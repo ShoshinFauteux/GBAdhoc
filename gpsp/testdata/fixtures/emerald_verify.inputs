@@ -1,0 +1,25 @@
+# emerald_verify.inputs — save-persistence verification run (plan §7.1 step 3).
+# Second half of the save test: boot the .sav written by emerald_save.inputs,
+# CONTINUE into the overworld, and log player position/map — the harness
+# compares them with the pos/loc values the save run recorded.
+# Addresses: Pokémon Emerald USA (BPEE rev 0), see docs/AUTOPILOT.md.
+ff on
+
+# through copyright/intro to the title screen
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 14400
+evt title_ok
+
+# title -> main menu
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+evt mainmenu_ok
+
+# CONTINUE -> overworld: the save restored in-field
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 7200
+evt overworld_ok
+wait 120
+
+# the restored spot must equal the saved spot
+logptr pos 4 0x03005D8C 0x00
+logptr loc 4 0x03005D8C 0x04
+dump
+evt verify_script_done

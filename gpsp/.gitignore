@@ -1,0 +1,42 @@
+﻿*.a
+*.o
+*.d
+*.so
+*.u
+*.z
+gpsp.gpe
+tags
+cscope.out
+pandora/linux
+tools/generate_cc_lut
+
+# gpsp-adhoc: user-supplied assets never enter git (plan section 3.4)
+testdata/**
+!testdata/fixtures/
+testdata/fixtures/*
+!testdata/fixtures/*.inputs
+!testdata/fixtures/*.inputs.md
+
+
+build/
+
+tools/e2e/hello/*.o
+tools/e2e/hello/*.elf
+tools/e2e/hello/EBOOT.PBP
+tools/e2e/hello/PARAM.SFO
+tools/e2e/sandboxes/
+tools/e2e/artifacts/
+
+
+# frontend build artifacts
+sdl/gpsp_sdl
+sdl/obj/
+psp/*.elf
+psp/EBOOT.PBP
+psp/PARAM.SFO
+psp/obj/
+
+# netdrv build artifacts
+netdrv/obj/
+netdrv/test_netdrv
+dist/

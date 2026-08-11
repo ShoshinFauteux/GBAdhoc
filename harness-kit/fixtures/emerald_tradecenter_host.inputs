@@ -1,0 +1,386 @@
+# emerald_tradecenter_host.inputs -- DIRECT CORNER trade, HOST side (leader).
+#
+# Rewritten whole rather than patched.  Successive string-surgery edits matched
+# the wrong occurrence of a repeated line ("wait 300" appears in both the role
+# section and the probe section) and silently deleted the entire role choice,
+# which cost a hardware run.  This file is now the single source of truth.
+#
+# WHY THIS EXISTS ALONGSIDE emerald_trade_host.inputs: that one drives the
+# UNION ROOM (map 0x3C19) trading-board flow.  This drives DIRECT CORNER ->
+# TRADE CENTER (map 0x1919).  union_room.c branches on ACTIVITY_TRADE versus
+# ACTIVITY_TRADE | IN_UNION_ROOM -- different code paths, and every hardware
+# finding on this project came from this one.
+#
+# DERIVED FROM THE pret DECOMP, OR MEASURED ON HARDWARE:
+#   MauvilleCity_PokemonCenter_2F/map.json
+#     (6,2) UnionRoomAttendant    (10,2) DirectCornerAttendant  <- ours
+#     warps (5,1)->UNION_ROOM     (9,1)->TRADE_CENTER
+#     row 4 is BLOCKED at x=8, so the route detours via row 5
+#     attendants sit behind a counter (row 3, solid): you talk ACROSS it,
+#     which is why the union-room script only ever presses UP without moving
+#   cable_club.inc DirectCornerSelectService: every menu variant has
+#     case 0 -> WirelessTrade, so TRADE is always the first entry
+#   MultichoiceList_LinkLeader = { JOIN GROUP, BECOME LEADER, EXIT }
+#     3 entries -> "count > 3" false -> NO WRAP, the cursor clamps.
+#     Exactly ONE Down is needed; two would land on EXIT and abort the link.
+#     sProcessInputDelay = 12 frames of input lockout after the menu opens.
+#   TradeCenter/map.json: warps (5,8)/(6,8); Chair0 (4,5); Chair1 (7,5);
+#     row 5 blocked at x=5/6 (the desks); receptionist at (9,6)
+#   MEASURED ON HARDWARE: gObjectEvents[0] is the RECEPTIONIST here, not the
+#     player.  The two players occupy slots 1 and 2 (stride 0x24).  Watching
+#     slot 0 made holdmash hold a direction into a wall until timeout, because
+#     an NPC's coordinates never change.
+#
+# Live object coords = map coords + 7 (MAP_OFFSET).  Parked save is map (6,4).
+# `wait N` counts EMULATED frames, so it is unaffected by the PSP's fps clamp.
+
+# --- boot to the overworld -------------------------------------------------
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 4800
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt overworld_ok
+wait 30
+logptr start_loc 2 0x03005D8C 0x04
+logram pre0 4 0x020244EC
+logram pre1 4 0x02024550
+
+# --- walk to the DIRECT CORNER attendant -----------------------------------
+# live (13,11) -> down to row 5 -> right -> back up in front of her counter.
+holdmash DOWN  B 2 0x02037362 0xFFFF 12 900
+holdmash RIGHT B 2 0x02037360 0xFFFF 17 900
+holdmash UP    B 2 0x02037362 0xFFFF 11 900
+press UP 2
+evt at_direct_corner
+
+# --- talk; TRADE is entry 0; she forces a save before linking --------------
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 1800
+mashsram A 4800
+evt entry_saved
+
+# --- ROLE: BECOME LEADER (entry 1) -----------------------------------------
+# mashsram holds A until the SRAM checksum moves, and that poll is coarse, so
+# it over-mashes slightly past the save.  Deliberately generous spacing:
+# settle, advance the one dialogue, let the menu appear and clear its input
+# lockout, move the cursor exactly once, confirm.
+wait 600
+press A 10
+wait 600
+press DOWN 10
+wait 300
+press A 10
+evt chose_become_leader
+wait 300
+
+# --- accept the client, then ride the warp into the TRADE CENTER -----------
+# This MUST press A: the leader has to accept the incoming connection.  It is
+# safe only because the role menu is already closed by this point -- mashing
+# here while it was still open is what kept selecting JOIN GROUP.
+mashptr A 2 0x03005D8C 0x04 0xFFFF 0x1919 4800
+evt in_trade_center
+
+# --- who and where are we?  (kept: this is how the slot bug was found) -----
+wait 300
+logptr sb1_x 2 0x03005D8C 0x00
+logptr sb1_y 2 0x03005D8C 0x02
+logram o1_x 2 0x02037384
+logram o2_x 2 0x020373A8
+dump
+# FULL-SPEED FAILURE (2026-08-06): every seat leg logged the SAME coordinate
+# and the avatar never moved -- host (13,9), join (9,9), nowhere near the
+# expected spawn of live (12,15)/(13,15).  That is not the overshoot race nor a
+# dropped step; those moved.  Before blaming the presses, establish WHICH object
+# is actually ours: slot 0 is the receptionist in this room, and the slot the
+# players occupy has been assumed, not re-verified at this frame rate.
+logram s0_x 2 0x02037360
+logram s0_y 2 0x02037362
+logram s1_x 2 0x02037384
+logram s1_y 2 0x02037386
+logram s2_x 2 0x020373A8
+logram s2_y 2 0x020373AA
+logptr map_id 2 0x03005D8C 0x04
+evt tc_coords_logged
+
+# --- take Chair0, watching OUR object slot (1) -----------------------------
+# spawn map (5,8)=live(12,15) -> up to row 6 -> left -> up onto the trigger at
+# map (4,5)=live(11,12).  Row 5 is blocked at map x=5/6, hence the detour.
+# Log x,y after EVERY leg.  A holdmash whose predicate never matches holds the
+# direction into a wall until it times out, and the next leg then starts from
+# the wrong tile -- the run where both characters walked into a wall, and the
+# one where the client ended up a tile up and right of its chair, both looked
+# like this.  Without per-leg coordinates the only way to see it is to watch
+# the screen, which is not a debugging strategy.
+# COUNTED STEPS, NOT PREDICATES -- see the join script for the measurement.
+# Run 12 showed holdmash overshooting by exactly one tile on every leg AND on
+# the corrective, because it releases the button the frame the coordinate
+# matches while the game has already committed the next step.  The route is
+# deterministic (spawn is a fixed warp destination at live (12,15) in every run
+# 6-12; chair0 is live (11,12)), so it is exactly UP, UP, LEFT, UP.  One press
+# RUN 15: a 4-frame press is a TAP -- in Pokemon that TURNS you to face a
+# direction without stepping, so run 15's client barely moved and run 14 lost a
+# step to a turn.  12 frames covers turn-then-step; 40 lets the 16-frame walk
+# finish before the next press.
+# ===================================================================
+# RUNS 175-177: WAYPOINT-CONFIRMED, mirroring the join script.
+# ===================================================================
+# See the join script for the derivation.  The failures were all on the client,
+# but this side carries the IDENTICAL structural bug and has simply not been
+# unlucky yet: the legs are counted `press`es that never check they landed, and
+# the x corrective sits BEFORE the y one, so a swallowed UP step would strand
+# this console on a lower row, walk it into the wall, and then time out in the
+# x corrective before y was ever looked at.
+#
+# Waypoints follow the path the passing run measured -- (12,15) -> (12,13) ->
+# (11,13) -> (11,12) -- so nothing here explores new tiles.  A leg whose
+# waypoint already reads correct is a true no-op (holdmash tests its predicate
+# before injecting, fe_autopilot.c:475), so a swallowed press now costs time
+# rather than the run.
+holdmash UP B 2 0x02037386 0xFFFF 13 300
+wait 20
+logram in1_x 2 0x02037384
+logram in1_y 2 0x02037386
+holdmash LEFT B 2 0x02037384 0xFFFF 11 300
+# THIS `wait` IS LOAD-BEARING -- see the join script.  holdmash exits the frame
+# its predicate first matches with a step already committed, so without this the
+# normaliser below sees the pre-commit value, no-ops, and the step then lands
+# uncorrected.  This side has never been observed to overshoot (in2_x = 11 in
+# all 14 runs, v1-v4), so its normalisation pair has only ever passed
+# VACUOUSLY; the wait is here for correctness, not because it has been seen to
+# matter on this console.
+wait 20
+# X IS NORMALISED HERE, BEFORE THE CHAIR STEP -- see the join script for the
+# full trace.  The x waypoint above overshoots by one every time (holdmash
+# releases the frame its predicate matches, but a step is already committed),
+# and if that is corrected AFTER the chair step then the counted presses walk
+# up the wrong column with no chair to absorb them, ending north of the seat
+# where the y backstop may not be able to recover.  Measured on the join: 6 of
+# 6 runs overshot x, and the v3 ordering failed 2/2 deterministically.  This
+# side walks LEFT, so its overshoot direction is the mirror.
+holdmash RIGHT B 2 0x02037384 0xFFFF 11 300
+wait 20
+logram in2_x 2 0x02037384
+logram in2_y 2 0x02037386
+# THE CHAIR STEP IS COUNTED, NOT CONFIRMED -- see the join script.  By this
+# line x is normalised to 11 and y confirmed at 13, so the console is one tile
+# SOUTH of the chair and a single press cannot overshoot.  Two of them, because
+# a swallowed press is the other failure mode and sitting is absorbing.
+press UP 12
+wait 60
+press UP 12
+wait 60
+logram in3_x 2 0x02037384
+logram in3_y 2 0x02037386
+
+# LAST-RESORT y BACKSTOP.  Only reachable if both counted presses were
+# swallowed AND the chair was missed; a no-op on the chair row.  The x backstop
+# is no longer here -- it now runs before the chair step.
+holdmash DOWN B 2 0x02037386 0xFFFF 12 300
+wait 20
+logram in4_x 2 0x02037384
+logram in4_y 2 0x02037386
+
+# ASSERT THE SEAT BEFORE CLAIMING IT -- see the join script.  The y backstop
+# above tests y alone, so a console standing beside the chair satisfies it on
+# open floor and `evt seated` fires falsely; the run then dies much later in
+# the trade handshake with no indication of the real cause.  Two single-axis
+# waits are the AND the grammar lacks; both are free on a correct run.
+waitram 2 0x02037384 0xFFFF 11 120
+waitram 2 0x02037386 0xFFFF 12 120
+evt seated
+
+# --- the trade -------------------------------------------------------------
+# WHICH MENU THIS IS.  There are two different "trade a mon" screens and they
+# order their options DIFFERENTLY:
+#   * UNION ROOM trading board -> party_menu.c, PARTY_MENU_TYPE_UNION_ROOM_TRADE
+#     -> ACTIONS_TRADE = { TRADE, SUMMARY, CANCEL }.  TRADE is first.
+#   * TRADE CENTER terminal    -> trade.c, its own screen.  Not party_menu.c.
+# This script is the TRADE CENTER, so trade.c governs:
+#   CB_ProcessSelectedMonInput()  case 0 = Summary, case 1 = Trade
+#   InitMenuInUpperLeftCornerNormal(1, ARRAY_COUNT(sSelectTradeMonActions), 0)
+#     -> cursor starts on entry 0 = SUMMARY.
+# So A-A here opens the summary, backs out, and opens it again forever, which
+# is exactly what hardware did.  SUMMARY is first; TRADE needs one Down.
+
+# Sitting down pops a "press B to exit the chair" dialog.  Press NOTHING here:
+# B would stand us back up, and no input is required -- once BOTH players are
+# seated the game links up by itself ("standby for communications") and hands
+# the field off to the trade screen.  That link is of unknown duration, so
+# rather than blind-wait, watch for gMain.callback2 leaving CB2_Overworld:
+# that edge IS the handover, and it needs no address we do not already have.
+waitramne 4 0x030022C4 0xFFFFFFFF 0x08085E5D 3600
+evt trade_screen
+logram cb2_trade 4 0x030022C4
+wait 900
+dump
+
+# Cursor lands on our first party mon.  A opens the two-entry action menu.
+press A 10
+wait 90
+dump
+
+# Menu_ProcessInputNoWrap(): the cursor CLAMPS at the bottom entry, so a second
+# Down is harmless insurance against a dropped input.  (Contrast the LINK
+# LEADER menu, which wraps off the end onto EXIT and aborts the link -- there
+# exactly one Down is allowed.)
+press DOWN 10
+wait 30
+press DOWN 10
+wait 60
+dump
+press A 10
+evt trade_selected
+
+# CB_InitConfirmTradePrompt sits on timer > 120 before it even draws the
+# Yes/No, and CreateYesNoMenu(&sTradeYesNoWindowTemplate, 1, 14, 0) starts the
+# cursor on YES -- so the mash below confirms it.  Mashing A is safe from here
+# because the only menu left defaults to the answer we want.
+wait 180
+dump
+logram cb2_confirm 4 0x030022C4
+evt trade_attempted
+
+mash A 4 0x030022C4 0xFFFFFFFF 0x0807AE51 4800
+evt trade_anim
+mashsram A 4800
+evt post_save
+
+# --- LEAVE THE TRADE SCREEN ------------------------------------------------
+# A completed trade does NOT exit: trade.c returns to CB_MAIN_MENU via
+# RedrawChooseAPokemonWindow(), so the cursor is back on the party and A just
+# reopens { SUMMARY, TRADE } forever.  That is what run 6 died on.
+# CB_ProcessMainMenuInput handles the D-pad and A only -- there is no B exit --
+# so the only way out is to land on CANCEL (cursorPosition == PARTY_SIZE * 2).
+#
+# src/data/trade.h documents the grid:
+#     0  1  6  7        0-5  = our party      12 = CANCEL
+#     2  3  8  9        6-11 = partner's
+#     4  5 10 11
+#             12
+# GetNewCursorPosition walks its candidate list and SKIPS inactive slots, so
+# with a 3-mon party (0,1,2 active; 3,4,5 not):
+#     RIGHT from 0 -> {1, 6, 7} -> 1
+#     DOWN  from 1 -> {3, 5, 12, 12} -> 3 and 5 are inactive -> 12 = CANCEL
+# Two presses, derived rather than guessed.  Then A on CANCEL opens a Yes/No
+# via CreateYesNoMenu(..., 0), which starts on YES.
+#
+# BUT FIRST, WAIT OUT THE SAVE.  mashsram returns on the FIRST SRAM checksum
+# change; Emerald keeps "SAVING... DON'T TURN OFF THE POWER." on screen long
+# past that.  All three of run 7's exit screenshots -- frames 8382, 8466 and
+# 8598, spanning ~330 emulated frames after post_save -- still showed that box,
+# so RIGHT, DOWN and both A presses were swallowed by it and the cursor never
+# moved at all.  The route below was never actually exercised.
+#
+# Floor plus ceiling: a fixed wait long enough to cover the save observed on
+# hardware, then a check against 0x080773D1 -- the trade menu's own callback2,
+# measured in run 6 as cb2_trade -- so a slower save is still caught.  If the
+# save shares that callback2 the check passes immediately and the floor is what
+# carries us; cb2_saving below is logged to settle exactly that.
+# MEASURED IN RUN 8: the save screen has its own callback2, 0x0807EB51, and
+# after the save the game does NOT return to 0x080773D1 -- the callback the
+# trade menu ran under when we FIRST entered it.  Waiting for that address
+# timed out after 3600 frames while the console sat on a menu that looked
+# right, which is why run 8 stalled.  Do not guess the destination: wait for
+# callback2 to LEAVE the save screen, which is the transition we actually care
+# about and the only value hardware has confirmed.  cb2_ready then records
+# where it really lands, so the next iteration can be exact if it needs to be.
+logram cb2_saving 4 0x030022C4
+wait 120
+waitramne 4 0x030022C4 0xFFFFFFFF 0x0807EB51 3600
+evt menu_interactive
+logram cb2_ready 4 0x030022C4
+wait 180
+dump
+
+# RUN 9 SHOWED WHAT COMES NEXT: leaving the save screen does NOT land on the
+# trade menu.  It lands on "Communication standby... Please wait." while the
+# two consoles resync, and cb2_ready=0x080773AD is that standby, not the menu.
+# The screenshot at frame 9998 caught RIGHT and DOWN being pressed into it, so
+# the cursor never moved -- the same way the save box ate them in run 7.  The
+# menu was fully interactive ~130 frames later (frame 10130).
+#
+# Ride it out with B.  CB_ProcessMainMenuInput handles only the D-pad and A, so
+# B is inert once the menu IS up and cannot reopen { SUMMARY, TRADE }, while
+# doing nothing harmful during the standby box.  ~520 frames covers the ~300
+# observed with margin.  A is never used here: on the live menu it would select
+# a mon.
+# RUN 10: THE STANDBY BOX IS DRAWN INSIDE THE TRADE-MENU CALLBACK.
+# cb2_menu read 0x080773D1 -- byte-identical to cb2_trade, the callback the
+# menu runs under when it is fully interactive -- while the screenshot at frame
+# 8462 still showed "Communication standby... Please wait.".  So callback2
+# CANNOT distinguish "standby box up" from "menu live", and no amount of
+# waitram/waitramne on 0x030022C4 will ever separate them.  Do not try again.
+#
+# What is left is a bounded wait.  Run 10 measured it: 512 frames of B-mashing
+# was not enough, and the menu was live 84 frames later -- so the standby runs
+# ~600 frames from menu_interactive.  1408 frames of B plus a 240-frame settle
+# is well past that with room for a slower link.  B stays the right button:
+# inert on the live menu (CB_ProcessMainMenuInput reads only the D-pad and A),
+# harmless against the box.
+repeat 22
+press B 4
+wait 60
+endrepeat
+wait 240
+logram cb2_menu 4 0x030022C4
+dump
+
+press RIGHT 10
+wait 30
+press DOWN 10
+wait 30
+dump
+press A 10
+wait 120
+dump
+press A 10
+evt trade_menu_exited
+
+# Farewell dialogue, then the field takes back over.
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt back_on_map
+wait 120
+
+# --- WALK OUT ---------------------------------------------------------------
+# Reverse of the route in: chair0 live (11,12) -> down to row 6 -> right to the
+# warp column -> down onto the warp at map (5,8) = live (12,15).
+holdmash DOWN  B 2 0x02037386 0xFFFF 13 900
+logram out1_x 2 0x02037384
+logram out1_y 2 0x02037386
+holdmash RIGHT B 2 0x02037384 0xFFFF 12 900
+logram out2_x 2 0x02037384
+logram out2_y 2 0x02037386
+# RUN 11: A COORDINATE IS THE WRONG INSTRUMENT FOR DETECTING A WARP.
+# The host reached the warp tile EXACTLY -- out3 = (12,15) = map (5,8) -- and
+# the map still never changed within 1800 frames; the client's final DOWN leg
+# timed out without reaching its tile at all.  Stepping onto a warp changes the
+# map, which moves/renumbers the object whose coordinate we are watching, so the
+# predicate can be missed in the very step that makes it true, and once the leg
+# has released its button nothing pushes the player onto the tile again.
+#
+# Watch the MAP ID instead and keep holding DOWN until it actually changes.
+# This needs no coordinate, cannot be raced by the warp, and self-terminates the
+# instant we are in the Pokemon Center (0x060A) -- which is the thing we
+# actually wanted to know.
+# LEAVING IS A CONVERSATION, NOT A WARP TILE.
+# Run 11's host stood on the exit tile EXACTLY -- out3 = (12,15) = map (5,8) --
+# and the map never changed.  Not a positioning bug and not a warp race: the
+# attendant ASKS whether you want to leave, and nothing was answering her.
+# (Reported by the user, who knew the room.)
+#
+# So hold DOWN to reach and stay on the tile, and mash A -- NOT B, which at best
+# does nothing and at worst declines the prompt -- until the map id actually
+# becomes the Pokemon Center.  Watching the map id rather than a coordinate also
+# side-steps the warp moving the object we would otherwise be measuring.
+evt walking_out
+holdmashptr DOWN A 2 0x03005D8C 0x04 0xFFFF 0x060A 1800
+evt left_trade_center
+wait 60
+
+# --- oracle inputs ---------------------------------------------------------
+logram post0 4 0x020244EC
+logram post1 4 0x02024550
+logram recv0 4 0x02024744
+logptr end_loc 2 0x03005D8C 0x04
+dump
+evt trade_complete
+wait 60

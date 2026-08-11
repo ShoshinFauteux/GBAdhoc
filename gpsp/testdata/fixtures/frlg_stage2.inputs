@@ -1,0 +1,250 @@
+# ###########################################################################
+# NOT A FIXTURE PATH � retained as the address-verification harness only.
+# Parked FR/LG saves are supplied by hand, not played from a new game
+# (DECISIONS.md ADR-0022).  No test script references this file.  It is kept
+# because running it is how the "D" (verified live) rows of the FR/LG table
+# in docs/AUTOPILOT.md were observed, and the chain deliberately stops one
+# leg short of a wireless counter.  See that document's "Empirical-
+# verification harness" section before touching it.
+# ###########################################################################
+# frlg_stage2.inputs — Phase-4 FR/LG fixture generation, stage 2 of 4.
+# Shared by FireRed and LeafGreen: every address it touches is byte-identical
+# between BPRE rev1 and BPGE rev1 (see docs/AUTOPILOT.md; the FR/LG splits
+# are CB2_NamingScreen, CB2_UpdatePartyMenu and Task_RunUnionRoom, none of
+# which appear here).
+#
+# In:  stage-1 save — Pallet Town (16,14), starter in slot 1, no Pokedex.
+# Out: Viridian City Mart, holding OAK'S PARCEL, saved.
+#
+# Route: Pallet Town north exit -> Route 1 northbound -> Viridian City ->
+# Mart door (36,19).  ViridianCity_Mart_OnFrame runs the parcel hand-over the
+# moment the player enters.
+#
+# Route 1 is tall grass on every through-gap (rows 5/10/15/20/26/31/36), so a
+# wild battle can start at any step.  Each leg is
+#     repeat N { wait 40 ; mash A until CB2_Overworld ; press DIR }
+# then two flushes and a reverse-direction holdmash for the exact tile.  The
+# "mash A until CB2_Overworld" is a no-op in the field (the predicate already
+# holds, so no button is pressed) and a battle-resolver otherwise, and it
+# runs BEFORE the next D-pad press: gActionSelectionCursor persists across
+# turns, so a stray DOWN would park the battle cursor on POKEMON and the next
+# A would open the party menu.  The doubled post-loop flush exists because
+# gMain.callback2 is still CB2_Overworld during the encounter's fade-in.
+ff on
+
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 14400
+evt title_ok
+mash START 4 0x030030F4 0xFFFFFFFF 0x0800C2E9 3600
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+evt overworld_ok
+wait 120
+logptr start_loc 2 0x03005008 0x04
+logram start_x 2 0x02036E48
+logram start_y 2 0x02036E4A
+
+# --- Pallet Town (16,14) -> north exit -------------------------------------
+# Taking the starter set FLAG_PALLET_LADY_NOT_BLOCKING_SIGN, so PalletTown's
+# ON_TRANSITION parks the sign lady on **(12,2)** — the left exit column.
+# Climb column 12 and switch to column 13 on row 3, below her; the coord
+# trigger at (13,2) then runs her "press START" sign lesson, cleared by the
+# B pulses.
+holdmash LEFT B 2 0x02036E48 0xFFFF 19 1800
+holdmash RIGHT B 2 0x02036E48 0xFFFF 19 600
+holdmash UP B 2 0x02036E4A 0xFFFF 10 1800
+holdmash DOWN B 2 0x02036E4A 0xFFFF 10 600
+holdmash RIGHT B 2 0x02036E48 0xFFFF 20 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 20 300
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x1303 5400
+evt route1_ok
+wait 60
+
+# --- Route 1 northbound, (13,39) -> (12,0) ----------------------------------
+# Waypoints (map-local, tools/e2e/map_grid.py on pret/pokefirered):
+#   (13,39) N (13,32) W (7,32) N (7,27) E (12,27) N (12,24) W (9,24)
+#   N (9,17) E (21,17) N (21,2) W (12,2) N -> Viridian City
+repeat 14
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press UP 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash DOWN B 2 0x02036E4A 0xFFFF 39 900
+evt r1_leg1
+
+repeat 10
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press LEFT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash RIGHT B 2 0x02036E48 0xFFFF 14 900
+evt r1_leg2
+
+repeat 9
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press UP 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash DOWN B 2 0x02036E4A 0xFFFF 34 900
+evt r1_leg3
+
+repeat 9
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press RIGHT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash LEFT B 2 0x02036E48 0xFFFF 19 900
+evt r1_leg4
+
+repeat 7
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press UP 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash DOWN B 2 0x02036E4A 0xFFFF 31 900
+evt r1_leg5
+
+repeat 7
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press LEFT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash RIGHT B 2 0x02036E48 0xFFFF 16 900
+evt r1_leg6
+
+repeat 11
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press UP 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash DOWN B 2 0x02036E4A 0xFFFF 24 900
+evt r1_leg7
+
+# legs 8 and 9 are deliberately WALL-TERMINATED: their correctors would
+# otherwise have to walk back across tall grass, and a wild battle started
+# during a corrector is unrecoverable (a held direction only moves the battle
+# action cursor, so the holdmash just times out).  Running east along row 17
+# to the wall at x=22 lands exactly on x=21, and column 21 is walkable all
+# the way up to row 2 where row 1 walls it, so both correctors are no-ops.
+repeat 16
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press RIGHT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash LEFT B 2 0x02036E48 0xFFFF 28 900
+evt r1_leg8
+
+repeat 22
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press UP 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash DOWN B 2 0x02036E4A 0xFFFF 9 900
+evt r1_leg9
+
+# row 2 has no grass, so this corrector is safe.
+repeat 13
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press LEFT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash RIGHT B 2 0x02036E48 0xFFFF 19 900
+evt r1_leg10
+
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x0103 1800
+evt viridian_ok
+wait 60
+logram v_x 2 0x02036E48
+logram v_y 2 0x02036E4A
+
+# --- Viridian City -> Mart door (36,19).  No grass here, plain holds. -------
+#   (24,39) N (24,31) W (21,31) N (21,27) E (36,27) N (36,20) -> door
+holdmash UP B 2 0x02036E4A 0xFFFF 38 1800
+holdmash DOWN B 2 0x02036E4A 0xFFFF 38 600
+holdmash LEFT B 2 0x02036E48 0xFFFF 28 900
+holdmash RIGHT B 2 0x02036E48 0xFFFF 28 300
+holdmash UP B 2 0x02036E4A 0xFFFF 34 900
+holdmash DOWN B 2 0x02036E4A 0xFFFF 34 300
+holdmash RIGHT B 2 0x02036E48 0xFFFF 43 1800
+holdmash LEFT B 2 0x02036E48 0xFFFF 43 600
+holdmash UP B 2 0x02036E4A 0xFFFF 27 1800
+holdmash DOWN B 2 0x02036E4A 0xFFFF 27 600
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x0305 1800
+evt mart_ok
+
+# ViridianCity_Mart_OnFrame runs the parcel scene on entry
+# (VAR_MAP_SCENE_VIRIDIAN_CITY_MART == 0): it walks the player to the counter
+# and hands over ITEM_OAKS_PARCEL, then sets scene 1 (which also closes the
+# shop until Oak clears it — so no ball shopping here).
+repeat 60
+press A 4
+wait 12
+endrepeat
+wait 120
+logram m_x 2 0x02036E48
+logram m_y 2 0x02036E4A
+dump
+
+# --- in-game SAVE (stage boundary) -----------------------------------------
+# Still no Pokedex: POKEMON BAG PLAYER SAVE OPTION EXIT -> 6 items, SAVE = 3.
+press START 4
+wait 60
+waitram 1 0x020370F5 0xFF 6 900
+repeat 3
+press DOWN 4
+wait 12
+endrepeat
+waitram 1 0x020370F4 0xFF 3 300
+press A 4
+waitramne 4 0x03000FA4 0xFFFFFFFF 0x00000000 900
+mashsram A 5400
+evt sram_written
+mash A 4 0x03000FA4 0xFFFFFFFF 0x0806F9F5 3600
+wait 300
+press START 4
+wait 60
+press B 4
+wait 60
+logptr end_loc 2 0x03005008 0x04
+logram end_x 2 0x02036E48
+logram end_y 2 0x02036E4A
+dump
+evt stage2_done

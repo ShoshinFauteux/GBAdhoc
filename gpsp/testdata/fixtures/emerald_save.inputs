@@ -1,0 +1,77 @@
+# emerald_save.inputs — in-game SAVE, RAM-predicate synced (plan §7.1 step 3).
+# Target: Pokémon Emerald USA (BPEE rev 0). All addresses verified against
+# pret/pokeemerald symbols + live runs — provenance in docs/AUTOPILOT.md.
+# Function-pointer compare values carry the Thumb bit (symbol address | 1).
+#
+# Flow: boot with an existing save -> title -> main menu -> CONTINUE ->
+# overworld -> start menu -> SAVE -> confirm + overwrite -> flash write lands
+# (SRAM CRC change) -> save flow completes -> reopen menu (interactivity
+# proof) -> log player position/map for the second-run comparison -> done.
+ff on
+
+# --- through copyright/intro to the title screen -----------------------------
+# 0x030022C4 = gMain.callback2 ; 0x080AAB2D = title_screen.c MainCB2|1
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 14400
+logram cb2_title 4 0x030022C4
+evt title_ok
+
+# --- title -> main menu ------------------------------------------------------
+# 0x0802F6B1 = CB2_MainMenu|1
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+logram cb2_mainmenu 4 0x030022C4
+evt mainmenu_ok
+
+# --- CONTINUE (default selection) -> overworld -------------------------------
+# 0x08085E5D = CB2_Overworld|1
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 7200
+logram cb2_overworld 4 0x030022C4
+evt overworld_ok
+dump
+wait 60
+
+# --- open the start menu -----------------------------------------------------
+# 0x03005DF4 = gMenuCallback ; 0x0809FAC5 = HandleStartMenuInput|1
+press START 4
+waitram 4 0x03005DF4 0xFFFFFFFF 0x0809FAC5 600
+logram menucb 4 0x03005DF4
+evt startmenu_open
+
+# --- cursor to SAVE: UP x3 wraps Pokedex -> Exit -> Option -> Save -----------
+press UP 4
+wait 8
+press UP 4
+wait 8
+press UP 4
+wait 8
+logram cursor 1 0x0203760E
+
+# --- select SAVE, wait for the save dialog to engage -------------------------
+# 0x0203761C = sSaveDialogCallback (0 until the save flow first runs)
+press A 4
+waitramne 4 0x0203761C 0xFFFFFFFF 0x00000000 600
+logram savecb 4 0x0203761C
+evt savedialog_open
+
+# --- mash A through confirm + overwrite until the flash write lands ----------
+mashsram A 3600
+evt sram_written
+
+# --- let the save flow finish ("saved the game" + SE + 60-frame timer) -------
+# 0x080A02D9 = SaveReturnSuccessCallback|1 (terminal save-dialog state)
+mash A 4 0x0203761C 0xFFFFFFFF 0x080A02D9 1800
+wait 300
+
+# --- interactivity proof: the field accepts input again ----------------------
+press START 4
+waitram 4 0x03005DF4 0xFFFFFFFF 0x0809FAC5 600
+evt startmenu_reopen
+press B 4
+wait 60
+
+# --- record the saved spot (compared against the verify run) -----------------
+# 0x03005D8C = gSaveBlock1Ptr -> SaveBlock1: +0 pos.x/y (2x s16),
+# +4 location mapGroup/mapNum/warpId
+logptr pos 4 0x03005D8C 0x00
+logptr loc 4 0x03005D8C 0x04
+dump
+evt save_script_done

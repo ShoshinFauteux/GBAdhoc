@@ -1,0 +1,201 @@
+# ###########################################################################
+# NOT A FIXTURE PATH � retained as the address-verification harness only.
+# Parked FR/LG saves are supplied by hand, not played from a new game
+# (DECISIONS.md ADR-0022).  No test script references this file.  It is kept
+# because running it is how the "D" (verified live) rows of the FR/LG table
+# in docs/AUTOPILOT.md were observed, and the chain deliberately stops one
+# leg short of a wireless counter.  See that document's "Empirical-
+# verification harness" section before touching it.
+# ###########################################################################
+# frlg_stage4.inputs — Phase-4 FR/LG fixture generation, stage 4 of 5.
+# Shared by FireRed and LeafGreen (no FR/LG-divergent address is used).
+#
+# In:  stage-3 save — Oak's lab, Pokedex + 5 POKE BALLs, one party mon.
+# Out: Route 1 (13,38/39), TWO party mons, healed, saved.
+#
+# The second mon is the whole point of this stage: the Union Room attendant
+# refuses entry below CountPartyNonEggMons >= 2 (pret data/scripts/
+# cable_club.inc CableClub_EventScript_CheckPartyUnionRoomRequirements) and
+# trade.c CanTradeSelectedMon returns CANT_TRADE_LAST_MON for a one-mon
+# party.  Route 1 only spawns PIDGEY and RATTATA at L2-5 — both Kanto-dex
+# species, so both are legal to trade without the National Dex (the
+# `species2[monIdx] > KANTO_SPECIES_END -> CANT_TRADE_NATIONAL` branch of
+# CanTradeSelectedMon never fires).  See docs/AUTOPILOT.md.
+#
+# Mom heals the party once FLAG_BEAT_RIVAL_IN_OAKS_LAB is set
+# (PalletTown_PlayersHouse_1F_EventScript_MomHeal); the detour is load-
+# bearing, because the lone starter arrives here at a few HP after the
+# Route-1 crossings and a whiteout would throw the run back to the respawn.
+ff on
+
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 14400
+evt title_ok
+mash START 4 0x030030F4 0xFFFFFFFF 0x0800C2E9 3600
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+evt overworld_ok
+wait 120
+
+# --- Oak's lab -> Pallet Town ----------------------------------------------
+holdmash DOWN B 2 0x02036E4A 0xFFFF 18 1800
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0003 1800
+evt pallet_ok
+wait 60
+
+# --- Pallet Town -> player's house door (6,7) ------------------------------
+# row 14 is walled at x=5, so running west along it stops exactly on x=6;
+# column 6 is walled at row 11, so running north stops exactly on row 12.
+holdmash DOWN B 2 0x02036E4A 0xFFFF 21 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 13 1800
+holdmash UP B 2 0x02036E4A 0xFFFF 19 1800
+holdmash LEFT B 2 0x02036E48 0xFFFF 11 900
+holdmash RIGHT B 2 0x02036E48 0xFFFF 11 300
+holdmash UP B 2 0x02036E4A 0xFFFF 15 1800
+holdmash RIGHT B 2 0x02036E48 0xFFFF 13 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 13 300
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x0004 1800
+evt house_ok
+wait 60
+
+# --- Mom heals: arrive (4,8); row 5 is walled at x=6,7 so use row 6 --------
+holdmash UP B 2 0x02036E4A 0xFFFF 13 1800
+holdmash DOWN B 2 0x02036E4A 0xFFFF 13 600
+holdmash RIGHT B 2 0x02036E48 0xFFFF 15 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 15 300
+holdmash UP B 2 0x02036E4A 0xFFFF 12 900
+wait 40
+press UP 2
+wait 30
+repeat 40
+press A 4
+wait 14
+endrepeat
+wait 120
+evt mom_healed
+dump
+
+# --- back out: (8,5) -> row 8 -> doormat (4,8) -> Pallet Town --------------
+holdmash DOWN B 2 0x02036E4A 0xFFFF 15 1800
+holdmash LEFT B 2 0x02036E48 0xFFFF 11 1800
+holdmash RIGHT B 2 0x02036E48 0xFFFF 11 300
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0003 1800
+evt pallet2_ok
+wait 60
+
+# --- Pallet Town -> Route 1 (leave by column 13; the sign lady sits on
+# (12,2), and column 13 is walled from row 7 down, so climb column 12) ------
+holdmash RIGHT B 2 0x02036E48 0xFFFF 19 1800
+holdmash LEFT B 2 0x02036E48 0xFFFF 19 600
+holdmash UP B 2 0x02036E4A 0xFFFF 10 1800
+holdmash DOWN B 2 0x02036E4A 0xFFFF 10 600
+holdmash RIGHT B 2 0x02036E48 0xFFFF 20 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 20 300
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x1303 5400
+evt route1_ok
+wait 60
+
+# --- catch a second mon in the Route 1 grass -------------------------------
+# Pace between (13,39) and (13,38).  Both are MB_TALL_GRASS and both have
+# x=14 walled, which matters: the throw sequence below presses RIGHT, and on
+# these two tiles RIGHT can only turn the player, never walk them out of the
+# grass or into an interaction.  Only UP/DOWN are used while hunting, and no
+# A: a stray A in the battle action menu would commit whatever the cursor
+# happens to be on.
+# The connection crossing lands the player on Route 1 (13,39); one step north
+# anchors the hunt on (13,38) so that a DOWN can never walk back out into
+# Pallet Town.
+press UP 20
+wait 30
+evt at_grass
+logram g_x 2 0x02036E48
+logram g_y 2 0x02036E4A
+logptr g_loc 2 0x03005008 0x04
+repeat 40
+press UP 20
+press DOWN 20
+endrepeat
+evt hunted
+logram h_x 2 0x02036E48
+logram h_y 2 0x02036E4A
+logram h_cb 4 0x030030F4
+
+# Let the encounter intro finish: presses landing during "Wild RATTATA
+# appeared!" are swallowed, and a half-eaten attempt desynchronises the rest
+# (observed: attempt 1 vanished into the intro, attempt 2's RIGHT then moved
+# the MOVE cursor and its A used TAIL WHIP).
+wait 300
+
+# Five throws (Oak's five balls).  Each attempt re-synchronises first:
+#   B B    back out of the move list or the bag, whatever we are in
+#   UP LEFT  normalise gActionSelectionCursor to FIGHT(0).  The cursor moves
+#          by bit-flip and does not wrap (src/battle_controller_player.c
+#          HandleInputChooseAction), so UP clears bit 1 and LEFT clears bit 0
+#          and the pair lands on 0 from any of the four positions.
+#   RIGHT  FIGHT(0) -> BAG(1)
+#   A      open the bag
+#   RIGHT RIGHT   ITEMS -> KEY ITEMS -> POKE BALLS (clamped, so a no-op on
+#          later opens: gBagMenuState.pocket is remembered)
+#   A      select the first row of the POKE BALLS pocket
+#   A      row 0 of sContextMenuItems_BattleUse = USE
+# If the mon is caught early the remaining attempts play out in the field on
+# a tile where RIGHT is blocked and A has nothing to talk to.
+repeat 5
+press B 4
+wait 24
+press B 4
+wait 24
+press UP 4
+wait 16
+press LEFT 4
+wait 24
+press RIGHT 4
+wait 24
+press A 4
+wait 150
+press RIGHT 4
+wait 20
+press RIGHT 4
+wait 24
+press A 4
+wait 60
+press A 4
+wait 480
+endrepeat
+dump
+
+# gPlayerPartyCount == 2 is the oracle.  B advances the "Gotcha!"/Pokedex
+# text and answers NO to "Give a nickname?".
+mash B 1 0x02024029 0xFF 2 5400
+evt caught
+mash B 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+evt back_in_field
+wait 120
+logram party_count 1 0x02024029
+logram pers0 4 0x02024284
+logram pers1 4 0x020242E8
+dump
+
+# --- in-game SAVE (stage boundary) ----------------------------------------
+#   POKEDEX POKEMON BAG PLAYER SAVE OPTION EXIT -> 7 items, SAVE at index 4.
+press START 4
+wait 60
+waitram 1 0x020370F5 0xFF 7 900
+repeat 4
+press DOWN 4
+wait 12
+endrepeat
+waitram 1 0x020370F4 0xFF 4 300
+press A 4
+waitramne 4 0x03000FA4 0xFFFFFFFF 0x00000000 900
+mashsram A 5400
+evt sram_written
+mash A 4 0x03000FA4 0xFFFFFFFF 0x0806F9F5 3600
+wait 300
+press START 4
+wait 60
+press B 4
+wait 60
+logptr end_loc 2 0x03005008 0x04
+logram end_x 2 0x02036E48
+logram end_y 2 0x02036E4A
+dump
+evt stage4_done

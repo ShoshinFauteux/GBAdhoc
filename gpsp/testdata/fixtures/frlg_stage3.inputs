@@ -1,0 +1,265 @@
+# ###########################################################################
+# NOT A FIXTURE PATH — retained as the address-verification harness only.
+# Parked FR/LG saves are supplied by hand, not played from a new game
+# (DECISIONS.md ADR-0022).  No test script references this file.  It is kept
+# because running it is how the "D" (verified live) rows of the FR/LG table
+# in docs/AUTOPILOT.md were observed, and the chain deliberately stops one
+# leg short of a wireless counter.  See that document's "Empirical-
+# verification harness" section before touching it.
+# ###########################################################################
+# frlg_stage3.inputs â€” Phase-4 FR/LG fixture generation, stage 3 of 4.
+# Shared by FireRed and LeafGreen (no FR/LG-divergent address is used).
+#
+# In:  stage-2 save â€” Viridian City Mart, holding OAK'S PARCEL.
+# Out: Oak's lab, Pokedex obtained (FLAG_SYS_POKEDEX_GET â€” the Union Room
+#      attendant's gate) and five POKE BALLs in the bag, saved.
+#
+# Route: Mart -> Viridian City -> Route 1 SOUTHbound -> Pallet Town ->
+# Oak's Lab -> talk to Oak.
+#
+# Every Route-1 leg here is deliberately WALL-TERMINATED where its corrector
+# would otherwise have to walk back through tall grass: a wild battle started
+# during a corrector is unrecoverable, because a held direction only moves
+# the battle action cursor and the holdmash then just times out.  Where a
+# corrector is unavoidable it runs on a grass-free row.
+ff on
+
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 14400
+evt title_ok
+mash START 4 0x030030F4 0xFFFFFFFF 0x0800C2E9 3600
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+evt overworld_ok
+wait 120
+logptr start_loc 2 0x03005008 0x04
+
+# --- Mart -> Viridian City (the doormat (4,7) is MB_SOUTH_ARROW_WARP) ------
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0103 1800
+evt viridian_ok
+wait 60
+
+# --- Viridian City: Mart door (36,20) -> Pokemon Center -> Route 1 --------
+#   (36,20) S (36,27) W (26,27) N -> PC 1F, heal, back out, W (21,27)
+#   S (21,31) E (24,31) S -> Route 1
+# The heal is load-bearing, not a nicety: the starter is the only party mon
+# and every Route-1 crossing costs it 2-4 wild battles.  Without it the run
+# whites out mid-route (observed: leg 4 of the southbound run ended in
+# PlayersHouse_1F (8,5), the HEAL_LOCATION_PALLET_TOWN respawn).
+holdmash DOWN B 2 0x02036E4A 0xFFFF 34 1800
+holdmash UP B 2 0x02036E4A 0xFFFF 34 600
+holdmash LEFT B 2 0x02036E48 0xFFFF 33 1800
+holdmash RIGHT B 2 0x02036E48 0xFFFF 33 600
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x0405 1800
+evt pc1f_ok
+wait 60
+# PC 1F: enter at (7,8); the nurse is at (7,2) behind an MB_COUNTER row, so
+# stand at (7,4) and face north.
+holdmash UP B 2 0x02036E4A 0xFFFF 11 1800
+wait 40
+press UP 2
+wait 30
+repeat 30
+press A 4
+wait 14
+endrepeat
+wait 90
+evt healed
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0103 1800
+wait 60
+holdmash DOWN B 2 0x02036E4A 0xFFFF 34 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 28 1800
+holdmash RIGHT B 2 0x02036E48 0xFFFF 28 600
+holdmash DOWN B 2 0x02036E4A 0xFFFF 38 900
+holdmash UP B 2 0x02036E4A 0xFFFF 38 300
+holdmash RIGHT B 2 0x02036E48 0xFFFF 31 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 31 300
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x1303 3600
+evt route1_ok
+wait 60
+logram r_x 2 0x02036E48
+logram r_y 2 0x02036E4A
+
+# --- Route 1 southbound, (12,0) -> (13,39) --------------------------------
+# Route 1's rows 5/10/15/20/26/31 are MB_JUMP_SOUTH **ledges**, not walls:
+# they carry collision 1 (so a naive grid prints them '#') but are hoppable
+# southbound.  tools/e2e/map_grid.py now renders them as 'v'.  Southbound is
+# therefore mostly a straight drop; the legs below are wall-terminated on
+# genuine walls only:
+#   (12,0) S (12,14)[wall row15 x=12]  W (6,14)  S (6,24)[wall row25]
+#   E (14,24)  S (14,35)[wall row36]   W (13,35) S -> Pallet Town
+repeat 14
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press DOWN 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash UP B 2 0x02036E4A 0xFFFF 21 900
+evt s_leg1
+logram s1_x 2 0x02036E48
+logram s1_y 2 0x02036E4A
+logptr s1_loc 2 0x03005008 0x04
+
+# row 14 is grass-free west of x=15, so wall-terminate at x=2 and come back
+repeat 16
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press LEFT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash RIGHT B 2 0x02036E48 0xFFFF 13 1800
+evt s_leg2
+logram s2_x 2 0x02036E48
+logram s2_y 2 0x02036E4A
+logptr s2_loc 2 0x03005008 0x04
+
+repeat 14
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press DOWN 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash UP B 2 0x02036E4A 0xFFFF 31 900
+evt s_leg3
+logram s3_x 2 0x02036E48
+logram s3_y 2 0x02036E4A
+logptr s3_loc 2 0x03005008 0x04
+
+# rows 25/26 are only passable at x=12..17 (all grass).  Aim for the middle
+# of that six-wide window: no corrector, so no grass walk-back.
+repeat 8
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press RIGHT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+evt s_leg4
+logram s4_x 2 0x02036E48
+logram s4_y 2 0x02036E4A
+logptr s4_loc 2 0x03005008 0x04
+
+repeat 16
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press DOWN 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+logram pre5_x 2 0x02036E48
+logram pre5_y 2 0x02036E4A
+holdmash UP B 2 0x02036E4A 0xFFFF 42 900
+evt s_leg5
+logram s5_x 2 0x02036E48
+logram s5_y 2 0x02036E4A
+logptr s5_loc 2 0x03005008 0x04
+
+# rows 36..39 are only passable at x=12,13 (grass); land on 13 so the Pallet
+# Town descent uses column 13 (the sign lady is parked on (12,2)).
+repeat 3
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press LEFT 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmash RIGHT B 2 0x02036E48 0xFFFF 20 900
+evt s_leg6
+logram s6_x 2 0x02036E48
+logram s6_y 2 0x02036E4A
+logptr s6_loc 2 0x03005008 0x04
+
+repeat 10
+wait 40
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+press DOWN 20
+endrepeat
+wait 90
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 18000
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0003 1800
+evt pallet_ok
+wait 60
+logram pt_x 2 0x02036E48
+logram pt_y 2 0x02036E4A
+logptr pt_loc 2 0x03005008 0x04
+dump
+
+# --- Pallet Town -> Oak's lab door (16,13) --------------------------------
+# The map-connection crossing updates SaveBlock1.location a few frames late,
+# so the holdmashptr above keeps walking: the player lands around (13,6),
+# not (13,0).  Column 13 is walled from row 7 down (the rival's house), so
+# step west to column 12 first — that works from any row 2..6.
+holdmash LEFT B 2 0x02036E48 0xFFFF 19 900
+holdmash RIGHT B 2 0x02036E48 0xFFFF 19 300
+holdmash DOWN B 2 0x02036E4A 0xFFFF 21 1800
+holdmash UP B 2 0x02036E4A 0xFFFF 21 600
+holdmash RIGHT B 2 0x02036E48 0xFFFF 23 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 23 300
+holdmashptr UP B 2 0x03005008 0x04 0xFFFF 0x0304 1800
+evt oakslab_ok
+wait 60
+
+# --- talk to Oak: Pokedex + five POKE BALLs -------------------------------
+# Oak stands at (6,3); walking up column 6 from the door stops at (6,4).
+holdmash UP B 2 0x02036E4A 0xFFFF 11 1800
+wait 40
+logram oak_x 2 0x02036E48
+logram oak_y 2 0x02036E4A
+press UP 2
+wait 30
+dump
+# Oak's scene is long (Pokedex speech, the rival barging in, the balls).
+# Mash into it and stop on a hard fact: ITEM_POKE_BALL (id 4) appearing in
+# SaveBlock1.bagPocket_PokeBalls[0].itemId at +0x0430 — the giveitem_msg at
+# PalletTown_ProfessorOaksLab/scripts.inc:660.
+mashptr A 2 0x03005008 0x0430 0xFFFF 4 21600
+evt got_pokeballs
+# three more msgboxes plus the rival's scripted exit walk still to go; B
+# advances text and is inert in the field, so it cannot start an unwanted
+# interaction with Oak while the player stands facing him.
+repeat 150
+press B 4
+wait 14
+endrepeat
+wait 240
+logptr loc_now 2 0x03005008 0x04
+logram nit 1 0x020370F5
+dump
+
+# --- in-game SAVE (stage boundary) ---------------------------------------
+# With the Pokedex the start menu is
+#   POKEDEX POKEMON BAG PLAYER SAVE OPTION EXIT -> 7 items, SAVE at index 4.
+# waitram on the item count is therefore also the assertion that
+# FLAG_SYS_POKEDEX_GET is now set.
+press START 4
+wait 60
+waitram 1 0x020370F5 0xFF 7 900
+evt pokedex_confirmed
+repeat 4
+press DOWN 4
+wait 12
+endrepeat
+waitram 1 0x020370F4 0xFF 4 300
+press A 4
+waitramne 4 0x03000FA4 0xFFFFFFFF 0x00000000 900
+mashsram A 5400
+evt sram_written
+mash A 4 0x03000FA4 0xFFFFFFFF 0x0806F9F5 3600
+wait 300
+press START 4
+wait 60
+press B 4
+wait 60
+logptr end_loc 2 0x03005008 0x04
+logram end_x 2 0x02036E48
+logram end_y 2 0x02036E4A
+logram party_count 1 0x02024029
+dump
+evt stage3_done

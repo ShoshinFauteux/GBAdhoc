@@ -1,0 +1,101 @@
+# emerald_park.inputs — play a save from the Route 117 Day Care spot to the
+# Mauville Pokémon Center 2F wireless counter and in-game save there
+# (Gate-3 fixture generation, plan §7.1 step 4).
+#
+# Target: Pokémon Emerald USA (BPEE rev 0). Addresses: docs/AUTOPILOT.md
+# (verified table + Gate-3 additions). Function-pointer compare values carry
+# the Thumb bit. Coordinates from pret map data (tools/e2e/map_grid.py):
+#   start (51,6) Route 117 (loc u16 0x2000) -> row 8 east -> Mauville (0x0200)
+#   -> (22,8) -> north into Pokémon Center door (22,5) -> PC1F (0x050A)
+#   -> (7,8) -> (1,7) -> stairs (1,6) -> PC2F (0x060A) -> (6,4), face the
+#   Union Room attendant across the counter (attendant (6,2), counter (6,3))
+#   -> start-menu SAVE -> park.
+# Movement is closed-loop: holdram on gObjectEvents[0].currentCoords
+# (0x02037360/x 0x02037362/y, live during walking, +7 MAP_OFFSET vs map
+# coords; SaveBlock1.pos only updates on warp/save) and holdptr on the
+# gSaveBlock1Ptr-derefed location u16 (updates on warps AND connection
+# crossings via ApplyCurrentWarp). Reverse-direction "corrector" steps make
+# one-tile overshoot harmless (idempotent when exact).
+ff on
+
+# --- boot with the save -> title -> main menu -> CONTINUE -> overworld -------
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 14400
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+evt mainmenu_ok
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 7200
+evt overworld_ok
+wait 60
+logptr start_x 2 0x03005D8C 0x00
+logptr start_y 2 0x03005D8C 0x02
+logptr start_loc 2 0x03005D8C 0x04
+logram party_count 1 0x020244E9
+logram pers0 4 0x020244EC
+logram pers1 4 0x02024550
+
+# --- Route 117: down to the open row 8, then east into Mauville --------------
+holdmash DOWN B 2 0x02037362 0xFFFF 15 900
+holdmash UP B 2 0x02037362 0xFFFF 15 900
+holdmashptr RIGHT B 2 0x03005D8C 0x04 0xFFFF 0x0200 3600
+evt mauville_ok
+
+# --- Mauville: east along row 8 to the Pokémon Center door column ------------
+holdmash RIGHT B 2 0x02037360 0xFFFF 29 3600
+holdmash LEFT B 2 0x02037360 0xFFFF 29 900
+holdmashptr UP B 2 0x03005D8C 0x04 0xFFFF 0x050A 1200
+evt center1f_ok
+wait 30
+
+# --- PC 1F: (7,8) -> row 7 -> west -> (2,6) -> board stairs (1,6) from the
+# right (the escalator only accepts entry from its east side) ----------------
+holdmash UP B 2 0x02037362 0xFFFF 14 600
+holdmash DOWN B 2 0x02037362 0xFFFF 14 600
+holdmash LEFT B 2 0x02037360 0xFFFF 9 1200
+holdmash RIGHT B 2 0x02037360 0xFFFF 9 600
+holdmash UP B 2 0x02037362 0xFFFF 13 600
+holdmashptr LEFT B 2 0x03005D8C 0x04 0xFFFF 0x060A 900
+evt center2f_ok
+wait 30
+
+# --- PC 2F: (1,6) -> east along row 6 -> (6,4), face the wireless counter ----
+holdmash RIGHT B 2 0x02037360 0xFFFF 13 900
+holdmash LEFT B 2 0x02037360 0xFFFF 13 600
+holdmash UP B 2 0x02037362 0xFFFF 11 600
+press UP 2
+wait 30
+logptr park_x 2 0x03005D8C 0x00
+logptr park_y 2 0x03005D8C 0x02
+logptr park_loc 2 0x03005D8C 0x04
+dump
+
+# --- in-game SAVE at the parked spot (same flow as emerald_save.inputs) ------
+# dismiss any pending Pok�nav call pages first (B is inert in the field)
+repeat 8
+press B 2
+wait 12
+endrepeat
+press START 4
+waitram 4 0x03005DF4 0xFFFFFFFF 0x0809FAC5 600
+press UP 4
+wait 8
+press UP 4
+wait 8
+press UP 4
+wait 8
+press A 4
+waitramne 4 0x0203761C 0xFFFFFFFF 0x00000000 600
+mashsram A 3600
+evt sram_written
+mash A 4 0x0203761C 0xFFFFFFFF 0x080A02D9 1800
+wait 300
+
+# --- proof + park record -----------------------------------------------------
+press START 4
+waitram 4 0x03005DF4 0xFFFFFFFF 0x0809FAC5 600
+press B 4
+wait 60
+logptr park_x2 2 0x03005D8C 0x00
+logptr park_y2 2 0x03005D8C 0x02
+logptr park_loc2 2 0x03005D8C 0x04
+dump
+evt park_done

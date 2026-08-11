@@ -1,0 +1,357 @@
+# emerald_tradecenter_join.inputs -- DIRECT CORNER trade, JOIN side.
+#
+# Rewritten whole rather than patched; see the host script's header for the
+# reason and for the full derivation of every address and coordinate here.
+#
+# Identical to the host up to the role menu.  Two differences only:
+#   * role: JOIN GROUP is entry 0, so the cursor is already on it and this
+#     side needs no Down -- just the confirm.
+#   * seat: Chair1 at map (7,5) instead of Chair0 at map (4,5), and this
+#     console is object slot 2 (spawned on warp tile map (6,8)), not slot 1.
+
+# --- boot to the overworld -------------------------------------------------
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 4800
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt overworld_ok
+wait 30
+logptr start_loc 2 0x03005D8C 0x04
+logram pre0 4 0x020244EC
+logram pre1 4 0x02024550
+
+# --- walk to the DIRECT CORNER attendant -----------------------------------
+# live (13,11) -> down to row 5 (row 4 is blocked at map x=8) -> right -> up
+# in front of her counter.  You talk ACROSS the counter, so no further step.
+holdmash DOWN  B 2 0x02037362 0xFFFF 12 900
+holdmash RIGHT B 2 0x02037360 0xFFFF 17 900
+holdmash UP    B 2 0x02037362 0xFFFF 11 900
+press UP 2
+evt at_direct_corner
+
+# --- talk; TRADE is entry 0; she forces a save before linking --------------
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 1800
+mashsram A 4800
+evt entry_saved
+
+# --- ROLE: JOIN GROUP (entry 0, already under the cursor) ------------------
+# Same generous spacing as the host: mashsram over-mashes slightly past the
+# save, so settle, advance the one dialogue, let the menu clear its 12-frame
+# input lockout, then confirm.  No Down on this side.
+wait 600
+press A 10
+wait 600
+press A 10
+evt chose_join_group
+wait 300
+
+# --- confirm the group we find, then ride the warp into the TRADE CENTER ---
+mashptr A 2 0x03005D8C 0x04 0xFFFF 0x1919 4800
+evt in_trade_center
+
+# --- who and where are we?  (kept: this is how the slot bug was found) -----
+wait 300
+logptr sb1_x 2 0x03005D8C 0x00
+logptr sb1_y 2 0x03005D8C 0x02
+logram o1_x 2 0x02037384
+logram o2_x 2 0x020373A8
+dump
+# FULL-SPEED FAILURE (2026-08-06): every seat leg logged the SAME coordinate
+# and the avatar never moved -- host (13,9), join (9,9), nowhere near the
+# expected spawn of live (12,15)/(13,15).  That is not the overshoot race nor a
+# dropped step; those moved.  Before blaming the presses, establish WHICH object
+# is actually ours: slot 0 is the receptionist in this room, and the slot the
+# players occupy has been assumed, not re-verified at this frame rate.
+logram s0_x 2 0x02037360
+logram s0_y 2 0x02037362
+logram s1_x 2 0x02037384
+logram s1_y 2 0x02037386
+logram s2_x 2 0x020373A8
+logram s2_y 2 0x020373AA
+logptr map_id 2 0x03005D8C 0x04
+evt tc_coords_logged
+
+# --- take Chair1, watching OUR object slot (2) -----------------------------
+# spawn map (6,8)=live(13,15) -> up to row 6 -> right -> up onto the trigger at
+# map (7,5)=live(14,12).  Row 5 is blocked at map x=5/6, hence the detour.
+# Per-leg coordinates: a blocked leg holds into a wall until timeout and the
+# next leg starts from the wrong tile.  This side is the one that ended up a
+# tile up and right of its chair, and the log could not say which leg did it.
+# RUN 12: holdmash OVERSHOOTS BY EXACTLY ONE TILE, INTERMITTENTLY.
+# Measured, all three legs plus the corrective:
+#   in1 (UP  ->13) = (13,13)  correct
+#   in2 (RIGHT->14) = (15,13)  one past
+#   in3 (UP  ->12) = (15,11)  one past
+#   in4 (LEFT ->14) = (13,11)  the CORRECTIVE overshot too
+# holdmash releases the button the frame its predicate matches
+# (fe_autopilot.c:475), but the game has already committed the next step, so
+# whether it lands is a per-frame race -- runs 10 and 11 were clean, 12 was not.
+# A corrective built on the same primitive inherits the same race and
+# oscillates instead of converging, which is exactly what in4 shows.
+#
+# The route is short and fully deterministic: the spawn is a fixed warp
+# destination, observed at live (13,15) in every run 6-12, and the chair is
+# live (14,12).  So it is exactly UP, UP, RIGHT, UP.  Counted single steps
+# cannot race.  RUN 15: a 4-frame press is only a TAP -- it turns you to face a
+# direction without stepping, which is why run 15's client barely moved.  12
+# frames covers turn-then-step; 40 lets the 16-frame walk finish.
+# ===================================================================
+# RUNS 175-177 (2026-08-07): THE COUNTED ROUTE IS THE BUG, AND IT IS **Y**.
+# ===================================================================
+# Three consecutive runs, identical binary, identical script.  Spawn is
+# (13,15) in all three; the chair is (14,12).  After the two counted UP legs:
+#
+#   run 177  in1 = (13,13)   both steps landed     -> TRADE COMPLETED
+#   run 176  in1 = (13,14)   ONE step landed       -> ap_fail line 122
+#   run 175  in1 = (13,15)   ZERO steps landed     -> ap_fail line 122
+#
+# So `press UP 12` is swallowed intermittently -- 0, 1 or 2 of the two land --
+# and the count is not a property of the route, it is a coin flip.
+#
+# X WAS NEVER THE PROBLEM.  It is a downstream symptom, which is exactly why
+# `in2_x == 14` predicted the party oracle with no exceptions in 62 runs: x can
+# only reach 14 if y was already right.  On a lower row the wall is to the
+# right, so `press RIGHT` walks into it and x stays 13 -- and then the ONLY
+# backstop was the LEFT corrective below, written for the run-9 OVERSHOOT, so
+# it walked away from the target into the opposite wall and timed out.  Watched
+# on the hardware: right into a wall, left into the other wall, dead.  The y
+# backstop existed but sat AFTER the x one, so the x one always timed out first
+# and y was never corrected.
+#
+# THE FIX IS TO STOP COUNTING STEPS AND START CONFIRMING THEM.  Every leg is
+# now a waypoint: hold the direction until the coordinate actually reads the
+# waypoint value.  holdmash evaluates its predicate BEFORE injecting anything
+# (fe_autopilot.c:475), so a leg whose waypoint is already satisfied is a true
+# no-op -- which means a swallowed press costs time, not the run.
+#
+# Waypoints follow the same path the passing run took, (13,15) -> (13,13) ->
+# (14,13) -> (14,12), so nothing here explores new tiles.
+holdmash UP B 2 0x020373AA 0xFFFF 13 300
+wait 20
+logram in1_x 2 0x020373A8
+logram in1_y 2 0x020373AA
+holdmash RIGHT B 2 0x020373A8 0xFFFF 14 300
+# THIS `wait` IS LOAD-BEARING.  Do not remove it and do not move it below the
+# LEFT.  holdmash exits the frame its predicate first matches, with a step
+# ALREADY COMMITTED, so at this instant x reads 14 and is about to become 15.
+# Run it straight into the LEFT normaliser and the LEFT sees x == 14, treats
+# its waypoint as satisfied, and no-ops -- and THEN the committed step lands.
+# Measured: in2_x = 15 in nine consecutive runs, v2 through v4, and in v4 the
+# normalisation pair provably never fired.  v3 happened to work here only
+# because it had this wait in this position by accident.
+#
+# 20 frames lets the committed step land, so the LEFT below sees the true 15.
+wait 20
+# X IS NORMALISED HERE, BEFORE THE CHAIR STEP -- NOT AFTER IT.
+#
+# v3 put the two counted UP presses first and left this backstop at the end,
+# and that ordering is deterministically fatal.  The RIGHT waypoint above
+# overshoots to x=15 in 6 OF 6 RUNS (holdmash releases the frame its predicate
+# matches, but a step is already committed).  With x=15 there is no chair
+# underneath, so nothing absorbs the presses and they simply walk:
+#
+#   in1                 (13,13)
+#   holdmash RIGHT      (15,13)   overshoots, every run
+#   press UP            (15,12)   would be the chair IF x were 14
+#   press UP            (15,11)   nothing to sit on, so it MOVES
+#   holdmash LEFT       (14,11)   x backstop works, one tile too late
+#   holdmash DOWN       TIMES OUT -> ap_fail line 165
+#
+# The v3 reasoning ("a press cannot overshoot; two cover a swallowed press;
+# sitting is absorbing") is sound but CONDITIONAL ON X BEING RIGHT -- absorption
+# requires standing on the chair.  v2's y-overshoot was intermittent (2/4
+# traded); v3's was guaranteed (0/2, and would stay 0/N).
+#
+# So x is settled to 14 while still on row 13, and only then does the console
+# step onto the chair.  Whether the chair is enterable from the north is STILL
+# UNTESTED and this ordering means it never has to be.
+# v5 FAILED, AND IT FAILED BECAUSE OF THE `wait` ABOVE.  Chaining two holdmash
+# correctives OSCILLATES: RIGHT settles at 15 (the committed step), then LEFT
+# exits the frame x reads 14 with ITS OWN step committed, and lands on 13.
+# Measured 4/4: in2_x = 13, in3 unchanged, ap_fail line 189.  The original
+# author wrote this down after run 12 -- "a corrective built on the same
+# primitive inherits the same race and oscillates instead of converging" -- and
+# I rebuilt the same trap from the other side.
+#
+# SO: EACH PRIMITIVE IS NOW USED ONLY WHERE IT HAS DIRECT EVIDENCE.
+#   holdmash  reliable for the APPROACH.  `RIGHT -> 14` settles at 15 in 9 of 9
+#             runs across v2/v3/v4 -- deterministic, just off by one.
+#   press     reliable for a SINGLE TILE.  v1's counted `press RIGHT` landed
+#             x = 14 in both runs that reached it; a press cannot overshoot.
+#   waitram   the assert.  Free when correct, and it fails ON THE LINE that
+#             names the axis instead of somewhere in the trade handshake.
+#
+# One tile back from a known 15, counted, then checked.
+press LEFT 12
+wait 60
+waitram 2 0x020373A8 0xFFFF 14 120
+logram in2_x 2 0x020373A8
+logram in2_y 2 0x020373AA
+# THE CHAIR STEP IS COUNTED, NOT CONFIRMED -- and this is the one place
+# counting is right.  A holdmash here would overshoot north of the chair for
+# the same committed-step reason as the x leg.  By this line x has been
+# normalised to 14 and y confirmed at 13, so the console is one tile SOUTH of
+# the chair and a single press cannot overshoot.  Two of them, because a
+# swallowed press is the other failure mode and sitting is absorbing -- once
+# seated the trade flow owns the input and a second UP is a no-op.
+press UP 12
+wait 60
+press UP 12
+wait 60
+logram in3_x 2 0x020373A8
+logram in3_y 2 0x020373AA
+
+# LAST-RESORT y BACKSTOP.  Only reachable if both counted presses were
+# swallowed AND the chair was missed; it is a no-op on the chair row.  It is
+# NOT the x backstop any more -- that one now runs before the chair step.
+holdmash DOWN B 2 0x020373AA 0xFFFF 12 300
+wait 20
+logram in4_x 2 0x020373A8
+logram in4_y 2 0x020373AA
+
+# ASSERT THE SEAT BEFORE CLAIMING IT.  `evt seated` used to fire on nothing but
+# reaching this line, and the y backstop above tests y ALONE -- so at x=15 the
+# `y == 12` predicate is satisfied by open floor one tile east of the chair.
+# Measured in runs 13 and 14: (15,11) -> (15,12), backstop "succeeded",
+# `seated` was emitted, and the run then died 60+ lines later at the
+# `waitramne` on callback2 with no indication why.  The player was standing
+# BESIDE the chair, never on it.
+#
+# Two single-axis waits are the AND the grammar does not have.  They cost
+# nothing on a correct run (the predicate is already true, so each returns on
+# its first evaluation) and they fail the run AT THE REAL CAUSE, on a line that
+# names the axis, instead of as a mystery timeout in the trade handshake.
+waitram 2 0x020373A8 0xFFFF 14 120
+waitram 2 0x020373AA 0xFFFF 12 120
+evt seated
+
+# --- the trade -------------------------------------------------------------
+# See the host script for the full derivation.  Short version: this is the
+# TRADE CENTER terminal, governed by trade.c, NOT the union-room board in
+# party_menu.c.  trade.c CB_ProcessSelectedMonInput() is case 0 = Summary,
+# case 1 = Trade, with the cursor initialised to 0 -- so SUMMARY is first here
+# and TRADE needs one Down.  Mashing A just reopens the summary forever.
+
+# Press nothing while seated: the "press B to exit the chair" dialog is
+# waiting on the partner, and B would stand us back up.  Watch instead for
+# gMain.callback2 leaving CB2_Overworld -- that edge is the handover to the
+# trade screen, and it costs no address we do not already have.
+waitramne 4 0x030022C4 0xFFFFFFFF 0x08085E5D 3600
+evt trade_screen
+logram cb2_trade 4 0x030022C4
+wait 900
+dump
+
+press A 10
+wait 90
+dump
+
+# Menu_ProcessInputNoWrap() clamps at the bottom entry, so the second Down is
+# free insurance.  (The LINK LEADER menu is the opposite -- it wraps onto EXIT
+# and aborts, so that one gets exactly one Down.)
+press DOWN 10
+wait 30
+press DOWN 10
+wait 60
+dump
+press A 10
+evt trade_selected
+
+wait 180
+dump
+logram cb2_confirm 4 0x030022C4
+evt trade_attempted
+
+mash A 4 0x030022C4 0xFFFFFFFF 0x0807AE51 4800
+evt trade_anim
+mashsram A 4800
+evt post_save
+
+# --- LEAVE THE TRADE SCREEN ------------------------------------------------
+# See the host script for the derivation.  Short version: a finished trade puts
+# you back on CB_MAIN_MENU, A only reopens { SUMMARY, TRADE }, and there is no
+# B exit -- you must land on CANCEL (position 12).  With a 3-mon party
+# RIGHT from 0 -> 1, then DOWN from 1 skips inactive 3 and 5 and lands on 12.
+#
+# BUT FIRST, WAIT OUT THE SAVE -- see the host script.  mashsram returns on the
+# first SRAM checksum change and Emerald keeps "SAVING..." up long past it; all
+# three of run 7's exit screenshots still showed that box, so every press in
+# this section was swallowed and the route was never exercised.
+# MEASURED IN RUN 8: save screen callback2 is 0x0807EB51, and the game does NOT
+# come back to 0x080773D1 afterwards -- waiting for that stalled run 8 for its
+# full 3600-frame timeout.  Wait for the save screen to be LEFT instead; that
+# transition is confirmed, the destination is not.  See the host script.
+logram cb2_saving 4 0x030022C4
+wait 120
+waitramne 4 0x030022C4 0xFFFFFFFF 0x0807EB51 3600
+evt menu_interactive
+logram cb2_ready 4 0x030022C4
+wait 180
+dump
+
+# RUN 9: after the save comes "Communication standby... Please wait." while the
+# consoles resync -- cb2_ready=0x080773AD is that standby, NOT the menu.  Run 9
+# pressed RIGHT/DOWN straight into it and the cursor never moved.  Ride it out
+# with B (inert on the live menu, harmless during the box); never A, which
+# would select a mon once the menu is up.  See the host script.
+# RUN 10: callback2 CANNOT tell the standby box from the live menu -- cb2_menu
+# read 0x080773D1, identical to cb2_trade, while the screen still showed
+# "Communication standby...".  The box is drawn inside the same callback.  Do
+# not attempt waitram detection again; use a bounded wait.  Measured: standby
+# runs ~600 frames from menu_interactive (512 frames of B was short, menu was
+# live 84 frames later).  See the host script.
+repeat 22
+press B 4
+wait 60
+endrepeat
+wait 240
+logram cb2_menu 4 0x030022C4
+dump
+
+press RIGHT 10
+wait 30
+press DOWN 10
+wait 30
+dump
+press A 10
+wait 120
+dump
+press A 10
+evt trade_menu_exited
+
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt back_on_map
+wait 120
+
+# --- WALK OUT ---------------------------------------------------------------
+# Reverse of the route in: chair1 live (14,12) -> down to row 6 -> left to the
+# warp column -> down onto the warp at map (6,8) = live (13,15).
+holdmash DOWN B 2 0x020373AA 0xFFFF 13 900
+logram out1_x 2 0x020373A8
+logram out1_y 2 0x020373AA
+holdmash LEFT B 2 0x020373A8 0xFFFF 13 900
+logram out2_x 2 0x020373A8
+logram out2_y 2 0x020373AA
+# RUN 11: this side's final DOWN leg timed out entirely (out2 = (13,13), no
+# out3), while the host reached its warp tile exactly and STILL did not warp.
+# A coordinate cannot detect a warp: the map change moves the object being
+# watched, so the predicate is raced, and the leg has already stopped pushing.
+# Watch the map id and hold DOWN until it changes.  See the host script.
+# LEAVING IS A CONVERSATION: the attendant asks whether you want to leave, so
+# reaching the tile is not enough -- run 11's host stood on it exactly and never
+# warped because nothing answered her.  Mash A (never B, which would decline)
+# while holding DOWN, and watch the map id rather than a coordinate.  See the
+# host script.
+evt walking_out
+holdmashptr DOWN A 2 0x03005D8C 0x04 0xFFFF 0x060A 1800
+evt left_trade_center
+wait 60
+
+# --- oracle inputs ---------------------------------------------------------
+logram post0 4 0x020244EC
+logram post1 4 0x02024550
+logram recv0 4 0x02024744
+logptr end_loc 2 0x03005D8C 0x04
+dump
+evt trade_complete
+wait 60

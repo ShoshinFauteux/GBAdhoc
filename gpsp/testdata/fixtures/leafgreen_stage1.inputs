@@ -1,0 +1,236 @@
+# ###########################################################################
+# NOT A FIXTURE PATH � retained as the address-verification harness only.
+# Parked FR/LG saves are supplied by hand, not played from a new game
+# (DECISIONS.md ADR-0022).  No test script references this file.  It is kept
+# because running it is how the "D" (verified live) rows of the FR/LG table
+# in docs/AUTOPILOT.md were observed, and the chain deliberately stops one
+# leg short of a wireless counter.  See that document's "Empirical-
+# verification harness" section before touching it.
+# ###########################################################################
+# firered_newgame.inputs — Phase-4 FR/LG fixture generation, FIRERED side.
+#
+# Plays a BRAND NEW GAME (no save) to the Viridian City Pokemon Center 2F
+# Union Room counter with two party mons, and in-game saves there.  The
+# FireRed twin is firered_stage1.inputs; the two differ only in the
+# typed trainer name and the starter taken (distinct trainer identities —
+# identical trainers in a Union Room are an untested edge case).
+#
+# Target: Pokemon LeafGreen USA (BPGE **rev 1**, DECISIONS.md ADR-0009).
+# Addresses: docs/AUTOPILOT.md "FR/LG (BPRE/BPGE rev 1)" table.  Function
+# pointer compares carry the Thumb bit.
+#   gMain.callback2       0x030030F4  (gMain 0x030030F0 + 4)
+#   CB2_TitleScreenRun    0x08078BB1   CB2_MainMenu   0x0800C2E9
+#   CB2_NamingScreen      0x0809FB59   CB2_Overworld  0x080565C9
+#   BattleMainCB2         0x08011115
+#   gSaveBlock1Ptr        0x03005008   (+0x00 pos, +0x04 WarpData)
+#   gObjectEvents[0].currentCoords  x 0x02036E48  y 0x02036E4A (+7 MAP_OFFSET)
+#   gPlayerPartyCount     0x02024029   gPlayerParty   0x02024284
+#   sStartMenuCursorPos   0x020370F4   sNumStartMenuItems 0x020370F5
+#   sSaveDialogCB         0x03000FA4   (IWRAM — Emerald's is EWRAM)
+#   SaveDialogCB_ReturnSuccess 0x0806F9F5
+# map loc u16 (mapGroup | mapNum<<8), from pret data/maps/map_groups.json:
+#   house2F 0x0104  house1F 0x0004  PalletTown 0x0003  OaksLab 0x0304
+#   Route1 0x1303  ViridianCity 0x0103  ViridianMart 0x0305
+#   PC1F 0x0405  PC2F 0x0505  UnionRoom 0x0400
+#
+# Route (why it is this long): the Union Room attendant is gated on
+# FLAG_SYS_POKEDEX_GET (pret data/scripts/cable_club.inc
+# CableClub_EventScript_UnionRoomAttendant) and on CountPartyNonEggMons >= 2
+# (CableClub_EventScript_CheckPartyUnionRoomRequirements), so the fixture
+# must complete the Oak's-Parcel round trip AND catch a second mon.  The
+# earliest Poke Balls in the game are the five Oak hands over with the
+# Pokedex (PalletTown_ProfessorOaksLab/scripts.inc:660), so the order is
+# forced: starter -> Viridian Mart (parcel) -> Oak (Pokedex + balls) ->
+# Route 1 grass (catch) -> Viridian PC 2F.
+#
+# Walking idiom: Route 1 is tall grass on every through-route, so a wild
+# battle can start at any step.  Each leg is
+#     repeat N { wait 30 ; mash A until CB2_Overworld ; press DIR }
+# — the "mash A until CB2_Overworld" is a no-op in the field (the predicate
+# already holds, so no button is pressed) and a battle-resolver otherwise,
+# and it runs BEFORE the next D-pad press so no D-pad input ever reaches the
+# battle action menu (gActionSelectionCursor persists across turns; a stray
+# DOWN would leave the cursor on POKEMON and the next A would open the party
+# menu).  A reverse-direction holdmash then lands the exact tile.
+ff on
+
+# ============================================================================
+# 1. Intro: title -> NEW GAME -> Oak's speech -> naming -> bedroom
+# ============================================================================
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 14400
+evt title_ok
+
+# Everything from NEW GAME to the player naming screen is A-mashable
+# (controls guide 3 pages, Pikachu intro 3 pages, Oak speech, BOY on row 0
+# of the no-wrap gender menu).
+mash A 4 0x030030F4 0xFFFFFFFF 0x0809FB59 36000
+evt naming_player
+dump
+
+# FR/LG has NO preset list for the PLAYER name (pret src/oak_speech.c
+# Task_OakSpeech_DoNamingScreen goes straight to DoNamingScreen) — type on
+# the keyboard.  Cursor starts at (0,0)='A'; page rows are
+#   A B C D E F _ .   /  G H I J K L _ ,  /  M N O P Q R S  /  T U V W X Y Z
+# START jumps the cursor to OK (naming_screen.c MoveCursorToOKButton).
+# LeafGreen types "LG": L=(5,1), G=(0,1).
+repeat 5
+press RIGHT 4
+wait 6
+endrepeat
+press DOWN 4
+wait 6
+press A 4
+wait 10
+repeat 5
+press LEFT 4
+wait 6
+endrepeat
+press A 4
+wait 10
+press START 4
+wait 20
+press A 4
+wait 20
+waitramne 4 0x030030F4 0xFFFFFFFF 0x0809FB59 900
+evt naming_player_done
+
+# rival name: the rival DOES get a preset list, but row 0 is NEW NAME and A
+# takes it, so the keyboard appears again — type one char and confirm.
+mash A 4 0x030030F4 0xFFFFFFFF 0x0809FB59 36000
+evt naming_rival
+repeat 3
+press A 4
+wait 8
+endrepeat
+press START 4
+wait 20
+press A 4
+wait 20
+waitramne 4 0x030030F4 0xFFFFFFFF 0x0809FB59 900
+
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 36000
+evt overworld_ok
+wait 120
+logptr loc_bedroom 2 0x03005008 0x04
+
+# ============================================================================
+# 2. Bedroom -> Pallet Town
+# ============================================================================
+# FR/LG house stairs are DIRECTIONAL stair warps: the 2F tile (10,2) is
+# MB_DOWN_LEFT_STAIR_WARP (0x6F) and IsDirectionalStairWarpMetatileBehavior
+# only fires for DIR_WEST, so walking up ONTO it does nothing (confirmed
+# live: standing on (10,2) never warped).  Arrive moving left.
+holdmash RIGHT B 2 0x02036E48 0xFFFF 18 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 18 300
+holdmash UP B 2 0x02036E4A 0xFFFF 9 900
+holdmash DOWN B 2 0x02036E4A 0xFFFF 9 300
+holdmashptr LEFT B 2 0x03005008 0x04 0xFFFF 0x0004 900
+evt house1f_ok
+wait 60
+
+# 1F (10,2) -> row 8 -> doormat (4,8), which is MB_SOUTH_ARROW_WARP: it
+# fires on a southward step, so hold DOWN through it.
+holdmash DOWN B 2 0x02036E4A 0xFFFF 15 900
+holdmash UP B 2 0x02036E4A 0xFFFF 15 300
+holdmash LEFT B 2 0x02036E48 0xFFFF 11 900
+holdmash RIGHT B 2 0x02036E48 0xFFFF 11 300
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0003 900
+evt pallet_ok
+wait 60
+
+# ============================================================================
+# 3. Pallet Town -> Oak's lab (forced), starter, rival battle
+# ============================================================================
+# The coord trigger at (12,1)/(13,1) fires while VAR_MAP_SCENE_PALLET_TOWN_OAK
+# == 0; Oak walks the player into the lab and the script ends in
+# `warp MAP_PALLET_TOWN_PROFESSOR_OAKS_LAB, 6, 12`.
+holdmash RIGHT B 2 0x02036E48 0xFFFF 19 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 19 300
+holdmash UP B 2 0x02036E4A 0xFFFF 8 900
+evt oak_trigger
+mashptr A 2 0x03005008 0x04 0xFFFF 0x0304 10800
+evt oakslab_ok
+
+# ChooseStarterScene walks the player (6,12) -> (6,4); its remaining msgboxes
+# are still running when the player lands, and the B pulses clear them.
+mash A 4 0x02036E4A 0xFFFF 11 10800
+evt starter_scene_done
+wait 60
+
+# Balls are objects at (8,4) Bulbasaur / (9,4) Squirtle / (10,4) Charmander;
+# row 4 is blocked by them, so approach along row 5 and face north.
+# LeafGreen takes BULBASAUR (8,4) -> stand (8,5) = obj x 15.
+holdmash DOWN B 2 0x02036E4A 0xFFFF 13 5400
+holdmash RIGHT B 2 0x02036E48 0xFFFF 15 900
+holdmash LEFT B 2 0x02036E48 0xFFFF 15 300
+wait 40
+press UP 2
+wait 30
+press UP 2
+wait 30
+mash A 1 0x02024029 0xFF 1 5400
+evt got_starter
+logram pers0 4 0x02024284
+
+# "Give it a nickname?" is answered NO by the B pulses below.  The rival
+# parks beside the table so row 5 is not usable westbound — drop to row 6.
+holdmash DOWN B 2 0x02036E4A 0xFFFF 13 5400
+holdmash LEFT B 2 0x02036E48 0xFFFF 13 3600
+holdmash RIGHT B 2 0x02036E48 0xFFFF 13 600
+holdmash DOWN B 2 0x02036E4A 0xFFFF 15 3600
+evt at_rival_trigger
+# the trigger's intro msgbox needs presses before the battle starts, so mash
+# INTO BattleMainCB2 rather than waiting on it.  The battle is unfailable:
+# TRAINER_BATTLE_EARLY_RIVAL heals and returns to the field either way.
+mash A 4 0x030030F4 0xFFFFFFFF 0x08011115 7200
+evt battle_start
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 54000
+evt battle_done
+wait 120
+
+# ============================================================================
+
+# ============================================================================
+# 5. Leave the lab and in-game SAVE (stage boundary)
+# ============================================================================
+# The post-battle scene (Oak's speech, the rival leaving) is still running
+# when CB2_Overworld returns, so the player is locked; the B pulses of the
+# walk south clear it before the hold takes effect.
+holdmash DOWN B 2 0x02036E4A 0xFFFF 18 18000
+holdmashptr DOWN B 2 0x03005008 0x04 0xFFFF 0x0003 3600
+evt pallet_exit
+wait 120
+holdmash DOWN B 2 0x02036E4A 0xFFFF 21 900
+wait 60
+
+# The autopilot engine caps a script at 256 steps
+# (frontend-common/fe_autopilot.c AP_MAX_STEPS � not ours to change) and the
+# full FR/LG new-game route is several times that, so the route is split into
+# four stages chained through the .sav file, exactly the way the Emerald
+# fixtures chain emerald_park.inputs into the trade scripts.
+# Start menu here (FLAG_SYS_POKEMON_GET set, no Pokedex yet):
+#   POKEMON BAG PLAYER SAVE OPTION EXIT  -> 6 items, SAVE at index 3.
+press START 4
+wait 60
+waitram 1 0x020370F5 0xFF 6 900
+repeat 3
+press DOWN 4
+wait 12
+endrepeat
+waitram 1 0x020370F4 0xFF 3 300
+press A 4
+waitramne 4 0x03000FA4 0xFFFFFFFF 0x00000000 900
+mashsram A 5400
+evt sram_written
+mash A 4 0x03000FA4 0xFFFFFFFF 0x0806F9F5 3600
+wait 300
+press START 4
+wait 60
+press B 4
+wait 60
+logptr end_loc 2 0x03005008 0x04
+logram end_x 2 0x02036E48
+logram end_y 2 0x02036E4A
+logram party_count 1 0x02024029
+dump
+evt stage1_done

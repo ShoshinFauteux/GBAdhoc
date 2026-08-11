@@ -1,0 +1,13 @@
+# TEMP diagnostic: where does the parked save actually put us?
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 4800
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt overworld_ok
+wait 60
+logram px 2 0x02037360
+logram py 2 0x02037362
+logram facing 1 0x02037364
+logptr loc 2 0x03005D8C 0x04
+dump
+evt coords_logged
+wait 30

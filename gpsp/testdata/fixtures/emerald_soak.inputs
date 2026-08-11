@@ -1,0 +1,34 @@
+# emerald_soak.inputs — 30 minutes of emulated gameplay, compressed via
+# uncapped fast-forward (Gate-1 soak, plan §5/§7.1). Boots the supplied save,
+# continues into the overworld, then spins the player in place (2-frame
+# direction taps never take a step, so no encounters/collisions — the field
+# engine, animations, RTC and audio paths all keep running).
+# 3840 iterations x 28 frames = 107,520 frames ≈ 30.0 min at 59.7275 Hz,
+# on top of the boot/continue lead-in.
+# Addresses: Pokémon Emerald USA (BPEE rev 0), see docs/AUTOPILOT.md.
+ff on
+
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 14400
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+evt mainmenu_ok
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 7200
+evt overworld_ok
+wait 60
+
+repeat 3840
+hold LEFT 2
+wait 12
+hold RIGHT 2
+wait 12
+endrepeat
+
+# still in the field and interactive after the soak
+waitram 4 0x030022C4 0xFFFFFFFF 0x08085E5D 600
+press START 4
+waitram 4 0x03005DF4 0xFFFFFFFF 0x0809FAC5 600
+evt soak_interactive
+press B 4
+wait 60
+dump
+evt soak_script_done

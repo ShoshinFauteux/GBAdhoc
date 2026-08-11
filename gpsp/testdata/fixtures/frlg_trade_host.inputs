@@ -1,0 +1,122 @@
+# frlg_trade_host.inputs — Union Room trade, HOST side, FireRed/LeafGreen.
+#
+# *** UNVERIFIED — pending user-supplied parked saves. ***
+# This is the FR/LG transliteration of emerald_trade_host.inputs: same flow,
+# same Union Room geometry (which is byte-identical between the games), with
+# every address swapped for the BPRE/BPGE rev-1 values in docs/AUTOPILOT.md.
+# The addresses it predicates on are split into two classes there:
+#   - boot/menu/save/party/coords: VERIFIED live on both ROMs (docs table);
+#   - union-room/link/trade: pret-derived but NOT yet observed at runtime,
+#     because reaching them needs a save already parked at a wireless
+#     counter.  The first run against a real parked save is what promotes
+#     them; a wrong one shows up as a `waitptr`/`mash` timeout, not as
+#     silent wrong behaviour.
+#
+# FIXTURE CONTRACT — what the supplied .sav must look like:
+#   * standing on a Pokemon Center 2F at map-local (6,4) facing NORTH, i.e.
+#     directly across the counter from the Union Room attendant at (6,2)
+#     (MB_COUNTER at (6,3) lets the interaction reach through).  This is the
+#     same spot the Emerald fixtures park on — LAYOUT_POKEMON_CENTER_2F is
+#     shared by every FR/LG Pokemon Center, so any city's works.
+#   * Pokedex obtained (FLAG_SYS_POKEDEX_GET) — the attendant refuses
+#     without it (data/scripts/cable_club.inc).
+#   * at least TWO non-egg party mons, and the slot-2 mon a Kanto-dex
+#     species (<= KANTO_SPECIES_END): without the National Dex,
+#     trade.c CanTradeSelectedMon rejects anything above it, and rejects
+#     trading your last mon at all.
+#
+# Flow: CONTINUE -> talk to attendant -> YES -> in-game save -> warp Union
+# Room -> walk to the registration nurse (3,2) -> register party slot 2
+# requesting type NORMAL -> retreat to (3,4) -> wait hands-off until the
+# joiner contacts us -> CB2_LinkTrade -> automatic save -> read the oracle.
+#
+# Requested type NORMAL (row 0 of sListMenuItems_TypeNames) is deliberate:
+# union_room.c IsRequestedTradeInPlayerParty screens the request against the
+# base types of the JOINER'S WHOLE PARTY, and on a FR/LG fixture that party
+# is a Kanto starter plus an early-route catch — Pidgey (Normal/Flying) and
+# Rattata (Normal) both satisfy NORMAL, so it is the most permissive ask and
+# the one least likely to bounce with "doesn't have the type".
+# NOTE: no `ff on` — a netdrv session is active, FF is interlocked to 1x.
+
+# --- boot -> title -> CONTINUE -> overworld (parked at PC2F (6,4)) ----------
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 21600
+evt title_ok
+mash START 4 0x030030F4 0xFFFFFFFF 0x0800C2E9 3600
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+evt overworld_ok
+wait 30
+logptr start_loc 2 0x03005008 0x04
+logram pre0 4 0x02024284
+logram pre1 4 0x020242E8
+
+# --- talk to the Union Room attendant.  FR/LG's multichoice is
+# MULTICHOICE_YES_NO_INFO (three rows, YES on row 0), then the party check,
+# then EventScript_AskSaveGame -> the entry save. ---------------------------
+press UP 2
+wait 10
+mashsram A 5400
+evt entry_saved
+mashptr A 2 0x03005008 0x04 0xFFFF 0x0400 3600
+evt in_union_room
+
+# --- wait for the Union Room task to reach UR_STATE_MAIN (4) ---------------
+# The UR_STATE_* enum is identical to Emerald's, and so is
+# WirelessLink_URoom.state at +0x14 (include/union_room.h).
+waitptr 1 0x0203B05C 0x14 0xFF 4 1800
+evt ur_main
+
+# --- navigate (7,11) -> row 10 -> column 3 -> (3,3), facing the nurse ------
+holdmash UP B 2 0x02036E4A 0xFFFF 17 600
+holdmash DOWN B 2 0x02036E4A 0xFFFF 17 600
+holdmash LEFT B 2 0x02036E48 0xFFFF 10 900
+holdmash RIGHT B 2 0x02036E48 0xFFFF 10 600
+holdmash UP B 2 0x02036E4A 0xFFFF 10 900
+
+# --- register: talk -> REGISTER (row 0) -> party menu -> slot 2 -> Register
+# Emerald's script watched CB2_UpdatePartyMenu here; that symbol is one of
+# the few that DIFFER between FR (0x0811EC18) and LG (0x0811EBF0), so this
+# script watches the game-independent UR state instead:
+# UR_STATE_REGISTER_SELECT_MON = 54.
+mashptr A 1 0x0203B05C 0x14 0xFF 54 1800
+wait 60
+press DOWN 4
+wait 20
+press A 4
+wait 30
+press A 4
+# back on the field: "choose requested type" list menu (UR state 52)
+mashptr A 1 0x0203B05C 0x14 0xFF 52 1800
+wait 30
+# NORMAL is row 0 of the request-type list — no cursor movement needed.
+press A 4
+# registration-complete text -> back to UR_STATE_MAIN
+mashptr A 1 0x0203B05C 0x14 0xFF 4 1800
+evt registered
+dump
+
+# --- retreat one tile to (3,4) facing down: its facing tile (3,5) is
+# neither the nurse, the board, nor any avatar spot, so a later stray A can
+# never start an interaction ------------------------------------------------
+holdmash DOWN B 2 0x02036E4A 0xFFFF 11 600
+
+# --- wait HANDS OFF until the joiner contacts us, then mash A --------------
+evt wait_partner
+waitptrne 1 0x0203B05C 0x14 0xFF 4 21600
+evt contacted
+mash A 4 0x030030F4 0xFFFFFFFF 0x0805014D 21600
+evt trade_anim
+
+# --- trade animation runs itself; ends in an automatic in-game save --------
+mashsram A 18000
+evt post_save
+
+# --- back to the Union Room field, then read the oracle --------------------
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+wait 60
+logram post0 4 0x02024284
+logram post1 4 0x020242E8
+logram recv0 4 0x0202402C
+logptr end_loc 2 0x03005008 0x04
+dump
+evt trade_complete
+wait 60

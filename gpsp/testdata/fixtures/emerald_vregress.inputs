@@ -1,0 +1,57 @@
+# emerald_vregress.inputs — the video regression oracle's workload (ADR-0033).
+#
+# Purpose is coverage of the SOFTWARE RENDERER, not gameplay.  The run is
+# hashed frame-by-frame (autopilot.ini vhash=1), so every step below only has
+# to be deterministic and to put different renderer paths on screen:
+#
+#   copyright/intro : brightness fades, alpha blending, affine BG + affine
+#                     sprites (the Rayquaza/legendary sequence), bitmap modes
+#   title screen    : mode 0 tiled BG + large OAM, scrolling + palette cycling
+#   main menu       : window layer, text tiles over a blended backdrop
+#   overworld       : mode 0 with 3-4 tiled BGs and ~10-30 sprites, scrolling
+#   start menu      : window + semi-transparent panel over the overworld
+#   party screen    : dense OAM, many palettes, mode 0
+#
+# Target: Pokémon Emerald USA (BPEE rev 0).  Addresses: docs/AUTOPILOT.md.
+# Only the boot leg is fast-forwarded; from `ff off` onward every frame is
+# rendered by the core, which is what the oracle is checking.
+ff on
+
+# --- boot -> title -> main menu -> CONTINUE -> overworld ---------------------
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 14400
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+evt mainmenu_ok
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 7200
+evt overworld_ok
+
+ff off
+wait 90
+evt vregress_overworld
+
+# --- overworld: scroll the tiled BGs under the sprite layer -----------------
+hold RIGHT 40
+wait 20
+hold LEFT 40
+wait 20
+hold DOWN 40
+wait 20
+hold UP 40
+wait 30
+
+# --- start menu: window layer + blended panel over a live overworld ---------
+press START 4
+wait 90
+evt vregress_menu
+
+# --- party screen: dense OAM, many palettes ---------------------------------
+press A 4
+wait 150
+evt vregress_party
+
+# --- back out to the overworld ----------------------------------------------
+press B 4
+wait 60
+press B 4
+wait 60
+evt vregress_done

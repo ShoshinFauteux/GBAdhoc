@@ -1,0 +1,14 @@
+# Copyrighted material must never enter this repository
+*.gba
+*.GBA
+gba_bios.bin
+GBA_BIOS.bin
+# Build intermediates
+*.o
+*.d
+*.elf
+*.a
+gpsp/sdl/gpsp_sdl
+# Run artifacts
+logs/
+*.log
