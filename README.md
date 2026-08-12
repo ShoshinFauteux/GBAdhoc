@@ -108,6 +108,16 @@ PSP-1000s), your own GBA ROMs, and — for wireless — two PSPs.
    optional — a built-in open-source BIOS is bundled.)
 3. Launch, pick a game, play.
 
+**Box art:** the gallery loads art you supply yourself. Make a `boxart/`
+folder beside the EBOOT and drop in one image per game, named exactly like
+the ROM but with a `.bmp` extension — `Golden Sun (USA, Europe).gba` →
+`boxart/Golden Sun (USA, Europe).bmp`. Uncompressed 24- or 32-bit BMP, any
+size (the gallery resamples to 112×112 when it loads). BMP rather than PNG
+is deliberate — the app ships no PNG decoder, and every image editor can
+export one. Games without art still get a styled placeholder card, so a
+partly-filled folder looks intentional. The gallery sorts alphabetically,
+so naming ROMs consistently keeps series together.
+
 **To link two consoles:** WLAN switch on, then on both PSPs:
 Start+Select → **Wireless** → one console **Host**, the other **Join**
 (same room code, set in Settings). In-game, head to the Union Room or Trade
@@ -116,6 +126,13 @@ you're both holding GBAs with Wireless Adapters.
 
 > **IMPORTANT:** Please make sure **BOTH** PSP's are configured in the
 > network settings of the XMB to occupy the **SAME** Ad-Hoc channel.
+
+**Settings tour:** dark and light **themes** (applies instantly), an **FPS
+counter** that reads the true emulation speed — during fast-forward it shows
+the real emulated rate, not the display cadence, and if a cart is paging off
+the memory stick it shows that too — plus **fast-forward** (1.5x / 3x /
+uncapped, fully working in Media Engine mode), an A/B button-swap, and video
+scale/filter options.
 
 Pokémon **Emerald** is the validated flagship — trades and clean session
 exits are regression-tested on real hardware. Other RFU-aware games should
@@ -131,15 +148,14 @@ more intelligent then me is able to optimize this further.
 
 - Two-player sessions; wireless validated primarily on Emerald; custom
   firmware required (the Media Engine and ad-hoc stack need kernel access).
-- **Fast-forward does not yet work properly in Media Engine mode.** The
-  dual-core renderer increases performance significantly, but pacing a
-  fast-forwarded display through its parallel pipeline needs a thoughtful
-  implementation of its own; coming in a future update. (I was too
-  excited to wait any longer.)
-- If you mainly play single-player and want working fast-forward today,
-  turn **Media Engine mode off** in Settings. That falls back to the
-  conventional single-core emulator stack — less peak performance but,
-  counter-intuitively, full fast-forward support.
+- On PSP-2000 and later the emulator claims the full 64 MB memory layout,
+  so even 32 MB carts (Mother 3, large ROM hacks) run fully
+  memory-resident. The original PSP-1000 has half the RAM: 32 MB carts
+  work, but demand-page off the memory stick with occasional hitches
+  (16 MB carts — the entire Pokémon gen-3 family — fit fully everywhere).
+- Heavily ASM-hacked ROMs (CFRU-based hacks such as Pokémon Unbound) boot
+  and play, but run below full speed in battles — their rewritten engines
+  are simply heavier than stock carts. Performance work here is ongoing.
 
 ---
 

@@ -141,11 +141,15 @@ PSP_EBOOT_TITLE ?= GBAdhoc
 PSP_EBOOT_ICON  = assets/gbadhoc_icon0.png
 PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 
-# PSP-1000 is the memory budget target (FRONTEND-AUDIT §8): do NOT request
-# the 64 MiB large-memory mode (build.mak defaults MEMSIZE=1 on FW>=6.00),
-# so PPSSPP models the standard 24 MiB user partition and the Gate-1
-# mem_free measurement stays honest for the 1000-series.
-PSP_LARGE_MEMORY = 0
+# Large-memory policy is SPLIT by build flavour (MEMSIZE in PARAM.SFO):
+#  - PLAYABLE requests the 64 MiB layout (MEMSIZE=1).  On a 2000+/CFW the
+#    ROM cache's greedy 1 MB loop then reaches the full 32 blocks and 32 MB
+#    carts (Mother 3, Unbound) run fully memory-resident; a 1000 has no
+#    extra RAM and ignores the flag, so its behaviour is unchanged.
+#  - HARNESS pins MEMSIZE=0 (the `harness` target below): PSP-1000 is the
+#    memory budget target (FRONTEND-AUDIT §8) and PPSSPP models MEMSIZE, so
+#    the Gate-1 mem_free measurement must stay honest for the 1000-series.
+PSP_LARGE_MEMORY ?= 1
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
@@ -160,7 +164,8 @@ harness:
 	$(MAKE) clean
 	$(MAKE) PSP_EBOOT_TITLE="GBAdhoc [HARNESS]" \
 	        PSP_EBOOT_ICON=assets/harness_icon0.png \
-	        PSP_EBOOT_PIC1=assets/harness_pic1.png
+	        PSP_EBOOT_PIC1=assets/harness_pic1.png \
+	        PSP_LARGE_MEMORY=0
 .PHONY: harness
 
 $(TARGET).elf: $(CORE_LIB)

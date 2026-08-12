@@ -12,6 +12,7 @@ extern "C" {
 void osd_toast(const char *fmt, ...);
 void osd_chip_session(const char *text);  /* NULL/"" hides the chip */
 void osd_chip_ff(const char *text);       /* NULL/"" hides the chip */
+void osd_chip_fps(const char *text);      /* top-left; NULL/"" hides */
 void osd_draw(void);
 
 #ifdef __cplusplus

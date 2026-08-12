@@ -85,8 +85,10 @@ typedef struct
     * the positional match to a real GBA.  1 = swapped: Cross is A, Circle
     * is B, for players who want the western confirm button as A. */
    int  btn_swap;
-   int  ff_mult_x10;  /* 15 / 20 / 30 / 0 = uncapped (default 20) */
+   int  ff_mult_x10;  /* 15 / 30 / 0 = uncapped (default 15; 20 retired) */
    int  ff_hold;      /* 1 = hold (default), 0 = toggle */
+   int  theme;        /* UI palette: 0 = dark (default), 1 = light */
+   int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
    /* Wireless-session frameskip policy (ADR-0019).  0 = off (default, the
     * smooth one), 1 = adaptive (auto_threshold with hysteresis, engaged
     * only after sustained real-time slippage), 2 = auto (ADR-0018's

@@ -22,6 +22,7 @@ static int      toast_timer;
 
 static char chip_session_txt[32];
 static char chip_ff_txt[16];
+static char chip_fps_txt[24];
 
 void osd_toast(const char *fmt, ...)
 {
@@ -59,9 +60,18 @@ void osd_chip_ff(const char *text)
       chip_ff_txt[0] = '\0';
 }
 
+void osd_chip_fps(const char *text)
+{
+   if (text && text[0])
+      snprintf(chip_fps_txt, sizeof(chip_fps_txt), "%s", text);
+   else
+      chip_fps_txt[0] = '\0';
+}
+
 void osd_draw(void)
 {
-   int any = toast_count || chip_session_txt[0] || chip_ff_txt[0];
+   int any = toast_count || chip_session_txt[0] || chip_ff_txt[0] ||
+             chip_fps_txt[0];
    if (!any)
       return;
 
@@ -83,6 +93,15 @@ void osd_draw(void)
          toast_count--;
          toast_timer = TOAST_FRAMES;
       }
+   }
+
+   if (chip_fps_txt[0])
+   {
+      /* Top-left, mirroring the FF chip's top-right — the two are designed
+       * to be on screen together (FPS is most interesting DURING FF). */
+      int tw = (int)strlen(chip_fps_txt) * FE_FONT_W;
+      vid_rect(10, 6, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
+      vid_text(16, 8, chip_fps_txt, COL_TEXT);
    }
 
    if (chip_ff_txt[0])

@@ -33,19 +33,57 @@
 #include "transport_adhoc.h"
 
 /* ----- theme (libretro RGB565) ------------------------------------------- */
-#define C_BG_TOP    0x0863   /* deep slate blue, page top          */
-#define C_BG_BOT    0x1948   /* lighter slate, page bottom         */
-#define C_HDR_TOP   0x2110   /* header bar                          */
-#define C_HDR_BOT   0x10A7
-#define C_ACCENT    0x05F7   /* teal accent                         */
-#define C_ACCENT_DK 0x02CB   /* dim teal                            */
-#define C_TITLE     0xFFFF
-#define C_ITEM      0xC618
-#define C_DIM       0x630C
-#define C_VALUE     0x8F3C   /* light teal values                   */
-#define C_WARN      0xFCC0   /* amber                               */
-#define C_CARD      0x18E5   /* card body                           */
-#define C_SHADOW    0x0000
+/* Themed palette (RGB565, R in the high bits — rgb565_to_abgr converts for
+ * the GE).  Every draw call goes through the C_* macros, so pointing g_thm
+ * at a different palette reskins the entire UI in one assignment; page()
+ * re-reads g_pcfg.theme each frame, which is what makes the Settings toggle
+ * apply live.  The harness's black-background override (g_theme_black) sits
+ * above this and only claims the page background.
+ *
+ * `title` is the header-bar text (both themes keep a dark header, so it
+ * stays white); `sel` is selected-row/selected-card text, which must flip
+ * to near-black on the light page — the one place the two roles diverge. */
+typedef struct {
+   uint16_t bg_top, bg_bot, hdr_top, hdr_bot, accent, accent_dk,
+            title, sel, item, dim, value, warn, card, shadow;
+} ui_theme;
+
+static const ui_theme THM_DARK = {
+   0x0863, 0x1948,           /* deep slate blue -> lighter slate          */
+   0x2110, 0x10A7,           /* header bar                                */
+   0x05F7, 0x02CB,           /* teal accent / dim teal                    */
+   0xFFFF, 0xFFFF,           /* header title / selected text: white       */
+   0xC618, 0x630C, 0x8F3C,   /* item / dim / light teal values            */
+   0xFCC0,                   /* amber                                     */
+   0x18E5, 0x0000            /* card body / shadow                        */
+};
+
+static const ui_theme THM_LIGHT = {
+   0xF79E, 0xD6DB,           /* near-white -> silver blue                 */
+   0x2210, 0x334F,           /* header keeps dark slate so the title pops */
+   0x0451, 0x0329,           /* deep teal accent / dimmer teal            */
+   0xFFFF, 0x0000,           /* header title white / selected text black  */
+   0x2124, 0x8C51, 0x0330,   /* near-black items / gray / dark teal       */
+   0xA280,                   /* dark amber                                */
+   0xEF7D, 0x8410            /* pale card body / soft gray shadow         */
+};
+
+static const ui_theme *g_thm = &THM_DARK;
+
+#define C_BG_TOP    (g_thm->bg_top)
+#define C_BG_BOT    (g_thm->bg_bot)
+#define C_HDR_TOP   (g_thm->hdr_top)
+#define C_HDR_BOT   (g_thm->hdr_bot)
+#define C_ACCENT    (g_thm->accent)
+#define C_ACCENT_DK (g_thm->accent_dk)
+#define C_TITLE     (g_thm->title)
+#define C_SEL       (g_thm->sel)
+#define C_ITEM      (g_thm->item)
+#define C_DIM       (g_thm->dim)
+#define C_VALUE     (g_thm->value)
+#define C_WARN      (g_thm->warn)
+#define C_CARD      (g_thm->card)
+#define C_SHADOW    (g_thm->shadow)
 
 /* ----- state -------------------------------------------------------------- */
 enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN };
@@ -257,6 +295,7 @@ static unsigned pad_edges(unsigned pad)
  * in the header — room code, game count, session state. */
 static void page(const char *title, const char *right)
 {
+   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
    if (g_theme_black)
       /* HARNESS: plain black page — the at-a-glance differentiator from the
        * playable build. */
@@ -289,7 +328,7 @@ static void row(int x, int y, int w, int selected, int enabled,
       vid_rect(x, y - 1, w, FE_FONT_H + 2, C_ACCENT, 36);
       vid_rect(x, y - 1, 3, FE_FONT_H + 2, C_ACCENT, 255);
    }
-   vid_text(x + 12, y, label, enabled ? (selected ? C_TITLE : C_ITEM)
+   vid_text(x + 12, y, label, enabled ? (selected ? C_SEL : C_ITEM)
                                       : C_DIM);
    if (value)
       vid_text(x + w - 10 - (int)strlen(value) * FE_FONT_W, y, value,
@@ -302,9 +341,9 @@ static void row(int x, int y, int w, int selected, int enabled,
  * that decides whether a trade completes, and the only one that costs a
  * restart).  Header rows are labels, not stops — the cursor skips them. */
 enum { SET_HDR_WL, SET_PROFILE, SET_ROOM, SET_OSD,
-       SET_HDR_VID, SET_SCALE, SET_FILTER,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_ABMAP,
-       SET_BACK, SET_COUNT };
+       SET_HDR_VID, SET_SCALE, SET_FILTER, SET_THEME,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_ABMAP, SET_FPS,
+       SET_COUNT };
 
 static const struct { unsigned char header; const char *label; } set_rows[SET_COUNT] = {
    { 1, "WIRELESS" },
@@ -314,23 +353,25 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 1, "VIDEO" },
    { 0, "Video scale" },
    { 0, "Video filter" },
+   { 0, "Theme" },
    { 1, "GAMEPLAY" },
    { 0, "Fast-forward" },
    { 0, "FF button (Square)" },
    { 0, "A/B buttons" },
-   { 0, "Back" },
+   { 0, "FPS counter" },
 };
 
 static int set_row_y(int idx)
 {
-   /* 12 rows must fit between the header (30) and footer (252): headers
-    * advance 20 px, items 17, headers after the first get 1 px of air.
-    * Last row lands at y=234, text ends at 250 — 2 px clear of the footer. */
-   int y = HDR_H + 6, i;
+   /* 13 rows must fit between the header (30) and footer (252) — the Back
+    * row paid for one of the Theme/FPS additions (O exits, it was pure
+    * redundancy) and the pixel budget paid for the other: headers advance
+    * 19 px, items 16.  Last row lands at y=235, text ends at 251 — 1 px
+    * clear of the footer.  The selection fill (FE_FONT_H+2 tall) now grazes
+    * the next row by 1 px; at alpha 36 it does not read. */
+   int y = HDR_H + 4, i;
    for (i = 0; i < idx; i++)
-      y += set_rows[i].header ? (FE_FONT_H + 4) : (FE_FONT_H + 1);
-   if (set_rows[idx].header && idx > 0)
-      y += 1;
+      y += set_rows[i].header ? (FE_FONT_H + 3) : FE_FONT_H;
    return y;
 }
 
@@ -359,7 +400,7 @@ static const char *ff_mult_name(int x10)
    case 15: return "1.5x";
    case 30: return "3x";
    case 0:  return "uncapped";
-   default: return "2x";
+   default: return "1.5x";   /* legacy 2x configs display as their remap */
    }
 }
 
@@ -390,14 +431,23 @@ static void settings_adjust(int id, int dir)
    case SET_ABMAP:
       g_pcfg.btn_swap = !g_pcfg.btn_swap;
       break;
+   case SET_THEME:
+      g_pcfg.theme = !g_pcfg.theme;   /* applies live — page() re-reads it */
+      break;
+   case SET_FPS:
+      g_pcfg.show_fps = !g_pcfg.show_fps;
+      break;
    case SET_FFMULT:
    {
-      static const int vals[4] = { 15, 20, 30, 0 };
+      /* 2x retired: it froze the ME-mode display across three separate
+       * present implementations while 1.5x/3x/uncapped all behave.  Rather
+       * than ship a haunted speed tier, it no longer exists. */
+      static const int vals[3] = { 15, 30, 0 };
       int i;
-      for (i = 0; i < 4; i++)
+      for (i = 0; i < 3; i++)
          if (vals[i] == g_pcfg.ff_mult_x10)
             break;
-      i = (i + 4 + dir) % 4;
+      i = (i + 3 + dir) % 3;
       g_pcfg.ff_mult_x10 = vals[i];
       break;
    }
@@ -434,16 +484,7 @@ static ui_action screen_settings(unsigned edges)
    if (edges & PSP_CTRL_RIGHT)
       settings_adjust(g_cursor, +1);
    if (edges & PSP_CTRL_CROSS)
-   {
-      if (g_cursor == SET_BACK)
-      {
-         if (g_profile_changed) { g_profile_changed = 0;
-                                  return UI_ACT_RELAUNCH; }
-         screen_to(SCR_MENU);
-      }
-      else
-         settings_adjust(g_cursor, +1);
-   }
+      settings_adjust(g_cursor, +1);
    if (edges & PSP_CTRL_CIRCLE)
    {
       /* ADR-0071: leaving SETTINGS after changing the profile is the commit
@@ -500,8 +541,13 @@ static ui_action screen_settings(unsigned edges)
          row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.btn_swap ? "A=X  B=O" : "A=O  B=X");
          break;
-      case SET_BACK:
-         row(36, y, 408, g_cursor == i, 1, set_rows[i].label, NULL);
+      case SET_THEME:
+         row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.theme ? "light" : "dark");
+         break;
+      case SET_FPS:
+         row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.show_fps ? "on" : "off");
          break;
       }
    }
@@ -1180,7 +1226,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
       rom_display_name(&g_roms[cur], title, sizeof(title), 0);
       if (strlen(title) > 52)
          title[52] = '\0';
-      vid_text_center(206, title, C_TITLE);
+      vid_text_center(206, title, C_SEL);
       if (g_roms[cur].has_sav)
          vid_text_center(226, "save data present", C_DIM);
 

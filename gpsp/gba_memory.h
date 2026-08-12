@@ -240,6 +240,7 @@ extern u8 ws_cyc_seq[16][2];
 extern u8 ws_cyc_nseq[16][2];
 
 extern u32 gamepak_size;
+extern u32 gamepak_buffer_count;   /* 1 MB ROM-cache blocks actually held */
 /* Monotonic count of 32 KiB ROM page faults served from the storage medium
  * (only ever nonzero when gamepak_must_swap()). Frontends take deltas. */
 extern u32 gamepak_page_loads;

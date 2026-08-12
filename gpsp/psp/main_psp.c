@@ -68,6 +68,10 @@
 PSP_MODULE_INFO("gpsp-adhoc", 0, 0, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 PSP_MAIN_THREAD_STACK_SIZE_KB(256);
+/* Large-memory mode is requested via MEMSIZE=1 in PARAM.SFO — a Makefile
+ * concern (PSP_LARGE_MEMORY, playable only), not a module-info macro.  On a
+ * 2000+ the heap below then spans the 64 MiB layout and the ROM cache holds
+ * 32 MB carts fully resident. */
 /* Leave 1 MiB of heap free for thread stacks etc.: the core greedily mallocs
  * ROM blocks at retro_init until malloc fails (FRONTEND-AUDIT §8 gotcha). */
 PSP_HEAP_SIZE_KB(-1024);
@@ -1114,6 +1118,114 @@ static int me_rend_init(void)
    return 0;
 }
 
+/* Write back the live inputs and fill the render desc for stage `out`.
+ * Shared by the async pipeline and the FF synchronous path. */
+static void me_rend_fill_desc(int out)
+{
+   sceKernelDcacheWritebackRange(vram, 1024 * 96);
+   sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
+   sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+   sceKernelDcacheWritebackRange(g_mer_cap[g_mer_cur],
+                                 sizeof(me_capture_frame));
+   g_mer_desc->vram      = (unsigned)vram;
+   g_mer_desc->oam       = (unsigned)oam_ram;
+   g_mer_desc->palette   = (unsigned)palette_ram_converted;
+   g_mer_desc->capture   = (unsigned)g_mer_cap[g_mer_cur];
+   g_mer_desc->out       = (unsigned)g_mer_stage[out];
+   g_mer_desc->out_pitch = MER_STAGE_PITCH;
+   sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
+}
+
+/* FAST-FORWARD presentation.  The async pipeline (post N, present N at the
+ * end of N+1) starves during FF: the FF fast-paths stop pumping it, the GE
+ * holds the last pre-FF frame, and the player "teleports" on release.  So
+ * while FF is engaged we run a SYNCHRONOUS cycle on a wall-clock cadence —
+ * every ~33 ms: post this frame's capture, wait out the ~10 ms render,
+ * present immediately.  Display runs at ~30 fps while emulation sprints;
+ * the sync waits cost FF roughly a quarter of its throughput, which beats
+ * a frozen screen.  Leaves nothing in flight, so the async pipeline
+ * resumes seamlessly the moment FF is released. */
+#define MER_FF_CADENCE_US 33000u
+static unsigned g_mer_ff_last_us;
+/* FF-path probe (2x-freeze hunt): count every way this function can decline
+ * to present, and log the census periodically.  Harness builds only pay the
+ * evt; the counters are near-free. */
+static unsigned g_ffp_calls, g_ffp_nemu, g_ffp_cad, g_ffp_stuck, g_ffp_postf,
+                g_ffp_late, g_ffp_ok;
+
+static void me_rend_ff_probe(void)
+{
+   if ((g_ffp_calls & 127u) == 1u)
+      fe_evt("me_ffp calls=%u nemu=%u cad=%u stuck=%u postf=%u late=%u ok=%u"
+             " mult=%d uncap=%d",
+             g_ffp_calls, g_ffp_nemu, g_ffp_cad, g_ffp_stuck, g_ffp_postf,
+             g_ffp_late, g_ffp_ok, g_ff_mult, g_ff_uncapped);
+}
+
+static void me_rend_ff_frame(int emulated)
+{
+   unsigned now = (unsigned)sceKernelGetSystemTimeLow();
+   int out;
+   unsigned t0;
+
+   g_ffp_calls++;
+   me_rend_ff_probe();
+   if (!emulated || !me_host_up())
+      { g_ffp_nemu++; return; }
+   if (now - g_mer_ff_last_us < MER_FF_CADENCE_US)
+      { g_ffp_cad++; return; }
+
+   /* Drain any async post left over from before FF engaged. */
+   if (g_mer_pending >= 0)
+   {
+      t0 = now;
+      while (!me_host_idle() &&
+             ((unsigned)sceKernelGetSystemTimeLow() - t0) < MER_RETIRE_US)
+         ;
+      if (!me_host_idle())
+         { g_ffp_stuck++; return; }  /* still busy — try next cadence tick */
+      g_mer_ready   = g_mer_pending;
+      g_mer_pending = -1;
+   }
+
+   /* Synchronous render of THIS frame's capture.  The full-completion wait
+    * subsumes the input_seq handshake: emulation cannot race the ME's reads
+    * because we do not return until the render is done. */
+   out = (g_mer_ready == 0) ? 1 : 0;
+   me_rend_fill_desc(out);
+   if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) != 0)
+      { g_ffp_postf++; return; }
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   while (!me_host_idle() &&
+          ((unsigned)sceKernelGetSystemTimeLow() - t0) < 30000u)
+      ;
+   if (!me_host_idle())
+   {
+      g_ffp_late++;
+      g_mer_drops++;                 /* ME late; the watchdog covers wedges */
+      return;
+   }
+   g_ffp_ok++;
+   g_mer_ready      = out;
+   g_mer_ff_last_us = (unsigned)sceKernelGetSystemTimeLow();
+   /* NO draw here: presentation happens at loop-top (me_rend_present), in
+    * phase with the swap.  Drawing from inside the emulation callback lands
+    * on whichever framebuffer happens to be the target — frozen or shimmering
+    * displays depending on FF mode (the 2x/3x/uncapped triage). */
+}
+
+/* Loop-top presentation for Media Engine mode — the ADR-0082 discipline:
+ * draw the newest finished stage once per host frame, right before the swap,
+ * so BOTH display buffers always carry the current frame.  Serves the async
+ * pipeline and the FF synchronous path alike. */
+static void me_rend_present(void)
+{
+   if (!g_me_rend || g_mer_ready < 0)
+      return;
+   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
+   g_drew = 1;
+}
+
 /* Called from plat_video_frame at the end of every emulated frame.
  * `emulated` is false for duped/skipped frames (no capture happened). */
 static void me_rend_frame(int emulated)
@@ -1155,18 +1267,7 @@ static void me_rend_frame(int emulated)
    if (emulated && me_host_up())
    {
       int out = (g_mer_ready == 0) ? 1 : 0;   /* render into the other stage */
-      sceKernelDcacheWritebackRange(vram, 1024 * 96);
-      sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
-      sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
-      sceKernelDcacheWritebackRange(g_mer_cap[g_mer_cur],
-                                    sizeof(me_capture_frame));
-      g_mer_desc->vram      = (unsigned)vram;
-      g_mer_desc->oam       = (unsigned)oam_ram;
-      g_mer_desc->palette   = (unsigned)palette_ram_converted;
-      g_mer_desc->capture   = (unsigned)g_mer_cap[g_mer_cur];
-      g_mer_desc->out       = (unsigned)g_mer_stage[out];
-      g_mer_desc->out_pitch = MER_STAGE_PITCH;
-      sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
+      me_rend_fill_desc(out);
       if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) == 0)
       {
          /* 3. Wait for the ME to consume the live arrays (~1 ms), then flip
@@ -1193,12 +1294,8 @@ static void me_rend_frame(int emulated)
    }
 
 present:
-   /* 4. Present the newest finished frame (one-frame latency by design). */
-   if (g_mer_ready >= 0)
-   {
-      vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
-      g_drew = 1;
-   }
+   /* 4. Presentation moved to loop-top (me_rend_present) — swap-phase
+    * discipline; see the FF triage note above. */
    if (g_me_rend && me_host_watchdog_frame())
       me_rend_teardown("watchdog");
 
@@ -1212,9 +1309,34 @@ present:
    }
 }
 
+/* FPS counter (Settings -> "FPS counter").  Counts EMULATED frames — the
+ * increment sits above the blit-suppress and FF-cadence returns, so during
+ * multiplier/uncapped FF the chip reads the true emulation speed (~179 at
+ * 3x), not the ~30 Hz presentation cadence. */
+static unsigned g_fps_emu_frames, g_fps_win_us, g_fps_last_pg;
+static int g_autoload_state;   /* harness `load_state = 1`: boot into .st0 */
+
+/* ROM-cache stats from gba_memory.c (declared here rather than pulling the
+ * core's header chain into the frontend TU; gamepak_page_loads is already
+ * declared with the perf stats above). */
+extern u32 gamepak_size;
+extern u32 gamepak_buffer_count;
+int gamepak_must_swap(void);
+
 static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
                              size_t pitch)
 {
+   static int rom_cache_logged;
+   if (!rom_cache_logged)
+   {
+      /* One-shot: how much of the cart the ROM cache actually holds.  With
+       * PSP_LARGE_MEMORY on a 2000+ this should read resident=1 even for
+       * 32 MB carts; on a 1000 a 32 MB cart pages (resident=0). */
+      rom_cache_logged = 1;
+      fe_evt("rom_cache blocks=%u rom=%uKB resident=%d",
+             gamepak_buffer_count, gamepak_size >> 10, !gamepak_must_swap());
+   }
+   g_fps_emu_frames++;
    if (pix)
    {
       cur_frame = pix;
@@ -1224,17 +1346,24 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
    }
    if (g_blit_suppress)
       return;   /* intermediate multiplier-FF frame */
-   /* Uncapped FF: blit only the latest frame at a low cadence. */
-   if (g_ff_uncapped && (fe_host_frame_count() & FF_PRESENT_MASK))
-      return;
 
    /* Media Engine mode: the second core renders; this frame's pixels came
-    * from the capture pipeline, not `pix` (which the core never wrote). */
+    * from the capture pipeline, not `pix` (which the core never wrote).
+    * FF gets its own synchronous cadence, and deliberately BYPASSES the
+    * uncapped present mask below — ff_frame's wall-clock throttle is the
+    * cadence authority (the mask capped the display at ~15 fps). */
    if (g_me_rend)
    {
-      me_rend_frame(pix != NULL);
+      if (g_ff_uncapped || g_ff_mult)
+         me_rend_ff_frame(pix != NULL);
+      else
+         me_rend_frame(pix != NULL);
       return;
    }
+
+   /* Uncapped FF (CPU path): blit only the latest frame at a low cadence. */
+   if (g_ff_uncapped && (fe_host_frame_count() & FF_PRESENT_MASK))
+      return;
 
    /* ADR-0080c: session-gated activation.  Offload runs ONLY while a WLAN
     * session is live — which begins AFTER np_start, so the ME video path
@@ -4279,6 +4408,10 @@ int main(int argc, char *argv[])
    fe_evt("ff mode=%s", ff_ini ? "uncapped" : "normal");
    if (fe_ini_get(HARNESS_INI, "script", script_name, sizeof(script_name)))
       have_script = 1;
+   /* Perf-rig key: load the slot-0 savestate shortly after boot, so a run
+    * can start INSIDE a scene (mid-battle benchmarks) instead of scripting
+    * its way there through a title screen. */
+   g_autoload_state = (int)fe_ini_get_int(HARNESS_INI, "load_state", 0);
 
    /* Wireless keys (harness channel; the UI panel drives the same calls). */
    net_host  = fe_ini_get_int(HARNESS_INI, "host", 0) != 0;
@@ -5101,6 +5234,14 @@ int main(int argc, char *argv[])
          }
       }
 
+      /* Perf-rig autoload: one shot, ~half a second in, once video/audio/ME
+       * are all up.  The scripted run then starts inside the saved scene. */
+      if (g_autoload_state && fe_host_frame_count() >= 30)
+      {
+         g_autoload_state = 0;
+         fe_evt("autoload_state rc=%d", fe_host_state_load(state_path));
+      }
+
       if (ui_active())
       {
          /* Core paused; wireless keeps pumping; UI draws + acts. */
@@ -5211,9 +5352,8 @@ int main(int argc, char *argv[])
                if (g_pcfg.ff_mult_x10 == 0)
                   osd_chip_ff("\xAF MAX");
                else
-                  osd_chip_ff(g_pcfg.ff_mult_x10 == 15 ? "\xAF 1.5x" :
-                              g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x" :
-                                                         "\xAF 2.0x");
+                  osd_chip_ff(g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x" :
+                                                         "\xAF 1.5x");
                fe_evt("ff_user on mult_x10=%d", g_pcfg.ff_mult_x10);
             }
             else
@@ -5238,6 +5378,46 @@ int main(int argc, char *argv[])
        * the GE rasterises through the whole retro_run below and the
        * pre-swap sync is ~0.  No-op unless me_video is active. */
       me_video_present();
+      me_rend_present();   /* ME renderer: swap-phase present (FF triage) */
+
+      /* FPS chip: emulated-frame rate over a ~1 s window, one decimal (a
+       * healthy reading is the GBA's own 59.7).  A window with zero frames
+       * (menu time) re-arms silently instead of flashing "0.0". */
+      if (g_pcfg.show_fps)
+      {
+         unsigned fnow = (unsigned)sceKernelGetSystemTimeLow();
+         if (!g_fps_win_us)
+         {
+            g_fps_win_us = fnow ? fnow : 1;
+            g_fps_emu_frames = 0;
+         }
+         else if (fnow - g_fps_win_us >= 1000000u)
+         {
+            if (g_fps_emu_frames)
+            {
+               char fbuf[24];
+               int  fn;
+               unsigned fps10 = (unsigned)((unsigned long long)
+                  g_fps_emu_frames * 10000000ull / (fnow - g_fps_win_us));
+               fn = snprintf(fbuf, sizeof(fbuf), "%u.%u fps",
+                             fps10 / 10, fps10 % 10);
+               /* Cart bigger than the ROM cache: append the page-fault rate
+                * (32 KiB stick reads/window) — the cause of any hitching. */
+               if (gamepak_must_swap() && fn > 0)
+                  snprintf(fbuf + fn, sizeof(fbuf) - fn, "  pg %u",
+                           gamepak_page_loads - g_fps_last_pg);
+               osd_chip_fps(fbuf);
+            }
+            g_fps_last_pg = gamepak_page_loads;
+            g_fps_win_us = fnow ? fnow : 1;
+            g_fps_emu_frames = 0;
+         }
+      }
+      else if (g_fps_win_us)
+      {
+         g_fps_win_us = 0;
+         osd_chip_fps(NULL);
+      }
 
       /* ---- run the core ---------------------------------------------- */
       preempt_mark(0);           /* ADR-0064: close `pre`, open `core` */

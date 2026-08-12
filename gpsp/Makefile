@@ -239,7 +239,14 @@ else ifeq ($(platform), psp1)
 	CC = psp-gcc$(EXE_EXT)
 	CXX = psp-g++$(EXE_EXT)
 	AR = psp-ar$(EXE_EXT)
-	CFLAGS += -DPSP -G0 -DMIPS_HAS_R2_INSTS -DSMALL_TRANSLATION_CACHE
+	CFLAGS += -DPSP -G0 -DMIPS_HAS_R2_INSTS
+	# JIT cache sizing: SMALL (2MB ROM / 384KB RAM code) fits the PSP-1000
+	# memory budget.  BIG_JIT=1 drops the define -> 10MB/512KB caches for
+	# large-memory (MEMSIZE=1) builds on 2000+ hardware, where CFRU-class
+	# ROM hacks (Unbound) overflow the small cache and flush-storm.
+	ifneq ($(BIG_JIT),1)
+	CFLAGS += -DSMALL_TRANSLATION_CACHE
+	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
 	# core decides the layout, the frontend's blit assumes it, and nothing
 	# at link time checks.  Build both with `make PSP_PIXFMT=rgb565` to get
