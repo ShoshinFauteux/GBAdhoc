@@ -402,7 +402,7 @@ int main(int argc, char **argv)
    const char *log_path  = NULL;
    const char *dump_dir  = ".";
    const char *script    = NULL;
-   long autoexit = 0, dump_at = 0;
+   long autoexit = 0, dump_at = 0, dump_every = 0;
    int scale = 2, no_pacing = 0, force_sram_write = 0, force_ff = 0;
    int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
    int rfu_cush = -1;   /* -1 = leave default; >=0 = rfu_set_cushion(n)    */
@@ -433,6 +433,8 @@ int main(int argc, char **argv)
          autoexit = strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--dump-at") && i + 1 < argc)
          dump_at = strtol(argv[++i], NULL, 0);
+      else if (!strcmp(argv[i], "--dump-every") && i + 1 < argc)
+         dump_every = strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--scale") && i + 1 < argc)
          scale = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--no-pacing"))
@@ -672,6 +674,7 @@ int main(int argc, char **argv)
          sess_poll_evt();
 
          if ((dump_at && fe_host_frame_count() == (unsigned)dump_at) ||
+             (dump_every && (fe_host_frame_count() % (unsigned)dump_every) == 0) ||
              fe_autopilot_dump_pending())
          {
             size_t pitch;

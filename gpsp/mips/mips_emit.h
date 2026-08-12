@@ -2368,6 +2368,18 @@ static void emit_pmemst_stub(
   /* PS2's native format */
   #define palette_convert()                       \
     mips_emit_andi(reg_temp, reg_a1, 0x7FFF);
+#elif defined(USE_PSP_RGB565_FORMAT)
+  /* BGR555 -> PSP-native 5650 (R stays in the LOW bits) — the register-level
+   * twin of common.h's convert_palette: (v & 0x1F) | ((v & 0x7FE0) << 1).
+   * This third conversion site was MISSED when the PSP format was introduced:
+   * dynarec-inlined palette stores kept emitting STANDARD 565, so any bulk
+   * palette upload through the fast path (menu/scene transitions) produced a
+   * single fully R/B-swapped frame until the next palette write repaired it. */
+  #define palette_convert()                       \
+    mips_emit_sll(reg_a0, reg_a1, 1);             \
+    mips_emit_andi(reg_a0, reg_a0, 0xFFC0);       \
+    mips_emit_andi(reg_temp, reg_a1, 0x1F);       \
+    mips_emit_or(reg_temp, reg_temp, reg_a0);
 #else
   /* 0BGR to RGB565 (clobbers a0) */
   #ifdef MIPS_HAS_R2_INSTS
