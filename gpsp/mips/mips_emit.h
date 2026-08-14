@@ -2333,6 +2333,42 @@ static void emit_pmemst_stub(
     } else {
       mips_emit_lb(reg_temp, reg_temp, base_addr);
     }
+#ifdef SMC_SKIP_SAME
+    /* Idempotent-store filter (word stores only).
+     *
+     * The stock check is "is there translated code at this address?" and, if
+     * so, wipes the ENTIRE RAM translation cache.  It never asks whether the
+     * store actually CHANGES anything — so a game that rewrites identical
+     * bytes over a region containing translated code triggers a full cache
+     * rebuild every time, for a write that altered nothing.  Measured on
+     * Pokemon Unbound (CFRU): >1000 wipes/second in battle, >2000 on the
+     * title screen, all of them CPU-store sourced (DMA count was zero).
+     *
+     * So: only flush when the value differs.  The predicate is exact — the
+     * comparison is against the very word the store is about to write, so
+     * "equal" provably means "memory unchanged", which means every already
+     * translated block covering it stays valid.
+     *
+     * Word stores only for now: sb/sh write partial registers, so a correct
+     * compare there needs masking (and a second scratch register).  Word
+     * stores are what code-copy loops and LDM/STM use, which is the pattern
+     * that generates the storm.
+     *
+     * Layout (offsets are delay-slot relative — the store at word 4 is both
+     * the fall-through and the bne's delay slot):
+     *   0 beq reg_temp, zero, +3   -> no code here, go straight to the store
+     *   1 nop                          (delay)
+     *   2 lw  reg_temp, off(reg_rv)    current value
+     *   3 bne reg_temp, reg_a1, smc    differs -> real SMC, flush
+     *   4 sw  reg_a1, off(reg_rv)      (delay slot / fall-through) */
+    if (realsize == 2) {
+      mips_emit_b(beq, reg_temp, reg_zero, 3);
+      mips_emit_nop();
+      mips_emit_lw(reg_temp, reg_rv, base_addr);
+      mips_emit_b(bne, reg_temp, reg_a1,
+                  branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));
+    } else
+#endif
     // If the data is non zero, we just wrote over code
     // Local-jump to the smc_write (which lives at offset:0)
     mips_emit_b(bne, reg_zero, reg_temp, branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));

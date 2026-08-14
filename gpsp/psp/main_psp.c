@@ -481,10 +481,35 @@ static SceUID audio_thid = -1;
  * for why that beat the alternative. */
 static volatile unsigned g_audio_step;
 
+/* Audio correctness oracle.  The frame-dump oracle proves the VIDEO output of
+ * a dynarec change is unaltered, and says nothing at all about sound — which
+ * matters because GBA sound engines (M4A/Sappy) classically live in IWRAM and
+ * SELF-MODIFY, patching per-channel volume/pitch immediates.  That is exactly
+ * the code partial invalidation retires, so audio is the likeliest place for
+ * a stale-jump bug to surface.  Rolling hash over every sample the core
+ * produces, logged at exit; deterministic for a scripted run, so it compares
+ * across builds the same way the frame hash does. */
+static uint32_t g_audio_hash = 2166136261u;
+static uint32_t g_audio_samples;
+
+uint32_t plat_audio_hash(void)    { return g_audio_hash; }
+uint32_t plat_audio_sample_count(void) { return g_audio_samples; }
+
 static void plat_audio_frames(const int16_t *lr, size_t frames)
 {
    size_t i;
-   if (g_ff_uncapped || g_ff_mult)
+   /* Hash BEFORE the FF/ring early-outs: this must describe what the core
+    * generated, not what the output path happened to accept.  Bench-only —
+    * it touches every sample the core produces, which is cheap but is pure
+    * instrumentation and has no business running in a shipping build. */
+   if (g_pcfg.bench_mode)
+   {
+      for (i = 0; i < frames * 2; i++)
+         g_audio_hash = (g_audio_hash ^ (uint16_t)lr[i]) * 16777619u;
+      g_audio_samples += (uint32_t)frames;
+   }
+
+   if ((g_ff_uncapped || g_ff_mult) && !g_pcfg.ff_audio)
       return;   /* FF mutes audio: ring drains to silence */
    for (i = 0; i < frames; i++)
    {
@@ -512,7 +537,8 @@ static void audio_status_frame(void)
 {
    unsigned level = ring_w - ring_r;
    int pct = (int)((uint64_t)level * 100u / RING_FRAMES);
-   int active = audio_running && !g_ff_uncapped && !g_ff_mult;
+   int active = audio_running &&
+                (g_pcfg.ff_audio || (!g_ff_uncapped && !g_ff_mult));
    fe_host_audio_buffer_status(active, pct, pct < AUDIO_UNDERRUN_PCT);
 }
 
@@ -615,6 +641,17 @@ extern u32 flush_ram_full;
 extern u32 flush_ram_smc;
 extern u32 flush_ram_dma;
 extern u32 gamepak_page_loads;
+/* What the flushes COST (main.h): time inside flush_translation_cache_ram(),
+ * the tag-memset volume, and how often it took the whole-region else-branch
+ * (32 KiB IWRAM / 256 KiB EWRAM).  smc_prof_clock is already installed below,
+ * so these have been accumulating all along — they were just never shown. */
+extern u32 smc_flush_us;
+extern u32 smc_flush_bytes;
+extern u32 smc_flush_wide;
+extern u32 smc_blk_xlat_total;   /* RAM blocks re-translated (monotonic) */
+extern u32 flush_rom_total;      /* ROM translation-cache wipes */
+extern u32 cph_jit_total;        /* dynarec compilation us (monotonic) */
+extern u32 smc_blk_watch;        /* 256-byte page the block/writer probe eyes */
 
 static void plat_core_counters(unsigned *rom_flush, unsigned *ram_full,
                                unsigned *ram_smc, unsigned *ram_dma,
@@ -1228,6 +1265,12 @@ static void me_rend_present(void)
 
 /* Called from plat_video_frame at the end of every emulated frame.
  * `emulated` is false for duped/skipped frames (no capture happened). */
+/* Complete frames actually rendered in the current fps window (ME: a retired
+ * render; CPU path: a frame the core really drew).  Reported beside the
+ * emulated rate so a frameskipped or ME-outrun measurement can never read as
+ * if every frame were being produced. */
+static unsigned g_fps_drawn;
+
 static void me_rend_frame(int emulated)
 {
    unsigned t0, t1;
@@ -1250,6 +1293,7 @@ static void me_rend_frame(int emulated)
          g_mer_ready   = g_mer_pending;
          g_mer_pending = -1;
          g_mer_miss    = 0;
+         g_fps_drawn++;             /* a complete rendered frame landed */
       }
       else
       {
@@ -1257,7 +1301,12 @@ static void me_rend_frame(int emulated)
           * flip the capture buffer — the next emulated frame overwrites
           * the capture and we try again. */
          g_mer_drops++;
-         if (++g_mer_miss >= MER_MISS_LIMIT)
+         /* Any fast-forward outruns the ME by design — drops there are the
+          * expected outcome, not a sick renderer, and a teardown would
+          * silently switch rendering paths mid-FF (or mid-measurement).
+          * Normal-speed lateness still trips the watchdog. */
+         if (++g_mer_miss >= MER_MISS_LIMIT &&
+             !g_ff_uncapped && !g_ff_mult && !g_pcfg.bench_mode)
             me_rend_teardown("late");
          goto present;
       }
@@ -1313,7 +1362,9 @@ present:
  * increment sits above the blit-suppress and FF-cadence returns, so during
  * multiplier/uncapped FF the chip reads the true emulation speed (~179 at
  * 3x), not the ~30 Hz presentation cadence. */
-static unsigned g_fps_emu_frames, g_fps_win_us, g_fps_last_pg;
+static unsigned g_fps_emu_frames, g_fps_win_us, g_fps_last_pg, g_fps_last_smc,
+                g_fps_last_dma, g_fps_last_fus, g_fps_last_fkb, g_fps_last_wide,
+                g_fps_last_xlat, g_fps_last_rom, g_fps_last_jit;
 static int g_autoload_state;   /* harness `load_state = 1`: boot into .st0 */
 
 /* ROM-cache stats from gba_memory.c (declared here rather than pulling the
@@ -1354,7 +1405,12 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
     * cadence authority (the mask capped the display at ~15 fps). */
    if (g_me_rend)
    {
-      if (g_ff_uncapped || g_ff_mult)
+      /* Smooth/bench FF stays on the ASYNC path even while uncapped: the
+       * point is to keep the parallel pipeline running, and the synchronous
+       * FF path both blocks on the ME and throttles rendering to a 33 ms
+       * cadence (which is exactly what makes ordinary FF look choppy). */
+      if ((g_ff_uncapped || g_ff_mult) &&
+          !(g_pcfg.ff_smooth || g_pcfg.bench_mode))
          me_rend_ff_frame(pix != NULL);
       else
          me_rend_frame(pix != NULL);
@@ -1391,6 +1447,8 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
    {
       vid_draw_frame(cur_frame, cur_w, cur_h, cur_pitch);
       g_drew = 1;
+      if (pix)
+         g_fps_drawn++;      /* a new image, not a re-present of the old one */
    }
 }
 
@@ -4412,6 +4470,20 @@ int main(int argc, char *argv[])
     * can start INSIDE a scene (mid-battle benchmarks) instead of scripting
     * its way there through a title screen. */
    g_autoload_state = (int)fe_ini_get_int(HARNESS_INI, "load_state", 0);
+   /* Point the SMC block/writer probe at a 256-byte page of interest.  The
+    * default (0x03007D00) is nowhere near Unbound's storm, which `EVT
+    * smc_addr` localised to 0x03006200/0x03006300 in IWRAM — four addresses
+    * taking ~1450 writes/s between them.  Aiming the watch here fills in the
+    * `blk=` and `wr=` fields: which translated blocks cover the page, and
+    * which PCs are doing the writing. */
+   {
+      unsigned w = (unsigned)fe_ini_get_int(HARNESS_INI, "smc_watch", 0);
+      if (w)
+      {
+         smc_blk_watch = w;
+         fe_evt("smc_watch set=%08x", w);
+      }
+   }
 
    /* Wireless keys (harness channel; the UI panel drives the same calls). */
    net_host  = fe_ini_get_int(HARNESS_INI, "host", 0) != 0;
@@ -5347,6 +5419,23 @@ int main(int argc, char *argv[])
                 * ~1.1-2.3x uncapped without it).  auto frameskip needs the
                 * audio-buffer-status env we decline; fixed_interval is the
                 * deterministic equivalent for FF (muted audio anyway). */
+               if (g_pcfg.ff_smooth || g_pcfg.bench_mode)
+               {
+                  /* Smooth FF: render EVERY frame.  Lower peak multiplier
+                   * than the skipping path, but the motion reads as fast
+                   * motion instead of a slideshow — and it is also the
+                   * apples-to-apples configuration for benchmarking against
+                   * an emulator running uncapped with frameskip off. */
+                  fe_host_option_set_live("gpsp_frameskip", "disabled");
+                  if (g_pcfg.bench_mode)
+                     osd_chip_ff("\xAF BENCH");
+                  else
+                     osd_chip_ff(g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x~" :
+                                 g_pcfg.ff_mult_x10 == 0  ? "\xAF MAX~"  :
+                                                            "\xAF 1.5x~");
+               }
+               else
+               {
                fe_host_option_set_live("gpsp_frameskip", "fixed_interval");
                fe_host_option_set_live("gpsp_frameskip_interval", "1");
                if (g_pcfg.ff_mult_x10 == 0)
@@ -5354,6 +5443,7 @@ int main(int argc, char *argv[])
                else
                   osd_chip_ff(g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x" :
                                                          "\xAF 1.5x");
+               }
                fe_evt("ff_user on mult_x10=%d", g_pcfg.ff_mult_x10);
             }
             else
@@ -5367,7 +5457,7 @@ int main(int argc, char *argv[])
                ff_acc = 0;
             }
          }
-         g_ff_uncapped = harness_ff ||
+         g_ff_uncapped = harness_ff || (ff_engaged && g_pcfg.bench_mode) ||
                          (ff_engaged && g_pcfg.ff_mult_x10 == 0);
          g_ff_mult = ff_engaged && !g_ff_uncapped;
          if (session)
@@ -5390,27 +5480,72 @@ int main(int argc, char *argv[])
          {
             g_fps_win_us = fnow ? fnow : 1;
             g_fps_emu_frames = 0;
+            g_fps_drawn = 0;
          }
          else if (fnow - g_fps_win_us >= 1000000u)
          {
             if (g_fps_emu_frames)
             {
-               char fbuf[24];
+               char fbuf[64];
                int  fn;
+               unsigned smc_now = flush_ram_smc;
+               unsigned dma_now = flush_ram_dma;
+               unsigned el    = fnow - g_fps_win_us;
                unsigned fps10 = (unsigned)((unsigned long long)
-                  g_fps_emu_frames * 10000000ull / (fnow - g_fps_win_us));
-               fn = snprintf(fbuf, sizeof(fbuf), "%u.%u fps",
-                             fps10 / 10, fps10 % 10);
+                  g_fps_emu_frames * 10000000ull / el);
+               unsigned drawn = (unsigned)((unsigned long long)
+                  g_fps_drawn * 1000000ull / el);
+               /* "emulated (rendered)" — the same pair FrogGBA's counter
+                * reports, so the two can be photographed side by side. */
+               fn = snprintf(fbuf, sizeof(fbuf), "%u.%u fps (%u)",
+                             fps10 / 10, fps10 % 10, drawn);
                /* Cart bigger than the ROM cache: append the page-fault rate
                 * (32 KiB stick reads/window) — the cause of any hitching. */
                if (gamepak_must_swap() && fn > 0)
-                  snprintf(fbuf + fn, sizeof(fbuf) - fn, "  pg %u",
-                           gamepak_page_loads - g_fps_last_pg);
+                  fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "  pg %u",
+                                 gamepak_page_loads - g_fps_last_pg);
+               /* Cache wipes per second, SPLIT BY SOURCE — they need
+                * different fixes (ADR-0029).  `s` = a CPU store from
+                * translated code hit a tagged halfword.  `d` = a DMA wrote
+                * into tagged IWRAM/EWRAM; a DMA knows its whole destination
+                * range up front, so that one is addressable by a range
+                * invalidate.  Shown only when non-zero. */
+               /* Dynarec diagnostics are for the lab, not the OSD: a player
+                * running a ROM hack should see "59.7 fps (60)", not a row of
+                * flush counters. */
+               if (g_pcfg.bench_mode &&
+                   (smc_now != g_fps_last_smc || dma_now != g_fps_last_dma) &&
+                   fn > 0)
+                  /* s = wipes/s, f = % of wall time INSIDE the flush (the
+                   * tag memset), M = MiB/s memset, w = whole-region wipes/s
+                   * (32K IWRAM / 256K EWRAM each). If f is large, the cost is
+                   * the memset, not the re-translation — and the fix is to
+                   * clear only the pages that carry tags, not the whole span. */
+                  snprintf(fbuf + fn, sizeof(fbuf) - fn,
+                           "  s%u x%u j%u%% f%u%%",
+                           smc_now - g_fps_last_smc,
+                           smc_blk_xlat_total - g_fps_last_xlat,
+                           /* j = % of wall time COMPILING code (needs
+                            * core_phase = 2 in config.ini; reads 0 without
+                            * it).  This is the cost the wipes force. */
+                           (unsigned)((unsigned long long)
+                              (cph_jit_total - g_fps_last_jit) * 100ull / el),
+                           (unsigned)((unsigned long long)
+                              (smc_flush_us - g_fps_last_fus) * 100ull / el));
                osd_chip_fps(fbuf);
             }
-            g_fps_last_pg = gamepak_page_loads;
+            g_fps_last_pg  = gamepak_page_loads;
+            g_fps_last_smc  = flush_ram_smc;
+            g_fps_last_dma  = flush_ram_dma;
+            g_fps_last_fus  = smc_flush_us;
+            g_fps_last_fkb  = smc_flush_bytes;
+            g_fps_last_wide = smc_flush_wide;
+            g_fps_last_xlat = smc_blk_xlat_total;
+            g_fps_last_rom  = flush_rom_total;
+            g_fps_last_jit  = cph_jit_total;
             g_fps_win_us = fnow ? fnow : 1;
             g_fps_emu_frames = 0;
+            g_fps_drawn = 0;
          }
       }
       else if (g_fps_win_us)
@@ -5652,6 +5787,8 @@ int main(int argc, char *argv[])
    fe_host_shutdown();
    audio_stop();
    vid_term();
+   fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
+          plat_audio_sample_count());
    if (exit_reason)
       fe_evt("exit code=%d reason=%s", exit_code, exit_reason);
    else

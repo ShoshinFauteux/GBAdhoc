@@ -11,7 +11,14 @@
 /* SHA-1 of the official GBA BIOS (Nintendo AGB BIOS, 16 KiB). */
 #define GBA_BIOS_SHA1 "300c20df6731a33952ded8c436f7f186d25d3492"
 #define SRAM_CHECK_INTERVAL 300   /* frames ~= 5 s (FRONTEND-AUDIT §5) */
+/* Frames between telemetry heartbeats.  600 is ~10 s at full speed, but a
+ * game running at 24 fps stretches that to 25 s — a short diagnostic run can
+ * exit before the FIRST heartbeat and produce a log with no measurements in
+ * it at all.  Overridable at build time (-DHEARTBEAT_INTERVAL=N) so a
+ * profiling EBOOT can sample much more often. */
+#ifndef HEARTBEAT_INTERVAL
 #define HEARTBEAT_INTERVAL  600
+#endif
 
 /* ---------------------------------------------------------------- state -- */
 

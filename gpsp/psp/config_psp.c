@@ -68,8 +68,11 @@ void pcfg_load(const char *ini_path)
                                             VID_FILTER_NEAREST);
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 15);
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
+   g_pcfg.ff_smooth   = (int)fe_ini_get_int(cfg_path, "ff_smooth", 0) ? 1 : 0;
+   g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
+   g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
    /* ADR-0019: default OFF — a session must not cost rendered frames on a
     * console that is holding real time (which the field says both are). */
    g_pcfg.net_frameskip = (int)fe_ini_get_int(cfg_path, "net_frameskip", 0);
@@ -254,8 +257,11 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "filter", g_pcfg.filter);
    fe_ini_set_int(cfg_path, "ff_mult_x10", g_pcfg.ff_mult_x10);
    fe_ini_set_int(cfg_path, "ff_hold", g_pcfg.ff_hold);
+   fe_ini_set_int(cfg_path, "ff_smooth", g_pcfg.ff_smooth);
+   fe_ini_set_int(cfg_path, "ff_audio", g_pcfg.ff_audio);
    fe_ini_set_int(cfg_path, "theme", g_pcfg.theme);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
+   fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
    fe_ini_set_int(cfg_path, "net_tx_thread", g_pcfg.net_tx_thread);
    fe_ini_set_int(cfg_path, "log_thread", g_pcfg.log_thread);

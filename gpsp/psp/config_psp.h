@@ -87,8 +87,30 @@ typedef struct
    int  btn_swap;
    int  ff_mult_x10;  /* 15 / 30 / 0 = uncapped (default 15; 20 retired) */
    int  ff_hold;      /* 1 = hold (default), 0 = toggle */
+   /* Fast-forward style.  0 = fast (default): frameskip on, the ME on its
+    * synchronous FF path — maximum emulated speed, visibly choppy.  1 =
+    * smooth: frameskip OFF and the ME kept on its normal ASYNC path, so
+    * every emulated frame is actually rendered.  Lower peak multiplier,
+    * but FF *looks* like fast motion instead of a slideshow.  Only the
+    * dual-core renderer makes smooth affordable at all. */
+   int  ff_smooth;
+   /* Keep audio running during fast-forward (default 0 = mute, the shipped
+    * behaviour).  Exists for benchmark parity: an emulator that mutes during
+    * FF skips the sample copy and the output path, and comparing it against
+    * one that does not is an uncontrolled variable.  Note the core generates
+    * the samples either way — only delivery is skipped — so the difference
+    * is expected to be small, but "expected" is not "measured". */
+   int  ff_audio;
    int  theme;        /* UI palette: 0 = dark (default), 1 = light */
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
+   /* Benchmark mode (config.ini only, no UI row).  Makes the FF button mean
+    * "engine throughput test": uncapped pacing, frameskip DISABLED (every
+    * frame is rendered), and the ME kept on its normal ASYNC path instead of
+    * the synchronous FF path.  Without this, an FF measurement flatters us
+    * badly — the shipping FF path renders on a 33 ms cadence (~30 fps of
+    * render work) and blocks on the ME, so it measures neither the parallel
+    * pipeline nor a comparable render load. */
+   int  bench_mode;
    /* Wireless-session frameskip policy (ADR-0019).  0 = off (default, the
     * smooth one), 1 = adaptive (auto_threshold with hysteresis, engaged
     * only after sustained real-time slippage), 2 = auto (ADR-0018's

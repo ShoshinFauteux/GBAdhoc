@@ -22,7 +22,11 @@ static int      toast_timer;
 
 static char chip_session_txt[32];
 static char chip_ff_txt[16];
-static char chip_fps_txt[24];
+/* Wide enough for the full diagnostic line, e.g.
+ * "24.0 fps (24)  s1700 f1% x48000 r0" (34 chars).  This was 24 and silently
+ * truncated the profiler fields mid-string — the chip looked like it simply
+ * had no x/r counters.  480px / 8px per glyph = 60 chars fit on screen. */
+static char chip_fps_txt[64];
 
 void osd_toast(const char *fmt, ...)
 {

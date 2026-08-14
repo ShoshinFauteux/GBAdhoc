@@ -125,7 +125,10 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
 #define SMC_SCAN_RAMEND   5  /* ran into the 0x3007FF0 / 0x203FFFF0 clamp */
 
 extern u32 smc_blk_watch;
+extern u32 smc_last_write_addr;  /* GBA addr of the store that forced a flush */
+extern u32 flush_ram_partial;    /* single-block retirements (SMC_PARTIAL) */
 extern u32 smc_blk_xlat;
+extern u32 smc_blk_xlat_total;   /* monotonic; never reset by a take */
 
 /* What a flush actually COSTS.  ADR-0029 priced it indirectly (worst frame
  * minus window mean, divided by the flush count) and got ~10 us; that was an
@@ -142,6 +145,10 @@ extern u32 smc_flush_bytes;
 extern u32 smc_flush_wide;
 
 void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason);
+#ifdef SMC_PARTIAL
+void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb);
+void ramtag_note_barrier(u32 end_pc);
+#endif
 void smc_blk_note_writer(u32 gba_addr, u32 pc);
 
 /* Did the store that just fired the SMC trap actually CHANGE the code?
@@ -230,6 +237,7 @@ extern u32 core_phase_clk_ns;   /* measured cost of ONE clock read, in ns */
 
 /* Frame-local accumulators, microseconds; cleared by core_phase_frame_begin */
 extern u32 cph_vid, cph_amix, cph_dsnd, cph_jit;
+extern u32 cph_jit_total;   /* monotonic JIT-compilation microseconds */
 extern u32 cph_reads;                     /* clock reads taken this frame */
 extern u32 cph_bkr, cph_bkw;              /* backup-memory calls this frame */
 /* ADR-0051: rfu_transfer() is called SYNCHRONOUSLY from write_siocnt(), i.e.

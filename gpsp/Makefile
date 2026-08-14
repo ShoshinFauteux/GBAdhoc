@@ -247,6 +247,26 @@ else ifeq ($(platform), psp1)
 	ifneq ($(BIG_JIT),1)
 	CFLAGS += -DSMALL_TRANSLATION_CACHE
 	endif
+	# SMC_SKIP_SAME=1: idempotent-store filter in the JIT store stubs
+	# (mips/mips_emit.h) — skip the full RAM-cache wipe when a store to
+	# tagged memory writes the value already there.
+	#
+	# NOTE FOR FUTURE ME: these knobs only take effect HERE, in the core
+	# archive.  Passing them to psp/Makefile does nothing — mips_emit.h is
+	# compiled into gpsp_libretro_psp1.a, not into the frontend — and make
+	# does not track define changes, so the core must be CLEAN-rebuilt when
+	# they change (ADR-0035, the franken-build trap, third occurrence).
+	ifeq ($(SMC_SKIP_SAME),1)
+	CFLAGS += -DSMC_SKIP_SAME
+	endif
+	# SMC_PARTIAL=1: retire only the block covering the written address
+	# instead of wiping the whole RAM translation cache (cpu_threaded.c
+	# flush_translation_cache_ram_block).  EXPERIMENTAL — see the safety note
+	# there about direct branch patching; validate with the harness frame-dump
+	# oracle before this goes anywhere near a shipping build.
+	ifeq ($(SMC_PARTIAL),1)
+	CFLAGS += -DSMC_PARTIAL
+	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
 	# core decides the layout, the frontend's blit assumes it, and nothing
 	# at link time checks.  Build both with `make PSP_PIXFMT=rgb565` to get

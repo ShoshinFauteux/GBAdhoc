@@ -2518,6 +2518,17 @@ typedef struct
 {
   u32 offset_arm;     // Cache offset to the ARM-mode compiled block
   u32 offset_thumb;   // Cache offset to the Thumb-mode compiled block
+#ifdef SMC_PARTIAL
+  /* Source extent [start, end) of this block, recorded by
+   * ramtag_note_extent() as soon as scan_block settles it.  Partial
+   * invalidation needs it to answer "does this block actually span the
+   * written address?" — without it the retire path can only guess from tag
+   * adjacency, and guessing either misses overlapping blocks (v1: fast but
+   * corrupted audio) or retires far too many (v2: correct but slower than
+   * the full flush it replaced). */
+  u32 blk_start;
+  u32 blk_end;
+#endif
 } ramtag_type;
 
 static u32 ram_block_tag = INITIAL_TOP_TAG;
@@ -3438,10 +3449,323 @@ void flush_translation_cache_ram(void)
  *         the write_io_epilogue path is exactly and only the DMA case.  A
  *         DMA knows its whole destination range up front, so this is the
  *         source a range-invalidate could actually address. */
+#ifdef SMC_PARTIAL
+/* Record a freshly scanned block's source extent against its tag.  Called
+ * from smc_blk_note_block() the moment scan_block settles block_end_pc — and
+ * crucially BEFORE the external-exit resolution that can recursively
+ * translate other blocks, so no nested translation can clobber it.  The tag
+ * itself is already allocated: block_lookup_translate() does that before it
+ * ever calls translate_block. */
+u32 smc_max_blk_len = 64;   /* longest RAM block seen, bytes (bounds the scan) */
+
+/* UNCONDITIONAL-BRANCH BARRIERS — one bit per halfword.
+ *
+ * TempGBA's insight (cpu.c partial_clear_metadata): no translated block can
+ * span an unconditional branch, because nothing falls through one.  So every
+ * block that could possibly cover an address lies between the nearest
+ * barriers around it — a bound that comes from code GEOMETRY and therefore
+ * cannot be invalidated by our own bookkeeping, which is what defeated every
+ * tag-adjacency scheme (v1-v6).
+ *
+ * gpSP already knows where these are: scan_block reports SMC_SCAN_UNCOND
+ * when it stops on one.  It simply never recorded the position.
+ * IWRAM 32 KiB -> 2 KiB of bits, EWRAM 256 KiB -> 16 KiB. */
+static u8 uncond_iw[0x8000 >> 4];
+static u8 uncond_ew[0x40000 >> 4];
+
+static u8 *uncond_map(u32 gba_addr, u32 *hw_off, u32 *hw_lim)
+{
+  if (gba_addr >= 0x03000000) {
+    *hw_off = (gba_addr & 0x7FFF) >> 1;  *hw_lim = 0x8000 >> 1;
+    return uncond_iw;
+  }
+  *hw_off = (gba_addr & 0x3FFFF) >> 1;   *hw_lim = 0x40000 >> 1;
+  return uncond_ew;
+}
+
+void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
+{
+  u16 *tagp;
+  u32  off;
+
+  if (end_pc > start_pc && (end_pc - start_pc) > smc_max_blk_len)
+    smc_max_blk_len = end_pc - start_pc;
+
+  if (start_pc >= 0x03000000 && start_pc < 0x04000000) {
+    tagp = (u16 *)iwram;   off = (start_pc & 0x7FFF) >> 1;
+  } else if (start_pc >= 0x02000000 && start_pc < 0x03000000) {
+    tagp = (u16 *)(ewram + 0x40000); off = (start_pc & 0x3FFFF) >> 1;
+  } else {
+    return;                              /* ROM block: no RAM tag to annotate */
+  }
+
+  if (VALID_TAG(tagp[off])) {
+    ramtag_type *te = get_ram_tag(tagp[off]);
+    te->blk_start = start_pc;
+    te->blk_end   = end_pc;
+  }
+  (void)thumb;
+}
+
+/* Record "no block spans this point" at a block end that stopped on an
+ * unconditional branch.  Called only for SMC_SCAN_UNCOND. */
+void ramtag_note_barrier(u32 end_pc)
+{
+  u32 h, lim;
+  u8 *map;
+  if (end_pc < 0x02000000 || end_pc >= 0x04000000)
+    return;
+  map = uncond_map(end_pc, &h, &lim);
+  if (h < lim)
+    map[h >> 3] |= (u8)(1u << (h & 7));
+}
+
+/* Partial RAM invalidation (experiment).
+ *
+ * Measured on Pokemon Unbound: one self-modifying ARM block in IWRAM
+ * (030061e4-03006358) patches four words of its own body ~1450x/second, and
+ * every one of those writes wipes the ENTIRE RAM translation cache.  The
+ * telemetry priced the collateral at ~5 block re-translations per write
+ * (xlat ~37000 for ~7040 writes), and dynarec compilation then eats 40-61%
+ * of the frame.
+ *
+ * The tag array doubles as a block map: 0 = no code, CODE_TAG_BLOCK16
+ * (0x0101) = an instruction inside a block, anything greater = a block START
+ * whose value indexes the ramtag table.  So the block covering an address is
+ * found by walking back to the nearest block-start tag and forward to the
+ * end of the tagged run.  Clearing just those tags retires exactly one block;
+ * everything else keeps its translation.
+ *
+ * NOTE ON SAFETY — this is why it is behind a flag and lives in the lab.
+ * translate_block patches DIRECT branches between blocks
+ * (generate_branch_patch_unconditional at the end of translate_block_arm).
+ * If another block already holds a patched jump into the block we retire, it
+ * will keep jumping to the stale translation.  The deterministic frame-dump
+ * oracle in the harness is what decides whether that happens in practice for
+ * this game: identical dump = safe here, different dump = this needs
+ * back-reference bookkeeping before it can ever ship.
+ *
+ * ram_translation_ptr is deliberately NOT rewound — the retired code is
+ * simply abandoned.  The cache-exhaustion path in translate_block already
+ * calls the full flush when it fills, so the leak is self-limiting. */
+static void flush_translation_cache_ram_block(u32 gba_addr)
+{
+  u16 *tagbase, *tagp;
+  u32 off, lim;
+
+  if (gba_addr >= 0x03000000) {          /* IWRAM: tags live 32 KiB below */
+    tagbase = (u16 *)(iwram);
+    off     = (gba_addr & 0x7FFF) >> 1;
+    lim     = 0x8000 >> 1;
+  } else {                               /* EWRAM: tags live at +0x40000 */
+    tagbase = (u16 *)(ewram + 0x40000);
+    off     = (gba_addr & 0x3FFFF) >> 1;
+    lim     = 0x40000 >> 1;
+  }
+
+  tagp = tagbase;
+  if (!tagp[off])                        /* not code after all — nothing to do */
+    return;
+
+  /* WHY A WINDOW AND NOT JUST "THE" BLOCK.
+   *
+   * v1 walked back to the nearest block start and retired that one block.
+   * It ran Unbound at 59.9 fps with a byte-identical video frame — and
+   * silently corrupted audio (hash e9c60c3e vs baseline 358b532f, proven
+   * deterministic by a repeat run).  A trampoline at the retired entry point
+   * changed nothing, which ruled out stale jumps.
+   *
+   * The real flaw: gpSP starts a block at every branch target, so SEVERAL
+   * blocks can span one address.  A block starting further back can reach
+   * across the written word, and its own start tag halts the backward walk,
+   * so v1 never found it.  That block stays live holding stale code — which
+   * is why the M4A sound driver kept playing outdated mixer code while
+   * graphics were unaffected.  The full flush was correct precisely because
+   * it killed every block regardless of overlap.
+   *
+   * A block is at most MAX_BLOCK_SIZE (1024) instructions = 4 KiB, so any
+   * block covering this address must START within 4 KiB behind it.  Retire
+   * every block starting in that window.  Over-invalidation is safe (it only
+   * costs re-translation); under-invalidation is the bug above. */
+  {
+    /* v2 used a flat 4 KiB window (MAX_BLOCK_SIZE) and was CORRECT but slow:
+     * 26.9 fps, worse than the 29.4 baseline, because it retired every block
+     * in the window whether or not it reached the write.
+     *
+     * Tighter and still exact: scan_block tags EVERY instruction slot of a
+     * block, so a block that spans this address has an unbroken run of tags
+     * from its own start all the way through it.  Walking back only while the
+     * tags stay non-zero therefore reaches every block that can possibly
+     * cover the write, and stops dead at the first untagged byte — no block
+     * spans a gap.  A fixed window can only be larger than this, never more
+     * correct. */
+    /* Window bounded by the LONGEST BLOCK SEEN SO FAR, not by tag adjacency.
+     *
+     * Each earlier attempt failed in its own way and this combines what they
+     * proved.  Following the tag run (v3/v5) is fragile: retiring punches
+     * holes in it (v4 -> wrong audio) and never clearing lets the run grow
+     * until the scan covers all of IWRAM (v5 -> the emulator stalled before
+     * its first heartbeat).  A flat 4 KiB window (v2) was correct but retired
+     * everything in it and ran slower than the full flush.
+     *
+     * Any block spanning this address must START no earlier than
+     * smc_max_blk_len bytes behind it — that is a hard bound, independent of
+     * the tag map's shape, so fragmentation cannot defeat it and the scan can
+     * never run away.  Measured blocks here are ~400 bytes, far below the
+     * 4 KiB MAX_BLOCK_SIZE ceiling, so the window stays small.  Coverage is
+     * then tested EXACTLY against each candidate's recorded extent.
+     * Tags are never cleared: they mean "code lives here", which stays true,
+     * and clearing them would blind the SMC check to future writes. */
+    u32 bh, blim;
+    u8 *bmap = uncond_map(gba_addr, &bh, &blim);
+    u32 cap  = (smc_max_blk_len >> 1) + 2;      /* hard ceiling, in slots */
+    u32 lo = off, hi = off, i, steps = 0;
+
+    /* This write may have edited the very instruction a barrier stands on,
+     * so drop barriers across the written word before trusting them. */
+    if (bh < blim) {
+      bmap[bh >> 3]       &= (u8)~(1u << (bh & 7));
+      if (bh + 1 < blim)
+        bmap[(bh+1) >> 3] &= (u8)~(1u << ((bh+1) & 7));
+    }
+
+    /* Walk back to the nearest barrier — provably past every block that can
+     * reach this address.  The cap is a safety valve: if no barrier turns up
+     * within the longest block ever seen, fall back to the full flush rather
+     * than scan further.  Correctness never depends on the walk being short. */
+    while (lo > 0 && steps < cap &&
+           !(bmap[(lo - 1) >> 3] & (1u << ((lo - 1) & 7)))) {
+      lo--; steps++;
+    }
+    if (steps >= cap) {
+      flush_translation_cache_ram();
+      return;
+    }
+
+    while (hi + 1 < lim && tagp[hi + 1] == CODE_TAG_BLOCK16)
+      hi++;                              /* forward to the end of this block */
+
+    for (i = lo; i <= hi; i++) {
+      if (VALID_TAG(tagp[i])) {
+        ramtag_type *te = get_ram_tag(tagp[i]);
+        /* Retire only blocks that genuinely span the written address.  With
+         * a recorded extent this is exact: no missed overlaps (v1's audio
+         * corruption) and no needless retirements (v2 being slower than the
+         * full flush).  Blocks with no extent recorded are retired anyway —
+         * unknown means assume guilty. */
+        if (!te->blk_end ||
+            (gba_addr >= te->blk_start && gba_addr < te->blk_end)) {
+          /* Retire by clearing the CACHE OFFSETS only — never the tags.
+           *
+           * v4 zeroed the retired block's tags and was still wrong (a third
+           * audio hash, 50bdf44f).  Reason: the walk-back above relies on an
+           * unbroken run of tags from a block's start through the written
+           * address, and zeroing tags punches holes in runs that OTHER,
+           * overlapping blocks still depend on — so the next write stops
+           * early at the hole and misses blocks starting before it.  Our own
+           * bookkeeping was destroying the map we navigate by.
+           *
+           * The tag only needs to mean "code lives at this halfword", which
+           * stays true.  block_lookup_translate reuses the existing tag when
+           * VALID_TAG holds and re-translates whenever the offset is 0, so
+           * clearing the offset alone is a complete retirement — and the tag
+           * map stays contiguous forever. */
+          te->offset_arm   = 0;
+          te->offset_thumb = 0;
+          flush_ram_partial++;
+        }
+      }
+    }
+
+    /* MAKE THE RE-TRANSLATION CHEAP, not just rare.
+     *
+     * Measured: correct invalidation alone gets 31.5 fps vs 29.4 baseline —
+     * only 7%.  Retiring the right blocks was never the expensive part; the
+     * cost is recompiling ONE 372-byte self-modifying routine ~1450 times a
+     * second.  The 59.9 fps variants were fast only because they skipped
+     * that necessary work.
+     *
+     * gpSP already supports translation gates (scan_block stops when
+     * block_end_pc hits one) but nothing ever populates the list.  Adding a
+     * gate at the written address splits future blocks there, so the word
+     * being patched sits on a block boundary and only a SMALL block has to be
+     * rebuilt each time instead of the whole routine.  This is what TempGBA's
+     * partial_flush_ram_stub does after its partial clear.
+     *
+     * 8 slots, and Unbound's storm is 4 addresses, so they fit. */
+    {
+      u32 gpc = gba_addr & ~3u, g;
+      for (g = 0; g < translation_gate_targets; g++)
+        if (translation_gate_target_pc[g] == gpc)
+          break;
+      if (g == translation_gate_targets &&
+          translation_gate_targets < MAX_TRANSLATION_GATES)
+        translation_gate_target_pc[translation_gate_targets++] = gpc;
+    }
+    return;
+  }
+#if 0  /* v1, kept for the record — see the comment above for why it is wrong */
+  while (off > 0 && tagp[off] == CODE_TAG_BLOCK16)
+    off--;
+
+  if (!VALID_TAG(tagp[off])) {
+    flush_translation_cache_ram();
+    return;
+  }
+
+  {
+    ramtag_type *trentry = get_ram_tag(tagp[off]);
+    /* THE CORRECTNESS PIECE.  Clearing the tag alone is NOT enough: other
+     * blocks hold patched DIRECT jumps into this block's entry point, and
+     * they would keep running the stale translation.  Measured consequence:
+     * Unbound's video stayed byte-identical while its audio hash changed
+     * (e9c60c3e vs 358b532f) because the M4A sound driver in IWRAM is
+     * exactly the self-modifying code being retired.
+     *
+     * So leave a TRAMPOLINE at the old entry point instead of abandoning it.
+     * gpSP only ever patches branches to block STARTS, so every stale jump
+     * lands here and gets re-dispatched through the normal lookup, which
+     * re-translates the modified code.  4 instructions, written once per
+     * retirement. */
+    u32 blk_pc = ((gba_addr >= 0x03000000) ? 0x03000000 : 0x02000000)
+               + (off << 1);
+    unsigned k;
+    for (k = 0; k < 2; k++)
+    {
+      u32 coff = k ? trentry->offset_thumb : trentry->offset_arm;
+      if (coff)
+      {
+        u8 *entry = &ram_translation_cache[coff];
+        u8 *translation_ptr = entry;
+        mips_emit_lui(reg_a0, (blk_pc >> 16) & 0xFFFF);
+        mips_emit_ori(reg_a0, reg_a0, blk_pc & 0xFFFF);
+        mips_emit_j(((u32)(k ? &mips_indirect_branch_thumb
+                             : &mips_indirect_branch_arm)) >> 2);
+        mips_emit_nop();
+        platform_cache_sync(entry, translation_ptr);
+      }
+    }
+    trentry->offset_arm   = 0;
+    trentry->offset_thumb = 0;
+  }
+
+  tagp[off++] = 0;                       /* retire the start ... */
+  while (off < lim && tagp[off] == CODE_TAG_BLOCK16)
+    tagp[off++] = 0;                     /* ... and its instruction run */
+
+  flush_ram_partial++;
+#endif  /* v1 */
+}
+#endif
+
 void flush_translation_cache_ram_smc(void)
 {
   flush_ram_smc++;
+#ifdef SMC_PARTIAL
+  flush_translation_cache_ram_block(smc_last_write_addr);
+#else
   flush_translation_cache_ram();
+#endif
 }
 
 void flush_translation_cache_ram_dma(void)

@@ -61,6 +61,12 @@ u32 flush_rom_total = 0;
 u32 flush_ram_full = 0;
 u32 flush_ram_smc = 0;   /* CPU store from translated code */
 u32 flush_ram_dma = 0;   /* DMA into tagged IWRAM/EWRAM */
+/* Where the CPU store that triggered the flush landed, as a real GBA address.
+ * smc_prof_note_store() already derives it and runs immediately before
+ * flush_translation_cache_ram_smc() in the smc_write stub, so the partial
+ * invalidation path can retire just the block covering it. */
+u32 smc_last_write_addr = 0;
+u32 flush_ram_partial = 0;   /* single-block retirements (SMC_PARTIAL) */
 
 /* ---------------------------------------------------------------------------
  * ADR-0030: SMC write-ADDRESS profile.
@@ -170,14 +176,16 @@ void smc_prof_note_store(u32 base, u32 off)
      * Thumb -- i.e. the GBA PC of the instruction doing the write.  Only the
      * CPU-store path reaches here; DMA writes go through write_io_epilogue and
      * are already counted separately as flush_ram_dma. */
-    smc_blk_note_writer(0x03000000 + (off & 0x7FFF), reg[REG_PC]);
-    smc_blk_check_silent(0x03000000 + (off & 0x7FFF));
+    smc_last_write_addr = 0x03000000 + (off & 0x7FFF);
+    smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
+    smc_blk_check_silent(smc_last_write_addr);
   }
   else if (lui == smc_prof_lui_ewram)
   {
     smc_prof_note_ewram(off);
-    smc_blk_note_writer(0x02000000 + (off & 0x3FFFF), reg[REG_PC]);
-    smc_blk_check_silent(0x02000000 + (off & 0x3FFFF));
+    smc_last_write_addr = 0x02000000 + (off & 0x3FFFF);
+    smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
+    smc_blk_check_silent(smc_last_write_addr);
   }
   else
     smc_prof_hits_oth++;
@@ -268,6 +276,12 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
  * about to flush the entire translation cache.  No behaviour change. */
 u32 smc_blk_watch = SMC_BLK_WATCH_DEFAULT;
 u32 smc_blk_xlat  = 0;   /* RAM blocks translated since the last take */
+/* Same count, but NEVER reset by a take — the on-screen profiler needs a
+ * monotonic source it can difference itself.  This is the re-translation
+ * churn a RAM cache wipe forces, and it is the one cost `smc_flush_us` does
+ * NOT include (that times only the tag memset, which measured ~1% on
+ * Unbound while the wipes ran at ~1700/s). */
+u32 smc_blk_xlat_total = 0;
 
 u32 (*smc_prof_clock)(void) = NULL;
 u32 smc_flush_us    = 0;
@@ -376,6 +390,17 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
 {
   unsigned i;
   smc_blk_xlat++;
+  smc_blk_xlat_total++;
+#ifdef SMC_PARTIAL
+  /* Hand the block's source extent to the tag table while it is still this
+   * block's — external-exit resolution below can recursively translate other
+   * blocks and would otherwise overwrite it. */
+  ramtag_note_extent(start_pc, end_pc, thumb);
+  /* And record the block end as a barrier when the scan stopped on an
+   * unconditional branch: nothing falls through one, so no block can span it. */
+  if (reason == SMC_SCAN_UNCOND)
+    ramtag_note_barrier(end_pc);
+#endif
   /* Does the range scan_block just tagged overlap the watched page? */
   if (!smc_blk_watch ||
       start_pc >= smc_blk_watch + SMC_BLK_WATCH_SIZE || end_pc <= smc_blk_watch)
@@ -516,6 +541,7 @@ u32 core_phase_lvl    = CORE_PHASE_OFF;
 u32 core_phase_clk_ns = 0;
 
 u32 cph_vid, cph_amix, cph_dsnd, cph_jit;
+u32 cph_jit_total;   /* monotonic; never reset by core_phase_take() */
 u32 cph_reads;
 u32 cph_bkr, cph_bkw;
 u32 cph_rfux, cph_rfut;   /* ADR-0051: rfu_transfer() calls / us this frame */
@@ -560,7 +586,16 @@ void core_phase_leave(u32 lvl, u32 *acc, u32 t0)
   if (--cph_depth)
     return;
   cph_reads++;
-  *acc += smc_prof_clock() - t0;
+  {
+    u32 dt = smc_prof_clock() - t0;
+    *acc += dt;
+    /* Monotonic mirror for the JIT bracket only, so the on-screen profiler
+     * can difference it without racing core_phase_take()'s reset.  This is
+     * dynarec COMPILATION time — the cost that `smc_flush_us` does not
+     * include and that the RAM-cache wipes force us to pay over and over. */
+    if (acc == &cph_jit)
+      cph_jit_total += dt;
+  }
 }
 
 void core_phase_set_level(unsigned lvl)

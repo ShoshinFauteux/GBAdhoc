@@ -129,10 +129,16 @@ you're both holding GBAs with Wireless Adapters.
 
 **Settings tour:** dark and light **themes** (applies instantly), an **FPS
 counter** that reads the true emulation speed — during fast-forward it shows
-the real emulated rate, not the display cadence, and if a cart is paging off
-the memory stick it shows that too — plus **fast-forward** (1.5x / 3x /
-uncapped, fully working in Media Engine mode), an A/B button-swap, and video
-scale/filter options.
+the real emulated rate, not the display cadence, and the number in brackets is
+how many frames were actually drawn — plus **fast-forward**, an A/B
+button-swap, and video scale/filter options.
+
+**Smooth fast-forward.** The Fast-forward setting offers six values: `1.5x`,
+`3x` and `uncapped`, each also available as **smooth**. Ordinary fast-forward
+skips frames to buy speed, which is why it looks like a slideshow on every
+handheld emulator. Smooth mode draws *every* frame instead — a lower top speed,
+but fast motion rather than a strobe. It is affordable here specifically
+because the Media Engine is doing the drawing on the second core.
 
 Pokémon **Emerald** is the validated flagship — trades and clean session
 exits are regression-tested on real hardware. Other RFU-aware games should

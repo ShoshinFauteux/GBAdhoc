@@ -404,6 +404,16 @@ static const char *ff_mult_name(int x10)
    }
 }
 
+/* Speed and style share one row: six values, no extra line on a settings
+ * page that is already full to the pixel. */
+static const char *ff_mode_name(void)
+{
+   static char buf[20];
+   snprintf(buf, sizeof(buf), "%s%s", ff_mult_name(g_pcfg.ff_mult_x10),
+            g_pcfg.ff_smooth ? " smooth" : "");
+   return buf;
+}
+
 static void settings_adjust(int id, int dir)
 {
    switch (id)
@@ -442,13 +452,19 @@ static void settings_adjust(int id, int dir)
       /* 2x retired: it froze the ME-mode display across three separate
        * present implementations while 1.5x/3x/uncapped all behave.  Rather
        * than ship a haunted speed tier, it no longer exists. */
+      /* The row cycles speed THEN style: 1.5x, 3x, uncapped, then the same
+       * three "smooth" (frameskip off — every emulated frame is rendered). */
       static const int vals[3] = { 15, 30, 0 };
-      int i;
+      int i, idx;
       for (i = 0; i < 3; i++)
          if (vals[i] == g_pcfg.ff_mult_x10)
             break;
-      i = (i + 3 + dir) % 3;
-      g_pcfg.ff_mult_x10 = vals[i];
+      if (i == 3)
+         i = 0;
+      idx = (g_pcfg.ff_smooth ? 3 : 0) + i;
+      idx = (idx + 6 + dir) % 6;
+      g_pcfg.ff_smooth   = (idx >= 3);
+      g_pcfg.ff_mult_x10 = vals[idx % 3];
       break;
    }
    case SET_FFMODE:
@@ -530,8 +546,7 @@ static ui_action screen_settings(unsigned edges)
              vid_filter_name(g_pcfg.filter));
          break;
       case SET_FFMULT:
-         row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
-             ff_mult_name(g_pcfg.ff_mult_x10));
+         row(36, y, 408, g_cursor == i, 1, set_rows[i].label, ff_mode_name());
          break;
       case SET_FFMODE:
          row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
