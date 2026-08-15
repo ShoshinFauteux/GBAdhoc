@@ -68,6 +68,9 @@ void pcfg_load(const char *ini_path)
                                             VID_FILTER_NEAREST);
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 15);
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
+   g_pcfg.frameskip_sparse = (int)fe_ini_get_int(cfg_path, "frameskip_sparse", 0);
+   if (g_pcfg.frameskip_sparse < 0 || g_pcfg.frameskip_sparse > 15)
+      g_pcfg.frameskip_sparse = 0;
    g_pcfg.ff_smooth   = (int)fe_ini_get_int(cfg_path, "ff_smooth", 0) ? 1 : 0;
    g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
@@ -257,6 +260,7 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "filter", g_pcfg.filter);
    fe_ini_set_int(cfg_path, "ff_mult_x10", g_pcfg.ff_mult_x10);
    fe_ini_set_int(cfg_path, "ff_hold", g_pcfg.ff_hold);
+   fe_ini_set_int(cfg_path, "frameskip_sparse", g_pcfg.frameskip_sparse);
    fe_ini_set_int(cfg_path, "ff_smooth", g_pcfg.ff_smooth);
    fe_ini_set_int(cfg_path, "ff_audio", g_pcfg.ff_audio);
    fe_ini_set_int(cfg_path, "theme", g_pcfg.theme);

@@ -267,6 +267,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_PARTIAL),1)
 	CFLAGS += -DSMC_PARTIAL
 	endif
+	# SMC_GATES=1: add a translation gate at each self-modified address so
+	# future blocks split there.  Independent of SMC_PARTIAL on purpose —
+	# gates are what bought Unbound its speed AND what broke its audio, so
+	# the two must be testable separately.
+	ifeq ($(SMC_GATES),1)
+	CFLAGS += -DSMC_GATES
+	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
 	# core decides the layout, the frontend's blit assumes it, and nothing
 	# at link time checks.  Build both with `make PSP_PIXFMT=rgb565` to get

@@ -2485,7 +2485,20 @@ static void skip_policy_reapply(void)
 {
    if (!g_net_up || !g_skip_engaged)
    {
-      skip_policy_set("disabled");
+      /* Outside a session, honour the sparse smoothing skip if the user asked
+       * for one: draw N frames, skip 1.  A game a few fps short of 60 gets its
+       * headroom back without the visible hitch that halving the rate causes.
+       * A wireless session overrides it — the session's own skip policy is
+       * about staying in step with the other console, which wins. */
+      if (g_pcfg.frameskip_sparse > 0)
+      {
+         char n[8];
+         snprintf(n, sizeof(n), "%d", g_pcfg.frameskip_sparse);
+         fe_host_option_set_live("gpsp_frameskip_interval", n);
+         skip_policy_set("sparse_interval");
+      }
+      else
+         skip_policy_set("disabled");
       return;
    }
    if (g_pcfg.net_frameskip == SKIP_POL_AUTO)

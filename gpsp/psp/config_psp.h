@@ -93,6 +93,12 @@ typedef struct
     * every emulated frame is actually rendered.  Lower peak multiplier,
     * but FF *looks* like fast motion instead of a slideshow.  Only the
     * dual-core renderer makes smooth affordable at all. */
+   /* Sparse frameskip for NORMAL play: draw N frames, skip 1.  0 = off.
+    * For a game sitting just under 60, halving the frame rate (ordinary
+    * frameskip) reads as a hitch, while dropping 1 frame in 4 or 8 recovers
+    * headroom and still looks smooth.  Suggested: 7 (87.5% drawn) for a small
+    * nudge, 3 (75%) for a real one. */
+   int  frameskip_sparse;
    int  ff_smooth;
    /* Keep audio running during fast-forward (default 0 = mute, the shipped
     * behaviour).  Exists for benchmark parity: an emulator that mutes during

@@ -2501,6 +2501,15 @@ void translate_icache_sync() {
 
 #define VALID_TAG(tagn) (tagn > LAST_TAG_NUM)
 
+#ifdef SMC_PARTIAL
+/* ram_translation_ptr has advanced past the block just emitted, so the size is
+ * simply the distance from its entry point. */
+#define SMC_NOTE_CODE_BYTES(te, blkptr)                                       \
+  (te)->code_bytes = (u32)(ram_translation_ptr - (blkptr))
+#else
+#define SMC_NOTE_CODE_BYTES(te, blkptr)  do { } while (0)
+#endif
+
 #define allocate_tag_arm(location) {   \
   location[0] = ram_block_tag;         \
   /* Could be another thumb inst */    \
@@ -2528,6 +2537,9 @@ typedef struct
    * the full flush it replaced). */
   u32 blk_start;
   u32 blk_end;
+  u32 code_bytes;   /* translated size, so the retire path knows whether an
+                     * entry-point trampoline fits without clobbering the
+                     * block emitted after it */
 #endif
 } ramtag_type;
 
@@ -2595,8 +2607,10 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         result = translate_block_##type(pc, true);                            \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
-        if (result)                                                           \
+        if (result) {                                                         \
+          SMC_NOTE_CODE_BYTES(trentry, blkptr);                               \
           return blkptr;                                                      \
+        }                                                                     \
       } else {                                                                \
         return &ram_translation_cache[trentry->offset_##type];                \
       }                                                                       \
@@ -2639,7 +2653,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
         if (result)                                                           \
-          return blkptr;                                                      \
+          return blkptr;   /* ROM block: never retired, no size needed */     \
       }                                                                       \
       return NULL;                                                            \
     }                                                                         \
@@ -3670,6 +3684,47 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
            * VALID_TAG holds and re-translates whenever the offset is 0, so
            * clearing the offset alone is a complete retirement — and the tag
            * map stays contiguous forever. */
+          /* LEAVE A TRAMPOLINE AT THE OLD ENTRY POINT.
+           *
+           * Retiring by clearing offsets is enough only while nothing holds a
+           * patched direct jump into this block.  Translation gates break that
+           * assumption on purpose: they make the self-modified addresses into
+           * block STARTS, and block starts are the only thing
+           * generate_branch_patch_unconditional ever targets.  So the gates
+           * manufacture inbound jumps pointing exactly at the words the sound
+           * driver rewrites — and a retired block still gets entered through
+           * them, running the stale translation.  Audible as music that plays
+           * correctly, screeches, recovers, screeches: dispatcher entry is
+           * fine, stale-jump entry is garbage.
+           *
+           * Overwriting the entry with a jump to the block-lookup dispatcher
+           * makes every stale jump land somewhere that re-translates the
+           * modified code.  (Tried once before against a DIFFERENT bug —
+           * missed overlapping blocks — where it correctly changed nothing.) */
+          /* SIZE GUARD.  The trampoline is 4 instructions = 16 bytes.  A block
+           * whose translation is shorter than that would have the trampoline
+           * spill into whatever was emitted next — and translation gates make
+           * short blocks common by design, because they deliberately split at
+           * the self-modified words.  Corrupting a neighbouring block is
+           * exactly the kind of damage that shows up as intermittently
+           * mangled audio, so refuse to write one that does not fit and take
+           * the safe full flush instead. */
+          if (te->blk_start && te->code_bytes >= 16) {
+            unsigned k;
+            for (k = 0; k < 2; k++) {
+              u32 coff = k ? te->offset_thumb : te->offset_arm;
+              if (coff) {
+                u8 *entry = &ram_translation_cache[coff];
+                u8 *translation_ptr = entry;
+                mips_emit_lui(reg_a0, (te->blk_start >> 16) & 0xFFFF);
+                mips_emit_ori(reg_a0, reg_a0, te->blk_start & 0xFFFF);
+                mips_emit_j(((u32)(k ? &mips_indirect_branch_thumb
+                                     : &mips_indirect_branch_arm)) >> 2);
+                mips_emit_nop();
+                platform_cache_sync(entry, translation_ptr);
+              }
+            }
+          }
           te->offset_arm   = 0;
           te->offset_thumb = 0;
           flush_ram_partial++;
@@ -3693,15 +3748,8 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
      * partial_flush_ram_stub does after its partial clear.
      *
      * 8 slots, and Unbound's storm is 4 addresses, so they fit. */
-    {
-      u32 gpc = gba_addr & ~3u, g;
-      for (g = 0; g < translation_gate_targets; g++)
-        if (translation_gate_target_pc[g] == gpc)
-          break;
-      if (g == translation_gate_targets &&
-          translation_gate_targets < MAX_TRANSLATION_GATES)
-        translation_gate_target_pc[translation_gate_targets++] = gpc;
-    }
+    /* (gate insertion now lives in flush_translation_cache_ram_smc, behind
+     * SMC_GATES, so gates and partial invalidation can be A/B'd separately) */
     return;
   }
 #if 0  /* v1, kept for the record — see the comment above for why it is wrong */
@@ -3758,9 +3806,30 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
 }
 #endif
 
+#ifdef SMC_GATES
+/* Split future blocks at the self-modified address, so each rebuild is a small
+ * block instead of the whole routine.  Hoisted OUT of the partial-invalidation
+ * path so the two can be tested independently: gates alone change block
+ * boundaries (and therefore when timers/DMA get serviced), which is the
+ * remaining suspect for Unbound's mangled audio now that stale jumps are
+ * ruled out. */
+static void smc_add_gate(u32 gba_addr)
+{
+  u32 gpc = gba_addr & ~3u, g;
+  for (g = 0; g < translation_gate_targets; g++)
+    if (translation_gate_target_pc[g] == gpc)
+      return;
+  if (translation_gate_targets < MAX_TRANSLATION_GATES)
+    translation_gate_target_pc[translation_gate_targets++] = gpc;
+}
+#endif
+
 void flush_translation_cache_ram_smc(void)
 {
   flush_ram_smc++;
+#ifdef SMC_GATES
+  smc_add_gate(smc_last_write_addr);
+#endif
 #ifdef SMC_PARTIAL
   flush_translation_cache_ram_block(smc_last_write_addr);
 #else

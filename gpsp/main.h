@@ -50,7 +50,13 @@ typedef enum
   no_frameskip = 0,
   auto_frameskip,
   auto_threshold_frameskip,
-  fixed_interval_frameskip
+  fixed_interval_frameskip,
+  /* DRAW n, SKIP 1 — the inverse of fixed_interval, which counts skips and so
+   * cannot express a light touch (its interval 1 is already 50 % skipped).
+   * A game sitting just under 60 needs to shed a little work, not half of it;
+   * dropping 1 frame in 4 recovers headroom while staying visually smooth,
+   * where halving the frame rate reads as a hitch. */
+  sparse_interval_frameskip
 } frameskip_type;
 
 typedef enum

@@ -187,7 +187,10 @@ static void init_frameskip(void)
    {
       bool calculate_audio_latency = true;
 
-      if (current_frameskip_type == fixed_interval_frameskip)
+      /* Both deterministic modes are open-loop — they ignore buffer status,
+       * so do not ask the frontend for it. */
+      if (current_frameskip_type == fixed_interval_frameskip ||
+          current_frameskip_type == sparse_interval_frameskip)
          environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, NULL);
       else
       {
@@ -1067,6 +1070,8 @@ static void check_variables(bool started_from_load)
          current_frameskip_type = auto_threshold_frameskip;
       else if (!strcmp(var.value, "fixed_interval"))
          current_frameskip_type = fixed_interval_frameskip;
+      else if (!strcmp(var.value, "sparse_interval"))
+         current_frameskip_type = sparse_interval_frameskip;
    }
 
    var.key             = "gpsp_frameskip_threshold";
@@ -1415,6 +1420,27 @@ void retro_run(void)
             else
             {
                skip_next_frame   = 0;
+               frameskip_counter = 0;
+            }
+
+            break;
+
+         case sparse_interval_frameskip:
+
+            /* Inverse of the above: draw `frameskip_interval` frames, then
+             * skip exactly one.  interval 3 => draw,draw,draw,skip (75 % of
+             * frames drawn), interval 7 => 87.5 %.  Interval 0 degenerates to
+             * "skip every frame", so treat it as no skipping at all. */
+            if (frameskip_interval == 0)
+               skip_next_frame = 0;
+            else if (frameskip_counter < frameskip_interval)
+            {
+               skip_next_frame   = 0;
+               frameskip_counter++;
+            }
+            else
+            {
+               skip_next_frame   = 1;
                frameskip_counter = 0;
             }
 

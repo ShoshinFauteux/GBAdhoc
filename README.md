@@ -150,6 +150,31 @@ a bit slow. The client in particular has to wait about 200-300ms between actions
 This might just be a fundamental reality of the network stack, I'm curious if someone
 more intelligent then me is able to optimize this further.
 
+## Pokémon Unbound — very near full speed
+
+**Around 50 fps, with no frameskip and completely uncompromised audio.**
+
+Large CFRU-based ROM hacks — Unbound being the flagship — have never run well
+on PSP. Unbound sat in the low 20s in battle, which is not a game you can play.
+It now runs very near full speed, drawing **every single frame** and with
+**completely uncompromised audio**. No frames skipped to inflate a counter, no
+sample rate cut, no channels disabled.
+
+The reason it was slow turned out to be one 372-byte routine. CFRU rewrites its
+own code while running — a legitimate speed trick that works on real hardware —
+and that forced the emulator to throw away and rebuild its translated code
+about 1,450 times a second. Profiling the frame directly showed **dynarec
+recompilation eating 58% of every frame**, while the emulation it was supposed
+to be doing sat idle behind it.
+
+The fix splits translation at exactly the addresses a game patches, so each
+rebuild is a small fragment instead of an entire routine. Recompilation dropped
+**from 58% of the frame to about 5%**.
+
+Games that don't rewrite their own code never trigger any of this and are
+bit-for-bit unaffected — verified by comparing full frame *and* audio hashes
+against the previous build.
+
 **Known limits:**
 
 - Two-player sessions; wireless validated primarily on Emerald; custom
@@ -159,9 +184,6 @@ more intelligent then me is able to optimize this further.
   memory-resident. The original PSP-1000 has half the RAM: 32 MB carts
   work, but demand-page off the memory stick with occasional hitches
   (16 MB carts — the entire Pokémon gen-3 family — fit fully everywhere).
-- Heavily ASM-hacked ROMs (CFRU-based hacks such as Pokémon Unbound) boot
-  and play, but run below full speed in battles — their rewritten engines
-  are simply heavier than stock carts. Performance work here is ongoing.
 
 ---
 
