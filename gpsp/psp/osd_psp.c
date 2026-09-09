@@ -84,7 +84,7 @@ void osd_draw(void)
    if (toast_count)
    {
       const char *msg = toast_q[toast_head];
-      int tw = (int)strlen(msg) * FE_FONT_W;
+      int tw = vid_text_w(msg);
       int px = (VID_SCR_W - tw) / 2 - 8;
       int pw = tw + 16;
       vid_rect(px, 6, pw, FE_FONT_H + 8, COL_PANEL, 200);
@@ -103,14 +103,14 @@ void osd_draw(void)
    {
       /* Top-left, mirroring the FF chip's top-right — the two are designed
        * to be on screen together (FPS is most interesting DURING FF). */
-      int tw = (int)strlen(chip_fps_txt) * FE_FONT_W;
+      int tw = vid_text_w(chip_fps_txt);
       vid_rect(10, 6, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
       vid_text(16, 8, chip_fps_txt, COL_TEXT);
    }
 
    if (chip_ff_txt[0])
    {
-      int tw = (int)strlen(chip_ff_txt) * FE_FONT_W;
+      int tw = vid_text_w(chip_ff_txt);
       int px = VID_SCR_W - tw - 14;
       vid_rect(px - 4, 6, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
       vid_text(px + 2, 8, chip_ff_txt, COL_FF);
@@ -118,7 +118,7 @@ void osd_draw(void)
 
    if (chip_session_txt[0])
    {
-      int tw = (int)strlen(chip_session_txt) * FE_FONT_W;
+      int tw = vid_text_w(chip_session_txt);
       int px = VID_SCR_W - tw - 14;
       int py = VID_SCR_H - FE_FONT_H - 8;
       vid_rect(px - 4, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);

@@ -21,7 +21,28 @@ int  fe_evt_init(const char *path, int echo_stderr);
 void fe_evt_close(void);
 
 /* Structured event: emits "EVT " + formatted line + "\n", then fflush. */
+/* ADR-0067b: with telemetry compiled out, a call site should not survive at
+ * all.  The stub function version still cost a call and full varargs setup at
+ * every site, and kept every format string in .rodata -- and it still
+ * EVALUATED the arguments, which for `fe_evt("sram_load crc=%08x", sram_crc())`
+ * means CRCing 128 KB for a line nobody will ever read.
+ *
+ * Verified safe before doing this: no fe_evt call site in the tree mutates
+ * state in its arguments, so discarding them changes nothing.
+ *
+ * Derived in the HEADER, not in fe_evt.c, because callers need to agree with
+ * the implementation about which one they are getting -- putting this
+ * derivation where only the implementation could see it is the exact bug
+ * ADR-0067 records (a "telemetry-free" build that linked the whole logger). */
+#if defined(GPSP_PLAYABLE) && !defined(GPSP_NO_TELEMETRY) &&     !defined(GPSP_KEEP_TELEMETRY)
+#define GPSP_NO_TELEMETRY 1
+#endif
+
+#ifdef GPSP_NO_TELEMETRY
+#define fe_evt(...)   ((void)0)
+#else
 void fe_evt(const char *fmt, ...);
+#endif
 
 /* Free-form info line (not an EVT marker): "LOG " prefix, also flushed. */
 void fe_log(const char *fmt, ...);

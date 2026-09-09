@@ -7,9 +7,15 @@
  * translation unit that uses it, because a `#define` in psp/main_psp.c is
  * invisible to this file — the first version of this change put it there and
  * produced a "telemetry-free" build that linked the whole logger. */
-#if defined(GPSP_PLAYABLE) && !defined(GPSP_NO_TELEMETRY)
-#define GPSP_NO_TELEMETRY 1
-#endif
+/* GPSP_NO_TELEMETRY is derived in fe_evt.h now, so call sites and this
+ * implementation cannot disagree about it.  GPSP_KEEP_TELEMETRY is the
+ * diagnostic escape hatch: player DEFAULTS with the log still attached, which
+ * is the only way the PLAY_* behaviour and the evidence for it can exist in
+ * one binary.  A real playable build never passes it.
+ *
+ * The definition below must compile either way, so the no-op macro is undone
+ * for this file alone; with telemetry off nothing calls the result. */
+#undef fe_evt
 
 static FILE *evt_file    = NULL;
 static int   evt_echo    = 0;

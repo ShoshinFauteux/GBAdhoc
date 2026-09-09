@@ -20,6 +20,7 @@ OBJS = main_psp.o usb_handoff.o \
        ui_psp.o \
        config_psp.o \
        font_8x16.o \
+       stb_impl.o \
        netdrv_core.o \
        transport_adhoc.o \
        ../frontend-common/fe_host.o \

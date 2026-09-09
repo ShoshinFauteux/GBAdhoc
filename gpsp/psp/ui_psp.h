@@ -47,8 +47,15 @@ const char *ui_group(void);
 
 /* Blocking pre-game ROM browser (generic build with no baked ROM and no
  * harness). Fills out with the full ROM path. Returns 0 on pick, -1 on
- * exit request / empty dir. */
+ * exit request / empty dir, and 1 when START->SETTINGS changed something
+ * only read at boot (Media Engine mode) and the app must relaunch. */
 int ui_browser(const char *rom_dir, char *out, size_t out_sz);
+
+/* Wake-from-sleep overlay: the frozen frame with a plate over it.
+ * `frame` may be NULL (nothing was captured), in which case the plate sits
+ * on the theme background.  Returns 0 to resume, 1 for the game list. */
+int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
+                 const char *game);
 
 /* Harness self-drive (.gpsp-harness.ini ui_demo=1): scripted walk through
  * menu -> settings (cycle scale) -> wireless -> resume, with EVT markers

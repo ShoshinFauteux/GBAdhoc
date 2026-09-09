@@ -40,6 +40,10 @@ typedef struct fe_np_config
  * or the protocol version is missing. */
 int fe_np_start(const fe_np_config *cfg);
 
+/* Short human-readable reason for the last fe_np_start() failure, for the
+ * frontend to show.  Never NULL. */
+const char *fe_np_start_reason(void);
+
 /* ADR-0062: override netdrv's ARQ timers before fe_np_start(). Microseconds;
  * 0 = leave the build-time ND_* default. See the comment at the definition. */
 void fe_np_set_arq_timers(uint32_t rto_first_max_us, uint32_t rto_min_us);

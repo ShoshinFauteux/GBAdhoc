@@ -2307,6 +2307,31 @@ static void emit_pmemst_stub(
     mips_emit_addu(reg_rv, reg_rv, reg_a0);    // Adds to base addr
   }
 
+  /* VRAM DIRTY MARKING (region 6 only).
+   *
+   * The ME re-copies all 96 KB of VRAM every frame while a consecutive-frame
+   * compare says only 0.1-0.5 of 96 pages actually change -- ~1.4 ms/frame of
+   * pure waste. Marking has to happen HERE: a coverage probe measured
+   * marks=0 from the C write_vram macros and the DMA path, i.e. essentially
+   * every VRAM store a game performs arrives through this stub.
+   *
+   * Placement: after the region-6 address arithmetic above, reg_a0 holds the
+   * adjusted VRAM offset and is dead (the store below uses reg_rv), and
+   * reg_temp is dead. Region 6 has check_smc = false, so nothing here sits in
+   * a branch delay slot.
+   *
+   * Cost: 4 instructions per VRAM store. `sb $zero` is why the map is
+   * inverted (1 = clean) -- there is no register holding a known-nonzero
+   * byte at this point, and making one would cost a 5th.
+   */
+  if (region == 6) {
+    u32 dbase = (u32)vram_clean;
+    mips_emit_srl(reg_temp, reg_a0, VRAM_DIRTY_SHIFT);   /* page index */
+    mips_emit_lui(reg_a0, ((dbase + 0x8000) >> 16));     /* a0 is dead here */
+    mips_emit_addu(reg_a0, reg_a0, reg_temp);
+    mips_emit_sb(reg_zero, reg_a0, dbase);               /* clean[page] = 0 */
+  }
+
   // Generate SMC write and tracking
   // TODO: Should we have SMC checks here also for aligned?
   if (meminfo->check_smc && !aligned) {

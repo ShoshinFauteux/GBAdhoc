@@ -53,7 +53,13 @@ enum
    ADHOC_ERR_MAC             = -10,  /* sceWlanGetEtherAddr failed */
    ADHOC_ERR_PDP             = -11,  /* sceNetAdhocPdpCreate failed */
    ADHOC_ERR_RX_THREAD       = -12,  /* RX thread create/start failed */
-   ADHOC_ERR_ALREADY         = -13   /* init while already up */
+   ADHOC_ERR_ALREADY         = -13,  /* init while already up */
+   /* Not a transport error -- the frontend's netdrv failed to start after the
+    * radio came up fine.  It lives in this enum because net_bringup() returns
+    * one code for the whole ladder, and it exists because returning -1 here
+    * collided with ADHOC_ERR_WLAN_OFF and produced a "WLAN switch is OFF"
+    * message on a console whose switch was on. */
+   ADHOC_ERR_NP_START        = -14
 };
 
 typedef struct adhoc_stats

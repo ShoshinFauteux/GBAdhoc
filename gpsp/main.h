@@ -299,6 +299,11 @@ void rand_seed(u32 data);
 #define cycles_to_run(c) ((c) & 0x7FFF)
 #define completed_frame(c) ((c) & 0x80000000)
 u32 function_cc update_gba(int remaining_cycles);
+
+/* Fired when vcount reaches 160: the visible lines are emulated and the ME
+ * capture is complete. Weak, so builds without a frontend hook pay nothing.
+ */
+void gpsp_visible_done_hook(void);
 void reset_gba(void);
 
 void init_main(void);

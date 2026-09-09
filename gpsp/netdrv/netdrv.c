@@ -268,6 +268,7 @@ struct netdrv
 
    nd_stats st;
 
+   int      from_arena;              /* built in the host's reserved block */
    uint8_t  scratch[ND_MAX_FRAME];   /* tx build buffer */
    uint8_t  rxbuf[ND_MAX_FRAME + 64];/* rx buffer (+ slack to detect oversize) */
 };
@@ -475,6 +476,30 @@ static void txq_push(netdrv *nd, nd_peer *p, const void *buf, uint16_t len)
       nd_xmit_peer(nd, p, ND_T_DATA, s->seq, p->txpay[ix], s->len);
       nd->st.tx_data++;
       s->first_tx_us = nd->now;
+      /* HOW STALE IS THE STAMP WE JUST USED?
+       *
+       * nd->now is assigned in exactly one place -- the top of netdrv_pump.
+       * This send is happening mid-retro_run, well after that, so
+       * first_tx_us is backdated by however long ago the last pump was. The
+       * ack side is quantised the same way, and both biases are positive,
+       * so the reported srtt is a strict OVER-estimate of the true round
+       * trip. The desktop rig reports srtt ~= one emulated frame on UDP
+       * LOOPBACK (logs/INDEX.md:27) where the real RTT is under 1 ms --
+       * that is this artefact with the radio removed.
+       *
+       * Measuring the staleness costs one clock read and no struct growth:
+       * nd_txmeta is deliberately capped at 24 bytes so the scanned window
+       * stays cache-resident, and the comment there says to put new fields
+       * elsewhere rather than widen it. */
+      if (nd->cfg.prof_us)
+      {
+         uint64_t w = nd->cfg.prof_us();
+         uint32_t stale = (w >= nd->now) ? (uint32_t)(w - nd->now) : 0;
+         nd->st.stamp_stale_sum += stale;
+         nd->st.stamp_stale_n++;
+         if (stale > nd->st.stamp_stale_max)
+            nd->st.stamp_stale_max = stale;
+      }
       s->next_tx_us  = nd->now + rto_first(nd, p);
    }
 }
@@ -1372,12 +1397,40 @@ int netdrv_poll_needed(const netdrv *nd)
 
 /* ------------------------------------------------------------------- API -- */
 
+static void  *nd_arena;        /* reserved block, or NULL for calloc */
+static size_t nd_arena_bytes;
+static int    nd_arena_busy;
+
+size_t netdrv_sizeof(void)
+{
+   return sizeof(netdrv);
+}
+
+void netdrv_set_arena(void *mem, size_t bytes)
+{
+   if (mem && bytes < sizeof(netdrv))
+      return;                     /* too small -- refuse rather than overrun */
+   nd_arena = mem;
+   nd_arena_bytes = mem ? bytes : 0;
+}
+
 netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,
                       const nd_config *cfg)
 {
-   netdrv *nd = (netdrv *)calloc(1, sizeof(*nd));
+   netdrv *nd;
+   int from_arena = 0;
+
+   if (nd_arena && !nd_arena_busy && nd_arena_bytes >= sizeof(netdrv))
+   {
+      nd = (netdrv *)nd_arena;
+      memset(nd, 0, sizeof(*nd));
+      nd_arena_busy = from_arena = 1;
+   }
+   else
+      nd = (netdrv *)calloc(1, sizeof(*nd));
    if (!nd)
       return NULL;
+   nd->from_arena = from_arena;
    nd->tp = *tp;
    nd->cb = *cb;
    nd->cfg = *cfg;
@@ -1399,7 +1452,10 @@ void netdrv_destroy(netdrv *nd)
       return;
    for (i = 0; i < ND_MAX_CLIENTS; i++)
       spill_free(&nd->peers[i]);
-   free(nd);
+   if (nd->from_arena)
+      nd_arena_busy = 0;          /* the block is the host's, not ours */
+   else
+      free(nd);
 }
 
 int netdrv_host(netdrv *nd)

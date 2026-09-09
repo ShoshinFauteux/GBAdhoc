@@ -232,25 +232,41 @@ void fe_np_set_arq_timers(uint32_t rto_first_max_us, uint32_t rto_min_us)
    np_rto_min_us       = rto_min_us;
 }
 
+/* WHY THIS EXISTS.  Every failure below returned a bare -1, the frontend
+ * turned that into one generic message, and -1 also happens to be
+ * ADHOC_ERR_WLAN_OFF -- so a netdrv allocation failure was reported to the
+ * user as "WLAN switch is OFF" with the switch plainly on.  A wrong diagnosis
+ * is worse than none: it sends the owner to check hardware that is fine.  So
+ * each exit records what it was, and the frontend prints it. */
+static const char *np_start_why = "";
+
+const char *fe_np_start_reason(void)
+{
+   return np_start_why[0] ? np_start_why : "unknown";
+}
+
 int fe_np_start(const fe_np_config *cfg)
 {
    nd_callbacks cb;
    nd_config nc;
    const char *proto;
 
+   np_start_why = "";
    if (np.active)
-      return -1;
+      { np_start_why = "already active"; return -1; }
 
    np.rcb = (const struct retro_netpacket_callback *)fe_host_netpacket_cb();
    if (!np.rcb || !np.rcb->start)
    {
       fe_log("fe_np_start: core registered no netpacket interface");
+      np_start_why = "no netpacket iface";
       return -1;
    }
    proto = np.rcb->protocol_version;
    if (!proto || !proto[0])
    {
       fe_log("fe_np_start: core has no protocol_version string");
+      np_start_why = "no protocol version";
       return -1;
    }
 
@@ -286,12 +302,18 @@ int fe_np_start(const fe_np_config *cfg)
    nc.retx_us          = np_rto_min_us;
    np.nd = netdrv_create(cfg->transport, &cb, &nc);
    if (!np.nd)
+   {
+      /* The only way this fails is the allocation, and it is the failure a
+       * 32 MB PSP-1000 can hit where a 64 MB console does not. */
+      np_start_why = "out of memory";
       return -1;
+   }
 
    if (cfg->is_host ? netdrv_host(np.nd) : netdrv_join(np.nd))
    {
       netdrv_destroy(np.nd);
       np.nd = NULL;
+      np_start_why = cfg->is_host ? "host failed" : "join failed";
       return -1;
    }
    np.active = 1;
@@ -350,7 +372,7 @@ void fe_np_pump(void)
              "drop_dead=%u core_tx=%u core_rx=%u peers=%d "
              "srtt_us=%u rto_us=%u retx_pct=%u txq_hi=%u spill=%u "
              "rttvar_us=%u beyondwin=%u retx_age=%u/%u reorder_hi=%u "
-             "tx_ack=%u rx_ack=%u tx_data=%u pumpgap=%u/%u",
+             "tx_ack=%u rx_ack=%u tx_data=%u pumpgap=%u/%u stale=%u/%u",
              st.tx_frames, st.rx_frames, st.acked, st.retx, st.rx_dup,
              st.rx_drop_crc, st.rx_drop_malformed, st.rx_drop_unknown_peer,
              st.tx_overflow, st.tx_drop_dead, np.core_tx, np.core_rx,
@@ -372,7 +394,12 @@ void fe_np_pump(void)
              st.tx_ack, st.rx_ack, st.tx_data,
              /* ADR-0061: mean/max ms between ARQ pumps. */
              st.pump_gap_n ? st.pump_gap_sum_ms / st.pump_gap_n : 0u,
-             st.pump_gap_max_us / 1000u);
+             st.pump_gap_max_us / 1000u,
+             /* How stale nd->now was when a send stamped it. srtt is
+              * computed from that stamp, so this is the floor of the
+              * over-estimate: true RTT <= srtt - stale. */
+             st.stamp_stale_n ? st.stamp_stale_sum / st.stamp_stale_n : 0u,
+             st.stamp_stale_max);
       np.last_stats_us = now;
    }
 }

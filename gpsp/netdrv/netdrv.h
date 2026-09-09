@@ -301,6 +301,8 @@ typedef struct nd_stats
    /* Live ARQ timing, worst (largest) across active peers — 0 with no peers.
     * srtt_us is 0 until the first Karn-valid RTT sample lands. */
    uint32_t srtt_us, rto_us;
+   /* Staleness of nd->now when a send stamped it -- the srtt over-estimate. */
+   uint32_t stamp_stale_sum, stamp_stale_n, stamp_stale_max;
    /* rttvar_us is the other half of RFC 6298: rto = srtt + 4*rttvar, then
     * clamped to [floor, ceiling]. Without it a report of rto_us == the
     * ceiling is ambiguous -- it cannot be told from a computed value that
@@ -355,6 +357,29 @@ typedef struct nd_config
 /* ------------------------------------------------------------------ API -- */
 
 typedef struct netdrv netdrv;
+
+/* Bytes netdrv_create() needs in one contiguous block.  Exposed so a host
+ * can reserve it up front -- see netdrv_set_arena(). */
+size_t netdrv_sizeof(void);
+
+/* Hand netdrv_create() a block to build in, instead of calloc.
+ *
+ * WHY.  sizeof(netdrv) is ~638 KiB, nearly all of it the five peers' 192-slot
+ * reliable backlogs (192 x 560 B of payload each).  That is one contiguous
+ * allocation, requested at the moment the user starts a session -- after a ROM
+ * (up to 16 MiB), the ME stages and the browser's art textures have all been
+ * through the heap.  On a 64 MiB console there is room to be careless; on a
+ * PSP-1000, with roughly half the user partition and the art cache having just
+ * malloc'd and freed 512 KiB textures through it, the largest free hole can be
+ * smaller than 638 KiB while total free memory still looks fine.  Wireless
+ * then fails for a reason that has nothing to do with wireless.
+ *
+ * So the frontend reserves the block at boot, when the heap is pristine, and
+ * a session can never lose to fragmentation.  `mem` must stay valid for the
+ * process's life and be at least netdrv_sizeof() bytes; pass NULL to go back
+ * to calloc.  Unset by default, so the tests (which build several drivers at
+ * once) are unaffected. */
+void netdrv_set_arena(void *mem, size_t bytes);
 
 /* Allocate a driver bound to a transport. Copies cfg/cb/tp by value. */
 netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,

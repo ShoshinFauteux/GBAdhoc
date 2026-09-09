@@ -371,6 +371,25 @@ u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 u32 gamepak_file_blocks;    /* Physical payload size in 32KB blocks */
 u32 gamepak_page_loads;     /* Monotonic: 32KB ROM page faults served */
+
+/* ---- VRAM DIRTY MAP (MEASUREMENT ONLY) ----------------------------------
+ * The ME re-copies all 96 KB of VRAM every frame while a consecutive-frame
+ * compare says only 0.1-0.5 of 96 pages actually change.  Copying just the
+ * changed pages is worth ~1.4 ms/frame -- but only if the marking is
+ * COMPLETE.  A page that changes without being marked renders stale, which
+ * is silent visual corruption rather than a crash.
+ *
+ * Translated code does NOT reach the write_vram macros below; the dynarec
+ * has its own store stub (mips/mips_emit.h, emit_pmemst_stub region 6).
+ * Instrumenting that is real work in the hottest store path, so first
+ * measure whether the C and DMA paths already cover the traffic -- GBA games
+ * push VRAM largely by DMA during VBlank, so they may.
+ *
+ * NOTHING READS THIS TO DECIDE WHAT TO COPY.  It is compared against the
+ * shadow-compare probe's ground truth and reported as `missed` (changed but
+ * unmarked).  Rendering is bit-identical with it on or off. */
+u8  vram_clean[VRAM_DIRTY_PAGES];
+u32 vram_dirty_marks;
 bool gamepak_mirror_1m;     /* 1MiB Classic NES/Famicom Mini mirror mode */
 static u8 *gamepak_mini_rom;
 bool gamepak_mini_materialized;
@@ -1206,14 +1225,21 @@ void function_cc write_backup(u32 address, u32 value)
 
 #define write_backup32()                                                      \
 
+#define vram_mark(addr)                                                       \
+  vram_clean[(addr) >> VRAM_DIRTY_SHIFT] = 0;                                 \
+  vram_dirty_marks++                                                          \
+
 #define write_vram8()                                                         \
+  vram_mark(address);                                                         \
   address &= ~0x01;                                                           \
   address16(vram, address) = eswap16((value << 8) | value)                    \
 
 #define write_vram16()                                                        \
+  vram_mark(address);                                                         \
   address16(vram, address) = eswap16(value)                                   \
 
 #define write_vram32()                                                        \
+  vram_mark(address);                                                         \
   address32(vram, address) = eswap32(value)                                   \
 
 // RTC code derived from VBA's (due to lack of any real publically available
@@ -1849,6 +1875,7 @@ const dma_region_type dma_region_map[17] =
 #define dma_write_vram(type, tfsize) {                                        \
   u32 wraddr = type##_ptr & 0x1FFFF;                                          \
   if (wraddr >= 0x18000) wraddr -= 0x8000;                                    \
+  vram_mark(wraddr);                                                          \
   address##tfsize(vram, wraddr) = eswap##tfsize(read_value);                  \
 }
 

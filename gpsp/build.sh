@@ -33,10 +33,19 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
   [ "$rc" -eq 0 ] || { echo "FAIL: $label container exited $rc"; exit 1; }
 }
 
-run "core"  /build      'make platform=psp1 -j4'
+# CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_PARTIAL, BIG_JIT, cache
+# sizes -- anything touching the dynarec); EXTRA_DEFS reaches psp/Makefile
+# (GPSP_PLAYABLE, titles).  Threaded through BECAUSE the alternative bit twice:
+# `make` does not track CFLAGS, so a core built by hand with flags and then a
+# bare `make platform=psp1` here RE-COMPILES the objects whose .d files went
+# stale and silently drops the defines.  On 2026-09-08 that produced an
+# undefined reference to ramtag_note_barrier -- the loud failure.  The quiet
+# one is worse and has happened: the EBOOT links a core without the flag and
+# the experiment reads as "the optimisation didn't help".
+run "core"  /build      "make platform=psp1 ${CORE_FLAGS:-} -j4"
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || { echo "FAIL: core archive missing"; exit 1; }
 
-run "eboot" /build/psp  'make'
+run "eboot" /build/psp  "make ${EXTRA_DEFS:+EXTRA_DEFS='$EXTRA_DEFS'}"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || { echo "FAIL: EBOOT missing"; exit 1; }
 
 if [ -n "$NEWEST_SRC" ] && [ "$NEWEST_SRC" -nt "$ROOT/psp/EBOOT.PBP" ]; then
@@ -75,4 +84,5 @@ for t in toks:
 sys.exit(rc)
 PY
 [ $? -eq 0 ] || exit 1
+echo "  flavour: core[${CORE_FLAGS:-none}] frontend[${EXTRA_DEFS:-none}]"
 echo "md5: $(md5sum "$ROOT/psp/EBOOT.PBP" | cut -d' ' -f1)"

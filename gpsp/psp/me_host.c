@@ -27,10 +27,17 @@ int me_host_up(void)
    return g_mb != NULL && !g_me_dead;
 }
 
+static int g_me_need_seh;
+
+void me_host_require_sysevent(int on)
+{
+   g_me_need_seh = on ? 1 : 0;
+}
+
 int me_host_init(const char *base_dir)
 {
    char path[192];
-   unsigned int arg;
+   unsigned int arg[2];
    SceUID mod;
    int st, i;
 
@@ -47,11 +54,25 @@ int me_host_init(const char *base_dir)
       return -1;
    }
 
-   arg = (unsigned int)ME_UNCACHED(&g_mbox_storage);
-   st  = sceKernelStartModule(mod, sizeof(arg), &arg, NULL, NULL);
+   arg[0] = (unsigned int)ME_UNCACHED(&g_mbox_storage);
+   arg[1] = (unsigned int)g_me_need_seh;
+   st  = sceKernelStartModule(mod, sizeof(arg), arg, NULL, NULL);
    if (st < 0)
    {
-      fe_evt("me_init state=unavailable reason=start rc=0x%08X", (unsigned)st);
+      /* With arg[1] set, this is also how "we could not take the SceMeRpc
+       * sysevent slot" arrives: the module refuses rather than coming up in a
+       * configuration where sleeping would cold-boot the console. */
+      /* 0x5Exxxxxx is our own encoding: the sysevent slot could not be
+       * taken, and the low bits are how many handlers were walked looking
+       * for it.  walked=0 means the list was empty; a large count means the
+       * list is there and nothing in it is named like SceMeRpc. */
+      if (((unsigned)st >> 24) == 0xDEu)
+         fe_evt("me_init state=unavailable reason=no_sysevent walked=%u",
+                (unsigned)st & 0xFFFFFFu);
+      else
+         fe_evt("me_init state=unavailable reason=start rc=0x%08X need_seh=%d",
+                (unsigned)st, g_me_need_seh);
+      sceKernelUnloadModule(mod);
       return -1;
    }
    g_me_modid = mod;

@@ -108,6 +108,21 @@ typedef struct
     * is expected to be small, but "expected" is not "measured". */
    int  ff_audio;
    int  theme;        /* UI palette: 0 = dark (default), 1 = light */
+   /* Game-list shell: 0 = Shelf (default, list + art panel),
+    * 1 = Marquee (art fills the screen).  The browser reads it once at
+    * startup, so like me_mode it applies on the next launch. */
+   int  ui_shell;
+   /* Media Engine same-frame presentation: retire and draw the ME frame at
+    * the end of its OWN frame instead of the next one, removing a frame of
+    * latency.  Default 1 -- a miss just falls back to the previous
+    * behaviour, so there is no downside case. */
+   int  me_sameframe;
+   /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
+    * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
+    * here so a graphics complaint can be bisected on the shipping build --
+    * it was harness-only, which meant a player could not turn it off and
+    * a bug report could not separate it from same-frame. */
+   int  me_dirty;
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
    /* Benchmark mode (config.ini only, no UI row).  Makes the FF button mean
     * "engine throughput test": uncapped pacing, frameskip DISABLED (every
@@ -209,6 +224,85 @@ typedef struct
     * setting.  Held packets wait one frame in our own queue; they are never
     * dropped.  No effect on a hosting console. */
    int  rfu_rx_cap;
+   /* ADR-0075b `rfu_pace_max_hold`: how many frames of host data the paced
+    * client may hold before the OLDEST is discarded.  This is the latency
+    * dial, and it is a config.ini key rather than a harness one because the
+    * measurement that set it can only be made by a person playing.
+    *
+    * Why it matters more than it looks: with the pace gate delivering one
+    * packet per frame and the game asking about once per frame, arrival and
+    * delivery are equal -- so ANY depth the queue reaches is a fixed point and
+    * it never drains on its own.  The cap is the only thing that drains it,
+    * which means the cap IS the standing latency.  Measured on hardware at 12:
+    * q_hi parked at 12 for the whole session (~210 ms behind) with only 39
+    * discards, and the player reported constant lag that no longer grew.
+    *
+    * Shedding it costs a one-time handful of discards; once the queue sits at
+    * the cap, arrival == delivery holds it there with no further loss.  Lower
+    * is more responsive, higher absorbs more network stall (the worst observed
+    * inter-packet gap is 32 ms, ~2 frames).  Must stay well under the game's
+    * 32-FRAME link timeout; 0 = unbounded = the build that died at 39. */
+   int  rfu_pace_max_hold;
+   /* Let config.ini's `net_session_fps` win over the trading profile's forced
+    * rate in a PLAYABLE build.  0 = profile decides (57.00 speed / 29.97
+    * compat), 1 = the ini value is used verbatim.
+    *
+    * 57.00 was chosen for a worst case that no longer holds: the note on it
+    * says "the join is ~2 fps short of nominal, so every pair pays 2.73 fps".
+    * With the ME renderer, dirty pages and same-frame the join now holds 57.00
+    * with skipped=0 and a worst frame of 14.7-16.8 ms against a 17.54 ms
+    * budget -- so nominal (59.73) is worth trying, and a 16.74 ms budget is
+    * the test of whether that worst frame still fits.
+    *
+    * SET IT IDENTICALLY ON BOTH CONSOLES.  Gen-3's RFU counts link timeouts
+    * in FRAMES; two consoles that disagree about how long a frame is are the
+    * one thing it cannot survive, which is what the forced rate was
+    * protecting against. */
+   int  net_session_fps_force;
+   /* ARQ retransmit floor, microseconds.  0 = the build-time ND_RTO_MIN_US
+    * (200,000 here, set on the psp/Makefile command line).
+    *
+    * WHY IT IS NOW A PLAYER KEY.  The floor was chosen when srtt was ~49 ms,
+    * where 200 ms is a sane 4x margin.  The playable build's idle-poll took
+    * srtt to ~11 ms, so the floor is now 18x srtt -- and because the channel
+    * is reliable ORDERED, one lost packet stalls everything behind it for a
+    * whole RTO.  Measured at a battle start, hardware 2026-09-08: retx 13 ->
+    * 33 in one window, rto_us backing off 200,000 -> 400,000, a payload
+    * resent 600 ms after it was queued, the host logging rfu_noresp 1..8 and
+    * then giving up.  The client's own answers were healthy (mean 1.7 ms) and
+    * the pace queue was only 11 deep -- nothing was slow except waiting out
+    * the RTO.
+    *
+    * 50,000 keeps the same 4-5x margin over the srtt we actually have now.
+    * Careful going much lower: a floor near srtt retransmits packets that
+    * were merely in flight, and the earlier ARQ campaign measured a duplicate
+    * storm (dup 2 -> 5) at 40 ms when srtt was 49 ms. */
+   int  nd_rto_min_us;
+   /* STANDBY (sleep/wake).  0 = off, the historical behaviour: the console
+    * cannot wake with the Media Engine running and comes back to a black
+    * screen.  1 = tear the engine down on suspend and rebuild it on wake.
+    *
+    * ON by default as of 2.0: validated on the PSP-1000, 3000 and Go.  It was
+    * off while it was being proven, because the failure mode is a console
+    * that needs a battery pull and a Go has no battery to pull -- but the
+    * proving is done, and a sleep feature nobody switches on is not a
+    * feature.
+    *
+    * Safety is structural rather than conservative: with this on, the Media
+    * Engine refuses to start unless it can take the kernel's SceMeRpc system
+    * event handler, which is what parks the second core on suspend.  A
+    * console that cannot do that falls back to single-core rendering -- slow,
+    * but it will never hard-reset when someone closes the lid. */
+   int  standby;
+   /* Load the Media Engine kernel module at all.  1 = yes (default, and what
+    * every performance measurement assumes); 0 = never touch the second core,
+    * CPU rendering only.
+    *
+    * Distinct from `me_mode`, which only decides whether the RENDERER uses it:
+    * with me_mode = 0 the module is still loaded and handshaked.  Separated
+    * because "has this process ever loaded a kernel module" is exactly the
+    * question standby resume turns on, and nothing could ask it before. */
+   int  me_boot;
    /* Session overlay chip (bottom-right "linked/hosting" status) while a
     * wireless session is live.  1 = shown (default), 0 = hidden.  The
     * WLAN-off warning chip is NOT gated by this: hiding the reason wireless

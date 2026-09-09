@@ -86,6 +86,13 @@ typedef struct me_render_desc
    volatile unsigned int capture;      /* me_capture_frame for this frame   */
    volatile unsigned int out;          /* pitched RGB565 output buffer      */
    volatile unsigned int out_pitch;    /* output stride in PIXELS (e.g 512) */
+   /* DIRTY-PAGE MAP: u8[96], one byte per 1 KiB VRAM page, 1 = clean.
+    * The ME copies only the pages marked dirty. A consecutive-frame compare
+    * measured 0.1-0.5 of 96 pages changing per frame, so this turns a 96 KB
+    * copy into ~2 KB. Zero means "copy this page".
+    * If 0, the ME copies ALL of VRAM -- used on the first frame and after any
+    * teardown/resume, when the ME's eDRAM mirror cannot be trusted. */
+   volatile unsigned int vram_clean;
 } me_render_desc;
 
 typedef struct me_mbox

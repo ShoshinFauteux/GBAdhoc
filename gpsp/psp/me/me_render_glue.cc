@@ -25,6 +25,10 @@ extern "C" {
 }
 #include "me_mbox.h"
 
+/* Must match gba_memory.h -- the ME does not include it. */
+#define VRAM_DIRTY_SHIFT 10
+#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+
 /* ME-local frame buffer the renderer draws into (PRX BSS, cached-fast). */
 static u16 me_out[GBA_SCREEN_PITCH * (160 + 1)];
 
@@ -54,8 +58,41 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
    }
 
    /* ---- phase 1: snapshot the live core arrays ------------------------- */
-   me_inv(d->vram    & ~0x40000000u, 1024 * 96);
-   memcpy(vram, (const void *)(d->vram & ~0x40000000u), 1024 * 96);
+   /* VRAM: copy only the pages the host marked dirty.
+    *
+    * A consecutive-frame compare measured 0.1-0.5 of 96 pages changing per
+    * frame, so the flat 96 KB copy was re-fetching ~99.5% unchanged data
+    * across the slow path to main RAM -- and the host SPUN for all of it
+    * (wait_mean_us ~1450). The map is u8[96], 1 = clean, and is produced by
+    * the dynarec's store stub plus the C write paths (coverage verified at
+    * missed=0 over 255 marked pages).
+    *
+    * vram_clean == 0 means "no map": copy everything. The host sets that on
+    * the first frame and after any teardown/resume, when this eDRAM mirror
+    * cannot be trusted to be a correct base to patch. */
+   if (d->vram_clean)
+   {
+      const unsigned char *cl =
+         (const unsigned char *)(d->vram_clean & ~0x40000000u);
+      const unsigned char *src =
+         (const unsigned char *)(d->vram & ~0x40000000u);
+      unsigned int p;
+      me_inv(d->vram_clean & ~0x40000000u, VRAM_DIRTY_PAGES);
+      for (p = 0; p < VRAM_DIRTY_PAGES; p++)
+      {
+         if (cl[p])
+            continue;                       /* clean: eDRAM copy still valid */
+         me_inv((unsigned int)(src + (p << VRAM_DIRTY_SHIFT)),
+                1u << VRAM_DIRTY_SHIFT);
+         memcpy(vram + (p << VRAM_DIRTY_SHIFT),
+                src + (p << VRAM_DIRTY_SHIFT), 1u << VRAM_DIRTY_SHIFT);
+      }
+   }
+   else
+   {
+      me_inv(d->vram & ~0x40000000u, 1024 * 96);
+      memcpy(vram, (const void *)(d->vram & ~0x40000000u), 1024 * 96);
+   }
    me_inv(d->oam     & ~0x40000000u, 512 * 2);
    memcpy(oam_ram, (const void *)(d->oam & ~0x40000000u), 512 * 2);
    me_inv(d->palette & ~0x40000000u, 512 * 2);

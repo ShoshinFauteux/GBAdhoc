@@ -44,6 +44,7 @@
 #include <pspiofilemgr.h>
 #include <pspsuspend.h>   /* sceKernelVolatileMemTryLock — engine buffers */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>   /* ADR-0080: memalign for the ME double/stage buffers */
@@ -55,6 +56,7 @@
 #include "fe_autopilot.h"
 #include "netpacket_host.h"
 #include "transport_adhoc.h"
+#include "netdrv.h"        /* netdrv_sizeof / netdrv_set_arena -- the boot reserve */
 #include "video_psp.h"
 #include "osd_psp.h"
 #include "ui_psp.h"
@@ -161,6 +163,9 @@ static char p_legacy_ap[160];
  * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
  * players: this is the input-eating fix. */
 #define PLAY_RFU_FRAME_PACE  1
+/* Bound on frame_pace's hold, in frames.  Now a config.ini key (the player
+ * owns the latency dial); this constant is only the harness-side default. */
+#define PLAY_RFU_PACE_MAX_HOLD 24
 /* Fixed-depth cushion (jitter buffer) PoC: hold each host packet N frames so a
  * stall must drain the whole reserve before the client underruns.  OFF by
  * default — UNVALIDATED on hardware; the desktop cannot exercise it (injected
@@ -204,6 +209,7 @@ static char p_legacy_ap[160];
  * we choose.  Set `dump_marker_poll = 60` to get the old mechanism back. */
 #define PLAY_DUMP_MARKER     0
 #define PLAY_RFU_FRAME_PACE  0          /* ADR-0075 off by default (harness) */
+#define PLAY_RFU_PACE_MAX_HOLD 0        /* unbounded hold by default (harness) */
 #define PLAY_RFU_CUSHION     0          /* fixed-depth cushion PoC off (harness) */
 #define PLAY_RFU_DISC_GRACE  0          /* ADR-0076 off by default (harness) */
 #define PLAY_EXIT_ASSIST     0          /* ADR-0079 off by default (harness) */
@@ -278,11 +284,35 @@ static int exit_cb(int arg1, int arg2, void *common)
    return 0;
 }
 
+/* ---- standby / resume --------------------------------------------------
+ *
+ * The PSP KEEPS RAM across suspend, so nothing about the emulated machine
+ * needs saving and restoring -- only peripherals die: the GU/display, the
+ * audio channels, WLAN, and the Media Engine.  Waking is therefore a
+ * re-initialisation problem, not a state problem.
+ *
+ * This first step does the half that is unambiguously safe: flush the .sav
+ * on the way down, and record what the power system actually told us.  A
+ * PSP Go's slider is a suspend request like any other, and today closing it
+ * mid-game can cost unsaved progress.
+ *
+ * THE CALLBACK MUST NOT DRAIN.  fe_host.h's contract is that exactly one
+ * thread calls fe_host_sram_service_io(), and that is the io thread.  So we
+ * raise the flag, WAKE the writer, and yield long enough for it to be
+ * scheduled before the machine goes down.  Draining from here would be a
+ * second writer and could interleave mid-block. */
+static volatile int g_pwr_suspend, g_pwr_resume;
+
+static int power_cb(int unknown, int pwrflags, void *common);
+
 static int cb_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
    int cbid = sceKernelCreateCallback("exit_cb", exit_cb, NULL);
+   int pcb  = sceKernelCreateCallback("power_cb", power_cb, NULL);
    sceKernelRegisterExitCallback(cbid);
+   if (pcb >= 0)
+      scePowerRegisterCallback(0, pcb);
    sceKernelSleepThreadCB();
    return 0;
 }
@@ -1007,6 +1037,14 @@ static void me_video_present(void)
  * Failure discipline (same as me_video): misses counted, never fatal —
  * teardown returns to main-CPU rendering mid-run, seamlessly. */
 extern unsigned char  vram[];
+/* VRAM dirty map (gba_memory.c) -- set by the C store macros and the DMA
+ * path, NOT by translated code.  The probe below reports how much that
+ * misses, which is what decides whether the dynarec store stub has to be
+ * instrumented at all. */
+#define VRAM_DIRTY_SHIFT 10
+#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+extern unsigned char vram_clean[VRAM_DIRTY_PAGES];  /* 1=clean, 0=dirty */
+extern unsigned int  vram_dirty_marks;
 extern unsigned short io_registers[];
 extern unsigned short oam_ram[];
 extern unsigned short palette_ram_converted[];
@@ -1024,6 +1062,98 @@ extern unsigned int   reg[];
 
 static int g_me_rend_cfg;                /* wanted (pcfg/harness) */
 static int g_me_rend;                    /* active */
+
+/* STANDBY, STAGE 1: prove the resume path exists.
+ *
+ * The PSP cannot wake cleanly with the Media Engine running.  The kernel's
+ * suspend does not cover the second core: its state lives in memory the power
+ * manager does not preserve, and our engine buffers are carved out of the
+ * VOLATILE partition (the 4 MB OS pool at 0x08400000), which is precisely the
+ * memory the OS is free to reclaim while the machine is asleep.  So resume
+ * cannot be a restore -- it has to be a REBUILD.
+ *
+ * What survives is the part that matters: SRAM, the dynarec caches and every
+ * emulator structure live in the malloc heap, which the kernel does preserve.
+ * So the GAME does not need restoring at all; only the presentation layer
+ * does.  That is the claim stage 1 exists to test, and the failure mode if it
+ * is wrong is a black screen needing a battery pull -- which is why this is
+ * behind a config key rather than on by default.
+ *
+ * Split by thread, deliberately.  TEARDOWN runs here in the callback because
+ * the machine is going away and there is no later; the callback already does
+ * io_wake plus an 80 ms yield, so it is a context that tolerates real work.
+ * REBUILD only sets a flag: module loading and GU work belong on the main
+ * thread, and doing them from a callback is how you get a hang that looks
+ * like the hardware's fault. */
+static void me_standby_down(void);   /* defined with the ME globals below */
+static void me_standby_up(void);
+static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
+/* The GE samples power-of-two textures only, and vid_image uses stride ==
+ * texw, so the snapshot is stored 256 wide with the live 240x160 as its
+ * top-left sub-rect.  256x256 allocated because texh is declared 256. */
+#define WAKE_TEX     256
+#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_TEX * 2)
+static uint16_t *g_wake_frame;       /* the picture the overlay sits on */
+static int       g_wake_have;        /* 1 = it holds a real frame       */
+static int       g_wake_menu;        /* main loop: show the overlay     */
+static const uint16_t *g_last_pix;   /* last frame the core handed us    */
+/* 1 while a wake is pending or the overlay is up: nothing else may present or
+ * swap, so the first thing the player sees after the screen lights is the
+ * overlay and not the frame we slept on. */
+#define g_wake_hold  (g_pwr_rebuild || g_wake_menu)
+static unsigned  g_last_pitch = 240;
+static volatile int g_pwr_rebuild;   /* main loop: rebuild it now */
+
+static int power_cb(int unknown, int pwrflags, void *common)
+{
+   (void)unknown; (void)common;
+   if (pwrflags & PSP_POWER_CB_SUSPENDING)
+   {
+      g_pwr_suspend++;
+      fe_evt("power suspending net=%d me=%d standby=%d",
+             g_net_up, g_me_rend, g_pcfg.standby);
+      /* FLUSH BEFORE TOUCHING ANYTHING.  The first attempt did the teardown
+       * first and the console hard-reset -- taking the queued line with it, so
+       * the log said nothing at all about the failure it was there to record.
+       * A diagnostic that cannot survive the crash it diagnoses is not a
+       * diagnostic.  Every step below flushes as it goes, so the LAST line on
+       * the stick names the step that killed the machine. */
+      io_wake();
+      sceKernelDelayThread(60000);
+      if (g_pcfg.standby)
+         me_standby_down();
+      /* Give the writer a real chance to land the .sav and this line before
+       * the kernel takes the machine away.  Not a guarantee -- the window is
+       * the kernel's to grant -- but it is the difference between usually
+       * losing progress and usually not. */
+      sceKernelDelayThread(80000);
+   }
+   /* Log the raw flag word too.  The PSP Go's slider offers "Resume Game",
+    * which is a different user-facing path from the other models' standby,
+    * and it is not obvious from the outside whether it delivers the same
+    * SUSPENDING/RESUME_COMPLETE pair, a different subset, or an exit.  The
+    * bits are the only way to tell. */
+   fe_evt("power flags=0x%08X susp=%d resuming=%d complete=%d",
+          (unsigned)pwrflags,
+          !!(pwrflags & PSP_POWER_CB_SUSPENDING),
+          !!(pwrflags & PSP_POWER_CB_RESUMING),
+          !!(pwrflags & PSP_POWER_CB_RESUME_COMPLETE));
+   if (pwrflags & PSP_POWER_CB_RESUMING)
+      fe_evt("power resuming");
+   if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)
+   {
+      g_pwr_resume++;
+      fe_evt("power resume_complete slept=%d", g_pwr_slept);
+      /* Flag only -- the main loop rebuilds.  See the note above. */
+      if (g_pcfg.standby && g_pwr_slept)
+         g_pwr_rebuild = 1;
+      io_wake();
+   }
+   return 0;
+}
+
+
+
 static me_capture_frame *g_mer_cap[2];
 static uint16_t *g_mer_stage[2];
 static me_render_desc *g_mer_desc;
@@ -1038,14 +1168,142 @@ static int g_mer_vmem;
 static int g_mer_cur;                    /* capture buffer the core fills */
 static int g_mer_pending = -1;           /* stage being rendered by the ME */
 static int g_mer_ready   = -1;           /* stage ready to present */
+static int g_vhash_on;                   /* harness oracle enabled */
+static void mer_note_sum(void);          /* defined below vhash_frame */
 static unsigned g_mer_frames, g_mer_drops, g_mer_miss;
 static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_census;
+/* ---- INPUT SHADOWS (kills the per-frame input spin) ---------------------
+ * The ME's phase 1 memcpy's vram+oam+palette out of MAIN RAM into its own
+ * eDRAM, and the main CPU SPINS for all of it -- measured 1415-1456 us EVERY
+ * frame on both consoles (EVT me_rend wait_mean_us, drops=0, so this is
+ * handshake latency and not the renderer being late).  It waits because the
+ * moment emulation resumes it starts writing those same arrays underneath
+ * the ME.
+ *
+ * Give the ME its own stable copy instead.  The main CPU snapshots the three
+ * arrays into volatile-memory shadows, points the descriptor at those, and
+ * resumes immediately -- there is nothing left for the ME to race against.
+ * A cached main-RAM memcpy of 98 KB costs far less than 1.45 ms of spinning
+ * on an UNCACHED read at ~67 MB/s, which is what we are paying today.
+ *
+ * Safe with a single (not double) shadow because me_rend_fill_desc() is only
+ * ever reached after step 1 has confirmed me_host_idle() -- the ME has
+ * finished the whole previous render, so it long ago finished reading its
+ * inputs.  Refilling cannot overtake a reader that does not exist.
+ *
+ * Volatile-backed only.  The heap fallback does NOT get shadows: a 96 KB
+ * malloc already fails on the host after np_start (observed run 418,
+ * `vram_probe off reason=alloc`), and quietly running the fast path on one
+ * console and the slow path on the other is exactly the split that makes a
+ * two-console measurement meaningless.  Off = today's behaviour exactly. */
+static unsigned char *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
+static int      g_mer_shadow;         /* wanted (harness key `me_shadow`)  */
+static int      g_mer_sh_on;          /* actually allocated + in use       */
+static unsigned g_mer_sh_us, g_mer_sh_max;
+/* ME RENDER DURATION -- the number the whole low-latency question turns on.
+ * The "~10 ms render" quoted in comments here was never measured. Uncapped
+ * smooth FF reaching 120+ fps implies <=8.3 ms, and that is a LOWER bound on
+ * the ME's speed: smooth FF renders every frame, so the ME can never outrun
+ * the rate the CPU feeds it (90 fps in battles is the CPU saturating, not
+ * the ME slowing).
+ *
+ * If the render is ~8 ms, handing the capture over at vcount==160 -- where
+ * it is already COMPLETE, 68 scanlines before we currently post it -- gives
+ * a 3.3 ms head start and leaves a ~4.7 ms wait, i.e. a ~15.7 ms frame that
+ * still fits 16.7. Chunking would be unnecessary. If it is ~10 ms it does
+ * not fit and the pipeline has to be split. One measurement, two very
+ * different designs.
+ *
+ * Sampled in the vblank wait, which is idle anyway. A render that outlasts
+ * the wait yields no sample, so `n` being small is itself informative --
+ * it means the render is longer than the frame's slack. */
+static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+/* WHEN IS THE CAPTURE ACTUALLY READY?
+ *
+ * The plan to present a frame in its OWN frame hinges on handing the ME its
+ * capture at vcount==160, where it is already complete, instead of at the end
+ * of retro_run 68 scanlines later. The size of the ME's window is then
+ * (frame budget - GE blit) minus whenever line 160 falls.
+ *
+ * It is tempting to assume 160/228 of the frame -- 70% -- but CPU time is not
+ * proportional to scanlines. VBlank is where games run their logic, AI,
+ * sprite updates and librfu's exchange, so lines 160-227 plausibly cost far
+ * more than 30% of the time. If line 160 actually lands at ~40% of the frame
+ * the ME gets ~10.7 ms rather than ~7.5 ms, which is the difference between
+ * the idea fitting comfortably and not fitting at all.
+ *
+ * Measured against the frame's own start (frame_t0), so it reads directly as
+ * "the capture was ready N us into the frame". */
+static unsigned g_vis_n, g_vis_us, g_vis_max;
+/* The ME keeps a persistent eDRAM mirror of VRAM and we now patch it with
+ * dirty pages only. That is only valid if the mirror was ever correct, so
+ * force a full copy on the first frame and after any teardown/resume. */
+static int g_mer_full_copy = 1;
+/* `me_dirty` -- 1 = copy only dirty VRAM pages, 0 = always copy all 96 KB.
+ *
+ * Exists so ONE binary produces both arms of the correctness test. Rebuilding
+ * the previous build to get baseline frame hashes would compare two binaries
+ * that differ in more than this; with the switch, everything except the copy
+ * strategy is byte-identical, so any frame-hash difference is attributable. */
+static int g_mer_dirty_cfg = 1;
+/* SAME-FRAME PRESENTATION (`me_sameframe`, default 0).
+ *
+ * Today the capture is handed to the ME at the END of retro_run and the
+ * result is shown at the top of the NEXT frame -- one frame, 16.7 ms, of
+ * pure display latency. But the capture is COMPLETE at vcount 160
+ * (ioregs[0..159] are all written by then); we simply sit on it for another
+ * 68 scanlines of VBlank.
+ *
+ * Post it the moment it exists and the render lands in idle the CPU already
+ * had. Measured: capture ready 7.0 ms, ME render 3.2 ms, GE blit 1.5 ms =
+ * 11.7 ms of a 16.74 ms frame -- and the dirty-page copy widened that margin
+ * further by collapsing the ME's input phase from 1.45 ms to 0.15 ms.
+ *
+ * If the ME misses the deadline we present the PREVIOUS frame, which is
+ * exactly today's behaviour for that frame only: never a stutter, never a
+ * dropped emulated frame. The failure mode degrades to the shipping design
+ * rather than to something worse. */
+static int      g_mer_sameframe;      /* configured */
+
+/* SAME-FRAME APPLIES ONLY TO THE PACED PATH.
+ *
+ * Fast-forward has its own SYNCHRONOUS ME path: me_rend_frame() posts the
+ * render and retires the stage itself.  Same-frame is a SECOND retire
+ * mechanism driven from the vcount-160 hook, and two things assigning
+ * g_mer_ready make the stage index alternate between a live render and a
+ * stale one -- seen as the picture flipping between the current frame and
+ * whichever frame was showing when fast-forward was switched on.
+ *
+ * The comment at the FF post above already warned about exactly this class
+ * of failure ("frozen or shimmering displays depending on FF mode"), and its
+ * fix was the loop-top present that same-frame removed.
+ *
+ * It is also pointless there: fast-forward is not vblank paced, so there is
+ * no "same frame" to be early for.  Scope it to where it was designed and
+ * measured. */
+static int mer_sameframe_active(void)
+{
+   return g_mer_sameframe && !g_ff_mult && !g_ff_uncapped;
+}
+static int g_mer_posted;        /* posted from the vcount-160 hook this frame */
+static unsigned g_mer_sf_hit, g_mer_sf_miss;
+/* Diagnostic for the same-frame gate.  `wouldhit` counts frames given up on
+ * while the ME was ALREADY IDLE -- it read 529/533 and 502/600 before the
+ * post-loop check below existed, and must stay at 0 now. */
+static unsigned g_mer_sf_noloop, g_mer_sf_wouldhit;
+static unsigned g_mer_wb_pages, g_mer_wb_n;
+/* Frame start at file scope. frame_t0 in the main loop is a LOCAL and is only
+ * taken while a session is up; this probe wants every frame. */
+static uint64_t g_frame_start_us;
+
+static int      g_mer_rend_seen;
 
 static void me_rend_teardown(const char *why)
 {
    if (!g_me_rend)
       return;
    g_me_rend = 0;
+   g_mer_full_copy = 1;   /* eDRAM mirror is now stale; rebuild it in full */
    me_capture_mode = 0;                  /* core renders on the CPU again */
    me_capture_buf  = NULL;
    g_mer_pending = g_mer_ready = -1;
@@ -1062,6 +1320,179 @@ static int me_rend_init(void);   /* defined below */
  * let np_start claim its memory, then re-init from the post-session heap
  * (the exact profile me_video validated).  The CPU renders during the connect
  * screen; a failed re-alloc afterwards is the usual graceful CPU fallback. */
+/* KEEP THE LAST FRAME for the wake overlay.
+ *
+ * It normally lives in the volatile partition we are about to hand back, so it
+ * has to be copied into memory that survives: 76.8 KB in the tail of the
+ * netdrv arena, which is 1 MiB while netdrv uses 516 KB.  No heap cost, which
+ * matters on the console with none to spare.
+ *
+ * Two sources, because the ME is not always the one drawing: its stage when
+ * the renderer is up, otherwise the core's own frame buffer (the CPU path, and
+ * what PPSSPP always uses -- which is what makes the overlay workshoppable off
+ * hardware at all). */
+static void wake_snapshot(void)
+{
+   const uint16_t *src = NULL;
+   unsigned pitch = 240;
+   int y;
+
+   if (!g_wake_frame)
+      return;
+   if (g_me_rend && g_mer_ready >= 0 && g_mer_stage[g_mer_ready])
+      { src = g_mer_stage[g_mer_ready]; pitch = MER_STAGE_PITCH; }
+   else if (g_last_pix)
+      { src = g_last_pix; pitch = g_last_pitch; }
+   if (!src)
+      return;
+   for (y = 0; y < 160; y++)
+      memcpy(g_wake_frame + y * WAKE_TEX, src + (unsigned)y * pitch, 240 * 2);
+   /* The GE reads main RAM directly; these texels were written through the
+    * CPU's cache, so they must be pushed out before it looks. */
+   sceKernelDcacheWritebackRange(g_wake_frame, WAKE_FRAME_BYTES);
+   g_wake_have = 1;
+}
+
+/* STANDBY halves.  See the note on power_cb for why the teardown runs in the
+ * callback and the rebuild runs on the main thread. */
+/* BREADCRUMBS THAT SURVIVE A HARD RESET.
+ *
+ * The event log did not, and the reason is FAT, not our ring: fe_evt_service
+ * does fwrite + fflush, so the BYTES reach the stick, but the directory entry
+ * is only updated when the file is closed.  A kernel reset therefore leaves
+ * frontend.log at its last-closed length -- which is why two standby attempts
+ * of different lengths both produced a byte-identical 2464-byte log ending at
+ * boot, and why every log that DID contain gameplay was one that exited
+ * cleanly.
+ *
+ * So the standby trail gets its own file and pays for a full open/write/close
+ * per line.  That is far too expensive for anything on the frame path and
+ * exactly right for six lines across a suspend. */
+static void standby_note(const char *fmt, ...)
+{
+   char path[160], line[192];
+   va_list ap;
+   FILE *fh;
+   int n;
+
+   va_start(ap, fmt);
+   n = vsnprintf(line, sizeof(line) - 2, fmt, ap);
+   va_end(ap);
+   if (n < 0)
+      return;
+   snprintf(path, sizeof(path), "%s/log/standby.log", g_dir_base);
+   fh = fopen(path, "a");
+   if (!fh)
+      return;
+   fprintf(fh, "%u %s\n", (unsigned)sceKernelGetSystemTimeLow(), line);
+   fclose(fh);                        /* the close IS the commit */
+}
+
+/* A LADDER, NOT A SWITCH.  `standby` is 0-3 and each level does strictly more
+ * than the one below, so the level that kills the console is the answer --
+ * without a rebuild between attempts:
+ *
+ *   1  park the renderer, release volatile memory; module stays LOADED
+ *   2  + unload the module (me_host_shutdown)
+ *
+ * Releasing volatile memory is NOT a rung -- see the note where it happens.
+ *
+ * Level 3 was the first attempt and the PSP-1000 hard-reset to the Sony logo,
+ * which is the kernel giving up rather than anything being damaged.  The
+ * suspect is unloading a kernel module from the power callback while the
+ * kernel is already quiescing for suspend -- so the ladder exists to say
+ * whether that is really it, or whether merely parking the renderer is
+ * enough on its own.
+ *
+ * Each step logs and flushes BEFORE the next one runs. */
+static void me_standby_step(const char *what)
+{
+   fe_evt("standby step=%s", what);
+   standby_note("step %s", what);
+}
+
+static void me_standby_down(void)
+{
+   me_standby_step("begin");
+   /* SNAPSHOT FIRST.  me_rend_teardown() sets g_mer_ready = -1, so taking the
+    * frame after it always found "nothing to copy" and the wake overlay came
+    * up on a flat background instead of the game.  Order is the whole fix. */
+   wake_snapshot();
+   if (g_me_rend)
+   {
+      me_rend_teardown("suspend");
+      me_standby_step("rend_down");
+   }
+   if (g_pcfg.standby >= 2)
+   {
+      me_host_shutdown();
+      me_standby_step("module_unloaded");
+   }
+   /* ALWAYS release the volatile partition -- this is not an optional rung.
+    *
+    * The engine's buffers are carved out of the 4 MB OS pool at 0x08400000,
+    * which the OS owns and is free to reclaim and re-hand to something else
+    * while we are asleep.  The first ladder kept g_mer_vmem set at level 1, so
+    * the resume path saw "volatile already locked", skipped re-locking, and
+    * rebuilt the renderer onto POINTERS INTO A PARTITION WE NO LONGER HELD.
+    * Writing there is a plausible way to reset the machine, and the machine
+    * did reset on resume.
+    *
+    * So releasing is the safe half and re-locking on wake is mandatory.  What
+    * remains genuinely questionable is unloading the module, which is what the
+    * ladder is now for. */
+   if (g_mer_vmem)
+   {
+      sceKernelVolatileMemUnlock(0);
+      g_mer_vmem   = 0;
+      g_mer_desc   = NULL;
+      g_mer_cap[0] = g_mer_cap[1] = NULL;
+      g_mer_stage[0] = g_mer_stage[1] = NULL;
+      g_mer_ready  = g_mer_pending = -1;
+      me_standby_step("vmem_released");
+   }
+   /* The audio ring still holds sound from before the sleep, and the audio
+    * thread plays it the moment the machine comes back -- ~20 ms of the game
+    * you are no longer looking at, underneath a menu.  Drop it. */
+   ring_r = ring_w;
+   /* And leave the screen black rather than a stale frame of gameplay: the
+    * LCD shows whatever is in VRAM the instant it powers on, well before we
+    * are scheduled to draw anything. */
+   vid_blank_all();
+   g_pwr_slept = 1;
+   me_standby_step("done");
+}
+
+/* Main thread, once per wake.  Every step is logged: if resume ever fails on
+ * a model we do not own, this line is the whole diagnosis. */
+static void me_standby_up(void)
+{
+   int host_rc, rend_rc = -1;
+
+   g_pwr_rebuild = 0;
+   g_pwr_slept   = 0;
+   /* Rebuild only what we tore down.  At level 1 the module is still loaded
+    * and me_host_init would be a second load of a module that never left. */
+   standby_note("wake begin host_up=%d me_rend=%d vmem=%d",
+                me_host_up(), g_me_rend, g_mer_vmem);
+   host_rc = me_host_up() ? 0 : me_host_init(g_dir_base);
+   standby_note("wake host=%d", host_rc);
+   if (host_rc == 0)
+      rend_rc = g_me_rend ? 0 : me_rend_init();
+   standby_note("wake rend=%d vmem=%d free=%d", rend_rc, g_mer_vmem,
+                sceKernelTotalFreeMemSize());
+   fe_evt("standby up host=%d rend=%d vmem=%d free=%d frame=%d",
+          host_rc, rend_rc, g_mer_vmem, sceKernelTotalFreeMemSize(),
+          g_wake_have);
+   /* Whatever the audio thread queued while the machine was coming back is
+    * also from before the sleep. */
+   ring_r = ring_w;
+   g_wake_menu = 1;
+   /* A failed rebuild is not fatal: g_me_rend stays 0 and the loop falls back
+    * to CPU rendering exactly as it does when the ME never boots.  Slow, but
+    * the game keeps running and the save is intact. */
+}
+
 static void me_rend_suspend(void)
 {
    int i;
@@ -1110,17 +1541,30 @@ static int me_rend_init(void)
    {
       void *vbase = NULL;
       int vsize = 0;
+      /* 98 KB of shadows on top of the renderer's own 206 KB; the partition
+       * is 4 MB on every model (measured 4194304 on both consoles). */
+      const int shbytes = 1024 * 96 + 512 * 2 + 512 * 2;
+      const int need    = 2 * 20544 + 2 * (MER_STAGE_PITCH*161*2) + 128;
       if (sceKernelVolatileMemTryLock(0, &vbase, &vsize) == 0 &&
-          vbase && vsize >= (int)(2 * 20544 + 2 * (MER_STAGE_PITCH*161*2) + 128))
+          vbase && vsize >= need)
       {
          unsigned p = ((unsigned)vbase + 63u) & ~63u;
          g_mer_desc     = (me_render_desc *)p;   p += 128;
          g_mer_cap[0]   = (me_capture_frame *)p; p += 20544;
          g_mer_cap[1]   = (me_capture_frame *)p; p += 20544;
          g_mer_stage[0] = (uint16_t *)p;         p += MER_STAGE_PITCH*161*2;
-         g_mer_stage[1] = (uint16_t *)p;
+         g_mer_stage[1] = (uint16_t *)p;         p += MER_STAGE_PITCH*161*2;
          g_mer_vmem = 1;
-         fe_evt("me_rend vmem base=%08x size=%d", (unsigned)vbase, vsize);
+         if (g_mer_shadow && vsize >= need + shbytes + 64)
+         {
+            p = (p + 63u) & ~63u;
+            g_mer_sh_vram = (unsigned char *)p;  p += 1024 * 96;
+            g_mer_sh_oam  = (unsigned char *)p;  p += 512 * 2;
+            g_mer_sh_pal  = (unsigned char *)p;
+            g_mer_sh_on   = 1;
+         }
+         fe_evt("me_rend vmem base=%08x size=%d shadow=%d",
+                (unsigned)vbase, vsize, g_mer_sh_on);
       }
    }
    for (i = 0; i < 2; i++)
@@ -1145,6 +1589,7 @@ static int me_rend_init(void)
    sceKernelDcacheWritebackInvalidateRange(g_mer_stage[0], MER_STAGE_PITCH*161*2);
    sceKernelDcacheWritebackInvalidateRange(g_mer_stage[1], MER_STAGE_PITCH*161*2);
    g_mer_cur = 0;
+   g_mer_full_copy = 1;   /* fresh ME: nothing to patch against */
    g_mer_pending = g_mer_ready = -1;
    me_capture_buf  = g_mer_cap[0];
    me_capture_mode = 1;                  /* core stops rendering NOW */
@@ -1159,14 +1604,63 @@ static int me_rend_init(void)
  * Shared by the async pipeline and the FF synchronous path. */
 static void me_rend_fill_desc(int out)
 {
-   sceKernelDcacheWritebackRange(vram, 1024 * 96);
-   sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
-   sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+   if (g_mer_sh_on)
+   {
+      /* Snapshot the live arrays so the ME has something stable to read and
+       * emulation can resume without waiting for it.  Cached->cached in main
+       * RAM; the writeback that follows is the whole coherency contract. */
+      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+      unsigned d;
+      memcpy(g_mer_sh_vram, vram, 1024 * 96);
+      memcpy(g_mer_sh_oam, oam_ram, 512 * 2);
+      memcpy(g_mer_sh_pal, palette_ram_converted, 512 * 2);
+      sceKernelDcacheWritebackRange(g_mer_sh_vram, 1024 * 96);
+      sceKernelDcacheWritebackRange(g_mer_sh_oam, 512 * 2);
+      sceKernelDcacheWritebackRange(g_mer_sh_pal, 512 * 2);
+      d = (unsigned)sceKernelGetSystemTimeLow() - t0;
+      g_mer_sh_us += d;
+      if (d > g_mer_sh_max)
+         g_mer_sh_max = d;
+   }
+   else if (g_mer_full_copy || !g_mer_dirty_cfg)
+   {
+      /* Mirror not trustworthy: copy everything and tell the ME to do the
+       * same by passing no map. */
+      sceKernelDcacheWritebackRange(vram, 1024 * 96);
+      sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
+      sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+   }
+   else
+   {
+      /* Write back ONLY the dirty pages -- the other half of the saving.
+       * The old code pushed 96 KB through the cache every frame purely so
+       * the ME could re-read data that had not changed. */
+      unsigned i, n = 0;
+      for (i = 0; i < VRAM_DIRTY_PAGES; i++)
+         if (!vram_clean[i])
+         {
+            sceKernelDcacheWritebackRange(vram + (i << VRAM_DIRTY_SHIFT),
+                                          1u << VRAM_DIRTY_SHIFT);
+            n++;
+         }
+      sceKernelDcacheWritebackRange(vram_clean, VRAM_DIRTY_PAGES);
+      sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
+      sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+      g_mer_wb_pages += n;
+      g_mer_wb_n++;
+   }
    sceKernelDcacheWritebackRange(g_mer_cap[g_mer_cur],
                                  sizeof(me_capture_frame));
-   g_mer_desc->vram      = (unsigned)vram;
-   g_mer_desc->oam       = (unsigned)oam_ram;
-   g_mer_desc->palette   = (unsigned)palette_ram_converted;
+   g_mer_desc->vram      = g_mer_sh_on ? (unsigned)g_mer_sh_vram
+                                       : (unsigned)vram;
+   g_mer_desc->oam       = g_mer_sh_on ? (unsigned)g_mer_sh_oam
+                                       : (unsigned)oam_ram;
+   g_mer_desc->palette   = g_mer_sh_on ? (unsigned)g_mer_sh_pal
+                                       : (unsigned)palette_ram_converted;
+   /* 0 = no map = copy all of VRAM. See g_mer_full_copy. */
+   g_mer_desc->vram_clean =
+      (g_mer_sh_on || g_mer_full_copy || !g_mer_dirty_cfg)
+      ? 0u : (unsigned)vram_clean;
    g_mer_desc->capture   = (unsigned)g_mer_cap[g_mer_cur];
    g_mer_desc->out       = (unsigned)g_mer_stage[out];
    g_mer_desc->out_pitch = MER_STAGE_PITCH;
@@ -1199,6 +1693,12 @@ static void me_rend_ff_probe(void)
              g_ffp_late, g_ffp_ok, g_ff_mult, g_ff_uncapped);
 }
 
+/* Complete frames actually rendered in the current fps window (ME: a retired
+ * render; CPU path: a frame the core really drew).  Reported beside the
+ * emulated rate so a frameskipped or ME-outrun measurement can never read as
+ * if every frame were being produced. */
+static unsigned g_fps_drawn;
+
 static void me_rend_ff_frame(int emulated)
 {
    unsigned now = (unsigned)sceKernelGetSystemTimeLow();
@@ -1222,6 +1722,7 @@ static void me_rend_ff_frame(int emulated)
       if (!me_host_idle())
          { g_ffp_stuck++; return; }  /* still busy — try next cadence tick */
       g_mer_ready   = g_mer_pending;
+      mer_note_sum();
       g_mer_pending = -1;
    }
 
@@ -1243,6 +1744,11 @@ static void me_rend_ff_frame(int emulated)
       return;
    }
    g_ffp_ok++;
+   /* Count it drawn.  This path retires its own stage, so it never passes
+    * through the async retire that bumps the counter -- uncapped non-smooth FF
+    * therefore reported "drawn=0" while plainly drawing, which same-frame had
+    * been masking by bumping the counter from its own retire. */
+   g_fps_drawn++;
    g_mer_ready      = out;
    g_mer_ff_last_us = (unsigned)sceKernelGetSystemTimeLow();
    /* NO draw here: presentation happens at loop-top (me_rend_present), in
@@ -1265,12 +1771,6 @@ static void me_rend_present(void)
 
 /* Called from plat_video_frame at the end of every emulated frame.
  * `emulated` is false for duped/skipped frames (no capture happened). */
-/* Complete frames actually rendered in the current fps window (ME: a retired
- * render; CPU path: a frame the core really drew).  Reported beside the
- * emulated rate so a frameskipped or ME-outrun measurement can never read as
- * if every frame were being produced. */
-static unsigned g_fps_drawn;
-
 static void me_rend_frame(int emulated)
 {
    unsigned t0, t1;
@@ -1291,6 +1791,7 @@ static void me_rend_frame(int emulated)
       if (me_host_idle())
       {
          g_mer_ready   = g_mer_pending;
+         mer_note_sum();
          g_mer_pending = -1;
          g_mer_miss    = 0;
          g_fps_drawn++;             /* a complete rendered frame landed */
@@ -1319,22 +1820,40 @@ static void me_rend_frame(int emulated)
       me_rend_fill_desc(out);
       if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) == 0)
       {
-         /* 3. Wait for the ME to consume the live arrays (~1 ms), then flip
-          *    the capture buffer so emulation of the next frame is free. */
-         t0 = (unsigned)sceKernelGetSystemTimeLow();
-         while (!me_host_input_done() &&
-                ((t1 = (unsigned)sceKernelGetSystemTimeLow()) - t0) < MER_INPUT_US)
-            ;
-         t1 = (unsigned)sceKernelGetSystemTimeLow() - t0;
-         g_mer_wait_us += t1;
-         if (t1 > g_mer_wait_max)
-            g_mer_wait_max = t1;
-         if (!me_host_input_done())
+         /* 3. Hand the capture buffer over and resume.
+          *
+          * With shadows the ME is reading copies nothing will touch, so there
+          * is NOTHING to wait for -- the ~1.45 ms spin below is skipped
+          * entirely and the capture flip is immediately safe (the captures
+          * were already double-buffered).  Without them we must still wait
+          * for the ME to finish reading the live arrays before emulation is
+          * allowed to write them again. */
+         if (!g_mer_sh_on)
          {
-            me_rend_teardown("input_wedge");   /* watchdog-class failure */
-            goto present;
+            t0 = (unsigned)sceKernelGetSystemTimeLow();
+            while (!me_host_input_done() &&
+                   ((t1 = (unsigned)sceKernelGetSystemTimeLow()) - t0) < MER_INPUT_US)
+               ;
+            t1 = (unsigned)sceKernelGetSystemTimeLow() - t0;
+            g_mer_wait_us += t1;
+            if (t1 > g_mer_wait_max)
+               g_mer_wait_max = t1;
+            if (!me_host_input_done())
+            {
+               me_rend_teardown("input_wedge");   /* watchdog-class failure */
+               goto present;
+            }
+            /* The ME has now copied. Only here is it safe to clear the map:
+             * clearing it before the copy would lose pages the ME had not
+             * read yet and leave its mirror stale. The core is blocked in the
+             * spin above, so no VRAM write can be missed in this window. */
+            memset(vram_clean, 1, VRAM_DIRTY_PAGES);
+            if (g_mer_dirty_cfg)
+               g_mer_full_copy = 0;   /* mirror is now valid to patch */
          }
          g_mer_pending = out;
+         g_mer_post_us = (unsigned)sceKernelGetSystemTimeLow();
+         g_mer_rend_seen = 0;
          g_mer_cur ^= 1;
          me_capture_buf = g_mer_cap[g_mer_cur];
       }
@@ -1350,11 +1869,31 @@ present:
 
    if (++g_mer_census >= 600)
    {
-      fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u",
+      fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u "
+             "shadow=%d sh_mean_us=%u sh_max_us=%u "
+             "dirty=%d wb_pages=%u sf=%d sf_hit=%u sf_miss=%u "
+             "rend_n=%u rend_mean_us=%u rend_max_us=%u "
+             "vis_n=%u vis_mean_us=%u vis_max_us=%u",
              g_mer_frames, g_mer_drops, g_mer_wait_us / g_mer_census,
-             g_mer_wait_max);
+             g_mer_wait_max, g_mer_sh_on,
+             g_mer_sh_us / g_mer_census, g_mer_sh_max,
+             g_mer_dirty_cfg,
+             g_mer_wb_n ? g_mer_wb_pages / g_mer_wb_n : 0u,
+             g_mer_sameframe, g_mer_sf_hit, g_mer_sf_miss,
+             g_mer_rend_n, g_mer_rend_n ? g_mer_rend_us / g_mer_rend_n : 0,
+             g_mer_rend_max,
+             g_vis_n, g_vis_n ? g_vis_us / g_vis_n : 0, g_vis_max);
       g_mer_census = 0;
       g_mer_wait_us = g_mer_wait_max = 0;
+      g_mer_sh_us = g_mer_sh_max = 0;
+      g_mer_rend_n = g_mer_rend_us = g_mer_rend_max = 0;
+      g_vis_n = g_vis_us = g_vis_max = 0;
+      g_mer_wb_pages = g_mer_wb_n = 0;
+      if (g_mer_sameframe)
+         fe_evt("me_sf_gate noloop=%u wouldhit=%u miss=%u",
+                g_mer_sf_noloop, g_mer_sf_wouldhit, g_mer_sf_miss);
+      g_mer_sf_hit = g_mer_sf_miss = 0;
+      g_mer_sf_noloop = g_mer_sf_wouldhit = 0;
    }
 }
 
@@ -1390,6 +1929,10 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
    g_fps_emu_frames++;
    if (pix)
    {
+      /* Kept for the wake overlay's snapshot when the ME is not the one
+       * drawing -- the CPU path, and everything under PPSSPP. */
+      g_last_pix   = pix;
+      g_last_pitch = (unsigned)(pitch / 2);
       cur_frame = pix;
       cur_w = w;
       cur_h = h;
@@ -1411,8 +1954,20 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
        * cadence (which is exactly what makes ordinary FF look choppy). */
       if ((g_ff_uncapped || g_ff_mult) &&
           !(g_pcfg.ff_smooth || g_pcfg.bench_mode))
-         me_rend_ff_frame(pix != NULL);
-      else
+      {
+         /* SYNCHRONOUS FF.  This posts, blocks on the ME and retires the
+          * stage itself.  It must be the only thing posting this frame: a
+          * second post from the same-frame hook leaves two producers for
+          * one stage index and the picture alternates between a live render
+          * and a stale one -- exactly the "oscillating between the current
+          * frame and the frame that was showing when FF was toggled" that
+          * scoping same-frame to the paced path fixes.  The gate closes at
+          * loop top, one frame after the hook may already have fired, so
+          * check the post flag here too. */
+         if (!g_mer_posted)
+            me_rend_ff_frame(pix != NULL);
+      }
+      else if (!g_mer_posted)
          me_rend_frame(pix != NULL);
       return;
    }
@@ -1522,6 +2077,17 @@ static void dump_frame_bmp(void)
       fe_evt("frame_dump file=%s", path);
 }
 
+/* The ME checksums every frame it renders.  Logging it at RETIRE gives one
+ * value per rendered frame, independent of when it is presented -- the only
+ * oracle that can tell "same-frame drew something different" apart from
+ * "same-frame drew the same thing earlier".  vhash samples at a fixed point
+ * in the frame loop and therefore conflates the two. */
+static void mer_note_sum(void)
+{
+   if (g_vhash_on)
+      fe_evt("mesum f=%u s=%08x", fe_host_frame_count(), me_host_result());
+}
+
 /* ADR-0033: per-frame hash of the CORE's output buffer, taken upstream of the
  * GU blit (fe_host_last_frame is the pointer retro_video_refresh handed us).
  * This is the video regression oracle: a renderer change that alters ONE
@@ -1534,6 +2100,17 @@ static void vhash_frame(void)
    const uint16_t *pix = fe_host_last_frame(&pitch);
    uint32_t h = 2166136261u;
    unsigned y;
+   /* MEDIA ENGINE MODE: the core buffer is NEVER WRITTEN (capture mode skips
+    * the render), so hashing it yields the same untouched buffer every frame.
+    * This oracle silently reported "0 frames differ" for every ME-mode run in
+    * the project -- 60 logs, all distinct=1 -- which is the answer it gives
+    * for a renderer that draws nothing at all.  dump_frame_bmp() already
+    * carries this switch; the oracle never got it.  Hash what was PRESENTED. */
+   if (g_me_rend && g_mer_ready >= 0)
+   {
+      pix   = g_mer_stage[g_mer_ready];
+      pitch = MER_STAGE_PITCH * 2;   /* pitch is BYTES here */
+   }
    if (!pix)
       return;
    for (y = 0; y < FE_GBA_HEIGHT; y++)
@@ -1585,6 +2162,129 @@ static unsigned eboot_crc(void)
    sceIoClose(fd);
    fe_evt("build eboot_crc=%08x size=%u", crc, total);
    return crc;
+}
+
+/* ---- VRAM DIRTY-PAGE PROBE ---------------------------------------------
+ *
+ * The question.  The ME renderer's input handshake costs a measured ~1.45 ms
+ * of MAIN-CPU SPIN every frame (`EVT me_rend wait_mean_us`, symmetric across
+ * both consoles, drops=0 -- so it is handshake latency, not render time).
+ * That wait exists because me_render_glue.cc does a flat
+ * `memcpy(vram, main_ram, 96 KB)` on the ME from uncached main RAM, ~67 MB/s.
+ * VRAM is 98 % of the 98 KB copied.
+ *
+ * IF a typical frame only dirties a small fraction of VRAM, copying just the
+ * dirty pages collapses that wait and hands ~1 ms/frame back on BOTH
+ * consoles -- more than the whole historical client-side deficit.  IF games
+ * rewrite most of VRAM every frame, the idea is dead and we stop here.
+ *
+ * Why a shadow compare and not write barriers.  Production dirty-tracking
+ * has to instrument the DYNAREC's store path (mips_emit.h `emit_pmemst_stub`,
+ * region 6) -- translated code does not go through gba_memory.c's
+ * `write_vram##type()` macros, so C-side instrumentation alone would
+ * undercount badly.  That is real work in the hottest store path and it is
+ * not worth doing speculatively.  This probe answers the same question with
+ * ZERO hot-path cost, and it either justifies that work or kills it.
+ *
+ * How.  Every `g_vp_period` frames, a two-frame cycle:
+ *   phase 1  copy VRAM to a shadow.
+ *   phase 2  the NEXT frame, compare page by page and count the pages that
+ *            differ.  Comparing consecutive frames is the point -- sampling
+ *            frame N against frame N-16 would measure a 16-frame union and
+ *            overstate a per-frame copy.
+ *
+ * Cost is confined to those two frames, is self-timed into `cost_us`, and is
+ * reported with the result so the instrument's own price is in its own
+ * output.  `vram_probe = 0` (the default) allocates nothing and never runs.
+ *
+ *   EVT vram_probe n=<samples> pages=<mean/96> max=<n> kb=<mean KB>
+ *                  cost_us=<mean> period=<n>
+ */
+#define VP_PAGE_SHIFT  10                 /* 1 KiB pages */
+#define VP_PAGES       (1024 * 96 >> VP_PAGE_SHIFT)   /* 96 */
+static int      g_vp_period;              /* harness key `vram_probe`, 0=off */
+static unsigned char *g_vp_shadow;
+static int      g_vp_phase;               /* 0 idle, 1 shadow taken          */
+static unsigned g_vp_ctr, g_vp_n, g_vp_sum, g_vp_max, g_vp_cost, g_vp_fail;
+static unsigned g_vp_marked, g_vp_missed, g_vp_marks0;
+
+static void vram_probe_frame(void)
+{
+   unsigned t0, i, dirty = 0;
+
+   if (!g_vp_period)
+      return;
+   if (!g_vp_shadow)
+   {
+      g_vp_shadow = (unsigned char *)malloc(1024 * 96);
+      if (!g_vp_shadow)
+      {
+         g_vp_period = 0;                 /* never let an instrument fail a run */
+         fe_evt("vram_probe off reason=alloc");
+         return;
+      }
+   }
+
+   if (g_vp_phase == 0)
+   {
+      if (++g_vp_ctr < (unsigned)g_vp_period)
+         return;
+      g_vp_ctr = 0;
+      t0 = (unsigned)sceKernelGetSystemTimeLow();
+      memcpy(g_vp_shadow, vram, 1024 * 96);
+      /* DO NOT clear the map here any more. It is now load-bearing: the ME
+       * copies exactly the pages it marks, and clearing it mid-frame would
+       * drop pages the ME has not read yet -- silent stale-VRAM rendering.
+       * Coverage has already been established (missed=0 over 255 marked
+       * pages on build 58026acf), so the probe reverts to its original job
+       * of counting how many pages actually change per frame. */
+      g_vp_marks0 = vram_dirty_marks;
+      g_vp_cost += (unsigned)sceKernelGetSystemTimeLow() - t0;
+      g_vp_phase = 1;
+      return;
+   }
+
+   /* phase 2: consecutive-frame delta */
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   for (i = 0; i < VP_PAGES; i++)
+   {
+      unsigned off = i << VP_PAGE_SHIFT;
+      int changed = memcmp(g_vp_shadow + off, vram + off,
+                           1u << VP_PAGE_SHIFT) != 0;
+      int marked  = vram_clean[i] == 0;   /* inverted map */
+      if (changed)
+         dirty++;
+      if (marked)
+         g_vp_marked++;
+      /* THE NUMBER THAT DECIDES THE DESIGN: a page that really changed and
+       * was never marked.  Copy only marked pages while this is non-zero and
+       * the ME renders stale VRAM -- silent corruption, not a crash. */
+      if (changed && !marked)
+         g_vp_missed++;
+   }
+   g_vp_cost += (unsigned)sceKernelGetSystemTimeLow() - t0;
+   g_vp_phase = 0;
+
+   g_vp_n++;
+   g_vp_sum += dirty;
+   if (dirty > g_vp_max)
+      g_vp_max = dirty;
+
+   if (g_vp_n >= 32)
+   {
+      fe_evt("vram_probe n=%u pages=%u.%u/%u max=%u kb=%u cost_us=%u "
+             "period=%u marked=%u missed=%u marks=%u",
+             g_vp_n,
+             g_vp_sum / g_vp_n, (g_vp_sum * 10u / g_vp_n) % 10u, VP_PAGES,
+             g_vp_max,
+             g_vp_sum / g_vp_n,        /* 1 KiB pages, so pages == KiB */
+             g_vp_cost / (g_vp_n * 2u),
+             (unsigned)g_vp_period,
+             g_vp_marked, g_vp_missed, vram_dirty_marks - g_vp_marks0);
+      g_vp_n = g_vp_sum = g_vp_max = g_vp_cost = 0;
+      g_vp_marked = g_vp_missed = 0;
+   }
+   (void)g_vp_fail;
 }
 
 static void vid_prof_frame(unsigned win)
@@ -1704,7 +2404,7 @@ static unsigned vprof_clock_us(void)
 
 /* Same clock, fe_evt's prototype (ADR-0021 log-I/O accounting).  The ADR-0067
  * playable build never installs it, because there is no log to account for. */
-#ifndef GPSP_PLAYABLE
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static unsigned long long evt_clock_us(void)
 {
    return (unsigned long long)sceKernelGetSystemTimeWide();
@@ -2351,6 +3051,11 @@ static void log_adhoc_up(const char *group)
 }
 
 /* Start the netdrv/netpacket layer over the (already-up) transport. */
+/* Reason text from the last failed netdrv start, for the toast.  A release
+ * build has no log, so the message on screen is the only diagnosis the owner
+ * ever gets -- it has to be true and it has to be specific. */
+static char g_np_start_why[32];
+
 static int net_start_np(int is_host, const char *group, const char *nick,
                         int probe)
 {
@@ -2366,8 +3071,15 @@ static int net_start_np(int is_host, const char *group, const char *nick,
    npc.probe     = probe;
    if (fe_np_start(&npc) != 0)
    {
-      fe_evt("net_error reason=np_start stage=up rc=-1 sce=0x0");
-      return -1;
+      /* Free memory goes in the log because "out of memory" is the reason a
+       * 32 MB console fails where a 64 MB one does not, and the number says
+       * whether it was exhaustion or fragmentation. */
+      fe_evt("net_error reason=np_start why=\"%s\" free=%d max_block=%d",
+             fe_np_start_reason(), sceKernelTotalFreeMemSize(),
+             sceKernelMaxFreeMemSize());
+      snprintf(g_np_start_why, sizeof(g_np_start_why), "%s",
+               fe_np_start_reason());
+      return ADHOC_ERR_NP_START;
    }
    g_net_up = 1;
    g_net_is_host = is_host;
@@ -3601,6 +4313,7 @@ extern void rfu_set_rx_cap(unsigned n);
  * WAITEVENT re-poll spin that sank the rfu_rx_cap arms cannot occur.  1 equals
  * both the game's drain rate and the real radio's cadence.  0 = off. */
 extern void rfu_set_frame_pace(unsigned n);
+extern void rfu_set_pace_max_hold(unsigned n);
 extern void rfu_set_cushion(unsigned n);     /* fixed-depth jitter buffer PoC */
 extern void adhoc_set_disc_await(int on);    /* candidate mid-run-Disconnect fix */
 /* ADR-0059.  Percent, 100 = stock.  Stretches the emulated adapter's two
@@ -3708,6 +4421,23 @@ void gpsp_rfu_flight_dump_hook(const unsigned *ring, unsigned cap,
 
 /* ADR-0071: set by UI_ACT_RELAUNCH; acted on after full teardown. */
 static int g_relaunch;
+
+/* Replace this process with a fresh boot of ourselves.  On CFW an EBOOT.PBP
+ * must be launched the way the FIRMWARE launches it; plain sceKernelLoadExec
+ * returns instead of replacing the process.  argp becomes the new argv[0],
+ * where every ms0 path is derived from.  Returns ONLY on failure. */
+static void relaunch_eboot(void)
+{
+   char eboot[160];
+   struct SceKernelLoadExecVSHParam param;
+   snprintf(eboot, sizeof(eboot), "%s/EBOOT.PBP", g_dir_base);
+   memset(&param, 0, sizeof(param));
+   param.size = sizeof(param);
+   param.args = (SceSize)(strlen(eboot) + 1);
+   param.argp = eboot;
+   param.key  = "game";
+   sctrlKernelLoadExecVSHMs2(eboot, &param);
+}
 
 volatile int g_rfu_activated;
 void gpsp_rfu_activated_hook(void)   /* overrides the weak rfu.c stub */
@@ -3874,6 +4604,29 @@ static volatile unsigned g_rfu_tr_buf[RFU_TRACE_RING];
 static volatile unsigned g_rfu_tr_head;   /* producer: emulation thread   */
 static volatile unsigned g_rfu_tr_tail;   /* consumer: main loop          */
 static volatile unsigned g_rfu_tr_lost;
+
+/* Fired by the core at vcount==160 -- see g_vis_n. Defined here, below
+ * frame_t0 and net_now_us. */
+void gpsp_visible_done_hook(void)
+{
+   /* SAME-FRAME: this is the earliest instant the ME can be given work. The
+    * capture is complete and the CPU still has all of VBlank to emulate, so
+    * the render overlaps real work instead of trailing it. */
+   if (mer_sameframe_active() && g_me_rend && !g_mer_posted)
+   {
+      g_mer_posted = 1;
+      me_rend_frame(1);
+   }
+   if (!g_frame_start_us)
+      return;
+   {
+      unsigned d = (unsigned)(net_now_us() - g_frame_start_us);
+      g_vis_n++;
+      g_vis_us += d;
+      if (d > g_vis_max)
+         g_vis_max = d;
+   }
+}
 
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
 {
@@ -4077,6 +4830,31 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_gqpeak peak=%u over_gate=%u/%u net=%s", a, b, 600u,
                 g_net_up ? "up" : "down");
          break;
+      case 23:
+         fe_evt("rfu_pacecatch n=%u q=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 22:
+         /* The bound on the pace hold (rfu.c rfu_pace_max_hold).  `n` =
+          * packets discarded this window because the client's undelivered
+          * queue was older than the bound; `hi` = the worst single frame.
+          *
+          * Read WITH rfu_pace: q_hi parked at the cap plus n>0 means the bound
+          * is doing its job -- the alternative was the hold crossing the
+          * game's 32-frame link timeout and the adapter being reset.  n
+          * climbing every window means the host is outrunning this game's ask
+          * rate persistently, which is a different problem from a clump. */
+         fe_evt("rfu_pacedrop n=%u hi=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 21:
+         /* SEND_DATA word count.  `hi` is the largest rfu_plen the guest put
+          * on the wire this window; `clamp` how many copies exceeded the
+          * 23-word tx buffer and were bounded.  hi<=24 means this ROM never
+          * reached the pre-fix overrun; hi>24 with clamp>0 means it did. */
+         fe_evt("rfu_txplen hi=%u clamp=%u net=%s",
+                a, b, g_net_up ? "up" : "down");
+         break;
       default:
          break;
       }
@@ -4203,6 +4981,8 @@ static void ui_net_action(int is_host)
                 ui_group());
    else if (rc == ADHOC_ERR_WLAN_OFF)
       osd_toast("WLAN switch is OFF");
+   else if (rc == ADHOC_ERR_NP_START)
+      osd_toast("Radio OK, netdrv failed: %s", g_np_start_why);
    else
       osd_toast("Wireless start failed (%s)", adhoc_transport_stage());
 }
@@ -4380,7 +5160,7 @@ int main(int argc, char *argv[])
    scePowerSetClockFrequency(333, 333, 166);
 
    init_paths(argc, argv);
-#ifndef GPSP_PLAYABLE
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
    sceIoMkdir(LOG_DIR, 0777);
    fe_evt_init(LOG_PATH, 0);
    fe_evt_set_clock(evt_clock_us);   /* ADR-0021: price the ms0 flushes */
@@ -4412,6 +5192,69 @@ int main(int argc, char *argv[])
     * ROM blocks (FRONTEND-AUDIT §8): GU uses VRAM + static list, audio ring
     * is static, audio thread stack is created here. */
    pcfg_load(CONFIG_INI);
+
+   /* RESERVE THE NETDRV BLOCK WHILE THE HEAP IS STILL PRISTINE.
+    *
+    * netdrv is ~638 KiB in one piece (five peers x a 192-slot reliable
+    * backlog).  It used to be calloc'd when the user starts a session --
+    * after a 16 MiB ROM, the ME stages and the browser's 512 KiB art
+    * textures have been through the heap.  On a PSP-1000, with half the user
+    * partition of a 2000/3000/Go, the largest free hole at that moment can be
+    * under 638 KiB while total free memory still looks healthy, and wireless
+    * fails for a reason that has nothing to do with wireless.  Field report:
+    * the 1000 could neither host nor join, and (because np_start returned -1,
+    * which collides with ADHOC_ERR_WLAN_OFF) reported "WLAN switch is OFF"
+    * with the switch on.
+    *
+    * Taking it here costs every player 638 KiB they may never use, and buys
+    * that a session cannot fail on fragmentation.  If even this fails, leave
+    * the arena unset: netdrv_create falls back to calloc and behaves exactly
+    * as it did before. */
+   {
+      /* RESERVE EXACTLY ONE MEGABYTE, NOT THE STRUCT'S SIZE.
+       *
+       * The core's init_gamepak_buffer() mallocs 1 MiB blocks until one
+       * FAILS.  Write the heap as H = n*1MiB + R: the loop takes n blocks and
+       * leaves R, and R is the entire budget for everything allocated after
+       * it -- gba_screen_pixels (77,280 B), the sound ring, the ME stages.
+       *
+       * Take C bytes before the loop and the leftover becomes:
+       *     C <= R  ->  n blocks still fit, leftover R - C     (R is eaten)
+       *     C >  R  ->  one block fewer,   leftover R + 1MiB - C
+       *
+       * Reserving the struct's own 504 KiB landed in the first case on a
+       * PSP-1000 and took the slack that the frame buffer needed:
+       *     core[3]: Failed to allocate frame buffer (77280 bytes)
+       *     retro_load_game FAILED ... exit reason=load_failed
+       * -- Emerald dropped straight back to the XMB.
+       *
+       * C = 1 MiB is the only value that cannot do that: it exceeds every
+       * possible R, so the loop always takes exactly one block fewer and the
+       * leftover comes out at R again, less one malloc header.  The frontend's
+       * post-load budget is then bit-for-bit what it was before this existed,
+       * and the whole cost is one 1 MiB ROM page-cache block (on a 64 MiB
+       * console, where the loop stops at its 32-block cap with megabytes to
+       * spare, the cost is nothing at all).
+       *
+       * Do NOT "tighten" this to netdrv_sizeof(). The slack it leaves behind
+       * is the point, not the bytes it hands to netdrv. */
+      size_t need = netdrv_sizeof();
+      size_t take = 1024u * 1024u;
+      void  *blk  = (need <= take) ? malloc(take) : malloc(need);
+      if (blk)
+      {
+         netdrv_set_arena(blk, take > need ? take : need);
+         /* The tail is free real estate: netdrv uses `need`, the block is
+          * `take`.  The wake overlay's frozen frame lives there. */
+         if (take > need + WAKE_FRAME_BYTES + 64)
+            g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
+      }
+      fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
+             (unsigned)need, (unsigned)(take > need ? take : need),
+             blk ? "reserved" : "FAILED",
+             sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+   }
+
    vid_init();
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    audio_start();
@@ -4462,6 +5305,7 @@ int main(int argc, char *argv[])
       vp_build_crc = eboot_crc();
    }
    vhash_from = fe_ini_get_int(HARNESS_INI, "vhash_from", 0);
+   g_vhash_on = (int)fe_ini_get_int(HARNESS_INI, "vhash", 0);
    vhash_to   = fe_ini_get_int(HARNESS_INI, "vhash_to", 0);
    if (fe_ini_get_int(HARNESS_INI, "vhash", 0) && !vhash_to)
    {
@@ -4554,7 +5398,10 @@ int main(int argc, char *argv[])
     * it — which is why switching profiles relaunches instead of taking effect
     * live.  Two consoles that disagree about how long a frame is are exactly
     * what gen-3's RFU cannot survive: it counts link timeouts in FRAMES. */
-   g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
+   /* `net_session_fps_force = 1` in config.ini hands this back to the player;
+    * see the field's note.  Both consoles must carry the same value. */
+   if (!g_pcfg.net_session_fps_force)
+      g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
    g_pcfg.net_session_fps_snap = 0;
    g_pcfg.core_phase           = 0;
    /* `gu_defer = 1` was in the harness ini of ALL 17 full-speed runs behind
@@ -4594,6 +5441,20 @@ int main(int argc, char *argv[])
       if (fp > 16) fp = 16;
       rfu_set_frame_pace((unsigned)fp);
       fe_evt("rfu_frame_pace n=%d", fp);
+      /* The bound on the hold.  frame_pace without it took the client's
+       * undelivered queue past the game's 32-frame link timeout on hardware
+       * (q_hi 1, 9, 13, 39 -> adapter reset).  Must stay well under 32; 0
+       * restores the unbounded hold, for an A/B against that failure. */
+      {
+         /* config.ini is the base (the player owns this dial), harness
+          * overrides -- the me_dirty / me_sameframe pattern. */
+         int mh = (int)fe_ini_get_int(HARNESS_INI, "rfu_pace_max_hold",
+                                      g_pcfg.rfu_pace_max_hold);
+         if (mh < 0)  mh = 0;
+         if (mh > 28) mh = 28;      /* 32 is the timeout; never sit on it */
+         rfu_set_pace_max_hold((unsigned)mh);
+         fe_evt("rfu_pace_max_hold n=%d", mh);
+      }
    }
    /* Fixed-depth cushion (jitter buffer) PoC — see PLAY_RFU_CUSHION. */
    {
@@ -4656,7 +5517,11 @@ int main(int argc, char *argv[])
    {
       int np_ = (int)fe_ini_get_int(HARNESS_INI, "adhoc_net_prio", 0);
       int rf  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_first_max_us", 0);
-      int rm  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_min_us", 0);
+      /* config.ini is the base, harness overrides -- and the base is no
+       * longer 0/build-time: see g_pcfg.nd_rto_min_us for why 200 ms is
+       * wrong at an 11 ms srtt. */
+      int rm  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_min_us",
+                                    g_pcfg.nd_rto_min_us);
       if (rf < 0) rf = 0;
       if (rm < 0) rm = 0;
       adhoc_transport_set_net_prio(np_);
@@ -4707,6 +5572,29 @@ int main(int argc, char *argv[])
          if (ip > 0x77) ip = 0x77;
          g_io_prio = ip;
       }
+      /* VRAM dirty-page probe: frames between samples, 0 = off (default).
+       * See vram_probe_frame().  30 gives ~2 instrumented frames/second. */
+      /* ME input shadows: 1 = give the ME private copies of vram/oam/palette
+       * so the main CPU never spins on its input phase.  Volatile-backed
+       * only.  Default 1; set 0 for the pre-shadow arm. */
+      g_mer_shadow = (int)fe_ini_get_int(HARNESS_INI, "me_shadow", 1);
+      g_mer_dirty_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_dirty",
+                                             g_pcfg.me_dirty);
+      /* config.ini is the base, harness overrides -- same pattern me_mode
+       * uses.  DEFAULT ON: in the playable build HARNESS_INI points at a
+       * path that cannot exist, so a harness-only key would have shipped
+       * this feature permanently disabled to every player.
+       *
+       * Safe as a default because a miss is not a failure: the frame simply
+       * presents on the next swap, which is exactly the N+1 behaviour that
+       * shipped before.  Measured hit rate 85.7%% (98.8%% light scenes,
+       * 72.7%% gameplay); the misses are CPU spikes, not ME capacity. */
+      g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe",
+                                            g_pcfg.me_sameframe);
+      g_vp_period = (int)fe_ini_get_int(HARNESS_INI, "vram_probe", 0);
+      if (g_vp_period)
+         fe_evt("vram_probe period=%d", g_vp_period);
+
       /* ADR-0066: frames between dump-marker polls.  ADR-0069 default = 0. */
       {
          int dm = (int)fe_ini_get_int(HARNESS_INI, "dump_marker_poll",
@@ -4978,7 +5866,31 @@ int main(int argc, char *argv[])
       /* `browser = 1` overrides the ADR-0067 suppression: the gallery runs
        * even with the harness channel present (asset capture / emulator
        * shoots — combine with ui_demo=1 for the unattended gallery dump). */
-      if (find_first_rom(rom_path, sizeof(rom_path)) != 0)
+      /* `rom = <name.gba>` names the cart explicitly, relative to roms/.
+       * Without it find_first_rom() takes whatever the FILESYSTEM returns
+       * first, which is insertion order, not alphabetical -- a card holding
+       * emerald.gba + firered.gba + leafgreen.gba silently picks by luck.
+       * The key lets an arm switch games by staging the ini alone, which
+       * matters because ROMs are far too big to stage. */
+      char kr[128] = "";
+      fe_ini_get(HARNESS_INI, "rom", kr, sizeof(kr));
+      if (kr[0])
+      {
+         snprintf(rom_path, sizeof(rom_path), "%s/%s", ROM_DIR, kr);
+         if (!file_exists(rom_path))
+         {
+            /* Loud, not a fallback to some other game: silently running the
+             * wrong cart would invalidate every number the run produces. */
+            fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
+            evt_shutdown();
+            audio_stop();
+            handoff_run(2, "rom_missing");
+            sceKernelExitGame();
+            return 0;
+         }
+         fe_evt("rom selected=%s (harness key)", kr);
+      }
+      else if (find_first_rom(rom_path, sizeof(rom_path)) != 0)
       {
          fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
@@ -4988,15 +5900,32 @@ int main(int argc, char *argv[])
          return 0;
       }
    }
-   else if (ui_browser(ROM_DIR, rom_path, sizeof(rom_path)) != 0)
+   else
    {
-      fe_evt("exit code=2 reason=no_rom");
-      evt_shutdown();
-      audio_stop();
-      vid_term();
-      handoff_run(2, "no_rom");   /* ADR-0053 */
-      sceKernelExitGame();
-      return 0;
+      int br = ui_browser(ROM_DIR, rom_path, sizeof(rom_path));
+      if (br > 0)
+      {
+         /* Settings changed Media Engine mode, which was latched above.
+          * Nothing is emulating yet -- no SRAM to flush, no core thread to
+          * stop.  Close the log and boot again. */
+         fe_evt("exit code=0 reason=ui_relaunch");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         relaunch_eboot();
+         sceKernelExitGame();
+         return 0;
+      }
+      if (br != 0)
+      {
+         fe_evt("exit code=2 reason=no_rom");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "no_rom");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
    }
    if (!have_variant)
    {
@@ -5060,7 +5989,13 @@ int main(int argc, char *argv[])
          /* Defaults were hardcoded 0, which silently left the PLAYABLE build
           * single-core despite PLAY_ME_BOOT/PLAY_ME_VIDEO=1 (the same latent
           * bug class as the exit_assist default).  PLAY_* now reaches here. */
-         int meb = (int)fe_ini_get_int(HARNESS_INI, "me_boot", PLAY_ME_BOOT);
+         /* config.ini is the base, harness overrides.  It became a player
+          * key for the standby investigation: `me_mode = 0` turns the
+          * RENDERER off but the module still loads, so the first attempt to
+          * isolate "did we ever load a kernel module" was void -- the log said
+          * `me_init state=up` with me_mode=0.  This key is the real switch. */
+         int meb = (int)fe_ini_get_int(HARNESS_INI, "me_boot",
+                                       g_pcfg.me_boot);
          int mbn = (int)fe_ini_get_int(HARNESS_INI, "me_bench", 0);
          int mev = (int)fe_ini_get_int(HARNESS_INI, "me_video", PLAY_ME_VIDEO);
          if (g_me_rend_cfg)
@@ -5068,9 +6003,39 @@ int main(int argc, char *argv[])
             meb = 1;         /* the renderer needs the ME booted */
             mev = 0;         /* and owns the ME: staging offload excluded */
          }
+         /* me_boot = 0 IS AUTHORITATIVE, and it has to be, because the load is
+          * `meb || mbn || mev` and me_video defaults to 1 in a playable build.
+          * Two standby runs were spent on a switch that did not switch: the
+          * log said `me_init state=up` with me_boot = 0 because me_video had
+          * already voted yes.  A key that means "never touch the second core"
+          * must outrank every other vote, including the renderer's. */
+         if (!g_pcfg.me_boot)
+         {
+            meb = mbn = mev = 0;
+            g_me_rend_cfg = 0;
+         }
+         fe_evt("me_boot cfg=%d boot=%d bench=%d video=%d rend=%d standby=%d",
+                g_pcfg.me_boot, meb, mbn, mev, g_me_rend_cfg, g_pcfg.standby);
+         /* With standby armed the ME may only come up if it can take the
+          * kernel's SceMeRpc sysevent slot -- that handler is what puts the
+          * second core away on suspend, and a console that cannot do that
+          * hard-resets on wake.  Single-core is the safe degradation. */
+         me_host_require_sysevent(g_pcfg.standby ? 1 : 0);
          if (meb || mbn || mev)
          {
-            if (me_host_init(g_dir_base) == 0)
+            int me_rc = me_host_init(g_dir_base);
+            if (me_rc < 0 && g_pcfg.standby)
+            {
+               /* The one failure a player must be TOLD about.  With standby on
+                * the engine refuses to start unless it can take the kernel's
+                * sleep handler, so a console in this state is running
+                * single-core -- correct and safe, but visibly slower with no
+                * explanation, because a release build has no log to read.
+                * Silence here would read as "this emulator is slow". */
+               osd_toast("Sleep unsupported here: running single-core");
+               osd_toast("Set standby = 0 in CONFIG.INI for full speed");
+            }
+            if (me_rc == 0)
             {
                if (mbn)
                   me_host_bench(76800, 32);
@@ -5171,6 +6136,7 @@ int main(int argc, char *argv[])
        * has to fit 16.7 ms.  Two clock reads per frame, and only while a
        * session is up. */
       uint64_t frame_t0 = g_net_up ? net_now_us() : 0;
+      g_frame_start_us = frame_t0 ? frame_t0 : net_now_us();
 
       /* ADR-0064: closes the PREVIOUS frame's `wait` region and opens this
        * frame's `pre`.  ADR-0065: open the protected window here, before any
@@ -5296,6 +6262,84 @@ int main(int argc, char *argv[])
       exit_assist_frame();    /* ADR-0079: repair the lost exit-key echo   */
       audio_status_frame();   /* feeds core frameskip when engaged (ADR-0019) */
 
+      /* ---- SELECT+L save state / SELECT+R load state ------------------
+       *
+       * The menu already offers both, but a quick-save you have to open a
+       * menu for is not a quick-save.  There is ONE slot per game and its
+       * path is the ROM's own name with .st0 -- so these write and read
+       * exactly what the menu entries do, and cannot be confused about
+       * which game they belong to.
+       *
+       * Edge-triggered on the shoulder button while SELECT is held, so
+       * holding the chord fires once rather than every frame.  SELECT+START
+       * (the menu) and L+R+SELECT (the screenshot) both stay distinct
+       * because each names a different third button.
+       *
+       * Deliberately NOT active while a script is driving: the harness holds
+       * button combinations the fixture never intended as chords. */
+      /* SELECT + TRIANGLE: open the wake overlay on demand.
+       *
+       * It exists to make the overlay workshoppable without a sleep cycle --
+       * and, more to the point, without hardware at all: PPSSPP has no Media
+       * Engine, but the CPU renderer still fills the frame the snapshot reads,
+       * so the overlay composes there exactly as it does on a console.  Every
+       * layout question about this screen was previously a full deploy, a
+       * sleep and a photograph. */
+      if (!ui_active() && !have_script &&
+          (g_pad & PSP_CTRL_SELECT) && (pad_new & PSP_CTRL_TRIANGLE))
+      {
+         wake_snapshot();
+         g_wake_menu = 1;
+         fe_evt("wake_menu via=chord frame=%d", g_wake_have);
+      }
+
+      if (!ui_active() && !have_script &&
+          (g_pad & PSP_CTRL_SELECT) && state_path[0])
+      {
+         /* EXCLUSIVE SHOULDERS.  L+R+SELECT is already the screenshot chord,
+          * and without this a screenshot would also fire a save on the way
+          * through.  Requiring the other shoulder to be UP keeps the three
+          * chords disjoint. */
+         if ((pad_new & PSP_CTRL_LTRIGGER) && !(g_pad & PSP_CTRL_RTRIGGER))
+         {
+            if (fe_host_state_save(state_path) == 0)
+            {
+               fe_evt("state_save via=chord");
+               osd_toast("State saved");
+            }
+            else
+               osd_toast("Save failed");
+         }
+         else if ((pad_new & PSP_CTRL_RTRIGGER) && !(g_pad & PSP_CTRL_LTRIGGER))
+         {
+            /* NEVER LOAD DURING A SESSION.  Restoring a state rewinds this
+             * console's entire machine state while the peer keeps running,
+             * so the adapter's sequence numbers, the link state and the
+             * game's own trade protocol all disagree afterwards.  The peer
+             * cannot recover from that -- it is not our state to rewind. */
+            if (g_net_up)
+               osd_toast("Cannot load during a wireless session");
+            else if (fe_host_state_load(state_path) == 0)
+            {
+               fe_evt("state_load via=chord");
+               osd_toast("State loaded");
+            }
+            else
+               osd_toast("No saved state");
+         }
+      }
+
+      /* Did we come back?  This line existing at all is the answer to
+       * "does the app survive a standby" -- the question that decides
+       * whether resuming is a re-init job or a much larger one. */
+      if (g_pwr_resume)
+      {
+         g_pwr_resume = 0;
+         fe_evt("power back frames=%u net=%d me=%d me_up=%d",
+                fe_host_frame_count(), g_net_up, g_me_rend, me_host_up());
+         osd_toast("Resumed");
+      }
+
       /* ---- in-game menu (Select+Start held ~1/4 s, plan §8) ---------- */
       if (!ui_active())
       {
@@ -5385,7 +6429,8 @@ int main(int argc, char *argv[])
          }
          osd_draw();
          sceDisplayWaitVblankStart();
-         vid_swap();
+         if (!g_wake_hold)
+            vid_swap();
          continue;
       }
 
@@ -5480,8 +6525,41 @@ int main(int argc, char *argv[])
       /* ADR-0082: present the ME-staged frame BEFORE running the core, so
        * the GE rasterises through the whole retro_run below and the
        * pre-swap sync is ~0.  No-op unless me_video is active. */
+      /* One wake, one rebuild, on this thread.
+       *
+       * Ordering matters for how this LOOKS.  The LCD powers back on showing
+       * whatever is still in VRAM -- the frame from before the sleep -- so the
+       * overlay has to be the very next thing drawn.  The swap sites below are
+       * suppressed while a wake is pending (see g_wake_hold), otherwise the
+       * loop iteration that was in flight when the machine suspended finishes
+       * and puts the stale frame up first, which reads as a flicker. */
+      if (g_pwr_rebuild)
+         me_standby_up();
+      /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
+       * emulated while it is up (the frame is a still and any link is long
+       * gone), so it owns the pad and the swap chain until the player picks.
+       * `Quit to game list` relaunches the EBOOT, which is how this build
+       * returns to the browser everywhere else -- the core cannot unload a
+       * ROM cleanly, and a relaunch flushes SRAM on the way out. */
+      if (g_wake_menu)
+      {
+         g_wake_menu = 0;
+         if (ui_wake_menu(g_wake_have ? g_wake_frame : NULL, 240, 160,
+                          g_pcfg.last_rom))
+         {
+            fe_evt("wake_menu choice=game_list");
+            relaunch_eboot();
+         }
+         fe_evt("wake_menu choice=continue frame=%d", g_wake_have);
+         g_wake_have = 0;
+      }
       me_video_present();
-      me_rend_present();   /* ME renderer: swap-phase present (FF triage) */
+      /* SAME-FRAME shows the frame at the END of its own frame, not at the
+       * top of the next one -- so the top-of-loop present is skipped and the
+       * GE draw happens in the vblank wait below, once the ME reports done. */
+      if (!mer_sameframe_active())
+         me_rend_present();   /* ME renderer: swap-phase present (FF triage) */
+      g_mer_posted = 0;
 
       /* FPS chip: emulated-frame rate over a ~1 s window, one decimal (a
        * healthy reading is the GBA's own 59.7).  A window with zero frames
@@ -5596,6 +6674,7 @@ int main(int argc, char *argv[])
 
       if (vid_prof_win > 0)
          vid_prof_frame((unsigned)vid_prof_win);
+      vram_probe_frame();        /* no-op unless `vram_probe` is set */
 
       if (vhash_to && frames >= (unsigned)vhash_from &&
           frames <= (unsigned)vhash_to)
@@ -5769,17 +6848,121 @@ int main(int argc, char *argv[])
             if ((int)(vc - g_vc_target) >= 0)
                g_fh_late++;       /* budget already spent: we will not wait */
          }
+         /* PUMP THE TRANSPORT WHILE WE WAIT.
+          *
+          * netdrv is a single-threaded pump model (netdrv.h:16): the RX
+          * thread only feeds the transport ring, and everything -- delivery
+          * to the core AND the outbound ACK -- happens on the main thread
+          * inside fe_np_pump.  That pump ran exactly once per frame, so an
+          * arriving packet waited 0-16.7 ms (mean ~8) to be looked at, and
+          * the ACK waited the same again on the far side.  Two quantisations
+          * of ~8 ms is ~16 ms, which is most of the measured srtt of 17-23 ms
+          * -- and why srtt sits suspiciously near one frame time while
+          * rttvar stays tiny (quantisation is regular; radios are not).
+          *
+          * This wait is pure idle: the loop is parked on vblank with the
+          * frame's work already done.  Pumping here costs no emulation time,
+          * stays on the main thread so the threading contract holds, and
+          * roughly halves the quantisation on both sides.
+          *
+          * Falsifier: if srtt stays ~20 ms while pumpgap drops, the latency
+          * is genuinely in the radio and this whole line of reasoning is
+          * wrong. */
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
+         {
+            if (g_net_up)
+               fe_np_pump();
+            /* SAME-FRAME, RETIRE ONLY.  Adopting the ME's output the moment
+             * it finishes is the whole feature -- this frame's render shown
+             * in this frame.  But it must NOT draw here: the single present
+             * happens below, before the swap, so that a frame which never
+             * retires still puts something in the back buffer. */
+            if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0 &&
+                me_host_idle())
+            {
+               g_mer_ready   = g_mer_pending;
+               mer_note_sum();
+               g_mer_pending = -1;
+               g_mer_miss    = 0;
+               g_fps_drawn++;
+               g_mer_sf_hit++;
+            }
+            /* First moment the ME reports done: that IS the render duration
+             * (measured from the post), and this wait is idle anyway. */
+            if (g_me_rend && !g_mer_rend_seen && g_mer_post_us &&
+                me_host_idle())
+            {
+               unsigned d = (unsigned)sceKernelGetSystemTimeLow() -
+                            g_mer_post_us;
+               g_mer_rend_seen = 1;
+               g_mer_rend_n++;
+               g_mer_rend_us += d;
+               if (d > g_mer_rend_max)
+                  g_mer_rend_max = d;
+            }
             sceDisplayWaitVblankStart();
+         }
 
-         vid_swap();
+         /* Counted here, after the wait: still pending at the swap means the
+          * ME did not make its own frame, so the previous one goes out and
+          * this render lands next frame -- the shipping behaviour. */
+         /* ONE LAST LOOK BEFORE GIVING UP.
+          *
+          * The loop above checks the ME and then BLOCKS in
+          * sceDisplayWaitVblankStart().  The ME routinely finishes DURING
+          * that block, and the loop then exits on its vcount condition
+          * without ever re-checking -- so a frame that was rendered and
+          * ready got thrown away and the previous one went out instead.
+          * Measured before this existed: of 533 and 600 "misses" in two
+          * windows, 529 and 502 had the ME already idle (99%% and 84%%).
+          * Same-frame was not losing a race, it was not looking at the
+          * finish line.  Hit rate 10.9%% -> 85.7%% on this one check; the
+          * blit sits at the same vblank phase the in-loop present used, so
+          * nothing about timing changes. */
+         if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0 &&
+             me_host_idle())
+         {
+            g_mer_ready   = g_mer_pending;
+            mer_note_sum();
+            g_mer_pending = -1;
+            g_mer_miss    = 0;
+            g_fps_drawn++;
+            g_mer_sf_hit++;
+         }
+         if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0)
+         {
+            g_mer_sf_miss++;
+            if (me_host_idle())
+               g_mer_sf_wouldhit++;   /* must stay 0 */
+         }
+
+         /* THE PRESENT.  Unconditional, once, immediately before the swap.
+          * Whatever is current goes into the back buffer -- a fresh render
+          * if one retired this frame, otherwise the one already showing.
+          * Re-drawing an unchanged frame costs a GE blit we would rather
+          * not spend, and buys the guarantee that the back buffer is never
+          * two frames stale.  That is a trade worth making every time. */
+         if (mer_sameframe_active())
+         {
+            me_rend_present();
+            if (g_drew)
+               osd_draw();
+         }
+
+         if (!g_wake_hold)
+            vid_swap();
          g_drew = 0;
       }
       else if (g_drew)
       {
-         /* Uncapped FF: swap only when a frame was actually blitted. */
+         /* UNCAPPED FF: swap only when a frame was actually blitted.
+          *
+          * No same-frame handling here.  mer_sameframe_active() is false
+          * whenever fast-forward is engaged, so the loop-top present ran
+          * as it always did and this branch is untouched shipping code. */
          osd_draw();
-         vid_swap();
+         if (!g_wake_hold)
+            vid_swap();
          g_drew = 0;
       }
    }
@@ -5818,19 +7001,9 @@ int main(int argc, char *argv[])
     * process.  argp becomes the new argv[0], which is where every ms0 path is
     * derived from — passing NULL would silently fall back to the compiled-in
     * default directory and lose a variant install's saves. */
+   /* Returns only if it failed: fall through to the XMB rather than hang. */
    if (g_relaunch)
-   {
-      char eboot[160];
-      struct SceKernelLoadExecVSHParam param;
-      snprintf(eboot, sizeof(eboot), "%s/EBOOT.PBP", g_dir_base);
-      memset(&param, 0, sizeof(param));
-      param.size = sizeof(param);
-      param.args = (SceSize)(strlen(eboot) + 1);
-      param.argp = eboot;
-      param.key  = "game";
-      sctrlKernelLoadExecVSHMs2(eboot, &param);
-      /* Returned?  Then fall through to the XMB rather than hanging. */
-   }
+      relaunch_eboot();
    sceKernelExitGame();
    return 0;
 }

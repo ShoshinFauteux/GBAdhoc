@@ -9,6 +9,8 @@
 
 #include "video_psp.h"
 #include "font_8x16.h"
+#include "font_ui.h"
+#include "logo_ui.h"
 #include "fe_util.h"
 
 #define FB_STRIDE 512
@@ -328,6 +330,13 @@ void vid_init(void)
    sceGuEnable(GU_SCISSOR_TEST);
    sceGuDisable(GU_DEPTH_TEST);
    sceGuDisable(GU_BLEND);
+   /* sceGuInit() leaves ordered dithering ON.  That is right for a
+    * photograph and wrong for flat UI surfaces: at RGB565 it stipples
+    * every panel and gradient with a 4x4 grain that is plainly visible
+    * on a PSP-3000 IPS panel.  The emulated frame is blitted 5650->5650
+    * with GU_TFX_REPLACE, so it never dithered anyway -- nothing that
+    * matters loses shading here. */
+   sceGuDisable(GU_DITHER);
    sceGuEnable(GU_TEXTURE_2D);
    sceGuTexWrap(GU_CLAMP, GU_CLAMP);
    sceGuClearColor(0);
@@ -572,6 +581,29 @@ void vid_rect(int x, int y, int w, int h, uint16_t rgb565, int alpha)
                   GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
 }
 
+/* Same idea, but the ALPHA is what ramps, at a constant colour.
+ *
+ * The marquee footer was a stack of four 8 px rects with alpha stepping
+ * 40/85/130/175.  On the dark theme the steps hide in the artwork; on the
+ * light one they are four visible bands of white across the bottom of the
+ * picture.  The GE interpolates vertex alpha exactly as it interpolates
+ * colour, so one strip gives a true per-pixel ramp for the same cost. */
+void vid_gradient_a(int x, int y, int w, int h,
+                    uint16_t rgb565, int a_top, int a_bot)
+{
+   cvtx_t *v = (cvtx_t *)sceGuGetMemory(4 * sizeof(cvtx_t));
+   unsigned int ct = rgb565_to_abgr(rgb565, a_top);
+   unsigned int cb = rgb565_to_abgr(rgb565, a_bot);
+   sceGuDisable(GU_TEXTURE_2D);
+   v[0].color = ct; v[0].x = (short)x;       v[0].y = (short)y;       v[0].z = 0;
+   v[1].color = ct; v[1].x = (short)(x + w); v[1].y = (short)y;       v[1].z = 0;
+   v[2].color = cb; v[2].x = (short)x;       v[2].y = (short)(y + h); v[2].z = 0;
+   v[3].color = cb; v[3].x = (short)(x + w); v[3].y = (short)(y + h); v[3].z = 0;
+   sceGuShadeModel(GU_SMOOTH);
+   sceGuDrawArray(GU_TRIANGLE_STRIP,
+                  GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 4, 0, v);
+}
+
 void vid_gradient(int x, int y, int w, int h,
                   uint16_t top565, uint16_t bot565, int alpha)
 {
@@ -591,20 +623,225 @@ void vid_gradient(int x, int y, int w, int h,
                   GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 4, 0, v);
 }
 
+/* `texw/texh` are the ALLOCATED texture dimensions (the GE only samples
+ * power-of-two textures); `srcw/srch` is the sub-rect actually filled, so
+ * portrait art can live in the top-left of a square allocation.  The old
+ * signature hardcoded a 128x128 texture, which is why anything else drew
+ * garbage. */
+/* vid_image onto the same rect the emulator draws the game into, so a frame
+ * shown behind the wake overlay lands exactly where the player last saw it --
+ * letterboxed or stretched according to their own scale preset.
+ *
+ * Separate from vid_draw_prestaged because that one opens its OWN display
+ * list (sceGuStart), which cannot be nested inside vid_overlay_begin's: the
+ * nesting silently produced a list that drew nothing at all. */
+void vid_image_screen(const uint16_t *pix, int texw, int texh,
+                      int srcw, int srch, int alpha)
+{
+   int ox, oy, dw, dh;
+   dest_rect((unsigned)srcw, (unsigned)srch, &ox, &oy, &dw, &dh);
+   vid_image(ox, oy, dw, dh, pix, texw, texh, srcw, srch, alpha);
+}
+
 void vid_image(int x, int y, int w, int h, const uint16_t *pix,
-               int tw, int th, int alpha)
+               int texw, int texh, int srcw, int srch, int alpha)
 {
    tcvtx_t *v = (tcvtx_t *)sceGuGetMemory(2 * sizeof(tcvtx_t));
    unsigned int col = 0x00FFFFFFu | ((unsigned int)(alpha & 0xFF) << 24);
    sceGuEnable(GU_TEXTURE_2D);
    sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
-   sceGuTexImage(0, 128, 128, 128, pix);
+   sceGuTexImage(0, texw, texh, texw, pix);
    sceGuTexFilter(GU_LINEAR, GU_LINEAR);
    sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGB);
-   v[0].u = 0;          v[0].v = 0;          v[0].color = col;
-   v[0].x = (short)x;   v[0].y = (short)y;   v[0].z = 0;
-   v[1].u = (short)tw;  v[1].v = (short)th;  v[1].color = col;
+   v[0].u = 0;            v[0].v = 0;            v[0].color = col;
+   v[0].x = (short)x;     v[0].y = (short)y;     v[0].z = 0;
+   v[1].u = (short)srcw;  v[1].v = (short)srch;  v[1].color = col;
    v[1].x = (short)(x + w); v[1].y = (short)(y + h); v[1].z = 0;
+   sceGuDrawArray(GU_SPRITES,
+                  GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT |
+                  GU_TRANSFORM_2D, 2, 0, v);
+}
+
+/* ---- anti-aliased UI text ------------------------------------------------
+ *
+ * The 8x16 1-bit bitmap font that used to live here has no anti-aliasing and
+ * a fixed 8 px advance, which is what made every label look chewed at the
+ * edges.  RetroShell PSP solves this the way the PSP's own GE wants it
+ * solved, and so do we now: Inter is baked on the HOST into an 8-bit
+ * coverage atlas (tools/bake_font.py -> font_ui.h), uploaded as GU_PSM_T8,
+ * and paired with a CLUT whose entry i is (i << 24) | 0x00FFFFFF -- so the
+ * palette index IS the alpha and the glyph is pure coverage.  GU_TFX_MODULATE
+ * then multiplies it by the vertex colour, which is where the text colour
+ * comes from.  One sprite per glyph, same as before; the GE does the
+ * blending it was always doing.
+ *
+ * Baking on the host rather than shipping a .ttf keeps the EBOOT
+ * self-contained -- there is no font file for a user to lose, and no
+ * runtime rasteriser.
+ *
+ * Two faces: `ui` (Inter Regular 15px) for everything, `hd` (Inter SemiBold
+ * 19px) for screen titles.  Text is proportional now, so LAYOUT MUST ASK:
+ * vid_text_w() replaces strlen(s) * FE_FONT_W everywhere.
+ */
+
+/* CLUT must be 16-byte aligned and written back before the GE reads it. */
+static unsigned int fu_clut[256] __attribute__((aligned(16)));
+static int fu_clut_ready;
+
+static void fu_clut_build(void)
+{
+   int i;
+   for (i = 0; i < 256; i++)
+      fu_clut[i] = ((unsigned int)i << 24) | 0x00FFFFFFu;
+   sceKernelDcacheWritebackRange(fu_clut, sizeof(fu_clut));
+   sceKernelDcacheWritebackRange((void *)fu_ui_a, sizeof(fu_ui_a));
+   sceKernelDcacheWritebackRange((void *)fu_hd_a, sizeof(fu_hd_a));
+   fu_clut_ready = 1;
+}
+
+typedef struct {
+   const fu_glyph      *g;
+   const unsigned char *a;
+   int                  aw, ah, asc;
+} fu_face;
+
+static fu_face fu_get(int hd)
+{
+   fu_face f;
+   if (hd) {
+      f.g = fu_hd_g; f.a = fu_hd_a;
+      f.aw = FU_HD_W; f.ah = FU_HD_H; f.asc = FU_HD_ASC;
+   } else {
+      f.g = fu_ui_g; f.a = fu_ui_a;
+      f.aw = FU_UI_W; f.ah = FU_UI_H; f.asc = FU_UI_ASC;
+   }
+   return f;
+}
+
+static int fu_measure(const fu_face *f, const char *s)
+{
+   int w = 0;
+   for (; *s; s++)
+   {
+      unsigned char c = (unsigned char)*s;
+      if (c < FU_FIRST || c > FU_LAST)
+         c = '?';
+      w += f->g[c - FU_FIRST].xadv;
+   }
+   return w;
+}
+
+int vid_text_w(const char *str)
+{
+   fu_face f = fu_get(0);
+   return fu_measure(&f, str);
+}
+
+int vid_text_hd_w(const char *str)
+{
+   fu_face f = fu_get(1);
+   return fu_measure(&f, str);
+}
+
+/* y is the TOP of the line box, as it was with the bitmap font, so every
+ * existing call site keeps its coordinates. */
+static void fu_draw(const fu_face *f, int x, int y, const char *str,
+                    unsigned int col)
+{
+   int n = 0, i, cx = x;
+   const char *s;
+   tcvtx_t *v;
+
+   if (!fu_clut_ready)
+      fu_clut_build();
+
+   for (s = str; *s; s++)
+   {
+      unsigned char c = (unsigned char)*s;
+      if (c < FU_FIRST || c > FU_LAST)
+         c = '?';
+      if (f->g[c - FU_FIRST].w)
+         n++;
+      if (n >= 96)
+         break;
+   }
+   if (!n)
+      return;
+
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuClutMode(GU_PSM_8888, 0, 0xFF, 0);
+   sceGuClutLoad(256 / 8, fu_clut);
+   sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
+   sceGuTexImage(0, f->aw, f->ah, f->aw, f->a);
+   /* NEAREST: the atlas is baked at its display size, so any filtering can
+    * only blur glyphs that are already correctly sampled 1:1. */
+   sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+   sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
+
+   v = (tcvtx_t *)sceGuGetMemory(2 * n * sizeof(tcvtx_t));
+   i = 0;
+   for (s = str; *s; s++)
+   {
+      unsigned char c = (unsigned char)*s;
+      const fu_glyph *g;
+      int gx, gy;
+      if (c < FU_FIRST || c > FU_LAST)
+         c = '?';
+      g = &f->g[c - FU_FIRST];
+      if (!g->w)
+      {
+         cx += g->xadv;
+         continue;
+      }
+      if (i >= n)
+         break;
+      gx = cx + g->xoff;
+      /* yoff is measured from the TOP OF THE LINE BOX, not the baseline
+       * (that is what PIL getbbox reports, and what the baker writes), so
+       * it already carries the ascent.  Adding f->asc here shifted every
+       * glyph down by a full ascent and pushed the footer off screen. */
+      gy = y + g->yoff;
+      v[i * 2 + 0].u = (short)g->x;          v[i * 2 + 0].v = (short)g->y;
+      v[i * 2 + 0].color = col;
+      v[i * 2 + 0].x = (short)gx;            v[i * 2 + 0].y = (short)gy;
+      v[i * 2 + 0].z = 0;
+      v[i * 2 + 1].u = (short)(g->x + g->w); v[i * 2 + 1].v = (short)(g->y + g->h);
+      v[i * 2 + 1].color = col;
+      v[i * 2 + 1].x = (short)(gx + g->w);   v[i * 2 + 1].y = (short)(gy + g->h);
+      v[i * 2 + 1].z = 0;
+      cx += g->xadv;
+      i++;
+   }
+   sceGuDrawArray(GU_SPRITES,
+                  GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT |
+                  GU_TRANSFORM_2D, 2 * i, 0, v);
+}
+
+/* The wordmark, drawn exactly like a glyph: 8-bit coverage through the
+ * alpha CLUT, tinted by the vertex colour.  So it follows the theme
+ * accent for free -- white on the dark palette, black on the light one --
+ * instead of needing a recoloured bitmap per theme. */
+void vid_logo(int x, int y, uint16_t rgb565, int alpha)
+{
+   tcvtx_t *v;
+   unsigned int col = rgb565_to_abgr(rgb565, alpha & 0xFF);
+   if (!fu_clut_ready)
+      fu_clut_build();
+   sceKernelDcacheWritebackRange((void *)logo_a, sizeof(logo_a));
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuClutMode(GU_PSM_8888, 0, 0xFF, 0);
+   sceGuClutLoad(256 / 8, fu_clut);
+   sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
+   sceGuTexImage(0, LOGO_TEX_W, LOGO_TEX_H, LOGO_TEX_W, logo_a);
+   sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+   sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
+   v = (tcvtx_t *)sceGuGetMemory(2 * sizeof(tcvtx_t));
+   v[0].u = 0;              v[0].v = 0;
+   v[0].color = col;        v[0].x = (short)x;  v[0].y = (short)y;
+   v[0].z = 0;
+   v[1].u = LOGO_W;         v[1].v = LOGO_H;
+   v[1].color = col;        v[1].x = (short)(x + LOGO_W);
+   v[1].y = (short)(y + LOGO_H); v[1].z = 0;
    sceGuDrawArray(GU_SPRITES,
                   GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT |
                   GU_TRANSFORM_2D, 2, 0, v);
@@ -612,48 +849,33 @@ void vid_image(int x, int y, int w, int h, const uint16_t *pix,
 
 void vid_text(int x, int y, const char *str, uint16_t rgb565)
 {
-   unsigned int col = rgb565_to_abgr(rgb565, 255);
-   int n = (int)strlen(str);
-   int i, cx = x;
-   tcvtx_t *v;
+   fu_face f = fu_get(0);
+   fu_draw(&f, x, y, str, rgb565_to_abgr(rgb565, 255));
+}
 
-   if (n <= 0)
-      return;
-   if (n > 60)
-      n = 60;
+void vid_text_hd(int x, int y, const char *str, uint16_t rgb565)
+{
+   fu_face f = fu_get(1);
+   fu_draw(&f, x, y, str, rgb565_to_abgr(rgb565, 255));
+}
 
-   sceGuEnable(GU_TEXTURE_2D);
-   sceGuTexMode(GU_PSM_5551, 0, 0, GU_FALSE);
-   sceGuTexImage(0, 128, 256, 128, font_tex);
-   sceGuTexFilter(GU_NEAREST, GU_NEAREST);
-   sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
+/* Restrict drawing to a rectangle.  The GE has a scissor; using it is how
+ * text scrolls UNDER an edge.  Painting rectangles over the overflow
+ * instead -- the first attempt -- puts opaque blocks on top of whatever
+ * art is behind, which on the marquee is the whole point of the screen. */
+void vid_clip(int x, int y, int w, int h)
+{
+   sceGuScissor(x, y, x + w, y + h);
+}
 
-   v = (tcvtx_t *)sceGuGetMemory(2 * n * sizeof(tcvtx_t));
-   for (i = 0; i < n; i++, cx += FE_FONT_W)
-   {
-      unsigned char c = (unsigned char)str[i];
-      short u0 = (short)((c & 15) * FE_FONT_W);
-      short v0 = (short)((c >> 4) * FE_FONT_H);
-      v[i * 2 + 0].u = u0;                    v[i * 2 + 0].v = v0;
-      v[i * 2 + 0].color = col;
-      v[i * 2 + 0].x = (short)cx;             v[i * 2 + 0].y = (short)y;
-      v[i * 2 + 0].z = 0;
-      v[i * 2 + 1].u = (short)(u0 + FE_FONT_W);
-      v[i * 2 + 1].v = (short)(v0 + FE_FONT_H);
-      v[i * 2 + 1].color = col;
-      v[i * 2 + 1].x = (short)(cx + FE_FONT_W);
-      v[i * 2 + 1].y = (short)(y + FE_FONT_H);
-      v[i * 2 + 1].z = 0;
-   }
-   sceGuDrawArray(GU_SPRITES,
-                  GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT |
-                  GU_TRANSFORM_2D, 2 * n, 0, v);
+void vid_clip_off(void)
+{
+   sceGuScissor(0, 0, VID_SCR_W, VID_SCR_H);
 }
 
 void vid_text_center(int y, const char *str, uint16_t rgb565)
 {
-   int w = (int)strlen(str) * FE_FONT_W;
-   vid_text((VID_SCR_W - w) / 2, y, str, rgb565);
+   vid_text((VID_SCR_W - vid_text_w(str)) / 2, y, str, rgb565);
 }
 
 void vid_overlay_end(void)
@@ -663,6 +885,23 @@ void vid_overlay_end(void)
 }
 
 /* ------------------------------------------------------------- swap/dump */
+
+/* Black out BOTH display buffers with plain uncached stores.
+ *
+ * For the suspend path only.  The LCD shows whatever is in VRAM the moment it
+ * powers back on, which is the frame from before the sleep -- so a console
+ * woken from standby flashes a stale frame of gameplay before the wake overlay
+ * can draw.  Blanking at suspend replaces that with black, which is what a
+ * sleeping device should look like anyway.
+ *
+ * Deliberately NOT a GE clear: this runs inside the power callback, where the
+ * machine is already being taken away and issuing display lists is asking for
+ * trouble.  Two memsets through the 0x44000000 uncached alias cannot race the
+ * GE or leave a list unfinished. */
+void vid_blank_all(void)
+{
+   memset((void *)0x44000000u, 0, (size_t)FB_BYTES * 2u);
+}
 
 void vid_swap(void)
 {

@@ -852,6 +852,8 @@ void init_main(void)
 #endif
 }
 
+__attribute__((weak)) void gpsp_visible_done_hook(void) {}
+
 u32 function_cc update_gba(int remaining_cycles)
 {
   u32 changed_pc = 0;
@@ -936,6 +938,16 @@ u32 function_cc update_gba(int remaining_cycles)
           // Transition from vrefresh to vblank
           u32 i;
           dispstat |= 0x01;
+
+          /* END OF VISIBLE. The ME capture (ioregs[0..159]) is COMPLETE
+           * here, but we currently sit on it for another 68 scanlines and
+           * only hand it over when retro_run returns. Those 68 lines are
+           * where games do their real work -- VBlank handler, AI, sprite
+           * updates, librfu's exchange -- so they are a far larger share of
+           * the frame's TIME than of its line count. How much larger has
+           * never been measured, and it decides whether the ME can finish
+           * inside the frame it belongs to. */
+          gpsp_visible_done_hook();
 
           // Reinit affine transformation counters for the next frame
           video_reload_counters();

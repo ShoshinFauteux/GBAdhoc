@@ -21,6 +21,12 @@ extern "C" {
  * failure is ALWAYS non-fatal to the app, which continues single-core.
  * Emits EVT me_init state=... either way. */
 int  me_host_init(const char *base_dir);
+/* Standby needs the ME's kernel-side sleep handler installed; without it the
+ * console cold-boots on wake.  Call with 1 before me_host_init to make that
+ * install MANDATORY -- the module then refuses to start rather than booting
+ * into a configuration that silently cannot sleep.  Default 0: attempt it,
+ * ignore failure, behave exactly as before on any model. */
+void me_host_require_sysevent(int on);
 int  me_host_up(void);
 void me_host_shutdown(void);
 

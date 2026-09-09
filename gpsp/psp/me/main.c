@@ -27,6 +27,7 @@
 #include <pspsdk.h>
 #include <pspkernel.h>
 #include <pspsysreg.h>
+#include <pspsysevent.h>
 #include <string.h>
 
 #include "me_mbox.h"
@@ -232,11 +233,41 @@ static void me_dispatch(volatile me_mbox *mb)
 
 /* ---- kernel-side boot (runs on the main CPU, kernel mode) -------------- */
 
+/* WE OVERWRITE THE ME's RESET VECTOR, AND WE HAVE TO PUT IT BACK.
+ *
+ * 0xbfc00040 is where the ME begins executing when it leaves reset, and the
+ * OS uses the ME itself -- it is the media decoder.  Leaving our stub there is
+ * a live grenade: the kernel's own resume path brings the ME up, jumps to that
+ * vector, and lands in a dispatcher whose PRX has been unloaded and whose
+ * mailbox pointer is stale.  That happens INSIDE the kernel's resume, before
+ * any callback of ours could run -- which is exactly the shape of the failure:
+ * every log ends in the suspend, and the console comes back at the Sony logo.
+ *
+ * So snapshot the bytes we are about to clobber and restore them on the way
+ * out, leaving the machine byte-identical to how we found it.  0x40 covers the
+ * stub; the two words at 0x600/0x604 are the entry and mailbox arguments the
+ * stub reads. */
+#define ME_VEC_BYTES 0x80   /* me_stub is 0x80 bytes -- measured with psp-nm, not guessed: a 0x40 copy-back would restore half a stub */
+static unsigned char me_vec_save[ME_VEC_BYTES];
+static unsigned int  me_arg_save[2];
+static int me_vec_saved;
+
 static int me_boot(volatile me_mbox *mb)
 {
    unsigned int k1 = pspSdkSetK1(0);
+   int stub_len = (int)((int)me_stub_end - (int)me_stub);
 
-   memcpy((void *)0xbfc00040, me_stub, (int)((int)me_stub_end - (int)me_stub));
+   if (!me_vec_saved)
+   {
+      memcpy(me_vec_save, (void *)0xbfc00040, ME_VEC_BYTES);
+      me_arg_save[0] = _lw(0xbfc00600);
+      me_arg_save[1] = _lw(0xbfc00604);
+      me_vec_saved = 1;
+   }
+   if (stub_len > ME_VEC_BYTES)
+      stub_len = ME_VEC_BYTES;      /* never clobber past what we saved */
+
+   memcpy((void *)0xbfc00040, me_stub, stub_len);
    _sw((unsigned int)me_dispatch, 0xbfc00600);   /* k0 = entry (kseg0 PRX) */
    _sw((unsigned int)mb,          0xbfc00604);   /* a0 = mailbox           */
    sceKernelDcacheWritebackAll();
@@ -248,6 +279,131 @@ static int me_boot(volatile me_mbox *mb)
    return 0;
 }
 
+/* ---- SLEEP / WAKE ------------------------------------------------------
+ *
+ * MECHANISM CREDIT: mcidclan (m-c/d), MIT-licensed --
+ *   https://github.com/mcidclan/psp-media-engine-custom-core
+ *   https://github.com/mcidclan/psp-media-engine-safe-task
+ * Their libraries identified this and they solved it first; what follows is
+ * their approach applied to our dispatcher, not a copy of their code.
+ *
+ * WHY A USER-MODE POWER CALLBACK CANNOT WORK.  The kernel's own ME driver
+ * registers a SYSTEM EVENT HANDLER named "SceMeRpc", and on suspend the kernel
+ * calls it to put the Media Engine away.  We have taken the ME over -- our stub
+ * sits at its reset vector and our dispatcher owns the core -- so that handler
+ * runs against hardware it no longer understands and the machine dies THERE,
+ * inside the kernel's suspend, before any callback of ours is reached.  That is
+ * why every standby log we captured ends in the suspend and the console comes
+ * back at the Sony logo: our teardown was running in the wrong place, at the
+ * wrong time, on the wrong CPU privilege.
+ *
+ * So take that handler's slot.  We are a kernel PRX already, so we can walk the
+ * list directly -- no kcall shim needed.  Event 0x402 is suspend, 0x10005 is
+ * resume; the ME's reset line is bit-masked into 0xbc10004c, and 0x14 is the
+ * value that parks it.
+ *
+ * On WAKE we deliberately do NOT rebuild anything: releasing reset restarts the
+ * ME from its vector, which still holds our stub with the mailbox pointer the
+ * host set at boot -- so the second core simply reboots into our dispatcher.
+ * The mailbox lives in memory the kernel preserves, so the host's view of it is
+ * still valid; a re-run of the last command is harmless because the host tracks
+ * completion by sequence number. */
+#define HW_SYS_RESET_ENABLE  (*(volatile unsigned int *)0xbc10004c)
+#define ME_HW_RESET          0x14
+#define SE_EV_SUSPEND        0x00000402
+#define SE_EV_RESUME         0x00010005
+
+static PspSysEventHandler        *g_me_seh;       /* the slot we took over */
+static PspSysEventHandlerFunc     g_me_seh_orig;  /* to put back on stop   */
+
+static void me_park(void)
+{
+   HW_SYS_RESET_ENABLE = ME_HW_RESET;
+   asm volatile("sync");
+}
+
+static void me_unpark(void)
+{
+   HW_SYS_RESET_ENABLE = ME_HW_RESET;
+   HW_SYS_RESET_ENABLE = 0;
+   asm volatile("sync");
+}
+
+static int me_sysevent(int ev_id, char *ev_name, void *param, int *result)
+{
+   static int last_id;
+   (void)ev_name; (void)param; (void)result;
+   if (ev_id == SE_EV_SUSPEND && last_id != SE_EV_SUSPEND)
+   {
+      me_park();
+      last_id = SE_EV_SUSPEND;
+   }
+   else if (ev_id == SE_EV_RESUME && last_id != SE_EV_RESUME)
+   {
+      me_unpark();
+      last_id = SE_EV_RESUME;
+   }
+   return 0;
+}
+
+/* Find SceMeRpc's handler by name and take its slot, keeping the original so
+ * module_stop can hand it back.  Matched on characters 3-5 the way the
+ * reference implementation does, because the string is not NUL-safe to compare
+ * wholesale from this context. */
+/* Bounded substring search for "MeR" anywhere in the first 16 characters,
+ * rather than a fixed offset of 3.
+ *
+ * The reference implementation tests name[3..5], which assumes the handler is
+ * called exactly "SceMeRpc".  That held on a PSP-1000 and is the sort of
+ * assumption that quietly does nothing on a model nobody tested -- and doing
+ * nothing here means the console hard-resets on wake, indistinguishable from
+ * having no support at all.  The name is not guaranteed NUL-terminated from
+ * this context, hence the bound rather than strstr. */
+static int me_name_is_merpc(const char *n)
+{
+   int i;
+   if (!n)
+      return 0;
+   for (i = 0; i < 16 - 2; i++)
+   {
+      if (n[i] == 0)
+         return 0;
+      if (n[i] == 'M' && n[i + 1] == 'e' && n[i + 2] == 'R')
+         return 1;
+   }
+   return 0;
+}
+
+/* Returns the number of handlers WALKED on success (>= 0), or -1 - walked on
+ * failure, so the host can tell "the list was empty" from "we saw forty and
+ * none matched" without the ME being able to log a word itself. */
+static int me_sysevent_install(void)
+{
+   PspSysEventHandler *seh = sceKernelReferSysEventHandler();
+   int walked = 0;
+   while (seh && walked < 128)
+   {
+      walked++;
+      if (me_name_is_merpc(seh->name))
+      {
+         g_me_seh      = seh;
+         g_me_seh_orig = seh->handler;
+         seh->handler  = me_sysevent;
+         return walked;
+      }
+      seh = seh->next;
+   }
+   return -1 - walked;
+}
+
+static void me_sysevent_remove(void)
+{
+   if (g_me_seh && g_me_seh_orig)
+      g_me_seh->handler = g_me_seh_orig;
+   g_me_seh      = NULL;
+   g_me_seh_orig = NULL;
+}
+
 /* The app passes: u32[0] = mailbox pointer (uncached user alias). */
 int module_start(SceSize args, void *argp)
 {
@@ -257,15 +413,53 @@ int module_start(SceSize args, void *argp)
    mb = (volatile me_mbox *)(*(unsigned int *)argp);
    if (!mb)
       return -1;
+   /* argp[1], when present and non-zero, says the host needs sleep support.
+    * Then a failed install is FATAL: better to run single-core than to boot
+    * into a machine that hard-resets the first time someone slides the power
+    * switch.  Absent or zero, we behave as we always did on every model. */
+   {
+      int seh = me_sysevent_install();
+      if (seh < 0 && args >= 8 && ((unsigned int *)argp)[1])
+      {
+         /* Encode what we saw into the start failure so the host can log
+          * it.  The marker must have its TOP BIT SET: the host only inspects
+          * this inside `if (st < 0)`, so a positive marker made the check
+          * provably unreachable and the compiler deleted the branch --
+          * silently, and the string vanished from the binary with it. */
+         return (int)(0xDE000000u | (unsigned)(-1 - seh));
+      }
+   }
    return me_boot(mb);
 }
 
 int module_stop(SceSize args, void *argp)
 {
    (void)args; (void)argp;
-   /* Hold the ME in reset on the way out — the dispatcher dies with it.
-    * (Suspend/resume: v0 does not support sleep with the ME live; the
-    * host watchdog treats a silent heartbeat as ME-down and falls back.) */
+   me_sysevent_remove();
+   /* Hold the ME in reset on the way out — the dispatcher dies with it. */
    sceSysregMeResetEnable();
+   /* AND TURN ITS BUS CLOCK BACK OFF.  me_boot() does
+    *     ResetEnable -> BusClockEnable -> ResetDisable
+    * and this only ever undid the reset half, so every shutdown left the ME's
+    * clock domain running with nothing in it.
+    *
+    * That asymmetry is the standby bug.  Measured on a PSP-1000: with the
+    * module never loaded, suspend/resume works -- and our own resume path then
+    * loads the ME and rebuilds the renderer successfully (standby.log: `wake
+    * host=0`, `wake rend=0 vmem=1`).  So the ME is fine to load AFTER a wake;
+    * what the kernel cannot survive is going to sleep with this clock domain
+    * enabled.  Unloading the module was not enough precisely because the
+    * unload never disabled it. */
+   sceSysregMeBusClockDisable();
+   /* Put the reset vector back — see the note on me_boot. */
+   if (me_vec_saved)
+   {
+      unsigned int k1 = pspSdkSetK1(0);
+      memcpy((void *)0xbfc00040, me_vec_save, ME_VEC_BYTES);
+      _sw(me_arg_save[0], 0xbfc00600);
+      _sw(me_arg_save[1], 0xbfc00604);
+      sceKernelDcacheWritebackAll();
+      pspSdkSetK1(k1);
+   }
    return 0;
 }

@@ -123,18 +123,41 @@ void vid_blit_prof(unsigned *frames,
 void vid_overlay_begin(int clear);
 void vid_rect(int x, int y, int w, int h, uint16_t rgb565, int alpha);
 void vid_text(int x, int y, const char *str, uint16_t rgb565);
+/* Larger semibold face, for screen titles. */
+void vid_text_hd(int x, int y, const char *str, uint16_t rgb565);
+/* Text is PROPORTIONAL: ask for the width, never strlen * FE_FONT_W. */
+int  vid_text_w(const char *str);
+int  vid_text_hd_w(const char *str);
 void vid_text_center(int y, const char *str, uint16_t rgb565);
+/* GE scissor: confine subsequent draws to a rectangle, then release it. */
+/* The GBAdhoc wordmark, tinted like text.  130x22 at the top-left. */
+/* Drawn size of the wordmark, so callers can centre it without pulling in
+ * the generated atlas header. Must match logo_ui.h's LOGO_W/LOGO_H. */
+#define VID_LOGO_W 130
+#define VID_LOGO_H 22
+void vid_logo(int x, int y, uint16_t rgb565, int alpha);
+void vid_clip(int x, int y, int w, int h);
+void vid_clip_off(void);
 /* Vertical gradient fill (top color -> bottom color), same pass/rules as
  * vid_rect.  Drawn as one triangle strip so the GE interpolates per-pixel. */
+/* Constant colour, ramped alpha -- a scrim that fades out per-pixel. */
+void vid_gradient_a(int x, int y, int w, int h,
+                    uint16_t rgb565, int a_top, int a_bot);
 void vid_gradient(int x, int y, int w, int h,
                   uint16_t top565, uint16_t bot565, int alpha);
-/* Draw the top-left tw x th texels of a 128x128 RGB565 (PSP channel order)
- * buffer, scaled to w x h at x,y.  `pix` must be 16-byte aligned and the
- * caller must have written the texels back to memory (writeback the cache)
+/* Draw the top-left srcw x srch texels of a texw x texh RGB565 (PSP channel
+ * order) buffer, scaled to w x h at x,y.  texw/texh MUST be powers of two —
+ * the GE samples nothing else — while srcw/srch may be any sub-rect, which
+ * is how portrait box art lives inside a square allocation.  `pix` must be
+ * 16-byte aligned and the caller must have written the texels back to memory
  * before the overlay pass ends — the UI box-art loader does this once at
  * load.  alpha 255 = opaque.  Used by the game-gallery browser. */
+/* vid_image onto the emulator's own destination rect (honours scale/filter).
+ * Overlay-safe: unlike vid_draw_prestaged it does not open a display list. */
+void vid_image_screen(const uint16_t *pix, int texw, int texh,
+                      int srcw, int srch, int alpha);
 void vid_image(int x, int y, int w, int h, const uint16_t *pix,
-               int tw, int th, int alpha);
+               int texw, int texh, int srcw, int srch, int alpha);
 void vid_overlay_end(void);
 
 /* ---- deferred GE sync (ADR-0040, `config.ini gu_defer`, DEFAULT OFF) -----
@@ -156,6 +179,9 @@ void vid_set_gu_defer(int on);
 void vid_gu_flush(void);
 
 /* Swap buffers (tracks which VRAM buffer is being drawn).  Flushes first. */
+/* Black both display buffers with plain stores (no GE).  For the suspend
+ * path: the LCD shows stale VRAM the instant it powers on. */
+void vid_blank_all(void);
 void vid_swap(void);
 
 /* GE drawbuffer readback (color-order regression check): writes the buffer

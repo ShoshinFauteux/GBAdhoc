@@ -74,6 +74,9 @@ void pcfg_load(const char *ini_path)
    g_pcfg.ff_smooth   = (int)fe_ini_get_int(cfg_path, "ff_smooth", 0) ? 1 : 0;
    g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
+   g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
+   g_pcfg.me_sameframe = (int)fe_ini_get_int(cfg_path, "me_sameframe", 1) ? 1 : 0;
+   g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
    /* ADR-0019: default OFF — a session must not cost rendered frames on a
@@ -149,6 +152,14 @@ void pcfg_load(const char *ini_path)
     * overlap is worth, so the user decides with a config edit. */
    g_pcfg.gu_defer = (int)fe_ini_get_int(cfg_path, "gu_defer", 0);
    g_pcfg.rfu_rx_cap = (int)fe_ini_get_int(cfg_path, "rfu_rx_cap", 0);
+   g_pcfg.rfu_pace_max_hold =
+      (int)fe_ini_get_int(cfg_path, "rfu_pace_max_hold", 24);
+   g_pcfg.net_session_fps_force =
+      (int)fe_ini_get_int(cfg_path, "net_session_fps_force", 0) ? 1 : 0;
+   g_pcfg.nd_rto_min_us =
+      (int)fe_ini_get_int(cfg_path, "nd_rto_min_us", 50000);
+   g_pcfg.standby = (int)fe_ini_get_int(cfg_path, "standby", 1);
+   g_pcfg.me_boot = (int)fe_ini_get_int(cfg_path, "me_boot", 1) ? 1 : 0;
    /* Session overlay chip; the WLAN-off warning is never gated by this. */
    g_pcfg.osd_wireless = (int)fe_ini_get_int(cfg_path, "osd_wireless", 1);
    g_pcfg.osd_wireless = g_pcfg.osd_wireless ? 1 : 0;
@@ -222,6 +233,11 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(blit_mode,            0, VID_BLIT_MODES - 1, VID_BLIT_CACHED);
    PCFG_CHK(gu_defer,             0, 1, 0);
    PCFG_CHK(rfu_rx_cap,           0, 16, 0);   /* RFU_PKT_QUEUE deep */
+   PCFG_CHK(rfu_pace_max_hold,    0, 28, 24);  /* 32 = the game's timeout */
+   PCFG_CHK(net_session_fps_force, 0, 1, 0);
+   PCFG_CHK(nd_rto_min_us,        0, 2000000, 50000);
+   PCFG_CHK(standby,              0, 3, 1);   /* ON: see me_standby_down */
+   PCFG_CHK(me_boot,              0, 1, 1);
    PCFG_CHK(osd_wireless,         0, 1, 1);
    PCFG_CHK(net_session_fps_x100, PCFG_SESSION_FPS_MIN, PCFG_SESSION_FPS_MAX,
             PCFG_SESSION_FPS_DEF);
@@ -264,6 +280,9 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ff_smooth", g_pcfg.ff_smooth);
    fe_ini_set_int(cfg_path, "ff_audio", g_pcfg.ff_audio);
    fe_ini_set_int(cfg_path, "theme", g_pcfg.theme);
+   fe_ini_set_int(cfg_path, "ui_shell", g_pcfg.ui_shell);
+   fe_ini_set_int(cfg_path, "me_sameframe", g_pcfg.me_sameframe);
+   fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
@@ -285,6 +304,12 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "blit_mode", g_pcfg.blit_mode);
    fe_ini_set_int(cfg_path, "gu_defer", g_pcfg.gu_defer);
    fe_ini_set_int(cfg_path, "rfu_rx_cap", g_pcfg.rfu_rx_cap);
+   fe_ini_set_int(cfg_path, "rfu_pace_max_hold", g_pcfg.rfu_pace_max_hold);
+   fe_ini_set_int(cfg_path, "net_session_fps_force",
+                  g_pcfg.net_session_fps_force);
+   fe_ini_set_int(cfg_path, "nd_rto_min_us", g_pcfg.nd_rto_min_us);
+   fe_ini_set_int(cfg_path, "standby", g_pcfg.standby);
+   fe_ini_set_int(cfg_path, "me_boot", g_pcfg.me_boot);
    fe_ini_set_int(cfg_path, "osd_wireless", g_pcfg.osd_wireless);
    fe_ini_set(cfg_path, "group", g_pcfg.group);
    fe_ini_set(cfg_path, "nick", g_pcfg.nick);

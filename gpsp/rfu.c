@@ -242,6 +242,11 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
  * `rfu_frame_pace` is on, INCLUDING n=0 -- ADR-0058's lesson: a probe whose
  * silence is indistinguishable from a dead instrument is not evidence. */
 #define RFU_TR_PACE      19
+/* a = packets discarded this window because the pace hold exceeded
+ * rfu_pace_max_hold, b = the worst single-frame discard.  Both 12-bit. */
+#define RFU_TR_PACEDROP  22
+/* a = extra deliveries granted to drain a backlog, b = queue depth right now. */
+#define RFU_TR_PACECATCH 23
 /* ADR-0072 fix: the game's recvQueue-depth PEAK, emitted on its own event so it
  * survives the ring's 12-bit fields (the old RFU_TR_RXGATE packed it at <<16 and
  * the ring masked it to zero -- trap 6, "peak always 0", the unanswered
@@ -249,6 +254,12 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
  * modelled this window; >4 trips Gate B, 32 latches FATAL), b = frames over the
  * gate this window.  Both fit 12 bits (window is 600). */
 #define RFU_TR_GQPEAK    20
+
+/* The guest-supplied word count on a SEND_DATA/SEND_DATAW command, censused
+ * once per window.  `a` is the largest rfu_plen seen, `b` the number of
+ * copies that had to be CLAMPED to fit rfu_tx_buf.  See the clamp itself in
+ * rfu_process_command(). */
+#define RFU_TR_TXPLEN    21
 /* Arrivals per census.  256 is a few seconds of live trade traffic and keeps
  * the ratio meaningful without flooding the 64-entry trace ring. */
 #define RFU_ARRIVAL_CENSUS_N 256
@@ -612,9 +623,120 @@ static u32 rfu_rx_delivered;
  * 0 = off = byte-for-byte the historical behaviour.  Harness key
  * `rfu_frame_pace`; hardware-validate before defaulting it on anywhere. */
 static u32 rfu_frame_pace;
+/* BOUND ON THE HOLD.  frame_pace fixed the input eating and then killed the
+ * link a different way.
+ *
+ * The gate admits at most `rfu_frame_pace` deliveries per frame but puts NO
+ * limit on how far behind the undelivered queue may fall, and that queue is
+ * drained by the GAME asking, not by our budget.  When the game asks less
+ * often than packets arrive -- a battle, where it is busy animating -- the
+ * backlog grows and the packet at the front of it gets older every frame.
+ *
+ * The game's link timeout is RFU_DEF_TIMEOUT = 32 FRAMES.  So once the hold
+ * passes 32 the client is answering with data its host has already given up
+ * on: RESP_TIMEO, the game resets the adapter (rfu_state cause=9), and both
+ * consoles show "communication error".  Measured on hardware 2026-09-08,
+ * client `rfu_pace q_hi` over four windows: 1, 9, 13, 39 -- it crossed 32 and
+ * the link died, while the host logged rfu_noresp climbing 1..10, retx_age to
+ * 803 ms, then peer_disconnected.
+ *
+ * The identical hazard is spelled out on rfu_cushion ("MUST stay well under
+ * RFU_DEF_TIMEOUT (32) so the deliberate hold never itself trips the
+ * timeout"), where a fixed depth makes it true by construction.  The pace gate
+ * holds a QUEUE, so the bound has to be stated.
+ *
+ * There is no way to consume faster -- the ask rate is the game's business --
+ * so the only bounded answer is to stop holding what is already too old:
+ * DISCARD from the front until the queue is within the bound.  The game sees a
+ * gap, which is exactly what a real adapter's packet loss looks like, and
+ * gen-3's RFU carries rtx_max retries for precisely that.  Holding a 700 ms
+ * link packet is not fidelity -- the state it carries is dead either way.
+ *
+ * Trimmed at the FRAME BOUNDARY so RECV_DATA and rfu_data_avail() both see an
+ * already-trimmed queue: identical gating in both is the ADR-0075 discipline
+ * that stops the WAITEVENT spin, and trimming inside the delivery path alone
+ * would break it.
+ *
+ * 0 = no bound = the behaviour that failed above. */
+/* WHY A CAP ALONE CANNOT WORK, AND WHAT DOES.
+ *
+ * Host packets arrive at ~1 per emulated frame and the game drains exactly 1
+ * per frame -- but 53% of arrivals land in the SAME frame as their predecessor
+ * (`rfu_arrival clumped=136/256`, measured at the client before any queueing).
+ * Arrival mean == drain rate, with variance.  That makes the queue a CRITICAL
+ * random walk: it has no restoring force, so it wanders upward as sqrt(time)
+ * and every depth is a fixed point.  Measured: it parked at 12 with a cap of
+ * 12, at 4 with a cap of 4, and reached 23 and then 64 when nothing stopped it.
+ *
+ * So the cap is not a tuning knob, it is the standing latency, and lowering it
+ * only converts latency into DISCARDS.  Hardware said what those cost: at a cap
+ * of 4, 19-41 discards per 10 s window desynced a battle (the client and host
+ * showed the avatar on different tiles, then the intro handshake never
+ * completed and it soft-locked on black).  Link data is a SEQUENCE, not
+ * idempotent state -- dropping any of it is a desync waiting to happen.  At a
+ * cap of 12 the whole session discarded 39 and a battle completed.
+ *
+ * The fix is a restoring force instead of a cap: drain slightly FASTER than
+ * arrivals when we are behind, and never drop.  A second delivery in one frame
+ * is what frame_pace exists to prevent -- two MSC callbacks between main-loop
+ * passes ratchet the game's sendQueue and Gate A then eats the player's input
+ * -- so it is allowed only when our model of the game's own recvQueue says it
+ * is EMPTY (rfu_gq_depth == 0), i.e. the game kept up this frame and a second
+ * packet lands in an empty queue rather than stacking.  That turns the critical
+ * walk into a mean-reverting one with a floor at RFU_PACE_LOW, so the standing
+ * queue collapses to a frame or two and stays there, losslessly.
+ *
+ * The cap stays as a pure BACKSTOP for a real stall (the console blocked for
+ * seconds), where the alternative is not latency but certain death: past 32
+ * frames the game's own link timeout fires and resets the adapter.  It should
+ * essentially never fire in normal play; `rfu_pacedrop` says whether it did. */
+#define RFU_PACE_LOW  2               /* target standing depth, in frames */
+#define RFU_PACE_MAX_HOLD_DEF 24      /* backstop only; 32 is the game's timeout */
+static u32 rfu_pace_max_hold = RFU_PACE_MAX_HOLD_DEF;
+static u32 rfu_pace_catch_n;          /* extra deliveries granted, per window */
+static u32 rfu_client_queued(void);
+
+/* One extra delivery this frame, to claw back a standing backlog.
+ *
+ * Granted only when BOTH hold:
+ *   - our queue is deeper than RFU_PACE_LOW, so there is a backlog to shed
+ *     (at or below it we are at the target and pace normally); and
+ *   - rfu_gq_depth == 0, our model of the GAME's recvQueue -- it drained
+ *     everything we gave it last frame, so a second packet lands in an empty
+ *     queue.  This is the condition that keeps Gate A shut: the ratchet needs
+ *     the game to be falling behind, and an empty recvQueue says it is not.
+ *
+ * At most one extra per frame (delivered <= pace + 1), so the drain rate is
+ * 2/frame at worst against ~1/frame of arrivals -- enough to converge in a
+ * second, gentle enough that it is nothing like the unpaced firehose that ate
+ * the player's input in the first place. */
+static u32 rfu_gq_depth_peek(void);
+static int rfu_pace_catchup(void)
+{
+  if (rfu_state != RFU_STATE_CLIENT)
+    return 0;
+  if (rfu_rx_delivered > rfu_frame_pace)      /* one extra, never two */
+    return 0;
+  if (rfu_client_queued() <= RFU_PACE_LOW)
+    return 0;
+  if (rfu_gq_depth_peek() != 0)
+    return 0;
+  rfu_pace_catch_n++;
+  return 1;
+}
+static u32 rfu_pace_drop_n, rfu_pace_drop_hi;
+void rfu_set_pace_max_hold(u32 n)
+{
+  rfu_pace_max_hold = n;
+}
 /* Set when the gate deferred an eligible packet this frame; consumed by the
  * once-per-window census in rfu_frame_update(). */
 static u32 rfu_pace_held, rfu_pace_win, rfu_pace_n, rfu_pace_q_hi;
+
+/* SEND_DATA word-count census (RFU_TR_TXPLEN).  `rfu_tx_plen_hi` is the
+ * largest rfu_plen this window, `rfu_tx_clamp_n` how many copies the bound
+ * below actually caught. */
+static u32 rfu_tx_plen_hi, rfu_tx_clamp_n, rfu_tx_win;
 
 void rfu_set_frame_pace(u32 n)
 {
@@ -1153,15 +1275,50 @@ static s32 rfu_process_command_inner(void) {
     if (!rfu_plen)
       return 0;
 
-    if (rfu_state == RFU_STATE_HOST) {
-      // Read data to be sent into the TX buffer
-      rfu_tx_buf.blen = rfu_buf[0] & 0x7F;
-      memcpy(rfu_tx_buf.buf, &rfu_buf[1], (rfu_plen - 1)*sizeof(u32));
-    }
-    else if (rfu_state == RFU_STATE_CLIENT) {
-      // Same as above, but the header encoding is funny
-      rfu_tx_buf.blen = (rfu_buf[0] >> (8 + rfu_client.clnum * 5)) & 0x1F;
-      memcpy(rfu_tx_buf.buf, &rfu_buf[1], (rfu_plen - 1)*sizeof(u32));
+    /* BOUND THE COPY.  `rfu_plen` is the length byte of the guest's command
+     * word (see RFU_COMSTATE_WAITCMD) and is therefore anything 0..255, so
+     * `(rfu_plen - 1) * 4` reaches 1016 bytes into a 92-byte destination.
+     * The `blen <= 90` / `<= 16` gates below run AFTER this copy and only
+     * decide whether to transmit -- they never protected the memcpy, and
+     * `rfu_tx_buf.blen` is itself the first thing an overrun overwrites.
+     *
+     * This is not a malformed-packet case, it is ordinary traffic: librfu
+     * builds its link-layer frame in `LLFBuffer[29]` and sends
+     * `totalPacketSize + 4` bytes from it, so a legitimate rfu_plen reaches
+     * 29 -- 112 bytes into 92.  The frame grows when NI-send, NI-recv and
+     * UNI-send are busy on the same slot at once, which is exactly what a
+     * trade does.  Emerald's Trade Center happens to stay under 24 words;
+     * FR/LG does not, and the 20 bytes past the end land on `blen` and then
+     * in `rfu_host` (devid, bdata) -- corrupting the device ID that every
+     * later client packet is validated against.
+     *
+     * Clamping loses nothing.  The host transmits at most 90 bytes and the
+     * client at most 16, both inside the 92 the buffer holds, so every word
+     * discarded here is LLF padding that could never have gone out.
+     *
+     * The receive paths were hardened against this same shape already (see
+     * NET_RFU_CLIENT_SEND); only the send side was missed. */
+    {
+      u32 words = rfu_plen - 1;
+      const u32 wmax = sizeof(rfu_tx_buf.buf) / sizeof(u32);
+
+      if (rfu_plen > rfu_tx_plen_hi)
+        rfu_tx_plen_hi = rfu_plen;
+      if (words > wmax) {
+        words = wmax;
+        rfu_tx_clamp_n++;
+      }
+
+      if (rfu_state == RFU_STATE_HOST) {
+        // Read data to be sent into the TX buffer
+        rfu_tx_buf.blen = rfu_buf[0] & 0x7F;
+        memcpy(rfu_tx_buf.buf, &rfu_buf[1], words * sizeof(u32));
+      }
+      else if (rfu_state == RFU_STATE_CLIENT) {
+        // Same as above, but the header encoding is funny
+        rfu_tx_buf.blen = (rfu_buf[0] >> (8 + rfu_client.clnum * 5)) & 0x1F;
+        memcpy(rfu_tx_buf.buf, &rfu_buf[1], words * sizeof(u32));
+      }
     }
 
     /* fallthrough */
@@ -1226,7 +1383,8 @@ static s32 rfu_process_command_inner(void) {
       /* ADR-0075: the pace gate, mirrored EXACTLY in rfu_data_avail() -- the
        * two must never disagree, or the WAITEVENT re-poll spin that sank the
        * cap experiment comes back.  See the block comment at rfu_frame_pace. */
-      if (rfu_frame_pace && dlen != 0 && rfu_rx_delivered >= rfu_frame_pace) {
+      if (rfu_frame_pace && dlen != 0 && rfu_rx_delivered >= rfu_frame_pace &&
+          !rfu_pace_catchup()) {
         rfu_pace_held = 1;
         rfu_buf[cnt++] = 0;
         return cnt;
@@ -1331,6 +1489,8 @@ static s32 rfu_process_command_inner(void) {
 }
 
 // Returns true if a Wait event can finish due to new data being available.
+static u32 rfu_gq_depth_peek(void) { return rfu_gq_depth; }
+
 /* Undelivered host packets sitting in the client's queue. */
 static u32 rfu_client_queued(void)
 {
@@ -1347,7 +1507,8 @@ static bool rfu_data_avail() {
       /* ADR-0075: an over-budget packet must be invisible HERE too, or
        * WAITEVENT answers RESP_DATA for a packet RECV_DATA then refuses --
        * the exact inconsistency behind the cap experiment's re-poll spin. */
-      if (rfu_frame_pace && rfu_rx_delivered >= rfu_frame_pace) {
+      if (rfu_frame_pace && rfu_rx_delivered >= rfu_frame_pace &&
+          !rfu_pace_catchup()) {
         rfu_pace_held = 1;
         return false;
       }
@@ -1574,12 +1735,56 @@ void rfu_frame_update() {
       rfu_pace_q_hi = q;
     rfu_pace_held = 0;
   }
+  /* Enforce the bound on the hold -- see rfu_pace_max_hold.  The front of the
+   * queue is the oldest packet, so drop there: what survives is the newest
+   * state, which is the only state the game can still act on. */
+  if (rfu_frame_pace && rfu_pace_max_hold && rfu_state == RFU_STATE_CLIENT) {
+    u32 q = rfu_client_queued(), dropped = 0;
+    while (q > rfu_pace_max_hold && rfu_client.pkts[0].hblen) {
+      memmove(&rfu_client.pkts[0], &rfu_client.pkts[1],
+              sizeof(rfu_client.pkts[0]) * (RFU_PKT_QUEUE - 1));
+      rfu_client.pkts[RFU_PKT_QUEUE - 1].hblen = 0;
+      dropped++;
+      q--;
+    }
+    rfu_pace_drop_n += dropped;
+    if (dropped > rfu_pace_drop_hi)
+      rfu_pace_drop_hi = dropped;
+  }
   if (++rfu_pace_win >= RFU_RXGATE_FRAMES) {
-    if (rfu_frame_pace)
+    if (rfu_frame_pace) {
       gpsp_rfu_trace_hook(RFU_TR_PACE, rfu_pace_n, rfu_pace_q_hi);
+      /* Drops on their own event: a q_hi parked at the cap says the bound is
+       * BINDING, and only the drop count says how hard.  Emitted every window
+       * including zero -- a silent instrument cannot distinguish "never bound"
+       * from "dead" (ADR-0058). */
+      gpsp_rfu_trace_hook(RFU_TR_PACEDROP, rfu_pace_drop_n & 0xFFF,
+                          rfu_pace_drop_hi & 0xFFF);
+      /* Catch-ups granted this window.  Read with rfu_pace q_hi: catch>0 and
+       * q_hi settling at RFU_PACE_LOW is the restoring force working.  q_hi
+       * climbing WITH catch>0 means arrivals genuinely exceed 1/frame and the
+       * imbalance is real, not variance. */
+      gpsp_rfu_trace_hook(RFU_TR_PACECATCH, rfu_pace_catch_n & 0xFFF,
+                          rfu_client_queued() & 0xFFF);
+    }
     rfu_pace_win = 0;
     rfu_pace_n = 0;
     rfu_pace_q_hi = 0;
+    rfu_pace_drop_n = 0;
+    rfu_pace_drop_hi = 0;
+    rfu_pace_catch_n = 0;
+  }
+
+  /* SEND_DATA word-count census.  Emitted every window unconditionally --
+   * this is the falsifier for the tx-buffer overrun, and a silent instrument
+   * cannot distinguish "the game never exceeded 24 words" from "the probe is
+   * dead" (ADR-0058).  hi <= 24 all session means this ROM never reached the
+   * old overrun; hi > 24 with clamp > 0 means it did, every time. */
+  if (++rfu_tx_win >= RFU_RXGATE_FRAMES) {
+    gpsp_rfu_trace_hook(RFU_TR_TXPLEN, rfu_tx_plen_hi, rfu_tx_clamp_n);
+    rfu_tx_win = 0;
+    rfu_tx_plen_hi = 0;
+    rfu_tx_clamp_n = 0;
   }
 
   /* ADR-0074: apply a deferred peer disconnect once the game has caught up.

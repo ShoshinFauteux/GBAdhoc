@@ -270,6 +270,19 @@ extern u16 oam_ram[512];
 extern u16 palette_ram_converted[512];
 extern u16 io_registers[512];
 extern u8 vram[1024 * 96];
+
+/* VRAM dirty map -- measurement only, see gba_memory.c.  1 KiB pages.
+ * `vram_dirty[p]` is set by the C store macros and the DMA path; it is NOT
+ * set by translated code (the dynarec has its own store stub), which is
+ * precisely what the `missed` counter exists to quantify. */
+#define VRAM_DIRTY_SHIFT 10
+#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+/* INVERTED: 1 = clean, 0 = dirty. Inverted so the DYNAREC can mark a page
+ * with `sb $zero` -- it has no register holding a known-nonzero byte at the
+ * point of the store, and manufacturing one would cost an extra instruction
+ * in the hottest store path. Reset by memset(.., 1, ..). */
+extern u8  vram_clean[VRAM_DIRTY_PAGES];
+extern u32 vram_dirty_marks;
 extern u8 bios_rom[1024 * 16];
 // Double buffer used for SMC detection
 extern u8 ewram[1024 * 256 * 2];
