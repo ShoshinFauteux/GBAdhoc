@@ -1008,47 +1008,170 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
 
 /* ----- ROM browser: game gallery ------------------------------------------ */
 
-#define BROWSER_MAX 64
+/* WHY A NAME POOL AND NOT AN ARRAY OF FIXED SLOTS.
+ *
+ * 2.0 shipped `char name[96]` x 64 and both numbers were wrong the same way:
+ * they were sized against MY library.  The first bug report after release was
+ * someone with a bit over 128 ROMs seeing exactly half of them, because the
+ * scan stopped at 64 entries BEFORE the sort ran -- so the survivors were the
+ * first 64 in FAT directory order, roughly the order the files were copied to
+ * the stick.  That reads as random, which is the worst way to fail: it looks
+ * like the emulator is broken rather than full.
+ *
+ * Fixed slots are also what forced the 96-character ceiling that silently
+ * dropped long No-Intro names.  Pointers into one packed pool spend ~55 bytes
+ * on a typical name instead of 96, and put the length limit somewhere no real
+ * filename reaches.
+ *
+ * This is in BSS on purpose.  gpSP's init_gamepak_buffer() mallocs 1 MiB
+ * blocks until malloc fails, so once a game is loaded there is no heap left
+ * to allocate a list from: a dynamic list would work on the first boot and
+ * fail when someone backed out to the game list mid-game, on a PSP-1000
+ * only.  BSS is taken before that loop runs, and 112 KB of it costs at most
+ * one of those 1 MiB blocks.
+ */
+#define BROWSER_MAX    1024
+#define ROM_POOL_BYTES (96 * 1024)
+#define ROM_SCAN_DEPTH 3                /* roms/ plus two levels beneath it */
 
-typedef struct { char name[96]; int has_sav; unsigned size; } rom_entry;
+typedef struct {
+   const char *name;    /* path relative to roms/, "Pokemon/Emerald.gba"     */
+   const char *base;    /* the filename alone: what the user reads, and what
+                         * box art is keyed on, so art never has to mirror
+                         * whatever folder layout the ROMs happen to use     */
+   unsigned    size;
+   signed char has_sav; /* -1 = not looked up yet; see rom_has_sav()         */
+} rom_entry;
+
 static rom_entry g_roms[BROWSER_MAX];
+static char      g_rom_pool[ROM_POOL_BYTES];
+static unsigned  g_rom_pool_used;
+static int       g_rom_found;   /* .gba files SEEN, which can exceed the
+                                 * number stored -- the browser says so out
+                                 * loud rather than showing a subset and
+                                 * letting the user guess why */
+static char      g_rom_root[160];
 
-static int rom_scan(const char *rom_dir)
+/* One stat per ROM during the scan was ~2 s of boot on a large library, and
+ * it was wasted work: only the handful of entries actually drawn need this. */
+static int rom_has_sav(int idx)
 {
-   SceUID d = sceIoDopen(rom_dir);
-   SceIoDirent ent;
-   int n = 0;
+   if (g_roms[idx].has_sav < 0)
+   {
+      char sav[320];
+      SceIoStat st;
+      size_t l = strlen(g_roms[idx].name);
+      snprintf(sav, sizeof(sav), "%s/%.*s.sav", g_rom_root,
+               (int)(l > 4 ? l - 4 : l), g_roms[idx].name);
+      g_roms[idx].has_sav = (signed char)(sceIoGetstat(sav, &st) >= 0);
+   }
+   return g_roms[idx].has_sav;
+}
 
+static const char *rom_pool_add(const char *s, size_t len)
+{
+   char *p;
+   if (g_rom_pool_used + len + 1 > sizeof(g_rom_pool))
+      return NULL;
+   p = g_rom_pool + g_rom_pool_used;
+   memcpy(p, s, len);
+   p[len] = '\0';
+   g_rom_pool_used += (unsigned)(len + 1);
+   return p;
+}
+
+/* `rel` is "" at the top level, otherwise a path under roms/ with no leading
+ * or trailing slash.  Directories are walked because sorting a library into
+ * folders is the obvious thing to do with one, and 2.0 ignored every one. */
+static void rom_scan_dir(const char *rel, int depth, int *n)
+{
+   char dir[320];
+   SceUID d;
+   SceIoDirent ent;
+
+   if (rel[0])
+      snprintf(dir, sizeof(dir), "%s/%s", g_rom_root, rel);
+   else
+      snprintf(dir, sizeof(dir), "%s", g_rom_root);
+
+   d = sceIoDopen(dir);
    if (d < 0)
-      return 0;
+      return;
    memset(&ent, 0, sizeof(ent));
-   while (n < BROWSER_MAX && sceIoDread(d, &ent) > 0)
+   while (sceIoDread(d, &ent) > 0)
    {
       size_t l = strlen(ent.d_name);
-      if (l > 4 && l < sizeof(g_roms[0].name) &&
-          strcasecmp(ent.d_name + l - 4, ".gba") == 0)
+      /* Memory Stick reports a directory in st_mode on some firmwares and
+       * only in st_attr on others.  Test both, rather than pick one and find
+       * out which from a bug report. */
+      int is_dir = (ent.d_stat.st_mode & 0x1000) != 0 ||
+                   (ent.d_stat.st_attr & 0x0010) != 0;
+
+      if (is_dir)
       {
-         char sav[256];
-         SceIoStat st;
-         snprintf(g_roms[n].name, sizeof(g_roms[n].name), "%s", ent.d_name);
-         snprintf(sav, sizeof(sav), "%s/%.*s.sav", rom_dir, (int)(l - 4),
-                  ent.d_name);
-         g_roms[n].has_sav = sceIoGetstat(sav, &st) >= 0;
-         /* dread already carried the stat -- no second I/O per ROM. */
-         g_roms[n].size = (unsigned)ent.d_stat.st_size;
-         n++;
+         /* Skips "." and ".." and anything else dot-prefixed, which on a
+          * stick that has been near a Mac means __MACOSX and .Trashes. */
+         if (depth > 1 && ent.d_name[0] != '.')
+         {
+            char sub[320];
+            if (rel[0])
+               snprintf(sub, sizeof(sub), "%s/%s", rel, ent.d_name);
+            else
+               snprintf(sub, sizeof(sub), "%s", ent.d_name);
+            rom_scan_dir(sub, depth - 1, n);
+         }
+      }
+      else if (l > 4 && strcasecmp(ent.d_name + l - 4, ".gba") == 0)
+      {
+         g_rom_found++;
+         if (*n < BROWSER_MAX)
+         {
+            char        path[320];
+            const char *stored;
+            int         plen;
+
+            if (rel[0])
+               plen = snprintf(path, sizeof(path), "%s/%s", rel, ent.d_name);
+            else
+               plen = snprintf(path, sizeof(path), "%s", ent.d_name);
+
+            if (plen > 0 && plen < (int)sizeof(path) &&
+                (stored = rom_pool_add(path, (size_t)plen)) != NULL)
+            {
+               const char *slash = strrchr(stored, '/');
+               g_roms[*n].name    = stored;
+               g_roms[*n].base    = slash ? slash + 1 : stored;
+               g_roms[*n].size    = (unsigned)ent.d_stat.st_size;
+               g_roms[*n].has_sav = -1;
+               (*n)++;
+            }
+         }
       }
       memset(&ent, 0, sizeof(ent));
    }
    sceIoDclose(d);
+}
 
-   /* insertion sort by name (case-insensitive-ish) */
+static int rom_scan(const char *rom_dir)
+{
+   int n = 0;
+
+   g_rom_pool_used = 0;
+   g_rom_found     = 0;
+   snprintf(g_rom_root, sizeof(g_rom_root), "%s", rom_dir);
+
+   rom_scan_dir("", ROM_SCAN_DEPTH, &n);
+
+   /* Sorted by BASENAME, so a library split into folders still reads as one
+    * alphabetical list instead of being grouped by a layout the player chose
+    * for tidiness rather than for browsing.  And sorted AFTER the whole tree
+    * is in: 2.0's real bug was that it truncated before this point. */
    {
       int i, j;
       for (i = 1; i < n; i++)
       {
          rom_entry key = g_roms[i];
-         for (j = i - 1; j >= 0 && strcasecmp(g_roms[j].name, key.name) > 0;
+         for (j = i - 1; j >= 0 && strcasecmp(g_roms[j].base, key.base) > 0;
               j--)
             g_roms[j + 1] = g_roms[j];
          g_roms[j + 1] = key;
@@ -1481,7 +1604,7 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
    extern char g_dir_base[];
    /* .565 first: it is the texture itself and costs one read. */
    static const char *ext[] = { "565", "png", "jpg", "jpeg", "bmp" };
-   size_t l = strlen(g_roms[rom_idx].name);
+   size_t l = strlen(g_roms[rom_idx].base);
    int stem = (int)(l > 4 ? l - 4 : l);
    unsigned e;
 
@@ -1496,7 +1619,7 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
       snprintf(path, sizeof(path), "%s/%s/%.*s.%s", g_dir_base, dir, stem,
-               g_roms[rom_idx].name, ext[e]);
+               g_roms[rom_idx].base, ext[e]);
       if (sceIoGetstat(path, &st) < 0)
          continue;
       if (ext[e][0] == '5')
@@ -1526,7 +1649,7 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
           * make the emulator look hung on first run. */
          char cpath[300];
          snprintf(cpath, sizeof(cpath), "%s/%s/%.*s.565", g_dir_base, dir,
-                  stem, g_roms[rom_idx].name);
+                  stem, g_roms[rom_idx].base);
          fe_evt("art_time fmt=png us=%u %s",
                 (unsigned)sceKernelGetSystemTimeLow() - t0, path);
          art_cache_565(cpath, tex, stride, *dw, *dh);
@@ -1661,11 +1784,11 @@ static const uint16_t *hero_get(int rom_idx, int load)
 static void rom_display_name(const rom_entry *r, char *out, size_t sz,
                              int cut_region)
 {
-   size_t l = strlen(r->name);
+   size_t l = strlen(r->base);
    size_t n = (l > 4) ? l - 4 : l;
    if (n >= sz)
       n = sz - 1;
-   memcpy(out, r->name, n);
+   memcpy(out, r->base, n);
    out[n] = '\0';
    /* No-Intro writes "Legend of Zelda, The".  Restoring the article to the
     * front costs nothing, reads properly, and matters most on exactly the
@@ -2052,7 +2175,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
       rom_display_name(&g_roms[idx], title, sizeof(title), 1);
       clip_title(title, 232);
       vid_text(20, y, title, col);
-      if (g_roms[idx].has_sav)
+      if (rom_has_sav(idx))
          vid_text(288 - vid_text_w("SAVE"), y, "SAVE",
                   d == 0 ? C_ACCENT : C_ACCENT_DK);
    }
@@ -2085,8 +2208,8 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
       meta_line(&g_roms[cur], buf, sizeof(buf));
       vid_text(ART_X, bot + 10, buf, C_DIM);
       vid_text(ART_X, bot + 28,
-               g_roms[cur].has_sav ? "save present" : "no save",
-               g_roms[cur].has_sav ? C_VALUE : C_DIM);
+               rom_has_sav(cur) ? "save present" : "no save",
+               rom_has_sav(cur) ? C_VALUE : C_DIM);
    }
 
    vid_rect(0, 246, 480, 1, C_CARD, 255);
@@ -2163,8 +2286,8 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int idle)
    meta_line(&g_roms[cur], buf, sizeof(buf));
    vid_text(20, 102, buf, C_ITEM);
    vid_text(20 + vid_text_w(buf) + 14, 102,
-            g_roms[cur].has_sav ? "save present" : "no save",
-            g_roms[cur].has_sav ? C_VALUE : C_DIM);
+            rom_has_sav(cur) ? "save present" : "no save",
+            rom_has_sav(cur) ? C_VALUE : C_DIM);
 
    /* FIVE rows, not three.  At 24 px pitch they span 128..224, which clears
     * the metadata line (ends ~117) and the footer ramp (starts 240).  The
@@ -2244,7 +2367,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
    int n = rom_scan(rom_dir);
    int cur = 0, i, idle = 0;
 
-   fe_evt("ui_browser roms=%d", n);
+   fe_evt("ui_browser roms=%d found=%d pool=%u", n, g_rom_found,
+          g_rom_pool_used);
    if (n == 0)
    {
       /* Nothing to show: draw a notice for ~3 s, then give up.  The path
@@ -2262,6 +2386,28 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
          vid_swap();
       }
       return -1;
+   }
+
+   /* A LIST THAT IS TOO LONG SAYS SO.  The 2.0 bug was not really the size
+    * of the cap, it was that hitting it looked identical to the games not
+    * being on the stick -- so whatever the ceiling is, crossing it has to be
+    * visible.  Shown for ~2.5 s, then the browser opens as normal. */
+   if (g_rom_found > n)
+   {
+      char msg[80];
+      snprintf(msg, sizeof(msg), "Showing %d of %d games", n, g_rom_found);
+      for (i = 0; i < 150 && g_running; i++)
+      {
+         vid_overlay_begin(1);
+         page("GBAdhoc", NULL);
+         vid_text_center(104, msg, C_WARN);
+         vid_text_center(134, "This build lists 1024 at a time.", C_ITEM);
+         vid_text_center(156, "Please open an issue on GitHub -- I want", C_ITEM);
+         vid_text_center(178, "to know how big real libraries get.", C_ITEM);
+         vid_overlay_end();
+         sceDisplayWaitVblankStart();
+         vid_swap();
+      }
    }
 
    /* preselect last played */

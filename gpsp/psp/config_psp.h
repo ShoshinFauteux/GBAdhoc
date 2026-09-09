@@ -310,7 +310,12 @@ typedef struct
    int  osd_wireless;
    char group[9];     /* wireless room code (adhocctl group, <= 8 chars) */
    char nick[24];     /* wireless nickname */
-   char last_rom[64]; /* browser preselect */
+   char last_rom[256]; /* browser preselect -- holds a path RELATIVE to
+                       * roms/, so it has to fit a folder prefix plus a
+                       * full No-Intro name.  64 could not even hold the
+                       * name alone; the only symptom was the browser
+                       * quietly opening on the first game instead of the
+                       * last one played. */
 } psp_config;
 
 /* Bounds for `net_session_fps` (ADR-0033), in hundredths of a frame/second.

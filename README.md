@@ -15,7 +15,8 @@ Now 1.45ms Faster! (woohoo)
 ### [**⬇ Download GBAdhoc 2.0**](https://github.com/ShoshinFauteux/GBAdhoc/releases/latest)
 
 Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. Put your
-`.gba` files in `roms/` and launch it from the XMB. No BIOS needed.
+`.gba` files in `roms/` and launch it from the XMB. No BIOS needed. Subfolders under
+`roms/` are fine, two levels deep; the browser shows one alphabetical list regardless.
 
 ![Browsing the library](gpsp/docs/img/browser-marquee.gif)
 
@@ -45,6 +46,21 @@ Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. P
 | **Wake from sleep**, your game is still there, underneath | Settings |
 
 ---
+
+## 2.0.1
+
+The game list stopped at 64 ROMs, and it stopped *before* sorting them, so the 64
+you got were whichever ones happened to land on the stick first. That reads as
+random rather than as a limit, which is the worst way for it to fail — it looks
+like the emulator is broken rather than full. Reported within a day of release by
+someone with about 130 games, which is a perfectly normal number of games to have
+and not one I had tested against.
+
+2.0.1 lists **1024**, walks **subfolders** under `roms/` two levels deep, no longer
+drops filenames of 96 characters or more, and if your library is still bigger than
+it can show it now says so on screen instead of leaving you to work it out. Nothing
+else changed — copy the new `EBOOT.PBP` and `gbadhoc_me.prx` over 2.0 and keep the
+rest.
 
 ## 2.0
 
@@ -202,7 +218,7 @@ correct everything else is.
 ## Install
 
 1. Copy the `GBAdhoc` folder to `ms0:/PSP/GAME/`.
-2. Put your `.gba` files in `GBAdhoc/roms/`.
+2. Put your `.gba` files in `GBAdhoc/roms/`, loose or in subfolders (two levels).
 3. Optional: box art in `GBAdhoc/boxart/`, hero art in `GBAdhoc/hero/`.
 
 ---
