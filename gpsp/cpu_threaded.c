@@ -3813,14 +3813,141 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
  * boundaries (and therefore when timers/DMA get serviced), which is the
  * remaining suspect for Unbound's mangled audio now that stale jumps are
  * ruled out. */
+/* WHICH ADDRESSES GET A GATE.
+ *
+ * A gate is not free.  It ends a block with an indirect branch, so every
+ * pass through it is a dispatcher lookup; its only benefit is that a write
+ * there retires a small block instead of a large one.  Measured per gate
+ * (SMC hits vs lookups at that PC), two rules came out of it:
+ *
+ *  1. ONE GATE PER PATCHED REGION.  A self-modifying routine patches several
+ *     words a few bytes apart -- the M4A sound mixer rewrites 4 words within
+ *     56 bytes, in two copies of its loop 152 bytes apart.  The first gate
+ *     already makes every later write in the region retire a short block;
+ *     further gates there saved no translation at all and each added ~25k
+ *     lookups a second, because they sit in the mixer's inner loop.  So a
+ *     write within SMC_GATE_CLUSTER bytes after an existing gate counts as a
+ *     hit on that gate.  128 keeps the mixer's two loop copies apart.
+ *
+ *  2. REPLACE GATES THAT HAVE GONE QUIET.  The 8 slots fill with whatever is
+ *     written first.  Pokemon Heart & Soul spends all of them at boot on
+ *     stack and copy writes that never recur, so its music engine never got
+ *     one: 457 KB/s re-translated, and a PSP-1000 dropped to 37 fps whenever
+ *     music played.  Once the table is full, a gate not hit for
+ *     SMC_GATE_IDLE_FRAMES is replaced.  Gates from the game table
+ *     (gba_over.h) carry no stamp and are never replaced.
+ *
+ * Hardware A/B, Heart & Soul on a PSP-1000 with music on: 37-60 fps -> a
+ * locked 60; re-translation 457 -> 48 KB/s, full flushes 8.0 -> 1.7/s.
+ * PPSSPP, Unbound: lookups -49%, translation unchanged, core time -10%.
+ * Unbound never fills the table, so rule 2 never fires there. */
+#define SMC_GATE_CLUSTER      128
+#define SMC_GATE_IDLE_FRAMES  60
+
+/* frame_counter + 1 at the gate's last hit; 0 = loaded from the game table */
+static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
+
+void smc_gates_reset(void)
+{
+  memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
+}
+
 static void smc_add_gate(u32 gba_addr)
 {
-  u32 gpc = gba_addr & ~3u, g;
+  u32 gpc = gba_addr & ~3u, now = frame_counter + 1, g, victim;
+
   for (g = 0; g < translation_gate_targets; g++)
     if (translation_gate_target_pc[g] == gpc)
+    {
+      if (smc_gate_last_hit[g])
+        smc_gate_last_hit[g] = now;
       return;
+    }
+
+  for (g = 0; g < translation_gate_targets; g++)
+  {
+    u32 gp = translation_gate_target_pc[g];
+    if (gpc > gp && gpc - gp <= SMC_GATE_CLUSTER)
+    {
+      if (smc_gate_last_hit[g])
+        smc_gate_last_hit[g] = now;
+      return;
+    }
+  }
+
   if (translation_gate_targets < MAX_TRANSLATION_GATES)
+  {
+    smc_gate_last_hit[translation_gate_targets] = now;
     translation_gate_target_pc[translation_gate_targets++] = gpc;
+    return;
+  }
+
+  victim = MAX_TRANSLATION_GATES;
+  for (g = 0; g < translation_gate_targets; g++)
+    if (smc_gate_last_hit[g] &&
+        (victim == MAX_TRANSLATION_GATES ||
+         smc_gate_last_hit[g] < smc_gate_last_hit[victim]))
+      victim = g;
+  if (victim < MAX_TRANSLATION_GATES &&
+      now - smc_gate_last_hit[victim] >= SMC_GATE_IDLE_FRAMES)
+  {
+    translation_gate_target_pc[victim] = gpc;
+    smc_gate_last_hit[victim] = now;
+  }
+}
+#endif
+
+#ifdef SMC_PARTIAL
+/* Was the store that raised this SMC a BLOCK COPY -- a multi-word store
+ * that advances its base register through memory?
+ *
+ * Partial invalidation assumes every write into translated code is
+ * reported.  Block stores break that: every word but the last goes through
+ * execute_aligned_store32, which has no SMC check, and only the final word
+ * reaches execute_store_u32.  A copy loop therefore overwrites code in
+ * chunks, and a chunk whose final word lands on data is never reported at
+ * all.  Upstream's full flush hides this -- any later event in the same copy
+ * wipes everything -- but retiring single blocks leaves the unreported
+ * chunks running their old translations.
+ *
+ * Pokemon Heart & Soul copies a routine into IWRAM with STMIA r0!, {r3-r10}.
+ * SMC_GATES splits the routine at the reported addresses, so the unreported
+ * words sit in blocks that are never retired; the routine runs a mix of new
+ * and old code, computes a garbage length and fills the whole address space
+ * (a white screen for ~12 s, then corrupted memory).  Either flag alone
+ * boots the game.
+ *
+ * A copy loop moves its base (ARM STM with writeback, Thumb STMIA/PUSH);
+ * those get the full flush, exactly as before partial invalidation existed.
+ * An in-place patch does not -- Unbound's sound driver rewrites its own code
+ * with STMIA lr, {r0,r1} -- and keeps the fast path unchanged.
+ *
+ * reg[REG_PC] was set by the smc_write stub from the store emitter's reg_a2:
+ * the writer's PC + 4 (ARM) or + 2 (Thumb), for single and block stores
+ * alike.  The opcode is fetched the way the translator fetches it. */
+static int smc_writer_is_block_copy(void)
+{
+  u32 pc = reg[REG_PC];
+  u32 op;
+  u8 *blk;
+
+  if (reg[REG_CPSR] & 0x20)
+  {
+    pc -= 2;
+    blk = memory_map_read[pc >> 15];
+    if (!blk)
+      blk = load_gamepak_page((pc >> 15) & 0x3FF);
+    op = readaddress16(blk, pc & 0x7FFF);
+    return (op & 0xF800) == 0xC000 ||    /* STMIA rb!, {rlist} */
+           (op & 0xFE00) == 0xB400;      /* PUSH {rlist[, lr]} */
+  }
+
+  pc -= 4;
+  blk = memory_map_read[pc >> 15];
+  if (!blk)
+    blk = load_gamepak_page((pc >> 15) & 0x3FF);
+  op = readaddress32(blk, pc & 0x7FFF);
+  return (op & 0x0E300000) == 0x08200000; /* STM with writeback, any cond */
 }
 #endif
 
@@ -3831,7 +3958,10 @@ void flush_translation_cache_ram_smc(void)
   smc_add_gate(smc_last_write_addr);
 #endif
 #ifdef SMC_PARTIAL
-  flush_translation_cache_ram_block(smc_last_write_addr);
+  if (smc_writer_is_block_copy())
+    flush_translation_cache_ram();
+  else
+    flush_translation_cache_ram_block(smc_last_write_addr);
 #else
   flush_translation_cache_ram();
 #endif

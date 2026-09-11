@@ -161,6 +161,7 @@ extern u8 *ram_translation_ptr;
 extern u32 idle_loop_target_pc;
 extern u32 translation_gate_targets;
 extern u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
+void smc_gates_reset(void);   /* SMC_GATES builds: forget gate hit stamps */
 
 extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 

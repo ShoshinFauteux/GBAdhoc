@@ -47,6 +47,59 @@ Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. P
 
 ---
 
+## 2.0.2
+
+**Pokémon Heart & Soul boots.** It went to a white screen for about twelve seconds
+and then a black one with pixelated spots. The speed-up that makes Unbound run at
+full speed retires only the translated code a write actually touches, and a block
+copy only reports its last word — so when Heart & Soul copied a routine into
+memory, part of the copy went unnoticed, the game ran a mix of old and new code,
+computed a garbage length, and filled the entire address space. Copies now take
+the safe path.
+
+**Music no longer costs a third of the frame rate.** The same machinery has 8
+*gates* for code that rewrites itself, and Heart & Soul spent all of them at boot
+on writes that never came back, so its music engine never got one. Gates now go
+one per patched region — extra gates inside one region were saving nothing and
+costing a dispatch on every pass — and a gate that goes quiet gets handed back.
+
+On a PSP-1000 with music playing:
+
+| | 2.0.1 | 2.0.2 |
+|---|---|---|
+| Pokémon Heart & Soul | didn't boot | **locked 60** |
+| Pokémon Unbound | — | **59–60** |
+
+With only the boot fix, Heart & Soul ran 37–60 and dropped every time the music
+changed.
+
+**Sleep is solid on every model.** Going to sleep released the second processor's
+memory while a frame could still be drawing into it. In 2.0 and 2.0.1 a log file
+written on every sleep happened to slow things down just enough to hide that, and
+taking the log out exposed it — a PSP-3000 stopped waking at all. The emulator now
+pauses between frames and lets the Media Engine finish before it lets go. A 3000
+and a Go went 20 for 20.
+
+**A PSP-1000 no longer crashes after waking in big games.** It can't hold a 32 MB
+game in memory, so it reads the rest from the memory stick as you play, and the
+open file doesn't survive sleep. The game ran into garbage a few steps later.
+The file is reopened automatically now.
+
+**The clock shows the real date.** Every Pokémon game showed 1 January 2070: on a
+real PSP, the call the emulator used for "now" returns the time since the console
+was switched on, which reads as 1970, and Pokémon only keeps the last two digits.
+The clock now comes from your PSP's own date and time, and a save state made under
+the old clock is brought up to today when you load it.
+
+One catch: an in-game save made under the 2070 clock remembers 2070, so the game
+sees time run backwards, and daily things like berry growth may stay paused on that
+save. Day and night are right for everyone, and new saves work normally.
+
+**Sleep no longer writes to your memory stick.** 2.0 and 2.0.1 added a diagnostic
+line to `log/standby.log` every time the PSP slept. That's gone.
+
+Copy the new `EBOOT.PBP` and `gbadhoc_me.prx` over 2.0.x and keep the rest.
+
 ## 2.0.1
 
 The game list stopped at 64 ROMs, and it stopped *before* sorting them, so the 64

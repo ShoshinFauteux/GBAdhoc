@@ -124,7 +124,7 @@ CORE_LIB = ../gpsp_libretro_psp1.a
 # resolve from those late scans in a single contiguous block.
 LIBS = $(CORE_LIB) -lpspgu -lpspge -lpspaudio -lpsppower \
        -lpspusb -lpspusbstor -lpspkubridge -lpspsystemctrl_user -lpspctrl \
-       -lpspnet_adhoc -lpspnet_adhocctl -lpspwlan -lm
+       -lpspnet_adhoc -lpspnet_adhocctl -lpspwlan -lpsprtc -lm
 
 # ADR-0080: the Media Engine kernel module builds as a sub-make and ships
 # beside the EBOOT (loaded at runtime via kuKernelLoadModule; nothing links

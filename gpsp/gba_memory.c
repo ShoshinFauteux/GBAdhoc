@@ -417,6 +417,11 @@ u32 gamepak_sticky_bit[1024/32];
 // pages from, so there's no slowdown with opening and closing the file
 // a lot.
 RFILE *gamepak_file_large = NULL;
+/* The ROM's path and true size, kept so load_gamepak_page can reopen the
+ * file when a read fails.  gamepak_reopens counts how often it had to. */
+static char gamepak_path[1024];
+static int64_t gamepak_file_bytes;
+u32 gamepak_reopens = 0;
 
 // Writes to these respective locations should trigger an update
 // so the related subsystem may react to it.
@@ -1302,17 +1307,60 @@ static s64 rtc_base_time = 0;
 #define GBA_CYCLES_PER_FRAME 280896
 #define GBA_FRAME_SECONDS    ((double)GBA_CYCLES_PER_FRAME / (double)GBC_BASE_RATE)
 
-static void rtc_init_base_time(void)
+/* WHERE "NOW" COMES FROM.
+ *
+ * On a PSP, time() is not the wall clock: it returns something close to
+ * time since power-on.  Every save state on three consoles held an RTC base
+ * of a few hours past 1970, so Pokemon read year "70" and showed
+ * 1 January 2070, every session, on every model.
+ *
+ * A frontend that knows its platform's real clock sets gpsp_wallclock.  It
+ * returns the LOCAL wall time encoded as seconds since 1970 with no
+ * timezone applied, and those fields are decoded back with gmtime(), so the
+ * game sees exactly what the console's own clock shows whatever the C
+ * library believes about timezones.  Without a hook: time() and localtime(),
+ * as before. */
+time_t (*gpsp_wallclock)(void) = NULL;
+
+/* No real clock reads earlier than this (2000-01-01), so an older base can
+ * only have come from the broken source above. */
+#define RTC_PLAUSIBLE_EPOCH  ((s64)946684800)
+
+static s64 rtc_now(void)
 {
   time_t t;
+  if (gpsp_wallclock)
+    return (s64)gpsp_wallclock();
   time(&t);
-  rtc_base_time = (s64)t;
+  return (s64)t;
+}
+
+static void rtc_init_base_time(void)
+{
+  rtc_base_time = rtc_now();
 }
 
 static time_t rtc_current_time(void)
 {
-  return (time_t)(rtc_base_time +
-                  (s64)((double)frame_counter * GBA_FRAME_SECONDS));
+  s64 elapsed = (s64)((double)frame_counter * GBA_FRAME_SECONDS);
+  /* A save state restores the base it was written with.  States made
+   * while the base came from the PSP's uptime carry 1970 forever, so
+   * re-anchor one that cannot be real to the clock now -- the game then
+   * resumes at today, which is what every one of those players expected.
+   * Done at read time so it does not depend on the order in which a state
+   * restores frame_counter and the RTC. */
+  if (rtc_base_time < RTC_PLAUSIBLE_EPOCH)
+  {
+    s64 now = rtc_now();
+    if (now >= RTC_PLAUSIBLE_EPOCH)
+      rtc_base_time = now - elapsed;
+  }
+  return (time_t)(rtc_base_time + elapsed);
+}
+
+static struct tm *rtc_fields(time_t t)
+{
+  return gpsp_wallclock ? gmtime(&t) : localtime(&t);
 }
 
 
@@ -1396,7 +1444,7 @@ static void write_rtc(u8 old, u8 new)
           {
             struct tm *current_time;
             time_t current_time_flat = rtc_current_time();
-            current_time = localtime(&current_time_flat);
+            current_time = rtc_fields(current_time_flat);
 
             rtc_state = RTC_OUTPUT_DATA;
             rtc_data_bits = 56;
@@ -1413,7 +1461,7 @@ static void write_rtc(u8 old, u8 new)
           {
             struct tm *current_time;
             time_t current_time_flat = rtc_current_time();
-            current_time = localtime(&current_time_flat);
+            current_time = rtc_fields(current_time_flat);
 
             rtc_state = RTC_OUTPUT_DATA;
             rtc_data_bits = 24;
@@ -2320,11 +2368,48 @@ u8 *load_gamepak_page(u32 physical_index)
   if (gamepak_mirror_1m && gamepak_file_blocks != 0)
     file_index %= gamepak_file_blocks;
 
-  filestream_seek(gamepak_file_large, file_index * (32 * 1024), SEEK_SET);
   {
-    u32 read_len = (u32)filestream_read(gamepak_file_large, swap_location, (32 * 1024));
-    if (read_len < (32 * 1024))
-      memset(swap_location + read_len, 0xFF, (32 * 1024) - read_len);
+    /* A PAGE READ CAN FIND THE ROM FILE GONE.
+     *
+     * The handle was opened at load and is used for as long as the game
+     * runs, which on a console with too little RAM for the whole cart means
+     * every time play reaches code that is not cached.  A PSP invalidates
+     * open Memory Stick files across sleep.  The read then returned 0, the
+     * page was filled with 0xFF and mapped as ROM, and the game jumped into
+     * it: Pokemon Heart & Soul (32 MB) woke fine on a PSP-1000, ran a few
+     * steps into uncached code, and powered the console off.  A PSP-3000
+     * or Go holds the whole cart and never reads the file after load, so
+     * it never saw this.
+     *
+     * So a read that returns less than the file holds at that offset
+     * reopens the ROM by path and tries once more.  It covers sleep and any
+     * other way the handle can die, without the core knowing about power
+     * events.  If the file is still unreachable the page is filled as
+     * before, and the next fault tries again. */
+    int64_t off  = (int64_t)file_index * (32 * 1024);
+    int64_t want = gamepak_file_bytes - off;
+    int64_t got  = -1;
+    if (want > 32 * 1024)
+      want = 32 * 1024;
+    if (gamepak_file_large &&
+        filestream_seek(gamepak_file_large, off, SEEK_SET) == 0)
+      got = filestream_read(gamepak_file_large, swap_location, 32 * 1024);
+    if (got < want && gamepak_path[0])
+    {
+      if (gamepak_file_large)
+        filestream_close(gamepak_file_large);
+      gamepak_file_large = filestream_open(gamepak_path,
+          RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+      gamepak_reopens++;
+      got = -1;
+      if (gamepak_file_large &&
+          filestream_seek(gamepak_file_large, off, SEEK_SET) == 0)
+        got = filestream_read(gamepak_file_large, swap_location, 32 * 1024);
+    }
+    if (got < 0)
+      got = 0;
+    if (got < 32 * 1024)
+      memset(swap_location + got, 0xFF, (size_t)(32 * 1024 - got));
   }
 
   // Map it to the read handlers now
@@ -2677,6 +2762,8 @@ static s32 load_gamepak_raw(const char *name)
       return -1;
     }
     raw_size = (u32)fsize;
+    gamepak_file_bytes = fsize;
+    snprintf(gamepak_path, sizeof(gamepak_path), "%s", name);
 
     // Round size to 32KB pages
     raw_size = (raw_size + 0x7FFF) & ~0x7FFF;
@@ -2965,6 +3052,9 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
 
    idle_loop_target_pc = 0xFFFFFFFF;
    translation_gate_targets = 0;
+#ifdef SMC_GATES
+   smc_gates_reset();   /* a new cart's table gates must not look evictable */
+#endif
    flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
    flash_bank_cnt = FLASH_SIZE_64KB;
    rtc_enabled = false;

@@ -52,6 +52,8 @@
 
 #include "fe_host.h"
 #include "fe_evt.h"
+#include <psprtc.h>
+#include <time.h>
 #include "fe_util.h"
 #include "fe_autopilot.h"
 #include "netpacket_host.h"
@@ -1087,6 +1089,7 @@ static int g_me_rend;                    /* active */
  * like the hardware's fault. */
 static void me_standby_down(void);   /* defined with the ME globals below */
 static void me_standby_up(void);
+static void standby_note(const char *fmt, ...);   /* defined below */
 static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
 /* The GE samples power-of-two textures only, and vid_image uses stride ==
  * texw, so the snapshot is stored 256 wide with the live 240x160 as its
@@ -1103,6 +1106,11 @@ static const uint16_t *g_last_pix;   /* last frame the core handed us    */
 #define g_wake_hold  (g_pwr_rebuild || g_wake_menu)
 static unsigned  g_last_pitch = 240;
 static volatile int g_pwr_rebuild;   /* main loop: rebuild it now */
+/* SUSPEND HANDSHAKE.  The callback sets park_req; the main loop, at the top
+ * of its next iteration, sets parked and waits until park_req clears.  See
+ * power_cb for why the teardown must not run while a frame is in flight. */
+static volatile int g_pwr_park_req;
+static volatile int g_pwr_parked;
 
 static int power_cb(int unknown, int pwrflags, void *common)
 {
@@ -1121,7 +1129,50 @@ static int power_cb(int unknown, int pwrflags, void *common)
       io_wake();
       sceKernelDelayThread(60000);
       if (g_pcfg.standby)
+      {
+         /* STOP THE FRAME BEFORE TAKING ITS MEMORY AWAY.
+          *
+          * The teardown clears the core's capture pointer and unlocks the
+          * volatile partition the capture and stage buffers live in.  This
+          * callback outranks the main thread and wakes from the delay above
+          * wherever that thread happens to be -- including mid-frame, with
+          * the core writing a scanline's registers through me_capture_buf or
+          * the post filling g_mer_desc, and with the ME itself still drawing
+          * into a stage.  Nothing stopped either, so a frame could land in
+          * memory the OS was given back: a console that never woke (0 of 6 on
+          * a PSP-3000), or one that woke and powered off a few steps after
+          * Continue (PSP-1000, PSP Go).
+          *
+          * It hid in 2.0 and 2.0.1 because every step used to write a line to
+          * the memory stick, and those writes blocked this callback long
+          * enough for the main loop to notice the renderer was gone and finish
+          * its frame first.  Removing the diagnostic file removed the accident.
+          *
+          * So: ask the loop to park between frames, wait for it, wait out the
+          * ME's current job the way me_rend_suspend already does, and only
+          * then tear down.  Both waits are bounded -- if the loop is inside a
+          * menu it will not park, and nothing is being emulated there. */
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow(), park_us, idle_us;
+         int idle = 1;
+         g_pwr_park_req = 1;
+         while (!g_pwr_parked &&
+                (unsigned)sceKernelGetSystemTimeLow() - t0 < 250000u)
+            sceKernelDelayThread(2000);
+         park_us = (unsigned)sceKernelGetSystemTimeLow() - t0;
+         t0 = (unsigned)sceKernelGetSystemTimeLow();
+         if (me_host_up())
+            while (!(idle = me_host_idle()) &&
+                   (unsigned)sceKernelGetSystemTimeLow() - t0 < 50000u)
+               sceKernelDelayThread(1000);
+         idle_us = (unsigned)sceKernelGetSystemTimeLow() - t0;
+         standby_note("suspend parked=%d park_us=%u me_idle=%d idle_us=%u",
+                      g_pwr_parked, park_us, idle, idle_us);
          me_standby_down();
+         /* Torn down: the loop may run again, on the CPU renderer, until
+          * the kernel freezes it.  Clearing here rather than at resume means
+          * a suspend that never completes cannot leave it parked forever. */
+         g_pwr_park_req = 0;
+      }
       /* Give the writer a real chance to land the .sav and this line before
        * the kernel takes the machine away.  Not a guarantee -- the window is
        * the kernel's to grant -- but it is the difference between usually
@@ -1143,6 +1194,9 @@ static int power_cb(int unknown, int pwrflags, void *common)
    if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)
    {
       g_pwr_resume++;
+      g_pwr_park_req = 0;
+      standby_note("resume_complete flags=0x%08X slept=%d",
+                   (unsigned)pwrflags, g_pwr_slept);
       fe_evt("power resume_complete slept=%d", g_pwr_slept);
       /* Flag only -- the main loop rebuilds.  See the note above. */
       if (g_pcfg.standby && g_pwr_slept)
@@ -1370,6 +1424,13 @@ static void wake_snapshot(void)
  * exactly right for six lines across a suspend. */
 static void standby_note(const char *fmt, ...)
 {
+#if defined(GPSP_NO_TELEMETRY) && !defined(GPSP_STANDBY_NOTES)
+   /* A player build writes no diagnostic files -- ADR-0067, the same rule
+    * that removes the event log.  This one was missed: every sleep and wake
+    * appended to log/standby.log on the memory stick, from the power
+    * callback, in 2.0 and 2.0.1. */
+   (void)fmt;
+#else
    char path[160], line[192];
    va_list ap;
    FILE *fh;
@@ -1386,6 +1447,7 @@ static void standby_note(const char *fmt, ...)
       return;
    fprintf(fh, "%u %s\n", (unsigned)sceKernelGetSystemTimeLow(), line);
    fclose(fh);                        /* the close IS the commit */
+#endif
 }
 
 /* A LADDER, NOT A SWITCH.  `standby` is 0-3 and each level does strictly more
@@ -5138,6 +5200,26 @@ static int run_nettest(int is_host, const char *group, long secs)
 
 /* ------------------------------------------------------------------- main */
 
+/* The PSP's local wall clock as seconds since 1970, with no timezone applied
+ * (the core decodes it with gmtime).  Days from civil date: H. Hinnant's
+ * algorithm, valid for any proleptic Gregorian date. */
+static time_t psp_local_wallclock(void)
+{
+   ScePspDateTime dt;
+   long long y, m, era, yoe, doy, doe, days;
+   if (sceRtcGetCurrentClockLocalTime(&dt) < 0)
+      return (time_t)0;             /* core keeps its own base then */
+   y   = (long long)dt.year - (dt.month <= 2);
+   m   = (long long)dt.month;
+   era = (y >= 0 ? y : y - 399) / 400;
+   yoe = y - era * 400;
+   doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + (long long)dt.day - 1;
+   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+   days = era * 146097 + doe - 719468;
+   return (time_t)(days * 86400 + (long long)dt.hour * 3600 +
+                   (long long)dt.minute * 60 + (long long)dt.second);
+}
+
 int main(int argc, char *argv[])
 {
    char rom_path[256], save_path[256], state_path[256];
@@ -5962,6 +6044,26 @@ int main(int argc, char *argv[])
    vid_set_gu_defer(g_pcfg.gu_defer);
    fe_evt("gu_defer=%d", vid_gu_defer());
 
+   /* THE CONSOLE'S CLOCK FOR THE GBA RTC -- see gpsp_wallclock in
+    * gba_memory.c.  Must be set before the cart loads, which is when the
+    * RTC takes its base. */
+   {
+      extern time_t (*gpsp_wallclock)(void);
+      gpsp_wallclock = psp_local_wallclock;
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+      {
+         ScePspDateTime dt;
+         time_t libc_now = time(NULL);
+         memset(&dt, 0, sizeof(dt));
+         sceRtcGetCurrentClockLocalTime(&dt);
+         fe_evt("rtc_seed local=%04u-%02u-%02u %02u:%02u:%02u "
+                "wallclock=%lld libc_time=%lld",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second,
+                (long long)psp_local_wallclock(), (long long)libc_now);
+      }
+#endif
+   }
+
    if (fe_host_boot(&cfg) == 0)
    {
       /* ADR-0028: adopt the core's real audio rate now that it exists. The
@@ -6137,6 +6239,32 @@ int main(int argc, char *argv[])
        * session is up. */
       uint64_t frame_t0 = g_net_up ? net_now_us() : 0;
       g_frame_start_us = frame_t0 ? frame_t0 : net_now_us();
+
+      /* SUSPEND HANDSHAKE, main-thread half: between frames nothing is being
+       * emulated, captured or posted, so this is where the power callback may
+       * take the renderer's memory.  Wait here until it has. */
+      if (g_pwr_park_req)
+      {
+         g_pwr_parked = 1;
+         while (g_pwr_park_req && g_running)
+            sceKernelDelayThread(5000);
+         g_pwr_parked = 0;
+      }
+#if defined(GPSP_STANDBY_NOTES)
+      {
+         /* Diagnostic build: say when a ROM page read had to reopen the
+          * file (gba_memory.c load_gamepak_page). */
+         extern u32 gamepak_reopens;
+         static u32 reopens_seen;
+         if (gamepak_reopens != reopens_seen)
+         {
+            reopens_seen = gamepak_reopens;
+            standby_note("rom reopened n=%u page_loads=%u",
+                         (unsigned)gamepak_reopens,
+                         (unsigned)gamepak_page_loads);
+         }
+      }
+#endif
 
       /* ADR-0064: closes the PREVIOUS frame's `wait` region and opens this
        * frame's `pre`.  ADR-0065: open the protected window here, before any
