@@ -47,6 +47,53 @@ Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. P
 
 ---
 
+## 2.0.3
+
+A stability release. One fix, and it undoes a piece of 2.0.2.
+
+**Pokémon Heart & Soul no longer switches the PSP off.** Two ways in: any Growl
+in a battle, and sometimes the fade at the end of a battle with no Growl
+involved. The screen froze, the sound turned to noise, the Pokémon on screen
+went the wrong colours, and then the console powered off.
+
+Here is what was happening. The emulator translates the game's code into PSP
+code once and keeps the result, because translating is the expensive part.
+Pokémon's music engine rewrites its own instructions thousands of times a
+second, so those saved translations keep going out of date. 2.0.2 handles that
+with eight *gates* — markers that tell the translator to break a block wherever
+the game rewrites itself, so each rebuild is small and cheap. That is where the
+speed comes from, and it is not going anywhere.
+
+The mistake was letting gates **move**. When all eight were in use, 2.0.2 would
+take the quietest one and reassign it somewhere else. But code translated
+earlier was built around where the gates were at the time, and it stays in
+memory. Move a gate and that older code and the gate table no longer agree,
+and the emulator can run a translation that no longer matches what the game
+actually says. It then executes nonsense: noise instead of music, wrong colours
+instead of graphics, and finally a jump into nothing, which is the console
+switching off.
+
+Gates are permanent again, as they were in 2.0.1. Once one is placed it is
+never moved, so code translated at any point can never disagree with the table.
+Heart & Soul now survives Growls, full battles and the fades between them.
+
+**This costs some speed, and that is the trade.** On a PSP Go in the heaviest
+battle in the game:
+
+| | 2.0.2 | 2.0.3 |
+|---|---|---|
+| Rival battle, music on | ~60, then crash | **~50** |
+| Rival battle, music off | — | **locked 60** |
+| Everywhere else | 60 | **60** |
+
+**There is more coming.** This release is deliberately narrow: it changes one
+rule and nothing else, because the priority was to stop people losing progress.
+The ~10 fps is a known gap with a known cause, and getting it back without
+giving up the stability is the next piece of work rather than the end of it.
+
+Nothing else changed. Everything fixed in 2.0.2 — the boot fix, sleep on every
+model, the 1000 waking in big games, the real date — is still in.
+
 ## 2.0.2
 
 **Pokémon Heart & Soul boots.** It went to a white screen for about twelve seconds
@@ -480,11 +527,18 @@ Docker supplies the toolchain, so the build is reproducible on any machine.
 
 ```bash
 # core + frontend, with the flavour stated explicitly
-CORE_FLAGS="SMC_PARTIAL=1 SMC_GATES=1" \
+CORE_FLAGS="SMC_GATES=1 SMC_GATES_SIMPLE=1" \
 EXTRA_DEFS="-DGPSP_PLAYABLE" \
   ./build.sh
 # -> psp/EBOOT.PBP
 ```
+
+That is the 2.0.3 release flavour. `SMC_GATES_SIMPLE` is the add-only gate rule:
+a gate is placed once and never moved. Dropping it restores 2.0.2's rule, which
+is faster and crashes Heart & Soul — see the 2.0.3 notes above. `SMC_PARTIAL` is
+off in the shipped build; it is an independent experiment and not needed for the
+speed, which comes from the gates.
+
 
 `CORE_FLAGS` reaches the **root** make (anything touching the dynarec: cache sizes,
 `SMC_GATES`, `BIG_JIT`). `EXTRA_DEFS` reaches `psp/Makefile` (`GPSP_PLAYABLE`, titles).

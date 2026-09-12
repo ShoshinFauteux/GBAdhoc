@@ -3852,6 +3852,37 @@ void smc_gates_reset(void)
   memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
 }
 
+#ifdef SMC_GATES_SIMPLE
+/* The 2.0.1 gate rule: ADD ONLY.  An address either already has a gate or
+ * takes a free slot; once written, a gate's address is NEVER changed.
+ *
+ * 2.0.2 replaced this with cluster-128 + idle eviction, which measured better
+ * in PPSSPP.  But eviction means the gate table MUTATES while blocks compiled
+ * against the old layout are still live, and gpSP's tag map holds one slot per
+ * halfword — it cannot represent the overlapping blocks that creates.  On
+ * 2026-09-12 a stock build (no gates at all) survived a full rival battle and
+ * four Growls at the highest flush rate we have ever measured (~1900/s), while
+ * every gated build died.  That puts the gate rule itself under suspicion, and
+ * this is the variable to eliminate first: Heart & Soul has never run on the
+ * simple rule, because it did not boot at all before 2.0.2.
+ *
+ * There is also a concrete defect in the evicting version: `now` derives from
+ * frame_counter, which savestates restore, while smc_gate_last_hit[] does not.
+ * Loading a state with a lower frame count underflows the idle comparison to
+ * ~4.29e9, so every gate reads as infinitely idle and churns constantly. */
+static void smc_add_gate(u32 gba_addr)
+{
+  u32 gpc = gba_addr & ~3u, g;
+
+  for (g = 0; g < translation_gate_targets; g++)
+    if (translation_gate_target_pc[g] == gpc)
+      return;                       /* already gated — nothing to do */
+
+  if (translation_gate_targets < MAX_TRANSLATION_GATES)
+    translation_gate_target_pc[translation_gate_targets++] = gpc;
+  /* Table full: leave every existing gate exactly where it is. */
+}
+#else
 static void smc_add_gate(u32 gba_addr)
 {
   u32 gpc = gba_addr & ~3u, now = frame_counter + 1, g, victim;
@@ -3895,6 +3926,7 @@ static void smc_add_gate(u32 gba_addr)
     smc_gate_last_hit[victim] = now;
   }
 }
+#endif  /* SMC_GATES_SIMPLE */
 #endif
 
 #ifdef SMC_PARTIAL
@@ -3925,6 +3957,9 @@ static void smc_add_gate(u32 gba_addr)
  * reg[REG_PC] was set by the smc_write stub from the store emitter's reg_a2:
  * the writer's PC + 4 (ARM) or + 2 (Thumb), for single and block stores
  * alike.  The opcode is fetched the way the translator fetches it. */
+/* Did the instruction that triggered this SMC check write a whole register
+ * list?  If so its earlier words bypassed the check entirely (see below), so
+ * the partial flush is not safe and the caller must wipe the RAM cache. */
 static int smc_writer_is_block_copy(void)
 {
   u32 pc = reg[REG_PC];
@@ -3947,9 +3982,52 @@ static int smc_writer_is_block_copy(void)
   if (!blk)
     blk = load_gamepak_page((pc >> 15) & 0x3FF);
   op = readaddress32(blk, pc & 0x7FFF);
-  return (op & 0x0E300000) == 0x08200000; /* STM with writeback, any cond */
+  /* ANY ARM block store, writeback or not.
+   *
+   * 2.0.2 tested for writeback (W=1, mask 0x0E300000 / 0x08200000) because
+   * the Heart & Soul boot hang was a register-list copy loop that used it.
+   * That was too narrow and shipped the same bug in a second form: EVERY
+   * non-final word of an ARM STM is emitted as execute_aligned_store32
+   * (mips_emit.h arm_block_memory_store), which carries no SMC check at all,
+   * regardless of writeback.  Only the final word reaches execute_store_u32
+   * and lands here.  So `STMIA r0, {r1-r8}` over code answered "not a block
+   * copy", took the partial flush around the last word alone, and left the
+   * earlier words' stale translations live — executing freed code, which on
+   * hardware is an unhandled exception and an instant power-off.
+   *
+   * Bits 27-25 == 100 selects block data transfer; L (bit 20) == 0 selects
+   * store.  P/U/S/W are all irrelevant to whether the copy skipped the check.
+   * Over-detecting only costs a full flush instead of a partial one, which is
+   * slower but never wrong; under-detecting corrupts the cache. */
+  return (op & 0x0E100000) == 0x08000000; /* any ARM STM, any cond */
 }
 #endif
+
+/* THE OPTIMISATION THAT LOOKS OBVIOUS HERE AND IS WRONG.
+ *
+ * Full-flushing on every block copy costs real speed: battle entry and saving
+ * in Heart & Soul hammer IWRAM, so the flushes land in bursts and the frame
+ * pacer visibly over-corrects afterwards (59 -> 65 fps, the player character
+ * speeds up, then it settles).  The tempting fix is that only the words THIS
+ * copy wrote can hold stale translations, and the opcode names exactly how
+ * many there were -- so retire just [last - (n-1)*4, last] and leave the rest
+ * of the cache alone.  The geometry is right: both drivers in mips_emit.h
+ * walk the register list ascending and mark the HIGHEST set register as the
+ * final store, the only one that reaches execute_store_u32, so the address
+ * recorded in smc_last_write_addr is the top of the copy.
+ *
+ * Implementing it as a LOOP over flush_translation_cache_ram_block() does not
+ * work, and was tried on hardware 2026-09-11: Heart & Soul went back to a
+ * white screen on boot, the exact pre-2.0.2 symptom.  That routine ZEROES the
+ * block's tag run as its last act, so the first call blinds every later one --
+ * they read tag 0, conclude "no code here", return early, and leave live
+ * blocks that still cover the range holding stale translations.  This is the
+ * v1/v4 failure already in the SMC notes ("retiring punches holes in runs
+ * other blocks depend on"), rediscovered by not reading them.
+ *
+ * A range retire has to be ONE pass: walk back once from the low end, retire
+ * through the high end, clear tags once at the finish.  Until that exists,
+ * flush everything -- the speed is worth nothing if the game does not boot. */
 
 void flush_translation_cache_ram_smc(void)
 {

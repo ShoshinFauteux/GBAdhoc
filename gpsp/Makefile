@@ -274,6 +274,22 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_GATES),1)
 	CFLAGS += -DSMC_GATES
 	endif
+	# SMC_GATES_SIMPLE=1: use the 2.0.1 add-only gate rule instead of 2.0.2's
+	# cluster+evict.  Add-only never moves an existing gate, so blocks already
+	# translated can never disagree with the table.  Only meaningful together
+	# with SMC_GATES=1.
+	ifeq ($(SMC_GATES_SIMPLE),1)
+	CFLAGS += -DSMC_GATES_SIMPLE
+	endif
+	# SMC_SP_CHECKED=1: send SP-based block STORES down the general path so
+	# their final word reaches execute_store_u32 and the SMC check.  The SP
+	# fast path emits raw stores with no check at all, which is the last
+	# known hole after the STM detector fix (mips/mips_emit.h).  Costs speed
+	# on the hottest memory path, so it is a flag and not a default until
+	# hardware says it is the bug.
+	ifeq ($(SMC_SP_CHECKED),1)
+	CFLAGS += -DSMC_SP_CHECKED
+	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
 	# core decides the layout, the frontend's blit assumes it, and nothing
 	# at link time checks.  Build both with `make PSP_PIXFMT=rgb565` to get

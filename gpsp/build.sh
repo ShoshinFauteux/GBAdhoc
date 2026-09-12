@@ -45,7 +45,7 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
 run "core"  /build      "make platform=psp1 ${CORE_FLAGS:-} -j4"
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || { echo "FAIL: core archive missing"; exit 1; }
 
-run "eboot" /build/psp  "make ${EXTRA_DEFS:+EXTRA_DEFS='$EXTRA_DEFS'}"
+run "eboot" /build/psp  "make ${EXTRA_DEFS:+EXTRA_DEFS='$EXTRA_DEFS'} ${PSP_EBOOT_TITLE:+PSP_EBOOT_TITLE='$PSP_EBOOT_TITLE'}"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || { echo "FAIL: EBOOT missing"; exit 1; }
 
 if [ -n "$NEWEST_SRC" ] && [ "$NEWEST_SRC" -nt "$ROOT/psp/EBOOT.PBP" ]; then

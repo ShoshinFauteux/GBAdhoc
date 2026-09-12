@@ -1372,6 +1372,25 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define arm_block_memory_writeback_post_store(writeback_type)                 \
   arm_block_memory_writeback_##writeback_type()                               \
 
+/* SMC_SP_CHECKED — diagnostic/candidate fix for the Heart & Soul load crash.
+ *
+ * When the base register is SP both block-memory drivers take a fast path
+ * that emits a raw mips_emit_sw per register, with NO SMC check on ANY word,
+ * not even the final one.  So a register-list store through SP that lands on
+ * translated code is never detected and its stale translations stay live.
+ * Every other store form reaches execute_store_u32 on its last word.
+ *
+ * With this defined, SP-based block STORES fall through to the general path,
+ * whose final word is checked.  Loads keep the fast path — a load cannot
+ * modify code, so diverting them would cost speed for nothing. */
+#ifdef SMC_SP_CHECKED
+#define sp_fastpath_load   1
+#define sp_fastpath_store  0
+#else
+#define sp_fastpath_load   1
+#define sp_fastpath_store  1
+#endif
+
 #define arm_block_memory(access_type, offset_type, writeback_type, s_bit)     \
 {                                                                             \
   arm_decode_block_trans();                                                   \
@@ -1382,7 +1401,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   arm_block_memory_offset_##offset_type();                                    \
   arm_block_memory_writeback_pre_##access_type(writeback_type);               \
                                                                               \
-  if(rn == REG_SP)                                                            \
+  if(rn == REG_SP && sp_fastpath_##access_type)                               \
   {                                                                           \
     /* Assume IWRAM, the most common path by far */                           \
     mips_emit_andi(reg_a1, reg_a2, 0x7FFC);                                   \
@@ -1678,10 +1697,32 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 #define thumb_block_memory_extra_down()                                       \
 
+/* PUSH {rlist, LR}: the LR word is written LAST and at the HIGHEST address,
+ * so it is the one word of this instruction that can carry the SMC check for
+ * the whole copy — exactly the role the final store plays for every other
+ * block form.  It never did: this emitted execute_aligned_store32, which has
+ * no check, and thumb_block_memory_final_push_lr deliberately uses the
+ * unchecked variant too (thumb_block_memory_final_store() overwrites reg_a2
+ * with the PC, and reg_a2 is the base this macro needs).  So `PUSH {..., lr}`
+ * over translated code went entirely undetected in every build to date.
+ *
+ * reg_a0 is computed from reg_a2 BEFORE reg_a2 is reloaded with the PC, so
+ * the address is taken while the base is still live and the checked store
+ * gets the writer PC it needs. */
+#ifdef SMC_SP_CHECKED
+#define thumb_block_memory_extra_push_lr()                                    \
+  mips_emit_addiu(reg_a0, reg_a2, (bit_count[reg_list] * 4));                 \
+  generate_load_pc(reg_a2, (pc + 2));                                         \
+  mips_emit_jal(mips_absolute_offset(execute_store_u32));                     \
+  generate_load_reg(reg_a1, REG_LR)                                           \
+
+#else
 #define thumb_block_memory_extra_push_lr()                                    \
   mips_emit_addiu(reg_a0, reg_a2, (bit_count[reg_list] * 4));                 \
   mips_emit_jal(mips_absolute_offset(execute_aligned_store32));               \
   generate_load_reg(reg_a1, REG_LR)                                           \
+
+#endif
 
 #define thumb_block_memory_extra_pop_pc()                                     \
   mips_emit_jal(mips_absolute_offset(execute_aligned_load32));                \
@@ -1717,7 +1758,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   thumb_block_address_preadjust_##pre_op(base_reg);                           \
   thumb_block_address_postadjust_##post_op(base_reg);                         \
                                                                               \
-  if(base_reg == REG_SP)                                                      \
+  if(base_reg == REG_SP && sp_fastpath_##access_type)                         \
   {                                                                           \
     /* Assume IWRAM, the most common path by far */                           \
     mips_emit_andi(reg_a1, reg_a2, 0x7FFC);                                   \
