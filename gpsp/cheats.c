@@ -261,7 +261,12 @@ cheat_error cheat_parse(unsigned index, const char *code)
    pos = 0;
    while (pos < codelen)
    {
-      u32 op1; u16 op2;
+      /* `u32` is `unsigned long` on this ABI, and %x names `unsigned int *`.
+       * Same width on MIPS32, so this happened to work -- but it is undefined,
+       * and on a 64-bit host build of the core sscanf would write four bytes
+       * into an eight-byte object and leave half of it whatever it was.  Scan
+       * into the types the conversions actually name, then assign. */
+      unsigned int op1; unsigned short op2;
       if (2 != sscanf(&buf[pos], "%08x %04hx", &op1, &op2))
          break;
       ch->codes[ch->cheat_count].address = op1;

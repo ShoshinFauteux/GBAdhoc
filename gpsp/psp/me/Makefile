@@ -10,7 +10,19 @@ CFLAGS = -O2 -G0 -Wall -Wextra
 # The renderer (video.cc, from the repo root) + its glue need the core headers
 # and the core's C++ dialect.  main.c / me_render_data.c stay plain C (CFLAGS).
 RENDER_INC = -I../.. -I../../libretro -I../../libretro/libretro-common/include
-RENDER_DEF = -DUSE_PSP_RGB565_FORMAT -D__LIBRETRO__ -DINLINE=inline \
+# ADR-0039 pixel format, inherited from psp/Makefile (which inherits the
+# top-level default).  This used to be hardcoded here, which made it a THIRD
+# independent copy of the same decision: a `PSP_PIXFMT=rgb565` build gave a core
+# and a frontend on one layout and an ME renderer on the other, with R and B
+# swapped in ME mode only, silently.  The core/frontend pair is a link error
+# now; the PRX is loaded at runtime and cannot be, so it is told instead.
+PSP_PIXFMT ?= psp5650
+ifeq ($(PSP_PIXFMT), psp5650)
+ME_PIXFMT_DEF = -DUSE_PSP_RGB565_FORMAT
+else
+ME_PIXFMT_DEF =
+endif
+RENDER_DEF = $(ME_PIXFMT_DEF) -D__LIBRETRO__ -DINLINE=inline \
              -DHAVE_STDINT_H -DHAVE_INTTYPES_H
 CXXFLAGS = $(CFLAGS) $(RENDER_INC) $(RENDER_DEF) -fno-rtti -fno-exceptions -std=c++11
 ASFLAGS = $(CFLAGS)

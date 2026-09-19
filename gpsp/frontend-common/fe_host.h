@@ -114,6 +114,9 @@ typedef struct fe_host_config
                        * charged to `cpu`, not to the `rfu` phase. */
                       unsigned *rfux, unsigned *rfut,
                       unsigned *wrfux, unsigned *wrfut);
+   /* Optional, synchronous boot-only status. Called on the booting thread;
+    * must not re-enter the core. NULL keeps desktop/other hosts unchanged. */
+   void (*boot_status)(const char *stage);
 } fe_host_config;
 
 /* Must be >= the core's SMC_BLK_SLOTS / SMC_WR_SLOTS / SMC_BLK_SNAP. */

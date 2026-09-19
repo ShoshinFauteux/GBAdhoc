@@ -240,6 +240,14 @@ else ifeq ($(platform), psp1)
 	CXX = psp-g++$(EXE_EXT)
 	AR = psp-ar$(EXE_EXT)
 	CFLAGS += -DPSP -G0 -DMIPS_HAS_R2_INSTS
+	# Keep 32 MiB cartridges on the paged-ROM path on every PSP model.  A
+	# PSP-3000 can otherwise allocate all 32 one-megabyte blocks and Unbound
+	# repeatedly diverges during battle (audio/video corruption followed by a
+	# freeze).  The PSP-1000 naturally tops out at 15 blocks and is stable; an
+	# explicit 15-block cap reproduced that behavior on the 3000 across the
+	# interleaved hardware soak.  This remains PSP-only so other ports retain
+	# their existing cache policy.
+	CFLAGS += -DROM_BUFFER_SIZE=15
 	# JIT cache sizing: SMALL (2MB ROM / 384KB RAM code) fits the PSP-1000
 	# memory budget.  BIG_JIT=1 drops the define -> 10MB/512KB caches for
 	# large-memory (MEMSIZE=1) builds on 2000+ hardware, where CFRU-class
@@ -267,6 +275,35 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_PARTIAL),1)
 	CFLAGS += -DSMC_PARTIAL
 	endif
+	# SMC_PARTIAL_SAFE=1: experimental selective invalidation with exact,
+	# per-ISA block extents and indirect cross-block branches into RAM. ARM
+	# block stores are eligible only when they do not write back their base;
+	# advancing copy loops retain the proven full-cache flush.
+	ifeq ($(SMC_PARTIAL_SAFE),1)
+	CFLAGS += -DSMC_PARTIAL_SAFE
+	endif
+	ifeq ($(SMC_PARTIAL_SAFE_CONTROL),1)
+	CFLAGS += -DSMC_PARTIAL_SAFE_CONTROL
+	endif
+	ifeq ($(SMC_PARTIAL_SAFE_NO_TRAMP),1)
+	CFLAGS += -DSMC_PARTIAL_SAFE_NO_TRAMP
+	endif
+	ifeq ($(SMC_PARTIAL_SAFE_FRAMEFULL),1)
+	CFLAGS += -DSMC_PARTIAL_SAFE_FRAMEFULL
+	endif
+	# Keep a permanent per-block RAM entry thunk while selective invalidation is
+	# active.  Retiring a block redirects the thunk to the dispatcher; a later
+	# translation points the same thunk at the new body, so inbound RAM links do
+	# not pay the dispatcher forever.
+	ifeq ($(SMC_PARTIAL_STABLE_THUNK),1)
+	CFLAGS += -DSMC_PARTIAL_STABLE_THUNK
+	endif
+	ifeq ($(SMC_PARTIAL_DIRECT_LINKS),1)
+	CFLAGS += -DSMC_PARTIAL_DIRECT_LINKS
+	endif
+	ifeq ($(SMC_PARTIAL_DIRECT_GATE),1)
+	CFLAGS += -DSMC_PARTIAL_DIRECT_GATE
+	endif
 	# SMC_GATES=1: add a translation gate at each self-modified address so
 	# future blocks split there.  Independent of SMC_PARTIAL on purpose —
 	# gates are what bought Unbound its speed AND what broke its audio, so
@@ -280,6 +317,163 @@ else ifeq ($(platform), psp1)
 	# with SMC_GATES=1.
 	ifeq ($(SMC_GATES_SIMPLE),1)
 	CFLAGS += -DSMC_GATES_SIMPLE
+	endif
+	# SMC_GATES_CLUSTER=1: add-only AND cluster grouping, no eviction.  Keeps
+	# the half of 2.0.2's rule that cut dispatcher lookups and drops the half
+	# that moved gates and crashed Heart & Soul.  Overrides SMC_GATES_SIMPLE.
+	ifeq ($(SMC_GATES_CLUSTER),1)
+	CFLAGS += -DSMC_GATES_CLUSTER
+	endif
+	# CLUSTER_BYTES=N: gate-clustering window (default 128, cpu_threaded.c).
+	# Must stay BELOW the spacing between a game's distinct patched regions or
+	# they merge into one gate; H&S's two mixer copies are 152 bytes apart.
+	ifneq ($(CLUSTER_BYTES),)
+	CFLAGS += -DSMC_GATE_CLUSTER=$(CLUSTER_BYTES)
+	endif
+	# GATE_SLOTS=N: size of the translation gate table (default 8, cpu.h).
+	# More slots cover more self-modifying regions, but scan_block compares
+	# block_end_pc against every live gate on EVERY instruction it translates,
+	# so the scan cost is O(slots) per instruction compiled.  Measure j% (needs
+	# core_phase=2), not xlat -- xlat counts blocks, and more gates make blocks
+	# smaller, so it rises even when the work falls.
+	ifneq ($(GATE_SLOTS),)
+	CFLAGS += -DMAX_TRANSLATION_GATES=$(GATE_SLOTS)
+	endif
+	# SMC_GATES_SNAPF=1: snap the gate FORWARD to the first proven instruction
+	# boundary at/after the write.  A gate must be both a valid code entry AND
+	# at/after the write (so the previous block ends before the SMC region).
+	# SNAP (backwards) kept validity but lost isolation: 1.43M flushes, 31-48
+	# fps vs 116k and 59.9 for add-only.
+	ifeq ($(SMC_GATES_SNAPF),1)
+	CFLAGS += -DSMC_GATES_SNAPF=1
+	endif
+	# SMC_GATES_RANKED=1: promote an address to a gate only once it has earned
+	# one.  SHIPPED.
+	#
+	# The rule is NOT frequency, and this comment used to say it was -- it
+	# described an SMC_GATE_PROMOTE_HITS threshold (default 256) that the code
+	# does not have.  Counting was tried and failed twice: an absolute
+	# threshold is outgrown by any cold address, and a ratio to the hottest
+	# candidate degenerates because a promoted gate stops counting and the
+	# maximum freezes.  Both crashed.
+	#
+	# What the code actually requires, all three (cpu_threaded.c,
+	# smc_gate_earned):
+	#   SMC_GATE_MIN_SAMPLE   64 writes of evidence, and
+	#   chg * 2 >= hits       at least half of them CHANGED the word.
+	# TWO conditions, not three.  A staleness rule (SMC_CAND_STALE_FRAMES)
+	# was proposed and WITHDRAWN; it is not in cpu_threaded.c.
+	# Measured on H&S: 0300168c (real code being patched) is 62953 changed vs
+	# 120 same; 03001404 (a constant re-stored into a code block, and the
+	# address that crashed us) is 1 changed vs 66 same.  That gap is
+	# structural, not tuned.  Add-only: once promoted, never moved.
+	ifeq ($(SMC_GATES_RANKED),1)
+	CFLAGS += -DSMC_GATES_RANKED=1
+	endif
+	# SMC_GATE_BITMAP=1: preserve the exact gate table and block boundaries,
+	# but test the current halfword through a bitmap instead of comparing it
+	# with every live gate while scan_block compiles each instruction. Only
+	# meaningful together with SMC_GATES=1.
+	ifeq ($(SMC_GATE_BITMAP),1)
+	CFLAGS += -DSMC_GATE_BITMAP=1
+	endif
+	ifneq ($(GATE_RATIO),)
+	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
+	endif
+	# SMC_GATES_SNAP=1: gate the START OF THE BLOCK containing the SMC write,
+	# found by walking back over the interior tag run to a VALID_TAG.  A gate
+	# is used as a code ENTRY point, but is harvested from a DATA write
+	# address; snapping guarantees it is a real instruction boundary without
+	# discarding the gate (which is what SMC_GATES_CODED did, at -13 fps).
+	# REJECTED: walking BACKWARDS keeps validity and loses isolation -- the
+	# block starting at that head still spans the SMC region.  1.43M flushes
+	# and 31-48 fps, against 116k and a locked 59.9 for add-only.
+	ifeq ($(SMC_GATES_SNAP),1)
+	CFLAGS += -DSMC_GATES_SNAP=1
+	endif
+	# SMC_GATES_CODED=1: refuse to gate an address that is not already the
+	# start of a translated block.  Gates come from smc_last_write_addr (a
+	# DATA address) but are used as CODE entries, so a gate can force a block
+	# to start mid-instruction or on half-written code; that block then scans
+	# garbage and emits branch targets into OAM/VRAM/SRAM.
+	# REJECTED: it rejects 0300168c, the address behind 97.8% of all flushes,
+	# because at the moment of the write that address is INTERIOR to its block
+	# (a block only starts there once the gate exists).  59.9 -> 46-58 fps.
+	ifeq ($(SMC_GATES_CODED),1)
+	CFLAGS += -DSMC_GATES_CODED=1
+	endif
+	# SMC_WRITE_HISTO=1: DIAGNOSTIC, and part of the `diagnostic` profile.
+	# Bucket the address written and the pc of the storing instruction for
+	# every SMC flush, dumped to ms0:/smchisto.txt every 4000 flushes, plus the
+	# count of unmappable block exits contained.  Answers "what is actually
+	# causing 10k flushes a battle" before any more guessing about stacks or
+	# gates.  NEVER IN A RELEASE, same reason as BADJUMP_REPORT.
+	ifeq ($(SMC_WRITE_HISTO),1)
+	CFLAGS += -DSMC_WRITE_HISTO=1
+	endif
+	# SMC_WRITER_PROBE=1: DIAGNOSTIC, and in NO profile.  Dump the distinct ARM
+	# block-store shapes smc_writer_safe_range() is asked about, once, to
+	# <gamedir>/log/writer.txt.  Exists to extend that fingerprint from measured
+	# opcodes instead of from a comment -- Heart & Soul's mixer is believed to
+	# differ from Unbound's only in its +0x48 offset, and believing is not
+	# knowing.  NEVER IN A RELEASE, same reason as BADJUMP_REPORT.
+	ifeq ($(SMC_WRITER_PROBE),1)
+	CFLAGS += -DSMC_WRITER_PROBE=1
+	endif
+	# SMC_SCAN_SPCLAMP=1: end scan_block at the stack pointer instead of at the
+	# top of IWRAM (0x3007FF0).  Stock scans run forward through the live stack
+	# and tag it as code, so ordinary PUSH traffic then trips the SMC check and
+	# forces a full cache flush (10122 measured in one battle).  PERFORMANCE.
+	# NOT IN THE SHIPPED SET: no recorded hardware verdict.  See
+	# docs/BUILD-SWITCHES.md.
+	ifeq ($(SMC_SCAN_SPCLAMP),1)
+	CFLAGS += -DSMC_SCAN_SPCLAMP=1
+	endif
+	# GBA_PC_MASK=1: mask the emulated pc to 28 bits before the region lookup.
+	# The GBA ignores address bits 28-31, so a branch to 0x58581818 executes
+	# ROM at 0x08581818 on hardware; gpSP instead falls through to its ~0
+	# sentinel, which nothing checks, and the PSP jumps to 0xFFFFFFFF.
+	# memory_map_read[] (8K x 32KB) and def_seq_cycles[16] are both sized for
+	# 28 bits already, so an unmasked pc also indexes them out of bounds.
+	# SHIPPED.  Note it is not sufficient on its own: a masked garbage target
+	# lands in a region the translator DOES handle, so the containment at the
+	# patch site (see cpu_threaded.c, BLOCK_LOOKUP_UNMAPPABLE) is what stops a
+	# garbage exit reaching generated code.
+	ifeq ($(GBA_PC_MASK),1)
+	CFLAGS += -DGBA_PC_MASK=1
+	endif
+	# BADJUMP_SAFE=1: never `jr` to an unmappable guest pc.  block_lookup
+	# returns ~0 (bad region) or NULL (translate failed); nothing checks
+	# either, so mips_indirect_branch_* jumps to it and the PSP dies hard.
+	# With this, that becomes a GBA soft-reset: the console survives.
+	# Cannot regress -- the path it replaces crashes 100% of the time.
+	ifeq ($(BADJUMP_SAFE),1)
+	CFLAGS += -DBADJUMP_SAFE=1
+	endif
+	# BADJUMP_REPORT=1: DIAGNOSTIC, and part of the `diagnostic` profile.
+	# When the emulated pc leaves every region block_lookup_translate handles,
+	# upstream hands the dispatcher ~0 and it jumps there -- "Bad Execution
+	# Address / PC: ffffffff", which is how that crash presents.  This dumps
+	# the registers, the gate table and the previous block entry to
+	# ms0:/badjump.txt, and turns badjump_recover's file append back on.
+	# NEVER IN A RELEASE: it writes to the memory stick from inside the dynarec
+	# dispatch path, on the emulation thread.  gpsp_profile.h refuses it.
+	ifeq ($(BADJUMP_REPORT),1)
+	CFLAGS += -DBADJUMP_REPORT=1
+	endif
+	# GPSP_PROFILE=release|harness|diagnostic.  Names the build so
+	# gpsp_profile.h can reject combinations that are silently wrong (a
+	# release with telemetry, two SMC rules where one shadows the other).
+	# tools/build.sh always sets it; leaving it unset means "unprofiled",
+	# which still compiles but gets no cross-checking.
+	ifeq ($(GPSP_PROFILE),release)
+	CFLAGS += -DGPSP_PROFILE_RELEASE=1
+	endif
+	ifeq ($(GPSP_PROFILE),harness)
+	CFLAGS += -DGPSP_PROFILE_HARNESS=1
+	endif
+	ifeq ($(GPSP_PROFILE),diagnostic)
+	CFLAGS += -DGPSP_PROFILE_DIAGNOSTIC=1
 	endif
 	# SMC_SP_CHECKED=1: send SP-based block STORES down the general path so
 	# their final word reaches execute_store_u32 and the SMC check.  The SP

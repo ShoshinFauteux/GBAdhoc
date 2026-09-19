@@ -53,7 +53,11 @@ BIOS="$REPO/testdata/gba_bios.bin"
 SAV="$REPO/testdata/Pokemon Emerald All Shiny Fixed.sav"
 INPUTS="$REPO/testdata/fixtures/emerald_vregress.inputs"
 GOLDEN_DIR="$SCRIPT_DIR/goldens"
-GOLDEN="$GOLDEN_DIR/video_emerald.hashes"
+# VREGRESS_GOLDEN lets this compare TWO BUILDS instead of only comparing one
+# build against the tracked reference -- capture with build A, compare with
+# build B.  That is what gates a structural change: not "does it match a
+# golden from months ago" but "did MY change alter a single pixel".
+GOLDEN="${VREGRESS_GOLDEN:-$GOLDEN_DIR/video_emerald.hashes}"
 
 MODE=compare
 PERTURB=0
@@ -92,7 +96,29 @@ one_run() {
   cp "$ROM"    "$GAME/roms/emerald.gba"
   cp "$SAV"    "$GAME/roms/emerald.sav"
   cp "$INPUTS" "$GAME/run.inputs"
-  cat > "$GAME/autopilot.ini" <<EOF
+  # The Media Engine PRX.  Staged so the failure is HONEST rather than ENOENT:
+  # without it me_init reported `reason=load rc=0x80010002` and the ME looked
+  # merely absent.  With it staged the PRX loads and the failure moves to
+  # `reason=handshake magic=0x00000000` -- the second core never runs, because
+  # PPSSPP does not emulate it.
+  #
+  # SO THIS ORACLE CANNOT TEST ME MODE, AND NO SCRIPT CHANGE WILL FIX THAT.
+  # g_me_rend stays 0, and vhash_frame hashes the CORE buffer -- the CPU
+  # renderer, the one path this oracle was never in doubt about.  vhash_frame's
+  # own comment records the ME going silently unmeasured for 60 logs; the branch
+  # added to fix that is still unreachable from here, and unreachable in
+  # principle.  ME-mode equivalence can only be established on hardware (the
+  # me_mode 0-vs-1 A/B in builds/opus-perf-harness).  Treat a PASS here as "the
+  # CPU path is unchanged", never as "the renderer is unchanged".
+  cp "$REPO/psp/me/gbadhoc_me.prx" "$GAME/gbadhoc_me.prx" 2>/dev/null     || echo "WARN: no psp/me/gbadhoc_me.prx -- ME mode will not be exercised"
+  # THE CONTROL CHANNEL IS .gpsp-harness.ini, AND HAS BEEN SINCE ADR-0067.
+  # This wrote autopilot.ini, which main_psp.c reads only so a leftover can be
+  # REPORTED and never obeyed -- so the emulator booted, auto-loaded nothing,
+  # and sat in the ROM browser until the timeout.  It also never named a ROM.
+  # Result: this oracle has been silently non-functional since the rename, which
+  # is why no structural change on this project has actually been gated on it.
+  cat > "$GAME/.gpsp-harness.ini" <<EOF
+rom = emerald.gba
 script = run.inputs
 vhash = 1
 autoexit_frames = 30000

@@ -244,8 +244,10 @@ int me_host_bench(unsigned len, unsigned iters)
    /* Host-CPU reference: the same copy the blit does today, timed the
     * same way (memcpy from cached src to uncached dst). */
    {
-      unsigned t0 = sceKernelGetSystemTimeLow(), t1;
+      unsigned t0 = sceKernelGetSystemTimeLow(), t1 = 0;
       unsigned it = iters;
+
+      FE_EVT_ONLY(t0); FE_EVT_ONLY(t1);
       while (it--)
          memcpy(ME_UNCACHED(dst), src, len);
       t1 = sceKernelGetSystemTimeLow();
@@ -257,7 +259,9 @@ int me_host_bench(unsigned len, unsigned iters)
     * 3 = cached both.  The checksum makes the work unfakeable. */
    for (mode = 0; mode < 4; mode++)
    {
-      unsigned t0, t1;
+      unsigned t0 = 0, t1 = 0;
+
+      FE_EVT_ONLY(t0); FE_EVT_ONLY(t1);
       if (!me_host_idle())
          break;
       t0 = sceKernelGetSystemTimeLow();

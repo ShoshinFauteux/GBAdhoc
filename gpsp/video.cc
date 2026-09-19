@@ -2931,6 +2931,7 @@ void update_scanline(void)
   VP_CNT(VP_C_MODE0 + (video_mode & 7), 1);
   {
     u32 wc = dispcnt >> 13;
+    (void)wc;   /* VP_CNT compiles away unless this is a profile build */
     VP_CNT(wc == 0 ? VP_C_WIN_NONE : (wc & 3) ? VP_C_WIN_N : VP_C_WIN_OBJ, 1);
   }
 

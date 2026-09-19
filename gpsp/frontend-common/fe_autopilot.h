@@ -49,6 +49,11 @@
  *                                   SZ bytes at target+OFF, emit ap_val
  *   repeat N / endrepeat            repeat the enclosed block N times
  *                                   (no nesting)
+ *   state                           reload the savestate.  HARNESS BUILDS ONLY
+ *                                   (-DGPSP_PERF_RIG).  The frontend hotkey that
+ *                                   loads a state is disabled while a script
+ *                                   runs, so a script cannot reach it any other
+ *                                   way.
  *
  * EVT interface (grep-stable): ap_loaded, ap_sync (predicate satisfied),
  * ap_val, ap_mark, ap_done, ap_fail.
@@ -81,6 +86,18 @@ int fe_autopilot_ff(void);
 
 /* Returns 1 (and clears the flag) if the script requested a frame dump. */
 int fe_autopilot_dump_pending(void);
+
+#ifdef GPSP_PERF_RIG
+/* Returns 1 (and clears the flag) if the script requested a savestate RELOAD
+ * (`state`).  Harness builds only, so the release ELF stays byte-identical:
+ * code motion alone costs 0.5-1% of frame budget on this hardware, and release
+ * can never run a script anyway.
+ *
+ * The host calls fe_host_state_load() on its own state path.  Scripts use this
+ * to stress the reload path -- restoring repeatedly mid-battle is what exposes
+ * dynarec or SMC state that survived a restore when it should not have. */
+int fe_autopilot_state_pending(void);
+#endif
 
 #ifdef __cplusplus
 }

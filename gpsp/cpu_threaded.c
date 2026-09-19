@@ -22,6 +22,7 @@
 // - block memory needs psr swapping and user mode reg swapping
 
 #include "common.h"
+#include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
 #include <stdio.h>
@@ -2501,13 +2502,21 @@ void translate_icache_sync() {
 
 #define VALID_TAG(tagn) (tagn > LAST_TAG_NUM)
 
-#ifdef SMC_PARTIAL
+/* (The direct-link/stable-thunk cross-check, and every other illegal SMC flag
+ * combination, is now asserted together in gpsp_profile.h.) */
+
+#ifdef SMC_PARTIAL_SAFE
+#define SMC_NOTE_CODE_BYTES(te, blkptr, type)                                 \
+  do { if (smc_partial_active)                                                \
+    (te)->code_bytes_##type = (u32)(ram_translation_ptr - (blkptr));          \
+  } while (0)
+#elif defined(SMC_PARTIAL)
 /* ram_translation_ptr has advanced past the block just emitted, so the size is
  * simply the distance from its entry point. */
-#define SMC_NOTE_CODE_BYTES(te, blkptr)                                       \
+#define SMC_NOTE_CODE_BYTES(te, blkptr, type)                                 \
   (te)->code_bytes = (u32)(ram_translation_ptr - (blkptr))
 #else
-#define SMC_NOTE_CODE_BYTES(te, blkptr)  do { } while (0)
+#define SMC_NOTE_CODE_BYTES(te, blkptr, type)  do { } while (0)
 #endif
 
 #define allocate_tag_arm(location) {   \
@@ -2525,9 +2534,17 @@ void translate_icache_sync() {
 
 typedef struct
 {
-  u32 offset_arm;     // Cache offset to the ARM-mode compiled block
-  u32 offset_thumb;   // Cache offset to the Thumb-mode compiled block
-#ifdef SMC_PARTIAL
+  u32 offset_arm;     // Cache offset to the ARM-mode public entry
+  u32 offset_thumb;   // Cache offset to the Thumb-mode public entry
+#ifdef SMC_PARTIAL_SAFE
+  /* The same guest address can have both ARM and Thumb translations. Keep
+   * their source extents separate so translating one mode cannot hide an
+   * overlapping block in the other mode from an SMC retirement. */
+  u32 blk_end_arm;
+  u32 blk_end_thumb;
+  u32 code_bytes_arm;
+  u32 code_bytes_thumb;
+#elif defined(SMC_PARTIAL)
   /* Source extent [start, end) of this block, recorded by
    * ramtag_note_extent() as soon as scan_block settles it.  Partial
    * invalidation needs it to answer "does this block actually span the
@@ -2543,6 +2560,19 @@ typedef struct
 #endif
 } ramtag_type;
 
+#ifdef SMC_PARTIAL_SAFE
+#define SMC_INIT_TAG_METADATA(te) do {                                        \
+  if (smc_partial_active) {                                                   \
+    (te)->blk_end_arm = 0;                                                    \
+    (te)->blk_end_thumb = 0;                                                  \
+    (te)->code_bytes_arm = 0;                                                 \
+    (te)->code_bytes_thumb = 0;                                               \
+  }                                                                           \
+} while (0)
+#else
+#define SMC_INIT_TAG_METADATA(te) do { } while (0)
+#endif
+
 static u32 ram_block_tag = INITIAL_TOP_TAG;
 
 inline static ramtag_type* get_ram_tag(u16 tagval) {
@@ -2551,6 +2581,136 @@ inline static ramtag_type* get_ram_tag(u16 tagval) {
   return &tbl[tgidx >> 1];  /* Since LSB is always 1 and thus unused */
 }
 
+#ifdef SMC_PARTIAL_SAFE
+u32 smc_partial_active;
+
+/* Selective retirement temporarily clears a hot patch domain's tag bytes so
+ * the remaining stores in the same mixer patch batch do not each trap. Keep
+ * its block-start tags here and restore them on the next real lookup, avoiding
+ * consumption of a new tag number on every audio tick. */
+#define SMC_RETIRED_TAGS 512
+typedef struct { u32 addr; u16 tag; } smc_retired_tag_type;
+static smc_retired_tag_type smc_retired_tags[SMC_RETIRED_TAGS];
+static u32 smc_retired_tag_count;
+
+static void smc_restore_retired_tag(u32 pc, u16 *tagp, u32 thumb)
+{
+  u32 i;
+  u32 addr = ((pc >> 24) == 3) ? 0x03000000 + (pc & 0x7FFF)
+                               : 0x02000000 + (pc & 0x3FFFF);
+  if (*tagp)
+    return;
+  for (i = 0; i < smc_retired_tag_count; i++)
+    if (smc_retired_tags[i].addr == addr) {
+      *tagp = smc_retired_tags[i].tag;
+      if (!thumb && !tagp[1])
+        tagp[1] = CODE_TAG_BLOCK16;
+      return;
+    }
+}
+
+static int smc_remember_retired_tag(u32 addr, u16 tag)
+{
+  u32 i;
+  for (i = 0; i < smc_retired_tag_count; i++)
+    if (smc_retired_tags[i].addr == addr) {
+      smc_retired_tags[i].tag = tag;
+      return 1;
+    }
+  if (smc_retired_tag_count == SMC_RETIRED_TAGS)
+    return 0;
+  smc_retired_tags[smc_retired_tag_count].addr = addr;
+  smc_retired_tags[smc_retired_tag_count].tag = tag;
+  smc_retired_tag_count++;
+  return 1;
+}
+
+#ifdef SMC_PARTIAL_STABLE_THUNK
+/* A stable thunk is the address returned to every RAM caller.  Its first two
+ * words are either a direct jump to the current body or, while retired, the
+ * first half of a four-instruction dispatcher path. */
+static void smc_stable_thunk_link(u8 *entry, u8 *body)
+{
+  generate_branch_patch_unconditional(entry, body);
+  address32(entry, 4) = 0;
+  platform_cache_sync(entry, entry + 8);
+}
+
+static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
+{
+  u8 *translation_ptr = entry;
+  generate_load_imm(reg_a0, pc);
+  if (thumb) {
+    mips_emit_j(mips_absolute_offset(mips_indirect_branch_thumb));
+  } else {
+    mips_emit_j(mips_absolute_offset(mips_indirect_branch_arm));
+  }
+  mips_emit_nop();
+  platform_cache_sync(entry, translation_ptr);
+}
+
+#define SMC_RAM_NEEDS_TRANSLATION(te, type)                                   \
+  (smc_partial_active ? !(te)->code_bytes_##type : !(te)->offset_##type)
+#define SMC_RAM_PREPARE_TRANSLATION(te, type, body) do {                       \
+  if (smc_partial_active) {                                                   \
+    if (!(te)->offset_##type)                                                 \
+      (te)->offset_##type = (u32)((body) - 16 - ram_translation_cache);       \
+    /* Nonzero also breaks a recursive lookup cycle while this body emits. */ \
+    (te)->code_bytes_##type = 1;                                              \
+  } else {                                                                    \
+    (te)->offset_##type = (u32)((body) - ram_translation_cache);              \
+  }                                                                           \
+} while (0)
+#define SMC_RAM_COMMIT_TRANSLATION(te, type, body) do {                        \
+  if (smc_partial_active)                                                     \
+    smc_stable_thunk_link(&ram_translation_cache[(te)->offset_##type],        \
+                          (body));                                             \
+} while (0)
+#define SMC_RAM_ABORT_TRANSLATION(te, type, pc, is_thumb) do {                 \
+  if (smc_partial_active) {                                                   \
+    (te)->code_bytes_##type = 0;                                              \
+    smc_stable_thunk_dispatch(                                                \
+      &ram_translation_cache[(te)->offset_##type], (pc), (is_thumb));         \
+  }                                                                           \
+} while (0)
+#define SMC_RAM_PUBLIC_ENTRY(te, type)                                        \
+  (&ram_translation_cache[(te)->offset_##type])
+#define SMC_RAM_LIVE_OFFSET(te, type) ((te)->code_bytes_##type)
+#ifdef SMC_PARTIAL_DIRECT_LINKS
+#define SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, target) (!(ram_region))
+#else
+#define SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, target)                       \
+  (!(ram_region) || smc_partial_target_is_gated(GBA_PC(target)))
+#endif
+#else
+#define SMC_RAM_NEEDS_TRANSLATION(te, type) (!(te)->offset_##type)
+#define SMC_RAM_PREPARE_TRANSLATION(te, type, body)                           \
+  ((te)->offset_##type = (u32)((body) - ram_translation_cache))
+#define SMC_RAM_COMMIT_TRANSLATION(te, type, body) do { } while (0)
+#define SMC_RAM_ABORT_TRANSLATION(te, type, pc, is_thumb) do { } while (0)
+#define SMC_RAM_PUBLIC_ENTRY(te, type)                                        \
+  (&ram_translation_cache[(te)->offset_##type])
+#define SMC_RAM_LIVE_OFFSET(te, type) ((te)->offset_##type)
+#define SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, target)                       \
+  (!(ram_region) || smc_partial_target_is_gated(GBA_PC(target)))
+#endif
+
+#define SMC_RESTORE_RETIRED_TAG_arm(pc, tagp) \
+  do { if (smc_partial_active) smc_restore_retired_tag((pc), (tagp), 0); } while (0)
+#define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) \
+  do { if (smc_partial_active) smc_restore_retired_tag((pc), (tagp), 1); } while (0)
+#else
+#define SMC_RESTORE_RETIRED_TAG_arm(pc, tagp) do { } while (0)
+#define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) do { } while (0)
+#define SMC_RAM_NEEDS_TRANSLATION(te, type) (!(te)->offset_##type)
+#define SMC_RAM_PREPARE_TRANSLATION(te, type, body)                           \
+  ((te)->offset_##type = (u32)((body) - ram_translation_cache))
+#define SMC_RAM_COMMIT_TRANSLATION(te, type, body) do { } while (0)
+#define SMC_RAM_ABORT_TRANSLATION(te, type, pc, is_thumb) do { } while (0)
+#define SMC_RAM_PUBLIC_ENTRY(te, type)                                        \
+  (&ram_translation_cache[(te)->offset_##type])
+#endif
+
 // This function will return a pointer to a translated block of code. If it
 // doesn't exist it will translate it, if it does it will pass it back.
 
@@ -2558,19 +2718,93 @@ inline static ramtag_type* get_ram_tag(u16 tagval) {
 // be a real PC, for dual the least significant bit will determine if it's
 // ARM or Thumb mode.
 
+/* GBA_PC_MASK: the GBA decodes only address bits 24-27 -- GBATEK lists
+ * 0x10000000-0xFFFFFFFF as "not used (upper 4bits of address bus unused)",
+ * so on hardware 0x58581818 IS 0x08581818 and executes from ROM.  gpSP does
+ * not mask, so such a pc misses every case of the region switch and falls
+ * through to the ~0 sentinel, which nothing checks -- that is the "Bad
+ * Execution Address / PC: ffffffff" crash.  It is also an out-of-bounds
+ * index: memory_map_read[] is 8K entries for pc>>15 (28 bits exactly) and
+ * def_seq_cycles[] is 16 entries for pc>>24.  Masking restores the hardware
+ * behaviour and the array bounds in one go. */
+#ifdef GBA_PC_MASK
+#define GBA_PC(x) ((x) & 0x0FFFFFFFu)
+#else
+#define GBA_PC(x) (x)
+#endif
+
 #define block_lookup_address_pc_arm()                                         \
   u32 thumb = 0;                                                              \
-  pc &= ~0x03
+  pc = GBA_PC(pc) & ~0x03
 
 #define block_lookup_address_pc_thumb()                                       \
   u32 thumb = 1;                                                              \
-  pc &= ~0x01                                                                 \
+  pc = GBA_PC(pc) & ~0x01                                                     \
 
+
+/* What the dispatcher gets when the emulated PC is outside every region the
+ * lookup handles.  Upstream returns ~0 and block_lookup_address_* passes it
+ * straight through -- it only tests for NULL -- so mips_stub.S does `jr $2`
+ * into 0xFFFFFFFF and the PSP dies with "Bad Execution Address".  That is
+ * the crash signature we caught in PPSSPP.
+ *
+ * BADJUMP_REPORT keeps the fault identical (0xF_______ is just as unmapped)
+ * but folds the offending 28-bit GBA pc into the address, so the crash
+ * screen prints the value we actually need to diagnose it. */
+/* THE VALUE block_lookup_translate_* RETURNS FOR A PC IT CANNOT TRANSLATE.
+ *
+ * Its switch handles regions 0x0 (BIOS), 0x2 (EWRAM), 0x3 (IWRAM) and
+ * 0x8..0xD (ROM).  Anything else -- I/O, palette, VRAM, OAM, SRAM -- falls
+ * through to this sentinel.  Upstream chose a non-NULL value deliberately, so
+ * one garbage exit from a speculative scan does not abort an otherwise good
+ * translation (see the comment at the return).  The hazard it created is that
+ * (u8 *)(~0) is also a perfectly plausible-looking POINTER, and every caller
+ * that only tests `if (ret)` accepts it. */
+#define BLOCK_LOOKUP_UNMAPPABLE ((u8 *)(~0))
+
+/* The same region set as a pure function of the target address.
+ *
+ * Needed because the translator has to classify a block exit BEFORE it commits
+ * translation_ptr: at that point it can still emit a dispatch island into the
+ * block's own budget, whereas by the time the eager patch loop runs the
+ * pointer is published and there is nowhere left to put one. */
+static inline int gba_pc_translatable(u32 pc)
+{
+  u32 region = GBA_PC(pc) >> 24;
+  return region == 0x0 || region == 0x2 || region == 0x3 ||
+         (region >= 0x8 && region <= 0xD);
+}
+
+/* Block exits routed through the dispatcher instead of being patched to
+ * BLOCK_LOOKUP_UNMAPPABLE.  Every one of these is a `j 0x3FFFFFF` -- a jump to
+ * 0x0FFFFFFC -- that a pre-fix build wrote into a live block, so the counter is
+ * the measurement of the freeze exposure rather than a claim about it.  Cheap
+ * enough to keep in the release build: it only moves during translation. */
+u32 badjump_contained = 0;
+
+#ifdef BADJUMP_REPORT
+/* pc >> 4, not pc & 0x0FFFFFFF: the first attempt masked off the TOP nibble,
+ * which is the very part that decides the region -- it printed f8581818 for
+ * a pc whose region 0x8 the switch above actually handles, proving the real
+ * pc had a high nibble set and that the mask had eaten it.  Shifting keeps
+ * the top 28 bits and drops only the instruction-alignment nibble. */
+/* The bad TARGET is already known -- 0x58581818, identically on two runs.
+ * What is not known is who branched there, so report the previous block
+ * entry instead.  Same fault, same timing, different field. */
+extern u32 badjump_prev_pc;
+void badjump_report(u32 pc);
+/* One run, whole picture: dump everything interesting to ms0:/badjump.txt
+ * (PPSSPP maps that to a host folder) and THEN return the sentinel, so the
+ * fault is unchanged.  Diagnostic only -- BADJUMP_REPORT never ships. */
+#define BADJUMP_SENTINEL(pc) (badjump_report((pc)), BLOCK_LOOKUP_UNMAPPABLE)
+#else
+#define BADJUMP_SENTINEL(pc) (BLOCK_LOOKUP_UNMAPPABLE)
+#endif
 
 #define block_lookup_translate_builder(type)                                  \
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
-  u8 pcregion = (pc >> 24);                                                   \
+  u8 pcregion = (GBA_PC(pc) >> 24);                                           \
   u16 *location;                                                              \
   u32 block_tag;                                                              \
                                                                               \
@@ -2584,21 +2818,23 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
       u16* tagp = (pcregion == 2) ? (u16 *)(ewram + (pc & 0x3FFFF) + 0x40000) \
                                   : (u16 *)(iwram + (pc & 0x7FFF));           \
       ramtag_type* trentry;                                                   \
+      SMC_RESTORE_RETIRED_TAG_##type(pc, tagp);                               \
       /* Allocate a tag if not a valid one, and initialize header */          \
       if (!VALID_TAG(*tagp)) {                                                \
         allocate_tag_##type(tagp);                                            \
         trentry = get_ram_tag(*tagp);                                         \
         trentry->offset_arm = 0;                                              \
         trentry->offset_thumb = 0;                                            \
+        SMC_INIT_TAG_METADATA(trentry);                                       \
       } else {                                                                \
         trentry = get_ram_tag(*tagp);                                         \
       }                                                                       \
                                                                               \
-      if (!trentry->offset_##type) {                                          \
+      if (SMC_RAM_NEEDS_TRANSLATION(trentry, type)) {                         \
         bool result;                                                          \
         u32 cph_t;                                                            \
-        u8 *blkptr = ram_translation_ptr + block_prologue_size;               \
-        trentry->offset_##type = blkptr - ram_translation_cache;              \
+        u8 *blkptr = ram_translation_ptr + ram_block_prologue_size;           \
+        SMC_RAM_PREPARE_TRANSLATION(trentry, type, blkptr);                   \
         /* Phase 5h: dynarec COMPILATION, separated from execution.  A        \
          * few tens of calls a frame in steady state, and the bracket is      \
          * nesting-safe because translate_block re-enters itself through      \
@@ -2608,11 +2844,13 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
         if (result) {                                                         \
-          SMC_NOTE_CODE_BYTES(trentry, blkptr);                               \
-          return blkptr;                                                      \
+          SMC_NOTE_CODE_BYTES(trentry, blkptr, type);                         \
+          SMC_RAM_COMMIT_TRANSLATION(trentry, type, blkptr);                  \
+          return SMC_RAM_PUBLIC_ENTRY(trentry, type);                         \
         }                                                                     \
+        SMC_RAM_ABORT_TRANSLATION(trentry, type, pc, thumb);                  \
       } else {                                                                \
-        return &ram_translation_cache[trentry->offset_##type];                \
+        return SMC_RAM_PUBLIC_ENTRY(trentry, type);                           \
       }                                                                       \
       return NULL;                                                            \
     }                                                                         \
@@ -2663,11 +2901,22 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
      points to some random place (perhaps due to being garbage). This can     \
      happen when especulatively compiling code in RAM. Perhaps the game       \
      patches these instructions later, which would trigger a flush */         \
-  return (u8*)(~0);                                                           \
+  return BADJUMP_SENTINEL(pc);                                                \
 }                                                                             \
 
 block_lookup_translate_builder(arm);
 block_lookup_translate_builder(thumb);
+
+#ifdef SMC_PARTIAL_SAFE
+static int smc_partial_target_is_gated(u32 addr)
+{
+  u32 i;
+  for (i = 0; i < translation_gate_targets; i++)
+    if (translation_gate_target_pc[i] == addr)
+      return 1;
+  return 0;
+}
+#endif
 
 u8 function_cc *block_lookup_address_dual(u32 pc)
 {
@@ -2683,20 +2932,115 @@ u8 function_cc *block_lookup_address_dual(u32 pc)
   }
 }
 
+#ifdef BADJUMP_REPORT
+u32 badjump_prev_pc;   /* pc of the lookup before the current one */
+#define BADJUMP_NOTE_PC(p) do { badjump_prev_pc = (p); } while (0)
+#else
+#define BADJUMP_NOTE_PC(p) do { } while (0)
+#endif
+
+#ifdef BADJUMP_REPORT
+u32 badjump_prev_pc;
+void badjump_report(u32 pc)
+{
+  static int seen = 0;
+  FILE *f = fopen("ms0:/badjump.txt", "a");
+  unsigned g;
+  if (!f) return;
+  fprintf(f, "=== badjump #%d ===\n", ++seen);
+  fprintf(f, "bad target pc  : %08x\n", (unsigned)pc);
+  fprintf(f, "prev lookup pc : %08x\n", (unsigned)badjump_prev_pc);
+  fprintf(f, "smc_last_write : %08x\n", (unsigned)smc_last_write_addr);
+  fprintf(f, "cpsr           : %08x  (T=%u)\n", (unsigned)reg[REG_CPSR],
+          (unsigned)((reg[REG_CPSR] >> 5) & 1));
+  fprintf(f, "gates (%u):", (unsigned)translation_gate_targets);
+  for (g = 0; g < translation_gate_targets; g++)
+    fprintf(f, " %08x", (unsigned)translation_gate_target_pc[g]);
+  fprintf(f, "\n");
+  for (g = 0; g < 16; g++)                 /* r13=SP r14=LR r15=PC */
+    fprintf(f, "r%-2u=%08x%s", g, (unsigned)reg[g],
+            (g % 4 == 3) ? "\n" : "  ");
+  fprintf(f, "\nflush ram total %u smc %u\n",
+          (unsigned)flush_ram_total, (unsigned)flush_ram_smc);
+  fclose(f);
+}
+#endif
+/* BADJUMP_SAFE: an unmappable guest pc must never reach `jr $v0`.
+ *
+ * block_lookup_translate returns (u8*)(~0) when the pc is outside every
+ * region it handles, and NULL when translation failed 4x.  Neither is checked
+ * anywhere: block_lookup_address_* only tests `if (ret)`, so ~0 sails through,
+ * and mips_stub.S mips_indirect_branch_* does `jr $v0` straight into it.  That
+ * is the hard PSP crash -- "Bad Execution Address, PC: ffffffff" (or 00000000
+ * once the pc is masked).  Verified in the disassembly: the crash RA lands at
+ * mips_indirect_branch_arm+0x44, the instruction after the JAL to
+ * block_lookup_address_arm.
+ *
+ * Garbage branch targets are ROUTINE, not exceptional -- 223 in one battle,
+ * every one from a block a gate started at a non-instruction boundary.  Almost
+ * none are ever executed; the crash is the rare one that is.  The guest has
+ * already gone wrong by the time we arrive, so there is nothing to preserve:
+ * treat it as a guest fault and soft-reset the GBA instead of taking the
+ * console down.  Emulator, frontend and memory stick all survive.
+ *
+ * This cannot regress anything -- the path it replaces crashes 100% of the
+ * time, so there is no working behaviour to lose. */
+#ifdef BADJUMP_SAFE
+u32 badjump_recoveries = 0;
+static u8 *badjump_recover(u32 pc)
+{
+  u8 *r;
+  badjump_recoveries++;
+#ifdef BADJUMP_REPORT
+  /* DIAGNOSTIC BUILDS ONLY.  This is reached from mips_indirect_branch_* --
+   * i.e. from inside a translated block, with the dynarec's register state
+   * live -- so fopen/fprintf/fclose here is a synchronous Memory Stick write
+   * on the emulation thread.  It also wrote ms0:/badjump.txt out of the
+   * shipped 7283f13 candidate, which the release audit's forbidden-string
+   * list did not cover. */
+  {
+    FILE *f = fopen("ms0:/badjump.txt", "a");
+    if (f) {
+      fprintf(f, "*** RECOVERED #%u: guest pc %08x was unmappable, GBA reset\n",
+              (unsigned)badjump_recoveries, (unsigned)pc);
+      fclose(f);
+    }
+  }
+#endif
+  reg[REG_CPSR] &= ~0x20;            /* ARM mode */
+  reg[REG_PC]    = 0x0;              /* GBA reset vector */
+  r = block_lookup_translate_arm(0x0);
+  if (r && r != BLOCK_LOOKUP_UNMAPPABLE)
+    return r;
+  return bios_swi_entrypoint;        /* last resort: known-good block */
+}
+#define BADJUMP_GUARD(ret, pc)                                            \
+  do { if ((ret) == BLOCK_LOOKUP_UNMAPPABLE) return badjump_recover(pc); } while (0)
+#define BADJUMP_EXHAUSTED(pc)  return badjump_recover(pc)
+#else
+#define BADJUMP_GUARD(ret, pc) do { } while (0)
+#define BADJUMP_EXHAUSTED(pc)  return NULL
+#endif
+
 u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_arm(pc);
+    BADJUMP_GUARD(ret, pc);
     if (ret) {
-      translate_icache_sync();
+      translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       return ret;
     }
   }
 
-  printf("bad jump %x (%x)\n", pc, reg[REG_PC]);
+  /* Same reason as badjump_recover: stdio from the dispatch path blocks the
+   * emulation thread on real hardware.  Diagnostic builds only. */
+#ifdef BADJUMP_REPORT
+  printf("bad jump %x (%x)\n", (unsigned)pc, (unsigned)reg[REG_PC]);
   fflush(stdout);
-  return NULL;
+#endif
+  BADJUMP_EXHAUSTED(pc);
 }
 
 u8 function_cc *block_lookup_address_thumb(u32 pc)
@@ -2704,14 +3048,19 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   unsigned i;
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_thumb(pc);
+    BADJUMP_GUARD(ret, pc);
     if (ret) {
-      translate_icache_sync();
+      translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       return ret;
     }
   }
-  printf("bad jump %x (%x)\n", pc, reg[REG_PC]);
+  /* Same reason as badjump_recover: stdio from the dispatch path blocks the
+   * emulation thread on real hardware.  Diagnostic builds only. */
+#ifdef BADJUMP_REPORT
+  printf("bad jump %x (%x)\n", (unsigned)pc, (unsigned)reg[REG_PC]);
   fflush(stdout);
-  return NULL;
+#endif
+  BADJUMP_EXHAUSTED(pc);
 }
 
 
@@ -2922,6 +3271,39 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define MAX_BLOCK_SIZE   1024   // 2/4KiB blocks max
 #define MAX_EXITS          32   // This covers 99% blocks
 
+/* WHERE AN UNMAPPABLE BLOCK EXIT IS SENT, AND WHY IT EMITS NOTHING.
+ *
+ * The first version of this fix emitted a four-instruction dispatch island per
+ * untranslatable exit -- load the guest pc, jump to mips_indirect_branch_*.  It
+ * was correct and it was expensive: measured on hardware at +16.4% frame work on
+ * heart_soul_light and +8.2% on unbound_double_high, both consoles.  The reason
+ * is a feedback loop rather than the loop's own cost.  Every island is 16 bytes
+ * of GENERATED code in the RAM translation cache, on workloads that already
+ * re-translate constantly; the cache fills sooner, a full flush retires
+ * everything, re-translation emits the islands again, and round.  The counter
+ * shows it directly: xlat 705 -> 831 in the same window.
+ *
+ * So exits go to bios_swi_entrypoint instead, and nothing is emitted at all --
+ * one patched word per exit.  That block:
+ *
+ *   * is pre-generated once by init_bios_hooks() BELOW rom_cache_watermark, so
+ *     it survives every ROM and RAM cache flush and its address never moves;
+ *   * is already designated the safe fallback by this file -- badjump_recover
+ *     returns it as its "last resort: known-good block";
+ *   * is already patched into RAM blocks by both translate_block_* for a
+ *     branch_target of 0x00000008, so a RAM->ROM direct link to it is an
+ *     established pattern and not a new hazard.
+ *
+ * The invariant is unchanged and is the whole point: a translated block never
+ * contains a direct jump to an address the translator could not resolve.  An
+ * executed garbage branch now enters the BIOS SWI handler, which is defined
+ * behaviour for the console even though the guest has already gone wrong -- as
+ * against 7283f13, where it fetched from 0x0FFFFFFC and the PSP died.
+ *
+ * (The emit budget this used to reserve is gone with the islands.  Measured
+ * separately: reserving it cost nothing, so it was never the problem -- but
+ * with nothing emitted there is nothing to reserve for.) */
+
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
@@ -2946,6 +3328,108 @@ block_exit_type block_exits[MAX_EXITS];
 #define smc_write_arm_no()                                                    \
 
 #define smc_write_thumb_no()                                                  \
+
+/* SMC_SCAN_SPCLAMP: stop scanning at the STACK POINTER, not at the top of
+ * IWRAM.
+ *
+ * The stock clamp is block_end_pc == 0x3007FF0 -- the last words of IWRAM --
+ * so a scan starting in IWRAM code runs forward through the whole live stack
+ * and tags every byte of it as code (SMC_SCAN_RAMEND names exactly this).
+ * Once the stack is tagged, ordinary PUSH/STM traffic trips the SMC check and
+ * forces a FULL cache flush: one PPSSPP battle measured 10122 SMC flushes,
+ * and six of eight gate slots had been spent within a few hundred bytes of SP.
+ *
+ * Code does not live above SP, so stopping there costs nothing real, and the
+ * clamp is safe by construction: worst case is an earlier block boundary,
+ * which the translator already handles everywhere.
+ *
+ * MEASURED: NULL RESULT, do not retry as-is.  The stack grows DOWN, so the
+ * live stack sits ABOVE sp and pushes land just BELOW it -- this clamp
+ * protects [sp, 0x3008000), which is the wrong side.  The gated stack
+ * addresses seen in the field (0x3007a38..0x3007c64) were all below an sp
+ * of 0x3007c6c, so the clamp never covered them: s/x were unchanged
+ * (s234 x7101 vs s242 x7355) and the crash still landed on b1c9. */
+#ifdef SMC_SCAN_SPCLAMP
+#define SMC_SCAN_PAST_SP(endpc)                                            \
+  ((endpc) >= 0x3000000 && (endpc) < 0x3008000 &&                          \
+   reg[REG_SP] >= 0x3000000 && reg[REG_SP] < 0x3008000 &&                  \
+   (endpc) >= reg[REG_SP])
+#else
+#define SMC_SCAN_PAST_SP(endpc) (0)
+#endif
+
+#ifdef SMC_WRITE_HISTO
+void smc_cover_note(u32 s, u32 e, u32 reason);
+#endif
+
+#if defined(SMC_GATE_BITMAP) && defined(SMC_GATES)
+/* One bit per RAM halfword. This is a compiled view of the existing gate
+ * table: it changes the cost of asking "is this PC gated?", never which PCs
+ * are gates or where translated blocks end. */
+static u8 smc_gate_iwram[0x8000 >> 4];
+static u8 smc_gate_ewram[0x40000 >> 4];
+
+static void smc_gate_map_add(u32 pc)
+{
+  u32 off;
+  u8 *map;
+  if ((pc >> 24) == 3) {
+    off = (pc & 0x7FFF) >> 1;
+    map = smc_gate_iwram;
+  } else if ((pc >> 24) == 2) {
+    off = (pc & 0x3FFFF) >> 1;
+    map = smc_gate_ewram;
+  } else {
+    return;
+  }
+  map[off >> 3] |= (u8)(1u << (off & 7));
+}
+
+static void smc_gate_map_rebuild(void)
+{
+  u32 i;
+  memset(smc_gate_iwram, 0, sizeof(smc_gate_iwram));
+  memset(smc_gate_ewram, 0, sizeof(smc_gate_ewram));
+  for (i = 0; i < translation_gate_targets; i++)
+    smc_gate_map_add(translation_gate_target_pc[i]);
+}
+
+static inline int smc_gate_map_has(u32 pc)
+{
+  u32 off;
+  const u8 *map;
+  if ((pc >> 24) == 3) {
+    off = (pc & 0x7FFF) >> 1;
+    map = smc_gate_iwram;
+  } else if ((pc >> 24) == 2) {
+    off = (pc & 0x3FFFF) >> 1;
+    map = smc_gate_ewram;
+  } else {
+    return 0;
+  }
+  return map[off >> 3] & (1u << (off & 7));
+}
+
+#define SMC_GATE_MAP_ADD(pc)       smc_gate_map_add(pc)
+#define SMC_GATE_MAP_REBUILD()     smc_gate_map_rebuild()
+#define SMC_SCAN_GATE_END() do {                                           \
+  if (smc_gate_map_has(block_end_pc)) {                                    \
+    scan_exit_reason = SMC_SCAN_GATE;                                      \
+    goto block_end;                                                        \
+  }                                                                        \
+} while (0)
+#else
+#define SMC_GATE_MAP_ADD(pc)       do { } while (0)
+#define SMC_GATE_MAP_REBUILD()     do { } while (0)
+#define SMC_SCAN_GATE_END() do {                                           \
+  for (i = 0; i < translation_gate_targets; i++) {                          \
+    if (block_end_pc == translation_gate_target_pc[i]) {                   \
+      scan_exit_reason = SMC_SCAN_GATE;                                    \
+      goto block_end;                                                      \
+    }                                                                      \
+  }                                                                        \
+} while (0)
+#endif
 
 #define scan_block(type, smc_write_op)                                        \
 {                                                                             \
@@ -3013,19 +3497,13 @@ block_exit_type block_exits[MAX_EXITS];
       type##_set_condition(condition);                                        \
     }                                                                         \
                                                                               \
-    for(i = 0; i < translation_gate_targets; i++)                             \
-    {                                                                         \
-      if(block_end_pc == translation_gate_target_pc[i])                       \
-      {                                                                       \
-        scan_exit_reason = SMC_SCAN_GATE;                                     \
-        goto block_end;                                                       \
-      }                                                                       \
-    }                                                                         \
+    SMC_SCAN_GATE_END();                                                      \
                                                                               \
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
     if((block_data_position == MAX_BLOCK_SIZE) ||                             \
-     (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFFF0))             \
+     (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFFF0) ||           \
+     SMC_SCAN_PAST_SP(block_end_pc))                                          \
     {                                                                         \
       scan_exit_reason = (block_data_position == MAX_BLOCK_SIZE)              \
                        ? SMC_SCAN_MAXSIZE : SMC_SCAN_RAMEND;                  \
@@ -3076,6 +3554,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
   s32 i;
   u32 flag_status;
   u32 scan_exit_reason = 0;   /* phase 5g diagnostic: why the scan stopped */
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  u8 *smc_gate_branch_source = NULL;
+  u32 smc_gate_branch_target = 0;
+#endif
   block_exit_type external_block_exits[MAX_EXITS];
   generate_block_extra_vars_arm();
   arm_fix_pc();
@@ -3106,6 +3588,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     scan_block(arm, yes);
     /* scan_block has just tagged exactly [block_start_pc, block_end_pc). */
     smc_blk_note_block(block_start_pc, block_end_pc, 0, scan_exit_reason);
+#ifdef SMC_WRITE_HISTO
+    smc_cover_note(block_start_pc, block_end_pc, scan_exit_reason);
+#endif
   }
   else
   {
@@ -3176,7 +3661,14 @@ bool translate_block_arm(u32 pc, bool ram_region)
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
-  generate_translation_gate(arm);
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  if (ram_region && smc_partial_active && scan_exit_reason == SMC_SCAN_GATE) {
+    smc_gate_branch_target = pc;
+    mips_emit_j_filler(smc_gate_branch_source);
+    mips_emit_nop();
+  } else
+#endif
+    generate_translation_gate(arm);
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -3203,19 +3695,102 @@ bool translate_block_arm(u32 pc, bool ram_region)
     }
   }
 
+#ifdef SMC_PARTIAL_SAFE
+  /* ROM survives a RAM-cache flush, so a direct ROM->RAM jump could later
+   * enter an overwritten cache slot. Route only those persistent links
+   * through a local island. RAM->RAM links stay direct on the normal path;
+   * their source disappears whenever the RAM cache is fully reset. */
+  for(i = 0; i < external_block_exit_position; i++)
+  {
+    branch_target = external_block_exits[i].branch_target;
+    if (smc_partial_active &&
+        SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, branch_target) &&
+        (((GBA_PC(branch_target) >> 24) == 2) ||
+         ((GBA_PC(branch_target) >> 24) == 3)))
+    {
+      translation_target = translation_ptr;
+      generate_load_pc(reg_a0, GBA_PC(branch_target));
+      mips_emit_j(mips_absolute_offset(mips_indirect_branch_arm));
+      mips_emit_nop();
+      generate_branch_patch_unconditional(
+        external_block_exits[i].branch_source, translation_target);
+      external_block_exits[i].branch_source = NULL;
+    }
+  }
+#endif
+
+  /* AN UNTRANSLATABLE EXIT MUST NOT BE PATCHED IN AS A DIRECT JUMP.
+   *
+   * block_lookup_translate_* answers BLOCK_LOOKUP_UNMAPPABLE -- (u8 *)(~0) --
+   * for a target outside the regions it handles, and the eager patch loop
+   * below only ever tested for NULL.  The sentinel therefore reached
+   * generate_branch_patch_unconditional, which emits
+   *
+   *     j ((0xFFFFFFFF / 4) & 0x3FFFFFF)   ==   j 0x3FFFFFF
+   *
+   * and MIPS `j` keeps the delay slot's top four PC bits, so the first
+   * execution of that branch fetches from 0x0FFFFFFC.  Nothing is mapped
+   * there on a PSP: the console takes an instruction-fetch fault with no
+   * handler and freezes hard, with no dispatcher call anywhere in the path --
+   * which is why BADJUMP_SAFE, which guards block_lookup_address_*, never saw
+   * it and why the freeze survived that fix.
+   *
+   * Speculatively scanned blocks produce these targets routinely -- 223 in one
+   * Heart & Soul battle, every one from a block a translation gate started at
+   * a non-instruction boundary, and almost none ever executed.  So the rule is
+   * containment rather than prediction: send the branch through the runtime
+   * dispatcher.  That is lazy (an exit that is never taken costs nothing at
+   * all) and it puts the fault back inside BADJUMP_SAFE's reach, where an
+   * unmappable guest pc resets the GBA instead of the console.
+   *
+   * It runs HERE, before translation_ptr is published, because the island has
+   * to come out of this block's emit budget; the region test is a pure
+   * function of the target address, so nothing needs translating to decide.
+   * Worst case is MAX_EXITS islands of 16 bytes = 512 B, and the loop above
+   * can only claim an exit this one would (their region sets are disjoint), so
+   * the two together stay inside TRANSLATION_CACHE_LIMIT_THRESHOLD's 2 KB. */
+  for(i = 0; i < external_block_exit_position; i++)
+  {
+    if (!external_block_exits[i].branch_source)
+      continue;
+    branch_target = external_block_exits[i].branch_target;
+    if (branch_target == 0x00000008 || gba_pc_translatable(branch_target))
+      continue;
+    badjump_contained++;
+    generate_branch_patch_unconditional(
+      external_block_exits[i].branch_source, bios_swi_entrypoint);
+    external_block_exits[i].branch_source = NULL;
+  }
+
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
 
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  if (smc_gate_branch_source) {
+    translation_target = block_lookup_translate_arm(smc_gate_branch_target);
+    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
+      return false;
+    generate_branch_patch_unconditional(smc_gate_branch_source,
+                                         translation_target);
+  }
+#endif
+
   for(i = 0; i < external_block_exit_position; i++)
   {
+    if (!external_block_exits[i].branch_source)
+      continue;
     branch_target = external_block_exits[i].branch_target;
     if(branch_target == 0x00000008)
       translation_target = bios_swi_entrypoint;
     else
       translation_target = block_lookup_translate_arm(branch_target);
-    if (!translation_target)
+    /* Backstop for the classifier above: the sentinel must never reach
+     * generate_branch_patch_unconditional.  Aborting the translation is the
+     * already-established safe path -- the caller retries, then BADJUMP_SAFE
+     * resets the guest. */
+    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
@@ -3245,6 +3820,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   s32 i;
   u32 flag_status;
   u32 scan_exit_reason = 0;   /* phase 5g diagnostic: why the scan stopped */
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  u8 *smc_gate_branch_source = NULL;
+  u32 smc_gate_branch_target = 0;
+#endif
   block_exit_type external_block_exits[MAX_EXITS];
   generate_block_extra_vars_thumb();
   thumb_fix_pc();
@@ -3273,6 +3852,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   {
     scan_block(thumb, yes);
     smc_blk_note_block(block_start_pc, block_end_pc, 1, scan_exit_reason);
+#ifdef SMC_WRITE_HISTO
+    smc_cover_note(block_start_pc, block_end_pc, scan_exit_reason);
+#endif
   }
   else
   {
@@ -3337,7 +3919,14 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
-  generate_translation_gate(thumb);
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  if (ram_region && smc_partial_active && scan_exit_reason == SMC_SCAN_GATE) {
+    smc_gate_branch_target = pc;
+    mips_emit_j_filler(smc_gate_branch_source);
+    mips_emit_nop();
+  } else
+#endif
+    generate_translation_gate(thumb);
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -3364,19 +3953,98 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     }
   }
 
+#ifdef SMC_PARTIAL_SAFE
+  for(i = 0; i < external_block_exit_position; i++)
+  {
+    branch_target = external_block_exits[i].branch_target;
+    if (smc_partial_active &&
+        SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, branch_target) &&
+        (((GBA_PC(branch_target) >> 24) == 2) ||
+         ((GBA_PC(branch_target) >> 24) == 3)))
+    {
+      translation_target = translation_ptr;
+      generate_load_pc(reg_a0, GBA_PC(branch_target));
+      mips_emit_j(mips_absolute_offset(mips_indirect_branch_thumb));
+      mips_emit_nop();
+      generate_branch_patch_unconditional(
+        external_block_exits[i].branch_source, translation_target);
+      external_block_exits[i].branch_source = NULL;
+    }
+  }
+#endif
+
+  /* AN UNTRANSLATABLE EXIT MUST NOT BE PATCHED IN AS A DIRECT JUMP.
+   *
+   * block_lookup_translate_* answers BLOCK_LOOKUP_UNMAPPABLE -- (u8 *)(~0) --
+   * for a target outside the regions it handles, and the eager patch loop
+   * below only ever tested for NULL.  The sentinel therefore reached
+   * generate_branch_patch_unconditional, which emits
+   *
+   *     j ((0xFFFFFFFF / 4) & 0x3FFFFFF)   ==   j 0x3FFFFFF
+   *
+   * and MIPS `j` keeps the delay slot's top four PC bits, so the first
+   * execution of that branch fetches from 0x0FFFFFFC.  Nothing is mapped
+   * there on a PSP: the console takes an instruction-fetch fault with no
+   * handler and freezes hard, with no dispatcher call anywhere in the path --
+   * which is why BADJUMP_SAFE, which guards block_lookup_address_*, never saw
+   * it and why the freeze survived that fix.
+   *
+   * Speculatively scanned blocks produce these targets routinely -- 223 in one
+   * Heart & Soul battle, every one from a block a translation gate started at
+   * a non-instruction boundary, and almost none ever executed.  So the rule is
+   * containment rather than prediction: send the branch through the runtime
+   * dispatcher.  That is lazy (an exit that is never taken costs nothing at
+   * all) and it puts the fault back inside BADJUMP_SAFE's reach, where an
+   * unmappable guest pc resets the GBA instead of the console.
+   *
+   * It runs HERE, before translation_ptr is published, because the island has
+   * to come out of this block's emit budget; the region test is a pure
+   * function of the target address, so nothing needs translating to decide.
+   * Worst case is MAX_EXITS islands of 16 bytes = 512 B, and the loop above
+   * can only claim an exit this one would (their region sets are disjoint), so
+   * the two together stay inside TRANSLATION_CACHE_LIMIT_THRESHOLD's 2 KB. */
+  for(i = 0; i < external_block_exit_position; i++)
+  {
+    if (!external_block_exits[i].branch_source)
+      continue;
+    branch_target = external_block_exits[i].branch_target;
+    if (branch_target == 0x00000008 || gba_pc_translatable(branch_target))
+      continue;
+    badjump_contained++;
+    generate_branch_patch_unconditional(
+      external_block_exits[i].branch_source, bios_swi_entrypoint);
+    external_block_exits[i].branch_source = NULL;
+  }
+
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
 
+#ifdef SMC_PARTIAL_DIRECT_GATE
+  if (smc_gate_branch_source) {
+    translation_target = block_lookup_translate_thumb(smc_gate_branch_target);
+    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
+      return false;
+    generate_branch_patch_unconditional(smc_gate_branch_source,
+                                         translation_target);
+  }
+#endif
+
   for(i = 0; i < external_block_exit_position; i++)
   {
+    if (!external_block_exits[i].branch_source)
+      continue;
     branch_target = external_block_exits[i].branch_target;
     if(branch_target == 0x00000008)
       translation_target = bios_swi_entrypoint;
     else
       translation_target = block_lookup_translate_thumb(branch_target);
-    if (!translation_target)
+    /* Backstop for the classifier above: the sentinel must never reach
+     * generate_branch_patch_unconditional.  Aborting the translation is the
+     * already-established safe path -- the caller retries, then BADJUMP_SAFE
+     * resets the guest. */
+    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
@@ -3406,6 +4074,10 @@ void flush_translation_cache_ram(void)
   /* Phase 5g: price the flush directly instead of inferring it from a frame
    * spike.  Two clock reads on a path that is already the expensive one. */
   u32 flush_t0 = smc_prof_clock ? smc_prof_clock() : 0;
+
+#ifdef SMC_PARTIAL_SAFE
+  smc_retired_tag_count = 0;
+#endif
 
   last_ram_translation_ptr = ram_translation_cache;
   ram_translation_ptr = ram_translation_cache;
@@ -3463,7 +4135,194 @@ void flush_translation_cache_ram(void)
  *         the write_io_epilogue path is exactly and only the DMA case.  A
  *         DMA knows its whole destination range up front, so this is the
  *         source a range-invalidate could actually address. */
-#ifdef SMC_PARTIAL
+#ifdef SMC_PARTIAL_SAFE
+/* Selective SMC invalidation used by the current hardware experiment.
+ * Tags identify block starts, while per-mode end addresses record exact
+ * source ranges. */
+void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
+{
+  u16 *tagp;
+  u32 off;
+
+  if (!smc_partial_active)
+    return;
+
+  if (start_pc >= 0x03000000 && start_pc < 0x04000000) {
+    tagp = (u16 *)iwram;
+    off = (start_pc & 0x7FFF) >> 1;
+  } else if (start_pc >= 0x02000000 && start_pc < 0x03000000) {
+    tagp = (u16 *)(ewram + 0x40000);
+    off = (start_pc & 0x3FFFF) >> 1;
+  } else {
+    return;
+  }
+
+  if (VALID_TAG(tagp[off])) {
+    ramtag_type *te = get_ram_tag(tagp[off]);
+    if (thumb)
+      te->blk_end_thumb = end_pc;
+    else
+      te->blk_end_arm = end_pc;
+  }
+}
+
+/* Retire every translation whose source overlaps [low, high). Cross-block
+ * branches into RAM are indirect under this flag, so clearing an offset
+ * cannot leave a generated jump pointing at the retired cache entry. */
+static void flush_translation_cache_ram_range(u32 low, u32 high)
+{
+  u16 *tagp;
+  u32 base, bytes, lo_off, hi_off, first, last, i, target_slot, domain_end;
+
+  if (high <= low || (low >> 24) != ((high - 1) >> 24)) {
+    flush_translation_cache_ram();
+    return;
+  }
+
+  if ((low >> 24) == 3) {
+    tagp = (u16 *)iwram;
+    base = 0x03000000;
+    bytes = 0x8000;
+  } else if ((low >> 24) == 2) {
+    tagp = (u16 *)(ewram + 0x40000);
+    base = 0x02000000;
+    bytes = 0x40000;
+  } else {
+    flush_translation_cache_ram();
+    return;
+  }
+
+  lo_off = low - base;
+  hi_off = high - base;
+  if (lo_off >= bytes || hi_off > bytes) {
+    flush_translation_cache_ram();
+    return;
+  }
+
+  /* The first STM in SoundMainRAM is followed by three more stores that
+   * patch the same generated mixer block. A full flush naturally clears all
+   * of their tags on the first trap. Preserve that atomic behavior by
+   * extending retirement through the gated block beginning at the reported
+   * final word; later stores in the batch then see no live tags. */
+  target_slot = (hi_off - 4) >> 1;
+  if (!VALID_TAG(tagp[target_slot])) {
+    flush_translation_cache_ram();
+    return;
+  }
+  {
+    ramtag_type *target = get_ram_tag(tagp[target_slot]);
+    domain_end = target->blk_end_arm;
+    if (target->blk_end_thumb > domain_end)
+      domain_end = target->blk_end_thumb;
+  }
+  if (domain_end <= high || domain_end > base + bytes) {
+    flush_translation_cache_ram();
+    return;
+  }
+  high = domain_end;
+  hi_off = high - base;
+
+  /* ARM is the wider ISA, so this is the hard maximum source span for
+   * either mode. Exact extents filter unrelated starts inside the window. */
+  first = (lo_off > MAX_BLOCK_SIZE * 4)
+        ? (lo_off - MAX_BLOCK_SIZE * 4) >> 1 : 0;
+  last = (hi_off + 1) >> 1;
+  if (last > (bytes >> 1))
+    last = bytes >> 1;
+
+  /* Validate the complete retirement set before changing any entry. */
+  for (i = first; i < last; i++) {
+    if (VALID_TAG(tagp[i])) {
+      ramtag_type *te = get_ram_tag(tagp[i]);
+      u32 start = base + (i << 1);
+
+      if ((SMC_RAM_LIVE_OFFSET(te, arm) && (!te->blk_end_arm ||
+#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
+           (start < high && te->blk_end_arm > low &&
+            te->code_bytes_arm < 8) ||
+#endif
+           0)) ||
+          (SMC_RAM_LIVE_OFFSET(te, thumb) && (!te->blk_end_thumb ||
+#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
+           (start < high && te->blk_end_thumb > low &&
+            te->code_bytes_thumb < 8) ||
+#endif
+           0))) {
+        flush_translation_cache_ram();
+        return;
+      }
+    }
+  }
+
+  for (i = first; i < last; i++) {
+    if (VALID_TAG(tagp[i])) {
+      ramtag_type *te = get_ram_tag(tagp[i]);
+      u32 start = base + (i << 1);
+
+      if (SMC_RAM_LIVE_OFFSET(te, arm) &&
+          start < high && te->blk_end_arm > low) {
+#ifdef SMC_PARTIAL_STABLE_THUNK
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
+        te->code_bytes_arm = 0;
+#else
+#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
+        u8 *entry = &ram_translation_cache[te->offset_arm];
+        u8 *translation_ptr = entry - 16;
+        generate_load_imm(reg_a0, start);
+        mips_emit_j(mips_absolute_offset(mips_indirect_branch_arm));
+        mips_emit_nop();
+        generate_branch_patch_unconditional(entry, entry - 16);
+        address32(entry, 4) = 0;
+        platform_cache_sync(entry - 16, entry + 8);
+#endif
+        te->offset_arm = 0;
+#endif
+        flush_ram_partial++;
+      }
+      if (SMC_RAM_LIVE_OFFSET(te, thumb) &&
+          start < high && te->blk_end_thumb > low) {
+#ifdef SMC_PARTIAL_STABLE_THUNK
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
+        te->code_bytes_thumb = 0;
+#else
+#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
+        u8 *entry = &ram_translation_cache[te->offset_thumb];
+        u8 *translation_ptr = entry - 16;
+        generate_load_imm(reg_a0, start);
+        mips_emit_j(mips_absolute_offset(mips_indirect_branch_thumb));
+        mips_emit_nop();
+        generate_branch_patch_unconditional(entry, entry - 16);
+        address32(entry, 4) = 0;
+        platform_cache_sync(entry - 16, entry + 8);
+#endif
+        te->offset_thumb = 0;
+#endif
+        flush_ram_partial++;
+      }
+    }
+  }
+
+
+  /* Suppress the other stores in this patch iteration, as a full flush does,
+   * but keep the trapping STM's FINAL word tagged. Only that highest-address
+   * store uses execute_store_u32 and performs an SMC check; retaining the low
+   * word instead lets a later channel iteration escape when the generated
+   * target has not run yet to reconstruct its tags. The other three STMs in
+   * this iteration target different final words and remain atomic with it. */
+  {
+    u16 trigger_tag = tagp[target_slot];
+    for (i = lo_off >> 1; i < (hi_off >> 1); i++)
+      if (VALID_TAG(tagp[i]) &&
+          !smc_remember_retired_tag(base + (i << 1), tagp[i])) {
+        flush_translation_cache_ram();
+        return;
+      }
+    memset(&tagp[lo_off >> 1], 0, hi_off - lo_off);
+    tagp[target_slot] = trigger_tag;
+  }
+}
+
+#elif defined(SMC_PARTIAL)
 /* Record a freshly scanned block's source extent against its tag.  Called
  * from smc_blk_note_block() the moment scan_block settles block_end_pc — and
  * crucially BEFORE the external-exit resolution that can recursively
@@ -3841,18 +4700,368 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
  * locked 60; re-translation 457 -> 48 KB/s, full flushes 8.0 -> 1.7/s.
  * PPSSPP, Unbound: lookups -49%, translation unchanged, core time -10%.
  * Unbound never fills the table, so rule 2 never fires there. */
+/* Overridable from the root make as CLUSTER_BYTES=N.  Sized to the GAME's
+ * layout, not picked for roundness: H&S's M4A mixer patches two loop copies
+ * 152 bytes apart, so a window under that gates each copy separately while
+ * anything over it merges them and leaves the second ungated.  64 was too
+ * small (slots wasted inside one region: 105k dispatcher lookups vs 59k). */
+#ifndef SMC_GATE_CLUSTER
 #define SMC_GATE_CLUSTER      128
+#endif
 #define SMC_GATE_IDLE_FRAMES  60
 
 /* frame_counter + 1 at the gate's last hit; 0 = loaded from the game table */
 static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
+#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE) && !defined(SMC_GATES_CLUSTER)
+static u32 smc_gate_prev_now;   /* detects savestate clock rewind */
+#endif
 
+#ifdef SMC_GATES_RANKED
+static void smc_cand_forget(void);   /* defined with the candidate table below */
+#endif
+
+/* FORGET EVERY LEARNED THING, not just the hit stamps.
+ *
+ * The ranked candidate table is where the gate rule keeps its evidence, and it
+ * was the one piece nothing ever cleared: gba_memory.c zeroes
+ * translation_gate_targets at ROM load and calls this, and this only reset the
+ * ages.  So the 32 candidates -- addresses, write counts, and the last VALUE
+ * seen at each address -- survived from one game into the next.
+ *
+ * That is not merely untidy, it inverts the promotion rule.  Unbound and Heart
+ * & Soul are both M4A engines, so both copy a sound driver into nearly the same
+ * IWRAM addresses; a candidate Unbound had already driven past
+ * SMC_GATE_MIN_SAMPLE is therefore still sitting there, saturated, when Heart &
+ * Soul writes the same address for the FIRST time.  smc_gate_earned() finds the
+ * stale row, compares the new word against a value left over from the other
+ * game (so it counts as changed), and promotes on that single observation --
+ * the 64-sample evidence requirement silently becomes a 1-sample one, and the
+ * address it gates was never shown to be self-modifying code in THIS game.
+ *
+ * Invariant, stated once: learned dynarec state may not outlive the evidence
+ * that produced it.  Called from ROM load, from init_dynarec_caches (emulator
+ * reset) and from flush_dynarec_caches (savestate load, cheat install,
+ * libretro load/reset), which is every boundary where that evidence dies. */
 void smc_gates_reset(void)
 {
   memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
+#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE) && !defined(SMC_GATES_CLUSTER)
+  /* Savestate-rewind re-anchor: a stale stamp against a fresh frame_counter is
+   * the underflow that made eviction fire on every write. */
+  smc_gate_prev_now = 0;
+#endif
+#ifdef SMC_GATES_RANKED
+  smc_cand_forget();
+#endif
+  SMC_GATE_MAP_REBUILD();
 }
 
-#ifdef SMC_GATES_SIMPLE
+/* SMC_GATES_CODED: only gate an address that is ALREADY the start of a
+ * translated block.
+ *
+ * Gates are placed at smc_last_write_addr -- a DATA write address -- but a
+ * gate is then used as a CODE entry: it forces blocks to end there, so the
+ * next block STARTS there.  Nothing guarantees a write address is an
+ * instruction boundary, and mid-copy it is not even finished code.  Scanning
+ * from such an address yields nonsense: one PPSSPP battle logged 223 bad
+ * branch targets (into OAM/VRAM/SRAM) and every one came from the block at
+ * the gated address 0x03001404.  Most are never executed; when one is, the
+ * dispatcher jumps to it and the console dies.
+ *
+ * A VALID_TAG at the address means a block was translated starting exactly
+ * there, which is proof it is a real instruction boundary.  Gating it still
+ * pays: it stops OTHER blocks from spanning the address, which is the
+ * overlap the one-slot-per-halfword tag map cannot represent. */
+/* SMC_GATES_SNAP: gate the START OF THE BLOCK containing the write, not the
+ * write address itself.
+ *
+ * Gates are harvested from smc_last_write_addr -- a DATA address -- but a
+ * gate is consumed as a CODE entry: it forces blocks to end there, so the
+ * next block STARTS there.  Nothing makes a data-write address an
+ * instruction boundary, and mid-copy it is not finished code either.  That
+ * is the whole crash: one battle logged 223 garbage branch targets, every
+ * one from the block at the gated address 0x03001404.
+ *
+ * A VALID_TAG exists at an address ONLY because allocate_tag_* ran with that
+ * exact pc, i.e. a block was translated starting there -- so it is a proven
+ * instruction boundary, in the right mode.  Walk back over the interior
+ * (CODE_TAG_BLOCK16) run to find it.
+ *
+ * This is what SMC_GATES_CODED should have been.  That one demanded the
+ * write address ITSELF be a block start, which rejected 0x0300168c -- the
+ * address behind 97.8% of all flushes, interior to its block -- and cost
+ * 59.9 -> 46-58 fps.  Snapping keeps that gate, just anchored to the head of
+ * its block, so scans still stop before the self-modifying region.
+ *
+ * Bonus: every write inside one block snaps to the same gate, so the table
+ * stops churning through near-duplicates.  That is SMC_GATE_CLUSTER grouping
+ * done by real block boundaries instead of a fixed byte window. */
+/* SMC_GATES_SNAPF: snap FORWARD to the first proven instruction boundary at
+ * or after the write address.
+ *
+ * A gate address has to satisfy TWO things, and SMC_GATES_SNAP only got one:
+ *   (1) validity  -- it is used as a code entry, so it must be a real
+ *                    instruction boundary, else the block scanned from it is
+ *                    garbage (223 bad jumps, all from gated 0x03001404);
+ *   (2) isolation -- it must be at/after the write, so the previous block
+ *                    ENDS before the self-modifying region instead of
+ *                    spanning it.  That is the entire speed mechanism.
+ * SNAP walked BACKWARDS to the block head: valid, but the block starting at
+ * that head still covers the SMC region, so isolation was lost -- measured
+ * 1,428,000 flushes and 31-48 fps, against 116,000 and a locked 59.9 for
+ * add-only.  Snapping forward keeps the anchor AND the isolation.
+ *
+ * Stride is 4, unconditionally: start+4k is a valid boundary for ARM (whose
+ * instructions are 4 bytes) and for Thumb (2 bytes, so every even offset is
+ * one), which sidesteps needing the block mode.  A Thumb block that starts on
+ * a BL second half is safe -- translate_block_thumb inits opcode = 0, so
+ * last_opcode is 0 on the first instruction and thumb_branch_target takes the
+ * no_direct_branch path instead of computing a target from stale bits. */
+#ifdef SMC_GATES_SNAPF
+static u32 smc_gate_snapf(u32 gba_addr)
+{
+  u8 *base; u32 off, region, mask, k, delta;
+  if (gba_addr >= 0x3000000) {
+    base = iwram;           mask = 0x7FFF;  region = 0x3000000;
+  } else {
+    base = ewram + 0x40000; mask = 0x3FFFF; region = 0x2000000;
+  }
+  off = (gba_addr & mask) & ~1u;
+  for (k = 0; k < 512; k++) {              /* find the enclosing block head */
+    u16 t = *(u16 *)(base + off);
+    if (VALID_TAG(t)) break;                /* proven instruction boundary */
+    if (t != CODE_TAG_BLOCK16) return 0;    /* data -- nothing to gate */
+    if (off < 2) return 0;
+    off -= 2;
+  }
+  if (k == 512) return 0;                   /* gave up; do not guess */
+  delta = ((gba_addr & mask) & ~1u) - off;  /* write, relative to the head */
+  return region + off + ((delta + 3u) & ~3u);
+}
+#define SMC_GATE_PICK(a) smc_gate_snapf(a)
+#elif defined(SMC_GATES_SNAP)
+
+#define SMC_GATE_SNAP_MAX 512        /* halfword slots (1 KB) before giving up */
+static u32 smc_gate_snap(u32 gba_addr)
+{
+  u8 *base; u32 off, region, k;
+  if (gba_addr >= 0x3000000) {
+    base = iwram;            off = gba_addr & 0x7FFF;  region = 0x3000000;
+  } else {
+    base = ewram + 0x40000;  off = gba_addr & 0x3FFFF; region = 0x2000000;
+  }
+  off &= ~1u;                          /* tags are one u16 per halfword */
+  for (k = 0; k < SMC_GATE_SNAP_MAX; k++) {
+    u16 t = *(u16 *)(base + off);
+    if (VALID_TAG(t))            return region + off;  /* proven block start */
+    if (t != CODE_TAG_BLOCK16)   return 0;   /* data -- nothing to gate */
+    if (off < 2)                 return 0;
+    off -= 2;
+  }
+  return 0;                              /* run too long; do not guess */
+}
+#define SMC_GATE_PICK(a) smc_gate_snap(a)
+#else
+#define SMC_GATE_PICK(a) ((a) & ~3u)
+#endif
+
+#ifdef SMC_GATES_CODED
+static int smc_gate_addr_is_block_start(u32 gba_addr)
+{
+  const u16 *tagp = (gba_addr >= 0x3000000)
+    ? (const u16 *)(iwram + (gba_addr & 0x7FFF))
+    : (const u16 *)(ewram + (gba_addr & 0x3FFFF) + 0x40000);
+  u16 t = *tagp;
+  return VALID_TAG(t);
+}
+#define SMC_GATE_REJECT(gpc) (!smc_gate_addr_is_block_start(gpc))
+#else
+#define SMC_GATE_REJECT(gpc) (0)
+#endif
+
+/* SMC_GATES_RANKED: promote an address to a gate only once it has proven
+ * itself HOT.  Both shipped rules pick gates blind -- add-only takes the
+ * first eight addresses it ever sees, eviction cycles round-robin -- and
+ * neither asks how much a gate would actually buy.
+ *
+ * Measured on the H&S rival battle, over one 8000-flush window:
+ *
+ *   0300168c   7723 writes   real code, value CHANGES (62953 vs 120 same)
+ *              a block starts here and runs 030016 8c..030017c4
+ *              -> the gate that matters; this is 97.8% of all flushes
+ *
+ *   03001404     67 writes   DATA inside a code block, value IDEMPOTENT
+ *              (66 same, 1 changed).  No block starts here; TWO overlapping
+ *              blocks span it (030013e8..03001414 and 030013f8..03001414).
+ *              Gating it forces a block to start ON THE DATA WORD, which
+ *              then scans garbage -- 223 bad branch targets in one battle,
+ *              and the crash when one of them is executed.
+ *
+ * The two differ by ~115x in hit count, so ranking separates them cleanly:
+ * gate the hot one, never spend a slot on the cold one.  Add-only semantics
+ * are kept -- once promoted a gate is never moved -- so the table cannot
+ * churn onto a bad address later, which is what made eviction unsafe. */
+#ifdef SMC_GATES_RANKED
+#ifndef SMC_GATE_RATIO
+#define SMC_GATE_RATIO 4            /* within 1/4 of the hottest */
+#endif
+#define SMC_GATE_MIN_SAMPLE 64     /* writes before judging an address */
+/* WITHDRAWN: A STALENESS RULE ON THE CANDIDATE ROWS.
+ *
+ * A gap over ~60 frames restarted a row's statistics, the reasoning being that
+ * an address hot in one role (a boot copy destination, the previous
+ * soundtrack's mixer body) should not promote on one write when the game later
+ * uses it in another.
+ *
+ * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
+ * The rule and the thing it gates are the same order of magnitude: earning a
+ * gate needs SMC_GATE_MIN_SAMPLE writes AT ONE ADDRESS, and if that takes
+ * longer than the window the row restarts forever and the gate is NEVER
+ * earned -- which is the documented 457 KB/s re-translation, 37 fps regime.
+ * I never measured writes-per-frame at a single address before choosing 60,
+ * so the window may well have been inside the accumulation time.
+ *
+ * It was also the only change on this branch with no demonstrated defect
+ * behind it -- unlike the cross-ROM leak, the role-change case was a
+ * hypothesis.  And it is defence in depth rather than the guard: with the
+ * containment fix, a wrongly promoted gate is no longer fatal, it is a
+ * dispatcher lookup.  That is what makes this safe to drop.
+ *
+ * If it is ever wanted back, the window has to be derived from measured
+ * writes-per-frame at the gate address, with a wide margin -- not chosen.
+ *
+ * (The kept half:
+ *
+ * Nothing ever aged a candidate row, so `hits` and `chg` were lifetime totals.
+ * An address that was hot in one role -- a copy destination during boot, a
+ * mixer body for the previous soundtrack -- keeps a saturated row for the whole
+ * session.  If the game later writes that address in a DIFFERENT role, the
+ * first such write finds hits already past SMC_GATE_MIN_SAMPLE and a stale
+ * remembered value that almost certainly differs, so the ratio holds and the
+ * address is promoted on ONE observation of its new role.  That is the same
+ * inversion as the cross-ROM leak, reachable inside a single game, and it lines
+ * up with the reported trigger: changing Heart & Soul's soundtrack moves which
+ * IWRAM words the M4A engine patches.
+ *
+ * So a row measures one continuous episode.  A gap longer than this retires the
+ * row's statistics AND its remembered value, and counting starts again.  The
+ * mixer writes thousands of times a second while music plays, so it never sees
+ * a gap; one second of silence costs it 64 writes -- about 20 ms of mixer
+ * activity -- to re-earn.
+ *
+ * an absolute floor on `chg` was tried first and was worse than useless: at
+ * SMC_GATE_MIN_SAMPLE 64 a floor of 32 is exactly what `chg * 2 >= hits`
+ * already requires.) */
+#define SMC_GATE_CAND 32            /* candidates tracked before promotion */
+static u32 smc_cand_addr[SMC_GATE_CAND];
+static u32 smc_cand_hits[SMC_GATE_CAND];
+static u32 smc_cand_used;
+
+/* Returns 1 when this address has earned a gate. */
+static u32 smc_cand_val[SMC_GATE_CAND];   /* last value seen at the address */
+static u32 smc_cand_chg[SMC_GATE_CAND];   /* times it actually CHANGED */
+
+/* Gate only addresses whose writes genuinely MODIFY memory.
+ *
+ * Frequency was the wrong discriminator and failed twice: an absolute
+ * threshold is outgrown by any cold address (crash b2c8), and a ratio to the
+ * hottest candidate silently degenerates into one, because a promoted gate
+ * stops counting and the max freezes (crash b3c8).  Counting only ever
+ * delays the bad promotion.
+ *
+ * The real property is structural and measured:
+ *     0300168c   120 same / 62953 changed  -> code being patched. SAFE, and
+ *                a block legitimately starts here once gated.
+ *     03001404    66 same /     1 changed  -> a constant being re-stored.
+ *                DATA inside a code block, spanned by two overlapping
+ *                blocks, no block starts here.  Gating it puts a block on a
+ *                data word, which scans garbage and crashes.
+ *
+ * An idempotent store did not modify anything, so the address is not
+ * self-modifying code in any useful sense -- it is data, and data must never
+ * become a code entry point.  1 vs 62953 is a structural gap, not a tuned
+ * constant.  Still add-only: promotion is permanent. */
+static u32 *smc_gba_ptr(u32 addr)
+{
+  return (addr >= 0x3000000)
+    ? (u32 *)(iwram + 0x8000 + (addr & 0x7FFF))
+    : (u32 *)(ewram + (addr & 0x3FFFF));
+}
+
+static int smc_gate_earned(u32 gpc)
+{
+  u32 k, coldest = 0, cur = *smc_gba_ptr(gpc);
+  for (k = 0; k < smc_cand_used; k++)
+    if (smc_cand_addr[k] == gpc) {
+      smc_cand_hits[k]++;
+      if (cur != smc_cand_val[k]) smc_cand_chg[k]++;
+      smc_cand_val[k] = cur;
+      /* enough evidence, and the writes really do rewrite the bytes */
+      return smc_cand_hits[k] >= SMC_GATE_MIN_SAMPLE &&
+             smc_cand_chg[k] * 2 >= smc_cand_hits[k];
+    }
+  if (smc_cand_used >= SMC_GATE_CAND) {
+    for (k = 1; k < SMC_GATE_CAND; k++)
+      if (smc_cand_hits[k] < smc_cand_hits[coldest]) coldest = k;
+  } else coldest = smc_cand_used++;
+  smc_cand_addr[coldest] = gpc;
+  smc_cand_hits[coldest] = 1;
+  smc_cand_chg[coldest]  = 0;
+  smc_cand_val[coldest]  = cur;
+  return 0;
+}
+static void smc_cand_forget(void)
+{
+  memset(smc_cand_addr, 0, sizeof(smc_cand_addr));
+  memset(smc_cand_hits, 0, sizeof(smc_cand_hits));
+  memset(smc_cand_val,  0, sizeof(smc_cand_val));
+  memset(smc_cand_chg,  0, sizeof(smc_cand_chg));
+  smc_cand_used = 0;
+}
+
+#define SMC_GATE_EARNED(gpc) smc_gate_earned(gpc)
+#else
+#define SMC_GATE_EARNED(gpc) (1)
+#endif
+
+#ifdef SMC_GATES_CLUSTER
+/* Add-only, PLUS 2.0.2's cluster grouping -- and deliberately WITHOUT its idle
+ * eviction, which is the part that crashed Heart & Soul.
+ *
+ * 2.0.2's rule did two separable things.  Clustering declines to spend a slot
+ * on a write within SMC_GATE_CLUSTER bytes of an existing gate, because extra
+ * gates inside one patched region save no translation and cost a dispatcher
+ * lookup on every pass (measured: lookups 196k -> 59k).  Eviction reassigns a
+ * quiet gate's ADDRESS, which is what let already-translated blocks disagree
+ * with the table.  Only the second one moves a gate, so clustering can be kept
+ * and eviction dropped.  Once a gate is placed here it is never moved.  */
+static void smc_add_gate(u32 gba_addr)
+{
+  u32 gpc = SMC_GATE_PICK(gba_addr), g;
+#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
+  if (!gpc) return;   /* no proven code entry for this write */
+#endif
+  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
+
+  for (g = 0; g < translation_gate_targets; g++)
+    if (translation_gate_target_pc[g] == gpc)
+      return;                       /* already gated */
+
+  for (g = 0; g < translation_gate_targets; g++)
+  {
+    u32 gp = translation_gate_target_pc[g];
+    if (gpc > gp && gpc - gp <= SMC_GATE_CLUSTER)
+      return;                       /* same patched region -- covered already */
+  }
+
+  if (!SMC_GATE_EARNED(gpc)) return;   /* not hot enough yet */
+  if (translation_gate_targets < MAX_TRANSLATION_GATES) {
+    translation_gate_target_pc[translation_gate_targets++] = gpc;
+    SMC_GATE_MAP_ADD(gpc);
+  }
+  /* Table full: leave every existing gate exactly where it is. */
+}
+#elif defined(SMC_GATES_SIMPLE)
 /* The 2.0.1 gate rule: ADD ONLY.  An address either already has a gate or
  * takes a free slot; once written, a gate's address is NEVER changed.
  *
@@ -3872,20 +5081,48 @@ void smc_gates_reset(void)
  * ~4.29e9, so every gate reads as infinitely idle and churns constantly. */
 static void smc_add_gate(u32 gba_addr)
 {
-  u32 gpc = gba_addr & ~3u, g;
+  u32 gpc = SMC_GATE_PICK(gba_addr), g;
+#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
+  if (!gpc) return;   /* no proven code entry for this write */
+#endif
+  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
 
   for (g = 0; g < translation_gate_targets; g++)
     if (translation_gate_target_pc[g] == gpc)
       return;                       /* already gated — nothing to do */
 
-  if (translation_gate_targets < MAX_TRANSLATION_GATES)
+  if (!SMC_GATE_EARNED(gpc)) return;   /* not hot enough yet */
+  if (translation_gate_targets < MAX_TRANSLATION_GATES) {
     translation_gate_target_pc[translation_gate_targets++] = gpc;
+    SMC_GATE_MAP_ADD(gpc);
+  }
   /* Table full: leave every existing gate exactly where it is. */
 }
 #else
 static void smc_add_gate(u32 gba_addr)
 {
-  u32 gpc = gba_addr & ~3u, now = frame_counter + 1, g, victim;
+  u32 gpc = SMC_GATE_PICK(gba_addr), now = frame_counter + 1, g, victim;
+#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
+  if (!gpc) return;   /* no proven code entry for this write */
+#endif
+
+  /* frame_counter is RESTORED by savestates (main.c "frame-count") but
+   * smc_gate_last_hit[] is not, so loading a state made earlier drags `now`
+   * backwards while the hit stamps stay large.  The idle test below is an
+   * unsigned subtraction, so it then underflows to ~4.29e9 -- always >=
+   * SMC_GATE_IDLE_FRAMES -- and eviction fires on EVERY smc write instead of
+   * on genuinely idle gates.  At ~11k smc writes a battle that churns the
+   * table thousands of times, and every fresh address is another chance to
+   * gate something that is not an instruction boundary.  Measured: 223 bad
+   * jumps and a crash in battle 1, every run.  Re-anchor on a backwards
+   * jump so eviction stays what it was meant to be. */
+  if (now < smc_gate_prev_now)
+    for (g = 0; g < MAX_TRANSLATION_GATES; g++)
+      if (smc_gate_last_hit[g])
+        smc_gate_last_hit[g] = now;
+  smc_gate_prev_now = now;
+
+  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
 
   for (g = 0; g < translation_gate_targets; g++)
     if (translation_gate_target_pc[g] == gpc)
@@ -3906,10 +5143,12 @@ static void smc_add_gate(u32 gba_addr)
     }
   }
 
+  if (!SMC_GATE_EARNED(gpc)) return;   /* not hot enough yet */
   if (translation_gate_targets < MAX_TRANSLATION_GATES)
   {
     smc_gate_last_hit[translation_gate_targets] = now;
     translation_gate_target_pc[translation_gate_targets++] = gpc;
+    SMC_GATE_MAP_ADD(gpc);
     return;
   }
 
@@ -3924,12 +5163,237 @@ static void smc_add_gate(u32 gba_addr)
   {
     translation_gate_target_pc[victim] = gpc;
     smc_gate_last_hit[victim] = now;
+    SMC_GATE_MAP_REBUILD();
   }
 }
 #endif  /* SMC_GATES_SIMPLE */
 #endif
 
-#ifdef SMC_PARTIAL
+#ifdef SMC_PARTIAL_SAFE
+/* Describe the complete write that led to the SMC trap. ARM STM emits
+ * unchecked stores for every word except the highest address.
+ * A non-writeback STM is still safe to retire selectively once we decode the
+ * register count and cover that full range. Advancing copies retain the full
+ * flush: an earlier iteration can have written code without its final word
+ * landing on a tag, and the later full flush is what makes that sequence safe.
+ * Thumb block stores always write back, so they follow the same fallback. */
+/* WITHDRAWN: HARDENING OF THIS FINGERPRINT.
+ *
+ * The predicate below is narrow but not sound: an ARM STMIA lr,{r0,r1} whose
+ * highest written word sits 0x3c bytes past the writer is a 32-bit opcode match
+ * plus an offset, and nothing in it is specific to a sound engine.  I added
+ * three requirements -- writer and target both in IWRAM, one latched writer pc,
+ * and N repetitions before activating -- on the reasoning that all three are
+ * structurally true of M4A's SoundMainRAM.
+ *
+ * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
+ * This function is the gate on selective invalidation, so any extra condition
+ * that turns out not to hold for the ROM in hand costs the FULL FLUSH on every
+ * mixer write -- which is a large, load-dependent slowdown and exactly what was
+ * reported.  I had not verified on hardware that Unbound's writer satisfies the
+ * IWRAM assumption, and a regression hunt is the wrong moment to be carrying an
+ * unverified extra condition on the hot path.
+ *
+ * The risk it was addressing remains real but theoretical: a false match hands
+ * a game selective retirement on a store whose earlier words bypassed the SMC
+ * check.  Re-introducing it needs the writer pc and its region CONFIRMED from a
+ * diagnostic build on hardware first -- ms0:/smchisto.txt reports storing pcs.
+ *
+ * Anything uncertain keeps the established full flush, which is the whole
+ * point: this function's job is to say yes to one known routine, not to
+ * classify stores in general. */
+#ifdef SMC_WRITER_PROBE
+/* DIAGNOSTIC ONLY, and in no build profile.  Record the distinct writer shapes
+ * this function sees, so the fingerprint can be extended from measurement rather
+ * than from a source comment.  Writes once, when the table first fills or at the
+ * sample cap, then goes quiet -- this runs on the emulation thread and must not
+ * turn into per-write file I/O. */
+#define SWP_MAX 24
+static u32 swp_pc[SWP_MAX], swp_addr[SWP_MAX], swp_op[SWP_MAX];
+static u32 swp_hits[SWP_MAX], swp_used, swp_dumped, swp_seen;
+
+static void swp_note(u32 pc, u32 addr, u32 op, int admitted)
+{
+  u32 i;
+  FILE *f;
+  swp_seen++;
+  for (i = 0; i < swp_used; i++)
+    if (swp_pc[i] == pc && swp_op[i] == op &&
+        (swp_addr[i] - swp_pc[i]) == (addr - pc)) {
+      swp_hits[i]++;
+      goto maybe_dump;
+    }
+  if (swp_used < SWP_MAX) {
+    i = swp_used++;
+    swp_pc[i] = pc; swp_addr[i] = addr; swp_op[i] = op; swp_hits[i] = 1;
+    /* `admitted` is folded into the opcode slot's sign bit-free companion via
+     * hits; the dump prints the decode, which makes admission obvious. */
+    (void)admitted;
+  }
+maybe_dump:
+  if (swp_dumped || (swp_used < SWP_MAX && swp_seen < 20000))
+    return;
+  swp_dumped = 1;
+  f = fopen("ms0:/PSP/GAME/GBADHOC-PERF/log/writer.txt", "w");
+  if (!f)
+    return;
+  fprintf(f, "SMC writer shapes seen by smc_writer_safe_range\n");
+  fprintf(f, "total traps=%u distinct=%u\n\n", (unsigned)swp_seen,
+          (unsigned)swp_used);
+  fprintf(f, "  writer_pc  target    delta  opcode    rlist base wb up pre  hits\n");
+  for (i = 0; i < swp_used; i++) {
+    u32 op = swp_op[i];
+    fprintf(f,
+      "  %08x   %08x  %5x  %08x  %04x  r%-3u %u  %u  %u   %u\n",
+      (unsigned)swp_pc[i], (unsigned)swp_addr[i],
+      (unsigned)(swp_addr[i] - swp_pc[i]), (unsigned)op,
+      (unsigned)(op & 0xFFFF), (unsigned)((op >> 16) & 0xF),
+      (unsigned)((op >> 21) & 1), (unsigned)((op >> 23) & 1),
+      (unsigned)((op >> 24) & 1), (unsigned)swp_hits[i]);
+  }
+  fprintf(f, "\nUnbound admits: rlist=0003 base=r14 wb=0 up=1 pre=0 delta=3c\n");
+  fclose(f);
+}
+#endif
+
+/* How far past its own pc an M4A mixer patch store may reach and still be
+ * recognised.  Measured maximum on Heart & Soul is 0x148; Unbound's is 0x3c. */
+#define SMC_MIXER_PATCH_SPAN 0x200
+
+static int smc_writer_safe_range(u32 *low, u32 *high)
+{
+  u32 pc = GBA_PC(reg[REG_PC]);
+  u32 addr = smc_last_write_addr;
+  u32 op;
+  u8 *blk;
+
+#ifdef SMC_PARTIAL_SAFE_CONTROL
+  (void)low;
+  (void)high;
+  return 0;
+#endif
+
+  /* The first correctness oracle proved that selectively retiring arbitrary
+   * single stores is still too broad for Heart & Soul. Only admit the exact
+   * class needed by Unbound; all Thumb and non-STM writes keep full flushes. */
+  if (reg[REG_CPSR] & 0x20)
+    return 0;
+
+  pc -= 4;
+  blk = memory_map_read[pc >> 15];
+  if (!blk)
+    blk = load_gamepak_page((pc >> 15) & 0x3FF);
+  op = readaddress32(blk, pc & 0x7FFF);
+#ifdef SMC_WRITER_PROBE
+  if ((op & 0x0E000000) == 0x08000000)
+    swp_note(pc, addr, op, 0);
+#endif
+  if ((op & 0x0E000000) == 0x08000000) {
+    u32 list, count = 0;
+    /* Loads cannot raise this store trap; treat an inconsistent decode as a
+     * reason to use the established full flush. */
+    if ((op & 0x00100000) || (op & 0x00200000))
+      return 0;
+    /* Admit M4A's SoundMainRAM patch stores: a non-writeback ARM STMIA through
+     * LR into the nearby generated mixer body.
+     *
+     * This used to require the checked word to sit EXACTLY 0x3c bytes past the
+     * writer, which is CFRU's (Unbound's) layout, and to be exactly {r0,r1}.
+     * Heart & Soul runs the same routine family elsewhere and therefore kept the
+     * coarse path on every mixer write.  Measured with SMC_WRITER_PROBE on
+     * heart_soul_heavy, 2815 traps: FOUR writer sites across SIXTEEN deltas
+     * (0x48..0x148), two storing two words and two storing four, the dominant
+     * one matching CFRU's shape on every field except the delta and accounting
+     * for 66% of traps.
+     *
+     * The delta was never a correctness condition.  The range returned below is
+     * derived from the decoded register count and covers every word the store
+     * writes, which is precisely the hazard a wider match is feared to expose --
+     * see the note above this function.  For STMIA with U=1 and P=0 the trapping
+     * address is the highest word, which is what makes that subtraction right for
+     * any count.  So the exact offset was conservatism: one known routine rather
+     * than one known routine FAMILY.
+     *
+     * WRITEBACK (bit 21) IS NOW CHECKED, and that is not cosmetic.  The old
+     * condition never tested it because the exact delta already excluded every
+     * writeback store it could have met; with a range that accident is gone.  The
+     * safety argument holds only for non-writeback stores, because an advancing
+     * copy can write code whose final word never lands on a tag.  The probe found
+     * exactly those -- base r0, list 07f8, W set -- copying into the stack, and
+     * they must keep the full flush.
+     *
+     * The delta stays bounded: a self-patching mixer writes near itself, and a
+     * store reaching far past its own pc is a different shape.  That bound is
+     * identity conservatism, not correctness, but it limits what a false match
+     * could reach. */
+    if (((op >> 16) & 0xF) != REG_LR ||
+        (op & 0x01000000) || !(op & 0x00800000) || (op & 0x00400000) ||
+        (op & 0x00200000) ||                 /* W: writeback must be clear */
+        addr <= pc || addr - pc > SMC_MIXER_PATCH_SPAN)
+      return 0;
+    list = op & 0xFFFF;
+    while (list) {
+      count += list & 1;
+      list >>= 1;
+    }
+    if (!count)
+      return 0;
+    *low = addr - (count - 1) * 4;
+    *high = addr + 4;
+    return 1;
+  }
+  return 0;
+}
+
+#ifdef SMC_PARTIAL_SAFE_FRAMEFULL
+static u32 smc_partial_last_full_frame = ~0u;
+#endif
+
+#ifdef SMC_GATES
+/* The ordinary gate is harvested from smc_last_write_addr, which is the
+ * highest word written by an ARM STM.  SoundMainRAM's checked store writes
+ * two words, so placing the boundary there still lets a translated block
+ * span the first modified instruction.  The exact writer decoder above gives
+ * us the complete range; for that proven layout, anchor the gate at the first
+ * word instead.
+ *
+ * Keep the established high-word gate as well.  It is part of the existing
+ * block/timing layout; the deterministic audio oracle detects removing it
+ * even when both reference video frames remain identical.  The caller still
+ * performs a full RAM-cache flush immediately after adding this one-time
+ * boundary, so no block translated without it survives. */
+static int smc_partial_install_range_gate(u32 low, u32 high)
+{
+  u32 i, found_high = 0, found_low = 0;
+  int changed = 0;
+
+  low &= ~3u;
+  high = (high - 4) & ~3u;
+
+  for (i = 0; i < translation_gate_targets; i++) {
+    found_high |= translation_gate_target_pc[i] == high;
+    found_low  |= translation_gate_target_pc[i] == low;
+  }
+
+  /* Preserve the original checked-word boundary first, then add the range
+   * start.  Installing both in one event lets the mandatory full flush below
+   * establish a single, deterministic block layout. */
+  if (!found_high && translation_gate_targets < MAX_TRANSLATION_GATES) {
+    translation_gate_target_pc[translation_gate_targets++] = high;
+    SMC_GATE_MAP_ADD(high);
+    changed = 1;
+  }
+  if (!found_low && translation_gate_targets < MAX_TRANSLATION_GATES) {
+    translation_gate_target_pc[translation_gate_targets++] = low;
+    SMC_GATE_MAP_ADD(low);
+    changed = 1;
+  }
+
+  return changed;
+}
+#endif
+
+#elif defined(SMC_PARTIAL)
 /* Was the store that raised this SMC a BLOCK COPY -- a multi-word store
  * that advances its base register through memory?
  *
@@ -4029,13 +5493,163 @@ static int smc_writer_is_block_copy(void)
  * through the high end, clear tags once at the finish.  Until that exists,
  * flush everything -- the speed is worth nothing if the game does not boot. */
 
+#ifdef SMC_WRITE_HISTO
+/* Where do the SMC flushes actually COME from?  A battle measured 10122 of
+ * them and six of eight gate slots sat near sp, which looked like stack
+ * traffic -- but clamping the scan at sp changed nothing, so the guess was
+ * wrong.  Bucket both the WRITE address and the PC of the storing
+ * instruction (mips_stub.S smc_write stores it to REG_PC before calling in)
+ * so the next change is aimed at measured hot spots instead of a hunch. */
+/* Word-granular view of the hot region.  256B buckets cannot tell "copies a
+ * routine" from "updates one data word that happens to sit inside a block
+ * scan_block tagged as code" -- and those want opposite fixes. */
+/* WHICH block scan covers the hot data word?  The SMC check fires on any
+ * non-zero tag, including the interior CODE_TAG_BLOCK16 that scan_block
+ * writes for every address it scans -- so 0x0300168c need not be a block
+ * START to cause flushes, it only has to fall inside some block's scanned
+ * range.  Record the distinct blocks whose [start,end) spans it. */
+#define SMC_COVER_ADDR 0x3001404u
+#define SMC_COVER_MAX 24
+static u32 smc_cov_s[SMC_COVER_MAX], smc_cov_e[SMC_COVER_MAX];
+static u32 smc_cov_r[SMC_COVER_MAX], smc_cov_n[SMC_COVER_MAX];
+static u32 smc_cov_used;
+/* Does the hot word actually CHANGE?  SMC_SKIP_SAME (skip the flush when the
+ * store writes an identical value) white-screened H&S, but its premise was
+ * never tested on this game.  If the value is the same every time, all these
+ * flushes are unnecessary and fixing that filter recovers everything; if it
+ * genuinely changes, the whole avenue is dead.  The store has already landed
+ * by the time we get here, so compare against what we saw last flush. */
+static u32 smc_val_prev, smc_val_seen, smc_val_same, smc_val_diff;
+void smc_cover_note(u32 s, u32 e, u32 reason)
+{
+  u32 k;
+  if (!(s <= SMC_COVER_ADDR && SMC_COVER_ADDR < e)) return;
+  for (k = 0; k < smc_cov_used; k++)
+    if (smc_cov_s[k] == s && smc_cov_e[k] == e) { smc_cov_n[k]++; return; }
+  if (smc_cov_used >= SMC_COVER_MAX) return;
+  smc_cov_s[smc_cov_used] = s; smc_cov_e[smc_cov_used] = e;
+  smc_cov_r[smc_cov_used] = reason; smc_cov_n[smc_cov_used] = 1;
+  smc_cov_used++;
+}
+
+#define SMC_FINE_BASE 0x3001400u
+#define SMC_FINE_WORDS 256                 /* covers 0x3001400..0x30017ff */
+static u32 smc_h_fine_w[SMC_FINE_WORDS];   /* write address */
+static u32 smc_h_fine_p[SMC_FINE_WORDS];   /* storing pc */
+static u32 smc_h_addr_iw[128], smc_h_addr_ew[1024];
+static u32 smc_h_pc_iw[128], smc_h_pc_other;
+static u32 smc_h_n;
+static void smc_histo_note(u32 addr, u32 storepc)
+{
+  if (addr >= 0x3000000) smc_h_addr_iw[(addr & 0x7FFF) >> 8]++;
+  else                   smc_h_addr_ew[(addr & 0x3FFFF) >> 8]++;
+  if (storepc >= 0x3000000 && storepc < 0x3008000)
+    smc_h_pc_iw[(storepc & 0x7FFF) >> 8]++;
+  else smc_h_pc_other++;
+  if (addr - SMC_FINE_BASE < SMC_FINE_WORDS * 4u)
+    smc_h_fine_w[(addr - SMC_FINE_BASE) >> 2]++;
+  if (storepc - SMC_FINE_BASE < SMC_FINE_WORDS * 4u)
+    smc_h_fine_p[(storepc - SMC_FINE_BASE) >> 2]++;
+  if (addr == SMC_COVER_ADDR) {
+    u32 cur = *(u32 *)(iwram + 0x8000 + (SMC_COVER_ADDR & 0x7FFF));
+    if (smc_val_seen && cur == smc_val_prev) smc_val_same++; else smc_val_diff++;
+    smc_val_prev = cur; smc_val_seen = 1;
+  }
+  if (++smc_h_n % 4000) return;
+  {
+    FILE *f = fopen("ms0:/smchisto.txt", "w");
+    unsigned k;
+    if (!f) return;
+    /* Every counter here is a u32, which is `unsigned long` on this ABI while
+     * %u/%x name `unsigned int`.  Same width on a PSP, undefined anywhere else;
+     * cast rather than switch to %lu, which would be wrong on a target where
+     * u32 is `unsigned int`. */
+    fprintf(f, "smc flushes: %u\n", (unsigned)smc_h_n);
+    fprintf(f, "unmappable block exits contained: %u\n",
+            (unsigned)badjump_contained);
+    fprintf(f, "-- WRITE addr, IWRAM 256B buckets --\n");
+    for (k = 0; k < 128; k++) if (smc_h_addr_iw[k])
+      fprintf(f, "  %08x %u\n", 0x3000000 + (k << 8),
+              (unsigned)smc_h_addr_iw[k]);
+    fprintf(f, "-- WRITE addr, EWRAM 256B buckets --\n");
+    for (k = 0; k < 1024; k++) if (smc_h_addr_ew[k])
+      fprintf(f, "  %08x %u\n", 0x2000000 + (k << 8),
+              (unsigned)smc_h_addr_ew[k]);
+    fprintf(f, "-- STORING pc, IWRAM 256B buckets --\n");
+    for (k = 0; k < 128; k++) if (smc_h_pc_iw[k])
+      fprintf(f, "  %08x %u\n", 0x3000000 + (k << 8),
+              (unsigned)smc_h_pc_iw[k]);
+    fprintf(f, "  (storing pc outside IWRAM: %u)\n", (unsigned)smc_h_pc_other);
+    fprintf(f, "-- hot word %08x: same=%u changed=%u --\n",
+            (unsigned)SMC_COVER_ADDR, (unsigned)smc_val_same,
+            (unsigned)smc_val_diff);
+    fprintf(f, "-- blocks whose scan COVERS %08x --\n",
+            (unsigned)SMC_COVER_ADDR);
+    for (k = 0; k < smc_cov_used; k++)
+      fprintf(f, "  %08x..%08x  reason=%u  seen=%u\n",
+              (unsigned)smc_cov_s[k], (unsigned)smc_cov_e[k],
+              (unsigned)smc_cov_r[k], (unsigned)smc_cov_n[k]);
+    fprintf(f, "-- FINE 0x%08x.. : word  writes  storing-pc --\n",
+            (unsigned)SMC_FINE_BASE);
+    for (k = 0; k < SMC_FINE_WORDS; k++)
+      if (smc_h_fine_w[k] || smc_h_fine_p[k])
+        fprintf(f, "  %08x  w=%-8u pc=%u\n",
+                (unsigned)(SMC_FINE_BASE + (k << 2)),
+                (unsigned)smc_h_fine_w[k], (unsigned)smc_h_fine_p[k]);
+    fclose(f);
+  }
+}
+#define SMC_HISTO_NOTE(a, p) smc_histo_note((a), (p))
+#else
+#define SMC_HISTO_NOTE(a, p) do { } while (0)
+#endif
+
 void flush_translation_cache_ram_smc(void)
 {
-  flush_ram_smc++;
-#ifdef SMC_GATES
-  smc_add_gate(smc_last_write_addr);
+#ifdef SMC_PARTIAL_SAFE
+  u32 partial_low = 0, partial_high = 0;
+  int range_safe = smc_writer_safe_range(&partial_low, &partial_high);
+  int range_gate_changed = 0;
+  int activating = range_safe && !smc_partial_active;
 #endif
-#ifdef SMC_PARTIAL
+  flush_ram_smc++;
+  SMC_HISTO_NOTE(smc_last_write_addr, reg[REG_PC]);
+#ifdef SMC_GATES
+#ifdef SMC_PARTIAL_SAFE
+  if (range_safe)
+    range_gate_changed = smc_partial_install_range_gate(partial_low,
+                                                        partial_high);
+  else
+#endif
+    smc_add_gate(smc_last_write_addr);
+#endif
+#ifdef SMC_PARTIAL_SAFE
+  {
+    if (activating) {
+      /* ROM translations survive a RAM flush and may contain direct links
+       * into RAM. Rebuild them once under the active indirect-link policy
+       * before any selective retirement can occur. */
+      smc_partial_active = 1;
+      flush_translation_cache_rom();
+    }
+    /* The event that installs or moves the range-start gate gets a full
+     * flush.  Subsequent events can retire selectively only after every live
+     * block has therefore been scanned with that exact boundary. */
+    int partial_ready = smc_partial_active && range_safe && !activating &&
+                        !range_gate_changed &&
+                        smc_partial_target_is_gated(partial_low);
+#ifdef SMC_PARTIAL_SAFE_FRAMEFULL
+    if (partial_ready && smc_partial_last_full_frame != frame_counter) {
+      smc_partial_last_full_frame = frame_counter;
+      flush_translation_cache_ram();
+    } else
+#endif
+    if (partial_ready)
+      flush_translation_cache_ram_range(partial_low, partial_high);
+    else
+      flush_translation_cache_ram();
+  }
+#elif defined(SMC_PARTIAL)
   if (smc_writer_is_block_copy())
     flush_translation_cache_ram();
   else
@@ -4068,6 +5682,9 @@ void init_dynarec_caches(void)
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 
   ram_translation_ptr = last_ram_translation_ptr = &ram_translation_cache[0];
+#ifdef SMC_PARTIAL_SAFE
+  smc_partial_active = 0;
+#endif
   memset(iwram, 0, 0x8000);
   memset(&ewram[0x40000], 0, 0x40000);
 
@@ -4075,8 +5692,40 @@ void init_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
+  /* NO smc_gates_reset() HERE.  See flush_dynarec_caches below: a reset keeps
+   * the same ROM, and ROM load already resets the table. */
 }
 
+/* WITHDRAWN: CLEARING THE GATE CANDIDATE TABLE HERE, AND IN
+ * init_dynarec_caches.  This cost 2-16% of frame time on hardware.
+ *
+ * The proven defect was CROSS-ROM: a candidate saturated by one game promotes on
+ * a single write from the next, because the stale remembered value counts as a
+ * change.  That happens at ROM load, and gba_memory.c already calls
+ * smc_gates_reset() there.  Extending it to savestate load, emulator reset,
+ * cheat install and config change was my inference, and it is the expensive
+ * kind of wrong.
+ *
+ * WHY IT COSTS SO MUCH.  Earning a gate needs SMC_GATE_MIN_SAMPLE observations
+ * at ONE address, and smc_gate_earned runs once per SMC flush event -- not once
+ * per store.  Measured on heart_soul_light, the hot mixer address 0300168c
+ * produces about 12 events per 600 frames, so re-earning its gate from scratch
+ * takes roughly 3200 frames.  Boot supplies those samples cheaply; a savestate
+ * load at frame 30 threw them away and left the rest of the run in the no-gate
+ * regime, which is the documented 457 KB/s re-translation behaviour.
+ *
+ * It shows up as MORE SMC EVENTS, not merely more CPU: hardware measured the
+ * window count 33 -> 51, xlat 705 -> 831, and mean core time +21%.  The penalty
+ * scales inversely with the mixer's write rate, which is why it was +16% on
+ * heart_soul_light, +8% on unbound_double_high and +2% on unbound_rival_medium
+ * -- the busier the mixer, the sooner the gate comes back.
+ *
+ * A savestate load does not change ROM, so the candidates remain evidence about
+ * the right game.  What a state load DOES invalidate is smc_cand_val, the
+ * remembered word at each address -- a real but much smaller hazard, and one
+ * that cannot be closed by throwing away the hit counts that cost thousands of
+ * frames to collect.  If it is ever worth closing, refresh the VALUES and keep
+ * the counts. */
 void flush_dynarec_caches(void)
 {
   /* Flush ROM and RAM caches. */
@@ -4087,4 +5736,3 @@ void flush_dynarec_caches(void)
   iwram_code_max = 0x8000;
   flush_translation_cache_ram();
 }
-

@@ -1,0 +1,5 @@
+# Warnings from GBAdhoc-owned code that are accepted, one grep -F pattern per
+# line, each with the reason it cannot simply be fixed.
+#
+# Empty on 2026-09-17: the tree has none.  Adding a line here is a decision, so
+# say who decided and why -- an entry with no reason is worse than the warning.

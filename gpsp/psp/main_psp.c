@@ -13,7 +13,7 @@
  *    Wireless/Settings/Exit), wireless panel with Host + Join(scan/code),
  *    OSD toasts + session/FF chips (osd_psp.c)
  *  - fast-forward as a product feature (plan §4.4): Square hold (or
- *    toggle), multiplier 1.5/2/3/uncapped from config, core frameskip
+ *    toggle), 3x / Unlimited / Unlimited Smooth from config, core frameskip
  *    engaged while active, OSD chip, forced 1x during wireless sessions
  *  - scePowerSetClockFrequency(333,333,166) at init (plan §9 / ADR-0004)
  *  - EVT log at <appdir>/log/frontend.log (fflush per line)
@@ -59,9 +59,13 @@
 #include "netpacket_host.h"
 #include "transport_adhoc.h"
 #include "netdrv.h"        /* netdrv_sizeof / netdrv_set_arena -- the boot reserve */
+#include "../gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
+#include "ff_psp.h"
 #include "video_psp.h"
 #include "osd_psp.h"
 #include "ui_psp.h"
+#include "mgift_net.h"
+#include "mgift_cart.h"
 #include "me_host.h"
 #include "me/me_mbox.h"   /* me_render_desc, ME_UNCACHED — for the render bench */
 #include "config_psp.h"
@@ -84,6 +88,7 @@ PSP_HEAP_SIZE_KB(-1024);
  * so per-game variant installs (docs/VARIANTS.md) work from any folder;
  * falls back to the canonical install dir. */
 #include "usb_handoff.h"                                  /* ADR-0053 */
+#include "perf_rig.h"
 
 #define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
 char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
@@ -147,7 +152,6 @@ static char p_legacy_ap[160];
 #define PLAY_IO_PRIO         0x2C
 #define PLAY_POLL_MIN_CYCLES 34952
 #define PLAY_BOOST_US        0
-#define PLAY_FPS_X100        5973
 /* ADR-0068 ON for a player.  Measured over 15 alternating runs at 59.73 with
  * COMPLETE SEPARATION on both consoles (p = 0.0002): host srtt 2.02 -> 0.91
  * emulated frames, join 1.45 -> 0.70.  Mechanism verified every run -- host
@@ -238,8 +242,12 @@ static void init_paths(int argc, char *argv[])
     * in this binary returns its default and `have_harness` is 0.  Deliberately
     * not a compile-time removal of the call sites: one code path, two
     * behaviours, and no chance of the two builds drifting. */
+#ifndef GPSP_PERF_RIG
    snprintf(p_harness, sizeof(p_harness), "%s/.playable-no-harness/x",
             g_dir_base);
+#else
+   snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
+#endif
 #else
    snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
 #endif
@@ -266,13 +274,16 @@ static void init_paths(int argc, char *argv[])
 volatile int g_running = 1;
 
 /* --- fast-forward state --------------------------------------------------
- * Uncapped FF (harness mode + "uncapped" user multiplier): no vblank
- * pacing, audio muted, frame blitted only every 32nd emulated frame.
- * Multiplier FF: N retro_runs per displayed frame (only the last one
- * blitted), audio muted, core frameskip engaged (plan §4.4). */
+ * 3x batches three emulated frames and presents the final capture.
+ * Unlimited and Unlimited Smooth run without vblank pacing. The latter
+ * waits for the renderer; the former drops captures when it is busy.
+ * The 1-in-32 CPU presentation mask is retained only for the harness. */
 #define FF_PRESENT_MASK 31
-static int g_ff_uncapped;
-static int g_ff_mult;         /* multiplier FF active (user, paced) */
+int g_ff_uncapped;
+int g_ff_mult;         /* multiplier FF active (user, paced) */
+static int g_ff_user;         /* distinguishes user profiles from the harness */
+static int g_ff_draw_all;     /* Unlimited Smooth: wait rather than drop */
+static int g_ff_unlimited;    /* Unlimited: never wait for a busy renderer */
 static int g_blit_suppress;   /* skip blits of intermediate FF frames */
 static int g_drew;            /* a GU frame was drawn since the last swap */
 
@@ -483,7 +494,7 @@ static void evt_shutdown(void)
 
 /* ------------------------------------------------------------------ audio */
 
-#define OUT_RATE       44100
+/* OUT_RATE lives in ff_psp.h: the pacing engine needs it too. */
 #define OUT_CHUNK      1024                 /* output frames per blocking write */
 #define RING_FRAMES    32768                /* power of two, ~0.5 s at 65536 Hz */
 #define RING_MASK      (RING_FRAMES - 1)
@@ -500,7 +511,7 @@ static volatile int audio_running;
  * fe_host_boot — see main()); the REAL value is taken from
  * fe_host_sample_rate() right after boot (ADR-0028).  Never hardcode this
  * ratio anywhere else. */
-static unsigned in_rate = 32768;
+unsigned in_rate = 32768;
 static SceUID audio_thid = -1;
 
 /* Resampler phase increment, 16.16, read fresh by the audio thread on every
@@ -511,7 +522,7 @@ static SceUID audio_thid = -1;
  * silence for ~22 % of every second.  Following the pace keeps the stream
  * CONTINUOUS at the cost of a proportional pitch drop — see ADR-0027 §audio
  * for why that beat the alternative. */
-static volatile unsigned g_audio_step;
+volatile unsigned g_audio_step;
 
 /* Audio correctness oracle.  The frame-dump oracle proves the VIDEO output of
  * a dynarec change is unaltered, and says nothing at all about sound — which
@@ -523,6 +534,7 @@ static volatile unsigned g_audio_step;
  * across builds the same way the frame hash does. */
 static uint32_t g_audio_hash = 2166136261u;
 static uint32_t g_audio_samples;
+static int g_audio_oracle;
 
 uint32_t plat_audio_hash(void)    { return g_audio_hash; }
 uint32_t plat_audio_sample_count(void) { return g_audio_samples; }
@@ -532,9 +544,14 @@ static void plat_audio_frames(const int16_t *lr, size_t frames)
    size_t i;
    /* Hash BEFORE the FF/ring early-outs: this must describe what the core
     * generated, not what the output path happened to accept.  Bench-only —
-    * it touches every sample the core produces, which is cheap but is pure
-    * instrumentation and has no business running in a shipping build. */
+    * The dedicated perf build selects it with audio_oracle; older developer
+    * builds retain bench_mode. It is pure instrumentation and must stay off
+    * in scoring runs and absent from a shipping build. */
+#ifdef GPSP_PERF_RIG
+   if (g_audio_oracle)
+#else
    if (g_pcfg.bench_mode)
+#endif
    {
       for (i = 0; i < frames * 2; i++)
          g_audio_hash = (g_audio_hash ^ (uint16_t)lr[i]) * 16777619u;
@@ -777,7 +794,9 @@ static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 
 /* ------------------------------------------------------------------ input */
 
+#include "mgift_shortcut.h"
 static unsigned g_pad;   /* raw SceCtrl buttons, sampled once per loop */
+static unsigned g_mgift_consumed;
 
 static uint32_t plat_input_bitmask(void)
 {
@@ -785,7 +804,7 @@ static uint32_t plat_input_bitmask(void)
     * now — they are NOT forwarded to the core (turbo A/B dropped; GBA has
     * no free buttons for them anyway, FRONTEND-AUDIT §4). */
    uint32_t m = 0;
-   unsigned b = g_pad;
+   unsigned b = g_pad & ~g_mgift_consumed;
    if (b & PSP_CTRL_UP)       m |= 1u << JP_UP;
    if (b & PSP_CTRL_DOWN)     m |= 1u << JP_DOWN;
    if (b & PSP_CTRL_LEFT)     m |= 1u << JP_LEFT;
@@ -848,7 +867,7 @@ static size_t cur_pitch = FE_GBA_WIDTH * 2;
  * the offload dodges EVERY session's np_start, not just the first.  A
  * watchdog/slow teardown is permanent for the boot (do not retry a dead
  * ME); a session-end teardown re-arms. */
-static int g_net_up;                         /* adhoc transport + netdrv live
+int g_net_up;                         /* adhoc transport + netdrv live
                                               * (defined here, above
                                               * plat_video_frame, for the
                                               * ADR-0080c session gate)      */
@@ -879,6 +898,7 @@ extern u16 *gba_screen_pixels;               /* core global (video.h)        */
  * ME); 0 just deactivates and RE-ARMS for the next session (ADR-0080c). */
 static void me_video_teardown(const char *why, int permanent)
 {
+   FE_EVT_ONLY(why);   /* the reason is reported, not acted on */
    if (!g_me_video)
    {
       if (permanent)
@@ -1090,6 +1110,7 @@ static int g_me_rend;                    /* active */
 static void me_standby_down(void);   /* defined with the ME globals below */
 static void me_standby_up(void);
 static void standby_note(const char *fmt, ...);   /* defined below */
+static int  me_rend_active(void);                 /* renderer, defined below */
 static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
 /* The GE samples power-of-two textures only, and vid_image uses stride ==
  * texw, so the snapshot is stored 256 wide with the live 240x160 as its
@@ -1119,7 +1140,7 @@ static int power_cb(int unknown, int pwrflags, void *common)
    {
       g_pwr_suspend++;
       fe_evt("power suspending net=%d me=%d standby=%d",
-             g_net_up, g_me_rend, g_pcfg.standby);
+             g_net_up, me_rend_active(), g_pcfg.standby);
       /* FLUSH BEFORE TOUCHING ANYTHING.  The first attempt did the teardown
        * first and the console hard-reset -- taking the queued line with it, so
        * the log said nothing at all about the failure it was there to record.
@@ -1222,6 +1243,8 @@ static int g_mer_vmem;
 static int g_mer_cur;                    /* capture buffer the core fills */
 static int g_mer_pending = -1;           /* stage being rendered by the ME */
 static int g_mer_ready   = -1;           /* stage ready to present */
+static int g_mer_last_presented = -1;
+static unsigned g_mer_watch_us;
 static int g_vhash_on;                   /* harness oracle enabled */
 static void mer_note_sum(void);          /* defined below vhash_frame */
 static unsigned g_mer_frames, g_mer_drops, g_mer_miss;
@@ -1319,22 +1342,9 @@ static int g_mer_dirty_cfg = 1;
  * rather than to something worse. */
 static int      g_mer_sameframe;      /* configured */
 
-/* SAME-FRAME APPLIES ONLY TO THE PACED PATH.
- *
- * Fast-forward has its own SYNCHRONOUS ME path: me_rend_frame() posts the
- * render and retires the stage itself.  Same-frame is a SECOND retire
- * mechanism driven from the vcount-160 hook, and two things assigning
- * g_mer_ready make the stage index alternate between a live render and a
- * stale one -- seen as the picture flipping between the current frame and
- * whichever frame was showing when fast-forward was switched on.
- *
- * The comment at the FF post above already warned about exactly this class
- * of failure ("frozen or shimmering displays depending on FF mode"), and its
- * fix was the loop-top present that same-frame removed.
- *
- * It is also pointless there: fast-forward is not vblank paced, so there is
- * no "same frame" to be early for.  Scope it to where it was designed and
- * measured. */
+/* Same-frame retirement stays off throughout FF. The three profiles use
+ * one end-of-frame producer and loop-top presentation; a second producer
+ * from the visible-end hook would corrupt stage/capture ownership. */
 static int mer_sameframe_active(void)
 {
    return g_mer_sameframe && !g_ff_mult && !g_ff_uncapped;
@@ -1354,18 +1364,90 @@ static int      g_mer_rend_seen;
 
 static void me_rend_teardown(const char *why)
 {
+   FE_EVT_ONLY(why);
    if (!g_me_rend)
       return;
    g_me_rend = 0;
    g_mer_full_copy = 1;   /* eDRAM mirror is now stale; rebuild it in full */
    me_capture_mode = 0;                  /* core renders on the CPU again */
    me_capture_buf  = NULL;
-   g_mer_pending = g_mer_ready = -1;
+   g_mer_pending = g_mer_ready = g_mer_last_presented = -1;
    fe_evt("me_rend off reason=%s frames=%u drops=%u", why,
           g_mer_frames, g_mer_drops);
 }
 
 static int me_rend_init(void);   /* defined below */
+
+/* ---- RENDERER ENTRY POINTS FOR THE LIFECYCLE -----------------------------
+ * The wireless session has talked to the engine through me_rend_suspend() /
+ * me_rend_resume() since ADR-0080d.  The standby path did not: it read
+ * g_me_rend, g_mer_vmem, g_mer_ready and g_mer_stage directly and hand-rolled
+ * the volatile release.  Measured, comments stripped: ten renderer symbols
+ * reached into the lifecycle code, eight of them raw variables, 24 references.
+ * These four put standby on the same footing as the wireless path, so buffer
+ * ownership lives in exactly one place -- it is now six symbols, all
+ * functions, 11 references. */
+
+static int me_rend_active(void)    { return g_me_rend; }
+static int me_rend_vmem_held(void) { return g_mer_vmem; }
+
+/* IS THE ENGINE THE PRESENTER RIGHT NOW, and if so which buffer and what
+ * stride.  The three callers that used to ask this inline -- the wake overlay,
+ * the screenshot dumper and the vhash oracle -- each wrote their own copy of
+ * `g_me_rend && g_mer_ready >= 0`, and two of them disagreed with the third
+ * about whether a NULL stage counts.  So this is the loose form, matching what
+ * the dumpers did: it answers "yes, the engine" and hands back the pointer even
+ * when that pointer is NULL, because their own `if (!pix) return;` is what
+ * decides in that case.  Conflating the two questions changed what a screenshot
+ * does when they disagree.
+ *
+ * THE STRIDE IS IN PIXELS.  fe_host_last_frame() reports BYTES, so the two
+ * dumpers double it at the call site, visibly: passing pixels where bytes were
+ * wanted interleaved the left and right halves of every row in the first
+ * ME-mode dumps, and the display looked fine the whole time. */
+static int me_rend_presenting(const uint16_t **src, unsigned *pitch_px)
+{
+   if (!g_me_rend || g_mer_ready < 0)
+      return 0;
+   *src      = g_mer_stage[g_mer_ready];
+   *pitch_px = MER_STAGE_PITCH;
+   return 1;
+}
+
+/* The strict form: the loose one plus "and it actually has a buffer".  The wake
+ * overlay wants this, because it copies unconditionally once it has a source
+ * and has no later NULL check to fall back on. */
+static const uint16_t *me_rend_present_src(unsigned *pitch)
+{
+   const uint16_t *src = NULL;
+   unsigned px = 0;
+   if (!me_rend_presenting(&src, &px) || !src)
+      return NULL;
+   *pitch = px;
+   return src;
+}
+
+/* Hand the volatile partition back and drop every pointer into it.  Returns
+ * whether there was anything to release, because the standby ladder logs the
+ * rung only when it actually descends one.
+ *
+ * ALWAYS safe to call and never optional at standby: the OS owns the 4 MB pool
+ * at 0x08400000 and may re-hand it while we sleep, so a resume that skipped
+ * re-locking would rebuild onto a partition we no longer held -- which is a
+ * plausible way to reset the machine, and the machine did reset.  The full
+ * history is at the call site in me_standby_down(). */
+static int me_rend_release_vmem(void)
+{
+   if (!g_mer_vmem)
+      return 0;
+   sceKernelVolatileMemUnlock(0);
+   g_mer_vmem   = 0;
+   g_mer_desc   = NULL;
+   g_mer_cap[0] = g_mer_cap[1] = NULL;
+   g_mer_stage[0] = g_mer_stage[1] = NULL;
+   g_mer_ready = g_mer_pending = g_mer_last_presented = -1;
+   return 1;
+}
 
 /* ADR-0080d, applied to the engine: the host's np_start needs a clean heap.
  * The dual-engine gate run (host run 407) confirmed it — the engine's ~205 KB
@@ -1393,9 +1475,8 @@ static void wake_snapshot(void)
 
    if (!g_wake_frame)
       return;
-   if (g_me_rend && g_mer_ready >= 0 && g_mer_stage[g_mer_ready])
-      { src = g_mer_stage[g_mer_ready]; pitch = MER_STAGE_PITCH; }
-   else if (g_last_pix)
+   src = me_rend_present_src(&pitch);
+   if (!src && g_last_pix)
       { src = g_last_pix; pitch = g_last_pitch; }
    if (!src)
       return;
@@ -1480,7 +1561,7 @@ static void me_standby_down(void)
     * frame after it always found "nothing to copy" and the wake overlay came
     * up on a flat background instead of the game.  Order is the whole fix. */
    wake_snapshot();
-   if (g_me_rend)
+   if (me_rend_active())
    {
       me_rend_teardown("suspend");
       me_standby_step("rend_down");
@@ -1503,16 +1584,8 @@ static void me_standby_down(void)
     * So releasing is the safe half and re-locking on wake is mandatory.  What
     * remains genuinely questionable is unloading the module, which is what the
     * ladder is now for. */
-   if (g_mer_vmem)
-   {
-      sceKernelVolatileMemUnlock(0);
-      g_mer_vmem   = 0;
-      g_mer_desc   = NULL;
-      g_mer_cap[0] = g_mer_cap[1] = NULL;
-      g_mer_stage[0] = g_mer_stage[1] = NULL;
-      g_mer_ready  = g_mer_pending = -1;
+   if (me_rend_release_vmem())
       me_standby_step("vmem_released");
-   }
    /* The audio ring still holds sound from before the sleep, and the audio
     * thread plays it the moment the machine comes back -- ~20 ms of the game
     * you are no longer looking at, underneath a menu.  Drop it. */
@@ -1536,15 +1609,15 @@ static void me_standby_up(void)
    /* Rebuild only what we tore down.  At level 1 the module is still loaded
     * and me_host_init would be a second load of a module that never left. */
    standby_note("wake begin host_up=%d me_rend=%d vmem=%d",
-                me_host_up(), g_me_rend, g_mer_vmem);
+                me_host_up(), me_rend_active(), me_rend_vmem_held());
    host_rc = me_host_up() ? 0 : me_host_init(g_dir_base);
    standby_note("wake host=%d", host_rc);
    if (host_rc == 0)
-      rend_rc = g_me_rend ? 0 : me_rend_init();
-   standby_note("wake rend=%d vmem=%d free=%d", rend_rc, g_mer_vmem,
+      rend_rc = me_rend_active() ? 0 : me_rend_init();
+   standby_note("wake rend=%d vmem=%d free=%d", rend_rc, me_rend_vmem_held(),
                 sceKernelTotalFreeMemSize());
    fe_evt("standby up host=%d rend=%d vmem=%d free=%d frame=%d",
-          host_rc, rend_rc, g_mer_vmem, sceKernelTotalFreeMemSize(),
+          host_rc, rend_rc, me_rend_vmem_held(), sceKernelTotalFreeMemSize(),
           g_wake_have);
    /* Whatever the audio thread queued while the machine was coming back is
     * also from before the sleep. */
@@ -1652,7 +1725,7 @@ static int me_rend_init(void)
    sceKernelDcacheWritebackInvalidateRange(g_mer_stage[1], MER_STAGE_PITCH*161*2);
    g_mer_cur = 0;
    g_mer_full_copy = 1;   /* fresh ME: nothing to patch against */
-   g_mer_pending = g_mer_ready = -1;
+   g_mer_pending = g_mer_ready = g_mer_last_presented = -1;
    me_capture_buf  = g_mer_cap[0];
    me_capture_mode = 1;                  /* core stops rendering NOW */
    g_me_rend = 1;
@@ -1662,10 +1735,16 @@ static int me_rend_init(void)
    return 0;
 }
 
-/* Write back the live inputs and fill the render desc for stage `out`.
- * Shared by the async pipeline and the FF synchronous path. */
+/* Write back the live inputs and fill the render desc for stage `out`. */
 static void me_rend_fill_desc(int out)
 {
+   /* Loop-top presentation queues a GE texture read from the ready stage.
+    * Retiring the other ME stage can then make that old ready stage `out`.
+    * A completed ME render does not mean the GE has finished reading its
+    * predecessor: drain those reads before allowing the ME to overwrite it.
+    * With no queued lists this is a no-op; it does not wait for vblank. */
+   vid_gu_flush();
+
    if (g_mer_sh_on)
    {
       /* Snapshot the live arrays so the ME has something stable to read and
@@ -1729,106 +1808,48 @@ static void me_rend_fill_desc(int out)
    sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
 }
 
-/* FAST-FORWARD presentation.  The async pipeline (post N, present N at the
- * end of N+1) starves during FF: the FF fast-paths stop pumping it, the GE
- * holds the last pre-FF frame, and the player "teleports" on release.  So
- * while FF is engaged we run a SYNCHRONOUS cycle on a wall-clock cadence —
- * every ~33 ms: post this frame's capture, wait out the ~10 ms render,
- * present immediately.  Display runs at ~30 fps while emulation sprints;
- * the sync waits cost FF roughly a quarter of its throughput, which beats
- * a frozen screen.  Leaves nothing in flight, so the async pipeline
- * resumes seamlessly the moment FF is released. */
-#define MER_FF_CADENCE_US 33000u
-static unsigned g_mer_ff_last_us;
-/* FF-path probe (2x-freeze hunt): count every way this function can decline
- * to present, and log the census periodically.  Harness builds only pay the
- * evt; the counters are near-free. */
-static unsigned g_ffp_calls, g_ffp_nemu, g_ffp_cad, g_ffp_stuck, g_ffp_postf,
-                g_ffp_late, g_ffp_ok;
-
-static void me_rend_ff_probe(void)
-{
-   if ((g_ffp_calls & 127u) == 1u)
-      fe_evt("me_ffp calls=%u nemu=%u cad=%u stuck=%u postf=%u late=%u ok=%u"
-             " mult=%d uncap=%d",
-             g_ffp_calls, g_ffp_nemu, g_ffp_cad, g_ffp_stuck, g_ffp_postf,
-             g_ffp_late, g_ffp_ok, g_ff_mult, g_ff_uncapped);
-}
-
 /* Complete frames actually rendered in the current fps window (ME: a retired
  * render; CPU path: a frame the core really drew).  Reported beside the
  * emulated rate so a frameskipped or ME-outrun measurement can never read as
  * if every frame were being produced. */
 static unsigned g_fps_drawn;
 
-static void me_rend_ff_frame(int emulated)
-{
-   unsigned now = (unsigned)sceKernelGetSystemTimeLow();
-   int out;
-   unsigned t0;
-
-   g_ffp_calls++;
-   me_rend_ff_probe();
-   if (!emulated || !me_host_up())
-      { g_ffp_nemu++; return; }
-   if (now - g_mer_ff_last_us < MER_FF_CADENCE_US)
-      { g_ffp_cad++; return; }
-
-   /* Drain any async post left over from before FF engaged. */
-   if (g_mer_pending >= 0)
-   {
-      t0 = now;
-      while (!me_host_idle() &&
-             ((unsigned)sceKernelGetSystemTimeLow() - t0) < MER_RETIRE_US)
-         ;
-      if (!me_host_idle())
-         { g_ffp_stuck++; return; }  /* still busy — try next cadence tick */
-      g_mer_ready   = g_mer_pending;
-      mer_note_sum();
-      g_mer_pending = -1;
-   }
-
-   /* Synchronous render of THIS frame's capture.  The full-completion wait
-    * subsumes the input_seq handshake: emulation cannot race the ME's reads
-    * because we do not return until the render is done. */
-   out = (g_mer_ready == 0) ? 1 : 0;
-   me_rend_fill_desc(out);
-   if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) != 0)
-      { g_ffp_postf++; return; }
-   t0 = (unsigned)sceKernelGetSystemTimeLow();
-   while (!me_host_idle() &&
-          ((unsigned)sceKernelGetSystemTimeLow() - t0) < 30000u)
-      ;
-   if (!me_host_idle())
-   {
-      g_ffp_late++;
-      g_mer_drops++;                 /* ME late; the watchdog covers wedges */
-      return;
-   }
-   g_ffp_ok++;
-   /* Count it drawn.  This path retires its own stage, so it never passes
-    * through the async retire that bumps the counter -- uncapped non-smooth FF
-    * therefore reported "drawn=0" while plainly drawing, which same-frame had
-    * been masking by bumping the counter from its own retire. */
-   g_fps_drawn++;
-   g_mer_ready      = out;
-   g_mer_ff_last_us = (unsigned)sceKernelGetSystemTimeLow();
-   /* NO draw here: presentation happens at loop-top (me_rend_present), in
-    * phase with the swap.  Drawing from inside the emulation callback lands
-    * on whichever framebuffer happens to be the target — frozen or shimmering
-    * displays depending on FF mode (the 2x/3x/uncapped triage). */
-}
-
-/* Loop-top presentation for Media Engine mode — the ADR-0082 discipline:
- * draw the newest finished stage once per host frame, right before the swap,
- * so BOTH display buffers always carry the current frame.  Serves the async
- * pipeline and the FF synchronous path alike. */
+/* Loop-top presentation for Media Engine mode (ADR-0082). */
 static void me_rend_present(void)
 {
    if (!g_me_rend || g_mer_ready < 0)
       return;
+   if (g_ff_unlimited && g_mer_ready == g_mer_last_presented)
+      return; /* No new render: keep the LCD frame and let emulation run. */
    vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
+   g_mer_last_presented = g_mer_ready;
    g_drew = 1;
+}
+
+/* SAME-FRAME RETIREMENT.  Promote the stage the ME has just finished to
+ * "ready" so this frame's own render is what gets presented this frame -- the
+ * whole point of the feature.
+ *
+ * This is the stage-ownership handoff, and it was written out twice: once at
+ * the ME's done-report inside the loop and once at the pre-swap blit.  Two
+ * identical copies of an ownership protocol is one edit away from two
+ * different protocols, so it lives here, in the renderer that owns the stages.
+ *
+ * It deliberately does NOT present.  The single present happens before the
+ * swap, so a frame that never retires still leaves something in the back
+ * buffer.  And there is exactly one producer: a second one from the
+ * visible-end hook would corrupt stage/capture ownership. */
+static void me_rend_retire_if_idle(void)
+{
+   if (!mer_sameframe_active() || !g_me_rend || g_mer_pending < 0
+       || !me_host_idle())
+      return;
+   g_mer_ready   = g_mer_pending;
+   mer_note_sum();
+   g_mer_pending = -1;
+   g_mer_miss    = 0;
+   g_fps_drawn++;
+   g_mer_sf_hit++;
 }
 
 /* Called from plat_video_frame at the end of every emulated frame.
@@ -1846,9 +1867,11 @@ static void me_rend_frame(int emulated)
     *    spin only for a genuinely late one. */
    if (g_mer_pending >= 0)
    {
+      unsigned budget = g_ff_unlimited ? 0u :
+                        g_ff_draw_all ? MER_INPUT_US : MER_RETIRE_US;
       t0 = (unsigned)sceKernelGetSystemTimeLow();
       while (!me_host_idle() &&
-             ((unsigned)sceKernelGetSystemTimeLow() - t0) < MER_RETIRE_US)
+             ((unsigned)sceKernelGetSystemTimeLow() - t0) < budget)
          ;
       if (me_host_idle())
       {
@@ -1860,6 +1883,14 @@ static void me_rend_frame(int emulated)
       }
       else
       {
+         if (g_ff_draw_all)
+         {
+            /* Every healthy frame must be posted. A hung renderer must not
+             * turn Smooth into a silent dropping mode or stall the PSP
+             * forever: use the existing CPU fallback on this hard timeout. */
+            me_rend_teardown("ff_render_wedge");
+            goto present;
+         }
          /* ME still busy: drop this frame (present the old one), do NOT
           * flip the capture buffer — the next emulated frame overwrites
           * the capture and we try again. */
@@ -1926,8 +1957,15 @@ static void me_rend_frame(int emulated)
 present:
    /* 4. Presentation moved to loop-top (me_rend_present) — swap-phase
     * discipline; see the FF triage note above. */
-   if (g_me_rend && me_host_watchdog_frame())
-      me_rend_teardown("watchdog");
+   /* Unlimited may run many tiny guest frames during one valid ME render.
+    * Do not count those as 30 separate heartbeat failures in a few ms. */
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   if (g_me_rend && (!g_ff_unlimited || t0 - g_mer_watch_us >= 16667u))
+   {
+      g_mer_watch_us = t0;
+      if (me_host_watchdog_frame())
+         me_rend_teardown("watchdog");
+   }
 
    if (++g_mer_census >= 600)
    {
@@ -2003,40 +2041,22 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
    if (g_blit_suppress)
       return;   /* intermediate multiplier-FF frame */
 
-   /* Media Engine mode: the second core renders; this frame's pixels came
-    * from the capture pipeline, not `pix` (which the core never wrote).
-    * FF gets its own synchronous cadence, and deliberately BYPASSES the
-    * uncapped present mask below — ff_frame's wall-clock throttle is the
-    * cadence authority (the mask capped the display at ~15 fps). */
+   /* All ME profiles share the capture/retire pipeline. Unlimited skips
+    * a new render if the ME is busy; Unlimited Smooth waits for it. */
    if (g_me_rend)
    {
-      /* Smooth/bench FF stays on the ASYNC path even while uncapped: the
-       * point is to keep the parallel pipeline running, and the synchronous
-       * FF path both blocks on the ME and throttles rendering to a 33 ms
-       * cadence (which is exactly what makes ordinary FF look choppy). */
-      if ((g_ff_uncapped || g_ff_mult) &&
-          !(g_pcfg.ff_smooth || g_pcfg.bench_mode))
-      {
-         /* SYNCHRONOUS FF.  This posts, blocks on the ME and retires the
-          * stage itself.  It must be the only thing posting this frame: a
-          * second post from the same-frame hook leaves two producers for
-          * one stage index and the picture alternates between a live render
-          * and a stale one -- exactly the "oscillating between the current
-          * frame and the frame that was showing when FF was toggled" that
-          * scoping same-frame to the paced path fixes.  The gate closes at
-          * loop top, one frame after the hook may already have fired, so
-          * check the post flag here too. */
-         if (!g_mer_posted)
-            me_rend_ff_frame(pix != NULL);
-      }
-      else if (!g_mer_posted)
+      if (!g_mer_posted)
          me_rend_frame(pix != NULL);
       return;
    }
 
-   /* Uncapped FF (CPU path): blit only the latest frame at a low cadence. */
-   if (g_ff_uncapped && (fe_host_frame_count() & FF_PRESENT_MASK))
+   /* Preserve the harness's historical CPU presentation sampling. User
+    * Unlimited Smooth must blit every rendered frame, including fallback. */
+   if (g_ff_uncapped && !g_ff_user &&
+       (fe_host_frame_count() & FF_PRESENT_MASK))
       return;
+   if (g_ff_unlimited && !pix)
+      return; /* CPU fallback: a skipped frame needs no duplicate GE blit. */
 
    /* ADR-0080c: session-gated activation.  Offload runs ONLY while a WLAN
     * session is live — which begins AFTER np_start, so the ME video path
@@ -2116,13 +2136,14 @@ static void dump_frame_bmp(void)
    /* Media Engine mode: the core buffer is never written (capture mode skips
     * the render) — dump the frame the ME actually presented instead, so
     * screenshots show what the screen shows. */
-   if (g_me_rend && g_mer_ready >= 0)
    {
-      pix   = g_mer_stage[g_mer_ready];
-      pitch = MER_STAGE_PITCH * 2;   /* fe_host_last_frame pitch is BYTES —
-                                      * passing pixels here interleaved the
-                                      * left/right halves of every row in the
-                                      * first ME-mode dumps (display was fine) */
+      const uint16_t *me = NULL;
+      unsigned mp = 0;
+      if (me_rend_presenting(&me, &mp))
+      {
+         pix   = me;
+         pitch = mp * 2;   /* fe_host_last_frame pitch is BYTES */
+      }
    }
    if (!pix)
       return;
@@ -2168,10 +2189,14 @@ static void vhash_frame(void)
     * the project -- 60 logs, all distinct=1 -- which is the answer it gives
     * for a renderer that draws nothing at all.  dump_frame_bmp() already
     * carries this switch; the oracle never got it.  Hash what was PRESENTED. */
-   if (g_me_rend && g_mer_ready >= 0)
    {
-      pix   = g_mer_stage[g_mer_ready];
-      pitch = MER_STAGE_PITCH * 2;   /* pitch is BYTES here */
+      const uint16_t *me = NULL;
+      unsigned mp = 0;
+      if (me_rend_presenting(&me, &mp))
+      {
+         pix   = me;
+         pitch = mp * 2;   /* pitch is BYTES here */
+      }
    }
    if (!pix)
       return;
@@ -2446,12 +2471,12 @@ static void backup_save(const char *save_path)
 /* ----------------------------------------------------------- wireless --- */
 
 /* g_net_up moved up near the ME video globals (ADR-0080c session gate). */
-static int g_net_is_host;
+int g_net_is_host;
 static int g_group_lost_logged;
 static char g_session_info[48];
 static const char *g_save_path_for_backup;
 
-static uint64_t net_now_us(void)
+uint64_t net_now_us(void)
 {
    /* Microseconds, monotonic (ADHOC-NOTES §11.13) — netdrv timers must
     * never see wall-clock steps (ADR-0010). */
@@ -2475,6 +2500,7 @@ static unsigned long long evt_clock_us(void)
 
 static void net_error_evt(const char *what, int rc)
 {
+   FE_EVT_ONLY(what); FE_EVT_ONLY(rc);
    fe_evt("net_error reason=%s stage=%s rc=%d sce=0x%08x",
           rc == ADHOC_ERR_WLAN_OFF ? "wlan_off" : what,
           adhoc_transport_stage(), rc,
@@ -2545,38 +2571,13 @@ static void adhoc_stats_evt(void)
  * charged to one frame).  `force` is teardown, which must always report. */
 #define SESS_COST_MIN_FRAMES 60
 
-/* Session pacing state (ADR-0027/0028 adaptive, ADR-0033 fixed-rate).
- * Declared here rather than with the module below only because `sess_cost`
- * reports it — the module, and the reasoning, live under "session pacing"
- * further down. */
-/* Hoisted out of the pacing constants below (ADR-0037): the frameskip policy
- * sits between here and there and now needs it too. */
-#define PACE_NOMINAL_X100      5973   /* GBA 59.7275 Hz: never target above */
-
-static int      g_pace_engaged;
-static unsigned g_pace_cap_x100;      /* OUR capability (EMA), not achieved */
-static unsigned g_pace_peer_x100;     /* last peer capability we acted on */
+/* The vblank target stays HERE: the present loop owns it, and the pacing
+ * engine in ff_psp.c does not touch it. */
 /* ADR-0047: the absolute vblank we intend to present the next frame on.
  * Paced against sceDisplayGetVcount() so an overrunning frame consumes
  * its budget instead of adding a whole vblank on top of it. */
 static unsigned g_vc_target;
 #define PACE_VC_RESYNC_VB 8   /* arrears past this are forgiven, not repaid */
-/* Decaying low-water marks (ADR-0028): the sustained WORST of each side. */
-static unsigned g_pace_self_lo, g_pace_peer_lo;
-static uint64_t g_pace_self_lo_us, g_pace_peer_lo_us;
-static unsigned g_pace_target_x100;   /* applied target, ramped */
-static unsigned g_pace_goal_x100;     /* what the target is ramping toward */
-static unsigned g_pace_acc;           /* fractional-vblank accumulator, /10000 */
-static uint64_t g_pace_win_us;
-static unsigned g_pace_win_frames;
-static uint64_t g_pace_win_vb;        /* vblank periods this window's work needed */
-static uint64_t g_pace_log_us;
-static int      g_pace_floor_said;
-static int      g_pace_slow_us;       /* harness only: see `pace_slow_us` */
-/* ADR-0033 fixed-rate mode. */
-static unsigned g_pace_fixed_x100;    /* the clamp: config net_session_fps */
-static uint64_t g_pace_ramp_us;       /* last time the glide advanced */
-static int      g_pace_miss_said;     /* one session_pace_miss per episode */
 
 /* ---- ADR-0063: EVT frame_hist — the SHAPE of the frame-time distribution --
  *
@@ -2653,9 +2654,9 @@ static void frame_hist_note(uint32_t work_us)
    static uint32_t cached_bud = 16740;
    unsigned i;
 
-   if (g_pace_target_x100 != cached_target)
+   if (ff_pace_target_x100() != cached_target)
    {
-      cached_target = g_pace_target_x100;
+      cached_target = ff_pace_target_x100();
       cached_bud    = cached_target
                     ? (uint32_t)(100000000ull / cached_target)
                     : 16740u;
@@ -2677,8 +2678,10 @@ static void frame_hist_note(uint32_t work_us)
  * `swin` is sess_cost's count, printed so the two can be lined up. */
 static void frame_hist_evt(unsigned swin)
 {
-   unsigned bud = g_pace_target_x100
-                ? (unsigned)(100000000ull / g_pace_target_x100) : 0u;
+   FE_EVT_ONLY(swin);
+   unsigned bud = ff_pace_target_x100()
+                ? (unsigned)(100000000ull / ff_pace_target_x100()) : 0u;
+   FE_EVT_ONLY(bud);
    fe_evt("frame_hist win=%u swin=%u bud=%u "
           "b=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u "
           "ovb=%u wmax=%u late=%u forgive=%u nudge=%u",
@@ -2833,6 +2836,7 @@ static void preempt_evt(void)
 {
    SceKernelThreadRunStatus st;
    int prio = 0;
+   FE_EVT_ONLY(prio);
    if (!g_pe_on)
       return;
    memset(&st, 0, sizeof(st));
@@ -3018,23 +3022,30 @@ static void boost_evt(void)
    g_boost_n_open = g_boost_n_self = g_boost_n_warden = g_boost_late = 0;
 }
 
-static void sess_cost_evt(int force)
+void sess_cost_evt(int force)
 {
    static fe_np_prof  prev;
    static adhoc_stats prev_a;
    static unsigned    prev_evt_lines, prev_evt_us, prev_evt_io_us;
+   FE_EVT_ONLY(prev_evt_lines); FE_EVT_ONLY(prev_evt_us);
+   FE_EVT_ONLY(prev_evt_io_us);
    static unsigned    prev_core_calls;
    static uint32_t    prev_core_us;
+   FE_EVT_ONLY(prev_core_us);
    fe_np_prof  p;
    adhoc_stats a;
    unsigned    el, eu, emx;
    unsigned    eio, eiomx, edrop, ehi;
-   unsigned    f, dpdp, denq;
-   unsigned    ccalls, dcc;
+   unsigned    f, dpdp = 0, denq = 0;
+   FE_EVT_ONLY(dpdp); FE_EVT_ONLY(denq);
+   unsigned    ccalls, dcc = 0;
+   FE_EVT_ONLY(dcc);
    uint32_t    cus, cmax;
    unsigned    srf, sff, ssf, sdf, spl;  /* counters, SLOWEST retro_run */
    unsigned    crf, cff, csf, cdf, cpl;  /* cumulative, for window rates */
    static unsigned prev_crf, prev_cff, prev_csf, prev_cdf, prev_cpl;
+   FE_EVT_ONLY(prev_crf); FE_EVT_ONLY(prev_cff); FE_EVT_ONLY(prev_csf);
+   FE_EVT_ONLY(prev_cdf); FE_EVT_ONLY(prev_cpl);
 
    fe_np_prof_get(&p);
    adhoc_transport_get_stats(&a);
@@ -3078,10 +3089,10 @@ static void sess_cost_evt(int force)
           crf - prev_crf, cff - prev_cff, csf - prev_csf, cdf - prev_cdf,
           cpl - prev_cpl,
           srf, sff, ssf, sdf, spl,
-          g_pace_target_x100 / 100, g_pace_target_x100 % 100,
-          g_pace_cap_x100 / 100,    g_pace_cap_x100 % 100,
-          g_pace_peer_x100 / 100,   g_pace_peer_x100 % 100,
-          g_pace_engaged);
+          ff_pace_target_x100() / 100, ff_pace_target_x100() % 100,
+          ff_pace_cap_x100() / 100,    ff_pace_cap_x100() % 100,
+          ff_pace_peer_x100() / 100,   ff_pace_peer_x100() % 100,
+          ff_pace_engaged());
 
    frame_hist_evt(f);                                       /* ADR-0063 */
    preempt_evt();                                           /* ADR-0064 */
@@ -3103,6 +3114,7 @@ static void sess_cost_evt(int force)
 
 static void log_adhoc_up(const char *group)
 {
+   FE_EVT_ONLY(group);
    nd_transport tp;
    uint8_t mac[6];
    adhoc_transport_iface(&tp);
@@ -3163,1045 +3175,9 @@ void osd_session_chip_refresh(void)
       osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
 }
 
-/* ---- session frameskip policy (ADR-0019, supersedes ADR-0018) -----------
- *
- * ADR-0018 set gpsp_frameskip=auto for the whole session on the theory that
- * a console falling behind stretches the emulated link's timeouts.  The
- * first successful field session disproved the premise for both consoles:
- * the heartbeat ladder held ~58.9 fps emulated from start to finish, i.e.
- * identical to solo play, so `auto` was throwing away rendered frames while
- * the emulator was already keeping real time.  Worse, `auto` triggers on a
- * transient audio-buffer dip (fe_host_audio_buffer_status < 25 %) which our
- * vblank-locked main loop can produce with plenty of CPU headroom — and
- * because the loop then still waits for vblank, the skip buys back no
- * emulation throughput at all.  Pure user-visible stutter.
- *
- * Policy (config.ini `net_frameskip`):
- *   0 off       DEFAULT — never touch frameskip for a session.
- *   1 adaptive  start disabled; engage a BOUNDED skip only after
- *               SKIP_SLOW_WINDOWS consecutive 1 s windows below
- *               SKIP_SLOW_PCT_TGT of the applied pace target, and drop it
- *               again after SKIP_FAST_WINDOWS windows back above
- *               SKIP_FAST_PCT_TGT of it (ADR-0037 made both relative).
- *               Hysteresis, deliberately: `auto` reacted per frame.
- *   2 auto      ADR-0018 behaviour verbatim, kept so the two can be
- *               compared on real hardware in one sitting.
- * Every transition is logged, so a field log says which policy ran.
- *
- * ADR-0021 amendment — what mode 1 engages.  On hardware it skipped
- * 580 of 600 frames (`EVT fps ... rendered=1.9`) and STILL did not reach
- * 60 fps.  That is not a tuning miss, it is the mechanism: `auto_threshold`
- * skips whenever audio-buffer occupancy is below the threshold, and a
- * console that is genuinely behind never refills the ring, so the only
- * thing bounding it is the core's FRAMESKIP_MAX = 30 consecutive skips
- * (libretro/libretro.c:96,1361-1377) — 30 skipped, 1 rendered, forever.
- * A console short of ~1.4x needs half its renders back, not 97 % of them.
- * So the adaptive mode now engages `fixed_interval` with interval 1: skip
- * one, render one, hard bound, no audio-occupancy feedback loop at all.
- * The hysteresis around it is unchanged.
- *
- * ADR-0037 amendment — "behind" IS RELATIVE TO THE APPLIED PACE TARGET.
- * The two thresholds used to be absolute fps constants (5700/5850) derived
- * from the GBA's nominal 59.7275.  That was right while the only rate we
- * ever aimed at WAS the nominal one.  ADR-0033 then made a session clamp
- * itself to `net_session_fps`, and the constants did not follow: a console
- * pacing perfectly at its 40.00 (or 29.97) target measures 40.00 < 57.00,
- * concludes it is behind on three consecutive windows, and engages
- * interval-1 skip FOR THE WHOLE SESSION.  The field log is unambiguous —
- * `EVT fps emu=29.43 rendered=14.71 skipped=300` with `self_cap` reporting
- * 52-57 fps of capability sitting unused.  The emulator was hitting its
- * target exactly and throwing away half its frames for it.
- *
- * So the thresholds are now a FRACTION of `g_pace_target_x100`, the applied
- * (ramped) target.  Off-session that is PACE_NOMINAL_X100 and the numbers
- * come out at 5697/5853 — within 3/100 fps of the old constants, so this is
- * a no-op everywhere except the case it fixes.  Percentages rather than the
- * old literals because the target moves during the ~5 s glide and a fixed
- * offset would mean something different at each point on the ramp. */
-#define SKIP_WIN_US        1000000ull
-#define SKIP_SLOW_PCT_TGT     954    /* x10: below 95.4 % of target = behind */
-#define SKIP_FAST_PCT_TGT     980    /* x10: above 98.0 % of target = fine   */
-#define SKIP_SLOW_WINDOWS      3
-#define SKIP_FAST_WINDOWS      5
-
-enum { SKIP_POL_OFF = 0, SKIP_POL_ADAPTIVE, SKIP_POL_AUTO };
-
-static int      g_skip_engaged;      /* auto_threshold currently set */
-static int      g_skip_slow, g_skip_fast;
-static uint64_t g_skip_win_us;
-static unsigned g_skip_win_frames;
-
-static void skip_policy_set(const char *mode)
-{
-   fe_host_option_set_live("gpsp_frameskip", mode);
-}
-
-static void skip_policy_session_begin(void)
-{
-   g_skip_engaged = 0;
-   g_skip_slow = g_skip_fast = 0;
-   g_skip_win_us = net_now_us();
-   g_skip_win_frames = fe_host_frame_count();
-   if (g_pcfg.net_frameskip == SKIP_POL_AUTO)
-   {
-      g_skip_engaged = 1;
-      skip_policy_set("auto");
-   }
-   fe_evt("skip_policy mode=%s engaged=%d",
-          g_pcfg.net_frameskip == SKIP_POL_AUTO     ? "auto" :
-          g_pcfg.net_frameskip == SKIP_POL_ADAPTIVE ? "adaptive" : "off",
-          g_skip_engaged);
-}
-
-/* Hand frameskip back to the session policy — used when fast-forward (which
- * owns gpsp_frameskip while it runs, plan §4.4) releases it. */
-static void skip_policy_reapply(void)
-{
-   if (!g_net_up || !g_skip_engaged)
-   {
-      /* Outside a session, honour the sparse smoothing skip if the user asked
-       * for one: draw N frames, skip 1.  A game a few fps short of 60 gets its
-       * headroom back without the visible hitch that halving the rate causes.
-       * A wireless session overrides it — the session's own skip policy is
-       * about staying in step with the other console, which wins. */
-      if (g_pcfg.frameskip_sparse > 0)
-      {
-         char n[8];
-         snprintf(n, sizeof(n), "%d", g_pcfg.frameskip_sparse);
-         fe_host_option_set_live("gpsp_frameskip_interval", n);
-         skip_policy_set("sparse_interval");
-      }
-      else
-         skip_policy_set("disabled");
-      return;
-   }
-   if (g_pcfg.net_frameskip == SKIP_POL_AUTO)
-      skip_policy_set("auto");
-   else
-   {
-      fe_host_option_set_live("gpsp_frameskip_interval", "1");
-      skip_policy_set("fixed_interval");
-   }
-}
-
-static void skip_policy_session_end(void)
-{
-   if (g_skip_engaged)
-   {
-      skip_policy_set("disabled");
-      g_skip_engaged = 0;
-   }
-}
-
-/* Once per main-loop iteration while a session is up.  Never runs during
- * fast-forward: FF owns gpsp_frameskip itself (plan §4.4). */
-/* The rate this console is CURRENTLY TRYING to hit, x100 (ADR-0037).  Before
- * pace_init runs, and whenever the pacing module is off, that is the GBA's
- * nominal rate — which is also what `g_pace_target_x100` is initialised to,
- * so the zero-check is belt-and-braces against call order, not a real case. */
-static unsigned skip_pace_target_x100(void)
-{
-   return g_pace_target_x100 ? g_pace_target_x100 : PACE_NOMINAL_X100;
-}
-
-static void skip_policy_frame(void)
-{
-   uint64_t now, dt;
-   unsigned frames, fps_x100, target, slow_x100, fast_x100;
-
-   if (g_pcfg.net_frameskip != SKIP_POL_ADAPTIVE)
-      return;
-   if (g_ff_uncapped || g_ff_mult)
-      return;
-   if (ui_active())
-   {
-      /* The core is paused while the menu is open, so wall clock advances
-       * and fe_host_frame_count() does not.  Left alone that divides real
-       * seconds by zero frames and engages the skip on a fabricated
-       * `fps=0.00` — which the field log duly showed.  Re-base the window
-       * every menu frame so the first measurement after Resume is honest. */
-      g_skip_win_us = net_now_us();
-      g_skip_win_frames = fe_host_frame_count();
-      return;
-   }
-
-   now = net_now_us();
-   dt  = now - g_skip_win_us;
-   if (dt < SKIP_WIN_US)
-      return;
-
-   frames = fe_host_frame_count() - g_skip_win_frames;
-   fps_x100 = (unsigned)((uint64_t)frames * 100000000ull / dt);
-   g_skip_win_us = now;
-   g_skip_win_frames = fe_host_frame_count();
-
-   /* ADR-0037: measure against what we are AIMING at, not against 59.7275. */
-   target    = skip_pace_target_x100();
-   slow_x100 = (unsigned)((uint64_t)target * SKIP_SLOW_PCT_TGT / 1000ull);
-   fast_x100 = (unsigned)((uint64_t)target * SKIP_FAST_PCT_TGT / 1000ull);
-
-   if (fps_x100 < slow_x100)
-   {
-      g_skip_fast = 0;
-      if (!g_skip_engaged && ++g_skip_slow >= SKIP_SLOW_WINDOWS)
-      {
-         g_skip_engaged = 1;
-         g_skip_slow = 0;
-         fe_host_option_set_live("gpsp_frameskip_interval", "1");
-         skip_policy_set("fixed_interval");
-         /* `target=` is the whole point of ADR-0037: a field log must show
-          * what the decision was measured AGAINST, or the next reader is
-          * back to guessing which rate 29.43 was supposed to beat. */
-         fe_evt("skip_engage fps=%u.%02u target=%u.%02u mode=fixed_interval "
-                "interval=1", fps_x100 / 100, fps_x100 % 100,
-                target / 100, target % 100);
-      }
-   }
-   else if (fps_x100 >= fast_x100)
-   {
-      g_skip_slow = 0;
-      if (g_skip_engaged && ++g_skip_fast >= SKIP_FAST_WINDOWS)
-      {
-         g_skip_engaged = 0;
-         g_skip_fast = 0;
-         skip_policy_set("disabled");
-         fe_evt("skip_release fps=%u.%02u target=%u.%02u",
-                fps_x100 / 100, fps_x100 % 100, target / 100, target % 100);
-      }
-   }
-   else
-      g_skip_slow = g_skip_fast = 0;   /* in the dead band: hold */
-}
-
-/* ---- session pacing (ADR-0033 fixed-rate; ADR-0027/0028 adaptive) --------
- *
- * TWO POLICIES LIVE HERE, selected by `config.ini net_pace_match`:
- *
- *   0  off       — both consoles free-run.  (Meaning unchanged.)
- *   1  FIXED     — DEFAULT (ADR-0033).  While a session is live both consoles
- *                  clamp to the SAME constant, `config.ini net_session_fps`
- *                  (default 40.00).  No negotiation, no control loop.
- *   2  adaptive  — ADR-0027/0028's peer-capability matcher, below, kept
- *                  verbatim for a hardware A/B.
- *
- * **THE MEANING OF `1` CHANGED.** It used to select the adaptive matcher.  An
- * existing config.ini carrying `net_pace_match=1` silently adopts fixed-rate
- * pacing, which is intended — 1 still means "pace during a session"; only the
- * how changed.  Anyone wanting the old behaviour must now write `2`.
- *
- * WHY THE CONTROL LOOP WENT AWAY.  The requirement changed: full-speed
- * emulation *during a wireless session* is now explicitly a nice-to-have, not
- * a requirement.  Trading is a temporary activity, and half speed for its
- * duration is acceptable so long as the session is not choppy, still accepts
- * input, and the emulator runs normally the moment the session ends.
- *
- * Against that requirement the matcher is not just unnecessary, it is
- * actively harmful.  Its target has to track a peer capability that genuinely
- * fluctuates with game workload (the field measured `peer_cap` walking
- * 49.9, 44.7, 41.6, 38.9, 41.1, 47.0, 51.0, 53.7, 55.4, 56.6, 52.6 ... within
- * seconds), so it spends the whole session hunting — and the applied rate
- * moving is itself a desync source, because Gen-3's RFU counts link timeouts
- * in FRAMES.  The hardware profile says why the hunt can never converge:
- * in-session steady state on a joining PSP-3000 is
- * `cpu 7754 vid 3069 blt 2973 audio 436` = 14253 us of a 16750 us budget, and
- * the host/join difference is entirely `cpu` (6071 -> 7754) — the GAME'S OWN
- * RFU driver code running on the emulated CPU.  That is not ours to optimise
- * and not ours to predict, so we stop predicting it.
- *
- * FIXED-RATE, then.  40.00 fps sits comfortably below the 45-58 fps both
- * consoles sustain in the join seat, and both sides compute it from the same
- * constant rather than from each other.  Deterministic, identical, and the
- * applied rate holds still for the whole session, which is the property the
- * link actually needs.  It costs speed on healthy sessions; per the changed
- * requirement, that is the trade we are choosing.
- *
- * RAMP, BOTH WAYS.  A step from 59.73 to 40.00 at session start is a stall by
- * another name — the frame it lands on is 8 ms longer, and the audio step
- * jumps with it.  So the applied rate GLIDES at PACE_FIXED_RAMP_X100_PER_S
- * (4.00 fps/s), ~5 s in and ~5 s out, on a per-frame time base rather than
- * the adaptive path's 1 s windows.  The glide out runs AFTER teardown, which
- * is why the throttle below gates on the applied target and never on
- * `g_net_up`: dropping the throttle instantly while the audio step is still
- * ramping would let the emulator outrun the consumer and overflow the ring.
- *
- * MISSING THE RATE IS REPORTED, NOT CHASED.  If a console cannot even sustain
- * the fixed rate we log `EVT session_pace_miss actual=` and carry on at the
- * configured clamp.  Chasing downward would reintroduce exactly the moving
- * target this ADR removed, and a known steady rate beats a correct-but-moving
- * one.  (The adaptive path's floor/low-water machinery is untouched and still
- * applies to mode 2.)
- *
- * AUDIO is unchanged in kind from ADR-0027: `g_audio_step` follows the
- * applied rate exactly, so production and consumption match and the stream
- * stays continuous, at the cost of a proportional pitch drop (~7 semitones at
- * 40.00 fps).  It glides because the pace glides.  The user approved this.
- *
- * ------------------------------------------------------------------------
- * What follows is mode 2's reasoning, unchanged (ADR-0027/0028):
- *
- * The field fact this exists for: the join/client role costs ~12 fps against
- * the host role on BOTH consoles (PSP-3000 58 host / 46 join; PSP-1000 56-58
- * host / 49-52 join), and the cost is inside the core's RFU client path, not
- * our transport (measured per-frame session cost totals ~500 us).  Two real
- * GBAs both run at 59.7275 Hz, so their link timing is mutually consistent.
- * Gen-3's RFU counts link timeouts in FRAMES, not wall-clock seconds — so
- * two emulators running ~20 % apart are permanently inconsistent in a way
- * two cartridges never are, and the slower side's game times out.  EQUALITY
- * MATTERS MORE THAN ABSOLUTE SPEED: if both run at the same rate, even a
- * slower one, the game-side link timing becomes mutually consistent again.
- *
- * THE CONTROL LOOP, and the trap in it.  Each side advertises a frame rate
- * and the faster side paces down to the slower.  If what a console
- * advertises is its *achieved* rate, the pair ratchets downward without
- * bound: A throttles to 46 to match B, A now measures and reports 46, B sees
- * "peer is at 46" and throttles itself, A re-measures lower, and both crawl
- * into the floor — a control-loop bug that looks exactly like a performance
- * regression.  So a console advertises its **capability**, never its
- * throttled rate:
- *
- *   capability = the rate this vblank-locked loop WOULD free-run at, derived
- *   from per-frame WORK time (the loop iteration with every vblank wait
- *   excluded — the same number ADR-0021 reports as `frame=`).  A frame
- *   costing w us occupies ceil(w / 16.683 ms) vblank periods, minimum one;
- *   sum that over a window and the rate is frames * 59.94 / periods.
- *
- * Our deliberate idle is not work, so throttling ourselves cannot move our
- * own advertised number.  `peer_cap` therefore always means "how fast my
- * partner CAN go", never "how fast my partner is currently choosing to go",
- * and the loop has exactly one mover: the genuinely faster console.  If
- * `self_cap` is ever seen sagging in the field log while `engaged=1`, the
- * ratchet is back and that line says so directly.
- *
- * WHAT THE FIELD CHANGED (ADR-0028).  The first hardware run proved the
- * mechanism and broke the control law.  Both consoles held `self_cap` flat
- * while throttling — the anti-ratchet is correct — and for the first time
- * both players entered the Union Room and could move.  But `peer_cap` swung
- * ~20 fps within seconds (49.9, 44.7, 41.6, 38.9, 41.1, 47.0, 51.0, 53.7,
- * 55.4, 56.6, 52.6, ...), and against a symmetric 2 fps/s ramp we were
- * permanently mid-chase, never at the right target, and even disengaged at
- * the floor mid-session.  The second log explained why: the console in the
- * JOIN seat becomes the slow one, so **the identity of the slow peer flips**
- * and a loop that tracks "whoever is behind right now" keeps reversing.
- *
- * So the target is no longer "the peer": it is the PAIR'S SUSTAINED WORST.
- *   - Each side keeps a decaying LOW-WATER MARK of both capabilities: a new
- *     low is taken immediately, and a low is only forgotten after 4 s of
- *     nothing worse, then at 0.50 fps per window.  This turns a 20 fps
- *     oscillation into a stable number.
- *   - The goal is `min(self_lo, peer_lo) + margin`.  **min() is symmetric**,
- *     so both consoles compute the SAME target from the same two numbers and
- *     a role flip does not move it — the identity of the mover changes, the
- *     target does not.  A steady 48 beats an accurate-but-moving 39-58.
- *   - ONE MOVER falls out for free instead of being enforced: whichever
- *     console is currently the binding constraint is already below the
- *     target and inserts no waits at all, because the throttle can only ever
- *     add delay.  No flag decides who moves.
- *
- * Guarantees, in the order they are enforced below:
- *   - ASYMMETRIC RAMP.  Fall 8.00 fps per window, rise 0.50.  Getting slow
- *     late is what desyncs a link; getting fast late costs nothing.
- *   - FLOOR.  We never pace ourselves below 40.00 fps — but we CLAMP there
- *     rather than releasing.  The field showed releasing is actively worse:
- *     against a peer at 38.9 it snaps us back to 59.73 and makes the gap
- *     21 fps instead of 1.1.  Absurd or zero reports are ignored outright.
- *   - CEILING.  The target never exceeds the GBA's own 59.7275 Hz.
- *   - STAY ENGAGED.  `engaged` is a wide-hysteresis *report* of "the target
- *     is meaningfully below nominal", not a gate on the throttle — the
- *     throttle follows the applied target alone.  Repeated engage/release
- *     cycling was itself a symptom; the 3000 released and never re-engaged
- *     even as it became the slower side.
- *   - RELEASE.  When the pair is genuinely fast again, or the peer goes
- *     away, the goal returns to nominal and the target ramps back off at the
- *     slow rate.  Nothing latches for the rest of the session.
- *
- * HOW THE TARGET IS APPLIED.  The loop is vblank-locked, so the only lever
- * is how many vblanks a frame waits for, and a whole extra vblank is a jump
- * from 59.94 to 29.97 fps — far too coarse.  Instead the fraction is
- * accumulated: a target needs 59.94/target vblanks per frame, so we carry
- * the fractional part in 1/10000ths and spend one extra vblank whenever it
- * crosses 1.  Target 46.50 -> 1.2890 vblanks/frame -> an extra vblank on
- * 28.9 % of frames, averaging exactly 46.50 fps.
- *
- * `config.ini net_pace_match` = 2 selects this policy (it was 1 before
- * ADR-0033), so the two policies A/B on hardware with no rebuild, exactly
- * like net_tx_thread/log_thread/sram_thread. */
-
-#define PACE_MODE_OFF             0
-#define PACE_MODE_FIXED           1   /* ADR-0033, default */
-#define PACE_MODE_ADAPTIVE        2   /* ADR-0027/0028, kept for the A/B */
-/* ADR-0078: FIXED's clamp, but the clamped rate FLOATS on backpressure.
- *
- * The fixed clamp (ADR-0033) bought rate equality with a constant, and the
- * constant has to be chosen for the worst case — 57.00 ships because the
- * join is ~2 fps short of nominal, so every pair pays 2.73 fps whether or
- * not their consoles could do better today.  The ADR-0027 matcher adapted,
- * but its signal was an EMA of the peer's ADVERTISED capability, and it
- * hunted (that is why ADR-0033 replaced it).
- *
- * This mode reuses ALL of FIXED's machinery — the glide, the audio step,
- * the snap, the miss reporting — and moves only WHERE the clamp value comes
- * from: the live reliable-TX backlog toward the peer (fe_np_txq_now).  A
- * receiver that stops absorbing shows up here within one RTO, as a direct
- * measurement rather than an estimate.  HOST-ONLY by design: the host is
- * the sender whose rate matters (child-side queues are child-only, HANDOVER
- * §2), and one adapting console cannot hunt against another — the join
- * simply runs its own fixed ceiling and the pair converges on what the join
- * actually absorbs.  On the join this mode degrades to plain FIXED.
- *
- * Control law, evaluated once per ~1 s pace window, asymmetric on purpose:
- *   backlog >= BP_HI            -> base falls  BP_STEP_DOWN, immediately
- *   backlog <= BP_LO for
- *     BP_RISE_WINS windows      -> base rises  BP_STEP_UP
- *   else                        -> hold, streak resets
- * Rise is slow (0.25 fps after 3 clean seconds), fall is fast (0.50 fps at
- * once), and every move is logged.  FALSIFIER (state it before the run):
- * if pace_bp shows the base oscillating — alternating up/down without a
- * change in conditions — this is ADR-0033's hunting again and the mode is
- * dead; if the base parks at the ini rate and never rises with txq at 0,
- * the signal is not informative and the mode is pointless. */
-#define PACE_MODE_BACKPRESSURE    3
-#define PACE_BP_HI                6    /* payloads: ~0.1 s of frames backed up */
-#define PACE_BP_LO                1
-#define PACE_BP_STEP_DOWN_X100    50
-#define PACE_BP_STEP_UP_X100      25
-#define PACE_BP_RISE_WINS         3
-#define PACE_BP_FLOOR_X100        5500
-static unsigned g_bp_low_streak;
-static unsigned g_bp_hold_wins;       /* windows since the last pace_bp line */
-
-#define PACE_VBLANK_HZ_X100    5994   /* PSP display 59.94 Hz */
-#define PACE_VBLANK_US        16683   /* one vblank period */
-#define PACE_FLOOR_X100        4000   /* never pace BELOW 40.00 fps ourselves */
-#define PACE_MARGIN_X100         50   /* aim just above the worst, not at it */
-#define PACE_ENGAGE_X100        150   /* "engaged" once 1.50 below nominal... */
-#define PACE_RELEASE_X100        40   /* ...and only released within 0.40 */
-#define PACE_RAMP_DOWN_X100     800   /* fall 8.00 fps per window: react fast */
-#define PACE_RAMP_UP_X100        50   /* rise 0.50 fps per window: recover slow */
-#define PACE_LOW_HOLD_US    4000000   /* remember a peer's worst for 4 s... */
-#define PACE_LOW_RISE_X100       50   /* ...then let it forget 0.50 fps/window */
-#define PACE_WIN_US         1000000   /* ~1 s measurement window */
-#define PACE_EMA_DEN              3   /* new sample gets 1/3 weight */
-#define PACE_PEER_MIN_X100     1000   /* sanity wall on a reported value: */
-#define PACE_PEER_MAX_X100    20000   /*   10.00 .. 200.00 fps, else ignore */
-#define PACE_LOG_US        10000000   /* heartbeat the steady state this often */
-#define PACE_MAX_EXTRA_VB         2   /* bound on extra vblanks per frame */
-
-/* ADR-0033 fixed-rate mode. */
-#define PACE_FIXED_RAMP_X100_PER_S 400 /* glide 4.00 fps/s: ~5 s in and out */
-#define PACE_MISS_MARGIN_X100      150 /* 1.50 fps of slack before "missed" */
-#define PACE_MISS_LOG_US       10000000/* at most one miss line per 10 s */
-/* ADR-0035: the snap only ever produces PACE_VBLANK_HZ_X100 / N.  N is capped
- * at 3 because N vblanks is (N-1) EXTRA vblanks and PACE_MAX_EXTRA_VB is 2 —
- * a snap the throttle could not actually deliver would be the same lie in a
- * different place. */
-#define PACE_SNAP_MAX_VB            3
-
-/* (state declared above sess_cost_evt, which reports it) */
-
-/* Harness knob (.gpsp-harness.ini `pace_slow_us`).  The PPSSPP rig runs both
- * instances at full speed, so it cannot reproduce the field's host/join
- * asymmetry and pace matching would never engage there — nothing to observe.
- * Burning BUSY microseconds (not sleeping) on one instance manufactures a
- * genuinely slower peer whose cost lands in exactly the per-frame work time
- * the capability estimate reads, so the full loop is exercised. */
-static void pace_burn(void)
-{
-   uint64_t t0;
-   if (!g_pace_slow_us)
-      return;
-   t0 = net_now_us();
-   while (net_now_us() - t0 < (uint64_t)g_pace_slow_us)
-      ;
-}
-
-static void pace_audio_step(unsigned target_x100)
-{
-   /* One wall second at `target` fps contains target/59.7275 seconds of
-    * emulated time, so the core produces that fraction of in_rate samples.
-    * Consume at the same fraction and the ring neither drains nor floods. */
-   if (target_x100 > PACE_NOMINAL_X100)
-      target_x100 = PACE_NOMINAL_X100;
-   g_audio_step = (unsigned)(((uint64_t)in_rate << 16) * target_x100
-                             / ((uint64_t)OUT_RATE * PACE_NOMINAL_X100));
-}
-
-/* Decaying low-water mark (ADR-0028).  A new low is taken IMMEDIATELY — the
- * worst is what desyncs a link, so it must never be smoothed away.  A low is
- * only forgotten after PACE_LOW_HOLD_US of nothing worse, and then only at
- * PACE_LOW_RISE_X100 per window, which is what converts the field's 20 fps
- * swing into a target that holds still. */
-static void pace_low_update(unsigned *lo, uint64_t *lo_us, unsigned v,
-                            uint64_t now)
-{
-   if (!v)
-      return;
-   if (!*lo || v <= *lo)
-   {
-      *lo    = v;
-      *lo_us = now;               /* restart the hold on every new low */
-      return;
-   }
-   if (now - *lo_us >= PACE_LOW_HOLD_US)
-   {
-      /* Deliberately does NOT restart the hold: once the quiet period has
-       * elapsed the mark keeps creeping up one step per window until it
-       * meets the current value. */
-      *lo += PACE_LOW_RISE_X100;
-      if (*lo > v)
-         *lo = v;
-   }
-}
-
-/* Everything except the applied target and its audio step: those two are the
- * only state a glide is allowed to carry across a session boundary, and in
- * fixed-rate mode they must, or leaving a session would be a step change. */
-static void pace_reset_state(void)
-{
-   g_pace_engaged     = 0;
-   g_pace_cap_x100    = 0;
-   g_pace_peer_x100   = 0;
-   g_pace_self_lo     = 0;
-   g_pace_peer_lo     = 0;
-   g_pace_self_lo_us  = 0;
-   g_pace_peer_lo_us  = 0;
-   g_pace_acc         = 0;
-   g_pace_win_vb      = 0;
-   g_pace_floor_said  = 0;
-   g_pace_miss_said   = 0;
-   g_pace_win_us      = net_now_us();
-   g_pace_win_frames  = fe_host_frame_count();
-   g_pace_log_us      = g_pace_win_us;
-   g_pace_ramp_us     = g_pace_win_us;
-   fe_np_set_local_fps(0);            /* "unknown" until the first window */
-}
-
-/* Snap everything back to nominal.  Used by mode 0/2, where a session
- * boundary has always been a step (mode 2's ramp only ever moved the target
- * *within* a session). */
-static void pace_reset(void)
-{
-   pace_reset_state();
-   g_pace_target_x100 = PACE_NOMINAL_X100;
-   g_pace_goal_x100   = PACE_NOMINAL_X100;
-   pace_audio_step(PACE_NOMINAL_X100);
-}
-
-/* ADR-0035 — SNAP THE REQUESTED RATE TO ONE THE THROTTLE CAN ACTUALLY HOLD.
- *
- * The field ran a 40.00 target and achieved 35-38 fps with `self_cap=52-57`,
- * i.e. the console could have gone faster and still missed.  That is not a
- * control bug, it is QUANTIZATION.  We pace by waiting whole vblanks, so a
- * frame costs 1 or 2 of them; averaging 40 needs ~half the frames to finish
- * inside one 16.68 ms vblank, and when per-frame work sits just ABOVE that,
- * none do — every frame becomes 2 vblanks and the average collapses toward
- * 29.97 with jitter from the frames that occasionally take 3.
- *
- * The rates a console can hold with NO headroom assumption are exactly
- * `PACE_VBLANK_HZ / N`.  That set is sparse — 59.94, 29.97, 19.98 — and there
- * is deliberately nothing between nominal and 29.97: with whole-vblank pacing
- * there CANNOT be.  Anything else is only reachable when frames genuinely fit
- * in one vblank, which is exactly the assumption the field just falsified.
- *
- * NOTE FOR ANYONE READING THE FIELD CONFIG: 2 vblanks is **29.97**, not 29.86.
- * 29.86 is 59.7275/2 — the GBA's own frame rate halved — but the thing we
- * insert is a PSP DISPLAY vblank at 59.94 Hz, so the achievable rate is
- * 59.94/2.  A configured 29.86 snaps to 29.97 and the snap is logged; the
- * 0.11 fps is not worth a second mechanism, but the log must not be silent
- * about it or the next reader will think the clamp drifted.
- *
- * Returns the applied rate.  `*vb` receives the vblanks-per-frame it implies
- * (1 = nominal, i.e. not pacing at all). */
-static unsigned pace_snap_x100(unsigned req_x100, unsigned *vb)
-{
-   unsigned n, best_n = 1, best_err = 0, first = 1;
-
-   if (vb)
-      *vb = 1;
-   if (!g_pcfg.net_session_fps_snap)
-      return req_x100;                 /* A/B: apply the request verbatim */
-
-   /* A request within the engage band of nominal is not a request to pace,
-    * and snapping it DOWN to 29.97 would be a wild overreaction. */
-   if (req_x100 + PACE_ENGAGE_X100 > PACE_NOMINAL_X100)
-      return PACE_NOMINAL_X100;
-
-   /* Otherwise the user does want pacing, so never snap back UP to nominal:
-    * search N >= 2 only.  Nearest by ERROR IN THE RATE, not by rounding the
-    * divisor — rounding 59.94/40.00 = 1.4985 to N=1 would hand back nominal
-    * and silently cancel the clamp. */
-   for (n = 2; n <= PACE_SNAP_MAX_VB; n++)
-   {
-      unsigned rate = PACE_VBLANK_HZ_X100 / n;
-      unsigned err  = (rate > req_x100) ? rate - req_x100 : req_x100 - rate;
-      if (first || err < best_err)
-      {
-         first    = 0;
-         best_err = err;
-         best_n   = n;
-      }
-   }
-   if (vb)
-      *vb = best_n;
-   return PACE_VBLANK_HZ_X100 / best_n;
-}
-
-/* `EVT session_pace fps=<applied goal> reason=<session_start|session_end>` —
- * ADR-0033's one line for "the clamp changed".  It reports the rate being
- * ramped TO, which is the number that matters; `EVT pace_match ... why=ramp`
- * is not emitted in fixed mode because there is nothing to negotiate. */
-static void pace_session_evt(const char *reason)
-{
-   fe_evt("session_pace fps=%u.%02u reason=%s",
-          g_pace_goal_x100 / 100, g_pace_goal_x100 % 100, reason);
-}
-
-static void pace_session_begin(void)
-{
-   /* ADR-0078: BACKPRESSURE is FIXED plus a floating clamp; it shares every
-    * piece of session lifecycle with FIXED, including this one.  The ini
-    * rate is the STARTING base; the control law moves it from there. */
-   if (g_pcfg.net_pace_match != PACE_MODE_FIXED &&
-       g_pcfg.net_pace_match != PACE_MODE_BACKPRESSURE)
-   {
-      pace_reset();
-      return;
-   }
-   g_bp_low_streak = 0;
-   g_bp_hold_wins  = 0;
-   pace_reset_state();
-   {
-      unsigned req = (unsigned)g_pcfg.net_session_fps_x100, vb = 1;
-      g_pace_fixed_x100 = pace_snap_x100(req, &vb);
-      if (g_pace_fixed_x100 > PACE_NOMINAL_X100)
-         g_pace_fixed_x100 = PACE_NOMINAL_X100;
-      /* Log the snap whenever it moved the number.  A user who configured
-       * 40.00 must be TOLD they are getting 29.97 — silently under-running a
-       * requested rate is what produced the field's 35-38 fps mystery. */
-      if (g_pace_fixed_x100 != req)
-         fe_evt("session_pace_snap req=%u.%02u applied=%u.%02u vblanks=%u "
-                "(achievable rates are %u.%02u/N)",
-                req / 100, req % 100,
-                g_pace_fixed_x100 / 100, g_pace_fixed_x100 % 100, vb,
-                PACE_VBLANK_HZ_X100 / 100, PACE_VBLANK_HZ_X100 % 100);
-   }
-   g_pace_goal_x100 = g_pace_fixed_x100;
-   /* The target is NOT snapped: it glides down from wherever it is (nominal,
-    * or mid-glide if a previous session ended seconds ago). */
-   pace_session_evt("session_start");
-}
-
-static void pace_session_end(void)
-{
-   if (g_pcfg.net_pace_match != PACE_MODE_FIXED &&
-       g_pcfg.net_pace_match != PACE_MODE_BACKPRESSURE)
-   {
-      pace_reset();
-      return;
-   }
-   pace_reset_state();
-   g_pace_goal_x100 = PACE_NOMINAL_X100;
-   pace_session_evt("session_end");
-   /* The glide back up runs from the main loop after teardown — see
-    * pace_fixed_ramp(), which is deliberately NOT gated on g_net_up. */
-}
-
-static void pace_log(const char *why)
-{
-   /* `*_lo` are the sustained worsts the target is actually derived from —
-    * log them beside the instantaneous values so the field can see directly
-    * whether the low-water marks are doing their job (ADR-0028). */
-   fe_evt("pace_match target=%u.%02u self_cap=%u.%02u peer_cap=%u.%02u "
-          "self_lo=%u.%02u peer_lo=%u.%02u engaged=%d why=%s",
-          g_pace_target_x100 / 100, g_pace_target_x100 % 100,
-          g_pace_cap_x100 / 100,    g_pace_cap_x100 % 100,
-          g_pace_peer_x100 / 100,   g_pace_peer_x100 % 100,
-          g_pace_self_lo / 100,     g_pace_self_lo % 100,
-          g_pace_peer_lo / 100,     g_pace_peer_lo % 100,
-          g_pace_engaged, why);
-   g_pace_log_us = net_now_us();
-}
-
-/* Accumulates this frame's work cost and closes a ~1 s measurement window.
- * Returns 1 exactly when a window just closed, having refreshed
- * `g_pace_cap_x100` (CAPABILITY — see the header) and published it to the
- * peer; `*achieved_x100` is then the rate this console actually DELIVERED
- * over the window (wall clock, throttle waits included), which is the number
- * the fixed-rate miss check needs and the one capability deliberately is not.
- *
- * Both policies share this: mode 2 needs the capability, mode 1 needs the
- * achieved rate, and both want `self_cap` in `sess_cost` either way. */
-static int pace_window(uint32_t work_us, unsigned *achieved_x100)
-{
-   uint64_t now, dt;
-   unsigned frames, sample, vb;
-
-   /* Cost this frame in whole vblank periods — what the loop actually pays,
-    * and what a free-running loop would pay.  Never less than one. */
-   vb = (unsigned)((work_us + PACE_VBLANK_US - 1) / PACE_VBLANK_US);
-   if (vb < 1)
-      vb = 1;
-   g_pace_win_vb += vb;
-
-   if (ui_active())
-   {
-      /* Core paused, wall clock still moving: re-base or the next window
-       * divides real seconds by zero frames (the same trap skip_policy_frame
-       * fell into in the field). */
-      g_pace_win_us     = net_now_us();
-      g_pace_win_frames = fe_host_frame_count();
-      g_pace_win_vb     = 0;
-      return 0;
-   }
-
-   now = net_now_us();
-   dt  = now - g_pace_win_us;
-   if (dt < PACE_WIN_US)
-      return 0;
-
-   frames = fe_host_frame_count() - g_pace_win_frames;
-   if (!frames || !g_pace_win_vb)
-   {
-      g_pace_win_us     = now;
-      g_pace_win_frames = fe_host_frame_count();
-      g_pace_win_vb     = 0;
-      return 0;
-   }
-
-   /* CAPABILITY, not achieved fps: our own throttle waits are not work and
-    * so cannot appear here.  This is what stops the pair ratcheting down. */
-   sample = (unsigned)((uint64_t)frames * PACE_VBLANK_HZ_X100 / g_pace_win_vb);
-   if (sample > PACE_NOMINAL_X100)
-      sample = PACE_NOMINAL_X100;      /* we never run the game faster */
-   g_pace_cap_x100 = g_pace_cap_x100
-      ? (g_pace_cap_x100 * (PACE_EMA_DEN - 1) + sample) / PACE_EMA_DEN
-      : sample;
-
-   /* ACHIEVED: frames per wall second, x100.  dt >= PACE_WIN_US so no /0. */
-   *achieved_x100 = (unsigned)((uint64_t)frames * 100000000ull / dt);
-
-   g_pace_win_us     = now;
-   g_pace_win_frames = fe_host_frame_count();
-   g_pace_win_vb     = 0;
-
-   /* Publish OUR capability. The peer paces against this. */
-   fe_np_set_local_fps(g_pace_cap_x100);
-   return 1;
-}
-
-/* ADR-0033: glide the applied rate toward the goal on a per-frame time base.
- * Runs whether or not a session is up — the glide OUT happens after teardown
- * by construction, and gating this on `g_net_up` would turn leaving a session
- * back into the step change the ramp exists to avoid. */
-static void pace_fixed_ramp(void)
-{
-   uint64_t now = net_now_us(), dt;
-   unsigned step, was = g_pace_target_x100;
-
-   /* Pre-boot both of these are still zero, and this runs from the FIRST
-    * frame — before any session, because the glide out has to.  A zero goal
-    * reads as "ramp to 0 fps", so the loop would throttle a solo game to the
-    * PACE_MAX_EXTRA_VB floor with no session in sight.  Nominal is the only
-    * safe reading of "not set yet"; the session sets a real goal. */
-   if (!g_pace_target_x100)
-      g_pace_target_x100 = PACE_NOMINAL_X100;
-   if (!g_pace_goal_x100)
-      g_pace_goal_x100 = PACE_NOMINAL_X100;
-   if (!g_pace_ramp_us)
-   {
-      g_pace_ramp_us = now;
-      return;
-   }
-   if (g_pace_target_x100 == g_pace_goal_x100)
-   {
-      g_pace_ramp_us = now;                       /* parked: no debt banked */
-      return;
-   }
-
-   dt   = now - g_pace_ramp_us;
-   step = (unsigned)((uint64_t)PACE_FIXED_RAMP_X100_PER_S * dt / 1000000ull);
-   if (!step)
-      return;   /* sub-step: leave g_pace_ramp_us alone so dt keeps growing,
-                 * or a fast enough loop would never accumulate a whole step */
-   g_pace_ramp_us = now;
-
-   if (g_pace_target_x100 > g_pace_goal_x100)
-      g_pace_target_x100 =
-         (g_pace_target_x100 - g_pace_goal_x100 > step)
-            ? g_pace_target_x100 - step : g_pace_goal_x100;
-   else
-      g_pace_target_x100 =
-         (g_pace_goal_x100 - g_pace_target_x100 > step)
-            ? g_pace_target_x100 + step : g_pace_goal_x100;
-
-   if (g_pace_target_x100 != was)
-   {
-      /* Audio follows the APPLIED rate exactly (ADR-0027 §audio): production
-       * and consumption then match and the stream stays continuous. */
-      pace_audio_step(g_pace_target_x100);
-      /* `engaged` is a report only, same as mode 2. */
-      g_pace_engaged =
-         (g_pace_target_x100 + PACE_ENGAGE_X100 <= PACE_NOMINAL_X100);
-      if (g_pace_target_x100 == g_pace_goal_x100)
-         pace_session_evt(g_pace_goal_x100 >= PACE_NOMINAL_X100
-                          ? "ramp_done_nominal" : "ramp_done");
-   }
-}
-
-/* ADR-0033 sanity: report a console that cannot hold the fixed rate, and do
- * NOT chase it downward.  Chasing is exactly the moving target this policy
- * removed, and the user prefers a known steady rate to a correct-but-moving
- * one.  Only checked once the glide has settled — during the ramp the
- * achieved rate is legitimately not the clamp yet. */
-static void pace_fixed_miss(unsigned achieved_x100, uint64_t now)
-{
-   if (g_pace_target_x100 != g_pace_goal_x100 || !achieved_x100)
-      return;
-   if (achieved_x100 + PACE_MISS_MARGIN_X100 >= g_pace_goal_x100)
-   {
-      g_pace_miss_said = 0;            /* recovered: re-arm the report */
-      return;
-   }
-   if (g_pace_miss_said && now - g_pace_log_us < PACE_MISS_LOG_US)
-      return;
-   g_pace_miss_said = 1;
-   g_pace_log_us    = now;
-   fe_evt("session_pace_miss actual=%u.%02u fixed=%u.%02u self_cap=%u.%02u"
-          " — not chasing",
-          achieved_x100 / 100,     achieved_x100 % 100,
-          g_pace_goal_x100 / 100,  g_pace_goal_x100 % 100,
-          g_pace_cap_x100 / 100,   g_pace_cap_x100 % 100);
-}
-
-/* ADR-0078: one window's worth of backpressure decision.  Adjusts the
- * FLOATING base (g_pace_fixed_x100) that the fixed-mode glide then follows;
- * never touches g_pace_target_x100 directly, so audio and throttle stay in
- * the lockstep pace_extra_vblanks() documents. */
-static void pace_bp_window(void)
-{
-   uint32_t q = fe_np_txq_now();
-   unsigned was = g_pace_fixed_x100;
-   const char *why = NULL;
-
-   if (!g_net_is_host)
-      return;                     /* join: plain FIXED at the ini ceiling */
-
-   if (q >= PACE_BP_HI)
-   {
-      g_bp_low_streak = 0;
-      if (g_pace_fixed_x100 > PACE_BP_FLOOR_X100)
-      {
-         g_pace_fixed_x100 =
-            (g_pace_fixed_x100 - PACE_BP_FLOOR_X100 > PACE_BP_STEP_DOWN_X100)
-               ? g_pace_fixed_x100 - PACE_BP_STEP_DOWN_X100
-               : PACE_BP_FLOOR_X100;
-         why = "down";
-      }
-   }
-   else if (q <= PACE_BP_LO)
-   {
-      if (++g_bp_low_streak >= PACE_BP_RISE_WINS)
-      {
-         g_bp_low_streak = 0;
-         if (g_pace_fixed_x100 < PACE_NOMINAL_X100)
-         {
-            g_pace_fixed_x100 =
-               (PACE_NOMINAL_X100 - g_pace_fixed_x100 > PACE_BP_STEP_UP_X100)
-                  ? g_pace_fixed_x100 + PACE_BP_STEP_UP_X100
-                  : PACE_NOMINAL_X100;
-            why = "up";
-         }
-      }
-   }
-   else
-      g_bp_low_streak = 0;
-
-   if (why)
-   {
-      g_pace_goal_x100 = g_pace_fixed_x100;
-      g_bp_hold_wins   = 0;
-      fe_evt("pace_bp txq=%u base=%u.%02u was=%u.%02u why=%s",
-             (unsigned)q, g_pace_fixed_x100 / 100, g_pace_fixed_x100 % 100,
-             was / 100, was % 100, why);
-   }
-   else if (++g_bp_hold_wins >= 10)
-   {
-      /* ADR-0058's rule: a probe whose silence looks like a dead instrument
-       * is not evidence.  One hold line per ~10 s says the law is running. */
-      g_bp_hold_wins = 0;
-      fe_evt("pace_bp txq=%u base=%u.%02u why=hold streak=%u",
-             (unsigned)q, g_pace_fixed_x100 / 100, g_pace_fixed_x100 % 100,
-             g_bp_low_streak);
-   }
-}
-
-/* Called once per main-loop iteration with the work time of the frame just
- * finished (vblank waits excluded). */
-static void pace_frame(uint32_t work_us)
-{
-   uint64_t now;
-   unsigned achieved = 0;
-   unsigned peer, desired;
-   int was_engaged;
-   unsigned was_target;
-
-   if (g_pcfg.net_pace_match == PACE_MODE_FIXED ||
-       g_pcfg.net_pace_match == PACE_MODE_BACKPRESSURE)
-   {
-      pace_fixed_ramp();               /* every frame, session or not */
-      if (g_net_up && pace_window(work_us, &achieved))
-      {
-         /* Nothing is negotiated in this mode, but keep reading the peer's
-          * advertised capability: `sess_cost pace=` still reports it, and
-          * "what could the pair actually have sustained" is the one question
-          * a fixed clamp cannot answer for itself. */
-         peer = fe_np_peer_min_fps();
-         g_pace_peer_x100 =
-            (peer < PACE_PEER_MIN_X100 || peer > PACE_PEER_MAX_X100) ? 0 : peer;
-         if (g_pcfg.net_pace_match == PACE_MODE_BACKPRESSURE)
-            pace_bp_window();          /* ADR-0078: move the base, maybe */
-         pace_fixed_miss(achieved, net_now_us());
-      }
-      return;
-   }
-
-   if (!g_net_up)
-      return;
-   if (!pace_window(work_us, &achieved))
-      return;
-
-   was_engaged = g_pace_engaged;
-   was_target  = g_pace_target_x100;
-   now         = net_now_us();
-
-   /* ---- decide the goal ------------------------------------------------ */
-   peer = fe_np_peer_min_fps();
-   if (peer < PACE_PEER_MIN_X100 || peer > PACE_PEER_MAX_X100)
-      peer = 0;                        /* absurd, stale or silent: ignore */
-   g_pace_peer_x100 = peer;
-
-   /* Both sides' sustained worst.  Ours is tracked even with no peer, so a
-    * target is available the instant one appears. */
-   pace_low_update(&g_pace_self_lo, &g_pace_self_lo_us, g_pace_cap_x100, now);
-   if (peer)
-      pace_low_update(&g_pace_peer_lo, &g_pace_peer_lo_us, peer, now);
-
-   if (!g_pcfg.net_pace_match || !peer || !g_pace_peer_lo)
-   {
-      g_pace_goal_x100 = PACE_NOMINAL_X100;
-      g_pace_engaged   = 0;
-   }
-   else
-   {
-      /* THE PAIR'S sustained worst, not "the peer's".  min() is symmetric,
-       * so both consoles land on the same number and a role flip does not
-       * move it (ADR-0028). */
-      unsigned pair = (g_pace_self_lo && g_pace_self_lo < g_pace_peer_lo)
-                      ? g_pace_self_lo : g_pace_peer_lo;
-
-      desired = pair + PACE_MARGIN_X100;
-      if (desired < PACE_FLOOR_X100)
-      {
-         /* CLAMP, never release: snapping back to nominal against a peer
-          * this slow widens the gap instead of closing it. */
-         desired = PACE_FLOOR_X100;
-         if (!g_pace_floor_said)
-         {
-            g_pace_floor_said = 1;
-            fe_evt("pace_floor pair=%u.%02u floor=%u.%02u — clamped, still pacing",
-                   pair / 100, pair % 100,
-                   PACE_FLOOR_X100 / 100, PACE_FLOOR_X100 % 100);
-         }
-      }
-      else
-         g_pace_floor_said = 0;
-      if (desired > PACE_NOMINAL_X100)
-         desired = PACE_NOMINAL_X100;
-
-      g_pace_goal_x100 = desired;
-
-      /* `engaged` only REPORTS that the goal is meaningfully below nominal;
-       * the throttle follows the applied target, so this cannot cause the
-       * engage/release cycling the field showed. */
-      if (!g_pace_engaged)
-      {
-         if (g_pace_goal_x100 + PACE_ENGAGE_X100 <= PACE_NOMINAL_X100)
-            g_pace_engaged = 1;
-      }
-      else if (g_pace_goal_x100 + PACE_RELEASE_X100 > PACE_NOMINAL_X100)
-         g_pace_engaged = 0;
-   }
-
-   /* ---- ramp the applied target: fall fast, rise slow ------------------- */
-   if (g_pace_target_x100 > g_pace_goal_x100)
-      g_pace_target_x100 =
-         (g_pace_target_x100 - g_pace_goal_x100 > PACE_RAMP_DOWN_X100)
-            ? g_pace_target_x100 - PACE_RAMP_DOWN_X100 : g_pace_goal_x100;
-   else if (g_pace_target_x100 < g_pace_goal_x100)
-      g_pace_target_x100 =
-         (g_pace_goal_x100 - g_pace_target_x100 > PACE_RAMP_UP_X100)
-            ? g_pace_target_x100 + PACE_RAMP_UP_X100 : g_pace_goal_x100;
-
-   if (g_pace_target_x100 != was_target)
-      pace_audio_step(g_pace_target_x100);
-
-   if (g_pace_target_x100 != was_target)
-      pace_log(g_pace_engaged != was_engaged
-               ? (g_pace_engaged ? "engage" : "release") : "ramp");
-   else if (g_pace_engaged != was_engaged)
-      pace_log(g_pace_engaged ? "engage" : "release");
-   else if (g_pace_engaged && now - g_pace_log_us >= PACE_LOG_US)
-      pace_log("hold");
-}
-
-/* How many EXTRA vblanks this frame should wait for, beyond the one the loop
- * always takes.  Fractional accumulator: see the header comment. */
-static unsigned pace_extra_vblanks(void)
-{
-   unsigned v_x10000, frac, n = 0;
-
-   if (!g_pcfg.net_pace_match)
-      return 0;
-   /* Mode 2's target is snapped back to nominal at teardown, so this is
-    * belt-and-braces there.  In FIXED mode there is deliberately no g_net_up
-    * gate: the glide out of the clamp runs after teardown, and cutting the
-    * throttle the instant the session ends — while the audio step is still
-    * several seconds from nominal — is precisely the ring-overflow the
-    * lockstep note below is about. */
-   if (g_pcfg.net_pace_match == PACE_MODE_ADAPTIVE && !g_net_up)
-      return 0;
-   /* Gate on the APPLIED TARGET, not on `engaged`.  `engaged` moves the goal;
-    * the target is what both this throttle and the audio step follow, and
-    * they must stay in lockstep.  Releasing by clearing `engaged` alone would
-    * drop the throttle instantly while the audio step was still ramping back
-    * over several seconds — the emulator would then outrun the consumer and
-    * the ring would overflow (dropped tail = clicks) for the whole ramp. */
-   if (g_pace_target_x100 >= PACE_NOMINAL_X100 || g_pace_target_x100 == 0)
-      return 0;                        /* not throttling: leave pacing alone */
-
-   v_x10000 = (unsigned)((uint64_t)PACE_VBLANK_HZ_X100 * 10000u
-                         / g_pace_target_x100);
-   frac = (v_x10000 > 10000u) ? v_x10000 - 10000u : 0u;
-   g_pace_acc += frac;
-   while (g_pace_acc >= 10000u && n < PACE_MAX_EXTRA_VB)
-   {
-      g_pace_acc -= 10000u;
-      n++;
-   }
-   if (g_pace_acc > 20000u)
-      g_pace_acc = 0;                  /* pathological target: never bank debt */
-   return n;
-}
-
-/* ADR-0034: `EVT blit_prof` on the same 600-frame cadence as `core_prof`, so
- * the two line up in the field log and the blit's share of the frame can be
- * read directly against `core_phase`'s `blt` phase.
- *
- * `stage` is the CPU-side conversion (plus, in mode 0 only, the 82 KiB cache
- * writeback) — the part `blit_mode` moves.  `gu` is the list build and the
- * sceGuSync that blocks until the GE has finished; no placement change can
- * shorten that, so if `gu` dominates then the staging A/B is the wrong hunt
- * and the answer is in the GE, not the copy.  Reporting them separately is
- * the point: one number could not tell those two stories apart. */
+/* The fast-forward and session-pacing engine moved to psp/ff_psp.c.
+ * 1052 lines and 23 state variables; see ff_psp.h for the interface and
+ * for the six host symbols it still reads. */
 static void blit_prof_evt(unsigned frames)
 {
    static unsigned last;
@@ -4260,6 +3236,7 @@ static int net_bringup(int is_host, const char *group, const char *nick,
       unsigned vb = 1;
       unsigned req  = (unsigned)g_pcfg.net_session_fps_x100;
       unsigned appl = pace_snap_x100(req, &vb);
+   FE_EVT_ONLY(appl);
       fe_evt("net_pace_match mode=%d policy=%s nominal=%u.%02u floor=%u.%02u "
              "fixed=%u.%02u req=%u.%02u snap=%d vblanks=%u ramp=%u.%02u",
              g_pcfg.net_pace_match,
@@ -4290,6 +3267,7 @@ static int net_bringup(int is_host, const char *group, const char *nick,
  * line in the log — turning an un-reproducible hang into a one-run pinpoint. */
 void gpsp_adhoc_step(const char *step)
 {
+   FE_EVT_ONLY(step);
    fe_evt("adhoc_step name=%s", step);
 }
 
@@ -4421,6 +3399,7 @@ void gpsp_rfu_flight_dump_hook(const unsigned *ring, unsigned cap,
    unsigned i;
    unsigned prev_frame = 0, prev_us = 0;
    unsigned worst_ms = 0, worst_frame = 0;
+   FE_EVT_ONLY(worst_frame);
    int have_prev = 0;
 
    /* EIGHT entries per line, not one.
@@ -4690,9 +3669,39 @@ void gpsp_visible_done_hook(void)
    }
 }
 
+/* RELEASE-SAFE PEEK AT WHAT THE GAME IS ASKING THE ADAPTER FOR.
+ *
+ * The ring below is drained into fe_evt, which compiles out of a player build --
+ * so when Mystery Gift fails in the field there is nothing to go on.  These four
+ * values are the minimum needed to tell the three failure modes apart, and the
+ * Mystery Gift screen prints them:
+ *
+ *   cmd   the last adapter command the GAME issued (rfu.c's RFU_CMD_*)
+ *   st    rfu.c's state: 0 idle, 1 host, 2 connecting, 3 client
+ *   S     1 once the game has issued BCRD_START (0x1c) -- it is scanning
+ *   C     1 once the game has issued CONNECT (0x1f)   -- it found us
+ *
+ * S=0 means the game is not searching over RFU at all.  S=1 C=0 means it is
+ * searching and rejecting our beacon.  C=1 means discovery worked. */
+static volatile unsigned g_rfu_last_cmd = 0xFFF, g_rfu_last_state;
+static volatile unsigned g_rfu_seen_bcrd, g_rfu_seen_conn;
+
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
 {
    unsigned head = g_rfu_tr_head;
+
+   /* Flag-writes only, like the adhocctl handler: this runs on the emulation
+    * thread inside the adapter emulation and must not do work. */
+   if (ev == 5 || ev == 1)              /* RFU_TR_CMD / RFU_TR_CMDERR */
+   {
+      g_rfu_last_cmd   = a;
+      g_rfu_last_state = b;
+      if (a == 0x1c) g_rfu_seen_bcrd = 1;   /* RFU_CMD_BCRD_START */
+      if (a == 0x1f) g_rfu_seen_conn = 1;   /* RFU_CMD_CONNECT    */
+   }
+   else if (ev == 2)                    /* RFU_TR_STATE */
+      g_rfu_last_state = a;
+
    if (head - g_rfu_tr_tail >= RFU_TRACE_RING)
    {
       g_rfu_tr_lost++;
@@ -4703,6 +3712,8 @@ void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
    g_rfu_tr_head = head + 1;
 }
 
+/* Reported, never branched on: gone with telemetry. */
+static const char *rfu_tr_state_name(unsigned s) __attribute__((unused));
 static const char *rfu_tr_state_name(unsigned s)
 {
    static const char *n[] = { "idle", "host", "connecting", "client" };
@@ -4717,6 +3728,7 @@ static void rfu_trace_drain(void)
    {
       unsigned v  = g_rfu_tr_buf[g_rfu_tr_tail % RFU_TRACE_RING];
       unsigned ev = (v >> 24) & 0xFF, a = (v >> 12) & 0xFFF, b = v & 0xFFF;
+   FE_EVT_ONLY(a); FE_EVT_ONLY(b);
       g_rfu_tr_tail++;
 
       switch (ev)
@@ -4741,6 +3753,7 @@ static void rfu_trace_drain(void)
       case 6: /* adapter login (AgbRFU_SoftReset + AgbRFU_checkID) */
       {
          static const char *ph[] = { "reset", "handshake", "logged_in" };
+   FE_EVT_ONLY(ph);
          fe_evt("rfu_login phase=%s prev_words=%u",
                 a < 3 ? ph[a] : "?", b);
          break;
@@ -5026,6 +4039,15 @@ static void ui_net_action(int is_host)
       osd_toast("Already in a session");
       return;
    }
+   /* Interlock, direction 2 (see mgift_start for direction 1).  Mystery Gift
+    * has the radio associated with an access point; adhoc_transport_init would
+    * take it into IBSS mode underneath the listener.  Refuse rather than
+    * silently break one of the two. */
+   if (mgift_ui_active())
+   {
+      osd_toast("Stop Mystery Gift first");
+      return;
+   }
    /* One "connecting" frame so the user sees feedback during the blocking
     * adhocctl bring-up (<= 30 s). */
    vid_overlay_begin(1);
@@ -5047,6 +4069,298 @@ static void ui_net_action(int is_host)
       osd_toast("Radio OK, netdrv failed: %s", g_np_start_why);
    else
       osd_toast("Wireless start failed (%s)", adhoc_transport_stage());
+}
+
+/* ---- Mystery Gift (2.0.5) ------------------------------------------------
+ *
+ * A Mystery Gift session is NOT a trading session and shares none of its state,
+ * but it does reuse the whole stack above the radio.  The phone plays a Pokemon
+ * distribution cart: it speaks netdrv's own GPN1 frames, with rfu.c's RFU1
+ * frames inside them and the game's Mystery Gift link protocol inside those.
+ * GBAdhoc translates the radio and nothing else -- infrastructure Wi-Fi to the
+ * phone's hotspot instead of the AGB-015 adapter the cart used -- and then
+ * FireRed's own Mystery Gift menu receives a real Wonder Card and saves it
+ * itself.  We never touch the save.
+ *
+ * OWNERSHIP, as implemented (this comment previously described a design that
+ * was not taken -- it named netdrv/transport_inet.c as a third nd_transport
+ * backend, and that file is not in psp/Makefile's OBJS and is never linked):
+ *
+ *   psp/mgift_net.c   brings up infrastructure Wi-Fi AND owns the UDP socket
+ *                     (sceNetInetSocket/Bind), talking to the phone directly.
+ *   psp/mgift_cart.c  connects the received parcel to the core's netpacket
+ *                     seam.
+ *
+ * NO netdrv session is created for Mystery Gift.  netdrv, rfu.c and the ad-hoc
+ * path are untouched, which is what keeps trading from regressing; the two
+ * modes are interlocked as mutually exclusive below because they cannot share
+ * the radio.
+ *
+ * Protocol spec: MysteryGiftStation/GBAdhoc_MysteryGift_Protocol_v2.md.
+ */
+static int        g_mg_on;             /* listener up */
+static char       g_mg_l1[64];         /* screen line 1: what is happening */
+static char       g_mg_l2[64];         /* screen line 2: detail */
+static char       g_mg_game[5];        /* running ROM header code at 0xAC */
+static int        g_mg_linked;         /* the game connected to the cart */
+
+/* THE DISTRIBUTION NETWORK.
+ *
+ * The player names their Android Mobile Hotspot exactly this, with Security set
+ * to Open and Band 2.4 GHz, and we create a matching connection profile on the
+ * PSP automatically.  Two halves of one agreed constant: nothing to type on
+ * either device beyond naming the hotspot once.
+ *
+ * OPEN, not WPA.  Android's own hotspot screen offers Security: Open, and that
+ * is the only kind of access point a PSP can join with no key at all.  An
+ * app-started Wi-Fi Direct group was tried first and abandoned: it cannot be
+ * open (P2P mandates an 8-character passphrase), it is the same radio as the
+ * hotspot so Android refuses to run both, and -- decisively -- the PSP could not
+ * see the group when scanning at all. */
+static unsigned   g_mg_secs;           /* seconds spent waiting, for the UI */
+
+int         mgift_ui_active(void) { return g_mg_on; }
+const char *mgift_ui_line1(void)  { return g_mg_l1; }
+const char *mgift_ui_line2(void)  { return g_mg_l2; }
+
+/* The running game 4-character header code, read from the ROM FILE rather than
+ * from the core.  gba_memory.h declares `extern char gamepak_code[5]` but
+ * nothing ever defines it -- a stale declaration that would not link -- and the
+ * alternative is exporting a new core global for four bytes the frontend can
+ * read for itself.  Called once, at boot. */
+static void rom_loading_progress(unsigned loaded, unsigned total)
+{
+   ui_loading_update(total ? "Reading ROM" : "Checking cartridge", loaded, total);
+}
+
+static void rom_loading_stage(const char *stage)
+{
+   ui_loading_update(stage, 0, 0);
+}
+
+static void mgift_read_game_code(const char *rom_path)
+{
+   FILE *fh;
+
+   g_mg_game[0] = '\0';
+   if (!rom_path || !rom_path[0])
+      return;
+   fh = fopen(rom_path, "rb");
+   if (!fh)
+      return;
+   if (fseek(fh, 0xAC, SEEK_SET) == 0 && fread(g_mg_game, 1, 4, fh) == 4)
+      g_mg_game[4] = '\0';
+   else
+      g_mg_game[0] = '\0';
+   fclose(fh);
+}
+
+/* The OSD must read "Mystery Gift", not "joined" or "host" (user direction).
+ * It reuses the session chip because the two modes are mutually exclusive, so
+ * nothing can ever need both at once. */
+static void mgift_chip(void)
+{
+   snprintf(g_session_info, sizeof(g_session_info), "Mystery Gift");
+   osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
+}
+
+static void mgift_stop(int quiet)
+{
+   if (!g_mg_on)
+      return;
+   /* Reverse order of mgift_start: the cart first (it tells the game goodbye
+    * through the netpacket seam, which must still be attached), then the card
+    * socket, then the association. */
+   mgift_cart_stop();
+   mgnet_card_close();
+   mgnet_wifi_down();
+   /* The profile STAYS.  It is named "GBAdhoc Mystery Gift" and carries the
+    * agreed SSID, so it shows up in the network row here and in the PSP's own
+    * settings, ready for next time -- which is the point: the player should
+    * never have to create it.  mgnet_profile_ensure adopts it again rather than
+    * making a second one. */
+   g_mg_on     = 0;
+   g_mg_linked = 0;
+   g_session_info[0] = '\0';
+   osd_chip_session(NULL);
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Not listening");
+   g_mg_l2[0] = '\0';
+   if (!quiet)
+      osd_toast("Mystery Gift off");
+   fe_evt("mg_stop linked=%d", g_mg_linked);
+}
+
+static void mgift_start(void)
+{
+   int rc;
+
+   /* Interlock, direction 1.  The trading link holds the radio in ad-hoc mode;
+    * associating with an AP would pull its IBSS out from under netdrv. */
+   if (g_net_up)
+   {
+      osd_toast("Leave the wireless session first");
+      return;
+   }
+   if (g_mg_on)
+   {
+      osd_toast("Mystery Gift is already listening");
+      return;
+   }
+
+   /* One feedback frame: the association blocks for seconds (DHCP + WPA against
+    * a phone hotspot) and silence there looks exactly like a hang. */
+   vid_overlay_begin(1);
+   vid_text_center(110, "Mystery Gift", 0xFFFF);
+   vid_text_center(140, "Joining your network...", 0x65BF);
+   vid_overlay_end();
+   vid_swap();
+
+   g_mg_linked = 0;
+   g_mg_secs   = 0;
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Joining your network...");
+   g_mg_l2[0] = '\0';
+
+   /* Automatic selects the exact open hotspot after the network stack is up.
+    * The saved profile label is independent of the phone's SSID. */
+   me_rend_suspend();
+   rc = mgnet_wifi_up(ui_mgift_conf(), 0);
+   me_rend_resume();
+
+   if (rc != MGNET_OK)
+   {
+      /* Every failure gets its own sentence.  A release build has no log, so
+       * the toast is the only diagnosis the owner will ever get, and "it did
+       * not work" is the one message that helps nobody. */
+      switch (rc)
+      {
+      case MGNET_ERR_WLAN_OFF:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "WLAN switch is OFF");
+         break;
+      case MGNET_ERR_NO_CONFIG:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not prepare the hotspot");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Profile error %08X; check free slots", mgnet_last_sce());
+         break;
+      case MGNET_ERR_CONNECT:
+      case MGNET_ERR_CONNECT_TIMEOUT:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not join the network");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the phone hotspot on?");
+         break;
+      default:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s)", mgnet_stage());
+         break;
+      }
+      osd_toast("%s", g_mg_l1);
+      mgnet_profile_release();
+      return;
+   }
+
+   /* The card socket: one datagram from the phone carrying a real 332-byte
+    * Wonder Card.  No netdrv and no session -- see mgift_net.h. */
+   if (mgnet_card_open() != 0)
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not open the socket");
+      osd_toast("%s", g_mg_l1);
+      mgnet_profile_release();
+      mgnet_wifi_down();
+      return;
+   }
+
+   /* Now become a distribution cart to the emulated game.  This attaches to the
+    * core's netpacket seam; it does not touch netdrv or the ad-hoc path. */
+   if (mgift_cart_start() != 0)
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no wireless");
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "Mystery Gift needs FR/LG or Emerald");
+      osd_toast("%s", g_mg_l1);
+      mgnet_card_close();
+      mgnet_profile_release();
+      mgnet_wifi_down();
+      return;
+   }
+
+   g_mg_on = 1;
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Waiting for a gift");
+   snprintf(g_mg_l2, sizeof(g_mg_l2), "%s  game %s", mgnet_local_ip(),
+            g_mg_game[0] ? g_mg_game : "?");
+   mgift_chip();
+   osd_toast("Mystery Gift listening");
+   fe_evt("mg_start ip=%s game=%s port=%d", mgnet_local_ip(), g_mg_game,
+          MGNET_LISTEN_PORT);
+}
+
+/* Once per frontend frame: poll the phone's parcel and advance the local cart.
+ * Keep this separate from net_frame(), which owns trading-session pacing. */
+static void mgift_frame(void)
+{
+   if (!g_mg_on)
+      return;
+
+   /* Acknowledge only after the cart accepts the complete parcel. Identical
+    * retries preserve an in-progress session; a different gift gets busy. */
+   {
+      static mgift_parcel parcel;
+      if (mgnet_card_poll(&parcel))
+      {
+         int rc = mgift_cart_set_parcel(&parcel);
+         mgnet_card_reply(parcel.id, rc == 0 ? 0 : 1);
+         if (rc == 0)
+         {
+            snprintf(g_mg_l1, sizeof(g_mg_l1), "Gift ready");
+            snprintf(g_mg_l2, sizeof(g_mg_l2), "Open MYSTERY GIFT in the game");
+            osd_toast("Gift uploaded from phone");
+         }
+      }
+   }
+
+   /* Drive the cart: advertise, handshake, and run the transfer once the game
+    * opens its own Mystery Gift menu. */
+   mgift_cart_frame();
+
+   {
+      /* DIAGNOSTICS THAT SURVIVE A RELEASE BUILD.
+       *
+       * fe_evt compiles out here, so if the game never sees the cart the owner
+       * has nothing to report but "it did not work" -- which is what happened
+       * the first time.  These three numbers split the whole problem:
+       *
+       *   b = broadcasts we have sent.  0 means the cart never attached to the
+       *       emulator's link layer at all (wrong game, or no RFU mode).
+       *   c = connection requests the GAME sent us.  0 with b rising means it
+       *       is not recognising the beacon -- the 24 broadcast bytes or the
+       *       distributor serial.
+       *   >0 means we are past discovery and into the block protocol. */
+      mgift_cart_stats s;
+      mgift_cart_get_stats(&s);
+      if (!g_mg_linked && s.linked)
+      {
+         g_mg_linked = 1;
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Game connected");
+         osd_toast("Game connected to the cart");
+      }
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "%s b%u c%u cmd%02x st%u S%u C%u",
+               mgift_cart_status(), (unsigned)s.bcasts, (unsigned)s.connects,
+               g_rfu_last_cmd & 0xFF, g_rfu_last_state,
+               (unsigned)g_rfu_seen_bcrd, (unsigned)g_rfu_seen_conn);
+   }
+
+   /* Say how long we have been waiting.  "Looking for the Station" that never
+    * changes is indistinguishable from a hang, and the usual cause is the
+    * phone being on a different network rather than anything being broken. */
+   if (!g_mg_linked)
+   {
+      unsigned s = fe_host_frame_count() / 60u;
+      if (s != g_mg_secs)
+      {
+         g_mg_secs = s;
+         if (s >= 10u && (s % 5u) == 0u && !mgift_cart_has_card())
+            snprintf(g_mg_l2, sizeof(g_mg_l2),
+                     "%s  no gift yet (%us)", mgnet_local_ip(), s);
+      }
+   }
+
+   /* A gift transfer is seconds of mostly-silent waiting; do not let the
+    * console suspend in the middle of one. */
+   scePowerTick(PSP_POWER_TICK_ALL);
 }
 
 /* ---- GU color-order test pattern (testpat = 1; no core, no ROM) --------
@@ -5137,7 +4451,8 @@ static int run_nettest(int is_host, const char *group, long secs)
 
       while ((n = tp.recv(tp.ctx, src, buf, sizeof(buf))) > 0)
       {
-         uint32_t rseq;
+         uint32_t rseq = 0;
+   FE_EVT_ONLY(rseq);
          if (n < NETTEST_PKT_LEN || memcmp(buf, "GPNT", 4) != 0)
             continue;
          rseq = (uint32_t)buf[5] | ((uint32_t)buf[6] << 8) |
@@ -5232,7 +4547,7 @@ int main(int argc, char *argv[])
    int net_host = 0, net_join = 0, net_probe = 0;
    int exit_code = 0;
    const char *exit_reason = NULL;
-   int ff_engaged = 0, ff_toggled = 0, ff_acc = 0;
+   int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
    unsigned prev_pad = 0;
    int chord_frames = 0;
    fe_host_config cfg;
@@ -5409,6 +4724,23 @@ int main(int argc, char *argv[])
     * can start INSIDE a scene (mid-battle benchmarks) instead of scripting
     * its way there through a title screen. */
    g_autoload_state = (int)fe_ini_get_int(HARNESS_INI, "load_state", 0);
+#ifdef GPSP_PERF_RIG
+   g_perf_rig = have_harness && fe_ini_get_int(HARNESS_INI, "perf_rig", 0);
+#endif
+   if (g_perf_rig)
+   {
+      unsigned from=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_from",300);
+      unsigned to=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_to",3900);
+      unsigned timeout=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_timeout_s",180);
+      char job[64]={0}, fixture[32]={0};
+      if(to<=from || to>36000) { from=300; to=3900; }
+      if(!timeout || timeout>3600) timeout=180;
+      rig_config(from,to,timeout,net_now_us());
+      fe_ini_get(HARNESS_INI,"perf_job",job,sizeof(job));
+      fe_ini_get(HARNESS_INI,"perf_fixture",fixture,sizeof(fixture));
+      fe_evt("perf_job id=%s fixture=%s from=%u to=%u timeout=%u",job,fixture,from,to,timeout);
+      g_audio_oracle = fe_ini_get_int(HARNESS_INI,"audio_oracle",0) ? 1 : 0;
+   }
    /* Point the SMC block/writer probe at a 256-byte page of interest.  The
     * default (0x03007D00) is nowhere near Unbound's storm, which `EVT
     * smc_addr` localised to 0x03006200/0x03006300 in IWRAM — four addresses
@@ -5473,8 +4805,9 @@ int main(int argc, char *argv[])
     * ~500 us/frame (FULLSPEED §20.4) of pure measurement on a build that has
     * nothing to measure. */
    /* ADR-0071: the rate comes from the TRADING PROFILE, which the player owns
-    * and which persists in config.ini across relaunches.  PLAY_FPS_X100 is the
-    * speed profile's value and stays the default; `profile = 1` selects 29.97.
+    * and which persists in config.ini across relaunches.  The values are
+    * PCFG_PROFILE_FPS_X100 (config_psp.h): 5700 for the speed profile, which is
+    * the default, and 2997 for `profile = 1` (compatibility).
     *
     * Latched HERE, once, before the pacer and the netdrv timeout scaling read
     * it — which is why switching profiles relaunches instead of taking effect
@@ -5485,7 +4818,8 @@ int main(int argc, char *argv[])
    if (!g_pcfg.net_session_fps_force)
       g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
    g_pcfg.net_session_fps_snap = 0;
-   g_pcfg.core_phase           = 0;
+   if (!g_perf_rig) g_pcfg.core_phase = 0;
+   if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3) g_pcfg.core_phase = 0;
    /* `gu_defer = 1` was in the harness ini of ALL 17 full-speed runs behind
     * the 16/34 number, but it is 0 in a stock config.ini.  Forced here so the
     * playable build is the configuration that was actually measured, rather
@@ -5583,8 +4917,10 @@ int main(int argc, char *argv[])
       if (aut < 100) aut = 100;
       if (ts < 0) ts = aut;
       if (rs < 0) rs = aut;
-      if (ts < 25) ts = 25;   if (ts > 1600) ts = 1600;
-      if (rs < 25) rs = 25;   if (rs > 1600) rs = 1600;
+      if (ts < 25)   ts = 25;
+      if (ts > 1600) ts = 1600;
+      if (rs < 25)   rs = 25;
+      if (rs > 1600) rs = 1600;
       rfu_set_timeout_scale((unsigned)ts, (unsigned)rs);
       fe_evt("rfu_timeout_scale to=%d rtx=%d auto=%d", ts, rs, aut);
    }
@@ -5656,23 +4992,18 @@ int main(int argc, char *argv[])
       }
       /* VRAM dirty-page probe: frames between samples, 0 = off (default).
        * See vram_probe_frame().  30 gives ~2 instrumented frames/second. */
-      /* ME input shadows: 1 = give the ME private copies of vram/oam/palette
-       * so the main CPU never spins on its input phase.  Volatile-backed
-       * only.  Default 1; set 0 for the pre-shadow arm. */
-      g_mer_shadow = (int)fe_ini_get_int(HARNESS_INI, "me_shadow", 1);
+      /* ME input shadows: retained only as a diagnostic A/B.  Hardware
+       * rejected them: the 98 KiB host copy costs more than waiting for the
+       * ME, and it also bypasses the later dirty-page transfer path.  Keep
+       * the measured winner as the default; a harness may still set 1. */
+      g_mer_shadow = (int)fe_ini_get_int(HARNESS_INI, "me_shadow", 0);
       g_mer_dirty_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_dirty",
                                              g_pcfg.me_dirty);
-      /* config.ini is the base, harness overrides -- same pattern me_mode
-       * uses.  DEFAULT ON: in the playable build HARNESS_INI points at a
-       * path that cannot exist, so a harness-only key would have shipped
-       * this feature permanently disabled to every player.
-       *
-       * Safe as a default because a miss is not a failure: the frame simply
-       * presents on the next swap, which is exactly the N+1 behaviour that
-       * shipped before.  Measured hit rate 85.7%% (98.8%% light scenes,
-       * 72.7%% gameplay); the misses are CPU spikes, not ME capacity. */
-      g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe",
-                                            g_pcfg.me_sameframe);
+      /* Same-frame is retained as a harness-only A/B.  Hardware showed that
+       * issuing the GE list immediately before swap costs heavy games about
+       * 1.5 ms per frame.  The loop-top pipeline overlaps that work with the
+       * CPU, keeps exact output, and also holds full speed in light games. */
+      g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe", 0);
       g_vp_period = (int)fe_ini_get_int(HARNESS_INI, "vram_probe", 0);
       if (g_vp_period)
          fe_evt("vram_probe period=%d", g_vp_period);
@@ -5716,6 +5047,7 @@ int main(int argc, char *argv[])
          {
             uint64_t t0 = net_now_us();
             int hit = file_exists(DUMP_MARKER);
+   FE_EVT_ONLY(t0); FE_EVT_ONLY(hit);
             fe_evt("msstat n=%d us=%u hit=%d",
                    k, (unsigned)(net_now_us() - t0), hit);
          }
@@ -5826,11 +5158,9 @@ int main(int argc, char *argv[])
     * not sleeping, so it lands in the same per-frame WORK time the
     * capability estimate reads and the whole loop is exercised end to end.
     * Harness only; never set in config.ini. */
-   g_pace_slow_us = (int)fe_ini_get_int(HARNESS_INI, "pace_slow_us", 0);
-   if (g_pace_slow_us < 0)      g_pace_slow_us = 0;
-   if (g_pace_slow_us > 30000)  g_pace_slow_us = 30000;
-   if (g_pace_slow_us)
-      fe_evt("pace_slow_us=%d", g_pace_slow_us);
+   ff_pace_set_slow_us((int)fe_ini_get_int(HARNESS_INI, "pace_slow_us", 0));
+   if (ff_pace_slow_us())
+      fe_evt("pace_slow_us=%d", ff_pace_slow_us());
    if (!fe_ini_get(HARNESS_INI, "nick", nick, sizeof(nick)))
       snprintf(nick, sizeof(nick), "%s", g_pcfg.nick);
    if (!fe_ini_get(HARNESS_INI, "group", group, sizeof(group)))
@@ -6015,6 +5345,11 @@ int main(int argc, char *argv[])
       make_suffixed_path(rom_path, ".st0", state_path, sizeof(state_path));
    }
    g_save_path_for_backup = save_path;
+   ui_loading_begin(rom_path); /* also covers harness/variant auto-boot */
+   /* Four bytes at 0xAC name the game for Mystery Gift: which title a card
+    * claims to be for, and what to call it on screen.  Read here, while the
+    * path is in scope, rather than exporting a core global. */
+   mgift_read_game_code(rom_path);
    fe_log("rom_path=%s save_path=%s", rom_path, save_path);
 
    memset(&cfg, 0, sizeof(cfg));
@@ -6026,6 +5361,7 @@ int main(int argc, char *argv[])
    cfg.input_bitmask = plat_input_bitmask;
    cfg.time_us       = net_now_us;   /* heartbeat t_us (hw perf baseline) */
    cfg.core_counters = plat_core_counters;                   /* ADR-0028 */
+   cfg.boot_status   = rom_loading_stage;
    cfg.smc_addr      = plat_smc_addr;                        /* ADR-0030 */
    cfg.smc_block     = plat_smc_block;                       /* phase 5g */
    cfg.core_phase    = plat_core_phase;                      /* phase 5h */
@@ -6064,8 +5400,14 @@ int main(int argc, char *argv[])
 #endif
    }
 
-   if (fe_host_boot(&cfg) == 0)
+   /* Boot observer only: page faults and normal emulation never draw UI. */
+   extern void (*gpsp_rom_load_progress)(unsigned, unsigned);
+   gpsp_rom_load_progress = rom_loading_progress;
+   int boot_rc = fe_host_boot(&cfg);
+   gpsp_rom_load_progress = NULL;
+   if (boot_rc == 0)
    {
+      rom_loading_stage("Starting renderer");
       /* ADR-0028: adopt the core's real audio rate now that it exists. The
        * audio thread re-reads g_audio_step every output chunk, so this is
        * picked up without restarting it. */
@@ -6169,6 +5511,7 @@ int main(int argc, char *argv[])
    }
    else
    {
+      ui_loading_finish(0);
       fe_evt("exit code=1 reason=load_failed");
       evt_shutdown();
       audio_stop();
@@ -6177,6 +5520,8 @@ int main(int argc, char *argv[])
       sceKernelExitGame();
       return 0;
    }
+
+   ui_loading_finish(1);
 
    /* Heap headroom after the core's greedy ROM-buffer allocation (Gate-1
     * memory measurement; PPSSPP models more RAM than a PSP-1000 — the real
@@ -6237,8 +5582,13 @@ int main(int argc, char *argv[])
       /* ADR-0021: the loop body without the vblank wait is the number that
        * has to fit 16.7 ms.  Two clock reads per frame, and only while a
        * session is up. */
-      uint64_t frame_t0 = g_net_up ? net_now_us() : 0;
+      unsigned rig_work_us = 0;
+      uint64_t frame_t0 = (g_net_up || g_perf_rig) ? net_now_us() : 0;
       g_frame_start_us = frame_t0 ? frame_t0 : net_now_us();
+      if (g_perf_rig && rig_expired(g_frame_start_us))
+      {
+         exit_code=6; exit_reason="perf_timeout"; g_running=0; break;
+      }
 
       /* SUSPEND HANDSHAKE, main-thread half: between frames nothing is being
        * emulated, captured or posted, so this is where the power callback may
@@ -6384,11 +5734,19 @@ int main(int argc, char *argv[])
       }
 
       net_frame();
+      mgift_frame();    /* Mystery Gift listener drain (2.0.5) */
       silent_frame();   /* variant silent-wireless policy (ADR-0013) */
       rfu_link_down_drain();  /* "the game ended it" breadcrumb (ADR-0019) */
       rfu_trace_drain();      /* adapter cmd/state trace (phase5j)         */
       exit_assist_frame();    /* ADR-0079: repair the lost exit-key echo   */
       audio_status_frame();   /* feeds core frameskip when engaged (ADR-0019) */
+
+      if (mgift_shortcut_update(g_pad, !ui_active() && !have_script && !g_wake_menu,
+                                &g_mgift_consumed))
+      {
+         if (g_mg_on) mgift_stop(0);
+         else mgift_start();
+      }
 
       /* ---- SELECT+L save state / SELECT+R load state ------------------
        *
@@ -6496,7 +5854,12 @@ int main(int argc, char *argv[])
       if (g_autoload_state && fe_host_frame_count() >= 30)
       {
          g_autoload_state = 0;
-         fe_evt("autoload_state rc=%d", fe_host_state_load(state_path));
+         int state_rc = fe_host_state_load(state_path);
+         fe_evt("autoload_state rc=%d", state_rc);
+         if (state_rc != 0)
+         {
+            exit_code=6; exit_reason="state_load_failed"; g_running=0; break;
+         }
       }
 
       if (ui_active())
@@ -6526,6 +5889,12 @@ int main(int argc, char *argv[])
          case UI_ACT_NET_DISCONNECT:
             net_teardown();
             osd_toast("Disconnected");
+            break;
+         case UI_ACT_NET_MGIFT:
+            mgift_start();
+            break;
+         case UI_ACT_NET_MGIFT_STOP:
+            mgift_stop(0);
             break;
          case UI_ACT_EXIT:
             g_running = 0;
@@ -6596,40 +5965,24 @@ int main(int argc, char *argv[])
             want_ff = 0;
             ff_toggled = 0;
          }
-         if (want_ff != ff_engaged)
+         if (want_ff != ff_engaged ||
+             (want_ff && (ff_last_mode != pcfg_ff_mode() || ff_last_me != g_me_rend)))
          {
             ff_engaged = want_ff;
             if (ff_engaged)
             {
-               /* Engage core frameskip for FF headroom (hw ceiling is
-                * ~1.1-2.3x uncapped without it).  auto frameskip needs the
-                * audio-buffer-status env we decline; fixed_interval is the
-                * deterministic equivalent for FF (muted audio anyway). */
-               if (g_pcfg.ff_smooth || g_pcfg.bench_mode)
-               {
-                  /* Smooth FF: render EVERY frame.  Lower peak multiplier
-                   * than the skipping path, but the motion reads as fast
-                   * motion instead of a slideshow — and it is also the
-                   * apples-to-apples configuration for benchmarking against
-                   * an emulator running uncapped with frameskip off. */
-                  fe_host_option_set_live("gpsp_frameskip", "disabled");
-                  if (g_pcfg.bench_mode)
-                     osd_chip_ff("\xAF BENCH");
-                  else
-                     osd_chip_ff(g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x~" :
-                                 g_pcfg.ff_mult_x10 == 0  ? "\xAF MAX~"  :
-                                                            "\xAF 1.5x~");
-               }
-               else
-               {
-               fe_host_option_set_live("gpsp_frameskip", "fixed_interval");
-               fe_host_option_set_live("gpsp_frameskip_interval", "1");
-               if (g_pcfg.ff_mult_x10 == 0)
-                  osd_chip_ff("\xAF MAX");
-               else
-                  osd_chip_ff(g_pcfg.ff_mult_x10 == 30 ? "\xAF 3.0x" :
-                                                         "\xAF 1.5x");
-               }
+               /* The ME gets a capture for every emulated frame and decides
+                * whether it has capacity. Only the CPU fallback for Unlimited
+                * uses alternate-frame skipping to leave emulation headroom. */
+               int skip = pcfg_ff_mode() == PCFG_FF_UNLIMITED &&
+                          !g_me_rend && !g_pcfg.bench_mode;
+               fe_host_option_set_live("gpsp_frameskip",
+                                       skip ? "fixed_interval" : "disabled");
+               if (skip)
+                  fe_host_option_set_live("gpsp_frameskip_interval", "1");
+               ff_last_mode = pcfg_ff_mode();
+               ff_last_me = g_me_rend;
+               osd_chip_ff(ff_chip_text());
                fe_evt("ff_user on mult_x10=%d", g_pcfg.ff_mult_x10);
             }
             else
@@ -6640,14 +5993,18 @@ int main(int argc, char *argv[])
                skip_policy_reapply();
                osd_chip_ff(NULL);
                fe_evt("ff_user off");
-               ff_acc = 0;
             }
          }
          g_ff_uncapped = harness_ff || (ff_engaged && g_pcfg.bench_mode) ||
                          (ff_engaged && g_pcfg.ff_mult_x10 == 0);
          g_ff_mult = ff_engaged && !g_ff_uncapped;
+         g_ff_user = ff_engaged;
+         g_ff_draw_all = ff_engaged && !g_pcfg.bench_mode &&
+                         pcfg_ff_mode() == PCFG_FF_SMOOTH;
+         g_ff_unlimited = ff_engaged && !g_pcfg.bench_mode &&
+                          pcfg_ff_mode() == PCFG_FF_UNLIMITED;
          if (session)
-            g_ff_uncapped = g_ff_mult = 0;   /* belt over the interlock */
+            g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_draw_all = g_ff_unlimited = 0;
       }
 
       /* ADR-0082: present the ME-staged frame BEFORE running the core, so
@@ -6722,7 +6079,8 @@ int main(int argc, char *argv[])
                 * (32 KiB stick reads/window) — the cause of any hitching. */
                if (gamepak_must_swap() && fn > 0)
                   fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "  pg %u",
-                                 gamepak_page_loads - g_fps_last_pg);
+                                 (unsigned)(gamepak_page_loads -
+                                            g_fps_last_pg));
                /* Cache wipes per second, SPLIT BY SOURCE — they need
                 * different fixes (ADR-0029).  `s` = a CPU store from
                 * translated code hit a tagged halfword.  `d` = a DMA wrote
@@ -6743,7 +6101,8 @@ int main(int argc, char *argv[])
                   snprintf(fbuf + fn, sizeof(fbuf) - fn,
                            "  s%u x%u j%u%% f%u%%",
                            smc_now - g_fps_last_smc,
-                           smc_blk_xlat_total - g_fps_last_xlat,
+                           (unsigned)(smc_blk_xlat_total -
+                                      g_fps_last_xlat),
                            /* j = % of wall time COMPILING code (needs
                             * core_phase = 2 in config.ini; reads 0 without
                             * it).  This is the cost the wipes force. */
@@ -6777,15 +6136,10 @@ int main(int argc, char *argv[])
       preempt_mark(0);           /* ADR-0064: close `pre`, open `core` */
       if (g_ff_mult)
       {
-         int runs, i;
-         ff_acc += g_pcfg.ff_mult_x10;
-         runs = ff_acc / 10;
-         ff_acc %= 10;
-         if (runs < 1)
-            runs = 1;
-         for (i = 0; i < runs; i++)
+         int i;
+         for (i = 0; i < 3; i++)
          {
-            g_blit_suppress = (i != runs - 1);
+            g_blit_suppress = (i != 2);
             fe_autopilot_frame();
             fe_host_run_frame();
          }
@@ -6817,6 +6171,22 @@ int main(int argc, char *argv[])
          dump_frame_bmp();
       if (fe_autopilot_dump_pending())
          dump_frame_bmp();
+#ifdef GPSP_PERF_RIG
+      /* HARNESS ONLY.  A script asked to reload the savestate.  The R-trigger
+       * chord that does this for a player is disabled while a script runs, so
+       * this is the only route a script has.
+       *
+       * Deliberately NOT gated on g_net_up the way the chord is: the chord
+       * refuses mid-session because rewinding one console desynchronises the
+       * peer's trade protocol, and there is no peer here.  A stress script that
+       * wanted to reload during a session would be testing something else.
+       *
+       * Reloading is the point: it restores guest RAM under a translation cache
+       * that keeps its blocks, which is exactly where stale SMC evidence or a
+       * stale block would show itself. */
+      if (state_path[0] && fe_autopilot_state_pending())
+         fe_evt("ap_state_load rc=%d", fe_host_state_load(state_path));
+#endif
       if (g_dump_chord_pending)      /* ADR-0069, set at the pad read above */
       {
          g_dump_chord_pending = 0;
@@ -6904,6 +6274,7 @@ int main(int argc, char *argv[])
           * capability estimate both want this frame's WORK time (every
           * vblank wait below is deliberately excluded). */
          uint32_t work_us = (uint32_t)(net_now_us() - frame_t0);
+         rig_work_us = work_us;
          fe_np_prof_frame(work_us);
          frame_hist_note(work_us);        /* ADR-0063: no extra clock read */
          pace_frame(work_us);
@@ -7005,16 +6376,7 @@ int main(int argc, char *argv[])
              * in this frame.  But it must NOT draw here: the single present
              * happens below, before the swap, so that a frame which never
              * retires still puts something in the back buffer. */
-            if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0 &&
-                me_host_idle())
-            {
-               g_mer_ready   = g_mer_pending;
-               mer_note_sum();
-               g_mer_pending = -1;
-               g_mer_miss    = 0;
-               g_fps_drawn++;
-               g_mer_sf_hit++;
-            }
+            me_rend_retire_if_idle();
             /* First moment the ME reports done: that IS the render duration
              * (measured from the post), and this wait is idle anyway. */
             if (g_me_rend && !g_mer_rend_seen && g_mer_post_us &&
@@ -7047,16 +6409,7 @@ int main(int argc, char *argv[])
           * finish line.  Hit rate 10.9%% -> 85.7%% on this one check; the
           * blit sits at the same vblank phase the in-loop present used, so
           * nothing about timing changes. */
-         if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0 &&
-             me_host_idle())
-         {
-            g_mer_ready   = g_mer_pending;
-            mer_note_sum();
-            g_mer_pending = -1;
-            g_mer_miss    = 0;
-            g_fps_drawn++;
-            g_mer_sf_hit++;
-         }
+         me_rend_retire_if_idle();
          if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0)
          {
             g_mer_sf_miss++;
@@ -7093,8 +6446,30 @@ int main(int argc, char *argv[])
             vid_swap();
          g_drew = 0;
       }
+      if (g_perf_rig)
+         rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
    }
 
+   if (g_perf_rig)
+   {
+      extern unsigned int translation_gate_targets;
+      extern unsigned int translation_gate_target_pc[];
+      char gates[16 * 10];
+      unsigned gn, gi;
+      int gp = 0;
+
+      rig_emit(fe_host_frame_count());
+      gn = translation_gate_targets;
+      if (gn > 16)
+         gn = 16;
+      for (gi = 0; gi < gn; gi++)
+         gp += snprintf(gates + gp, sizeof(gates) - gp, "%s%08x",
+                        gi ? "," : "", translation_gate_target_pc[gi]);
+      if (!gp)
+         snprintf(gates, sizeof(gates), "-");
+      fe_evt("smc_gates n=%u pcs=%s", translation_gate_targets, gates);
+      fe_evt("perf_done samples=%u expected=%u",rig_stats.total_n,rig_to-rig_from);
+   }
    /* Clean exit (incl. HOME): stop the netdrv session + full adhoc
     * teardown first (BYE to peers while the radio is still up), then SRAM
     * is flushed inside fe_host_shutdown (dirty-check). */
@@ -7106,6 +6481,7 @@ int main(int argc, char *argv[])
    free(g_me_stage[0]);   g_me_stage[0] = NULL;
    free(g_me_stage[1]);   g_me_stage[1] = NULL;
    net_teardown();
+   mgift_stop(1);      /* drops the AP association and unloads the net modules */
    emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
    fe_host_shutdown();

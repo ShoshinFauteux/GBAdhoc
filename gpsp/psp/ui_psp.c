@@ -25,6 +25,7 @@
 #include <malloc.h>
 
 #include "ui_psp.h"
+#include "mgift_net.h"
 #include "video_psp.h"
 #include "stb_image.h"
 #include "osd_psp.h"
@@ -103,7 +104,7 @@ static const ui_theme *g_thm = &THM_DARK;
 #define C_SHADOW    (g_thm->shadow)
 
 /* ----- state -------------------------------------------------------------- */
-enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN };
+enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT };
 
 static int g_active;
 static int g_screen;
@@ -394,7 +395,8 @@ int ui_active(void)
 
 static void screen_to(int scr)
 {
-   static const char *names[] = { "menu", "settings", "wireless", "scan" };
+   static const char *names[] __attribute__((unused)) =
+      { "menu", "settings", "wireless", "scan" };
    if (g_screen != scr && g_settings_dirty)
    {
       pcfg_save();
@@ -572,27 +574,6 @@ static int g_profile_changed;
  * went with the row; the mode itself is still read from config.ini and still
  * falls back automatically.  See the SET_PROFILE note above the enum. */
 
-static const char *ff_mult_name(int x10)
-{
-   switch (x10)
-   {
-   case 15: return "1.5x";
-   case 30: return "3x";
-   case 0:  return "uncapped";
-   default: return "1.5x";   /* legacy 2x configs display as their remap */
-   }
-}
-
-/* Speed and style share one row: six values, no extra line on a settings
- * page that is already full to the pixel. */
-static const char *ff_mode_name(void)
-{
-   static char buf[20];
-   snprintf(buf, sizeof(buf), "%s%s", ff_mult_name(g_pcfg.ff_mult_x10),
-            g_pcfg.ff_smooth ? " smooth" : "");
-   return buf;
-}
-
 static void settings_adjust(int id, int dir)
 {
    switch (id)
@@ -626,25 +607,8 @@ static void settings_adjust(int id, int dir)
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
    case SET_FFMULT:
-   {
-      /* 2x retired: it froze the ME-mode display across three separate
-       * present implementations while 1.5x/3x/uncapped all behave.  Rather
-       * than ship a haunted speed tier, it no longer exists. */
-      /* The row cycles speed THEN style: 1.5x, 3x, uncapped, then the same
-       * three "smooth" (frameskip off — every emulated frame is rendered). */
-      static const int vals[3] = { 15, 30, 0 };
-      int i, idx;
-      for (i = 0; i < 3; i++)
-         if (vals[i] == g_pcfg.ff_mult_x10)
-            break;
-      if (i == 3)
-         i = 0;
-      idx = (g_pcfg.ff_smooth ? 3 : 0) + i;
-      idx = (idx + 6 + dir) % 6;
-      g_pcfg.ff_smooth   = (idx >= 3);
-      g_pcfg.ff_mult_x10 = vals[idx % 3];
+      pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_COUNT + dir) % PCFG_FF_COUNT);
       break;
-   }
    case SET_FFMODE:
       g_pcfg.ff_hold = !g_pcfg.ff_hold;
       break;
@@ -723,7 +687,7 @@ static ui_action screen_settings(unsigned edges)
              vid_filter_name(g_pcfg.filter));
          break;
       case SET_FFMULT:
-         row(36, y, 408, g_cursor == i, 1, set_rows[i].label, ff_mode_name());
+         row(36, y, 408, g_cursor == i, 1, set_rows[i].label, pcfg_ff_name());
          break;
       case SET_FFMODE:
          row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
@@ -757,7 +721,7 @@ static ui_action screen_settings(unsigned edges)
 
 /* ----- wireless screens --------------------------------------------------- */
 
-enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_BACK, WL_COUNT };
+enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_BACK, WL_COUNT };
 enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
 
 static ui_action screen_wireless(unsigned edges, int session_active,
@@ -823,6 +787,12 @@ static ui_action screen_wireless(unsigned edges, int session_active,
          snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
          screen_to(SCR_MENU);
          return UI_ACT_NET_JOIN;
+      case WL_MGIFT:
+         /* Navigate only.  The Mystery Gift screen starts the radio, because
+          * the player has to pick WHICH saved network to join first -- see the
+          * comment on MGF_NET. */
+         screen_to(SCR_MGIFT);
+         return UI_ACT_NONE;
       case WL_BACK:
          screen_to(SCR_MENU);
          return UI_ACT_NONE;
@@ -838,8 +808,122 @@ static ui_action screen_wireless(unsigned edges, int session_active,
    row(36, 128, 408, g_cursor == WL_SCAN, 1, "Join: scan for rooms", NULL);
    row(36, 150, 408, g_cursor == WL_JOINCODE, 1, "Join room code",
        g_pcfg.group);
-   row(36, 172, 408, g_cursor == WL_BACK, 1, "Back", NULL);
+   row(36, 172, 408, g_cursor == WL_MGIFT, 1, "Mystery Gift", "phone");
+   row(36, 194, 408, g_cursor == WL_BACK, 1, "Back", NULL);
    footer("X select   DPAD change code   O back");
+   return UI_ACT_NONE;
+}
+
+/* ----- Mystery Gift ------------------------------------------------------
+ *
+ * A separate screen from the wireless one because it is a separate radio mode
+ * with a separate failure surface (no stored network profile, wrong hotspot,
+ * WLAN switch off) and because the transfer has PROGRESS worth watching.  The
+ * two status lines are built by the frontend (mgift_ui_line1/2) so nothing
+ * about the wire protocol leaks into the menu code.
+ */
+/* WHY THERE IS A NETWORK ROW HERE.
+ *
+ * sceNetApctlConnect() takes a STORED profile index -- one of the connections
+ * set up once in XMB Settings > Network Settings.  It does not scan and it does
+ * not prompt.  So the player does NOT have to leave the emulator or reconnect
+ * anything: we associate on demand, mid-game, when they start Mystery Gift.
+ * But "the first profile that exists" is the wrong guess the moment somebody
+ * has their home Wi-Fi saved as profile 1 and the phone hotspot as profile 2 --
+ * we would join the house and then wait forever for a phone that is not on it.
+ * Hence: pick the profile, by name, before starting. */
+enum { MGF_NET, MGF_START, MGF_BACK, MGF_COUNT };
+
+/* 0 = AUTOMATIC: select/create the open Mystery Gift hotspot profile.
+ * A nonzero selection overrides this with a saved PSP connection. */
+static int g_mg_conf;
+
+int ui_mgift_conf(void) { return g_mg_conf; }
+
+static ui_action screen_mgift(unsigned edges)
+{
+   const char *l1 = mgift_ui_line1();
+   const char *l2 = mgift_ui_line2();
+   int  running   = mgift_ui_active();
+   int  nconf     = mgnet_config_count();
+   static char cname[36];
+
+   if (edges & PSP_CTRL_UP)
+      g_cursor = (g_cursor + MGF_COUNT - 1) % MGF_COUNT;
+   if (edges & PSP_CTRL_DOWN)
+      g_cursor = (g_cursor + 1) % MGF_COUNT;
+
+   /* The profile can only be changed while stopped -- changing it under a live
+    * association would mean tearing the radio down mid-transfer. */
+   if (!running && g_cursor == MGF_NET)
+   {
+      /* 0..nconf, wrapping: 0 is Automatic and is always offered, even when the
+       * console has no saved connections at all -- which is exactly the case
+       * Automatic exists for. */
+      if (edges & PSP_CTRL_LEFT)
+         g_mg_conf = (g_mg_conf <= 0) ? nconf : g_mg_conf - 1;
+      if (edges & PSP_CTRL_RIGHT)
+         g_mg_conf = (g_mg_conf >= nconf) ? 0 : g_mg_conf + 1;
+   }
+
+   /* O backs out but deliberately does NOT stop the listener: a gift can be
+    * arriving, and the player may well want to watch the game while it does.
+    * Stopping is an explicit choice, or happens on its own when the session
+    * ends. */
+   if (edges & PSP_CTRL_CIRCLE)
+      screen_to(SCR_WIRELESS);
+   if (edges & PSP_CTRL_CROSS)
+   {
+      if (g_cursor == MGF_START)
+      {
+         /* Starting blocks for seconds while the radio associates, so leave the
+          * menu open: the frontend draws its own progress frame and this screen
+          * narrates the result when we come back to it. */
+         return running ? UI_ACT_NET_MGIFT_STOP : UI_ACT_NET_MGIFT;
+      }
+      if (g_cursor == MGF_BACK)
+         screen_to(SCR_WIRELESS);
+   }
+
+   page("MYSTERY GIFT", running ? "LISTENING" : "OFF");
+
+   vid_rect(62, 62, 360, 76, C_SHADOW, 90);
+   vid_rect(58, 58, 360, 76, C_CARD, 235);
+   vid_rect(58, 58, 360, 2, C_ACCENT, 255);
+   vid_text(74, 66, "Station", C_DIM);
+   vid_text(74, 88, l1 && l1[0] ? l1 : "not started", C_VALUE);
+   if (l2 && l2[0])
+      vid_text(74, 110, l2, C_ITEM);
+
+   /* WHAT TO SET THE PHONE TO.  The connection profile is made for us, so the
+    * only thing the player has to get right is the hotspot itself -- and the
+    * one place they will be looking when it does not connect is this screen.
+    * Spelling it out here beats a README they do not have on them. */
+   if (!running)
+   {
+      vid_text(58, 216, "Phone: Mobile Hotspot named  Mystery Gift", C_DIM);
+      vid_text(58, 232, "Security: Open    Band: 2.4 GHz", C_DIM);
+   }
+
+   /* Name the profile, so "which network is this going to join" is answered on
+    * screen instead of guessed.  No profiles at all is the one failure worth
+    * spelling out in full -- it is a trip to XMB, not a retry. */
+   if (g_mg_conf == 0)
+      snprintf(cname, sizeof(cname), "Automatic (Mystery Gift)");
+   else if (mgnet_config_name(g_mg_conf, cname, sizeof(cname)) != 0 || !cname[0])
+      snprintf(cname, sizeof(cname), "connection %d", g_mg_conf);
+
+   row(58, 150, 360, g_cursor == MGF_NET, !running, "Network", cname);
+   row(58, 172, 360, g_cursor == MGF_START, 1,
+       running ? "Stop listening" : "Start listening", NULL);
+   row(58, 194, 360, g_cursor == MGF_BACK, 1, "Back", NULL);
+
+   if (running)
+      footer("X select   O back (keeps listening)");
+   else if (g_mg_conf == 0)
+      footer("SELECT+DOWN toggles in game.  X start   O back");
+   else
+      footer("DPAD pick network   X start   O back");
    return UI_ACT_NONE;
 }
 
@@ -993,6 +1077,9 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       break;
    case SCR_SCAN:
       act = screen_scan(edges);
+      break;
+   case SCR_MGIFT:
+      act = screen_mgift(edges);
       break;
    default:
       act = screen_menu(edges, session_active);
@@ -1611,6 +1698,8 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
    int boxw = *dw, boxh = *dh;
    unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
 
+   FE_EVT_ONLY(t0);
+
    for (e = 0; e < sizeof(ext) / sizeof(ext[0]); e++)
    {
       char path[300];
@@ -1797,10 +1886,21 @@ static void rom_display_name(const rom_entry *r, char *out, size_t sz,
       char *c = strstr(out, ", The");
       if (c && (c[5] == '\0' || c[5] == ' ' || c[5] == '-'))
       {
-         char tmp[96];
+         /* Done IN PLACE.  Moving ", The" to the front takes five characters
+          * out and puts four back, so the result is always one byte shorter
+          * than what is already in `out` -- which means it always fits, and
+          * the scratch buffer this used to need (whose size had to be guessed
+          * against the caller's `sz`, and was the only truncation risk in the
+          * function) is not needed at all.
+          *
+          * Order matters and is safe: the shift right by 4 writes no further
+          * than out[head+3], which is before the ", The" at out[head+5], so
+          * the tail is still intact when it is moved left by one. */
          size_t head = (size_t)(c - out);
-         snprintf(tmp, sizeof(tmp), "The %.*s%s", (int)head, out, c + 5);
-         snprintf(out, sz, "%s", tmp);
+         size_t tail = strlen(c + 5);
+         memmove(out + 4, out, head);
+         memmove(out + 4 + head, out + head + 5, tail + 1);
+         memcpy(out, "The ", 4);
       }
    }
    if (cut_region)
@@ -2070,6 +2170,109 @@ static void clip_title(char *t, int px)
    while (n > 0 && (t[n - 1] == ' ' || t[n - 1] == '-'))
       t[--n] = 0;
    strcpy(t + n, "...");
+}
+
+/* Loading stays on the main thread, like every other GU user. Progress is
+ * driven by completed reads, not a second thread racing the loader/renderer.
+ * Keep the existing large reads; throttle redraws rather than splitting I/O. */
+static struct {
+   int active, count;
+   char title[132]; /* leave room for clip_title's ellipsis */
+   unsigned started, stage_at, drawn_at;
+   const char *stage[8];
+   unsigned elapsed[8];
+} g_loading;
+
+void ui_loading_update(const char *stage, unsigned done, unsigned total)
+{
+   static const signed char ring[8][2] = {
+      {0,-7}, {5,-5}, {7,0}, {5,5}, {0,7}, {-5,5}, {-7,0}, {-5,-5}
+   };
+   unsigned now = sceKernelGetSystemTimeLow();
+   int changed, i;
+   char amount[48];
+   if (!g_loading.active) return;
+   changed = !g_loading.count ||
+             strcmp(stage, g_loading.stage[g_loading.count - 1]) != 0;
+   if (changed)
+   {
+      if (g_loading.count)
+         g_loading.elapsed[g_loading.count - 1] += now - g_loading.stage_at;
+      if (g_loading.count < 8)
+         g_loading.stage[g_loading.count++] = stage;
+      g_loading.stage_at = now;
+   }
+   if (!changed && now - g_loading.drawn_at < 100000 && done != total)
+      return;
+   g_loading.drawn_at = now;
+   vid_overlay_begin(1);
+   page("LOADING GAME", NULL);
+   for (i = 0; i < 8; i++)
+      vid_rect(452 + ring[i][0], 13 + ring[i][1], 3, 3, C_TITLE,
+               50 + 25 * ((i + 8 - (now / 100000) % 8) % 8));
+   vid_text_center(100, g_loading.title, C_ITEM);
+   vid_text_center(132, stage, C_VALUE);
+   if (total)
+   {
+      if (done > total) done = total;
+      vid_rect(90, 164, 300, 4, C_ACCENT_DK, 160);
+      vid_rect(90, 164, (int)((unsigned long long)done * 300 / total), 4,
+               C_ACCENT, 255);
+      snprintf(amount, sizeof(amount), "%u / %u KiB", done / 1024,
+               (total + 1023) / 1024);
+      vid_text_center(185, amount, C_DIM);
+   }
+   vid_overlay_end();
+   vid_swap();
+   /* Ensure the status is actually visible BEFORE the next blocking call.
+    * The existing swap path still owns all display-buffer safety. */
+   sceDisplayWaitVblankStart();
+}
+
+void ui_loading_begin(const char *path)
+{
+   const char *name = strrchr(path, '/');
+   char *dot;
+   if (g_loading.active) return; /* browser already started the timer */
+   memset(&g_loading, 0, sizeof(g_loading));
+   g_loading.active = 1;
+   g_loading.started = sceKernelGetSystemTimeLow();
+   snprintf(g_loading.title, sizeof(g_loading.title) - 4, "%s", name ? name + 1 : path);
+   dot = strrchr(g_loading.title, '.');
+   if (dot) *dot = 0;
+   clip_title(g_loading.title, 432);
+   ui_loading_update("Remembering game", 0, 0);
+}
+
+void ui_loading_finish(int success)
+{
+   unsigned now = sceKernelGetSystemTimeLow();
+   if (!g_loading.active) return;
+   if (g_loading.count)
+      g_loading.elapsed[g_loading.count - 1] += now - g_loading.stage_at;
+   g_loading.active = 0;
+#ifdef GPSP_ROMLOAD_DIAGNOSTICS
+   /* Test builds only: one small write AFTER timing, no per-read logging.
+    * This measures the real storage/CPU, which PPSSPP cannot price. */
+   {
+      extern char g_dir_base[];
+      char path[256];
+      FILE *f;
+      int i;
+      snprintf(path, sizeof(path), "%s/ROMLOAD.TXT", g_dir_base);
+      f = fopen(path, "w");
+      if (f)
+      {
+         fprintf(f, "result=%s total_us=%u\n", success ? "ok" : "failed",
+                  now - g_loading.started);
+         for (i = 0; i < g_loading.count; i++)
+            fprintf(f, "%s: %u us\n", g_loading.stage[i], g_loading.elapsed[i]);
+         fclose(f);
+      }
+   }
+#else
+   (void)success;
+#endif
 }
 
 /* HORIZONTAL SCROLL FOR THE SELECTED TITLE.
@@ -2492,9 +2695,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
       if (edges & PSP_CTRL_CROSS)
       {
          snprintf(out, out_sz, "%s/%s", rom_dir, g_roms[cur].name);
-         snprintf(g_pcfg.last_rom, sizeof(g_pcfg.last_rom), "%s",
-                  g_roms[cur].name);
-         pcfg_save();
+         ui_loading_begin(out);
+         if (pcfg_remember_rom(g_roms[cur].name) != 0)
+            fe_log("Could not remember last ROM: %s", g_roms[cur].name);
          fe_evt("ui_browser_pick rom=%s", g_roms[cur].name);
          art_free_all();
          return 0;

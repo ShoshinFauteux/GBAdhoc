@@ -40,3 +40,11 @@ psp/obj/
 netdrv/obj/
 netdrv/test_netdrv
 dist/
+
+# tools/run_host_tests.py caches the PSP SDK headers here (extracted from the
+# pspdev image) so the two SDK-dependent suites can run on the host.
+.sdk-include/
+host-test-results.json
+psp/build-manifest.json
+.build-*.log
+tools/__pycache__/

@@ -18,7 +18,9 @@
 #undef fe_evt
 
 static FILE *evt_file    = NULL;
-static int   evt_echo    = 0;
+/* Both of these exist for the async sink and the desktop echo; a build with
+ * neither leaves them defined and unreferenced rather than wrong. */
+static int   evt_echo __attribute__((unused)) = 0;
 
 /* ADR-0021 log-I/O cost accounting. */
 static unsigned long long (*evt_clock)(void);
@@ -184,6 +186,7 @@ void fe_evt_close(void)
 
 /* Single producer.  Returns 0 if the line does not fit (dropped whole —
  * never half a line, so the log is always parseable). */
+static int ring_push(const char *p, unsigned n) __attribute__((unused));
 static int ring_push(const char *p, unsigned n)
 {
    unsigned w    = evt_w;

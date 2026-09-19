@@ -271,10 +271,8 @@ extern u16 palette_ram_converted[512];
 extern u16 io_registers[512];
 extern u8 vram[1024 * 96];
 
-/* VRAM dirty map -- measurement only, see gba_memory.c.  1 KiB pages.
- * `vram_dirty[p]` is set by the C store macros and the DMA path; it is NOT
- * set by translated code (the dynarec has its own store stub), which is
- * precisely what the `missed` counter exists to quantify. */
+/* VRAM dirty map, see gba_memory.c.  One byte per 1 KiB page.  C stores,
+ * DMA, translated stores, and bulk state restoration must all mark it. */
 #define VRAM_DIRTY_SHIFT 10
 #define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
 /* INVERTED: 1 = clean, 0 = dirty. Inverted so the DYNAREC can mark a page
@@ -327,6 +325,9 @@ extern u32 flash_bank_cnt;
 extern u32 eeprom_size;
 
 extern u8 gamepak_backup[1024 * 128];
+/* Optional synchronous ROM-load observer: bytes read / bytes to preload.
+ * (0,0) announces cartridge setup. Must not re-enter or mutate the core. */
+extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
 
 // Page sticky bit routines
 extern u32 gamepak_sticky_bit[1024/32];

@@ -44,6 +44,20 @@ void fe_evt_close(void);
 void fe_evt(const char *fmt, ...);
 #endif
 
+/* A VALUE THAT EXISTS ONLY TO BE REPORTED.
+ *
+ * Because fe_evt() above compiles to ((void)0) with telemetry out -- and
+ * deliberately does not evaluate its arguments, so
+ * fe_evt("sram_load crc=%08x", sram_crc()) does not CRC 128 KB for a line
+ * nobody reads -- everything feeding a call site looks dead to the compiler in
+ * a release build.  It is not dead; it is an input to a disabled reporter.
+ *
+ * Wrapping it says which of the two it is.  A bare (void) cast would silence
+ * the warning just as well and would read as "genuinely unused", which is the
+ * one thing it must not say: the next person to see an unused variable in a hot
+ * loop should delete it, and these must not be deleted. */
+#define FE_EVT_ONLY(x)   ((void)(x))
+
 /* Free-form info line (not an EVT marker): "LOG " prefix, also flushed. */
 void fe_log(const char *fmt, ...);
 

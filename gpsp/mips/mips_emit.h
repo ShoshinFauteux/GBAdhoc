@@ -264,7 +264,37 @@ u32 arm_to_mips_reg[] =
   mips_emit_j(mips_absolute_offset(mips_indirect_branch_##type));             \
   mips_emit_nop()                                                             \
 
-#define block_prologue_size   16
+#ifdef SMC_PARTIAL_SAFE
+/* Reserve a private 16-byte retirement trampoline immediately before every
+ * RAM block entry.  The stable-thunk experiment makes this the public entry
+ * and points it at the current body; selective retirement can then redirect
+ * the same address without leaving permanent inbound links on the dispatcher. */
+#define block_prologue_size       16
+#define ram_block_prologue_size   (block_prologue_size +                     \
+                                   (smc_partial_active ? 16 : 0))
+#ifdef SMC_PARTIAL_STABLE_THUNK
+#define generate_smc_retire_space()                                           \
+  if (ram_region && smc_partial_active) {                                     \
+    u8 *smc_thunk_body = translation_ptr + 16;                               \
+    mips_emit_j(mips_absolute_offset(smc_thunk_body));                        \
+    mips_emit_nop();                                                          \
+    mips_emit_nop();                                                          \
+    mips_emit_nop();                                                          \
+  }
+#else
+#define generate_smc_retire_space()                                           \
+  if (ram_region && smc_partial_active) {                                     \
+    mips_emit_nop();                                                          \
+    mips_emit_nop();                                                          \
+    mips_emit_nop();                                                          \
+    mips_emit_nop();                                                          \
+  }
+#endif
+#else
+#define block_prologue_size       16
+#define ram_block_prologue_size   block_prologue_size
+#define generate_smc_retire_space() do { } while (0)
+#endif
 
 #define generate_block_prologue()                                             \
   update_trampoline = translation_ptr;                                        \
@@ -273,6 +303,7 @@ u32 arm_to_mips_reg[] =
   spaccess_trampoline = translation_ptr;                                      \
   mips_emit_j(mips_absolute_offset(&rom_translation_cache[EWRAM_SPM_OFF]));   \
   mips_emit_nop();                                                            \
+  generate_smc_retire_space();                                                \
   generate_load_imm(reg_pc, stored_pc)                                        \
 
 #define check_generate_n_flag (flag_status & 0x08)
@@ -2400,6 +2431,20 @@ static void emit_pmemst_stub(
       mips_emit_lb(reg_temp, reg_temp, base_addr);
     }
 #ifdef SMC_SKIP_SAME
+    /* DO NOT SHIP AS-IS: white-screens Pokemon Heart & Soul at boot.
+     * Tested 2026-09-12 in PPSSPP as a single-variable change from a config
+     * that had just run three rival battles clean.  The game executed hard
+     * (68000 SMC flushes during boot alone, vs 56000 for three FULL battles
+     * on the same build without this) and then froze on a white screen --
+     * the OSD kept drawing 59.9 fps while the s/x counters stopped, i.e. the
+     * emulated CPU had stopped.  That is the pre-2.0.2 H&S boot symptom.
+     *
+     * The idea still targets the right thing: a histogram of 56000 flushes
+     * showed 97.8% came from ONE self-modifying routine at 0x030016xx
+     * writing to itself.  But the filter as written does not make that game
+     * boot, so the predicate or the emitted sequence is wrong somewhere --
+     * suspect what reg_temp/base_addr address the compare actually reads
+     * (tag mirror vs data), and note sb/sh are not filtered at all. */
     /* Idempotent-store filter (word stores only).
      *
      * The stock check is "is there translated code at this address?" and, if
@@ -2933,5 +2978,3 @@ u32 execute_arm_translate(u32 cycles) {
 }
 
 #endif
-
-

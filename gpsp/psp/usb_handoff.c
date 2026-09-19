@@ -354,6 +354,7 @@ void handoff_run(int exit_code, const char *exit_reason)
    int  run, waited = 0, rc, total_ms = 0;
    int  last_state = -1;   /* usb state word, logged on change only */
    int  esc_ms = 0;
+   unsigned window_id = 0;
 
    if (!h_enabled)
       return;
@@ -414,6 +415,22 @@ park:
       if (h_read_small(h_result, cmd, sizeof(cmd)) <= 0)
          h_write_result(run, exit_code, exit_reason, "parked");
 
+      /* Publish BEFORE export. The PC must observe a NEW window token before
+       * staging, so attaching late cannot start a copy into a closing window.
+       * Never read/write this file while h_usb_active is set. */
+      {
+         char path[192], line[80];
+         int fd, n;
+         snprintf(path, sizeof(path), "%s/WINDOW.TXT", h_dir);
+         n = snprintf(line, sizeof(line), "token=%d-%u\nseconds=%d\n",
+                      run, ++window_id, cur_window);
+         fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+         if (fd >= 0)
+         {
+            sceIoWrite(fd, line, n);
+            sceIoClose(fd);
+         }
+      }
       rc = h_usb_up();
       if (rc < 0)
       {

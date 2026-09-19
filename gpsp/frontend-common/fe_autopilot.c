@@ -19,13 +19,20 @@ enum ap_op
    OP_EVT, OP_FF, OP_DUMP, OP_WAIT, OP_PRESS, OP_HOLD,
    OP_WAITRAM, OP_MASH, OP_HOLDRAM, OP_WAITSRAM, OP_LOGRAM, OP_LOGPTR,
    OP_REPEAT, OP_ENDREPEAT
+#ifdef GPSP_PERF_RIG
+   , OP_STATE                 /* harness only -- see fe_autopilot_state_pending */
+#endif
 };
 
-static const char *op_name[] =
+/* Only ever read by an fe_evt argument, so it disappears with telemetry. */
+static const char *op_name[] __attribute__((unused)) =
 {
    "evt", "ff", "dump", "wait", "press", "hold",
    "waitram", "mash", "holdram", "waitsram", "logram", "logptr",
    "repeat", "endrepeat"
+#ifdef GPSP_PERF_RIG
+   , "state"
+#endif
 };
 
 typedef struct
@@ -57,6 +64,9 @@ static uint32_t sram_ref_crc;   /* waitsram reference */
 static int      status = 2;     /* 0 run, 1 done, -1 fail, 2 none */
 static int      ff_on;
 static int      dump_req;
+#ifdef GPSP_PERF_RIG
+static int      state_req;     /* harness only: `state` asked for a reload */
+#endif
 static uint32_t frame_no;       /* engine frame counter (for EVT context) */
 
 static int      rpt_start = -1; /* repeat block: index of step after REPEAT */
@@ -115,6 +125,9 @@ int fe_autopilot_load(const char *path)
    step_inited = 0;
    ff_on = 0;
    dump_req = 0;
+#ifdef GPSP_PERF_RIG
+   state_req = 0;
+#endif
    frame_no = 0;
    rpt_start = -1;
    rpt_left = 0;
@@ -167,6 +180,12 @@ int fe_autopilot_load(const char *path)
          st->op = OP_FF;
          st->flag = (uint8_t)(strcmp(tok[1], "on") == 0);
       }
+#ifdef GPSP_PERF_RIG
+      else if (!strcmp(tok[0], "state") && ntok == 1)
+      {
+         st->op = OP_STATE;
+      }
+#endif
       else if (!strcmp(tok[0], "dump") && ntok == 1)
          st->op = OP_DUMP;
       else if (!strcmp(tok[0], "wait") && ntok == 2)
@@ -379,6 +398,7 @@ static int predicate(const ap_step *st)
 
 static void ap_fail(const ap_step *st)
 {
+   FE_EVT_ONLY(st);
    status = -1;
    fe_evt("ap_fail step=%d line=%d op=%s frame=%u", cur, st->line,
           op_name[st->op], frame_no);
@@ -388,7 +408,9 @@ static void log_val(const ap_step *st, int deref)
 {
    int err = 0;
    uint32_t addr = st->addr;
-   uint32_t v;
+   uint32_t v = 0;
+
+   FE_EVT_ONLY(v);
 
    if (deref)
    {
@@ -423,6 +445,12 @@ static int run_step(void)
    case OP_DUMP:
       dump_req = 1;
       return 0;
+
+#ifdef GPSP_PERF_RIG
+   case OP_STATE:
+      state_req = 1;
+      return 0;
+#endif
 
    case OP_LOGRAM:
       log_val(st, 0);
@@ -588,3 +616,12 @@ int fe_autopilot_dump_pending(void)
    dump_req = 0;
    return r;
 }
+
+#ifdef GPSP_PERF_RIG
+int fe_autopilot_state_pending(void)
+{
+   int r = state_req;
+   state_req = 0;
+   return r;
+}
+#endif

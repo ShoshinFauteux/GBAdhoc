@@ -391,11 +391,13 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
   unsigned i;
   smc_blk_xlat++;
   smc_blk_xlat_total++;
-#ifdef SMC_PARTIAL
+#if defined(SMC_PARTIAL) || defined(SMC_PARTIAL_SAFE)
   /* Hand the block's source extent to the tag table while it is still this
    * block's — external-exit resolution below can recursively translate other
    * blocks and would otherwise overwrite it. */
   ramtag_note_extent(start_pc, end_pc, thumb);
+#endif
+#ifdef SMC_PARTIAL
   /* And record the block end as a barrier when the scan stopped on an
    * unconditional branch: nothing falls through one, so no block can span it. */
   if (reason == SMC_SCAN_UNCOND)
@@ -1206,4 +1208,3 @@ unsigned main_write_savestate(u8* dst)
 
   return (unsigned int)(dst - startp);
 }
-

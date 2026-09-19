@@ -25,6 +25,12 @@ typedef enum
    UI_ACT_NET_HOST,        /* host on ui_group() */
    UI_ACT_NET_JOIN,        /* join ui_group() */
    UI_ACT_NET_DISCONNECT,
+   /* Mystery Gift (2.0.5) is deliberately NOT a host/join variant.  It is a
+    * different radio mode -- infrastructure Wi-Fi to the phone's hotspot, not
+    * ad-hoc IBSS -- so it cannot share the session state machine, and the two
+    * are interlocked as mutually exclusive.  See psp/mgift_net.h. */
+   UI_ACT_NET_MGIFT,       /* start listening for a Mystery Gift Station */
+   UI_ACT_NET_MGIFT_STOP,  /* stop listening and drop the association */
    UI_ACT_EXIT,            /* exit-with-flush */
    UI_ACT_GAMELIST,        /* relaunch back to the ROM browser */
    /* ADR-0071: the trading profile changed.  The main loop saves config and
@@ -37,6 +43,11 @@ void ui_open(void);
 void ui_close(void);
 int  ui_active(void);
 
+/* Boot-only, main-thread presentation. No worker, art allocation or core calls. */
+void ui_loading_begin(const char *path);
+void ui_loading_update(const char *stage, unsigned done, unsigned total);
+void ui_loading_finish(int success);
+
 /* One frame of menu UI: input edges + draw (vid_overlay_begin(1)..end).
  * pad = raw SceCtrl button mask; session_active gates savestates + shows
  * the wireless status screen; session_info is the status line (or NULL). */
@@ -44,6 +55,18 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info);
 
 /* Group selected by the last Host/Join action (scan pick or room code). */
 const char *ui_group(void);
+
+/* ---- Mystery Gift status, for the screen that shows it -------------------
+ * Implemented in main_psp.c, where the rest of the wireless state lives (the
+ * same arrangement as osd_session_chip_refresh below).  The frontend hands
+ * the UI finished strings rather than the session struct, so ui_psp.c needs
+ * no knowledge of the wire protocol. */
+int         mgift_ui_active(void);    /* 1 while the listener is up */
+/* Which stored network profile the player picked, 1-based (0 = first that
+ * exists).  Read by the frontend when it associates. */
+int         ui_mgift_conf(void);
+const char *mgift_ui_line1(void);     /* what is happening */
+const char *mgift_ui_line2(void);     /* the gift / progress, or "" */
 
 /* Blocking pre-game ROM browser (generic build with no baked ROM and no
  * harness). Fills out with the full ROM path. Returns 0 on pick, -1 on

@@ -173,9 +173,9 @@ void vid_overlay_end(void);
 int  vid_gu_defer(void);
 void vid_set_gu_defer(int on);
 
-/* Wait for any in-flight display list.  Callers only need this before
- * touching the drawbuffer behind the GU's back; vid_swap() and
- * vid_dump_ge() already do it. */
+/* Wait for any in-flight display list. Call before modifying/freeing a
+ * texture the GE may still be reading, or touching its drawbuffer behind
+ * the GU's back; vid_swap() and vid_dump_ge() already do it. */
 void vid_gu_flush(void);
 
 /* Swap buffers (tracks which VRAM buffer is being drawn).  Flushes first. */

@@ -1063,6 +1063,8 @@ static void log_rom_evt(void)
    uint8_t code[5] = { 0 };
    long size = 0;
 
+   FE_EVT_ONLY(size);
+
    if (f)
    {
       fseek(f, 0, SEEK_END);
@@ -1093,12 +1095,15 @@ int fe_host_boot(const fe_host_config *cfg)
    retro_set_input_poll(input_poll);
    retro_set_input_state(input_state);
 
+   if (host.boot_status) host.boot_status("Preparing emulator");
    retro_init();
 
+   if (host.boot_status) host.boot_status("Reading BIOS");
    log_bios_evt();
 
    memset(&game, 0, sizeof(game));
    game.path = host.rom_path;
+   if (host.boot_status) host.boot_status("Reading ROM");
    if (!retro_load_game(&game))
    {
       fe_log("retro_load_game FAILED for %s", host.rom_path);
@@ -1119,6 +1124,7 @@ int fe_host_boot(const fe_host_config *cfg)
           av.timing.fps, av.timing.sample_rate,
           av.geometry.base_width, av.geometry.base_height);
 
+   if (host.boot_status) host.boot_status("Loading save");
    sram_load();
    fps_last_us = host.time_us ? host.time_us() : 0;
    return 0;
@@ -1140,6 +1146,8 @@ static void fps_evt(void)
    unsigned dren = frames_rendered - fps_last_rendered;
    unsigned dskp = frames_skipped  - fps_last_skipped;
    unsigned emu_x100 = 0, ren_x100 = 0;
+
+   FE_EVT_ONLY(dskp); FE_EVT_ONLY(emu_x100); FE_EVT_ONLY(ren_x100);
 
    if (dt >= 1000)                   /* need a sane window to divide by */
    {
@@ -1253,6 +1261,10 @@ static void core_prof_evt(void)
    static uint64_t prev_us;
    static unsigned prev_rf, prev_ff, prev_sf, prev_df, prev_pl;
    unsigned d = core_run_calls - prev_calls;
+
+   FE_EVT_ONLY(prev_us); FE_EVT_ONLY(d);
+   FE_EVT_ONLY(prev_rf); FE_EVT_ONLY(prev_ff); FE_EVT_ONLY(prev_sf);
+   FE_EVT_ONLY(prev_df); FE_EVT_ONLY(prev_pl);
    unsigned rf = 0, ff = 0, sf = 0, df = 0, pl = 0;
    unsigned srf, sff, ssf, sdf, spl;
 

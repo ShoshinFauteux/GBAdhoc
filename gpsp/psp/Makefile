@@ -14,11 +14,15 @@
 
 TARGET = gpsp_adhoc
 OBJS = main_psp.o usb_handoff.o \
+       ff_psp.o \
        me_host.o \
        video_psp.o \
        osd_psp.o \
        ui_psp.o \
        config_psp.o \
+       mgift_net.o \
+       mgift_cart.o \
+       mgift_payload.o \
        font_8x16.o \
        stb_impl.o \
        netdrv_core.o \
@@ -63,13 +67,17 @@ INCDIR   = ../frontend-common ../netdrv ../libretro/libretro-common/include ..
 # ADR-0039 pixel format.  MUST MATCH the top-level Makefile's PSP_PIXFMT.
 # `psp5650` means the CORE already emits the GE's native channel order, so
 # video_psp.c's staging step is a straight copy instead of a per-pixel R/B
-# swap.  Set it in ONE place for both builds:
+# swap.  THREE things consume it, and they must agree:
 #     make PSP_PIXFMT=rgb565 platform=psp1      (core)
-#     make PSP_PIXFMT=rgb565 -C psp             (frontend)
-# Getting the two out of step does not fail to build and does not warn -- it
-# renders with R and B swapped.  tools/e2e/run_gu_color_test.sh phase A pins
-# the frontend side of this absolutely; the boot log's `pixfmt=` says which
-# layout the binary in your hand expects.
+#     make PSP_PIXFMT=rgb565 -C psp             (frontend, and it passes the
+#                                                value down to me/ for the PRX)
+# Getting them out of step does not fail to build and does not warn -- it
+# renders with R and B swapped.  The core/frontend pair is now a LINK ERROR
+# (gba_memory.c exports a symbol named after its layout, psp/video_psp.c
+# references the one it expects); the PRX is loaded at runtime so it cannot be,
+# which is why the value is threaded into that sub-make instead.
+# tools/e2e/run_gu_color_test.sh phase A pins the frontend side absolutely;
+# the boot log's `pixfmt=` says which layout the binary in your hand expects.
 PSP_PIXFMT ?= psp5650
 ifeq ($(PSP_PIXFMT), psp5650)
 PIXFMT_DEF = -DUSE_PSP_RGB565_FORMAT
@@ -122,6 +130,35 @@ CORE_LIB = ../gpsp_libretro_psp1.a
 # two archive scans and psp-fixup-imports fails with "stubs out of order"
 # (= broken imports on real hardware).  Our sceNetInit/sceUtility* refs
 # resolve from those late scans in a single contiguous block.
+#
+# THE SAME TRAP, RE-SPRUNG AND MEASURED (Mystery Gift, 2.0.5).  Mystery Gift
+# calls sceNetApctl* and sceNetInet*, so the obvious move is to add
+# -lpspnet_apctl -lpspnet_inet here.  Do not: BOTH ARE ALREADY LINKED, and
+# naming either one produces
+#
+#     Warning: could not fixup imports, stubs out of order.
+#
+#   * -lpspnet_inet comes from psp-gcc's own spec.  `psp-gcc -dumpspecs`
+#     *lib: ends with "-lpsputility -lpsprtc -lpspnet_inet -lpspnet_resolver",
+#     because libcglue's BSD-socket wrappers import sceNetInet*.
+#   * -lpspnet_apctl comes from build.mak's default tail, "-lpspnet
+#     -lpspnet_apctl".
+#
+# Measured: with neither named, the link is clean and every sceNetInet*/
+# sceNetApctl* symbol in mgift_net.o resolves (ELF 36c166a9, 0 warnings).  Name
+# them and the same ELF grows a split stub block (42308fb2, 1 warning).  So the
+# correct change to this list for Mystery Gift is NO CHANGE.
+#
+# Mystery Gift creates the PSP's connection profile itself, so the player never
+# has to leave the emulator for XMB -- but that needs NOTHING added here.  It
+# uses sceUtility*NetParam, which lives in libpsputility, and libpsputility is
+# already pulled in implicitly (see the paragraph above -- naming it explicitly
+# is exactly what breaks the stub ordering).
+#
+# AND NOTE THE FAILURE MODE, which the paragraph above gets wrong: it is a
+# WARNING, not an error.  make still exits 0, psp-fixup-imports gives up, and
+# you get an EBOOT with broken imports that built "successfully" and would die
+# on real hardware.  Never trust make's exit status for this -- grep the log.
 LIBS = $(CORE_LIB) -lpspgu -lpspge -lpspaudio -lpsppower \
        -lpspusb -lpspusbstor -lpspkubridge -lpspsystemctrl_user -lpspctrl \
        -lpspnet_adhoc -lpspnet_adhocctl -lpspwlan -lpsprtc -lm
@@ -143,10 +180,18 @@ PSP_EBOOT_ICON  = assets/gbadhoc_icon0.png
 PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 
 # Large-memory policy is SPLIT by build flavour (MEMSIZE in PARAM.SFO):
-#  - PLAYABLE requests the 64 MiB layout (MEMSIZE=1).  On a 2000+/CFW the
-#    ROM cache's greedy 1 MB loop then reaches the full 32 blocks and 32 MB
-#    carts (Mother 3, Unbound) run fully memory-resident; a 1000 has no
-#    extra RAM and ignores the flag, so its behaviour is unchanged.
+#  - PLAYABLE requests the 64 MiB layout (MEMSIZE=1).  A 1000 has no extra
+#    RAM and ignores the flag.
+#
+#    IT DOES NOT MAKE LARGE CARTS RESIDENT.  The core caps the ROM cache at
+#    -DROM_BUFFER_SIZE=15 for every PSP target (root Makefile), so the greedy
+#    1 MB loop stops at 15 blocks and 32 MB carts (Mother 3, Unbound) use the
+#    PAGED ROM cache on ALL models, the 2000+ included.  The cap is deliberate
+#    and load-bearing: letting the PSP-3000 take all 32 blocks made Unbound
+#    diverge during battle (audio/video corruption then a freeze), while the
+#    1000 naturally topped out at 15 and was stable.  Do not raise it to chase
+#    residency.  The extra RAM still helps -- it is what BIG_JIT spends on
+#    larger translation caches.
 #  - HARNESS pins MEMSIZE=0 (the `harness` target below): PSP-1000 is the
 #    memory budget target (FRONTEND-AUDIT §8) and PPSSPP models MEMSIZE, so
 #    the Gate-1 mem_free measurement must stay honest for the 1000-series.
@@ -180,6 +225,12 @@ netdrv_core.o: ../netdrv/netdrv.c ../netdrv/netdrv.h ../netdrv/netdrv_wire.h
 transport_adhoc.o: ../netdrv/transport_adhoc.c ../netdrv/transport_adhoc.h ../netdrv/netdrv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Mystery Gift's netdrv backend (2.0.5).  Same out-of-tree rule and the same
+# reason as transport_adhoc above: a MIPS .o left in ../netdrv would be swept
+# into the desktop core archive by sdl/Makefile's find (ADR-0005).
+transport_inet.o: ../netdrv/transport_inet.c ../netdrv/transport_inet.h ../netdrv/netdrv.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
 
@@ -202,6 +253,13 @@ clean-deps:
 # else).  PHONY so its own sub-make owns dependency tracking.
 .PHONY: me/gbadhoc_me.prx clean-me
 me/gbadhoc_me.prx:
-	$(MAKE) -C me
+	# PSP_PIXFMT must reach the PRX too.  It was a THIRD, independent copy of
+	# the pixel-format decision -- me/Makefile hardcoded -DUSE_PSP_RGB565_FORMAT
+	# -- so a `PSP_PIXFMT=rgb565` build gave a core and a frontend using one
+	# layout and an ME renderer using the other, with R and B swapped in ME mode
+	# only, silently.  The core/frontend pair is caught at link time
+	# (gba_memory.c's pixfmt guard); the PRX is a separately loaded module and
+	# cannot be, so it has to be told.
+	$(MAKE) -C me PSP_PIXFMT=$(PSP_PIXFMT)
 clean-me:
 	-$(MAKE) -C me clean

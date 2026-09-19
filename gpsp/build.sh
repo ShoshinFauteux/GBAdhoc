@@ -31,6 +31,18 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
   local rc=$?
   printf '%s\n' "$outp" | tail -3
   [ "$rc" -eq 0 ] || { echo "FAIL: $label container exited $rc"; exit 1; }
+  # psp-fixup-imports FAILS AS A WARNING AND make STILL EXITS 0.  When the
+  # import stubs are out of order it prints one line, gives up, and leaves an
+  # EBOOT whose syscall imports are broken -- it builds clean here and dies on
+  # real hardware.  Adding -lpspnet_inet to psp/Makefile sprang exactly this in
+  # 2.0.5 (both it and -lpspnet_apctl are already linked implicitly; see the
+  # LIBS comment there).  An exit status cannot catch it, so grep for it.
+  if printf '%s\n' "$outp" | grep -q "stubs out of order"; then
+    echo "FAIL: $label linked with BROKEN IMPORTS (psp-fixup-imports gave up)."
+    echo "      A library is named in psp/Makefile LIBS that is already linked"
+    echo "      by psp-gcc's spec or build.mak's tail -- see the LIBS comment."
+    exit 1
+  fi
 }
 
 # CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_PARTIAL, BIG_JIT, cache

@@ -13,8 +13,24 @@
 #include "logo_ui.h"
 #include "fe_util.h"
 
+/* The other half of the pixel-format link guard; see gba_memory.c. */
+#ifdef USE_PSP_RGB565_FORMAT
+extern const char gpsp_core_pixfmt_psp5650;
+__attribute__((used)) static const char *const gpsp_pixfmt_agreed =
+   &gpsp_core_pixfmt_psp5650;
+#else
+extern const char gpsp_core_pixfmt_rgb565;
+__attribute__((used)) static const char *const gpsp_pixfmt_agreed =
+   &gpsp_core_pixfmt_rgb565;
+#endif
+
 #define FB_STRIDE 512
 #define FB_BYTES  (FB_STRIDE * VID_SCR_H * 2)
+#ifdef VID_TRIPLE
+#define VID_NBUF  3u        /* display buffers; depth and staging sit above */
+#else
+#define VID_NBUF  2u
+#endif
 
 /* TWO display lists (ADR-0040).  One was enough while every list was synced
  * before the next one started; `gu_defer` lets a finished list keep running
@@ -49,6 +65,69 @@ typedef struct
 /* Current GE draw-buffer offset in VRAM (toggles on every swap): lets the
  * GE readback dump the buffer that was just drawn, pre-swap. */
 static unsigned g_draw_off;
+
+#ifdef VID_TRIPLE
+/* TRIPLE BUFFERING -- fixes tearing along the top of the screen.
+ *
+ * sceGuSwapBuffers() latches with PSP_DISPLAY_SETBUF_NEXTFRAME, so the flip
+ * itself is atomic at vblank and cannot tear.  The tear comes from the frame
+ * AFTER it: the new draw buffer is the one still on screen until that latch
+ * happens.  The pacing loop in main_psp.c normally blocks in
+ * sceDisplayWaitVblankStart() so a vblank always intervenes -- but when a
+ * frame overruns its budget it takes the `g_fh_late` path and does NOT wait,
+ * and the next GE blit then writes into the buffer being scanned out.  Blit
+ * and beam both run top-to-bottom, the blit outruns the beam near the top,
+ * and the seam lands a few rows down.  Vertical scrolling makes it obvious
+ * because a horizontal seam separates two vertically-offset images.
+ *
+ * Three buffers provide space for the LCD's current frame, the pending
+ * vblank flip, and a draw target. They are NOT a modulo-3 ring: fast-forward
+ * and pacing catch-up can submit several frames before one vblank. vid_swap
+ * must exclude both the current and pending display buffers when choosing
+ * the next target. This needs no extra vblank wait on the normal path.
+ *
+ * VRAM cost: a third 512x272x2 = 272 KiB buffer.  Layout becomes
+ *   0 / 272K / 544K  display, 816K depth, 1.09M staging, ending ~1.2 MiB of
+ * the 2 MiB every PSP has (the 1000 included -- its 32 MiB limit is main
+ * RAM, a different pool from sceGeEdram). */
+static const unsigned g_fb_off[3] = { 0u, FB_BYTES, FB_BYTES * 2u };
+static unsigned g_fb_cur;          /* index currently being DRAWN into */
+
+/* Point the GE at the current draw buffer.  Must be issued inside a list, so
+ * every sceGuStart in this file pairs with it. */
+#define VID_GU_TARGET()    sceGuDrawBuffer(GU_PSM_5650, (void *)(uintptr_t)g_fb_off[g_fb_cur], FB_STRIDE)
+
+/* HAS ANYTHING FILLED THE BUFFER WE ARE ABOUT TO SHOW?
+ *
+ * With two buffers, swapping with nothing drawn was invisible: you re-showed
+ * the complete frame from two presents ago, which during fast-forward reads as
+ * ordinary strobing.  With three buffers it is a bug.  The ring advances onto a
+ * buffer whose newest content is three presents old, and buffer 2 is never
+ * written at all before its first use -- so it shows BLACK.
+ *
+ * That is the "black bars flashing during FF" regression this fixes.  The
+ * paced branch in main_psp.c calls vid_swap() unconditionally (correct when a
+ * swap could only ever show a complete older frame), while every fast-forward
+ * path deliberately skips the blit on most frames: g_blit_suppress for the
+ * intermediate 1.5x/3x frames, the FF_PRESENT_MASK cadence for uncapped CPU
+ * FF, and the post-only ME paths.  Skipped blit + unconditional swap = a
+ * buffer nobody filled, on screen.
+ *
+ * A buffer counts as filled when something CLEARED it and drew a whole frame
+ * into it: vid_draw_frame, vid_draw_prestaged, or vid_overlay_begin(1) (menus,
+ * the wake overlay, the "connecting" frames).  vid_overlay_begin(0) is the OSD
+ * drawing chips ON TOP of whatever is already there; it cannot make an undrawn
+ * buffer presentable, so it deliberately does not set this.
+ *
+ * Scoped to VID_TRIPLE: in the double-buffered fallback an unconditional swap
+ * is the shipped 2.0.3 behaviour and showed a complete frame, so it is left
+ * exactly as it was. */
+static int g_fb_filled;
+#define VID_FB_FILLED()  do { g_fb_filled = 1; } while (0)
+#else
+#define VID_GU_TARGET()  do { } while (0)
+#define VID_FB_FILLED()  do { } while (0)
+#endif
 
 static int g_scale  = VID_SCALE_1X;
 static int g_filter = VID_FILTER_NEAREST;
@@ -175,7 +254,7 @@ int vid_set_blit_mode(int mode)
        * 2 MiB of VRAM against 3 x 512x272x2 = 816 KiB leaves ~1.2 MiB, so
        * 82 KiB fits with room to spare — but check rather than assert, and
        * fall back rather than scribble on the framebuffer if it ever moves. */
-      uintptr_t off  = (uintptr_t)FB_BYTES * 3u;
+      uintptr_t off  = (uintptr_t)FB_BYTES * (VID_NBUF + 1u);
       unsigned  size = sceGeEdramGetSize();
       off = (off + 63u) & ~(uintptr_t)63u;
       if (!size || off + (uintptr_t)STAGE_BYTES > (uintptr_t)size)
@@ -321,9 +400,10 @@ void vid_init(void)
 
    sceGuInit();
    sceGuStart(GU_DIRECT, gu_next_list());
+   VID_GU_TARGET();
    sceGuDrawBuffer(GU_PSM_5650, (void *)0, FB_STRIDE);
    sceGuDispBuffer(VID_SCR_W, VID_SCR_H, (void *)(uintptr_t)FB_BYTES, FB_STRIDE);
-   sceGuDepthBuffer((void *)(uintptr_t)(FB_BYTES * 2), FB_STRIDE);
+   sceGuDepthBuffer((void *)(uintptr_t)(FB_BYTES * VID_NBUF), FB_STRIDE);
    sceGuOffset(2048 - (VID_SCR_W / 2), 2048 - (VID_SCR_H / 2));
    sceGuViewport(2048, 2048, VID_SCR_W, VID_SCR_H);
    sceGuScissor(0, 0, VID_SCR_W, VID_SCR_H);
@@ -447,6 +527,8 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
       g_stage_us_max = d;
 
    sceGuStart(GU_DIRECT, gu_next_list());
+   VID_GU_TARGET();
+   VID_FB_FILLED();
    sceGuClear(GU_COLOR_BUFFER_BIT);
    sceGuDisable(GU_BLEND);
    sceGuEnable(GU_TEXTURE_2D);
@@ -519,6 +601,8 @@ void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
    t1 = sceKernelGetSystemTimeLow();
 
    sceGuStart(GU_DIRECT, gu_next_list());
+   VID_GU_TARGET();
+   VID_FB_FILLED();
    sceGuClear(GU_COLOR_BUFFER_BIT);
    sceGuDisable(GU_BLEND);
    sceGuEnable(GU_TEXTURE_2D);
@@ -564,8 +648,15 @@ void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
 void vid_overlay_begin(int clear)
 {
    sceGuStart(GU_DIRECT, gu_next_list());
+   VID_GU_TARGET();
    if (clear)
+   {
+      /* A full-screen clear makes this buffer presentable on its own: menus
+       * and the wake overlay own the whole frame.  A non-clearing overlay (the
+       * OSD) does not -- see g_fb_filled. */
+      VID_FB_FILLED();
       sceGuClear(GU_COLOR_BUFFER_BIT);
+   }
    sceGuEnable(GU_BLEND);
    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 }
@@ -886,7 +977,7 @@ void vid_overlay_end(void)
 
 /* ------------------------------------------------------------- swap/dump */
 
-/* Black out BOTH display buffers with plain uncached stores.
+/* Black out EVERY display buffer with plain uncached stores.
  *
  * For the suspend path only.  The LCD shows whatever is in VRAM the moment it
  * powers back on, which is the frame from before the sleep -- so a console
@@ -900,16 +991,70 @@ void vid_overlay_end(void)
  * GE or leave a list unfinished. */
 void vid_blank_all(void)
 {
-   memset((void *)0x44000000u, 0, (size_t)FB_BYTES * 2u);
+   /* VID_NBUF, not a hardcoded 2.  With triple buffering the old constant left
+    * the THIRD buffer holding whatever was in VRAM, which is the other half of
+    * the FF black-flash bug: an unwritten buffer 2 is exactly what the display
+    * latched when the ring over-rotated.  See g_fb_filled. */
+   memset((void *)0x44000000u, 0, (size_t)FB_BYTES * VID_NBUF);
 }
 
 void vid_swap(void)
 {
+#ifdef VID_TRIPLE
+   void *display;
+   uintptr_t edram = (uintptr_t)sceGeEdramGetAddr();
+   int width, format;
+   unsigned next;
+#endif
    /* ADR-0040: swapping while the GE is still drawing shows a half-rendered
     * frame.  Unconditional, so the invariant does not depend on gu_defer. */
    vid_gu_flush();
+#ifdef VID_TRIPLE
+   /* NOTHING DREW THIS FRAME: hold what is on screen.  Do not present and do
+    * not advance the ring -- rotating here is what put an unwritten buffer on
+    * the display during fast-forward (see g_fb_filled).  Holding the current
+    * frame is also the right look for a skipped frame, and it costs nothing:
+    * no syscall, no flip. */
+   if (!g_fb_filled)
+      return;
+
+   /* sceGuSwapBuffers() only knows two buffers, so drive the flip directly.
+    * NEXTFRAME latches at vblank exactly as it did before -- the change is
+    * WHICH buffer we start drawing into next, not when the flip happens. */
+   if (sceDisplaySetFrameBuf((void *)(edram + g_fb_off[g_fb_cur]),
+                         FB_STRIDE, PSP_DISPLAY_PIXEL_FORMAT_565,
+                         PSP_DISPLAY_SETBUF_NEXTFRAME) < 0)
+      return;                         /* retain the complete frame for retry */
+
+   /* Read AFTER submitting: an older pending frame can latch until the
+    * SetFrameBuf above replaces it. From here the LCD can only keep the
+    * current frame or advance to the one we just submitted. Excluding both
+    * is safe even if vblank happens during/after GetFrameBuf. Querying the
+    * NEXTFRAME address instead would protect only the pending frame.
+    * Compare physical addresses because the SDK may return a VRAM alias. */
+   next = (g_fb_cur + 1u) % VID_NBUF;
+   if (sceDisplayGetFrameBuf(&display, &width, &format,
+                            PSP_DISPLAY_SETBUF_IMMEDIATE) == 0)
+   {
+      while (next == g_fb_cur ||
+             ((edram + g_fb_off[next]) & 0x1fffffffu) ==
+             ((uintptr_t)display & 0x1fffffffu))
+         next = (next + 1u) % VID_NBUF;
+   }
+   else
+   {
+      /* Without the current address, wait for our successful submission
+       * to latch before reusing another buffer. Only the API-error path
+       * waits; uncapped FF remains independent of the LCD refresh rate. */
+      sceDisplayWaitVblankStart();
+   }
+   g_fb_cur    = next;
+   g_draw_off  = g_fb_off[g_fb_cur];
+   g_fb_filled = 0;                      /* the new target is empty again */
+#else
    sceGuSwapBuffers();
    g_draw_off ^= FB_BYTES;
+#endif
 }
 
 int vid_dump_ge(const char *path)

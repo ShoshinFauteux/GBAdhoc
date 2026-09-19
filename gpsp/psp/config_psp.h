@@ -85,14 +85,10 @@ typedef struct
     * the positional match to a real GBA.  1 = swapped: Cross is A, Circle
     * is B, for players who want the western confirm button as A. */
    int  btn_swap;
-   int  ff_mult_x10;  /* 15 / 30 / 0 = uncapped (default 15; 20 retired) */
+   /* Persist the legacy keys for compatibility: 30/1 = 3x (default),
+    * 0/0 = Unlimited, 0/1 = Unlimited Smooth. Use pcfg_ff_set_mode(). */
+   int  ff_mult_x10;
    int  ff_hold;      /* 1 = hold (default), 0 = toggle */
-   /* Fast-forward style.  0 = fast (default): frameskip on, the ME on its
-    * synchronous FF path — maximum emulated speed, visibly choppy.  1 =
-    * smooth: frameskip OFF and the ME kept on its normal ASYNC path, so
-    * every emulated frame is actually rendered.  Lower peak multiplier,
-    * but FF *looks* like fast motion instead of a slideshow.  Only the
-    * dual-core renderer makes smooth affordable at all. */
    /* Sparse frameskip for NORMAL play: draw N frames, skip 1.  0 = off.
     * For a game sitting just under 60, halving the frame rate (ordinary
     * frameskip) reads as a hitch, while dropping 1 frame in 4 or 8 recovers
@@ -112,11 +108,6 @@ typedef struct
     * 1 = Marquee (art fills the screen).  The browser reads it once at
     * startup, so like me_mode it applies on the next launch. */
    int  ui_shell;
-   /* Media Engine same-frame presentation: retire and draw the ME frame at
-    * the end of its OWN frame instead of the next one, removing a frame of
-    * latency.  Default 1 -- a miss just falls back to the previous
-    * behaviour, so there is no downside case. */
-   int  me_sameframe;
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
     * here so a graphics complaint can be bisected on the shipping build --
@@ -360,6 +351,11 @@ typedef struct
 
 extern psp_config g_pcfg;
 
+enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_COUNT };
+int pcfg_ff_mode(void);
+void pcfg_ff_set_mode(int mode);
+const char *pcfg_ff_name(void); /* shared by settings and OSD */
+
 /* Reads a decimal frame rate ("40", "40.5", "40.00") from `ini` as hundredths,
  * clamped to PCFG_SESSION_FPS_MIN..MAX.  Returns `def` when the key is absent
  * or unparseable.  Shared with the harness override in main_psp.c so the
@@ -368,6 +364,8 @@ int  pcfg_fps_x100(const char *ini, const char *key, int def);
 
 void pcfg_load(const char *ini_path);
 void pcfg_save(void);   /* rewrites all keys to the load path */
+/* Browser selection changes only this key. Returns -1 on persistence failure. */
+int pcfg_remember_rom(const char *name);
 
 #ifdef __cplusplus
 }

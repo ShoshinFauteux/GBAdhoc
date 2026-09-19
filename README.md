@@ -1,15 +1,15 @@
 <p align="center">
   <img src="assets/gbadhoc-logo.png" alt="GBAdhoc — PSP GBA emulator" width="480"><br>
-  <sub><b>GBAdhoc 2.0</b></sub>
+  <sub><b>GBAdhoc 2.1.0</b></sub>
 </p>
 
 **A GBA emulator for the PSP that runs the renderer on the console's second CPU and
 carries GBA Wireless Adapter multiplayer over the PSP's own ad-hoc WiFi.**
 
-The first (and only) GBA Emulator with Wireless Adapter Support! 
+The first (and only) GBA Emulator with Wireless Adapter Support!
 Trade your friends, Partake in Link battles, recieve Mystery Gifts and more!
 It also just plays GBA games, and it is fast: Fully compatible with the PSP-1000,
-The secret sauce is a NEW and IMPROVED dual-core Media Engine Frame Renderer. 
+The secret sauce is a NEW and IMPROVED dual-core Media Engine Frame Renderer.
 Now 1.45ms Faster! (woohoo)
 
 ### [**⬇ Download GBAdhoc 2.0**](https://github.com/ShoshinFauteux/GBAdhoc/releases/latest)
@@ -24,10 +24,11 @@ Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. P
 
 | | |
 |---|---|
+| **Mystery Gift** | Receive real Gen-3 Wonder Cards from an Android phone acting as the distribution station. **SELECT + DOWN** in game. See [Mystery Gift](#mystery-gift). |
 | **Wireless multiplayer** | Full AGB-015 Wireless Adapter emulation carried over PSP ad-hoc. Trades, link battles, Union Room, Mystery Gift. **No Internet connection required** |
 | **Wake from sleep** | Slide it shut, flick the switch, and come back whenever. Your game is exactly where you left it, under a translucent *Continue / Quit to game list* prompt. On by default. |
 | **Two processors, both working** | The PSP's second CPU draws every frame while the first emulates the next one. Full speed on a PSP-1000, and **past 170 fps** with fast-forward uncapped. |
-| **Six fast-forward presets** | 1.5x, 3x and uncapped, each in normal or **smooth**. Normal skips frames to go as fast as possible; smooth renders every single one, noticeably slower (roughly 100 fps against 170 uncapped) But far nicer to watch. Hold or toggle, your choice. |
+| **Three fast-forward presets** | **3x**, **Unlimited** and **Unlimited Smooth**. 3x holds a steady triple speed. Unlimited skips frames to go as fast as it can, **past 170 fps**. Unlimited Smooth draws every single frame instead, slower at roughly 100 fps, but far nicer to watch. Hold or toggle, your choice. |
 | **A browser worth using** | Two layouts **Marquee** for one game and its art per screen, **Shelf** for more of the library at once, each in light or dark. Four looks from one setting pair. |
 | **Save states on the shoulders** | Select + L saves, Select + R loads, one slot per game. Your battery-save SRAM is written out on exit, on HOME and periodically as you play, with a backup kept. |
 | **Runs the hard stuff** | Pokémon Unbound and other CFRU hacks at full speed. Emerald, FireRed and LeafGreen all link. |
@@ -46,6 +47,65 @@ Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. P
 | **Wake from sleep**, your game is still there, underneath | Settings |
 
 ---
+
+## 2.1.0
+
+Faster where it was slowest, and a hard freeze found and fixed.
+
+### The sound mixer was costing a third of the frame
+
+Pokemon games build their sound mixer at runtime and then rewrite its instructions as
+they play. Every one of those writes forces the emulator to throw away compiled code and
+recompile it, and a busy battle does that about twelve times a frame.
+
+The emulator already knew how to handle this cheaply, retiring only the handful of
+compiled blocks that the write actually touched. But it only recognised **one** game's
+mixer by sight, and Heart & Soul's sits a few bytes further along, so it failed the check
+and took the expensive path every single time: one write, thirty recompiles.
+
+It now recognises the whole family of mixers rather than one specific address. On Heart &
+Soul's heaviest battle that is **37% less work per frame, and 57 fps becomes a solid
+59.8** — recompiles per measurement window fell from 107,416 to 10,778. Unbound and
+everything already running at full speed are unaffected; they were passing the check
+before.
+
+**Known issue: a brief visual artifact on some attacks.** In Heart & Soul you may see a
+sprite drawn in the wrong place for a few frames when certain attacks land. It is
+deterministic and reproducible, and it is being worked on.
+
+**Switching Heart & Soul to its classic soundtrack avoids it entirely**, if it bothers you
+more than the music does. Running that game in **mono** also gives the sound engine less to
+do, which is worth setting either way.
+
+Testing has been extensive, on real hardware rather than in an emulator, but this is a
+large change to how the emulator handles self-rewriting code and there may well be a bug
+here and there. Please raise anything you find.
+
+### The freeze
+
+A compiled block could end up containing a direct jump to an address the translator had
+failed to resolve. That is a jump into unmapped memory, and because nothing called the
+dispatcher on the way there, the existing safety net never saw it, so the console locked
+up hard instead of recovering. Those exits now go to a permanent known-good block and
+emit no code at all.
+
+Separately, the emulator's memory of which addresses rewrite themselves is now wiped when
+a ROM loads, so one game's habits can no longer be applied to the next one.
+
+**What backs it up:** 36 unattended runs across a PSP-1000 and a PSP-3000, both test
+games, all three fast-forward presets, second-core renderer on. 1440 save-state reloads
+with fast-forward toggling throughout, zero failures and zero lockups. Reloading a state
+restores the game's memory underneath a translation cache that keeps its compiled code,
+which is exactly where stale state would show itself if any survived.
+
+The original freeze was rare and has never been reproduced on demand, so this prevents
+the mechanism that was demonstrated rather than proving the symptom gone for good.
+
+### Upgrading from any earlier version
+
+Copy the new `EBOOT.PBP` and `gbadhoc_me.prx` over your existing install, then **delete
+your old `config.ini`** — several defaults changed, and a stale file keeps the old ones.
+Your `roms/`, battery saves and save states are untouched.
 
 ## 2.0.3
 
@@ -162,76 +222,247 @@ it can show it now says so on screen instead of leaving you to work it out. Noth
 else changed — copy the new `EBOOT.PBP` and `gbadhoc_me.prx` over 2.0 and keep the
 rest.
 
-## 2.0
+## The second processor
 
-I've been working on this for about a month now, the response I received from my initial release was very positive.
-I am a PSP Enjoyer and have been since the age of 9, I suffered through hours of clanker diagnosis to bring this to you.
-Hopefully, people are able to enjoy it for years to come. 
-**I Respond to issues raised in the repo, if you encounter a bug. Tell me, I will fix it probably maybe**
+The PSP has two CPUs. The second one, Sony's Media Engine, sits idle in almost every
+homebrew emulator; GBAdhoc gives it the entire GBA renderer.
 
-### Coming from 1.x
+The timing is what makes it pay. A GBA screen is 160 lines drawn top to bottom, and the
+instant line 160 is done the picture is final — nothing the game does for the rest of the
+frame can change it. But the console still has the whole vblank period before it has to
+show anything. So the drawing is handed over at line 160 and both processors work at once
+for the remainder.
 
-Copy the new `EBOOT.PBP` and `gbadhoc_me.prx` over your existing install and keep your
-`roms/`, saves and `config.ini`. Three defaults changed and are worth knowing about:
+Two details carry it. The Media Engine's first act is to take a private copy of what it
+needs and say so, which releases the main CPU to start the next frame instead of waiting.
+And it copies only the video memory the game actually wrote — typically 8 KB of 96 KB,
+tracked by a per-page map — because handing over all of it was slower than not offloading
+at all. The emulator gets roughly 750 microseconds of every frame back. About 85% of
+frames finish inside their own frame; a miss simply presents one frame later, which is
+what every earlier version did for every frame.
 
-| key | 1.x | 2.0 | why |
-|---|---|---|---|
-| `net_session_fps` | `29.97` | `59.73` | both consoles now hold full speed during a link |
-| `nd_rto_min_us` | 200 ms (fixed) | `50000` | the old floor was 18× the round-trip we actually have |
-| `me_mode` | n/a | `1` | the second-core renderer; `0` is the deprecated single-core path |
+## Requirements
 
-Sleep/wake (`standby`) is **on** by default in 2.0.
+- A PSP running custom firmware (developed and tested on **ARK-4**). Works on the
+  **PSP-1000, 2000/3000 and Go**, all three are tested.
+- A GBA BIOS is **not** required: an open-source replacement is bundled. Drop a real
+  `gba_bios.bin` in the app folder if you would rather use one.
+- For wireless: **two** PSPs, both with the WLAN switch on, both on the **same fixed
+  ad-hoc channel**.
 
 ---
 
-## How it runs this fast
+## Mystery Gift
 
-The PSP has **two** processors, the main CPU, and a second one Sony put in for video
-decoding called the Media Engine. Almost every homebrew emulator uses the first and
-lets the second sit idle. GBAdhoc gives it the whole GBA renderer.
+Gen-3 Mystery Gift works, from an Android phone. The phone stands in for Nintendo's
+distribution station, and the game receives a real Wonder Card through its own Mystery
+Gift menu — nothing is written into your save by the emulator.
 
-The timing is what makes it work. A GBA screen is 160 lines drawn top to bottom, and
-**the instant line 160 is done the picture is final**, nothing the game does for the
-rest of that frame can change how it looks. But the console still has the whole vblank
-period before it has to show anything. That gap is the opportunity: hand the drawing
-over at line 160, and both processors run at once for the rest of the frame.
+**Get the app:**
+[**Mystery Gift Station**](https://github.com/ShoshinFauteux/MysteryGiftStation)
 
-```mermaid
-flowchart LR
-    subgraph MAIN["Main CPU"]
-        direction TB
-        E1["emulate frame N"]
-        E2["straight into frame N+1<br/><i>no waiting</i>"]
-        BL["blit + swap<br/><i>~1.5 ms</i>"]
-    end
-    subgraph ME["Media Engine · 2nd processor"]
-        direction TB
-        CP["copy what changed<br/><i>~8 KB of 96 KB VRAM,<br/>+ sprites + palette</i>"]
-        DR["render 160 scanlines<br/><i>~10 ms</i>"]
-    end
-    E1 -->|"line 160 · picture is final<br/>job posted via mailbox"| CP
-    CP -.->|"inputs copied,<br/>main CPU released"| E2
-    CP --> DR
-    DR -->|"done · 85.7% land in time"| BL
-    BL --> SCR(["frame N on screen,<br/>in frame N"])
-    style SCR fill:#065f46,stroke:#059669,color:#f9fafb
+1. On the phone, start a normal Wi-Fi hotspot named exactly **`Mystery Gift`**, with
+   **security Open** and the band set to **2.4 GHz**. The PSP's radio is 2.4 GHz only and
+   will not see a 5 GHz hotspot.
+2. Open Mystery Gift Station and pick a gift.
+3. On the PSP, in-game, press **SELECT + DOWN**. GBAdhoc joins that hotspot and starts
+   listening — it creates the connection profile itself, so there is nothing to set up in
+   the PSP's network settings.
+4. In the game, go to **Mystery Gift** on the title screen and receive the card as you
+   normally would.
+
+**SELECT + DOWN** again stops it. Mystery Gift and wireless trading cannot run at the same
+time; the emulator will tell you to stop one before starting the other.
+
+Full protocol notes, the gift list and troubleshooting live in the app's repository.
+
+## ⚠ Read this before you try wireless
+
+### 1. The physical WLAN switch must be ON
+
+It is in a different place on every model, and the PSP Go has no switch at all, it is
+a setting. If it is off you now get a message that says so, rather than a puzzle.
+
+### 2. Both consoles must be on the SAME FIXED ad-hoc channel, not "Automatic"
+
+`Settings → Network Settings → Ad Hoc Channel` on both consoles. Pick **1**, **6** or
+**11** and set the same one on both. "Automatic" lets the two consoles choose different
+channels, and two radios on different channels cannot hear each other no matter how
+correct everything else is.
+
+---
+
+## Install
+
+1. Copy the `GBAdhoc` folder to `ms0:/PSP/GAME/`.
+2. Put your `.gba` files in `GBAdhoc/roms/`, loose or in subfolders (two levels).
+3. Optional: box art in `GBAdhoc/boxart/`, hero art in `GBAdhoc/hero/`.
+
+---
+
+## Artwork
+
+Two optional kinds of picture: **box art**, the small cover in the Shelf layout, and
+**hero art**, the full-screen 480x272 backdrop behind Marquee. The browser works fine
+without either.
+
+**The one rule that matters: a picture is matched to a game by filename and nothing
+else.**
+
+```
+roms/Pokemon - LeafGreen Version (USA).gba
+hero/Pokemon - LeafGreen Version (USA).png     <- found
+hero/Pokemon LeafGreen.png                     <- silently ignored
 ```
 
-The dotted line is the important one. The Media Engine's first act is to take its own
-private copy of everything it needs; the moment that is done it says so, and the main
-CPU carries on emulating while the frame is still being painted. Without it the two
-would be a relay race instead of two people working.
+No database, no fuzzy matching, and a mismatch is not an error and prints no warning,
+the game just shows no art. **If a card is not showing up, the name is wrong.** Same
+rule for `boxart/`.
 
-That is where the speed comes from: the emulator stopped spending roughly **750 µs of
-every frame** pushing pixels, and got that time back.
+Ready-made packs, a tool that renames a pack to match the ROMs you actually have, the
+prompt used to generate the existing set, and a script that derives a backdrop from box
+art are all in the art repo, along with the instructions for each:
 
-**The parts that are harder than they sound:**
+### [**GBAdhoc-heroart**](https://github.com/ShoshinFauteux/GBAdhoc-heroart)
+
+Drop PNGs in and you are done. The console bakes each one to the GPU's own `.565`
+texture format on first view, one game at a time while the browser is idle, so a big
+library never stalls at boot. Packs ship those pre-baked, which skips that first-view
+cost and dithers better than the console can.
+
+The packs are **generated images**, not scans and not official artwork. They are kept
+out of this repository because hero art derives from copyrighted box art, so if a pack
+ever has to come down, the emulator is untouched.
+
+## Using it
+
+### ROM browser
+
+Two shells, switchable in Settings:
+
+- **Marquee**, one game per screen, its hero art filling the background.
+- **Shelf**, a denser list with box art alongside.
+
+D-pad to move, **×** to start, **Start** for Settings. Art loads while you are idle and
+never while you are scrolling, so holding a direction stays smooth.
+
+### In-game controls
+
+| PSP | Does |
+|---|---|
+| D-pad | GBA D-pad |
+| **○** | GBA **A** |
+| **×** | GBA **B** |
+| L / R | GBA L / R |
+| Start / Select | GBA Start / Select |
+| **△** | Cycle video preset (saved) |
+| **□** | Fast-forward (hold by default; preset and hold/toggle in Settings) |
+| **Select + L** | Save state |
+| **Select + R** | Load state |
+| **Select + Start**, held ~¼ s | In-game menu |
+
+One state slot per game. The shoulder chords require Select held, so L and R behave
+normally in play.
+
+### In-game menu
+
+**Resume · Save state · Load state · Wireless · Settings · Exit.** Exit flushes your
+save, as does quitting with HOME.
+
+---
+
+## Saves
+
+- **SRAM** is written to `roms/<game>.sav`, flushed on exit, on HOME, and periodically
+  during play. A `.sav.bak` is kept.
+- **Save states**: one slot per game, `roms/<game>.st0`.
+- Sleeping does not touch your save; the game is still in memory exactly as it was.
+
+---
+
+## What to expect from which games
 
 | | |
 |---|---|
-| **The two CPUs cannot see each other's memory** | No cache coherency between them, each has its own private view, and neither can snoop the other. Every shared word goes through one 64-byte mailbox at an address that bypasses the caches entirely (`0x40000000`). Commands are sequence-numbered, so "has it finished?" is one integer compare and the main CPU never blocks on the answer. |
-| **Copying everything cost more than it saved** | Handing over all 96 KB of video RAM per frame was slower than not offloading at all. A 96-byte map tracks which 1 KB pages the game actually wrote, typically ~8 KB, and only those move. **145–173 µs across 14 runs, 0 drops in 161,000 frames.** |
-| **Sometimes it doesn't finish** | 85.7% of frames are retired inside their own frame. A miss is not a stutter: the frame simply presents one later, which is exactly what every earlier version did for *every* frame. The misses are CPU spikes, not the engine running short of time.
+| **Pokémon Emerald / FireRed / LeafGreen** | Full speed. Union Room trades and battles work between two consoles. |
+| **Pokémon Unbound** and other CFRU hacks | Full speed (59.9). Was 29 before translation gates. Run it on the **medium music preset** (in the game's own options) for the best results. |
+| **Pokémon Heart & Soul** | Full speed (59.8) as of 2.1.0, including its heaviest battles — was 57. Set its sound to **mono** for the best performance. Tested hard, but see the known issue above; if you hit something odd, please raise it. |
+| Most commercial GBA titles | Full speed. |
+| Heavy 3D / Mode 7 titles | Varies; fast-forward and frameskip are there if you need them. |
+
+---
+
+## Status and known limitations
+
+**Works, tested on hardware, on all three PSP models.**
+
+- Wireless link battles complete; earlier builds only managed quick trades.
+- Sleep/wake with the Media Engine live.
+- Single-core rendering is **deprecated** but kept for diagnostics (`me_mode = 0`).
+
+**Rough edges, honestly:**
+
+- The wake prompt appears a beat after the screen lights. The LCD shows video memory the
+  instant it powers on, and we blank it at suspend, so you get black then the prompt,
+  not a stale frame, but not instant either.
+- Link sessions are paced to 59.73 fps on both consoles. Gen-3 games count link timeouts
+  in *frames*, so two consoles that disagree about how long a frame is will drop the
+  link. Both must run the same rate.
+- Hero art is not included in this repository, it is derived from copyrighted box art
+  and lives in a separate pack. See
+  [GBAdhoc-heroart](https://github.com/ShoshinFauteux/GBAdhoc-heroart).
+- FireRed/LeafGreen wireless is less tested than Emerald.
+
+---
+
+## Building from source
+
+Docker supplies the toolchain, so the build is reproducible on any machine.
+
+```bash
+# one profile name, one artifact, one manifest
+gpsp/tools/build.sh release      # what a player installs
+gpsp/tools/build.sh harness      # the hardware test rig
+gpsp/tools/build.sh diagnostic   # release plus instruments
+# -> gpsp/psp/EBOOT.PBP
+```
+
+The reproducible release procedure and current flag set are documented in
+[`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.md).
+
+The three profiles exist because these flavours used to be defined in four separate
+places, each carrying its own copy of a long flag list, and they drifted. The lists now
+live in that one script, and `gpsp_profile.h` refuses combinations that are silently
+wrong. All three share the same dynarec configuration deliberately: a diagnostic build
+must be the *same emulator* as the release, or it answers a different question.
+
+What differs is the frontend.
+
+- **release** — telemetry compiled out entirely (not stubbed; the call sites are gone),
+  and the harness ini path points at a filename that cannot exist, so a leftover
+  `.gpsp-harness.ini` on your memory stick is inert.
+- **harness** — adds telemetry and the autopilot so a job file can drive a console
+  unattended. Titled **GBAdhoc HARNESS** on the XMB, because a harness build must never
+  be mistaken for a playable one.
+- **diagnostic** — release plus instruments that write to the memory stick, which is
+  exactly why the release profile refuses them.
+
+The script then reads the linked binary and fails if a profile's expected strings are
+missing, or a forbidden one is present, because a build that quietly did nothing looks
+exactly like a build that worked. `make` does not track CFLAGS, so the default is a full
+clean rebuild: a stale object silently drops a flag, and that reads as "the optimisation
+didn't help" rather than as a build error.
+
+---
+
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](gpsp/docs/ARCHITECTURE.md), how the pieces fit together
+- [`docs/ADHOC-NOTES.md`](gpsp/docs/ADHOC-NOTES.md), the RFU protocol as we found it
+- [`docs/DECISIONS.md`](gpsp/docs/DECISIONS.md), every design decision and why, including the
+  ones that were wrong
+- [`docs/TESTING.md`](gpsp/docs/TESTING.md), the harness
+- [`docs/RELEASE.md`](gpsp/docs/RELEASE.md), how a release is built and verified
 
 ## Credits, this project stands on other people's work
 
@@ -287,283 +518,6 @@ Licensed **GPL-2.0**, same as gpSP (see `COPYING`). Upstream copyright headers a
 Changes to the core itself are kept minimal and are intended to be offered upstream.
 
 ---
-
-## Requirements
-
-- A PSP running custom firmware (developed and tested on **ARK-4**). Works on the
-  **PSP-1000, 2000/3000 and Go**, all three are tested.
-- A GBA BIOS is **not** required: an open-source replacement is bundled. Drop a real
-  `gba_bios.bin` in the app folder if you would rather use one.
-- For wireless: **two** PSPs, both with the WLAN switch on, both on the **same fixed
-  ad-hoc channel**.
-
----
-
-## ⚠ Read this before you try wireless
-
-### 1. The physical WLAN switch must be ON
-
-It is in a different place on every model, and the PSP Go has no switch at all, it is
-a setting. If it is off you now get a message that says so, rather than a puzzle.
-
-### 2. Both consoles must be on the SAME FIXED ad-hoc channel, not "Automatic"
-
-`Settings → Network Settings → Ad Hoc Channel` on both consoles. Pick **1**, **6** or
-**11** and set the same one on both. "Automatic" lets the two consoles choose different
-channels, and two radios on different channels cannot hear each other no matter how
-correct everything else is.
-
----
-
-## Install
-
-1. Copy the `GBAdhoc` folder to `ms0:/PSP/GAME/`.
-2. Put your `.gba` files in `GBAdhoc/roms/`, loose or in subfolders (two levels).
-3. Optional: box art in `GBAdhoc/boxart/`, hero art in `GBAdhoc/hero/`.
-
----
-
-## Getting the artwork
-
-Two kinds of picture. **Box art** is the little cover in the Shelf layout. **Hero art**
-is the full-screen 480×272 backdrop behind the Marquee layout, the Venusaur above.
-Neither is required; the browser works fine without them.
-
-### The one rule that matters
-
-**A picture is matched to a game by filename and nothing else.**
-
-```
-roms/Pokemon - LeafGreen Version (USA).gba
-hero/Pokemon - LeafGreen Version (USA).png     ← found
-hero/Pokemon LeafGreen.png                     ← silently ignored
-```
-
-There is no database and no fuzzy matching. A mismatched name is not an error and
-produces no warning, the game simply shows no art, which looks exactly like a broken
-download. **If a card is not showing up, the name is wrong.** Same rule for `boxart/`.
-
-### Three ways to get hero art
-
-**1. Download a pack.** [**GBAdhoc-heroart**](https://github.com/ShoshinFauteux/GBAdhoc-heroart)
-has 27 cards ready to go. Unzip, drop the files into `GBAdhoc/hero/`. Names in a pack are already the standard No-Intro ROM names, so if your
-ROMs use those it just works. If they don't, `install_heroes.py` in
-[tools/heroforge](tools/heroforge) matches the pack against the ROMs you actually
-have and renames as it copies, and tells you about anything it could not place, rather
-than guessing.
-
-**2. Make your own.** The [art repo](https://github.com/ShoshinFauteux/GBAdhoc-heroart)
-carries `PROMPT.md`, the prompt used to generate the existing set, along with why each constraint is there, the composition rules are not
-taste, they are where the shell prints its text, and they were worked out by looking at
-mockups that failed. Feed it to any image generator, ask for 480×272, save the PNG under
-the ROM's exact name. That is the whole process.
-
-**3. Derive it from the box art.** `compose.py` builds a passable backdrop out of a
-cover with no AI involved. A lower ceiling than a made-for-purpose card, but it works
-for any game and needs nothing but the cover you already have.
-
-### PNG or .565?
-
-Drop in a **PNG** and you are done. The first time you look at that game, the console
-decodes it and writes a `.565` beside it, the GPU's own texture format, and every
-visit after that is a single read with no decoding at all. **112 ms as a PNG, 14 ms as a
-.565.** The conversion is lazy: one game at a time, only for games you actually look at,
-and only while the browser is idle, so a big library never stalls at boot.
-
-Packs ship the `.565` files pre-baked, which skips that first-view cost and looks
-slightly better as well, baking on a PC lets us dither the 24-bit-to-16-bit step, which
-the console's straight truncation cannot do, so skies and gradients come out cleaner.
-
-### Why the art is not in this repository
-
-Hero art is derived from copyrighted box art, the characters and styles belong to
-Nintendo, Konami, Capcom and others. Bundling it would put that risk on the emulator
-itself, so it lives in a separate archive, the same reason RetroArch keeps
-`libretro-thumbnails` as its own project. If a pack ever has to come down, the emulator
-is untouched.
-
-The packs are **generated images**, not scans and not official artwork.
-
----
-
-## Using it
-
-### ROM browser
-
-Two shells, switchable in Settings:
-
-- **Marquee**, one game per screen, its hero art filling the background.
-- **Shelf**, a denser list with box art alongside.
-
-D-pad to move, **×** to start, **Start** for Settings. Art loads while you are idle and
-never while you are scrolling, so holding a direction stays smooth.
-
-### In-game controls
-
-| PSP | Does |
-|---|---|
-| D-pad | GBA D-pad |
-| **○** | GBA **A** |
-| **×** | GBA **B** |
-| L / R | GBA L / R |
-| Start / Select | GBA Start / Select |
-| **△** | Cycle video preset (saved) |
-| **□** | Fast-forward (hold by default; mode and multiplier in Settings) |
-| **Select + L** | Save state |
-| **Select + R** | Load state |
-| **Select + Start**, held ~¼ s | In-game menu |
-
-One state slot per game. The shoulder chords require Select held, so L and R behave
-normally in play.
-
-### In-game menu
-
-**Resume · Save state · Load state · Wireless · Settings · Exit.** Exit flushes your
-save, as does quitting with HOME.
-
----
-
-## Saves
-
-- **SRAM** is written to `roms/<game>.sav`, flushed on exit, on HOME, and periodically
-  during play. A `.sav.bak` is kept.
-- **Save states**: one slot per game, `roms/<game>.st0`.
-- Sleeping does not touch your save; the game is still in memory exactly as it was.
-
----
-
-## What to expect from which games
-
-| | |
-|---|---|
-| **Pokémon Emerald / FireRed / LeafGreen** | Full speed. Union Room trades and battles work between two consoles. |
-| **Pokémon Unbound** and other CFRU hacks | Full speed (59.9). Was 29 before translation gates. |
-| Most commercial GBA titles | Full speed. |
-| Heavy 3D / Mode 7 titles | Varies; fast-forward and frameskip are there if you need them. |
-
----
-
-## Status and known limitations
-
-**Works, tested on hardware, on all three PSP models.**
-
-- Wireless link battles complete; earlier builds only managed quick trades.
-- Sleep/wake with the Media Engine live.
-- Single-core rendering is **deprecated** but kept for diagnostics (`me_mode = 0`).
-
-**Rough edges, honestly:**
-
-- The wake prompt appears a beat after the screen lights. The LCD shows video memory the
-  instant it powers on, and we blank it at suspend, so you get black then the prompt,
-  not a stale frame, but not instant either.
-- Link sessions are paced to 59.73 fps on both consoles. Gen-3 games count link timeouts
-  in *frames*, so two consoles that disagree about how long a frame is will drop the
-  link. Both must run the same rate.
-- Hero art is not included in this repository, it is derived from copyrighted box art
-  and lives in a separate pack. See `tools/heroforge`.
-- FireRed/LeafGreen wireless is less tested than Emerald.
-
----
-
-## The Test Harness (For Developers)
-
-The reliability of the netcode implementation is validated using
-`harness-kit/`, an autonomous, on-device test rig included in this
-repository.
-
-Network edge cases cannot be reliably validated within standard emulator
-environments. Software like PPSSPP reproduces neither physical PSP WLAN
-latency nor multi-device hardware clock drift, which are the primary
-variables for ad-hoc desynchronization. To account for this, the test rig
-orchestrates unattended execution on actual console hardware.
-
-The harness is designed to support general automated hardware testing and
-artifact generation (such as capturing all UI screenshots for this
-repository.)
-
-Below is an example of a practical use case (Mine)
-
-```
-two PSPs run a scripted trade → exit → expose their memory sticks over USB
-→ the PC collects logs/saves/screenshots, restores golden saves, stages the
-next build → the consoles relaunch themselves → repeat, all night
-```
-
-Every run ends with an oracle check.
-
-### Running it
-
-```
-python harness-kit/hw_loop.py --host D: --join E: ^
-  --stage <dir> --golden harness-kit/golden-saves ^
-  --logs <dir> --verify --forever --keep-going --timeout 86400
-```
-
-- **`--stage`** is a folder mirrored onto both cards before each run: the
-  EBOOT, `gbadhoc_me.prx`, autopilot `.inputs` scripts, and per-role configs
-  (`host-.gpsp-harness.ini` / `join-.gpsp-harness.ini` — prefixes route a
-  file to one console). **Editing files here between runs is how you change
-  experiments — no restart needed.**
-- **`--golden`** holds the baseline saves restored before every run (two
-  different parties on purpose, so a completed trade is detectable).
-- **`--verify`** turns on the save-decoding oracle. Always pass it.
-
-The consoles run the harness EBOOT (black background — instantly
-distinguishable from the playable build) with an autopilot that injects pad
-input and asserts on GBA RAM — it navigates the real Union Room, sits in the
-real chair, trades the real Pokémon. Fixture scripts for Emerald's Trade
-Center are included, comment-annotated with every failure mode that shaped
-them.
-
-`harness-kit/HARNESS.md` is the full manual — staging semantics, the config
-keys, and the autopilot grammar. `summarize_log.py` turns a 40 KB run log
-into 30 lines worth reading.
-
----
-
-## Building from source
-
-Docker supplies the toolchain, so the build is reproducible on any machine.
-
-```bash
-# core + frontend, with the flavour stated explicitly
-CORE_FLAGS="SMC_GATES=1 SMC_GATES_SIMPLE=1" \
-EXTRA_DEFS="-DGPSP_PLAYABLE" \
-  ./build.sh
-# -> psp/EBOOT.PBP
-```
-
-That is the 2.0.3 release flavour. `SMC_GATES_SIMPLE` is the add-only gate rule:
-a gate is placed once and never moved. Dropping it restores 2.0.2's rule, which
-is faster and crashes Heart & Soul — see the 2.0.3 notes above. `SMC_PARTIAL` is
-off in the shipped build; it is an independent experiment and not needed for the
-speed, which comes from the gates.
-
-
-`CORE_FLAGS` reaches the **root** make (anything touching the dynarec: cache sizes,
-`SMC_GATES`, `BIG_JIT`). `EXTRA_DEFS` reaches `psp/Makefile` (`GPSP_PLAYABLE`, titles).
-They are separate because `make` does not track CFLAGS, and a bare core build will
-silently un-flag a core you just flagged by hand, which reads as "the optimisation
-didn't help" rather than as a build error.
-
-`build.sh` prints the flavour it built and searches the linked binary for tokens you
-name, because a build that quietly did nothing looks exactly like a build that worked.
-
-- **without** `-DGPSP_PLAYABLE` → the harness build: every knob comes from
-  `.gpsp-harness.ini`, telemetry on.
-- **with** it → the player build: telemetry compiled out entirely (not stubbed, the call
-  sites are gone), harness ini inert.
-
----
-
-## Documentation
-
-- [`docs/ARCHITECTURE.md`](gpsp/docs/ARCHITECTURE.md), how the pieces fit together
-- [`docs/ADHOC-NOTES.md`](gpsp/docs/ADHOC-NOTES.md), the RFU protocol as we found it
-- [`docs/DECISIONS.md`](gpsp/docs/DECISIONS.md), every design decision and why, including the
-  ones that were wrong
-- [`docs/TESTING.md`](gpsp/docs/TESTING.md), the harness
-- [`docs/RELEASE.md`](gpsp/docs/RELEASE.md), how a release is built and verified
 
 ## License
 

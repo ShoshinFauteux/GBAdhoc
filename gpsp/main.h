@@ -151,8 +151,15 @@ extern u32 smc_flush_bytes;
 extern u32 smc_flush_wide;
 
 void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason);
-#ifdef SMC_PARTIAL
+#if defined(SMC_PARTIAL) || defined(SMC_PARTIAL_SAFE)
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb);
+#endif
+#ifdef SMC_PARTIAL_SAFE
+/* Runtime activation keeps the selective-retirement machinery out of games
+ * that never present the proven SoundMainRAM patch layout. */
+extern u32 smc_partial_active;
+#endif
+#ifdef SMC_PARTIAL
 void ramtag_note_barrier(u32 end_pc);
 #endif
 void smc_blk_note_writer(u32 gba_addr, u32 pc);
@@ -332,5 +339,3 @@ void print_regs(void);
 #endif
 
 #endif
-
-

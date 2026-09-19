@@ -3,6 +3,21 @@
 Living document. Started in Phase 3 with the netdrv section; frontend/UI
 sections land with their phases. Plan references are to gpsp-adhoc-plan.md.
 
+**This file is the netdrv and wire-protocol reference.** For the layer above it:
+
+| you want | read |
+|---|---|
+| which subsystem owns what, on which processor, and the contracts between them | `SUBSYSTEMS.md` |
+| the three build profiles, what each forbids, and the one build command | `BUILD-PROFILES.md` |
+| every dynarec switch, with a verdict and the measurement behind it | `BUILD-SWITCHES.md` |
+| a symptom, and the first thing to look at | `DEBUGGING.md` |
+| display-buffer ownership and the fast-forward artifact, already solved | `FF-ARTIFACT-FIX.md` |
+| what the three fast-forward presets do | `FF-PROFILES.md` |
+| what to ask a player for | `BUG-REPORT.md` |
+| why a past decision went the way it did | `DECISIONS.md` |
+| how much of the quality roadmap is actually done | `QUALITY-PROGRESS.md` |
+| ad-hoc / RFU behaviour on real hardware | `ADHOC-NOTES.md` |
+
 ---
 
 ## netdrv — the Netpacket-over-transport driver (plan §4.3, ADR-0003, ADR-0008)
@@ -159,9 +174,10 @@ Memory note: a netdrv instance is `5 × (ND_TXQ_CAP × slot + ND_WINDOW ×
 rxslot)`. Desktop (560 B payload, 192/32) ≈ 600 KiB. **PSP/ad-hoc**
 right-sizes the payload to 144 B (ADR-0016: RFU max is 104, roster 138 —
 the 560 B budget existed for cable modes that are out of scope), which
-buys `ND_TXQ_CAP` 96 → 384 and `ND_WINDOW` 16 → 32 at neutral cost:
-instance ≈322 → ≈347 KiB while the transport's .bss RX ring drops ≈37 →
-≈11 KiB. A build whose payload budget cannot hold the roster/JOIN/RFU
+buys a larger backlog and window at neutral cost, while the transport's
+.bss RX ring drops ≈37 → ≈11 KiB.  For the values actually compiled today
+see "the ad-hoc profile" below; the figures in this paragraph describe the
+sizing at the time ADR-0016 was written and the window has grown since. A build whose payload budget cannot hold the roster/JOIN/RFU
 maxima fails to compile (static assert in netdrv.c).
 
 ### Threading contract
@@ -189,7 +205,7 @@ garbage is a call through a stack value (it segfaulted the desktop twin
 once; `test_udp_backend` now asserts against it).
 
 **PSP (Phase 4, implemented — `netdrv/transport_adhoc.c`)**: the RX
-thread (prio 0x1E, just above main's 0x20) lives entirely *below* the
+thread (prio 0x1E) lives entirely *below* the
 transport line: it blocks in `sceNetAdhocPdpRecv` with 250 ms timeout
 slices (bounds teardown latency), reads the datagram length from the s32
 in/out param (never the return value — ADHOC-NOTES §11.7), and publishes
@@ -234,9 +250,23 @@ UI panel lands.
 
 Memory: with the desktop sizing a netdrv instance is ≈ 600 KiB — over the
 PSP's post-boot ~512 KiB max contiguous block. The PSP build therefore
-compiles the **ad-hoc profile** (`-DND_MAX_PAYLOAD=144 -DND_WINDOW=32
--DND_TXQ_CAP=384 -DND_RTO_MIN_US=100000 -DND_RTO_MAX_US=800000`,
-psp/Makefile — ADR-0016/ADR-0017), giving ≈ 347 KiB heap-allocated at
+compiles the **ad-hoc profile**.  Read out of `psp/Makefile` (lines
+121-122) on 2026-09-18, the currently compiled values are:
+
+```
+-DND_MAX_PAYLOAD=144  -DND_WINDOW=256  -DND_TXQ_CAP=384
+-DND_RTO_MIN_US=200000  -DND_RTO_MAX_US=2500000
+```
+
+These are **overrides**.  `netdrv/netdrv.h` still declares the generic
+defaults (`ND_WINDOW 32`, `ND_TXQ_CAP 192`, `ND_RTO_MIN_US 30000`,
+`ND_RTO_MAX_US 240000`), which is what a desktop build gets — so quoting the
+header is not quoting PSP policy.  The RTO pair in particular is now far
+wider than the ADR-0017 figures this section used to cite: the tuning moved
+and the document did not.  ADR-0016/ADR-0017 remain the governing decisions
+for the *shape* of the profile, not for these numbers.
+
+That gives ≈ 347 KiB heap-allocated at
 session start, plus ≈ 12 KiB transport .bss (ring + MFS scratch) and the
 128 KiB `sceNetInit` pool. Actual post-bring-up numbers are logged as
 `EVT mem_free=... net=up`.

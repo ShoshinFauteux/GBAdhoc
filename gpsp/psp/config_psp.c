@@ -11,6 +11,29 @@ psp_config g_pcfg;
 
 static char cfg_path[256];
 
+int pcfg_ff_mode(void)
+{
+   if (g_pcfg.ff_mult_x10 != 0)
+      return PCFG_FF_3X;
+   return g_pcfg.ff_smooth ? PCFG_FF_SMOOTH : PCFG_FF_UNLIMITED;
+}
+
+void pcfg_ff_set_mode(int mode)
+{
+   if (mode < 0 || mode >= PCFG_FF_COUNT)
+      mode = PCFG_FF_3X;
+   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : 0;
+   g_pcfg.ff_smooth = mode != PCFG_FF_UNLIMITED;
+}
+
+const char *pcfg_ff_name(void)
+{
+   static const char *const names[PCFG_FF_COUNT] = {
+      "3x", "Unlimited", "Unlimited Smooth"
+   };
+   return names[pcfg_ff_mode()];
+}
+
 /* Decimal fps -> hundredths, without pulling in strtod (and its locale) for
  * one key.  Accepts "40", "40.5", "40.00"; anything else falls back to `def`
  * rather than half-parsing, because a silently-wrong session rate is a desync
@@ -66,7 +89,7 @@ void pcfg_load(const char *ini_path)
    g_pcfg.btn_swap    = (int)fe_ini_get_int(cfg_path, "btn_swap", 0);
    g_pcfg.filter      = (int)fe_ini_get_int(cfg_path, "filter",
                                             VID_FILTER_NEAREST);
-   g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 15);
+   g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 30);
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
    g_pcfg.frameskip_sparse = (int)fe_ini_get_int(cfg_path, "frameskip_sparse", 0);
    if (g_pcfg.frameskip_sparse < 0 || g_pcfg.frameskip_sparse > 15)
@@ -75,10 +98,16 @@ void pcfg_load(const char *ini_path)
    g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
-   g_pcfg.me_sameframe = (int)fe_ini_get_int(cfg_path, "me_sameframe", 1) ? 1 : 0;
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
+#ifdef GPSP_PLAYABLE
+   /* Bench mode is a HARNESS facility: it forces uncapped + every-frame
+    * render and hijacks the FF chip, which reads as "fast-forward is
+    * broken" to anyone who is not benchmarking.  A release build must not
+    * be able to enter it, however stale the config.ini on the card is. */
+   g_pcfg.bench_mode  = 0;
+#endif
    /* ADR-0019: default OFF — a session must not cost rendered frames on a
     * console that is holding real time (which the field says both are). */
    g_pcfg.net_frameskip = (int)fe_ini_get_int(cfg_path, "net_frameskip", 0);
@@ -135,6 +164,16 @@ void pcfg_load(const char *ini_path)
    /* Phase 5h: default 2 — the field run has to come back with the video
     * split, and level 1 is one config edit away for the probe-cost A/B. */
    g_pcfg.core_phase = (int)fe_ini_get_int(cfg_path, "core_phase", 2);
+#ifdef CORE_PHASE_FORCE
+   /* Pin the probe level for a measurement build.  Editing core_phase in
+    * config.ini does not stick -- pcfg_save() rewrites the file from g_pcfg
+    * on exit -- so a hand edit is lost every run, which is why the OSD j%/f%
+    * fields have always read 0.  Applied HERE, at the config read, not later
+    * in main: subsystems branch on core_phase during init, and forcing it
+    * after they have already decided leaves them inconsistent (a late
+    * override built fine and then would not boot). */
+   g_pcfg.core_phase = CORE_PHASE_FORCE;
+#endif
    if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3)
       g_pcfg.core_phase = 2;
    /* ADR-0034 (amended): default **2 = VRAM**.  The hardware A/B is in and it
@@ -172,10 +211,9 @@ void pcfg_load(const char *ini_path)
    if (g_pcfg.scale < 0 || g_pcfg.scale >= VID_SCALE_MODES)
       g_pcfg.scale = VID_SCALE_1X;
    g_pcfg.filter = g_pcfg.filter ? 1 : 0;
-   /* 20 (2x) is retired — remap saved configs from older builds too. */
-   if (g_pcfg.ff_mult_x10 != 0 && g_pcfg.ff_mult_x10 != 15 &&
-       g_pcfg.ff_mult_x10 != 30)
-      g_pcfg.ff_mult_x10 = 15;
+   /* All former capped profiles migrate to the former 3x Smooth policy.
+    * Max and Max Smooth retain their respective unlimited selections. */
+   pcfg_ff_set_mode(pcfg_ff_mode());
 
    fe_log("config loaded: scale=%s filter=%s ff_mult_x10=%d ff_hold=%d "
           "group=%s net_frameskip=%d net_skip_threshold=%s net_tx_thread=%d "
@@ -205,6 +243,8 @@ void pcfg_load(const char *ini_path)
 static int pcfg_validate(const char *when)
 {
    int bad = 0;
+
+   FE_EVT_ONLY(when);   /* names the caller in the report only */
 
 #define PCFG_CHK(field, lo, hi, fallback)                                     \
    do {                                                                       \
@@ -264,6 +304,22 @@ static int pcfg_validate(const char *when)
    return bad;
 }
 
+int pcfg_remember_rom(const char *name)
+{
+   if (!cfg_path[0] || !name || !name[0] ||
+       strlen(name) >= sizeof(g_pcfg.last_rom))
+      return -1;
+   if (strcmp(g_pcfg.last_rom, name) == 0)
+      return 0;
+   /* Settings are already saved when their menu closes. Rewriting every
+    * setting here did 36 complete INI read/truncate/write/close cycles
+    * before the ROM loader could even start. */
+   if (fe_ini_set(cfg_path, "last_rom", name) != 0)
+      return -1;
+   snprintf(g_pcfg.last_rom, sizeof(g_pcfg.last_rom), "%s", name);
+   return 0;
+}
+
 void pcfg_save(void)
 {
    if (!cfg_path[0])
@@ -281,7 +337,6 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ff_audio", g_pcfg.ff_audio);
    fe_ini_set_int(cfg_path, "theme", g_pcfg.theme);
    fe_ini_set_int(cfg_path, "ui_shell", g_pcfg.ui_shell);
-   fe_ini_set_int(cfg_path, "me_sameframe", g_pcfg.me_sameframe);
    fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);

@@ -20,6 +20,25 @@
 #include "common.h"
 #include "streams/file_stream.h"
 
+/* PIXEL-FORMAT LINK GUARD (ADR-0039).
+ *
+ * The core and the PSP frontend each default PSP_PIXFMT in their OWN
+ * makefile, and USE_PSP_RGB565_FORMAT changes both convert_palette() in
+ * common.h and the JIT's store emitter in mips/mips_emit.h.  Building the
+ * two halves with different values therefore produces a core whose pixels
+ * and generated code use one layout and a blitter that assumes the other --
+ * and, as psp/Makefile's own comment says, nothing at link time checks.
+ *
+ * So the core exports a symbol NAMED after its layout and the frontend
+ * references the one it expects (psp/video_psp.c).  A mismatch is then an
+ * undefined reference, which is the cheapest possible place to find it.
+ */
+#ifdef USE_PSP_RGB565_FORMAT
+const char gpsp_core_pixfmt_psp5650 = 1;
+#else
+const char gpsp_core_pixfmt_rgb565 = 1;
+#endif
+
 /* Sound */
 #define gbc_sound_tone_control_low(channel, regn)                             \
 {                                                                             \
@@ -371,23 +390,23 @@ u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 u32 gamepak_file_blocks;    /* Physical payload size in 32KB blocks */
 u32 gamepak_page_loads;     /* Monotonic: 32KB ROM page faults served */
+/* Optional boot-only observer. Runs between existing 1 MiB reads on the
+ * caller's thread; never during emulation/page faults. No buffer ownership. */
+void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
 
-/* ---- VRAM DIRTY MAP (MEASUREMENT ONLY) ----------------------------------
+/* ---- VRAM DIRTY MAP -----------------------------------------------------
  * The ME re-copies all 96 KB of VRAM every frame while a consecutive-frame
  * compare says only 0.1-0.5 of 96 pages actually change.  Copying just the
  * changed pages is worth ~1.4 ms/frame -- but only if the marking is
  * COMPLETE.  A page that changes without being marked renders stale, which
  * is silent visual corruption rather than a crash.
  *
- * Translated code does NOT reach the write_vram macros below; the dynarec
- * has its own store stub (mips/mips_emit.h, emit_pmemst_stub region 6).
- * Instrumenting that is real work in the hottest store path, so first
- * measure whether the C and DMA paths already cover the traffic -- GBA games
- * push VRAM largely by DMA during VBlank, so they may.
+ * Translated code does not reach the write_vram macros below, so the dynarec
+ * store stub marks region 6 directly (mips/mips_emit.h).  C stores and DMA
+ * mark through their own paths, and savestate restoration marks every page.
  *
- * NOTHING READS THIS TO DECIDE WHAT TO COPY.  It is compared against the
- * shadow-compare probe's ground truth and reported as `missed` (changed but
- * unmarked).  Rendering is bit-identical with it on or off. */
+ * The PSP Media Engine renderer uses this map to update its persistent VRAM
+ * mirror.  Any bulk replacement of VRAM must therefore dirty every page. */
 u8  vram_clean[VRAM_DIRTY_PAGES];
 u32 vram_dirty_marks;
 bool gamepak_mirror_1m;     /* 1MiB Classic NES/Famicom Mini mirror mode */
@@ -2664,6 +2683,12 @@ bool memory_read_savestate(const u8 *src)
 
   rtc_data = rtc_data_array[0] | (((u64)rtc_data_array[1]) << 32);
 
+  /* The state loader replaced VRAM without going through any store or DMA
+   * path.  The PSP ME renderer may already have a persistent mirror from the
+   * pre-load game, so every restored page must be transferred once before
+   * incremental dirty tracking resumes. */
+  memset(vram_clean, 0, sizeof(vram_clean));
+
   return true;
 }
 
@@ -2780,7 +2805,11 @@ static s32 load_gamepak_raw(const char *name)
       gamepak_mini_rom = (u8*)malloc(gamepak_size);
       if (gamepak_mini_rom)
       {
+        if (gpsp_rom_load_progress)
+          gpsp_rom_load_progress(0, (u32)fsize);
         u32 read_len = (u32)filestream_read(gamepak_file_large, gamepak_mini_rom, raw_size);
+        if (gpsp_rom_load_progress)
+          gpsp_rom_load_progress(read_len <= (u32)fsize ? read_len : 0, (u32)fsize);
         if (read_len < raw_size)
           memset(gamepak_mini_rom + read_len, 0xFF, raw_size - read_len);
         memcpy(gamepak_mini_rom + 0x100000, gamepak_mini_rom, 0x100000);
@@ -2823,6 +2852,11 @@ static s32 load_gamepak_raw(const char *name)
     u32 rom_blocks = gamepak_size >> 15;
     u32 ldblks = buf_blocks < gamepak_buffer_count ?
                     buf_blocks : gamepak_buffer_count;
+    u32 load_total = ldblks * gamepak_buffer_blocksize;
+    u32 load_done = 0;
+    if (load_total > (u32)fsize) load_total = (u32)fsize;
+    if (gpsp_rom_load_progress)
+      gpsp_rom_load_progress(0, load_total);
 
     // Unmap the ROM space since we will re-map it now
     map_null(read, 0x8000000, 0xD000000);
@@ -2835,6 +2869,10 @@ static s32 load_gamepak_raw(const char *name)
         u32 read_len = (u32)filestream_read(gamepak_file_large, gamepak_buffers[i], gamepak_buffer_blocksize);
         if (read_len < gamepak_buffer_blocksize)
           memset(gamepak_buffers[i] + read_len, 0xFF, gamepak_buffer_blocksize - read_len);
+        if (read_len <= gamepak_buffer_blocksize)
+          load_done += read_len;
+        if (gpsp_rom_load_progress)
+          gpsp_rom_load_progress(load_done, load_total);
       }
       for (j = 0; j < 32 && i*32 + j < gamepak_file_blocks; j++)
       {
@@ -3025,6 +3063,9 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    if (load_gamepak_raw(name))
       return -1;
 
+   if (gpsp_rom_load_progress)
+      gpsp_rom_load_progress(0, 0); /* reads finished; cartridge setup next */
+
    gamepak_header_nonstandard =
       (gamepak_buffers[0][3] != 0xEA) || (gamepak_buffers[0][0xB2] != 0x96);
 
@@ -3052,9 +3093,6 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
 
    idle_loop_target_pc = 0xFFFFFFFF;
    translation_gate_targets = 0;
-#ifdef SMC_GATES
-   smc_gates_reset();   /* a new cart's table gates must not look evictable */
-#endif
    flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
    flash_bank_cnt = FLASH_SIZE_64KB;
    rtc_enabled = false;
@@ -3063,6 +3101,11 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    serial_mode = force_serial;
 
    load_game_config_over(game_code);
+#ifdef SMC_GATES
+   /* Reset ages and rebuild derived gate state after the cartridge table has
+    * populated its fixed gates. */
+   smc_gates_reset();
+#endif
 
    if (backup_type_reset == BACKUP_UNKN)
    {
