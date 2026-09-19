@@ -12,7 +12,7 @@ It also just plays GBA games, and it is fast: Fully compatible with the PSP-1000
 The secret sauce is a NEW and IMPROVED dual-core Media Engine Frame Renderer.
 Now 1.45ms Faster! (woohoo)
 
-### [**⬇ Download GBAdhoc 2.0**](https://github.com/ShoshinFauteux/GBAdhoc/releases/latest)
+### [**⬇ Download GBAdhoc 2.1.0**](https://github.com/ShoshinFauteux/GBAdhoc/releases/latest)
 
 Unzip to the **root of your memory stick** — it lands in `PSP/GAME/GBAdhoc`. Put your
 `.gba` files in `roms/` and launch it from the XMB. No BIOS needed. Subfolders under
