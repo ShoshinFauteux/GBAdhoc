@@ -11,6 +11,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
+#include "fe_console.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,9 +26,13 @@ extern "C" {
 
 typedef struct fe_host_config
 {
+   /* Select the execution backend. Zero/default preserves the GBA libretro
+    * core for existing callers. */
+   fe_console_t console;
    const char *rom_path;     /* full path; core opens it itself (need_fullpath) */
    const char *system_dir;   /* directory containing gba_bios.bin */
-   const char *save_path;    /* .sav file (full 128 KiB image) */
+   const char *save_path;    /* GBA: .sav (full 128 KiB image); GB/GBC:
+                              * battery RAM plus any cartridge clock */
 
    /* Platform sinks. video data==NULL means "duped frame — re-present the
     * previous one" (core frameskip contract, FRONTEND-AUDIT §2). */
@@ -38,8 +44,18 @@ typedef struct fe_host_config
    /* Host wall-clock in microseconds, monotonic (PSP:
     * sceKernelGetSystemTimeWide; SDL: CLOCK_MONOTONIC — same sources the
     * netdrv timers use). Optional; heartbeat logs t_us=0 when absent.
-    * Used only for logging (hw perf baseline: fps = d(frames)/d(t_us)). */
+    * Logging (hw perf baseline: fps = d(frames)/d(t_us)) and the GB cable's
+    * byte timeout; without it a GB link byte gives up after one pump. */
    uint64_t (*time_us)(void);
+   /* Optional yield while a GB byte-cable transfer waits for its peer. */
+   void (*yield_thread)(void);
+   /* Optional wall clock (seconds since 1970) for GB/GBC cartridge RTCs.
+    * NULL = C time(), which on a PSP is roughly uptime and resets MBC3
+    * clocks (Pokemon Gold/Silver/Crystal) on every boot. */
+   time_t (*wallclock)(void);
+   /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
+    * Game Boy colours where the game has them, grey otherwise). */
+   int gb_palette;
 
    /* Optional (ADR-0028/0029): read the core's monotonic perf counters — ROM
     * translation-cache flushes, RAM flushes, 32 KiB ROM page faults. Lets
@@ -155,6 +171,9 @@ int fe_host_boot(const fe_host_config *cfg);
 
 /* One emulated frame: retro_run + periodic SRAM dirty check + heartbeat. */
 void fe_host_run_frame(void);
+/* Emulation faults the core recovered from by resetting the game (a guest
+ * jump to an address that is not code).  Monotonic; the UI toasts on change. */
+unsigned fe_host_guest_faults(void);
 
 /* Report the platform audio buffer's state to the core, once per frame
  * (ADR-0018). Only meaningful with gpsp_frameskip=auto/auto_threshold, which
@@ -202,12 +221,21 @@ void fe_host_frame_stats(unsigned *emulated, unsigned *rendered,
 /* Last presented frame (for BMP dumps); NULL if none yet. */
 const uint16_t *fe_host_last_frame(size_t *pitch_bytes);
 
-/* Savestate to/from a file (416 KiB fixed size, FRONTEND-AUDIT §7).
+/* Savestate to/from a file.  GBA: 416 KiB fixed size (FRONTEND-AUDIT §7).
+ * GB/GBC: the TGB Dual image (gbcore_state_save), about 20-190 KiB with the
+ * cartridge, refused unless it was made for the same cartridge and console.
  * Emits EVT state_save/state_load. Returns 0 on success.  Callers must
  * enforce the session block themselves (plan §4.5: savestates are blocked
  * while a wireless session is active — RFU state is not serialized). */
 int fe_host_state_save(const char *path);
 int fe_host_state_load(const char *path);
+
+/* GB/GBC DMG palette (GBCORE_PALETTE_* ids).  Setting it applies to the
+ * running game when there is one, and to every later boot; the names are
+ * for menus. */
+void        fe_host_gb_palette_set(int id);
+int         fe_host_gb_palette_count(void);
+const char *fe_host_gb_palette_name(int id);
 
 /* CRC-compare the 128 KiB SRAM buffer and write the .sav if dirty.
  * force_write=1 writes even when clean (used by round-trip tests) AND
@@ -269,6 +297,17 @@ void fe_host_set_io(const fe_host_io *io);
 /* Called ONLY by the writer thread.  Drains every pending block (no budget:
  * nothing here is on the frame path).  Returns blocks written. */
 int fe_host_sram_service_io(void);
+
+/* FF durability nudge (see fe_host.c).  Call once per main-loop iteration on
+ * the EMULATION thread, after the core has run, with ff_active = "fast-forward
+ * is engaged".  Does nothing unless a writer thread is installed, a GBA game
+ * has written backup memory, and the writer has not yet persisted it; then,
+ * only while ff_active and once the save has settled, it requests a scan and
+ * yields ~1 ms through the io interface, at most every few frames, until the
+ * writer confirms.  Returns 1 if it yielded this call. */
+int  fe_host_sram_ff_nudge(int ff_active);
+/* Harness A/B: 0 disables the yield (detection and logging stay on). */
+void fe_host_sram_ff_nudge_enable(int on);
 
 /* CRC32 of the live 128 KiB SRAM buffer right now (autopilot save-detect). */
 uint32_t fe_host_sram_crc_now(void);

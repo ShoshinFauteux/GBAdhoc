@@ -22,6 +22,7 @@
  *   waitramne SZ ADDR MASK VAL TO   ... until != VAL
  *   mash BTNS SZ ADDR MASK VAL TO   press/release BTNS (2 on / 6 off) until
  *                                   (mem[ADDR]&MASK)==VAL
+ *   mashne BTNS SZ ADDR MASK VAL TO ... mash until (mem[ADDR]&MASK)!=VAL
  *   holdram BTNS SZ ADDR MASK VAL TO  hold BTNS continuously until
  *                                   (mem[ADDR]&MASK)==VAL (movement predicates:
  *                                   tap=turn, hold=walk in gen-3 overworld)
@@ -32,6 +33,7 @@
  *                                   NULL pointer just evaluates false.
  *   waitptrne SZ PTR OFF MASK VAL TO  ... until != VAL
  *   mashptr BTNS SZ PTR OFF MASK VAL TO   mash until deref-predicate holds
+ *   mashptrne BTNS SZ PTR OFF MASK VAL TO ... until it no longer holds
  *   holdptr BTNS SZ PTR OFF MASK VAL TO   hold until deref-predicate holds
  *   holdmash HBTNS MBTNS SZ ADDR MASK VAL TO      hold HBTNS every frame and
  *                                   pulse MBTNS (2 on / 6 off) on top, until
@@ -41,6 +43,11 @@
  *                                   interruptions (Emerald Pokénav match
  *                                   calls) without ever talking to anything.
  *   holdmashptr HBTNS MBTNS SZ PTR OFF MASK VAL TO  ... deref variant
+ *   mashif BTNS CSZ CADDR CMASK CVAL SZ ADDR MASK VAL TO
+ *                                   mash BTNS only on frames where
+ *                                   (mem[CADDR]&CMASK)==CVAL, until
+ *                                   (mem[ADDR]&MASK)==VAL (dialogue: press
+ *                                   only while text prints, stop at the menu)
  *   waitsram TO                     wait until the 128 KiB SRAM CRC differs
  *                                   from its value when this step started
  *   mashsram BTNS TO                ... same, mashing BTNS while waiting
@@ -54,6 +61,13 @@
  *                                   loads a state is disabled while a script
  *                                   runs, so a script cannot reach it any other
  *                                   way.
+ *
+ *   logbytes NAME N ADDR             emit N (<=24) raw bytes as hex:
+ *                                   "EVT ap_val name=NAME hex=..."
+ * Every ap_mark, ap_sync, ap_val and ap_fail carries it=<repeat iteration,
+ * 1-based, 0 outside a repeat>; ap_mark/ap_sync carry f= and t_ms=;
+ * ap_loaded carries crc= (CRC32 of the script file); ap_fail carries val=
+ * (the last value the failing predicate read, or ERR).
  *
  * EVT interface (grep-stable): ap_loaded, ap_sync (predicate satisfied),
  * ap_val, ap_mark, ap_done, ap_fail.

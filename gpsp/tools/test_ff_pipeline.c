@@ -81,6 +81,13 @@ static int mer_sameframe_active(void)
    return 0;
 }
 
+/* main_psp.c's loop-phase breadcrumb (a store to g_loop_phase in instrumented
+ * builds, nothing otherwise).  The sliced functions may use it; this test does
+ * not observe it. */
+#ifndef LOOP_PHASE
+#define LOOP_PHASE(p) do { (void)(p); } while (0)
+#endif
+
 #include "ff_pipeline.inc"
 
 static void reset(void)

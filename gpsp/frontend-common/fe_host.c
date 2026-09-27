@@ -7,6 +7,9 @@
 #include <string.h>
 
 #include "libretro.h"
+#include "../gbcore/gbcore.h"
+#include "../netdrv/gb_link.h"
+#include "netpacket_host.h"
 
 /* SHA-1 of the official GBA BIOS (Nintendo AGB BIOS, 16 KiB). */
 #define GBA_BIOS_SHA1 "300c20df6731a33952ded8c436f7f186d25d3492"
@@ -23,6 +26,357 @@
 /* ---------------------------------------------------------------- state -- */
 
 static fe_host_config host;
+static gbcore_t *gb_core;
+static uint8_t *gb_save_buffer;
+static size_t gb_save_capacity;
+static uint32_t gb_save_crc;
+static int gb_save_crc_valid;
+static gb_link_t gb_link;
+typedef struct { uint8_t peer_id; } gb_link_send_context;
+static gb_link_send_context gb_link_send_ctx;
+static uint16_t gb_link_next_transfer;
+static uint8_t gb_link_received_byte;
+static enum gb_link_result gb_link_result;
+static int gb_link_initialized;
+static int gb_link_completed;
+static const uint16_t *last_frame;
+static size_t last_pitch;
+static unsigned frames_rendered;
+static unsigned frames_skipped;   /* ADR-0019 accounting; see below */
+
+/* The core renders straight into the frontend's 16-bit layout (gbcore.h),
+ * so its frame is handed on as-is: no conversion pass and no copy.  The
+ * buffer stays unchanged until the next gbcore_run_frame, which is as long
+ * as fe_host_last_frame() consumers (dumps, state thumbnails, the wake
+ * overlay) run; shutdown clears last_frame before the core frees it. */
+static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
+
+static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
+{
+   (void)userdata;
+   if (gb_skip_frame)
+   {
+      /* Same contract as the GBA core's frameskip: NULL = nothing new. */
+      frames_skipped++;
+      if (host.video_frame)
+         host.video_frame(NULL, 160, 144, last_pitch);
+      return;
+   }
+   if (!frame || !frame->pixels || frame->width != 160 || frame->height != 144 ||
+       frame->pitch_bytes < frame->width * sizeof(uint16_t))
+      return;
+   last_frame = frame->pixels;
+   last_pitch = frame->pitch_bytes;
+   frames_rendered++;
+   if (host.video_frame)
+      host.video_frame(frame->pixels, 160, 144, last_pitch);
+}
+
+static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames)
+{
+   (void)userdata;
+   if (host.audio_frames)
+      host.audio_frames(samples, frames);
+}
+
+static uint16_t gb_buttons_from_retro(uint32_t pad)
+{
+   uint16_t out = 0;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT))  out |= GBCORE_BUTTON_RIGHT;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))   out |= GBCORE_BUTTON_LEFT;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_UP))     out |= GBCORE_BUTTON_UP;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))   out |= GBCORE_BUTTON_DOWN;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_A))      out |= GBCORE_BUTTON_A;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_B))      out |= GBCORE_BUTTON_B;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_SELECT)) out |= GBCORE_BUTTON_SELECT;
+   if (pad & (1u << RETRO_DEVICE_ID_JOYPAD_START))  out |= GBCORE_BUTTON_START;
+   return out;
+}
+
+/* Room past cart RAM for any clock trailer the core accepts (largest 48 B). */
+#define GB_SAVE_TRAILER_MAX 64
+
+static long gb_save_file_len = -1;   /* bytes on disk; -1 = absent/unknown */
+
+static int gb_save_reserve(size_t size)
+{
+   uint8_t *buffer;
+   if (size <= gb_save_capacity)
+      return 0;
+   buffer = (uint8_t *)realloc(gb_save_buffer, size);
+   if (!buffer)
+      return -1;
+   gb_save_buffer = buffer;
+   gb_save_capacity = size;
+   return 0;
+}
+
+/* Change detection covers cart RAM only.  An RTC cart's battery image ends in
+ * a clock trailer stamped with the wall clock at the moment it is read, so a
+ * CRC over the whole image changed every second and rewrote the save every
+ * SRAM_CHECK_INTERVAL for as long as Pokemon Gold/Silver/Crystal ran.  The
+ * trailer on disk stays a consistent (clock, timestamp) pair from the last
+ * write, which is all the next load needs to advance the clock. */
+static uint32_t gb_save_ram_crc(size_t image_size)
+{
+   size_t ram = gbcore_cart_ram_size(gb_core);
+   if (ram > image_size)
+      ram = image_size;
+   return fe_crc32(0, gb_save_buffer, ram);
+}
+
+static int gb_save_flush(int force)
+{
+   size_t size = gbcore_save_ram_size(gb_core);
+   FILE *f = NULL;
+   uint32_t crc;
+   int ok;
+   if (!gb_core || !host.save_path || !size)
+      return 0;
+   if (gb_save_reserve(size) != 0 ||
+       gbcore_save_ram_read(gb_core, gb_save_buffer, gb_save_capacity) != 0)
+      return -1;
+   crc = gb_save_ram_crc(size);
+   if (!force && gb_save_crc_valid && crc == gb_save_crc)
+      return 0;
+   /* Same length on disk: overwrite in place.  "wb" truncates first, so an
+    * interrupted write left an empty file -- which the next boot cannot load
+    * and whose first flush then replaced with a blank cartridge. */
+   if (gb_save_file_len == (long)size)
+      f = fopen(host.save_path, "r+b");
+   if (!f)
+      f = fopen(host.save_path, "wb");
+   if (!f)
+      return -1;
+   ok = fwrite(gb_save_buffer, 1, size, f) == size;
+   if (fclose(f) != 0)
+      ok = 0;
+   if (!ok)
+   {
+      gb_save_file_len = -1;
+      return -1;
+   }
+   gb_save_file_len = (long)size;
+   gb_save_crc = crc;
+   gb_save_crc_valid = 1;
+   fe_evt("gb_sram_flush size=%u crc=%08x", (unsigned)size, crc);
+   return 1;
+}
+
+/* Loads whatever the file holds, like the GBA path does: cart RAM alone
+ * (raw dumps), or RAM plus the 44/48-byte VBA-M/BGB clock trailer -- the
+ * layout SameBoy wrote for the saves made before the TGB Dual core, too.
+ * Requiring the exact size rejected saves imported from other emulators,
+ * and the first periodic flush then overwrote the player's file with a
+ * blank cartridge. */
+static void gb_save_load(void)
+{
+   size_t size = gbcore_save_ram_size(gb_core);
+   size_t cap = size + GB_SAVE_TRAILER_MAX, n, load;
+   int whole;
+   FILE *f;
+   gb_save_crc_valid = 0;
+   gb_save_file_len = -1;
+   if (!size || !host.save_path || gb_save_reserve(cap) != 0)
+      return;
+   f = fopen(host.save_path, "rb");
+   if (!f)
+   {
+      fe_evt("gb_sram_load size=0");
+      return;
+   }
+   n = fread(gb_save_buffer, 1, cap, f);
+   whole = fgetc(f) == EOF;
+   fclose(f);
+   if (!n)
+   {
+      fe_evt("gb_sram_load size=0");
+      return;
+   }
+   /* Longer than any known layout: keep the RAM, let the clock reset. */
+   load = whole ? n : gbcore_cart_ram_size(gb_core);
+   if (load > n)
+      load = n;
+   if (whole)
+      gb_save_file_len = (long)n;
+   if (gbcore_save_ram_write(gb_core, gb_save_buffer, load) != 0 ||
+       gbcore_save_ram_read(gb_core, gb_save_buffer, gb_save_capacity) != 0)
+   {
+      fe_evt("gb_sram_load FAILED size=%u", (unsigned)n);
+      return;
+   }
+   /* A file in another layout stays "dirty", so the first flush rewrites it
+    * in the standard layout (RAM, then the 48-byte trailer on clock carts)
+    * -- with the RAM just loaded, not a blank one. */
+   gb_save_crc = gb_save_ram_crc(size);
+   gb_save_crc_valid = gb_save_file_len == (long)size;
+   fe_evt("gb_sram_load size=%u file=%u crc=%08x", (unsigned)size,
+          (unsigned)n, gb_save_crc);
+}
+
+/* Per-boot cable state.  Registered with netpacket before the core exists, so
+ * it must be clean before those callbacks can fire. */
+static void gb_link_reset(void)
+{
+   memset(&gb_link, 0, sizeof(gb_link));
+   gb_link_send_ctx.peer_id = 0xFF;
+   gb_link_next_transfer = 0;
+   gb_link_received_byte = 0xFF;
+   gb_link_result = GB_LINK_RESULT_OK;
+   gb_link_completed = 0;
+   gb_link_initialized = 0;
+}
+
+/* One bound for a GB link byte: the coordinator's protocol timeout and the
+ * wall-clock cap on how long gb_serial_transfer holds the emulation thread. */
+#define GB_LINK_TIMEOUT_MS 3000u
+
+static uint32_t gb_link_now_ms(void)
+{
+   uint64_t now = host.time_us ? host.time_us() : 0;
+   return (uint32_t)(now / 1000u);
+}
+
+static int gb_link_send_message(void *ctx,
+                                const gb_link_message_t *message)
+{
+   gb_link_send_context *send_ctx = (gb_link_send_context *)ctx;
+   uint8_t wire[GB_LINK_WIRE_SIZE];
+   if (!send_ctx || gb_link_encode(message, wire) < 0)
+      return -1;
+   return fe_np_gb_send(send_ctx->peer_id, wire, sizeof(wire));
+}
+
+static void gb_link_complete_message(void *ctx, uint16_t transfer_id,
+                                     uint8_t received,
+                                     enum gb_link_result result)
+{
+   (void)ctx;
+   (void)transfer_id;
+   gb_link_received_byte = received;
+   gb_link_result = result;
+   gb_link_completed = 1;
+}
+
+static void gb_link_receive_message(void *userdata, const void *payload,
+                                    size_t len, uint8_t src_id)
+{
+   gb_link_message_t message;
+   (void)userdata;
+   if (len != GB_LINK_WIRE_SIZE ||
+       gb_link_decode(&message, (const uint8_t *)payload, (unsigned)len) != 0 ||
+       message.sender_id != src_id)
+   {
+      fe_evt("gb_link_drop reason=malformed len=%u src=%u", (unsigned)len,
+             src_id);
+      return;
+   }
+   gb_link_receive(&gb_link, &message, gb_link_now_ms());
+}
+
+static void gb_link_peer_event(void *userdata, uint8_t peer_id, int connected)
+{
+   uint8_t local_id;
+   (void)userdata;
+   if (connected)
+   {
+      if (gb_link_initialized && gb_link.peer_id != peer_id)
+      {
+         fe_evt("gb_link_peer_rejected reason=second_peer id=%u", peer_id);
+         return;
+      }
+      if (fe_np_gb_local_id(&local_id) == 0)
+      {
+         fe_evt("gb_link_peer_error reason=no_local_id");
+         return;
+      }
+      /* Same peer again (a re-JOIN resets its channel): finish any byte in
+       * flight before gb_link_init wipes it, or the waiting SC write would
+       * sit out the full timeout for a completion that can never come. */
+      if (gb_link_initialized)
+         gb_link_set_connected(&gb_link, 0);
+      gb_link_send_ctx.peer_id = peer_id;
+      gb_link_init(&gb_link, local_id, peer_id, GB_LINK_TIMEOUT_MS,
+                   &gb_link_send_ctx,
+                   gb_link_send_message, gb_link_complete_message);
+      gb_link_initialized = 1;
+      gb_link_set_connected(&gb_link, 1);
+      fe_evt("gb_link_peer local=%u peer=%u", local_id, peer_id);
+   }
+   else if (gb_link_initialized && gb_link.peer_id == peer_id)
+   {
+      gb_link_set_connected(&gb_link, 0);
+      gb_link_initialized = 0;
+      fe_evt("gb_link_peer_down peer=%u", peer_id);
+   }
+}
+
+/* The core enters this callback at the SC write that starts a transfer,
+ * before any of the eight bit times elapse (gbcore.h).  Waiting here pauses
+ * this endpoint at a byte boundary, never in the middle of a bit;
+ * fe_np_pump() drains PSP ad-hoc RX on this emulation thread until the
+ * paired byte arrives or the bounded wait expires. */
+static int gb_serial_transfer(void *userdata, uint8_t outgoing,
+                              int internal_clock, uint8_t *received)
+{
+   uint8_t peer_id, local_id;
+   uint64_t start_us;
+   uint16_t transfer_id;
+   (void)userdata;
+   if (!received || !fe_np_gb_peer_ready(&peer_id) ||
+       fe_np_gb_local_id(&local_id) == 0 || !gb_link_initialized ||
+       gb_link.peer_id != peer_id || gb_link.local_id != local_id)
+      return 0;
+
+   gb_link_completed = 0;
+   gb_link_received_byte = 0xFF;
+   transfer_id = ++gb_link_next_transfer;
+   if (gb_link_start(&gb_link, transfer_id, outgoing,
+                     internal_clock ? GB_LINK_INTERNAL_CLOCK :
+                                      GB_LINK_EXTERNAL_CLOCK,
+                     gb_link_now_ms()) != 0)
+   {
+      fe_evt("gb_link_start failed tx=%u", outgoing);
+      return 0;
+   }
+
+   start_us = host.time_us ? host.time_us() : 0;
+   while (!gb_link_completed)
+   {
+      fe_np_pump();
+      gb_link_tick(&gb_link, gb_link_now_ms());
+      if (gb_link_completed)
+         break;
+      if (!host.time_us ||
+          (host.time_us() - start_us) >= GB_LINK_TIMEOUT_MS * 1000u)
+      {
+         gb_link_tick(&gb_link, gb_link_now_ms() + GB_LINK_TIMEOUT_MS);
+         if (!gb_link_completed)
+         {
+            /* Abort just this byte.  Leaving the link disconnected here
+             * (as before) refused every later byte for the rest of the
+             * session while netpacket still reported the peer as up. */
+            gb_link_set_connected(&gb_link, 0);
+            gb_link_set_connected(&gb_link, 1);
+         }
+         break;
+      }
+      if (host.yield_thread)
+         host.yield_thread();
+   }
+   if (!gb_link_completed)
+   {
+      fe_evt("gb_link_wait failed reason=no_completion");
+      return 0;
+   }
+   *received = gb_link_received_byte;
+   fe_evt("gb_link_byte id=%u clock=%s tx=%02x rx=%02x result=%d",
+          transfer_id, internal_clock ? "internal" : "external", outgoing,
+          *received, (int)gb_link_result);
+   /* A timeout/disconnect is completed with the open-bus value. That keeps
+    * the game from hanging inside the emulator's CPU loop. */
+   return 1;
+}
 
 /* Core options (FRONTEND-AUDIT §9). Values must match check_variables()
  * string compares exactly (libretro/libretro.c:918-1120). */
@@ -68,8 +422,6 @@ static unsigned frame_count;
 /* Core's audio output rate, learned from retro_get_system_av_info at boot
  * (ADR-0028). 0 until fe_host_boot succeeds. */
 static unsigned core_sample_rate;
-static const uint16_t *last_frame;
-static size_t last_pitch;
 
 /* Rendered-vs-emulated accounting (ADR-0019).  The core signals a skipped
  * VIDEO frame by calling video_refresh with data==NULL, so these two
@@ -77,8 +429,6 @@ static size_t last_pitch;
  * "the console is fine but we threw pictures away".  The field's first
  * session looked healthy on `EVT heartbeat` alone (58.9 fps sustained)
  * while frameskip was quietly halving what the user actually saw. */
-static unsigned frames_rendered;
-static unsigned frames_skipped;
 static unsigned fps_last_frames, fps_last_rendered, fps_last_skipped;
 static uint64_t fps_last_us;
 
@@ -97,6 +447,68 @@ static int      sram_have_crc;
 #define SRAM_BLOCKS  (FE_SRAM_SIZE / SRAM_BLOCK)
 static uint32_t sram_blk_crc[SRAM_BLOCKS];
 static int      sram_have_blk;   /* the .sav on disk matches sram_blk_crc */
+
+/* ---- FF durability nudge ---------------------------------------------------
+ * The writer runs BELOW the emulation thread on purpose (emu_prio 0x2B / io
+ * 0x2C), and it gets the CPU in the slack main donates at the vblank wait.
+ * Unlimited fast-forward never waits, so an in-game save made there could sit
+ * in RAM until fast-forward ended -- on PPSSPP indefinitely (the same
+ * starvation silenced the event log), on hardware for as long as the GE syncs
+ * happen not to leave a gap.  Forced flushes (exit, HOME, quit) always
+ * waited; the exposure was a power cut or hard freeze in that window.
+ *
+ * The signal is the CORE's battery-save write generation (gba_memory.c
+ * `backup_write_gen`, bumped only when the game mutates backup memory), so
+ * this costs nothing -- not a load of the SRAM, not a CRC -- until a game has
+ * actually saved.  Weak: a core without the counter links and never nudges.
+ *
+ * The writer records the generation it read BEFORE each scan and publishes it
+ * as `sram_disk_gen` only once that scan's writes have all landed.  A write
+ * that arrives mid-scan or mid-drain moves the live generation past the one
+ * published, so it can never be marked persisted by a pass that did not see
+ * it.  (A counter, not a bool, for exactly that reason.)
+ *
+ * The emulation thread, only while fast-forward is on and only once the save
+ * has been quiet for SRAM_FF_SETTLE_FRAMES, asks for a scan and sleeps ~1 ms
+ * (host_io->yield) every SRAM_FF_NUDGE_EVERY frames until the writer has
+ * published the live generation.  Outside fast-forward nothing changes: the
+ * writer's own 5 s cadence persists it, exactly as before. */
+extern volatile uint32_t backup_write_gen __attribute__((weak));
+
+/* Frames of save silence before the first nudge: a gen-3 Pokemon save
+ * writes sectors for ~1 s of game time, and scanning mid-save would only
+ * write blocks the game is about to rewrite. */
+#define SRAM_FF_SETTLE_FRAMES     30
+/* A game that never stops writing still gets persisted: nudge anyway once the
+ * oldest unpersisted write is this old. */
+#define SRAM_FF_MAX_DEFER_FRAMES  300
+/* One ~1 ms yield per this many emulated frames while a save is pending. */
+#define SRAM_FF_NUDGE_EVERY       2
+/* Give up on one generation after this many yields (~0.3 s of sleeping):
+ * a writer that cannot persist (dead stick, no save path) must not tax
+ * fast-forward forever.  A new save re-arms it. */
+#define SRAM_FF_NUDGE_CAP         300
+
+static volatile uint32_t sram_disk_gen;  /* WRITER: gen whose bytes are on disk */
+static volatile uint32_t sram_scan_gen;  /* WRITER: gen read before its last scan */
+static volatile int sram_scan_gen_valid; /* WRITER: sram_scan_gen is meaningful */
+
+static int      ffn_enabled = 1;         /* harness A/B knob (sram_ff_nudge) */
+static uint32_t ffn_seen_gen;            /* EMU: last gen observed */
+static int      ffn_pending;             /* EMU: seen gen not yet on disk */
+static unsigned ffn_first_frame;         /* EMU: oldest unpersisted write */
+static unsigned ffn_last_frame;          /* EMU: newest write */
+static uint64_t ffn_last_us;             /* EMU: host clock at newest write */
+static unsigned ffn_next_frame;          /* EMU: earliest next nudge */
+static unsigned ffn_gen_yields;          /* EMU: yields spent on this gen */
+static int      ffn_gave_up;             /* EMU: cap hit for this gen */
+static unsigned ffn_yields;              /* EMU: lifetime yields */
+static uint64_t ffn_yield_us;            /* EMU: lifetime time asleep */
+
+static uint32_t sram_gen_now(void)
+{
+   return &backup_write_gen ? backup_write_gen : 0u;
+}
 
 /* Netpacket interface copy — unused in Phase 1, wired in Phase 3/4. */
 static struct retro_netpacket_callback netpacket_cb;
@@ -316,6 +728,16 @@ static bool env_cb(unsigned cmd, void *data)
 
 static uint32_t sram_crc(void)
 {
+   if (gb_core)
+   {
+      /* Same RAM-only span as the flush's change detection: the clock
+       * trailer would make this CRC tick every second on RTC carts. */
+      size_t size = gbcore_save_ram_size(gb_core);
+      if (!size || gb_save_reserve(size) != 0 ||
+          gbcore_save_ram_read(gb_core, gb_save_buffer, gb_save_capacity) != 0)
+         return 0;
+      return gb_save_ram_crc(size);
+   }
    const void *p = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
    return p ? fe_crc32(0, p, FE_SRAM_SIZE) : 0;
 }
@@ -343,6 +765,13 @@ static void sram_load(void)
 
    sram_last_crc = sram_crc();
    sram_have_crc = 1;
+
+   /* Whatever the game has written so far is what was just loaded. */
+   sram_disk_gen = ffn_seen_gen = sram_gen_now();
+   sram_scan_gen_valid = 0;
+   ffn_pending = 0;
+   ffn_gave_up = 0;
+   ffn_gen_yields = 0;
 
    /* Seed the per-block dirty map (ADR-0020) only when the file on disk is
     * exactly a 128 KiB image of what we just loaded — otherwise the first
@@ -384,6 +813,8 @@ void fe_host_input_inject(uint32_t joypad_mask)
 int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 {
    unsigned i;
+   if (gb_core)
+      return -1; /* GBA-addressed autopilot probes do not map to GB memory. */
 
    for (i = 0; i < memdesc_count; i++)
    {
@@ -418,6 +849,8 @@ int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 int fe_host_mem_write(uint32_t gba_addr, const void *in, unsigned len)
 {
    unsigned i;
+   if (gb_core)
+      return -1;
 
    if (gba_addr >= 0x08000000)
       return -1;
@@ -455,14 +888,31 @@ static uint8_t state_buf[FE_STATE_MAX];
 
 int fe_host_state_save(const char *path)
 {
-   size_t sz = retro_serialize_size();
+   size_t sz;
    FILE *f;
 
-   if (sz == 0 || sz > sizeof(state_buf) || !retro_serialize(state_buf, sz))
+   if (gb_core)
    {
-      fe_evt("state_save file=%s FAILED reason=serialize sz=%u", path,
-             (unsigned)sz);
-      return -1;
+      /* The same staging buffer: the largest GB image (CGB with 128 KiB of
+       * cartridge RAM) is under half of it. */
+      long n = gbcore_state_save(gb_core, state_buf, sizeof(state_buf));
+      if (n <= 0)
+      {
+         fe_evt("state_save file=%s FAILED reason=serialize sz=%u", path,
+                (unsigned)gbcore_state_size(gb_core));
+         return -1;
+      }
+      sz = (size_t)n;
+   }
+   else
+   {
+      sz = retro_serialize_size();
+      if (sz == 0 || sz > sizeof(state_buf) || !retro_serialize(state_buf, sz))
+      {
+         fe_evt("state_save file=%s FAILED reason=serialize sz=%u", path,
+                (unsigned)sz);
+         return -1;
+      }
    }
    f = fopen(path, "wb");
    if (!f || fwrite(state_buf, 1, sz, f) != sz)
@@ -480,7 +930,7 @@ int fe_host_state_save(const char *path)
 
 int fe_host_state_load(const char *path)
 {
-   size_t sz = retro_serialize_size();
+   size_t sz;
    size_t n;
    FILE *f = fopen(path, "rb");
 
@@ -491,6 +941,20 @@ int fe_host_state_load(const char *path)
    }
    n = fread(state_buf, 1, sizeof(state_buf), f);
    fclose(f);
+   if (gb_core)
+   {
+      /* The core validates the image (magic, version, console, cartridge
+       * identity, exact size) before touching any machine state. */
+      if (gbcore_state_load(gb_core, state_buf, n) != 0)
+      {
+         fe_evt("state_load file=%s FAILED reason=unserialize n=%u", path,
+                (unsigned)n);
+         return -1;
+      }
+      fe_evt("state_load file=%s size=%u", path, (unsigned)n);
+      return 0;
+   }
+   sz = retro_serialize_size();
    if (n != sz || !retro_unserialize(state_buf, sz))
    {
       fe_evt("state_load file=%s FAILED reason=unserialize n=%u", path,
@@ -551,9 +1015,11 @@ int fe_host_state_load(const char *path)
  *   WRITING -> the writer thread has taken it
  * The emulation thread only ever raises DIRTY and never clears; the writer
  * only ever CLEAN-s a block it still owns (`state == WRITING` after the
- * write).  So a block the game touches mid-write is re-marked DIRTY, the
- * writer's compare-and-clear fails, and the next pass rewrites it.  That is
- * the whole synchronisation, and it needs no lock. */
+ * write).  Once async ownership has ended, synchronous shutdown recovery may
+ * convert an orphaned WRITING block back to DIRTY for retry.  So a block the
+ * game touches mid-write is re-marked DIRTY, the writer's compare-and-clear
+ * fails, and the next pass rewrites it.  That is the whole synchronisation,
+ * and it needs no lock. */
 #define SBLK_CLEAN    0
 #define SBLK_DIRTY    1
 #define SBLK_WRITING  2
@@ -624,6 +1090,21 @@ static unsigned sram_pending(void)
    return n;
 }
 
+/* The async writer can be terminated at shutdown if a memory-stick call does
+ * not return within the join timeout.  In that case it may leave one block in
+ * WRITING, a state only that writer normally owns.  Once host_io is cleared,
+ * no writer can still be using the block or sram_fp, so make that interrupted
+ * block retryable.  Do not do this while async ownership is installed: a live
+ * writer may still be copying or writing the block, and its normal
+ * compare-and-clear preserves any concurrent DIRTY transition. */
+static void sram_recover_interrupted_writes(void)
+{
+   unsigned i;
+   for (i = 0; i < SRAM_BLOCKS; i++)
+      if (sram_blk_state[i] == SBLK_WRITING)
+         sram_blk_state[i] = SBLK_DIRTY;
+}
+
 static void sram_close(void)
 {
    if (sram_fp)
@@ -690,7 +1171,6 @@ static int sram_drain(uint32_t budget_us)
       t0 = host.time_us ? host.time_us() : 0;
       if (sram_write_full(p) != 0)
       {
-         sram_full_req = 0;
          return -1;
       }
       slice = (host.time_us ? host.time_us() : 0) - t0;
@@ -822,6 +1302,15 @@ int fe_host_sram_service_io(void)
    unsigned before;
    int req = sram_scan_req;
 
+   if (gb_core)
+   {
+      /* This entry point belongs to the I/O worker. The GB core owns mutable
+       * cartridge RAM on the emulation thread, so even taking a snapshot
+       * here would race a frame. The main-thread service handles both the
+       * snapshot and file write for GB-family cartridges. */
+      return 0;
+   }
+
    /* The scan is on this thread too since ADR-0026: it is 11 ms of CPU on
     * the user's hardware, and on a single-core console the only place to
     * put 11 ms that does not cost the emulator a frame is the slack it
@@ -829,19 +1318,111 @@ int fe_host_sram_service_io(void)
    if (req || (sram_last_scan_us &&
                now - sram_last_scan_us >= SRAM_SCAN_INTERVAL_US))
    {
+      /* Read the generation BEFORE the scan: anything the game writes from
+       * here on may or may not be in what this pass sees, so it must not be
+       * credited to it (FF durability nudge). */
+      uint32_t gen = sram_gen_now();
       sram_last_scan_us = now;
       sram_run_threaded = 1;
       (void)sram_scan(req == 2);
       sram_scan_req = 0;      /* clear only after the scan has marked */
+      sram_scan_gen = gen;
+      sram_scan_gen_valid = 1;
    }
 
-   if (!sram_full_req && !sram_pending())
-      return 0;
    before = sram_pending();
-   sram_run_threaded = 1;
-   (void)sram_drain(0);
+   if (sram_full_req || before)
+   {
+      sram_run_threaded = 1;
+      if (sram_drain(0) != 0)
+         return 0;            /* nothing is persisted on an I/O error */
+   }
+   /* Everything the last scan asked for is on disk, and the on-disk image is
+    * a trustworthy baseline (a failed write clears sram_have_blk until a
+    * full rewrite succeeds): publish the generation that scan saw. */
+   if (sram_scan_gen_valid && sram_have_blk && !sram_full_req &&
+       !sram_pending())
+      sram_disk_gen = sram_scan_gen;
    { unsigned after = sram_pending();
      return (int)(before > after ? before - after : 0); }
+}
+
+void fe_host_sram_ff_nudge_enable(int on)
+{
+   ffn_enabled = on ? 1 : 0;
+}
+
+int fe_host_sram_ff_nudge(int ff_active)
+{
+   uint32_t gen;
+
+   if (!host_io || gb_core || !&backup_write_gen || !host.save_path)
+      return 0;
+
+   gen = backup_write_gen;
+   if (gen != ffn_seen_gen)
+   {
+      if (!ffn_pending)
+         ffn_first_frame = frame_count;
+      ffn_pending = 1;
+      ffn_seen_gen = gen;
+      ffn_last_frame = frame_count;
+      ffn_last_us = host.time_us ? host.time_us() : 0;
+      ffn_gen_yields = 0;
+      ffn_gave_up = 0;
+   }
+   if (!ffn_pending)
+      return 0;
+   if (sram_disk_gen == gen)
+   {
+      /* Persisted -- by a nudged scan or by the writer's own cadence.
+       * Observed here, so both figures are upper bounds by one frame. */
+      uint64_t now_us = host.time_us ? host.time_us() : 0;
+      fe_evt("sram_persisted gen=%u ff=%d frames_since_write=%u "
+             "ms_since_write=%u yields=%u total_yields=%u total_yield_us=%u",
+             (unsigned)gen, ff_active, frame_count - ffn_last_frame,
+             (unsigned)((now_us - ffn_last_us) / 1000u), ffn_gen_yields,
+             ffn_yields, (unsigned)ffn_yield_us);
+      FE_EVT_ONLY(now_us);
+      ffn_pending = 0;
+      ffn_gen_yields = 0;
+      return 0;
+   }
+   if (!ff_active || !ffn_enabled || ffn_gave_up)
+      return 0;
+   if (frame_count - ffn_last_frame < SRAM_FF_SETTLE_FRAMES &&
+       frame_count - ffn_first_frame < SRAM_FF_MAX_DEFER_FRAMES)
+      return 0;
+   if ((int)(frame_count - ffn_next_frame) < 0)
+      return 0;
+   if (ffn_gen_yields >= SRAM_FF_NUDGE_CAP)
+   {
+      ffn_gave_up = 1;
+      fe_evt("sram_ff_nudge gave_up gen=%u disk_gen=%u yields=%u",
+             (unsigned)gen, (unsigned)sram_disk_gen, ffn_gen_yields);
+      return 0;
+   }
+
+   /* The writer has not scanned since this write, or its last pass failed
+    * (no trustworthy on-disk image until a full rewrite, which only a scan
+    * schedules): ask for a scan now rather than at its 5 s cadence.  Never
+    * downgrade a pending forced request. */
+   if (!sram_scan_gen_valid || sram_scan_gen != gen || !sram_have_blk)
+   {
+      if (!sram_scan_req)
+         sram_scan_req = 1;
+   }
+   ffn_next_frame = frame_count + SRAM_FF_NUDGE_EVERY;
+   ffn_gen_yields++;
+   ffn_yields++;
+   {
+      uint64_t t0 = host.time_us ? host.time_us() : 0;
+      host_io->wake();
+      host_io->yield();
+      if (t0)
+         ffn_yield_us += host.time_us() - t0;
+   }
+   return 1;
 }
 
 /* Per-frame service: keep an in-progress flush moving without ever handing
@@ -849,6 +1430,12 @@ int fe_host_sram_service_io(void)
  * fe_host_run_frame; cheap no-op when nothing is pending. */
 void fe_host_sram_service(void)
 {
+   if (gb_core)
+   {
+      if ((frame_count % SRAM_CHECK_INTERVAL) == 0)
+         (void)gb_save_flush(0);
+      return;
+   }
    if (host_io)
       return;              /* the writer thread owns the file (ADR-0025) */
    if (sram_pending() || sram_full_req)
@@ -862,10 +1449,26 @@ void fe_host_sram_service(void)
  * file with blocks still pending. */
 void fe_host_sram_sync(void)
 {
+   if (gb_core)
+   {
+      /* Must run on the emulation thread: only it may read the GB core's RAM.
+       * Not forced: exit reaches this two or three times (io_thread_stop,
+       * then fe_host_shutdown's flush + sync) and an unchanged cartridge
+       * needs no memory-stick write at all. */
+      (void)gb_save_flush(0);
+      return;
+   }
    if (!host_io)
    {
+      /* Synchronous ownership means the async writer has stopped.  Recover
+       * its interrupted block before draining; sram_drain deliberately only
+       * takes DIRTY blocks, so leaving WRITING here would strand the save. */
+      sram_recover_interrupted_writes();
       if (sram_pending() || sram_full_req)
-         sram_drain(0);
+      {
+         if (sram_drain(0) != 0)
+            sram_full_req = 1;   /* retry from a whole-image write */
+      }
       return;
    }
    /* Async: the writer thread owns the file, so we must not touch it — we
@@ -933,7 +1536,11 @@ static int sram_scan(int force_write)
       }
       sram_run_scan_us += (host.time_us ? host.time_us() : 0) - s0;
    }
-   if (!force_write && sram_have_crc && crc == sram_last_crc)
+   /* A failed delta write invalidates the per-block on-disk baseline.  Even
+    * when live SRAM's whole-image CRC is unchanged, scan again to schedule a
+    * full rewrite; that write is the only way to re-establish the baseline. */
+   if (!force_write && sram_have_blk && sram_have_crc &&
+       crc == sram_last_crc)
    {
       sram_run_scan_us = 0;    /* nothing to attribute it to */
       return 0;
@@ -973,6 +1580,8 @@ static int sram_scan(int force_write)
 
 int fe_host_sram_flush(int force_write)
 {
+   if (gb_core)
+      return gb_save_flush(force_write);
    /* Threaded: the writer thread owns the scan AND the writes, so this only
     * places the request.  A forced flush additionally waits for the whole
     * cycle — scan, then drain — to finish before returning, which is what
@@ -1087,6 +1696,52 @@ int fe_host_boot(const fe_host_config *cfg)
    host = *cfg;
    frame_count = 0;
    last_frame = NULL;
+   frames_rendered = 0;
+   frames_skipped = 0;
+   fps_last_frames = fps_last_rendered = fps_last_skipped = 0;
+   gb_save_crc_valid = 0;
+   gb_skip_frame = 0;
+
+   if (host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC)
+   {
+      gbcore_callbacks_t callbacks;
+      char title[17] = "";
+      unsigned rate = 32768;
+      if (host.boot_status) host.boot_status("Preparing GB emulator");
+      memset(&callbacks, 0, sizeof(callbacks));
+      callbacks.video = gb_video_frame;
+      callbacks.audio_batch = gb_audio_batch;
+      callbacks.serial_transfer = gb_serial_transfer;
+      gb_link_reset();
+      fe_np_gb_set_receive(gb_link_receive_message, NULL);
+      fe_np_gb_set_peer_callback(gb_link_peer_event, NULL);
+      /* Before create: the core takes its clock base and chooses DMG, SGB
+       * or CGB behaviour (the palette decides SGB colours) as it boots. */
+      gbcore_set_wallclock(host.wallclock);
+      gbcore_set_palette((unsigned)host.gb_palette);
+      gb_core = gbcore_create(host.rom_path, NULL, 0, host.console, rate,
+                              &callbacks);
+      if (!gb_core)
+      {
+         fe_log("gbcore_create FAILED for %s console=%d", host.rom_path,
+                (int)host.console);
+         return -1;
+      }
+      core_sample_rate = gbcore_sample_rate(gb_core);
+      gbcore_rom_title(gb_core, title, sizeof(title));
+      fe_evt("gb_rom_loaded console=%s title=%s", host.console == FE_CONSOLE_GBC ?
+             "GBC" : "GB", title);
+      fe_evt("av_info fps=59.7275 rate=%u w=%u h=%u", core_sample_rate,
+             gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
+      if (host.boot_status) host.boot_status("Loading GB save");
+      gb_save_load();
+      fps_last_us = host.time_us ? host.time_us() : 0;
+      fe_evt("gb_backend ready console=%d", (int)host.console);
+      return 0;
+   }
+
+   if (host.console != FE_CONSOLE_GBA)
+      return -1;
 
    retro_set_environment(env_cb);
    retro_set_video_refresh(video_refresh);
@@ -1187,8 +1842,8 @@ static unsigned core_run_calls;
  * spike appears BEFORE any peer connects — solo Emerald, no wireless. So the
  * residue is intrinsic to the core, and the two candidates that can cost tens
  * of milliseconds are (a) a translation-cache flush, which discards up to
- * 2 MiB of generated code on the SMALL_TRANSLATION_CACHE build and forces
- * re-translation, and (b) a ROM page fault, which is a 32 KiB read from the
+ * 2 MiB of generated code on the small cache tier (10 MiB on the large one
+ * a 64 MiB PSP gets) and forces re-translation, and (b) a ROM page fault, which is a 32 KiB read from the
  * memory stick mid-emulation whenever the ROM does not fit in RAM — on a
  * stick ADR-0026 measured at 34 ms for 4 KiB.
  *
@@ -1213,6 +1868,22 @@ static unsigned core_win_spike_dma, core_win_spike_page;
 unsigned fe_host_sample_rate(void)
 {
    return core_sample_rate;
+}
+
+void fe_host_gb_palette_set(int id)
+{
+   host.gb_palette = id;
+   gbcore_set_palette((unsigned)id);
+}
+
+int fe_host_gb_palette_count(void)
+{
+   return GBCORE_PALETTE_COUNT;
+}
+
+const char *fe_host_gb_palette_name(int id)
+{
+   return gbcore_palette_name((unsigned)id);
 }
 
 void fe_host_core_prof(unsigned *calls, uint32_t *total_us, uint32_t *max_us)
@@ -1501,15 +2172,99 @@ static void core_phase_evt(void)
           rfux, rfut, wrfux, wrfut);
 }
 
+/* BADJUMP_SAFE (a CORE flag, so invisible to this file's defines): the
+ * dynarec caught the guest jumping to an address that is not code.  It can
+ * only point the CPU at the reset vector from inside the dispatcher, which is
+ * not a reset -- the BIOS then boots with the game's IRQs, timers and sound
+ * DMA still live (black screen over a looping sound buffer).  The core raises
+ * this flag instead, and the real reset happens here, between frames.  Weak,
+ * so a core built without the guard links and never resets. */
+extern volatile uint32_t badjump_reset_pending __attribute__((weak));
+extern uint32_t badjump_last_pc __attribute__((weak));
+static unsigned guest_faults;
+
+static void fe_host_guest_fault_check(void)
+{
+   if (!&badjump_reset_pending || !badjump_reset_pending)
+      return;
+   badjump_reset_pending = 0;
+   guest_faults++;
+   fe_evt("guest_fault n=%u pc=%08x frame=%u action=reset", guest_faults,
+          &badjump_last_pc ? (unsigned)badjump_last_pc : 0u, frame_count);
+   retro_reset();
+}
+
+unsigned fe_host_guest_faults(void)
+{
+   return guest_faults;
+}
+
+/* The frameskip the platform asks of the GBA core (fast-forward's CPU
+ * Unlimited mode sets gpsp_frameskip=fixed_interval) applies to the GB core
+ * too: skipped frames are emulated and heard but not drawn, and reach the
+ * platform as the NULL "nothing new" frame.  0 = draw every frame. */
+static unsigned gb_frameskip_interval(void)
+{
+   const char *mode = NULL, *interval = NULL;
+   size_t i;
+   for (i = 0; i < sizeof(options) / sizeof(options[0]); i++)
+   {
+      if (strcmp(options[i].key, "gpsp_frameskip") == 0)
+         mode = options[i].value;
+      else if (strcmp(options[i].key, "gpsp_frameskip_interval") == 0)
+         interval = options[i].value;
+   }
+   if (!mode || strcmp(mode, "fixed_interval") != 0 || !interval)
+      return 0;
+   return (unsigned)atoi(interval);
+}
+
 void fe_host_run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
    unsigned rf0 = 0, ff0 = 0, sf0 = 0, df0 = 0, pl0 = 0;
 
+   if (gb_core)
+   {
+      static unsigned skip_phase;
+      unsigned interval = gb_frameskip_interval();
+      uint32_t pad = (host.input_bitmask ? host.input_bitmask() : 0) |
+                     injected_mask;
+      if (interval)
+         gb_skip_frame = (skip_phase++ % (interval + 1)) != 0;
+      else
+      {
+         gb_skip_frame = 0;
+         skip_phase = 0;
+      }
+      gbcore_set_skip_render(gb_core, gb_skip_frame);
+      if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
+         fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+      if (core_t0 && host.time_us)
+      {
+         uint32_t elapsed = (uint32_t)(host.time_us() - core_t0);
+         core_run_us_total += elapsed;
+         core_run_calls++;
+         if (elapsed > core_run_max_us) core_run_max_us = elapsed;
+         if (elapsed > core_win_max_us) core_win_max_us = elapsed;
+      }
+      frame_count++;
+      fe_host_sram_service();
+      if ((frame_count % HEARTBEAT_INTERVAL) == 0)
+      {
+         fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
+                (unsigned long long)(host.time_us ? host.time_us() : 0));
+         fps_evt();
+         core_prof_evt();
+      }
+      return;
+   }
+
    if (core_t0 && host.core_counters)
       host.core_counters(&rf0, &ff0, &sf0, &df0, &pl0);
 
    retro_run();
+   fe_host_guest_fault_check();
 
    if (core_t0)
    {
@@ -1596,7 +2351,7 @@ const uint16_t *fe_host_last_frame(size_t *pitch_bytes)
 
 const void *fe_host_netpacket_cb(void)
 {
-   return netpacket_registered ? (const void *)&netpacket_cb : NULL;
+   return !gb_core && netpacket_registered ? (const void *)&netpacket_cb : NULL;
 }
 
 void fe_host_shutdown(void)
@@ -1608,6 +2363,20 @@ void fe_host_shutdown(void)
    fe_host_sram_flush(0);
    fe_host_sram_sync();     /* exit must never close over pending blocks */
    sram_close();
+   if (gb_core)
+   {
+      gbcore_shutdown(gb_core);
+      gb_core = NULL;
+      free(gb_save_buffer);
+      gb_save_buffer = NULL;
+      gb_save_capacity = 0;
+      gb_save_crc_valid = 0;
+      gb_save_file_len = -1;
+      gb_link_reset();
+      last_frame = NULL;
+      last_pitch = 0;
+      return;
+   }
    retro_unload_game();
    retro_deinit();
 }

@@ -50,7 +50,13 @@ int pcfg_fps_x100(const char *ini, const char *key, int def)
    for (p = buf; *p == ' ' || *p == '\t'; p++)
       ;
    for (; *p >= '0' && *p <= '9'; p++, seen++)
-      whole = whole * 10 + (*p - '0');
+   {
+      int digit = *p - '0';
+      /* Reject values above 1000 before multiplication can overflow. */
+      if (whole > 100 || (whole == 100 && digit > 0))
+         return def;
+      whole = whole * 10 + digit;
+   }
    if (*p == '.')
       for (p++; *p >= '0' && *p <= '9' && digits < 2; p++, digits++, seen++)
          frac = frac * 10 + (*p - '0');
@@ -99,7 +105,11 @@ void pcfg_load(const char *ini_path)
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
+   g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
+   g_pcfg.gb_palette  = (int)fe_ini_get_int(cfg_path, "gb_palette", 0);
+   if (g_pcfg.gb_palette < 0 || g_pcfg.gb_palette > 15)
+      g_pcfg.gb_palette = 0;
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
 #ifdef GPSP_PLAYABLE
    /* Bench mode is a HARNESS facility: it forces uncapped + every-frame
@@ -206,6 +216,9 @@ void pcfg_load(const char *ini_path)
       strcpy(g_pcfg.group, "GPSP07");
    if (!fe_ini_get(cfg_path, "nick", g_pcfg.nick, sizeof(g_pcfg.nick)))
       strcpy(g_pcfg.nick, "PSP");
+   g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_GBC)
+      g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
 
    if (g_pcfg.scale < 0 || g_pcfg.scale >= VID_SCALE_MODES)
@@ -244,6 +257,7 @@ static int pcfg_validate(const char *when)
 {
    int bad = 0;
 
+   (void)when; /* FE_EVT_ONLY may compile away all uses in host builds. */
    FE_EVT_ONLY(when);   /* names the caller in the report only */
 
 #define PCFG_CHK(field, lo, hi, fallback)                                     \
@@ -320,6 +334,18 @@ int pcfg_remember_rom(const char *name)
    return 0;
 }
 
+int pcfg_remember_console(int console)
+{
+   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+      return -1;
+   g_pcfg.console = console;
+   /* One key, for the reason pcfg_remember_rom gives: pcfg_save() is ~37
+    * whole-file INI rewrites, which every TRIANGLE press used to pay. */
+   if (!cfg_path[0] || fe_ini_set_int(cfg_path, "console", console) != 0)
+      return -1;
+   return 0;
+}
+
 void pcfg_save(void)
 {
    if (!cfg_path[0])
@@ -339,6 +365,7 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ui_shell", g_pcfg.ui_shell);
    fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
+   fe_ini_set_int(cfg_path, "gb_palette", g_pcfg.gb_palette);
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
    fe_ini_set_int(cfg_path, "net_tx_thread", g_pcfg.net_tx_thread);
@@ -368,6 +395,7 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "osd_wireless", g_pcfg.osd_wireless);
    fe_ini_set(cfg_path, "group", g_pcfg.group);
    fe_ini_set(cfg_path, "nick", g_pcfg.nick);
+   fe_ini_set_int(cfg_path, "console", g_pcfg.console);
    if (g_pcfg.last_rom[0])
       fe_ini_set(cfg_path, "last_rom", g_pcfg.last_rom);
    fe_evt("config_saved scale=%d filter=%d ff_mult_x10=%d ff_hold=%d",

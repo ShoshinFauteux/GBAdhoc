@@ -73,8 +73,25 @@
 #ifdef SMC_WRITE_HISTO
 #error "release + SMC_WRITE_HISTO: writes ms0:/smchisto.txt every 4000 flushes."
 #endif
+#ifdef XLAT_DEPTH_PROBE
+#error "release + XLAT_DEPTH_PROBE: soak/diagnostic translation-depth instrument."
+#endif
 #ifdef GPSP_ROMLOAD_DIAGNOSTICS
 #error "release + GPSP_ROMLOAD_DIAGNOSTICS: diagnostic ROM-load instrumentation."
+#endif
+#ifdef IRQ_INTEGRITY_CHECK
+#error "release + IRQ_INTEGRITY_CHECK: writes ms0:/irqchk.txt when IRQ state is lost."
+#endif
+#ifdef STALE_CHECK
+#error "release + STALE_CHECK: PPSSPP stale-translation detector, slow and writes ms0."
+#endif
+/* The 2026-09-24 gate-layout A/B apparatus (cpu_threaded.c, main.c,
+ * gba_memory.c, mips/): each changes emulation or timing on purpose. */
+#if defined(GATE_NOCHECK) || defined(GATE_ONLY_FULLFLUSH) || \
+    defined(GATE_HIGH_ONLY) || defined(STATE_HASH_TRACE) || \
+    defined(UPDATE_TRACE_LO) || defined(RTC_PIN) || defined(STALE_STACKNOTE) || \
+    defined(NO_GATE_TAG_FIX) || defined(NO_BL_FIX)
+#error "release + a gate-layout A/B diagnostic switch (docs/BUILD-SWITCHES.md)."
 #endif
 
 /* Experiment control arms.  Each of these deliberately DISABLES something the
@@ -82,6 +99,9 @@
  * apparent cause. */
 #ifdef SMC_PARTIAL_SAFE_CONTROL
 #error "release + SMC_PARTIAL_SAFE_CONTROL: the A/B control arm, not a release."
+#endif
+#ifdef GPSP_CATCH_SELFTEST
+#error "release + GPSP_CATCH_SELFTEST: L+R+UP+TRIANGLE crashes the PSP on purpose."
 #endif
 
 /* Rejected experiments.  SMC_SKIP_SAME white-screens Pokemon Heart & Soul at

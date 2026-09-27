@@ -5,6 +5,8 @@
 #ifndef CONFIG_PSP_H
 #define CONFIG_PSP_H
 
+#include "fe_console.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -114,7 +116,15 @@ typedef struct
     * it was harness-only, which meant a player could not turn it off and
     * a bug report could not separate it from same-frame. */
    int  me_dirty;
+   /* CONFIG.INI `rom_resident` (read, never written): hold a 32 MiB cart
+    * whole when the heap allows it (main_psp.c rom_cache_select).  Default
+    * ON since 3.0.0 (the Go A/B rig, 21/21); `rom_resident = 0` pages. */
+   int  rom_resident;
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
+   /* GB/GBC DMG palette, a GBCORE_PALETTE_* id (gbcore.h): 0 = Auto (Super
+    * Game Boy colours where the game has them, grey otherwise, default),
+    * 1 Grey, 2 DMG green, 3 Pocket.  Unknown ids fall back to Auto. */
+   int  gb_palette;
    /* Benchmark mode (config.ini only, no UI row).  Makes the FF button mean
     * "engine throughput test": uncapped pacing, frameskip DISABLED (every
     * frame is rendered), and the ME kept on its normal ASYNC path instead of
@@ -301,8 +311,10 @@ typedef struct
    int  osd_wireless;
    char group[9];     /* wireless room code (adhocctl group, <= 8 chars) */
    char nick[24];     /* wireless nickname */
-   char last_rom[256]; /* browser preselect -- holds a path RELATIVE to
-                       * roms/, so it has to fit a folder prefix plus a
+   int  console;      /* FE_CONSOLE_* browser/core selection; defaults to GBA */
+   char last_rom[320]; /* browser preselect -- holds the longest relative
+                       * ROM path accepted by the browser (319 bytes), so it
+                       * has to fit a folder prefix plus a
                        * full No-Intro name.  64 could not even hold the
                        * name alone; the only symptom was the browser
                        * quietly opening on the first game instead of the
@@ -366,6 +378,9 @@ void pcfg_load(const char *ini_path);
 void pcfg_save(void);   /* rewrites all keys to the load path */
 /* Browser selection changes only this key. Returns -1 on persistence failure. */
 int pcfg_remember_rom(const char *name);
+/* Browser console switch (TRIANGLE): sets g_pcfg.console and writes only the
+ * `console` key.  Returns -1 on an invalid value or persistence failure. */
+int pcfg_remember_console(int console);
 
 #ifdef __cplusplus
 }

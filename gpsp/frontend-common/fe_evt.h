@@ -73,6 +73,11 @@ void fe_log(const char *fmt, ...);
  * what the CALLING (emulation) thread paid — format + ring copy + signal.
  * The memory-stick cost moves to fe_evt_prof_io(). */
 void fe_evt_set_clock(unsigned long long (*now_us)(void));
+/* The same clock, for a line that wants to carry a wall-clock stamp (the
+ * autopilot's ap_mark/ap_sync: per-step link latency is a wall-clock
+ * question, and a frame count alone cannot answer it while the frame rate is
+ * what is being varied).  0 when no clock is installed. */
+unsigned long long fe_evt_now_us(void);
 void fe_evt_prof(unsigned *lines, unsigned *us, unsigned *max_us);
 
 /* ---- asynchronous writer (ADR-0024) -------------------------------------
@@ -97,6 +102,9 @@ void fe_evt_prof(unsigned *lines, unsigned *us, unsigned *max_us);
 void fe_evt_set_async(void (*wake)(void));
 int  fe_evt_service(void);
 int  fe_evt_pending(void);
+/* Lines dropped because the async ring was full, since boot.  Every gap is
+ * also marked in-band (`EVT evt_gap`); this is for the exit/RESULT report. */
+unsigned fe_evt_drops(void);
 void fe_evt_prof_io(unsigned *io_us, unsigned *io_max_us, unsigned *dropped,
                     unsigned *ring_hi);
 

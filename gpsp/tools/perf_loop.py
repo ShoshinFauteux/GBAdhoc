@@ -172,7 +172,13 @@ def load_job(directory):
         if sha(directory/name) != digest: raise ValueError('package hash mismatch: ' + name)
     for name in job['resident']:
         safe_name(name)
-    if not 0 <= job['from'] < job['to'] <= 36000 or job['core_phase'] not in (0, 2, 3):
+    # THE SAME CEILING LIVES IN psp/main_psp.c, and the two must agree.
+    # 36000 frames is ten minutes of EMULATED time, which is only about three
+    # wall-clock minutes at 3x.  A ten-minute soak needs a window past it, and
+    # the two copies fail differently: this one REJECTS the job, which is loud
+    # and harmless, while main_psp.c's silently substituted 300..3900 and the
+    # run measured the wrong range without saying so.
+    if not 0 <= job['from'] < job['to'] <= 600000 or job['core_phase'] not in (0, 2, 3):
         raise ValueError('invalid measurement settings')
     return job
 

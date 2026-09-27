@@ -20,6 +20,15 @@
   #define RAM_TRANSLATION_CACHE_SIZE (1024 * 512)
 #endif
 
+/* RUNTIME_JIT_CACHE (PSP): the sizes above are the SMALL tier, always present
+ * as static arrays.  A console whose heap can afford it gets these instead,
+ * allocated at startup (cpu_threaded.c, dynarec_select_translation_caches).
+ * They are the sizes the old BIG_JIT=1 build compiled in. */
+#if defined(RUNTIME_JIT_CACHE)
+  #define ROM_TRANSLATION_CACHE_SIZE_LARGE (1024 * 1024 * 10)
+  #define RAM_TRANSLATION_CACHE_SIZE_LARGE (1024 * 512)
+#endif
+
 /* Should be an upperbound to the maximum number of bytes a single JIT'ed
    instruction can take. STM/LDM are tipically the biggest ones */
 #define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 2)

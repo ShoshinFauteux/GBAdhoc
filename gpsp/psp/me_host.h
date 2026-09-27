@@ -58,6 +58,11 @@ int  me_host_input_done(void);   /* v2: ME consumed the live inputs */
  * EVT me_watchdog on the transition. */
 int  me_host_watchdog_frame(void);
 
+/* Diagnostics only (stall watch): raw mailbox words, read uncached.  Any
+ * pointer may be NULL; all outputs read 0 while the ME is down. */
+void me_host_diag(unsigned *cmd_seq, unsigned *done_seq, unsigned *input_seq,
+                  unsigned *heartbeat);
+
 #ifdef __cplusplus
 }
 #endif

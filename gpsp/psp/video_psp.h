@@ -123,6 +123,17 @@ void vid_blit_prof(unsigned *frames,
 void vid_overlay_begin(int clear);
 void vid_rect(int x, int y, int w, int h, uint16_t rgb565, int alpha);
 void vid_text(int x, int y, const char *str, uint16_t rgb565);
+/* PSP button glyphs, baked into both faces after the ASCII range
+ * (tools/bake_font.py EXTRAS).  Ordinary proportional glyphs: vid_text_w
+ * measures them and vid_text draws them, so a hint is a plain string.
+ * CONCATENATE, never embed: "\x81 play" is fine but "\x80exit" reads the
+ * 'e' as a hex digit -- always write VID_GLYPH_O " exit". */
+#define VID_GLYPH_TRI    "\x7F"
+#define VID_GLYPH_O      "\x80"
+#define VID_GLYPH_X      "\x81"
+#define VID_GLYPH_SQ     "\x82"
+#define VID_GLYPH_STAR   "\x83"
+#define VID_GLYPH_STAR_O "\x84"
 /* Larger semibold face, for screen titles. */
 void vid_text_hd(int x, int y, const char *str, uint16_t rgb565);
 /* Text is PROPORTIONAL: ask for the width, never strlen * FE_FONT_W. */

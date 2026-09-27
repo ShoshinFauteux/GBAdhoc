@@ -25,5 +25,7 @@ void handoff_config(int enabled, int window_s, int max_runs, int total_s,
  * `exit_code` / `exit_reason` are published to the PC so the loop can tell a
  * clean finish from ap_fail without parsing the log. */
 void handoff_run(int exit_code, const char *exit_reason);
+/* Lines ("k=v\n...") appended to every RESULT.TXT this process writes. */
+void handoff_set_extra(const char *kv_lines);
 
 #endif

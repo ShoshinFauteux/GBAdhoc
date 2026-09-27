@@ -148,7 +148,6 @@ static int  h_pending_len;
  * anything on ms0 asks this first.  Fixing only the one call site that bit us
  * would leave the others waiting; the property we need is "no path touches the
  * card while it is exported", and that has to be enforced in one place. */
-static int h_ms0_forbidden(const char *what) __attribute__((unused));
 static int h_ms0_forbidden(const char *what)
 {
    if (!h_usb_active)
@@ -185,6 +184,10 @@ static void h_note(const char *fmt, ...)
    va_end(ap);
    if (n < 0)
       return;
+   /* vsnprintf returns the UNTRUNCATED length: clamp, or a long path puts the
+    * '\n' and the n + 1-byte write below past the end of `line`. */
+   if (n > (int)sizeof(line) - 3)
+      n = (int)sizeof(line) - 3;
    line[n] = '\n';
    if (h_usb_active)
    {
@@ -206,7 +209,10 @@ static void h_note(const char *fmt, ...)
 
 static int h_read_small(const char *path, char *buf, int cap)
 {
-   int fd = sceIoOpen(path, PSP_O_RDONLY, 0777), n = 0;
+   int fd, n = 0;
+   if (h_ms0_forbidden("read"))
+      return -1;
+   fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
    if (fd < 0)
       return -1;
    n = sceIoRead(fd, buf, cap - 1);
@@ -235,7 +241,10 @@ static int h_run_index(void)
 static void h_write_run_index(int run)
 {
    char buf[32];
-   int fd, n = snprintf(buf, sizeof(buf), "%d\n", run);
+   int fd, n;
+   if (h_ms0_forbidden("write RUNS.TXT"))
+      return;
+   n = snprintf(buf, sizeof(buf), "%d\n", run);
    fd = sceIoOpen(h_runs, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    if (fd >= 0)
    {
@@ -244,19 +253,38 @@ static void h_write_run_index(int run)
    }
 }
 
+/* Extra `key=value` lines appended to RESULT.TXT (the rig's liveness and
+ * log-loss facts: frames=, evt_drop=).  RESULT.TXT is written with sceIo
+ * directly, after the event log is closed, so these cannot be starved or
+ * truncated the way a log line can -- which is the point. */
+static char h_extra[160];
+
+void handoff_set_extra(const char *kv_lines)
+{
+   if (!kv_lines)
+      h_extra[0] = '\0';
+   else
+   {
+      strncpy(h_extra, kv_lines, sizeof(h_extra) - 1);
+      h_extra[sizeof(h_extra) - 1] = '\0';
+   }
+}
+
 static void h_write_result(int run, int exit_code, const char *reason,
                            const char *status)
 {
-   char line[224];
+   char line[224 + sizeof(h_extra)];
    int fd, n;
    /* `status` is how the PC tells "just finished a run" (ready) from "sitting
     * here waiting for work" (parked).  Without it a parked console either
     * looks like a completed run and gets counted as one, or -- if it stops
     * publishing -- becomes invisible and the next batch finds nothing. */
    n = snprintf(line, sizeof(line),
-                "run=%d\nexit=%d\nreason=%s\nstatus=%s\n",
+                "run=%d\nexit=%d\nreason=%s\nstatus=%s\n%s",
                 run, exit_code, reason ? reason : "ok",
-                status ? status : "ready");
+                status ? status : "ready", h_extra);
+   if (h_ms0_forbidden("write RESULT.TXT"))
+      return;
    fd = sceIoOpen(h_result, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    if (fd >= 0)
    {
@@ -332,6 +360,7 @@ static int h_usb_up(void)
 
    rc = sceUsbActivate(HANDOFF_PID);
    if (rc < 0) { h_note("  sceUsbActivate -> 0x%08X", (unsigned)rc); return -5; }
+   h_usb_active = 1; /* Gate all ms0 access at the instant export succeeds. */
    h_note("  usb up OK");
    return 0;
 }
@@ -424,7 +453,8 @@ park:
          snprintf(path, sizeof(path), "%s/WINDOW.TXT", h_dir);
          n = snprintf(line, sizeof(line), "token=%d-%u\nseconds=%d\n",
                       run, ++window_id, cur_window);
-         fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+         fd = h_ms0_forbidden("write WINDOW.TXT") ? -1 :
+              sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
          if (fd >= 0)
          {
             sceIoWrite(fd, line, n);
@@ -442,7 +472,6 @@ park:
       }
       h_note("usb activated (window %ds, parked %ds)",
              cur_window, total_ms / 1000);
-      h_usb_active = 1;   /* from here to h_usb_down(): ms0 is NOT ours */
 
       /* The USB state is LOGGED, never used as a control signal.
        *

@@ -26,6 +26,13 @@ else ifeq ($(TARGET_ARCH),x86_64)
    HAVE_DYNAREC := 1
 endif
 
+# Keep the JIT helper calling convention in sync with the root Makefile's
+# CPU_ARCH-derived architecture defines.  In particular, 32-bit x86 stubs
+# call C helpers using regparm(2).
+ifeq ($(CPU_ARCH),x86_32)
+   COREFLAGS += -DX86_ARCH
+endif
+
 ifeq ($(HAVE_DYNAREC),1)
   COREFLAGS += -DHAVE_DYNAREC
 endif

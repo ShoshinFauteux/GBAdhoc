@@ -90,6 +90,8 @@
 }
 
 bool bson_contains_key(const u8 *srcp, const char *key, u8 keytype);
+bool bson_has_bytes(const u8 *srcp, const char *key, u32 size);
+bool bson_has_int32_array(const u8 *srcp, const char *key, u32 count);
 const u8* bson_find_key(const u8 *srcp, const char *key);
 bool bson_read_int32(const u8 *srcp, const char *key, u32* value);
 bool bson_read_int32_array(const u8 *srcp, const char *key, u32* value, unsigned cnt);
@@ -104,4 +106,3 @@ bool gba_load_state(const void *src);
 void gba_save_state(void *dst);
 
 #endif
-

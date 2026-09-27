@@ -35,7 +35,12 @@ def old(name):
 
 def raw(source, suffix):
     start = source.index('static s32 load_gamepak_raw(')
-    end = source.index('static bool rom_has_signature(', start)
+    ends = [source.find(marker, start) for marker in
+            ('static bool rom_has_signature(', '\nenum\n{')]
+    ends = [end for end in ends if end >= 0]
+    if not ends:
+        raise SystemExit('cannot find end of load_gamepak_raw in source')
+    end = min(ends)
     return source[start:end].replace('load_gamepak_raw(', 'load_gamepak_raw_' + suffix + '(')
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -62,7 +67,11 @@ with tempfile.TemporaryDirectory() as tmp:
                        '-Wl,--gc-sections', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     (tmp/'load_before.inc').write_text(raw(old('gba_memory.c'), 'before'))
-    (tmp/'load_after.inc').write_text(raw((repo/'gba_memory.c').read_text(), 'after'))
+    current_memory = (repo/'gba_memory.c').read_text()
+    (tmp/'load_after.inc').write_text(raw(current_memory, 'after'))
+    sig_start = current_memory.index('\nenum\n{', current_memory.index('static s32 load_gamepak_raw(')) + 1
+    sig_end = current_memory.index('\nstatic bool rom_is_pokemon_family', sig_start)
+    (tmp/'rom_scan_after.inc').write_text(current_memory[sig_start:sig_end])
     binary=tmp/'loader'
     subprocess.run(common + ['-fsanitize=address,undefined', '-fno-omit-frame-pointer',
                    str(repo/'tools/test_rom_loading.c'), '-o', str(binary)], check=True)

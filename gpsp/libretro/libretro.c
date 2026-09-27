@@ -117,6 +117,16 @@ static retro_set_rumble_state_t rumble_cb;
 struct retro_perf_callback perf_cb;
 
 int dynarec_enable;
+#if defined(HAVE_DYNAREC) && (defined(MMAP_JIT_CACHE) || defined(_3DS) || defined(VITA))
+static bool dynarec_cache_ready = false;
+#else
+static bool dynarec_cache_ready = true;
+#endif
+
+bool gpsp_dynarec_cache_available(void)
+{
+   return dynarec_cache_ready;
+}
 boot_mode selected_boot_mode = boot_game;
 int sprite_limit = 1;
 
@@ -647,7 +657,14 @@ void retro_init(void)
 #if defined(HAVE_DYNAREC)
   #if defined(MMAP_JIT_CACHE)
    rom_translation_cache = map_jit_block(ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE);
-   ram_translation_cache = &rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
+   if (rom_translation_cache)
+   {
+      ram_translation_cache = &rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
+      dynarec_cache_ready = true;
+   }
+   else if (log_cb)
+      log_cb(RETRO_LOG_WARN,
+             "JIT memory unavailable; using the interpreter\n");
   #elif defined(_3DS)
    if (__ctr_svchax && !translation_caches_inited)
    {
@@ -657,18 +674,51 @@ void retro_init(void)
       rom_translation_cache_ptr  = memalign(0x1000, ROM_TRANSLATION_CACHE_SIZE);
       ram_translation_cache_ptr  = memalign(0x1000, RAM_TRANSLATION_CACHE_SIZE);
 
-      svcDuplicateHandle(&currentHandle, 0xFFFF8001);
-      svcControlProcessMemory(currentHandle,
-                              rom_translation_cache, rom_translation_cache_ptr,
-                              ROM_TRANSLATION_CACHE_SIZE, MEMOP_MAP, 0b111);
-      svcControlProcessMemory(currentHandle,
-                              ram_translation_cache, ram_translation_cache_ptr,
-                              RAM_TRANSLATION_CACHE_SIZE, MEMOP_MAP, 0b111);
-      svcCloseHandle(currentHandle);
-      rom_translation_ptr = rom_translation_cache;
-      ram_translation_ptr = ram_translation_cache;
-      ctr_flush_invalidate_cache();
-      translation_caches_inited = 1;
+      if (rom_translation_cache_ptr && ram_translation_cache_ptr)
+      {
+         int32_t dup_rc = svcDuplicateHandle(&currentHandle, 0xFFFF8001);
+         int32_t rom_rc = -1, ram_rc = -1;
+         if (dup_rc >= 0)
+         {
+            rom_rc = svcControlProcessMemory(currentHandle,
+               rom_translation_cache, rom_translation_cache_ptr,
+               ROM_TRANSLATION_CACHE_SIZE, MEMOP_MAP, 0b111);
+            if (rom_rc >= 0)
+               ram_rc = svcControlProcessMemory(currentHandle,
+                  ram_translation_cache, ram_translation_cache_ptr,
+                  RAM_TRANSLATION_CACHE_SIZE, MEMOP_MAP, 0b111);
+            if (rom_rc >= 0 && ram_rc >= 0)
+            {
+               svcCloseHandle(currentHandle);
+               rom_translation_ptr = rom_translation_cache;
+               ram_translation_ptr = ram_translation_cache;
+               ctr_flush_invalidate_cache();
+               translation_caches_inited = 1;
+               dynarec_cache_ready = true;
+            }
+            else
+            {
+               if (ram_rc >= 0)
+                  svcControlProcessMemory(currentHandle, ram_translation_cache,
+                     ram_translation_cache_ptr, RAM_TRANSLATION_CACHE_SIZE,
+                     MEMOP_UNMAP, 0b111);
+               if (rom_rc >= 0)
+                  svcControlProcessMemory(currentHandle, rom_translation_cache,
+                     rom_translation_cache_ptr, ROM_TRANSLATION_CACHE_SIZE,
+                     MEMOP_UNMAP, 0b111);
+               svcCloseHandle(currentHandle);
+            }
+         }
+      }
+      if (!dynarec_cache_ready && log_cb)
+         log_cb(RETRO_LOG_WARN,
+                "JIT memory unavailable; using the interpreter\n");
+      if (!dynarec_cache_ready)
+      {
+         free(rom_translation_cache_ptr);
+         free(ram_translation_cache_ptr);
+         rom_translation_cache_ptr = ram_translation_cache_ptr = NULL;
+      }
    }
   #elif defined(VITA)
    if(!translation_caches_inited){
@@ -694,7 +744,13 @@ void retro_init(void)
       ram_translation_ptr = ram_translation_cache;
       sceKernelOpenVMDomain();
       translation_caches_inited = 1;
+      dynarec_cache_ready = true;
     }
+  #elif defined(RUNTIME_JIT_CACHE)
+   /* HERE, before init_gamepak_buffer: that loop takes 1 MiB blocks until
+    * malloc fails, so after it there is nothing left to size a cache from.
+    * Always leaves a usable cache (the static small tier at worst). */
+   dynarec_select_translation_caches();
   #endif
 #endif
 
@@ -748,7 +804,11 @@ void retro_deinit(void)
    memory_term();
 
 #if defined(MMAP_JIT_CACHE) && defined(HAVE_DYNAREC)
-   unmap_jit_block(rom_translation_cache, ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE);
+   if (dynarec_cache_ready)
+      unmap_jit_block(rom_translation_cache,
+                      ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE);
+   rom_translation_cache = ram_translation_cache = NULL;
+   dynarec_cache_ready = false;
 #endif
 #if defined(_3DS) && defined(HAVE_DYNAREC)
 
@@ -766,12 +826,14 @@ void retro_deinit(void)
       free(rom_translation_cache_ptr);
       free(ram_translation_cache_ptr);
       translation_caches_inited = 0;
+      dynarec_cache_ready = false;
    }
 #endif
 
 #if defined(VITA) && defined(HAVE_DYNAREC)
     if(translation_caches_inited){
         translation_caches_inited = 0;
+        dynarec_cache_ready = false;
     }
 #endif
 
@@ -949,23 +1011,30 @@ static void check_variables(bool started_from_load)
    bool post_process_mix_prev;
 
 #ifdef HAVE_DYNAREC
+   int dynarec_requested = 1;
+   int dynarec_previous = dynarec_enable;
    var.key = "gpsp_drc";
    var.value = NULL;
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
-      int prevvalue = dynarec_enable;
       if (strcmp(var.value, "disabled") == 0)
-         dynarec_enable = 0;
+         dynarec_requested = 0;
       else if (strcmp(var.value, "enabled") == 0)
-         dynarec_enable = 1;
-
-      /* Flush dynarec cache to ensure we do not execute old code */
-      if (dynarec_enable != prevvalue)
+         dynarec_requested = 1;
+   }
+   dynarec_enable = dynarec_requested && dynarec_cache_ready;
+   if (dynarec_requested && !dynarec_cache_ready && log_cb)
+      log_cb(RETRO_LOG_WARN,
+             "Dynarec requested but its code cache is unavailable; using the interpreter\n");
+   /* Flush only when the effective execution mode changes. */
+   if (dynarec_cache_ready && dynarec_enable != dynarec_previous)
+   {
+      if (dynarec_enable)
+         main_enable_dynarec();
+      else
          flush_dynarec_caches();
    }
-   else
-      dynarec_enable = 1;
 #else
    dynarec_enable = 0;
 #endif
@@ -1314,6 +1383,8 @@ bool retro_load_game_special(unsigned game_type,
 
 void retro_unload_game(void)
 {
+   memory_unload_gamepak();
+
    if (libretro_ff_enabled)
       set_fastforward_override(false);
 

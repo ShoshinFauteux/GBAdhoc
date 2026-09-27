@@ -210,8 +210,7 @@ static void sound_control_x(u32 value)
 
 #define sound_update_frequency_step(timer_number)                             \
   timer[timer_number].frequency_step =                                        \
-   (fixed8_24)(((u64)GBC_BASE_RATE_INT << 24) /                               \
-    ((u64)sound_frequency * (timer_reload)))                                  \
+   direct_sound_timer_step(timer_reload, sound_frequency)                      \
 
 /* Main */
 extern timer_type timer[4];
@@ -378,6 +377,20 @@ u8 bios_rom[1024 * 16];
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
 u8 gamepak_backup[1024 * 128];
 
+/* Battery-save write generation.  Bumped at every point where the GAME
+ * mutates backup memory: an SRAM byte, a flash program / sector erase / chip
+ * erase, an EEPROM block write.  Flash command and ID-mode traffic and EEPROM
+ * reads do not count -- they change nothing that has to reach the stick.
+ *
+ * Observation only: nothing in the core reads it, it is not in a savestate,
+ * and it cannot change emulation.  The frontend compares it with the
+ * generation its .sav writer has persisted, so that a save made during
+ * fast-forward reaches the memory stick without waiting for fast-forward to
+ * end (fe_host.c, "FF durability nudge").  The frontend declares it weak,
+ * because core defines and symbols do not reach frontend-only builds. */
+volatile u32 backup_write_gen = 0;
+#define backup_mark_written() (backup_write_gen++)
+
 u32 dma_bus_val;
 dma_transfer_type dma[4];
 
@@ -387,12 +400,28 @@ dma_transfer_type dma[4];
 
 u8 *gamepak_buffers[32];    /* Pointers to malloc'ed blocks */
 u32 gamepak_buffer_count;   /* Value between 1 and 32 */
+u32 gamepak_buffer_cap = ROM_BUFFER_SIZE;   /* see gba_memory.h */
+u32 gamepak_resident_wanted;
+const char *gamepak_cap_reason = "default";
+/* Idle static memory another subsystem lends the ROM cache (see
+ * init_gamepak_buffer).  The dynarec sets it when the LARGE translation-cache
+ * tier replaces the static SMALL arrays, which are then never touched again.
+ * Whole 1 MiB blocks are carved from it before the heap is asked. */
+u8 *gamepak_spare_pool;
+u32 gamepak_spare_pool_bytes;
+/* gamepak_buffers[0 .. gamepak_static_blocks-1] point into the spare pool:
+ * they are not heap blocks and are never freed. */
+u32 gamepak_static_blocks;
+/* Blocks the residency attempt reached (0 = no attempt was made). */
+u32 gamepak_resident_got;
+u32 gamepak_force_swap_stubs;
 u32 gamepak_size;           /* Size of the ROM in bytes */
 u32 gamepak_file_blocks;    /* Physical payload size in 32KB blocks */
 u32 gamepak_page_loads;     /* Monotonic: 32KB ROM page faults served */
 /* Optional boot-only observer. Runs between existing 1 MiB reads on the
  * caller's thread; never during emulation/page faults. No buffer ownership. */
 void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
+void (*gpsp_heap_census)(const char *where);
 
 /* ---- VRAM DIRTY MAP -----------------------------------------------------
  * The ME re-copies all 96 KB of VRAM every frame while a consecutive-frame
@@ -407,7 +436,13 @@ void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
  *
  * The PSP Media Engine renderer uses this map to update its persistent VRAM
  * mirror.  Any bulk replacement of VRAM must therefore dirty every page. */
-u8  vram_clean[VRAM_DIRTY_PAGES];
+/* 64-byte aligned: the ME reads this map through its own D-cache after
+ * me_inv(), which invalidates one line per 64 bytes starting at the (possibly
+ * unaligned) base and so misses the final line whenever base % 64 > 32.  The
+ * map's tail is OBJ VRAM (pages 64..95); a stale tail line hides dirty sprite
+ * pages from the renderer.  Aligned, the 96-byte map starts a line, so the
+ * two lines me_inv() touches are exactly the two it spans. */
+u8  vram_clean[VRAM_DIRTY_PAGES] __attribute__((aligned(64)));
 u32 vram_dirty_marks;
 bool gamepak_mirror_1m;     /* 1MiB Classic NES/Famicom Mini mirror mode */
 static u8 *gamepak_mini_rom;
@@ -441,6 +476,7 @@ RFILE *gamepak_file_large = NULL;
 static char gamepak_path[1024];
 static int64_t gamepak_file_bytes;
 u32 gamepak_reopens = 0;
+u32 gamepak_short_reads = 0;   /* pages mapped with 0xFF where data was due */
 
 // Writes to these respective locations should trigger an update
 // so the related subsystem may react to it.
@@ -611,6 +647,7 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
         {
           eeprom_mode = EEPROM_WRITE_MODE;
           memset(gamepak_backup + eeprom_address, 0, 8);
+          backup_mark_written();
         }
       }
       break;
@@ -623,6 +660,7 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
       {
         eeprom_counter = 0;
         eeprom_mode = EEPROM_WRITE_FOOTER_MODE;
+        backup_mark_written();   /* the 8-byte block is now complete */
       }
       break;
 
@@ -1187,6 +1225,7 @@ void function_cc write_backup(u32 address, u32 value)
           {
             memset(gamepak_backup, 0xFF, 1024 * 128);
             flash_mode = FLASH_BASE_MODE;
+            backup_mark_written();
           }
           break;
 
@@ -1196,7 +1235,10 @@ void function_cc write_backup(u32 address, u32 value)
       flash_command_position = 0;
     }
     if(backup_type == BACKUP_SRAM)
+    {
       gamepak_backup[0x5555] = value;
+      backup_mark_written();
+    }
   }
   else
 
@@ -1213,6 +1255,7 @@ void function_cc write_backup(u32 address, u32 value)
       memset(&gamepak_backup[fulladdr], 0xFF, 1024 * 4);
       flash_mode = FLASH_BASE_MODE;
       flash_command_position = 0;
+      backup_mark_written();
     }
     else
 
@@ -1231,6 +1274,7 @@ void function_cc write_backup(u32 address, u32 value)
       u32 fulladdr = address + 64*1024*flash_bank_num;
       gamepak_backup[fulladdr] = value;
       flash_mode = FLASH_BASE_MODE;
+      backup_mark_written();
     }
     else
 
@@ -1238,6 +1282,7 @@ void function_cc write_backup(u32 address, u32 value)
     {
       // Write value to SRAM
       gamepak_backup[address] = value;
+      backup_mark_written();
     }
   }
 }
@@ -1348,6 +1393,9 @@ time_t (*gpsp_wallclock)(void) = NULL;
 static s64 rtc_now(void)
 {
   time_t t;
+#ifdef RTC_PIN
+  return (s64)RTC_PIN;   /* DIAGNOSTIC: deterministic RTC across runs */
+#endif
   if (gpsp_wallclock)
     return (s64)gpsp_wallclock();
   time(&t);
@@ -1396,6 +1444,21 @@ static u8 encode_bcd(u8 value)
   h = value / 10;
 
   return h * 16 + l;
+}
+
+static u8 rtc_encode_hour(const struct tm *current_time)
+{
+  u8 hour = (u8)current_time->tm_hour;
+  if (rtc_status & 0x40)
+    return encode_bcd(hour);
+
+  {
+    bool pm = hour >= 12;
+    hour %= 12;
+    if (!hour)
+      hour = 12;
+    return encode_bcd(hour) | (pm ? 0x80 : 0);
+  }
 }
 
 void update_gpio_romregs() {
@@ -1448,6 +1511,13 @@ static void write_rtc(u8 old, u8 new)
       if (++rtc_bit_count == 8) {
         switch (rtc_command) {
         case RTC_COMMAND_RESET:
+          // RESET has no payload; it clears the control register as soon as
+          // the command byte is complete.
+          rtc_status = 0;
+          rtc_state = RTC_IDLE;
+          rtc_data = 0;
+          rtc_data_bits = 0;
+          break;
         case RTC_COMMAND_WRITE_STATUS:
           rtc_state = RTC_INPUT_DATA;
           rtc_data = 0;
@@ -1471,7 +1541,7 @@ static void write_rtc(u8 old, u8 new)
                        ((u64)encode_bcd(current_time->tm_mon+1)<< 8) |
                        ((u64)encode_bcd(current_time->tm_mday) << 16) |
                        ((u64)encode_bcd(current_time->tm_wday) << 24) |
-                       ((u64)encode_bcd(current_time->tm_hour) << 32) |
+                       ((u64)rtc_encode_hour(current_time) << 32) |
                        ((u64)encode_bcd(current_time->tm_min)  << 40) |
                        ((u64)encode_bcd(current_time->tm_sec)  << 48);
           }
@@ -1484,7 +1554,7 @@ static void write_rtc(u8 old, u8 new)
 
             rtc_state = RTC_OUTPUT_DATA;
             rtc_data_bits = 24;
-            rtc_data = (encode_bcd(current_time->tm_hour)) |
+            rtc_data = (rtc_encode_hour(current_time)) |
                        (encode_bcd(current_time->tm_min) << 8) |
                        (encode_bcd(current_time->tm_sec) << 16);
           }
@@ -1495,8 +1565,7 @@ static void write_rtc(u8 old, u8 new)
       break;
 
     case RTC_INPUT_DATA:
-      rtc_data <<= 1;
-      rtc_data |= ((new >> 1) & 1);
+      rtc_data |= (u64)(((new >> 1) & 1) << (8 - rtc_data_bits));
       rtc_data_bits--;
       if (!rtc_data_bits) {
         rtc_status = rtc_data; // HACK: assuming write status here.
@@ -1529,6 +1598,15 @@ void write_rumble(bool oldv, bool newv) {
     rumble_ticks += (cpu_ticks - rumble_enable_tick);
     rumble_enable_tick = 0;
   }
+}
+
+/* cpu_ticks and the cartridge state have already been restored when this is
+ * called. The frame-local accumulator is deliberately not serialized; seed it
+ * from the restored GBP latch and GPIO cartridge pin instead. */
+void rumble_restore_state(bool gbp_active) {
+  bool gpio_active = rumble_enabled && (gpio_regs[0] & 0x08);
+  rumble_ticks = 0;
+  rumble_enable_tick = (gbp_active || gpio_active) ? cpu_ticks : 0;
 }
 
 void rumble_frame_reset() {
@@ -1774,19 +1852,24 @@ static void load_game_config_over(const char *gamecode)
        serial_mode = m + 1;   // Maintain the serial mode list consistently.
      }
 
-     if (gbaover[i].translation_gate_target_1 != 0)
+     /* translation_gate_target_pc[] holds MAX_TRANSLATION_GATES entries and
+      * several table rows may share one game code; never index past it. */
+     if (gbaover[i].translation_gate_target_1 != 0 &&
+         translation_gate_targets < MAX_TRANSLATION_GATES)
      {
         translation_gate_target_pc[translation_gate_targets] = gbaover[i].translation_gate_target_1;
         translation_gate_targets++;
      }
 
-     if (gbaover[i].translation_gate_target_2 != 0)
+     if (gbaover[i].translation_gate_target_2 != 0 &&
+         translation_gate_targets < MAX_TRANSLATION_GATES)
      {
         translation_gate_target_pc[translation_gate_targets] = gbaover[i].translation_gate_target_2;
         translation_gate_targets++;
      }
 
-     if (gbaover[i].translation_gate_target_3 != 0)
+     if (gbaover[i].translation_gate_target_3 != 0 &&
+         translation_gate_targets < MAX_TRANSLATION_GATES)
      {
         translation_gate_target_pc[translation_gate_targets] = gbaover[i].translation_gate_target_3;
         translation_gate_targets++;
@@ -2227,6 +2310,60 @@ static cpu_alert_type dma_transfer_copy(
   return CPU_ALERT_NONE;
 }
 
+/* Return the number of consecutive transfers that can use the region selected
+ * by dma_tf_loop16/32.  The split is based on actual transfer addresses (not
+ * the one-past-end address), which also handles decrementing DMA at offset 0.
+ * Adjacent 16 MiB windows with the same DMA mapping are deliberately skipped. */
+static u32 dma_region_span(u32 address, u32 max_length, u32 transfer_bytes,
+ int direction)
+{
+  u32 region = MIN(address >> 24, 16);
+  u32 i;
+
+  if (direction > 0)
+  {
+    for (i = region + 1; i <= 16; i++)
+    {
+      if (dma_region_map[i] != dma_region_map[i - 1])
+      {
+        u32 boundary = i << 24;
+        u32 span = (boundary - address) / transfer_bytes;
+        return MIN(max_length, span);
+      }
+    }
+  }
+  else if (direction < 0)
+  {
+    for (i = region; i > 0; i--)
+    {
+      if (dma_region_map[i] != dma_region_map[i - 1])
+      {
+        u32 boundary = i << 24;
+        u32 span = ((address - boundary) / transfer_bytes) + 1;
+        return MIN(max_length, span);
+      }
+    }
+  }
+
+  return max_length;
+}
+
+/* Split a DMA copy whenever either moving address enters a differently
+ * mapped 16 MiB region.  A transfer can cross both boundaries, at different
+ * transfer indices; taking the shorter span preserves the original element
+ * order while keeping each dma_transfer_copy inside one dispatch region. */
+static u32 dma_transfer_region_span(u32 src_ptr, u32 dst_ptr,
+ u32 remaining, u32 transfer_bytes, u32 src_direction, u32 dst_direction)
+{
+  u32 span = dma_region_span(src_ptr, remaining, transfer_bytes,
+                             dma_stride[src_direction]);
+  span = MIN(span, dma_region_span(dst_ptr, span, transfer_bytes,
+                                   dma_stride[dst_direction]));
+  /* DMA source direction 3 is prohibited and dma_transfer_copy performs no
+   * transfer for it.  Keep the caller's bounded loop advancing nevertheless. */
+  return span ? span : 1;
+}
+
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
   dma_transfer_type *dmach = &dma[dma_chan];
@@ -2234,43 +2371,35 @@ cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
                    dmach->length_type == DMA_16BIT ? ~1U : ~3U);
   u32 dst_ptr = 0x0FFFFFFF & dmach->dest_address & (
                    dmach->length_type == DMA_16BIT ? ~1U : ~3U);
+  u32 src_cycle_region = src_ptr >> 24;
+  u32 dst_cycle_region = dst_ptr >> 24;
   cpu_alert_type ret = CPU_ALERT_NONE;
   u32 tfsizes = dmach->length_type == DMA_16BIT ? 1 : 2;
-  u32 byte_length = dmach->length << tfsizes;
   cph_dman++;   /* phase 5h: DMA transfers per frame (counted, inside `cpu`) */
 
-  // Divide the DMA transaction into up to three transactions depending on
-  // the source and destination memory regions.
-  u32 src_end = MIN(0x10000000, src_ptr + byte_length * dma_stride[dmach->source_direction]);
-  u32 dst_end = MIN(0x10000000, dst_ptr + byte_length * dma_stride[dmach->dest_direction]);
+  // Split by actual transfer addresses.  Source and destination may both
+  // cross a region boundary, either together or on different elements.
+  {
+    u32 remaining = dmach->length;
+    u32 transfer_bytes = 1u << tfsizes;
+    int src_stride = dma_stride[dmach->source_direction];
+    int dst_stride = dma_stride[dmach->dest_direction];
 
-  dma_region_type src_reg0 = dma_region_map[src_ptr >> 24];
-  dma_region_type src_reg1 = dma_region_map[src_end >> 24];
-  dma_region_type dst_reg0 = dma_region_map[dst_ptr >> 24];
-  dma_region_type dst_reg1 = dma_region_map[dst_end >> 24];
+    /* Preserve the existing zero-length dispatch side effects (notably the
+     * OAM destination marker) even though the bounded loop has no elements. */
+    if (!remaining)
+      ret |= dma_transfer_copy(dmach, src_ptr, dst_ptr, 0);
 
-  if (src_reg0 == src_reg1 && dst_reg0 == dst_reg1)
-    ret = dma_transfer_copy(dmach, src_ptr, dst_ptr, byte_length >> tfsizes);
-  else if (src_reg0 == src_reg1) {
-    // Source stays within the region, dest crosses over
-    u32 blen0 = dma_stride[dmach->dest_direction] < 0 ?
-        dst_ptr & 0xFFFFFF : 0x1000000 - (dst_ptr & 0xFFFFFF);
-    u32 src1 = src_ptr + blen0 * dma_stride[dmach->source_direction];
-    u32 dst1 = dst_ptr + blen0 * dma_stride[dmach->dest_direction];
-    ret  = dma_transfer_copy(dmach, src_ptr, dst_ptr, blen0 >> tfsizes);
-    ret |= dma_transfer_copy(dmach, src1, dst1, (byte_length - blen0) >> tfsizes);
+    while (remaining)
+    {
+      u32 span = dma_transfer_region_span(src_ptr, dst_ptr, remaining,
+        transfer_bytes, dmach->source_direction, dmach->dest_direction);
+      ret |= dma_transfer_copy(dmach, src_ptr, dst_ptr, span);
+      src_ptr += span * transfer_bytes * src_stride;
+      dst_ptr += span * transfer_bytes * dst_stride;
+      remaining -= span;
+    }
   }
-  else if (dst_reg0 == dst_reg1) {
-    // Dest stays within the region, source crosses over
-    u32 blen0 = dma_stride[dmach->source_direction] < 0 ?
-        src_ptr & 0xFFFFFF : 0x1000000 - (src_ptr & 0xFFFFFF);
-    u32 src1 = src_ptr + blen0 * dma_stride[dmach->source_direction];
-    u32 dst1 = dst_ptr + blen0 * dma_stride[dmach->dest_direction];
-    ret  = dma_transfer_copy(dmach, src_ptr, dst_ptr, blen0 >> tfsizes);
-    ret |= dma_transfer_copy(dmach, src1, dst1, (byte_length - blen0) >> tfsizes);
-  }
-  // TODO: We do not cover the three-region case, seems no game uses that?
-  // Lucky Luke does cross dest region due to some off-by-one error.
 
   if((dmach->repeat_type == DMA_NO_REPEAT) ||
    (dmach->start_type == DMA_START_IMMEDIATELY))
@@ -2287,8 +2416,8 @@ cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
   // This is an approximation for the most common case (no region cross)
   if (usedcycles)
     *usedcycles += dmach->length * (
-       def_seq_cycles[src_ptr >> 24][tfsizes - 1] +
-       def_seq_cycles[dst_ptr >> 24][tfsizes - 1]);
+       def_seq_cycles[src_cycle_region][tfsizes - 1] +
+       def_seq_cycles[dst_cycle_region][tfsizes - 1]);
 
   return ret;
 }
@@ -2403,8 +2532,10 @@ u8 *load_gamepak_page(u32 physical_index)
      * So a read that returns less than the file holds at that offset
      * reopens the ROM by path and tries once more.  It covers sleep and any
      * other way the handle can die, without the core knowing about power
-     * events.  If the file is still unreachable the page is filled as
-     * before, and the next fault tries again. */
+     * events.  If the reopen still fails, this loader currently fills the
+     * unread tail with 0xFF and maps it as a page.  That page will not fault
+     * again until eviction, so execution may consume bad bytes; propagating a
+     * storage failure to a safe CPU/frontend stop remains a separate task. */
     int64_t off  = (int64_t)file_index * (32 * 1024);
     int64_t want = gamepak_file_bytes - off;
     int64_t got  = -1;
@@ -2427,6 +2558,11 @@ u8 *load_gamepak_page(u32 physical_index)
     }
     if (got < 0)
       got = 0;
+    /* Diagnostic: a page that will be mapped with bytes that are NOT the
+     * cartridge's (0xFF fill where the file should have had data).  If this
+     * ever moves during a run, executed ROM code may be garbage. */
+    if (got < want)
+      gamepak_short_reads++;
     if (got < 32 * 1024)
       memset(swap_location + got, 0xFF, (size_t)(32 * 1024 - got));
   }
@@ -2444,15 +2580,108 @@ u8 *load_gamepak_page(u32 physical_index)
 void init_gamepak_buffer(void)
 {
   unsigned i;
-  // Try to allocate up to 32 blocks of 1MB each
+#if defined(PSP) || defined(GPSP_TEST_GAMEPAK_BUDGET)
+  /* POST-LOAD BUDGET.  The loop below takes 1 MiB blocks until malloc fails,
+   * so on a PSP-1000 (where it runs out before the gamepak_buffer_cap) the
+   * heap left afterwards is whatever remainder R the heap size happens to
+   * leave -- and R is the whole budget for everything allocated after it:
+   * gba_screen_pixels (77,280 B), the sound ring, the ME stages.  R depends
+   * on the EBOOT's size and on what the browser left fragmented, so it moved
+   * every time the binary grew: 3.x left it under 77 KB on the 1000, and
+   * every GBA ROM failed with "Failed to allocate frame buffer" -> XMB, while
+   * a differently sized harness build happened to leave ~750 KB and worked.
+   *
+   * Hold 1 MiB across the loop and release it afterwards: the loop then
+   * stops one block earlier and the leftover is R + 1 MiB, never less than
+   * 1 MiB, whatever the binary's size.  Costs the 1000 one ROM page-cache
+   * block; costs a 64 MiB console nothing (its loop stops at the cap). */
+  /* volatile: a malloc whose result only reaches free() is dead code to GCC
+   * (-O3 elides the pair), which silently removed the first version. */
+  void * volatile post_load_reserve;
+  u32 cap = gamepak_buffer_cap;
+  /* RESIDENCY (docs/ROM-RESIDENCY.md, "One startup memory budget").  The
+   * frontend states the wish as the cart's size in 1 MiB blocks.  A cart
+   * larger than the cap is held whole only if EVERY block it needs can be
+   * taken while the post-load reserve is held -- i.e. only if the load still
+   * leaves the same >= 1 MiB floor a PSP-1000 always lives on.  Otherwise the
+   * extra blocks go straight back and the cap stands: the cart pages exactly
+   * as it would have without the wish.
+   *
+   * WHY NOT ONE BIG PROBE ANY MORE.  The 3.0.0 candidate asked for one
+   * contiguous 32 + 3 MiB malloc.  Its 1.6 MiB margin was measured in
+   * PPSSPP, whose 64 MiB layout gives the process 5.00 MiB more heap than a
+   * real PSP Go (same EBOOT, same boot: resrig 2026-09-26, heap_budget
+   * 15,577,704 vs 10,334,824 B).  On the Go the probe could never pass, and
+   * a 32 MiB cart could not fit beside the LARGE JIT tier even with no slack
+   * at all.  Taking the blocks themselves is exact (headers, fragmentation,
+   * the spare pool) and on a PSP-1000 it is the very sequence of mallocs the
+   * paged path makes: the loop fails at the same block either way. */
+  u32 want = gamepak_resident_wanted;
+  u32 target;
+  gamepak_cap_reason = "default";
+  gamepak_resident_got = 0;
+  if (gpsp_heap_census)
+    gpsp_heap_census("pre_probe");
+  if (cap > sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+    cap = sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]);
+  if (cap < 1)
+    cap = 1;
+  if (want > sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+    want = sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]);
+  target = want > cap ? want : cap;
+  post_load_reserve = malloc(1024 * 1024);
+
   gamepak_buffer_count = 0;
-  while (gamepak_buffer_count < ROM_BUFFER_SIZE)
+  /* The spare pool first: memory nothing else will use, so every block
+   * taken from it is a megabyte the heap keeps. */
+  while (gamepak_spare_pool && gamepak_buffer_count < target &&
+         (gamepak_buffer_count + 1) * gamepak_buffer_blocksize <=
+            gamepak_spare_pool_bytes)
+  {
+    gamepak_buffers[gamepak_buffer_count] =
+      gamepak_spare_pool + gamepak_buffer_count * gamepak_buffer_blocksize;
+    gamepak_buffer_count++;
+  }
+  gamepak_static_blocks = gamepak_buffer_count;
+  while (gamepak_buffer_count < target)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
     if (!ptr)
       break;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
+  if (want > cap)
+  {
+    gamepak_resident_got = gamepak_buffer_count;
+    if (gamepak_buffer_count >= want)
+      gamepak_cap_reason = "resident";
+    else
+    {
+      /* Short: hand the extra blocks back, newest first, so they rejoin the
+       * top of the heap and the result is the paged layout exactly. */
+      gamepak_cap_reason = "heap_short";
+      while (gamepak_buffer_count > cap &&
+             gamepak_buffer_count > gamepak_static_blocks)
+        free(gamepak_buffers[--gamepak_buffer_count]);
+    }
+  }
+  free(post_load_reserve);
+#else
+  u32 cap = gamepak_buffer_cap;
+  // Try to allocate up to 32 blocks of 1MB each
+  if (cap > sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+    cap = sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]);
+  if (cap < 1)
+    cap = 1;
+  gamepak_buffer_count = 0;
+  while (gamepak_buffer_count < cap)
+  {
+    void *ptr = malloc(gamepak_buffer_blocksize);
+    if (!ptr)
+      break;
+    gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
+  }
+#endif
 
   // Initialize the memory map structure
   for (i = 0; i < 1024; i++)
@@ -2538,17 +2767,14 @@ void init_memory(void)
   reg[REG_BUS_VALUE] = 0xe129f000;
 }
 
-void memory_term(void)
+/* Release content-specific ROM resources while keeping the page buffers
+ * available for a later load in the same core lifetime. */
+void memory_unload_gamepak(void)
 {
   if (gamepak_file_large)
   {
     filestream_close(gamepak_file_large);
     gamepak_file_large = NULL;
-  }
-
-  while (gamepak_buffer_count)
-  {
-    free(gamepak_buffers[--gamepak_buffer_count]);
   }
 
   if (gamepak_mini_rom)
@@ -2557,6 +2783,26 @@ void memory_term(void)
     gamepak_mini_rom = NULL;
   }
   gamepak_mini_materialized = false;
+  gamepak_size = 0;
+  gamepak_file_blocks = 0;
+  gamepak_file_bytes = 0;
+  gamepak_mirror_1m = false;
+  gamepak_path[0] = '\0';
+  map_null(read, 0x8000000, 0xD000000);
+}
+
+void memory_term(void)
+{
+  memory_unload_gamepak();
+  while (gamepak_buffer_count)
+  {
+    --gamepak_buffer_count;
+    /* Spare-pool blocks are not the heap's. */
+    if (gamepak_buffer_count >= gamepak_static_blocks)
+      free(gamepak_buffers[gamepak_buffer_count]);
+    gamepak_buffers[gamepak_buffer_count] = NULL;
+  }
+  gamepak_static_blocks = 0;
 }
 
 bool memory_check_savestate(const u8 *src)
@@ -2570,20 +2816,25 @@ bool memory_check_savestate(const u8 *src)
     "src-addr", "dst-addr", "src-dir", "dst-dir",
     "len", "size", "repeat", "start", "dsc", "irq"
   };
-  int i;
+  int i, d, v;
+  u32 src_dir, dst_dir, size, length, repeat, start, dsc, irq;
+  u32 backup_kind, flash_mode_val, flash_cmd_pos, flash_bank;
+  u32 flash_size, eeprom_size_val, eeprom_mode_val, eeprom_address_val;
+  u32 eeprom_counter_val, rtc_state_val, rtc_write_mode_val, rtc_command_val;
+  u32 rtc_status_val, rtc_data_bits_val, rtc_bit_count_val;
   const u8 *memdoc = bson_find_key(src, "memory");
   const u8 *bakdoc = bson_find_key(src, "backup");
   const u8 *dmadoc = bson_find_key(src, "dma");
   if (!memdoc || !bakdoc || !dmadoc)
     return false;
 
-  // Check memory buffers (TODO: check sizes!)
-  if (!bson_contains_key(memdoc, "iwram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "ewram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "vram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "oamram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "palram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "ioregs", BSON_TYPE_BIN) ||
+  // Validate exact destination sizes before any component starts mutating state.
+  if (!bson_has_bytes(memdoc, "iwram", 0x8000) ||
+      !bson_has_bytes(memdoc, "ewram", 0x40000) ||
+      !bson_has_bytes(memdoc, "vram", sizeof(vram)) ||
+      !bson_has_bytes(memdoc, "oamram", sizeof(oam_ram)) ||
+      !bson_has_bytes(memdoc, "palram", sizeof(palette_ram)) ||
+      !bson_has_bytes(memdoc, "ioregs", sizeof(io_registers)) ||
       !bson_contains_key(memdoc, "dma-bus", BSON_TYPE_INT32))
      return false;
 
@@ -2592,20 +2843,87 @@ bool memory_check_savestate(const u8 *src)
     if (!bson_contains_key(bakdoc, vars32[i], BSON_TYPE_INT32))
       return false;
 
-  if (!bson_contains_key(bakdoc, "gpio-regs", BSON_TYPE_BIN) ||
-      !bson_contains_key(bakdoc, "rtc-data-words", BSON_TYPE_ARR))
+  /* Serialized protocol state is normally bounded by hardware writes.  A
+   * damaged/imported state must not turn those values into array indexes or
+   * invalid shift counts on the next cartridge access. */
+  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_UNKN ||
+      !bson_read_int32(bakdoc, "flash-mode", &flash_mode_val) || flash_mode_val > FLASH_BANKSWITCH_MODE ||
+      !bson_read_int32(bakdoc, "flash-cmd-pos", &flash_cmd_pos) || flash_cmd_pos > 2 ||
+      !bson_read_int32(bakdoc, "flash-bank-num", &flash_bank) || flash_bank > 1 ||
+      !bson_read_int32(bakdoc, "flash-size", &flash_size) ||
+      !bson_read_int32(bakdoc, "eeprom-size", &eeprom_size_val) ||
+      (eeprom_size_val != EEPROM_512_BYTE && eeprom_size_val != EEPROM_8_KBYTE) ||
+      !bson_read_int32(bakdoc, "eeprom-mode", &eeprom_mode_val) || eeprom_mode_val > EEPROM_WRITE_FOOTER_MODE ||
+      !bson_read_int32(bakdoc, "eeprom-addr", &eeprom_address_val) || eeprom_address_val > 0x1FFFFu ||
+      !bson_read_int32(bakdoc, "eeprom-counter", &eeprom_counter_val) || eeprom_counter_val > 63 ||
+      !bson_read_int32(bakdoc, "rtc-state", &rtc_state_val) || rtc_state_val > RTC_INPUT_DATA ||
+      !bson_read_int32(bakdoc, "rtc-write-mode", &rtc_write_mode_val) || rtc_write_mode_val > RTC_WRITE_STATUS ||
+      !bson_read_int32(bakdoc, "rtc-cmd", &rtc_command_val) || rtc_command_val > 0xFF ||
+      !bson_read_int32(bakdoc, "rtc-status", &rtc_status_val) || rtc_status_val > 0xFF ||
+      !bson_read_int32(bakdoc, "rtc-data-bit-cnt", &rtc_data_bits_val) || rtc_data_bits_val > 56 ||
+      !bson_read_int32(bakdoc, "rtc-bit-cnt", &rtc_bit_count_val) || rtc_bit_count_val > 7)
+    return false;
+  if (flash_size != FLASH_SIZE_64KB && flash_size != FLASH_SIZE_128KB)
+    return false;
+  if ((eeprom_mode_val == EEPROM_READ_MODE || eeprom_mode_val == EEPROM_WRITE_MODE) &&
+      (eeprom_address_val > 0x1FFF8u || (eeprom_address_val & 7)))
+    return false;
+  switch (eeprom_mode_val)
+  {
+    case EEPROM_BASE_MODE:
+      if (eeprom_counter_val > 1) return false;
+      break;
+    case EEPROM_ADDRESS_MODE:
+    case EEPROM_WRITE_ADDRESS_MODE:
+      if (eeprom_counter_val > (eeprom_size_val == EEPROM_512_BYTE ? 5u : 13u))
+        return false;
+      break;
+    case EEPROM_READ_MODE:
+    case EEPROM_WRITE_MODE:
+      break; /* 0..63 is checked above. */
+    case EEPROM_READ_HEADER_MODE:
+      if (eeprom_counter_val > 3) return false;
+      break;
+    case EEPROM_ADDRESS_FOOTER_MODE:
+    case EEPROM_WRITE_FOOTER_MODE:
+      if (eeprom_counter_val != 0) return false;
+      break;
+  }
+  if (rtc_state_val == RTC_INPUT_DATA &&
+      (!rtc_data_bits_val || rtc_data_bits_val > 8))
+    return false;
+  if (rtc_state_val == RTC_OUTPUT_DATA && !rtc_data_bits_val)
+    return false;
+
+  if (!bson_has_bytes(bakdoc, "gpio-regs", sizeof(gpio_regs)) ||
+      !bson_has_int32_array(bakdoc, "rtc-data-words", 2))
       return false;
 
-  for (i = 0; i < DMA_CHAN_CNT; i++)
+  for (d = 0; d < DMA_CHAN_CNT; d++)
   {
-    char tname[2] = {'0' + i, 0};
+    char tname[2] = {'0' + d, 0};
     const u8 *dmastr = bson_find_key(dmadoc, tname);
     if (!dmastr)
       return false;
 
-    for (i = 0; i < sizeof(dmavars32)/sizeof(dmavars32[0]); i++)
-      if (!bson_contains_key(dmastr, dmavars32[i], BSON_TYPE_INT32))
+    for (v = 0; v < sizeof(dmavars32)/sizeof(dmavars32[0]); v++)
+      if (!bson_contains_key(dmastr, dmavars32[v], BSON_TYPE_INT32))
         return false;
+
+    /* These values index dma_stride and select 16/32-bit bus transfers.
+     * Game writes are naturally limited by the hardware register fields; a
+     * corrupted state must be rejected before those values reach DMA. */
+    if (!bson_read_int32(dmastr, "src-dir", &src_dir) || src_dir > 3 ||
+        !bson_read_int32(dmastr, "dst-dir", &dst_dir) || dst_dir > 3 ||
+        !bson_read_int32(dmastr, "size", &size) || size > 1 ||
+        !bson_read_int32(dmastr, "len", &length) ||
+        length > (d == 3 ? 0x10000u : 0x4000u) ||
+        !bson_read_int32(dmastr, "repeat", &repeat) || repeat > 1 ||
+        !bson_read_int32(dmastr, "start", &start) || start > DMA_INACTIVE ||
+        !bson_read_int32(dmastr, "dsc", &dsc) ||
+        dsc > DMA_NO_DIRECT_SOUND ||
+        !bson_read_int32(dmastr, "irq", &irq) || irq > DMA_TRIGGER_IRQ)
+      return false;
   }
   return true;
 }
@@ -2682,6 +3000,11 @@ bool memory_read_savestate(const u8 *src)
   }
 
   rtc_data = rtc_data_array[0] | (((u64)rtc_data_array[1]) << 32);
+
+  /* GPIO values are mirrored into the mapped cartridge ROM window.  Loading
+   * the saved registers bypasses write_gpio(), so refresh that mirror before
+   * execution resumes. */
+  update_gpio_romregs();
 
   /* The state loader replaced VRAM without going through any store or DMA
    * path.  The PSP ME renderer may already have a persistent mirror from the
@@ -2764,6 +3087,15 @@ static s32 load_gamepak_raw(const char *name)
   unsigned i, j;
   u32 raw_size;
   int64_t fsize;
+  /* Close any prior content before opening its replacement. A failed open
+  * therefore cannot leave the old ROM handle and page mapping live. */
+  memory_unload_gamepak();
+  /* The memory map exposes cartridge space through 0x08, 0x0A and 0x0C
+   * windows.  map_rom_entry() writes all three windows into an 8192-entry
+   * table; the 0x0C window is only 64 MiB wide, so larger images would
+   * write past that table even though file paging supports larger sizes. */
+  if (!gamepak_buffer_count || !gamepak_buffers[0])
+    return -1;
   gamepak_file_large = filestream_open(name, RETRO_VFS_FILE_ACCESS_READ,
                                        RETRO_VFS_FILE_ACCESS_HINT_NONE);
   if(gamepak_file_large)
@@ -2780,7 +3112,7 @@ static s32 load_gamepak_raw(const char *name)
      * u32 produces a wrong raw_size that downstream code happily uses to
      * malloc, memset and map. Reject both cases up front. */
     fsize = filestream_get_size(gamepak_file_large);
-    if (fsize <= 0 || fsize > (int64_t)0x20000000)   /* > 512MiB: not a GBA ROM */
+    if (fsize <= 0 || fsize > (int64_t)0x04000000)   /* Mapping table supports at most 64 MiB. */
     {
       filestream_close(gamepak_file_large);
       gamepak_file_large = NULL;
@@ -2807,7 +3139,14 @@ static s32 load_gamepak_raw(const char *name)
       {
         if (gpsp_rom_load_progress)
           gpsp_rom_load_progress(0, (u32)fsize);
-        u32 read_len = (u32)filestream_read(gamepak_file_large, gamepak_mini_rom, raw_size);
+        int64_t read_result = filestream_read(gamepak_file_large, gamepak_mini_rom, raw_size);
+        u32 read_len;
+        if (read_result < 0 || read_result > raw_size)
+        {
+          memory_unload_gamepak();
+          return -1;
+        }
+        read_len = (u32)read_result;
         if (gpsp_rom_load_progress)
           gpsp_rom_load_progress(read_len <= (u32)fsize ? read_len : 0, (u32)fsize);
         if (read_len < raw_size)
@@ -2866,7 +3205,14 @@ static s32 load_gamepak_raw(const char *name)
     {
       // Load 1MB chunk and map it
       {
-        u32 read_len = (u32)filestream_read(gamepak_file_large, gamepak_buffers[i], gamepak_buffer_blocksize);
+        int64_t read_result = filestream_read(gamepak_file_large, gamepak_buffers[i], gamepak_buffer_blocksize);
+        u32 read_len;
+        if (read_result < 0 || read_result > gamepak_buffer_blocksize)
+        {
+          memory_unload_gamepak();
+          return -1;
+        }
+        read_len = (u32)read_result;
         if (read_len < gamepak_buffer_blocksize)
           memset(gamepak_buffers[i] + read_len, 0xFF, gamepak_buffer_blocksize - read_len);
         if (read_len <= gamepak_buffer_blocksize)
@@ -2891,22 +3237,6 @@ static s32 load_gamepak_raw(const char *name)
   return -1;
 }
 
-static bool rom_has_signature(const u8 *rom, u32 rom_size, const char *sig)
-{
-  u32 i;
-  u32 sig_len = (u32)strlen(sig);
-  if (rom_size < sig_len)
-    return false;
-
-  for (i = 0; i + sig_len <= rom_size; i++)
-  {
-    if (memcmp(&rom[i], sig, sig_len) == 0)
-      return true;
-  }
-
-  return false;
-}
-
 enum
 {
   ROM_SIG_EEPROM  = (1 << 0),
@@ -2915,17 +3245,63 @@ enum
   ROM_SIG_FLASH5  = (1 << 3)
 };
 
+/* Scan the first resident ROM block once for every backup marker.  The former
+ * code made four or five independent full-buffer passes before deciding
+ * whether the slower whole-cache scan was needed.  ROM loading is already
+ * storage-bound on Memory Stick; avoid multiplying its CPU-side scan cost. */
+static u32 rom_scan_signatures(const u8 *rom, u32 rom_size)
+{
+  static const char sig_eeprom[] = "EEPROM_V";
+  static const char sig_sram[] = "SRAM_V";
+  static const char sig_flash1m[] = "FLASH1M_V";
+  static const char sig_flash512[] = "FLASH512_V";
+  static const char sig_flash[] = "FLASH_V";
+  const u32 all = ROM_SIG_EEPROM | ROM_SIG_SRAM |
+                  ROM_SIG_FLASH1M | ROM_SIG_FLASH5;
+  u32 found = 0;
+  u32 i;
+
+  for (i = 0; i < rom_size; i++)
+  {
+    u32 left = rom_size - i;
+    switch (rom[i])
+    {
+      case 'E':
+        if (!(found & ROM_SIG_EEPROM) && left >= sizeof(sig_eeprom) - 1 &&
+            memcmp(&rom[i], sig_eeprom, sizeof(sig_eeprom) - 1) == 0)
+          found |= ROM_SIG_EEPROM;
+        break;
+      case 'S':
+        if (!(found & ROM_SIG_SRAM) && left >= sizeof(sig_sram) - 1 &&
+            memcmp(&rom[i], sig_sram, sizeof(sig_sram) - 1) == 0)
+          found |= ROM_SIG_SRAM;
+        break;
+      case 'F':
+        if (!(found & ROM_SIG_FLASH1M) && left >= sizeof(sig_flash1m) - 1 &&
+            memcmp(&rom[i], sig_flash1m, sizeof(sig_flash1m) - 1) == 0)
+          found |= ROM_SIG_FLASH1M;
+        if (!(found & ROM_SIG_FLASH5) &&
+            ((left >= sizeof(sig_flash512) - 1 &&
+              memcmp(&rom[i], sig_flash512, sizeof(sig_flash512) - 1) == 0) ||
+             (left >= sizeof(sig_flash) - 1 &&
+              memcmp(&rom[i], sig_flash, sizeof(sig_flash) - 1) == 0)))
+          found |= ROM_SIG_FLASH5;
+        break;
+    }
+    if (found == all)
+      break;
+  }
+  return found;
+}
+
 static u32 rom_scan_signatures_in_memory(void)
 {
   u32 found = 0;
-  u32 size_left = gamepak_size;
-  u32 buf_idx = 0;
-
-  const char *sig_eeprom = "EEPROM_V";
-  const char *sig_sram = "SRAM_V";
-  const char *sig_flash1m = "FLASH1M_V";
-  const char *sig_flash512 = "FLASH512_V";
-  const char *sig_flash = "FLASH_V";
+  /* Buffer 0 was already scanned at every byte by detect_backup_subcircuit.
+   * Search only later resident blocks, at the historical four-byte stride. */
+  u32 size_left = gamepak_size > gamepak_buffer_blocksize ?
+                  gamepak_size - gamepak_buffer_blocksize : 0;
+  u32 buf_idx = 1;
 
   while (size_left > 0 && buf_idx < gamepak_buffer_count)
   {
@@ -2935,11 +3311,12 @@ static u32 rom_scan_signatures_in_memory(void)
 
     for (i = 0; i < chunk_size - 10; i += 4)
     {
-      if (chunk[i] == 'E' && !(found & ROM_SIG_EEPROM) && memcmp(&chunk[i], sig_eeprom, 8) == 0) found |= ROM_SIG_EEPROM;
-      else if (chunk[i] == 'S' && !(found & ROM_SIG_SRAM) && memcmp(&chunk[i], sig_sram, 6) == 0) found |= ROM_SIG_SRAM;
-      else if (chunk[i] == 'F' && !(found & ROM_SIG_FLASH1M) && memcmp(&chunk[i], sig_flash1m, 9) == 0) found |= ROM_SIG_FLASH1M;
+      if (chunk[i] == 'E' && !(found & ROM_SIG_EEPROM) && i + 8 <= chunk_size && memcmp(&chunk[i], "EEPROM_V", 8) == 0) found |= ROM_SIG_EEPROM;
+      else if (chunk[i] == 'S' && !(found & ROM_SIG_SRAM) && i + 6 <= chunk_size && memcmp(&chunk[i], "SRAM_V", 6) == 0) found |= ROM_SIG_SRAM;
+      else if (chunk[i] == 'F' && !(found & ROM_SIG_FLASH1M) && i + 9 <= chunk_size && memcmp(&chunk[i], "FLASH1M_V", 9) == 0) found |= ROM_SIG_FLASH1M;
       else if (chunk[i] == 'F' && !(found & ROM_SIG_FLASH5)) {
-        if (memcmp(&chunk[i], sig_flash512, 10) == 0 || memcmp(&chunk[i], sig_flash, 7) == 0)
+        if ((i + 10 <= chunk_size && memcmp(&chunk[i], "FLASH512_V", 10) == 0) ||
+            (i + 7 <= chunk_size && memcmp(&chunk[i], "FLASH_V", 7) == 0))
           found |= ROM_SIG_FLASH5;
       }
     }
@@ -3003,12 +3380,11 @@ static void normalize_blank_backup_for_detected_type(void)
 
 static void detect_backup_subcircuit(const u8 *rom, u32 rom_size)
 {
-  bool has_eeprom = rom_has_signature(rom, rom_size, "EEPROM_V");
-  bool has_sram = rom_has_signature(rom, rom_size, "SRAM_V");
-  bool has_flash1m = rom_has_signature(rom, rom_size, "FLASH1M_V");
-  bool has_flash5 = rom_has_signature(rom, rom_size, "FLASH512_V") ||
-                    rom_has_signature(rom, rom_size, "FLASH_V");
-  u32 file_sigs = 0;
+  u32 file_sigs = rom_scan_signatures(rom, rom_size);
+  bool has_eeprom = (file_sigs & ROM_SIG_EEPROM) != 0;
+  bool has_sram = (file_sigs & ROM_SIG_SRAM) != 0;
+  bool has_flash1m = (file_sigs & ROM_SIG_FLASH1M) != 0;
+  bool has_flash5 = (file_sigs & ROM_SIG_FLASH5) != 0;
 
   if (!has_eeprom && !has_sram && !has_flash1m && !has_flash5 &&
       rom_is_pokemon_family(rom))
@@ -3019,7 +3395,7 @@ static void detect_backup_subcircuit(const u8 *rom, u32 rom_size)
     return;
   }
 
-  if (!has_eeprom && !has_sram && !has_flash1m && !has_flash5)
+  if (!file_sigs)
     file_sigs = rom_scan_signatures_in_memory();
 
   if (has_eeprom ||
@@ -3192,13 +3568,16 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
 
 s32 load_bios(char *name)
 {
+  int64_t bytes_read;
   RFILE *fd = filestream_open(name, RETRO_VFS_FILE_ACCESS_READ,
                               RETRO_VFS_FILE_ACCESS_HINT_NONE);
 
   if(!fd)
     return -1;
 
-  filestream_read(fd, bios_rom, 0x4000);
+  bytes_read = filestream_read(fd, bios_rom, 0x4000);
   filestream_close(fd);
+  if (bytes_read != 0x4000)
+    return -1;
   return 0;
 }

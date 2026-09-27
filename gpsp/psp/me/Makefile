@@ -38,6 +38,28 @@ LDFLAGS = -nostartfiles
 # same single-library link as the DaedalusX64 reference).
 LIBS = -lpspkernel
 
+# ME_CATCH=1: diagnostic CPU-exception screen (catcher.c).  Appended LAST so
+# every existing object keeps its address; without it the PRX is unchanged.
+ifeq ($(ME_CATCH),1)
+OBJS += catcher.o catcher_vec.o
+CFLAGS += -DME_CATCH
+endif
+# Hard-freeze A/B (catcher.c / catcher_pad.c): the catcher with registration
+# swapped for the (already imported) release call -- same code size, same
+# imports, no handler; and layout padding appended after everything else.
+ifeq ($(ME_CATCH_NOREG),1)
+CFLAGS += -DME_CATCH_NOREG
+endif
+ifneq ($(ME_PAD_RODATA)$(ME_PAD_BSS),)
+OBJS += catcher_pad.o
+endif
+ifneq ($(ME_PAD_RODATA),)
+CFLAGS += -DME_PAD_RODATA=$(ME_PAD_RODATA)
+endif
+ifneq ($(ME_PAD_BSS),)
+CFLAGS += -DME_PAD_BSS=$(ME_PAD_BSS)
+endif
+
 PSP_FW_VERSION = 500
 
 PSPSDK = $(shell psp-config --pspsdk-path)

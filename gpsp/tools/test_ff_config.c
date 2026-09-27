@@ -19,6 +19,17 @@ static void load_legacy(int mult, int smooth)
    pcfg_load(path);
 }
 
+static int fps_value(const char *value, int def)
+{
+   FILE *f = fopen(path, "w");
+   int result;
+   assert(f);
+   fprintf(f, "session_fps = %s\n", value);
+   fclose(f);
+   result = pcfg_fps_x100(path, "session_fps", def);
+   return result;
+}
+
 int main(void)
 {
    const int speeds[] = {15, 30, 0, 20, -1, 999};
@@ -31,6 +42,10 @@ int main(void)
    pcfg_load(path);
    assert(pcfg_ff_mode() == PCFG_FF_3X);
    assert(g_pcfg.ff_mult_x10 == 30 && g_pcfg.ff_smooth == 1);
+   assert(fps_value("1000", 1234) == PCFG_SESSION_FPS_MAX);
+   assert(fps_value("59.5", 1234) == 5950);
+   assert(fps_value("2147483648", 1234) == 1234);
+   assert(fps_value("999999999999999", 1234) == 1234);
 
    f = fopen(path, "w");
    assert(f);

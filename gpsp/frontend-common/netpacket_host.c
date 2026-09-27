@@ -13,6 +13,7 @@
 
 #define NP_STATS_INTERVAL_US 5000000ull   /* EVT net_stats every ~5 s */
 #define NP_PROBE_INTERVAL_US 1000000ull
+#define NP_GB_PROTOCOL "GBAdhoc GB link v1"
 
 static struct
 {
@@ -27,8 +28,28 @@ static struct
    uint32_t core_tx, core_rx;       /* payloads core<->driver */
    uint32_t core_tx_fail;
    int      failed;                 /* ND_STOP_TX_FAILED seen (see header) */
+   int      gb_mode;
+   fe_np_gb_receive_fn gb_receive;
+   void    *gb_receive_user;
+   fe_np_gb_peer_fn gb_peer;
+   void    *gb_peer_user;
+   uint8_t  gb_peers[ND_MAX_CLIENTS];
    fe_np_prof prof;                 /* ADR-0021 */
 } np;
+
+static void np_gb_clear_peers(void)
+{
+   unsigned i;
+   for (i = 0; i < ND_MAX_CLIENTS; i++)
+   {
+      if (np.gb_peers[i])
+      {
+         np.gb_peers[i] = 0;
+         if (np.gb_peer)
+            np.gb_peer(np.gb_peer_user, (uint8_t)i, 0);
+      }
+   }
+}
 
 /* ------------------------------------------------------------ profiling -- */
 
@@ -140,6 +161,12 @@ static void np_deliver(void *user, const void *buf, size_t len, uint8_t src)
 {
    (void)user;
    np.core_rx++;
+   if (np.gb_mode)
+   {
+      if (np.core_started && np.gb_receive)
+         np.gb_receive(np.gb_receive_user, buf, len, src);
+      return;
+   }
    if (np.core_started && np.rcb->receive)
       np.rcb->receive(buf, len, src);
 }
@@ -150,7 +177,8 @@ static void np_session_started(void *user, uint8_t local_id)
    if (np.core_started)
       return;
    np.core_started = 1;
-   np.rcb->start(local_id, np_send_fn, np_poll_receive_fn);
+   if (!np.gb_mode)
+      np.rcb->start(local_id, np_send_fn, np_poll_receive_fn);
    fe_evt("session_start id=%u peers=%d", local_id,
           netdrv_peer_count(np.nd));
 }
@@ -159,6 +187,23 @@ static int np_peer_connected(void *user, uint8_t id)
 {
    (void)user;
    fe_evt("peer_connected id=%u", id);
+   if (np.gb_mode)
+   {
+      unsigned i;
+      for (i = 0; i < ND_MAX_CLIENTS; i++)
+      {
+         if (np.gb_peers[i])
+         {
+            fe_evt("gb_peer_refused id=%u reason=one_peer_limit", id);
+            return -1;
+         }
+      }
+      if (id < ND_MAX_CLIENTS)
+         np.gb_peers[id] = 1;
+      if (np.gb_peer)
+         np.gb_peer(np.gb_peer_user, id, 1);
+      return 0;
+   }
    /* connected()/disconnected() are host-side-only calls per the API
     * (libretro.h:3155-3165, SERIAL-PROTO-NOTES §6); on the host they are
     * the admission gate. */
@@ -177,6 +222,14 @@ static void np_peer_disconnected(void *user, uint8_t id)
 {
    (void)user;
    fe_evt("peer_disconnected id=%u", id);
+   if (np.gb_mode)
+   {
+      if (id < ND_MAX_CLIENTS)
+         np.gb_peers[id] = 0;
+      if (np.gb_peer)
+         np.gb_peer(np.gb_peer_user, id, 0);
+      return;
+   }
    if (netdrv_local_id(np.nd) == 0 && np.rcb->disconnected)
       np.rcb->disconnected(id);
 }
@@ -199,10 +252,12 @@ static void np_session_stopped(void *user, int reason)
              st.txq_hiwater, st.srtt_us, st.rto_us);
    }
    fe_evt("session_stop reason=%d", reason);
+   if (np.gb_mode)
+      np_gb_clear_peers();
    if (np.core_started)
    {
       np.core_started = 0;
-      if (np.rcb->stop)
+      if (!np.gb_mode && np.rcb->stop)
          np.rcb->stop();
    }
 }
@@ -245,7 +300,7 @@ const char *fe_np_start_reason(void)
    return np_start_why[0] ? np_start_why : "unknown";
 }
 
-int fe_np_start(const fe_np_config *cfg)
+static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
 {
    nd_callbacks cb;
    nd_config nc;
@@ -255,14 +310,27 @@ int fe_np_start(const fe_np_config *cfg)
    if (np.active)
       { np_start_why = "already active"; return -1; }
 
-   np.rcb = (const struct retro_netpacket_callback *)fe_host_netpacket_cb();
-   if (!np.rcb || !np.rcb->start)
+   if (!cfg || !cfg->transport || !cfg->now_us)
+   {
+      np_start_why = "invalid config";
+      return -1;
+   }
+   np.gb_mode = gb_mode ? 1 : 0;
+   memset(np.gb_peers, 0, sizeof(np.gb_peers));
+   np.rcb = gb_mode ? NULL :
+      (const struct retro_netpacket_callback *)fe_host_netpacket_cb();
+   if (gb_mode && !np.gb_receive)
+   {
+      np_start_why = "no GB receive callback";
+      return -1;
+   }
+   if (!gb_mode && (!np.rcb || !np.rcb->start))
    {
       fe_log("fe_np_start: core registered no netpacket interface");
       np_start_why = "no netpacket iface";
       return -1;
    }
-   proto = np.rcb->protocol_version;
+   proto = gb_mode ? NP_GB_PROTOCOL : np.rcb->protocol_version;
    if (!proto || !proto[0])
    {
       fe_log("fe_np_start: core has no protocol_version string");
@@ -271,7 +339,7 @@ int fe_np_start(const fe_np_config *cfg)
    }
 
    np.now_us = cfg->now_us;
-   np.probe = cfg->probe;
+   np.probe = gb_mode ? 0 : cfg->probe;
    np.core_started = 0;
    np.failed = 0;
    np.core_tx = np.core_rx = np.core_tx_fail = 0;
@@ -319,6 +387,77 @@ int fe_np_start(const fe_np_config *cfg)
    np.active = 1;
    fe_evt("net_up role=%s proto=\"%s\"", cfg->is_host ? "host" : "join", proto);
    return 0;
+}
+
+int fe_np_start(const fe_np_config *cfg)
+{
+   return fe_np_start_internal(cfg, 0);
+}
+
+int fe_np_start_gb(const fe_np_config *cfg)
+{
+   return fe_np_start_internal(cfg, 1);
+}
+
+void fe_np_gb_set_receive(fe_np_gb_receive_fn receive, void *userdata)
+{
+   if (!np.active)
+   {
+      np.gb_receive = receive;
+      np.gb_receive_user = userdata;
+   }
+}
+
+void fe_np_gb_set_peer_callback(fe_np_gb_peer_fn peer, void *userdata)
+{
+   if (!np.active)
+   {
+      np.gb_peer = peer;
+      np.gb_peer_user = userdata;
+   }
+}
+
+int fe_np_gb_peer_ready(uint8_t *peer_id)
+{
+   unsigned i, count = 0;
+   uint8_t found = 0xFF;
+   if (!np.active || !np.gb_mode || !np.core_started || !np.nd ||
+       !netdrv_active(np.nd))
+      return 0;
+   for (i = 0; i < ND_MAX_CLIENTS; i++)
+   {
+      if (np.gb_peers[i])
+      {
+         found = (uint8_t)i;
+         count++;
+      }
+   }
+   if (count != 1 || netdrv_peer_count(np.nd) != 1)
+      return 0;
+   if (peer_id)
+      *peer_id = found;
+   return 1;
+}
+
+int fe_np_gb_local_id(uint8_t *local_id)
+{
+   if (!np.active || !np.gb_mode || !np.core_started || !np.nd ||
+       !netdrv_active(np.nd))
+      return 0;
+   if (local_id)
+      *local_id = netdrv_local_id(np.nd);
+   return 1;
+}
+
+int fe_np_gb_send(uint16_t peer_id, const void *payload, size_t len)
+{
+   if (!np.active || !np.gb_mode || !np.core_started || !np.nd ||
+       !payload || !len || !fe_np_gb_peer_ready(NULL))
+      return -1;
+   if (peer_id >= ND_MAX_CLIENTS || !np.gb_peers[peer_id])
+      return -1;
+   return netdrv_send(np.nd, ND_RELIABLE | ND_FLUSH_HINT, payload, len,
+                      peer_id);
 }
 
 void fe_np_pump(void)
@@ -408,10 +547,14 @@ void fe_np_stop(void)
 {
    if (!np.active)
       return;
+   /* netdrv_leave() is intentionally callback-free; notify the GB cable
+    * coordinator explicitly before destroying this local session. */
+   if (np.gb_mode)
+      np_gb_clear_peers();
    if (np.core_started)
    {
       np.core_started = 0;
-      if (np.rcb->stop)
+      if (!np.gb_mode && np.rcb && np.rcb->stop)
          np.rcb->stop();
    }
    if (np.nd)
@@ -422,6 +565,8 @@ void fe_np_stop(void)
    }
    np.active = 0;
    np.failed = 0;
+   np.gb_mode = 0;
+   memset(np.gb_peers, 0, sizeof(np.gb_peers));
    fe_evt("net_down");
 }
 

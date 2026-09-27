@@ -11,6 +11,9 @@
 #define UI_PSP_H
 
 #include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include "fe_console.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +55,8 @@ void ui_loading_finish(int success);
  * pad = raw SceCtrl button mask; session_active gates savestates + shows
  * the wireless status screen; session_info is the status line (or NULL). */
 ui_action ui_frame(unsigned pad, int session_active, const char *session_info);
+void ui_set_state_base(const char *slot1_path);
+int ui_state_slot(void); /* selected slot, 1..5 */
 
 /* Group selected by the last Host/Join action (scan pick or room code). */
 const char *ui_group(void);
@@ -72,7 +77,42 @@ const char *mgift_ui_line2(void);     /* the gift / progress, or "" */
  * harness). Fills out with the full ROM path. Returns 0 on pick, -1 on
  * exit request / empty dir, and 1 when START->SETTINGS changed something
  * only read at boot (Media Engine mode) and the app must relaunch. */
-int ui_browser(const char *rom_dir, char *out, size_t out_sz);
+int ui_browser(const char *rom_dir, char *out, size_t out_sz,
+               int *out_state_slot, fe_console_t *console_out);
+
+/* Pure extension predicate shared by the browser and its host test.  The
+ * console selection is explicit: .gbc files are not folded into GB mode. */
+static inline int ui_rom_matches_console(const char *name, fe_console_t console)
+{
+   const char *ext;
+   size_t len, i;
+   static const char *const suffix[] = { ".gba", ".gb", ".gbc" };
+   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+      return 0;
+   len = strlen(name);
+   ext = suffix[console];
+   if (len < strlen(ext))
+      return 0;
+   name += len - strlen(ext);
+   for (i = 0; ext[i]; i++)
+   {
+      unsigned char a = (unsigned char)name[i];
+      unsigned char b = (unsigned char)ext[i];
+      if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+      if (b >= 'A' && b <= 'Z') b = (unsigned char)(b + ('a' - 'A'));
+      if (a != b) return 0;
+   }
+   return 1;
+}
+
+static inline size_t ui_rom_stem_length(const char *name)
+{
+   const char *dot, *slash;
+   if (!name) return 0;
+   dot = strrchr(name, '.');
+   slash = strrchr(name, '/');
+   return dot && (!slash || dot > slash) ? (size_t)(dot - name) : strlen(name);
+}
 
 /* Wake-from-sleep overlay: the frozen frame with a plate over it.
  * `frame` may be NULL (nothing was captured), in which case the plate sits
@@ -86,6 +126,10 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 void ui_demo_start(void);
 int  ui_demo_running(void);
 void ui_demo_shots(void);          /* arm the gallery dump + auto-pick     */
+/* ui_browser_demo=1 (with browser=1): the browser walks its 3.0 states --
+ * star, favourites, empty favourites, console flare, empty console -- and
+ * GE-dumps each to log/ge_gallery_*.bmp, then exits. */
+void ui_browser_demo_shots(void);
 void ui_set_theme_black(int b);    /* runtime page theme (-1 = leave)      */
 
 #ifdef __cplusplus

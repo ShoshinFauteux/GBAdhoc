@@ -7,7 +7,7 @@
  * ui_action enum, same entry points, same demo hooks — the overhaul is
  * confined to presentation and to one new config bit (osd_wireless).
  *
- * BOX ART: `<appdir>/boxart/<rom-name-minus-.gba>.bmp`, uncompressed
+ * BOX ART: `<appdir>/boxart/<rom-name-minus-extension>.bmp`, uncompressed
  * 24/32-bpp BMP, any size (nearest-resampled to 112x112 at load).  BMP,
  * not PNG, deliberately: this tree carries no inflate/PNG code and the
  * GE eats raw RGB565 directly.  A ROM with no art gets a styled template
@@ -30,8 +30,12 @@
 #include "stb_image.h"
 #include "osd_psp.h"
 #include "config_psp.h"
+#include "rom_paths.h"
+#include "state_slots.h"
 #include "font_8x16.h"
+#include "fe_favs.h"
 #include "fe_evt.h"
+#include "fe_host.h"
 #include "transport_adhoc.h"
 
 /* ----- theme (libretro RGB565) ------------------------------------------- */
@@ -103,19 +107,129 @@ static const ui_theme *g_thm = &THM_DARK;
 #define C_CARD      (g_thm->card)
 #define C_SHADOW    (g_thm->shadow)
 
+/* ----- console skins ------------------------------------------------------ */
+/* The chrome stays monochrome (see above: the box art is the one saturated
+ * thing on screen).  A console gets ONE colour, spent in exactly three
+ * places -- the header badge, the 3 px selection edge, and the favourite
+ * star -- plus a palette that appears only on the badge's 2 px stripe and
+ * in the TRIANGLE flare.  GBA is its indigo shell; GB is the DMG's four
+ * green-grey shades, which are also the palette a GB game draws in; GBC is
+ * the five translucent shell colours, with teal as the accent because
+ * Atomic Purple sits too close to the GBA indigo to read as a change.
+ *
+ * Each has a light-theme accent: the dark ones vanish on the off-white page.
+ * Indexed by fe_console_t: GBA, GB, GBC. */
+#define RGB565(r, g, b) \
+   ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
+
+typedef struct {
+   const char *id;          /* "GBA" -- the badge and the flare caption    */
+   const char *full;        /* "Game Boy Advance" -- the flare caption     */
+   const char *ext;         /* "gba" -- the empty-state message            */
+   uint16_t    accent;      /* badge text, selection edge, star            */
+   uint16_t    pal[5];      /* badge stripe and flare bands, in order      */
+   int         pal_n;
+   int         cart_wide;   /* GBA carts are wider than tall; GB/GBC tall  */
+} ui_skin;
+
+static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
+   { "GBA", "Game Boy Advance", "gba", RGB565(0x8F, 0x80, 0xFF),
+     { RGB565(0x2E, 0x24, 0x72), RGB565(0x5B, 0x4B, 0xC4),
+       RGB565(0x8F, 0x80, 0xFF), 0, 0 }, 3, 1 },
+   { "GB",  "Game Boy",         "gb",  RGB565(0x9B, 0xBC, 0x0F),
+     { RGB565(0x0F, 0x38, 0x0F), RGB565(0x30, 0x62, 0x30),
+       RGB565(0x8B, 0xAC, 0x0F), RGB565(0x9B, 0xBC, 0x0F), 0 }, 4, 0 },
+   { "GBC", "Game Boy Color",   "gbc", RGB565(0x2F, 0xD6, 0xC8),
+     { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
+       RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
+       RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+};
+
+/* Light accents are DARK: they are read as text on the badge's pale plate
+ * (~#DDDAF4 for GBA), and 4.5:1 there needs a colour around L* 30. */
+static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
+   { "GBA", "Game Boy Advance", "gba", RGB565(0x3B, 0x2D, 0xA4),
+     { RGB565(0x2E, 0x24, 0x72), RGB565(0x5B, 0x4B, 0xC4),
+       RGB565(0x8F, 0x80, 0xFF), 0, 0 }, 3, 1 },
+   { "GB",  "Game Boy",         "gb",  RGB565(0x2E, 0x56, 0x12),
+     { RGB565(0x0F, 0x38, 0x0F), RGB565(0x30, 0x62, 0x30),
+       RGB565(0x8B, 0xAC, 0x0F), RGB565(0x9B, 0xBC, 0x0F), 0 }, 4, 0 },
+   { "GBC", "Game Boy Color",   "gbc", RGB565(0x0A, 0x6C, 0x66),
+     { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
+       RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
+       RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+};
+
+static const ui_skin *skin_of(int console)
+{
+   if (console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
+      console = FE_CONSOLE_GBA;
+   return (g_pcfg.theme == 1 ? SKIN_LIGHT : SKIN_DARK) + console;
+}
+
+/* The active console's accent; the browser's fourth colour macro. */
+#define C_CON (skin_of(g_pcfg.console)->accent)
+
+/* a -> b by t/256, per channel.  The GE has no text alpha (the font is a
+ * coverage texture modulated by an opaque vertex colour), so text that has
+ * to fade is drawn in a colour walked toward the background instead. */
+static uint16_t mix565(uint16_t a, uint16_t b, int t)
+{
+   int ar = (a >> 11) & 31, ag = (a >> 5) & 63, ab = a & 31;
+   int br = (b >> 11) & 31, bg = (b >> 5) & 63, bb = b & 31;
+   if (t <= 0) return a;
+   if (t >= 256) return b;
+   ar += ((br - ar) * t) >> 8;
+   ag += ((bg - ag) * t) >> 8;
+   ab += ((bb - ab) * t) >> 8;
+   return (uint16_t)((ar << 11) | (ag << 5) | ab);
+}
+
 /* ----- state -------------------------------------------------------------- */
-enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT };
+enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
+       SCR_STATE_SLOTS };
 
 static int g_active;
 static int g_screen;
 static int g_cursor;
 static int g_settings_dirty;
 static int g_set_scroll;      /* SETTINGS list scroll, px (see set_row_y) */
+static char g_state_base[PSP_FILE_PATH_CAP];
+static int g_state_slot = 1;
+static int g_state_save_mode;
+static int g_browser_state_open;
+static int g_ui_shell;                    /* 0 = Shelf, 1 = Marquee */
+static int g_browser_state_slot = 1;
+/* State-shelf slide, 0 (closed) .. PANEL_FRAMES (open), eased at draw time.
+ * It was a linear 26 px/frame step that also stat()ed all five slots and
+ * read a thumbnail from the stick on the same frames -- Memory Stick I/O
+ * inside an animation is what made it stutter. */
+#define PANEL_FRAMES 11
+static int g_browser_panel_t;
+/* Which slots have a state file, filled once by browser_rom_has_state()
+ * when the shelf opens, so drawing never touches the stick. */
+static unsigned char g_browser_state_exists[PSP_STATE_SLOT_COUNT];
+static uint16_t *g_browser_previews;
+static unsigned char g_browser_preview_status[PSP_STATE_SLOT_COUNT];
+static int g_browser_preview_rom = -1;
 
 static unsigned g_prev_pad;
 static int g_rep_timer;
 
 static char g_join_group[9];
+
+void ui_set_state_base(const char *slot1_path)
+{
+   if (slot1_path)
+      snprintf(g_state_base, sizeof(g_state_base), "%s", slot1_path);
+   else
+      g_state_base[0] = '\0';
+}
+
+int ui_state_slot(void)
+{
+   return g_state_slot;
+}
 
 /* scan results */
 static char g_scan_groups[8][9];
@@ -131,22 +245,27 @@ static const demo_step demo_script[] = {
    { 0,               30, 0 },   /* settle on menu     */
    { DEMO_DUMP,        1, 0 },   /* GE dump of menu    */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Save state      */
-   { PSP_CTRL_CROSS,   2, 10 },  /* save state         */
+   { PSP_CTRL_CROSS,   2, 5 },   /* open save slots    */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2          */
+   { PSP_CTRL_CROSS,   2, 10 },  /* save slot 2        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Save state      */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Load state      */
-   { PSP_CTRL_CROSS,   2, 10 },  /* load state         */
+   { PSP_CTRL_CROSS,   2, 5 },   /* open load slots    */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2          */
+   { PSP_CTRL_CROSS,   2, 10 },  /* load slot 2        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Save state      */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Load state      */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Wireless        */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Settings        */
    { PSP_CTRL_CROSS,   2, 8 },   /* enter settings     */
-   /* v2 NOTE: the cursor lands on "Trading profile" (ADR-0071 keeps it
-    * first).  The four RIGHT/RIGHT/LEFT/LEFT presses toggle it an EVEN
-    * number of times, and g_profile_changed now tracks the DIFFERENCE
-    * against the value at entry rather than "was ever touched", so the
-    * demo still exits settings without triggering a relaunch. */
-   { PSP_CTRL_RIGHT,   2, 4 },
+   /* Settings now starts at Room code; move through Session overlay to
+    * Video scale and cycle through all three scale modes. */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Session overlay */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Video scale     */
+   { PSP_CTRL_RIGHT,   2, 4 },   /* cycle scale        */
    { DEMO_DUMP,        1, 0 },   /* GE dump of settings*/
    { PSP_CTRL_RIGHT,   2, 4 },
-   { PSP_CTRL_LEFT,    2, 4 },
-   { PSP_CTRL_LEFT,    2, 4 },
+   { PSP_CTRL_RIGHT,   2, 4 },
    { PSP_CTRL_CIRCLE,  2, 8 },   /* back to menu (cursor -> Resume) */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Save state      */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Load state      */
@@ -396,7 +515,7 @@ int ui_active(void)
 static void screen_to(int scr)
 {
    static const char *names[] __attribute__((unused)) =
-      { "menu", "settings", "wireless", "scan" };
+      { "menu", "settings", "wireless", "scan", "mystery_gift", "state_slots" };
    if (g_screen != scr && g_settings_dirty)
    {
       pcfg_save();
@@ -498,7 +617,7 @@ static void row(int x, int y, int w, int selected, int enabled,
  * can still be bisected without a special build.  Only the menu row is gone. */
 enum { SET_HDR_WL, SET_ROOM, SET_OSD,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_THEME, SET_SHELL,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_ABMAP, SET_FPS,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_ABMAP, SET_FPS, SET_GBPAL,
        SET_COUNT };
 
 static const struct { unsigned char header; const char *label; } set_rows[SET_COUNT] = {
@@ -515,6 +634,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "FF button (Square)" },
    { 0, "A/B buttons" },
    { 0, "FPS counter" },
+   { 0, "GB palette" },
 };
 
 /* The list outgrew the page when "Menu style" landed.  The pitch has
@@ -606,6 +726,16 @@ static void settings_adjust(int id, int dir)
    case SET_FPS:
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
+   case SET_GBPAL:
+   {
+      /* Applies to a running GB game at once (and to the next boot); an
+       * out-of-range id read from config.ini counts as Auto (0). */
+      int n = fe_host_gb_palette_count();
+      int cur = g_pcfg.gb_palette < n ? g_pcfg.gb_palette : 0;
+      g_pcfg.gb_palette = (cur + n + dir) % n;
+      fe_host_gb_palette_set(g_pcfg.gb_palette);
+      break;
+   }
    case SET_FFMULT:
       pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_COUNT + dir) % PCFG_FF_COUNT);
       break;
@@ -709,6 +839,14 @@ static ui_action screen_settings(unsigned edges)
          row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.show_fps ? "on" : "off");
          break;
+      case SET_GBPAL:
+      {
+         int gp = g_pcfg.gb_palette < fe_host_gb_palette_count()
+                  ? g_pcfg.gb_palette : 0;
+         row(36, y, 408, g_cursor == i, 1, set_rows[i].label,
+             fe_host_gb_palette_name(gp));
+         break;
+      }
       }
    }
    /* The relaunch-to-apply footer went with the Media Engine row: nothing
@@ -1024,14 +1162,20 @@ static ui_action screen_menu(unsigned edges, int session_active)
             osd_toast("Savestates locked during wireless session");
             break;
          }
-         return UI_ACT_SAVESTATE;
+         g_state_save_mode = 1;
+         g_state_slot = 1;
+         screen_to(SCR_STATE_SLOTS);
+         break;
       case M_LOADSTATE:
          if (session_active)
          {
             osd_toast("Savestates locked during wireless session");
             break;
          }
-         return UI_ACT_LOADSTATE;
+         g_state_save_mode = 0;
+         g_state_slot = 1;
+         screen_to(SCR_STATE_SLOTS);
+         break;
       case M_WIRELESS:  screen_to(SCR_WIRELESS); break;
       case M_SETTINGS:  screen_to(SCR_SETTINGS); break;
       case M_GAMELIST:  return UI_ACT_GAMELIST;
@@ -1049,6 +1193,58 @@ static ui_action screen_menu(unsigned edges, int session_active)
       row(120, top + i * 26, 240, g_cursor == i, enabled, labels[i], val);
    }
    footer("X select   O resume");
+   return UI_ACT_NONE;
+}
+
+static ui_action screen_state_slots(unsigned edges)
+{
+   SceIoStat st;
+   char path[PSP_FILE_PATH_CAP];
+   int occupied = 0, i;
+
+   if (edges & PSP_CTRL_CIRCLE)
+   {
+      screen_to(SCR_MENU);
+      return UI_ACT_NONE;
+   }
+   if (edges & PSP_CTRL_UP)
+      g_state_slot = g_state_slot > 1 ? g_state_slot - 1 : PSP_STATE_SLOT_COUNT;
+   if (edges & PSP_CTRL_DOWN)
+      g_state_slot = g_state_slot < PSP_STATE_SLOT_COUNT ? g_state_slot + 1 : 1;
+   if (g_state_base[0] &&
+       psp_state_path_for_slot(path, sizeof(path), g_state_base,
+                               (unsigned)g_state_slot) == 0 &&
+       sceIoGetstat(path, &st) >= 0)
+      occupied = 1;
+   if (edges & PSP_CTRL_CROSS)
+   {
+      if (!occupied && !g_state_save_mode)
+      {
+         osd_toast("No saved state in this slot");
+         return UI_ACT_NONE;
+      }
+      screen_to(SCR_MENU);
+      return g_state_save_mode ? UI_ACT_SAVESTATE : UI_ACT_LOADSTATE;
+   }
+
+   page(g_state_save_mode ? "Save state" : "Load state", NULL);
+   for (i = 1; i <= PSP_STATE_SLOT_COUNT; i++)
+   {
+      int y = HDR_H + 26 + (i - 1) * 30;
+      int has = 0;
+      if (g_state_base[0] &&
+          psp_state_path_for_slot(path, sizeof(path), g_state_base,
+                                  (unsigned)i) == 0 &&
+          sceIoGetstat(path, &st) >= 0)
+         has = 1;
+      row(74, y, 332, i == g_state_slot, 1,
+          has ? (g_state_save_mode ? "Overwrite saved state" : "Saved state")
+              : (g_state_save_mode ? "Save to empty slot" : "Empty slot"),
+          i == 1 ? "slot 1" : NULL);
+      if (i == g_state_slot)
+         vid_text(350, y + 3, has ? "X confirm" : "empty", C_DIM);
+   }
+   footer("X select   O back");
    return UI_ACT_NONE;
 }
 
@@ -1080,6 +1276,9 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       break;
    case SCR_MGIFT:
       act = screen_mgift(edges);
+      break;
+   case SCR_STATE_SLOTS:
+      act = screen_state_slots(edges);
       break;
    default:
       act = screen_menu(edges, session_active);
@@ -1128,16 +1327,470 @@ typedef struct {
                          * whatever folder layout the ROMs happen to use     */
    unsigned    size;
    signed char has_sav; /* -1 = not looked up yet; see rom_has_sav()         */
+   signed char is_fav;  /* in favourites.txt; set by favs_mark(), and it
+                         * sits in the padding beside has_sav, so the 1024
+                         * entry table costs nothing more for it            */
+   unsigned short scan_order; /* preserves traversal order for equal basenames */
 } rom_entry;
 
 static rom_entry g_roms[BROWSER_MAX];
 static char      g_rom_pool[ROM_POOL_BYTES];
 static unsigned  g_rom_pool_used;
-static int       g_rom_found;   /* .gba files SEEN, which can exceed the
-                                 * number stored -- the browser says so out
-                                 * loud rather than showing a subset and
-                                 * letting the user guess why */
-static char      g_rom_root[160];
+static int       g_rom_found;   /* matching ROM files seen, including names
+                                 * skipped for path/storage limits; the browser
+                                 * keeps this distinct from the usable-entry
+                                 * count and says so out loud */
+static char      g_rom_root[PSP_FILE_PATH_CAP];
+static unsigned  g_rom_scan_path_errors;
+
+/* ---- favourites ----------------------------------------------------------
+ *
+ * ONE GLOBAL LIST, roms/favourites.txt, one path relative to roms/ per line
+ * -- the same key last_rom uses.  The browser only ever lists the ROMs whose
+ * extension matches the active console, so the favourites VIEW is
+ * per-console without a per-console list: a .gbc line is simply never in a
+ * GB scan.  SQUARE toggles the highlighted game and rewrites the file at
+ * once (it is a few hundred bytes); SELECT swaps the list for the tagged
+ * subset and back.
+ *
+ * STATIC, like g_roms and for the same reason: the heap is gone once a game
+ * has loaded, and this must work when the player backs out to the list. */
+static fe_favs        g_favs;                   /* ~14 KB, BSS            */
+static int            g_fav_count;              /* tagged entries in scan */
+static unsigned short g_view_idx[BROWSER_MAX];  /* favourites view -> rom */
+static int            g_view_n;
+static int            g_browser_favs;           /* 1 = favourites view    */
+
+/* The list the shells draw is either the scan or the favourites subset;
+ * every g_roms[] index that comes from a row goes through here. */
+static int view_rom(int i)
+{
+   return g_browser_favs ? g_view_idx[i] : i;
+}
+
+static int view_count(int n_scan)
+{
+   return g_browser_favs ? g_view_n : n_scan;
+}
+
+static int favs_path(const char *rom_dir, char *out, size_t out_sz)
+{
+   int n = snprintf(out, out_sz, "%s/favourites.txt", rom_dir);
+   return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
+}
+
+/* Read straight into the pool and split it in place: no second buffer. */
+static void favs_load(const char *rom_dir)
+{
+   char path[PSP_FILE_PATH_CAP];
+   SceUID fd;
+   int len = 0;
+   fe_favs_clear(&g_favs);
+   if (favs_path(rom_dir, path, sizeof(path)) == 0 &&
+       (fd = sceIoOpen(path, PSP_O_RDONLY, 0)) >= 0)
+   {
+      len = sceIoRead(fd, g_favs.pool, FE_FAVS_POOL);
+      sceIoClose(fd);
+      if (len > 0)
+         fe_favs_parse_pool(&g_favs, (size_t)len);
+   }
+   fe_evt("favs_load n=%u bytes=%d", g_favs.n, len);
+}
+
+static int favs_save(const char *rom_dir)
+{
+   char path[PSP_FILE_PATH_CAP];
+   SceUID fd;
+   unsigned i;
+   int rc = 0;
+   if (favs_path(rom_dir, path, sizeof(path)) != 0)
+      return -1;
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (fd < 0)
+      rc = -1;
+   for (i = 0; rc == 0 && i < g_favs.n; i++)
+   {
+      const char *s = g_favs.pool + g_favs.off[i];
+      int len = (int)strlen(s);
+      if (sceIoWrite(fd, s, len) != len || sceIoWrite(fd, "\n", 1) != 1)
+         rc = -1;
+   }
+   if (fd >= 0)
+      sceIoClose(fd);
+   fe_evt("favs_save n=%u rc=%d", g_favs.n, rc);
+   return rc;
+}
+
+/* Stamp is_fav on every scan entry and rebuild the favourites view.  Once
+ * per scan and per toggle, never per frame: 1024 hashes of a filename is
+ * nothing, 1024 strcmp per row per frame would not be. */
+static void favs_build_view(int n_scan)
+{
+   int i;
+   g_view_n = 0;
+   for (i = 0; i < n_scan; i++)
+      if (g_roms[i].is_fav)
+         g_view_idx[g_view_n++] = (unsigned short)i;
+}
+
+static void favs_mark(int n_scan)
+{
+   int i;
+   g_fav_count = 0;
+   for (i = 0; i < n_scan; i++)
+   {
+      g_roms[i].is_fav = fe_favs_find(&g_favs, g_roms[i].name) >= 0;
+      g_fav_count += g_roms[i].is_fav;
+   }
+   favs_build_view(n_scan);
+}
+
+/* ---- the console switch ---------------------------------------------------
+ *
+ * TRIANGLE is a moment, not a filter change.  The rows fan out to the right
+ * (lower rows lagging) while the title, meta line and hero fade; the NEW
+ * console's palette slides in from the left as K vertical bands, each two
+ * frames behind the last, until the screen IS the palette -- the DMG's four
+ * greens, the GBC's five shells, the GBA's three indigos -- with the
+ * console's name on it.  The bands then leave to the right in the same
+ * order and the new list slides in beneath them.  550 ms for GBA, 617 for
+ * GB, 683 for GBC.
+ *
+ * THE RESCAN HAPPENS AT THE PEAK, when the bands cover everything.  Walking
+ * roms/ is a directory read per folder and stalls the frame; behind an
+ * opaque screen a stall is invisible.  A second TRIANGLE mid-flare finishes
+ * it at once (rescanning if that has not happened yet) and starts the next.
+ *
+ * Every step is rects and text: K vid_rect for the bands, one for the
+ * caption plate, text colours walked toward the background for the fades.
+ * No allocation, no texture. */
+#define SW_LAG     2          /* frames between one band and the next     */
+#define SW_TRAVEL  9          /* frames a band takes to cross the screen  */
+#define SW_OUT     12         /* frames the old rows take to fan out      */
+#define SW_ROWS_IN 10         /* frames the new rows take to slide in     */
+
+static struct {
+   int active;
+   int f;                    /* frames since the press                    */
+   int to;                   /* the console being switched to             */
+   int swapped;              /* the rescan has happened                   */
+   int peak, exit_start, rows_in, end;
+} g_sw;
+
+/* Presentation modifiers the shells read.  All 0..256 fixed point. */
+static int g_fx_out;         /* fan-out progress of the outgoing rows     */
+static int g_fx_in;          /* frames since the new rows began arriving,
+                              * -1 when they are not arriving             */
+static int g_fx_badge;       /* badge scale, 256 = 1:1                    */
+static int g_fx_fade;        /* list/title colour walked toward the bg    */
+static int g_fx_dy;          /* list/title vertical shift, pixels         */
+
+static void fx_reset(void)
+{
+   g_fx_out = 0;
+   g_fx_in = -1;
+   g_fx_badge = 256;
+   g_fx_fade = 0;
+   g_fx_dy = 0;
+}
+
+static int clamp256(int v)
+{
+   return v < 0 ? 0 : v > 256 ? 256 : v;
+}
+
+static int ease_out(int u)            /* 1 - (1-u)^3 */
+{
+   int v = 256 - clamp256(u);
+   return 256 - (((v * v) >> 8) * v >> 8);
+}
+
+static int ease_in(int u)             /* u^2 */
+{
+   u = clamp256(u);
+   return (u * u) >> 8;
+}
+
+/* Per-row offset and fade for list row `rel` (-3..3 around the cursor). */
+static void row_fx(int rel, int *dx, int *fade)
+{
+   *dx = 0;
+   *fade = g_fx_fade;
+   if (g_fx_out > 0)
+   {
+      int e = ease_in(g_fx_out);
+      *dx = (e * (56 + 12 * (rel + 3))) >> 8;
+      *fade = g_fx_out;
+   }
+   else if (g_fx_in >= 0)
+   {
+      int p = ease_out(((g_fx_in - (rel + 3)) * 256) / SW_ROWS_IN);
+      *dx = -((40 * (256 - p)) >> 8);
+      *fade = 256 - p;
+   }
+}
+
+static void switch_begin(int to)
+{
+   int k = skin_of(to)->pal_n;
+   g_sw.active = 1;
+   g_sw.f = 0;
+   g_sw.to = to;
+   g_sw.swapped = 0;
+   g_sw.peak = 4 + (k - 1) * SW_LAG + SW_TRAVEL;
+   g_sw.exit_start = g_sw.peak + 3;
+   g_sw.rows_in = g_sw.exit_start + 2;
+   g_sw.end = g_sw.exit_start + (k - 1) * SW_LAG + SW_TRAVEL;
+   fx_reset();
+}
+
+/* Advance one frame and set the modifiers.  Returns 1 on the frame the
+ * caller must perform the rescan. */
+static int switch_step(void)
+{
+   int do_swap = 0;
+   if (!g_sw.active)
+      return 0;
+   g_sw.f++;
+   if (!g_sw.swapped)
+   {
+      g_fx_out = clamp256((g_sw.f * 256) / SW_OUT);
+      g_fx_in = -1;
+      if (g_sw.f >= g_sw.peak)
+         do_swap = 1;
+   }
+   else
+   {
+      int bp = clamp256(((g_sw.f - g_sw.exit_start) * 256) / 10);
+      g_fx_out = 0;
+      g_fx_in = g_sw.f - g_sw.rows_in;
+      /* Lands at 1.35x and settles: the badge is what changed. */
+      g_fx_badge = 256 + ((90 * (((256 - bp) * (256 - bp)) >> 8)) >> 8);
+      if (g_sw.f >= g_sw.end)
+      {
+         g_sw.active = 0;
+         fx_reset();
+      }
+   }
+   return do_swap;
+}
+
+/* The bands and the caption, over everything the shell drew. */
+static void switch_draw(void)
+{
+   const ui_skin *s = skin_of(g_sw.to);
+   int k, f = g_sw.f;
+   if (!g_sw.active)
+      return;
+   for (k = 0; k < s->pal_n; k++)
+   {
+      int x0 = (k * 480) / s->pal_n, x1 = ((k + 1) * 480) / s->pal_n, x;
+      int ep = clamp256(((f - 4 - k * SW_LAG) * 256) / SW_TRAVEL);
+      int xp = clamp256(((f - g_sw.exit_start - k * SW_LAG) * 256) / SW_TRAVEL);
+      if (ep <= 0)
+         continue;
+      if (xp > 0)
+         x = x0 + ((480 * ease_in(xp)) >> 8);
+      else
+         x = x0 - ((480 * (256 - ease_out(ep))) >> 8);
+      vid_rect(x, 0, x1 - x0 + 1, 272, s->pal[k], 255);
+   }
+   /* Caption: it names what you switched to, on a plate so it reads on the
+    * yellow band as well as the dark green one.  Rises 6 px as it lands and
+    * cuts the moment the first band starts to leave -- the motion hides the
+    * cut, and text has no alpha to fade with. */
+   if (f >= g_sw.peak - 5 && f < g_sw.exit_start + 2)
+   {
+      int tp = clamp256(((f - (g_sw.peak - 5)) * 256) / 6);
+      int w = vid_text_hd_w(s->id), fw = vid_text_w(s->full), pw, py;
+      if (fw > w)
+         w = fw;
+      pw = w + 36;
+      py = 112 - ((6 * (256 - tp)) >> 8);
+      vid_rect((480 - pw) / 2, py, pw, 52, 0x0000, (150 * tp) >> 8);
+      vid_rect((480 - pw) / 2, py, 3, 52, 0xFFFF, (255 * tp) >> 8);
+      if (tp >= 128)
+      {
+         vid_text_hd((480 - vid_text_hd_w(s->id)) / 2, py + 6, s->id, 0xFFFF);
+         vid_text((480 - fw) / 2, py + 30, s->full, 0xCE59);
+      }
+   }
+}
+
+/* ---- the favourite star: tag, pop, sparks --------------------------------
+ * Frames 0..13 after SQUARE.  Tagging: the star arrives large (the hd face's
+ * star, 1.4x the row's) and settles to the row size at frame 10, while six
+ * 2x2 sparks radiate and the selection edge flashes white.  Untagging: the
+ * star dims, turns to its outline at frame 5, and is gone at 14.  The row
+ * itself never moves. */
+#define POP_FRAMES 14
+
+static struct {
+   int active;
+   int f;
+   int add;
+   int view;                 /* the row's index in the current view      */
+} g_pop;
+
+static void pop_begin(int view, int add)
+{
+   g_pop.active = 1;
+   g_pop.f = 0;
+   g_pop.add = add;
+   g_pop.view = view;
+}
+
+/* Returns 1 on the frame the pop finishes. */
+static int pop_step(void)
+{
+   if (!g_pop.active)
+      return 0;
+   if (++g_pop.f >= POP_FRAMES)
+   {
+      g_pop.active = 0;
+      return 1;
+   }
+   return 0;
+}
+
+/* `x` is the star column, `y_cur` the top of the cursor row this frame,
+ * `row_h` the pitch: the pop stays with its row if the list moves on. */
+static void browser_pop_draw(int x, int y_cur, int row_h, int cur)
+{
+   int f = g_pop.f, y, k;
+   if (!g_pop.active)
+      return;
+   y = y_cur + (g_pop.view - cur) * row_h;
+   if (g_pop.add)
+   {
+      /* Two sizes is what a bitmap font has: the hd star (1.4x) for the
+       * overshoot, the row star once it settles.  The hd glyph is offset
+       * so both share a centre. */
+      if (f < 2)
+         vid_text(x, y, VID_GLYPH_STAR_O, C_CON);
+      else if (f < 10)
+         vid_text_hd(x - 1, y - 3, VID_GLYPH_STAR, C_CON);
+      else
+         vid_text(x, y, VID_GLYPH_STAR, C_CON);
+      for (k = 0; k < 6; k++)
+      {
+         /* Six sparks on a 60-degree fan, radius 4 -> 15, fading out.  A
+          * sin/cos table for six fixed angles, in 256ths. */
+         static const int sx[6] = { 245, 45, -200, -245, -45, 200 };
+         static const int sy[6] = { 75, 252, 177, -75, -252, -177 };
+         int r = 4 + ((11 * ease_out((f * 256) / POP_FRAMES)) >> 8);
+         int a = 255 - (255 * f) / POP_FRAMES;
+         vid_rect(x + 6 + ((sx[k] * r) >> 8) - 1, y + 9 + ((sy[k] * r) >> 8) - 1,
+                  2, 2, C_CON, a);
+      }
+   }
+   else
+   {
+      if (f < 5)
+         vid_text(x, y, VID_GLYPH_STAR, C_DIM);
+      else
+         vid_text(x, y, VID_GLYPH_STAR_O,
+                  mix565(C_DIM, C_BG_TOP, ((f - 5) * 256) / (POP_FRAMES - 5)));
+   }
+}
+
+/* ---- header: the two VIEW switches ---------------------------------------
+ *
+ * The footer was full.  Its five hints already ended at x=469, and the two
+ * new controls did not fit at any abbreviation, so the browser now splits
+ * them by kind: the footer keeps the ACTIONS on the highlighted game (play,
+ * page, states, star, settings) and the header carries the two VIEW switches
+ * -- TRIANGLE beside the console badge, SELECT beside the favourites pill --
+ * each labelled with its button, right where the thing it changes is drawn.
+ *
+ * Badge: a translucent plate in the console colour, its name, and the
+ * palette as a 2 px stripe along the bottom.  During the switch it lands at
+ * 1.35x (g_fx_badge).  Favourites pill: the star and how many, filled in
+ * the console colour while that view is open. */
+static void browser_header(int n_scan)
+{
+   const ui_skin *s = skin_of(g_pcfg.console);
+   char count[8];
+   int x = 460, pw, bw, k, i;
+
+   snprintf(count, sizeof(count), "%d", g_fav_count);
+   pw = 8 + vid_text_w(VID_GLYPH_STAR) + 4 + vid_text_w(count) + 8;
+   x -= pw;
+   if (g_browser_favs)
+   {
+      vid_rect(x, 9, pw, 20, C_CON, 60);
+      vid_text(x + 8, 11, VID_GLYPH_STAR, C_CON);
+      vid_text(x + 8 + vid_text_w(VID_GLYPH_STAR) + 4, 11, count, C_SEL);
+   }
+   else
+   {
+      /* The count is information, not a hint: C_ACCENT_DK (#6B6B6B on the
+       * light page, #8B8B8B on the dark) clears 4.5:1 where C_DIM does
+       * not.  The SELECT and TRIANGLE labels stay C_DIM like the footer. */
+      vid_rect(x, 9, pw, 20, C_BG_TOP, 140);
+      vid_text(x + 8, 11, g_fav_count ? VID_GLYPH_STAR : VID_GLYPH_STAR_O,
+               C_ACCENT_DK);
+      vid_text(x + 8 + vid_text_w(VID_GLYPH_STAR) + 4, 11, count, C_ACCENT_DK);
+   }
+   x -= 6 + vid_text_w("SELECT");
+   vid_text(x, 11, "SELECT", C_DIM);
+
+   bw = 8 + vid_text_w(s->id) + 8;
+   x -= 14 + bw;
+   {
+      int sw = (bw * g_fx_badge) >> 8, sh = (20 * g_fx_badge) >> 8;
+      int bx = x + bw / 2 - sw / 2, by = 19 - sh / 2;
+      vid_rect(bx, by, sw, sh, C_CON, g_pcfg.theme == 1 ? 36 : 48);
+      for (k = 0; k < s->pal_n; k++)
+         vid_rect(bx + (k * sw) / s->pal_n, by + sh - 2,
+                  ((k + 1) * sw) / s->pal_n - (k * sw) / s->pal_n, 2,
+                  s->pal[k], 255);
+      vid_text(x + 8, 11, s->id, C_CON);
+   }
+   x -= 4 + vid_text_w(VID_GLYPH_TRI);
+   vid_text(x, 11, VID_GLYPH_TRI, C_DIM);
+
+   /* The shelf used to put "24 games" here; it keeps it when it fits. */
+   if (!g_ui_shell && n_scan > 0)
+   {
+      char buf[24];
+      snprintf(buf, sizeof(buf), "%d games", n_scan);
+      i = x - 16 - vid_text_w(buf);
+      if (i >= 20 + VID_LOGO_W + 12)
+         vid_text(i, 11, buf, C_DIM);
+   }
+}
+
+/* One footer for both shells.  Text is proportional, so the hints are laid
+ * out by measured width.  Honest per state: the square hint says which way
+ * the highlighted game will go, and an empty list advertises only what
+ * still works. */
+static void browser_footer(int n_view, int cur_is_fav)
+{
+   const char *hint[6];
+   int count = 0, x = 20, i;
+   if (g_browser_state_open)
+      return;
+   if (n_view <= 0)
+   {
+      hint[count++] = g_browser_favs ? "SELECT all games"
+                                     : VID_GLYPH_O " exit";
+      hint[count++] = "START settings";
+   }
+   else
+   {
+      hint[count++] = VID_GLYPH_X " play";
+      hint[count++] = "L/R page";
+      hint[count++] = "Left: states";
+      hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
+      hint[count++] = "START settings";
+   }
+   for (i = 0; i < count; i++)
+   {
+      vid_text(x, 252, hint[i], C_DIM);
+      x += vid_text_w(hint[i]) + 18;
+   }
+}
 
 /* One stat per ROM during the scan was ~2 s of boot on a large library, and
  * it was wasted work: only the handful of entries actually drawn need this. */
@@ -1145,11 +1798,21 @@ static int rom_has_sav(int idx)
 {
    if (g_roms[idx].has_sav < 0)
    {
-      char sav[320];
+      char sav[PSP_FILE_PATH_CAP];
       SceIoStat st;
-      size_t l = strlen(g_roms[idx].name);
-      snprintf(sav, sizeof(sav), "%s/%.*s.sav", g_rom_root,
-               (int)(l > 4 ? l - 4 : l), g_roms[idx].name);
+      /* GB/GBC saves keep the .gb/.gbc stem so a GB and a GBA game of the
+       * same name cannot share one battery file. */
+      int n = g_pcfg.console == FE_CONSOLE_GBA
+         ? snprintf(sav, sizeof(sav), "%s/%.*s.sav", g_rom_root,
+                    (int)ui_rom_stem_length(g_roms[idx].name),
+                    g_roms[idx].name)
+         : snprintf(sav, sizeof(sav), "%s/%s.sav", g_rom_root,
+                    g_roms[idx].name);
+      if (n < 0 || (size_t)n >= sizeof(sav))
+      {
+         g_roms[idx].has_sav = 0;
+         return 0;
+      }
       g_roms[idx].has_sav = (signed char)(sceIoGetstat(sav, &st) >= 0);
    }
    return g_roms[idx].has_sav;
@@ -1170,14 +1833,22 @@ static const char *rom_pool_add(const char *s, size_t len)
 /* `rel` is "" at the top level, otherwise a path under roms/ with no leading
  * or trailing slash.  Directories are walked because sorting a library into
  * folders is the obvious thing to do with one, and 2.0 ignored every one. */
-static void rom_scan_dir(const char *rel, int depth, int *n)
+static void rom_scan_dir(const char *rel, int depth, int *n,
+                         fe_console_t console)
 {
-   char dir[320];
+   char dir[PSP_FILE_PATH_CAP];
    SceUID d;
    SceIoDirent ent;
 
    if (rel[0])
-      snprintf(dir, sizeof(dir), "%s/%s", g_rom_root, rel);
+   {
+      if (psp_rom_path_join(dir, sizeof(dir), g_rom_root, rel) != 0)
+      {
+         g_rom_scan_path_errors++;
+         fe_evt("rom_scan_skip reason=full_path_too_long rel=%s", rel);
+         return;
+      }
+   }
    else
       snprintf(dir, sizeof(dir), "%s", g_rom_root);
 
@@ -1187,7 +1858,6 @@ static void rom_scan_dir(const char *rel, int depth, int *n)
    memset(&ent, 0, sizeof(ent));
    while (sceIoDread(d, &ent) > 0)
    {
-      size_t l = strlen(ent.d_name);
       /* Memory Stick reports a directory in st_mode on some firmwares and
        * only in st_attr on others.  Test both, rather than pick one and find
        * out which from a bug report. */
@@ -1200,20 +1870,28 @@ static void rom_scan_dir(const char *rel, int depth, int *n)
           * stick that has been near a Mac means __MACOSX and .Trashes. */
          if (depth > 1 && ent.d_name[0] != '.')
          {
-            char sub[320];
+            char sub[PSP_ROM_REL_PATH_CAP];
+            int sub_len;
             if (rel[0])
-               snprintf(sub, sizeof(sub), "%s/%s", rel, ent.d_name);
+               sub_len = snprintf(sub, sizeof(sub), "%s/%s", rel, ent.d_name);
             else
-               snprintf(sub, sizeof(sub), "%s", ent.d_name);
-            rom_scan_dir(sub, depth - 1, n);
+               sub_len = snprintf(sub, sizeof(sub), "%s", ent.d_name);
+            if (sub_len < 0 || (size_t)sub_len >= sizeof(sub))
+            {
+               g_rom_scan_path_errors++;
+               fe_evt("rom_scan_skip reason=relative_path_too_long dir=%s",
+                      ent.d_name);
+            }
+            else
+               rom_scan_dir(sub, depth - 1, n, console);
          }
       }
-      else if (l > 4 && strcasecmp(ent.d_name + l - 4, ".gba") == 0)
+      else if (ui_rom_matches_console(ent.d_name, console))
       {
          g_rom_found++;
          if (*n < BROWSER_MAX)
          {
-            char        path[320];
+            char        path[PSP_ROM_REL_PATH_CAP];
             const char *stored;
             int         plen;
 
@@ -1230,7 +1908,15 @@ static void rom_scan_dir(const char *rel, int depth, int *n)
                g_roms[*n].base    = slash ? slash + 1 : stored;
                g_roms[*n].size    = (unsigned)ent.d_stat.st_size;
                g_roms[*n].has_sav = -1;
+               g_roms[*n].is_fav  = 0;       /* favs_mark() after the sort */
+               g_roms[*n].scan_order = (unsigned short)*n;
                (*n)++;
+            }
+            else if (plen < 0 || plen >= (int)sizeof(path))
+            {
+               g_rom_scan_path_errors++;
+               fe_evt("rom_scan_skip reason=relative_path_too_long file=%s",
+                      ent.d_name);
             }
          }
       }
@@ -1239,31 +1925,68 @@ static void rom_scan_dir(const char *rel, int depth, int *n)
    sceIoDclose(d);
 }
 
-static int rom_scan(const char *rom_dir)
+static int rom_entry_less(const rom_entry *a, const rom_entry *b)
+{
+   int by_name = strcasecmp(a->base, b->base);
+   return by_name < 0 || (by_name == 0 && a->scan_order < b->scan_order);
+}
+
+static void rom_heap_sift_down(int root, int end)
+{
+   while (root * 2 + 1 < end)
+   {
+      int child = root * 2 + 1;
+      rom_entry tmp;
+      if (child + 1 < end && rom_entry_less(&g_roms[child], &g_roms[child + 1]))
+         child++;
+      if (!rom_entry_less(&g_roms[root], &g_roms[child]))
+         return;
+      tmp = g_roms[root];
+      g_roms[root] = g_roms[child];
+      g_roms[child] = tmp;
+      root = child;
+   }
+}
+
+/* In-place heap sort by basename. The old insertion sort could compare and
+ * shift roughly half a million entries for a full, reverse-ish 1024-ROM
+ * library. Heap sort uses O(n log n) comparisons and no extra BSS/heap. The
+ * scan ordinal preserves traversal order for equal basenames. */
+static void rom_sort(int n)
+{
+   int start, end;
+   for (start = n / 2 - 1; start >= 0; start--)
+      rom_heap_sift_down(start, n);
+   for (end = n - 1; end > 0; end--)
+   {
+      rom_entry tmp = g_roms[0];
+      g_roms[0] = g_roms[end];
+      g_roms[end] = tmp;
+      rom_heap_sift_down(0, end);
+   }
+}
+
+static int rom_scan(const char *rom_dir, fe_console_t console)
 {
    int n = 0;
 
    g_rom_pool_used = 0;
    g_rom_found     = 0;
-   snprintf(g_rom_root, sizeof(g_rom_root), "%s", rom_dir);
-
-   rom_scan_dir("", ROM_SCAN_DEPTH, &n);
-
-   /* Sorted by BASENAME, so a library split into folders still reads as one
-    * alphabetical list instead of being grouped by a layout the player chose
-    * for tidiness rather than for browsing.  And sorted AFTER the whole tree
-    * is in: 2.0's real bug was that it truncated before this point. */
+   g_rom_scan_path_errors = 0;
    {
-      int i, j;
-      for (i = 1; i < n; i++)
+      int root_len = snprintf(g_rom_root, sizeof(g_rom_root), "%s", rom_dir);
+      if (root_len < 0 || (size_t)root_len >= sizeof(g_rom_root))
       {
-         rom_entry key = g_roms[i];
-         for (j = i - 1; j >= 0 && strcasecmp(g_roms[j].base, key.base) > 0;
-              j--)
-            g_roms[j + 1] = g_roms[j];
-         g_roms[j + 1] = key;
+         g_rom_root[0] = '\0';
+         return -1;
       }
    }
+
+   rom_scan_dir("", ROM_SCAN_DEPTH, &n, console);
+
+   /* Sort after collecting the full tree: truncating before sorting was the
+    * original 2.0 browser bug. */
+   rom_sort(n);
    return n;
 }
 
@@ -1480,7 +2203,7 @@ static int art_load_stb(const char *path, uint16_t *tex, int stride,
    if (!file)
       return -1;
    if (!stbi_info_from_memory(file, flen, &w, &h, &nc) ||
-       w <= 0 || h <= 0 || (long)w * h > ART_SRC_MAX_PX)
+       w <= 0 || h <= 0 || w > ART_SRC_MAX_PX / h)
    {
       fe_evt("art_fail stage=info path=%s w=%d h=%d", path, w, h);
       free(file);
@@ -1618,7 +2341,8 @@ static int art_load_565(const char *path, uint16_t *tex, int stride,
    h       = hdr[6] | (hdr[7] << 8);
    fstride = hdr[8] | (hdr[9] << 8);
    if (magic != R565_MAGIC || w <= 0 || h <= 0 ||
-       w > stride || h > stride || fstride == 0)
+       w > stride || h > stride || fstride < (unsigned)w ||
+       fstride > (unsigned)stride)
    {
       fe_evt("art_fail stage=565hdr path=%s w=%d h=%d stride=%u",
              path, w, h, fstride);
@@ -1691,8 +2415,7 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
    extern char g_dir_base[];
    /* .565 first: it is the texture itself and costs one read. */
    static const char *ext[] = { "565", "png", "jpg", "jpeg", "bmp" };
-   size_t l = strlen(g_roms[rom_idx].base);
-   int stem = (int)(l > 4 ? l - 4 : l);
+   int stem = (int)ui_rom_stem_length(g_roms[rom_idx].base);
    unsigned e;
 
    int boxw = *dw, boxh = *dh;
@@ -1702,13 +2425,16 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
 
    for (e = 0; e < sizeof(ext) / sizeof(ext[0]); e++)
    {
-      char path[300];
+      char path[PSP_FILE_PATH_CAP];
       SceIoStat st;
+      int path_len;
       /* A failed attempt may have shrunk the box; every candidate gets
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
-      snprintf(path, sizeof(path), "%s/%s/%.*s.%s", g_dir_base, dir, stem,
-               g_roms[rom_idx].base, ext[e]);
+      path_len = snprintf(path, sizeof(path), "%s/%s/%.*s.%s", g_dir_base,
+                          dir, stem, g_roms[rom_idx].base, ext[e]);
+      if (path_len < 0 || (size_t)path_len >= sizeof(path))
+         continue;
       if (sceIoGetstat(path, &st) < 0)
          continue;
       if (ext[e][0] == '5')
@@ -1736,9 +2462,12 @@ static int art_load_any(int rom_idx, const char *dir, uint16_t *tex,
           * something the user actually looked at: there is deliberately no
           * batch pass, because converting a 100-ROM library at boot would
           * make the emulator look hung on first run. */
-         char cpath[300];
-         snprintf(cpath, sizeof(cpath), "%s/%s/%.*s.565", g_dir_base, dir,
-                  stem, g_roms[rom_idx].base);
+         char cpath[PSP_FILE_PATH_CAP];
+         int cache_len = snprintf(cpath, sizeof(cpath), "%s/%s/%.*s.565",
+                                  g_dir_base, dir, stem,
+                                  g_roms[rom_idx].base);
+         if (cache_len < 0 || (size_t)cache_len >= sizeof(cpath))
+            return 0; /* art decoded, but its cache destination cannot fit */
          fe_evt("art_time fmt=png us=%u %s",
                 (unsigned)sceKernelGetSystemTimeLow() - t0, path);
          art_cache_565(cpath, tex, stride, *dw, *dh);
@@ -1873,8 +2602,7 @@ static const uint16_t *hero_get(int rom_idx, int load)
 static void rom_display_name(const rom_entry *r, char *out, size_t sz,
                              int cut_region)
 {
-   size_t l = strlen(r->base);
-   size_t n = (l > 4) ? l - 4 : l;
+   size_t n = ui_rom_stem_length(r->base);
    if (n >= sz)
       n = sz - 1;
    memcpy(out, r->base, n);
@@ -1951,8 +2679,8 @@ static void card_template(int x, int y, int w, int h, const rom_entry *r)
          p++;
       line++;
    }
-   vid_text(x + w - 8 - vid_text_w("GBA"), y + h - FE_FONT_H - 6,
-            "GBA", C_ACCENT_DK);
+   vid_text(x + w - 8 - vid_text_w(skin_of(g_pcfg.console)->id),
+            y + h - FE_FONT_H - 6, skin_of(g_pcfg.console)->id, C_ACCENT_DK);
 }
 
 /* ============================ SHELLS =====================================
@@ -1971,8 +2699,9 @@ static void card_template(int x, int y, int w, int h, const rom_entry *r)
  * five cards at once and drew four of them only to throw a dim veil over
  * them -- four art fetches per frame spent on decoration, which is the other
  * half of why art was perpetually loading.
- */
-static int g_ui_shell;                    /* 0 = Shelf, 1 = Marquee */
+ *
+ * g_ui_shell (0 = Shelf, 1 = Marquee) is defined with the browser state
+ * above: the header cluster, drawn by both shells, reads it. */
 
 /* ---- motion -------------------------------------------------------------
  *
@@ -2130,7 +2859,8 @@ static void art_prefetch(const char *rom_dir, int cur, int n)
    unsigned k;
    for (k = 0; k < sizeof(off) / sizeof(off[0]); k++)
    {
-      int idx = ((cur + off[k]) % n + n) % n;
+      /* `cur` and `n` are list rows; the cache is keyed by ROM. */
+      int idx = view_rom(((cur + off[k]) % n + n) % n);
       int j, have = 0;
       for (j = 0; j < ART_SLOTS; j++)
          if (g_art[j].rom_idx == idx && g_art[j].state != 0)
@@ -2321,7 +3051,10 @@ static int marquee_offset(int rom_idx, const char *full, int px)
 }
 
 /* ---- SHELL A: Shelf ---------------------------------------------------- */
-static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
+/* `n` is the rows in the current view (favourites or all); `n_scan` is the
+ * scan, for the games count. */
+static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
+                        int idle)
 {
    const uint16_t *art;
    char buf[64], title[64];
@@ -2339,17 +3072,17 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
    vid_rect(0, 0, 480, 272, C_BG_TOP, 255);
 
    vid_logo(20, 8, C_ACCENT, 255);
-   snprintf(buf, sizeof(buf), "%d games", n);
-   vid_text(ART_X + ART_W - vid_text_w(buf), 12, buf, C_DIM);
+   browser_header(n_scan);
 
    /* The selection band does NOT move -- it is the fixed thing the list
-    * slides under.  Only the rows take the scroll offset. */
+    * slides under.  Only the rows take the scroll offset.  Its edge is the
+    * console colour: one of the three places that colour is spent. */
    vid_rect(0, SHELF_TOP + SHELF_SEL * SHELF_ROW_H - 4, 300, SHELF_ROW_H,
             C_CARD, 255);
    vid_rect(0, SHELF_TOP + SHELF_SEL * SHELF_ROW_H - 4, 3, SHELF_ROW_H,
-            C_ACCENT, 255);
+            C_CON, 255);
 
-   sy = scroll_px(cur, SHELF_ROW_H);
+   sy = scroll_px(cur, SHELF_ROW_H) + g_fx_dy;
 
    /* CLIP THE LIST.  A row sliding in from above used to be drawn wherever
     * the tween put it, which with the wordmark now occupying y=8..30 meant
@@ -2362,9 +3095,10 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
    for (i = -1; i <= SHELF_ROWS; i++)
    {
       int rel = i - SHELF_SEL;
-      int idx = ((cur + rel) % n + n) % n;
+      int idx = view_rom(((cur + rel) % n + n) % n);
       int y   = SHELF_TOP + i * SHELF_ROW_H + sy;
       int d   = rel < 0 ? -rel : rel;
+      int dx, fade;
       uint16_t col = (d == 0) ? C_SEL : (d == 1) ? C_ITEM : C_DIM;
 
       if (y < SHELF_TOP - SHELF_ROW_H || y > 240)
@@ -2375,14 +3109,23 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
       if (n < SHELF_ROWS && (cur + rel < 0 || cur + rel >= n))
          continue;
 
+      row_fx(rel, &dx, &fade);
+      col = mix565(col, C_BG_TOP, fade);
       rom_display_name(&g_roms[idx], title, sizeof(title), 1);
-      clip_title(title, 232);
-      vid_text(20, y, title, col);
+      /* 208, not 232: the star column sits between the title and SAVE. */
+      clip_title(title, 208);
+      vid_text(20 + dx, y, title, col);
+      if (g_roms[idx].is_fav && !(g_pop.active && g_pop.view == cur + rel))
+         vid_text(234 + dx, y, VID_GLYPH_STAR,
+                  mix565(d == 0 ? C_CON : mix565(C_CON, C_BG_TOP, 115),
+                         C_BG_TOP, fade));
       if (rom_has_sav(idx))
-         vid_text(288 - vid_text_w("SAVE"), y, "SAVE",
-                  d == 0 ? C_ACCENT : C_ACCENT_DK);
+         vid_text(288 - vid_text_w("SAVE") + dx, y, "SAVE",
+                  mix565(d == 0 ? C_ACCENT : C_ACCENT_DK, C_BG_TOP, fade));
    }
    vid_clip_off();
+   browser_pop_draw(234, SHELF_TOP + SHELF_SEL * SHELF_ROW_H + sy,
+                    SHELF_ROW_H, cur);
 
    {
       /* The cover is TOP-anchored in the panel and the caption follows its
@@ -2390,12 +3133,12 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
        * libretro boxart floating with dead space under it and pushed the
        * caption into the footer. */
       art_slot a;
-      int ax = ART_X, ay = ART_Y, bot;
+      int ax = ART_X, ay = ART_Y, bot, rom = view_rom(cur);
       a.aw = ART_W; a.ah = ART_H;
-      art = art_get(rom_dir, cur, idle >= IDLE_SELECTED && scroll_settled(), &a);
+      art = art_get(rom_dir, rom, idle >= IDLE_SELECTED && scroll_settled(), &a);
       if (art)
       {
-         int al = art_alpha(cur, art);
+         int al = (art_alpha(rom, art) * (256 - g_fx_fade)) >> 8;
          ax = ART_X + (ART_W - a.aw) / 2;
          vid_rect(ax + 3, ay + 4, a.aw, a.ah, C_SHADOW, (90 * al) / 255);
          vid_image(ax, ay, a.aw, a.ah, art,
@@ -2404,30 +3147,173 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int idle)
       }
       else
       {
-         art_alpha(cur, NULL);          /* arm the fade for when it lands */
-         card_template(ART_X, ART_Y, ART_W, ART_H, &g_roms[cur]);
+         art_alpha(rom, NULL);          /* arm the fade for when it lands */
+         card_template(ART_X, ART_Y, ART_W, ART_H, &g_roms[rom]);
          bot = ART_Y + ART_H;
       }
-      meta_line(&g_roms[cur], buf, sizeof(buf));
-      vid_text(ART_X, bot + 10, buf, C_DIM);
+      meta_line(&g_roms[rom], buf, sizeof(buf));
+      vid_text(ART_X, bot + 10, buf, mix565(C_DIM, C_BG_TOP, g_fx_fade));
       vid_text(ART_X, bot + 28,
-               rom_has_sav(cur) ? "save present" : "no save",
-               rom_has_sav(cur) ? C_VALUE : C_DIM);
+               rom_has_sav(rom) ? "save present" : "no save",
+               mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP,
+                      g_fx_fade));
    }
 
    vid_rect(0, 246, 480, 1, C_CARD, 255);
-   vid_text(20, 252, "X play", C_DIM);
-   vid_text(116, 252, "L/R page", C_DIM);
-   vid_text(244, 252, "START settings", C_DIM);
+   browser_footer(n, g_roms[view_rom(cur)].is_fav);
 }
 
 /* ---- SHELL B: Marquee -------------------------------------------------- */
 #define MQ_ROW_H  24
 #define MQ_MID    176            /* the selected row; everything else moves */
 
-static void shell_marquee(const char *rom_dir, int cur, int n, int idle)
+static int browser_rom_state_path(const char *rom_dir, int rom_idx,
+                                  unsigned slot, char *out, size_t out_sz)
 {
-   int sy;
+   char rom_path[PSP_FILE_PATH_CAP];
+   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
+                         g_roms[rom_idx].name) != 0)
+      return -1;
+   /* The browsing console is the console the game will boot as. */
+   if (psp_rom_path_suffix(out, out_sz, rom_path,
+                           psp_state_slot1_suffix(
+                              (fe_console_t)g_pcfg.console)) != 0)
+      return -1;
+   return psp_state_path_for_slot(out, out_sz, out, slot);
+}
+
+static int browser_rom_has_state(const char *rom_dir, int rom_idx)
+{
+   SceIoStat st;
+   char path[PSP_FILE_PATH_CAP];
+   int slot, any = 0;
+   for (slot = 1; slot <= PSP_STATE_SLOT_COUNT; slot++)
+   {
+      g_browser_state_exists[slot - 1] =
+         browser_rom_state_path(rom_dir, rom_idx, (unsigned)slot,
+                                path, sizeof(path)) == 0 &&
+         sceIoGetstat(path, &st) >= 0;
+      any |= g_browser_state_exists[slot - 1];
+   }
+   return any;
+}
+
+static void browser_preview_load_one(const char *rom_dir, int rom_idx)
+{
+   int i;
+   char state_path[PSP_FILE_PATH_CAP], thumb_path[PSP_STATE_THUMB_PATH_CAP];
+   unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE];
+   SceIoStat state_stat;
+   SceUID fd;
+   uint16_t *dst;
+   size_t bytes = (size_t)PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_HEIGHT * 2;
+   if (!g_browser_state_open || !g_browser_previews)
+      return;
+   if (g_browser_preview_rom != rom_idx)
+   {
+      memset(g_browser_preview_status, 0, sizeof(g_browser_preview_status));
+      memset(g_browser_previews, 0, PSP_STATE_SLOT_COUNT *
+             PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_TEX_HEIGHT * 2);
+      g_browser_preview_rom = rom_idx;
+   }
+   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+      if (!g_browser_preview_status[i])
+         break;
+   if (i == PSP_STATE_SLOT_COUNT)
+      return;
+   g_browser_preview_status[i] = 2; /* missing/invalid unless fully read */
+   if (browser_rom_state_path(rom_dir, rom_idx, (unsigned)i + 1,
+                              state_path, sizeof(state_path)) != 0 ||
+       sceIoGetstat(state_path, &state_stat) < 0 ||
+       psp_state_thumb_path(thumb_path, sizeof(thumb_path), state_path) != 0)
+      return;
+   fd = sceIoOpen(thumb_path, PSP_O_RDONLY, 0);
+   if (fd < 0)
+      return;
+   if (sceIoRead(fd, hdr, sizeof(hdr)) != sizeof(hdr) ||
+       memcmp(hdr, PSP_STATE_THUMB_MAGIC, 4) != 0 ||
+       hdr[4] != PSP_STATE_THUMB_WIDTH || hdr[5] != 0 ||
+       hdr[6] != PSP_STATE_THUMB_HEIGHT || hdr[7] != 0 ||
+       hdr[8] != PSP_STATE_THUMB_WIDTH || hdr[9] != 0)
+   {
+      sceIoClose(fd);
+      return;
+   }
+   dst = g_browser_previews + (size_t)i * PSP_STATE_THUMB_WIDTH *
+         PSP_STATE_THUMB_TEX_HEIGHT;
+   if (sceIoRead(fd, dst, bytes) == (int)bytes)
+      g_browser_preview_status[i] = 1;
+   sceIoClose(fd);
+}
+
+static void browser_state_cache_free(void)
+{
+   if (g_browser_previews)
+      free(g_browser_previews);
+   g_browser_previews = NULL;
+   g_browser_state_open = 0;
+   g_browser_preview_rom = -1;
+   g_browser_panel_t = 0;
+   memset(g_browser_preview_status, 0, sizeof(g_browser_preview_status));
+}
+
+static void browser_state_panel(const char *rom_dir, int cur, int n)
+{
+   char title[64];
+   int i, x;
+   if (g_browser_state_open && g_browser_panel_t < PANEL_FRAMES)
+      g_browser_panel_t++;
+   else if (!g_browser_state_open && g_browser_panel_t > 0)
+      g_browser_panel_t--;
+   if (!g_browser_panel_t)
+      return;
+   /* Ease-out on the way in; running the same curve backwards on the way
+    * out makes the close accelerate away, which reads as dismissal. */
+   x = 480 - (202 * ease_out(g_browser_panel_t * 256 / PANEL_FRAMES) >> 8);
+   /* Thumbnails only once the panel has landed: one read per frame then is
+    * invisible, one read per frame during the slide was the stutter. */
+   if (g_browser_state_open && g_browser_panel_t == PANEL_FRAMES)
+      browser_preview_load_one(rom_dir, cur);
+   vid_rect(x, 0, 480 - x, 272, C_BG_TOP, 255);
+   vid_rect(x, 0, 2, 272, C_ACCENT, 255);
+   vid_text(x + 14, 12, "SAVE STATES", C_SEL);
+   rom_display_name(&g_roms[cur], title, sizeof(title), 1);
+   clip_title(title, 174);
+   vid_text(x + 14, 34, title, C_DIM);
+   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   {
+      int y = 62 + i * 35, exists = g_browser_state_exists[i];
+      vid_rect(x + 10, y - 3, 182, 32,
+               i + 1 == g_browser_state_slot ? C_CARD : C_BG_TOP, 255);
+      if (g_browser_previews && g_browser_preview_status[i] == 1)
+         vid_image(x + 14, y - 1, 42, 28,
+                   g_browser_previews + (size_t)i * PSP_STATE_THUMB_WIDTH *
+                      PSP_STATE_THUMB_TEX_HEIGHT,
+                   PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_TEX_HEIGHT,
+                   PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT, 255);
+      else
+      {
+         vid_rect(x + 14, y - 1, 42, 28, C_HDR_BOT, 255);
+         vid_text(x + 15, y + 7, exists ? "old" : "empty", C_DIM);
+      }
+      {
+         char slot[16];
+         snprintf(slot, sizeof(slot), "Slot %d", i + 1);
+         vid_text(x + 66, y + 1, slot, C_SEL);
+      }
+      vid_text(x + 66, y + 15, exists ? "saved" : "empty",
+               exists ? C_VALUE : C_DIM);
+   }
+   vid_rect(x + 10, 238, 182, 1, C_CARD, 255);
+   vid_text(x + 14, 241, "UP/DN: slot", C_DIM);
+   vid_text(x + 14, 254, "X: load   O: close", C_DIM);
+   (void)n;
+}
+
+static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
+                          int idle)
+{
+   int sy, rom = view_rom(cur);
    (void)rom_dir;   /* the hero cache is keyed by index, not path */
 
    /* APPLY THE THEME.  g_thm was only ever assigned inside page(), which
@@ -2440,7 +3326,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int idle)
    scroll_track(cur, n);
    /* The hero is a SEPARATE, larger decode of the same file -- the shelf
     * thumbnail stretched to 480 wide is the blurry mess this replaces. */
-   const uint16_t *hero = hero_get(cur, idle >= IDLE_HERO && scroll_settled());
+   const uint16_t *hero = hero_get(rom, idle >= IDLE_HERO && scroll_settled());
    char buf[64], title[64];
    int i;
 
@@ -2452,10 +3338,11 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int idle)
        * would letterbox the background, which reads as a bug. */
       int bh = (int)((long)480 * g_hero_h / (g_hero_w ? g_hero_w : 1));
       /* Fades in on arrival, so a hero that took a moment to decode eases
-       * into place rather than replacing the flat background in one frame. */
+       * into place rather than replacing the flat background in one frame.
+       * And out again as the console switch fans the list away. */
       vid_image(0, (272 - bh) / 2, 480, bh, hero,
                 g_hero_tex, g_hero_tex, g_hero_w, g_hero_h,
-                art_alpha(cur, hero));
+                (art_alpha(rom, hero) * (256 - g_fx_fade)) >> 8);
       /* Scrim by PROVENANCE.  Art from hero/ was composed for this shell --
        * already exposed for white text, already quiet on the left -- so it
        * needs a light touch.  A cover the emulator cropped itself has had no
@@ -2473,50 +3360,148 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int idle)
    }
 
    vid_logo(20, 10, C_ACCENT, 255);
+   browser_header(n_scan);
 
    {
       /* Drawn scrolled and then masked, so the text slides UNDER the edge of
        * the panel instead of appearing to run off the screen. */
       char full[64];
       int off;
-      rom_display_name(&g_roms[cur], full, sizeof(full), 1);
-      off = marquee_offset(cur, full, 244);
+      rom_display_name(&g_roms[rom], full, sizeof(full), 1);
+      off = marquee_offset(rom, full, 244);
       vid_clip(20, 68, 244, 30);
-      vid_text_hd(20 - off, 74, full, C_SEL);
+      vid_text_hd(20 - off, 74 - g_fx_dy, full,
+                  mix565(C_SEL, C_BG_TOP, g_fx_fade));
       vid_clip_off();
    }
 
-   meta_line(&g_roms[cur], buf, sizeof(buf));
-   vid_text(20, 102, buf, C_ITEM);
-   vid_text(20 + vid_text_w(buf) + 14, 102,
-            rom_has_sav(cur) ? "save present" : "no save",
-            rom_has_sav(cur) ? C_VALUE : C_DIM);
+   meta_line(&g_roms[rom], buf, sizeof(buf));
+   vid_text(20, 102 - g_fx_dy, buf, mix565(C_ITEM, C_BG_TOP, g_fx_fade));
+   vid_text(20 + vid_text_w(buf) + 14, 102 - g_fx_dy,
+            rom_has_sav(rom) ? "save present" : "no save",
+            mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP, g_fx_fade));
 
    /* FIVE rows, not three.  At 24 px pitch they span 128..224, which clears
     * the metadata line (ends ~117) and the footer ramp (starts 240).  The
     * selected row stays at 176 so nothing else on the screen moves. */
-   sy = scroll_px(cur, MQ_ROW_H);
+   sy = scroll_px(cur, MQ_ROW_H) + g_fx_dy;
    for (i = -3; i <= 3; i++)          /* one row of overscan each side */
    {
-      int idx = ((cur + i) % n + n) % n;
+      int idx = view_rom(((cur + i) % n + n) % n);
       int y   = MQ_MID + i * MQ_ROW_H + sy;
       int d   = i < 0 ? -i : i;
-      if (n < 3 && i != 0)
+      int dx, fade;
+      uint16_t col;
+      /* Short libraries do not wrap (the Shelf's rule): with fewer games
+       * than the five rows, a repeat reads as a bug, not a carousel.  This
+       * was `n < 3` from the three-row marquee and never followed the row
+       * count up, which is how a four-game favourites view showed its
+       * first game twice. */
+      if (n < 5 && (cur + i < 0 || cur + i >= n))
          continue;
       if (y < MQ_MID - 2 * MQ_ROW_H - 4 || y > MQ_MID + 2 * MQ_ROW_H + 4)
          continue;
+      row_fx(i, &dx, &fade);
       rom_display_name(&g_roms[idx], title, sizeof(title), 1);
       clip_title(title, 232);
       /* The far rows fade out, so five entries do not read as a wall of
        * text competing with the artwork behind them. */
-      vid_text(32, y, title,
-               d == 0 ? C_SEL : (d == 1 ? C_ITEM : C_DIM));
+      col = d == 0 ? C_SEL : (d == 1 ? C_ITEM : C_DIM);
+      vid_text(32 + dx, y, title, mix565(col, C_BG_TOP, fade));
+      /* The star column, past the title's 232 px budget.  Full console
+       * colour on the cursor row, walked halfway to the background on the
+       * others so it marks without shouting. */
+      if (g_roms[idx].is_fav && !(g_pop.active && g_pop.view == cur + i))
+         vid_text(270 + dx, y, VID_GLYPH_STAR,
+                  mix565(d == 0 ? C_CON : mix565(C_CON, C_BG_TOP, 115),
+                         C_BG_TOP, fade));
    }
-   vid_rect(20, MQ_MID - 4, 3, 21, C_ACCENT, 255);
+   /* The selection edge shrinks away with the outgoing list and grows back
+    * with the new one. */
+   {
+      int h = g_fx_out ? (21 * (256 - g_fx_out)) >> 8
+            : g_fx_in >= 0 ? (21 * ease_out((g_fx_in * 256) / SW_ROWS_IN)) >> 8
+            : 21;
+      if (h > 0)
+         vid_rect(20, MQ_MID - 4 + (21 - h) / 2, 3, h, C_CON, 255);
+   }
+   browser_pop_draw(270, MQ_MID + sy, MQ_ROW_H, cur);
 
-   vid_text(20, 252, "X play", C_DIM);
-   vid_text(116, 252, "L/R page", C_DIM);
-   vid_text(244, 252, "START settings", C_DIM);
+   browser_footer(n, g_roms[rom].is_fav);
+}
+
+/* ---- empty states ---------------------------------------------------------
+ * Both wear the console's identity, so a bare GBC folder still looks like
+ * GBC.  The cartridge is eight rects: GBA carts are wide, GB/GBC carts tall
+ * with the notch, and the label is the palette stripe.  The empty
+ * favourites view shows the outline star it is asking for. */
+static void browser_cart(int cx, int cy, const ui_skin *s)
+{
+   uint16_t body = g_pcfg.theme == 1 ? RGB565(0xD6, 0xD6, 0xD3)
+                                     : RGB565(0x2C, 0x2C, 0x2C);
+   uint16_t lip  = g_pcfg.theme == 1 ? RGB565(0xC2, 0xC2, 0xBE)
+                                     : RGB565(0x3A, 0x3A, 0x3A);
+   int k, lx, ly, lw, lh;
+   if (s->cart_wide)
+   {
+      vid_rect(cx - 24, cy - 15, 48, 30, body, 255);
+      vid_rect(cx - 24, cy - 15, 48, 4, lip, 255);
+      lx = cx - 16; ly = cy - 6; lw = 32; lh = 14;
+   }
+   else
+   {
+      vid_rect(cx - 17, cy - 21, 28, 42, body, 255);
+      vid_rect(cx + 11, cy - 15, 6, 36, body, 255);
+      vid_rect(cx - 17, cy - 21, 34, 3, lip, 255);
+      lx = cx - 11; ly = cy - 12; lw = 22; lh = 20;
+   }
+   vid_rect(lx, ly, lw, lh, C_BG_TOP, 120);
+   for (k = 0; k < s->pal_n; k++)
+      vid_rect(lx + (k * lw) / s->pal_n, ly,
+               ((k + 1) * lw) / s->pal_n - (k * lw) / s->pal_n, lh,
+               s->pal[k], 230);
+}
+
+static void browser_empty(const char *rom_dir, int n_scan)
+{
+   const ui_skin *s = skin_of(g_pcfg.console);
+   char msg[64];
+   uint16_t sel = mix565(C_SEL, C_BG_TOP, g_fx_fade);
+   uint16_t item = mix565(C_ITEM, C_BG_TOP, g_fx_fade);
+   uint16_t dim = mix565(C_DIM, C_BG_TOP, g_fx_fade);
+
+   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   vid_rect(0, 0, 480, 272, C_BG_TOP, 255);
+   vid_logo(20, 10, C_ACCENT, 255);
+   browser_header(n_scan);
+   if (g_browser_favs)
+   {
+      vid_text_hd(240 - vid_text_hd_w(VID_GLYPH_STAR_O) / 2, 88,
+                  VID_GLYPH_STAR_O, mix565(C_CON, C_BG_TOP, g_fx_fade));
+      snprintf(msg, sizeof(msg), "No %s favourites yet", s->id);
+      vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
+      vid_text_center(160, "Press " VID_GLYPH_SQ " on a game to star it", item);
+      vid_text_center(182, "SELECT: all games", dim);
+   }
+   else
+   {
+      browser_cart(240, 104, s);
+      snprintf(msg, sizeof(msg), "No .%s ROMs found", s->ext);
+      vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 130, msg, sel);
+      /* The folder on one line when it fits, on its own line when not:
+       * a memory stick path can be long. */
+      snprintf(msg, sizeof(msg), "Copy them to %s", rom_dir);
+      if (vid_text_w(msg) <= 440)
+         vid_text_center(164, msg, item);
+      else
+      {
+         vid_text_center(160, "Copy them to:", item);
+         vid_text_center(180, rom_dir, item);
+      }
+      vid_text_center(vid_text_w(msg) <= 440 ? 186 : 204,
+                      VID_GLYPH_TRI " change console", dim);
+   }
+   browser_footer(0, 0);
 }
 
 extern volatile int g_running;               /* main_psp exit flag */
@@ -2565,25 +3550,171 @@ static int browser_settings(void)
    return relaunch;
 }
 
-int ui_browser(const char *rom_dir, char *out, size_t out_sz)
-{
-   int n = rom_scan(rom_dir);
-   int cur = 0, i, idle = 0;
+/* ---- harness browser demo -------------------------------------------------
+ * .gpsp-harness.ini ui_browser_demo=1 (with browser=1): a fixed script of
+ * presses and GE dumps that walks the browser through every state the 3.0
+ * UI has -- a tag, the favourites view, empty favourites, the console
+ * switch mid-flare and at its caption, and a console with no ROMs -- so
+ * tools/e2e can photograph them under PPSSPP.  Frames count browser loop
+ * iterations; a dump at frame N shows the frame drawn at N-1.  The last
+ * step exits the browser.  Reachable only through the harness ini, which a
+ * release build points at a name that cannot exist (ADR-0067). */
+static int g_ui_bdemo;
+void ui_browser_demo_shots(void) { g_ui_bdemo = 1; }
 
-   fe_evt("ui_browser roms=%d found=%d pool=%u", n, g_rom_found,
-          g_rom_pool_used);
-   if (n == 0)
+typedef struct {
+   unsigned short at;
+   unsigned       btn;        /* edge to inject, or 0                     */
+   const char    *dump;       /* log/<dump>.bmp to write, or NULL         */
+} bdemo_step;
+
+static const bdemo_step BDEMO[] = {
+   /* The save-state shelf of the first game, when it has states (a no-op
+    * otherwise): open, let the slide and the five thumbnails land, shoot,
+    * close. */
+   { 100, PSP_CTRL_LEFT,     NULL },
+   { 135, 0,                 "ge_gallery_states" },
+   { 140, PSP_CTRL_CIRCLE,   NULL },
+   { 150, 0,                 "ge_gallery" },
+   { 160, PSP_CTRL_SQUARE,   NULL },
+   { 166, 0,                 "ge_gallery_star" },
+   { 200, PSP_CTRL_SELECT,   NULL },
+   { 240, 0,                 "ge_gallery_favs" },
+   { 260, PSP_CTRL_SELECT,   NULL },
+   { 300, PSP_CTRL_TRIANGLE, NULL },
+   { 311, 0,                 "ge_gallery_flare" },
+   { 322, 0,                 "ge_gallery_caption" },
+   { 440, 0,                 "ge_gallery_gb" },
+   { 460, PSP_CTRL_SELECT,   NULL },
+   { 490, 0,                 "ge_gallery_favs_empty" },
+   { 510, PSP_CTRL_SELECT,   NULL },
+   { 540, PSP_CTRL_TRIANGLE, NULL },
+   { 660, 0,                 "ge_gallery_empty" },
+   { 680, PSP_CTRL_TRIANGLE, NULL },
+   { 800, 0,                 NULL },          /* end: leave the browser */
+};
+
+static void browser_dump(const char *name)
+{
+   extern char g_dir_base[];
+   char gp[176];
+   snprintf(gp, sizeof(gp), "%s/log", g_dir_base);
+   sceIoMkdir(gp, 0777);
+   snprintf(gp, sizeof(gp), "%s/log/%s.bmp", g_dir_base, name);
+   if (vid_dump_ge(gp) == 0)
+      fe_evt("ge_dump file=%s.bmp ui=1", name);
+}
+
+/* Returns 1 when the script wants the browser to exit. */
+static int browser_demo(int frame, unsigned *edges)
+{
+   unsigned k;
+   if (!g_ui_bdemo)
+      return 0;
+   for (k = 0; k < sizeof(BDEMO) / sizeof(BDEMO[0]); k++)
+      if (BDEMO[k].at == frame)
+      {
+         if (BDEMO[k].dump)
+            browser_dump(BDEMO[k].dump);
+         else if (!BDEMO[k].btn)
+            return 1;
+         *edges |= BDEMO[k].btn;
+      }
+   return 0;
+}
+
+/* ---- the favourites list swap ---------------------------------------------
+ * SELECT, and an untag inside the favourites view, replace the list with a
+ * different one.  Ten frames: the rows sink 10 px and fade, the list is
+ * swapped at frame 5, the new rows rise into place. */
+#define SWAP_FRAMES 10
+static struct { int active, f, rebuild; } g_swap;
+
+static void swap_begin(int rebuild)
+{
+   g_swap.active = 1;
+   g_swap.f = 0;
+   g_swap.rebuild = rebuild;
+}
+
+/* Advance; returns 1 on the frame the list must change. */
+static int swap_step(void)
+{
+   int e;
+   if (!g_swap.active)
+      return 0;
+   g_swap.f++;
+   if (g_swap.f < SWAP_FRAMES / 2)
    {
-      /* Nothing to show: draw a notice for ~3 s, then give up.  The path
-       * printed is the one we ACTUALLY scanned (see v1 note re hardcoded
-       * paths going stale). */
+      e = (g_swap.f * 256) / (SWAP_FRAMES / 2);
+      g_fx_fade = e;
+      g_fx_dy = (10 * ease_in(e)) >> 8;
+   }
+   else
+   {
+      e = ease_out(((g_swap.f - SWAP_FRAMES / 2) * 256) / (SWAP_FRAMES / 2));
+      g_fx_fade = 256 - e;
+      g_fx_dy = (10 * (256 - e)) >> 8;
+   }
+   if (g_swap.f >= SWAP_FRAMES)
+   {
+      g_swap.active = 0;
+      fx_reset();
+   }
+   return g_swap.f == SWAP_FRAMES / 2;
+}
+
+/* The console switch's rescan: the old TRIANGLE handler, run at the peak of
+ * the flare.  Re-scan using the strict extension for the newly selected
+ * console; start at the saved game when compatible.  The state shelf is
+ * keyed by list index, so it is closed and its cache dropped before the
+ * list changes under it. */
+static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
+                                 int *cur, int *idle)
+{
+   int i;
+   if (pcfg_remember_console(g_sw.to) != 0)
+      fe_log("Could not remember console: %d", g_sw.to);
+   *n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+   if (*n_scan < 0)
+      *n_scan = 0;
+   favs_mark(*n_scan);
+   *n = view_count(*n_scan);
+   *cur = 0;
+   for (i = 0; i < *n; i++)
+      if (g_pcfg.last_rom[0] &&
+          strcmp(g_roms[view_rom(i)].name, g_pcfg.last_rom) == 0)
+         *cur = i;
+   art_free_all();
+   browser_state_cache_free();
+   g_scroll_cur = -1;
+   g_art_fade_idx = -1;
+   g_marq_idx = -1;
+   *idle = 0;
+   g_sw.swapped = 1;
+   fe_evt("ui_browser_console console=%d roms=%d found=%d",
+          g_pcfg.console, *n_scan, g_rom_found);
+}
+
+int ui_browser(const char *rom_dir, char *out, size_t out_sz,
+               int *out_state_slot, fe_console_t *console_out)
+{
+   int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+   int n, cur = 0, i, idle = 0, bframe = 0;
+
+   if (out_state_slot)
+      *out_state_slot = 0;
+   if (console_out)
+      *console_out = (fe_console_t)g_pcfg.console;
+
+   if (n_scan < 0)
+   {
       for (i = 0; i < 180 && g_running; i++)
       {
          vid_overlay_begin(1);
          page("GBAdhoc", NULL);
-         vid_text_center(110, "No .gba ROMs found", C_WARN);
-         vid_text_center(140, "Copy ROMs to:", C_ITEM);
-         vid_text_center(162, rom_dir, C_ITEM);
+         vid_text_center(110, "ROM path is too long", C_WARN);
+         vid_text_center(140, "Shorten the folder or filename", C_ITEM);
          vid_overlay_end();
          sceDisplayWaitVblankStart();
          vid_swap();
@@ -2591,27 +3722,52 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
       return -1;
    }
 
+   /* n == 0 is NOT an exit here: another console's ROMs may be one
+    * TRIANGLE away, so the empty notice is drawn inside the browser loop. */
+   fe_evt("ui_browser console=%d roms=%d found=%d pool=%u",
+          g_pcfg.console, n_scan, g_rom_found, g_rom_pool_used);
+
    /* A LIST THAT IS TOO LONG SAYS SO.  The 2.0 bug was not really the size
     * of the cap, it was that hitting it looked identical to the games not
     * being on the stick -- so whatever the ceiling is, crossing it has to be
     * visible.  Shown for ~2.5 s, then the browser opens as normal. */
-   if (g_rom_found > n)
+   if (g_rom_found > n_scan || g_rom_scan_path_errors)
    {
       char msg[80];
-      snprintf(msg, sizeof(msg), "Showing %d of %d games", n, g_rom_found);
+      const char *detail = g_rom_scan_path_errors
+         ? "Some paths were too long and were skipped."
+         : (n_scan == BROWSER_MAX ? "This build lists 1024 at a time."
+                                  : "The name storage limit was reached.");
+      if (g_rom_found > n_scan)
+         snprintf(msg, sizeof(msg), "Showing %d of %d games", n_scan,
+                  g_rom_found);
+      else
+         snprintf(msg, sizeof(msg), "Some ROM folders were skipped");
       for (i = 0; i < 150 && g_running; i++)
       {
          vid_overlay_begin(1);
          page("GBAdhoc", NULL);
          vid_text_center(104, msg, C_WARN);
-         vid_text_center(134, "This build lists 1024 at a time.", C_ITEM);
-         vid_text_center(156, "Please open an issue on GitHub -- I want", C_ITEM);
-         vid_text_center(178, "to know how big real libraries get.", C_ITEM);
+         vid_text_center(134, detail, C_ITEM);
+         if (g_rom_scan_path_errors)
+            vid_text_center(156, "Shorten folders or filenames to browse them.", C_ITEM);
+         else
+         {
+            vid_text_center(156, "Please open an issue on GitHub -- I want", C_ITEM);
+            vid_text_center(178, "to know how big real libraries get.", C_ITEM);
+         }
          vid_overlay_end();
          sceDisplayWaitVblankStart();
          vid_swap();
       }
    }
+
+   /* Favourites: read once here, stamped onto the scan; the view opens on
+    * the full list. */
+   favs_load(rom_dir);
+   favs_mark(n_scan);
+   g_browser_favs = 0;
+   n = n_scan;
 
    /* preselect last played */
    for (i = 0; i < n; i++)
@@ -2624,15 +3780,21 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
    g_ui_shell = g_pcfg.ui_shell;
    g_scroll_cur = -1;                 /* no slide on the first frame */
    g_art_fade_idx = -1;
+   g_sw.active = 0;
+   g_swap.active = 0;
+   g_pop.active = 0;
+   fx_reset();
 
    g_prev_pad = 0xFFFFFFFFu;
    while (g_running)
    {
       SceCtrlData pd;
       unsigned edges;
+      int rom;                        /* g_roms index of the cursor row */
 
       sceCtrlPeekBufferPositive(&pd, 1);
       edges = pad_edges(pd.Buttons);
+      bframe++;
 
       /* L+R+SELECT in the browser: dump the gallery screen as displayed
        * pixels (plain file I/O — works in every build, including the
@@ -2644,13 +3806,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
          static int shot_armed = 1;
          if (shot_armed)
          {
-            extern char g_dir_base[];
-            char gp[176];
-            snprintf(gp, sizeof(gp), "%s/log", g_dir_base);
-            sceIoMkdir(gp, 0777);
-            snprintf(gp, sizeof(gp), "%s/log/ge_gallery.bmp", g_dir_base);
-            if (vid_dump_ge(gp) == 0)
-               fe_evt("ge_dump file=ge_gallery.bmp ui=1");
+            browser_dump("ge_gallery");
             shot_armed = 0;
          }
       }
@@ -2663,44 +3819,243 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
          static int settle;
          if (++settle == 150)   /* let the box art fully stream in first */
          {
-            extern char g_dir_base[];
-            char gp[176];
-            snprintf(gp, sizeof(gp), "%s/log/ge_gallery.bmp", g_dir_base);
-            if (vid_dump_ge(gp) == 0)
-               fe_evt("ge_dump file=ge_gallery.bmp ui=1");
+            browser_dump("ge_gallery");
             edges |= PSP_CTRL_CROSS;
          }
       }
+      if (browser_demo(bframe, &edges))
+         break;
 
-      /* The list is vertical now, so UP/DOWN step and LEFT/RIGHT page
-       * alongside the shoulder buttons. */
-      if (edges & PSP_CTRL_UP)
+      /* TRIANGLE cycles the active hardware family, as a flare (see
+       * switch_begin).  A press while one is running finishes it -- doing
+       * the rescan now if the peak has not passed -- and starts the next
+       * from the console it landed on.  The state shelf is keyed by list
+       * index, so no switch starts while it is open. */
+      if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open)
+      {
+         int skipped = 0;
+         if (g_sw.active)
+         {
+            if (!g_sw.swapped)
+               browser_switch_apply(rom_dir, &n_scan, &n, &cur, &idle);
+            g_sw.active = 0;
+            fx_reset();
+            skipped = 1;
+         }
+         switch_begin((g_pcfg.console + 1) % FE_CONSOLE_COUNT);
+         g_pop.active = 0;
+         g_swap.active = 0;
+         fe_evt("ui_browser_switch from=%d to=%d skipped=%d",
+                g_pcfg.console, g_sw.to, skipped);
+         FE_EVT_ONLY(skipped);
+      }
+      if (g_sw.active)
+      {
+         if (switch_step())
+            browser_switch_apply(rom_dir, &n_scan, &n, &cur, &idle);
+         /* No decodes and no input mid-flare: a cover decode would stall
+          * the animation, and the list is about to change under the
+          * cursor.  START is the one thing still honoured, below. */
+         idle = 0;
+         edges &= PSP_CTRL_START;
+      }
+      if (g_swap.active)
+      {
+         if (swap_step())
+         {
+            if (g_swap.rebuild)
+               favs_build_view(n_scan);
+            else
+            {
+               g_browser_favs = !g_browser_favs;
+               fe_evt("ui_browser_view favs=%d shown=%d", g_browser_favs,
+                      view_count(n_scan));
+            }
+            /* Stay on the same game when it is in both lists; when the
+             * row itself left (an untag), stay where the cursor was. */
+            {
+               int found = 0, old_cur = cur;
+               rom = n > 0 ? view_rom(cur) : -1;
+               n = view_count(n_scan);
+               cur = 0;
+               for (i = 0; i < n; i++)
+                  if (view_rom(i) == rom)
+                  {
+                     cur = i;
+                     found = 1;
+                  }
+               if (!found && g_swap.rebuild && n > 0)
+                  cur = old_cur < n ? old_cur : n - 1;
+            }
+            g_scroll_cur = -1;
+            g_marq_idx = -1;
+            g_art_fade_idx = -1;
+            idle = 0;
+         }
+         edges &= PSP_CTRL_START;
+      }
+      if (pop_step() && !g_pop.add && g_browser_favs)
+         swap_begin(1);                /* the untagged row leaves the view */
+
+      rom = n > 0 ? view_rom(cur) : -1;
+
+      /* SELECT swaps the list for the favourites subset and back.  Not
+       * while L+R are held: that is the screenshot chord above. */
+      if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
+          !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
+         swap_begin(0);
+
+      /* SQUARE tags or untags the highlighted game and rewrites the file
+       * at once.  In the favourites view an untag plays the pop first and
+       * removes the row after it. */
+      if ((edges & PSP_CTRL_SQUARE) && n > 0 && !g_browser_state_open &&
+          !g_pop.active && !g_swap.active)
+      {
+         rom_entry *r = &g_roms[rom];
+         int rc;
+         if (r->is_fav)
+         {
+            rc = fe_favs_remove(&g_favs, r->name);
+            r->is_fav = 0;
+            g_fav_count--;
+            if (!g_browser_favs)
+               favs_build_view(n_scan);
+            pop_begin(cur, 0);
+         }
+         else if ((rc = fe_favs_add(&g_favs, r->name)) == 0)
+         {
+            r->is_fav = 1;
+            g_fav_count++;
+            favs_build_view(n_scan);
+            pop_begin(cur, 1);
+         }
+         else
+            osd_toast("Favourites list is full");
+         if (rc == 0)
+            rc = favs_save(rom_dir);
+         fe_evt("ui_browser_fav op=%s rom=%s n=%u rc=%d",
+                r->is_fav ? "add" : "remove", r->name, g_favs.n, rc);
+         idle = 0;
+      }
+
+      /* LEFT opens the selected game's save-state shelf, for every
+       * console. Shoulder buttons page the list. */
+      if (g_browser_state_open)
+      {
+         char state_path[PSP_FILE_PATH_CAP];
+         SceIoStat st;
+         if (edges & PSP_CTRL_CIRCLE)
+         {
+            g_browser_state_open = 0;
+            idle = 0;
+         }
+         else if (edges & PSP_CTRL_UP)
+            g_browser_state_slot = g_browser_state_slot > 1
+               ? g_browser_state_slot - 1 : PSP_STATE_SLOT_COUNT;
+         else if (edges & PSP_CTRL_DOWN)
+            g_browser_state_slot = g_browser_state_slot < PSP_STATE_SLOT_COUNT
+               ? g_browser_state_slot + 1 : 1;
+         else if ((edges & PSP_CTRL_RIGHT) && !(edges & PSP_CTRL_CROSS))
+            g_browser_state_open = 0;
+         else if (edges & PSP_CTRL_CROSS)
+         {
+            if (browser_rom_state_path(rom_dir, rom,
+                                       (unsigned)g_browser_state_slot,
+                                       state_path, sizeof(state_path)) == 0 &&
+                sceIoGetstat(state_path, &st) >= 0 &&
+                psp_rom_path_join(out, out_sz, rom_dir,
+                                  g_roms[rom].name) == 0)
+            {
+               if (out_state_slot)
+                  *out_state_slot = g_browser_state_slot;
+               if (console_out)
+                  *console_out = (fe_console_t)g_pcfg.console;
+               ui_loading_begin(out);
+               if (pcfg_remember_rom(g_roms[rom].name) != 0)
+                  fe_log("Could not remember last ROM: %s", g_roms[rom].name);
+               fe_evt("ui_browser_pick rom=%s state_slot=%d",
+                      g_roms[rom].name, g_browser_state_slot);
+               art_free_all();
+               browser_state_cache_free();
+               return 0;
+            }
+            osd_toast("No saved state in this slot");
+         }
+      }
+      else if (n <= 0)
+         ; /* nothing to move over; the empty notice below handles O */
+      else if ((edges & PSP_CTRL_LEFT) && !g_ui_shots)
+      {
+         if (browser_rom_has_state(rom_dir, rom))
+         {
+            if (!g_browser_previews)
+               g_browser_previews = (uint16_t *)memalign(16,
+                  PSP_STATE_SLOT_COUNT * PSP_STATE_THUMB_WIDTH *
+                  PSP_STATE_THUMB_TEX_HEIGHT * sizeof(uint16_t));
+            g_browser_state_open = 1;
+            g_browser_state_slot = 1;
+            g_browser_preview_rom = -1;
+            memset(g_browser_preview_status, 0,
+                   sizeof(g_browser_preview_status));
+            idle = 0;
+         }
+      }
+      else if (edges & PSP_CTRL_UP)
          { cur = (cur + n - 1) % n; idle = 0; }
-      if (edges & PSP_CTRL_DOWN)
+      else if (edges & PSP_CTRL_DOWN)
          { cur = (cur + 1) % n; idle = 0; }
-      if (edges & (PSP_CTRL_LTRIGGER | PSP_CTRL_LEFT))
-         { cur = (cur + n - SHELF_ROWS) % n; idle = 0; }
-      if (edges & (PSP_CTRL_RTRIGGER | PSP_CTRL_RIGHT))
+      else if (edges & PSP_CTRL_LTRIGGER)
+         { cur = (cur + n - SHELF_ROWS % n) % n; idle = 0; }
+      else if (edges & PSP_CTRL_RTRIGGER)
          { cur = (cur + SHELF_ROWS) % n; idle = 0; }
       if (edges & PSP_CTRL_START)
       {
          if (browser_settings())
          {
             art_free_all();
+            browser_state_cache_free();
             return 1;
          }
          idle = 0;
          continue;
       }
-      if (edges & PSP_CTRL_CROSS)
+      rom = n > 0 ? view_rom(cur) : -1;
+      if ((edges & PSP_CTRL_CROSS) && n > 0)
       {
-         snprintf(out, out_sz, "%s/%s", rom_dir, g_roms[cur].name);
+         if (g_browser_state_open)
+            continue;
+         if (psp_rom_path_join(out, out_sz, rom_dir, g_roms[rom].name) != 0)
+         {
+            osd_toast("ROM path is too long");
+            fe_evt("ui_browser_pick rejected=path_too_long rel=%s",
+                   g_roms[rom].name);
+            continue;
+         }
+         if (console_out)
+            *console_out = (fe_console_t)g_pcfg.console;
          ui_loading_begin(out);
-         if (pcfg_remember_rom(g_roms[cur].name) != 0)
-            fe_log("Could not remember last ROM: %s", g_roms[cur].name);
-         fe_evt("ui_browser_pick rom=%s", g_roms[cur].name);
+         if (pcfg_remember_rom(g_roms[rom].name) != 0)
+            fe_log("Could not remember last ROM: %s", g_roms[rom].name);
+         fe_evt("ui_browser_pick rom=%s", g_roms[rom].name);
          art_free_all();
+         browser_state_cache_free();
          return 0;
+      }
+
+      if (n == 0)
+      {
+         /* No ROMs for this console, or no favourites in it.  The flare
+          * still plays over this screen, so a switch out of an empty
+          * console looks like any other. */
+         vid_overlay_begin(1);
+         browser_empty(rom_dir, n_scan);
+         switch_draw();
+         vid_overlay_end();
+         sceDisplayWaitVblankStart();
+         vid_swap();
+         if ((edges & PSP_CTRL_CIRCLE) && !g_browser_favs)
+            break;
+         continue;
       }
 
       /* Asset shoot: force the idle state so art loads unconditionally —
@@ -2719,9 +4074,11 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
          art_prefetch(rom_dir, cur, n);
 
       if (g_ui_shell)
-         shell_marquee(rom_dir, cur, n, idle);
+         shell_marquee(rom_dir, cur, n, n_scan, idle);
       else
-         shell_shelf(rom_dir, cur, n, idle);
+         shell_shelf(rom_dir, cur, n, n_scan, idle);
+      browser_state_panel(rom_dir, rom, n);
+      switch_draw();
 
       vid_overlay_end();
       sceDisplayWaitVblankStart();
@@ -2730,5 +4087,6 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz)
          idle++;
    }
    art_free_all();
+   browser_state_cache_free();
    return -1;
 }

@@ -144,6 +144,10 @@ static struct
 
    /* debug fault shim (harness only; all-zero = disabled, see header) */
    int      fault_lat_ms, fault_jit_ms, fault_loss_pct;
+   /* periodic blackout: drop everything received for bo_ms out of every
+    * bo_every_ms, counted from the first datagram (a radio fade) */
+   int      fault_bo_ms, fault_bo_every_ms;
+   uint64_t fault_bo_t0;
    uint32_t fault_prng;
 
    /* SPSC ring: rx thread produces (head), main thread consumes (tail).
@@ -205,7 +209,8 @@ static void ctl_handler(int flag, int error, void *unknown)
 
 static int fault_on(void)
 {
-   return (A.fault_lat_ms | A.fault_jit_ms | A.fault_loss_pct) != 0;
+   return (A.fault_lat_ms | A.fault_jit_ms | A.fault_loss_pct |
+           A.fault_bo_ms) != 0;
 }
 
 static uint32_t fault_rand(void)
@@ -231,6 +236,13 @@ void adhoc_transport_set_fault(int latency_ms, int jitter_ms, int loss_pct,
    A.fault_loss_pct = loss_pct     > 0 ? loss_pct     : 0;
    if (seed)
       A.fault_prng = seed;
+}
+
+void adhoc_transport_set_blackout(int ms, int every_ms)
+{
+   A.fault_bo_ms       = (ms > 0 && every_ms > ms) ? ms : 0;
+   A.fault_bo_every_ms = A.fault_bo_ms ? every_ms : 0;
+   A.fault_bo_t0       = 0;
 }
 
 /* ---- RX thread ----------------------------------------------------------- */
@@ -276,6 +288,19 @@ static int rx_thread(SceSize args, void *argp)
                {
                   A.st.fault_dropped++;
                   continue;              /* injected loss */
+               }
+               if (A.fault_bo_ms)
+               {
+                  uint64_t nw = adhoc_now_us();
+                  if (!A.fault_bo_t0)
+                     A.fault_bo_t0 = nw;
+                  if ((uint32_t)(((nw - A.fault_bo_t0) / 1000u) %
+                                 (uint64_t)A.fault_bo_every_ms) <
+                      (uint32_t)A.fault_bo_ms)
+                  {
+                     A.st.fault_dropped++;
+                     continue;           /* injected fade */
+                  }
                }
                delay_ms = (uint32_t)A.fault_lat_ms +
                   (A.fault_jit_ms

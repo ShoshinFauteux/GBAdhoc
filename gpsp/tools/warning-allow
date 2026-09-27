@@ -3,3 +3,10 @@
 #
 # Empty on 2026-09-17: the tree has none.  Adding a line here is a decision, so
 # say who decided and why -- an entry with no reason is worse than the warning.
+
+# 2026-09-24: the gbcore/sameboy/ entry that stood here went with SameBoy.
+# Its replacement, the vendored TGB Dual core in gbcore/tgbdual/, needs no
+# entry: its real warnings were fixed in the vendored files (see
+# gbcore/tgbdual/LOCAL-PATCHES.md, which also names the upstream bugs they
+# exposed) and psp/Makefile turns off only -Wunused-parameter for its
+# objects, whose I/O and opcode dispatch tables share one signature.

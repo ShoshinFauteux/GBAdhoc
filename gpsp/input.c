@@ -175,9 +175,28 @@ u32 update_input(void)
 bool input_check_savestate(const u8 *src)
 {
   const u8 *p = bson_find_key(src, "input");
+  u32 value;
+  static const char *const optional[] = {
+    "turbo-a", "turbo-b", "gbp-frames", "gbp-sent"
+  };
+  unsigned i;
   /* Only 'prevkey' is required for backwards compatibility. The other
    * fields are optional and default to a safe state on load. */
-  return (p && bson_contains_key(p, "prevkey", BSON_TYPE_INT32));
+  if (!p || !bson_contains_key(p, "prevkey", BSON_TYPE_INT32) ||
+      !bson_read_int32(p, "prevkey", &value) || value > 0x3FFu)
+    return false;
+  for (i = 0; i < sizeof(optional) / sizeof(optional[0]); i++)
+  {
+    if (!bson_find_key(p, optional[i]))
+      continue; /* Older savestates omit these fields. */
+    if (!bson_contains_key(p, optional[i], BSON_TYPE_INT32) ||
+        !bson_read_int32(p, optional[i], &value))
+      return false;
+    if ((i < 2 && value >= TURBO_PERIOD_MAX) ||
+        (i == 2 && value > 96) || (i == 3 && value > 1))
+      return false;
+  }
+  return true;
 }
 
 bool input_read_savestate(const u8 *src)
@@ -211,4 +230,3 @@ unsigned input_write_savestate(u8 *dst)
   bson_finish_document(dst, wbptr1);
   return (unsigned int)(dst - startp);
 }
-

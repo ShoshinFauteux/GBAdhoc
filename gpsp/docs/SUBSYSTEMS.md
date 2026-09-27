@@ -4,8 +4,10 @@ The question this document answers is "I need to change X; what do I have to
 understand, and what am I allowed to touch?"  `ARCHITECTURE.md` covers netdrv's
 wire protocol in depth; this is the map above it.
 
-Accurate as of 2026-09-17 on `opus/performance-stability-fixes`.  Where
-something is inferred rather than verified, it says so.
+**Historical snapshot:** audited 2026-09-17 on `opus/performance-stability-fixes`.
+This is not a claim about the active checkout. Verify ownership and file/line
+references against current source before relying on them. Where the original
+audit marked an inference, that status still applies.
 
 ---
 

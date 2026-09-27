@@ -15,6 +15,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Sandboxes MUST live on a native Linux filesystem: PPSSPP boot fails (and I/O
 # crawls) when the memstick sits on a /mnt/c (DrvFs/OneDrive) mount. Verified 2026-07-31.
 SANDBOX_ROOT="${SANDBOX_ROOT:-$HOME/gpsp-e2e/sandboxes}"
+SAFE_SANDBOX_PARENT="$(realpath -m "$HOME/gpsp-e2e")"
+SANDBOX_ROOT="$(realpath -m "$SANDBOX_ROOT")"
+case "$SANDBOX_ROOT" in
+  "$SAFE_SANDBOX_PARENT"/*) ;;
+  *) echo "FATAL: refusing to recreate sandbox outside $SAFE_SANDBOX_PARENT: $SANDBOX_ROOT" >&2; exit 2 ;;
+esac
 
 INSTANCES=2
 BOOT_CHECK=0

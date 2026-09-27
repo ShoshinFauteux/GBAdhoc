@@ -36,17 +36,8 @@ Exactly these commands, from a clean checkout of the tagged commit. Docker suppl
 toolchain so the build is reproducible on any machine.
 
 ```bash
-# 0. clean slate — stale objects from a desktop build must never reach the PSP link
-git clean -xdf -e testdata -e tools/e2e/artifacts     # check what this will delete first!
-
-# 1. the gpSP core, PSP target (MIPS32 Allegrex, dynarec on)
-docker run --rm -v "$PWD":/build -w /build pspdev/pspdev \
-    sh -c 'make platform=psp1 clean && make platform=psp1'
-#    -> gpsp_libretro_psp1.a
-
-# 2. the frontend + EBOOT
-docker run --rm -v "$PWD":/build -w /build/psp pspdev/pspdev make
-#    -> psp/EBOOT.PBP   (XMB title "PSP AGB", ICON0/PIC1 from psp/assets/)
+# One clean, profile-stamped build; stages the EBOOT, PRX and manifest together.
+tools/build.sh release --out dist/release-build
 ```
 
 Sanity-check the artefact before packaging it:
@@ -63,15 +54,19 @@ broken link before it reaches a memory stick.
 ## 3. Package
 
 ```bash
-tools/make_release.sh psp/EBOOT.PBP --version 0.1.0
+tools/make_release.sh dist/release-build/EBOOT.PBP --version 0.1.0
 ```
 
+The script checks that the adjacent manifest says `release` and its EBOOT and
+Media Engine hashes match the selected artifacts. It also refuses to package
+source files newer than the EBOOT unless `--allow-stale` is explicitly used.
 The script will:
 
 - refuse if the EBOOT is missing, implausibly small, or **older than any source in
   `psp/`, `frontend-common/`, `netdrv/`** or the core archive (`--allow-stale` overrides —
   never use it for a real release);
-- lay out `PSP/GAME/gpsp-adhoc/` with the EBOOT and empty `roms/`, `saves/`, `log/`;
+- lay out `PSP/GAME/gpsp-adhoc/` with the EBOOT, Media Engine module, and empty
+  `roms/`, `saves/`, `log/`;
 - write `README.txt` (install text with the WLAN-switch and ad-hoc-channel warnings first),
   `LICENSE` (copied from `COPYING`), and a `VERSION.txt` stamp with version + commit + date;
 - **refuse to package any ROM, BIOS image or save file** — by extension and by GBA header

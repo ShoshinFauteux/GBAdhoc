@@ -260,6 +260,18 @@ static int earned_old(cand_table *c, u32 gpc, u32 cur)
 
 static void cand_forget(cand_table *c) { memset(c, 0, sizeof(*c)); }
 
+/* Savestate reload preserves learned counts but rebases the remembered word
+ * from restored guest memory. This models smc_gates_refresh_values(). */
+static void cand_refresh_value(cand_table *c, u32 addr, u32 restored)
+{
+   u32 k;
+   for (k = 0; k < c->used; k++)
+      if (c->addr[k] == addr) {
+         c->val[k] = restored;
+         return;
+      }
+}
+
 /* Drive n writes that each change the word, as self-modifying code does. */
 static int drive_changing(int (*fn)(cand_table *, u32, u32),
                           cand_table *c, u32 addr, unsigned n)
@@ -320,6 +332,21 @@ static int test_promotion_rule(void)
    memset(&c, 0, sizeof(c));
    CHECK(drive_changing(earned_new, &c, MIXER_ADDR, 64) == 1);
    CHECK(earned_new(&c, MIXER_ADDR, 0x08001234u) == 1);   /* still promotes */
+
+   /* A same-ROM state load preserves expensive hit/change learning, but the
+    * saved candidate value belongs to the pre-load timeline. Without rebasing,
+    * one restored value can be miscounted as the 32nd real change and promote
+    * the row. Refreshing prevents that false promotion without clearing hits. */
+   memset(&c, 0, sizeof(c));
+   c.used = 1; c.addr[0] = DATA_ADDR; c.hits[0] = 63;
+   c.chg[0] = 31; c.val[0] = 0x11111111u;
+   CHECK(earned_new(&c, DATA_ADDR, 0x22222222u) == 1); /* old timeline: false */
+   memset(&c, 0, sizeof(c));
+   c.used = 1; c.addr[0] = DATA_ADDR; c.hits[0] = 63;
+   c.chg[0] = 31; c.val[0] = 0x11111111u;
+   cand_refresh_value(&c, DATA_ADDR, 0x22222222u);
+   CHECK(earned_new(&c, DATA_ADDR, 0x22222222u) == 0); /* restored baseline */
+   CHECK(c.hits[0] == 64 && c.chg[0] == 31); /* costly evidence retained */
    return 0;
 }
 
@@ -332,22 +359,22 @@ static int test_promotion_rule(void)
  * needed.
  *
  * An IWRAM precondition, a latched writer pc and a repetition count were added
- * here and then WITHDRAWN on 2026-09-18: this function gates selective
- * invalidation, so any extra condition that does not hold for the ROM in hand
- * costs a full flush on every mixer write.  Hardware showed degraded
- * performance and the assumption had never been confirmed on a console.  What
- * remains is exactly 7283f13's predicate. */
+ * here and then WITHDRAWN on 2026-09-18. The current production predicate is
+ * the broader M4A writer-family match from e501964: ARM STMIA through LR,
+ * non-writeback, bounded to +0x200, with the write range derived from the
+ * register list. */
+#define MIXER_PATCH_SPAN 0x200u
+
 static int writer_safe_range(u32 pc_plus_4, u32 addr, u32 op, int thumb,
-                             int pc_mapped, u32 *low, u32 *high)
+                             u32 *low, u32 *high)
 {
    u32 pc = pc_plus_4 - 4;
-   (void)pc_mapped;
    if (thumb) return 0;
    if ((op & 0x0E000000u) != 0x08000000u) return 0;
    if ((op & 0x00100000u) || (op & 0x00200000u)) return 0;     /* L or W */
-   if ((op & 0xFFFFu) != 0x0003u || ((op >> 16) & 0xFu) != REG_LR ||
+   if (((op >> 16) & 0xFu) != REG_LR ||
        (op & 0x01000000u) || !(op & 0x00800000u) || (op & 0x00400000u) ||
-       addr - pc != 0x3cu)
+       addr <= pc || addr - pc > MIXER_PATCH_SPAN)
       return 0;
    {
       u32 list = op & 0xFFFFu, count = 0;
@@ -362,10 +389,10 @@ static int writer_safe_range(u32 pc_plus_4, u32 addr, u32 op, int thumb,
 /* ARM STMIA lr, {r0,r1}: cond=E 100 P=0 U=1 S=0 W=0 L=0 Rn=14 list=0x0003. */
 #define OP_STMIA_LR_R0R1 0xE88E0003u
 
-static int accepts(u32 pc_plus_4, u32 addr, u32 op, int thumb, int mapped)
+static int accepts(u32 pc_plus_4, u32 addr, u32 op, int thumb)
 {
    u32 lo = 0, hi = 0;
-   return writer_safe_range(pc_plus_4, addr, op, thumb, mapped, &lo, &hi);
+   return writer_safe_range(pc_plus_4, addr, op, thumb, &lo, &hi);
 }
 
 static int test_writer_fingerprint(void)
@@ -375,39 +402,201 @@ static int test_writer_fingerprint(void)
 
    /* CFRU's SoundMainRAM patch is admitted, on the FIRST event -- no warm-up.
     * The accepted build activates immediately and so must this one. */
-   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1, 0, 1) == 1);
-   CHECK(writer_safe_range(pc4, dst, OP_STMIA_LR_R0R1, 0, 1, &lo, &hi) == 1);
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1, 0) == 1);
+   CHECK(writer_safe_range(pc4, dst, OP_STMIA_LR_R0R1, 0, &lo, &hi) == 1);
    /* and the range is the FULL store, not just the checked word */
    CHECK(lo == dst - 4 && hi == dst + 4);
 
-   /* A writer outside IWRAM is NOT rejected: the region test was withdrawn,
-    * because it had never been confirmed for the ROMs in the field. */
-   CHECK(accepts(0x08001604u, 0x0800163cu, OP_STMIA_LR_R0R1, 0, 1) == 1);
+   /* H&S's measured +0x48..+0x148 family is accepted, including its
+    * four-register stores. Its low/high range must cover every transferred
+    * word; merely checking the final word would miss earlier unchecked words. */
+   CHECK(writer_safe_range(0x03001604u, 0x03001648u,
+                           OP_STMIA_LR_R0R1, 0, &lo, &hi) == 1);
+   CHECK(lo == 0x03001644u && hi == 0x0300164Cu);
+   CHECK(writer_safe_range(0x03001604u, 0x03001748u,
+                           0xE88E0704u, 0, &lo, &hi) == 1);
+   CHECK(lo == 0x0300173Cu && hi == 0x0300174Cu);
 
    /* Rejections, all of them from the shape alone. */
-   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1, 1, 1) == 0);   /* Thumb          */
-   CHECK(accepts(pc4, pc + 0x48u, OP_STMIA_LR_R0R1, 0, 1) == 0);  /* H&S +0x48 */
-   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x00200000u, 0, 1) == 0); /* W=1 */
-   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x00100000u, 0, 1) == 0); /* LDM */
-   CHECK(accepts(pc4, dst, 0xE88D0003u, 0, 1) == 0);        /* Rn=SP not LR   */
-   CHECK(accepts(pc4, dst, 0xE88E000Fu, 0, 1) == 0);        /* {r0-r3} not {r0,r1} */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1, 1) == 0);   /* Thumb */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x00200000u, 0) == 0); /* W=1 */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x00100000u, 0) == 0); /* LDM */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x01000000u, 0) == 0); /* P=1 */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 & ~0x00800000u, 0) == 0); /* U=0 */
+   CHECK(accepts(pc4, dst, OP_STMIA_LR_R0R1 | 0x00400000u, 0) == 0); /* S=1 */
+   CHECK(accepts(pc4, dst, 0xE88D0003u, 0) == 0);        /* Rn=SP not LR */
+   CHECK(accepts(pc4, dst, 0xE88E000Fu, 0) == 1);        /* count, not exact rlist */
+   CHECK(accepts(pc4, pc + 0x200u, OP_STMIA_LR_R0R1, 0) == 1); /* inclusive limit */
+   CHECK(accepts(pc4, pc + 0x201u, OP_STMIA_LR_R0R1, 0) == 0); /* out of span */
+   CHECK(accepts(pc4, pc, OP_STMIA_LR_R0R1, 0) == 0);    /* not above writer */
+   CHECK(accepts(pc4, dst, 0xE88E0000u, 0) == 0);        /* empty register list */
 
-   /* A different pc with the same shape and the same +0x3c relationship IS
-    * still admitted.  That is the residual risk the withdrawn hardening was
-    * aimed at, asserted so it is not mistaken for covered. */
-   CHECK(writer_safe_range(0x03002004u, 0x0300203cu,
-                           OP_STMIA_LR_R0R1, 0, 1, &lo, &hi) == 1);
+   /* There is no fixed writer-PC or game-title identity filter: an unrelated
+    * EWRAM writer with the same shape and bounded EWRAM target is admitted. */
+   CHECK(writer_safe_range(0x02002004u, 0x02002048u,
+                           OP_STMIA_LR_R0R1, 0, &lo, &hi) == 1);
+   return 0;
+}
+
+/* The production SMC path may retire a range selectively only after both
+ * endpoint gates established the block layout: the first written word and the
+ * final checked word. A full gate table can leave only the low endpoint
+ * present, which must take the conservative full-flush path. */
+static int partial_range_ready(int active, int range_safe, int activating,
+                               int gate_changed, int low_gated, int high_gated)
+{
+   return active && range_safe && !activating && !gate_changed &&
+          low_gated && high_gated;
+}
+
+static int test_partial_range_requires_both_gates(void)
+{
+   CHECK(partial_range_ready(1, 1, 0, 0, 1, 1) == 1);
+   CHECK(partial_range_ready(1, 1, 0, 0, 1, 0) == 0);
+   CHECK(partial_range_ready(1, 1, 0, 0, 0, 1) == 0);
+   CHECK(partial_range_ready(1, 1, 0, 1, 1, 1) == 0);
+   return 0;
+}
+
+/* ======================================================================== 7
+ * A block that stops at a translation gate must tag the gate word.
+ *
+ * cpu_threaded.c scan_block: each loop iteration tags block_end_pc (the
+ * instruction about to be scanned), loads it, ADVANCES block_end_pc, and only
+ * then asks SMC_SCAN_GATE_END whether the new block_end_pc is a gate.  So the
+ * gate word itself was never tagged by the block that stops in front of it.
+ * mips/mips_emit.h arm_block_memory: every STM word but the last goes through
+ * execute_aligned_store32 (no SMC check); only the final word reaches
+ * execute_store_u32, whose stub raises SMC when the word's tag is non-zero.
+ *
+ * Measured in PPSSPP (heart_soul_heavy, timing-neutral A/B): with the gate at
+ * 0x0300168c only, `stm lr, {r0, r1}` rewrote 0x03001688 inside the LIVE block
+ * 03001604..0300168c without any SMC event, and the stale instruction ran.
+ */
+#define TAG_BASE  0x03001600u
+#define TAG_WORDS 0x100u
+static u32 tagmap[TAG_WORDS * 2];                 /* one entry per halfword */
+static u32 *tag_at(u32 a) { return &tagmap[(a - TAG_BASE) >> 1]; }
+
+/* scan_block's order of operations for an ARM RAM block that stops at a
+ * gate.  Returns the block end. */
+static u32 scan_to_gate(u32 start, u32 gate, int tag_gate_word)
+{
+   u32 end = start;
+   do {
+      if (!*tag_at(end)) *tag_at(end) = 0x0101;   /* smc_write_arm_yes() */
+      if (!*tag_at(end + 2)) *tag_at(end + 2) = 0x0101;
+      end += 4;                                   /* arm_load_opcode()    */
+   } while (end != gate);                         /* SMC_SCAN_GATE_END()  */
+   if (tag_gate_word) {                           /* smc_tag_gate_arm_yes */
+      if (!*tag_at(end)) *tag_at(end) = 0x0101;
+      if (!*tag_at(end + 2)) *tag_at(end + 2) = 0x0101;
+   }
+   return end;
+}
+
+/* Does a non-writeback STM of `n` words at `lo` raise SMC?  Only its final
+ * word is checked. */
+static int stm_raises_smc(u32 lo, u32 n)
+{
+   u32 last = lo + 4 * (n - 1);
+   return *tag_at(last) != 0 || *tag_at(last + 2) != 0;
+}
+
+static int covered(u32 start, u32 end, u32 lo, u32 n)
+{
+   return lo < end && lo + 4 * n > start;
+}
+
+static int test_gate_word_is_tagged(void)
+{
+   int fix;
+   for (fix = 0; fix <= 1; fix++) {
+      u32 end;
+      /* ONE gate (the checked word): a block scanned from 0x03001604 stops
+       * at 0x0300168c and covers 0x03001688. */
+      memset(tagmap, 0, sizeof(tagmap));
+      end = scan_to_gate(0x03001604u, 0x0300168cu, fix);
+      CHECK(end == 0x0300168cu);
+      CHECK(covered(0x03001604u, end, 0x03001688u, 2));  /* live block is hit */
+      /* ...so the store MUST be caught.  Before the fix it was not. */
+      CHECK(stm_raises_smc(0x03001688u, 2) == fix);
+
+      /* TWO gates, and the one-instruction block AT the low gate has been
+       * translated while the block at the high gate has not run yet: the
+       * same hole, one word along. */
+      memset(tagmap, 0, sizeof(tagmap));
+      end = scan_to_gate(0x03001688u, 0x0300168cu, fix);
+      CHECK(covered(0x03001688u, end, 0x03001688u, 2));
+      CHECK(stm_raises_smc(0x03001688u, 2) == fix);
+
+      /* TWO gates, only the block that stops at the LOW gate is live: it does
+       * not cover either written word, so no SMC is needed -- and the fix
+       * must not create one (the low word is the unchecked one). */
+      memset(tagmap, 0, sizeof(tagmap));
+      end = scan_to_gate(0x03001604u, 0x03001688u, fix);
+      CHECK(!covered(0x03001604u, end, 0x03001688u, 2));
+      CHECK(stm_raises_smc(0x03001688u, 2) == 0);
+   }
+   return 0;
+}
+
+/* ======================================================================== 8
+ * A Thumb BL whose two halves land in different blocks.
+ *
+ * cpu_threaded.c translate_thumb_instruction: the low half (0xF000-0xF7FF)
+ * emitted no code; the high half is fused with it (thumb_bl, target from
+ * scan_block's thumb_branch_target) only when both are in one block.  A gate
+ * at the high half starts a new block there, which runs thumb_blh:
+ * target = LR + offset*2.  The low half must therefore leave
+ * LR = pc + 4 + (sext(off11) << 12) behind when it ends its block.
+ */
+static u32 bl_fused_target(u32 low_pc, u32 low_op, u32 high_op)
+{
+   /* scan_block: block_end_pc == high_pc + 2 when the high half is scanned */
+   u32 block_end_pc = low_pc + 4;
+   return block_end_pc + ((int32_t)((low_op & 0x07FFu) << 21) >> 9) +
+          ((high_op & 0x07FFu) * 2);
+}
+
+static u32 bl_low_lr(u32 low_pc, u32 low_op)
+{
+   return low_pc + 4 + ((int32_t)((low_op & 0x07FFu) << 21) >> 9);
+}
+
+static int test_split_thumb_bl(void)
+{
+   /* bl 0x0821ae6c from 0x08218fc4 (the Heart & Soul sprite loop): f001 ff52 */
+   const u32 low_pc = 0x08218fc4u, low = 0xF001u, high = 0xFF52u;
+   const u32 stale_lr = 0x08218fc9u;
+   u32 lr;
+   CHECK(bl_fused_target(low_pc, low, high) == 0x0821ae6cu);
+
+   /* Before: the low half did nothing, so the split high half branched to
+    * stale LR + offset. */
+   lr = stale_lr;
+   CHECK(lr + (high & 0x07FFu) * 2 != 0x0821ae6cu);
+
+   /* After: the low half, ending its block, sets LR; the high half's thumb_blh
+    * then lands exactly where the fused form does -- including backwards. */
+   lr = bl_low_lr(low_pc, low);
+   CHECK(lr + (high & 0x07FFu) * 2 == bl_fused_target(low_pc, low, high));
+   CHECK(bl_low_lr(0x03001000u, 0xF7FFu) + (0xFFFFu & 0x07FFu) * 2 ==
+         bl_fused_target(0x03001000u, 0xF7FFu, 0xFFFFu));
    return 0;
 }
 
 int main(void)
 {
    struct { const char *name; int (*fn)(void); } t[] = {
+      { "a block stopping at a gate tags the gate word", test_gate_word_is_tagged },
+      { "a split Thumb BL keeps its LR", test_split_thumb_bl                },
       { "sentinel becomes j 0x0FFFFFFC", test_sentinel_is_a_jump_to_nowhere },
       { "region classifier == the switch", test_region_classifier           },
       { "unmappable exits are contained", test_containment                  },
       { "gate promotion needs fresh evidence", test_promotion_rule          },
       { "writer fingerprint", test_writer_fingerprint                       },
+      { "partial ranges require both endpoint gates", test_partial_range_requires_both_gates },
    };
    unsigned i;
    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {

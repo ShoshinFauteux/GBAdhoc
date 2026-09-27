@@ -40,11 +40,18 @@ static char evt_ring[FE_EVT_RING];
 static volatile unsigned evt_w, evt_r;
 static void (*evt_wake)(void);
 static unsigned evt_drop, evt_hi;
+/* Drops already announced by an in-band gap marker (see emit()). */
+static unsigned evt_drop_marked __attribute__((unused));
 static unsigned evt_io_us, evt_io_max_us;
 
 void fe_evt_set_clock(unsigned long long (*now_us)(void))
 {
    evt_clock = now_us;
+}
+
+unsigned long long fe_evt_now_us(void)
+{
+   return evt_clock ? evt_clock() : 0ull;
 }
 
 void fe_evt_prof(unsigned *lines, unsigned *us, unsigned *max_us)
@@ -150,6 +157,11 @@ int fe_evt_service(void)
 #endif   /* GPSP_NO_TELEMETRY */
 }
 
+unsigned fe_evt_drops(void)
+{
+   return evt_drop;
+}
+
 int fe_evt_pending(void)
 {
    return (int)(evt_w - evt_r);
@@ -227,7 +239,26 @@ static void emit(const char *prefix, const char *fmt, va_list ap)
    {
       /* Async: the emulation thread pays a memcpy and a semaphore signal;
        * the memory stick is the writer thread's problem (ADR-0024). */
-      if (!ring_push(line, n))
+      /* A GAP IN THE LOG IS MARKED WHERE IT HAPPENED.  The drop counter used
+       * to reach the file only inside sess_cost -- a line that goes through
+       * this same ring, so a starved writer (the io thread sits BELOW the
+       * emulation thread and a main loop that never blocks never lets it run)
+       * lost the very report of its own loss.  Now the first line that fits
+       * after any drop is preceded by `EVT evt_gap dropped=N total=T`, so a
+       * reader sees exactly where lines vanished and how many.  If even the
+       * marker does not fit, the line is dropped too and the marker waits for
+       * the next one: the gap only grows, it is never silent.  The exit path
+       * also writes the total synchronously (fe_evt_drops()). */
+      if (evt_drop != evt_drop_marked)
+      {
+         char mk[96];
+         int mn = snprintf(mk, sizeof(mk), "EVT evt_gap dropped=%u total=%u\n",
+                           evt_drop - evt_drop_marked, evt_drop);
+         if (mn > 0 && (evt_w - evt_r) + (unsigned)mn + n <= FE_EVT_RING &&
+             ring_push(mk, (unsigned)mn))
+            evt_drop_marked = evt_drop;
+      }
+      if (evt_drop != evt_drop_marked || !ring_push(line, n))
          evt_drop++;
       evt_wake();
    }

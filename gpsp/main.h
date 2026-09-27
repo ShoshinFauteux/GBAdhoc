@@ -128,7 +128,7 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
 #define SMC_SCAN_MAXEXIT  2  /* MAX_EXITS block exits recorded */
 #define SMC_SCAN_GATE     3  /* hit a translation gate target */
 #define SMC_SCAN_MAXSIZE  4  /* MAX_BLOCK_SIZE instructions */
-#define SMC_SCAN_RAMEND   5  /* ran into the 0x3007FF0 / 0x203FFFF0 clamp */
+#define SMC_SCAN_RAMEND   5  /* ran into the 0x3007FF0 / 0x203FFF0 clamp */
 
 extern u32 smc_blk_watch;
 extern u32 smc_last_write_addr;  /* GBA addr of the store that forced a flush */
@@ -312,6 +312,9 @@ u32 function_cc update_gba(int remaining_cycles);
  */
 void gpsp_visible_done_hook(void);
 void reset_gba(void);
+void main_init_dynarec(void);
+void main_enable_dynarec(void);
+bool gpsp_dynarec_cache_available(void);
 
 void init_main(void);
 

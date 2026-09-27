@@ -71,7 +71,7 @@ $(CORE_LIB):
 	  $$(find . -name '*.o' \
 	       -not -path './sdl/*' -not -path './psp/*' \
 	       -not -path './frontend-common/*' -not -path './netdrv/*' \
-	       -not -path './tools/*' \
+	       -not -path './tools/*' -not -path './gbcore/*' \
 	       -not -path './tests/*' \
 	       -not -path './mips/*' -not -path './arm/*' \
 	       -not -path './3ds/*' -not -path './jni/*')

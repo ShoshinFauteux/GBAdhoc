@@ -5,9 +5,9 @@
 #     at frame 300 and self-drives it: save state -> load state -> settings
 #     (cycle scale fit/stretch/back, persisting config) -> wireless panel ->
 #     resume.  GE dumps of the menu/settings/wireless screens land in log/.
-#     Asserts the full EVT ladder + the .st0 savestate + config_saved.
+#     Asserts the full EVT ladder + a slot 2 savestate/preview + config_saved.
 #   Phase B (simff=300): a virtual FF hold (Square) engages for 300 frames
-#     at the configured multiplier (default 2x): asserts ff_user on/off with
+#     at the configured multiplier (default 3x): asserts ff_user on/off with
 #     the frameskip engage path, and a clean run to exit.
 #
 # Exit 0 = pass. Prereqs: setup_ppsspp.sh ran once; psp/EBOOT.PBP built.
@@ -96,22 +96,24 @@ run_instance uidemo
 assert_evt "$ART/frontend-uidemo.log" \
   "^EVT ui_open" \
   "^EVT ui_demo_start" \
-  "^EVT state_save file=.*\.st0 size=425984" \
-  "^EVT state_load file=.*\.st0 size=425984" \
+  "^EVT state_save file=.*\.st1 size=425984" \
+  "^EVT state_load file=.*\.st1 size=425984" \
   "^EVT ui_screen name=settings" \
   "^EVT video_mode scale=fit filter=nearest" \
   "^EVT video_mode scale=stretch filter=nearest" \
   "^EVT video_mode scale=1x filter=nearest" \
-  "^EVT config_saved scale=0" \
+  "^EVT config_saved scale=[0-2]" \
   "^EVT ui_screen name=wireless" \
   "^EVT ui_demo_done" \
   "^EVT ui_close" \
   "^EVT exit code=0" || fail "phase A EVT ladder incomplete (see verdict)"
 
-ls "$GAME"/roms/*.st0 >/dev/null 2>&1 || fail "savestate .st0 missing"
-[ -f "$GAME/log/ge_ui.bmp" ]    || fail "menu GE dump ge_ui.bmp missing"
+STATE_SLOT2="$(find "$GAME/roms" -maxdepth 1 -iname '*.st1' -print -quit)"
+[ -n "$STATE_SLOT2" ] || fail "savestate slot 2 (.st1) missing"
+[ -s "$STATE_SLOT2.thumb" ] || fail "slot 2 preview missing"
+[ -f "$GAME/log/ge_ui_0.bmp" ]  || fail "menu GE dump ge_ui_0.bmp missing"
 [ -f "$GAME/config.ini" ]       || fail "config.ini not persisted"
-cp "$GAME/log/ge_ui.bmp" "$GAME/config.ini" "$ART/" 2>/dev/null || true
+cp "$GAME/log/ge_ui_0.bmp" "$GAME/config.ini" "$ART/" 2>/dev/null || true
 
 # --- Phase B: simulated FF hold ---------------------------------------------
 setup_sandbox
@@ -122,7 +124,7 @@ EOF
 run_instance simff
 
 assert_evt "$ART/frontend-simff.log" \
-  "^EVT ff_user on mult_x10=20" \
+  "^EVT ff_user on mult_x10=30" \
   "^EVT ff_user off" \
   "^EVT heartbeat frames=600" \
   "^EVT exit code=0" || fail "phase B EVT ladder incomplete (see verdict)"

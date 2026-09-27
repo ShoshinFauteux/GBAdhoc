@@ -116,8 +116,8 @@ static int fail(int rc, const char *where, unsigned sce)
    N.last_sce = sce;
    stage(where);
    fe_evt("mg_net_error stage=%s rc=%d sce=0x%08X", where, rc, sce);
-   mgnet_profile_release();
    mgnet_wifi_down();
+   mgnet_profile_release();
    stage(where);      /* down() resets it; the failing rung is the useful one */
    return rc;
 }
@@ -224,7 +224,7 @@ void mgnet_wifi_down(void)
    if (N.progress == ST_DOWN)
       return;
 
-   if (N.progress >= ST_ASSOCIATED)
+   if (N.progress >= ST_APCTL)
    {
       int state, i;
       sceNetApctlDisconnect();

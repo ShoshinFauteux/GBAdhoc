@@ -51,6 +51,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$EBOOT" ]  || EBOOT="$REPO/psp/EBOOT.PBP"
 [ -n "$OUTDIR" ] || OUTDIR="$REPO/dist"
+EBOOT_DIR="$(cd "$(dirname "$EBOOT")" && pwd)"
+EBOOT="$EBOOT_DIR/$(basename "$EBOOT")"
 
 # ----------------------------------------------------------- the EBOOT -----
 [ -f "$EBOOT" ] || die "no EBOOT at '$EBOOT'.
@@ -64,17 +66,37 @@ EBOOT_SIZE=$(wc -c < "$EBOOT" | tr -d ' ')
   That is far too small to contain the gpSP core — this looks like a failed or
   partial build, not a release candidate."
 
-# Staleness: any frontend/driver source, the psp Makefile, or the core archive
-# newer than the EBOOT means you are about to ship yesterday's binary.
-STALE=$(find "$REPO/psp" "$REPO/frontend-common" "$REPO/netdrv" \
-             -maxdepth 1 \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) \
-             -newer "$EBOOT" -print 2>/dev/null || true)
-if [ -f "$REPO/gpsp_libretro_psp1.a" ] && \
-   [ "$REPO/gpsp_libretro_psp1.a" -nt "$EBOOT" ]; then
-  STALE="$STALE
-$REPO/gpsp_libretro_psp1.a"
-fi
+ME_PRX="$EBOOT_DIR/gbadhoc_me.prx"
+[ -f "$ME_PRX" ] || ME_PRX="$REPO/psp/me/gbadhoc_me.prx"
+[ -f "$ME_PRX" ] || die "no Media Engine module at '$ME_PRX'. Build the PSP frontend before packaging."
+
+# Staleness: any recursively included PSP/frontend/transport source or build
+# input, including artwork embedded in EBOOT.PBP, newer than the EBOOT means
+# you are about to ship yesterday's binary.
+STALE=$({
+  find "$REPO" -maxdepth 1 -type f \( -name '*.c' -o -name '*.cc' \
+       -o -name '*.h' -o -name '*.S' -o -name '*.s' \
+       -o -name 'Makefile' \)
+  find "$REPO/psp" "$REPO/frontend-common" "$REPO/netdrv" "$REPO/libretro" \
+       "$REPO/gbcore" \
+       -type f \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
+                   -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \
+                   -o -name '*.inc' \
+                   -o -name '*.png' -o -name '*.jpg' -o -name '*.bmp' \)
+} | while IFS= read -r source; do
+       [ "$source" -nt "$EBOOT" ] && printf '%s\n' "$source" || true
+     done)
 STALE=$(echo "$STALE" | sed '/^$/d')
+ME_STALE=$(find "$REPO/psp/me" -type f \( -name '*.c' -o -name '*.cc' \
+             -o -name '*.h' -o -name '*.S' -o -name '*.s' \
+             -o -name '*.exp' -o -name 'Makefile' \) \
+             -newer "$ME_PRX" -print 2>/dev/null || true)
+for me_dep in psp/Makefile video.cc video.h video_prof.h common.h; do
+  if [ "$REPO/$me_dep" -nt "$ME_PRX" ]; then
+    ME_STALE="$ME_STALE
+$REPO/$me_dep"
+  fi
+done
 if [ -n "$STALE" ]; then
   if [ "$ALLOW_STALE" -eq 1 ]; then
     echo "WARNING: EBOOT is older than these sources (--allow-stale given):" >&2
@@ -86,6 +108,46 @@ if [ -n "$STALE" ]; then
     exit 1
   fi
 fi
+if [ -n "$ME_STALE" ]; then
+  if [ "$ALLOW_STALE" -eq 1 ]; then
+    echo "WARNING: Media Engine module is older than these sources (--allow-stale given):" >&2
+    echo "$ME_STALE" | sed 's/^/  /' >&2
+  else
+    echo "FATAL: '$ME_PRX' is OLDER than Media Engine sources:" >&2
+    echo "$ME_STALE" | sed 's/^/  /' >&2
+    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
+    exit 1
+  fi
+fi
+
+# Confirm that this is the player profile and that the supplied EBOOT and PRX
+# are the exact pair recorded by the build, rather than unrelated fresh files.
+BUILD_MANIFEST="$EBOOT_DIR/build-manifest.json"
+[ -f "$BUILD_MANIFEST" ] || die "no build-manifest.json beside '$EBOOT'; build with tools/build.sh release --out DIR"
+python3 - "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" <<'PY' || die "build manifest does not describe this release EBOOT and Media Engine module"
+import hashlib, json, pathlib, sys
+m = json.loads(pathlib.Path(sys.argv[1]).read_text())
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+if m.get("profile") != "release":
+    raise SystemExit("manifest profile is not release")
+if m.get("eboot", {}).get("sha256") != sha(sys.argv[2]):
+    raise SystemExit("EBOOT hash differs from build manifest")
+if m.get("mePrxSha256") != sha(sys.argv[3]):
+    raise SystemExit("Media Engine PRX hash differs from build manifest")
+PY
+BUILD_ID=$(python3 - "$BUILD_MANIFEST" <<'PY'
+import json, pathlib, sys
+m = json.loads(pathlib.Path(sys.argv[1]).read_text())
+commit = m.get("sourceCommit", "unknown")
+clean = bool(m.get("workingTreeClean", False))
+print("%s|%s" % (commit, "clean" if clean else "dirty"))
+PY
+)
 
 # ---------------------------------------------------------- version/stamp --
 if [ -z "$VERSION" ]; then
@@ -96,9 +158,11 @@ fi
 echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9]+)*$' || \
   die "version '$VERSION' does not look like X.Y.Z"
 
-COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_COMMIT="${BUILD_ID%%|*}"
+BUILD_CLEAN="${BUILD_ID#*|}"
+COMMIT="${BUILD_COMMIT:0:7}"
 DIRTY=""
-if ! git -C "$REPO" diff --quiet HEAD -- 2>/dev/null; then DIRTY="-dirty"; fi
+[ "$BUILD_CLEAN" = clean ] || DIRTY="-dirty"
 BUILT="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
 note "packaging $PRODUCT v$VERSION (commit ${COMMIT}${DIRTY})"
@@ -112,6 +176,8 @@ rm -rf "$STAGE"
 mkdir -p "$APP/roms" "$APP/saves" "$APP/log"
 
 cp "$EBOOT" "$APP/EBOOT.PBP"
+[ -f "$ME_PRX" ] || die "no Media Engine module at '$ME_PRX' — build the PSP frontend before packaging"
+cp "$ME_PRX" "$APP/gbadhoc_me.prx"
 # Keep the empty folders alive through zip/unzip on every extractor.
 : > "$APP/roms/.keep"; : > "$APP/saves/.keep"; : > "$APP/log/.keep"
 
@@ -155,6 +221,7 @@ Copy the "PSP" folder in this zip to the ROOT of your memory stick.  You get:
 
     ms0:/PSP/GAME/$APPDIR_NAME/
         EBOOT.PBP     the app
+        gbadhoc_me.prx  Media Engine renderer module
         roms/         <- put your own .gba ROMs here
         saves/        (used by per-game builds)
         log/          frontend.log lands here

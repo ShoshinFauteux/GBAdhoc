@@ -29,6 +29,10 @@
 #elif defined(PS2)
 #include <kernel.h>
 #endif
+#if defined(RUNTIME_JIT_CACHE)
+#include <malloc.h>   /* memalign */
+#include <stdint.h>   /* uintptr_t */
+#endif
 
 u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
@@ -49,6 +53,18 @@ u8* rom_translation_cache_ptr;
 u8* ram_translation_cache_ptr;
 u8 *rom_translation_ptr = rom_translation_cache;
 u8 *ram_translation_ptr = ram_translation_cache;
+#elif defined(RUNTIME_JIT_CACHE)
+/* The SMALL tier lives in the stub file's .bss exactly where the fixed-size
+ * arrays used to; these pointers start there and move only if startup
+ * allocates the LARGE tier (dynarec_select_translation_caches, below). */
+extern u8 rom_translation_cache_static[ROM_TRANSLATION_CACHE_SIZE];
+extern u8 ram_translation_cache_static[RAM_TRANSLATION_CACHE_SIZE];
+u8 *rom_translation_cache = rom_translation_cache_static;
+u8 *ram_translation_cache = ram_translation_cache_static;
+u32 rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE;
+u32 ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
+u8 *rom_translation_ptr = rom_translation_cache_static;
+u8 *ram_translation_ptr = ram_translation_cache_static;
 #else
 u8 *rom_translation_ptr = rom_translation_cache;
 u8 *ram_translation_ptr = ram_translation_cache;
@@ -223,12 +239,55 @@ typedef struct
   #include "x86/x86_emit.h"
 #endif
 
+/* Only the MIPS emitter needs a larger private entry for SMC retirement.
+ * Other emitters use the ordinary block prologue for RAM and ROM blocks. */
+#ifndef ram_block_prologue_size
+#define ram_block_prologue_size block_prologue_size
+#endif
+
 /* Cache invalidation */
 
 #if defined(PSP)
+  /* DIAGNOSTIC (harness `cache_paranoid = 1`): every sync writes back and
+   * invalidates the WHOLE data cache and invalidates the WHOLE instruction
+   * cache, instead of the range.  It removes every way a ranged sync can
+   * miss a line (unaligned ends, a patch outside the synced range), so a
+   * hardware-only divergence that goes away with it is a coherency hole.
+   * Emulation is unchanged; only host time is spent. */
+  u32 platform_cache_paranoid;
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    if (platform_cache_paranoid) {
+      sceKernelDcacheWritebackInvalidateAll();
+      sceKernelIcacheInvalidateAll();
+      return;
+    }
     sceKernelDcacheWritebackRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
     sceKernelIcacheInvalidateRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
+  }
+
+  /* DIAGNOSTIC (harness `jit_coherency_scan = N`): count the words of live
+   * RAM-cache code whose CACHED view differs from main memory.  The CPU fetches
+   * instructions from memory (through the I-cache), never from the D-cache, so
+   * a word that differs here is code the emitter wrote that instruction fetch
+   * cannot see yet -- a missing writeback.  The RAM cache holds only code
+   * below ram_translation_ptr (its tag table is at the far end), so between
+   * frames every mismatch is a real hole.  Reads through the uncached alias;
+   * never writes.  `first` receives the first mismatching host address. */
+  u32 jit_coherency_scan(u32 *first)
+  {
+    const u32 *p   = (const u32 *)ram_translation_cache;
+    const u32 *end = (const u32 *)ram_translation_ptr;
+    u32 n = 0;
+    for (; p < end; p++) {
+      const volatile u32 *mem =
+        (const volatile u32 *)(0x40000000u | (u32)p);
+      if (*mem != *p) {
+        if (!n && first)
+          *first = (u32)p;
+        n++;
+      }
+    }
+    return n;
   }
 #elif defined(PS2)
   void platform_cache_sync(void *baseaddr, void *endptr) {
@@ -1744,6 +1803,18 @@ void translate_icache_sync() {
 
 #define arm_flag_status()                                                     \
 
+/* See the (low word) BL case in translate_thumb_instruction.  Only the MIPS
+ * emitter is built and verified in this tree; other back ends keep upstream
+ * behaviour. */
+#if defined(MIPS_ARCH) && !defined(NO_BL_FIX)
+#define thumb_bl_low_alone(lr_value) {                                        \
+  generate_load_imm(reg_a0, (lr_value));                                      \
+  generate_store_reg(reg_a0, REG_LR);                                         \
+}
+#else
+#define thumb_bl_low_alone(lr_value) do { (void)(lr_value); } while (0)
+#endif
+
 #define translate_thumb_instruction()                                         \
   flag_status = block_data[block_data_position].flag_data;                    \
   check_pc_region(pc);                                                        \
@@ -2320,8 +2391,18 @@ void translate_icache_sync() {
     case 0xF0 ... 0xF7:                                                       \
     {                                                                         \
       /* (low word) BL label */                                               \
-      /* This should possibly generate code if not in conjunction with a BLH  \
-         next, but I don't think anyone will do that. */                      \
+      /* Normally fused with the high word that follows (thumb_bl).  But a    \
+         translation gate at the high word -- or MAX_BLOCK_SIZE / the RAM-end \
+         clamp -- ends the block right here, and the high word then starts    \
+         a block of its own as thumb_blh, which computes its target from LR.  \
+         So when this is the block's last instruction, perform the low        \
+         word's architectural effect: LR = PC + 4 + (offset << 12).  Without  \
+         it the high word branched to (stale LR + offset). */                 \
+      if((pc + 2) == block_end_pc)                                            \
+      {                                                                       \
+        u32 bl_lr = pc + 4 + ((s32)((opcode & 0x07FF) << 21) >> 9);           \
+        thumb_bl_low_alone(bl_lr);                                            \
+      }                                                                       \
       break;                                                                  \
     }                                                                         \
                                                                               \
@@ -2576,7 +2657,7 @@ typedef struct
 static u32 ram_block_tag = INITIAL_TOP_TAG;
 
 inline static ramtag_type* get_ram_tag(u16 tagval) {
-  ramtag_type *tbl = (ramtag_type*)&ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE];
+  ramtag_type *tbl = (ramtag_type*)&ram_translation_cache[ram_translation_cache_size];
   s16 tgidx = (s16)(tagval);
   return &tbl[tgidx >> 1];  /* Since LSB is always 1 and thus unused */
 }
@@ -2592,6 +2673,15 @@ u32 smc_partial_active;
 typedef struct { u32 addr; u16 tag; } smc_retired_tag_type;
 static smc_retired_tag_type smc_retired_tags[SMC_RETIRED_TAGS];
 static u32 smc_retired_tag_count;
+
+/* Set when any live RAM block's source wraps past the end of its region's
+ * canonical window (a block entered through a mirror near the top, or one that
+ * starts inside the last 16 bytes and so misses the scan clamp).  Such a block
+ * covers [start, end-of-region) AND [region base, ...), which a single [low,
+ * high) overlap test cannot express, so while one is live every selective
+ * retirement falls back to the full flush.  Cleared only by the full RAM
+ * flush, which is also the only thing that kills every live block. */
+static u32 smc_partial_wrap_live;
 
 static void smc_restore_retired_tag(u32 pc, u16 *tagp, u32 thumb)
 {
@@ -2801,6 +2891,36 @@ void badjump_report(u32 pc);
 #define BADJUMP_SENTINEL(pc) (BLOCK_LOOKUP_UNMAPPABLE)
 #endif
 
+/* XLAT_DEPTH_PROBE (soak/diagnostic only): how deep does eager exit
+ * resolution nest, and how low does the main-thread stack get while it does?
+ * Each level is ~380-430 B on the 256 KB PSP main stack (measured from the
+ * psp-gcc prologues), and every savestate reload empties the ROM cache, so
+ * the first frames after a load are the worst case.  The frontend reads and
+ * resets these in its core_health line. */
+#ifdef DMA_SMC_FLUSH
+u32 dma_smc_flushes;   /* incremented by update_gba (main.c) */
+#endif
+
+#ifdef XLAT_DEPTH_PROBE
+u32 xlat_depth_max;
+u32 xlat_sp_min;
+static u32 xlat_depth;
+void xlat_depth_probe_reset(void)
+{
+  xlat_depth_max = 0;
+  xlat_sp_min = 0;
+}
+#define XLAT_PROBE_ENTER() do {                                               \
+  u32 xlat_sp_ = (u32)(uintptr_t)__builtin_frame_address(0);                  \
+  if (++xlat_depth > xlat_depth_max) xlat_depth_max = xlat_depth;             \
+  if (!xlat_sp_min || xlat_sp_ < xlat_sp_min) xlat_sp_min = xlat_sp_;         \
+} while (0)
+#define XLAT_PROBE_LEAVE() do { xlat_depth--; } while (0)
+#else
+#define XLAT_PROBE_ENTER() do { } while (0)
+#define XLAT_PROBE_LEAVE() do { } while (0)
+#endif
+
 #define block_lookup_translate_builder(type)                                  \
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
@@ -2840,7 +2960,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
          * nesting-safe because translate_block re-enters itself through      \
          * block_lookup_translate below -- see main.h. */                     \
         cph_t = core_phase_enter(CORE_PHASE_FINE);                            \
+        XLAT_PROBE_ENTER();                                                   \
         result = translate_block_##type(pc, true);                            \
+        XLAT_PROBE_LEAVE();                                                   \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
         if (result) {                                                         \
@@ -2887,7 +3009,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         rom_translation_ptr += sizeof(hashhdr_type);                          \
         blkptr = rom_translation_ptr + block_prologue_size;                   \
         cph_t = core_phase_enter(CORE_PHASE_FINE);                            \
+        XLAT_PROBE_ENTER();                                                   \
         result = translate_block_##type(pc, false);                           \
+        XLAT_PROBE_LEAVE();                                                   \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
         if (result)                                                           \
@@ -2939,13 +3063,272 @@ u32 badjump_prev_pc;   /* pc of the lookup before the current one */
 #define BADJUMP_NOTE_PC(p) do { } while (0)
 #endif
 
+#ifdef STALE_CHECK
+/* DIAGNOSTIC: a LIVE translated IWRAM block (its start tag unchanged, and under
+ * SMC_PARTIAL_SAFE its body not retired) whose guest source words no longer
+ * match what was translated.  That is stale code the SMC machinery failed to
+ * catch; it is reported at the next dispatch/event after the write. */
+#define STALE_RECS  256
+#define STALE_WORDS 128
+typedef struct { u32 start, end, thumb, tag, live; u32 w[STALE_WORDS]; } stale_rec;
+static stale_rec stale_recs[STALE_RECS];
+static u32 stale_rr, stale_reports, stale_checks;
+static u16 *stale_tagp(u32 pc) { return (u16 *)(iwram + (pc & 0x7FFF)); }
+void stale_note(u32 start, u32 end, u32 thumb)
+{
+  u32 i, n, slot = STALE_RECS;
+  stale_rec *r;
+  if ((start >> 24) != 3 || end <= start) return;
+#ifdef STALE_STACKNOTE
+  if ((start & 0x7FFF) >= 0x7000) {
+    static u32 sn;
+    FILE *f;
+    if (sn++ < 200 && (f = fopen("ms0:/stacknote.txt", "a"))) {
+      fprintf(f, "xlat %s %08x..%08x frame %u REG_PC %08x lr %08x sp %08x cpsr %08x first %08x\n",
+              thumb ? "thumb" : "arm", (unsigned)start, (unsigned)end,
+              (unsigned)frame_counter, (unsigned)reg[REG_PC], (unsigned)reg[14],
+              (unsigned)reg[13], (unsigned)reg[REG_CPSR],
+              (unsigned)*(u32 *)(iwram + 0x8000 + (start & 0x7FFC)));
+      fclose(f);
+    }
+  }
+#endif
+  for (i = 0; i < STALE_RECS; i++)
+    if (stale_recs[i].live && stale_recs[i].start == start &&
+        stale_recs[i].thumb == thumb) { slot = i; break; }
+  if (slot == STALE_RECS)
+    for (i = 0; i < STALE_RECS; i++)
+      if (!stale_recs[i].live) { slot = i; break; }
+  if (slot == STALE_RECS) slot = (stale_rr++) % STALE_RECS;
+  r = &stale_recs[slot];
+  r->start = start; r->end = end; r->thumb = thumb;
+  r->tag = *stale_tagp(start); r->live = 1;
+  n = (end - start + 3) >> 2;
+  if (n > STALE_WORDS) { n = STALE_WORDS; r->end = start + 4 * n; }
+  for (i = 0; i < n; i++)
+    r->w[i] = *(u32 *)(iwram + 0x8000 + ((start + 4 * i) & 0x7FFC));
+}
+void stale_scan(u32 where)
+{
+  u32 i, k, n;
+  stale_checks++;
+#ifdef STALE_DISPATCH_ONLY
+  /* Cheap mode: at a dispatch, examine only the block being entered, and do
+   * the full sweep only once per 64 update_gba calls. */
+  if (where != 0xFFFFFFFFu) {
+    u32 pc = where & 0x0FFFFFFE;
+    if ((pc >> 24) != 3) return;
+    for (i = 0; i < STALE_RECS; i++) {
+      stale_rec *r = &stale_recs[i];
+      if (!r->live || r->start != pc || r->thumb != (where & 1)) continue;
+      if (*stale_tagp(r->start) != r->tag) { r->live = 0; continue; }
+#ifdef SMC_PARTIAL_SAFE
+      if (smc_partial_active) {
+        ramtag_type *te = get_ram_tag(r->tag);
+        if (!(r->thumb ? te->code_bytes_thumb : te->code_bytes_arm)) { r->live = 0; continue; }
+      }
+#endif
+      n = (r->end - r->start + 3) >> 2;
+      for (k = 0; k < n; k++) {
+        u32 a = r->start + 4 * k;
+        if (*(u32 *)(iwram + 0x8000 + (a & 0x7FFC)) != r->w[k]) {
+          FILE *f;
+          r->live = 0;
+          if (++stale_reports > 200) return;
+          f = fopen("ms0:/stale.txt", "a");
+          if (f) {
+            fprintf(f, "EXECUTING STALE (dispatch) %s block %08x..%08x word %08x was %08x now %08x frame %u\n",
+                    r->thumb ? "thumb" : "arm", (unsigned)r->start, (unsigned)r->end,
+                    (unsigned)a, (unsigned)r->w[k],
+                    (unsigned)*(u32 *)(iwram + 0x8000 + (a & 0x7FFC)),
+                    (unsigned)frame_counter);
+            fclose(f);
+          }
+          break;
+        }
+      }
+    }
+    return;
+  }
+  if (stale_checks & 63) return;
+#endif
+  for (i = 0; i < STALE_RECS; i++) {
+    stale_rec *r = &stale_recs[i];
+    u16 tag;
+    if (!r->live) continue;
+    tag = *stale_tagp(r->start);
+    if (tag != r->tag || !VALID_TAG(tag)) { r->live = 0; continue; }
+    if (r->live == 2) {
+      /* already reported stale: is the guest now EXECUTING it? */
+      u32 pc = (where == 0xFFFFFFFFu) ? reg[REG_PC] : where;
+      if (pc >= r->start && pc < r->end && stale_reports < 200) {
+        FILE *f = fopen("ms0:/stale.txt", "a");
+        stale_reports++;
+        if (f) {
+          fprintf(f, "EXECUTING STALE %s block %08x..%08x at pc %08x (%s) frame %u\n",
+                  r->thumb ? "thumb" : "arm", (unsigned)r->start, (unsigned)r->end,
+                  (unsigned)pc, where == 0xFFFFFFFFu ? "update_gba" : "dispatch",
+                  (unsigned)frame_counter);
+          fclose(f);
+        }
+        r->live = 0;
+      }
+      continue;
+    }
+#ifdef SMC_PARTIAL_SAFE
+    if (smc_partial_active) {
+      ramtag_type *te = get_ram_tag(tag);
+      if (!(r->thumb ? te->code_bytes_thumb : te->code_bytes_arm)) { r->live = 0; continue; }
+    }
+#endif
+    n = (r->end - r->start + 3) >> 2;
+    for (k = 0; k < n; k++) {
+      u32 a = r->start + 4 * k;
+      u32 now = *(u32 *)(iwram + 0x8000 + (a & 0x7FFC));
+      if (now != r->w[k]) {
+        FILE *f;
+        r->live = 2;
+        if (++stale_reports > 60) return;
+        f = fopen("ms0:/stale.txt", "a");
+        if (f) {
+          fprintf(f, "STALE #%u live %s block %08x..%08x  word %08x was %08x now %08x"
+                     "  frame %u  where %08x  REG_PC %08x  smc %u flush %u  gates",
+                  (unsigned)stale_reports, r->thumb ? "thumb" : "arm",
+                  (unsigned)r->start, (unsigned)r->end, (unsigned)a,
+                  (unsigned)r->w[k], (unsigned)now, (unsigned)frame_counter,
+                  (unsigned)where, (unsigned)reg[REG_PC],
+                  (unsigned)flush_ram_smc, (unsigned)flush_ram_total);
+          for (k = 0; k < translation_gate_targets; k++)
+            fprintf(f, " %08x", (unsigned)translation_gate_target_pc[k]);
+          fprintf(f, "\n");
+          fclose(f);
+        }
+        break;
+      }
+    }
+  }
+}
+#define STALE_NOTE(s, e, t) stale_note((s), (e), (t))
+#define STALE_SCAN(w) stale_scan(w)
+#else
+#define STALE_NOTE(s, e, t) do { } while (0)
+#define STALE_SCAN(w) do { } while (0)
+#endif
+
+#ifdef IRQ_INTEGRITY_CHECK
+/* DIAGNOSTIC.  On the GBA an interrupt is invisible to the code it interrupts:
+ * the BIOS IRQ stub saves r0-r3/r12/lr, the game's handler preserves r4-r11
+ * by ABI, and `subs pc, lr, #4` restores CPSR from SPSR_irq.  So at every IRQ
+ * RETURN, r0-r14 of the resumed mode and the CPSR must equal what they were at
+ * the matching IRQ ENTRY.  Any difference is the emulator losing guest state
+ * inside the handler -- timing-independent, so it discriminates a real
+ * dynarec defect from a mere change of interrupt cadence. */
+typedef struct { u32 r[15]; u32 cpsr, ret, mode, ifie, frame, site, smc, flush; } irqchk_rec;
+static irqchk_rec irqchk_stack[16];
+static u32 irqchk_depth, irqchk_entries, irqchk_exits, irqchk_bad, irqchk_unmatched;
+/* A savestate load or reset abandons any IRQ in flight. */
+void irqchk_reset(void) { irqchk_depth = 0; }
+void irqchk_enter(u32 site)
+{
+  irqchk_rec *e;
+  u32 i;
+  irqchk_entries++;
+  if (irqchk_depth >= 16) { irqchk_unmatched++; return; }
+  e = &irqchk_stack[irqchk_depth++];
+  for (i = 0; i < 15; i++) e->r[i] = reg[i];
+  e->cpsr  = REG_SPSR(MODE_IRQ);
+  e->ret   = REG_MODE(MODE_IRQ)[6] - 4;
+  e->mode  = reg[CPU_MODE];
+  e->ifie  = ((u32)read_ioreg(REG_IF) << 16) | read_ioreg(REG_IE);
+  e->frame = frame_counter;
+  e->site  = site;
+  e->smc   = flush_ram_smc;
+  e->flush = flush_ram_total;
+}
+void irqchk_exit(u32 old_mode, u32 address)
+{
+  irqchk_rec *e;
+  u32 i, diff = 0;
+  if (old_mode != MODE_IRQ || reg[CPU_MODE] == MODE_IRQ)
+    return;                                  /* not an IRQ return */
+  irqchk_exits++;
+  if (!irqchk_depth) { irqchk_unmatched++; return; }
+  e = &irqchk_stack[--irqchk_depth];
+  for (i = 0; i < 15; i++)
+    if (reg[i] != e->r[i]) diff |= 1u << i;
+  if (address != e->ret) diff |= 1u << 15;
+  if (reg[REG_CPSR] != e->cpsr) diff |= 1u << 16;
+  if (reg[CPU_MODE] != e->mode) diff |= 1u << 17;
+  if (diff) {
+    FILE *f;
+    irqchk_bad++;
+    if (irqchk_bad > 40) return;
+    f = fopen("ms0:/irqchk.txt", "a");
+    if (!f) return;
+    fprintf(f, "=== IRQ STATE LOST #%u  diff=%05x  frame %u->%u  site %u  depth %u"
+               "  entries %u exits %u\n",
+            (unsigned)irqchk_bad, (unsigned)diff, (unsigned)e->frame,
+            (unsigned)frame_counter, (unsigned)e->site, (unsigned)irqchk_depth,
+            (unsigned)irqchk_entries, (unsigned)irqchk_exits);
+    fprintf(f, "  IF:IE at entry %08x   smc flushes during %u   ram flushes during %u\n",
+            (unsigned)e->ifie, (unsigned)(flush_ram_smc - e->smc),
+            (unsigned)(flush_ram_total - e->flush));
+    fprintf(f, "  ret  entry %08x exit %08x | cpsr entry %08x exit %08x | mode %02x %02x\n",
+            (unsigned)e->ret, (unsigned)address, (unsigned)e->cpsr,
+            (unsigned)reg[REG_CPSR], (unsigned)e->mode, (unsigned)reg[CPU_MODE]);
+    for (i = 0; i < 15; i++)
+      fprintf(f, "  r%-2u %08x %08x%s\n", (unsigned)i, (unsigned)e->r[i],
+              (unsigned)reg[i], (diff >> i) & 1 ? "   <-- CHANGED" : "");
+    fprintf(f, "  gates (%u):", (unsigned)translation_gate_targets);
+    for (i = 0; i < translation_gate_targets; i++)
+      fprintf(f, " %08x", (unsigned)translation_gate_target_pc[i]);
+    fprintf(f, "\n  smc_last_write %08x  smc flushes %u  ram flushes %u\n",
+            (unsigned)smc_last_write_addr, (unsigned)flush_ram_smc,
+            (unsigned)flush_ram_total);
+    fclose(f);
+    /* The first two: guest RAM as the resumed code is about to see it. */
+    if (irqchk_bad <= 2) {
+      char nm[48];
+      snprintf(nm, sizeof(nm), "ms0:/irqlost-%u-iwram.bin", (unsigned)irqchk_bad);
+      if ((f = fopen(nm, "wb"))) { fwrite(&iwram[0x8000], 1, 0x8000, f); fclose(f); }
+      snprintf(nm, sizeof(nm), "ms0:/irqlost-%u-ewram.bin", (unsigned)irqchk_bad);
+      if ((f = fopen(nm, "wb"))) { fwrite(ewram, 1, 0x40000, f); fclose(f); }
+      snprintf(nm, sizeof(nm), "ms0:/irqlost-%u-regs.bin", (unsigned)irqchk_bad);
+      if ((f = fopen(nm, "wb"))) { fwrite(reg, 4, 64, f); fclose(f); }
+    }
+  }
+#ifdef IRQ_INTEGRITY_SUMMARY
+  /* PPSSPP runs only: a heartbeat proving the checker is live.  Left out of
+   * hardware diagnostics -- a synchronous Memory Stick write every ~16k IRQs. */
+  if ((irqchk_exits & 0x3FFF) == 0) {
+    FILE *f = fopen("ms0:/irqchk.txt", "a");
+    if (f) {
+      fprintf(f, "summary: frame %u entries %u exits %u bad %u unmatched %u depth %u\n",
+              (unsigned)frame_counter, (unsigned)irqchk_entries,
+              (unsigned)irqchk_exits, (unsigned)irqchk_bad,
+              (unsigned)irqchk_unmatched, (unsigned)irqchk_depth);
+      fclose(f);
+    }
+  }
+#endif
+}
+#endif
+
 #ifdef BADJUMP_REPORT
 u32 badjump_prev_pc;
+static u32 badjump_executed_pc = 0xFFFFFFFF;
 void badjump_report(u32 pc)
 {
   static int seen = 0;
-  FILE *f = fopen("ms0:/badjump.txt", "a");
+  FILE *f;
   unsigned g;
+  /* Garbage targets reached only by eager translation are routine (223 in one
+   * battle) and each report is a synchronous Memory Stick write on the
+   * emulation thread.  The first few show the pattern; the one that matters
+   * is the EXECUTED fault, which badjump_recover reports without this cap. */
+  if (seen >= 32 && pc != badjump_executed_pc)
+    return;
+  f = fopen("ms0:/badjump.txt", "a");
   if (!f) return;
   fprintf(f, "=== badjump #%d ===\n", ++seen);
   fprintf(f, "bad target pc  : %08x\n", (unsigned)pc);
@@ -2987,10 +3370,48 @@ void badjump_report(u32 pc)
  * time, so there is no working behaviour to lose. */
 #ifdef BADJUMP_SAFE
 u32 badjump_recoveries = 0;
+/* Pointing the CPU at the reset vector is NOT a reset: mode, IRQ enables,
+ * timers and sound DMA all carry on, so the BIOS boots in the wrong mode with
+ * the game's hardware still live.  Field report 2026-09-24 (H&S, PSP-3000,
+ * 3.0.0): a black screen over a stale sound buffer, the "zombie" that before
+ * DISPATCH_CYCLE_CHECK spun the console solid.  So the jump to 0 only has to
+ * survive to the end of THIS frame; the frontend reads this flag after
+ * retro_run() and performs a real reset_gba() between frames. */
+volatile u32 badjump_reset_pending = 0;
+u32 badjump_last_pc = 0;
+#ifdef BADJUMP_REPORT
+static void badjump_dump(const char *name, const void *p, unsigned len)
+{
+  FILE *f = fopen(name, "wb");
+  if (f) { fwrite(p, 1, len, f); fclose(f); }
+}
+#endif
 static u8 *badjump_recover(u32 pc)
 {
   u8 *r;
   badjump_recoveries++;
+  badjump_last_pc = pc;
+  badjump_reset_pending = 1;
+#ifdef BADJUMP_REPORT
+  /* The EXECUTED fault: full context (bypasses the routine-report cap) and,
+   * for the first two, the guest RAM exactly as the faulting code saw it --
+   * the savestate a player can take afterwards shows only the aftermath. */
+  badjump_executed_pc = pc;
+  badjump_report(pc);
+  if (badjump_recoveries <= 2)
+  {
+    char name[48];
+    snprintf(name, sizeof(name), "ms0:/badjump-%u-iwram.bin",
+             (unsigned)badjump_recoveries);
+    badjump_dump(name, &iwram[0x8000], 0x8000);   /* data half */
+    snprintf(name, sizeof(name), "ms0:/badjump-%u-ewram.bin",
+             (unsigned)badjump_recoveries);
+    badjump_dump(name, ewram, 0x40000);
+    snprintf(name, sizeof(name), "ms0:/badjump-%u-regs.bin",
+             (unsigned)badjump_recoveries);
+    badjump_dump(name, reg, sizeof(u32) * 64);
+  }
+#endif
 #ifdef BADJUMP_REPORT
   /* DIAGNOSTIC BUILDS ONLY.  This is reached from mips_indirect_branch_* --
    * i.e. from inside a translated block, with the dynarec's register state
@@ -3010,6 +3431,13 @@ static u8 *badjump_recover(u32 pc)
   reg[REG_CPSR] &= ~0x20;            /* ARM mode */
   reg[REG_PC]    = 0x0;              /* GBA reset vector */
   r = block_lookup_translate_arm(0x0);
+  /* BADJUMP_GUARD returns this pointer straight out of block_lookup_address_*,
+   * skipping the translate_icache_sync() that function does on its normal
+   * success path.  After any ROM-cache flush the reset-vector block is newly
+   * emitted here, so without a sync the Allegrex can fetch stale I-cache
+   * lines / un-written-back D-cache bytes for it.  PPSSPP does not model this,
+   * which is why the guard was only ever proven there. */
+  translate_icache_sync();
   if (r && r != BLOCK_LOOKUP_UNMAPPABLE)
     return r;
   return bios_swi_entrypoint;        /* last resort: known-good block */
@@ -3025,6 +3453,7 @@ static u8 *badjump_recover(u32 pc)
 u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
+  STALE_SCAN(pc);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_arm(pc);
     BADJUMP_GUARD(ret, pc);
@@ -3046,6 +3475,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
+  STALE_SCAN(pc | 1);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_thumb(pc);
     BADJUMP_GUARD(ret, pc);
@@ -3271,6 +3701,31 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define MAX_BLOCK_SIZE   1024   // 2/4KiB blocks max
 #define MAX_EXITS          32   // This covers 99% blocks
 
+/* SMC_GATE_CHARGE: charge a gated block's tail before its exit.
+ *
+ * generate_translation_gate ends a block with an indirect jump that neither
+ * subtracts the pending cycle_count nor checks the budget, so the instructions
+ * between the last cycle-update point and the gate cost the guest nothing.
+ * A gate inside a hot loop (the M4A mixer's endpoint gates) therefore makes
+ * that loop run partly for free, which moves timer/sound-DMA timing -- the
+ * PPSSPP full/control audio divergence.  Charging here restores the cycle
+ * total the ungated layout would have charged by the next check point.
+ *
+ * Scoped to SMC_SCAN_GATE on purpose: blocks that end at MAX_BLOCK_SIZE /
+ * MAX_EXITS / the RAM-end clamp keep upstream behaviour, so games that never
+ * earn a gate emit byte-identical code. */
+#ifdef SMC_GATE_CHARGE
+#define SMC_GATE_CHARGE_TAIL()                                                \
+  do {                                                                        \
+    if (scan_exit_reason == SMC_SCAN_GATE)                                    \
+    {                                                                         \
+      generate_cycle_update();                                                \
+    }                                                                         \
+  } while (0)
+#else
+#define SMC_GATE_CHARGE_TAIL() do { } while (0)
+#endif
+
 /* WHERE AN UNMAPPABLE BLOCK EXIT IS SENT, AND WHY IT EMITS NOTHING.
  *
  * The first version of this fix emitted a four-instruction dispatch island per
@@ -3328,6 +3783,63 @@ block_exit_type block_exits[MAX_EXITS];
 #define smc_write_arm_no()                                                    \
 
 #define smc_write_thumb_no()                                                  \
+
+
+/* A BLOCK THAT STOPS AT A TRANSLATION GATE MUST STILL TAG THE GATE WORD.
+ *
+ * scan_block tags each address at the top of its loop and tests for a gate
+ * only after advancing, so the word AT the gate is left untagged: it becomes
+ * "code" only once the block that starts there is itself translated.  Gates
+ * are placed at the FINAL word of the block stores that patch code, and that
+ * final word is the only one an STM/PUSH checks -- every earlier word goes
+ * through execute_aligned_store32, which has no SMC check.  Together that is a
+ * hole: while the block ending at the gate is live but the block starting at
+ * it has not been translated yet, a store whose earlier words land in the live
+ * block and whose checked final word lands on the gate raises NO SMC event,
+ * and the live block keeps executing the pre-patch instructions.
+ *
+ * Measured (PPSSPP, heart_soul_heavy, timing-neutral A/B, 2026-09-24): with
+ * only the high endpoint gate 0x0300168c, SoundMainRAM's `stm lr, {r0, r1}`
+ * at 0x03001644 rewrites 0x03001688 (unchecked) and 0x0300168c (checked but
+ * untagged).  Blocks 030015bc..0300168c and 03001604..0300168c stayed live
+ * holding the old `adds sb, r6, sb, asr #23` at 0x03001688 and ran it once
+ * per mixer channel: one wrong mixed sample, which is the whole "full vs
+ * control" audio divergence.  The low endpoint gate hides it for that one
+ * store only -- and not at all when the gate table is full and the low gate
+ * cannot be installed.
+ *
+ * Tagging the gate word as interior code (never as a block start: allocate_tag
+ * still happens only when the gate block itself is looked up) makes the final
+ * word's check fire whenever a live block precedes it.  Words already tagged
+ * are left alone, ROM scans are unaffected, and ungated scans never get here. */
+#define smc_tag_gate_arm_yes() {                                              \
+  intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
+  check_pc_region(block_end_pc);                                              \
+  if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
+    address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) =           \
+      CODE_TAG_BLOCK16;                                                       \
+  if(address16(pc_address_block, ((block_end_pc + 2) & 0x7FFF) + offset) == 0)\
+    address16(pc_address_block, ((block_end_pc + 2) & 0x7FFF) + offset) =     \
+      CODE_TAG_BLOCK16;                                                       \
+}
+
+#define smc_tag_gate_thumb_yes() {                                            \
+  intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
+  check_pc_region(block_end_pc);                                              \
+  if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
+    address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) =           \
+      CODE_TAG_BLOCK16;                                                       \
+}
+
+#define smc_tag_gate_arm_no()
+#define smc_tag_gate_thumb_no()
+
+#ifdef NO_GATE_TAG_FIX   /* DIAGNOSTIC A/B only: restore the pre-fix hole */
+#undef smc_tag_gate_arm_yes
+#undef smc_tag_gate_thumb_yes
+#define smc_tag_gate_arm_yes()
+#define smc_tag_gate_thumb_yes()
+#endif
 
 /* SMC_SCAN_SPCLAMP: stop scanning at the STACK POINTER, not at the top of
  * IWRAM.
@@ -3412,8 +3924,9 @@ static inline int smc_gate_map_has(u32 pc)
 
 #define SMC_GATE_MAP_ADD(pc)       smc_gate_map_add(pc)
 #define SMC_GATE_MAP_REBUILD()     smc_gate_map_rebuild()
-#define SMC_SCAN_GATE_END() do {                                           \
+#define SMC_SCAN_GATE_END(tag_gate_op) do {                                \
   if (smc_gate_map_has(block_end_pc)) {                                    \
+    tag_gate_op;                                                           \
     scan_exit_reason = SMC_SCAN_GATE;                                      \
     goto block_end;                                                        \
   }                                                                        \
@@ -3421,9 +3934,10 @@ static inline int smc_gate_map_has(u32 pc)
 #else
 #define SMC_GATE_MAP_ADD(pc)       do { } while (0)
 #define SMC_GATE_MAP_REBUILD()     do { } while (0)
-#define SMC_SCAN_GATE_END() do {                                           \
+#define SMC_SCAN_GATE_END(tag_gate_op) do {                                \
   for (i = 0; i < translation_gate_targets; i++) {                          \
     if (block_end_pc == translation_gate_target_pc[i]) {                   \
+      tag_gate_op;                                                         \
       scan_exit_reason = SMC_SCAN_GATE;                                    \
       goto block_end;                                                      \
     }                                                                      \
@@ -3497,12 +4011,12 @@ static inline int smc_gate_map_has(u32 pc)
       type##_set_condition(condition);                                        \
     }                                                                         \
                                                                               \
-    SMC_SCAN_GATE_END();                                                      \
+    SMC_SCAN_GATE_END(smc_tag_gate_##type##_##smc_write_op());                \
                                                                               \
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
     if((block_data_position == MAX_BLOCK_SIZE) ||                             \
-     (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFFF0) ||           \
+     (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFF0) ||            \
      SMC_SCAN_PAST_SP(block_end_pc))                                          \
     {                                                                         \
       scan_exit_reason = (block_data_position == MAX_BLOCK_SIZE)              \
@@ -3568,12 +4082,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
   if (ram_region) {
     translation_ptr = ram_translation_ptr;
     translation_cache_limit = &ram_translation_cache[
-       RAM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD
+       ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
        - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type)];
   } else {
     translation_ptr = rom_translation_ptr;
     translation_cache_limit =
-     rom_translation_cache + ROM_TRANSLATION_CACHE_SIZE -
+     rom_translation_cache + rom_translation_cache_size -
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
@@ -3588,6 +4102,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     scan_block(arm, yes);
     /* scan_block has just tagged exactly [block_start_pc, block_end_pc). */
     smc_blk_note_block(block_start_pc, block_end_pc, 0, scan_exit_reason);
+    STALE_NOTE(block_start_pc, block_end_pc, 0);
 #ifdef SMC_WRITE_HISTO
     smc_cover_note(block_start_pc, block_end_pc, scan_exit_reason);
 #endif
@@ -3668,7 +4183,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
     mips_emit_nop();
   } else
 #endif
+  {
+    /* Braced: generate_translation_gate is several statements, so the bare
+     * `else` above used to guard only its first one. */
+    SMC_GATE_CHARGE_TAIL();
     generate_translation_gate(arm);
+  }
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -3834,12 +4354,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   if (ram_region) {
     translation_ptr = ram_translation_ptr;
     translation_cache_limit = &ram_translation_cache[
-       RAM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD
+       ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
        - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type)];
   } else {
     translation_ptr = rom_translation_ptr;
     translation_cache_limit = &rom_translation_cache[
-       ROM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD];
+       rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
 
   generate_block_prologue();
@@ -3852,6 +4372,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   {
     scan_block(thumb, yes);
     smc_blk_note_block(block_start_pc, block_end_pc, 1, scan_exit_reason);
+    STALE_NOTE(block_start_pc, block_end_pc, 1);
 #ifdef SMC_WRITE_HISTO
     smc_cover_note(block_start_pc, block_end_pc, scan_exit_reason);
 #endif
@@ -3926,7 +4447,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     mips_emit_nop();
   } else
 #endif
+  {
+    SMC_GATE_CHARGE_TAIL();   /* braced for the same reason as the ARM side */
     generate_translation_gate(thumb);
+  }
 
   for(i = 0; i < block_exit_position; i++)
   {
@@ -4054,6 +4578,18 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 
 void init_bios_hooks(void)
 {
+  /* init_emitter has just written the handler stubs into
+   * [rom_translation_cache, watermark), and nothing else ever syncs that
+   * range: translate_icache_sync only covers [last, ptr), and last is set
+   * past the stubs right below.  Emitted code reaches them by `j`/`b`, so
+   * they must be visible to instruction fetch.  With the cache in the
+   * EBOOT's .bss this held by luck (the stubs are re-emitted identically at
+   * the same address on every load); with a heap-allocated cache the bytes
+   * under them were ordinary data a moment ago, so make it explicit.  Cost:
+   * one writeback + invalidate of a few KiB per ROM load / emitter rebuild. */
+  platform_cache_sync(rom_translation_cache,
+                      &rom_translation_cache[rom_cache_watermark]);
+
   // Pre-generate this entry point so that we can safely invoke fast
   // SWI calls from ROM and RAM regardless of cache flushes.
   rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
@@ -4077,6 +4613,7 @@ void flush_translation_cache_ram(void)
 
 #ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;
+  smc_partial_wrap_live = 0;
 #endif
 
   last_ram_translation_ptr = ram_translation_cache;
@@ -4139,30 +4676,50 @@ void flush_translation_cache_ram(void)
 /* Selective SMC invalidation used by the current hardware experiment.
  * Tags identify block starts, while per-mode end addresses record exact
  * source ranges. */
+/* Record a block's source extent in CANONICAL addresses.
+ *
+ * start_pc/end_pc are the raw pcs the scan walked, so a block translated from
+ * a mirror (0x0300xxxx + k*0x8000, 0x02xxxxxx + k*0x40000) used to store a
+ * raw end that the canonical overlap test in flush_translation_cache_ram_range
+ * compares against canonical write addresses -- a block starting at canonical
+ * S but recorded with a mirror end could be judged "not overlapping" a write
+ * it really covers.  Tags are already canonical (they index by offset), so
+ * rebasing the end onto base + offset(start) + length makes the extent exact
+ * for every non-wrapping block; wrapping ones set smc_partial_wrap_live. */
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
-  u32 off;
+  u32 off, base, size, len, canon_end;
 
   if (!smc_partial_active)
     return;
 
   if (start_pc >= 0x03000000 && start_pc < 0x04000000) {
     tagp = (u16 *)iwram;
-    off = (start_pc & 0x7FFF) >> 1;
+    base = 0x03000000;
+    size = 0x8000;
   } else if (start_pc >= 0x02000000 && start_pc < 0x03000000) {
     tagp = (u16 *)(ewram + 0x40000);
-    off = (start_pc & 0x3FFFF) >> 1;
+    base = 0x02000000;
+    size = 0x40000;
   } else {
     return;
   }
+  off = start_pc & (size - 1);
+  len = end_pc - start_pc;          /* > 0 and <= MAX_BLOCK_SIZE * 4 */
+  if (off + len > size) {
+    smc_partial_wrap_live = 1;
+    canon_end = base + size;
+  } else {
+    canon_end = base + off + len;
+  }
 
-  if (VALID_TAG(tagp[off])) {
-    ramtag_type *te = get_ram_tag(tagp[off]);
+  if (VALID_TAG(tagp[off >> 1])) {
+    ramtag_type *te = get_ram_tag(tagp[off >> 1]);
     if (thumb)
-      te->blk_end_thumb = end_pc;
+      te->blk_end_thumb = canon_end;
     else
-      te->blk_end_arm = end_pc;
+      te->blk_end_arm = canon_end;
   }
 }
 
@@ -4174,7 +4731,8 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, first, last, i, target_slot, domain_end;
 
-  if (high <= low || (low >> 24) != ((high - 1) >> 24)) {
+  if (smc_partial_wrap_live ||
+      high <= low || (low >> 24) != ((high - 1) >> 24)) {
     flush_translation_cache_ram();
     return;
   }
@@ -4720,28 +5278,16 @@ static u32 smc_gate_prev_now;   /* detects savestate clock rewind */
 static void smc_cand_forget(void);   /* defined with the candidate table below */
 #endif
 
-/* FORGET EVERY LEARNED THING, not just the hit stamps.
+/* Clear ROM-specific gate learning after a new cartridge is loaded.
  *
- * The ranked candidate table is where the gate rule keeps its evidence, and it
- * was the one piece nothing ever cleared: gba_memory.c zeroes
- * translation_gate_targets at ROM load and calls this, and this only reset the
- * ages.  So the 32 candidates -- addresses, write counts, and the last VALUE
- * seen at each address -- survived from one game into the next.
- *
- * That is not merely untidy, it inverts the promotion rule.  Unbound and Heart
- * & Soul are both M4A engines, so both copy a sound driver into nearly the same
- * IWRAM addresses; a candidate Unbound had already driven past
- * SMC_GATE_MIN_SAMPLE is therefore still sitting there, saturated, when Heart &
- * Soul writes the same address for the FIRST time.  smc_gate_earned() finds the
- * stale row, compares the new word against a value left over from the other
- * game (so it counts as changed), and promotes on that single observation --
- * the 64-sample evidence requirement silently becomes a 1-sample one, and the
- * address it gates was never shown to be self-modifying code in THIS game.
- *
- * Invariant, stated once: learned dynarec state may not outlive the evidence
- * that produced it.  Called from ROM load, from init_dynarec_caches (emulator
- * reset) and from flush_dynarec_caches (savestate load, cheat install,
- * libretro load/reset), which is every boundary where that evidence dies. */
+ * Ranked candidates contain addresses, write counts, and the last value seen
+ * at each address.  Reusing those observations across ROMs could let one
+ * game's evidence promote a gate in another game.  This function is called
+ * from gba_memory.c after the new cartridge's fixed gate table is populated.
+ * It is intentionally NOT called by dynarec reset or cache-flush paths:
+ * clearing candidates during a same-ROM reset or savestate load discarded
+ * useful learning and caused a measured performance loss.  See the withdrawn
+ * reset-boundary experiment below (around flush_dynarec_caches). */
 void smc_gates_reset(void)
 {
   memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
@@ -4930,28 +5476,9 @@ static int smc_gate_addr_is_block_start(u32 gba_addr)
  * If it is ever wanted back, the window has to be derived from measured
  * writes-per-frame at the gate address, with a wide margin -- not chosen.
  *
- * (The kept half:
- *
- * Nothing ever aged a candidate row, so `hits` and `chg` were lifetime totals.
- * An address that was hot in one role -- a copy destination during boot, a
- * mixer body for the previous soundtrack -- keeps a saturated row for the whole
- * session.  If the game later writes that address in a DIFFERENT role, the
- * first such write finds hits already past SMC_GATE_MIN_SAMPLE and a stale
- * remembered value that almost certainly differs, so the ratio holds and the
- * address is promoted on ONE observation of its new role.  That is the same
- * inversion as the cross-ROM leak, reachable inside a single game, and it lines
- * up with the reported trigger: changing Heart & Soul's soundtrack moves which
- * IWRAM words the M4A engine patches.
- *
- * So a row measures one continuous episode.  A gap longer than this retires the
- * row's statistics AND its remembered value, and counting starts again.  The
- * mixer writes thousands of times a second while music plays, so it never sees
- * a gap; one second of silence costs it 64 writes -- about 20 ms of mixer
- * activity -- to re-earn.
- *
- * an absolute floor on `chg` was tried first and was worse than useless: at
+ * An absolute floor on `chg` was tried first and was worse than useless: at
  * SMC_GATE_MIN_SAMPLE 64 a floor of 32 is exactly what `chg * 2 >= hits`
- * already requires.) */
+ * already requires. */
 #define SMC_GATE_CAND 32            /* candidates tracked before promotion */
 static u32 smc_cand_addr[SMC_GATE_CAND];
 static u32 smc_cand_hits[SMC_GATE_CAND];
@@ -4988,6 +5515,17 @@ static u32 *smc_gba_ptr(u32 addr)
     : (u32 *)(ewram + (addr & 0x3FFFF));
 }
 
+/* A savestate restores guest RAM but intentionally preserves the ranked
+ * candidate hit/change counts: discarding them costs thousands of frames of
+ * mixer learning.  Rebase only the remembered words so the first write after
+ * load is compared with the restored memory, not the pre-load timeline. */
+void smc_gates_refresh_values(void)
+{
+  u32 k;
+  for (k = 0; k < smc_cand_used; k++)
+    smc_cand_val[k] = *smc_gba_ptr(smc_cand_addr[k]);
+}
+
 static int smc_gate_earned(u32 gpc)
 {
   u32 k, coldest = 0, cur = *smc_gba_ptr(gpc);
@@ -5022,6 +5560,7 @@ static void smc_cand_forget(void)
 #define SMC_GATE_EARNED(gpc) smc_gate_earned(gpc)
 #else
 #define SMC_GATE_EARNED(gpc) (1)
+void smc_gates_refresh_values(void) {}
 #endif
 
 #ifdef SMC_GATES_CLUSTER
@@ -5383,6 +5922,9 @@ static int smc_partial_install_range_gate(u32 low, u32 high)
     SMC_GATE_MAP_ADD(high);
     changed = 1;
   }
+#ifdef GATE_HIGH_ONLY
+  found_low = 1;   /* DIAGNOSTIC: one-gate layout (checked word only) */
+#endif
   if (!found_low && translation_gate_targets < MAX_TRANSLATION_GATES) {
     translation_gate_target_pc[translation_gate_targets++] = low;
     SMC_GATE_MAP_ADD(low);
@@ -5610,10 +6152,20 @@ void flush_translation_cache_ram_smc(void)
   u32 partial_low = 0, partial_high = 0;
   int range_safe = smc_writer_safe_range(&partial_low, &partial_high);
   int range_gate_changed = 0;
+#ifdef GATE_ONLY_FULLFLUSH
+  /* DIAGNOSTIC: install the endpoint gates but never activate partial
+   * retirement -- every SMC event is a full RAM flush. */
+  int activating = 0;
+#else
   int activating = range_safe && !smc_partial_active;
+#endif
 #endif
   flush_ram_smc++;
   SMC_HISTO_NOTE(smc_last_write_addr, reg[REG_PC]);
+#ifdef UPDATE_TRACE_LO
+  { void utrace_note(const char *, u32, u32);
+    utrace_note("smc", reg[REG_PC], smc_last_write_addr); }
+#endif
 #ifdef SMC_GATES
 #ifdef SMC_PARTIAL_SAFE
   if (range_safe)
@@ -5637,7 +6189,13 @@ void flush_translation_cache_ram_smc(void)
      * block has therefore been scanned with that exact boundary. */
     int partial_ready = smc_partial_active && range_safe && !activating &&
                         !range_gate_changed &&
-                        smc_partial_target_is_gated(partial_low);
+                        smc_partial_target_is_gated(partial_low & ~3u) &&
+                        /* Retirement also requires the final written word to
+                         * begin at its established block boundary.  If the
+                         * gate table filled after low was learned but before
+                         * this range's high endpoint was added, low alone is
+                         * not enough to prove the block layout. */
+                        smc_partial_target_is_gated((partial_high - 4) & ~3u);
 #ifdef SMC_PARTIAL_SAFE_FRAMEFULL
     if (partial_ready && smc_partial_last_full_frame != frame_counter) {
       smc_partial_last_full_frame = frame_counter;
@@ -5696,6 +6254,140 @@ void init_dynarec_caches(void)
    * the same ROM, and ROM load already resets the table. */
 }
 
+#if defined(RUNTIME_JIT_CACHE)
+/* ---- startup-sized translation caches -----------------------------------
+ *
+ * ONE EBOOT, TWO BUDGETS.  A PSP-1000 has 32 MiB and runs at its limit: the
+ * ROM page cache (init_gamepak_buffer) takes 1 MiB blocks until malloc fails,
+ * and the frontend lives on what is left.  A 2000/3000/Go running the 64 MiB
+ * layout stops at the ROM_BUFFER_SIZE cap with ~30 MiB unused -- the memory
+ * that CFRU-class hacks (Unbound) need for a translation cache that does not
+ * flush-storm.  So: the SMALL tier is static (.bss, exactly where the fixed
+ * arrays always were), and the LARGE tier is one heap block taken here, in
+ * retro_init, BEFORE init_gamepak_buffer, only when the heap can afford it.
+ *
+ * WHAT DECIDES IT: the heap, not the model number.  The quantity at stake is
+ * the memory this process was actually given, and the model is only a proxy
+ * for it -- a 2000 whose launcher did not grant MEMSIZE, or any 64 MiB
+ * console running a 32 MiB layout, reports a big-memory model and has a small
+ * heap.  So the test is one malloc of the large tier PLUS everything that
+ * must still fit after it (JIT_LARGE_HEADROOM).  A PSP-1000's whole user
+ * partition is ~24 MiB, below the ~31 MiB asked for, so the 1000 can never
+ * pass it, whatever the model register says and however the binary grows.
+ * (sceKernelGetModel is a kernel export; kuKernelGetModel needs a CFW bridge
+ * PRX.  Neither is worth a boot-time import that can fail to resolve.)
+ *
+ * ON THE SMALL PATH THE HEAP IS UNTOUCHED: the only thing that happens is a
+ * malloc that fails, which moves no break and allocates nothing.  The static
+ * arrays are where they were, so the 1000's post-load budget is what it was.
+ *
+ * ON THE LARGE PATH the static SMALL arrays are simply left unused (2.4 MiB
+ * of a 64 MiB console's ~30 MiB spare).  The block is never freed: it lives
+ * for the process, like the static arrays it replaces, so retro_deinit /
+ * retro_init cycles keep the first decision. */
+u32 jit_cache_tier = JIT_CACHE_UNDECIDED;
+u32 jit_cache_force_small = 0;
+const char *jit_cache_reason = "undecided";
+
+/* What the heap must STILL hold once the large tier is taken, or the large
+ * tier costs more than it buys: the full ROM page cache (ROM_BUFFER_SIZE
+ * blocks of 1 MiB), the 1 MiB post-load reserve init_gamepak_buffer holds
+ * across its loop, and 4 MiB for what the frontend allocates after the load
+ * (frame buffer, sound ring, ME stages -- each a few hundred KiB). */
+#define JIT_LARGE_HEADROOM  ((u32)(ROM_BUFFER_SIZE + 1 + 4) * 1024u * 1024u)
+#define JIT_LARGE_BYTES     ((u32)(ROM_TRANSLATION_CACHE_SIZE_LARGE + \
+                                   RAM_TRANSLATION_CACHE_SIZE_LARGE))
+/* Cache-line alignment.  The emitter itself only needs 4 (the static arrays
+ * are .align 2); 64 keeps every sync range line-exact. */
+#define JIT_CACHE_ALIGN     64u
+
+void dynarec_select_translation_caches(void)
+{
+  /* VOLATILE, OR THERE IS NO PROBE.  A malloc whose result only reaches
+   * free() is dead code to GCC: it deletes the pair and folds the NULL test
+   * to "succeeded".  The first build of this function did exactly that (no
+   * malloc call in the ELF, only the memalign), and in PPSSPP's 32 MiB layout
+   * it chose the LARGE tier and left the ROM page cache 3 blocks.  That is
+   * the PSP-1000 failure this function exists to prevent.  Same trap as
+   * init_gamepak_buffer's post_load_reserve. */
+  void * volatile probe;
+  u8 *blk;
+
+  if (jit_cache_tier != JIT_CACHE_UNDECIDED)
+    return;
+
+  /* Every early return below leaves the static SMALL tier in place. */
+  jit_cache_tier = JIT_CACHE_SMALL;
+  if (gpsp_heap_census)
+    gpsp_heap_census("pre_jit");
+
+  if (jit_cache_force_small)
+  {
+    jit_cache_reason = "forced";
+    return;
+  }
+
+  /* The decision.  Freed at once: newlib hands the top of the heap straight
+   * back, so the block below lands where this probe was. */
+  probe = malloc(JIT_LARGE_BYTES + JIT_CACHE_ALIGN + JIT_LARGE_HEADROOM);
+  if (!probe)
+  {
+    jit_cache_reason = "heap_short";
+    return;
+  }
+  free(probe);
+
+  blk = (u8 *)memalign(JIT_CACHE_ALIGN, JIT_LARGE_BYTES);
+  if (!blk)
+  {
+    jit_cache_reason = "alloc_failed";
+    return;
+  }
+
+#if defined(MIPS_ARCH)
+  /* Generated code reaches the stubs and C handlers in the EBOOT's .text with
+   * `j`/`jal`, which keep the top four bits of the PC: code and target must
+   * share a 256 MiB segment.  The PSP's user memory is all in 0x08xxxxxx,
+   * so this cannot fail on a real console -- which is exactly why it is
+   * checked rather than assumed: if it ever does, a wrong jump is silent. */
+  {
+    uintptr_t text = (uintptr_t)&flush_translation_cache_rom;
+    uintptr_t lo   = (uintptr_t)blk;
+    uintptr_t hi   = lo + JIT_LARGE_BYTES - 1;
+    if ((lo >> 28) != (text >> 28) || (hi >> 28) != (text >> 28))
+    {
+      free(blk);
+      jit_cache_reason = "segment";
+      return;
+    }
+  }
+#endif
+
+  rom_translation_cache      = blk;
+  ram_translation_cache      = blk + ROM_TRANSLATION_CACHE_SIZE_LARGE;
+  rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
+  ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
+  rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
+  ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  jit_cache_tier   = JIT_CACHE_LARGE;
+  jit_cache_reason = "heap_ok";
+
+  /* The static SMALL ROM array is now idle for the life of the process (the
+   * tier never changes back), so lend it to the ROM page cache: 2 MiB the
+   * heap does not have to supply.  That is what lets a 32 MiB cart sit beside
+   * this tier on a real PSP Go, whose heap is 5 MiB smaller than PPSSPP's
+   * 64 MiB model (docs/ROM-RESIDENCY.md).  The RAM array (384 KiB) is not a
+   * whole block and stays idle.  Only the ROM cache's DATA lands here; no
+   * code is ever emitted into it again. */
+  {
+    extern u8 *gamepak_spare_pool;
+    extern u32 gamepak_spare_pool_bytes;
+    gamepak_spare_pool       = rom_translation_cache_static;
+    gamepak_spare_pool_bytes = ROM_TRANSLATION_CACHE_SIZE;
+  }
+}
+#endif
+
 /* WITHDRAWN: CLEARING THE GATE CANDIDATE TABLE HERE, AND IN
  * init_dynarec_caches.  This cost 2-16% of frame time on hardware.
  *
@@ -5728,6 +6420,7 @@ void init_dynarec_caches(void)
  * the counts. */
 void flush_dynarec_caches(void)
 {
+  IRQCHK_RESET();
   /* Flush ROM and RAM caches. */
   flush_translation_cache_rom();
   ewram_code_min = 0;

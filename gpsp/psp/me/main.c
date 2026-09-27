@@ -33,6 +33,14 @@
 #include "me_mbox.h"
 
 PSP_MODULE_INFO("gbadhoc_me", 0x1006, 1, 0);
+
+/* ME_CATCH=1 (catcher.c) wraps the two entry points so that THIS file's code,
+ * and therefore every address in the Media Engine's own code, is identical to
+ * the default PRX: only the symbol names change here. */
+#ifdef ME_CATCH
+#define module_start me_module_start_inner
+#define module_stop  me_module_stop_inner
+#endif
 PSP_MAIN_THREAD_ATTR(0);
 
 extern void me_stub(void);
@@ -55,9 +63,11 @@ static void me_dcache_wbinv_all(void)
 
 static void me_dcache_inv_range(void *addr, int size)
 {
-   int i, j = (int)addr;
-   for (i = j; i < size + j; i += 64)
-      __builtin_allegrex_cache(0x19, i);
+   /* Line-aligned walk (see me_inv in me_render_glue.cc). */
+   unsigned int a   = (unsigned int)addr & ~63u;
+   unsigned int end = (unsigned int)addr + (unsigned int)size;
+   for (; a < end; a += 64)
+      __builtin_allegrex_cache(0x19, (int)a);
 }
 
 /* ---- ME-side jobs ------------------------------------------------------ */
@@ -227,6 +237,9 @@ static void me_dispatch(volatile me_mbox *mb)
          mb->result = 0;
          break;
       }
+      /* Drain the write buffer: every uncached output store (stage rows,
+       * result) reaches RAM before the host can observe completion. */
+      asm volatile("sync" ::: "memory");
       mb->done_seq = seen;
    }
 }

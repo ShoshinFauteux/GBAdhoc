@@ -34,11 +34,33 @@ typedef struct fe_np_config
    int probe;
 } fe_np_config;
 
+/* Separate, experimental Game Boy serial-byte datagrams. Receive and peer
+ * callbacks run synchronously from the netdrv pump on the emulation thread.
+ * Do not call fe_np_pump() recursively from either callback. */
+typedef void (*fe_np_gb_receive_fn)(void *userdata, const void *payload,
+                                    size_t len, uint8_t src_id);
+typedef void (*fe_np_gb_peer_fn)(void *userdata, uint8_t peer_id,
+                                 int connected);
+
 /* Bring the session up (host immediately; join keeps retrying until the
  * host answers). Calls the core's start() when the session establishes.
  * Returns 0 on success, -1 if the core registered no netpacket interface
  * or the protocol version is missing. */
 int fe_np_start(const fe_np_config *cfg);
+
+/* GB-only session: negotiates a wire protocol string distinct from the GBA
+ * netpacket protocol. Callbacks must be installed first. GBA start semantics
+ * are unchanged. */
+int fe_np_start_gb(const fe_np_config *cfg);
+void fe_np_gb_set_receive(fe_np_gb_receive_fn receive, void *userdata);
+void fe_np_gb_set_peer_callback(fe_np_gb_peer_fn peer, void *userdata);
+/* True only for an active GB session with exactly one connected peer; returns
+ * that peer's netdrv client ID. Refuses zero-peer/multi-peer ambiguity. */
+int fe_np_gb_peer_ready(uint8_t *peer_id);
+/* Query this endpoint's netdrv client ID under the same active-session guard. */
+int fe_np_gb_local_id(uint8_t *local_id);
+/* Reliable ordered unicast payload; caller explicitly encodes GB protocol. */
+int fe_np_gb_send(uint16_t peer_id, const void *payload, size_t len);
 
 /* Short human-readable reason for the last fe_np_start() failure, for the
  * frontend to show.  Never NULL. */

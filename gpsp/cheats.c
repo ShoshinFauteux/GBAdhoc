@@ -33,10 +33,32 @@ cheat_type cheats[MAX_CHEATS];
 u32 max_cheat = 0;
 u32 cheat_master_hook = 0xffffffff;
 
+/* Records one CodeBreaker code occupies.  Slide (4) and super (5) codes carry
+ * payload records -- raw data whose top nibble means nothing -- so every walk
+ * over a cheat must step over them, never treat them as opcodes of their own.
+ * cheat_parse guarantees the payload is complete. */
+static unsigned codebreaker_code_len(const cheat_type *cheat, unsigned i)
+{
+  u32 opcode = cheat->codes[i].address >> 28;
+  if (opcode == 4)
+    return 2;
+  if (opcode == 5)
+    return 1 + ((unsigned)(u16)cheat->codes[i].value * 2 + 5) / 6;
+  return 1;
+}
+
+/* Records to skip when a conditional code at `i` skips "the next code": the
+ * whole next code (as mGBA does), not just its first record -- skipping only
+ * the header of a slide/super code ran its payload as independent writes. */
+static unsigned codebreaker_next_len(const cheat_type *cheat, unsigned i)
+{
+  return i + 1 < cheat->cheat_count ? codebreaker_code_len(cheat, i + 1) : 1;
+}
+
 static bool has_encrypted_codebreaker(cheat_type *cheat)
 {
-  int i;
-  for(i = 0; i < cheat->cheat_count; i++)
+  unsigned i;
+  for(i = 0; i < cheat->cheat_count; i += codebreaker_code_len(cheat, i))
   {
      u32 code    = cheat->codes[i].address;
      u32 opcode  = code >> 28;
@@ -48,8 +70,8 @@ static bool has_encrypted_codebreaker(cheat_type *cheat)
 
 static void update_hook_codebreaker(cheat_type *cheat)
 {
-  int i;
-  for(i = 0; i < cheat->cheat_count; i++)
+  unsigned i;
+  for(i = 0; i < cheat->cheat_count; i += codebreaker_code_len(cheat, i))
   {
      u32 code    = cheat->codes[i].address;
      u32 address = code & 0xfffffff;
@@ -70,8 +92,7 @@ static void update_hook_codebreaker(cheat_type *cheat)
 
 static void process_cheat_codebreaker(cheat_type *cheat, u16 pad)
 {
-  int i;
-  unsigned j;
+  unsigned i, j;
   for(i = 0; i < cheat->cheat_count; i++)
   {
     u32 code    = cheat->codes[i].address;
@@ -105,7 +126,15 @@ static void process_cheat_codebreaker(cheat_type *cheat, u16 pad)
       }
       break;
     case 5:   /* Super code: copies bytes to a buffer addr */
-      for (j = 0; j < value * 2 && i < cheat->cheat_count; j++)
+      /* Each following CodeBreaker record provides six payload bytes.  The
+       * off==0 case advances i before reading, so checking only i<count in
+       * the loop condition lets a truncated payload increment past the end. */
+      if (((unsigned)value * 2 + 5) / 6 > cheat->cheat_count - i - 1)
+      {
+        i = cheat->cheat_count;
+        break;
+      }
+      for (j = 0; j < (unsigned)value * 2; j++)
       {
         u8 bvalue, off = j % 6;
         switch (off) {
@@ -128,36 +157,36 @@ static void process_cheat_codebreaker(cheat_type *cheat, u16 pad)
       break;
     case 7:   /* Compare mem value and execute next cheat */
       if (read_memory16(address) != value)
-        i++;
+        i += codebreaker_next_len(cheat, i);
       break;
     case 8:   /* 16 bit write */
       write_memory16(address, value);
       break;
     case 10:   /* Compare mem value and skip next cheat */
       if (read_memory16(address) == value)
-        i++;
+        i += codebreaker_next_len(cheat, i);
       break;
     case 11:   /* Compare mem value and skip next cheat */
       if (read_memory16(address) <= value)
-        i++;
+        i += codebreaker_next_len(cheat, i);
       break;
     case 12:   /* Compare mem value and skip next cheat */
       if (read_memory16(address) >= value)
-        i++;
+        i += codebreaker_next_len(cheat, i);
       break;
     case 13:   /* Check button state and execute next cheat */
       switch ((address >> 4) & 0xf) {
       case 0:
         if (((~pad) & 0x3ff) == value)
-          i++;
+          i += codebreaker_next_len(cheat, i);
         break;
       case 1:
         if ((pad & value) == value)
-          i++;
+          i += codebreaker_next_len(cheat, i);
         break;
       case 2:
         if ((pad & value) == 0)
-          i++;
+          i += codebreaker_next_len(cheat, i);
         break;
       };
       break;
@@ -175,7 +204,7 @@ static void process_cheat_codebreaker(cheat_type *cheat, u16 pad)
       break;
     case 15:   /* Immediate and check and skip */
       if ((read_memory16(address) & value) == 0)
-        i++;
+        i += codebreaker_next_len(cheat, i);
       break;
     }
   }
@@ -238,15 +267,16 @@ cheat_error cheat_parse(unsigned index, const char *code)
     * per C even if the pointer is never dereferenced. */
    if (index >= MAX_CHEATS)
       return CheatErrorTooMany;
-   if (codelen >= sizeof(buf))
-      return CheatErrorTooBig;
-
    ch = &cheats[index];
+   /* Init to a known good state so any rejected replacement disables the
+    * previous cheat rather than leaving stale code running. */
+   ch->cheat_count = 0;
+   ch->cheat_active = false;
+   if ((size_t)codelen >= sizeof(buf))
+      return CheatErrorTooBig;
 
    memcpy(buf, code, codelen+1);
 
-   /* Init to a known good state */
-   ch->cheat_count = 0;
    if (index > max_cheat)
       max_cheat = index;
 
@@ -280,6 +310,18 @@ cheat_error cheat_parse(unsigned index, const char *code)
    
    if (pos >= codelen)
    {
+      /* Validate variable-length CodeBreaker records before activating the
+       * cheat.  Opcode 5 consumes ceil(value*2/6) following records; opcode 4
+       * consumes one.  Reject an incomplete sequence rather than letting
+       * payload records execute as independent opcodes. */
+      unsigned i, len;
+      for (i = 0; i < ch->cheat_count; i += len)
+      {
+         len = codebreaker_code_len(ch, i);
+         if (len > ch->cheat_count - i)
+            return CheatErrorNotSupported;
+      }
+
       /* Check whether these cheats are readable */
       if (has_encrypted_codebreaker(ch))
          return CheatErrorEncrypted;
@@ -292,5 +334,3 @@ cheat_error cheat_parse(unsigned index, const char *code)
    /* TODO parse other types here */
    return CheatErrorNotSupported;
 }
-
-

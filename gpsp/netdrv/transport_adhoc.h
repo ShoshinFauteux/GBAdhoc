@@ -144,6 +144,11 @@ void        adhoc_transport_get_stats(adhoc_stats *out);
  * datagram.  Set before or after adhoc_transport_init(); survives it. */
 void adhoc_transport_set_fault(int latency_ms, int jitter_ms, int loss_pct,
                                uint32_t seed);
+/* A radio FADE, harness only: drop every datagram received during the first
+ * `ms` of each `every_ms` period (counted from the first datagram).  Short
+ * random loss (loss_pct) never produced the 1-2 s ARQ stalls the hardware
+ * showed (H0b/BQ, 2026-09-26); a fade does.  0 = off. */
+void adhoc_transport_set_blackout(int ms, int every_ms);
 
 /* ---- TX offload thread (ADR-0021) ---------------------------------------
  * send_to/broadcast copy the datagram into an SPSC ring and signal a

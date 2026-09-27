@@ -1,0 +1,8 @@
+Inter is licensed under the SIL Open Font License, Version 1.1.
+Copyright (c) 2016-present The Inter Project Authors
+https://github.com/rsms/inter
+Full licence text: https://openfontlicense.org/open-font-license-official-text/
+
+These TTFs are the SOURCE for tools/bake_font.py, which produces
+gpsp/psp/font_ui.h.  Neither TTF ships in the EBOOT; only the baked
+8-bit coverage atlas does.

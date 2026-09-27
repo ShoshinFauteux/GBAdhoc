@@ -16,10 +16,11 @@ with `kuKernelLoadModule` — nothing here touches the EBOOT link.
 * it is reproducible — the tracked copy and a fresh build agree byte for byte
   (sha256 `7612a2e1425150ad…`, the same value the 7283f13 manifest recorded).
 
-If you change anything under `psp/me/` or in `video.cc`, **commit the rebuilt
-`.prx` with it.** A source change without the matching binary leaves a clone
-packaging a stale renderer, and nothing checks that. `tools/build.sh` records
-the `.prx`'s sha256 in `psp/build-manifest.json`, which is how you tell.
+If you change anything under `psp/me/` or one of the shared renderer inputs,
+**commit the rebuilt `.prx` with it.** `tools/build.sh` rebuilds the module and
+records its sha256 in `psp/build-manifest.json`; `tools/make_release.sh` refuses
+to package a PRX older than the module sources or its explicit shared
+dependencies. Keep those dependency checks current when adding a new input.
 
 The object files (`*.o`) are gitignored, as they should be.
 

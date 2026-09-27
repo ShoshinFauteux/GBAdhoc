@@ -30,8 +30,29 @@ OBJS = main_psp.o usb_handoff.o \
        ../frontend-common/fe_host.o \
        ../frontend-common/fe_evt.o \
        ../frontend-common/fe_util.o \
+       ../frontend-common/fe_favs.o \
        ../frontend-common/fe_autopilot.o \
-       ../frontend-common/netpacket_host.o
+       ../frontend-common/netpacket_host.o \
+       ../netdrv/gb_link.o \
+       ../gbcore/gbcore_tgbdual_linked.o
+
+# Vendored TGB Dual (GB/GBC; gbcore/tgbdual/, from MasterBoy).  Its flags are
+# scoped to its own objects and assigned after the build.mak include, beside
+# the other object rules: -O3 as MasterBoy built it (Makefile.psp), GNU89
+# inline semantics (it defines non-static `inline` functions and takes their
+# addresses), no strict aliasing (VRAM and ROM bytes are read through word
+# pointers), and no unused-parameter warning (every I/O and opcode handler
+# shares one dispatch signature).  All other warnings stay on; see
+# gbcore/tgbdual/LOCAL-PATCHES.md.
+TGB_OBJS = $(addprefix ../gbcore/tgbdual/,apu.o cpu.o gb.o lcd.o mbc.o rom.o \
+           sgb.o)
+TGB_CFLAGS = -O3 -fgnu89-inline -fno-strict-aliasing -Wno-unused-parameter
+# The core is one relocatable object whose only global symbols are the
+# gbcore_* API (rule below).  TGB Dual exports ~780 names -- vram, ram, oam,
+# halt, speed, info, stack -- and the first link failed on `vram`, which the
+# GBA core's mips_stub.o defines too.  Localising them all means no present
+# or future GBA-side global can collide with the GB core's state.
+GB_CORE_OBJS = ../gbcore/gbcore_tgbdual.o $(TGB_OBJS)
 
 INCDIR   = ../frontend-common ../netdrv ../libretro/libretro-common/include ..
 # ND_* knobs — the PSP/ad-hoc profile (ADR-0016, ADR-0017).  Two changes
@@ -183,15 +204,14 @@ PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 #  - PLAYABLE requests the 64 MiB layout (MEMSIZE=1).  A 1000 has no extra
 #    RAM and ignores the flag.
 #
-#    IT DOES NOT MAKE LARGE CARTS RESIDENT.  The core caps the ROM cache at
-#    -DROM_BUFFER_SIZE=15 for every PSP target (root Makefile), so the greedy
-#    1 MB loop stops at 15 blocks and 32 MB carts (Mother 3, Unbound) use the
-#    PAGED ROM cache on ALL models, the 2000+ included.  The cap is deliberate
-#    and load-bearing: letting the PSP-3000 take all 32 blocks made Unbound
-#    diverge during battle (audio/video corruption then a freeze), while the
-#    1000 naturally topped out at 15 and was stable.  Do not raise it to chase
-#    residency.  The extra RAM still helps -- it is what BIG_JIT spends on
-#    larger translation caches.
+#    32 MB carts (Mother 3, Unbound) are held WHOLE on a 64 MiB console:
+#    CONFIG.INI `rom_resident` (default 1) makes the core probe 32 + 3 MiB
+#    after the translation-cache tier has taken its block (main_psp.c
+#    rom_cache_select, gba_memory.c init_gamepak_buffer).  A PSP-1000 fails
+#    the probe and pages with its 13-15 block cache as before; the paged
+#    default cap stays ROM_BUFFER_SIZE=15 (root Makefile).  The 2026-09-16
+#    PSP-3000 Unbound divergence at 32 blocks was re-tested on the Go A/B
+#    rig: 21/21 frame-identical (docs/ROM-RESIDENCY.md).
 #  - HARNESS pins MEMSIZE=0 (the `harness` target below): PSP-1000 is the
 #    memory budget target (FRONTEND-AUDIT §8) and PPSSPP models MEMSIZE, so
 #    the Gate-1 mem_free measurement must stay honest for the 1000-series.
@@ -231,6 +251,16 @@ transport_adhoc.o: ../netdrv/transport_adhoc.c ../netdrv/transport_adhoc.h ../ne
 transport_inet.o: ../netdrv/transport_inet.c ../netdrv/transport_inet.h ../netdrv/netdrv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# GB flags per object (variables defined beside OBJS above).  Changing them
+# does not touch any header, so -MMD cannot see it: clean-build after edits.
+# The appended -O3 overrides the global -O2 for these objects only.
+$(TGB_OBJS): CFLAGS += $(TGB_CFLAGS)
+
+../gbcore/gbcore_tgbdual_linked.o: $(GB_CORE_OBJS)
+	psp-ld -r -o $@.tmp $(GB_CORE_OBJS)
+	psp-objcopy -w --keep-global-symbol='gbcore_*' $@.tmp $@
+	rm -f $@.tmp
+
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
 
@@ -238,15 +268,18 @@ $(CORE_LIB):
 # rebuilds every object that includes it.  Must come AFTER build.mak (which
 # defines the compile rules) and after OBJS is complete.  The leading `-`
 # makes a first, .d-less build silent instead of fatal.
-DEPS := $(OBJS:.o=.d)
+DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 -include $(DEPS)
 
 # `clean` is build.mak's; the .d files are ours, so sweep them too or a
-# stale one outlives the object it describes.
-clean: clean-deps clean-me
+# stale one outlives the object it describes.  The GB core's objects are
+# not in OBJS (only their linked product is), so they are ours as well.
+clean: clean-deps clean-me clean-gbcore
 clean-deps:
 	-@rm -f $(DEPS)
-.PHONY: clean-deps
+clean-gbcore:
+	-@rm -f $(GB_CORE_OBJS)
+.PHONY: clean-deps clean-gbcore
 
 # ADR-0080: the ME kernel module (defined here, after the include, so it
 # never becomes the default goal — that bug once built the PRX and nothing
@@ -260,6 +293,8 @@ me/gbadhoc_me.prx:
 	# only, silently.  The core/frontend pair is caught at link time
 	# (gba_memory.c's pixfmt guard); the PRX is a separately loaded module and
 	# cannot be, so it has to be told.
-	$(MAKE) -C me PSP_PIXFMT=$(PSP_PIXFMT)
+	$(MAKE) -C me PSP_PIXFMT=$(PSP_PIXFMT) ME_CATCH=$(ME_CATCH) \
+	        ME_CATCH_NOREG=$(ME_CATCH_NOREG) ME_PAD_RODATA=$(ME_PAD_RODATA) \
+	        ME_PAD_BSS=$(ME_PAD_BSS)
 clean-me:
 	-$(MAKE) -C me clean

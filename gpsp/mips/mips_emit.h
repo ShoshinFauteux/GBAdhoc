@@ -648,12 +648,17 @@ u32 arm_to_mips_reg[] =
 
 u32 execute_spsr_restore_body(u32 address)
 {
+#ifdef IRQ_INTEGRITY_CHECK
+  u32 irqchk_old_mode = reg[CPU_MODE];
+#endif
   set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0xF]);
+  IRQCHK_EXIT(irqchk_old_mode, address);
   if((io_registers[REG_IE] & io_registers[REG_IF]) &&
    io_registers[REG_IME] && ((reg[REG_CPSR] & 0x80) == 0))
   {
     REG_MODE(MODE_IRQ)[6] = address + 4;
     REG_SPSR(MODE_IRQ) = reg[REG_CPSR];
+    IRQCHK_ENTER(2);
     reg[REG_CPSR] = 0xD2;
     address = 0x00000018;
     set_cpu_mode(MODE_IRQ);
@@ -1199,6 +1204,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   {
     REG_MODE(MODE_IRQ)[6] = address + 4;
     REG_SPSR(MODE_IRQ) = _cpsr;
+    IRQCHK_ENTER(3);
     reg[REG_CPSR] = 0xD2;
     set_cpu_mode(MODE_IRQ);
     return 0x00000018;
@@ -1496,6 +1502,9 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   generate_load_reg(reg_a0, rn);                                              \
   generate_load_reg(reg_a0, rn);                                              \
   generate_load_reg(reg_a1, rm);                                              \
+  /* reg_a2 must hold the writer PC + 4 like every other store: smc_write */  \
+  /* and the I/O stub save it as REG_PC and resume/report from there.     */  \
+  generate_load_pc(reg_a2, (pc + 4));                                         \
   mips_emit_jal(mips_absolute_offset(execute_store_##type));                  \
   generate_store_reg(reg_rv, rd);                                             \
 }                                                                             \
@@ -1961,9 +1970,21 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   mips_emit_subu(reg_r3, reg_r3, reg_a0);                                     \
 
 
+#ifdef GATE_NOCHECK
+/* DIAGNOSTIC: gate exits skip the dispatcher's cycle check, so a gate is not
+ * an update_gba point and block layout cannot move interrupt timing. */
+void mips_indirect_branch_arm_nocheck(u32 address);
+void mips_indirect_branch_thumb_nocheck(u32 address);
+#define generate_translation_gate(type)                                       \
+  generate_load_pc(reg_a0, pc);                                               \
+  mips_emit_j(mips_absolute_offset(mips_indirect_branch_##type##_nocheck));   \
+  mips_emit_nop()
+#else
 #define generate_translation_gate(type)                                       \
   generate_load_pc(reg_a0, pc);                                               \
   generate_indirect_branch_no_cycle_update(type)                              \
+
+#endif
 
 #define generate_update_pc_reg()                                              \
   generate_load_pc(reg_a0, pc);                                               \

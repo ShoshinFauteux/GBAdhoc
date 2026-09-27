@@ -587,6 +587,29 @@ static void arq_on_ack(netdrv *nd, nd_peer *p, uint16_t ack)
 {
    uint32_t sample = 0;
    int have_sample = 0;
+   uint16_t sent = p->txq_count < ND_WINDOW ? p->txq_count : ND_WINDOW;
+
+   /* Only the contiguous prefix inside the ARQ window has gone over the
+    * transport, so a cumulative ACK may retire at most `sent` payloads.
+    * An ACK at or BEHIND the queue head is ordinary: every DATA/PING frame
+    * piggybacks the receiver's current ack, and reordered or duplicate
+    * frames repeat an old one.  It retires nothing and is not an error.
+    * Only an ACK AHEAD of what was sent is impossible from a correct peer,
+    * and only that is counted as malformed (it used to count both, which
+    * inflated rx_drop_malformed on every healthy session).  Serial-number
+    * distance is wrap-safe for the bounded window (< 32768 sequences). */
+   if (!sent)
+      return;
+   {
+      int16_t dist = (int16_t)(ack - txq_at(p, 0)->seq);
+      if (dist <= 0)
+         return;                  /* stale/duplicate: nothing to retire */
+      if (dist > (int16_t)sent)
+      {
+         nd->st.rx_drop_malformed++;
+         return;
+      }
+   }
 
    while (p->txq_count && seq_lt(txq_at(p, 0)->seq, ack))
    {
@@ -1228,6 +1251,8 @@ static uint64_t prof_mark(netdrv *nd, uint64_t t0, uint32_t *sum, uint32_t *max)
 
 void netdrv_pump(netdrv *nd, uint64_t now_us)
 {
+   if (!nd)
+      return;
    /* ADR-0061: interval since the previous pump. */
    if (nd->last_pump_us) {
       uint32_t gap = (uint32_t)(now_us - nd->last_pump_us);
@@ -1240,7 +1265,7 @@ void netdrv_pump(netdrv *nd, uint64_t now_us)
    int i, budget;
    uint64_t pt = 0;
 
-   if (!nd || nd->in_pump)
+   if (nd->in_pump)
       return;                     /* re-entry guard (nested poll_receive) */
    nd->in_pump = 1;
    nd->now = now_us;

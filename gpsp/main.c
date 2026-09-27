@@ -849,13 +849,49 @@ void init_main(void)
   video_count = 960;
 
 #ifdef HAVE_DYNAREC
+  main_init_dynarec();
+#endif
+}
+
+/* Frontends with fallible JIT mappings override this weak default. */
+__attribute__((weak)) bool gpsp_dynarec_cache_available(void)
+{
+  return true;
+}
+
+void main_init_dynarec(void)
+{
+#ifdef HAVE_DYNAREC
+  if (!dynarec_enable || !gpsp_dynarec_cache_available())
+    return;
   init_dynarec_caches();
-  init_emitter(gamepak_must_swap());
+  init_emitter(gamepak_must_swap() || gamepak_force_swap_stubs != 0);
+#endif
+}
+
+void main_enable_dynarec(void)
+{
+#ifdef HAVE_DYNAREC
+  if (!dynarec_enable || !gpsp_dynarec_cache_available())
+    return;
+  /* The game is already running here. Rebuild the emitter helpers and reset
+   * translated code without clearing IWRAM/EWRAM as init_dynarec_caches does. */
+  init_emitter(gamepak_must_swap() || gamepak_force_swap_stubs != 0);
+  flush_dynarec_caches();
 #endif
 }
 
 __attribute__((weak)) void gpsp_visible_done_hook(void) {}
 
+#ifdef UPDATE_TRACE_LO
+static FILE *utf;
+void utrace_note(const char *what, u32 a, u32 b)
+{
+  if (frame_counter < UPDATE_TRACE_LO || frame_counter > UPDATE_TRACE_HI) return;
+  if (!utf) utf = fopen("ms0:/utrace.txt", "w");
+  if (utf) fprintf(utf, "  %s %08x %08x t=%u\n", what, (unsigned)a, (unsigned)b, (unsigned)cpu_ticks);
+}
+#endif
 u32 function_cc update_gba(int remaining_cycles)
 {
   u32 changed_pc = 0;
@@ -863,6 +899,46 @@ u32 function_cc update_gba(int remaining_cycles)
   irq_type irq_raised = IRQ_NONE;
   int dma_cycles;
   trace_update_gba(remaining_cycles);
+#ifdef STALE_CHECK
+  { void stale_scan(u32); stale_scan(0xFFFFFFFFu); }
+#endif
+#ifdef UPDATE_TRACE_LO
+  if (frame_counter >= UPDATE_TRACE_LO && frame_counter <= UPDATE_TRACE_HI)
+  {
+    /* DIAGNOSTIC: one line per update_gba entry -- where the guest is and a
+     * hash of its registers and IWRAM data -- so two builds can be diffed
+     * call by call. */
+    u32 h = 2166136261u, hi = 2166136261u, k;
+    if (!utf) utf = fopen("ms0:/utrace.txt", "w");
+    for (k = 0; k < 15; k++) h = (h ^ reg[k]) * 16777619u;
+    for (k = 0; k < 0x8000; k += 4) hi = (hi ^ *(const u32 *)(&iwram[0x8000] + k)) * 16777619u;
+    if (utf) fprintf(utf, "f=%u t=%u rem=%d pc=%08x cpsr=%08x rh=%08x ih=%08x\n",
+                     (unsigned)frame_counter, (unsigned)cpu_ticks, remaining_cycles,
+                     (unsigned)reg[REG_PC], (unsigned)reg[REG_CPSR], (unsigned)h, (unsigned)hi);
+    if (utf) {
+      fprintf(utf, "   ");
+      for (k = 0; k < 15; k++) fprintf(utf, " %08x", (unsigned)reg[k]);
+      fprintf(utf, " g%u\n", (unsigned)translation_gate_targets);
+    }
+#ifdef UTRACE_DUMP_T
+    if (cpu_ticks == UTRACE_DUMP_T || cpu_ticks == UTRACE_DUMP_T0)
+    {
+      char nm[48];
+      FILE *df;
+      snprintf(nm, sizeof(nm), "ms0:/ud_%u.bin", (unsigned)cpu_ticks);
+      df = fopen(nm, "wb");
+      if (df) {
+        fwrite(&iwram[0x8000], 1, 0x8000, df);
+        fwrite(ewram, 1, 0x40000, df);
+        fwrite(reg, 4, 64, df);
+        fwrite(io_registers, 1, 0x400, df);
+        fwrite(iwram, 1, 0x8000, df);    /* the code-tag half */
+        fclose(df);
+      }
+    }
+#endif
+  }
+#endif
 
   remaining_cycles = MAX(remaining_cycles, -64);
 
@@ -917,10 +993,28 @@ u32 function_cc update_gba(int remaining_cycles)
           }
 
           // Trigger the HBlank DMAs if enabled
-          for (i = 0; i < 4; i++)
           {
-            if(dma[i].start_type == DMA_START_HBLANK)
-              dma_transfer(i, &dma_cycles);
+            cpu_alert_type dma_alert = CPU_ALERT_NONE;
+            for (i = 0; i < 4; i++)
+            {
+              if(dma[i].start_type == DMA_START_HBLANK)
+                dma_alert |= dma_transfer(i, &dma_cycles);
+            }
+#if defined(HAVE_DYNAREC) && defined(DMA_SMC_FLUSH)
+            /* A DMA that lands on translated code raises CPU_ALERT_SMC, as
+             * the CPU-triggered path in write_io_epilogue already honours.
+             * Here it used to be dropped, leaving the old translation live.
+             * Flush, and report a PC change so mips_update_gba re-dispatches
+             * via lookup_pc instead of returning into the flushed block. */
+            if ((dma_alert & CPU_ALERT_SMC) && dynarec_enable)
+            {
+              dma_smc_flushes++;
+              flush_translation_cache_ram_dma();
+              changed_pc = 0x40000000;
+            }
+#else
+            (void)dma_alert;
+#endif
           }
         }
 
@@ -959,10 +1053,24 @@ u32 function_cc update_gba(int remaining_cycles)
             irq_raised |= IRQ_VBLANK;
 
           // Trigger the VBlank DMAs if enabled
-          for (i = 0; i < 4; i++)
           {
-            if(dma[i].start_type == DMA_START_VBLANK)
-              dma_transfer(i, &dma_cycles);
+            cpu_alert_type dma_alert = CPU_ALERT_NONE;
+            for (i = 0; i < 4; i++)
+            {
+              if(dma[i].start_type == DMA_START_VBLANK)
+                dma_alert |= dma_transfer(i, &dma_cycles);
+            }
+#if defined(HAVE_DYNAREC) && defined(DMA_SMC_FLUSH)
+            /* Same as the HBlank case above. */
+            if ((dma_alert & CPU_ALERT_SMC) && dynarec_enable)
+            {
+              dma_smc_flushes++;
+              flush_translation_cache_ram_dma();
+              changed_pc = 0x40000000;
+            }
+#else
+            (void)dma_alert;
+#endif
           }
         }
         else if (vcount == 228)
@@ -991,6 +1099,43 @@ u32 function_cc update_gba(int remaining_cycles)
           // We completed a frame, tell the dynarec to exit to the main thread
           frame_complete = 0x80000000;
           frame_counter++;
+#ifdef STATE_HASH_TRACE
+          {
+            /* DIAGNOSTIC: per-frame hash of guest-visible state. */
+            static FILE *shf;
+            u32 h = 2166136261u, k;
+            const u8 *p;
+            if (!shf) shf = fopen("ms0:/statehash.txt", "w");
+            for (k = 0; k < 17; k++) h = (h ^ reg[k]) * 16777619u;
+            p = &iwram[0x8000];
+            for (k = 0; k < 0x8000; k += 4) h = (h ^ *(const u32 *)(p + k)) * 16777619u;
+            {
+              u32 he = 2166136261u;
+              for (k = 0; k < 0x40000; k += 4) he = (he ^ *(const u32 *)(ewram + k)) * 16777619u;
+              if (shf) fprintf(shf, "f=%u ticks=%u r=%08x iw=%08x ew=%08x\n",
+                               (unsigned)frame_counter, (unsigned)cpu_ticks,
+                               (unsigned)reg[REG_PC], (unsigned)h, (unsigned)he);
+            }
+            if (shf) fflush(shf);
+#ifdef STATE_DUMP_LO
+            if ((frame_counter >= STATE_DUMP_LO && frame_counter < STATE_DUMP_LO + 3) ||
+                (frame_counter >= STATE_DUMP_HI && frame_counter < STATE_DUMP_HI + 4))
+            {
+              char nm[64];
+              FILE *df;
+              snprintf(nm, sizeof(nm), "ms0:/sd_%u.bin", (unsigned)frame_counter);
+              df = fopen(nm, "wb");
+              if (df) {
+                fwrite(&iwram[0x8000], 1, 0x8000, df);
+                fwrite(ewram, 1, 0x40000, df);
+                fwrite(reg, 4, 64, df);
+                fwrite(io_registers, 1, 0x400, df);
+                fclose(df);
+              }
+            }
+#endif
+          }
+#endif
         }
 
         // Vcount trigger (flag) and IRQ if enabled
@@ -1099,6 +1244,7 @@ bool main_check_savestate(const u8 *src)
   {
     char tname[2] = {'0' + i, 0};
     const u8 *p = bson_find_key(p2, tname);
+    u32 prescale, status, dsc, irq, frequency_step;
     if (!p)
       return false;
 
@@ -1109,6 +1255,24 @@ bool main_check_savestate(const u8 *src)
         !bson_contains_key(p, "dsc", BSON_TYPE_INT32) ||
         !bson_contains_key(p, "irq", BSON_TYPE_INT32) ||
         !bson_contains_key(p, "status", BSON_TYPE_INT32))
+      return false;
+
+    if (!bson_read_int32(p, "prescale", &prescale) ||
+        (prescale != 0 && prescale != 6 &&
+         prescale != 8 && prescale != 10) ||
+        !bson_read_int32(p, "status", &status) || status > TIMER_CASCADE ||
+        !bson_read_int32(p, "dsc", &dsc) ||
+        dsc > TIMER_DS_CHANNEL_BOTH ||
+        !bson_read_int32(p, "irq", &irq) || irq > TIMER_TRIGGER_IRQ ||
+        /* 0xFF000000 is the largest step with which sound_timer's
+         * `fifo_fractional (<= 0xFFFFFF) += step` cannot wrap a u32; past
+         * it the wrap makes that loop spin up to ~16M times per timer
+         * event.  direct_sound_timer_step clamps to the same bound.  No
+         * older writer exceeded it: the unclamped formula (base<<24) /
+         * (rate * reload), for both base rates and both sound rates (2^15,
+         * 2^16), wraps to <= 0xAAAAAAAA at every reload >= 1.  Keep. */
+        !bson_read_int32(p, "freq-step", &frequency_step) ||
+        frequency_step > 0xFF000000u)
       return false;
   }
 

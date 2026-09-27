@@ -45,7 +45,7 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
   fi
 }
 
-# CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_PARTIAL, BIG_JIT, cache
+# CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_PARTIAL, cache
 # sizes -- anything touching the dynarec); EXTRA_DEFS reaches psp/Makefile
 # (GPSP_PLAYABLE, titles).  Threaded through BECAUSE the alternative bit twice:
 # `make` does not track CFLAGS, so a core built by hand with flags and then a

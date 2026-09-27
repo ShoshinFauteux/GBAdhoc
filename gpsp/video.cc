@@ -984,6 +984,14 @@ static inline void render_scanline_bitmap(
     }
 
     u32 pixel_x = (u32)(source_x >> 8);
+    /* Nothing of the bitmap lies in this segment when it starts right of the
+     * segment (start >= end: end - start would wrap and `width` pixels would
+     * be written past the segment -- past the u32 tmp_buf on the stack, or
+     * past the screen buffer on the last line) or ends left of it
+     * (pixel_x >= width: width - pixel_x would wrap and the read run off the
+     * bitmap row). */
+    if (start >= end || pixel_x >= width)
+      return;
     u32 pixcnt = MIN(end - start, width - pixel_x);
     pixfmt *valptr = &src_ptr[pixel_x + (pixel_y * width)];
     pixfmt val = 0;
@@ -2889,6 +2897,17 @@ __attribute__((constructor)) static void mcv_install(void) { atexit(mcv_dump); }
 #define MCV_FRAME(vc) do {} while (0)
 #endif
 
+/* ---- ME_TIMING_SIM: the ME's PRODUCTION snapshot timing, on the desktop --
+ * See video_me_timing_sim.h.  Desktop-only, -DME_TIMING_SIM=1. */
+#ifndef ME_TIMING_SIM
+#define ME_TIMING_SIM 0
+#endif
+#if ME_TIMING_SIM
+#include "video_me_timing_sim.h"
+#else
+#define MTS_CAPTURE_LINE(vc) do {} while (0)
+#endif
+
 void update_scanline(void)
 {
   u32 pitch = get_screen_pitch();
@@ -2918,6 +2937,7 @@ void update_scanline(void)
     }
     memcpy(me_capture_buf->ioregs[vcount], io_registers,
            ME_CAP_IOREGS * sizeof(u16));
+    MTS_CAPTURE_LINE(vcount);
     if (me_capture_mode == 1)
       return;                     /* the render happens on the ME */
   }

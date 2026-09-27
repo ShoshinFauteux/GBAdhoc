@@ -1,5 +1,73 @@
 # The ME renderer diverges from the CPU renderer, and it is deterministic
 
+## Update 2026-09-24: cause found, fix committed, hardware check pending
+
+**The cause is the post point, not the snapshot granularity.** `main_psp.c`
+posted the render from `plat_video_frame`, after `retro_run` had emulated the
+whole of VBlank, and the ME copies vram/oam/palette at the post. So frame N's
+captured registers (lines 0-159) were drawn with graphics memory that had
+already been through frame N's VBlank, where games write the *next* frame.
+The capture itself was always right; ME_CAP_VALIDATE could not see this
+because it snapshots at line 0 and skips frames whose memory changes.
+
+**The owner's sprite artifact is one case of it.** Pokemon's `monbg`
+battle animations (Scratch, Tackle, ...) copy the battler into BG1's tiles and
+map (VRAM pages 16-17 and 56-59) in the same VBlank that moves BG1's scroll
+onto it. The engine drew the new map at the old scroll, so for one frame the
+battler appeared 144 px left and 18 px up of its place, at the top-left under
+the opponent's HP box. At the PSP's 1.7x-2x scales, 144 GBA px is 245-288
+screen px, which matches the reported "200-300 px to the left". It is not an OAM X wrap; OAM did not change in those frames.
+
+**Why it depends on the soundtrack.** Measured on the two H&S saves with the
+same script: on `heart_soul_light` the BG1 scroll register already holds the
+new value in the frame whose VBlank writes the map, so the early map lands at
+the right place and nothing shows. On `heart_soul_heavy` the scroll and the map
+land in the same VBlank, which produces the ghost on each of the 7 Scratch and
+4 Tackle animations in the fixture. The saves differ only in music, so the
+likeliest reading is that the heavier mixer pushes the game's own register
+write out of VBlank and into its buffered next-VBlank path. The earlier
+conclusion that the divergence was independent of the soundtrack was wrong
+about the *visible* part. The total count barely moves (188 vs 185) because
+it is dominated by the battle intro. The 11 ghost frames exist only on heavy.
+
+**Measured without hardware.** `ME_TIMING_SIM` (`video_me_timing_sim.h`,
+`tools/e2e/run_me_timing_sim.sh`) replays each capture through `video.cc`
+exactly as `me_render_glue.cc` does. It uses the memory the ME would copy at
+each post point, with production `OAM_UPDATED` semantics and persistent
+per-engine `order_obj` state. On the 2026-09-18 fixtures and input script,
+frames 300-3900, matching no CPU frame within +-8:
+
+| fixture | hardware (lower bound) | model, post at frame end | model, post at vcount 160 |
+| --- | --- | --- | --- |
+| `heart_soul_heavy` | 188 | 200 | **5** |
+| `heart_soul_light` | 185 | 185 | **0** |
+| `unbound_rival_medium` | 106-111 | 125 | **0** |
+
+The model reproduces the hardware distribution too: 45 unmatched in 300-599
+and 122-123 in 600-899 on heavy, as the table below records. The 5 left are
+frames the game writes VRAM or OAM while lines 0-159 draw. That is the known
+single-snapshot limitation, and those frames are equally wrong at either post
+point.
+
+**The fix** (`gpsp_visible_done_hook`, harness key `me_vispost`, default 1)
+posts from the vcount-160 hook at normal speed. The rest is unchanged:
+presentation stays at the loop top, and the once-per-frame guard and the
+stage and capture ownership are the same. The work per frame is the same
+work, done 68 lines earlier. Fast-forward keeps its end-of-frame post.
+`me_vispost = 0` restores the old post point, so one binary can run the A/B.
+
+**Latency, stated plainly.** Before, the presented image took its registers
+from frame N and its memory from N+1. Now both come from N. Scrolling reaches
+the screen as before; sprite and tile changes arrive one frame (16.7 ms) later
+than they did. On hardware the vhash A/B should now read `-1` for every changing
+frame and leave about 5 unmatched on heavy.
+
+**Not yet established:** the hardware result, and the per-frame cost on the
+consoles (`me_rend` census `wait_mean_us`, `rend_mean_us`, `vis_mean_us`,
+before vs after).
+
+---
+
 Measured 2026-09-18 on both consoles. This is the first time the Media Engine
 renderer's output has actually been compared against the core's own renderer on
 hardware, and it is the only place it *can* be compared: PPSSPP never runs the

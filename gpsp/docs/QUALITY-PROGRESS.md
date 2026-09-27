@@ -49,8 +49,8 @@ mechanism behind the one-frame sprite displacement.
 
 ### One command for host tests — done
 
-`tools/run_host_tests.py`: 8 suites, PASS/FAIL/SKIP with a reason for every skip,
-JSON manifest. Three were effectively unrunnable before — `rom_load` failed in
+`tools/run_host_tests.py`: then 8 suites (now 23), PASS/FAIL/SKIP with a reason
+for every skip, JSON manifest. Three were effectively unrunnable before — `rom_load` failed in
 *every* worktree, and two had no runner plus a documented build command missing
 `-ffunction-sections`.
 

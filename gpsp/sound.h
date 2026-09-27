@@ -76,6 +76,22 @@ void sound_flush_ring(void);
   #define GBC_BASE_RATE_INT ((u32)(16 * 1024 * 1024))
 #endif
 
+/* Timer rates above the representable 8.24 range previously wrapped to zero
+ * (notably reload=1 at 64 kHz), leaving sound_timer's progress loop stuck.
+ * Saturate at the largest step that cannot overflow when added to a 24-bit
+ * fractional accumulator.  Such rates are far beyond the output Nyquist rate. */
+static INLINE fixed8_24 direct_sound_timer_step(u32 timer_reload, u32 rate)
+{
+   u64 step;
+   if (!timer_reload || !rate)
+      return 0;
+   step = ((u64)GBC_BASE_RATE_INT << 24) /
+          ((u64)rate * timer_reload);
+   if (step > 0xFF000000ULL)
+      step = 0xFF000000ULL;
+   return (fixed8_24)step;
+}
+
 #define DIRECT_SOUND_INACTIVE         0
 #define DIRECT_SOUND_RIGHT            1
 #define DIRECT_SOUND_LEFT             2

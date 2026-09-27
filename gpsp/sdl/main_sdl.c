@@ -130,10 +130,16 @@ static int g_ff;             /* uncapped fast-forward active this frame */
 /* Keep at most ~250 ms queued; beyond that we drop (pacing drift guard). */
 #define AUDIO_QUEUE_MAX_BYTES (65536 / 4 * 4 * 2) /* 250ms * 4 bytes * stereo-ish */
 
+/* ME_TIMING_SIM core builds define this (video_me_timing_sim.h); called
+ * where psp/main_psp.c posts the ME render.  Absent otherwise. */
+extern void me_timing_sim_frame_end(void) __attribute__((weak));
+
 static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
                              size_t pitch)
 {
    (void)w; (void)h;   /* texture is fixed 240x160 */
+   if (me_timing_sim_frame_end)
+      me_timing_sim_frame_end();
    if (!have_video)
       return;
    if (g_ff && (fe_host_frame_count() & FF_PRESENT_MASK))
@@ -402,6 +408,7 @@ int main(int argc, char **argv)
    const char *log_path  = NULL;
    const char *dump_dir  = ".";
    const char *script    = NULL;
+   const char *state_path = NULL;   /* --state: load at frame 30, as the PSP rig */
    long autoexit = 0, dump_at = 0, dump_every = 0;
    int scale = 2, no_pacing = 0, force_sram_write = 0, force_ff = 0;
    int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
@@ -443,6 +450,8 @@ int main(int argc, char **argv)
          force_ff = 1;
       else if (!strcmp(argv[i], "--script") && i + 1 < argc)
          script = argv[++i];
+      else if (!strcmp(argv[i], "--state") && i + 1 < argc)
+         state_path = argv[++i];
       else if (!strcmp(argv[i], "--force-sram-write"))
          force_sram_write = 1;
       else if (!strcmp(argv[i], "--host"))
@@ -655,6 +664,19 @@ int main(int argc, char **argv)
             if (ev.type == SDL_QUIT ||
                 (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE))
                running = 0;
+         }
+
+         /* Same one-shot as the PSP perf rig's `load_state = 1`. */
+         if (state_path && fe_host_frame_count() >= 30)
+         {
+            if (fe_host_state_load(state_path) != 0)
+            {
+               exit_code = 6;
+               exit_reason = "state_load_failed";
+               running = 0;
+               break;
+            }
+            state_path = NULL;
          }
 
          g_ff = force_ff || fe_autopilot_ff();

@@ -36,9 +36,14 @@ static u16 me_out[GBA_SCREEN_PITCH * (160 + 1)];
  * the host's freshly written data and never a stale line. */
 static void me_inv(unsigned int cached_addr, int nbytes)
 {
-   int i;
-   for (i = 0; i < nbytes; i += 64)
-      __builtin_allegrex_cache(0x19, (int)(cached_addr + i));
+   /* Line-aligned walk: stepping 64 from an UNALIGNED start misses the last
+    * line whenever (addr % 64) + nbytes spills into one more line -- e.g. the
+    * 96-byte vram_clean map at a line offset above 32 would leave the map's
+    * tail (OBJ VRAM pages) served from a stale ME cache line. */
+   unsigned int a   = cached_addr & ~63u;
+   unsigned int end = cached_addr + (unsigned int)nbytes;
+   for (; a < end; a += 64)
+      __builtin_allegrex_cache(0x19, (int)a);
 }
 
 /* ME_CMD_RENDER entry (called from me_dispatch with the command's seq).

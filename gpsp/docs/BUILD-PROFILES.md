@@ -1,33 +1,37 @@
 # BUILD PROFILES
 
-Three builds, three names, one command each.
+Four builds, four names, one command each.
 
 ```
 tools/build.sh release      # what a player installs
 tools/build.sh harness      # the hardware performance rig
 tools/build.sh diagnostic   # release plus investigation instruments
+tools/build.sh soak         # long-running harness plus bad-jump reporting
 ```
 
 Options: `--no-clean` (only safe when no define changed — see below), `--out
 DIR` to stage the artifacts, `--expect TOKEN` to require a string in the linked
 ELF.
 
-Everything below is derived from `tools/build.sh` and `gpsp_profile.h`, which
-are the only two places a profile is defined.
+Profile defines and titles are set in `tools/build.sh` and checked by
+`gpsp_profile.h`. The harness/soak PSP memory budget is also passed there and
+must match the `PSP_LARGE_MEMORY=0` policy documented in `psp/Makefile`.
 
 ---
 
 ## What each profile is for
 
-| | release | harness | diagnostic |
+| | release | harness | diagnostic | soak |
 |---|---|---|---|
-| XMB title | `GBAdhoc` | `GBAdhoc HARNESS` | `GBAdhoc DIAG` |
-| EVT log to the memory stick | no | yes | no |
-| drivable by a CMD.TXT job file | no | yes | no |
-| `ms0:/badjump.txt`, `ms0:/smchisto.txt` | no | no | yes |
-| same emulation as release | — | yes | yes |
+| XMB title | `GBAdhoc` | `GBAdhoc HARNESS` | `GBAdhoc DIAG` | `GBAdhoc SOAK` |
+| EVT log to the memory stick | no | yes | no | yes |
+| drivable by a CMD.TXT job file | no | yes | no | yes |
+| bad-jump report | no | no | yes | yes |
+| SMC write histogram | no | no | yes | no |
+| PSP-1000 memory budget (`PSP_LARGE_MEMORY=0`) | no | yes | no | yes |
+| same emulation as release | — | yes | yes | yes |
 
-The dynarec flags are **shared by all three** on purpose: a diagnostic build
+The dynarec flags are **shared by all four** on purpose: a diagnostic build
 must be the same emulator as the release, or it answers a different question.
 
 ```
@@ -125,8 +129,9 @@ it is not reproducible from a commit.
 python tools/run_host_tests.py
 ```
 
-Eight suites, one command, `PASS`/`FAIL`/`SKIP` with a reason for every skip,
-and a JSON manifest.  A skip is not a pass and the runner says so.
+Twenty-one suites, one command, `PASS`/`FAIL`/`SKIP` with a reason for every
+skip, and a JSON manifest. Use `--strict` in a release gate to make any skip
+fail the command; a skip is never counted as a pass.
 
 It solves two environment problems particular to this repo: there is no native
 gcc on the Windows host (suites that compile are re-run inside WSL), and a git

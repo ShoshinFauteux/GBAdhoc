@@ -32,6 +32,19 @@ int fe_ini_get(const char *path, const char *key, char *out, size_t out_sz);
 /* Integer convenience: returns def if missing/unparsable. */
 long fe_ini_get_int(const char *path, const char *key, long def);
 
+/* Lookup audit.  Register a path, and every fe_ini_get/fe_ini_get_int of it
+ * is recorded; fe_ini_audit_report() then calls emit() once per key=value
+ * line in the file with `asked` = whether anything looked that key up (2 =
+ * a DUPLICATE line, ignored because the first one wins; 0 is a
+ * typo or a key this build does not have), the integer parse and whether the
+ * whole value parsed as one.  Returns lines reported, -1 if not registered. */
+void fe_ini_audit(const char *path);
+int  fe_ini_audit_report(const char *path,
+                         void (*emit)(void *user, const char *key,
+                                      const char *raw, int asked, long ival,
+                                      int is_int),
+                         void *user);
+
 /* Replace (or append) `key = value` in a small ini file, preserving all
  * other lines. Creates the file if missing. Returns 0 on success. */
 int fe_ini_set(const char *path, const char *key, const char *value);

@@ -249,12 +249,159 @@ static char *trim(char *s)
    return s;
 }
 
+/* ---- lookup audit (rig: "a misspelled key fails silently") -------------
+ *
+ * Every harness campaign that lost runs to a config mistake lost them the same
+ * way: a key that no code ever reads (a typo, a key from another branch) looks
+ * exactly like a key that was applied.  With an audited path registered, every
+ * lookup of that file is recorded, and fe_ini_audit_report() walks the file
+ * afterwards and reports each key it contains, with whether anything asked for
+ * it and what an integer read of it returned.  A key nobody asked for is the
+ * typo.  Up to FE_INI_AUDIT_PATHS files, FE_INI_AUDIT_KEYS lookups each.
+ *
+ * NOT IN A PLAYER BUILD.  Nothing in a release registers a path (the caller
+ * is telemetry-only), so the table would be 13 KB of .bss that shrinks the
+ * PSP-1000's heap for nothing.  Same condition as fe_evt.h's
+ * GPSP_NO_TELEMETRY. */
+#if defined(GPSP_PLAYABLE) && !defined(GPSP_KEEP_TELEMETRY)
+void fe_ini_audit(const char *path) { (void)path; }
+int fe_ini_audit_report(const char *path,
+                        void (*emit)(void *user, const char *key,
+                                     const char *raw, int asked, long ival,
+                                     int is_int),
+                        void *user)
+{
+   (void)path; (void)emit; (void)user;
+   return -1;
+}
+#define ini_audit_note(path, key) do { (void)(path); (void)(key); } while (0)
+#else
+#define FE_INI_AUDIT_PATHS 2
+#define FE_INI_AUDIT_KEYS  160
+#define FE_INI_AUDIT_KLEN  40
+static struct
+{
+   char path[256];
+   unsigned n;
+   char key[FE_INI_AUDIT_KEYS][FE_INI_AUDIT_KLEN];
+} ini_audit[FE_INI_AUDIT_PATHS];
+
+void fe_ini_audit(const char *path)
+{
+   unsigned i;
+   for (i = 0; i < FE_INI_AUDIT_PATHS; i++)
+      if (!ini_audit[i].path[0] || !strcmp(ini_audit[i].path, path))
+      {
+         strncpy(ini_audit[i].path, path, sizeof(ini_audit[i].path) - 1);
+         ini_audit[i].n = 0;
+         return;
+      }
+}
+
+static void ini_audit_note(const char *path, const char *key)
+{
+   unsigned i, k;
+   for (i = 0; i < FE_INI_AUDIT_PATHS; i++)
+   {
+      if (!ini_audit[i].path[0] || strcmp(ini_audit[i].path, path))
+         continue;
+      for (k = 0; k < ini_audit[i].n; k++)
+         if (!strcmp(ini_audit[i].key[k], key))
+            return;
+      if (ini_audit[i].n < FE_INI_AUDIT_KEYS)
+      {
+         strncpy(ini_audit[i].key[ini_audit[i].n], key, FE_INI_AUDIT_KLEN - 1);
+         ini_audit[i].key[ini_audit[i].n][FE_INI_AUDIT_KLEN - 1] = '\0';
+         ini_audit[i].n++;
+      }
+      return;
+   }
+}
+
+static int ini_audit_asked(unsigned slot, const char *key)
+{
+   unsigned k;
+   for (k = 0; k < ini_audit[slot].n; k++)
+      if (!strcmp(ini_audit[slot].key[k], key))
+         return 1;
+   return 0;
+}
+
+static char *trim(char *s);
+
+int fe_ini_audit_report(const char *path,
+                        void (*emit)(void *user, const char *key,
+                                     const char *raw, int asked, long ival,
+                                     int is_int),
+                        void *user)
+{
+   unsigned slot;
+   FILE *f;
+   char line[512];
+   static char seen[FE_INI_AUDIT_KEYS][FE_INI_AUDIT_KLEN];   /* not stack: PSP */
+   unsigned nseen = 0, s;
+   int n = 0;
+
+   for (slot = 0; slot < FE_INI_AUDIT_PATHS; slot++)
+      if (!strcmp(ini_audit[slot].path, path))
+         break;
+   if (slot == FE_INI_AUDIT_PATHS)
+      return -1;
+   f = fopen(path, "r");
+   if (!f)
+      return 0;
+   while (fgets(line, sizeof(line), f))
+   {
+      char *eq, *k, *v, *end;
+      long iv;
+      if (line[0] == '#' || line[0] == ';' || line[0] == '[')
+         continue;
+      eq = strchr(line, '=');
+      if (!eq)
+         continue;
+      *eq = '\0';
+      k = trim(line);
+      v = trim(eq + 1);
+      if (!*k)
+         continue;
+      iv = strtol(v, &end, 0);
+      /* A key that appears twice: fe_ini_get returns the FIRST line, so the
+       * later one is silently ignored -- report it as asked=2.  (A rig arm
+       * appended `net_latency_ms = 50` below a staged `net_latency_ms = 0`
+       * and the run measured nothing; the audit echoed both lines.) */
+      for (s = 0; s < nseen; s++)
+         if (!strcmp(seen[s], k))
+            break;
+      if (s < nseen)
+      {
+         emit(user, k, v, 2, iv, end != v && *trim(end) == '\0');
+         n++;
+         continue;
+      }
+      if (nseen < FE_INI_AUDIT_KEYS)
+      {
+         strncpy(seen[nseen], k, FE_INI_AUDIT_KLEN - 1);
+         seen[nseen][FE_INI_AUDIT_KLEN - 1] = '\0';
+         nseen++;
+      }
+      emit(user, k, v, ini_audit_asked(slot, k), iv,
+           end != v && *trim(end) == '\0');
+      n++;
+   }
+   fclose(f);
+   return n;
+}
+#endif   /* audit only in telemetry builds */
+
 int fe_ini_get(const char *path, const char *key, char *out, size_t out_sz)
 {
    FILE *f = fopen(path, "r");
-   char line[256];
+   /* `last_rom` can hold a browser relative path of 319 bytes plus the
+    * `key = ` prefix; keep the whole setting on one line when loading it. */
+   char line[512];
    int found = 0;
 
+   ini_audit_note(path, key);
    if (!f)
       return 0;
    while (fgets(line, sizeof(line), f))
@@ -305,6 +452,16 @@ int fe_ini_set(const char *path, const char *key, const char *value)
    if (f)
    {
       n = fread(buf, 1, sizeof(buf) - 1, f);
+      if (n == sizeof(buf) - 1 && fgetc(f) != EOF)
+      {
+         fclose(f);
+         return -1;
+      }
+      if (ferror(f))
+      {
+         fclose(f);
+         return -1;
+      }
       fclose(f);
    }
    buf[n] = '\0';
@@ -325,26 +482,43 @@ int fe_ini_set(const char *path, const char *key, const char *value)
                q++;
             if (*q == '=')
             {
-               o += (size_t)snprintf(out + o, sizeof(out) - o, "%s = %s\n",
-                                     key, value);
+               int written;
+               if (o >= sizeof(out))
+                  return -1;
+               written = snprintf(out + o, sizeof(out) - o, "%s = %s\n",
+                                  key, value);
+               if (written < 0 || (size_t)written >= sizeof(out) - o)
+                  return -1;
+               o += (size_t)written;
                replaced = 1;
                line = nl ? nl + 1 : NULL;
                continue;
             }
          }
-         if (o + len < sizeof(out))
-         {
-            memcpy(out + o, line, len);
-            o += len;
-         }
+         if (len >= sizeof(out) - o)
+            return -1;
+         memcpy(out + o, line, len);
+         o += len;
          line = nl ? nl + 1 : NULL;
       }
    }
    if (!replaced)
    {
       if (o && out[o - 1] != '\n')
+      {
+         if (o >= sizeof(out))
+            return -1;
          out[o++] = '\n';
-      o += (size_t)snprintf(out + o, sizeof(out) - o, "%s = %s\n", key, value);
+      }
+      if (o >= sizeof(out))
+         return -1;
+      {
+         int written = snprintf(out + o, sizeof(out) - o, "%s = %s\n",
+                                key, value);
+         if (written < 0 || (size_t)written >= sizeof(out) - o)
+            return -1;
+         o += (size_t)written;
+      }
    }
 
    f = fopen(path, "wb");

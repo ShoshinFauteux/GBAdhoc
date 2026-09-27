@@ -47,6 +47,26 @@ typedef u32 cpu_mode_type;
 #define CPU_STOP            2
 #define CPU_DMA             3  /* CPU is idling due to DMA transfer */
 
+/* HALT wakes on any enabled interrupt request (IE & IF), even when IRQ
+ * delivery is masked by IME or CPSR.I. STOP deliberately keeps its existing
+ * stricter wake path in check_and_raise_interrupts(). */
+static inline bool cpu_irq_request_pending(u32 ie, u32 irq_flags)
+{
+  return (ie & irq_flags) != 0;
+}
+
+static inline bool cpu_irq_delivery_enabled(u32 ie, u32 irq_flags,
+                                             u32 ime, u32 cpsr)
+{
+  return !(cpsr & 0x80) && ime && cpu_irq_request_pending(ie, irq_flags);
+}
+
+static inline bool cpu_halt_wake_requested(u32 halt_state, u32 ie,
+                                            u32 irq_flags)
+{
+  return halt_state == CPU_HALT && cpu_irq_request_pending(ie, irq_flags);
+}
+
 typedef u8 cpu_alert_type;
 
 #define CPU_ALERT_NONE         0
@@ -114,6 +134,19 @@ u32 check_and_raise_interrupts(void);
 cpu_alert_type check_interrupt(void);
 cpu_alert_type flag_interrupt(irq_type irq_raised);
 void set_cpu_mode(cpu_mode_type new_mode);
+#ifdef IRQ_INTEGRITY_CHECK
+/* DIAGNOSTIC: IRQ entry/return register-integrity invariant (cpu_threaded.c) */
+void irqchk_enter(u32 site);
+void irqchk_exit(u32 old_mode, u32 address);
+#define IRQCHK_ENTER(site) irqchk_enter(site)
+#define IRQCHK_EXIT(old_mode, address) irqchk_exit(old_mode, address)
+void irqchk_reset(void);
+#define IRQCHK_RESET() irqchk_reset()
+#else
+#define IRQCHK_ENTER(site) do { } while (0)
+#define IRQCHK_EXIT(old_mode, address) do { } while (0)
+#define IRQCHK_RESET() do { } while (0)
+#endif
 
 u32 function_cc execute_load_u8(u32 address);
 u32 function_cc execute_load_u16(u32 address);
@@ -149,9 +182,22 @@ extern u8* ram_translation_cache_ptr;
 extern u8* rom_translation_cache;
 extern u8* ram_translation_cache;
 extern int sceBlock;
+#elif defined(RUNTIME_JIT_CACHE)
+/* Sized at startup (dynarec_select_translation_caches): the static SMALL
+ * arrays in the stub file by default, or one heap block of the LARGE sizes
+ * when the console has the memory.  Every size below must be read from these
+ * variables, never from the *_TRANSLATION_CACHE_SIZE macros. */
+extern u8 *rom_translation_cache;
+extern u8 *ram_translation_cache;
+extern u32 rom_translation_cache_size;
+extern u32 ram_translation_cache_size;
 #else
 extern u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
 extern u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE];
+#endif
+#if !defined(RUNTIME_JIT_CACHE)
+#define rom_translation_cache_size ((u32)ROM_TRANSLATION_CACHE_SIZE)
+#define ram_translation_cache_size ((u32)RAM_TRANSLATION_CACHE_SIZE)
 #endif
 extern u8 *rom_translation_ptr;
 extern u8 *ram_translation_ptr;
@@ -168,6 +214,20 @@ extern u32 idle_loop_target_pc;
 extern u32 translation_gate_targets;
 extern u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
 void smc_gates_reset(void);   /* SMC_GATES builds: forget gate hit stamps */
+void smc_gates_refresh_values(void); /* Savestate: rebase ranked observations */
+#ifdef DMA_SMC_FLUSH
+/* HBlank/VBlank DMAs that landed on translated code and forced a full RAM
+ * flush from update_gba (main.c).  Monotonic; frontends declare it weak. */
+extern u32 dma_smc_flushes;
+#endif
+#ifdef XLAT_DEPTH_PROBE
+/* Soak/diagnostic: deepest nested block translation and lowest frame address
+ * seen at translation entry since the last reset (0 = none yet).  Frontends
+ * that must link without the flag declare these weak. */
+extern u32 xlat_depth_max;
+extern u32 xlat_sp_min;
+void xlat_depth_probe_reset(void);
+#endif
 
 extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
@@ -180,6 +240,20 @@ void init_dynarec_caches(void);
 void flush_dynarec_caches(void);
 void init_emitter(bool);
 void init_bios_hooks(void);
+
+#if defined(RUNTIME_JIT_CACHE)
+/* Translation-cache tier chosen at startup.  See cpu_threaded.c. */
+enum
+{
+  JIT_CACHE_UNDECIDED = 0,
+  JIT_CACHE_SMALL     = 1,   /* the static arrays (PSP-1000 budget)        */
+  JIT_CACHE_LARGE     = 2    /* one heap block, 64 MiB consoles            */
+};
+extern u32 jit_cache_tier;          /* JIT_CACHE_*                          */
+extern u32 jit_cache_force_small;   /* set by the frontend BEFORE retro_init */
+extern const char *jit_cache_reason;
+void dynarec_select_translation_caches(void);
+#endif
 
 extern u32 reg_mode[7][7];
 extern u32 spsr[6];

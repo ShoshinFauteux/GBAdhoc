@@ -3,8 +3,9 @@
 Onboarding index. Every claim here is either verified against current source or
 labelled as a hypothesis. Detailed experiments live in the linked records.
 
-**Dated 2026-09-18.** If a statement here disagrees with the code, the code wins
-— say so and fix this file.
+**Snapshot dated 2026-09-18.** Branch names and status below describe that
+checkpoint, not necessarily the active checkout. If a statement here disagrees
+with current code, verify it and update this file.
 
 ## Commits and artifacts
 
@@ -21,11 +22,11 @@ candidate, the outer GBAdhoc repository, or unrelated README/screenshot work.
 
 ## Build profiles
 
-One command: `tools/build.sh [release|harness|diagnostic]`. Flag lists live
+One command: `tools/build.sh [release|harness|diagnostic|soak]`. Flag lists live
 there and nowhere else; `gpsp_profile.h` rejects combinations that are silently
 wrong.
 
-Core flags are **shared by all three profiles** — a diagnostic build must be the
+Core flags are **shared by all four profiles** — a diagnostic build must be the
 same emulator as the release or it answers a different question:
 
     SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 SMC_GATE_BITMAP=1

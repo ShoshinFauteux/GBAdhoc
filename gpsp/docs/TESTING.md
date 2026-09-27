@@ -11,6 +11,15 @@ live-run confirmation. All PPSSPP citations below are against `hrydgard/ppsspp` 
 
 ---
 
+## Fast source checks
+
+Run `tools/lint.sh` for shell syntax, Python syntax, and whitespace checks before
+the longer host-test and PSP-build gates. It uses only tools already expected in
+the WSL build environment; ShellCheck runs when installed. C/C++ warnings are
+checked by the host suites and PSP profile builds rather than by this script.
+The host runner enforces a 30-suite ceiling; extend an existing suite when
+additional focused coverage is needed.
+
 ## PPSSPP multi-instance recipe
 
 ### 0. The three mechanisms that make N instances work (read this first)

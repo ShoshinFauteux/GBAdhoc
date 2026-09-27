@@ -230,6 +230,8 @@ void function_cc write_backup(u32 address, u32 value);
 void function_cc write_gpio(u32 address, u32 value);
 
 void write_rumble(bool oldv, bool newv);
+/* Rebuild the frame-local rumble timer after restoring CPU/cart state. */
+void rumble_restore_state(bool gbp_active);
 void rumble_frame_reset();
 float rumble_active_pct();
 
@@ -241,9 +243,44 @@ extern u8 ws_cyc_nseq[16][2];
 
 extern u32 gamepak_size;
 extern u32 gamepak_buffer_count;   /* 1 MB ROM-cache blocks actually held */
+/* Most 1 MiB blocks init_gamepak_buffer() may take (read once, in
+ * retro_init).  Defaults to ROM_BUFFER_SIZE; a frontend that knows it has the
+ * memory may raise it (at most 32, the size of gamepak_buffers[]) so a 32 MiB
+ * cart is held whole.  Lowering it is always safe: a cart that does not fit
+ * is paged. */
+extern u32 gamepak_buffer_cap;
+/* Frontend: the cart's size in 1 MiB blocks when it wants the cart held
+ * whole (0 = no wish).  Read by init_gamepak_buffer (PSP only), the LAST
+ * allocation decision of startup -- after the translation-cache tier
+ * (RUNTIME_JIT_CACHE) has taken its block -- so it decides on the heap that
+ * is really left: JIT tier first, residency only from what remains.  The
+ * blocks are taken one by one while the 1 MiB post-load reserve is held, so
+ * a resident cart leaves the same >= 1 MiB floor a PSP-1000 lives on; if
+ * any is refused, every extra block goes back and the cap stands.
+ * gamepak_cap_reason says what happened ("default", "resident",
+ * "heap_short"); gamepak_resident_got how many blocks the attempt reached. */
+extern u32 gamepak_resident_wanted;
+extern const char *gamepak_cap_reason;
+extern u32 gamepak_resident_got;
+/* Idle static memory lent to the ROM cache (the dynarec's SMALL arrays once
+ * the LARGE tier replaced them); blocks carved from it are counted in
+ * gamepak_static_blocks and are never freed. */
+extern u8 *gamepak_spare_pool;
+extern u32 gamepak_spare_pool_bytes;
+extern u32 gamepak_static_blocks;
+/* Diagnostic: emit the paged-ROM load stubs (NULL page check + fault call)
+ * even when the cart is resident, so a resident run executes exactly the
+ * translated code a paged run does.  Behaviour is identical either way -- a
+ * resident cart never has an unmapped page -- only code size and layout
+ * change.  Read by the emitter at every reset. */
+extern u32 gamepak_force_swap_stubs;
 /* Monotonic count of 32 KiB ROM page faults served from the storage medium
  * (only ever nonzero when gamepak_must_swap()). Frontends take deltas. */
 extern u32 gamepak_page_loads;
+/* Page reads that needed a reopen, and pages mapped with 0xFF fill where the
+ * file should have supplied data.  Both should stay 0; frontends may log them. */
+extern u32 gamepak_reopens;
+extern u32 gamepak_short_reads;
 extern bool gamepak_mini_materialized;
 extern bool gamepak_header_nonstandard;
 extern char gamepak_code[5];
@@ -257,6 +294,7 @@ s32 load_bios(char *name);
 void init_memory(void);
 void init_gamepak_buffer(void);
 bool gamepak_must_swap(void);
+void memory_unload_gamepak(void);
 void memory_term(void);
 u8 *load_gamepak_page(u32 physical_index);
 
@@ -328,6 +366,10 @@ extern u8 gamepak_backup[1024 * 128];
 /* Optional synchronous ROM-load observer: bytes read / bytes to preload.
  * (0,0) announces cartridge setup. Must not re-enter or mutate the core. */
 extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
+/* Telemetry-only observer: the frontend measures the heap (free total and
+ * largest contiguous block) at the startup allocation decisions.  NULL in a
+ * release build; never called after startup. */
+extern void (*gpsp_heap_census)(const char *where);
 
 // Page sticky bit routines
 extern u32 gamepak_sticky_bit[1024/32];

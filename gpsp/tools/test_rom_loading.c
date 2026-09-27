@@ -25,6 +25,9 @@ static unsigned evict_at, maps, io_calls, notifications, last_done, expected_tot
 static unsigned mapped_pages[1024], mapped_blocks[1024];
 static int mini_fail;
 static void (*gpsp_rom_load_progress)(u32, u32);
+/* The extracted loader's production pre-load teardown is covered by the
+ * dedicated gamepak lifecycle test; this fixture isolates byte loading. */
+static void memory_unload_gamepak(void) {}
 static void *rom_malloc(size_t size) { return mini_fail ? NULL : malloc(size); }
 static RFILE *filestream_open(const char *name, int access, int hint)
 { (void)name; (void)access; (void)hint; file.pos=0; return &file; }
@@ -59,6 +62,7 @@ static void observer(u32 done, u32 total)
 #define malloc rom_malloc
 #include "load_before.inc"
 #include "load_after.inc"
+#include "rom_scan_after.inc"
 #undef malloc
 
 static void reset(unsigned buffers, unsigned size, int fail)
@@ -101,9 +105,30 @@ int main(void)
       reset(caches[c],sizes[s],fail); gpsp_rom_load_progress=observer;
       assert(load_gamepak_raw_after("test.gba")==0);
       assert(fingerprint()==hash && io_calls==calls && gamepak_size==size && gamepak_file_blocks==blocks && maps==count && gamepak_mini_materialized==mini);
-      assert(notifications>=2 && last_done==expected_total);
+   assert(notifications>=2 && last_done==expected_total);
    }
+
+   /* One shared scan must find every marker, including unaligned placements
+    * that the former four-to-five independent scans had to rediscover. */
+   reset(2, 2*1024*1024, 0);
+   memset(gamepak_buffers[0], 0xFF, 1024*1024);
+   memcpy(gamepak_buffers[0]+101, "EEPROM_V", 8);
+   memcpy(gamepak_buffers[0]+203, "SRAM_V", 6);
+   memcpy(gamepak_buffers[0]+307, "FLASH1M_V", 9);
+   memcpy(gamepak_buffers[0]+409, "FLASH512_V", 10);
+   assert(rom_scan_signatures(gamepak_buffers[0], 1024*1024) ==
+          (ROM_SIG_EEPROM | ROM_SIG_SRAM | ROM_SIG_FLASH1M | ROM_SIG_FLASH5));
+
+   /* If the first resident MiB has no marker, the fallback starts at the
+    * next resident block and still finds later ROM backup metadata. */
+   memset(gamepak_buffers[0], 0xFF, 1024*1024);
+   memset(gamepak_buffers[1], 0xFF, 1024*1024);
+   memcpy(gamepak_buffers[1]+4, "FLASH_V", 7);
+   gamepak_size = 2*1024*1024;
+   assert(rom_scan_signatures(gamepak_buffers[0], 1024*1024) == 0);
+   assert(rom_scan_signatures_in_memory() == ROM_SIG_FLASH5);
    puts("PASS 30 before/after ROM byte/mapping/I/O comparisons; progress monotonic and exact");
+   puts("PASS one-pass aligned/unaligned backup detection and later-block fallback");
    reset(1,0,0); gpsp_rom_load_progress=observer;
    assert(load_gamepak_raw_after("empty.gba")==-1 && notifications==0);
    file.size=0x20000001;

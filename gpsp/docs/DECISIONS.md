@@ -51,6 +51,12 @@ Format per ADR: Context / Decision / Alternatives / Consequences / Upstream impa
 
 ## ADR-0007 — PSP memory posture: PSP_LARGE_MEMORY=0, 1 MiB heap slack, greedy ROM buffer kept
 
+**Status: superseded in part.** The historical `ROM_BUFFER_SIZE=32` decision
+below no longer describes current builds: the root Makefile caps PSP builds at
+15 blocks. The cap avoids the measured PSP-3000 Unbound battle divergence and
+freeze documented in `psp/Makefile`; do not use this ADR's residency estimate
+to change that limit without repeating the hardware stability test.
+
 - **Context:** pspsdk's build.mak defaults MEMSIZE=1 (64 MiB large-memory mode) on FW≥6.00; the core greedily mallocs up to 32×1 MiB ROM blocks at `retro_init` (FRONTEND-AUDIT §8). Target hardware is PSP-1000 (24 MiB user partition).
 - **Decision:** `PSP_LARGE_MEMORY = 0` in psp/Makefile so PPSSPP models the standard partition and Gate-1 numbers stay honest for the 1000-series; `PSP_HEAP_SIZE_KB(-1024)` leaves 1 MiB outside the heap; all frontend buffers are static/.bss/VRAM and created before `retro_init`; `ROM_BUFFER_SIZE` left at 32 (16 MiB Emerald loads fully resident).
 - **Measured (PPSSPP, MEMSIZE=0, 2026-07-31):** after core init + Emerald load: `EVT mem_free=765952 max_block=524288` — ~750 KiB heap headroom with the ROM fully resident. Adequate for Phase 1; the netdrv/UI phases must budget from static allocations or shrink `ROM_BUFFER_SIZE` (documented compile knob), and the real-hardware verdict still lands at Gate 4-H.

@@ -131,7 +131,10 @@ run_side() {
   cp "$ROM"  "$GAME/roms/emerald.gba"
   cp "$SAV"  "$GAME/roms/emerald.sav"
   cp "$INPUTS" "$GAME/run.inputs"
-  cat > "$GAME/autopilot.ini" <<EOF
+  # ADR-0036: autopilot.ini is deliberately ignored; automated test control
+  # must use the harness-only channel so the workload actually runs.
+  cat > "$GAME/.gpsp-harness.ini" <<EOF
+rom = emerald.gba
 script = run.inputs
 vid_prof = $WIN
 autoexit_frames = 30000

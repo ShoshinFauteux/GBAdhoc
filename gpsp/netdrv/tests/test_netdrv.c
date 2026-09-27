@@ -536,6 +536,79 @@ static void test_arq(void)
    netdrv_destroy(nd[1]);
 }
 
+static void test_ack_range(void)
+{
+   sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd[2];
+   nd_stats before, after;
+   nd_hdr h;
+   uint8_t payload[6] = { 0, 0, 0, 0, 0, 0 };
+   uint8_t frame[ND_MAX_FRAME];
+   size_t frame_len;
+
+   printf("[arq: reject cumulative ACK beyond sent range]\n");
+   sim_init(&s, 2, 0xA11CE);
+   nd[0] = mk_node(&s, &ep[0], 0, &a[0], "host", 0xA1, NULL);
+   nd[1] = mk_node(&s, &ep[1], 1, &a[1], "cli", 0xB2, NULL);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   sim_run(&s, nd, 2, 3000);
+   CHECK(netdrv_active(nd[0]) && netdrv_active(nd[1]), "session up");
+
+   CHECK(netdrv_send(nd[0], ND_RELIABLE, payload, sizeof(payload), 1) == 0,
+         "first reliable send");
+   CHECK(netdrv_send(nd[0], ND_RELIABLE, payload, sizeof(payload), 1) == 0,
+         "second reliable send");
+   netdrv_get_stats(nd[0], &before);
+
+   memset(&h, 0, sizeof(h));
+   h.type = ND_T_ACK;
+   h.src = 1;
+   h.dst = 0;
+   h.ack = 5; /* Only two payloads are outstanding. */
+   frame_len = nd_wire_build(frame, &h, NULL);
+   sim_deposit(&s, 0, s.node[1].mac, frame, frame_len, 0);
+   s.now += 1000;
+   netdrv_pump(nd[0], s.now);
+   netdrv_get_stats(nd[0], &after);
+   CHECK(after.acked == before.acked,
+         "future ACK retired payloads: %u -> %u", before.acked, after.acked);
+   CHECK(after.txq_now == before.txq_now,
+         "future ACK changed queued depth: %u -> %u",
+         before.txq_now, after.txq_now);
+   CHECK(after.rx_drop_malformed == before.rx_drop_malformed + 1,
+         "future ACK not counted malformed: %u -> %u",
+         before.rx_drop_malformed, after.rx_drop_malformed);
+
+   /* An ACK at/behind the queue head (what every piggybacked or reordered
+    * frame carries) retires nothing and is NOT malformed. */
+   before = after;
+   h.ack = 0;
+   frame_len = nd_wire_build(frame, &h, NULL);
+   sim_deposit(&s, 0, s.node[1].mac, frame, frame_len, 0);
+   s.now += 1000;
+   netdrv_pump(nd[0], s.now);
+   netdrv_get_stats(nd[0], &after);
+   CHECK(after.acked == before.acked && after.txq_now == before.txq_now,
+         "stale ACK retired payloads: %u -> %u", before.acked, after.acked);
+   CHECK(after.rx_drop_malformed == before.rx_drop_malformed,
+         "stale ACK counted malformed: %u -> %u",
+         before.rx_drop_malformed, after.rx_drop_malformed);
+   netdrv_get_stats(nd[0], &before);
+
+   /* Let the receiver consume the real DATA and send its genuine ACK. */
+   sim_run(&s, nd, 2, 20);
+   netdrv_get_stats(nd[0], &after);
+   CHECK(after.acked >= before.acked + 2,
+         "valid ACK did not retire both payloads: %u -> %u",
+         before.acked, after.acked);
+
+   netdrv_destroy(nd[0]);
+   netdrv_destroy(nd[1]);
+}
+
 /* ADR-0021 regression wall: the mid-frame poll gate must save work without
  * ever costing delivery.
  *
@@ -869,6 +942,82 @@ static void test_adaptive_rto(void)
          a[0].next_expect[a[1].local_id], sent[1],
          a[1].next_expect[a[0].local_id], sent[0]);
 
+   netdrv_destroy(nd[0]);
+   netdrv_destroy(nd[1]);
+}
+
+
+/* 3b. HEAD-OF-LINE MUST NOT INFLATE THE RTT ESTIMATE (H0b/BQ hardware,
+ * 2026-09-26).  Acks are cumulative: while a lost slot waits for its
+ * retransmission, every slot behind it -- each sent exactly once, so
+ * Karn-valid -- is acknowledged only when the gap fills.  Sampling one of
+ * those measures the HOL wait, not the path: SRTT inflates, RTO grows, the
+ * next loss waits longer, the next samples are longer still.  The join's log
+ * showed it: 1-2 % median loss, then srtt 12 -> 103 -> 338 -> 609 ms -> 1.9 s,
+ * RTO pinned at the 2.5 s ceiling, txq 139-183, and the peer's burst release
+ * overflowed the host's RFU queue.
+ * Short loss bursts on a 40 ms link: SRTT must stay near 40 ms. */
+static void test_hol_does_not_inflate_rtt(void)
+{
+   sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd[2];
+   uint8_t buf[104];
+   uint32_t sent[2] = { 0, 0 };
+   int t, i;
+   nd_stats st[2];
+   uint32_t srtt_max[2] = { 0, 0 }, rto_max[2] = { 0, 0 };
+
+   printf("[HOL: 150 ms loss bursts every 2 s on a 40 ms link]\n");
+   sim_init(&s, 2, 0x401BADu);
+   s.lat_ms = 20;
+   s.jit_ms = 4;
+   nd[0] = mk_node(&s, &ep[0], 0, &a[0], "host", 0xA1, NULL);
+   nd[1] = mk_node(&s, &ep[1], 1, &a[1], "cli", 0xB2, NULL);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   sim_run(&s, nd, 2, 3000);
+   CHECK(netdrv_active(nd[0]) && netdrv_active(nd[1]), "session up");
+   for (t = 0; t < 30000; t++)
+   {
+      s.now += 1000;
+      s.loss_pct = (t % 2000) < 150 ? 100 : 0;
+      for (i = 0; i < 2; i++)
+      {
+         netdrv_pump(nd[i], s.now);
+         if ((t % 16) == 0)
+         {
+            size_t len = msg_build(buf, sent[i], a[i].local_id, 0, 104);
+            if (netdrv_send(nd[i], ND_RELIABLE | ND_FLUSH_HINT, buf, len,
+                            (uint16_t)a[!i].local_id) == 0)
+               sent[i]++;
+         }
+         if ((t % 50) == 0)
+         {
+            nd_stats x;
+            netdrv_get_stats(nd[i], &x);
+            if (x.srtt_us > srtt_max[i]) srtt_max[i] = x.srtt_us;
+            if (x.rto_us > rto_max[i])   rto_max[i] = x.rto_us;
+         }
+      }
+   }
+   s.loss_pct = 0;
+   sim_run(&s, nd, 2, 3000);
+   netdrv_get_stats(nd[0], &st[0]);
+   netdrv_get_stats(nd[1], &st[1]);
+   for (i = 0; i < 2; i++)
+   {
+      printf("  %s: srtt=%uus (max %u) rto max %uus samples=%u retx=%u\n",
+             i ? "cli" : "host", st[i].srtt_us, srtt_max[i], rto_max[i],
+             st[i].rtt_samples, st[i].retx);
+      CHECK(srtt_max[i] <= 90000,
+            "SRTT reached %u us: inflated by head-of-line waits on a 40 ms link",
+            srtt_max[i]);
+   }
+   CHECK(a[0].next_expect[a[1].local_id] == sent[1] &&
+         a[1].next_expect[a[0].local_id] == sent[0],
+         "everything delivered in order");
    netdrv_destroy(nd[0]);
    netdrv_destroy(nd[1]);
 }
@@ -1382,13 +1531,16 @@ static void test_peer_fps_absent_is_unknown(void)
 
 int main(void)
 {
+   netdrv_pump(NULL, 0); /* Public pump tolerates a missing instance. */
    test_wire();
    test_handshake_loss();
    test_arq();
+   test_ack_range();
    test_poll_gate();
    test_no_reliable_loss_under_overload();
    test_txq_failure_is_loud();
    test_adaptive_rto();
+   test_hol_does_not_inflate_rtt();
    test_oversize_refused();
    test_reentrant_echo();
    test_keepalive_death();

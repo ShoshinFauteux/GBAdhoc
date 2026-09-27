@@ -294,7 +294,39 @@ return_to_main:
 
 # $4: GBA address to branch to
 
+# DISPATCH_CYCLE_CHECK: the direct-branch exits check the cycle budget
+# (bltzal reg_cycles -> mips_update_gba) but these stubs never did, so a guest
+# loop closed only by indirect branches (bx/mov pc/ldr pc/pop {pc}) or by
+# translation-gate exits never reached update_gba: no frame ever completed and
+# the main thread spun forever.  When the budget is spent, run the event
+# handler here with $4 = the (aligned) target, exactly as a direct branch
+# would.  mips_update_gba either never returns (frame complete -> return_to_main,
+# PC changed by an IRQ -> lookup_pc, both from REG_PC = our target) or returns
+# with every ARM register restored from reg[] but $4 clobbered (it passes the
+# cycle count in it), so $4 is reloaded from REG_PC, which it stored on entry
+# and which only the PC-changed path alters.  $1/$2/$5/$6 are dead at entry.
+# Not applied to _dual: there the T bit is only settled inside the lookup, and
+# an IRQ taken before it would save the wrong CPSR/LR pair.
+#ifdef DISPATCH_CYCLE_CHECK
+.macro dispatch_cycle_check align_bits
+  bgez reg_cycles, 9f             # budget left: straight to the lookup
+  nop
+  srl $4, $4, \align_bits
+  jal mips_update_gba             # may not return (see above)
+  sll $4, $4, \align_bits         # (delay) aligned target -> REG_PC
+  lw $4, REG_PC($16)              # $4 was clobbered by the event call
+9:
+.endm
+#else
+.macro dispatch_cycle_check align_bits
+.endm
+#endif
+
 defsymbl(mips_indirect_branch_arm)
+  dispatch_cycle_check 2
+#ifdef GATE_NOCHECK
+defsymbl(mips_indirect_branch_arm_nocheck)
+#endif
   save_registers
   cfncall block_lookup_address_arm, 1
   restore_registers
@@ -302,6 +334,10 @@ defsymbl(mips_indirect_branch_arm)
   nop
 
 defsymbl(mips_indirect_branch_thumb)
+  dispatch_cycle_check 1
+#ifdef GATE_NOCHECK
+defsymbl(mips_indirect_branch_thumb_nocheck)
+#endif
   save_registers
   cfncall block_lookup_address_thumb, 2
   restore_registers
@@ -638,10 +674,21 @@ fnptrs:
 #endif
 .align 2
 
+#if defined(RUNTIME_JIT_CACHE)
+# The SMALL tier.  rom_/ram_translation_cache are C pointers
+# (cpu_threaded.c) that point here unless startup found the memory for the
+# LARGE tier.  Same section, alignment and order as before, so the small
+# path's memory layout is unchanged.
+defsymbl(rom_translation_cache_static)
+  .space ROM_TRANSLATION_CACHE_SIZE
+defsymbl(ram_translation_cache_static)
+  .space RAM_TRANSLATION_CACHE_SIZE
+#else
 defsymbl(rom_translation_cache)
   .space ROM_TRANSLATION_CACHE_SIZE
 defsymbl(ram_translation_cache)
   .space RAM_TRANSLATION_CACHE_SIZE
+#endif
 
 #endif
 

@@ -1409,9 +1409,9 @@ void set_cpu_mode(cpu_mode_type new_mode)
   reg[CPU_MODE] = new_mode;
 }
 
-#define cpu_has_interrupt()                                 \
-  (!(reg[REG_CPSR] & 0x80) && read_ioreg(REG_IME) &&        \
-    (read_ioreg(REG_IE) & read_ioreg(REG_IF)))
+#define cpu_has_interrupt()                                                   \
+  cpu_irq_delivery_enabled(read_ioreg(REG_IE), read_ioreg(REG_IF),            \
+                           read_ioreg(REG_IME), reg[REG_CPSR])
 
 // Returns whether the CPU has a pending interrupt.
 cpu_alert_type check_interrupt() {
@@ -1422,8 +1422,17 @@ cpu_alert_type check_interrupt() {
 // which means that it must be called with a valid CPU state.
 u32 check_and_raise_interrupts()
 {
+  u32 irq_enabled = read_ioreg(REG_IE);
+  u32 irq_flags = read_ioreg(REG_IF);
+
+  // HALT wakes on IE & IF independently of whether the IRQ can be delivered.
+  // IME and CPSR.I are checked below only for entering the IRQ vector.
+  if (cpu_halt_wake_requested(reg[CPU_HALT_STATE], irq_enabled, irq_flags))
+    reg[CPU_HALT_STATE] = CPU_ACTIVE;
+
   // Check any IRQ flag pending, IME and CPSR-IRQ enabled
-  if (cpu_has_interrupt())
+  if (cpu_irq_delivery_enabled(irq_enabled, irq_flags,
+                               read_ioreg(REG_IME), reg[REG_CPSR]))
   {
     // Value after the FIQ returns, should be improved
     reg[REG_BUS_VALUE] = 0xe55ec002;
@@ -1431,14 +1440,14 @@ u32 check_and_raise_interrupts()
     // Interrupt handler in BIOS
     REG_MODE(MODE_IRQ)[6] = reg[REG_PC] + 4;
     REG_SPSR(MODE_IRQ) = reg[REG_CPSR];
+    IRQCHK_ENTER(1);
     reg[REG_CPSR] = 0xD2;
     reg[REG_PC] = 0x00000018;
 
     set_cpu_mode(MODE_IRQ);
 
-    // Wake up CPU if it is stopped/sleeping.
-    if (reg[CPU_HALT_STATE] == CPU_STOP ||
-        reg[CPU_HALT_STATE] == CPU_HALT)
+    // STOP retains the existing IRQ-delivery-gated wake behavior.
+    if (reg[CPU_HALT_STATE] == CPU_STOP)
       reg[CPU_HALT_STATE] = CPU_ACTIVE;
 
     return 1;
@@ -3562,6 +3571,7 @@ thumb_loop:
 
 void init_cpu(void)
 {
+  IRQCHK_RESET();
   // Initialize CPU registers
   memset(reg, 0, REG_USERDEF * sizeof(u32));
   memset(reg_mode, 0, sizeof(reg_mode));
@@ -3607,9 +3617,9 @@ bool cpu_check_savestate(const u8 *src)
     return false;
 
   return bson_contains_key(cpudoc, "bus-value", BSON_TYPE_INT32) &&
-         bson_contains_key(cpudoc, "regs", BSON_TYPE_ARR) &&
-         bson_contains_key(cpudoc, "spsr", BSON_TYPE_ARR) &&
-         bson_contains_key(cpudoc, "regmod", BSON_TYPE_ARR);
+         bson_has_int32_array(cpudoc, "regs", REG_ARCH_COUNT) &&
+         bson_has_int32_array(cpudoc, "spsr", 6) &&
+         bson_has_int32_array(cpudoc, "regmod", 7 * 7);
 }
 
 

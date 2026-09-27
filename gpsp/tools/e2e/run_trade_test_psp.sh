@@ -257,6 +257,15 @@ EOF
   if [ -n "$RFU_RX_CAP" ] && [ "$2" = "join" ]; then
     echo "rfu_rx_cap = $RFU_RX_CAP" >> "$GAME/.gpsp-harness.ini"
   fi
+  # Free-form per-role ini lines for an A/B arm without a new flag each time,
+  # e.g. JOIN_EXTRA_INI=$'net_loss_pct = 2\n' or HOST_EXTRA_INI='link_gov = 0'.
+  # Appended last, so they override anything above.
+  if [ "$2" = "host" ] && [ -n "${HOST_EXTRA_INI:-}" ]; then
+    printf '%s\n' "$HOST_EXTRA_INI" >> "$GAME/.gpsp-harness.ini"
+  fi
+  if [ "$2" = "join" ] && [ -n "${JOIN_EXTRA_INI:-}" ]; then
+    printf '%s\n' "$JOIN_EXTRA_INI" >> "$GAME/.gpsp-harness.ini"
+  fi
   return 0
 }
 setup_inst 1 host "$HOST_SAV" "$HOST_SCRIPT" host "$HOST_ROM" 0
@@ -434,8 +443,12 @@ if [ "${PACE_MODE:-1}" = "1" ]; then
   # clamp because 40 is not one; this asserts we never ship that again.
   case "$FIXED_H" in
     59.94|29.97|19.98) note "clamp $FIXED_H fps is a whole-vblank rate (ADR-0035)" ;;
-    *) if grep -q "net_session_fps_snap = 0" "$G1/.gpsp-harness.ini" 2>/dev/null; then
-         note "clamp $FIXED_H is not a vblank divisor, but snapping is off for this A/B"
+    *) # The PLAYABLE-based harness profile forces snap=0 and takes its rate
+       # from the trading profile (57.00), so read what the BUILD applied from
+       # its own net_pace_match line rather than from the ini we staged.
+       if grep -q "net_session_fps_snap = 0" "$G1/.gpsp-harness.ini" 2>/dev/null ||
+          grep -q "^EVT net_pace_match .* snap=0 " "$HL"; then
+         note "clamp $FIXED_H is not a vblank divisor, but snapping is off (snap=0 applied)"
        else
          fail "clamp $FIXED_H fps is not 59.94/N — the snap did not fire (ADR-0035)"
        fi ;;

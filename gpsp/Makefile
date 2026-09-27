@@ -240,21 +240,34 @@ else ifeq ($(platform), psp1)
 	CXX = psp-g++$(EXE_EXT)
 	AR = psp-ar$(EXE_EXT)
 	CFLAGS += -DPSP -G0 -DMIPS_HAS_R2_INSTS
-	# Keep 32 MiB cartridges on the paged-ROM path on every PSP model.  A
-	# PSP-3000 can otherwise allocate all 32 one-megabyte blocks and Unbound
-	# repeatedly diverges during battle (audio/video corruption followed by a
-	# freeze).  The PSP-1000 naturally tops out at 15 blocks and is stable; an
-	# explicit 15-block cap reproduced that behavior on the 3000 across the
-	# interleaved hardware soak.  This remains PSP-only so other ports retain
-	# their existing cache policy.
-	CFLAGS += -DROM_BUFFER_SIZE=15
-	# JIT cache sizing: SMALL (2MB ROM / 384KB RAM code) fits the PSP-1000
-	# memory budget.  BIG_JIT=1 drops the define -> 10MB/512KB caches for
-	# large-memory (MEMSIZE=1) builds on 2000+ hardware, where CFRU-class
-	# ROM hacks (Unbound) overflow the small cache and flush-storm.
-	ifneq ($(BIG_JIT),1)
-	CFLAGS += -DSMALL_TRANSLATION_CACHE
+	# DEFAULT ROM page-cache cap: 15 one-megabyte blocks.  This is the PAGED
+	# cap, and also what the JIT tier's headroom is computed from
+	# (JIT_LARGE_HEADROOM = ROM_BUFFER_SIZE + 1 + 4 MiB) -- never set it to 32.
+	# Full residency is the RUNTIME decision instead: CONFIG.INI rom_resident
+	# (default on) makes init_gamepak_buffer probe 32 + 3 MiB on the heap the JIT
+	# tier left, so a 64 MiB console holds a 32 MiB cart whole and a PSP-1000
+	# (heap ~22 MiB) fails the probe and pages exactly as before.  The
+	# 2026-09-16 Unbound divergence at 32 blocks was re-tested by the Go A/B
+	# rig (21/21 frame-identical to the paged golden); docs/ROM-RESIDENCY.md.
+	ROM_BUFFER_SIZE ?= 15
+	CFLAGS += -DROM_BUFFER_SIZE=$(ROM_BUFFER_SIZE)
+	# JIT cache sizing is decided AT STARTUP, not here (RUNTIME_JIT_CACHE,
+	# cpu_threaded.c dynarec_select_translation_caches).  One EBOOT for every
+	# model: the SMALL tier (2MB ROM / 384KB RAM code, static) fits the
+	# PSP-1000 budget and is what a 1000 always gets; a console whose heap
+	# can afford it (a 2000/3000/Go with the 64 MiB layout) allocates the
+	# LARGE tier (10MB / 512KB) instead, which is what CFRU-class ROM hacks
+	# (Unbound) need to stop flush-storming.
+	#
+	# BIG_JIT=1 compiled the large tier in for every model.  It is gone
+	# because a PSP-1000 cannot afford it and one EBOOT now serves both; a
+	# harness can still force the small tier with `jit_small = 1`.  Refused
+	# loudly rather than ignored: a silently dropped core flag has already
+	# cost two hardware experiments (core-vs-frontend-defines).
+	ifdef BIG_JIT
+	$(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
 	endif
+	CFLAGS += -DSMALL_TRANSLATION_CACHE -DRUNTIME_JIT_CACHE
 	# SMC_SKIP_SAME=1: idempotent-store filter in the JIT store stubs
 	# (mips/mips_emit.h) — skip the full RAM-cache wipe when a store to
 	# tagged memory writes the value already there.
@@ -449,6 +462,41 @@ else ifeq ($(platform), psp1)
 	# Cannot regress -- the path it replaces crashes 100% of the time.
 	ifeq ($(BADJUMP_SAFE),1)
 	CFLAGS += -DBADJUMP_SAFE=1
+	endif
+	# SMC_GATE_CHARGE=1: a block that ends at a translation gate charges the
+	# cycles of its tail before the (uncharged, unchecked) indirect exit, so a
+	# gate no longer lets the code in front of it run for free.  Timing change
+	# for gated (SMC) code only; ungated blocks emit identical code.
+	ifeq ($(SMC_GATE_CHARGE),1)
+	CFLAGS += -DSMC_GATE_CHARGE=1
+	endif
+	# DISPATCH_CYCLE_CHECK=1: mips_indirect_branch_arm/_thumb run update_gba
+	# when the cycle budget is spent, so a guest loop closed only by indirect
+	# branches (bx/mov pc/ldr pc/pop {pc}) can no longer spin forever without
+	# ever completing a frame.  Two instructions per indirect branch.
+	ifeq ($(DISPATCH_CYCLE_CHECK),1)
+	CFLAGS += -DDISPATCH_CYCLE_CHECK=1
+	endif
+	# DMA_SMC_FLUSH=1: an HBlank/VBlank DMA that lands on translated code
+	# (CPU_ALERT_SMC from dma_transfer) flushes the RAM translation cache and
+	# re-dispatches, as the CPU-triggered DMA path already does.  Upstream
+	# dropped that alert in update_gba, leaving the old translation live.
+	ifeq ($(DMA_SMC_FLUSH),1)
+	CFLAGS += -DDMA_SMC_FLUSH=1
+	endif
+	# XLAT_DEPTH_PROBE=1: DIAGNOSTIC (soak/diagnostic profiles).  Records the
+	# deepest nested block translation and the lowest $sp seen at translation
+	# entry (xlat_depth_max / xlat_sp_min) for the frontend's health line.
+	ifeq ($(XLAT_DEPTH_PROBE),1)
+	CFLAGS += -DXLAT_DEPTH_PROBE=1
+	endif
+	# IRQ_INTEGRITY_CHECK=1: DIAGNOSTIC (soak/diagnostic profiles).  At every
+	# IRQ return (BIOS `subs pc, lr, #4`) compare r0-r14, CPSR and the return
+	# address with the IRQ entry snapshot -- the GBA BIOS and ABI guarantee they
+	# match -- and on a mismatch write ms0:/irqchk.txt plus a RAM dump.  One
+	# struct copy per interrupt.  NEVER IN A RELEASE (Memory Stick writes).
+	ifeq ($(IRQ_INTEGRITY_CHECK),1)
+	CFLAGS += -DIRQ_INTEGRITY_CHECK=1
 	endif
 	# BADJUMP_REPORT=1: DIAGNOSTIC, and part of the `diagnostic` profile.
 	# When the emulated pc leaves every region block_lookup_translate handles,

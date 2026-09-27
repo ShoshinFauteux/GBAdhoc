@@ -1,0 +1,255 @@
+# FR/LG WIRELESS DOUBLE BATTLE -- HOST (link leader)   docs/RIG-DOUBLE-BATTLE.md
+# ---------------------------------------------------------------------------
+# Every step that changes game state is CLOSED-LOOP: a RAM predicate proves
+# the press took effect before the next one.  Where a single `press` is used,
+# the very next line is the predicate that proves it.  No mash crosses a menu.
+#
+# Addresses: pret/pokefirered `symbols` df4449a, pokefirered_rev1.sym and
+# pokeleafgreen_rev1.sym (identical for every address below).
+#   gMain.callback2        0x030030F4   CB2_TitleScreenRun|1 0x08078BB1
+#                                       CB2_MainMenu|1       0x0800C2E9
+#                                       CB2_Overworld|1      0x080565C9
+#                                       BattleMainCB2|1      0x08011115
+#   gQuestLogState         0x0203ADFA   0 = no recap playing
+#   sMenu (menu.c)         0x0203ADE4   +2 cursorPos, +4 maxCursorPos
+#   gSaveBlock1Ptr         0x03005008   ->+4 location (u16 group|num<<8)
+#   gObjectEvents[0]       x 0x02036E48, y 0x02036E4A (map + 7), facing 0x02036E50
+#   sWirelessLinkMain      0x0203B05C   Leader: ->+12 state
+#   gBattlerControllerFuncs 0x03004FE0  u32[4]; HandleInputChooseAction|1
+#                                       0x0802E44D, HandleInputChooseMove|1
+#                                       0x0802EA25, ...ChooseTarget|1 0x0802E689
+#   gPlayerParty 0x02024284 / gEnemyParty 0x0202402C, 100 bytes per mon:
+#     +0 personality, +4 otId, +0x20..0x4F encrypted substructs, +0x56 hp
+#   gBattleTypeFlags 0x02022B4C, gBattleOutcome 0x02023E8A
+#   gRfu recvQueue.count 0x03005AEE, sendQueue.count 0x03005D22
+# The HOST's local battlers are 0 and 2 (the master's; §1.2, pinned in G1).
+# ---------------------------------------------------------------------------
+
+# ---- P1-P3 boot ---------------------------------------------------------
+mash A 4 0x030030F4 0xFFFFFFFF 0x08078BB1 21600
+evt title_ok
+mash START 4 0x030030F4 0xFFFFFFFF 0x0800C2E9 3600
+mash A 4 0x030030F4 0xFFFFFFFF 0x080565C9 7200
+evt overworld_ok
+mash B 1 0x0203ADFA 0xFF 0 5400
+wait 30
+evt questlog_done
+
+# ---- P4 parked position (golden save: PC 2F, (10,4) = live (17,11), north)
+logptr loc 2 0x03005008 0x04
+logbytes menu0 12 0x0203ADE4
+waitram 2 0x02036E48 0xFFFF 17 1
+waitram 2 0x02036E4A 0xFFFF 11 1
+waitram 1 0x02036E50 0x0F 2 1
+evt parked_ok
+
+# ---- P5 talk: the Direct Corner service menu (TRADE/COLOSSEUM/EXIT) --------
+# G1 finding: a single `press A` right after the recap was swallowed by the
+# field fade-in.  So: wait for the field to be idle (no script running), then
+# mash A only until a script STARTS (sGlobalScriptContext.mode 0x03000EB1
+# leaves 0) -- the dialogue itself needs no key, so no A reaches a menu.
+waitram 1 0x03000EB1 0xFF 0 600
+mashne A 1 0x03000EB1 0xFF 0 600
+evt talk_started
+# The greeting has key-wait pages ("...DIRECT CORNER.<A>").  mashif presses A
+# only while text printer 0 (sTextPrinters 0x02020034, +0x1B active) is busy,
+# so it advances the dialogue and can never land on the menu that follows.
+mashif A 1 0x0202004F 0xFF 1 1 0x0203ADE8 0xFF 2 1800
+waitram 1 0x0203ADE6 0xFF 0 1
+evt service_menu
+# ---- P6 COLOSSEUM
+mash DOWN 1 0x0203ADE6 0xFF 1 300
+# G1: a lone `press A` on a just-moved cursor was swallowed.  Mash A until the
+# NEXT text starts printing (printer 0 active): the choice is proven taken and
+# the mash stops before any A can reach the text or the next menu.
+mash A 1 0x0202004F 0xFF 1 300
+# ---- P7 battle mode menu (SINGLE/DOUBLE/MULTI/INFO/EXIT) -> DOUBLE
+mashif A 1 0x0202004F 0xFF 1 1 0x0203ADE8 0xFF 4 1800
+waitram 1 0x0203ADE6 0xFF 0 1
+mash DOWN 1 0x0203ADE6 0xFF 1 300
+# G1: a lone `press A` on a just-moved cursor was swallowed.  Mash A until the
+# NEXT text starts printing (printer 0 active): the choice is proven taken and
+# the mash stops before any A can reach the text or the next menu.
+mash A 1 0x0202004F 0xFF 1 300
+evt chose_double
+# ---- P8 save: "save the game?" YES, then "overwrite?" YES, the save lands.
+# sSaveDialogCB (IWRAM 0x03000FA4) names each state:
+#   AskSaveHandleInput|1 0x0806F80D, AskOverwriteOrReplace...HandleInput|1
+#   0x0806F8F1, ReturnSuccess|1 0x0806F9F5 (auto-closes after 60 frames: the
+#   "saved the game" text needs NO key -- a press there would reach the menu).
+mashif A 1 0x0202004F 0xFF 1 4 0x03000FA4 0xFFFFFFFF 0x0806F80D 1800
+waitram 1 0x0203ADE6 0xFF 0 60
+mashne A 4 0x03000FA4 0xFFFFFFFF 0x0806F80D 300
+mashif A 1 0x0202004F 0xFF 1 4 0x03000FA4 0xFFFFFFFF 0x0806F8F1 600
+waitram 1 0x0203ADE6 0xFF 0 60
+mashne A 4 0x03000FA4 0xFFFFFFFF 0x0806F8F1 300
+waitsram 1800
+evt saved
+waitram 4 0x03000FA4 0xFFFFFFFF 0x0806F9F5 600
+# ---- P9 leader menu (JOIN / LEAD / EXIT) -> LEAD
+mashif A 1 0x0202004F 0xFF 1 1 0x0203ADE8 0xFF 2 1800
+waitram 1 0x0203ADE6 0xFF 0 1
+mash DOWN 1 0x0203ADE6 0xFF 1 300
+evt chose_lead
+# ---- H1 mash A until the leader UI is up and awaiting players (state 6):
+# the first A picks LEAD; any later ones land on the leader UI's init states.
+mashptr A 1 0x0203B05C 12 0xFF 6 1800
+evt awaiting_players
+# ---- H2 the join's request: accept prompt handle input (11) ---------------
+waitptr 1 0x0203B05C 12 0xFF 11 18000
+waitram 1 0x0203ADE6 0xFF 0 1
+evt join_request
+press A 2
+waitptrne 1 0x0203B05C 12 0xFF 11 600
+# ---- H3 G1 finding: for a 2-player group the leader starts the activity by
+# itself once the final member is accepted -- there is no "members OK?"
+# prompt.  Nothing to press; H4 waits for the colosseum.
+logptr lstate 1 0x0203B05C 12
+evt members_confirmed
+
+# ---- H4 in the colosseum --------------------------------------------------
+waitptr 2 0x03005008 0x04 0xFFFF 0x0000 3600
+waitram 4 0x030030F4 0xFFFFFFFF 0x080565C9 3600
+wait 60
+evt in_colosseum
+# G1 finding: in a link room gObjectEvents[0] is the RECEPTIONIST; the link
+# players are slots 1 (leader, spawns at the warp (6,8)) and 2 (member,
+# (7,8)) -- overworld.c SpawnLinkPlayers.  Stride 0x24.
+logram spawn_x 2 0x02036E6C
+logram spawn_y 2 0x02036E6E
+# ---- H5 walk to spot0 (3,5) = live (10,12).  G1 finding: in the link room
+# movement goes through the link-key exchange and holdmash does NOT overshoot
+# (unlike the Emerald overworld, HARNESS §4) -- aim at the exact tile; the
+# waitram after each leg proves where the player stopped.
+# H0b/BQ hardware (2026-09-26): holdmash-until-the-coordinate-reads-the-
+# target OVERSHOOTS under a long link round trip.  In the link room a
+# console's OWN avatar moves only when its key frames come back through the
+# link, so the autopilot keeps the d-pad down for a whole round trip after
+# the step it is waiting for has already been sent -- the member ended two
+# tiles past, or blocked at x=15, with both consoles agreeing.  The key
+# stream is replayed frame for frame, so the NUMBER of frames held decides
+# the steps, whatever the latency: hold for a fixed 44 frames (3 steps of 16
+# frames each, with room for a turn of up to 11 frames first, and released
+# before a 4th step could start), then wait -- as long as the link needs --
+# for the tile, and check 40 frames later that the avatar STAYED there.
+# walk_start: the START-SKEW metric's zero (watch_ram logs the frame and
+# t_ms at which each player's coordinates first change on this console).
+evt walk_start
+hold UP 44
+waitram 2 0x02036E6E 0xFFFF 12 900
+wait 40
+evt walk_settle
+waitram 2 0x02036E6E 0xFFFF 12 1
+hold LEFT 44
+waitram 2 0x02036E6C 0xFFFF 10 900
+wait 40
+evt walk_settle
+waitram 2 0x02036E6C 0xFFFF 10 1
+waitram 2 0x02036E6E 0xFFFF 12 1
+evt on_spot
+# POSITION PROBE (H0 run 1, 2026-09-26: the owner saw the member miss his
+# tile while the member's own waitram had passed).  Each console's view of
+# BOTH link players: gObjectEvents[1] (leader) and [2] (member), 12 bytes
+# from +0x10 = currentCoords x,y (s16 each), previousCoords x,y, then
+# facingDirection (low nibble) / movementDirection (high nibble) at +0x18.
+# Taken at on_spot and again 600 frames later (after any queued movement has
+# drained, and after the battle has normally started), so PASS runs record
+# agreement too.  The H6 wait keeps its 7200-frame total.
+logbytes p1_spot 12 0x02036E6C
+logbytes p2_spot 12 0x02036E90
+# ---- H6 the battle is running, and it is a LINK DOUBLE -----------------
+wait 600
+logbytes p1_late 12 0x02036E6C
+logbytes p2_late 12 0x02036E90
+waitram 4 0x030030F4 0xFFFFFFFF 0x08011115 6600
+logram btype 4 0x02022B4C
+waitram 4 0x02022B4C 0x3 0x3 1
+evt battle_started
+# CROSS-CONSOLE FINGERPRINT (desync detector, RIG §2.9).  G1 finding: only the
+# link MASTER runs the battle engine -- the member's gBattleMons stays zero --
+# so the shared state is what BOTH consoles hold in their party copies, which
+# the master's SETMONDATA commands keep current: HP (+0x56) and the encrypted
+# substructures (+0x20..+0x4F: PP of the move lives there).  k* = personality
+# + OT id (the decryption key, logged once); per turn d*a/d*b/h*.
+# m* = gPlayerParty (own), e* = gEnemyParty (the peer's), stride 100.
+logbytes km0 8 0x02024284
+logbytes km1 8 0x020242E8
+logbytes ke0 8 0x0202402C
+logbytes ke1 8 0x02024090
+
+# ---- T: 30 turns ----------------------------------------------------------
+repeat 30
+# T1 action menu for battler 0
+waitram 4 0x03004FE0 0xFFFFFFFF 0x0802E44D 10800
+evt t1
+# fingerprint at the turn boundary (both consoles are at their action menu)
+logbytes km0 8 0x02024284
+logbytes dm0a 24 0x020242A4
+logbytes dm0b 24 0x020242BC
+logram hm0 2 0x020242DA
+logbytes km1 8 0x020242E8
+logbytes dm1a 24 0x02024308
+logbytes dm1b 24 0x02024320
+logram hm1 2 0x0202433E
+logbytes ke0 8 0x0202402C
+logbytes de0a 24 0x0202404C
+logbytes de0b 24 0x02024064
+logram he0 2 0x02024082
+logbytes ke1 8 0x02024090
+logbytes de1a 24 0x020240B0
+logbytes de1b 24 0x020240C8
+logram he1 2 0x020240E6
+logram fo 1 0x02023E8A
+logram rq 1 0x03005AEE
+logram sq 1 0x03005D22
+waitram 1 0x02023FF8 0xFF 0 1
+# T2 FIGHT consumed
+mashne A 4 0x03004FE0 0xFFFFFFFF 0x0802E44D 300
+evt t2_fight
+waitramne 4 0x03004FE0 0xFFFFFFFF 0x0802E44D 1
+# T3 move menu for battler 0 (the owner's symptom: FIGHT -> move menu)
+waitram 4 0x03004FE0 0xFFFFFFFF 0x0802EA25 10800
+evt t3_movemenu
+waitram 1 0x02023FFC 0xFF 0 1
+# T4 GROWL consumed
+mashne A 4 0x03004FE0 0xFFFFFFFF 0x0802EA25 300
+waitramne 4 0x03004FE0 0xFFFFFFFF 0x0802EA25 1
+evt t4_move
+# T5-T8 battler 2
+waitram 4 0x03004FE8 0xFFFFFFFF 0x0802E44D 10800
+evt t5
+waitram 1 0x02023FFA 0xFF 0 1
+mashne A 4 0x03004FE8 0xFFFFFFFF 0x0802E44D 300
+evt t6_fight
+waitram 4 0x03004FE8 0xFFFFFFFF 0x0802EA25 10800
+evt t7_movemenu
+waitram 1 0x02023FFE 0xFF 0 1
+mashne A 4 0x03004FE8 0xFFFFFFFF 0x0802EA25 300
+waitramne 4 0x03004FE8 0xFFFFFFFF 0x0802EA25 1
+evt t8_move
+endrepeat
+
+# one last fingerprint, after turn 30 resolved
+waitram 4 0x03004FE0 0xFFFFFFFF 0x0802E44D 10800
+evt t1
+logbytes km0 8 0x02024284
+logbytes dm0a 24 0x020242A4
+logbytes dm0b 24 0x020242BC
+logram hm0 2 0x020242DA
+logbytes km1 8 0x020242E8
+logbytes dm1a 24 0x02024308
+logbytes dm1b 24 0x02024320
+logram hm1 2 0x0202433E
+logbytes ke0 8 0x0202402C
+logbytes de0a 24 0x0202404C
+logbytes de0b 24 0x02024064
+logram he0 2 0x02024082
+logbytes ke1 8 0x02024090
+logbytes de1a 24 0x020240B0
+logbytes de1b 24 0x020240C8
+logram he1 2 0x020240E6
+logram fo 1 0x02023E8A
+evt turns_done
+# keep the link alive while the peer finishes its own last turn
+wait 600
+evt script_end

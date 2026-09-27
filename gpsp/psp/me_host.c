@@ -95,6 +95,10 @@ int me_host_init(const char *base_dir)
    }
    fe_evt("me_init state=unavailable reason=handshake magic=0x%08X",
           (unsigned)((volatile me_mbox *)ME_UNCACHED(&g_mbox_storage))->magic);
+   /* module_start succeeded, so module_start() has already patched the ME
+    * reset vector and enabled its bus clock. A failed handshake must unwind
+    * that platform state before we fall back to CPU rendering. */
+   me_host_shutdown();
    return -1;
 }
 
@@ -162,6 +166,16 @@ int me_host_post_render(unsigned int desc_uncached)
 unsigned int me_host_result(void)
 {
    return g_mb ? g_mb->result : 0u;
+}
+
+void me_host_diag(unsigned *cmd_seq, unsigned *done_seq, unsigned *input_seq,
+                  unsigned *heartbeat)
+{
+   volatile me_mbox *mb = g_mb;
+   if (cmd_seq)   *cmd_seq   = mb ? mb->cmd_seq   : 0u;
+   if (done_seq)  *done_seq  = mb ? mb->done_seq  : 0u;
+   if (input_seq) *input_seq = mb ? mb->input_seq : 0u;
+   if (heartbeat) *heartbeat = mb ? mb->heartbeat : 0u;
 }
 
 /* ---- watchdog ---------------------------------------------------------- */

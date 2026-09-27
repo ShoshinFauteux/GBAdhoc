@@ -3,7 +3,9 @@
 #
 #   tools/build.sh release      what a player installs
 #   tools/build.sh harness      the hardware performance rig (telemetry+autopilot)
+#   tools/build.sh harness64    the same rig with the 64 MiB layout (MEMSIZE=1)
 #   tools/build.sh diagnostic   release plus investigation instruments
+#   tools/build.sh soak         the rig plus the bad-jump reporter, for long runs
 #
 # Options:
 #   --no-clean     skip the clean rebuild.  ONLY safe when no define changed;
@@ -37,6 +39,18 @@ cd "$(dirname "$0")/.." || exit 9
 ROOT="$PWD"
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
+# WSL cannot read the Windows absolute path stored in a linked-worktree .git
+# file. Allow the caller to supply the Windows Git metadata explicitly; a
+# normal Linux checkout still discovers everything here as before.
+BUILD_COMMIT="${GPSP_BUILD_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+BUILD_TREE="${GPSP_BUILD_TREE:-$(git rev-parse 'HEAD^{tree}' 2>/dev/null || echo unknown)}"
+if [ "${GPSP_BUILD_DIRTY+x}" = x ]; then
+  BUILD_DIRTY="$GPSP_BUILD_DIRTY"
+else
+  BUILD_DIRTY="$(git status --porcelain 2>/dev/null | head -1)" || BUILD_DIRTY=unknown
+fi
+BUILD_VERSION="${GPSP_BUILD_VERSION:-${BUILD_COMMIT:0:7}}"
+
 DOCKER_IMAGE="pspdev/pspdev"
 
 # ------------------------------------------------------------- profiles ----
@@ -49,14 +63,22 @@ DOCKER_IMAGE="pspdev/pspdev"
 # answers a different question.
 CORE_COMMON="SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 SMC_GATE_BITMAP=1
 SMC_PARTIAL_SAFE=1 SMC_PARTIAL_STABLE_THUNK=1 SMC_PARTIAL_DIRECT_LINKS=1
-GBA_PC_MASK=1 BADJUMP_SAFE=1"
+GBA_PC_MASK=1 BADJUMP_SAFE=1 SMC_GATE_CHARGE=1 DISPATCH_CYCLE_CHECK=1 DMA_SMC_FLUSH=1"
 
 profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
+  PSP_MAKE_FLAGS=""
   case "$1" in
     release)
       CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=release"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_RELEASE=1"
       TITLE="GBAdhoc"
+      # ME_CATCH=1 ships the Media Engine module WITH the CPU-exception screen
+      # (psp/me/catcher.c).  2026-09-26: this exact PRX (164633a0) ran hours of
+      # heavy Heart & Soul play on all three consoles without a single freeze,
+      # while the stock PRX froze the PSP Go within ~2 h -- why is still open
+      # (docs/BUILD-SWITCHES.md, ME_CATCH).  It also turns any hard crash into
+      # a photographable register screen instead of a silent hang.
+      PSP_MAKE_FLAGS="ME_CATCH=1"
       ;;
     harness)
       # Telemetry plus autopilot, so a job file can drive a console unattended.
@@ -66,18 +88,68 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # The title is the only thing a tester sees on the XMB, so the harness
       # says so: a harness EBOOT must never be mistaken for a playable one.
       TITLE="GBAdhoc HARNESS"
+      PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0"
+      ;;
+    harness64)
+      # The harness with the 64 MiB layout (MEMSIZE=1), which is what a
+      # 2000/3000/Go runs a PLAYABLE build with.  `harness` pins the 1000's
+      # 32 MiB layout, so on a 3000 it can never hold a 32 MiB cart: the ROM
+      # residency A/B (docs/ROM-RESIDENCY.md) needs this one.  Same core, same
+      # frontend defines; only PARAM.SFO's MEMSIZE differs.
+      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=harness"
+      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+-DGPSP_PROFILE_HARNESS=1"
+      TITLE="GBAdhoc HARNESS64"
+      # ME_CATCH=1 as in the release: the residency rig runs on the PSP Go,
+      # the console that hard-freezes, and a CPU exception there should leave
+      # a photographable register screen rather than a silent hang.
+      PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=1 ME_CATCH=1"
+      ;;
+    soak)
+      # The harness, plus the bad-jump reporter.  For long unattended runs whose
+      # POINT is the failure: a freeze leaves no summary and no score, so the
+      # only evidence is what reached the Memory Stick before it stopped.
+      #
+      # This is a harness build by every other measure -- same telemetry, same
+      # autopilot, same GPSP_PROFILE_HARNESS for gpsp_profile.h -- so the guard
+      # treats it as one.  BADJUMP_REPORT is legal here; it is forbidden only in
+      # a release, which is the combination that actually shipped once.
+      #
+      # SMC_WRITE_HISTO is deliberately NOT set: it rewrites smchisto.txt every
+      # 4000 flushes, and over ten minutes of fast-forward that is a lot of
+      # Memory Stick traffic competing with the event log we actually want.
+      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=soak BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
+      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+-DGPSP_PROFILE_HARNESS=1"
+      TITLE="GBAdhoc SOAK"
+      PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0"
       ;;
     diagnostic)
       # Release, plus the instruments for the question currently being asked.
       # Both of these write to the Memory Stick; that is the point, and it is
       # exactly why gpsp_profile.h forbids them in a release.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 SMC_WRITE_HISTO=1"
+      # 2026-09-24: the question is the EXECUTED bad jump (badjump_recover dumps
+      # guest RAM at the fault).  SMC_WRITE_HISTO is left out: on Heart & Soul
+      # it rewrites smchisto.txt every 4000 flushes, i.e. constant synchronous
+      # Memory Stick writes on the emulation thread while the player is trying
+      # to reproduce a timing-sensitive fault.
+      # 2026-09-24 (later): plus IRQ_INTEGRITY_CHECK.  The H&S field fault had
+      # r5, r6 and r8-r11 of the sprite loop at 08218fac replaced across one
+      # call to a sprite-anim callee that saves only r4-r7 -- so r8-r11 changed
+      # in something that ran INSIDE that call, and the prime suspect is an
+      # interrupt handler (the VBlank/M4A mixer path) returning with the wrong
+      # state.  PPSSPP never shows it (114k IRQ returns clean); the checker
+      # asks the same question on hardware.  It compares
+      # r0-r14/CPSR/return address at each IRQ return against the entry
+      # snapshot (the BIOS and ABI guarantee equality) and dumps guest RAM to
+      # ms0:/irqlost-N-*.bin on the first mismatches.  One struct copy per IRQ.
+      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_DIAGNOSTIC=1"
       TITLE="GBAdhoc DIAG"
       ;;
     *)
       echo "unknown profile '$1'"
-      echo "usage: tools/build.sh [release|harness|diagnostic] [--no-clean] [--out DIR] [--expect TOK]"
+      echo "usage: tools/build.sh [release|harness|harness64|diagnostic|soak] [--no-clean] [--out DIR] [--expect TOK]"
       exit 2 ;;
   esac
   KIND="$1"
@@ -102,8 +174,9 @@ profile_flags "$PROFILE"
 die()  { echo "FAIL: $*"; exit 1; }
 note() { printf '%s\n' "$*"; }
 
-NEWEST_SRC=$(find "$ROOT" -name '*.c' -o -name '*.cc' -o -name '*.h' \
-             -o -name 'Makefile' | xargs ls -t 2>/dev/null | head -1)
+NEWEST_SRC=$(find "$ROOT" \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
+             -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \) \
+             -type f -print | xargs ls -t 2>/dev/null | head -1)
 
 run() {   # run <label> <workdir> <cmd...>
   local label="$1" wd="$2"; shift 2
@@ -155,11 +228,11 @@ warning_gate() {
 
 note "=== $PROFILE build in $ROOT ==="
 if [ "$CLEAN" -eq 1 ]; then
-  run clean /build "make platform=psp1 clean >/dev/null 2>&1; make -C psp clean >/dev/null 2>&1; rm -f psp/*.o psp/*.d; true"
+  run clean /build "set -e; make platform=psp1 clean >/dev/null 2>&1; make -C psp clean >/dev/null 2>&1; rm -f psp/*.o psp/*.d"
 fi
-run core  /build      "make platform=psp1 GIT_VERSION='$(git rev-parse --short HEAD 2>/dev/null || echo nogit)' $CORE_FLAGS -j4"
+run core  /build      "make platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLAGS -j4"
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || die "core archive missing"
-run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE'"
+run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || die "EBOOT missing"
 
 warning_gate "$ROOT/.build-core.log"  "core"
@@ -167,6 +240,11 @@ warning_gate "$ROOT/.build-eboot.log" "eboot"
 
 if [ -n "$NEWEST_SRC" ] && [ "$NEWEST_SRC" -nt "$ROOT/psp/EBOOT.PBP" ]; then
   die "EBOOT.PBP is OLDER than $NEWEST_SRC -- the build did not run"
+fi
+NEWEST_PSP_ASSET=$(find "$ROOT/psp/assets" -type f -print 2>/dev/null |
+                   xargs ls -t 2>/dev/null | head -1)
+if [ -n "$NEWEST_PSP_ASSET" ] && [ "$NEWEST_PSP_ASSET" -nt "$ROOT/psp/EBOOT.PBP" ]; then
+  die "EBOOT.PBP is OLDER than $NEWEST_PSP_ASSET -- rebuild the PSP artwork"
 fi
 
 # --------------------------------------------------------------- audit -----
@@ -188,22 +266,30 @@ command -v cygpath >/dev/null && ELF_NATIVE=$(cygpath -w "$ELF")
 FORBIDDEN=(); REQUIRE=()
 case "$KIND" in
   release)
-    FORBIDDEN=("badjump.txt" "smchisto.txt")
+    FORBIDDEN=("badjump.txt" "smchisto.txt" "irqchk.txt")
     # ADR-0067: proof the harness ini was pointed at an impossible path, so a
     # leftover .gpsp-harness.ini on a player's card cannot drive their console.
     REQUIRE=(".playable-no-harness")
     ;;
-  harness)
+  harness|harness64)
     REQUIRE=(".gpsp-harness.ini")
     ;;
   diagnostic)
     # The instruments are the point; assert they are really in.
-    REQUIRE=("badjump.txt" "smchisto.txt" ".playable-no-harness")
+    REQUIRE=("badjump.txt" "badjump-%u-iwram.bin" ".playable-no-harness" "irqchk.txt")
+    FORBIDDEN=("smchisto.txt")
+    ;;
+  soak)
+    # Soak is a live harness profile with the bad-jump reporter enabled.
+    # It must retain the harness control channel, while keeping the noisy SMC
+    # histogram disabled and the release-only harness neutralizer absent.
+    REQUIRE=(".gpsp-harness.ini" "badjump.txt" "irqchk.txt")
+    FORBIDDEN=("smchisto.txt" ".playable-no-harness")
     ;;
 esac
 EXPECT=("${EXPECT[@]+"${EXPECT[@]}"}" "${REQUIRE[@]+"${REQUIRE[@]}"}")
 
-AUDIT=$(python - "$ELF_NATIVE" "${#FORBIDDEN[@]}" "${FORBIDDEN[@]+"${FORBIDDEN[@]}"}" \
+AUDIT=$(python3 - "$ELF_NATIVE" "${#FORBIDDEN[@]}" "${FORBIDDEN[@]+"${FORBIDDEN[@]}"}" \
         "${#EXPECT[@]}" "${EXPECT[@]+"${EXPECT[@]}"}" <<'PY'
 import sys
 path = sys.argv[1]
@@ -218,7 +304,7 @@ except OSError as e:
 rc = 0
 for t in forb:
     if t.encode() in blob:
-        print("  FAIL FORBIDDEN in a release build: %s" % t); rc = 1
+        print("  FAIL FORBIDDEN in this build profile: %s" % t); rc = 1
     else:
         print("  ok   absent: %s" % t)
 for t in want:
@@ -239,9 +325,8 @@ PBP_SHA=$(sha256sum "$ROOT/psp/EBOOT.PBP"   | cut -d' ' -f1)
 PRX_SHA=$(sha256sum "$ROOT/psp/me/gbadhoc_me.prx" 2>/dev/null | cut -d' ' -f1)
 IMG_ID=$(docker image inspect --format '{{index .RepoDigests 0}}' "$DOCKER_IMAGE" 2>/dev/null \
          || docker image inspect --format '{{.Id}}' "$DOCKER_IMAGE" 2>/dev/null)
-COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
-TREE=$(git rev-parse HEAD^{tree} 2>/dev/null || echo unknown)
-DIRTY=$(git status --porcelain 2>/dev/null | head -1)
+COMMIT="$BUILD_COMMIT"
+TREE="$BUILD_TREE"
 
 MANIFEST="$ROOT/psp/build-manifest.json"
 {
@@ -251,7 +336,7 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"builtAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
   echo "  \"sourceCommit\": \"$COMMIT\","
   echo "  \"sourceTree\": \"$TREE\","
-  echo "  \"workingTreeClean\": $([ -z "$DIRTY" ] && echo true || echo false),"
+  echo "  \"workingTreeClean\": $([ -z "$BUILD_DIRTY" -o "$BUILD_DIRTY" = 0 ] && echo true || echo false),"
   echo "  \"dockerImage\": \"$IMG_ID\","
   echo "  \"coreFlags\": \"$CORE_FLAGS\","
   echo "  \"frontendDefines\": \"$FE_DEFS\","
@@ -276,5 +361,7 @@ note "frontend: $FE_DEFS"
 note "elf md5 : $ELF_MD5"
 note "pbp md5 : $PBP_MD5"
 note "manifest: $MANIFEST"
-[ -n "$DIRTY" ] && note "NOTE: working tree is dirty; this artifact is not reproducible from a commit."
+if [ -n "$BUILD_DIRTY" ] && [ "$BUILD_DIRTY" != 0 ]; then
+  note "NOTE: working tree is dirty; this artifact is not reproducible from a commit."
+fi
 exit 0

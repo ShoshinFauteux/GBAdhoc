@@ -7,7 +7,6 @@
 #include <stdint.h>
 #include <string.h>
 #include "fe_evt.h"
-static int g_perf_rig;
 static unsigned rig_from, rig_to, rig_timeout;
 static uint64_t rig_started;
 static struct {

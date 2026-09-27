@@ -7,7 +7,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* A fixture that plays a whole battle needs more steps than one that presses a
+ * few buttons.  The rival battle runs ~3900 frames and has to be advanced with
+ * a press every ~20, which is roughly 380 steps -- and the parser refuses a
+ * script over the limit outright, so on hardware that reads as a console that
+ * ran the job and did nothing.
+ *
+ * `mash` is not a way around it: it waits for a RAM predicate and ap_fail()s on
+ * timeout, which scores the run invalid.
+ *
+ * Raised only for the rig.  steps[] is a static array, so this is BSS, and the
+ * release build keeps the size it has always had rather than carrying 18 KB for
+ * an automation feature a player cannot reach. */
+#ifdef GPSP_PERF_RIG
+#define AP_MAX_STEPS   1024
+#else
 #define AP_MAX_STEPS   256
+#endif
 #define AP_NAME_LEN    32
 #define AP_MASH_ON     2     /* frames pressed per mash cycle */
 #define AP_MASH_PERIOD 8     /* mash cycle length in frames */
@@ -18,7 +34,7 @@ enum ap_op
 {
    OP_EVT, OP_FF, OP_DUMP, OP_WAIT, OP_PRESS, OP_HOLD,
    OP_WAITRAM, OP_MASH, OP_HOLDRAM, OP_WAITSRAM, OP_LOGRAM, OP_LOGPTR,
-   OP_REPEAT, OP_ENDREPEAT
+   OP_REPEAT, OP_ENDREPEAT, OP_LOGBYTES, OP_MASHIF
 #ifdef GPSP_PERF_RIG
    , OP_STATE                 /* harness only -- see fe_autopilot_state_pending */
 #endif
@@ -29,7 +45,7 @@ static const char *op_name[] __attribute__((unused)) =
 {
    "evt", "ff", "dump", "wait", "press", "hold",
    "waitram", "mash", "holdram", "waitsram", "logram", "logptr",
-   "repeat", "endrepeat"
+   "repeat", "endrepeat", "logbytes", "mashif"
 #ifdef GPSP_PERF_RIG
    , "state"
 #endif
@@ -50,6 +66,9 @@ typedef struct
    uint32_t val;
    uint32_t off;               /* logptr offset; repeat count */
    uint32_t frames;            /* wait/hold/press duration or timeout */
+   uint8_t  csize;             /* mashif: the PRESS-ONLY-WHILE condition */
+   uint32_t caddr, cmask, cval;
+   uint32_t cstart;            /* mashif: frame the condition last rose */
    char     name[AP_NAME_LEN]; /* evt text / log label */
 } ap_step;
 
@@ -71,6 +90,33 @@ static uint32_t frame_no;       /* engine frame counter (for EVT context) */
 
 static int      rpt_start = -1; /* repeat block: index of step after REPEAT */
 static uint32_t rpt_left;
+/* 1-based iteration of the enclosing repeat block, 0 outside one.  Stamped on
+ * every ap_mark/ap_sync/ap_val/ap_fail as `it=`, so a per-iteration metric
+ * (a battle turn) is keyed by the engine itself, never by counting lines --
+ * a count breaks the moment one line is lost. */
+static uint32_t rpt_it;
+/* The last value a predicate read, for ap_fail's `val=`: a timeout that says
+ * WHAT it saw instead of only that it waited. */
+static uint32_t last_val;
+static int      last_err;
+static uint32_t script_crc;     /* CRC32 of the script file, for ap_loaded */
+
+#define AP_LOGBYTES_MAX 24
+
+static uint32_t ap_crc32(uint32_t crc, const void *data, size_t len)
+{
+   const uint8_t *p = (const uint8_t *)data;
+   size_t i;
+   int b;
+   crc = ~crc;
+   for (i = 0; i < len; i++)
+   {
+      crc ^= p[i];
+      for (b = 0; b < 8; b++)
+         crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+   }
+   return ~crc;
+}
 
 /* ------------------------------------------------------------- parsing -- */
 
@@ -131,6 +177,10 @@ int fe_autopilot_load(const char *path)
    frame_no = 0;
    rpt_start = -1;
    rpt_left = 0;
+   rpt_it = 0;
+   last_val = 0;
+   last_err = 0;
+   script_crc = 0;
 
    if (!f)
    {
@@ -140,12 +190,13 @@ int fe_autopilot_load(const char *path)
 
    while (fgets(line, sizeof(line), f))
    {
-      char *tok[10];
+      char *tok[12];
       int ntok = 0;
       char *p, *save = NULL;
       ap_step *st;
 
       lineno++;
+      script_crc = ap_crc32(script_crc, line, strlen(line));
       /* strip comments */
       p = strchr(line, '#');
       if (p) *p = '\0';
@@ -153,7 +204,7 @@ int fe_autopilot_load(const char *path)
       if (p) *p = '\0';
 
       for (p = strtok_r(line, " \t\r\n", &save);
-           p && ntok < 10;
+           p && ntok < 12;
            p = strtok_r(NULL, " \t\r\n", &save))
          tok[ntok++] = p;
       if (ntok == 0)
@@ -231,10 +282,13 @@ int fe_autopilot_load(const char *path)
          st->val  = parse_num(tok[5]);
          st->frames = parse_num(tok[6]);
       }
-      else if ((!strcmp(tok[0], "mash") || !strcmp(tok[0], "holdram")) &&
-               ntok == 7)
+      else if ((!strcmp(tok[0], "mash") || !strcmp(tok[0], "holdram") ||
+                !strcmp(tok[0], "mashne")) && ntok == 7)
       {
          st->op = tok[0][0] == 'm' ? OP_MASH : OP_HOLDRAM;
+         /* mashne: mash until the value is NO LONGER VAL -- "keep pressing A
+          * until the game has consumed it and left this menu". */
+         st->negate = (uint8_t)(!strcmp(tok[0], "mashne"));
          if (parse_buttons(tok[1], &st->buttons))
             goto bad;
          st->size = (uint8_t)parse_num(tok[2]);
@@ -243,11 +297,12 @@ int fe_autopilot_load(const char *path)
          st->val  = parse_num(tok[5]);
          st->frames = parse_num(tok[6]);
       }
-      else if ((!strcmp(tok[0], "mashptr") || !strcmp(tok[0], "holdptr")) &&
-               ntok == 8)
+      else if ((!strcmp(tok[0], "mashptr") || !strcmp(tok[0], "holdptr") ||
+                !strcmp(tok[0], "mashptrne")) && ntok == 8)
       {
          st->op = tok[0][0] == 'm' ? OP_MASH : OP_HOLDRAM;
          st->deref = 1;
+         st->negate = (uint8_t)(!strcmp(tok[0], "mashptrne"));
          if (parse_buttons(tok[1], &st->buttons))
             goto bad;
          st->size = (uint8_t)parse_num(tok[2]);
@@ -283,6 +338,28 @@ int fe_autopilot_load(const char *path)
          st->val  = parse_num(tok[7]);
          st->frames = parse_num(tok[8]);
       }
+      else if (!strcmp(tok[0], "mashif") && ntok == 11)
+      {
+         /* mashif BTNS CSZ CADDR CMASK CVAL  SZ ADDR MASK VAL TO
+          * Mash BTNS only on frames where (mem[CADDR]&CMASK)==CVAL, until
+          * (mem[ADDR]&MASK)==VAL.  Built for dialogue: press A only while a
+          * text printer is active, until the menu that follows is up -- so a
+          * press can advance text but can never land on the menu. */
+         st->op = OP_MASHIF;
+         if (parse_buttons(tok[1], &st->buttons))
+            goto bad;
+         st->csize = (uint8_t)parse_num(tok[2]);
+         st->caddr = parse_num(tok[3]);
+         st->cmask = parse_num(tok[4]);
+         st->cval  = parse_num(tok[5]);
+         st->size  = (uint8_t)parse_num(tok[6]);
+         st->addr  = parse_num(tok[7]);
+         st->mask  = parse_num(tok[8]);
+         st->val   = parse_num(tok[9]);
+         st->frames = parse_num(tok[10]);
+         if (st->csize != 1 && st->csize != 2 && st->csize != 4)
+            goto bad;
+      }
       else if (!strcmp(tok[0], "waitsram") && ntok == 2)
       {
          st->op = OP_WAITSRAM;
@@ -302,6 +379,16 @@ int fe_autopilot_load(const char *path)
          strncpy(st->name, tok[1], AP_NAME_LEN - 1);
          st->size = (uint8_t)parse_num(tok[2]);
          st->addr = parse_num(tok[3]);
+      }
+      else if (!strcmp(tok[0], "logbytes") && ntok == 4)
+      {
+         /* logbytes NAME N ADDR -- N raw bytes as hex, one line. */
+         st->op = OP_LOGBYTES;
+         strncpy(st->name, tok[1], AP_NAME_LEN - 1);
+         st->frames = parse_num(tok[2]);
+         st->addr = parse_num(tok[3]);
+         if (st->frames == 0 || st->frames > AP_LOGBYTES_MAX)
+            goto bad;
       }
       else if (!strcmp(tok[0], "logptr") && ntok == 5)
       {
@@ -330,7 +417,7 @@ int fe_autopilot_load(const char *path)
          goto bad;
 
       if ((st->op == OP_WAITRAM || st->op == OP_MASH || st->op == OP_HOLDRAM ||
-           st->op == OP_LOGRAM || st->op == OP_LOGPTR) &&
+           st->op == OP_LOGRAM || st->op == OP_LOGPTR || st->op == OP_MASHIF) &&
           st->size != 1 && st->size != 2 && st->size != 4)
          goto bad;
 
@@ -357,7 +444,8 @@ int fe_autopilot_load(const char *path)
 
    loaded = 1;
    status = 0;
-   fe_evt("ap_loaded steps=%d file=%s", step_count, path);
+   fe_evt("ap_loaded steps=%d file=%s crc=%08x", step_count, path,
+          (unsigned)script_crc);
    return 0;
 }
 
@@ -385,13 +473,16 @@ static int predicate(const ap_step *st)
    if (st->deref)
    {
       addr = read_mem(4, st->addr, &err);
+      last_err = err;
       if (err)
          return 0;
       addr += st->off;
    }
    v = read_mem(st->size, addr, &err);
+   last_err = err;
    if (err)
       return 0;
+   last_val = v;
    eq = ((v & st->mask) == st->val);
    return st->negate ? !eq : eq;
 }
@@ -400,8 +491,13 @@ static void ap_fail(const ap_step *st)
 {
    FE_EVT_ONLY(st);
    status = -1;
-   fe_evt("ap_fail step=%d line=%d op=%s frame=%u", cur, st->line,
-          op_name[st->op], frame_no);
+   if (last_err)
+      fe_evt("ap_fail step=%d line=%d op=%s frame=%u it=%u val=ERR", cur,
+             st->line, op_name[st->op], frame_no, (unsigned)rpt_it);
+   else
+      fe_evt("ap_fail step=%d line=%d op=%s frame=%u it=%u val=0x%08x", cur,
+             st->line, op_name[st->op], frame_no, (unsigned)rpt_it,
+             (unsigned)last_val);
 }
 
 static void log_val(const ap_step *st, int deref)
@@ -420,9 +516,34 @@ static void log_val(const ap_step *st, int deref)
    }
    v = err ? 0 : read_mem(st->size, addr, &err);
    if (err)
-      fe_evt("ap_val name=%s val=ERR", st->name);
+      fe_evt("ap_val name=%s val=ERR it=%u f=%u", st->name, (unsigned)rpt_it,
+             frame_no);
    else
-      fe_evt("ap_val name=%s val=0x%08x", st->name, (unsigned)v);
+      fe_evt("ap_val name=%s val=0x%08x it=%u f=%u", st->name, (unsigned)v,
+             (unsigned)rpt_it, frame_no);
+}
+
+static void log_bytes(const ap_step *st)
+{
+   uint8_t b[AP_LOGBYTES_MAX];
+   char hex[AP_LOGBYTES_MAX * 2 + 1];
+   unsigned i, n = st->frames;
+   static const char dig[] = "0123456789abcdef";
+   FE_EVT_ONLY(hex);
+   if (fe_host_mem_read(st->addr, b, n) != 0)
+   {
+      fe_evt("ap_val name=%s val=ERR it=%u f=%u", st->name, (unsigned)rpt_it,
+             frame_no);
+      return;
+   }
+   for (i = 0; i < n; i++)
+   {
+      hex[i * 2]     = dig[b[i] >> 4];
+      hex[i * 2 + 1] = dig[b[i] & 15];
+   }
+   hex[n * 2] = '\0';
+   fe_evt("ap_val name=%s hex=%s it=%u f=%u", st->name, hex,
+          (unsigned)rpt_it, frame_no);
 }
 
 /* Execute the current step for this frame.
@@ -435,7 +556,11 @@ static int run_step(void)
    switch (st->op)
    {
    case OP_EVT:
-      fe_evt("ap_mark text=%s", st->name);
+      /* f= / t_ms= appended AFTER the text so every existing
+       * `grep "ap_mark text=NAME"` still matches: per-step wall-clock is what
+       * the link-lag oracle scores (summarize_log.py `lag`). */
+      fe_evt("ap_mark text=%s f=%u t_ms=%u it=%u", st->name, frame_no,
+             (unsigned)(fe_evt_now_us() / 1000ull), (unsigned)rpt_it);
       return 0;
 
    case OP_FF:
@@ -460,9 +585,14 @@ static int run_step(void)
       log_val(st, 1);
       return 0;
 
+   case OP_LOGBYTES:
+      log_bytes(st);
+      return 0;
+
    case OP_REPEAT:
       rpt_start = cur + 1;
       rpt_left = st->off;
+      rpt_it = 1;
       if (rpt_left == 0)
       {
          /* skip the whole block */
@@ -475,8 +605,11 @@ static int run_step(void)
       if (rpt_left > 1)
       {
          rpt_left--;
+         rpt_it++;
          cur = rpt_start - 1;   /* advanced past REPEAT by caller */
       }
+      else
+         rpt_it = 0;            /* left the block */
       return 0;
 
    case OP_WAIT:
@@ -502,7 +635,9 @@ static int run_step(void)
    case OP_HOLDRAM:
       if (predicate(st))
       {
-         fe_evt("ap_sync step=%d line=%d frame=%u", cur, st->line, frame_no);
+         fe_evt("ap_sync step=%d line=%d frame=%u t_ms=%u it=%u", cur,
+                st->line, frame_no, (unsigned)(fe_evt_now_us() / 1000ull),
+                (unsigned)rpt_it);
          fe_host_input_inject(0);
          return 2;
       }
@@ -522,6 +657,39 @@ static int run_step(void)
                                  ? st->buttons : 0);
       step_frame++;
       return 1;
+
+   case OP_MASHIF:
+   {
+      int err = 0;
+      uint32_t c;
+      if (step_frame == 0)
+         st->cstart = 0;
+      if (predicate(st))
+      {
+         fe_evt("ap_sync step=%d line=%d frame=%u t_ms=%u it=%u", cur,
+                st->line, frame_no, (unsigned)(fe_evt_now_us() / 1000ull),
+                (unsigned)rpt_it);
+         fe_host_input_inject(0);
+         return 2;
+      }
+      if (step_frame >= st->frames)
+      {
+         ap_fail(st);
+         fe_host_input_inject(0);
+         return 1;
+      }
+      c = read_mem(st->csize, st->caddr, &err);
+      if (err || (c & st->cmask) != st->cval)
+      {
+         st->cstart = step_frame + 1;     /* next eligible frame is a NEW press */
+         fe_host_input_inject(0);
+      }
+      else
+         fe_host_input_inject(((step_frame - st->cstart) % AP_MASH_PERIOD) <
+                              AP_MASH_ON ? st->buttons : 0);
+      step_frame++;
+      return 1;
+   }
 
    case OP_WAITSRAM:
       if (!step_inited)

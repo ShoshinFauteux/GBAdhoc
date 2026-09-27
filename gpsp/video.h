@@ -30,12 +30,14 @@ extern u16* gba_screen_pixels;
 
 /* ---- ME RENDERER CAPTURE (the production path for the second-core render) --
  *
- * The complete per-frame input set the renderer needs, as PROVEN bit-exact by
- * the RENDER_REPLAY desktop oracle (~81k frames, 0 mismatch): a frame-start
- * snapshot of {affine reference seed, OAM_UPDATED} plus the per-line LCD
- * register file.  VRAM/OAM/palette are NOT copied here — they are stable
- * across a frame for ~98% of frames (RASTER_PROF) and the ME snapshots them
- * itself at post time, before emulation of the next frame resumes.
+ * Captured replay inputs are a frame-start snapshot of {affine reference
+ * seed, OAM_UPDATED} plus the per-line LCD register file.  VRAM/OAM/palette
+ * are not copied here; the ME snapshots them at post time.  The desktop
+ * RENDER_REPLAY oracle reproduced the CPU renderer for ~81k tested frames,
+ * but that does not establish hardware equivalence: the hardware comparison
+ * recorded deterministic image divergence when frame snapshots differ from
+ * per-scanline state.  See docs/ME-RENDERER-DIVERGENCE.md for the measured
+ * results and the still-unproven cause.
  *
  * 64 halfwords per line covers the whole LCD block the renderer reads
  * (0x00..0x2A, VCOUNT at 0x03 included); the renderer reads nothing above

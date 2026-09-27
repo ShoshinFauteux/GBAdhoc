@@ -64,6 +64,12 @@ unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
   u32 sample_status = DIRECT_SOUND_INACTIVE;
   direct_sound_struct *ds = &direct_sound_channel[channel];
 
+  /* Older or damaged states can carry a zero step, and it cannot make the
+   * accumulator below progress.  Disable this sample update safely instead
+   * of hanging the emulation thread in an infinite loop. */
+  if (!frequency_step)
+    return 0;
+
   fixed8_24 fifo_fractional = ds->fifo_fractional;
   u32 buffer_index = ds->buffer_index;
   s32 current_sample, next_sample;
@@ -92,6 +98,24 @@ unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
   {
      case DIRECT_SOUND_INACTIVE:
         /* render samples NULL */
+        /* For a low timer step, a silent channel may span thousands of
+         * output samples between timer events.  No samples are written in
+         * this case, so advance the phase and ring position in one exact
+         * quotient instead of iterating once per silent sample.  The guards
+         * ensure at least 255 iterations would otherwise be required; for
+         * short spans the simple loop is cheaper than a 64-bit divide. */
+        if(frequency_step <= 0x10000 &&
+           fifo_fractional < frequency_step)
+        {
+           /* With phase < step <= 0x10000, the rounded numerator, product,
+            * and doubled ring advance all fit in u32; avoid a software 64-bit
+            * divide on the PSP's 32-bit CPU. */
+           u32 samples = (0x1000000u - fifo_fractional + frequency_step - 1) /
+                         frequency_step;
+           fifo_fractional += samples * frequency_step;
+           buffer_index = (buffer_index + samples * 2) & BUFFER_SIZE_MASK;
+           break;
+        }
         while(fifo_fractional <= 0xFFFFFF)
         {
            fifo_fractional += frequency_step;
@@ -642,7 +666,8 @@ bool sound_check_savestate(const u8 *src)
     "len-status", "len-ticks", "noise-type", "sample-tbl"
   };
 
-  int i;
+  int i, d, g, v;
+  u32 index;
   const u8 *snddoc = bson_find_key(src, "sound");
   if (!snddoc)
     return false;
@@ -650,35 +675,60 @@ bool sound_check_savestate(const u8 *src)
   for (i = 0; i < sizeof(gvars)/sizeof(gvars[0]); i++)
     if (!bson_contains_key(snddoc, gvars[i], BSON_TYPE_INT32))
       return false;
-  if (!bson_contains_key(snddoc, "wav-samples", BSON_TYPE_BIN))
+  if (!bson_has_bytes(snddoc, "wav-samples", sizeof(wave_samples)))
+    return false;
+
+  if (!bson_read_int32(snddoc, "buf-base", &index) ||
+      index >= BUFFER_SIZE || (index & 1))
+    return false;
+  if (!bson_read_int32(snddoc, "gbc-buf-idx", &index) ||
+      index >= BUFFER_SIZE || (index & 1))
     return false;
 
 
-  for (i = 0; i < 2; i++)
+  for (d = 0; d < 2; d++)
   {
-    char tn[4] = {'d', 's', '0' + i, 0};
+    char tn[4] = {'d', 's', '0' + d, 0};
     const u8 *sndchan = bson_find_key(snddoc, tn);
     if (!sndchan)
       return false;
 
-    for (i = 0; i < sizeof(dsvars)/sizeof(dsvars[0]); i++)
-      if (!bson_contains_key(sndchan, dsvars[i], BSON_TYPE_INT32))
+    for (v = 0; v < sizeof(dsvars)/sizeof(dsvars[0]); v++)
+      if (!bson_contains_key(sndchan, dsvars[v], BSON_TYPE_INT32))
         return false;
 
-    if (!bson_contains_key(sndchan, "fifo-bytes", BSON_TYPE_BIN))
+    if (!bson_has_bytes(sndchan, "fifo-bytes",
+                         sizeof(direct_sound_channel[0].fifo)))
+      return false;
+    if (!bson_read_int32(sndchan, "fifo-base", &index) || index >= 32)
+      return false;
+    if (!bson_read_int32(sndchan, "fifo-top", &index) || index >= 32)
+      return false;
+    if (!bson_read_int32(sndchan, "fifo-frac", &index) || index > 0xFFFFFF)
+      return false;
+    if (!bson_read_int32(sndchan, "volume", &index) || index > 1)
+      return false;
+    if (!bson_read_int32(sndchan, "buf-idx", &index) ||
+        index >= BUFFER_SIZE || (index & 1))
       return false;
   }
 
-  for (i = 0; i < 4; i++)
+  for (g = 0; g < 4; g++)
   {
-    char tn[4] = {'g', 's', '0' + i, 0};
+    char tn[4] = {'g', 's', '0' + g, 0};
     const u8 *sndchan = bson_find_key(snddoc, tn);
     if (!sndchan)
       return false;
 
-    for (i = 0; i < sizeof(gsvars)/sizeof(gsvars[0]); i++)
-      if (!bson_contains_key(sndchan, gsvars[i], BSON_TYPE_INT32))
+    for (v = 0; v < sizeof(gsvars)/sizeof(gsvars[0]); v++)
+      if (!bson_contains_key(sndchan, gsvars[v], BSON_TYPE_INT32))
         return false;
+    if (!bson_read_int32(sndchan, "sample-tbl", &index) || index >= 4)
+      return false;
+    if (!bson_read_int32(sndchan, "env-vol", &index) || index > 15)
+      return false;
+    if (!bson_read_int32(sndchan, "sweep-shift", &index) || index > 7)
+      return false;
   }
 
   return true;

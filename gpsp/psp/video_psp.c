@@ -809,6 +809,9 @@ static fu_face fu_get(int hd)
    return f;
 }
 
+/* FU_LAST is past 0x7E: bytes 0x7F..FU_LAST are the button glyphs
+ * (VID_GLYPH_*), contiguous with ASCII so the same subtraction indexes
+ * them.  Anything beyond that range still draws as '?'. */
 static int fu_measure(const fu_face *f, const char *s)
 {
    int w = 0;
