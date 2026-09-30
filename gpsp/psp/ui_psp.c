@@ -17,6 +17,7 @@
  */
 #include <pspkernel.h>
 #include <pspctrl.h>
+#include <psputility_sysparam.h>
 #include <pspdisplay.h>
 #include <pspiofilemgr.h>
 
@@ -238,6 +239,62 @@ static int  g_scan_count = -1;   /* -1 = not scanned yet */
 /* main_psp.c: re-applies the session chip after the OSD toggle changes. */
 extern void osd_session_chip_refresh(void);
 
+
+/* ----- system confirm button ----------------------------------------------
+ * The PSP lets the owner choose whether O or X confirms (Settings > System
+ * Settings > Button Assign; 0 = O confirms, 1 = X confirms).  Every menu in
+ * this file asks for the LOGICAL buttons: g_ui_ok confirms, g_ui_back backs
+ * out.  The scripted demo tables below are written in logical terms too
+ * (CROSS = confirm, CIRCLE = back) and go through ui_logical() on injection.
+ * In-game GBA A/B mapping is a separate setting (btn_swap) and is untouched. */
+static unsigned g_ui_ok = PSP_CTRL_CROSS, g_ui_back = PSP_CTRL_CIRCLE;
+static int g_ui_ok_is_circle;
+
+static void ui_buttons_refresh(void)
+{
+   int v = 1;
+   if (sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_BUTTON_SWAP, &v) < 0)
+      v = 1;                        /* unreadable -> keep the old X confirm */
+   g_ui_ok_is_circle = (v == 0);
+   g_ui_ok   = g_ui_ok_is_circle ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
+   g_ui_back = g_ui_ok_is_circle ? PSP_CTRL_CROSS  : PSP_CTRL_CIRCLE;
+}
+
+/* Scripted tables say CROSS for confirm and CIRCLE for back. */
+static unsigned ui_logical(unsigned m)
+{
+   unsigned r = m & ~(PSP_CTRL_CROSS | PSP_CTRL_CIRCLE);
+   if (m & PSP_CTRL_CROSS)  r |= g_ui_ok;
+   if (m & PSP_CTRL_CIRCLE) r |= g_ui_back;
+   return r;
+}
+
+/* Hint text is written with "X" = confirm and "O" = back; show the real
+ * faces.  Only stand-alone X / O tokens are touched. */
+static const char *ui_hint(const char *in)
+{
+   static char buf[4][128];
+   static int n;
+   char *o;
+   size_t i;
+   if (!g_ui_ok_is_circle)
+      return in;
+   o = buf[n++ & 3];
+   for (i = 0; in[i] && i < 127; i++)
+   {
+      char c = in[i];
+      int lone = (i == 0 || in[i - 1] == ' ') &&
+                 (in[i + 1] == ' ' || in[i + 1] == ':' || !in[i + 1]);
+      if (c == '\x80') c = '\x81';
+      else if (c == '\x81') c = '\x80';
+      else if (lone && c == 'X') c = 'O';
+      else if (lone && c == 'O') c = 'X';
+      o[i] = c;
+   }
+   o[i] = 0;
+   return o;
+}
+
 /* ----- demo (harness self-drive) ------------------------------------------ */
 typedef struct { unsigned pad; unsigned char hold, gap; } demo_step;
 #define DEMO_DUMP 0xFFFFFFFFu
@@ -338,7 +395,7 @@ static unsigned demo_pad(void)
       g_demo_phase--;
       if (g_demo_phase == 0)
          g_demo_phase = -(int)s->gap - 1;
-      return s->pad;
+      return ui_logical(s->pad);
    }
    g_demo_phase++;
    if (g_demo_phase == 0)
@@ -386,6 +443,7 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
    unsigned prev = 0;
    char title[96];
 
+   ui_buttons_refresh();
    g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
 
    /* The filename is not the game's name.  Drop the extension; the region
@@ -427,9 +485,9 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 
       if (edges & (PSP_CTRL_UP | PSP_CTRL_DOWN))
          sel ^= 1;
-      if (edges & PSP_CTRL_CROSS)
+      if (edges & g_ui_ok)
          return sel;
-      if (edges & PSP_CTRL_CIRCLE)
+      if (edges & g_ui_back)
          return 0;              /* O is always "back to what I was doing" */
 
       vid_overlay_begin(1);
@@ -486,6 +544,7 @@ void ui_open(void)
    g_active = 1;
    g_screen = SCR_MENU;
    g_cursor = 0;
+   ui_buttons_refresh();
    g_prev_pad = 0xFFFFFFFFu;   /* swallow the opening chord */
    fe_evt("ui_open");
 }
@@ -579,7 +638,7 @@ static void footer(const char *hint)
 {
    vid_rect(0, VID_SCR_H - FTR_H, VID_SCR_W, 1, C_ACCENT_DK, 180);
    vid_rect(0, VID_SCR_H - FTR_H + 1, VID_SCR_W, FTR_H - 1, C_HDR_BOT, 220);
-   vid_text_center(VID_SCR_H - FTR_H + 2, hint, C_DIM);
+   vid_text_center(VID_SCR_H - FTR_H + 2, ui_hint(hint), C_DIM);
 }
 
 /* One list row.  Selection is an accent edge bar + a soft fill, which reads
@@ -771,9 +830,9 @@ static ui_action screen_settings(unsigned edges)
       settings_adjust(g_cursor, -1);
    if (edges & PSP_CTRL_RIGHT)
       settings_adjust(g_cursor, +1);
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
       settings_adjust(g_cursor, +1);
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
    {
       /* ADR-0071: leaving SETTINGS after changing the profile is the commit
        * point.  The main loop saves and relaunches from there — not from
@@ -871,9 +930,9 @@ static ui_action screen_wireless(unsigned edges, int session_active,
          g_cursor = (g_cursor + WLS_COUNT - 1) % WLS_COUNT;
       if (edges & PSP_CTRL_DOWN)
          g_cursor = (g_cursor + 1) % WLS_COUNT;
-      if (edges & PSP_CTRL_CIRCLE)
+      if (edges & g_ui_back)
          screen_to(SCR_MENU);
-      if (edges & PSP_CTRL_CROSS)
+      if (edges & g_ui_ok)
       {
          if (g_cursor == WLS_DISCONNECT)
          {
@@ -907,9 +966,9 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       if (edges & PSP_CTRL_RIGHT)
          settings_adjust(SET_ROOM, +1);
    }
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
       screen_to(SCR_MENU);
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
    {
       switch (g_cursor)
       {
@@ -1008,9 +1067,9 @@ static ui_action screen_mgift(unsigned edges)
     * arriving, and the player may well want to watch the game while it does.
     * Stopping is an explicit choice, or happens on its own when the session
     * ends. */
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
       screen_to(SCR_WIRELESS);
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
    {
       if (g_cursor == MGF_START)
       {
@@ -1095,9 +1154,9 @@ static ui_action screen_scan(unsigned edges)
       g_cursor = (g_cursor + rows - 1) % rows;
    if (edges & PSP_CTRL_DOWN)
       g_cursor = (g_cursor + 1) % rows;
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
       screen_to(SCR_WIRELESS);
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
    {
       if (g_scan_count > 0 && g_cursor < g_scan_count)
       {
@@ -1149,9 +1208,9 @@ static ui_action screen_menu(unsigned edges, int session_active)
       g_cursor = (g_cursor + M_COUNT - 1) % M_COUNT;
    if (edges & PSP_CTRL_DOWN)
       g_cursor = (g_cursor + 1) % M_COUNT;
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
       return UI_ACT_RESUME;
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
    {
       switch (g_cursor)
       {
@@ -1202,7 +1261,7 @@ static ui_action screen_state_slots(unsigned edges)
    char path[PSP_FILE_PATH_CAP];
    int occupied = 0, i;
 
-   if (edges & PSP_CTRL_CIRCLE)
+   if (edges & g_ui_back)
    {
       screen_to(SCR_MENU);
       return UI_ACT_NONE;
@@ -1216,7 +1275,7 @@ static ui_action screen_state_slots(unsigned edges)
                                (unsigned)g_state_slot) == 0 &&
        sceIoGetstat(path, &st) >= 0)
       occupied = 1;
-   if (edges & PSP_CTRL_CROSS)
+   if (edges & g_ui_ok)
    {
       if (!occupied && !g_state_save_mode)
       {
@@ -1242,7 +1301,7 @@ static ui_action screen_state_slots(unsigned edges)
               : (g_state_save_mode ? "Save to empty slot" : "Empty slot"),
           i == 1 ? "slot 1" : NULL);
       if (i == g_state_slot)
-         vid_text(350, y + 3, has ? "X confirm" : "empty", C_DIM);
+         vid_text(350, y + 3, has ? ui_hint("X confirm") : "empty", C_DIM);
    }
    footer("X select   O back");
    return UI_ACT_NONE;
@@ -1774,12 +1833,12 @@ static void browser_footer(int n_view, int cur_is_fav)
    if (n_view <= 0)
    {
       hint[count++] = g_browser_favs ? "SELECT all games"
-                                     : VID_GLYPH_O " exit";
+                                     : ui_hint(VID_GLYPH_O " exit");
       hint[count++] = "START settings";
    }
    else
    {
-      hint[count++] = VID_GLYPH_X " play";
+      hint[count++] = ui_hint(VID_GLYPH_X " play");
       hint[count++] = "L/R page";
       hint[count++] = "Left: states";
       hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
@@ -3306,7 +3365,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
    }
    vid_rect(x + 10, 238, 182, 1, C_CARD, 255);
    vid_text(x + 14, 241, "UP/DN: slot", C_DIM);
-   vid_text(x + 14, 254, "X: load   O: close", C_DIM);
+   vid_text(x + 14, 254, ui_hint("X: load   O: close"), C_DIM);
    (void)n;
 }
 
@@ -3517,6 +3576,7 @@ extern volatile int g_running;               /* main_psp exit flag */
  * (Media Engine mode is latched before the browser runs), else 0. */
 static int browser_settings(void)
 {
+   ui_buttons_refresh();
    int relaunch = 0;
 
    screen_to(SCR_SETTINGS);
@@ -3618,7 +3678,7 @@ static int browser_demo(int frame, unsigned *edges)
             browser_dump(BDEMO[k].dump);
          else if (!BDEMO[k].btn)
             return 1;
-         *edges |= BDEMO[k].btn;
+         *edges |= ui_logical(BDEMO[k].btn);
       }
    return 0;
 }
@@ -3699,6 +3759,7 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
 int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                int *out_state_slot, fe_console_t *console_out)
 {
+   ui_buttons_refresh();
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0, bframe = 0;
 
@@ -3820,7 +3881,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          if (++settle == 150)   /* let the box art fully stream in first */
          {
             browser_dump("ge_gallery");
-            edges |= PSP_CTRL_CROSS;
+            edges |= g_ui_ok;
          }
       }
       if (browser_demo(bframe, &edges))
@@ -3944,7 +4005,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       {
          char state_path[PSP_FILE_PATH_CAP];
          SceIoStat st;
-         if (edges & PSP_CTRL_CIRCLE)
+         if (edges & g_ui_back)
          {
             g_browser_state_open = 0;
             idle = 0;
@@ -3955,9 +4016,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          else if (edges & PSP_CTRL_DOWN)
             g_browser_state_slot = g_browser_state_slot < PSP_STATE_SLOT_COUNT
                ? g_browser_state_slot + 1 : 1;
-         else if ((edges & PSP_CTRL_RIGHT) && !(edges & PSP_CTRL_CROSS))
+         else if ((edges & PSP_CTRL_RIGHT) && !(edges & g_ui_ok))
             g_browser_state_open = 0;
-         else if (edges & PSP_CTRL_CROSS)
+         else if (edges & g_ui_ok)
          {
             if (browser_rom_state_path(rom_dir, rom,
                                        (unsigned)g_browser_state_slot,
@@ -4020,7 +4081,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          continue;
       }
       rom = n > 0 ? view_rom(cur) : -1;
-      if ((edges & PSP_CTRL_CROSS) && n > 0)
+      if ((edges & g_ui_ok) && n > 0)
       {
          if (g_browser_state_open)
             continue;
@@ -4053,7 +4114,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          vid_overlay_end();
          sceDisplayWaitVblankStart();
          vid_swap();
-         if ((edges & PSP_CTRL_CIRCLE) && !g_browser_favs)
+         if ((edges & g_ui_back) && !g_browser_favs)
             break;
          continue;
       }
