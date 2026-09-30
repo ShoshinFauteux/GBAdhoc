@@ -7249,20 +7249,6 @@ int main(int argc, char *argv[])
          *(volatile unsigned *)(uintptr_t)g_catch_selftest_addr = 0xDEADu;
 #endif
 
-      /* ADR-0057: ABORT A RUN WITHOUT A HARD RESET.
-       *
-       * HOME is registered (sceKernelRegisterExitCallback -> g_running = 0)
-       * but its system dialog is not reliably reachable while we are driving
-       * the display and an autopilot script owns the pad, so in practice the
-       * only way to stop a run has been holding POWER.  Hard-resetting a
-       * console mid-run is how a memory stick gets a corrupt FAT, which this
-       * project has already paid for twice.
-       *
-       * START+SELECT held is the same combo that leaves the parked handoff
-       * loop, so there is ONE gesture to remember for "stop, whatever you are
-       * doing".  It sets g_running = 0, which exits through the normal
-       * teardown -- SRAM flushed, log closed, handoff offered -- rather than
-       * yanking power. */
       /* ADR-0057: keep the system idle timer alive for the WHOLE run.
        *
        * scePowerTick was only called while a netdrv session was up, so during
@@ -7285,21 +7271,6 @@ int main(int argc, char *argv[])
          }
       }
 
-      {
-         static unsigned abort_held;
-         if ((g_pad & (PSP_CTRL_START | PSP_CTRL_SELECT))
-               == (PSP_CTRL_START | PSP_CTRL_SELECT))
-         {
-            if (++abort_held == 90)      /* ~1.5 s at 60 Hz */
-            {
-               fe_evt("abort start+select held -- ending run cleanly");
-               exit_reason = "user_abort";
-               g_running = 0;
-            }
-         }
-         else
-            abort_held = 0;
-      }
 
       /* ADR-0046: what the GAME was actually offered, logged on change only.
        *
