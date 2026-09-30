@@ -13,7 +13,7 @@
 #    psp-gcc works (upstream links the .so with gcc on purpose).
 
 TARGET = gpsp_adhoc
-OBJS = main_psp.o usb_handoff.o \
+OBJS = main_psp.o usb_handoff.o home_btn.o \
        ff_psp.o \
        me_host.o \
        video_psp.o \
