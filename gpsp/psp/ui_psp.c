@@ -1208,7 +1208,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
       g_cursor = (g_cursor + M_COUNT - 1) % M_COUNT;
    if (edges & PSP_CTRL_DOWN)
       g_cursor = (g_cursor + 1) % M_COUNT;
-   if (edges & g_ui_back)
+   if (edges & (g_ui_back | PSP_CTRL_HOME))   /* HOME toggles the menu */
       return UI_ACT_RESUME;
    if (edges & g_ui_ok)
    {

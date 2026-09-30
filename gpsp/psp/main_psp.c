@@ -53,6 +53,7 @@
 
 #include "fe_host.h"
 #include "fe_evt.h"
+#include "home_btn.h"
 #include <psprtc.h>
 #include <time.h>
 #include "fe_util.h"
@@ -290,6 +291,7 @@ static void init_paths(int argc, char *argv[])
 #define JP_R      11
 
 volatile int g_running = 1;
+static int g_home_pressed;     /* HOME edge this frame (home_btn.h) */
 #ifdef GPSP_CATCH_SELFTEST
 /* A variable so the compiler cannot prove the self-test store faults. */
 volatile unsigned g_catch_selftest_addr = 0u;
@@ -4134,6 +4136,7 @@ static void relaunch_eboot(void)
 {
    char eboot[160];
    struct SceKernelLoadExecVSHParam param;
+   home_btn_arm(0);          /* hand HOME back to the system before leaving */
    snprintf(eboot, sizeof(eboot), "%s/EBOOT.PBP", g_dir_base);
    memset(&param, 0, sizeof(param));
    param.size = sizeof(param);
@@ -7140,6 +7143,9 @@ int main(int argc, char *argv[])
    sceIoMkdir(LOG_DIR, 0777);
 #endif
 #endif
+   home_btn_init();
+   if (!have_script)
+      home_btn_arm(1);     /* HOME opens the in-game menu (see home_btn.h) */
    stall_watch_start();
    rig_cfg_audit_report();   /* every harness key has been read by now */
 
@@ -7206,6 +7212,12 @@ int main(int argc, char *argv[])
       g_pad = pd.Buttons;
       pad_new = g_pad & ~prev_pad;
       prev_pad = g_pad;
+      {  /* HOME is invisible to user-mode reads; home_btn reads it in kernel */
+         static unsigned home_prev;
+         unsigned home_now = home_btn_read();
+         g_home_pressed = home_now && !home_prev;
+         home_prev = home_now;
+      }
 
       /* ADR-0069: SCREENSHOT ON DEMAND, WITHOUT TOUCHING THE FILESYSTEM.
        *
@@ -7237,20 +7249,6 @@ int main(int argc, char *argv[])
          *(volatile unsigned *)(uintptr_t)g_catch_selftest_addr = 0xDEADu;
 #endif
 
-      /* ADR-0057: ABORT A RUN WITHOUT A HARD RESET.
-       *
-       * HOME is registered (sceKernelRegisterExitCallback -> g_running = 0)
-       * but its system dialog is not reliably reachable while we are driving
-       * the display and an autopilot script owns the pad, so in practice the
-       * only way to stop a run has been holding POWER.  Hard-resetting a
-       * console mid-run is how a memory stick gets a corrupt FAT, which this
-       * project has already paid for twice.
-       *
-       * START+SELECT held is the same combo that leaves the parked handoff
-       * loop, so there is ONE gesture to remember for "stop, whatever you are
-       * doing".  It sets g_running = 0, which exits through the normal
-       * teardown -- SRAM flushed, log closed, handoff offered -- rather than
-       * yanking power. */
       /* ADR-0057: keep the system idle timer alive for the WHOLE run.
        *
        * scePowerTick was only called while a netdrv session was up, so during
@@ -7273,21 +7271,6 @@ int main(int argc, char *argv[])
          }
       }
 
-      {
-         static unsigned abort_held;
-         if ((g_pad & (PSP_CTRL_START | PSP_CTRL_SELECT))
-               == (PSP_CTRL_START | PSP_CTRL_SELECT))
-         {
-            if (++abort_held == 90)      /* ~1.5 s at 60 Hz */
-            {
-               fe_evt("abort start+select held -- ending run cleanly");
-               exit_reason = "user_abort";
-               g_running = 0;
-            }
-         }
-         else
-            abort_held = 0;
-      }
 
       /* ADR-0046: what the GAME was actually offered, logged on change only.
        *
@@ -7421,7 +7404,10 @@ int main(int argc, char *argv[])
       /* ---- in-game menu (Select+Start held ~1/4 s, plan §8) ---------- */
       if (!ui_active())
       {
-         if ((g_pad & (PSP_CTRL_SELECT | PSP_CTRL_START)) ==
+         if (g_home_pressed && !have_script)
+            ui_open();
+         if (!home_btn_armed() &&
+             (g_pad & (PSP_CTRL_SELECT | PSP_CTRL_START)) ==
              (PSP_CTRL_SELECT | PSP_CTRL_START) && !have_script)
          {
             if (++chord_frames >= 15)
@@ -7465,7 +7451,7 @@ int main(int argc, char *argv[])
          /* Core paused; wireless keeps pumping; UI draws + acts. */
          ui_action act;
          LOOP_PHASE(5);
-         act = ui_frame(g_pad, g_net_up || g_mg_on, g_session_info);
+         act = ui_frame(g_pad | (g_home_pressed ? PSP_CTRL_HOME : 0), g_net_up || g_mg_on, g_session_info);
          switch (act)
          {
          case UI_ACT_SAVESTATE:
@@ -8107,6 +8093,8 @@ int main(int argc, char *argv[])
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
    }
+
+   home_btn_arm(0);      /* give HOME back to the system on every way out */
 
    if (g_perf_rig)
    {
