@@ -23,6 +23,7 @@
 // recreate some serial protocols.
 
 #include <assert.h>
+#include <string.h>
 #include "common.h"
 
 // Debug print logic:
@@ -371,7 +372,12 @@ bool serialpoke_update(unsigned cycles) {
 
 void serialpoke_net_receive(const void* buf, size_t len, uint16_t client_id) {
   // MPK1 header, sanity checking.
-  const u32 *pkt = (u32*)buf;
+  // buf may be misaligned (netdrv hands us a payload at an odd offset); a
+  // direct u32 read faults on the PSP (AdEL), so copy to an aligned buffer.
+  u32 pkt[6];
+  if (len != sizeof(pkt))
+    return;
+  memcpy(pkt, buf, sizeof(pkt));
   if (len == 24 && netorder32(pkt[0]) == NET_SERPOKE_HEADER) {
     const unsigned count = serstate.poke.peer[client_id].count;
     const u32 flags = netorder32(pkt[1]);
@@ -678,7 +684,11 @@ bool serialaw_update(unsigned cycles) {
 
 void serialaw_net_receive(const void* buf, size_t len, uint16_t client_id) {
   // MAW1 header, sanity checking.
-  const u32 *pkt = (u32*)buf;
+  // See serialpoke_net_receive: buf may be misaligned.
+  u32 pkt[2 + 128];
+  if (len < 8 || len > sizeof(pkt))
+    return;
+  memcpy(pkt, buf, len);
   if (len >= 8 && netorder32(pkt[0]) == NET_SERADWR_HEADER) {
     const u32 flags = netorder32(pkt[1]);
     const u16 cmd = flags >> 16;
