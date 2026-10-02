@@ -1,0 +1,85 @@
+# aw2_scenes.txt -- Advance Wars 2 (USA) scene tour for the link bench.
+# Start: the owner's AW2 .st0 (campaign world map, before Mission 2), loaded
+# at frame 30 (lb_host --load-at 30 / PSP harness load_state = 1).
+# Frame-stamped press/hold/wait only: no RAM predicates, so the input
+# sequence is identical in every arm.  `evt` lines mark scene boundaries.
+evt campaign_map
+wait 90
+press LEFT 6
+wait 30
+evt mission_select
+press A 4
+wait 60
+press A 4
+wait 150
+press START 4
+wait 200
+evt mission_start_anim
+press START 4
+wait 400
+evt briefing_skip
+press START 4
+wait 300
+press START 4
+wait 300
+evt map_idle
+wait 136
+evt unit_select
+press RIGHT 4
+wait 12
+press RIGHT 4
+wait 12
+press UP 4
+wait 20
+press A 4
+wait 40
+press START 4
+wait 40
+press UP 4
+wait 20
+press A 4
+wait 40
+press A 4
+wait 40
+evt battle_anim
+press A 4
+wait 520
+evt map_scroll
+hold RIGHT 60
+hold UP 60
+hold LEFT 90
+hold DOWN 60
+hold RIGHT 90
+hold UP 40
+wait 30
+evt map_menu
+press A 4
+wait 40
+press DOWN 4
+wait 20
+press DOWN 4
+wait 20
+press DOWN 4
+wait 20
+press UP 4
+wait 20
+press B 4
+wait 40
+evt minimap
+press START 4
+wait 90
+press B 4
+wait 60
+evt co_screen
+press A 4
+wait 40
+press A 4
+wait 150
+press B 4
+wait 40
+press B 4
+wait 60
+evt attract_intro
+hold A+B+SELECT+START 10
+wait 2400
+evt end

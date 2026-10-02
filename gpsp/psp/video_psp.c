@@ -12,6 +12,8 @@
 #include "font_ui.h"
 #include "logo_ui.h"
 #include "fe_util.h"
+#include "fe_evt.h"
+#include "ambient_look.h"
 
 /* The other half of the pixel-format link guard; see gba_memory.c. */
 #ifdef USE_PSP_RGB565_FORMAT
@@ -131,6 +133,32 @@ static int g_fb_filled;
 
 static int g_scale  = VID_SCALE_1X;
 static int g_filter = VID_FILTER_NEAREST;
+/* The smoothing TRIANGLE's smoothed presets use: the last non-nearest filter
+ * vid_set_mode was given.  BILINEAR until a player picks sharp, so the cycle
+ * is unchanged for everyone who never does.  Invariant: g_filter is always
+ * NEAREST or g_smooth. */
+static int g_smooth = VID_FILTER_BILINEAR;
+
+/* Where a w x h source lands, and which of its rows are drawn.  Only the
+ * integer 2x mode crops (sy0 > 0, sh < h); every other mode draws all rows. */
+typedef struct
+{
+   int ox, oy, dw, dh;   /* destination rect, screen px                   */
+   int sy0, sh;          /* source rows [sy0, sy0 + sh)                   */
+} vid_geo;
+
+static void dest_rect(unsigned w, unsigned h,
+                      int *ox, int *oy, int *dw, int *dh);
+
+/* Ambient bars, defined at the end of this file. */
+static int  amb_draw_bg(const vid_geo *g);
+static void amb_snap_maybe(const uint16_t *src, int stride, unsigned w,
+                           unsigned h, int uncached);
+
+/* Sharp bilinear (docs/SHARP-BILINEAR.md), defined after the ambient bars:
+ * its render target sits above their texture in VRAM. */
+static int  sharp_draw(const uint16_t *tex, unsigned w, const vid_geo *g);
+static int  picture_filter(unsigned w, const vid_geo *g);
 
 /* Staging buffer for the GE texture upload.
  *
@@ -154,8 +182,14 @@ static int g_filter = VID_FILTER_NEAREST;
  * CPU ~600, on top of needing a 76.8 KiB dcache writeback and a malloc'd
  * base with no alignment guarantee.  Measured, not assumed: keep the copy.
  *
- * One extra row + zeroed right margin so bilinear edge taps read black, and
- * GU_CLAMP wrap set at init. */
+ * One extra row, and GU_CLAMP wrap set at init.  The texel column just right
+ * of the picture and the row just below it repeat the picture's edge
+ * (stage_convert_rgb565), so a bilinear tap past the right or bottom edge
+ * reads the edge pixel; GU_CLAMP does the same past the left and top.
+ * These used to be "zeroed so edge taps read black" -- true for a 240-wide
+ * GBA frame only: a 160x144 GB frame left columns 160-255 and rows 144-160
+ * holding whatever was drawn there before, and the last column of the
+ * picture was blended with it (docs/GB-PALETTE-FIXES.md). */
 #define STAGE_STRIDE 256
 #define STAGE_ROWS   161
 #define STAGE_BYTES  (STAGE_STRIDE * STAGE_ROWS * 2)
@@ -198,10 +232,25 @@ static void stage_convert_rgb565(const uint16_t *src, unsigned w, unsigned h,
     * nothing to convert and this is a straight row copy.  The rows are not
     * contiguous at either end (core pitch 480 B, staging stride 512 B), so
     * it stays a loop rather than one big copy. */
-   for (y = 0; y < h; y++)
-      memcpy(&fb_staging[y * STAGE_STRIDE],
-             (const uint8_t *)src + (size_t)y * pitch_bytes,
-             (size_t)w * 2);
+   if (w > 0 && w < STAGE_STRIDE && h > 0)
+   {
+      /* Plus the edge texels (see STAGE_STRIDE): column w repeats column
+       * w-1, and row h, when there is room, repeats row h-1.  Read from the
+       * cached source, never back from the (possibly uncached) staging. */
+      unsigned rows = h < STAGE_ROWS ? h + 1 : h;
+      for (y = 0; y < rows; y++)
+      {
+         const uint16_t *row = (const uint16_t *)((const uint8_t *)src +
+                               (size_t)(y < h ? y : h - 1) * pitch_bytes);
+         memcpy(&fb_staging[y * STAGE_STRIDE], row, (size_t)w * 2);
+         fb_staging[y * STAGE_STRIDE + w] = row[w - 1];
+      }
+   }
+   else
+      for (y = 0; y < h; y++)
+         memcpy(&fb_staging[y * STAGE_STRIDE],
+                (const uint8_t *)src + (size_t)y * pitch_bytes,
+                (size_t)w * 2);
 #else
    unsigned x;
    for (y = 0; y < h; y++)
@@ -217,6 +266,16 @@ static void stage_convert_rgb565(const uint16_t *src, unsigned w, unsigned h,
                  (v & 0x07E007E0u) |
                 ((v & 0x001F001Fu) << 11);
       }
+   }
+   /* Edge texels, as above: column w repeats column w-1, row h row h-1. */
+   if (w > 0 && h > 0 && w < STAGE_STRIDE)
+   {
+      for (y = 0; y < h; y++)
+         fb_staging[y * STAGE_STRIDE + w] =
+            fb_staging[y * STAGE_STRIDE + w - 1];
+      if (h < STAGE_ROWS)
+         memcpy(&fb_staging[h * STAGE_STRIDE],
+                &fb_staging[(h - 1) * STAGE_STRIDE], (size_t)(w + 1) * 2);
    }
 #endif
    /* Only mode 0 has a cache to flush.  In modes 1 and 2 the stores already
@@ -437,7 +496,11 @@ void vid_set_mode(int scale, int filter)
 {
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
-   g_filter = filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
+   /* Any other non-zero value is bilinear, as it always was. */
+   g_filter = filter == VID_FILTER_SHARP ? VID_FILTER_SHARP
+            : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
+   if (g_filter != VID_FILTER_NEAREST)
+      g_smooth = g_filter;
 }
 
 int vid_scale_mode(void) { return g_scale; }
@@ -449,19 +512,24 @@ const char *vid_scale_name(int scale)
    {
    case VID_SCALE_FIT:     return "fit";
    case VID_SCALE_STRETCH: return "stretch";
+   case VID_SCALE_INT2:    return "2x";
    default:                return "1x";
    }
 }
 
 const char *vid_filter_name(int filter)
 {
-   return filter ? "bilinear" : "nearest";
+   return filter == VID_FILTER_SHARP ? "sharp bilinear"
+        : filter ? "bilinear" : "nearest";
 }
 
 const char *vid_cycle_preset(void)
 {
    /* 1x/nearest -> fit/nearest -> fit/bilinear -> stretch/nearest ->
-    * stretch/bilinear -> 1x/nearest */
+    * stretch/bilinear -> 1x/nearest.  2x is opt-in from Settings and not in
+    * here (it crops the GBA picture top and bottom, which nobody cycling
+    * for "bigger" should land on by accident); from 2x, i ends at 5 and the
+    * cycle continues at fit. */
    static const struct { int s, f; const char *name; } preset[5] = {
       { VID_SCALE_1X,      VID_FILTER_NEAREST,  "1x"               },
       { VID_SCALE_FIT,     VID_FILTER_NEAREST,  "fit"              },
@@ -469,14 +537,64 @@ const char *vid_cycle_preset(void)
       { VID_SCALE_STRETCH, VID_FILTER_NEAREST,  "stretch"          },
       { VID_SCALE_STRETCH, VID_FILTER_BILINEAR, "stretch bilinear" },
    };
+   /* The smoothed presets take the player's own smoothing (g_smooth). */
+   static const char *const sharp_name[5] = {
+      "1x", "fit", "fit sharp", "stretch", "stretch sharp"
+   };
    int i;
    for (i = 0; i < 5; i++)
-      if (preset[i].s == g_scale && preset[i].f == g_filter)
+      if (preset[i].s == g_scale &&
+          (preset[i].f ? g_smooth : VID_FILTER_NEAREST) == g_filter)
          break;
    i = (i + 1) % 5;
    g_scale  = preset[i].s;
-   g_filter = preset[i].f;
-   return preset[i].name;
+   g_filter = preset[i].f ? g_smooth : VID_FILTER_NEAREST;
+   return g_smooth == VID_FILTER_SHARP ? sharp_name[i] : preset[i].name;
+}
+
+static void dest_geo(unsigned w, unsigned h, vid_geo *g)
+{
+   g->sy0 = 0;
+   g->sh  = (int)h;
+   switch (g_scale)
+   {
+   case VID_SCALE_INT2:
+      /* Exact 2x: 2w x 2h, cropped to the screen's 272 rows by drawing only
+       * the middle 136 source rows.  Cropping in the SOURCE (texture v) keeps
+       * every vertex on screen and every output row exactly two source-row
+       * copies -- no partial row at either edge.  A source wider than 240
+       * cannot double into 480; draw it 1x rather than crop sideways. */
+      if (2u * w > VID_SCR_W)
+      {
+         g->dw = (int)w;
+         g->dh = (int)h;
+         break;
+      }
+      if (2u * h > VID_SCR_H)
+      {
+         g->sh  = VID_SCR_H / 2;
+         g->sy0 = ((int)h - g->sh) / 2;
+      }
+      g->dw = 2 * (int)w;
+      g->dh = 2 * g->sh;
+      break;
+   default:
+      {
+         int ox, oy;
+         dest_rect(w, h, &ox, &oy, &g->dw, &g->dh);
+      }
+      break;
+   }
+   g->ox = (VID_SCR_W - g->dw) / 2;
+   g->oy = (VID_SCR_H - g->dh) / 2;
+}
+
+/* GU filter for the game picture: 2x is nearest whatever the setting says. */
+static int game_filter(void)
+{
+   if (g_scale == VID_SCALE_INT2)
+      return GU_NEAREST;
+   return g_filter ? GU_LINEAR : GU_NEAREST;
 }
 
 static void dest_rect(unsigned w, unsigned h,
@@ -504,14 +622,54 @@ static void dest_rect(unsigned w, unsigned h,
    *oy = (VID_SCR_H - *dh) / 2;
 }
 
+/* The picture as it has always been drawn: the clear (or the ambient bars in
+ * its place), then the staged texture at the destination rect in one pass,
+ * filtered `filt`.  Both blit paths share it; the GE list it builds is the
+ * one they built inline before sharp bilinear existed, command for command.
+ * sharp_draw() is the only other way a game picture is drawn. */
+static void game_draw(const uint16_t *tex, unsigned w, const vid_geo *g,
+                      int filt)
+{
+   int x;
+
+   /* Ambient bars REPLACE the clear: the background sprite covers every
+    * pixel the clear would have, so the GE fills the same count either way. */
+   if (!amb_draw_bg(g))
+      sceGuClear(GU_COLOR_BUFFER_BIT);
+   sceGuDisable(GU_BLEND);
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 256, 256, STAGE_STRIDE, tex);
+   sceGuTexFilter(filt, filt);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
+
+   /* 60-src-px strips (GE texture-cache friendliness); consecutive strips
+    * share exact dest boundaries, so scaling leaves no seams. */
+   for (x = 0; x < (int)w; x += 60)
+   {
+      int sw = ((int)w - x < 60) ? (int)w - x : 60;
+      int dx0 = g->ox + x * g->dw / (int)w;
+      int dx1 = g->ox + (x + sw) * g->dw / (int)w;
+      vtx_t *v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
+      v[0].u = (short)x;        v[0].v = (short)g->sy0;
+      v[0].x = (short)dx0;      v[0].y = (short)g->oy;           v[0].z = 0;
+      v[1].u = (short)(x + sw); v[1].v = (short)(g->sy0 + g->sh);
+      v[1].x = (short)dx1;      v[1].y = (short)(g->oy + g->dh); v[1].z = 0;
+      sceGuDrawArray(GU_SPRITES,
+                     GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                     2, 0, v);
+   }
+}
+
 void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
                     size_t pitch_bytes)
 {
-   int x, ox, oy, dw, dh;
-   int filt = g_filter ? GU_LINEAR : GU_NEAREST;
+   int filt;
    unsigned t0, t1, t2, t3, d;
+   vid_geo g;
 
-   dest_rect(w, h, &ox, &oy, &dw, &dh);
+   dest_geo(w, h, &g);
+   filt = picture_filter(w, &g);
 
    /* ADR-0034: the two halves are priced separately because they answer
     * different questions.  `stage` is the CPU copy + (mode 0 only) the cache
@@ -529,30 +687,8 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    sceGuStart(GU_DIRECT, gu_next_list());
    VID_GU_TARGET();
    VID_FB_FILLED();
-   sceGuClear(GU_COLOR_BUFFER_BIT);
-   sceGuDisable(GU_BLEND);
-   sceGuEnable(GU_TEXTURE_2D);
-   sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
-   sceGuTexImage(0, 256, 256, STAGE_STRIDE, fb_staging);
-   sceGuTexFilter(filt, filt);
-   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
-
-   /* 60-src-px strips (GE texture-cache friendliness); consecutive strips
-    * share exact dest boundaries, so scaling leaves no seams. */
-   for (x = 0; x < (int)w; x += 60)
-   {
-      int sw = ((int)w - x < 60) ? (int)w - x : 60;
-      int dx0 = ox + x * dw / (int)w;
-      int dx1 = ox + (x + sw) * dw / (int)w;
-      vtx_t *v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
-      v[0].u = (short)x;        v[0].v = 0;
-      v[0].x = (short)dx0;      v[0].y = (short)oy;        v[0].z = 0;
-      v[1].u = (short)(x + sw); v[1].v = (short)h;
-      v[1].x = (short)dx1;      v[1].y = (short)(oy + dh); v[1].z = 0;
-      sceGuDrawArray(GU_SPRITES,
-                     GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
-                     2, 0, v);
-   }
+   if (!sharp_draw(fb_staging, w, &g))
+      game_draw(fb_staging, w, &g, filt);
 
    /* ADR-0038: bracket the sync SEPARATELY.  Everything above this point is
     * CPU work building the list; everything below is the CPU stopped dead
@@ -581,6 +717,9 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    if (d > g_gu_us_max)
       g_gu_us_max = d;
    g_blit_frames++;
+   /* Outside the blit_prof brackets: a snapshot is a one-off, priced by its
+    * own EVT line, and must not read as a blit regression. */
+   amb_snap_maybe(pix, (int)(pitch_bytes / 2), w, h, 0);
 }
 
 /* ADR-0080: draw a frame that something else (the Media Engine) already
@@ -593,38 +732,19 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
  * in ME mode, which is itself the signal that the offload is live. */
 void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
 {
-   int x, ox, oy, dw, dh;
-   int filt = g_filter ? GU_LINEAR : GU_NEAREST;
+   int filt;
    unsigned t1, t2, t3, d;
+   vid_geo g;
 
-   dest_rect(w, h, &ox, &oy, &dw, &dh);
+   dest_geo(w, h, &g);
+   filt = picture_filter(w, &g);
    t1 = sceKernelGetSystemTimeLow();
 
    sceGuStart(GU_DIRECT, gu_next_list());
    VID_GU_TARGET();
    VID_FB_FILLED();
-   sceGuClear(GU_COLOR_BUFFER_BIT);
-   sceGuDisable(GU_BLEND);
-   sceGuEnable(GU_TEXTURE_2D);
-   sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
-   sceGuTexImage(0, 256, 256, STAGE_STRIDE, staged);
-   sceGuTexFilter(filt, filt);
-   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
-
-   for (x = 0; x < (int)w; x += 60)
-   {
-      int sw = ((int)w - x < 60) ? (int)w - x : 60;
-      int dx0 = ox + x * dw / (int)w;
-      int dx1 = ox + (x + sw) * dw / (int)w;
-      vtx_t *v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
-      v[0].u = (short)x;        v[0].v = 0;
-      v[0].x = (short)dx0;      v[0].y = (short)oy;        v[0].z = 0;
-      v[1].u = (short)(x + sw); v[1].v = (short)h;
-      v[1].x = (short)dx1;      v[1].y = (short)(oy + dh); v[1].z = 0;
-      sceGuDrawArray(GU_SPRITES,
-                     GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
-                     2, 0, v);
-   }
+   if (!sharp_draw(staged, w, &g))
+      game_draw(staged, w, &g, filt);
 
    t2 = sceKernelGetSystemTimeLow();
    gu_end_list();
@@ -641,6 +761,8 @@ void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
    if (d > g_gu_us_max)
       g_gu_us_max = d;
    g_blit_frames++;
+   /* The ME wrote `staged` behind the D-cache: read it uncached. */
+   amb_snap_maybe(staged, STAGE_STRIDE, w, h, 1);
 }
 
 /* ---------------------------------------------------------------- overlay */
@@ -726,31 +848,69 @@ void vid_gradient(int x, int y, int w, int h,
  * Separate from vid_draw_prestaged because that one opens its OWN display
  * list (sceGuStart), which cannot be nested inside vid_overlay_begin's: the
  * nesting silently produced a list that drew nothing at all. */
-void vid_image_screen(const uint16_t *pix, int texw, int texh,
-                      int srcw, int srch, int alpha)
-{
-   int ox, oy, dw, dh;
-   dest_rect((unsigned)srcw, (unsigned)srch, &ox, &oy, &dw, &dh);
-   vid_image(ox, oy, dw, dh, pix, texw, texh, srcw, srch, alpha);
-}
-
-void vid_image(int x, int y, int w, int h, const uint16_t *pix,
-               int texw, int texh, int srcw, int srch, int alpha)
+/* The source sub-rect [0,srcw) x [v0,v1) of a texture, filtered `filt`. */
+static void image_rows(int x, int y, int w, int h, const uint16_t *pix,
+                       int texw, int texh, int srcw, int v0, int v1,
+                       int alpha, int filt)
 {
    tcvtx_t *v = (tcvtx_t *)sceGuGetMemory(2 * sizeof(tcvtx_t));
    unsigned int col = 0x00FFFFFFu | ((unsigned int)(alpha & 0xFF) << 24);
    sceGuEnable(GU_TEXTURE_2D);
    sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
    sceGuTexImage(0, texw, texh, texw, pix);
-   sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+   sceGuTexFilter(filt, filt);
    sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGB);
-   v[0].u = 0;            v[0].v = 0;            v[0].color = col;
+   v[0].u = 0;            v[0].v = (short)v0;    v[0].color = col;
    v[0].x = (short)x;     v[0].y = (short)y;     v[0].z = 0;
-   v[1].u = (short)srcw;  v[1].v = (short)srch;  v[1].color = col;
+   v[1].u = (short)srcw;  v[1].v = (short)v1;    v[1].color = col;
    v[1].x = (short)(x + w); v[1].y = (short)(y + h); v[1].z = 0;
    sceGuDrawArray(GU_SPRITES,
                   GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT |
                   GU_TRANSFORM_2D, 2, 0, v);
+}
+
+void vid_image_screen(const uint16_t *pix, int texw, int texh,
+                      int srcw, int srch, int alpha)
+{
+   /* Same geometry -- and the same 2x crop -- as the live picture. */
+   vid_geo g;
+   dest_geo((unsigned)srcw, (unsigned)srch, &g);
+   if (alpha < 255)
+   {
+      image_rows(g.ox, g.oy, g.dw, g.dh, pix, texw, texh, srcw, g.sy0,
+                 g.sy0 + g.sh, alpha, game_filter());
+      return;
+   }
+   /* OPAQUE: the picture exactly as the player last saw it.  The in-game
+    * menu (docs/UI-OVERLAY.md) sits on this, so it goes through the very
+    * code the live frame does -- sharp_draw() or game_draw(): the same
+    * filter, the same strips, the same ambient bars -- and opening the menu
+    * does not visibly resample the game behind it.  (It was one GU_LINEAR
+    * quad, which softened a nearest picture the moment the menu came up.)
+    * The snapshot is a 256-stride texture like the staging buffer. */
+   if (texw != STAGE_STRIDE || !sharp_draw(pix, (unsigned)srcw, &g))
+   {
+      if (texw == STAGE_STRIDE)
+         game_draw(pix, (unsigned)srcw, &g, picture_filter((unsigned)srcw, &g));
+      else
+         image_rows(g.ox, g.oy, g.dw, g.dh, pix, texw, texh, srcw, g.sy0,
+                    g.sy0 + g.sh, 255, game_filter());
+   }
+   sceGuEnable(GU_BLEND);
+}
+
+/* A texture drawn 1:1 with NEAREST sampling: every texel is one pixel. */
+void vid_image_px(int x, int y, int w, int h, const uint16_t *pix,
+                  int texw, int texh)
+{
+   image_rows(x, y, w, h, pix, texw, texh, w, 0, h, 255, GU_NEAREST);
+}
+
+
+void vid_image(int x, int y, int w, int h, const uint16_t *pix,
+               int texw, int texh, int srcw, int srch, int alpha)
+{
+   image_rows(x, y, w, h, pix, texw, texh, srcw, 0, srch, alpha, GU_LINEAR);
 }
 
 /* ---- anti-aliased UI text ------------------------------------------------
@@ -835,6 +995,35 @@ int vid_text_hd_w(const char *str)
 {
    fu_face f = fu_get(1);
    return fu_measure(&f, str);
+}
+
+/* OPTICAL CENTRING (docs/UI-OVERLAY.md §10).  A line of UI text drawn at y
+ * has a 16 px box, but its ink does not fill it: Inter's cap height is rows
+ * y+4..y+14 (the 'H' glyph of the atlas: yoff 4, 11 rows; the baseline is
+ * y+15), the x-height y+7..y+14, descenders to y+17.  Centring the 16 px box
+ * in a band -- what every band did, give or take -- puts the letters 1.5 px
+ * low in a 24 px band and on the floor of a 20 px one.  These centre the CAP
+ * HEIGHT instead.  When the spare rows are odd the extra one goes BELOW, the
+ * side the lowercase body and the descenders weigh down. */
+static void fu_cap(int *top, int *h)
+{
+   const fu_glyph *g = &fu_ui_g['H' - FU_FIRST];
+   *top = g->yoff;
+   *h   = g->h;
+}
+
+int vid_band_y(int text_y, int band_h)
+{
+   int top, h;
+   fu_cap(&top, &h);
+   return text_y + top - (band_h - h) / 2;
+}
+
+int vid_text_y_in(int box_y, int box_h)
+{
+   int top, h;
+   fu_cap(&top, &h);
+   return box_y + (box_h - h) / 2 - top;
 }
 
 /* y is the TOP of the line box, as it was with the bitmap font, so every
@@ -959,7 +1148,12 @@ void vid_text_hd(int x, int y, const char *str, uint16_t rgb565)
  * art is behind, which on the marquee is the whole point of the screen. */
 void vid_clip(int x, int y, int w, int h)
 {
-   sceGuScissor(x, y, x + w, y + h);
+   /* sceGuScissor takes a WIDTH and HEIGHT in this SDK (it sends
+    * x + w - 1, y + h - 1; disassembled from libpspgu.a).  This passed the
+    * end corner, which only came out right at x = y = 0: every clip with a
+    * top edge ran on by its own y (the settings viewport, 74..246, cut at
+    * 319 -- i.e. not at all) and every clip with a left edge by its x. */
+   sceGuScissor(x, y, w, h);
 }
 
 void vid_clip_off(void)
@@ -1072,4 +1266,670 @@ int vid_dump_ge(const char *path)
    vid_gu_flush();
    return fe_bmp_write_psp565(path, vram, VID_SCR_W, VID_SCR_H,
                               FB_STRIDE * 2);
+}
+
+/* ===========================================================================
+ * AMBIENT BARS (docs/DISPLAY-FEATURES.md, look in ambient_look.h)
+ *
+ * THE TEXTURE LIVES IN VRAM, NOT IN RAM.  The 2 MiB of eDRAM hold the
+ * display buffers, the depth buffer and the 82 KiB staging buffer -- 1.17 MiB
+ * with triple buffering -- and nothing else, on every model.  The 32 KiB
+ * texture goes above that.  A static array would have been simpler, but on a
+ * PSP the BSS comes out of the same user partition as the heap
+ * (PSP_HEAP_SIZE_KB(-1024) is "all of it but 1 MiB"), so 32 KiB of BSS is
+ * 32 KiB less for the core's ROM-cache loop -- the PSP-1000 post-load budget
+ * the core exhausts by design.  VRAM costs it nothing.  The offset does not
+ * depend on blit_mode, so a staging fallback to RAM cannot move it.
+ *
+ *   [display x VID_NBUF][depth][staging 82 KiB][ambient 32 KiB]
+ *
+ * PER FRAME: the bars are drawn IN PLACE OF the clear the frame already
+ * paid for -- one textured sprite per bar (2 at Fit, 4 at 1x, 0 at Stretch
+ * and GBA 2x), GU_LINEAR, the scrim folded into the texture function as a
+ * MODULATE colour.  Fewer pixels than the clear, no blending, no CPU work
+ * beyond the vertices.  The bake is the only per-pixel CPU work, and it runs
+ * once.
+ * ======================================================================== */
+
+#define AMB_TEX_W   128          /* power-of-two home for AMB_W x AMB_H */
+#define AMB_TEX_H   128
+#define AMB_TEX_BYTES (AMB_TEX_W * AMB_TEX_H * 2)
+
+typedef char amb_w_fits[(AMB_W + 1 <= AMB_TEX_W && AMB_W % 4 == 0) ? 1 : -1];
+typedef char amb_h_fits[(AMB_H + 1 <= AMB_TEX_H) ? 1 : -1];
+
+enum { AMB_SRC_NONE = 0, AMB_SRC_ART = 1, AMB_SRC_SNAP = 2 };
+
+static uint16_t *g_amb_tex;      /* uncached VRAM, NULL until first bake */
+static int       g_amb_mode;     /* PCFG_AMB_* (0 off, 1 art, 2 art|game) */
+static int       g_amb_src;      /* AMB_SRC_* of what g_amb_tex holds     */
+static int       g_amb_scrim;    /* alpha of the black scrim for g_amb_src */
+static uint16_t  g_amb_shade;    /* palette fallback, libretro RGB565      */
+static int       g_amb_have_shade;
+static unsigned  g_amb_frames;   /* presented frames, snapshot clock      */
+static int       g_amb_snap_done;
+
+typedef struct
+{
+   float u, v;
+   float x, y, z;
+} ftvtx_t;
+
+/* Byte offset of the first free VRAM byte above the staging buffer. */
+static uintptr_t vram_free_base(void)
+{
+   uintptr_t off = (uintptr_t)FB_BYTES * (VID_NBUF + 1u);
+   off = (off + 63u) & ~(uintptr_t)63u;
+   off += (uintptr_t)STAGE_BYTES;
+   return (off + 63u) & ~(uintptr_t)63u;
+}
+
+/* Uncached pointer to [off, off+bytes) of VRAM, or NULL if it does not fit. */
+static uint16_t *vram_at(uintptr_t off, uintptr_t bytes)
+{
+   unsigned size = sceGeEdramGetSize();
+   if (!size || off + bytes > (uintptr_t)size)
+      return NULL;
+   return (uint16_t *)(0x40000000u |
+                       ((uintptr_t)sceGeEdramGetAddr() + off));
+}
+
+void vid_ambient_mode(int mode)
+{
+   g_amb_mode = (mode >= 0 && mode <= 2) ? mode : 0;
+   g_amb_frames = 0;             /* a newly enabled snapshot waits again */
+}
+
+void vid_ambient_fallback(uint16_t rgb565)
+{
+   g_amb_shade = rgb565;
+   g_amb_have_shade = 1;
+}
+
+int vid_ambient_source(void)
+{
+   return g_amb_src;
+}
+
+void vid_ambient_resnap(void)
+{
+   /* Only a snapshot is ever retaken; art is the art. */
+   if (g_amb_src == AMB_SRC_SNAP || (g_amb_src == AMB_SRC_NONE &&
+                                     g_amb_snap_done))
+   {
+      g_amb_snap_done = 0;
+      g_amb_frames = AMB_SNAP_AFTER - 1;   /* the next presented frame */
+      if (g_amb_src == AMB_SRC_SNAP)
+         g_amb_src = AMB_SRC_NONE;          /* palette until it lands */
+   }
+}
+
+void vid_ambient_drop(void)
+{
+   if (g_amb_src == AMB_SRC_ART)
+      g_amb_src = AMB_SRC_NONE;
+}
+
+int vid_ambient_image(int x, int y, int w, int h, int alpha)
+{
+   if (!g_amb_tex || g_amb_src != AMB_SRC_ART)
+      return 0;
+   vid_image(x, y, w, h, g_amb_tex, AMB_TEX_W, AMB_TEX_H, AMB_W, AMB_H,
+             alpha);
+   return 1;
+}
+
+/* One bar: screen rect [x0,x1) x [y0,y1), textured from the matching part
+ * of the screen-sized texture, or a vertical palette ramp when tex == 0. */
+static void amb_bar(int x0, int y0, int x1, int y1, int textured,
+                    unsigned int top, unsigned int bot)
+{
+   if (x1 <= x0 || y1 <= y0)
+      return;
+   if (textured)
+   {
+      ftvtx_t *v = (ftvtx_t *)sceGuGetMemory(2 * sizeof(ftvtx_t));
+      v[0].u = (float)x0 * AMB_W / VID_SCR_W;
+      v[0].v = (float)y0 * AMB_H / VID_SCR_H;
+      v[0].x = (float)x0; v[0].y = (float)y0; v[0].z = 0.0f;
+      v[1].u = (float)x1 * AMB_W / VID_SCR_W;
+      v[1].v = (float)y1 * AMB_H / VID_SCR_H;
+      v[1].x = (float)x1; v[1].y = (float)y1; v[1].z = 0.0f;
+      sceGuDrawArray(GU_SPRITES,
+                     GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D,
+                     2, 0, v);
+   }
+   else
+   {
+      cvtx_t *v = (cvtx_t *)sceGuGetMemory(4 * sizeof(cvtx_t));
+      v[0].color = top; v[0].x = (short)x0; v[0].y = (short)y0; v[0].z = 0;
+      v[1].color = top; v[1].x = (short)x1; v[1].y = (short)y0; v[1].z = 0;
+      v[2].color = bot; v[2].x = (short)x0; v[2].y = (short)y1; v[2].z = 0;
+      v[3].color = bot; v[3].x = (short)x1; v[3].y = (short)y1; v[3].z = 0;
+      sceGuDrawArray(GU_TRIANGLE_STRIP,
+                     GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                     4, 0, v);
+   }
+}
+
+/* `c` darkened as a black scrim of alpha `a` over it would leave it. */
+static unsigned int amb_dim(uint16_t c, int a)
+{
+   unsigned int abgr = rgb565_to_abgr(c, 255);
+   unsigned k = 255u - (unsigned)a;
+   unsigned r = (abgr & 0xFF) * k / 255u;
+   unsigned g = ((abgr >> 8) & 0xFF) * k / 255u;
+   unsigned b = ((abgr >> 16) & 0xFF) * k / 255u;
+   return 0xFF000000u | (b << 16) | (g << 8) | r;
+}
+
+/* Draw the bars around g, in place of the clear.  Returns 0 (the caller
+ * clears as before) when ambient is off or the picture covers the screen. */
+static int amb_draw_bg(const vid_geo *g)
+{
+   int textured, x0 = g->ox, x1 = g->ox + g->dw;
+   int y0 = g->oy, y1 = g->oy + g->dh;
+   unsigned int top = 0, bot = 0;
+
+   if (!g_amb_mode)
+      return 0;
+   if (x0 <= 0 && y0 <= 0 && x1 >= VID_SCR_W && y1 >= VID_SCR_H)
+      return 0;                  /* no bars: stretch, or 2x on a GBA */
+   textured = g_amb_tex && (g_amb_src == AMB_SRC_ART ||
+                            (g_amb_src == AMB_SRC_SNAP && g_amb_mode == 2));
+   if (!textured && !g_amb_have_shade)
+      return 0;
+   if (x0 < 0) x0 = 0;
+   if (y0 < 0) y0 = 0;
+   if (x1 > VID_SCR_W) x1 = VID_SCR_W;
+   if (y1 > VID_SCR_H) y1 = VID_SCR_H;
+
+   sceGuDisable(GU_BLEND);
+   if (textured)
+   {
+      unsigned k = 255u - (unsigned)g_amb_scrim;
+      sceGuEnable(GU_TEXTURE_2D);
+      sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
+      sceGuTexImage(0, AMB_TEX_W, AMB_TEX_H, AMB_TEX_W, g_amb_tex);
+      sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+      /* The scrim, for free: texel x (k,k,k) is the black-alpha blend. */
+      sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGB);
+      sceGuColor(0xFF000000u | (k << 16) | (k << 8) | k);
+   }
+   else
+   {
+      sceGuDisable(GU_TEXTURE_2D);
+      sceGuShadeModel(GU_SMOOTH);
+      top = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP);
+      bot = amb_dim(g_amb_shade, AMB_PAL_RAMP_BOT);
+   }
+   /* Full-height side bars, then the top and bottom between them.  A ramp
+    * is interpolated over each bar's own height, so the top/bottom bars of a
+    * 1x picture would restart it -- give them the colour at their rows. */
+   amb_bar(0, 0, x0, VID_SCR_H, textured, top, bot);
+   amb_bar(x1, 0, VID_SCR_W, VID_SCR_H, textured, top, bot);
+   if (!textured)
+   {
+      unsigned int mid0 = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP +
+                          (AMB_PAL_RAMP_BOT - AMB_PAL_RAMP_TOP) * y0 /
+                          VID_SCR_H);
+      unsigned int mid1 = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP +
+                          (AMB_PAL_RAMP_BOT - AMB_PAL_RAMP_TOP) * y1 /
+                          VID_SCR_H);
+      amb_bar(x0, 0, x1, y0, 0, top, mid0);
+      amb_bar(x0, y1, x1, VID_SCR_H, 0, mid1, bot);
+   }
+   else
+   {
+      amb_bar(x0, 0, x1, y0, 1, 0, 0);
+      amb_bar(x0, y1, x1, VID_SCR_H, 1, 0, 0);
+   }
+   /* The game quad that follows sets its own texture state; restore what it
+    * does not set. */
+   sceGuColor(0xFFFFFFFFu);
+   sceGuEnable(GU_TEXTURE_2D);
+   return 1;
+}
+
+/* One separable box pass over an AMB_W x AMB_H x 3 byte image, edge-clamped,
+ * radius r, along x or along y.  `line` holds one row or column. */
+static void amb_box(unsigned char *img, unsigned char *line, int r, int along_x)
+{
+   int n_lines = along_x ? AMB_H : AMB_W;
+   int len     = along_x ? AMB_W : AMB_H;
+   int step    = along_x ? 3 : AMB_W * 3;
+   int li, i, c, div = 2 * r + 1;
+
+   for (li = 0; li < n_lines; li++)
+   {
+      unsigned char *base = img + (along_x ? li * AMB_W * 3 : li * 3);
+      for (i = 0; i < len; i++)
+         for (c = 0; c < 3; c++)
+            line[i * 3 + c] = base[i * step + c];
+      for (c = 0; c < 3; c++)
+      {
+         int sum = 0, k;
+         for (k = -r; k <= r; k++)
+         {
+            int j = k < 0 ? 0 : (k >= len ? len - 1 : k);
+            sum += line[j * 3 + c];
+         }
+         for (i = 0; i < len; i++)
+         {
+            int out = i - r, in = i + r + 1;
+            base[i * step + c] = (unsigned char)(sum / div);
+            if (out < 0) out = 0;
+            if (in >= len) in = len - 1;
+            sum += line[in * 3 + c] - line[out * 3 + c];
+         }
+      }
+   }
+}
+
+static int amb_clamp255(int v)
+{
+   return v < 0 ? 0 : (v > 255 ? 255 : v);
+}
+
+/* THE BAKE.  Cover-crop `src` to the screen's 480:272, box-average it into
+ * AMB_W x AMB_H (at most `max_taps` samples per axis per texel; the blur that
+ * follows hides the rest), blur, grade, write VRAM.  The working image is
+ * 24 KiB on the STACK (main thread, 256 KiB): a static would be BSS, which
+ * is heap on a PSP (see the section comment).
+ *
+ * `luma_min` > 0 rejects a too-dark image (the snapshot's "is there a
+ * picture yet" test) and returns 1 without touching the texture.
+ * Returns 0 on success, -1 with no VRAM room. */
+static int amb_bake(const uint16_t *src, int stride, int sw, int sh,
+                    int max_taps, int luma_min, int libretro_order,
+                    int extra_passes)
+{
+   unsigned char img[AMB_H * AMB_W * 3];
+   unsigned char line[(AMB_W > AMB_H ? AMB_W : AMB_H) * 3];
+   int cx = 0, cy = 0, cw = sw, ch = sh, tx, ty, p;
+   unsigned luma = 0;
+   uint16_t *tex;
+
+   if (!src || sw <= 0 || sh <= 0)
+      return -1;
+   if (!g_amb_tex)
+      g_amb_tex = vram_at(vram_free_base(), AMB_TEX_BYTES);
+   tex = g_amb_tex;
+   if (!tex)
+      return -1;                 /* no VRAM room: ambient simply stays off */
+
+   /* Cover crop: the widest/tallest 480:272 window, centred. */
+   if ((long)sw * VID_SCR_H > (long)sh * VID_SCR_W)
+   {
+      cw = (int)((long)sh * VID_SCR_W / VID_SCR_H);
+      cx = (sw - cw) / 2;
+   }
+   else
+   {
+      ch = (int)((long)sw * VID_SCR_H / VID_SCR_W);
+      cy = (sh - ch) / 2;
+   }
+   if (cw < 1) cw = 1;
+   if (ch < 1) ch = 1;
+
+   for (ty = 0; ty < AMB_H; ty++)
+   {
+      int y0 = cy + ty * ch / AMB_H, y1 = cy + (ty + 1) * ch / AMB_H;
+      int ys;
+      if (y1 <= y0) y1 = y0 + 1;
+      ys = (y1 - y0 + max_taps - 1) / max_taps;
+      for (tx = 0; tx < AMB_W; tx++)
+      {
+         int x0 = cx + tx * cw / AMB_W, x1 = cx + (tx + 1) * cw / AMB_W;
+         unsigned r = 0, gg = 0, b = 0, n = 0;
+         int xs, x, y;
+         if (x1 <= x0) x1 = x0 + 1;
+         xs = (x1 - x0 + max_taps - 1) / max_taps;
+         /* One tap per axis samples the middle of the block. */
+         for (y = (max_taps == 1 ? (y0 + y1) / 2 : y0); y < y1; y += ys)
+         {
+            for (x = (max_taps == 1 ? (x0 + x1) / 2 : x0); x < x1; x += xs)
+            {
+               unsigned c = src[(long)y * stride + x];
+               unsigned cr = c & 31, cg = (c >> 5) & 63, cb = (c >> 11) & 31;
+               if (libretro_order)
+               {
+                  unsigned t = cr; cr = cb; cb = t;
+               }
+               r  += (cr << 3) | (cr >> 2);
+               gg += (cg << 2) | (cg >> 4);
+               b  += (cb << 3) | (cb >> 2);
+               n++;
+               if (max_taps == 1)
+                  break;
+            }
+            if (max_taps == 1)
+               break;
+         }
+         if (!n) n = 1;
+         p = (ty * AMB_W + tx) * 3;
+         img[p]     = (unsigned char)(r / n);
+         img[p + 1] = (unsigned char)(gg / n);
+         img[p + 2] = (unsigned char)(b / n);
+         luma += (77u * img[p] + 150u * img[p + 1] + 29u * img[p + 2]) >> 8;
+      }
+   }
+   luma /= (unsigned)(AMB_W * AMB_H);
+   if (luma_min > 0 && (int)luma < luma_min)
+      return 1;
+
+   for (p = 0; p < AMB_BLUR_PASSES; p++)
+   {
+      amb_box(img, line, AMB_BLUR_RADIUS, 1);
+      amb_box(img, line, AMB_BLUR_RADIUS, 0);
+   }
+   /* vid_ambient_bake_cover only: a small cover is nearly 1:1 with the
+    * texture, so the "soft" pass alone leaves its lettering readable. */
+   for (p = 0; p < extra_passes; p++)
+   {
+      amb_box(img, line, AMB_COVER_BLUR_RADIUS, 1);
+      amb_box(img, line, AMB_COVER_BLUR_RADIUS, 0);
+   }
+
+   vid_gu_flush();               /* never rewrite a texture mid-draw */
+   for (ty = 0; ty <= AMB_H; ty++)
+   {
+      /* Row AMB_H and column AMB_W repeat the edge: bilinear at the far
+       * edge reads one texel past it. */
+      int sy = ty < AMB_H ? ty : AMB_H - 1;
+      for (tx = 0; tx <= AMB_W; tx++)
+      {
+         int sx = tx < AMB_W ? tx : AMB_W - 1;
+         int r, gg, b, l;
+         p = (sy * AMB_W + sx) * 3;
+         r = img[p]; gg = img[p + 1]; b = img[p + 2];
+         l = (77 * r + 150 * gg + 29 * b) >> 8;
+         r  = l + ((r  - l) * AMB_SATURATION >> 8);
+         gg = l + ((gg - l) * AMB_SATURATION >> 8);
+         b  = l + ((b  - l) * AMB_SATURATION >> 8);
+         r  += (AMB_TINT_R - r)  * AMB_TINT_AMOUNT >> 8;
+         gg += (AMB_TINT_G - gg) * AMB_TINT_AMOUNT >> 8;
+         b  += (AMB_TINT_B - b)  * AMB_TINT_AMOUNT >> 8;
+         r = amb_clamp255(r); gg = amb_clamp255(gg); b = amb_clamp255(b);
+         /* GE 5650 texel, PSP channel order: R in the low bits. */
+         tex[ty * AMB_TEX_W + tx] =
+            (uint16_t)((r >> 3) | ((gg >> 2) << 5) | ((b >> 3) << 11));
+      }
+   }
+   return 0;
+}
+
+int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
+                         int precomposed)
+{
+   unsigned t0 = sceKernelGetSystemTimeLow(), us;
+   int rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
+   us = sceKernelGetSystemTimeLow() - t0;
+   g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
+   g_amb_scrim = precomposed ? AMB_SCRIM_HERO : AMB_SCRIM_BOXART;
+   fe_evt("ambient_bake src=art w=%d h=%d hero=%d rc=%d us=%u vram_off=%u",
+          w, h, precomposed, rc, us, (unsigned)vram_free_base());
+   FE_EVT_ONLY(us);
+   return rc == 0 ? 0 : -1;
+}
+
+int vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h)
+{
+   unsigned t0 = sceKernelGetSystemTimeLow(), us;
+   int rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
+   us = sceKernelGetSystemTimeLow() - t0;
+   g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
+   g_amb_scrim = AMB_SCRIM_BOXART;
+   fe_evt("ambient_bake src=cover w=%d h=%d rc=%d us=%u", w, h, rc, us);
+   FE_EVT_ONLY(us);
+   return rc == 0 ? 0 : -1;
+}
+
+/* The snapshot fallback: called once per presented frame; does nothing
+ * unless "art, else game" is on and there is no art.  One tap per texel, so
+ * the read is ~8k pixels (uncached for an ME-written stage). */
+static void amb_snap_maybe(const uint16_t *src, int stride, unsigned w,
+                           unsigned h, int uncached)
+{
+   unsigned t0, us;
+   int rc;
+   if (g_amb_mode != 2 || g_amb_src != AMB_SRC_NONE || g_amb_snap_done || !src)
+      return;
+   g_amb_frames++;
+   if (g_amb_frames < AMB_SNAP_AFTER ||
+       (g_amb_frames - AMB_SNAP_AFTER) % AMB_SNAP_RETRY)
+      return;
+   if (g_amb_frames > AMB_SNAP_GIVE_UP)
+   {
+      g_amb_snap_done = 1;
+      fe_evt("ambient_bake src=game rc=gave_up frame=%u", g_amb_frames);
+      return;
+   }
+   if (uncached)
+      src = (const uint16_t *)(0x40000000u | (uintptr_t)src);
+   t0 = sceKernelGetSystemTimeLow();
+#ifdef USE_PSP_RGB565_FORMAT
+   rc = amb_bake(src, stride, (int)w, (int)h, 1, AMB_SNAP_MIN_LUMA, 0, 0);
+#else
+   /* Without ADR-0039 the core emits libretro order (R high); an ME stage
+    * is already in the GE's order. */
+   rc = amb_bake(src, stride, (int)w, (int)h, 1, AMB_SNAP_MIN_LUMA,
+                 !uncached, 0);
+#endif
+   us = sceKernelGetSystemTimeLow() - t0;
+   if (rc == 0)
+   {
+      g_amb_src = AMB_SRC_SNAP;
+      g_amb_scrim = AMB_SCRIM_FRAME;
+      g_amb_snap_done = 1;
+   }
+   else if (rc < 0)
+      g_amb_snap_done = 1;       /* no VRAM: stop asking */
+   fe_evt("ambient_bake src=game rc=%d frame=%u w=%u h=%u us=%u",
+          rc, g_amb_frames, w, h, us);
+   FE_EVT_ONLY(us);
+}
+
+/* ===========================================================================
+ * SHARP BILINEAR (docs/SHARP-BILINEAR.md; VID_FILTER_SHARP, default off)
+ *
+ * The GE has no shaders, so the "sharp bilinear" look is built from two
+ * fixed-function passes inside the blit's own display list:
+ *
+ *   1. PRESCALE.  Draw the staged frame NEAREST at an integer factor kx x ky
+ *      into a render target in VRAM.  k = ceil(final scale) per axis, so the
+ *      target is at least as large as the picture: 240x160 -> 480x320 at Fit
+ *      and Stretch, 160x144 -> 320x288 (Fit) or 480x288 (Stretch).
+ *   2. RESAMPLE.  Draw that target with GU_LINEAR at the final size.  Inside
+ *      a k x k block every tap reads the same colour, so only the output
+ *      pixel straddling a source-pixel edge is blended: crisp, square pixels
+ *      with no nearest-neighbour shimmer (the uneven 1-2 px columns of a 1.7x
+ *      nearest scale crawl when the picture scrolls).
+ *
+ * At an exact integer scale (1x, 2x) the passes would change nothing, so the
+ * picture is drawn NEAREST through game_draw(), pixel-identical to "nearest".
+ *
+ * VRAM: [display x VID_NBUF][depth][staging][ambient 32 KiB][THIS]
+ * 512 x SHARP_ROWS x 2 = 336 KiB, 8 KiB aligned, at offset 1,236,992 with
+ * triple buffering; it ends at 1,581,056 of 2,097,152.  Taken on the first
+ * sharp frame and never freed (VRAM is not shared with anything else).  If
+ * it ever does not fit, sharp falls back to plain bilinear.
+ *
+ * The prescale replaces the full-screen clear with black sprites over the
+ * bars only (or the ambient bars, which already do that), because the
+ * picture covers everything else.  That pays back part of pass 1's fill.
+ * ======================================================================== */
+
+#define SHARP_STRIDE 512          /* render-target and texture row, texels */
+#define SHARP_ROWS   336          /* >= 2 x 160 + 1 (GBA) and 2 x 144 + 1   */
+#define SHARP_BYTES  (SHARP_STRIDE * SHARP_ROWS * 2)
+
+/* GE drawing-region commands (pspsdk's private drawRegion uses these). */
+#define GE_CMD_REGION1 21
+#define GE_CMD_REGION2 22
+
+static uintptr_t g_sharp_off;     /* VRAM byte offset of the target        */
+static uint16_t *g_sharp_tex;     /* uncached pointer to it, NULL = none   */
+static int       g_sharp_tried;
+
+/* The integer prescale for picture geometry g of a w-wide source.
+ * Returns 0 when the scale is already an integer on both axes (draw nearest),
+ * 1 with kx and ky set when the two passes apply, -1 when the target would not
+ * fit (draw bilinear).  Pure: the host geometry test calls it. */
+static int sharp_factors(unsigned w, const vid_geo *g, int *kx, int *ky)
+{
+   int sw = (int)w, sh = g->sh, x, y;
+
+   if (sw <= 0 || sh <= 0 || g->dw <= 0 || g->dh <= 0)
+      return -1;
+   if (g->dw % sw == 0 && g->dh % sh == 0)
+      return 0;
+   x = (g->dw + sw - 1) / sw;
+   y = (g->dh + sh - 1) / sh;
+   /* +1: the duplicated edge column and row (see sharp_draw). */
+   if (x * sw + 1 > SHARP_STRIDE || y * sh + 1 > SHARP_ROWS)
+      return -1;
+   if (kx) *kx = x;
+   if (ky) *ky = y;
+   return 1;
+}
+
+/* The GU filter for the one-pass picture (game_draw).  2x is nearest
+ * whatever the setting; sharp at an integer scale is nearest; sharp that
+ * cannot prescale is bilinear. */
+static int picture_filter(unsigned w, const vid_geo *g)
+{
+   if (g_filter == VID_FILTER_SHARP && g_scale != VID_SCALE_INT2)
+      return sharp_factors(w, g, NULL, NULL) == 0 ? GU_NEAREST : GU_LINEAR;
+   return game_filter();
+}
+
+static uint16_t *sharp_target(void)
+{
+   if (!g_sharp_tried)
+   {
+      uintptr_t off = vram_free_base() + (uintptr_t)AMB_TEX_BYTES;
+      off = (off + 0x1FFFu) & ~(uintptr_t)0x1FFFu;
+      g_sharp_tried = 1;
+      g_sharp_off   = off;
+      g_sharp_tex   = vram_at(off, SHARP_BYTES);
+      fe_evt("sharp_target rc=%d vram_off=%u bytes=%u",
+             g_sharp_tex ? 0 : -1, (unsigned)off, (unsigned)SHARP_BYTES);
+   }
+   return g_sharp_tex;
+}
+
+/* Black over [x0,x1) x [y0,y1), untextured. */
+static void sharp_black(int x0, int y0, int x1, int y1)
+{
+   cvtx_t *v;
+   if (x1 <= x0 || y1 <= y0)
+      return;
+   v = (cvtx_t *)sceGuGetMemory(2 * sizeof(cvtx_t));
+   v[0].color = 0xFF000000u; v[0].x = (short)x0; v[0].y = (short)y0; v[0].z = 0;
+   v[1].color = 0xFF000000u; v[1].x = (short)x1; v[1].y = (short)y1; v[1].z = 0;
+   sceGuDrawArray(GU_SPRITES,
+                  GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
+}
+
+/* One nearest/linear sprite: texels [u0,u1) x [v0,v1) onto [x0,x1) x [y0,y1). */
+static void sharp_quad(int u0, int v0, int u1, int v1,
+                       int x0, int y0, int x1, int y1)
+{
+   vtx_t *v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
+   v[0].u = (short)u0; v[0].v = (short)v0;
+   v[0].x = (short)x0; v[0].y = (short)y0; v[0].z = 0;
+   v[1].u = (short)u1; v[1].v = (short)v1;
+   v[1].x = (short)x1; v[1].y = (short)y1; v[1].z = 0;
+   sceGuDrawArray(GU_SPRITES,
+                  GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                  2, 0, v);
+}
+
+/* Draw the picture sharp-bilinear into the current list.  Returns 0 (and
+ * draws nothing) when sharp is off or does not apply; the caller then draws
+ * game_draw() exactly as before. */
+static int sharp_draw(const uint16_t *tex, unsigned w, const vid_geo *g)
+{
+   int kx, ky, iw, ih, x, x0, y0, x1, y1;
+   int last = g->sy0 + g->sh;     /* one past the last source row drawn */
+   uint16_t *rt;
+
+   if (g_filter != VID_FILTER_SHARP || g_scale == VID_SCALE_INT2)
+      return 0;
+   if (sharp_factors(w, g, &kx, &ky) != 1)
+      return 0;
+   rt = sharp_target();
+   if (!rt)
+      return 0;
+   iw = kx * (int)w;
+   ih = ky * g->sh;
+
+   /* 0. Background: the ambient bars, else black bars -- never the
+    *    full-screen clear, since the picture covers the rest. */
+   if (!amb_draw_bg(g))
+   {
+      x0 = g->ox < 0 ? 0 : g->ox;
+      y0 = g->oy < 0 ? 0 : g->oy;
+      x1 = g->ox + g->dw > VID_SCR_W ? VID_SCR_W : g->ox + g->dw;
+      y1 = g->oy + g->dh > VID_SCR_H ? VID_SCR_H : g->oy + g->dh;
+      sceGuDisable(GU_BLEND);
+      sceGuDisable(GU_TEXTURE_2D);
+      sharp_black(0, 0, x0, VID_SCR_H);
+      sharp_black(x1, 0, VID_SCR_W, VID_SCR_H);
+      sharp_black(x0, 0, x1, y0);
+      sharp_black(x0, y1, x1, VID_SCR_H);
+   }
+
+   /* 1. Prescale, nearest, into the render target.  Scissor AND drawing
+    *    region are opened to the target: the screen's 480x272 would clip
+    *    the 320-row GBA target. */
+   sceGuDrawBufferList(GU_PSM_5650, (void *)g_sharp_off, SHARP_STRIDE);
+   sceGuScissor(0, 0, iw + 1, ih + 1);
+   sceGuSendCommandi(GE_CMD_REGION1, 0);
+   sceGuSendCommandi(GE_CMD_REGION2, (ih << 10) | iw);
+   /* The depth buffer is screen-sized (272 rows at stride 512) and the
+    * staging texture sits directly after it, so a depth write on target row
+    * 272+ would land in the texture being read.  Depth test is off, which
+    * already means no depth writes; mask them anyway for this pass. */
+   sceGuDepthMask(GU_TRUE);
+   sceGuDisable(GU_BLEND);
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 256, 256, STAGE_STRIDE, tex);
+   sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
+   for (x = 0; x < (int)w; x += 60)
+   {
+      int sw = ((int)w - x < 60) ? (int)w - x : 60;
+      sharp_quad(x, g->sy0, x + sw, last, x * kx, 0, (x + sw) * kx, ih);
+   }
+   /* The last column and row once more, one texel past the picture: a
+    * bilinear tap at the far edge then reads the edge colour, whatever the
+    * GE's sampling offset turns out to be, never stale VRAM. */
+   sharp_quad((int)w - 1, g->sy0, (int)w, last, iw, 0, iw + 1, ih);
+   sharp_quad(0, last - 1, (int)w, last, 0, ih, iw, ih + 1);
+   sharp_quad((int)w - 1, last - 1, (int)w, last, iw, ih, iw + 1, ih + 1);
+
+   /* 2. Back to the display buffer; resample the target, linear. */
+   sceGuDrawBufferList(GU_PSM_5650, (void *)(uintptr_t)g_draw_off, FB_STRIDE);
+   sceGuDepthMask(GU_FALSE);
+   sceGuScissor(0, 0, VID_SCR_W, VID_SCR_H);
+   sceGuSendCommandi(GE_CMD_REGION1, 0);
+   sceGuSendCommandi(GE_CMD_REGION2, ((VID_SCR_H - 1) << 10) | (VID_SCR_W - 1));
+   /* Pass 1's pixels must be in VRAM before pass 2 samples them, and the
+    * texture cache may still hold LAST frame's target. */
+   sceGuTexSync();
+   sceGuTexImage(0, 512, 512, SHARP_STRIDE, rt);
+   sceGuTexFlush();
+   sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+   /* 64-texel strips; consecutive strips share exact dest boundaries. */
+   for (x = 0; x < iw; x += 64)
+   {
+      int sw = (iw - x < 64) ? iw - x : 64;
+      sharp_quad(x, 0, x + sw, ih,
+                 g->ox + x * g->dw / iw, g->oy,
+                 g->ox + (x + sw) * g->dw / iw, g->oy + g->dh);
+   }
+   return 1;
 }

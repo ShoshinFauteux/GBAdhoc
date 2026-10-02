@@ -1,0 +1,25 @@
+# PSP code a GB link frame runs that the qemu twin cannot run (it has no PSP
+# frontend, GE, audio or radio).  "symbol executions_per_instruction_per_frame
+# [group]": every instruction of the symbol is charged that rate, so these are
+# ORDER-OF-MAGNITUDE placeholders, not measurements -- the map uses them to
+# know WHERE this code sits, and weighs it low because it runs once per frame
+# (or per packet), while the cores alternate every scanline.  main's loop is
+# not listed: main is 20 KB and only a fraction of it is the loop.
+# Update this list when the per-frame path changes (docs/CACHE-MAP.md).
+fe_host_run_frame        1  FE
+gblink_frame             1  FE
+fe_gblink_step           1  FE
+input_cb                 2  FE
+send_input               1  FE
+take_input               1  FE
+fe_gblink_receive        2  FE
+plat_video_frame         1  FE
+vid_draw_frame           1  FE
+stage_convert_rgb565     20 FE
+osd_draw                 1  FE
+audio_thread             4  AUDIO
+fe_np_pump               3  NET
+adhoc_send_raw           2  NET
+adhoc_pdp_send           2  NET
+tx_thread                2  NET
+rx_thread                2  NET

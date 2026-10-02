@@ -58,11 +58,14 @@ with tempfile.TemporaryDirectory() as tmp:
     (before/'config_psp.h').write_text(old('psp/config_psp.h'))
     (before/'test_rom_selection.c').write_text(test_source)
     (after/'test_rom_selection.c').write_text(test_source)
-    for label, test, config, flags in [
-            ('before', before/'test_rom_selection.c', before/'config_psp.c', ['-DBASELINE']),
-            ('after', after/'test_rom_selection.c', repo/'psp/config_psp.c', [])]:
+    # The current config_psp.c loads the control bindings (psp/ctl_map.c);
+    # the baseline predates them.
+    for label, test, config, flags, extra in [
+            ('before', before/'test_rom_selection.c', before/'config_psp.c', ['-DBASELINE'], []),
+            ('after', after/'test_rom_selection.c', repo/'psp/config_psp.c', [],
+             [str(repo/'psp/ctl_map.c')])]:
         binary=tmp/(label + '_test')
-        subprocess.run(common + flags + [str(test), str(config),
+        subprocess.run(common + flags + [str(test), str(config)] + extra + [
                        str(repo/'frontend-common/fe_util.c'), '-Wl,--wrap=fopen',
                        '-Wl,--gc-sections', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)

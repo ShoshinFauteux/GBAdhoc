@@ -11,6 +11,20 @@ psp_config g_pcfg;
 
 static char cfg_path[256];
 
+/* PER-CONSOLE DISPLAY PROFILES, at the end of this file. */
+static void pdisp_load(void);
+static int  pdisp_write(int console);
+
+/* VID_FILTER_*: 0 nearest, 2 sharp bilinear, and any other non-zero value is
+ * bilinear -- what every value but 0 meant before sharp existed, so a file
+ * written by anything older loads exactly as it did. */
+static int pcfg_filter_clamp(int f)
+{
+   if (f == VID_FILTER_SHARP)
+      return VID_FILTER_SHARP;
+   return f ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
+}
+
 int pcfg_ff_mode(void)
 {
    if (g_pcfg.ff_mult_x10 != 0)
@@ -92,7 +106,6 @@ void pcfg_load(const char *ini_path)
                                             PCFG_PROFILE_SPEED);
    g_pcfg.me_mode     = (int)fe_ini_get_int(cfg_path, "me_mode",
                                             PCFG_ME_MODE_DEF);
-   g_pcfg.btn_swap    = (int)fe_ini_get_int(cfg_path, "btn_swap", 0);
    g_pcfg.filter      = (int)fe_ini_get_int(cfg_path, "filter",
                                             VID_FILTER_NEAREST);
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 30);
@@ -220,10 +233,22 @@ void pcfg_load(const char *ini_path)
    if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_GBC)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
+   /* Every bind_* key is validated here; a bad one is reported
+    * (config_bind_invalid) and falls back to its DEFAULT, never to unbound.
+    * The legacy `btn_swap` key is read in there too, and only there: a 3.0
+    * swapped-A/B config becomes explicit bind_a/bind_b (ctl_load_ini). */
+   ctl_load_ini(&g_pcfg.controls, cfg_path);
 
    if (g_pcfg.scale < 0 || g_pcfg.scale >= VID_SCALE_MODES)
       g_pcfg.scale = VID_SCALE_1X;
-   g_pcfg.filter = g_pcfg.filter ? 1 : 0;
+   g_pcfg.filter = pcfg_filter_clamp(g_pcfg.filter);
+   g_pcfg.loading_art =
+      (int)fe_ini_get_int(cfg_path, "loading_art", 1) ? 1 : 0;
+   g_pcfg.gbc_color_correction =
+      (int)fe_ini_get_int(cfg_path, "gbc_color_correction", 1) ? 1 : 0;
+   /* Last: the legacy scale/filter/gb_palette above are the migration
+    * defaults for every console's profile, so they must be final first. */
+   pdisp_load();
    /* All former capped profiles migrate to the former 3x Smooth policy.
     * Max and Max Smooth retain their respective unlimited selections. */
    pcfg_ff_set_mode(pcfg_ff_mode());
@@ -275,8 +300,8 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(scale,                0, VID_SCALE_MODES - 1, PCFG_SCALE_DEF);
    PCFG_CHK(profile,              0, 1, PCFG_PROFILE_SPEED);
    PCFG_CHK(me_mode,              0, 1, PCFG_ME_MODE_DEF);
-   PCFG_CHK(btn_swap,             0, 1, 0);
-   PCFG_CHK(filter,               0, 1, 0);
+   PCFG_CHK(filter,               0, VID_FILTER_MODES - 1, 0);
+   PCFG_CHK(ambient,              0, PCFG_AMB_MODES - 1, PCFG_AMBIENT_DEF);
    PCFG_CHK(ff_hold,              0, 1, 1);
    PCFG_CHK(net_frameskip,        0, 2, 0);
    PCFG_CHK(net_tx_thread,        0, 2, 1);
@@ -305,6 +330,18 @@ static int pcfg_validate(const char *when)
    g_pcfg.group[sizeof(g_pcfg.group) - 1]     = '\0';
    g_pcfg.nick[sizeof(g_pcfg.nick) - 1]       = '\0';
    g_pcfg.last_rom[sizeof(g_pcfg.last_rom) - 1] = '\0';
+   /* Bindings: same evidence rule.  The load path only ever stores legal,
+    * duplicate-free tables, so a repair here means memory went wrong. */
+   {
+      int fixed = ctl_repair(&g_pcfg.controls, NULL, NULL);
+      if (fixed)
+      {
+         FE_EVT_ONLY(fixed);
+         fe_evt("config_corrupt when=%s field=controls repaired=%d", when,
+                fixed);
+         bad++;
+      }
+   }
    if (g_pcfg.group[0] && strlen(g_pcfg.group) < 5)
    {
       fe_evt("config_corrupt when=%s field=group value=\"%s\" "
@@ -339,6 +376,9 @@ int pcfg_remember_console(int console)
    if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
       return -1;
    g_pcfg.console = console;
+   /* The browser's console switch is the settings context: the next
+    * Settings screen edits THIS console's display profile. */
+   pcfg_display_select(console);
    /* One key, for the reason pcfg_remember_rom gives: pcfg_save() is ~37
     * whole-file INI rewrites, which every TRIANGLE press used to pay. */
    if (!cfg_path[0] || fe_ini_set_int(cfg_path, "console", console) != 0)
@@ -351,11 +391,17 @@ void pcfg_save(void)
    if (!cfg_path[0])
       return;
    pcfg_validate("save");
-   fe_ini_set_int(cfg_path, "scale", g_pcfg.scale);
+   pcfg_display_commit();
+   /* Legacy keys: what a pre-profile build reads -- GBA's look for it. */
+   fe_ini_set_int(cfg_path, "scale", g_pdisp[FE_CONSOLE_GBA].scale);
    fe_ini_set_int(cfg_path, "profile", g_pcfg.profile);
    fe_ini_set_int(cfg_path, "me_mode", g_pcfg.me_mode);
-   fe_ini_set_int(cfg_path, "btn_swap", g_pcfg.btn_swap);
-   fe_ini_set_int(cfg_path, "filter", g_pcfg.filter);
+   /* A write-only mirror of the A/B pair for 3.0 (downgrade) -- this build
+    * never reads it while bind_a/bind_b are in the file, and a 1 here always
+    * comes with both (ctl_legacy_swap).  0 for a player who never remapped,
+    * so their file stays byte-identical to 3.0's. */
+   fe_ini_set_int(cfg_path, "btn_swap", ctl_legacy_swap(&g_pcfg.controls));
+   fe_ini_set_int(cfg_path, "filter", g_pdisp[FE_CONSOLE_GBA].filter);
    fe_ini_set_int(cfg_path, "ff_mult_x10", g_pcfg.ff_mult_x10);
    fe_ini_set_int(cfg_path, "ff_hold", g_pcfg.ff_hold);
    fe_ini_set_int(cfg_path, "frameskip_sparse", g_pcfg.frameskip_sparse);
@@ -365,7 +411,10 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ui_shell", g_pcfg.ui_shell);
    fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
-   fe_ini_set_int(cfg_path, "gb_palette", g_pcfg.gb_palette);
+   fe_ini_set_int(cfg_path, "gbc_color_correction",
+                  g_pcfg.gbc_color_correction);
+   fe_ini_set_int(cfg_path, "gb_palette",
+                  g_pdisp[FE_CONSOLE_GB].gb_palette);
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
    fe_ini_set_int(cfg_path, "net_tx_thread", g_pcfg.net_tx_thread);
@@ -398,6 +447,164 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "console", g_pcfg.console);
    if (g_pcfg.last_rom[0])
       fe_ini_set(cfg_path, "last_rom", g_pcfg.last_rom);
+   /* Writes nothing for a player who never remapped (see ctl_map.keep). */
+   ctl_save_ini(&g_pcfg.controls, cfg_path);
+   {
+      int c;
+      for (c = 0; c < FE_CONSOLE_COUNT; c++)
+         pdisp_write(c);
+   }
    fe_evt("config_saved scale=%d filter=%d ff_mult_x10=%d ff_hold=%d",
           g_pcfg.scale, g_pcfg.filter, g_pcfg.ff_mult_x10, g_pcfg.ff_hold);
+}
+
+/* ---- PER-CONSOLE DISPLAY PROFILES (see config_psp.h) ---------------------
+ *
+ * Kept in this file because the profiles ARE config: same INI, same
+ * validation, same host tests (tools/test_rom_selection.c links config_psp.c
+ * with only fe_util.c, so nothing here may reach the video layer). */
+
+pcfg_display g_pdisp[FE_CONSOLE_COUNT];
+static int g_pdisp_live = FE_CONSOLE_GBA;
+
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc" };
+
+const char *pcfg_console_tag(int console)
+{
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
+   return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
+}
+
+const char *pcfg_ambient_name(int mode)
+{
+   switch (mode)
+   {
+   case PCFG_AMB_ART:      return "art";
+   case PCFG_AMB_ART_GAME: return "art, else game";
+   default:                return "off";
+   }
+}
+
+/* Same bounds pcfg_load applies to the legacy keys. */
+static void pdisp_clamp(pcfg_display *d)
+{
+   if (d->scale < 0 || d->scale >= VID_SCALE_MODES)
+      d->scale = VID_SCALE_1X;
+   d->filter = pcfg_filter_clamp(d->filter);
+   if (d->ambient < 0 || d->ambient >= PCFG_AMB_MODES)
+      d->ambient = PCFG_AMBIENT_DEF;
+   if (d->gb_palette < 0 || d->gb_palette > 15)
+      d->gb_palette = 0;
+}
+
+static int pdisp_key(char *out, size_t sz, const char *what, int console)
+{
+   int n = snprintf(out, sz, "%s_%s", what, pdisp_tag_lc[console]);
+   return n > 0 && (size_t)n < sz;
+}
+
+static long pdisp_get(const char *what, int console, long def)
+{
+   char key[24];
+   return pdisp_key(key, sizeof(key), what, console)
+      ? fe_ini_get_int(cfg_path, key, def) : def;
+}
+
+static int pdisp_set(const char *what, int console, long v)
+{
+   char key[24];
+   return pdisp_key(key, sizeof(key), what, console)
+      ? fe_ini_set_int(cfg_path, key, v) : -1;
+}
+
+/* MIGRATION lives in the defaults: each absent key falls back to the legacy
+ * value pcfg_load has already read and clamped, independently, so a
+ * hand-edited file that names only `scale_gb` keeps everything else.
+ * Nothing is written here -- the first save writes the new keys. */
+static void pdisp_load(void)
+{
+   int c, migrated = 0;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+   {
+      pcfg_display *d = &g_pdisp[c];
+      char key[24], val[16];
+      if (pdisp_key(key, sizeof(key), "scale", c) &&
+          !fe_ini_get(cfg_path, key, val, sizeof(val)))
+         migrated++;
+      d->scale   = (int)pdisp_get("scale", c, g_pcfg.scale);
+      d->filter  = (int)pdisp_get("filter", c, g_pcfg.filter);
+      d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
+      /* GBA has no DMG palette; its slot just carries the legacy value. */
+      d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
+                    : (int)pdisp_get("gb_palette", c, g_pcfg.gb_palette);
+      pdisp_clamp(d);
+   }
+   pcfg_display_select(g_pcfg.console);
+   fe_log("display profiles (scale/filter/ambient/palette): gba=%d/%d/%d "
+          "gb=%d/%d/%d/%d gbc=%d/%d/%d/%d migrated=%d live=%s",
+          g_pdisp[0].scale, g_pdisp[0].filter, g_pdisp[0].ambient,
+          g_pdisp[1].scale, g_pdisp[1].filter, g_pdisp[1].ambient,
+          g_pdisp[1].gb_palette, g_pdisp[2].scale, g_pdisp[2].filter,
+          g_pdisp[2].ambient, g_pdisp[2].gb_palette, migrated,
+          pcfg_console_tag(g_pdisp_live));
+}
+
+void pcfg_display_select(int console)
+{
+   const pcfg_display *d;
+   if (console < 0 || console >= FE_CONSOLE_COUNT)
+      console = FE_CONSOLE_GBA;
+   g_pdisp_live = console;
+   d = &g_pdisp[console];
+   g_pcfg.scale      = d->scale;
+   g_pcfg.filter     = d->filter;
+   g_pcfg.ambient    = d->ambient;
+   g_pcfg.gb_palette = d->gb_palette;
+}
+
+void pcfg_display_commit(void)
+{
+   pcfg_display *d = &g_pdisp[g_pdisp_live];
+   d->scale      = g_pcfg.scale;
+   d->filter     = g_pcfg.filter;
+   d->ambient    = g_pcfg.ambient;
+   d->gb_palette = g_pcfg.gb_palette;
+   pdisp_clamp(d);
+}
+
+int pcfg_display_console(void)
+{
+   return g_pdisp_live;
+}
+
+static int pdisp_write(int c)
+{
+   const pcfg_display *d = &g_pdisp[c];
+   int rc = 0;
+   rc |= pdisp_set("scale", c, d->scale);
+   rc |= pdisp_set("filter", c, d->filter);
+   rc |= pdisp_set("ambient", c, d->ambient);
+   if (c != FE_CONSOLE_GBA)
+      rc |= pdisp_set("gb_palette", c, d->gb_palette);
+   return rc ? -1 : 0;
+}
+
+int pcfg_display_save(void)
+{
+   int rc;
+   if (!cfg_path[0])
+      return -1;
+   pcfg_display_commit();
+   rc = pdisp_write(g_pdisp_live);
+   /* Keep the legacy mirror honest (see pcfg_save). */
+   if (g_pdisp_live == FE_CONSOLE_GBA)
+   {
+      rc |= fe_ini_set_int(cfg_path, "scale", g_pdisp[FE_CONSOLE_GBA].scale);
+      rc |= fe_ini_set_int(cfg_path, "filter",
+                           g_pdisp[FE_CONSOLE_GBA].filter);
+   }
+   fe_evt("config_saved display=%s scale=%d filter=%d ambient=%d rc=%d",
+          pcfg_console_tag(g_pdisp_live), g_pcfg.scale, g_pcfg.filter,
+          g_pcfg.ambient, rc);
+   return rc ? -1 : 0;
 }

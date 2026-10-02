@@ -5,6 +5,7 @@
  */
 #include "transport_adhoc.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <pspkernel.h>
@@ -106,6 +107,12 @@ typedef struct
    uint8_t  data[ND_MAX_FRAME];
 } adhoc_tx_slot;
 
+typedef struct
+{
+   uint16_t len;
+   uint8_t  data[ADHOC_BULK_MAX];
+} adhoc_bulk_slot;
+
 /* ---- singleton state ----------------------------------------------------- */
 
 /* Init progress ladder — term() unwinds exactly what init reached. */
@@ -132,6 +139,9 @@ static struct
    uint8_t  mac[8];             /* sceWlanGetEtherAddr writes 6, wants 8
                                    (ADHOC-NOTES §5 gotcha) */
    char     group[9];
+   int      join_tries, join_channel;   /* adhoc_transport_init_join */
+   uint32_t join_ms;
+   uint8_t  join_bssid[6];
 
    /* set by the adhocctl handler (AdhocThread context — flag-writes only,
     * ADHOC-NOTES §11.2) */
@@ -167,6 +177,13 @@ static struct
    volatile int tx_run;
    adhoc_tx_slot tx_ring[ADHOC_TX_SLOTS];
    volatile uint32_t tx_head, tx_tail;
+
+   /* bulk lane: rx thread produces, main thread consumes */
+   adhoc_bulk_slot *bulk_ring;    /* allocated on first open, freed at term */
+   unsigned bulk_slots;
+   volatile int bulk_on;
+   char     bulk_magic[4];
+   volatile uint32_t bulk_head, bulk_tail;
 
    adhoc_stats st;
    uint32_t    last_sce;
@@ -270,6 +287,28 @@ static int rx_thread(SceSize args, void *argp)
       {
          if (len <= 0)
             continue;
+         if (A.bulk_on && len >= 4 && len <= ADHOC_BULK_MAX &&
+             !memcmp(scratch, A.bulk_magic, 4))
+         {
+            uint32_t head = A.bulk_head;
+            if (A.fault_loss_pct &&
+                (int)(fault_rand() % 100) < A.fault_loss_pct)
+            {
+               A.st.fault_dropped++;
+               continue;                 /* injected loss (latency: none) */
+            }
+            if (head - A.bulk_tail >= A.bulk_slots)
+            {
+               A.st.bulk_drop++;
+               continue;                 /* full: the sender resends */
+            }
+            A.bulk_ring[head % A.bulk_slots].len = (uint16_t)len;
+            memcpy(A.bulk_ring[head % A.bulk_slots].data, scratch,
+                   (size_t)len);
+            A.bulk_head = head + 1;      /* publish after the copy */
+            A.st.bulk_rx++;
+            continue;
+         }
          if (len > ND_MAX_FRAME)
          {
             /* Consumed at full scratch capacity, just not ours: netdrv's
@@ -503,6 +542,60 @@ static void adhoc_local_addr(void *ctx, uint8_t mac[6])
    memcpy(mac, A.mac, 6);
 }
 
+/* ---- bulk lane ----------------------------------------------------------- */
+
+int adhoc_transport_bulk_open(unsigned slots, const char magic[4])
+{
+   if (A.progress != ST_UP || !slots)
+      return -1;
+   if (!A.bulk_ring)
+   {
+      A.bulk_ring = (adhoc_bulk_slot *)malloc(slots * sizeof(adhoc_bulk_slot));
+      if (!A.bulk_ring)
+         return -1;
+      A.bulk_slots = slots;
+   }
+   memcpy(A.bulk_magic, magic, 4);
+   A.bulk_tail = A.bulk_head;
+   A.bulk_on = 1;
+   return 0;
+}
+
+void adhoc_transport_bulk_close(void)
+{
+   /* The ring stays (the RX thread may be mid-copy); term frees it. */
+   A.bulk_on = 0;
+}
+
+int adhoc_transport_bulk_send(const uint8_t mac[6], const void *buf, size_t len)
+{
+   if (A.progress != ST_UP || len > ADHOC_BULK_MAX)
+      return -1;
+   if (adhoc_pdp_send(mac, buf, len, adhoc_now_us(), 1) != 0)
+   {
+      A.st.bulk_txfail++;
+      return 0;                           /* lost: the sender resends */
+   }
+   A.st.bulk_tx++;
+   return 0;
+}
+
+int adhoc_transport_bulk_recv(void *buf, size_t cap)
+{
+   uint32_t tail = A.bulk_tail;
+   adhoc_bulk_slot *s;
+   int len;
+   if (!A.bulk_ring || tail == A.bulk_head)
+      return 0;
+   s = &A.bulk_ring[tail % A.bulk_slots];
+   len = s->len;
+   if ((size_t)len > cap)
+      len = (int)cap;
+   memcpy(buf, s->data, (size_t)len);
+   A.bulk_tail = tail + 1;                /* release after the copy */
+   return len;
+}
+
 /* ---- init / term --------------------------------------------------------- */
 
 static int group_valid(const char *g)
@@ -625,6 +718,168 @@ static int init_to_handler(void)
    return ADHOC_OK;
 }
 
+static int init_after_connect(void);
+static int wait_connected(uint32_t connect_timeout_us);
+
+/* The join's bring-up (hw3 run 9, hw4 auto001/003): scan, and JOIN the host's
+ * group by its BSSID.  sceNetAdhocctlConnect(name) runs a quick scan of its
+ * own and, when that misses the host's beacons, CREATES a group of the same
+ * name: two cells called GBLNK7 that never hear each other (both rx=0),
+ * even right after our own scan had seen the host (auto003: found=1).
+ * Joining the scanned BSS cannot create anything.  No group after
+ * `scan_budget_ms` of scanning: ADHOC_ERR_NO_GROUP, nothing created.
+ *
+ * A TIME budget, not a count (hw5 PPSSPP smoke, arm X): a scan that
+ * returns at once made 20 tries last ~10 s, less than a partner that
+ * starts late -- hw_loop's ejects land up to 20 s apart on hardware. */
+int adhoc_transport_init_join(const char *group, uint32_t connect_timeout_us,
+                              uint32_t scan_budget_ms)
+{
+   static struct SceNetAdhocctlScanInfo scanbuf[16];
+   struct SceNetAdhocctlScanInfo pick;
+   uint64_t t0;
+   int rc, t, found = 0;
+
+   if (A.progress != ST_DOWN)
+      return ADHOC_ERR_ALREADY;
+   if (!group || !group[0])
+      group = ADHOC_GROUP_DEFAULT;
+   if (!group_valid(group))
+   {
+      A.stage = "group";
+      return ADHOC_ERR_BAD_GROUP;
+   }
+   memset(A.group, 0, sizeof(A.group));
+   strncpy(A.group, group, 8);
+   if (!connect_timeout_us)
+      connect_timeout_us = 30 * 1000 * 1000;
+   rc = init_to_handler();
+   if (rc != ADHOC_OK)
+      return rc;
+   memset(&pick, 0, sizeof(pick));
+   t0 = adhoc_now_us();
+   for (t = 1; !found && (t == 1 ||
+                          adhoc_now_us() - t0 < (uint64_t)scan_budget_ms * 1000u);
+        t++)
+   {
+      uint32_t waited = 0;
+      A.stage = "join_scan";
+      A.ctl_scan_done = 0;
+      rc = sceNetAdhocctlScan();
+      if (rc < 0)
+      {
+         A.last_sce = (uint32_t)rc;
+         sceKernelDelayThread(500000);
+         continue;
+      }
+      while (!A.ctl_scan_done && waited < 10000000u)
+      {
+         sceKernelDelayThread(50000);
+         waited += 50000;
+      }
+      if (A.ctl_scan_done)
+      {
+         int len = (int)sizeof(scanbuf);
+         memset(scanbuf, 0, sizeof(scanbuf));
+         if (sceNetAdhocctlGetScanInfo(&len, scanbuf) == 0 && len > 0)
+         {
+            const struct SceNetAdhocctlScanInfo *si = scanbuf;
+            while (si)
+            {
+               if (!strncmp(si->name, A.group, 8))
+               {
+                  pick = *si;
+                  pick.next = NULL;
+                  found = 1;
+                  break;
+               }
+               if (si->next && (const void *)si->next >= (const void *)scanbuf &&
+                   (const void *)si->next <
+                      (const void *)(scanbuf + sizeof(scanbuf) / sizeof(scanbuf[0])))
+                  si = si->next;
+               else
+                  si = NULL;
+            }
+         }
+      }
+      if (!found)
+         sceKernelDelayThread(500000);
+   }
+   A.join_tries = t - 1;
+   A.join_ms = (uint32_t)((adhoc_now_us() - t0) / 1000u);
+   if (!found)
+   {
+      A.stage = "join_no_group";
+      adhoc_transport_term();
+      return ADHOC_ERR_NO_GROUP;
+   }
+   memcpy(A.join_bssid, pick.bssid, 6);
+   A.join_channel = pick.channel;
+   A.stage = "ctl_join";
+   rc = sceNetAdhocctlJoin(&pick);
+   if (rc < 0)
+   {
+      A.last_sce = (uint32_t)rc;
+      return init_fail(ADHOC_ERR_CONNECT);
+   }
+   rc = wait_connected(connect_timeout_us);
+   if (rc != ADHOC_OK)
+      return rc;
+   return init_after_connect();
+}
+
+static int wait_connected(uint32_t connect_timeout_us)
+{
+   uint32_t waited = 0;
+   while (waited < connect_timeout_us)
+   {
+      int st = 0;
+      if (A.ctl_connected ||
+          (sceNetAdhocctlGetState(&st) == 0 && st == ADHOCCTL_STATE_CONNECTED))
+      {
+         A.ctl_connected = 1;
+         A.progress = ST_CONNECTED;
+         return ADHOC_OK;
+      }
+      sceKernelDelayThread(50000);
+      waited += 50000;
+   }
+   A.stage = "ctl_connect_wait";
+   A.last_sce = A.ctl_last_error;
+   return init_fail(ADHOC_ERR_CONNECT_TIMEOUT);
+}
+
+int adhoc_transport_ctl_info(int *channel, uint8_t bssid[6], int *peers)
+{
+   struct SceNetAdhocctlParams pr;
+   int len = 0;
+   if (A.progress < ST_CONNECTED)
+      return -1;
+   memset(&pr, 0, sizeof(pr));
+   if (sceNetAdhocctlGetParameter(&pr) < 0)
+      return -1;
+   if (channel)
+      *channel = pr.channel;
+   if (bssid)
+      memcpy(bssid, pr.bssid, 6);
+   if (peers)
+   {
+      *peers = -1;
+      if (sceNetAdhocctlGetPeerList(&len, NULL) >= 0)
+         *peers = len / (int)sizeof(struct SceNetAdhocctlPeerInfo);
+   }
+   return 0;
+}
+
+void adhoc_transport_join_info(int *tries, uint32_t *ms, int *channel,
+                               uint8_t bssid[6])
+{
+   if (tries) *tries = A.join_tries;
+   if (ms) *ms = A.join_ms;
+   if (channel) *channel = A.join_channel;
+   if (bssid) memcpy(bssid, A.join_bssid, 6);
+}
+
 int adhoc_transport_init(const char *group, uint32_t connect_timeout_us)
 {
    int rc;
@@ -659,31 +914,15 @@ int adhoc_transport_init(const char *group, uint32_t connect_timeout_us)
       A.last_sce = (uint32_t)rc;
       return init_fail(ADHOC_ERR_CONNECT);
    }
-   {
-      uint32_t waited = 0;
-      int connected = 0;
-      while (waited < connect_timeout_us)
-      {
-         int st = 0;
-         if (A.ctl_connected ||
-             (sceNetAdhocctlGetState(&st) == 0 &&
-              st == ADHOCCTL_STATE_CONNECTED))
-         {
-            connected = 1;
-            break;
-         }
-         sceKernelDelayThread(50000);
-         waited += 50000;
-      }
-      if (!connected)
-      {
-         A.stage = "ctl_connect_wait";
-         A.last_sce = A.ctl_last_error;
-         return init_fail(ADHOC_ERR_CONNECT_TIMEOUT);
-      }
-   }
-   A.ctl_connected = 1;
-   A.progress = ST_CONNECTED;
+   rc = wait_connected(connect_timeout_us);
+   if (rc != ADHOC_OK)
+      return rc;
+   return init_after_connect();
+}
+
+static int init_after_connect(void)
+{
+   int rc;
 
    /* 7. Own MAC (8-byte buffer — §5 gotcha) + PDP socket.  PdpCreate only
     * after CONNECTED (§11.10: MAC valid after a successful group join). */
@@ -938,6 +1177,13 @@ void adhoc_transport_term(void)
       sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
    }
    gpsp_adhoc_step("term_done");
+
+   /* The RX thread is gone (joined above): the bulk ring can go. */
+   A.bulk_on = 0;
+   free(A.bulk_ring);
+   A.bulk_ring = NULL;
+   A.bulk_slots = 0;
+   A.bulk_head = A.bulk_tail = 0;
 
    A.progress = ST_DOWN;
    A.stage = "down";

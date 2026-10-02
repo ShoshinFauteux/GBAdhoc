@@ -1,5 +1,10 @@
 # Three fast-forward profiles (2026-09-14)
 
+> **2026-10-02:** the two unlimited profiles now draw at most 30 (Unlimited) or
+> 60 (Unlimited Smooth) frames a second and skip capture and rendering of the
+> rest; the "submit when available" and "render every frame" policies below
+> are superseded for them. 3x is unchanged. See [FF-PRESETS.md](FF-PRESETS.md).
+
 The preceding **GBAdhoc FF Fix 1** build was reported artifact-free by the
 PSP-3000 owner. This change retains its LCD-buffer ownership selection and
 GE-before-ME-reuse synchronization. See [the fix record](FF-ARTIFACT-FIX.md).

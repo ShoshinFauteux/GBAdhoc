@@ -1,0 +1,12 @@
+# Restore slot 0 at frame 30, settle, photograph, then fixed workload.
+wait 90
+dump
+wait 210
+evt sample_begin
+repeat 450
+press A 2
+wait 4
+endrepeat
+evt sample_end
+dump
+wait 30

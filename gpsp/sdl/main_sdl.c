@@ -240,11 +240,18 @@ extern void rfu_set_cushion(unsigned n);   /* fixed-depth jitter buffer PoC */
 /* ME renderer capture validation (--me-capture-test): run the production
  * capture path in mode 2 (capture AND render) so an ME_CAP_VALIDATE build of
  * video.cc can replay-from-capture and prove the capture bit-exact.  Raw-byte
- * buffer sized to me_capture_frame (video.h): 160*64 u16 + 4 s32 + 1 u32. */
+ * buffer, checked against sizeof(me_capture_frame) at startup (video.h). */
 extern unsigned int me_capture_mode;
 extern void *me_capture_buf;
-static unsigned char g_mecap_test_buf[160*64*2 + 4*4 + 4]
+static unsigned char g_mecap_test_buf[32768]
    __attribute__((aligned(8)));
+extern const unsigned int me_capture_frame_bytes;   /* video.cc */
+/* ME_MIDFRAME_LOG (video.h), weak so a build without it still links. */
+extern void me_capture_log_setup(void *cap, void *entries, unsigned n)
+   __attribute__((weak));
+extern unsigned char *me_vram_shadow __attribute__((weak));
+#define SDL_ME_LOG_ENTRIES 12288          /* = main_psp.c MER_LOG_ENTRIES */
+static int g_me_midlog = 1;               /* --me-midlog 0 turns it off   */
 
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b);
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
@@ -418,7 +425,7 @@ int main(int argc, char **argv)
    char save_buf[512];
    fe_host_config cfg;
    int i;
-   int net_host = 0, net_loss = 0, net_jitter = 0, net_probe = 0;
+   int net_host = 0, net_loss = 0, net_jitter = 0, net_latency = 0, net_probe = 0;
    long net_port = NET_DEFAULT_PORT;
    const char *net_join = NULL;     /* "ip:port" */
    const char *nick = "sdl";
@@ -468,6 +475,8 @@ int main(int argc, char **argv)
          net_loss = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--net-jitter") && i + 1 < argc)
          net_jitter = (int)strtol(argv[++i], NULL, 0);
+      else if (!strcmp(argv[i], "--net-latency") && i + 1 < argc)
+         net_latency = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--net-probe"))
          net_probe = 1;
       else if (!strcmp(argv[i], "--trace") && i + 1 < argc)
@@ -484,9 +493,25 @@ int main(int argc, char **argv)
          rfu_cush = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--me-capture-test"))
       {
+         if (me_capture_frame_bytes > sizeof(g_mecap_test_buf))
+         {
+            fprintf(stderr, "me_capture_frame is %u bytes; buffer is %u\n",
+                    me_capture_frame_bytes, (unsigned)sizeof(g_mecap_test_buf));
+            return 2;
+         }
          me_capture_buf  = g_mecap_test_buf;
          me_capture_mode = 2;    /* capture AND render: the validate mode */
       }
+      else if (!strcmp(argv[i], "--me-capture-mode1"))
+      {
+         /* The PRODUCTION mode: capture and skip the CPU render.  Only
+          * meaningful with an ME_TIMING_SIM build, whose model images must
+          * then equal a --me-capture-test run's CPU images frame for frame. */
+         me_capture_buf  = g_mecap_test_buf;
+         me_capture_mode = 1;
+      }
+      else if (!strcmp(argv[i], "--me-midlog") && i + 1 < argc)
+         g_me_midlog = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--option") && i + 1 < argc)
       {
          char *kv = argv[++i];
@@ -505,6 +530,16 @@ int main(int argc, char **argv)
          fprintf(stderr, "unknown arg: %s\n", argv[i]);
          return 2;
       }
+   }
+
+   /* Mid-frame log buffers for the one test capture (see video.h). */
+   if (me_capture_buf == (void *)g_mecap_test_buf && me_capture_log_setup)
+   {
+      void *log = g_me_midlog ? calloc(SDL_ME_LOG_ENTRIES, 12) : NULL;
+      me_capture_log_setup(g_mecap_test_buf, log, SDL_ME_LOG_ENTRIES);
+      if (log && &me_vram_shadow)
+         me_vram_shadow = (unsigned char *)calloc(1, 1024 * 96);
+      fprintf(stderr, "me_midlog %s\n", log ? "on" : "off");
    }
 
    if (!rom_path)
@@ -628,11 +663,11 @@ int main(int argc, char **argv)
          fe_host_shutdown();
          return 4;
       }
-      if (net_loss || net_jitter)
+      if (net_loss || net_jitter || net_latency)
       {
-         udp_transport_set_fault(udp, net_loss, 0, 0, net_jitter,
+         udp_transport_set_fault(udp, net_loss, 0, net_latency, net_jitter,
                                  (uint32_t)net_now_us());
-         fe_evt("net_fault loss=%d jitter=%d", net_loss, net_jitter);
+         fe_evt("net_fault loss=%d latency=%d jitter=%d", net_loss, net_latency, net_jitter);
       }
 
       memset(&npc, 0, sizeof(npc));

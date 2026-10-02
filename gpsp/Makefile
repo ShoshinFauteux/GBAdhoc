@@ -268,6 +268,17 @@ else ifeq ($(platform), psp1)
 	$(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
 	endif
 	CFLAGS += -DSMALL_TRANSLATION_CACHE -DRUNTIME_JIT_CACHE
+	# LAYOUT_PIN=1 (OPT-IN; docs/LAYOUT-PINNING.md): every function in its own
+	# section, so psp/Makefile's link can put the hot path first in .text in a
+	# fixed order (psp/layout/hot.ord), and -DLAYOUT_PIN pins the translation
+	# cache's I-cache sets (gpsp_config.h JIT_PIN_*).  Code is unchanged; only
+	# addresses move.  OFF by default until a hardware bench validates it (owner
+	# guardrail); LAYOUT_PIN=0 is the pre-pinning layout, byte for byte.  Pass
+	# the SAME value to psp/Makefile (tools/build.sh does).
+	LAYOUT_PIN ?= 0
+	ifeq ($(LAYOUT_PIN),1)
+	CFLAGS += -ffunction-sections -DLAYOUT_PIN=1
+	endif
 	# SMC_SKIP_SAME=1: idempotent-store filter in the JIT store stubs
 	# (mips/mips_emit.h) — skip the full RAM-cache wipe when a store to
 	# tagged memory writes the value already there.
@@ -483,6 +494,61 @@ else ifeq ($(platform), psp1)
 	# dropped that alert in update_gba, leaving the old translation live.
 	ifeq ($(DMA_SMC_FLUSH),1)
 	CFLAGS += -DDMA_SMC_FLUSH=1
+	endif
+	# DRPROF_HW=1: the hardware dynarec-profile bench (drprof.h, psp/ sampler).
+	# Adds a phase store around every C call from translated code.  Never in a
+	# release (gpsp_profile.h).  The frontend needs -DDRPROF_HW too.
+	ifeq ($(DRPROF_HW),1)
+	CFLAGS += -DDRPROF_HW=1
+	endif
+	# SMC_RETIRE_WINDOW=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
+	# Bound the partial-retire tag walk by the longest live block extent
+	# instead of MAX_BLOCK_SIZE*4.  Measurement only.
+	ifeq ($(SMC_RETIRE_WINDOW),1)
+	CFLAGS += -DSMC_RETIRE_WINDOW=1
+	endif
+	# SMC_RETIRE_WINDOW_CHECK=1: also walk the old 4 KiB window and count any
+	# live overlapping block the short window would miss (smc_window_violations,
+	# falls back to the full walk).  In the twin a violation aborts the run,
+	# so dr_oracle.py base <variant with -DSMC_RETIRE_WINDOW_CHECK> is the test.
+	ifeq ($(SMC_RETIRE_WINDOW_CHECK),1)
+	CFLAGS += -DSMC_RETIRE_WINDOW_CHECK=1
+	endif
+	# DISPATCH_CACHE=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
+	# A direct-mapped {guest pc -> host entry} table probed in asm by
+	# mips_indirect_branch_* before the register save + C block lookup.
+	# Speed only: guest timing is unchanged (tools/drprof/dr_oracle.py).
+	ifeq ($(DISPATCH_CACHE),1)
+	CFLAGS += -DDISPATCH_CACHE=1
+	endif
+	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
+	# Skips update_serial's call chain when no transfer is pending and this
+	# console has no link client role; exact by construction (main.c).
+	ifeq ($(SERIAL_IDLE_FAST),1)
+	CFLAGS += -DSERIAL_IDLE_FAST=1
+	endif
+	# JIT_CODE_DISCIPLINE=1: OFF by default (docs/JIT-CODE-DISCIPLINE.md).
+	# Code memory in three zones, every code write recorded through one API,
+	# one publish point (D writeback + I invalidate of exactly what was
+	# written), and a whole I-cache invalidate on every ownership change
+	# (cache flush, emitter rebuild, tier lend).  Replaces 8b48b48's whole
+	# invalidate on every ROM publish.  Emulation is unchanged.
+	ifeq ($(JIT_CODE_DISCIPLINE),1)
+	CFLAGS += -DJIT_CODE_DISCIPLINE=1
+	endif
+	# JIT_CODE_CHECK=1: DIAGNOSTIC.  With JIT_CODE_DISCIPLINE, assert the zones
+	# on every recorded write and on every pointer a lookup returns (prints to
+	# stderr; meant for the twin and desktop builds).
+	ifeq ($(JIT_CODE_CHECK),1)
+	CFLAGS += -DJIT_CODE_CHECK=1
+	endif
+	# JIT_CODE_AB=1: HARNESS ONLY.  With JIT_CODE_DISCIPLINE, compile the
+	# original sync model in as well and pick one at startup (harness key
+	# jit_code_mode: 0 legacy, 1 + 8b48b48, 2 discipline, 3 discipline without
+	# the ownership invalidate), so a hardware A/B runs ONE binary and the code
+	# layout cannot differ between arms.
+	ifeq ($(JIT_CODE_AB),1)
+	CFLAGS += -DJIT_CODE_AB=1
 	endif
 	# XLAT_DEPTH_PROBE=1: DIAGNOSTIC (soak/diagnostic profiles).  Records the
 	# deepest nested block translation and the lowest $sp seen at translation
@@ -721,6 +787,26 @@ else ifneq (,$(findstring armv,$(platform)))
 		HAVE_DYNAREC := 1
 	endif
 	LDFLAGS += -Wl,--no-undefined
+
+# DYNAREC PROFILING TWIN (tools/drprof, docs/DYNAREC-PROFILE.md).
+# The PSP's own ARM->MIPS translator built as a static Linux mipsel archive,
+# so the exact emitter the PSP runs can be executed under qemu-mipsel (with an
+# instruction-counting TCG plugin) and compared frame by frame against other
+# translator variants.  Never shipped: nothing links this but tools/drprof.
+# Differences from psp1 that reach emitted code are listed in
+# docs/DYNAREC-PROFILE.md ("fidelity of the twin"): the patch handler uses
+# sltiu/branch where the PSP uses Allegrex `min`, and synci where the PSP uses
+# `cache`.  Everything else in mips_emit.h is shared.
+else ifeq ($(platform), drprof-mipsel)
+	TARGET := $(TARGET_NAME)_libretro_drprof_mipsel.a
+	CC = mipsel-linux-gnu-gcc
+	CXX = mipsel-linux-gnu-g++
+	AR = mipsel-linux-gnu-ar
+	CFLAGS += -fno-pic -fno-pie -mno-shared -march=mips32r2 -mhard-float
+	CFLAGS += -fomit-frame-pointer -ffast-math -DMIPS_HAS_R2_INSTS -DDRPROF_MIPSEL_LINUX
+	STATIC_LINKING = 1
+	HAVE_DYNAREC := 1
+	CPU_ARCH := mips
 
 # MIPS
 else ifeq ($(platform), mips32)

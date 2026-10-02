@@ -45,6 +45,11 @@ char use_gba;
 
 void gb_fill_vframe(word color)
 {
+	/* GBAdhoc: a headless machine (the partner's Game Boy in a link
+	 * session) has no frame buffer.  Reached from gb_reset and SGB
+	 * MASK_EN packets regardless of gbSkip. */
+	if (!vframe)
+		return;
 	memset(vframe,0,VFRAME_SIZE);
 }
 

@@ -1,0 +1,25 @@
+# After the fixture pokes (gen1_fixture_pokes.py) have flown the player to
+# Viridian City: into the Pokemon Center, to the Cable Club receptionist,
+# and SAVE there (START, 5th item), so the fixture resumes at the counter.
+wait 400
+holdram UP 1 0xD35E 0xFF 0x29 300
+wait 60
+holdram UP 1 0xD361 0xFF 4 200
+holdram RIGHT 1 0xD362 0xFF 11 300
+hold UP 20
+wait 30
+hold START 6
+wait 60
+repeat 4
+hold DOWN 6
+wait 20
+endrepeat
+hold A 6
+wait 90
+mashsram A 900
+evt saved
+wait 120
+hold A 6
+wait 60
+logbytes map 1 0xD35E
+logbytes yx 2 0xD361

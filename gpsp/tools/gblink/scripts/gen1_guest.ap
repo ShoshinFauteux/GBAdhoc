@@ -1,0 +1,48 @@
+# Pokemon Red/Blue link trade, guest side (slot 1).
+# Fixture: tools/gblink/make_fixtures.sh gen1-b.sav (saved at the Viridian
+# City Cable Club counter).  Every wait is in this machine's frames; the run
+# is deterministic for a given input delay (tools/gblink/run_trades.sh).
+# The guest reaches the counter a little later than the host, as two
+# people do; the handshake is symmetric-safe either way (gbcore_dual.c).
+wait 37
+# --- title screen -> CONTINUE -> overworld
+repeat 10
+wait 90
+hold START 6
+endrepeat
+wait 120
+hold A 6
+wait 90
+hold A 6
+wait 150
+evt booted
+# --- talk to the receptionist, save when asked, choose TRADE CENTER
+hold UP 6
+wait 20
+mash A 1 0xD35E 0xFF 0xEF 6000
+evt in_trade_center
+wait 120
+logbytes seat 2 0xD361
+# --- face the table from whichever seat the link gave us (x=3 or x=6)
+ifram 1 0xD362 0xFF 3 1
+hold RIGHT 6
+ifram 1 0xD362 0xFF 6 1
+hold LEFT 6
+wait 20
+hold A 6
+wait 300
+# --- our only Pokemon: TRADE, then confirm until the party changes
+hold A 6
+wait 60
+hold RIGHT 6
+wait 30
+hold A 6
+wait 200
+mash A 1 0xD164 0xFF 0xB1 3000
+evt traded
+# The games save by themselves once the trade animation ends (~60 s).
+# Not waitsram: both use cartridge RAM as scratch for Pokemon pictures, so
+# its CRC moves long before the save lands.  score_trade.py judges the save.
+wait 3600
+evt settled
+logbytes party 3 0xD163

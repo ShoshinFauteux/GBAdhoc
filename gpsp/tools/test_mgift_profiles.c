@@ -4,6 +4,27 @@
 #include "../psp/mgift_net.c"
 #include "../psp/mgift_shortcut.h"
 
+/* The 3.0 shortcut, verbatim, for the remap equivalence check below. */
+static int legacy_mgift(unsigned pad, int enabled, unsigned *consumed)
+{
+   const unsigned chord = PSP_CTRL_SELECT | PSP_CTRL_DOWN;
+   const unsigned conflicts = PSP_CTRL_START | PSP_CTRL_UP | PSP_CTRL_LEFT |
+      PSP_CTRL_RIGHT | PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER | PSP_CTRL_TRIANGLE |
+      PSP_CTRL_SQUARE | PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+   if (!enabled) { *consumed = 0; return 0; }
+   if (*consumed)
+   {
+      if (!(pad & chord)) *consumed = 0;
+      return 0;
+   }
+   if ((pad & chord) == chord && !(pad & conflicts))
+   {
+      *consumed = chord;
+      return 1;
+   }
+   return 0;
+}
+
 static struct { int exists; netData values[17]; } profiles[11];
 static int created, deleted, fail_param = -1, fail_copy, corrupt_copy;
 static int require_ready, apctl_ready, connected_slot;
@@ -128,6 +149,36 @@ int main(void)
    assert(!mgift_shortcut_update(chord | PSP_CTRL_START, 1, &consumed));
    assert(!mgift_shortcut_update(chord | PSP_CTRL_LTRIGGER, 1, &consumed));
    assert(!mgift_shortcut_update(chord, 0, &consumed) && !consumed);
+
+   /* Control remap: the chord is now the player's binding.  The default
+    * (SELECT+DOWN) must behave exactly as the hand-written 3.0 version over
+    * long random pad sequences; an unbound chord never fires and consumes
+    * nothing; a rebound chord fires only on its own buttons. */
+   {
+      unsigned c_new = 0, c_old = 0, seed = 7, pad, k;
+      for (k = 0; k < 2000000; k++)
+      {
+         int en, f_new, f_old;
+         seed = seed * 1103515245u + 12345u;
+         /* bias toward the chord so it is actually exercised */
+         pad = (seed >> 16) & MGIFT_SHORTCUT_ALL;
+         if ((seed >> 8) & 1) pad &= chord | PSP_CTRL_START;
+         en = ((seed >> 4) & 15) != 0;
+         f_new = mgift_shortcut_update(pad, en, &c_new);
+         f_old = legacy_mgift(pad, en, &c_old);
+         assert(f_new == f_old && c_new == c_old);
+      }
+      consumed = 0;
+      for (k = 0; k < 4096; k++)
+         assert(!mgift_shortcut_update_chord(k, 0, 1, &consumed) && !consumed);
+      consumed = 0;
+      assert(!mgift_shortcut_update_chord(chord, PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER,
+                                          1, &consumed));
+      assert(mgift_shortcut_update_chord(PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER,
+                                         PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER,
+                                         1, &consumed) &&
+             consumed == (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER));
+   }
    puts("PASS: Automatic profile reuse/create/failure cleanup and Select+Down debounce/consumption");
    return 0;
 }

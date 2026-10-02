@@ -432,6 +432,9 @@ void fe_log(const char *fmt, ...) { (void)fmt; }
 void fe_np_gb_set_receive(fe_np_gb_receive_fn fn, void *u) { (void)fn; (void)u; }
 void fe_np_gb_set_peer_callback(fe_np_gb_peer_fn fn, void *u) { (void)fn; (void)u; }
 int fe_np_gb_peer_ready(uint8_t *id) { (void)id; return 0; }
+int fe_np_gb_send_room(void) { return 0; }
+int fe_np_gb_unacked(void) { return 0; }
+int fe_np_gb_peer_mac(uint8_t mac[6]) { (void)mac; return -1; }
 int fe_np_gb_local_id(uint8_t *id) { (void)id; return 0; }
 int fe_np_gb_send(uint16_t id, const void *p, size_t n)
 { (void)id; (void)p; (void)n; return -1; }

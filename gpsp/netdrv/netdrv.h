@@ -437,6 +437,12 @@ int netdrv_send(netdrv *nd, int flags, const void *buf, size_t len,
  * hitting the tx_overflow drop; the core itself is naturally paced by the
  * RFU request/response rhythm. */
 int netdrv_send_capacity(const netdrv *nd, uint16_t dst_id);
+/* Reliable payloads to dst_id not yet acknowledged (queued, in flight or
+ * spilled); 0 when the peer is unknown. */
+int netdrv_unacked(const netdrv *nd, uint16_t dst_id);
+/* The address a peer's frames come from (a client learns the host's from
+ * WELCOME).  0 on success. */
+int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6]);
 
 /* Introspection */
 int  netdrv_active(const netdrv *nd);        /* session up? */

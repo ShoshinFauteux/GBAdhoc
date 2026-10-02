@@ -77,7 +77,44 @@ int main(void)
    }
    pcfg_ff_set_mode(99);
    assert(pcfg_ff_mode() == PCFG_FF_3X);
+
+   /* 3.0's "A/B buttons" (btn_swap) has no row and no field any more.  A
+    * 3.0 card with it set loads cleanly, keeps Cross-is-A as an explicit
+    * bind_a/bind_b pair, and after one save the key no longer matters. */
+   f = fopen(path, "w");
+   assert(f);
+   fputs("scale = 1\nprofile = 0\nme_mode = 1\nbtn_swap = 1\nfilter = 0\n"
+         "ff_mult_x10 = 30\nff_hold = 1\ngroup = GPSP07\n", f);
+   fclose(f);
+   memset(&g_pcfg, 0, sizeof(g_pcfg));
+   pcfg_load(path);
+   assert(g_pcfg.controls.bind[CTL_GAME_A] == CTL_CROSS &&
+          g_pcfg.controls.bind[CTL_GAME_B] == CTL_CIRCLE);
+   assert(pcfg_ff_mode() == PCFG_FF_3X && g_pcfg.ff_hold == 1);
+   pcfg_save();
+   assert(fe_ini_get_int(path, "btn_swap", -1) == 1);   /* 3.0's mirror */
+   {
+      char v[16];
+      assert(fe_ini_get(path, "bind_a", v, sizeof(v)) && !strcmp(v, "CROSS"));
+      assert(fe_ini_get(path, "bind_b", v, sizeof(v)) && !strcmp(v, "CIRCLE"));
+   }
+   assert(fe_ini_set_int(path, "btn_swap", 0) == 0);    /* now inert */
+   memset(&g_pcfg, 0, sizeof(g_pcfg));
+   pcfg_load(path);
+   assert(g_pcfg.controls.bind[CTL_GAME_A] == CTL_CROSS);
+   /* a fresh card never gains bind_ keys and reads btn_swap = 0 */
+   f = fopen(path, "w");
+   assert(f);
+   fclose(f);
+   memset(&g_pcfg, 0, sizeof(g_pcfg));
+   pcfg_load(path);
+   pcfg_save();
+   {
+      char v[16];
+      assert(!fe_ini_get(path, "bind_a", v, sizeof(v)));
+      assert(fe_ini_get_int(path, "btn_swap", -1) == 0);
+   }
    remove(path);
-   puts("PASS: defaults, six legacy presets, invalid values, all save/load round trips");
+   puts("PASS: defaults, six legacy presets, invalid values, all save/load round trips, btn_swap migration");
    return 0;
 }

@@ -2421,6 +2421,13 @@ static void emit_pmemst_stub(
     u32 dbase = (u32)vram_clean;
     mips_emit_srl(reg_temp, reg_a0, VRAM_DIRTY_SHIFT);   /* page index */
     mips_emit_lui(reg_a0, ((dbase + 0x8000) >> 16));     /* a0 is dead here */
+#if ME_MIDFRAME_LOG
+    /* 5th instruction: clean[VRAM_DIRTY_ANY] = 0, "some page was written",
+     * which ME_MIDFRAME_LOG checks once per scanline instead of scanning
+     * the 96-byte map (video.h).  Same lui: the map is 128-aligned, so
+     * dbase and dbase + 96 share it (gba_memory.c). */
+    mips_emit_sb(reg_zero, reg_a0, dbase + VRAM_DIRTY_ANY);
+#endif
     mips_emit_addu(reg_a0, reg_a0, reg_temp);
     mips_emit_sb(reg_zero, reg_a0, dbase);               /* clean[page] = 0 */
   }
@@ -2611,6 +2618,12 @@ static void emit_palette_hdl(
     palette_convert();
     mips_emit_sh(reg_temp, reg_rv, 0x502);
   }
+#if ME_MIDFRAME_LOG
+  // Signal that the palette was written (any nonzero word, as the OAM stub
+  // does for OAM_UPDATED): the Media Engine's mid-frame log checks it once
+  // per scanline (video.h, cpu.h PAL_UPDATED).
+  mips_emit_sw(reg_base, reg_base, PAL_UPDATED * 4);
+#endif
   generate_function_return_swap_delay();
 
   *tr_ptr = translation_ptr;

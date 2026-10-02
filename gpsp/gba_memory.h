@@ -317,7 +317,14 @@ extern u8 vram[1024 * 96];
  * with `sb $zero` -- it has no register holding a known-nonzero byte at the
  * point of the store, and manufacturing one would cost an extra instruction
  * in the hottest store path. Reset by memset(.., 1, ..). */
-extern u8  vram_clean[VRAM_DIRTY_PAGES];
+/* One more byte after the map (the array is VRAM_DIRTY_MAP_BYTES long):
+ * vram_clean[VRAM_DIRTY_ANY] is cleared by every mark, whatever the page, so
+ * a reader that resets it can tell "nothing was written" with one load
+ * (ME_MIDFRAME_LOG's per-scanline check, video.h).  The ME and the frontend
+ * only ever touch the first VRAM_DIRTY_PAGES bytes. */
+#define VRAM_DIRTY_ANY       VRAM_DIRTY_PAGES
+#define VRAM_DIRTY_MAP_BYTES (VRAM_DIRTY_PAGES + 32)
+extern u8  vram_clean[VRAM_DIRTY_MAP_BYTES];
 extern u32 vram_dirty_marks;
 extern u8 bios_rom[1024 * 16];
 // Double buffer used for SMC detection

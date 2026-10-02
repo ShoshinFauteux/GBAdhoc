@@ -90,6 +90,14 @@ static union {
   } aw;
 } serstate;
 
+#ifdef SERIAL_IDLE_FAST
+/* The only state serialpoke_update / serialaw_update touch while this console
+ * has no link client role (netplay_client_id == 0): main.c's idle fast path
+ * does exactly that add itself and skips the call chain. */
+unsigned *const serial_poke_frcnt = &serstate.poke.frcnt;
+unsigned *const serial_aw_frcnt   = &serstate.aw.frcnt;
+#endif
+
 // Serial-Poke: emulates (via fakes) the pokemon serial protocol.
 //
 // The protocol has two phases: handshake and data exchange.
@@ -417,7 +425,20 @@ void serialpoke_net_receive(const void* buf, size_t len, uint16_t client_id) {
 
 static void serialaw_senddata(u16 cmd, u8 state, const u16 *packet, size_t wcnt) {
   u32 flags = (cmd << 16) | (state << 8) | wcnt;
+#ifdef LINKBENCH
+  /* tools/linkbench only: report the frame size the fixed buffer below and
+   * the 8-bit count field must hold (docs/GBA-LINK-FEASIBILITY.md). */
+  if (wcnt > 255)
+    fprintf(stderr, "LB serialaw_senddata wcnt=%u state=%u cmd=%04x\n",
+            (unsigned)wcnt, (unsigned)state, (unsigned)cmd);
+#endif
+#ifdef LINKBENCH_AWFIX
+  /* bench-only candidate fix: a PACKETXG frame is up to 255 + 1 + 2 = 258
+   * words; the stock 128-word buffer overflows and the count wraps. */
+  u32 pkt[2 + 130] = {
+#else
   u32 pkt[2 + 128] = {
+#endif
     netorder32(NET_SERADWR_HEADER),  // Header magic
     netorder32(flags),               // Current device state
   };
@@ -683,7 +704,13 @@ void serialaw_net_receive(const void* buf, size_t len, uint16_t client_id) {
     const u32 flags = netorder32(pkt[1]);
     const u16 cmd = flags >> 16;
     const u16 ste = (flags >> 8) & 0xff;    // Peer state.
+#ifdef LINKBENCH_AWFIX
+    /* the 8-bit field wraps above 255; the datagram length is authoritative */
+    const u16 cnt = (len >= 8 && (((len - 8) / 2) & 0xff) == (flags & 0xff))
+                    ? (u16)((len - 8) / 2) : (u16)(flags & 0x00ff);
+#else
     const u16 cnt = flags & 0x00ff;         // Number of words to follow.
+#endif
 
     serstate.aw.peer[client_id].timeout = 0;
     serstate.aw.peer[client_id].state = ste;

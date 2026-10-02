@@ -1,0 +1,14 @@
+VALIDATION ONLY: smc_stable_thunk_link writes back the thunk but does NOT
+invalidate the I-cache over it (an I-only hole: the D side is complete).
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -2779,7 +2779,8 @@
+ {
+   generate_branch_patch_unconditional(entry, body);
+   address32(entry, 4) = 0;
+-  platform_cache_sync(entry, entry + 8);
++  /* JITCOH VALIDATION: D writeback only, no I invalidate */
++  sceKernelDcacheWritebackRange(entry, 8);
+ }
+ 
+ static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)

@@ -124,6 +124,12 @@ typedef enum
   /* Machine defined storage */
   REG_USERDEF       = 32,
 
+  /* Set by every palette store (C write_palette*, the MIPS and x86 store
+   * stubs), cleared only by the ME_MIDFRAME_LOG capture (video_me_log.h).
+   * The palette's twin of OAM_UPDATED.  The last slot: the ARM backends use
+   * REG_USERDEF + 0..14, MIPS and x86 nothing above REG_SAVE6. */
+  PAL_UPDATED       = 63,
+
   REG_MAX           = 64
 } ext_reg_numbers;
 
@@ -208,6 +214,13 @@ extern u8 *ram_translation_ptr;
  * silent buffer overrun rather than a link error. */
 #ifndef MAX_TRANSLATION_GATES
 #define MAX_TRANSLATION_GATES 8
+#endif
+
+#ifdef DISPATCH_CACHE
+#ifndef DISPATCH_CACHE_BITS
+#define DISPATCH_CACHE_BITS 9     /* 512 entries per ISA, 4 KiB per table */
+#endif
+void dispatch_cache_clear(void);
 #endif
 
 extern u32 idle_loop_target_pc;

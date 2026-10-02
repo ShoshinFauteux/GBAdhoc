@@ -1,0 +1,13 @@
+VALIDATION ONLY: smc_stable_thunk_link re-points a stable RAM thunk without
+syncing the two words it rewrites (an I-side hole on code that has run).
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -2779,7 +2779,7 @@
+ {
+   generate_branch_patch_unconditional(entry, body);
+   address32(entry, 4) = 0;
+-  platform_cache_sync(entry, entry + 8);
++  /* JITCOH VALIDATION: sync removed */
+ }
+ 
+ static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)

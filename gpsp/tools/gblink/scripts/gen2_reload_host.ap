@@ -1,0 +1,66 @@
+# Pokemon Crystal LIVE link trade + CLOCK CHECK, host side.  The session runs
+# on real clocks (no gblink_rtc_seed; the host's clock reads 2011); after it
+# the game boots from its battery save (gblink_resume = 2) and must reach
+# the overworld without "The clock's time may be wrong".
+# From here as gen2_live_host.ap:
+# (the gen2_counter_host.ap end state, standing at the Cable Trade Center
+# receptionist) -- no boot, no restart.  The host disconnects after the
+# trade (the menu's Disconnect); both then play on.
+hold UP 8
+wait 20
+# YES, wait for the friend, save, and walk in (map 20:2 TRADE_CENTER)
+mash A 1 0xDCB6 0xFF 2 4000
+evt in_trade_center
+wait 120
+# --- the internal-clock side sits at (3,4) facing right, the other at
+# (6,4) facing left (TradeCenter.asm; hSerialConnectionStatus $FFCB = 2)
+stepram UP 1 0xDCB7 0xFF 5 1000
+ifram 1 0xFFCB 0xFF 2 3
+stepram LEFT 1 0xDCB8 0xFF 3 1000
+stepram UP 1 0xDCB7 0xFF 4 1000
+hold RIGHT 8
+ifram 1 0xFFCB 0xFF 1 3
+stepram RIGHT 1 0xDCB8 0xFF 6 1000
+stepram UP 1 0xDCB7 0xFF 4 1000
+hold LEFT 8
+wait 20
+logbytes seat 2 0xDCB7
+hold A 6
+wait 800
+# --- our first Pokemon (GROWLITHE "Jacob"): STATS/TRADE -> TRADE, confirm
+hold A 6
+wait 60
+hold RIGHT 6
+wait 30
+hold A 6
+wait 400
+mash A 1 0xDCD8 0xFF 0xA0 4000
+evt traded
+# The games save by themselves once the trade animation ends (~90 s).
+# Not waitsram: both use cartridge RAM as scratch for Pokemon pictures, so
+# its CRC moves long before the save lands.  score_trade.py judges the save.
+wait 5400
+evt settled
+logbytes party 7 0xDCD7
+disconnect
+# --- past the session's end (margin + any deferrals), into the reboot
+wait 1400
+evt rebooted
+repeat 5
+wait 120
+press START
+endrepeat
+wait 200
+hold A 8
+wait 60
+hold A 8
+wait 180
+evt booted
+logbytes where 4 0xDCB5
+waitramne 1 0xDCB5 0xFF 0 600
+hold DOWN 20
+wait 60
+logbytes moved 4 0xDCB5
+# the step landed: y 3 -> 4 (PC 2F, where the trade's save put us)
+waitram 1 0xDCB7 0xFF 4 60
+evt clock_ok

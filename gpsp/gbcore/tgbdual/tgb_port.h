@@ -44,6 +44,11 @@
 extern int pad_state;
 /* DMG palette as BGR555: BG[4], OBJ0[4], OBJ1[4].  Adapter. */
 extern word tgb_dmg_palette[12];
+/* Nonzero (the default): CGB colours are shown through the Game Boy Color
+ * LCD model (lcd.c, _cgb_lcd_table.h); zero: the raw 5-to-8-bit expansion.
+ * Defined once in tgb_shared.c; set by gbcore_set_color_correction. */
+#define tgb_cgb_lcd tgbshared_cgb_lcd
+extern int tgb_cgb_lcd;
 
 /* --- adapter callbacks --------------------------------------------------- */
 
@@ -60,6 +65,11 @@ void set_gb_type(void);
 /* A serial transfer started with `outgoing` in SB.  Returns 1 and fills
  * *received when a peer exchanged a byte, 0 when there is no cable. */
 int tgb_port_serial(byte outgoing, int internal_clock, byte *received);
+/* An internal-clock transfer that started with `outgoing` has shifted its
+ * eight bits.  Returns the byte that lands in SB: an in-memory cable's
+ * (two-instance link sessions) or else `fallback`, the byte decided at the
+ * start (seri_rx). */
+byte tgb_port_serial_complete(byte outgoing, byte fallback);
 
 /* --- core functions without a prototype in gb.h -------------------------- */
 
@@ -68,6 +78,9 @@ void sgb_set_color(int color, word value);
 void sgb_render_border(void);
 void gb_invalidate_palette(int palNo);
 size_t gb_save_state(byte *buf);
+/* The external-clock side of a transfer (cpu.c): shifts `dat` in and
+ * returns the byte shifted out, or 0xFF when no transfer is waiting. */
+byte cpu_seri_send(byte dat);
 
 /* --- core internals the adapter reaches ---------------------------------- */
 

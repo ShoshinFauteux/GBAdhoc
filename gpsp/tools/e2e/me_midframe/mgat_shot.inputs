@@ -1,0 +1,31 @@
+# Mario Golf: Advance Tour (USA), from power-on with the owner's save:
+# title -> Quick Game -> character -> course -> hole 1 flyover -> aim view
+# (overhead, mode-7) -> address view -> swing -> ball flight (overhead).
+# Frames at 60/s, desktop twin, --option defaults.  Used by
+# run_me_midframe_fixtures.sh; the ROM is not in the repository.
+wait 600
+press START 3
+wait 300
+press START 3
+wait 300
+press RIGHT 3
+wait 60
+press A 3
+wait 150
+press A 3
+wait 150
+press A 3
+wait 150
+press A 3
+wait 150
+press A 3
+wait 900
+press A 3
+press A 3
+wait 110
+press A 2
+wait 40
+press A 2
+wait 40
+press A 2
+wait 900

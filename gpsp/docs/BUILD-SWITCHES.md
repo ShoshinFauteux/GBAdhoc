@@ -119,6 +119,8 @@ for that" is never mistaken for "that was tried".
 | `SMC_PARTIAL_DIRECT_GATE` | Patch the gate fall-through directly instead of through the dispatcher. | Never measured; no comment. |
 | `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | Override `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. | Tuning knobs, not experiments. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart), not picked for roundness. |
 | `OVERCLOCK_60FPS` | Upstream's 60 fps overclock build. | Untouched by this project. |
+| `ME_AFFINE_LINES` (video.h, default 1 on `claude/me-midframe`) | The Media Engine capture records the affine reference counters per line and the engine installs them, so a BG2X/Y/BG3X/Y reload in HBlank (mode-7 floors and roads) reaches it. | Desktop model: Mario Golf's aim view 1558 wrong frames -> 23; clean frames bit-identical. Hardware pending. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
+| `ME_MIDFRAME_LOG` (video.h, default 1 on `claude/me-midframe`; harness key `me_midlog`) | Undo/redo log of palette/OAM/VRAM written during the visible lines, applied by the engine line by line. Adds one store to the MIPS palette stub (`PAL_UPDATED`) and one to the VRAM stub (`vram_clean[96]`). | Desktop model: all synthetic cases and H&S heavy's 5 remaining frames exact; recorder ~0.5 us/frame on the desktop. PSP cost not measured. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
 
 ## Control arms
 
@@ -254,6 +256,36 @@ post-load malloc budget as `EVT heap_budget`; `jit_small = 1` in
 
 `BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
 the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.
+
+### Dynarec profiling and the two speed prototypes (2026-09-29)
+
+All OFF by default; `docs/DYNAREC-PROFILE.md` has the measurements.
+
+| switch | where | what it does | status |
+|---|---|---|---|
+| `DISPATCH_CACHE` | root make (`DISPATCH_CACHE=1`) | `mips_indirect_branch_*` probe a 512-entry-per-ISA {guest pc -> host entry} table in asm before `save_registers` + the C block lookup; filled by the C lookup, emptied by every flush entry point (full RAM, ROM, partial retire). The cycle check still runs first. | Prototype. `tools/drprof/dr_oracle.py` IDENTICAL on 7 fixtures; PPSSPP IDENTICAL; twin -4..-23% core instructions. Hardware A/B staged (`GBADHOC-DRPROF` rig, arms A-PROTO/H-PROTO). |
+| `SMC_RETIRE_WINDOW` | root make | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. | Prototype. Oracle IDENTICAL on 7 fixtures; twin -6..-12% on SMC games, 0 elsewhere. Relies on every live block having a recorded extent (see the doc). Hardware A/B staged with `DISPATCH_CACHE`. |
+| `DRPROF_HW` | root make **and** `-DDRPROF_HW` frontend | phase word `reg[40]` + a 1 kHz sampler thread; `EVT drprof` windows | Bench only (`GBADHOC-DRPROF` rig, arms A-SAMP/H-SAMP). PPSSPP: hash-identical to base, +4% cost. Refused in a release. |
+| `DRPROF_TWIN` | `tools/drprof` only | translation-time class map + zone markers for the qemu plugin; emitted code unchanged (`dr_oracle.py base base-notwin` IDENTICAL) | Host twin only. Refused in a release. |
+| `DRPROF_NEGCTL` | `tools/drprof` only | +1 cycle per Thumb instruction: the oracle's negative control | Must FAIL the oracle; it does, on all 7 fixtures. |
+| `platform=drprof-mipsel` | root make | the PSP's translator as a static Linux mipsel archive for qemu (`tools/drprof/Makefile`) | Host only. |
+
+`tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` for one-off variants of
+a non-release profile; it refuses them with `release`.
+
+### The JIT code discipline (2026-10-01)
+
+All OFF by default; `docs/JIT-CODE-DISCIPLINE.md` has the design and the
+measurements.
+
+| switch | where | what it does | status |
+|---|---|---|---|
+| `JIT_CODE_DISCIPLINE` | root make | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change; replaces 8b48b48's whole-I on every ROM publish | Oracle IDENTICAL on 7 fixtures + a 32-reload soak; PPSSPP IDENTICAL (AW2, H&S resident); audit 0 unrecorded writes; twin cache checker 0 stale executions under every model; twin −0.0..+0.3% instructions. Off: release EBOOT byte-identical. Hardware plan staged, not run. |
+| `JIT_CODE_CHECK` | root make | zone asserts on every record and every lookup return (stderr) | Twin/desktop. 0 violations. Refused in a release; needs the discipline. |
+| `JIT_CODE_AUDIT` | `tools/drprof` only | shadows both zones; flags any code word changed without a record | 0 on 7 fixtures + soak; its negative control `JIT_CODE_AUDIT_NEGCTL` (one record dropped) FAILS: 60,672 on H&S heavy. |
+| `JIT_CODE_AB` | root make, harness | the original sync model compiled in beside the discipline; harness key `jit_code_mode` 0 legacy / 1 + 8b48b48 / 2 discipline / 3 no ownership invalidate: one binary per hardware A/B | Oracle and PPSSPP IDENTICAL in every mode. Refused in a release. |
+| `JIT_SYNC_STATS` | `tools/drprof` only | counts of the original sync path | Twin only. Refused in a release. |
+| `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | `psp/Makefile` (via `tools/build.sh` `PSP_EXTRA=`) | link `psp/layout_pad.S` first so every object moves by N bytes | Hardware layout sweeps. `PSP_EXTRA` refused with `release`. |
 
 ---
 

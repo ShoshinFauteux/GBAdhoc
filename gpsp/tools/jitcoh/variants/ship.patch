@@ -1,0 +1,36 @@
+jitcoh variant "ship": the ROM publish of 3.0.0 (before 8b48b48): ranged D
+writeback + ranged I invalidate of [last_rom_translation_ptr, rom_translation_ptr).
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -351,31 +351,7 @@
+ void translate_icache_sync() {
+     // Cache emitted code can only grow
+     if (last_rom_translation_ptr < rom_translation_ptr) {
+-#if defined(PSP) || defined(JITCOH_PSP_CACHE)
+-        /* NEW ROM CODE INVALIDATES THE WHOLE I-CACHE, not just its own range.
+-         *
+-         * The resident-ROM crash (Heart & Soul dies the frame after a state
+-         * load; BADJUMP_SAFE catches the derail and soft-resets the GBA) was
+-         * bisected on the EXACT failing binary by one-instruction patches of
+-         * its nine inlined sync sites, so the layout the bug needs never moved
+-         * (docs/RESIDENT-ICACHE-FIX.md, 2026-10-01, PSP Go + PSP-3000):
+-         *   - whole D+I at this site (ROM publish, out-of-line copy): fixed;
+-         *     every other single site: still dies;
+-         *   - this site's ranged D writeback + WHOLE I invalidate: fixed;
+-         *     ranged I invalidate + WHOLE D writeback: dies;
+-         *   - the same ranges rounded out to whole 64-byte lines: dies.
+-         * So instruction fetch runs stale I-cache lines that lie OUTSIDE the
+-         * range just written, and nothing data-side is missing.  The ranged
+-         * invalidate cannot reach them; a whole invalidate (256 line ops, a
+-         * few microseconds) can, and ROM publishes are rare once a game is
+-         * warm.  The D side stays ranged: the new bytes are all that need to
+-         * reach memory. */
+-        sceKernelDcacheWritebackRange(last_rom_translation_ptr,
+-          (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
+-        sceKernelIcacheInvalidateAll();
+-#else
+         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+-#endif
+         last_rom_translation_ptr = rom_translation_ptr;
+     }
+     if (last_ram_translation_ptr < ram_translation_ptr) {

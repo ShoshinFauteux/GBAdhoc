@@ -38,11 +38,22 @@ static u32 sound_buffer_base;
 
 static fixed16_16 gbc_sound_tick_step;
 
+#ifdef LINKBENCH
+/* tools/linkbench only (never a PSP build): DirectSound FIFO bytes queued per
+ * channel, reset by the bench every frame -- the audio a thin client would
+ * need if it mixed the GBA's own sample stream itself. */
+u32 lb_fifo_bytes[2];
+#endif
+
 /* Queue 4 samples to the top of the DS FIFO, wrap around circularly */
 
 void sound_timer_queue32(u32 channel, u32 value)
 {
   direct_sound_struct *ds = &direct_sound_channel[channel];
+
+#ifdef LINKBENCH
+  lb_fifo_bytes[channel & 1] += 4;
+#endif
 
   ds->fifo[ds->fifo_top++] = value & 0xFF;
   ds->fifo_top &= 31;
@@ -60,6 +71,7 @@ void sound_timer_queue32(u32 channel, u32 value)
 
 unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
 {
+  DRPH_SCOPE(DRPH_SOUND);
   int ret = 0;
   u32 sample_status = DIRECT_SOUND_INACTIVE;
   direct_sound_struct *ds = &direct_sound_channel[channel];
@@ -447,6 +459,7 @@ static void render_gbc_sound_body(void);
  * `amix` is measuring. */
 void render_gbc_sound()
 {
+  DRPH_SCOPE(DRPH_SOUND);
   u32 cph_t = core_phase_enter(CORE_PHASE_FINE);
   render_gbc_sound_body();
   core_phase_leave(CORE_PHASE_FINE, &cph_amix, cph_t);
@@ -896,6 +909,7 @@ unsigned sound_write_savestate(u8 *dst)
 
 u32 sound_read_samples(s16 *out, u32 frames)
 {
+  DRPH_SCOPE(DRPH_SOUND);
    u32 i;
    u32 samples_to_read   = frames << 1;
    /* Get total number of samples in the buffer */

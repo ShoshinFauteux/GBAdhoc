@@ -15,6 +15,19 @@ uint32_t fe_crc32(uint32_t crc, const void *data, size_t len);
 /* SHA-1: out_hex must hold 41 bytes (40 hex chars + NUL). */
 void fe_sha1_hex(const void *data, size_t len, char *out_hex);
 
+/* The same hash, fed in pieces (a ROM streamed from a file or received in
+ * chunks).  fe_sha1_final writes the 20-byte digest. */
+typedef struct fe_sha1_ctx
+{
+   uint32_t h[5];
+   uint64_t len;
+   uint8_t  buf[64];
+   size_t   used;
+} fe_sha1_ctx;
+void fe_sha1_init(fe_sha1_ctx *c);
+void fe_sha1_update(fe_sha1_ctx *c, const void *data, size_t len);
+void fe_sha1_final(fe_sha1_ctx *c, uint8_t out[20]);
+
 /* Write a 240x160-ish RGB565 frame as a bottom-up 24bpp BMP.
  * pitch is in BYTES. Returns 0 on success. */
 int fe_bmp_write_rgb565(const char *path, const uint16_t *pix,

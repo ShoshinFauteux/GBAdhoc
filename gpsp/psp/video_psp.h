@@ -26,13 +26,29 @@ enum
    VID_SCALE_1X      = 0,  /* 240x160 centered (hw-confirmed v1 default) */
    VID_SCALE_FIT     = 1,  /* aspect-preserving fill: 408x272 centered   */
    VID_SCALE_STRETCH = 2,  /* fullscreen 480x272                          */
-   VID_SCALE_MODES   = 3
+   /* Exact 2x, always nearest: every source pixel is a 2x2 block.  A
+    * 240x160 GBA picture is 480x320, so the middle 136 source rows are shown
+    * (12 cropped top and bottom); a 160x144 GB picture is 320x288 -> the
+    * middle 136 rows (4 cropped each side) at 320x272 with 80 px bars.
+    * Appended, not inserted: CONFIG.INI stores the number. */
+   VID_SCALE_INT2    = 3,
+   VID_SCALE_MODES   = 4
 };
 
 enum
 {
    VID_FILTER_NEAREST  = 0,
-   VID_FILTER_BILINEAR = 1
+   VID_FILTER_BILINEAR = 1,
+   /* SHARP BILINEAR (docs/SHARP-BILINEAR.md): nearest-upscale by an integer
+    * factor into a VRAM render target, then draw THAT with GU_LINEAR at the
+    * final size.  Pixels stay square and crisp, and only the one output pixel
+    * on each source-pixel edge is blended, so a non-integer scale (Fit,
+    * Stretch) does not shimmer as the picture scrolls.  At an exact integer
+    * scale (1x, 2x) it draws plain nearest, pixel-identical.  Appended, not
+    * inserted: CONFIG.INI stores the number, and an older build reads 2 as
+    * bilinear (its loader maps any non-zero filter to 1). */
+   VID_FILTER_SHARP    = 2,
+   VID_FILTER_MODES    = 3
 };
 
 void vid_init(void);
@@ -45,7 +61,12 @@ const char *vid_scale_name(int scale);
 const char *vid_filter_name(int filter);
 
 /* Cycle the runtime presets (Triangle, plan §8): 1x → fit → fit+bilinear
- * → stretch → stretch+bilinear → 1x. Returns the new preset's name. */
+ * → stretch → stretch+bilinear → 1x. Returns the new preset's name.  2x is
+ * NOT in the cycle (opt-in from Settings: it crops the GBA picture, which a
+ * player cycling past would not expect); from 2x the cycle goes to fit.
+ * The two smoothed presets use the smoothing the player last CHOSE: after
+ * sharp bilinear was set (Settings or CONFIG.INI) they are "fit sharp" and
+ * "stretch sharp"; otherwise the cycle is exactly what it always was. */
 const char *vid_cycle_preset(void);
 
 /* Blit one libretro-RGB565 GBA frame through the GU path at the current
@@ -139,6 +160,12 @@ void vid_text_hd(int x, int y, const char *str, uint16_t rgb565);
 /* Text is PROPORTIONAL: ask for the width, never strlen * FE_FONT_W. */
 int  vid_text_w(const char *str);
 int  vid_text_hd_w(const char *str);
+/* Optical centring of one line of vid_text in a box (a selection band, a
+ * chip, a plate): the box top that centres the cap height of text drawn at
+ * text_y, and the inverse, the text y that centres it in a given box.  Both
+ * read the metrics from the atlas (video_psp.c fu_cap). */
+int  vid_band_y(int text_y, int band_h);
+int  vid_text_y_in(int box_y, int box_h);
 void vid_text_center(int y, const char *str, uint16_t rgb565);
 /* GE scissor: confine subsequent draws to a rectangle, then release it. */
 /* The GBAdhoc wordmark, tinted like text.  130x22 at the top-left. */
@@ -169,6 +196,10 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
                       int srcw, int srch, int alpha);
 void vid_image(int x, int y, int w, int h, const uint16_t *pix,
                int texw, int texh, int srcw, int srch, int alpha);
+/* 1:1, NEAREST, opaque: the top-left w x h texels at x,y unfiltered (the
+ * harness's injected menu backdrop, docs/UI-OVERLAY.md). */
+void vid_image_px(int x, int y, int w, int h, const uint16_t *pix,
+                  int texw, int texh);
 void vid_overlay_end(void);
 
 /* ---- deferred GE sync (ADR-0040, `config.ini gu_defer`, DEFAULT OFF) -----
@@ -199,6 +230,42 @@ void vid_swap(void);
  * that was just drawn (pre-swap) as a 24bpp BMP, decoding VRAM bytes with
  * the REAL GE 5650 layout. Returns 0 on success. */
 int vid_dump_ge(const char *path);
+
+/* ---- ambient bars (docs/DISPLAY-FEATURES.md, look in ambient_look.h) -----
+ *
+ * One AMB_W x AMB_H texture in VRAM above the staging buffer (no main RAM:
+ * on a PSP-1000 the core takes every heap byte at ROM load), baked once from
+ * the hero art at launch or, failing that, from an early game frame.  While
+ * a mode is set, vid_draw_frame/vid_draw_prestaged draw the BARS -- the
+ * screen outside the picture -- from it IN PLACE OF the clear they already
+ * did: one textured sprite per bar, the scrim folded in as a MODULATE
+ * colour.  Nothing is drawn when the picture covers the screen.
+ * `mode` is a PCFG_AMB_* value. */
+void vid_ambient_mode(int mode);
+/* The bar colour when there is no picture: the console's darkest palette
+ * shade (libretro RGB565), drawn under ambient_look.h's black ramp. */
+void vid_ambient_fallback(uint16_t rgb565);
+/* Bake from a PSP-order RGB565 image (w x h at `stride` texels), cover-
+ * cropped to the screen's shape.  `precomposed` = it came from hero/ (the
+ * lighter scrim).  0 = ok, -1 = no VRAM room (ambient then shows the
+ * palette, never an error anywhere else).  Logs EVT ambient_bake. */
+int  vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
+                          int precomposed);
+/* The same from a small box-art cover (the browser's 128-px cache), blurred
+ * AMB_COVER_BLUR_PASSES more so its lettering does not read through a
+ * menu.  The browser's Settings backdrop only. */
+int  vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h);
+/* 0 = nothing baked, 1 = art, 2 = game snapshot. */
+int  vid_ambient_source(void);
+/* Retake a game snapshot on the next presented frame (if that is what the
+ * bars show): the in-game menu closing is a state load or a new scene. */
+void vid_ambient_resnap(void);
+/* Draw the baked ART (not a snapshot) at x,y,w,h inside an overlay pass --
+ * the loading screen's background.  Returns 0 when there is none. */
+int  vid_ambient_image(int x, int y, int w, int h, int alpha);
+/* Forget a baked ART source (the texture's bytes stay, unused): the
+ * browser's Settings backdrop is put back to "nothing baked" on close. */
+void vid_ambient_drop(void);
 
 #ifdef __cplusplus
 }

@@ -442,7 +442,10 @@ void (*gpsp_heap_census)(const char *where);
  * map's tail is OBJ VRAM (pages 64..95); a stale tail line hides dirty sprite
  * pages from the renderer.  Aligned, the 96-byte map starts a line, so the
  * two lines me_inv() touches are exactly the two it spans. */
-u8  vram_clean[VRAM_DIRTY_PAGES] __attribute__((aligned(64)));
+/* 128-aligned (was 64) so the MIPS stub's `lui` for the map also reaches
+ * vram_clean[VRAM_DIRTY_ANY]: a 128-byte block never straddles the 0x8000
+ * boundary where the stub's sign-extended low half would change the lui. */
+u8  vram_clean[VRAM_DIRTY_MAP_BYTES] __attribute__((aligned(128)));
 u32 vram_dirty_marks;
 bool gamepak_mirror_1m;     /* 1MiB Classic NES/Famicom Mini mirror mode */
 static u8 *gamepak_mini_rom;
@@ -523,6 +526,7 @@ void reload_timing_info()
 
 u8 read_backup(u32 address)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   u8 value = 0;
   cph_bkr++;   /* phase 5h: counted, not timed -- see main.h */
 
@@ -603,6 +607,7 @@ u32 eeprom_counter = 0;
 
 void function_cc write_eeprom(u32 unused_address, u32 value)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   cph_bkw++;   /* phase 5h */
   switch(eeprom_mode)
   {
@@ -720,6 +725,7 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
 
 u32 function_cc read_eeprom(void)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   u32 value;
   cph_bkr++;   /* phase 5h */
 
@@ -925,6 +931,7 @@ static inline s32 signext28(u32 value)
 
 cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   uint32_t ioreg = ((address & 0xffffff) >> 1);
   value &= 0xffff;
   switch(ioreg)
@@ -1090,6 +1097,7 @@ cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
 
 cpu_alert_type function_cc write_io_register8(u32 address, u32 value)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   address &= 0xffffff;
   if (address == 0x301) {
     if (value & 1)
@@ -1113,6 +1121,7 @@ cpu_alert_type function_cc write_io_register8(u32 address, u32 value)
 
 cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   address &= 0xfffffc;
   // Handle sound FIFO data write
   if (address == 0xA0) {
@@ -1135,6 +1144,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 {                                                                             \
   u32 aladdr = address & ~1U;                                                 \
   u16 val16 = (value << 8) | value;                                           \
+  reg[PAL_UPDATED] = 1;                                                       \
   address16(palette_ram, aladdr) = eswap16(val16);                            \
   address16(palette_ram_converted, aladdr) = convert_palette(val16);          \
 }
@@ -1142,6 +1152,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 #define write_palette16(address, value)                                       \
 {                                                                             \
   u32 palette_address = address;                                              \
+  reg[PAL_UPDATED] = 1;                                                       \
   address16(palette_ram, palette_address) = eswap16(value);                   \
   value = convert_palette(value);                                             \
   address16(palette_ram_converted, palette_address) = value;                  \
@@ -1152,6 +1163,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
   u32 palette_address = address;                                              \
   u32 value_high = value >> 16;                                               \
   u32 value_low = value & 0xFFFF;                                             \
+  reg[PAL_UPDATED] = 1;                                                       \
   address32(palette_ram, palette_address) = eswap32(value);                   \
   value_high = convert_palette(value_high);                                   \
   address16(palette_ram_converted, palette_address + 2) = value_high;         \
@@ -1162,6 +1174,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
 
 void function_cc write_backup(u32 address, u32 value)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   value &= 0xFF;
   cph_bkw++;   /* phase 5h */
 
@@ -1296,6 +1309,7 @@ void function_cc write_backup(u32 address, u32 value)
 
 #define vram_mark(addr)                                                       \
   vram_clean[(addr) >> VRAM_DIRTY_SHIFT] = 0;                                 \
+  vram_clean[VRAM_DIRTY_ANY] = 0;                                             \
   vram_dirty_marks++                                                          \
 
 #define write_vram8()                                                         \
@@ -1627,6 +1641,7 @@ float rumble_active_pct() {
 }
 
 void function_cc write_gpio(u32 address, u32 value) {
+  DRPH_SCOPE(DRPH_MEMC);
   u8 prev_value = gpio_regs[0];
   switch(address) {
   case 0xC4:
@@ -2366,6 +2381,7 @@ static u32 dma_transfer_region_span(u32 src_ptr, u32 dst_ptr,
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
+  DRPH_SCOPE(DRPH_DMA);
   dma_transfer_type *dmach = &dma[dma_chan];
   u32 src_ptr = 0x0FFFFFFF & dmach->source_address & (
                    dmach->length_type == DMA_16BIT ? ~1U : ~3U);
@@ -2491,6 +2507,7 @@ static u32 evict_gamepak_page(void)
 
 u8 *load_gamepak_page(u32 physical_index)
 {
+  DRPH_SCOPE(DRPH_MEMC);
   u32 rom_blocks = gamepak_size >> 15;
   /* Monotonic counter: every one of these is a 32 KiB read from the storage
    * medium in the middle of emulation, so a frontend can attribute a
@@ -2738,6 +2755,9 @@ void init_memory(void)
   memset(iwram, 0, sizeof(iwram));
   memset(ewram, 0, sizeof(ewram));
   memset(vram, 0, sizeof(vram));
+  /* Written without the store paths: every page differs from any copy an
+   * observer kept (the ME's eDRAM mirror, ME_MIDFRAME_LOG's shadow). */
+  memset(vram_clean, 0, sizeof(vram_clean));
 
   write_ioreg(REG_DISPCNT, 0x80);
   write_ioreg(REG_P1, 0x3FF);

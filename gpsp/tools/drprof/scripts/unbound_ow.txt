@@ -1,0 +1,30 @@
+# unbound_ow.txt -- Pokemon Unbound overworld (owner's Go state: inside a
+# Pokemon Center).  Dismiss the nurse text, walk out, then walk the town.
+# Frame-stamped press/hold/wait only.  Profile the `ow_walk` segment.
+wait 60
+press A 4
+wait 40
+press A 4
+wait 40
+press A 4
+wait 40
+press B 4
+wait 40
+evt exit_pc
+hold DOWN 150
+wait 60
+evt ow_walk
+hold DOWN 60
+hold LEFT 120
+hold UP 90
+hold RIGHT 200
+hold DOWN 90
+hold LEFT 120
+hold UP 60
+hold RIGHT 120
+hold LEFT 120
+hold DOWN 60
+hold RIGHT 90
+hold UP 90
+evt ow_end
+wait 30

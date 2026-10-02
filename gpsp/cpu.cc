@@ -1422,6 +1422,7 @@ cpu_alert_type check_interrupt() {
 // which means that it must be called with a valid CPU state.
 u32 check_and_raise_interrupts()
 {
+  DRPH_SCOPE(DRPH_IRQ);
   u32 irq_enabled = read_ioreg(REG_IE);
   u32 irq_flags = read_ioreg(REG_IF);
 

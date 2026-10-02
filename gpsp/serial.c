@@ -22,7 +22,12 @@
 
 int serial_mode = SERIAL_MODE_AUTO;
 
+#ifdef SERIAL_IDLE_FAST
+/* main.c's idle fast path reads it (contender #3, docs/DYNAREC-PROFILE.md) */
+u32 serial_irq_cycles = 0;
+#else
 static u32 serial_irq_cycles = 0;
+#endif
 
 /* Savestate accessors for the serial-IRQ scheduler. The pending-cycles
  * counter must be persisted: without it, a state saved mid-transaction
@@ -207,6 +212,7 @@ u32 serial_next_event() {
 
 // Account for consumed cycles and return if a serial IRQ should be raised.
 bool update_serial(unsigned cycles) {
+  DRPH_SCOPE(DRPH_SERIAL);
   // Might wanna check if the connected device has some update (IRQ).
   switch (serial_mode) {
   case SERIAL_MODE_RFU:

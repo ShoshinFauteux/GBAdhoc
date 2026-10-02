@@ -7,7 +7,10 @@
  * (psp/gameboy_render.c, psp/SMS.c, loadrom.c): input, the MBC3 clock, the
  * frame loop, sound rendering, battery images and save states.
  *
- * The core is one global machine, so there is at most one gbcore_t.
+ * The core is one global machine, so there is at most one gbcore_t per
+ * instance.  A build may link this object twice, the second copy with its
+ * gbcore_* symbols renamed gbcoreb_* (gbcore.h); everything else in it is
+ * local, so the copies share nothing.
  */
 #include "gbcore.h"
 
@@ -51,12 +54,75 @@ struct gbcore {
   uint64_t frame_number;
   uint16_t prev_buttons;
   int skip_render;
+  int headless;                /* gbcore_set_headless */
+  unsigned lines;              /* scanlines run in the current frame */
   uint8_t header[0x1C];        /* ROM 0x134..0x14F: identity for states */
 };
 
 static gbcore_t *active;
 static time_t (*gbcore_wallclock)(void);
 static unsigned palette_id = GBCORE_PALETTE_AUTO;
+
+/* ------------------------------------------------------------ power on --
+ * gbcore_power_on returns every static byte of this instance to its state
+ * in a freshly loaded program.  gbcore/gbcore_instance.ld gathers the
+ * instance's writable data and marks it; the initialised part (.data) is
+ * copied aside at the instance's first call, before anything can have
+ * changed it, and the zero-initialised part (.bss) is simply cleared.  A
+ * build that links the adapter without that script has no marks, and
+ * gbcore_power_on fails. */
+extern char tgb_image_data_start[] __attribute__((weak));
+extern char tgb_image_data_end[] __attribute__((weak));
+extern char tgb_image_bss_start[] __attribute__((weak));
+extern char tgb_image_bss_end[] __attribute__((weak));
+
+/* Outside the cleared range (the script places .bss.gbcore_keep first). */
+static struct {
+  uint8_t *data;
+  size_t size;
+  int taken;
+  int failed;
+} image __attribute__((section(".bss.gbcore_keep")));
+
+/* Byte loops the sanitizer leaves alone: the ranges include the padding
+ * AddressSanitizer puts between instrumented globals. */
+__attribute__((no_sanitize_address))
+static void image_copy(volatile uint8_t *dst, const volatile uint8_t *src,
+                       size_t n)
+{
+  while (n--)
+    *dst++ = *src++;
+}
+
+__attribute__((no_sanitize_address))
+static void image_zero(volatile uint8_t *dst, size_t n)
+{
+  while (n--)
+    *dst++ = 0;
+}
+
+static void image_keep(void)
+{
+  size_t n;
+  if (image.taken)
+    return;
+  image.taken = 1;
+  if (!tgb_image_data_start || !tgb_image_data_end ||
+      !tgb_image_bss_start || !tgb_image_bss_end)
+  {
+    image.failed = 1;
+    return;
+  }
+  n = (size_t)(tgb_image_data_end - tgb_image_data_start);
+  image.data = n ? (uint8_t *)malloc(n) : NULL;
+  if (n && !image.data)
+  {
+    image.failed = 1;
+    return;
+  }
+  image_copy(image.data, (const volatile uint8_t *)tgb_image_data_start, n);
+  image.size = n;
+}
 
 /* Core-visible state owned by the adapter (tgb_port.h). */
 int pad_state;
@@ -93,6 +159,7 @@ static void palette_apply(void)
 
 void gbcore_set_palette(unsigned palette)
 {
+  image_keep();
   palette_id = palette < GBCORE_PALETTE_COUNT ? palette : GBCORE_PALETTE_AUTO;
   palette_apply();
 }
@@ -102,10 +169,23 @@ const char *gbcore_palette_name(unsigned palette)
   return palette < GBCORE_PALETTE_COUNT ? palette_names[palette] : "?";
 }
 
+void gbcore_set_color_correction(int on)
+{
+  tgb_cgb_lcd = on ? 1 : 0;
+  /* Every CGB entry is reconverted before the next line is drawn. */
+  gb_invalidate_all_colors();
+}
+
+int gbcore_color_correction(void)
+{
+  return tgb_cgb_lcd;
+}
+
 /* ---------------------------------------------------------- wall clock -- */
 
 void gbcore_set_wallclock(time_t (*wallclock)(void))
 {
+  image_keep();
   gbcore_wallclock = wallclock;
 }
 
@@ -267,6 +347,41 @@ void set_gb_type(void)
   }
 }
 
+/* An internal-clock transfer completes (cpu_exec).  The in-memory cable
+ * decides the byte now; otherwise the one chosen at the SC write stands. */
+byte tgb_port_serial_complete(byte outgoing, byte fallback)
+{
+  uint8_t in = 0xFF;
+  if (!active || !active->callbacks.serial_clocked)
+    return fallback;
+  if (!active->callbacks.serial_clocked(active->callbacks.userdata, outgoing,
+                                        &in))
+    return fallback;
+  return in;
+}
+
+uint8_t gbcore_serial_clock_in(gbcore_t *core, uint8_t master_byte)
+{
+  if (!core || core != active)
+    return 0xFF;
+  return cpu_seri_send(master_byte);
+}
+
+void gbcore_serial_deliver(gbcore_t *core, uint8_t master_byte)
+{
+  if (!core || core != active)
+    return;
+  g_regs.SB = master_byte;
+  g_regs.SC &= 0x7f;
+  seri_occer = 0x7fffffff;
+  cpu_irq(INT_SERIAL);
+}
+
+uint8_t gbcore_serial_control(gbcore_t *core)
+{
+  return core && core == active ? g_regs.SC : 0;
+}
+
 int tgb_port_serial(byte outgoing, int internal_clock, byte *received)
 {
   uint8_t in = 0xFF;
@@ -352,6 +467,32 @@ static uint8_t *load_rom(const char *rom_path, const void *rom_data,
   return buffer;
 }
 
+/* The buffer load_rom would build for a ROM of `rom_size` bytes, 0xFF
+ * filled, for a caller that fills it itself (a ROM received over a link)
+ * and hands it to gbcore_create_owned: no second copy. */
+uint8_t *gbcore_rom_alloc(size_t rom_size, size_t *alloc_out)
+{
+  size_t need = 0x8000, alloc = GBCORE_ROM_MIN_ALLOC;
+  uint8_t *b;
+  if (rom_size < 0x150 || rom_size > GBCORE_ROM_MAX)
+    return NULL;
+  while (need < rom_size)
+    need <<= 1;
+  if (need > alloc)
+    alloc = need;
+  b = (uint8_t *)malloc(alloc);
+  if (b)
+    memset(b, 0xFF, alloc);
+  if (alloc_out)
+    *alloc_out = alloc;
+  return b;
+}
+
+static gbcore_t *create_common(const char *rom_path, const void *rom_data,
+                               size_t rom_size, uint8_t *owned,
+                               fe_console_t console, unsigned audio_rate,
+                               const gbcore_callbacks_t *callbacks);
+
 gbcore_t *gbcore_create(const char *rom_path,
                         const void *rom_data,
                         size_t rom_size,
@@ -359,19 +500,51 @@ gbcore_t *gbcore_create(const char *rom_path,
                         unsigned audio_rate,
                         const gbcore_callbacks_t *callbacks)
 {
+  if ((rom_path != NULL) == (rom_data != NULL) ||
+      (rom_path != NULL && rom_size != 0))
+    return NULL;
+  return create_common(rom_path, rom_data, rom_size, NULL, console,
+                       audio_rate, callbacks);
+}
+
+gbcore_t *gbcore_create_owned(uint8_t *rom_buffer, size_t rom_size,
+                              fe_console_t console, unsigned audio_rate,
+                              const gbcore_callbacks_t *callbacks)
+{
+  if (!rom_buffer)
+    return NULL;
+  if (rom_size < 0x150 || rom_size > GBCORE_ROM_MAX)
+  {
+    free(rom_buffer);
+    return NULL;
+  }
+  return create_common(NULL, NULL, rom_size, rom_buffer, console, audio_rate,
+                       callbacks);
+}
+
+static gbcore_t *create_common(const char *rom_path, const void *rom_data,
+                               size_t rom_size, uint8_t *owned,
+                               fe_console_t console, unsigned audio_rate,
+                               const gbcore_callbacks_t *callbacks)
+{
   gbcore_t *core;
   size_t size = 0;
 
+  image_keep();
   if (active ||
-      (rom_path != NULL) == (rom_data != NULL) ||
-      (rom_path != NULL && rom_size != 0) ||
       (console != FE_CONSOLE_GB && console != FE_CONSOLE_GBC) ||
       audio_rate < 8000 || audio_rate > 192000)
+  {
+    free(owned);
     return NULL;
+  }
 
   core = (gbcore_t *)calloc(1, sizeof(*core));
   if (!core)
+  {
+    free(owned);
     return NULL;
+  }
   if (callbacks)
     core->callbacks = *callbacks;
   core->console = console;
@@ -381,7 +554,35 @@ gbcore_t *gbcore_create(const char *rom_path,
   core->audio_capacity = (size_t)audio_rate / 29 + 64;
   core->audio = (int16_t *)malloc(core->audio_capacity * 2 * sizeof(int16_t));
   core->sram = (uint8_t *)malloc(GBCORE_SRAM_ALLOC);
-  core->rom = load_rom(rom_path, rom_data, rom_size, &size);
+  if (owned)
+  {
+    /* The buffer came from gbcore_rom_alloc(rom_size): grow it exactly as
+     * load_rom does when the header claims more than the file holds. */
+    unsigned code = owned[0x148];
+    size_t need = 0x8000, alloc = GBCORE_ROM_MIN_ALLOC;
+    while (need < rom_size)
+      need <<= 1;
+    if (need > alloc)
+      alloc = need;
+    size = rom_size;
+    core->rom = owned;
+    if (code <= 8 && (0x8000u << code) > alloc)
+    {
+      uint8_t *bigger = (uint8_t *)realloc(owned, 0x8000u << code);
+      if (!bigger)
+      {
+        free(owned);
+        core->rom = NULL;
+      }
+      else
+      {
+        memset(bigger + alloc, 0xFF, (0x8000u << code) - alloc);
+        core->rom = bigger;
+      }
+    }
+  }
+  else
+    core->rom = load_rom(rom_path, rom_data, rom_size, &size);
   vframe = (word *)malloc(VFRAME_SIZE);
   snd_write_que = (struct apu_que *)malloc(SND_QUE_SIZE *
                                            sizeof(struct apu_que));
@@ -469,10 +670,33 @@ void gbcore_set_skip_render(gbcore_t *core, int skip)
     core->skip_render = skip ? 1 : 0;
 }
 
-int gbcore_run_frame(gbcore_t *core, uint16_t buttons)
+void gbcore_set_headless(gbcore_t *core, int headless)
 {
-  unsigned lines = 0;
-  size_t samples;
+  if (!core || core != active)
+    return;
+  headless = headless ? 1 : 0;
+  if (headless == core->headless)
+    return;
+  if (headless)
+  {
+    /* Nothing draws into it again (every lcd_render and fill is under
+     * gbSkip or checks for NULL); 128 KiB back to the heap. */
+    free(vframe);
+    vframe = NULL;
+  }
+  else if (!vframe)
+  {
+    vframe = (word *)malloc(VFRAME_SIZE);
+    if (!vframe)
+      return;                 /* stays headless */
+    memset(vframe, 0, VFRAME_SIZE);
+  }
+  core->headless = headless;
+  gbSkip = core->skip_render || headless;
+}
+
+int gbcore_frame_begin(gbcore_t *core, uint16_t buttons)
+{
   uint16_t pressed;
 
   if (!core || core != active)
@@ -486,33 +710,38 @@ int gbcore_run_frame(gbcore_t *core, uint16_t buttons)
   if (pressed)
     cpu_irq(INT_PAD);
 
-  gbSkip = core->skip_render;
-  /* A frame ends when VBlank starts, so the image is lines 0-143 of one
-   * frame (MasterBoy's loop ended at LY 0, after drawing the next frame's
-   * first line).  With the LCD off there is no VBlank: 154 lines. */
-  for (;;)
-  {
-    gb_run();
-    lines++;
-    if (g_regs.LCDC & 0x80)
-    {
-      if (g_regs.LY == 144 || lines >= 2 * GB_FRAME_LINES)
-        break;
-    }
-    else if (lines >= GB_FRAME_LINES)
-      break;
-  }
+  gbSkip = core->skip_render || core->headless;
+  core->lines = 0;
+  return 0;
+}
 
-  core->audio_acc += (uint64_t)lines * GB_LINE_CLOCKS * core->sample_rate;
+static void frame_end(gbcore_t *core)
+{
+  size_t samples;
+
+  core->audio_acc += (uint64_t)core->lines * GB_LINE_CLOCKS *
+                     core->sample_rate;
   samples = (size_t)(core->audio_acc / GB_CLOCK_HZ);
   core->audio_acc %= GB_CLOCK_HZ;
   if (samples > core->audio_capacity)
     samples = core->audio_capacity;
-  if (samples)
+  if (core->headless)
+  {
+    /* Drop the frame's sound-register writes unheard.  They changed the
+     * register side of the APU when they were made (apu_write ->
+     * snd_process); the queue only feeds the synthesiser, whose copy of
+     * the state nothing in the game can read. */
+    snd_que_count = 0;
+    snd_bef_clock = total_clock;
+    samples = 0;
+  }
+  else if (samples)
     snd_render_orig(core->audio, (int)samples);
   rebase_clocks();
   core->frame_number++;
 
+  if (core->headless)
+    return;
   if (core->callbacks.video)
   {
     gbcore_video_frame_t frame;
@@ -525,7 +754,36 @@ int gbcore_run_frame(gbcore_t *core, uint16_t buttons)
   if (core->callbacks.audio_batch && samples)
     core->callbacks.audio_batch(core->callbacks.userdata, core->audio,
                                 samples);
-  return 0;
+}
+
+/* A frame ends when VBlank starts, so the image is lines 0-143 of one
+ * frame (MasterBoy's loop ended at LY 0, after drawing the next frame's
+ * first line).  With the LCD off there is no VBlank: 154 lines. */
+int gbcore_run_line(gbcore_t *core)
+{
+  if (!core || core != active)
+    return -1;
+  gb_run();
+  core->lines++;
+  if (g_regs.LCDC & 0x80)
+  {
+    if (g_regs.LY != 144 && core->lines < 2 * GB_FRAME_LINES)
+      return 0;
+  }
+  else if (core->lines < GB_FRAME_LINES)
+    return 0;
+  frame_end(core);
+  return 1;
+}
+
+int gbcore_run_frame(gbcore_t *core, uint16_t buttons)
+{
+  int r;
+  if (gbcore_frame_begin(core, buttons) != 0)
+    return -1;
+  while ((r = gbcore_run_line(core)) == 0)
+    ;
+  return r < 0 ? -1 : 0;
 }
 
 unsigned gbcore_sample_rate(const gbcore_t *core)
@@ -816,24 +1074,61 @@ long gbcore_state_save(gbcore_t *core, void *destination, size_t capacity)
   return (long)need;
 }
 
+/* Put the machine in hardware model `type` (1 DMG, 2 SGB) exactly as
+ * set_gb_type() would have at power-on. */
+static void gb_model_apply(int type)
+{
+  rom_get_info()->gb_type = type;
+  now_gb_mode = type;
+  lcd_set_mpal(type == 2 ? PAL_SGB : PAL_STANDARD);
+}
+
 int gbcore_state_load(gbcore_t *core, const void *source, size_t size)
 {
   const uint8_t *in = (const uint8_t *)source;
   size_t core_len;
+  int model, saved_model;
   if (!core || core != active || !source || size < STATE_HEADER + STATE_EXT)
     return -1;
-  core_len = gb_save_state(NULL);
   if (memcmp(in, STATE_MAGIC, 4) != 0 ||
       (in[4] | (in[5] << 8)) != STATE_VERSION ||
       in[6] != (uint8_t)core->console ||
-      in[7] != (uint8_t)rom_get_info()->gb_type ||
-      memcmp(in + 8, core->header, sizeof(core->header)) != 0 ||
-      get_le32(in + 36) != core_len ||
+      memcmp(in + 8, core->header, sizeof(core->header)) != 0)
+    return -1;
+  /* The first int of TGB's block is the hardware mode it restores, and the
+   * header repeats it; they must agree. */
+  saved_model = (int)get_le32(in + STATE_HEADER);
+  if (in[7] != (uint8_t)saved_model)
+    return -1;
+  /* A STATE IS A WHOLE MACHINE, MODEL INCLUDED.  On FE_CONSOLE_GB the model
+   * is DMG or Super Game Boy, and set_gb_type() picks it at power-on from the
+   * DMG palette setting: Auto boots an SGB-aware cart as an SGB, any explicit
+   * palette boots it as a DMG.  So changing the palette (a display setting)
+   * made every earlier state of such a game unloadable -- the browser shelf
+   * then quit to the XMB, and the menu said "No state to load".  The game
+   * code saved in the state has already detected the hardware it was booted
+   * on, so the only correct restore is onto that same hardware: adopt the
+   * saved model (the next boot goes back to what the palette chooses).  Only
+   * DMG <-> SGB, and SGB only for a cart that declares SGB support; CGB
+   * states never meet a DMG/SGB core (the console byte above). */
+  model = rom_get_info()->gb_type;
+  if (saved_model != model)
+  {
+    if (core->console != FE_CONSOLE_GB ||
+        (saved_model != 1 && saved_model != 2) ||
+        (model != 1 && model != 2) ||
+        (saved_model == 2 && !sgb_mode))
+      return -1;
+    gb_model_apply(saved_model);
+  }
+  core_len = gb_save_state(NULL);
+  if (get_le32(in + 36) != core_len ||
       size != STATE_HEADER + core_len + STATE_EXT)
+  {
+    if (saved_model != model)
+      gb_model_apply(model);
     return -1;
-  /* The first int of TGB's block is the hardware mode it restores. */
-  if ((int)get_le32(in + STATE_HEADER) != rom_get_info()->gb_type)
-    return -1;
+  }
   if (gb_restore_state(in + STATE_HEADER, core_len) != 0)
     return -1;
   ext_load(in + STATE_HEADER + core_len);
@@ -846,3 +1141,245 @@ int gbcore_state_load(gbcore_t *core, const void *source, size_t size)
   cpu_irq_check();
   return 0;
 }
+
+int gbcore_power_on(void)
+{
+  image_keep();
+  if (active || image.failed)
+    return -1;
+  image_copy((volatile uint8_t *)tgb_image_data_start, image.data,
+             image.size);
+  image_zero((volatile uint8_t *)tgb_image_bss_start,
+             (size_t)(tgb_image_bss_end - tgb_image_bss_start));
+  return 0;
+}
+
+int gbcore_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len)
+{
+  uint8_t *o = (uint8_t *)out;
+  unsigned i;
+  if (!core || core != active || !out)
+    return -1;
+  for (i = 0; i < len; i++)
+  {
+    unsigned a = (unsigned)addr + i;
+    if (a > 0xFFFE)
+      return -1;
+    if (a < 0x4000)
+      o[i] = get_rom()[a];
+    else if (a < 0x8000)
+      o[i] = mbc_get_rom()[a];
+    else if (a < 0xA000)
+      o[i] = vram_bank[a & 0x1FFF];
+    else if (a < 0xC000)
+    {
+      if (!mbc_is_ext_ram())
+        return -1;
+      o[i] = mbc_get_sram()[a & 0x1FFF];
+    }
+    else if (a < 0xFE00)
+      o[i] = (a & 0x1000) ? ram_bank[a & 0x0FFF] : cpu_get_ram()[a & 0x0FFF];
+    else if (a < 0xFEA0)
+      o[i] = cpu_get_oam()[a - 0xFE00];
+    else if (a >= 0xFF80)
+      o[i] = cpu_get_stack()[a - 0xFF80];
+    else
+      return -1;
+  }
+  return 0;
+}
+
+static uint8_t *poke_ptr(unsigned a)
+{
+  if (a >= 0x8000 && a < 0xA000)
+    return &vram_bank[a & 0x1FFF];
+  if (a >= 0xA000 && a < 0xC000)
+    return mbc_is_ext_ram() ? &mbc_get_sram()[a & 0x1FFF] : NULL;
+  if (a >= 0xC000 && a < 0xFE00)
+    return (a & 0x1000) ? &ram_bank[a & 0x0FFF] : &cpu_get_ram()[a & 0x0FFF];
+  if (a >= 0xFE00 && a < 0xFEA0)
+    return &cpu_get_oam()[a - 0xFE00];
+  if (a >= 0xFF80 && a < 0xFFFF)
+    return &cpu_get_stack()[a - 0xFF80];
+  return NULL;
+}
+
+int gbcore_poke(gbcore_t *core, uint16_t addr, const void *data, unsigned len)
+{
+  const uint8_t *d = (const uint8_t *)data;
+  unsigned i;
+  if (!core || core != active || !data)
+    return -1;
+  for (i = 0; i < len; i++)
+    if (!poke_ptr((unsigned)addr + i))
+      return -1;
+  for (i = 0; i < len; i++)
+    *poke_ptr((unsigned)addr + i) = d[i];
+  return 0;
+}
+
+/* ----------------------------------------------------------- sync hash -- */
+
+/* FNV-1a, 64-bit, over bytes: portable and endian-independent, and cheap
+ * enough at the rate a link session checks (a few hundred KiB a second). */
+#define SYNC_FNV_OFFSET 0xcbf29ce484222325ull
+#define SYNC_FNV_PRIME  0x100000001b3ull
+
+static uint64_t sync_bytes(uint64_t h, const void *data, size_t size)
+{
+  const uint8_t *p = (const uint8_t *)data;
+  size_t i;
+  for (i = 0; i < size; i++)
+  {
+    h ^= p[i];
+    h *= SYNC_FNV_PRIME;
+  }
+  return h;
+}
+
+static uint64_t sync_int(uint64_t h, int64_t v)
+{
+  uint8_t b[8];
+  unsigned i;
+  for (i = 0; i < 8; i++)
+    b[i] = (uint8_t)((uint64_t)v >> (8 * i));
+  return sync_bytes(h, b, sizeof(b));
+}
+
+/* What goes in: everything gb_save_state and ext_save carry that the game
+ * can observe or that decides its next instruction -- memory, registers,
+ * clocks, DMA, the serial port, the cartridge (RAM, banks, MBC3 clock),
+ * the register side of the APU, SGB packet state -- plus the adapter's
+ * input latch and clock.  What stays out: the synthesiser's copy of the
+ * APU (apu_get_stat_gen, advanced only when sound is rendered) and the
+ * renderer's window-line counter (now_win_line), both of which differ
+ * between a drawn and a headless machine and neither of which the game
+ * can read. */
+uint64_t gbcore_sync_hash(gbcore_t *core)
+{
+  static const int tbl_ram[] = { 1, 1, 1, 4, 16, 8 };
+  struct rom_info *ri;
+  struct cpu_regs *r;
+  uint64_t h = SYNC_FNV_OFFSET;
+  int cpu_dat[16];
+  int banks;
+
+  if (!core || core != active)
+    return 0;
+  ri = rom_get_info();
+  h = sync_int(h, ri->gb_type);
+  h = sync_int(h, now_gb_mode);
+  h = sync_int(h, sgb_mode);
+  h = sync_bytes(h, cpu_get_ram(), ri->gb_type >= 3 ? 0x2000 * 4 : 0x2000);
+  h = sync_bytes(h, cpu_get_vram(), ri->gb_type >= 3 ? 0x2000 * 2 : 0x2000);
+  h = sync_bytes(h, cpu_get_oam(), 0xA0);
+  h = sync_bytes(h, cpu_get_stack(), 0x80);
+  h = sync_bytes(h, spare_oam, 0x18);
+  h = sync_bytes(h, ext_mem, 16);
+  banks = ri->ram_size <= 5 ? tbl_ram[ri->ram_size] : 1;
+  h = sync_bytes(h, get_sram(), (size_t)banks * 0x2000);
+
+  r = cpu_get_c_regs();
+  h = sync_int(h, r->AF.w);
+  h = sync_int(h, r->BC.w);
+  h = sync_int(h, r->DE.w);
+  h = sync_int(h, r->HL.w);
+  h = sync_int(h, r->SP);
+  h = sync_int(h, r->PC);
+  h = sync_int(h, r->I);
+  h = sync_bytes(h, &g_regs, sizeof(g_regs));
+  h = sync_bytes(h, &cg_regs, sizeof(cg_regs));
+  h = sync_bytes(h, lcd_get_pal(0), sizeof(word) * 16 * 4);
+
+  memset(cpu_dat, 0, sizeof(cpu_dat));
+  cpu_save_state(cpu_dat);                /* banks, speed, HDMA */
+  cpu_save_state_ex(cpu_dat + 8);         /* div/rest/sys/total clocks */
+  h = sync_bytes(h, cpu_dat, sizeof(cpu_dat));
+  h = sync_int(h, halt);
+  h = sync_int(h, b_dma_first);
+  h = sync_int(h, gdma_rest);
+  h = sync_int(h, last_int);
+  h = sync_int(h, int_disable_next);
+  h = sync_int(h, int_invoke_next);
+  h = sync_int(h, seri_occer);
+  h = sync_int(h, seri_rx);
+  h = sync_int(h, re_render);
+  h = sync_int(h, _ff6c);
+  h = sync_int(h, _ff72);
+  h = sync_int(h, _ff73);
+  h = sync_int(h, _ff74);
+  h = sync_int(h, _ff75);
+
+  h = sync_int(h, mbc_get_state());
+  h = sync_int(h, (int64_t)(mbc_get_rom() - get_rom()));
+  h = sync_int(h, (int64_t)(mbc_get_sram() - get_sram()));
+  h = sync_int(h, mbc_is_ext_ram());
+  h = sync_int(h, mbc3_latch);
+  h = sync_int(h, mbc3_sec);
+  h = sync_int(h, mbc3_min);
+  h = sync_int(h, mbc3_hour);
+  h = sync_int(h, mbc3_dayl);
+  h = sync_int(h, mbc3_dayh);
+  h = sync_int(h, mbc3_timer);
+
+  h = sync_bytes(h, apu_get_stat_cpu(), sizeof(struct apu_stat));
+  h = sync_bytes(h, apu_get_mem(), 0x30);
+
+  if (now_gb_mode == 2)
+  {
+    h = sync_int(h, bit_received);
+    h = sync_int(h, bits_received);
+    h = sync_int(h, packets_received);
+    h = sync_int(h, sgb_state);
+    h = sync_int(h, sgb_index);
+    h = sync_int(h, sgb_multiplayer);
+    h = sync_int(h, sgb_fourplayers);
+    h = sync_int(h, sgb_nextcontrol);
+    h = sync_int(h, sgb_readingcontrol);
+    h = sync_int(h, sgb_mask);
+    h = sync_bytes(h, sgb_palette, sizeof(unsigned short) * 8 * 16);
+    h = sync_bytes(h, sgb_palette_memory, sizeof(unsigned short) * 512 * 4);
+    h = sync_bytes(h, sgb_buffer, 7 * 16);
+    h = sync_bytes(h, sgb_ATF, 18 * 20);
+    h = sync_bytes(h, sgb_ATF_list, 45 * 20 * 18);
+  }
+
+  h = sync_int(h, rtc.base);
+  h = sync_int(h, rtc.halted_count);
+  h = sync_int(h, rtc.halted);
+  h = sync_int(h, rtc.carry);
+  h = sync_int(h, pad_state);
+  h = sync_int(h, core->prev_buttons);
+  return h;
+}
+
+/* ------------------------------------------------------ instance table -- */
+
+const gbcore_api_t gbcore_api = {
+  gbcore_create,
+  gbcore_shutdown,
+  gbcore_run_frame,
+  gbcore_frame_begin,
+  gbcore_run_line,
+  gbcore_set_skip_render,
+  gbcore_set_headless,
+  gbcore_sync_hash,
+  gbcore_serial_clock_in,
+  gbcore_frame_number,
+  gbcore_rom_title,
+  gbcore_save_ram_size,
+  gbcore_cart_ram_size,
+  gbcore_save_ram_read,
+  gbcore_save_ram_write,
+  gbcore_state_size,
+  gbcore_state_save,
+  gbcore_state_load,
+  gbcore_set_wallclock,
+  gbcore_set_palette,
+  gbcore_power_on,
+  gbcore_peek,
+  gbcore_poke,
+  gbcore_serial_control,
+  gbcore_create_owned,
+  gbcore_serial_deliver,
+};

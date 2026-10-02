@@ -127,6 +127,8 @@ int main(int argc, char **argv)
             case OP_MASH:
             case OP_HOLDRAM:
             case OP_WAITSRAM:
+            case OP_MASHIF:
+            case OP_STEPRAM:
                fmin = 1;
                fmax = (unsigned long long)steps[i].frames + 1;
                break;

@@ -280,6 +280,7 @@ bool gba_load_state(const void* src)
 
   instruction_count = 0;
   reg[OAM_UPDATED] = 1;
+  reg[PAL_UPDATED] = 1;   /* palette restored without the store paths */
 
   return true;
 }

@@ -212,5 +212,6 @@ typedef u32 fixed8_24;
 #include "main.h"
 #include "cheats.h"
 #include "serial.h"
+#include "drprof.h"   /* profiling hooks; empty unless DRPROF_TWIN / DRPROF_HW */
 
 #endif

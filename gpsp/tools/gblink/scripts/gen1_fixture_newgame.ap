@@ -1,0 +1,12 @@
+# Pokemon Blue: title -> NEW GAME -> player and rival named by mashing A
+# (both AAAAAAA) -> Red's bedroom.  D158 wPlayerName, D34A wRivalName.
+wait 120
+mash A 1 0xD158 0xFF 0x80 8000
+mash A 1 0xD34A 0xFF 0x80 8000
+repeat 16
+wait 60
+hold A 6
+endrepeat
+wait 240
+logbytes map 1 0xD35E
+logbytes yx 2 0xD361

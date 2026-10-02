@@ -8,6 +8,8 @@
 
 #include "libretro.h"
 #include "../gbcore/gbcore.h"
+#include "../gbcore/gbcore_dual.h"
+#include "fe_gblink.h"
 #include "../netdrv/gb_link.h"
 #include "netpacket_host.h"
 
@@ -22,11 +24,29 @@
 #ifndef HEARTBEAT_INTERVAL
 #define HEARTBEAT_INTERVAL  600
 #endif
+/* The cadence in force: fe_host_config.heartbeat_frames when set (harness
+ * `telemetry_period`, for timing runs that must not pay for their own
+ * reporting), else HEARTBEAT_INTERVAL. */
+static unsigned hb_every = HEARTBEAT_INTERVAL;
 
 /* ---------------------------------------------------------------- state -- */
 
 static fe_host_config host;
 static gbcore_t *gb_core;
+/* A machine pair (host.gb_dual_rom): gb_core is then its slot 0. */
+static gbdual_t *gb_dual;
+static uint16_t gb_dual_buttons;
+/* A GB/GBC session, single-player or linked: the GB paths below key on this,
+ * not on gb_core, because a link session (gbl) runs with no single core. */
+static int gb_family;
+/* The GB link session (fe_gblink.h), NULL when none. */
+static fe_gblink *gbl;
+static int gbl_last;               /* last fe_gblink_step result */
+static int gbl_primed;             /* autopilot had its power-on look */
+static uint8_t *gbl_prelink_state; /* the running game when the link began */
+static size_t gbl_prelink_state_n;
+static int gbl_hold;               /* harness: single machine held for a link */
+static unsigned gbl_sessions;      /* link sessions closed since boot */
 static uint8_t *gb_save_buffer;
 static size_t gb_save_capacity;
 static uint32_t gb_save_crc;
@@ -50,6 +70,10 @@ static unsigned frames_skipped;   /* ADR-0019 accounting; see below */
  * as fe_host_last_frame() consumers (dumps, state thumbnails, the wake
  * overlay) run; shutdown clears last_frame before the core frees it. */
 static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
+/* fe_host_skip_override(): -1 none.  The GBA core reads its own copy; weak,
+ * so host tests that link this file without the core still link. */
+static int skip_override = -1;
+extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
 
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
@@ -77,6 +101,17 @@ static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames
    (void)userdata;
    if (host.audio_frames)
       host.audio_frames(samples, frames);
+}
+
+/* The machine pair's buttons: the player's for slot 0, the same or none for
+ * the headless partner (harness measurement; no network behind it). */
+static int gb_dual_input(void *userdata, int slot, uint64_t frame,
+                         uint16_t *buttons)
+{
+   (void)userdata;
+   (void)frame;
+   *buttons = (slot == 0 || host.gb_dual_mirror) ? gb_dual_buttons : 0;
+   return 1;
 }
 
 static uint16_t gb_buttons_from_retro(uint32_t pad)
@@ -258,11 +293,46 @@ static void gb_link_complete_message(void *ctx, uint16_t transfer_id,
    gb_link_completed = 1;
 }
 
+/* Session messages that arrive before this console's session exists.  The
+ * partner starts its session when ITS radio is up, and the ordered channel
+ * delivers its HELLO at once -- if this console has not called
+ * fe_host_gblink_start yet, that HELLO used to be dropped and never resent:
+ * both sessions then waited forever (PPSSPP, consoles starting their
+ * sessions 30 frames apart).  Only a HELLO is kept -- the partner sends
+ * nothing else before ours reaches it, and a straggler from a session that
+ * just ended must not reach the next one -- and replayed into the session
+ * when it starts; a disconnect forgets it. */
+#define GBL_EARLY_MAX 4
+#define GBL_EARLY_LEN 128
+static uint8_t gbl_early[GBL_EARLY_MAX][GBL_EARLY_LEN];
+static size_t gbl_early_len[GBL_EARLY_MAX];
+static unsigned gbl_early_n;
+
 static void gb_link_receive_message(void *userdata, const void *payload,
                                     size_t len, uint8_t src_id)
 {
    gb_link_message_t message;
    (void)userdata;
+   if (gbl)
+   {
+      fe_gblink_receive(gbl, payload, len);
+      return;
+   }
+   if (len != GB_LINK_WIRE_SIZE && gb_family)
+   {
+      if (gbl_early_n < GBL_EARLY_MAX && len == FE_GBLINK_HELLO_LEN &&
+          ((const uint8_t *)payload)[0] == FE_GBLINK_HELLO_TYPE)
+      {
+         memcpy(gbl_early[gbl_early_n], payload, len);
+         gbl_early_len[gbl_early_n++] = len;
+         fe_evt("gblink_early_msg type=%u len=%u n=%u",
+                len ? ((const uint8_t *)payload)[0] : 0u, (unsigned)len,
+                gbl_early_n);
+      }
+      else
+         fe_evt("gblink_early_drop len=%u", (unsigned)len);
+      return;
+   }
    if (len != GB_LINK_WIRE_SIZE ||
        gb_link_decode(&message, (const uint8_t *)payload, (unsigned)len) != 0 ||
        message.sender_id != src_id)
@@ -278,6 +348,13 @@ static void gb_link_peer_event(void *userdata, uint8_t peer_id, int connected)
 {
    uint8_t local_id;
    (void)userdata;
+   if (gbl)
+   {
+      fe_gblink_peer(gbl, connected);
+      return;
+   }
+   if (!connected)
+      gbl_early_n = 0;
    if (connected)
    {
       if (gb_link_initialized && gb_link.peer_id != peer_id)
@@ -728,6 +805,23 @@ static bool env_cb(unsigned cmd, void *data)
 
 static uint32_t sram_crc(void)
 {
+   if (gb_family && !gb_core)
+   {
+      /* A link session: the local machine's cartridge RAM (autopilot
+       * waitsram).  Nothing of it is ever flushed from here. */
+      gbdual_t *d = gbl ? fe_gblink_dual(gbl) : NULL;
+      int slot = fe_gblink_local_slot(gbl);
+      const gbcore_api_t *api = gbdual_api(slot);
+      size_t n;
+      if (!d || !api)
+         return 0;
+      n = api->cart_ram_size(gbdual_core(d, slot));
+      if (!n || gb_save_reserve(n + GB_SAVE_TRAILER_MAX) != 0 ||
+          api->save_ram_read(gbdual_core(d, slot), gb_save_buffer,
+                             gb_save_capacity) != 0)
+         return 0;
+      return fe_crc32(0, gb_save_buffer, n);
+   }
    if (gb_core)
    {
       /* Same RAM-only span as the flush's change detection: the clock
@@ -813,8 +907,21 @@ void fe_host_input_inject(uint32_t joypad_mask)
 int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 {
    unsigned i;
-   if (gb_core)
-      return -1; /* GBA-addressed autopilot probes do not map to GB memory. */
+   if (gb_family)
+   {
+      /* GB addresses (0000-FFFF) for GB scripts: the single machine, or in
+       * a link session this console's own machine. */
+      gbdual_t *d = gbl ? fe_gblink_dual(gbl) : NULL;
+      if (gba_addr > 0xFFFF)
+         return -1;
+      if (gb_core)
+         return gbcore_peek(gb_core, (uint16_t)gba_addr, out, len);
+      if (!d)
+         return -1;
+      return gbdual_api(fe_gblink_local_slot(gbl))->peek(
+         gbdual_core(d, fe_gblink_local_slot(gbl)), (uint16_t)gba_addr, out,
+         len);
+   }
 
    for (i = 0; i < memdesc_count; i++)
    {
@@ -849,7 +956,7 @@ int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 int fe_host_mem_write(uint32_t gba_addr, const void *in, unsigned len)
 {
    unsigned i;
-   if (gb_core)
+   if (gb_family)
       return -1;
 
    if (gba_addr >= 0x08000000)
@@ -891,6 +998,11 @@ int fe_host_state_save(const char *path)
    size_t sz;
    FILE *f;
 
+   if (gb_family && !gb_core)
+   {
+      fe_evt("state_save file=%s FAILED reason=link_session", path);
+      return -1;
+   }
    if (gb_core)
    {
       /* The same staging buffer: the largest GB image (CGB with 128 KiB of
@@ -941,6 +1053,11 @@ int fe_host_state_load(const char *path)
    }
    n = fread(state_buf, 1, sizeof(state_buf), f);
    fclose(f);
+   if (gb_family && !gb_core)
+   {
+      fe_evt("state_load file=%s FAILED reason=link_session", path);
+      return -1;
+   }
    if (gb_core)
    {
       /* The core validates the image (magic, version, console, cartridge
@@ -1302,7 +1419,7 @@ int fe_host_sram_service_io(void)
    unsigned before;
    int req = sram_scan_req;
 
-   if (gb_core)
+   if (gb_family)
    {
       /* This entry point belongs to the I/O worker. The GB core owns mutable
        * cartridge RAM on the emulation thread, so even taking a snapshot
@@ -1356,7 +1473,7 @@ int fe_host_sram_ff_nudge(int ff_active)
 {
    uint32_t gen;
 
-   if (!host_io || gb_core || !&backup_write_gen || !host.save_path)
+   if (!host_io || gb_family || !&backup_write_gen || !host.save_path)
       return 0;
 
    gen = backup_write_gen;
@@ -1430,8 +1547,10 @@ int fe_host_sram_ff_nudge(int ff_active)
  * fe_host_run_frame; cheap no-op when nothing is pending. */
 void fe_host_sram_service(void)
 {
-   if (gb_core)
+   if (gb_family)
    {
+      if (!gb_core)
+         return;           /* link session: saves commit only at its end */
       if ((frame_count % SRAM_CHECK_INTERVAL) == 0)
          (void)gb_save_flush(0);
       return;
@@ -1449,7 +1568,7 @@ void fe_host_sram_service(void)
  * file with blocks still pending. */
 void fe_host_sram_sync(void)
 {
-   if (gb_core)
+   if (gb_family)
    {
       /* Must run on the emulation thread: only it may read the GB core's RAM.
        * Not forced: exit reaches this two or three times (io_thread_stop,
@@ -1580,7 +1699,7 @@ static int sram_scan(int force_write)
 
 int fe_host_sram_flush(int force_write)
 {
-   if (gb_core)
+   if (gb_family)
       return gb_save_flush(force_write);
    /* Threaded: the writer thread owns the scan AND the writes, so this only
     * places the request.  A forced flush additionally waits for the whole
@@ -1688,12 +1807,401 @@ static void log_rom_evt(void)
           code[2] ? code[2] : '?', code[3] ? code[3] : '?', size);
 }
 
+/* ---- GB link session (fe_gblink.h) -----------------------------------
+ *
+ * The platform brings the ad-hoc session up (fe_np_start_gb), then calls
+ * fe_host_gblink_start: the running game is flushed and shut down, and the
+ * session negotiates, transfers what it must and powers BOTH players' Game
+ * Boys on.  From then fe_host_run_frame steps the session instead of the
+ * single machine.  When it has ended (DONE: this console's save written;
+ * FAILED: nothing written) the platform calls fe_host_gblink_close, which
+ * boots the game again from its save. */
+
+static int gbl_send(void *user, const void *buf, size_t len)
+{
+   uint8_t id;
+   (void)user;
+   if (!fe_np_gb_peer_ready(&id))
+      return -1;
+   return fe_np_gb_send(id, buf, len);
+}
+
+/* Cartridge and save chunks go at GBL_BULK_PER_FRAME a frame, with at most
+ * GBL_BULK_BACKLOG of netdrv's reliable payloads queued or in flight.
+ *
+ * The rate (PPSSPP, 139-byte chunks, 8 MiB cart): the receiver's transport
+ * ring holds 64 datagrams between two drains, one a frame.  24 a frame ran
+ * clean at 200 KB/s, 32 clean at 267 KB/s (retx 2 in 60,000), 40 and 48
+ * overran the ring (ringdrop), and each drop cost a retransmission timeout.
+ * Unpaced, 2 MiB took 257 s.
+ *
+ * The backlog: netdrv_send_capacity counts its spill list, ~900 payloads,
+ * and filling it turned those drops into a collapse -- at 40 a frame the
+ * sender queued 800+ chunks, every loss was resent behind them, the RTT
+ * grew to 350 ms and the rate fell to a few chunks a frame.  96 covers the
+ * round trip at 32 a frame (~2 frames) with room to spare, and keeps the
+ * session's own messages (inputs, hashes) from waiting behind a cartridge. */
+#ifndef GBL_BULK_PER_FRAME
+#define GBL_BULK_PER_FRAME 32
+#endif
+#define GBL_BULK_BACKLOG 96
+static unsigned gbl_bulk = GBL_BULK_PER_FRAME;
+void fe_host_gblink_tune(unsigned bulk_per_frame)
+{
+   if (bulk_per_frame)
+      gbl_bulk = bulk_per_frame;
+}
+
+static int gbl_room(void *user)
+{
+   (void)user;
+   return GBL_BULK_BACKLOG - fe_np_gb_unacked();
+}
+
+int fe_host_gblink_flushed(void)
+{
+   return fe_np_gb_unacked() == 0;
+}
+
+static int gbl_bulk_send(void *user, const void *buf, size_t len)
+{
+   uint8_t mac[6];
+   (void)user;
+   if (!host.gb_bulk_send || fe_np_gb_peer_mac(mac) != 0)
+      return -1;
+   return host.gb_bulk_send(mac, buf, len);
+}
+
+static int gbl_find(void *user, uint32_t size, const uint8_t header[0x1C],
+                    char *path, size_t cap)
+{
+   (void)user;
+   return host.gb_find_rom ? host.gb_find_rom(size, header, path, cap) : 0;
+}
+
+/* A battery image's clock trailer (VBA-M/BGB layout: 48 bytes, or the
+ * 44-byte variant with a 32-bit stamp) re-stamped with THIS PSP's clock:
+ * the registers keep the time the game's clock shows, the stamp says "as of
+ * now", so the next load advances it by exactly the time that passes from
+ * here.  A session's images are stamped with the session clock (the host's,
+ * advanced by emulated frames); written back unchanged, a PSP whose clock
+ * reads earlier (the PSP-1000 says 2011) loads a stamp from its future, the
+ * core calls the clock not real and resets it, and Crystal asks for the time
+ * again -- the owner's report after the first hand-played trade. */
+static void gb_rtc_to_local(uint8_t *image, size_t size)
+{
+   /* Cartridge RAM sizes are multiples of 256 bytes (MBC2's 512 included),
+    * so a remainder of 48 or 44 is a trailer. */
+   size_t ram = size - size % 0x100;
+   int64_t now;
+   uint8_t *t;
+   if (!host.wallclock || size < 0x100 || (size - ram != 48 && size - ram != 44))
+      return;
+   if (host.gblink_rtc_keep_session_stamp)
+   {
+      fe_evt("gb_rtc_rebase skipped (harness A/B)");
+      return;
+   }
+   now = (int64_t)host.wallclock();
+   if (now <= 0)
+      return;
+   t = image + ram;
+   t[40] = (uint8_t)now; t[41] = (uint8_t)(now >> 8);
+   t[42] = (uint8_t)(now >> 16); t[43] = (uint8_t)(now >> 24);
+   if (size - ram == 48)
+   {
+      t[44] = (uint8_t)(now >> 32); t[45] = (uint8_t)(now >> 40);
+      t[46] = (uint8_t)(now >> 48); t[47] = (uint8_t)(now >> 56);
+   }
+   fe_evt("gb_rtc_rebase to_local=%lld trailer=%u", (long long)now,
+          (unsigned)(size - ram));
+}
+
+static int gbl_commit(void *user, const void *image, size_t size)
+{
+   FILE *f;
+   int ok;
+   uint8_t *local;
+   (void)user;
+   if (!host.save_path)
+      return -1;
+   local = (uint8_t *)malloc(size);
+   if (!local)
+      return -1;
+   memcpy(local, image, size);
+   gb_rtc_to_local(local, size);
+   image = local;
+   /* Same length: overwrite in place, as gb_save_flush does. */
+   f = gb_save_file_len == (long)size ? fopen(host.save_path, "r+b") : NULL;
+   if (!f)
+      f = fopen(host.save_path, "wb");
+   if (!f)
+      return -1;
+   ok = fwrite(image, 1, size, f) == size;
+   if (fclose(f) != 0)
+      ok = 0;
+   gb_save_file_len = ok ? (long)size : -1;
+   gb_save_crc_valid = 0;
+   fe_evt("gblink_save_commit size=%u crc=%08x ok=%d", (unsigned)size,
+          fe_crc32(0, image, size), ok);
+   free(local);
+   return ok ? 0 : -1;
+}
+
+static void gbl_video(void *user, const gbcore_video_frame_t *frame)
+{
+   gb_skip_frame = 0;
+   gb_video_frame(user, frame);
+}
+
+static int gb_single_boot(void)
+{
+   gbcore_callbacks_t cb;
+   memset(&cb, 0, sizeof(cb));
+   cb.video = gb_video_frame;
+   cb.audio_batch = gb_audio_batch;
+   cb.serial_transfer = gb_serial_transfer;
+   gbcore_set_wallclock(host.wallclock);
+   gbcore_set_palette((unsigned)host.gb_palette);
+   gb_core = gbcore_create(host.rom_path, NULL, 0, host.console,
+                           core_sample_rate ? core_sample_rate : 32768, &cb);
+   if (!gb_core)
+      return -1;
+   gb_save_load();
+   return 0;
+}
+
+int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
+{
+   fe_gblink_platform p;
+   fe_gblink_local l;
+   size_t n;
+   uint8_t *save = NULL;
+   if (!gb_family || gbl || !gb_core || gb_dual)
+      return -1;
+   /* This console's save, as the game has it now (and on disk). */
+   gb_save_flush(1);
+   n = gbcore_save_ram_size(gb_core);
+   if (n)
+   {
+      save = (uint8_t *)malloc(n);
+      if (!save || gbcore_save_ram_read(gb_core, save, n) != 0)
+      {
+         free(save);
+         return -1;
+      }
+   }
+   /* A live link: the running game, as it stands at this frame boundary. */
+   free(gbl_prelink_state);
+   gbl_prelink_state = NULL;
+   gbl_prelink_state_n = 0;
+   if (host.gblink_live)
+   {
+      size_t sn = gbcore_state_size(gb_core);
+      gbl_prelink_state = sn ? (uint8_t *)malloc(sn) : NULL;
+      if (gbl_prelink_state &&
+          gbcore_state_save(gb_core, gbl_prelink_state, sn) == (long)sn)
+         gbl_prelink_state_n = sn;
+      else
+      {
+         free(gbl_prelink_state);
+         gbl_prelink_state = NULL;
+      }
+      fe_evt("gblink_live_state size=%u", (unsigned)gbl_prelink_state_n);
+   }
+   memset(&p, 0, sizeof(p));
+   memset(&l, 0, sizeof(l));
+   p.send = gbl_send;
+   p.max_payload = ND_MAX_PAYLOAD;
+   p.send_room = gbl_room;
+   p.bulk_per_step = gbl_bulk;
+   p.find_rom = gbl_find;
+   p.commit_save = gbl_commit;
+   p.video = gbl_video;
+   p.audio = gb_audio_batch;
+   if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
+       (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
+   {
+      p.bulk_send = gbl_bulk_send;
+      p.bulk_max = host.gb_bulk_max;
+      p.bulk_rate = host.gb_bulk_rate;
+      p.input_copies = host.gblink_input_copies;
+   }
+   fe_evt("gblink_lane bulk_max=%u rate=%u input_copies=%u",
+          (unsigned)p.bulk_max, p.bulk_rate, p.input_copies);
+   l.is_host = is_host;
+   l.rom_path = host.rom_path;
+   l.console = host.console;
+   l.palette = (unsigned)host.gb_palette;
+   l.save = save;
+   l.save_size = n;
+   l.wallclock_now = rtc_seed ? rtc_seed
+                              : (int64_t)(host.wallclock ? host.wallclock()
+                                                         : time(NULL));
+   l.audio_rate = core_sample_rate;
+   l.input_delay = input_delay;
+   l.hash_interval = 60;
+   l.batch_lines = host.gblink_batch;
+   l.pace_slot0 = host.gblink_pace_slot0;
+   l.state = gbl_prelink_state;
+   l.state_size = gbl_prelink_state_n;
+   /* The single machine goes: instance A is needed for slot 0. */
+   gbcore_shutdown(gb_core);
+   gb_core = NULL;
+   last_frame = NULL;
+   gbl = fe_gblink_create(&p, &l);
+   free(save);
+   gbl_last = FE_GBLINK_IDLE;
+   gbl_primed = 0;
+   if (!gbl)
+   {
+      fe_evt("gblink_start FAILED reason=create");
+      if (p.bulk_send && host.gb_bulk_enable)
+         host.gb_bulk_enable(0);
+      gb_single_boot();
+      return -1;
+   }
+   fe_gblink_set_clock(gbl, host.time_us);
+   if (fe_np_gb_peer_ready(NULL))
+   {
+      unsigned i;
+      fe_gblink_peer(gbl, 1);
+      for (i = 0; i < gbl_early_n && gbl; i++)
+         fe_gblink_receive(gbl, gbl_early[i], gbl_early_len[i]);
+   }
+   gbl_early_n = 0;
+   return 0;
+}
+
+int fe_host_gblink_active(void) { return gbl != NULL; }
+static int gbl_repeat;              /* inside a stall's re-present */
+int fe_host_gblink_stalled(void)
+{
+   return gbl_repeat;
+}
+void fe_host_gblink_hold(int on) { gbl_hold = on ? 1 : 0; }
+int fe_host_gblink_state(void) { return gbl ? fe_gblink_state(gbl) : -1; }
+
+void fe_host_gblink_status(char *l1, size_t c1, char *l2, size_t c2)
+{
+   fe_gblink_status(gbl, l1, c1, l2, c2);
+}
+
+void fe_host_gblink_progress(int *p1, int *p2)
+{
+   fe_gblink_status_progress(gbl, p1, p2);
+}
+
+void fe_host_gblink_request_end(void)
+{
+   if (gbl)
+      fe_gblink_request_end(gbl);
+}
+
+static void gblink_stats_evt(void);
+
+int fe_host_gblink_close(void)
+{
+   if (!gbl)
+      return -1;
+   /* The session's totals, always: with the periodic reporting off
+    * (telemetry_period) the heartbeat never printed them. */
+   gblink_stats_evt();
+   /* t_ms (this console's clock): close -> resume is how long the game
+    * takes to come back (the single machine re-reads its cartridge), the
+    * hw4 Y ending's 3000-vs-1000 gap. */
+   fe_evt("gblink_close state=%d error=%s t_ms=%llu", fe_gblink_state(gbl),
+          fe_gblink_error_text(fe_gblink_error(gbl)),
+          (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+   {
+      fe_gblink_stats st;
+      fe_gblink_get_stats(gbl, &st);
+      fe_evt("gblink_bulk_stats chunk=%u sent=%u resent=%u rx=%u dup=%u "
+             "bad=%u rate=%u", st.bulk_chunk, st.bulk_sent, st.bulk_resent,
+             st.bulk_rx, st.bulk_dup, st.bulk_bad, st.bulk_rate);
+   }
+   {
+      /* DONE: continue from the agreed end (its battery image is on disk,
+       * clock re-based to this PSP).  Anything else: back to the moment
+       * the link began -- nothing of the session was saved, so nothing of
+       * it may continue either (the game would save it later itself). */
+      size_t sn = 0;
+      const void *fs = fe_gblink_final_state(gbl, &sn);
+      uint8_t *state = NULL;
+      int rc;
+      const char *how = "restart";
+      if (host.gblink_resume_boot)
+         how = "boot_from_battery";
+      else if (fs && sn && (state = (uint8_t *)malloc(sn)) != NULL)
+      {
+         memcpy(state, fs, sn);
+         how = "live_end";
+      }
+      else if (gbl_prelink_state)
+      {
+         state = gbl_prelink_state;
+         sn = gbl_prelink_state_n;
+         gbl_prelink_state = NULL;
+         how = "restore_prelink";
+      }
+      fe_gblink_destroy(gbl);
+      gbl = NULL;
+      last_frame = NULL;
+      gbl_sessions++;
+      gbl_hold = 0;
+      if (host.gb_bulk_enable)
+         host.gb_bulk_enable(0);
+      rc = gb_single_boot();
+      if (rc == 0 && state)
+      {
+         rc = gbcore_state_load(gb_core, state, sn);
+         if (rc != 0)
+         {
+            /* the battery image on disk is still right: power on from it */
+            fe_evt("gblink_resume FAILED state=%u", (unsigned)sn);
+            gbcore_shutdown(gb_core);
+            gb_core = NULL;
+            rc = gb_single_boot();
+            how = "restart";
+         }
+      }
+      free(state);
+      free(gbl_prelink_state);
+      gbl_prelink_state = NULL;
+      FE_EVT_ONLY(how);
+      fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
+             (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+      return rc;
+   }
+}
+
+/* The autopilot takes one look per frame of THIS console's machine: at
+ * power-on, then after each completed frame -- never while a partner input
+ * is late -- so a script sees exactly what it would in linkplay/sesssim. */
+int fe_host_autopilot_gate(void)
+{
+   int st;
+   if (!gbl)
+      return !host.gblink_script_waits || (gbl_sessions && !gbl_hold);
+   st = fe_gblink_state(gbl);
+   if (st != FE_GBLINK_RUNNING && st != FE_GBLINK_ENDING)
+      return 0;
+   if (!gbl_primed)
+   {
+      gbl_primed = 1;
+      return 1;
+   }
+   return gbl_last == FE_GBLINK_FRAME;
+}
+
 int fe_host_boot(const fe_host_config *cfg)
 {
    struct retro_game_info game;
    struct retro_system_av_info av;
 
    host = *cfg;
+   hb_every = cfg->heartbeat_frames ? cfg->heartbeat_frames
+                                    : HEARTBEAT_INTERVAL;
    frame_count = 0;
    last_frame = NULL;
    frames_rendered = 0;
@@ -1702,11 +2210,13 @@ int fe_host_boot(const fe_host_config *cfg)
    gb_save_crc_valid = 0;
    gb_skip_frame = 0;
 
-   if (host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC)
+   gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC;
+   if (gb_family)
    {
       gbcore_callbacks_t callbacks;
       char title[17] = "";
       unsigned rate = 32768;
+      gbcore_set_color_correction(!host.gbc_raw_colors);
       if (host.boot_status) host.boot_status("Preparing GB emulator");
       memset(&callbacks, 0, sizeof(callbacks));
       callbacks.video = gb_video_frame;
@@ -1717,10 +2227,65 @@ int fe_host_boot(const fe_host_config *cfg)
       fe_np_gb_set_peer_callback(gb_link_peer_event, NULL);
       /* Before create: the core takes its clock base and chooses DMG, SGB
        * or CGB behaviour (the palette decides SGB colours) as it boots. */
-      gbcore_set_wallclock(host.wallclock);
-      gbcore_set_palette((unsigned)host.gb_palette);
-      gb_core = gbcore_create(host.rom_path, NULL, 0, host.console, rate,
-                              &callbacks);
+      if (host.gb_dual_rom)
+      {
+         /* The pair takes the cable: no ad-hoc byte link beside it. */
+         gbdual_config_t dc;
+         const char *dot = strrchr(host.gb_dual_rom, '.');
+         memset(&dc, 0, sizeof(dc));
+         dc.machine[0].rom_path = host.rom_path;
+         dc.machine[0].console = host.console;
+         dc.machine[0].palette = (unsigned)host.gb_palette;
+         dc.machine[0].wallclock = host.wallclock;
+         dc.machine[0].callbacks.video = gb_video_frame;
+         dc.machine[0].callbacks.audio_batch = gb_audio_batch;
+         dc.machine[1].rom_path = host.gb_dual_rom;
+         dc.machine[1].console = (dot && (dot[3] == 'c' || dot[3] == 'C'))
+                                 ? FE_CONSOLE_GBC : FE_CONSOLE_GB;
+         dc.machine[1].palette = (unsigned)host.gb_palette;
+         dc.machine[1].wallclock = host.wallclock;
+         dc.machine[1].headless = 1;
+         dc.audio_rate = rate;
+         dc.link = 1;
+         dc.pace_slot = 0;
+         dc.batch_lines = host.gb_dual_batch;
+         gb_dual = gbdual_create(&dc);
+         gb_core = gb_dual ? gbdual_core(gb_dual, 0) : NULL;
+         fe_evt("gb_dual_bench rom=%s console=%s headless=1 mirror=%d "
+                "batch=%u ok=%d", host.gb_dual_rom,
+                dc.machine[1].console == FE_CONSOLE_GBC ? "GBC" : "GB",
+                host.gb_dual_mirror, dc.batch_lines ? dc.batch_lines : 1u,
+                gb_dual != NULL);
+         if (gb_dual && host.gb_dual_state)
+         {
+            FILE *sf = fopen(host.gb_dual_state, "rb");
+            size_t n = sf ? fread(state_buf, 1, sizeof(state_buf), sf) : 0;
+            int rc = -1;
+            FE_EVT_ONLY(rc);
+            if (sf)
+               fclose(sf);
+            if (n)
+               rc = gbdual_api(1)->state_load(gbdual_core(gb_dual, 1),
+                                              state_buf, n);
+            fe_evt("gb_dual_bench state=%s size=%u rc=%d", host.gb_dual_state,
+                   (unsigned)n, rc);
+         }
+      }
+      else
+      {
+         gbcore_set_wallclock(host.wallclock);
+         gbcore_set_palette((unsigned)host.gb_palette);
+         gb_core = gbcore_create(host.rom_path, NULL, 0, host.console, rate,
+                                 &callbacks);
+         if (gb_core && host.gb_bench_headless)
+         {
+            /* Milestone-1 bench: the one machine as a link session's
+             * partner machine runs -- no picture, no synthesis -- to
+             * measure what headless costs on its own. */
+            gbcore_set_headless(gb_core, 1);
+            fe_evt("gb_bench headless=1");
+         }
+      }
       if (!gb_core)
       {
          fe_log("gbcore_create FAILED for %s console=%d", host.rom_path,
@@ -2219,11 +2784,85 @@ static unsigned gb_frameskip_interval(void)
    return (unsigned)atoi(interval);
 }
 
+static void gblink_stats_evt(void)
+{
+   fe_gblink_stats s;
+   fe_gblink_get_stats(gbl, &s);
+   fe_evt("gblink_stats slot=%d delay=%u f0=%llu f1=%llu stalls=%u "
+          "streak_max=%u hashes=%u/%u last_hash=%u:%016llx episodes=%u "
+          "inputs_fast=%u inputs_ordered=%u", s.local_slot,
+          s.input_delay, (unsigned long long)s.frames[0],
+          (unsigned long long)s.frames[1], s.stalls, s.stall_streak_max,
+          s.hashes_matched, s.hashes_sent, s.last_hash_frame,
+          (unsigned long long)s.last_hash, s.stall_episodes, s.inputs_fast,
+          s.inputs_ordered);
+}
+
+static void gblink_frame(uint64_t core_t0)
+{
+   uint32_t pad = (host.input_bitmask ? host.input_bitmask() : 0) |
+                  injected_mask;
+   int st = fe_gblink_state(gbl);
+   if (host.gb_bulk_recv && (st == FE_GBLINK_SETUP ||
+                             st == FE_GBLINK_RUNNING ||
+                             st == FE_GBLINK_ENDING))
+   {
+      static uint8_t bk[1500];
+      int n, guard = 256;
+      while (guard-- && (n = host.gb_bulk_recv(bk, sizeof(bk))) > 0)
+         fe_gblink_receive_bulk(gbl, bk, (size_t)n);
+   }
+   gbl_last = fe_gblink_step(gbl, gb_buttons_from_retro(pad));
+   if (gbl_last == FE_GBLINK_STALL && host.video_frame)
+   {
+      gbl_repeat = 1;
+      host.video_frame(NULL, 160, 144, last_pitch);
+      gbl_repeat = 0;
+   }
+   if (gbl_last != FE_GBLINK_FRAME)
+   {
+      if (st != fe_gblink_state(gbl))
+         gblink_stats_evt();
+      return;
+   }
+   if (core_t0 && host.time_us)
+   {
+      uint32_t elapsed = (uint32_t)(host.time_us() - core_t0);
+      core_run_us_total += elapsed;
+      core_run_calls++;
+      if (elapsed > core_run_max_us) core_run_max_us = elapsed;
+      if (elapsed > core_win_max_us) core_win_max_us = elapsed;
+   }
+   frame_count++;
+   if ((frame_count % hb_every) == 0)
+   {
+      fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
+             (unsigned long long)(host.time_us ? host.time_us() : 0));
+      fps_evt();
+      core_prof_evt();
+      gblink_stats_evt();
+   }
+}
+
+void fe_host_skip_override(int skip)
+{
+   skip_override = skip < 0 ? -1 : (skip ? 1 : 0);
+   if (&frontend_skip_override)
+      frontend_skip_override = skip_override;
+}
+
 void fe_host_run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
    unsigned rf0 = 0, ff0 = 0, sf0 = 0, df0 = 0, pl0 = 0;
 
+   if (gbl)
+   {
+      gblink_frame(core_t0);
+      return;
+   }
+   if (gb_core && gbl_hold)
+      return;                  /* harness: waiting for the link to form */
    if (gb_core)
    {
       static unsigned skip_phase;
@@ -2237,8 +2876,16 @@ void fe_host_run_frame(void)
          gb_skip_frame = 0;
          skip_phase = 0;
       }
+      if (skip_override >= 0)
+         gb_skip_frame = skip_override;
       gbcore_set_skip_render(gb_core, gb_skip_frame);
-      if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
+      if (gb_dual)
+      {
+         gb_dual_buttons = gb_buttons_from_retro(pad);
+         if (gbdual_advance(gb_dual, gb_dual_input, NULL) != 1)
+            fe_evt("gb_dual_advance FAILED frame=%u", frame_count);
+      }
+      else if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
          fe_evt("gb_run_frame FAILED frame=%u", frame_count);
       if (core_t0 && host.time_us)
       {
@@ -2250,12 +2897,19 @@ void fe_host_run_frame(void)
       }
       frame_count++;
       fe_host_sram_service();
-      if ((frame_count % HEARTBEAT_INTERVAL) == 0)
+      if ((frame_count % hb_every) == 0)
       {
          fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
                 (unsigned long long)(host.time_us ? host.time_us() : 0));
          fps_evt();
          core_prof_evt();
+         if (gb_dual)
+            fe_evt("gb_dual frames=%llu/%llu lines=%llu serial=%llu/%llu",
+                   (unsigned long long)gbdual_frame(gb_dual, 0),
+                   (unsigned long long)gbdual_frame(gb_dual, 1),
+                   (unsigned long long)gbdual_lines(gb_dual),
+                   (unsigned long long)gbdual_serial_bytes(gb_dual, 0),
+                   (unsigned long long)gbdual_serial_bytes(gb_dual, 1));
       }
       return;
    }
@@ -2306,7 +2960,7 @@ void fe_host_run_frame(void)
    fe_host_sram_service();
    if (!host_io && (frame_count % SRAM_CHECK_INTERVAL) == 0)
       fe_host_sram_flush(0);
-   if ((frame_count % HEARTBEAT_INTERVAL) == 0)
+   if ((frame_count % hb_every) == 0)
    {
       fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
              (unsigned long long)(host.time_us ? host.time_us() : 0));
@@ -2351,7 +3005,7 @@ const uint16_t *fe_host_last_frame(size_t *pitch_bytes)
 
 const void *fe_host_netpacket_cb(void)
 {
-   return !gb_core && netpacket_registered ? (const void *)&netpacket_cb : NULL;
+   return !gb_family && netpacket_registered ? (const void *)&netpacket_cb : NULL;
 }
 
 void fe_host_shutdown(void)
@@ -2363,9 +3017,20 @@ void fe_host_shutdown(void)
    fe_host_sram_flush(0);
    fe_host_sram_sync();     /* exit must never close over pending blocks */
    sram_close();
-   if (gb_core)
+   if (gbl)
    {
-      gbcore_shutdown(gb_core);
+      /* Quitting mid-session: nothing is committed (fe_gblink.h). */
+      fe_evt("gblink_abandoned state=%d", fe_gblink_state(gbl));
+      fe_gblink_destroy(gbl);
+      gbl = NULL;
+   }
+   if (gb_family)
+   {
+      if (gb_dual)
+         gbdual_destroy(gb_dual);
+      else
+         gbcore_shutdown(gb_core);
+      gb_dual = NULL;
       gb_core = NULL;
       free(gb_save_buffer);
       gb_save_buffer = NULL;

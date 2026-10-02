@@ -1,0 +1,21 @@
+# psp_frame_path.txt -- the GBA frame's CPU code that the dynarec twin cannot
+# run (docs/LAYOUT-PINNING.md): the PSP frontend, the Media Engine host side,
+# audio output.  "symbol calls_per_frame [bytes_fetched_per_call]"; each call
+# fetches the first `bytes` of the function (default: all of it) once.
+# ORDER-OF-MAGNITUDE placeholders, not measurements: the simulation uses them
+# so this code competes for sets where it really sits, and the generator so it
+# is pinned with the rest of the per-frame path.  The twin's own frontend
+# (fe_host_run_frame, the core, fe_autopilot) is NOT listed: it is measured.
+#
+# The renderer runs on the ME, so the twin's video.o is not placed; what the
+# CPU still runs in video.cc is update_scanline's ME-capture head, once per
+# visible line (the register snapshot, the ME fix's affine stores, return).
+update_scanline        160   384
+plat_video_frame         1
+me_host_post_render      1
+me_host_result           1
+me_host_idle             1
+me_host_watchdog_frame   1
+plat_audio_frames        1
+audio_thread             2   256
+osd_draw                 1   128

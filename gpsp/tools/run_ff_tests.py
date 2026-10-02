@@ -24,12 +24,19 @@ with tempfile.TemporaryDirectory() as tmp:
     common = ['gcc', '-std=gnu99', '-O2', '-Wall', '-Wextra',
               '-ffunction-sections', '-fdata-sections', '-DGPSP_PLAYABLE',
               '-I' + str(repo / 'frontend-common'), '-I' + str(tmp)]
-    for name, sources in (
+    # display_profiles rides here because it is the same shape -- the real
+    # config_psp.c and INI writer -- and run_host_tests.py caps the number
+    # of suites (docs/DISPLAY-FEATURES.md).
+    for name, sources, extra in (
         ('config', ['tools/test_ff_config.c', 'psp/config_psp.c',
-                    'frontend-common/fe_util.c']),
-        ('pipeline', ['tools/test_ff_pipeline.c']),
+                    'psp/ctl_map.c', 'frontend-common/fe_util.c'], []),
+        ('pipeline', ['tools/test_ff_pipeline.c'], []),
+        ('display_profiles', ['tools/test_display_profiles.c',
+                              'psp/config_psp.c', 'psp/ctl_map.c',
+                              'frontend-common/fe_util.c'],
+         ['-Wl,--wrap=fopen']),
     ):
         binary = tmp / name
-        subprocess.run(common + [str(repo / p) for p in sources] +
+        subprocess.run(common + [str(repo / p) for p in sources] + extra +
                        ['-Wl,--gc-sections', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)

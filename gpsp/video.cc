@@ -83,6 +83,8 @@ u16* gba_screen_pixels = NULL;
  * byte-identical behaviour for every build that never sets them. */
 u32 me_capture_mode = 0;
 me_capture_frame *me_capture_buf = NULL;
+/* For frontends that size a capture buffer without including video.h. */
+extern "C" const u32 me_capture_frame_bytes = sizeof(me_capture_frame);
 
 #define get_screen_pixels()   gba_screen_pixels
 #define get_screen_pitch()    GBA_SCREEN_PITCH
@@ -2857,11 +2859,7 @@ static void mcv_frame_end(unsigned vcount)
   affine_reference_y[0]=me_capture_buf->affine_seed[2];
   affine_reference_y[1]=me_capture_buf->affine_seed[3];
   reg[OAM_UPDATED] = me_capture_buf->oam_updated;
-  for (int ln = 0; ln < 160; ln++)
-  {
-    memcpy(io_registers, me_capture_buf->ioregs[ln], ME_CAP_IOREGS*2);
-    update_scanline();
-  }
+  me_replay_lines(me_capture_buf, NULL, 0);
   unsigned shadow = mcv_wh(g_mcv.shadow, GBA_SCREEN_PITCH*160*2);
 
   memcpy(io_registers, sv_io, sizeof(sv_io));
@@ -2908,8 +2906,83 @@ __attribute__((constructor)) static void mcv_install(void) { atexit(mcv_dump); }
 #define MTS_CAPTURE_LINE(vc) do {} while (0)
 #endif
 
+/* Step the affine reference counters past line `vcount` (PB/PD, honouring
+ * vertical mosaic).  The CPU renderer's own step, moved verbatim into a
+ * function so capture mode 1 can run the identical arithmetic. */
+static inline void affine_advance(u32 vcount)
+{
+  // Account for vertical mosaic effect, by correcting affine references.
+  const u32 bgmosv = ((read_ioreg(REG_MOSAIC) >> 4) & 0xF) + 1;
+
+  if (read_ioreg(REG_BG2CNT) & 0x40) {   // Mosaic enabled for this BG
+    if ((vcount % bgmosv) == bgmosv-1) { // Correct after the last line
+      affine_reference_x[0] += (s16)read_ioreg(REG_BG2PB) * bgmosv;
+      affine_reference_y[0] += (s16)read_ioreg(REG_BG2PD) * bgmosv;
+    }
+  } else {
+    affine_reference_x[0] += (s16)read_ioreg(REG_BG2PB);
+    affine_reference_y[0] += (s16)read_ioreg(REG_BG2PD);
+  }
+
+  if (read_ioreg(REG_BG3CNT) & 0x40) {
+    if ((vcount % bgmosv) == bgmosv-1) {
+      affine_reference_x[1] += (s16)read_ioreg(REG_BG3PB) * bgmosv;
+      affine_reference_y[1] += (s16)read_ioreg(REG_BG3PD) * bgmosv;
+    }
+  } else {
+    affine_reference_x[1] += (s16)read_ioreg(REG_BG3PB);
+    affine_reference_y[1] += (s16)read_ioreg(REG_BG3PD);
+  }
+}
+
+#if ME_MIDFRAME_LOG
+#include "video_me_log.h"
+#endif
+
+void me_replay_lines(const me_capture_frame *cap, int *reloads, int use_log)
+{
+  int ln, n = 0;
+#if ME_MIDFRAME_LOG
+  const me_log_entry *log = (const me_log_entry *)cap->log_addr;
+  u32 log_n = (use_log && log) ? cap->log_n : 0, k = 0;
+  if (log_n && ml_undo(log, log_n))
+    reg[OAM_UPDATED] = 1;          /* OAM is back at its line-0 state */
+#else
+  (void)use_log;
+#endif
+  for (ln = 0; ln < 160; ln++)
+  {
+    memcpy(io_registers, cap->ioregs[ln], ME_CAP_IOREGS * sizeof(u16));
+#if ME_MIDFRAME_LOG
+    if (log_n)
+      k = ml_redo_line(log, log_n, k, (u32)ln);
+#endif
+#if ME_AFFINE_LINES
+    {
+      const s32 *a = cap->affine_line[ln];
+      if (reloads && ln &&
+          (affine_reference_x[0] != a[0] || affine_reference_x[1] != a[1] ||
+           affine_reference_y[0] != a[2] || affine_reference_y[1] != a[3]))
+        n++;
+      affine_reference_x[0] = a[0];
+      affine_reference_x[1] = a[1];
+      affine_reference_y[0] = a[2];
+      affine_reference_y[1] = a[3];
+    }
+#endif
+    update_scanline();             /* VCOUNT rides in the captured regs */
+  }
+#if ME_MIDFRAME_LOG
+  if (log_n)                       /* line 160: back to the snapshot state */
+    ml_redo_line(log, log_n, k, 160);
+#endif
+  if (reloads)
+    *reloads = n;
+}
+
 void update_scanline(void)
 {
+  DRPH_SCOPE(DRPH_VIDEO);
   u32 pitch = get_screen_pitch();
   u16 dispcnt = read_ioreg(REG_DISPCNT);
   u32 vcount = read_ioreg(REG_VCOUNT);
@@ -2922,9 +2995,19 @@ void update_scanline(void)
   /* ME renderer capture: log this line's LCD registers; at line 0 also latch
    * the affine seed (video_reload_counters ran at the last vblank) and the
    * OAM_UPDATED flag.  Mode 1 then SKIPS the render entirely — the ME renders
-   * this frame from the capture, and the ~6 ms/frame stays with the emulator. */
+   * this frame from the capture, and the ~6 ms/frame stays with the emulator.
+   * Compiled out of the engine itself (ME_PRX_BUILD): it never captures, and
+   * this is the hottest function in its 16 KiB I-cache. */
+#ifndef ME_PRX_BUILD
   if (me_capture_mode && me_capture_buf && vcount < 160)
   {
+#if ME_MIDFRAME_LOG
+    /* Before the OAM flag is latched (line 0) or consumed (mode 2 render). */
+    if (vcount == 0)
+      MFL_FRAME_START();
+    else
+      MFL_LINE(vcount);
+#endif
     if (vcount == 0)
     {
       me_capture_buf->affine_seed[0] = affine_reference_x[0];
@@ -2937,10 +3020,30 @@ void update_scanline(void)
     }
     memcpy(me_capture_buf->ioregs[vcount], io_registers,
            ME_CAP_IOREGS * sizeof(u16));
+#if ME_AFFINE_LINES
+    me_capture_buf->affine_line[vcount][0] = affine_reference_x[0];
+    me_capture_buf->affine_line[vcount][1] = affine_reference_x[1];
+    me_capture_buf->affine_line[vcount][2] = affine_reference_y[0];
+    me_capture_buf->affine_line[vcount][3] = affine_reference_y[1];
+#endif
     MTS_CAPTURE_LINE(vcount);
     if (me_capture_mode == 1)
+    {
+#if ME_AFFINE_LINES
+      /* The render is skipped, the counters are not: the next line's
+       * recorded value must be where the CPU renderer would have been. */
+      if (video_mode)
+        affine_advance(vcount);
+#endif
       return;                     /* the render happens on the ME */
+    }
   }
+#endif
+#if ME_TIMING_SIM && ME_MIDFRAME_LOG
+  /* Desktop cost reference: the CPU renderer's own time (mode 2 only). */
+  unsigned long long mts_t0 =
+    (me_capture_mode == 2 && !g_mts.in_replay) ? ml_now() : 0;
+#endif
   MCV_LINE(vcount);
 
   RP_LINE(vcount);
@@ -2982,32 +3085,14 @@ void update_scanline(void)
 #endif
 
   // Mode 0 does not use any affine params at all.
-  if (video_mode) {
-    // Account for vertical mosaic effect, by correcting affine references.
-    const u32 bgmosv = ((read_ioreg(REG_MOSAIC) >> 4) & 0xF) + 1;
-
-    if (read_ioreg(REG_BG2CNT) & 0x40) {   // Mosaic enabled for this BG
-      if ((vcount % bgmosv) == bgmosv-1) { // Correct after the last line
-        affine_reference_x[0] += (s16)read_ioreg(REG_BG2PB) * bgmosv;
-        affine_reference_y[0] += (s16)read_ioreg(REG_BG2PD) * bgmosv;
-      }
-    } else {
-      affine_reference_x[0] += (s16)read_ioreg(REG_BG2PB);
-      affine_reference_y[0] += (s16)read_ioreg(REG_BG2PD);
-    }
-
-    if (read_ioreg(REG_BG3CNT) & 0x40) {
-      if ((vcount % bgmosv) == bgmosv-1) {
-        affine_reference_x[1] += (s16)read_ioreg(REG_BG3PB) * bgmosv;
-        affine_reference_y[1] += (s16)read_ioreg(REG_BG3PD) * bgmosv;
-      }
-    } else {
-      affine_reference_x[1] += (s16)read_ioreg(REG_BG3PB);
-      affine_reference_y[1] += (s16)read_ioreg(REG_BG3PD);
-    }
-  }
+  if (video_mode)
+    affine_advance(vcount);
 
   VP_LEAVE(VP_T_TOTAL);
+#if ME_TIMING_SIM && ME_MIDFRAME_LOG
+  if (mts_t0)
+    g_mts.render_ns += ml_now() - mts_t0;
+#endif
 
   RR_REPLAY(vcount);
   MCV_FRAME(vcount);

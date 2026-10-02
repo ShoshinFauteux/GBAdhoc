@@ -22,7 +22,9 @@ ME_PIXFMT_DEF = -DUSE_PSP_RGB565_FORMAT
 else
 ME_PIXFMT_DEF =
 endif
-RENDER_DEF = $(ME_PIXFMT_DEF) -D__LIBRETRO__ -DINLINE=inline \
+# ME_PRX_BUILD: video.cc's host-only halves (the ME_MIDFRAME_LOG recorder)
+# stay out of the engine; they touch symbols only the EBOOT has.
+RENDER_DEF = $(ME_PIXFMT_DEF) -D__LIBRETRO__ -DINLINE=inline -DME_PRX_BUILD \
              -DHAVE_STDINT_H -DHAVE_INTTYPES_H
 CXXFLAGS = $(CFLAGS) $(RENDER_INC) $(RENDER_DEF) -fno-rtti -fno-exceptions -std=c++11
 ASFLAGS = $(CFLAGS)
@@ -67,5 +69,5 @@ include $(PSPSDK)/lib/build.mak
 
 # AFTER the include so it does not steal the default goal (the PRX target).
 # video.cc lives in the repo root; compile it into the PRX with the render flags.
-video.o: ../../video.cc
+video.o: ../../video.cc ../../video.h ../../video_me_log.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

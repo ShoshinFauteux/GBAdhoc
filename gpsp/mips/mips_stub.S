@@ -31,6 +31,14 @@
   #define REG_S sw
 #endif
 
+// DRPROF twin only (platform=drprof-mipsel, tools/drprof): a static Linux
+// executable is still assembled -mabicalls, and gas then expands every `jal`
+// below into a GOT load through $gp -- which holds guest r13 in here.  pic0
+// makes them the plain absolute jal the PSP build already assembles.
+#ifdef DRPROF_MIPSEL_LINUX
+  .option pic0
+#endif
+
 #define defsymbl(symbol) \
 .type symbol, %function ;\
 .global symbol ;         \
@@ -221,10 +229,33 @@ symbol:
   REG_L $28, GP_SAVE($16)
 .endm
 #else
+#ifdef DRPROF_HW
+// DRPROF_HW: publish the phase (drprof.h) around every C call from here.
+// $1 is free at every call site (arguments are in $4-$7).
+.equ DRPH_OFF, (40 * 4)
+.macro cfncall target, targetid
+  .if \targetid == 0
+  addiu $1, $0, 1                 # update_gba
+  .elseif \targetid <= 3
+  addiu $1, $0, 2                 # block lookups
+  .elseif (\targetid == 4) || (\targetid >= 10)
+  addiu $1, $0, 3                 # flush / smc
+  .elseif \targetid == 9
+  addiu $1, $0, 12                # irq
+  .else
+  addiu $1, $0, 4                 # mode / psr / cheats
+  .endif
+  sw $1, DRPH_OFF($16)
+  jal \target
+  REG_L $28, GP_SAVE($16)
+  sw $0, DRPH_OFF($16)            # back to translated code (or its glue)
+.endm
+#else
 .macro cfncall target, targetid
   jal \target
   REG_L $28, GP_SAVE($16)
 .endm
+#endif
 #endif
 
 
@@ -322,10 +353,42 @@ return_to_main:
 .endm
 #endif
 
+// DISPATCH_CACHE (prototype, cpu_threaded.c): probe {pc -> entry} before
+// paying for save_registers + the C lookup.  $1/$2/$5/$6 are dead here (see
+// dispatch_cycle_check).  key = the exact bits block_lookup_address_* keys on.
+#ifdef DISPATCH_CACHE
+#ifndef DISPATCH_CACHE_BITS
+#define DISPATCH_CACHE_BITS 9     /* must match cpu.h */
+#endif
+#ifdef GBA_PC_MASK
+  #define DC_KEY_ARM   ext $5, $4, 2, 26
+  #define DC_KEY_THUMB ext $5, $4, 1, 27
+#else
+  #define DC_KEY_ARM   srl $5, $4, 2
+  #define DC_KEY_THUMB srl $5, $4, 1
+#endif
+.macro dc_probe table, miss
+  andi $6, $5, ((1 << DISPATCH_CACHE_BITS) - 1)
+  sll $6, $6, 3
+  lui $1, %hi(\table)
+  addu $1, $1, $6
+  lw $2, %lo(\table)($1)         # key
+  bne $2, $5, \miss
+  lw $6, %lo(\table)+4($1)       # (delay) entry
+.endm
+#endif
+
 defsymbl(mips_indirect_branch_arm)
   dispatch_cycle_check 2
 #ifdef GATE_NOCHECK
 defsymbl(mips_indirect_branch_arm_nocheck)
+#endif
+#ifdef DISPATCH_CACHE
+  DC_KEY_ARM
+  dc_probe dispatch_cache_arm, 8f
+  jr $6
+  nop
+8:
 #endif
   save_registers
   cfncall block_lookup_address_arm, 1
@@ -338,6 +401,13 @@ defsymbl(mips_indirect_branch_thumb)
 #ifdef GATE_NOCHECK
 defsymbl(mips_indirect_branch_thumb_nocheck)
 #endif
+#ifdef DISPATCH_CACHE
+  DC_KEY_THUMB
+  dc_probe dispatch_cache_thumb, 8f
+  jr $6
+  nop
+8:
+#endif
   save_registers
   cfncall block_lookup_address_thumb, 2
   restore_registers
@@ -345,6 +415,31 @@ defsymbl(mips_indirect_branch_thumb_nocheck)
   nop
 
 defsymbl(mips_indirect_branch_dual)
+#ifdef DISPATCH_CACHE
+  // block_lookup_address_dual: bit 0 set -> Thumb at pc & ~1, CPSR.T = 1;
+  // clear -> ARM at (pc + 2) & ~3, CPSR.T = 0.  Same keys, same CPSR write.
+  andi $1, $4, 1
+  bne $1, $0, 7f
+  addiu $5, $4, 2                 # (delay) ARM: pc + 2
+#ifdef GBA_PC_MASK
+  ext $5, $5, 2, 26
+#else
+  srl $5, $5, 2
+#endif
+  dc_probe dispatch_cache_arm, 8f
+  lw $1, REG_CPSR($16)
+  ins $1, $0, 5, 1                # T = 0
+  jr $6
+  sw $1, REG_CPSR($16)            # (delay)
+7:
+  DC_KEY_THUMB                    # (pc & ~1) -> same key as pc
+  dc_probe dispatch_cache_thumb, 8f
+  lw $1, REG_CPSR($16)
+  ori $1, $1, 0x20                # T = 1
+  jr $6
+  sw $1, REG_CPSR($16)            # (delay)
+8:
+#endif
   save_registers
   cfncall block_lookup_address_dual, 3
   nop
@@ -673,12 +768,25 @@ fnptrs:
   .section .jit,"awx",%nobits
 #endif
 .align 2
+#if defined(JIT_CODE_DISCIPLINE)
+# JIT_CODE_DISCIPLINE (docs/JIT-CODE-DISCIPLINE.md): the code zones own whole
+# 64-byte cache lines -- no line holds both translated code and some other
+# object's data.  (The LARGE tier is memalign(64) already.)  Both sizes are
+# multiples of 64, so the RAM array that follows is aligned too.
+.balign 64
+#endif
 
 #if defined(RUNTIME_JIT_CACHE)
 # The SMALL tier.  rom_/ram_translation_cache are C pointers
 # (cpu_threaded.c) that point here unless startup found the memory for the
 # LARGE tier.  Same section, alignment and order as before, so the small
 # path's memory layout is unchanged.
+#if defined(LAYOUT_PIN)
+# Pinned I-cache sets (gpsp_config.h, docs/LAYOUT-PINNING.md): the same
+# offset into an 8 KiB way as the LARGE tier, whatever precedes this in .bss.
+.balign JIT_PIN_WAY
+  .space JIT_PIN_OFFSET
+#endif
 defsymbl(rom_translation_cache_static)
   .space ROM_TRANSLATION_CACHE_SIZE
 defsymbl(ram_translation_cache_static)

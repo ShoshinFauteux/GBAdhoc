@@ -69,6 +69,9 @@ EBOOT_SIZE=$(wc -c < "$EBOOT" | tr -d ' ')
 ME_PRX="$EBOOT_DIR/gbadhoc_me.prx"
 [ -f "$ME_PRX" ] || ME_PRX="$REPO/psp/me/gbadhoc_me.prx"
 [ -f "$ME_PRX" ] || die "no Media Engine module at '$ME_PRX'. Build the PSP frontend before packaging."
+HOME_PRX="$EBOOT_DIR/gbadhoc_home.prx"
+[ -f "$HOME_PRX" ] || HOME_PRX="$REPO/psp/home/gbadhoc_home.prx"
+[ -f "$HOME_PRX" ] || die "no HOME-button module at '$HOME_PRX'. Build the PSP frontend before packaging."
 
 # Staleness: any recursively included PSP/frontend/transport source or build
 # input, including artwork embedded in EBOOT.PBP, newer than the EBOOT means
@@ -91,7 +94,10 @@ ME_STALE=$(find "$REPO/psp/me" -type f \( -name '*.c' -o -name '*.cc' \
              -o -name '*.h' -o -name '*.S' -o -name '*.s' \
              -o -name '*.exp' -o -name 'Makefile' \) \
              -newer "$ME_PRX" -print 2>/dev/null || true)
-for me_dep in psp/Makefile video.cc video.h video_prof.h common.h; do
+HOME_STALE=$(find "$REPO/psp/home" -type f \( -name '*.c' -o -name '*.h' \
+               -o -name '*.exp' -o -name 'Makefile' \) \
+               -newer "$HOME_PRX" -print 2>/dev/null || true)
+for me_dep in psp/Makefile video.cc video.h video_prof.h video_me_log.h common.h; do
   if [ "$REPO/$me_dep" -nt "$ME_PRX" ]; then
     ME_STALE="$ME_STALE
 $REPO/$me_dep"
@@ -105,6 +111,17 @@ if [ -n "$STALE" ]; then
     echo "FATAL: '$EBOOT' is OLDER than sources that go into it:" >&2
     echo "$STALE" | sed 's/^/  /' >&2
     echo "  Rebuild the EBOOT, or pass --allow-stale if you really mean it." >&2
+    exit 1
+  fi
+fi
+if [ -n "$HOME_STALE" ]; then
+  if [ "$ALLOW_STALE" -eq 1 ]; then
+    echo "WARNING: HOME-button module is older than these sources (--allow-stale given):" >&2
+    echo "$HOME_STALE" | sed 's/^/  /' >&2
+  else
+    echo "FATAL: '$HOME_PRX' is OLDER than its sources:" >&2
+    echo "$HOME_STALE" | sed 's/^/  /' >&2
+    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
     exit 1
   fi
 fi
@@ -178,6 +195,7 @@ mkdir -p "$APP/roms" "$APP/saves" "$APP/log"
 cp "$EBOOT" "$APP/EBOOT.PBP"
 [ -f "$ME_PRX" ] || die "no Media Engine module at '$ME_PRX' — build the PSP frontend before packaging"
 cp "$ME_PRX" "$APP/gbadhoc_me.prx"
+cp "$HOME_PRX" "$APP/gbadhoc_home.prx"
 # Keep the empty folders alive through zip/unzip on every extractor.
 : > "$APP/roms/.keep"; : > "$APP/saves/.keep"; : > "$APP/log/.keep"
 
@@ -222,6 +240,7 @@ Copy the "PSP" folder in this zip to the ROOT of your memory stick.  You get:
     ms0:/PSP/GAME/$APPDIR_NAME/
         EBOOT.PBP     the app
         gbadhoc_me.prx  Media Engine renderer module
+        gbadhoc_home.prx  HOME-as-menu-button module (Settings > Controls)
         roms/         <- put your own .gba ROMs here
         saves/        (used by per-game builds)
         log/          frontend.log lands here

@@ -1,0 +1,23 @@
+# emerald_battle.txt -- Pokemon Emerald: from the owner's 3000 state
+# (Petalburg, outside the Pokemon Center) east onto Route 102's grass and
+# pace until a wild battle, then mash A through it.  Frame-stamped only.
+wait 60
+press B 4
+wait 30
+press B 4
+wait 30
+evt walk_east
+hold RIGHT 270
+hold UP 48
+evt grass
+repeat 4
+hold LEFT 32
+hold RIGHT 32
+endrepeat
+evt battle
+repeat 200
+press A 2
+wait 4
+endrepeat
+evt end
+wait 30

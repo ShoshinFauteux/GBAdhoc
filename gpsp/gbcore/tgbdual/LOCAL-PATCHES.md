@@ -11,7 +11,8 @@ git diff 8f84303 -- gbcore/tgbdual
 ```
 
 Every changed line in the sources carries a `GBAdhoc:` comment. `tgb_port.h`,
-`README.md` and this file are new; `cheat.c` is unchanged and not built.
+`tgb_shared.c`, `README.md` and this file are new; `cheat.c` is unchanged and
+not built.
 
 ## Import normalisation (no code change)
 
@@ -54,6 +55,7 @@ their original encodings (Shift-JIS, some CP1252). `diff -w -B
 | `rom.c` | Bank masks come from the header size code, so a file larger than its header claims lost its upper banks. | The code grows to cover the file (the adapter pads the buffer to match). |
 | `apu.c` | `freq<<16` overflowed `int` for square frequencies above 32767 Hz. | Unsigned shift. |
 | `op_def.h` | Header guard `OP_DEF_` defined `OP_DEF`. | Defines `OP_DEF_`. |
+| `apu.c` | The wave channel's `sample * volume << 1` shifts a negative value (undefined; UBSan reports it on every real cartridge). | `* 2`: the same value on every compiler we use, and the single-player trace is bit-identical to 3.0.0 (`gbcore/tests/bitident.c`). |
 | `gb.c` | HDMA from WRAM formed `ram-0xC000` from the array itself (`-Warray-bounds`). | Same pointer via `cpu_get_ram()`. |
 
 ## Behaviour changes
@@ -68,9 +70,51 @@ their original encodings (Shift-JIS, some CP1252). `diff -w -B
   clock: with a peer the byte lands at once; without one nothing happens, as
   on hardware. The DMG transfer time is corrected from 512 to 4096 clocks.
   New global `seri_rx`.
+- **Game Boy Color colours.** `gbc_recreate_colors` (`lcd.c`) converts a
+  CGB palette entry through the GBC LCD model (`cgb_lcd_color`: SameBoy's
+  measured response curve and green/blue mix, tables generated into
+  `_cgb_lcd_table.h` by `tools/gen_cgb_lcd_table.py`) instead of the plain
+  5-to-8-bit expansion, unless the adapter's `gbcore_set_color_correction(0)`
+  turns it off. The tables and the switch (`tgbshared_cgb_lcd`) are defined
+  once in `tgb_shared.c`. DMG and SGB colours are unchanged. Why:
+  `docs/GB-PALETTE-FIXES.md`.
 - **`gb_run` frame boundary.** Unchanged in the core; the adapter ends a
   frame at VBlank (LY 144) rather than at LY 0, so a presented frame is
   lines 0-143 of one frame.
+
+## Two machines in one program (GB link sessions)
+
+A link session runs both players' Game Boys on each console
+(`../gbcore_dual.h`). The core stays a set of globals: the build links the
+adapter and core as one partial link through `../gbcore_instance.ld`, keeps
+only the `gbcore_*` API global, and links a second copy with those names
+renamed `gbcoreb_*` (`psp/Makefile`, `tools/run_gb_tests.py`). Changes for
+that:
+
+| File | Change |
+|---|---|
+| `cpu.c` | Serial completion (`seri_occer` expiring in `cpu_exec`) asks the adapter for the byte that lands in SB (`tgb_port_serial_complete`). With an in-memory cable the byte is exchanged THEN, with the peer machine's SB (`cpu_seri_send`), which is what upstream TGB Dual did between its two machines; otherwise the adapter returns `seri_rx`, the byte chosen at the SC write, exactly as before. |
+| `gb.c` | `gb_fill_vframe` returns when there is no frame buffer: a headless machine (the partner's Game Boy) has none. It is reached from `gb_reset` and from SGB `MASK_EN` packets whatever `gbSkip` says. |
+| `_mrand_table.h` | The noise tables are `const` and named `tgbshared_mrand7/15`, defined once by the new `tgb_shared.c` outside the per-instance link: 64 KiB the second machine does not duplicate. |
+| `tgb_port.h` | Prototypes for `tgb_port_serial_complete` and `cpu_seri_send`. |
+
+Headless (`gbcore_set_headless`) needs nothing else in the core: every
+`lcd_render` call and the LCD-off fill are already under `gbSkip`, and the
+synthesiser (`snd_render_orig`) works on its own copy of the APU state,
+swapped in and out, so skipping it leaves every register the game can read
+unchanged. `snd_update`'s shared counter (the comment by LCK) would have
+coupled the two, but its register-side caller in `apu_write` never runs:
+`clocks += clock - bef_clock` adds zero, because `bef_clock` is set from
+`clock` on entry. `gbcore/tests/dual.c` checks the outcome on six real
+cartridges: a headless machine's sync hash equals the drawn one's every frame.
+
+`gb_reset` does not clear everything a game can read -- the sound registers
+NR10-NR51 in `snd_mem`, `_ff6c`/`_ff72`-`_ff75`, `ext_mem` -- nor the
+synthesiser's phases, so a second game in the same process started from the
+first one's leftovers (measured: the sync hash differs at frame 0).
+Single-player is left exactly as it was; a link session instead starts each
+machine with `gbcore_power_on`, which restores the instance's whole `.data`
+and clears its `.bss` (`../gbcore_instance.ld` marks them).
 
 ## Volume
 

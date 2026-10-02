@@ -663,10 +663,12 @@ void cpu_exec(unsigned short clocks)
 		/* GBAdhoc: serial completion restored.  MasterBoy had compiled it
 		 * out, so an internal-clock transfer never finished.  The byte was
 		 * exchanged at the SC write (cpu_io_write_02 -> tgb_port_serial);
-		 * here it lands in SB after the eight bit times, as on hardware. */
+		 * here it lands in SB after the eight bit times, as on hardware.
+		 * An in-memory cable (a two-instance link session) exchanges it
+		 * now instead, with the peer machine's SB, as TGB Dual did. */
 		if (total_clock>seri_occer){
 			seri_occer=0x7fffffff;
-			g_regs.SB=seri_rx;
+			g_regs.SB=tgb_port_serial_complete(g_regs.SB,seri_rx);
 			g_regs.SC&=0x7f;
 			cpu_irq(INT_SERIAL);
 		}

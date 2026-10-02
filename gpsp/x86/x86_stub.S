@@ -98,6 +98,7 @@ _##symbol:
 .equ REG_SLEEP_CYCLES,  (24 * 4)
 .equ OAM_UPDATED,       (25 * 4)
 .equ REG_SAVE,          (26 * 4)
+.equ PAL_UPDATED,       (63 * 4)
 
 .equ load_u8_tbl,           -(9 * 16 * ADDR_SIZE_BYTES)
 .equ load_s8_tbl,           -(8 * 16 * ADDR_SIZE_BYTES)
@@ -299,6 +300,32 @@ ext_store_eeprom16:
   cmp##opsuf $0, addrexp                            /* Check SMC mirror */   ;\
   jne smc_write
 
+# VRAM dirty-page map (gba_memory.c vram_clean[], 1 KiB pages, 0 = dirty).
+# The MIPS stub has marked it since the ME renderer's dirty-page copy; this
+# desktop twin did not, so nothing built on the map could be tested here.
+# eax holds the VRAM offset after the write; ecx/edx are free (the palette
+# stub below uses both).
+#if defined(__x86_64__) || defined(__amd64__)
+  #if defined(_WIN32)
+    #define MARK_VRAM_PAGE()                                                   \
+      shr $10, %eax                                                          ;\
+      lea fnm(vram_clean)(%rip), %rcx                                        ;\
+      movb $0, 96(%rcx)                   /* VRAM_DIRTY_ANY */               ;\
+      movb $0, (%rcx, %rax)
+  #else
+    #define MARK_VRAM_PAGE()                                                   \
+      shr $10, %eax                                                          ;\
+      mov fnm(vram_clean)@GOTPCREL(%rip), %rcx                               ;\
+      movb $0, 96(%rcx)                   /* VRAM_DIRTY_ANY */               ;\
+      movb $0, (%rcx, %rax)
+  #endif
+#else
+  #define MARK_VRAM_PAGE()                                                     \
+    shr $10, %eax                                                            ;\
+    movb $0, fnm(vram_clean)+96          /* VRAM_DIRTY_ANY */                ;\
+    movb $0, fnm(vram_clean)(%eax)
+#endif
+
 # Memory write routines
 
 #define write_stubs(fname, wsize, opsuf, regfn, regfn16, addrm, dup8fn)      ;\
@@ -334,6 +361,7 @@ ext_##fname##_vram##wsize:                                                   ;\
   sub $0x8000, %eax                                   /* Mirror last bank */ ;\
 1:                                                                           ;\
   mov regfn16(d), VRAM_OFF(REG_BASE, FULLREG(ax))         /* Actual write */ ;\
+  MARK_VRAM_PAGE()                          /* vram_clean[addr >> 10] = 0 */ ;\
   ret                                                                        ;\
                                                                              ;\
 ext_##fname##_oam##wsize:                                                    ;\
@@ -365,6 +393,7 @@ ext_store_palette8:
 ext_store_palette16:
   and $0x3FF, %eax            # wrap around address
 ext_store_palette16b:         # entry point for 8bit write
+  movl $1, PAL_UPDATED(REG_BASE) # flag the write (cpu.h PAL_UPDATED)
   mov %dx, PALETTE_RAM_OFF(REG_BASE, FULLREG(ax)) # write out palette value
   mov %edx, %ecx              # cx = dx
   shl $11, %ecx               # cx <<= 11 (red component is in high bits)

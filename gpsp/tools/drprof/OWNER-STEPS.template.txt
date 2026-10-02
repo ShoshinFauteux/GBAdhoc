@@ -1,0 +1,61 @@
+GBAdhoc DYNAREC PROFILE -- hardware bench, ONE rig app (docs/DYNAREC-PROFILE.md)
+==============================================================================
+Branch claude/dynarec-profile.  Stage: builds\dynarec-profile-out\rig-stage\
+One app folder, GBADHOC-DRPROF (XMB title "DRPROF RIG"), launched ONCE.  The
+USB handoff loop then runs 12 cycles by itself: AW2 tour and Heart & Soul
+heavy battle x { shipped dynarec, the two prototypes, time-split sampler },
+then the same six again in reverse order (the repeat).  Between cycles the
+console exports its Memory Stick for one 90 s window, the PC collects the logs,
+restores the saves, stages the next arm's EBOOT and settings, and the console
+relaunches itself.  About 40 minutes, hands off.
+
+The rig has its own ROM/save/state copies; GBADHOC and your saves are never
+touched.  MD5s: rig-stage\MANIFEST.json.  All three EBOOTs are harness64
+(64 MiB layout; a PSP-1000 runs them in 32 MiB), ME renderer on, ME_CATCH PRX.
+
+!! PSP GO: THE RIG MUST BE ON THE MEMORY STICK (M2), NOT INTERNAL STORAGE !!
+The in-app USB export serves the Memory Stick only.  The 2026-09-29 attempt
+was installed on internal storage (ef0): the run finished, the Go exported its
+(empty) M2 card instead, and the PC waited on the internal volume forever.
+These EBOOTs now refuse the loop on internal storage (on-screen notice, EVT
+handoff_refused) and simply run once.  Identify the M2 volume by content in
+XMB USB mode (the Go shows BOTH volumes; the M2 is the one with no GBADHOC
+today).  ~80 MB must be free on it.
+
+Proven in PPSSPP from these exact files, the WHOLE loop: install, one launch,
+12 cycles, every handoff, collection, golden restore, EBOOT/ini swap and
+relaunch (tools\drprof\drrig_dry.sh; result in rig-dryrun\).
+
+LEAD (PC; the only writes to a card)
+------------------------------------
+Run from builds\dynarec-profile-worktree.  M: below = the Go's M2 volume.
+
+L1. Backup (read-only, verified):
+      python tools\rig\backup_sticks.py --out ..\go-m2-backup-2026-09-30 M:=PSP-Go
+    It must end with MANIFEST.verified.
+L2. Install (refuses without L1 for that volume serial):
+      python tools\drprof\drrig.py install --stage ..\dynarec-profile-out\rig-stage --drive M: --backup ..\go-m2-backup-2026-09-30
+    Eject M: in Windows; leave the Go's USB mode.
+L3. Start the loop, detached, and leave the USB cable in:
+      Start-Process python -ArgumentList 'tools\drprof\drrig.py','run','--stage','..\dynarec-profile-out\rig-stage','--drive','M:','--logs','..\dynarec-profile-out\logs-go' -RedirectStandardOutput ..\dynarec-profile-out\logs-go-loop.log -WindowStyle Hidden
+    (mkdir ..\dynarec-profile-out\logs-go first if the redirect complains.)
+
+OWNER (one launch)
+------------------
+ 1. AC power, USB cable connected to the PC.  WLAN switch does not matter.
+ 2. XMB -> Game -> Memory Stick -> "DRPROF RIG".  Press nothing.
+ 3. It plays AW2, then sits on the last frame for ~90 s (USB export --
+    normal), relaunches itself, and so on for 12 runs.  After the last one
+    it stays parked (screen frozen on the last frame is normal).  To leave: hold START+SELECT for 3 s -> XMB.
+ 4. If a run does not end within ~10 minutes (loop log says "NO RESULT"),
+    hold POWER to switch off, power on, relaunch "DRPROF RIG"; the loop
+    resumes the same cycle and keeps both attempts.
+    A blue register screen is the ME_CATCH exception screen: photograph it.
+
+ANALYSIS (PC)
+-------------
+  python tools\drprof\hw_report.py --rig ..\dynarec-profile-out\logs-go
+    -> per fixture and round: ms/frame per scene for base / proto / sampler,
+       the hardware oracle (base vs proto must be IDENTICAL on every frame,
+       audio included), the sampler's time split and its own cost.
+Then the PSP-1000 the same way (its own backup, --drive, --logs logs-1000).

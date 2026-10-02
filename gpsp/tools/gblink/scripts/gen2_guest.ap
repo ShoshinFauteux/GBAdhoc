@@ -1,0 +1,76 @@
+# Pokemon Crystal link trade, guest side (slot 1).
+# Fixture: the owner's Crystal save (host) and pksav.py's re-branded copy
+# LINKB (guest), both standing in the Ecruteak dance theatre.
+wait 37
+# Crystal: boot to the overworld from a save (title, CONTINUE, info box)
+repeat 5
+wait 120
+press START
+endrepeat
+wait 200
+hold A 8
+wait 60
+hold A 8
+wait 120
+evt booted
+# Ecruteak dance theatre -> Pokemon Center 1F -> 2F -> the Cable Trade
+# Center receptionist.  Walking is stepram (one tile per 48 frames, checked
+# after it lands) or a hold into something solid: a player's buttons reach
+# the game a session's input delay later, and a hold ended by a position
+# check would overshoot by that delay.
+hold DOWN 64
+wait 60
+stepram LEFT 1 0xDCB8 0xFF 21 1000
+stepram DOWN 1 0xDCB7 0xFF 28 1000
+stepram RIGHT 1 0xDCB8 0xFF 23 1000
+stepram UP 1 0xDCB6 0xFF 3 1000
+wait 120
+# Pokemon Center 1F (7,3): stairs in the bottom-left corner
+stepram UP 1 0xDCB7 0xFF 6 1000
+stepram LEFT 1 0xDCB8 0xFF 0 1000
+stepram DOWN 1 0xDCB5 0xFF 20 1000
+wait 120
+# 2F (7,0): the left receptionist, Cable Trade Center, at (5,2)
+stepram UP 1 0xDCB7 0xFF 4 1000
+stepram RIGHT 1 0xDCB8 0xFF 5 1000
+stepram UP 1 0xDCB7 0xFF 3 1000
+hold UP 8
+wait 20
+# YES, wait for the friend, save, and walk in (map 20:2 TRADE_CENTER)
+mash A 1 0xDCB6 0xFF 2 4000
+evt in_trade_center
+wait 120
+# --- the internal-clock side sits at (3,4) facing right, the other at
+# (6,4) facing left (TradeCenter.asm; hSerialConnectionStatus $FFCB = 2)
+stepram UP 1 0xDCB7 0xFF 5 1000
+ifram 1 0xFFCB 0xFF 2 3
+stepram LEFT 1 0xDCB8 0xFF 3 1000
+stepram UP 1 0xDCB7 0xFF 4 1000
+hold RIGHT 8
+ifram 1 0xFFCB 0xFF 1 3
+stepram RIGHT 1 0xDCB8 0xFF 6 1000
+stepram UP 1 0xDCB7 0xFF 4 1000
+hold LEFT 8
+wait 20
+logbytes seat 2 0xDCB7
+hold A 6
+wait 800
+# --- our third Pokemon (SANDSHREW "GIFTSHREW"): TRADE, confirm
+hold DOWN 6
+wait 30
+hold DOWN 6
+wait 30
+hold A 6
+wait 60
+hold RIGHT 6
+wait 30
+hold A 6
+wait 400
+mash A 1 0xDCDA 0xFF 0x3F 4000
+evt traded
+# The games save by themselves once the trade animation ends (~90 s).
+# Not waitsram: both use cartridge RAM as scratch for Pokemon pictures, so
+# its CRC moves long before the save lands.  score_trade.py judges the save.
+wait 5400
+evt settled
+logbytes party 7 0xDCD7

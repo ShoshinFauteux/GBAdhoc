@@ -6,6 +6,7 @@
 #define CONFIG_PSP_H
 
 #include "fe_console.h"
+#include "ctl_map.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,7 +62,7 @@ extern "C" {
 typedef struct
 {
    int  scale;        /* VID_SCALE_* (default 1x) */
-   int  filter;       /* VID_FILTER_* (default nearest) */
+   int  filter;       /* VID_FILTER_* (default nearest; 2 = sharp bilinear) */
    /* ADR-0071: TRADING PROFILE.  0 = speed (DEFAULT), 1 = compatibility.
     *
     * Only the playable/variant builds consult this; the harness sets its rate
@@ -83,10 +84,6 @@ typedef struct
     * settings UI relaunches the app when it changes — the same ADR-0071
     * restart flow the trading profile used. */
    int  me_mode;
-   /* GBA A/B face-button layout.  0 (default) = Circle is A, Cross is B —
-    * the positional match to a real GBA.  1 = swapped: Cross is A, Circle
-    * is B, for players who want the western confirm button as A. */
-   int  btn_swap;
    /* Persist the legacy keys for compatibility: 30/1 = 3x (default),
     * 0/0 = Unlimited, 0/1 = Unlimited Smooth. Use pcfg_ff_set_mode(). */
    int  ff_mult_x10;
@@ -125,6 +122,20 @@ typedef struct
     * Game Boy colours where the game has them, grey otherwise, default),
     * 1 Grey, 2 DMG green, 3 Pocket.  Unknown ids fall back to Auto. */
    int  gb_palette;
+   /* Ambient bars (PCFG_AMB_*): what fills the bars beside a picture that
+    * does not cover the screen.  Like scale, filter and gb_palette this is
+    * the LIVE MIRROR of the running (or browsed) console's display profile
+    * -- see "PER-CONSOLE DISPLAY PROFILES" at the end of this header. */
+   int  ambient;
+   /* CONFIG.INI `loading_art` (read, never written): 1 (default) puts the
+    * game's hero art behind the ROM loading screen and bakes the ambient
+    * texture from it; 0 skips both, so the launch path is the 3.1 one.  The
+    * A/B switch for the startup-heap proof in docs/DISPLAY-FEATURES.md. */
+   int  loading_art;
+   /* CONFIG.INI `gbc_color_correction` (no UI row): 1 (default) shows Game
+    * Boy Color games through the GBC LCD model, 0 shows their colours raw
+    * (gbcore_set_color_correction; docs/GB-PALETTE-FIXES.md). */
+   int  gbc_color_correction;
    /* Benchmark mode (config.ini only, no UI row).  Makes the FF button mean
     * "engine throughput test": uncapped pacing, frameskip DISABLED (every
     * frame is rendered), and the ME kept on its normal ASYNC path instead of
@@ -319,6 +330,12 @@ typedef struct
                        * name alone; the only symptom was the browser
                        * quietly opening on the first game instead of the
                        * last one played. */
+   /* User control remapping (Settings > Controls, docs/CONTROL-REMAP.md).
+    * CONFIG.INI `bind_*` keys, validated on load; a config without them --
+    * every config before this existed -- resolves to the 3.0 layout.  The
+    * old `btn_swap` key (3.0's "A/B buttons" row, now removed) is converted
+    * into bind_a/bind_b at load and has no field of its own. */
+   ctl_map controls;
 } psp_config;
 
 /* Bounds for `net_session_fps` (ADR-0033), in hundredths of a frame/second.
@@ -381,6 +398,58 @@ int pcfg_remember_rom(const char *name);
 /* Browser console switch (TRIANGLE): sets g_pcfg.console and writes only the
  * `console` key.  Returns -1 on an invalid value or persistence failure. */
 int pcfg_remember_console(int console);
+
+/* ---- PER-CONSOLE DISPLAY PROFILES (docs/DISPLAY-FEATURES.md) ------------
+ *
+ * GBA, GB and GBC each keep their own picture settings.  CONFIG.INI:
+ *
+ *     scale_gba / scale_gb / scale_gbc         VID_SCALE_*
+ *     filter_gba / filter_gb / filter_gbc      VID_FILTER_*
+ *     ambient_gba / ambient_gb / ambient_gbc   PCFG_AMB_*
+ *     gb_palette_gb / gb_palette_gbc           GBCORE_PALETTE_* id
+ *
+ * MIGRATION: a key that is absent takes the pre-profile value -- `scale`,
+ * `filter`, `gb_palette` -- so the first boot after an upgrade looks exactly
+ * like the last one on every console.  The legacy keys are still WRITTEN
+ * (scale/filter from the GBA profile, gb_palette from the GB one) so an older
+ * build reading this file keeps the GBA look it had.
+ *
+ * g_pcfg.scale / filter / ambient / gb_palette are the live mirror of ONE
+ * profile, the "live console" (g_pcfg.console whenever it was last selected).
+ * Everything that already reads those fields keeps working unchanged; code
+ * that CHANGES one calls pcfg_display_commit() so the profile follows. */
+enum
+{
+   PCFG_AMB_OFF      = 0,   /* black bars (the 3.1 look)                    */
+   PCFG_AMB_ART      = 1,   /* blurred hero art; black when there is none   */
+   PCFG_AMB_ART_GAME = 2,   /* hero art, else a blurred early game frame    */
+   PCFG_AMB_MODES    = 3
+};
+/* Off until the owner picks a look (Fable's mockups). */
+#define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
+
+typedef struct
+{
+   int scale, filter, ambient, gb_palette;
+} pcfg_display;
+
+extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
+
+/* Mirror `console`'s profile into g_pcfg (scale/filter/ambient/gb_palette)
+ * and make it the live console.  Touches no file and no video state: the
+ * caller applies it (vid_set_mode etc.) when a picture is on screen. */
+void pcfg_display_select(int console);
+/* Copy g_pcfg's live display fields back into the live console's profile. */
+void pcfg_display_commit(void);
+/* The console whose profile g_pcfg currently mirrors. */
+int  pcfg_display_console(void);
+/* Persist ONLY the live console's display keys (2-4 INI rewrites instead of
+ * pcfg_save's ~50) -- for the in-game TRIANGLE preset cycle.  Commits first.
+ * Returns -1 on a persistence failure. */
+int  pcfg_display_save(void);
+/* "GBA" / "GB" / "GBC" -- the settings section names the profile it edits. */
+const char *pcfg_console_tag(int console);
+const char *pcfg_ambient_name(int mode);
 
 #ifdef __cplusplus
 }

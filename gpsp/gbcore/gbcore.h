@@ -6,7 +6,12 @@
  * gbcore/tgbdual/README.md and gbcore_tgbdual.c.
  *
  * The core is a single global machine: at most one gbcore_t exists at a
- * time (gbcore_create refuses a second).
+ * time per INSTANCE (gbcore_create refuses a second).  The build links a
+ * second instance, whose API is the same functions renamed gbcore_* ->
+ * gbcoreb_*: one relocatable object, two copies, every other symbol local
+ * (psp/Makefile, tools/run_gb_tests.py).  The two instances share no state
+ * at all, so a link session runs two Game Boys (gbcore_dual.h).  Code that
+ * must work with either instance goes through gbcore_api_t below.
  */
 #ifndef GBADHOC_GBCORE_H
 #define GBADHOC_GBCORE_H
@@ -63,6 +68,15 @@ typedef struct gbcore_callbacks {
    * external-clock one it reaches SB, with the serial interrupt, at once. */
   int (*serial_transfer)(void *userdata, uint8_t outgoing, int internal_clock,
                          uint8_t *received);
+  /* Optional in-memory cable (two-instance link sessions).  It runs when an
+   * internal-clock transfer COMPLETES -- eight bit times after the SC write
+   * -- which is when a real cable has finished shifting the peer's byte in.
+   * Return 1 with the peer's byte in `received` (0xFF when the peer is not
+   * waiting on the external clock), or 0 for the ordinary completion (the
+   * byte serial_transfer supplied, else 0xFF).  The peer side is completed
+   * by gbcore_serial_clock_in.  A session that uses this leaves
+   * serial_transfer NULL. */
+  int (*serial_clocked)(void *userdata, uint8_t outgoing, uint8_t *received);
 } gbcore_callbacks_t;
 
 /* Creates and loads a GB or GBC ROM. FE_CONSOLE_GB runs DMG hardware (with
@@ -76,6 +90,16 @@ gbcore_t *gbcore_create(const char *rom_path,
                         fe_console_t console,
                         unsigned audio_rate,
                         const gbcore_callbacks_t *callbacks);
+
+/* A ROM buffer as gbcore_create would build it for `rom_size` bytes (0xFF
+ * filled, at least 1 MiB, a power of two), for a caller that fills bytes
+ * [0, rom_size) itself -- a ROM received over a link -- and then passes it
+ * to gbcore_create_owned, which takes ownership (freed at shutdown, or at
+ * once if the create fails).  No second copy of the cartridge is made. */
+uint8_t *gbcore_rom_alloc(size_t rom_size, size_t *alloc);
+gbcore_t *gbcore_create_owned(uint8_t *rom_buffer, size_t rom_size,
+                              fe_console_t console, unsigned audio_rate,
+                              const gbcore_callbacks_t *callbacks);
 
 /* Execute one emulated video frame with the current frontend button mask. */
 int gbcore_run_frame(gbcore_t *core, uint16_t buttons);
@@ -133,6 +157,126 @@ enum {
 };
 void gbcore_set_palette(unsigned palette);
 const char *gbcore_palette_name(unsigned palette);
+
+/* Game Boy Color colours.  On (the default), a CGB palette entry is shown
+ * as the GBC's own LCD shows it: its response curve lifts the mid-tones and
+ * its green picks up some blue (SameBoy's measured model, "Modern -
+ * Balanced").  Off, it is the plain 5-to-8-bit expansion, which on a modern
+ * display makes CGB games too dark and too saturated
+ * (docs/GB-PALETTE-FIXES.md).  DMG palettes (gbcore_set_palette) and Super
+ * Game Boy colours are not affected.  One setting for the whole program
+ * (both instances), applied at once and kept across gbcore_power_on. */
+void gbcore_set_color_correction(int on);
+int gbcore_color_correction(void);
+
+/* ------------------------------------------------------ link sessions --
+ * Line stepping, for two instances interleaved one scanline at a time.
+ * gbcore_run_frame(core, b) is exactly gbcore_frame_begin(core, b) and then
+ * gbcore_run_line(core) until it returns 1.
+ *
+ * gbcore_frame_begin latches the buttons for the frame (and raises the
+ * joypad interrupt on a new press).  gbcore_run_line runs one scanline and
+ * returns 1 when that line ended the frame -- VBlank started, or 154 lines
+ * with the LCD off -- after delivering the frame's video and audio; 0 when
+ * the frame goes on; -1 on misuse. */
+int gbcore_frame_begin(gbcore_t *core, uint16_t buttons);
+int gbcore_run_line(gbcore_t *core);
+
+/* Headless: emulate everything the game can observe (CPU, memory, timers,
+ * LY/STAT, interrupts, DMA, the serial port, the sound registers and their
+ * length/envelope/sweep state) but draw no pixels and synthesise no audio.
+ * No video or audio callback is made, and the frame buffer is released.
+ * For the partner's Game Boy in a link session.  gbcore_sync_hash is the
+ * same headless or not. */
+void gbcore_set_headless(gbcore_t *core, int headless);
+
+/* A 64-bit hash of every piece of state the game can observe or that
+ * decides what it does next, excluding what exists only to draw or to
+ * synthesise sound.  Two machines that agree on it are running the same
+ * game from the same point.  Valid between frames. */
+uint64_t gbcore_sync_hash(gbcore_t *core);
+
+/* The far end of the in-memory cable: a peer's internal clock shifted
+ * `master_byte` into this machine.  If this machine is waiting on the
+ * external clock (SC bit 7 set, bit 0 clear) the byte lands in SB, the
+ * transfer completes with the serial interrupt, and the byte SB held is
+ * returned; otherwise nothing changes and 0xFF is returned (an idle
+ * cable).  Valid between lines. */
+uint8_t gbcore_serial_clock_in(gbcore_t *core, uint8_t master_byte);
+/* The far end of the cable when this machine armed the external clock
+ * during the peer's transfer but has since switched away (gbcore_dual.c):
+ * the peer's clock still shifted `master_byte` in.  SB takes it, the
+ * transfer request clears, any transfer of its own that this machine
+ * started since is cancelled, and the serial interrupt is raised. */
+void gbcore_serial_deliver(gbcore_t *core, uint8_t master_byte);
+/* SC as the game last wrote it (bit 7 transfer requested, bit 1 fast
+ * clock on CGB, bit 0 internal clock), for link diagnostics. */
+uint8_t gbcore_serial_control(gbcore_t *core);
+
+/* Returns every static byte of this instance -- the core's globals, file
+ * and function statics, and the adapter's settings -- to what a freshly
+ * loaded program holds, so two consoles start a link session from the same
+ * machine whatever either played before.  (gb_reset does not clear the
+ * sound registers NR10-NR51, the CGB registers FF6C/FF72-FF75 or the
+ * synthesiser's phases; a game reads the first two.)  Only with no core
+ * of this instance active; 0 on success.  Needs the partial link through
+ * gbcore/gbcore_instance.ld (-1 without it).  Call gbcore_set_wallclock
+ * and gbcore_set_palette after it. */
+int gbcore_power_on(void);
+
+/* Reads `len` bytes of the Game Boy's address space starting at `addr`
+ * without side effects: ROM, VRAM, cartridge RAM (when mapped), WRAM and its
+ * echo, OAM and HRAM, as the CPU would see them now.  I/O registers
+ * (FF00-FF7F, FFFF) and unmapped cartridge RAM are refused.  0 on success,
+ * -1 if any byte is refused.  For scripted play (autopilot RAM predicates)
+ * and tests. */
+int gbcore_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len);
+/* The writing counterpart, for building test fixtures only (a link
+ * session never pokes): VRAM, mapped cartridge RAM, WRAM, OAM and HRAM;
+ * ROM and I/O are refused.  Nothing is written unless every byte is
+ * accepted. */
+int gbcore_poke(gbcore_t *core, uint16_t addr, const void *data,
+                unsigned len);
+
+/* One instance's whole API, so session code can drive either. */
+typedef struct gbcore_api {
+  gbcore_t *(*create)(const char *rom_path, const void *rom_data,
+                      size_t rom_size, fe_console_t console,
+                      unsigned audio_rate, const gbcore_callbacks_t *callbacks);
+  void (*shutdown)(gbcore_t *core);
+  int (*run_frame)(gbcore_t *core, uint16_t buttons);
+  int (*frame_begin)(gbcore_t *core, uint16_t buttons);
+  int (*run_line)(gbcore_t *core);
+  void (*set_skip_render)(gbcore_t *core, int skip);
+  void (*set_headless)(gbcore_t *core, int headless);
+  uint64_t (*sync_hash)(gbcore_t *core);
+  uint8_t (*serial_clock_in)(gbcore_t *core, uint8_t master_byte);
+  uint64_t (*frame_number)(const gbcore_t *core);
+  int (*rom_title)(gbcore_t *core, char *destination, size_t capacity);
+  size_t (*save_ram_size)(gbcore_t *core);
+  size_t (*cart_ram_size)(gbcore_t *core);
+  int (*save_ram_read)(gbcore_t *core, void *destination, size_t capacity);
+  int (*save_ram_write)(gbcore_t *core, const void *source, size_t size);
+  size_t (*state_size)(gbcore_t *core);
+  long (*state_save)(gbcore_t *core, void *destination, size_t capacity);
+  int (*state_load)(gbcore_t *core, const void *source, size_t size);
+  void (*set_wallclock)(time_t (*wallclock)(void));
+  void (*set_palette)(unsigned palette);
+  int (*power_on)(void);
+  int (*peek)(gbcore_t *core, uint16_t addr, void *out, unsigned len);
+  int (*poke)(gbcore_t *core, uint16_t addr, const void *data, unsigned len);
+  uint8_t (*serial_control)(gbcore_t *core);
+  gbcore_t *(*create_owned)(uint8_t *rom_buffer, size_t rom_size,
+                            fe_console_t console, unsigned audio_rate,
+                            const gbcore_callbacks_t *callbacks);
+  void (*serial_deliver)(gbcore_t *core, uint8_t master_byte);
+} gbcore_api_t;
+
+/* Instance A: the gbcore_* functions above. */
+extern const gbcore_api_t gbcore_api;
+/* Instance B: the same object with its symbols renamed gbcore_* ->
+ * gbcoreb_*.  Present only in builds that link the second copy. */
+extern const gbcore_api_t gbcoreb_api;
 
 #ifdef __cplusplus
 }

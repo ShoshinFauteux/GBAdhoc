@@ -29,14 +29,22 @@
 #define AP_MASH_PERIOD 8     /* mash cycle length in frames */
 #define AP_PRESS_GAP   2     /* release frames appended to press */
 #define AP_MAX_CHAIN   64    /* zero-frame steps executed per frame */
+/* stepram: hold for AP_STEP_HOLD frames, then let go, and look again only
+ * when a whole AP_STEP_PERIOD has passed.  One tile per cycle on a Game Boy
+ * (16 frames a step), and the predicate is read after the step has landed
+ * even when the buttons reach the game up to ~30 frames late (a link
+ * session's input delay). */
+#define AP_STEP_HOLD   12
+#define AP_STEP_PERIOD 48
 
 enum ap_op
 {
    OP_EVT, OP_FF, OP_DUMP, OP_WAIT, OP_PRESS, OP_HOLD,
    OP_WAITRAM, OP_MASH, OP_HOLDRAM, OP_WAITSRAM, OP_LOGRAM, OP_LOGPTR,
-   OP_REPEAT, OP_ENDREPEAT, OP_LOGBYTES, OP_MASHIF
+   OP_REPEAT, OP_ENDREPEAT, OP_LOGBYTES, OP_MASHIF, OP_IFRAM, OP_STEPRAM
 #ifdef GPSP_PERF_RIG
    , OP_STATE                 /* harness only -- see fe_autopilot_state_pending */
+   , OP_DISCONNECT            /* harness only -- fe_autopilot_disconnect_pending */
 #endif
 };
 
@@ -45,7 +53,7 @@ static const char *op_name[] __attribute__((unused)) =
 {
    "evt", "ff", "dump", "wait", "press", "hold",
    "waitram", "mash", "holdram", "waitsram", "logram", "logptr",
-   "repeat", "endrepeat", "logbytes", "mashif"
+   "repeat", "endrepeat", "logbytes", "mashif", "ifram", "stepram"
 #ifdef GPSP_PERF_RIG
    , "state"
 #endif
@@ -85,6 +93,7 @@ static int      ff_on;
 static int      dump_req;
 #ifdef GPSP_PERF_RIG
 static int      state_req;     /* harness only: `state` asked for a reload */
+static int      disc_req;      /* harness only: `disconnect` ends a link */
 #endif
 static uint32_t frame_no;       /* engine frame counter (for EVT context) */
 
@@ -173,6 +182,7 @@ int fe_autopilot_load(const char *path)
    dump_req = 0;
 #ifdef GPSP_PERF_RIG
    state_req = 0;
+   disc_req = 0;
 #endif
    frame_no = 0;
    rpt_start = -1;
@@ -236,6 +246,10 @@ int fe_autopilot_load(const char *path)
       {
          st->op = OP_STATE;
       }
+      else if (!strcmp(tok[0], "disconnect") && ntok == 1)
+      {
+         st->op = OP_DISCONNECT;
+      }
 #endif
       else if (!strcmp(tok[0], "dump") && ntok == 1)
          st->op = OP_DUMP;
@@ -283,9 +297,11 @@ int fe_autopilot_load(const char *path)
          st->frames = parse_num(tok[6]);
       }
       else if ((!strcmp(tok[0], "mash") || !strcmp(tok[0], "holdram") ||
-                !strcmp(tok[0], "mashne")) && ntok == 7)
+                !strcmp(tok[0], "mashne") || !strcmp(tok[0], "stepram")) &&
+               ntok == 7)
       {
-         st->op = tok[0][0] == 'm' ? OP_MASH : OP_HOLDRAM;
+         st->op = tok[0][0] == 'm' ? OP_MASH :
+                  tok[0][0] == 's' ? OP_STEPRAM : OP_HOLDRAM;
          /* mashne: mash until the value is NO LONGER VAL -- "keep pressing A
           * until the game has consumed it and left this menu". */
          st->negate = (uint8_t)(!strcmp(tok[0], "mashne"));
@@ -390,6 +406,21 @@ int fe_autopilot_load(const char *path)
          if (st->frames == 0 || st->frames > AP_LOGBYTES_MAX)
             goto bad;
       }
+      else if (!strcmp(tok[0], "ifram") && ntok == 6)
+      {
+         /* ifram SZ ADDR MASK VAL N -- run the next N steps only if
+          * (mem[ADDR]&MASK)==VAL now; otherwise skip them.  A read error
+          * skips.  Zero frames.  For scripts whose moves depend on a role
+          * the game assigns (which side of a link table you sit on). */
+         st->op = OP_IFRAM;
+         st->size = (uint8_t)parse_num(tok[1]);
+         st->addr = parse_num(tok[2]);
+         st->mask = parse_num(tok[3]);
+         st->val = parse_num(tok[4]);
+         st->off = parse_num(tok[5]);
+         if (st->size != 1 && st->size != 2 && st->size != 4)
+            goto bad;
+      }
       else if (!strcmp(tok[0], "logptr") && ntok == 5)
       {
          st->op = OP_LOGPTR;
@@ -417,6 +448,7 @@ int fe_autopilot_load(const char *path)
          goto bad;
 
       if ((st->op == OP_WAITRAM || st->op == OP_MASH || st->op == OP_HOLDRAM ||
+           st->op == OP_STEPRAM ||
            st->op == OP_LOGRAM || st->op == OP_LOGPTR || st->op == OP_MASHIF) &&
           st->size != 1 && st->size != 2 && st->size != 4)
          goto bad;
@@ -546,6 +578,16 @@ static void log_bytes(const ap_step *st)
           (unsigned)rpt_it, frame_no);
 }
 
+/* The most recent `evt` text, handed out once (tools/drprof segments its
+ * profile at scene boundaries).  Nothing else reads it. */
+static const char *last_mark;
+const char *fe_autopilot_take_mark(void)
+{
+   const char *m = last_mark;
+   last_mark = NULL;
+   return m;
+}
+
 /* Execute the current step for this frame.
  * Returns 1 if the step consumed the frame (input decided), 0 if it
  * completed instantly and the next step may run in the same frame. */
@@ -561,6 +603,7 @@ static int run_step(void)
        * the link-lag oracle scores (summarize_log.py `lag`). */
       fe_evt("ap_mark text=%s f=%u t_ms=%u it=%u", st->name, frame_no,
              (unsigned)(fe_evt_now_us() / 1000ull), (unsigned)rpt_it);
+      last_mark = st->name;
       return 0;
 
    case OP_FF:
@@ -575,6 +618,9 @@ static int run_step(void)
    case OP_STATE:
       state_req = 1;
       return 0;
+   case OP_DISCONNECT:
+      disc_req = 1;
+      return 0;
 #endif
 
    case OP_LOGRAM:
@@ -587,6 +633,15 @@ static int run_step(void)
 
    case OP_LOGBYTES:
       log_bytes(st);
+      return 0;
+
+   case OP_IFRAM:
+      if (!predicate(st))
+      {
+         cur += (int)st->off;
+         if (cur > step_count - 1)
+            cur = step_count - 1;
+      }
       return 0;
 
    case OP_REPEAT:
@@ -655,6 +710,26 @@ static int run_step(void)
          fe_host_input_inject((st->op == OP_MASH &&
                                (step_frame % AP_MASH_PERIOD) < AP_MASH_ON)
                                  ? st->buttons : 0);
+      step_frame++;
+      return 1;
+
+   case OP_STEPRAM:
+      if ((step_frame % AP_STEP_PERIOD) == 0 && predicate(st))
+      {
+         fe_evt("ap_sync step=%d line=%d frame=%u t_ms=%u it=%u", cur,
+                st->line, frame_no, (unsigned)(fe_evt_now_us() / 1000ull),
+                (unsigned)rpt_it);
+         fe_host_input_inject(0);
+         return 2;
+      }
+      if (step_frame >= st->frames)
+      {
+         ap_fail(st);
+         fe_host_input_inject(0);
+         return 1;
+      }
+      fe_host_input_inject((step_frame % AP_STEP_PERIOD) < AP_STEP_HOLD
+                           ? st->buttons : 0);
       step_frame++;
       return 1;
 
@@ -790,6 +865,13 @@ int fe_autopilot_state_pending(void)
 {
    int r = state_req;
    state_req = 0;
+   return r;
+}
+
+int fe_autopilot_disconnect_pending(void)
+{
+   int r = disc_req;
+   disc_req = 0;
    return r;
 }
 #endif

@@ -29,6 +29,27 @@
   #define RAM_TRANSLATION_CACHE_SIZE_LARGE (1024 * 512)
 #endif
 
+/* LAYOUT_PIN (PSP, OPT-IN: defined only by `make LAYOUT_PIN=1`, off by
+ * default; docs/LAYOUT-PINNING.md): where the translation caches sit
+ * in the Allegrex instruction cache.  It is 16 KiB, 2-way, with 64 B lines
+ * (measured; docs/CACHE-MAP.md), so a line's set is address bits 6..12 and
+ * only (address mod 8 KiB) decides what it competes with.  The emitter writes
+ * its hottest code -- the memory-access stubs every guest load and store goes
+ * through -- at the START of the ROM cache (mips_emit.h init_emitter), so the
+ * cache's base decides whether those stubs fight the dispatcher and
+ * update_gba.  Unpinned, the base was wherever the heap (LARGE tier) or .bss
+ * (SMALL tier) happened to put it, and moved with every unrelated change.
+ * Pinned, both tiers start at JIT_PIN_OFFSET mod JIT_PIN_WAY: the sets the
+ * pinned static hot path (psp/layout/hot.ord) leaves free, chosen by the
+ * twin's cache simulation.  Costs at most JIT_PIN_WAY + JIT_PIN_OFFSET bytes
+ * of alignment per tier. */
+#if defined(LAYOUT_PIN)
+  #define JIT_PIN_WAY 8192
+  #ifndef JIT_PIN_OFFSET
+  #define JIT_PIN_OFFSET 0x1500
+  #endif
+#endif
+
 /* Should be an upperbound to the maximum number of bytes a single JIT'ed
    instruction can take. STM/LDM are tipically the biggest ones */
 #define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 2)

@@ -1,0 +1,24 @@
+# Pokemon Crystal: boot from the battery save (title, CONTINUE, the player
+# box) and take a first step -- the clock check after a link session.  If the
+# cartridge clock was not re-based to this PSP's clock, Crystal stops at "The
+# clock's time may be wrong" and asks for the time instead of reaching the
+# overworld: the step never happens and the script fails there.
+repeat 5
+wait 120
+press START
+endrepeat
+wait 200
+hold A 8
+wait 60
+hold A 8
+wait 180
+evt booted
+logbytes where 4 0xDCB5
+# the overworld runs: wait for the map number to settle, then one step down
+waitramne 1 0xDCB5 0xFF 0 600
+hold DOWN 20
+wait 60
+logbytes moved 4 0xDCB5
+# the step landed: y 3 -> 4 (PC 2F, where the trade's save put us)
+waitram 1 0xDCB7 0xFF 4 60
+evt clock_ok

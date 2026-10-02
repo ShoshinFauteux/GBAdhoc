@@ -79,6 +79,11 @@ size_t gbcore_save_ram_size(gbcore_t *core) { (void)core; return 0; }
 size_t gbcore_cart_ram_size(gbcore_t *core) { (void)core; return 0; }
 int gbcore_save_ram_read(gbcore_t *core, void *dst, size_t cap)
 { (void)core; (void)dst; (void)cap; return -1; }
+/* A GB link session is never up in this test (gb_family is 0). */
+gbdual_t *fe_gblink_dual(const fe_gblink *s) { (void)s; return NULL; }
+int fe_gblink_local_slot(const fe_gblink *s) { (void)s; return 0; }
+const gbcore_api_t *gbdual_api(int slot) { (void)slot; return NULL; }
+gbcore_t *gbdual_core(const gbdual_t *d, int slot) { (void)d; (void)slot; return NULL; }
 
 static const char *path = "/tmp/gpsp-sram-ff-nudge-test.sav";
 

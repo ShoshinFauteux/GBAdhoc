@@ -56,6 +56,61 @@ typedef struct fe_host_config
    /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
     * Game Boy colours where the game has them, grey otherwise). */
    int gb_palette;
+   /* GBC only: 1 = show CGB colours raw (the 5-to-8-bit expansion); 0, the
+    * default, = through the Game Boy Color LCD model
+    * (gbcore_set_color_correction; docs/GB-PALETTE-FIXES.md). */
+   int gbc_raw_colors;
+   /* GB/GBC, harness measurement only (GPSP_PERF_RIG's `gb_dual_rom`): also
+    * run this second cartridge headless beside the player's, interleaved
+    * one scanline at a time with the cable wired -- the machine pair of a
+    * GB link session (gbcore_dual.h), without the network.  NULL = off.
+    * gb_dual_mirror: the second machine gets the player's buttons (1) or
+    * none (0). */
+   const char *gb_dual_rom;
+   int gb_dual_mirror;
+   unsigned gb_dual_batch;   /* bench: scanlines per turn (gbdual_config) */
+   int gb_bench_headless;    /* bench: the single machine runs headless */
+   /* ...and optionally starts it from this save state (a .stN file). */
+   const char *gb_dual_state;
+   /* GB link sessions: the platform's library lookup for the partner's
+    * cartridge -- a file of exactly `size` bytes whose header (0x134-0x14F)
+    * matches; the session checks its SHA-1.  NULL = never in the library
+    * (the partner then sends it). */
+   int (*gb_find_rom)(uint32_t size, const uint8_t header[0x1C], char *path,
+                      size_t cap);
+   /* Harness: the autopilot script belongs to a link session, so it waits
+    * (fe_host_autopilot_gate) until the session's machines are running. */
+   int gblink_script_waits;
+   /* GB link sessions hosted here: scanlines slot 0 may run ahead while
+    * the cable is quiet (gbdual_config_t.batch_lines; 0/1 = strict). */
+   unsigned gblink_batch;
+   /* Link sessions start from the running games' save states (the partner
+    * loads yours) and each game continues from its own state afterwards --
+    * no restart either side.  0 = power on from the battery images. */
+   int gblink_live;
+   /* Frames of this player's input repeated in each unreliable input
+    * datagram (fe_gblink_platform.input_copies; 0 = off). */
+   unsigned gblink_input_copies;
+   /* Harness: after a session, boot the game from its battery save (as a
+    * power cycle would) instead of continuing -- the clock check. */
+   int gblink_resume_boot;
+   int gblink_pace_slot0;      /* fe_gblink_local.pace_slot0 */
+   /* Frames between the periodic telemetry lines (heartbeat, fps,
+    * core_prof, gblink_stats); 0 = HEARTBEAT_INTERVAL (600). */
+   unsigned heartbeat_frames;
+   /* Harness A/B only: 1 = write the session's clock stamp back unchanged
+    * (the behaviour before the fix), to show the clock prompt it caused. */
+   int gblink_rtc_keep_session_stamp;
+   /* GB link bulk lane (optional; fe_gblink.h): large unreliable datagrams
+    * to the partner's radio address, and the ones received.  enable(1) at a
+    * session's start, enable(0) at its end.  gb_bulk_max = datagram bytes
+    * (0 = the ordered channel carries transfers); gb_bulk_rate = datagrams
+    * a frame (0 = adaptive). */
+   int (*gb_bulk_enable)(int on);
+   int (*gb_bulk_send)(const uint8_t mac[6], const void *buf, size_t len);
+   int (*gb_bulk_recv)(void *buf, size_t cap);
+   size_t gb_bulk_max;
+   unsigned gb_bulk_rate;
 
    /* Optional (ADR-0028/0029): read the core's monotonic perf counters — ROM
     * translation-cache flushes, RAM flushes, 32 KiB ROM page faults. Lets
@@ -171,6 +226,12 @@ int fe_host_boot(const fe_host_config *cfg);
 
 /* One emulated frame: retro_run + periodic SRAM dirty check + heartbeat. */
 void fe_host_run_frame(void);
+/* Force the NEXT fe_host_run_frame's video to be drawn (0) or skipped (1),
+ * overriding the frameskip option; -1 hands the decision back to it.  A
+ * skipped frame is emulated in full but neither rendered nor captured -- the
+ * same contract as the core's own frameskip (video callback with NULL).
+ * Used by the fast-forward draw gate (docs/FF-PRESETS.md); GBA and GB. */
+void fe_host_skip_override(int skip);
 /* Emulation faults the core recovered from by resetting the game (a guest
  * jump to an address that is not code).  Monotonic; the UI toasts on change. */
 unsigned fe_host_guest_faults(void);
@@ -339,6 +400,37 @@ const void *fe_host_netpacket_cb(void);
 
 /* Flush SRAM (dirty-check), retro_unload_game + retro_deinit. */
 void fe_host_shutdown(void);
+
+/* ---- GB link sessions (fe_gblink.h) -------------------------------------
+ * After fe_np_start_gb has brought the ad-hoc session up: flush and stop the
+ * running game and start the session (host/guest; input delay in frames;
+ * rtc_seed 0 = this console's clock).  fe_host_run_frame then steps it.
+ * fe_host_gblink_state: -1 none, else FE_GBLINK_* (SETUP, RUNNING, ENDING,
+ * DONE, FAILED).  Once DONE or FAILED, fe_host_gblink_close boots the game
+ * again from its (possibly just committed) save. */
+int  fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed);
+int  fe_host_gblink_active(void);
+int  fe_host_gblink_state(void);
+void fe_host_gblink_status(char *line1, size_t cap1, char *line2, size_t cap2);
+void fe_host_gblink_progress(int *p1, int *p2);   /* per mille, -1 = none */
+/* The last step of a link session stalled (the frame shown is a repeat). */
+int fe_host_gblink_stalled(void);
+void fe_host_gblink_request_end(void);
+int  fe_host_gblink_close(void);
+/* Harness tuning: cartridge/save chunks sent per frame (0 = default). */
+void fe_host_gblink_tune(unsigned bulk_per_frame);
+/* 1 once nothing this console sent the partner is still unacknowledged (or
+ * the partner is gone): only then may the radio go down after a session.
+ * Tearing it down at DONE lost the last FINAL in hardware run hw1 (arm W):
+ * the partner never saw it and ended FAILED, its save unwritten. */
+int  fe_host_gblink_flushed(void);
+/* Harness: stop running the single machine (the game waits, as behind the
+ * pause menu) until a session starts, so its state at link time does not
+ * depend on how long the radio took. */
+void fe_host_gblink_hold(int on);
+/* 1 when the autopilot may take its per-frame step now (always, outside a
+ * link session unless gblink_script_waits). */
+int  fe_host_autopilot_gate(void);
 
 #ifdef __cplusplus
 }

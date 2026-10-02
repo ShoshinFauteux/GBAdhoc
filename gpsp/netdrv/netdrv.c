@@ -1623,6 +1623,30 @@ int netdrv_send_capacity(const netdrv *nd, uint16_t dst_id)
    return peer_capacity(nd, &nd->peers[dst_id]);
 }
 
+int netdrv_unacked(const netdrv *nd, uint16_t dst_id)
+{
+   if (!nd || nd->state != ND_S_ACTIVE || dst_id >= ND_MAX_CLIENTS ||
+       !nd->peers[dst_id].active)
+      return 0;
+   return (int)nd->peers[dst_id].txq_count +
+          (int)nd->peers[dst_id].spill_count;
+}
+
+int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
+{
+   if (!nd || nd->state != ND_S_ACTIVE || id >= ND_MAX_CLIENTS)
+      return -1;
+   if (!nd->is_host && id == 0)
+   {
+      memcpy(mac, nd->host_mac, 6);
+      return 0;
+   }
+   if (!nd->peers[id].active)
+      return -1;
+   memcpy(mac, nd->peers[id].mac, 6);
+   return 0;
+}
+
 int netdrv_active(const netdrv *nd)   { return nd && nd->state == ND_S_ACTIVE; }
 int netdrv_local_id(const netdrv *nd)
 {

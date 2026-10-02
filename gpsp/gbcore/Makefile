@@ -25,7 +25,7 @@ CORE_SOURCES = \
   tgbdual/lcd.c \
   tgbdual/mbc.c \
   tgbdual/rom.c \
-  tgbdual/sgb.c
+  tgbdual/sgb.c   tgbdual/tgb_shared.c
 
 all: smoke
 

@@ -771,6 +771,15 @@ pick a `blit_mode` default from a rig number.** What the rig *does* establish, a
 `sceGuSync`) is **3 %**, and `tot=721` matches ADR-0032's independently-written `blt` bracket of
 722 µs — two separate brackets agreeing, which is what makes the split trustworthy.
 
+Control remapping (docs/CONTROL-REMAP.md) added three harness keys:
+`pad_script = <file>` (GPSP_PERF_RIG builds only) ORs scripted PSP buttons into
+the real pad at the pad read, one `<frame> <hold> <BTN+BTN>` per line, keyed to
+emulated frames. Unlike `script`, which injects GBA buttons after the mapping,
+it drives the player's own path: the button table and every frontend shortcut.
+`ui_controls_demo = 1` walks Settings > Controls in-game (GE dumps
+`log/ge_ctl_*.bmp`); `= 2` with `browser = 1` takes the ROM browser's START
+settings path instead (`log/ge_ctlb_*.bmp`).
+
 Autopilot.ini keys added for this layer: `testpat`, `gedump_at`, `ui_demo`,
 `simff`, `silent` (+ optional `role`), `blit_mode` — documented in psp/main_psp.c's
 header. The generic-build XMB branding (title "PSP AGB", ICON0/PIC1 from

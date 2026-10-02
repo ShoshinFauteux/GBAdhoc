@@ -109,6 +109,64 @@ void fe_sha1_hex(const void *data, size_t len, char *out_hex)
    out_hex[40] = '\0';
 }
 
+/* The streaming form reuses sha1_block; fe_sha1_hex above is untouched. */
+void fe_sha1_init(fe_sha1_ctx *c)
+{
+   c->h[0] = 0x67452301; c->h[1] = 0xEFCDAB89; c->h[2] = 0x98BADCFE;
+   c->h[3] = 0x10325476; c->h[4] = 0xC3D2E1F0;
+   c->len = 0;
+   c->used = 0;
+}
+
+void fe_sha1_update(fe_sha1_ctx *c, const void *data, size_t len)
+{
+   const uint8_t *p = (const uint8_t *)data;
+   sha1_ctx b;
+   memcpy(b.h, c->h, sizeof(b.h));
+   c->len += (uint64_t)len * 8;
+   while (len)
+   {
+      size_t n = 64 - c->used;
+      if (n > len)
+         n = len;
+      memcpy(c->buf + c->used, p, n);
+      c->used += n;
+      p += n;
+      len -= n;
+      if (c->used == 64)
+      {
+         sha1_block(&b, c->buf);
+         c->used = 0;
+      }
+   }
+   memcpy(c->h, b.h, sizeof(c->h));
+}
+
+void fe_sha1_final(fe_sha1_ctx *c, uint8_t out[20])
+{
+   uint8_t pad[64 + 8];
+   size_t pad_len;
+   sha1_ctx b;
+   int i;
+   memcpy(b.h, c->h, sizeof(b.h));
+   memset(pad, 0, sizeof(pad));
+   memcpy(pad, c->buf, c->used);
+   pad[c->used] = 0x80;
+   pad_len = (c->used < 56) ? 64 : 128;
+   for (i = 0; i < 8; i++)
+      pad[pad_len - 1 - i] = (uint8_t)(c->len >> (8 * i));
+   sha1_block(&b, pad);
+   if (pad_len == 128)
+      sha1_block(&b, pad + 64);
+   for (i = 0; i < 5; i++)
+   {
+      out[i * 4] = (uint8_t)(b.h[i] >> 24);
+      out[i * 4 + 1] = (uint8_t)(b.h[i] >> 16);
+      out[i * 4 + 2] = (uint8_t)(b.h[i] >> 8);
+      out[i * 4 + 3] = (uint8_t)b.h[i];
+   }
+}
+
 /* -------------------------------------------------------------------- bmp */
 
 static void put16(uint8_t *p, uint32_t v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; }

@@ -47,4 +47,8 @@ dist/
 host-test-results.json
 psp/build-manifest.json
 .build-*.log
-tools/__pycache__/
+__pycache__/
+/.layout/
+# Menu = HOME kernel module: the .prx is tracked (packaging, like psp/me),
+# its intermediate .elf is not.
+psp/home/gbadhoc_home.elf

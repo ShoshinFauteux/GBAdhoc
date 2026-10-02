@@ -1,0 +1,15 @@
+VALIDATION ONLY: the patch handler rewrites a memory-op `jal` without the
+synci after it (PSP: without cache 0x1A / cache 0x08).
+--- a/mips/mips_emit.h
++++ b/mips/mips_emit.h
+@@ -2864,9 +2864,7 @@
+     mips_emit_cache(0x08, mips_reg_ra, -8);
+   #else
+     mips_emit_jr(reg_rv);
+-    #ifdef MIPS_HAS_R2_INSTS
+-      mips_emit_synci(mips_reg_ra, -8);
+-    #endif
++    mips_emit_nop();   /* JITCOH VALIDATION: synci removed */
+   #endif
+ 
+   // Round up handlers to 16 instructions for easy addressing

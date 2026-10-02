@@ -61,6 +61,13 @@ int fe_np_gb_peer_ready(uint8_t *peer_id);
 int fe_np_gb_local_id(uint8_t *local_id);
 /* Reliable ordered unicast payload; caller explicitly encodes GB protocol. */
 int fe_np_gb_send(uint16_t peer_id, const void *payload, size_t len);
+/* Free reliable-queue slots toward the one peer (0 without one): bulk
+ * senders (a cartridge sent to the partner) pace themselves on it. */
+int fe_np_gb_send_room(void);
+/* Reliable payloads to the GB link partner not yet acknowledged. */
+int fe_np_gb_unacked(void);
+/* The GB link partner's radio address (for the bulk lane).  0 on success. */
+int fe_np_gb_peer_mac(uint8_t mac[6]);
 
 /* Short human-readable reason for the last fe_np_start() failure, for the
  * frontend to show.  Never NULL. */

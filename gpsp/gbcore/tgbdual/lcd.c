@@ -28,6 +28,8 @@
  * palette files) comes from the adapter as twelve BGR555 colours:
  * tgb_dmg_palette[], BG then OBJ0 then OBJ1. */
 #include "gb.h"
+/* GBAdhoc: the Game Boy Color LCD model (docs/GB-PALETTE-FIXES.md). */
+#include "_cgb_lcd_table.h"
 
 word m_pal16[2][3][4] = {
 	{	//GB
@@ -725,6 +727,22 @@ void sgb_set_color(int color, word value)		{
 	sgb_palette[color] = value;
 }
 
+/* GBAdhoc: a CGB palette entry (BGR555) as the Game Boy Color's LCD shows
+ * it, in the frontend's pixel format.  With tgb_cgb_lcd (the default) the
+ * channels go through the LCD's response curve and green picks up some of
+ * the blue, as on the real screen; without it, the plain 5-to-8-bit
+ * expansion MasterBoy used, which makes CGB games look too dark and too
+ * saturated on a modern display.  Three table reads either way, and only
+ * for entries the game has rewritten. */
+static inline word cgb_lcd_color(word col)
+{
+	unsigned r = col & 0x1f, g = (col >> 5) & 0x1f, b = (col >> 10) & 0x1f;
+	if (!tgb_cgb_lcd)
+		return CONVERT_COLOR15(col);
+	return MAKE_COLOR(_cgb_lcd_curve[r], _cgb_lcd_green[(g << 5) | b],
+	                  _cgb_lcd_curve[b]);
+}
+
 /* GBAdhoc: the loops below walk 2-D arrays as flat ones.  Indexing past the
  * inner dimension (inval_col_pal[0][i] for i >= 4) is undefined, and GCC
  * warns it may cut such a loop to four iterations -- which would leave most
@@ -738,7 +756,7 @@ static void gbc_recreate_colors()		{
 		for (i=0;i<16*4;i++)		{
 			if (inval[i])		{
 				word col = src[i];
-				dst[i] = CONVERT_COLOR15(col);
+				dst[i] = cgb_lcd_color(col);	/* GBAdhoc: was CONVERT_COLOR15 */
 				inval[i] = 0;
 			}
 		}

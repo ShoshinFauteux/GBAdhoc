@@ -628,7 +628,7 @@ void snd_render(short *buf1, short *buf2, int sample)
 					tmp_r+=tmp;
 			}
 			if (snd_stat.wav_playing/*&&(snd_stat.wav_freq!=0x7ff)*/){
-				tmp = snd_wav_produce(wav_freq) * snd_stat.wav_vol << 1;
+				tmp = snd_wav_produce(wav_freq) * snd_stat.wav_vol * 2;	/* GBAdhoc: was << 1, undefined for a negative sample; same value */
 				if (snd_stat.wav_enable){
 					if (snd_stat.ch_enable[2][0])
 						tmp_l+=tmp;
@@ -750,7 +750,7 @@ void snd_render_orig(short *buf,int sample)
 					tmp_r+=tmp;
 			}
 			if (snd_stat.wav_playing/*&&(snd_stat.wav_freq!=0x7ff)*/){
-				tmp = snd_wav_produce(wav_freq) * snd_stat.wav_vol << 1;
+				tmp = snd_wav_produce(wav_freq) * snd_stat.wav_vol * 2;	/* GBAdhoc: was << 1, undefined for a negative sample; same value */
 				if (snd_stat.wav_enable){
 					if (snd_stat.ch_enable[2][0])
 						tmp_l+=tmp;

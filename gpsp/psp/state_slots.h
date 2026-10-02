@@ -57,4 +57,43 @@ static inline int psp_state_thumb_path(char *out, size_t out_sz,
    return 0;
 }
 
+/* DELETE (docs/CONTROL-REMAP.md section 11): the two files a delete may
+ * remove, slot `slot`'s state and its preview, derived from the SLOT-1 path
+ * alone.  The derivation is deliberately narrower than
+ * psp_state_path_for_slot: `slot1_path` must already end in ".st0" (any case
+ * of "st") after a non-empty name, and the state path is that string with
+ * the final digit replaced -- so nothing a caller passes, a ROM path or a
+ * .sav included, can make this name a file that is not a .stN or its
+ * .stN.thumb.  Returns 0 and fills both, or -1 with both left empty. */
+static inline int psp_state_delete_paths(char *state, size_t state_sz,
+                                         char *thumb, size_t thumb_sz,
+                                         const char *slot1_path,
+                                         unsigned slot)
+{
+   size_t n;
+   if (state && state_sz)
+      state[0] = '\0';
+   if (thumb && thumb_sz)
+      thumb[0] = '\0';
+   if (!state || !thumb || !slot1_path || slot < 1 ||
+       slot > PSP_STATE_SLOT_COUNT)
+      return -1;
+   n = strlen(slot1_path);
+   if (n < 5 || n + 1 > state_sz)
+      return -1;
+   if (slot1_path[n - 4] != '.' ||
+       (slot1_path[n - 3] | 0x20) != 's' ||
+       (slot1_path[n - 2] | 0x20) != 't' || slot1_path[n - 1] != '0' ||
+       slot1_path[n - 5] == '/' || slot1_path[n - 5] == ':')
+      return -1;
+   memcpy(state, slot1_path, n + 1);
+   state[n - 1] = (char)('0' + (slot - 1));
+   if (psp_state_thumb_path(thumb, thumb_sz, state) != 0)
+   {
+      state[0] = '\0';
+      return -1;
+   }
+   return 0;
+}
+
 #endif

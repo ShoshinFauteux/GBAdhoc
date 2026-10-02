@@ -94,6 +94,22 @@
 #error "release + a gate-layout A/B diagnostic switch (docs/BUILD-SWITCHES.md)."
 #endif
 
+/* Dynarec profiling (drprof.h, docs/DYNAREC-PROFILE.md).  The twin is a
+ * host-only build; the hardware bench adds a phase store around every C call
+ * from translated code and runs a sampling alarm. */
+#if defined(DRPROF_TWIN) || defined(DRPROF_HW) || defined(DRPROF_NEGCTL)
+#error "release + DRPROF_*: dynarec profiling instruments, never shipped."
+#endif
+
+/* JIT_CODE_DISCIPLINE's instruments (docs/JIT-CODE-DISCIPLINE.md): zone
+ * asserts print to stderr and the audit keeps a shadow of both code zones. */
+#if defined(JIT_CODE_CHECK) || defined(JIT_CODE_AUDIT) || defined(JIT_SYNC_STATS)
+#error "release + JIT_CODE_CHECK/JIT_CODE_AUDIT/JIT_SYNC_STATS: twin/debug instruments."
+#endif
+#ifdef JIT_CODE_AB
+#error "release + JIT_CODE_AB: the hardware A/B selector (harness key jit_code_mode)."
+#endif
+
 /* Experiment control arms.  Each of these deliberately DISABLES something the
  * release depends on, so shipping one reads as a performance regression with no
  * apparent cause. */
@@ -164,6 +180,13 @@
     defined(SMC_PARTIAL_SAFE_FRAMEFULL) || defined(SMC_PARTIAL_SAFE_NO_TRAMP)
 #error "An SMC_PARTIAL_SAFE sub-flag is set without SMC_PARTIAL_SAFE."
 #endif
+#endif
+
+/* JIT_CODE_CHECK / JIT_CODE_AUDIT check the discipline; without it they
+ * compile to nothing and the "zero violations" would be vacuous. */
+#if (defined(JIT_CODE_CHECK) || defined(JIT_CODE_AUDIT) || \
+     defined(JIT_CODE_AB)) && !defined(JIT_CODE_DISCIPLINE)
+#error "JIT_CODE_CHECK/_AUDIT/_AB without JIT_CODE_DISCIPLINE: they need it."
 #endif
 
 #endif /* GPSP_PROFILE_H */

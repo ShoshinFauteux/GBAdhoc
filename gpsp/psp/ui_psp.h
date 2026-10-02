@@ -42,14 +42,45 @@ typedef enum
    UI_ACT_RELAUNCH
 } ui_action;
 
+/* The in-game menu draws over the game (docs/UI-OVERLAY.md): the frame it
+ * sits on -- a w x h PSP-5650 picture at the top-left of a 256x256 texture
+ * (main_psp.c's wake snapshot), or NULL for a flat page.  Set before
+ * ui_open(); the pointer is only read while the menu is up. */
+void ui_set_backdrop(const uint16_t *frame, int w, int h);
+/* Five 64x64 PSP-5650 textures the state-slot screen loads the previews
+ * into (main_psp.c carves them from the netdrv arena's tail), or NULL. */
+void ui_set_thumb_buffer(uint16_t *buf);
+/* Harness `ui_backdrop = <file>`: a raw 480x272 PSP-5650 picture drawn 1:1
+ * behind the menu instead of the game, for the pixel comparison with the
+ * design model.  Allocates 512 KiB; call before the core loads a ROM. */
+void ui_backdrop_inject(const char *rel);
 void ui_open(void);
 void ui_close(void);
 int  ui_active(void);
+/* Menu = HOME (docs/CONTROL-REMAP.md section 10): a HOME press while the
+ * in-game menu is open.  On the menu's top page it closes the menu, exactly
+ * as Resume does; on any other page it is ignored (a sub-page may be in the
+ * middle of something -- a capture, a scan -- and O already walks back).
+ * Returns 1 when the menu closed. */
+int  ui_home_press(void);
+/* 1 while Settings > Controls is waiting for the player to press the input
+ * for a binding.  The main loop keeps its own always-on chords (the
+ * screenshot) quiet meanwhile: the player is pressing them to TEACH them. */
+int  ui_capturing(void);
 
-/* Boot-only, main-thread presentation. No worker, art allocation or core calls. */
+/* Boot-only, main-thread presentation. No worker and no core calls.  The
+ * only allocation is a launch without a browser pick (harness, variant):
+ * ui_loading_begin then decodes the hero art by file name and FREES it
+ * before returning -- i.e. before fe_host_boot (docs/DISPLAY-FEATURES.md). */
 void ui_loading_begin(const char *path);
 void ui_loading_update(const char *stage, unsigned done, unsigned total);
 void ui_loading_finish(int success);
+/* Harness `loading_dump = N`: GE-dump the first N loading-screen redraws to
+ * log/ge_loading_<n>.bmp (docs/DISPLAY-FEATURES.md screenshots). */
+void ui_loading_dump_shots(int n);
+/* The console's darkest palette shade (its browser skin's first stripe
+ * colour), libretro RGB565 -- the ambient bars' no-art fallback. */
+uint16_t ui_console_shade(int console);
 
 /* One frame of menu UI: input edges + draw (vid_overlay_begin(1)..end).
  * pad = raw SceCtrl button mask; session_active gates savestates + shows
@@ -119,17 +150,34 @@ static inline size_t ui_rom_stem_length(const char *name)
  * on the theme background.  Returns 0 to resume, 1 for the game list. */
 int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
                  const char *game);
+/* Harness `wake_shot = N`: the next wake overlay dumps log/ge_wake.bmp on
+ * its third frame and continues on its own. */
+void ui_wake_shot_arm(void);
 
 /* Harness self-drive (.gpsp-harness.ini ui_demo=1): scripted walk through
  * menu -> settings (cycle scale) -> wireless -> resume, with EVT markers
  * (ui_open/ui_screen/ui_demo_done) and a GE dump of the menu screen. */
 void ui_demo_start(void);
+/* .gpsp-harness.ini ui_controls_demo=1: the same self-drive, through
+ * Settings > Controls -- unbind, capture, a steal, a chord, reset -- with GE
+ * dumps log/ge_ctl_*.bmp (docs/CONTROL-REMAP.md). */
+void ui_controls_demo_start(void);
+/* ui_controls_demo=2 (with browser=1): the browser opens START settings,
+ * walks to Controls (log/ge_ctlb_*.bmp), backs out and boots the game. */
+void ui_controls_browser_demo(void);
+/* ui_controls_demo=3: Settings > Controls > Menu, flipped once (ge_cth_*);
+ * =4: save slot 2, then delete it from the Load page -- the question, a
+ * "keep", the delete (ge_del_*).  docs/CONTROL-REMAP.md sections 10-11. */
+void ui_home_demo_start(int which);
 int  ui_demo_running(void);
 void ui_demo_shots(void);          /* arm the gallery dump + auto-pick     */
 /* ui_browser_demo=1 (with browser=1): the browser walks its 3.0 states --
  * star, favourites, empty favourites, console flare, empty console -- and
  * GE-dumps each to log/ge_gallery_*.bmp, then exits. */
 void ui_browser_demo_shots(void);
+/* ui_browser_script = <file under the app dir>: a text script of presses,
+ * dumps and per-frame dump ranges for the README shoot (see ui_psp.c). */
+void ui_browser_script_load(const char *rel);
 void ui_set_theme_black(int b);    /* runtime page theme (-1 = leave)      */
 
 #ifdef __cplusplus

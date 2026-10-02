@@ -13,6 +13,7 @@ sections land with their phases. Plan references are to gpsp-adhoc-plan.md.
 | a symptom, and the first thing to look at | `DEBUGGING.md` |
 | display-buffer ownership and the fast-forward artifact, already solved | `FF-ARTIFACT-FIX.md` |
 | what the three fast-forward presets do | `FF-PROFILES.md` |
+| how Unlimited / Unlimited Smooth choose which frames to draw (30 / 60 a second) | `FF-PRESETS.md` |
 | what to ask a player for | `BUG-REPORT.md` |
 | why a past decision went the way it did | `DECISIONS.md` |
 | how much of the quality roadmap is actually done | `QUALITY-PROGRESS.md` |

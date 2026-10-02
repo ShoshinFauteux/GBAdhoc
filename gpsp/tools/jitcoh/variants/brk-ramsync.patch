@@ -1,0 +1,14 @@
+VALIDATION ONLY: the RAM half of translate_icache_sync publishes nothing
+(new RAM-cache code is never written back or invalidated).  The checker must
+flag it; restoring the sync must silence it.
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -379,7 +379,7 @@
+         last_rom_translation_ptr = rom_translation_ptr;
+     }
+     if (last_ram_translation_ptr < ram_translation_ptr) {
+-        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
++        /* JITCOH VALIDATION: sync removed */
+         last_ram_translation_ptr = ram_translation_ptr;
+     }
+ }

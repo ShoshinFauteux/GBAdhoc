@@ -53,7 +53,6 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
    me_render_desc *d = (me_render_desc *)(mb->arg0 & ~0x40000000u);
    const me_capture_frame *cap;
    unsigned int sum = 0;
-   int ln;
 
    me_inv((unsigned int)d, sizeof(*d));
    if (!d->vram || !d->capture || !d->out || !d->out_pitch)
@@ -104,6 +103,16 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
    memcpy(palette_ram_converted, (const void *)(d->palette & ~0x40000000u),
           512 * 2);
    me_inv(d->capture & ~0x40000000u, sizeof(me_capture_frame));
+#if ME_MIDFRAME_LOG
+   {
+      /* The entries live in their own buffer; invalidate only what is used.
+       * log_n is 0 unless this is a vcount-160 post (main_psp.c). */
+      const me_capture_frame *c =
+         (const me_capture_frame *)(d->capture & ~0x40000000u);
+      if (c->log_n && c->log_addr)
+         me_inv(c->log_addr & ~0x40000000u, c->log_n * sizeof(me_log_entry));
+   }
+#endif
    mb->input_seq = seq;              /* host may resume emulation NOW */
 
    /* ---- phase 2: render from the capture ------------------------------- */
@@ -117,11 +126,10 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
    affine_reference_y[1] = cap->affine_seed[3];
    reg[OAM_UPDATED] = cap->oam_updated;
 
-   for (ln = 0; ln < 160; ln++)
-   {
-      memcpy(io_registers, cap->ioregs[ln], ME_CAP_IOREGS * sizeof(u16));
-      update_scanline();             /* VCOUNT rides in the captured regs */
-   }
+   /* The shared loop (video.cc): per-line registers and, with
+    * ME_AFFINE_LINES, the per-line affine reference.  The desktop models
+    * (ME_CAP_VALIDATE, ME_TIMING_SIM) run this same function. */
+   me_replay_lines(cap, NULL, 1);
 
    /* Pitched, uncached write-out: 240-pixel rows at out_pitch stride. */
    {

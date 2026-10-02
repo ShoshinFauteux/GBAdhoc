@@ -47,7 +47,14 @@ PPSSPP_DIR="${PPSSPP_DIR:-$HOME/ppsspp}"
 SANDBOX_ROOT="${SANDBOX_ROOT:-$HOME/gpsp-e2e/sandboxes}"
 TIMEOUT_S="${TIMEOUT_S:-600}"
 
-EBOOT="$REPO/psp/EBOOT.PBP"
+# VREGRESS_EBOOT runs a staged EBOOT (another build) without copying it into
+# psp/; VREGRESS_CONFIG is a config.ini body (\n-escaped) for the run, so a
+# frontend setting can be proven not to reach the core's frame; XDISPLAY=:N
+# pins Xvfb to display N (`xvfb-run -n`) instead of letting it pick (`-a`).
+EBOOT="${VREGRESS_EBOOT:-$REPO/psp/EBOOT.PBP}"
+VREGRESS_CONFIG="${VREGRESS_CONFIG:-}"
+XVFB_SEL="-a"
+[ -n "${XDISPLAY:-}" ] && XVFB_SEL="-n ${XDISPLAY#:}"
 ROM="$REPO/testdata/Pokemon - Emerald Version (USA, Europe).gba"
 BIOS="$REPO/testdata/gba_bios.bin"
 SAV="$REPO/testdata/Pokemon Emerald All Shiny Fixed.sav"
@@ -75,7 +82,7 @@ mkdir -p "$ART"
 fail() { echo "FAIL: $*" | tee -a "$ART/verdict.txt"; exit 1; }
 
 [ -x "$PPSSPP_DIR/build/PPSSPPSDL" ] || fail "PPSSPPSDL not built (setup_ppsspp.sh)"
-[ -f "$EBOOT" ]  || fail "psp/EBOOT.PBP missing"
+[ -f "$EBOOT" ]  || fail "$EBOOT missing"
 [ -f "$ROM" ]    || fail "test ROM missing in testdata/"
 [ -f "$BIOS" ]   || fail "gba_bios.bin missing in testdata/"
 [ -f "$SAV" ]    || fail "test .sav missing in testdata/"
@@ -117,6 +124,7 @@ one_run() {
   # and sat in the ROM browser until the timeout.  It also never named a ROM.
   # Result: this oracle has been silently non-functional since the rename, which
   # is why no structural change on this project has actually been gated on it.
+  [ -n "$VREGRESS_CONFIG" ] && printf '%b\n' "$VREGRESS_CONFIG" > "$GAME/config.ini"
   cat > "$GAME/.gpsp-harness.ini" <<EOF
 rom = emerald.gba
 script = run.inputs
@@ -128,7 +136,7 @@ EOF
   local EVTLOG="$GAME/log/frontend.log"
   ( cd "$PPSSPP_DIR/build" && \
     XDG_CONFIG_HOME="$SANDBOX_ROOT/inst1" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 \
-    timeout $((TIMEOUT_S + 30)) xvfb-run -a -s "-screen 0 1280x720x24 +extension GLX +render -noreset" \
+    timeout $((TIMEOUT_S + 30)) xvfb-run $XVFB_SEL -s "-screen 0 1280x720x24 +extension GLX +render -noreset" \
       ./PPSSPPSDL --windowed "$GAME/EBOOT.PBP" >"$ART/emu-$tag.log" 2>&1 ) &
   local EMU_PID=$!
   local DONE=0

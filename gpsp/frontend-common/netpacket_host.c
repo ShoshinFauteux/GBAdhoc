@@ -13,7 +13,10 @@
 
 #define NP_STATS_INTERVAL_US 5000000ull   /* EVT net_stats every ~5 s */
 #define NP_PROBE_INTERVAL_US 1000000ull
-#define NP_GB_PROTOCOL "GBAdhoc GB link v1"
+/* v2: the link session (fe_gblink.h, two Game Boys per console).  v1 was the
+ * byte-per-exchange cable (netdrv/gb_link.c), which ad-hoc jitter cannot
+ * carry; a v1 peer is refused at the handshake rather than misread. */
+#define NP_GB_PROTOCOL "GBAdhoc GB link v2"
 
 static struct
 {
@@ -447,6 +450,30 @@ int fe_np_gb_local_id(uint8_t *local_id)
    if (local_id)
       *local_id = netdrv_local_id(np.nd);
    return 1;
+}
+
+int fe_np_gb_send_room(void)
+{
+   uint8_t id;
+   if (!fe_np_gb_peer_ready(&id))
+      return 0;
+   return netdrv_send_capacity(np.nd, id);
+}
+
+int fe_np_gb_peer_mac(uint8_t mac[6])
+{
+   uint8_t id;
+   if (!fe_np_gb_peer_ready(&id))
+      return -1;
+   return netdrv_peer_mac(np.nd, id, mac);
+}
+
+int fe_np_gb_unacked(void)
+{
+   uint8_t id;
+   if (!fe_np_gb_peer_ready(&id))
+      return 0;
+   return netdrv_unacked(np.nd, id);
 }
 
 int fe_np_gb_send(uint16_t peer_id, const void *payload, size_t len)

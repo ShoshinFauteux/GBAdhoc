@@ -88,6 +88,10 @@ int netdrv_send(netdrv *nd, int flags, const void *buf, size_t len,
 }
 int netdrv_send_capacity(const netdrv *nd, uint16_t dst_id)
 { (void)nd; (void)dst_id; return 32; }
+int netdrv_unacked(const netdrv *nd, uint16_t dst_id)
+{ (void)nd; (void)dst_id; return 0; }
+int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
+{ (void)nd; (void)id; memset(mac, 0, 6); return 0; }
 int netdrv_active(const netdrv *nd) { return nd->active; }
 int netdrv_local_id(const netdrv *nd) { return nd->active ? nd->local_id : -1; }
 int netdrv_peer_count(const netdrv *nd) { return nd->peers; }
@@ -128,7 +132,7 @@ int main(void)
    fe_np_gb_set_receive(gb_receive, NULL);
    fe_np_gb_set_peer_callback(gb_peer, NULL);
    CHECK(fe_np_start_gb(&cfg) == 0);
-   CHECK(strcmp(negotiated, "GBAdhoc GB link v1") == 0);
+   CHECK(strcmp(negotiated, "GBAdhoc GB link v2") == 0);
    CHECK(fe_np_gb_local_id(&local_id) && local_id == 0);
    CHECK(!fe_np_gb_peer_ready(&peer_id)); /* host has no peer yet */
 

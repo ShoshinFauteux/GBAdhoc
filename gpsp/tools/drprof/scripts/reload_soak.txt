@@ -1,0 +1,135 @@
+# reload_soak.txt -- docs/JIT-CODE-DISCIPLINE.md.  The resident-ROM derail
+# fires on the first frame after a STATE LOAD (the ROM and RAM translation
+# caches are flushed and their addresses reused).  This script reloads the
+# fixture's state over and over, with battle input between loads, so every
+# load is one more chance for a previous generation's I-cache lines to run.
+# 40 reloads, 390 frames apart (~15,700 frames, ~4-5 min on a Go).  The
+# autopilot has no nested repeats, so the input between loads is unrolled.
+wait 90
+dump
+repeat 40
+state
+wait 30
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+press A 2
+wait 4
+endrepeat
+dump
+wait 30

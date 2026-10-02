@@ -62,6 +62,14 @@
  *                                   runs, so a script cannot reach it any other
  *                                   way.
  *
+ *   stepram BTNS SZ ADDR MASK VAL TO  walk one tile at a time: hold BTNS
+ *                                   12 frames, release, re-check after 48;
+ *                                   until the predicate holds.  Never
+ *                                   overshoots when buttons arrive late
+ *                                   (GB link sessions' input delay)
+ *   ifram SZ ADDR MASK VAL N        run the next N steps only if
+ *                                   (mem[ADDR]&MASK)==VAL now, else skip
+ *                                   them (zero frames; a read error skips)
  *   logbytes NAME N ADDR             emit N (<=24) raw bytes as hex:
  *                                   "EVT ap_val name=NAME hex=..."
  * Every ap_mark, ap_sync, ap_val and ap_fail carries it=<repeat iteration,
@@ -111,6 +119,12 @@ int fe_autopilot_dump_pending(void);
  * to stress the reload path -- restoring repeatedly mid-battle is what exposes
  * dynarec or SMC state that survived a restore when it should not have. */
 int fe_autopilot_state_pending(void);
+/* `disconnect`: the script asks to end the GB link session (the menu's
+ * Disconnect); the game plays on from where it stands afterwards. */
+int fe_autopilot_disconnect_pending(void);
+
+/* The text of the last `evt` step executed, or NULL; clears it (one-shot). */
+const char *fe_autopilot_take_mark(void);
 #endif
 
 #ifdef __cplusplus

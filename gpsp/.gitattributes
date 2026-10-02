@@ -9,3 +9,5 @@ Makefile text eol=lf
 
 bios/source/*.c -text
 bios/source/*.h -text
+*.patch text eol=lf
+*.py text eol=lf

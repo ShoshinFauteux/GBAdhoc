@@ -1,0 +1,72 @@
+wait 90
+hold A+B+SELECT+START 10
+wait 900
+press START 4
+wait 200
+dump
+press START 4
+press DOWN 4
+wait 40
+dump
+press DOWN 4
+wait 40
+dump
+press DOWN 4
+wait 40
+dump
+press DOWN 4
+wait 40
+dump
+press DOWN 4
+wait 40
+dump
+press DOWN 4
+wait 40
+dump
+press A 4
+wait 90
+dump
+press DOWN 4
+wait 30
+dump
+press UP 4
+press A 4
+wait 120
+wait 600
+repeat 6
+press A 4
+wait 240
+endrepeat
+wait 600
+evt host_end
+press A 4
+wait 40
+press DOWN 4
+wait 15
+press DOWN 4
+wait 15
+press DOWN 4
+wait 15
+press A 4
+wait 60
+dump
+press A 4
+wait 60
+dump
+wait 2400
+evt host_end2
+press A 4
+wait 40
+press DOWN 4
+wait 15
+press DOWN 4
+wait 15
+press DOWN 4
+wait 15
+press A 4
+wait 60
+dump
+press A 4
+wait 60
+dump
+wait 900

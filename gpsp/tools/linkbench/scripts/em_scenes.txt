@@ -1,0 +1,61 @@
+# em_scenes.txt -- Pokemon Emerald (USA/EU) scene tour for the link bench.
+# Start: the owner's Emerald .st0 (Petalburg, outside the Pokemon Center),
+# loaded at frame 30.  Frame-stamped press/hold/wait only.
+evt text
+wait 60
+press B 4
+wait 30
+press B 4
+wait 30
+evt ow_walk
+hold DOWN 120
+wait 10
+hold LEFT 120
+wait 10
+hold UP 200
+wait 10
+hold RIGHT 200
+wait 10
+hold DOWN 200
+wait 10
+evt start_menu
+press START 4
+wait 40
+press DOWN 4
+wait 20
+press DOWN 4
+wait 20
+press UP 4
+wait 20
+evt party
+press A 4
+wait 90
+press A 4
+wait 40
+press A 4
+wait 150
+evt summary
+press RIGHT 4
+wait 60
+press RIGHT 4
+wait 60
+press DOWN 4
+wait 80
+press B 4
+wait 60
+press B 4
+wait 60
+press B 4
+wait 60
+press B 4
+wait 60
+press B 4
+wait 60
+evt ow_walk2
+hold LEFT 150
+wait 10
+hold UP 150
+wait 10
+hold RIGHT 150
+wait 30
+evt end

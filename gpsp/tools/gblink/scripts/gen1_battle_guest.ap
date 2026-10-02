@@ -1,0 +1,58 @@
+# Pokemon Red/Blue link BATTLE (Colosseum), guest side (slot 1).  See
+# gen1_battle_host.ap.  The guest reaches the counter a little later.
+wait 37
+# --- title screen -> CONTINUE -> overworld
+repeat 10
+wait 90
+hold START 6
+endrepeat
+wait 120
+hold A 6
+wait 90
+hold A 6
+wait 150
+evt booted
+# --- talk to the receptionist through the three boxes that need A, and
+# stop at "Please wait." (the 8th letter of the box's first line, tile
+# (8,14) = 0xC4C0, is the 'w' = 0xB6; "Please apply" has an 'a' there):
+# from here nothing needs A, so presses still in flight (the input delay)
+# cannot pick a menu entry.  Then wait for the link menu's cursor, tile
+# (6,7) = 0xC432: 0xED, on TRADE CENTER; COLOSSEUM is one row down.
+hold UP 6
+wait 20
+mash A 1 0xC4C0 0xFF 0xB6 6000
+evt please_wait
+waitram 1 0xC432 0xFF 0xED 3000
+evt link_menu
+# --- one row down to COLOSSEUM, and verify it: a DOWN pressed before the
+# menu takes input is lost (Red at delay 0), so press again, once per 30
+# frames (longer than any input delay), only while the cursor is still on
+# TRADE CENTER; then require the cursor on COLOSSEUM (tile (6,9), 0xC45A).
+repeat 4
+wait 30
+ifram 1 0xC432 0xFF 0xED 1
+hold DOWN 6
+endrepeat
+wait 30
+waitram 1 0xC45A 0xFF 0xED 120
+hold A 6
+waitram 1 0xD35E 0xFF 0xF0 3000
+evt in_colosseum
+wait 120
+logbytes seat 2 0xD361
+# --- face the table from whichever seat the link gave us (x=3 or x=6)
+ifram 1 0xD362 0xFF 3 1
+hold RIGHT 6
+ifram 1 0xD362 0xFF 6 1
+hold LEFT 6
+wait 20
+hold A 6
+# --- the battle: wIsInBattle (0xD057) is 2 for a trainer/link battle
+mash A 1 0xD057 0xFF 0x02 3000
+evt battle_start
+mash A 1 0xD057 0xFF 0x00 20000
+evt battle_end
+wait 300
+logbytes party 3 0xD163
+logbytes hp 2 0xD16C
+evt settled

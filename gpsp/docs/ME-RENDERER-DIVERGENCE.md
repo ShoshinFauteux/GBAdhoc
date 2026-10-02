@@ -1,5 +1,11 @@
 # The ME renderer diverges from the CPU renderer, and it is deterministic
 
+> **2026-09-29:** the "known single-snapshot limitation" below (graphics memory
+> written while lines 0-159 draw) and a second gap, the affine reference seeded
+> only at line 0, are addressed on `claude/me-midframe`; the 5 frames left on
+> `heart_soul_heavy` are exact in the model there. See
+> [ME-MIDFRAME.md](ME-MIDFRAME.md).
+
 ## Update 2026-09-24: cause found, fix committed, hardware check pending
 
 **The cause is the post point, not the snapshot granularity.** `main_psp.c`

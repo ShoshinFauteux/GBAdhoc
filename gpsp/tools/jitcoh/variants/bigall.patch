@@ -1,0 +1,19 @@
+The PRECISE FIX candidate: platform_cache_sync never hands the kernel an
+I-invalidate range of 16 KiB or more (the I-cache size, where
+sceKernelIcacheInvalidateRange leaves its exact line loop for a tag walk);
+such ranges invalidate the whole I-cache instead (256 line ops, the same as
+the 16 KiB loop).  Apply on top of ship.patch to get 3.0.0 + this rule.
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -290,7 +290,10 @@
+       return;
+     }
+     sceKernelDcacheWritebackRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
+-    sceKernelIcacheInvalidateRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
++    if (((char*)endptr) - ((char*)baseaddr) >= 16 * 1024)
++      sceKernelIcacheInvalidateAll();
++    else
++      sceKernelIcacheInvalidateRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
+   }
+ #endif
+ 

@@ -22,6 +22,20 @@
 // - block memory needs psr swapping and user mode reg swapping
 
 #include "common.h"
+#include "drprof.h"   /* DRPROF_TWIN hooks; no-ops otherwise */
+#ifdef SMC_RETIRE_WINDOW
+static u32 smc_max_extent[2];   /* see ramtag_note_extent */
+/* The short window is exact only if EVERY live RAM block had its extent
+ * noted (ramtag_note_extent) since the last full RAM flush.  Extents are only
+ * noted while smc_partial_active, so the window is ARMED by a full RAM flush
+ * taken while partial retirement is active (activation always takes one) and
+ * disarmed whenever partial retirement is switched off.  Disarmed = the
+ * original MAX_BLOCK_SIZE*4 walk. */
+static u32 smc_window_armed;
+/* Blocks found live and overlapping the write in [lo-4KiB, lo-span): must
+ * stay 0.  Counted by the SMC_RETIRE_WINDOW_CHECK build (and the twin). */
+u32 smc_window_violations;
+#endif
 #include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
@@ -239,6 +253,11 @@ typedef struct
   #include "x86/x86_emit.h"
 #endif
 
+/* JIT_CODE_DISCIPLINE (docs/JIT-CODE-DISCIPLINE.md): zones, one writer API,
+ * one publish point.  Every macro it adds expands to the original code when
+ * the switch is off. */
+#include "jit_code.h"
+
 /* Only the MIPS emitter needs a larger private entry for SMC retirement.
  * Other emitters use the ordinary block prologue for RAM and ROM blocks. */
 #ifndef ram_block_prologue_size
@@ -247,7 +266,36 @@ typedef struct
 
 /* Cache invalidation */
 
-#if defined(PSP)
+#ifdef JIT_SYNC_STATS
+/* Twin measurement of the ORIGINAL sync path (docs/JIT-CODE-DISCIPLINE.md):
+ * how often each kind of sync runs.  rom_pub is also the count of whole
+ * I-cache invalidates the 8b48b48 fix performs on a PSP. */
+struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
+#define JIT_LEGACY_SYNC_NOTE(b, e) do {                                        \
+  jit_legacy_stats.calls++;                                                   \
+  jit_legacy_stats.lines += (u32)((((uintptr_t)(e) + 63) & ~(uintptr_t)63) -  \
+                                  ((uintptr_t)(b) & ~(uintptr_t)63)) >> 6;    \
+} while (0)
+#else
+#define JIT_LEGACY_SYNC_NOTE(b, e) do { } while (0)
+#endif
+
+#if defined(JITCOH_PSP_CACHE)
+  /* DRPROF TWIN ONLY (tools/jitcoh, docs/JIT-COHERENCY.md).  The twin compiles
+   * the PSP's cache maintenance below UNCHANGED, against four out-of-line
+   * functions that carry the PSP kernel's names and arguments
+   * (tools/drprof/dr_host.c).  qemu is coherent and needs none of them; each
+   * posts its call to a mailbox that the coherency checker plugin watches,
+   * and the plugin applies the Allegrex semantics to its cache model -- so
+   * every maintenance call the PSP makes is seen one-to-one, with the same
+   * arguments, in the same order.  Never defined in a PSP build. */
+  void sceKernelDcacheWritebackRange(const void *p, unsigned int size);
+  void sceKernelIcacheInvalidateRange(const void *p, unsigned int size);
+  void sceKernelDcacheWritebackInvalidateAll(void);
+  void sceKernelIcacheInvalidateAll(void);
+#endif
+
+#if defined(PSP) || defined(JITCOH_PSP_CACHE)
   /* DIAGNOSTIC (harness `cache_paranoid = 1`): every sync writes back and
    * invalidates the WHOLE data cache and invalidates the WHOLE instruction
    * cache, instead of the range.  It removes every way a ranged sync can
@@ -264,7 +312,9 @@ typedef struct
     sceKernelDcacheWritebackRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
     sceKernelIcacheInvalidateRange(baseaddr, ((char*)endptr) - ((char*)baseaddr));
   }
+#endif
 
+#if defined(PSP)
   /* DIAGNOSTIC (harness `jit_coherency_scan = N`): count the words of live
    * RAM-cache code whose CACHED view differs from main memory.  The CPU fetches
    * instructions from memory (through the I-cache), never from the D-cache, so
@@ -289,6 +339,8 @@ typedef struct
     }
     return n;
   }
+#elif defined(JITCOH_PSP_CACHE)
+  /* platform_cache_sync is the PSP one, above */
 #elif defined(PS2)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     FlushCache(0);   // Dcache flush
@@ -309,6 +361,7 @@ typedef struct
   }
 #elif defined(MIPS_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    JIT_LEGACY_SYNC_NOTE(baseaddr, endptr);
     __builtin___clear_cache(baseaddr, endptr);
   }
 #else
@@ -316,8 +369,15 @@ typedef struct
   void platform_cache_sync(void *baseaddr, void *endptr) {}
 #endif
 
-void translate_icache_sync() {
-    // Cache emitted code can only grow
+#ifndef JIT_CODE_DISCIPLINE
+/* The ARM lookup's normal success path keeps the RANGED sync.  The bisection
+ * (docs/RESIDENT-ICACHE-FIX.md) cured the derail with a whole I-cache
+ * invalidate at the OUT-OF-LINE copy only -- the Thumb/dual lookups,
+ * init_bios_hooks and badjump_recover -- while the copy inlined into this path
+ * (site E) did not matter; and a whole invalidate on every ARM publish costs
+ * 18% on AW2 in the candidate.  So this path keeps the old behaviour.
+ * (Under JIT_CODE_DISCIPLINE the publish point owns this decision.) */
+static void translate_icache_sync_ranged(void) {
     if (last_rom_translation_ptr < rom_translation_ptr) {
         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
@@ -326,6 +386,86 @@ void translate_icache_sync() {
         platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
+}
+#endif
+
+#if defined(JIT_CODE_DISCIPLINE) && defined(JIT_CODE_AB)
+/* JIT_CODE_AB legacy modes: the original translate_icache_sync, verbatim
+ * apart from the mode test (and counted, so the rig can compare). */
+static void jit_legacy_icache_sync(void)
+{
+    if (last_rom_translation_ptr < rom_translation_ptr) {
+        jit_code_stats.publishes++;
+#if defined(PSP) || defined(JITCOH_PSP_CACHE)
+        if (jit_code_mode == JCM_ROMWHOLE) {
+            /* 8b48b48, docs/RESIDENT-ICACHE-FIX.md */
+            sceKernelDcacheWritebackRange(last_rom_translation_ptr,
+              (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
+            sceKernelIcacheInvalidateAll();
+            jit_code_stats.whole_i++;
+        } else
+#endif
+        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+        last_rom_translation_ptr = rom_translation_ptr;
+    }
+    if (last_ram_translation_ptr < ram_translation_ptr) {
+        jit_code_stats.publishes++;
+        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+        last_ram_translation_ptr = ram_translation_ptr;
+    }
+}
+#endif
+
+void translate_icache_sync() {
+#ifdef JIT_CODE_DISCIPLINE
+#ifdef JIT_CODE_AB
+    if (jit_code_mode < JCM_DISCIPLINE) {
+      jit_legacy_icache_sync();
+      return;
+    }
+#endif
+    /* The one publish point: every recorded write, ROM and RAM zone alike,
+     * plus a whole I-cache invalidate if code memory changed owner. */
+    jit_code_publish();
+#else
+#ifdef JIT_SYNC_STATS
+    if (last_rom_translation_ptr < rom_translation_ptr) jit_legacy_stats.rom_pub++;
+    if (last_ram_translation_ptr < ram_translation_ptr) jit_legacy_stats.ram_pub++;
+#endif
+    // Cache emitted code can only grow
+    if (last_rom_translation_ptr < rom_translation_ptr) {
+#if defined(PSP) || defined(JITCOH_PSP_CACHE)
+        /* NEW ROM CODE INVALIDATES THE WHOLE I-CACHE, not just its own range.
+         *
+         * The resident-ROM crash (Heart & Soul dies the frame after a state
+         * load; BADJUMP_SAFE catches the derail and soft-resets the GBA) was
+         * bisected on the EXACT failing binary by one-instruction patches of
+         * its nine inlined sync sites, so the layout the bug needs never moved
+         * (docs/RESIDENT-ICACHE-FIX.md, 2026-10-01, PSP Go + PSP-3000):
+         *   - whole D+I at this site (ROM publish, out-of-line copy): fixed;
+         *     every other single site: still dies;
+         *   - this site's ranged D writeback + WHOLE I invalidate: fixed;
+         *     ranged I invalidate + WHOLE D writeback: dies;
+         *   - the same ranges rounded out to whole 64-byte lines: dies.
+         * So instruction fetch runs stale I-cache lines that lie OUTSIDE the
+         * range just written, and nothing data-side is missing.  The ranged
+         * invalidate cannot reach them; a whole invalidate (256 line ops, a
+         * few microseconds) can, and ROM publishes are rare once a game is
+         * warm.  The D side stays ranged: the new bytes are all that need to
+         * reach memory. */
+        sceKernelDcacheWritebackRange(last_rom_translation_ptr,
+          (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
+        sceKernelIcacheInvalidateAll();
+#else
+        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+#endif
+        last_rom_translation_ptr = rom_translation_ptr;
+    }
+    if (last_ram_translation_ptr < ram_translation_ptr) {
+        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+        last_ram_translation_ptr = ram_translation_ptr;
+    }
+#endif
 }
 
 /* End of Cache invalidation */
@@ -2723,7 +2863,15 @@ static void smc_stable_thunk_link(u8 *entry, u8 *body)
 {
   generate_branch_patch_unconditional(entry, body);
   address32(entry, 4) = 0;
+#ifdef JIT_CODE_DISCIPLINE
+  /* Only ever called while a lookup translates (SMC_RAM_COMMIT_TRANSLATION):
+   * that lookup's publish runs before control can reach the thunk. */
+#ifndef JIT_CODE_AUDIT_NEGCTL   /* the audit's negative control drops this */
+  JIT_CODE_WROTE(entry, entry + 8);
+#endif
+#else
   platform_cache_sync(entry, entry + 8);
+#endif
 }
 
 static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
@@ -2736,7 +2884,13 @@ static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
     mips_emit_j(mips_absolute_offset(mips_indirect_branch_arm));
   }
   mips_emit_nop();
+#ifdef JIT_CODE_DISCIPLINE
+  /* Called from a translating lookup (the abort path) or from SMC
+   * retirement; both publish before control can reach the thunk. */
+  JIT_CODE_WROTE(entry, translation_ptr);
+#else
   platform_cache_sync(entry, translation_ptr);
+#endif
 }
 
 #define SMC_RAM_NEEDS_TRANSLATION(te, type)                                   \
@@ -2961,7 +3115,11 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
          * block_lookup_translate below -- see main.h. */                     \
         cph_t = core_phase_enter(CORE_PHASE_FINE);                            \
         XLAT_PROBE_ENTER();                                                   \
+        DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
+        DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
         result = translate_block_##type(pc, true);                            \
+        DRPROF_XLAT_PC_POP();                                                 \
+        DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
@@ -3005,12 +3163,18 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         bhdr = (hashhdr_type*)rom_translation_ptr;                            \
         bhdr->pc_value = key;                                                 \
         bhdr->next_entry = 0;                                                 \
+        JIT_CODE_META(bhdr, bhdr + 1);                                        \
         *blk_offset_addr = (u32)(rom_translation_ptr - rom_translation_cache);\
+        JIT_CODE_META(blk_offset_addr, blk_offset_addr + 1);                  \
         rom_translation_ptr += sizeof(hashhdr_type);                          \
         blkptr = rom_translation_ptr + block_prologue_size;                   \
         cph_t = core_phase_enter(CORE_PHASE_FINE);                            \
         XLAT_PROBE_ENTER();                                                   \
+        DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
+        DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
         result = translate_block_##type(pc, false);                           \
+        DRPROF_XLAT_PC_POP();                                                 \
+        DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
         core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);                   \
                                                                               \
@@ -3438,8 +3602,10 @@ static u8 *badjump_recover(u32 pc)
    * lines / un-written-back D-cache bytes for it.  PPSSPP does not model this,
    * which is why the guard was only ever proven there. */
   translate_icache_sync();
-  if (r && r != BLOCK_LOOKUP_UNMAPPABLE)
+  if (r && r != BLOCK_LOOKUP_UNMAPPABLE) {
+    JIT_CODE_CHECK_ENTRY(r);
     return r;
+  }
   return bios_swi_entrypoint;        /* last resort: known-good block */
 }
 #define BADJUMP_GUARD(ret, pc)                                            \
@@ -3450,15 +3616,56 @@ static u8 *badjump_recover(u32 pc)
 #define BADJUMP_EXHAUSTED(pc)  return NULL
 #endif
 
+#ifdef DISPATCH_CACHE
+/* DISPATCH_CACHE (prototype, docs/DYNAREC-PROFILE.md): a direct-mapped
+ * {guest pc -> host entry} table probed by mips_indirect_branch_* in asm
+ * BEFORE they save the guest registers and call into C.  Filled here, on the
+ * success path of the C lookup, so it only ever holds pointers this function
+ * itself returned; emptied by every event that can retire or move a
+ * translation (all three flush entry points below).  Keys are the exact bits
+ * the lookup uses (GBA_PC-masked, aligned, shifted), so a hit returns
+ * precisely what the C path would have returned for that pc.  The cycle
+ * check (DISPATCH_CYCLE_CHECK) still runs first, unchanged: guest timing is
+ * identical by construction, which dr_oracle.py verifies. */
+u32 dispatch_cache_arm[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
+u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
+#ifdef GBA_PC_MASK
+#define DC_KEY_ARM(pc)   ((((pc) & 0x0FFFFFFFu) >> 2))
+#define DC_KEY_THUMB(pc) ((((pc) & 0x0FFFFFFFu) >> 1))
+#else
+#define DC_KEY_ARM(pc)   ((pc) >> 2)
+#define DC_KEY_THUMB(pc) ((pc) >> 1)
+#endif
+#define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
+void dispatch_cache_clear(void)
+{
+  memset(dispatch_cache_arm, 0xFF, sizeof(dispatch_cache_arm));
+  memset(dispatch_cache_thumb, 0xFF, sizeof(dispatch_cache_thumb));
+}
+#define DC_PUT(tbl, key, ptr) do {                                            \
+  u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
+  (tbl)[i_] = k_; (tbl)[i_ + 1] = (u32)(uintptr_t)(ptr);                      \
+} while (0)
+#else
+#define DC_PUT(tbl, key, ptr) do { } while (0)
+#endif
+
 u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
+  DRPH_SCOPE(DRPH_DISP);
   STALE_SCAN(pc);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_arm(pc);
     BADJUMP_GUARD(ret, pc);
     if (ret) {
+#ifdef JIT_CODE_DISCIPLINE
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
+      JIT_CODE_CHECK_ENTRY(ret);
+#else
+      translate_icache_sync_ranged(); BADJUMP_NOTE_PC(pc);
+#endif
+      DC_PUT(dispatch_cache_arm, DC_KEY_ARM(pc), ret);
       return ret;
     }
   }
@@ -3475,12 +3682,15 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
+  DRPH_SCOPE(DRPH_DISP);
   STALE_SCAN(pc | 1);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_thumb(pc);
     BADJUMP_GUARD(ret, pc);
     if (ret) {
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
+      JIT_CODE_CHECK_ENTRY(ret);
+      DC_PUT(dispatch_cache_thumb, DC_KEY_THUMB(pc), ret);
       return ret;
     }
   }
@@ -4047,6 +4257,7 @@ if (ram_region) {                                                             \
 
 bool translate_block_arm(u32 pc, bool ram_region)
 {
+  DRPH_SCOPE(DRPH_XLAT);
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -4091,6 +4302,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
+#ifdef JIT_CODE_DISCIPLINE
+  /* Everything this block emits lies in [jit_emit_start, the committed
+   * translation_ptr); it is recorded as one span at commit. */
+  u8 *jit_emit_start = translation_ptr;
+#endif
+  DRPROF_NOTE(translation_ptr, DRC_PROLOGUE);
   generate_block_prologue();
 
   /* This is a function because it's used a lot more than it might seem (all
@@ -4138,10 +4355,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
 
     if (pc == cheat_master_hook)
     {
+      DRPROF_NOTE(translation_ptr, DRC_CHEAT);
       arm_process_cheats();
     }
 
     update_pc_limits();
+    DRPROF_NOTE(translation_ptr, drprof_class_arm(
+      readaddress32(pc_address_block, (pc & 0x7FFF)), 0xF));
     translate_arm_instruction();
     block_data_position++;
 
@@ -4165,6 +4385,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     if (pc != block_end_pc &&
         block_data[block_data_position].update_cycles)
     {
+      DRPROF_NOTE(translation_ptr, DRC_CYCLE_UPD);
       generate_cycle_update();
     }
   }
@@ -4186,6 +4407,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   {
     /* Braced: generate_translation_gate is several statements, so the bare
      * `else` above used to guard only its first one. */
+    DRPROF_NOTE(translation_ptr, DRC_TAIL);
     SMC_GATE_CHARGE_TAIL();
     generate_translation_gate(arm);
   }
@@ -4286,14 +4508,16 @@ bool translate_block_arm(u32 pc, bool ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
+#ifdef JIT_CODE_DISCIPLINE
+  JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+#endif
 
 #ifdef SMC_PARTIAL_DIRECT_GATE
   if (smc_gate_branch_source) {
     translation_target = block_lookup_translate_arm(smc_gate_branch_target);
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
-    generate_branch_patch_unconditional(smc_gate_branch_source,
-                                         translation_target);
+    JIT_PATCH_BRANCH(smc_gate_branch_source, translation_target);
   }
 #endif
 
@@ -4312,14 +4536,15 @@ bool translate_block_arm(u32 pc, bool ram_region)
      * resets the guest. */
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
-    generate_branch_patch_unconditional(
-      external_block_exits[i].branch_source, translation_target);
+    JIT_PATCH_BRANCH(external_block_exits[i].branch_source,
+                     translation_target);
   }
   return true;
 }
 
 bool translate_block_thumb(u32 pc, bool ram_region)
 {
+  DRPH_SCOPE(DRPH_XLAT);
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -4362,6 +4587,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
 
+#ifdef JIT_CODE_DISCIPLINE
+  /* Everything this block emits lies in [jit_emit_start, the committed
+   * translation_ptr); it is recorded as one span at commit. */
+  u8 *jit_emit_start = translation_ptr;
+#endif
+  DRPROF_NOTE(translation_ptr, DRC_PROLOGUE);
   generate_block_prologue();
 
   /* This is a function because it's used a lot more than it might seem (all
@@ -4406,10 +4637,19 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 
     if (pc == cheat_master_hook)
     {
+      DRPROF_NOTE(translation_ptr, DRC_CHEAT);
       thumb_process_cheats();
     }
 
     update_pc_limits();
+    DRPROF_NOTE(translation_ptr, drprof_class_thumb(
+      readaddress16(pc_address_block, (pc & 0x7FFF)),
+      block_data[block_data_position].flag_data));
+#ifdef DRPROF_NEGCTL
+    /* The oracle's NEGATIVE control (twin only): one extra cycle per Thumb
+     * instruction is a real timing change and dr_oracle.py must flag it. */
+    cycle_count++;
+#endif
     translate_thumb_instruction();
     block_data_position++;
 
@@ -4434,6 +4674,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     if (pc != block_end_pc &&
         block_data[block_data_position].update_cycles)
     {
+      DRPROF_NOTE(translation_ptr, DRC_CYCLE_UPD);
       generate_cycle_update();
     }
   }
@@ -4448,6 +4689,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   } else
 #endif
   {
+    DRPROF_NOTE(translation_ptr, DRC_TAIL);
     SMC_GATE_CHARGE_TAIL();   /* braced for the same reason as the ARM side */
     generate_translation_gate(thumb);
   }
@@ -4544,14 +4786,16 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
+#ifdef JIT_CODE_DISCIPLINE
+  JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+#endif
 
 #ifdef SMC_PARTIAL_DIRECT_GATE
   if (smc_gate_branch_source) {
     translation_target = block_lookup_translate_thumb(smc_gate_branch_target);
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
-    generate_branch_patch_unconditional(smc_gate_branch_source,
-                                         translation_target);
+    JIT_PATCH_BRANCH(smc_gate_branch_source, translation_target);
   }
 #endif
 
@@ -4570,8 +4814,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
      * resets the guest. */
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
-    generate_branch_patch_unconditional(
-      external_block_exits[i].branch_source, translation_target);
+    JIT_PATCH_BRANCH(external_block_exits[i].branch_source,
+                     translation_target);
   }
   return true;
 }
@@ -4587,19 +4831,49 @@ void init_bios_hooks(void)
    * the same address on every load); with a heap-allocated cache the bytes
    * under them were ordinary data a moment ago, so make it explicit.  Cost:
    * one writeback + invalidate of a few KiB per ROM load / emitter rebuild. */
+#ifdef JIT_CODE_DISCIPLINE
+  /* An emitter rebuild is an ownership change: the STUB zone was just
+   * rewritten (and with a heap-allocated cache it may have held data).  The
+   * stubs are recorded and published, with a whole I-cache invalidate, by
+   * the lookup of the BIOS entry below -- before any of them can run. */
+  jit_code_owner_changed(JOWN_REBUILD);
+  JIT_CODE_WROTE(rom_translation_cache,
+                 &rom_translation_cache[rom_cache_watermark]);
+#else
   platform_cache_sync(rom_translation_cache,
                       &rom_translation_cache[rom_cache_watermark]);
+#endif
 
   // Pre-generate this entry point so that we can safely invoke fast
   // SWI calls from ROM and RAM regardless of cache flushes.
   rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   last_rom_translation_ptr = rom_translation_ptr;
+#ifdef DRPROF_TWIN
+  drprof_stub_end = rom_translation_ptr;   /* emitter stubs end here */
+#endif
   bios_swi_entrypoint = block_lookup_address_arm(0x8);
   rom_cache_watermark = (u32)(rom_translation_ptr - rom_translation_cache);
+#ifdef JIT_CODE_DISCIPLINE
+  /* The STUB zone now ends here and is immutable until the next rebuild. */
+  jit_code_publish();
+  jit_stub_zone_sealed = 1;
+#endif
 }
 
 void flush_translation_cache_ram(void)
 {
+  DRPH_SCOPE(DRPH_FLUSH);
+  DRPROF_ZONE_ENTER(DRZ_FLUSH);
+#ifdef JIT_CODE_DISCIPLINE
+  /* The RAM zone's addresses are about to hold a new generation of code. */
+  jit_code_owner_changed(JOWN_RAM_FLUSH);
+#endif
+#ifdef DRPROF_TWIN
+  drprof_forget_ram();
+#endif
+#ifdef DISPATCH_CACHE
+  dispatch_cache_clear();
+#endif
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
   flush_ram_count++;
   flush_ram_total++;
@@ -4614,6 +4888,9 @@ void flush_translation_cache_ram(void)
 #ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;
   smc_partial_wrap_live = 0;
+#endif
+#ifdef SMC_RETIRE_WINDOW
+  smc_max_extent[0] = smc_max_extent[1] = 0;
 #endif
 
   last_ram_translation_ptr = ram_translation_cache;
@@ -4655,6 +4932,12 @@ void flush_translation_cache_ram(void)
   ewram_code_min = ~0U;
   ewram_code_max =  0U;
   ram_block_tag = INITIAL_TOP_TAG;
+#ifdef SMC_RETIRE_WINDOW
+  /* Every RAM block is gone; from here on each one is noted iff partial
+   * retirement is active. */
+  smc_window_armed = smc_partial_active ? 1 : 0;
+#endif
+  DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
 /* Self-modifying-code entry points: identical behaviour to
@@ -4686,6 +4969,15 @@ void flush_translation_cache_ram(void)
  * it really covers.  Tags are already canonical (they index by offset), so
  * rebasing the end onto base + offset(start) + length makes the extent exact
  * for every non-wrapping block; wrapping ones set smc_partial_wrap_live. */
+#ifdef SMC_RETIRE_WINDOW
+/* SMC_RETIRE_WINDOW (prototype, docs/DYNAREC-PROFILE.md): the longest source
+ * extent recorded for a live RAM block since the last full RAM flush, per
+ * region ([0] IWRAM, [1] EWRAM).  No block can start further than this below
+ * a write and still cover it, so flush_translation_cache_ram_range scans
+ * from lo - max_extent instead of lo - MAX_BLOCK_SIZE*4 (4 KiB): the twin
+ * measured that tag walk at ~41k instructions per SMC event on Heart & Soul. */
+#endif
+
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
@@ -4707,6 +4999,10 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
   }
   off = start_pc & (size - 1);
   len = end_pc - start_pc;          /* > 0 and <= MAX_BLOCK_SIZE * 4 */
+#ifdef SMC_RETIRE_WINDOW
+  if (len > smc_max_extent[base == 0x02000000])
+    smc_max_extent[base == 0x02000000] = len;
+#endif
   if (off + len > size) {
     smc_partial_wrap_live = 1;
     canon_end = base + size;
@@ -4730,6 +5026,12 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 {
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, first, last, i, target_slot, domain_end;
+
+#ifdef DISPATCH_CACHE
+  /* A retired block's stable thunk jumps straight back into
+   * mips_indirect_branch_*: a surviving {pc -> thunk} entry would loop. */
+  dispatch_cache_clear();
+#endif
 
   if (smc_partial_wrap_live ||
       high <= low || (low >> 24) != ((high - 1) >> 24)) {
@@ -4782,8 +5084,45 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 
   /* ARM is the wider ISA, so this is the hard maximum source span for
    * either mode. Exact extents filter unrelated starts inside the window. */
+#ifdef SMC_RETIRE_WINDOW
+  {
+    u32 span = smc_max_extent[base == 0x02000000] + 4;
+    u32 full = (lo_off > MAX_BLOCK_SIZE * 4)
+             ? (lo_off - MAX_BLOCK_SIZE * 4) >> 1 : 0;
+    if (!smc_window_armed || span > MAX_BLOCK_SIZE * 4)
+      span = MAX_BLOCK_SIZE * 4;
+    first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+#ifdef SMC_RETIRE_WINDOW_CHECK
+    /* The assumption, checked: nothing live between the full window's start
+     * and the short one's may overlap the write.  A block there without an
+     * extent, or with one reaching `low`, would be missed. */
+    for (i = full; i < first; i++) {
+      if (VALID_TAG(tagp[i])) {
+        ramtag_type *te = get_ram_tag(tagp[i]);
+        if ((SMC_RAM_LIVE_OFFSET(te, arm) &&
+             (!te->blk_end_arm || te->blk_end_arm > low)) ||
+            (SMC_RAM_LIVE_OFFSET(te, thumb) &&
+             (!te->blk_end_thumb || te->blk_end_thumb > low))) {
+          smc_window_violations++;
+#ifdef DRPROF_TWIN
+          fprintf(stderr, "SMC_RETIRE_WINDOW VIOLATION: live block at %08x "
+                  "overlaps write %08x but lies outside the %u-byte window\n",
+                  base + (i << 1), low, span);
+          abort();
+#endif
+          first = full;        /* fall back to the proven walk */
+          break;
+        }
+      }
+    }
+#else
+    (void)full;
+#endif
+  }
+#else
   first = (lo_off > MAX_BLOCK_SIZE * 4)
         ? (lo_off - MAX_BLOCK_SIZE * 4) >> 1 : 0;
+#endif
   last = (hi_off + 1) >> 1;
   if (last > (bytes >> 1))
     last = bytes >> 1;
@@ -4831,7 +5170,11 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
         mips_emit_nop();
         generate_branch_patch_unconditional(entry, entry - 16);
         address32(entry, 4) = 0;
+#ifdef JIT_CODE_DISCIPLINE
+        JIT_CODE_WROTE(entry - 16, entry + 8);
+#else
         platform_cache_sync(entry - 16, entry + 8);
+#endif
 #endif
         te->offset_arm = 0;
 #endif
@@ -4851,7 +5194,11 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
         mips_emit_nop();
         generate_branch_patch_unconditional(entry, entry - 16);
         address32(entry, 4) = 0;
+#ifdef JIT_CODE_DISCIPLINE
+        JIT_CODE_WROTE(entry - 16, entry + 8);
+#else
         platform_cache_sync(entry - 16, entry + 8);
+#endif
 #endif
         te->offset_thumb = 0;
 #endif
@@ -4860,6 +5207,12 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
     }
   }
 
+#ifdef JIT_CODE_DISCIPLINE
+  /* Every retirement above patched existing code: publish it now, once for
+   * the whole batch, before anything can run (the store stub's next stop
+   * is the lookup, but the rule is not allowed to depend on that). */
+  jit_code_publish();
+#endif
 
   /* Suppress the other stores in this patch iteration, as a full flush does,
    * but keep the trapping STM's FINAL word tagged. Only that highest-address
@@ -5138,7 +5491,11 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
                 mips_emit_j(((u32)(k ? &mips_indirect_branch_thumb
                                      : &mips_indirect_branch_arm)) >> 2);
                 mips_emit_nop();
+#ifdef JIT_CODE_DISCIPLINE
+                JIT_CODE_WROTE(entry, translation_ptr);
+#else
                 platform_cache_sync(entry, translation_ptr);
+#endif
               }
             }
           }
@@ -5167,6 +5524,9 @@ static void flush_translation_cache_ram_block(u32 gba_addr)
      * 8 slots, and Unbound's storm is 4 addresses, so they fit. */
     /* (gate insertion now lives in flush_translation_cache_ram_smc, behind
      * SMC_GATES, so gates and partial invalidation can be A/B'd separately) */
+#ifdef JIT_CODE_DISCIPLINE
+    jit_code_publish();   /* the trampolines patched existing code */
+#endif
     return;
   }
 #if 0  /* v1, kept for the record — see the comment above for why it is wrong */
@@ -5706,6 +6066,9 @@ static void smc_add_gate(u32 gba_addr)
   }
 }
 #endif  /* SMC_GATES_SIMPLE */
+#else
+/* No gate machinery (every non-PSP build): savestate.c still calls this. */
+void smc_gates_refresh_values(void) {}
 #endif
 
 #ifdef SMC_PARTIAL_SAFE
@@ -6148,6 +6511,7 @@ static void smc_histo_note(u32 addr, u32 storepc)
 
 void flush_translation_cache_ram_smc(void)
 {
+  DRPH_SCOPE(DRPH_FLUSH);
 #ifdef SMC_PARTIAL_SAFE
   u32 partial_low = 0, partial_high = 0;
   int range_safe = smc_writer_safe_range(&partial_low, &partial_high);
@@ -6160,6 +6524,7 @@ void flush_translation_cache_ram_smc(void)
   int activating = range_safe && !smc_partial_active;
 #endif
 #endif
+  DRPROF_ZONE_ENTER(DRZ_FLUSH);
   flush_ram_smc++;
   SMC_HISTO_NOTE(smc_last_write_addr, reg[REG_PC]);
 #ifdef UPDATE_TRACE_LO
@@ -6215,6 +6580,7 @@ void flush_translation_cache_ram_smc(void)
 #else
   flush_translation_cache_ram();
 #endif
+  DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
 void flush_translation_cache_ram_dma(void)
@@ -6225,23 +6591,46 @@ void flush_translation_cache_ram_dma(void)
 
 void flush_translation_cache_rom(void)
 {
+  DRPH_SCOPE(DRPH_FLUSH);
   /* We flush the generated code except for everything below the watermark. */
+  DRPROF_ZONE_ENTER(DRZ_FLUSH);
   flush_rom_total++;
+#ifdef JIT_CODE_DISCIPLINE
+  /* The ROM zone's addresses are about to hold a new generation of code
+   * (state load, ROM load, cheats, a full cache, SMC partial activation). */
+  jit_code_owner_changed(JOWN_ROM_FLUSH);
+#endif
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#ifdef DISPATCH_CACHE
+  dispatch_cache_clear();
+#endif
+#ifdef DRPROF_TWIN
+  drprof_forget_rom(rom_translation_ptr);
+#endif
+  DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
 void init_dynarec_caches(void)
 {
   /* Initialize caches so that we can start initalizing the emitter. */
+#ifdef JIT_CODE_DISCIPLINE
+  jit_code_owner_changed(JOWN_INIT);
+#endif
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 
   ram_translation_ptr = last_ram_translation_ptr = &ram_translation_cache[0];
 #ifdef SMC_PARTIAL_SAFE
   smc_partial_active = 0;
+#endif
+#ifdef SMC_RETIRE_WINDOW
+  smc_window_armed = 0;
+#endif
+#ifdef DISPATCH_CACHE
+  dispatch_cache_clear();   /* bss zero would be key 0 -> entry NULL */
 #endif
   memset(iwram, 0, 0x8000);
   memset(&ewram[0x40000], 0, 0x40000);
@@ -6298,8 +6687,17 @@ const char *jit_cache_reason = "undecided";
 #define JIT_LARGE_BYTES     ((u32)(ROM_TRANSLATION_CACHE_SIZE_LARGE + \
                                    RAM_TRANSLATION_CACHE_SIZE_LARGE))
 /* Cache-line alignment.  The emitter itself only needs 4 (the static arrays
- * are .align 2); 64 keeps every sync range line-exact. */
+ * are .align 2); 64 keeps every sync range line-exact.
+ * LAYOUT_PIN (gpsp_config.h): align to the I-cache WAY instead and start the
+ * cache JIT_PIN_OFFSET into it, so the emitted stubs land in the same sets on
+ * every build, whatever the heap looked like before this call. */
+#if defined(LAYOUT_PIN)
+#define JIT_CACHE_ALIGN     ((u32)JIT_PIN_WAY)
+#define JIT_PIN_SKIP        ((u32)JIT_PIN_OFFSET)
+#else
 #define JIT_CACHE_ALIGN     64u
+#define JIT_PIN_SKIP        0u
+#endif
 
 void dynarec_select_translation_caches(void)
 {
@@ -6329,7 +6727,8 @@ void dynarec_select_translation_caches(void)
 
   /* The decision.  Freed at once: newlib hands the top of the heap straight
    * back, so the block below lands where this probe was. */
-  probe = malloc(JIT_LARGE_BYTES + JIT_CACHE_ALIGN + JIT_LARGE_HEADROOM);
+  probe = malloc(JIT_LARGE_BYTES + JIT_PIN_SKIP + JIT_CACHE_ALIGN +
+                 JIT_LARGE_HEADROOM);
   if (!probe)
   {
     jit_cache_reason = "heap_short";
@@ -6337,7 +6736,7 @@ void dynarec_select_translation_caches(void)
   }
   free(probe);
 
-  blk = (u8 *)memalign(JIT_CACHE_ALIGN, JIT_LARGE_BYTES);
+  blk = (u8 *)memalign(JIT_CACHE_ALIGN, JIT_LARGE_BYTES + JIT_PIN_SKIP);
   if (!blk)
   {
     jit_cache_reason = "alloc_failed";
@@ -6353,7 +6752,7 @@ void dynarec_select_translation_caches(void)
   {
     uintptr_t text = (uintptr_t)&flush_translation_cache_rom;
     uintptr_t lo   = (uintptr_t)blk;
-    uintptr_t hi   = lo + JIT_LARGE_BYTES - 1;
+    uintptr_t hi   = lo + JIT_LARGE_BYTES + JIT_PIN_SKIP - 1;
     if ((lo >> 28) != (text >> 28) || (hi >> 28) != (text >> 28))
     {
       free(blk);
@@ -6363,14 +6762,22 @@ void dynarec_select_translation_caches(void)
   }
 #endif
 
-  rom_translation_cache      = blk;
-  ram_translation_cache      = blk + ROM_TRANSLATION_CACHE_SIZE_LARGE;
+  /* (blk itself is never freed after this point; JIT_PIN_SKIP is 0 unless
+   * LAYOUT_PIN.) */
+  rom_translation_cache      = blk + JIT_PIN_SKIP;
+  ram_translation_cache      = rom_translation_cache +
+                               ROM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   jit_cache_tier   = JIT_CACHE_LARGE;
   jit_cache_reason = "heap_ok";
+#ifdef JIT_CODE_DISCIPLINE
+  /* The zones move into the heap block (memory that was data until now) and
+   * the SMALL array below becomes cart data: both directions of a lend. */
+  jit_code_owner_changed(JOWN_TIER);
+#endif
 
   /* The static SMALL ROM array is now idle for the life of the process (the
    * tier never changes back), so lend it to the ROM page cache: 2 MiB the
@@ -6429,3 +6836,564 @@ void flush_dynarec_caches(void)
   iwram_code_max = 0x8000;
   flush_translation_cache_ram();
 }
+
+#ifdef JIT_CODE_DISCIPLINE
+/* ---- JIT_CODE_DISCIPLINE: the writer API and the publish point -----------
+ * docs/JIT-CODE-DISCIPLINE.md; the contract is at the top of jit_code.h. */
+#define JIT_LINE   64u     /* Allegrex D and I line (measured: icprobe) */
+#define JIT_SPANS  32u     /* spans between publishes; full = publish early */
+#define JIT_KERNEL_RANGE_MAX 16384u  /* never pass the kernel a range this big */
+#define JIT_KERNEL_CHUNK      8192u  /* D writeback piece size */
+
+typedef struct { u8 *lo, *hi; } jit_span_type;
+static jit_span_type jit_spans[JIT_SPANS];
+u32 jit_dirty_n;
+u32 jit_owner_pending;
+u32 jit_stub_zone_sealed;   /* set by init_bios_hooks, cleared by any
+                               ownership change */
+jit_code_stats_type jit_code_stats;
+#ifdef JIT_CODE_AB
+#ifndef JIT_CODE_MODE_DEFAULT
+#define JIT_CODE_MODE_DEFAULT JCM_DISCIPLINE   /* twin variants override */
+#endif
+u32 jit_code_mode = JIT_CODE_MODE_DEFAULT;   /* harness key jit_code_mode */
+#define JIT_AB_LEGACY() (jit_code_mode < JCM_DISCIPLINE)
+#else
+#define JIT_AB_LEGACY() 0
+#endif
+
+#if defined(JIT_CODE_AUDIT) || defined(JIT_CODE_CHECK)
+#include <stdio.h>
+#include <stdlib.h>
+u32 jit_check_violations;
+static void jit_check_fail(const char *what, const void *a, const void *b)
+{
+  if (jit_check_violations++ < 32)
+    fprintf(stderr, "JIT_CODE_CHECK VIOLATION: %s %p..%p (rom %p+%x wm %x ptr %p, "
+            "ram %p+%x ptr %p)\n", what, a, b, (void *)rom_translation_cache,
+            (unsigned)rom_translation_cache_size, (unsigned)rom_cache_watermark,
+            (void *)rom_translation_ptr, (void *)ram_translation_cache,
+            (unsigned)ram_translation_cache_size, (void *)ram_translation_ptr);
+}
+
+/* ZONES, asserted.  A recorded write must lie in the ROM or RAM allocation;
+ * below the watermark only while the stubs are being rebuilt; in the RAM
+ * allocation, never in the tag table that grows down from its top. */
+static void jit_zone_check(u8 *lo, u8 *hi)
+{
+  u8 *rom_end = rom_translation_cache + rom_translation_cache_size;
+  u8 *ram_end = ram_translation_cache + ram_translation_cache_size;
+  u8 *tags = ram_end - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type);
+  if (((uintptr_t)rom_translation_cache | (uintptr_t)ram_translation_cache |
+       rom_translation_cache_size | ram_translation_cache_size) & (JIT_LINE - 1))
+    jit_check_fail("a zone does not own whole cache lines", rom_translation_cache,
+                   ram_translation_cache);
+  if (lo >= rom_translation_cache && hi <= rom_end) {
+    if (jit_stub_zone_sealed &&
+        lo < rom_translation_cache + rom_cache_watermark)
+      jit_check_fail("write into the sealed STUB zone", lo, hi);
+  } else if (lo >= ram_translation_cache && hi <= ram_end) {
+    if (hi > tags)
+      jit_check_fail("RAM code reaches the tag table", lo, hi);
+  } else {
+    jit_check_fail("code written outside every zone", lo, hi);
+  }
+}
+
+/* A pointer about to leave a lookup: inside a zone's committed code, and
+ * nothing recorded is still unpublished. */
+void jit_code_check_entry_(u8 *p)
+{
+  if (!((p >= rom_translation_cache && p < rom_translation_ptr) ||
+        (p >= ram_translation_cache && p < ram_translation_ptr)))
+    jit_check_fail("lookup returned code outside the zones", p, p);
+  if (jit_dirty_n || jit_owner_pending)
+    jit_check_fail("lookup returned with unpublished code", p, p);
+}
+#define JIT_ZONE_CHECK(lo, hi) jit_zone_check((lo), (hi))
+#else
+#define JIT_ZONE_CHECK(lo, hi) do { } while (0)
+#endif
+
+#ifdef JIT_CODE_AUDIT
+/* THE AUDIT (twin): proves the writer API is complete.  A shadow of each
+ * zone's committed code is kept; at every publish (and once a frame, from
+ * the host) every word that differs from the shadow must lie in a span being
+ * published, be zone metadata (a ROM hash header), or be the patch handler's
+ * jal-for-jal swap.  Anything else is a write that bypassed the API -- the
+ * exact bug class this discipline exists to make impossible. */
+static u8 *jit_shadow[2];
+static u32 *jit_hdrmap;            /* 1 bit per ROM-zone word: hash header */
+static u32 jit_shadow_ready;
+u32 jit_audit_violations, jit_audit_checks, jit_audit_phand;
+
+static void jit_audit_alloc(void)
+{
+  if (jit_shadow_ready)
+    return;
+  jit_shadow[0] = (u8 *)malloc(rom_translation_cache_size);
+  jit_shadow[1] = (u8 *)malloc(ram_translation_cache_size);
+  jit_hdrmap = (u32 *)calloc(rom_translation_cache_size / 4 / 32 + 1, 4);
+  if (!jit_shadow[0] || !jit_shadow[1] || !jit_hdrmap)
+    abort();
+  memcpy(jit_shadow[0], rom_translation_cache, rom_translation_cache_size);
+  memcpy(jit_shadow[1], ram_translation_cache, ram_translation_cache_size);
+  jit_shadow_ready = 1;
+}
+
+void jit_code_meta_(u8 *lo, u8 *hi)
+{
+  u8 *p;
+  if (lo < rom_translation_cache ||
+      hi > rom_translation_cache + rom_translation_cache_size) {
+    if (!(lo >= (u8 *)rom_branch_hash &&
+          hi <= (u8 *)(rom_branch_hash + ROM_BRANCH_HASH_SIZE)))
+      jit_check_fail("metadata outside the ROM zone", lo, hi);
+    return;
+  }
+  jit_audit_alloc();
+  for (p = lo; p < hi; p += 4) {
+    u32 w = (u32)(p - rom_translation_cache) >> 2;
+    jit_hdrmap[w >> 5] |= 1u << (w & 31);
+  }
+}
+
+static int jit_in_spans(u8 *p)
+{
+  u32 i;
+  for (i = 0; i < jit_dirty_n; i++)
+    if (p >= jit_spans[i].lo && p < jit_spans[i].hi)
+      return 1;
+  return 0;
+}
+
+static int jit_is_stub_jal(u32 op, u8 *at)
+{
+  u32 tgt;
+  if ((op >> 26) != 3)              /* jal */
+    return 0;
+  tgt = (((u32)(uintptr_t)at + 4) & 0xF0000000u) | ((op & 0x03FFFFFFu) << 2);
+  return tgt >= (u32)(uintptr_t)rom_translation_cache &&
+         tgt < (u32)(uintptr_t)rom_translation_cache + rom_cache_watermark;
+}
+
+static void jit_audit_zone(u32 z, u8 *base, u8 *end)
+{
+  u32 *m = (u32 *)base, *sh = (u32 *)jit_shadow[z];
+  u32 n = (u32)(end - base) >> 2, i, j;
+  for (i = 0; i < n; i += 256) {
+    u32 len = (n - i < 256) ? n - i : 256;
+    if (!memcmp(m + i, sh + i, len * 4))
+      continue;
+    for (j = i; j < i + len; j++) {
+      u8 *at;
+      if (m[j] == sh[j])
+        continue;
+      at = base + j * 4;
+      if (jit_in_spans(at))
+        ;
+      else if (z == 0 && (jit_hdrmap[j >> 5] & (1u << (j & 31))))
+        ;
+      else if (jit_is_stub_jal(sh[j], at) && jit_is_stub_jal(m[j], at))
+        jit_audit_phand++;
+      else if (jit_audit_violations++ < 32)
+        fprintf(stderr, "JIT_CODE_AUDIT VIOLATION: unrecorded write in the %s "
+                "zone at %p (+%x): %08x -> %08x\n", z ? "RAM" : "ROM",
+                (void *)at, (unsigned)(at - base), (unsigned)sh[j],
+                (unsigned)m[j]);
+      sh[j] = m[j];
+    }
+  }
+}
+
+static void jit_audit(void)
+{
+  jit_audit_alloc();
+  jit_audit_checks++;
+  jit_audit_zone(0, rom_translation_cache, rom_translation_ptr);
+  jit_audit_zone(1, ram_translation_cache, ram_translation_ptr);
+}
+
+/* Called by the twin host once a frame: catches a write that no later
+ * publish would ever look at. */
+void jit_code_audit_now(void)
+{
+  if (jit_shadow_ready)
+    jit_audit();
+}
+#endif /* JIT_CODE_AUDIT */
+
+/* Record [lo, hi) as written.  Rounded out to whole lines (the unit both
+ * caches operate on) and merged into an overlapping or touching span; the
+ * table is tiny because a translation writes one contiguous run per zone and
+ * patches are rare. */
+void jit_code_wrote_(u8 *lo, u8 *hi, u32 cls)
+{
+  u32 i;
+  if (hi <= lo)
+    return;
+  if (JIT_AB_LEGACY()) {
+    /* The original model: a patch synced its own range on the spot; an
+     * emission waited for translate_icache_sync's [last, ptr). */
+    if (cls == JW_PATCH)
+      platform_cache_sync(lo, hi);
+    return;
+  }
+  (void)cls;
+  JIT_ZONE_CHECK(lo, hi);
+  lo = (u8 *)((uintptr_t)lo & ~(uintptr_t)(JIT_LINE - 1));
+  hi = (u8 *)(((uintptr_t)hi + JIT_LINE - 1) & ~(uintptr_t)(JIT_LINE - 1));
+  for (i = jit_dirty_n; i-- > 0; ) {
+    jit_span_type *s = &jit_spans[i];
+    if (lo <= s->hi && hi >= s->lo) {
+      if (lo < s->lo) s->lo = lo;
+      if (hi > s->hi) s->hi = hi;
+      return;
+    }
+  }
+  if (jit_dirty_n == JIT_SPANS) {
+    /* Publishing early is always safe: it only makes written code visible
+     * sooner.  Nothing has run from these spans yet. */
+    jit_code_stats.early++;
+    jit_code_publish_();
+  }
+  jit_spans[jit_dirty_n].lo = lo;
+  jit_spans[jit_dirty_n].hi = hi;
+  jit_dirty_n++;
+}
+
+/* Code memory changed owner: whatever the I-cache holds for it may be a
+ * previous generation's code (or never code at all).  The next publish
+ * invalidates the whole I-cache -- before any code can run, since every
+ * entry into translated code passes a publish. */
+void jit_code_owner_changed(u32 why)
+{
+  if (why < JOWN_COUNT)
+    jit_code_stats.owner[why]++;
+  jit_stub_zone_sealed = 0;
+  if (JIT_AB_LEGACY())
+    return;
+#ifdef JIT_CODE_AB
+  if (jit_code_mode != JCM_NOOWNER)
+#endif
+  jit_owner_pending = 1;
+#ifdef JIT_CODE_AUDIT
+  if (why == JOWN_TIER || why == JOWN_INIT) {
+    /* The zones moved or were re-initialised: start the shadow afresh. */
+    if (jit_shadow_ready) {
+      free(jit_shadow[0]); free(jit_shadow[1]); free(jit_hdrmap);
+      jit_shadow_ready = 0;
+    }
+  } else if (why == JOWN_ROM_FLUSH && jit_shadow_ready) {
+    /* Headers above the watermark are gone with the code. */
+    u32 w = rom_cache_watermark >> 2;
+    u32 words = rom_translation_cache_size >> 2, k;
+    for (k = w; k < words && (k & 31); k++)
+      jit_hdrmap[k >> 5] &= ~(1u << (k & 31));
+    if (k < words)
+      memset(&jit_hdrmap[k >> 5], 0, (words - k) / 8);
+  }
+#endif
+}
+
+/* THE PUBLISH POINT.  All recorded lines are written back from the D-cache
+ * first, then the I-cache forgets them: line by line normally, or entirely
+ * when code memory changed owner since the last publish. */
+void jit_code_publish_(void)
+{
+  u32 i, n, k;
+
+#ifdef JIT_CODE_AUDIT
+  jit_audit();
+#endif
+
+  /* Sort by start and merge: spans that grew into each other while being
+   * recorded are synced once. */
+  n = jit_dirty_n;
+  for (i = 1; i < n; i++) {
+    jit_span_type t = jit_spans[i];
+    k = i;
+    while (k > 0 && jit_spans[k - 1].lo > t.lo) {
+      jit_spans[k] = jit_spans[k - 1];
+      k--;
+    }
+    jit_spans[k] = t;
+  }
+  for (i = 0, k = 0; i < n; i++) {
+    if (k && jit_spans[i].lo <= jit_spans[k - 1].hi) {
+      if (jit_spans[i].hi > jit_spans[k - 1].hi)
+        jit_spans[k - 1].hi = jit_spans[i].hi;
+    } else {
+      jit_spans[k++] = jit_spans[i];
+    }
+  }
+  n = k;
+
+  /* JITCOH_PSP_CACHE: the twin's coherency checker (tools/jitcoh,
+   * docs/JIT-COHERENCY.md) runs this PSP code against hooked stand-ins of
+   * the four kernel calls, so it sees exactly what a PSP would do. */
+#if defined(PSP) || defined(JITCOH_PSP_CACHE)
+  if (platform_cache_paranoid) {
+    /* harness `cache_paranoid = 1` still means: every sync is whole. */
+    sceKernelDcacheWritebackInvalidateAll();
+    sceKernelIcacheInvalidateAll();
+    jit_code_stats.whole_i++;
+  } else {
+    /* NO KERNEL RANGE OF 16 KiB OR MORE (docs/JIT-COHERENCY.md section 8,
+     * docs/JIT-CODE-DISCIPLINE.md 2.3).  The leading explanation of the
+     * resident-ROM derail is that the kernel's ranged calls take a different
+     * path at >= 16 KiB (the cache size), and only the old Thumb ROM publish
+     * ever passed one (up to 83 KiB in a state-load frame).  So the D side
+     * is written back in 8 KiB pieces, and an I span that large becomes the
+     * whole invalidate -- which is what it would cost anyway. */
+    u32 big = 0;
+    for (i = 0; i < n; i++) {
+      u8 *p = jit_spans[i].lo;
+      if ((u32)(jit_spans[i].hi - p) >= JIT_KERNEL_RANGE_MAX)
+        big = 1;
+      while (p < jit_spans[i].hi) {
+        u32 len = (u32)(jit_spans[i].hi - p);
+        if (len > JIT_KERNEL_CHUNK)
+          len = JIT_KERNEL_CHUNK;
+        sceKernelDcacheWritebackRange(p, len);
+        p += len;
+      }
+    }
+    if (jit_owner_pending || big) {
+      sceKernelIcacheInvalidateAll();
+      jit_code_stats.whole_i++;
+      if (big && !jit_owner_pending)
+        jit_code_stats.big_i++;
+    } else {
+      for (i = 0; i < n; i++)
+        sceKernelIcacheInvalidateRange(jit_spans[i].lo,
+                                       jit_spans[i].hi - jit_spans[i].lo);
+    }
+  }
+#else
+  /* The twin and generic MIPS: the toolchain's clear-cache per span (what the
+   * original path used).  qemu-user keeps translated code coherent by
+   * itself, so the twin's whole invalidate is only counted; generic MIPS
+   * hardware gets both zones cleared. */
+  for (i = 0; i < n; i++) {
+    __builtin___clear_cache((char *)jit_spans[i].lo, (char *)jit_spans[i].hi);
+    /* count what the PSP path does with a span this big (see above) */
+    if ((u32)(jit_spans[i].hi - jit_spans[i].lo) >= JIT_KERNEL_RANGE_MAX &&
+        !jit_owner_pending) {
+      jit_owner_pending = 1;
+      jit_code_stats.big_i++;
+    }
+  }
+  if (jit_owner_pending) {
+#if !defined(DRPROF_MIPSEL_LINUX)
+    __builtin___clear_cache((char *)rom_translation_cache,
+                            (char *)rom_translation_cache +
+                            rom_translation_cache_size);
+    __builtin___clear_cache((char *)ram_translation_cache,
+                            (char *)ram_translation_cache +
+                            ram_translation_cache_size);
+#endif
+    jit_code_stats.whole_i++;
+  }
+#endif
+
+  if (n) {
+    jit_code_stats.publishes++;
+    jit_code_stats.spans += n;
+    for (i = 0; i < n; i++)
+      jit_code_stats.lines += (u32)(jit_spans[i].hi - jit_spans[i].lo) / JIT_LINE;
+  }
+  jit_dirty_n = 0;
+  jit_owner_pending = 0;
+}
+#endif /* JIT_CODE_DISCIPLINE */
+
+#if defined(DRPROF_TWIN) && (defined(JIT_CODE_DISCIPLINE) || defined(JIT_SYNC_STATS))
+#include <stdio.h>
+/* The twin host prints this at exit (weak reference in dr_host.c). */
+void jit_stats_report(FILE *f)
+{
+#ifdef JIT_CODE_DISCIPLINE
+  fprintf(f, "jitc publishes=%u spans=%u lines=%u whole_i=%u big_i=%u early=%u "
+          "own_rom=%u own_ram=%u own_rebuild=%u own_init=%u own_tier=%u",
+          (unsigned)jit_code_stats.publishes, (unsigned)jit_code_stats.spans,
+          (unsigned)jit_code_stats.lines, (unsigned)jit_code_stats.whole_i,
+          (unsigned)jit_code_stats.big_i, (unsigned)jit_code_stats.early,
+          (unsigned)jit_code_stats.owner[JOWN_ROM_FLUSH],
+          (unsigned)jit_code_stats.owner[JOWN_RAM_FLUSH],
+          (unsigned)jit_code_stats.owner[JOWN_REBUILD],
+          (unsigned)jit_code_stats.owner[JOWN_INIT],
+          (unsigned)jit_code_stats.owner[JOWN_TIER]);
+#if defined(JIT_CODE_AUDIT) || defined(JIT_CODE_CHECK)
+  fprintf(f, " check_violations=%u", (unsigned)jit_check_violations);
+#endif
+#ifdef JIT_CODE_AUDIT
+  fprintf(f, " audit_checks=%u audit_violations=%u audit_phand=%u",
+          (unsigned)jit_audit_checks, (unsigned)jit_audit_violations,
+          (unsigned)jit_audit_phand);
+#endif
+  fprintf(f, "\n");
+#else
+  fprintf(f, "jitlegacy rom_pub=%u ram_pub=%u syncs=%u lines=%u\n",
+          (unsigned)jit_legacy_stats.rom_pub, (unsigned)jit_legacy_stats.ram_pub,
+          (unsigned)jit_legacy_stats.calls, (unsigned)jit_legacy_stats.lines);
+#endif
+}
+#endif
+
+#ifdef DRPROF_TWIN
+/* ---- DRPROF_TWIN: translation-time class map (docs/DYNAREC-PROFILE.md) ----
+ * One u16 per emitted MIPS word, beside the caches (never inside them), so the
+ * emitted code is byte-identical to a normal build.  The qemu plugin reads the
+ * map lazily the first time it executes a translated TB. */
+static u16 drprof_rom_map_s[ROM_TRANSLATION_CACHE_SIZE / 4];
+static u16 drprof_ram_map_s[RAM_TRANSLATION_CACHE_SIZE / 4];
+u16 *drprof_rom_map = drprof_rom_map_s;
+u16 *drprof_ram_map = drprof_ram_map_s;
+u8 *drprof_stub_end;
+volatile u32 drprof_zone_arg;
+volatile u32 drprof_xlat_pc;
+
+__attribute__((noinline, used)) void drprof_zone(void)
+{
+  __asm__ volatile("" ::: "memory");
+}
+
+void drprof_note(u8 *host, u16 cls)
+{
+  if (host >= rom_translation_cache &&
+      host < rom_translation_cache + rom_translation_cache_size)
+    drprof_rom_map[(host - rom_translation_cache) >> 2] = cls;
+  else if (host >= ram_translation_cache &&
+           host < ram_translation_cache + ram_translation_cache_size)
+    drprof_ram_map[(host - ram_translation_cache) >> 2] = cls;
+}
+
+void drprof_forget_ram(void)
+{
+  DRPROF_ZONE_ENTER(DRZ_TWIN);
+  memset(drprof_ram_map_s, 0, sizeof(drprof_ram_map_s));
+  DRPROF_ZONE_LEAVE(DRZ_TWIN);
+}
+
+void drprof_forget_rom(u8 *from)
+{
+  u32 w = (from - rom_translation_cache) >> 2;
+  DRPROF_ZONE_ENTER(DRZ_TWIN);
+  if (w < ROM_TRANSLATION_CACHE_SIZE / 4)
+    memset(&drprof_rom_map_s[w], 0,
+           (ROM_TRANSLATION_CACHE_SIZE / 4 - w) * sizeof(u16));
+  DRPROF_ZONE_LEAVE(DRZ_TWIN);
+}
+
+u16 drprof_class_arm(u32 op, u32 fs)
+{
+  u32 cond = op >> 28, rn = (op >> 16) & 15, rd = (op >> 12) & 15;
+  u32 L = (op >> 20) & 1, S = (op >> 20) & 1;
+  u16 f = 0, c = DRC_OTHER;
+  (void)fs;
+  if (cond != 0xE && cond != 0xF)
+    f |= DRC_F_COND;
+  switch ((op >> 25) & 7)
+  {
+    case 0:
+      if ((op & 0x0FFFFFF0) == 0x012FFF10) { c = DRC_BX; f |= DRC_F_PCW; break; }
+      if ((op & 0x0FC000F0) == 0x00000090 || (op & 0x0F8000F0) == 0x00800090)
+      { c = DRC_MUL; if (S) f |= DRC_F_SBIT | DRC_F_FLAGS; break; }
+      if ((op & 0x0FB00FF0) == 0x01000090) { c = DRC_SWP; break; }
+      if ((op & 0x90) == 0x90)
+      {
+        if (L) c = rn == 15 ? DRC_LOAD_LIT : rn == 13 ? DRC_LOAD_SP : DRC_LOAD;
+        else   c = rn == 13 ? DRC_STORE_SP : DRC_STORE;
+        if (L && rd == 15) f |= DRC_F_PCW;
+        break;
+      }
+      /* fall through: data processing, register operand */
+    case 1:
+      if (((op >> 23) & 3) == 2 && !S) { c = DRC_PSR; break; }
+      {
+        u32 opc = (op >> 21) & 15;
+        c = (opc >= 8 && opc <= 11) ? DRC_CMP :
+            (opc == 13 || opc == 15) ? DRC_MOV : DRC_ALU;
+        /* ARM has no flag liveness: arm_dead_flag_eliminate() forces 0xF, so
+         * every S-bit instruction generates its flags. */
+        if (S) f |= DRC_F_SBIT | DRC_F_FLAGS;
+        if (rd == 15 && c != DRC_CMP) f |= DRC_F_PCW;
+      }
+      break;
+    case 2:
+    case 3:
+      if (((op >> 25) & 7) == 3 && (op & 0x10)) { c = DRC_OTHER; break; }
+      if (L) c = rn == 15 ? DRC_LOAD_LIT : rn == 13 ? DRC_LOAD_SP : DRC_LOAD;
+      else   c = rn == 13 ? DRC_STORE_SP : DRC_STORE;
+      if (L && rd == 15) f |= DRC_F_PCW;
+      break;
+    case 4:
+      c = L ? DRC_LDM : DRC_STM;
+      if (rn == 13) f |= DRC_F_SPBASE;
+      if (L && (op & 0x8000)) f |= DRC_F_PCW;
+      break;
+    case 5:
+      c = (op >> 24) & 1 ? DRC_BL : DRC_B;
+      f |= DRC_F_PCW;
+      break;
+    case 7:
+      c = ((op >> 24) & 0xF) == 0xF ? DRC_SWI : DRC_OTHER;
+      break;
+    default:
+      c = DRC_OTHER;
+  }
+  return c | f;
+}
+
+u16 drprof_class_thumb(u32 op, u32 fs)
+{
+  u32 hi = (op >> 8) & 0xFF;
+  u16 f = DRC_F_THUMB, c = DRC_OTHER;
+  u16 fl = (fs & 0xF) ? DRC_F_FLAGS : 0;
+  if (hi <= 0x1F)      { c = DRC_ALU; f |= DRC_F_SBIT | fl; }
+  else if (hi <= 0x27) { c = DRC_MOV; f |= DRC_F_SBIT | fl; }
+  else if (hi <= 0x2F) { c = DRC_CMP; f |= DRC_F_SBIT | fl; }
+  else if (hi <= 0x3F) { c = DRC_ALU; f |= DRC_F_SBIT | fl; }
+  else if (hi <= 0x43)
+  {
+    u32 sub = (op >> 6) & 0xF;
+    c = (sub == 8 || sub == 10 || sub == 11) ? DRC_CMP :
+        sub == 13 ? DRC_MUL : sub == 15 ? DRC_MOV : DRC_ALU;
+    f |= DRC_F_SBIT | fl;
+  }
+  else if (hi <= 0x47)
+  {
+    u32 o2 = (op >> 8) & 3, rd = (op & 7) | ((op >> 4) & 8);
+    if (o2 == 3)      { c = DRC_BX; f |= DRC_F_PCW; }
+    else if (o2 == 1) { c = DRC_CMP; f |= DRC_F_SBIT | fl; }
+    else
+    {
+      c = o2 == 2 ? DRC_MOV : DRC_ALU;
+      if (rd == 15) f |= DRC_F_PCW;
+    }
+  }
+  else if (hi <= 0x4F) c = DRC_LOAD_LIT;
+  else if (hi <= 0x5F) c = ((op >> 9) & 7) >= 3 ? DRC_LOAD : DRC_STORE;
+  else if (hi <= 0x8F) c = (op & 0x0800) ? DRC_LOAD : DRC_STORE;
+  else if (hi <= 0x9F) c = (op & 0x0800) ? DRC_LOAD_SP : DRC_STORE_SP;
+  else if (hi <= 0xB0) c = DRC_ALU;
+  else if (hi == 0xB4 || hi == 0xB5) { c = DRC_STM; f |= DRC_F_SPBASE; }
+  else if (hi == 0xBC || hi == 0xBD)
+  {
+    c = DRC_LDM; f |= DRC_F_SPBASE;
+    if (hi == 0xBD) f |= DRC_F_PCW;
+  }
+  else if (hi <= 0xBF) c = DRC_OTHER;
+  else if (hi <= 0xC7) c = DRC_STM;
+  else if (hi <= 0xCF) c = DRC_LDM;
+  else if (hi <= 0xDD) { c = DRC_B; f |= DRC_F_COND | DRC_F_PCW; }
+  else if (hi == 0xDF) c = DRC_SWI;
+  else if (hi <= 0xDE) c = DRC_OTHER;
+  else if (hi <= 0xE7) { c = DRC_B; f |= DRC_F_PCW; }
+  else if (hi <= 0xEF) c = DRC_OTHER;
+  else if (hi <= 0xF7) c = DRC_BL;
+  else                 { c = DRC_BL; f |= DRC_F_PCW; }
+  return c | f;
+}
+#endif /* DRPROF_TWIN */

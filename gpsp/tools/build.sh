@@ -61,9 +61,14 @@ DOCKER_IMAGE="pspdev/pspdev"
 # validated with.  Changing these changes emulation, so they are not per
 # profile -- a diagnostic build must be the same emulator as the release or it
 # answers a different question.
+# JIT_CODE_DISCIPLINE (2026-10-02, 3.1.0 beta): survived every 40-reload soak on
+# the Go and the 3000, corpus 26/26 identical; it never hands the kernel an
+# I-cache range >= 16 KiB (proven a silent no-op on hardware).
 CORE_COMMON="SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 SMC_GATE_BITMAP=1
 SMC_PARTIAL_SAFE=1 SMC_PARTIAL_STABLE_THUNK=1 SMC_PARTIAL_DIRECT_LINKS=1
-GBA_PC_MASK=1 BADJUMP_SAFE=1 SMC_GATE_CHARGE=1 DISPATCH_CYCLE_CHECK=1 DMA_SMC_FLUSH=1"
+GBA_PC_MASK=1 BADJUMP_SAFE=1 SMC_GATE_CHARGE=1 DISPATCH_CYCLE_CHECK=1 DMA_SMC_FLUSH=1
+DISPATCH_CACHE=1 SMC_RETIRE_WINDOW=1 SERIAL_IDLE_FAST=1
+JIT_CODE_DISCIPLINE=1"
 
 profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
   PSP_MAKE_FLAGS=""
@@ -170,6 +175,27 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$PROFILE" ] || PROFILE=release
 profile_flags "$PROFILE"
+# GPSP_EBOOT_TITLE: the XMB title for a side-by-side test install (its own
+# PSP/GAME folder next to the player's).  Only the title changes; the profile's
+# flags do not, and the manifest records the title used.  relabel_pbp.py
+# cannot do this for the release profile: "GBAdhoc" left no room in the SFO.
+[ -n "${GPSP_EBOOT_TITLE:-}" ] && TITLE="$GPSP_EBOOT_TITLE"
+
+# One-off VARIANTS of a non-release profile (tools/drprof/drrig.py builds):
+# CORE_EXTRA is appended to the ROOT make's flags (DISPATCH_CACHE=1,
+# DRPROF_HW=1, ...), FE_EXTRA to the frontend defines.  Refused for a release:
+# the release flag list lives in profile_flags and nowhere else.
+if [ -n "${CORE_EXTRA:-}${FE_EXTRA:-}" ]; then
+  [ "$PROFILE" = release ] && { echo "FAIL: CORE_EXTRA/FE_EXTRA with the release profile"; exit 1; }
+  CORE_FLAGS="$CORE_FLAGS ${CORE_EXTRA:-}"
+  FE_DEFS="$FE_DEFS ${FE_EXTRA:-}"
+fi
+# PSP_EXTRA: extra psp/Makefile variables for a one-off variant, e.g. the
+# layout sweep's LAYOUT_PAD_TEXT=N (docs/JIT-CODE-DISCIPLINE.md).  Same rule.
+if [ -n "${PSP_EXTRA:-}" ]; then
+  [ "$PROFILE" = release ] && { echo "FAIL: PSP_EXTRA with the release profile"; exit 1; }
+  PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS $PSP_EXTRA"
+fi
 
 die()  { echo "FAIL: $*"; exit 1; }
 note() { printf '%s\n' "$*"; }
@@ -230,9 +256,20 @@ note "=== $PROFILE build in $ROOT ==="
 if [ "$CLEAN" -eq 1 ]; then
   run clean /build "set -e; make platform=psp1 clean >/dev/null 2>&1; make -C psp clean >/dev/null 2>&1; rm -f psp/*.o psp/*.d"
 fi
-run core  /build      "make platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLAGS -j4"
+# LAYOUT_PIN (docs/LAYOUT-PINNING.md): ON by default since 2026-10-02.  Both
+# gates passed: the whole-library corpus oracle (25/25 identical, dr_corpus
+# `allpin`) and the PSP-3000 bench (AW2 5.56 -> 4.39 ms/frame, H&S 8.77 ->
+# 8.43, and a 2600-byte pad no longer moves the pinned build).  Every profile
+# gets it, so rigs measure the layout that ships.  LAYOUT_PIN=0 is the kill
+# switch: the pre-pinning layout, byte for byte.  BOTH makes must get the
+# same value.  LAYOUT_PAD_BYTES=N adds the stability probe (the bench's pad arm).
+LAYOUT_PIN="${LAYOUT_PIN:-1}"
+LAYOUT_PAD_BYTES="${LAYOUT_PAD_BYTES:-0}"
+case "$LAYOUT_PIN" in 0|1) ;; *) die "LAYOUT_PIN must be 0 or 1" ;; esac
+note "layout  : LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES"
+run core  /build      "make platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLAGS LAYOUT_PIN=$LAYOUT_PIN -j4"
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || die "core archive missing"
-run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS"
+run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || die "EBOOT missing"
 
 warning_gate "$ROOT/.build-core.log"  "core"
@@ -266,7 +303,8 @@ command -v cygpath >/dev/null && ELF_NATIVE=$(cygpath -w "$ELF")
 FORBIDDEN=(); REQUIRE=()
 case "$KIND" in
   release)
-    FORBIDDEN=("badjump.txt" "smchisto.txt" "irqchk.txt")
+    FORBIDDEN=("badjump.txt" "smchisto.txt" "irqchk.txt"
+               "home_stall_frame")   # Menu = HOME stall rig: GPSP_PERF_RIG only
     # ADR-0067: proof the harness ini was pointed at an impossible path, so a
     # leftover .gpsp-harness.ini on a player's card cannot drive their console.
     REQUIRE=(".playable-no-harness")
@@ -323,6 +361,8 @@ ELF_MD5=$(md5sum "$ROOT/psp/gpsp_adhoc.elf" 2>/dev/null | cut -d' ' -f1)
 PBP_MD5=$(md5sum "$ROOT/psp/EBOOT.PBP"      | cut -d' ' -f1)
 PBP_SHA=$(sha256sum "$ROOT/psp/EBOOT.PBP"   | cut -d' ' -f1)
 PRX_SHA=$(sha256sum "$ROOT/psp/me/gbadhoc_me.prx" 2>/dev/null | cut -d' ' -f1)
+HOME_PRX_SHA=$(sha256sum "$ROOT/psp/home/gbadhoc_home.prx" 2>/dev/null | cut -d' ' -f1)
+[ -n "$HOME_PRX_SHA" ] || die "psp/home/gbadhoc_home.prx missing (Menu = HOME module)"
 IMG_ID=$(docker image inspect --format '{{index .RepoDigests 0}}' "$DOCKER_IMAGE" 2>/dev/null \
          || docker image inspect --format '{{.Id}}' "$DOCKER_IMAGE" 2>/dev/null)
 COMMIT="$BUILD_COMMIT"
@@ -340,10 +380,14 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"dockerImage\": \"$IMG_ID\","
   echo "  \"coreFlags\": \"$CORE_FLAGS\","
   echo "  \"frontendDefines\": \"$FE_DEFS\","
+  echo "  \"pspMakeFlags\": \"$PSP_MAKE_FLAGS\","
   echo "  \"cleanRebuild\": $([ "$CLEAN" -eq 1 ] && echo true || echo false),"
+  echo "  \"layoutPin\": $LAYOUT_PIN,"
+  echo "  \"layoutPadBytes\": $LAYOUT_PAD_BYTES,"
   echo "  \"eboot\": { \"md5\": \"$PBP_MD5\", \"sha256\": \"$PBP_SHA\" },"
   echo "  \"elfMd5\": \"$ELF_MD5\","
-  echo "  \"mePrxSha256\": \"$PRX_SHA\""
+  echo "  \"mePrxSha256\": \"$PRX_SHA\","
+  echo "  \"homePrxSha256\": \"$HOME_PRX_SHA\""
   echo '}'
 } > "$MANIFEST"
 
@@ -352,6 +396,7 @@ if [ -n "$OUTDIR" ]; then
   cp "$MANIFEST" "$OUTDIR/" 2>/dev/null
   cp "$ROOT/psp/EBOOT.PBP" "$OUTDIR/" 2>/dev/null
   cp "$ROOT/psp/me/gbadhoc_me.prx" "$OUTDIR/" 2>/dev/null
+  cp "$ROOT/psp/home/gbadhoc_home.prx" "$OUTDIR/" 2>/dev/null
   note "staged to $OUTDIR"
 fi
 

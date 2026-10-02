@@ -59,7 +59,8 @@ enum
     * one code for the whole ladder, and it exists because returning -1 here
     * collided with ADHOC_ERR_WLAN_OFF and produced a "WLAN switch is OFF"
     * message on a console whose switch was on. */
-   ADHOC_ERR_NP_START        = -14
+   ADHOC_ERR_NP_START        = -14,
+   ADHOC_ERR_NO_GROUP        = -15   /* join: the group was never seen */
 };
 
 typedef struct adhoc_stats
@@ -76,6 +77,8 @@ typedef struct adhoc_stats
    uint32_t ctl_errors;     /* ADHOCCTL_EVENT_ERROR seen */
    uint32_t fault_delayed;  /* debug shim: datagrams held for latency/jitter */
    uint32_t fault_dropped;  /* debug shim: datagrams dropped by loss_pct */
+   /* bulk lane (GB link cartridge/save transfers) */
+   uint32_t bulk_tx, bulk_txfail, bulk_rx, bulk_drop;
    /* TX cost accounting (ADR-0021).  sceNetAdhocPdpSend is the one call in
     * this driver whose real cost we cannot measure anywhere but on hardware:
     * PPSSPP implements it as a host UDP sendto, a PSP-1000 runs a whole
@@ -110,6 +113,18 @@ int adhoc_transport_init(const char *group, uint32_t connect_timeout_us);
  * ADHOC_ERR_WLAN_OFF.  Blocks the calling thread for the scan duration. */
 int adhoc_transport_scan(char out[][9], int max, uint32_t timeout_us);
 
+/* The JOIN's bring-up: scan (for up to scan_budget_ms) for `group` and join
+ * that BSS (sceNetAdhocctlJoin) -- never creates a group, unlike
+ * adhoc_transport_init's connect-by-name, which creates one when its own
+ * quick scan misses the host.  ADHOC_ERR_NO_GROUP when it is never seen. */
+int adhoc_transport_init_join(const char *group, uint32_t connect_timeout_us,
+                              uint32_t scan_budget_ms);
+/* Diagnostics: the cell this console is in (channel, BSSID, adhocctl peer
+ * count), and what the join's scan picked.  -1 when not connected. */
+int  adhoc_transport_ctl_info(int *channel, uint8_t bssid[6], int *peers);
+void adhoc_transport_join_info(int *tries, uint32_t *ms, int *channel,
+                               uint8_t bssid[6]);
+
 /* Reverse teardown (ADHOC-NOTES §1.5): RX thread join → PdpDelete →
  * Disconnect → DelHandler → AdhocctlTerm → AdhocTerm → NetTerm → module
  * unload.  Idempotent; also correct after a failed/partial init. */
@@ -126,6 +141,21 @@ int adhoc_transport_connected(void);
 uint32_t    adhoc_transport_last_sce_error(void);   /* 0 if none */
 const char *adhoc_transport_stage(void);            /* last init/fail stage */
 void        adhoc_transport_get_stats(adhoc_stats *out);
+
+/* ---- bulk lane ------------------------------------------------------------
+ * Large unreliable datagrams (up to ADHOC_BULK_MAX bytes) beside netdrv's
+ * 160-byte frames, on the same socket: a received datagram that begins with
+ * the 4-byte `magic` goes to its own ring (slots of ADHOC_BULK_MAX, allocated
+ * on the first open, freed at term) instead of netdrv's.  The GB link
+ * session sends cartridges and saves this way (frontend-common/fe_gblink.h:
+ * the PSP radio's cost is per datagram, and netdrv's cumulative
+ * acknowledgement stalls behind every loss).  Emulation thread only. */
+#define ADHOC_BULK_MAX 1472
+int  adhoc_transport_bulk_open(unsigned slots, const char magic[4]);
+void adhoc_transport_bulk_close(void);
+int  adhoc_transport_bulk_send(const uint8_t mac[6], const void *buf, size_t len);
+/* One datagram into buf; its length, 0 if none. */
+int  adhoc_transport_bulk_recv(void *buf, size_t cap);
 
 /* ---- debug fault-injection shim (harness only) --------------------------
  * Mirrors udp_transport_set_fault() on the desktop backend so the PPSSPP
