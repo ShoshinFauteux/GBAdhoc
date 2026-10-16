@@ -13097,13 +13097,9 @@ session_top:
    /* From here on the memory stick is somebody else's thread (ADR-0024).
     * Deliberately after boot: a BIOS/ROM failure must reach the stick even
     * if we never get to the main loop. */
-   if (g_pcfg.console != FE_CONSOLE_GBA && g_pcfg.sram_thread)
-   {
-      /* GB cartridge RAM has no race-safe GBA block scanner. Keep its
-       * battery snapshot on the emulation thread; log I/O may stay async. */
-      fe_evt("sram_thread disabled reason=gb_core_snapshot");
-      g_pcfg.sram_thread = 0;
-   }
+   /* GB/GBC: the battery snapshot stays on the emulation thread (the core
+    * owns that RAM); the writer thread only writes the copy it is handed
+    * (fe_host.c, gb_save_flush_periodic). */
    io_thread_start();
 
    if (have_script)

@@ -483,10 +483,130 @@ int fe_np_gb_send(uint16_t id, const void *p, size_t n)
 { (void)id; (void)p; (void)n; return -1; }
 void fe_np_pump(void) { }
 
+/* ---- periodic battery flush: settle first, cap, and the writer thread ----
+ * A cartridge whose battery RAM changes while A is held (Pokemon's sprite
+ * scratch, in miniature).  The periodic flush must wait for the RAM to hold
+ * still for one check, write at most every ~30 s while it never does, and
+ * hand the write to the writer thread; exit still writes at once. */
+static uint32_t scratch_pad;
+static uint32_t scratch_input(void) { return scratch_pad; }
+static int writer_wakes;
+static void writer_wake(void) { writer_wakes++; fe_host_sram_service_io(); }
+static void writer_yield(void) { }
+static const fe_host_io writer_iface = { writer_wake, writer_yield };
+
+static int read_file(const char *path, uint8_t *out, size_t n)
+{
+   FILE *f = fopen(path, "rb");
+   size_t got;
+   if (!f) return -1;
+   got = fread(out, 1, n, f);
+   fclose(f);
+   return got == n ? 0 : -1;
+}
+
+static void frames_to(unsigned target)
+{
+   while (fe_host_frame_count() < target)
+      fe_host_run_frame();
+}
+
+static int run_periodic_flush(int threaded)
+{
+   static const uint8_t prog[] = {
+      0x31, 0xFE, 0xFF,       /* ld sp,FFFE */
+      0x3E, 0x91, 0xE0, 0x40, /* LCD on */
+      0x3E, 0x0A, 0xEA, 0x00, 0x00, /* enable cartridge RAM */
+      0x3E, 0x10, 0xE0, 0x00, /* select the button row */
+      0xF0, 0x00,             /* loop: ldh a,(P1) */
+      0xE6, 0x01,             /* and 1 (A, active low) */
+      0x20, 0xFA,             /* jr nz,loop */
+      0xF0, 0x04,             /* ldh a,(DIV) */
+      0xEA, 0x00, 0xA0,       /* ld (A000),a */
+      0x18, 0xF3              /* jr loop */
+   };
+   static uint8_t rom[0x8000], a[0x2000], b[0x2000];
+   char path[] = "/tmp/gbadhocflushXXXXXX";
+   char rom_path[128], save_path[160];
+   stats_t stats = {0};
+   fe_host_config cfg;
+   int fd = mkstemp(path);
+   CHECK(fd >= 0);
+   make_rom_typed(rom, 0, 0x03, 2);      /* MBC1+RAM+BATTERY, 8 KiB */
+   memcpy(rom + 0x150, prog, sizeof(prog));
+   {
+      unsigned i, sum = 0;
+      for (i = 0; i < 0x8000; i++) if (i != 0x14E && i != 0x14F) sum += rom[i];
+      rom[0x14E] = (uint8_t)(sum >> 8);
+      rom[0x14F] = (uint8_t)sum;
+   }
+   CHECK(write(fd, rom, sizeof(rom)) == (ssize_t)sizeof(rom));
+   close(fd);
+   snprintf(rom_path, sizeof(rom_path), "%s.gb", path);
+   snprintf(save_path, sizeof(save_path), "%s.gb.sav", path);
+   CHECK(rename(path, rom_path) == 0);
+
+   memset(&cfg, 0, sizeof(cfg));
+   cfg.console = FE_CONSOLE_GB;
+   cfg.rom_path = rom_path;
+   cfg.save_path = save_path;
+   cfg.video_frame = video;
+   cfg.audio_frames = audio;
+   cfg.input_bitmask = scratch_input;
+   cfg.time_us = time_us;
+   active_stats = &stats;
+   active_console_name = "GB";
+   scratch_pad = 0;
+   writer_wakes = 0;
+   CHECK(fe_host_boot(&cfg) == 0);
+   if (threaded)
+      fe_host_set_io(&writer_iface);
+
+   /* A burst of changes, then still: no write at the first check that sees
+    * it (300), one at the next (600). */
+   scratch_pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
+   frames_to(100);
+   scratch_pad = 0;
+   frames_to(450);
+   CHECK(access(save_path, F_OK) != 0);
+   frames_to(650);
+   CHECK(read_file(save_path, a, sizeof(a)) == 0);
+   if (threaded)
+      CHECK(writer_wakes > 0);
+
+   /* Changing at every check: held back until ~30 s after it first
+    * differed (900 + 1800), not rewritten every 5 s. */
+   scratch_pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
+   frames_to(2650);
+   CHECK(read_file(save_path, b, sizeof(b)) == 0);
+   CHECK(memcmp(a, b, sizeof(a)) == 0);
+   frames_to(2750);
+   CHECK(read_file(save_path, b, sizeof(b)) == 0);
+   CHECK(memcmp(a, b, sizeof(a)) != 0);
+
+   /* Exit does not wait for anything to settle. */
+   memcpy(a, b, sizeof(a));
+   frames_to(2800);
+   scratch_pad = 0;
+   if (threaded)
+      fe_host_set_io(NULL);              /* as io_thread_stop does */
+   fe_host_shutdown();
+   CHECK(read_file(save_path, b, sizeof(b)) == 0);
+   CHECK(memcmp(a, b, sizeof(a)) != 0);
+
+   unlink(save_path);
+   unlink(rom_path);
+   printf("frontend periodic gb flush (%s): settles before writing, "
+          "~30 s cap while churning, exit writes at once\n",
+          threaded ? "writer thread" : "synchronous");
+   return 0;
+}
+
 int main(void)
 {
    return run_one(FE_CONSOLE_GB, 0) || run_one(FE_CONSOLE_GBC, 1) ||
           run_rtc_save() || run_old_save_import(RTC_TRAILER, 0) ||
           run_old_save_import(44, 0) || run_old_save_import(RTC_TRAILER, 1) ||
-          run_state_roundtrip() || run_battery_load_failure();
+          run_state_roundtrip() || run_battery_load_failure() ||
+          run_periodic_flush(0) || run_periodic_flush(1);
 }

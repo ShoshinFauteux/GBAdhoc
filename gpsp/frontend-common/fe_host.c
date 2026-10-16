@@ -104,6 +104,18 @@ static uint8_t *gb_save_buffer;
 static size_t gb_save_capacity;
 static uint32_t gb_save_crc;
 static int gb_save_crc_valid;
+/* The periodic GB flush hands its snapshot to the writer thread (see
+ * gb_save_flush_periodic): a second buffer the emulation thread never
+ * touches while gb_io_req is set. */
+static uint8_t *gb_io_buffer;
+static size_t gb_io_capacity, gb_io_size;
+static uint32_t gb_io_crc;
+static volatile int gb_io_req;       /* 1: gb_io_buffer is the writer's */
+static volatile int gb_io_failed;    /* the writer's last write failed */
+static const fe_host_io *host_io;    /* defined with the GBA writer below */
+static unsigned frame_count;         /* likewise, with the frame loop */
+static uint32_t gb_seen_crc;         /* cart RAM at the previous check */
+static unsigned gb_dirty_since;      /* frame it first differed; 0 = clean */
 static gb_link_t gb_link;
 typedef struct { uint8_t peer_id; } gb_link_send_context;
 static gb_link_send_context gb_link_send_ctx;
@@ -335,10 +347,12 @@ static uint32_t gb_save_ram_crc(size_t image_size)
    return fe_crc32(0, gb_save_buffer, ram);
 }
 
-static int gb_save_flush(int force)
+/* Read the cartridge's battery image into gb_save_buffer (emulation thread
+ * only: the core owns that RAM).  1 = it differs from what is on disk (or
+ * force), 0 = nothing to write, -1 = error. */
+static int gb_save_snapshot(int force, size_t *size_out, uint32_t *crc_out)
 {
    size_t size = gbcore_save_ram_size(gb_core);
-   uint32_t crc;
    if (battery_load_failed)
       return -1;
    if (!gb_core || !host.save_path || !size)
@@ -346,26 +360,163 @@ static int gb_save_flush(int force)
    if (gb_save_reserve(size) != 0 ||
        gbcore_save_ram_read(gb_core, gb_save_buffer, gb_save_capacity) != 0)
       return -1;
-   crc = gb_save_ram_crc(size);
-   if (!force && gb_save_crc_valid && crc == gb_save_crc)
+   *size_out = size;
+   *crc_out = gb_save_ram_crc(size);
+   if (!force && gb_save_crc_valid && *crc_out == gb_save_crc)
       return 0;
    {
       uint8_t *t = gb_rtc_trailer(gb_save_buffer, size);
       if (t)
          gb_rtc_mark(t);
    }
-   /* The snapshot is stable on the main thread. Preserve the previous file
-    * through short writes, full disks, deferred close errors and renames. */
+   return 1;
+}
+
+/* Preserve the previous file through short writes, full disks, deferred
+ * close errors and renames.  Either thread; the caller owns `data`. */
+static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
+{
    if (save_recover_bak(host.save_path) < 0 ||
-       state_file_replace(host.save_path, gb_save_buffer, size) != 0)
+       state_file_replace(host.save_path, data, size) != 0)
    {
       gb_save_file_len = -1;
+      fe_evt("gb_sram_flush size=%u FAILED", (unsigned)size);
       return -1;
    }
    gb_save_file_len = (long)size;
+   fe_evt("gb_sram_flush size=%u crc=%08x", (unsigned)size, crc);
+   return 0;
+}
+
+/* Wait for a periodic write the writer thread still holds.  Never write the
+ * file from here while it does: that would put two writers on one path. */
+static int gb_io_settle(void)
+{
+   const fe_host_io *io = host_io;
+   int spins;
+   for (spins = 0; gb_io_req && io && spins < 4000; spins++)   /* ~4 s */
+   {
+      io->wake();
+      io->yield();
+   }
+   if (gb_io_req)
+   {
+      fe_evt("gb_sram_sync_timeout");
+      return -1;
+   }
+   if (gb_io_failed)
+   {
+      /* Its CRC was recorded when it was handed over; the file never got
+       * it, so the next write must not be skipped as "unchanged". */
+      gb_io_failed = 0;
+      gb_save_crc_valid = 0;
+   }
+   return 0;
+}
+
+/* Synchronous: exit, sleep, quit, state and link paths.  Writes whatever
+ * differs from the file now, on the calling (emulation) thread. */
+static int gb_save_flush(int force)
+{
+   size_t size;
+   uint32_t crc;
+   int rc;
+   if (gb_io_settle() != 0)
+      return -1;
+   rc = gb_save_snapshot(force, &size, &crc);
+   if (rc <= 0)
+      return rc;
+   if (gb_save_write(gb_save_buffer, size, crc) != 0)
+      return -1;
    gb_save_crc = crc;
    gb_save_crc_valid = 1;
-   fe_evt("gb_sram_flush size=%u crc=%08x", (unsigned)size, crc);
+   gb_dirty_since = 0;
+   return 1;
+}
+
+/* Upper bound on how long a cartridge that never stops changing waits. */
+#define GB_SAVE_MAX_DELAY (6 * SRAM_CHECK_INTERVAL)   /* ~30 s */
+
+/* The every-SRAM_CHECK_INTERVAL flush during play.
+ *
+ * Pokemon Red/Blue/Gold/Silver/Crystal (and others) use battery RAM as
+ * scratch -- sprite decompression -- so during ordinary play it differs at
+ * almost every check, and writing on every difference meant a Memory Stick
+ * rewrite every 5 s.  Write when the RAM has changed and then held still for
+ * one interval (an in-game save lands 5-10 s later), or once it has been
+ * different for GB_SAVE_MAX_DELAY.  Exit, sleep and quit flush at once
+ * through gb_save_flush.
+ *
+ * The write itself goes to the writer thread when there is one: the
+ * replacement is a temporary file, a close, renames and removes, each a FAT
+ * update, and on the emulation thread that was a visible hitch. */
+static int gb_save_flush_periodic(void)
+{
+   size_t size;
+   uint32_t crc;
+   int rc;
+   if (gb_io_req)
+      return 0;                     /* the previous write is still going */
+   if (gb_io_failed)
+   {
+      gb_io_failed = 0;
+      gb_save_crc_valid = 0;
+   }
+   rc = gb_save_snapshot(0, &size, &crc);
+   if (rc <= 0)
+   {
+      if (rc == 0)
+         gb_dirty_since = 0;
+      return rc;
+   }
+   if (!gb_dirty_since || crc != gb_seen_crc)
+   {
+      gb_seen_crc = crc;
+      if (!gb_dirty_since)
+         gb_dirty_since = frame_count ? frame_count : 1;
+      if (frame_count - gb_dirty_since < GB_SAVE_MAX_DELAY)
+         return 0;                  /* still changing: wait for it to settle */
+   }
+   gb_dirty_since = 0;
+   if (host_io && size > gb_io_capacity)
+   {
+      uint8_t *b = (uint8_t *)realloc(gb_io_buffer, size);
+      if (b)
+      {
+         gb_io_buffer = b;
+         gb_io_capacity = size;
+      }
+   }
+   if (!host_io || size > gb_io_capacity)
+   {
+      /* No writer thread, or no memory for its copy: write here. */
+      if (gb_save_write(gb_save_buffer, size, crc) != 0)
+         return -1;
+      gb_save_crc = crc;
+      gb_save_crc_valid = 1;
+      return 1;
+   }
+   memcpy(gb_io_buffer, gb_save_buffer, size);
+   gb_io_size = size;
+   gb_io_crc = crc;
+   gb_save_crc = crc;               /* gb_io_failed undoes this */
+   gb_save_crc_valid = 1;
+   __asm__ __volatile__("" ::: "memory");
+   gb_io_req = 1;
+   host_io->wake();
+   return 1;
+}
+
+/* Writer thread: the snapshot the emulation thread handed over. */
+static int gb_save_service_io(void)
+{
+   if (!gb_io_req)
+      return 0;
+   __asm__ __volatile__("" ::: "memory");
+   if (gb_save_write(gb_io_buffer, gb_io_size, gb_io_crc) != 0)
+      gb_io_failed = 1;
+   __asm__ __volatile__("" ::: "memory");
+   gb_io_req = 0;
    return 1;
 }
 
@@ -2026,11 +2177,10 @@ static int sram_service_io_body(void)
       return 0;
    if (gb_family)
    {
-      /* This entry point belongs to the I/O worker. The GB core owns mutable
-       * cartridge RAM on the emulation thread, so even taking a snapshot
-       * here would race a frame. The main-thread service handles both the
-       * snapshot and file write for GB-family cartridges. */
-      return 0;
+      /* The GB core owns its cartridge RAM on the emulation thread, so the
+       * snapshot is taken there (gb_save_flush_periodic); this thread only
+       * writes the copy it was handed. */
+      return gb_save_service_io();
    }
 
    /* The scan is on this thread too since ADR-0026: it is 11 ms of CPU on
@@ -2282,7 +2432,7 @@ void fe_host_sram_service(void)
       if (!gb_core)
          return;           /* link session: saves commit only at its end */
       if ((frame_count % SRAM_CHECK_INTERVAL) == 0)
-         (void)gb_save_flush(0);
+         (void)gb_save_flush_periodic();
       return;
    }
    if (host_io)
@@ -6721,8 +6871,8 @@ void fe_host_run_frame(void)
     * owns the scan cadence as well as the writes, so the emulation thread
     * pays exactly nothing for the save path. */
    fe_host_sram_service();
-   if (!host_io && (frame_count % SRAM_CHECK_INTERVAL) == 0)
-      fe_host_sram_flush(0);
+   if (!host_io && !gb_family && (frame_count % SRAM_CHECK_INTERVAL) == 0)
+      fe_host_sram_flush(0);   /* GB: fe_host_sram_service owns its cadence */
    if ((frame_count % hb_every) == 0)
    {
       fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
@@ -6811,9 +6961,18 @@ void fe_host_shutdown(void)
          gbcore_shutdown(gb_core);
       gb_dual = NULL;
       gb_core = NULL;
+      (void)gb_io_settle();
       free(gb_save_buffer);
       gb_save_buffer = NULL;
       gb_save_capacity = 0;
+      if (!gb_io_req)
+      {
+         free(gb_io_buffer);
+         gb_io_buffer = NULL;
+         gb_io_capacity = 0;
+      }
+      gb_io_failed = 0;
+      gb_dirty_since = 0;
       gb_save_crc_valid = 0;
       gb_save_file_len = -1;
       gb_link_reset();
