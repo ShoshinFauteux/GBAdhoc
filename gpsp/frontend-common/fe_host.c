@@ -376,6 +376,7 @@ static int gb_save_snapshot(int force, size_t *size_out, uint32_t *crc_out)
  * close errors and renames.  Either thread; the caller owns `data`. */
 static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
 {
+   (void)crc;                           /* the log line only */
    if (save_recover_bak(host.save_path) < 0 ||
        state_file_replace(host.save_path, data, size) != 0)
    {
@@ -538,7 +539,12 @@ static int gb_save_load(void)
    if (!size || !host.save_path)
       return 0;
    battery_load_failed = 1;
-   if (gb_save_reserve(cap) != 0 || save_recover_bak(host.save_path) < 0)
+   if (gb_save_reserve(cap) != 0)
+   {
+      battery_load_failed = 2;          /* no memory for it, not a bad file */
+      goto failed;
+   }
+   if (save_recover_bak(host.save_path) < 0)
       goto failed;
    f = fopen(host.save_path, "rb");
    if (!f)
@@ -1349,6 +1355,11 @@ static int save_recover_bak(const char *path)
    }
    fe_evt("save_recovered from=.bak (an interrupted share replace)");
    return 1;
+}
+
+int fe_host_battery_refusal(void)
+{
+   return battery_load_failed;
 }
 
 static int sram_load(void)

@@ -6966,11 +6966,9 @@ void ui_loading_begin(const char *path)
    ui_loading_update("Remembering game", 0, 0);
 }
 
-#if defined(GBA_LINK) || defined(GPSP_MEM_BUDGET)
 /* A full-screen notice for a boot that cannot continue (docs/MEMORY-BUDGET.md:
- * the memory gate).  Held until a button is pressed or hold_ms passes, so an
- * unattended rig still returns to the XMB.  Compiled into the builds that
- * carry the gate only; a release is byte-identical without it. */
+ * the memory gate; a save that could not be read).  Held until a button is
+ * pressed or hold_ms passes, so an unattended rig still returns to the XMB. */
 void ui_notice(const char *title, const char *l1, const char *l2,
                const char *l3, unsigned hold_ms)
 {
@@ -6995,7 +6993,6 @@ void ui_notice(const char *title, const char *l1, const char *l2,
          break;
    } while (sceKernelGetSystemTimeLow() - t0 < hold_ms * 1000u);
 }
-#endif
 
 void ui_loading_finish(int success)
 {

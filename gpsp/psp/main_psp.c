@@ -13050,8 +13050,22 @@ session_top:
    }
    else
    {
+      int refusal = fe_host_battery_refusal();
       ui_loading_finish(0);
-      fe_evt("exit code=1 reason=load_failed");
+      /* A save that exists but could not be read stops the boot, so the
+       * game cannot overwrite it.  Say so: a bare return to the XMB left
+       * the player with a game that would not start and no reason. */
+      if (refusal == 1)
+         ui_notice("SAVE FILE COULD NOT BE READ",
+                   "The Memory Stick could not read its .sav file.",
+                   "The file has not been changed. Back it up,",
+                   "then rename it to start without the save.",
+                   30000);
+      else if (refusal == 2)
+         ui_notice("NOT ENOUGH MEMORY",
+                   "No memory is left to load this game's save.",
+                   "The save has not been changed.", NULL, 30000);
+      fe_evt("exit code=1 reason=load_failed battery=%d", refusal);
       evt_shutdown();
       audio_stop();
       vid_term();

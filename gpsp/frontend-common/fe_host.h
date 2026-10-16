@@ -428,6 +428,12 @@ void fe_host_sram_sync(void);
  * clears one, so a block the game touches mid-write is simply seen as dirty
  * again; the writer CRCs the staging copy it actually wrote, so the recorded
  * CRC always matches the bytes on disk. */
+/* Why the last boot refused to start because of the battery save: 0 it did
+ * not, 1 the file exists but could not be read (it is left untouched), 2 no
+ * memory for it.  A game is never run over a save it could not load: its
+ * first flush would replace the player's file. */
+int fe_host_battery_refusal(void);
+
 typedef struct fe_host_io
 {
    void (*wake)(void);   /* signal the writer thread; cheap, may be frequent */

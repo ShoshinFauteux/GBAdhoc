@@ -75,11 +75,10 @@ int  ui_capturing(void);
 void ui_loading_begin(const char *path);
 void ui_loading_update(const char *stage, unsigned done, unsigned total);
 void ui_loading_finish(int success);
-#if defined(GBA_LINK) || defined(GPSP_MEM_BUDGET)
-/* Full-screen notice for a boot that cannot continue (memory gate). */
+/* Full-screen notice for a boot that cannot continue (memory gate, a save
+ * that could not be read). */
 void ui_notice(const char *title, const char *l1, const char *l2,
                const char *l3, unsigned hold_ms);
-#endif
 /* Harness `loading_dump = N`: GE-dump the first N loading-screen redraws to
  * log/ge_loading_<n>.bmp (docs/DISPLAY-FEATURES.md screenshots). */
 void ui_loading_dump_shots(int n);
