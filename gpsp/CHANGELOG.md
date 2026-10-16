@@ -10,6 +10,18 @@ separately and are intended for upstream.
 
 ---
 
+## [4.1.1] — unreleased
+
+- GB/GBC battery saves are written by the writer thread, once cartridge RAM has
+  held still for one check (at most ~30 s while it keeps changing); exit, sleep and
+  quit still write at once. Fixes a hitch every ~5 s in GBC games that use battery
+  RAM as scratch (Pokémon Gold/Silver/Crystal).
+- Install folder back to `PSP/GAME/GBAdhoc`; plain "GBAdhoc" XMB title.
+- A boot refused over an unreadable save shows the reason (unreadable file, or no
+  memory for it) instead of returning silently to the XMB.
+- Rewind: an unlogged save read during replay is reported again, not a game reset.
+- netdrv: the unreliable broadcast path sends each peer's nonce (was uninitialised).
+
 ## [4.1.0] — 2026-10-14
 
 - Protect previous battery images on failed full writes and failed loads; preserve

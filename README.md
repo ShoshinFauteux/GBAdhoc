@@ -1,6 +1,6 @@
 <!-- ============================================================================
      VERSION: the release number is written ONCE, on the "Version" line in the
-     hero block just below (4.1.0).  Every other sentence says "this release",
+     hero block just below (4.1.1).  Every other sentence says "this release",
      and the download button points at /releases/latest, so renaming the
      release is a one-line edit.
      ============================================================================ -->
@@ -15,7 +15,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.1.0</b> &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 4.1.1</b> &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -91,7 +91,22 @@ game up tomorrow exactly where it was.
 
 ## What's new in this release
 
-4.1.0 focuses on reliability:
+**4.1.1** fixes problems in 4.1.0:
+
+- **Game Boy Color games no longer hitch every few seconds.** Saving now happens in the
+  background, and only once the game has finished writing. Pokémon Gold, Silver and
+  Crystal write to their save constantly as you play; that used to mean a Memory
+  Stick write every 5 seconds.
+- **Installs to `PSP/GAME/GBAdhoc` again.** 4.1.0 installed to its own `GBAdhoc410`
+  folder, so it started without your games, saves or settings. If you played on
+  4.1.0, copy anything you want to keep from `PSP/GAME/GBAdhoc410` (saves, save
+  states, `config.ini`) into `PSP/GAME/GBAdhoc`, then delete `GBAdhoc410`.
+- **A save that cannot be read now says so.** The game still won't start over a
+  save it can't read (so it can't overwrite it), but it tells you why instead of
+  dropping back to the XMB.
+- **Rewind no longer restarts the game** in a rare case where 4.1.0 did.
+
+4.1.0 focused on reliability:
 
 - Whole-image battery writes preserve the previous usable save when replacement fails;
   failed battery reads refuse boot instead of later writing blank or partial RAM.
@@ -107,7 +122,7 @@ game up tomorrow exactly where it was.
 
 See the [4.1.0 release notes and validation scope](gpsp/docs/RELEASE-4.1.0.md).
 
-[Download the ready-made cheat pack](https://github.com/ShoshinFauteux/GBAdhoc/releases/download/v4.1.0/GBAdhoc-4.1.0-cheats.zip): 48 game lists / 1,618 entries. Extract into `PSP/GAME/GBAdhoc410/cheats`, match filenames to your ROMs, then open **Cheats** and press **X** to toggle an entry.
+[Download the ready-made cheat pack](https://github.com/ShoshinFauteux/GBAdhoc/releases/download/v4.1.1/GBAdhoc-4.1.1-cheats.zip): 48 game lists / 1,618 entries. Extract into `PSP/GAME/GBAdhoc/cheats`, match filenames to your ROMs, then open **Cheats** and press **X** to toggle an entry.
 
 ### Features introduced in 4.0.0
 
