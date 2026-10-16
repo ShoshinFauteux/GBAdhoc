@@ -1058,6 +1058,38 @@ static void test_oversize_refused(void)
    netdrv_destroy(nd[1]);
 }
 
+static void test_unreliable_broadcast(void)
+{
+   sim s;
+   sim_ep ep[3];
+   app a[3];
+   netdrv *nd[3];
+   static const uint8_t msg[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+   unsigned before1, before2;
+
+   printf("[unreliable broadcast: every peer receives it under wire v2]\n");
+   sim_init(&s, 3, 0x0B0A57);
+   nd[0] = mk_node(&s, &ep[0], 0, &a[0], "host", 0xA1, NULL);
+   nd[1] = mk_node(&s, &ep[1], 1, &a[1], "cli1", 0xB2, NULL);
+   nd[2] = mk_node(&s, &ep[2], 2, &a[2], "cli2", 0xC3, NULL);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   netdrv_join(nd[2]);
+   sim_run(&s, nd, 3, 3000);
+   CHECK(netdrv_active(nd[1]) && netdrv_active(nd[2]), "session up");
+   before1 = a[1].delivered;
+   before2 = a[2].delivered;
+   CHECK(netdrv_send(nd[0], 0, msg, sizeof(msg), ND_BROADCAST_ID) == 0,
+         "unreliable broadcast refused");
+   sim_run(&s, nd, 3, 200);
+   CHECK(a[1].delivered == before1 + 1 && a[2].delivered == before2 + 1,
+         "unreliable broadcast delivered %u/%u (want 1/1)",
+         a[1].delivered - before1, a[2].delivered - before2);
+   netdrv_destroy(nd[0]);
+   netdrv_destroy(nd[1]);
+   netdrv_destroy(nd[2]);
+}
+
 static void test_reentrant_echo(void)
 {
    enum { MSGS = 50 };
@@ -1544,6 +1576,7 @@ int main(void)
    test_adaptive_rto();
    test_hol_does_not_inflate_rtt();
    test_oversize_refused();
+   test_unreliable_broadcast();
    test_reentrant_echo();
    test_keepalive_death();
    test_roster_churn();

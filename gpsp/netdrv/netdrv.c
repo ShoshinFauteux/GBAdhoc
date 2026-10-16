@@ -1787,14 +1787,14 @@ int netdrv_send(netdrv *nd, int flags, const void *buf, size_t len,
       uint16_t seq = nd->utx_seq++;
       if (dst_id == ND_BROADCAST_ID)
       {
-         nd_hdr h;
-         size_t sz;
-         h.type = type; h.src = nd->local_id; h.dst = ND_ID_BCAST;
-         h.seq = seq; h.ack = 0; h.len = (uint16_t)len;
-         sz = nd_wire_build(nd->scratch, &h, buf);
-         nd->st.tx_frames++;
-         nd->st.tx_bytes += (uint32_t)sz;
-         return nd->tp.broadcast(nd->tp.ctx, nd->scratch, sz) < 0 ? -1 : 0;
+         /* Wire v2 drops any data frame whose dst_nonce is not the
+          * receiver's own, so a single radio broadcast cannot carry one:
+          * one frame per active peer, each with that peer's nonce. */
+         for (i = 0; i < ND_MAX_CLIENTS; i++)
+            if (nd->peers[i].active)
+               nd_xmit_instance(nd, nd->peers[i].mac, type, ND_ID_BCAST, seq,
+                                0, buf, (uint16_t)len, nd->peers[i].nonce);
+         return 0;
       }
       if (dst_id >= ND_MAX_CLIENTS || !nd->peers[dst_id].active)
          return -1;
