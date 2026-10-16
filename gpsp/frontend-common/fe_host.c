@@ -6387,12 +6387,23 @@ int fe_host_rewind_tick_step(int held, uint32_t step)
    rw_held_tick = held;
    r = fe_rewind_tick_step(held, step, &s, &rw_stepped);
    rw_held_tick = 0;
-   if (r == FE_RW_ERROR || gba_rewind_rlog_miss != rw_rlog_miss_seen)
+   if (gba_rewind_rlog_miss != rw_rlog_miss_seen && r != FE_RW_ERROR)
    {
-      /* A failed restore or a missing historical save read leaves a
-       * machine that has not earned permission to write the live save.
-       * Reset from the cartridge before reporting PLAY. retro_reset keeps
-       * the current battery bytes; replay never wrote those bytes. */
+      /* A re-run frame read save bytes the first pass did not read: it is
+       * not the frame it claims to be (or the log was cut under it).  It
+       * got the live bytes.  Said and counted, as up to 4.0.0: resetting
+       * the player's game in the middle of a rewind for a frame that may
+       * differ is the worse failure (4.1.1). */
+      rw_rlog_miss_seen = gba_rewind_rlog_miss;
+      fe_evt("rewind_save_read_unlogged n=%u frame=%u",
+             (unsigned)gba_rewind_rlog_miss, (unsigned)fe_rewind_frame_mach());
+   }
+   if (r == FE_RW_ERROR)
+   {
+      /* A failed restore leaves a machine that has not earned permission
+       * to write the live save.  Reset from the cartridge before reporting
+       * PLAY. retro_reset keeps the current battery bytes; replay never
+       * wrote those bytes. */
       fe_evt("rewind_replay_fault restore=%d read_misses=%u frame=%u",
              r == FE_RW_ERROR, (unsigned)gba_rewind_rlog_miss,
              (unsigned)fe_rewind_frame_mach());

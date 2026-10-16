@@ -50,12 +50,14 @@ int main(void)
    setup(); injected_result=FE_RW_ERROR;
    assert(fe_host_rewind_tick_step(0,1)==FE_RW_PLAY);
    check_reset(0);
+   /* An unlogged save read is reported, not a reset (4.1.1). */
    setup(); injected_result=FE_RW_SHOW; gba_rewind_rlog_miss=1;
-   assert(fe_host_rewind_tick_step(0,1)==FE_RW_PLAY);
-   check_reset(1); assert(rw_rlog_miss_seen==1);
+   assert(fe_host_rewind_tick_step(0,1)==FE_RW_SHOW);
+   assert(reset_count==1 && rw_rlog_miss_seen==1 && rw_gesture);
    setup(); injected_result=FE_RW_PLAY;
    assert(fe_host_rewind_tick_step(0,1)==FE_RW_PLAY);
-   assert(reset_count==2);
-   puts("frontend replay faults: cartridge reset before PLAY; battery retained");
+   assert(reset_count==1);
+   puts("frontend replay faults: failed restore resets before PLAY, battery "
+        "retained; unlogged save read reported only");
    return 0;
 }
