@@ -231,7 +231,7 @@ during link play.
   Alpha 3 and Sonic Battle at full speed, and Kirby multiplayer a little under it.
 - <kbd>NEW</kbd> **A finished trade is written to the Memory Stick straight away,**
   instead of at the next periodic save.
-- Update both PSPs to 4.1.0 before linking or sharing saves. Protocol version 2 refuses
+- Update both PSPs to 4.1.0 or later before linking or sharing saves. Protocol version 2 refuses
   older transports safely. The new speed and Fast
   link need both sides.
 
