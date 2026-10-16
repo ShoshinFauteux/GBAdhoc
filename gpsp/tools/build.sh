@@ -86,7 +86,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
     release)
       CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=release"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_RELEASE=1"
-      TITLE="GBAdhoc 4.1.0"
+      TITLE="GBAdhoc"
       # ME_CATCH=1 ships the Media Engine module WITH the CPU-exception screen
       # (psp/me/catcher.c).  2026-09-26: this exact PRX (164633a0) ran hours of
       # heavy Heart & Soul play on all three consoles without a single freeze,
