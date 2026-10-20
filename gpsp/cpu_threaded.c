@@ -4692,6 +4692,14 @@ static void xlat_arm_flagset_build(void)
 #endif
   xlat_arm_flagset_ready = 1;
 }
+#ifdef DRPROF_TWIN
+/* Twin only: build (and self-test) before main, so the check is not counted
+ * in a measured segment.  The PSP builds the table at the first scan. */
+__attribute__((constructor)) static void xlat_arm_flagset_twin_init(void)
+{
+  xlat_arm_flagset_build();
+}
+#endif
 #endif
 
 static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st)

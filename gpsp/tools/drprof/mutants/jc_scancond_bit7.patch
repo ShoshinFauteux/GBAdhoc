@@ -1,0 +1,12 @@
+mutant: JIT_COST SCANCOND indexes the table without opcode bit 7
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -4724,7 +4724,7 @@
+ #undef SCAN_SET_CONDITION
+ #define SCAN_SET_CONDITION(type, c)                                           \
+   block_data[block_data_position].condition = (c) |                           \
+-    (((xlat_arm_flagset[(opcode >> 20) & 0xFF] >> ((opcode >> 4) & 0xF)) & 1) \
++    (((xlat_arm_flagset[(opcode >> 20) & 0xFF] >> ((opcode >> 4) & 0x7)) & 1) \
+      << 5)
+ #endif
+ #ifndef JIT_COST_NO_SCANWIN

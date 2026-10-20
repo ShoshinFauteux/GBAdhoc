@@ -1,0 +1,13 @@
+jitcoh mutant: JIT_COST PUBINL's D write-back loop skips the FIRST line of each
+span.  The checker must flag executed words never written back (HAZ_D).
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -7970,7 +7970,7 @@
+       u8 *p;
+       if ((u32)(jit_spans[i].hi - jit_spans[i].lo) >= JIT_KERNEL_RANGE_MAX)
+         big = 1;
+-      for (p = jit_spans[i].lo; p < jit_spans[i].hi; p += JIT_LINE)
++      for (p = jit_spans[i].lo + JIT_LINE; p < jit_spans[i].hi; p += JIT_LINE)
+         jit_line_dwb(p);
+       lines += (u32)(jit_spans[i].hi - jit_spans[i].lo) / JIT_LINE;
+     }

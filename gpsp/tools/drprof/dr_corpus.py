@@ -97,6 +97,9 @@ if os.environ.get("DRCORPUS_SHIP") == "1":
         "xlat":  (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
                   " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1 -DXLAT_FAST=1", "switch",
                   "fast2 + XLAT_FAST (claude/bench-xlat: cheaper translation, same output)"),
+        "jcost": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
+                  " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1 -DXLAT_FAST=1 -DJIT_COST=1", "switch",
+                  "xlat + JIT_COST (claude/jit-cost: user-mode publish, cheaper RAM ARM scan)"),
         "fast2off": (SHIP + " -DSCHED_FAST=1 -DIRQ_IO_FAST=1", "switch",
                   "both compiled in, both off (the config.ini kill switches)"),
         "rwoff": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
@@ -159,6 +162,13 @@ MUTANTS = {
                      "LIMITS records only each block's first pc"),
     "m_xf_exitpf":  (XLAT_MUT, "xf_exitpf_nobranch.patch", "xlat",
                      "EXITPF prefilter misses B (0xA) opcodes"),
+    # JIT_COST (claude/jit-cost): the scan pieces broken on purpose.  PUBINL
+    # cannot be seen here (qemu is coherent): tools/jitcoh's brk-pubinl-*
+    # mutants are its check.
+    "m_jc_win":     (XLAT_MUT + " -DJIT_COST=1", "jc_scanwin_3bytes.patch", "jcost",
+                     "SCANWIN ignores the last bitmap byte of each 64-byte window"),
+    "m_jc_cond":    (XLAT_MUT + " -DJIT_COST=1", "jc_scancond_bit7.patch", "jcost",
+                     "SCANCOND table indexed without opcode bit 7"),
 }
 
 

@@ -1,0 +1,14 @@
+jitcoh mutant: JIT_COST PUBINL's I-invalidate loop skips the FIRST line of each
+span (the line shared with the previous block's executed tail).  The checker
+must flag stale I lines (HAZ_I / ACT models).
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -7985,7 +7985,7 @@
+     } else {
+       for (i = 0; i < n; i++) {
+         u8 *p;
+-        for (p = jit_spans[i].lo; p < jit_spans[i].hi; p += JIT_LINE)
++        for (p = jit_spans[i].lo + JIT_LINE; p < jit_spans[i].hi; p += JIT_LINE)
+           jit_line_iinv(p);
+       }
+       JIT_PUB_COUNT(lineops, lines);
