@@ -70,7 +70,11 @@ Scan: about 55 -> about 44 host instructions per guest instruction (-12% scan on
   SMC_PARTIAL_SINGLE (STABLE_THUNK retirement publishes). The mutants are CAUGHT:
   `brk-pubinl-ifirst` (I-invalidate skips a span's first line) 51k incidents on doom2;
   `brk-pubinl-dfirst` (D write-back skips it) 85k.
-- Corpus oracle and PPSSPP vhash: see the report in COORD.md (`- jit-cost: RESULT`).
+- Corpus oracle (35 ROMs x 3000 frames, power-on): `jcost` 35/35 PASS. Mutants `m_jc_win` (SCANWIN
+  drops a window byte) caught 2/35, `m_jc_cond` (SCANCOND drops opcode bit 7) caught 5/35. The corpus
+  cannot see PUBINL (qemu is coherent), so the checker mutants above cover it.
+- PPSSPP vhash (harness, 1200 frames or the fixture's script): 26/26 GBA bench-ready fixtures IDENTICAL
+  to 4.1.1 (runs/validate-20261019-213754), and all 36 incl. GB identical to XLAT_FAST x7.
 - Switches off: release EBOOT byte-identical. Link harness .text/.data identical; only the
   `__TIME__` string differs, as it does between any two harness builds.
 
