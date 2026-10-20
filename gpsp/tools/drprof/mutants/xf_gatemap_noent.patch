@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c	2026-10-20 02:59:54.031230700 -0400
++++ b/cpu_threaded.c	2026-10-20 02:59:54.279798100 -0400
+@@ -4302,7 +4302,7 @@
+     *smc = smc_gate_iwram;
+     *mask = 0x7FFF;
+ #ifdef ENTRY_GATES
+-    if (entry_gates_armed)
++    if (0)
+       *ent = entry_gate_iwram;
+ #endif
+   } else if (region == 2) {

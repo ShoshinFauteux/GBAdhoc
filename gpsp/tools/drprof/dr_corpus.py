@@ -94,6 +94,9 @@ if os.environ.get("DRCORPUS_SHIP") == "1":
         "fast2": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
                   " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1", "switch",
                   "the 4.0.0 beta: SCHED_FAST + IRQ_IO_FAST both on"),
+        "xlat":  (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
+                  " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1 -DXLAT_FAST=1", "switch",
+                  "fast2 + XLAT_FAST (claude/bench-xlat: cheaper translation, same output)"),
         "fast2off": (SHIP + " -DSCHED_FAST=1 -DIRQ_IO_FAST=1", "switch",
                   "both compiled in, both off (the config.ini kill switches)"),
         "rwoff": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
@@ -122,6 +125,7 @@ REF_PATCHES = {"sndpre": "snd_phase_fraction_only.patch"}
 # the corpus has NOT been tested by it -- the corpus never reaches its code
 # path.  `dr_corpus.py mutants` must report every mutant CAUGHT.
 # name -> (VDEFS, patch file or "", the switch it attacks, what the bug is)
+XLAT_MUT = SHIP + " -DXLAT_FAST=1"
 MUTANTS = {
     "m_negctl":    ("-DDRPROF_NEGCTL", "", "timing",
                     "+1 cycle per Thumb instruction (dr_oracle's own control)"),
@@ -146,6 +150,15 @@ MUTANTS = {
                     "fast path taken with a serial transfer pending"),
     "m_si_rfu":    (SI, "si_take_rfu.patch", "si",
                     "fast path also skips the RFU adapter"),
+    # XLAT_FAST (claude/bench-xlat): each piece broken on purpose.
+    "m_xf_dclear":  (XLAT_MUT, "xf_dclear_one.patch", "xlat",
+                     "DCLEAR resets only the first filled dispatch slot"),
+    "m_xf_noent":   (XLAT_MUT, "xf_gatemap_noent.patch", "xlat",
+                     "GATEMAP ignores IWRAM entry gates"),
+    "m_xf_limits":  (XLAT_MUT, "xf_limits_first.patch", "xlat",
+                     "LIMITS records only each block's first pc"),
+    "m_xf_exitpf":  (XLAT_MUT, "xf_exitpf_nobranch.patch", "xlat",
+                     "EXITPF prefilter misses B (0xA) opcodes"),
 }
 
 
