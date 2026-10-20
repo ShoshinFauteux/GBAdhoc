@@ -8707,7 +8707,7 @@ static void stall_exit(unsigned iter)
 #ifdef GBA_LINK
    fe_gbadual_abort();
 #endif
-   sceKernelDelayThread(3000000);
+   sceKernelDelayThread(3000000); LAB_HOOK(if (g_loop_iter == iter) lab_stalled(iter, g_loop_phase);)
    if (g_loop_iter != iter || !g_stall_exit_hard)
       return;
    if (g_hb_s > 0)
@@ -14685,7 +14685,7 @@ session_top:
          }
 
          FE_LP_SET(FELP_L_SWAP);
-         UISCRIPT_DUMP();
+         UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
          if (!g_wake_hold)
             vid_swap();
          g_drew = 0;
@@ -14698,7 +14698,7 @@ session_top:
           * whenever fast-forward is engaged, so the loop-top present ran
           * as it always did and this branch is untouched shipping code. */
          osd_draw();
-         UISCRIPT_DUMP();
+         UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
          if (!g_wake_hold)
             vid_swap();
          g_drew = 0;

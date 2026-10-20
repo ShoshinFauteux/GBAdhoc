@@ -39,6 +39,7 @@
 #include <systemctrl.h>
 
 #include "lab_harness.h"
+#include "video_psp.h"        /* vid_rect: the photoresistor blink */
 #include "labab/ab_io.h"     /* autoboot agent's BUDGET.TXT contract, verbatim from GBAdhoc-Lab autoboot/src (d31d586) */
 #include "fe_util.h"
 #include "fe_evt.h"
@@ -60,6 +61,8 @@ static char L_tid[48], L_ini[192], L_out[128], L_work[160], L_bid[16], L_fixture
 static char L_state_in[160], L_sav_in[160];
 static int  L_active, L_usb_active;
 static unsigned L_attempt = 1, L_eboot_crc, L_model;
+static char L_first[8];            /* outcome of attempt 1 when this is a retry ("crash"/"hang") */
+static int  L_blink, L_window_every_s = 600, L_stall_test_at, L_stall_test_attempt = 1;
 static int  L_tlm_every = 300, L_tlm_flush_s = 60, L_window_after = 1, L_window_s = 30;
 static int  L_wall_limit_s = 900, L_attempts = 1;
 static uint64_t L_t0_us, L_last_flush_us;
@@ -69,6 +72,7 @@ static unsigned L_last_frame;
 
 typedef struct {
    unsigned boot, hop, cmd_seq, idle_s, next_window_s;
+   unsigned long long last_window_t;   /* RTC seconds of the last window (chaining policy) */
    char last_token[64], mode[8];
 } lab_bootf;
 static lab_bootf L_b;
@@ -261,6 +265,10 @@ static void boot_load(void)
    L_b.cmd_seq = kvu(buf, "cmd_seq", 0);
    L_b.idle_s = kvu(buf, "idle_s", 30);
    L_b.next_window_s = kvu(buf, "next_window_s", 30);
+   {
+      char v[24];
+      L_b.last_window_t = kv(buf, "last_window_t", v, sizeof(v)) ? strtoull(v, NULL, 10) : 0;
+   }
    kv(buf, "last_token", L_b.last_token, sizeof(L_b.last_token));
    if (!kv(buf, "mode", L_b.mode, sizeof(L_b.mode)) || !L_b.mode[0])
       strcpy(L_b.mode, "RUN");
@@ -268,10 +276,11 @@ static void boot_load(void)
 
 static void boot_save(void)
 {
-   char buf[320], p[64];
+   char buf[360], p[64];
    int n = snprintf(buf, sizeof(buf), "v=1\nboot=%u\nhop=%u\nlast_token=%s\ncmd_seq=%u\nmode=%s\n"
-                    "idle_s=%u\nnext_window_s=%u\nharness_v=%d\n", L_b.boot, L_b.hop, L_b.last_token,
-                    L_b.cmd_seq, L_b.mode, L_b.idle_s, L_b.next_window_s, LAB_HARNESS_V);
+                    "idle_s=%u\nnext_window_s=%u\nlast_window_t=%llu\nharness_v=%d\n", L_b.boot, L_b.hop,
+                    L_b.last_token, L_b.cmd_seq, L_b.mode, L_b.idle_s, L_b.next_window_s, L_b.last_window_t,
+                    LAB_HARNESS_V);
    path2(p, sizeof(p), L_root, "sys/BOOT.TXT");
    wr(p, buf, n, 0);
 }
@@ -446,6 +455,7 @@ static void lab_window(const char *kind, unsigned seconds)
       if (n >= (int)sizeof(buf))
          n = (int)sizeof(buf) - 1;
    }
+   L_b.last_window_t = ab_rtc_now();
    boot_save();
    journal("window %s %us token=%s", kind, seconds, L_b.last_token);
    path2(p, sizeof(p), L_root, "sys/WINDOW.TXT");
@@ -500,11 +510,13 @@ static void write_result(const char *tid, const char *bid, const char *outcome, 
                 "v=1\ntask=%s\nid=%s\nboot=%u\nbuild=%s\neboot_crc=%08x\nattempt=%u\noutcome=%s\nexit=%d\n"
                 "reason=%s\nframes=%u\nt_ms=%u\nevt_drop=%u\nbatt_start=%d\nbatt_end=%d\ntlm_records=%u\n"
                 "tlm_dropped=%u\nharness_v=%d\nini_crc=%08x\nlab_fixture=%s\n"
+                "first_outcome=%s\n"
                 "keys=lab_v,lab_task,lab_build,lab_fixture,lab_files,lab_state,lab_sav,lab_attempts,"
-                "lab_wall_limit_s,lab_tlm_every,lab_tlm_flush_s,lab_window_after,lab_window_s\n",
+                "lab_wall_limit_s,lab_tlm_every,lab_tlm_flush_s,lab_window_after,lab_window_s,lab_window_every_s,"
+                "lab_blink\n",
                 tid, L_labid, L_b.boot, bid, L_eboot_crc, L_attempt, outcome, code, reason ? reason : "ok",
                 frames, t_ms, fe_evt_drops(), L_batt_start, be, recs, drops, LAB_HARNESS_V, (unsigned)ini_crc,
-                L_fixture);
+                L_fixture, L_first);
    path2(p, sizeof(p), d, "RESULT.TXT");
    if (wr(p, buf, n, 0) == 0)
       L_proof = 1;
@@ -678,6 +690,12 @@ int lab_frame(unsigned frame, unsigned wall_us, unsigned work_us, unsigned loop_
    if (!L_active)
       return 0;
    L_last_frame = frame;
+   if (L_stall_test_at && frame >= (unsigned)L_stall_test_at && L_attempt == (unsigned)L_stall_test_attempt)
+   {  /* TEST ONLY (lab_stall_test_at): the main loop stops turning, as a hang would; the stall thread must catch it */
+      journal("lab_stall_test: main loop parked at frame %u (attempt %u)", frame, L_attempt);
+      for (;;)
+         sceKernelDelayThread(100000);
+   }
    T_win.n++;
    T_win.wall += wall_us;
    T_win.work += work_us;
@@ -728,9 +746,25 @@ void lab_set_eboot_crc(unsigned crc)
 }
 
 /* sec. 5.2 lab_files: name:size[:crc] for every staged input; "rom" names the ROM. */
+static uint32_t file_crc(const char *path)
+{
+   static unsigned char buf[16384];
+   uint32_t c = 0;
+   int fd, n;
+   if (!lab_ms0_ok())
+      return 0;
+   fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
+   if (fd < 0)
+      return 0;
+   while ((n = sceIoRead(fd, buf, sizeof(buf))) > 0)
+      c = crc32_buf(c, buf, n);
+   sceIoClose(fd);
+   return c;
+}
+
 static int files_ok(const char *tid, const char *rom, char *why, int why_sz)
 {
-   char list[512], *s, *save = NULL, p[192];
+   char list[512], *s, *c2, *save = NULL, p[192];
    if (!fe_ini_get(L_ini, "lab_files", list, sizeof(list)))
       return 1;
    for (s = strtok_r(list, ",", &save); s; s = strtok_r(NULL, ",", &save))
@@ -741,6 +775,7 @@ static int files_ok(const char *tid, const char *rom, char *why, int why_sz)
          continue;
       *c1 = 0;
       want = (int)strtol(c1 + 1, NULL, 10);
+      c2 = strchr(c1 + 1, ':');
       if (!strcmp(s, "rom"))
          snprintf(p, sizeof(p), "%s/roms/%s", L_root, rom);
       else
@@ -748,6 +783,11 @@ static int files_ok(const char *tid, const char *rom, char *why, int why_sz)
       if (fsize(p) != want)
       {
          snprintf(why, why_sz, "file_mismatch:%s", s);
+         return 0;
+      }
+      if (c2 && c2[1] && file_crc(p) != (uint32_t)strtoul(c2 + 1, NULL, 16))
+      {
+         snprintf(why, why_sz, "crc_mismatch:%s", s);    /* a torn copy from a window that closed early */
          return 0;
       }
    }
@@ -842,26 +882,52 @@ static void process_cmd(void)
    journal("cmd %s seq=%u next_window_s=%u", cmd, seq, L_b.next_window_s);
 }
 
+/* sec. 6.1.7 + main's decision 2026-10-20: a task that died is retried ONCE.  Attempt 1's out dir is kept as
+ * out/<tid>.a1 (collected as evidence); sys/RETRY.TXT carries the attempt number into the next boot.
+ * Returns 0 nothing to recover, 1 final result written, 2 a retry is queued. */
 static int recover_current(void)
 {
-   char buf[256], p[64], tid[48], bid[16], hp[160];
+   char buf[256], p[64], tid[48], bid[16], hp[160], ini[160], from[160], to[160], rb[96];
+   unsigned attempt, attempts;
+   int hang, n;
    path2(p, sizeof(p), L_root, "sys/CURRENT.TXT");
    if (rd(p, buf, sizeof(buf)) <= 0)
       return 0;
-   if (kv(buf, "task", tid, sizeof(tid)) && tid[0])
+   if (!kv(buf, "task", tid, sizeof(tid)) || !tid[0])
    {
-      int hang;
-      kv(buf, "build", bid, sizeof(bid));
-      snprintf(hp, sizeof(hp), "%s/out/%s/HANG.TXT", L_root, tid);
-      hang = exists(hp);
-      journal("previous boot died in %s -> %s", tid, hang ? "hang" : "crash");
-      /* telemetry flushed before the death stays in out/<tid>/TLM.BIN */
-      write_result(tid, bid, hang ? "hang" : "crash", -1, hang ? "stall" : "no_exit_path", 0, 0, 0, 0, 0);
       sceIoRemove(p);
-      return 1;
+      return 0;
    }
+   kv(buf, "build", bid, sizeof(bid));
+   attempt = kvu(buf, "attempt", 1);
+   snprintf(hp, sizeof(hp), "%s/out/%s/HANG.TXT", L_root, tid);
+   hang = exists(hp);
+   snprintf(ini, sizeof(ini), "%s/tasks/%s/TASK.INI", L_root, tid);
+   attempts = exists(ini) ? (unsigned)fe_ini_get_int(ini, "lab_attempts", 2) : 1;
+   journal("previous boot died in %s (attempt %u of %u) -> %s", tid, attempt, attempts, hang ? "hang" : "crash");
+   snprintf(from, sizeof(from), "%s/out/%s", L_root, tid);
+   snprintf(to, sizeof(to), "%s/out/%s.a%u", L_root, tid, attempt);
+   path2(rb, sizeof(rb), L_root, "sys/RETRY.TXT");
+   if (attempt < attempts)
+   {
+      rmtree(to, 0);
+      if (sceIoRename(from, to) >= 0 || !exists(from))
+      {
+         n = snprintf(buf, sizeof(buf), "v=1\ntask=%s\nattempt=%u\nfirst=%s\n", tid, attempt + 1,
+                      hang ? "hang" : "crash");
+         wr(rb, buf, n, 0);
+         sceIoRemove(p);
+         journal("retry %s as attempt %u", tid, attempt + 1);
+         return 2;
+      }
+      journal("retry of %s impossible (rename failed): final", tid);
+   }
+   L_attempt = attempt;
+   write_result(tid, bid, hang ? "hang" : "crash", -1, hang ? "stall" : "no_exit_path", 0, 0, 0, 0, 0);
+   L_attempt = 1;
+   sceIoRemove(rb);
    sceIoRemove(p);
-   return 0;
+   return 1;
 }
 
 int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_dir, size_t rom_sz,
@@ -931,7 +997,7 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
       sceKernelExitGame();
    }
    if (recover_current())
-      lab_window("recovery", 30);   /* autoboot proposal 4: the PC hears of the crash before the next task */
+      lab_window("recovery", 30);   /* a final crash/hang result or a queued retry: the PC hears of it first */   /* autoboot proposal 4: the PC hears of the crash before the next task */
    if (!strcmp(L_b.mode, "HOLD") || !pick_task())
    {
       unsigned s = L_b.idle_s < 30 ? 30 : L_b.idle_s;
@@ -979,13 +1045,13 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
    }
    L_b.hop = 0;
    boot_save();
-   L_attempts = task_ini_int("lab_attempts", 1);
+   L_attempts = task_ini_int("lab_attempts", 2);
    L_wall_limit_s = task_ini_int("lab_wall_limit_s", 900);
    L_tlm_every = task_ini_int("lab_tlm_every", 300);
    if (L_tlm_every < 30 || L_tlm_every > 6000)
       L_tlm_every = 300;
-   L_tlm_flush_s = task_ini_int("lab_tlm_flush_s", 60);
-   L_window_after = task_ini_int("lab_window_after", 1);
+   L_tlm_flush_s = task_ini_int("lab_tlm_flush_s", 0);   /* benchmarks: task end only (main 2026-10-20) */
+   L_window_after = task_ini_int("lab_window_after", 0);
    L_window_s = task_ini_int("lab_window_s", 30);
    if (L_window_s < 20 || L_window_s > 600)
       L_window_s = 30;
@@ -996,6 +1062,19 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
       if (fe_ini_get(L_ini, "lab_sav", st, sizeof(st)) && st[0] && !strchr(st, '/'))
          snprintf(L_sav_in, sizeof(L_sav_in), "%s/tasks/%s/%s", L_root, L_tid, st);
    }
+   {  /* a retry queued by recover_current() */
+      char rb[96], rbuf[160], rt[48];
+      path2(rb, sizeof(rb), L_root, "sys/RETRY.TXT");
+      if (rd(rb, rbuf, sizeof(rbuf)) > 0 && kv(rbuf, "task", rt, sizeof(rt)) && !strcmp(rt, L_tid))
+      {
+         L_attempt = kvu(rbuf, "attempt", 2);
+         kv(rbuf, "first", L_first, sizeof(L_first));
+      }
+   }
+   L_blink = task_ini_int("lab_blink", 0);
+   L_window_every_s = task_ini_int("lab_window_every_s", 600);
+   L_stall_test_at = task_ini_int("lab_stall_test_at", 0);
+   L_stall_test_attempt = task_ini_int("lab_stall_test_attempt", 1);
    /* sec. 6.1.10: start */
    snprintf(L_out, sizeof(L_out), "%s/out/%s", L_root, L_tid);
    rmtree(L_out, 0);                   /* a half-written earlier attempt */
@@ -1024,6 +1103,36 @@ void lab_task_file(char *out, size_t out_sz, const char *name)
    if (!L_active || !name || !name[0] || strchr(name, '/'))
       return;
    snprintf(out, out_sz, "%s/tasks/%s/%s", L_root, L_tid, name);
+}
+
+/* Photoresistor heartbeat (PROTOCOL.md 9): a 16x16 square in the top-left corner, white/black at 1 Hz, drawn by
+ * the main loop AFTER the vhash/screenshot capture (it sits on the UISCRIPT_DUMP line, before vid_swap), so it never
+ * reaches a hash or a dump.  When the main loop stops, the square stops changing. */
+void lab_blink_draw(void)
+{
+   if (!L_active || !L_blink)
+      return;
+   vid_rect(0, 0, 16, 16, ((sceKernelGetSystemTimeWide() / 500000ull) & 1) ? 0xFFFF : 0x0000, 255);
+}
+
+/* Called from the stall thread (main_psp.c stall_exit) when the main loop has not turned for stall_exit_s and
+ * is still stuck 3 s later.  Records HANG.TXT, saves what telemetry the ring holds and relaunches: the next boot
+ * classifies the task as `hang` (and retries it once).  Runs on the stall thread; the main loop is not running. */
+void lab_stalled(unsigned iter, int phase)
+{
+   char p[160], buf[160];
+   int n;
+   if (!L_active)
+      return;
+   n = snprintf(buf, sizeof(buf), "v=1\ntask=%s\nframe=%u\niter=%u\nphase=%d\nattempt=%u\n", L_tid, L_last_frame,
+                iter, phase, L_attempt);
+   path2(p, sizeof(p), L_out, "HANG.TXT");
+   wr(p, buf, n, 0);
+   lab_event(7, L_last_frame, "stall");
+   tlm_flush();
+   journal("stall: task %s frame %u -- relaunching", L_tid, L_last_frame);
+   boot_save();
+   lab_relaunch_and_die(L_self);
 }
 
 void lab_sidecars(char *save_path, size_t save_sz, char *state_path, size_t state_sz)
@@ -1065,12 +1174,30 @@ void lab_finish(int exit_code, const char *reason)
    n = rd(L_ini, ini, sizeof(ini));
    ini_crc = n > 0 ? crc32_buf(0, (const unsigned char *)ini, n) : 0;
    outcome = exit_code == 0 ? "ok" : (reason && !strcmp(reason, "lab_wall_limit")) ? "timeout" : "exit_error";
+   if (L_attempt > 1 && exit_code == 0)
+      outcome = "flaky";                   /* attempt 1 crashed/hung, the retry passed */
    write_result(L_tid, L_bid, outcome, exit_code, reason, L_last_frame, t_ms, T_written, T_dropped, ini_crc);
    path2(p, sizeof(p), L_root, "sys/CURRENT.TXT");
+   sceIoRemove(p);
+   path2(p, sizeof(p), L_root, "sys/RETRY.TXT");
    sceIoRemove(p);
    journal("task %s %s exit=%d reason=%s t_ms=%u tlm=%u", L_tid, outcome, exit_code, reason ? reason : "ok",
            t_ms, T_written);
    L_active = 0;
+   {  /* main's decision 2026-10-20: chain tasks; a window when the queue runs out or ~10 min after the last */
+      char keep_tid[48], keep_ini[192];
+      ab_u64 now = ab_rtc_now();
+      int more;
+      memcpy(keep_tid, L_tid, sizeof(keep_tid));
+      memcpy(keep_ini, L_ini, sizeof(keep_ini));
+      more = pick_task();
+      memcpy(L_tid, keep_tid, sizeof(keep_tid));
+      memcpy(L_ini, keep_ini, sizeof(keep_ini));
+      if (!more || !now || !L_b.last_window_t || now - L_b.last_window_t >= (ab_u64)L_window_every_s)
+         L_window_after = 1;
+      journal("next: %s (more=%d since_window=%llus)", L_window_after ? "window" : "chain", more,
+              now && L_b.last_window_t ? (unsigned long long)(now - L_b.last_window_t) : 0ull);
+   }
    if (L_window_after)
    {
       unsigned s = L_window_s;

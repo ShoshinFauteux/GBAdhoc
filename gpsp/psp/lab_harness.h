@@ -43,6 +43,10 @@ int  lab_frame(unsigned frame, unsigned wall_us, unsigned work_us,
 void lab_event(int code, unsigned arg, const char *text);
 /* For the instruments agent: one pre-framed 64-byte TLM record (type 4..10). */
 void lab_tlm_put(const void *rec64);
+/* After the vhash/screenshot capture, before vid_swap: the 1 Hz corner square (lab_blink=1). */
+void lab_blink_draw(void);
+/* From the stall thread: HANG.TXT + relaunch (never returns while a task is active). */
+void lab_stalled(unsigned iter, int phase);
 /* Replaces handoff_run() while a task is active: telemetry, RESULT.TXT,
  * then the window and the relaunch.  Returns only if every relaunch path
  * failed (the caller then exits to the XMB). */
