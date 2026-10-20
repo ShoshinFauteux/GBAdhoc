@@ -6519,6 +6519,9 @@ static int smc_wide_gate(void)
   return 1;
 #endif
 }
+#ifdef SMC_SINGLE_HOT
+void smc_coverage_state_loaded(void) { smc_wide_traps = 0; }
+#endif
 #define SMC_DR2_CLASS(pc, a) ((((pc) >> 24) == 0x03) && (((a) >> 24) == 0x03))
 #endif
 static int smc_writer_safe_range(u32 *low, u32 *high)
@@ -6546,9 +6549,13 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
      * with pc + 2 for Thumb.  Thumb STMIA/PUSH stay on the full flush. */
     u32 top;
     pc -= 2;
+    /* Decode only from a RESIDENT page.  4.1.1 returned before touching
+     * memory for every Thumb trap; paging a ROM block in here would change
+     * the paged-ROM state (twin: Heart & Soul light diverged at f2005 with
+     * no widened store ever admitted).  Not resident = not admitted. */
     blk = memory_map_read[pc >> 15];
     if (!blk)
-      blk = load_gamepak_page((pc >> 15) & 0x3FF);
+      return 0;
     op = readaddress16(blk, pc & 0x7FFF);
     top = op & 0xFE00;
     if ((top == 0x5000 || top == 0x5200 || top == 0x5400 ||

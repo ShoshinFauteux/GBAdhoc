@@ -178,9 +178,10 @@ if os.environ.get("DRCORPUS_SMC") == "1":
              " -DSMC_SINGLE_ANYPC -DSMC_SINGLE_EWRAM")
     CLS_B = CLS_A + " -DSMC_BLOCK_EXACT"
     CLS_H = CLS_B + " -DSMC_SINGLE_UNTAG -DSMC_BLOCK_SAME -DSMC_SINGLE_HOT=64"
+    CLS_C = CLS_A + " -DSMC_SINGLE_UNTAG -DSMC_SINGLE_HOT=64"   # candidate A
     STALE = " -DSTALE_CHECK -DSMC_FALLBACK_STATS -UDISPATCH_CACHE -DSTALE_ABORT=1"
     _ref = os.environ.get("DRCORPUS_SMCREF", "ship")
-    _refdefs = F2 + {"ship": "", "cova": CLS_A, "covb": CLS_B, "covh": CLS_H}[_ref]
+    _refdefs = F2 + {"ship": "", "cova": CLS_A, "covb": CLS_B, "covh": CLS_H, "cand": CLS_C}[_ref]
     VARIANTS = {
         "base": (_refdefs, "ref", "reference: %s (4.1.1 CORE_COMMON + fast2%s)" % (
             _ref, "" if _ref == "ship" else " + smc-coverage " + _ref)),
@@ -192,11 +193,15 @@ if os.environ.get("DRCORPUS_SMC") == "1":
         "covu": (F2 + CLS_B + " -DSMC_SINGLE_UNTAG", "switch", "covb + SMC_SINGLE_UNTAG"),
         "covh": (F2 + CLS_H, "switch", "THE CANDIDATE: covb + UNTAG + BLOCK_SAME + SMC_SINGLE_HOT=64"),
         "covhs": (F2 + CLS_H + STALE, "assert", "covh + stale-entry checker that aborts"),
+        "cand": (F2 + CLS_C, "switch", "CANDIDATE A: single-store classes + UNTAG + HOT=64 (no BLOCK_EXACT)"),
+        "cands": (F2 + CLS_C + STALE, "assert", "cand + stale-entry checker that aborts"),
     }
     ORDER = list(VARIANTS)
     MUTANTS = {
         "m_cov_skip": (F2 + CLS_H + " -DSMC_COVERAGE_MUTANT_SKIP_LAST", "", "covh",
                        "smc_retire_span skips ARM blocks starting inside the written range"),
+        "m_cand_skip": (F2 + CLS_C + " -DSMC_COVERAGE_MUTANT_SKIP_LAST", "", "cand",
+                        "candidate A with smc_retire_span skipping ARM blocks starting in the range"),
         "m_cov_blk":  (F2 + CLS_H + " -DSMC_COVERAGE_MUTANT_BLOCK_IGNORE", "", "covh",
                        "SMC_BLOCK_EXACT word hits retire nothing (the 2.0.2 hole)"),
     }
