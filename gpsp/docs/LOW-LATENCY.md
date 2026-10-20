@@ -2,7 +2,9 @@
 
 Issue #11: GBA "feels sluggish", GB/GBC feel better. Status: tier 0 and the pad
 finding are **measured on a PSP-1000** (section 6). Tier 1 is not yet shown to
-work on hardware (two bugs found and fixed there; the fixed build is unverified).
+work on hardware for a light game (em_battle) after two bugs found there were
+fixed. It rarely engages on heavy frames, and one run ended with the console
+dropping off PSPLink at exit (cause unknown, section 6).
 
 ## 1. Where the latency comes from (code-derived; PPSSPP confirms the CPU path)
 
@@ -126,7 +128,8 @@ d2_drive, nfsu2_race. Read per arm:
 ## 6. Hardware results (PSP-1000, PSPLink, 2026-10-20)
 
 Arms A = `flip_early=0 me_early_retire=0` (shipping), B = defaults (tier 0),
-D = B-binary + `me_lowlat=1 input_fresh=1`. The `hist` mean is latch - poll in
+D = `me_lowlat=1 input_fresh=1` (run on lat-4, where tier 1 never engaged, so
+it isolates input_fresh), C = `me_lowlat=1` on lat-5 (both tier-1 fixes). The `hist` mean is latch - poll in
 vblanks. Each fixture ran 1500 measured frames.
 
 | fixture | A fps / work ms | B fps / work ms | A mean | B mean |
@@ -151,6 +154,25 @@ vblanks. Each fixture ran 1500 measured frames.
   (the firmware samples at vblank end, like PPSSPP). `input_fresh=1` brings it
   to 0.3-0.5 ms (waits ~0.74 ms; work +0.6-0.7 ms; fps unchanged on em/hns/ub).
   That is one more whole frame, available to every core including GB/GBC.
-* Tier 1, first attempts: lat-3 presented the PREVIOUS render (commit 55962bd);
-  lat-4 never entered the mode (commit 64a9e58). Both are fixed; the fixed
-  build (lat-5-prx) is unverified.
+* Tier 1, first attempts: lat-3 presented the PREVIOUS render (fixed in
+  55962bd); lat-4 never entered the mode (fixed in 64a9e58).
+* Tier 1 on lat-5 (C):
+
+  | fixture | fps / work ms | hist 0..7 | mean | hit | entries (to_h) |
+  |---|---|---|---|---|---|
+  | em_battle | 59.78 / 5.69 | 0,959,790,23,6,1,0,2 | 1.49 | 957 | 7 |
+  | hns_heavy | 59.49 / 9.59 | 0,41,2521,239,56,15,4,11 | 2.15 | 38 | 5 |
+  | nfsu2_race | no log: see below | | | | |
+
+  No cost: fps and work match tier 0. The latch - poll = 1 floor is reached
+  (72% of frames in em_battle's steady window). Every miss costs ~60 frames
+  in tier 0 before re-entry; on hns_heavy ~8% of frames would miss, which
+  resets the 60-in-a-row streak, so the mode rarely engages. Next: a ratio rule
+  (e.g. >= 95% would-hit over the last 120) instead of a consecutive streak,
+  and a measured blit deadline (`blit_ema` reads ~1.5 ms on the 1000).
+* **Open risk:** the lat-5 tier-1 nfsu2_race run reached frame ~3296 of 3330
+  at full speed with normal heartbeats, then the PSP-1000 dropped off
+  PSPLink around exit; frontend.log was lost. lat-4 nfsu2 with the same key
+  (tier 1 never engaging) exited cleanly. Not reproduced, not explained: it
+  could be tier 1, the exit path, or PSPLink/USB. It must be repeated before
+  tier 1 goes anywhere near a default.
