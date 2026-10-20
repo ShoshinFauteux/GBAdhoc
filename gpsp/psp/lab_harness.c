@@ -63,6 +63,9 @@ static int  L_active, L_usb_active;
 static unsigned L_attempt = 1, L_eboot_crc, L_model;
 static char L_first[8];            /* outcome of attempt 1 when this is a retry ("crash"/"hang") */
 static int  L_blink, L_window_every_s = 600, L_stall_test_at, L_stall_test_attempt = 1;
+static int  L_sleep_journal, L_save_every_s, L_load_every_s;
+static unsigned L_susp_seen, L_cycle, L_after_frame;
+static uint64_t L_last_poll_us, L_next_save_us, L_next_load_us;
 static int  L_tlm_every = 300, L_tlm_flush_s = 60, L_window_after = 1, L_window_s = 30;
 static int  L_wall_limit_s = 900, L_attempts = 1;
 static uint64_t L_t0_us, L_last_flush_us;
@@ -1075,6 +1078,9 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
    L_window_every_s = task_ini_int("lab_window_every_s", 600);
    L_stall_test_at = task_ini_int("lab_stall_test_at", 0);
    L_stall_test_attempt = task_ini_int("lab_stall_test_attempt", 1);
+   L_sleep_journal = task_ini_int("lab_sleep_journal", 0);
+   L_save_every_s = task_ini_int("lab_state_save_every_s", 0);
+   L_load_every_s = task_ini_int("lab_state_load_every_s", 0);
    /* sec. 6.1.10: start */
    snprintf(L_out, sizeof(L_out), "%s/out/%s", L_root, L_tid);
    rmtree(L_out, 0);                   /* a half-written earlier attempt */
@@ -1135,6 +1141,88 @@ void lab_stalled(unsigned iter, int phase)
    lab_relaunch_and_die(L_self);
 }
 
+static void sleep_line(const char *fmt, ...)
+{
+   char line[200], p[160];
+   va_list ap;
+   int n;
+   if (!L_sleep_journal)
+      return;
+   va_start(ap, fmt);
+   n = vsnprintf(line, sizeof(line) - 1, fmt, ap);
+   va_end(ap);
+   if (n < 0)
+      return;
+   if (n > (int)sizeof(line) - 2)
+      n = (int)sizeof(line) - 2;
+   line[n++] = '\n';
+   path2(p, sizeof(p), L_out, "SLEEP.TXT");
+   wr(p, line, n, 1);
+}
+
+void lab_power_poll(unsigned suspend_count, int in_ui)
+{
+   uint64_t now;
+   if (!L_active)
+      return;
+   now = sceKernelGetSystemTimeWide();
+   if (!L_last_poll_us)
+   {
+      L_susp_seen = suspend_count;
+      sleep_line("v=1");
+      sleep_line("b boot=%u task=%s attempt=%u", L_b.boot, L_tid, L_attempt);
+   }
+   else if (suspend_count != L_susp_seen)
+   {  /* the main loop is running again after a sleep: the gap since its last frame is the sleep */
+      unsigned t_ms = (unsigned)((L_last_poll_us - L_t0_us) / 1000ull);
+      L_susp_seen = suspend_count;
+      L_cycle++;
+      sleep_line("c %u suspend f=%u t_ms=%u state=%s hold=-", L_cycle, L_last_frame, t_ms,
+                 in_ui ? "menu" : "gameplay");
+      sleep_line("c %u resume f=%u t_ms=%u slept_ms=%u rebuild=- rend=- vmem=- reopen=-", L_cycle, L_last_frame,
+                 (unsigned)((now - L_t0_us) / 1000ull), (unsigned)((now - L_last_poll_us) / 1000ull));
+      L_after_frame = L_last_frame + 600;
+   }
+   if (L_after_frame && L_last_frame >= L_after_frame)
+   {
+      sleep_line("c %u after frames=600 t_ms=%u", L_cycle, (unsigned)((now - L_t0_us) / 1000ull));
+      L_after_frame = 0;
+   }
+   L_last_poll_us = now;
+}
+
+int lab_state_due(void)
+{
+   uint64_t now;
+   if (!L_active || (!L_save_every_s && !L_load_every_s))
+      return 0;
+   now = sceKernelGetSystemTimeWide();
+   if (!L_next_save_us)
+   {
+      L_next_save_us = now + (uint64_t)L_save_every_s * 1000000ull;
+      L_next_load_us = now + (uint64_t)L_load_every_s * 1000000ull;
+      return 0;
+   }
+   if (L_save_every_s && now >= L_next_save_us)
+   {
+      L_next_save_us = now + (uint64_t)L_save_every_s * 1000000ull;
+      return 1;
+   }
+   if (L_load_every_s && now >= L_next_load_us)
+   {
+      L_next_load_us = now + (uint64_t)L_load_every_s * 1000000ull;
+      return 2;
+   }
+   return 0;
+}
+
+void lab_state_done(int what, int rc)
+{
+   char t[24];
+   snprintf(t, sizeof(t), "%s rc=%d", what == 1 ? "timer_save" : "timer_load", rc);
+   lab_event(what == 1 ? 8 : 2, (unsigned)rc, t);
+}
+
 void lab_sidecars(char *save_path, size_t save_sz, char *state_path, size_t state_sz)
 {
    const char *s;
@@ -1183,6 +1271,7 @@ void lab_finish(int exit_code, const char *reason)
    sceIoRemove(p);
    journal("task %s %s exit=%d reason=%s t_ms=%u tlm=%u", L_tid, outcome, exit_code, reason ? reason : "ok",
            t_ms, T_written);
+   sleep_line("x exit code=%d reason=%s f=%u", exit_code, reason ? reason : "ok", L_last_frame);
    L_active = 0;
    {  /* main's decision 2026-10-20: chain tasks; a window when the queue runs out or ~10 min after the last */
       char keep_tid[48], keep_ini[192];

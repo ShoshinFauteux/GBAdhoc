@@ -47,6 +47,12 @@ void lab_tlm_put(const void *rec64);
 void lab_blink_draw(void);
 /* From the stall thread: HANG.TXT + relaunch (never returns while a task is active). */
 void lab_stalled(unsigned iter, int phase);
+/* suites H-S1: SLEEP.TXT journal, written from the MAIN LOOP only (lab_sleep_journal=1).  Fed the monotonic
+ * suspend counter every frame; a change is a completed sleep/wake cycle. */
+void lab_power_poll(unsigned suspend_count, int in_ui);
+/* suites H-S5: lab_state_save_every_s / lab_state_load_every_s.  1 = save now, 2 = load now, 0 = nothing. */
+int  lab_state_due(void);
+void lab_state_done(int what, int rc);
 /* Replaces handoff_run() while a task is active: telemetry, RESULT.TXT,
  * then the window and the relaunch.  Returns only if every relaunch path
  * failed (the caller then exits to the XMB). */
