@@ -124,6 +124,17 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # a photographable register screen rather than a silent hang.
       PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=1 ME_CATCH=1"
       ;;
+    lab)
+      # The GBAdhoc Lab harness (psp/lab_harness.c, GBAdhoc-Lab docs/PROTOCOL.md):
+      # the `harness` profile plus the task runner -- queue from ms0:/GBALAB,
+      # RAM telemetry, one USB window per process, relaunch.  Same core flags
+      # as `harness`; its timings compare only with other lab builds.
+      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=harness"
+      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+-DGPSP_PROFILE_HARNESS=1"
+      TITLE="GBAdhoc LAB"
+      PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0 LAB_HARNESS=1"
+      ;;
     soak)
       # The harness, plus the bad-jump reporter.  For long unattended runs whose
       # POINT is the failure: a freeze leaves no summary and no score, so the
@@ -168,7 +179,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       ;;
     *)
       echo "unknown profile '$1'"
-      echo "usage: tools/build.sh [release|harness|harness64|diagnostic|soak] [--no-clean] [--out DIR] [--expect TOK]"
+      echo "usage: tools/build.sh [release|harness|harness64|lab|diagnostic|soak] [--no-clean] [--out DIR] [--expect TOK]"
       exit 2 ;;
   esac
   KIND="$1"
@@ -381,6 +392,9 @@ case "$KIND" in
     ;;
   harness|harness64)
     REQUIRE=(".gpsp-harness.ini")
+    ;;
+  lab)
+    REQUIRE=(".gpsp-harness.ini" "GBALAB" "lab_wall_limit_s" "state=closed")
     ;;
   diagnostic)
     # The instruments are the point; assert they are really in.

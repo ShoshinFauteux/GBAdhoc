@@ -231,6 +231,14 @@ ifeq ($(REWIND),1)
 OBJS += ../frontend-common/fe_rewind.o ../frontend-common/fe_rewind_pack.o
 CFLAGS += -DREWIND
 endif
+# LAB_HARNESS=1: the GBAdhoc Lab task runner (psp/lab_harness.c; GBAdhoc-Lab
+# docs/PROTOCOL.md).  Frontend only.  Off by default; without it lab_harness.c
+# is not compiled and main_psp.c's LAB_HOOK()s expand to nothing.
+LAB_HARNESS ?= 0
+ifeq ($(LAB_HARNESS),1)
+OBJS += lab_harness.o
+CFLAGS += -DLAB_HARNESS
+endif
 GBA_LINK ?= 0
 ifeq ($(GBA_LINK),1)
 OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \

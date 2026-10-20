@@ -99,7 +99,7 @@ PSP_MAIN_THREAD_STACK_SIZE_KB(256);
 /* Leave 1 MiB of heap free for thread stacks etc.: the core greedily mallocs
  * ROM blocks at retro_init until malloc fails (FRONTEND-AUDIT §8 gotcha). */
 PSP_HEAP_SIZE_KB(-1024);
-
+#include "lab_harness.h"
 /* All paths are derived from the EBOOT's own directory at runtime (argv[0])
  * so per-game variant installs (docs/VARIANTS.md) work from any folder;
  * falls back to the canonical install dir. */
@@ -307,7 +307,7 @@ static void init_paths(int argc, char *argv[])
    snprintf(p_legacy_ap, sizeof(p_legacy_ap), "%s/autopilot.ini", g_dir_base);
    snprintf(p_config, sizeof(p_config), "%s/config.ini", g_dir_base);
    snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base);
-   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base);
+   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base); LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
 }
 
 /* libretro joypad ids (kept local; matches libretro.h) */
@@ -2203,7 +2203,7 @@ static void pwr_release_all(void)
 /* No process exit may leave the switch held: handoff_run (the USB handoff),
  * relaunch_eboot and sceKernelExitGame drop every hold first.  (A macro's own
  * name is not re-expanded inside it, so these call the real functions.) */
-#define handoff_run(code, why) (pwr_release_all(), handoff_run((code), (why)))
+#define handoff_run(code, why) (pwr_release_all(), LAB_HANDOFF((code), (why), handoff_run))
 #define sceKernelExitGame() (pwr_release_all(), sceKernelExitGame())
 
 #ifdef GPSP_PERF_RIG
@@ -9185,7 +9185,7 @@ static int psp_state_load_io(const char *path, const char *why)
     * until it is pressed again, a Hold still down starts a fresh train. */
    ctl_turbo_stop(&g_turbo);
    rc = fe_host_state_load(path);
-   core_health_evt("load");
+   core_health_evt("load"); LAB_HOOK(lab_event(LAB_EVT_STATE_LOAD, (unsigned)rc, why);)
    return rc;
 }
 
@@ -10939,7 +10939,7 @@ int main(int argc, char *argv[])
    fe_evt_init(LOG_PATH, 0);
    /* Every lookup of these two files is recorded from here on, so the report
     * before the main loop can name a key nothing ever read. */
-   fe_ini_audit(HARNESS_INI);
+   fe_ini_audit(HARNESS_INI); LAB_HOOK(lab_audit_keys();)
    fe_ini_audit(CONFIG_INI);
    fe_evt_set_clock(evt_clock_us);   /* ADR-0021: price the ms0 flushes */
 #endif
@@ -11082,7 +11082,7 @@ int main(int argc, char *argv[])
       fe_evt("harness_ini active file=%s — automated control channel is "
              "present; ROM browser suppressed and harness keys apply",
              HARNESS_INI);
-   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0);
+   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
    {
       /* GB link session harness keys (see gblink_service). */
       char gr[8] = "";
@@ -12382,7 +12382,7 @@ session_top:
          return 0;
       }
    }
-   ui_set_state_base(state_path);
+   LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));) ui_set_state_base(state_path);
    g_save_path_for_backup = save_path;
    ui_loading_begin(rom_path); /* also covers harness/variant auto-boot */
    /* Four bytes at 0xAC name the game for Mystery Gift: which title a card
@@ -13213,7 +13213,7 @@ session_top:
        * has to fit 16.7 ms.  Two clock reads per frame, and only while a
        * session is up. */
       unsigned rig_work_us = 0;
-      uint64_t frame_t0 = (g_net_up || g_perf_rig) ? net_now_us() : 0;
+      uint64_t frame_t0 = (g_net_up || g_perf_rig || LAB_ON) ? net_now_us() : 0;
       LOOP_TOP();
       FE_LP_SET(FELP_L_TOP);
       g_frame_start_us = frame_t0 ? frame_t0 : net_now_us();
@@ -14703,7 +14703,7 @@ session_top:
             vid_swap();
          g_drew = 0;
       }
-      FE_LP_SET(FELP_L_RIGN);
+      FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; })
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
       ff_win_note();
