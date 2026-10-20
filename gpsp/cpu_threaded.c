@@ -3767,6 +3767,20 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   ((opcode >= 0xA000000) && (opcode < 0xF000000)) ||                          \
   ((opcode >= 0xF000000) && (!is_div_swi((opcode >> 16) & 0xFF))))            \
 
+/* XLAT_FAST EXITPF: a cheap necessary condition in front of arm_exit_point.
+ * Every term of arm_exit_point needs bit 15 of the (28-bit) opcode -- the
+ * Rd == PC tests (0xF000), BX (0x12FFF10 covers bits 19..8), LDM with PC in
+ * the list (0x8108000) -- except the ones that need opcode >= 0xA000000
+ * (branches, coprocessor, SWI).  So "bit 15 clear and below 0xA000000"
+ * proves "not an exit point", which is most instructions, in two tests. */
+#if defined(XLAT_FAST) && !defined(XLAT_NO_EXITPF)
+#define arm_exit_point_scan                                                   \
+ (((opcode & 0x8000) || (opcode >= 0xA000000)) && arm_exit_point)
+#else
+#define arm_exit_point_scan arm_exit_point
+#endif
+#define thumb_exit_point_scan thumb_exit_point
+
 #define arm_opcode_branch                                                     \
   ((opcode & 0xE000000) == 0xA000000)                                         \
 
@@ -4231,6 +4245,68 @@ static inline int entry_gate_has(u32 pc)
 
 #define SMC_GATE_MAP_ADD(pc)       smc_gate_map_add(pc)
 #define SMC_GATE_MAP_REBUILD()     smc_gate_map_rebuild()
+#if defined(XLAT_FAST) && !defined(XLAT_NO_GATEMAP)
+/* XLAT_FAST GATEMAP: the same two bitmap tests as smc_gate_map_has() and
+ * entry_gate_has(), with the per-region choice of map (and the entry-gate
+ * "armed" test) made once per region instead of once per scanned
+ * instruction: scan_block keeps the maps of the region (pc >> 24) it last
+ * saw and looks them up again only when block_end_pc leaves it.  Neither map
+ * changes during a scan (gates are added by SMC events, entry gates by an
+ * exhaustion flush, never while a block is being scanned). */
+static void xlat_gate_maps(u32 region, const u8 **smc, const u8 **ent,
+                           u32 *mask)
+{
+  *smc = NULL;
+  *ent = NULL;
+  *mask = 0;
+  if (region == 3) {
+    *smc = smc_gate_iwram;
+    *mask = 0x7FFF;
+#ifdef ENTRY_GATES
+    if (entry_gates_armed)
+      *ent = entry_gate_iwram;
+#endif
+  } else if (region == 2) {
+    *smc = smc_gate_ewram;
+    *mask = 0x3FFFF;
+#ifdef ENTRY_GATES
+    if (entry_gates_armed)
+      *ent = entry_gate_ewram;
+#endif
+  }
+}
+#ifdef ENTRY_GATES
+#define XLAT_ENTRY_GATE_TEST(tag_gate_op, off, bit)                           \
+  if (xg_ent && (xg_ent[(off) >> 3] & (bit))) {                               \
+    tag_gate_op;                                                              \
+    scan_exit_reason = SMC_SCAN_GATE;                                         \
+    entry_gate_stop = 1;                                                      \
+    goto block_end;                                                           \
+  }
+#else
+#define XLAT_ENTRY_GATE_TEST(tag_gate_op, off, bit)
+#endif
+#define SMC_SCAN_GATE_END(tag_gate_op) do {                                   \
+  u32 xg_r = block_end_pc >> 24;                                              \
+  if (xg_r != xg_reg) {                                                       \
+    xg_reg = xg_r;                                                            \
+    xlat_gate_maps(xg_r, &xg_smc, &xg_ent, &xg_mask);                         \
+  }                                                                           \
+  if (xg_smc) {                                                               \
+    u32 xg_off = (block_end_pc & xg_mask) >> 1;                               \
+    u32 xg_bit = 1u << (xg_off & 7);                                          \
+    if (xg_smc[xg_off >> 3] & xg_bit) {                                       \
+      tag_gate_op;                                                            \
+      scan_exit_reason = SMC_SCAN_GATE;                                       \
+      goto block_end;                                                         \
+    }                                                                         \
+    XLAT_ENTRY_GATE_TEST(tag_gate_op, xg_off, xg_bit)                         \
+  }                                                                           \
+} while (0)
+#define XLAT_GATEMAP_VARS                                                     \
+  u32 xg_reg = ~0U, xg_mask = 0;                                              \
+  const u8 *xg_smc = NULL, *xg_ent = NULL;
+#else
 #define SMC_SCAN_GATE_END(tag_gate_op) do {                                \
   if (smc_gate_map_has(block_end_pc)) {                                    \
     tag_gate_op;                                                           \
@@ -4239,6 +4315,7 @@ static inline int entry_gate_has(u32 pc)
   }                                                                        \
   ENTRY_GATE_SCAN(tag_gate_op)                                             \
 } while (0)
+#endif
 #else
 #define SMC_GATE_MAP_ADD(pc)       do { } while (0)
 #define SMC_GATE_MAP_REBUILD()     do { } while (0)
@@ -4253,9 +4330,40 @@ static inline int entry_gate_has(u32 pc)
 } while (0)
 #endif
 
+/* XLAT_FAST RAMEND: scan_block stops when block_end_pc reaches 0x3007FF0 or
+ * 0x203FFF0 (the last words of IWRAM / EWRAM).  block_end_pc only ever
+ * steps up by the instruction width from the block start, at most
+ * MAX_BLOCK_SIZE times, so at most one of the two can be reached, and which
+ * one (if any) is known before the scan starts: compare against that one
+ * address instead of two constants per instruction.  1 is never reached
+ * (block_end_pc stays even). */
+#if defined(XLAT_FAST) && !defined(XLAT_NO_RAMEND)
+static inline u32 xlat_ramend_stop(u32 start, u32 width)
+{
+  static const u32 stops[2] = { 0x3007FF0, 0x203FFF0 };
+  u32 k;
+  for (k = 0; k < 2; k++) {
+    u32 d = stops[k] - start;
+    if (stops[k] > start && d <= MAX_BLOCK_SIZE * width && (d % width) == 0)
+      return stops[k];
+  }
+  return 1;
+}
+#define XLAT_RAMEND_VARS(type)                                               \
+  const u32 xs_stop_pc = xlat_ramend_stop(block_end_pc, type##_instruction_width);
+#define XLAT_SCAN_RAMEND(endpc) ((endpc) == xs_stop_pc)
+#else
+#define XLAT_RAMEND_VARS(type)
+#define XLAT_SCAN_RAMEND(endpc) (((endpc) == 0x3007FF0) || ((endpc) == 0x203FFF0))
+#endif
+#ifndef XLAT_GATEMAP_VARS
+#define XLAT_GATEMAP_VARS
+#endif
 #define scan_block(type, smc_write_op)                                        \
 {                                                                             \
   __label__ block_end;                                                        \
+  XLAT_GATEMAP_VARS                                                           \
+  XLAT_RAMEND_VARS(type)                                                      \
   /* Find the end of the block */                                             \
   do                                                                          \
   {                                                                           \
@@ -4264,7 +4372,7 @@ static inline int entry_gate_has(u32 pc)
     type##_load_opcode();                                                     \
     type##_flag_status();                                                     \
                                                                               \
-    if(type##_exit_point)                                                     \
+    if(type##_exit_point_scan)                                                \
     {                                                                         \
       /* Branch/branch with link */                                           \
       if(type##_opcode_branch)                                                \
@@ -4324,7 +4432,7 @@ static inline int entry_gate_has(u32 pc)
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
     if((block_data_position == MAX_BLOCK_SIZE) ||                             \
-     (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFF0) ||            \
+     XLAT_SCAN_RAMEND(block_end_pc) ||                                        \
      SMC_SCAN_PAST_SP(block_end_pc))                                          \
     {                                                                         \
       scan_exit_reason = (block_data_position == MAX_BLOCK_SIZE)              \
@@ -4352,6 +4460,64 @@ if (ram_region) {                                                             \
     ewram_code_max = MAX(pc & 0x3FFFF, ewram_code_max);                       \
   }                                                                           \
 }                                                                             \
+
+/* XLAT_FAST (make XLAT_FAST=1; claude/bench-xlat): translator-side speedups
+ * that change NOTHING the translator produces -- same emitted bytes, same
+ * tags, same counters -- only the host work spent producing them.  Each piece
+ * has its own XLAT_NO_<piece> define so a bisect can switch it off alone.
+ *
+ * LIMITS: update_pc_limits() ran once per guest instruction, a read-modify-
+ * write of two globals that the emitter's calls force through memory (twin:
+ * ~18 host instructions per guest instruction, ~8% of translate_block_arm on
+ * Doom II, which translates ~17k guest instructions a frame).  The pcs of one
+ * block are consecutive, so MIN/MAX over them is MIN/MAX of the first and the
+ * last -- unless the block crosses a region or wraps a mirror boundary, where
+ * the masked offsets are not monotonic; those take the original
+ * per-instruction path.  The limits are read only by
+ * flush_translation_cache_ram(), so they are committed exactly where a flush
+ * can happen: before the cache-full flush inside the emit loop (covering the
+ * instructions translated so far, as before) and right after the loop,
+ * before the exit lookups that can translate (and flush) recursively. */
+#if defined(XLAT_FAST) && !defined(XLAT_NO_LIMITS)
+#define XLAT_FAST_LIMITS 1
+static void note_pc_limits_range(u32 first, u32 last, u32 width)
+{
+  u32 iw = first >= 0x3000000;
+  if ((last >= 0x3000000) == iw) {
+    u32 mask = iw ? 0x7FFF : 0x3FFFF;
+    u32 lo = first & mask, hi = last & mask;
+    if (hi >= lo && (last - first) == (hi - lo)) {
+      if (iw) {
+        iwram_code_min = MIN(lo, iwram_code_min);
+        iwram_code_max = MAX(hi, iwram_code_max);
+      } else {
+        ewram_code_min = MIN(lo, ewram_code_min);
+        ewram_code_max = MAX(hi, ewram_code_max);
+      }
+      return;
+    }
+  }
+  {
+    const bool ram_region = true;
+    u32 pc;
+    for (pc = first; ; pc += width) {
+      update_pc_limits();
+      if (pc == last)
+        break;
+    }
+  }
+}
+/* lim_first: this block's first pc; lim_last: the latest pc translated
+ * (~0U until the first instruction). */
+#define pc_limits_step()        do { lim_last = pc; } while (0)
+#define pc_limits_commit(width) do {                                         \
+  if (ram_region && lim_last != ~0U)                                        \
+    note_pc_limits_range(lim_first, lim_last, (width));                     \
+} while (0)
+#else
+#define pc_limits_step()        update_pc_limits()
+#define pc_limits_commit(width) do { } while (0)
+#endif
 
 bool translate_block_arm(u32 pc, bool ram_region)
 {
@@ -4417,6 +4583,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
      of the data processing functions can access it), and its expansion was
      massacreing the compiler. */
 
+#ifdef XLAT_SPLIT_DIAG
+  /* DIAGNOSTIC ONLY (never shipped): hardware split of RAM ARM translation
+   * into scan / emit loop, reported through two phase counters that are
+   * zero on the titles studied (dsnd = scan us, rfu = emit us). */
+  u32 xsd_t0 = (ram_region && core_phase_lvl >= CORE_PHASE_FINE) ? smc_prof_clock() : 0;
+#endif
   if(ram_region)
   {
     scan_block(arm, yes);
@@ -4444,6 +4616,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
     }
   }
 
+#ifdef XLAT_SPLIT_DIAG
+  u32 xsd_t1 = 0;
+  if (xsd_t0) { xsd_t1 = smc_prof_clock(); cph_dsnd += xsd_t1 - xsd_t0; }
+#endif
   arm_dead_flag_eliminate();
 
   block_exit_position = 0;
@@ -4451,6 +4627,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
 
   last_condition = 0x0E;
 
+#ifdef XLAT_FAST_LIMITS
+  u32 lim_first = pc, lim_last = ~0U;
+#endif
   while(pc != block_end_pc)
   {
     block_data[block_data_position].block_offset = translation_ptr;
@@ -4462,7 +4641,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
       arm_process_cheats();
     }
 
-    update_pc_limits();
+    pc_limits_step();
     DRPROF_NOTE(translation_ptr, drprof_class_arm(
       readaddress32(pc_address_block, (pc & 0x7FFF)), 0xF));
     translate_arm_instruction();
@@ -4474,6 +4653,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
        the beginning. */
 
     if(translation_ptr > translation_cache_limit) {
+      pc_limits_commit(4);
       if (ram_region) {
         flush_ram_full++;
 #ifdef ENTRY_GATES
@@ -4495,6 +4675,11 @@ bool translate_block_arm(u32 pc, bool ram_region)
       generate_cycle_update();
     }
   }
+
+#ifdef XLAT_SPLIT_DIAG
+  if (xsd_t0) cph_rfut += smc_prof_clock() - xsd_t1;
+#endif
+  pc_limits_commit(4);
 
   /* This can happen if the last instruction is *not* inconditional */
   if ((last_condition & 0x0F) != 0x0E) {
@@ -4758,6 +4943,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   block_exit_position = 0;
   block_data_position = 0;
 
+#ifdef XLAT_FAST_LIMITS
+  u32 lim_first = pc, lim_last = ~0U;
+#endif
   while(pc != block_end_pc)
   {
     block_data[block_data_position].block_offset = translation_ptr;
@@ -4769,7 +4957,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       thumb_process_cheats();
     }
 
-    update_pc_limits();
+    pc_limits_step();
     DRPROF_NOTE(translation_ptr, drprof_class_thumb(
       readaddress16(pc_address_block, (pc & 0x7FFF)),
       block_data[block_data_position].flag_data));
@@ -4788,6 +4976,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 
     if(translation_ptr > translation_cache_limit)
     {
+      pc_limits_commit(2);
       if (ram_region) {
         flush_ram_full++;
 #ifdef ENTRY_GATES
@@ -4809,6 +4998,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       generate_cycle_update();
     }
   }
+  pc_limits_commit(2);
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
@@ -7371,6 +7561,10 @@ void jit_code_owner_changed(u32 why)
 void jit_code_publish_(void)
 {
   u32 i, n, k;
+#ifdef XLAT_SPLIT_DIAG
+  /* DIAGNOSTIC ONLY: publish time, us, into the rfux phase field. */
+  u32 xsd_p0 = (core_phase_lvl >= CORE_PHASE_FINE) ? smc_prof_clock() : 0;
+#endif
 
 #ifdef JIT_CODE_AUDIT
   jit_audit();
@@ -7472,6 +7666,9 @@ void jit_code_publish_(void)
     for (i = 0; i < n; i++)
       jit_code_stats.lines += (u32)(jit_spans[i].hi - jit_spans[i].lo) / JIT_LINE;
   }
+#ifdef XLAT_SPLIT_DIAG
+  if (xsd_p0) cph_rfux += smc_prof_clock() - xsd_p0;
+#endif
   jit_dirty_n = 0;
   jit_owner_pending = 0;
 }

@@ -414,6 +414,16 @@ else ifeq ($(platform), psp1)
 	endif
 	CFLAGS += -DENTRY_GATES=1
 	endif
+	# XLAT_FAST=1: translator host-work speedups that leave everything the
+	# translator produces (emitted code, tags, counters) unchanged
+	# (cpu_threaded.c XLAT_FAST; claude/bench-xlat).
+	ifeq ($(XLAT_FAST),1)
+	CFLAGS += -DXLAT_FAST=1
+	endif
+	# XLAT_SPLIT_DIAG=1: diagnostic only -- scan/emit time split (cpu_threaded.c).
+	ifeq ($(XLAT_SPLIT_DIAG),1)
+	CFLAGS += -DXLAT_SPLIT_DIAG=1
+	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
 	endif
