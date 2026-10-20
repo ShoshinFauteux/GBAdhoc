@@ -3715,7 +3715,7 @@ void dispatch_cache_clear(void)
 }
 #define DC_NOTE_FILL(tbl, i_) do {                                            \
   if ((tbl)[i_] == 0xFFFFFFFFu && dc_list_valid)                              \
-    dc_filled[dc_filled_n++] = (u16)((((tbl) == dispatch_cache_thumb)         \
+    dc_filled[dc_filled_n++] = (u16)((((tbl) == &dispatch_cache_thumb[0])       \
                                       << DISPATCH_CACHE_BITS) | ((i_) / 2));  \
 } while (0)
 #else
