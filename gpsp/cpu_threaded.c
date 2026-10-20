@@ -4558,6 +4558,62 @@ static void note_pc_limits_range(u32 first, u32 last, u32 width)
 #define pc_limits_commit(width) do { } while (0)
 #endif
 
+/* XLAT_FAST SCANFN: the RAM ARM scan as its own function.  Inlined into
+ * translate_block_arm -- a few hundred KB of code with every emitter case
+ * live -- the scan loop keeps its state in stack slots (the twin shows a
+ * load or store of a spilled local on most of its ~65 instructions per
+ * guest instruction).  Out of line it has the registers to itself.  The
+ * body is the same scan_block(arm, yes) expansion over the same variables,
+ * copied in and out, so its effects (tags, block_data[], block_exits[],
+ * the pc-region cache and every counter) are those of the inline scan. */
+#if defined(XLAT_FAST) && !defined(XLAT_NO_SCANFN)
+#define XLAT_SCANFN_ARM 1
+typedef struct {
+  u32 pc, block_end_pc, pc_region, new_pc_region;
+  u8 *pc_address_block;
+  u32 block_exit_position;
+  s32 block_data_position;
+  u32 opcode, condition, branch_target;
+  u32 scan_exit_reason;
+#ifdef ENTRY_GATES
+  u32 entry_gate_stop;
+#endif
+} xlat_scan_state;
+
+static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
+{
+  const u32 pc = st->pc;
+  u32 block_end_pc = st->block_end_pc;
+  u32 pc_region = st->pc_region, new_pc_region = 0;
+  u8 *pc_address_block = st->pc_address_block;
+  u32 block_exit_position = st->block_exit_position;
+  s32 block_data_position = st->block_data_position;
+  /* written before they are read, in the scan and after it */
+  u32 opcode = 0, condition = 0, branch_target = 0;
+  u32 scan_exit_reason = st->scan_exit_reason;
+#ifdef ENTRY_GATES
+  u32 entry_gate_stop = st->entry_gate_stop;
+#endif
+  s32 i;
+
+  scan_block(arm, yes);
+
+  st->block_end_pc = block_end_pc;
+  st->pc_region = pc_region;
+  st->new_pc_region = new_pc_region;
+  st->pc_address_block = pc_address_block;
+  st->block_exit_position = block_exit_position;
+  st->block_data_position = block_data_position;
+  st->opcode = opcode;
+  st->condition = condition;
+  st->branch_target = branch_target;
+  st->scan_exit_reason = scan_exit_reason;
+#ifdef ENTRY_GATES
+  st->entry_gate_stop = entry_gate_stop;
+#endif
+}
+#endif
+
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
@@ -4630,7 +4686,37 @@ bool translate_block_arm(u32 pc, bool ram_region)
 #endif
   if(ram_region)
   {
+#ifdef XLAT_SCANFN_ARM
+    {
+      xlat_scan_state st;
+      st.pc = pc;
+      st.block_end_pc = block_end_pc;
+      st.pc_region = pc_region;
+      st.pc_address_block = pc_address_block;
+      st.block_exit_position = block_exit_position;
+      st.block_data_position = block_data_position;
+      st.scan_exit_reason = scan_exit_reason;
+#ifdef ENTRY_GATES
+      st.entry_gate_stop = entry_gate_stop;
+#endif
+      xlat_scan_arm_ram(&st);
+      block_end_pc = st.block_end_pc;
+      pc_region = st.pc_region;
+      new_pc_region = st.new_pc_region;
+      pc_address_block = st.pc_address_block;
+      block_exit_position = st.block_exit_position;
+      block_data_position = st.block_data_position;
+      opcode = st.opcode;
+      condition = st.condition;
+      branch_target = st.branch_target;
+      scan_exit_reason = st.scan_exit_reason;
+#ifdef ENTRY_GATES
+      entry_gate_stop = st.entry_gate_stop;
+#endif
+    }
+#else
     scan_block(arm, yes);
+#endif
     /* scan_block has just tagged exactly [block_start_pc, block_end_pc). */
     smc_blk_note_block(block_start_pc, block_end_pc, 0, scan_exit_reason);
     STALE_NOTE(block_start_pc, block_end_pc, 0);
