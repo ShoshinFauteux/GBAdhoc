@@ -32,6 +32,8 @@
 #include <psppower.h>
 #include <pspctrl.h>
 #include <psputils.h>
+#include <pspwlan.h>
+#include <psprtc.h>
 #include <kubridge.h>
 #include <psploadexec_kernel.h>
 #include <systemctrl.h>
@@ -287,8 +289,18 @@ static void labid_ensure(void)
       unsigned hi, lo;
       int n;
       static const char *names[] = { "PSP-1000", "PSP-2000", "PSP-3000", "PSP-3000", "PSP-Go" };
-      sceKernelUtilsMt19937Init(&ctx, (u32)(sceKernelGetSystemTimeWide() ^ (L_model << 24) ^ 0x6C616221u));
-      hi = sceKernelUtilsMt19937UInt(&ctx);
+      /* Entropy that differs per CONSOLE, not per boot: microseconds since boot are nearly the same on
+       * every power-on (two PPSSPP runs produced the same id), so mix the Wi-Fi MAC (unique per unit),
+       * the RTC (differs per day/second) and the model. */
+      unsigned char mac[8];
+      u64 tick = 0;
+      u32 seed;
+      memset(mac, 0, sizeof(mac));
+      sceWlanGetEtherAddr(mac);
+      sceRtcGetCurrentTick(&tick);
+      seed = crc32_buf(0, mac, 6) ^ (u32)tick ^ (u32)(tick >> 32) ^ (u32)sceKernelGetSystemTimeWide() ^ (L_model << 24);
+      sceKernelUtilsMt19937Init(&ctx, seed);
+      hi = sceKernelUtilsMt19937UInt(&ctx) ^ crc32_buf(0x6C616221u, mac, 6);
       lo = sceKernelUtilsMt19937UInt(&ctx) ^ (unsigned)sceKernelGetSystemTimeLow();
       snprintf(L_labid, sizeof(L_labid), "%08x%08x", hi, lo);
       n = snprintf(buf, sizeof(buf), "v=1\nid=%s\nmodel=%u\nmodel_name=%s\ncreated_boot=%u\n", L_labid, L_model,
