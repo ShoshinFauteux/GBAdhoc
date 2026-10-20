@@ -1,8 +1,8 @@
 # Low latency (claude/low-latency, prototype)
 
-Issue #11: GBA "feels sluggish", GB/GBC feel better. Status: PPSSPP-verified for
-the CPU/GB path; the ME arms are **unmeasured on hardware** until the A/B in
-section 5 runs.
+Issue #11: GBA "feels sluggish", GB/GBC feel better. Status: tier 0 and the pad
+finding are **measured on a PSP-1000** (section 6). Tier 1 is not yet shown to
+work on hardware (two bugs found and fixed there; the fixed build is unverified).
 
 ## 1. Where the latency comes from (code-derived; PPSSPP confirms the CPU path)
 
@@ -122,3 +122,35 @@ d2_drive, nfsu2_race. Read per arm:
 * perf_window fps/work: B and C must match A within noise (~1%).
 * still needed after that: an end-to-end camera test (owner's latency ROM +
   high-speed camera) to tie vblanks to photons.
+
+## 6. Hardware results (PSP-1000, PSPLink, 2026-10-20)
+
+Arms A = `flip_early=0 me_early_retire=0` (shipping), B = defaults (tier 0),
+D = B-binary + `me_lowlat=1 input_fresh=1`. The `hist` mean is latch - poll in
+vblanks. Each fixture ran 1500 measured frames.
+
+| fixture | A fps / work ms | B fps / work ms | A mean | B mean |
+|---|---|---|---|---|
+| em_battle | 59.74 / 5.75 | 59.77 / 5.73 | 4.01 | 2.03 |
+| hns_heavy | 59.49 / 9.53 | 59.48 / 9.46 | 4.02 | 2.16 |
+| ub_rival_medium | 59.76 / 13.17 | 59.76 / 13.18 | 4.02 | 2.34 |
+| aw2_battle | 59.76 / 4.84 | 59.77 / 4.76 | 4.01 | 2.01 |
+| d2_drive | 59.76 / 13.01 | 59.76 / 12.99 | 4.01 | 2.48 |
+| nfsu2_race | 59.77 / 9.53 | 59.77 / 9.53 | 4.01 | 2.04 |
+| kf_doom_ii (sub-60) | 18.72 / 53.4 | 18.68 / 53.5 | 6.95 | 6.49 |
+
+* NEXTFRAME latches on the vblank after the submit: `latched_next` covers
+  every flip, `immed` ~0. The model in section 1 holds on real firmware.
+* Tier 0 costs nothing measurable and removes ~2 vblanks (~33 ms) at full
+  speed. Its residual 3s and 4s (ub_rival, d2) are renders that finish after
+  the next loop top (vis ~7.9 ms + render ~7 ms on the 1000).
+* Sub-60 (Doom, ~3.2 vblanks a frame) gains little: no vblank wait happens, so
+  flip_early never fires. Follow-up: submit the flip from the vcount-160 hook
+  once the loop-top blit is done (OSD must move to the loop top for that).
+* **The pad sample is stale on hardware too:** `age_us` ~15.9 ms at the poll
+  (the firmware samples at vblank end, like PPSSPP). `input_fresh=1` brings it
+  to 0.3-0.5 ms (waits ~0.74 ms; work +0.6-0.7 ms; fps unchanged on em/hns/ub).
+  That is one more whole frame, available to every core including GB/GBC.
+* Tier 1, first attempts: lat-3 presented the PREVIOUS render (commit 55962bd);
+  lat-4 never entered the mode (commit 64a9e58). Both are fixed; the fixed
+  build (lat-5-prx) is unverified.
