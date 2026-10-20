@@ -14547,7 +14547,14 @@ session_top:
           * the frame retired above (if any) is superseded -- the one drop
           * of a switch into the mode. */
          if (mer_lowlat_active() && g_ll_mode_h)
+         {
             g_ll_iter_h = 1;
+            /* g_mer_last_presented is a STAGE index: with the superseded
+             * render left unpresented, this iteration's render lands in
+             * the stage last presented and would read as "already shown"
+             * (hardware: every entry into the mode missed).  Forget it. */
+            g_mer_last_presented = -1;
+         }
          else
             me_rend_present(); /* ME renderer: swap-phase present (FF triage) */
       }
