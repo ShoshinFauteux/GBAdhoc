@@ -3683,13 +3683,52 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 #define DC_KEY_THUMB(pc) ((pc) >> 1)
 #endif
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
+#if defined(XLAT_FAST) && !defined(XLAT_NO_DCLEAR)
+/* XLAT_FAST DCLEAR: every RAM flush and every partial retirement empties
+ * both tables -- 8 KiB of memset, 12+ times a frame on the SMC-heavy titles,
+ * while only the slots filled since the last clear can hold anything.  So
+ * remember those slots (each at most once: a slot is listed when it goes from
+ * empty to full) and reset just them.  The tables end up exactly as the
+ * memset leaves them (every word 0xFFFFFFFF).  The first clear after boot
+ * is a full memset, since .bss zeros are not "empty". */
+static u16 dc_filled[2 << DISPATCH_CACHE_BITS];   /* (table << BITS) | slot */
+static u32 dc_filled_n;
+static u32 dc_list_valid;
+void dispatch_cache_clear(void)
+{
+  if (!dc_list_valid) {
+    memset(dispatch_cache_arm, 0xFF, sizeof(dispatch_cache_arm));
+    memset(dispatch_cache_thumb, 0xFF, sizeof(dispatch_cache_thumb));
+    dc_list_valid = 1;
+  } else {
+    u32 n;
+    for (n = 0; n < dc_filled_n; n++) {
+      u32 e = dc_filled[n];
+      u32 *tbl = (e >> DISPATCH_CACHE_BITS) ? dispatch_cache_thumb
+                                            : dispatch_cache_arm;
+      u32 i = (e & DC_MASK) * 2;
+      tbl[i] = 0xFFFFFFFFu;
+      tbl[i + 1] = 0xFFFFFFFFu;
+    }
+  }
+  dc_filled_n = 0;
+}
+#define DC_NOTE_FILL(tbl, i_) do {                                            \
+  if ((tbl)[i_] == 0xFFFFFFFFu && dc_list_valid)                              \
+    dc_filled[dc_filled_n++] = (u16)((((tbl) == dispatch_cache_thumb)         \
+                                      << DISPATCH_CACHE_BITS) | ((i_) / 2));  \
+} while (0)
+#else
 void dispatch_cache_clear(void)
 {
   memset(dispatch_cache_arm, 0xFF, sizeof(dispatch_cache_arm));
   memset(dispatch_cache_thumb, 0xFF, sizeof(dispatch_cache_thumb));
 }
+#define DC_NOTE_FILL(tbl, i_) do { } while (0)
+#endif
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
+  DC_NOTE_FILL(tbl, i_);                                                      \
   (tbl)[i_] = k_; (tbl)[i_ + 1] = (u32)(uintptr_t)(ptr);                      \
 } while (0)
 #else
