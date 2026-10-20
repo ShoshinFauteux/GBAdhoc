@@ -65,7 +65,7 @@ static char L_first[8];            /* outcome of attempt 1 when this is a retry 
 static int  L_blink, L_window_every_s = 600, L_stall_test_at, L_stall_test_attempt = 1;
 static int  L_sleep_journal, L_save_every_s, L_load_every_s;
 static unsigned L_susp_seen, L_cycle, L_after_frame;
-static uint64_t L_last_poll_us, L_next_save_us, L_next_load_us;
+static uint64_t L_last_poll_us, L_next_save_us, L_next_load_us, L_susp_us;
 static int  L_tlm_every = 300, L_tlm_flush_s = 60, L_window_after = 1, L_window_s = 30;
 static int  L_wall_limit_s = 900, L_attempts = 1;
 static uint64_t L_t0_us, L_last_flush_us;
@@ -1173,15 +1173,12 @@ void lab_power_poll(unsigned suspend_count, int in_ui)
       sleep_line("b boot=%u task=%s attempt=%u", L_b.boot, L_tid, L_attempt);
    }
    else if (suspend_count != L_susp_seen)
-   {  /* the main loop is running again after a sleep: the gap since its last frame is the sleep */
-      unsigned t_ms = (unsigned)((L_last_poll_us - L_t0_us) / 1000ull);
+   {  /* SUSPENDING was signalled (the callback counts it before the loop parks): log it now, in the main loop */
       L_susp_seen = suspend_count;
       L_cycle++;
-      sleep_line("c %u suspend f=%u t_ms=%u state=%s hold=-", L_cycle, L_last_frame, t_ms,
-                 in_ui ? "menu" : "gameplay");
-      sleep_line("c %u resume f=%u t_ms=%u slept_ms=%u rebuild=- rend=- vmem=- reopen=-", L_cycle, L_last_frame,
-                 (unsigned)((now - L_t0_us) / 1000ull), (unsigned)((now - L_last_poll_us) / 1000ull));
-      L_after_frame = L_last_frame + 600;
+      L_susp_us = now;
+      sleep_line("c %u suspend f=%u t_ms=%u state=%s hold=-", L_cycle, L_last_frame,
+                 (unsigned)((now - L_t0_us) / 1000ull), in_ui ? "menu" : "gameplay");
    }
    if (L_after_frame && L_last_frame >= L_after_frame)
    {
@@ -1189,6 +1186,17 @@ void lab_power_poll(unsigned suspend_count, int in_ui)
       L_after_frame = 0;
    }
    L_last_poll_us = now;
+}
+
+void lab_power_resumed(void)
+{
+   uint64_t now;
+   if (!L_active || !L_cycle)
+      return;
+   now = sceKernelGetSystemTimeWide();
+   sleep_line("c %u resume f=%u t_ms=%u slept_ms=%u rebuild=- rend=- vmem=- reopen=-", L_cycle, L_last_frame,
+              (unsigned)((now - L_t0_us) / 1000ull), (unsigned)((now - L_susp_us) / 1000ull));
+   L_after_frame = L_last_frame + 600;
 }
 
 int lab_state_due(void)

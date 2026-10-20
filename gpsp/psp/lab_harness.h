@@ -50,6 +50,8 @@ void lab_stalled(unsigned iter, int phase);
 /* suites H-S1: SLEEP.TXT journal, written from the MAIN LOOP only (lab_sleep_journal=1).  Fed the monotonic
  * suspend counter every frame; a change is a completed sleep/wake cycle. */
 void lab_power_poll(unsigned suspend_count, int in_ui);
+/* The main loop handled a RESUME_COMPLETE (g_pwr_resume): the end of the sleep. */
+void lab_power_resumed(void);
 /* suites H-S5: lab_state_save_every_s / lab_state_load_every_s.  1 = save now, 2 = load now, 0 = nothing. */
 int  lab_state_due(void);
 void lab_state_done(int what, int rc);

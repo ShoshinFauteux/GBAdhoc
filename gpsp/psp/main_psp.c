@@ -13615,7 +13615,7 @@ session_top:
        * whether resuming is a re-init job or a much larger one. */
       if (g_pwr_resume)
       {
-         g_pwr_resume = 0;
+         g_pwr_resume = 0; LAB_HOOK(lab_power_resumed();)
          fe_evt("power back frames=%u net=%d me=%d me_up=%d",
                 fe_host_frame_count(), g_net_up, g_me_rend, me_host_up());
          osd_toast("Resumed");
