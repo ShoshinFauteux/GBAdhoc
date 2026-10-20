@@ -2495,11 +2495,33 @@ static void emit_pmemst_stub(
       mips_emit_addiu(reg_temp, reg_rv, 0x8000);
     }
     mips_emit_lw(reg_temp, reg_temp, base_addr);    /* the word's tags */
-    mips_emit_sw(reg_a1, reg_rv, base_addr);        /* the store itself */
-    mips_emit_b(bne, reg_zero, reg_temp, 3);        /* -> hit path */
+    {
+    u8 *b_hit;
+#ifdef SMC_BLOCK_SAME
+    u8 *b_chg;
+#endif
+    b_hit = translation_ptr;
+    mips_emit_b(bne, reg_zero, reg_temp, 0);        /* -> hit path */
     mips_emit_nop();
+    mips_emit_sw(reg_a1, reg_rv, base_addr);        /* no code here: store */
     mips_emit_jr(mips_reg_ra);
     mips_emit_nop();
+    generate_branch_patch_conditional(b_hit, translation_ptr);
+#ifdef SMC_BLOCK_SAME
+    /* SMC_BLOCK_SAME: the word is code but the store does not change it --
+     * nothing translated from it is stale, so there is nothing to retire.
+     * Exact, and unlike SMC_SKIP_SAME (never shipped) it changes no trap:
+     * this word never traps in any build. */
+    mips_emit_lw(reg_temp, reg_rv, base_addr);      /* old value */
+    b_chg = translation_ptr;
+    mips_emit_b(bne, reg_temp, reg_a1, 0);
+    mips_emit_nop();
+    mips_emit_jr(mips_reg_ra);                      /* equal: nothing to do */
+    mips_emit_nop();
+    generate_branch_patch_conditional(b_chg, translation_ptr);
+#endif
+    }
+    mips_emit_sw(reg_a1, reg_rv, base_addr);        /* the store itself */
     /* hit: a0 = masked offset, rv = lui constant + offset (as smc_write) */
     mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
     emit_save_regs(true);

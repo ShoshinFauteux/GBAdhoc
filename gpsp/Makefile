@@ -490,6 +490,11 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_BLOCK_EXACT),1)
 	CFLAGS += -DSMC_BLOCK_EXACT
 	endif
+	# SMC_BLOCK_SAME=1 (with SMC_BLOCK_EXACT): a block-store word that hits
+	# code but leaves it unchanged retires nothing (exact; no trap involved).
+	ifeq ($(SMC_BLOCK_SAME),1)
+	CFLAGS += -DSMC_BLOCK_SAME
+	endif
 	# SMC_COVERAGE_MUTANT_BLOCK=1: ORACLE SELF-TEST ONLY.  The block-word hit
 	# handler retires nothing (the 2.0.2 hole reopened).
 	ifeq ($(SMC_COVERAGE_MUTANT_BLOCK),1)

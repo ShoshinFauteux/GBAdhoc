@@ -6473,6 +6473,12 @@ maybe_dump:
 
 #ifdef SMC_PARTIAL_SINGLE
 static int smc_single_store;   /* set by smc_writer_safe_range per event */
+/* SMC_SINGLE_UNTAG applies only to retirements caused by a WIDENED class or
+ * a block-store word hit (stack/overlay code that is usually dead after the
+ * write).  dr2's in-place patches (NFS, Smashing Drive, Doom) re-execute the
+ * patched block at once; lifting its tags there only churned the retired-tag
+ * table (twin: NFS Carbon +5%, Smashing +7% core). */
+static int smc_untag_now;
 /* Which single stores are admitted (smc-coverage 2026-10-20).  dr2 admitted
  * only IWRAM writers into IWRAM.  Neither restriction is a correctness
  * condition -- the store reports its whole write wherever it runs from, and
@@ -6502,7 +6508,10 @@ static u32 smc_wide_traps;
 static int smc_wide_gate(void)
 {
 #ifdef SMC_SINGLE_HOT
-  if (smc_partial_active || smc_wide_traps >= SMC_SINGLE_HOT)
+  /* Counted even when selective mode is already on (M4A mixer games): the
+   * corpus showed Pokemon titles otherwise switch their few boot-time
+   * widened traps to the new path for no gain. */
+  if (smc_wide_traps >= SMC_SINGLE_HOT)
     return 1;
   smc_wide_traps++;
   return 0;
@@ -6545,16 +6554,13 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
     if ((top == 0x5000 || top == 0x5200 || top == 0x5400 ||
          (op & 0xF800) == 0x6000 || (op & 0xF800) == 0x7000 ||
          (op & 0xF800) == 0x8000 || (op & 0xF800) == 0x9000
-#ifdef SMC_BLOCK_EXACT
-         /* Thumb STMIA Rb!: earlier words checked by the aligned stub */
-         || (op & 0xF800) == 0xC000
-#endif
         ) &&
         SMC_SINGLE_WRITER_OK(pc) && SMC_SINGLE_TARGET_OK(addr) &&
         smc_wide_gate()) {
       *low = addr & ~3u;
       *high = *low + 4;
       smc_single_store = 1;
+      smc_untag_now = 1;
       return 1;
     }
 #endif
@@ -6595,6 +6601,7 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
     *low = addr & ~3u;
     *high = *low + 4;
     smc_single_store = 1;
+    smc_untag_now = !((op & 0x0C100000) == 0x04000000 && SMC_DR2_CLASS(pc, addr));
     return 1;
   }
 #endif
@@ -6605,7 +6612,13 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
    * is a single word as far as retirement is concerned.  M4A's mixer patch
    * keeps its established gated range path (same predicate as below), so
    * Unbound and Heart & Soul keep their 4.1.1 block layout. */
-  if ((op & 0x0E100000) == 0x08000000 &&       /* STM, L=0 */
+  /* Writeback block stores (advancing copies: Hot Wheels and LEGO copy code
+   * into IWRAM every frame with STMIA r0!,{r4-r11}) keep the full flush: one
+   * flush, after which the rest of the copy runs untrapped, is far cheaper
+   * than retiring the destination block by block (twin: +27% core on Hot
+   * Wheels).  That is cost policy only -- their earlier words are still
+   * handled exactly by the aligned stub. */
+  if ((op & 0x0E300000) == 0x08000000 &&       /* STM, L=0, W=0 */
       !(((op >> 16) & 0xF) == REG_LR && !(op & 0x01000000) &&
         (op & 0x00800000) && !(op & 0x00400000) && !(op & 0x00200000) &&
         addr > pc && addr - pc <= SMC_MIXER_PATCH_SPAN && (op & 0xFFFF)) &&
@@ -6614,6 +6627,7 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
     *low = addr & ~3u;
     *high = *low + 4;
     smc_single_store = 1;
+    smc_untag_now = 1;
     return 1;
   }
 #endif
@@ -6712,6 +6726,12 @@ static int smc_retire_span(u32 lo, u32 hi)
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, span, first, last, i;
   u32 rgn;
+#ifdef DISPATCH_CACHE
+  int dc_cleared = 0;
+#endif
+#ifdef SMC_SINGLE_UNTAG
+  u32 ulo = hi, uhi = lo;      /* union of the retired blocks' extents */
+#endif
 
   if ((lo >> 24) == 3) {
     tagp = (u16 *)iwram;
@@ -6752,13 +6772,22 @@ static int smc_retire_span(u32 lo, u32 hi)
         return 0;
     }
   }
-#ifdef DISPATCH_CACHE
-  dispatch_cache_clear();
-#endif
   for (i = first; i <= last; i++) {
     if (VALID_TAG(tagp[i])) {
       ramtag_type *te = get_ram_tag(tagp[i]);
       u32 start = base + (i << 1);
+#ifdef DISPATCH_CACHE
+      /* Empty the dispatch cache before the FIRST retirement only: a cached
+       * pc may map to a retired thunk (which itself dispatches: a loop).
+       * Nothing retired, nothing to empty (smc-coverage: the unconditional
+       * 8 KiB memset was a third of Hot Wheels' retire cost). */
+      if (!dc_cleared &&
+          ((SMC_RAM_LIVE_OFFSET(te, arm) && start < hi && te->blk_end_arm > lo) ||
+           (SMC_RAM_LIVE_OFFSET(te, thumb) && start < hi && te->blk_end_thumb > lo))) {
+        dispatch_cache_clear();
+        dc_cleared = 1;
+      }
+#endif
 #ifndef SMC_COVERAGE_MUTANT_SKIP_LAST
       if (SMC_RAM_LIVE_OFFSET(te, arm) && start < hi &&
           te->blk_end_arm > lo) {
@@ -6771,12 +6800,20 @@ static int smc_retire_span(u32 lo, u32 hi)
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
         te->code_bytes_arm = 0;
         flush_ram_partial++;
+#ifdef SMC_SINGLE_UNTAG
+        if (start < ulo) ulo = start;
+        if (te->blk_end_arm > uhi) uhi = te->blk_end_arm;
+#endif
       }
       if (SMC_RAM_LIVE_OFFSET(te, thumb) && start < hi &&
           te->blk_end_thumb > lo) {
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
         te->code_bytes_thumb = 0;
         flush_ram_partial++;
+#ifdef SMC_SINGLE_UNTAG
+        if (start < ulo) ulo = start;
+        if (te->blk_end_thumb > uhi) uhi = te->blk_end_thumb;
+#endif
       }
     }
   }
@@ -6784,20 +6821,65 @@ static int smc_retire_span(u32 lo, u32 hi)
   jit_code_publish();
 #endif
 #ifdef SMC_SINGLE_UNTAG
-  /* SMC_SINGLE_UNTAG: a block-start tag inside the written range whose
-   * entry now has no live translation in either mode is lifted too, kept in
-   * smc_retired_tags and put back by the next lookup at that address
-   * (SMC_RESTORE_RETIRED_TAG) -- the mechanism the mixer range path already
-   * uses.  Without it every later DATA store to that word traps again and
-   * retires nothing (Top Gear Rally's stack: 167k traps in 1200 frames).
-   * A full table keeps the tag (the old behaviour), never a full flush. */
-  for (i = lo_off >> 1; i < (hi_off >> 1); i++)
-    if (VALID_TAG(tagp[i])) {
-      ramtag_type *te = get_ram_tag(tagp[i]);
-      if (!SMC_RAM_LIVE_OFFSET(te, arm) && !SMC_RAM_LIVE_OFFSET(te, thumb) &&
-          smc_remember_retired_tag(base + (i << 1), tagp[i]))
-        tagp[i] = 0;
+  if (smc_untag_now)
+  /* SMC_SINGLE_UNTAG: do for the retired blocks what a full flush does for
+   * every block -- take their code marks off guest memory -- but only where
+   * no block that is STILL LIVE covers the halfword.  Region U is the union
+   * of the retired blocks' extents (or just the written range when nothing
+   * was retired).  A halfword of U no live extent covers loses its interior
+   * mark (CODE_TAG_BLOCK16), and a block-start tag there whose entry has no
+   * live translation in either mode is lifted into smc_retired_tags, which
+   * the next lookup at that address restores (SMC_RESTORE_RETIRED_TAG; the
+   * mechanism the mixer range path already uses).  Without this, every later
+   * store into a retired block's remaining words traps again and retires
+   * nothing: Top Gear Rally's stack (167k traps / 1200 frames), Hot Wheels'
+   * per-frame code copy (50k traps vs 374 full flushes on 4.1.1).
+   * A live block keeps every one of its marks, so no write to live code can
+   * go unreported.  A full retired-tag table keeps the tag (never a flush). */
+  {
+    u32 u_lo, u_hi, n, j, k, scan0;
+    u8 cov[(MAX_BLOCK_SIZE * 8) / 16];   /* 1 bit per halfword of U */
+    if (ulo >= uhi) { ulo = lo; uhi = hi; }
+    if (ulo < base) ulo = base;
+    if (uhi > base + bytes) uhi = base + bytes;
+    u_lo = (ulo - base) >> 1;
+    u_hi = (uhi - base + 1) >> 1;
+    n = u_hi - u_lo;
+    if (n <= sizeof(cov) * 8) {
+      memset(cov, 0, (n + 7) >> 3);
+      scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
+      for (i = scan0; i < u_hi; i++) {
+        if (VALID_TAG(tagp[i])) {
+          ramtag_type *te = get_ram_tag(tagp[i]);
+          u32 e[2], m;
+          e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 0;
+          e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 0;
+          for (m = 0; m < 2; m++) {
+            u32 e_off;
+            if (!e[m]) continue;
+            e_off = (e[m] - base + 1) >> 1;          /* exclusive, halfwords */
+            for (k = (i > u_lo ? i : u_lo); k < u_hi && k < e_off; k++)
+              cov[(k - u_lo) >> 3] |= (u8)(1u << ((k - u_lo) & 7));
+          }
+        }
+      }
+      for (j = 0; j < n; j++) {
+        u32 h = u_lo + j;
+        if (cov[j >> 3] & (1u << (j & 7)))
+          continue;
+        if (tagp[h] == CODE_TAG_BLOCK16)
+          tagp[h] = 0;
+#ifndef SMC_UNTAG_MARKS_ONLY   /* experiment: interior marks only */
+        else if (VALID_TAG(tagp[h])) {
+          ramtag_type *te = get_ram_tag(tagp[h]);
+          if (!SMC_RAM_LIVE_OFFSET(te, arm) && !SMC_RAM_LIVE_OFFSET(te, thumb) &&
+              smc_remember_retired_tag(base + (h << 1), tagp[h]))
+            tagp[h] = 0;
+        }
+#endif
+      }
     }
+  }
 #endif
   for (i = lo_off >> 1; i < (hi_off >> 1); i++)
     if (tagp[i] == CODE_TAG_BLOCK16)
@@ -6830,6 +6912,7 @@ void smc_block_word_hit(u32 base_plus_off, u32 off)
   if (!smc_partial_active)
     return;
 #ifndef SMC_COVERAGE_MUTANT_BLOCK_IGNORE
+  smc_untag_now = 1;
   if (smc_retire_span(addr, addr + 4)) {
     smc_block_retired++;
     SMC_FB(13);
@@ -7228,6 +7311,7 @@ void flush_translation_cache_ram_smc(void)
   int range_safe;
 #ifdef SMC_PARTIAL_SINGLE
   smc_single_store = 0;
+  smc_untag_now = 0;
 #endif
   range_safe = smc_writer_safe_range(&partial_low, &partial_high);
   int range_gate_changed = 0;

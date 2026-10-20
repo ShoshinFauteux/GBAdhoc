@@ -198,7 +198,8 @@
  * retires through smc_retire_span, which only exists with it. */
 #if (defined(SMC_SINGLE_THUMB) || defined(SMC_SINGLE_HALF) || \
      defined(SMC_SINGLE_ANYPC) || defined(SMC_SINGLE_EWRAM) || \
-     defined(SMC_BLOCK_EXACT) || defined(SMC_SINGLE_UNTAG)) && \
+     defined(SMC_BLOCK_EXACT) || defined(SMC_SINGLE_UNTAG) || \
+     defined(SMC_BLOCK_SAME)) && \
     !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
 #error "SMC_SINGLE_* / SMC_BLOCK_EXACT need SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK."
 #endif

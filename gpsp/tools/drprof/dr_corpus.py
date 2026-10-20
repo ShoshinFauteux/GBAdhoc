@@ -177,7 +177,7 @@ if os.environ.get("DRCORPUS_SMC") == "1":
     CLS_A = (" -DSMC_PARTIAL_SINGLE -DSMC_SINGLE_THUMB -DSMC_SINGLE_HALF"
              " -DSMC_SINGLE_ANYPC -DSMC_SINGLE_EWRAM")
     CLS_B = CLS_A + " -DSMC_BLOCK_EXACT"
-    CLS_H = CLS_B + " -DSMC_SINGLE_UNTAG -DSMC_SINGLE_HOT=64"
+    CLS_H = CLS_B + " -DSMC_SINGLE_UNTAG -DSMC_BLOCK_SAME -DSMC_SINGLE_HOT=64"
     STALE = " -DSTALE_CHECK -DSMC_FALLBACK_STATS -UDISPATCH_CACHE -DSTALE_ABORT=1"
     _ref = os.environ.get("DRCORPUS_SMCREF", "ship")
     _refdefs = F2 + {"ship": "", "cova": CLS_A, "covb": CLS_B, "covh": CLS_H}[_ref]
@@ -190,7 +190,7 @@ if os.environ.get("DRCORPUS_SMC") == "1":
         "covas": (F2 + CLS_A + STALE, "assert", "cova + stale-entry checker that aborts"),
         "covbs": (F2 + CLS_B + STALE, "assert", "covb + stale-entry checker that aborts"),
         "covu": (F2 + CLS_B + " -DSMC_SINGLE_UNTAG", "switch", "covb + SMC_SINGLE_UNTAG"),
-        "covh": (F2 + CLS_H, "switch", "THE CANDIDATE: covb + UNTAG + SMC_SINGLE_HOT=64"),
+        "covh": (F2 + CLS_H, "switch", "THE CANDIDATE: covb + UNTAG + BLOCK_SAME + SMC_SINGLE_HOT=64"),
         "covhs": (F2 + CLS_H + STALE, "assert", "covh + stale-entry checker that aborts"),
     }
     ORDER = list(VARIANTS)
