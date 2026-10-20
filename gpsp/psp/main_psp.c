@@ -2659,6 +2659,8 @@ static unsigned g_vb_us, g_vb_vc;
  * iteration that emulated the frame".  1 is the floor. */
 static unsigned g_lat_poll_vc;
 static unsigned g_mer_stage_pvc[2];   /* poll vcount of each stage's frame */
+static unsigned g_lat_seq;            /* loop iterations (input polls)     */
+static unsigned g_mer_stage_seq[2];   /* ...the one each stage was posted in */
 static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
 static int      g_bb_new;             /* back buffer holds an unshown frame */
 static unsigned g_lat_hist[8], g_lat_over, g_lat_early, g_lat_post, g_lat_hold;
@@ -3742,6 +3744,7 @@ static void me_rend_frame(int emulated)
          }
          g_mer_pending = out;
          g_mer_stage_pvc[out] = g_lat_poll_vc;
+         g_mer_stage_seq[out] = g_lat_seq;
 #ifdef REWIND
          if (g_rw_slot)
             g_rw_slot_posted = 1;
@@ -11102,8 +11105,12 @@ static int lat_wait_step(void)
          g_lw_ll = LL_DONE;       /* the ME went away / FF / rewind */
          ll_to_b();
       }
-      else if (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented)
+      else if (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented &&
+               g_mer_stage_seq[g_mer_ready] == g_lat_seq)
       {
+         /* (only THIS iteration's render: the one the loop top retired is
+          * superseded -- presenting it here would keep the mode one frame
+          * behind for good, which is exactly what hardware showed) */
          if (us_to_vblank(now) >= need)
          {
             me_rend_present();
@@ -11149,7 +11156,8 @@ static int lat_wait_step(void)
    if (g_lw_measure)
    {
       if (g_mer_pending < 0 && g_mer_ready >= 0 &&
-          g_mer_ready != g_mer_last_presented)
+          g_mer_ready != g_mer_last_presented &&
+          g_mer_stage_seq[g_mer_ready] == g_lat_seq)
       {
          if (us_to_vblank(now) >= need)
          {
@@ -13728,6 +13736,7 @@ session_top:
             g_in_fresh_got++;
       }
       g_lat_poll_vc = sceDisplayGetVcount();
+      g_lat_seq++;
       {
          unsigned age = (unsigned)sceKernelGetSystemTimeLow() - pd.TimeStamp;
          if (age < 100000u)
