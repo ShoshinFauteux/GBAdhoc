@@ -94,6 +94,9 @@ if os.environ.get("DRCORPUS_SHIP") == "1":
         "fast2": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
                   " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1", "switch",
                   "the 4.0.0 beta: SCHED_FAST + IRQ_IO_FAST both on"),
+        "xlat":  (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
+                  " -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1 -DXLAT_FAST=1", "switch",
+                  "fast2 + XLAT_FAST (claude/bench-xlat: cheaper translation, same output)"),
         "fast2off": (SHIP + " -DSCHED_FAST=1 -DIRQ_IO_FAST=1", "switch",
                   "both compiled in, both off (the config.ini kill switches)"),
         "rwoff": (SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1"
@@ -122,6 +125,7 @@ REF_PATCHES = {"sndpre": "snd_phase_fraction_only.patch"}
 # the corpus has NOT been tested by it -- the corpus never reaches its code
 # path.  `dr_corpus.py mutants` must report every mutant CAUGHT.
 # name -> (VDEFS, patch file or "", the switch it attacks, what the bug is)
+XLAT_MUT = SHIP + " -DXLAT_FAST=1"
 MUTANTS = {
     "m_negctl":    ("-DDRPROF_NEGCTL", "", "timing",
                     "+1 cycle per Thumb instruction (dr_oracle's own control)"),
@@ -146,7 +150,56 @@ MUTANTS = {
                     "fast path taken with a serial transfer pending"),
     "m_si_rfu":    (SI, "si_take_rfu.patch", "si",
                     "fast path also skips the RFU adapter"),
+    # XLAT_FAST (claude/bench-xlat): each piece broken on purpose.
+    "m_xf_dclear":  (XLAT_MUT, "xf_dclear_one.patch", "xlat",
+                     "DCLEAR resets only the first filled dispatch slot"),
+    "m_xf_noent":   (XLAT_MUT, "xf_gatemap_noent.patch", "xlat",
+                     "GATEMAP ignores IWRAM entry gates"),
+    "m_xf_limits":  (XLAT_MUT, "xf_limits_first.patch", "xlat",
+                     "LIMITS records only each block's first pc"),
+    "m_xf_exitpf":  (XLAT_MUT, "xf_exitpf_nobranch.patch", "xlat",
+                     "EXITPF prefilter misses B (0xA) opcodes"),
 }
+
+
+# ---- DRCORPUS_SMC=1: the smc-coverage set (claude/smc-coverage) ------------
+# SMC policy switches are NOT timing-neutral (a selective retire keeps tags
+# that a full flush clears, so later stores trap differently; the single path
+# installs no gates), so against the shipped reference they are expected to
+# differ in SMC-heavy titles: each such cell is a divergence to explain.  The
+# correctness checks are therefore (1) covbs: the stale-entry checker on every
+# block entry ABORTS on stale code (kind assert: must not die), and (2) the
+# mutants, which run against DRCORPUS_SMCREF (default the shipped config; set
+# DRCORPUS_SMCREF=covb in a home of its own so a mutant is judged against the
+# switch it breaks, not against timing noise).
+if os.environ.get("DRCORPUS_SMC") == "1":
+    F2 = SHIP + " -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1 -DIRQ_IO_FAST=1 -DIRQ_IO_FAST_DEFAULT=1"
+    CLS_A = (" -DSMC_PARTIAL_SINGLE -DSMC_SINGLE_THUMB -DSMC_SINGLE_HALF"
+             " -DSMC_SINGLE_ANYPC -DSMC_SINGLE_EWRAM")
+    CLS_B = CLS_A + " -DSMC_BLOCK_EXACT"
+    CLS_H = CLS_B + " -DSMC_SINGLE_UNTAG -DSMC_SINGLE_HOT=64"
+    STALE = " -DSTALE_CHECK -DSMC_FALLBACK_STATS -UDISPATCH_CACHE -DSTALE_ABORT=1"
+    _ref = os.environ.get("DRCORPUS_SMCREF", "ship")
+    _refdefs = F2 + {"ship": "", "cova": CLS_A, "covb": CLS_B, "covh": CLS_H}[_ref]
+    VARIANTS = {
+        "base": (_refdefs, "ref", "reference: %s (4.1.1 CORE_COMMON + fast2%s)" % (
+            _ref, "" if _ref == "ship" else " + smc-coverage " + _ref)),
+        "dr2":  (F2 + " -DSMC_PARTIAL_SINGLE", "switch", "SMC_PARTIAL_SINGLE (claude/bench-dr 82f099a)"),
+        "cova": (F2 + CLS_A, "switch", "class A: + Thumb/STRH/any-writer/EWRAM single stores"),
+        "covb": (F2 + CLS_B, "switch", "class A + SMC_BLOCK_EXACT (block stores)"),
+        "covas": (F2 + CLS_A + STALE, "assert", "cova + stale-entry checker that aborts"),
+        "covbs": (F2 + CLS_B + STALE, "assert", "covb + stale-entry checker that aborts"),
+        "covu": (F2 + CLS_B + " -DSMC_SINGLE_UNTAG", "switch", "covb + SMC_SINGLE_UNTAG"),
+        "covh": (F2 + CLS_H, "switch", "THE CANDIDATE: covb + UNTAG + SMC_SINGLE_HOT=64"),
+        "covhs": (F2 + CLS_H + STALE, "assert", "covh + stale-entry checker that aborts"),
+    }
+    ORDER = list(VARIANTS)
+    MUTANTS = {
+        "m_cov_skip": (F2 + CLS_H + " -DSMC_COVERAGE_MUTANT_SKIP_LAST", "", "covh",
+                       "smc_retire_span skips ARM blocks starting inside the written range"),
+        "m_cov_blk":  (F2 + CLS_H + " -DSMC_COVERAGE_MUTANT_BLOCK_IGNORE", "", "covh",
+                       "SMC_BLOCK_EXACT word hits retire nothing (the 2.0.2 hole)"),
+    }
 
 
 def vdefs(v):

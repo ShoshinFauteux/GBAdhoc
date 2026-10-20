@@ -193,4 +193,14 @@
 #error "JIT_CODE_CHECK/_AUDIT/_AB without JIT_CODE_DISCIPLINE: they need it."
 #endif
 
+/* smc-coverage (2026-10-20): the single-store class switches widen
+ * SMC_PARTIAL_SINGLE and do nothing without it; SMC_BLOCK_EXACT's handler
+ * retires through smc_retire_span, which only exists with it. */
+#if (defined(SMC_SINGLE_THUMB) || defined(SMC_SINGLE_HALF) || \
+     defined(SMC_SINGLE_ANYPC) || defined(SMC_SINGLE_EWRAM) || \
+     defined(SMC_BLOCK_EXACT) || defined(SMC_SINGLE_UNTAG)) && \
+    !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
+#error "SMC_SINGLE_* / SMC_BLOCK_EXACT need SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK."
+#endif
+
 #endif /* GPSP_PROFILE_H */

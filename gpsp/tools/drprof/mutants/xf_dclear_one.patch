@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c	2026-10-20 02:59:54.031230700 -0400
++++ b/cpu_threaded.c	2026-10-20 02:59:54.096628200 -0400
+@@ -3702,7 +3702,7 @@
+     dc_list_valid = 1;
+   } else {
+     u32 n;
+-    for (n = 0; n < dc_filled_n; n++) {
++    for (n = 0; n < dc_filled_n && n < 1; n++) {
+       u32 e = dc_filled[n];
+       u32 *tbl = (e >> DISPATCH_CACHE_BITS) ? dispatch_cache_thumb
+                                             : dispatch_cache_arm;

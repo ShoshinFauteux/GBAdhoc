@@ -456,6 +456,50 @@ else ifeq ($(platform), psp1)
 	endif
 	# SMC_FALLBACK_STATS=1: DIAGNOSTIC.  Count why SMC traps fall back to a
 	# full RAM flush (EVT core_health smcfb=).
+	# smc-coverage 2026-10-20: widen SMC_PARTIAL_SINGLE, one class per switch
+	# (all need SMC_PARTIAL_SINGLE=1; cpu_threaded.c smc_writer_safe_range).
+	#   SMC_SINGLE_THUMB=1  Thumb STR/STRH/STRB single stores
+	#   SMC_SINGLE_HALF=1   ARM STRH
+	#   SMC_SINGLE_ANYPC=1  writers outside IWRAM (ROM/EWRAM/BIOS)
+	#   SMC_SINGLE_EWRAM=1  EWRAM targets (smc_retire_span)
+	#   SMC_SINGLE_HOT=K    widened classes engage only after K of their traps
+	#                       (or once selective retirement is already active)
+	ifneq ($(SMC_SINGLE_HOT),)
+	CFLAGS += -DSMC_SINGLE_HOT=$(SMC_SINGLE_HOT)
+	endif
+	#   SMC_SINGLE_UNTAG=1  also lift dead block-start tags in the written range
+	ifeq ($(SMC_SINGLE_UNTAG),1)
+	CFLAGS += -DSMC_SINGLE_UNTAG
+	endif
+	ifeq ($(SMC_SINGLE_THUMB),1)
+	CFLAGS += -DSMC_SINGLE_THUMB
+	endif
+	ifeq ($(SMC_SINGLE_HALF),1)
+	CFLAGS += -DSMC_SINGLE_HALF
+	endif
+	ifeq ($(SMC_SINGLE_ANYPC),1)
+	CFLAGS += -DSMC_SINGLE_ANYPC
+	endif
+	ifeq ($(SMC_SINGLE_EWRAM),1)
+	CFLAGS += -DSMC_SINGLE_EWRAM
+	endif
+	# SMC_BLOCK_EXACT=1: tag-check every non-final word of a non-SP block
+	# store (mips_emit.h aligned store stub) and retire what it hits; block
+	# stores' final-word traps then take the exact single-word path.  Needs
+	# SMC_PARTIAL_SINGLE=1 (and SMC_SINGLE_THUMB=1 for Thumb STMIA).
+	ifeq ($(SMC_BLOCK_EXACT),1)
+	CFLAGS += -DSMC_BLOCK_EXACT
+	endif
+	# SMC_COVERAGE_MUTANT_BLOCK=1: ORACLE SELF-TEST ONLY.  The block-word hit
+	# handler retires nothing (the 2.0.2 hole reopened).
+	ifeq ($(SMC_COVERAGE_MUTANT_BLOCK),1)
+	CFLAGS += -DSMC_COVERAGE_MUTANT_BLOCK_IGNORE
+	endif
+	# SMC_COVERAGE_MUTANT=1: ORACLE SELF-TEST ONLY.  smc_retire_span skips ARM
+	# blocks that start inside the written range; the oracle must catch it.
+	ifeq ($(SMC_COVERAGE_MUTANT),1)
+	CFLAGS += -DSMC_COVERAGE_MUTANT_SKIP_LAST
+	endif
 	ifeq ($(SMC_FALLBACK_STATS),1)
 	CFLAGS += -DSMC_FALLBACK_STATS
 	endif
@@ -463,6 +507,12 @@ else ifeq ($(platform), psp1)
 	# Hash each RAM block's guest bytes at translation and re-check on reuse.
 	ifeq ($(STALE_CHECK),1)
 	CFLAGS += -DSTALE_CHECK
+	endif
+	# STALE_CHECK_ALL_ENTRIES=1: DIAGNOSTIC (with STALE_CHECK).  Route every
+	# RAM-bound block exit through the dispatcher so the stale check sees every
+	# block entry, not only lookups.  Changes timing.
+	ifeq ($(STALE_CHECK_ALL_ENTRIES),1)
+	CFLAGS += -DSTALE_CHECK_ALL_ENTRIES
 	endif
 	# SMC_CLASS_PROBE=1: DIAGNOSTIC, in NO profile.  Classify every SMC trap by
 	# writer shape (ARM/Thumb, single/STM, writeback) to ms0:/smcclass.txt.

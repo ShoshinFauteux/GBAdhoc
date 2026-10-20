@@ -2108,6 +2108,9 @@ extern u32 tmemld[11][16];
 extern u32 tmemst[ 4][16];
 extern u32 thnjal[15*16];
 void smc_write();
+#ifdef SMC_BLOCK_EXACT
+void smc_block_word_hit(u32 base_plus_off, u32 off);   /* cpu_threaded.c */
+#endif
 cpu_alert_type write_io_register8 (u32 address, u32 value);
 cpu_alert_type write_io_register16(u32 address, u32 value);
 cpu_alert_type write_io_register32(u32 address, u32 value);
@@ -2469,6 +2472,49 @@ static void emit_pmemst_stub(
     emit_rw_mark(reg_temp, RW_CLEAN_VRAM);
 #endif
   }
+
+#ifdef SMC_BLOCK_EXACT
+  /* SMC_BLOCK_EXACT (smc-coverage 2026-10-20): the ALIGNED store is every
+   * word of a non-SP block store except its last (ARM STM, Thumb STMIA), and
+   * upstream gives it no SMC check -- the 2.0.2 block-copy hole: a word that
+   * lands on translated code goes unreported, so selective retirement could
+   * never be trusted with a block store.  Here the word is stored, then its
+   * tag is tested; on a hit, smc_block_word_hit() retires exactly the blocks
+   * covering it (when selective retirement is active) and the stub RETURNS,
+   * so the store sequence continues as before: no trap, no re-dispatch, no
+   * change to the guest's cycle count.  With every earlier word handled
+   * here, the final word's ordinary trap describes the rest of the write
+   * exactly, which is what lets smc_writer_safe_range admit block stores.
+   * SP-based block stores take the inline fast path (arm/thumb_block_memory)
+   * and are NOT covered; neither are they in 4.1.1. */
+  if (meminfo->check_smc && aligned) {
+    if (region == 2) {
+      mips_emit_lui(reg_temp, 0x40000 >> 16);
+      mips_emit_addu(reg_temp, reg_rv, reg_temp);
+    } else {
+      mips_emit_addiu(reg_temp, reg_rv, 0x8000);
+    }
+    mips_emit_lw(reg_temp, reg_temp, base_addr);    /* the word's tags */
+    mips_emit_sw(reg_a1, reg_rv, base_addr);        /* the store itself */
+    mips_emit_b(bne, reg_zero, reg_temp, 3);        /* -> hit path */
+    mips_emit_nop();
+    mips_emit_jr(mips_reg_ra);
+    mips_emit_nop();
+    /* hit: a0 = masked offset, rv = lui constant + offset (as smc_write) */
+    mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+    emit_save_regs(true);
+    mips_emit_addu(reg_a1, reg_a0, reg_zero);
+    mips_emit_addu(reg_a0, reg_rv, reg_zero);
+    genccall(&smc_block_word_hit);
+    mips_emit_nop();
+    mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+    emit_restore_regs(true);
+    mips_emit_jr(mips_reg_ra);
+    mips_emit_nop();
+    *tr_ptr = translation_ptr;
+    return;
+  }
+#endif
 
   // Generate SMC write and tracking
   // TODO: Should we have SMC checks here also for aligned?

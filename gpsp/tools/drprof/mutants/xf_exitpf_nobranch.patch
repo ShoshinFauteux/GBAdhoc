@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c	2026-10-20 02:59:54.031230700 -0400
++++ b/cpu_threaded.c	2026-10-20 02:59:54.590238500 -0400
+@@ -3814,7 +3814,7 @@
+  * proves "not an exit point", which is most instructions, in two tests. */
+ #if defined(XLAT_FAST) && !defined(XLAT_NO_EXITPF)
+ #define arm_exit_point_scan                                                   \
+- (((opcode & 0x8000) || (opcode >= 0xA000000)) && arm_exit_point)
++ (((opcode & 0x8000) || (opcode >= 0xB000000)) && arm_exit_point)
+ #else
+ #define arm_exit_point_scan arm_exit_point
+ #endif
