@@ -236,7 +236,7 @@ endif
 # is not compiled and main_psp.c's LAB_HOOK()s expand to nothing.
 LAB_HARNESS ?= 0
 ifeq ($(LAB_HARNESS),1)
-OBJS += lab_harness.o
+OBJS += lab_harness.o labab/budget.o labab/ab_io.o
 CFLAGS += -DLAB_HARNESS
 endif
 GBA_LINK ?= 0

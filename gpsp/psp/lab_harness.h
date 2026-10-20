@@ -34,11 +34,15 @@ void lab_set_eboot_crc(unsigned crc);
 /* After the save/state sidecar paths are computed: point them at
  * out/<tid>/work/ and copy the task's input state/save there. */
 void lab_sidecars(char *save_path, size_t save_sz, char *state_path, size_t state_sz);
+/* script / pad_script: resolve in tasks/<tid>/ instead of next to the EBOOT. */
+void lab_task_file(char *out, size_t out_sz, const char *name);
 /* Once per main-loop frame.  Returns nonzero when the task's wall-clock
  * limit is reached (the caller ends the loop with exit 6 lab_wall_limit). */
 int  lab_frame(unsigned frame, unsigned wall_us, unsigned work_us,
                unsigned loop_iter, int loop_phase);
 void lab_event(int code, unsigned arg, const char *text);
+/* For the instruments agent: one pre-framed 64-byte TLM record (type 4..10). */
+void lab_tlm_put(const void *rec64);
 /* Replaces handoff_run() while a task is active: telemetry, RESULT.TXT,
  * then the window and the relaunch.  Returns only if every relaunch path
  * failed (the caller then exits to the XMB). */

@@ -37,6 +37,7 @@
 #include <systemctrl.h>
 
 #include "lab_harness.h"
+#include "labab/ab_io.h"     /* autoboot agent's BUDGET.TXT contract, verbatim from GBAdhoc-Lab autoboot/src (d31d586) */
 #include "fe_util.h"
 #include "fe_evt.h"
 
@@ -45,6 +46,8 @@ extern uint32_t flush_rom_total, gamepak_reopens, gamepak_short_reads, badjump_c
 extern uint32_t dma_smc_flushes __attribute__((weak));
 extern uint32_t badjump_recoveries __attribute__((weak));
 extern uint32_t jit_code_stats[10] __attribute__((weak));
+/* instruments agent (claude/lab-instruments, LAB_INSTR=1): flushed into the ring before the result */
+void lab_instr_exit(void) __attribute__((weak));
 
 /* ---------------------------------------------------------------- state */
 #define ROOT_MAX 32
@@ -59,6 +62,7 @@ static int  L_tlm_every = 300, L_tlm_flush_s = 60, L_window_after = 1, L_window_
 static int  L_wall_limit_s = 900, L_attempts = 1;
 static uint64_t L_t0_us, L_last_flush_us;
 static int  L_batt_start = -1;
+static int  L_proof;     /* autoboot refill proof: a token-valid CMD.TXT consumed this boot, or a RESULT.TXT written */
 static unsigned L_last_frame;
 
 typedef struct {
@@ -300,6 +304,8 @@ static const char *const lab_usb_prx[] = {
    "flash0:/kd/usbstorms.prx", "flash0:/kd/usbstorboot.prx",
 };
 
+static int L_ab_rc = AB_E_MISSING, L_ab_left = -1, L_ab_seq = -1;
+
 static int lab_usb_up(void)
 {
    unsigned i;
@@ -399,13 +405,32 @@ static void lab_window(const char *kind, unsigned seconds)
       kv(buf, "seq", qseq, sizeof(qseq));
    snprintf(L_b.last_token, sizeof(L_b.last_token), "%s-%u-1", L_labid, L_b.boot);
    b = batt_pct();
+   {  /* autoboot contract 1: refill in exactly one place, right before WINDOW.TXT, USB still down */
+      char bp[64];
+      ab_budget bb;
+      ab_u64 now = ab_rtc_now();
+      path2(bp, sizeof(bp), L_root, "sys/BUDGET.TXT");
+      L_ab_rc = ab_budget_load(bp, &bb);
+      if (now && ab_harness_should_refill(L_ab_rc, &bb, now, L_proof))
+      {
+         ab_budget_refill(&bb, L_ab_rc, now, L_b.boot);
+         if (ab_budget_store(bp, &bb) == 0)
+         {
+            journal("budget refill left=%u seq=%u (was %s)", bb.left, bb.seq, ab_err_name(L_ab_rc));
+            L_ab_rc = AB_OK;
+         }
+      }
+      L_ab_left = L_ab_rc == AB_OK ? (int)bb.left : -1;
+      L_ab_seq = L_ab_rc == AB_OK ? (int)bb.seq : -1;
+   }
    {
       char bs[8] = "";     /* unknown battery: an empty value, never 0 */
       if (b >= 0)
          snprintf(bs, sizeof(bs), "%d", b);
       n = snprintf(buf, sizeof(buf), "v=1\nid=%s\nboot=%u\nwin=1\ntoken=%s\nstate=open\nseconds=%u\nkind=%s\n"
-                   "self=%s\nqueue_seq=%s\nready=%s\nbatt=%s\n", L_labid, L_b.boot, L_b.last_token, seconds,
-                   kind, L_self, qseq, ready, bs);
+                   "self=%s\nqueue_seq=%s\nready=%s\nbatt=%s\nab_rc=%s\nab_left=%d\nab_seq=%d\nharness_v=%d\n",
+                   L_labid, L_b.boot, L_b.last_token, seconds, kind, L_self, qseq, ready, bs,
+                   L_ab_rc == AB_OK ? "ok" : ab_err_name(L_ab_rc), L_ab_left, L_ab_seq, LAB_HARNESS_V);
       if (n >= (int)sizeof(buf))
          n = (int)sizeof(buf) - 1;
    }
@@ -414,11 +439,17 @@ static void lab_window(const char *kind, unsigned seconds)
    path2(p, sizeof(p), L_root, "sys/WINDOW.TXT");
    wr(p, buf, n, 0);
    /* ---- the card belongs to the PC from here until lab_usb_down ---- */
-   if (lab_usb_up() < 0)
    {
-      if (lab_usb_down() < 0)
-         sceKernelExitGame();       /* ownership unknown: no further access */
-      lab_relaunch_and_die(L_self); /* no USB this boot; try again fresh */
+      int urc = lab_usb_up();
+      if (urc < 0)
+      {
+         if (lab_usb_down() < 0)
+            sceKernelExitGame();       /* ownership unknown: no further access */
+         journal("usb up FAILED rc=%d -- waiting the window out offline", urc);
+         /* Never a hot relaunch loop: sit out the window, then try fresh. */
+         sceKernelDelayThread(seconds * 1000000u);
+         lab_relaunch_and_die(L_self);
+      }
    }
    while (ms < (int)seconds * 1000)
    {
@@ -463,7 +494,8 @@ static void write_result(const char *tid, const char *bid, const char *outcome, 
                 frames, t_ms, fe_evt_drops(), L_batt_start, be, recs, drops, LAB_HARNESS_V, (unsigned)ini_crc,
                 L_fixture);
    path2(p, sizeof(p), d, "RESULT.TXT");
-   wr(p, buf, n, 0);
+   if (wr(p, buf, n, 0) == 0)
+      L_proof = 1;
 }
 
 /* -------------------------------------------------------------- telemetry */
@@ -498,6 +530,23 @@ static unsigned char *tlm_new(int type, unsigned frame)
    put32(r + 8, t_ms);
    T_head++;
    return r;
+}
+
+/* instruments agent: append one pre-framed 64-byte record (types 4-10, PROTOCOL.md 7/14.4) to the ring. */
+void lab_tlm_put(const void *rec64)
+{
+   unsigned char *r;
+   if (!L_active || !rec64)
+      return;
+   if (T_head - T_flushed >= TLM_RING)
+   {
+      T_dropped++;
+      return;
+   }
+   r = T_ring[T_head % TLM_RING].b;
+   memcpy(r, rec64, 64);
+   put16(r + 2, T_seq++);       /* one sequence across all writers */
+   T_head++;
 }
 
 void lab_event(int code, unsigned arg, const char *text)
@@ -773,6 +822,7 @@ static void process_cmd(void)
    if (strcmp(cmd, "RUN") && strcmp(cmd, "HOLD") && strcmp(cmd, "EXIT"))
       return;
    L_b.cmd_seq = seq;
+   L_proof = 1;
    snprintf(L_b.mode, sizeof(L_b.mode), "%s", cmd);
    L_b.next_window_s = kvu(buf, "next_window_s", 30);
    if (L_b.next_window_s < 20 || L_b.next_window_s > 600)
@@ -780,12 +830,12 @@ static void process_cmd(void)
    journal("cmd %s seq=%u next_window_s=%u", cmd, seq, L_b.next_window_s);
 }
 
-static void recover_current(void)
+static int recover_current(void)
 {
    char buf[256], p[64], tid[48], bid[16], hp[160];
    path2(p, sizeof(p), L_root, "sys/CURRENT.TXT");
    if (rd(p, buf, sizeof(buf)) <= 0)
-      return;
+      return 0;
    if (kv(buf, "task", tid, sizeof(tid)) && tid[0])
    {
       int hang;
@@ -795,8 +845,11 @@ static void recover_current(void)
       journal("previous boot died in %s -> %s", tid, hang ? "hang" : "crash");
       /* telemetry flushed before the death stays in out/<tid>/TLM.BIN */
       write_result(tid, bid, hang ? "hang" : "crash", -1, hang ? "stall" : "no_exit_path", 0, 0, 0, 0, 0);
+      sceIoRemove(p);
+      return 1;
    }
    sceIoRemove(p);
+   return 0;
 }
 
 int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_dir, size_t rom_sz,
@@ -852,11 +905,21 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
    if (!strcmp(L_b.mode, "EXIT"))
    {
       journal("CMD=EXIT: leaving the loop to the XMB");
+      {  /* autoboot contract 2: disarm before leaving, so the plugin does not bring us back */
+         char bp[64];
+         ab_budget bb;
+         int rc;
+         path2(bp, sizeof(bp), L_root, "sys/BUDGET.TXT");
+         rc = ab_budget_load(bp, &bb);
+         if (ab_budget_disarm(&bb, rc, ab_rtc_now(), L_b.boot, "exit"))
+            ab_budget_store(bp, &bb);
+      }
       strcpy(L_b.mode, "RUN");             /* a manual relaunch by the owner means go */
       boot_save();
       sceKernelExitGame();
    }
-   recover_current();
+   if (recover_current())
+      lab_window("recovery", 30);   /* autoboot proposal 4: the PC hears of the crash before the next task */
    if (!strcmp(L_b.mode, "HOLD") || !pick_task())
    {
       unsigned s = L_b.idle_s < 30 ? 30 : L_b.idle_s;
@@ -942,6 +1005,15 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
    return 1;
 }
 
+/* A harness key naming a file (script, pad_script) resolves next to the EBOOT; in a lab task the PC
+ * staged it in tasks/<tid>/ instead (the build dir is shared by every task). */
+void lab_task_file(char *out, size_t out_sz, const char *name)
+{
+   if (!L_active || !name || !name[0] || strchr(name, '/'))
+      return;
+   snprintf(out, out_sz, "%s/tasks/%s/%s", L_root, L_tid, name);
+}
+
 void lab_sidecars(char *save_path, size_t save_sz, char *state_path, size_t state_sz)
 {
    const char *s;
@@ -970,6 +1042,8 @@ void lab_finish(int exit_code, const char *reason)
    if (!L_active)
       return;
    t_ms = (unsigned)((sceKernelGetSystemTimeWide() - L_t0_us) / 1000ull);
+   if (lab_instr_exit)
+      lab_instr_exit();
    if (T_win.n)
       tlm_emit_win(L_last_frame, 0, 0);
    lab_event(4, (unsigned)exit_code, reason ? reason : "ok");
@@ -982,11 +1056,6 @@ void lab_finish(int exit_code, const char *reason)
    write_result(L_tid, L_bid, outcome, exit_code, reason, L_last_frame, t_ms, T_written, T_dropped, ini_crc);
    path2(p, sizeof(p), L_root, "sys/CURRENT.TXT");
    sceIoRemove(p);
-   if (exit_code == 0)
-   {  /* autoboot's relaunch budget: refilled only by a task that completed (sec. 10.3, provisional) */
-      path2(p, sizeof(p), L_root, "sys/BUDGET.TXT");
-      wr(p, "v=1\nleft=3\nby=harness\n", 21, 0);
-   }
    journal("task %s %s exit=%d reason=%s t_ms=%u tlm=%u", L_tid, outcome, exit_code, reason ? reason : "ok",
            t_ms, T_written);
    L_active = 0;

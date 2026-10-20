@@ -11403,7 +11403,7 @@ int main(int argc, char *argv[])
       char pad_name[64], pad_path[192];
       if (fe_ini_get(HARNESS_INI, "pad_script", pad_name, sizeof(pad_name)))
       {
-         snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name);
+         snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name); LAB_HOOK(lab_task_file(pad_path, sizeof(pad_path), pad_name);)
          pad_script_load(pad_path);
       }
    }
@@ -13118,7 +13118,7 @@ session_top:
 
    if (have_script)
    {
-      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name);
+      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name); LAB_HOOK(lab_task_file(script_path, sizeof(script_path), script_name);)
 #if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
       snprintf(g_script_path, sizeof(g_script_path), "%s", script_path);
 #endif
