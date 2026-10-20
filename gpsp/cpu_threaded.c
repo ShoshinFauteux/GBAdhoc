@@ -4398,10 +4398,16 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
 #ifndef XLAT_GATEMAP_VARS
 #define XLAT_GATEMAP_VARS
 #endif
+/* The scan's three hook points.  These defaults are the scan as it always
+ * was; JIT_COST's fast RAM ARM scan (xlat_scan_arm_ram_fast) redefines them
+ * around its own expansion only. */
+#define SCAN_VARS                       XLAT_GATEMAP_VARS
+#define SCAN_SET_CONDITION(type, c)     type##_set_condition(c)
+#define SCAN_GATE_END(tag_gate_op)      SMC_SCAN_GATE_END(tag_gate_op)
 #define scan_block(type, smc_write_op)                                        \
 {                                                                             \
   __label__ block_end;                                                        \
-  XLAT_GATEMAP_VARS                                                           \
+  SCAN_VARS                                                                   \
   XLAT_RAMEND_VARS(type)                                                      \
   /* Find the end of the block */                                             \
   do                                                                          \
@@ -4434,7 +4440,7 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
         block_exit_position++;                                                \
       }                                                                       \
                                                                               \
-      type##_set_condition(condition | 0x10);                                 \
+      SCAN_SET_CONDITION(type, condition | 0x10);                             \
                                                                               \
       /* Only unconditional branches can end the block. */                    \
       if(type##_opcode_unconditional_branch)                                  \
@@ -4463,10 +4469,10 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
     }                                                                         \
     else                                                                      \
     {                                                                         \
-      type##_set_condition(condition);                                        \
+      SCAN_SET_CONDITION(type, condition);                                    \
     }                                                                         \
                                                                               \
-    SMC_SCAN_GATE_END(smc_tag_gate_##type##_##smc_write_op());                \
+    SCAN_GATE_END(smc_tag_gate_##type##_##smc_write_op());                    \
                                                                               \
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
@@ -4614,6 +4620,160 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
 }
 #endif
 
+/* JIT_COST scan pieces (docs/JIT-COST.md): a second RAM ARM scan,
+ * xlat_scan_arm_ram_fast, chosen at run time by xlat_scan_fast (harness key
+ * of the same name), so one binary A/Bs it against xlat_scan_arm_ram with the
+ * code layout held fixed.  Its body is xlat_scan_arm_ram's, word for word;
+ * only the scan's hook macros differ, and each replacement computes exactly
+ * what the default computes.  The twin's per-address profile put the scan at
+ * ~55 host instructions per guest instruction (Doom II), ~12 of them the gate
+ * bitmap test and ~12-15 the flag-write switch.
+ *
+ * SCANWIN: the gate test (SMC gate bitmap, and the entry-gate bitmap when
+ * armed) is skipped while block_end_pc stays in a 64-byte window whose four
+ * bitmap bytes are all zero -- 16 ARM instructions per window.  Only a window
+ * that holds a gate pays the per-instruction test, which is then the original
+ * one.  Exact: a zero byte fails both bitmap tests for every pc it covers,
+ * and neither map changes during a scan (see GATEMAP).  The window key is
+ * block_end_pc >> 6, so it also changes when the region does.
+ *
+ * SCANCOND: arm_set_condition's switch ORs 0x20 into the condition when the
+ * instruction writes the flags.  Its answer depends only on opcode bits
+ * 20..27 (the case) and 4..7 (the tests inside the cases), so it is one bit
+ * of a 256 x 16 table -- built at first use BY RUNNING THE SAME MACRO over
+ * every combination of those bits, so it cannot disagree with it; twin
+ * builds also check it against the macro on random opcodes at build time. */
+#if defined(JIT_COST) && defined(XLAT_SCANFN_ARM) && \
+    defined(SMC_GATE_BITMAP) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP) && \
+    (!defined(JIT_COST_NO_SCANWIN) || !defined(JIT_COST_NO_SCANCOND))
+#define JIT_SCAN_FAST 1
+u32 xlat_scan_fast = 1;
+
+#ifndef JIT_COST_NO_SCANCOND
+static u16 xlat_arm_flagset[256];
+static u32 xlat_arm_flagset_ready;
+/* arm_set_condition's 0x20, for any (28-bit) opcode, from the macro itself */
+static u32 xlat_arm_flagset_ref(u32 opcode)
+{
+  s32 block_data_position = 0;
+  u8 saved = block_data[0].condition;
+  u32 r;
+  arm_set_condition(0);
+  r = block_data[0].condition & 0x20;
+  block_data[0].condition = saved;
+  return r;
+}
+static void xlat_arm_flagset_build(void)
+{
+  u32 idx, nib;
+  for (idx = 0; idx < 256; idx++) {
+    u32 m = 0;
+    for (nib = 0; nib < 16; nib++)
+      if (xlat_arm_flagset_ref((idx << 20) | (nib << 4)))
+        m |= 1u << nib;
+    xlat_arm_flagset[idx] = (u16)m;
+  }
+#ifdef DRPROF_TWIN
+  {
+    /* The table's premise, checked: no other opcode bit matters. */
+    u32 x = 0x12345678u, k;
+    for (k = 0; k < 200000; k++) {
+      u32 op;
+      x = x * 1664525u + 1013904223u;
+      op = x & 0x0FFFFFFFu;
+      if ((((xlat_arm_flagset[(op >> 20) & 0xFF] >> ((op >> 4) & 0xF)) & 1)
+           << 5) != xlat_arm_flagset_ref(op)) {
+        fprintf(stderr, "JIT_COST SCANCOND table mismatch at %07x\n",
+                (unsigned)op);
+        abort();
+      }
+    }
+  }
+#endif
+  xlat_arm_flagset_ready = 1;
+}
+#endif
+
+static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st)
+{
+  const u32 pc = st->pc;
+  u32 block_end_pc = st->block_end_pc;
+  u32 pc_region = st->pc_region, new_pc_region = 0;
+  u8 *pc_address_block = st->pc_address_block;
+  u32 block_exit_position = st->block_exit_position;
+  s32 block_data_position = st->block_data_position;
+  /* written before they are read, in the scan and after it */
+  u32 opcode = 0, condition = 0, branch_target = 0;
+  u32 scan_exit_reason = st->scan_exit_reason;
+#ifdef ENTRY_GATES
+  u32 entry_gate_stop = st->entry_gate_stop;
+#endif
+  s32 i;
+
+#ifndef JIT_COST_NO_SCANCOND
+  if (!xlat_arm_flagset_ready)
+    xlat_arm_flagset_build();
+#undef SCAN_SET_CONDITION
+#define SCAN_SET_CONDITION(type, c)                                           \
+  block_data[block_data_position].condition = (c) |                           \
+    (((xlat_arm_flagset[(opcode >> 20) & 0xFF] >> ((opcode >> 4) & 0xF)) & 1) \
+     << 5)
+#endif
+#ifndef JIT_COST_NO_SCANWIN
+#undef SCAN_VARS
+#undef SCAN_GATE_END
+#define SCAN_VARS                                                             \
+  XLAT_GATEMAP_VARS                                                           \
+  u32 xw_key = ~0U, xw_any = 0;
+#define SCAN_GATE_END(tag_gate_op) do {                                       \
+  if ((block_end_pc >> 6) != xw_key) {                                        \
+    u32 xw_r = block_end_pc >> 24;                                            \
+    xw_key = block_end_pc >> 6;                                               \
+    if (xw_r != xg_reg) {                                                     \
+      xg_reg = xw_r;                                                          \
+      xlat_gate_maps(xw_r, &xg_smc, &xg_ent, &xg_mask);                       \
+    }                                                                         \
+    xw_any = 0;                                                               \
+    if (xg_smc) {                                                             \
+      u32 xw_b = ((block_end_pc & xg_mask) >> 4) & ~3u;                       \
+      xw_any = xg_smc[xw_b] | xg_smc[xw_b + 1] |                              \
+               xg_smc[xw_b + 2] | xg_smc[xw_b + 3];                           \
+      if (xg_ent)                                                             \
+        xw_any |= xg_ent[xw_b] | xg_ent[xw_b + 1] |                           \
+                  xg_ent[xw_b + 2] | xg_ent[xw_b + 3];                        \
+    }                                                                         \
+  }                                                                           \
+  if (xw_any)                                                                 \
+    SMC_SCAN_GATE_END(tag_gate_op);                                           \
+} while (0)
+#endif
+
+  scan_block(arm, yes);
+
+  /* back to the defaults for every other expansion */
+#undef SCAN_VARS
+#undef SCAN_SET_CONDITION
+#undef SCAN_GATE_END
+#define SCAN_VARS                       XLAT_GATEMAP_VARS
+#define SCAN_SET_CONDITION(type, c)     type##_set_condition(c)
+#define SCAN_GATE_END(tag_gate_op)      SMC_SCAN_GATE_END(tag_gate_op)
+
+  st->block_end_pc = block_end_pc;
+  st->pc_region = pc_region;
+  st->new_pc_region = new_pc_region;
+  st->pc_address_block = pc_address_block;
+  st->block_exit_position = block_exit_position;
+  st->block_data_position = block_data_position;
+  st->opcode = opcode;
+  st->condition = condition;
+  st->branch_target = branch_target;
+  st->scan_exit_reason = scan_exit_reason;
+#ifdef ENTRY_GATES
+  st->entry_gate_stop = entry_gate_stop;
+#endif
+}
+#endif
+
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
@@ -4698,6 +4858,11 @@ bool translate_block_arm(u32 pc, bool ram_region)
       st.scan_exit_reason = scan_exit_reason;
 #ifdef ENTRY_GATES
       st.entry_gate_stop = entry_gate_stop;
+#endif
+#ifdef JIT_SCAN_FAST
+      if (xlat_scan_fast)
+        xlat_scan_arm_ram_fast(&st);
+      else
 #endif
       xlat_scan_arm_ram(&st);
       block_end_pc = st.block_end_pc;
@@ -7429,6 +7594,75 @@ void flush_dynarec_caches(void)
 #define JIT_KERNEL_RANGE_MAX 16384u  /* never pass the kernel a range this big */
 #define JIT_KERNEL_CHUNK      8192u  /* D writeback piece size */
 
+/* JIT_COST PUBINL (make JIT_COST=1; docs/JIT-COST.md): publish with the
+ * cache-line operations themselves instead of two kernel calls.
+ *
+ * WHY.  The heavy SMC titles publish ~285 times a frame (Doom II, PSP-1000:
+ * one span of ~18 lines per publish, 2.1 ms/frame, ~7.4 us each).  Each
+ * publish was sceKernelDcacheWritebackRange + sceKernelIcacheInvalidateRange:
+ * two syscalls whose bodies, for a range below the I-cache size, are exactly
+ * a `cache 0x1A` loop (+ sync) and a `cache 0x08` loop over the lines
+ * (uOFW src/kd/sysmem/start.S; docs/JIT-COHERENCY.md section 4).  The same
+ * two operations already run in user mode on every PSP: emit_phand
+ * (mips_emit.h) patches a `jal` and publishes its line with `cache 0x1A` +
+ * `cache 0x08`, shipped since upstream gpSP.
+ *
+ * WHAT IS THE SAME.  The lines: every line of every recorded span, rounded
+ * out exactly as before.  The order: all D write-backs, a sync, then the I
+ * side, as the kernel calls ran.  The whole-I cases (ownership change, a span
+ * of 16 KiB or more) still use sceKernelIcacheInvalidateAll, the path proven
+ * on hardware (kernel-icache-16k-noop): a hit loop has no large-range path,
+ * so nothing here can meet the firmware's >= 16 KiB no-op, but a whole
+ * invalidate stays cheaper than 256+ line ops.  WHEN publishes happen is
+ * untouched (every lookup still publishes before it returns a pointer), so
+ * no code can run unpublished that did not before.
+ *
+ * Run-time switch jit_pub_inline (harness key of the same name): 0 = the
+ * kernel calls, so one binary A/Bs both with the layout held fixed.
+ *
+ * TWIN.  qemu is coherent; a -DJITCOH_PSP_CACHE twin routes each line op to
+ * the kernel-call stand-ins (one line each), so the coherency checker sees
+ * exactly the lines this loop touches. */
+#if defined(JIT_COST) && !defined(JIT_COST_NO_PUBINL)
+#define JIT_PUB_INLINE 1
+u32 jit_pub_inline = 1;
+#if defined(PSP)
+static inline void jit_line_dwb(u8 *p)
+{ __asm__ volatile("cache 0x1A, 0(%0)" : : "r"(p) : "memory"); }
+static inline void jit_line_iinv(u8 *p)
+{ __asm__ volatile("cache 0x08, 0(%0)" : : "r"(p) : "memory"); }
+static inline void jit_line_sync(void)
+{ __asm__ volatile("sync" : : : "memory"); }
+#elif defined(JITCOH_PSP_CACHE)
+static inline void jit_line_dwb(u8 *p)  { sceKernelDcacheWritebackRange(p, JIT_LINE); }
+static inline void jit_line_iinv(u8 *p) { sceKernelIcacheInvalidateRange(p, JIT_LINE); }
+static inline void jit_line_sync(void)  { }
+#endif
+#if defined(PSP) || defined(JITCOH_PSP_CACHE)
+/* [lo, hi) rounded out to lines: D write-back, sync, I invalidate.  Also the
+ * harness probe's entry point (psp/icprobe.c), so the hardware check runs
+ * this very code. */
+void jit_pub_lines(u8 *lo, u8 *hi)
+{
+  u8 *p;
+  lo = (u8 *)((uintptr_t)lo & ~(uintptr_t)(JIT_LINE - 1));
+  for (p = lo; p < hi; p += JIT_LINE)
+    jit_line_dwb(p);
+  jit_line_sync();
+  for (p = lo; p < hi; p += JIT_LINE)
+    jit_line_iinv(p);
+}
+#endif
+#endif
+/* JIT_COST builds count the cache work a publish hands out: kernel calls
+ * (kcalls) and user-mode line operations (lineops), so the twin -- which
+ * cannot time either -- can compare the two models call for call. */
+#ifdef JIT_COST
+#define JIT_PUB_COUNT(field, n) (jit_code_stats.field += (n))
+#else
+#define JIT_PUB_COUNT(field, n) do { } while (0)
+#endif
+
 typedef struct { u8 *lo, *hi; } jit_span_type;
 static jit_span_type jit_spans[JIT_SPANS];
 u32 jit_dirty_n;
@@ -7726,7 +7960,39 @@ void jit_code_publish_(void)
     sceKernelDcacheWritebackInvalidateAll();
     sceKernelIcacheInvalidateAll();
     jit_code_stats.whole_i++;
-  } else {
+    JIT_PUB_COUNT(kcalls, 2);
+  } else
+#ifdef JIT_PUB_INLINE
+  if (jit_pub_inline) {
+    /* JIT_COST PUBINL (above): the same lines, no syscall. */
+    u32 big = 0, lines = 0;
+    for (i = 0; i < n; i++) {
+      u8 *p;
+      if ((u32)(jit_spans[i].hi - jit_spans[i].lo) >= JIT_KERNEL_RANGE_MAX)
+        big = 1;
+      for (p = jit_spans[i].lo; p < jit_spans[i].hi; p += JIT_LINE)
+        jit_line_dwb(p);
+      lines += (u32)(jit_spans[i].hi - jit_spans[i].lo) / JIT_LINE;
+    }
+    jit_line_sync();
+    JIT_PUB_COUNT(lineops, lines);
+    if (jit_owner_pending || big) {
+      sceKernelIcacheInvalidateAll();
+      jit_code_stats.whole_i++;
+      JIT_PUB_COUNT(kcalls, 1);
+      if (big && !jit_owner_pending)
+        jit_code_stats.big_i++;
+    } else {
+      for (i = 0; i < n; i++) {
+        u8 *p;
+        for (p = jit_spans[i].lo; p < jit_spans[i].hi; p += JIT_LINE)
+          jit_line_iinv(p);
+      }
+      JIT_PUB_COUNT(lineops, lines);
+    }
+  } else
+#endif
+  {
     /* NO KERNEL RANGE OF 16 KiB OR MORE (docs/JIT-COHERENCY.md section 8,
      * docs/JIT-CODE-DISCIPLINE.md 2.3).  The leading explanation of the
      * resident-ROM derail is that the kernel's ranged calls take a different
@@ -7744,18 +8010,21 @@ void jit_code_publish_(void)
         if (len > JIT_KERNEL_CHUNK)
           len = JIT_KERNEL_CHUNK;
         sceKernelDcacheWritebackRange(p, len);
+        JIT_PUB_COUNT(kcalls, 1);
         p += len;
       }
     }
     if (jit_owner_pending || big) {
       sceKernelIcacheInvalidateAll();
       jit_code_stats.whole_i++;
+      JIT_PUB_COUNT(kcalls, 1);
       if (big && !jit_owner_pending)
         jit_code_stats.big_i++;
     } else {
       for (i = 0; i < n; i++)
         sceKernelIcacheInvalidateRange(jit_spans[i].lo,
                                        jit_spans[i].hi - jit_spans[i].lo);
+      JIT_PUB_COUNT(kcalls, n);
     }
   }
 #else
@@ -7783,6 +8052,25 @@ void jit_code_publish_(void)
 #endif
     jit_code_stats.whole_i++;
   }
+#ifdef JIT_COST
+  /* The PSP's cache work for this publish, counted as the PSP path above
+   * would hand it out (the twin cannot time it). */
+  {
+    u32 lines = 0, dk = 0;
+    for (i = 0; i < n; i++) {
+      u32 len = (u32)(jit_spans[i].hi - jit_spans[i].lo);
+      lines += len / JIT_LINE;
+      dk += (len + JIT_KERNEL_CHUNK - 1) / JIT_KERNEL_CHUNK;
+    }
+#ifdef JIT_PUB_INLINE
+    if (jit_pub_inline) {
+      JIT_PUB_COUNT(lineops, jit_owner_pending ? lines : 2 * lines);
+      JIT_PUB_COUNT(kcalls, jit_owner_pending ? 1 : 0);
+    } else
+#endif
+    JIT_PUB_COUNT(kcalls, dk + (jit_owner_pending ? 1 : n));
+  }
+#endif
 #endif
 
   if (n) {
@@ -7815,6 +8103,10 @@ void jit_stats_report(FILE *f)
           (unsigned)jit_code_stats.owner[JOWN_REBUILD],
           (unsigned)jit_code_stats.owner[JOWN_INIT],
           (unsigned)jit_code_stats.owner[JOWN_TIER]);
+#ifdef JIT_COST
+  fprintf(f, " kcalls=%u lineops=%u", (unsigned)jit_code_stats.kcalls,
+          (unsigned)jit_code_stats.lineops);
+#endif
 #if defined(JIT_CODE_AUDIT) || defined(JIT_CODE_CHECK)
   fprintf(f, " check_violations=%u", (unsigned)jit_check_violations);
 #endif

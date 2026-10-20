@@ -425,6 +425,21 @@ else ifeq ($(platform), psp1)
 	ifneq ($(XLAT_NO),)
 	CFLAGS += $(foreach p,$(subst :, ,$(XLAT_NO)),-DXLAT_NO_$(p)=1)
 	endif
+	# JIT_COST=1: cost of producing translated code (cpu_threaded.c JIT_COST;
+	# claude/jit-cost, docs/JIT-COST.md).  Exact: same emitted code, same tags,
+	# same guest state.  Pieces: PUBINL (publish with user-mode cache line ops
+	# instead of two kernel calls; runtime jit_pub_inline), SCANWIN (RAM ARM
+	# scan: gate bitmaps tested only in 64-byte windows that hold a gate),
+	# SCANCOND (RAM ARM scan: flag-write bit from a table built from the
+	# original switch).  The scan pieces need XLAT_FAST's SCANFN and GATEMAP
+	# and are chosen at run time too (xlat_scan_fast), so one binary A/Bs them.
+	ifeq ($(JIT_COST),1)
+	CFLAGS += -DJIT_COST=1
+	endif
+	# JIT_COST_NO=PIECE[:PIECE...]: compile single JIT_COST pieces out.
+	ifneq ($(JIT_COST_NO),)
+	CFLAGS += $(foreach p,$(subst :, ,$(JIT_COST_NO)),-DJIT_COST_NO_$(p)=1)
+	endif
 	# XLAT_SPLIT_DIAG=1: diagnostic only -- scan/emit time split (cpu_threaded.c).
 	ifeq ($(XLAT_SPLIT_DIAG),1)
 	CFLAGS += -DXLAT_SPLIT_DIAG=1

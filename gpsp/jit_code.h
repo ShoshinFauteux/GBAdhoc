@@ -120,7 +120,15 @@ typedef struct
   u32 owner[JOWN_COUNT];
   u32 big_i;            /* whole-I forced by a span >= 16 KiB (kept last:
                            the frontend reads the first ten words) */
+#ifdef JIT_COST
+  u32 kcalls;           /* kernel cache calls (ranged + whole) by publishes  */
+  u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
+#endif
 } jit_code_stats_type;
+#if defined(JIT_COST) && !defined(JIT_COST_NO_PUBINL)
+/* run time: 1 = user-mode line ops (default), 0 = the kernel calls */
+extern u32 jit_pub_inline;
+#endif
 extern jit_code_stats_type jit_code_stats;
 
 /* JIT_CODE_CHECK (implied by JIT_CODE_AUDIT): zone asserts on every record
