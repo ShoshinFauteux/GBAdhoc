@@ -448,6 +448,27 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_WRITE_HISTO),1)
 	CFLAGS += -DSMC_WRITE_HISTO=1
 	endif
+	# SMC_PARTIAL_SINGLE=1: with SMC_PARTIAL_SAFE, also admit single-word ARM
+	# stores from IWRAM code into IWRAM to the selective-retirement path
+	# (cpu_threaded.c smc_writer_safe_range).  Bench campaign 2026-10-20.
+	ifeq ($(SMC_PARTIAL_SINGLE),1)
+	CFLAGS += -DSMC_PARTIAL_SINGLE
+	endif
+	# SMC_FALLBACK_STATS=1: DIAGNOSTIC.  Count why SMC traps fall back to a
+	# full RAM flush (EVT core_health smcfb=).
+	ifeq ($(SMC_FALLBACK_STATS),1)
+	CFLAGS += -DSMC_FALLBACK_STATS
+	endif
+	# STALE_CHECK=1: DIAGNOSTIC (needs SMC_PARTIAL_SAFE and SMC_FALLBACK_STATS).
+	# Hash each RAM block's guest bytes at translation and re-check on reuse.
+	ifeq ($(STALE_CHECK),1)
+	CFLAGS += -DSTALE_CHECK
+	endif
+	# SMC_CLASS_PROBE=1: DIAGNOSTIC, in NO profile.  Classify every SMC trap by
+	# writer shape (ARM/Thumb, single/STM, writeback) to ms0:/smcclass.txt.
+	ifeq ($(SMC_CLASS_PROBE),1)
+	CFLAGS += -DSMC_CLASS_PROBE=1
+	endif
 	# SMC_WRITER_PROBE=1: DIAGNOSTIC, and in NO profile.  Dump the distinct ARM
 	# block-store shapes smc_writer_safe_range() is asked about, once, to
 	# <gamedir>/log/writer.txt.  Exists to extend that fingerprint from measured

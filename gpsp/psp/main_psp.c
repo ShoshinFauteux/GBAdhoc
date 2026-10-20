@@ -5768,6 +5768,8 @@ static int g_relaunch;
 #endif
 extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
 extern u32 badjump_recoveries __attribute__((weak));
+/* SMC_FALLBACK_STATS (diagnostic): why SMC traps took a full RAM flush. */
+extern u32 smc_fallback_stats[12] __attribute__((weak));
 
 /* Why this quit may not return in-process, or NULL when it may.  Checked
  * after the teardown, so what it reads is final. */
@@ -9105,7 +9107,14 @@ extern u32 badjump_recoveries __attribute__((weak));
 
 static void core_health_evt(const char *at)
 {
-   char xl[80] = "", dm[48] = "", jc[96] = "";
+   char xl[80] = "", dm[48] = "", jc[96] = "", fb[128] = "";
+   if (&smc_fallback_stats)
+   {
+      unsigned i, n = (unsigned)snprintf(fb, sizeof(fb), " smcfb=");
+      for (i = 0; i < 12 && n < sizeof(fb); i++)
+         n += (unsigned)snprintf(fb + n, sizeof(fb) - n, i ? "/%u" : "%u",
+                                 (unsigned)smc_fallback_stats[i]);
+   }
    if (&dma_smc_flushes)
       snprintf(dm, sizeof(dm), " dma_flush=%u", (unsigned)dma_smc_flushes);
    if (&badjump_recoveries)
@@ -9137,9 +9146,9 @@ static void core_health_evt(const char *at)
          xlat_depth_probe_reset();
    }
    fe_evt("core_health at=%s f=%u reopens=%u short_reads=%u badjump=%u "
-          "rom_flush=%u%s%s%s", at, fe_host_frame_count(),
+          "rom_flush=%u%s%s%s%s", at, fe_host_frame_count(),
           (unsigned)gamepak_reopens, (unsigned)gamepak_short_reads,
-          (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc);
+          (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc, fb);
 }
 #else
 #define core_health_evt(at) do { } while (0)
@@ -14920,6 +14929,7 @@ session_top:
           g_stick_max[0], g_stick_min[1], g_stick_max[1],
           ctl_stick_name(g_pcfg.stick));
 #endif
+   core_health_evt("exit");   /* final counters: heartbeats can be starved */
    if (exit_reason)
       fe_evt("exit code=%d reason=%s", exit_code, exit_reason);
    else
