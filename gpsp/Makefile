@@ -420,6 +420,11 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_FAST),1)
 	CFLAGS += -DXLAT_FAST=1
 	endif
+	# XLAT_NO=PIECE[:PIECE...]: switch single XLAT_FAST pieces off for an A/B
+	# (LIMITS GATEMAP EXITPF RAMEND DCLEAR SCANFN), e.g. XLAT_NO=SCANFN:DCLEAR.
+	ifneq ($(XLAT_NO),)
+	CFLAGS += $(foreach p,$(subst :, ,$(XLAT_NO)),-DXLAT_NO_$(p)=1)
+	endif
 	# XLAT_SPLIT_DIAG=1: diagnostic only -- scan/emit time split (cpu_threaded.c).
 	ifeq ($(XLAT_SPLIT_DIAG),1)
 	CFLAGS += -DXLAT_SPLIT_DIAG=1
