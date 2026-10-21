@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c	2026-10-20 02:59:54.031230700 -0400
++++ b/cpu_threaded.c	2026-10-20 02:59:54.435679300 -0400
+@@ -4548,7 +4548,7 @@
+ }
+ /* lim_first: this block's first pc; lim_last: the latest pc translated
+  * (~0U until the first instruction). */
+-#define pc_limits_step()        do { lim_last = pc; } while (0)
++#define pc_limits_step()        do { if (lim_last == ~0U) lim_last = pc; } while (0)
+ #define pc_limits_commit(width) do {                                         \
+   if (ram_region && lim_last != ~0U)                                        \
+     note_pc_limits_range(lim_first, lim_last, (width));                     \

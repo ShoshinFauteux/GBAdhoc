@@ -5769,7 +5769,7 @@ static int g_relaunch;
 extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
 extern u32 badjump_recoveries __attribute__((weak));
 /* SMC_FALLBACK_STATS (diagnostic): why SMC traps took a full RAM flush. */
-extern u32 smc_fallback_stats[12] __attribute__((weak));
+extern u32 smc_fallback_stats[16] __attribute__((weak));
 
 /* Why this quit may not return in-process, or NULL when it may.  Checked
  * after the teardown, so what it reads is final. */
@@ -9107,11 +9107,11 @@ extern u32 badjump_recoveries __attribute__((weak));
 
 static void core_health_evt(const char *at)
 {
-   char xl[80] = "", dm[48] = "", jc[96] = "", fb[128] = "";
+   char xl[80] = "", dm[48] = "", jc[96] = "", fb[192] = "";
    if (&smc_fallback_stats)
    {
       unsigned i, n = (unsigned)snprintf(fb, sizeof(fb), " smcfb=");
-      for (i = 0; i < 12 && n < sizeof(fb); i++)
+      for (i = 0; i < 15 && n < sizeof(fb); i++)
          n += (unsigned)snprintf(fb + n, sizeof(fb) - n, i ? "/%u" : "%u",
                                  (unsigned)smc_fallback_stats[i]);
    }

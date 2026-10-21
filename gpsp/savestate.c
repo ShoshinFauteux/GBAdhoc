@@ -406,6 +406,12 @@ bool gba_load_state(const void* src)
    * restored, whether or not the dynarec is currently enabled, before a later
    * SMC event can mistake the restored timeline for a code change. */
   smc_gates_refresh_values();
+#ifdef SMC_SINGLE_HOT
+  /* smc-coverage: the widened-class trap count restarts with the restored
+   * timeline, so whether a loaded state engages them does not depend on
+   * what ran before the load (cpu_threaded.c smc_wide_gate). */
+  { void smc_coverage_state_loaded(void); smc_coverage_state_loaded(); }
+#endif
 #endif
 
   instruction_count = 0;
