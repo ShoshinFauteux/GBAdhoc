@@ -4117,7 +4117,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
-#ifdef SMC_PARTIAL_SINGLE
+#if defined(SMC_PARTIAL_SINGLE) && !defined(DR2NFSU_MUTANT_WORDTAG)
 /* TAG EACH HALFWORD OF AN ARM INSTRUCTION ON ITS OWN (dr2-nfsu, 2026-10-21).
  *
  * The stock macro marks the word only when BOTH halfword tags are zero.  That
