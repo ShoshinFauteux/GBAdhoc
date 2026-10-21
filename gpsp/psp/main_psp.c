@@ -276,6 +276,15 @@ static int g_perf_rig;
 #define PLAY_ME_VIDEO        0
 #endif
 
+/* LOW LATENCY test builds (docs/LOW-LATENCY.md): the default of the
+ * `input_fresh` pad re-peek, set by `INPUT_FRESH=1 tools/build.sh ...`
+ * (-DPLAY_INPUT_FRESH=1) so a playable build, which cannot read the harness
+ * ini, can carry it.  0 = the shipping behaviour; a harness ini still
+ * overrides it either way. */
+#ifndef PLAY_INPUT_FRESH
+#define PLAY_INPUT_FRESH     0
+#endif
+
 static void init_paths(int argc, char *argv[])
 {
    if (argc > 0 && argv && argv[0])
@@ -12190,7 +12199,8 @@ int main(int argc, char *argv[])
                                                 (int)g_ll_margin_us);
       if (g_ll_cfg)
          g_mer_sameframe = 0;      /* two retire/present owners: never both */
-      g_in_fresh = (int)fe_ini_get_int(HARNESS_INI, "input_fresh", 0) != 0;
+      g_in_fresh = (int)fe_ini_get_int(HARNESS_INI, "input_fresh",
+                                       PLAY_INPUT_FRESH) != 0;
       g_ctrl_cycle = (int)fe_ini_get_int(HARNESS_INI, "ctrl_cycle", 0);
       if (g_ctrl_cycle >= 5555 && g_ctrl_cycle <= 20000)
          fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle,

@@ -223,6 +223,14 @@ if [ "${REWIND:-0}" = 1 ]; then
   PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=1"
 fi
 
+# INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
+# ON by default, for a side-by-side PLAYABLE test build, which cannot read the
+# harness ini.  Frontend only.  A switch of its own like REWIND, because a
+# release refuses FE_EXTRA.
+if [ "${INPUT_FRESH:-0}" = 1 ]; then
+  FE_DEFS="$FE_DEFS -DPLAY_INPUT_FRESH=1"
+fi
+
 # CORE_EXTRA is appended to the ROOT make's flags (DISPATCH_CACHE=1,
 # DRPROF_HW=1, ...), FE_EXTRA to the frontend defines.  Refused for a release:
 # the release flag list lives in profile_flags and nowhere else.
