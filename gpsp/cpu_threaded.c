@@ -5227,6 +5227,42 @@ void flush_translation_cache_ram(void)
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
+#ifdef EXEC_STALE_CHECK
+/* DIAGNOSTIC (dr2-nfsu, twin only; mips_emit.h emit_trace_instruction):
+ * an executed RAM instruction whose guest opcode no longer matches the one
+ * it was translated from is stale code.  Counts to stderr at exit; the first
+ * 16 are listed; EXEC_STALE_ABORT=1 in the environment aborts on the first. */
+static u32 esc_hits, esc_checks;
+static int esc_abort = -1;
+static void esc_report(void)
+{
+  fprintf(stderr, "EXEC_STALE checks=%u hits=%u\n", (unsigned)esc_checks,
+          (unsigned)esc_hits);
+}
+void exec_stale_check(u32 pc, u32 mode, u32 op)
+{
+  u32 cur;
+  const u8 *p = (pc >> 24) == 3 ? iwram + 0x8000 + (pc & 0x7FFF)
+                                : ewram + (pc & 0x3FFFF);
+  if (esc_abort < 0) {
+    const char *e = getenv("EXEC_STALE_ABORT");
+    esc_abort = e && *e == '1';
+    atexit(esc_report);
+  }
+  esc_checks++;
+  cur = mode ? *(const u32 *)p : *(const u16 *)p;
+  if (cur == op)
+    return;
+  if (esc_hits++ < 16)
+    fprintf(stderr, "EXEC_STALE frame=%u pc=%08x %s translated=%08x now=%08x "
+            "last_smc_write=%08x\n", (unsigned)frame_counter, (unsigned)pc,
+            mode ? "arm" : "thumb", (unsigned)op, (unsigned)cur,
+            (unsigned)smc_last_write_addr);
+  if (esc_abort)
+    abort();
+}
+#endif
+
 #ifdef SMC_EVTRACE
 /* DIAGNOSTIC (twin only): one line per SMC event in a frame window. */
 static FILE *smc_evt_f;
