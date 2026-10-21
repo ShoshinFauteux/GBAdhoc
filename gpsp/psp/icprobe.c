@@ -203,9 +203,39 @@ static void icinv_write(uint8_t *region, uint32_t val)
    }
 }
 
+#ifdef JIT_COST_KEYS
+/* JIT_COST PUBINL (docs/JIT-COST.md): the user-mode line ops it publishes
+ * with, checked the same way.  u_dnone (no D write-back at all, then a whole
+ * I invalidate) is the D-side control: stale > 0 on a console shows the probe
+ * can see a missing write-back.  u_d = `cache 0x1A` per line + sync, then the
+ * whole I invalidate: 0 means the user-mode write-back works.  u_i = the
+ * kernel's exact D write-back, then `cache 0x08` per line: 0 means the
+ * user-mode invalidate works.  u_pub = the core's own jit_pub_lines (the
+ * code PUBINL runs), both sides user-mode: must be 0. */
+enum { M_NONE, M_ALL, M_EXACT, M_16383, M_16384, M_32K, M_MID32K, M_DBIG,
+       M_UDNONE, M_UD, M_UI, M_UPUB, M_COUNT };
+static const char *icinv_mode_name[M_COUNT] = {
+   "none", "all", "r_exact", "r_16383", "r_16384", "r_32k", "r_mid32k", "d_big",
+   "u_dnone", "u_d", "u_i", "u_pub" };
+extern void jit_pub_lines(uint8_t *lo, uint8_t *hi) __attribute__((weak));
+static void icinv_user_d(uint8_t *p, unsigned n)
+{
+   unsigned i;
+   for (i = 0; i < n; i += 64)
+      __asm__ volatile("cache 0x1A, 0(%0)" : : "r"(p + i) : "memory");
+   __asm__ volatile("sync" : : : "memory");
+}
+static void icinv_user_i(uint8_t *p, unsigned n)
+{
+   unsigned i;
+   for (i = 0; i < n; i += 64)
+      __asm__ volatile("cache 0x08, 0(%0)" : : "r"(p + i) : "memory");
+}
+#else
 enum { M_NONE, M_ALL, M_EXACT, M_16383, M_16384, M_32K, M_MID32K, M_DBIG, M_COUNT };
 static const char *icinv_mode_name[M_COUNT] = {
    "none", "all", "r_exact", "r_16383", "r_16384", "r_32k", "r_mid32k", "d_big" };
+#endif
 
 /* one trial; returns stale count, *odd = results that are neither */
 static unsigned icinv_trial(uint8_t *region, int mode, unsigned *odd)
@@ -222,11 +252,25 @@ static unsigned icinv_trial(uint8_t *region, int mode, unsigned *odd)
    icinv_write(region, ICINV_NEW);
    if (mode == M_DBIG)
       sceKernelDcacheWritebackRange(region, 65536);
+#ifdef JIT_COST_KEYS
+   else if (mode == M_UDNONE || mode == M_UPUB)
+      ;
+   else if (mode == M_UD)
+      icinv_user_d(region, ICINV_NB * 64u);
+#endif
    else
       sceKernelDcacheWritebackRange(region, ICINV_NB * 64u);
    switch (mode)
    {
    case M_ALL:    case M_DBIG: sceKernelIcacheInvalidateAll(); break;
+#ifdef JIT_COST_KEYS
+   case M_UDNONE: case M_UD: sceKernelIcacheInvalidateAll(); break;
+   case M_UI:     icinv_user_i(region, ICINV_NB * 64u); break;
+   case M_UPUB:
+      if (&jit_pub_lines)
+         jit_pub_lines(region, region + ICINV_NB * 64u);
+      break;
+#endif
    case M_EXACT:  sceKernelIcacheInvalidateRange(region, ICINV_NB * 64u); break;
    case M_16383:  sceKernelIcacheInvalidateRange(region, 16383); break;
    case M_16384:  sceKernelIcacheInvalidateRange(region, 16384); break;
@@ -279,6 +323,48 @@ int icinv_probe_run(void)
                 offs[o], icinv_mode_name[m], min, max, sum, ICINV_NB * REPS, odd_sum);
       }
    }
+#ifdef JIT_COST_KEYS
+   /* PUBLISH COST: one publish of NL freshly dirtied lines (the emitter's
+    * typical burst is ~18), by the kernel calls and by jit_pub_lines, minus
+    * the cost of only dirtying them.  ns per publish, min of REPS. */
+   {
+      static const unsigned nls[] = { 4, 18, 64 };
+      unsigned k;
+      uint8_t *region = raw + 65536;
+      for (k = 0; k < sizeof(nls) / sizeof(nls[0]); k++)
+      {
+         unsigned nl = nls[k], meth;
+         for (meth = 0; meth < 3; meth++)
+         {
+            unsigned best = 0xFFFFFFFFu;
+            for (r = 0; r < REPS; r++)
+            {
+               unsigned it, l;
+               SceInt64 t0 = sceKernelGetSystemTimeWide(), t1;
+               for (it = 0; it < 1000; it++)
+               {
+                  for (l = 0; l < nl; l++)
+                     ((volatile uint32_t *)(region + l * 64u))[0] = it + l;
+                  if (meth == 1)
+                  {
+                     sceKernelDcacheWritebackRange(region, nl * 64u);
+                     sceKernelIcacheInvalidateRange(region, nl * 64u);
+                  }
+                  else if (meth == 2 && &jit_pub_lines)
+                     jit_pub_lines(region, region + nl * 64u);
+               }
+               t1 = sceKernelGetSystemTimeWide();
+               if ((unsigned)(t1 - t0) < best)
+                  best = (unsigned)(t1 - t0);
+            }
+            /* best us per 1000 publishes == ns per publish */
+            fe_evt("pubcost lines=%u method=%s ns=%u", nl,
+                   meth == 0 ? "dirty_only" : meth == 1 ? "kernel" : "user",
+                   best);
+         }
+      }
+   }
+#endif
    fe_evt("icinv_end");
    free(raw);
    return 0;

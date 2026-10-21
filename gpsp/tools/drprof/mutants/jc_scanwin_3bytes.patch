@@ -1,0 +1,12 @@
+mutant: JIT_COST SCANWIN reads 3 of the 4 SMC-gate bitmap bytes of a window
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -4745,7 +4745,7 @@
+     if (xg_smc) {                                                             \
+       u32 xw_b = ((block_end_pc & xg_mask) >> 4) & ~3u;                       \
+       xw_any = xg_smc[xw_b] | xg_smc[xw_b + 1] |                              \
+-               xg_smc[xw_b + 2] | xg_smc[xw_b + 3];                           \
++               xg_smc[xw_b + 2];                                              \
+       if (xg_ent)                                                             \
+         xw_any |= xg_ent[xw_b] | xg_ent[xw_b + 1] |                           \
+                   xg_ent[xw_b + 2] | xg_ent[xw_b + 3];                        \

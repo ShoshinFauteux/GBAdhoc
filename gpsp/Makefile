@@ -414,6 +414,36 @@ else ifeq ($(platform), psp1)
 	endif
 	CFLAGS += -DENTRY_GATES=1
 	endif
+	# XLAT_FAST=1: translator host-work speedups that leave everything the
+	# translator produces (emitted code, tags, counters) unchanged
+	# (cpu_threaded.c XLAT_FAST; claude/bench-xlat).
+	ifeq ($(XLAT_FAST),1)
+	CFLAGS += -DXLAT_FAST=1
+	endif
+	# XLAT_NO=PIECE[:PIECE...]: switch single XLAT_FAST pieces off for an A/B
+	# (LIMITS GATEMAP EXITPF RAMEND DCLEAR SCANFN), e.g. XLAT_NO=SCANFN:DCLEAR.
+	ifneq ($(XLAT_NO),)
+	CFLAGS += $(foreach p,$(subst :, ,$(XLAT_NO)),-DXLAT_NO_$(p)=1)
+	endif
+	# JIT_COST=1: cost of producing translated code (cpu_threaded.c JIT_COST;
+	# claude/jit-cost, docs/JIT-COST.md).  Exact: same emitted code, same tags,
+	# same guest state.  Pieces: PUBINL (publish with user-mode cache line ops
+	# instead of two kernel calls; runtime jit_pub_inline), SCANWIN (RAM ARM
+	# scan: gate bitmaps tested only in 64-byte windows that hold a gate),
+	# SCANCOND (RAM ARM scan: flag-write bit from a table built from the
+	# original switch).  The scan pieces need XLAT_FAST's SCANFN and GATEMAP
+	# and are chosen at run time too (xlat_scan_fast), so one binary A/Bs them.
+	ifeq ($(JIT_COST),1)
+	CFLAGS += -DJIT_COST=1
+	endif
+	# JIT_COST_NO=PIECE[:PIECE...]: compile single JIT_COST pieces out.
+	ifneq ($(JIT_COST_NO),)
+	CFLAGS += $(foreach p,$(subst :, ,$(JIT_COST_NO)),-DJIT_COST_NO_$(p)=1)
+	endif
+	# XLAT_SPLIT_DIAG=1: diagnostic only -- scan/emit time split (cpu_threaded.c).
+	ifeq ($(XLAT_SPLIT_DIAG),1)
+	CFLAGS += -DXLAT_SPLIT_DIAG=1
+	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
 	endif

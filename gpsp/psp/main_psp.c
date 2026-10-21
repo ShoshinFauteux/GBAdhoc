@@ -1385,6 +1385,26 @@ static void rom_cache_select(const char *rom_path)
             jit_code_mode = (u32)m;
          fe_evt("jit_code mode=%u key=%d", (unsigned)jit_code_mode, m);
       }
+#ifdef JIT_COST_KEYS
+      /* JIT_COST cores (docs/JIT-COST.md): the run-time choice of each
+       * piece, so one binary A/Bs it with the code layout held fixed.
+       *   jit_pub_inline = 0|1   publish by kernel calls | user line ops
+       *   xlat_scan_fast = 0|1   RAM ARM scan: original | SCANWIN+SCANCOND
+       * Absent keys keep the core's default (1). */
+      {
+         extern u32 jit_pub_inline __attribute__((weak));
+         extern u32 xlat_scan_fast __attribute__((weak));
+         int pi = (int)fe_ini_get_int(HARNESS_INI, "jit_pub_inline", -1);
+         int sf = (int)fe_ini_get_int(HARNESS_INI, "xlat_scan_fast", -1);
+         if (&jit_pub_inline && (pi == 0 || pi == 1))
+            jit_pub_inline = (u32)pi;
+         if (&xlat_scan_fast && (sf == 0 || sf == 1))
+            xlat_scan_fast = (u32)sf;
+         fe_evt("jit_cost pub_inline=%d scan_fast=%d keys=%d/%d",
+                &jit_pub_inline ? (int)jit_pub_inline : -1,
+                &xlat_scan_fast ? (int)xlat_scan_fast : -1, pi, sf);
+      }
+#endif
    }
 #endif
    gamepak_buffer_cap = cap;
@@ -9149,6 +9169,21 @@ static void core_health_evt(const char *at)
           "rom_flush=%u%s%s%s%s", at, fe_host_frame_count(),
           (unsigned)gamepak_reopens, (unsigned)gamepak_short_reads,
           (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc, fb);
+#ifdef JIT_COST_KEYS
+   /* JIT_COST cores append kcalls and lineops (words 11, 12) after big_i
+    * (word 10): the cache work publishes handed out, cumulative. */
+   if (&jit_code_stats)
+   {
+      /* the declaration above is ten words; launder the pointer so the
+       * compiler does not hold the longer JIT_COST struct to that bound */
+      const volatile u32 *js = (const volatile u32 *)jit_code_stats;
+      __asm__("" : "+r"(js));
+      fe_evt("jit_cost_stats at=%s publishes=%u lines=%u whole_i=%u big_i=%u "
+             "kcalls=%u lineops=%u", at, (unsigned)js[0], (unsigned)js[2],
+             (unsigned)js[3], (unsigned)js[10], (unsigned)js[11],
+             (unsigned)js[12]);
+   }
+#endif
 }
 #else
 #define core_health_evt(at) do { } while (0)
