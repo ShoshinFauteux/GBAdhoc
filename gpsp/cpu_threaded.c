@@ -4137,15 +4137,22 @@ block_exit_type block_exits[MAX_EXITS];
  * to 0x030066de/df go unreported, and the loop runs its old SUB from then on
  * (twin SMC event trace: dc,dd,e0,e1... vs dc,dd,de,df,e0,e1 with the full
  * flush).  Per-halfword marking re-tags whatever half is zero, which only ever
- * adds marks (never more traps than a word with both halves marked). */
+ * adds marks (never more traps than a word with both halves marked).  The
+ * common all-zero word keeps the single 32-bit test and store; only a word
+ * with one half already non-zero takes the halfword tests. */
 #define smc_write_arm_yes() {                                                 \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
-  if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
-    address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) =           \
-      CODE_TAG_BLOCK16;                                                       \
-  if(address16(pc_address_block, ((block_end_pc + 2) & 0x7FFF) + offset) == 0)\
-    address16(pc_address_block, ((block_end_pc + 2) & 0x7FFF) + offset) =     \
-      CODE_TAG_BLOCK16;                                                       \
+  intptr_t tag_off = (block_end_pc & 0x7FFF) + offset;                        \
+  u32 tag_w = address32(pc_address_block, tag_off);                           \
+  if(tag_w == 0)                                                              \
+    address32(pc_address_block, tag_off) = CODE_TAG_BLOCK32;                  \
+  else if(!(tag_w & 0xFFFF) || !(tag_w >> 16))                                \
+  {                                                                           \
+    if(address16(pc_address_block, tag_off) == 0)                             \
+      address16(pc_address_block, tag_off) = CODE_TAG_BLOCK16;                \
+    if(address16(pc_address_block, tag_off + 2) == 0)                         \
+      address16(pc_address_block, tag_off + 2) = CODE_TAG_BLOCK16;            \
+  }                                                                           \
 }
 #else
 #define smc_write_arm_yes() {                                                 \
