@@ -865,6 +865,21 @@ static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
       } while (timer_lazy && timer[i].count <= 0 &&
                timer[i].status == TIMER_PRESCALE);
 #endif
+#ifdef TIMER_RELOAD_FIX
+      /* A timer that just overflowed reads its RELOAD value, not 0x0000
+       * (dr2-nfsu, 2026-10-21).  The register is refreshed above with the
+       * count BEFORE the reload, i.e. -(0) = 0x0000 at the exact overflow
+       * event, and nothing rewrote it until the next update -- so a game that
+       * reads TMxCNT_L right after an overflow (its IRQ handler, or code
+       * running until the next scheduler event) saw 0.  Need for Speed
+       * Underground's mixer computes its sample count from TM1 with reload
+       * 0xFEE0 as (len + pos - 0x10000): pos = 0 gave 0xFFFF0120 bytes, a
+       * runaway memset that wipes IWRAM, its own loop included (4.1.1: the
+       * 0.15 fps "storm"; mGBA reads 0xFEE0.. and boots on). */
+      write_ioreg(REG_TMXD(i), timer[i].status == TIMER_CASCADE ?
+                  (u32)(-timer[i].count) :
+                  (u32)(-(timer[i].count >> timer[i].prescale)));
+#endif
    }
    return ret;
 }
