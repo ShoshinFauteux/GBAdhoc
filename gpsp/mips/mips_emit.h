@@ -1919,7 +1919,26 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define arm_process_cheats()                                                  \
   generate_function_call(mips_cheat_hook);
 
-#ifdef TRACE_INSTRUCTIONS
+#if defined(EXEC_STALE_CHECK)
+  /* DIAGNOSTIC (dr2-nfsu, twin only): every EXECUTED instruction of a RAM
+   * block re-reads its guest opcode and compares it with the one it was
+   * translated from (cpu_threaded.c exec_stale_check).  Unlike STALE_CHECK,
+   * which hashes at block ENTRY, this also sees a loop inside one block
+   * running after its own code changed -- the NFSU hole. */
+  void exec_stale_check(u32 pc, u32 mode, u32 op);
+  #define emit_trace_instruction(pc, mode)                                      \
+    if (((pc) >> 24) == 2 || ((pc) >> 24) == 3) {                               \
+      emit_save_regs(false);                                                    \
+      generate_load_imm(reg_a0, pc);                                            \
+      generate_load_imm(reg_a1, mode);                                          \
+      generate_load_imm(reg_a2, opcode);                                        \
+      genccall(&exec_stale_check);                                              \
+      mips_emit_nop();                                                          \
+      emit_restore_regs(false);                                                 \
+    }
+  #define emit_trace_thumb_instruction(pc) emit_trace_instruction(pc, 0)
+  #define emit_trace_arm_instruction(pc)   emit_trace_instruction(pc, 1)
+#elif defined(TRACE_INSTRUCTIONS)
   void trace_instruction(u32 pc, u32 mode)
   {
     if (mode)

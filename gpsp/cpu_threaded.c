@@ -4170,6 +4170,44 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
+#if defined(SMC_PARTIAL_SINGLE) && !defined(DR2NFSU_MUTANT_WORDTAG)
+/* TAG EACH HALFWORD OF AN ARM INSTRUCTION ON ITS OWN (dr2-nfsu, 2026-10-21).
+ *
+ * The stock macro marks the word only when BOTH halfword tags are zero.  That
+ * was harmless while every SMC event wiped the whole tag map, but
+ * smc_retire_single_word() clears the 0x0101 interior marks of the one word it
+ * retired -- and when that word is the FIRST instruction of a block, its low
+ * halfword holds the block-start tag, which stays.  The block is then
+ * retranslated from the same start tag (no allocate_tag_arm, so nothing sets
+ * location[1]) and this check sees a non-zero word and skips it: the HIGH
+ * halfword of the block's first instruction stays untagged while the block is
+ * live.  An STRB/STRH/STR to that halfword raises no SMC event and the block
+ * runs stale code.
+ *
+ * Need for Speed Underground hits it exactly: a runaway byte memset
+ * (STRB r3,[r12],#1 at 0x030066e0) walks over its own loop; the write to
+ * 0x030066dd retires block 030066dc and clears 0x030066de's mark, the writes
+ * to 0x030066de/df go unreported, and the loop runs its old SUB from then on
+ * (twin SMC event trace: dc,dd,e0,e1... vs dc,dd,de,df,e0,e1 with the full
+ * flush).  Per-halfword marking re-tags whatever half is zero, which only ever
+ * adds marks (never more traps than a word with both halves marked).  The
+ * common all-zero word keeps the single 32-bit test and store; only a word
+ * with one half already non-zero takes the halfword tests. */
+#define smc_write_arm_yes() {                                                 \
+  intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
+  intptr_t tag_off = (block_end_pc & 0x7FFF) + offset;                        \
+  u32 tag_w = address32(pc_address_block, tag_off);                           \
+  if(tag_w == 0)                                                              \
+    address32(pc_address_block, tag_off) = CODE_TAG_BLOCK32;                  \
+  else if(!(tag_w & 0xFFFF) || !(tag_w >> 16))                                \
+  {                                                                           \
+    if(address16(pc_address_block, tag_off) == 0)                             \
+      address16(pc_address_block, tag_off) = CODE_TAG_BLOCK16;                \
+    if(address16(pc_address_block, tag_off + 2) == 0)                         \
+      address16(pc_address_block, tag_off + 2) = CODE_TAG_BLOCK16;            \
+  }                                                                           \
+}
+#else
 #define smc_write_arm_yes() {                                                 \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address32(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
@@ -4178,6 +4216,7 @@ block_exit_type block_exits[MAX_EXITS];
       CODE_TAG_BLOCK32;                                                       \
   }                                                                           \
 }
+#endif
 
 #define smc_write_thumb_yes() {                                               \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
@@ -5676,6 +5715,60 @@ void flush_translation_cache_ram(void)
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
+#ifdef EXEC_STALE_CHECK
+/* DIAGNOSTIC (dr2-nfsu, twin only; mips_emit.h emit_trace_instruction):
+ * an executed RAM instruction whose guest opcode no longer matches the one
+ * it was translated from is stale code.  Counts to stderr at exit; the first
+ * 16 are listed; EXEC_STALE_ABORT=1 in the environment aborts on the first. */
+static u32 esc_hits, esc_checks;
+static int esc_abort = -1;
+static void esc_report(void)
+{
+  fprintf(stderr, "EXEC_STALE checks=%u hits=%u\n", (unsigned)esc_checks,
+          (unsigned)esc_hits);
+}
+void exec_stale_check(u32 pc, u32 mode, u32 op)
+{
+  u32 cur;
+  const u8 *p = (pc >> 24) == 3 ? iwram + 0x8000 + (pc & 0x7FFF)
+                                : ewram + (pc & 0x3FFFF);
+  if (esc_abort < 0) {
+    const char *e = getenv("EXEC_STALE_ABORT");
+    esc_abort = e && *e == '1';
+    atexit(esc_report);
+  }
+  esc_checks++;
+  cur = mode ? *(const u32 *)p : *(const u16 *)p;
+  if (cur == op)
+    return;
+  if (esc_hits++ < 16)
+    fprintf(stderr, "EXEC_STALE frame=%u pc=%08x %s translated=%08x now=%08x "
+            "last_smc_write=%08x\n", (unsigned)frame_counter, (unsigned)pc,
+            mode ? "arm" : "thumb", (unsigned)op, (unsigned)cur,
+            (unsigned)smc_last_write_addr);
+  if (esc_abort)
+    abort();
+}
+#endif
+
+#ifdef SMC_EVTRACE
+/* DIAGNOSTIC (twin only): one line per SMC event in a frame window. */
+static FILE *smc_evt_f;
+static int smc_evt_on(void)
+{
+  static int lo = -1, hi;
+  if (lo < 0) { const char *e = getenv("SMC_EVT_LO"); lo = e ? atoi(e) : 0;
+    e = getenv("SMC_EVT_HI"); hi = e ? atoi(e) : 0x7fffffff; }
+  if ((int)frame_counter < lo || (int)frame_counter > hi) return 0;
+  if (!smc_evt_f) { const char *e = getenv("SMC_EVT_FILE");
+    smc_evt_f = fopen(e ? e : "smcevt.txt", "w"); }
+  return smc_evt_f != NULL;
+}
+#define SMC_EVT(...) do { if (smc_evt_on()) fprintf(smc_evt_f, __VA_ARGS__); } while (0)
+#else
+#define SMC_EVT(...) do { } while (0)
+#endif
+
 #ifdef SMC_FALLBACK_STATS
 /* DIAGNOSTIC (bench campaign 2026-10-20): why an SMC trap took the full RAM
  * flush.  [0] writer not range-safe, [1] activation, [2] range gate installed
@@ -5686,9 +5779,9 @@ void flush_translation_cache_ram(void)
 u32 smc_fallback_stats[16];   /* [10] stale checks, [11] stale MISMATCHES,
                                * [12..14] SMC_BLOCK_EXACT word hits /
                                * retired / deferred to a full flush */
-#define SMC_FB(i) (smc_fallback_stats[i]++)
+#define SMC_FB(i) do { SMC_EVT("  FB %d\n", (int)(i)); smc_fallback_stats[i]++; } while (0)
 #else
-#define SMC_FB(i) do { } while (0)
+#define SMC_FB(i) SMC_EVT("  FB %d\n", (int)(i))
 #endif
 
 /* Self-modifying-code entry points: identical behaviour to
@@ -5948,6 +6041,7 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
       if (SMC_RAM_LIVE_OFFSET(te, arm) &&
           start < high && te->blk_end_arm > low) {
 #ifdef SMC_PARTIAL_STABLE_THUNK
+        SMC_EVT("  R arm %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_arm);
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
         te->code_bytes_arm = 0;
 #else
@@ -5972,6 +6066,7 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
       if (SMC_RAM_LIVE_OFFSET(te, thumb) &&
           start < high && te->blk_end_thumb > low) {
 #ifdef SMC_PARTIAL_STABLE_THUNK
+        SMC_EVT("  R thumb %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_thumb);
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
         te->code_bytes_thumb = 0;
 #else
@@ -7292,6 +7387,7 @@ static int smc_retire_span(u32 lo, u32 hi)
       if (SMC_RAM_LIVE_OFFSET(te, arm) && start < lo &&
           te->blk_end_arm > lo) {
 #endif
+        SMC_EVT("  R arm %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_arm);
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
         te->code_bytes_arm = 0;
         flush_ram_partial++;
@@ -7302,6 +7398,7 @@ static int smc_retire_span(u32 lo, u32 hi)
       }
       if (SMC_RAM_LIVE_OFFSET(te, thumb) && start < hi &&
           te->blk_end_thumb > lo) {
+        SMC_EVT("  R thumb %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_thumb);
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
         te->code_bytes_thumb = 0;
         flush_ram_partial++;
@@ -7801,6 +7898,44 @@ static void scp_note(int admitted)
 void flush_translation_cache_ram_smc(void)
 {
   DRPH_SCOPE(DRPH_FLUSH);
+  SMC_EVT("E f=%u pc=%08x t=%u a=%08x w=%08x\n", (unsigned)frame_counter,
+          (unsigned)reg[REG_PC], (unsigned)((reg[REG_CPSR] >> 5) & 1),
+          (unsigned)smc_last_write_addr,
+          (unsigned)*(u32 *)(((smc_last_write_addr >> 24) == 3 ?
+             iwram + 0x8000 + (smc_last_write_addr & 0x7FFC) :
+             ewram + (smc_last_write_addr & 0x3FFFC))));
+#ifdef SMC_EVTRACE
+  {
+    static u32 nreg;
+    if (smc_evt_on() && nreg++ < 64) {
+      u32 k;
+      fprintf(smc_evt_f, "  regs");
+      for (k = 0; k < 16; k++) fprintf(smc_evt_f, " %08x", (unsigned)reg[k]);
+      fprintf(smc_evt_f, "\n");
+      if (nreg == 1 || nreg == 8 || nreg == 20) {
+        u32 a0 = (smc_last_write_addr & 0x7FFC) - 0x100;
+        for (k = 0; k < 0x200; k += 4) {
+          if (!(k & 31)) fprintf(smc_evt_f, "\n  %08x:", (unsigned)(0x03000000 + a0 + k));
+          fprintf(smc_evt_f, " %08x", (unsigned)*(u32 *)(iwram + 0x8000 + a0 + k));
+        }
+        fprintf(smc_evt_f, "\n  tags:");
+        for (k = 0; k < 0x200; k += 2) {
+          if (!(k & 63)) fprintf(smc_evt_f, "\n  %08x:", (unsigned)(0x03000000 + a0 + k));
+          fprintf(smc_evt_f, " %04x", (unsigned)*(u16 *)(iwram + a0 + k));
+        }
+        fprintf(smc_evt_f, "\n");
+        if (nreg == 1 && getenv("SMC_EVT_EW")) {
+          u32 e0 = strtoul(getenv("SMC_EVT_EW"), NULL, 16) & 0x3FFFC;
+          for (k = 0; k < 0x400; k += 4) {
+            if (!(k & 31)) fprintf(smc_evt_f, "\n  %08x:", (unsigned)(0x02000000 + e0 + k));
+            fprintf(smc_evt_f, " %08x", (unsigned)*(u32 *)(ewram + e0 + k));
+          }
+          fprintf(smc_evt_f, "\n");
+        }
+      }
+    }
+  }
+#endif
 #ifdef SMC_PARTIAL_SAFE
   u32 partial_low = 0, partial_high = 0;
   int range_safe;

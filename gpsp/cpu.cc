@@ -1632,6 +1632,9 @@ arm_loop:
        #ifdef TRACE_INSTRUCTIONS
        interp_trace_instruction(reg[REG_PC], 1);
        #endif
+       #ifdef PC_RING
+       pc_ring_note(reg[REG_PC], 1, opcode);
+       #endif
 
        switch((opcode >> 20) & 0xFF)
        {
@@ -3103,6 +3106,9 @@ thumb_loop:
 
        #ifdef TRACE_INSTRUCTIONS
        interp_trace_instruction(reg[REG_PC], 0);
+       #endif
+       #ifdef PC_RING
+       pc_ring_note(reg[REG_PC], 0, opcode);
        #endif
 
        switch((opcode >> 8) & 0xFF)

@@ -484,6 +484,18 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_PARTIAL_SINGLE),1)
 	CFLAGS += -DSMC_PARTIAL_SINGLE
 	endif
+	# TIMER_RELOAD_FIX=1: a timer that has just overflowed reads its reload
+	# value instead of 0x0000 (main.c update_timers).  Need for Speed
+	# Underground computed a 4 GB mixer fill from the 0 and wiped IWRAM
+	# (dr2-nfsu 2026-10-21).  Guest-visible, so off by default.
+	ifeq ($(TIMER_RELOAD_FIX),1)
+	CFLAGS += -DTIMER_RELOAD_FIX
+	endif
+	# SMC_EVTRACE / PC_RING: DIAGNOSTIC, twin only (tools/drprof VDEFS), in no
+	# profile.  SMC_EVTRACE logs every SMC event (writer, word, retirements,
+	# fallback reason) to $SMC_EVT_FILE between frame_counter $SMC_EVT_LO..HI;
+	# PC_RING keeps the interpreter's last 256k instructions and dumps them
+	# when $PC_RING_PC is entered with r1 negative.
 	# SMC_FALLBACK_STATS=1: DIAGNOSTIC.  Count why SMC traps fall back to a
 	# full RAM flush (EVT core_health smcfb=).
 	# smc-coverage 2026-10-20: widen SMC_PARTIAL_SINGLE, one class per switch
