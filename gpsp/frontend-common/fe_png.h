@@ -5,8 +5,8 @@
  * chain matching -- what zlib does at a middling level -- plus the one
  * thing that matters most for a console frame: a picture with at most 256
  * colours (nearly every GBA and every GB frame) is written as an INDEXED
- * PNG, at 1, 2, 4 or 8 bits a pixel, so a four-shade Game Boy frame is a
- * few hundred bytes of data before compression even starts.  More colours
+ * PNG (8 bits a pixel; 1/2/4 with -DFE_PNG_LOW_DEPTH): one byte a pixel
+ * instead of three before compression even starts.  More colours
  * than that: 24-bit RGB with a per-row adaptive filter.
  *
  * NO HEAP.  The caller hands in all the memory it needs (fe_png_work_bytes:

@@ -588,8 +588,14 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
 
    colors = count_colors(pix, w, h, pitch, tab, pal);
    indexed = colors <= 256;
+#ifdef FE_PNG_LOW_DEPTH
+   /* 1/2/4-bit indices: legal PNG, ~40% smaller for a Game Boy frame, but
+    * off by default -- the XMB's Photo viewer has not been seen showing a
+    * sub-byte palette image, and 8-bit indexed is the form every decoder
+    * meets.  The host test runs both. */
    if (indexed)
       depth = colors <= 2 ? 1 : colors <= 4 ? 2 : colors <= 16 ? 4 : 8;
+#endif
 
    /* the filtered scanlines, whole */
    if (indexed)

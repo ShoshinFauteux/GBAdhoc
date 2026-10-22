@@ -154,7 +154,7 @@ typedef struct { int x; } theme;
 typedef enum { UI_ACT_NONE, UI_ACT_RESUME, UI_ACT_SAVESTATE, UI_ACT_LOADSTATE,
                UI_ACT_NET_HOST, UI_ACT_NET_JOIN, UI_ACT_NET_DISCONNECT,
                UI_ACT_NET_MGIFT, UI_ACT_NET_MGIFT_STOP, UI_ACT_EXIT,
-               UI_ACT_GAMELIST, UI_ACT_RELAUNCH } ui_action;
+               UI_ACT_GAMELIST, UI_ACT_RELAUNCH, UI_ACT_RESET } ui_action;
 static const theme THM_LIGHT, THM_DARK;
 static const theme *g_thm;
 static char trace[1024];
@@ -278,6 +278,7 @@ static int ui_state_load_done(int rc) { (void)rc; return 1; }
 static int psp_state_path_for_slot(char *o, size_t n, const char *p, unsigned s)
 { (void)o; (void)n; (void)p; (void)s; return -1; }
 static int psp_state_load(const char *p, const char *w) { (void)p; (void)w; return -1; }
+static int psp_game_reset(void) { return -2; }
 static void osd_toast(const char *f, ...) { (void)f; }
 static void ui_net_action(int h) { (void)h; }
 static int fe_host_gblink_active(void) { return 0; }
