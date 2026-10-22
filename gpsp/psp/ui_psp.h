@@ -246,9 +246,21 @@ static inline size_t ui_rom_stem_length(const char *name)
 
 /* Wake-from-sleep overlay: the frozen frame with a plate over it.
  * `frame` may be NULL (nothing was captured), in which case the plate sits
- * on the theme background.  Returns 0 to resume, 1 for the game list. */
+ * on the theme background.  Returns 0 to resume, 1 for the game list,
+ * UI_WAKE_YIELD when the yield hook asked it to leave (nothing chosen: the
+ * caller lets the game loop park and opens it again). */
+#define UI_WAKE_YIELD 2
 int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
                  const char *game);
+/* Asked by the wake overlay once a frame, before it reads the pad or draws:
+ * nonzero = return UI_WAKE_YIELD now.  The overlay is modal (the
+ * SELECT+TRIANGLE pause screen, the post-wake screen); the game loop sets
+ * this to "the power callback wants the loop parked", so a switch slid there
+ * parks at the loop's own top like any in-game sleep.  NULL = never. */
+void ui_set_wake_yield(int (*yield)(void));
+/* The menu reads the next frame's held buttons as already seen (as at
+ * ui_open): the wake overlay's answer, still down, is not a menu press. */
+void ui_swallow_pad(void);
 /* Harness `wake_shot = N`: the next wake overlay dumps log/ge_wake.bmp on
  * its third frame and continues on its own. */
 void ui_wake_shot_arm(void);

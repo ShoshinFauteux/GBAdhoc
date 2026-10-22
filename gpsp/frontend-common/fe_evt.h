@@ -19,6 +19,13 @@ extern "C" {
  * Returns 0 on success; on failure logging degrades to stderr-only. */
 int  fe_evt_init(const char *path, int echo_stderr);
 void fe_evt_close(void);
+/* Reopen a sleep-closed event log without truncating its earlier lines
+ * (fe_evt_close() first; only once the writer thread has stopped).
+ * 0 = reopened, 1 = it was already open / there is no log in this build,
+ * -1 = the open failed (logging stays off, as after a failed fe_evt_init). */
+int fe_evt_reopen_append(const char *path);
+/* 1 while the event log file is open. */
+int fe_evt_is_open(void);
 
 /* Structured event: emits "EVT " + formatted line + "\n", then fflush. */
 /* ADR-0067b: with telemetry compiled out, a call site should not survive at

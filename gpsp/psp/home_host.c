@@ -34,6 +34,11 @@ int home_host_tried(void)
    return g_tried;
 }
 
+int home_host_loaded(void)
+{
+   return g_mod >= 0;
+}
+
 int home_host_start(const char *base_dir)
 {
    char path[192];

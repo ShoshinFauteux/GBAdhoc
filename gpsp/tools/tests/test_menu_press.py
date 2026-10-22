@@ -100,6 +100,17 @@ def overlay_continue(src):
     return src[j + len("g_wake_have = 0;"):k] if 0 <= j < k else ""
 
 
+ANSWERED = "      if (g_wake_answered)\n      {"
+
+
+def answered_drop(src):
+    """The in-game present's drop after wake_service's Continue (PR #15
+    moved the overlay's answer into wake_service, which cannot reach the
+    caller's pad_new / ctl_fired: it flags g_wake_answered instead)."""
+    i = src.find(ANSWERED)
+    return braced(src, i) + "\n" if i >= 0 else ""
+
+
 def menu_close(src):
     """The menu branch's last statements before its final continue."""
     i = src.find(MENU_HEAD)
@@ -143,7 +154,7 @@ def production(src):
         "      if (overlay_up)\n      {\n"
         "         overlay_up = 0;\n"
         "         ui_wake_menu();\n" + overlay_continue(src) + "\n"
-        "      }\n"
+        "      }\n" + answered_drop(body) +
         "      core_seen[frame] = g_pad;   /* retro_run */\n"
         "      new_seen[frame] = pad_new;  /* turbo_frame */\n"
         "      fired_seen[frame] = ctl_fired;\n"
@@ -171,6 +182,7 @@ typedef struct { unsigned Buttons; } SceCtrlData;
 static SceCtrlData pd;
 static unsigned g_pad, prev_pad, pad_new, ctl_fired;
 static int g_rw_held;
+static int g_wake_answered;
 static int home_pressed, menu_open, overlay_up;
 static unsigned pads[64];          /* the pad, per game iteration (1-based) */
 static unsigned core_seen[64];     /* g_pad as the core read it */
@@ -225,6 +237,7 @@ static void machine(void)
 {
    g_pad = prev_pad = pad_new = ctl_fired = 0;
    g_rw_held = 0;
+   g_wake_answered = 0;
    home_pressed = menu_open = overlay_up = 0;
    memset(pads, 0, sizeof(pads));
    memset(ov_pad, 0, sizeof(ov_pad));
@@ -356,7 +369,7 @@ def wiring(src):
     and clear the pad.  Returns a list of failures."""
     bad = []
     body = main_body(src)
-    raw = body.find("      g_pad = pd.Buttons & ~CTL_STICK_ALL;")
+    raw = body.find("      g_pad = ctl_pad_word(pd.Buttons, ")
     m = READ.search(body, max(raw, 0))
     swallow = m.start() if m else -1
     first_use = body.find("      pad_new = g_pad & ~prev_pad;", raw)
@@ -373,7 +386,7 @@ def wiring(src):
              ("g_pad", "pad_new", "ctl_fired")),
             ("overlay Continue", overlay_continue(src),
              "sceCtrlPeekBufferPositive(&pd, 1);",
-             ("g_pad", "pad_new", "ctl_fired", "g_rw_held"))):
+             ("g_pad", "g_rw_held"))):
         i = text.find(arm)
         if i < 0 or (name == "overlay Continue" and
                      "pad_swallow_arm(pd.Buttons);" not in text[i:]):
@@ -382,6 +395,17 @@ def wiring(src):
             m = re.search(r"\b%s = (?:\w+ = )*0;" % var, text)
             if not m or m.start() < i:
                 bad.append("%s does not clear %s after the arm" % (name, var))
+    if not re.search(r"\bg_wake_answered = 1;", overlay_continue(src)):
+        bad.append("overlay Continue does not flag its caller")
+    drop = answered_drop(body)
+    present = body.find("      FE_LP_SET(FELP_L_PRES0);\n      me_video_present();")
+    call = body.find("int w = wake_service();\n         if (w)\n")
+    at = body.find(ANSWERED)
+    if not drop or at < 0 or at > present or call < 0 or call > at:
+        bad.append("the present does not drop the answer's edges after wake_service")
+    for var in ("pad_new", "ctl_fired"):
+        if not re.search(r"\b%s = (?:\w+ = )*0;" % var, drop):
+            bad.append("overlay Continue does not clear %s" % var)
     if not re.search(r"^ *g_pad_swallow = 0;", inproc_reset(src), re.M):
         bad.append("the in-process return keeps the last game's swallow")
     return bad
@@ -408,6 +432,7 @@ def in_site(start, end):
 
 at_home = in_site(HOME_HEAD, "\n      }\n")
 at_continue = in_site(CONTINUE, "if (!g_running)")
+at_answered = in_site(ANSWERED, "FE_LP_SET(FELP_L_PRES0);")
 at_close = in_site("         if (!ui_active())\n            pad_swallow_arm(",
                    "continue;")
 
@@ -440,11 +465,14 @@ MUTANTS = (
      at_continue(r"pad_swallow_arm\(pd\.Buttons\);", "(void)0;"), "",
      "core_seen[2] == PSP_CTRL_UP", True),
     ("the overlay's iteration runs on its stale pad",
-     at_continue(r"\bg_pad = ", ""), "", "core_seen[1] == 0", True),
+     at_continue(r"\bg_pad = 0;", "(void)0;"), "", "core_seen[1] == 0", True),
     ("the overlay's iteration fires turbo on its stale edges",
-     at_continue(r"\bpad_new = ", ""), "", "new_seen[1] == 0", True),
+     at_answered(r"\bpad_new = ", ""), "", "new_seen[1] == 0", True),
+    ("the overlay's Continue does not flag its caller",
+     at_continue(r"\bg_wake_answered = 1;", "(void)0;"), "", "new_seen[1] == 0",
+     True),
     ("the overlay's iteration keeps its stale shortcuts",
-     at_continue(r"\bctl_fired = ", ""), "", "fired_seen[1] == 0", True),
+     at_answered(r"\bctl_fired = ", ""), "", "fired_seen[1] == 0", True),
     ("the overlay's iteration rewinds on its stale level",
      at_continue(r"\bg_rw_held = 0;", ""), "", "rw_seen[1] == 0", True),
     ("the overlay arms with everything, held or not",

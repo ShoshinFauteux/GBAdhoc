@@ -17,6 +17,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        ff_psp.o \
        me_host.o \
        home_host.o \
+       sleep_q.o \
        video_psp.o \
        osd_psp.o \
        ui_psp.o \

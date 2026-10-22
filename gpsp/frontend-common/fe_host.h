@@ -402,6 +402,13 @@ void fe_host_sram_service(void);
  * any suspend/savestate path you introduce).  Budgeted draining is a
  * smoothness optimisation and must never become a durability regression. */
 void fe_host_sram_sync(void);
+/* Call only after the async writer has stopped (or was never started): no
+ * other thread may own the handle.  Closes the held-open .sav; the delta
+ * writer reopens it by path on its next write (sram_drain), exactly as after
+ * a failed write.  Returns 1 if a handle was open, 0 if not.  For the sleep
+ * quiesce (psp/sleep_q.h): a sleeping PSP invalidates open Memory Stick
+ * files, and TYL keeps none open across a suspend. */
+int fe_host_sram_sleep_close(void);
 
 /* ---- asynchronous .sav writer (ADR-0025) --------------------------------
  * ADR-0020's budgeted drain bounded the stall but did not remove it: the
