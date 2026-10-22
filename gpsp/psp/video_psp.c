@@ -14,6 +14,7 @@
 #include "fe_util.h"
 #include "fe_evt.h"
 #include "ambient_look.h"
+#include "text_fold.h"   /* UTF-8 names drawn folded to ASCII (issue #19) */
 
 /* Callers lay out with VID_LOGO_W/H; the sprite is drawn LOGO_W x LOGO_H. */
 typedef char vid_logo_size_matches_atlas[
@@ -996,9 +997,9 @@ static fu_face fu_get(int hd)
 static int fu_measure(const fu_face *f, const char *s)
 {
    int w = 0;
-   for (; *s; s++)
+   while (*s)
    {
-      unsigned char c = (unsigned char)*s;
+      unsigned char c = utf8_fold_next(&s);
       if (c < FU_FIRST || c > FU_LAST)
          c = '?';
       w += f->g[c - FU_FIRST].xadv;
@@ -1059,9 +1060,9 @@ static void fu_draw(const fu_face *f, int x, int y, const char *str,
    if (!fu_clut_ready)
       fu_clut_build();
 
-   for (s = str; *s; s++)
+   for (s = str; *s; )
    {
-      unsigned char c = (unsigned char)*s;
+      unsigned char c = utf8_fold_next(&s);
       if (c < FU_FIRST || c > FU_LAST)
          c = '?';
       if (f->g[c - FU_FIRST].w)
@@ -1084,9 +1085,9 @@ static void fu_draw(const fu_face *f, int x, int y, const char *str,
 
    v = (tcvtx_t *)sceGuGetMemory(2 * n * sizeof(tcvtx_t));
    i = 0;
-   for (s = str; *s; s++)
+   for (s = str; *s; )
    {
-      unsigned char c = (unsigned char)*s;
+      unsigned char c = utf8_fold_next(&s);
       const fu_glyph *g;
       int gx, gy;
       if (c < FU_FIRST || c > FU_LAST)

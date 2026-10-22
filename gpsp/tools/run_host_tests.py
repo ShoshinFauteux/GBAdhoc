@@ -256,6 +256,12 @@ def suites(env: Env, baseline: Path | None):
          "-fsanitize=address,undefined -Ifrontend-common "
          "-o /tmp/t_link_mode tools/test_link_mode.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_link_mode && "
+         # ...and the browser's non-ASCII file names (psp/text_fold.h,
+         # issue #19): the display fold and the FAT long/short name choice.
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined "
+         "-o /tmp/t_text_fold tools/tests/test_text_fold.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_text_fold && "
          # ...and the rewind core (frontend-common/fe_rewind.c, a REWIND=1
          # prototype) against a fake machine: any pattern of taps on the
          # control, every frame checked against a run that never rewound,

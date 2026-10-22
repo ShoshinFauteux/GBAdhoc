@@ -44,6 +44,7 @@
 #include "link_games.h"
 #include "fe_linkmode.h"
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
+#include "text_fold.h"      /* non-ASCII file names (issue #19) */
 #ifdef GPSP_CHEATS
 #include "fe_cheats.h"
 #endif
@@ -5179,6 +5180,10 @@ typedef struct {
    const char *base;    /* the filename alone: what the user reads, and what
                          * box art is keyed on, so art never has to mirror
                          * whatever folder layout the ROMs happen to use     */
+   const char *disp;    /* what the list SHOWS and sorts by: `base`, except
+                         * for a long name the firmware could not open, which
+                         * is shown while `name` holds the FAT 8.3 name it is
+                         * opened by (text_fold.h fat_rom_pick, issue #19)  */
    unsigned    size;
    signed char has_sav; /* -1 = not looked up yet; see rom_has_sav()         */
    signed char is_fav;  /* in favourites.txt; set by favs_mark(), and it
@@ -5685,6 +5690,46 @@ static const char *rom_pool_add(const char *s, size_t len)
    return p;
 }
 
+/* One directory entry through text_fold.h's fat_rom_pick: which of its names
+ * the ROM is opened by (g_scan_open) and which the list shows (g_scan_show).
+ * Static, not on the stack: rom_scan_dir recurses, and the FAT block is
+ * 1 KiB; each entry is decided before the next read overwrites it. */
+static SceIoFatDirentPrivate g_scan_fat;
+static const char *g_scan_open, *g_scan_show;
+struct scan_pick_ctx { const char *dir; fe_console_t console; };
+
+static int scan_match(const char *name, void *ctx)
+{
+   return ui_rom_matches_console(name, ((struct scan_pick_ctx *)ctx)->console);
+}
+
+static int scan_opens(const char *name, void *ctx)
+{
+   char full[PSP_FILE_PATH_CAP];
+   SceIoStat st;
+   return psp_rom_path_join(full, sizeof(full),
+                            ((struct scan_pick_ctx *)ctx)->dir, name) == 0 &&
+          sceIoGetstat(full, &st) >= 0;
+}
+
+static int scan_rom_pick(const SceIoDirent *ent, const char *dir,
+                         fe_console_t console)
+{
+   static char s_short[sizeof(g_scan_fat.s_name) + 1];
+   static char s_long[sizeof(g_scan_fat.l_name)];
+   struct scan_pick_ctx c;
+   c.dir = dir;
+   c.console = console;
+   /* Copied out NUL-bounded: the firmware fills these, not us (and PPSSPP
+    * fills only the long name). */
+   memcpy(s_short, g_scan_fat.s_name, sizeof(g_scan_fat.s_name));
+   s_short[sizeof(g_scan_fat.s_name)] = '\0';
+   memcpy(s_long, g_scan_fat.l_name, sizeof(s_long) - 1);
+   s_long[sizeof(s_long) - 1] = '\0';
+   return fat_rom_pick(ent->d_name, s_long, s_short, scan_match, scan_opens,
+                       &c, &g_scan_open, &g_scan_show);
+}
+
 /* `rel` is "" at the top level, otherwise a path under roms/ with no leading
  * or trailing slash.  Directories are walked because sorting a library into
  * folders is the obvious thing to do with one, and 2.0 ignored every one. */
@@ -5710,7 +5755,13 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    d = sceIoDopen(dir);
    if (d < 0)
       return;
+   /* d_private: the FAT driver also reports each entry's 8.3 short name
+    * and its long name there (issue #19: a long name with a character the
+    * firmware cannot hand back in d_name must still be found, and opened). */
    memset(&ent, 0, sizeof(ent));
+   memset(&g_scan_fat, 0, sizeof(g_scan_fat));
+   g_scan_fat.size = sizeof(g_scan_fat);
+   ent.d_private = &g_scan_fat;
    while (sceIoDread(d, &ent) > 0)
    {
       /* Memory Stick reports a directory in st_mode on some firmwares and
@@ -5741,7 +5792,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                rom_scan_dir(sub, depth - 1, n, console);
          }
       }
-      else if (ui_rom_matches_console(ent.d_name, console))
+      else if (scan_rom_pick(&ent, dir, console))
       {
          g_rom_found++;
          ret_scan_tick();
@@ -5751,17 +5802,25 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
             const char *stored;
             int         plen;
 
+            const char *disp = NULL;
+
             if (rel[0])
-               plen = snprintf(path, sizeof(path), "%s/%s", rel, ent.d_name);
+               plen = snprintf(path, sizeof(path), "%s/%s", rel, g_scan_open);
             else
-               plen = snprintf(path, sizeof(path), "%s", ent.d_name);
+               plen = snprintf(path, sizeof(path), "%s", g_scan_open);
 
             if (plen > 0 && plen < (int)sizeof(path) &&
-                (stored = rom_pool_add(path, (size_t)plen)) != NULL)
+                (stored = rom_pool_add(path, (size_t)plen)) != NULL &&
+                (g_scan_show == g_scan_open ||
+                 (disp = rom_pool_add(g_scan_show, strlen(g_scan_show)))
+                    != NULL))
             {
                const char *slash = strrchr(stored, '/');
                g_roms[*n].name    = stored;
                g_roms[*n].base    = slash ? slash + 1 : stored;
+               g_roms[*n].disp    = disp ? disp : g_roms[*n].base;
+               if (disp)
+                  fe_evt("rom_scan_short open=%s show=%s", stored, disp);
                g_roms[*n].size    = (unsigned)ent.d_stat.st_size;
                g_roms[*n].has_sav = -1;
                g_roms[*n].is_fav  = 0;       /* favs_mark() after the sort */
@@ -5777,13 +5836,16 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
          }
       }
       memset(&ent, 0, sizeof(ent));
+      memset(&g_scan_fat, 0, sizeof(g_scan_fat));
+      g_scan_fat.size = sizeof(g_scan_fat);
+      ent.d_private = &g_scan_fat;
    }
    sceIoDclose(d);
 }
 
 static int rom_entry_less(const rom_entry *a, const rom_entry *b)
 {
-   int by_name = strcasecmp(a->base, b->base);
+   int by_name = strcasecmp(a->disp, b->disp);
    return by_name < 0 || (by_name == 0 && a->scan_order < b->scan_order);
 }
 
@@ -6475,10 +6537,10 @@ static const uint16_t *hero_decode(int rom_idx, const char *base)
 static void rom_display_name(const rom_entry *r, char *out, size_t sz,
                              int cut_region)
 {
-   size_t n = ui_rom_stem_length(r->base);
+   size_t n = ui_rom_stem_length(r->disp);
    if (n >= sz)
       n = sz - 1;
-   memcpy(out, r->base, n);
+   memcpy(out, r->disp, n);
    out[n] = '\0';
    /* No-Intro writes "Legend of Zelda, The".  Restoring the article to the
     * front costs nothing, reads properly, and matters most on exactly the
@@ -6770,6 +6832,8 @@ static void clip_title(char *t, int px)
       if (vid_text_w(t) + vid_text_w("...") <= px)
          break;
    }
+   utf8_trim_partial(t);          /* a cut inside a UTF-8 letter (#19) */
+   n = (int)strlen(t);
    /* Do not leave a dangling space or separator before the dots. */
    while (n > 0 && (t[n - 1] == ' ' || t[n - 1] == '-'))
       t[--n] = 0;
@@ -6875,6 +6939,8 @@ static void clip_title_hd(char *t, int px)
       if (vid_text_hd_w(t) + vid_text_hd_w("...") <= px)
          break;
    }
+   utf8_trim_partial(t);
+   n = (int)strlen(t);
    while (n > 0 && (t[n - 1] == ' ' || t[n - 1] == '-'))
       t[--n] = 0;
    strcpy(t + n, "...");
