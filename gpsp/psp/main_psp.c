@@ -13802,11 +13802,8 @@ session_top:
       /* THE THUMBSTICK (ctl_map.h).  Its four direction bits are bits
        * pad.Buttons does not use; clear them, then add what the stick says
        * in the chosen mode.  OFF adds nothing: the word is 3.5.0's. */
-      g_pad = pd.Buttons & ~CTL_STICK_ALL;
-      if (g_pcfg.stick != CTL_STICK_OFF)
-         g_pad |= ctl_stick_bits(g_pcfg.stick, pd.Lx, pd.Ly, &g_stick_state);
-      else
-         g_stick_state = 0;
+      g_pad = ctl_pad_word(pd.Buttons, g_pcfg.stick, pd.Lx, pd.Ly,
+                           &g_stick_state);
 #ifdef GPSP_PERF_RIG
       if (pd.Lx < g_stick_min[0]) g_stick_min[0] = pd.Lx;
       if (pd.Lx > g_stick_max[0]) g_stick_max[0] = pd.Lx;

@@ -7636,6 +7636,7 @@ static int browse_backdrop_take(void)
 static int browser_settings(void)
 {
    int relaunch = 0;
+   unsigned stick;               /* ctl_pad_word: engaged stick directions */
 
    browse_backdrop_take();
    g_ov_browse = 1;
@@ -7669,6 +7670,7 @@ static int browser_settings(void)
    screen_to(SCR_SETTINGS);
    g_cursor = SET_ROOM;
    g_prev_pad = 0xFFFFFFFFu;      /* swallow the opening START */
+   stick = 0;
    /* Settings > Controls runs inside this loop too: it is a sub-page of
     * these settings, and it leaves back to them. */
    g_share_req = 0;
@@ -7680,7 +7682,11 @@ static int browser_settings(void)
       unsigned edges, pad;
       int join = 0;
       sceCtrlPeekBufferPositive(&pd, 1);
-      pad = ui_demo_running() ? demo_pad() : pd.Buttons;
+      /* The pad word the game loop builds (ctl_pad_word), stick included:
+       * with raw pd.Buttons, Controls opened from the browser never saw
+       * the stick, so a stick direction could be bound only in game. */
+      pad = ui_demo_running() ? demo_pad() :
+            ctl_pad_word(pd.Buttons, g_pcfg.stick, pd.Lx, pd.Ly, &stick);
       edges = pad_edges(pad);
       /* The harness script keeps counting in here, so a shoot can walk the
        * Settings screen (no-op without a script). */
