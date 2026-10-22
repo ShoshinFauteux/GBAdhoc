@@ -234,6 +234,17 @@ if [ "${REWIND:-0}" = 1 ]; then
   PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=1"
 fi
 
+# COMBO3=1: the lab-combo3 dynarec additions (a9f432c, Lab build 67e4f36a1357:
+# candidate A's single-store SMC retire, XLAT_FAST, JIT_COST, TIMER_RELOAD_FIX)
+# on top of CORE_COMMON, for a PLAYABLE owner test build of the validated Lab
+# core -- the lab profile passed these as CORE_EXTRA, which a release refuses.
+# Core only (ROOT make).  JIT_COST is codegen (publish by user line ops, fast
+# RAM scan; runtime defaults on), not telemetry; its harness keys
+# (-DJIT_COST_KEYS) are NOT added.
+if [ "${COMBO3:-0}" = 1 ]; then
+  CORE_FLAGS="$CORE_FLAGS SMC_PARTIAL_SINGLE=1 SMC_SINGLE_THUMB=1 SMC_SINGLE_HALF=1 SMC_SINGLE_ANYPC=1 SMC_SINGLE_EWRAM=1 SMC_SINGLE_UNTAG=1 SMC_SINGLE_HOT=64 XLAT_FAST=1 JIT_COST=1 TIMER_RELOAD_FIX=1"
+fi
+
 # INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
 # ON by default, for a side-by-side PLAYABLE test build, which cannot read the
 # harness ini.  Frontend only.  A switch of its own like REWIND, because a
