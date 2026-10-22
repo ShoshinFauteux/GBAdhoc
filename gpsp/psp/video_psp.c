@@ -422,6 +422,15 @@ static void gu_end_list(void)
 
 int vid_gu_defer(void) { return g_gu_defer; }
 
+int vid_gu_busy(void)
+{
+   if (!g_gu_queued)
+      return 0;
+   /* sceGeDrawSync(1) = sceGuSync(GU_SYNC_FINISH, GU_SYNC_NOWAIT): the
+    * state of the queue, without blocking.  PSP_GE_LIST_DONE (0) = idle. */
+   return sceGuSync(GU_SYNC_FINISH, GU_SYNC_NOWAIT) != 0;
+}
+
 void vid_set_gu_defer(int on)
 {
    if (!on)
@@ -1312,7 +1321,20 @@ void vid_blank_all(void)
    memset((void *)0x44000000u, 0, (size_t)FB_BYTES * VID_NBUF);
 }
 
-void vid_swap(void)
+static uintptr_t g_flip_addr;   /* physical address of the last submit */
+
+int vid_flip_latched(void)
+{
+   void *display;
+   int width, format;
+   if (!g_flip_addr ||
+       sceDisplayGetFrameBuf(&display, &width, &format,
+                             PSP_DISPLAY_SETBUF_IMMEDIATE) != 0)
+      return 0;
+   return ((uintptr_t)display & 0x1fffffffu) == g_flip_addr;
+}
+
+int vid_swap(void)
 {
 #ifdef VID_TRIPLE
    void *display;
@@ -1330,7 +1352,7 @@ void vid_swap(void)
     * frame is also the right look for a skipped frame, and it costs nothing:
     * no syscall, no flip. */
    if (!g_fb_filled)
-      return;
+      return 0;
 
    /* sceGuSwapBuffers() only knows two buffers, so drive the flip directly.
     * NEXTFRAME latches at vblank exactly as it did before -- the change is
@@ -1338,7 +1360,8 @@ void vid_swap(void)
    if (sceDisplaySetFrameBuf((void *)(edram + g_fb_off[g_fb_cur]),
                          FB_STRIDE, PSP_DISPLAY_PIXEL_FORMAT_565,
                          PSP_DISPLAY_SETBUF_NEXTFRAME) < 0)
-      return;                         /* retain the complete frame for retry */
+      return 0;                       /* retain the complete frame for retry */
+   g_flip_addr = (edram + g_fb_off[g_fb_cur]) & 0x1fffffffu;
 
    /* Read AFTER submitting: an older pending frame can latch until the
     * SetFrameBuf above replaces it. From here the LCD can only keep the
@@ -1365,9 +1388,12 @@ void vid_swap(void)
    g_fb_cur    = next;
    g_draw_off  = g_fb_off[g_fb_cur];
    g_fb_filled = 0;                      /* the new target is empty again */
+   return 1;
 #else
+   g_flip_addr = 0;            /* sceGuSwapBuffers does not say where */
    sceGuSwapBuffers();
    g_draw_off ^= FB_BYTES;
+   return 1;
 #endif
 }
 
