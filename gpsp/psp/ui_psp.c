@@ -652,9 +652,30 @@ static const demo_step quit_demo_script[] = {
 #ifdef GPSP_CHEATS
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Cheats                             */
 #endif
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Reset game                         */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Quit to game list                  */
    { DEMO_DUMP,        1, 0 },   /* ge_quit_0: the menu, on the row       */
    { PSP_CTRL_CROSS,   2, 4 },   /* quit                                  */
+};
+
+/* ui_controls_demo=8: Reset game from the menu (soft reset): the row, the
+ * question, O keeps playing, then X X resets and the menu closes. */
+static const demo_step rst_demo_script[] = {
+   { 0,               20, 0 },   /* settle on menu                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Save states                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Wireless                           */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Settings                           */
+#ifdef GPSP_CHEATS
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Cheats                             */
+#endif
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Reset game                         */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_0: the menu, on the row        */
+   { PSP_CTRL_CROSS,   2, 6 },   /* ask                                   */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_1: the question on the plate   */
+   { PSP_CTRL_CIRCLE,  2, 6 },   /* keep playing: the menu stays          */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_2: no question                 */
+   { PSP_CTRL_CROSS,   2, 6 },   /* ask again                             */
+   { PSP_CTRL_CROSS,   2, 6 },   /* reset: the menu closes                */
 };
 
 static const demo_step *g_demo_steps = demo_script;
@@ -715,7 +736,13 @@ void ui_controls_demo_start(void)
 
 void ui_home_demo_start(int which)
 {
-   if (which == 7)
+   if (which == 8)
+   {
+      g_demo_steps = rst_demo_script;
+      g_demo_len = (int)(sizeof(rst_demo_script) / sizeof(rst_demo_script[0]));
+      g_demo_prefix = "ge_rst";
+   }
+   else if (which == 7)
    {
       g_demo_steps = rwl_demo_script;
       g_demo_len = (int)(sizeof(rwl_demo_script) / sizeof(rwl_demo_script[0]));
@@ -748,7 +775,7 @@ void ui_home_demo_start(int which)
    }
    g_demo_on = 0;
    g_demo_phase = 0;
-   fe_evt("ui_demo_start script=%s", which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
+   fe_evt("ui_demo_start script=%s", which == 8 ? "reset" : which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
           which == 4 ? "delete" : "menu_button");
 }
 
@@ -1016,12 +1043,17 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
    return 0;      /* HOME: let the main loop run its clean shutdown */
 }
 
+/* 1 while the menu asks "Reset? Unsaved progress is lost" (X answers;
+ * screen_menu). */
+static int g_reset_ask;
+
 void ui_open(void)
 {
    ctl_page_reset();
    g_active = 1;
    g_screen = SCR_MENU;
    g_cursor = 0;
+   g_reset_ask = 0;
    g_ov_open_k = 0;              /* the opening transition (screen_menu) */
    ov_title_take();
    g_prev_pad = 0xFFFFFFFFu;   /* swallow the opening chord */
@@ -4501,11 +4533,19 @@ static int screen_cheats(unsigned edges, const char *game)
  * one row and one page since 3.5 (docs/UI-OVERLAY.md section 13). */
 /* Cheats (docs/CHEATS.md) sits after Settings for the same reason: rows 0-3
  * keep their positions; quit_demo_script takes one more DOWN. */
+/* Reset game (soft reset) sits between Cheats and Quit to game list: rows
+ * 0-3 keep their positions again, quit_demo_script takes one more DOWN. */
 enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_SETTINGS,
 #ifdef GPSP_CHEATS
        M_CHEATS,
 #endif
-       M_GAMELIST, M_EXIT, M_COUNT };
+       M_RESET, M_GAMELIST, M_EXIT, M_COUNT };
+
+/* Eight rows since Reset game: the pitch closes up by 2 px so Exit stays
+ * clear of the footer. */
+#define M_ROW_Y0    (M_COUNT > 7 ? 84 : 88)
+#define M_ROW_PITCH (M_COUNT > 7 ? 20 : 22)
+#define M_BAND_H    (M_COUNT > 7 ? 22 : 24)
 
 static ui_action screen_menu(unsigned edges, int session_active)
 {
@@ -4514,10 +4554,24 @@ static ui_action screen_menu(unsigned edges, int session_active)
 #ifdef GPSP_CHEATS
       "Cheats",
 #endif
-      "Quit to game list", "Exit"
+      "Reset game", "Quit to game list", "Exit"
    };
    int i, k, fade, dy;
 
+   /* The reset question holds the menu: X resets, anything else keeps
+    * playing (and is not acted on), as the Save states page's questions. */
+   if (g_reset_ask && edges)
+   {
+      g_reset_ask = 0;
+      if (edges & PSP_CTRL_CROSS)
+      {
+         if (g_turbo_locked)            /* a session came up meanwhile */
+            osd_toast("Reset is off during link play");
+         else
+            return UI_ACT_RESET;
+      }
+      edges = 0;
+   }
    if (edges & PSP_CTRL_UP)
       g_cursor = (g_cursor + M_COUNT - 1) % M_COUNT;
    if (edges & PSP_CTRL_DOWN)
@@ -4548,6 +4602,15 @@ static ui_action screen_menu(unsigned edges, int session_active)
          screen_cheats(0, g_ov_title);   /* draw this frame as the new page */
          return UI_ACT_NONE;
 #endif
+      case M_RESET:
+         /* Refused in any link or wireless session, the test the turbo
+          * buttons and cheats share (ui_set_turbo_locked): starting one
+          * machine again desynchronises the other. */
+         if (g_turbo_locked)
+            osd_toast("Reset is off during link play");
+         else
+            g_reset_ask = 1;
+         break;
       case M_GAMELIST:  return UI_ACT_GAMELIST;
       case M_EXIT:      return UI_ACT_EXIT;
       }
@@ -4567,11 +4630,15 @@ static ui_action screen_menu(unsigned edges, int session_active)
    ov_head(g_ov_title, NULL);
    for (i = 0; i < M_COUNT; i++)
    {
-      int y = 88 + i * 22 + dy;
-      int enabled = !(i == M_SAVESTATES && session_active);
+      int y = M_ROW_Y0 + i * M_ROW_PITCH + dy;
+      int enabled = !(i == M_SAVESTATES && session_active) &&
+                    !(i == M_RESET && g_turbo_locked);
       uint16_t c = !enabled ? C_DIM : (i == g_cursor ? C_SEL : C_ITEM);
       if (i == g_cursor && k >= OV_OPEN_FRAMES)
-         ov_band(y, vid_text_w(labels[i]) + 44, 24);
+         ov_band(y, vid_text_w(labels[i]) + 44, M_BAND_H);
+      if (i == M_RESET && !enabled)
+         vid_text(18 + vid_text_w(labels[i]) + 12, y, "off during link play",
+                  mix565(C_DIM, C_BG_BOT, fade));
       vid_text(18, y, labels[i], mix565(c, C_BG_BOT, fade));
       /* The Wireless row carries the session's mode where it used to
        * say "linked" (docs/GBA-LINK-UI.md); a cable host waiting says so. */
@@ -4602,7 +4669,11 @@ static ui_action screen_menu(unsigned edges, int session_active)
       }
 #endif
    }
-   footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume");
+   if (g_reset_ask)
+      ov_plate("Reset? Unsaved progress is lost.     " VID_GLYPH_X " reset     "
+               VID_GLYPH_O " keep playing");
+   else
+      footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume");
    return UI_ACT_NONE;
 }
 
@@ -5175,7 +5246,7 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       demo_dump_named(nm);
    }
 
-   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT ||
+   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT || act == UI_ACT_RESET ||
        act == UI_ACT_NET_HOST || act == UI_ACT_NET_JOIN)
       ui_close();
    return act;

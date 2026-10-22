@@ -39,7 +39,11 @@ typedef enum
    /* ADR-0071: the trading profile changed.  The main loop saves config and
     * RELAUNCHES the EBOOT — the session rate is latched at startup, so there
     * is no honest way to apply it live. */
-   UI_ACT_RELAUNCH
+   UI_ACT_RELAUNCH,
+   /* "Reset game", confirmed: the main loop resets the running game
+    * (fe_host_reset) and closes the menu.  Never offered in a link
+    * session (ui_set_turbo_locked). */
+   UI_ACT_RESET
 } ui_action;
 
 /* The in-game menu draws over the game (docs/UI-OVERLAY.md): the frame it

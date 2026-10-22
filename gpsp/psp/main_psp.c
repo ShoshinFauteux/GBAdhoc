@@ -9946,6 +9946,30 @@ static int psp_state_load_io(const char *path, const char *why)
    return rc;
 }
 
+/* SOFT RESET ("Reset game", the in-game menu).  Everything a state load
+ * does around the core -- land a rewind, quiesce the Media Engine renderer,
+ * stop the turbo trains, hold the power switch -- then fe_host_reset (the
+ * battery to the stick, then the fresh-boot reset; fe_host.h).  Refused in
+ * any link or wireless session.  Same rc as fe_host_reset. */
+static int psp_game_reset(void)
+{
+   int rc;
+   if (link_session_any())
+      return -2;
+   pwr_hold("reset");
+#ifdef REWIND
+   (void)psp_rewind_land("reset", 0);
+#endif
+   me_rend_quiesce("reset");
+   ctl_turbo_stop(&g_turbo);
+   rc = fe_host_reset();
+   if (rc == 0 && g_pcfg.console != FE_CONSOLE_GBA)
+      g_last_pix = NULL;    /* the GB machine (and its frame buffer) is new */
+   core_health_evt("reset");
+   pwr_release();
+   return rc;
+}
+
 /* pwr_hold: see power_cb -- this runs outside the loop's park point. */
 static int psp_state_load(const char *path, const char *why)
 {
@@ -15135,6 +15159,26 @@ session_top:
             if (g_pcfg.console == FE_CONSOLE_GBA)
                mgift_stop(0);
             break;
+         case UI_ACT_RESET:
+         {
+            /* "Reset game" (soft reset, fe_host_reset): the menu has
+             * already closed.  A GB reboot that failed leaves no machine:
+             * back to the game list by the normal clean exit. */
+            int rc = psp_game_reset();
+            if (rc == -1)
+            {
+               osd_toast("Reset failed: back to the game list");
+               pcfg_save();
+               g_relaunch = RELAUNCH_GAMELIST;
+               exit_reason = "reset_failed";
+               g_running = 0;
+            }
+            else
+               osd_toast(rc == 0 ? "Game reset" :
+                         rc == -2 ? "Reset is off during link play"
+                                  : "Reset refused: the save could not be written");
+            break;
+         }
          case UI_ACT_EXIT:
             g_running = 0;
             break;

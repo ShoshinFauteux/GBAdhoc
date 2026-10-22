@@ -503,6 +503,15 @@ void fe_host_input_inject(uint32_t joypad_mask);
  * so this header stays libretro.h-free); consumed by netpacket_host. */
 const void *fe_host_netpacket_cb(void);
 
+/* Soft reset of the running game (the in-game menu's "Reset game"): the
+ * battery written out first, then the machine started again from the
+ * cartridge as a fresh boot starts it -- reset_gba for GBA (translation
+ * caches and all), a power-on reboot from file for GB/GBC.  The rewind
+ * history starts again.  0 = done; -2 = refused, a link session is up;
+ * -3 = refused, the GB save could not be written; -1 = the GB reboot
+ * failed (the caller leaves the game).  Emulation thread, between frames. */
+int fe_host_reset(void);
+
 /* Flush SRAM (dirty-check), retro_unload_game + retro_deinit. */
 void fe_host_shutdown(void);
 /* After fe_host_shutdown, before the next fe_host_boot in the SAME process
