@@ -79,6 +79,8 @@
 #include "link_games.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "shot_name.h"      /* screenshot file names (issue #13) */
+#include "fe_png.h"
 #include "mgift_net.h"
 #include "mgift_cart.h"
 #include "me_host.h"
@@ -4504,6 +4506,152 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
       *sh = FE_GBA_HEIGHT;
    }
    return (!*pix || !*sw || !*sh || *pitch < *sw * sizeof(uint16_t)) ? -1 : 0;
+}
+
+/* ---- THE PLAYER'S SCREENSHOT (GitHub issue #13) ---------------------------
+ *
+ * The Screenshot shortcut (L+R+SELECT unless remapped).  The harness dumps
+ * (dump_at, dump_every, the autopilot's, the marker) keep dump_frame_bmp and
+ * log/frame_<n>.bmp: rigs compare those by name.
+ *
+ *   name    <game>_<YYYY-MM-DD>_<HH-MM-SS>.png  (shot_name.h), from the ROM's
+ *           file name and the console's own clock -- sceRtc local time, never
+ *           time() (uptime on real firmware, memory rtc-wallclock-psp); a
+ *           second shot in the same second gets _2, _3, ...
+ *   where   Settings > Screenshot folder: <dev>:/PICTURE/GBAdhoc/ (default),
+ *           the XMB Photo column's own folder -- on the device the EBOOT runs
+ *           from, so a PSP Go running from internal storage writes ef0: -- or
+ *           log/ beside the EBOOT, where 4.x put them.
+ *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
+ *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
+ *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
+ *           ROM is in (memory heap-exhausted-by-design), so it is carved at
+ *           boot from the netdrv arena's tail, after the wake frame and the
+ *           state thumbnails -- the same free real estate, no heap cost.  No
+ *           room there (the arena reservation failed): the shot is a BMP.
+ *   cost    one-off, on the emulation thread, with the power switch held
+ *           off for the write (EVT screenshot ... us=). */
+static uint8_t *g_shot_work;
+static size_t   g_shot_work_bytes;
+static char     g_shot_rom[PSP_FILE_PATH_CAP];   /* the running game's path */
+
+static int shot_fd_write(void *ctx, const void *d, size_t n)
+{
+   return sceIoWrite(*(SceUID *)ctx, d, (SceSize)n) == (int)n ? 0 : -1;
+}
+
+/* The folder for the setting, created as needed.  0 = it exists. */
+static int shot_folder(char *dir, size_t cap)
+{
+   SceIoStat st;
+   if (g_pcfg.shot_folder == PCFG_SHOT_APP)
+      snprintf(dir, cap, "%s", LOG_DIR);
+   else
+   {
+      /* "ms0:/PSP/GAME/X" -> "ms0:"; no device prefix -> ms0: */
+      const char *colon = strchr(g_dir_base, ':');
+      int dev = colon && colon - g_dir_base < 8 ? (int)(colon - g_dir_base) + 1
+                                                : 0;
+      snprintf(dir, cap, "%.*s/PICTURE", dev ? dev : 4,
+               dev ? g_dir_base : "ms0:");
+      sceIoMkdir(dir, 0777);
+      snprintf(dir + strlen(dir), cap - strlen(dir), "/GBAdhoc");
+   }
+   sceIoMkdir(dir, 0777);
+   return sceIoGetstat(dir, &st) >= 0 ? 0 : -1;
+}
+
+static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
+                          unsigned h, size_t pitch, fe_png_info *info)
+{
+   SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   int rc, crc;
+   if (fd < 0)
+      return -1;
+   rc = fe_png_encode(pix, w, h, pitch,
+#ifdef USE_PSP_RGB565_FORMAT
+                      FE_PNG_PSP5650,
+#else
+                      FE_PNG_RGB565,
+#endif
+                      g_shot_work, g_shot_work_bytes, shot_fd_write, &fd,
+                      info);
+   crc = sceIoClose(fd);
+   if (rc != 0 || crc < 0)
+   {
+      sceIoRemove(path);        /* never leave half a picture behind */
+      return -1;
+   }
+   return 0;
+}
+
+static void player_screenshot(void)
+{
+   const uint16_t *pix;
+   size_t pitch;
+   unsigned w, h, seq, t0, us;
+   char dir[sizeof(p_log_dir) + 16], title[SHOT_TITLE_MAX + 1];
+   char name[SHOT_TITLE_MAX + 48];
+   char path[PSP_FILE_PATH_CAP];
+   fe_png_info info;
+   time_t now;
+   struct tm tmv;
+   int png, rc = -1;
+   SceIoStat st;
+
+   memset(&info, 0, sizeof(info));
+   if (state_preview_src(&pix, &pitch, &w, &h) != 0)
+   {
+      osd_toast("Screenshot failed: no picture yet");
+      return;
+   }
+   pwr_hold("screenshot");
+   t0 = sceKernelGetSystemTimeLow();
+   png = g_pcfg.shot_format == PCFG_SHOT_PNG && g_shot_work &&
+         g_shot_work_bytes >= fe_png_work_bytes(w, h);
+   now = psp_local_wallclock();     /* local time, held as if UTC */
+   memset(&tmv, 0, sizeof(tmv));
+   gmtime_r(&now, &tmv);
+   shot_title_from_rom(g_shot_rom, title, sizeof(title));
+   path[0] = '\0';
+   if (shot_folder(dir, sizeof(dir)) == 0)
+      for (seq = 1; seq < 100; seq++)
+      {
+         if (shot_file_name(name, sizeof(name), title, tmv.tm_year + 1900,
+                            tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour,
+                            tmv.tm_min, tmv.tm_sec, seq,
+                            png ? "png" : "bmp") != 0 ||
+             psp_rom_path_join(path, sizeof(path), dir, name) != 0)
+         {
+            path[0] = '\0';
+            break;
+         }
+         if (sceIoGetstat(path, &st) < 0)
+            break;                  /* a free name */
+         path[0] = '\0';
+      }
+   if (path[0])
+   {
+      if (png)
+         rc = shot_write_png(path, pix, w, h, pitch, &info);
+      else
+#ifdef USE_PSP_RGB565_FORMAT
+         rc = fe_bmp_write_psp565(path, pix, w, h, pitch);
+#else
+         rc = fe_bmp_write_rgb565(path, pix, w, h, pitch);
+#endif
+   }
+   us = sceKernelGetSystemTimeLow() - t0;
+   pwr_release();
+   FE_EVT_ONLY(us);
+   fe_evt("screenshot file=%s fmt=%s rc=%d %ux%u colors=%u depth=%u "
+          "bytes=%u us=%u", path[0] ? path : "(none)", png ? "png" : "bmp",
+          rc, w, h, info.colors, info.bit_depth, (unsigned)info.bytes, us);
+   if (rc == 0)
+      osd_toast(png || g_pcfg.shot_format == PCFG_SHOT_BMP
+                   ? "Screenshot saved" : "Screenshot saved (as BMP)");
+   else
+      osd_toast("Screenshot FAILED (is the Memory Stick full?)");
 }
 
 /* Save a compact companion image for the browser's per-slot state shelf.
@@ -11937,6 +12085,10 @@ int main(int argc, char *argv[])
    long autoexit, dump_at, dump_every, gedump_at, gedump_every, ff_ini, ui_demo, simff;
    long ui_ctl_demo = 0;        /* harness: Settings > Controls self-drive */
    long wake_shot = 0;          /* harness: open the wake overlay at frame N */
+   /* harness `player_shot_at = N` (`player_shot_n = K`, default 1): take K
+    * player screenshots, one a frame, from frame N -- the Screenshot
+    * shortcut's own path, which a script cannot press (issue #13). */
+   long player_shot_at = 0, player_shot_n = 1;
    long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
    long vid_prof_win;           /* ADR-0034(coreopt) renderer path profile */
    int have_script = 0, have_harness, have_variant;
@@ -12099,6 +12251,23 @@ int main(int argc, char *argv[])
             g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
                                         WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
+         /* ...and after those the screenshot encoder's work memory (issue
+          * #13), if what is left of the megabyte holds it. */
+         if (g_ui_thumbs)
+         {
+            uint8_t *lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES +
+                                       63u) & ~63u);
+            uint8_t *hi = (uint8_t *)blk + (take > need ? take : need);
+            size_t want = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
+            if (hi > lo && (size_t)(hi - lo) >= want)
+            {
+               g_shot_work = lo;
+               g_shot_work_bytes = (size_t)(hi - lo);
+            }
+            fe_evt("shot_work bytes=%u want=%u %s",
+                   (unsigned)(hi > lo ? hi - lo : 0), (unsigned)want,
+                   g_shot_work ? "ok" : "NO_ROOM(bmp)");
+         }
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
              (unsigned)need, (unsigned)(take > need ? take : need),
@@ -12377,6 +12546,8 @@ int main(int argc, char *argv[])
    /* docs/UI-OVERLAY.md: the wake overlay, opened as SELECT+TRIANGLE opens
     * it, photographed and dismissed -- a script cannot press the chord. */
    wake_shot = fe_ini_get_int(HARNESS_INI, "wake_shot", 0);
+   player_shot_at = fe_ini_get_int(HARNESS_INI, "player_shot_at", 0);
+   player_shot_n = fe_ini_get_int(HARNESS_INI, "player_shot_n", 1);
    if (ui_ctl_demo == 2)
    {
       ui_controls_browser_demo();   /* from the browser instead */
@@ -14008,6 +14179,7 @@ session_top:
    ui_set_game(g_pcfg.console == FE_CONSOLE_GBA ? g_game_code : NULL,
                g_pcfg.console == FE_CONSOLE_GBA ? NULL : g_gb_title,
                g_game_key, fe_host_gba_cable_ready());
+   snprintf(g_shot_rom, sizeof(g_shot_rom), "%s", rom_path);   /* shot names */
 #ifdef GPSP_CHEATS
    /* This game's cheat list and the player's choices (docs/CHEATS.md).  After
     * the boot: the list is static, the file is read with sceIo, so the core's
@@ -15454,7 +15626,13 @@ session_top:
       if (g_dump_chord_pending)      /* ADR-0069, set at the pad read above */
       {
          g_dump_chord_pending = 0;
-         dump_frame_bmp();
+         player_screenshot();        /* issue #13: named, PNG, a toast */
+      }
+      if (player_shot_at && player_shot_n > 0 &&
+          frames >= (unsigned)player_shot_at)
+      {
+         player_shot_n--;
+         player_screenshot();
       }
       if (gedump_at && frames >= (unsigned)gedump_at && g_drew)
       {

@@ -262,6 +262,20 @@ def suites(env: Env, baseline: Path | None):
          "-fsanitize=address,undefined "
          "-o /tmp/t_text_fold tools/tests/test_text_fold.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_text_fold && "
+         # ...and the screenshot PNG writer (frontend-common/fe_png.c, issue
+         # #13): every test frame decoded by Python's zlib (and Pillow when
+         # present) back to the exact pixels; plus the screenshot file name.
+         "rm -rf /tmp/t_png && mkdir -p /tmp/t_png && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined -Ifrontend-common "
+         "-o /tmp/t_fe_png tools/tests/test_fe_png.c frontend-common/fe_png.c "
+         "frontend-common/fe_util.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_png /tmp/t_png && "
+         "python3 tools/tests/check_png.py /tmp/t_png && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined "
+         "-o /tmp/t_shot_name tools/tests/test_shot_name.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_shot_name && "
          # ...and the rewind core (frontend-common/fe_rewind.c, a REWIND=1
          # prototype) against a fake machine: any pattern of taps on the
          # control, every frame checked against a run that never rewound,

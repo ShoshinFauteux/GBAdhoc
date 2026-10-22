@@ -615,6 +615,8 @@ static const demo_step rwl_demo_script[] = {
    { PSP_CTRL_CROSS,   2, 8 },   /* enter settings                        */
    { PSP_CTRL_UP,      2, 6 },   /* wraps to Button mapping               */
    { PSP_CTRL_UP,      2, 6 },   /* Thumbstick                            */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot folder                     */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot format                     */
    { PSP_CTRL_UP,      2, 6 },   /* Rewind length                         */
    { DEMO_DUMP,        1, 0 },   /* ge_rwl_0: the value on the card       */
    { PSP_CTRL_RIGHT,   2, 6 },
@@ -1742,6 +1744,7 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
+       SET_HDR_SHOT, SET_SHOT_FMT, SET_SHOT_DIR,
        SET_HDR_CTL, SET_STICK, SET_CONTROLS,
        SET_COUNT };
 
@@ -1786,6 +1789,12 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Rewind" },
    { 0, "Rewind length" },
 #endif
+   /* Screenshots (issue #13).  Above CONTROLS, so Thumbstick and Button
+    * mapping stay the last two rows the harness walkers wrap up to (the
+    * rewind-length walker takes two more UPs for these rows). */
+   { 1, "SCREENSHOTS" },
+   { 0, "Screenshot format" },
+   { 0, "Screenshot folder" },
    /* Last, so every row above keeps its position (the harness ui_demo walks
     * this list by count).  X opens the page; it is not a value to cycle. */
    { 1, "CONTROLS" },
@@ -2317,6 +2326,14 @@ static void settings_adjust(int id, int dir)
       fe_evt("rewind_setting on=%d mb=%d", g_pcfg.rewind, g_pcfg.rewind_mb);
       break;
 #endif
+   case SET_SHOT_FMT:
+      g_pcfg.shot_format = g_pcfg.shot_format == PCFG_SHOT_PNG ? PCFG_SHOT_BMP
+                                                               : PCFG_SHOT_PNG;
+      break;
+   case SET_SHOT_DIR:
+      g_pcfg.shot_folder = g_pcfg.shot_folder == PCFG_SHOT_PICTURE
+                              ? PCFG_SHOT_APP : PCFG_SHOT_PICTURE;
+      break;
    case SET_STICK:
       /* off -> moves -> custom, live: the main loop reads it every frame. */
       g_pcfg.stick = (g_pcfg.stick + 3 + (dir < 0 ? -1 : 1)) % 3;
@@ -2541,6 +2558,15 @@ static ui_action screen_settings(unsigned edges)
          break;
       }
 #endif
+      case SET_SHOT_FMT:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.shot_format == PCFG_SHOT_BMP ? "BMP" : "PNG");
+         break;
+      case SET_SHOT_DIR:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc folder (log)"
+                                                 : "PICTURE/GBAdhoc");
+         break;
       case SET_STICK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.stick == CTL_STICK_MOVE ? "moves (as the d-pad)" :
@@ -2568,6 +2594,14 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
+   else if (g_cursor == SET_SHOT_FMT)
+      footer(g_pcfg.shot_format == PCFG_SHOT_BMP
+                ? "BMP: uncompressed, about 115 KB a picture."
+                : "PNG: compressed, usually a few KB a picture.");
+   else if (g_cursor == SET_SHOT_DIR)
+      footer(g_pcfg.shot_folder == PCFG_SHOT_APP
+                ? "In log/ beside GBAdhoc, as before."
+                : "In PICTURE/GBAdhoc: open them from the XMB Photo menu.");
 #ifdef REWIND
    else if (g_cursor == SET_REWIND_MB)
       /* What each length is, and what the largest needs.  Nothing is

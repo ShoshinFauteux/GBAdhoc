@@ -1,6 +1,7 @@
 /* config_psp.c — persisted frontend settings (see config_psp.h). */
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "config_psp.h"
 #include "video_psp.h"
@@ -157,6 +158,19 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
+   {
+      /* Screenshots (issue #13).  Anything but the other word is the
+       * default: PNG, into PICTURE. */
+      char sv[16];
+      g_pcfg.shot_format = PCFG_SHOT_PNG;
+      if (fe_ini_get(cfg_path, "screenshot_format", sv, sizeof(sv)) &&
+          !strcasecmp(sv, "bmp"))
+         g_pcfg.shot_format = PCFG_SHOT_BMP;
+      g_pcfg.shot_folder = PCFG_SHOT_PICTURE;
+      if (fe_ini_get(cfg_path, "screenshot_folder", sv, sizeof(sv)) &&
+          !strcasecmp(sv, "app"))
+         g_pcfg.shot_folder = PCFG_SHOT_APP;
+   }
 #ifdef REWIND
    g_pcfg.rewind      = (int)fe_ini_get_int(cfg_path, "rewind", PCFG_REWIND_DEFAULT) ? 1 : 0;
    /* No key: Medium.  Any other number (a 1..8 written by an earlier build,
@@ -526,6 +540,10 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ui_shell", g_pcfg.ui_shell);
    fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty);
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
+   fe_ini_set(cfg_path, "screenshot_format",
+              g_pcfg.shot_format == PCFG_SHOT_BMP ? "bmp" : "png");
+   fe_ini_set(cfg_path, "screenshot_folder",
+              g_pcfg.shot_folder == PCFG_SHOT_APP ? "app" : "picture");
 #ifdef REWIND
    fe_ini_set_int(cfg_path, "rewind", g_pcfg.rewind);
    fe_ini_set_int(cfg_path, "rewind_mb", g_pcfg.rewind_mb);
