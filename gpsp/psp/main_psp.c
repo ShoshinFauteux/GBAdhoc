@@ -1523,6 +1523,26 @@ static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 static unsigned g_pad;   /* raw SceCtrl buttons, sampled once per loop */
 static unsigned g_mgift_consumed;
 
+/* AN ANSWER IS NOT INPUT.  The button that closes the START+SELECT menu
+ * (Resume, a state load, Host/Join) or answers the SELECT+TRIANGLE pause
+ * screen / wake overlay is still down when the game gets the pad back, and
+ * the next pad read handed it to the core (X on Resume reached Pokemon
+ * Crystal as B).  pad_swallow_arm() where the UI lets go makes every
+ * button held at its answer invisible until that button is released --
+ * to the core (GBA and GB/GBC alike: ctl_game_mask reads g_pad) and to the
+ * shortcuts.  A button first pressed after the answer (while Host/Join or a
+ * state load works, say) is the game's at once. */
+static unsigned g_pad_swallow;
+static void pad_swallow_arm(unsigned held)
+{
+   g_pad_swallow |= held;        /* and what is still swallowed stays so */
+}
+static unsigned pad_swallow(unsigned pad)
+{
+   g_pad_swallow &= pad;         /* a released button is free again */
+   return pad & ~g_pad_swallow;
+}
+
 #ifdef GPSP_PERF_RIG
 /* HARNESS ONLY: RAW PAD REPLAY (`pad_script = <file>`).
  *
@@ -13804,6 +13824,7 @@ session_top:
        * in the chosen mode.  OFF adds nothing: the word is 3.5.0's. */
       g_pad = ctl_pad_word(pd.Buttons, g_pcfg.stick, pd.Lx, pd.Ly,
                            &g_stick_state);
+      g_pad = pad_swallow(g_pad);   /* a UI's answer, until released */
 #ifdef GPSP_PERF_RIG
       if (pd.Lx < g_stick_min[0]) g_stick_min[0] = pd.Lx;
       if (pd.Lx > g_stick_max[0]) g_stick_max[0] = pd.Lx;
@@ -14259,7 +14280,13 @@ session_top:
       /* Menu = HOME: HOME on the menu's top page closes it, like Resume, and
        * this iteration carries on into the game. */
       if (home_pressed && ui_active() && ui_home_press())
+      {
          home_pressed = 0;
+         pad_swallow_arm(g_pad);     /* whatever is held is not the game's */
+         /* nor this iteration's pad, read before it, or its edges and
+          * shortcuts (turbo, fast-forward, the video cycle, rewind) */
+         g_pad = pad_new = ctl_fired = 0;
+      }
 
 #ifdef REWIND
       /* The menu opened, or the pause overlay is about to, in the middle of
@@ -14386,6 +14413,12 @@ session_top:
          sceDisplayWaitVblankStart();
          if (!g_wake_hold)
             vid_swap();
+         /* Closed (Resume, a state load, Host/Join): the X or O that
+          * closed it is still down, and is not the game's (pad_swallow).
+          * The pad it answered, not one read now: a press made while the
+          * action ran (Host/Join waits up to 15 s) is the game's. */
+         if (!ui_active())
+            pad_swallow_arm(g_pad);
          continue;
       }
 
@@ -14560,6 +14593,16 @@ session_top:
          fe_evt("wake_menu choice=continue frame=%d slept=%d running=%d",
                 g_wake_have, g_pwr_slept, g_running);
          g_wake_have = 0;
+         /* The answer's X or O is still down: not the game's (pad_swallow).
+          * Read now, as it answered: the rebuild below takes a while. */
+         sceCtrlPeekBufferPositive(&pd, 1);
+         pad_swallow_arm(pd.Buttons);
+         /* nor this iteration's pad, read before the overlay, or its edges,
+          * shortcuts and rewind level */
+         g_pad = pad_new = ctl_fired = 0;
+#ifdef REWIND
+         g_rw_held = 0;
+#endif
          if (!g_running)
          {
             /* HOME / exit while the overlay was up: leaving, as above. */
@@ -15396,6 +15439,7 @@ session_top:
          ff_last_mode = -1;
          ff_last_me = -1;
          prev_pad = 0;
+         g_pad_swallow = 0;          /* nothing of the last game is held */
          chord_frames = 0;
          ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
          ui_set_turbo_locked(0);     /* ...and no session outlives it */
