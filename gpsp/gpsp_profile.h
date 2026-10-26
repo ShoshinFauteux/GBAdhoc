@@ -166,6 +166,11 @@
 #endif
 #endif
 
+#if defined(SMC_SAME_SKIP) && \
+    !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
+#error "SMC_SAME_SKIP refines SMC_PARTIAL_SINGLE's retirement: it needs SMC_PARTIAL_SINGLE and SMC_PARTIAL_STABLE_THUNK."
+#endif
+
 #if defined(DISPATCH_PRECISE) && !defined(DISPATCH_CACHE)
 #error "DISPATCH_PRECISE refines DISPATCH_CACHE's invalidation: it needs DISPATCH_CACHE."
 #endif

@@ -668,6 +668,15 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DISPATCH_PRECISE),1)
 	CFLAGS += -DDISPATCH_PRECISE=1
 	endif
+	# SMC_SAME_SKIP=1: OFF by default (cpu-levers).  A single-store SMC trap
+	# in IWRAM skips the retirement when every block it would retire is still
+	# exactly what it was translated from (per-halfword record of what each
+	# translation read, checked over the blocks' whole extents).  The trap
+	# itself is unchanged.  Changes guest timing (blocks keep their marks), so
+	# it is judged by the gate's replayed lockstep, not bit identity.
+	ifeq ($(SMC_SAME_SKIP),1)
+	CFLAGS += -DSMC_SAME_SKIP=1
+	endif
 	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).

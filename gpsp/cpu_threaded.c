@@ -4219,6 +4219,119 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
  * separately: reserving it cost nothing, so it was never the problem -- but
  * with nothing emitted there is nothing to reserve for.) */
 
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+/* SMC_SAME_SKIP (cpu-levers, 2026-10-26): do not retire translations that a
+ * single-store SMC trap left exactly as they were compiled.
+ *
+ * Doom II and Duke Nukem Advance patch their IWRAM renderers from a handful
+ * of writer pcs, and ~70% of those traps store the value the word ALREADY
+ * had when the covering blocks were translated (twin SMC event trace, 64
+ * frames: Doom 2514 of 3542, Duke 1097 of 1642).  Each such trap retired the
+ * blocks and the next entry retranslated them byte for byte.
+ *
+ * The record: for every IWRAM halfword a translation reads, the value it read
+ * (xs_val) and a valid bit (xs_ok).  A scan that finds the halfword already
+ * valid with a DIFFERENT value cannot tell which block read what (a write no
+ * trap reported, or a retirement path that does not clear records -- the
+ * M4A range path, harmlessly); it poisons the halfword (xs_bad) until the
+ * next full RAM flush, and a poisoned halfword never skips.  The valid bit is cleared only
+ * where no live translation can still cover the halfword: the full RAM flush
+ * and the two places partial retirement removes a halfword's code marks
+ * after retiring every block that covered it.  A clear site this misses can
+ * only cause a poison (a missed skip), never a wrong skip.
+ *
+ * Invariant: a valid, unpoisoned record of halfword h equals what EVERY live
+ * block covering h read.  Proof: a live block L covering h scanned h; at that
+ * scan the record was either set to L's value or already equal to it (else
+ * poison).  The record changes later only through a clear, and no clear
+ * happens while L lives.
+ *
+ * Skip rule (xs_blocks_current): skip the retirement only when every live
+ * block retirement would retire has, for EVERY halfword of its source extent,
+ * a valid unpoisoned record equal to memory now.  By the invariant each such
+ * block is then exactly what translating it again would produce, whatever
+ * wrote memory in between -- including a store no trap reported (the STM
+ * hole), DMA or a BIOS CpuSet, whose changed halfwords no longer match.
+ *
+ * Why the 2026-09-12 SMC_SKIP_SAME (mips_emit.h, never shipped) failure does
+ * not carry over: that filter lived in the emitted store stub, compared the
+ * new value with the PRE-STORE word and, when equal, skipped the trap itself
+ * -- so it changed which stores trap, and it trusted memory to describe the
+ * translated code (false after any unreported write).  Here no emitted code
+ * changes, every trap still happens (same smc_write path and re-dispatch),
+ * and the comparison is against what the translations read, over their whole
+ * extents.  IWRAM only; EWRAM traps retire as before. */
+static u16 xs_val[0x8000 / 2] __attribute__((aligned(16)));
+static u8  xs_ok[0x8000 / 16];
+static u8  xs_bad[0x8000 / 16];
+static u32 xs_ready;
+u32 smc_same_skips, smc_same_poison;
+#ifdef XS_COST_PROBE
+u32 xs_calls, xs_slots, xs_halves;
+#endif
+/* xs_min[word]: a lower bound (halfword index) on the start of every live
+ * block covering either halfword of the word -- the scan window
+ * xs_blocks_current walks.  Lowered by every scan of the word; reset only
+ * when neither halfword has a valid record, i.e. no live block covers it. */
+static u16 xs_min[0x8000 / 4];
+static inline void xs_note_half(u32 off, u32 start)
+{
+  u32 h = (off & 0x7FFF) >> 1, w = h >> 1;
+  u32 s = (start & 0x7FFF) >> 1;
+  u8 bit = (u8)(1u << (h & 7));
+  u16 cur = *(u16 *)(iwram + 0x8000 + (h << 1));
+  if (xs_bad[h >> 3] & bit)
+    return;
+  if (!(xs_ok[h >> 3] & bit)) {
+    u8 obit = (u8)(1u << ((h ^ 1) & 7));
+    if (!(xs_ok[(h ^ 1) >> 3] & obit) || s < xs_min[w])
+      xs_min[w] = (u16)s;
+    xs_val[h] = cur;
+    xs_ok[h >> 3] |= bit;
+  } else if (s < xs_min[w]) {
+    xs_min[w] = (u16)s;
+  }
+  if ((xs_ok[h >> 3] & bit) && xs_val[h] != cur) {
+    xs_bad[h >> 3] |= bit;
+    smc_same_poison++;
+  }
+}
+static inline void xs_clear_half(u32 h)          /* h: IWRAM halfword index */
+{
+  xs_ok[h >> 3] &= (u8)~(1u << (h & 7));
+}
+#ifdef DRPROF_TWIN
+static void xs_report(void)
+{
+  fprintf(stderr, "SMC_SAME_SKIP skips=%u poison=%u\n",
+          (unsigned)smc_same_skips, (unsigned)smc_same_poison);
+#ifdef XS_COST_PROBE
+  fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u\n", (unsigned)xs_calls,
+          (unsigned)xs_slots, (unsigned)xs_halves);
+#endif
+}
+#endif
+static void xs_clear_all(void)
+{
+#ifdef DRPROF_TWIN
+  if (!xs_ready) atexit(xs_report);
+#endif
+  memset(xs_ok, 0, sizeof(xs_ok));
+  memset(xs_bad, 0, sizeof(xs_bad));
+  xs_ready = 1;
+}
+#define XS_NOTE_ARM()   do { if (pc >= 0x03000000) {                          \
+    xs_note_half(block_end_pc, pc); xs_note_half(block_end_pc + 2, pc); } } while (0)
+#define XS_NOTE_THUMB() do { if (pc >= 0x03000000)                            \
+    xs_note_half(block_end_pc, pc); } while (0)
+#define XS_CLEAR_HALF(region_is_iwram, h) do {                                \
+    if (region_is_iwram) xs_clear_half(h); } while (0)
+#else
+#define XS_NOTE_ARM()   do { } while (0)
+#define XS_NOTE_THUMB() do { } while (0)
+#define XS_CLEAR_HALF(region_is_iwram, h) do { } while (0)
+#endif
+
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
@@ -4246,6 +4359,7 @@ block_exit_type block_exits[MAX_EXITS];
  * common all-zero word keeps the single 32-bit test and store; only a word
  * with one half already non-zero takes the halfword tests. */
 #define smc_write_arm_yes() {                                                 \
+  XS_NOTE_ARM();                                                              \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   intptr_t tag_off = (block_end_pc & 0x7FFF) + offset;                        \
   u32 tag_w = address32(pc_address_block, tag_off);                           \
@@ -4261,6 +4375,7 @@ block_exit_type block_exits[MAX_EXITS];
 }
 #else
 #define smc_write_arm_yes() {                                                 \
+  XS_NOTE_ARM();                                                              \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address32(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
   {                                                                           \
@@ -4271,6 +4386,7 @@ block_exit_type block_exits[MAX_EXITS];
 #endif
 
 #define smc_write_thumb_yes() {                                               \
+  XS_NOTE_THUMB();                                                            \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
   {                                                                           \
@@ -5722,6 +5838,9 @@ void flush_translation_cache_ram(void)
 
   last_ram_translation_ptr = ram_translation_cache;
   ram_translation_ptr = ram_translation_cache;
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+  xs_clear_all();        /* every RAM translation is gone */
+#endif
 
   // Proceed to clean the SMC area if needed
   // (also try to memset as little as possible for performance)
@@ -7512,6 +7631,7 @@ static int smc_retire_span(u32 lo, u32 hi)
         u32 h = u_lo + j;
         if (cov[j >> 3] & (1u << (j & 7)))
           continue;
+        XS_CLEAR_HALF(rgn == 0, h);   /* no live block covers h */
         if (tagp[h] == CODE_TAG_BLOCK16)
           tagp[h] = 0;
 #ifndef SMC_UNTAG_MARKS_ONLY   /* experiment: interior marks only */
@@ -7526,9 +7646,11 @@ static int smc_retire_span(u32 lo, u32 hi)
     }
   }
 #endif
-  for (i = lo_off >> 1; i < (hi_off >> 1); i++)
+  for (i = lo_off >> 1; i < (hi_off >> 1); i++) {
+    XS_CLEAR_HALF(rgn == 0, i);   /* every covering block was just retired */
     if (tagp[i] == CODE_TAG_BLOCK16)
       tagp[i] = 0;
+  }
   return 1;
 }
 
@@ -7581,6 +7703,107 @@ static int smc_retire_single_word(u32 word)
   return smc_retire_span(word, word + 4);
 #endif
 }
+
+#ifdef SMC_SAME_SKIP
+/* SMC_SAME_SKIP's decision for a single-store trap at IWRAM word `word`:
+ * 1 = every live block smc_retire_span would retire for this word is
+ * CURRENT -- each halfword of its whole recorded source [start, end) holds
+ * exactly what the translation read (xs record valid, not poisoned, equal to
+ * memory now) -- so retiring them would retranslate identical code.
+ * 0 = anything else, including "no live block covers the word" (retire_span
+ * then only clears marks, as before) and every case retire_span itself
+ * refuses (unknown extent, wrapping block, outside the window).
+ *
+ * Checking the WHOLE extent, not just the trapping word, is what makes this
+ * independent of the block-store hole: a word some earlier store changed
+ * without a trap (STM non-final word, the stale-FIFA case) no longer matches
+ * its record, so the trap retires the block exactly as before.  The record is
+ * what every live reader read because a scan that finds a valid record with a
+ * different value poisons it instead of overwriting it (xs_note_half). */
+static int xs_blocks_current(u32 word)
+{
+  u16 *tagp = (u16 *)iwram;
+  const u32 base = 0x03000000, bytes = 0x8000;
+  u32 lo = word & ~3u, hi = lo + 4, lo_off, span, first, last, i, m;
+  int found = 0;
+
+  if ((lo >> 24) != 3 || !xs_ready || smc_partial_wrap_live)
+    return 0;
+  lo_off = lo - base;
+  if (lo_off + 4 > bytes)
+    return 0;
+#ifdef SMC_RETIRE_WINDOW
+  span = smc_max_extent[0] + 4;
+  if (!smc_window_armed || span > MAX_BLOCK_SIZE * 4)
+    span = MAX_BLOCK_SIZE * 4;
+#else
+  span = MAX_BLOCK_SIZE * 4;
+#endif
+  first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+  last = (lo_off + 2) >> 1;            /* last halfword slot of the word */
+  {
+    /* Neither half recorded: no live block covers the word. */
+    u32 h0 = lo_off >> 1;
+    if (!(xs_ok[h0 >> 3] & (3u << (h0 & 7))))
+      return 0;
+    /* Every live block covering the word scanned it, so starts at or after
+     * xs_min (see xs_note_half); retire_span's window is the outer bound. */
+    if (xs_min[lo_off >> 2] > first)
+      first = xs_min[lo_off >> 2];
+  }
+#ifdef XS_COST_PROBE
+  xs_calls++; xs_slots += last - first + 1;
+#endif
+  for (i = first; i <= last; i++) {
+    ramtag_type *te;
+    u32 start, e[2];
+    if (!VALID_TAG(tagp[i]))
+      continue;
+    te = get_ram_tag(tagp[i]);
+    start = base + (i << 1);
+    e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 1;
+    e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 1;
+    for (m = 0; m < 2; m++) {
+      u32 h, h_end;
+      if (e[m] == 1)
+        continue;                      /* no live translation in this mode */
+      if (!e[m])
+        return 0;                      /* live without an extent: unknowable */
+      if (!(start < hi && e[m] > lo))
+        continue;                      /* does not cover the word */
+      if (e[m] > base + bytes)
+        return 0;
+      h_end = (e[m] - base + 1) >> 1;
+#ifdef SMC_SAME_SKIP_MUTANT_NOCHECK
+      /* MUTANT (oracle self-test only): trust any covering block. */
+      h_end = i;
+#endif
+#ifdef XS_COST_PROBE
+      xs_halves += h_end - i;
+#endif
+      for (h = i; h < h_end; ) {
+        if (!(h & 7) && h + 8 <= h_end) {
+          /* 8 halfwords at once: all recorded, none poisoned, all equal */
+          const u32 *r = (const u32 *)&xs_val[h];
+          const u32 *g = (const u32 *)(iwram + 0x8000 + (h << 1));
+          if (xs_ok[h >> 3] != 0xFF || xs_bad[h >> 3] ||
+              ((r[0] ^ g[0]) | (r[1] ^ g[1]) | (r[2] ^ g[2]) | (r[3] ^ g[3])))
+            return 0;
+          h += 8;
+        } else {
+          u8 bit = (u8)(1u << (h & 7));
+          if (!(xs_ok[h >> 3] & bit) || (xs_bad[h >> 3] & bit) ||
+              xs_val[h] != *(u16 *)(iwram + 0x8000 + (h << 1)))
+            return 0;
+          h++;
+        }
+      }
+      found = 1;
+    }
+  }
+  return found;
+}
+#endif
 #endif
 
 #ifdef SMC_PARTIAL_SAFE_FRAMEFULL
@@ -8036,6 +8259,10 @@ void flush_translation_cache_ram_smc(void)
       flush_translation_cache_rom();
       SMC_FB(1);
       flush_translation_cache_ram();
+#if defined(SMC_SAME_SKIP)
+    } else if (xs_blocks_current(partial_low)) {
+      smc_same_skips++;          /* nothing translated from it is stale */
+#endif
     } else if (smc_retire_single_word(partial_low)) {
       SMC_FB(9);
     } else {
