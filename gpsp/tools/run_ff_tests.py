@@ -11,14 +11,15 @@ import tempfile
 repo = Path(__file__).resolve().parent.parent
 source = (repo / 'psp/main_psp.c').read_text()
 
-def function(name, next_marker):
-    start = source.index('static void ' + name + '(')
+def function(name, next_marker, ret='void'):
+    start = source.index('static ' + ret + ' ' + name + '(')
     end = source.index(next_marker, start)
     return source[start:end]
 
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     (tmp / 'ff_pipeline.inc').write_text(
+        function('mer_retire_early_active', 'static int mer_lowlat_active', 'int') +
         function('me_rend_present', '/* Called from plat_video_frame') +
         function('me_rend_frame', '/* FPS counter'))
     common = ['gcc', '-std=gnu99', '-O2', '-Wall', '-Wextra',

@@ -26,6 +26,12 @@ static unsigned g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
 static unsigned g_vis_n, g_vis_us, g_vis_max, g_mer_wb_pages, g_mer_wb_n;
 static unsigned g_mer_sf_hit, g_mer_sf_miss, g_mer_sf_noloop;
 static unsigned g_mer_sf_wouldhit;
+/* low-latency bookkeeping (docs/LOW-LATENCY.md); only recorded, never asserted here */
+static unsigned g_lat_poll_vc, g_mer_stage_pvc[2], g_lat_seq, g_mer_stage_seq[2];
+static unsigned g_bb_pvc, g_lat_over;
+static int g_bb_new;
+static int g_mer_early_retire, g_ll_cfg;   /* tier 0 off: the gate under test is FF's */
+static int mer_rewind_busy(void) { return 0; }
 static int cap[2], stage[2];
 static int *g_mer_cap[2] = {&cap[0], &cap[1]}, *me_capture_buf;
 static int *g_mer_stage[2] = {&stage[0], &stage[1]};
