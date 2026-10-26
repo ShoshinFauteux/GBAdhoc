@@ -3006,9 +3006,18 @@ static void smc_stable_thunk_link(u8 *entry, u8 *body)
 #endif
 }
 
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
+static void dispatch_cache_forget(u32 pc, u32 thumb);
+#endif
 static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 {
   u8 *translation_ptr = entry;
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
+  /* This thunk now jumps back into the dispatcher: a cached {pc -> thunk}
+   * would loop.  Every retirement and every aborted translation comes
+   * through here, so this is the one place the cache must forget. */
+  dispatch_cache_forget(pc, thumb);
+#endif
   generate_load_imm(reg_a0, pc);
   if (thumb) {
     mips_emit_j(mips_absolute_offset(mips_indirect_branch_thumb));
@@ -3825,6 +3834,47 @@ void dispatch_cache_clear(void)
 }
 #define DC_NOTE_FILL(tbl, i_) do { } while (0)
 #endif
+#ifdef DISPATCH_PRECISE
+/* DISPATCH_PRECISE (cpu-levers, 2026-10-26): SMC retirement forgets only the
+ * retired blocks' own entries instead of emptying the whole cache (Doom II
+ * retires ~200 blocks a frame; each wipe cost the next indirect branches a
+ * C lookup: twin dispatch-cache miss rate 59-70%).
+ *
+ * Exact by construction: an entry is {pc -> SMC_RAM_PUBLIC_ENTRY of the
+ * block whose tag is at pc}, and retirement redirects exactly that thunk
+ * (smc_stable_thunk_dispatch, which calls dispatch_cache_forget(start)).
+ * The one many-to-one case is RAM mirroring: 0x0300ae14 and 0x03002e14 share
+ * a tag but not a key.  So only CANONICAL RAM pcs are cached (IWRAM
+ * 03000000-03007FFF, EWRAM 02000000-0203FFFF after GBA_PC masking); a
+ * mirrored pc always takes the C lookup, which returns what it always did.
+ * Full flushes (RAM, ROM, init) still empty everything.  A forgotten slot
+ * gets the key DC_TOMB, which no pc produces (keys are at most 28 bits), so
+ * the XLAT_FAST fill list never lists a slot twice. */
+#define DC_TOMB 0xFFFFFFFEu
+#define DC_FILL_OK(pc) dc_fill_ok(pc)
+static inline int dc_fill_ok(u32 pc)
+{
+  u32 r = (pc >> 24) & 0xF;
+  if (r == 3) return !(pc & 0x00FF8000u);
+  if (r == 2) return !(pc & 0x00FC0000u);
+  return 1;
+}
+static void dispatch_cache_forget(u32 pc, u32 thumb)
+{
+  u32 r = (pc >> 24) & 0xF, k, i;
+  u32 *tbl;
+  if (r == 3) pc = 0x03000000u | (pc & 0x7FFFu);
+  else if (r == 2) pc = 0x02000000u | (pc & 0x3FFFFu);
+  else return;                          /* only RAM blocks retire */
+  if (thumb) { k = pc >> 1; tbl = dispatch_cache_thumb; }
+  else       { k = pc >> 2; tbl = dispatch_cache_arm; }
+  i = (k & DC_MASK) * 2;
+  if (tbl[i] == k)
+    tbl[i] = DC_TOMB;
+}
+#else
+#define DC_FILL_OK(pc) 1
+#endif
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
   DC_NOTE_FILL(tbl, i_);                                                      \
@@ -3849,7 +3899,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 #else
       translate_icache_sync_ranged(); BADJUMP_NOTE_PC(pc);
 #endif
-      DC_PUT(dispatch_cache_arm, DC_KEY_ARM(pc), ret);
+      if (DC_FILL_OK(GBA_PC(pc)))
+        DC_PUT(dispatch_cache_arm, DC_KEY_ARM(pc), ret);
       return ret;
     }
   }
@@ -3874,7 +3925,8 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
     if (ret) {
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       JIT_CODE_CHECK_ENTRY(ret);
-      DC_PUT(dispatch_cache_thumb, DC_KEY_THUMB(pc), ret);
+      if (DC_FILL_OK(GBA_PC(pc)))
+        DC_PUT(dispatch_cache_thumb, DC_KEY_THUMB(pc), ret);
       return ret;
     }
   }
@@ -5904,9 +5956,10 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, first, last, i, target_slot, domain_end;
 
-#ifdef DISPATCH_CACHE
+#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
   /* A retired block's stable thunk jumps straight back into
-   * mips_indirect_branch_*: a surviving {pc -> thunk} entry would loop. */
+   * mips_indirect_branch_*: a surviving {pc -> thunk} entry would loop.
+   * (DISPATCH_PRECISE: smc_stable_thunk_dispatch forgets that entry.) */
   dispatch_cache_clear();
 #endif
 
@@ -7316,7 +7369,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, span, first, last, i;
   u32 rgn;
-#ifdef DISPATCH_CACHE
+#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
   int dc_cleared = 0;
 #endif
 #ifdef SMC_SINGLE_UNTAG
@@ -7366,7 +7419,7 @@ static int smc_retire_span(u32 lo, u32 hi)
     if (VALID_TAG(tagp[i])) {
       ramtag_type *te = get_ram_tag(tagp[i]);
       u32 start = base + (i << 1);
-#ifdef DISPATCH_CACHE
+#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
       /* Empty the dispatch cache before the FIRST retirement only: a cached
        * pc may map to a retired thunk (which itself dispatches: a loop).
        * Nothing retired, nothing to empty (smc-coverage: the unconditional

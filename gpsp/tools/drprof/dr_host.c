@@ -346,6 +346,23 @@ int main(int argc, char **argv)
          }
          fputc('\n', hf);
       }
+      /* DR_RAMDUMP=<frame>: raw regs+IWRAM+EWRAM at that frame boundary to
+       * DR_RAMDUMP_FILE (state-divergence triage; cpu-levers 2026-10-26). */
+      {
+         const char *rd = getenv("DR_RAMDUMP");
+         if (rd && (unsigned)strtoul(rd, NULL, 0) == fe_host_frame_count())
+         {
+            const char *rp = getenv("DR_RAMDUMP_FILE");
+            FILE *df = fopen(rp ? rp : "ramdump.bin", "wb");
+            if (df)
+            {
+               fwrite(reg, 4, 17, df);
+               fwrite(iwram + 0x8000, 1, 0x8000, df);
+               fwrite(ewram, 1, 0x40000, df);
+               fclose(df);
+            }
+         }
+      }
       if (dump_dir && g_pix)
       {
          int want = fe_autopilot_dump_pending();

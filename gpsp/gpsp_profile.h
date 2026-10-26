@@ -166,6 +166,10 @@
 #endif
 #endif
 
+#if defined(DISPATCH_PRECISE) && !defined(DISPATCH_CACHE)
+#error "DISPATCH_PRECISE refines DISPATCH_CACHE's invalidation: it needs DISPATCH_CACHE."
+#endif
+
 #if defined(ENTRY_GATES) && !defined(SMC_GATE_BITMAP)
 #error "ENTRY_GATES is tested inside the gate bitmap's scan check: it needs SMC_GATE_BITMAP."
 #endif

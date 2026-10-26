@@ -16,7 +16,7 @@ IMAGE=${DRPROF_IMAGE:-drprof-qemu}
 PROF=${PROF:-1}
 mkdir -p "$DRPROF_HOME/runs/$OUT"
 BIN=/w/bin/dr_host_$VARIANT
-docker run --rm -v "$DRPROF_HOME":/w -w /w/fx "$IMAGE" bash -c "
+docker run --rm -e DR_RAMDUMP -e DR_RAMDUMP_FILE -e SMC_EVT_FILE -e SMC_EVT_LO -e SMC_EVT_HI -e EXEC_STALE_ABORT -v "$DRPROF_HOME":/w -w /w/fx "$IMAGE" bash -c "
   set -e
   O=/w/runs/$OUT
   SCR=''; [ '$SCRIPT' != '-' ] && SCR='--script $SCRIPT'

@@ -661,6 +661,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DISPATCH_CACHE),1)
 	CFLAGS += -DDISPATCH_CACHE=1
 	endif
+	# DISPATCH_PRECISE=1: OFF by default (cpu-levers).  With DISPATCH_CACHE,
+	# SMC retirement forgets only the retired blocks' entries instead of
+	# emptying the cache; only canonical RAM pcs are cached (mirror-safe).
+	# Exact: twin state hashes identical to the build without it.
+	ifeq ($(DISPATCH_PRECISE),1)
+	CFLAGS += -DDISPATCH_PRECISE=1
+	endif
 	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).
