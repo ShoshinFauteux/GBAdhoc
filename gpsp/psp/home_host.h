@@ -19,6 +19,8 @@ extern "C" {
  * menu then stays on START+SELECT, which always works. */
 int  home_host_start(const char *base_dir);
 int  home_host_tried(void);
+/* 1 while gbadhoc_home.prx is loaded (the sleep quiesce). */
+int  home_host_loaded(void);
 /* Stop and unload.  The module switches the popup back on in module_stop. */
 void home_host_stop(void);
 /* After home_host_stop: the next game loads the module again, as a fresh

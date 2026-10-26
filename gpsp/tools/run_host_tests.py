@@ -256,6 +256,33 @@ def suites(env: Env, baseline: Path | None):
          "-fsanitize=address,undefined -Ifrontend-common "
          "-o /tmp/t_link_mode tools/test_link_mode.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_link_mode && "
+         # ...and the browser's non-ASCII file names (psp/text_fold.h,
+         # issue #19): the display fold and the FAT long/short name choice.
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined "
+         "-o /tmp/t_text_fold tools/tests/test_text_fold.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_text_fold && "
+         # ...and the screenshot PNG writer (frontend-common/fe_png.c, issue
+         # #13): every test frame decoded by Python's zlib (and Pillow when
+         # present) back to the exact pixels; plus the screenshot file name.
+         "rm -rf /tmp/t_png && mkdir -p /tmp/t_png && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined -Ifrontend-common "
+         "-o /tmp/t_fe_png tools/tests/test_fe_png.c frontend-common/fe_png.c "
+         "frontend-common/fe_util.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_png /tmp/t_png && "
+         "python3 tools/tests/check_png.py /tmp/t_png && "
+         "rm -rf /tmp/t_png4 && mkdir -p /tmp/t_png4 && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror -DFE_PNG_LOW_DEPTH "
+         "-fsanitize=address,undefined -Ifrontend-common "
+         "-o /tmp/t_fe_png4 tools/tests/test_fe_png.c frontend-common/fe_png.c "
+         "frontend-common/fe_util.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_png4 /tmp/t_png4 && "
+         "python3 tools/tests/check_png.py /tmp/t_png4 && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined "
+         "-o /tmp/t_shot_name tools/tests/test_shot_name.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_shot_name && "
          # ...and the rewind core (frontend-common/fe_rewind.c, a REWIND=1
          # prototype) against a fake machine: any pattern of taps on the
          # control, every frame checked against a run that never rewound,
@@ -515,7 +542,17 @@ def suites(env: Env, baseline: Path | None):
           "-ffunction-sections -fdata-sections "
           "-I%s -Ifrontend-common -Ipsp tools/test_video_geometry.c "
           "-Wl,--gc-sections -o /tmp/t_vgeo565 && /tmp/t_vgeo565 && "
-          "python3 tools/tests/test_psp_runtime.py")
+          "python3 tools/tests/test_psp_runtime.py && "
+          "python3 tools/tests/test_power_callback.py && "
+          # The in-game sleep quiesce (psp/sleep_q.h): the production park
+          # side of the handshake, extracted from main_psp.c, plus mutants.
+          "python3 tools/tests/test_sleep_quiesce.py && "
+          # The audio worker's channel across a terminate-and-restart.
+          "python3 tools/tests/test_audio_channel.py && "
+          # A sleep from the in-game menu / pause screen: the menu branch's
+          # wake and the overlay's yield to the loop-top park (main_psp.c +
+          # ui_psp.c), mutants.
+          "python3 tools/tests/test_sleep_menu.py")
          % (sdk, sdk, sdk)),
 
         ("perf_loop", False, lambda: None,
@@ -585,6 +622,10 @@ def suites(env: Env, baseline: Path | None):
           "-o /tmp/t_ctl_map_rw tools/tests/test_ctl_map.c psp/ctl_map.c "
           "psp/config_psp.c frontend-common/fe_util.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_ctl_map_rw && "
+          # The button that answers an in-game UI (the menu's Resume, a
+          # state load, the pause screen / wake overlay) is not the game's
+          # until released: main_psp.c's pad swallow and its wiring, mutants.
+          "python3 tools/tests/test_menu_press.py && "
           # The GBA cartridge clock's source rule (rtc_clock.h): frames
           # unchanged, wall clock immune to fast-forward / sleep / state
           # load, the guard, the link-session hand-over.
@@ -599,6 +640,12 @@ def suites(env: Env, baseline: Path | None):
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_state_delete tools/tests/test_state_delete.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_state_delete && "
+          # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
+          # reason.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+          "-fsanitize=address,undefined -Ipsp "
+          "-o /tmp/t_sleep_q tools/tests/test_sleep_q.c psp/sleep_q.c && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sleep_q && "
           # Share game data (docs/SAVE-SHARE.md): the protocol with both ends
           # in one process over a lossy fake radio, hostile requests, mixed
           # versions and the temp/verify/swap commit.  Here for the same

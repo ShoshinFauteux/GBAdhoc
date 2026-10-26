@@ -1945,6 +1945,13 @@ static void sram_close(void)
    }
 }
 
+int fe_host_sram_sleep_close(void)
+{
+   int was_open = sram_fp != NULL;
+   sram_close();
+   return was_open;
+}
+
 #ifdef GPSP_PERF_RIG
 int fe_host_sram_test_kill_handle(void)
 {
@@ -6734,6 +6741,88 @@ static int gb_cheat_poke(void *ctx, uint16_t addr, uint8_t value)
    return gbcore_poke((gbcore_t *)ctx, addr, &value, 1);
 }
 #endif
+
+/* SOFT RESET: the in-game menu's "Reset game" (fe_host.h).
+ *
+ * Correctness first, so each half is the path a fresh boot of the same game
+ * already takes, not a new one:
+ *
+ *  GBA  gba_reset_power_on(): the cartridge's own SMC gate set restored (the
+ *       learned gates move block boundaries and charge cycles, so keeping
+ *       them gives the first frames different timing), then reset_gba(), the
+ *       call retro_load_game ends with: the
+ *       translation caches (ROM and RAM), the RAM code tags, the dispatch
+ *       cache, the SMC partial/window state and the JIT ownership (I-cache)
+ *       are all re-initialised by init_dynarec_caches; memory, I/O, timers,
+ *       DMA, sound and the CPU by init_memory/init_main/init_cpu/reset_sound.
+ *       What it keeps is the cartridge: the ROM, its detected save type and
+ *       RTC, the battery bytes in memory (gamepak_backup).  Checked with the
+ *       PPSSPP frame-hash oracle: every frame after the reset equals the same
+ *       frame after power-on.  The rewind history starts again, as
+ *       after a state load: nothing before the reset can be rewound into.
+ *  GB   the battery is written out, the machine shut down, the instance's
+ *       static memory put back to power-on (gbcore_power_on) and the game
+ *       booted again from its file and that save -- gb_single_boot, the
+ *       power-on the end of a link session already uses.
+ *
+ * The battery goes to the Memory Stick FIRST (fe_host_sram_flush(1), as
+ * quitting does), so a reset never costs a save the game made.  For GB a
+ * failed write refuses the reset: the reboot reads the save from the file.
+ *
+ * 0 = reset.  -2 = refused, a link session (or the pair bench) is up: a
+ * reset would desynchronise the other machine.  -3 = refused, the GB save
+ * could not be written.  -1 = the GB reboot failed (no machine now; the
+ * caller must leave the game). */
+extern uint16_t *gba_screen_pixels;          /* the core's (video.h) */
+void gba_reset_power_on(void);               /* the core's (gba_memory.c) */
+
+int fe_host_reset(void)
+{
+   int flush;
+   if (gbl || gb_dual || (gb_family && !gb_core) || fe_np_session_active())
+      return -2;
+#ifdef GBA_LINK
+   if (host.gba_dual || fe_gbadual_active())
+      return -2;
+#endif
+   flush = fe_host_sram_flush(1);
+   if (gb_family)
+   {
+      if (flush < 0)
+      {
+         fe_evt("game_reset REFUSED console=gb reason=save_write");
+         return -3;
+      }
+      gbcore_shutdown(gb_core);
+      gb_core = NULL;
+      last_frame = NULL;
+      gb_skip_frame = 0;
+      (void)gbcore_power_on();
+      if (gb_single_boot() != 0)
+      {
+         fe_evt("game_reset FAILED console=gb reason=boot");
+         return -1;
+      }
+      fe_evt("game_reset console=%s frame=%u flush=%d",
+             host.console == FE_CONSOLE_GBC ? "gbc" : "gb", frame_count,
+             flush);
+      return 0;
+   }
+   gba_reset_power_on();
+   /* The picture buffer too, as a first boot finds it: a frame the game
+    * draws only partly (lines in forced blank) otherwise shows the last
+    * picture from before the reset through the gaps -- Driver 2's fourth
+    * frame did, the one frame of 899 that differed from power-on. */
+   if (gba_screen_pixels)
+      memset(gba_screen_pixels, 0, 240u * 160u * sizeof(uint16_t));
+#ifdef REWIND
+   if (rw_on)
+      fe_host_rewind_state_loaded();
+#endif
+   FE_EVT_ONLY(flush);
+   fe_evt("game_reset console=gba frame=%u flush=%d", frame_count, flush);
+   return 0;
+}
 
 void fe_host_run_frame(void)
 {

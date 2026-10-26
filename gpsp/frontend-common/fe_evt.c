@@ -196,6 +196,30 @@ void fe_evt_close(void)
    }
 }
 
+int fe_evt_reopen_append(const char *path)
+{
+#ifdef GPSP_NO_TELEMETRY
+   (void)path;
+   return 1;
+#else
+   if (evt_file)
+      return 1;
+   if (!path || !path[0])
+      return -1;
+   evt_file = fopen(path, "a");
+   return evt_file ? 0 : -1;
+#endif
+}
+
+int fe_evt_is_open(void)
+{
+#ifdef GPSP_NO_TELEMETRY
+   return 0;
+#else
+   return evt_file != NULL;
+#endif
+}
+
 /* Single producer.  Returns 0 if the line does not fit (dropped whole —
  * never half a line, so the log is always parseable). */
 static int ring_push(const char *p, unsigned n) __attribute__((unused));

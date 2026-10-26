@@ -899,6 +899,27 @@ static void test_stick(void)
    CHECK(!ctl_stick_only(CTL_L));
    CHECK(!ctl_stick_only(0));
 
+   /* ctl_pad_word: the one pad word every loop builds.  The bug it closes:
+    * the browser's Settings loop passed raw pad.Buttons, so the Controls
+    * page opened from there never saw a stick direction to capture. */
+   st = 0;
+   CHECK(ctl_pad_word(CTL_CROSS, CTL_STICK_CUSTOM, 255, 128, &st) ==
+         (CTL_CROSS | CTL_STICK_RIGHT));
+   CHECK(st == CTL_STICK_RIGHT);
+   /* the stick's bits are never taken from pad.Buttons */
+   st = 0;
+   CHECK(ctl_pad_word(CTL_STICK_ALL | CTL_L, CTL_STICK_CUSTOM, 128, 128, &st) ==
+         CTL_L);
+   st = 0;
+   CHECK(ctl_pad_word(0, CTL_STICK_MOVE, 128, 0, &st) == CTL_UP);
+   /* off: the buttons alone, and the latch let go */
+   st = CTL_STICK_LEFT;
+   CHECK(ctl_pad_word(CTL_START | CTL_STICK_UP, CTL_STICK_OFF, 0, 0, &st) ==
+         CTL_START);
+   CHECK(st == 0);
+   CHECK(ctl_pad_word(CTL_R, CTL_STICK_CUSTOM, 128, 255, NULL) ==
+         (CTL_R | CTL_STICK_DOWN));
+
    /* parse / format */
    CHECK(ctl_parse("STICK_UP", &mask) == 0 && mask == CTL_STICK_UP);
    CHECK(ctl_parse("l + stick_left", &mask) == 0 && mask == (CTL_L | CTL_STICK_LEFT));

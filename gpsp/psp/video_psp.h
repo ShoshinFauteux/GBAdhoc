@@ -255,7 +255,20 @@ void vid_gu_flush(void);
 /* Black both display buffers with plain stores (no GE).  For the suspend
  * path: the LCD shows stale VRAM the instant it powers on. */
 void vid_blank_all(void);
-void vid_swap(void);
+/* Returns 1 when a flip was submitted (PSP_DISPLAY_SETBUF_NEXTFRAME: it
+ * latches at the NEXT vblank start), 0 when nothing was drawn and the screen
+ * is held, or the submit failed.  Callers that ignore it are unchanged. */
+int  vid_swap(void);
+
+/* LOW LATENCY (docs/LOW-LATENCY.md).  1 while a deferred display list is
+ * still executing on the GE -- a peek, never a wait.  Lets the main loop
+ * submit a flip BEFORE the vblank it is meant to latch on, without stalling
+ * the CPU on a list that has not finished. */
+int  vid_gu_busy(void);
+/* 1 when the buffer the last vid_swap() submitted is the one the display
+ * shows now (sceDisplayGetFrameBuf IMMEDIATE).  Hardware evidence for WHICH
+ * vblank a NEXTFRAME flip latches on. */
+int  vid_flip_latched(void);
 
 /* GE drawbuffer readback (color-order regression check): writes the buffer
  * that was just drawn (pre-swap) as a 24bpp BMP, decoding VRAM bytes with

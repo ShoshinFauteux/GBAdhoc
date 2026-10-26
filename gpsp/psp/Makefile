@@ -17,6 +17,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        ff_psp.o \
        me_host.o \
        home_host.o \
+       sleep_q.o \
        video_psp.o \
        osd_psp.o \
        ui_psp.o \
@@ -32,6 +33,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        ../frontend-common/fe_host.o \
        ../frontend-common/fe_evt.o \
        ../frontend-common/fe_util.o \
+       ../frontend-common/fe_png.o \
        ../frontend-common/fe_favs.o \
        ../frontend-common/fe_share.o share_psp.o \
        ../frontend-common/fe_linkmode.o \

@@ -79,10 +79,13 @@
 #include "link_games.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "shot_name.h"      /* screenshot file names (issue #13) */
+#include "fe_png.h"
 #include "mgift_net.h"
 #include "mgift_cart.h"
 #include "me_host.h"
 #include "home_host.h"
+#include "sleep_q.h"
 #include "me/me_mbox.h"   /* me_render_desc, ME_UNCACHED — for the render bench */
 #include "config_psp.h"
 #include "video_prof.h"   /* ADR-0034 renderer path profile (core-side) */
@@ -274,6 +277,15 @@ static int g_perf_rig;
 #define PLAY_EXIT_ASSIST     0          /* ADR-0079 off by default (harness) */
 #define PLAY_ME_BOOT         0          /* ME keys off by default (harness)  */
 #define PLAY_ME_VIDEO        0
+#endif
+
+/* LOW LATENCY test builds (docs/LOW-LATENCY.md): the default of the
+ * `input_fresh` pad re-peek, set by `INPUT_FRESH=1 tools/build.sh ...`
+ * (-DPLAY_INPUT_FRESH=1) so a playable build, which cannot read the harness
+ * ini, can carry it.  0 = the shipping behaviour; a harness ini still
+ * overrides it either way. */
+#ifndef PLAY_INPUT_FRESH
+#define PLAY_INPUT_FRESH     0
 #endif
 
 static void init_paths(int argc, char *argv[])
@@ -483,6 +495,7 @@ static void setup_exit_callback(void)
 #define IO_PRIO        0x22
 #define IO_STACK       0x1000
 #define IO_WAIT_US     250000     /* only bounds teardown latency */
+#define IO_JOIN_US     5000000u   /* the last pass may be flushing 128 KiB */
 #define IO_SEMA_MAX    64
 
 static SceUID g_io_thid = -1, g_io_sema = -1;
@@ -582,19 +595,26 @@ static void io_thread_start(void)
  * other thread can touch the .sav or the SRAM buffer, which is what makes
  * fe_host_shutdown()'s flush/sync/close and retro_unload_game() safe.  It
  * must therefore run BEFORE fe_host_shutdown(), not after. */
-static void io_thread_stop(void)
+/* Returns 0 = the thread was joined, 1 = there was no thread, < 0 = the
+ * join timed out and the thread was terminated (the kernel's rc). */
+static int io_thread_stop(void)
 {
    int had_thread = (g_io_thid >= 0);
+   int rc = 1;
 
    if (had_thread)
    {
-      SceUInt tmo = 5000000;   /* the last pass may be flushing 128 KiB */
+      SceUInt tmo = IO_JOIN_US;
       g_io_run = 0;
       sceKernelSignalSema(g_io_sema, 1);
-      if (sceKernelWaitThreadEnd(g_io_thid, &tmo) < 0)
+      rc = sceKernelWaitThreadEnd(g_io_thid, &tmo);
+      if (rc < 0)
          sceKernelTerminateDeleteThread(g_io_thid);
       else
+      {
          sceKernelDeleteThread(g_io_thid);
+         rc = 0;
+      }
       g_io_thid = -1;
    }
    if (g_io_sema >= 0)
@@ -612,6 +632,7 @@ static void io_thread_stop(void)
        * traded for smoothness — this is the line that guarantees it. */
       fe_host_sram_sync();
    }
+   return rc;
 }
 
 /* Every exit path funnels through here so the log is always closed with the
@@ -692,6 +713,11 @@ static volatile int audio_output_error;
  * ratio anywhere else. */
 unsigned in_rate = 32768;
 static SceUID audio_thid = -1;
+/* The worker's sceAudio channel while it holds one.  It gives the channel
+ * back on its way out; a worker terminated in its output (audio_stop) never
+ * gets there, so the stop does, or each restart would take another of the
+ * eight until the game went silent. */
+static volatile int audio_ch = -1;
 
 /* Resampler phase increment, 16.16, read fresh by the audio thread on every
  * output chunk.  Normally (in_rate << 16) / OUT_RATE.  ADR-0027 lowers it in
@@ -833,6 +859,7 @@ static int audio_thread(SceSize args, void *argp)
       audio_running = 0;
       return 0;
    }
+   audio_ch = ch;
 
    while (audio_running)
    {
@@ -920,6 +947,9 @@ static int audio_thread(SceSize args, void *argp)
       }
    }
 
+   /* Cleared first: a stop that terminates us from here on finds nothing
+    * left to release. */
+   audio_ch = -1;
    sceAudioChRelease(ch);
    return 0;
 }
@@ -958,20 +988,38 @@ static void audio_ring_reset(void)
    in_rate = 32768;
 }
 
-static void audio_stop(void)
+/* Returns 0 = joined (the worker released its channel on the way out),
+ * 1 = there was no worker, < 0 = the join timed out and it was terminated
+ * (its channel released here). */
+#define AUDIO_JOIN_US 1000000u
+static int audio_stop(void)
 {
+   int rc = 1;
    audio_running = 0;
    if (audio_thid >= 0)
    {
       /* Bounded: one chunk is ~23 ms, so a worker that has not returned from
        * sceAudioOutputBlocking in a second never will -- do not hang exit. */
-      SceUInt tmo = 1000000;
-      if (sceKernelWaitThreadEnd(audio_thid, &tmo) < 0)
+      SceUInt tmo = AUDIO_JOIN_US;
+      rc = sceKernelWaitThreadEnd(audio_thid, &tmo);
+      if (rc < 0)
+      {
          sceKernelTerminateDeleteThread(audio_thid);
+         /* Terminated in its output, it still holds its channel. */
+         if (audio_ch >= 0)
+         {
+            sceAudioChRelease(audio_ch);
+            audio_ch = -1;
+         }
+      }
       else
+      {
          sceKernelDeleteThread(audio_thid);
+         rc = 0;
+      }
       audio_thid = -1;
    }
+   return rc;
 }
 
 /* Report audio-device failures from the main thread, never the high-priority
@@ -1514,6 +1562,26 @@ static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 static unsigned g_pad;   /* raw SceCtrl buttons, sampled once per loop */
 static unsigned g_mgift_consumed;
 
+/* AN ANSWER IS NOT INPUT.  The button that closes the START+SELECT menu
+ * (Resume, a state load, Host/Join) or answers the SELECT+TRIANGLE pause
+ * screen / wake overlay is still down when the game gets the pad back, and
+ * the next pad read handed it to the core (X on Resume reached Pokemon
+ * Crystal as B).  pad_swallow_arm() where the UI lets go makes every
+ * button held at its answer invisible until that button is released --
+ * to the core (GBA and GB/GBC alike: ctl_game_mask reads g_pad) and to the
+ * shortcuts.  A button first pressed after the answer (while Host/Join or a
+ * state load works, say) is the game's at once. */
+static unsigned g_pad_swallow;
+static void pad_swallow_arm(unsigned held)
+{
+   g_pad_swallow |= held;        /* and what is still swallowed stays so */
+}
+static unsigned pad_swallow(unsigned pad)
+{
+   g_pad_swallow &= pad;         /* a released button is free again */
+   return pad & ~g_pad_swallow;
+}
+
 #ifdef GPSP_PERF_RIG
 /* HARNESS ONLY: RAW PAD REPLAY (`pad_script = <file>`).
  *
@@ -1997,6 +2065,43 @@ static volatile int g_pwr_rebuild;   /* main loop: rebuild it now */
  * power_cb for why the teardown must not run while a frame is in flight. */
 static volatile int g_pwr_park_req;
 static volatile int g_pwr_parked;
+/* THE SLEEP QUIESCE (psp/sleep_q.h).  The park point does real work before
+ * it reports `parked`: it stops the audio thread, the writer, the long-lived
+ * files, the HOME module and the radio.  So the handshake has two answers:
+ *   g_pwr_park_ack  the loop has SEEN the request (it is at its park point and
+ *                   quiescing) -- awaited for PWR_PARK_WAIT_US, as before, so
+ *                   a loop that has no park point (browser, menus) still costs
+ *                   the callback 250 ms and no more;
+ *   g_pwr_parked    the quiesce is finished -- awaited, once acknowledged,
+ *                   up to PWR_QUIESCE_WAIT_US: the quiesce's own worst
+ *                   case, so the callback never gives up on a loop that is
+ *                   only slow.  A loop still quiescing past even that keeps
+ *                   the gameplay lock, parked, until the SUSPENDING that
+ *                   follows has torn down (sleep_park_hold), so the suspend
+ *                   never lands mid-I/O or with the renderer up.
+ * Everything blocking runs on the EMULATION thread, never here: it owns the
+ * ROM handle and the core, and joining the audio and writer threads from it
+ * cannot deadlock against this callback thread (0x11), which outranks them.
+ * The callback only waits, bounded, which is what makes its return prompt.
+ *
+ * g_pwr_cb_done      the callback finished its part (the ME teardown); a
+ *                    loop held in the park may now let the suspend proceed.
+ * g_pwr_sleep_pending a switch/suspend was seen and RESUME_COMPLETE has not
+ *                    come yet: the gameplay power lock stays down, and the
+ *                    quiesce stays in force, until it does. */
+static volatile int g_pwr_park_ack;
+static volatile int g_pwr_cb_done;
+static volatile int g_pwr_sleep_pending;
+/* Each step at its bound: the audio join, the writer's join, the .sav it
+ * may leave to finish on the loop's thread (4 s: SRAM_SYNC_MAX_SPINS' "a
+ * stick that has not taken 128 KiB in that is broken"), the radio
+ * (adhoc_transport_term: two 1.5 s joins, a 0.2 s drain, a 2 s spin), and a
+ * second for the rest (the HOME module's stop, the handles). */
+#define SQ_SAV_LAND_US 4000000u
+#define SQ_NET_TERM_US 5500000u
+#define PWR_QUIESCE_WAIT_US (AUDIO_JOIN_US + IO_JOIN_US + SQ_SAV_LAND_US + \
+                             SQ_NET_TERM_US + 1000000u)
+static void play_lock_drop(const char *who);
 #ifdef REWIND
 /* When the callback asked (it waits PWR_PARK_WAIT_US for the answer): what
  * the park point may spend landing a rewind first (psp_rewind_land). */
@@ -2011,8 +2116,36 @@ static int psp_rewind_land(const char *why, unsigned budget_us);
 static int power_cb(int unknown, int pwrflags, void *common)
 {
    (void)unknown; (void)common;
-   if (pwrflags & PSP_POWER_CB_SUSPENDING)
+   /* Log the raw flag word, before any delay or teardown, while the writer
+    * can still get it to the stick.  A manual slide can arrive as
+    * POWER_SWITCH without SUSPENDING (the later SUSPENDING must not tear
+    * down the same renderer and volatile partition twice), and the PSP Go's
+    * slider offers "Resume Game", which may deliver yet another subset.
+    * The bits are the only way to tell. */
+   fe_evt("power flags=0x%08X switch=%d susp=%d resuming=%d complete=%d slept=%d",
+          (unsigned)pwrflags,
+          !!(pwrflags & PSP_POWER_CB_POWER_SWITCH),
+          !!(pwrflags & PSP_POWER_CB_SUSPENDING),
+          !!(pwrflags & PSP_POWER_CB_RESUMING),
+          !!(pwrflags & PSP_POWER_CB_RESUME_COMPLETE), g_pwr_slept);
+   if (pwrflags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING))
+      standby_note("flags=0x%08X switch=%d susp=%d slept=%d",
+                   (unsigned)pwrflags,
+                   !!(pwrflags & PSP_POWER_CB_POWER_SWITCH),
+                   !!(pwrflags & PSP_POWER_CB_SUSPENDING), g_pwr_slept);
+   if (pwrflags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING))
+      g_pwr_sleep_pending = 1;
+   /* Once the work is done for this sleep (the switch normally arrives first
+    * and the SUSPENDING ~0.1 s later), a repeat returns at once: the firmware
+    * is about to take the machine and nothing here would add anything.
+    * Per sleep, not per teardown: a switch slid on the wake overlay (the
+    * engine still down, g_pwr_slept 1) is a new sleep, and the loop must
+    * park and quiesce for it like any other. */
+   if ((pwrflags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING)) &&
+       !(g_pcfg.standby && g_pwr_cb_done))
    {
+      unsigned cb_t0 = (unsigned)sceKernelGetSystemTimeLow();
+      int held = 0;
       /* Menu = HOME: HOME is the system's across a sleep.  The module turns
        * the popup back on within one poll (16 ms), well inside the 60 ms
        * delay below; the wake overlay keeps it there until Continue. */
@@ -2065,11 +2198,24 @@ static int power_cb(int unknown, int pwrflags, void *common)
          g_pwr_park_t0 = t0;
 #endif
          g_pwr_park_req = 1;
-         while (!g_pwr_parked &&
+         /* Stage 1: has the loop seen it?  Stage 2, only if it has: wait
+          * out its quiesce (see g_pwr_park_ack).  A loop with no park point
+          * costs exactly what it always did. */
+         while (!g_pwr_park_ack && !g_pwr_parked &&
                 (unsigned)sceKernelGetSystemTimeLow() - t0 < PWR_PARK_WAIT_US)
             sceKernelDelayThread(2000);
+         if (g_pwr_park_ack)
+            while (!g_pwr_parked &&
+                   (unsigned)sceKernelGetSystemTimeLow() - t0 <
+                      PWR_PARK_WAIT_US + PWR_QUIESCE_WAIT_US)
+               sceKernelDelayThread(2000);
          park_us = (unsigned)sceKernelGetSystemTimeLow() - t0;
-         if (g_pwr_parked)
+         if (g_pwr_parked && g_pwr_slept)
+            /* Slid again on the wake overlay: the engine is still down from
+             * the last sleep (Continue rebuilds it), so the loop's quiesce
+             * is all there is to do. */
+            standby_note("suspend parked=1 park_us=%u already_down=1", park_us);
+         else if (g_pwr_parked)
          {
             t0 = (unsigned)sceKernelGetSystemTimeLow();
             if (me_host_loaded())
@@ -2119,32 +2265,46 @@ static int power_cb(int unknown, int pwrflags, void *common)
             fe_evt("power teardown_skipped reason=park_timeout park_us=%u",
                    park_us);
          }
-         /* Release the parked loop in either case; a suspend that never
-          * completes must not leave it waiting forever. */
-         g_pwr_park_req = 0;
+         if (g_pwr_parked)
+            held = 1;      /* answered below, once this callback is done */
+         else
+            /* Release the loop in any case; a suspend that never completes
+             * must not leave it waiting forever. */
+            g_pwr_park_req = 0;
       }
+      /* Nobody parked will drop the gameplay power lock (a menu, standby
+       * = 0): drop it here, or the suspend would wait for it forever.  A
+       * loop that acknowledged and is still quiescing drops it itself, once
+       * parked and torn down (sleep_park_hold): dropped here, the suspend
+       * would land with it inside a join, a .sav write or the radio's
+       * teardown. */
+      if (!g_pwr_parked && !g_pwr_park_ack)
+         play_lock_drop("cb");
       /* Give the writer a real chance to land the .sav and this line before
        * the kernel takes the machine away.  Not a guarantee -- the window is
        * the kernel's to grant -- but it is the difference between usually
        * losing progress and usually not. */
       sceKernelDelayThread(80000);
+      standby_note("cb out us=%u parked=%d hold=%d",
+                   (unsigned)sceKernelGetSystemTimeLow() - cb_t0,
+                   g_pwr_parked, held);
+      /* Our part is done -- and only now, after the last line this callback
+       * writes, so the loop's own notes never share the file with ours.  As
+       * in TYL, the game stays paused until the wake: the loop stays in its
+       * park, asleep, until RESUME_COMPLETE clears park_req; seeing
+       * g_pwr_cb_done it drops the gameplay power lock and the suspend
+       * proceeds. */
+      if (held)
+         g_pwr_cb_done = 1;
    }
-   /* Log the raw flag word too.  The PSP Go's slider offers "Resume Game",
-    * which is a different user-facing path from the other models' standby,
-    * and it is not obvious from the outside whether it delivers the same
-    * SUSPENDING/RESUME_COMPLETE pair, a different subset, or an exit.  The
-    * bits are the only way to tell. */
-   fe_evt("power flags=0x%08X susp=%d resuming=%d complete=%d",
-          (unsigned)pwrflags,
-          !!(pwrflags & PSP_POWER_CB_SUSPENDING),
-          !!(pwrflags & PSP_POWER_CB_RESUMING),
-          !!(pwrflags & PSP_POWER_CB_RESUME_COMPLETE));
    if (pwrflags & PSP_POWER_CB_RESUMING)
       fe_evt("power resuming");
    if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)
    {
       g_pwr_resume++;
-      g_pwr_park_req = 0;
+      g_pwr_park_req = 0;      /* releases a loop held in its park */
+      g_pwr_cb_done = 0;
+      g_pwr_sleep_pending = 0;
       standby_note("resume_complete flags=0x%08X slept=%d",
                    (unsigned)pwrflags, g_pwr_slept);
       fe_evt("power resume_complete slept=%d", g_pwr_slept);
@@ -2218,6 +2378,7 @@ static void pwr_release_all(void)
       g_pwr_hold = 1;
       pwr_release();
    }
+   play_lock_drop("exit");   /* the gameplay lock too */
 }
 
 /* No process exit may leave the switch held: handoff_run (the USB handoff),
@@ -2255,7 +2416,7 @@ static void pwr_release_all(void)
  * spent": no landing, so the last resort has to act.
  * `sleep_sim_nopark = 1`: the loop does not answer the
  * park request and stands still until the resume, as a blocking loop that
- * has no park point does (the pause overlay): power_cb then tears nothing
+ * has no park point would: power_cb then tears nothing
  * down.  `sleep_sim_trash_pool = 1` overwrites the rewind's part of the
  * volatile pool while "asleep", which is what the OS is entitled to do; and
  * `rewind_pool_restart = 0` is the MUTANT that leaves the history as it was
@@ -2625,6 +2786,111 @@ static int      g_mer_sameframe;      /* configured */
 static int mer_sameframe_active(void)
 {
    return g_mer_sameframe && !g_ff_mult && !g_ff_uncapped;
+}
+
+/* ===========================================================================
+ * LOW LATENCY (docs/LOW-LATENCY.md).  Three switches, one per mechanism, so
+ * one binary carries every arm of the A/B.
+ *
+ * Where the shipping ME pipeline's latency came from, per emulated frame N
+ * (input polled just after vblank V(k), frame N emulated in interval k):
+ *
+ *   vcount 160 of k     render of N posted to the ME, done ~3 ms later
+ *   vcount 160 of k+1   ...but only RETIRED here, by the next post
+ *   loop top of k+2     blitted (the loop-top present shows the ready stage)
+ *   after V(k+3)        vid_swap(): SetFrameBuf NEXTFRAME
+ *   V(k+4)              latched -- a NEXTFRAME flip issued just AFTER a
+ *                       vblank waits for the following one
+ *
+ * i.e. latch - poll = 4 vblanks, where the CPU renderer (and the GB/GBC
+ * cores) have 2 and the floor for "emulate the frame, then show it" is 1.
+ *
+ *   flip_early      (tier 0a, every path) submit the flip as soon as the
+ *                   frame is complete and the GE idle, BEFORE the vblank
+ *                   wait, so NEXTFRAME latches on the vblank we are waiting
+ *                   for.  -1 vblank on every path; no CPU cost (the GE is
+ *                   polled, never waited on, inside a wait that was idle).
+ *   me_early_retire (tier 0b, ME) retire a finished render at the loop top
+ *                   instead of at the next post.  -1 vblank; nothing waits.
+ *   me_lowlat       (tier 1, ME) present the render in the wait of the
+ *                   interval it was emulated in and flip before that
+ *                   interval's vblank: latch - poll = 1.  Needs the render
+ *                   and the blit to finish before the vblank; a frame that
+ *                   cannot is shown one vblank later, as with tier 0, and
+ *                   the mode drops back to tier 0 until `me_lowlat_recover`
+ *                   consecutive frames would have made it.
+ * ======================================================================== */
+static int      g_flip_early       = 1;   /* `flip_early`      */
+static int      g_mer_early_retire = 1;   /* `me_early_retire` */
+static int      g_ll_cfg;                 /* `me_lowlat`       */
+static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
+static unsigned g_ll_margin_us = 500;     /* `me_lowlat_margin_us` */
+static int      g_ll_mode_h;     /* persistent: same-interval mode engaged */
+static int      g_ll_iter_h;     /* this loop iteration presents in its wait */
+static unsigned g_ll_streak;     /* consecutive would-hit frames (tier 0)   */
+static unsigned g_ll_blit_ema = 2000;  /* us, blit + OSD on the GE (EMA)   */
+static unsigned g_ll_hit, g_ll_miss_me, g_ll_miss_ge, g_ll_to_h, g_ll_to_b;
+static unsigned g_ll_would, g_ll_wouldnt;
+
+/* vblank clock: the last vblank start the wait loop woke on */
+static unsigned g_vb_us, g_vb_vc;
+
+/* Pipeline telemetry: every number below is "vblank count at the moment the
+ * NEXTFRAME flip latches" minus "vblank count at the input poll of the loop
+ * iteration that emulated the frame".  1 is the floor. */
+static unsigned g_lat_poll_vc;
+static unsigned g_mer_stage_pvc[2];   /* poll vcount of each stage's frame */
+static unsigned g_lat_seq;            /* loop iterations (input polls)     */
+static unsigned g_mer_stage_seq[2];   /* ...the one each stage was posted in */
+static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
+static int      g_bb_new;             /* back buffer holds an unshown frame */
+static unsigned g_lat_hist[8], g_lat_over, g_lat_early, g_lat_post, g_lat_hold;
+static unsigned g_lat_sub_vc, g_lat_check, g_lat_l1, g_lat_l0, g_lat_immed;
+static unsigned g_lat_lead_n, g_lat_lead_us, g_lat_lead_min = ~0u;
+static unsigned g_lat_hc_n, g_lat_hc_sum, g_lat_vbhc_sum, g_lat_vbhc_n;
+static unsigned g_lat_age_us, g_lat_age_n, g_lat_iter;
+/* INPUT FRESHNESS (harness only, both default 0).  PPSSPP samples the pad
+ * at vblank END (Core/HW/Display.cpp DisplayFireVblankEnd -> __CtrlVblank),
+ * so a poll made the instant the vblank wait returns reads the sample taken
+ * a whole frame earlier: `age_us` reads ~15.9 ms there.  Whether the real
+ * firmware does the same is what these exist to find out.
+ *   input_fresh = 1  if the sample predates this vblank by > 2 ms, re-peek
+ *                    in 50 us steps (<= 1.5 ms) until a newer one lands.
+ *   ctrl_cycle  = N  sceCtrlSetSamplingCycle(N) (5555..20000 us): timer
+ *                    sampling instead of vblank sampling. */
+static int      g_in_fresh, g_ctrl_cycle;
+static unsigned g_in_fresh_n, g_in_fresh_us, g_in_fresh_got;
+
+static int mer_rewind_busy(void);     /* below, beside the rewind's state */
+
+static int mer_retire_early_active(void)
+{
+   if (g_ff_mult || g_ff_uncapped)
+      return 0;
+   return g_mer_sameframe || g_mer_early_retire || g_ll_cfg;
+}
+
+static int mer_lowlat_active(void)
+{
+   return g_ll_cfg && g_me_rend && !g_ff_mult && !g_ff_uncapped &&
+          !g_ff_gate && !mer_rewind_busy();
+}
+
+/* Microseconds to the next vblank start, extrapolated from the last one the
+ * wait loop woke on (59.94 Hz = 16683.33 us).  Time only: it does not
+ * depend on which edge sceDisplayGetVcount() counts.  Huge when not
+ * anchored. */
+#define VB_PERIOD_US(n) ((n) * 16683u + (n) / 3u)
+static int us_to_vblank(unsigned now)
+{
+   unsigned el, n;
+   if (!g_vb_us)
+      return 1 << 30;
+   el = now - g_vb_us;
+   n  = el / 16683u + 1u;
+   if (VB_PERIOD_US(n - 1u) > el)      /* the /3 term near a boundary */
+      n--;
+   return (int)(VB_PERIOD_US(n) - el);
 }
 /* VISIBLE-END POST (`me_vispost`, harness only, default 1): hand the ME its
  * render at vcount 160 even when presentation stays at the loop top.
@@ -3035,8 +3301,9 @@ static void me_standby_down(void)
  *
  * While the overlay is up the machine now stays exactly as the suspend left
  * it: renderer down, partition released, g_pwr_slept still 1.  A second
- * suspend finds nothing to tear down (power_cb's renderer=off branch) and
- * its resume asks for the same single rebuild.  `Quit to game list` never
+ * suspend parks the loop (the overlay yields to it) but finds nothing to tear
+ * down (power_cb's already_down branch), and its resume asks for the same
+ * single rebuild.  `Quit to game list` never
  * rebuilds at all: the teardown it goes through shuts the engine down anyway.
  *
  * Every step is logged: if resume ever fails on a model we do not own, this
@@ -3082,6 +3349,287 @@ static void me_standby_up(void)
    /* A failed rebuild is not fatal: g_me_rend stays 0 and the loop falls back
     * to CPU rendering exactly as it does when the ME never boots.  Slow, but
     * the game keeps running and the save is intact. */
+}
+
+/* ---- THE SLEEP QUIESCE (psp/sleep_q.h) ----------------------------------
+ *
+ * A PSP-3001 (ARK-4 6.61) powered OFF when the switch was slid in game: the
+ * teardown completed, then the LED blinked, went solid and the next start was
+ * a cold boot.  From the ROM list the same console sleeps and wakes, with the
+ * ME never started (me_boot = 0) it fails identically, and Snes9xTYLme sleeps
+ * on the same console and card.
+ *
+ * Until this, the in-game sleep was entered with everything in the game
+ * still running: the teardown released the parked loop again, so the core
+ * kept emulating (and reading ROM pages) into the suspend, the audio thread
+ * kept a channel reserved and sat in sceAudioOutputBlocking with real sound,
+ * the .sav writer thread and its held-open handle were live, and so was the
+ * paged ROM's handle.  TYL (psp/psp.cpp:2545-2575, 3986-3993, 1841-1882) holds
+ * scePowerLock through play; its callback only flags the pause; the MAIN loop
+ * then stops and JOINS the sound thread (before_pause -> StopSoundThread),
+ * kills the ME, and only then calls scePowerUnlock -- so the deferred suspend
+ * runs while the main thread sleeps in sceKernelDelayThread and no other
+ * thread of the game is inside a driver.  It keeps no file open across play.
+ * The steps below reproduce that. */
+#include <streams/file_stream.h>
+extern RFILE *gamepak_file_large;                 /* gba_memory.c */
+static void net_teardown_io(void);                /* defined below */
+static sleep_q g_sq;
+/* The gameplay scePowerLock (TYL's scheme).  Taken at the
+ * top of the loop while a game is being played; dropped by whoever lets a
+ * suspend proceed: the parked loop once the callback is done, the callback
+ * itself when nothing is parked, and every exit (pwr_release_all).  Separate
+ * from g_pwr_hold's nesting count: the kernel counts locks, so the two
+ * cannot unbalance each other. */
+static volatile int g_pwr_play_lock;
+
+static void play_lock_take(void)
+{
+   /* Held over the wake overlay too: it yields to the park
+    * (wake_overlay_yield), so a second sleep slid on it waits for the
+    * park like one slid in play. */
+   if (g_pwr_play_lock || g_pwr_sleep_pending || g_pwr_park_req)
+      return;
+   {
+      int rc = scePowerLock(0);
+      if (rc >= 0)
+         g_pwr_play_lock = 1;
+      else
+      {
+         static int told;
+         if (!told)
+         {
+            told = 1;
+            standby_note("q play_lock rc=%d", rc);
+         }
+      }
+   }
+}
+
+static void play_lock_drop(const char *who)
+{
+   int rc;
+   if (!g_pwr_play_lock)
+      return;
+   g_pwr_play_lock = 0;
+   rc = scePowerUnlock(0);
+   standby_note("q play_unlock by=%s rc=%d", who, rc);
+   FE_EVT_ONLY(rc);
+   FE_EVT_ONLY(who);
+}
+
+static int sq_audio_stop(void *c)
+{
+   int rc;
+   (void)c;
+   if (audio_thid < 0)
+      return SQ_NONE;
+   if (!audio_running)
+   {
+      (void)audio_stop();       /* a worker that already died: just reap it */
+      return SQ_NONE;
+   }
+   rc = audio_stop();
+   ring_r = ring_w;             /* nothing from before the sleep is replayed */
+   return rc;
+}
+
+static int sq_audio_start(void *c)
+{
+   (void)c;
+   ring_r = ring_w;
+   audio_start();
+   if (audio_thid >= 0 && audio_running)
+      return SQ_DONE;
+   return audio_output_error < 0 ? audio_output_error : -1;
+}
+
+static int sq_writer_stop(void *c)
+{
+   int rc;
+   (void)c;
+   rc = io_thread_stop();       /* its last pass lands what it had */
+   /* The callback asked for its scan 60-80 ms before this park, and the
+    * game may have written SRAM since.  The writer gone, scan and drain once
+    * more here, so the .sav on the stick is SRAM as it stands at the
+    * suspend: also with no writer thread (sram_thread = 0: io_thread_stop
+    * syncs nothing) or one terminated before its last pass. */
+   (void)fe_host_sram_flush(0);
+   fe_host_sram_sync();
+   return rc;
+}
+
+static int sq_writer_start(void *c)
+{
+   (void)c;
+   io_thread_start();
+   return g_io_thid >= 0 ? SQ_DONE : -1;
+}
+
+/* After sq_writer_stop: the .sav and the event log are the writer's while
+ * it runs, and it is gone now. */
+static int sq_files_close(void *c, char *d, size_t n)
+{
+   int sav, rom = 0, evt, closed = 0;
+   (void)c;
+   sav = fe_host_sram_sleep_close();
+   closed += sav;
+   /* The paged ROM's handle is this thread's own (load_gamepak_page runs
+    * here), and the loader reopens it by path on the next page miss -- the
+    * PSP-1000 wake fix in gba_memory.c.  A whole-cart console never reads it
+    * again at all. */
+   if (gamepak_file_large)
+   {
+      filestream_close(gamepak_file_large);
+      gamepak_file_large = NULL;
+      rom = 1;
+      closed++;
+   }
+   evt = fe_evt_is_open();
+   if (evt)
+      fe_evt_close();
+   closed += evt;
+   snprintf(d, n, "sav=%d rom=%d evt=%d", sav, rom, evt);
+   return closed;
+}
+
+static int sq_files_reopen(void *c, char *d, size_t n)
+{
+   int evt = 1;
+   (void)c;
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   evt = fe_evt_reopen_append(LOG_PATH);
+#endif
+   snprintf(d, n, "evt=%d sav=lazy rom=lazy", evt);
+   return evt;
+}
+
+static int sq_home_stop(void *c)
+{
+   (void)c;
+   if (!home_host_loaded())
+      return SQ_NONE;
+   home_host_stop();
+   return home_host_loaded() ? -1 : SQ_DONE;
+}
+
+static int sq_home_rearm(void *c)
+{
+   (void)c;
+   /* The loop's next frame loads it again, as at a game's first frame
+    * (home_host_start under `menu_home && !home_host_tried()`). */
+   home_host_forget();
+   return SQ_DONE;
+}
+
+static int sq_net_term(void *c)
+{
+   (void)c;
+   if (!g_net_up)
+      return SQ_NONE;
+   net_teardown_io();           /* BYE, adhoc term, modules unloaded */
+   return g_net_up ? -1 : SQ_DONE;
+}
+
+static void sq_note(void *c, const char *line)
+{
+   (void)c;
+   standby_note("%s", line);
+   fe_evt("sleep %s", line);
+}
+
+static const sleep_q_ops g_sq_ops = {
+   NULL,
+   sq_audio_stop, sq_audio_start,
+   sq_writer_stop, sq_writer_start,
+   sq_files_close, sq_files_reopen,
+   sq_home_stop, sq_home_rearm,
+   sq_net_term,
+   sq_note
+};
+
+/* Emulation thread, at the park point, before it reports `parked`. */
+static void sleep_quiesce_down(void)
+{
+   unsigned t0;
+   if (g_sq.down || !g_pcfg.standby)
+      return;
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   (void)sleep_q_down(&g_sq, &g_sq_ops);
+   standby_note("q down us=%u stopped=0x%X",
+                (unsigned)sceKernelGetSystemTimeLow() - t0, g_sq.stopped);
+}
+
+/* Emulation thread, once the wake has come (RESUME_COMPLETE), or at a hold's
+ * timeout, or when the loop ends with the quiesce still in force. */
+static void sleep_quiesce_up(const char *why)
+{
+   if (!g_sq.down)
+      return;
+   standby_note("q up why=%s stopped=0x%X", why, g_sq.stopped);
+   (void)sleep_q_up(&g_sq, &g_sq_ops);
+}
+
+/* The loop's park, held the way TYL's main loop sits in
+ * sceKernelDelayThread while the console sleeps: no frame, no ROM read, no
+ * GE list, nothing of ours inside a driver.  When the callback has done its
+ * part, the gameplay power lock is dropped HERE -- the suspend then proceeds
+ * with this thread already asleep.  RESUME_COMPLETE clears park_req and ends
+ * the hold.  Bounded by a count of 5 ms naps rather than the clock: the naps
+ * stop while the CPU is suspended, so only a suspend that never came can run
+ * the count out. */
+#define SLEEP_HOLD_NAPS 1000u            /* 5 s awake without a suspend */
+#ifdef REWIND
+static void psp_rewind_pwr(void);         /* defined with the rewind */
+#endif
+static void sleep_park_hold(void)
+{
+   unsigned naps = 0;
+   /* Held until the wake, also when the callback let go before we parked
+    * (a quiesce that overran its budget): the suspend still comes, and it
+    * should find this thread asleep here, not running frames half
+    * quiesced. */
+   while ((g_pwr_park_req || g_pwr_sleep_pending || SLEEP_SIM_ASLEEP()) &&
+          g_running)
+   {
+      /* The callback is done with us: it held us (cb_done), or gave up and
+       * left the lock to us (park_req cleared). */
+      int cb_over = g_pwr_cb_done || !g_pwr_park_req;
+      /* Dropped only once a teardown has run for this sleep.  A callback
+       * that gave up tore nothing down: the lock is kept until the
+       * SUSPENDING that follows (delivered with it held) finds us parked
+       * and does, or the hold runs out and play resumes.  Dropped at once,
+       * the suspend would land with the renderer in the volatile
+       * partition. */
+      if (g_pwr_cb_done)
+      {
+         play_lock_drop("park");
+#ifdef REWIND
+         /* A rewind inside an old save holds the switch too; the teardown
+          * has suspended it, so that hold is over -- but only this thread
+          * looks (every loop), and it is here. */
+         psp_rewind_pwr();
+#endif
+      }
+      sceKernelDelayThread(5000);
+      if (cb_over && ++naps >= SLEEP_HOLD_NAPS && !SLEEP_SIM_ASLEEP())
+      {
+         /* The switch was seen and nothing followed it.  Do not hold the
+          * game forever: resume, and if the engine was torn down let the
+          * wake overlay rebuild it as after a real sleep. */
+         standby_note("q hold_timeout naps=%u slept=%d", naps, g_pwr_slept);
+         g_pwr_sleep_pending = 0;
+         g_pwr_cb_done = 0;
+         if (g_pwr_slept)
+            g_pwr_rebuild = 1;
+         g_pwr_park_req = 0;
+         break;
+      }
+   }
+   /* Left with a sleep still pending (the game is exiting): it is this
+    * thread that must now let the suspend through. */
+   if (g_pwr_sleep_pending)
+      play_lock_drop("park_exit");
 }
 
 /* Heap fallback only: give the work area back to malloc.  0 = freed (or there
@@ -3457,7 +4005,13 @@ static void me_rend_present(void)
    if (g_ff_gate && g_mer_ready == g_mer_last_presented)
       return; /* No new render: keep the LCD frame and let emulation run. */
    if (g_mer_ready != g_mer_last_presented)
+   {
       FFW_DRAWN();
+      if (g_bb_new)
+         g_lat_over++;          /* an unshown frame overwritten (dropped) */
+      g_bb_new = 1;
+      g_bb_pvc = g_mer_stage_pvc[g_mer_ready];
+   }
    vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
    g_mer_last_presented = g_mer_ready;
    g_drew = 1;
@@ -3478,8 +4032,14 @@ static void me_rend_present(void)
  * visible-end hook would corrupt stage/capture ownership. */
 static void me_rend_retire_if_idle(void)
 {
-   if (!mer_sameframe_active() || !g_me_rend || g_mer_pending < 0
-       || !me_host_idle())
+   if (!g_me_rend || g_mer_pending < 0)
+      return;
+   /* me_sameframe keeps exactly its old reach; the low-latency retire
+    * stays out of a rewind (which repoints the stages itself). */
+   if (!mer_sameframe_active() &&
+       (!mer_retire_early_active() || mer_rewind_busy()))
+      return;
+   if (!me_host_idle())
       return;
    if (me_host_render_refused())
    {
@@ -3498,7 +4058,8 @@ static void me_rend_retire_if_idle(void)
    g_mer_pending = -1;
    g_mer_miss    = 0;
    g_fps_drawn++;
-   g_mer_sf_hit++;
+   if (mer_sameframe_active())
+      g_mer_sf_hit++;
 }
 
 /* Called from plat_video_frame at the end of every emulated frame.
@@ -3645,6 +4206,8 @@ static void me_rend_frame(int emulated)
                g_mer_full_copy = 0;   /* mirror is now valid to patch */
          }
          g_mer_pending = out;
+         g_mer_stage_pvc[out] = g_lat_poll_vc;
+         g_mer_stage_seq[out] = g_lat_seq;
 #ifdef REWIND
          if (g_rw_slot)
             g_rw_slot_posted = 1;
@@ -3836,6 +4399,10 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
       {
          g_fps_drawn++;      /* a new image, not a re-present of the old one */
          FFW_DRAWN();
+         if (g_bb_new)
+            g_lat_over++;
+         g_bb_new = 1;
+         g_bb_pvc = g_lat_poll_vc;
       }
    }
 }
@@ -3939,6 +4506,152 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
       *sh = FE_GBA_HEIGHT;
    }
    return (!*pix || !*sw || !*sh || *pitch < *sw * sizeof(uint16_t)) ? -1 : 0;
+}
+
+/* ---- THE PLAYER'S SCREENSHOT (GitHub issue #13) ---------------------------
+ *
+ * The Screenshot shortcut (L+R+SELECT unless remapped).  The harness dumps
+ * (dump_at, dump_every, the autopilot's, the marker) keep dump_frame_bmp and
+ * log/frame_<n>.bmp: rigs compare those by name.
+ *
+ *   name    <game>_<YYYY-MM-DD>_<HH-MM-SS>.png  (shot_name.h), from the ROM's
+ *           file name and the console's own clock -- sceRtc local time, never
+ *           time() (uptime on real firmware, memory rtc-wallclock-psp); a
+ *           second shot in the same second gets _2, _3, ...
+ *   where   Settings > Screenshot folder: <dev>:/PICTURE/GBAdhoc/ (default),
+ *           the XMB Photo column's own folder -- on the device the EBOOT runs
+ *           from, so a PSP Go running from internal storage writes ef0: -- or
+ *           log/ beside the EBOOT, where 4.x put them.
+ *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
+ *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
+ *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
+ *           ROM is in (memory heap-exhausted-by-design), so it is carved at
+ *           boot from the netdrv arena's tail, after the wake frame and the
+ *           state thumbnails -- the same free real estate, no heap cost.  No
+ *           room there (the arena reservation failed): the shot is a BMP.
+ *   cost    one-off, on the emulation thread, with the power switch held
+ *           off for the write (EVT screenshot ... us=). */
+static uint8_t *g_shot_work;
+static size_t   g_shot_work_bytes;
+static char     g_shot_rom[PSP_FILE_PATH_CAP];   /* the running game's path */
+
+static int shot_fd_write(void *ctx, const void *d, size_t n)
+{
+   return sceIoWrite(*(SceUID *)ctx, d, (SceSize)n) == (int)n ? 0 : -1;
+}
+
+/* The folder for the setting, created as needed.  0 = it exists. */
+static int shot_folder(char *dir, size_t cap)
+{
+   SceIoStat st;
+   if (g_pcfg.shot_folder == PCFG_SHOT_APP)
+      snprintf(dir, cap, "%s", LOG_DIR);
+   else
+   {
+      /* "ms0:/PSP/GAME/X" -> "ms0:"; no device prefix -> ms0: */
+      const char *colon = strchr(g_dir_base, ':');
+      int dev = colon && colon - g_dir_base < 8 ? (int)(colon - g_dir_base) + 1
+                                                : 0;
+      snprintf(dir, cap, "%.*s/PICTURE", dev ? dev : 4,
+               dev ? g_dir_base : "ms0:");
+      sceIoMkdir(dir, 0777);
+      snprintf(dir + strlen(dir), cap - strlen(dir), "/GBAdhoc");
+   }
+   sceIoMkdir(dir, 0777);
+   return sceIoGetstat(dir, &st) >= 0 ? 0 : -1;
+}
+
+static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
+                          unsigned h, size_t pitch, fe_png_info *info)
+{
+   SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   int rc, crc;
+   if (fd < 0)
+      return -1;
+   rc = fe_png_encode(pix, w, h, pitch,
+#ifdef USE_PSP_RGB565_FORMAT
+                      FE_PNG_PSP5650,
+#else
+                      FE_PNG_RGB565,
+#endif
+                      g_shot_work, g_shot_work_bytes, shot_fd_write, &fd,
+                      info);
+   crc = sceIoClose(fd);
+   if (rc != 0 || crc < 0)
+   {
+      sceIoRemove(path);        /* never leave half a picture behind */
+      return -1;
+   }
+   return 0;
+}
+
+static void player_screenshot(void)
+{
+   const uint16_t *pix;
+   size_t pitch;
+   unsigned w, h, seq, t0, us;
+   char dir[sizeof(p_log_dir) + 16], title[SHOT_TITLE_MAX + 1];
+   char name[SHOT_TITLE_MAX + 48];
+   char path[PSP_FILE_PATH_CAP];
+   fe_png_info info;
+   time_t now;
+   struct tm tmv;
+   int png, rc = -1;
+   SceIoStat st;
+
+   memset(&info, 0, sizeof(info));
+   if (state_preview_src(&pix, &pitch, &w, &h) != 0)
+   {
+      osd_toast("Screenshot failed: no picture yet");
+      return;
+   }
+   pwr_hold("screenshot");
+   t0 = sceKernelGetSystemTimeLow();
+   png = g_pcfg.shot_format == PCFG_SHOT_PNG && g_shot_work &&
+         g_shot_work_bytes >= fe_png_work_bytes(w, h);
+   now = psp_local_wallclock();     /* local time, held as if UTC */
+   memset(&tmv, 0, sizeof(tmv));
+   gmtime_r(&now, &tmv);
+   shot_title_from_rom(g_shot_rom, title, sizeof(title));
+   path[0] = '\0';
+   if (shot_folder(dir, sizeof(dir)) == 0)
+      for (seq = 1; seq < 100; seq++)
+      {
+         if (shot_file_name(name, sizeof(name), title, tmv.tm_year + 1900,
+                            tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour,
+                            tmv.tm_min, tmv.tm_sec, seq,
+                            png ? "png" : "bmp") != 0 ||
+             psp_rom_path_join(path, sizeof(path), dir, name) != 0)
+         {
+            path[0] = '\0';
+            break;
+         }
+         if (sceIoGetstat(path, &st) < 0)
+            break;                  /* a free name */
+         path[0] = '\0';
+      }
+   if (path[0])
+   {
+      if (png)
+         rc = shot_write_png(path, pix, w, h, pitch, &info);
+      else
+#ifdef USE_PSP_RGB565_FORMAT
+         rc = fe_bmp_write_psp565(path, pix, w, h, pitch);
+#else
+         rc = fe_bmp_write_rgb565(path, pix, w, h, pitch);
+#endif
+   }
+   us = sceKernelGetSystemTimeLow() - t0;
+   pwr_release();
+   FE_EVT_ONLY(us);
+   fe_evt("screenshot file=%s fmt=%s rc=%d %ux%u colors=%u depth=%u "
+          "bytes=%u us=%u", path[0] ? path : "(none)", png ? "png" : "bmp",
+          rc, w, h, info.colors, info.bit_depth, (unsigned)info.bytes, us);
+   if (rc == 0)
+      osd_toast(png || g_pcfg.shot_format == PCFG_SHOT_BMP
+                   ? "Screenshot saved" : "Screenshot saved (as BMP)");
+   else
+      osd_toast("Screenshot FAILED (is the Memory Stick full?)");
 }
 
 /* Save a compact companion image for the browser's per-slot state shelf.
@@ -9233,6 +9946,30 @@ static int psp_state_load_io(const char *path, const char *why)
    return rc;
 }
 
+/* SOFT RESET ("Reset game", the in-game menu).  Everything a state load
+ * does around the core -- land a rewind, quiesce the Media Engine renderer,
+ * stop the turbo trains, hold the power switch -- then fe_host_reset (the
+ * battery to the stick, then the fresh-boot reset; fe_host.h).  Refused in
+ * any link or wireless session.  Same rc as fe_host_reset. */
+static int psp_game_reset(void)
+{
+   int rc;
+   if (link_session_any())
+      return -2;
+   pwr_hold("reset");
+#ifdef REWIND
+   (void)psp_rewind_land("reset", 0);
+#endif
+   me_rend_quiesce("reset");
+   ctl_turbo_stop(&g_turbo);
+   rc = fe_host_reset();
+   if (rc == 0 && g_pcfg.console != FE_CONSOLE_GBA)
+      g_last_pix = NULL;    /* the GB machine (and its frame buffer) is new */
+   core_health_evt("reset");
+   pwr_release();
+   return rc;
+}
+
 /* pwr_hold: see power_cb -- this runs outside the loop's park point. */
 static int psp_state_load(const char *path, const char *why)
 {
@@ -10134,10 +10871,17 @@ static void *psp_rewind_pool_offer(size_t *bytes)
 }
 
 /* The pool is about to go back to the OS (a sleep).  The main loop is
- * parked between frames, or is not emulating at all. */
+ * parked between frames, or is not emulating at all.
+ *
+ * A heap-backed rewind keeps its history across the sleep -- unless the
+ * machine stands inside an old save: its hold (psp_rewind_pwr) would then
+ * keep the suspend off until the park's hold gave up, and the slide would
+ * be lost.  With the loop parked it is ended here as the pool's is, and
+ * fe_host_rewind_suspend decides it (vetted frame, or the game is reset). */
 static void psp_rewind_pool_lost(void)
 {
-   if (!g_rw_pool)
+   if (!g_rw_pool &&
+       !(g_pwr_parked && g_rw_on && fe_host_rewind_unvetted()))
       return;
    if (g_rw_on)
    {
@@ -10915,6 +11659,447 @@ static int psp_rewind_tick(int ff)
 }
 #endif /* REWIND */
 
+/* ---- LOW LATENCY: the main loop's half (switches and rationale at
+ * g_flip_early; docs/LOW-LATENCY.md) ------------------------------------ */
+static int mer_rewind_busy(void)
+{
+#ifdef REWIND
+   return g_rw_showing || (g_rw_on && fe_host_rewind_busy()) ||
+          fe_host_rewind_replaying();
+#else
+   return 0;
+#endif
+}
+
+/* THE swap of a loop iteration, with its bookkeeping.  `early` = submitted
+ * before the vblank the loop is waiting for. */
+static int lat_swap(int early)
+{
+   unsigned vc, now;
+   int r;
+
+   UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
+   if (g_wake_hold)
+      return 0;
+   vc  = sceDisplayGetVcount();
+   now = (unsigned)sceKernelGetSystemTimeLow();
+   if (g_lat_check && (int)(vc - g_lat_sub_vc) >= 1)
+   {
+      /* (the loop-top check never sees a post-vblank swap's latch) */
+      if (vid_flip_latched())
+         g_lat_l1++;
+      else
+         g_lat_l0++;
+      g_lat_check = 0;
+   }
+   r   = vid_swap();
+   if (!r)
+   {
+      g_lat_hold++;            /* nothing drawn: the screen holds */
+      return 0;
+   }
+   g_lat_sub_vc = vc;
+   g_lat_check  = 1;
+   if (vid_flip_latched())
+      g_lat_immed++;           /* nonzero would mean NEXTFRAME is not deferred */
+   if (early)
+   {
+      int lead = us_to_vblank(now);
+      g_lat_early++;
+      if (lead >= 0 && lead < (1 << 20))
+      {
+         g_lat_lead_n++;
+         g_lat_lead_us += (unsigned)lead;
+         if ((unsigned)lead < g_lat_lead_min)
+            g_lat_lead_min = (unsigned)lead;
+      }
+      g_lat_hc_n++;
+      g_lat_hc_sum += (unsigned)sceDisplayGetCurrentHcount();
+   }
+   else
+      g_lat_post++;
+   if (g_bb_new)
+   {
+      unsigned d = vc + 1u - g_bb_pvc;   /* latch vblank - poll vblank */
+      g_lat_hist[d < 7u ? d : 7u]++;
+      g_bb_new = 0;
+   }
+   return r;
+}
+
+/* The paced branch's vblank wait, in three calls: begin, one step per pass
+ * of the wait loop (1 = poll again shortly instead of blocking on the
+ * vblank), end.  Single thread, single owner: the main loop. */
+enum { LL_OFF, LL_WAIT_ME, LL_WAIT_GE, LL_DONE };
+#define LAT_POLL_US 150u
+static int      g_lw_swapped, g_lw_ll, g_lw_measure;
+static unsigned g_lw_t;
+
+static void ll_to_b(void)
+{
+   if (g_ll_mode_h)
+   {
+      g_ll_mode_h = 0;
+      g_ll_to_b++;
+   }
+   g_ll_streak = 0;
+}
+
+static void lat_wait_begin(void)
+{
+   g_lw_swapped = 0;
+   g_lw_ll      = g_ll_iter_h ? LL_WAIT_ME : LL_OFF;
+   /* Tier 0 with me_lowlat on: time this frame's render against the vblank
+    * to decide whether same-interval presentation would have made it. */
+   g_lw_measure = !g_ll_iter_h && mer_lowlat_active() &&
+                  (g_mer_pending >= 0 ||
+                   (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented));
+}
+
+static int lat_wait_step(void)
+{
+   unsigned now = (unsigned)sceKernelGetSystemTimeLow();
+   int need = (int)(g_ll_blit_ema + g_ll_margin_us);
+   int poll = 0;
+
+   if (g_lw_ll == LL_WAIT_ME)
+   {
+      if (!mer_lowlat_active())
+      {
+         g_lw_ll = LL_DONE;       /* the ME went away / FF / rewind */
+         ll_to_b();
+      }
+      else if (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented &&
+               g_mer_stage_seq[g_mer_ready] == g_lat_seq)
+      {
+         /* (only THIS iteration's render: the one the loop top retired is
+          * superseded -- presenting it here would keep the mode one frame
+          * behind for good, which is exactly what hardware showed) */
+         if (us_to_vblank(now) >= need)
+         {
+            me_rend_present();
+#ifdef REWIND
+            if (g_drew && (g_rw_on || g_rwh.denied))
+               psp_rewind_hud();
+#endif
+            if (g_drew)
+               osd_draw();
+            g_lw_t  = now;
+            g_lw_ll = LL_WAIT_GE;
+         }
+         else
+         {
+            g_ll_miss_me++;       /* rendered, but too late to blit */
+            g_lw_ll = LL_DONE;
+            ll_to_b();
+         }
+      }
+      else if (us_to_vblank(now) < need)
+      {
+         g_ll_miss_me++;          /* the render will not make it */
+         g_lw_ll = LL_DONE;
+         ll_to_b();
+      }
+      else
+         poll = 1;
+   }
+   if (g_lw_ll == LL_WAIT_GE)
+   {
+      if (vid_gu_busy())
+         poll = 1;
+      else
+      {
+         unsigned d = (unsigned)sceKernelGetSystemTimeLow() - g_lw_t;
+         g_ll_blit_ema = (g_ll_blit_ema * 7u + d) / 8u;
+         lat_swap(1);
+         g_lw_swapped = 1;
+         g_lw_ll      = LL_DONE;
+         g_ll_hit++;
+      }
+   }
+   if (g_lw_measure)
+   {
+      if (g_mer_pending < 0 && g_mer_ready >= 0 &&
+          g_mer_ready != g_mer_last_presented &&
+          g_mer_stage_seq[g_mer_ready] == g_lat_seq)
+      {
+         if (us_to_vblank(now) >= need)
+         {
+            g_ll_would++;
+            if (++g_ll_streak >= g_ll_recover)
+            {
+               g_ll_mode_h = 1;   /* from the next loop top: one frame drops */
+               g_ll_to_h++;
+               g_ll_streak = 0;
+            }
+         }
+         else
+         {
+            g_ll_wouldnt++;
+            g_ll_streak = 0;
+         }
+         g_lw_measure = 0;
+      }
+      else
+         poll = 1;
+   }
+   /* Tier 0a: the frame is complete once the GE is idle; flip it now and
+    * it latches on the vblank this loop is waiting for. */
+   if (!g_lw_swapped && g_lw_ll == LL_OFF && g_flip_early &&
+       !mer_sameframe_active())
+   {
+      if (vid_gu_busy())
+         poll = 1;
+      else
+      {
+         lat_swap(1);
+         g_lw_swapped = 1;
+      }
+   }
+   return poll;
+}
+
+static void lat_wait_end(void)
+{
+   if (g_lw_ll == LL_WAIT_ME)
+   {
+      g_ll_miss_me++;             /* the vblank came first */
+      ll_to_b();
+   }
+   else if (g_lw_ll == LL_WAIT_GE)
+   {
+      g_ll_miss_ge++;             /* the swap below flushes, lands next vblank */
+      ll_to_b();
+   }
+   if (g_lw_measure)
+   {
+      g_ll_wouldnt++;
+      g_ll_streak = 0;
+   }
+   g_lw_ll = LL_OFF;
+   g_lw_measure = 0;
+}
+
+static void lat_census(void)
+{
+   unsigned i;
+   if (++g_lat_iter < 600)
+      return;
+   fe_evt("lat iters=%u early=%u post=%u hold=%u over=%u "
+          "hist=%u,%u,%u,%u,%u,%u,%u,%u latched_next=%u not=%u immed=%u "
+          "lead_mean_us=%u lead_min_us=%u sub_hc=%u vb_hc=%u age_us=%u "
+          "ll=%d h=%d hit=%u miss_me=%u miss_ge=%u would=%u wouldnt=%u "
+          "to_h=%u to_b=%u blit_ema_us=%u age_n=%u fresh_n=%u fresh_got=%u "
+          "fresh_us=%u",
+          g_lat_iter, g_lat_early, g_lat_post, g_lat_hold, g_lat_over,
+          g_lat_hist[0], g_lat_hist[1], g_lat_hist[2], g_lat_hist[3],
+          g_lat_hist[4], g_lat_hist[5], g_lat_hist[6], g_lat_hist[7],
+          g_lat_l1, g_lat_l0, g_lat_immed,
+          g_lat_lead_n ? g_lat_lead_us / g_lat_lead_n : 0u,
+          g_lat_lead_n ? g_lat_lead_min : 0u,
+          g_lat_hc_n ? g_lat_hc_sum / g_lat_hc_n : 0u,
+          g_lat_vbhc_n ? g_lat_vbhc_sum / g_lat_vbhc_n : 0u,
+          g_lat_age_n ? g_lat_age_us / g_lat_age_n : 0u,
+          g_ll_cfg, g_ll_mode_h, g_ll_hit, g_ll_miss_me, g_ll_miss_ge,
+          g_ll_would, g_ll_wouldnt, g_ll_to_h, g_ll_to_b, g_ll_blit_ema,
+          g_lat_age_n, g_in_fresh_n, g_in_fresh_got,
+          g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u);
+   for (i = 0; i < 8; i++)
+      g_lat_hist[i] = 0;
+   g_lat_iter = g_lat_early = g_lat_post = g_lat_hold = g_lat_over = 0;
+   g_lat_l1 = g_lat_l0 = g_lat_immed = 0;
+   g_lat_lead_n = g_lat_lead_us = 0;
+   g_lat_lead_min = ~0u;
+   g_lat_hc_n = g_lat_hc_sum = g_lat_vbhc_n = g_lat_vbhc_sum = 0;
+   g_lat_age_n = g_lat_age_us = 0;
+   g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_would = g_ll_wouldnt = 0;
+   g_ll_to_h = g_ll_to_b = 0;
+   g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
+}
+
+/* THE PARK POINT (the suspend handshake's main-thread half), between two
+ * frames: nothing is being emulated, captured or posted, so this is where
+ * the power callback may take the renderer's memory.  Quiesce, report
+ * `parked`, stay held until the wake (loop_unpark undoes the quiesce).
+ *
+ * Called at the top of the game loop and nowhere else.  That covers the
+ * in-game menu (its pages are drawn by the loop) and, since the wake
+ * overlay yields to it (wake_overlay_yield), the SELECT+TRIANGLE pause
+ * screen too: every in-game sleep is entered from this one place, in the
+ * same state. */
+static int loop_park(void)
+{
+   if (!g_pwr_park_req)
+      return 0;
+   {
+#ifdef REWIND
+      /* A rewind in progress LANDS before the history is taken away (the
+       * callback suspends the rewind once this loop is parked, and play
+       * would go on from wherever the machine stood: possibly the middle
+       * of an old save sequence, replayed over a newer save).  It gets
+       * what is left of the callback's wait, less a margin for the
+       * engine to go idle; what cannot land in that is decided by
+       * fe_host_rewind_suspend (vetted frame, or the game is reset). */
+      if (g_rw_on && fe_host_rewind_busy())
+      {
+         unsigned used = (unsigned)sceKernelGetSystemTimeLow() - g_pwr_park_t0;
+         unsigned room = used + 60000u < PWR_PARK_WAIT_US
+                       ? PWR_PARK_WAIT_US - 60000u - used : 0u;
+#ifdef GPSP_PERF_RIG
+         if (g_ss_no_land)
+            room = 0;
+#endif
+         if (room >= 10000u)
+            (void)psp_rewind_land("sleep", room);
+         else
+            fe_evt("rewind_land_psp why=sleep ok=0 budget_us=0 (no room)");
+      }
+#endif
+      /* Seen: the callback now waits for the quiesce, not the 250 ms. */
+      g_pwr_park_ack = 1;
+      sleep_quiesce_down();
+      g_pwr_parked = 1;
+      sleep_park_hold();
+      g_pwr_parked = 0;
+      g_pwr_park_ack = 0;
+   }
+   return 1;
+}
+
+/* The wake has come (or a hold ran out): undo the quiesce -- reopen what
+ * reopens, restart the writer, then sound -- before anything else, the wake
+ * overlay included.  A loop the callback let go before the wake runs on
+ * without its sound until then, as TYL's does. */
+static void loop_unpark(const char *why)
+{
+   if (g_sq.down && !g_pwr_sleep_pending)
+      sleep_quiesce_up(why);
+}
+
+/* The wake overlay's yield hook (ui_set_wake_yield), once a frame: the
+ * power callback wants the loop parked, so the overlay leaves and the loop
+ * goes round to its top to park there (wake_service: WAKE_YIELD).
+ *
+ * The overlay does not park itself.  From in there the loop would sleep
+ * nested in wake_service at the in-game present -- mid-iteration, after the
+ * pad read and before the ME's staged frame is presented, and without the
+ * loop top's own work (the GB cart-RAM flush the callback asks for, the
+ * rewind's power hold).  With one park point there is nothing to differ. */
+static int wake_overlay_yield(void)
+{
+   return g_pwr_park_req;
+}
+
+/* THE WAKE: one rebuild, after the overlay's answer, on this thread.
+ * Returns WAKE_QUIT when the player chose `Quit to game list` (g_running is
+ * 0 and the caller must `continue` to the loop's end), WAKE_YIELD when the
+ * overlay left for a park (the caller `continue`s; the loop's top parks and
+ * the overlay opens again after), else 0.
+ *
+ * Called where the game loop presents, and FIRST THING in the in-game
+ * menu's branch.  That branch ends its iteration with `continue`, so it
+ * never reached the call below it: a sleep taken with the menu open (it
+ * parks, at the loop's top, like play) came back with g_pwr_rebuild set
+ * forever -- g_wake_hold up, so the menu drew every frame and never swapped
+ * onto the screen me_standby_down had blanked, and the renderer and the
+ * volatile partition stayed down: a black screen with the menu live
+ * underneath.  Now the overlay comes up over the menu, and Continue
+ * rebuilds and returns to the menu where it was. */
+#define WAKE_QUIT  1
+#define WAKE_YIELD 2
+static int g_wake_answered;   /* Continue taken: the pad is the answer's */
+static int wake_service(void)
+{
+   g_wake_answered = 0;   /* (also drops one the menu branch left) */
+   if (g_pwr_rebuild)
+   {
+      /* The rebuild itself waits for the overlay's answer (me_standby_up):
+       * g_pwr_slept stays 1 until then, which is also what keeps
+       * g_wake_hold up and makes a second resume ask again. */
+      g_pwr_rebuild = 0;
+      ring_r = ring_w;              /* sound from before the sleep */
+      g_wake_menu = 1;
+      fe_evt("standby wake overlay_first slept=%d rend=%d vmem=%d",
+             g_pwr_slept, me_rend_active(), me_rend_vmem_held());
+   }
+   /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
+    * emulated while it is up (the frame is a still and any link is long
+    * gone), so it owns the pad and the swap chain until the player picks.
+    * `Quit to game list` relaunches the EBOOT, which is how this build
+    * returns to the browser everywhere else -- the core cannot unload a
+    * ROM cleanly, and a relaunch flushes SRAM on the way out. */
+   if (g_wake_menu)
+   {
+      g_wake_menu = 0;
+      home_host_disarm();   /* the overlay is not the game: HOME is the system's */
+      ctl_turbo_stop(&g_turbo);   /* the console slept: auto-fire is over */
+      int answer = ui_wake_menu(g_wake_have ? g_wake_frame : NULL,
+                                (int)g_wake_w, (int)g_wake_h,
+                                g_pcfg.last_rom);
+      if (answer == UI_WAKE_YIELD)
+      {
+         /* The switch: the loop parks at its top, and the overlay (the same
+          * snapshot) is back after -- as the wake overlay if a sleep came. */
+         g_wake_menu = 1;
+         fe_evt("wake_menu yield park_req=%d", g_pwr_park_req);
+         return WAKE_YIELD;
+      }
+      if (answer)
+      {
+         /* The same quit the menu's "Quit to game list" makes: through
+          * the teardown (SRAM flushed) to the browser.  It used to
+          * relaunch from here directly, skipping both. */
+         fe_evt("wake_menu choice=game_list slept=%d", g_pwr_slept);
+         /* Nothing is rebuilt for a game that is being left: the
+          * teardown below stops the engine and the next game starts it
+          * as a boot does.  Only the flags must not outlive the game
+          * (g_wake_hold would keep its swaps suppressed). */
+         g_pwr_slept = 0;
+         g_pwr_rebuild = 0;
+         g_relaunch = RELAUNCH_GAMELIST;
+         g_running = 0;
+         return WAKE_QUIT;
+      }
+      fe_evt("wake_menu choice=continue frame=%d slept=%d running=%d",
+             g_wake_have, g_pwr_slept, g_running);
+      g_wake_have = 0;
+      {
+         /* PR #16 (pad_swallow), here since #15 moved the overlay's answer
+          * into wake_service.  The answer's X or O is still down: not the
+          * game's.  Read now, as it answered: the rebuild below takes a
+          * while.  Nor the pad this iteration read before the overlay
+          * (g_pad, which the core and the menu read), nor its edges and
+          * shortcuts (the caller's pad_new / ctl_fired: turbo_frame reads
+          * pad_new after the present). */
+         SceCtrlData pd;
+         sceCtrlPeekBufferPositive(&pd, 1);
+         pad_swallow_arm(pd.Buttons);
+         g_pad = 0;
+         g_wake_answered = 1;  /* the caller drops its pad_new and ctl_fired */
+#ifdef REWIND
+         g_rw_held = 0;
+#endif
+      }
+      if (!g_running)
+      {
+         /* HOME / exit while the overlay was up: leaving, as above. */
+         g_pwr_slept = 0;
+         g_pwr_rebuild = 0;
+      }
+      else if (g_pwr_slept || g_pwr_rebuild)
+      {
+         unsigned up_t0 = (unsigned)sceKernelGetSystemTimeLow();
+         pwr_hold("wake");          /* renderer rebuild: me_rend_init */
+         me_standby_up();
+         pwr_release();
+         fe_evt("standby up_us=%u",
+                (unsigned)sceKernelGetSystemTimeLow() - up_t0);
+         FE_EVT_ONLY(up_t0);
+      }
+   }
+   return 0;
+}
+
 int main(int argc, char *argv[])
 {
    char rom_path[PSP_FILE_PATH_CAP];
@@ -10924,6 +12109,10 @@ int main(int argc, char *argv[])
    long autoexit, dump_at, dump_every, gedump_at, gedump_every, ff_ini, ui_demo, simff;
    long ui_ctl_demo = 0;        /* harness: Settings > Controls self-drive */
    long wake_shot = 0;          /* harness: open the wake overlay at frame N */
+   /* harness `player_shot_at = N` (`player_shot_n = K`, default 1): take K
+    * player screenshots, one a frame, from frame N -- the Screenshot
+    * shortcut's own path, which a script cannot press (issue #13). */
+   long player_shot_at = 0, player_shot_n = 1;
    long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
    long vid_prof_win;           /* ADR-0034(coreopt) renderer path profile */
    int have_script = 0, have_harness, have_variant;
@@ -11086,6 +12275,23 @@ int main(int argc, char *argv[])
             g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
                                         WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
+         /* ...and after those the screenshot encoder's work memory (issue
+          * #13), if what is left of the megabyte holds it. */
+         if (g_ui_thumbs)
+         {
+            uint8_t *lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES +
+                                       63u) & ~63u);
+            uint8_t *hi = (uint8_t *)blk + (take > need ? take : need);
+            size_t want = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
+            if (hi > lo && (size_t)(hi - lo) >= want)
+            {
+               g_shot_work = lo;
+               g_shot_work_bytes = (size_t)(hi - lo);
+            }
+            fe_evt("shot_work bytes=%u want=%u %s",
+                   (unsigned)(hi > lo ? hi - lo : 0), (unsigned)want,
+                   g_shot_work ? "ok" : "NO_ROOM(bmp)");
+         }
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
              (unsigned)need, (unsigned)(take > need ? take : need),
@@ -11364,6 +12570,8 @@ int main(int argc, char *argv[])
    /* docs/UI-OVERLAY.md: the wake overlay, opened as SELECT+TRIANGLE opens
     * it, photographed and dismissed -- a script cannot press the chord. */
    wake_shot = fe_ini_get_int(HARNESS_INI, "wake_shot", 0);
+   player_shot_at = fe_ini_get_int(HARNESS_INI, "player_shot_at", 0);
+   player_shot_n = fe_ini_get_int(HARNESS_INI, "player_shot_n", 1);
    if (ui_ctl_demo == 2)
    {
       ui_controls_browser_demo();   /* from the browser instead */
@@ -11839,6 +13047,32 @@ int main(int argc, char *argv[])
        * 1.5 ms per frame.  The loop-top pipeline overlaps that work with the
        * CPU, keeps exact output, and also holds full speed in light games. */
       g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe", 0);
+      /* LOW LATENCY (docs/LOW-LATENCY.md): one switch per mechanism. */
+      g_flip_early = (int)fe_ini_get_int(HARNESS_INI, "flip_early",
+                                         g_flip_early) != 0;
+      g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
+                                               g_mer_early_retire) != 0;
+      g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", g_ll_cfg) != 0;
+      g_ll_recover = (unsigned)fe_ini_get_int(HARNESS_INI, "me_lowlat_recover",
+                                              (int)g_ll_recover);
+      g_ll_margin_us = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                "me_lowlat_margin_us",
+                                                (int)g_ll_margin_us);
+      if (g_ll_cfg)
+         g_mer_sameframe = 0;      /* two retire/present owners: never both */
+      g_in_fresh = (int)fe_ini_get_int(HARNESS_INI, "input_fresh",
+                                       PLAY_INPUT_FRESH) != 0;
+      g_ctrl_cycle = (int)fe_ini_get_int(HARNESS_INI, "ctrl_cycle", 0);
+      if (g_ctrl_cycle >= 5555 && g_ctrl_cycle <= 20000)
+         fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle,
+                sceCtrlSetSamplingCycle(g_ctrl_cycle));
+      else
+         g_ctrl_cycle = 0;
+      fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
+      fe_evt("latency flip_early=%d me_early_retire=%d me_lowlat=%d "
+             "recover=%u margin_us=%u me_sameframe=%d",
+             g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
+             g_ll_margin_us, g_mer_sameframe);
       /* 0 restores the end-of-retro_run post for a one-binary A/B. */
       g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
       if (!g_mer_vispost)
@@ -12969,6 +14203,7 @@ session_top:
    ui_set_game(g_pcfg.console == FE_CONSOLE_GBA ? g_game_code : NULL,
                g_pcfg.console == FE_CONSOLE_GBA ? NULL : g_gb_title,
                g_game_key, fe_host_gba_cable_ready());
+   snprintf(g_shot_rom, sizeof(g_shot_rom), "%s", rom_path);   /* shot names */
 #ifdef GPSP_CHEATS
    /* This game's cheat list and the player's choices (docs/CHEATS.md).  After
     * the boot: the list is static, the file is read with sceIo, so the core's
@@ -13243,6 +14478,7 @@ session_top:
    rig_cfg_audit_report();   /* every harness key has been read by now */
 
    pwr_release();            /* the boot's hold: the loop can park from here */
+   ui_set_wake_yield(wake_overlay_yield);   /* the pause screen parks too */
    while (g_running)
    {
       unsigned frames;
@@ -13279,41 +14515,15 @@ session_top:
       }
       if (SLEEP_SIM_NOPARK() && (g_pwr_park_req || SLEEP_SIM_ASLEEP()))
       {
-         /* harness: a blocking loop with no park point (the pause overlay) */
+         /* harness: a blocking loop with no park point */
          while ((g_pwr_park_req || SLEEP_SIM_ASLEEP()) && g_running)
             sceKernelDelayThread(5000);
       }
       else
-      if (g_pwr_park_req)
-      {
-#ifdef REWIND
-         /* A rewind in progress LANDS before the history is taken away (the
-          * callback suspends the rewind once this loop is parked, and play
-          * would go on from wherever the machine stood: possibly the middle
-          * of an old save sequence, replayed over a newer save).  It gets
-          * what is left of the callback's wait, less a margin for the
-          * engine to go idle; what cannot land in that is decided by
-          * fe_host_rewind_suspend (vetted frame, or the game is reset). */
-         if (g_rw_on && fe_host_rewind_busy())
-         {
-            unsigned used = (unsigned)sceKernelGetSystemTimeLow() - g_pwr_park_t0;
-            unsigned room = used + 60000u < PWR_PARK_WAIT_US
-                          ? PWR_PARK_WAIT_US - 60000u - used : 0u;
-#ifdef GPSP_PERF_RIG
-            if (g_ss_no_land)
-               room = 0;
-#endif
-            if (room >= 10000u)
-               (void)psp_rewind_land("sleep", room);
-            else
-               fe_evt("rewind_land_psp why=sleep ok=0 budget_us=0 (no room)");
-         }
-#endif
-         g_pwr_parked = 1;
-         while ((g_pwr_park_req || SLEEP_SIM_ASLEEP()) && g_running)
-            sceKernelDelayThread(5000);
-         g_pwr_parked = 0;
-      }
+         (void)loop_park();
+      loop_unpark("resume");
+      /* TYL holds scePowerLock through play. */
+      play_lock_take();
 #ifdef REWIND
       if (g_rw_pool_suspect)
       {
@@ -13345,15 +14555,49 @@ session_top:
       emu_boost_open();
 
       rtc_wall_publish(0);
+      /* LOW LATENCY: did the previous iteration's flip latch on the vblank
+       * after its submit?  (Checked before anything can submit again.) */
+      if (g_lat_check &&
+          (int)(sceDisplayGetVcount() - g_lat_sub_vc) >= 1)
+      {
+         if (vid_flip_latched())
+            g_lat_l1++;
+         else
+            g_lat_l0++;
+         g_lat_check = 0;
+      }
       sceCtrlPeekBufferPositive(&pd, 1);
+      if (g_in_fresh && g_vb_us &&
+          (int)(g_vb_us - pd.TimeStamp) > 2000)
+      {
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow(), tn = t0;
+         g_in_fresh_n++;
+         while ((int)(g_vb_us - pd.TimeStamp) > 2000 && tn - t0 < 1500u)
+         {
+            sceKernelDelayThread(50);
+            sceCtrlPeekBufferPositive(&pd, 1);
+            tn = (unsigned)sceKernelGetSystemTimeLow();
+         }
+         g_in_fresh_us += tn - t0;
+         if ((int)(g_vb_us - pd.TimeStamp) <= 2000)
+            g_in_fresh_got++;
+      }
+      g_lat_poll_vc = sceDisplayGetVcount();
+      g_lat_seq++;
+      {
+         unsigned age = (unsigned)sceKernelGetSystemTimeLow() - pd.TimeStamp;
+         if (age < 100000u)
+         {
+            g_lat_age_n++;
+            g_lat_age_us += age;
+         }
+      }
       /* THE THUMBSTICK (ctl_map.h).  Its four direction bits are bits
        * pad.Buttons does not use; clear them, then add what the stick says
        * in the chosen mode.  OFF adds nothing: the word is 3.5.0's. */
-      g_pad = pd.Buttons & ~CTL_STICK_ALL;
-      if (g_pcfg.stick != CTL_STICK_OFF)
-         g_pad |= ctl_stick_bits(g_pcfg.stick, pd.Lx, pd.Ly, &g_stick_state);
-      else
-         g_stick_state = 0;
+      g_pad = ctl_pad_word(pd.Buttons, g_pcfg.stick, pd.Lx, pd.Ly,
+                           &g_stick_state);
+      g_pad = pad_swallow(g_pad);   /* a UI's answer, until released */
 #ifdef GPSP_PERF_RIG
       if (pd.Lx < g_stick_min[0]) g_stick_min[0] = pd.Lx;
       if (pd.Lx > g_stick_max[0]) g_stick_max[0] = pd.Lx;
@@ -13809,7 +15053,13 @@ session_top:
       /* Menu = HOME: HOME on the menu's top page closes it, like Resume, and
        * this iteration carries on into the game. */
       if (home_pressed && ui_active() && ui_home_press())
+      {
          home_pressed = 0;
+         pad_swallow_arm(g_pad);     /* whatever is held is not the game's */
+         /* nor this iteration's pad, read before it, or its edges and
+          * shortcuts (turbo, fast-forward, the video cycle, rewind) */
+         g_pad = pad_new = ctl_fired = 0;
+      }
 
 #ifdef REWIND
       /* The menu opened, or the pause overlay is about to, in the middle of
@@ -13825,6 +15075,20 @@ session_top:
          /* Core paused; wireless keeps pumping; UI draws + acts. */
          ui_action act;
          LOOP_PHASE(5);
+         /* A sleep taken with the menu open: the wake overlay, and on
+          * Continue the rebuild, before the menu draws again (see
+          * wake_service).  Then a fresh iteration, so the pad is read
+          * after the answer -- and the answer's X, still down, is not read
+          * by the menu as a press of its own. */
+         if (g_pwr_rebuild || g_wake_menu)
+         {
+            int w = wake_service();
+            if (w == WAKE_QUIT)
+               exit_reason = "game_list";
+            else if (!w)
+               ui_swallow_pad();
+            continue;
+         }
          /* The menu is open: auto-fire stops, and no menu key (X is a
           * likely turbo button) can start or toggle one from in here. */
          if (g_turbo.live)
@@ -13895,6 +15159,26 @@ session_top:
             if (g_pcfg.console == FE_CONSOLE_GBA)
                mgift_stop(0);
             break;
+         case UI_ACT_RESET:
+         {
+            /* "Reset game" (soft reset, fe_host_reset): the menu has
+             * already closed.  A GB reboot that failed leaves no machine:
+             * back to the game list by the normal clean exit. */
+            int rc = psp_game_reset();
+            if (rc == -1)
+            {
+               osd_toast("Reset failed: back to the game list");
+               pcfg_save();
+               g_relaunch = RELAUNCH_GAMELIST;
+               exit_reason = "reset_failed";
+               g_running = 0;
+            }
+            else
+               osd_toast(rc == 0 ? "Game reset" :
+                         rc == -2 ? "Reset is off during link play"
+                                  : "Reset refused: the save could not be written");
+            break;
+         }
          case UI_ACT_EXIT:
             g_running = 0;
             break;
@@ -13936,6 +15220,12 @@ session_top:
          sceDisplayWaitVblankStart();
          if (!g_wake_hold)
             vid_swap();
+         /* Closed (Resume, a state load, Host/Join): the X or O that
+          * closed it is still down, and is not the game's (pad_swallow).
+          * The pad it answered, not one read now: a press made while the
+          * action ran (Host/Join waits up to 15 s) is the game's. */
+         if (!ui_active())
+            pad_swallow_arm(g_pad);
          continue;
       }
 
@@ -14067,68 +15357,33 @@ session_top:
        * suppressed while a wake is pending (see g_wake_hold), otherwise the
        * loop iteration that was in flight when the machine suspended finishes
        * and puts the stale frame up first, which reads as a flicker. */
-      if (g_pwr_rebuild)
       {
-         /* The rebuild itself waits for the overlay's answer (me_standby_up):
-          * g_pwr_slept stays 1 until then, which is also what keeps
-          * g_wake_hold up and makes a second resume ask again. */
-         g_pwr_rebuild = 0;
-         ring_r = ring_w;              /* sound from before the sleep */
-         g_wake_menu = 1;
-         fe_evt("standby wake overlay_first slept=%d rend=%d vmem=%d",
-                g_pwr_slept, me_rend_active(), me_rend_vmem_held());
-      }
-      /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
-       * emulated while it is up (the frame is a still and any link is long
-       * gone), so it owns the pad and the swap chain until the player picks.
-       * `Quit to game list` relaunches the EBOOT, which is how this build
-       * returns to the browser everywhere else -- the core cannot unload a
-       * ROM cleanly, and a relaunch flushes SRAM on the way out. */
-      if (g_wake_menu)
-      {
-         g_wake_menu = 0;
-         home_host_disarm();   /* the overlay is not the game: HOME is the system's */
-         ctl_turbo_stop(&g_turbo);   /* the console slept: auto-fire is over */
-         if (ui_wake_menu(g_wake_have ? g_wake_frame : NULL,
-                          (int)g_wake_w, (int)g_wake_h, g_pcfg.last_rom))
+         int w = wake_service();
+         if (w)
          {
-            /* The same quit the menu's "Quit to game list" makes: through
-             * the teardown (SRAM flushed) to the browser.  It used to
-             * relaunch from here directly, skipping both. */
-            fe_evt("wake_menu choice=game_list slept=%d", g_pwr_slept);
-            /* Nothing is rebuilt for a game that is being left: the
-             * teardown below stops the engine and the next game starts it
-             * as a boot does.  Only the flags must not outlive the game
-             * (g_wake_hold would keep its swaps suppressed). */
-            g_pwr_slept = 0;
-            g_pwr_rebuild = 0;
-            g_relaunch = RELAUNCH_GAMELIST;
-            exit_reason = "game_list";
-            g_running = 0;
+            /* WAKE_YIELD: the switch, slid on the pause screen.  Round to
+             * the top, which parks; nothing of this frame is presented or
+             * run first. */
+            if (w == WAKE_QUIT)
+               exit_reason = "game_list";
             continue;
          }
-         fe_evt("wake_menu choice=continue frame=%d slept=%d running=%d",
-                g_wake_have, g_pwr_slept, g_running);
-         g_wake_have = 0;
-         if (!g_running)
-         {
-            /* HOME / exit while the overlay was up: leaving, as above. */
-            g_pwr_slept = 0;
-            g_pwr_rebuild = 0;
-         }
-         else if (g_pwr_slept || g_pwr_rebuild)
-         {
-            unsigned up_t0 = (unsigned)sceKernelGetSystemTimeLow();
-            pwr_hold("wake");          /* renderer rebuild: me_rend_init */
-            me_standby_up();
-            pwr_release();
-            fe_evt("standby up_us=%u",
-                   (unsigned)sceKernelGetSystemTimeLow() - up_t0);
-            FE_EVT_ONLY(up_t0);
-         }
+      }
+      if (g_wake_answered)
+      {
+         /* Continue on the wake overlay (PR #16): this iteration's edges
+          * and shortcuts were read before it; turbo_frame below reads
+          * pad_new.  (wake_service zeroed g_pad and armed the swallow.) */
+         g_wake_answered = 0;
+         pad_new = ctl_fired = 0;
       }
       FE_LP_SET(FELP_L_PRES0);
       me_video_present();
+      /* LOW LATENCY tier 0b: a render that finished during the previous
+       * iteration is shown NOW, not after the next post retires it. */
+      g_ll_iter_h = 0;
+      if (!mer_sameframe_active())
+         me_rend_retire_if_idle();
       /* SAME-FRAME shows the frame at the END of its own frame, not at the
        * top of the next one -- so the top-of-loop present is skipped and the
        * GE draw happens in the vblank wait below, once the ME reports done. */
@@ -14138,7 +15393,22 @@ session_top:
       else
 #endif
       if (!mer_sameframe_active())
-         me_rend_present();   /* ME renderer: swap-phase present (FF triage) */
+      {
+         /* Tier 1: this iteration's own render is presented in its wait;
+          * the frame retired above (if any) is superseded -- the one drop
+          * of a switch into the mode. */
+         if (mer_lowlat_active() && g_ll_mode_h)
+         {
+            g_ll_iter_h = 1;
+            /* g_mer_last_presented is a STAGE index: with the superseded
+             * render left unpresented, this iteration's render lands in
+             * the stage last presented and would read as "already shown"
+             * (hardware: every entry into the mode missed).  Forget it. */
+            g_mer_last_presented = -1;
+         }
+         else
+            me_rend_present(); /* ME renderer: swap-phase present (FF triage) */
+      }
 #ifdef REWIND
       if (g_drew && (g_rw_on || g_rwh.denied))
          psp_rewind_hud();
@@ -14400,7 +15670,13 @@ session_top:
       if (g_dump_chord_pending)      /* ADR-0069, set at the pad read above */
       {
          g_dump_chord_pending = 0;
-         dump_frame_bmp();
+         player_screenshot();        /* issue #13: named, PNG, a toast */
+      }
+      if (player_shot_at && player_shot_n > 0 &&
+          frames >= (unsigned)player_shot_at)
+      {
+         player_shot_n--;
+         player_screenshot();
       }
       if (gedump_at && frames >= (unsigned)gedump_at && g_drew)
       {
@@ -14655,6 +15931,7 @@ session_top:
           * is genuinely in the radio and this whole line of reasoning is
           * wrong. */
          FE_LP_SET(FELP_VWAIT);
+         lat_wait_begin();
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
             if (g_net_up)
@@ -14678,8 +15955,23 @@ session_top:
                if (d > g_mer_rend_max)
                   g_mer_rend_max = d;
             }
-            sceDisplayWaitVblankStart();
+            /* LOW LATENCY: flip as soon as the frame is complete (tier 0a)
+             * or present this iteration's own render (tier 1).  While one
+             * of those waits on the GE or the ME, poll in short sleeps --
+             * still a wait, other threads still run -- instead of
+             * sleeping through the moment the work became possible. */
+            if (lat_wait_step())
+               sceKernelDelayThread(LAT_POLL_US);
+            else
+            {
+               sceDisplayWaitVblankStart();
+               g_vb_us = (unsigned)sceKernelGetSystemTimeLow();
+               g_vb_vc = sceDisplayGetVcount();
+               g_lat_vbhc_n++;
+               g_lat_vbhc_sum += (unsigned)sceDisplayGetCurrentHcount();
+            }
          }
+         lat_wait_end();
          FE_LP_SET(FELP_L_RETIRE);
 
          /* Counted here, after the wait: still pending at the swap means the
@@ -14729,9 +16021,9 @@ session_top:
          }
 
          FE_LP_SET(FELP_L_SWAP);
-         UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
-         if (!g_wake_hold)
-            vid_swap();
+         if (!g_lw_swapped)
+            lat_swap(0);
+         g_lw_swapped = 0;
          g_drew = 0;
       }
       else if (g_drew)
@@ -14742,12 +16034,11 @@ session_top:
           * whenever fast-forward is engaged, so the loop-top present ran
           * as it always did and this branch is untouched shipping code. */
          osd_draw();
-         UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
-         if (!g_wake_hold)
-            vid_swap();
+         lat_swap(0);
          g_drew = 0;
       }
       FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
+      lat_census();
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
       ff_win_note();
@@ -14778,6 +16069,12 @@ session_top:
     * flush, the ME and HOME modules, the radio, the core's unload, the
     * in-process return's census): the switch waits (pwr_hold, see power_cb).
     * Released before the browser (goto session_top) or by the exit itself. */
+   /* The loop ended with a sleep's quiesce still in force (HOME or an exit
+    * while held): put back what it stopped, so the teardown below finds the
+    * state it was written for.  The gameplay power lock is play's only. */
+   ui_set_wake_yield(NULL);   /* no game loop: nothing to park */
+   sleep_quiesce_up("loop_exit");
+   play_lock_drop("loop_exit");
    pwr_hold("teardown");
    /* "Quit to game list": the menu goes, the frame it sat on stays with a
     * "Returning to game list..." chip, and the teardown below runs under it
@@ -14911,6 +16208,7 @@ session_top:
          ff_last_mode = -1;
          ff_last_me = -1;
          prev_pad = 0;
+         g_pad_swallow = 0;          /* nothing of the last game is held */
          chord_frames = 0;
          ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
          ui_set_turbo_locked(0);     /* ...and no session outlives it */

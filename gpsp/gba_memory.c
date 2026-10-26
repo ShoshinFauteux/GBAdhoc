@@ -3168,6 +3168,39 @@ bool gamepak_must_swap(void)
   return gamepak_buffer_count * gamepak_buffer_blocksize < gamepak_size;
 }
 
+/* ---- SOFT RESET AS A POWER-ON (the in-game menu's "Reset game") ----------
+ *
+ * reset_gba() alone restarts the guest but KEEPS the dynarec's learned SMC
+ * translation gates and ranked candidates, as a state load does.  Gates move
+ * block boundaries and charge cycles (SMC_GATE_CHARGE), so a game reset that
+ * way runs its first frames with different timing than at power-on: Driver 2's
+ * fourth frame switched from white to black 58 scanlines earlier after a reset
+ * than after a boot (the PPSSPP oracle: frame hashes from the reset against
+ * frame hashes from power-on).  gba_reset_power_on() is what load_gamepak +
+ * retro_load_game do for the same cartridge: the cartridge's own gate set
+ * (load_game_config_over's, before any was learned; the GBA link's cold start
+ * does the same, gbalink_core.c lk_cold_start), the gate state forgotten, then
+ * reset_gba() -- whose init_dynarec_caches re-initialises every translation
+ * cache, the code tags and the JIT ownership. */
+static u32 cart_gate_n;
+static u32 cart_gate_pc[MAX_TRANSLATION_GATES];
+
+static void gba_cart_gates_snapshot(void)
+{
+  cart_gate_n = translation_gate_targets;
+  memcpy(cart_gate_pc, translation_gate_target_pc, sizeof(cart_gate_pc));
+}
+
+void gba_reset_power_on(void)
+{
+  translation_gate_targets = cart_gate_n;
+  memcpy(translation_gate_target_pc, cart_gate_pc, sizeof(cart_gate_pc));
+#ifdef SMC_GATES
+  smc_gates_reset();
+#endif
+  reset_gba();
+}
+
 void init_memory(void)
 {
   u32 map_offset = 0, i;
@@ -3994,6 +4027,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    serial_mode = force_serial;
 
    load_game_config_over(game_code);
+   gba_cart_gates_snapshot();
 #ifdef SMC_GATES
    /* Reset ages and rebuild derived gate state after the cartridge table has
     * populated its fixed gates. */

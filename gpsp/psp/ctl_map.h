@@ -186,6 +186,14 @@ unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state);
 /* 1 if `mask` is bound to the stick alone: one or more stick directions
  * and no real button. */
 int ctl_stick_only(unsigned mask);
+/* THE PAD WORD every reader of the controls uses: pad.Buttons with the four
+ * bits it never sets cleared, plus ctl_stick_bits() for `mode` (OFF adds
+ * nothing and zeroes `state`).  One function so that no pad loop -- the game
+ * loop, the browser's own Settings loop -- can leave the stick out: the
+ * Controls page captures a binding from this word, and a loop that passed
+ * raw pad.Buttons could never bind a stick direction. */
+unsigned ctl_pad_word(unsigned buttons, int mode, int lx, int ly,
+                      unsigned *state);
 /* CONFIG.INI spelling of a menu mode ("start_select" / "home"). */
 const char *ctl_menu_name(int menu_home);
 /* "start_select", "START+SELECT", "home" (any case, surrounding blanks

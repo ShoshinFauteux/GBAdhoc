@@ -97,6 +97,9 @@ extern "C" {
 #define PCFG_ME_MODE_DEF     0   /* harness: arms opt in explicitly */
 #endif
 
+enum { PCFG_SHOT_PNG = 0, PCFG_SHOT_BMP = 1 };
+enum { PCFG_SHOT_PICTURE = 0, PCFG_SHOT_APP = 1 };
+
 typedef struct
 {
    int  scale;        /* VID_SCALE_* (default 1x) */
@@ -156,6 +159,15 @@ typedef struct
     * ON since 3.0.0 (the Go A/B rig, 21/21); `rom_resident = 0` pages. */
    int  rom_resident;
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
+   /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
+    * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
+    * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,
+    * where the XMB's Photo column lists them; PCFG_SHOT_APP = log/ beside the
+    * EBOOT, where 4.x and earlier wrote them.
+    * CONFIG.INI `screenshot_format = png | bmp`,
+    *            `screenshot_folder = picture | app`. */
+   int  shot_format;
+   int  shot_folder;
 #ifdef REWIND
    /* Settings > Gameplay > Rewind (docs/REWIND.md).  rewind: 1 = record
     * (GBA games, outside link sessions); 0 = no snapshots, no memory, and

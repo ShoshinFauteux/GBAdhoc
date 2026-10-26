@@ -309,6 +309,19 @@ unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state)
    return 0;
 }
 
+unsigned ctl_pad_word(unsigned buttons, int mode, int lx, int ly,
+                      unsigned *state)
+{
+   buttons &= ~CTL_STICK_ALL;
+   if (mode == CTL_STICK_OFF)
+   {
+      if (state)
+         *state = 0;
+      return buttons;
+   }
+   return buttons | ctl_stick_bits(mode, lx, ly, state);
+}
+
 int ctl_stick_only(unsigned mask)
 {
    mask &= CTL_ALL;

@@ -44,6 +44,7 @@
 #include "link_games.h"
 #include "fe_linkmode.h"
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
+#include "text_fold.h"      /* non-ASCII file names (issue #19) */
 #ifdef GPSP_CHEATS
 #include "fe_cheats.h"
 #endif
@@ -614,6 +615,8 @@ static const demo_step rwl_demo_script[] = {
    { PSP_CTRL_CROSS,   2, 8 },   /* enter settings                        */
    { PSP_CTRL_UP,      2, 6 },   /* wraps to Button mapping               */
    { PSP_CTRL_UP,      2, 6 },   /* Thumbstick                            */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot folder                     */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot format                     */
    { PSP_CTRL_UP,      2, 6 },   /* Rewind length                         */
    { DEMO_DUMP,        1, 0 },   /* ge_rwl_0: the value on the card       */
    { PSP_CTRL_RIGHT,   2, 6 },
@@ -649,9 +652,30 @@ static const demo_step quit_demo_script[] = {
 #ifdef GPSP_CHEATS
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Cheats                             */
 #endif
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Reset game                         */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> Quit to game list                  */
    { DEMO_DUMP,        1, 0 },   /* ge_quit_0: the menu, on the row       */
    { PSP_CTRL_CROSS,   2, 4 },   /* quit                                  */
+};
+
+/* ui_controls_demo=8: Reset game from the menu (soft reset): the row, the
+ * question, O keeps playing, then X X resets and the menu closes. */
+static const demo_step rst_demo_script[] = {
+   { 0,               20, 0 },   /* settle on menu                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Save states                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Wireless                           */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Settings                           */
+#ifdef GPSP_CHEATS
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Cheats                             */
+#endif
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Reset game                         */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_0: the menu, on the row        */
+   { PSP_CTRL_CROSS,   2, 6 },   /* ask                                   */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_1: the question on the plate   */
+   { PSP_CTRL_CIRCLE,  2, 6 },   /* keep playing: the menu stays          */
+   { DEMO_DUMP,        1, 0 },   /* ge_rst_2: no question                 */
+   { PSP_CTRL_CROSS,   2, 6 },   /* ask again                             */
+   { PSP_CTRL_CROSS,   2, 6 },   /* reset: the menu closes                */
 };
 
 static const demo_step *g_demo_steps = demo_script;
@@ -712,7 +736,13 @@ void ui_controls_demo_start(void)
 
 void ui_home_demo_start(int which)
 {
-   if (which == 7)
+   if (which == 8)
+   {
+      g_demo_steps = rst_demo_script;
+      g_demo_len = (int)(sizeof(rst_demo_script) / sizeof(rst_demo_script[0]));
+      g_demo_prefix = "ge_rst";
+   }
+   else if (which == 7)
    {
       g_demo_steps = rwl_demo_script;
       g_demo_len = (int)(sizeof(rwl_demo_script) / sizeof(rwl_demo_script[0]));
@@ -745,7 +775,7 @@ void ui_home_demo_start(int which)
    }
    g_demo_on = 0;
    g_demo_phase = 0;
-   fe_evt("ui_demo_start script=%s", which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
+   fe_evt("ui_demo_start script=%s", which == 8 ? "reset" : which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
           which == 4 ? "delete" : "menu_button");
 }
 
@@ -880,6 +910,10 @@ void ui_wake_inject(int choice) { (void)choice; }
 void ui_wake_inject_frame(int frame) { (void)frame; }
 #endif
 
+static int (*g_wake_yield)(void);
+void ui_set_wake_yield(int (*yield)(void)) { g_wake_yield = yield; }
+void ui_swallow_pad(void) { g_prev_pad = 0xFFFFFFFFu; }
+
 int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
                  const char *game)
 {
@@ -921,6 +955,13 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
       unsigned now, edges;
       int i;
 
+      /* The power switch, slid while this screen is up: leave it, so the
+       * game loop parks at its OWN top -- the one park point, in exactly
+       * the state an in-game sleep reaches -- and opens this screen again
+       * afterwards (UI_WAKE_YIELD).  Checked before the pad and before any
+       * drawing: no list is started after the request is seen. */
+      if (g_wake_yield && g_wake_yield())
+         return UI_WAKE_YIELD;
       sceCtrlPeekBufferPositive(&pad, 1);
       now   = pad.Buttons;
       edges = now & ~prev;
@@ -1002,12 +1043,17 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
    return 0;      /* HOME: let the main loop run its clean shutdown */
 }
 
+/* 1 while the menu asks "Reset? Unsaved progress is lost" (X answers;
+ * screen_menu). */
+static int g_reset_ask;
+
 void ui_open(void)
 {
    ctl_page_reset();
    g_active = 1;
    g_screen = SCR_MENU;
    g_cursor = 0;
+   g_reset_ask = 0;
    g_ov_open_k = 0;              /* the opening transition (screen_menu) */
    ov_title_take();
    g_prev_pad = 0xFFFFFFFFu;   /* swallow the opening chord */
@@ -1730,6 +1776,7 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
+       SET_HDR_SHOT, SET_SHOT_FMT, SET_SHOT_DIR,
        SET_HDR_CTL, SET_STICK, SET_CONTROLS,
        SET_COUNT };
 
@@ -1774,6 +1821,12 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Rewind" },
    { 0, "Rewind length" },
 #endif
+   /* Screenshots (issue #13).  Above CONTROLS, so Thumbstick and Button
+    * mapping stay the last two rows the harness walkers wrap up to (the
+    * rewind-length walker takes two more UPs for these rows). */
+   { 1, "SCREENSHOTS" },
+   { 0, "Screenshot format" },
+   { 0, "Screenshot folder" },
    /* Last, so every row above keeps its position (the harness ui_demo walks
     * this list by count).  X opens the page; it is not a value to cycle. */
    { 1, "CONTROLS" },
@@ -2305,6 +2358,14 @@ static void settings_adjust(int id, int dir)
       fe_evt("rewind_setting on=%d mb=%d", g_pcfg.rewind, g_pcfg.rewind_mb);
       break;
 #endif
+   case SET_SHOT_FMT:
+      g_pcfg.shot_format = g_pcfg.shot_format == PCFG_SHOT_PNG ? PCFG_SHOT_BMP
+                                                               : PCFG_SHOT_PNG;
+      break;
+   case SET_SHOT_DIR:
+      g_pcfg.shot_folder = g_pcfg.shot_folder == PCFG_SHOT_PICTURE
+                              ? PCFG_SHOT_APP : PCFG_SHOT_PICTURE;
+      break;
    case SET_STICK:
       /* off -> moves -> custom, live: the main loop reads it every frame. */
       g_pcfg.stick = (g_pcfg.stick + 3 + (dir < 0 ? -1 : 1)) % 3;
@@ -2529,6 +2590,15 @@ static ui_action screen_settings(unsigned edges)
          break;
       }
 #endif
+      case SET_SHOT_FMT:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.shot_format == PCFG_SHOT_BMP ? "BMP" : "PNG");
+         break;
+      case SET_SHOT_DIR:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc folder (log)"
+                                                 : "PICTURE/GBAdhoc");
+         break;
       case SET_STICK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.stick == CTL_STICK_MOVE ? "moves (as the d-pad)" :
@@ -2556,6 +2626,14 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
+   else if (g_cursor == SET_SHOT_FMT)
+      footer(g_pcfg.shot_format == PCFG_SHOT_BMP
+                ? "BMP: uncompressed, about 115 KB a picture."
+                : "PNG: compressed, usually a few KB a picture.");
+   else if (g_cursor == SET_SHOT_DIR)
+      footer(g_pcfg.shot_folder == PCFG_SHOT_APP
+                ? "In log/ beside GBAdhoc, as before."
+                : "In PICTURE/GBAdhoc: open them from the XMB Photo menu.");
 #ifdef REWIND
    else if (g_cursor == SET_REWIND_MB)
       /* What each length is, and what the largest needs.  Nothing is
@@ -4455,11 +4533,19 @@ static int screen_cheats(unsigned edges, const char *game)
  * one row and one page since 3.5 (docs/UI-OVERLAY.md section 13). */
 /* Cheats (docs/CHEATS.md) sits after Settings for the same reason: rows 0-3
  * keep their positions; quit_demo_script takes one more DOWN. */
+/* Reset game (soft reset) sits between Cheats and Quit to game list: rows
+ * 0-3 keep their positions again, quit_demo_script takes one more DOWN. */
 enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_SETTINGS,
 #ifdef GPSP_CHEATS
        M_CHEATS,
 #endif
-       M_GAMELIST, M_EXIT, M_COUNT };
+       M_RESET, M_GAMELIST, M_EXIT, M_COUNT };
+
+/* Eight rows since Reset game: the pitch closes up by 2 px so Exit stays
+ * clear of the footer. */
+#define M_ROW_Y0    (M_COUNT > 7 ? 84 : 88)
+#define M_ROW_PITCH (M_COUNT > 7 ? 20 : 22)
+#define M_BAND_H    (M_COUNT > 7 ? 22 : 24)
 
 static ui_action screen_menu(unsigned edges, int session_active)
 {
@@ -4468,10 +4554,24 @@ static ui_action screen_menu(unsigned edges, int session_active)
 #ifdef GPSP_CHEATS
       "Cheats",
 #endif
-      "Quit to game list", "Exit"
+      "Reset game", "Quit to game list", "Exit"
    };
    int i, k, fade, dy;
 
+   /* The reset question holds the menu: X resets, anything else keeps
+    * playing (and is not acted on), as the Save states page's questions. */
+   if (g_reset_ask && edges)
+   {
+      g_reset_ask = 0;
+      if (edges & PSP_CTRL_CROSS)
+      {
+         if (g_turbo_locked)            /* a session came up meanwhile */
+            osd_toast("Reset is off during link play");
+         else
+            return UI_ACT_RESET;
+      }
+      edges = 0;
+   }
    if (edges & PSP_CTRL_UP)
       g_cursor = (g_cursor + M_COUNT - 1) % M_COUNT;
    if (edges & PSP_CTRL_DOWN)
@@ -4502,6 +4602,15 @@ static ui_action screen_menu(unsigned edges, int session_active)
          screen_cheats(0, g_ov_title);   /* draw this frame as the new page */
          return UI_ACT_NONE;
 #endif
+      case M_RESET:
+         /* Refused in any link or wireless session, the test the turbo
+          * buttons and cheats share (ui_set_turbo_locked): starting one
+          * machine again desynchronises the other. */
+         if (g_turbo_locked)
+            osd_toast("Reset is off during link play");
+         else
+            g_reset_ask = 1;
+         break;
       case M_GAMELIST:  return UI_ACT_GAMELIST;
       case M_EXIT:      return UI_ACT_EXIT;
       }
@@ -4521,11 +4630,15 @@ static ui_action screen_menu(unsigned edges, int session_active)
    ov_head(g_ov_title, NULL);
    for (i = 0; i < M_COUNT; i++)
    {
-      int y = 88 + i * 22 + dy;
-      int enabled = !(i == M_SAVESTATES && session_active);
+      int y = M_ROW_Y0 + i * M_ROW_PITCH + dy;
+      int enabled = !(i == M_SAVESTATES && session_active) &&
+                    !(i == M_RESET && g_turbo_locked);
       uint16_t c = !enabled ? C_DIM : (i == g_cursor ? C_SEL : C_ITEM);
       if (i == g_cursor && k >= OV_OPEN_FRAMES)
-         ov_band(y, vid_text_w(labels[i]) + 44, 24);
+         ov_band(y, vid_text_w(labels[i]) + 44, M_BAND_H);
+      if (i == M_RESET && !enabled)
+         vid_text(18 + vid_text_w(labels[i]) + 12, y, "off during link play",
+                  mix565(C_DIM, C_BG_BOT, fade));
       vid_text(18, y, labels[i], mix565(c, C_BG_BOT, fade));
       /* The Wireless row carries the session's mode where it used to
        * say "linked" (docs/GBA-LINK-UI.md); a cable host waiting says so. */
@@ -4556,7 +4669,11 @@ static ui_action screen_menu(unsigned edges, int session_active)
       }
 #endif
    }
-   footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume");
+   if (g_reset_ask)
+      ov_plate("Reset? Unsaved progress is lost.     " VID_GLYPH_X " reset     "
+               VID_GLYPH_O " keep playing");
+   else
+      footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume");
    return UI_ACT_NONE;
 }
 
@@ -5129,7 +5246,7 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       demo_dump_named(nm);
    }
 
-   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT ||
+   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT || act == UI_ACT_RESET ||
        act == UI_ACT_NET_HOST || act == UI_ACT_NET_JOIN)
       ui_close();
    return act;
@@ -5168,6 +5285,10 @@ typedef struct {
    const char *base;    /* the filename alone: what the user reads, and what
                          * box art is keyed on, so art never has to mirror
                          * whatever folder layout the ROMs happen to use     */
+   const char *disp;    /* what the list SHOWS and sorts by: `base`, except
+                         * for a long name the firmware could not open, which
+                         * is shown while `name` holds the FAT 8.3 name it is
+                         * opened by (text_fold.h fat_rom_pick, issue #19)  */
    unsigned    size;
    signed char has_sav; /* -1 = not looked up yet; see rom_has_sav()         */
    signed char is_fav;  /* in favourites.txt; set by favs_mark(), and it
@@ -5674,6 +5795,46 @@ static const char *rom_pool_add(const char *s, size_t len)
    return p;
 }
 
+/* One directory entry through text_fold.h's fat_rom_pick: which of its names
+ * the ROM is opened by (g_scan_open) and which the list shows (g_scan_show).
+ * Static, not on the stack: rom_scan_dir recurses, and the FAT block is
+ * 1 KiB; each entry is decided before the next read overwrites it. */
+static SceIoFatDirentPrivate g_scan_fat;
+static const char *g_scan_open, *g_scan_show;
+struct scan_pick_ctx { const char *dir; fe_console_t console; };
+
+static int scan_match(const char *name, void *ctx)
+{
+   return ui_rom_matches_console(name, ((struct scan_pick_ctx *)ctx)->console);
+}
+
+static int scan_opens(const char *name, void *ctx)
+{
+   char full[PSP_FILE_PATH_CAP];
+   SceIoStat st;
+   return psp_rom_path_join(full, sizeof(full),
+                            ((struct scan_pick_ctx *)ctx)->dir, name) == 0 &&
+          sceIoGetstat(full, &st) >= 0;
+}
+
+static int scan_rom_pick(const SceIoDirent *ent, const char *dir,
+                         fe_console_t console)
+{
+   static char s_short[sizeof(g_scan_fat.s_name) + 1];
+   static char s_long[sizeof(g_scan_fat.l_name)];
+   struct scan_pick_ctx c;
+   c.dir = dir;
+   c.console = console;
+   /* Copied out NUL-bounded: the firmware fills these, not us (and PPSSPP
+    * fills only the long name). */
+   memcpy(s_short, g_scan_fat.s_name, sizeof(g_scan_fat.s_name));
+   s_short[sizeof(g_scan_fat.s_name)] = '\0';
+   memcpy(s_long, g_scan_fat.l_name, sizeof(s_long) - 1);
+   s_long[sizeof(s_long) - 1] = '\0';
+   return fat_rom_pick(ent->d_name, s_long, s_short, scan_match, scan_opens,
+                       &c, &g_scan_open, &g_scan_show);
+}
+
 /* `rel` is "" at the top level, otherwise a path under roms/ with no leading
  * or trailing slash.  Directories are walked because sorting a library into
  * folders is the obvious thing to do with one, and 2.0 ignored every one. */
@@ -5699,7 +5860,13 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    d = sceIoDopen(dir);
    if (d < 0)
       return;
+   /* d_private: the FAT driver also reports each entry's 8.3 short name
+    * and its long name there (issue #19: a long name with a character the
+    * firmware cannot hand back in d_name must still be found, and opened). */
    memset(&ent, 0, sizeof(ent));
+   memset(&g_scan_fat, 0, sizeof(g_scan_fat));
+   g_scan_fat.size = sizeof(g_scan_fat);
+   ent.d_private = &g_scan_fat;
    while (sceIoDread(d, &ent) > 0)
    {
       /* Memory Stick reports a directory in st_mode on some firmwares and
@@ -5730,7 +5897,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                rom_scan_dir(sub, depth - 1, n, console);
          }
       }
-      else if (ui_rom_matches_console(ent.d_name, console))
+      else if (scan_rom_pick(&ent, dir, console))
       {
          g_rom_found++;
          ret_scan_tick();
@@ -5740,17 +5907,25 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
             const char *stored;
             int         plen;
 
+            const char *disp = NULL;
+
             if (rel[0])
-               plen = snprintf(path, sizeof(path), "%s/%s", rel, ent.d_name);
+               plen = snprintf(path, sizeof(path), "%s/%s", rel, g_scan_open);
             else
-               plen = snprintf(path, sizeof(path), "%s", ent.d_name);
+               plen = snprintf(path, sizeof(path), "%s", g_scan_open);
 
             if (plen > 0 && plen < (int)sizeof(path) &&
-                (stored = rom_pool_add(path, (size_t)plen)) != NULL)
+                (stored = rom_pool_add(path, (size_t)plen)) != NULL &&
+                (g_scan_show == g_scan_open ||
+                 (disp = rom_pool_add(g_scan_show, strlen(g_scan_show)))
+                    != NULL))
             {
                const char *slash = strrchr(stored, '/');
                g_roms[*n].name    = stored;
                g_roms[*n].base    = slash ? slash + 1 : stored;
+               g_roms[*n].disp    = disp ? disp : g_roms[*n].base;
+               if (disp)
+                  fe_evt("rom_scan_short open=%s show=%s", stored, disp);
                g_roms[*n].size    = (unsigned)ent.d_stat.st_size;
                g_roms[*n].has_sav = -1;
                g_roms[*n].is_fav  = 0;       /* favs_mark() after the sort */
@@ -5766,13 +5941,16 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
          }
       }
       memset(&ent, 0, sizeof(ent));
+      memset(&g_scan_fat, 0, sizeof(g_scan_fat));
+      g_scan_fat.size = sizeof(g_scan_fat);
+      ent.d_private = &g_scan_fat;
    }
    sceIoDclose(d);
 }
 
 static int rom_entry_less(const rom_entry *a, const rom_entry *b)
 {
-   int by_name = strcasecmp(a->base, b->base);
+   int by_name = strcasecmp(a->disp, b->disp);
    return by_name < 0 || (by_name == 0 && a->scan_order < b->scan_order);
 }
 
@@ -6464,10 +6642,10 @@ static const uint16_t *hero_decode(int rom_idx, const char *base)
 static void rom_display_name(const rom_entry *r, char *out, size_t sz,
                              int cut_region)
 {
-   size_t n = ui_rom_stem_length(r->base);
+   size_t n = ui_rom_stem_length(r->disp);
    if (n >= sz)
       n = sz - 1;
-   memcpy(out, r->base, n);
+   memcpy(out, r->disp, n);
    out[n] = '\0';
    /* No-Intro writes "Legend of Zelda, The".  Restoring the article to the
     * front costs nothing, reads properly, and matters most on exactly the
@@ -6759,6 +6937,8 @@ static void clip_title(char *t, int px)
       if (vid_text_w(t) + vid_text_w("...") <= px)
          break;
    }
+   utf8_trim_partial(t);          /* a cut inside a UTF-8 letter (#19) */
+   n = (int)strlen(t);
    /* Do not leave a dangling space or separator before the dots. */
    while (n > 0 && (t[n - 1] == ' ' || t[n - 1] == '-'))
       t[--n] = 0;
@@ -6864,6 +7044,8 @@ static void clip_title_hd(char *t, int px)
       if (vid_text_hd_w(t) + vid_text_hd_w("...") <= px)
          break;
    }
+   utf8_trim_partial(t);
+   n = (int)strlen(t);
    while (n > 0 && (t[n - 1] == ' ' || t[n - 1] == '-'))
       t[--n] = 0;
    strcpy(t + n, "...");
@@ -7636,6 +7818,7 @@ static int browse_backdrop_take(void)
 static int browser_settings(void)
 {
    int relaunch = 0;
+   unsigned stick;               /* ctl_pad_word: engaged stick directions */
 
    browse_backdrop_take();
    g_ov_browse = 1;
@@ -7669,6 +7852,7 @@ static int browser_settings(void)
    screen_to(SCR_SETTINGS);
    g_cursor = SET_ROOM;
    g_prev_pad = 0xFFFFFFFFu;      /* swallow the opening START */
+   stick = 0;
    /* Settings > Controls runs inside this loop too: it is a sub-page of
     * these settings, and it leaves back to them. */
    g_share_req = 0;
@@ -7680,7 +7864,11 @@ static int browser_settings(void)
       unsigned edges, pad;
       int join = 0;
       sceCtrlPeekBufferPositive(&pd, 1);
-      pad = ui_demo_running() ? demo_pad() : pd.Buttons;
+      /* The pad word the game loop builds (ctl_pad_word), stick included:
+       * with raw pd.Buttons, Controls opened from the browser never saw
+       * the stick, so a stick direction could be bound only in game. */
+      pad = ui_demo_running() ? demo_pad() :
+            ctl_pad_word(pd.Buttons, g_pcfg.stick, pd.Lx, pd.Ly, &stick);
       edges = pad_edges(pad);
       /* The harness script keeps counting in here, so a shoot can walk the
        * Settings screen (no-op without a script). */
