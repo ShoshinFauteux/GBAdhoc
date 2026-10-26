@@ -552,7 +552,10 @@ def suites(env: Env, baseline: Path | None):
           # A sleep from the in-game menu / pause screen: the menu branch's
           # wake and the overlay's yield to the loop-top park (main_psp.c +
           # ui_psp.c), mutants.
-          "python3 tools/tests/test_sleep_menu.py")
+          "python3 tools/tests/test_sleep_menu.py && "
+          # A sleep from the game list (after a game was left): the list
+          # parks like the game loop (browser_park + ui_browser), mutants.
+          "python3 tools/tests/test_sleep_browser.py")
          % (sdk, sdk, sdk)),
 
         ("perf_loop", False, lambda: None,

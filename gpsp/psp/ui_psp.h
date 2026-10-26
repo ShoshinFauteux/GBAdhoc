@@ -262,6 +262,10 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
  * this to "the power callback wants the loop parked", so a switch slid there
  * parks at the loop's own top like any in-game sleep.  NULL = never. */
 void ui_set_wake_yield(int (*yield)(void));
+/* Called by the game list once a frame, before it reads the pad or draws:
+ * the list's park point for a sleep (main_psp.c browser_park).  Returns
+ * nonzero when it parked and the console has woken.  NULL = never. */
+void ui_set_browser_park(int (*park)(void));
 /* The menu reads the next frame's held buttons as already seen (as at
  * ui_open): the wake overlay's answer, still down, is not a menu press. */
 void ui_swallow_pad(void);
