@@ -912,6 +912,8 @@ void ui_wake_inject_frame(int frame) { (void)frame; }
 
 static int (*g_wake_yield)(void);
 void ui_set_wake_yield(int (*yield)(void)) { g_wake_yield = yield; }
+static int (*g_browser_park)(void);
+void ui_set_browser_park(int (*park)(void)) { g_browser_park = park; }
 void ui_swallow_pad(void) { g_prev_pad = 0xFFFFFFFFu; }
 
 int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
@@ -8485,6 +8487,11 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       unsigned edges;
       int rom;                        /* g_roms index of the cursor row */
 
+      /* The power switch: park here, between frames -- no list drawing, no
+       * art read in flight (browser_park).  What is held at the wake is
+       * not a press. */
+      if (g_browser_park && g_browser_park())
+         g_prev_pad = 0xFFFFFFFFu;
       sceCtrlPeekBufferPositive(&pd, 1);
       edges = pad_edges(pd.Buttons);
       g_bframe++;

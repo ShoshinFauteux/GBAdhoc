@@ -2092,6 +2092,10 @@ static volatile int g_pwr_parked;
 static volatile int g_pwr_park_ack;
 static volatile int g_pwr_cb_done;
 static volatile int g_pwr_sleep_pending;
+/* The loop that answered `parked` is the game list's (browser_park), not the
+ * game's: nothing to tear down but the volatile partition, no wake overlay
+ * to ask for (g_pwr_slept stays 0). */
+static volatile int g_pwr_park_browser;
 /* Each step at its bound: the audio join, the writer's join, the .sav it
  * may leave to finish on the loop's thread (4 s: SRAM_SYNC_MAX_SPINS' "a
  * stick that has not taken 128 KiB in that is broken"), the radio
@@ -2215,7 +2219,7 @@ static int power_cb(int unknown, int pwrflags, void *common)
              * the last sleep (Continue rebuilds it), so the loop's quiesce
              * is all there is to do. */
             standby_note("suspend parked=1 park_us=%u already_down=1", park_us);
-         else if (g_pwr_parked)
+         else if (g_pwr_parked && !g_pwr_park_browser)
          {
             t0 = (unsigned)sceKernelGetSystemTimeLow();
             if (me_host_loaded())
@@ -2239,7 +2243,8 @@ static int power_cb(int unknown, int pwrflags, void *common)
          else if (!me_rend_active())
 #endif
          {
-            /* The loop did not park, but the renderer is off: the browser
+            /* The loop did not park, or it is the game list's that did
+             * (browser_park), and the renderer is off: the browser
              * (after an in-process return the volatile partition is KEPT
              * locked for the next game), the wake overlay, a GB game.
              * Nothing reads the partition, and it does not survive a sleep
@@ -2250,7 +2255,8 @@ static int power_cb(int unknown, int pwrflags, void *common)
             int rel = me_rend_release_vmem();
             FE_EVT_ONLY(rel);
             standby_note("suspend unparked renderer=off vmem_released=%d "
-                         "park_us=%u", rel, park_us);
+                         "park_us=%u browser_parked=%d", rel, park_us,
+                         g_pwr_parked);
             fe_evt("power unparked renderer=off vmem_released=%d", rel);
          }
          else
@@ -11976,6 +11982,44 @@ static void loop_unpark(const char *why)
       sleep_quiesce_up(why);
 }
 
+/* THE GAME LIST'S PARK POINT (ui_set_browser_park), once a frame, before
+ * the browser reads the pad or draws.
+ *
+ * The browser used to have none: the callback waited out its 250 ms, gave
+ * the volatile partition back from its own thread and returned, and the
+ * suspend then landed on a main thread still running the list -- a GE list
+ * in flight, box art being read off the stick and decoded, and the audio
+ * thread in sceAudioOutputBlocking with its channel reserved.  That is the
+ * state the in-game sleep was taken out of (the TYL order above: nothing of
+ * ours inside a driver when the deferred suspend runs), and the game list
+ * after a game is where a PSP-3001 was seen to cold-boot on a sleep.
+ *
+ * So the list parks like the game loop: acknowledge, stop and join the
+ * audio thread (the only thread of ours the list runs -- the writer, the
+ * .sav, the ROM handle, HOME and the radio all went with the game's
+ * teardown), report `parked`, and sleep in sleep_park_hold until the wake.
+ * The callback sees g_pwr_park_browser and does only the list's half of
+ * the teardown (the partition), so no wake overlay follows. */
+static int browser_park(void)
+{
+   int audio;
+   if (!g_pwr_park_req)
+      return 0;
+   g_pwr_park_browser = 1;
+   g_pwr_park_ack = 1;
+   audio = sq_audio_stop(NULL);
+   standby_note("browser park audio_stop rc=%d", audio);
+   g_pwr_parked = 1;
+   sleep_park_hold();
+   g_pwr_parked = 0;
+   g_pwr_park_ack = 0;
+   g_pwr_park_browser = 0;
+   if (audio == SQ_DONE || audio < 0)
+      (void)sq_audio_start(NULL);
+   standby_note("browser unpark audio_start=%d", audio_running);
+   return 1;
+}
+
 /* The wake overlay's yield hook (ui_set_wake_yield), once a frame: the
  * power callback wants the loop parked, so the overlay leaves and the loop
  * goes round to its top to park there (wake_service: WAKE_YIELD).
@@ -13587,8 +13631,10 @@ session_top:
          boot_mark("browser");
          boot_timeline_emit();
       }
+      ui_set_browser_park(browser_park);   /* the list parks too */
       br = ui_browser(ROM_DIR, rom_path, sizeof(rom_path),
                           &browser_state_slot, &selected_console);
+      ui_set_browser_park(NULL);
       if (br > 0)
       {
          /* Settings changed Media Engine mode, which was latched above.

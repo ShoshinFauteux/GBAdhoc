@@ -38,6 +38,7 @@ stub = r'''
 static struct { int standby; } g_pcfg = { 1 };
 static int g_pwr_slept, g_pwr_parked = 1, g_pwr_park_req;
 static int g_pwr_park_ack, g_pwr_cb_done, g_pwr_sleep_pending;
+static int g_pwr_park_browser;   /* the game list's park: not in these */
 static int g_pwr_suspend, g_pwr_resume, g_pwr_rebuild, g_pwr_gb_flush_req;
 static int down_calls, notes, scan_calls, wakes, disarms, delays;
 static int lock_drops;
