@@ -166,6 +166,10 @@
 #endif
 #endif
 
+#if defined(STATIC_ALU_PC) && !defined(MIPS_ARCH)
+#error "STATIC_ALU_PC is wired for the MIPS dynarec only (cpu_threaded.c arm_static_alu_pc)."
+#endif
+
 #if defined(SPIN_SKIP) && !defined(MIPS_ARCH)
 #error "SPIN_SKIP is implemented in the MIPS dynarec only (mips/mips_emit.h generate_branch_spin)."
 #endif

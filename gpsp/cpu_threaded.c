@@ -1345,7 +1345,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x24:                                                                \
       /* SUB rd, rn, imm */                                                   \
-      arm_data_proc(sub, imm, no_flags);                                      \
+      arm_static_alu_pc(0, sub);                                              \
       break;                                                                  \
                                                                               \
     case 0x25:                                                                \
@@ -1365,7 +1365,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x28:                                                                \
       /* ADD rd, rn, imm */                                                   \
-      arm_data_proc(add, imm, no_flags);                                      \
+      arm_static_alu_pc(1, add);                                              \
       break;                                                                  \
                                                                               \
     case 0x29:                                                                \
@@ -5546,6 +5546,92 @@ int spin_check(const u32 *desc)
 }
 #endif /* SPIN_SKIP */
 
+/* STATIC_ALU_PC (make STATIC_ALU_PC=1; cpu-levers lever 5, OFF by default).
+ *
+ * `add pc, pc, #imm` / `sub pc, pc, #imm` (S clear, any condition) jumps to a
+ * constant: the pc operand reads as this instruction + 8 and the immediate is
+ * fixed.  Compilers emit it as a forward skip (Doom II's column loop at
+ * 03002e18: `addcc pc, pc, #20`).  The translator handled it like any write to
+ * r15 -- an indirect branch through mips_indirect_branch_arm, which probes the
+ * dispatch cache (or calls block_lookup_address_arm) on every taken pass.
+ *
+ * Here it is emitted as the direct branch a `b`/`bcc` to the same address
+ * gets, linked to the block that STARTS at the target -- always an external
+ * link, never into the middle of this block.  That keeps it exact:
+ *   - the scan is untouched (it already treats these as exit points that end
+ *     the block only when unconditional), so block extents, update_cycles
+ *     points and block_exits[] are what they were;
+ *   - the indirect path entered the block keyed by the target too
+ *     (block_lookup_address_arm), so the guest runs the same blocks;
+ *   - cycles: conditional -> neither path charges the pending count;
+ *     unconditional -> both subtract it first; then both run update_gba with
+ *     the target in a0 when the budget is spent (bltzal update_trampoline
+ *     here, DISPATCH_CYCLE_CHECK in the stub), which this switch requires.
+ * Guest state must therefore be bit-identical with the switch on; only the
+ * host path and when the target block is translated (eagerly, as for any
+ * direct exit) change.  Not converted: S set (CPSR restore), a target not
+ * word-aligned, in another region, or 0, and any past the SALU_MAX_EXITS-th
+ * in one block -- all keep the indirect path. */
+#ifdef STATIC_ALU_PC
+#ifndef DISPATCH_CYCLE_CHECK
+#error "STATIC_ALU_PC relies on DISPATCH_CYCLE_CHECK for its cycle equivalence."
+#endif
+#define SALU_MAX_EXITS 8
+u32 salu_converted;    /* exits emitted direct (translation-time count) */
+#ifdef DRPROF_TWIN
+static void salu_report(void)
+{
+  fprintf(stderr, "STATIC_ALU_PC converted=%u\n", (unsigned)salu_converted);
+}
+__attribute__((constructor)) static void salu_report_init(void)
+{
+  atexit(salu_report);
+}
+#endif
+
+static inline u32 salu_static_target(u32 opcode, u32 pc, u32 is_add)
+{
+  u32 imm = opcode & 0xFF, ror = ((opcode >> 8) & 0x0F) * 2, v, t;
+  if ((((opcode >> 12) & 0x0F) != REG_PC) || (((opcode >> 16) & 0x0F) != REG_PC))
+    return 0;
+  v = ror ? ((imm >> ror) | (imm << (32 - ror))) : imm;
+  t = is_add ? (pc + 8 + v) : (pc + 8 - v);
+#ifdef STATIC_ALU_PC_MUTANT
+  t += 4;   /* oracle test only: the pc+8 bias got wrong by one word */
+#endif
+  if ((t & 3) || (t >> 24) != (pc >> 24))
+    return 0;
+  return t;
+}
+
+#define arm_static_alu_pc(is_add, name)                                       \
+{                                                                             \
+  u32 salu_t = (salu_n < SALU_MAX_EXITS) ?                                    \
+    salu_static_target(opcode, pc, is_add) : 0;                               \
+  if (salu_t)                                                                 \
+  {                                                                           \
+    salu_exits[salu_n].branch_target = salu_t;                                \
+    if(condition == 0x0E)                                                     \
+    {                                                                         \
+      generate_branch_cycle_update(salu_exits[salu_n].branch_source, salu_t); \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      generate_branch_no_cycle_update(salu_exits[salu_n].branch_source,       \
+                                      salu_t);                                \
+    }                                                                         \
+    salu_n++;                                                                 \
+    salu_converted++;                                                         \
+  }                                                                           \
+  else                                                                        \
+  {                                                                           \
+    arm_data_proc(name, imm, no_flags);                                       \
+  }                                                                           \
+}
+#else
+#define arm_static_alu_pc(is_add, name) arm_data_proc(name, imm, no_flags)
+#endif
+
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
@@ -5579,7 +5665,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
   u8 *smc_gate_branch_source = NULL;
   u32 smc_gate_branch_target = 0;
 #endif
+#ifdef STATIC_ALU_PC
+  block_exit_type salu_exits[SALU_MAX_EXITS];
+  u32 salu_n = 0;
+  block_exit_type external_block_exits[MAX_EXITS + SALU_MAX_EXITS];
+#else
   block_exit_type external_block_exits[MAX_EXITS];
+#endif
   generate_block_extra_vars_arm();
   arm_fix_pc();
 
@@ -5806,6 +5898,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
      entry_gate_branch_source;
     external_block_exit_position++;
   }
+#endif
+#ifdef STATIC_ALU_PC
+  /* Always external (see STATIC_ALU_PC): linked to the block that starts at
+   * the target, like the dispatcher would have found. */
+  for(i = 0; i < (s32)salu_n; i++)
+    external_block_exits[external_block_exit_position++] = salu_exits[i];
 #endif
 #ifdef SMC_PARTIAL_SAFE
   /* ROM survives a RAM-cache flush, so a direct ROM->RAM jump could later

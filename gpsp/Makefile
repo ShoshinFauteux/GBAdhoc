@@ -694,6 +694,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_THUMB_NO_UNSWITCH),1)
 	CFLAGS += -DXLAT_THUMB_NO_UNSWITCH=1
 	endif
+	# STATIC_ALU_PC=1: OFF by default (cpu-levers).  `add/sub pc, pc, #imm`
+	# (S clear) becomes a direct branch linked to the target's block instead of
+	# an indirect dispatch.  Exact: guest state bit-identical (needs
+	# DISPATCH_CYCLE_CHECK=1).  MIPS dynarec only.
+	ifeq ($(STATIC_ALU_PC),1)
+	CFLAGS += -DSTATIC_ALU_PC=1
+	endif
 	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).
