@@ -130,6 +130,11 @@ typedef enum
    * REG_USERDEF + 0..14, MIPS and x86 nothing above REG_SAVE6. */
   PAL_UPDATED       = 63,
 
+  /* SPIN_SKIP: a spin loop's descriptor, set by its back-edge just before
+   * it calls mips_update_gba, consumed (zeroed) on update_gba's entry.
+   * Never live across anything else; reg[40] is DRPROF_HW's phase word. */
+  REG_SPIN_DESC     = 41,
+
   REG_MAX           = 64
 } ext_reg_numbers;
 

@@ -231,6 +231,80 @@ u32 arm_to_mips_reg[] =
   *((u32 *)(dest)) = (mips_opcode_j << 26) |                                  \
    ((mips_absolute_offset(offset)) & 0x3FFFFFF)                               \
 
+#ifdef SPIN_SKIP
+/* SPIN_SKIP (cpu_threaded.c, spin_analyze): the taken back-edge of a spin
+ * loop.  Unless its descriptor is vetoed, it names the descriptor in
+ * reg[REG_SPIN_DESC] and calls the scheduler with the real cycle count;
+ * update_gba either ends the slice (the loop polls only event-driven
+ * locations) or vetoes the loop and returns at once.  A vetoed loop pays a
+ * lui/lw/bne per iteration and is otherwise the ordinary branch.
+ *
+ *     addiu a0, pc, new_pc
+ *     lui   at, hi(desc)
+ *     lw    at, lo(desc)(at)        veto word
+ *     bne   at, zero, NORMAL
+ *     lui   at, hi(desc)            (delay)
+ *     addiu at, at, lo(desc)
+ *     sw    at, REG_SPIN_DESC*4(reg_base)
+ *     jal   mips_update_gba
+ *     nop
+ *     b     JUMP
+ *     nop
+ *   NORMAL:
+ *     bltzal reg_cycles, update_trampoline
+ *     nop
+ *   JUMP:
+ *     j     new_pc                  (patched like every block exit)
+ *     nop
+ *   desc: veto, nloads, loads...    (data; never executed) */
+#define spin_emit_hilo(at_ptr, addr, lo_only)                                 \
+  *(u16 *)(at_ptr) = (lo_only) ? ((addr) & 0xFFFF) : (((addr) + 0x8000) >> 16)
+
+#define generate_branch_spin(writeback_location, new_pc)                      \
+{                                                                             \
+  u8 *sp_hi1, *sp_lo1, *sp_hi2, *sp_lo2, *sp_normal, *sp_jump;                \
+  u32 sp_k, sp_desc;                                                          \
+  generate_load_pc(reg_a0, new_pc);                                           \
+  sp_hi1 = translation_ptr;                                                   \
+  mips_emit_lui(reg_temp, 0);                                                 \
+  sp_lo1 = translation_ptr;                                                   \
+  mips_emit_lw(reg_temp, reg_temp, 0);                                        \
+  mips_emit_b_filler(bne, reg_temp, reg_zero, sp_normal);                     \
+  sp_hi2 = translation_ptr;                                                   \
+  mips_emit_lui(reg_temp, 0);                                                 \
+  sp_lo2 = translation_ptr;                                                   \
+  mips_emit_addiu(reg_temp, reg_temp, 0);                                     \
+  mips_emit_sw(reg_temp, reg_base, REG_SPIN_DESC * 4);                        \
+  mips_emit_jal(mips_absolute_offset(mips_update_gba));                       \
+  mips_emit_nop();                                                            \
+  mips_emit_b_filler(beq, reg_zero, reg_zero, sp_jump);                       \
+  mips_emit_nop();                                                            \
+  generate_branch_patch_conditional(sp_normal, translation_ptr);              \
+  mips_emit_bltzal(reg_cycles,                                                \
+   mips_relative_offset(translation_ptr, update_trampoline));                 \
+  mips_emit_nop();                                                            \
+  generate_branch_patch_conditional(sp_jump, translation_ptr);                \
+  mips_emit_j_filler(writeback_location);                                     \
+  mips_emit_nop();                                                            \
+  sp_desc = (u32)translation_ptr;                                             \
+  for (sp_k = 0; sp_k < spin_n; sp_k++) {                                     \
+    *(u32 *)translation_ptr = spin_words[sp_k];                               \
+    translation_ptr += 4;                                                     \
+  }                                                                           \
+  spin_emit_hilo(sp_hi1, sp_desc, 0);                                         \
+  spin_emit_hilo(sp_lo1, sp_desc, 1);                                         \
+  spin_emit_hilo(sp_hi2, sp_desc, 0);                                         \
+  spin_emit_hilo(sp_lo2, sp_desc, 1);                                         \
+}
+
+#define spin_try(new_pc)                                                      \
+  ((spin_n = spin_analyze((new_pc), pc, spin_thumb, pc_address_block,         \
+                          block_start_pc, spin_words)) != 0)
+#else
+#define spin_try(new_pc) 0
+#define generate_branch_spin(writeback_location, new_pc)
+#endif
+
 #define generate_branch_no_cycle_update(writeback_location, new_pc)           \
   if(pc == idle_loop_target_pc)                                               \
   {                                                                           \
@@ -239,6 +313,10 @@ u32 arm_to_mips_reg[] =
     generate_function_call_swap_delay(mips_update_gba);                       \
     mips_emit_j_filler(writeback_location);                                   \
     mips_emit_nop();                                                          \
+  }                                                                           \
+  else if (spin_try(new_pc))                                                  \
+  {                                                                           \
+    generate_branch_spin(writeback_location, new_pc);                         \
   }                                                                           \
   else                                                                        \
   {                                                                           \
@@ -585,8 +663,19 @@ u32 arm_to_mips_reg[] =
   u8 *update_trampoline;                                                      \
   u8 *spaccess_trampoline;                                                    \
 
+#ifdef SPIN_SKIP
+#define generate_block_extra_vars_spin(thumb)                                 \
+  const u32 spin_thumb = (thumb);                                             \
+  u32 spin_words[SPIN_DESC_WORDS];                                            \
+  u32 spin_n = 0;                                                             \
+
+#else
+#define generate_block_extra_vars_spin(thumb)
+#endif
+
 #define generate_block_extra_vars_arm()                                       \
   generate_block_extra_vars();                                                \
+  generate_block_extra_vars_spin(0)                                           \
 
 #define generate_load_offset_sh(rm)                                           \
   {                                                                           \
@@ -641,6 +730,7 @@ u32 arm_to_mips_reg[] =
 
 #define generate_block_extra_vars_thumb()                                     \
   generate_block_extra_vars()                                                 \
+  generate_block_extra_vars_spin(1)                                           \
 
 // It should be okay to still generate result flags, spsr will overwrite them.
 // This is pretty infrequent (returning from interrupt handlers, et al) so

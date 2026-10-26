@@ -5088,6 +5088,464 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 }
 #endif
 
+#ifdef SPIN_SKIP
+/* SPIN_SKIP (cpu-levers lever 4, 2026-10-26): fast-forward a provably
+ * side-effect-free polling loop to the next scheduled event.
+ *
+ * WHAT IS A SPIN LOOP.  A backward branch B (B, or Thumb B/Bcc; never BL/SWI)
+ * whose target T lies in the same block, with every instruction in [T, B)
+ * drawn from: loads (no writeback), data processing, flag-setting compares,
+ * and nothing else -- no store, no call, no SWI, no mode/PSR access, no write
+ * to pc.  Two register rules make one iteration a pure function of memory:
+ *   1. every register (and every one of N, Z, C, V) READ in the loop is
+ *      either never written in it, or written earlier in the same iteration;
+ *      a conditional ARM instruction or a partial flag write counts as a read
+ *      of what it may leave unchanged;
+ *   2. every register a load ADDRESS uses is never written in the loop.
+ * Then, as long as no memory the loop reads changes, every iteration leaves
+ * exactly the state the previous one left, and the loop never exits.
+ *
+ * WHY THE NEXT EVENT.  Between two scheduled events (update_gba's slice: the
+ * next video event, a non-lazy timer, serial, DMA sleep) nothing but the CPU
+ * writes memory -- IRQs are raised, and DMAs started, only inside update_gba
+ * -- and the loop does not write.  So the remaining iterations of the slice
+ * are exact repeats and the loop may end the slice now (reg_cycles = 0, the
+ * same thing a per-game idle_loop_target_pc does).  Timing moves by less than
+ * one iteration: the loop reaches the event exactly instead of overshooting.
+ *
+ * THE READ SET (runtime, spin_check).  The rule above is about memory only an
+ * event can change.  Some locations change without one: lazy timer counters,
+ * KEYINPUT, serial, the cartridge GPIO/EEPROM/flash, BIOS open bus.  So the
+ * loop's load addresses (rule 2 makes them fixed for the loop) are checked
+ * when it first spins: RAM, palette, VRAM, OAM and ROM pass; IO passes only
+ * for DISPSTAT, VCOUNT, IE, IF, IME and the DMA control words, which change
+ * only at events or on CPU stores.  A loop that polls anything else -- a timer
+ * counter, say -- is vetoed for the life of its translation and runs as
+ * before, iteration by iteration, to the cycle.
+ *
+ * A loop with no loads (`b .`) is the degenerate case: only an IRQ ends it.
+ * Not keyed on any address or ROM.  The descriptor (veto word + loads) is
+ * emitted into the translation cache right after the branch, so it lives and
+ * dies with the block. */
+
+#define SPIN_MAX_BODY   16
+#define SPIN_MAX_LOADS  4
+#define SPIN_FN 16
+#define SPIN_FZ 17
+#define SPIN_FC 18
+#define SPIN_FV 19
+#define SPIN_FLAGS_NZCV (0xFu << 16)
+#define SPIN_FLAGS_NZ   ((1u << SPIN_FN) | (1u << SPIN_FZ))
+
+/* descriptor: [0] veto (0 = may skip), [1] number of loads,
+ * then per load: w0 = kind | size_log2 << 2 | rb << 4 | ro << 8 |
+ *                     shift << 12 | negate << 17,  w1 = imm (or address)
+ * kind 0: address w1; 1: reg[rb] + w1; 2: reg[rb] +/- (reg[ro] << shift) */
+#define SPIN_DESC_WORDS (2 + 2 * SPIN_MAX_LOADS)
+
+u32 spin_skips = 0, spin_vetoes = 0, spin_loops = 0;
+
+typedef struct {
+  u32 all_w;      /* everything written anywhere in the body (pass 1) */
+  u32 w;          /* written so far in this iteration (pass 2) */
+  u32 bad;
+  u32 nloads;
+  u32 *desc;
+  u32 pass;
+} spin_ana;
+
+static inline void spin_read(spin_ana *a, u32 mask)
+{
+#ifndef SPIN_SKIP_MUTANT_REGS
+  if (a->pass == 2 && (mask & a->all_w & ~a->w))
+    a->bad = 1;
+#else
+  (void)a; (void)mask;   /* MUTANT (twin tests only): no register rule */
+#endif
+}
+
+static inline void spin_write(spin_ana *a, u32 mask)
+{
+  if (a->pass == 1) a->all_w |= mask;
+  else a->w |= mask;
+}
+
+static inline u32 spin_cond_flags(u32 cond)
+{
+  switch (cond) {
+    case 0x0: case 0x1: return 1u << SPIN_FZ;
+    case 0x2: case 0x3: return 1u << SPIN_FC;
+    case 0x4: case 0x5: return 1u << SPIN_FN;
+    case 0x6: case 0x7: return 1u << SPIN_FV;
+    case 0x8: case 0x9: return (1u << SPIN_FC) | (1u << SPIN_FZ);
+    case 0xA: case 0xB: return (1u << SPIN_FN) | (1u << SPIN_FV);
+    case 0xC: case 0xD: return SPIN_FLAGS_NZCV & ~(1u << SPIN_FC);
+    default: return 0;
+  }
+}
+
+/* A load: its address registers must not be written anywhere in the loop. */
+static void spin_load(spin_ana *a, u32 kind, u32 size_log2, u32 rb, u32 ro,
+                      u32 shift, u32 neg, u32 imm)
+{
+  u32 used = 0;
+  if (kind >= 1) used |= 1u << rb;
+  if (kind == 2) used |= 1u << ro;
+  spin_read(a, used);
+  if (a->pass == 1)
+    return;
+  if (used & a->all_w)
+    a->bad = 1;
+  if (a->nloads == SPIN_MAX_LOADS) {
+    a->bad = 1;
+    return;
+  }
+  a->desc[2 + 2 * a->nloads] = kind | (size_log2 << 2) | (rb << 4) |
+                               (ro << 8) | (shift << 12) | (neg << 17);
+  a->desc[3 + 2 * a->nloads] = imm;
+  a->nloads++;
+}
+
+#define SPIN_R(m)  spin_read(a, (m))
+#define SPIN_W(m)  spin_write(a, (m))
+#define SPIN_RW(m) do { spin_read(a, (m)); spin_write(a, (m)); } while (0)
+
+static void spin_thumb_op(spin_ana *a, u32 op, u32 pc)
+{
+  u32 rd = op & 7, rs = (op >> 3) & 7;
+  switch (op >> 11) {
+    case 0x00: case 0x01: case 0x02:            /* lsl/lsr/asr #imm */
+      SPIN_R(1u << rs);
+      if ((op >> 11) == 0 && ((op >> 6) & 31) == 0)
+        SPIN_RW(1u << SPIN_FC);                 /* lsl #0 keeps C */
+      else
+        SPIN_W(1u << SPIN_FC);
+      SPIN_W((1u << rd) | SPIN_FLAGS_NZ);
+      return;
+    case 0x03:                                  /* add/sub reg/imm3 */
+      SPIN_R(1u << rs);
+      if (!(op & 0x0400))
+        SPIN_R(1u << ((op >> 6) & 7));
+      SPIN_W((1u << rd) | SPIN_FLAGS_NZCV);
+      return;
+    case 0x04:                                  /* mov #imm8 */
+      SPIN_W((1u << ((op >> 8) & 7)) | SPIN_FLAGS_NZ);
+      return;
+    case 0x05:                                  /* cmp #imm8 */
+      SPIN_R(1u << ((op >> 8) & 7));
+      SPIN_W(SPIN_FLAGS_NZCV);
+      return;
+    case 0x06: case 0x07:                       /* add/sub #imm8 */
+      SPIN_R(1u << ((op >> 8) & 7));
+      SPIN_W((1u << ((op >> 8) & 7)) | SPIN_FLAGS_NZCV);
+      return;
+    case 0x08:
+      if (!(op & 0x0400)) {                     /* ALU */
+        u32 alu = (op >> 6) & 15;
+        switch (alu) {
+          case 0x0: case 0x1: case 0xC: case 0xE:   /* and eor orr bic */
+            SPIN_R((1u << rd) | (1u << rs));
+            SPIN_W((1u << rd) | SPIN_FLAGS_NZ);
+            return;
+          case 0x2: case 0x3: case 0x4: case 0x7:   /* shifts by register */
+          case 0xD:                                 /* mul (C: leave as read) */
+            SPIN_R((1u << rd) | (1u << rs));
+            SPIN_RW(1u << SPIN_FC);
+            SPIN_W((1u << rd) | SPIN_FLAGS_NZ);
+            return;
+          case 0x5: case 0x6:                       /* adc sbc */
+            SPIN_R((1u << rd) | (1u << rs) | (1u << SPIN_FC));
+            SPIN_W((1u << rd) | SPIN_FLAGS_NZCV);
+            return;
+          case 0x8:                                 /* tst */
+            SPIN_R((1u << rd) | (1u << rs));
+            SPIN_W(SPIN_FLAGS_NZ);
+            return;
+          case 0x9:                                 /* neg */
+            SPIN_R(1u << rs);
+            SPIN_W((1u << rd) | SPIN_FLAGS_NZCV);
+            return;
+          case 0xA: case 0xB:                       /* cmp cmn */
+            SPIN_R((1u << rd) | (1u << rs));
+            SPIN_W(SPIN_FLAGS_NZCV);
+            return;
+          case 0xF:                                 /* mvn */
+            SPIN_R(1u << rs);
+            SPIN_W((1u << rd) | SPIN_FLAGS_NZ);
+            return;
+        }
+      } else {                                  /* hi-register ops */
+        u32 hd = (op & 7) | ((op >> 4) & 8), hs = (op >> 3) & 15;
+        switch ((op >> 8) & 3) {
+          case 0:                               /* add */
+            if (hd == 15) break;
+            SPIN_R((1u << hd) | (1u << hs));
+            SPIN_W(1u << hd);
+            return;
+          case 1:                               /* cmp */
+            SPIN_R((1u << hd) | (1u << hs));
+            SPIN_W(SPIN_FLAGS_NZCV);
+            return;
+          case 2:                               /* mov */
+            if (hd == 15) break;
+            SPIN_R(1u << hs);
+            SPIN_W(1u << hd);
+            return;
+        }
+      }
+      break;
+    case 0x09:                                  /* ldr rd, [pc, #imm] */
+      spin_load(a, 0, 2, 0, 0, 0, 0, ((pc + 4) & ~2u) + (op & 0xFF) * 4);
+      SPIN_W(1u << ((op >> 8) & 7));
+      return;
+    case 0x0A: case 0x0B: {                     /* register offset */
+      u32 sub = (op >> 9) & 7, ro = (op >> 6) & 7;
+      static const u8 szl[8] = { 0, 0, 0, 0, 2, 1, 0, 1 };
+      if (sub < 3) {                            /* str strh strb */
+#ifdef SPIN_SKIP_MUTANT_STORE
+        /* MUTANT (twin tests only): treat the store as harmless */
+        SPIN_R((1u << rd) | (1u << rs) | (1u << ro));
+        return;
+#endif
+        break;
+      }
+      spin_load(a, 2, szl[sub], rs, ro, 0, 0, 0);
+      SPIN_W(1u << rd);
+      return;
+    }
+#ifdef SPIN_SKIP_MUTANT_STORE
+    case 0x0C: case 0x0E: case 0x10:            /* MUTANT: str #imm */
+      SPIN_R((1u << rd) | (1u << rs));
+      return;
+    case 0x12:
+      SPIN_R((1u << ((op >> 8) & 7)) | (1u << 13));
+      return;
+#endif
+    case 0x0D: case 0x0F:                       /* ldr / ldrb #imm */
+      spin_load(a, 1, (op >> 11) == 0x0D ? 2 : 0, rs, 0, 0, 0,
+                ((op >> 6) & 31) << ((op >> 11) == 0x0D ? 2 : 0));
+      SPIN_W(1u << rd);
+      return;
+    case 0x11:                                  /* ldrh #imm */
+      spin_load(a, 1, 1, rs, 0, 0, 0, ((op >> 6) & 31) << 1);
+      SPIN_W(1u << rd);
+      return;
+    case 0x13:                                  /* ldr rd, [sp, #imm] */
+      spin_load(a, 1, 2, 13, 0, 0, 0, (op & 0xFF) * 4);
+      SPIN_W(1u << ((op >> 8) & 7));
+      return;
+    case 0x14:                                  /* add rd, pc, #imm */
+      SPIN_W(1u << ((op >> 8) & 7));
+      return;
+    case 0x15:                                  /* add rd, sp, #imm */
+      SPIN_R(1u << 13);
+      SPIN_W(1u << ((op >> 8) & 7));
+      return;
+  }
+  a->bad = 1;
+}
+
+static void spin_arm_op(spin_ana *a, u32 op, u32 pc)
+{
+  u32 cond = op >> 28;
+  u32 rn = (op >> 16) & 15, rd = (op >> 12) & 15, rm = op & 15;
+  u32 partial = 0;
+
+  if (cond == 0xF) { a->bad = 1; return; }
+  if (cond != 0xE) {
+    SPIN_R(spin_cond_flags(cond));
+    partial = 1;                    /* a skipped write leaves the old value */
+  }
+
+  if ((op & 0x0E000090) == 0x00000090 && (op & 0x60)) {
+    /* ldrh/ldrsb/ldrsh, pre-indexed without writeback */
+    u32 sh = (op >> 5) & 3;
+    if (!(op & (1u << 20)) || !(op & (1u << 24)) || (op & (1u << 21)) ||
+        rd == 15) { a->bad = 1; return; }
+    if (op & (1u << 22)) {
+      u32 imm = ((op >> 4) & 0xF0) | (op & 0xF);
+      if (!(op & (1u << 23))) imm = -imm;
+      if (rn == 15) spin_load(a, 0, sh == 2 ? 0 : 1, 0, 0, 0, 0, pc + 8 + imm);
+      else spin_load(a, 1, sh == 2 ? 0 : 1, rn, 0, 0, 0, imm);
+    } else {
+      if (rn == 15 || rm == 15) { a->bad = 1; return; }
+      spin_load(a, 2, sh == 2 ? 0 : 1, rn, rm, 0, !(op & (1u << 23)), 0);
+    }
+    if (partial) SPIN_R(1u << rd);
+    SPIN_W(1u << rd);
+    return;
+  }
+
+  if ((op & 0x0C000000) == 0x00000000 && (op & 0x0E000090) != 0x00000090 &&
+      (op & 0x0E000090) != 0x00000090) {
+    u32 opc = (op >> 21) & 15, s = (op >> 20) & 1;
+    u32 logical = (opc <= 1) || (opc >= 8 && opc <= 9) || opc >= 12;
+    u32 writes_rd = !(opc >= 8 && opc <= 11);
+    u32 reads_rn = !(opc == 13 || opc == 15);
+    u32 c_from_shifter = 0;          /* 1: written, 2: maybe unchanged */
+    if (!s && !writes_rd) { a->bad = 1; return; }      /* mrs/msr/bx/... */
+    if ((op & 0x0FFFFFF0) == 0x012FFF10) { a->bad = 1; return; }
+    if (writes_rd && rd == 15) { a->bad = 1; return; }
+    if (reads_rn) SPIN_R(1u << rn);
+    if (op & (1u << 25)) {
+      c_from_shifter = ((op >> 8) & 15) ? 1 : 2;
+    } else {
+      u32 type = (op >> 5) & 3;
+      SPIN_R(1u << rm);
+      if (op & 0x10) {
+        SPIN_R(1u << ((op >> 8) & 15));
+        c_from_shifter = 2;
+      } else if (((op >> 7) & 31) == 0) {
+        if (type == 0) c_from_shifter = 2;              /* lsl #0 */
+        else if (type == 3) {                           /* rrx */
+          SPIN_R(1u << SPIN_FC);
+          c_from_shifter = 1;
+        } else c_from_shifter = 1;
+      } else c_from_shifter = 1;
+    }
+    if (opc == 5 || opc == 6 || opc == 7)               /* adc sbc rsc */
+      SPIN_R(1u << SPIN_FC);
+    if (s) {
+      u32 fw = logical ? SPIN_FLAGS_NZ : SPIN_FLAGS_NZCV;
+      if (logical) {
+        if (c_from_shifter == 2) SPIN_RW(1u << SPIN_FC);
+        else fw |= 1u << SPIN_FC;
+      }
+      if (partial) SPIN_R(fw);
+      SPIN_W(fw);
+    }
+    if (writes_rd) {
+      if (partial) SPIN_R(1u << rd);
+      SPIN_W(1u << rd);
+    }
+    return;
+  }
+
+  if ((op & 0x0C000000) == 0x04000000) {
+    /* ldr/ldrb, pre-indexed without writeback */
+    u32 sz = (op & (1u << 22)) ? 0 : 2;
+    if (!(op & (1u << 20)) || !(op & (1u << 24)) || (op & (1u << 21)) ||
+        rd == 15) { a->bad = 1; return; }
+    if (!(op & (1u << 25))) {
+      u32 imm = op & 0xFFF;
+      if (!(op & (1u << 23))) imm = -imm;
+      if (rn == 15) spin_load(a, 0, sz, 0, 0, 0, 0, pc + 8 + imm);
+      else spin_load(a, 1, sz, rn, 0, 0, 0, imm);
+    } else {
+      if (op & 0x70) { a->bad = 1; return; }    /* lsl #n only */
+      if (rn == 15 || rm == 15 || (op & 0x10)) { a->bad = 1; return; }
+      spin_load(a, 2, sz, rn, rm, (op >> 7) & 31, !(op & (1u << 23)), 0);
+    }
+    if (partial) SPIN_R(1u << rd);
+    SPIN_W(1u << rd);
+    return;
+  }
+
+  a->bad = 1;
+}
+
+/* Returns the number of descriptor words (0: not a spin loop). */
+static u32 spin_analyze(u32 target, u32 branch_pc, u32 thumb,
+                        u8 *pc_address_block, u32 block_start_pc, u32 *desc)
+{
+  spin_ana an, *a = &an;
+  u32 width = thumb ? 2 : 4, p, bop, cond;
+
+  if (target < block_start_pc || target > branch_pc ||
+      (branch_pc - target) / width > SPIN_MAX_BODY)
+    return 0;
+  if ((target >> 15) != (branch_pc >> 15) ||
+      (block_start_pc >> 15) != (branch_pc >> 15))
+    return 0;
+
+  if (thumb) {
+    bop = readaddress16(pc_address_block, (branch_pc & 0x7FFF));
+    if ((bop >> 12) == 0xD) cond = (bop >> 8) & 15;
+    else if ((bop >> 11) == 0x1C) cond = 0xE;
+    else return 0;
+    if (cond == 0xF) return 0;                  /* swi */
+  } else {
+    bop = readaddress32(pc_address_block, (branch_pc & 0x7FFF));
+    if ((bop & 0x0F000000) != 0x0A000000) return 0;   /* b, not bl */
+    cond = bop >> 28;
+    if (cond == 0xF) return 0;
+  }
+
+  memset(a, 0, sizeof(*a));
+  a->desc = desc;
+  for (a->pass = 1; a->pass <= 2; a->pass++) {
+    a->w = 0;
+    for (p = target; p < branch_pc; p += width) {
+      if (thumb)
+        spin_thumb_op(a, readaddress16(pc_address_block, (p & 0x7FFF)), p);
+      else
+        spin_arm_op(a, readaddress32(pc_address_block, (p & 0x7FFF)), p);
+      if (a->bad)
+        return 0;
+    }
+    /* the back-edge itself reads its condition flags */
+    if (cond != 0xE)
+      spin_read(a, spin_cond_flags(cond));
+    if (a->bad)
+      return 0;
+  }
+  /* No loads at all (`b .`, `cmp r0, #0; bne .`): it can only be left by
+   * an interrupt, which only an event raises -- the same case, simpler. */
+  desc[0] = 0;
+  desc[1] = a->nloads;
+  spin_loops++;
+  return 2 + 2 * a->nloads;
+}
+
+/* May the location [addr, addr+size) change between two events? */
+static int spin_addr_ok(u32 addr, u32 size)
+{
+  u32 region = addr >> 24, off, last;
+  addr &= ~(size - 1);
+  switch (region) {
+    case 0x02: case 0x03: case 0x05: case 0x06: case 0x07:
+      return 1;
+    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C:
+      off = addr & 0x01FFFFFF;
+      return off + size <= 0xC4 || off >= 0xCA;   /* cartridge GPIO */
+    case 0x04:
+      off = addr & 0x00FFFFFF;
+      last = off + size - 1;
+      if (last >= 0x400) return 0;
+      /* DISPSTAT VCOUNT | IE IF | IME | DMA0-3 CNT_H */
+      if (off >= 0x004 && last <= 0x007) return 1;
+      if (off >= 0x200 && last <= 0x203) return 1;
+      if (off >= 0x208 && last <= 0x209) return 1;
+      if ((off & ~1u) == 0x0BA || (off & ~1u) == 0x0C6 ||
+          (off & ~1u) == 0x0D2 || (off & ~1u) == 0x0DE)
+        return last <= (off | 1);
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+/* update_gba: may this loop end the slice?  Registers are in reg[]. */
+int spin_check(const u32 *desc)
+{
+  u32 i, n = desc[1];
+  for (i = 0; i < n; i++) {
+    u32 w = desc[2 + 2 * i], imm = desc[3 + 2 * i], addr;
+    u32 kind = w & 3, size = 1u << ((w >> 2) & 3);
+    u32 rb = (w >> 4) & 15, ro = (w >> 8) & 15;
+    if (kind == 0) addr = imm;
+    else if (kind == 1) addr = reg[rb] + imm;
+    else {
+      u32 x = reg[ro] << ((w >> 12) & 31);
+      addr = (w & (1u << 17)) ? reg[rb] - x : reg[rb] + x;
+    }
+    if (!spin_addr_ok(addr, size))
+      return 0;
+  }
+  return 1;
+}
+#endif /* SPIN_SKIP */
+
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);

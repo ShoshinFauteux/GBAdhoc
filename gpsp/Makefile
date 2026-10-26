@@ -677,6 +677,15 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_SAME_SKIP),1)
 	CFLAGS += -DSMC_SAME_SKIP=1
 	endif
+	# SPIN_SKIP=1: OFF by default (cpu-levers).  A loop the translator proves
+	# side-effect free (loads + ALU only, every iteration a pure function of
+	# memory) ends the scheduler slice when it spins on locations only an
+	# event can change; anything else (timer counters, KEYINPUT, serial,
+	# cartridge IO) vetoes it at its first spin.  MIPS dynarec only.  Changes
+	# timing (by < 1 loop iteration per event): judged by the replayed lockstep.
+	ifeq ($(SPIN_SKIP),1)
+	CFLAGS += -DSPIN_SKIP=1
+	endif
 	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).

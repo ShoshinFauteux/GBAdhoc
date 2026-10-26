@@ -166,6 +166,10 @@
 #endif
 #endif
 
+#if defined(SPIN_SKIP) && !defined(MIPS_ARCH)
+#error "SPIN_SKIP is implemented in the MIPS dynarec only (mips/mips_emit.h generate_branch_spin)."
+#endif
+
 #if defined(SMC_SAME_SKIP) && \
     !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
 #error "SMC_SAME_SKIP refines SMC_PARTIAL_SINGLE's retirement: it needs SMC_PARTIAL_SINGLE and SMC_PARTIAL_STABLE_THUNK."
