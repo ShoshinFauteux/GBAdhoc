@@ -372,6 +372,14 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
   fi
 fi
 
+# XLAT_THUMB_NO_UNSWITCH: fail if translate_block_thumb's translation_ptr
+# spill comes back (it is invisible in the emitted code; tools/xlat_spill_guard.sh).
+case " $CORE_FLAGS " in
+  *" XLAT_THUMB_NO_UNSWITCH=1 "*)
+    bash "$ROOT/tools/xlat_spill_guard.sh" "$ROOT" "$DOCKER_IMAGE" ||
+      die "translate_block_thumb spills translation_ptr again (tools/xlat_spill_guard.sh)" ;;
+esac
+
 warning_gate "$ROOT/.build-core.log"  "core"
 warning_gate "$ROOT/.build-eboot.log" "eboot"
 

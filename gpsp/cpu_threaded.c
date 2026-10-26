@@ -6009,6 +6009,25 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 #endif
   while(pc != block_end_pc)
   {
+#ifdef XLAT_THUMB_NO_UNSWITCH
+    /* XLAT_THUMB_NO_UNSWITCH (cpu-levers, 2026-10-26): host compiler only.
+     * It changes no emitted code and no guest behaviour.
+     *
+     * psp-gcc 15.2 -O3 unswitches this loop on `ram_region`
+     * (-fopt-info-loop: "unswitching loop ... ram_region != 0"; the tests are
+     * the cache-overflow flush, pc_limits_commit and the Thumb literal-pool
+     * check).  That compiles the whole Thumb decoder twice, once for RAM and
+     * once for ROM: 37.7k MIPS instructions.  In the doubled function the
+     * allocator keeps translation_ptr in a stack slot, giving 1545 stack
+     * stores and 2973 stack loads, about one pair per emitted word.
+     *
+     * The empty asm tells the compiler ram_region may change on each
+     * iteration, so there is nothing to unswitch on.  It emits no
+     * instruction (a "+r" operand already in a register), and the value
+     * never really changes.  tools/xlat_spill_guard.sh fails the build if
+     * the spill comes back. */
+    __asm__ ("" : "+r" (ram_region));
+#endif
     block_data[block_data_position].block_offset = translation_ptr;
     thumb_base_cycles();
 
