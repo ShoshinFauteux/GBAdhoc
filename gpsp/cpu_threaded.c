@@ -6120,7 +6120,7 @@ static u32 spin_analyze(u32 target, u32 branch_pc, u32 thumb,
                         u8 *pc_address_block, u32 block_start_pc, u32 *desc)
 {
   spin_ana an, *a = &an;
-  u32 width = thumb ? 2 : 4, p, cond, loop, c2;
+  u32 width = thumb ? 2 : 4, p, cond = 0xE, loop, c2;
 
   if ((block_start_pc >> 15) != (branch_pc >> 15) ||
       spin_branch_at(pc_address_block, branch_pc, thumb, &cond) != target)
