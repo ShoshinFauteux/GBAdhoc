@@ -550,7 +550,16 @@ void (*gpsp_heap_census)(const char *where);
 /* 128-aligned (was 64) so the MIPS stub's `lui` for the map also reaches
  * vram_clean[VRAM_DIRTY_ANY]: a 128-byte block never straddles the 0x8000
  * boundary where the stub's sign-extended low half would change the lui. */
-u8  vram_clean[VRAM_DIRTY_MAP_BYTES] __attribute__((aligned(128)));
+#ifdef VRAM_EXEC
+/* VRAM_EXEC: vram_xclean is the second half of this array (gba_memory.h), so
+ * every C/DMA mark reaches both maps from one base and the store stub's lui
+ * is always shared; 256-aligned for the same lui argument as below.  The
+ * memsets that dirty every page (sizeof(vram_clean)) now dirty both maps,
+ * which also tells VRAM_EXEC that bulk-replaced VRAM may hold new code. */
+u8  vram_clean[VRAM_CLEAN_ARRAY_BYTES] __attribute__((aligned(256)));
+#else
+u8  vram_clean[VRAM_CLEAN_ARRAY_BYTES] __attribute__((aligned(128)));
+#endif
 #ifdef REWIND
 u32 gba_rewind_skip_arrays;
 u32 gba_rewind_backup_ro;
@@ -1480,7 +1489,25 @@ void function_cc write_backup(u32 address, u32 value)
   vram_clean[(addr) >> VRAM_DIRTY_SHIFT] = 0;                                 \
   vram_clean[VRAM_DIRTY_ANY] = 0;                                             \
   RW_MARK_VRAM(addr);                                                         \
+  VRAM_X_MARK(addr);                                                          \
   vram_dirty_marks++                                                          \
+
+#ifdef VRAM_EXEC
+/* DMA marks every word it writes into the ME's map but not into vram_xclean:
+ * that map only has to be right at the next VRAM-code lookup, which cannot
+ * happen inside a DMA, so a DMA into VRAM marks the pages it will write
+ * once, before its loop (dma_vram_dest) -- and only once the game has armed
+ * VRAM_EXEC by jumping into VRAM.  Dormant, a VRAM DMA costs what it did
+ * in 4.1.1 (it was one more sb per word). */
+#define vram_mark_dma(addr)                                                   \
+  vram_clean[(addr) >> VRAM_DIRTY_SHIFT] = 0;                                 \
+  vram_clean[VRAM_DIRTY_ANY] = 0;                                             \
+  RW_MARK_VRAM(addr);                                                         \
+  vram_dirty_marks++                                                          \
+
+#else
+#define vram_mark_dma(addr) vram_mark(addr)
+#endif
 
 #define write_vram8()                                                         \
   vram_mark(address);                                                         \
@@ -2252,7 +2279,20 @@ const dma_region_type dma_region_map[17] =
 #define dma_vars_iwram(type)
 #define dma_vars_ewram(type)
 #define dma_vars_io(type)
+#ifdef VRAM_EXEC
+/* A DMA INTO VRAM marks vram_xclean once, before its loop, for every page it
+ * will write -- and only once the game has armed VRAM_EXEC (vram_mark_dma).
+ * Nothing reads that map during a DMA.  Other destinations get no code. */
+static void vram_x_mark_dma(u32 dest_ptr, int stride_bytes, u32 length);
+#define dma_vars_vram(type) dma_vram_##type()
+#define dma_vram_src()
+#define dma_vram_dest()                                                       \
+  if (vram_exec_active)                                                       \
+    vram_x_mark_dma(dest_ptr, dest_strd, length)                              \
+
+#else
 #define dma_vars_vram(type)
+#endif
 #define dma_vars_palette_ram(type)
 #define dma_vars_bus(type)
 #define dma_vars_ext(type)
@@ -2336,7 +2376,7 @@ const dma_region_type dma_region_map[17] =
 #define dma_write_vram(type, tfsize) {                                        \
   u32 wraddr = type##_ptr & 0x1FFFF;                                          \
   if (wraddr >= 0x18000) wraddr -= 0x8000;                                    \
-  vram_mark(wraddr);                                                          \
+  vram_mark_dma(wraddr);                                                      \
   address##tfsize(vram, wraddr) = eswap##tfsize(read_value);                  \
 }
 
@@ -2611,6 +2651,35 @@ dma_tf_loop_builder(16);
 dma_tf_loop_builder(32);
 
 static const int dma_stride[4] = {1, -1, 0, 1};
+
+#ifdef VRAM_EXEC
+/* A DMA into VRAM while VRAM_EXEC is armed: clear vram_xclean for every
+ * 1 KiB page the transfer writes (see vram_mark_dma).  [lo, hi] is the span of
+ * GBA addresses written (dma_region_span keeps one transfer inside one region);
+ * a 1 KiB-aligned chunk never straddles the 32/128 KiB mirror boundaries, so
+ * each chunk is exactly one page. */
+static void __attribute__((noinline))
+ vram_x_mark_dma(u32 dest_ptr, int stride_bytes, u32 length)
+{
+  u32 lo = dest_ptr, hi = dest_ptr, a;
+  if (!length)
+    return;
+  if (stride_bytes > 0)
+    hi = dest_ptr + (length - 1) * (u32)stride_bytes;
+  else if (stride_bytes < 0)
+    lo = dest_ptr - (length - 1) * (u32)(-stride_bytes);
+  if (hi - lo >= 0x20000 || (lo >> 24) != (hi >> 24)) {
+    memset(vram_xclean, 0, VRAM_DIRTY_PAGES);   /* every page */
+    return;
+  }
+  for (a = lo & ~0x3FFu; a <= hi; a += 0x400) {
+    u32 off = a & 0x1FFFF;
+    if (off >= 0x18000)
+      off -= 0x8000;
+    VRAM_X_MARK(off);
+  }
+}
+#endif
 
 static cpu_alert_type dma_transfer_copy(
   dma_transfer_type *dmach, u32 src_ptr, u32 dest_ptr, u32 length)

@@ -217,6 +217,38 @@ if os.environ.get("DRCORPUS_SMC") == "1":
     }
 
 
+# ---- DRCORPUS_SLOW=1: the slow-titles set (claude/slow-titles) ------------
+# Reference = the cpu-levers candidate's twin flags (lab-combo3 + c3lat4 +
+# cpu-levers DISPATCH_PRECISE/SMC_SAME_SKIP/SMC_SAME_ADAPT).  VRAM_EXEC is
+# dormant until a game jumps into VRAM, SMC_RETIRE_LOCAL only shortens the
+# retire walks: both must match base on every frame of every ROM.
+if os.environ.get("DRCORPUS_SLOW") == "1":
+    C3 = ("-DSMC_GATES -DSMC_GATES_SIMPLE -DSMC_GATES_RANKED=1 -DSMC_GATE_BITMAP=1"
+          " -DSMC_PARTIAL_SAFE -DSMC_PARTIAL_STABLE_THUNK -DSMC_PARTIAL_DIRECT_LINKS"
+          " -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 -DSMC_GATE_CHARGE=1 -DDISPATCH_CYCLE_CHECK=1"
+          " -DDMA_SMC_FLUSH=1 -DDISPATCH_CACHE=1 -DSMC_RETIRE_WINDOW=1 -DSERIAL_IDLE_FAST=1"
+          " -DJIT_CODE_DISCIPLINE=1 -DENTRY_GATES=1 -DSCHED_FAST=1 -DIRQ_IO_FAST=1 -DREWIND"
+          " -DSMC_PARTIAL_SINGLE -DSMC_SINGLE_THUMB -DSMC_SINGLE_HALF -DSMC_SINGLE_ANYPC"
+          " -DSMC_SINGLE_EWRAM -DSMC_SINGLE_UNTAG -DSMC_SINGLE_HOT=64 -DXLAT_FAST=1"
+          " -DJIT_COST=1 -DTIMER_RELOAD_FIX -DDISPATCH_PRECISE=1 -DSMC_SAME_SKIP=1"
+          " -DSMC_SAME_ADAPT=1")
+    VX = " -DVRAM_EXEC=1"
+    RL = " -DSMC_RETIRE_LOCAL=1"
+    VARIANTS = {
+        "base":  (C3, "ref", "cpu-levers candidate flags"),
+        "vx":    (C3 + VX, "switch", "VRAM_EXEC (ported from claude/self-activate)"),
+        "rl":    (C3 + RL, "switch", "SMC_RETIRE_LOCAL alone"),
+        "rlchk": (C3 + RL + " -DSMC_RETIRE_LOCAL_CHECK=1", "assert",
+                  "SMC_RETIRE_LOCAL with its invariant asserted (aborts on violation)"),
+        "slow":  (C3 + VX + RL, "switch", "the slow-titles candidate: VRAM_EXEC + SMC_RETIRE_LOCAL"),
+    }
+    ORDER = list(VARIANTS)
+    MUTANTS = {
+        "m_rl_last": (C3 + RL + " -DSMC_RETIRE_LOCAL_CHECK=1 -DSMC_RETIRE_LOCAL_MUTANT=1", "", "rlchk",
+                      "smc_back_note forgets the last chunk of every block"),
+    }
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 

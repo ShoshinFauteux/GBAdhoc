@@ -2472,6 +2472,21 @@ static bool rw_map_emit;
   }
 #endif
 
+#ifdef VRAM_EXEC
+/* VRAM_EXEC self-activation (cpu_threaded.c vram_exec_activate).  The
+ * region-6 store stubs are emitted DORMANT: their jr delay slot holds
+ * upstream's nop, so a game that never runs code from VRAM pays nothing per
+ * VRAM store.  These are the delay slots and the one word that arms them
+ * (`sb $zero, lo(vram_xclean)(a0)`, the same in every stub); the first guest
+ * jump into VRAM writes it into each slot.  init_emitter rebuilds the stubs
+ * dormant again (and forgets translated VRAM code, see there). */
+#define VRAM_X_SLOTS_MAX 4
+static u32 *vram_x_slots[VRAM_X_SLOTS_MAX];
+static u32 vram_x_slot_n;
+static u32 vram_x_slot_word;
+u8 vram_exec_active;   /* extern in gba_memory.h */
+#endif
+
 // Generates the stub to store memory for a given region and size
 // Handles "special" cases like weirdly mapped memory
 static void emit_pmemst_stub(
@@ -2481,6 +2496,9 @@ static void emit_pmemst_stub(
   u8 *translation_ptr = *tr_ptr;
   unsigned region = meminfo->region;
   u32 base_addr = meminfo->baseptr;
+#ifdef VRAM_EXEC
+  int vx_delay_slot = 0;   /* VRAM_EXEC mark rides in the jr delay slot */
+#endif
 
   // Palette, VRAM and OAM cannot be really byte accessed (use a 16 bit store)
   bool doubleaccess = (size == 0 && meminfo->bus16);
@@ -2575,6 +2593,27 @@ static void emit_pmemst_stub(
 #endif
     mips_emit_addu(reg_a0, reg_a0, reg_temp);
     mips_emit_sb(reg_zero, reg_a0, dbase);               /* clean[page] = 0 */
+#ifdef VRAM_EXEC
+    /* ...and the dynarec's own written-map for translated VRAM code
+     * (cpu_threaded.c VRAM_EXEC).  reg_temp still holds the page index;
+     * only in VRAM_EXEC builds.  reg_a0 = hi(dbase) + page: when the two maps
+     * share that lui (they sit side by side in gba_memory.c, so in practice
+     * always), one sb reaches xclean[page], and it goes into the jr ra delay
+     * slot at the end of the stub (reg_a0 is untouched by the rewind mark and
+     * the store), where upstream had a nop -- and it is emitted AS that nop
+     * until the game first jumps into VRAM (vram_x_slots, self-activate).
+     * Otherwise three always-armed instructions here (compat-cost). */
+    {
+      u32 xbase = (u32)vram_xclean;
+      if (((xbase + 0x8000) >> 16) == ((dbase + 0x8000) >> 16)) {
+        vx_delay_slot = 1;
+      } else {
+        mips_emit_lui(reg_a0, ((xbase + 0x8000) >> 16));
+        mips_emit_addu(reg_a0, reg_a0, reg_temp);
+        mips_emit_sb(reg_zero, reg_a0, xbase);
+      }
+    }
+#endif
 #ifdef REWIND
     /* ...and the rewind's own map: reg_temp still holds the page index.
      * Two more instructions per VRAM store. */
@@ -2746,7 +2785,23 @@ static void emit_pmemst_stub(
   }
   else {
     mips_emit_jr(mips_reg_ra);
-    mips_emit_nop();
+#ifdef VRAM_EXEC
+    if (vx_delay_slot && vram_x_slot_n < VRAM_X_SLOTS_MAX) {
+      /* xclean[page] = 0, emitted dormant: assemble the sb to learn its
+       * encoding, then put the nop back over it (see vram_x_slots). */
+      u8 *slot = translation_ptr;
+      mips_emit_sb(reg_zero, reg_a0, (u32)vram_xclean);
+      vram_x_slot_word = *(u32 *)slot;
+      translation_ptr = slot;
+      mips_emit_nop();
+      vram_x_slots[vram_x_slot_n++] = (u32 *)slot;
+    } else if (vx_delay_slot) {
+      mips_emit_sb(reg_zero, reg_a0, (u32)vram_xclean); /* always armed */
+    } else
+#endif
+    {
+      mips_emit_nop();
+    }
   }
 
   *tr_ptr = translation_ptr;
@@ -3195,6 +3250,11 @@ void init_emitter(bool must_swap) {
 
   // Generates the trampoline and helper stubs that we need
   u8 *translation_ptr = (u8*)&rom_translation_cache[0];
+#ifdef VRAM_EXEC
+  /* the region-6 store stubs below are rebuilt dormant */
+  vram_x_slot_n = 0;
+  vram_exec_active = 0;
+#endif
 #ifdef REWIND
   rw_map_emit = gba_rewind_marks_wanted && rw_map_off_ok();
   gba_rewind_map_ok = rw_map_emit;

@@ -333,7 +333,25 @@ extern u8 vram[1024 * 96];
  * only ever touch the first VRAM_DIRTY_PAGES bytes. */
 #define VRAM_DIRTY_ANY       VRAM_DIRTY_PAGES
 #define VRAM_DIRTY_MAP_BYTES (VRAM_DIRTY_PAGES + 32)
-extern u8  vram_clean[VRAM_DIRTY_MAP_BYTES];
+#ifdef VRAM_EXEC
+/* VRAM_EXEC (cpu_threaded.c): a second written-map, same pages, same inverted
+ * sense, that only the dynarec resets (when it translates code in a page), so
+ * it can tell whether translated VRAM code may have been overwritten.  The
+ * ME's vram_clean is reset by the renderer every frame and cannot say that.
+ * It lives right after vram_clean's map in the same array (compat-cost): a
+ * mark is then one more sb off the same base (C, DMA) and the store stub's
+ * mark rides in its jr delay slot (mips_emit.h). */
+#define VRAM_CLEAN_ARRAY_BYTES (2 * VRAM_DIRTY_MAP_BYTES)
+#define vram_xclean (vram_clean + VRAM_DIRTY_MAP_BYTES)
+#define VRAM_X_MARK(off) (vram_clean[VRAM_DIRTY_MAP_BYTES + ((off) >> VRAM_DIRTY_SHIFT)] = 0)
+/* Set when the game first jumps into VRAM (cpu_threaded.c vram_exec_activate);
+ * until then the store stubs and DMA leave vram_xclean alone. */
+extern u8 vram_exec_active;
+#else
+#define VRAM_CLEAN_ARRAY_BYTES VRAM_DIRTY_MAP_BYTES
+#define VRAM_X_MARK(off) ((void)0)
+#endif
+extern u8  vram_clean[VRAM_CLEAN_ARRAY_BYTES];
 #ifdef REWIND
 /* Rewind (docs/REWIND.md).
  * gba_rewind_skip_arrays: memory_write_savestate / memory_read_savestate

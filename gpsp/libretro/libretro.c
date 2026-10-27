@@ -1317,6 +1317,7 @@ int gpsp_rewind_arrays_restore(const u8 *ref, const u8 *ewram256,
             memcpy(vram + (p << 10), ref + (p << 10), 1024);
             vram_clean[p] = 0;
             vram_clean[VRAM_DIRTY_ANY] = 0;
+            VRAM_X_MARK(p << VRAM_DIRTY_SHIFT); /* VRAM_EXEC: may be new code */
             n += 1024;
          }
    ref += sizeof(vram);

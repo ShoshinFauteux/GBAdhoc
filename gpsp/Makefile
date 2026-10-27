@@ -444,6 +444,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_SPLIT_DIAG),1)
 	CFLAGS += -DXLAT_SPLIT_DIAG=1
 	endif
+	# VRAM_EXEC=1: translate and run code the game copied into VRAM
+	# (cpu_threaded.c VRAM_EXEC; Big Mutha Truckers, Street Racing Syndicate,
+	# jsmolka nes.gba).  Off by default.
+	ifeq ($(VRAM_EXEC),1)
+	CFLAGS += -DVRAM_EXEC=1
+	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
 	endif
@@ -653,6 +659,18 @@ else ifeq ($(platform), psp1)
 	# so dr_oracle.py base <variant with -DSMC_RETIRE_WINDOW_CHECK> is the test.
 	ifeq ($(SMC_RETIRE_WINDOW_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_WINDOW_CHECK=1
+	endif
+	# SMC_RETIRE_LOCAL=1: OFF by default (slow-titles, needs SMC_RETIRE_WINDOW).
+	# The retire walks start at a per-64-byte-chunk bound on where a block
+	# covering the write can start, instead of one longest-block-seen below
+	# it (cpu_threaded.c smc_back_*).  Same retirements, shorter walks.
+	# SMC_RETIRE_LOCAL_CHECK=1: diagnostic, also walk the gap and count (twin:
+	# abort on) any live overlapping block the bound would miss.
+	ifeq ($(SMC_RETIRE_LOCAL),1)
+	CFLAGS += -DSMC_RETIRE_LOCAL=1
+	endif
+	ifeq ($(SMC_RETIRE_LOCAL_CHECK),1)
+	CFLAGS += -DSMC_RETIRE_LOCAL_CHECK=1
 	endif
 	# DISPATCH_CACHE=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
 	# A direct-mapped {guest pc -> host entry} table probed in asm by

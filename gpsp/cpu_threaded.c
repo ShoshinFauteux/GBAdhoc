@@ -35,6 +35,94 @@ static u32 smc_window_armed;
 /* Blocks found live and overlapping the write in [lo-4KiB, lo-span): must
  * stay 0.  Counted by the SMC_RETIRE_WINDOW_CHECK build (and the twin). */
 u32 smc_window_violations;
+#ifdef SMC_RETIRE_LOCAL
+/* SMC_RETIRE_LOCAL (slow-titles 2026-10-27): SMC_RETIRE_WINDOW's bound, per
+ * 64-byte chunk instead of per region.  smc_back[r][c] is the largest
+ * distance from chunk c's first byte back to the start of any block noted
+ * (ramtag_note_extent) since the last full RAM flush whose extent reaches
+ * into chunk c (0 when every such block starts inside the chunk).  A live
+ * block covering a byte of chunk c therefore starts at or after
+ * (c << 6) - smc_back[r][c]: the retire walks start there instead of one
+ * longest-block-seen below the write.  Same armed condition as the window
+ * (every live block noted since the flush that reset the table).  Values only
+ * grow until that flush, so a retired block's entry stays a safe over-bound.
+ * Payback (twin): smc_retire_span walked ~7k instructions per trap through a
+ * window sized by a 0x22c-byte unrolled loop elsewhere in IWRAM. */
+#define SMC_LOCAL_SHIFT 6
+static u16 smc_back_iw[0x8000 >> SMC_LOCAL_SHIFT];
+static u16 smc_back_ew[0x40000 >> SMC_LOCAL_SHIFT];
+static u32 smc_back_lo[2] = { ~0u, ~0u }, smc_back_hi[2];   /* dirty chunks */
+static inline u16 *smc_back_tab(u32 rgn)
+{
+  return rgn ? smc_back_ew : smc_back_iw;
+}
+/* [start_off, end_off): canonical offsets of a block just noted */
+static void smc_back_note(u32 rgn, u32 start_off, u32 end_off)
+{
+  u16 *t = smc_back_tab(rgn);
+  u32 c = start_off >> SMC_LOCAL_SHIFT, ce = (end_off - 1) >> SMC_LOCAL_SHIFT;
+  if (c < smc_back_lo[rgn]) smc_back_lo[rgn] = c;
+  if (ce > smc_back_hi[rgn]) smc_back_hi[rgn] = ce;
+#ifdef SMC_RETIRE_LOCAL_MUTANT
+  if (ce > c) ce--;   /* MUTANT (oracle self-test only): last chunk not noted */
+#endif
+  for (c++; c <= ce; c++) {
+    u32 d = (c << SMC_LOCAL_SHIFT) - start_off;
+    if (d > t[c])
+      t[c] = (u16)d;
+  }
+}
+static void smc_back_reset(void)
+{
+  u32 r;
+  for (r = 0; r < 2; r++) {
+    if (smc_back_lo[r] <= smc_back_hi[r])
+      memset(smc_back_tab(r) + smc_back_lo[r], 0,
+             (smc_back_hi[r] - smc_back_lo[r] + 1) * sizeof(u16));
+    smc_back_lo[r] = ~0u;
+    smc_back_hi[r] = 0;
+  }
+}
+/* Lowest halfword index at which a noted block overlapping the byte range
+ * [lo_off, hi_off) can start. */
+static u32 smc_back_first(u32 rgn, u32 lo_off, u32 hi_off)
+{
+  const u16 *t = smc_back_tab(rgn);
+  u32 c = lo_off >> SMC_LOCAL_SHIFT, ce = (hi_off - 1) >> SMC_LOCAL_SHIFT;
+  u32 lb = lo_off & ~((1u << SMC_LOCAL_SHIFT) - 1);
+  for (; c <= ce; c++) {
+    u32 b = (c << SMC_LOCAL_SHIFT) - t[c];
+    if (b < lb)
+      lb = b;
+  }
+  return lb >> 1;
+}
+#ifdef SMC_RETIRE_LOCAL_CHECK
+/* DIAGNOSTIC: nothing live in [first, local) may overlap [lo_off, hi_off). */
+u32 smc_local_violations;
+static void smc_local_check(const u16 *tagp, u32 base, u32 first, u32 local,
+                            u32 lo_off, u32 hi_off);
+#endif
+/* Raise `first` (a halfword index) to the chunk bound when the window is
+ * armed (smc_back is exact only then). */
+#define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base) do {         \
+  if (smc_window_armed) {                                                     \
+    u32 local_ = smc_back_first((rgn), (lo_off), (hi_off));                   \
+    SMC_LOCAL_CHECK(tagp, base, first, local_, lo_off, hi_off);               \
+    if (local_ > (first))                                                     \
+      (first) = local_;                                                       \
+  }                                                                           \
+} while (0)
+#ifdef SMC_RETIRE_LOCAL_CHECK
+#define SMC_LOCAL_CHECK(t, b, f, l, lo, hi) smc_local_check(t, b, f, l, lo, hi)
+#else
+#define SMC_LOCAL_CHECK(t, b, f, l, lo, hi) do { } while (0)
+#endif
+#else
+#define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base) do { } while (0)
+#endif
+#else
+#define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base) do { } while (0)
 #endif
 #include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
@@ -3157,6 +3245,9 @@ static inline int gba_pc_translatable(u32 pc)
 {
   u32 region = GBA_PC(pc) >> 24;
   return region == 0x0 || region == 0x2 || region == 0x3 ||
+#ifdef VRAM_EXEC
+         region == 0x6 ||
+#endif
          (region >= 0x8 && region <= 0xD);
 }
 
@@ -3214,6 +3305,212 @@ void xlat_depth_probe_reset(void)
 #else
 #define XLAT_PROBE_ENTER() do { } while (0)
 #define XLAT_PROBE_LEAVE() do { } while (0)
+#endif
+
+#ifdef VRAM_EXEC
+/* VRAM_EXEC: code executing from VRAM (Blue Roses' engine -- Big Mutha
+ * Truckers, Street Racing Syndicate -- copies routines to OBJ VRAM and jumps
+ * there; jsmolka nes.gba too).  Without it the lookup has no case for region
+ * 6 and BADJUMP_SAFE resets the GBA.
+ *
+ * Design (docs: compat-fix report).  Nothing can branch DIRECTLY into VRAM:
+ * ARM B/BL reach +-32 MiB and Thumb BL +-4 MiB, and VRAM is further than that
+ * from ROM, EWRAM and IWRAM, so every entry is an indirect branch through the
+ * C dispatcher -- the only code that ever links INTO a VRAM block is another
+ * VRAM block.  So VRAM code is translated like ROM code (no RAM tags, no SMC
+ * gates) into the ROM translation cache, found through its own small hash,
+ * and kept out of DISPATCH_CACHE (whose asm probe would skip the check
+ * below).  Invalidation is by page: every VRAM store (the region-6 store stub,
+ * write_vram*, DMA) clears vram_xclean[page] (gba_memory.h VRAM_X_MARK);
+ * translating code in a page sets it again.  Each VRAM lookup first checks the
+ * pages that hold code; if any was written since, the whole VRAM hash is
+ * forgotten and the code retranslated on demand.  Old blocks stay as dead
+ * space in the ROM cache (only stale VRAM blocks can still link to them) until
+ * the next ROM-cache flush, which also forgets the VRAM hash. */
+#define VRAM_BRANCH_HASH_BITS 8
+#define VRAM_BRANCH_HASH_SIZE (1u << VRAM_BRANCH_HASH_BITS)
+static u32 vram_branch_hash[VRAM_BRANCH_HASH_SIZE];
+static u8  vram_code_page[VRAM_DIRTY_PAGES];
+static u8  vram_code_list[VRAM_DIRTY_PAGES];
+static u32 vram_code_pages;
+u32 vram_exec_blocks, vram_exec_drops;   /* translations / hash drops */
+
+static inline u32 vram_page_of(u32 pc)
+{
+  u32 o = pc & 0x1FFFF;
+  if (o >= 0x18000)
+    o -= 0x8000;
+  return o >> VRAM_DIRTY_SHIFT;
+}
+
+static void vram_code_forget(void)
+{
+  u32 i;
+  memset(vram_branch_hash, 0, sizeof(vram_branch_hash));
+  for (i = 0; i < vram_code_pages; i++)
+    vram_code_page[vram_code_list[i]] = 0;
+  vram_code_pages = 0;
+}
+
+/* scan_block has settled [start, end): those pages now hold code. */
+static void vram_code_note(u32 start, u32 end)
+{
+  u32 a;
+  for (a = start & ~((1u << VRAM_DIRTY_SHIFT) - 1); a < end;
+       a += 1u << VRAM_DIRTY_SHIFT) {
+    u32 pg = vram_page_of(a);
+    if (!vram_code_page[pg]) {
+      vram_code_page[pg] = 1;
+      vram_code_list[vram_code_pages++] = (u8)pg;
+    }
+    vram_xclean[pg] = 1;
+  }
+  vram_exec_blocks++;
+}
+
+static void vram_code_check(void)
+{
+  u32 i;
+  for (i = 0; i < vram_code_pages; i++)
+    if (!vram_xclean[vram_code_list[i]]) {
+      vram_exec_drops++;
+      vram_code_forget();
+      return;
+    }
+}
+
+/* SELF-ACTIVATION (claude/self-activate).  The region-6 store stubs are
+ * built dormant (mips_emit.h vram_x_slots): until the game first jumps into
+ * VRAM, a VRAM store costs exactly what it did in 4.1.1.  That first jump
+ * always arrives here (every entry into VRAM is an indirect branch through
+ * the C lookup -- see above -- and every region-6 translation, eager links
+ * included, goes through vram_lookup_translate_*), so this is where the marks
+ * are armed: the sb goes into each stub's jr delay slot and is published
+ * before the lookup returns (block_lookup_address_* publish on success).
+ *
+ * Why nothing written before this moment can be missed: xclean only has to
+ * describe pages written SINCE their code was translated, and no VRAM code
+ * has been translated yet -- vram_code_page/list are empty (forgotten again
+ * here; a ROM-cache flush forgets them too), and vram_code_note sets a page
+ * clean only after the translator has read it, with the marks already live.
+ * The C and DMA marks (VRAM_X_MARK) and the bulk memsets were never dormant
+ * (one sb on paths a VRAM store rarely takes).  The trigger is the guest's
+ * own jump, so linked consoles running the same guest arm at the same
+ * instruction, and the marks change no guest-visible state either way.  Once
+ * armed it stays armed until init_emitter rebuilds the stubs dormant (ROM
+ * load, dynarec re-enable; both flush the ROM cache, forgetting VRAM code). */
+u32 vram_exec_activations;
+static void __attribute__((noinline)) vram_exec_activate(void)
+{
+  u32 i;
+#ifdef JIT_CODE_DISCIPLINE
+  u32 sealed = jit_stub_zone_sealed;
+  jit_stub_zone_sealed = 0;   /* a recorded patch of the STUB zone */
+#endif
+  vram_code_forget();
+  for (i = 0; i < vram_x_slot_n; i++) {
+    u32 *w = vram_x_slots[i];
+    *w = vram_x_slot_word;
+#ifdef JIT_CODE_DISCIPLINE
+    JIT_CODE_WROTE(w, w + 1);   /* published before the lookup returns */
+#else
+    platform_cache_sync(w, w + 1);
+#endif
+  }
+#ifdef JIT_CODE_DISCIPLINE
+  jit_stub_zone_sealed = sealed;
+#endif
+  vram_exec_active = 1;
+  vram_exec_activations++;
+}
+
+#define VRAM_CODE_NOTE(start, end) do {                                       \
+  if ((GBA_PC(start) >> 24) == 6) vram_code_note((start), (end));            \
+} while (0)
+#define DC_PUT_OK(pc) 1   /* VRAM blocks never reach the put: see above */
+#else
+#define VRAM_CODE_NOTE(start, end) do { } while (0)
+#define DC_PUT_OK(pc) 1
+#endif
+
+#ifdef VRAM_EXEC
+/* the region-6 case of block_lookup_translate_builder (see VRAM_EXEC above),
+ * out of line (compat-cost): inline it grew block_lookup_translate_arm/thumb
+ * and changed what the compiler inlines on the hot dispatch path (PSP harness
+ * hot core: block_lookup_address_dual 404 -> 56 bytes), for a case only
+ * games that run code from VRAM ever reach. */
+#define vram_lookup_builder(type)                                             \
+static u8 * __attribute__((noinline))                                         \
+ vram_lookup_translate_##type(u32 pc, u32 thumb)                              \
+{                                                                             \
+  u32 key = pc | thumb;                                                       \
+  u32 hash_target = ((key * 2654435761U) >> (32 - VRAM_BRANCH_HASH_BITS))     \
+                                          & (VRAM_BRANCH_HASH_SIZE - 1);      \
+  hashhdr_type *bhdr;                                                         \
+  u32 blk_offset, *blk_offset_addr;                                           \
+  if (!vram_exec_active)                                                      \
+    vram_exec_activate();   /* the game's first jump into VRAM */            \
+  vram_code_check();   /* written since translated? forget it all */          \
+  blk_offset = vram_branch_hash[hash_target];                                 \
+  blk_offset_addr = &vram_branch_hash[hash_target];                           \
+  while(blk_offset)                                                           \
+  {                                                                           \
+    bhdr = (hashhdr_type*)&rom_translation_cache[blk_offset];                 \
+    if(bhdr->pc_value == key)                                                 \
+      return &rom_translation_cache[                                          \
+              blk_offset + sizeof(hashhdr_type) + block_prologue_size];       \
+    blk_offset = bhdr->next_entry;                                            \
+    blk_offset_addr = &bhdr->next_entry;                                      \
+  }                                                                           \
+  {                                                                           \
+    u8 *blkptr;                                                               \
+    bool result;                                                              \
+    bhdr = (hashhdr_type*)rom_translation_ptr;                                \
+    bhdr->pc_value = key;                                                     \
+    bhdr->next_entry = 0;                                                     \
+    JIT_CODE_META(bhdr, bhdr + 1);                                            \
+    *blk_offset_addr = (u32)(rom_translation_ptr - rom_translation_cache);    \
+    JIT_CODE_META(blk_offset_addr, blk_offset_addr + 1);                      \
+    rom_translation_ptr += sizeof(hashhdr_type);                              \
+    blkptr = rom_translation_ptr + block_prologue_size;                       \
+    DRPROF_XLAT_PC_PUSH(pc | thumb);                                          \
+    result = translate_block_##type(pc, false);                               \
+    DRPROF_XLAT_PC_POP();                                                     \
+    if (result)                                                               \
+      return blkptr;                                                          \
+    vram_code_forget();   /* never leave a half-built block hashed */         \
+  }                                                                           \
+  return NULL;                                                                \
+}
+vram_lookup_builder(arm)
+vram_lookup_builder(thumb)
+
+/* Region 6 is NOT a case of block_lookup_translate_* (self-activate): it
+ * falls to the default, BLOCK_LOOKUP_UNMAPPABLE, so the shared lookup -- and
+ * block_lookup_address_*, which inline it on the dispatch path -- compile
+ * exactly as without VRAM_EXEC.  The two callers that can meet a VRAM pc take
+ * it from there: the dispatcher through BADJUMP_GUARD_X's existing sentinel
+ * test (vram_or_badjump below, out of line, after which the result is NOT
+ * put into DISPATCH_CACHE: its asm probe would skip vram_code_check), and the
+ * translator's eager links through XLAT_LINK_LOOKUP.  This replaces
+ * compat-cost's DC_PUT_OK test, which every C lookup paid. */
+#ifdef BADJUMP_REPORT
+#define VRAM_LOOKUP_CASE(type)                                                \
+    case 0x6:                                                                 \
+      return BLOCK_LOOKUP_UNMAPPABLE;   /* not a bad jump: no report */
+#else
+#define VRAM_LOOKUP_CASE(type)
+#endif
+#define XLAT_LINK_LOOKUP(type, thumb, target)                                 \
+  (((GBA_PC(target) >> 24) == 6) ?                                            \
+    vram_lookup_translate_##type((target), (thumb)) :                         \
+    block_lookup_translate_##type(target))
+#ifndef BADJUMP_SAFE
+#error "VRAM_EXEC needs BADJUMP_SAFE (its dispatcher path is BADJUMP_GUARD's)"
+#endif
+#else
+#define VRAM_LOOKUP_CASE(type)
+#define XLAT_LINK_LOOKUP(type, thumb, target) block_lookup_translate_##type(target)
 #endif
 
 #define block_lookup_translate_builder(type)                                  \
@@ -3278,6 +3575,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
       return NULL;                                                            \
     }                                                                         \
                                                                               \
+    VRAM_LOOKUP_CASE(type)                                                    \
     case 0x0:                                                                 \
     case 0x8 ... 0xD:                                                         \
     {                                                                         \
@@ -3765,8 +4063,39 @@ static u8 *badjump_recover(u32 pc)
 #define BADJUMP_GUARD(ret, pc)                                            \
   do { if ((ret) == BLOCK_LOOKUP_UNMAPPABLE) return badjump_recover(pc); } while (0)
 #define BADJUMP_EXHAUSTED(pc)  return badjump_recover(pc)
+#ifdef VRAM_EXEC
+/* The dispatcher's region-6 lookups (see VRAM_LOOKUP_CASE): the sentinel
+ * test BADJUMP_GUARD always made is the only thing on the common path.  The
+ * same retries and publish as block_lookup_address_*, minus the dispatch
+ * cache put.  One per instruction set, each with badjump_recover's one-
+ * argument shape, so the call in the lookup's cold path is unchanged. */
+#define vram_or_badjump_builder(type, thumb)                                  \
+static u8 * __attribute__((noinline)) vram_or_badjump_##type(u32 pc)          \
+{                                                                             \
+  unsigned i;                                                                 \
+  if ((GBA_PC(pc) >> 24) != 6)                                                \
+    return badjump_recover(pc);                                               \
+  for (i = 0; i < 4; i++) {                                                   \
+    u8 *ret = vram_lookup_translate_##type(pc, (thumb));                      \
+    if (ret && ret != BLOCK_LOOKUP_UNMAPPABLE) {                              \
+      translate_icache_sync(); BADJUMP_NOTE_PC(pc);                           \
+      JIT_CODE_CHECK_ENTRY(ret);                                              \
+      return ret;                                                             \
+    }                                                                         \
+  }                                                                           \
+  return badjump_recover(pc);                                                 \
+}
+vram_or_badjump_builder(arm, 0)
+vram_or_badjump_builder(thumb, 1)
+#define BADJUMP_GUARD_X(ret, pc, type)                                        \
+  do { if ((ret) == BLOCK_LOOKUP_UNMAPPABLE)                                  \
+         return vram_or_badjump_##type(pc); } while (0)
+#else
+#define BADJUMP_GUARD_X(ret, pc, type) BADJUMP_GUARD(ret, pc)
+#endif
 #else
 #define BADJUMP_GUARD(ret, pc) do { } while (0)
+#define BADJUMP_GUARD_X(ret, pc, type) do { } while (0)
 #define BADJUMP_EXHAUSTED(pc)  return NULL
 #endif
 
@@ -3891,7 +4220,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   STALE_SCAN(pc);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_arm(pc);
-    BADJUMP_GUARD(ret, pc);
+    BADJUMP_GUARD_X(ret, pc, arm);
     if (ret) {
 #ifdef JIT_CODE_DISCIPLINE
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
@@ -3921,7 +4250,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   STALE_SCAN(pc | 1);
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_thumb(pc);
-    BADJUMP_GUARD(ret, pc);
+    BADJUMP_GUARD_X(ret, pc, thumb);
     if (ret) {
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       JIT_CODE_CHECK_ENTRY(ret);
@@ -5900,6 +6229,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   else
   {
     scan_block(arm, no);
+    VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
   for(i = 0; i < block_exit_position; i++)
@@ -6140,7 +6470,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     if(branch_target == 0x00000008)
       translation_target = bios_swi_entrypoint;
     else
-      translation_target = block_lookup_translate_arm(branch_target);
+      translation_target = XLAT_LINK_LOOKUP(arm, 0, branch_target);
     /* Backstop for the classifier above: the sentinel must never reach
      * generate_branch_patch_unconditional.  Aborting the translation is the
      * already-established safe path -- the caller retries, then BADJUMP_SAFE
@@ -6227,6 +6557,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   else
   {
     scan_block(thumb, no);
+    VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
   for(i = 0; i < block_exit_position; i++)
@@ -6466,7 +6797,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     if(branch_target == 0x00000008)
       translation_target = bios_swi_entrypoint;
     else
-      translation_target = block_lookup_translate_thumb(branch_target);
+      translation_target = XLAT_LINK_LOOKUP(thumb, 1, branch_target);
     /* Backstop for the classifier above: the sentinel must never reach
      * generate_branch_patch_unconditional.  Aborting the translation is the
      * already-established safe path -- the caller retries, then BADJUMP_SAFE
@@ -6553,6 +6884,9 @@ void flush_translation_cache_ram(void)
 #endif
 #ifdef SMC_RETIRE_WINDOW
   smc_max_extent[0] = smc_max_extent[1] = 0;
+#ifdef SMC_RETIRE_LOCAL
+  smc_back_reset();
+#endif
 #endif
 
   last_ram_translation_ptr = ram_translation_cache;
@@ -6750,6 +7084,17 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 #ifdef STALE_CHECK
   stale_note_extent(start_pc, end_pc, thumb);
 #endif
+#ifdef SMC_EVTRACE_XLAT
+  /* DIAGNOSTIC (slow-titles): one line per RAM translation with a hash of
+   * its guest source -- how often identical code is translated again. */
+  if ((start_pc >> 24) == 3 && end_pc > start_pc && end_pc - start_pc <= 0x1000) {
+    u32 a, h = 2166136261u;
+    for (a = start_pc; a < end_pc; a += 2)
+      h = (h ^ *(u16 *)(iwram + 0x8000 + (a & 0x7FFE))) * 16777619u;
+    SMC_EVT("X %08x %08x %u %08x\n", (unsigned)start_pc, (unsigned)end_pc,
+            (unsigned)thumb, (unsigned)h);
+  }
+#endif
   if (!smc_partial_active)
     return;
 
@@ -6775,6 +7120,9 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
     canon_end = base + size;
   } else {
     canon_end = base + off + len;
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_RETIRE_LOCAL)
+    smc_back_note(base == 0x02000000, off, off + len);
+#endif
   }
 
   if (VALID_TAG(tagp[off >> 1])) {
@@ -6867,6 +7215,7 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
     if (!smc_window_armed || span > MAX_BLOCK_SIZE * 4)
       span = MAX_BLOCK_SIZE * 4;
     first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+    SMC_LOCAL_NARROW(first, base == 0x02000000, lo_off, hi_off, tagp, base);
 #ifdef SMC_RETIRE_WINDOW_CHECK
     /* The assumption, checked: nothing live between the full window's start
      * and the short one's may overlap the write.  A block there without an
@@ -8244,6 +8593,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   span = MAX_BLOCK_SIZE * 4;
 #endif
   first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+  SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base);
   last = (hi_off - 2) >> 1;            /* last halfword slot of the range */
 
   /* Validate before changing anything: every live block in the window must
@@ -8334,6 +8684,7 @@ static int smc_retire_span(u32 lo, u32 hi)
     if (n <= sizeof(cov) * 8) {
       memset(cov, 0, (n + 7) >> 3);
       scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
+      SMC_LOCAL_NARROW(scan0, rgn, ulo - base, uhi - base, tagp, base);
       for (i = scan0; i < u_hi; i++) {
         if (VALID_TAG(tagp[i])) {
           ramtag_type *te = get_ram_tag(tagp[i]);
@@ -9182,6 +9533,9 @@ void flush_translation_cache_rom(void)
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#ifdef VRAM_EXEC
+  vram_code_forget();
+#endif
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
@@ -9211,6 +9565,9 @@ void init_dynarec_caches(void)
 #endif
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#ifdef VRAM_EXEC
+  vram_code_forget();
+#endif
 
   ram_translation_ptr = last_ram_translation_ptr = &ram_translation_cache[0];
 #ifdef SMC_PARTIAL_SAFE
@@ -10033,11 +10390,52 @@ void jit_code_publish_(void)
 }
 #endif /* JIT_CODE_DISCIPLINE */
 
+#if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_LOCAL_CHECK)
+static void smc_local_check(const u16 *tagp, u32 base, u32 first, u32 local,
+                            u32 lo_off, u32 hi_off)
+{
+  u32 i, lo = base + lo_off, hi = base + hi_off;
+  for (i = first; i < local; i++) {
+    if (VALID_TAG(tagp[i])) {
+      ramtag_type *te = get_ram_tag(tagp[i]);
+      if ((SMC_RAM_LIVE_OFFSET(te, arm) &&
+           (!te->blk_end_arm || te->blk_end_arm > lo)) ||
+          (SMC_RAM_LIVE_OFFSET(te, thumb) &&
+           (!te->blk_end_thumb || te->blk_end_thumb > lo))) {
+        smc_local_violations++;
+#ifdef DRPROF_TWIN
+        fprintf(stderr, "SMC_RETIRE_LOCAL VIOLATION: live block at %08x "
+                "(end arm %08x thumb %08x) overlaps [%08x,%08x) below the "
+                "chunk bound %08x\n", base + (i << 1),
+                (unsigned)te->blk_end_arm, (unsigned)te->blk_end_thumb,
+                lo, hi, base + (local << 1));
+        abort();
+#endif
+      }
+    }
+  }
+}
+#endif
+
 #if defined(DRPROF_TWIN) && (defined(JIT_CODE_DISCIPLINE) || defined(JIT_SYNC_STATS))
 #include <stdio.h>
 /* The twin host prints this at exit (weak reference in dr_host.c). */
 void jit_stats_report(FILE *f)
 {
+  /* twin only: flush counts by cause (main.c) */
+  fprintf(f, "flushes ram=%u full=%u smc=%u dma=%u partial=%u rom=%u\n",
+          (unsigned)flush_ram_total, (unsigned)flush_ram_full,
+          (unsigned)flush_ram_smc, (unsigned)flush_ram_dma,
+          (unsigned)flush_ram_partial, (unsigned)flush_rom_total);
+#ifdef SMC_FALLBACK_STATS
+  {
+    unsigned k;
+    fprintf(f, "smcfb");
+    for (k = 0; k < 16; k++)
+      fprintf(f, " %u", (unsigned)smc_fallback_stats[k]);
+    fprintf(f, "\n");
+  }
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   fprintf(f, "jitc publishes=%u spans=%u lines=%u whole_i=%u big_i=%u early=%u "
           "own_rom=%u own_ram=%u own_rebuild=%u own_init=%u own_tier=%u",
@@ -10066,6 +10464,12 @@ void jit_stats_report(FILE *f)
   fprintf(f, "jitlegacy rom_pub=%u ram_pub=%u syncs=%u lines=%u\n",
           (unsigned)jit_legacy_stats.rom_pub, (unsigned)jit_legacy_stats.ram_pub,
           (unsigned)jit_legacy_stats.calls, (unsigned)jit_legacy_stats.lines);
+#endif
+#ifdef VRAM_EXEC
+  fprintf(f, "vramx armed=%u activations=%u blocks=%u drops=%u slots=%u\n",
+          (unsigned)vram_exec_active, (unsigned)vram_exec_activations,
+          (unsigned)vram_exec_blocks, (unsigned)vram_exec_drops,
+          (unsigned)vram_x_slot_n);
 #endif
 }
 #endif
