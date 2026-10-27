@@ -9090,6 +9090,77 @@ void flush_translation_cache_ram_smc(void)
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
+#ifdef SMC_STM_RANGE
+#if !defined(SMC_PARTIAL_SINGLE) || !defined(SMC_PARTIAL_STABLE_THUNK) || \
+    defined(SMC_BLOCK_EXACT)
+#error SMC_STM_RANGE needs SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK, without SMC_BLOCK_EXACT
+#endif
+#ifndef SMC_STM_RANGE_MAX
+#define SMC_STM_RANGE_MAX 4
+#endif
+/* SMC_STM_RANGE (cpu-levers 2026-10-27): the smc_write stub's entry (fnptrs
+ * slot 10) when the switch is on.  A short increment-after writeback STM --
+ * STMIA Rn!, 2..SMC_STM_RANGE_MAX registers, from IWRAM into IWRAM -- retires
+ * exactly its own write instead of taking the full RAM flush.
+ *
+ * Measured on the twin: FIFA 07's sound-code generator writes its routine
+ * with STMIA r12!,{r0,r7,r9} and STMIA r12!,{r4,r7}: 4090 traps in 1500 f,
+ * every one a full RAM flush ("writer not range-safe"), and retranslation was
+ * 63 % of FIFA's core work.
+ *
+ * Exactness: the trap is the STM's FINAL word (only that word is checked),
+ * and the instruction wrote [final - 4*(n-1), final + 4) in full, known from
+ * the opcode.  smc_retire_span's contract -- the range is the WHOLE write --
+ * therefore holds for this store as it does for a single STR's word.  The
+ * block-store hole for EARLIER stores (an STM whose final word lands on
+ * untagged memory raises no trap) is unchanged by this switch.
+ *
+ * Everything else -- Thumb, other STM shapes, longer copies (Hot Wheels'
+ * STMIA r0!,{r4-r11}: one flush is cheaper than retiring a copy block by
+ * block), selective retirement not yet active, the first SMC_SINGLE_HOT
+ * widened traps, an undecidable span -- goes to flush_translation_cache_ram_smc
+ * unchanged.
+ *
+ * LAYOUT NEUTRALITY: this sits outside the pinned hot order, and
+ * flush_translation_cache_ram_smc is byte-identical with the switch on or
+ * off; only the stub's function-pointer slot changes. */
+void smc_trap_entry(void)
+{
+  if (smc_partial_active && !(reg[REG_CPSR] & 0x20)) {
+    u32 pc = GBA_PC(reg[REG_PC]) - 4;          /* as smc_writer_safe_range */
+    u32 addr = smc_last_write_addr;
+    u8 *blk = memory_map_read[pc >> 15];
+    if (blk && (pc >> 24) == 3 && (addr >> 24) == 3) {
+      u32 op = readaddress32(blk, pc & 0x7FFF);
+      u32 n = (u32)__builtin_popcount(op & 0xFFFF);
+      u32 hi = (addr & ~3u) + 4, lo = hi - 4 * n;
+#ifdef SMC_STM_RANGE_MUTANT_LASTWORD
+      lo = hi - 4;      /* MUTANT (oracle self-test only): final word only */
+#endif
+      if ((op & 0x0FF00000) == 0x08A00000 &&  /* STMIA Rn! (P0 U1 S0 W1 L0) */
+          n >= 2 && n <= SMC_STM_RANGE_MAX &&
+          (lo >> 15) == ((hi - 4) >> 15) &&    /* one 32 KiB IWRAM mirror */
+          smc_wide_gate()) {
+        DRPH_SCOPE(DRPH_FLUSH);
+        DRPROF_ZONE_ENTER(DRZ_FLUSH);
+        flush_ram_smc++;
+        smc_single_store = 1;
+        smc_untag_now = 1;
+        if (smc_retire_span(lo, hi)) {
+          SMC_FB(9);
+        } else {
+          SMC_FB(7);
+          flush_translation_cache_ram();
+        }
+        DRPROF_ZONE_LEAVE(DRZ_FLUSH);
+        return;
+      }
+    }
+  }
+  flush_translation_cache_ram_smc();
+}
+#endif
+
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;

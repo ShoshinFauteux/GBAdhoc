@@ -693,6 +693,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_SAME_ADAPT),1)
 	CFLAGS += -DSMC_SAME_ADAPT=1
 	endif
+	# SMC_STM_RANGE=1: OFF by default (cpu-levers).  A short writeback STMIA
+	# (2-4 registers) from IWRAM into IWRAM retires exactly its own span
+	# instead of taking a full RAM flush (FIFA 07's code generator).
+	ifeq ($(SMC_STM_RANGE),1)
+	CFLAGS += -DSMC_STM_RANGE=1
+	endif
 	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
 	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
 	# ram_region, which doubles the function and spills translation_ptr to

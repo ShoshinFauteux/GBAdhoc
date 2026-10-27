@@ -514,7 +514,11 @@ defsymbl(smc_write)
   move $5, $4                     # arg1 = masked region offset
   move $4, $2                     # arg0 = lui constant + offset
   cfncall smc_prof_note_store, 12
+#ifdef SMC_STM_RANGE
+  cfncall smc_trap_entry, 10        # SMC_STM_RANGE (cpu_threaded.c)
+#else
   cfncall flush_translation_cache_ram_smc, 10
+#endif
   b lookup_pc_noflags
   lw $1, REG_CPSR($16)            # (delay)
 
@@ -753,7 +757,11 @@ fnptrs:
   .long execute_store_cpsr_body        # 7
   .long process_cheats                 # 8
   .long check_and_raise_interrupts     # 9
+#ifdef SMC_STM_RANGE
+  .long smc_trap_entry                 # 10  (SMC_STM_RANGE, cpu_threaded.c)
+#else
   .long flush_translation_cache_ram_smc # 10
+#endif
   .long flush_translation_cache_ram_dma # 11
   .long smc_prof_note_store            # 12  (ADR-0030, counters only)
 
