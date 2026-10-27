@@ -8979,6 +8979,39 @@ static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 #endif
   return word;
 }
+#ifdef XS_WALK_PAIR
+/* XS_WALK_PAIR (cpu-levers cpl2w; from SMC_WALK_FAST fb5fee5): the first
+ * block-start tag at or after halfword slot i, up to `last` (last + 1 when
+ * none).  Tags are 0 (data), CODE_TAG_BLOCK16 0x0101 (interior), or a block
+ * start > 0x0101 with a byte >= 2 (counts down from 0xFFFF, odd), so a pair
+ * of slots whose bytes are all 0 or 1 holds no block start: one aligned load
+ * tests two slots.  Exact: the same slots, in the same order, as testing
+ * VALID_TAG one slot at a time.  xs_blocks_current's window on Doom/Duke is
+ * ~235 slots for ~4.6 block starts. */
+typedef u32 __attribute__((may_alias)) xs_tagpair;
+static inline u32 xs_tag_next(const u16 *tagp, u32 i, u32 last)
+{
+  if ((i & 1) && i <= last) {
+    if (VALID_TAG(tagp[i]))
+      return i;
+    i++;
+  }
+  while (i + 1 <= last) {
+    if (*(const xs_tagpair *)&tagp[i] & 0xFEFEFEFEu) {
+      if (VALID_TAG(tagp[i]))
+        return i;
+#ifndef XS_WALK_PAIR_MUTANT      /* MUTANT (oracle self-test only) */
+      if (VALID_TAG(tagp[i + 1]))
+        return i + 1;
+#endif
+    }
+    i += 2;
+  }
+  if (i <= last && VALID_TAG(tagp[i]))
+    return i;
+  return last + 1;
+}
+#endif
 static __attribute__((noinline)) int xs_blocks_current(u32 word)
 {
   u16 *tagp = (u16 *)iwram;
@@ -9013,7 +9046,12 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
 #ifdef XS_COST_PROBE
   xs_calls++; xs_slots += last - first + 1;
 #endif
+#ifdef XS_WALK_PAIR
+  for (i = xs_tag_next(tagp, first, last); i <= last;
+       i = xs_tag_next(tagp, i + 1, last)) {
+#else
   for (i = first; i <= last; i++) {
+#endif
     ramtag_type *te;
     u32 start, e[2];
     if (!VALID_TAG(tagp[i]))

@@ -685,6 +685,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XS_HEAP),1)
 	CFLAGS += -DXS_HEAP=1
 	endif
+	# XS_WALK_PAIR=1: OFF by default (cpu-levers cpl2w).  xs_blocks_current
+	# tests two tag slots per aligned load (a pair with every byte 0 or 1
+	# holds no block start).  Same blocks, same order.
+	ifeq ($(XS_WALK_PAIR),1)
+	CFLAGS += -DXS_WALK_PAIR=1
+	endif
 	# SMC_SAME_REPROBE=N: SMC_SAME_ADAPT's first re-probe threshold (default
 	# 256 single-word retirements while off).
 	ifneq ($(SMC_SAME_REPROBE),)
