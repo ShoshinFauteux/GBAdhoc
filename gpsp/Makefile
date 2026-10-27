@@ -672,6 +672,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_LOCAL_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_LOCAL_CHECK=1
 	endif
+	# SMC_RETIRE_LIST=1: OFF by default (slow-titles).  smc_retire_span's
+	# validation walk skips interior-mark pairs a word at a time and lists the
+	# block-start tags; the retire pass visits only those.  Same retirements.
+	ifeq ($(SMC_RETIRE_LIST),1)
+	CFLAGS += -DSMC_RETIRE_LIST=1
+	endif
 	# ENTRY_GATES_RANGE=1: OFF by default (slow-titles, needs ENTRY_GATES).
 	# The exhaustion-time gate harvest walks only the tag range the following
 	# full flush clears (iwram/ewram_code_min..max) instead of all 144K tags.

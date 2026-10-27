@@ -235,6 +235,7 @@ if os.environ.get("DRCORPUS_SLOW") == "1":
     VX = " -DVRAM_EXEC=1"
     RL = " -DSMC_RETIRE_LOCAL=1"
     EG = " -DENTRY_GATES_RANGE=1"
+    LS = " -DSMC_RETIRE_LIST=1"
     VARIANTS = {
         "base":  (C3, "ref", "cpu-levers candidate flags"),
         "vx":    (C3 + VX, "switch", "VRAM_EXEC (ported from claude/self-activate)"),
@@ -243,8 +244,9 @@ if os.environ.get("DRCORPUS_SLOW") == "1":
                   "SMC_RETIRE_LOCAL with its invariant asserted (aborts on violation)"),
         "egchk": (C3 + EG + " -DENTRY_GATES_RANGE_CHECK=1", "assert",
                   "ENTRY_GATES_RANGE with its invariant asserted (aborts on violation)"),
-        "slow":  (C3 + VX + RL + EG, "switch",
-                  "the slow-titles candidate: VRAM_EXEC + SMC_RETIRE_LOCAL + ENTRY_GATES_RANGE"),
+        "ls":    (C3 + LS, "switch", "SMC_RETIRE_LIST alone"),
+        "slow":  (C3 + VX + RL + EG + LS, "switch",
+                  "the slow-titles candidate: VRAM_EXEC + SMC_RETIRE_LOCAL + ENTRY_GATES_RANGE + SMC_RETIRE_LIST"),
     }
     ORDER = list(VARIANTS)
     MUTANTS = {

@@ -8589,6 +8589,9 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
  * extent, and a covering block must start inside it.  What the CALLER must
  * guarantee is that [lo, hi) is the WHOLE write: no word of this store, and
  * no earlier store, went to tagged memory unreported (the block-copy hole). */
+#if defined(SMC_RETIRE_LIST) && !defined(SMC_RETIRE_LIST_N)
+#define SMC_RETIRE_LIST_N 64
+#endif
 static int smc_retire_span(u32 lo, u32 hi)
 {
   u16 *tagp;
@@ -8633,15 +8636,44 @@ static int smc_retire_span(u32 lo, u32 hi)
 
   /* Validate before changing anything: every live block in the window must
    * have a known extent. */
+#ifdef SMC_RETIRE_LIST
+  /* SMC_RETIRE_LIST (slow-titles): the validation walk skips aligned pairs of
+   * interior marks a word at a time and remembers where the block-start tags
+   * are, so the retire pass below visits only those (same slots, same order);
+   * more than SMC_RETIRE_LIST_N of them -> the retire pass walks as before. */
+  u32 rl_ix[SMC_RETIRE_LIST_N], rl_n = 0, rl_k = 0;
+#endif
   for (i = first; i <= last; i++) {
+#ifdef SMC_RETIRE_LIST
+    if (!(i & 1) && i < last &&
+        ((const u32 *)tagp)[i >> 1] == CODE_TAG_BLOCK32) {
+      i++;
+      continue;
+    }
+#endif
     if (VALID_TAG(tagp[i])) {
       ramtag_type *te = get_ram_tag(tagp[i]);
       if ((SMC_RAM_LIVE_OFFSET(te, arm) && !te->blk_end_arm) ||
           (SMC_RAM_LIVE_OFFSET(te, thumb) && !te->blk_end_thumb))
         return 0;
+#ifdef SMC_RETIRE_LIST
+      if (rl_n < SMC_RETIRE_LIST_N)
+        rl_ix[rl_n] = i;
+      rl_n++;
+#endif
     }
   }
+#ifdef SMC_RETIRE_LIST
+  for (i = first; ; i++) {
+    if (rl_n <= SMC_RETIRE_LIST_N) {
+      if (rl_k >= rl_n)
+        break;
+      i = rl_ix[rl_k++];
+    } else if (i > last)
+      break;
+#else
   for (i = first; i <= last; i++) {
+#endif
     if (VALID_TAG(tagp[i])) {
       ramtag_type *te = get_ram_tag(tagp[i]);
       u32 start = base + (i << 1);
