@@ -678,6 +678,18 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_LIST),1)
 	CFLAGS += -DSMC_RETIRE_LIST=1
 	endif
+	# XS_HEAP=1: OFF by default (cpu-levers cpl2w).  The SMC_SAME_SKIP and
+	# SMC_RETIRE_LOCAL tables (up to 69 KiB) come from one heap block taken
+	# before the ROM cache instead of .bss, so the hot arrays after them in
+	# .bss keep the release layout (D-cache sets).
+	ifeq ($(XS_HEAP),1)
+	CFLAGS += -DXS_HEAP=1
+	endif
+	# SMC_SAME_REPROBE=N: SMC_SAME_ADAPT's first re-probe threshold (default
+	# 256 single-word retirements while off).
+	ifneq ($(SMC_SAME_REPROBE),)
+	CFLAGS += -DSMC_SAME_REPROBE=$(SMC_SAME_REPROBE)
+	endif
 	# ENTRY_GATES_RANGE=1: OFF by default (slow-titles, needs ENTRY_GATES).
 	# The exhaustion-time gate harvest walks only the tag range the following
 	# full flush clears (iwram/ewram_code_min..max) instead of all 144K tags.

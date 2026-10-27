@@ -49,8 +49,12 @@ u32 smc_window_violations;
  * Payback (twin): smc_retire_span walked ~7k instructions per trap through a
  * window sized by a 0x22c-byte unrolled loop elsewhere in IWRAM. */
 #define SMC_LOCAL_SHIFT 6
+#ifdef XS_HEAP
+static u16 *smc_back_iw, *smc_back_ew;      /* dynarec_heap_tables_init */
+#else
 static u16 smc_back_iw[0x8000 >> SMC_LOCAL_SHIFT];
 static u16 smc_back_ew[0x40000 >> SMC_LOCAL_SHIFT];
+#endif
 static u32 smc_back_lo[2] = { ~0u, ~0u }, smc_back_hi[2];   /* dirty chunks */
 static inline u16 *smc_back_tab(u32 rgn)
 {
@@ -105,18 +109,33 @@ static void smc_local_check(const u16 *tagp, u32 base, u32 first, u32 local,
 #endif
 /* Raise `first` (a halfword index) to the chunk bound when the window is
  * armed (smc_back is exact only then). */
-#define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base) do {         \
-  if (smc_window_armed) {                                                     \
-    u32 local_ = smc_back_first((rgn), (lo_off), (hi_off));                   \
-    SMC_LOCAL_CHECK(tagp, base, first, local_, lo_off, hi_off);               \
-    if (local_ > (first))                                                     \
-      (first) = local_;                                                       \
-  }                                                                           \
-} while (0)
 #ifdef SMC_RETIRE_LOCAL_CHECK
 #define SMC_LOCAL_CHECK(t, b, f, l, lo, hi) smc_local_check(t, b, f, l, lo, hi)
 #else
 #define SMC_LOCAL_CHECK(t, b, f, l, lo, hi) do { } while (0)
+#endif
+/* LAYOUT NEUTRALITY (cpu-levers cpl2w): one out-of-line call, so the range
+ * path inlined into the pinned flush_translation_cache_ram_smc grows by the
+ * call alone.  Returns the (possibly raised) first halfword index. */
+static __attribute__((noinline)) u32 smc_local_narrow(u32 first, u32 rgn,
+    u32 lo_off, u32 hi_off, const u16 *tagp, u32 base)
+{
+  if (smc_window_armed) {
+    u32 local_ = smc_back_first(rgn, lo_off, hi_off);
+    SMC_LOCAL_CHECK(tagp, base, first, local_, lo_off, hi_off);
+    if (local_ > first)
+      first = local_;
+  }
+  return first;
+}
+#define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base)              \
+  ((first) = smc_local_narrow((first), (rgn), (lo_off), (hi_off), (tagp), (base)))
+/* With SMC_SAME_ADAPT the per-block note and the flush-time reset ride the
+ * existing out-of-line helpers xs_extent_note and xs_clear_all, so
+ * ramtag_note_extent and flush_translation_cache_ram keep their size. */
+#if defined(SMC_SAME_ADAPT) && defined(SMC_SAME_SKIP) && \
+    defined(SMC_PARTIAL_SINGLE)
+#define SMC_LOCAL_COLD 1
 #endif
 #else
 #define SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base) do { } while (0)
@@ -4590,9 +4609,17 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
  * changes, every trap still happens (same smc_write path and re-dispatch),
  * and the comparison is against what the translations read, over their whole
  * extents.  IWRAM only; EWRAM traps retire as before. */
+#ifdef XS_HEAP
+/* XS_HEAP (cpu-levers cpl2w): the tables live in one heap block taken
+ * before the ROM cache (dynarec_heap_tables_init), so .bss -- and every hot
+ * array after these in it -- keeps the release build's layout. */
+static u16 *xs_val;
+static u8  *xs_ok, *xs_bad;
+#else
 static u16 xs_val[0x8000 / 2] __attribute__((aligned(16)));
 static u8  xs_ok[0x8000 / 16];
 static u8  xs_bad[0x8000 / 16];
+#endif
 static u32 xs_ready;
 u32 smc_same_skips, smc_same_poison;
 #ifdef SMC_SAME_ADAPT
@@ -4632,10 +4659,22 @@ u32 smc_same_skips, smc_same_poison;
 #define XS_WINDOW     65536u
 #endif
 #define XS_MIN_SKIPS  (XS_WINDOW / 256)
+/* SMC_SAME_REPROBE=N (cpu-levers cpl2w): the first re-probe threshold and
+ * the value a paying window resets it to (default 256; cpl2w 1024 = the 4x
+ * start, so a title that never pays -- Top Gear Rally, Mario Tennis --
+ * spends three fewer probes before the backoff ceiling). */
+#ifdef SMC_SAME_REPROBE
+#define XS_REPROBE    ((u32)(SMC_SAME_REPROBE))
+#else
 #define XS_REPROBE    256u
+#endif
 static u32 xs_on = 1, xs_win_noted, xs_win_skips, xs_off_retires, xs_dirty;
 u32 xs_turned_off, xs_turned_on;
+#ifdef XS_HEAP
+static u8 (*xs_rec)[0x10000 / 16];
+#else
 static u8 xs_rec[2][0x10000 / 16];       /* [thumb][tag >> 1] bit */
+#endif
 /* Nothing reads the record before partial invalidation is active, and
  * activation is a full RAM flush, so recording starts there. */
 #define XS_ON() (xs_on && smc_partial_active)
@@ -4691,7 +4730,11 @@ u32 xs_calls, xs_slots, xs_halves;
  * block covering either halfword of the word -- the scan window
  * xs_blocks_current walks.  Lowered by every scan of the word; reset only
  * when neither halfword has a valid record, i.e. no live block covers it. */
+#ifdef XS_HEAP
+static u16 *xs_min;
+#else
 static u16 xs_min[0x8000 / 4];
+#endif
 static inline void xs_note_half(u32 off, u32 start)
 {
   u32 h = (off & 0x7FFF) >> 1, w = h >> 1;
@@ -4735,6 +4778,18 @@ static __attribute__((noinline)) void xs_extent_note(u32 start_pc,
   u32 start = 0x03000000 + off;
   u32 end = (off + len > 0x8000) ? 0x03008000 : start + len;
 
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_LOCAL_COLD)
+  /* ramtag_note_extent's smc_back_note, moved here.  Only blocks whose start
+   * tag is valid get here, and only those can be retired by a walk, so the
+   * bound still covers every block a retire walk could visit.  A wrapping
+   * extent is skipped as before (smc_partial_wrap_live full-flushes). */
+  {
+    u32 rgn = (start_pc >> 24) == 2, size = rgn ? 0x40000 : 0x8000;
+    u32 o = start_pc & (size - 1);
+    if (o + len <= size)
+      smc_back_note(rgn, o, o + len);
+  }
+#endif
   if ((start_pc >> 24) != 3)
     return;
   if (XS_ON())
@@ -4763,6 +4818,9 @@ static void xs_report(void)
 #endif
 static __attribute__((noinline)) void xs_clear_all(void)
 {
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_LOCAL_COLD)
+  smc_back_reset();      /* flush_translation_cache_ram's, moved here */
+#endif
 #ifdef DRPROF_TWIN
   if (!xs_ready) atexit(xs_report);
 #endif
@@ -4773,13 +4831,13 @@ static __attribute__((noinline)) void xs_clear_all(void)
    * ramtag_note_extent rewrites a tag's bit at every translation, before the
    * tag can be seen live by xs_blocks_current. */
   if (xs_dirty || !xs_ready) {
-    memset(xs_ok, 0, sizeof(xs_ok));
-    memset(xs_bad, 0, sizeof(xs_bad));
+    memset(xs_ok, 0, 0x8000 / 16);
+    memset(xs_bad, 0, 0x8000 / 16);
     xs_dirty = 0;
   }
 #else
-  memset(xs_ok, 0, sizeof(xs_ok));
-  memset(xs_bad, 0, sizeof(xs_bad));
+  memset(xs_ok, 0, 0x8000 / 16);
+  memset(xs_bad, 0, 0x8000 / 16);
 #endif
   xs_ready = 1;
 }
@@ -6919,7 +6977,7 @@ void flush_translation_cache_ram(void)
 #endif
 #ifdef SMC_RETIRE_WINDOW
   smc_max_extent[0] = smc_max_extent[1] = 0;
-#ifdef SMC_RETIRE_LOCAL
+#if defined(SMC_RETIRE_LOCAL) && !defined(SMC_LOCAL_COLD)
   smc_back_reset();
 #endif
 #endif
@@ -7155,7 +7213,8 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
     canon_end = base + size;
   } else {
     canon_end = base + off + len;
-#if defined(SMC_RETIRE_WINDOW) && defined(SMC_RETIRE_LOCAL)
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_RETIRE_LOCAL) && \
+    !defined(SMC_LOCAL_COLD)
     smc_back_note(base == 0x02000000, off, off + len);
 #endif
   }
@@ -7172,6 +7231,21 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
   }
 }
 
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_LOCAL_COLD) && \
+    !defined(SMC_RETIRE_WINDOW_CHECK) && !defined(SMC_RETIRE_LOCAL_CHECK)
+/* flush_translation_cache_ram_range's window start, out of line (cpl2w). */
+static __attribute__((noinline)) u32 smc_window_first(u32 rgn, u32 lo_off,
+                                                      u32 hi_off)
+{
+  /* armed (the caller checks): the short window, then the chunk bound */
+  u32 span = smc_max_extent[rgn] + 4, first, local_;
+  if (span > MAX_BLOCK_SIZE * 4)
+    span = MAX_BLOCK_SIZE * 4;
+  first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+  local_ = smc_back_first(rgn, lo_off, hi_off);
+  return local_ > first ? local_ : first;
+}
+#endif
 /* Retire every translation whose source overlaps [low, high). Cross-block
  * branches into RAM are indirect under this flag, so clearing an offset
  * cannot leave a generated jump pointing at the retired cache entry. */
@@ -7242,7 +7316,15 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 
   /* ARM is the wider ISA, so this is the hard maximum source span for
    * either mode. Exact extents filter unrelated starts inside the window. */
-#ifdef SMC_RETIRE_WINDOW
+#if defined(SMC_RETIRE_WINDOW) && defined(SMC_LOCAL_COLD) && \
+    !defined(SMC_RETIRE_WINDOW_CHECK) && !defined(SMC_RETIRE_LOCAL_CHECK)
+  /* LAYOUT NEUTRALITY (cpl2w): the window start and its chunk narrowing in
+   * one out-of-line call; the same arithmetic as the block below. */
+  first = (lo_off > MAX_BLOCK_SIZE * 4)
+        ? (lo_off - MAX_BLOCK_SIZE * 4) >> 1 : 0;   /* the window unarmed */
+  if (smc_window_armed)
+    first = smc_window_first(base == 0x02000000, lo_off, hi_off);
+#elif defined(SMC_RETIRE_WINDOW)
   {
     u32 span = smc_max_extent[base == 0x02000000] + 4;
     u32 full = (lo_off > MAX_BLOCK_SIZE * 4)
@@ -9624,8 +9706,55 @@ void gpsp_rewind_jit_used(u32 *rom, u32 *ram)
 }
 #endif
 
+#ifdef XS_HEAP
+/* One zeroed block for the SMC_SAME_SKIP / SMC_RETIRE_LOCAL tables, taken
+ * once, before init_gamepak_buffer's 1 MiB loop (libretro.c retro_init);
+ * init_dynarec_caches calls it too, as a no-op after the first. */
+void dynarec_heap_tables_init(void)
+{
+  static u8 *blk;
+  u32 sz = 0;
+  if (blk)
+    return;
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+  sz += 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2;
+#ifdef SMC_SAME_ADAPT
+  sz += 2 * (0x10000 / 16);
+#endif
+#endif
+#if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
+  sz += (0x8000 >> SMC_LOCAL_SHIFT) * 2 + (0x40000 >> SMC_LOCAL_SHIFT) * 2;
+#endif
+  blk = malloc(sz ? sz : 64);
+  if (!blk) {
+    fprintf(stderr, "dynarec_heap_tables_init: %u bytes refused\n", (unsigned)sz);
+    abort();
+  }
+  memset(blk, 0, sz ? sz : 64);
+  {
+    u8 *p = blk;
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+    xs_val = (u16 *)p; p += 0x8000;
+    xs_ok = p;         p += 0x8000 / 16;
+    xs_bad = p;        p += 0x8000 / 16;
+    xs_min = (u16 *)p; p += 0x8000 / 2;
+#ifdef SMC_SAME_ADAPT
+    xs_rec = (u8 (*)[0x10000 / 16])p; p += 2 * (0x10000 / 16);
+#endif
+#endif
+#if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
+    smc_back_iw = (u16 *)p; p += (0x8000 >> SMC_LOCAL_SHIFT) * 2;
+    smc_back_ew = (u16 *)p; p += (0x40000 >> SMC_LOCAL_SHIFT) * 2;
+#endif
+    (void)p;
+  }
+}
+#endif
 void init_dynarec_caches(void)
 {
+#ifdef XS_HEAP
+  dynarec_heap_tables_init();
+#endif
   /* Initialize caches so that we can start initalizing the emitter. */
 #ifdef JIT_CODE_DISCIPLINE
   jit_code_owner_changed(JOWN_INIT);

@@ -770,6 +770,12 @@ void retro_init(void)
   #endif
 #endif
 
+#ifdef XS_HEAP
+   {  /* before the 1 MiB ROM loop takes the heap (cpu_threaded.c) */
+      extern void dynarec_heap_tables_init(void);
+      dynarec_heap_tables_init();
+   }
+#endif
    init_gamepak_buffer();
    init_sound();
 
