@@ -7228,6 +7228,110 @@ void census_dma_alert(void)
   if (!cen_dkey[h & 4095] && cen_keys < 4000) { cen_dkey[h & 4095] = k; cen_keys++; }
   census_cause = 1;
 }
+
+#ifdef XLAT_REUSE_SIM
+/* XLAT_REUSE_SIM (twin sizing only, 2026-10-27): what would a MULTI-VERSION
+ * SMC_REUSE revive under the real cache lifetime?
+ *
+ * Model (SMC_REUSE's design, generalised): every RAM translation leaves its
+ * body plus a record (40 B header + 16 B exits + the guest bytes) in a
+ * virtual 384 KiB RAM cache; flushes and retirements are "virtual" (bodies
+ * stay dormant); a translation whose (pc, mode, guest-byte hash) has a live
+ * record is a REVIVE and costs no cache bytes.  When the virtual cache
+ * overflows, it resets for real and every record dies.  The index keeps
+ * RS_WAYS versions per (pc, mode) set, LRU.  Two flavours:
+ *   A  capacity only (the ceiling of a well-built reuse);
+ *   B  A + every record dropped when the gate count or smc_partial_active
+ *      changes (bb8b7b2's environment rule).
+ * Host bytes per block: the RAM translation pointer's advance between
+ * consecutive RAM translations (running average when that is not usable).
+ * Counted from frame 300 of the run (the profiles' window). */
+#define RS_SETS 16384
+#define RS_WAYS 4
+#ifndef RS_CAP
+#define RS_CAP  (384 * 1024)
+#endif
+typedef struct { u32 key, hash, gen, lru; } rs_ent;
+static rs_ent *rs_tab[2];
+static u32 rs_v[2], rs_gen[2] = { 1, 1 }, rs_clock, rs_live[2], rs_live_bytes[2];
+static u32 rs_peak[2], rs_peak_bytes[2], rs_resets[2], rs_env_drops, rs_ngates, rs_pa;
+static u32 rs_blocks, rs_halves, rs_rev_b[2], rs_rev_h[2];
+static u8 *rs_last_ptr;
+static unsigned long long rs_bytes_sum, rs_halves_sum;
+static void rs_report(void)
+{
+  int f;
+  fprintf(stderr, "RS blocks=%u halves=%u env_drops=%u bytes_per_half=%.2f\n",
+          (unsigned)rs_blocks, (unsigned)rs_halves, (unsigned)rs_env_drops,
+          rs_halves_sum ? (double)rs_bytes_sum / rs_halves_sum : 0.0);
+  for (f = 0; f < 2; f++)
+    fprintf(stderr, "RS flavour=%c revive_blocks=%u revive_halves=%u resets=%u peak_records=%u peak_record_bytes=%u\n",
+            'A' + f, (unsigned)rs_rev_b[f], (unsigned)rs_rev_h[f], (unsigned)rs_resets[f],
+            (unsigned)rs_peak[f], (unsigned)rs_peak_bytes[f]);
+}
+static void rs_reset(int f)
+{
+  rs_gen[f]++;
+  rs_v[f] = 0;
+  rs_live[f] = rs_live_bytes[f] = 0;
+}
+static void rs_xlat(u32 pc, u32 thumb, u32 hsh, u32 halves, int counted)
+{
+  u32 key = pc | (thumb & 1), bytes, set, w, f;
+  if (!rs_tab[0]) {
+    rs_tab[0] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
+    rs_tab[1] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
+    atexit(rs_report);
+  }
+  /* host bytes of this block */
+  if (rs_last_ptr && ram_translation_ptr > rs_last_ptr &&
+      ram_translation_ptr - rs_last_ptr < 16384) {
+    rs_bytes_sum += ram_translation_ptr - rs_last_ptr;
+    rs_halves_sum += halves;
+  }
+  rs_last_ptr = ram_translation_ptr;
+  bytes = rs_halves_sum ? (u32)(halves * rs_bytes_sum / rs_halves_sum) : halves * 8;
+  /* flavour B's environment */
+  if (translation_gate_targets != rs_ngates || smc_partial_active != rs_pa) {
+    rs_ngates = translation_gate_targets;
+    rs_pa = smc_partial_active;
+    rs_env_drops++;
+    rs_reset(1);
+  }
+  if (counted) { rs_blocks++; rs_halves += halves; }
+  set = ((key * 2654435761u) >> 18) & (RS_SETS - 1);
+  rs_clock++;
+  for (f = 0; f < 2; f++) {
+    rs_ent *e = rs_tab[f] + set * RS_WAYS, *victim = e;
+    int hit = 0;
+    for (w = 0; w < RS_WAYS; w++) {
+      if (e[w].gen == rs_gen[f] && e[w].key == key && e[w].hash == hsh) {
+        e[w].lru = rs_clock; hit = 1; break;
+      }
+      if (e[w].gen != rs_gen[f] || e[w].lru < victim->lru)
+        if (victim->gen == rs_gen[f]) victim = &e[w];
+    }
+    if (hit) {
+      if (counted) { rs_rev_b[f]++; rs_rev_h[f] += halves; }
+      continue;
+    }
+    {
+      u32 rec = 56 + halves * 2 + 4;
+      if (rs_v[f] + bytes + rec > RS_CAP) {
+        rs_reset(f);
+        if (counted) rs_resets[f]++;
+        victim = e;
+      }
+      rs_v[f] += bytes + rec;
+      if (victim->gen != rs_gen[f]) rs_live[f]++;
+      rs_live_bytes[f] += rec;
+      victim->key = key; victim->hash = hsh; victim->gen = rs_gen[f]; victim->lru = rs_clock;
+      if (rs_live[f] > rs_peak[f]) rs_peak[f] = rs_live[f];
+      if (rs_live_bytes[f] > rs_peak_bytes[f]) rs_peak_bytes[f] = rs_live_bytes[f];
+    }
+  }
+}
+#endif
 static void census_xlat(u32 start_pc, u32 end_pc, u32 thumb)
 {
   const u8 *mem; u32 off, lim, i, idx, hsh = 2166136261u, c = census_cause;
@@ -7244,6 +7348,10 @@ static void census_xlat(u32 start_pc, u32 end_pc, u32 thumb)
   for (i = off; i < lim; i++) hsh = (hsh ^ mem[i]) * 16777619u;
   hsh ^= (lim - off) * 0x85EBCA6Bu;
   if (!hsh) hsh = 1;
+#ifdef XLAT_REUSE_SIM
+  rs_xlat(start_pc, thumb, hsh, (lim - off) >> 1,
+          frame_counter - cen_frames0 >= 300);
+#endif
   cen_x[c]++;
   cen_hw[c] += (lim - off) >> 1;
   idx += thumb ? (0x4000 + 0x20000) : 0;
