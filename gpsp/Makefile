@@ -447,6 +447,11 @@ else ifeq ($(platform), psp1)
 	# VRAM_EXEC=1: translate and run code the game copied into VRAM
 	# (cpu_threaded.c VRAM_EXEC; Big Mutha Truckers, Street Racing Syndicate,
 	# jsmolka nes.gba).  Off by default.
+	# FIQ_BANK_FIX=1: bank FIQ's r8-r12 correctly in set_cpu_mode (cpu.cc;
+	# OpenLara).  Off by default.  (From claude/self-activate 950c5f3/25cab1b.)
+	ifeq ($(FIQ_BANK_FIX),1)
+	CFLAGS += -DFIQ_BANK_FIX=1
+	endif
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
 	endif

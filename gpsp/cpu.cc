@@ -1377,6 +1377,71 @@ const u32 cpu_modes[16] =
 
 u32 instruction_count = 0;
 
+#ifdef FIQ_BANK_FIX
+/* FIQ has its own r8-r14; every other mode shares the user r8-r12 and has
+ * only its own r13/r14.  The shared r8-r12 are parked in the USER/SYSTEM
+ * slot (reg_mode[0][0..4]) while FIQ runs, FIQ's own r8-r14 live in
+ * reg_mode[FIQ].  Upstream (the #else in set_cpu_mode) never saved FIQ's
+ * r8-r12 and, on FIQ -> IRQ/SVC, loaded r8-r12 from that mode's never-written
+ * slots and kept them on the way back: OpenLara rasterises in FIQ with IRQs
+ * enabled, so every VBlank replaced its r8-r12 with zeros and the span loop
+ * ran ~4e9 iterations (kf_openlara_gba).
+ *
+ * COST (self-activate): a game that never enters FIQ must run exactly what
+ * upstream runs.  Switches that do not involve FIQ do what they always did
+ * (SP/LR only).  The FIQ bank swap is plain loads and stores with no call,
+ * marked unlikely, so every copy of this body stays a LEAF: compat-cost's
+ * out-of-line helper made set_cpu_mode cheap but, once GCC inlined it into
+ * check_and_raise_interrupts (the IRQ entry, every interrupt), that function
+ * needed a stack frame for the helper call -- +5 instructions per IRQ on
+ * every game (twin, Unbound rival: +367k instructions per 3100 frames).
+ * With new_mode a constant (MODE_IRQ there) the test folds to the one
+ * cpu_mode == FIQ compare upstream already had. */
+static inline __attribute__((always_inline))
+ void set_cpu_mode_body(cpu_mode_type new_mode)
+{
+  cpu_mode_type cpu_mode = reg[CPU_MODE];
+
+  if(cpu_mode == new_mode)
+     return;
+
+  if(__builtin_expect(cpu_mode == MODE_FIQ || new_mode == MODE_FIQ, 0))
+  {
+    if(cpu_mode == MODE_FIQ)
+    {
+       for (u32 i = 8; i < 15; i++)        /* FIQ's own r8-r14 */
+          REG_MODE(MODE_FIQ)[i - 8] = reg[i];
+       for (u32 i = 8; i < 13; i++)        /* back to the shared r8-r12 */
+          reg[i] = REG_MODE(MODE_USER)[i - 8];
+       reg[REG_SP] = REG_MODE(new_mode)[5];
+       reg[REG_LR] = REG_MODE(new_mode)[6];
+    }
+    else                                   /* new_mode == MODE_FIQ */
+    {
+       for (u32 i = 8; i < 13; i++)        /* park the shared r8-r12 */
+          REG_MODE(MODE_USER)[i - 8] = reg[i];
+       REG_MODE(cpu_mode)[5] = reg[REG_SP];
+       REG_MODE(cpu_mode)[6] = reg[REG_LR];
+       for (u32 i = 8; i < 15; i++)
+          reg[i] = REG_MODE(MODE_FIQ)[i - 8];
+    }
+  }
+  else
+  {
+    REG_MODE(cpu_mode)[5] = reg[REG_SP];
+    REG_MODE(cpu_mode)[6] = reg[REG_LR];
+    reg[REG_SP] = REG_MODE(new_mode)[5];
+    reg[REG_LR] = REG_MODE(new_mode)[6];
+  }
+
+  reg[CPU_MODE] = new_mode;
+}
+
+void set_cpu_mode(cpu_mode_type new_mode)
+{
+  set_cpu_mode_body(new_mode);
+}
+#else
 void set_cpu_mode(cpu_mode_type new_mode)
 {
   cpu_mode_type cpu_mode = reg[CPU_MODE];
@@ -1408,6 +1473,7 @@ void set_cpu_mode(cpu_mode_type new_mode)
 
   reg[CPU_MODE] = new_mode;
 }
+#endif
 
 #define cpu_has_interrupt()                                                   \
   cpu_irq_delivery_enabled(read_ioreg(REG_IE), read_ioreg(REG_IF),            \
@@ -1445,7 +1511,11 @@ u32 check_and_raise_interrupts()
     reg[REG_CPSR] = 0xD2;
     reg[REG_PC] = 0x00000018;
 
+#ifdef FIQ_BANK_FIX
+    set_cpu_mode_body(MODE_IRQ);   /* inline and a leaf, as upstream's was */
+#else
     set_cpu_mode(MODE_IRQ);
+#endif
 
     // STOP retains the existing IRQ-delivery-gated wake behavior.
     if (reg[CPU_HALT_STATE] == CPU_STOP)
