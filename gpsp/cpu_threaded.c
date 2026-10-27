@@ -4282,7 +4282,8 @@ u32 smc_same_skips, smc_same_poison;
  *   ON  -> OFF: after every XS_WINDOW recorded halfwords, if fewer than
  *               XS_WINDOW / 256 traps were skipped in that window.
  *   OFF -> ON : after XS_REPROBE single-word IWRAM retirements while off --
- *               the events a skip could have saved -- re-probe for a window.
+ *               the events a skip could have saved -- re-probe for a window
+ *               (doubling, up to 64x, after each probe that never paid).
  * While OFF nothing is recorded and no trap is checked (every trap retires,
  * as without SMC_SAME_SKIP).
  *
@@ -4316,6 +4317,12 @@ static inline void xs_rec_set(u32 tag, u32 m, u32 v)
   if (v) xs_rec[m][tag >> 4] |= bit; else xs_rec[m][tag >> 4] &= (u8)~bit;
 }
 /* ramtag_note_extent, IWRAM block of `halves` halfwords just scanned */
+/* Re-probe backoff: a probe (the windows from switching ON to switching OFF)
+ * that never had one paying window doubles the retirements needed before the
+ * next probe, up to XS_REPROBE << 6; a paying window resets it.  Top Gear
+ * Rally retires steadily but never pays: without the backoff it re-probed 28
+ * times in 1200 f (twin +2.7 % core); Doom never stops paying. */
+static u32 xs_reprobe = XS_REPROBE, xs_probe_paid;
 static inline void xs_adapt_note(u32 tag, u32 thumb, u32 halves)
 {
   xs_rec_set(tag, thumb, xs_on);
@@ -4327,13 +4334,19 @@ static inline void xs_adapt_note(u32 tag, u32 thumb, u32 halves)
       xs_on = 0;
       xs_off_retires = 0;
       xs_turned_off++;
-    }
+      if (xs_probe_paid)
+        xs_reprobe = XS_REPROBE;
+      else if (xs_reprobe < (XS_REPROBE << 6))
+        xs_reprobe <<= 1;
+    } else
+      xs_probe_paid = 1;
     xs_win_noted = xs_win_skips = 0;
   }
 }
 static inline void xs_adapt_retired(void)
 {
-  if (!xs_on && ++xs_off_retires >= XS_REPROBE) {
+  if (!xs_on && ++xs_off_retires >= xs_reprobe) {
+    xs_probe_paid = 0;
     xs_on = 1;
     xs_win_noted = xs_win_skips = 0;
     xs_turned_on++;
