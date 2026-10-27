@@ -5023,14 +5023,49 @@ static inline int smc_gate_map_has(u32 pc)
 static u8 entry_gate_iwram[0x8000 >> 4];
 static u8 entry_gate_ewram[0x40000 >> 4];
 u32 entry_gates_armed, entry_gate_count;
+#ifdef ENTRY_GATES_RANGE
+/* ENTRY_GATES_RANGE (slow-titles 2026-10-27): walk only the tag range the
+ * full flush that follows will clear ([*_code_min & ~15, *_code_max + 8),
+ * the same bounds and the same whole-region fallback as
+ * flush_translation_cache_ram), instead of all 16K + 128K halfwords.  Every
+ * tag outside it is zero -- the flush relies on exactly that -- so the
+ * harvest is the same.  Payback exhausts the RAM cache every ~2 frames and
+ * the two full walks cost the twin ~3M instructions each. */
+static void entry_gates_bounds(u32 cmin, u32 cmax, u32 size, u32 *lo, u32 *hi)
+{
+  if (!cmax) { *lo = *hi = 0; return; }
+  if (cmax > cmin) {
+    *lo = (cmin & ~15U) >> 1;
+    *hi = (MIN(cmax + 8, size) + 1) >> 1;
+#ifdef ENTRY_GATES_RANGE_MUTANT
+    *hi = cmax >> 1;   /* oracle mutant: drop the last block's tags */
+#endif
+  } else {
+    *lo = 0;
+    *hi = size >> 1;
+  }
+}
+#endif
 static void entry_gates_harvest(void)
 {
   const u16 *t = (const u16 *)iwram;
   u32 i, n = 0;
+  u32 ilo = 0, ihi = 0x4000, elo = 0, ehi = 0x20000;
+#ifdef ENTRY_GATES_RANGE
+  entry_gates_bounds(iwram_code_min, iwram_code_max, 0x8000, &ilo, &ihi);
+  entry_gates_bounds(ewram_code_min, ewram_code_max, 0x40000, &elo, &ehi);
+#ifdef ENTRY_GATES_RANGE_CHECK
   for (i = 0; i < 0x4000; i++)
+    if ((i < ilo || i >= ihi) && VALID_TAG(t[i])) abort();
+  for (i = 0; i < 0x20000; i++)
+    if ((i < elo || i >= ehi) &&
+        VALID_TAG(((const u16 *)(ewram + 0x40000))[i])) abort();
+#endif
+#endif
+  for (i = ilo; i < ihi; i++)
     if (VALID_TAG(t[i])) { entry_gate_iwram[i >> 3] |= (u8)(1u << (i & 7)); n++; }
   t = (const u16 *)(ewram + 0x40000);
-  for (i = 0; i < 0x20000; i++)
+  for (i = elo; i < ehi; i++)
     if (VALID_TAG(t[i])) { entry_gate_ewram[i >> 3] |= (u8)(1u << (i & 7)); n++; }
   entry_gates_armed++;
   entry_gate_count = n;

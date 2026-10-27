@@ -234,18 +234,24 @@ if os.environ.get("DRCORPUS_SLOW") == "1":
           " -DSMC_SAME_ADAPT=1")
     VX = " -DVRAM_EXEC=1"
     RL = " -DSMC_RETIRE_LOCAL=1"
+    EG = " -DENTRY_GATES_RANGE=1"
     VARIANTS = {
         "base":  (C3, "ref", "cpu-levers candidate flags"),
         "vx":    (C3 + VX, "switch", "VRAM_EXEC (ported from claude/self-activate)"),
         "rl":    (C3 + RL, "switch", "SMC_RETIRE_LOCAL alone"),
         "rlchk": (C3 + RL + " -DSMC_RETIRE_LOCAL_CHECK=1", "assert",
                   "SMC_RETIRE_LOCAL with its invariant asserted (aborts on violation)"),
-        "slow":  (C3 + VX + RL, "switch", "the slow-titles candidate: VRAM_EXEC + SMC_RETIRE_LOCAL"),
+        "egchk": (C3 + EG + " -DENTRY_GATES_RANGE_CHECK=1", "assert",
+                  "ENTRY_GATES_RANGE with its invariant asserted (aborts on violation)"),
+        "slow":  (C3 + VX + RL + EG, "switch",
+                  "the slow-titles candidate: VRAM_EXEC + SMC_RETIRE_LOCAL + ENTRY_GATES_RANGE"),
     }
     ORDER = list(VARIANTS)
     MUTANTS = {
         "m_rl_last": (C3 + RL + " -DSMC_RETIRE_LOCAL_CHECK=1 -DSMC_RETIRE_LOCAL_MUTANT=1", "", "rlchk",
                       "smc_back_note forgets the last chunk of every block"),
+        "m_eg_last": (C3 + EG + " -DENTRY_GATES_RANGE_CHECK=1 -DENTRY_GATES_RANGE_MUTANT=1", "", "egchk",
+                      "harvest range drops the highest block's tags"),
     }
 
 

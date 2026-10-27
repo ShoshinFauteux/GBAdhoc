@@ -672,6 +672,16 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_LOCAL_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_LOCAL_CHECK=1
 	endif
+	# ENTRY_GATES_RANGE=1: OFF by default (slow-titles, needs ENTRY_GATES).
+	# The exhaustion-time gate harvest walks only the tag range the following
+	# full flush clears (iwram/ewram_code_min..max) instead of all 144K tags.
+	# ENTRY_GATES_RANGE_CHECK=1: diagnostic, abort on a live tag outside it.
+	ifeq ($(ENTRY_GATES_RANGE),1)
+	CFLAGS += -DENTRY_GATES_RANGE=1
+	endif
+	ifeq ($(ENTRY_GATES_RANGE_CHECK),1)
+	CFLAGS += -DENTRY_GATES_RANGE_CHECK=1
+	endif
 	# DISPATCH_CACHE=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
 	# A direct-mapped {guest pc -> host entry} table probed in asm by
 	# mips_indirect_branch_* before the register save + C block lookup.
