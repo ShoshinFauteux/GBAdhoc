@@ -829,6 +829,16 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_PURE),1)
 	CFLAGS += -DXLAT_PURE=1
 	endif
+	# SMC_REUSE=1: OFF by default (multi-version reuse step 2).  A full RAM
+	# flush keeps the native code; a RAM block whose guest bytes are unchanged
+	# is revived instead of translated again (cpu_threaded.c SMC_REUSE).
+	# Speed only; needs XLAT_PURE=1.
+	ifeq ($(SMC_REUSE),1)
+	ifneq ($(XLAT_PURE),1)
+	$(error SMC_REUSE=1 needs XLAT_PURE=1)
+	endif
+	CFLAGS += -DSMC_REUSE=1
+	endif
 	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
 	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective
 	# retirement (Hot Wheels' STMIA r0!,{r4-r11} code generator).  Needs

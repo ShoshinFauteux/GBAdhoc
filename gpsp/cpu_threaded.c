@@ -3100,6 +3100,14 @@ static int smc_remember_retired_tag(u32 addr, u16 tag)
  * first half of a four-instruction dispatcher path. */
 static void smc_stable_thunk_link(u8 *entry, u8 *body)
 {
+#ifdef SMC_REUSE
+  /* A revived block's thunk normally still holds exactly this jump: leave the
+   * code memory (and so the I-cache) alone. */
+  if (address32(entry, 0) == ((mips_opcode_j << 26) |
+                              (mips_absolute_offset(body) & 0x3FFFFFF)) &&
+      address32(entry, 4) == 0)
+    return;
+#endif
   generate_branch_patch_unconditional(entry, body);
   address32(entry, 4) = 0;
 #ifdef JIT_CODE_DISCIPLINE
@@ -3532,6 +3540,38 @@ vram_lookup_builder(thumb)
 #define XLAT_LINK_LOOKUP(type, thumb, target) block_lookup_translate_##type(target)
 #endif
 
+#ifdef SMC_REUSE
+/* SMC_REUSE (make SMC_REUSE=1, off by default; docs/BUILD-SWITCHES.md).
+ * The implementation and its contract are above translate_block_arm. */
+struct smc_reuse_rec_s;
+static struct smc_reuse_rec_s *smc_reuse_find(u32 key);
+static u32 smc_reuse_gen;         /* bumped by every gate-table change */
+static u8 *smc_reuse_body(struct smc_reuse_rec_s *r);
+static u32 smc_reuse_size(struct smc_reuse_rec_s *r);
+static bool smc_reuse_revive(struct smc_reuse_rec_s *r);
+#define SMC_REUSE_DECL()            struct smc_reuse_rec_s *smc_rr
+#define SMC_REUSE_FIND(key, body)   do {                                      \
+  smc_rr = smc_reuse_find(key);                                               \
+  if (smc_rr) (body) = smc_reuse_body(smc_rr);                                \
+} while (0)
+#define SMC_REUSE_TRANSLATE(call)   (smc_rr ? smc_reuse_revive(smc_rr) : (call))
+#ifdef SMC_PARTIAL_SAFE
+/* code_bytes is "live" (nonzero) and "a trampoline fits" (>= 8); a revived
+ * body sits below ram_translation_ptr, so the distance cannot be used. */
+#define SMC_REUSE_CODE_BYTES(te, type) do {                                   \
+  if (smc_rr && smc_partial_active)                                           \
+    (te)->code_bytes_##type = smc_reuse_size(smc_rr);                         \
+} while (0)
+#else
+#define SMC_REUSE_CODE_BYTES(te, type) do { } while (0)
+#endif
+#else
+#define SMC_REUSE_DECL()            int smc_rr_unused_
+#define SMC_REUSE_FIND(key, body)   do { (void)smc_rr_unused_; } while (0)
+#define SMC_REUSE_TRANSLATE(call)   (call)
+#define SMC_REUSE_CODE_BYTES(te, type) do { } while (0)
+#endif
+
 #define block_lookup_translate_builder(type)                                  \
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
@@ -3566,6 +3606,8 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         bool result;                                                          \
         u32 cph_t;                                                            \
         u8 *blkptr = ram_translation_ptr + ram_block_prologue_size;           \
+        SMC_REUSE_DECL();                                                     \
+        SMC_REUSE_FIND(pc | thumb, blkptr);                                   \
         SMC_RAM_PREPARE_TRANSLATION(trentry, type, blkptr);                   \
         /* Phase 5h: dynarec COMPILATION, separated from execution.  A        \
          * few tens of calls a frame in steady state, and the bracket is      \
@@ -3575,7 +3617,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         XLAT_PROBE_ENTER();                                                   \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
-        result = translate_block_##type(pc, true);                            \
+        result = SMC_REUSE_TRANSLATE(translate_block_##type(pc, true));       \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
@@ -3583,6 +3625,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
                                                                               \
         if (result) {                                                         \
           SMC_NOTE_CODE_BYTES(trentry, blkptr, type);                         \
+          SMC_REUSE_CODE_BYTES(trentry, type);                                \
           SMC_RAM_COMMIT_TRANSLATION(trentry, type, blkptr);                  \
           return SMC_RAM_PUBLIC_ENTRY(trentry, type);                         \
         }                                                                     \
@@ -5055,11 +5098,17 @@ static void smc_gate_map_add(u32 pc)
     return;
   }
   map[off >> 3] |= (u8)(1u << (off & 7));
+#ifdef SMC_REUSE
+  smc_reuse_gen++;
+#endif
 }
 
 static void smc_gate_map_rebuild(void)
 {
   u32 i;
+#ifdef SMC_REUSE
+  smc_reuse_gen++;
+#endif
   memset(smc_gate_iwram, 0, sizeof(smc_gate_iwram));
   memset(smc_gate_ewram, 0, sizeof(smc_gate_ewram));
   for (i = 0; i < translation_gate_targets; i++)
@@ -5141,12 +5190,18 @@ static void entry_gates_harvest(void)
     if (VALID_TAG(t[i])) { entry_gate_ewram[i >> 3] |= (u8)(1u << (i & 7)); n++; }
   entry_gates_armed++;
   entry_gate_count = n;
+#ifdef SMC_REUSE
+  smc_reuse_gen++;
+#endif
 }
 static void entry_gates_reset(void)
 {
   memset(entry_gate_iwram, 0, sizeof(entry_gate_iwram));
   memset(entry_gate_ewram, 0, sizeof(entry_gate_ewram));
   entry_gates_armed = entry_gate_count = 0;
+#ifdef SMC_REUSE
+  smc_reuse_gen++;
+#endif
 }
 static inline int entry_gate_has(u32 pc)
 {
@@ -6392,6 +6447,622 @@ static inline u32 salu_static_target(u32 opcode, u32 pc, u32 is_add)
 #define arm_static_alu_pc(is_add, name) arm_data_proc(name, imm, no_flags)
 #endif
 
+#ifdef SMC_REUSE
+/* SMC_REUSE -- do not re-translate RAM code that has not changed.
+ *
+ * WHY.  Some games rewrite their own RAM code with the same bytes, or run code
+ * from the stack and then overwrite it, several times a frame (Camelot's sound
+ * driver: Mario Tennis / Mario Golf / Golden Sun; Iridion II; Payback).  Every
+ * such write is a full RAM flush, and the same blocks are then translated
+ * again: 99.6% of Mario Tennis's RAM translations are repeats.
+ *
+ * WHAT.  A full RAM flush still does everything the guest can observe -- every
+ * code tag is zeroed, the tag numbering restarts, all the SMC bookkeeping is
+ * reset -- but the native code is left where it is ("dormant").  Each RAM block
+ * is followed in the cache by a small RECORD: its guest pc and mode, the guest
+ * bytes it was translated from, and its external exits.  When the lookup would
+ * translate a block, and a record for that pc exists whose guest bytes are
+ * still identical, the block is REVIVED instead: the side effects of the
+ * translation are replayed (tags, code limits, extent note, the virtual cache
+ * pointer, and the same lookups of the same exit targets in the same order)
+ * and the old body is used.  Nothing else changes.
+ *
+ * THE CONTRACT, which is what makes this a speed-only change:
+ *  1. The translator is a pure function of (pc, mode, the guest bytes of the
+ *     scanned extent, the gate tables, smc_partial_active, the idle-loop pc and
+ *     the cheat hook).  For RAM blocks it reads guest memory only as opcodes
+ *     inside the extent (the one literal-pool fold is ROM-only).  The record
+ *     keeps the extent plus 4 bytes; everything else in that list is the
+ *     ENVIRONMENT, and any change to it drops every record (smc_reuse_env_ok).
+ *  2. A dormant body is reachable only through the lookup: the flush zeroed
+ *     every tag, and a live block's exits were all looked up when it was
+ *     translated or revived.  So a body runs only after its bytes were compared.
+ *  3. Exits are not trusted: revival looks every target up again (exactly the
+ *     calls a translation makes) and re-patches a jump whose target moved.
+ *  4. The guest-visible effects of a translation are the tags it writes and
+ *     the moment the cache "fills" (a full flush, and ENTRY_GATES arming).
+ *     Tags are replayed by smc_reuse_retag().  Fullness is decided on a VIRTUAL
+ *     pointer that advances exactly as the real one would without this switch
+ *     (smc_reuse_vptr, the record's size and chk), so the cache fills at the
+ *     same block as before.
+ *  5. The one known exception to (4): the real cache also holds dormant bodies
+ *     and records, so it can fill while the virtual one has room.  That is
+ *     handled as an ordinary cache-full flush, and counted in
+ *     smc_reuse_early_full; a flush that finds the cache more than half used
+ *     resets it for real to keep that rare, and the switch stays inert in
+ *     any game that is not flushing constantly (see ARMING below), which is
+ *     every game that fills its cache in the library sweep.  NOT yet exact:
+ *     an exact answer needs either spare cache bytes that the virtual
+ *     pointer never counts, or a purge that keeps the tags.
+ *
+ * Code memory is not written on a virtual flush or on a revival whose links
+ * are unchanged, so neither needs an I-cache sync. */
+typedef struct smc_reuse_rec_s
+{
+  u32 key;      /* guest pc | thumb */
+  u32 end;      /* scan end (raw pc) */
+  u32 first;    /* cache offset of the block's first emitted byte */
+  u32 body;     /* cache offset of the body (what the lookup returns) */
+  u32 size;     /* emitted bytes, first .. committed translation_ptr */
+  u32 chk;      /* offset from first of the last cache-limit check */
+  u32 reason;   /* scan_exit_reason */
+  u32 nexits;   /* smc_reuse_exit[nexits] follows, */
+  u32 nsites;   /* then smc_reuse_call[nsites] memory-access call sites, */
+  u32 srclen;   /* then srclen guest bytes */
+} smc_reuse_rec;
+typedef struct { u32 src, target; } smc_reuse_exit;
+
+#define SMC_REUSE_SLOTS 1024
+static u32 smc_reuse_index[SMC_REUSE_SLOTS];   /* cache offset of a record */
+static u32 smc_reuse_vptr;        /* where ram_translation_ptr would be */
+static u8 *smc_reuse_water;       /* ram_translation_ptr as last seen */
+static u32 smc_reuse_force_real;
+/* ARMING.  Records cost cache space, which contract point 5 says can make
+ * the real cache fill before the virtual one.  So the switch is inert -- no
+ * record written, nothing kept, nothing revived, the cache used byte for byte
+ * as without it -- unless the game is flushing its RAM code for reasons other
+ * than a full cache at least SMC_REUSE_ARM_FLUSHES times per
+ * SMC_REUSE_ARM_FRAMES frames (re-evaluated every window), and it stands down
+ * for the rest of the session the first time the cache does fill. */
+#define SMC_REUSE_ARM_FRAMES   64
+#define SMC_REUSE_ARM_FLUSHES  32
+static u32 smc_reuse_armed, smc_reuse_win_frame, smc_reuse_win_flushes,
+           smc_reuse_last_full, smc_reuse_full_seen;
+static void smc_reuse_window(void)
+{
+  if ((u32)(frame_counter - smc_reuse_win_frame) >= SMC_REUSE_ARM_FRAMES) {
+    smc_reuse_armed = !smc_reuse_full_seen &&
+                      smc_reuse_win_flushes >= SMC_REUSE_ARM_FLUSHES;
+    smc_reuse_win_flushes = 0;
+    smc_reuse_win_frame = frame_counter;
+  }
+}
+static struct { u32 gen, idle, cheat, pa, ngates, size; u8 *base; } smc_reuse_env;
+u32 smc_reuse_hits, smc_reuse_stale, smc_reuse_early_full, smc_reuse_resets,
+    smc_reuse_kept, smc_reuse_records, smc_reuse_relinked, smc_reuse_unlearnt,
+    smc_reuse_rom2ram;
+
+#ifdef DRPROF_TWIN
+#include <stdio.h>
+#include <stdlib.h>
+static void smc_reuse_report(void)
+{
+  fprintf(stderr, "smc_reuse: rom2ram=%u unlearnt=%u relinked=%u hits=%u records=%u stale=%u kept=%u resets=%u "
+          "early_full=%u fl_total=%u fl_full=%u fl_smc=%u fl_dma=%u\n",
+          (unsigned)smc_reuse_rom2ram,
+          (unsigned)smc_reuse_unlearnt, (unsigned)smc_reuse_relinked,
+          (unsigned)smc_reuse_hits, (unsigned)smc_reuse_records,
+          (unsigned)smc_reuse_stale, (unsigned)smc_reuse_kept,
+          (unsigned)smc_reuse_resets, (unsigned)smc_reuse_early_full,
+          (unsigned)flush_ram_total, (unsigned)flush_ram_full,
+          (unsigned)flush_ram_smc, (unsigned)flush_ram_dma);
+#ifdef SMC_REUSE_DEBUG
+  { extern u32 smc_reuse_dry_ok, smc_reuse_dry_bad, smc_reuse_dry_ic, smc_reuse_dry_full;
+    fprintf(stderr, "smc_reuse dry: ok=%u bad=%u relearnt_call_sites=%u%c",
+            (unsigned)smc_reuse_dry_ok, (unsigned)smc_reuse_dry_bad,
+            (unsigned)smc_reuse_dry_ic, 10); }
+#endif
+}
+#endif
+
+static void smc_reuse_drop(void)
+{
+#ifdef DRPROF_TWIN
+  static int once;
+  if (!once) { once = 1; atexit(smc_reuse_report); }
+#endif
+  memset(smc_reuse_index, 0, sizeof(smc_reuse_index));
+  smc_reuse_water = ram_translation_cache;
+}
+
+/* 1 = every record in the index was made in the environment we are in. */
+static int smc_reuse_env_ok(void)
+{
+#ifdef SMC_PARTIAL_SAFE
+  u32 pa = smc_partial_active;
+#else
+  u32 pa = 0;
+#endif
+  if (smc_reuse_env.gen == smc_reuse_gen &&
+      smc_reuse_env.idle == idle_loop_target_pc &&
+      smc_reuse_env.cheat == cheat_master_hook &&
+      smc_reuse_env.pa == pa &&
+      smc_reuse_env.ngates == translation_gate_targets &&
+      smc_reuse_env.size == ram_translation_cache_size &&
+      smc_reuse_env.base == ram_translation_cache &&
+      ram_translation_ptr >= smc_reuse_water)
+    return 1;
+  smc_reuse_env.gen = smc_reuse_gen;
+  smc_reuse_env.idle = idle_loop_target_pc;
+  smc_reuse_env.cheat = cheat_master_hook;
+  smc_reuse_env.pa = pa;
+  smc_reuse_env.ngates = translation_gate_targets;
+  smc_reuse_env.size = ram_translation_cache_size;
+  smc_reuse_env.base = ram_translation_cache;
+  /* The cache was reset behind this switch's back (init, a tier change): the
+   * real pointer is then also the virtual one. */
+  if (ram_translation_ptr < smc_reuse_water)
+    smc_reuse_vptr = (u32)(ram_translation_ptr - ram_translation_cache);
+  smc_reuse_drop();
+  return 0;
+}
+
+static inline u32 smc_reuse_slot(u32 key)
+{
+  return (key * 2654435761u) >> 22;            /* 10 bits */
+}
+
+/* Guest bytes and tag halfwords of a RAM pc, and the room to the region end. */
+static u8 *smc_reuse_mem(u32 pc, u16 **tagp, u32 *room)
+{
+  if ((pc >> 24) == 2) {
+    u32 off = pc & 0x3FFFF;
+    *room = 0x40000 - off;
+    *tagp = (u16 *)(ewram + 0x40000 + off);
+    return ewram + off;
+  } else {
+    u32 off = pc & 0x7FFF;
+    *room = 0x8000 - off;
+    *tagp = (u16 *)(iwram + off);
+    return iwram + 0x8000 + off;
+  }
+}
+
+static u32 smc_reuse_limit_off(void)          /* translate_block's formula */
+{
+  return ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
+         - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type);
+}
+
+/* The limit translate_block must test against so that it reports "full" at
+ * the instruction where the cache would have filled without this switch. */
+static u8 *smc_reuse_limit(u8 *first, u8 *real_limit)
+{
+  s32 room = (s32)(real_limit - ram_translation_cache) - (s32)smc_reuse_vptr;
+  u8 *v = first + room;
+  return v < real_limit ? v : real_limit;
+}
+
+static void smc_reuse_note_full(u8 *first, u8 *translation_ptr)
+{
+  if ((s32)smc_reuse_vptr + (s32)(translation_ptr - first) <=
+      (s32)smc_reuse_limit_off())
+    smc_reuse_early_full++;            /* contract point 5 */
+}
+
+/* MEMORY-ACCESS CALL SITES.  A translated block calls the memory stubs with
+ * `jal`, and the stubs RE-POINT that jal at run time to the stub for the
+ * region the access actually hit (emit_phand, mips/mips_emit.h).  So a body
+ * that has run is not the body the translator emitted: it has learnt regions.
+ * That is not invisible -- with the learnt sites left in place Payback's
+ * per-frame state diverges at frame 1364, and with them reset it does not --
+ * so a record lists every `jal` into the stub zone as (offset from first, the
+ * word the translator emitted) and a revival puts each one back.  The stub
+ * zone is below rom_cache_watermark and is rebuilt only with the whole
+ * dynarec, which resets the RAM cache and so drops every record. */
+typedef struct { u32 off, word; } smc_reuse_call;
+static int smc_reuse_site(const u8 *at)
+{
+  u32 w = address32(at, 0), target;
+  if ((w >> 26) != mips_opcode_jal)
+    return 0;
+  target = ((u32)(uintptr_t)at & 0xF0000000) | ((w & 0x3FFFFFF) << 2);
+  return target >= (u32)(uintptr_t)rom_translation_cache &&
+         target < (u32)(uintptr_t)rom_translation_cache + rom_cache_watermark;
+}
+
+static u8 *smc_reuse_src_copy(smc_reuse_rec *r)
+{
+  return (u8 *)(r + 1) + r->nexits * sizeof(smc_reuse_exit) +
+         r->nsites * sizeof(smc_reuse_call);
+}
+
+static smc_reuse_rec *smc_reuse_find(u32 key)
+{
+  u32 off, room;
+  u16 *tagp;
+  u8 *src;
+  smc_reuse_rec *r;
+
+  if (!smc_reuse_env_ok() || !smc_reuse_armed)
+    return NULL;
+#ifdef SMC_REUSE_DEBUG   /* twin only: bisect a divergence without rebuilding */
+  {
+    static int dbg = -1;
+    if (dbg < 0) { const char *e = getenv("SMC_REUSE_DBG"); dbg = e ? atoi(e) : 0; }
+    if ((dbg & 1) || ((dbg & 2) && !(key & 1)) || ((dbg & 4) && (key & 1)) ||
+        ((dbg & 8) && (key >> 24) == 3 && (key & 0x7FFF) >= 0x7000) ||
+        ((dbg & 16) && frame_counter >= (u32)(getenv("SMC_REUSE_FROM") ? atoi(getenv("SMC_REUSE_FROM")) : 0)))
+      return NULL;
+    {
+      static u32 xkey = 1; static const char *xe;
+      if (xkey == 1) { xe = getenv("SMC_REUSE_KEY"); xkey = xe ? strtoul(xe, NULL, 16) : 0; }
+      if (xkey && key == xkey) return NULL;
+      if ((dbg & 64) && frame_counter >= (u32)(getenv("SMC_REUSE_FROM") ? atoi(getenv("SMC_REUSE_FROM")) : 0))
+        fprintf(stderr, "RV %u %08x%c", (unsigned)frame_counter, (unsigned)key, 10);
+    }
+  }
+#endif
+  off = smc_reuse_index[smc_reuse_slot(key)];
+  if (!off)
+    return NULL;
+  r = (smc_reuse_rec *)(ram_translation_cache + off);
+  if (r->key != key)
+    return NULL;
+  src = smc_reuse_mem(key & ~1u, &tagp, &room);
+#ifdef SMC_REUSE_DEBUG   /* mutant 256: trust the record without comparing */
+  if (getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 256))
+    return r;
+#endif
+  if (r->srclen > room ||
+      memcmp(src, smc_reuse_src_copy(r), r->srclen)) {
+    smc_reuse_stale++;
+    return NULL;
+  }
+  return r;
+}
+
+static u8 *smc_reuse_body(smc_reuse_rec *r)
+{
+  return ram_translation_cache + r->body;
+}
+static u32 smc_reuse_size(smc_reuse_rec *r)
+{
+  return r->size;
+}
+
+/* Called by translate_block_* for every RAM block, right after it publishes
+ * ram_translation_ptr and before it resolves the exits. */
+static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
+                             u8 *first, u32 chk, const block_exit_type *ex,
+                             u32 nex)
+{
+  u8 *p = ram_translation_ptr, *src;
+  u16 *tagp;
+  u32 i, n = 0, room, len = end - start, srclen, need, ns = 0;
+  smc_reuse_call *sp;
+  smc_reuse_rec *r;
+  smc_reuse_exit *xe;
+
+  smc_reuse_env_ok();
+  smc_reuse_vptr += (u32)(p - first);
+  smc_reuse_water = p;
+  smc_reuse_window();
+  if (!smc_reuse_armed)
+    return;
+
+  src = smc_reuse_mem(start, &tagp, &room);
+  if (len > room)                       /* wraps the region: never reused */
+    return;
+  if (reason == SMC_SCAN_GATE && len + 4 > room)
+    return;                             /* gate word in the next region */
+  srclen = (len + 4 <= room) ? len + 4 : len;
+  for (i = 0; i < nex; i++)
+    if (ex[i].branch_source)
+      n++;
+  for (i = 0; i < (u32)(p - first); i += 4)
+    if (smc_reuse_site(first + i))
+      ns++;
+  need = (sizeof(*r) + n * sizeof(*xe) + ns * sizeof(*sp) + srclen + 3) & ~3u;
+  if ((u32)(p - ram_translation_cache) + need > smc_reuse_limit_off())
+    return;                             /* no room: this block is not reusable */
+
+  r = (smc_reuse_rec *)p;
+  r->key = start | thumb;
+  r->end = end;
+  r->first = (u32)(first - ram_translation_cache);
+  r->body = r->first + ram_block_prologue_size;
+  r->size = (u32)(p - first);
+  r->chk = chk;
+  r->reason = reason;
+  r->nexits = n;
+  r->nsites = ns;
+  r->srclen = srclen;
+  xe = (smc_reuse_exit *)(r + 1);
+  for (i = 0; i < nex; i++)
+    if (ex[i].branch_source) {
+      xe->src = (u32)(ex[i].branch_source - ram_translation_cache);
+      xe->target = ex[i].branch_target;
+      xe++;
+    }
+  sp = (smc_reuse_call *)xe;
+  for (i = 0; i < (u32)(p - first); i += 4)
+    if (smc_reuse_site(first + i)) {
+      sp->off = i;
+      sp->word = address32(first, i);
+      sp++;
+    }
+  memcpy(sp, src, srclen);
+  ram_translation_ptr = p + need;
+  smc_reuse_water = ram_translation_ptr;
+#ifdef JIT_CODE_DISCIPLINE
+  /* A record is data, but it is written inside the RAM code zone, over bytes
+   * that may have been code before the last real reset.  Recording it keeps
+   * the rule "every write into a code zone is published" without exception
+   * (and the audit build clean); it joins its own block's span, so it costs
+   * no extra kernel call. */
+  JIT_CODE_WROTE(p, p + need);
+#endif
+  smc_reuse_index[smc_reuse_slot(r->key)] = (u32)(p - ram_translation_cache);
+  smc_reuse_records++;
+}
+
+/* The tags scan_block writes for [start, end): smc_write_*_yes per
+ * instruction, smc_tag_gate_*_yes when the scan stopped at a gate, and
+ * update_pc_limits per instruction. */
+static void smc_reuse_retag(u32 start, u32 end, u32 thumb, u32 reason)
+{
+  u16 *tagp;
+  u32 room, len = end - start, i, lo, hi;
+  smc_reuse_mem(start, &tagp, &room);
+
+  if (thumb) {
+    for (i = 0; i < len; i += 2)
+      if (tagp[i >> 1] == 0)
+        tagp[i >> 1] = CODE_TAG_BLOCK16;
+  } else {
+    for (i = 0; i < len; i += 4) {
+      u32 w = address32(tagp, i);
+      if (w == 0)
+        address32(tagp, i) = CODE_TAG_BLOCK32;
+#if defined(SMC_PARTIAL_SINGLE) && !defined(DR2NFSU_MUTANT_WORDTAG)
+      else if (!(w & 0xFFFF) || !(w >> 16)) {   /* smc_write_arm_yes */
+        if (address16(tagp, i) == 0)
+          address16(tagp, i) = CODE_TAG_BLOCK16;
+        if (address16(tagp, i + 2) == 0)
+          address16(tagp, i + 2) = CODE_TAG_BLOCK16;
+      }
+#endif
+    }
+  }
+  if (reason == SMC_SCAN_GATE) {
+    u16 *g;
+    smc_reuse_mem(end, &g, &room);
+    if (g[0] == 0)
+      g[0] = CODE_TAG_BLOCK16;
+    if (!thumb) {
+      smc_reuse_mem(end + 2, &g, &room);
+      if (g[0] == 0)
+        g[0] = CODE_TAG_BLOCK16;
+    }
+  }
+  lo = start;
+  hi = end - (thumb ? 2 : 4);
+  if (start >= 0x3000000) {
+    iwram_code_min = MIN(lo & 0x7FFF, iwram_code_min);
+    iwram_code_max = MAX(hi & 0x7FFF, iwram_code_max);
+  } else {
+    ewram_code_min = MIN(lo & 0x3FFFF, ewram_code_min);
+    ewram_code_max = MAX(hi & 0x3FFFF, ewram_code_max);
+  }
+}
+
+#ifdef SMC_REUSE_DEBUG
+/* Twin-only self check (SMC_REUSE_DBG bit 128): before a block is revived it
+ * is ALSO translated, without being committed, and the fresh code is compared
+ * with the dormant body word by word.  This tests contract point 1 directly. */
+static smc_reuse_rec *smc_reuse_dry_rec;
+u32 smc_reuse_dry_ok, smc_reuse_dry_bad, smc_reuse_dry_ic, smc_reuse_dry_full;
+static void smc_reuse_dry_compare(u8 *first, u8 *tp, u32 end, u32 reason,
+                                  u32 chk, const block_exit_type *ex, u32 nex)
+{
+  smc_reuse_rec *r = smc_reuse_dry_rec;
+  smc_reuse_exit *xe = (smc_reuse_exit *)(r + 1);
+  u8 *old = ram_translation_cache + r->first;
+  u32 size = (u32)(tp - first), i, k, n = 0, bad = 0;
+  const char *why = NULL;
+  for (i = 0; i < nex; i++)
+    if (ex[i].branch_source) {
+      if (n < r->nexits && ((u32)(ex[i].branch_source - first) != xe[n].src - r->first ||
+                            ex[i].branch_target != xe[n].target))
+        why = "exit";
+      n++;
+    }
+  if (n != r->nexits) why = "nexits";
+  if (end != r->end) why = "end";
+  if (reason != r->reason) why = "reason";
+  if (chk != r->chk) why = "chk";
+  if (size != r->size) why = "size";
+  if (!why)
+    for (i = 0; i < size; i += 4) {
+      u32 a = address32(old, i), b = address32(first, i);
+      if (a == b) continue;
+      if (r->body - r->first == 32 && i >= 16 && i < 32)
+        continue;                                     /* stable thunk */
+      if ((a >> 26) == 2 && (b >> 26) == 2) {
+        u32 ta = (a & 0x3FFFFFF) << 2, tb = (b & 0x3FFFFFF) << 2;
+        if (ta - ((u32)(uintptr_t)old & 0x0FFFFFFF) == tb - ((u32)(uintptr_t)first & 0x0FFFFFFF))
+          continue;                                   /* internal jump */
+        for (k = 0; k < r->nexits; k++)
+          if (xe[k].src - r->first == i) break;
+        if (k < r->nexits) continue;                  /* a patched exit */
+      }
+      if (!bad++)
+        fprintf(stderr, "DRY MISMATCH f=%u key=%08x word=%u old=%08x new=%08x%c",
+                (unsigned)frame_counter, (unsigned)r->key, (unsigned)(i >> 2),
+                (unsigned)a, (unsigned)b, 10);
+    }
+  if (why)
+    fprintf(stderr, "DRY MISMATCH f=%u key=%08x %s: end %08x/%08x size %u/%u chk %u/%u nex %u/%u%c",
+            (unsigned)frame_counter, (unsigned)r->key, why, (unsigned)r->end, (unsigned)end,
+            (unsigned)r->size, (unsigned)size, (unsigned)r->chk, (unsigned)chk,
+            (unsigned)r->nexits, (unsigned)n, 10);
+  if (why && (size != r->size) && smc_reuse_dry_bad < 400) {
+    u32 m = size < r->size ? size : r->size, j;
+    for (i = 0; i < m; i += 4) {
+      u32 x = address32(old, i), y = address32(first, i);
+      if (x != y && !((x >> 26) == 3 && (y >> 26) == 3) && !((x >> 26) == 2 && (y >> 26) == 2)) break;
+    }
+    fprintf(stderr, "DRY DUMP key=%08x at word %u gpc_regs sp=%08x lr=%08x old:", (unsigned)r->key,
+            (unsigned)(i >> 2), (unsigned)reg[REG_SP], (unsigned)reg[REG_LR]);
+    for (j = (i >= 12 ? i - 12 : 0); j < i + 16 && j < r->size; j += 4) fprintf(stderr, " %08x", (unsigned)address32(old, j));
+    fprintf(stderr, " new:");
+    for (j = (i >= 12 ? i - 12 : 0); j < i + 16 && j < size; j += 4) fprintf(stderr, " %08x", (unsigned)address32(first, j));
+    fprintf(stderr, "%c", 10);
+  }
+  if (why || bad) smc_reuse_dry_bad++; else smc_reuse_dry_ok++;
+}
+#endif
+
+/* Stand in for translate_block_{arm,thumb}(pc, true) on a block whose record
+ * matched.  Same return value, same guest-visible effects, same nested
+ * lookups; the body is the one already in the cache. */
+static bool smc_reuse_revive(smc_reuse_rec *r)
+{
+  u32 key = r->key, thumb = key & 1, start = key & ~1u, i, n = r->nexits;
+  smc_reuse_exit *xe = (smc_reuse_exit *)(r + 1);
+  const smc_reuse_call *sp = (const smc_reuse_call *)(xe + n);
+
+  for (i = 0; i < r->nsites; i++) {
+    u8 *at = ram_translation_cache + r->first + sp[i].off;
+#ifdef SMC_REUSE_DEBUG   /* bisect WHICH learnt stub is not neutral: keep some */
+    if (address32(at, 0) != sp[i].word && getenv("SMC_REUSE_KEEPCOL")) {
+      static int kc = -1, kr = -1;
+      u32 w = address32(at, 0), t, k;
+      if (kc < 0) { kc = strtol(getenv("SMC_REUSE_KEEPCOL"), NULL, 0);
+                    kr = getenv("SMC_REUSE_KEEPROW") ? strtol(getenv("SMC_REUSE_KEEPROW"), NULL, 0) : 0x7FFF; }
+      t = ((u32)(uintptr_t)at & 0xF0000000) | ((w & 0x3FFFFFF) << 2);
+      for (k = 0; k < 15 * 16; k++)
+        if ((k < 176 ? (&tmemld[0][0])[k] : (&tmemst[0][0])[k - 176]) == t) break;
+      if (k < 240 && ((kc >> (k & 15)) & 1) && ((kr >> (k >> 4)) & 1))
+        continue;
+      if (k == 240) {
+        static u32 odd; u32 o = sp[i].word, ot = ((u32)(uintptr_t)at & 0xF0000000) | ((o & 0x3FFFFFF) << 2), ok;
+        for (ok = 0; ok < 240; ok++)
+          if ((ok < 176 ? (&tmemld[0][0])[ok] : (&tmemst[0][0])[ok - 176]) == ot) break;
+        if (odd++ < 12)
+          fprintf(stderr, "ODD f=%u key=%08x off=%u cur=%08x (stub+%x) orig=%08x (idx %u) tmemld=%p tmemst=%p%c",
+                  (unsigned)frame_counter, (unsigned)key, (unsigned)sp[i].off, (unsigned)w,
+                  (unsigned)(t - (u32)(uintptr_t)rom_translation_cache), (unsigned)o, (unsigned)ok,
+                  (void *)tmemld, (void *)tmemst, 10);
+      }
+    }
+#endif
+    if (address32(at, 0) != sp[i].word) {
+      address32(at, 0) = sp[i].word;
+      smc_reuse_unlearnt++;
+#ifdef JIT_CODE_DISCIPLINE
+      JIT_CODE_WROTE(at, at + 4);
+#else
+      platform_cache_sync(at, at + 4);
+#endif
+    }
+  }
+
+#ifdef SMC_REUSE_DEBUG
+  {
+    static int dbg = -1;
+    if (dbg < 0) { const char *e = getenv("SMC_REUSE_DBG"); dbg = e ? atoi(e) : 0; }
+    if (dbg & 128) {
+      smc_reuse_dry_rec = r;
+      if (thumb) translate_block_thumb(start, true);
+      else translate_block_arm(start, true);
+      smc_reuse_dry_rec = NULL;
+    }
+  }
+#endif
+#ifdef SMC_REUSE_DEBUG   /* mutant 512: revive without replaying the tags */
+  if (!(getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 512)))
+#endif
+  smc_reuse_retag(start, r->end, thumb, r->reason);
+  smc_blk_note_block(start, r->end, thumb, r->reason);
+
+  /* The tag table grows down from the top of the cache with every block
+   * start, revived or translated.  A translation tests the real pointer
+   * against it; a revival emits nothing, so it must test it here, or the
+   * table could grow into bodies that are already in the cache. */
+  if (smc_reuse_vptr + r->chk <= smc_reuse_limit_off() &&
+      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_limit_off())
+    smc_reuse_early_full++;            /* contract point 5 */
+  if (smc_reuse_vptr + r->chk > smc_reuse_limit_off() ||
+      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_limit_off()) {
+    /* Without this switch the cache fills while this block is emitted. */
+    flush_ram_full++;
+#ifdef ENTRY_GATES
+    entry_gates_harvest();
+#endif
+    flush_translation_cache_ram();
+    return false;
+  }
+  smc_reuse_vptr += r->size;
+  smc_reuse_hits++;
+
+  for (i = 0; i < n; i++) {
+    u8 *src = ram_translation_cache + xe[i].src, *target;
+    if (xe[i].target == 0x00000008)
+      target = bios_swi_entrypoint;
+    else if (thumb)
+      target = XLAT_LINK_LOOKUP(thumb, 1, xe[i].target);
+    else
+      target = XLAT_LINK_LOOKUP(arm, 0, xe[i].target);
+    if (!target || target == BLOCK_LOOKUP_UNMAPPABLE)
+      return false;
+#ifdef SMC_REUSE_DEBUG   /* mutant 1024: look the exits up but never re-patch */
+    if (getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 1024))
+      continue;
+#endif
+    if (address32(src, 0) != ((mips_opcode_j << 26) |
+                              (mips_absolute_offset(target) & 0x3FFFFFF))) {
+      JIT_PATCH_BRANCH(src, target);
+      smc_reuse_relinked++;
+#ifndef JIT_CODE_DISCIPLINE
+      platform_cache_sync(src, src + 4);
+#endif
+    }
+  }
+  return true;
+}
+
+/* flush_translation_cache_ram: 1 = keep the native code (a virtual flush). */
+static int smc_reuse_on_flush(void)
+{
+  int keep;
+  if (flush_ram_full == smc_reuse_last_full)
+    smc_reuse_win_flushes++;             /* not a cache-full flush */
+  else
+    /* A game that fills its RAM cache is where contract point 5 can bite:
+     * stand down until the dynarec is reset (reset, state load, ROM load). */
+    smc_reuse_full_seen = 1, smc_reuse_armed = 0;
+  if (smc_reuse_force_real)
+    smc_reuse_full_seen = 0;
+  smc_reuse_last_full = flush_ram_full;
+  smc_reuse_window();
+  keep = smc_reuse_env_ok() && smc_reuse_armed && !smc_reuse_force_real &&
+             (u32)(ram_translation_ptr - ram_translation_cache) <=
+               ram_translation_cache_size / 2;
+  smc_reuse_force_real = 0;
+  smc_reuse_vptr = 0;
+  if (keep)
+    smc_reuse_kept++;
+  else {
+    smc_reuse_resets++;
+    smc_reuse_drop();
+  }
+  return keep;
+}
+#endif
+
+
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
@@ -6432,6 +7103,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
 #else
   block_exit_type external_block_exits[MAX_EXITS];
 #endif
+#ifdef SMC_REUSE
+  u8 *smc_reuse_first = NULL;
+  u32 smc_reuse_chk = 0;
+#endif
   generate_block_extra_vars_arm();
   arm_fix_pc();
 
@@ -6450,6 +7125,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
+#ifdef SMC_REUSE
+  if (ram_region) {
+    smc_reuse_first = translation_ptr;
+    translation_cache_limit = smc_reuse_limit(translation_ptr,
+                                              translation_cache_limit);
+  }
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   /* Everything this block emits lies in [jit_emit_start, the committed
    * translation_ptr); it is recorded as one span at commit. */
@@ -6585,6 +7267,15 @@ bool translate_block_arm(u32 pc, bool ram_region)
     if(translation_ptr > translation_cache_limit) {
       pc_limits_commit(4);
       if (ram_region) {
+#ifdef SMC_REUSE_DEBUG
+        if (smc_reuse_dry_rec) {           /* a dry run never flushes */
+          smc_reuse_dry_full++;
+          return false;
+        }
+#endif
+#ifdef SMC_REUSE
+        smc_reuse_note_full(smc_reuse_first, translation_ptr);
+#endif
         flush_ram_full++;
 #ifdef ENTRY_GATES
         entry_gates_harvest();
@@ -6615,6 +7306,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
   if ((last_condition & 0x0F) != 0x0E) {
     generate_branch_patch_conditional(backpatch_address, translation_ptr);
   }
+#ifdef SMC_REUSE
+  if (ram_region)
+    smc_reuse_chk = (u32)(translation_ptr - smc_reuse_first);
+#endif
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
@@ -6747,12 +7442,26 @@ bool translate_block_arm(u32 pc, bool ram_region)
     external_block_exits[i].branch_source = NULL;
   }
 
+#ifdef SMC_REUSE_DEBUG
+  if (ram_region && smc_reuse_dry_rec) {
+    smc_reuse_dry_compare(smc_reuse_first, translation_ptr, block_end_pc,
+                          scan_exit_reason, smc_reuse_chk, external_block_exits,
+                          external_block_exit_position);
+    return false;
+  }
+#endif
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+#endif
+#ifdef SMC_REUSE
+  if (ram_region)
+    smc_reuse_commit(block_start_pc, block_end_pc, 0, scan_exit_reason,
+                     smc_reuse_first, smc_reuse_chk, external_block_exits,
+                     external_block_exit_position);
 #endif
 
 #ifdef SMC_PARTIAL_DIRECT_GATE
@@ -6779,6 +7488,11 @@ bool translate_block_arm(u32 pc, bool ram_region)
      * resets the guest. */
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
+#ifdef SMC_REUSE
+    if (!ram_region && (((GBA_PC(branch_target) >> 24) == 2) ||
+                        ((GBA_PC(branch_target) >> 24) == 3)))
+      smc_reuse_rom2ram++;   /* a link the lookup cannot guard: see contract 2 */
+#endif
     JIT_PATCH_BRANCH(external_block_exits[i].branch_source,
                      translation_target);
   }
@@ -6818,6 +7532,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   u32 smc_gate_branch_target = 0;
 #endif
   block_exit_type external_block_exits[MAX_EXITS];
+#ifdef SMC_REUSE
+  u8 *smc_reuse_first = NULL;
+  u32 smc_reuse_chk = 0;
+#endif
   generate_block_extra_vars_thumb();
   thumb_fix_pc();
 
@@ -6835,6 +7553,13 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
 
+#ifdef SMC_REUSE
+  if (ram_region) {
+    smc_reuse_first = translation_ptr;
+    translation_cache_limit = smc_reuse_limit(translation_ptr,
+                                              translation_cache_limit);
+  }
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   /* Everything this block emits lies in [jit_emit_start, the committed
    * translation_ptr); it is recorded as one span at commit. */
@@ -6935,6 +7660,15 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     {
       pc_limits_commit(2);
       if (ram_region) {
+#ifdef SMC_REUSE_DEBUG
+        if (smc_reuse_dry_rec) {           /* a dry run never flushes */
+          smc_reuse_dry_full++;
+          return false;
+        }
+#endif
+#ifdef SMC_REUSE
+        smc_reuse_note_full(smc_reuse_first, translation_ptr);
+#endif
         flush_ram_full++;
 #ifdef ENTRY_GATES
         entry_gates_harvest();
@@ -6956,6 +7690,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     }
   }
   pc_limits_commit(2);
+#ifdef SMC_REUSE
+  if (ram_region)
+    smc_reuse_chk = (u32)(translation_ptr - smc_reuse_first);
+#endif
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
@@ -7076,12 +7814,26 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     external_block_exits[i].branch_source = NULL;
   }
 
+#ifdef SMC_REUSE_DEBUG
+  if (ram_region && smc_reuse_dry_rec) {
+    smc_reuse_dry_compare(smc_reuse_first, translation_ptr, block_end_pc,
+                          scan_exit_reason, smc_reuse_chk, external_block_exits,
+                          external_block_exit_position);
+    return false;
+  }
+#endif
   if (ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+#endif
+#ifdef SMC_REUSE
+  if (ram_region)
+    smc_reuse_commit(block_start_pc, block_end_pc, 1, scan_exit_reason,
+                     smc_reuse_first, smc_reuse_chk, external_block_exits,
+                     external_block_exit_position);
 #endif
 
 #ifdef SMC_PARTIAL_DIRECT_GATE
@@ -7108,6 +7860,11 @@ bool translate_block_thumb(u32 pc, bool ram_region)
      * resets the guest. */
     if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
       return false;
+#ifdef SMC_REUSE
+    if (!ram_region && (((GBA_PC(branch_target) >> 24) == 2) ||
+                        ((GBA_PC(branch_target) >> 24) == 3)))
+      smc_reuse_rom2ram++;   /* a link the lookup cannot guard: see contract 2 */
+#endif
     JIT_PATCH_BRANCH(external_block_exits[i].branch_source,
                      translation_target);
   }
@@ -7158,12 +7915,27 @@ void flush_translation_cache_ram(void)
 {
   DRPH_SCOPE(DRPH_FLUSH);
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
+#ifdef SMC_REUSE
+  /* 1 = a VIRTUAL flush: everything below happens except that the native
+   * code stays in place, dormant, for smc_reuse_revive. */
+  int smc_reuse_keep = smc_reuse_on_flush();
+#else
+#define smc_reuse_keep 0
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   /* The RAM zone's addresses are about to hold a new generation of code. */
+  /* SMC_REUSE_WHOLE_I (hardware A/B only): invalidate the whole I-cache on a
+   * virtual flush as well, exactly as often as without SMC_REUSE. */
+#ifdef SMC_REUSE_WHOLE_I
   jit_code_owner_changed(JOWN_RAM_FLUSH);
+#else
+  if (!smc_reuse_keep)
+    jit_code_owner_changed(JOWN_RAM_FLUSH);
+#endif
 #endif
 #ifdef DRPROF_TWIN
-  drprof_forget_ram();
+  if (!smc_reuse_keep)
+    drprof_forget_ram();
 #endif
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
@@ -7193,8 +7965,13 @@ void flush_translation_cache_ram(void)
 #endif
 #endif
 
-  last_ram_translation_ptr = ram_translation_cache;
-  ram_translation_ptr = ram_translation_cache;
+  if (!smc_reuse_keep) {
+    last_ram_translation_ptr = ram_translation_cache;
+    ram_translation_ptr = ram_translation_cache;
+  }
+#ifndef SMC_REUSE
+#undef smc_reuse_keep
+#endif
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
   xs_clear_all();        /* every RAM translation is gone */
 #endif
@@ -11086,6 +11863,9 @@ void flush_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
+#ifdef SMC_REUSE
+  smc_reuse_force_real = 1;   /* reset, state load, ROM load: start clean */
+#endif
   flush_translation_cache_ram();
 }
 

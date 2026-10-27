@@ -191,6 +191,25 @@
 #error "ENTRY_GATES is tested inside the gate bitmap's scan check: it needs SMC_GATE_BITMAP."
 #endif
 
+#if defined(SMC_REUSE) && !defined(XLAT_PURE)
+#error "SMC_REUSE revives old translations: it needs XLAT_PURE, or a block's code depends on translation history."
+#endif
+#if defined(SMC_REUSE_DEBUG) && !defined(DRPROF_TWIN)
+#error "SMC_REUSE_DEBUG is the twin's self-check (stdio, getenv): never in a console build."
+#endif
+/* SMC_REUSE's contract point 1 (cpu_threaded.c): the translator is a pure
+ * function of the block's guest bytes and the environment it checks.  These
+ * switches break that or add links a revival does not replay. */
+#if defined(SMC_REUSE) && defined(SPIN_SKIP)
+#error "SMC_REUSE with SPIN_SKIP: a spin descriptor's veto word is run-time state inside the body."
+#endif
+#if defined(SMC_REUSE) && defined(SMC_SCAN_SPCLAMP)
+#error "SMC_REUSE with SMC_SCAN_SPCLAMP: the scan end depends on the guest stack pointer."
+#endif
+#if defined(SMC_REUSE) && (defined(SMC_PARTIAL_DIRECT_GATE) || defined(STATIC_ALU_PC))
+#error "SMC_REUSE with SMC_PARTIAL_DIRECT_GATE / STATIC_ALU_PC: links a revival does not replay."
+#endif
+
 /* Selective retirement redirects live blocks through a trampoline; a direct
  * link into one without the stable thunk points at a body that has moved. */
 #if (defined(SMC_PARTIAL_DIRECT_LINKS) || defined(SMC_PARTIAL_DIRECT_GATE)) && \
