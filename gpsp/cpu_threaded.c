@@ -4109,13 +4109,19 @@ vram_or_badjump_builder(thumb, 1)
 #define BADJUMP_GUARD_X(ret, pc, type)                                        \
   do { if ((ret) == BLOCK_LOOKUP_UNMAPPABLE)                                  \
          return vram_or_badjump_##type(pc); } while (0)
+/* (cpu-levers vx) The exhausted path calls the same helper (a non-VRAM pc
+ * goes straight to badjump_recover there), so the two cold tail calls merge
+ * as they do without VRAM_EXEC and block_lookup_address_* keep their size. */
+#define BADJUMP_EXHAUSTED_X(pc, type)  return vram_or_badjump_##type(pc)
 #else
 #define BADJUMP_GUARD_X(ret, pc, type) BADJUMP_GUARD(ret, pc)
+#define BADJUMP_EXHAUSTED_X(pc, type)  BADJUMP_EXHAUSTED(pc)
 #endif
 #else
 #define BADJUMP_GUARD(ret, pc) do { } while (0)
 #define BADJUMP_GUARD_X(ret, pc, type) do { } while (0)
 #define BADJUMP_EXHAUSTED(pc)  return NULL
+#define BADJUMP_EXHAUSTED_X(pc, type)  BADJUMP_EXHAUSTED(pc)
 #endif
 
 #ifdef DISPATCH_CACHE
@@ -4259,7 +4265,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   printf("bad jump %x (%x)\n", (unsigned)pc, (unsigned)reg[REG_PC]);
   fflush(stdout);
 #endif
-  BADJUMP_EXHAUSTED(pc);
+  BADJUMP_EXHAUSTED_X(pc, arm);
 }
 
 u8 function_cc *block_lookup_address_thumb(u32 pc)
@@ -4284,7 +4290,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   printf("bad jump %x (%x)\n", (unsigned)pc, (unsigned)reg[REG_PC]);
   fflush(stdout);
 #endif
-  BADJUMP_EXHAUSTED(pc);
+  BADJUMP_EXHAUSTED_X(pc, thumb);
 }
 
 

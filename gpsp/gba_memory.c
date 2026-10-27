@@ -2283,13 +2283,9 @@ const dma_region_type dma_region_map[17] =
 /* A DMA INTO VRAM marks vram_xclean once, before its loop, for every page it
  * will write -- and only once the game has armed VRAM_EXEC (vram_mark_dma).
  * Nothing reads that map during a DMA.  Other destinations get no code. */
-static void vram_x_mark_dma(u32 dest_ptr, int stride_bytes, u32 length);
-#define dma_vars_vram(type) dma_vram_##type()
-#define dma_vram_src()
-#define dma_vram_dest()                                                       \
-  if (vram_exec_active)                                                       \
-    vram_x_mark_dma(dest_ptr, dest_strd, length)                              \
-
+/* (cpu-levers vx) Marked once per transfer, out of line, by dma_transfer
+ * (vram_x_dma_note): no per-combination code in the pinned copy loops. */
+#define dma_vars_vram(type)
 #else
 #define dma_vars_vram(type)
 #endif
@@ -2659,15 +2655,28 @@ static const int dma_stride[4] = {1, -1, 0, 1};
  * a 1 KiB-aligned chunk never straddles the 32/128 KiB mirror boundaries, so
  * each chunk is exactly one page. */
 static void __attribute__((noinline))
- vram_x_mark_dma(u32 dest_ptr, int stride_bytes, u32 length)
+ vram_x_dma_note(unsigned dma_chan)
 {
-  u32 lo = dest_ptr, hi = dest_ptr, a;
-  if (!length)
+  const dma_transfer_type *dmach = &dma[dma_chan];
+  u32 length = dmach->length, dest_ptr, lo, hi, a;
+  int stride_bytes;
+#ifdef VX_DMA_NOTE_MUTANT              /* MUTANT (oracle self-test only) */
+  return;
+#endif
+  if (!vram_exec_active || !length)
     return;
+  dest_ptr = 0x0FFFFFFF & dmach->dest_address &
+             (dmach->length_type == DMA_16BIT ? ~1U : ~3U);   /* as dma_transfer */
+  lo = hi = dest_ptr;
+  stride_bytes = dma_stride[dmach->dest_direction] *
+                 (dmach->length_type == DMA_16BIT ? 2 : 4);
   if (stride_bytes > 0)
     hi = dest_ptr + (length - 1) * (u32)stride_bytes;
   else if (stride_bytes < 0)
     lo = dest_ptr - (length - 1) * (u32)(-stride_bytes);
+  if ((lo >> 24) == (hi >> 24) && (lo >> 24) != 6)
+    return;                                     /* not into VRAM */
+  /* a span crossing a 16 MiB region (rare) or the whole VRAM: every page */
   if (hi - lo >= 0x20000 || (lo >> 24) != (hi >> 24)) {
     memset(vram_xclean, 0, VRAM_DIRTY_PAGES);   /* every page */
     return;
@@ -2755,6 +2764,9 @@ static u32 dma_transfer_region_span(u32 src_ptr, u32 dst_ptr,
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
+#ifdef VRAM_EXEC
+  vram_x_dma_note(dma_chan);    /* (cpu-levers vx) once per transfer */
+#endif
   DRPH_SCOPE(DRPH_DMA);
   dma_transfer_type *dmach = &dma[dma_chan];
   u32 src_ptr = 0x0FFFFFFF & dmach->source_address & (
