@@ -2355,6 +2355,18 @@ const dma_region_type dma_region_map[17] =
 #define dma_read_ext(type, tfsize)                                            \
   read_value = read_memory##tfsize(type##_ptr)                                \
 
+/* DMA_SMC_RETIRE (cpu_threaded.c): lowest/highest tagged word a DMA wrote */
+#if defined(DMA_SMC_RETIRE) && defined(HAVE_DYNAREC)
+extern u32 dma_smc_lo[2], dma_smc_hi[2];
+#define DMA_SMC_NOTE(r, a) {                                                   \
+  u32 a_ = (a);                                                               \
+  if (a_ < dma_smc_lo[r]) dma_smc_lo[r] = a_;                                 \
+  if (a_ + 4 > dma_smc_hi[r]) dma_smc_hi[r] = a_ + 4;                         \
+}
+#else
+#define DMA_SMC_NOTE(r, a)
+#endif
+
 #define dma_write_iwram(type, tfsize)                                         \
   address##tfsize(iwram + 0x8000, type##_ptr & 0x7FFF) =                      \
                                           eswap##tfsize(read_value);          \
@@ -2366,6 +2378,7 @@ const dma_region_type dma_region_map[17] =
      * the CPU-store events (and swamp them: one code DMA is ~1900 writes). */\
     if (!(alerts & CPU_ALERT_SMC))                                            \
       smc_prof_note_iwram(type##_ptr);                                        \
+    DMA_SMC_NOTE(0, 0x03000000 + (type##_ptr & 0x7FFC));                      \
     alerts |= CPU_ALERT_SMC;                                                  \
   }                                                                           \
 
@@ -2394,6 +2407,7 @@ const dma_region_type dma_region_map[17] =
   if (address##tfsize(ewram, (type##_ptr & 0x3FFFF) + 0x40000)) {             \
     if (!(alerts & CPU_ALERT_SMC))     /* ADR-0030, once per transfer */      \
       smc_prof_note_ewram(type##_ptr);                                        \
+    DMA_SMC_NOTE(1, 0x02000000 + (type##_ptr & 0x3FFFC));                     \
     alerts |= CPU_ALERT_SMC;                                                  \
   }                                                                           \
 

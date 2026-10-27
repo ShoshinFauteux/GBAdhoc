@@ -9713,6 +9713,9 @@ void flush_translation_cache_ram_smc(void)
     defined(SMC_BLOCK_EXACT)
 #error SMC_STM_RANGE needs SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK, without SMC_BLOCK_EXACT
 #endif
+#if defined(SMC_STM_WIDE) && !defined(SMC_STM_RANGE_MAX)
+#define SMC_STM_RANGE_MAX 16
+#endif
 #ifndef SMC_STM_RANGE_MAX
 #define SMC_STM_RANGE_MAX 4
 #endif
@@ -9747,7 +9750,15 @@ void smc_trap_entry(void)
 #ifdef SMC_STM_CHAIN
   smc_chain_pending = 0;           /* the chain (if any) ends in this trap */
 #endif
+#ifdef SMC_STM_WIDE
+  /* SMC_STM_WIDE: the shape below may also ACTIVATE selective retirement
+   * (Hot Wheels never raises any other range-safe event, so it stayed on the
+   * full flush for good).  Activation is the single-store path's: ROM flush
+   * once (direct links into RAM), then a full RAM flush. */
+  if (!(reg[REG_CPSR] & 0x20)) {
+#else
   if (smc_partial_active && !(reg[REG_CPSR] & 0x20)) {
+#endif
     u32 pc = GBA_PC(reg[REG_PC]) - 4;          /* as smc_writer_safe_range */
     u32 addr = smc_last_write_addr;
     u8 *blk = memory_map_read[pc >> 15];
@@ -9767,6 +9778,14 @@ void smc_trap_entry(void)
         flush_ram_smc++;
         smc_single_store = 1;
         smc_untag_now = 1;
+#ifdef SMC_STM_WIDE
+        if (!smc_partial_active) {
+          smc_partial_active = 1;
+          flush_translation_cache_rom();
+          SMC_FB(1);
+          flush_translation_cache_ram();
+        } else
+#endif
         if (smc_retire_span(lo, hi)) {
           SMC_FB(9);
         } else {
@@ -9782,9 +9801,52 @@ void smc_trap_entry(void)
 }
 #endif
 
+#ifdef DMA_SMC_RETIRE
+#ifndef SMC_STM_RANGE
+#error DMA_SMC_RETIRE needs SMC_STM_RANGE (smc_retire_span + stable thunks)
+#endif
+/* DMA_SMC_RETIRE (cpu-levers 2026-10-27, twin prototype): dma_write_iwram /
+ * dma_write_ewram record the lowest and highest TAGGED word every transfer
+ * since the last consumption wrote (gba_memory.c; only on a tag hit, so an
+ * ordinary DMA pays nothing).  Every instruction word of a live block is
+ * tagged (scan_block), so [lo, hi) covers every live code word the DMA
+ * changed: smc_retire_span's contract.  One region only; anything else, or
+ * selective retirement not active, takes the full flush as before.
+ *
+ * Measured on the twin: Top Gear Rally DMA3s code overlays from ROM into
+ * 030075d8..03007cff 3.2 times a frame, each a full RAM flush, and 31 % of the
+ * resulting retranslation is unrelated low-IWRAM code. */
+u32 dma_smc_lo[2] = { ~0u, ~0u }, dma_smc_hi[2];
+u32 dma_smc_retired;
+static int dma_smc_retire(void)
+{
+  int ok = 0;
+  u32 r = (dma_smc_hi[0] != 0) ? 0 : 1;
+  if (smc_partial_active && dma_smc_hi[r] && !dma_smc_hi[r ^ 1]) {
+    SMC_EVT("  D retire %08x..%08x\n", (unsigned)dma_smc_lo[r],
+            (unsigned)dma_smc_hi[r]);
+    smc_single_store = 1;
+    smc_untag_now = 1;
+    ok = smc_retire_span(dma_smc_lo[r], dma_smc_hi[r]);
+  }
+  dma_smc_lo[0] = dma_smc_lo[1] = ~0u;
+  dma_smc_hi[0] = dma_smc_hi[1] = 0;
+  return ok;
+}
+#endif
+
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;
+#ifdef DMA_SMC_RETIRE
+  DRPROF_ZONE_ENTER(DRZ_FLUSH);
+  if (dma_smc_retire()) {
+    dma_smc_retired++;
+    DRPROF_ZONE_LEAVE(DRZ_FLUSH);
+    return;
+  }
+  DRPROF_ZONE_LEAVE(DRZ_FLUSH);
+#endif
   flush_translation_cache_ram();
 }
 
@@ -10750,6 +10812,9 @@ void jit_stats_report(FILE *f)
     fprintf(f, "stmchain marks=%u same=%u\n", (unsigned)smc_chain_marks,
             (unsigned)smc_chain_same);
   }
+#endif
+#ifdef DMA_SMC_RETIRE
+  fprintf(f, "dmaretire retired=%u\n", (unsigned)dma_smc_retired);
 #endif
 #ifdef SMC_FALLBACK_STATS
   {

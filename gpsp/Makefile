@@ -784,6 +784,20 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_STM_RANGE),1)
 	CFLAGS += -DSMC_STM_RANGE=1
 	endif
+	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
+	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective
+	# retirement (Hot Wheels' STMIA r0!,{r4-r11} code generator).  Needs
+	# SMC_STM_RANGE.
+	ifeq ($(SMC_STM_WIDE),1)
+	CFLAGS += -DSMC_STM_WIDE=1
+	endif
+	# DMA_SMC_RETIRE=1: OFF by default (cpu-levers, twin prototype).  A DMA that
+	# lands on translated code retires exactly the tagged words it wrote while
+	# selective retirement is active, instead of a full RAM flush (Top Gear
+	# Rally's ROM->IWRAM overlays).  Needs SMC_STM_RANGE.
+	ifeq ($(DMA_SMC_RETIRE),1)
+	CFLAGS += -DDMA_SMC_RETIRE=1
+	endif
 	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
 	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
 	# ram_region, which doubles the function and spills translation_ptr to
