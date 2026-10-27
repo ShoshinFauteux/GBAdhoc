@@ -4394,6 +4394,25 @@ static __attribute__((noinline)) void xs_note_block(u32 start, u32 end)
     xs_note_half(a, start);
 }
 #endif
+#ifdef SMC_SAME_ADAPT
+/* ramtag_note_extent's one call (see LAYOUT NEUTRALITY at xs_trap_skip): the
+ * block [start_pc, end_pc) whose start tag is valid was just scanned.  It
+ * takes ramtag_note_extent's own arguments, so the call there is a bare tail
+ * jump, and redoes the IWRAM canonicalisation itself.  IWRAM only. */
+static __attribute__((noinline)) void xs_extent_note(u32 start_pc,
+                                                     u32 end_pc, u32 thumb)
+{
+  u32 off = start_pc & 0x7FFF, len = end_pc - start_pc;
+  u32 start = 0x03000000 + off;
+  u32 end = (off + len > 0x8000) ? 0x03008000 : start + len;
+
+  if ((start_pc >> 24) != 3)
+    return;
+  if (XS_ON())
+    xs_note_block(start, end);
+  xs_adapt_note(((u16 *)iwram)[off >> 1], thumb ? 1 : 0, (end - start) >> 1);
+}
+#endif
 static inline void xs_clear_half(u32 h)          /* h: IWRAM halfword index */
 {
   xs_ok[h >> 3] &= (u8)~(1u << (h & 7));
@@ -4413,7 +4432,7 @@ static void xs_report(void)
 #endif
 }
 #endif
-static void xs_clear_all(void)
+static __attribute__((noinline)) void xs_clear_all(void)
 {
 #ifdef DRPROF_TWIN
   if (!xs_ready) atexit(xs_report);
@@ -6757,10 +6776,6 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
   } else {
     canon_end = base + off + len;
   }
-#if defined(SMC_SAME_ADAPT)
-  if (base == 0x03000000 && XS_ON())
-    xs_note_block(base + off, canon_end);
-#endif
 
   if (VALID_TAG(tagp[off >> 1])) {
     ramtag_type *te = get_ram_tag(tagp[off >> 1]);
@@ -6769,8 +6784,7 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
     else
       te->blk_end_arm = canon_end;
 #if defined(SMC_SAME_ADAPT)
-    if (base == 0x03000000)
-      xs_adapt_note(tagp[off >> 1], thumb ? 1 : 0, len >> 1);
+    xs_extent_note(start_pc, end_pc, thumb);
 #endif
   }
 }
@@ -8400,8 +8414,18 @@ void smc_block_word_hit(u32 base_plus_off, u32 off)
 }
 #endif
 
+#ifdef SMC_SAME_SKIP
+static __attribute__((noinline)) u32 xs_trap_skip(u32 word);
+#endif
 static int smc_retire_single_word(u32 word)
 {
+#ifdef SMC_SAME_SKIP
+  /* Nothing translated from `word` is stale: report it handled, as a
+   * retirement would be (counted in xs_trap_skip; see LAYOUT NEUTRALITY). */
+  word = xs_trap_skip(word);   /* 0 = skip; else `word` back, so it need */
+  if (!word)                   /* not live across the call               */
+    return 1;
+#endif
 #if defined(SMC_SINGLE_EWRAM)
   return smc_retire_span(word, word + 4);
 #else
@@ -8428,7 +8452,34 @@ static int smc_retire_single_word(u32 word)
  * its record, so the trap retires the block exactly as before.  The record is
  * what every live reader read because a scan that finds a valid record with a
  * different value poisons it instead of overwriting it (xs_note_half). */
-static int xs_blocks_current(u32 word)
+static __attribute__((noinline)) int xs_blocks_current(u32 word);
+/* LAYOUT NEUTRALITY (cpu-levers 2026-10-27).  flush_translation_cache_ram_smc,
+ * ramtag_note_extent and flush_translation_cache_ram are in the pinned hot
+ * order (psp/layout/hot.ord).  The first cut of this lever grew them by up to
+ * 1.1 KiB.  That moved 59 of the 83 pinned functions to other I-cache sets
+ * (dma_tf_loop16/32, trigger_dma, write_io_register8, ...).  On the 3000,
+ * cpl2 cost AW2 +7.5 %, FE8 +7.7 % and Emerald +3.6 % work per frame, with
+ * no extra instructions on the twin.  So every piece of the lever that sits
+ * in a pinned function is ONE call to an out-of-line helper, and those
+ * functions stay within their cpl1 link slack. */
+static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
+{
+  if (XS_ON() && xs_blocks_current(word)) {
+    smc_same_skips++;
+#ifdef SMC_SAME_ADAPT
+    xs_win_skips++;
+#endif
+    return 0;
+  }
+#ifdef SMC_SAME_ADAPT
+  /* A retirement follows (or, if that fails, a full flush: either way the
+   * event a skip would have saved). */
+  if ((word >> 24) == 3)
+    xs_adapt_retired();
+#endif
+  return word;
+}
+static __attribute__((noinline)) int xs_blocks_current(u32 word)
 {
   u16 *tagp = (u16 *)iwram;
   const u32 base = 0x03000000, bytes = 0x8000;
@@ -8971,18 +9022,7 @@ void flush_translation_cache_ram_smc(void)
       flush_translation_cache_rom();
       SMC_FB(1);
       flush_translation_cache_ram();
-#if defined(SMC_SAME_SKIP)
-    } else if (XS_ON() && xs_blocks_current(partial_low)) {
-      smc_same_skips++;          /* nothing translated from it is stale */
-#ifdef SMC_SAME_ADAPT
-      xs_win_skips++;
-#endif
-#endif
     } else if (smc_retire_single_word(partial_low)) {
-#ifdef SMC_SAME_ADAPT
-      if ((partial_low >> 24) == 3)
-        xs_adapt_retired();
-#endif
       SMC_FB(9);
     } else {
       SMC_FB(7);
