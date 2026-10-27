@@ -771,6 +771,15 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
 	endif
+	# NO_GAME_SPEED_HINTS=1: OFF by default (claude/idle-general).  The game
+	# table (gba_over.h) keeps its cartridge facts -- save type, RTC, rumble,
+	# serial mode -- but its idle-loop address and translation-gate seeds are
+	# ignored (gba_memory.c says what each was worth).  Pair it with
+	# SPIN_SKIP=1, which proves the real waits from the code itself.  Changes
+	# timing on the table's titles.
+	ifeq ($(NO_GAME_SPEED_HINTS),1)
+	CFLAGS += -DNO_GAME_SPEED_HINTS=1
+	endif
 	# SMC_SAME_ADAPT=1: OFF by default (cpu-levers).  Refines SMC_SAME_SKIP:
 	# stop recording translated IWRAM halfwords while the skip rate does not
 	# pay for the recording (Hot Wheels: all cost, no traps); re-probe after

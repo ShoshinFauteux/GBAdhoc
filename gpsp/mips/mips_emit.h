@@ -305,18 +305,39 @@ u32 arm_to_mips_reg[] =
 #define generate_branch_spin(writeback_location, new_pc)
 #endif
 
+/* IDLE_STATS / IDLE_VERIFY (twin builds only, main.c): the game table's idle
+ * branch marks itself in reg[REG_SPIN_DESC] (IDLE_MARK, never a descriptor
+ * address) so update_gba can count it; IDLE_VERIFY also keeps the cycles, so
+ * nothing is skipped and every pass is checked against the first. */
+#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
+#define generate_idle_mark()                                                  \
+  mips_emit_addiu(reg_temp, reg_zero, IDLE_MARK);                             \
+  mips_emit_sw(reg_temp, reg_base, REG_SPIN_DESC * 4)
+#else
+#define generate_idle_mark()
+#endif
+#ifdef IDLE_VERIFY
+#define generate_idle_cycles()
+#else
+#define generate_idle_cycles() mips_emit_lui(reg_cycles, 0)
+#endif
+
+/* A branch SPIN_SKIP proves is a spin loop keeps its run-time veto even when
+ * the game table names it too: the table's unconditional skip is only for
+ * branches the proof rejects. */
 #define generate_branch_no_cycle_update(writeback_location, new_pc)           \
-  if(pc == idle_loop_target_pc)                                               \
+  if (spin_try(new_pc))                                                       \
+  {                                                                           \
+    generate_branch_spin(writeback_location, new_pc);                         \
+  }                                                                           \
+  else if(pc == idle_loop_target_pc)                                          \
   {                                                                           \
     generate_load_pc(reg_a0, new_pc);                                         \
-    mips_emit_lui(reg_cycles, 0);                                             \
+    generate_idle_mark();                                                     \
+    generate_idle_cycles();                                                   \
     generate_function_call_swap_delay(mips_update_gba);                       \
     mips_emit_j_filler(writeback_location);                                   \
     mips_emit_nop();                                                          \
-  }                                                                           \
-  else if (spin_try(new_pc))                                                  \
-  {                                                                           \
-    generate_branch_spin(writeback_location, new_pc);                         \
   }                                                                           \
   else                                                                        \
   {                                                                           \

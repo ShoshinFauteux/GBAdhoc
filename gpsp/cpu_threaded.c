@@ -5673,9 +5673,28 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
  *      either never written in it, or written earlier in the same iteration;
  *      a conditional ARM instruction or a partial flag write counts as a read
  *      of what it may leave unchanged;
- *   2. every register a load ADDRESS uses is never written in the loop.
+ *   2. every register a load ADDRESS uses is never written in the loop --
+ *      or (claude/idle-general) is set earlier in the same iteration to a
+ *      constant, a ROM literal-pool word or an immediate, so the address is
+ *      that constant (`ldr r0, =FLAG; ldrh r1, [r0]` inside the loop).
  * Then, as long as no memory the loop reads changes, every iteration leaves
  * exactly the state the previous one left, and the loop never exits.
+ *
+ * TWO MORE SHAPES (claude/idle-general, 2026-10-27), both still one straight
+ * run [T, B) inside the block being translated:
+ *  - EXIT IN THE MIDDLE: the body may hold conditional B/Bcc whose target is
+ *    outside [T, B].  Taken, it leaves the loop (the block exits there); not
+ *    taken, it only read its flags (rule 1 applies).  B is reached only when
+ *    every one of them fell through, so a pass through B is still a whole
+ *    iteration of the one path analysed.  A target INSIDE [T, B] would make
+ *    the path actually run differ from that one: rejected (synth
+ *    spin_inskip.s; SPIN_SKIP_MUTANT_INSKIP drops the check).
+ *  - THREADED BACK-EDGE: B branches FORWARD to an unconditional `b T`
+ *    (`beq 1f; b out; 1: b T` -- what compilers emit for a wait whose exit
+ *    is the fall-through, Final Fantasy Tactics Advance's main wait).  B is
+ *    then the loop's back-edge and the `b` a trampoline.  Only in ROM: the
+ *    trampoline lies outside this block, so a RAM store could change it
+ *    without retiring this translation.
  *
  * WHY THE NEXT EVENT.  Between two scheduled events (update_gba's slice: the
  * next video event, a non-lazy timer, serial, DMA sleep) nothing but the CPU
@@ -5687,13 +5706,17 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
  *
  * THE READ SET (runtime, spin_check).  The rule above is about memory only an
  * event can change.  Some locations change without one: lazy timer counters,
- * KEYINPUT, serial, the cartridge GPIO/EEPROM/flash, BIOS open bus.  So the
+ * serial, the cartridge GPIO/EEPROM/flash, BIOS open bus.  So the
  * loop's load addresses (rule 2 makes them fixed for the loop) are checked
- * when it first spins: RAM, palette, VRAM, OAM and ROM pass; IO passes only
+ * -- a constant one at translation, a register-based one whenever it spins
+ * (remembered once passed): RAM, palette, VRAM, OAM and ROM pass; IO passes only
  * for DISPSTAT, VCOUNT, IE, IF, IME and the DMA control words, which change
- * only at events or on CPU stores.  A loop that polls anything else -- a timer
- * counter, say -- is vetoed for the life of its translation and runs as
- * before, iteration by iteration, to the cycle.
+ * only at events or on CPU stores, and KEYINPUT/KEYCNT: this core latches the
+ * pad once per frame, between two slices (update_input from retro_run,
+ * gbalink_update_input at a link frame's start).  A loop that polls anything else -- a timer
+ * counter, say -- is not a spin loop (a constant address) or is vetoed for
+ * the life of its translation, and runs as before, iteration by iteration,
+ * to the cycle.
  *
  * A loop with no loads (`b .`) is the degenerate case: only an IRQ ends it.
  * Not keyed on any address or ROM.  The descriptor (veto word + loads) is
@@ -5711,9 +5734,10 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 
 /* descriptor: [0] veto (0 = may skip), [1] number of loads,
  * then per load: w0 = kind | size_log2 << 2 | rb << 4 | ro << 8 |
- *                     shift << 12 | negate << 17,  w1 = imm (or address)
+ *                     shift << 12 | negate << 17,  w1 = imm (or address),
+ *                w2 = the last address spin_check passed (0: none yet)
  * kind 0: address w1; 1: reg[rb] + w1; 2: reg[rb] +/- (reg[ro] << shift) */
-#define SPIN_DESC_WORDS (2 + 2 * SPIN_MAX_LOADS)
+#define SPIN_DESC_WORDS (2 + 3 * SPIN_MAX_LOADS)
 
 u32 spin_skips = 0, spin_vetoes = 0, spin_loops = 0;
 
@@ -5724,6 +5748,10 @@ typedef struct {
   u32 nloads;
   u32 *desc;
   u32 pass;
+  u32 kc;         /* registers holding a known constant here (pass 2) */
+  u32 kv[16];     /* ... and their values */
+  u8 *blk;        /* the block's page, for literal pools */
+  u32 page;       /* its pc >> 15 */
 } spin_ana;
 
 static inline void spin_read(spin_ana *a, u32 mask)
@@ -5739,7 +5767,23 @@ static inline void spin_read(spin_ana *a, u32 mask)
 static inline void spin_write(spin_ana *a, u32 mask)
 {
   if (a->pass == 1) a->all_w |= mask;
-  else a->w |= mask;
+  else { a->w |= mask; a->kc &= ~mask; }
+}
+
+/* rd now holds k on every iteration (called after its SPIN_W). */
+static inline void spin_const(spin_ana *a, u32 rd, u32 k)
+{
+  if (a->pass == 2) { a->kc |= 1u << rd; a->kv[rd] = k; }
+}
+
+/* A word literal at lit, if it is cartridge ROM in this block's page (never
+ * the GPIO words): the same value on every pass. */
+static void spin_literal(spin_ana *a, u32 rd, u32 lit)
+{
+  u32 off = lit & 0x01FFFFFF;
+  if ((lit >> 24) >= 0x08 && (lit >> 24) <= 0x0D && !(lit & 3) &&
+      (lit >> 15) == a->page && (off + 4 <= 0xC4 || off >= 0xCA))
+    spin_const(a, rd, readaddress32(a->blk, (lit & 0x7FFF)));
 }
 
 static inline u32 spin_cond_flags(u32 cond)
@@ -5756,7 +5800,12 @@ static inline u32 spin_cond_flags(u32 cond)
   }
 }
 
-/* A load: its address registers must not be written anywhere in the loop. */
+static int spin_addr_ok(u32 addr, u32 size);
+
+/* A load: its address registers must not be written anywhere in the loop
+ * -- or must hold a constant set earlier in the same iteration (a ROM
+ * literal or an immediate: `ldr r0, =FLAG; ldrh r1, [r0]` inside the loop),
+ * and then the address is that constant. */
 static void spin_load(spin_ana *a, u32 kind, u32 size_log2, u32 rb, u32 ro,
                       u32 shift, u32 neg, u32 imm)
 {
@@ -5766,15 +5815,32 @@ static void spin_load(spin_ana *a, u32 kind, u32 size_log2, u32 rb, u32 ro,
   spin_read(a, used);
   if (a->pass == 1)
     return;
+  if (kind >= 1 && (used & a->kc) == used) {
+    if (kind == 1)
+      imm += a->kv[rb];
+    else
+      imm = neg ? a->kv[rb] - (a->kv[ro] << shift)
+                : a->kv[rb] + (a->kv[ro] << shift);
+    kind = 0;
+    used = 0;
+  }
   if (used & a->all_w)
     a->bad = 1;
+  if (kind == 0) {
+    /* a fixed address: decided now (a loop polling a timer counter, say,
+     * is no spin loop at all), never listed for spin_check */
+    if (!spin_addr_ok(imm, 1u << size_log2))
+      a->bad = 1;
+    return;
+  }
   if (a->nloads == SPIN_MAX_LOADS) {
     a->bad = 1;
     return;
   }
-  a->desc[2 + 2 * a->nloads] = kind | (size_log2 << 2) | (rb << 4) |
+  a->desc[2 + 3 * a->nloads] = kind | (size_log2 << 2) | (rb << 4) |
                                (ro << 8) | (shift << 12) | (neg << 17);
-  a->desc[3 + 2 * a->nloads] = imm;
+  a->desc[3 + 3 * a->nloads] = imm;
+  a->desc[4 + 3 * a->nloads] = 0;
   a->nloads++;
 }
 
@@ -5802,6 +5868,7 @@ static void spin_thumb_op(spin_ana *a, u32 op, u32 pc)
       return;
     case 0x04:                                  /* mov #imm8 */
       SPIN_W((1u << ((op >> 8) & 7)) | SPIN_FLAGS_NZ);
+      spin_const(a, (op >> 8) & 7, op & 0xFF);
       return;
     case 0x05:                                  /* cmp #imm8 */
       SPIN_R(1u << ((op >> 8) & 7));
@@ -5869,6 +5936,7 @@ static void spin_thumb_op(spin_ana *a, u32 op, u32 pc)
     case 0x09:                                  /* ldr rd, [pc, #imm] */
       spin_load(a, 0, 2, 0, 0, 0, 0, ((pc + 4) & ~2u) + (op & 0xFF) * 4);
       SPIN_W(1u << ((op >> 8) & 7));
+      spin_literal(a, (op >> 8) & 7, ((pc + 4) & ~2u) + (op & 0xFF) * 4);
       return;
     case 0x0A: case 0x0B: {                     /* register offset */
       u32 sub = (op >> 9) & 7, ro = (op >> 6) & 7;
@@ -5989,6 +6057,10 @@ static void spin_arm_op(spin_ana *a, u32 op, u32 pc)
     if (writes_rd) {
       if (partial) SPIN_R(1u << rd);
       SPIN_W(1u << rd);
+      if (!partial && opc == 13 && (op & (1u << 25))) {     /* mov #imm */
+        u32 r = ((op >> 8) & 15) * 2, v = op & 0xFF;
+        spin_const(a, rd, r ? (v >> r) | (v << (32 - r)) : v);
+      }
     }
     return;
   }
@@ -6010,10 +6082,37 @@ static void spin_arm_op(spin_ana *a, u32 op, u32 pc)
     }
     if (partial) SPIN_R(1u << rd);
     SPIN_W(1u << rd);
+    if (!partial && sz == 2 && rn == 15 && !(op & (1u << 25)))
+      spin_literal(a, rd, pc + 8 + ((op & (1u << 23)) ? (op & 0xFFF)
+                                                      : -(op & 0xFFF)));
     return;
   }
 
   a->bad = 1;
+}
+
+/* A direct B/Bcc at p (never BL, BLX or SWI; p in the block's 32 KiB page):
+ * its target, and its condition in *cond (0xE: always); ~0 if p is not one. */
+static u32 spin_branch_at(u8 *pc_address_block, u32 p, u32 thumb, u32 *cond)
+{
+  if (thumb) {
+    u32 op = readaddress16(pc_address_block, (p & 0x7FFF));
+    if ((op >> 12) == 0xD && ((op >> 8) & 15) < 0xE) {   /* not udf/swi */
+      *cond = (op >> 8) & 15;
+      return p + 4 + ((u32)(s32)(s8)(op & 0xFF) << 1);
+    }
+    if ((op >> 11) == 0x1C) {
+      *cond = 0xE;
+      return p + 4 + (u32)(((s32)(op << 21)) >> 20);
+    }
+  } else {
+    u32 op = readaddress32(pc_address_block, (p & 0x7FFF));
+    if ((op & 0x0F000000) == 0x0A000000 && (op >> 28) != 0xF) {
+      *cond = op >> 28;
+      return p + 8 + (u32)(((s32)(op << 8)) >> 6);
+    }
+  }
+  return ~0u;
 }
 
 /* Returns the number of descriptor words (0: not a spin loop). */
@@ -6021,33 +6120,46 @@ static u32 spin_analyze(u32 target, u32 branch_pc, u32 thumb,
                         u8 *pc_address_block, u32 block_start_pc, u32 *desc)
 {
   spin_ana an, *a = &an;
-  u32 width = thumb ? 2 : 4, p, bop, cond;
+  u32 width = thumb ? 2 : 4, p, cond, loop, c2;
 
-  if (target < block_start_pc || target > branch_pc ||
-      (branch_pc - target) / width > SPIN_MAX_BODY)
-    return 0;
-  if ((target >> 15) != (branch_pc >> 15) ||
-      (block_start_pc >> 15) != (branch_pc >> 15))
+  if ((block_start_pc >> 15) != (branch_pc >> 15) ||
+      spin_branch_at(pc_address_block, branch_pc, thumb, &cond) != target)
     return 0;
 
-  if (thumb) {
-    bop = readaddress16(pc_address_block, (branch_pc & 0x7FFF));
-    if ((bop >> 12) == 0xD) cond = (bop >> 8) & 15;
-    else if ((bop >> 11) == 0x1C) cond = 0xE;
-    else return 0;
-    if (cond == 0xF) return 0;                  /* swi */
-  } else {
-    bop = readaddress32(pc_address_block, (branch_pc & 0x7FFF));
-    if ((bop & 0x0F000000) != 0x0A000000) return 0;   /* b, not bl */
-    cond = bop >> 28;
-    if (cond == 0xF) return 0;
+  loop = target;
+  if (target > branch_pc) {
+    /* threaded back-edge: forward to an unconditional `b` into this block */
+    if ((branch_pc >> 24) < 0x08 || (branch_pc >> 24) > 0x0D ||
+        (target >> 15) != (branch_pc >> 15))
+      return 0;
+    loop = spin_branch_at(pc_address_block, target, thumb, &c2);
+    if (loop == ~0u || c2 != 0xE)
+      return 0;
   }
+  if (loop < block_start_pc || loop > branch_pc ||
+      (branch_pc - loop) / width > SPIN_MAX_BODY)
+    return 0;
 
   memset(a, 0, sizeof(*a));
   a->desc = desc;
+  a->blk = pc_address_block;
+  a->page = branch_pc >> 15;
   for (a->pass = 1; a->pass <= 2; a->pass++) {
     a->w = 0;
-    for (p = target; p < branch_pc; p += width) {
+    a->kc = 0;
+    for (p = loop; p < branch_pc; p += width) {
+      u32 c3, t3 = spin_branch_at(pc_address_block, p, thumb, &c3);
+      if (t3 != ~0u) {
+        /* exit in the middle: out of [loop, branch_pc] only */
+        if (c3 == 0xE)
+          return 0;
+#ifndef SPIN_SKIP_MUTANT_INSKIP
+        if (t3 >= loop && t3 <= branch_pc)
+          return 0;
+#endif
+        spin_read(a, spin_cond_flags(c3));
+        continue;
+      }
       if (thumb)
         spin_thumb_op(a, readaddress16(pc_address_block, (p & 0x7FFF)), p);
       else
@@ -6066,7 +6178,7 @@ static u32 spin_analyze(u32 target, u32 branch_pc, u32 thumb,
   desc[0] = 0;
   desc[1] = a->nloads;
   spin_loops++;
-  return 2 + 2 * a->nloads;
+  return 2 + 3 * a->nloads;
 }
 
 /* May the location [addr, addr+size) change between two events? */
@@ -6084,10 +6196,11 @@ static int spin_addr_ok(u32 addr, u32 size)
       off = addr & 0x00FFFFFF;
       last = off + size - 1;
       if (last >= 0x400) return 0;
-      /* DISPSTAT VCOUNT | IE IF | IME | DMA0-3 CNT_H */
+      /* DISPSTAT VCOUNT | IE IF | IME | KEYINPUT KEYCNT | DMA0-3 CNT_H */
       if (off >= 0x004 && last <= 0x007) return 1;
       if (off >= 0x200 && last <= 0x203) return 1;
       if (off >= 0x208 && last <= 0x209) return 1;
+      if (off >= 0x130 && last <= 0x133) return 1;     /* KEYINPUT KEYCNT */
       if ((off & ~1u) == 0x0BA || (off & ~1u) == 0x0C6 ||
           (off & ~1u) == 0x0D2 || (off & ~1u) == 0x0DE)
         return last <= (off | 1);
@@ -6097,22 +6210,27 @@ static int spin_addr_ok(u32 addr, u32 size)
   }
 }
 
-/* update_gba: may this loop end the slice?  Registers are in reg[]. */
-int spin_check(const u32 *desc)
+/* update_gba: may this loop end the slice?  Registers are in reg[].  Runs on
+ * every skip -- hundreds a frame for a game waiting on VBlank, with the same
+ * registers each time -- so an address that passed is remembered (w2) and
+ * passes again without the region test.  Fixed addresses (kind 0) were
+ * decided at translation and are not listed. */
+int spin_check(u32 *desc)
 {
   u32 i, n = desc[1];
   for (i = 0; i < n; i++) {
-    u32 w = desc[2 + 2 * i], imm = desc[3 + 2 * i], addr;
-    u32 kind = w & 3, size = 1u << ((w >> 2) & 3);
-    u32 rb = (w >> 4) & 15, ro = (w >> 8) & 15;
-    if (kind == 0) addr = imm;
-    else if (kind == 1) addr = reg[rb] + imm;
+    u32 *l = &desc[2 + 3 * i], w = l[0], rb = (w >> 4) & 15, addr;
+    if ((w & 3) == 1)
+      addr = reg[rb] + l[1];
     else {
-      u32 x = reg[ro] << ((w >> 12) & 31);
+      u32 x = reg[(w >> 8) & 15] << ((w >> 12) & 31);
       addr = (w & (1u << 17)) ? reg[rb] - x : reg[rb] + x;
     }
-    if (!spin_addr_ok(addr, size))
+    if (addr == l[2])
+      continue;
+    if (!spin_addr_ok(addr, 1u << ((w >> 2) & 3)))
       return 0;
+    l[2] = addr;
   }
   return 1;
 }
