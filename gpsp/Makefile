@@ -798,6 +798,21 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DMA_SMC_RETIRE),1)
 	CFLAGS += -DDMA_SMC_RETIRE=1
 	endif
+	# DMA_SMC_ADAPT=1: OFF by default (twin prototype).  DMA_SMC_RETIRE only
+	# while it measures cheaper than the full flush (probe/backoff controller,
+	# EVT dma_retire_mode logs each decision).  Needs DMA_SMC_RETIRE.
+	ifeq ($(DMA_SMC_ADAPT),1)
+	CFLAGS += -DDMA_SMC_ADAPT=1
+	endif
+	# SMC_STM_AHEAD=1: OFF by default (twin prototype).  SMC_STM_WIDE retires
+	# forward over the tagged run after an advancing copy's write (bounded by
+	# SMC_STM_AHEAD_BYTES / SMC_STM_AHEAD_BLOCKS).  Needs SMC_STM_WIDE.
+	ifeq ($(SMC_STM_AHEAD),1)
+	CFLAGS += -DSMC_STM_AHEAD=1
+	endif
+	ifeq ($(SMC_STM_AHEAD_MUTANT),1)
+	CFLAGS += -DSMC_STM_AHEAD_MUTANT=1
+	endif
 	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
 	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
 	# ram_region, which doubles the function and spills translation_ptr to

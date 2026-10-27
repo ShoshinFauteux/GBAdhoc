@@ -7179,6 +7179,10 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
   u32 off, base, size, len, canon_end;
+#ifdef DMA_SMC_ADAPT
+  extern u32 dma_rt_xlat;
+  dma_rt_xlat++;
+#endif
 
 #ifdef STALE_CHECK
   stale_note_extent(start_pc, end_pc, thumb);
@@ -9745,6 +9749,50 @@ void flush_translation_cache_ram_smc(void)
  * LAYOUT NEUTRALITY: this sits outside the pinned hot order, and
  * flush_translation_cache_ram_smc is byte-identical with the switch on or
  * off; only the stub's function-pointer slot changes. */
+#ifdef SMC_STM_AHEAD
+#ifndef SMC_STM_WIDE
+#error SMC_STM_AHEAD needs SMC_STM_WIDE
+#endif
+#ifndef SMC_STM_AHEAD_BYTES
+#define SMC_STM_AHEAD_BYTES 1024
+#endif
+#ifndef SMC_STM_AHEAD_BLOCKS
+#define SMC_STM_AHEAD_BLOCKS 8
+#endif
+/* SMC_STM_AHEAD (cpu-levers 2026-10-27, twin prototype): an advancing copy
+ * (STMIA Rn!) that traps on live code is about to overwrite what follows it.
+ * Exact retirement of just its own span left every later STM of the copy to
+ * trap again (Hot Wheels: 774 full flushes became 58k selective traps, ~48 a
+ * frame).  So the span retired is widened FORWARD over the run of tagged
+ * words that continues from the write's end, bounded by SMC_STM_AHEAD_BYTES
+ * and by SMC_STM_AHEAD_BLOCKS block starts; the first untagged word ends it.
+ *
+ * Safety: smc_retire_span retires every live block overlapping the range, so
+ * widening it retires MORE code, never less; the written span is still inside
+ * the range.  Its interior-mark clear over the widened part removes only
+ * marks of blocks it has just retired (every covering block of the range is
+ * retired).  The cost of a too-wide guess is retranslation, not correctness.
+ * hi is canonical IWRAM (0x03000000 + off) here. */
+static u32 smc_stm_ahead(u32 hi)
+{
+  const u16 *tagp = (const u16 *)iwram;
+  u32 off = hi - 0x03000000, lim = off + SMC_STM_AHEAD_BYTES, starts = 0;
+  if (off >= 0x8000)
+    return hi;
+  if (lim > 0x8000)
+    lim = 0x8000;
+  while (off < lim) {
+    u32 t0 = tagp[off >> 1], t1 = tagp[(off >> 1) + 1];
+    if (!t0 && !t1)
+      break;
+    if ((VALID_TAG(t0) || VALID_TAG(t1)) && ++starts > SMC_STM_AHEAD_BLOCKS)
+      break;
+    off += 4;
+  }
+  return 0x03000000 + off;
+}
+u32 smc_stm_ahead_bytes;
+#endif
 void smc_trap_entry(void)
 {
 #ifdef SMC_STM_CHAIN
@@ -9786,6 +9834,16 @@ void smc_trap_entry(void)
           flush_translation_cache_ram();
         } else
 #endif
+#ifdef SMC_STM_AHEAD
+        {
+          u32 hx = smc_stm_ahead(hi);
+          smc_stm_ahead_bytes += hx - hi;
+#ifdef SMC_STM_AHEAD_MUTANT
+          lo = hi - 4;  /* MUTANT (oracle self-test): earlier words dropped */
+#endif
+          hi = hx;
+        }
+#endif
         if (smc_retire_span(lo, hi)) {
           SMC_FB(9);
         } else {
@@ -9818,11 +9876,98 @@ void smc_trap_entry(void)
  * resulting retranslation is unrelated low-IWRAM code. */
 u32 dma_smc_lo[2] = { ~0u, ~0u }, dma_smc_hi[2];
 u32 dma_smc_retired;
+#ifdef DMA_SMC_ADAPT
+/* DMA_SMC_ADAPT: exact DMA retirement only while it pays.
+ *
+ * Exact retirement keeps every other translation live, so later DMAs and
+ * stores in the same frame land on tagged code and alert again where a full
+ * flush had left them nothing to hit.  Twin, 1200 f: Mario Golf -8.0 % and
+ * FIFA 07 -4.3 % core (few DMA alerts, much collateral saved), Top Gear Rally
+ * +9.7 % (DMA alerts 3797 -> 10009, store traps 9.1k -> 21.5k, xlat only
+ * -5 %).  Which way a game goes is a property of its code, so it is MEASURED,
+ * not listed:
+ *
+ *   cost of a window = 2 x RAM blocks translated + SMC events (store traps +
+ *   DMA alerts), per frame.  The weights are the twin's measured prices: a
+ *   RAM block translation ~9.8k host instructions (Hot Wheels), a selective
+ *   trap or retire ~5k (Hot Wheels, TGR).
+ *
+ * Windows are DMA_ADAPT_WINDOW frames, closed at the next DMA alert (nothing
+ * here matters to a game that raises none).  After `gap` windows in the
+ * current mode, one window is spent in the other mode (a probe).  The probe
+ * mode is kept when it costs less than 7/8 of the window before it; then gap
+ * resets to DMA_ADAPT_GAP0.  Otherwise the mode reverts and gap doubles, up to
+ * DMA_ADAPT_GAP0 << 5, so a game whose answer is settled probes about once
+ * per 2048 frames.  Deterministic: frame_counter and event counts only.
+ * Every decision is logged (EVT dma_retire_mode on the PSP harness builds,
+ * SMC_EVT on the twin) so a hardware run shows each game's mode. */
+#ifndef DMA_ADAPT_WINDOW
+#define DMA_ADAPT_WINDOW 32u
+#endif
+#define DMA_ADAPT_GAP0 2u
+u32 dma_rt_xlat;                    /* RAM blocks translated (ramtag_note_extent) */
+u32 dma_rt_mode = 1, dma_rt_switches, dma_rt_probes;
+static u32 drt_f0, drt_x0, drt_e0, drt_ref, drt_since, drt_probing;
+static u32 drt_gap = DMA_ADAPT_GAP0;
+extern void fe_evt(const char *fmt, ...) __attribute__((weak));
+static void dma_adapt_tick(void)
+{
+  u32 f = frame_counter, ev = flush_ram_smc + flush_ram_dma, frames, cost;
+  if (f < drt_f0 || drt_f0 == 0) {          /* first alert, or a state load */
+    drt_f0 = f ? f : 1;
+    drt_x0 = dma_rt_xlat;
+    drt_e0 = ev;
+    return;
+  }
+  frames = f - drt_f0;
+  if (frames < DMA_ADAPT_WINDOW)
+    return;
+  cost = (2 * (dma_rt_xlat - drt_x0) + (ev - drt_e0)) * 16 / frames;
+  if (drt_probing) {
+    int keep = cost * 8 < drt_ref * 7;
+    dma_rt_probes++;
+    if (keep) {
+      dma_rt_switches++;
+      drt_gap = DMA_ADAPT_GAP0;
+    } else {
+      dma_rt_mode ^= 1;
+      if (drt_gap < (DMA_ADAPT_GAP0 << 5))
+        drt_gap <<= 1;
+    }
+    SMC_EVT("  DA f=%u probe %s mode=%u cost=%u ref=%u gap=%u\n", (unsigned)f,
+            keep ? "keep" : "revert", (unsigned)dma_rt_mode, (unsigned)cost,
+            (unsigned)drt_ref, (unsigned)drt_gap);
+    if (fe_evt)
+      fe_evt("dma_retire_mode f=%u probe=%s mode=%s cost=%u ref=%u gap=%u",
+             (unsigned)f, keep ? "keep" : "revert",
+             dma_rt_mode ? "retire" : "flush", (unsigned)cost,
+             (unsigned)drt_ref, (unsigned)drt_gap);
+    drt_probing = 0;
+    drt_since = 0;
+  } else {
+    drt_ref = cost;
+    if (++drt_since >= drt_gap) {
+      drt_probing = 1;
+      dma_rt_mode ^= 1;
+    }
+  }
+  drt_f0 = f;
+  drt_x0 = dma_rt_xlat;
+  drt_e0 = ev;
+}
+#endif
 static int dma_smc_retire(void)
 {
   int ok = 0;
   u32 r = (dma_smc_hi[0] != 0) ? 0 : 1;
+#ifdef DMA_SMC_ADAPT
+  if (smc_partial_active)
+    dma_adapt_tick();
+  if (smc_partial_active && dma_rt_mode && dma_smc_hi[r] &&
+      !dma_smc_hi[r ^ 1]) {
+#else
   if (smc_partial_active && dma_smc_hi[r] && !dma_smc_hi[r ^ 1]) {
+#endif
     SMC_EVT("  D retire %08x..%08x\n", (unsigned)dma_smc_lo[r],
             (unsigned)dma_smc_hi[r]);
     smc_single_store = 1;
@@ -10814,6 +10959,14 @@ void jit_stats_report(FILE *f)
   }
 #endif
 #ifdef DMA_SMC_RETIRE
+#ifdef DMA_SMC_ADAPT
+  fprintf(f, "dmaadapt mode=%u switches=%u probes=%u xlat=%u\n",
+          (unsigned)dma_rt_mode, (unsigned)dma_rt_switches,
+          (unsigned)dma_rt_probes, (unsigned)dma_rt_xlat);
+#endif
+#ifdef SMC_STM_AHEAD
+  fprintf(f, "stmahead bytes=%u\n", (unsigned)smc_stm_ahead_bytes);
+#endif
   fprintf(f, "dmaretire retired=%u\n", (unsigned)dma_smc_retired);
 #endif
 #ifdef SMC_FALLBACK_STATS
