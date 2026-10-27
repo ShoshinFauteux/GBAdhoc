@@ -28,6 +28,10 @@ SECTIONS
   .data.pin :
   {
     gbahot_data_pin = .;
+    /* One byte of content makes this PROGBITS: a section holding only a
+     * pad is NOBITS, and ld splits the segment at the hole (seen: 4 PT_LOAD
+     * again).  The pad is then zeros in the file. */
+    BYTE(0)
     . = ALIGN(8192);
   }
 }
