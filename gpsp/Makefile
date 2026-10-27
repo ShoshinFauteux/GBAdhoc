@@ -784,6 +784,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_STM_RANGE),1)
 	CFLAGS += -DSMC_STM_RANGE=1
 	endif
+	# XLAT_PURE=1: OFF by default (multi-version reuse step 1).  scan_block
+	# clears every instruction's update_cycles slot at the top of its loop, so a
+	# block's translation depends only on its own guest bytes (a precondition of
+	# reusing translations).  Changes timing where a stale slot used to be 1.
+	ifeq ($(XLAT_PURE),1)
+	CFLAGS += -DXLAT_PURE=1
+	endif
 	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
 	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective
 	# retirement (Hot Wheels' STMIA r0!,{r4-r11} code generator).  Needs

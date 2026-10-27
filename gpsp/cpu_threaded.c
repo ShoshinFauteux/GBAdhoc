@@ -5282,6 +5282,67 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
 #define SCAN_VARS                       XLAT_GATEMAP_VARS
 #define SCAN_SET_CONDITION(type, c)     type##_set_condition(c)
 #define SCAN_GATE_END(tag_gate_op)      SMC_SCAN_GATE_END(tag_gate_op)
+/* XLAT_PURE (make XLAT_PURE=1, off by default; ported from claude/smc-reuse
+ * bb8b7b2).
+ *
+ * block_data[] is static and scan_block clears an instruction's update_cycles
+ * flag only at the BOTTOM of its loop, which the last instruction of a block
+ * never reaches when the scan leaves through an exit point.  The emit loop
+ * then tests that slot to decide whether to commit the pending cycles before
+ * the block's last instruction, so it reads whatever an EARLIER translation
+ * left there: 1 if some earlier block had a branch target at the same
+ * instruction index, 0 if a longer block cleared it since.  The same guest
+ * code is therefore translated two ways depending on translation history.
+ * With this switch the flag is cleared at the top of the loop, for every
+ * scanned instruction, so a block's code depends only on its own guest bytes
+ * (a precondition of reusing a translation).  It CHANGES emulation timing
+ * wherever the stale flag used to be 1.
+ *
+ * XLAT_PURE_PROBE (twin diagnostic, -D only, meaningless with XLAT_PURE):
+ * logs each translation whose last slot carries such a stale 1 ("XPP" lines,
+ * first XPP_LOG_MAX) and counts them, so a PURE-vs-base divergence can be
+ * tied to the first impure translation that precedes it. */
+#ifdef XLAT_PURE
+#define SCAN_CLEAR_SLOT() (block_data[block_data_position].update_cycles = 0)
+#else
+#define SCAN_CLEAR_SLOT() do { } while (0)
+#endif
+
+#if defined(XLAT_PURE_PROBE) && !defined(XLAT_PURE)
+#ifndef XPP_LOG_MAX
+#define XPP_LOG_MAX 4000
+#endif
+u32 xpp_count, xpp_logged;
+/* Before the branch-target pass: the slot the scan left uncleared, if it is
+ * inside the block (an exit-point exit), and its flag. */
+#define XPP_SNAP(width)                                                       \
+  u32 xpp_idx = block_data_position;                                          \
+  u32 xpp_in = (block_start_pc + xpp_idx * (width)) < block_end_pc &&         \
+               xpp_idx < MAX_BLOCK_SIZE;                                      \
+  u32 xpp_stale = xpp_in ? block_data[xpp_idx].update_cycles : 0
+/* After it: impure when no branch of THIS block targets that slot. */
+#define XPP_CHECK(width, thumb)                                               \
+  if (xpp_stale) {                                                            \
+    u32 xpp_k, xpp_legit = 0;                                                 \
+    for (xpp_k = 0; xpp_k < block_exit_position; xpp_k++)                     \
+      if (block_exits[xpp_k].branch_target ==                                 \
+          block_start_pc + xpp_idx * (width)) xpp_legit = 1;                  \
+    if (!xpp_legit) {                                                         \
+      xpp_count++;                                                            \
+      if (xpp_logged < XPP_LOG_MAX) {                                         \
+        xpp_logged++;                                                         \
+        fprintf(stderr, "XPP f=%u pc=%08x end=%08x t=%u n=%u\n",              \
+                (unsigned)frame_counter, (unsigned)block_start_pc,            \
+                (unsigned)block_end_pc, (unsigned)(thumb),                    \
+                (unsigned)xpp_count);                                         \
+      }                                                                       \
+    }                                                                         \
+  }
+#else
+#define XPP_SNAP(width)
+#define XPP_CHECK(width, thumb)
+#endif
+
 #define scan_block(type, smc_write_op)                                        \
 {                                                                             \
   __label__ block_end;                                                        \
@@ -5291,6 +5352,7 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
   do                                                                          \
   {                                                                           \
     check_pc_region(block_end_pc);                                            \
+    SCAN_CLEAR_SLOT();                                                        \
     smc_write_##type##_##smc_write_op();                                      \
     type##_load_opcode();                                                     \
     type##_flag_status();                                                     \
@@ -6331,6 +6393,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
+  XPP_SNAP(arm_instruction_width);
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -6342,6 +6405,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
        arm_instruction_width].update_cycles = 1;
     }
   }
+  XPP_CHECK(arm_instruction_width, 0);
 
 #ifdef XLAT_SPLIT_DIAG
   u32 xsd_t1 = 0;
@@ -6659,6 +6723,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
+  XPP_SNAP(thumb_instruction_width);
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -6670,6 +6735,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        thumb_instruction_width].update_cycles = 1;
     }
   }
+  XPP_CHECK(thumb_instruction_width, 1);
 
   thumb_dead_flag_eliminate();
 
@@ -7249,7 +7315,7 @@ void census_dma_alert(void)
 #define RS_SETS 16384
 #define RS_WAYS 4
 #ifndef RS_CAP
-#define RS_CAP  (384 * 1024)
+#define RS_CAP  RAM_TRANSLATION_CACHE_SIZE   /* the real cache's size */
 #endif
 typedef struct { u32 key, hash, gen, lru; } rs_ent;
 static rs_ent *rs_tab[2];

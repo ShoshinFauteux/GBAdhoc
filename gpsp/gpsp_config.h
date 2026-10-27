@@ -26,6 +26,13 @@
   #define RAM_TRANSLATION_CACHE_SIZE (1024 * 512)
 #endif
 
+/* RAM_CACHE_KB (twin sizing study only, never in a PSP build): override the
+ * RAM code cache size, e.g. -DRAM_CACHE_KB=768. */
+#ifdef RAM_CACHE_KB
+  #undef RAM_TRANSLATION_CACHE_SIZE
+  #define RAM_TRANSLATION_CACHE_SIZE (1024 * RAM_CACHE_KB)
+#endif
+
 /* RUNTIME_JIT_CACHE (PSP): the sizes above are the SMALL tier, always present
  * as static arrays.  A console whose heap can afford it gets these instead,
  * allocated at startup (cpu_threaded.c, dynarec_select_translation_caches).
