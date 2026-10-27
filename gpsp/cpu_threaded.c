@@ -8825,6 +8825,11 @@ static int smc_retire_span(u32 lo, u32 hi)
     u32 u_lo, u_hi, n, j, k, scan0;
     u8 cov[(MAX_BLOCK_SIZE * 8) / 16];   /* 1 bit per halfword of U */
     if (ulo >= uhi) { ulo = lo; uhi = hi; }
+#ifdef SMC_STM_CHAIN
+    /* ...and the written range itself, which may hold chain marks past the
+     * retired extents (a block store's later words over data). */
+    else { if (lo < ulo) ulo = lo; if (hi > uhi) uhi = hi; }
+#endif
     if (ulo < base) ulo = base;
     if (uhi > base + bytes) uhi = base + bytes;
     u_lo = (ulo - base) >> 1;
@@ -8876,6 +8881,75 @@ static int smc_retire_span(u32 lo, u32 hi)
   return 1;
 }
 
+#ifdef SMC_STM_CHAIN
+/* SMC_STM_CHAIN (cpu-levers 2026-10-27): a non-final word of a block store
+ * (ARM STM, Thumb STMIA; not the SP fast path) just landed on a tagged word
+ * of IWRAM or EWRAM -- translated code, or a mark this function left.  Only
+ * the FINAL word of a block store is SMC-checked, so a store whose earlier
+ * words overwrite code while its final word lands on untagged data went
+ * unreported (FIFA 07's sound generator, the 03005d54 stale B, every
+ * release).  Mark the NEXT word with interior marks if it has none: the
+ * next word's stub sees them and passes the mark on, and the final word's
+ * ordinary check traps.  The trap then describes the write (SMC_STM_RANGE
+ * retires its whole span exactly; anything else takes its usual path).
+ * The marks are cleared like any interior mark: by the trap's untag of the
+ * written range, or by the next full flush, whose range code_max is raised
+ * to cover them.  A stray mark costs one trap later, never correctness. */
+/* VALUE FILTER: a word stored with the value it already holds changes no
+ * code, so it starts no chain (Mario Golf re-copies unchanged code with block
+ * stores: chaining those cost the twin +8.9 %, as SMC_BLOCK_WORDS' check
+ * cost the 1000 +11.6 %).  Sound because every other write to a tagged word
+ * traps and retires, so a tagged word holds what was translated from it.
+ * Once a word has changed code, smc_chain_pending carries the chain over the
+ * following words whatever their values, until the trap it leads to
+ * (smc_trap_entry clears it; a chain that runs off the region's end leaves it
+ * set, which costs at most one needless mark later). */
+#ifndef SMC_STM_RANGE
+#error SMC_STM_CHAIN needs SMC_STM_RANGE (smc_trap_entry ends a chain)
+#endif
+u32 smc_chain_marks, smc_chain_same;
+u32 smc_chain_pending;
+static inline void smc_chain_store(u16 *tagp, u8 *data, u32 off, u32 size,
+                                   u32 val, u32 *code_max)
+{
+  u32 w = off & ~3u, nxt = w + 4;
+  u32 *p = (u32 *)(data + w);
+  u16 *t;
+#ifndef SMC_STM_CHAIN_MUTANT_NOFILTER   /* MUTANT: chain on every hit */
+#ifdef SMC_STM_CHAIN_MUTANT_NOPENDING   /* MUTANT: unchanged word ends it */
+  if (*p == val) {
+#else
+  if (*p == val && !smc_chain_pending) {
+#endif
+    smc_chain_same++;
+    return;                        /* unchanged: no chain (the value stands) */
+  }
+#endif
+  *p = val;
+  smc_chain_pending = 1;
+  if (nxt + 4 > size)
+    return;                        /* the region's last word: nothing after */
+  t = &tagp[nxt >> 1];
+#ifndef SMC_STM_CHAIN_MUTANT       /* MUTANT (oracle self-test): no chain */
+  if (!t[0] && !t[1]) {
+    t[0] = t[1] = CODE_TAG_BLOCK16;
+    smc_chain_marks++;
+    if (*code_max < nxt + 4)
+      *code_max = nxt + 4;
+  }
+#endif
+}
+void smc_chain_store_iw(u32 off, u32 val)
+{
+  smc_chain_store((u16 *)iwram, iwram + 0x8000, off & 0x7FFF, 0x8000, val,
+                  &iwram_code_max);
+}
+void smc_chain_store_ew(u32 off, u32 val)
+{
+  smc_chain_store((u16 *)(ewram + 0x40000), ewram, off & 0x3FFFF, 0x40000,
+                  val, &ewram_code_max);
+}
+#endif
 #ifdef SMC_BLOCK_EXACT
 /* Called from the aligned (non-final block-store word) IWRAM/EWRAM store stub
  * when the word it just stored was tagged as code (mips_emit.h,
@@ -9664,6 +9738,9 @@ void flush_translation_cache_ram_smc(void)
  * off; only the stub's function-pointer slot changes. */
 void smc_trap_entry(void)
 {
+#ifdef SMC_STM_CHAIN
+  smc_chain_pending = 0;           /* the chain (if any) ends in this trap */
+#endif
   if (smc_partial_active && !(reg[REG_CPSR] & 0x20)) {
     u32 pc = GBA_PC(reg[REG_PC]) - 4;          /* as smc_writer_safe_range */
     u32 addr = smc_last_write_addr;
@@ -10661,6 +10738,13 @@ void jit_stats_report(FILE *f)
           (unsigned)flush_ram_total, (unsigned)flush_ram_full,
           (unsigned)flush_ram_smc, (unsigned)flush_ram_dma,
           (unsigned)flush_ram_partial, (unsigned)flush_rom_total);
+#ifdef SMC_STM_CHAIN
+  {
+    extern u32 smc_chain_marks, smc_chain_same;
+    fprintf(f, "stmchain marks=%u same=%u\n", (unsigned)smc_chain_marks,
+            (unsigned)smc_chain_same);
+  }
+#endif
 #ifdef SMC_FALLBACK_STATS
   {
     unsigned k;

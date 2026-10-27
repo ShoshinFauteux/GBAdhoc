@@ -2220,6 +2220,15 @@ void smc_write();
 #ifdef SMC_BLOCK_EXACT
 void smc_block_word_hit(u32 base_plus_off, u32 off);   /* cpu_threaded.c */
 #endif
+#ifdef SMC_STM_CHAIN
+void smc_chain_store_iw(u32 off, u32 val);             /* cpu_threaded.c */
+void smc_chain_store_ew(u32 off, u32 val);
+extern u32 smc_chain_pending;
+/* The aligned (block-store) u32 stubs of IWRAM/EWRAM jump to a tail emitted
+ * after every other stub; see emit_stm_chain_tails. */
+static u32 *stm_chain_jsite[4];
+static u32  stm_chain_base[4];
+#endif
 cpu_alert_type write_io_register8 (u32 address, u32 value);
 cpu_alert_type write_io_register16(u32 address, u32 value);
 cpu_alert_type write_io_register32(u32 address, u32 value);
@@ -2767,6 +2776,27 @@ static void emit_pmemst_stub(
     mips_emit_b(bne, reg_zero, reg_temp, branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));
   }
 
+#ifdef SMC_STM_CHAIN
+  /* SMC_STM_CHAIN (cpu-levers): the block-store word stub keeps its size --
+   * `j tail ; (tag address, delay) ; nop` replaces `sw ; jr ra ; nop` -- and
+   * the tag test and the store live in a tail emitted after every other stub
+   * (init_emitter), so no other stub moves.  The jump target is patched in
+   * there.  The tag is tested BEFORE the store, so a hit can compare the old
+   * word with the new one. */
+  if (meminfo->check_smc && aligned && (region == 2 || region == 3)) {
+    stm_chain_jsite[region] = (u32 *)translation_ptr;
+    stm_chain_base[region] = base_addr;
+    mips_emit_j(0);                                  /* patched */
+    if (region == 2) {   /* braces: the emit macros are several statements */
+      mips_emit_lui(reg_temp, 0x40000 >> 16);        /* tags: data + 256 KiB */
+    } else {
+      mips_emit_addiu(reg_temp, reg_rv, 0x8000);     /* tags: data - 32 KiB */
+    }
+    mips_emit_nop();                                 /* never executed */
+    *tr_ptr = translation_ptr;
+    return;
+  }
+#endif
   // Store the data (delay slot from the SMC branch)
   if (realsize == 2) {
     mips_emit_sw(reg_a1, reg_rv, base_addr);
@@ -3376,6 +3406,75 @@ void init_emitter(bool must_swap) {
     handler(3, &stinfo[i], 2, true,  &translation_ptr);  // st aligned 32
   }
 
+#ifdef SMC_STM_CHAIN
+  {
+    /* The tails, then a pad so the stub area grows by exactly 8 KiB (one
+     * I-cache way): ROM translations keep their cache sets. */
+    u8 *t0 = translation_ptr;
+    unsigned r;
+    for (r = 2; r <= 3; r++) {
+      u8 *b_hit;
+      u32 base_addr = stm_chain_base[r];
+      if (!stm_chain_jsite[r])
+        continue;
+      *stm_chain_jsite[r] = (mips_opcode_j << 26) |
+                            ((((u32)translation_ptr) >> 2) & 0x3FFFFFF);
+      /* the word's tags (the stub's delay slot began the address) */
+      if (r == 2) {
+        mips_emit_addu(reg_temp, reg_rv, reg_temp);
+      }
+      mips_emit_lw(reg_temp, reg_temp, base_addr);
+      b_hit = translation_ptr;
+      mips_emit_b(bne, reg_zero, reg_temp, 0);
+      mips_emit_lw(reg_temp, reg_rv, base_addr);     /* old word (delay) */
+      mips_emit_jr(mips_reg_ra);                     /* no code here: */
+      mips_emit_sw(reg_a1, reg_rv, base_addr);       /* store (delay) */
+      generate_branch_patch_conditional(b_hit, translation_ptr);
+#ifndef SMC_STM_CHAIN_MUTANT_NOFILTER
+      {
+        /* value filter, fast half: the word already holds the value and no
+         * chain is pending -> nothing to do (the store would not change it) */
+        u8 *b_ne, *b_pend = NULL;
+        u32 pa = (u32)&smc_chain_pending;
+        b_ne = translation_ptr;                        /* temp = old word */
+        mips_emit_b(bne, reg_temp, reg_a1, 0);
+        mips_emit_lui(reg_temp, (pa + 0x8000) >> 16);  /* (delay) */
+#ifndef SMC_STM_CHAIN_MUTANT_NOPENDING
+        mips_emit_lw(reg_temp, reg_temp, pa);
+        b_pend = translation_ptr;
+        mips_emit_b(bne, reg_zero, reg_temp, 0);
+        mips_emit_nop();
+#endif
+        mips_emit_jr(mips_reg_ra);
+        mips_emit_nop();
+        generate_branch_patch_conditional(b_ne, translation_ptr);
+        if (b_pend) {
+          generate_branch_patch_conditional(b_pend, translation_ptr);
+        }
+      }
+#endif
+      /* code (or a chain mark) under a non-final block-store word: C
+       * stores the word and, if it changes it (or a chain is pending), marks
+       * the next word so the chain reaches the final word's checked store */
+      mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      emit_save_regs(true);
+      if (r == 2) {
+        genccall(&smc_chain_store_ew);
+      } else {
+        genccall(&smc_chain_store_iw);
+      }
+      mips_emit_nop();                         /* a0 = masked offset, a1 = value */
+      mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      emit_restore_regs(true);
+      mips_emit_jr(mips_reg_ra);
+      mips_emit_nop();
+    }
+    /* braces: mips_emit_nop() is two statements */
+    while ((u32)(translation_ptr - t0) < 8192) {
+      mips_emit_nop();
+    }
+  }
+#endif
   // Generate JAL tables
   u32 *tmemptr = &tmemld[0][0];
   for (i = 0; i < 15*16; i++)

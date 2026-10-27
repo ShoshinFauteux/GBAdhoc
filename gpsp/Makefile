@@ -691,6 +691,24 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XS_WALK_PAIR),1)
 	CFLAGS += -DXS_WALK_PAIR=1
 	endif
+	# SMC_STM_CHAIN=1: OFF by default (cpu-levers).  A non-final block-store
+	# word that lands on tagged IWRAM/EWRAM marks the next word, so the final
+	# word's checked store traps (the STM block-store hole: FIFA 07).  The
+	# aligned stub keeps its size; its tag test is a tail after all stubs,
+	# padded so the stub area grows by exactly 8 KiB.  A word rewritten with
+	# its own value starts no chain (value filter).  Needs SMC_STM_RANGE.
+	ifeq ($(SMC_STM_CHAIN),1)
+	CFLAGS += -DSMC_STM_CHAIN=1
+	endif
+	ifeq ($(SMC_STM_CHAIN_MUTANT),1)
+	CFLAGS += -DSMC_STM_CHAIN_MUTANT=1
+	endif
+	ifeq ($(SMC_STM_CHAIN_MUTANT_NOPENDING),1)
+	CFLAGS += -DSMC_STM_CHAIN_MUTANT_NOPENDING=1
+	endif
+	ifeq ($(SMC_STM_CHAIN_MUTANT_NOFILTER),1)
+	CFLAGS += -DSMC_STM_CHAIN_MUTANT_NOFILTER=1
+	endif
 	# SMC_SAME_REPROBE=N: SMC_SAME_ADAPT's first re-probe threshold (default
 	# 256 single-word retirements while off).
 	ifneq ($(SMC_SAME_REPROBE),)
