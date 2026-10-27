@@ -686,6 +686,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
 	endif
+	# SMC_SAME_ADAPT=1: OFF by default (cpu-levers).  Refines SMC_SAME_SKIP:
+	# stop recording translated IWRAM halfwords while the skip rate does not
+	# pay for the recording (Hot Wheels: all cost, no traps); re-probe after
+	# single-word retirements.  Exact like SMC_SAME_SKIP (it only skips less).
+	ifeq ($(SMC_SAME_ADAPT),1)
+	CFLAGS += -DSMC_SAME_ADAPT=1
+	endif
 	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
 	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
 	# ram_region, which doubles the function and spills translation_ptr to

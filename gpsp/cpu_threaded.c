@@ -4266,6 +4266,82 @@ static u8  xs_ok[0x8000 / 16];
 static u8  xs_bad[0x8000 / 16];
 static u32 xs_ready;
 u32 smc_same_skips, smc_same_poison;
+#ifdef SMC_SAME_ADAPT
+/* SMC_SAME_ADAPT (cpu-levers, 2026-10-26): record only while it pays.
+ *
+ * The record costs ~40 host instructions per IWRAM halfword translated
+ * (xs_note_half), whether or not a single-store trap ever asks.  Hot Wheels
+ * Stunt Track Challenge retranslates IWRAM ARM code constantly with NO
+ * single-store traps (twin, 1200 f: 9.45M halfwords noted, 0 checks: +34 %
+ * translation cost, -6.2 % on the 3000); Mario Tennis notes 6.2M for 1180
+ * skips.  Doom notes 1.4M for 84k skips, Duke 1.4M for 42k.  A skip saves a
+ * retire + retranslate, thousands of instructions, so the break-even is about
+ * one skip per ~140 noted halfwords.
+ *
+ * Policy, general and deterministic (no game keys, no timers):
+ *   ON  -> OFF: after every XS_WINDOW recorded halfwords, if fewer than
+ *               XS_WINDOW / 256 traps were skipped in that window.
+ *   OFF -> ON : after XS_REPROBE single-word IWRAM retirements while off --
+ *               the events a skip could have saved -- re-probe for a window.
+ * While OFF nothing is recorded and no trap is checked (every trap retires,
+ * as without SMC_SAME_SKIP).
+ *
+ * Switching ON mid-run would break the record's invariant for blocks
+ * translated while OFF (they read memory nobody recorded, so a later record
+ * by another block could disagree with them unseen).  So every translation
+ * remembers whether it was recorded (xs_rec, one bit per tag and mode, set in
+ * ramtag_note_extent), and xs_blocks_current refuses to skip unless every
+ * covering block was.  Among recorded blocks the invariant and its proof are
+ * unchanged; an unrecorded block can only cause a retirement.  With trapped
+ * stores alone the bit is redundant (a changing store retires every covering
+ * block and clears the record); it matters when untrapped STM non-final
+ * words change code twice.  tools/drprof/synth/xs_norec.s builds exactly that case:
+ * SMC_SAME_ADAPT_MUTANT_NOREC (no bit) executes a stale translation there,
+ * the real check retires it.  XS_WINDOW is overridable for that test only. */
+#ifndef XS_WINDOW                    /* overridable for the mutant test only */
+#define XS_WINDOW     65536u
+#endif
+#define XS_MIN_SKIPS  (XS_WINDOW / 256)
+#define XS_REPROBE    256u
+static u32 xs_on = 1, xs_win_noted, xs_win_skips, xs_off_retires, xs_dirty;
+u32 xs_turned_off, xs_turned_on;
+static u8 xs_rec[2][0x10000 / 16];       /* [thumb][tag >> 1] bit */
+/* Nothing reads the record before partial invalidation is active, and
+ * activation is a full RAM flush, so recording starts there. */
+#define XS_ON() (xs_on && smc_partial_active)
+#define XS_REC_GET(tag, m) ((xs_rec[m][(tag) >> 4] >> (((tag) >> 1) & 7)) & 1)
+static inline void xs_rec_set(u32 tag, u32 m, u32 v)
+{
+  u8 bit = (u8)(1u << ((tag >> 1) & 7));
+  if (v) xs_rec[m][tag >> 4] |= bit; else xs_rec[m][tag >> 4] &= (u8)~bit;
+}
+/* ramtag_note_extent, IWRAM block of `halves` halfwords just scanned */
+static inline void xs_adapt_note(u32 tag, u32 thumb, u32 halves)
+{
+  xs_rec_set(tag, thumb, xs_on);
+  if (!xs_on)
+    return;
+  xs_win_noted += halves;
+  if (xs_win_noted >= XS_WINDOW) {
+    if (xs_win_skips < XS_MIN_SKIPS) {
+      xs_on = 0;
+      xs_off_retires = 0;
+      xs_turned_off++;
+    }
+    xs_win_noted = xs_win_skips = 0;
+  }
+}
+static inline void xs_adapt_retired(void)
+{
+  if (!xs_on && ++xs_off_retires >= XS_REPROBE) {
+    xs_on = 1;
+    xs_win_noted = xs_win_skips = 0;
+    xs_turned_on++;
+  }
+}
+#else
+#define XS_ON() 1
+#endif
 #ifdef XS_COST_PROBE
 u32 xs_calls, xs_slots, xs_halves;
 #endif
@@ -4296,6 +4372,15 @@ static inline void xs_note_half(u32 off, u32 start)
     smc_same_poison++;
   }
 }
+#ifdef SMC_SAME_ADAPT
+static __attribute__((noinline)) void xs_note_block(u32 start, u32 end)
+{
+  u32 a;
+  xs_dirty = 1;
+  for (a = start; a < end; a += 2)
+    xs_note_half(a, start);
+}
+#endif
 static inline void xs_clear_half(u32 h)          /* h: IWRAM halfword index */
 {
   xs_ok[h >> 3] &= (u8)~(1u << (h & 7));
@@ -4305,6 +4390,10 @@ static void xs_report(void)
 {
   fprintf(stderr, "SMC_SAME_SKIP skips=%u poison=%u\n",
           (unsigned)smc_same_skips, (unsigned)smc_same_poison);
+#ifdef SMC_SAME_ADAPT
+  fprintf(stderr, "SMC_SAME_ADAPT on=%u off_events=%u on_events=%u\n",
+          (unsigned)xs_on, (unsigned)xs_turned_off, (unsigned)xs_turned_on);
+#endif
 #ifdef XS_COST_PROBE
   fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u\n", (unsigned)xs_calls,
           (unsigned)xs_slots, (unsigned)xs_halves);
@@ -4316,14 +4405,37 @@ static void xs_clear_all(void)
 #ifdef DRPROF_TWIN
   if (!xs_ready) atexit(xs_report);
 #endif
+#ifdef SMC_SAME_ADAPT
+  /* Only xs_note_half sets xs_ok/xs_bad bits, so with nothing recorded since
+   * the last clear they are still zero (Mario Tennis full-flushes often:
+   * the two memsets were most of its flush time).  xs_rec needs no clear:
+   * ramtag_note_extent rewrites a tag's bit at every translation, before the
+   * tag can be seen live by xs_blocks_current. */
+  if (xs_dirty || !xs_ready) {
+    memset(xs_ok, 0, sizeof(xs_ok));
+    memset(xs_bad, 0, sizeof(xs_bad));
+    xs_dirty = 0;
+  }
+#else
   memset(xs_ok, 0, sizeof(xs_ok));
   memset(xs_bad, 0, sizeof(xs_bad));
+#endif
   xs_ready = 1;
 }
+#ifdef SMC_SAME_ADAPT
+/* Recorded in bulk once the scan has settled the extent (xs_note_block, from
+ * ramtag_note_extent): the same halfwords in the same order, read from memory
+ * the scan does not change -- and nothing left in the scan loop, where the
+ * inlined per-instruction note cost the twin +22 % scan time on Hot Wheels
+ * even while recording was off. */
+#define XS_NOTE_ARM()   do { } while (0)
+#define XS_NOTE_THUMB() do { } while (0)
+#else
 #define XS_NOTE_ARM()   do { if (pc >= 0x03000000) {                          \
     xs_note_half(block_end_pc, pc); xs_note_half(block_end_pc + 2, pc); } } while (0)
 #define XS_NOTE_THUMB() do { if (pc >= 0x03000000)                            \
     xs_note_half(block_end_pc, pc); } while (0)
+#endif
 #define XS_CLEAR_HALF(region_is_iwram, h) do {                                \
     if (region_is_iwram) xs_clear_half(h); } while (0)
 #else
@@ -6632,6 +6744,10 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
   } else {
     canon_end = base + off + len;
   }
+#if defined(SMC_SAME_ADAPT)
+  if (base == 0x03000000 && XS_ON())
+    xs_note_block(base + off, canon_end);
+#endif
 
   if (VALID_TAG(tagp[off >> 1])) {
     ramtag_type *te = get_ram_tag(tagp[off >> 1]);
@@ -6639,6 +6755,10 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
       te->blk_end_thumb = canon_end;
     else
       te->blk_end_arm = canon_end;
+#if defined(SMC_SAME_ADAPT)
+    if (base == 0x03000000)
+      xs_adapt_note(tagp[off >> 1], thumb ? 1 : 0, len >> 1);
+#endif
   }
 }
 
@@ -8348,6 +8468,10 @@ static int xs_blocks_current(u32 word)
         continue;                      /* does not cover the word */
       if (e[m] > base + bytes)
         return 0;
+#if defined(SMC_SAME_ADAPT) && !defined(SMC_SAME_ADAPT_MUTANT_NOREC)
+      if (!XS_REC_GET(tagp[i], m))
+        return 0;                      /* translated while not recording */
+#endif
       h_end = (e[m] - base + 1) >> 1;
 #ifdef SMC_SAME_SKIP_MUTANT_NOCHECK
       /* MUTANT (oracle self-test only): trust any covering block. */
@@ -8835,10 +8959,17 @@ void flush_translation_cache_ram_smc(void)
       SMC_FB(1);
       flush_translation_cache_ram();
 #if defined(SMC_SAME_SKIP)
-    } else if (xs_blocks_current(partial_low)) {
+    } else if (XS_ON() && xs_blocks_current(partial_low)) {
       smc_same_skips++;          /* nothing translated from it is stale */
+#ifdef SMC_SAME_ADAPT
+      xs_win_skips++;
+#endif
 #endif
     } else if (smc_retire_single_word(partial_low)) {
+#ifdef SMC_SAME_ADAPT
+      if ((partial_low >> 24) == 3)
+        xs_adapt_retired();
+#endif
       SMC_FB(9);
     } else {
       SMC_FB(7);

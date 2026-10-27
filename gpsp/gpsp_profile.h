@@ -170,6 +170,10 @@
 #error "STATIC_ALU_PC is wired for the MIPS dynarec only (cpu_threaded.c arm_static_alu_pc)."
 #endif
 
+#if defined(SMC_SAME_ADAPT) && !defined(SMC_SAME_SKIP)
+#error "SMC_SAME_ADAPT refines SMC_SAME_SKIP; set both."
+#endif
+
 #if defined(SPIN_SKIP) && !defined(MIPS_ARCH)
 #error "SPIN_SKIP is implemented in the MIPS dynarec only (mips/mips_emit.h generate_branch_spin)."
 #endif
