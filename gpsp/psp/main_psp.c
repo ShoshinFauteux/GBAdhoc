@@ -12771,6 +12771,10 @@ int main(int argc, char *argv[])
     * speed the join's whole margin is about a millisecond. */
    g_pcfg.core_phase = (int)fe_ini_get_int(HARNESS_INI, "core_phase",
                                            g_pcfg.core_phase);
+   /* The Lab turns the FPS chip on so the owner can read a console at a
+    * glance; it draws after the frame is presented, so vhash never sees it. */
+   g_pcfg.show_fps = (int)fe_ini_get_int(HARNESS_INI, "show_fps",
+                                         g_pcfg.show_fps) ? 1 : 0;
    /* ADR-0019: let the harness pin the session frameskip policy without
     * touching the user's config.ini (0 off / 1 adaptive / 2 auto). */
    g_pcfg.net_frameskip = (int)fe_ini_get_int(HARNESS_INI, "net_frameskip",
