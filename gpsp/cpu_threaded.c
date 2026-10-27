@@ -5038,7 +5038,7 @@ static void entry_gates_bounds(u32 cmin, u32 cmax, u32 size, u32 *lo, u32 *hi)
     *lo = (cmin & ~15U) >> 1;
     *hi = (MIN(cmax + 8, size) + 1) >> 1;
 #ifdef ENTRY_GATES_RANGE_MUTANT
-    *hi = cmax >> 1;   /* oracle mutant: drop the last block's tags */
+    *hi = *lo + ((*hi - *lo) >> 1);   /* oracle mutant: drop the upper half */
 #endif
   } else {
     *lo = 0;

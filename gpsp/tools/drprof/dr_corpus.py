@@ -253,7 +253,7 @@ if os.environ.get("DRCORPUS_SLOW") == "1":
         "m_rl_last": (C3 + RL + " -DSMC_RETIRE_LOCAL_CHECK=1 -DSMC_RETIRE_LOCAL_MUTANT=1", "", "rlchk",
                       "smc_back_note forgets the last chunk of every block"),
         "m_eg_last": (C3 + EG + " -DENTRY_GATES_RANGE_CHECK=1 -DENTRY_GATES_RANGE_MUTANT=1", "", "egchk",
-                      "harvest range drops the highest block's tags"),
+                      "harvest range drops the upper half of the code range"),
     }
 
 
