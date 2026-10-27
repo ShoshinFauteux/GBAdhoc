@@ -736,7 +736,10 @@ defsymbl(io_registers)
 .error "HOT_DATA_OFFSET must be a multiple of 64 below 8192"
 .endif
   .section .data.gbahot.a,"aw"
-  .balign 8192
+  # NOT .balign 8192: an 8 KiB section alignment splits the EBOOT's
+  # read-write segment and a real PSP will not start it.  The 8 KiB boundary
+  # is psp/hot_data_guard.ld's (a location-counter pad).
+  .balign 64
   .space HOT_DATA_OFFSET
   .section .data.gbahot.b,"aw"
   .balign 64

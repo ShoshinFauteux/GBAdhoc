@@ -262,6 +262,12 @@ if [ -n "${CORE_EXTRA:-}${FE_EXTRA:-}" ]; then
   FE_DEFS="$FE_DEFS ${FE_EXTRA:-}"
 fi
 
+# HOT_DATA_GUARD reaches the PSP link too: its placement is a link script
+# (psp/hot_data_guard.ld), which the core flag alone cannot add.
+case " $CORE_FLAGS " in
+  *" HOT_DATA_GUARD=1 "*) PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1" ;;
+esac
+
 # PSP_EXTRA: extra psp/Makefile variables for a one-off variant, e.g. the
 # layout sweep's LAYOUT_PAD_TEXT=N (docs/JIT-CODE-DISCIPLINE.md).  Same rule.
 if [ -n "${PSP_EXTRA:-}" ]; then
@@ -349,6 +355,36 @@ run core  /build      "make platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLA
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || die "core archive missing"
 run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES CHEATS=$CHEATS"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || die "EBOOT missing"
+
+# LOADABLE BY A REAL PSP.  The firmware's loader did not start an EBOOT whose
+# ELF had 4 PT_LOAD segments / 5 program headers (2026-10-27: every
+# HOT_DATA_GUARD build hung black at launch on a PSP-3000; PPSSPP loads
+# anything).  Every EBOOT that ever booted had 3 / 4.  Refuse more.
+PYB=python3; command -v python3 >/dev/null 2>&1 || PYB=python
+PBP_NATIVE="$ROOT/psp/EBOOT.PBP"
+command -v cygpath >/dev/null && PBP_NATIVE=$(cygpath -w "$PBP_NATIVE")
+SEGS=$("$PYB" - "$PBP_NATIVE" <<'PY'
+import struct, sys
+b = open(sys.argv[1], "rb").read()
+base = struct.unpack_from("<8I", b, 8)[6]
+if b[base:base + 4] != b"\x7fELF":
+    print("noelf 0 0"); sys.exit()
+phoff, = struct.unpack_from("<I", b, base + 28)
+ent, n = struct.unpack_from("<HH", b, base + 42)
+loads = sum(1 for i in range(n) if struct.unpack_from("<I", b, base + phoff + i * ent)[0] == 1)
+print("elf %d %d" % (n, loads))
+PY
+)
+read -r SEG_KIND SEG_PH SEG_LOAD <<EOS
+$SEGS
+EOS
+if [ "$SEG_KIND" = elf ]; then
+  note "segments: $SEG_PH program headers, $SEG_LOAD PT_LOAD"
+  [ "$SEG_PH" -le 4 ] && [ "$SEG_LOAD" -le 3 ] ||
+    die "EBOOT has $SEG_PH program headers / $SEG_LOAD PT_LOAD (max 4 / 3): a real PSP will not start it (psp/hot_data_guard.ld)"
+else
+  die "EBOOT.PBP's DATA.PSP is not a plain ELF ($SEGS): the segment check cannot run"
+fi
 
 # HOT-CORE BUDGET (docs/GBA-LINK-MIRROR.md 24-25).  psp/layout/hot_order.txt was
 # generated for the function sizes of one build; a hot function that grows
