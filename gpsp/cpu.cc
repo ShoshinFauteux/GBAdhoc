@@ -1484,6 +1484,21 @@ cpu_alert_type check_interrupt() {
   return (cpu_has_interrupt()) ? CPU_ALERT_IRQ : CPU_ALERT_NONE;
 }
 
+#ifdef FIQ_BANK_FIX
+/* (cpu-levers) An IRQ taken while in FIQ: the bank swap, out of line and
+ * reached by a sibling (tail) call, so check_and_raise_interrupts stays a
+ * frameless leaf.  Inlining set_cpu_mode_body's FIQ branch there cost this
+ * tree a saved register -- a stack frame on EVERY call (+~1.4k instructions
+ * a frame on every fixture in the twin). */
+static u32 __attribute__((noinline)) irq_enter_from_fiq(void)
+{
+  set_cpu_mode_body(MODE_IRQ);
+  if (reg[CPU_HALT_STATE] == CPU_STOP)
+    reg[CPU_HALT_STATE] = CPU_ACTIVE;
+  return 1;
+}
+#endif
+
 // Checks for pending IRQs and raises them. This changes the CPU mode
 // which means that it must be called with a valid CPU state.
 u32 check_and_raise_interrupts()
@@ -1512,7 +1527,9 @@ u32 check_and_raise_interrupts()
     reg[REG_PC] = 0x00000018;
 
 #ifdef FIQ_BANK_FIX
-    set_cpu_mode_body(MODE_IRQ);   /* inline and a leaf, as upstream's was */
+    if (__builtin_expect(reg[CPU_MODE] == MODE_FIQ, 0))
+      return irq_enter_from_fiq();
+    set_cpu_mode_body(MODE_IRQ);   /* not FIQ: SP/LR only, inline, a leaf */
 #else
     set_cpu_mode(MODE_IRQ);
 #endif
