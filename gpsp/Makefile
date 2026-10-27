@@ -455,6 +455,16 @@ else ifeq ($(platform), psp1)
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
 	endif
+	# HOT_DATA_GUARD=1: the stub's hot data block (memory_map_read, reg,
+	# palette/OAM, spsr, reg_mode, patcher tables) at a FIXED D-cache set
+	# offset, HOT_DATA_OFFSET (default 0x1b00 = lab-cpl2xvf's placement;
+	# mips/mips_stub.S).  Off by default.
+	ifeq ($(HOT_DATA_GUARD),1)
+	CFLAGS += -DHOT_DATA_GUARD=1
+	ifneq ($(HOT_DATA_OFFSET),)
+	CFLAGS += -DHOT_DATA_OFFSET=$(HOT_DATA_OFFSET)
+	endif
+	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
 	endif

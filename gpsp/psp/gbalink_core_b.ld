@@ -16,6 +16,9 @@
  */
 SECTIONS
 {
+  /* HOT_DATA_GUARD (mips/mips_stub.S): instance A's hot-block padding.  B
+   * keeps its block where it always was.  Matches nothing in other builds. */
+  /DISCARD/ : { *(.data.gbahot.a) *(.data.gbahot.c) }
   .data 0 : {
     bdata_start = .;
     *(.data .data.*)

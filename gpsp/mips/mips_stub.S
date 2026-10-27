@@ -712,8 +712,38 @@ defsymbl(ewram)
 defsymbl(io_registers)
   .space 0x400
 
+#if defined(HOT_DATA_GUARD)
+# HOT_DATA_GUARD (cpu-levers 2026-10-27): this block (memory_map_read, reg,
+# palette/OAM, spsr, reg_mode, the patcher tables) is the hottest data the
+# core has, and plain .data let every text/rodata change slide its D-cache
+# sets (lab j08621b: the same code with the block 704 B lower lost 2-5 % on
+# AW2/FE8/Emerald/H&S/TGR/Hot Wheels).  Here it sits at a FIXED offset into
+# an 8 KiB way (the D-cache is 16 KiB 2-way):
+#   .data.gbahot.a   8 KiB-aligned, HOT_DATA_OFFSET bytes of zeros
+#   .data.gbahot.b   the block itself
+#   .data.gbahot.c   (HOT_DATA_REF - HOT_DATA_OFFSET) mod 8 KiB of zeros, so
+#                    everything linked after the block keeps its sets
+#                    whatever HOT_DATA_OFFSET is (the offset sweep moves the
+#                    block and nothing else).
+# HOT_DATA_REF is lab-cpl2xvf's placement, so the default build is
+# set-identical to it.  GBA_LINK's instance B discards .a and .c
+# (psp/gbalink_core_b.ld): its copy of the block stays where it was.
+#ifndef HOT_DATA_OFFSET
+#define HOT_DATA_OFFSET 0x1b00
+#endif
+#define HOT_DATA_REF 0x1b00
+.if (HOT_DATA_OFFSET & 63) || (HOT_DATA_OFFSET >= 8192)
+.error "HOT_DATA_OFFSET must be a multiple of 64 below 8192"
+.endif
+  .section .data.gbahot.a,"aw"
+  .balign 8192
+  .space HOT_DATA_OFFSET
+  .section .data.gbahot.b,"aw"
+  .balign 64
+#else
 .data
 .align 6
+#endif
 
 defobj(memory_map_read)
   .space 0x8000
@@ -771,6 +801,10 @@ fnptrs:
 # instructions and no lui: srl / addu $16 / sb $zero.
 defobj(gba_rewind_clean)
   .space 360
+#endif
+#if defined(HOT_DATA_GUARD)
+  .section .data.gbahot.c,"aw"
+  .space ((HOT_DATA_REF - HOT_DATA_OFFSET) & 8191)
 #endif
 
 #if !defined(MMAP_JIT_CACHE)
