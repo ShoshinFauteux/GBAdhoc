@@ -417,10 +417,15 @@ defsymbl(mips_indirect_branch_thumb_nocheck)
 defsymbl(mips_indirect_branch_dual)
 #ifdef DISPATCH_CACHE
   // block_lookup_address_dual: bit 0 set -> Thumb at pc & ~1, CPSR.T = 1;
-  // clear -> ARM at (pc + 2) & ~3, CPSR.T = 0.  Same keys, same CPSR write.
+  // clear -> ARM at (pc + 2) & ~3 (BX_ALIGN_FIX: pc & ~3), CPSR.T = 0.
+  // Same keys, same CPSR write.
   andi $1, $4, 1
   bne $1, $0, 7f
+#ifdef BX_ALIGN_FIX
+  addiu $5, $4, 0                 # (delay) ARM: pc (bit 1 dropped by the key)
+#else
   addiu $5, $4, 2                 # (delay) ARM: pc + 2
+#endif
 #ifdef GBA_PC_MASK
   ext $5, $5, 2, 26
 #else

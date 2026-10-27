@@ -452,6 +452,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(FIQ_BANK_FIX),1)
 	CFLAGS += -DFIQ_BANK_FIX=1
 	endif
+	# BX_ALIGN_FIX=1: a BX into ARM state with address bit 1 set goes to the
+	# word below, as on the ARM7TDMI (cpu_threaded.c block_lookup_address_dual,
+	# mips_stub.S).  gpSP rounded UP and skipped the first ARM instruction of
+	# Camelot's "bx pc" IRQ veneer (corpus-classify 2026-10-27).  Same code size.
+	ifeq ($(BX_ALIGN_FIX),1)
+	CFLAGS += -DBX_ALIGN_FIX=1
+	endif
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
 	endif

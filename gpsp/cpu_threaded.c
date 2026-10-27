@@ -3685,7 +3685,15 @@ u8 function_cc *block_lookup_address_dual(u32 pc)
     reg[REG_CPSR] |= 0x20;
     return block_lookup_address_thumb(pc);
   } else {
+#ifdef BX_ALIGN_FIX
+    /* ARM7TDMI: a BX into ARM state with address bit 1 set fetches from
+     * the word BELOW (the bus ignores A1).  Camelot's IRQ veneer ("bx pc" at
+     * a halfword-aligned address, Golden Sun 2 / Mario Golf / Mario Tennis)
+     * lands on the "mrs r3, cpsr" at pc+2; rounding up skipped it. */
+    pc &= ~0x03;
+#else
     pc = (pc + 2) & ~0x03;
+#endif
     reg[REG_CPSR] &= ~0x20;
     return block_lookup_address_arm(pc);
   }
