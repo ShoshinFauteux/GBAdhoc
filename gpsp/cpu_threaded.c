@@ -6235,7 +6235,14 @@ static int immp_try(u32 word)
 #ifdef SMC_IMM_PATCH_MUTANT_ONESITE
     if (k) break;      /* MUTANT (oracle self-test only): miss every other site */
 #endif
+#ifdef SMC_IMM_PATCH_MUTANT_ALU
+    /* MUTANT (oracle self-test only): the first site's ALU immediate is
+     * written wrong (bit 0 flipped) while its opcode load is right: invisible
+     * to the EXEC_STALE opcode compare, visible to IMMP_VERIFY. */
+    immp_site_put(e->site[k], k ? vn : vn ^ 1);
+#else
     immp_site_put(e->site[k], vn);
+#endif
     if (e->esc[k])
       immp_site_put(e->esc[k], nw);
   }
@@ -8947,10 +8954,50 @@ void flush_translation_cache_ram(void)
  * 16 are listed; EXEC_STALE_ABORT=1 in the environment aborts on the first. */
 static u32 esc_hits, esc_checks;
 static int esc_abort = -1;
+#ifdef SMC_IMM_PATCH
+/* IMMP_VERIFY (xlat-cost 2026-10-28; rides on EXEC_STALE_CHECK, twin only):
+ * the opcode compare above sees a site whose EXEC_STALE opcode load was not
+ * patched, but not one whose ALU immediate is wrong while its opcode load is
+ * right.  So every time an instruction at a learned, not-bad word executes,
+ * EVERY registered site of that word is re-derived from guest memory: the
+ * `lui/ori a0` pair must encode immp_rot(word now), the opcode load the word
+ * now, and the entry's record the word now.  (Invariant, see SMC_IMM_PATCH:
+ * learned and not bad => every listed site encodes the current word; sites
+ * of retired blocks stay listed and patched, so they are checked too.) */
+static u32 immp_vchecks, immp_vhits;
+static void immp_verify(u32 pc, u32 cur)
+{
+  const u32 lui_a0 = (0x0Fu << 26) | ((u32)reg_a0 << 16);
+  const u32 lui_a2 = (0x0Fu << 26) | ((u32)reg_a2 << 16);
+  u32 w = IMMP_W(pc), k;
+  immp_ent *e;
+  if (IMMP_GET(immp_bad, w) || !immp_slot[w])
+    return;
+  e = &immp_tab[immp_slot[w]];
+  if (!e->n)
+    return;
+  immp_vchecks++;
+  for (k = 0; k < e->n; k++)
+    if (e->old != cur || !immp_site_ok(e->site[k], immp_rot(cur), lui_a0) ||
+        (e->esc[k] && !immp_site_ok(e->esc[k], cur, lui_a2))) {
+      if (immp_vhits++ < 16)
+        fprintf(stderr, "IMMP_VERIFY frame=%u pc=%08x word=%08x old=%08x site=%u/%u\n",
+                (unsigned)frame_counter, (unsigned)pc, (unsigned)cur,
+                (unsigned)e->old, (unsigned)k, (unsigned)e->n);
+      if (esc_abort)
+        abort();
+      return;
+    }
+}
+#endif
 static void esc_report(void)
 {
   fprintf(stderr, "EXEC_STALE checks=%u hits=%u\n", (unsigned)esc_checks,
           (unsigned)esc_hits);
+#ifdef SMC_IMM_PATCH
+  fprintf(stderr, "IMMP_VERIFY checks=%u hits=%u\n", (unsigned)immp_vchecks,
+          (unsigned)immp_vhits);
+#endif
 }
 void exec_stale_check(u32 pc, u32 mode, u32 op)
 {
@@ -8974,6 +9021,10 @@ void exec_stale_check(u32 pc, u32 mode, u32 op)
     }
   }
   cur = mode ? *(const u32 *)p : *(const u16 *)p;
+#ifdef SMC_IMM_PATCH
+  if (mode && IMMP_LEARNED(pc))
+    immp_verify(pc, cur);
+#endif
   if (cur == op)
     return;
   if (esc_hits++ < 16)
