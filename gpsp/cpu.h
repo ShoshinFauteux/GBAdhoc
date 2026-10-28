@@ -138,6 +138,10 @@ typedef enum
   REG_MAX           = 64
 } ext_reg_numbers;
 
+/* reg[REG_SPIN_DESC] from the game table's idle branch in the twin's
+ * IDLE_STATS / IDLE_VERIFY builds (main.c): never a descriptor address. */
+#define IDLE_MARK 1
+
 extern u32 instruction_count;
 
 void execute_arm(u32 cycles);

@@ -1,0 +1,6 @@
+# spin_shapes.txt -- input for synth/spin_shapes.s: A held 30 frames every 120.
+wait 60
+repeat 40
+hold A 30
+wait 90
+endrepeat

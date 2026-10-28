@@ -12,7 +12,7 @@ sound_timer                                       0.522358     884
 sound_read_samples                                0.102566     180
 block_lookup_address_dual                         0.029787      56
 check_and_raise_interrupts                        0.117249     292
-update_gba                                        1.318898    3760
+update_gba                                        1.318898    3868
 serial_next_event                                 0.036420     148
 sound_timer_queue32                               0.027255     112
 memset                                            0.064612     284 libc.a:libc_a-memset.o
@@ -20,12 +20,6 @@ check_interrupt                                   0.012647      68
 execute_store_cpsr_body                           0.020876     168
 flag_interrupt                                    0.005793      76
 process_cheats                                    0.000323       8
-core_phase_now                                    0.000502      52
-fe_host_frame_count                               0.000043      12
-execute_arm_translate                             0.000036      12
-input_poll                                        0.000014       8
-fe_autopilot_take_mark                            0.000029      16
-fe_host_sram_sync                                 0.000001       8
 # ---- warm tail
 update_scanline                                   0.061440    7740
 update_serial                                     0.041468     368
@@ -37,8 +31,9 @@ write_io_register32                               0.004315     152
 block_lookup_translate_thumb                      0.031129    1108
 block_lookup_translate_arm                        0.028109    1108
 write_io_register16                               0.073814    3032
-flush_translation_cache_ram_smc                   0.100813    4344
 dma_transfer                                      0.070630    3088
+flush_translation_cache_ram_smc                   0.100813    5028
+core_phase_now                                    0.000502      52
 read_backup                                       0.001740     212
 write_io_register8                                0.001351     172
 dma_tf_loop16                                     0.076796   10876
@@ -46,10 +41,14 @@ dma_tf_loop32                                     0.085811   12468
 memcpy                                            0.005821     880 libc.a:libc_a-memcpy.o
 core_phase_enter                                  0.000418      72
 ramtag_note_extent                                0.001394     280
+fe_host_frame_count                               0.000043      12
+execute_arm_translate                             0.000036      12
 fe_host_sram_service                              0.001744     652
 core_phase_leave                                  0.000418     164
 audio_thread                                      0.000512     824
+input_poll                                        0.000014       8
 core_phase_frame_begin                            0.000194     108
+fe_autopilot_take_mark                            0.000029      16
 fe_autopilot_status                               0.000022      12
 fe_host_input_inject                              0.000022      12
 smc_prof_note_store                               0.000472     300
@@ -78,6 +77,7 @@ serialpoke_frame_update                           0.000088     400
 audio_sample_batch                                0.000101     476
 fe_autopilot_frame                                0.000601    3484
 gpsp_rfu_now_us                                   0.000004      28
+fe_host_sram_sync                                 0.000001       8
 rfu_frame_update                                  0.000758    5952
 fe_host_run_frame                                 0.000632    5828
 fwrite                                            0.000003      32 libc.a:libc_a-fwrite.o
@@ -96,5 +96,5 @@ __moddi3                                          0.000005    1392 libgcc.a:_mod
 __divdi3                                          0.000005    1404 libgcc.a:_divdi3.o
 core_prof_evt                                     0.000002     728
 render_gbc_sound                                  0.282188   25816
-translate_block_arm                               0.312053  331940
-translate_block_thumb                             0.051681  150872
+translate_block_arm                               0.312053  341048
+translate_block_thumb                             0.051681   99820

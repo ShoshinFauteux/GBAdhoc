@@ -1006,19 +1006,62 @@ u32 sched_fast = SCHED_FAST_DEFAULT;
 #endif
 
 #ifdef SPIN_SKIP
-int spin_check(const u32 *desc);
+int spin_check(u32 *desc);
 extern u32 spin_skips, spin_vetoes, spin_loops;
-#ifdef SPIN_SKIP_VERIFY
-/* SPIN_SKIP_VERIFY (twin oracle): never skip.  When a loop would be skipped,
- * snapshot the machine; at the next update_gba entry -- the event the skip
- * would have jumped to -- the guest must be at the same back-edge with the
- * same registers and the same memory, i.e. the skipped iterations really
- * were exact repeats.  Any difference is a violation (printed). */
-static u32 sv_active, sv_claims, sv_bad;
+#endif
+#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
+/* Twin builds only: the game table's idle branch (mips_emit.h
+ * generate_branch_no_cycle_update) names itself with IDLE_MARK in
+ * reg[REG_SPIN_DESC] -- never a descriptor address -- so it can be counted
+ * (IDLE_STATS) or checked like a spin claim (IDLE_VERIFY). */
+static u32 idle_fires;
+#endif
+#if defined(SPIN_SKIP_VERIFY) || defined(IDLE_VERIFY)
+#define SKIP_VERIFY 1
+/* SPIN_SKIP_VERIFY / IDLE_VERIFY (twin oracles): never skip.  Where a skip
+ * would be taken -- a spin descriptor that passes spin_check, or the game
+ * table's idle branch -- snapshot the machine.  Until the event the skip
+ * would have jumped to, every pass through the same claim site must find the
+ * same registers, and at that event (the next update_gba entry that is not a
+ * claim) memory must be unchanged: the skipped passes really were exact
+ * repeats.  Reaching another claim site first means the loop was left.  A
+ * spin loop is one block (plus, threaded, the `b` it branches through), so
+ * its event lands on the back-edge and the registers are compared there as
+ * well; the table's branch may sit in a loop of several blocks (calls
+ * included), so at the event its registers are compared only if the guest is
+ * back at the claim site.  Any difference is a violation (printed, and
+ * counted per claim site). */
+static u32 sv_active, sv_kind, sv_claims[2], sv_bad[2];
 static u32 sv_reg[17];
 static u8 sv_iw[0x8000], sv_ew[0x40000], sv_vr[sizeof(vram)];
 static u16 sv_pal[512], sv_oam[512], sv_io[512];
-static void spin_verify_claim(void)
+static struct { u32 pc, n; const char *what; } sv_hist[2][16];
+
+static void skip_verify_bad(const char *what)
+{
+  u32 k;
+  sv_bad[sv_kind]++;
+  for (k = 0; k < 16; k++)
+  {
+    if (!sv_hist[sv_kind][k].n)
+    {
+      sv_hist[sv_kind][k].pc = sv_reg[REG_PC];
+      sv_hist[sv_kind][k].what = what;
+    }
+    if (sv_hist[sv_kind][k].pc == sv_reg[REG_PC] &&
+        sv_hist[sv_kind][k].what == what)
+    {
+      sv_hist[sv_kind][k].n++;
+      break;
+    }
+  }
+  if (sv_bad[0] + sv_bad[1] <= 20)
+    fprintf(stderr, "%s_VERIFY violation: %s, loop pc %08x now pc %08x\n",
+            sv_kind ? "IDLE" : "SPIN", what, (unsigned)sv_reg[REG_PC],
+            (unsigned)reg[REG_PC]);
+}
+
+static void skip_verify_claim(u32 kind)
 {
   memcpy(sv_reg, reg, sizeof(sv_reg));
   memcpy(sv_iw, &iwram[0x8000], 0x8000);
@@ -1028,47 +1071,97 @@ static void spin_verify_claim(void)
   memcpy(sv_oam, oam_ram, sizeof(sv_oam));
   memcpy(sv_io, io_registers, sizeof(sv_io));
   sv_active = 1;
-  sv_claims++;
+  sv_kind = kind;
+  sv_claims[kind]++;
 }
-static void spin_verify_check(void)
+
+/* A pass through a claim site (0 spin, 1 idle table) with cycles left. */
+static void skip_verify_pass(u32 kind)
+{
+  if (sv_active)
+  {
+    if (kind == sv_kind && reg[REG_PC] == sv_reg[REG_PC])
+    {
+      if (!memcmp(sv_reg, reg, sizeof(sv_reg)))
+        return;
+      skip_verify_bad("regs differ at a repeat");
+    }
+    else
+      skip_verify_bad("left the loop before the event");
+  }
+  skip_verify_claim(kind);
+}
+
+/* A threaded spin loop is claimed at its trampoline (the `b` back to the
+ * loop start), and its event may land on either side of that `b`: the same
+ * state if pc is all that differs and the claim pc branches to it. */
+static int sv_trampoline_only(void)
+{
+  u32 k, op, to = ~0u, at = sv_reg[REG_PC];
+  for (k = 0; k < 17; k++)
+    if (k != REG_PC && sv_reg[k] != reg[k]) return 0;
+  if ((at >> 24) < 0x08 || (at >> 24) > 0x0D) return 0;
+  if (sv_reg[REG_CPSR] & 0x20) {
+    op = read_memory16(at);
+    if ((op >> 11) == 0x1C) to = at + 4 + (u32)(((s32)(op << 21)) >> 20);
+  } else {
+    op = read_memory32(at);
+    if ((op >> 24) == 0xEA) to = at + 8 + (u32)(((s32)(op << 8)) >> 6);
+  }
+  return to == reg[REG_PC];
+}
+
+static void skip_verify_event(void)
 {
   const char *what = NULL;
   if (!sv_active) return;
   sv_active = 0;
-  if (memcmp(sv_reg, reg, sizeof(sv_reg))) what = "regs";
-  else if (memcmp(sv_iw, &iwram[0x8000], 0x8000)) what = "iwram";
-  else if (memcmp(sv_ew, ewram, 0x40000)) what = "ewram";
-  else if (memcmp(sv_vr, vram, sizeof(vram))) what = "vram";
-  else if (memcmp(sv_pal, palette_ram, sizeof(sv_pal))) what = "palette";
-  else if (memcmp(sv_oam, oam_ram, sizeof(sv_oam))) what = "oam";
-  else if (memcmp(sv_io, io_registers, sizeof(sv_io))) what = "io";
-  if (what) {
-    sv_bad++;
-    if (sv_bad <= 20)
-      fprintf(stderr, "SPIN_VERIFY violation #%u: %s differ, loop pc %08x now pc %08x\n",
-              (unsigned)sv_bad, what, (unsigned)sv_reg[REG_PC], (unsigned)reg[REG_PC]);
-  }
+  if ((!sv_kind || reg[REG_PC] == sv_reg[REG_PC]) &&
+      memcmp(sv_reg, reg, sizeof(sv_reg)) &&
+      (sv_kind || !sv_trampoline_only())) what = "regs differ";
+  else if (memcmp(sv_iw, &iwram[0x8000], 0x8000)) what = "iwram differs";
+  else if (memcmp(sv_ew, ewram, 0x40000)) what = "ewram differs";
+  else if (memcmp(sv_vr, vram, sizeof(vram))) what = "vram differs";
+  else if (memcmp(sv_pal, palette_ram, sizeof(sv_pal))) what = "palette differs";
+  else if (memcmp(sv_oam, oam_ram, sizeof(sv_oam))) what = "oam differs";
+  else if (memcmp(sv_io, io_registers, sizeof(sv_io))) what = "io differs";
+  if (what)
+    skip_verify_bad(what);
 }
 #endif
-#ifdef DRPROF_TWIN
+#if defined(DRPROF_TWIN) && \
+    (defined(SPIN_SKIP) || defined(IDLE_STATS) || defined(IDLE_VERIFY))
 static void spin_report(void)
 {
-#ifdef SPIN_SKIP_VERIFY
-  fprintf(stderr, "SPIN_SKIP loops=%u skips=%u vetoes=%u verify claims=%u violations=%u\n",
-          (unsigned)spin_loops, (unsigned)spin_skips, (unsigned)spin_vetoes,
-          (unsigned)sv_claims, (unsigned)sv_bad);
-#else
+#ifdef SPIN_SKIP
   fprintf(stderr, "SPIN_SKIP loops=%u skips=%u vetoes=%u\n",
           (unsigned)spin_loops, (unsigned)spin_skips, (unsigned)spin_vetoes);
 #endif
-}
+#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
+  fprintf(stderr, "IDLE_TABLE pc=%08x fires=%u\n",
+          (unsigned)idle_loop_target_pc, (unsigned)idle_fires);
 #endif
+#ifdef SKIP_VERIFY
+  {
+    u32 kd, k;
+    for (kd = 0; kd < 2; kd++)
+    {
+      fprintf(stderr, "%s_VERIFY claims=%u violations=%u\n", kd ? "IDLE" : "SPIN",
+              (unsigned)sv_claims[kd], (unsigned)sv_bad[kd]);
+      for (k = 0; k < 16 && sv_hist[kd][k].n; k++)
+        fprintf(stderr, "  %s_VERIFY site %08x: %u x %s\n", kd ? "IDLE" : "SPIN",
+                (unsigned)sv_hist[kd][k].pc, (unsigned)sv_hist[kd][k].n,
+                sv_hist[kd][k].what);
+    }
+  }
+#endif
+}
 #endif
 
 u32 function_cc update_gba(int remaining_cycles)
 {
   DRPH_SCOPE(DRPH_UPD);
-#ifdef SPIN_SKIP
+#if defined(SPIN_SKIP) || defined(IDLE_STATS) || defined(IDLE_VERIFY)
   /* A spin loop's back-edge (mips_emit.h generate_branch_spin) asks whether
    * it may end this slice.  Only with cycles left: a due event is processed
    * normally.  Vetoed loops return here with their cycles untouched. */
@@ -1077,28 +1170,46 @@ u32 function_cc update_gba(int remaining_cycles)
 #endif
   if (reg[REG_SPIN_DESC])
   {
-    u32 *sd = (u32 *)reg[REG_SPIN_DESC];
+    u32 sdw = reg[REG_SPIN_DESC];
     reg[REG_SPIN_DESC] = 0;
-    if (remaining_cycles >= 0)
+#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
+    if (sdw == IDLE_MARK)
     {
-      if (!spin_check(sd))
+      idle_fires++;
+#ifdef IDLE_VERIFY
+      if (remaining_cycles >= 0)
       {
-        sd[0] = 1;
-        spin_vetoes++;
+        skip_verify_pass(1);
         return remaining_cycles;
       }
+#endif
+    }
+    else
+#endif
+    {
+#ifdef SPIN_SKIP
+      u32 *sd = (u32 *)sdw;
+      if (remaining_cycles >= 0)
+      {
+        if (!spin_check(sd))
+        {
+          sd[0] = 1;
+          spin_vetoes++;
+          return remaining_cycles;
+        }
 #ifdef SPIN_SKIP_VERIFY
-      if (!sv_active)
-        spin_verify_claim();
-      return remaining_cycles;
+        skip_verify_pass(0);
+        return remaining_cycles;
 #else
-      spin_skips++;
-      remaining_cycles = 0;
+        spin_skips++;
+        remaining_cycles = 0;
+#endif
+      }
 #endif
     }
   }
-#ifdef SPIN_SKIP_VERIFY
-  spin_verify_check();
+#ifdef SKIP_VERIFY
+  skip_verify_event();
 #endif
 #endif
   u32 changed_pc = 0;
