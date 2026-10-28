@@ -257,6 +257,12 @@ u32 arm_to_mips_reg[] =
  *     j     new_pc                  (patched like every block exit)
  *     nop
  *   desc: veto, nloads, loads...    (data; never executed) */
+/* SMC_REUSE (cpu_threaded.c): the descriptor's veto and last-address words
+ * are run-time state inside the body; a revival puts back the words emitted
+ * here, so a revived loop starts exactly as a fresh translation would. */
+#ifndef SMC_REUSE_MUTABLE
+#define SMC_REUSE_MUTABLE(ptr, nwords) do { } while (0)
+#endif
 #define spin_emit_hilo(at_ptr, addr, lo_only)                                 \
   *(u16 *)(at_ptr) = (lo_only) ? ((addr) & 0xFFFF) : (((addr) + 0x8000) >> 16)
 
@@ -287,6 +293,7 @@ u32 arm_to_mips_reg[] =
   mips_emit_j_filler(writeback_location);                                     \
   mips_emit_nop();                                                            \
   sp_desc = (u32)translation_ptr;                                             \
+  SMC_REUSE_MUTABLE(translation_ptr, spin_n);                                 \
   for (sp_k = 0; sp_k < spin_n; sp_k++) {                                     \
     *(u32 *)translation_ptr = spin_words[sp_k];                               \
     translation_ptr += 4;                                                     \

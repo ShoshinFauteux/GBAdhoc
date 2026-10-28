@@ -838,6 +838,17 @@ else ifeq ($(platform), psp1)
 	$(error SMC_REUSE=1 needs XLAT_PURE=1)
 	endif
 	CFLAGS += -DSMC_REUSE=1
+	ifneq ($(SMC_REUSE_SPARE_KB),)
+	CFLAGS += -DSMC_REUSE_SPARE_KB=$(SMC_REUSE_SPARE_KB)
+	endif
+	# SMC_REUSE_MODE=0|1|2 (default 2): off / record only / on, as one
+	# initialised word, so hardware A/B arms share the code layout.
+	ifneq ($(SMC_REUSE_MODE),)
+	CFLAGS += -DSMC_REUSE_MODE=$(SMC_REUSE_MODE)
+	endif
+	ifeq ($(SMC_REUSE_ARMING),1)
+	CFLAGS += -DSMC_REUSE_ARMING=1
+	endif
 	endif
 	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
 	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective

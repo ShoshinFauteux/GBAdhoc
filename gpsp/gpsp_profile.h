@@ -200,9 +200,6 @@
 /* SMC_REUSE's contract point 1 (cpu_threaded.c): the translator is a pure
  * function of the block's guest bytes and the environment it checks.  These
  * switches break that or add links a revival does not replay. */
-#if defined(SMC_REUSE) && defined(SPIN_SKIP)
-#error "SMC_REUSE with SPIN_SKIP: a spin descriptor's veto word is run-time state inside the body."
-#endif
 #if defined(SMC_REUSE) && defined(SMC_SCAN_SPCLAMP)
 #error "SMC_REUSE with SMC_SCAN_SPCLAMP: the scan end depends on the guest stack pointer."
 #endif

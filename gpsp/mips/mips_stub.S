@@ -858,6 +858,10 @@ defsymbl(ram_translation_cache_static)
   .space JIT_PIN_WAY
 #endif
 #else
+#if defined(LAYOUT_PROBE_PAD)
+# twin only: shift the caches' host addresses (a layout-dependence probe)
+  .space LAYOUT_PROBE_PAD
+#endif
 defsymbl(rom_translation_cache)
   .space ROM_TRANSLATION_CACHE_SIZE
 defsymbl(ram_translation_cache)

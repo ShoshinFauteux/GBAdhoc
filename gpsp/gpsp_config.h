@@ -42,6 +42,40 @@
   #define RAM_TRANSLATION_CACHE_SIZE_LARGE (1024 * 384)   /* = the SMALL tier's, see above */
 #endif
 
+/* SMC_REUSE's spare region (cpu_threaded.c, contract point 5): the RAM code
+ * cache is SMC_REUSE_SPARE bytes LARGER than the size the guest-visible
+ * accounting uses, and dormant code plus records may never occupy more than
+ * that spare.  So the real cache can never fill before the virtual one, and
+ * every cache-full flush happens at exactly the block it would without
+ * SMC_REUSE.  The accounting size is the one above, on every tier. */
+#ifdef SMC_REUSE
+  #ifndef SMC_REUSE_SPARE_KB
+    #define SMC_REUSE_SPARE_KB 128
+  #endif
+  #define SMC_REUSE_SPARE (1024 * SMC_REUSE_SPARE_KB)
+  /* (spelled out: a macro naming RAM_TRANSLATION_CACHE_SIZE would expand to
+   * the redefinition below) */
+  #if defined(RAM_CACHE_KB)
+    #define SMC_REUSE_VIRT_SIZE (1024 * RAM_CACHE_KB)
+  #elif defined(SMALL_TRANSLATION_CACHE)
+    #define SMC_REUSE_VIRT_SIZE (1024 * 384)
+  #else
+    #define SMC_REUSE_VIRT_SIZE (1024 * 512)
+  #endif
+  #if RAM_TRANSLATION_CACHE_SIZE != SMC_REUSE_VIRT_SIZE
+    #error "SMC_REUSE_VIRT_SIZE must spell the RAM cache size above"
+  #endif
+  #undef RAM_TRANSLATION_CACHE_SIZE
+  #define RAM_TRANSLATION_CACHE_SIZE (SMC_REUSE_VIRT_SIZE + SMC_REUSE_SPARE)
+  #if defined(RUNTIME_JIT_CACHE)
+    #if RAM_TRANSLATION_CACHE_SIZE_LARGE != SMC_REUSE_VIRT_SIZE
+      #error "SMC_REUSE: the tiers must share one accounting size"
+    #endif
+    #undef RAM_TRANSLATION_CACHE_SIZE_LARGE
+    #define RAM_TRANSLATION_CACHE_SIZE_LARGE RAM_TRANSLATION_CACHE_SIZE
+  #endif
+#endif
+
 /* LAYOUT_PIN (PSP, OPT-IN: defined only by `make LAYOUT_PIN=1`, off by
  * default; docs/LAYOUT-PINNING.md): where the translation caches sit
  * in the Allegrex instruction cache.  It is 16 KiB, 2-way, with 64 B lines

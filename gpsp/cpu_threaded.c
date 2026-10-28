@@ -3555,6 +3555,63 @@ static bool smc_reuse_revive(struct smc_reuse_rec_s *r);
   if (smc_rr) (body) = smc_reuse_body(smc_rr);                                \
 } while (0)
 #define SMC_REUSE_TRANSLATE(call)   (smc_rr ? smc_reuse_revive(smc_rr) : (call))
+#ifdef SMC_REUSE_DEBUG
+static void smc_reuse_lktrace(u32 key, u32 off, u32 cb);
+#define SMC_REUSE_LKTRACE(key, te, type)   smc_reuse_lktrace((key), (te)->offset_##type, (te)->code_bytes_##type)
+#else
+#define SMC_REUSE_LKTRACE(key, te, type) do { } while (0)
+#endif
+#ifdef SMC_REUSE_DEBUG
+static void smc_reuse_dump_maybe(void);
+#define SMC_REUSE_DUMP() smc_reuse_dump_maybe()
+#else
+#define SMC_REUSE_DUMP() do { } while (0)
+#endif
+/* Memory-stub call sites, logged as the emitter writes them, so a record
+ * need not scan its body for them (smc_reuse_commit).  Every `jal` the
+ * translator emits goes through mips_emit_jal; the log keeps the addresses in
+ * order and drops any the emitter has since rewound over.  It is reset when a
+ * RAM block starts; a block with more sites than fit falls back to the scan. */
+#define SMC_REUSE_MAXSITES 1024
+static u8 *smc_reuse_sitelog[SMC_REUSE_MAXSITES];
+static u32 smc_reuse_nlog;        /* > SMC_REUSE_MAXSITES: overflowed */
+static u32 smc_reuse_rec_on = 1;  /* recording (smc_reuse_window) */
+static inline void smc_reuse_log_site(u8 *at)
+{
+  u32 n = smc_reuse_nlog;
+  if (n > SMC_REUSE_MAXSITES || !smc_reuse_rec_on)
+    return;
+  while (n && smc_reuse_sitelog[n - 1] >= at)
+    n--;
+  if (n == SMC_REUSE_MAXSITES)
+    n = SMC_REUSE_MAXSITES + 1;
+  else
+    smc_reuse_sitelog[n++] = at;
+  smc_reuse_nlog = n;
+}
+/* Run-time-mutable data words inside a body (SPIN_SKIP's descriptor), logged
+ * as the emitter writes them: a record keeps their emitted values with the
+ * call sites, and a revival restores both. */
+#define SMC_REUSE_MAXMUT 64
+static u8 *smc_reuse_mutlog[SMC_REUSE_MAXMUT];
+static u32 smc_reuse_nmut;        /* > SMC_REUSE_MAXMUT: overflowed, never record */
+static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
+{
+  u32 n = smc_reuse_nmut;
+  while (nwords-- && n <= SMC_REUSE_MAXMUT) {
+    if (n == SMC_REUSE_MAXMUT) { n++; break; }
+    smc_reuse_mutlog[n++] = at;
+    at += 4;
+  }
+  smc_reuse_nmut = n;
+}
+#undef SMC_REUSE_MUTABLE
+#define SMC_REUSE_MUTABLE(ptr, nwords) smc_reuse_log_mutable((ptr), (nwords))
+#undef mips_emit_jal
+#define mips_emit_jal(offset) do {                                            \
+  smc_reuse_log_site(translation_ptr);                                        \
+  mips_emit_jump(jal, offset);                                                \
+} while (0)
 #ifdef SMC_PARTIAL_SAFE
 /* code_bytes is "live" (nonzero) and "a trampoline fits" (>= 8); a revived
  * body sits below ram_translation_ptr, so the distance cannot be used. */
@@ -3566,6 +3623,8 @@ static bool smc_reuse_revive(struct smc_reuse_rec_s *r);
 #define SMC_REUSE_CODE_BYTES(te, type) do { } while (0)
 #endif
 #else
+#define SMC_REUSE_DUMP() do { } while (0)
+#define SMC_REUSE_LKTRACE(key, te, type) do { } while (0)
 #define SMC_REUSE_DECL()            int smc_rr_unused_
 #define SMC_REUSE_FIND(key, body)   do { (void)smc_rr_unused_; } while (0)
 #define SMC_REUSE_TRANSLATE(call)   (call)
@@ -3602,6 +3661,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         trentry = get_ram_tag(*tagp);                                         \
       }                                                                       \
                                                                               \
+      SMC_REUSE_LKTRACE(pc | thumb, trentry, type);                           \
       if (SMC_RAM_NEEDS_TRANSLATION(trentry, type)) {                         \
         bool result;                                                          \
         u32 cph_t;                                                            \
@@ -3626,6 +3686,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         if (result) {                                                         \
           SMC_NOTE_CODE_BYTES(trentry, blkptr, type);                         \
           SMC_REUSE_CODE_BYTES(trentry, type);                                \
+          SMC_REUSE_DUMP();                                                   \
           SMC_RAM_COMMIT_TRANSLATION(trentry, type, blkptr);                  \
           return SMC_RAM_PUBLIC_ENTRY(trentry, type);                         \
         }                                                                     \
@@ -6510,6 +6571,7 @@ typedef struct smc_reuse_rec_s
   u32 nsites;   /* then smc_reuse_call[nsites] memory-access call sites, */
   u32 srclen;   /* then srclen guest bytes */
   u32 next;     /* cache offset of the previous record in this slot, or 0 */
+  u32 epoch;    /* smc_reuse_epoch when last live (translated or revived) */
 } smc_reuse_rec;
 typedef struct { u32 src, target; } smc_reuse_exit;
 
@@ -6541,8 +6603,47 @@ static u32 smc_reuse_force_real;
 #define SMC_REUSE_ARM_FLUSHES  32
 static u32 smc_reuse_armed, smc_reuse_win_frame, smc_reuse_win_flushes,
            smc_reuse_last_full, smc_reuse_full_seen;
+#ifndef SMC_REUSE_REC_RATIO
+#define SMC_REUSE_REC_RATIO 8
+#endif
+#define SMC_REUSE_REC_PROBE 8
+static u32 smc_reuse_win_xlat, smc_reuse_win_hits, smc_reuse_win_n;
+static u32 smc_reuse_find_on = 1;
+extern u32 smc_reuse_xlat, smc_reuse_hits, smc_reuse_paused;
 static void smc_reuse_window(void)
 {
+#ifndef SMC_REUSE_ARMING
+  /* The spare invariant makes reuse exact everywhere: no arming needed.
+   * (make SMC_REUSE_ARMING=1 restores bb8b7b2's window as a cost knob.)
+   * What remains is cost: a record costs its block a pass over the call
+   * sites and a copy of the guest bytes, and pays only when it is revived.
+   * So recording pauses for a window after one in which translations
+   * outnumbered revivals SMC_REUSE_REC_RATIO to one (Hot Wheels: 15 to 1),
+   * and every SMC_REUSE_REC_PROBE-th window records anyway to look again.
+   * Lookups never pause.  Recording or not changes host work only: every
+   * flush, full or otherwise, still comes at the guest instruction it would
+   * without this switch (the spare invariant), so this is exact as well;
+   * and it depends only on frame_counter and the translation history, so a
+   * twin and a console decide alike. */
+  smc_reuse_armed = 1;
+  if ((u32)(frame_counter - smc_reuse_win_frame) >= SMC_REUSE_ARM_FRAMES) {
+    u32 x = smc_reuse_xlat - smc_reuse_win_xlat;
+    u32 h = smc_reuse_hits - smc_reuse_win_hits;
+    smc_reuse_win_n++;
+    smc_reuse_rec_on = (smc_reuse_win_n % SMC_REUSE_REC_PROBE) == 0 ||
+                       x < SMC_REUSE_ARM_FRAMES ||
+                       x <= h * SMC_REUSE_REC_RATIO;
+    if (!smc_reuse_rec_on)
+      smc_reuse_paused++;
+    /* Lookups likewise: a window without a single revival skips them for
+     * the next one (probe windows still look). */
+    smc_reuse_find_on = (smc_reuse_win_n % SMC_REUSE_REC_PROBE) == 0 || h > 0;
+    smc_reuse_win_xlat = smc_reuse_xlat;
+    smc_reuse_win_hits = smc_reuse_hits;
+    smc_reuse_win_frame = frame_counter;
+  }
+  return;
+#endif
   if ((u32)(frame_counter - smc_reuse_win_frame) >= SMC_REUSE_ARM_FRAMES) {
     smc_reuse_armed = !smc_reuse_full_seen &&
                       smc_reuse_win_flushes >= SMC_REUSE_ARM_FLUSHES;
@@ -6551,17 +6652,70 @@ static void smc_reuse_window(void)
   }
 }
 static struct { u32 gen, idle, cheat, pa, ngates, size; u8 *base; } smc_reuse_env;
+/* SMC_REUSE_MODE (root make, default 2): a hardware A/B with the code layout
+ * held fixed -- the arms differ in this one initialised word only.
+ *   0 off: no record, no revival, every flush real (guest-exact as without
+ *     SMC_REUSE, and the cache is used as without it)
+ *   1 record only: the full recording cost, never a revival
+ *   2 on
+ *   3 on without the cost rules (no recording/lookup pause, every matching
+ *     record revived: the step-4 behaviour) */
+#ifndef SMC_REUSE_MODE
+#define SMC_REUSE_MODE 2
+#endif
+/* Biased so that no arm's value is 0: a zero would move the word to .bss. */
+u32 smc_reuse_mode_w = 0x100 + SMC_REUSE_MODE;
+#define smc_reuse_mode (smc_reuse_mode_w & 0xFF)
+/* SMC_REUSE_EPOCH (default 1): a record is revived at most once per flush
+ * epoch, and never in the epoch it was live in.  Reuse pays where a flush
+ * threw a working set away (TGR, Tennis, Golf: the whole set comes back in
+ * place).  A block that a single-block SMC retirement took out of a live
+ * epoch (Doom, Duke, Payback: one routine toggling between versions) is
+ * translated afresh instead: on hardware, reviving its old body cost more in
+ * cache misses than the translation it saved (docs: cachesim m0/m1/m2).
+ * Counts only, so a twin and a console decide alike. */
+#ifndef SMC_REUSE_EPOCH
+#define SMC_REUSE_EPOCH 1
+#endif
+/* ...unless the translation it saves is big: a body of at least this many
+ * emitted bytes is revived in its own epoch too (Heart & Soul's 1-2 KiB
+ * battle routine: the saving outweighs the misses there). */
+#ifndef SMC_REUSE_SAME_MIN
+#define SMC_REUSE_SAME_MIN 1024
+#endif
+static u32 smc_reuse_epoch = 1;
+u32 smc_reuse_same_epoch, smc_reuse_same_skip;
+#ifdef SMC_REUSE_DEBUG
+static u32 smc_reuse_szh[2][10], smc_reuse_szb[2];
+#endif
+/* The key a same-epoch match just sent to translation: its record would only
+ * duplicate the one that matched (still in the cache, revivable next epoch). */
+static u32 smc_reuse_skip_key = 1;
 u32 smc_reuse_hits, smc_reuse_stale, smc_reuse_early_full, smc_reuse_resets,
     smc_reuse_kept, smc_reuse_records, smc_reuse_relinked, smc_reuse_unlearnt,
-    smc_reuse_rom2ram, smc_reuse_hits_old, smc_reuse_walked, smc_reuse_cut;
+    smc_reuse_rom2ram, smc_reuse_hits_old, smc_reuse_walked, smc_reuse_cut,
+    smc_reuse_xlat, smc_reuse_nospare, smc_reuse_sitebad, smc_reuse_paused;
 
 #ifdef DRPROF_TWIN
 #include <stdio.h>
 #include <stdlib.h>
 static void smc_reuse_report(void)
 {
-  fprintf(stderr, "smc_reuse: hits_old=%u walked=%u cut=%u rom2ram=%u unlearnt=%u relinked=%u hits=%u records=%u stale=%u kept=%u resets=%u "
+  fprintf(stderr, "smc_reuse: same_epoch=%u same_skip=%u%c", (unsigned)smc_reuse_same_epoch,
+          (unsigned)smc_reuse_same_skip, 10);
+#ifdef SMC_REUSE_DEBUG
+  { int e, b;
+    for (e = 0; e < 2; e++) {
+      fprintf(stderr, "smc_reuse: %s revivals bytes=%u sizes(<64,<128..):", e ? "same-epoch" : "cross-epoch",
+              (unsigned)smc_reuse_szb[e]);
+      for (b = 0; b < 10; b++) fprintf(stderr, " %u", (unsigned)smc_reuse_szh[e][b]);
+      fprintf(stderr, "%c", 10);
+    } }
+#endif
+  fprintf(stderr, "smc_reuse: paused=%u sitebad=%u xlat=%u nospare=%u hits_old=%u walked=%u cut=%u rom2ram=%u unlearnt=%u relinked=%u hits=%u records=%u stale=%u kept=%u resets=%u "
           "early_full=%u fl_total=%u fl_full=%u fl_smc=%u fl_dma=%u\n",
+          (unsigned)smc_reuse_paused, (unsigned)smc_reuse_sitebad,
+          (unsigned)smc_reuse_xlat, (unsigned)smc_reuse_nospare,
           (unsigned)smc_reuse_hits_old, (unsigned)smc_reuse_walked,
           (unsigned)smc_reuse_cut, (unsigned)smc_reuse_rom2ram,
           (unsigned)smc_reuse_unlearnt, (unsigned)smc_reuse_relinked,
@@ -6642,7 +6796,15 @@ static u8 *smc_reuse_mem(u32 pc, u16 **tagp, u32 *room)
   }
 }
 
-static u32 smc_reuse_limit_off(void)          /* translate_block's formula */
+/* translate_block's limit formula, for the VIRTUAL cache (the size without
+ * this switch, gpsp_config.h SMC_REUSE_VIRT_SIZE) and for the real one. */
+static u32 smc_reuse_limit_off(void)
+{
+  return ram_translation_cache_size - SMC_REUSE_SPARE
+         - TRANSLATION_CACHE_LIMIT_THRESHOLD
+         - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type);
+}
+static u32 smc_reuse_real_off(void)
 {
   return ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
          - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type);
@@ -6652,9 +6814,21 @@ static u32 smc_reuse_limit_off(void)          /* translate_block's formula */
  * the instruction where the cache would have filled without this switch. */
 static u8 *smc_reuse_limit(u8 *first, u8 *real_limit)
 {
-  s32 room = (s32)(real_limit - ram_translation_cache) - (s32)smc_reuse_vptr;
+  s32 room = (s32)smc_reuse_limit_off() - (s32)smc_reuse_vptr;
   u8 *v = first + room;
   return v < real_limit ? v : real_limit;
+}
+
+/* THE SPARE INVARIANT (contract point 5): real pointer - virtual pointer
+ * <= SMC_REUSE_SPARE.  A translation advances both by the same bytes, a
+ * revival only the virtual one; only a record or a kept flush can raise the
+ * excess, and each is refused when it would break the bound.  Since the real
+ * limit is the virtual one + SMC_REUSE_SPARE, the real cache then always has
+ * at least the virtual cache's room left. */
+static inline s32 smc_reuse_excess(u32 extra)
+{
+  return (s32)(ram_translation_ptr - ram_translation_cache) + (s32)extra -
+         (s32)smc_reuse_vptr;
 }
 
 static void smc_reuse_note_full(u8 *first, u8 *translation_ptr)
@@ -6675,6 +6849,7 @@ static void smc_reuse_note_full(u8 *first, u8 *translation_ptr)
  * zone is below rom_cache_watermark and is rebuilt only with the whole
  * dynarec, which resets the RAM cache and so drops every record. */
 typedef struct { u32 off, word; } smc_reuse_call;
+static smc_reuse_call smc_reuse_sitebuf[SMC_REUSE_MAXSITES];
 static int smc_reuse_site(const u8 *at)
 {
   u32 w = address32(at, 0), target;
@@ -6698,7 +6873,9 @@ static smc_reuse_rec *smc_reuse_find(u32 key)
   u8 *src;
   smc_reuse_rec *r = NULL;
 
-  if (!smc_reuse_env_ok() || !smc_reuse_armed)
+  if (smc_reuse_mode < 2 || (!smc_reuse_find_on && smc_reuse_mode == 2) ||
+      !smc_reuse_env_ok() ||
+      !smc_reuse_armed)
     return NULL;
 #ifdef SMC_REUSE_DEBUG   /* twin only: bisect a divergence without rebuilding */
   {
@@ -6712,6 +6889,17 @@ static smc_reuse_rec *smc_reuse_find(u32 key)
       static u32 xkey = 1; static const char *xe;
       if (xkey == 1) { xe = getenv("SMC_REUSE_KEY"); xkey = xe ? strtoul(xe, NULL, 16) : 0; }
       if (xkey && key == xkey) return NULL;
+      {   /* SMC_REUSE_MAXHITS=n: no revival after the n-th (bisect) */
+        static long mh = -2;
+        if (mh == -2) { const char *m = getenv("SMC_REUSE_MAXHITS"); mh = m ? atol(m) : -1; }
+        if (mh >= 0 && smc_reuse_hits >= (u32)mh) {
+          extern u32 smc_reuse_dump_pending, smc_reuse_dump_done;
+          static long tk = -2;
+          if (tk == -2) { const char *m = getenv("SMC_REUSE_DUMPKEY"); tk = m ? (long)strtoul(m, NULL, 16) : -1; }
+          if (tk >= 0 && key == (u32)tk && !smc_reuse_dump_done) smc_reuse_dump_pending = 1;
+          return NULL;
+        }
+      }
       if ((dbg & 64) && frame_counter >= (u32)(getenv("SMC_REUSE_FROM") ? atoi(getenv("SMC_REUSE_FROM")) : 0))
         fprintf(stderr, "RV %u %08x%c", (unsigned)frame_counter, (unsigned)key, 10);
     }
@@ -6739,6 +6927,14 @@ static smc_reuse_rec *smc_reuse_find(u32 key)
 #endif
     if (r->srclen <= room &&
         !memcmp(src, smc_reuse_src_copy(r), r->srclen)) {
+#if SMC_REUSE_EPOCH
+      if (r->epoch == smc_reuse_epoch && r->size < SMC_REUSE_SAME_MIN &&
+          smc_reuse_mode == 2) {
+        smc_reuse_same_epoch++;        /* live this epoch: translate afresh */
+        smc_reuse_skip_key = key;
+        return NULL;
+      }
+#endif
       if (seen)
         smc_reuse_hits_old++;          /* not the newest version of this pc */
       return r;
@@ -6775,8 +6971,16 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
   smc_reuse_env_ok();
   smc_reuse_vptr += (u32)(p - first);
   smc_reuse_water = p;
+  smc_reuse_xlat++;
   smc_reuse_window();
-  if (!smc_reuse_armed)
+  if (smc_reuse_skip_key == (start | thumb)) {
+    smc_reuse_skip_key = 1;            /* (1 is no key: bit 0 = thumb, pc 0) */
+    smc_reuse_same_skip++;
+    return;
+  }
+  smc_reuse_skip_key = 1;
+  if (!smc_reuse_armed || !smc_reuse_mode ||
+      (!smc_reuse_rec_on && smc_reuse_mode != 3))
     return;
 
   src = smc_reuse_mem(start, &tagp, &room);
@@ -6788,12 +6992,53 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
   for (i = 0; i < nex; i++)
     if (ex[i].branch_source)
       n++;
-  for (i = 0; i < (u32)(p - first); i += 4)
-    if (smc_reuse_site(first + i))
+  if (smc_reuse_nlog <= SMC_REUSE_MAXSITES) {
+    /* one pass: the log is in emission order, so sites come out sorted */
+    for (i = 0; i < smc_reuse_nlog; i++) {
+      u8 *at = smc_reuse_sitelog[i];
+      if (at < p && smc_reuse_site(at)) {
+        smc_reuse_sitebuf[ns].off = (u32)(at - first);
+        smc_reuse_sitebuf[ns].word = address32(at, 0);
+        ns++;
+      }
+    }
+  } else {
+    for (i = 0; i < (u32)(p - first); i += 4)
+      if (smc_reuse_site(first + i))
+        ns++;
+  }
+#ifdef SMC_REUSE_DEBUG   /* twin: the log must find what the scan finds */
+  {
+    u32 scan = 0;
+    for (i = 0; i < (u32)(p - first); i += 4)
+      if (smc_reuse_site(first + i))
+        scan++;
+    if (scan != ns)
+      smc_reuse_sitebad++;
+  }
+#endif
+  /* The mutable words go with the call sites and are restored the same way.
+   * A block with more than the log holds, or with too many sites for the
+   * fast path, is simply not recorded. */
+  if (smc_reuse_nmut) {
+    if (smc_reuse_nmut > SMC_REUSE_MAXMUT || smc_reuse_nlog > SMC_REUSE_MAXSITES)
+      return;
+    for (i = 0; i < smc_reuse_nmut; i++) {
+      u8 *at = smc_reuse_mutlog[i];
+      if (at >= p)
+        continue;
+      if (ns == SMC_REUSE_MAXSITES)
+        return;
+      smc_reuse_sitebuf[ns].off = (u32)(at - first);
+      smc_reuse_sitebuf[ns].word = address32(at, 0);
       ns++;
+    }
+  }
   need = (sizeof(*r) + n * sizeof(*xe) + ns * sizeof(*sp) + srclen + 3) & ~3u;
-  if ((u32)(p - ram_translation_cache) + need > smc_reuse_limit_off())
-    return;                             /* no room: this block is not reusable */
+  if (smc_reuse_excess(need) > (s32)SMC_REUSE_SPARE) {
+    smc_reuse_nospare++;
+    return;                             /* spare full: this block is not reusable */
+  }
 
   r = (smc_reuse_rec *)p;
   r->key = start | thumb;
@@ -6807,6 +7052,7 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
   r->nsites = ns;
   r->srclen = srclen;
   r->next = smc_reuse_index[smc_reuse_slot(r->key)];
+  r->epoch = smc_reuse_epoch;
   xe = (smc_reuse_exit *)(r + 1);
   for (i = 0; i < nex; i++)
     if (ex[i].branch_source) {
@@ -6815,12 +7061,17 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
       xe++;
     }
   sp = (smc_reuse_call *)xe;
-  for (i = 0; i < (u32)(p - first); i += 4)
-    if (smc_reuse_site(first + i)) {
-      sp->off = i;
-      sp->word = address32(first, i);
-      sp++;
-    }
+  if (smc_reuse_nlog <= SMC_REUSE_MAXSITES) {
+    memcpy(sp, smc_reuse_sitebuf, ns * sizeof(*sp));
+    sp += ns;
+  } else {
+    for (i = 0; i < (u32)(p - first); i += 4)
+      if (smc_reuse_site(first + i)) {
+        sp->off = i;
+        sp->word = address32(first, i);
+        sp++;
+      }
+  }
   memcpy(sp, src, srclen);
   ram_translation_ptr = p + need;
   smc_reuse_water = ram_translation_ptr;
@@ -6956,11 +7207,136 @@ static void smc_reuse_dry_compare(u8 *first, u8 *tp, u32 end, u32 reason,
 /* Stand in for translate_block_{arm,thumb}(pc, true) on a block whose record
  * matched.  Same return value, same guest-visible effects, same nested
  * lookups; the body is the one already in the cache. */
+#ifdef SMC_REUSE_DEBUG
+/* Twin bisect aid: SMC_REUSE_TRACEHIT (a revival) or SMC_REUSE_DUMPKEY with
+ * SMC_REUSE_MAXHITS (the translation that replaces it) marks one lookup; when
+ * it completes, the guest-invisible state a translation leaves behind is
+ * written to SMC_REUSE_DUMPFILE, for a diff between the two runs. */
+u32 smc_reuse_dump_pending, smc_reuse_dump_done;
+static void smc_reuse_dump_maybe(void)
+{
+  FILE *f;
+  const char *fn;
+  u32 i, n;
+  if (!smc_reuse_dump_pending || smc_reuse_dump_done)
+    return;
+  smc_reuse_dump_pending = 0;
+  smc_reuse_dump_done = 1;
+  fn = getenv("SMC_REUSE_DUMPFILE");
+  f = fopen(fn ? fn : "/tmp/rdump.bin", "wb");
+  if (!f) return;
+  fprintf(stderr, "DUMP f=%u%c", (unsigned)frame_counter, 10);
+  fwrite("TAGI", 1, 4, f); fwrite(iwram, 1, 0x8000, f);
+  fwrite("TAGE", 1, 4, f); fwrite(ewram + 0x40000, 1, 0x40000, f);
+  fwrite("MEMI", 1, 4, f); fwrite(iwram + 0x8000, 1, 0x8000, f);
+  fwrite("REGS", 1, 4, f); fwrite(reg, 4, 64, f);
+#ifdef SMC_SAME_ADAPT
+  fwrite("XSVA", 1, 4, f); fwrite(xs_val, 2, 0x8000 / 2, f);
+  fwrite("XSOK", 1, 4, f); fwrite(xs_ok, 1, 0x8000 / 16, f);
+  fwrite("XSBA", 1, 4, f); fwrite(xs_bad, 1, 0x8000 / 16, f);
+  fwrite("XSMI", 1, 4, f); fwrite(xs_min, 2, 0x8000 / 4, f);
+  fwrite("XSRE", 1, 4, f); fwrite(xs_rec, 1, 2 * (0x10000 / 16), f);
+  { u32 v[6] = { xs_on, xs_win_noted, xs_win_skips, xs_off_retires, xs_reprobe, xs_probe_paid };
+    fwrite("XSSC", 1, 4, f); fwrite(v, 4, 6, f); }
+#endif
+  { u32 v[8] = { iwram_code_min, iwram_code_max, ewram_code_min, ewram_code_max,
+                 smc_max_extent[0], smc_max_extent[1], ram_block_tag, smc_reuse_vptr };
+    fwrite("LIMS", 1, 4, f); fwrite(v, 4, 8, f); }
+#if defined(SMC_RETIRE_WINDOW)
+  fwrite("BKIW", 1, 4, f); fwrite(smc_back_iw, 2, 0x8000 >> SMC_LOCAL_SHIFT, f);
+  fwrite("BKEW", 1, 4, f); fwrite(smc_back_ew, 2, 0x40000 >> SMC_LOCAL_SHIFT, f);
+  fwrite("BKLH", 1, 4, f); fwrite(smc_back_lo, 4, 2, f); fwrite(smc_back_hi, 4, 2, f);
+#endif
+  {   /* the key's code: public entry .. +512, relative jumps decoded */
+    const char *k = getenv("SMC_REUSE_DUMPPC");
+    if (k) {
+      u32 pc = strtoul(k, NULL, 16), j;
+      u16 tg = ((u16 *)iwram)[(pc & 0x7FFF) >> 1];
+      fwrite("CODE", 1, 4, f);
+      if (VALID_TAG(tg)) {
+        ramtag_type *te = get_ram_tag(tg);
+        u8 *e = ram_translation_cache + te->offset_arm;
+        fprintf(stderr, "DUMPCODE tag=%04x off=%u cb=%u%c", tg, (unsigned)te->offset_arm,
+                (unsigned)te->code_bytes_arm, 10);
+        for (j = 0; j < 512; j += 4) {
+          u32 w = address32(e, j);
+          if ((w >> 26) == 2 || (w >> 26) == 3) {   /* j / jal: make relative */
+            u32 t = ((u32)(uintptr_t)(e + j) & 0xF0000000) | ((w & 0x3FFFFFF) << 2);
+            u32 rel = t - (u32)(uintptr_t)e;
+            if (t >= (u32)(uintptr_t)ram_translation_cache &&
+                t < (u32)(uintptr_t)ram_translation_cache + ram_translation_cache_size)
+              w = (w & 0xFC000000) | 0x02000000 | (rel & 0x00FFFFFF);   /* tagged as RAM-relative */
+          }
+          fwrite(&w, 4, 1, f);
+          if (j < 400)
+            fprintf(stderr, "DUMPW %u %08x%c", (unsigned)j, (unsigned)w, 10);
+        }
+      }
+    }
+  }
+  /* tag entries: extents and liveness, not host offsets */
+  n = (0x10000 - ram_block_tag) / 2;
+  fwrite("TENT", 1, 4, f);
+  for (i = 0; i < n; i++) {
+    ramtag_type *te = get_ram_tag((u16)(INITIAL_TOP_TAG - 2 * i));
+    u32 v[4] = { te->blk_end_arm, te->blk_end_thumb,
+                 te->code_bytes_arm ? (te->code_bytes_arm >= 8 ? 2 : 1) : 0,
+                 te->code_bytes_thumb ? (te->code_bytes_thumb >= 8 ? 2 : 1) : 0 };
+    fwrite(v, 4, 4, f);
+  }
+  fclose(f);
+}
+#endif
+#ifdef SMC_REUSE_DEBUG
+static void smc_reuse_lktrace(u32 key, u32 off, u32 cb)
+{
+  static long t0 = -2, t1;
+  if (t0 == -2) {
+    const char *a = getenv("SMC_REUSE_LK_T0"), *b = getenv("SMC_REUSE_LK_T1");
+    t0 = a ? atol(a) : -1; t1 = b ? atol(b) : 0;
+  }
+  if (t0 >= 0 && cpu_ticks >= (u32)t0 && cpu_ticks <= (u32)t1)
+    fprintf(stderr, "LK t=%u key=%08x off=%u cb=%u vptr=%u%c", (unsigned)cpu_ticks,
+            (unsigned)key, (unsigned)off, (unsigned)cb, (unsigned)smc_reuse_vptr, 10);
+}
+#endif
+#ifdef SMC_REUSE_DEBUG
+static int smc_reuse_exp(int bit)
+{
+  static int e = -1;
+  if (e < 0) { const char *v = getenv("SMC_REUSE_EXP"); e = v ? atoi(v) : 0; }
+  return (e & bit) != 0;
+}
+#endif
 static bool smc_reuse_revive(smc_reuse_rec *r)
 {
   u32 key = r->key, thumb = key & 1, start = key & ~1u, i, n = r->nexits;
   smc_reuse_exit *xe = (smc_reuse_exit *)(r + 1);
   const smc_reuse_call *sp = (const smc_reuse_call *)(xe + n);
+#ifdef SMC_REUSE_DEBUG   /* SMC_REUSE_TRACEHIT=n: describe revival n (0-based) */
+  {
+    static long th = -2;
+    if (th == -2) { const char *m = getenv("SMC_REUSE_TRACEHIT"); th = m ? atol(m) : -1; }
+    if (th >= 0 && smc_reuse_hits == (u32)th) {
+      extern u32 smc_reuse_dump_pending;
+      u32 k, changed = 0;
+      smc_reuse_dump_pending = 1;
+      for (k = 0; k < r->nsites; k++)
+        if (address32(ram_translation_cache + r->first + sp[k].off, 0) != sp[k].word) changed++;
+      fprintf(stderr, "TRACEHIT f=%u key=%08x end=%08x reason=%u size=%u chk=%u nexits=%u nsites=%u learnt=%u srclen=%u first=%u vptr=%u real=%u limv=%u limr=%u newest=%d%c",
+        (unsigned)frame_counter, (unsigned)key, (unsigned)r->end, (unsigned)r->reason,
+        (unsigned)r->size, (unsigned)r->chk, (unsigned)n, (unsigned)r->nsites, (unsigned)changed,
+        (unsigned)r->srclen, (unsigned)r->first, (unsigned)smc_reuse_vptr,
+        (unsigned)(ram_translation_ptr - ram_translation_cache),
+        (unsigned)smc_reuse_limit_off(), (unsigned)smc_reuse_real_off(),
+        (int)(smc_reuse_index[smc_reuse_slot(key)] == (u32)((u8 *)r - ram_translation_cache)), 10);
+      for (k = 0; k < n; k++)
+        fprintf(stderr, "TRACEHIT exit %u src=%u target=%08x cur=%08x%c", (unsigned)k,
+                (unsigned)xe[k].src, (unsigned)xe[k].target,
+                (unsigned)address32(ram_translation_cache + xe[k].src, 0), 10);
+    }
+  }
+#endif
 
   for (i = 0; i < r->nsites; i++) {
     u8 *at = ram_translation_cache + r->first + sp[i].off;
@@ -6987,7 +7363,11 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
       }
     }
 #endif
-    if (address32(at, 0) != sp[i].word) {
+    if (address32(at, 0) != sp[i].word
+#ifdef SMC_REUSE_DEBUG   /* experiment bit 8: keep learnt sites */
+        && !smc_reuse_exp(8)
+#endif
+        ) {
       address32(at, 0) = sp[i].word;
       smc_reuse_unlearnt++;
 #ifdef JIT_CODE_DISCIPLINE
@@ -7014,6 +7394,9 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
   if (!(getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 512)))
 #endif
   smc_reuse_retag(start, r->end, thumb, r->reason);
+#ifdef SMC_REUSE_DEBUG   /* experiment bit 4: no note_block replay */
+  if (!smc_reuse_exp(4))
+#endif
   smc_blk_note_block(start, r->end, thumb, r->reason);
 
   /* The tag table grows down from the top of the cache with every block
@@ -7021,10 +7404,10 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
    * against it; a revival emits nothing, so it must test it here, or the
    * table could grow into bodies that are already in the cache. */
   if (smc_reuse_vptr + r->chk <= smc_reuse_limit_off() &&
-      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_limit_off())
-    smc_reuse_early_full++;            /* contract point 5 */
+      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_real_off())
+    smc_reuse_early_full++;            /* contract point 5: never, by the invariant */
   if (smc_reuse_vptr + r->chk > smc_reuse_limit_off() ||
-      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_limit_off()) {
+      (u32)(ram_translation_ptr - ram_translation_cache) > smc_reuse_real_off()) {
     /* Without this switch the cache fills while this block is emitted. */
     flush_ram_full++;
 #ifdef ENTRY_GATES
@@ -7035,6 +7418,15 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
   }
   smc_reuse_vptr += r->size;
   smc_reuse_hits++;
+#ifdef SMC_REUSE_DEBUG   /* revival size histogram, same-epoch vs cross-epoch */
+  {
+    u32 b = 0, z = r->size;
+    while (z >= 64 && b < 9) { z >>= 1; b++; }
+    smc_reuse_szh[r->epoch == smc_reuse_epoch][b]++;
+    smc_reuse_szb[r->epoch == smc_reuse_epoch] += r->size;
+  }
+#endif
+  r->epoch = smc_reuse_epoch;
 
   for (i = 0; i < n; i++) {
     u8 *src = ram_translation_cache + xe[i].src, *target;
@@ -7051,7 +7443,11 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
       continue;
 #endif
     if (address32(src, 0) != ((mips_opcode_j << 26) |
-                              (mips_absolute_offset(target) & 0x3FFFFFF))) {
+                              (mips_absolute_offset(target) & 0x3FFFFFF))
+#ifdef SMC_REUSE_DEBUG   /* experiment bit 2: always re-patch */
+        || smc_reuse_exp(2)
+#endif
+        ) {
       JIT_PATCH_BRANCH(src, target);
       smc_reuse_relinked++;
 #ifndef JIT_CODE_DISCIPLINE
@@ -7059,6 +7455,10 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
 #endif
     }
   }
+#ifdef SMC_REUSE_DEBUG   /* experiment bit 1: forget every dispatch entry */
+  if (smc_reuse_exp(1))
+    dispatch_cache_clear();
+#endif
   return true;
 }
 
@@ -7066,6 +7466,22 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
 static int smc_reuse_on_flush(void)
 {
   int keep;
+#ifndef SMC_REUSE_ARMING
+  /* Exact by the spare invariant: always on.  A flush keeps the code when
+   * all of it fits in the spare (the virtual pointer restarts at 0). */
+  keep = smc_reuse_env_ok() && !smc_reuse_force_real && smc_reuse_mode &&
+         smc_reuse_excess(0) + (s32)smc_reuse_vptr <= (s32)SMC_REUSE_SPARE;
+  smc_reuse_force_real = 0;
+  smc_reuse_vptr = 0;
+  smc_reuse_epoch++;
+  if (keep)
+    smc_reuse_kept++;
+  else {
+    smc_reuse_resets++;
+    smc_reuse_drop();
+  }
+  return keep;
+#endif
   if (flush_ram_full == smc_reuse_last_full)
     smc_reuse_win_flushes++;             /* not a cache-full flush */
   else
@@ -7157,6 +7573,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
 #ifdef SMC_REUSE
   if (ram_region) {
     smc_reuse_first = translation_ptr;
+    smc_reuse_nlog = 0;
+    smc_reuse_nmut = 0;
     translation_cache_limit = smc_reuse_limit(translation_ptr,
                                               translation_cache_limit);
   }
@@ -7585,6 +8003,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 #ifdef SMC_REUSE
   if (ram_region) {
     smc_reuse_first = translation_ptr;
+    smc_reuse_nlog = 0;
+    smc_reuse_nmut = 0;
     translation_cache_limit = smc_reuse_limit(translation_ptr,
                                               translation_cache_limit);
   }
@@ -8072,6 +8492,17 @@ void exec_stale_check(u32 pc, u32 mode, u32 op)
     atexit(esc_report);
   }
   esc_checks++;
+  {
+    static int tf = -2; static FILE *tfp; static u32 tn;
+    if (tf == -2) { const char *e = getenv("ESC_TRACE_F"); tf = e ? atoi(e) : -1; }
+    if (tf >= 0 && (int)frame_counter == tf && tn < 400000) {
+      if (!tfp) { const char *e = getenv("ESC_TRACE_FILE"); tfp = fopen(e ? e : "/tmp/esct.txt", "w"); }
+      if (tfp) { tn++; fprintf(tfp, "%08x %08x r0=%08x r1=%08x r2=%08x r3=%08x r7=%08x r8=%08x sp=%08x lr=%08x
+",
+                 (unsigned)pc, (unsigned)op, (unsigned)reg[0], (unsigned)reg[1], (unsigned)reg[2], (unsigned)reg[3],
+                 (unsigned)reg[7], (unsigned)reg[8], (unsigned)reg[13], (unsigned)reg[14]); }
+    }
+  }
   cur = mode ? *(const u32 *)p : *(const u16 *)p;
   if (cur == op)
     return;
