@@ -13552,7 +13552,11 @@ __attribute__((noinline, used)) void drprof_zone(void)
   __asm__ volatile("" ::: "memory");
 }
 
-void drprof_note(u8 *host, u16 cls)
+/* noinline: inlined, its body ran inside translate_block_* and the twin
+ * charged it to translation (~23 % of translate_block_arm, xlat-cost
+ * 2026-10-28); out of line it is drprof_* bookkeeping, never counted, and
+ * only the call remains (twin only: DRPROF_TWIN). */
+__attribute__((noinline)) void drprof_note(u8 *host, u16 cls)
 {
   if (host >= rom_translation_cache &&
       host < rom_translation_cache + rom_translation_cache_size)
