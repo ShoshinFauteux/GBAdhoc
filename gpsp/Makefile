@@ -459,6 +459,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(BX_ALIGN_FIX),1)
 	CFLAGS += -DBX_ALIGN_FIX=1
 	endif
+	# BACKUP_BUS_FIX=1: a 16/32-bit dynarec load from SRAM/flash (0x0E) returns
+	# the byte in every lane, as the 8-bit bus does and the interpreter already
+	# did (mips_emit.h region 14).  gpSP returned the bare byte (FFTA f692
+	# LDR from 0x0ec54d2c: 0xff vs 0xffffffff; corpus-classify).  Stub-only.
+	ifeq ($(BACKUP_BUS_FIX),1)
+	CFLAGS += -DBACKUP_BUS_FIX=1
+	endif
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
 	endif

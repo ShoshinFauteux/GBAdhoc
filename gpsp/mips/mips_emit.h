@@ -2422,6 +2422,30 @@ static void emit_pmemld_stub(
   } else if (region == 14) {
     // Read from flash, is a bit special, fn call
     emit_mem_call_ds(&read_backup, 0xFFFF);
+#ifdef BACKUP_BUS_FIX
+    /* SRAM/flash sit on an 8-bit bus: a 16/32-bit read returns the byte in
+     * every lane (ARM7 + GBA bus; gba_memory.c read_backup16/32 and the
+     * interpreter do this).  Only LDRSH from an odd address is a byte load. */
+    if (!size) {
+      if (signext) {   /* braces: the emit macros are two statements */
+        extend_byte_signed(reg_rv, reg_rv);
+      }
+    } else if (size == 1 && signext && alignment) {
+      extend_byte_signed(reg_rv, reg_rv);
+    } else {
+      mips_emit_sll(reg_temp, reg_rv, 8);
+      mips_emit_or(reg_rv, reg_rv, reg_temp);          // b * 0x0101
+      if (size == 2) {
+        mips_emit_sll(reg_temp, reg_rv, 16);
+        mips_emit_or(reg_rv, reg_rv, reg_temp);        // b * 0x01010101
+      } else if (signext) {
+        mips_emit_sll(reg_rv, reg_rv, 16);             // LDRSH, even address
+        mips_emit_sra(reg_rv, reg_rv, 16);
+      } else if (alignment) {
+        rotate_right(reg_rv, reg_rv, reg_temp, 8);     // LDRH, odd address
+      }
+    }
+#else
     if (!size && signext) {
       extend_byte_signed(reg_rv, reg_rv);
     } else if (size == 1 && alignment) {
@@ -2429,6 +2453,7 @@ static void emit_pmemld_stub(
     } else if (size == 2) {
       rotate_right(reg_rv, reg_rv, reg_temp, 8 * alignment);
     }
+#endif
     generate_function_return_swap_delay();
     *tr_ptr = translation_ptr;
     return;
