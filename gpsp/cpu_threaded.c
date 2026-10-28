@@ -6550,6 +6550,21 @@ bool translate_block_arm(u32 pc, bool ram_region)
   while(pc != block_end_pc)
   {
     block_data[block_data_position].block_offset = translation_ptr;
+#ifdef COND_ENTRY_FIX
+    /* An internal branch target inside a run of same-condition instructions
+     * had no condition check of its own: the run's one header sits at the
+     * run's first instruction, so a branch landing mid-run executed the rest
+     * unconditionally.  Close the run here (its skip lands on this entry)
+     * and let translate_arm_instruction open a fresh header.  Seen as
+     * Mario Golf's stack-resident loop: bne back into ANDEQ words with Z=0
+     * (corpus-classify 2026-10-28). */
+    if (block_data[block_data_position].update_cycles &&
+        (last_condition & 0x0F) != 0x0E)
+    {
+      generate_branch_patch_conditional(backpatch_address, translation_ptr);
+      last_condition = 0x0E;
+    }
+#endif
     arm_base_cycles();
 
     if (pc == cheat_master_hook)

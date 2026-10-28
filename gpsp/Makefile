@@ -466,6 +466,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(BACKUP_BUS_FIX),1)
 	CFLAGS += -DBACKUP_BUS_FIX=1
 	endif
+	# COND_ENTRY_FIX=1: a branch into the middle of a run of same-condition ARM
+	# instructions gets its own condition check (cpu_threaded.c translate_block_arm).
+	# gpSP emitted one header per run, so the landing point and everything after it
+	# ran unconditionally (Mario Golf f1c2 NEEDS-REVIEW; corpus-classify).
+	ifeq ($(COND_ENTRY_FIX),1)
+	CFLAGS += -DCOND_ENTRY_FIX=1
+	endif
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
 	endif
