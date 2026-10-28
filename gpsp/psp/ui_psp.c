@@ -5871,7 +5871,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    memset(&ent, 0, sizeof(ent));
    memset(&g_scan_fat, 0, sizeof(g_scan_fat));
    g_scan_fat.fat.size = sizeof(g_scan_fat.fat);
-   ent.d_private = &g_scan_fat;
+   ent.d_private = &g_scan_fat.fat;
    while (sceIoDread(d, &ent) > 0)
    {
       /* Memory Stick reports a directory in st_mode on some firmwares and
@@ -5948,7 +5948,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       memset(&ent, 0, sizeof(ent));
       memset(&g_scan_fat, 0, sizeof(g_scan_fat));
       g_scan_fat.fat.size = sizeof(g_scan_fat.fat);
-      ent.d_private = &g_scan_fat;
+      ent.d_private = &g_scan_fat.fat;
    }
    sceIoDclose(d);
 }
