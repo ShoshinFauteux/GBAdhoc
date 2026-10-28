@@ -145,6 +145,62 @@ static inline int text_is_ascii(const char *s)
    return 1;
 }
 
+/* WHERE THE FIRMWARE PUT THE NAMES IN d_private.  It has two layouts, chosen
+ * by the SDK version the EBOOT declares (JPCSP / PPSSPP __IoDread):
+ *   old (SDK <= 3.07, or none declared -- this app): [0..12] 8.3 name,
+ *       [13..] long name; the size word at [0..3] is not read.
+ *   new: [0..3] size (>= 1044), [4..19] 8.3 name, [20..] long name.
+ * Reading the new layout from an old-layout block drops the first 7
+ * characters of every long name (issue #19's fix did, on hardware: names
+ * shown cut and ROMs that would not open).  Which one is in use is decided
+ * from the entries themselves: the layout whose long name equals d_name (the
+ * firmware's own long name for an ASCII entry) wins and is remembered in
+ * *layout for entries that cannot tell (non-ASCII, where d_name is
+ * mangled).  *layout: 0 unknown (treated as old), 13 old, 20 new.  `raw` is
+ * the whole d_private block, at least FAT_PRIV_BYTES long, NUL-terminated
+ * by the caller at FAT_PRIV_BYTES - 1.  Copies the names out NUL-bounded. */
+#define FAT_PRIV_BYTES (20 + 1024 + 1)
+static inline void fat_private_names(const unsigned char *raw,
+                                     const char *d_name, int *layout,
+                                     char *long_out, size_t long_cap,
+                                     char *short_out, size_t short_cap)
+{
+   const char *l13 = (const char *)raw + 13, *l20 = (const char *)raw + 20;
+   int lay = *layout;
+   size_t n;
+   if (d_name && d_name[0] && text_is_ascii(d_name))
+   {
+      if (strcmp(l13, d_name) == 0)
+         lay = *layout = 13;
+      else if (strcmp(l20, d_name) == 0)
+         lay = *layout = 20;
+   }
+   if (lay != 20)
+      lay = 13;
+   n = strlen((const char *)raw + lay);
+   if (n >= long_cap)
+      n = long_cap - 1;
+   memcpy(long_out, raw + lay, n);
+   long_out[n] = '\0';
+   /* the 8.3 name: [0..12] old, [4..19] new; at most 12 characters.  In
+    * the old layout [0..3] still holds the size word when the firmware
+    * filled only the long name (PPSSPP does), so a name with any byte
+    * outside printable ASCII is not one: no short name. */
+   n = 0;
+   while (n < 12 && n + 1 < short_cap && raw[(lay == 20 ? 4 : 0) + n])
+   {
+      unsigned char c = raw[(lay == 20 ? 4 : 0) + n];
+      if (c < 0x20 || c > 0x7E)
+      {
+         n = 0;
+         break;
+      }
+      short_out[n] = (char)c;
+      n++;
+   }
+   short_out[n] = '\0';
+}
+
 /* Which name a directory entry is opened by, and which is shown.
  *
  *   d_name     SceIoDirent.d_name

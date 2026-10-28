@@ -5801,7 +5801,12 @@ static const char *rom_pool_add(const char *s, size_t len)
  * the ROM is opened by (g_scan_open) and which the list shows (g_scan_show).
  * Static, not on the stack: rom_scan_dir recurses, and the FAT block is
  * 1 KiB; each entry is decided before the next read overwrites it. */
-static SceIoFatDirentPrivate g_scan_fat;
+static union
+{
+   SceIoFatDirentPrivate fat;              /* sets the size word */
+   unsigned char raw[FAT_PRIV_BYTES + 3];
+} g_scan_fat;
+static int g_scan_fat_layout;              /* text_fold.h fat_private_names */
 static const char *g_scan_open, *g_scan_show;
 struct scan_pick_ctx { const char *dir; fe_console_t console; };
 
@@ -5822,17 +5827,15 @@ static int scan_opens(const char *name, void *ctx)
 static int scan_rom_pick(const SceIoDirent *ent, const char *dir,
                          fe_console_t console)
 {
-   static char s_short[sizeof(g_scan_fat.s_name) + 1];
-   static char s_long[sizeof(g_scan_fat.l_name)];
+   static char s_short[13];
+   static char s_long[1024];
    struct scan_pick_ctx c;
    c.dir = dir;
    c.console = console;
-   /* Copied out NUL-bounded: the firmware fills these, not us (and PPSSPP
-    * fills only the long name). */
-   memcpy(s_short, g_scan_fat.s_name, sizeof(g_scan_fat.s_name));
-   s_short[sizeof(g_scan_fat.s_name)] = '\0';
-   memcpy(s_long, g_scan_fat.l_name, sizeof(s_long) - 1);
-   s_long[sizeof(s_long) - 1] = '\0';
+   /* The firmware fills the block, not us, in one of two layouts. */
+   g_scan_fat.raw[FAT_PRIV_BYTES - 1] = '\0';
+   fat_private_names(g_scan_fat.raw, ent->d_name, &g_scan_fat_layout,
+                     s_long, sizeof(s_long), s_short, sizeof(s_short));
    return fat_rom_pick(ent->d_name, s_long, s_short, scan_match, scan_opens,
                        &c, &g_scan_open, &g_scan_show);
 }
@@ -5867,7 +5870,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
     * firmware cannot hand back in d_name must still be found, and opened). */
    memset(&ent, 0, sizeof(ent));
    memset(&g_scan_fat, 0, sizeof(g_scan_fat));
-   g_scan_fat.size = sizeof(g_scan_fat);
+   g_scan_fat.fat.size = sizeof(g_scan_fat.fat);
    ent.d_private = &g_scan_fat;
    while (sceIoDread(d, &ent) > 0)
    {
@@ -5944,7 +5947,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       }
       memset(&ent, 0, sizeof(ent));
       memset(&g_scan_fat, 0, sizeof(g_scan_fat));
-      g_scan_fat.size = sizeof(g_scan_fat);
+      g_scan_fat.fat.size = sizeof(g_scan_fat.fat);
       ent.d_private = &g_scan_fat;
    }
    sceIoDclose(d);

@@ -102,6 +102,47 @@ int main(void)
                       opens_if, NULL, &o, &s) == 1);
    CHECK(!strcmp(o, "Pok?mon.gba"));
 
+   /* d_private layouts (fat_private_names) */
+   {
+      static unsigned char raw[FAT_PRIV_BYTES + 3];
+      char l[1024], sh[13];
+      int lay = 0;
+      const char *nm = "Pokemon Unbound.gba";
+      /* old layout as PPSSPP fills it: size word left, long name at 13 */
+      memset(raw, 0, sizeof(raw));
+      raw[0] = 0x15; raw[1] = 0x04;
+      strcpy((char *)raw + 13, nm);
+      fat_private_names(raw, nm, &lay, l, sizeof(l), sh, sizeof(sh));
+      CHECK(lay == 13 && !strcmp(l, nm) && sh[0] == '\0');
+      /* old layout with an 8.3 name over the size word */
+      memset(raw, 0, sizeof(raw));
+      strcpy((char *)raw, "POKEMO~1.GBA");
+      strcpy((char *)raw + 13, nm);
+      lay = 0;
+      fat_private_names(raw, nm, &lay, l, sizeof(l), sh, sizeof(sh));
+      CHECK(lay == 13 && !strcmp(l, nm) && !strcmp(sh, "POKEMO~1.GBA"));
+      /* new layout */
+      memset(raw, 0, sizeof(raw));
+      raw[0] = 0x14; raw[1] = 0x04;
+      strcpy((char *)raw + 4, "POKEMO~1.GBA");
+      strcpy((char *)raw + 20, nm);
+      lay = 0;
+      fat_private_names(raw, nm, &lay, l, sizeof(l), sh, sizeof(sh));
+      CHECK(lay == 20 && !strcmp(l, nm) && !strcmp(sh, "POKEMO~1.GBA"));
+      /* a non-ASCII entry cannot tell: the remembered layout is used */
+      memset(raw, 0, sizeof(raw));
+      strcpy((char *)raw + 13, "Pok\xC3\xA9mon.gba");
+      lay = 13;
+      fat_private_names(raw, "Pok?mon.gba", &lay, l, sizeof(l), sh,
+                        sizeof(sh));
+      CHECK(lay == 13 && !strcmp(l, "Pok\xC3\xA9mon.gba"));
+      /* nothing known yet: old layout, the one this app gets */
+      lay = 0;
+      fat_private_names(raw, "Pok?mon.gba", &lay, l, sizeof(l), sh,
+                        sizeof(sh));
+      CHECK(!strcmp(l, "Pok\xC3\xA9mon.gba"));
+   }
+
    if (fails)
    {
       fprintf(stderr, "text_fold: %d FAILED\n", fails);
