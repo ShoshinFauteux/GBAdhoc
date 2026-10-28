@@ -1,0 +1,149 @@
+# GB core performance (TGB Dual on the PSP)
+
+2026-10-28, branch claude/gbcore-perf (from claude/candidate-next a429765).
+Goal: GB/GBC link trades at full speed on hardware (owner sees Crystal at
+~50 fps while trading).  General levers only; hardware decides.
+
+## 1. Where a trade frame goes
+
+A link session runs TWO TGB machines per console (objcopy copies gbcore_* and
+gbcoreb_*) in scanline interleave with an in-memory cable, plus input lockstep
+over ad hoc.  From the hw2/M1 logs (core_prof, window-matched) and x86 perf:
+
+| part | cost | notes |
+|---|---|---|
+| CPU interpreter, both machines | the bulk | per op: cpu_exec -> op_read -> jump table -> cpu_clock_advance -> cpu_timer_advance (a loop per instruction while TAC&4) |
+| strict per-scanline alternation | ~2.9 ms/frame | I-cache: each copy's hot code is ~2x the 16 KiB cache; hw2 strict 12.8 ms vs batched 9.9 ms |
+| LCD (drawn machine only) | ~2.4 ms | SOLO - SOLOH; the headless partner already skips LCD and APU |
+| APU synthesis | small | drawn machine only |
+| periodic sync hash | 2-4 ms spike every 240 frames | word FNV over ~160 KiB |
+| net + frontend | ~0.6-1 ms | |
+
+**Why the trade drops to ~50 fps:** the pair may batch (slot 0 leads up to
+batch_lines=154) only while `cable_quiet` -- both ports' SC bit 7 clear plus 60
+quiet frames.  In Pokemon's trade/battle screens the partner keeps its port
+ARMED (external clock, SC=0x80) almost all the time, so the session runs strict
+alternation for the whole trade.  linkplay x86, Gen 2 trade: only 25 % of
+lines batched (Gen 1 16.5 %, battle 15 %).
+
+## 2. Why the Lab fixture misses it
+
+The Lab's gblink_gen1_trade / gblink_gen2_trade (59.8 fps, work 7.6 / 10.0 ms)
+ran as ONE console with ONE machine: the staged task ini has `host=0 join=0`,
+none of the fixture's `link.host_keys` (no gblink_*), and just the sav (+ st0)
+-- a single-player Crystal/Red boot.  No second machine, no cable, no
+alternation, no net.  It cannot see the trade cost.
+
+**Replacement (built, one console, no radio):** the gb_dual bench
+(GPSP_PERF_RIG) replays a linkplay input track for both machines:
+
+```
+rom = <crystal>.gbc            ; slot 0 (its sav = the host's sav)
+gb_dual_rom = <crystal>.gbc    ; slot 1, headless
+gb_dual_sav = slot1.sav        ; slot 1's battery
+gb_dual_inputs = trade.inputs  ; linkplay inputs_out= track ("FRAME S0 S1" hex, "N end")
+gb_dual_rtc = 1790500000       ; session clock seed
+psp_clock = 1790500000
+psp_clock_tz = 0
+gb_dual_batch = 154
+gb_dual_armed = 0|1            ; section 4
+perf_rig = 1
+autoexit_frames = 11200        ; Gen 2 trade ends at frame 11057
+```
+
+Track: `linkplay rom0=crystal rom1=crystal sav0=gen2-a.sav sav1=gen2-b.sav
+ap0=gen2_host.ap ap1=gen2_guest.ap delay=4 rtc=1790500000 inputs_out=FILE`
+(tools/gblink/scripts).  It costs like the real session's emulation (both
+machines, real serial traffic) minus the radio.
+
+## 3. Which candidate slowed GB
+
+Lab work_ms, gb_crystal_walk: lab-final 8.82, lab-combo3 9.02, **lab-c3lat4
+9.63** (+0.61), cpl1/f1c2-da2 unchanged since.  gb_shantae_town 14.31 ->
+14.96, gb_ages_forest 9.67 -> 10.39.  c3lat4 with `input_fresh=0`: 8.95 /
+14.28 -- back to combo3.  So the step is c3lat4's input_fresh pad wait, a
+sleep counted in work_ms (memory input-fresh-work-ms), not GB CPU.  (Smaller,
+older: lab-compat +0.3 and the compat-cost arms +0.5 on crystal_walk,
+already gone by combo3.)
+
+## 4. Levers, ranked (estimates; hardware decides)
+
+1. **Armed batching** (`batch_armed`, link only, exact, low risk).  A batch may
+   also start while slot 1's port is busy, as long as slot 0's is idle.  Slot
+   0's first serial event still ends the lead (the existing cut/hidden path);
+   the one read that could see a lagged port -- a CGB fast-transfer clocked by
+   slot 0 while slot 1 trails -- is counted (`lag_reads`) and switches the
+   mode off for the session.  Lines batched: Gen 2 trade 25 -> 89 % (93.6 %
+   with quiet=1), Gen 1 16.5 -> 82 %, battle 15 -> 80 %.  Expected -2.5 to -4
+   ms in busy trade windows (strict 12.8 vs batched 9.9 ms on hw2).
+2. **Lazy timer** (`TGB_LAZY_TIMER`, all GB, exact).  cpu_clock_advance keeps
+   a budget of clocks before the next timer event (TIMA tick, overflow
+   reload, reload end); below it only the divider phase moves.  Timer writes
+   (DIV/TIMA/TMA/TAC), reset and every state load call cpu_timer_dirty().
+   x86 Gen 2 trade 1.60 -> 1.30 s (-20 %).  PSP guess -0.5 to -1.5 ms in
+   heavy scenes; layout/code size may eat some (the -Os lesson).
+3. Dispatch: op_read fast path, inline cpu_clock_advance.  Medium risk, code
+   size moves the I-cache picture.
+4. LCD renderer (drawn machine, ~2.4 ms).
+5. APU synthesis (small).
+6. Spread the periodic sync hash over frames (removes a 2-4 ms spike / 240).
+7. Net/frontend (~0.6-1 ms).
+
+## 5. Prototypes (both OFF by default)
+
+**Armed batching** -- `gbdual_config_t.batch_armed`; session bit
+`FE_GBLINK_MASK_ARMED_BATCH` (0x4, NEGOTIABLE: the host decides, both
+consoles step alike, an older build on either side = plain session); harness
+key `gblink_batch_armed` (host), bench key `gb_dual_armed`.  Both consoles
+must agree because the periodic sync hash reads both machines at slot 0's
+frame ends.
+
+**Lazy timer** -- `make TGB_LAZY_TIMER=1` (psp/Makefile, adds
+-DTGB_LAZY_TIMER to TGB_CFLAGS; both machine copies get it).
+
+### Exactness
+
+* linkplay x86, per-machine whole save state + picture hash at every frame
+  end: strict, base b154, armed, armed quiet=1, armed b1232, and batch
+  2/7/33/77/500 with armed quiet=1 -- all identical (gen1 <=6540, battle
+  <=7200, gen2 <=11040 frames); saves identical; lag_reads 0 everywhere.
+* sesssim (whole session stack: two consoles' fe_gblink, latency, bulk lane),
+  Gen 2: armed off / on / on b1232 / guest-only request -- all rc=0,
+  gblink_done frame=8344 hash=f61d7f984320b784 on both sides, saves equal;
+  a guest-only request is ignored (armed=0).
+* Lazy timer: tgb_ref `--statehash` over all 10 Lab gb_* fixtures -- every
+  frame's state and picture hash identical to the base; linkplay trades
+  identical.
+* PPSSPP (correctness gate only): see section 6.
+
+## 6. PPSSPP results
+
+Builds gbp-a / gbp-b (section 7), headless PPSSPP, vhash every frame:
+
+* All 12 registry gb_* single fixtures: A and B identical on every frame
+  (0 diffs), all exit 0.
+* One-console Gen 2 replay trade (section 2): gbp-b armed=1, gbp-b armed=0
+  and gbp-a armed=1 -- per-frame vhash identical over 10,571 frames (the
+  run stopped at perf_rig's default perf window, after the trade); serial
+  bytes 2660 as in linkplay; slot 0's cartridge RAM at the end is
+  byte-identical to linkplay's traded save (only the 48-byte RTC footer
+  differs: it stamps the wall time at save).  So the replay fixture
+  reproduces the real trade on one console.
+
+Fixture files: builds/gbcore-perf-out/replay-gen2 (trade.inputs, slot0.sav =
+the Lab's gblink_gen2_trade sav 4216b8ab, slot1.sav, harness-armed0/1.ini;
+ROM = Crystal Rev 1, 301899b8).  For a Lab fixture set perf_from/perf_to to
+cover frames ~300-10500.
+
+## 7. Hardware A/B to run
+
+Builds (cand1 Lab recipe, tools/build.sh lab, PAD 5264), commit 6c09270:
+`builds/gbcore-perf-out/gbp-a` (both switches off; armed is run-time) and
+`gbp-b` (TGB_LAZY_TIMER=1).
+
+1. Lazy timer: gbp-a vs gbp-b on the gb_* fixtures (both models).  Compare
+   work_ms with input_fresh in mind (or `input_fresh=0` on both arms).
+2. Armed batching: gbp-a, one-console Gen 2 replay fixture (section 2) with
+   `gb_dual_armed=0` vs `=1`; then a real two-PSP Gen 2 trade with
+   `gblink_batch_armed=1` on the host (both consoles on gbp-a).
+3. Both: gbp-b + armed on the replay fixture.
