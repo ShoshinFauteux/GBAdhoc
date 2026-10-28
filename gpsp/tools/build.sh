@@ -245,6 +245,14 @@ if [ "${COMBO3:-0}" = 1 ]; then
   CORE_FLAGS="$CORE_FLAGS SMC_PARTIAL_SINGLE=1 SMC_SINGLE_THUMB=1 SMC_SINGLE_HALF=1 SMC_SINGLE_ANYPC=1 SMC_SINGLE_EWRAM=1 SMC_SINGLE_UNTAG=1 SMC_SINGLE_HOT=64 XLAT_FAST=1 JIT_COST=1 TIMER_RELOAD_FIX=1"
 fi
 
+# CAND1=1: the cand1 core (f1c2-da2 + idle/gate learning + correctness fixes +
+# XLAT_PURE; Lab build 05638f0d21ae, gate PASS 2026-10-28) on top of COMBO3, for
+# a PLAYABLE owner test build -- the lab recipe (builds/cand-out/cand_build.sh)
+# passed these as CORE_EXTRA, which a release refuses.  Core only.
+if [ "${CAND1:-0}" = 1 ]; then
+  CORE_FLAGS="$CORE_FLAGS DISPATCH_PRECISE=1 SMC_SAME_SKIP=1 SMC_SAME_ADAPT=1 SMC_STM_RANGE=1 SMC_RETIRE_LOCAL=1 SMC_RETIRE_LIST=1 XS_HEAP=1 SMC_SAME_REPROBE=1024 XS_WALK_PAIR=1 SMC_STM_CHAIN=1 VRAM_EXEC=1 FIQ_BANK_FIX=1 HOT_DATA_GUARD=1 HOT_DATA_OFFSET=0x1b00 SMC_STM_WIDE=1 SMC_STM_AHEAD=1 DMA_SMC_RETIRE=1 DMA_SMC_ADAPT=1 DMA_ADAPT_V2=1 SPIN_SKIP=1 SMC_GATE_SELFPATCH=1 BX_ALIGN_FIX=1 COND_ENTRY_FIX=1 BACKUP_BUS_FIX=1 XLAT_PURE=1"
+fi
+
 # INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
 # ON by default, for a side-by-side PLAYABLE test build, which cannot read the
 # harness ini.  Frontend only.  A switch of its own like REWIND, because a
