@@ -6045,7 +6045,7 @@ static inline int immp_want_op(int ram_region, u32 pc, u32 op)
   (void)ram_region;
   return immp_blk_on && IMMP_LEARNED(pc) && immp_class_ok(op);
 }
-#ifdef EXEC_STALE_CHECK
+#if defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP)
 static void immp_note_op(u8 *host, u32 pc)  /* EXEC_STALE_CHECK's load */
 {
   immp_cur_esc = host;

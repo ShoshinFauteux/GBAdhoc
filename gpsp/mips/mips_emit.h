@@ -2062,17 +2062,11 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define arm_process_cheats()                                                  \
   generate_function_call(mips_cheat_hook);
 
-#if defined(EXEC_STALE_CHECK)
-  /* DIAGNOSTIC (dr2-nfsu, twin only): every EXECUTED instruction of a RAM
-   * block re-reads its guest opcode and compares it with the one it was
-   * translated from (cpu_threaded.c exec_stale_check).  Unlike STALE_CHECK,
-   * which hashes at block ENTRY, this also sees a loop inside one block
-   * running after its own code changed -- the NFSU hole. */
-  void exec_stale_check(u32 pc, u32 mode, u32 op);
-  /* SMC_IMM_PATCH: a patch site's opcode is loaded in the fixed form too and
-   * rewritten with the immediate, so this check stays the oracle for it: a
-   * live copy of the word that the patch missed fails here. */
-  #ifdef SMC_IMM_PATCH
+/* SMC_IMM_PATCH: a patch site's opcode is loaded in the fixed form by the
+ * per-instruction checks below and rewritten with the immediate, so they
+ * keep comparing what the site NOW encodes with guest memory: a live copy
+ * of the word that a patch missed still fails them. */
+#if defined(SMC_IMM_PATCH) && (defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP))
   #define IMMP_ESC_OP(mode, normal)                                           \
     if ((mode) && immp_want_op(ram_region, pc, opcode)) {                     \
       immp_note_op(translation_ptr, pc);                                      \
@@ -2081,15 +2075,40 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
     } else {                                                                  \
       normal;                                                                 \
     }
-  #else
+#else
   #define IMMP_ESC_OP(mode, normal) normal
-  #endif
+#endif
+#if defined(LAB_LOCKSTEP)
+  /* gate lockstep (the gate_fixup.py hook, carried in-tree so the opcode
+   * load goes through IMMP_ESC_OP: the gate's own hook bakes the translated
+   * opcode in, which a patched site no longer encodes -> false "stale"). */
+  void trace_instruction(u32 pc, u32 mode, u32 xop)
+  {
+    lab_trace(pc, mode, xop);
+  }
+  #define emit_trace_instruction(pc, mode)                                    \
+    emit_save_regs(false);                                                    \
+    generate_load_imm(reg_a0, pc);                                            \
+    generate_load_imm(reg_a1, mode);                                          \
+    IMMP_ESC_OP(mode, generate_load_imm(reg_a2, opcode));                     \
+    genccall(&trace_instruction);                                             \
+    mips_emit_nop();                                                          \
+    emit_restore_regs(false)
+  #define emit_trace_thumb_instruction(pc) emit_trace_instruction(pc, 0)
+  #define emit_trace_arm_instruction(pc)   emit_trace_instruction(pc, 1)
+#elif defined(EXEC_STALE_CHECK)
+  /* DIAGNOSTIC (dr2-nfsu, twin only): every EXECUTED instruction of a RAM
+   * block re-reads its guest opcode and compares it with the one it was
+   * translated from (cpu_threaded.c exec_stale_check).  Unlike STALE_CHECK,
+   * which hashes at block ENTRY, this also sees a loop inside one block
+   * running after its own code changed -- the NFSU hole. */
+  void exec_stale_check(u32 pc, u32 mode, u32 op);
   #define emit_trace_instruction(pc, mode)                                      \
     if (((pc) >> 24) == 2 || ((pc) >> 24) == 3) {                               \
       emit_save_regs(false);                                                    \
       generate_load_imm(reg_a0, pc);                                            \
       generate_load_imm(reg_a1, mode);                                          \
-      IMMP_ESC_OP(mode, generate_load_imm(reg_a2, opcode));                                        \
+      IMMP_ESC_OP(mode, generate_load_imm(reg_a2, opcode));                   \
       genccall(&exec_stale_check);                                              \
       mips_emit_nop();                                                          \
       emit_restore_regs(false);                                                 \
