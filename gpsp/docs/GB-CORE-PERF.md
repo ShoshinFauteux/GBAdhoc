@@ -135,6 +135,26 @@ the Lab's gblink_gen2_trade sav 4216b8ab, slot1.sav, harness-armed0/1.ini;
 ROM = Crystal Rev 1, 301899b8).  For a Lab fixture set perf_from/perf_to to
 cover frames ~300-10500.
 
+## 6b. Lazy timer v1 lost on hardware; v2
+
+3000, gbp-a vs gbp-b (input_fresh=0): Ages -12.9 %, Crystal walk -7.2 %,
+SML -6.7 %, Crystal -5.2 %; but Shantae town +7.5 %, Shantae menu +6.2 %,
+LADX +5.1 %, Kirby +3.5 %, Yellow +3.5 %.  Op counts per fixture (tgb_ref):
+every winner runs with the timer ON all the time (Ages 22.7M ops, 98 % fast
+path), every loser with it OFF all the time (TAC&4 clear: Shantae, LADX,
+Kirby, Kirby 2, Red, Yellow) -- v1's budget was always 0 there, so it was a
+pure extra load + branch per instruction in front of the base's own check.
+x86 agrees (v1: Shantae menu +7 %, Yellow +6.5 %, Kirby 2 +10 %).
+
+v2 (684d6d0): a stopped, idle timer gets budget TIMER_IDLE, so those games
+take the fast path too; the fast path no longer writes sys_clock (only the
+state savers read it: cpu_timer_sync() there and before every timer
+register write; cpu_timer_forget() on reset/load); the walk is noinline, so
+the per-op cpu_clock_advance shrinks from 0x674 (base) / 0x710 (v1) to 0x12c
+bytes.  x86 min-of-7 vs base: timer on -15..-21 %, timer off -6..+1 % (a
+base-vs-base arm shows +-5 % noise).  Exact: same proofs as v1 (tgb_ref 10
+fixtures, linkplay 3 scenarios x 5 policies).
+
 ## 7. Hardware A/B to run
 
 Builds (cand1 Lab recipe, tools/build.sh lab, PAD 5264), commit 6c09270:
