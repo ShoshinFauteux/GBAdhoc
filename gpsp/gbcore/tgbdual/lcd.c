@@ -226,6 +226,39 @@ static inline dword dtwk(dword src)
 	return ((d>>7)|d)&6;
 }
 
+#ifdef TGB_FAST_TILE
+/* GBAdhoc TGB_FAST_TILE (docs/GB-CORE-PERF.md): pixel j of a tile row is
+ * colour ((lo>>(7-j))&1) | ((hi>>(7-j))&1)<<1; tile_spread[b] holds bit
+ * (7-j) of b times 2 in nibble j, so spread[lo] | spread[hi]<<1 is every
+ * pixel's byte offset into pal[] (0,2,4,6), one nibble each -- the same
+ * offsets dtwk() computes bit by bit.  Pure function of its inputs. */
+static const dword tile_spread[256] = {
+#define TS1(b,j) ((dword)(((b)>>(7-(j)))&1)<<(4*(j)+1))
+#define TS(b) (TS1(b,0)|TS1(b,1)|TS1(b,2)|TS1(b,3)|TS1(b,4)|TS1(b,5)|TS1(b,6)|TS1(b,7))
+#define TS4(b) TS(b),TS(b+1),TS(b+2),TS(b+3)
+#define TS16(b) TS4(b),TS4(b+4),TS4(b+8),TS4(b+12)
+#define TS64(b) TS16(b),TS16(b+16),TS16(b+32),TS16(b+48)
+	TS64(0),TS64(64),TS64(128),TS64(192)
+#undef TS64
+#undef TS16
+#undef TS4
+#undef TS
+#undef TS1
+};
+void dattrans2n(word *pal, word *dat, dword src)
+{
+	dword v=tile_spread[src&0xff]|(tile_spread[(src>>8)&0xff]<<1);
+	const byte *pb=(const byte *)pal;
+	dat[0]=*(const word *)(pb+( v     &6));
+	dat[1]=*(const word *)(pb+((v>>4) &6));
+	dat[2]=*(const word *)(pb+((v>>8) &6));
+	dat[3]=*(const word *)(pb+((v>>12)&6));
+	dat[4]=*(const word *)(pb+((v>>16)&6));
+	dat[5]=*(const word *)(pb+((v>>20)&6));
+	dat[6]=*(const word *)(pb+((v>>24)&6));
+	dat[7]=*(const word *)(pb+((v>>28)&6));
+}
+#else
 void dattrans2n(word *pal, word *dat, dword src)
 {
 	*(dat++)=*(word *)( ((byte *)pal)+( dtwk(src>>6) ) );
@@ -237,6 +270,7 @@ void dattrans2n(word *pal, word *dat, dword src)
 	*(dat++)=*(word *)( ((byte *)pal)+( dtwk(src   ) ) );
 	*(dat++)=*(word *)( ((byte *)pal)+( dtwk(src<<1) ) );
 }
+#endif
 
 #define dattrans2nd(pal,dat,src) dattrans2n(pal,dat,src);dat+=8;
 

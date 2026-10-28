@@ -69,6 +69,11 @@ TGB_CFLAGS = $(TGB_OPT) -fgnu89-inline -fno-strict-aliasing -Wno-unused-paramete
 ifeq ($(TGB_LAZY_TIMER),1)
 TGB_CFLAGS += -DTGB_LAZY_TIMER
 endif
+# TGB_FAST_TILE=1 (docs/GB-CORE-PERF.md): tile rows decoded by a 1 KiB table
+# instead of bit by bit.  Exact (pixel hashes); off until a hardware A/B.
+ifeq ($(TGB_FAST_TILE),1)
+TGB_CFLAGS += -DTGB_FAST_TILE
+endif
 # The core is one relocatable object whose only global symbols are the
 # gbcore_* API (rule below).  TGB Dual exports ~780 names -- vram, ram, oam,
 # halt, speed, info, stack -- and the first link failed on `vram`, which the

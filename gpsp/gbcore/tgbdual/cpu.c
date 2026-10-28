@@ -734,6 +734,12 @@ void cpu_irq_process()
 }
 
 int tmp_clocks;
+#ifdef TGB_OPCOUNT
+/* tools only (linkplay framestat, docs/GB-CORE-PERF.md): instructions
+ * executed, a noise-free cost proxy.  gbcore_* so each objcopy'd machine
+ * copy keeps its own (gbcoreb_opcount). */
+unsigned long long gbcore_opcount;
+#endif
 #include "op_cb.h"
 #include "op_normal.h"
 
@@ -773,6 +779,9 @@ void cpu_exec(unsigned short clocks)
 		tmp_clocks=cycles[op_code];
 
 		op_code_normal_JmpTbl[op_code]();
+#ifdef TGB_OPCOUNT
+		gbcore_opcount++;
+#endif
 
 		rest_clock-=tmp_clocks;
 		cpu_clock_advance((unsigned)tmp_clocks);

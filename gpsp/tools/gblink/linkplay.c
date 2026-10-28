@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The second engine (renamed copy). */
 int fe_autopilot_b_load(const char *path);
@@ -65,6 +66,39 @@ static unsigned dump_every;
 static int have_script[2];
 static uint64_t cur_frame[2];
 static FILE *frame_log;
+/* framestat=FILE: per gbdual_advance (one slot-0 frame) "F L0 L1 NS0 NS1 SW
+ * BATCHED OPS0 OPS1": lines each slot ran, x86 ns each slot spent (between successive
+ * line_trace calls), slot switches, lines run inside a batch, instructions
+ * each machine executed (TGB_OPCOUNT core builds, else 0).  A cost model
+ * input only (docs/GB-CORE-PERF.md); the stepping is untouched. */
+static FILE *fstat_log;
+static unsigned long long fs_lines[2], fs_ns[2], fs_sw, fs_t;
+static int fs_last = -1;
+static unsigned long long now_ns(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (unsigned long long)ts.tv_sec * 1000000000ull + (unsigned long long)ts.tv_nsec;
+}
+/* TGB_OPCOUNT builds of the core export each machine's instruction count */
+extern unsigned long long gbcore_opcount __attribute__((weak));
+extern unsigned long long gbcoreb_opcount __attribute__((weak));
+static unsigned long long fs_ops_base[2];
+static unsigned long long ops_of(int slot)
+{
+  unsigned long long *p = slot ? &gbcoreb_opcount : &gbcore_opcount;
+  return p ? *p : 0;
+}
+static void on_line_stat(void *ud, int slot, uint64_t line)
+{
+  unsigned long long t = now_ns();
+  (void)ud; (void)line;
+  fs_lines[slot]++;
+  fs_ns[slot] += t - fs_t;
+  fs_t = t;
+  if (fs_last >= 0 && fs_last != slot) fs_sw++;
+  fs_last = slot;
+}
 static uint16_t *given[2];            /* buttons each machine got, by frame */
 static uint64_t given_n[2];
 
@@ -513,6 +547,12 @@ int main(int argc, char **argv)
       cfg.line_trace = serial_log ? on_line : NULL;
     }
   }
+  if (arg(argc, argv, "framestat", NULL))
+  {
+    fstat_log = fopen(arg(argc, argv, "framestat", NULL), "w");
+    if (!fstat_log) { fprintf(stderr, "cannot write framestat\n"); return 2; }
+    cfg.line_trace = on_line_stat;
+  }
   dual = gbdual_create(&cfg);
   if (!dual) { fprintf(stderr, "gbdual_create failed\n"); return 2; }
   if (arg(argc, argv, "pokes", NULL) && load_pokes(arg(argc, argv, "pokes", NULL)))
@@ -540,7 +580,21 @@ int main(int argc, char **argv)
 
   for (f = 0; f < max; f++)
   {
+    unsigned long long b0 = fstat_log ? gbdual_batched_lines(dual) : 0;
+    fs_t = now_ns();
     if (gbdual_advance(dual, input, NULL) != 1) { rc = 2; break; }
+    if (fstat_log)
+    {
+      unsigned long long o0 = ops_of(0), o1 = ops_of(1);
+      fprintf(fstat_log, "%llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+              (unsigned long long)gbdual_frame(dual, 0), fs_lines[0], fs_lines[1],
+              fs_ns[0], fs_ns[1], fs_sw,
+              (unsigned long long)(gbdual_batched_lines(dual) - b0),
+              o0 - fs_ops_base[0], o1 - fs_ops_base[1]);
+      fs_ops_base[0] = o0;
+      fs_ops_base[1] = o1;
+      fs_lines[0] = fs_lines[1] = fs_ns[0] = fs_ns[1] = fs_sw = 0;
+    }
     /* by slot 0's completed frames -- the numbering a session's HASH
      * messages and sesssim's hashlog use */
     if (hashlog && gbdual_frame(dual, 0) % 60 == 0)
@@ -588,6 +642,7 @@ int main(int argc, char **argv)
     }
   }
   if (frame_log) fclose(frame_log);
+  if (fstat_log) fclose(fstat_log);
   if (save_out(0, out[0]) || save_out(1, out[1])) rc = 2;
   for (s = 0; s < 2; s++)
   {
