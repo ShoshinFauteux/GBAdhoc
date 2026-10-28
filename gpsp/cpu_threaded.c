@@ -3501,7 +3501,9 @@ static u8 * __attribute__((noinline))                                         \
     rom_translation_ptr += sizeof(hashhdr_type);                              \
     blkptr = rom_translation_ptr + block_prologue_size;                       \
     DRPROF_XLAT_PC_PUSH(pc | thumb);                                          \
+    DRPROF_BLK_BEGIN();                                                       \
     result = translate_block_##type(pc, false);                               \
+    DRPROF_BLK_END(result);                                                   \
     DRPROF_XLAT_PC_POP();                                                     \
     if (result)                                                               \
       return blkptr;                                                          \
@@ -3677,7 +3679,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         XLAT_PROBE_ENTER();                                                   \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
+        DRPROF_BLK_BEGIN();                                                   \
         result = SMC_REUSE_TRANSLATE(translate_block_##type(pc, true));       \
+        DRPROF_BLK_END(result);                                               \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
@@ -3736,7 +3740,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         XLAT_PROBE_ENTER();                                                   \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
+        DRPROF_BLK_BEGIN();                                                   \
         result = translate_block_##type(pc, false);                           \
+        DRPROF_BLK_END(result);                                               \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
@@ -4880,8 +4886,54 @@ static __attribute__((noinline)) void xs_note_block(u32 start, u32 end)
 {
   u32 a;
   xs_dirty = 1;
+#ifdef XS_NOTE_FAST
+  /* XS_NOTE_FAST (xlat-cost 2026-10-28): eight halfwords (one xs_ok byte)
+   * at a time where that is exactly what xs_note_half would do eight times.
+   *  - none recorded, none poisoned: record all eight; both halves of each
+   *    word were unrecorded, so xs_min[w] = s (the first half sets it, the
+   *    second finds the first recorded and s < s is false).
+   *  - all recorded, none poisoned, all equal to memory: only
+   *    xs_min[w] = min(xs_min[w], s); no poison.
+   * Anything else (partly recorded, poisoned, a differing value, a ragged
+   * head or tail) goes through xs_note_half one halfword at a time, in the
+   * same order, so xs_val/xs_ok/xs_bad/xs_min/smc_same_poison end up
+   * identical.  Doom notes ~1.2k IWRAM halfwords a frame at ~35 host
+   * instructions each (twin). */
+  {
+    const u32 s = (start & 0x7FFF) >> 1;
+    a = start;
+    while (a < end) {
+      u32 h = (a & 0x7FFF) >> 1;
+      if (!(h & 7) && a + 16 <= end && !xs_bad[h >> 3]) {
+        u32 ok = xs_ok[h >> 3];
+        u32 *val = (u32 *)&xs_val[h];
+        const u32 *cur = (const u32 *)(iwram + 0x8000 + (h << 1));
+        u16 *mn = &xs_min[h >> 1];
+        if (!ok) {
+          val[0] = cur[0]; val[1] = cur[1]; val[2] = cur[2]; val[3] = cur[3];
+          xs_ok[h >> 3] = 0xFF;
+          mn[0] = mn[1] = mn[2] = mn[3] = (u16)s;
+          a += 16;
+          continue;
+        }
+        if (ok == 0xFF && !((val[0] ^ cur[0]) | (val[1] ^ cur[1]) |
+                            (val[2] ^ cur[2]) | (val[3] ^ cur[3]))) {
+          if (s < mn[0]) mn[0] = (u16)s;
+          if (s < mn[1]) mn[1] = (u16)s;
+          if (s < mn[2]) mn[2] = (u16)s;
+          if (s < mn[3]) mn[3] = (u16)s;
+          a += 16;
+          continue;
+        }
+      }
+      xs_note_half(a, start);
+      a += 2;
+    }
+  }
+#else
   for (a = start; a < end; a += 2)
     xs_note_half(a, start);
+#endif
 }
 #endif
 #ifdef SMC_SAME_ADAPT
@@ -5228,6 +5280,31 @@ static void entry_gates_bounds(u32 cmin, u32 cmax, u32 size, u32 *lo, u32 *hi)
   }
 }
 #endif
+#ifdef ENTRY_GATES_FAST
+/* ENTRY_GATES_FAST (xlat-cost 2026-10-28): the harvest tests four tag slots
+ * at a time.  Tags are 0 (data), 0x0101 (interior) or a block start with a
+ * byte >= 2 (XS_WALK_PAIR's argument), so four slots whose bytes are all 0
+ * or 1 hold no start.  Same slots, same bits, same count. */
+typedef u32 __attribute__((may_alias)) eg_tagpair;
+static u32 entry_gates_walk(const u16 *t, u32 lo, u32 hi, u8 *map)
+{
+  u32 i = lo, n = 0, k;
+  while (i < hi && (i & 3)) {
+    if (VALID_TAG(t[i])) { map[i >> 3] |= (u8)(1u << (i & 7)); n++; }
+    i++;
+  }
+  for (; i + 4 <= hi; i += 4) {
+    const eg_tagpair *q = (const eg_tagpair *)&t[i];
+    if (!((q[0] | q[1]) & 0xFEFEFEFEu))
+      continue;
+    for (k = i; k < i + 4; k++)
+      if (VALID_TAG(t[k])) { map[k >> 3] |= (u8)(1u << (k & 7)); n++; }
+  }
+  for (; i < hi; i++)
+    if (VALID_TAG(t[i])) { map[i >> 3] |= (u8)(1u << (i & 7)); n++; }
+  return n;
+}
+#endif
 static void entry_gates_harvest(void)
 {
   const u16 *t = (const u16 *)iwram;
@@ -5244,11 +5321,18 @@ static void entry_gates_harvest(void)
         VALID_TAG(((const u16 *)(ewram + 0x40000))[i])) abort();
 #endif
 #endif
+#ifdef ENTRY_GATES_FAST
+  (void)i;
+  n += entry_gates_walk(t, ilo, ihi, entry_gate_iwram);
+  t = (const u16 *)(ewram + 0x40000);
+  n += entry_gates_walk(t, elo, ehi, entry_gate_ewram);
+#else
   for (i = ilo; i < ihi; i++)
     if (VALID_TAG(t[i])) { entry_gate_iwram[i >> 3] |= (u8)(1u << (i & 7)); n++; }
   t = (const u16 *)(ewram + 0x40000);
   for (i = elo; i < ehi; i++)
     if (VALID_TAG(t[i])) { entry_gate_ewram[i >> 3] |= (u8)(1u << (i & 7)); n++; }
+#endif
   entry_gates_armed++;
   entry_gate_count = n;
 #ifdef SMC_REUSE
@@ -5846,6 +5930,361 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 }
 #endif
 
+
+#ifdef SMC_IMM_PATCH
+/* SMC_IMM_PATCH (xlat-cost 2026-10-28; twin prototype, OFF by default).
+ *
+ * WHAT IT IS FOR.  Doom II, Duke Nukem Advance and Ice Nine rewrite the
+ * immediate field of a handful of ARM data-processing instructions in their
+ * IWRAM renderers, thousands of times a second (twin census, 1200 f: Doom
+ * 33k of 45k single-store retirements are an imm-only change to one of 21
+ * words; Duke 22k of 32k / 17 words; Ice 18k of 24k / 23 words).  Each one
+ * retires the covering block and the next entry retranslates it: that is
+ * most of their xlat + flush time (Doom 21 % of core work).
+ *
+ * THE MECHANISM, general (no game key, no table of addresses):
+ *  1. LEARN.  When a single-store trap at IWRAM word w RETIRES (no
+ *     same-value skip) and the change is one a patch could have served --
+ *     the word the translations read (SMC_SAME_SKIP record, both halves,
+ *     unpoisoned) and the word now are both patchable (immp_class_ok: ARM
+ *     DP immediate, not MSR, Rd/Rn != pc) and differ only in bits 11:0 --
+ *     w's bit is set.  (Learning any retire to a DP-imm word learned 3386
+ *     words on Top Gear Rally and 751 on Mario Golf for no patch at all.)  The retirement that follows removes every live translation
+ *     covering w (if it cannot, the caller full-flushes, which clears
+ *     everything here).
+ *  2. EMIT.  While w's bit is set, every ARM RAM translation of w emits the
+ *     fixed form (mips_emit.h IMMP_OR) and registers the host address of its
+ *     lui at commit.  A translation of w that does NOT (the word is no longer
+ *     patchable, or a Thumb block covers it) marks w bad.  The emit test is
+ *     gated per block (immp_blk_on, set after the scan only when the
+ *     block's extent holds a learned word) and the missing-site check runs
+ *     at commit, so the per-instruction emit loop carries no hook: per-
+ *     instruction hooks cost Top Gear Rally +8 % of translate_block_arm with
+ *     nothing learned.
+ *  3. PATCH.  At a later single-store trap at w, before anything else: if w
+ *     is learned, not bad, and the new word differs from the registered one
+ *     only in bits 11:0 (and, where a site's shifter carry is live, keeps the
+ *     rotation's carry: rotate zero / non-zero and bit 31 the same), every
+ *     registered site's two immediates are rewritten (all sites validated
+ *     first; JIT_CODE_WROTE, published by the trap path's own publish), the
+ *     SMC_SAME_SKIP record of w is updated, and the trap is handled with no
+ *     retirement.  Anything else falls through to the normal path, which
+ *     retires and re-learns.
+ * Invariant: w learned and not bad => every live translation covering w is a
+ * registered fixed-form site.  Bit set only immediately before a retirement
+ * of w; a later non-fixed translation of w sets bad; bad and the site list
+ * are cleared only by a retirement of w or a full RAM flush.  Sites of
+ * retired blocks stay in the list (the RAM cache is append-only between full
+ * flushes, and a retired body is never entered again), so they are patched
+ * too, harmlessly; each site is validated (exact lui/ori pattern with the
+ * registered immediate) before any is written.
+ *
+ * DETERMINISM.  Everything here is reset at every full RAM flush (which
+ * every state load, reset and ROM load performs), so the emitted code is a
+ * function of the guest's history since its last flush, as before.  Guest
+ * timing still moves wherever translation volume moves the full-flush
+ * points (ram-cache-pressure-codegen); emulated semantics do not.
+ *
+ * LAYOUT.  The emitted code of a game that never rewrites an immediate is
+ * byte-identical; the helpers are out of line, outside the pinned order.
+ * translate_block_arm itself grows (IMMP_OR's second emit path, twin +11.6
+ * KB) and flush_translation_cache_ram (immp_reset), both pinned in hot.ord:
+ * a hardware build needs the layout regenerated. */
+#ifndef JIT_CODE_DISCIPLINE
+#error "SMC_IMM_PATCH records its code patches through JIT_CODE_DISCIPLINE"
+#endif
+#define IMMP_K      16
+#define IMMP_SLOTS  255
+static u8 immp_bit[0x8000 / 32], immp_bad[0x8000 / 32];
+static u8 immp_slot[0x8000 / 4];
+typedef struct
+{
+  u32 old;                 /* the ARM word every registered site encodes  */
+  u32 n;
+  u8 *site[IMMP_K];        /* host address of the `lui a0`                */
+  u8 *esc[IMMP_K];         /* EXEC_STALE_CHECK's opcode lui (twin), or 0  */
+  u8 cl[IMMP_K];           /* 1 = shifter carry live at that site         */
+} immp_ent;
+static immp_ent immp_tab[IMMP_SLOTS + 1];
+static u32 immp_nslots, immp_dirty;
+u32 immp_patches, immp_learned, immp_refused[8], immp_sites, immp_selftest_fail;
+static inline u32 immp_rot(u32 op);
+static inline int immp_site_ok(u8 *p, u32 v, u32 rlui);
+static u32 immp_esc_pc;
+/* 1 while translate_block_arm emits a RAM block whose extent holds a learned
+ * word (set once after the scan): every per-instruction hook tests it first,
+ * so blocks without one translate as before at the cost of one load. */
+static u32 immp_blk_on;
+static u8 *immp_cur_esc;
+static struct { u8 *host, *esc; u32 pc, op; u8 cl; } immp_pend[MAX_BLOCK_SIZE];
+static u32 immp_npend;
+#define IMMP_W(pc)       (((pc) & 0x7FFF) >> 2)
+#define IMMP_GET(m, w)   ((m)[(w) >> 3] & (1u << ((w) & 7)))
+#define IMMP_SET(m, w)   ((m)[(w) >> 3] |= (u8)(1u << ((w) & 7)))
+#define IMMP_CLR(m, w)   ((m)[(w) >> 3] &= (u8)~(1u << ((w) & 7)))
+#define IMMP_LEARNED(pc) (((pc) >> 24) == 3 && IMMP_GET(immp_bit, IMMP_W(pc)))
+
+static inline int immp_class_ok(u32 op)
+{
+  u32 opc = (op >> 21) & 0xF;
+  if (((op >> 25) & 7) != 1 || (op >> 28) == 0xF)
+    return 0;
+  if (opc >= 8 && opc <= 11 && !(op & (1u << 20)))
+    return 0;                                   /* MSR imm / undefined */
+  if (((op >> 12) & 0xF) == 15 || ((op >> 16) & 0xF) == 15)
+    return 0;
+  return 1;
+}
+/* emit-time: is the instruction being emitted (at guest `pc`) a site? */
+static inline int immp_want(u32 pc, u32 rd, u32 rn)
+{
+  return immp_blk_on && rd != 15 && rn != 15 && IMMP_LEARNED(pc);
+}
+static inline int immp_want_op(int ram_region, u32 pc, u32 op)
+{
+  (void)ram_region;
+  return immp_blk_on && IMMP_LEARNED(pc) && immp_class_ok(op);
+}
+static void immp_note_op(u8 *host, u32 pc)  /* EXEC_STALE_CHECK's load */
+{
+  immp_cur_esc = host;
+  immp_esc_pc = pc;
+}
+static void immp_note(u8 *host, u32 pc, u32 op, u32 cl)
+{
+  if (immp_npend < MAX_BLOCK_SIZE) {
+    immp_pend[immp_npend].host = host;
+    immp_pend[immp_npend].esc = immp_esc_pc == pc ? immp_cur_esc : NULL;
+    immp_pend[immp_npend].pc = pc;
+    immp_pend[immp_npend].op = op;
+    immp_pend[immp_npend].cl = (u8)cl;
+    immp_npend++;
+  }
+  immp_cur_esc = NULL;
+}
+/* after the scan: does [start, end) of a RAM block hold a learned word? */
+static void immp_blk_begin(int ram_region, u32 start, u32 end)
+{
+  u32 a;
+  immp_blk_on = 0;
+  if (!ram_region || !immp_dirty || (start >> 24) != 3)
+    return;
+  for (a = start & ~3u; a < end; a += 4)
+    if (IMMP_LEARNED(a)) { immp_blk_on = 1; return; }
+}
+static void immp_bad_range(u32 start, u32 end)   /* a Thumb block's extent */
+{
+  u32 a;
+  if ((start >> 24) != 3)
+    return;
+  for (a = start & ~3u; a < end; a += 4)
+    if (IMMP_LEARNED(a))
+      IMMP_SET(immp_bad, IMMP_W(a));
+}
+/* translate_block_arm's commit: register the sites it emitted.  A learned
+ * word of the block's extent that got no site (not emitted in the fixed
+ * form: a flag-only op, a different encoding path, a full pend list) leaves
+ * a translation a patch cannot reach: the word goes bad, so it retires. */
+static void immp_commit(u32 start, u32 end)
+{
+  u32 k, a;
+  if (!immp_blk_on) {
+    immp_npend = 0;
+    return;
+  }
+  immp_blk_on = 0;
+  for (a = start & ~3u, k = 0; a < end; a += 4) {
+    while (k < immp_npend && immp_pend[k].pc < a)
+      k++;
+    if (IMMP_LEARNED(a) && !(k < immp_npend && immp_pend[k].pc == a))
+      IMMP_SET(immp_bad, IMMP_W(a));
+  }
+  for (k = 0; k < immp_npend; k++) {
+    u32 w = IMMP_W(immp_pend[k].pc), sl = immp_slot[w];
+    immp_ent *e;
+    if (!sl) {
+      if (immp_nslots >= IMMP_SLOTS) { IMMP_SET(immp_bad, w); continue; }
+      sl = immp_slot[w] = (u8)++immp_nslots;
+      immp_tab[sl].n = 0;
+    }
+    e = &immp_tab[sl];
+    if (!e->n)
+      e->old = immp_pend[k].op;
+    if (e->old != immp_pend[k].op || e->n >= IMMP_K) {
+      IMMP_SET(immp_bad, w);
+      continue;
+    }
+#ifdef DRPROF_TWIN
+    /* self-test: the fixed form encodes what immp_rot says (the patch and
+     * its validation both rely on immp_rot == the translator's ror) */
+    if (!immp_site_ok(immp_pend[k].host, immp_rot(immp_pend[k].op),
+                      (0x0Fu << 26) | ((u32)reg_a0 << 16)))
+      immp_selftest_fail++;
+#endif
+    e->site[e->n] = immp_pend[k].host;
+    e->esc[e->n] = immp_pend[k].esc;
+    e->cl[e->n] = immp_pend[k].cl;
+    e->n++;
+    immp_sites++;
+  }
+  immp_npend = 0;
+}
+static void immp_reset(void)          /* every full RAM flush */
+{
+  immp_npend = 0;
+  if (!immp_dirty)
+    return;
+  memset(immp_bit, 0, sizeof(immp_bit));
+  memset(immp_bad, 0, sizeof(immp_bad));
+  memset(immp_slot, 0, sizeof(immp_slot));
+  immp_nslots = 0;
+  immp_dirty = 0;
+}
+/* a single-store trap at `word` is about to retire: learn it */
+static void immp_learn(u32 word)
+{
+  u32 w;
+  if ((word >> 24) != 3)
+    return;
+  w = IMMP_W(word);
+  if (IMMP_GET(immp_bit, w)) {
+    /* every covering translation is about to go: so do its sites */
+    IMMP_CLR(immp_bad, w);
+    if (immp_slot[w])
+      immp_tab[immp_slot[w]].n = 0;
+    return;
+  }
+  {
+    /* learn only what a patch could have served: the word the translations
+     * read (xs record, both halves, unpoisoned) and the word now are both
+     * patchable DP-immediate forms differing only in bits 11:0 */
+    u32 h = (word & 0x7FFC) >> 1, hb = 3u << (h & 7);
+    u32 nw = *(u32 *)(iwram + 0x8000 + (word & 0x7FFC)), ow, x;
+    if ((xs_ok[h >> 3] & hb) != hb || (xs_bad[h >> 3] & hb))
+      return;
+    ow = xs_val[h] | ((u32)xs_val[h + 1] << 16);
+    x = ow ^ nw;
+    if (!x || (x & ~0xFFFu) || !immp_class_ok(ow) || !immp_class_ok(nw))
+      return;
+  }
+  {
+    IMMP_SET(immp_bit, w);
+    immp_dirty = 1;
+    immp_learned++;
+  }
+}
+static inline u32 immp_rot(u32 op)
+{
+  u32 r = ((op >> 8) & 0xF) * 2, v = op & 0xFF;
+  return r ? (v >> r) | (v << (32 - r)) : v;
+}
+static inline int immp_site_ok(u8 *p, u32 v, u32 rlui)
+{
+  u32 a = ((u32 *)p)[0], b = ((u32 *)p)[1];
+  return (a & 0xFFFF0000u) == rlui && (a & 0xFFFF) == (v >> 16) &&
+         (b & 0xFFFF0000u) == ((rlui & 0x001F0000u) | (0x0Du << 26) |
+                               ((rlui & 0x001F0000u) << 5)) &&
+         (b & 0xFFFF) == (v & 0xFFFF);
+}
+static inline void immp_site_put(u8 *p, u32 v)
+{
+  u32 *q = (u32 *)p;
+  q[0] = (q[0] & 0xFFFF0000u) | (v >> 16);
+  q[1] = (q[1] & 0xFFFF0000u) | (v & 0xFFFF);
+  JIT_CODE_WROTE(p, p + 8);
+}
+#if defined(STALE_CHECK)
+static void stale_note_extent(u32 start_pc, u32 end_pc, u32 thumb);
+#endif
+/* the trap at IWRAM `word`: 1 = handled by patching (no retirement) */
+static int immp_try(u32 word)
+{
+  u32 w, nw, ow, k, vo, vn;
+  immp_ent *e;
+  const u32 lui_a0 = (0x0Fu << 26) | ((u32)reg_a0 << 16);
+  const u32 lui_a2 = (0x0Fu << 26) | ((u32)reg_a2 << 16);
+  if ((word >> 24) != 3)
+    return 0;
+  w = IMMP_W(word);
+  if (!IMMP_GET(immp_bit, w))
+    return 0;
+  if (IMMP_GET(immp_bad, w) || !immp_slot[w] || !immp_tab[immp_slot[w]].n) {
+    immp_refused[0]++;
+    return 0;
+  }
+  e = &immp_tab[immp_slot[w]];
+  nw = *(u32 *)(iwram + 0x8000 + (word & 0x7FFC));
+  ow = e->old;
+  if (nw == ow) { immp_refused[1]++; return 0; }      /* xs path's case */
+  if ((nw ^ ow) & ~0xFFFu) { immp_refused[2]++; return 0; }
+  vo = immp_rot(ow);
+  vn = immp_rot(nw);
+  for (k = 0; k < e->n; k++) {
+    if (e->cl[k] && ((((ow >> 8) & 0xF) != 0) != (((nw >> 8) & 0xF) != 0) ||
+                     (((ow >> 8) & 0xF) && ((vo ^ vn) >> 31)))) {
+      immp_refused[3]++;
+      return 0;                     /* the rotation's carry would change */
+    }
+    if (!immp_site_ok(e->site[k], vo, lui_a0) ||
+        (e->esc[k] && !immp_site_ok(e->esc[k], ow, lui_a2))) {
+      immp_refused[4]++;
+      return 0;
+    }
+  }
+  for (k = 0; k < e->n; k++) {
+#ifdef SMC_IMM_PATCH_MUTANT_ONESITE
+    if (k) break;      /* MUTANT (oracle self-test only): miss every other site */
+#endif
+    immp_site_put(e->site[k], vn);
+    if (e->esc[k])
+      immp_site_put(e->esc[k], nw);
+  }
+  e->old = nw;
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+  {
+    /* every live block covering w now encodes nw: so must the record */
+    u32 h = (word & 0x7FFC) >> 1;
+    if (xs_ready) {
+      xs_val[h] = (u16)nw;
+      xs_val[h + 1] = (u16)(nw >> 16);
+    }
+  }
+#endif
+#if defined(STALE_CHECK)
+  {
+    /* re-hash every live ARM block covering w (STALE_CHECK's record) */
+    u16 *tagp = (u16 *)iwram;
+    u32 lo = (word & 0x7FFC) >> 1, i0 = lo > 2 * MAX_BLOCK_SIZE ? lo - 2 * MAX_BLOCK_SIZE : 0, i;
+    for (i = i0; i <= lo; i++)
+      if (VALID_TAG(tagp[i])) {
+        ramtag_type *te = get_ram_tag(tagp[i]);
+        u32 st = 0x03000000 + (i << 1);
+        if (SMC_RAM_LIVE_OFFSET(te, arm) && te->stale_end_arm > (word & ~3u))
+          stale_note_extent(st, te->stale_end_arm, 0);
+      }
+  }
+#endif
+  jit_code_publish();
+  immp_patches++;
+  return 1;
+}
+#ifdef DRPROF_TWIN
+static void immp_report(void)
+{
+  fprintf(stderr, "SMC_IMM_PATCH patches=%u learned=%u sites=%u selftest_fail=%u refused=%u/%u/%u/%u/%u\n",
+          (unsigned)immp_patches, (unsigned)immp_learned, (unsigned)immp_sites,
+          (unsigned)immp_selftest_fail,
+          (unsigned)immp_refused[0], (unsigned)immp_refused[1],
+          (unsigned)immp_refused[2], (unsigned)immp_refused[3],
+          (unsigned)immp_refused[4]);
+}
+__attribute__((constructor)) static void immp_report_init(void)
+{
+  atexit(immp_report);
+}
+#endif
+#else
+#endif
 #ifdef SPIN_SKIP
 /* SPIN_SKIP (cpu-levers lever 4, 2026-10-26): fast-forward a provably
  * side-effect-free polling loop to the next scheduled event.
@@ -6346,6 +6785,11 @@ static u32 spin_analyze(u32 target, u32 branch_pc, u32 thumb,
         spin_read(a, spin_cond_flags(c3));
         continue;
       }
+#ifdef SMC_IMM_PATCH
+      /* a learned word's immediate can change without a retirement */
+      if (!thumb && IMMP_LEARNED(p))
+        return 0;
+#endif
       if (thumb)
         spin_thumb_op(a, readaddress16(pc_address_block, (p & 0x7FFF)), p);
       else
@@ -7554,6 +7998,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
 #endif
   generate_block_extra_vars_arm();
   arm_fix_pc();
+#ifdef SMC_IMM_PATCH
+  immp_npend = 0;
+  immp_blk_on = 0;
+#endif
 
   if(!pc_address_block)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
@@ -7640,6 +8088,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     STALE_NOTE(block_start_pc, block_end_pc, 0);
 #ifdef SMC_WRITE_HISTO
     smc_cover_note(block_start_pc, block_end_pc, scan_exit_reason);
+#endif
+#ifdef SMC_IMM_PATCH
+    immp_blk_begin(ram_region, block_start_pc, block_end_pc);
 #endif
   }
   else
@@ -7903,6 +8354,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
     rom_translation_ptr = translation_ptr;
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+  DRPROF_BLK_EMITTED(jit_emit_start, translation_ptr,
+    jit_emit_start + (ram_region ? ram_block_prologue_size : block_prologue_size),
+    block_start_pc, block_end_pc, 0 | (ram_region ? 2 : 0));
+#ifdef SMC_IMM_PATCH
+  if (ram_region)
+    immp_commit(block_start_pc, block_end_pc);
+#endif
 #endif
 #ifdef SMC_REUSE
   if (ram_region)
@@ -7985,6 +8443,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 #endif
   generate_block_extra_vars_thumb();
   thumb_fix_pc();
+#ifdef SMC_IMM_PATCH
+  immp_blk_on = 0;
+#endif
 
   if(!pc_address_block)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
@@ -8277,6 +8738,13 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     rom_translation_ptr = translation_ptr;
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
+  DRPROF_BLK_EMITTED(jit_emit_start, translation_ptr,
+    jit_emit_start + (ram_region ? ram_block_prologue_size : block_prologue_size),
+    block_start_pc, block_end_pc, 1 | (ram_region ? 2 : 0));
+#ifdef SMC_IMM_PATCH
+  if (ram_region)
+    immp_bad_range(block_start_pc, block_end_pc);
+#endif
 #endif
 #ifdef SMC_REUSE
   if (ram_region)
@@ -8423,6 +8891,9 @@ void flush_translation_cache_ram(void)
 #endif
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
   xs_clear_all();        /* every RAM translation is gone */
+#ifdef SMC_IMM_PATCH
+  immp_reset();
+#endif
 #endif
 
   // Proceed to clean the SMC area if needed
@@ -10800,12 +11271,19 @@ static __attribute__((noinline)) u32 xs_trap_skip(u32 word);
 #endif
 static int smc_retire_single_word(u32 word)
 {
+#ifdef SMC_IMM_PATCH
+  if (immp_try(word))
+    return 1;
+#endif
 #ifdef SMC_SAME_SKIP
   /* Nothing translated from `word` is stale: report it handled, as a
    * retirement would be (counted in xs_trap_skip; see LAYOUT NEUTRALITY). */
   word = xs_trap_skip(word);   /* 0 = skip; else `word` back, so it need */
   if (!word)                   /* not live across the call               */
     return 1;
+#endif
+#ifdef SMC_IMM_PATCH
+  immp_learn(word);
 #endif
 #if defined(SMC_SINGLE_EWRAM)
   return smc_retire_span(word, word + 4);
@@ -10843,6 +11321,64 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word);
  * no extra instructions on the twin.  So every piece of the lever that sits
  * in a pinned function is ONE call to an out-of-line helper, and those
  * functions stay within their cpl1 link slack. */
+#ifdef SMC_DIFF_CENSUS
+/* DIAGNOSTIC (xlat-cost 2026-10-28, twin only): for every IWRAM trap that
+ * RETIRES (no same-value skip), what changed between the word the
+ * translations read (xs_val) and memory now.  Classes: ARM data-processing
+ * immediate field only (bits 11:0), ARM load/store immediate offset only,
+ * ARM branch offset only, ARM condition only, other ARM, Thumb halfword
+ * (imm8 / imm5 / other), unrecorded. */
+static u32 sdc_n[16];
+static u32 sdc_words[0x2000];
+static void sdc_report(void)
+{
+  static const char *nm[16] = { "unrec", "same", "arm_dp_imm", "arm_ldst_off",
+    "arm_b_off", "arm_cond", "arm_other", "thumb_imm8", "thumb_imm5",
+    "thumb_other", "arm_dp_imm_S", "arm_ldst_other", "", "", "", "" };
+  u32 k, d = 0;
+  for (k = 0; k < 0x2000; k++) d += sdc_words[k] != 0;
+  fprintf(stderr, "SMC_DIFF");
+  for (k = 0; k < 12; k++) fprintf(stderr, " %s=%u", nm[k], (unsigned)sdc_n[k]);
+  fprintf(stderr, " distinct_words=%u\n", (unsigned)d);
+}
+static void sdc_note(u32 word)
+{
+  static int init;
+  u32 h, ow, nw, x;
+  if (!init) { init = 1; atexit(sdc_report); }
+  if ((word >> 24) != 3) return;
+  h = (word & 0x7FFC) >> 1;
+  if (sdc_words[h >> 1] < 0xFFFFFFFF) sdc_words[h >> 1]++;
+  if ((xs_ok[h >> 3] & (3u << (h & 7))) != (3u << (h & 7))) { sdc_n[0]++; return; }
+  ow = xs_val[h] | ((u32)xs_val[h + 1] << 16);
+  nw = *(u32 *)(iwram + 0x8000 + (h << 1));
+  x = ow ^ nw;
+  if (!x) { sdc_n[1]++; return; }
+  if (reg[REG_CPSR] & 0x20) {
+    /* Thumb: classify the changed halfword(s) by the low one that changed */
+    u32 hw = (x & 0xFFFF) ? (nw & 0xFFFF) : (nw >> 16);
+    u32 hx = (x & 0xFFFF) ? (x & 0xFFFF) : (x >> 16);
+    if (!(hx & ~0xFFu) && ((hw >> 13) == 1 || (hw >> 12) == 9 || (hw >> 12) == 13))
+      sdc_n[7]++;
+    else if (!(hx & ~0x07C0u)) sdc_n[8]++;
+    else sdc_n[9]++;
+    return;
+  }
+  if (!(x & 0x0FFFFFFF)) { sdc_n[5]++; return; }
+  switch ((nw >> 25) & 7) {
+    case 1:
+      if (!(x & ~0xFFFu)) { sdc_n[(nw & (1u << 20)) ? 10 : 2]++; return; }
+      break;
+    case 2:
+      if (!(x & ~0xFFFu)) { sdc_n[3]++; return; }
+      sdc_n[11]++; return;
+    case 5:
+      if (!(x & ~0xFFFFFFu)) { sdc_n[4]++; return; }
+      break;
+  }
+  sdc_n[6]++;
+}
+#endif
 static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 {
   if (XS_ON() && xs_blocks_current(word)) {
@@ -10852,6 +11388,9 @@ static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 #endif
     return 0;
   }
+#ifdef SMC_DIFF_CENSUS
+  sdc_note(word);
+#endif
 #ifdef SMC_SAME_ADAPT
   /* A retirement follows (or, if that fails, a full flush: either way the
    * event a skip would have saved). */
@@ -12948,6 +13487,12 @@ u16 *drprof_ram_map = drprof_ram_map_s;
 u8 *drprof_stub_end;
 volatile u32 drprof_zone_arg;
 volatile u32 drprof_xlat_pc;
+volatile u32 drprof_blk_arg[8];
+
+__attribute__((noinline, used)) void drprof_blk_mark(void)
+{
+  __asm__ volatile("" ::: "memory");
+}
 
 __attribute__((noinline, used)) void drprof_zone(void)
 {

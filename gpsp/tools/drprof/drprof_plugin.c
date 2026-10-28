@@ -161,6 +161,7 @@ typedef struct tbrec
    uint32_t nlist;
    uint32_t cat_n[NCAT];
    uint32_t zb[4];      /* per-zone "zone:<z>:<symbol>" bucket, 0 = not made */
+   uint32_t ngi;        /* guest instruction starts in this TB (blk=)       */
 } tbrec;
 
 static GHashTable *tb_dedup;
@@ -206,6 +207,91 @@ static void read_geom(void)
 static int in_rom(uint32_t a) { return a >= rom_base && a < rom_base + rom_size; }
 static int in_ram(uint32_t a) { return a >= ram_base && a < ram_base + ram_size; }
 static int in_stub(uint32_t a) { return a >= rom_base && a < stub_end; }
+
+/* ---- block life (blk=ADDR,bout=FILE; xlat-cost 2026-10-28) ----------------
+ * The core brackets every translate_block_* call (op 1 begin / 3 end) and
+ * reports each committed block's extent (op 2).  Exclusive translation cost
+ * = counted instructions between begin and end minus nested translations
+ * (eager links).  Executed translated code is charged to the block that owns
+ * its host address; a block's ownership ends when a later block reuses the
+ * address (its death frame). */
+typedef struct
+{
+   uint32_t hlo, hhi, ent, glo, ghi, fl, depth, bframe, dframe, ok;
+   uint64_t excl, eexec, texec, hexec, gi;
+} blkrec;
+static uint64_t blk_addr, gtot;
+static char blk_outp[256];
+static GArray *blks;
+static uint32_t *blk_of_ram, *blk_of_rom;
+static struct { uint64_t t0, child; int64_t id; } bst[256];
+static int bsp;
+static uint32_t cur_frame;
+static uint64_t abort_n, abort_cost;
+
+static void on_blk(unsigned int vcpu, void *ud)
+{
+   uint32_t a[8];
+   (void)vcpu; (void)ud;
+   if (!read_u32s(blk_addr, a, 8))
+      return;
+   if (!geom_ok)
+      read_geom();
+   if (!blk_of_ram && geom_ok)
+   {
+      blk_of_ram = g_new0(uint32_t, ram_size / 4 + 1);
+      blk_of_rom = g_new0(uint32_t, rom_size / 4 + 1);
+   }
+   if (a[0] == 1)
+   {
+      if (bsp < 256)
+      {
+         bst[bsp].t0 = gtot; bst[bsp].child = 0; bst[bsp].id = -1;
+      }
+      bsp++;
+   }
+   else if (a[0] == 2 && bsp > 0 && bsp <= 256 && blk_of_ram)
+   {
+      blkrec b;
+      uint32_t i, lo, hi, *map;
+      memset(&b, 0, sizeof(b));
+      b.hlo = a[1]; b.hhi = a[2]; b.ent = a[3]; b.glo = a[4]; b.ghi = a[5];
+      b.fl = a[6]; b.depth = bsp; b.bframe = cur_frame;
+      bst[bsp - 1].id = blks->len;
+      g_array_append_val(blks, b);
+      if (in_ram(b.hlo)) { map = blk_of_ram; lo = (b.hlo - ram_base) >> 2; hi = (b.hhi - ram_base) >> 2; }
+      else if (in_rom(b.hlo)) { map = blk_of_rom; lo = (b.hlo - rom_base) >> 2; hi = (b.hhi - rom_base) >> 2; }
+      else return;
+      for (i = lo; i < hi; i++)
+      {
+         uint32_t o = map[i];
+         if (o && g_array_index(blks, blkrec, o - 1).dframe == 0)
+            g_array_index(blks, blkrec, o - 1).dframe = cur_frame + 1;
+         map[i] = blks->len;
+      }
+   }
+   else if (a[0] == 3 && bsp > 0)
+   {
+      bsp--;
+      if (bsp < 256)
+      {
+         uint64_t incl = gtot - bst[bsp].t0, excl = incl - bst[bsp].child;
+         if (bsp > 0 && bsp - 1 < 256)
+            bst[bsp - 1].child += incl;
+         if (bst[bsp].id >= 0)
+         {
+            blkrec *b = &g_array_index(blks, blkrec, bst[bsp].id);
+            b->excl = excl; b->ok = a[1];
+         }
+         else
+         {
+            abort_n++; abort_cost += excl;
+         }
+      }
+   }
+}
+
+static inline void blk_exec(const struct tbrec *r);
 
 /* ---- classification ------------------------------------------------------- */
 static int writes_reg(uint32_t w)
@@ -363,6 +449,7 @@ static void classify_jit(tbrec *r)
                      (e & 0x0080) ? "F" : "", (e & 0x0100) ? "C" : "",
                      (e & 0x0400) ? "P" : "", (e & 0x0800) ? "K" : "");
             list_add(l, bucket(nm, CAT_OTHER), 1);   /* cat ignored for gi */
+            r->ngi++;
          }
       }
       role = role_of(w, pc, &tgt);
@@ -479,6 +566,7 @@ static void on_mark(unsigned int vcpu, void *ud)
    switch (c[2])
    {
    case 1:   /* frame */
+      cur_frame = c[3];
       if (running)
       {
          int k;
@@ -585,6 +673,7 @@ static void on_tb(unsigned int vcpu, void *ud)
          g_array_index(bk_cnt, uint64_t, r->list[i].id) += r->list[i].n;
       fcat[cat] += r->n;
       ftot += r->n;
+      gtot += r->n;
       return;
    }
    for (i = 0; i < r->nlist; i++)
@@ -592,6 +681,26 @@ static void on_tb(unsigned int vcpu, void *ud)
    for (i = 0; i < NCAT; i++)
       fcat[i] += r->cat_n[i];
    ftot += r->n;
+   gtot += r->n;
+   if (blk_of_ram && r->kind == 1)
+      blk_exec(r);
+}
+
+static inline void blk_exec(const struct tbrec *r)
+{
+   uint32_t va = (uint32_t)r->vaddr, o;
+   blkrec *b;
+   if (in_ram(va)) o = blk_of_ram[(va - ram_base) >> 2];
+   else if (in_rom(va)) o = blk_of_rom[(va - rom_base) >> 2];
+   else return;
+   if (!o)
+      return;
+   b = &g_array_index(blks, blkrec, o - 1);
+   b->texec++;
+   b->hexec += r->n;
+   b->gi += r->ngi;
+   if (va == b->ent)
+      b->eexec++;
 }
 
 static void tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
@@ -621,6 +730,8 @@ static void tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
          r->kind = 3;
       else if (sym && !strcmp(sym, "drprof_zone"))
          r->kind = 4;
+      else if (sym && !strcmp(sym, "drprof_blk_mark"))
+         r->kind = 6;
       else if (in_cache_sym((uint32_t)va))
          r->kind = 1;     /* classified at first execution */
       else
@@ -647,6 +758,8 @@ static void tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
       qemu_plugin_register_vcpu_tb_exec_cb(tb, on_mark, QEMU_PLUGIN_CB_NO_REGS, r);
    else if (r->kind == 4)
       qemu_plugin_register_vcpu_tb_exec_cb(tb, on_zone, QEMU_PLUGIN_CB_NO_REGS, r);
+   else if (r->kind == 6 && blk_addr)
+      qemu_plugin_register_vcpu_tb_exec_cb(tb, on_blk, QEMU_PLUGIN_CB_NO_REGS, r);
    qemu_plugin_register_vcpu_tb_exec_cb(tb, on_tb, QEMU_PLUGIN_CB_NO_REGS, r);
 }
 
@@ -654,6 +767,24 @@ static void at_exit(qemu_plugin_id_t id, void *p)
 {
    (void)id; (void)p;
    dump_scene();
+   if (blk_addr && blk_outp[0])
+   {
+      FILE *f = fopen(blk_outp, "w");
+      guint i;
+      if (f)
+      {
+         fprintf(f, "# blk v1: id bframe dframe fl depth ok glo ginsn hbytes excl eexec texec hexec gi; aborts %" PRIu64 " cost %" PRIu64 "\n", abort_n, abort_cost);
+         for (i = 0; i < blks->len; i++)
+         {
+            blkrec *b = &g_array_index(blks, blkrec, i);
+            fprintf(f, "%u %u %u %u %u %u %x %u %u %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n",
+                    i, b->bframe, b->dframe, b->fl, b->depth, b->ok, b->glo,
+                    (b->ghi - b->glo) / ((b->fl & 1) ? 2 : 4), b->hhi - b->hlo,
+                    b->excl, b->eexec, b->texec, b->hexec, b->gi);
+         }
+         fclose(f);
+      }
+   }
    fprintf(out, "# end\n");
    fclose(out);
 }
@@ -702,12 +833,15 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
    syms = g_array_new(FALSE, FALSE, sizeof(sym_t));
    symcat_by_name = g_hash_table_new(g_str_hash, g_str_equal);
    tb_dedup = g_hash_table_new(tbkey_hash, tbkey_eq);
+   blks = g_array_new(FALSE, FALSE, sizeof(blkrec));
    for (i = 0; i < argc; i++)
    {
       if (!strncmp(argv[i], "out=", 4)) outp = argv[i] + 4;
       else if (!strncmp(argv[i], "symcat=", 7)) symcat = argv[i] + 7;
       else if (!strncmp(argv[i], "ctl=", 4)) ctl_addr = strtoull(argv[i] + 4, NULL, 16);
       else if (!strncmp(argv[i], "zarg=", 5)) zarg_addr = strtoull(argv[i] + 5, NULL, 16);
+      else if (!strncmp(argv[i], "blk=", 4)) blk_addr = strtoull(argv[i] + 4, NULL, 16);
+      else if (!strncmp(argv[i], "bout=", 5)) snprintf(blk_outp, sizeof(blk_outp), "%s", argv[i] + 5);
       else if (!strncmp(argv[i], "hot=", 4)) snprintf(hot_sym, sizeof(hot_sym), "%s", argv[i] + 4);
    }
    if (!symcat || load_symcat(symcat) != 0 || !ctl_addr || !zarg_addr)

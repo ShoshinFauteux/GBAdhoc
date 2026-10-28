@@ -97,7 +97,23 @@ void drprof_forget_rom(u8 *from);
 extern volatile u32 drprof_xlat_pc;
 #define DRPROF_XLAT_PC_PUSH(key) u32 drprof_xlat_saved_ = drprof_xlat_pc; drprof_xlat_pc = (key)
 #define DRPROF_XLAT_PC_POP()     drprof_xlat_pc = drprof_xlat_saved_
+/* Block-life study (xlat-cost 2026-10-28): the plugin (blk=) brackets every
+ * translate_block_* call (BEGIN/END; nesting = eager links), learns each
+ * committed block's host and guest extent (EMITTED), and charges executed
+ * translated code to the block that owns it.  Translation-time C only. */
+extern volatile u32 drprof_blk_arg[8];
+void drprof_blk_mark(void);
+#define DRPROF_BLK_BEGIN() do { drprof_blk_arg[0] = 1; drprof_blk_mark(); } while (0)
+#define DRPROF_BLK_END(ok) do { drprof_blk_arg[1] = (u32)(ok); drprof_blk_arg[0] = 3; drprof_blk_mark(); } while (0)
+#define DRPROF_BLK_EMITTED(hlo, hhi, ent, glo, ghi, fl) do { \
+    drprof_blk_arg[1] = (u32)(hlo); drprof_blk_arg[2] = (u32)(hhi); \
+    drprof_blk_arg[3] = (u32)(ent); drprof_blk_arg[4] = (u32)(glo); \
+    drprof_blk_arg[5] = (u32)(ghi); drprof_blk_arg[6] = (u32)(fl); \
+    drprof_blk_arg[0] = 2; drprof_blk_mark(); } while (0)
 #else
+#define DRPROF_BLK_BEGIN() do { } while (0)
+#define DRPROF_BLK_END(ok) do { } while (0)
+#define DRPROF_BLK_EMITTED(hlo, hhi, ent, glo, ghi, fl) do { } while (0)
 #define DRPROF_ZONE_ENTER(z) do { } while (0)
 #define DRPROF_ZONE_LEAVE(z) do { } while (0)
 #define DRPROF_NOTE(ptr, cls) do { } while (0)

@@ -1231,11 +1231,35 @@ u32 execute_spsr_restore_body(u32 address)
   generate_op_##name##_reg(arm_to_mips_reg[rd], arm_to_mips_reg[rn],          \
    arm_to_mips_reg[rm])                                                       \
 
+/* SMC_IMM_PATCH (cpu_threaded.c): a data-processing immediate at an IWRAM
+ * word whose immediate the game rewrites is emitted in a FIXED form -- the
+ * immediate materialised by `lui a0, hi; ori a0, a0, lo`, then the
+ * register-operand op (the same one generate_op_imm_wrapper uses) -- so a
+ * later store that changes only bits 11:0 can rewrite those two immediates
+ * in place instead of retiring the block.  Every other instruction, and
+ * every instruction of a game that never rewrites immediates, is emitted
+ * exactly as before. */
+#ifdef SMC_IMM_PATCH
+#define IMMP_OR(name, cl, normal)                                             \
+  if (immp_want(pc, rd, rn)) {                                                \
+    immp_note(translation_ptr, pc, opcode, (cl));                             \
+    mips_emit_lui(reg_a0, ((u32)(imm)) >> 16);                                \
+    mips_emit_ori(reg_a0, reg_a0, ((u32)(imm)) & 0xFFFF);                     \
+    generate_op_##name##_reg(arm_to_mips_reg[rd], arm_to_mips_reg[rn],        \
+                             reg_a0);                                         \
+  } else {                                                                    \
+    normal;                                                                   \
+  }
+#else
+#define IMMP_OR(name, cl, normal) normal
+#endif
+
 #define arm_generate_op_imm(name, load_op)                                    \
   arm_decode_data_proc_imm(opcode);                                           \
   ror(imm, imm, imm_ror);                                                     \
   arm_op_check_##load_op();                                                   \
-  generate_op_##name##_imm(arm_to_mips_reg[rd], arm_to_mips_reg[rn])          \
+  IMMP_OR(name, 0,                                                            \
+    generate_op_##name##_imm(arm_to_mips_reg[rd], arm_to_mips_reg[rn]))       \
 
 #define arm_generate_op_imm_flags(name, load_op)                              \
   arm_decode_data_proc_imm(opcode);                                           \
@@ -1245,7 +1269,8 @@ u32 execute_spsr_restore_body(u32 address)
      mips_emit_addiu(reg_c_cache, reg_zero, ((imm) >> 31));                   \
   }                                                                           \
   arm_op_check_##load_op();                                                   \
-  generate_op_##name##_imm(arm_to_mips_reg[rd], arm_to_mips_reg[rn])          \
+  IMMP_OR(name, (check_generate_c_flag ? 1 : 0),                              \
+    generate_op_##name##_imm(arm_to_mips_reg[rd], arm_to_mips_reg[rn]))       \
 
 #define arm_data_proc(name, type, flags_op)                                   \
 {                                                                             \
@@ -2044,12 +2069,27 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
    * which hashes at block ENTRY, this also sees a loop inside one block
    * running after its own code changed -- the NFSU hole. */
   void exec_stale_check(u32 pc, u32 mode, u32 op);
+  /* SMC_IMM_PATCH: a patch site's opcode is loaded in the fixed form too and
+   * rewritten with the immediate, so this check stays the oracle for it: a
+   * live copy of the word that the patch missed fails here. */
+  #ifdef SMC_IMM_PATCH
+  #define IMMP_ESC_OP(mode, normal)                                           \
+    if ((mode) && immp_want_op(ram_region, pc, opcode)) {                     \
+      immp_note_op(translation_ptr, pc);                                      \
+      mips_emit_lui(reg_a2, ((u32)opcode) >> 16);                             \
+      mips_emit_ori(reg_a2, reg_a2, ((u32)opcode) & 0xFFFF);                  \
+    } else {                                                                  \
+      normal;                                                                 \
+    }
+  #else
+  #define IMMP_ESC_OP(mode, normal) normal
+  #endif
   #define emit_trace_instruction(pc, mode)                                      \
     if (((pc) >> 24) == 2 || ((pc) >> 24) == 3) {                               \
       emit_save_regs(false);                                                    \
       generate_load_imm(reg_a0, pc);                                            \
       generate_load_imm(reg_a1, mode);                                          \
-      generate_load_imm(reg_a2, opcode);                                        \
+      IMMP_ESC_OP(mode, generate_load_imm(reg_a2, opcode));                                        \
       genccall(&exec_stale_check);                                              \
       mips_emit_nop();                                                          \
       emit_restore_regs(false);                                                 \

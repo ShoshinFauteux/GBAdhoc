@@ -7,6 +7,7 @@
 # Paths are relative to $DRPROF_HOME/fx (fixtures) and $DRPROF_HOME/runs.
 # Writes OUTDIR/{prof.txt,hash.txt,host.log,stubmap.txt,symcat.txt}.
 # PROF=0 runs the same thing without the plugin (oracle / speed runs).
+# BLK=1 adds the block-life table OUTDIR/blk.txt (drprof_plugin.c on_blk).
 # HOT=<symbol> adds per-instruction-address counts (hot:<addr>) for one function.
 set -euo pipefail
 OUT=$1; ROM=$2; STATE=$3; SCRIPT=$4; FRAMES=$5; VARIANT=${6:-base}
@@ -26,9 +27,10 @@ docker run --rm -e DR_RAMDUMP -e DR_RAMDUMP_FILE -e SMC_EVT_FILE -e SMC_EVT_LO -
     python3 /w/src/tools/drprof/dr_symcat.py $BIN.nm $BIN.members > \$O/symcat.txt
     CTL=\$(awk '\$4==\"drprof_ctl\"{print \$1}' $BIN.nm)
     ZARG=\$(awk '\$4==\"drprof_zone_arg\"{print \$1}' $BIN.nm)
-    PLUG=\"-plugin /w/bin/drprof_plugin.so,out=\$O/prof.txt,symcat=\$O/symcat.txt,ctl=\$CTL,zarg=\$ZARG${HOT:+,hot=$HOT}\"
+    BLKA=''; [ '${BLK:-0}' = 1 ] && BLKA=\",blk=\$(awk '\$4==\"drprof_blk_arg\"{print \$1}' $BIN.nm),bout=\$O/blk.txt\"
+    PLUG=\"-plugin /w/bin/drprof_plugin.so,out=\$O/prof.txt,symcat=\$O/symcat.txt,ctl=\$CTL,zarg=\$ZARG\$BLKA${HOT:+,hot=$HOT}\"
   fi
   time /opt/qemu/bin/qemu-mipsel -cpu 74Kf \$PLUG $BIN \
      --rom $ROM --bios-dir . \$SV --state $STATE \$SCR --frames $FRAMES \
-     --hash \$O/hash.txt --log \$O/host.log --stubmap \$O/stubmap.txt $* 2>&1 | tail -3
+     --hash \$O/hash.txt --log \$O/host.log --stubmap \$O/stubmap.txt $* 2>&1 | tail -12
 "
