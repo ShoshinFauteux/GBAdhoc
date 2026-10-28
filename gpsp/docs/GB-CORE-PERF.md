@@ -167,3 +167,84 @@ Builds (cand1 Lab recipe, tools/build.sh lab, PAD 5264), commit 6c09270:
    `gb_dual_armed=0` vs `=1`; then a real two-PSP Gen 2 trade with
    `gblink_batch_armed=1` on the host (both consoles on gbp-a).
 3. Both: gbp-b + armed on the replay fixture.
+
+## 8. Gen 2 armed: what the over-budget frames are (2026-10-28)
+
+Hardware (armed=1): Gen 2 trade 58.6 fps, 12.88 ms mean, 25.3 % of frames
+over 16 ms, max 32-35 ms in every arm.
+
+Method: `linkplay framestat=FILE` on a TGB_OPCOUNT x86 build gives, for each
+slot-0 frame, lines, instructions and slot switches per machine. A fitted
+cost model, PSP ms = 1.25 us x (ops0+ops1) + 9.0 us x switches + 3 ms, gives
+28 % of frames over 16 ms (hardware: 25.3 %). On the post-trade tail it gives
+18.8 ms (hardware window: 18.1 ms). The 9.0 us per switch comes from the
+armed0/armed1 hardware delta.
+
+What dominates the frames over 16 ms:
+- **CPU of both machines, split evenly**: about 8.0 ms each. Switching adds
+  about 0.34 ms. The fixed part, about 3 ms, is the shown slot's PPU, the APU
+  and the frontend.
+- **Post-trade tail (frames ~9300-10500)**, the worst scene. Each machine runs
+  a constant 6307 instructions per frame and never HALTs. It busy-polls the
+  joypad: routines 0x0984-0x09a6 (bank 0) and 0x5714/0x576a (bank 1), about
+  77 calls per frame, plus a DelayFrames-like loop at 0x468. I found no exact
+  cheap skip. Only a faster CPU path helps.
+- **Strict-stepping windows** (serial bursts at ~2700-3300, 3900-4500,
+  5100-5700 and 8700-9300) are now minor. quiet_frames=1 is only about
+  -0.13 ms mean.
+- **The 32-35 ms max frames** are multi-frame advances, about 18 per 10k
+  frames. One host frame runs a machine for more than 154 lines (252-308),
+  usually around LCD on/off or slot 1 catching up. That is about two frames of
+  emulated time, so it is inherent and happens in solo play too.
+- **The 240-frame hash** is not in the bench path, so it is unmeasured. A fix
+  would spread the hash over frames, which is a protocol change.
+
+Sensitivity (model): a CPU speedup of x0.92 gives 26.7 % over and a 17.6 ms
+tail. x0.85 gives 24.7 % and 16.5 ms. Only about x0.80 clears most of the
+frames (6 %), because the busy scenes sit just above 16 ms.
+
+x86 profile, Gen 2 trade with lazy v2:
+
+| Function | Share |
+|---|---|
+| cpu_exec | 25 % |
+| op handlers | 22 % |
+| dattrans2n | 11 % |
+| snd_render_orig | 7.5 % |
+| set_ztbl | 7.2 % |
+| cpu_clock_advance | 6.6 % (was 28-31 % before the lazy timer) |
+| lcd_bg_render_color | 5.7 % |
+
+### TGB_FAST_TILE (commit 7b9d20c, off by default)
+
+dattrans2n decodes a tile row with a 256-entry spread table instead of eight
+bit-by-bit dtwk() steps. It is a pure function of its inputs.
+
+Exactness:
+- tgb_ref: all 10 fixtures have identical state and picture hashes.
+- linkplay: all 15 policy x scenario hashes are identical.
+- PPSSPP gbp-a2 vs gbp-c2: all 12 gb_* fixtures have vhash diff=0.
+- Gen 2 replay (armed=1): vhash md5 ad0eb470 on both builds; slot-0 save
+  4a7f8a60b8f2 on both.
+
+x86 speed vs lazy v2 alone: -0.5 to -7.9 % on most fixtures. Kirby +6 % and
+Kirby 2 +3 % are inside the ±5 % noise.
+
+### Builds (builds/gbcore-perf-out)
+
+| Build | Switches | PBP md5 |
+|---|---|---|
+| gbp-a2 | baseline (all off) | 73582809 |
+| gbp-b2 | TGB_LAZY_TIMER | 5d917bf0 |
+| gbp-c2 | TGB_LAZY_TIMER + TGB_FAST_TILE | f049558f |
+
+### Next levers (not prototyped)
+
+1. quiet_frames=1 tied to armed. This needs a new mask bit because 0x4 is
+   taken. The gain is small.
+2. Skip set_ztbl on lines with no sprites (about 7 %, needs an exactness
+   proof).
+3. Work on the dispatch and op path (cpu_exec plus the handlers are about
+   half the time). This is medium risk and is the only lever big enough for
+   the tail.
+4. Spread the session hash over frames (protocol change).
