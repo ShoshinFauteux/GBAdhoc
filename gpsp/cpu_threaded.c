@@ -6509,11 +6509,24 @@ typedef struct smc_reuse_rec_s
   u32 nexits;   /* smc_reuse_exit[nexits] follows, */
   u32 nsites;   /* then smc_reuse_call[nsites] memory-access call sites, */
   u32 srclen;   /* then srclen guest bytes */
+  u32 next;     /* cache offset of the previous record in this slot, or 0 */
 } smc_reuse_rec;
 typedef struct { u32 src, target; } smc_reuse_exit;
 
+/* MULTI-VERSION.  A slot heads a chain of records, newest first: every
+ * record a slot has received since the last real reset, whatever its key.
+ * So one pc keeps every version of its code that was translated (a game
+ * that patches a routine between a few fixed variants revives each of them)
+ * and two pcs that share a slot no longer evict each other.  The chain is
+ * valid for exactly as long as the records are: both die only at a real
+ * reset, which also clears the index (smc_reuse_drop).  find walks at most
+ * SMC_REUSE_WALK records of the chain -- a bound on the cost of a miss, not a
+ * correctness rule: a version past it is simply translated again. */
 #define SMC_REUSE_SLOTS 1024
-static u32 smc_reuse_index[SMC_REUSE_SLOTS];   /* cache offset of a record */
+#ifndef SMC_REUSE_WALK
+#define SMC_REUSE_WALK  8
+#endif
+static u32 smc_reuse_index[SMC_REUSE_SLOTS];   /* cache offset of a chain head */
 static u32 smc_reuse_vptr;        /* where ram_translation_ptr would be */
 static u8 *smc_reuse_water;       /* ram_translation_ptr as last seen */
 static u32 smc_reuse_force_real;
@@ -6540,16 +6553,17 @@ static void smc_reuse_window(void)
 static struct { u32 gen, idle, cheat, pa, ngates, size; u8 *base; } smc_reuse_env;
 u32 smc_reuse_hits, smc_reuse_stale, smc_reuse_early_full, smc_reuse_resets,
     smc_reuse_kept, smc_reuse_records, smc_reuse_relinked, smc_reuse_unlearnt,
-    smc_reuse_rom2ram;
+    smc_reuse_rom2ram, smc_reuse_hits_old, smc_reuse_walked, smc_reuse_cut;
 
 #ifdef DRPROF_TWIN
 #include <stdio.h>
 #include <stdlib.h>
 static void smc_reuse_report(void)
 {
-  fprintf(stderr, "smc_reuse: rom2ram=%u unlearnt=%u relinked=%u hits=%u records=%u stale=%u kept=%u resets=%u "
+  fprintf(stderr, "smc_reuse: hits_old=%u walked=%u cut=%u rom2ram=%u unlearnt=%u relinked=%u hits=%u records=%u stale=%u kept=%u resets=%u "
           "early_full=%u fl_total=%u fl_full=%u fl_smc=%u fl_dma=%u\n",
-          (unsigned)smc_reuse_rom2ram,
+          (unsigned)smc_reuse_hits_old, (unsigned)smc_reuse_walked,
+          (unsigned)smc_reuse_cut, (unsigned)smc_reuse_rom2ram,
           (unsigned)smc_reuse_unlearnt, (unsigned)smc_reuse_relinked,
           (unsigned)smc_reuse_hits, (unsigned)smc_reuse_records,
           (unsigned)smc_reuse_stale, (unsigned)smc_reuse_kept,
@@ -6558,9 +6572,9 @@ static void smc_reuse_report(void)
           (unsigned)flush_ram_smc, (unsigned)flush_ram_dma);
 #ifdef SMC_REUSE_DEBUG
   { extern u32 smc_reuse_dry_ok, smc_reuse_dry_bad, smc_reuse_dry_ic, smc_reuse_dry_full;
-    fprintf(stderr, "smc_reuse dry: ok=%u bad=%u relearnt_call_sites=%u%c",
+    fprintf(stderr, "smc_reuse dry: ok=%u bad=%u full=%u relearnt_call_sites=%u%c",
             (unsigned)smc_reuse_dry_ok, (unsigned)smc_reuse_dry_bad,
-            (unsigned)smc_reuse_dry_ic, 10); }
+            (unsigned)smc_reuse_dry_full, (unsigned)smc_reuse_dry_ic, 10); }
 #endif
 }
 #endif
@@ -6679,10 +6693,10 @@ static u8 *smc_reuse_src_copy(smc_reuse_rec *r)
 
 static smc_reuse_rec *smc_reuse_find(u32 key)
 {
-  u32 off, room;
+  u32 off, room, n, seen;
   u16 *tagp;
   u8 *src;
-  smc_reuse_rec *r;
+  smc_reuse_rec *r = NULL;
 
   if (!smc_reuse_env_ok() || !smc_reuse_armed)
     return NULL;
@@ -6703,23 +6717,37 @@ static smc_reuse_rec *smc_reuse_find(u32 key)
     }
   }
 #endif
-  off = smc_reuse_index[smc_reuse_slot(key)];
-  if (!off)
-    return NULL;
-  r = (smc_reuse_rec *)(ram_translation_cache + off);
-  if (r->key != key)
-    return NULL;
   src = smc_reuse_mem(key & ~1u, &tagp, &room);
+  off = smc_reuse_index[smc_reuse_slot(key)];
+  for (n = 0, seen = 0; off; off = r->next) {
+    if (n == SMC_REUSE_WALK) {
+      smc_reuse_cut++;                 /* older versions not looked at */
+      break;
+    }
+    n++;
+    smc_reuse_walked++;
+    r = (smc_reuse_rec *)(ram_translation_cache + off);
+    if (r->key != key)
+      continue;
 #ifdef SMC_REUSE_DEBUG   /* mutant 256: trust the record without comparing */
-  if (getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 256))
-    return r;
+    if (getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 256))
+      return r;
 #endif
-  if (r->srclen > room ||
-      memcmp(src, smc_reuse_src_copy(r), r->srclen)) {
-    smc_reuse_stale++;
-    return NULL;
+#ifdef SMC_REUSE_DEBUG   /* mutant 2048: single-version (newest of this pc only) */
+    if (seen && getenv("SMC_REUSE_DBG") && (atoi(getenv("SMC_REUSE_DBG")) & 2048))
+      break;
+#endif
+    if (r->srclen <= room &&
+        !memcmp(src, smc_reuse_src_copy(r), r->srclen)) {
+      if (seen)
+        smc_reuse_hits_old++;          /* not the newest version of this pc */
+      return r;
+    }
+    seen++;
   }
-  return r;
+  if (seen)
+    smc_reuse_stale++;
+  return NULL;
 }
 
 static u8 *smc_reuse_body(smc_reuse_rec *r)
@@ -6778,6 +6806,7 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
   r->nexits = n;
   r->nsites = ns;
   r->srclen = srclen;
+  r->next = smc_reuse_index[smc_reuse_slot(r->key)];
   xe = (smc_reuse_exit *)(r + 1);
   for (i = 0; i < nex; i++)
     if (ex[i].branch_source) {
