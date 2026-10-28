@@ -73,6 +73,23 @@ typedef struct gbdual_config {
    * every scanline cost more than the second machine's own work (hw1). */
   unsigned batch_lines;
   unsigned quiet_frames;
+  /* Nonzero (GBDUAL_ARMED_BATCH): a batch also starts while slot 1's port
+   * is busy -- armed on the external clock, or clocking a transfer of its
+   * own -- as long as slot 0's port is idle.  A Pokemon trade room keeps
+   * the guest armed for minutes on end, and without this every one of
+   * those frames alternates line by line.  Exact (the machines' states at
+   * every frame end are those of strict alternation): during slot 0's
+   * lead its port is idle and nothing of slot 1 is read, because slot 0's
+   * first serial event ends the lead (the cut) and slot 1 then catches up
+   * seeing slot 0's port as it was before that line; slot 1's own events
+   * read only slot 0's port, idle until the cut.  The one read that could
+   * see slot 1 early -- slot 0 clocking a CGB fast transfer to completion
+   * inside the very line it started it -- is counted
+   * (gbdual_lag_reads) and switches this off for the rest of the pair's
+   * life.  Both consoles of a session must agree on it (fe_gblink sends
+   * it in CONFIG): the session's sync hashes read both machines at slot
+   * 0's frame ends, where slot 1's progress depends on the stepping. */
+  int batch_armed;
   /* Nonzero: both cartridge clocks run on EMULATED time -- this many
    * seconds since 1970 at power-on, plus each machine's own emulated
    * frames -- instead of the machines' wallclock functions, so two consoles
@@ -123,6 +140,10 @@ uint64_t gbdual_serial_starts(const gbdual_t *dual, int slot);
 uint64_t gbdual_batched_lines(const gbdual_t *dual);
 /* Batches a serial event cut short while slot 1 was behind. */
 uint64_t gbdual_batch_cuts(const gbdual_t *dual);
+/* Serial completions slot 0 ran while slot 1 was behind (should stay 0;
+ * gbdual_config_t.batch_armed), and whether armed batching is still on. */
+uint64_t gbdual_lag_reads(const gbdual_t *dual);
+int gbdual_batch_armed(const gbdual_t *dual);
 
 gbcore_t *gbdual_core(const gbdual_t *dual, int slot);
 const gbcore_api_t *gbdual_api(int slot);

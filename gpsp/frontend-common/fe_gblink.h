@@ -247,7 +247,13 @@ typedef struct fe_gblink_local
    uint32_t core_mask;
 #define FE_GBLINK_MASK_TIMER_LAZY  0x1u   /* strict: guest-visible core switch */
 #define FE_GBLINK_MASK_INPUT_BATCH 0x2u   /* negotiable: "Fast link", M_INPUTS */
-#define FE_GBLINK_MASK_NEGOTIABLE  FE_GBLINK_MASK_INPUT_BATCH
+/* negotiable: GB pair stepping, gbdual_config_t.batch_armed.  The machines
+ * compute the same frames either way (exact), but the session's HASH
+ * points read slot 1 mid-frame, so both consoles must step alike: the host
+ * decides, and an older build on either side means it is off. */
+#define FE_GBLINK_MASK_ARMED_BATCH 0x4u
+#define FE_GBLINK_MASK_NEGOTIABLE  (FE_GBLINK_MASK_INPUT_BATCH | \
+                                    FE_GBLINK_MASK_ARMED_BATCH)
 #define FE_GBLINK_HOSTCAP_NEGOTIATE 0x02u /* in the host's HELLO role byte     */
    /* NULL = the GB/GBC pair; else the machines above (console must match
     * machines->console). */
