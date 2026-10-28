@@ -8497,10 +8497,9 @@ void exec_stale_check(u32 pc, u32 mode, u32 op)
     if (tf == -2) { const char *e = getenv("ESC_TRACE_F"); tf = e ? atoi(e) : -1; }
     if (tf >= 0 && (int)frame_counter == tf && tn < 400000) {
       if (!tfp) { const char *e = getenv("ESC_TRACE_FILE"); tfp = fopen(e ? e : "/tmp/esct.txt", "w"); }
-      if (tfp) { tn++; fprintf(tfp, "%08x %08x r0=%08x r1=%08x r2=%08x r3=%08x r7=%08x r8=%08x sp=%08x lr=%08x
-",
+      if (tfp) { tn++; fprintf(tfp, "%08x %08x r0=%08x r1=%08x r2=%08x r3=%08x r7=%08x r8=%08x sp=%08x lr=%08x%c",
                  (unsigned)pc, (unsigned)op, (unsigned)reg[0], (unsigned)reg[1], (unsigned)reg[2], (unsigned)reg[3],
-                 (unsigned)reg[7], (unsigned)reg[8], (unsigned)reg[13], (unsigned)reg[14]); }
+                 (unsigned)reg[7], (unsigned)reg[8], (unsigned)reg[13], (unsigned)reg[14], 10); }
     }
   }
   cur = mode ? *(const u32 *)p : *(const u16 *)p;
