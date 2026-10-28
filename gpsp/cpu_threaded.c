@@ -10180,12 +10180,17 @@ extern void fe_evt(const char *fmt, ...) __attribute__((weak));
  * Prices: least squares over 546 paired 64-frame windows (flush-only vs
  * always-retire vs adaptive twins of TGR, Mario Golf, FIFA 07, Mario Tennis,
  * Hot Wheels; SMC_WORK_WINDOWS), R^2 0.974 against the twin's core
- * instruction counts; per-title totals within ~15 %.  Exact retirement is the
- * mode only while it is at least 1/8 cheaper than the flush, whichever mode
- * the probe came from; anything closer returns to the established full
- * flush.  Mistake 1 then costs at most the gap until the next probe
- * (DMA_ADAPT_GAP0 windows), because the next flush probe sees the light
- * scene too.  Deterministic: event counts and frame_counter only. */
+ * instruction counts; per-title totals within ~15 %.  The decision rule is
+ * unchanged (a probe must be 1/8 cheaper than the window before it to be
+ * kept), so the incumbent wins ties.  That bias is deliberate: the first
+ * window after a switch pays the switch itself (a retire probe starts on
+ * code a flush just discarded), which the model cannot separate.  Measured:
+ * with ties going to the flush instead (DMA_ADAPT_TIE_FLUSH, kept as a
+ * sub-switch) Mario Golf left retire at f=1517 on a 7 % flush probe and
+ * never came back (-3.6 % vs -5.0 %); TGR gains nothing from it, because
+ * with these prices its f=5766 flush probe is 18 % cheaper and reverts.
+ * Mistake 1 then costs only the gap until that probe (DMA_ADAPT_GAP0
+ * windows).  Deterministic: event counts and frame_counter only. */
 #ifndef DA2_P_HALF
 #define DA2_P_HALF    100u   /* guest halfword translated (RAM) */
 #endif
@@ -10245,7 +10250,7 @@ static void dma_adapt_tick(void)
   cost = (w - drt_x0) / frames;
 #endif
   if (drt_probing) {
-#ifdef DMA_ADAPT_V2
+#if defined(DMA_ADAPT_V2) && defined(DMA_ADAPT_TIE_FLUSH)
     /* the probe ran in dma_rt_mode; drt_ref is the other mode's window */
     u32 rc = dma_rt_mode ? cost : drt_ref, fc = dma_rt_mode ? drt_ref : cost;
     int want_retire = (unsigned long long)rc * 8 < (unsigned long long)fc * 7;
