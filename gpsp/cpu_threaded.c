@@ -6087,9 +6087,45 @@ static void immp_bad_range(u32 start, u32 end)   /* a Thumb block's extent */
  * word of the block's extent that got no site (not emitted in the fixed
  * form: a flag-only op, a different encoding path, a full pend list) leaves
  * a translation a patch cannot reach: the word goes bad, so it retires. */
+#ifdef SMC_REUSE
+/* SMC_REUSE x SMC_IMM_PATCH (cand2, 2026-10-28).  Reuse revives a recorded
+ * body after comparing only the guest bytes it was translated from; this
+ * switch rewrites bodies in place and keeps a list of the live fixed-form
+ * sites of every learned word.  Two rules keep both contracts:
+ *  R1 (record).  A block whose extent held a learned word when it was
+ *     translated -- the only kind that can hold a fixed-form site, and so the
+ *     only kind a patch ever writes -- is never recorded.  Every recorded
+ *     body is therefore byte for byte what the translator emitted from the
+ *     record's guest bytes, whatever was patched since.
+ *  R2 (revive).  A record whose extent holds a learned word NOW is not
+ *     revived: the block is translated, so the fixed-form sites are emitted
+ *     and registered (or the word goes bad) exactly as without reuse, and the
+ *     invariant "learned and not bad => every live translation covering w is
+ *     a registered site" survives revivals.  (Learned state is cleared at
+ *     every flush, virtual ones included, so R2 bites within an epoch only.)
+ * Both are tests on IMMP state only: they turn a revival into the
+ * translation that would have happened anyway, so reuse stays exact
+ * (smc_reuse_vptr is advanced by the translation as usual).
+ * SMC_REUSE_IMMP_MUTANT (twin oracle self-test only) drops both rules. */
+static u32 immp_blk_learned;    /* the last ARM RAM commit held a learned word */
+u32 immp_reuse_norec, immp_reuse_nofind;
+static int immp_covers(u32 start, u32 end)
+{
+  u32 a;
+  if (!immp_dirty || (start >> 24) != 3)
+    return 0;
+  for (a = start & ~3u; a < end; a += 4)
+    if (IMMP_LEARNED(a))
+      return 1;
+  return 0;
+}
+#endif
 static void immp_commit(u32 start, u32 end)
 {
   u32 k, a;
+#ifdef SMC_REUSE
+  immp_blk_learned = immp_blk_on;
+#endif
   if (!immp_blk_on) {
     immp_npend = 0;
     return;
@@ -6286,6 +6322,10 @@ static void immp_report(void)
           (unsigned)immp_refused[0], (unsigned)immp_refused[1],
           (unsigned)immp_refused[2], (unsigned)immp_refused[3],
           (unsigned)immp_refused[4]);
+#ifdef SMC_REUSE
+  fprintf(stderr, "SMC_IMM_PATCH x SMC_REUSE norec=%u nofind=%u%c",
+          (unsigned)immp_reuse_norec, (unsigned)immp_reuse_nofind, 10);
+#endif
 }
 __attribute__((constructor)) static void immp_report_init(void)
 {
@@ -7380,6 +7420,12 @@ static smc_reuse_rec *smc_reuse_find(u32 key)
 #endif
     if (r->srclen <= room &&
         !memcmp(src, smc_reuse_src_copy(r), r->srclen)) {
+#if defined(SMC_IMM_PATCH) && !defined(SMC_REUSE_IMMP_MUTANT)
+      if (immp_covers(key & ~1u, r->end)) {
+        immp_reuse_nofind++;           /* R2: translate, register the sites */
+        return NULL;
+      }
+#endif
 #if SMC_REUSE_EPOCH
       if (r->epoch == smc_reuse_epoch && r->size < SMC_REUSE_SAME_MIN &&
           smc_reuse_mode == 2) {
@@ -7435,6 +7481,12 @@ static void smc_reuse_commit(u32 start, u32 end, u32 thumb, u32 reason,
   if (!smc_reuse_armed || !smc_reuse_mode ||
       (!smc_reuse_rec_on && smc_reuse_mode != 3))
     return;
+#if defined(SMC_IMM_PATCH) && !defined(SMC_REUSE_IMMP_MUTANT)
+  if (!thumb && immp_blk_learned) {    /* R1: the body may be patched later */
+    immp_reuse_norec++;
+    return;
+  }
+#endif
 
   src = smc_reuse_mem(start, &tagp, &room);
   if (len > room)                       /* wraps the region: never reused */
@@ -8354,6 +8406,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
     smc_reuse_dry_compare(smc_reuse_first, translation_ptr, block_end_pc,
                           scan_exit_reason, smc_reuse_chk, external_block_exits,
                           external_block_exit_position);
+#ifdef SMC_IMM_PATCH
+    immp_npend = 0;      /* a dry run registers nothing (no immp_commit) */
+    immp_blk_on = 0;
+#endif
     return false;
   }
 #endif
