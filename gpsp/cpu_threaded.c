@@ -7293,10 +7293,210 @@ static void stale_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 }
 #endif
 
+
+#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
+/* XLAT_CENSUS (twin diagnosis only, 2026-10-27): what would a translation
+ * reuse mechanism save?  Every RAM block translation is classified by the
+ * FNV hash of the guest bytes it was translated from:
+ *   same_last  the previous translation at this (pc, mode) had the same bytes
+ *              (what a one-record-per-pc reuse such as SMC_REUSE can revive)
+ *   seen_any   this (pc, mode, bytes) was translated at any time before
+ *              (what a multi-version reuse / an overlay cache could revive)
+ * and attributed to the cause of the last RAM invalidation before it
+ * (0 boot/cache-full/other, 1 DMA alert, 2 CPU store trap).  DMA alerts are
+ * counted by source region with the distinct (source, destination) keys. */
+#include <stdio.h>
+#include <stdlib.h>
+u32 census_cause, census_dma_src, census_dma_dst;
+static u32 *cen_last;               /* [mode][iwram 16K + ewram 128K halfwords] */
+static unsigned long long *cen_seen;  /* open addressing, 0 = empty */
+#define CEN_SEEN_BITS 21
+static u32 cen_x[3], cen_same[3], cen_any[3], cen_hw[3];
+static u32 cen_dma[17], cen_keys, cen_seen_full;
+static u32 cen_dkey[4096];
+static u32 cen_frames0 = ~0u;
+static void census_report(void)
+{
+  int c;
+  fprintf(stderr, "XC frames=%u keys=%u dma_rom=%u dma_ew=%u dma_iw=%u dma_oth=%u seen_full=%u\n",
+          (unsigned)(frame_counter - cen_frames0), (unsigned)cen_keys,
+          (unsigned)(cen_dma[8] + cen_dma[9] + cen_dma[10] + cen_dma[11] + cen_dma[12] + cen_dma[13]),
+          (unsigned)cen_dma[2], (unsigned)cen_dma[3], (unsigned)cen_dma[16],
+          (unsigned)cen_seen_full);
+  for (c = 0; c < 3; c++)
+    fprintf(stderr, "XC cause=%d xlat=%u halves=%u same_last=%u seen_any=%u\n", c,
+            (unsigned)cen_x[c], (unsigned)cen_hw[c], (unsigned)cen_same[c],
+            (unsigned)cen_any[c]);
+}
+static void census_init(void)
+{
+  cen_last = calloc(2 * (0x4000 + 0x20000), 4);
+  cen_seen = calloc(1u << CEN_SEEN_BITS, 8);
+  cen_frames0 = frame_counter;
+  atexit(census_report);
+}
+void census_dma_alert(void)
+{
+  u32 k, h;
+  if (!cen_last) census_init();
+  cen_dma[MIN(census_dma_src >> 24, 16)]++;
+  k = census_dma_src ^ (census_dma_dst * 0x9E3779B1u);
+  h = (k * 2654435761u) >> 20;
+  while (cen_dkey[h & 4095] && cen_dkey[h & 4095] != k) h++;
+  if (!cen_dkey[h & 4095] && cen_keys < 4000) { cen_dkey[h & 4095] = k; cen_keys++; }
+  census_cause = 1;
+}
+
+#ifdef XLAT_REUSE_SIM
+/* XLAT_REUSE_SIM (twin sizing only, 2026-10-27): what would a MULTI-VERSION
+ * SMC_REUSE revive under the real cache lifetime?
+ *
+ * Model (SMC_REUSE's design, generalised): every RAM translation leaves its
+ * body plus a record (40 B header + 16 B exits + the guest bytes) in a
+ * virtual 384 KiB RAM cache; flushes and retirements are "virtual" (bodies
+ * stay dormant); a translation whose (pc, mode, guest-byte hash) has a live
+ * record is a REVIVE and costs no cache bytes.  When the virtual cache
+ * overflows, it resets for real and every record dies.  The index keeps
+ * RS_WAYS versions per (pc, mode) set, LRU.  Two flavours:
+ *   A  capacity only (the ceiling of a well-built reuse);
+ *   B  A + every record dropped when the gate count or smc_partial_active
+ *      changes (bb8b7b2's environment rule).
+ * Host bytes per block: the RAM translation pointer's advance between
+ * consecutive RAM translations (running average when that is not usable).
+ * Counted from frame 300 of the run (the profiles' window). */
+#define RS_SETS 16384
+#define RS_WAYS 4
+#ifndef RS_CAP
+#define RS_CAP  (384 * 1024)
+#endif
+typedef struct { u32 key, hash, gen, lru; } rs_ent;
+static rs_ent *rs_tab[2];
+static u32 rs_v[2], rs_gen[2] = { 1, 1 }, rs_clock, rs_live[2], rs_live_bytes[2];
+static u32 rs_peak[2], rs_peak_bytes[2], rs_resets[2], rs_env_drops, rs_ngates, rs_pa;
+static u32 rs_blocks, rs_halves, rs_rev_b[2], rs_rev_h[2];
+static u8 *rs_last_ptr;
+static unsigned long long rs_bytes_sum, rs_halves_sum;
+static void rs_report(void)
+{
+  int f;
+  fprintf(stderr, "RS blocks=%u halves=%u env_drops=%u bytes_per_half=%.2f\n",
+          (unsigned)rs_blocks, (unsigned)rs_halves, (unsigned)rs_env_drops,
+          rs_halves_sum ? (double)rs_bytes_sum / rs_halves_sum : 0.0);
+  for (f = 0; f < 2; f++)
+    fprintf(stderr, "RS flavour=%c revive_blocks=%u revive_halves=%u resets=%u peak_records=%u peak_record_bytes=%u\n",
+            'A' + f, (unsigned)rs_rev_b[f], (unsigned)rs_rev_h[f], (unsigned)rs_resets[f],
+            (unsigned)rs_peak[f], (unsigned)rs_peak_bytes[f]);
+}
+static void rs_reset(int f)
+{
+  rs_gen[f]++;
+  rs_v[f] = 0;
+  rs_live[f] = rs_live_bytes[f] = 0;
+}
+static void rs_xlat(u32 pc, u32 thumb, u32 hsh, u32 halves, int counted)
+{
+  u32 key = pc | (thumb & 1), bytes, set, w, f;
+  if (!rs_tab[0]) {
+    rs_tab[0] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
+    rs_tab[1] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
+    atexit(rs_report);
+  }
+  /* host bytes of this block */
+  if (rs_last_ptr && ram_translation_ptr > rs_last_ptr &&
+      ram_translation_ptr - rs_last_ptr < 16384) {
+    rs_bytes_sum += ram_translation_ptr - rs_last_ptr;
+    rs_halves_sum += halves;
+  }
+  rs_last_ptr = ram_translation_ptr;
+  bytes = rs_halves_sum ? (u32)(halves * rs_bytes_sum / rs_halves_sum) : halves * 8;
+  /* flavour B's environment */
+  if (translation_gate_targets != rs_ngates || smc_partial_active != rs_pa) {
+    rs_ngates = translation_gate_targets;
+    rs_pa = smc_partial_active;
+    rs_env_drops++;
+    rs_reset(1);
+  }
+  if (counted) { rs_blocks++; rs_halves += halves; }
+  set = ((key * 2654435761u) >> 18) & (RS_SETS - 1);
+  rs_clock++;
+  for (f = 0; f < 2; f++) {
+    rs_ent *e = rs_tab[f] + set * RS_WAYS, *victim = e;
+    int hit = 0;
+    for (w = 0; w < RS_WAYS; w++) {
+      if (e[w].gen == rs_gen[f] && e[w].key == key && e[w].hash == hsh) {
+        e[w].lru = rs_clock; hit = 1; break;
+      }
+      if (e[w].gen != rs_gen[f] || e[w].lru < victim->lru)
+        if (victim->gen == rs_gen[f]) victim = &e[w];
+    }
+    if (hit) {
+      if (counted) { rs_rev_b[f]++; rs_rev_h[f] += halves; }
+      continue;
+    }
+    {
+      u32 rec = 56 + halves * 2 + 4;
+      if (rs_v[f] + bytes + rec > RS_CAP) {
+        rs_reset(f);
+        if (counted) rs_resets[f]++;
+        victim = e;
+      }
+      rs_v[f] += bytes + rec;
+      if (victim->gen != rs_gen[f]) rs_live[f]++;
+      rs_live_bytes[f] += rec;
+      victim->key = key; victim->hash = hsh; victim->gen = rs_gen[f]; victim->lru = rs_clock;
+      if (rs_live[f] > rs_peak[f]) rs_peak[f] = rs_live[f];
+      if (rs_live_bytes[f] > rs_peak_bytes[f]) rs_peak_bytes[f] = rs_live_bytes[f];
+    }
+  }
+}
+#endif
+static void census_xlat(u32 start_pc, u32 end_pc, u32 thumb)
+{
+  const u8 *mem; u32 off, lim, i, idx, hsh = 2166136261u, c = census_cause;
+  unsigned long long key; u32 slot;
+  if (!cen_last) census_init();
+  if ((start_pc >> 24) == 3) {
+    off = start_pc & 0x7FFF; lim = 0x8000; mem = iwram + 0x8000; idx = off >> 1;
+  } else if ((start_pc >> 24) == 2) {
+    off = start_pc & 0x3FFFF; lim = 0x40000; mem = ewram; idx = 0x4000 + (off >> 1);
+  } else
+    return;
+  if (end_pc <= start_pc) return;
+  if (off + (end_pc - start_pc) < lim) lim = off + (end_pc - start_pc);
+  for (i = off; i < lim; i++) hsh = (hsh ^ mem[i]) * 16777619u;
+  hsh ^= (lim - off) * 0x85EBCA6Bu;
+  if (!hsh) hsh = 1;
+#ifdef XLAT_REUSE_SIM
+  rs_xlat(start_pc, thumb, hsh, (lim - off) >> 1,
+          frame_counter - cen_frames0 >= 300);
+#endif
+  cen_x[c]++;
+  cen_hw[c] += (lim - off) >> 1;
+  idx += thumb ? (0x4000 + 0x20000) : 0;
+  if (cen_last[idx] == hsh) cen_same[c]++;
+  cen_last[idx] = hsh;
+  key = ((unsigned long long)(start_pc | (thumb & 1)) << 32) | hsh;
+  slot = (u32)((key * 0x9E3779B97F4A7C15ull) >> (64 - CEN_SEEN_BITS));
+  for (i = 0; i < 64; i++, slot = (slot + 1) & ((1u << CEN_SEEN_BITS) - 1)) {
+    if (cen_seen[slot] == key) { cen_any[c]++; return; }
+    if (!cen_seen[slot]) { cen_seen[slot] = key; return; }
+  }
+  cen_seen_full++;
+}
+#endif
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
   u32 off, base, size, len, canon_end;
+#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
+  census_xlat(start_pc, end_pc, thumb);
+#endif
+#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
+  if (end_pc > start_pc && ((start_pc >> 24) == 2 || (start_pc >> 24) == 3)) {
+    extern u32 smc_work_halves;
+    smc_work_halves += (end_pc - start_pc) >> 1;
+  }
+#endif
 
 #ifdef STALE_CHECK
   stale_note_extent(start_pc, end_pc, thumb);
@@ -8923,6 +9123,15 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
 #if defined(SMC_RETIRE_LIST) && !defined(SMC_RETIRE_LIST_N)
 #define SMC_RETIRE_LIST_N 64
 #endif
+#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
+/* Deterministic work counters (DMA_SMC_ADAPT's cost model; SMC_WORK_STATS
+ * prints them on the twin): tag slots walked by selective retirement, and
+ * guest halfwords scanned by RAM translations. */
+u32 smc_work_walk, smc_work_halves;
+#define SMC_WORK_WALK(n) (smc_work_walk += (u32)(n))
+#else
+#define SMC_WORK_WALK(n) ((void)0)
+#endif
 static int smc_retire_span(u32 lo, u32 hi)
 {
   u16 *tagp;
@@ -8964,6 +9173,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
   SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base);
   last = (hi_off - 2) >> 1;            /* last halfword slot of the range */
+  SMC_WORK_WALK(last - first + 1);
 
   /* Validate before changing anything: every live block in the window must
    * have a known extent. */
@@ -9088,6 +9298,7 @@ static int smc_retire_span(u32 lo, u32 hi)
       memset(cov, 0, (n + 7) >> 3);
       scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
       SMC_LOCAL_NARROW(scan0, rgn, ulo - base, uhi - base, tagp, base);
+      SMC_WORK_WALK(u_hi - scan0 + n);
       for (i = scan0; i < u_hi; i++) {
         if (VALID_TAG(tagp[i])) {
           ramtag_type *te = get_ram_tag(tagp[i]);
@@ -9965,6 +10176,9 @@ void flush_translation_cache_ram_smc(void)
     defined(SMC_BLOCK_EXACT)
 #error SMC_STM_RANGE needs SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK, without SMC_BLOCK_EXACT
 #endif
+#if defined(SMC_STM_WIDE) && !defined(SMC_STM_RANGE_MAX)
+#define SMC_STM_RANGE_MAX 16
+#endif
 #ifndef SMC_STM_RANGE_MAX
 #define SMC_STM_RANGE_MAX 4
 #endif
@@ -9994,12 +10208,67 @@ void flush_translation_cache_ram_smc(void)
  * LAYOUT NEUTRALITY: this sits outside the pinned hot order, and
  * flush_translation_cache_ram_smc is byte-identical with the switch on or
  * off; only the stub's function-pointer slot changes. */
+#ifdef SMC_STM_AHEAD
+#ifndef SMC_STM_WIDE
+#error SMC_STM_AHEAD needs SMC_STM_WIDE
+#endif
+#ifndef SMC_STM_AHEAD_BYTES
+#define SMC_STM_AHEAD_BYTES 1024
+#endif
+#ifndef SMC_STM_AHEAD_BLOCKS
+#define SMC_STM_AHEAD_BLOCKS 8
+#endif
+/* SMC_STM_AHEAD (cpu-levers 2026-10-27, twin prototype): an advancing copy
+ * (STMIA Rn!) that traps on live code is about to overwrite what follows it.
+ * Exact retirement of just its own span left every later STM of the copy to
+ * trap again (Hot Wheels: 774 full flushes became 58k selective traps, ~48 a
+ * frame).  So the span retired is widened FORWARD over the run of tagged
+ * words that continues from the write's end, bounded by SMC_STM_AHEAD_BYTES
+ * and by SMC_STM_AHEAD_BLOCKS block starts; the first untagged word ends it.
+ *
+ * Safety: smc_retire_span retires every live block overlapping the range, so
+ * widening it retires MORE code, never less; the written span is still inside
+ * the range.  Its interior-mark clear over the widened part removes only
+ * marks of blocks it has just retired (every covering block of the range is
+ * retired).  The cost of a too-wide guess is retranslation, not correctness.
+ * hi is canonical IWRAM (0x03000000 + off) here. */
+static u32 smc_stm_ahead(u32 hi)
+{
+  const u16 *tagp = (const u16 *)iwram;
+  u32 off = hi - 0x03000000, lim = off + SMC_STM_AHEAD_BYTES, starts = 0;
+  if (off >= 0x8000)
+    return hi;
+  if (lim > 0x8000)
+    lim = 0x8000;
+  while (off < lim) {
+    u32 t0 = tagp[off >> 1], t1 = tagp[(off >> 1) + 1];
+    if (!t0 && !t1)
+      break;
+    if ((VALID_TAG(t0) || VALID_TAG(t1)) && ++starts > SMC_STM_AHEAD_BLOCKS)
+      break;
+    off += 4;
+  }
+  return 0x03000000 + off;
+}
+u32 smc_stm_ahead_bytes;
+#endif
 void smc_trap_entry(void)
 {
+#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
+  { extern u32 census_cause; census_cause = 2; }
+#endif
 #ifdef SMC_STM_CHAIN
   smc_chain_pending = 0;           /* the chain (if any) ends in this trap */
 #endif
+#ifdef SMC_STM_WIDE
+  /* SMC_STM_WIDE: the shape below may also ACTIVATE selective retirement
+   * (Hot Wheels never raises any other range-safe event, so it stayed on the
+   * full flush for good).  Activation is the single-store path's: ROM flush
+   * once (direct links into RAM), then a full RAM flush. */
+  if (!(reg[REG_CPSR] & 0x20)) {
+#else
   if (smc_partial_active && !(reg[REG_CPSR] & 0x20)) {
+#endif
     u32 pc = GBA_PC(reg[REG_PC]) - 4;          /* as smc_writer_safe_range */
     u32 addr = smc_last_write_addr;
     u8 *blk = memory_map_read[pc >> 15];
@@ -10019,6 +10288,24 @@ void smc_trap_entry(void)
         flush_ram_smc++;
         smc_single_store = 1;
         smc_untag_now = 1;
+#ifdef SMC_STM_WIDE
+        if (!smc_partial_active) {
+          smc_partial_active = 1;
+          flush_translation_cache_rom();
+          SMC_FB(1);
+          flush_translation_cache_ram();
+        } else
+#endif
+#ifdef SMC_STM_AHEAD
+        {
+          u32 hx = smc_stm_ahead(hi);
+          smc_stm_ahead_bytes += hx - hi;
+#ifdef SMC_STM_AHEAD_MUTANT
+          lo = hi - 4;  /* MUTANT (oracle self-test): earlier words dropped */
+#endif
+          hi = hx;
+        }
+#endif
         if (smc_retire_span(lo, hi)) {
           SMC_FB(9);
         } else {
@@ -10034,9 +10321,146 @@ void smc_trap_entry(void)
 }
 #endif
 
+#ifdef DMA_SMC_RETIRE
+#ifndef SMC_STM_RANGE
+#error DMA_SMC_RETIRE needs SMC_STM_RANGE (smc_retire_span + stable thunks)
+#endif
+/* DMA_SMC_RETIRE (cpu-levers 2026-10-27, twin prototype): dma_write_iwram /
+ * dma_write_ewram record the lowest and highest TAGGED word every transfer
+ * since the last consumption wrote (gba_memory.c; only on a tag hit, so an
+ * ordinary DMA pays nothing).  Every instruction word of a live block is
+ * tagged (scan_block), so [lo, hi) covers every live code word the DMA
+ * changed: smc_retire_span's contract.  One region only; anything else, or
+ * selective retirement not active, takes the full flush as before.
+ *
+ * Measured on the twin: Top Gear Rally DMA3s code overlays from ROM into
+ * 030075d8..03007cff 3.2 times a frame, each a full RAM flush, and 31 % of the
+ * resulting retranslation is unrelated low-IWRAM code. */
+u32 dma_smc_lo[2] = { ~0u, ~0u }, dma_smc_hi[2];
+u32 dma_smc_retired;
+#ifdef DMA_SMC_ADAPT
+/* DMA_SMC_ADAPT: exact DMA retirement only while it pays.
+ *
+ * Exact retirement keeps every other translation live, so later DMAs and
+ * stores in the same frame land on tagged code and alert again where a full
+ * flush had left them nothing to hit.  Twin, 1200 f: Mario Golf -8.0 % and
+ * FIFA 07 -4.3 % core (few DMA alerts, much collateral saved), Top Gear Rally
+ * +9.7 % (DMA alerts 3797 -> 10009, store traps 9.1k -> 21.5k, xlat only
+ * -5 %).  Which way a game goes is a property of its code, so it is MEASURED,
+ * not listed:
+ *
+ *   cost of a window, per frame, in units of one translated guest halfword:
+ *     halfwords translated (RAM)  x 1    (~150 host instr each)
+ *     tag slots walked by retire  x 1/8  (~24 host instr each)
+ *     full RAM flushes            x 128  (~17k host instr each)
+ *   Prices measured on the twin (TGR, Mario Golf, FIFA 07; hb0 vs exact DMA
+ *   retire, smcwork counters).  A first model that counted SMC events at a
+ *   flat price misjudged TGR, whose DMA retires walk ~12k slots a frame.
+ *
+ * The controller starts in the full-flush mode (the established behaviour)
+ * and must find exact retirement cheaper by the margin below to keep it.
+ * Windows are DMA_ADAPT_WINDOW frames, closed at the next DMA alert (nothing
+ * here matters to a game that raises none).  After `gap` windows in the
+ * current mode, one window is spent in the other mode (a probe).  The probe
+ * mode is kept when it costs less than 7/8 of the window before it; then gap
+ * resets to DMA_ADAPT_GAP0.  Otherwise the mode reverts and gap doubles, up to
+ * DMA_ADAPT_GAP0 << 5, so a game whose answer is settled probes about once
+ * per 4096 frames.  Deterministic: frame_counter and event counts only.
+ * Every decision is logged (EVT dma_retire_mode on the PSP harness builds,
+ * SMC_EVT on the twin) so a hardware run shows each game's mode. */
+#ifndef DMA_ADAPT_WINDOW
+#define DMA_ADAPT_WINDOW 64u
+#endif
+#define DMA_ADAPT_GAP0 2u
+extern u32 smc_work_walk, smc_work_halves;
+u32 dma_rt_mode = 0, dma_rt_switches, dma_rt_probes;
+static u32 drt_f0, drt_x0, drt_ref, drt_since, drt_probing;
+static u32 drt_gap = DMA_ADAPT_GAP0;
+extern void fe_evt(const char *fmt, ...) __attribute__((weak));
+static void dma_adapt_tick(void)
+{
+  u32 f = frame_counter, frames, cost;
+  u32 w = smc_work_halves + (smc_work_walk >> 3) + (flush_ram_total << 7);
+  if (f < drt_f0 || drt_f0 == 0) {          /* first alert, or a state load */
+    drt_f0 = f ? f : 1;
+    drt_x0 = w;
+    return;
+  }
+  frames = f - drt_f0;
+  if (frames < DMA_ADAPT_WINDOW)
+    return;
+  cost = (w - drt_x0) / frames;
+  if (drt_probing) {
+    int keep = cost * 8 < drt_ref * 7;
+    dma_rt_probes++;
+    if (keep) {
+      dma_rt_switches++;
+      drt_gap = DMA_ADAPT_GAP0;
+    } else {
+      dma_rt_mode ^= 1;
+      if (drt_gap < (DMA_ADAPT_GAP0 << 5))
+        drt_gap <<= 1;
+    }
+    SMC_EVT("  DA f=%u probe %s mode=%u cost=%u ref=%u gap=%u\n", (unsigned)f,
+            keep ? "keep" : "revert", (unsigned)dma_rt_mode, (unsigned)cost,
+            (unsigned)drt_ref, (unsigned)drt_gap);
+    if (fe_evt)
+      fe_evt("dma_retire_mode f=%u probe=%s mode=%s cost=%u ref=%u gap=%u",
+             (unsigned)f, keep ? "keep" : "revert",
+             dma_rt_mode ? "retire" : "flush", (unsigned)cost,
+             (unsigned)drt_ref, (unsigned)drt_gap);
+    drt_probing = 0;
+    drt_since = 0;
+  } else {
+    drt_ref = cost;
+    if (++drt_since >= drt_gap) {
+      drt_probing = 1;
+      dma_rt_mode ^= 1;
+    }
+  }
+  drt_f0 = f;
+  drt_x0 = w;
+}
+#endif
+static int dma_smc_retire(void)
+{
+  int ok = 0;
+  u32 r = (dma_smc_hi[0] != 0) ? 0 : 1;
+#ifdef DMA_SMC_ADAPT
+  if (smc_partial_active)
+    dma_adapt_tick();
+  if (smc_partial_active && dma_rt_mode && dma_smc_hi[r] &&
+      !dma_smc_hi[r ^ 1]) {
+#else
+  if (smc_partial_active && dma_smc_hi[r] && !dma_smc_hi[r ^ 1]) {
+#endif
+    SMC_EVT("  D retire %08x..%08x\n", (unsigned)dma_smc_lo[r],
+            (unsigned)dma_smc_hi[r]);
+    smc_single_store = 1;
+    smc_untag_now = 1;
+    ok = smc_retire_span(dma_smc_lo[r], dma_smc_hi[r]);
+  }
+  dma_smc_lo[0] = dma_smc_lo[1] = ~0u;
+  dma_smc_hi[0] = dma_smc_hi[1] = 0;
+  return ok;
+}
+#endif
+
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;
+#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
+  { void census_dma_alert(void); census_dma_alert(); }
+#endif
+#ifdef DMA_SMC_RETIRE
+  DRPROF_ZONE_ENTER(DRZ_FLUSH);
+  if (dma_smc_retire()) {
+    dma_smc_retired++;
+    DRPROF_ZONE_LEAVE(DRZ_FLUSH);
+    return;
+  }
+  DRPROF_ZONE_LEAVE(DRZ_FLUSH);
+#endif
   flush_translation_cache_ram();
 }
 
@@ -11002,6 +11426,22 @@ void jit_stats_report(FILE *f)
     fprintf(f, "stmchain marks=%u same=%u\n", (unsigned)smc_chain_marks,
             (unsigned)smc_chain_same);
   }
+#endif
+#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
+  { extern u32 smc_work_walk, smc_work_halves;
+    fprintf(f, "smcwork walk=%u halves=%u\n", (unsigned)smc_work_walk,
+            (unsigned)smc_work_halves); }
+#endif
+#ifdef DMA_SMC_ADAPT
+  fprintf(f, "dmaadapt mode=%u switches=%u probes=%u\n",
+          (unsigned)dma_rt_mode, (unsigned)dma_rt_switches,
+          (unsigned)dma_rt_probes);
+#endif
+#ifdef SMC_STM_AHEAD
+  fprintf(f, "stmahead bytes=%u\n", (unsigned)smc_stm_ahead_bytes);
+#endif
+#ifdef DMA_SMC_RETIRE
+  fprintf(f, "dmaretire retired=%u\n", (unsigned)dma_smc_retired);
 #endif
 #ifdef SMC_FALLBACK_STATS
   {

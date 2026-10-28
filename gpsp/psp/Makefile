@@ -242,6 +242,12 @@ OBJS += lab_harness.o labab/budget.o labab/ab_io.o
 CFLAGS += -DLAB_HARNESS
 endif
 GBA_LINK ?= 0
+# HOT_DATA_GUARD=1 (set by tools/build.sh when the ROOT make has it): the
+# guard's 8 KiB placement comes from this INSERT script, not from section
+# alignment (psp/hot_data_guard.ld says why).
+ifeq ($(HOT_DATA_GUARD),1)
+LDFLAGS += -Wl,-T,hot_data_guard.ld
+endif
 ifeq ($(GBA_LINK),1)
 OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
         ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o \
