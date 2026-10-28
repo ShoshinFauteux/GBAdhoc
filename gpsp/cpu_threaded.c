@@ -6045,11 +6045,13 @@ static inline int immp_want_op(int ram_region, u32 pc, u32 op)
   (void)ram_region;
   return immp_blk_on && IMMP_LEARNED(pc) && immp_class_ok(op);
 }
+#ifdef EXEC_STALE_CHECK
 static void immp_note_op(u8 *host, u32 pc)  /* EXEC_STALE_CHECK's load */
 {
   immp_cur_esc = host;
   immp_esc_pc = pc;
 }
+#endif
 static void immp_note(u8 *host, u32 pc, u32 op, u32 cl)
 {
   if (immp_npend < MAX_BLOCK_SIZE) {
