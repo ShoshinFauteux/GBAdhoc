@@ -850,6 +850,28 @@ else ifeq ($(platform), psp1)
 	CFLAGS += -DSMC_REUSE_ARMING=1
 	endif
 	endif
+	# SMC_IMM_PATCH=1: OFF by default (xlat-cost 2026-10-28).  An IWRAM ARM
+	# data-processing immediate that the game keeps rewriting is emitted in a
+	# fixed lui/ori form and patched in place on the next imm-only store
+	# instead of retiring the block (Doom II / Duke / Ice Nine renderers).
+	# Needs JIT_CODE_DISCIPLINE (and the SMC single-store path).
+	ifeq ($(SMC_IMM_PATCH),1)
+	ifneq ($(JIT_CODE_DISCIPLINE),1)
+	$(error SMC_IMM_PATCH=1 needs JIT_CODE_DISCIPLINE=1)
+	endif
+	CFLAGS += -DSMC_IMM_PATCH=1
+	endif
+	# XS_NOTE_FAST=1: OFF by default (xlat-cost).  xs_note_block records eight
+	# halfwords at a time where that is exactly what the per-halfword path
+	# does.  Exact (hash-identical).  Needs SMC_SAME_SKIP.
+	ifeq ($(XS_NOTE_FAST),1)
+	CFLAGS += -DXS_NOTE_FAST=1
+	endif
+	# ENTRY_GATES_FAST=1: OFF by default (xlat-cost).  The entry-gate harvest
+	# tests four tag slots per load.  Exact.  Needs ENTRY_GATES.
+	ifeq ($(ENTRY_GATES_FAST),1)
+	CFLAGS += -DENTRY_GATES_FAST=1
+	endif
 	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
 	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective
 	# retirement (Hot Wheels' STMIA r0!,{r4-r11} code generator).  Needs
