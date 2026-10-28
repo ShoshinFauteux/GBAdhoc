@@ -1071,6 +1071,7 @@ static void ext_load(const uint8_t *q)
 {
   cursor_t c;
   c.q = q;
+  cpu_timer_dirty();
   div_clock = r32(&c);
   rest_clock = r32(&c);
   sys_clock = r32(&c);

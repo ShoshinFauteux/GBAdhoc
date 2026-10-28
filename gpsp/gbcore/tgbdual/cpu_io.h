@@ -551,9 +551,10 @@ static void cpu_io_write_04( word adr,byte dat ){
       cpu_timer_increment();
     }
     g_regs.DIV=0; div_clock=0; sys_clock=0;
+    cpu_timer_dirty();
   }
-static void cpu_io_write_05( word adr,byte dat ){ if (!timer_reloading) { g_regs.TIMA=dat; timer_pending=0; } }
-static void cpu_io_write_06( word adr,byte dat ){ g_regs.TMA=dat; if (timer_reloading) g_regs.TIMA=dat; }
+static void cpu_io_write_05( word adr,byte dat ){ if (!timer_reloading) { g_regs.TIMA=dat; timer_pending=0; } cpu_timer_dirty(); }
+static void cpu_io_write_06( word adr,byte dat ){ g_regs.TMA=dat; if (timer_reloading) g_regs.TIMA=dat; cpu_timer_dirty(); }
 static void cpu_io_write_07( word adr,byte dat )
 {
     static const unsigned short timer_bits[]={512,8,32,128};
@@ -566,6 +567,7 @@ static void cpu_io_write_07( word adr,byte dat )
       cpu_timer_increment();
     }
     g_regs.TAC=dat;
+    cpu_timer_dirty();
 }
 static void cpu_io_write_08( word adr,byte dat ){ ; }
 static void cpu_io_write_09( word adr,byte dat ){ ; }

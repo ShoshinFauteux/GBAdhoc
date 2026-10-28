@@ -58,6 +58,19 @@ byte z802gb[256],gb2z80[256];
 //	word org_pal[16][4];
 int total_clock,rest_clock,sys_clock,seri_occer,div_clock;
 static unsigned timer_pending, timer_reloading;
+#ifdef TGB_LAZY_TIMER
+/* GBAdhoc (TGB_LAZY_TIMER, docs/GB-CORE-PERF.md): clocks the timer can take
+ * before its next event -- a TIMA increment, an overflow's reload, the end
+ * of a reload -- with the timer on; 0 = unknown, take the full walk.  Below
+ * it, cpu_timer_advance would only move the divider phase, so the fast path
+ * does just that (sys_clock is that phase whenever the timer is on).  Not
+ * part of any state: anything that changes the timer outside
+ * cpu_clock_advance calls cpu_timer_dirty(). */
+static int timer_budget;
+void cpu_timer_dirty(void) { timer_budget = 0; }
+#else
+void cpu_timer_dirty(void) { }
+#endif
 /* GBAdhoc: the byte an internal-clock transfer delivers into SB when
  * seri_occer expires (0xFF with no cable), set at the SC write. */
 byte seri_rx=0xFF;
@@ -114,6 +127,7 @@ void cpu_reset(void)
 	rest_clock=0;
 	total_clock=sys_clock=div_clock=0;
 	timer_pending=timer_reloading=0;
+	cpu_timer_dirty();
 	seri_occer=0x7fffffff;
 	halt=false;
 	speed=false;
@@ -160,9 +174,22 @@ static void cpu_timer_advance(unsigned clocks) {
         if ((g_regs.TAC&4) && step==until_tick) cpu_timer_increment();
     }
     if (g_regs.TAC&4) sys_clock=(int)phase;
+#ifdef TGB_LAZY_TIMER
+    /* the next tick is period-phase clocks away; pending/reloading count
+     * down in clocks of their own, so those take the walk */
+    timer_budget=((g_regs.TAC&4) && !timer_pending && !timer_reloading)
+        ? (int)(period-phase) : 0;
+#endif
 }
 
 static void cpu_clock_advance(unsigned clocks) {
+#ifdef TGB_LAZY_TIMER
+    if ((int)clocks<timer_budget) {
+        timer_budget-=(int)clocks;
+        sys_clock+=(int)clocks;
+    }
+    else
+#endif
     cpu_timer_advance(clocks);
     div_clock+=(int)clocks;
     g_regs.DIV+=(byte)(div_clock>>8);div_clock&=255;
@@ -204,6 +231,7 @@ int cpu_timer_timing_valid(const byte *in) {
 }
 void cpu_load_timer_timing(const byte *in) {
     timer_pending=timer_reloading=0;
+    cpu_timer_dirty();
     if (!memcmp(in,"TMR1",4)) {timer_pending=in[4];timer_reloading=in[5];}
 }
 
@@ -245,6 +273,7 @@ void cpu_restore_state(int *dat)
 
 void cpu_restore_state_ex(int *dat)
 {
+	cpu_timer_dirty();
 	div_clock=dat[0];
 	rest_clock=dat[1];
 	sys_clock=dat[2];

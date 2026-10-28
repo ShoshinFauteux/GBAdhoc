@@ -63,6 +63,12 @@ TGB_OPT ?= -O3
 TGB_OBJS = $(addprefix ../gbcore/tgbdual/,apu.o cpu.o gb.o lcd.o mbc.o rom.o \
            sgb.o)
 TGB_CFLAGS = $(TGB_OPT) -fgnu89-inline -fno-strict-aliasing -Wno-unused-parameter
+# TGB_LAZY_TIMER=1 (docs/GB-CORE-PERF.md): the timer walk only when an event
+# can fall inside the step.  Exact; off until a hardware A/B.  The adapter
+# needs it too (cpu_timer_dirty on state load is defined either way).
+ifeq ($(TGB_LAZY_TIMER),1)
+TGB_CFLAGS += -DTGB_LAZY_TIMER
+endif
 # The core is one relocatable object whose only global symbols are the
 # gbcore_* API (rule below).  TGB Dual exports ~780 names -- vram, ram, oam,
 # halt, speed, info, stack -- and the first link failed on `vram`, which the
