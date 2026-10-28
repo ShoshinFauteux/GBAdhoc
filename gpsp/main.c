@@ -1344,6 +1344,9 @@ u32 function_cc update_gba(int remaining_cycles)
           // We completed a frame, tell the dynarec to exit to the main thread
           frame_complete = 0x80000000;
           frame_counter++;
+#if defined(SMC_WORK_WINDOWS) && defined(DRPROF_TWIN)
+          { void smc_work_window_dump(void); smc_work_window_dump(); }
+#endif
 #ifdef STATE_HASH_TRACE
           {
             /* DIAGNOSTIC: per-frame hash of guest-visible state. */

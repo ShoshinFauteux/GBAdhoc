@@ -804,6 +804,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DMA_SMC_ADAPT),1)
 	CFLAGS += -DDMA_SMC_ADAPT=1
 	endif
+	# DMA_ADAPT_V2=1: OFF by default (tgr-regression).  DMA_SMC_ADAPT's cost
+	# model re-priced from the twin (per translated halfword AND block, walk
+	# slot, full flush) and ties go to the full flush (cpu_threaded.c says
+	# why: Top Gear Rally +5 % on hardware).  Needs DMA_SMC_ADAPT.
+	ifeq ($(DMA_ADAPT_V2),1)
+	CFLAGS += -DDMA_ADAPT_V2=1
+	endif
 	# SMC_STM_AHEAD=1: OFF by default (twin prototype).  SMC_STM_WIDE retires
 	# forward over the tagged run after an advancing copy's write (bounded by
 	# SMC_STM_AHEAD_BYTES / SMC_STM_AHEAD_BLOCKS).  Needs SMC_STM_WIDE.

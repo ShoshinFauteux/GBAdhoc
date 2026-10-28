@@ -7377,6 +7377,9 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
   if (end_pc > start_pc && ((start_pc >> 24) == 2 || (start_pc >> 24) == 3)) {
     extern u32 smc_work_halves;
     smc_work_halves += (end_pc - start_pc) >> 1;
+#if defined(DMA_ADAPT_V2) || defined(SMC_WORK_WINDOWS)
+    { extern u32 smc_work_blocks; smc_work_blocks++; }
+#endif
   }
 #endif
 
@@ -8885,6 +8888,27 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
  * prints them on the twin): tag slots walked by selective retirement, and
  * guest halfwords scanned by RAM translations. */
 u32 smc_work_walk, smc_work_halves;
+#if defined(DMA_ADAPT_V2) || defined(SMC_WORK_WINDOWS)
+u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
+#endif
+#if defined(SMC_WORK_WINDOWS) && defined(DRPROF_TWIN)
+/* DIAGNOSTIC (twin only, tgr-regression 2026-10-28): cumulative SMC work
+ * counters once per emulated frame (host frame index = drprof's F index),
+ * to stderr, so the cost model's prices can be fitted against the twin's
+ * per-frame zone instruction counts. */
+void smc_work_window_dump(void)
+{
+  static u32 n;
+  n++;
+  fprintf(stderr, "WW %u %u %u %u %u %u %u %u %u %u %u %u\n", (unsigned)n,
+          (unsigned)frame_counter, (unsigned)smc_work_halves,
+          (unsigned)smc_work_walk, (unsigned)flush_ram_total,
+          (unsigned)flush_ram_partial, (unsigned)flush_ram_smc,
+          (unsigned)flush_ram_dma, (unsigned)jit_code_stats.publishes,
+          (unsigned)jit_code_stats.spans, (unsigned)jit_code_stats.lines,
+          (unsigned)smc_work_blocks);
+}
+#endif
 #define SMC_WORK_WALK(n) (smc_work_walk += (u32)(n))
 #else
 #define SMC_WORK_WALK(n) ((void)0)
@@ -10069,6 +10093,9 @@ void smc_trap_entry(void)
 }
 #endif
 
+#if defined(DMA_ADAPT_V2) && !defined(DMA_SMC_ADAPT)
+#error DMA_ADAPT_V2 needs DMA_SMC_ADAPT
+#endif
 #ifdef DMA_SMC_RETIRE
 #ifndef SMC_STM_RANGE
 #error DMA_SMC_RETIRE needs SMC_STM_RANGE (smc_retire_span + stable thunks)
@@ -10125,21 +10152,107 @@ u32 dma_rt_mode = 0, dma_rt_switches, dma_rt_probes;
 static u32 drt_f0, drt_x0, drt_ref, drt_since, drt_probing;
 static u32 drt_gap = DMA_ADAPT_GAP0;
 extern void fe_evt(const char *fmt, ...) __attribute__((weak));
+#ifdef DMA_ADAPT_V2
+/* DMA_ADAPT_V2 (tgr-regression 2026-10-28): a cost model fitted to what the
+ * work costs, and ties go to the full flush.
+ *
+ * WHY.  Hardware A/B lab-xvr2 vs lab-f1c2: Top Gear Rally +5 % on both
+ * consoles; the twin over the whole 3930-frame fixture agrees (+4.0 %
+ * instructions; the 1200-frame census before saw only the heavy part).
+ * The controller made two mistakes there:
+ *   1. f=5574 the scene lightens 4x DURING a retire probe (probe 1951 vs
+ *      the heavy-scene reference 7509), so retire was kept;
+ *   2. it then stayed in retire: every later flush probe measured a tie
+ *      under the old prices (2528 vs 2430, 2482 vs 2425, 2355 vs 2311), and
+ *      a tie kept the current mode.  The twin's instruction counts for those
+ *      windows say retire costs +10..13 % of ALL core work.
+ * The old prices (halfword x1 ~150 instr, walk slot x1/8, full flush x128)
+ * explain the twin's paired windows worse than a constant (R^2 -1.9 on the
+ * 546 windows below) and get the SIGN wrong for TGR (always-retire: model
+ * -322M instructions, twin +891M over 4000 frames).  A translated halfword
+ * costs ~100 instructions, not 150; every translated BLOCK has a fixed cost
+ * (~1.4k: lookup, entry-gate harvest, publish, notes) and every retired
+ * block another (~1.9k: stable thunk, untag) that the halfword count misses
+ * -- retire mode translates more, smaller blocks.
+ *
+ * WHAT.  cost/frame = halves*P_HALF + blocks*P_BLOCK + walk*P_WALK +
+ * full flushes*P_FULL + retired blocks*P_RETIRED, in twin instructions.
+ * Prices: least squares over 546 paired 64-frame windows (flush-only vs
+ * always-retire vs adaptive twins of TGR, Mario Golf, FIFA 07, Mario Tennis,
+ * Hot Wheels; SMC_WORK_WINDOWS), R^2 0.974 against the twin's core
+ * instruction counts; per-title totals within ~15 %.  Exact retirement is the
+ * mode only while it is at least 1/8 cheaper than the flush, whichever mode
+ * the probe came from; anything closer returns to the established full
+ * flush.  Mistake 1 then costs at most the gap until the next probe
+ * (DMA_ADAPT_GAP0 windows), because the next flush probe sees the light
+ * scene too.  Deterministic: event counts and frame_counter only. */
+#ifndef DA2_P_HALF
+#define DA2_P_HALF    100u   /* guest halfword translated (RAM) */
+#endif
+#ifndef DA2_P_BLOCK
+#define DA2_P_BLOCK  1360u   /* RAM block translated: fixed part */
+#endif
+#ifndef DA2_P_WALK
+#define DA2_P_WALK     20u   /* tag slot walked by smc_retire_span */
+#endif
+#ifndef DA2_P_FULL
+#define DA2_P_FULL  23000u   /* full RAM flush */
+#endif
+#ifndef DA2_P_RETIRED
+#define DA2_P_RETIRED 1920u  /* block retired selectively (thunk, untag) */
+#endif
+extern u32 smc_work_blocks;
+static u32 drt_s[5];
+static u32 da2_cost(u32 frames, int reset)
+{
+  u32 c[5], i;
+  unsigned long long w;
+  c[0] = smc_work_halves; c[1] = smc_work_blocks;
+  c[2] = smc_work_walk;   c[3] = flush_ram_total; c[4] = flush_ram_partial;
+  w = (unsigned long long)(c[0] - drt_s[0]) * DA2_P_HALF +
+      (unsigned long long)(c[1] - drt_s[1]) * DA2_P_BLOCK +
+      (unsigned long long)(c[2] - drt_s[2]) * DA2_P_WALK +
+      (unsigned long long)(c[3] - drt_s[3]) * DA2_P_FULL +
+      (unsigned long long)(c[4] - drt_s[4]) * DA2_P_RETIRED;
+  if (reset)
+    for (i = 0; i < 5; i++)
+      drt_s[i] = c[i];
+  w /= frames ? frames : 1;
+  return w > 0xFFFFFFFFull ? 0xFFFFFFFFu : (u32)w;
+}
+#endif
 static void dma_adapt_tick(void)
 {
   u32 f = frame_counter, frames, cost;
+#ifndef DMA_ADAPT_V2
   u32 w = smc_work_halves + (smc_work_walk >> 3) + (flush_ram_total << 7);
+#endif
   if (f < drt_f0 || drt_f0 == 0) {          /* first alert, or a state load */
     drt_f0 = f ? f : 1;
+#ifdef DMA_ADAPT_V2
+    da2_cost(1, 1);
+#else
     drt_x0 = w;
+#endif
     return;
   }
   frames = f - drt_f0;
   if (frames < DMA_ADAPT_WINDOW)
     return;
+#ifdef DMA_ADAPT_V2
+  cost = da2_cost(frames, 1);
+#else
   cost = (w - drt_x0) / frames;
+#endif
   if (drt_probing) {
+#ifdef DMA_ADAPT_V2
+    /* the probe ran in dma_rt_mode; drt_ref is the other mode's window */
+    u32 rc = dma_rt_mode ? cost : drt_ref, fc = dma_rt_mode ? drt_ref : cost;
+    int want_retire = (unsigned long long)rc * 8 < (unsigned long long)fc * 7;
+    int keep = (u32)want_retire == dma_rt_mode;
+#else
     int keep = cost * 8 < drt_ref * 7;
+#endif
     dma_rt_probes++;
     if (keep) {
       dma_rt_switches++;
@@ -10167,7 +10280,9 @@ static void dma_adapt_tick(void)
     }
   }
   drt_f0 = f;
+#ifndef DMA_ADAPT_V2
   drt_x0 = w;
+#endif
 }
 #endif
 static int dma_smc_retire(void)
