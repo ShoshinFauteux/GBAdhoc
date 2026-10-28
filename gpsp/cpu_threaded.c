@@ -8222,6 +8222,10 @@ static u32 smc_cand_used;
 /* Returns 1 when this address has earned a gate. */
 static u32 smc_cand_val[SMC_GATE_CAND];   /* last value seen at the address */
 static u32 smc_cand_chg[SMC_GATE_CAND];   /* times it actually CHANGED */
+#ifdef SMC_GATE_SELFPATCH
+static u32 smc_cand_sp[SMC_GATE_CAND];    /* times it was a forward self-patch */
+static u32 smc_gate_sp_now;               /* this trap is one (smc_add_gate) */
+#endif
 
 /* Gate only addresses whose writes genuinely MODIFY memory.
  *
@@ -8261,6 +8265,12 @@ void smc_gates_refresh_values(void)
     smc_cand_val[k] = *smc_gba_ptr(smc_cand_addr[k]);
 }
 
+#ifdef SMC_GATE_SELFPATCH
+#define SMC_CAND_SP(k) smc_cand_sp[k]
+#else
+#define SMC_CAND_SP(k) 0u
+#endif
+
 static int smc_gate_earned(u32 gpc)
 {
   u32 k, coldest = 0, cur = *smc_gba_ptr(gpc);
@@ -8269,17 +8279,38 @@ static int smc_gate_earned(u32 gpc)
       smc_cand_hits[k]++;
       if (cur != smc_cand_val[k]) smc_cand_chg[k]++;
       smc_cand_val[k] = cur;
-      /* enough evidence, and the writes really do rewrite the bytes */
+#ifdef SMC_GATE_SELFPATCH
+      smc_cand_sp[k] += smc_gate_sp_now;
+#endif
+      SMC_EVT("C %08x k=%u hits=%u chg=%u sp=%u used=%u\n", (unsigned)gpc,
+              (unsigned)k, (unsigned)smc_cand_hits[k],
+              (unsigned)smc_cand_chg[k], (unsigned)SMC_CAND_SP(k),
+              (unsigned)smc_cand_used);
+      /* enough evidence, and the writes really do rewrite the bytes -- or
+       * (SMC_GATE_SELFPATCH) they are mostly code patching the code just
+       * ahead of itself, see smc_gate_selfpatch */
+#ifdef SMC_GATE_SELFPATCH
+      return smc_cand_hits[k] >= SMC_GATE_MIN_SAMPLE &&
+             (smc_cand_chg[k] * 2 >= smc_cand_hits[k] ||
+              smc_cand_sp[k] * 2 >= smc_cand_hits[k]);
+#else
       return smc_cand_hits[k] >= SMC_GATE_MIN_SAMPLE &&
              smc_cand_chg[k] * 2 >= smc_cand_hits[k];
+#endif
     }
   if (smc_cand_used >= SMC_GATE_CAND) {
     for (k = 1; k < SMC_GATE_CAND; k++)
       if (smc_cand_hits[k] < smc_cand_hits[coldest]) coldest = k;
   } else coldest = smc_cand_used++;
+  SMC_EVT("C %08x new slot=%u evicts=%08x/%u used=%u\n", (unsigned)gpc,
+          (unsigned)coldest, (unsigned)smc_cand_addr[coldest],
+          (unsigned)smc_cand_hits[coldest], (unsigned)smc_cand_used);
   smc_cand_addr[coldest] = gpc;
   smc_cand_hits[coldest] = 1;
   smc_cand_chg[coldest]  = 0;
+#ifdef SMC_GATE_SELFPATCH
+  smc_cand_sp[coldest]   = smc_gate_sp_now;
+#endif
   smc_cand_val[coldest]  = cur;
   return 0;
 }
@@ -8289,6 +8320,9 @@ static void smc_cand_forget(void)
   memset(smc_cand_hits, 0, sizeof(smc_cand_hits));
   memset(smc_cand_val,  0, sizeof(smc_cand_val));
   memset(smc_cand_chg,  0, sizeof(smc_cand_chg));
+#ifdef SMC_GATE_SELFPATCH
+  memset(smc_cand_sp,   0, sizeof(smc_cand_sp));
+#endif
   smc_cand_used = 0;
 }
 
@@ -8353,11 +8387,98 @@ static void smc_add_gate(u32 gba_addr)
  * frame_counter, which savestates restore, while smc_gate_last_hit[] does not.
  * Loading a state with a lower frame count underflows the idle comparison to
  * ~4.29e9, so every gate reads as infinitely idle and churns constantly. */
+#ifdef SMC_GATE_SELFPATCH
+#if !defined(SMC_GATES_RANKED) || defined(SMC_GATES_SNAP) || \
+    defined(SMC_GATES_SNAPF) || defined(SMC_GATES_CODED)
+#error SMC_GATE_SELFPATCH is written for SMC_GATES_SIMPLE + SMC_GATES_RANKED
+#endif
+/* SMC_GATE_SELFPATCH (claude/idle-general, 2026-10-27): code that patches
+ * the code just AHEAD of itself earns a gate at the start of what it wrote,
+ * whether or not the bytes change.
+ *
+ * Measured on the twin, Mario Golf (fixture mgolf, frames 760-820): a setup
+ * routine at 0x03000cdc..0x03000cf8 runs four two-word STMIAs (r1 = the
+ * target, no writeback) into the unrolled loop it falls into at 0x03000d00.
+ * The stored words are the ones already there (the retranslated source hash
+ * is identical after every store), so the ranked rule's change test sees
+ * chg = 0 in 505 of 505 samples and never promotes -- the rule that keeps a
+ * re-stored DATA word (H&S 0x03001404) from becoming a code entry.  But
+ * every store still traps (the writer is not a range-safe shape) and takes
+ * a full RAM flush, and the writer's own retranslation scans straight
+ * through the next target, so the next STM traps again: 4 full flushes a
+ * pass, 456 per 60 frames.  The game table seeds a gate at 0x03000d00, the
+ * first written word: the writer's block then ends there, one flush a pass,
+ * and xlat is ~1/3 lower (twin: seeds worth ~18 % of Golf's core work).
+ *
+ * The evidence used instead of "the bytes changed": the trapping store and
+ * its whole written range lie in one contiguous run of translated code,
+ * the range AHEAD of the store.  That run is what the writer's next scan
+ * re-covers, so isolating it is what pays; and the word is inside straight-
+ * line code the writer itself executes through (a data word re-stored by
+ * unrelated code fails "ahead of the writer, contiguous with it").  The
+ * gate goes on the lowest word the store wrote -- for an STM, the first
+ * register's word, which the trap (raised on the LAST word only) does not
+ * report -- so no word of the write stays inside the writer's block.
+ * Promotion still needs SMC_GATE_MIN_SAMPLE traps at that address, a
+ * majority of them self-patches; add-only and the table size are unchanged.
+ *
+ * Returns the gate address for a self-patching trap, else 0. */
+#ifndef SMC_SELFPATCH_SPAN
+#define SMC_SELFPATCH_SPAN (MAX_BLOCK_SIZE * 4)   /* one ARM block, at most */
+#endif
+static u32 smc_gate_selfpatch(u32 addr)
+{
+  u32 thumb = (reg[REG_CPSR] >> 5) & 1;
+  u32 pc = GBA_PC(reg[REG_PC]) - (thumb ? 2 : 4);
+  u32 n = 1, op, lo, hi, a, region, mask;
+  const u8 *mem;
+  const u16 *tags;
+
+  if ((pc >> 24) != (addr >> 24))
+    return 0;
+  if ((addr >> 24) == 0x03) {
+    mem = iwram + 0x8000; tags = (const u16 *)iwram;  mask = 0x7FFF;
+  } else if ((addr >> 24) == 0x02) {
+    mem = ewram; tags = (const u16 *)(ewram + 0x40000); mask = 0x3FFFF;
+  } else
+    return 0;
+  region = addr & ~mask;
+  if (thumb) {
+    op = *(const u16 *)(mem + (pc & mask & ~1u));
+    if ((op & 0xF800) == 0xC000)                    /* STMIA rb!, {list} */
+      n = __builtin_popcount(op & 0xFF);
+    else if ((op & 0xFE00) == 0xB400)               /* PUSH {list, lr} */
+      n = __builtin_popcount(op & 0xFF) + ((op >> 8) & 1);
+  } else {
+    op = *(const u32 *)(mem + (pc & mask & ~3u));
+    if ((op & 0x0E100000) == 0x08000000)            /* STM, any mode */
+      n = __builtin_popcount(op & 0xFFFF);
+  }
+  if (!n)
+    return 0;
+  hi = (addr & ~3u) + 4;                            /* the trap: last word */
+  lo = hi - 4 * n;
+  if ((lo & ~mask) != region || lo <= pc || hi - pc > SMC_SELFPATCH_SPAN)
+    return 0;
+  for (a = pc & ~1u; a < hi; a += 2)                /* one contiguous run */
+    if (!tags[(a & mask) >> 1])
+      return 0;
+  return lo;
+}
+#endif
+
 static void smc_add_gate(u32 gba_addr)
 {
   u32 gpc = SMC_GATE_PICK(gba_addr), g;
 #if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
   if (!gpc) return;   /* no proven code entry for this write */
+#endif
+#ifdef SMC_GATE_SELFPATCH
+  {
+    u32 sp = smc_gate_selfpatch(gba_addr);
+    smc_gate_sp_now = sp != 0;
+    if (sp) gpc = sp;
+  }
 #endif
   if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
 
@@ -8365,7 +8486,11 @@ static void smc_add_gate(u32 gba_addr)
     if (translation_gate_target_pc[g] == gpc)
       return;                       /* already gated — nothing to do */
 
-  if (!SMC_GATE_EARNED(gpc)) return;   /* not hot enough yet */
+  if (!SMC_GATE_EARNED(gpc)) {
+    SMC_EVT("G %08x no\n", (unsigned)gpc);
+    return;   /* not hot enough yet */
+  }
+  SMC_EVT("G %08x ADD n=%u\n", (unsigned)gpc, (unsigned)translation_gate_targets);
   if (translation_gate_targets < MAX_TRANSLATION_GATES) {
     translation_gate_target_pc[translation_gate_targets++] = gpc;
     SMC_GATE_MAP_ADD(gpc);
@@ -9719,6 +9844,15 @@ void flush_translation_cache_ram_smc(void)
   smc_untag_now = 0;
 #endif
   range_safe = smc_writer_safe_range(&partial_low, &partial_high);
+#ifdef SMC_PARTIAL_SINGLE
+  SMC_EVT("R rs=%d single=%d lo=%08x hi=%08x act=%d op=%08x\n", range_safe,
+          smc_single_store, (unsigned)partial_low, (unsigned)partial_high,
+          smc_partial_active,
+          (unsigned)(((GBA_PC(reg[REG_PC]) >> 24) == 3 &&
+                      !(reg[REG_CPSR] & 0x20)) ?
+             *(u32 *)(iwram + 0x8000 + ((GBA_PC(reg[REG_PC]) - 4) & 0x7FFC)) :
+             0));
+#endif
   int range_gate_changed = 0;
 #ifdef GATE_ONLY_FULLFLUSH
   /* DIAGNOSTIC: install the endpoint gates but never activate partial

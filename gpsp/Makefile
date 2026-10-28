@@ -780,6 +780,14 @@ else ifeq ($(platform), psp1)
 	ifeq ($(NO_GAME_SPEED_HINTS),1)
 	CFLAGS += -DNO_GAME_SPEED_HINTS=1
 	endif
+	# SMC_GATE_SELFPATCH=1: OFF by default (claude/idle-general).  The ranked
+	# SMC gate rule also promotes a store that patches the code just ahead of
+	# itself (same contiguous translated run), even when it re-stores the
+	# same bytes, and gates the lowest word it wrote.  Learns Mario Golf's
+	# table gate (0x03000d00) at run time.  Needs SMC_GATES_RANKED.
+	ifeq ($(SMC_GATE_SELFPATCH),1)
+	CFLAGS += -DSMC_GATE_SELFPATCH=1
+	endif
 	# SMC_SAME_ADAPT=1: OFF by default (cpu-levers).  Refines SMC_SAME_SKIP:
 	# stop recording translated IWRAM halfwords while the skip rate does not
 	# pay for the recording (Hot Wheels: all cost, no traps); re-probe after
