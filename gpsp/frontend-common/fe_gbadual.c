@@ -219,9 +219,11 @@ uint16_t fe_gbadual_keys_from_retro(uint32_t pad)
 
 /* ---- instance B's static state belongs to the session (section 19) ----
  *
- * B's .bss is one block, padded to whole MiB (psp/gbalink_core_b.ld).  While
- * B is not loaded it is LENT to instance A's ROM cache as a second spare
- * pool, so a single-player game keeps those megabytes.  Before B is loaded
+ * B's .bss is one block, rounded up to a 32 KiB ROM page (psp/
+ * gbalink_core_b.ld).  While B is not loaded it is LENT to instance A's ROM
+ * cache as a second spare pool, so a single-player game keeps those
+ * megabytes: whole MiB as blocks, the remainder as the cache's last, partial
+ * block (gba_memory.c gamepak_buffer_pages).  Before B is loaded
  * the block is zeroed and B's .data is put back from the copy taken at boot,
  * so every session's instance B starts from exactly the bytes a fresh boot
  * gives it, however the last session or the lending left them. */

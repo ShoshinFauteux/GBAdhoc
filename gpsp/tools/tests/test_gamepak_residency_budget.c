@@ -197,7 +197,65 @@ int main(void)
   assert(gamepak_buffer_count == 15);
   check_released_all(heap - 1);
 
+  /* 6. A second pool that is not a whole MiB (GBA_LINK instance B's state,
+   * lent at its exact page-rounded size): its whole MiB are blocks, its
+   * remainder is the cache's LAST block, a partial one, after the heap's;
+   * the heap's mallocs are exactly those without the tail; the tail is
+   * never freed; a reload adds it exactly when the boot did. */
+  {
+    static u8 pool2[4 * MIB + 8 * 32768];
+    u32 pages_tail;
+    heap = 1 * MIB + HDR + 5 * (MIB + HDR) + 300 * 1024;
+    reset(heap, 32, 0, 0);
+    gamepak_spare_pool2 = pool2;
+    gamepak_spare_pool2_bytes = (u32)sizeof(pool2);
+    init_gamepak_buffer();
+    assert(gamepak_static_blocks == 4);
+    assert(gamepak_buffer_count == 4 + 5 + 1);
+    assert(gamepak_buffer_pages == 9 * 32 + 8);
+    assert(gamepak_buffers[9] == pool2 + 4 * MIB);
+    assert(gamepak_lru_tail == 9 * 32 + 8 - 1);
+    assert(gamepak_block_bytes(8) == MIB && gamepak_block_bytes(9) == 8 * 32768);
+    gamepak_size = (9 * 32 + 8) * 32768;          /* held exactly whole */
+    assert(!gamepak_must_swap());
+    gamepak_size += 32768;                        /* one page more pages */
+    assert(gamepak_must_swap());
+    gamepak_size = 0;
+    pages_tail = gamepak_buffer_pages;
+    left_paged = budget_left;
+    /* a reload of the same game: capped at the boot's blocks, tail again */
+    memory_term();
+    assert(budget_left == heap);
+    gamepak_reload = 1;
+    budget_left = heap;
+    init_gamepak_buffer();
+    assert(gamepak_buffer_count == 10 && gamepak_buffer_pages == pages_tail);
+    (void)left_paged;
+    gamepak_reload = 0;
+    check_released_all(heap);   /* the tail never reached free() */
+
+    /* held whole without it: no tail */
+    reset(heap, 6, 0, 0);
+    gamepak_spare_pool2 = pool2;
+    gamepak_spare_pool2_bytes = (u32)sizeof(pool2);
+    init_gamepak_buffer();
+    assert(gamepak_buffer_count == 6 && gamepak_buffer_pages == 6 * 32);
+    check_released_all(heap);
+
+    /* a whole-MiB pool: exactly the old layout */
+    reset(heap, 32, 0, 0);
+    gamepak_spare_pool2 = pool2;
+    gamepak_spare_pool2_bytes = 4 * MIB;
+    init_gamepak_buffer();
+    assert(gamepak_buffer_count == 9 && gamepak_buffer_pages == 9 * 32);
+    assert(gamepak_lru_tail == 9 * 32 - 1);
+    check_released_all(heap);
+    gamepak_spare_pool2 = NULL;
+    gamepak_spare_pool2_bytes = 0;
+  }
+
   puts("PASS gamepak residency budget: floor kept, short heap pages, "
-       "1000 unchanged, spare pool used first and never freed");
+       "1000 unchanged, spare pool used first and never freed, "
+       "a lent pool's tail is the last partial block");
   return 0;
 }

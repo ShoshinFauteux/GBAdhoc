@@ -17,6 +17,10 @@ static RFILE *gamepak_file_large;
 static u8 *gamepak_buffers[32], *gamepak_mini_rom;
 static u32 gamepak_buffer_count, gamepak_size, gamepak_file_blocks;
 static const unsigned gamepak_buffer_blocksize = 1024*1024;
+/* 32 KiB pages held; the last block may be short (gba_memory.c). */
+static u32 gamepak_buffer_pages;
+static __attribute__((unused)) u32 gamepak_block_bytes(u32 i)
+{ return i < (gamepak_buffer_pages >> 5) ? gamepak_buffer_blocksize : (gamepak_buffer_pages & 31u) << 15; }
 static bool gamepak_mirror_1m, gamepak_mini_materialized;
 static int64_t gamepak_file_bytes;
 static char gamepak_path[1024];
@@ -71,7 +75,7 @@ static void reset(unsigned buffers, unsigned size, int fail)
    free(gamepak_mini_rom); gamepak_mini_rom=NULL;
    for(i=0;i<32;i++) { free(gamepak_buffers[i]); gamepak_buffers[i]=NULL; }
    for(i=0;i<buffers;i++) { gamepak_buffers[i]=malloc(1024*1024); assert(gamepak_buffers[i]); memset(gamepak_buffers[i],0,1024*1024); }
-   gamepak_buffer_count=buffers; file.size=size; mini_fail=fail;
+   gamepak_buffer_count=buffers; gamepak_buffer_pages=buffers*32; file.size=size; mini_fail=fail;
    gamepak_mini_materialized=gamepak_mirror_1m=false;
    gamepak_size=gamepak_file_blocks=0;
    evict_at=maps=io_calls=notifications=last_done=0;
