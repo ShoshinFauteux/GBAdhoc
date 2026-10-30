@@ -1572,13 +1572,24 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   arm_block_memory_writeback_post_store(writeback_type);                      \
   generate_function_call_swap_delay(execute_store_u32);                       \
 
-#define arm_block_memory_adjust_pc_store()                                    \
+#define arm_block_memory_adjust_pc_store(s_bit)                               \
 
-#define arm_block_memory_adjust_pc_load()                                     \
+/* LDM with the PC in the list and the S bit ("LDM rn, {..., pc}^") also
+ * restores the CPSR from the SPSR, like MOVS pc (check_store_reg_pc_flags):
+ * the target is in reg_a0 and execute_spsr_restore returns it with bit 0 =
+ * CPSR.T.  This used to branch without the restore and stay in the mode. */
+#define arm_block_memory_pc_load_yes()                                        \
+    generate_function_call(execute_spsr_restore);                             \
+    generate_indirect_branch_dual();                                          \
+
+#define arm_block_memory_pc_load_no()                                         \
+    generate_indirect_branch_arm();                                           \
+
+#define arm_block_memory_adjust_pc_load(s_bit)                                \
   if(reg_list & 0x8000)                                                       \
   {                                                                           \
     generate_mov(reg_a0, reg_rv);                                             \
-    generate_indirect_branch_arm();                                           \
+    arm_block_memory_pc_load_##s_bit();                                       \
   }                                                                           \
 
 #define arm_block_memory_sp_load()                                            \
@@ -1591,12 +1602,12 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   mips_emit_sw(arm_to_mips_reg[store_reg], reg_a1, offset);                   \
 }                                                                             \
 
-#define arm_block_memory_sp_adjust_pc_store()                                 \
+#define arm_block_memory_sp_adjust_pc_store(s_bit)                            \
 
-#define arm_block_memory_sp_adjust_pc_load()                                  \
+#define arm_block_memory_sp_adjust_pc_load(s_bit)                             \
   if(reg_list & 0x8000)                                                       \
   {                                                                           \
-    generate_indirect_branch_arm();                                           \
+    arm_block_memory_pc_load_##s_bit();                                       \
   }                                                                           \
 
 #define arm_block_memory_offset_down_a()                                      \
@@ -1686,7 +1697,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
     }                                                                         \
                                                                               \
     arm_block_memory_writeback_post_##access_type(writeback_type);            \
-    arm_block_memory_sp_adjust_pc_##access_type();                            \
+    arm_block_memory_sp_adjust_pc_##access_type(s_bit);                       \
   }                                                                           \
   else                                                                        \
   {                                                                           \
@@ -1711,7 +1722,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
       }                                                                       \
     }                                                                         \
                                                                               \
-    arm_block_memory_adjust_pc_##access_type();                               \
+    arm_block_memory_adjust_pc_##access_type(s_bit);                          \
   }                                                                           \
 }                                                                             \
 
