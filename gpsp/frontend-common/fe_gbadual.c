@@ -28,6 +28,7 @@ void   gbab_retro_unload_game(void);
 void   gbab_retro_deinit(void);
 void   gbab_dynarec_release_translation_caches(void) __attribute__((weak));
 void   gbab_gamepak_share_release(void) __attribute__((weak));
+void   gbab_dynarec_heap_tables_release(void) __attribute__((weak));
 bool   gbab_retro_unserialize(const void *, size_t);
 size_t gbab_retro_serialize_size(void);
 bool   gbab_retro_serialize(void *, size_t);
@@ -1039,6 +1040,11 @@ void fe_gbadual_unload(void)
          gbab_dynarec_release_translation_caches();
       if (gbab_gamepak_share_release)
          gbab_gamepak_share_release();
+      /* B's XS_HEAP tables (cpu_threaded.c): their pointer is in B's .bss,
+       * which b_fresh zeroes and the lend hands to A's ROM cache, so the
+       * block is freed here or orphaned every session (70,672 B a cycle). */
+      if (gbab_dynarec_heap_tables_release)
+         gbab_dynarec_heap_tables_release();
    }
    gbab_gamepak_share_in = NULL;
    gamepak_evict_hook = NULL;
