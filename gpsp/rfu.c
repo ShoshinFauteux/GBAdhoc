@@ -1080,6 +1080,8 @@ static struct {
     u16 devid;       // Host-assigned device ID
     u16 clttl;       // Client TTL (to check for disconnects)
     rfu_map_t map;   // this client's frame timeline, mapped onto ours
+    u32 sup_run;     // rfu_supersede arming: frames over the allowance
+    u32 sup_armed;
     struct {
       u32 datalen;   // Byte count of data waiting to be polled.
       u8  st;        // carries a sender stamp (map valid)
@@ -1094,6 +1096,8 @@ static struct {
   u16 clnum;         // Client number (0 to 3)
   u16 host_id;       // Client ID for the host device.
   rfu_map_t map;     // the host's frame timeline, mapped onto ours
+  u32 sup_run;       // rfu_supersede arming: frames over the allowance
+  u32 sup_armed;
   // Store host recevied packets (up to 8!)
   struct {
     u16 hblen;       // Bytes received from the host.
@@ -1447,8 +1451,44 @@ static u32 rfu_shed_host(void)
  * Never below RFU_SUPERSEDE_KEEP queued: that much is jitter buffer, and a
  * link whose lossless forces keep up never reaches the rule at all.  Never the
  * newest packet (nothing has replaced it), never an unstamped one (an older
- * peer or the Mystery Gift cart: no timeline, historical behaviour). */
+ * peer or the Mystery Gift cart: no timeline, historical behaviour).
+ *
+ * And only against a STANDING backlog.  The touch model is per frame; a game
+ * that reads from its reception callback (Gen3's librfu) may answer a packet a
+ * frame or two later and still never lose one on hardware, where no transport
+ * jitter ever clumps its traffic.  Our transport does, and the Emerald Union
+ * Room handshake under 5% loss / 30 ms jitter queues up to 9 packets for a
+ * few frames and drains them itself (standing backlog <= 2 in every window).
+ * Superseding inside those transients lost packets Gen3 requires: the
+ * impaired trade e2e failed 5/6 ("trade never started"), and still 3/6 with
+ * same-sender-frame packets exempt, against 3/3 with the rule off and 3/3 on
+ * the pre-change build.  The backlog the rule exists for
+ * never drains (Golf, Tennis: tens of packets standing), so the rule ARMS only
+ * after the queue has stayed above the allowance for RFU_SUPERSEDE_ARM frames
+ * running, and disarms once the queue empties (the receiver caught up by
+ * itself).  What piled up while it was arming is a standing lag no hardware
+ * adapter could hold -- its buffer is one packet -- and the rule cannot see
+ * it any more (the colliding packets were delivered while arming), so a
+ * backlog that has stood above the allowance for RFU_SUPERSEDE_ARM frames is
+ * cut back to the allowance, oldest first, and the rule keeps it there. */
 #define RFU_SUPERSEDE_KEEP RFU_PACE_LOW
+#define RFU_SUPERSEDE_ARM  30
+
+/* One frame of the arming gate for a queue of `depth`; returns armed. */
+static u32 rfu_sup_gate(u32 depth, u32 *run, u32 *armed)
+{
+  if (depth > RFU_SUPERSEDE_KEEP) {
+    if (*run < RFU_SUPERSEDE_ARM)
+      (*run)++;
+    if (*run >= RFU_SUPERSEDE_ARM)
+      *armed = 1;
+  } else {
+    *run = 0;
+    if (depth == 0)
+      *armed = 0;
+  }
+  return *armed;
+}
 static u32 rfu_supersede_on = 1;
 static u32 rfu_sup_n_client, rfu_sup_n_host;     /* superseded, per window */
 
@@ -1551,20 +1591,37 @@ static int rfu_superseded(u32 side, u32 st0, u32 map0, u32 st1, u32 map1)
 
 static u32 rfu_supersede_client(void)
 {
-  u32 depth, i, w, n = 0;
+  u32 depth, i, w, k, n = 0;
   u8 kill[RFU_PKT_QUEUE];
+  u32 total = rfu_client_queued();
+  if (!rfu_sup_gate(total, &rfu_client.sup_run, &rfu_client.sup_armed) ||
+      !rfu_supersede_on)
+    return 0;
+  if (rfu_client.sup_run >= RFU_SUPERSEDE_ARM) {   /* the standing lag */
+    for (depth = 0; depth < RFU_PKT_QUEUE && rfu_client.pkts[depth].hblen; depth++)
+      ;
+    for (i = 0; total > RFU_SUPERSEDE_KEEP && i + 1 < depth &&
+                rfu_client.pkts[i].st; i++, total--)
+      n++;
+    if (n) {
+      memmove(&rfu_client.pkts[0], &rfu_client.pkts[n],
+              (RFU_PKT_QUEUE - n) * sizeof(rfu_client.pkts[0]));
+      for (i = RFU_PKT_QUEUE - n; i < RFU_PKT_QUEUE; i++)
+        rfu_client.pkts[i].hblen = 0;
+    }
+  }
   for (depth = 0; depth < RFU_PKT_QUEUE && rfu_client.pkts[depth].hblen; depth++)
     ;
-  if (!rfu_supersede_on || depth <= RFU_SUPERSEDE_KEEP)
-    return 0;
+  if (depth <= RFU_SUPERSEDE_KEEP)
+    return n;
   for (i = 0; i + 1 < depth; i++)
     kill[i] = (u8)rfu_superseded(0, rfu_client.pkts[i].st, rfu_client.pkts[i].map,
                                  rfu_client.pkts[i + 1].st,
                                  rfu_client.pkts[i + 1].map);
   kill[depth - 1] = 0;
-  for (i = 0, w = 0; i < depth; i++) {
-    if (kill[i] && depth - n > RFU_SUPERSEDE_KEEP) {
-      n++;
+  for (i = 0, w = 0, k = 0; i < depth; i++) {
+    if (kill[i] && depth - k > RFU_SUPERSEDE_KEEP) {
+      k++;
       continue;
     }
     if (w != i)
@@ -1573,7 +1630,7 @@ static u32 rfu_supersede_client(void)
   }
   for (i = w; i < depth; i++)
     rfu_client.pkts[i].hblen = 0;
-  return n;
+  return n + k;
 }
 
 static u32 rfu_supersede_host(void)
@@ -1582,13 +1639,31 @@ static u32 rfu_supersede_host(void)
   if (!rfu_supersede_on)
     return 0;
   for (c = 0; c < 4; c++) {
-    u32 depth, i, w, cn = 0;
+    u32 depth, total, i, w, cn = 0;
     u8 kill[RFU_PKT_QUEUE];
     if (!rfu_host.clients[c].devid)
       continue;
     for (depth = 0; depth < RFU_PKT_QUEUE &&
                     rfu_host.clients[c].pkts[depth].datalen; depth++)
       ;
+    total = depth + (rfu_hold_n ? rfu_hold_count(1, c) : 0);
+    if (!rfu_sup_gate(total, &rfu_host.clients[c].sup_run,
+                      &rfu_host.clients[c].sup_armed))
+      continue;
+    if (rfu_host.clients[c].sup_run >= RFU_SUPERSEDE_ARM) {  /* standing lag */
+      u32 t = 0;
+      for (i = 0; total > RFU_SUPERSEDE_KEEP && i + 1 < depth &&
+                  rfu_host.clients[c].pkts[i].st; i++, total--)
+        t++;
+      if (t) {
+        memmove(&rfu_host.clients[c].pkts[0], &rfu_host.clients[c].pkts[t],
+                (RFU_PKT_QUEUE - t) * sizeof(rfu_host.clients[c].pkts[0]));
+        for (i = RFU_PKT_QUEUE - t; i < RFU_PKT_QUEUE; i++)
+          rfu_host.clients[c].pkts[i].datalen = 0;
+        depth -= t;
+        n += t;
+      }
+    }
     if (depth <= RFU_SUPERSEDE_KEEP)
       continue;
     for (i = 0; i + 1 < depth; i++)

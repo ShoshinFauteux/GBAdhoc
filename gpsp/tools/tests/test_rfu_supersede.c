@@ -164,29 +164,46 @@ static void test_clumps_lose_nothing(void)
 
 /* A transport stall: 12 packets held back and released together while the
  * game was looking the whole time.  A real adapter would have delivered each
- * in its frame, so the rule keeps all of them (draining the latency is the
- * lossless forces' job, as before). */
-static void test_stall_is_lossless(void)
+ * in its frame, so the rule never touches the burst.  If the sender then
+ * pauses (Gen3 waiting on a reply) the queue drains and nothing is lost.  If
+ * it does not, the lag the stall left STANDS -- no lossless force drains it
+ * at equal rates -- and a lag that has stood RFU_SUPERSEDE_ARM frames is one
+ * no one-packet adapter could hold: it is cut back to the allowance. */
+static void test_stall(void)
 {
-  unsigned i, first, burst = 12;
-  client_reset(1);
-  for (i = 0; i < 120; i++) {
-    host_tick();
-    client_frame();
+  unsigned i, first, burst = 12, gaps;
+  for (int pause = 1; pause >= 0; pause--) {
+    client_reset(1);
+    for (i = 0; i < 120; i++) {
+      host_tick();
+      client_frame();
+    }
+    first = host_frame;
+    for (i = 0; i < burst; i++)
+      client_frame();                  /* looking; nothing arrives */
+    for (i = 0; i < burst; i++)
+      host_packet_at(first + i, host_tag = host_tag % 250 + 1, 1);
+    host_frame = first + burst;
+    if (pause) {
+      for (i = 0; i < burst + 2; i++)
+        client_frame();                /* the sender waits; the burst drains */
+      host_frame += burst + 2;
+    }
+    for (i = 0; i < 300; i++) {
+      host_tick();
+      client_frame();
+    }
+    gaps = check_order();
+    if (pause) {
+      assert(gaps == 0);
+      assert(rfu_link_backlog() <= 1);
+    } else {
+      assert(gaps >= burst - RFU_SUPERSEDE_KEEP - 1 && gaps <= burst);
+      assert(rfu_link_backlog() <= RFU_SUPERSEDE_KEEP);
+    }
+    printf("  12-frame stall, sender %s: %u superseded, standing %u\n",
+           pause ? "pauses" : "keeps sending", gaps, rfu_link_backlog());
   }
-  first = host_frame;
-  for (i = 0; i < burst; i++)
-    client_frame();                    /* looking; nothing arrives */
-  for (i = 0; i < burst; i++)
-    host_packet_at(first + i, host_tag = host_tag % 250 + 1, 1);
-  host_frame = first + burst;
-  for (i = 0; i < 300; i++) {
-    host_tick();
-    client_frame();
-  }
-  assert(check_order() == 0);
-  printf("  12-frame stall while looking: 0 superseded, standing %u\n",
-         rfu_link_backlog());
 }
 
 /* The game stops looking (Golf loading a hole) while the host keeps sending.
@@ -194,27 +211,32 @@ static void test_stall_is_lossless(void)
 static void test_not_looking_comes_back_to_newest(void)
 {
   unsigned i, gaps, q;
-  client_reset(1);
-  for (i = 0; i < 120; i++) {
-    host_tick();
-    client_frame();
+  static const unsigned away[2] = { 20, 90 };
+  for (int k = 0; k < 2; k++) {
+    client_reset(1);
+    for (i = 0; i < 120; i++) {
+      host_tick();
+      client_frame();
+    }
+    for (i = 0; i < away[k]; i++) {
+      host_tick();
+      client_frame_away();
+    }
+    q = rfu_client_queued();
+    for (i = 0; i < 90; i++) {
+      host_tick();
+      client_frame();
+    }
+    gaps = check_order();
+    printf("  %u frames not looking: queue %u at the return -> standing %u,"
+           " %u superseded\n", away[k], q, rfu_link_backlog(), gaps);
+    /* Shorter than the arming time: the queue holds it all until it has
+     * stood that long.  Longer: trimmed while still away. */
+    assert(away[k] < RFU_SUPERSEDE_ARM ? q >= away[k] - 1
+                                       : q <= RFU_SUPERSEDE_KEEP + 1);
+    assert(rfu_link_backlog() <= RFU_SUPERSEDE_KEEP);
+    assert(gaps >= away[k] - RFU_SUPERSEDE_KEEP - 2);
   }
-  for (i = 0; i < 90; i++) {
-    host_tick();
-    client_frame_away();
-  }
-  q = rfu_client_queued();
-  client_frame();                      /* one look: the rule now applies */
-  for (i = 0; i < 60; i++) {
-    host_tick();
-    client_frame();
-  }
-  gaps = check_order();
-  printf("  90 frames not looking: queue %u -> standing %u, %u superseded\n",
-         q, rfu_link_backlog(), gaps);
-  assert(q >= 85);
-  assert(rfu_link_backlog() <= RFU_SUPERSEDE_KEEP);
-  assert(gaps >= 80);
 }
 
 /* THE RATCHET THE FIXTURES FOUND.  The receiver runs 3 frames for the host's
@@ -283,58 +305,42 @@ static void test_off_is_historical(void)
   assert(rfu_client_queued() >= 85);
 }
 
-/* Several transmissions in ONE sender frame (Gen3's link layer sends several
- * SEND_DATA per frame in the Union Room handshake).  A real receiver reads
- * each as it lands, and Gen3 needs every one: they are never superseded,
- * however deep the queue gets -- neither by each other nor, while the game
- * keeps looking, by the next frame's packets.  (Superseding them desynced
- * the impaired Emerald trade e2e.) */
-static void test_same_frame_sends_lossless(void)
+/* Gen3's traffic: bursts of several SEND_DATA per sender frame (the Union
+ * Room handshake), then a wait for the reply, under transport jitter, with
+ * the game reading from its reception callback -- here, skipping a frame now
+ * and then.  On hardware nothing is lost and Gen3 needs every packet; the
+ * queue swells (the e2e saw 9) and drains by itself.  Superseding inside
+ * those transients desynced the impaired Emerald trade; the rule must stay
+ * disarmed through them. */
+static void test_gen3_bursts_lossless(void)
 {
-  unsigned f, k, tag = 0;
-  client_reset(1);
-  for (f = 0; f < 20; f++)
-    client_frame();
-  for (f = 0; f < 60; f++) {
-    for (k = 0; k < 3; k++) {
-      tag = tag % 250 + 1;
-      host_packet_at(5000 + f, tag, 1);
-    }
-    client_frame();
-  }
-  for (f = 0; f < 200; f++)
-    client_frame();
-  assert(check_order() == 0);
-  assert(n_seen == 180);
-  /* The same burst with the game away for its first 10 frames: those
-   * frames' packets may go stale (later sender frames landed before it
-   * looked again); every packet that landed once it was looking again is
-   * delivered. */
-  client_reset(1);
-  tag = 0;
-  for (f = 0; f < 20; f++)
-    client_frame();
-  for (f = 0; f < 60; f++) {
-    for (k = 0; k < 3; k++) {
-      tag = tag % 250 + 1;
-      host_packet_at(6000 + f, tag, 1);
-    }
-    if (f < 10)
-      client_frame_away();
-    else
+  unsigned f, k, tag = 0, sent = 0;
+  for (int skip = 0; skip < 2; skip++) {
+    client_reset(1);
+    tag = 0;
+    sent = 0;
+    for (f = 0; f < 20; f++)
       client_frame();
+    for (f = 0; f < 600; f++) {
+      if (f % 10 < 3) {                        /* 3 frames of 3 sends */
+        for (k = 0; k < 3; k++) {
+          tag = tag % 250 + 1;
+          host_packet_at(7000 + f, tag, 1);
+          sent++;
+        }
+      }
+      if (skip && f % 10 == 1)
+        client_frame_away();                   /* reads a frame late */
+      else
+        client_frame();
+    }
+    for (f = 0; f < 60; f++)
+      client_frame();
+    assert(check_order() == 0);
+    assert(n_seen == sent);
+    printf("  Gen3-style bursts (3x3 per 10 frames%s): %u/%u delivered\n",
+           skip ? ", a frame skipped in each" : "", n_seen, sent);
   }
-  for (f = 0; f < 200; f++)
-    client_frame();
-  check_order();
-  for (k = 31; k <= 180; k++) {
-    unsigned i, found = 0;
-    for (i = 0; i < n_seen; i++)
-      found |= seen[i] == k;
-    assert(found);
-  }
-  printf("  3 sends per sender frame: 180/180 delivered looking, %u/180 after"
-         " 10 frames away (all after the return kept)\n", n_seen);
 }
 
 /* A stamp that jumps by more than a minute (a new sender) restarts the
@@ -469,12 +475,12 @@ int main(void)
   setvbuf(stdout, NULL, _IONBF, 0);
   test_stamps_on_the_wire();
   test_clumps_lose_nothing();
-  test_stall_is_lossless();
+  test_stall();
   test_not_looking_comes_back_to_newest();
   test_rate_mismatch_bounded();
   test_unstamped_is_historical();
   test_off_is_historical();
-  test_same_frame_sends_lossless();
+  test_gen3_bursts_lossless();
   test_stamp_wrap_and_jump();
   test_host_side_rate_mismatch();
   printf("rfu supersede: all tests passed\n");
