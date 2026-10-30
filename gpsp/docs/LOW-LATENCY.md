@@ -57,8 +57,9 @@ poller has, and possibly +1V if the hardware pad sample is stale.)
 |---|---|---|---|
 | `flip_early` | 1 | tier 0a, every path: in the vblank wait, once the GE is idle (`vid_gu_busy()`, a peek), call `vid_swap()` BEFORE the vblank, so NEXTFRAME latches on the vblank being waited for. If the frame is late (no wait), nothing changes. | none: the wait was idle, and the GE is polled, never waited on |
 | `me_early_retire` | 1 | tier 0b, ME: `me_rend_retire_if_idle()` at the loop top, so the render finished in k is blitted at the top of k+1 instead of k+2 | none: an idle check |
-| `me_lowlat` | 0 | tier 1, ME: skip the loop-top present; in the wait, poll the ME (150 us sleeps); when the render retires with `blit_ema + me_lowlat_margin_us` (500) left before the vblank, blit + rewind HUD + OSD, poll the GE, flip before the vblank | no extra CPU work (the same blit, moved into idle time); see section 3 |
-| `me_lowlat_recover` | 60 | frames of "would have made it" (measured in tier 0) before tier 1 is entered again | |
+| `me_lowlat` | 0 (`ME_LOWLAT=1` build: 1) | tier 1, ME: skip the loop-top present; in the wait, poll the ME (150 us sleeps); when the render retires with `need` left before the vblank, blit + rewind HUD + OSD, poll the GE, flip before the vblank. 1 = enter on the natural audio-ring nudge, 2 = also take that nudge early to enter (section 7) | no extra CPU work (the same blit, moved into idle time); see sections 3 and 7 |
+| `me_lowlat_recover` | 60 | minimum frames in tier 0 after an exit before tier 1 may be entered again | |
+| `me_lowlat_margin_us` | 250 | safety margin on top of the measured blit deadline (section 7) | |
 | `input_fresh` | 0 | probe: if the pad sample predates this vblank by more than 2 ms, re-peek in 50 us steps, at most 1.5 ms | up to ~0.9 ms at frame start (PPSSPP: 0.88 ms) |
 | `ctrl_cycle` | 0 | probe: `sceCtrlSetSamplingCycle(N)` timer sampling (5555..20000) | PPSSPP age 2.7 ms at 5555 |
 
@@ -176,3 +177,89 @@ vblanks. Each fixture ran 1500 measured frames.
   (tier 1 never engaging) exited cleanly. Not reproduced, not explained: it
   could be tier 1, the exit path, or PSPLink/USB. It must be repeated before
   tier 1 goes anywhere near a default.
+
+## 7. Tier 1 policy, second version (claude/lowlat-t1)
+
+The prototype (section 3) entered tier 1 by superseding the frame the loop
+top had just retired, so every entry dropped a frame, and it needed 60
+would-hit frames in a row. On hns_heavy (~8 % misses) that almost never
+happened. The rework, in `main_psp.c` at "TIER 1 POLICY":
+
+* **The picture moves by one vblank whenever the mode changes.** Leaving
+  repeats a frame, and entering at an arbitrary frame skips one. The repeat
+  on leaving can't be avoided: the frame that missed is already late.
+  Entering is now **drop-free**.
+* **Entry happens only in a wait that is already two vblanks long.** That
+  wait is the audio-ring nudge (`want` 2). It fires about once every 288
+  frames at 1x, because the PSP runs at 59.94 Hz and the GBA at 59.73, and in
+  tier 0 it shows a frame twice anyway. The frame the loop top retired is
+  flipped early and latches on the first vblank. This iteration's own
+  render is then presented in the second interval and flipped before the
+  second vblank: N-1, N, N+1, with nothing skipped and nothing repeated. The
+  repeat the nudge would have made pays for the latency step. If the render
+  or the GE is late, the mode is not entered, and the loop top shows the
+  frame next iteration as tier 0 always does.
+* **Nothing changes in the long run.** Each exit adds one repeat and each
+  entry removes one, so over any stretch tier 1 shows exactly the frames
+  tier 0 shows, give or take one repeat that moves in time. Emulation still
+  starts on the same vblanks. Only the moment a finished picture is flipped
+  changes, and the guest never sees it, so replays, vhash and link lockstep
+  are unaffected. Link sessions are excluded anyway (`link_session_any`).
+* **Eligibility.** Over the last 128 measured frames at most 6 may have
+  missed (95.3 %), none of the last 32 may have missed, and at least
+  `me_lowlat_recover` frames must have passed since the last exit. A frame
+  "would have made it" if its render retired before the vblank after its own
+  poll with `need` us to spare. In tier 0 this is measured in the wait. In
+  tier 1 it is the hit or miss itself.
+* **Exit** happens on the first miss, or on a loop top that finds an unshown
+  frame (it is shown; never skipped).
+* **`need`** is measured per console: the EMA of present-to-GE-idle (blit +
+  OSD) + 4 mean deviations + one poll period (150 us) + `me_lowlat_margin_us`.
+  It is clamped to 0.8..8 ms. A GE that finishes after the vblank pushes the
+  EMA and the deviation up. It starts conservative (EMA 2 ms, deviation
+  0.25 ms, so `need` is 3.4 ms) until real blits have been timed.
+* **`me_lowlat 2`.** Waiting up to ~5 s for the next nudge after a miss caps
+  how much of a marginal game can run in tier 1. Mode 2 takes the nudge as
+  soon as the ring is within one frame of audio (`in_rate/60`) of the
+  high-water mark, once eligible. That moves a nudge earlier and never adds
+  one: every nudge holds back one frame of production, so their long-run
+  rate is set by the clock mismatch alone. It happens at most once per
+  exit, and the ring sits at most one frame (~17 ms) lower until the next
+  nudge is due.
+
+`EVT lat` gains `eng` (iterations in tier 1), `slot`/`slot_fail` (entry slots
+tried and failed), `win=misses/n` and `clean`, `need_us`, `blit_dev_us`,
+`lead1_min_us` (smallest lead of a tier-1 flip before its vblank), `vb`
+(vblanks in the window) and `pull` (mode-2 early nudges). `to_h`/`to_b` count
+entries and exits.
+
+Host test: `tools/tests/test_lowlat_policy.py` (in the `ff` host suite)
+compiles the production code into a model of the vblank, NEXTFRAME flip, GE,
+ME and audio ring. It covers the low-latency globals, us_to_vblank,
+me_rend_present, me_rend_retire_if_idle, lat_swap, the wait functions, and
+main()'s loop-top, nudge and wait text. It runs eight load profiles in
+tier 0, mode 1 and mode 2 and checks that:
+
+* no frame is skipped or shown out of order;
+* the poll vblanks are identical (mode 1);
+* there are no extra repeats;
+* the nudge count is unchanged and the audio is never starved (mode 2);
+* the mode engages where there is room and not where there is none.
+
+Five mutants must fail: prototype entry, no latch check, no deadline, no
+exit, early nudge anywhere.
+
+Model results (12000 frames, mean poll->latch in vblanks):
+
+| profile | tier 0 | mode 1 (in tier 1) | mode 2 (in tier 1) |
+|---|---|---|---|
+| light (5.5 ms work) | 2.00 | 1.03 (97 %) | 1.01 (98 %) |
+| medium, 2 % spikes | 2.00 | 1.77 (23 %) | 1.56 (44 %) |
+| bursty phases | 2.00 | 1.76 (24 %) | 1.60 (40 %) |
+| hns-like, 8 % spikes | 2.00 | 2.00 (0 %) | 1.94 (6 %) |
+| heavy / ub-like / sub-60 | 2.00 / 2.00 / 3.40 | unchanged, never entered | unchanged |
+
+GB/GBC and the CPU renderer already sit at the floor with tier 0: the
+`hist` mode on gb_crystal is 1 (Lab runs, 2026-10-30). Below 60 fps (Doom,
+~3.2-3.4) no vblank wait happens, so neither tier applies. The follow-up for
+those games is still the vcount-160 flip (section 6).
