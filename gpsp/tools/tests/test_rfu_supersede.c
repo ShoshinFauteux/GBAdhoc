@@ -283,32 +283,58 @@ static void test_off_is_historical(void)
   assert(rfu_client_queued() >= 85);
 }
 
-/* Two transmissions in one host frame (a SEND and a RetransmitAndWait): if the
- * game had not read the first when the second landed, the second replaced it
- * -- but only above the jitter allowance. */
-static void test_same_frame_resend(void)
+/* Several transmissions in ONE sender frame (Gen3's link layer sends several
+ * SEND_DATA per frame in the Union Room handshake).  A real receiver reads
+ * each as it lands, and Gen3 needs every one: they are never superseded,
+ * however deep the queue gets -- neither by each other nor, while the game
+ * keeps looking, by the next frame's packets.  (Superseding them desynced
+ * the impaired Emerald trade e2e.) */
+static void test_same_frame_sends_lossless(void)
 {
-  unsigned i;
+  unsigned f, k, tag = 0;
   client_reset(1);
-  for (i = 0; i < 20; i++)
+  for (f = 0; f < 20; f++)
     client_frame();
-  for (i = 0; i < 2; i++)
-    host_packet_at(5000, i + 1, 1);
-  for (i = 0; i < 4; i++)
+  for (f = 0; f < 60; f++) {
+    for (k = 0; k < 3; k++) {
+      tag = tag % 250 + 1;
+      host_packet_at(5000 + f, tag, 1);
+    }
     client_frame();
-  assert(n_seen == 2 && seen[0] == 1 && seen[1] == 2);  /* within keep: kept */
+  }
+  for (f = 0; f < 200; f++)
+    client_frame();
+  assert(check_order() == 0);
+  assert(n_seen == 180);
+  /* The same burst with the game away for its first 10 frames: those
+   * frames' packets may go stale (later sender frames landed before it
+   * looked again); every packet that landed once it was looking again is
+   * delivered. */
   client_reset(1);
-  for (i = 0; i < 20; i++)
+  tag = 0;
+  for (f = 0; f < 20; f++)
     client_frame();
-  for (i = 0; i < 8; i++)                     /* 4 frames, each sent twice */
-    host_packet_at(5000 + i / 2, i + 1, 1);
-  for (i = 0; i < 8; i++)
+  for (f = 0; f < 60; f++) {
+    for (k = 0; k < 3; k++) {
+      tag = tag % 250 + 1;
+      host_packet_at(6000 + f, tag, 1);
+    }
+    if (f < 10)
+      client_frame_away();
+    else
+      client_frame();
+  }
+  for (f = 0; f < 200; f++)
     client_frame();
   check_order();
-  /* The game read what it could in the frame they landed; the rest above the
-   * allowance was replaced, and the newest copy always reaches it. */
-  assert(n_seen < 8 && seen[n_seen - 1] == 8);
-  assert(rfu_client_queued() == 0);
+  for (k = 31; k <= 180; k++) {
+    unsigned i, found = 0;
+    for (i = 0; i < n_seen; i++)
+      found |= seen[i] == k;
+    assert(found);
+  }
+  printf("  3 sends per sender frame: 180/180 delivered looking, %u/180 after"
+         " 10 frames away (all after the return kept)\n", n_seen);
 }
 
 /* A stamp that jumps by more than a minute (a new sender) restarts the
@@ -448,7 +474,7 @@ int main(void)
   test_rate_mismatch_bounded();
   test_unstamped_is_historical();
   test_off_is_historical();
-  test_same_frame_resend();
+  test_same_frame_sends_lossless();
   test_stamp_wrap_and_jump();
   test_host_side_rate_mismatch();
   printf("rfu supersede: all tests passed\n");

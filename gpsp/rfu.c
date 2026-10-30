@@ -1524,11 +1524,27 @@ static int rfu_first_touch(u32 side, u32 from, u32 *o)
   return 0;
 }
 
-/* Is packet (st0, map0) superseded by its successor (st1, map1)? */
+/* `st` per packet: 0 = unstamped, else RFU_ST_FLAG | the low 7 bits of the
+ * sender's frame stamp. */
+#define RFU_ST_FLAG 0x80u
+#define RFU_ST(s24) (RFU_ST_FLAG | ((s24) & 0x7Fu))
+
+/* Is packet (st0, map0) superseded by its successor (st1, map1)?
+ *
+ * Never by a packet from the SAME sender frame.  A sender that transmits
+ * several times in one of its frames (Gen3's link layer does, several
+ * SEND_DATA per frame during the Union Room handshake) is talking to a
+ * receiver that reads each one as it lands -- librfu's MSC callback fires
+ * per reception -- and every one of them is required: superseding them
+ * under transport jitter desynced the Emerald trade (impaired e2e, 2/3
+ * "trade never started" until this exemption).  What the one-buffer rule
+ * models is data from DIFFERENT sender frames piling up behind a receiver
+ * that could not take it: a sender running faster than us, or a game that
+ * was not looking. */
 static int rfu_superseded(u32 side, u32 st0, u32 map0, u32 st1, u32 map1)
 {
   u32 o;
-  if (!st0 || !st1 || !rfu_first_touch(side, map0, &o))
+  if (!st0 || !st1 || st0 == st1 || !rfu_first_touch(side, map0, &o))
     return 0;
   return (s32)(map1 - o) <= 0;
 }
@@ -3013,7 +3029,7 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         if (len >= blen + 12) {
           u32 i;
           /* The host's frame stamp, if it sent one (see rfu_net_send_data). */
-          u32 st = (hdata & 0x80) ? 1 : 0;
+          u32 st = (hdata & 0x80) ? RFU_ST(hdata >> 8) : 0;
           u32 map = st ? rfu_map_arrival(&rfu_client.map, hdata >> 8) : 0;
           /* ADR-0060: a KEEPALIVE, not an acknowledgement of this packet.
            * The host only needs to know we still exist (clttl, 4 s); it does
@@ -3128,7 +3144,8 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         if (rfu_host.clients[clid].client_id == client_id &&
             rfu_host.clients[clid].devid == cdevid) {
           /* The client's frame stamp, if it sent one (rfu_net_send_data). */
-          u32 st = (len >= 12 + 92 && payl[88] == RFU_STAMP_TAG) ? 1 : 0;
+          u32 st = (len >= 12 + 92 && payl[88] == RFU_STAMP_TAG)
+                   ? RFU_ST(payl[91]) : 0;
           u32 map = st ? rfu_map_arrival(&rfu_host.clients[clid].map,
                                          ((u32)payl[89] << 16) |
                                          ((u32)payl[90] << 8) | payl[91])
