@@ -6367,6 +6367,7 @@ extern void rfu_set_pace_max_hold(unsigned n);
 extern void rfu_set_cushion(unsigned n);     /* fixed-depth jitter buffer PoC */
 extern void rfu_set_shed_keep(unsigned n);   /* link shedding, 0 = off */
 extern void rfu_set_hold(unsigned on);        /* hold, never discard */
+extern void rfu_set_supersede(unsigned on);   /* adapter one-buffer rule */
 extern void rfu_set_fault_corrupt(unsigned n); /* desync-detector validation */
 extern void rfu_set_fault_span(unsigned n);
 extern void rfu_set_fault_mode(unsigned m);
@@ -7119,6 +7120,20 @@ static void rfu_trace_drain(void)
             fe_evt("rfu_fault_bytes off=%u b=%02x", a >> 8, a & 0xFF);
          else
             fe_evt("rfu_fault_bytes off=%u b=%02x%02x", a >> 8, a & 0xFF, b);
+         break;
+      case 35:
+         fe_evt("rfu_pollmix none=%u multi=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 36:
+         fe_evt("rfu_catchgq n=%u arr=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 37:
+         /* The adapter's one-buffer rule: packets a real adapter would have
+          * overwritten before the game looked, removed this window. */
+         fe_evt("rfu_supersede n=%u on=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
          break;
       case 30:
          /* Link shedding: content-free packets removed from the queue this
@@ -12924,6 +12939,14 @@ int main(int argc, char *argv[])
       int hd = (int)fe_ini_get_int(HARNESS_INI, "rfu_hold", PLAY_RFU_HOLD);
       rfu_set_hold(hd ? 1u : 0u);
       fe_evt("rfu_hold n=%d", hd ? 1 : 0);
+   }
+   /* THE ADAPTER'S ONE BUFFER (rfu.c rfu_supersede).  ON by default in
+    * every build (the core's default); 0 = the historical queues, for the
+    * A/B. */
+   {
+      int sv = (int)fe_ini_get_int(HARNESS_INI, "rfu_supersede", 1);
+      rfu_set_supersede(sv ? 1u : 0u);
+      fe_evt("rfu_supersede on=%d", sv ? 1 : 0);
    }
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in

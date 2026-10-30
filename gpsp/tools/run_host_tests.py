@@ -515,7 +515,17 @@ def suites(env: Env, baseline: Path | None):
           "-DINLINE=inline -Ilibretro/libretro-common/include "
           "-Ifrontend-common -o /tmp/t_rfu_link_backlog "
           "tools/tests/test_rfu_link_backlog.c -Wl,--gc-sections && "
-          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_link_backlog")),
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_link_backlog && "
+          # ...and the adapter's one-buffer rule on the sender's timeline
+          # (rfu_supersede): bounded under a rate mismatch, lossless under
+          # transport clumps and stalls, inert for unstamped peers.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra "
+          "-Wno-old-style-declaration -Wno-missing-field-initializers "
+          "-fsanitize=address,undefined -ffunction-sections -fdata-sections "
+          "-DINLINE=inline -Ilibretro/libretro-common/include "
+          "-Ifrontend-common -o /tmp/t_rfu_supersede "
+          "tools/tests/test_rfu_supersede.c -Wl,--gc-sections && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_supersede")),
 
         # The rig's honesty invariants (docs/RIG-DOUBLE-BATTLE.md §2): the
         # autopilot's it=/crc=/val=/logbytes output, the in-band evt_gap

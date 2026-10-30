@@ -475,6 +475,9 @@ static void rfu_trace_drain(void)
       case 20:  /* ADR-0072 fix: game recvQueue depth peak (a) + over-gate frames (b) */
          fe_evt("rfu_gqpeak peak=%u over_gate=%u/%u net=%s", a, b, 600u, net);
          break;
+      case 37:  /* rfu_supersede: packets the one-buffer rule replaced */
+         fe_evt("rfu_supersede n=%u on=%u net=%s", a, b, net);
+         break;
       default:
          /* case 5 (RFU_TR_CMD) is per-command and would flood; ignored, the
           * same as the PSP frontend does unless explicitly enabled. */
