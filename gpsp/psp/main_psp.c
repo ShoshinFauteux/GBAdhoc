@@ -6417,6 +6417,15 @@ void gpsp_rfu_flight_dump_hook(const unsigned *ring, unsigned cap,
    FE_EVT_ONLY(worst_frame);
    int have_prev = 0;
 
+#ifdef GPSP_NO_TELEMETRY
+   /* Release: every fe_evt below compiles out, but the loop would still
+    * format the whole ring -- up to 512 snprintf calls on the emulation
+    * thread at the instant a live session ends -- into lines nobody sees. */
+   (void)stn; (void)ring; (void)cap; (void)start; (void)n; (void)i;
+   (void)prev_frame; (void)prev_us; (void)worst_ms; (void)have_prev;
+   return;
+#endif
+
    /* EIGHT entries per line, not one.
     *
     * One-per-line lost 228 of 1024 entries to the event queue on the very
