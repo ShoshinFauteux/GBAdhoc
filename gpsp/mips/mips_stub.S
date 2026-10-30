@@ -18,6 +18,17 @@
 
 #include "../gpsp_config.h"
 
+// MSR_FAST (codegen-q3): mode switches by MSR / SPSR restore without the C
+// call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
+// is that set_cpu_mode), absolute addressing, and no IRQ_INTEGRITY_CHECK
+// (whose exit hook lives in the C body).
+#if defined(MSR_FAST) && !defined(PIC) && !defined(IRQ_INTEGRITY_CHECK)
+#ifndef FIQ_BANK_FIX
+#error "MSR_FAST needs FIQ_BANK_FIX"
+#endif
+#define MSR_FAST_ON 1
+#endif
+
 // This is also defined in sys/asm.h but doesn't seem portable?
 #ifdef __mips64
   .set mips64
@@ -184,6 +195,11 @@ symbol:
 
 .macro save_registers
   sw $3, REG_R0($16)
+  save_registers_tail
+.endm
+
+# save_registers minus its first word (MSR_FAST: that word is a delay slot)
+.macro save_registers_tail
   sw $7, REG_R1($16)
   sw $8, REG_R2($16)
   sw $9, REG_R3($16)
@@ -580,8 +596,15 @@ defsymbl(execute_spsr_restore)
   lw $1, SPSR_BASE($2)            # $1 = spsr[cpu_mode]
   sw $1, REG_CPSR($16)            # cpsr = spsr[cpu_mode]
   extract_flags_body              # extract flags from $1
+#ifdef MSR_FAST_ON
+  j msr_fast_spsr                 # same size as the two words it replaces
+  sw $3, REG_R0($16)              # (delay) save_registers' first word
+msr_spsr_slow:                    # msr_fast_spsr stored $ra already
+  save_registers_tail
+#else
   sw $ra, REG_SAVE3($16)
   save_registers
+#endif
   cfncall execute_spsr_restore_body, 6  # do the dirty work in this C function
   restore_registers
   lw $ra, REG_SAVE3($16)
@@ -620,8 +643,15 @@ defsymbl(execute_store_cpsr)
   nop
 
 1:
+#ifdef MSR_FAST_ON
+  j msr_fast_store                # same size as the two words it replaces
+  sw $3, REG_R0($16)              # (delay) save_registers' first word
+msr_store_slow:                   # msr_fast_store stored $ra already
+  save_registers_tail
+#else
   sw $ra, REG_SAVE3($16)
   save_registers
+#endif
   addu $4, $1, $0                 # load the new CPSR
   cfncall execute_store_cpsr_body, 7   # do the dirty work in this C function
 
@@ -702,6 +732,151 @@ defsymbl(execute_arm_translate_internal)
   restore_registers               # load initial register values
   jr $2                           # jump to return
   nop
+
+#ifdef MSR_FAST_ON
+# MSR_FAST (codegen-q3, 2026-10-30).  A CPSR write that touches the control
+# field (MSR CPSR_c / CPSR_fc) and an SPSR restore (MOVS/SUBS pc, LDM ^) used
+# to save all guest registers, call execute_store_cpsr_body /
+# execute_spsr_restore_body (set_cpu_mode + the pending-IRQ check) and restore
+# them: ~130 instructions.  OpenLara switches SYS <-> FIQ ~2,600 times a frame
+# to borrow r8-r12 (14 % of its time on hardware); Unbound's IRQ dispatcher
+# switches IRQ <-> SYS and the BIOS SVC <-> SYS ~500 times a frame.
+#
+# Here the same work is done on the host registers:
+#  1. the IRQ test of the C bodies, first and on nothing but $1 (the new
+#     CPSR), $2 and $6: (IE & IF) && IME && !(CPSR & I).  If it holds, the
+#     C path runs exactly as before (it raises the IRQ), so every interrupt
+#     entry is the one it was.
+#  2. set_cpu_mode (FIQ_BANK_FIX) on the host registers: r8-r12 live in
+#     $14/$15/$18/$24/$25, r13/r14 in $28/$30, the banks in reg_mode[].
+#  3. SPSR restore only: the returned address gets bit 0 = CPSR.T.
+# reg[] in memory is not written: every reader of reg[r0..r14] runs after a
+# save_registers, which writes the host registers there first.
+# The run-time switch msr_fast (config.ini / harness key msr_fast) sends every
+# call down the old path.  The hooks in execute_store_cpsr and
+# execute_spsr_restore replace two words with two (the hot core does not
+# move); this code sits in .text.msr_fast, outside psp/layout/hot.ord.
+  .section .text.msr_fast,"ax",@progbits
+
+# reg_mode[] slot of a mode: \dst = $16 + (\mode & 0xF) * 28 (+ REGMODE_BASE)
+.macro msr_mode_slot dst, mode, tmp
+  andi \tmp, \mode, 0xF
+  sll \dst, \tmp, 5
+  sll \tmp, \tmp, 2
+  subu \dst, \dst, \tmp
+  addu \dst, \dst, $16
+.endm
+
+# -> \slow when the C body would raise an IRQ; $1 = new CPSR; uses $2, $6
+.macro msr_irq_check slow
+  andi $2, $1, 0x80
+  bnez $2, 1f                     # CPSR.I set: no IRQ
+  lui $6, %hi(io_registers)
+  addiu $6, $6, %lo(io_registers)
+  lhu $2, 0x200($6)               # IE
+  lhu $6, 0x202($6)               # IF
+  and $2, $2, $6
+  beqz $2, 1f
+  lui $6, %hi(io_registers)
+  addiu $6, $6, %lo(io_registers)
+  lhu $2, 0x208($6)               # IME
+  bnez $2, \slow
+  nop
+1:
+.endm
+
+# set_cpu_mode(cpu_modes[$1 & 0xF]) (FIQ_BANK_FIX) on the host registers.
+# Uses $1, $2, $5, $6; keeps $4.
+.macro msr_mode_swap
+  lui $6, %hi(cpu_modes)
+  andi $2, $1, 0xF
+  sll $2, $2, 2
+  addu $6, $6, $2
+  lw $2, %lo(cpu_modes)($6)       # $2 = new mode
+  lw $5, CPU_MODE($16)            # $5 = old mode
+  beq $2, $5, 4f                  # same mode: nothing to bank
+  sw $2, CPU_MODE($16)            # (delay) reg[CPU_MODE] = new mode
+  xori $6, $5, 0x12
+  beqz $6, 2f                     # leaving FIQ
+  xori $6, $2, 0x12               # (delay)
+  beqz $6, 3f                     # entering FIQ
+  nop
+  msr_mode_slot $1, $5, $6        # neither: r13/r14 only
+  sw $28, REGMODE_BASE+20($1)
+  sw $30, REGMODE_BASE+24($1)
+  msr_mode_slot $1, $2, $6
+  lw $28, REGMODE_BASE+20($1)
+  b 4f
+  lw $30, REGMODE_BASE+24($1)     # (delay)
+2:                                # FIQ -> other: FIQ's r8-r14 to its bank,
+  sw $14, REGMODE_BASE+56($16)    # the shared r8-r12 back from USER's slot
+  sw $15, REGMODE_BASE+60($16)
+  sw $18, REGMODE_BASE+64($16)
+  sw $24, REGMODE_BASE+68($16)
+  sw $25, REGMODE_BASE+72($16)
+  sw $28, REGMODE_BASE+76($16)
+  sw $30, REGMODE_BASE+80($16)
+  lw $14, REGMODE_BASE+0($16)
+  lw $15, REGMODE_BASE+4($16)
+  lw $18, REGMODE_BASE+8($16)
+  lw $24, REGMODE_BASE+12($16)
+  lw $25, REGMODE_BASE+16($16)
+  msr_mode_slot $1, $2, $6
+  lw $28, REGMODE_BASE+20($1)
+  b 4f
+  lw $30, REGMODE_BASE+24($1)     # (delay)
+3:                                # other -> FIQ: park the shared r8-r12,
+  sw $14, REGMODE_BASE+0($16)     # the old mode's r13/r14, load FIQ's r8-r14
+  sw $15, REGMODE_BASE+4($16)
+  sw $18, REGMODE_BASE+8($16)
+  sw $24, REGMODE_BASE+12($16)
+  sw $25, REGMODE_BASE+16($16)
+  msr_mode_slot $1, $5, $6
+  sw $28, REGMODE_BASE+20($1)
+  sw $30, REGMODE_BASE+24($1)
+  lw $14, REGMODE_BASE+56($16)
+  lw $15, REGMODE_BASE+60($16)
+  lw $18, REGMODE_BASE+64($16)
+  lw $24, REGMODE_BASE+68($16)
+  lw $25, REGMODE_BASE+72($16)
+  lw $28, REGMODE_BASE+76($16)
+  lw $30, REGMODE_BASE+80($16)
+4:
+.endm
+
+# from execute_store_cpsr: $1 = the new CPSR (stored, flags extracted),
+# $5 = PC (the C body's argument), $ra = the real return address
+msr_fast_store:
+  lui $2, %hi(msr_fast)
+  lw $2, %lo(msr_fast)($2)
+  beqz $2, 9f                     # switched off
+  nop
+  msr_irq_check 9f
+  msr_mode_swap
+  jr $ra
+  nop
+9:
+  j msr_store_slow
+  sw $ra, REG_SAVE3($16)          # (delay) the word the hook replaced
+
+# from execute_spsr_restore: $1 = CPSR = SPSR (stored, flags extracted),
+# $4 = the address to return to
+msr_fast_spsr:
+  lui $2, %hi(msr_fast)
+  lw $2, %lo(msr_fast)($2)
+  beqz $2, 9f                     # switched off
+  nop
+  msr_irq_check 9f
+  msr_mode_swap
+  lw $1, REG_CPSR($16)
+  andi $1, $1, 0x20               # T -> bit 0 of the address
+  srl $1, $1, 5
+  jr $ra
+  or $4, $4, $1                   # (delay)
+9:
+  j msr_spsr_slow
+  sw $ra, REG_SAVE3($16)          # (delay) the word the hook replaced
+#endif
 
 .bss
 .align 6

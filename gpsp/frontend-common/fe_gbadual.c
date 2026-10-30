@@ -64,6 +64,7 @@ extern volatile uint32_t gbalink_abort, gbab_gbalink_abort;
 /* SCHED_FAST builds: the partner's scheduler switch follows the player's */
 extern uint32_t sched_fast GBAD_WEAK_EARLY, gbab_sched_fast GBAD_WEAK_EARLY;
 extern uint32_t irq_io_fast GBAD_WEAK_EARLY, gbab_irq_io_fast GBAD_WEAK_EARLY;
+extern uint32_t msr_fast GBAD_WEAK_EARLY, gbab_msr_fast GBAD_WEAK_EARLY;
 extern uint32_t timer_lazy GBAD_WEAK_EARLY, gbab_timer_lazy GBAD_WEAK_EARLY;
 extern uint32_t backup_writes, gbab_backup_writes;
 /* cache_paranoid (harness): every sync whole D+I.  The frontend sets A's;
@@ -328,6 +329,9 @@ int fe_gbadual_load(const fe_gbadual_config *cfg)
    /* read by B's emitter when it builds its stubs (gbab_retro_load_game) */
    if (&irq_io_fast && &gbab_irq_io_fast)
       gbab_irq_io_fast = irq_io_fast;
+   /* MSR_FAST builds: B's mode switches follow the player's switch */
+   if (&msr_fast && &gbab_msr_fast)
+      gbab_msr_fast = msr_fast;
    /* Section 21: the cable fast path, the same on both machines. */
    gbalink_fast = gbab_gbalink_fast =
       (cfg->cable_fast >= 0 && cfg->cable_fast <= 3) ? (uint32_t)cfg->cable_fast

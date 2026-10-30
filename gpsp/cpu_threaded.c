@@ -209,6 +209,16 @@ u32 rom_cache_watermark = INITIAL_ROM_WATERMARK;
 #endif
 u32 irq_io_fast = IRQ_IO_FAST_DEFAULT;
 #endif
+#ifdef MSR_FAST
+/* MSR_FAST=1 (build) + msr_fast (run time: config.ini / harness key
+ * msr_fast): CPSR writes that switch mode, and SPSR restores, bank the
+ * registers in mips/mips_stub.S (msr_fast_store) instead of the C call.
+ * Read on every switch; 0 = the C path every build before it ran. */
+#ifndef MSR_FAST_DEFAULT
+#define MSR_FAST_DEFAULT 1
+#endif
+u32 msr_fast = MSR_FAST_DEFAULT;
+#endif
 
 u8 *bios_swi_entrypoint = NULL;
 
