@@ -344,7 +344,7 @@ static void test_gen3_bursts_lossless(void)
 }
 
 /* The measured Pokemon envelope (rfu_qrun, RFU-AUDIT.md): a queue that stands
- * above the allowance for up to 37 frames running and then drains on its own
+ * above the allowance for up to 49 frames running and then drains on its own
  * is never touched.  Here: 2 sends per frame for 30 frames, then a wait, so
  * the queue stands above 2 for about 60 frames -- still lossless. */
 static void test_measured_envelope_lossless(void)
@@ -367,7 +367,7 @@ static void test_measured_envelope_lossless(void)
     if (run > longest)
       longest = run;
   }
-  assert(longest > 37 && longest < RFU_SUPERSEDE_ARM);
+  assert(longest > 49 && longest < RFU_SUPERSEDE_ARM);
   assert(check_order() == 0);
   assert(n_seen == sent);
   printf("  queue above the allowance %u frames, then drained: %u/%u delivered\n",

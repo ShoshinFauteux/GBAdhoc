@@ -1465,7 +1465,7 @@ static u32 rfu_shed_host(void)
  * frame or two later and still never lose one on hardware, where no transport
  * jitter ever clumps its traffic.  Our transport does: Emerald's Union Room
  * trade and battle under 5% loss / 30 ms jitter queue up to 17 packets and
- * stand above the allowance for up to 37 frames running, then drain by
+ * stand above the allowance for up to 49 frames running, then drain by
  * themselves (standing backlog <= 2 in every window).
  * Superseding inside those transients lost packets Gen3 requires: the
  * impaired trade e2e failed 5/6 ("trade never started"), and still 3/6 with
@@ -1483,10 +1483,10 @@ static u32 rfu_shed_host(void)
 /* RFU_SUPERSEDE_ARM is read off the rfu_qrun census (RFU-AUDIT.md, "Arming
  * threshold"), the longest run of frames each receive queue stood above the
  * allowance with the rule OFF.  Pokemon Emerald Union Room trade and battle,
- * clean and under 5% loss / 30 ms jitter (9 runs, 18 queues): at most 37
+ * clean and under 5% loss / 30 ms jitter (17 runs, 34 queues): at most 49
  * frames.  Every Golf/Tennis episode that hurt the game (answers past 150 ms;
- * 11 episodes): at least 291 frames.  100 sits at the geometric middle of
- * that gap, about 2.7x clear of each side. */
+ * 11 episodes): at least 291 frames.  100 sits inside that gap (geometric
+ * middle ~119), 2x above the worst Pokemon run, 2.9x below the mildest harm. */
 #define RFU_SUPERSEDE_ARM  100
 
 /* One frame of the arming gate for a queue of `depth`; returns armed. */
