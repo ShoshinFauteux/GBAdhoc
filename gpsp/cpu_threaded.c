@@ -12599,12 +12599,39 @@ void gpsp_rewind_jit_used(u32 *rom, u32 *ram)
 #ifdef XS_HEAP
 /* One zeroed block for the SMC_SAME_SKIP / SMC_RETIRE_LOCAL tables, taken
  * once, before init_gamepak_buffer's 1 MiB loop (libretro.c retro_init);
- * init_dynarec_caches calls it too, as a no-op after the first. */
+ * init_dynarec_caches calls it too, as a no-op after the first.
+ *
+ * The pointer is file-scope so dynarec_heap_tables_release() can give the
+ * block back.  Instance A never does: its .bss lives for the process and the
+ * block is reused by every reload.  Instance B's .bss (gbab_xs_heap_blk
+ * among it) is zeroed and lent to A's ROM cache between GBA link sessions
+ * (fe_gbadual.c b_fresh / fe_gbadual_lend), so B MUST release the block
+ * before it is unloaded: otherwise each session start finds a NULL pointer,
+ * takes a fresh 70,656 B block and the previous one is orphaned -- the
+ * 70,672 B/cycle sessmem_cycles leak on the PSP-1000 (docs/GBA-LINK-MIRROR.md
+ * 19). */
+static u8 *xs_heap_blk;
+void dynarec_heap_tables_release(void)
+{
+  free(xs_heap_blk);
+  xs_heap_blk = NULL;
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+  xs_val = NULL;
+  xs_ok = xs_bad = NULL;
+  xs_min = NULL;
+#ifdef SMC_SAME_ADAPT
+  xs_rec = NULL;
+#endif
+#endif
+#if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
+  smc_back_iw = smc_back_ew = NULL;
+#endif
+}
 void dynarec_heap_tables_init(void)
 {
-  static u8 *blk;
+  u8 *blk;
   u32 sz = 0;
-  if (blk)
+  if (xs_heap_blk)
     return;
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
   sz += 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2;
@@ -12620,6 +12647,7 @@ void dynarec_heap_tables_init(void)
     fprintf(stderr, "dynarec_heap_tables_init: %u bytes refused\n", (unsigned)sz);
     abort();
   }
+  xs_heap_blk = blk;
   memset(blk, 0, sz ? sz : 64);
   {
     u8 *p = blk;

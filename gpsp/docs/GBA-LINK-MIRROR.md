@@ -1298,6 +1298,18 @@ All from `claude/gbalink-sessmem`, unpinned (`LAYOUT_PIN=0`):
 - Commits after be2ca8b are docs only.
 - A release build must be made with `LAYOUT_PIN=0 GBA_LINK=1`: `tools/build.sh` still defaults `LAYOUT_PIN` to 1, which section 17.7 measured as slower for two cores.
 
+### 19.9 The 70,672 B per-session leak (branch `claude/linkleak`, 2026-10-30)
+
+The 20-cycle census of 19.2 was flat at be2ca8b. XS_HEAP (cpu-levers, later) moved the SMC_SAME_SKIP / SMC_RETIRE_LOCAL tables into one heap block, 70,656 B (70,672 with the malloc header). `dynarec_heap_tables_init` kept the block's pointer in a function static, in `.bss`. For instance B, that `.bss` is zeroed by `b_fresh` and lent to A's ROM cache between sessions. So every session start saw a NULL pointer and took a new block, and the previous block was orphaned. The heap trace (`HEAP_TRACE=1`) named it: one new live 70,656 B block per cycle, from `gbab_dynarec_heap_tables_init`.
+
+- **Leak, not fragmentation.** Live bytes rose 70,672 B a cycle, and the largest free block shrank with them: 1,675,264, then 1,597,440, then 1,527,808 B.
+- **Effect on the PSP-1000 model.** The 4th session start failed: A's reload could not allocate its 77,280 B frame buffer, and the player saw "Not enough memory for link play".
+- **Fix.** `dynarec_heap_tables_release()` frees the block. `fe_gbadual_unload` calls B's copy. A never releases its block, and every reload reuses it.
+- **After the fix** (PSP-1000 model, `sessmem_cycles = 12`, Emerald and AW2): after every end, the census has 7,500,216 live bytes, 1,754,184 B free and 11 blocks, the same as before the first session. The largest free block is 1,748,992 B every time.
+- **Real late-mode pair** (AW2, `gblink_repeat = 2`, host on the 64 MiB model, join on the 1000):
+  - At `gblink_running`, free heap was 890,088, then 1,868,008, then 1,797,336 B before the fix, and 890,088, then 1,938,680, then 1,938,680 B after it.
+  - The emulated-frame shash (30,000 frames on each console) and `gbadual_hash` are identical to the unfixed build.
+
 ## 20. Per-mode translation-cache offsets: single player pinned, a cable session at its own (commit bb20b69)
 
 Pinning is worth -21 % AW2 core and -4 % H&S in single player on the 3000; two cores pinned at the same offset lose ~2 fps (17.7). A session start already reloads instance A, so the offset can be chosen per mode.
