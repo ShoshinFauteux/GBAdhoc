@@ -63,14 +63,19 @@ TGB_OPT ?= -O3
 TGB_OBJS = $(addprefix ../gbcore/tgbdual/,apu.o cpu.o gb.o lcd.o mbc.o rom.o \
            sgb.o)
 TGB_CFLAGS = $(TGB_OPT) -fgnu89-inline -fno-strict-aliasing -Wno-unused-parameter
-# TGB_LAZY_TIMER=1 (docs/GB-CORE-PERF.md): the timer walk only when an event
-# can fall inside the step.  Exact; off until a hardware A/B.  The adapter
-# needs it too (cpu_timer_dirty on state load is defined either way).
+# TGB_LAZY_TIMER (docs/GB-CORE-PERF.md): the timer walk only when an event
+# can fall inside the step.  Exact (tgb_ref state hashes, linkplay).  ON by
+# default since 4.5.0: hardware build gbp-b2 (v2) with armed batching took
+# real two-PSP Gen 2 trades 49.8 -> 58.5 fps, Gen 1 55.1 -> 59.2, no desyncs
+# (2026-10-28/30).  TGB_LAZY_TIMER=0 is the kill switch.  The adapter needs
+# nothing (cpu_timer_dirty on state load is defined either way).
+TGB_LAZY_TIMER ?= 1
 ifeq ($(TGB_LAZY_TIMER),1)
 TGB_CFLAGS += -DTGB_LAZY_TIMER
 endif
 # TGB_FAST_TILE=1 (docs/GB-CORE-PERF.md): tile rows decoded by a 1 KiB table
-# instead of bit by bit.  Exact (pixel hashes); off until a hardware A/B.
+# instead of bit by bit.  Exact (pixel hashes); OFF: no gain on hardware
+# (gbp-c2 vs gbp-b2, 13/13 "same", mean ~+0.7 % worse).
 ifeq ($(TGB_FAST_TILE),1)
 TGB_CFLAGS += -DTGB_FAST_TILE
 endif

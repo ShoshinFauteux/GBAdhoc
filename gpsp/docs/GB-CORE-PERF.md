@@ -89,7 +89,13 @@ already gone by combo3.)
 6. Spread the periodic sync hash over frames (removes a 2-4 ms spike / 240).
 7. Net/frontend (~0.6-1 ms).
 
-## 5. Prototypes (both OFF by default)
+## 5. Prototypes (both ON by default since 4.5.0)
+
+Shipped defaults (claude/rc-4.5.0): `TGB_LAZY_TIMER ?= 1` in psp/Makefile
+(kill switch `TGB_LAZY_TIMER=0`) and `GBLINK_ARMED_DEFAULT 1` in
+psp/main_psp.c (harness `gblink_batch_armed = 0` = control).  Every profile
+gets them with no harness key.  The bench key `gb_dual_armed` keeps
+default 0.  TGB_FAST_TILE stays off; TGB_OPCOUNT is tools only.
 
 **Armed batching** -- `gbdual_config_t.batch_armed`; session bit
 `FE_GBLINK_MASK_ARMED_BATCH` (0x4, NEGOTIABLE: the host decides, both

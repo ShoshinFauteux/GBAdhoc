@@ -7337,10 +7337,12 @@ static unsigned g_gblink_bulk_rate;           /* 0 = adaptive */
 #define GBLINK_BATCH_DEFAULT 154u
 static unsigned g_gblink_batch = GBLINK_BATCH_DEFAULT; /* gbdual batch_lines */
 /* ...also while the partner's port is armed (gbdual_config_t.batch_armed,
- * docs/GB-CORE-PERF.md): OFF until a hardware A/B; harness key
- * gblink_batch_armed, the host decides for both (negotiated). */
+ * docs/GB-CORE-PERF.md): ON by default since 4.5.0 -- with the lazy timer
+ * (gbp-b2) real two-PSP Gen 2 trades went 49.8 -> 58.5 fps, no desyncs.
+ * Exact; the host decides for both (negotiated, an older build on either
+ * side = off).  Harness key gblink_batch_armed = 0 is the control arm. */
 #ifndef GBLINK_ARMED_DEFAULT
-#define GBLINK_ARMED_DEFAULT 0
+#define GBLINK_ARMED_DEFAULT 1
 #endif
 static int g_gblink_batch_armed = GBLINK_ARMED_DEFAULT;
 static int g_gblink_live = 1;                 /* link from the running game */
