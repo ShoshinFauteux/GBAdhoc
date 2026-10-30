@@ -112,7 +112,7 @@ int main(void)
    /* 6. Hand-edited and corrupt values: each key migrates independently;
     *    out-of-range values clamp. */
    write_file("scale = 1\nscale_gb = 3\nscale_gbc = 9\nambient_gb = 7\n"
-              "ambient_gbc = 2\nfilter_gba = 5\n");
+              "ambient_gbc = 2\nfilter_gba = 9\n");
    pcfg_load(path);
    assert(g_pdisp[FE_CONSOLE_GBA].scale == 1);
    assert(g_pdisp[FE_CONSOLE_GB].scale == VID_SCALE_INT2);
@@ -143,6 +143,18 @@ int main(void)
    pcfg_load(path);
    assert(g_pdisp[FE_CONSOLE_GB].filter == VID_FILTER_SHARP);
    puts("PASS sharp bilinear: third filter value, per console, INI-compatible");
+
+   /* 6c. Grid filters (VID_FILTER_LCD/DOT/SCAN = 3..5) load as themselves,
+    *     per console; 6 and up is still bilinear (6. above uses 9). */
+   write_file("filter_gba = 3\nfilter_gb = 4\nfilter_gbc = 5\n");
+   pcfg_load(path);
+   assert(g_pdisp[FE_CONSOLE_GBA].filter == VID_FILTER_LCD);
+   assert(g_pdisp[FE_CONSOLE_GB].filter == VID_FILTER_DOT);
+   assert(g_pdisp[FE_CONSOLE_GBC].filter == VID_FILTER_SCAN);
+   write_file("filter_gba = 6\n");
+   pcfg_load(path);
+   assert(g_pdisp[FE_CONSOLE_GBA].filter == VID_FILTER_BILINEAR);
+   puts("PASS grid filters: values 3..5 load per console, 6+ is bilinear");
 
    /* 7. No config path: nothing persists, nothing crashes. */
    pcfg_load("");

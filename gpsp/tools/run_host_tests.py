@@ -161,7 +161,7 @@ GB_BASELINE_PATHS = ("gbcore", "frontend-common/fe_console.h")
 def extract_gb_baseline(dest: Path) -> tuple[bool, str]:
     try:
         names = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", GB_BASELINE_COMMIT,
+            ["git", "ls-tree", "-r", "--full-tree", "--name-only", GB_BASELINE_COMMIT,
              *GB_BASELINE_PATHS], cwd=str(REPO), capture_output=True,
             check=True, text=True).stdout.split()
     except Exception:

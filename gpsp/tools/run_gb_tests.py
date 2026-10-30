@@ -28,7 +28,10 @@ REPO = Path(__file__).resolve().parents[1]
 GB_BASELINE = "696ad10a21d92e83400d5fb45a2856e6032d2824"   # 3.0.0 source
 WARN = ["-Wall", "-Wextra", "-Werror"]
 SAN = ["-fsanitize=address,undefined", "-g", "-O1"]
-CORE_FLAGS = ["-fgnu89-inline", "-fno-strict-aliasing", "-Wno-unused-parameter"]
+# -DTGB_LAZY_TIMER: the shipped default since 4.5.0 (psp/Makefile TGB_LAZY_TIMER ?= 1),
+# so the bit-identity and dual tests prove the configuration that ships.
+CORE_FLAGS = ["-fgnu89-inline", "-fno-strict-aliasing", "-Wno-unused-parameter",
+              "-DTGB_LAZY_TIMER"]
 CORE = ["apu.c", "cpu.c", "gb.c", "lcd.c", "mbc.c", "rom.c", "sgb.c"]
 # Read-only tables every instance shares: linked once, outside the
 # per-instance partial link (gbcore/tgbdual/tgb_shared.c).
