@@ -1038,6 +1038,7 @@ static struct {
 static struct {
   u16 devid;         // Device ID assigned to the host
   u8 tx_ttl;         // Internal counter for broadcast transmission
+  u8 accepting;      // Room open: HOST_START opens it, HOST_STOP closes it
   u32 bdata[6];      // Data to broadcast other devices
   struct {
     u16 client_id;   // libretro client ID
@@ -1624,6 +1625,7 @@ static s32 rfu_process_command_inner(void) {
     }
     // Start broadcasting immediately.
     rfu_host.tx_ttl = 0xff;
+    rfu_host.accepting = 1;
     return 0;
 
   case RFU_CMD_HOST_STOP:
@@ -1632,6 +1634,13 @@ static s32 rfu_process_command_inner(void) {
 
     // This just "stops" accepting new clients, however if the host has no
     // clients, it will return to idle state (I think!).
+    /* EndHost CLOSES the room: the adapter stops broadcasting and refuses
+     * new connections, while the links it holds carry on (afska's
+     * gba-link-connection docs, 0x1B; librfu's SC_END).  Ours kept
+     * broadcasting and admitting for the whole session, so a closed
+     * two-player group stayed on every other player's list and a third
+     * console could still join it. */
+    rfu_host.accepting = 0;
     if (rfu_state == RFU_STATE_HOST) {
       for (i = 0; i < 4; i++)
         if (rfu_host.clients[i].devid)
@@ -2448,8 +2457,8 @@ void rfu_frame_update() {
       }
     }
 
-    // Broadcast host session periodically
-    if (rfu_state == RFU_STATE_HOST) {
+    // Broadcast host session periodically (only while the room is open)
+    if (rfu_state == RFU_STATE_HOST && rfu_host.accepting) {
       if (rfu_host.tx_ttl++ >= BCST_ANNOUNCE_VB) {
         rfu_host.tx_ttl = 0;
         rfu_net_send_bcast(NET_RFU_BROADCAST, rfu_host.devid, rfu_host.bdata);
@@ -2511,6 +2520,13 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
             RFU_DEBUG_LOG("Connection request ignored: already connected!\n");
             return;
           }
+
+        /* A closed room (HOST_STOP) admits nobody new; say so at once
+         * rather than leave the requester to time out. */
+        if (!rfu_host.accepting) {
+          rfu_net_send_cmd(client_id, NET_RFU_CONNECT_NACK, 0);
+          break;
+        }
 
         // Find an empty connection slot
         for (i = 0; i < 4; i++)

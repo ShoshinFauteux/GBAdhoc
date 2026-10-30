@@ -177,10 +177,72 @@ static void test_late_connect_ack_releases_the_slot(void)
   puts("  connect: a late or foreign ACK hands its slot back");
 }
 
+static unsigned bcasts_over(unsigned frames)
+{
+  unsigned n = 0, f;
+  for (f = 0; f < frames; f++) {
+    sends = 0;
+    last_type = 0xffffffffu;
+    rfu_frame_update();
+    if (sends && last_type == NET_RFU_BROADCAST)
+      n++;
+  }
+  return n;
+}
+
+/* 3. EndHost (0x1B) closes the room but keeps the links it holds.  Ours kept
+ *    broadcasting and admitting for the whole session: a closed group stayed
+ *    on everyone's list and a further console could still join it. */
+static void test_host_stop_closes_the_room(void)
+{
+  uint8_t p[16];
+  u16 devid;
+  fresh();
+  rfu_comstate = RFU_COMSTATE_WAITCMD;
+  assert(cmd(RFU_CMD_HOST_START, 0, 0) == 0);
+  assert(rfu_state == RFU_STATE_HOST);
+  devid = rfu_host.devid;
+  assert(bcasts_over(70) >= 2);                 /* open: announced */
+
+  packet(p, NET_RFU_CONNECT_REQ, devid);
+  sends = 0;
+  rfu_net_receive(p, sizeof(p), 3);
+  assert(sends == 1 && last_type == NET_RFU_CONNECT_ACK);
+  assert(rfu_host.clients[0].client_id == 3 && rfu_host.clients[0].devid);
+
+  assert(cmd(RFU_CMD_HOST_STOP, 0, 0) == 0);
+  assert(rfu_state == RFU_STATE_HOST);          /* the link carries on */
+  assert(bcasts_over(70) == 0);                 /* closed: not announced */
+
+  sends = 0;
+  rfu_net_receive(p, sizeof(p), 4);             /* a newcomer is refused */
+  assert(sends == 1 && last_dst == 4 && last_type == NET_RFU_CONNECT_NACK);
+  assert(rfu_host.clients[1].devid == 0);
+  sends = 0;
+  rfu_net_receive(p, sizeof(p), 3);             /* the member's repeat: quiet */
+  assert(sends == 0 && rfu_host.clients[0].client_id == 3);
+
+  assert(cmd(RFU_CMD_HOST_START, 0, 0) == 0);   /* reopening announces again */
+  assert(rfu_host.devid == devid);
+  assert(bcasts_over(70) >= 2);
+  sends = 0;
+  rfu_net_receive(p, sizeof(p), 4);
+  assert(sends == 1 && last_type == NET_RFU_CONNECT_ACK);
+
+  /* With no clients, EndHost still drops back to idle. */
+  fresh();
+  rfu_comstate = RFU_COMSTATE_WAITCMD;
+  assert(cmd(RFU_CMD_HOST_START, 0, 0) == 0);
+  assert(cmd(RFU_CMD_HOST_STOP, 0, 0) == 0);
+  assert(rfu_state == RFU_STATE_IDLE);
+  puts("  host: EndHost closes the room, keeps its links, reopens on StartHost");
+}
+
 int main(void)
 {
   test_disconnect_skips_empty_slots();
   test_late_connect_ack_releases_the_slot();
+  test_host_stop_closes_the_room();
   puts("RFU lifecycle tests passed");
   return 0;
 }
