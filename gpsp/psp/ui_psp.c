@@ -2309,7 +2309,8 @@ static void settings_adjust(int id, int dir)
              pcfg_console_tag(pcfg_display_console()));
       break;
    case SET_FILTER:
-      /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md). */
+      /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md) ->
+       * LCD grid -> dot grid -> scanlines (video_psp.c GRID FILTERS). */
       g_pcfg.filter = (g_pcfg.filter + VID_FILTER_MODES + dir) %
                       VID_FILTER_MODES;
       pcfg_display_commit();
@@ -2528,6 +2529,17 @@ static ui_action screen_settings(unsigned edges)
              vid_scale_name(g_pcfg.scale));
          break;
       case SET_FILTER:
+         if (g_pcfg.filter >= VID_FILTER_LCD)
+         {
+            /* The grid filters draw at every scale but 1x, where a game
+             * pixel is one screen pixel (video_psp.c GRID FILTERS). */
+            char v[40];
+            int on = g_pcfg.scale != VID_SCALE_1X;
+            snprintf(v, sizeof(v), on ? "%s" : "%s (off at 1x)",
+                     vid_filter_name(g_pcfg.filter));
+            set_item(y, g_cursor == i, on, set_rows[i].label, v);
+            break;
+         }
          /* 2x samples nearest whatever this says; say so. */
          set_item(y, g_cursor == i, g_pcfg.scale != VID_SCALE_INT2,
              set_rows[i].label,

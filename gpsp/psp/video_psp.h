@@ -48,6 +48,12 @@ enum
     * inserted: CONFIG.INI stores the number, and an older build reads 2 as
     * bilinear (its loader maps any non-zero filter to 1). */
    VID_FILTER_SHARP    = 2,
+   /* GRID FILTERS (video_psp.c "GRID FILTERS", docs/DISPLAY-FEATURES.md):
+    * the picture drawn nearest with a mask whose period is one GAME pixel --
+    * LCD grid (rows and columns), dot grid (their crossings), scanlines
+    * (rows).  Nothing to draw at 1x, where a game pixel is one screen pixel:
+    * those show plain nearest.  Appended: an older build reads 3..5 as
+    * bilinear. */
    VID_FILTER_LCD      = 3,
    VID_FILTER_DOT      = 4,
    VID_FILTER_SCAN     = 5,
