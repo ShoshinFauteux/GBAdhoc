@@ -1,0 +1,88 @@
+diff --git a/cpu.cc b/cpu.cc
+index dfedd75..1d531d6 100644
+--- a/cpu.cc
++++ b/cpu.cc
+@@ -1009,7 +1009,7 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
+   // However for LDM {PC} we restore CPSR from SPSR.
+   // TODO: implement CPSR restore, only USER mode is now implemented.
+   u32 old_cpsr = reg[REG_CPSR];
+-  if (sbit && (mode == AccStore || !(reglist & 0x8000)))
++  if (sbit && (mode == AccStore || rn != REG_PC))
+     set_cpu_mode(MODE_USER);
+ 
+   // If base is in the reglist and writeback is enabled, the value of the
+@@ -1040,7 +1040,7 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
+   if (writeback && !writeback_first)
+     reg[rn] = endaddr;
+ 
+-  if (sbit && (mode == AccStore || !(reglist & 0x8000)))
++  if (sbit && (mode == AccStore || rn != REG_PC))
+     set_cpu_mode(cpu_modes[old_cpsr & 0xF]);
+ 
+   return cpu_alert;
+diff --git a/mips/mips_emit.h b/mips/mips_emit.h
+index cb9bfcd..1aeac6f 100644
+--- a/mips/mips_emit.h
++++ b/mips/mips_emit.h
+@@ -1572,24 +1572,13 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
+   arm_block_memory_writeback_post_store(writeback_type);                      \
+   generate_function_call_swap_delay(execute_store_u32);                       \
+ 
+-#define arm_block_memory_adjust_pc_store(s_bit)                               \
++#define arm_block_memory_adjust_pc_store()                                    \
+ 
+-/* LDM with the PC in the list and the S bit ("LDM rn, {..., pc}^") also
+- * restores the CPSR from the SPSR, like MOVS pc (check_store_reg_pc_flags):
+- * the target is in reg_a0 and execute_spsr_restore returns it with bit 0 =
+- * CPSR.T.  This used to branch without the restore and stay in the mode. */
+-#define arm_block_memory_pc_load_yes()                                        \
+-    generate_function_call(execute_spsr_restore);                             \
+-    generate_indirect_branch_dual();                                          \
+-
+-#define arm_block_memory_pc_load_no()                                         \
+-    generate_indirect_branch_arm();                                           \
+-
+-#define arm_block_memory_adjust_pc_load(s_bit)                                \
++#define arm_block_memory_adjust_pc_load()                                     \
+   if(reg_list & 0x8000)                                                       \
+   {                                                                           \
+     generate_mov(reg_a0, reg_rv);                                             \
+-    arm_block_memory_pc_load_##s_bit();                                       \
++    generate_indirect_branch_arm();                                           \
+   }                                                                           \
+ 
+ #define arm_block_memory_sp_load()                                            \
+@@ -1602,12 +1591,12 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
+   mips_emit_sw(arm_to_mips_reg[store_reg], reg_a1, offset);                   \
+ }                                                                             \
+ 
+-#define arm_block_memory_sp_adjust_pc_store(s_bit)                            \
++#define arm_block_memory_sp_adjust_pc_store()                                 \
+ 
+-#define arm_block_memory_sp_adjust_pc_load(s_bit)                             \
++#define arm_block_memory_sp_adjust_pc_load()                                  \
+   if(reg_list & 0x8000)                                                       \
+   {                                                                           \
+-    arm_block_memory_pc_load_##s_bit();                                       \
++    generate_indirect_branch_arm();                                           \
+   }                                                                           \
+ 
+ #define arm_block_memory_offset_down_a()                                      \
+@@ -1697,7 +1686,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
+     }                                                                         \
+                                                                               \
+     arm_block_memory_writeback_post_##access_type(writeback_type);            \
+-    arm_block_memory_sp_adjust_pc_##access_type(s_bit);                       \
++    arm_block_memory_sp_adjust_pc_##access_type();                            \
+   }                                                                           \
+   else                                                                        \
+   {                                                                           \
+@@ -1722,7 +1711,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
+       }                                                                       \
+     }                                                                         \
+                                                                               \
+-    arm_block_memory_adjust_pc_##access_type(s_bit);                          \
++    arm_block_memory_adjust_pc_##access_type();                               \
+   }                                                                           \
+ }                                                                             \
+ 

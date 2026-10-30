@@ -285,9 +285,16 @@ if os.environ.get("DRCORPUS_Q3") == "1":
         "pre":    (R450, "switch", "the same with the fixes reversed (rc450 behaviour): may differ"),
         "msr":    (R450 + MF, "switch", "MSR_FAST on"),
         "msroff": (R450 + MF + " -DMSR_FAST_DEFAULT=0", "switch", "MSR_FAST compiled in, msr_fast=0"),
+        # which fix a "pre" divergence comes from: one fix reversed at a time
+        "preshf": (R450, "switch", "only the register-shift fix reversed"),
+        "preflg": (R450, "switch", "only the MSR CPSR_c NZCV + IRQ LR fix reversed"),
+        "preldm": (R450, "switch", "only the LDM {pc}^ fix reversed"),
+        "prelr":  (R450, "switch", "only the IRQ-from-MSR LR fix reversed"),
     }
     ORDER = list(VARIANTS)
-    REF_PATCHES = {"pre": "q3_pre_fixes.patch"}
+    REF_PATCHES = {"pre": "q3_pre_fixes.patch", "preshf": "q3_pre_shift.patch",
+                   "preflg": "q3_pre_msrflags.patch", "preldm": "q3_pre_ldm.patch",
+                   "prelr": "q3_pre_irqlr.patch"}
     MUTANTS = {
         "m_msr_irq": (R450 + MF, "msr_fast_m1.patch", "msr",
                       "msr_fast_store skips the pending-IRQ test"),

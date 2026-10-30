@@ -1,0 +1,15 @@
+diff --git a/mips/mips_emit.h b/mips/mips_emit.h
+index 1aeac6f..04cdab4 100644
+--- a/mips/mips_emit.h
++++ b/mips/mips_emit.h
+@@ -1404,9 +1404,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
+   if((io_registers[REG_IE] & io_registers[REG_IF]) &&
+    io_registers[REG_IME] && ((_cpsr & 0x80) == 0))
+   {
+-    /* address is the MSR's own; the IRQ is taken after it, so LR_irq =
+-       the next instruction + 4 (SUBS pc, lr, #4 used to re-run the MSR). */
+-    REG_MODE(MODE_IRQ)[6] = address + 8;
++    REG_MODE(MODE_IRQ)[6] = address + 4;
+     REG_SPSR(MODE_IRQ) = _cpsr;
+     IRQCHK_ENTER(3);
+     reg[REG_CPSR] = 0xD2;
