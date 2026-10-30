@@ -651,8 +651,7 @@ static void dest_rect(unsigned w, unsigned h,
 
 /* ===========================================================================
  * GRID FILTERS: LCD grid, dot grid, scanlines (docs/DISPLAY-FEATURES.md).
- * Based on a community patch (GBAdhoc 4.1.0 Filters).
- * TODO(credit): name the contributor once known.
+ * Based on a community patch by u/Far_Froyo_6317 (GBAdhoc 4.1.0 Filters).
  *
  * The game picture is drawn NEAREST, then one small repeating alpha mask is
  * blended over it.  The mask's period is ONE GAME PIXEL on both axes at every

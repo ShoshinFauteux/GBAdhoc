@@ -67,8 +67,8 @@ was added later on `claude/sharp-bilinear`. See
 
 ### Grid filters: LCD grid, dot grid, scanlines (`filter_* = 3, 4, 5`)
 
-Based on a community patch (GBAdhoc 4.1.0 Filters; TODO: credit the
-contributor by name). The picture is drawn nearest, and then one small
+Based on a community patch by u/Far_Froyo_6317 (GBAdhoc 4.1.0 Filters).
+The picture is drawn nearest, and then one small
 repeating alpha mask is blended over it (`grid_draw` in `psp/video_psp.c`).
 The patch repeated its mask every 2 SCREEN pixels, which only lined up at 2x.
 Here the mask's period is **one game pixel** on both axes. Its texture
