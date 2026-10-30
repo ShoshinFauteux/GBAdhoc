@@ -511,7 +511,7 @@ void vid_set_mode(int scale, int filter)
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
    /* Any other non-zero value is bilinear, as it always was. */
-   g_filter = filter == VID_FILTER_SHARP ? VID_FILTER_SHARP
+   g_filter = filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES ? filter
             : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
    if (g_filter != VID_FILTER_NEAREST)
       g_smooth = g_filter;
@@ -533,7 +533,10 @@ const char *vid_scale_name(int scale)
 
 const char *vid_filter_name(int filter)
 {
-   return filter == VID_FILTER_SHARP ? "sharp bilinear"
+   return filter == VID_FILTER_LCD ? "LCD grid"
+        : filter == VID_FILTER_DOT ? "dot grid"
+        : filter == VID_FILTER_SCAN ? "scanlines"
+        : filter == VID_FILTER_SHARP ? "sharp bilinear"
         : filter ? "bilinear" : "nearest";
 }
 
@@ -608,7 +611,8 @@ static int game_filter(void)
 {
    if (g_scale == VID_SCALE_INT2)
       return GU_NEAREST;
-   return g_filter ? GU_LINEAR : GU_NEAREST;
+   return g_filter == VID_FILTER_BILINEAR || g_filter == VID_FILTER_SHARP
+      ? GU_LINEAR : GU_NEAREST;
 }
 
 static void dest_rect(unsigned w, unsigned h,
@@ -641,6 +645,49 @@ static void dest_rect(unsigned w, unsigned h,
  * filtered `filt`.  Both blit paths share it; the GE list it builds is the
  * one they built inline before sharp bilinear existed, command for command.
  * sharp_draw() is the only other way a game picture is drawn. */
+/* Small repeating alpha masks, sampled in display pixels. No CPU framebuffer
+ * processing and no additional full-size framebuffer allocation. */
+static unsigned int grid_masks[3][64] __attribute__((aligned(16)));
+static int grid_masks_ready;
+static void grid_draw(const vid_geo *g)
+{
+   int kind = g_filter - VID_FILTER_LCD, x, y;
+   vtx_t *v;
+   if (kind < 0 || kind > 2) return;
+   if (!grid_masks_ready) {
+      for (y = 0; y < 8; ++y) for (x = 0; x < 8; ++x) {
+         grid_masks[0][y*8+x] = ((x & 1) || (y & 1)) ? 0x38000000u : 0;
+         grid_masks[1][y*8+x] = ((x & 1) && (y & 1)) ? 0x68000000u : 0;
+         grid_masks[2][y*8+x] = (y & 1) ? 0x58000000u : 0;
+      }
+      sceKernelDcacheWritebackRange(grid_masks, sizeof(grid_masks));
+      grid_masks_ready = 1;
+   }
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuEnable(GU_BLEND);
+   sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+   sceGuTexMode(GU_PSM_8888, 0, 0, GU_FALSE);
+   sceGuTexImage(0, 8, 8, 8, grid_masks[kind]);
+   sceGuTexFlush();
+   sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+   sceGuTexWrap(GU_REPEAT, GU_REPEAT);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGBA);
+   /* Narrow strips respect the PSP texture cache and sprite rasterizer. */
+   for (x = 0; x < g->dw; x += 32) {
+      int right = x + 32 < g->dw ? x + 32 : g->dw;
+      v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
+      v[0].u = x; v[0].v = 0;
+      v[0].x = g->ox+x; v[0].y = g->oy; v[0].z = 0;
+      v[1].u = right; v[1].v = g->dh;
+      v[1].x = g->ox+right; v[1].y = g->oy+g->dh; v[1].z = 0;
+      sceGuDrawArray(GU_SPRITES,
+         GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
+   }
+   sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+   sceGuDisable(GU_BLEND);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
+}
+
 static void game_draw(const uint16_t *tex, unsigned w, const vid_geo *g,
                       int filt)
 {
@@ -673,6 +720,7 @@ static void game_draw(const uint16_t *tex, unsigned w, const vid_geo *g,
                      GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
                      2, 0, v);
    }
+   grid_draw(g);
 }
 
 void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,

@@ -21,8 +21,8 @@ static int  pdisp_write(int console);
  * written by anything older loads exactly as it did. */
 static int pcfg_filter_clamp(int f)
 {
-   if (f == VID_FILTER_SHARP)
-      return VID_FILTER_SHARP;
+   if (f >= VID_FILTER_SHARP && f < VID_FILTER_MODES)
+      return f;
    return f ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
 }
 

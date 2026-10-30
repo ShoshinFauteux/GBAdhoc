@@ -48,7 +48,10 @@ enum
     * inserted: CONFIG.INI stores the number, and an older build reads 2 as
     * bilinear (its loader maps any non-zero filter to 1). */
    VID_FILTER_SHARP    = 2,
-   VID_FILTER_MODES    = 3
+   VID_FILTER_LCD      = 3,
+   VID_FILTER_DOT      = 4,
+   VID_FILTER_SCAN     = 5,
+   VID_FILTER_MODES    = 6
 };
 
 void vid_init(void);
