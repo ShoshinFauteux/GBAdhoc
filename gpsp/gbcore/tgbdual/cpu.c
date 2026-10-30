@@ -58,6 +58,33 @@ byte z802gb[256],gb2z80[256];
 //	word org_pal[16][4];
 int total_clock,rest_clock,sys_clock,seri_occer,div_clock;
 static unsigned timer_pending, timer_reloading;
+#ifdef TGB_LAZY_TIMER
+/* GBAdhoc (TGB_LAZY_TIMER, docs/GB-CORE-PERF.md): clocks the timer can take
+ * before its next event; 0 = unknown, take the full walk.  Timer on and
+ * idle: the clocks to the next TIMA tick (pending/reloading count down on
+ * their own, so those always walk).  Timer stopped and idle: TIMER_IDLE --
+ * nothing can happen until a TAC write, which calls cpu_timer_dirty().
+ * Below the budget the walk would only move the divider phase, which the
+ * base copies into sys_clock; sys_clock is read only by the state savers, so
+ * it is brought up to date there (cpu_timer_sync) and before any timer
+ * register write, instead of on every instruction.  Not part of any state.
+ * v2 (hardware 2026-10-28): v1 covered only a running timer, so games with
+ * the timer stopped paid an extra check per instruction (+3.5..7.5 %). */
+#define TIMER_IDLE 0x40000000
+static int timer_budget;
+static int timer_lazy_mask;     /* period-1 while sys_clock is lazy, else -1 */
+void cpu_timer_sync(void)
+{
+    if (timer_budget > 0 && timer_lazy_mask >= 0)
+        sys_clock = (int)(((g_regs.DIV << 8) + div_clock) & timer_lazy_mask);
+}
+void cpu_timer_dirty(void) { cpu_timer_sync(); timer_budget = 0; }
+void cpu_timer_forget(void) { timer_budget = 0; timer_lazy_mask = -1; }
+#else
+void cpu_timer_sync(void) { }
+void cpu_timer_dirty(void) { }
+void cpu_timer_forget(void) { }
+#endif
 /* GBAdhoc: the byte an internal-clock transfer delivers into SB when
  * seri_occer expires (0xFF with no cable), set at the SC write. */
 byte seri_rx=0xFF;
@@ -114,6 +141,7 @@ void cpu_reset(void)
 	rest_clock=0;
 	total_clock=sys_clock=div_clock=0;
 	timer_pending=timer_reloading=0;
+	cpu_timer_forget();
 	seri_occer=0x7fffffff;
 	halt=false;
 	speed=false;
@@ -139,9 +167,18 @@ static void cpu_timer_increment(void) {
     if (timer_reloading) return;
     if (!(++g_regs.TIMA)) timer_pending=4;
 }
+#ifdef TGB_LAZY_TIMER
+/* out of line: with the budget it is the rare path */
+static void __attribute__((noinline)) cpu_timer_advance(unsigned clocks) {
+    static const unsigned periods[]={1024,16,64,256};
+    if (!(g_regs.TAC&4) && !timer_pending && !timer_reloading) {
+        timer_budget=TIMER_IDLE; timer_lazy_mask=-1; return;
+    }
+#else
 static void cpu_timer_advance(unsigned clocks) {
     static const unsigned periods[]={1024,16,64,256};
     if (!(g_regs.TAC&4) && !timer_pending && !timer_reloading) return;
+#endif
     unsigned period=periods[g_regs.TAC&3];
     unsigned phase=((g_regs.DIV<<8)+div_clock)&(period-1);
     while (clocks) {
@@ -160,9 +197,25 @@ static void cpu_timer_advance(unsigned clocks) {
         if ((g_regs.TAC&4) && step==until_tick) cpu_timer_increment();
     }
     if (g_regs.TAC&4) sys_clock=(int)phase;
+#ifdef TGB_LAZY_TIMER
+    /* the next tick is period-phase clocks away; pending/reloading count
+     * down in clocks of their own, so those take the walk */
+    if ((g_regs.TAC&4) && !timer_pending && !timer_reloading) {
+        timer_budget=(int)(period-phase); timer_lazy_mask=(int)(period-1);
+    } else if (!(g_regs.TAC&4) && !timer_pending && !timer_reloading) {
+        timer_budget=TIMER_IDLE; timer_lazy_mask=-1;
+    } else {
+        timer_budget=0; timer_lazy_mask=-1;
+    }
+#endif
 }
 
 static void cpu_clock_advance(unsigned clocks) {
+#ifdef TGB_LAZY_TIMER
+    if ((int)clocks<timer_budget)
+        timer_budget-=(int)clocks;
+    else
+#endif
     cpu_timer_advance(clocks);
     div_clock+=(int)clocks;
     g_regs.DIV+=(byte)(div_clock>>8);div_clock&=255;
@@ -204,6 +257,7 @@ int cpu_timer_timing_valid(const byte *in) {
 }
 void cpu_load_timer_timing(const byte *in) {
     timer_pending=timer_reloading=0;
+    cpu_timer_forget();
     if (!memcmp(in,"TMR1",4)) {timer_pending=in[4];timer_reloading=in[5];}
 }
 
@@ -222,6 +276,7 @@ void cpu_save_state(int *dat)
 
 void cpu_save_state_ex(int *dat)
 {
+	cpu_timer_sync();
 	dat[0]=div_clock;
 	dat[1]=rest_clock;
 	dat[2]=sys_clock;
@@ -245,6 +300,7 @@ void cpu_restore_state(int *dat)
 
 void cpu_restore_state_ex(int *dat)
 {
+	cpu_timer_forget();
 	div_clock=dat[0];
 	rest_clock=dat[1];
 	sys_clock=dat[2];
@@ -678,6 +734,12 @@ void cpu_irq_process()
 }
 
 int tmp_clocks;
+#ifdef TGB_OPCOUNT
+/* tools only (linkplay framestat, docs/GB-CORE-PERF.md): instructions
+ * executed, a noise-free cost proxy.  gbcore_* so each objcopy'd machine
+ * copy keeps its own (gbcoreb_opcount). */
+unsigned long long gbcore_opcount;
+#endif
 #include "op_cb.h"
 #include "op_normal.h"
 
@@ -717,6 +779,9 @@ void cpu_exec(unsigned short clocks)
 		tmp_clocks=cycles[op_code];
 
 		op_code_normal_JmpTbl[op_code]();
+#ifdef TGB_OPCOUNT
+		gbcore_opcount++;
+#endif
 
 		rest_clock-=tmp_clocks;
 		cpu_clock_advance((unsigned)tmp_clocks);

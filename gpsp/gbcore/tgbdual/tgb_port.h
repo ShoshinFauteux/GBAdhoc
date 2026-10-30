@@ -62,6 +62,12 @@ void apu_save_timing(byte *out);     /* 256 reserved bytes */
 void apu_load_timing(const byte *in);
 void cpu_save_timer_timing(byte *out); /* 8 bytes, reserved native state 80..87 */
 void cpu_load_timer_timing(const byte *in);
+/* GBAdhoc TGB_LAZY_TIMER: a timer register is about to change / just
+ * changed (brings sys_clock up to date first); _forget: state replaced
+ * wholesale (load/reset); _sync: before reading sys_clock (state save). */
+void cpu_timer_dirty(void);
+void cpu_timer_forget(void);
+void cpu_timer_sync(void);
 int cpu_timer_timing_valid(const byte *in);
 void gbe_init(void);
 void gbe_reset(void);

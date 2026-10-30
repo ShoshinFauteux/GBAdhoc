@@ -7336,6 +7336,13 @@ static unsigned g_gblink_bulk_rate;           /* 0 = adaptive */
  * slot 0 off); harness `gblink_batch = 1` is the strict control. */
 #define GBLINK_BATCH_DEFAULT 154u
 static unsigned g_gblink_batch = GBLINK_BATCH_DEFAULT; /* gbdual batch_lines */
+/* ...also while the partner's port is armed (gbdual_config_t.batch_armed,
+ * docs/GB-CORE-PERF.md): OFF until a hardware A/B; harness key
+ * gblink_batch_armed, the host decides for both (negotiated). */
+#ifndef GBLINK_ARMED_DEFAULT
+#define GBLINK_ARMED_DEFAULT 0
+#endif
+static int g_gblink_batch_armed = GBLINK_ARMED_DEFAULT;
 static int g_gblink_live = 1;                 /* link from the running game */
 /* Redundant input frames, OFF: hw2's paired A/B (V vs U, same states and
  * scripts) measured the extra datagram at +0.7-1.4 ms of emulation-thread
@@ -12439,6 +12446,8 @@ int main(int argc, char *argv[])
        * both): 1 = strict alternation (the control arm), default on. */
       g_gblink_batch = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_batch",
                                                 GBLINK_BATCH_DEFAULT);
+      g_gblink_batch_armed = fe_ini_get_int(HARNESS_INI, "gblink_batch_armed",
+                                            GBLINK_ARMED_DEFAULT) != 0;
       /* gblink_live = 0: power on from the battery images (the 3.0-era
        * link); gblink_after = frames the game plays on after a session. */
       g_gblink_live = fe_ini_get_int(HARNESS_INI, "gblink_live", 1) != 0;
@@ -12484,11 +12493,12 @@ int main(int argc, char *argv[])
                 g_gbl_win_ms, g_gbl_hash_every, g_gbl_hash_legacy);
       }
       fe_evt("gblink_harness role=%s delay=%u seed=%lld end_after=%u "
-             "library=%d bulk_bytes=%u bulk_rate=%u batch=%u",
+             "library=%d bulk_bytes=%u bulk_rate=%u batch=%u armed=%d",
              g_gblink_role == 1 ? "host" :
              g_gblink_role == 2 ? "join" : "none", g_gblink_delay,
              g_gblink_seed, g_gblink_end_after, g_gblink_library,
-             g_gblink_bulk_bytes, g_gblink_bulk_rate, g_gblink_batch);
+             g_gblink_bulk_bytes, g_gblink_bulk_rate, g_gblink_batch,
+             g_gblink_batch_armed);
    }
    /* ADR-0053: harness-ini only and default OFF.  Putting this in CONFIG.INI
     * would let a stale file toggle USB on a console someone is playing --
@@ -13791,6 +13801,7 @@ session_top:
    cfg.gbc_raw_colors = !g_pcfg.gbc_color_correction;
    cfg.gb_find_rom   = psp_gb_find_rom;     /* GB link: partner cartridge */
    cfg.gblink_batch  = g_gblink_batch;
+   cfg.gblink_batch_armed = g_gblink_batch_armed;
    cfg.gblink_live   = g_gblink_live;
    cfg.gblink_input_copies = g_gblink_copies;
    cfg.gblink_resume_boot = g_gblink_resume_boot;
@@ -13850,7 +13861,8 @@ session_top:
    {
       /* A value without a device (no ':') names a file in this app's roms
        * folder, so one ini works on ms0: and on the Go's ef0:. */
-      static char dual_rom[352], dual_state[352];
+      static char dual_rom[352], dual_state[352], dual_inputs[352],
+                  dual_sav[352];
       char v[200];
       /* gb_headless = 1: the single machine without picture or synthesis
        * (what a link session's partner machine costs on its own). */
@@ -13865,6 +13877,29 @@ session_top:
             (int)fe_ini_get_int(HARNESS_INI, "gb_dual_mirror", 0);
          cfg.gb_dual_batch =
             (unsigned)fe_ini_get_int(HARNESS_INI, "gb_dual_batch", 1);
+         /* The one-console trade (docs/GB-CORE-PERF.md): gb_dual_inputs =
+          * linkplay's input track for both machines, gb_dual_sav = slot 1's
+          * battery image, gb_dual_rtc = the session clock seed. */
+         cfg.gb_dual_armed =
+            fe_ini_get_int(HARNESS_INI, "gb_dual_armed", 0) != 0;
+         cfg.gb_dual_quiet =
+            (unsigned)fe_ini_get_int(HARNESS_INI, "gb_dual_quiet", 0);
+         if (fe_ini_get(HARNESS_INI, "gb_dual_rtc", v, sizeof(v)) && v[0])
+            cfg.gb_dual_rtc = strtoll(v, NULL, 10);
+         if (fe_ini_get(HARNESS_INI, "gb_dual_inputs", v, sizeof(v)) && v[0])
+         {
+            snprintf(dual_inputs, sizeof(dual_inputs), "%s%s%s",
+                     strchr(v, ':') ? "" : p_rom_dir,
+                     strchr(v, ':') ? "" : "/", v);
+            cfg.gb_dual_inputs = dual_inputs;
+         }
+         if (fe_ini_get(HARNESS_INI, "gb_dual_sav", v, sizeof(v)) && v[0])
+         {
+            snprintf(dual_sav, sizeof(dual_sav), "%s%s%s",
+                     strchr(v, ':') ? "" : p_rom_dir,
+                     strchr(v, ':') ? "" : "/", v);
+            cfg.gb_dual_sav = dual_sav;
+         }
          if (fe_ini_get(HARNESS_INI, "gb_dual_state", v, sizeof(v)) && v[0])
          {
             snprintf(dual_state, sizeof(dual_state), "%s%s%s",

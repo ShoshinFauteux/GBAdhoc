@@ -491,6 +491,10 @@ int main(int argc, char **argv)
       l.batch_lines = (unsigned)atoi(arg(argc, argv, "batch", "0"));
       l.pace_slot0 = atoi(arg(argc, argv, "pace0", "0"));
       l.hash_legacy = atoi(arg(argc, argv, "hash_legacy", "0"));
+      /* armed=1: the host asks for gbdual batch_armed (negotiated; the
+       * guest's own armed_g is ignored, as on the consoles) */
+      if (atoi(arg(argc, argv, i ? "armed_g" : "armed", "0")))
+        l.core_mask |= FE_GBLINK_MASK_ARMED_BATCH;
       sess[i] = STACK[i].create(&p, &l);
       free(sd);
       free(std_);

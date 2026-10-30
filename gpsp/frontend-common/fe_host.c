@@ -168,6 +168,58 @@ static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames
       host.audio_frames(samples, frames);
 }
 
+/* gb_dual_inputs (harness bench): a link session's buttons for BOTH
+ * machines, replayed from linkplay's inputs_out track ("FRAME S0 S1" hex
+ * lines where either changes, then "N end").  Both Game Boys of a trade,
+ * scripted and cabled in one process: what each PSP of a real session
+ * computes, without the radio (docs/GB-CORE-PERF.md). */
+#define GB_REPLAY_MAX 8192u
+typedef struct { uint32_t frame; uint16_t b[2]; } gb_replay_t;
+static gb_replay_t *gb_dual_replay;
+static unsigned gb_dual_replay_n;
+static unsigned gb_dual_replay_cur[2];
+
+static void gb_dual_replay_load(const char *path)
+{
+   char line[96];
+   FILE *f = fopen(path, "r");
+   free(gb_dual_replay);
+   gb_dual_replay = NULL;
+   gb_dual_replay_n = 0;
+   gb_dual_replay_cur[0] = gb_dual_replay_cur[1] = 0;
+   if (!f)
+   {
+      fe_evt("gb_dual_replay open_failed path=%s", path);
+      return;
+   }
+   gb_dual_replay = (gb_replay_t *)malloc(GB_REPLAY_MAX * sizeof(gb_replay_t));
+   while (gb_dual_replay && fgets(line, sizeof(line), f) &&
+          gb_dual_replay_n < GB_REPLAY_MAX)
+   {
+      unsigned long fr;
+      unsigned a, b;
+      if (line[0] == '#' || sscanf(line, "%lu %x %x", &fr, &a, &b) != 3)
+         continue;
+      gb_dual_replay[gb_dual_replay_n].frame = (uint32_t)fr;
+      gb_dual_replay[gb_dual_replay_n].b[0] = (uint16_t)a;
+      gb_dual_replay[gb_dual_replay_n].b[1] = (uint16_t)b;
+      gb_dual_replay_n++;
+   }
+   fclose(f);
+   fe_evt("gb_dual_replay path=%s changes=%u", path, gb_dual_replay_n);
+}
+
+/* Each machine asks for its own frames in order, so a cursor per slot. */
+static uint16_t gb_dual_replay_at(int slot, uint64_t frame)
+{
+   unsigned *c = &gb_dual_replay_cur[slot];
+   if (!gb_dual_replay_n || frame < gb_dual_replay[0].frame)
+      return 0;
+   while (*c + 1 < gb_dual_replay_n && gb_dual_replay[*c + 1].frame <= frame)
+      (*c)++;
+   return gb_dual_replay[*c].b[slot];
+}
+
 /* The machine pair's buttons: the player's for slot 0, the same or none for
  * the headless partner (harness measurement; no network behind it). */
 static int gb_dual_input(void *userdata, int slot, uint64_t frame,
@@ -175,6 +227,11 @@ static int gb_dual_input(void *userdata, int slot, uint64_t frame,
 {
    (void)userdata;
    (void)frame;
+   if (gb_dual_replay)
+   {
+      *buttons = gb_dual_replay_at(slot, frame);
+      return 1;
+   }
    *buttons = (slot == 0 || host.gb_dual_mirror) ? gb_dual_buttons : 0;
    return 1;
 }
@@ -3499,6 +3556,8 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    l.hash_interval = host.gblink_hash_every ? host.gblink_hash_every : 240;
    l.hash_legacy = host.gblink_hash_legacy;
    l.batch_lines = host.gblink_batch;
+   if (host.gblink_batch_armed)
+      l.core_mask |= FE_GBLINK_MASK_ARMED_BATCH;
    l.pace_slot0 = host.gblink_pace_slot0;
    l.state = gbl_prelink_state;
    l.state_size = gbl_prelink_state_n;
@@ -3777,13 +3836,32 @@ int fe_host_boot(const fe_host_config *cfg)
          dc.link = 1;
          dc.pace_slot = 0;
          dc.batch_lines = host.gb_dual_batch;
+         dc.batch_armed = host.gb_dual_armed;
+         dc.quiet_frames = host.gb_dual_quiet;
+         if (host.gb_dual_rtc)
+            dc.rtc_seed = (int64_t)host.gb_dual_rtc;
+         if (host.gb_dual_sav)
+         {
+            FILE *sf = fopen(host.gb_dual_sav, "rb");
+            size_t n = sf ? fread(state_buf, 1, sizeof(state_buf), sf) : 0;
+            if (sf)
+               fclose(sf);
+            dc.machine[1].save = n ? state_buf : NULL;
+            dc.machine[1].save_size = n;
+            fe_evt("gb_dual_bench sav=%s size=%u", host.gb_dual_sav,
+                   (unsigned)n);
+         }
+         if (host.gb_dual_inputs)
+            gb_dual_replay_load(host.gb_dual_inputs);
          gb_dual = gbdual_create(&dc);
          gb_core = gb_dual ? gbdual_core(gb_dual, 0) : NULL;
          fe_evt("gb_dual_bench rom=%s console=%s headless=1 mirror=%d "
-                "batch=%u ok=%d", host.gb_dual_rom,
+                "batch=%u armed=%d quiet=%u rtc=%lld replay=%u ok=%d",
+                host.gb_dual_rom,
                 dc.machine[1].console == FE_CONSOLE_GBC ? "GBC" : "GB",
                 host.gb_dual_mirror, dc.batch_lines ? dc.batch_lines : 1u,
-                gb_dual != NULL);
+                dc.batch_armed, dc.quiet_frames, (long long)dc.rtc_seed,
+                gb_dual_replay_n, gb_dual != NULL);
          if (gb_dual && host.gb_dual_state)
          {
             FILE *sf = fopen(host.gb_dual_state, "rb");

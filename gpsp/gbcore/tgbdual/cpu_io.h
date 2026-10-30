@@ -547,18 +547,21 @@ static void cpu_io_write_04( word adr,byte dat ){
     static const unsigned short timer_bits[]={512,8,32,128};
     /* Resetting a selected high divider bit creates a TIMA falling edge. */
     apu_div_reset();
+    cpu_timer_sync();
     if ((g_regs.TAC&4) && (((g_regs.DIV<<8)+div_clock)&timer_bits[g_regs.TAC&3])) {
       cpu_timer_increment();
     }
     g_regs.DIV=0; div_clock=0; sys_clock=0;
+    cpu_timer_dirty();
   }
-static void cpu_io_write_05( word adr,byte dat ){ if (!timer_reloading) { g_regs.TIMA=dat; timer_pending=0; } }
-static void cpu_io_write_06( word adr,byte dat ){ g_regs.TMA=dat; if (timer_reloading) g_regs.TIMA=dat; }
+static void cpu_io_write_05( word adr,byte dat ){ if (!timer_reloading) { g_regs.TIMA=dat; timer_pending=0; } cpu_timer_dirty(); }
+static void cpu_io_write_06( word adr,byte dat ){ g_regs.TMA=dat; if (timer_reloading) g_regs.TIMA=dat; cpu_timer_dirty(); }
 static void cpu_io_write_07( word adr,byte dat )
 {
     static const unsigned short timer_bits[]={512,8,32,128};
     unsigned counter=(g_regs.DIV<<8)+div_clock;
     int old_high=(counter&timer_bits[g_regs.TAC&3])!=0;
+    cpu_timer_sync();
     int new_high=(counter&timer_bits[dat&3])!=0;
     /* DMG gates enable before the edge detector; CGB gates it after. */
     if ((g_regs.TAC&4) && old_high &&
@@ -566,6 +569,7 @@ static void cpu_io_write_07( word adr,byte dat )
       cpu_timer_increment();
     }
     g_regs.TAC=dat;
+    cpu_timer_dirty();
 }
 static void cpu_io_write_08( word adr,byte dat ){ ; }
 static void cpu_io_write_09( word adr,byte dat ){ ; }

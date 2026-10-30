@@ -1038,6 +1038,7 @@ static void ext_save(uint8_t *p)
   cursor_t c;
   c.p = p;
   memset(p, 0, STATE_EXT);
+  cpu_timer_sync();
   w32(&c, div_clock);
   w32(&c, rest_clock);
   w32(&c, sys_clock);
@@ -1071,6 +1072,7 @@ static void ext_load(const uint8_t *q)
 {
   cursor_t c;
   c.q = q;
+  cpu_timer_forget();
   div_clock = r32(&c);
   rest_clock = r32(&c);
   sys_clock = r32(&c);

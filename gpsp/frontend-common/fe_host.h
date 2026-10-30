@@ -83,6 +83,14 @@ typedef struct fe_host_config
    const char *gb_dual_rom;
    int gb_dual_mirror;
    unsigned gb_dual_batch;   /* bench: scanlines per turn (gbdual_config) */
+   int gb_dual_armed;        /* bench: gbdual_config_t.batch_armed */
+   unsigned gb_dual_quiet;   /* bench: gbdual_config_t.quiet_frames (0=60) */
+   /* bench: replay a link session's buttons for BOTH machines (linkplay
+    * inputs_out), slot 1's battery image, and the session clock (both
+    * cartridge clocks on emulated time from this seed, as fe_gblink). */
+   const char *gb_dual_inputs;
+   const char *gb_dual_sav;
+   long long gb_dual_rtc;
    int gb_bench_headless;    /* bench: the single machine runs headless */
    /* ...and optionally starts it from this save state (a .stN file). */
    const char *gb_dual_state;
@@ -151,6 +159,9 @@ typedef struct fe_host_config
    /* GB link sessions hosted here: scanlines slot 0 may run ahead while
     * the cable is quiet (gbdual_config_t.batch_lines; 0/1 = strict). */
    unsigned gblink_batch;
+   /* ...and also while the partner's port is armed (gbdual_config_t.
+    * batch_armed; FE_GBLINK_MASK_ARMED_BATCH, host decides). */
+   int gblink_batch_armed;
    /* Link sessions start from the running games' save states (the partner
     * loads yours) and each game continues from its own state afterwards --
     * no restart either side.  0 = power on from the battery images. */

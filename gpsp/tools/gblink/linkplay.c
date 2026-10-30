@@ -18,6 +18,16 @@
  *            [console1=..] [palette=N] [after=FRAMES] [hashlog=FILE]
  *            [pokes=FILE] [st0=..] [st1=..] [stout0=..] [stout1=..]
  *            [batch=LINES] [quiet=FRAMES]   (gbdual_config_t.batch_lines)
+ *            [armed=1]   (gbdual_config_t.batch_armed)
+ *            [framelog=FILE] [inputs_out=FILE]
+ *
+ * framelog=FILE: one line per machine frame, written at that machine's own
+ * frame end (the frame hook): "SLOT FRAME STATEHASH PIXHASH", STATEHASH an
+ * FNV-1a over the machine's whole save state, PIXHASH over the last picture
+ * (slot 0 only; 0 when headless).  Machine-local, so two stepping policies
+ * that are exact give identical files.  inputs_out=FILE: the buttons each
+ * machine was given, by its own frame, as "FRAME S0 S1" hex lines -- the
+ * input track of a one-console replay (fe_host gb_dual_inputs).
  *
  * pokes=FILE: fixture building only -- lines "SLOT FRAME ADDR HEXBYTES"
  * write RAM at the start of that slot's frame (gbcore_poke).  st0/st1 load a
@@ -34,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The second engine (renamed copy). */
 int fe_autopilot_b_load(const char *path);
@@ -54,6 +65,42 @@ static const char *dump_dir;
 static unsigned dump_every;
 static int have_script[2];
 static uint64_t cur_frame[2];
+static FILE *frame_log;
+/* framestat=FILE: per gbdual_advance (one slot-0 frame) "F L0 L1 NS0 NS1 SW
+ * BATCHED OPS0 OPS1": lines each slot ran, x86 ns each slot spent (between successive
+ * line_trace calls), slot switches, lines run inside a batch, instructions
+ * each machine executed (TGB_OPCOUNT core builds, else 0).  A cost model
+ * input only (docs/GB-CORE-PERF.md); the stepping is untouched. */
+static FILE *fstat_log;
+static unsigned long long fs_lines[2], fs_ns[2], fs_sw, fs_t;
+static int fs_last = -1;
+static unsigned long long now_ns(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (unsigned long long)ts.tv_sec * 1000000000ull + (unsigned long long)ts.tv_nsec;
+}
+/* TGB_OPCOUNT builds of the core export each machine's instruction count */
+extern unsigned long long gbcore_opcount __attribute__((weak));
+extern unsigned long long gbcoreb_opcount __attribute__((weak));
+static unsigned long long fs_ops_base[2];
+static unsigned long long ops_of(int slot)
+{
+  unsigned long long *p = slot ? &gbcoreb_opcount : &gbcore_opcount;
+  return p ? *p : 0;
+}
+static void on_line_stat(void *ud, int slot, uint64_t line)
+{
+  unsigned long long t = now_ns();
+  (void)ud; (void)line;
+  fs_lines[slot]++;
+  fs_ns[slot] += t - fs_t;
+  fs_t = t;
+  if (fs_last >= 0 && fs_last != slot) fs_sw++;
+  fs_last = slot;
+}
+static uint16_t *given[2];            /* buttons each machine got, by frame */
+static uint64_t given_n[2];
 
 typedef struct { int slot; uint64_t frame; uint16_t addr; uint8_t n; uint8_t b[64]; } poke_t;
 static poke_t pokes[256];
@@ -329,7 +376,39 @@ static int input(void *ud, int slot, uint64_t frame, uint16_t *buttons)
   if (dump_every && frame % dump_every == 0)
     dump(slot, frame, "_e");
   *buttons = queue[slot][frame];
+  if (given[slot] && frame < MAXF)
+  {
+    given[slot][frame] = *buttons;
+    if (frame + 1 > given_n[slot]) given_n[slot] = frame + 1;
+  }
   return 1;
+}
+
+/* framelog: FNV-1a 64 over the machine's save state, at its frame end. */
+static uint64_t fnv64(uint64_t h, const uint8_t *p, size_t n)
+{
+  size_t i;
+  for (i = 0; i < n; i++) { h ^= p[i]; h *= 0x100000001B3ull; }
+  return h;
+}
+
+static void on_frame(void *ud, int slot, uint64_t frame)
+{
+  static uint8_t buf[1 << 20];
+  const gbcore_api_t *api = gbdual_api(slot);
+  long n = api->state_save(gbdual_core(dual, slot), buf, sizeof(buf));
+  uint64_t px = 0;
+  (void)ud;
+  if (slot == 0 && last_px[0])
+  {
+    unsigned y;
+    px = 0xCBF29CE484222325ull;
+    for (y = 0; y < 144; y++)
+      px = fnv64(px, (const uint8_t *)last_px[0] + y * last_pitch[0], 320);
+  }
+  fprintf(frame_log, "%d %llu %016llx %016llx\n", slot, (unsigned long long)frame,
+          (unsigned long long)(n > 0 ? fnv64(0xCBF29CE484222325ull, buf, (size_t)n) : 0),
+          (unsigned long long)px);
 }
 
 /* ---------------------------------------------------------------- main -- */
@@ -446,6 +525,16 @@ int main(int argc, char **argv)
   cfg.pace_slot = 0;
   cfg.batch_lines = (unsigned)atoi(arg(argc, argv, "batch", "0"));
   cfg.quiet_frames = (unsigned)atoi(arg(argc, argv, "quiet", "0"));
+  cfg.batch_armed = atoi(arg(argc, argv, "armed", "0"));
+  if (arg(argc, argv, "framelog", NULL))
+  {
+    frame_log = fopen(arg(argc, argv, "framelog", NULL), "w");
+    if (!frame_log) { fprintf(stderr, "cannot write framelog\n"); return 2; }
+    cfg.frame_hook = on_frame;
+  }
+  if (arg(argc, argv, "inputs_out", NULL))
+    for (s = 0; s < 2; s++)
+      given[s] = (uint16_t *)calloc(MAXF, sizeof(uint16_t));
   cfg.rtc_seed = strtoll(arg(argc, argv, "rtc", "1700000000"), NULL, 0);
   if (arg(argc, argv, "seriallog", NULL))
   {
@@ -457,6 +546,12 @@ int main(int argc, char **argv)
       sc_to = sc_from + 2;
       cfg.line_trace = serial_log ? on_line : NULL;
     }
+  }
+  if (arg(argc, argv, "framestat", NULL))
+  {
+    fstat_log = fopen(arg(argc, argv, "framestat", NULL), "w");
+    if (!fstat_log) { fprintf(stderr, "cannot write framestat\n"); return 2; }
+    cfg.line_trace = on_line_stat;
   }
   dual = gbdual_create(&cfg);
   if (!dual) { fprintf(stderr, "gbdual_create failed\n"); return 2; }
@@ -485,7 +580,21 @@ int main(int argc, char **argv)
 
   for (f = 0; f < max; f++)
   {
+    unsigned long long b0 = fstat_log ? gbdual_batched_lines(dual) : 0;
+    fs_t = now_ns();
     if (gbdual_advance(dual, input, NULL) != 1) { rc = 2; break; }
+    if (fstat_log)
+    {
+      unsigned long long o0 = ops_of(0), o1 = ops_of(1);
+      fprintf(fstat_log, "%llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+              (unsigned long long)gbdual_frame(dual, 0), fs_lines[0], fs_lines[1],
+              fs_ns[0], fs_ns[1], fs_sw,
+              (unsigned long long)(gbdual_batched_lines(dual) - b0),
+              o0 - fs_ops_base[0], o1 - fs_ops_base[1]);
+      fs_ops_base[0] = o0;
+      fs_ops_base[1] = o1;
+      fs_lines[0] = fs_lines[1] = fs_ns[0] = fs_ns[1] = fs_sw = 0;
+    }
     /* by slot 0's completed frames -- the numbering a session's HASH
      * messages and sesssim's hashlog use */
     if (hashlog && gbdual_frame(dual, 0) % 60 == 0)
@@ -509,13 +618,31 @@ int main(int argc, char **argv)
          (unsigned long long)gbdual_serial_bytes(dual, 1),
          (unsigned long long)gbdual_sync_hash(dual));
   lp_evt("lp_stepping batch=%s quiet=%s batched_lines=%llu of %llu "
-         "cuts=%llu serial_starts=%llu/%llu", arg(argc, argv, "batch", "1"),
-         arg(argc, argv, "quiet", "60"),
+         "cuts=%llu serial_starts=%llu/%llu armed=%d lag_reads=%llu",
+         arg(argc, argv, "batch", "1"), arg(argc, argv, "quiet", "60"),
          (unsigned long long)gbdual_batched_lines(dual),
          (unsigned long long)(gbdual_lines(dual) * 2),
          (unsigned long long)gbdual_batch_cuts(dual),
          (unsigned long long)gbdual_serial_starts(dual, 0),
-         (unsigned long long)gbdual_serial_starts(dual, 1));
+         (unsigned long long)gbdual_serial_starts(dual, 1),
+         gbdual_batch_armed(dual), (unsigned long long)gbdual_lag_reads(dual));
+  if (arg(argc, argv, "inputs_out", NULL))
+  {
+    FILE *fi = fopen(arg(argc, argv, "inputs_out", NULL), "w");
+    uint64_t i, n = given_n[0] > given_n[1] ? given_n[0] : given_n[1];
+    if (!fi) rc = 2;
+    else
+    {
+      fprintf(fi, "# linkplay inputs: FRAME S0 S1 (GBCORE_BUTTON_* bits, hex)\n");
+      for (i = 0; i < n; i++)
+        if (i == 0 || given[0][i] != given[0][i - 1] || given[1][i] != given[1][i - 1])
+          fprintf(fi, "%llu %x %x\n", (unsigned long long)i, given[0][i], given[1][i]);
+      fprintf(fi, "%llu end\n", (unsigned long long)n);
+      fclose(fi);
+    }
+  }
+  if (frame_log) fclose(frame_log);
+  if (fstat_log) fclose(fstat_log);
   if (save_out(0, out[0]) || save_out(1, out[1])) rc = 2;
   for (s = 0; s < 2; s++)
   {

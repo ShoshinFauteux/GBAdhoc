@@ -54,6 +54,8 @@ struct gbdual {
   uint32_t cut_arms, line_arms;
   uint64_t serial_starts[GBDUAL_SLOTS];
   uint64_t batched_lines, cuts;
+  int batch_armed;                 /* gbdual_config_t.batch_armed */
+  uint64_t lag_reads;              /* see gbdual_lag_reads */
   int64_t rtc_seed;
   int pace_slot;
   uint64_t line_pairs;
@@ -154,6 +156,16 @@ static int on_serial_clocked(void *userdata, uint8_t outgoing,
   uint8_t peer_sc = hide ? 0 : d->api[peer]->serial_control(d->core[peer]);
   uint32_t peer_arms = peer_arms_seen(d, p->slot);
   d->touched = 1;
+  /* Slot 0 completing a transfer is the one moment it reads slot 1 (its
+   * SC, arms and SB); strict alternation has slot 1 through line
+   * cur_line - 1 by then.  Only a CGB fast transfer started inside a lead
+   * can finish before slot 1 has caught up: count it, and stop leading
+   * while slot 1 is busy from here on (both consoles do the same). */
+  if (p->slot == 0 && d->lines[1] < d->cur_line)
+  {
+    d->lag_reads++;
+    d->batch_armed = 0;
+  }
   if ((peer_sc & 0x81) == 0x80)
     *received = d->api[peer]->serial_clock_in(d->core[peer], outgoing);
   else if (peer_arms != p->peer_arms_at_start)
@@ -206,6 +218,7 @@ gbdual_t *gbdual_create(const gbdual_config_t *config)
     goto fail;
   d->pace_slot = config->pace_slot;
   d->batch = config->batch_lines ? config->batch_lines : 1;
+  d->batch_armed = config->batch_armed != 0;
   d->quiet_lines = (uint64_t)(config->quiet_frames ? config->quiet_frames
                                                    : 60u) * 154u;
   d->rtc_seed = config->rtc_seed;
@@ -291,17 +304,18 @@ void gbdual_destroy(gbdual_t *d)
   free(d);
 }
 
-/* May slot 0 run ahead?  Neither machine's serial port is busy (a transfer
- * requested, or armed on the external clock) and nothing serial happened
- * for the quiet period. */
+/* May slot 0 run ahead?  Nothing serial happened for the quiet period and
+ * neither machine's serial port is busy (a transfer requested, or armed on
+ * the external clock) -- with batch_armed, only slot 0's port must be idle
+ * (gbdual_config_t.batch_armed). */
 static int cable_quiet(gbdual_t *d)
 {
-  int s;
   if (d->batch <= 1 || d->lines[0] - d->last_serial < d->quiet_lines)
     return 0;
-  for (s = 0; s < GBDUAL_SLOTS; s++)
-    if (d->api[s]->serial_control(d->core[s]) & 0x80)
-      return 0;
+  if (d->api[0]->serial_control(d->core[0]) & 0x80)
+    return 0;
+  if (!d->batch_armed && (d->api[1]->serial_control(d->core[1]) & 0x80))
+    return 0;
   return 1;
 }
 
@@ -405,6 +419,16 @@ uint64_t gbdual_batched_lines(const gbdual_t *d)
 uint64_t gbdual_batch_cuts(const gbdual_t *d)
 {
   return d ? d->cuts : 0;
+}
+
+uint64_t gbdual_lag_reads(const gbdual_t *d)
+{
+  return d ? d->lag_reads : 0;
+}
+
+int gbdual_batch_armed(const gbdual_t *d)
+{
+  return d ? d->batch_armed : 0;
 }
 
 uint64_t gbdual_serial_bytes(const gbdual_t *d, int slot)

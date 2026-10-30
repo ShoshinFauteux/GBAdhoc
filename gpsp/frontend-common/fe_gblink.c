@@ -1463,6 +1463,7 @@ static void start_pair(fe_gblink *s)
    cfg.frame_hook = frame_hook;
    cfg.frame_hook_userdata = s;
    cfg.batch_lines = s->batch;
+   cfg.batch_armed = (s->l.core_mask & FE_GBLINK_MASK_ARMED_BATCH) != 0;
    cfg.sync_hash_legacy = s->l.hash_legacy;
    s->dual = gbdual_create(&cfg);
    if (!s->dual)
@@ -1484,6 +1485,7 @@ static void start_pair(fe_gblink *s)
       }
    }
    s->state = FE_GBLINK_RUNNING;
+   fe_evt("gblink_stepping batch=%u armed=%d", s->batch, cfg.batch_armed);
    fe_evt("gblink_start slot=%d delay=%u seed=%lld partner=%s batch=%u",
           s->local_slot, s->delay, (long long)s->seed,
           s->partner_path[0] ? "library" : "received", s->batch);
