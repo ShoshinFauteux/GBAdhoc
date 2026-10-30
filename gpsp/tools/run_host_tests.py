@@ -239,7 +239,10 @@ def suites(env: Env, baseline: Path | None):
          "gcc -Wall -Wextra -O1 -o /tmp/t_smc tools/test_smc_safety.c && /tmp/t_smc"),
 
         ("ff", True, lambda: None,
-         "python3 tools/run_ff_tests.py"),
+         # + the low-latency tier-1 policy (docs/LOW-LATENCY.md): the
+         # production wait/present code in a model of the vblank, GE and ME
+         "python3 tools/run_ff_tests.py && "
+         "python3 tools/tests/test_lowlat_policy.py"),
 
         # The browser's favourites list (roms/favourites.txt): in-place parse,
         # hashed lookup, add/remove compaction, serialise, and the full-list /

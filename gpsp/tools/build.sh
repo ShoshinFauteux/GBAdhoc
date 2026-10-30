@@ -271,6 +271,14 @@ if [ "${INPUT_FRESH:-0}" = 1 ]; then
   FE_DEFS="$FE_DEFS -DPLAY_INPUT_FRESH=1"
 fi
 
+# ME_LOWLAT=1: low-latency tier 1 (`me_lowlat`, docs/LOW-LATENCY.md) ON by
+# default -- the ME renderer's picture flipped before the vblank after its
+# own input poll whenever the game leaves room.  Frontend only; a harness
+# ini still overrides it either way.
+if [ "${ME_LOWLAT:-0}" = 1 ]; then
+  FE_DEFS="$FE_DEFS -DPLAY_ME_LOWLAT=1"
+fi
+
 # CORE_EXTRA is appended to the ROOT make's flags (DISPATCH_CACHE=1,
 # DRPROF_HW=1, ...), FE_EXTRA to the frontend defines.  Refused for a release:
 # the release flag list lives in profile_flags and nowhere else.

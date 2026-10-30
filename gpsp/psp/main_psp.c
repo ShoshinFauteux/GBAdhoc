@@ -2823,20 +2823,74 @@ static int mer_sameframe_active(void)
  *                   interval's vblank: latch - poll = 1.  Needs the render
  *                   and the blit to finish before the vblank; a frame that
  *                   cannot is shown one vblank later, as with tier 0, and
- *                   the mode drops back to tier 0 until `me_lowlat_recover`
- *                   consecutive frames would have made it.
+ *                   the mode drops back to tier 0 (see "TIER 1 POLICY").
+ *
+ * TIER 1 POLICY (claude/lowlat-t1).  Moving between tier 0 (2 vblanks) and
+ * tier 1 (1 vblank) moves the picture by one vblank, and that is never free
+ * on its own: leaving shows one frame twice (the miss that forced it), and
+ * entering at an arbitrary frame would show one frame never (the prototype
+ * superseded the frame the loop top had just retired).  So:
+ *
+ *   ENTER only in an iteration whose vblank wait is already two vblanks
+ *   long -- the audio-ring nudge (`want` 2), which repeats a frame in tier 0
+ *   anyway (~1 per 5 s at 1x: the PSP refreshes at 59.94, the GBA at 59.73).
+ *   The frame the loop top retired is flipped early and latches on the first
+ *   vblank as usual; this iteration's own render is then presented and
+ *   flipped before the SECOND one.  Every frame is shown, none twice: the
+ *   repeat the nudge would have made is what the latency step spends.  No
+ *   frame is ever dropped to get into tier 1.
+ *
+ *   ...and only when the game has room for it: of the last LL_WIN measured
+ *   frames at most LL_WIN_MISS would have missed (95 %), none of the last
+ *   LL_CLEAN, and at least `me_lowlat_recover` frames since the last exit.
+ *   A frame "would have made it" when its render retired before the vblank
+ *   after its own input poll with at least `need` us to spare.
+ *
+ *   LEAVE on the first frame that misses (no choice: it is already late).
+ *   That repeats one frame -- the repeat the entry saved -- so over any
+ *   stretch tier 1 shows exactly the frames tier 0 shows, give or take one
+ *   repeat moved in time.  Every frame is still emulated at the same vblank:
+ *   only WHEN a finished picture is flipped changes, never the guest, so
+ *   replays, vhash and link lockstep are untouched.
+ *
+ *   me_lowlat 2 also asks for that slot instead of waiting up to ~5 s for
+ *   it (ll_want_slot): once eligible, the nudge is taken as soon as the ring
+ *   is within one frame of audio of the high-water mark.  That moves a nudge
+ *   earlier, it never adds one -- every nudge holds back one frame of
+ *   production, so their long-run rate is the clock mismatch's alone -- and
+ *   it can happen at most once per exit.  The ring sits at most one frame
+ *   (~17 ms) lower until the next nudge is due.
+ *
+ *   `need` is measured per console: an EMA of the blit + OSD time on the GE
+ *   (present to GE idle) plus four mean deviations, one poll period, and
+ *   `me_lowlat_margin_us`.  A GE that finishes after the vblank widens it.
+ *
+ * Off under FF, rewind, the FF draw gate and any link or wireless session
+ * (link_session_any): there the pacing is the link's and nothing is gained
+ * by proving it safe.
  * ======================================================================== */
+#ifndef PLAY_ME_LOWLAT
+#define PLAY_ME_LOWLAT 0     /* ME_LOWLAT=1 tools/build.sh: tier 1 by default */
+#endif
 static int      g_flip_early       = 1;   /* `flip_early`      */
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
-static int      g_ll_cfg;                 /* `me_lowlat`       */
+static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
-static unsigned g_ll_margin_us = 500;     /* `me_lowlat_margin_us` */
+static unsigned g_ll_margin_us = 250;     /* `me_lowlat_margin_us` */
+#define LL_WIN       128u   /* measured frames in the engage window */
+#define LL_WIN_MISS  6u     /* at most this many would-miss in it (95.3 %) */
+#define LL_CLEAN     32u    /* ...and none in the most recent this many */
 static int      g_ll_mode_h;     /* persistent: same-interval mode engaged */
 static int      g_ll_iter_h;     /* this loop iteration presents in its wait */
-static unsigned g_ll_streak;     /* consecutive would-hit frames (tier 0)   */
+static uint32_t g_ll_win[LL_WIN / 32u];  /* 1 = that frame would have missed */
+static unsigned g_ll_win_pos, g_ll_win_n, g_ll_win_miss, g_ll_clean;
+static unsigned g_ll_cool;       /* frames since the last exit */
 static unsigned g_ll_blit_ema = 2000;  /* us, blit + OSD on the GE (EMA)   */
+static unsigned g_ll_blit_dev = 250;   /* us, its mean absolute deviation  */
 static unsigned g_ll_hit, g_ll_miss_me, g_ll_miss_ge, g_ll_to_h, g_ll_to_b;
 static unsigned g_ll_would, g_ll_wouldnt;
+static unsigned g_ll_slot, g_ll_slot_fail, g_ll_eng, g_ll_lead_min = ~0u;
+static unsigned g_ll_pull;       /* nudges taken early for an entry (mode 2) */
 
 /* vblank clock: the last vblank start the wait loop woke on */
 static unsigned g_vb_us, g_vb_vc;
@@ -2855,6 +2909,7 @@ static unsigned g_lat_sub_vc, g_lat_check, g_lat_l1, g_lat_l0, g_lat_immed;
 static unsigned g_lat_lead_n, g_lat_lead_us, g_lat_lead_min = ~0u;
 static unsigned g_lat_hc_n, g_lat_hc_sum, g_lat_vbhc_sum, g_lat_vbhc_n;
 static unsigned g_lat_age_us, g_lat_age_n, g_lat_iter;
+static unsigned g_lat_vc0;            /* vcount at the last census: `vb=` */
 /* INPUT FRESHNESS (harness only, both default 0).  PPSSPP samples the pad
  * at vblank END (Core/HW/Display.cpp DisplayFireVblankEnd -> __CtrlVblank),
  * so a poll made the instant the vblank wait returns reads the sample taken
@@ -2868,6 +2923,7 @@ static int      g_in_fresh, g_ctrl_cycle;
 static unsigned g_in_fresh_n, g_in_fresh_us, g_in_fresh_got;
 
 static int mer_rewind_busy(void);     /* below, beside the rewind's state */
+static int link_session_any(void);    /* below, beside the link UI */
 
 static int mer_retire_early_active(void)
 {
@@ -2879,7 +2935,7 @@ static int mer_retire_early_active(void)
 static int mer_lowlat_active(void)
 {
    return g_ll_cfg && g_me_rend && !g_ff_mult && !g_ff_uncapped &&
-          !g_ff_gate && !mer_rewind_busy();
+          !g_ff_gate && !mer_rewind_busy() && !link_session_any();
 }
 
 /* Microseconds to the next vblank start, extrapolated from the last one the
@@ -11759,8 +11815,72 @@ static int lat_swap(int early)
  * vblank), end.  Single thread, single owner: the main loop. */
 enum { LL_OFF, LL_WAIT_ME, LL_WAIT_GE, LL_DONE };
 #define LAT_POLL_US 150u
-static int      g_lw_swapped, g_lw_ll, g_lw_measure;
+static int      g_lw_swapped, g_lw_ll, g_lw_measure, g_lw_slot, g_lw_entering;
 static unsigned g_lw_t;
+
+/* Microseconds before the vblank by which a tier-1 present must START for
+ * its flip to be submitted in time: the measured blit + OSD on the GE, four
+ * mean deviations of it, one poll period (the GE is polled, never waited
+ * on), and the configured margin.  See TIER 1 POLICY at g_flip_early. */
+static int ll_need_us(void)
+{
+   unsigned n = g_ll_blit_ema + 4u * g_ll_blit_dev + LAT_POLL_US +
+                g_ll_margin_us;
+   if (n < 800u)
+      n = 800u;
+   if (n > 8000u)
+      n = 8000u;
+   return (int)n;
+}
+
+static void ll_blit_note(unsigned d)
+{
+   unsigned dev;
+   if (d > 20000u)
+      return;                   /* a sleep or a preemption, not a blit */
+   dev = d > g_ll_blit_ema ? d - g_ll_blit_ema : g_ll_blit_ema - d;
+   g_ll_blit_ema = (g_ll_blit_ema * 7u + d) / 8u;
+   g_ll_blit_dev = (g_ll_blit_dev * 7u + dev) / 8u;
+}
+
+static void ll_win_reset(void)
+{
+   memset(g_ll_win, 0, sizeof(g_ll_win));
+   g_ll_win_pos = g_ll_win_n = g_ll_win_miss = g_ll_clean = 0;
+}
+
+/* One measured frame into the engage window (miss = it would not have
+ * made, or did not make, the vblank after its own input poll). */
+static void ll_sample(int miss)
+{
+   unsigned w = g_ll_win_pos >> 5;
+   uint32_t b = 1u << (g_ll_win_pos & 31u);
+   if (g_ll_win_n == LL_WIN)
+   {
+      if (g_ll_win[w] & b)
+         g_ll_win_miss--;
+   }
+   else
+      g_ll_win_n++;
+   if (miss)
+   {
+      g_ll_win[w] |= b;
+      g_ll_win_miss++;
+      g_ll_clean = 0;
+   }
+   else
+   {
+      g_ll_win[w] &= ~b;
+      g_ll_clean++;
+   }
+   g_ll_win_pos = (g_ll_win_pos + 1u) % LL_WIN;
+}
+
+static int ll_eligible(void)
+{
+   return g_ll_win_n == LL_WIN && g_ll_win_miss <= LL_WIN_MISS &&
+          g_ll_clean >= LL_CLEAN && g_ll_cool >= g_ll_recover;
+}
 
 static void ll_to_b(void)
 {
@@ -11768,55 +11888,107 @@ static void ll_to_b(void)
    {
       g_ll_mode_h = 0;
       g_ll_to_b++;
+      g_ll_cool = 0;
    }
-   g_ll_streak = 0;
 }
 
-static void lat_wait_begin(void)
+/* THIS iteration's own render: posted after this iteration's input poll,
+ * retired, and not yet on screen.  (A render from an earlier iteration is
+ * never what tier 1 presents in the wait.) */
+static int ll_own_ready(void)
 {
-   g_lw_swapped = 0;
-   g_lw_ll      = g_ll_iter_h ? LL_WAIT_ME : LL_OFF;
+   return g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented &&
+          g_mer_stage_seq[g_mer_ready] == g_lat_seq;
+}
+
+static int ll_own_posted(void)
+{
+   return ll_own_ready() ||
+          (g_mer_pending >= 0 && g_mer_stage_seq[g_mer_pending] == g_lat_seq);
+}
+
+/* The blit + OSD of this iteration's render (tier 1, or the entry slot). */
+static void ll_present(unsigned now)
+{
+   me_rend_present();
+#ifdef REWIND
+   if (g_drew && (g_rw_on || g_rwh.denied))
+      psp_rewind_hud();
+#endif
+   if (g_drew)
+      osd_draw();
+   g_lw_t  = now;
+   g_lw_ll = LL_WAIT_GE;
+}
+
+/* me_lowlat 2: take the audio-ring nudge now, as an entry slot (TIER 1
+ * POLICY).  `level` = the ring level the pacer just read. */
+static int ll_want_slot(unsigned level)
+{
+   return g_ll_cfg >= 2 && !g_ll_mode_h && level + in_rate / 60u > RING_HIGH_WATER &&
+          mer_lowlat_active() && ll_own_posted() && ll_eligible();
+}
+
+/* `want`: vblanks this wait spans (2 on an audio-ring nudge). */
+static void lat_wait_begin(unsigned want)
+{
+   int active = mer_lowlat_active();
+
+   g_lw_swapped  = 0;
+   g_lw_entering = 0;
+   g_lw_slot     = 0;
+   g_lw_ll       = LL_OFF;
+   if (!active)
+   {
+      ll_to_b();
+      ll_win_reset();
+   }
+   if (g_ll_iter_h)
+   {
+      g_ll_eng++;
+      if (active && ll_own_posted())
+         g_lw_ll = LL_WAIT_ME;
+      else
+      {
+         /* Nothing of this iteration's to present (a frame the core did
+          * not draw, the ME went away): tier 0 shows whatever is drawn. */
+         g_ll_iter_h = 0;
+         ll_to_b();
+      }
+   }
+   else if (g_ll_cool < (1u << 20))
+      g_ll_cool++;
    /* Tier 0 with me_lowlat on: time this frame's render against the vblank
-    * to decide whether same-interval presentation would have made it. */
-   g_lw_measure = !g_ll_iter_h && mer_lowlat_active() &&
-                  (g_mer_pending >= 0 ||
-                   (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented));
+    * after its poll, to decide whether tier 1 would have made it. */
+   g_lw_measure = !g_ll_iter_h && active && ll_own_posted();
+   /* The entry slot (TIER 1 POLICY): a wait two vblanks long. */
+   g_lw_slot = want >= 2u && !g_ll_iter_h && active && g_flip_early &&
+               ll_own_posted() && ll_eligible();
+   if (g_lw_slot)
+      g_ll_slot++;
 }
 
 static int lat_wait_step(void)
 {
    unsigned now = (unsigned)sceKernelGetSystemTimeLow();
-   int need = (int)(g_ll_blit_ema + g_ll_margin_us);
+   int need = ll_need_us();
    int poll = 0;
 
    if (g_lw_ll == LL_WAIT_ME)
    {
       if (!mer_lowlat_active())
       {
-         g_lw_ll = LL_DONE;       /* the ME went away / FF / rewind */
+         g_lw_ll = LL_DONE;       /* the ME went away / FF / rewind / link */
          ll_to_b();
       }
-      else if (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented &&
-               g_mer_stage_seq[g_mer_ready] == g_lat_seq)
+      else if (ll_own_ready())
       {
-         /* (only THIS iteration's render: the one the loop top retired is
-          * superseded -- presenting it here would keep the mode one frame
-          * behind for good, which is exactly what hardware showed) */
          if (us_to_vblank(now) >= need)
-         {
-            me_rend_present();
-#ifdef REWIND
-            if (g_drew && (g_rw_on || g_rwh.denied))
-               psp_rewind_hud();
-#endif
-            if (g_drew)
-               osd_draw();
-            g_lw_t  = now;
-            g_lw_ll = LL_WAIT_GE;
-         }
+            ll_present(now);
          else
          {
             g_ll_miss_me++;       /* rendered, but too late to blit */
+            ll_sample(1);
             g_lw_ll = LL_DONE;
             ll_to_b();
          }
@@ -11824,8 +11996,35 @@ static int lat_wait_step(void)
       else if (us_to_vblank(now) < need)
       {
          g_ll_miss_me++;          /* the render will not make it */
+         ll_sample(1);
          g_lw_ll = LL_DONE;
          ll_to_b();
+      }
+      else
+         poll = 1;
+   }
+   /* ENTRY.  The frame the loop top retired was flipped early (below, on an
+    * earlier pass) and has latched on the first vblank of the two; now, in
+    * the second interval, present this iteration's own render and flip it
+    * before the second vblank.  Too late for that = no entry, and nothing
+    * lost: the loop top shows it next iteration, as tier 0 always does. */
+   if (g_lw_slot && g_lw_ll == LL_OFF && g_lw_swapped)
+   {
+      if ((int)(g_vc_target - sceDisplayGetVcount()) > 1 ||
+          !vid_flip_latched())
+         ;                        /* still the first interval: block on it */
+      else if (!mer_lowlat_active())
+         g_lw_slot = 0;
+      else if (ll_own_ready() && us_to_vblank(now) >= need)
+      {
+         g_lw_entering = 1;
+         g_lw_slot     = 0;
+         ll_present(now);
+      }
+      else if (ll_own_ready() || us_to_vblank(now) < need)
+      {
+         g_lw_slot = 0;
+         g_ll_slot_fail++;
       }
       else
          poll = 1;
@@ -11836,35 +12035,63 @@ static int lat_wait_step(void)
          poll = 1;
       else
       {
-         unsigned d = (unsigned)sceKernelGetSystemTimeLow() - g_lw_t;
-         g_ll_blit_ema = (g_ll_blit_ema * 7u + d) / 8u;
+         unsigned vc = sceDisplayGetVcount();
+         unsigned t  = (unsigned)sceKernelGetSystemTimeLow();
+         int lead    = us_to_vblank(t);
+         ll_blit_note(t - g_lw_t);
          lat_swap(1);
          g_lw_swapped = 1;
          g_lw_ll      = LL_DONE;
-         g_ll_hit++;
-      }
-   }
-   if (g_lw_measure)
-   {
-      if (g_mer_pending < 0 && g_mer_ready >= 0 &&
-          g_mer_ready != g_mer_last_presented &&
-          g_mer_stage_seq[g_mer_ready] == g_lat_seq)
-      {
-         if (us_to_vblank(now) >= need)
+         if (sceDisplayGetVcount() != vc)
          {
-            g_ll_would++;
-            if (++g_ll_streak >= g_ll_recover)
+            /* the vblank fell between the check and the submit: this flip
+             * latches one later, as a tier-0 one would */
+            g_ll_blit_dev += g_ll_blit_ema / 4u;
+            if (g_lw_entering)
+               g_ll_slot_fail++;
+            else
             {
-               g_ll_mode_h = 1;   /* from the next loop top: one frame drops */
-               g_ll_to_h++;
-               g_ll_streak = 0;
+               g_ll_miss_ge++;
+               ll_sample(1);
+               ll_to_b();
             }
          }
          else
          {
-            g_ll_wouldnt++;
-            g_ll_streak = 0;
+            if (lead >= 0 && (unsigned)lead < g_ll_lead_min)
+               g_ll_lead_min = (unsigned)lead;
+            if (g_lw_entering)
+            {
+               g_ll_mode_h = 1;   /* from the next loop top */
+               g_ll_to_h++;
+            }
+            else
+            {
+               g_ll_hit++;
+               ll_sample(0);
+            }
          }
+         g_lw_entering = 0;
+      }
+   }
+   if (g_lw_measure)
+   {
+      if (ll_own_ready())
+      {
+         int would = sceDisplayGetVcount() == g_lat_poll_vc &&
+                     us_to_vblank(now) >= need;
+         if (would)
+            g_ll_would++;
+         else
+            g_ll_wouldnt++;
+         ll_sample(!would);
+         g_lw_measure = 0;
+      }
+      else if (sceDisplayGetVcount() != g_lat_poll_vc ||
+               us_to_vblank(now) < need)
+      {
+         g_ll_wouldnt++;          /* not rendered in time to blit */
+         ll_sample(1);
          g_lw_measure = 0;
       }
       else
@@ -11891,20 +12118,35 @@ static void lat_wait_end(void)
    if (g_lw_ll == LL_WAIT_ME)
    {
       g_ll_miss_me++;             /* the vblank came first */
+      ll_sample(1);
       ll_to_b();
    }
    else if (g_lw_ll == LL_WAIT_GE)
    {
-      g_ll_miss_ge++;             /* the swap below flushes, lands next vblank */
-      ll_to_b();
+      /* The GE did not finish before the vblank: the swap below (tier 1)
+       * or the next loop top (entry) flips it a vblank later, as tier 0
+       * would have.  Widen the deadline: the blit took at least this long,
+       * and the deviation grows. */
+      ll_blit_note((unsigned)sceKernelGetSystemTimeLow() - g_lw_t);
+      g_ll_blit_dev += g_ll_blit_ema / 4u;
+      if (g_lw_entering)
+         g_ll_slot_fail++;
+      else
+      {
+         g_ll_miss_ge++;
+         ll_sample(1);
+         ll_to_b();
+      }
    }
    if (g_lw_measure)
    {
       g_ll_wouldnt++;
-      g_ll_streak = 0;
+      ll_sample(1);
    }
+   if (g_lw_slot)
+      g_ll_slot_fail++;           /* the wait ended before the slot was tried */
    g_lw_ll = LL_OFF;
-   g_lw_measure = 0;
+   g_lw_measure = g_lw_slot = g_lw_entering = 0;
 }
 
 static void lat_census(void)
@@ -11917,7 +12159,8 @@ static void lat_census(void)
           "lead_mean_us=%u lead_min_us=%u sub_hc=%u vb_hc=%u age_us=%u "
           "ll=%d h=%d hit=%u miss_me=%u miss_ge=%u would=%u wouldnt=%u "
           "to_h=%u to_b=%u blit_ema_us=%u age_n=%u fresh_n=%u fresh_got=%u "
-          "fresh_us=%u",
+          "fresh_us=%u eng=%u slot=%u slot_fail=%u win=%u/%u clean=%u "
+          "need_us=%u blit_dev_us=%u lead1_min_us=%u vb=%u pull=%u",
           g_lat_iter, g_lat_early, g_lat_post, g_lat_hold, g_lat_over,
           g_lat_hist[0], g_lat_hist[1], g_lat_hist[2], g_lat_hist[3],
           g_lat_hist[4], g_lat_hist[5], g_lat_hist[6], g_lat_hist[7],
@@ -11930,7 +12173,12 @@ static void lat_census(void)
           g_ll_cfg, g_ll_mode_h, g_ll_hit, g_ll_miss_me, g_ll_miss_ge,
           g_ll_would, g_ll_wouldnt, g_ll_to_h, g_ll_to_b, g_ll_blit_ema,
           g_lat_age_n, g_in_fresh_n, g_in_fresh_got,
-          g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u);
+          g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u,
+          g_ll_eng, g_ll_slot, g_ll_slot_fail, g_ll_win_miss, g_ll_win_n,
+          g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
+          g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
+          sceDisplayGetVcount() - g_lat_vc0, g_ll_pull);
+   g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
    g_lat_iter = g_lat_early = g_lat_post = g_lat_hold = g_lat_over = 0;
@@ -11941,6 +12189,8 @@ static void lat_census(void)
    g_lat_age_n = g_lat_age_us = 0;
    g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_would = g_ll_wouldnt = 0;
    g_ll_to_h = g_ll_to_b = 0;
+   g_ll_eng = g_ll_slot = g_ll_slot_fail = g_ll_pull = 0;
+   g_ll_lead_min = ~0u;
    g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
 }
 
@@ -13124,7 +13374,11 @@ int main(int argc, char *argv[])
                                          g_flip_early) != 0;
       g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
                                                g_mer_early_retire) != 0;
-      g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", g_ll_cfg) != 0;
+      /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
+       * on an early nudge (TIER 1 POLICY at g_flip_early) */
+      g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", PLAY_ME_LOWLAT);
+      if (g_ll_cfg < 0 || g_ll_cfg > 2)
+         g_ll_cfg = 1;
       g_ll_recover = (unsigned)fe_ini_get_int(HARNESS_INI, "me_lowlat_recover",
                                               (int)g_ll_recover);
       g_ll_margin_us = (unsigned)fe_ini_get_int(HARNESS_INI,
@@ -15493,18 +15747,16 @@ session_top:
 #endif
       if (!mer_sameframe_active())
       {
-         /* Tier 1: this iteration's own render is presented in its wait;
-          * the frame retired above (if any) is superseded -- the one drop
-          * of a switch into the mode. */
-         if (mer_lowlat_active() && g_ll_mode_h)
-         {
+         /* Tier 1: this iteration's own render is presented in its wait.
+          * Steady in tier 1 nothing is waiting here (the last render was
+          * shown in the last wait); if something is, it is shown and the
+          * mode is left -- a frame is never skipped (TIER 1 POLICY). */
+         if (g_ll_mode_h &&
+             (!mer_lowlat_active() ||
+              (g_mer_ready >= 0 && g_mer_ready != g_mer_last_presented)))
+            ll_to_b();
+         if (g_ll_mode_h)
             g_ll_iter_h = 1;
-            /* g_mer_last_presented is a STAGE index: with the superseded
-             * render left unpresented, this iteration's render lands in
-             * the stage last presented and would read as "already shown"
-             * (hardware: every entry into the mode missed).  Forget it. */
-            g_mer_last_presented = -1;
-         }
          else
             me_rend_present(); /* ME renderer: swap-phase present (FF triage) */
       }
@@ -15983,6 +16235,13 @@ session_top:
             g_fh_nudge++;         /* ADR-0063: previously unobservable */
             g_ar_nudge++;
          }
+         else if (want == 1u && !g_ff_mult && ll_want_slot(ring_w - ring_r))
+         {
+            want++;               /* the same nudge, a little early (me_lowlat 2) */
+            g_fh_nudge++;
+            g_ar_nudge++;
+            g_ll_pull++;
+         }
          audio_ring_note();
          FE_LP_SET(FELP_L_OSD);
          if (g_drew)
@@ -16030,7 +16289,7 @@ session_top:
           * is genuinely in the radio and this whole line of reasoning is
           * wrong. */
          FE_LP_SET(FELP_VWAIT);
-         lat_wait_begin();
+         lat_wait_begin(want);
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
             if (g_net_up)
