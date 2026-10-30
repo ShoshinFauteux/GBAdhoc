@@ -1463,9 +1463,10 @@ static u32 rfu_shed_host(void)
  * And only against a STANDING backlog.  The touch model is per frame; a game
  * that reads from its reception callback (Gen3's librfu) may answer a packet a
  * frame or two later and still never lose one on hardware, where no transport
- * jitter ever clumps its traffic.  Our transport does, and the Emerald Union
- * Room handshake under 5% loss / 30 ms jitter queues up to 9 packets for a
- * few frames and drains them itself (standing backlog <= 2 in every window).
+ * jitter ever clumps its traffic.  Our transport does: Emerald's Union Room
+ * trade and battle under 5% loss / 30 ms jitter queue up to 17 packets and
+ * stand above the allowance for up to 37 frames running, then drain by
+ * themselves (standing backlog <= 2 in every window).
  * Superseding inside those transients lost packets Gen3 requires: the
  * impaired trade e2e failed 5/6 ("trade never started"), and still 3/6 with
  * same-sender-frame packets exempt, against 3/3 with the rule off and 3/3 on
@@ -1479,7 +1480,14 @@ static u32 rfu_shed_host(void)
  * backlog that has stood above the allowance for RFU_SUPERSEDE_ARM frames is
  * cut back to the allowance, oldest first, and the rule keeps it there. */
 #define RFU_SUPERSEDE_KEEP RFU_PACE_LOW
-#define RFU_SUPERSEDE_ARM  30
+/* RFU_SUPERSEDE_ARM is read off the rfu_qrun census (RFU-AUDIT.md, "Arming
+ * threshold"), the longest run of frames each receive queue stood above the
+ * allowance with the rule OFF.  Pokemon Emerald Union Room trade and battle,
+ * clean and under 5% loss / 30 ms jitter (9 runs, 18 queues): at most 37
+ * frames.  Every Golf/Tennis episode that hurt the game (answers past 150 ms;
+ * 11 episodes): at least 291 frames.  100 sits at the geometric middle of
+ * that gap, about 2.7x clear of each side. */
+#define RFU_SUPERSEDE_ARM  100
 
 /* One frame of the arming gate for a queue of `depth`; returns armed. */
 static u32 rfu_qrun_max[2];          /* rfu_qrun census: client, host */

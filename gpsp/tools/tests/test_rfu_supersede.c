@@ -343,6 +343,37 @@ static void test_gen3_bursts_lossless(void)
   }
 }
 
+/* The measured Pokemon envelope (rfu_qrun, RFU-AUDIT.md): a queue that stands
+ * above the allowance for up to 37 frames running and then drains on its own
+ * is never touched.  Here: 2 sends per frame for 30 frames, then a wait, so
+ * the queue stands above 2 for about 60 frames -- still lossless. */
+static void test_measured_envelope_lossless(void)
+{
+  unsigned f, tag = 0, sent = 0, longest = 0, run = 0;
+  client_reset(1);
+  for (f = 0; f < 20; f++)
+    client_frame();
+  for (f = 0; f < 200; f++) {
+    if (f < 30) {
+      unsigned k;
+      for (k = 0; k < 2; k++) {
+        tag = tag % 250 + 1;
+        host_packet_at(9000 + f, tag, 1);
+        sent++;
+      }
+    }
+    client_frame();
+    run = rfu_client_queued() > RFU_SUPERSEDE_KEEP ? run + 1 : 0;
+    if (run > longest)
+      longest = run;
+  }
+  assert(longest > 37 && longest < RFU_SUPERSEDE_ARM);
+  assert(check_order() == 0);
+  assert(n_seen == sent);
+  printf("  queue above the allowance %u frames, then drained: %u/%u delivered\n",
+         longest, n_seen, sent);
+}
+
 /* A stamp that jumps by more than a minute (a new sender) restarts the
  * timeline instead of mapping across the gap. */
 static void test_stamp_wrap_and_jump(void)
@@ -481,6 +512,7 @@ int main(void)
   test_unstamped_is_historical();
   test_off_is_historical();
   test_gen3_bursts_lossless();
+  test_measured_envelope_lossless();
   test_stamp_wrap_and_jump();
   test_host_side_rate_mismatch();
   printf("rfu supersede: all tests passed\n");
