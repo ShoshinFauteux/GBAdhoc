@@ -4300,6 +4300,7 @@ static int g_autoload_from_shelf;
  * declared with the perf stats above). */
 extern u32 gamepak_size;
 extern u32 gamepak_buffer_count;
+extern u32 gamepak_buffer_pages;
 extern u8 *gamepak_buffers[32];
 extern u32 gamepak_resident_got;
 extern u32 gamepak_static_blocks;
@@ -4327,12 +4328,13 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
             if (a > bhi) bhi = a;
          }
          fe_evt("rom_cache blocks=%u rom=%uKB resident=%d lo=%08x hi=%08x "
-                "plan=%s want=%u got=%u spare=%u",
+                "plan=%s want=%u got=%u spare=%u pages=%u",
                 gamepak_buffer_count, gamepak_size >> 10,
                 !gamepak_must_swap(), blo, bhi + (1u << 20),
                 gamepak_cap_reason, (unsigned)gamepak_resident_wanted,
                 (unsigned)gamepak_resident_got,
-                (unsigned)gamepak_static_blocks);
+                (unsigned)gamepak_static_blocks,
+                (unsigned)gamepak_buffer_pages);
       }
 #endif
    }

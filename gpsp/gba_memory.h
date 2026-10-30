@@ -243,6 +243,9 @@ extern u8 ws_cyc_nseq[16][2];
 
 extern u32 gamepak_size;
 extern u32 gamepak_buffer_count;   /* 1 MB ROM-cache blocks actually held */
+/* 32 KiB pages they hold: 32 per block; only the last block may be short
+ * (a lent pool's tail, see init_gamepak_buffer). */
+extern u32 gamepak_buffer_pages;
 /* Most 1 MiB blocks init_gamepak_buffer() may take (read once, in
  * retro_init).  Defaults to ROM_BUFFER_SIZE; a frontend that knows it has the
  * memory may raise it (at most 32, the size of gamepak_buffers[]) so a 32 MiB
