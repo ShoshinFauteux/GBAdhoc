@@ -2112,8 +2112,17 @@ u32 rfu_transfer(u32 sent_value) {
       /* ADR-0059: ... x scale/100.  The divisions are folded into the
        * constants to stay in u32: 16777216/60/100 = 2796 (0.007 % low against
        * the exact 2796.20), 16777216/60/6/100 = 466. */
+      /* SYSCFG zeros are not "expire at once": timeout 0 is NO timeout and
+       * 0 transmissions is unlimited (afska's adapter docs, 0x17 -- both are
+       * the adapter's power-on defaults).  Taken literally they made every
+       * WAIT answer at once, TIMEO for a client and a no-response for a
+       * host.  A zero timeout waits (the timeout branch below is skipped;
+       * link loss still answers through RESP_DISC); a zero count keeps the
+       * default for our synthetic no-response, which stands in for clients
+       * that had nothing to say and must still let the host's WAIT end. */
       rfu_timeout_cycles = rfu_timeout * (16777216 / 60 / 100) * rfu_to_scale_x100;
-      rfu_resp_timeout = rfu_rtx_max * (16777216 / 60 / 6 / 100) * rfu_rtx_scale_x100;
+      rfu_resp_timeout = (rfu_rtx_max ? rfu_rtx_max : RFU_DEF_RTXMAX) *
+                         (16777216 / 60 / 6 / 100) * rfu_rtx_scale_x100;
     } else {
       rfu_comstate = rfu_plen ? RFU_COMSTATE_RESPDAT : RFU_COMSTATE_WAITCMD;
     }
@@ -2944,7 +2953,7 @@ bool rfu_update(unsigned cycles) {
         rfu_plen = 3;
         rfu_comstate = RFU_COMSTATE_WAITRESP;
       }
-      else if (!rfu_timeout_cycles) {
+      else if (rfu_timeout && !rfu_timeout_cycles) {
         // We ran out of time, just return an "error" code
         rfu_timeo_n++;    /* ADR-0059 -- the central event of CLIFF-FINDINGS */
         rfu_buf[0] = 0x99660000 | RFU_CMD_RESP_TIMEO;

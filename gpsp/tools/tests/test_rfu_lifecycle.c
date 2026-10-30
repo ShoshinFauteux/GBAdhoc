@@ -298,8 +298,56 @@ static void test_peer_loss_reaches_the_adapter(void)
   puts("  loss: a vanished peer or session ends the links that rode on it");
 }
 
+/* Enter WAITEVENT through the real RESPCMD path, then let `cycles` pass with
+ * the GBA in slave mode.  Returns the comstate afterwards. */
+static u32 wait_for(u32 cycles)
+{
+  rfu_cmd = RFU_CMD_WAIT;
+  rfu_plen = 0;
+  rfu_comstate = RFU_COMSTATE_RESPCMD;
+  rfu_transfer(0);
+  assert(rfu_comstate == RFU_COMSTATE_WAITEVENT);
+  write_ioreg(REG_SIOCNT, 0);
+  while (cycles && rfu_comstate == RFU_COMSTATE_WAITEVENT) {
+    u32 step = cycles < 1232 ? cycles : 1232;   /* one scanline */
+    rfu_update(step);
+    cycles -= step;
+  }
+  return rfu_comstate;
+}
+
+/* 5. SYSCFG zeros mean "no timeout" and "unlimited transmissions" (the
+ *    adapter's power-on defaults), not "expire at once". */
+static void test_syscfg_zero_is_not_immediate(void)
+{
+  const u32 frame = 280896;
+  fresh();
+  make_client(2, 0x77, 1);
+  assert(cmd(RFU_CMD_SYSCFG, 1, 32 | (4 << 8)) == 0);
+  assert(wait_for(frame * 40) == RFU_COMSTATE_WAITRESP);   /* 32 frames */
+  assert(rfu_buf[0] == (0x99660000u | RFU_CMD_RESP_TIMEO));
+
+  assert(cmd(RFU_CMD_SYSCFG, 1, 0) == 0);
+  assert(wait_for(frame * 600) == RFU_COMSTATE_WAITEVENT);  /* waits on */
+  rfu_net_peer_gone(2);                         /* link loss still answers */
+  rfu_update(1232);
+  assert(rfu_comstate == RFU_COMSTATE_WAITRESP);
+  assert(rfu_buf[0] == (0x99660000u | (1 << 8) | RFU_CMD_RESP_DISC));
+
+  /* A host with 0 transmissions still ends its WAIT, but not at once. */
+  fresh();
+  rfu_state = RFU_STATE_HOST;
+  rfu_host.accepting = 1;
+  assert(cmd(RFU_CMD_SYSCFG, 1, 0) == 0);
+  assert(wait_for(1232) == RFU_COMSTATE_WAITEVENT);
+  assert(wait_for(frame) == RFU_COMSTATE_WAITRESP);
+  assert(rfu_buf[1] == 0x0F0F);
+  puts("  syscfg: 0 = no timeout / unlimited transmissions, not 'expire now'");
+}
+
 int main(void)
 {
+  test_syscfg_zero_is_not_immediate();
   test_peer_loss_reaches_the_adapter();
   test_disconnect_skips_empty_slots();
   test_late_connect_ack_releases_the_slot();
