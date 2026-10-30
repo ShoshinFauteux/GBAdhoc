@@ -9961,7 +9961,17 @@ static int psp_game_reset(void)
 {
    int rc;
    if (link_session_any())
+   {
+#ifdef GBA_LINK
+      fe_evt("game_reset REFUSED reason=session net=%d mg=%d gblink=%d "
+             "pair=%d", g_net_up, g_mg_on, fe_host_gblink_active(),
+             fe_gbadual_active());
+#else
+      fe_evt("game_reset REFUSED reason=session net=%d mg=%d gblink=%d",
+             g_net_up, g_mg_on, fe_host_gblink_active());
+#endif
       return -2;
+   }
    pwr_hold("reset");
 #ifdef REWIND
    (void)psp_rewind_land("reset", 0);

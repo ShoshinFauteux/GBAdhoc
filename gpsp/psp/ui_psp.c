@@ -4609,7 +4609,10 @@ static ui_action screen_menu(unsigned edges, int session_active)
           * buttons and cheats share (ui_set_turbo_locked): starting one
           * machine again desynchronises the other. */
          if (g_turbo_locked)
+         {
+            fe_evt("menu_reset REFUSED reason=session");
             osd_toast("Reset is off during link play");
+         }
          else
             g_reset_ask = 1;
          break;

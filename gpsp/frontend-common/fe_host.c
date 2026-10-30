@@ -6778,13 +6778,25 @@ void gba_reset_power_on(void);               /* the core's (gba_memory.c) */
 
 int fe_host_reset(void)
 {
-   int flush;
-   if (gbl || gb_dual || (gb_family && !gb_core) || fe_np_session_active())
-      return -2;
+   int flush, pair = 0;
+   /* A SESSION refuses, not the ability to have one -- the rule
+    * fe_host_rewind_blocked learned: `host.gba_dual` is set at every GBA
+    * game load in a build that can host a cable room (a player's build
+    * always: instance B is the session's machine, idle until one starts),
+    * and testing it here refused "Reset game" in every GBA game.  A running
+    * pair is fe_gbadual_active(): a cable session, or the one-console bench
+    * once its pair runs. */
 #ifdef GBA_LINK
-   if (host.gba_dual || fe_gbadual_active())
-      return -2;
+   pair = fe_gbadual_active();
 #endif
+   if (gbl || gb_dual || (gb_family && !gb_core) || fe_np_session_active() ||
+       pair)
+   {
+      fe_evt("game_reset REFUSED reason=link gbl=%d gb_dual=%d gb_core=%d "
+             "np=%d pair=%d", gbl != NULL, gb_dual != NULL,
+             !gb_family || gb_core != NULL, fe_np_session_active(), pair);
+      return -2;
+   }
    flush = fe_host_sram_flush(1);
    if (gb_family)
    {
