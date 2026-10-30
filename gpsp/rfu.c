@@ -2481,6 +2481,98 @@ void rfu_frame_update() {
   }
 }
 
+/* The CLIENT's host has ended the link: a DISCONNECT notice from it, or the
+ * radio session underneath reporting it gone.  Honours the grace/defer
+ * windows exactly as the notice always did. */
+static void rfu_client_lose_host(void) {
+  /* ADR-0074: measure the damage whether or not we are fixing it --
+   * `queued` IS the number of exit-negotiation packets the historical
+   * path threw away. */
+  u32 queued = rfu_client_queued();
+  gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, rfu_disc_defer);
+  /* ADR-0076: grace window.  Stay CLIENT so the game can finish its
+   * clock-master change and take the clean exit itself; see the block
+   * comment at rfu_disc_grace.  mode=3 in the trace = grace armed. */
+  if (rfu_disc_grace) {
+    if (!rfu_disc_pending)
+      gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, 3);
+    rfu_disc_pending     = 1;
+    rfu_disc_grace_armed = 1;
+    rfu_disc_wait        = rfu_disc_grace;
+    return;
+  }
+  if (rfu_disc_defer && queued) {
+    rfu_disc_pending = 1;
+    rfu_disc_wait    = RFU_DISC_DRAIN_MAX_FRAMES;
+    return;             /* keep the queue; drain it first */
+  }
+  // Go back to idle state!
+  {
+    u32 clnum = rfu_client.clnum;
+    memset(&rfu_client, 0, sizeof(rfu_client));
+    RFU_SET_STATE(RFU_STATE_IDLE, RFU_TRC_DISC_PEER);
+    gpsp_rfu_link_down_hook(RFU_DOWN_PEER, clnum);
+  }
+}
+
+/* LINK LOSS HAS TO REACH THE ADAPTER.
+ *
+ * librfu notices a lost host one way only: LINK_STATUS (0x11) reads 0 for
+ * the child's slot, then SYSTEM_STATUS reads idle (rfu_REQBN_watchLink).  We
+ * answer 0x11 with full strength for any CLIENT, so the only thing that ever
+ * ended a client's link was a NET_RFU_DISCONNECT -- which a host that
+ * crashed, slept, walked out of range or quit to the menu never sends.  The
+ * client then sat in CLIENT for good (the game's own link timeout aside),
+ * and its WAITs never got RESP_DISC.  These two entry points let the
+ * transport say what it already knows. */
+
+/* One radio peer is gone (netdrv dropped it from the roster). */
+void rfu_net_peer_gone(uint16_t client_id) {
+  u32 i;
+  if (client_id < MAX_RFU_PEERS)
+    rfu_peer_bcst[client_id].valid = 0;     /* off the room list now */
+
+  if (rfu_state == RFU_STATE_HOST) {
+    for (i = 0; i < 4; i++)
+      if (rfu_host.clients[i].devid &&
+          rfu_host.clients[i].client_id == client_id) {
+        memset(&rfu_host.clients[i], 0, sizeof(rfu_host.clients[i]));
+        gpsp_rfu_link_down_hook(RFU_DOWN_PEER, i);
+      }
+  }
+  else if (rfu_state == RFU_STATE_CLIENT) {
+    if (client_id == rfu_client.host_id && !rfu_disc_pending)
+      rfu_client_lose_host();
+  }
+  else if (rfu_state == RFU_STATE_CONNECTING) {
+    /* No ACK will come; fail the attempt now (CONCOMPL reports it). */
+    if (client_id == rfu_client.host_id)
+      RFU_SET_STATE(RFU_STATE_IDLE, RFU_TRC_CONN_NACK);
+  }
+}
+
+/* The whole radio session ended (sleep, menu teardown, network error). */
+void rfu_net_session_end(void) {
+  u32 i;
+  memset(rfu_peer_bcst, 0, sizeof(rfu_peer_bcst));
+  if (rfu_state == RFU_STATE_HOST) {
+    /* Stay HOST: the game still thinks it is serving, and a new session can
+     * bring clients back.  Only the links it held are gone. */
+    for (i = 0; i < 4; i++)
+      if (rfu_host.clients[i].devid) {
+        memset(&rfu_host.clients[i], 0, sizeof(rfu_host.clients[i]));
+        gpsp_rfu_link_down_hook(RFU_DOWN_PEER, i);
+      }
+  }
+  else if (rfu_state == RFU_STATE_CLIENT) {
+    if (!rfu_disc_pending)
+      rfu_client_lose_host();
+  }
+  else if (rfu_state == RFU_STATE_CONNECTING) {
+    RFU_SET_STATE(RFU_STATE_IDLE, RFU_TRC_CONN_NACK);
+  }
+}
+
 void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
   // RFU1 header, just some minor sanity check really.
   if (len >= 12 && upack32((const u8*)buf) == NET_RFU_HEADER) {
@@ -2607,34 +2699,7 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
          * its slots 1-3 now can). */
         if (hdata != 0 && (hdata & 0xffff) != rfu_client.devid)
           break;
-        /* ADR-0074: measure the damage whether or not we are fixing it --
-         * `queued` IS the number of exit-negotiation packets the historical
-         * path threw away. */
-        u32 queued = rfu_client_queued();
-        gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, rfu_disc_defer);
-        /* ADR-0076: grace window.  Stay CLIENT so the game can finish its
-         * clock-master change and take the clean exit itself; see the block
-         * comment at rfu_disc_grace.  mode=3 in the trace = grace armed. */
-        if (rfu_disc_grace) {
-          if (!rfu_disc_pending)
-            gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, 3);
-          rfu_disc_pending     = 1;
-          rfu_disc_grace_armed = 1;
-          rfu_disc_wait        = rfu_disc_grace;
-          break;
-        }
-        if (rfu_disc_defer && queued) {
-          rfu_disc_pending = 1;
-          rfu_disc_wait    = RFU_DISC_DRAIN_MAX_FRAMES;
-          break;            /* keep the queue; drain it first */
-        }
-        // Go back to idle state!
-        {
-          u32 clnum = rfu_client.clnum;
-          memset(&rfu_client, 0, sizeof(rfu_client));
-          RFU_SET_STATE(RFU_STATE_IDLE, RFU_TRC_DISC_PEER);
-          gpsp_rfu_link_down_hook(RFU_DOWN_PEER, clnum);
-        }
+        rfu_client_lose_host();
       }
       break;
 

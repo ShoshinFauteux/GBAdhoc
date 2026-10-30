@@ -141,6 +141,8 @@ bool rfu_update(unsigned cycles);
 u32 rfu_transfer(u32 value);
 void rfu_frame_update(void);
 void rfu_net_receive(const void* buf, size_t len, uint16_t client_id);
+void rfu_net_peer_gone(uint16_t client_id);
+void rfu_net_session_end(void);
 
 // Serial implementations
 void serialproto_reset(void);

@@ -238,8 +238,69 @@ static void test_host_stop_closes_the_room(void)
   puts("  host: EndHost closes the room, keeps its links, reopens on StartHost");
 }
 
+/* 4. Peer loss and session end reach the adapter.  A host that crashes,
+ *    sleeps or quits never sends DISCONNECT; the client stayed CLIENT for
+ *    good, with LINK_STATUS at full strength, so librfu never saw the loss. */
+static void test_peer_loss_reaches_the_adapter(void)
+{
+  fresh();
+  make_client(2, 0x77, 1);
+  rfu_peer_bcst[2].valid = 1;
+  rfu_net_peer_gone(3);                          /* someone else: no effect */
+  assert(rfu_state == RFU_STATE_CLIENT);
+  rfu_net_peer_gone(2);                          /* our host */
+  assert(rfu_state == RFU_STATE_IDLE && rfu_client.devid == 0);
+  assert(!rfu_peer_bcst[2].valid);               /* and off the room list */
+
+  /* The grace window still applies (the game may be mid clean exit). */
+  fresh();
+  rfu_disc_grace = 5;
+  make_client(2, 0x77, 1);
+  rfu_net_peer_gone(2);
+  assert(rfu_state == RFU_STATE_CLIENT && rfu_disc_pending);
+  {
+    int f;
+    for (f = 0; f < 10 && rfu_state == RFU_STATE_CLIENT; f++)
+      rfu_frame_update();
+    assert(rfu_state == RFU_STATE_IDLE);
+  }
+
+  /* A pending connection to a vanished host fails at once. */
+  fresh();
+  rfu_peer_bcst[2].valid = 1;
+  rfu_peer_bcst[2].device_id = 0x2468;
+  assert(cmd(RFU_CMD_CONNECT, 1, 0x2468) == 0);
+  rfu_net_peer_gone(2);
+  assert(rfu_state == RFU_STATE_IDLE);
+  assert(cmd(RFU_CMD_CONCOMPL, 0, 0) == 1 && rfu_buf[0] == RFU_CONN_COMP_FAIL);
+
+  /* A host frees only the slots that peer held. */
+  fresh();
+  rfu_state = RFU_STATE_HOST;
+  rfu_host.accepting = 1;
+  rfu_host.clients[0].devid = 0x10; rfu_host.clients[0].client_id = 1;
+  rfu_host.clients[2].devid = 0x30; rfu_host.clients[2].client_id = 3;
+  rfu_net_peer_gone(3);
+  assert(rfu_host.clients[0].devid == 0x10 && rfu_host.clients[2].devid == 0);
+  assert(rfu_state == RFU_STATE_HOST);
+
+  /* Session end: the host keeps serving with no links; a client drops. */
+  rfu_peer_bcst[4].valid = 1;
+  rfu_net_session_end();
+  assert(rfu_state == RFU_STATE_HOST && rfu_host.clients[0].devid == 0);
+  assert(rfu_host.accepting && !rfu_peer_bcst[4].valid);
+  fresh();
+  make_client(0, 0x55, 0);
+  rfu_net_session_end();
+  assert(rfu_state == RFU_STATE_IDLE);
+  rfu_net_session_end();                         /* idle: harmless */
+  assert(rfu_state == RFU_STATE_IDLE);
+  puts("  loss: a vanished peer or session ends the links that rode on it");
+}
+
 int main(void)
 {
+  test_peer_loss_reaches_the_adapter();
   test_disconnect_skips_empty_slots();
   test_late_connect_ack_releases_the_slot();
   test_host_stop_closes_the_room();

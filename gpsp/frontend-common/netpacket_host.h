@@ -187,6 +187,10 @@ void fe_np_prof_frame(uint32_t work_us);
  * Off by default and only ever armed from autopilot.ini. */
 void fe_np_debug_drop_rfu_disconnect(int n);
 
+/* Core hook: a radio peer left the session (any role).  Defined by the core
+ * (libretro.c); netpacket_host.c carries a weak no-op. */
+void gpsp_netpacket_peer_lost(uint16_t client_id);
+
 #ifdef __cplusplus
 }
 #endif

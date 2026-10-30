@@ -554,6 +554,19 @@ static void netpacket_start(uint16_t client_id, retro_netpacket_send_t send_fn, 
 static void netpacket_stop() {
   netpacket_send_fn_ptr = NULL;
   netpacket_pollrcv_fn_ptr = NULL;
+  /* The links rode on that session; the adapter must not keep reporting
+   * them (rfu.c, "LINK LOSS HAS TO REACH THE ADAPTER"). */
+  if (serial_mode == SERIAL_MODE_RFU)
+    rfu_net_session_end();
+}
+
+/* A peer left the radio session.  libretro's disconnected() is host-only by
+ * the API, so the frontend reports peer loss for every role through this
+ * (frontend-common/netpacket_host.c keeps a weak no-op for builds without
+ * the core). */
+void gpsp_netpacket_peer_lost(uint16_t client_id) {
+  if (serial_mode == SERIAL_MODE_RFU)
+    rfu_net_peer_gone(client_id);
 }
 
 static void netpacket_receive(const void* buf, size_t len, uint16_t client_id) {
