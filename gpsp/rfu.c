@@ -1923,8 +1923,13 @@ static s32 rfu_process_command_inner(void) {
       gpsp_rfu_link_down_hook(RFU_DOWN_LOCAL, rfu_client.clnum);
     } else if (rfu_state == RFU_STATE_HOST) {
       // We are disconnecing some client(s).
+      /* Only slots that hold a client.  librfu's mask can name a slot we
+       * already freed (its linkLossSlotFlag outlives our clttl timeout), and
+       * an empty slot's client_id is 0: the old loop then sent a DISCONNECT
+       * to netplay peer 0 -- which, when that peer is another of OUR
+       * clients, dropped it (the client side checked only the sender). */
       for (i = 0; i < 4; i++)
-        if (rfu_buf[0] & (1 << i)) {
+        if ((rfu_buf[0] & (1 << i)) && rfu_host.clients[i].devid) {
           // Send disconnect notice, clear slot!
           rfu_net_send_cmd(rfu_host.clients[i].client_id, NET_RFU_DISCONNECT,
                    rfu_host.clients[i].devid | (i << 16));
@@ -2565,6 +2570,14 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
       }
       else if (rfu_state == RFU_STATE_CLIENT) {
         if (client_id != rfu_client.host_id)
+          break;
+        /* The notice names the link it ends (devid | slot << 16).  One for
+         * another device ID is not ours: a stale notice, or an older build's
+         * host disconnecting an EMPTY slot (devid 0) that maps to our peer
+         * id.  A bare 0 is accepted: the Mystery Gift cart sends one (an
+         * older host's empty slot 0 looks the same and cannot be told apart;
+         * its slots 1-3 now can). */
+        if (hdata != 0 && (hdata & 0xffff) != rfu_client.devid)
           break;
         /* ADR-0074: measure the damage whether or not we are fixing it --
          * `queued` IS the number of exit-negotiation packets the historical

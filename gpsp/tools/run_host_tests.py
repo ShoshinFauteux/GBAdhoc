@@ -489,7 +489,15 @@ def suites(env: Env, baseline: Path | None):
           "-DINLINE=inline -Ilibretro/libretro-common/include "
           "-Ifrontend-common -o /tmp/t_rfu_peer_binding "
           "tools/tests/test_rfu_peer_binding.c -Wl,--gc-sections && "
-          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_peer_binding")),
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_peer_binding && "
+          # The link lifecycle: who may end a link, peer loss, room close.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra "
+          "-Wno-old-style-declaration -Wno-missing-field-initializers "
+          "-fsanitize=address,undefined -ffunction-sections -fdata-sections "
+          "-DINLINE=inline -Ilibretro/libretro-common/include "
+          "-Ifrontend-common -o /tmp/t_rfu_lifecycle "
+          "tools/tests/test_rfu_lifecycle.c -Wl,--gc-sections && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_lifecycle")),
 
         # -ffunction-sections/-fdata-sections are REQUIRED: without them
         # --gc-sections has nothing to discard, so every GU call video_psp.c
