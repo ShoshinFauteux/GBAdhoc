@@ -547,38 +547,88 @@ u32 arm_to_mips_reg[] =
   }                                                                           \
   _rm = arm_reg                                                               \
 
+/* Register-specified shifts (ARM data processing "Rm, <sh> Rs" and Thumb
+ * LSL/LSR/ASR/ROR Rd, Rs).  ARM7TDMI semantics: the amount is Rs[7:0] ONLY
+ * (bits 31:8 of Rs are ignored).  With s = Rs & 0xFF:
+ *   s == 0          result Rm, C unchanged (all four shifts)
+ *   LSL/LSR 1..31   the shift; C = the last bit shifted out
+ *   LSL/LSR 32      result 0; C = Rm[0] (LSL) / Rm[31] (LSR)
+ *   LSL/LSR > 32    result 0; C = 0
+ *   ASR >= 32       result and C = Rm[31], replicated
+ *   ROR             rotate by s & 31; C = Rm[(s - 1) & 31], so a non-zero
+ *                   multiple of 32 leaves Rm unchanged and sets C = Rm[31]
+ * Rm == PC reads PC + 12 (the register shift takes an extra cycle), as the
+ * interpreter does; Rs == PC keeps the engine's PC + 8 (UNPREDICTABLE on the
+ * ARM7TDMI).
+ * Upstream gpSP used the WHOLE of Rs (Rs = 0x101 shifted by 0, not by 1).  The
+ * no-flags forms test Rs & 0xE0, which is "s >= 32" because a MIPS variable
+ * shift uses Rs[4:0] == s[4:0]; they cost the same words as before.  The flags
+ * forms mask s into a1 first (one andi; ASR's old `move a1, rs` becomes it). */
+
+/* the host register holding Rm / Rs of a register shift (loads PC if needed) */
+#define generate_shift_reg_rm(dest, _rm, pc_tmp)                              \
+  u32 dest = arm_to_mips_reg[_rm];                                            \
+  if((_rm) == REG_PC)                                                         \
+  {                                                                           \
+    generate_load_pc(pc_tmp, (pc + 12));                                      \
+    dest = pc_tmp;                                                            \
+  }                                                                           \
+
+#define generate_shift_reg_rs(dest, _rs)                                      \
+  u32 dest = arm_to_mips_reg[_rs];                                            \
+  if((_rs) == REG_PC)                                                         \
+  {                                                                           \
+    generate_load_pc(reg_a1, (pc + 8));                                       \
+    dest = reg_a1;                                                            \
+  }                                                                           \
+
 #define generate_shift_reg_lsl_no_flags(_rm, _rs)                             \
-  mips_emit_sltiu(reg_temp, arm_to_mips_reg[_rs], 32);                        \
-  mips_emit_sllv(reg_a0, arm_to_mips_reg[_rm], arm_to_mips_reg[_rs]);         \
-  mips_emit_movz(reg_a0, reg_zero, reg_temp)                                  \
+{                                                                             \
+  generate_shift_reg_rm(srm, _rm, reg_a0);                                    \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_temp, srs, 0xE0);          /* s >= 32 */                 \
+  mips_emit_sllv(reg_a0, srm, srs);                                           \
+  mips_emit_movn(reg_a0, reg_zero, reg_temp);                                 \
+}                                                                             \
 
 #define generate_shift_reg_lsr_no_flags(_rm, _rs)                             \
-  mips_emit_sltiu(reg_temp, arm_to_mips_reg[_rs], 32);                        \
-  mips_emit_srlv(reg_a0, arm_to_mips_reg[_rm], arm_to_mips_reg[_rs]);         \
-  mips_emit_movz(reg_a0, reg_zero, reg_temp)                                  \
+{                                                                             \
+  generate_shift_reg_rm(srm, _rm, reg_a0);                                    \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_temp, srs, 0xE0);          /* s >= 32 */                 \
+  mips_emit_srlv(reg_a0, srm, srs);                                           \
+  mips_emit_movn(reg_a0, reg_zero, reg_temp);                                 \
+}                                                                             \
 
 #define generate_shift_reg_asr_no_flags(_rm, _rs)                             \
-  mips_emit_sltiu(reg_temp, arm_to_mips_reg[_rs], 32);                        \
-  mips_emit_b(bne, reg_temp, reg_zero, 2);                                    \
-  mips_emit_srav(reg_a0, arm_to_mips_reg[_rm], arm_to_mips_reg[_rs]);         \
-  mips_emit_sra(reg_a0, reg_a0, 31)                                           \
+{                                                                             \
+  generate_shift_reg_rm(srm, _rm, reg_a0);                                    \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_temp, srs, 0xE0);          /* s >= 32 */                 \
+  mips_emit_b(beq, reg_temp, reg_zero, 2);                                    \
+  mips_emit_srav(reg_a0, srm, srs);                                           \
+  mips_emit_sra(reg_a0, reg_a0, 31);                                          \
+}                                                                             \
 
 #define generate_shift_reg_ror_no_flags(_rm, _rs)                             \
-  rotate_right_var(reg_a0, arm_to_mips_reg[_rm],                              \
-                   reg_temp, arm_to_mips_reg[_rs])                            \
+{                                                                             \
+  generate_shift_reg_rm(srm, _rm, reg_rv);                                    \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  rotate_right_var(reg_a0, srm, reg_temp, srs);   /* Rs[4:0] == s[4:0] */     \
+}                                                                             \
 
 #define generate_shift_reg_lsl_flags(_rm, _rs)                                \
 {                                                                             \
-  u32 shift_reg = _rs;                                                        \
-  check_load_reg_pc(arm_reg_a1, shift_reg, 8);                                \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_a1, srs, 0xFF);                                          \
   generate_load_reg_pc(reg_a0, _rm, 12);                                      \
-  /* Only load the result on zero, no shift */                                \
-  mips_emit_b(beq, arm_to_mips_reg[shift_reg], reg_zero, 7);                  \
+  /* s == 0: Rm, C unchanged */                                               \
+  mips_emit_b(beq, reg_a1, reg_zero, 7);                                      \
   generate_swap_delay();                                                      \
-  mips_emit_addiu(reg_temp, arm_to_mips_reg[shift_reg], -1);                  \
+  mips_emit_addiu(reg_temp, reg_a1, -1);                                      \
   mips_emit_sllv(reg_a0, reg_a0, reg_temp);                                   \
   mips_emit_srl(reg_c_cache, reg_a0, 31);                                     \
-  mips_emit_sltiu(reg_temp, arm_to_mips_reg[shift_reg], 33);                  \
+  mips_emit_sltiu(reg_temp, reg_a1, 33);                                      \
   mips_emit_sll(reg_a0, reg_a0, 1);                                           \
   /* Result and flag to be zero if shift is 33+ */                            \
   mips_emit_movz(reg_c_cache, reg_zero, reg_temp);                            \
@@ -587,16 +637,16 @@ u32 arm_to_mips_reg[] =
 
 #define generate_shift_reg_lsr_flags(_rm, _rs)                                \
 {                                                                             \
-  u32 shift_reg = _rs;                                                        \
-  check_load_reg_pc(arm_reg_a1, shift_reg, 8);                                \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_a1, srs, 0xFF);                                          \
   generate_load_reg_pc(reg_a0, _rm, 12);                                      \
-  /* Only load the result on zero, no shift */                                \
-  mips_emit_b(beq, arm_to_mips_reg[shift_reg], reg_zero, 7);                  \
+  /* s == 0: Rm, C unchanged */                                               \
+  mips_emit_b(beq, reg_a1, reg_zero, 7);                                      \
   generate_swap_delay();                                                      \
-  mips_emit_addiu(reg_temp, arm_to_mips_reg[shift_reg], -1);                  \
+  mips_emit_addiu(reg_temp, reg_a1, -1);                                      \
   mips_emit_srlv(reg_a0, reg_a0, reg_temp);                                   \
   mips_emit_andi(reg_c_cache, reg_a0, 1);                                     \
-  mips_emit_sltiu(reg_temp, arm_to_mips_reg[shift_reg], 33);                  \
+  mips_emit_sltiu(reg_temp, reg_a1, 33);                                      \
   mips_emit_srl(reg_a0, reg_a0, 1);                                           \
   /* Result and flag to be zero if shift is 33+ */                            \
   mips_emit_movz(reg_c_cache, reg_zero, reg_temp);                            \
@@ -604,9 +654,11 @@ u32 arm_to_mips_reg[] =
 }                                                                             \
 
 #define generate_shift_reg_asr_flags(_rm, _rs)                                \
-  generate_load_reg_pc(reg_a1, _rs, 8);                                       \
+{                                                                             \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_a1, srs, 0xFF);                                          \
   generate_load_reg_pc(reg_a0, _rm, 12);                                      \
-  /* Only load the result on zero, no shift */                                \
+  /* s == 0: Rm, C unchanged */                                               \
   mips_emit_b(beq, reg_a1, reg_zero, 7);                                      \
   generate_swap_delay();                                                      \
   /* Cap shift at 32, since it's equivalent */                                \
@@ -617,14 +669,20 @@ u32 arm_to_mips_reg[] =
   mips_emit_srav(reg_a0, reg_a0, reg_temp);                                   \
   mips_emit_andi(reg_c_cache, reg_a0, 1);                                     \
   mips_emit_sra(reg_a0, reg_a0, 1);                                           \
+}                                                                             \
 
 #define generate_shift_reg_ror_flags(_rm, _rs)                                \
-  mips_emit_b(beq, arm_to_mips_reg[_rs], reg_zero, 3);                        \
-  mips_emit_addiu(reg_temp, arm_to_mips_reg[_rs], -1);                        \
-  mips_emit_srlv(reg_temp, arm_to_mips_reg[_rm], reg_temp);                   \
+{                                                                             \
+  generate_shift_reg_rm(srm, _rm, reg_rv);                                    \
+  generate_shift_reg_rs(srs, _rs);                                            \
+  mips_emit_andi(reg_a1, srs, 0xFF);                                          \
+  /* s == 0: Rm, C unchanged; else C = Rm[(s - 1) & 31] */                    \
+  mips_emit_b(beq, reg_a1, reg_zero, 3);                                      \
+  mips_emit_addiu(reg_temp, reg_a1, -1);                                      \
+  mips_emit_srlv(reg_temp, srm, reg_temp);                                    \
   mips_emit_andi(reg_c_cache, reg_temp, 1);                                   \
-  rotate_right_var(reg_a0, arm_to_mips_reg[_rm],                              \
-                   reg_temp, arm_to_mips_reg[_rs])                            \
+  rotate_right_var(reg_a0, srm, reg_temp, reg_a1);                            \
+}                                                                             \
 
 #define generate_shift_imm(arm_reg, name, flags_op)                           \
   u32 shift = (opcode >> 7) & 0x1F;                                           \
@@ -632,7 +690,8 @@ u32 arm_to_mips_reg[] =
 
 #define generate_shift_reg(arm_reg, name, flags_op)                           \
   u32 rs = ((opcode >> 8) & 0x0F);                                            \
-  generate_shift_reg_##name##_##flags_op(rm, rs);                             \
+  translation_ptr = emit_shift_reg(translation_ptr, SHIFT_REG_##name,         \
+   SHIFT_REG_##flags_op, rm, rs, pc, stored_pc);                              \
   rm = arm_reg                                                                \
 
 // Made functions due to the macro expansion getting too large.
@@ -1763,16 +1822,10 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 #define thumb_generate_shift_reg(name)                                        \
 {                                                                             \
-  u32 original_rd = rd;                                                       \
-  if(check_generate_c_flag)                                                   \
-  {                                                                           \
-    generate_shift_reg_##name##_flags(rd, rs);                                \
-  }                                                                           \
-  else                                                                        \
-  {                                                                           \
-    generate_shift_reg_##name##_no_flags(rd, rs);                             \
-  }                                                                           \
-  mips_emit_addu(arm_to_mips_reg[original_rd], reg_a0, reg_zero);             \
+  translation_ptr = emit_shift_reg(translation_ptr, SHIFT_REG_##name,         \
+   check_generate_c_flag ? SHIFT_REG_flags : SHIFT_REG_no_flags, rd, rs,      \
+   pc, stored_pc);                                                            \
+  mips_emit_addu(arm_to_mips_reg[rd], reg_a0, reg_zero);                      \
 }                                                                             \
 
 #define thumb_shift(decode_type, op_type, value_type)                         \
@@ -2250,6 +2303,34 @@ void mips_indirect_branch_thumb_nocheck(u32 address);
     mips_emit_or(rdest, rdest, rtemp)
 
 #endif
+
+/* The register-shift emitters live in ONE out-of-line function: expanded
+ * inline they were copied into every data-processing case of the translator
+ * (and again into GBA_LINK core B), +80 KB of translator text for the PC
+ * checks above.  Emits exactly the same words as the macros. */
+#define SHIFT_REG_lsl      0
+#define SHIFT_REG_lsr      1
+#define SHIFT_REG_asr      2
+#define SHIFT_REG_ror      3
+#define SHIFT_REG_no_flags 0
+#define SHIFT_REG_flags    1
+
+static __attribute__((noinline)) u8 *emit_shift_reg(u8 *translation_ptr,
+ u32 op, u32 flags, u32 rm, u32 rs, u32 pc, u32 stored_pc)
+{
+  switch((op << 1) | flags)
+  {
+    case 0: generate_shift_reg_lsl_no_flags(rm, rs); break;
+    case 1: generate_shift_reg_lsl_flags(rm, rs);    break;
+    case 2: generate_shift_reg_lsr_no_flags(rm, rs); break;
+    case 3: generate_shift_reg_lsr_flags(rm, rs);    break;
+    case 4: generate_shift_reg_asr_no_flags(rm, rs); break;
+    case 5: generate_shift_reg_asr_flags(rm, rs);    break;
+    case 6: generate_shift_reg_ror_no_flags(rm, rs); break;
+    default: generate_shift_reg_ror_flags(rm, rs);   break;
+  }
+  return translation_ptr;
+}
 
 
 // Register save layout as follows:
