@@ -7135,6 +7135,12 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_supersede n=%u on=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
+      case 39:
+         /* Longest run of frames a receive queue stood above the supersede
+          * allowance this window (client queue, host queues). */
+         fe_evt("rfu_qrun client=%u host=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
       case 30:
          /* Link shedding: content-free packets removed from the queue this
           * adapter reads, this window; keep = the rfu_shed_keep in force

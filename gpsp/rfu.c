@@ -312,6 +312,11 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
  * roles), b = 1 when the rule is on. */
 #define RFU_TR_SUPERSEDE 37
 
+/* rfu_qrun: the longest run of consecutive frames a receive queue stood above
+ * RFU_SUPERSEDE_KEEP this window (a = client queue, b = host queues), measured
+ * whether or not the rule is on -- the evidence behind RFU_SUPERSEDE_ARM. */
+#define RFU_TR_QRUN 39
+
 /* The guest-supplied word count on a SEND_DATA/SEND_DATAW command, censused
  * once per window.  `a` is the largest rfu_plen seen, `b` the number of
  * copies that had to be CLAMPED to fit rfu_tx_buf.  See the clamp itself in
@@ -1082,6 +1087,7 @@ static struct {
     rfu_map_t map;   // this client's frame timeline, mapped onto ours
     u32 sup_run;     // rfu_supersede arming: frames over the allowance
     u32 sup_armed;
+    u32 q_run;       // frames running over the allowance (census, uncapped)
     struct {
       u32 datalen;   // Byte count of data waiting to be polled.
       u8  st;        // carries a sender stamp (map valid)
@@ -1098,6 +1104,7 @@ static struct {
   rfu_map_t map;     // the host's frame timeline, mapped onto ours
   u32 sup_run;       // rfu_supersede arming: frames over the allowance
   u32 sup_armed;
+  u32 q_run;         // frames running over the allowance (census, uncapped)
   // Store host recevied packets (up to 8!)
   struct {
     u16 hblen;       // Bytes received from the host.
@@ -1475,15 +1482,20 @@ static u32 rfu_shed_host(void)
 #define RFU_SUPERSEDE_ARM  30
 
 /* One frame of the arming gate for a queue of `depth`; returns armed. */
-static u32 rfu_sup_gate(u32 depth, u32 *run, u32 *armed)
+static u32 rfu_qrun_max[2];          /* rfu_qrun census: client, host */
+
+static u32 rfu_sup_gate(u32 depth, u32 *run, u32 *armed, u32 *qrun, u32 side)
 {
   if (depth > RFU_SUPERSEDE_KEEP) {
+    if (++*qrun > rfu_qrun_max[side])
+      rfu_qrun_max[side] = *qrun;
     if (*run < RFU_SUPERSEDE_ARM)
       (*run)++;
     if (*run >= RFU_SUPERSEDE_ARM)
       *armed = 1;
   } else {
     *run = 0;
+    *qrun = 0;
     if (depth == 0)
       *armed = 0;
   }
@@ -1594,7 +1606,8 @@ static u32 rfu_supersede_client(void)
   u32 depth, i, w, k, n = 0;
   u8 kill[RFU_PKT_QUEUE];
   u32 total = rfu_client_queued();
-  if (!rfu_sup_gate(total, &rfu_client.sup_run, &rfu_client.sup_armed) ||
+  if (!rfu_sup_gate(total, &rfu_client.sup_run, &rfu_client.sup_armed,
+                    &rfu_client.q_run, 0) ||
       !rfu_supersede_on)
     return 0;
   if (rfu_client.sup_run >= RFU_SUPERSEDE_ARM) {   /* the standing lag */
@@ -1636,8 +1649,6 @@ static u32 rfu_supersede_client(void)
 static u32 rfu_supersede_host(void)
 {
   u32 c, n = 0;
-  if (!rfu_supersede_on)
-    return 0;
   for (c = 0; c < 4; c++) {
     u32 depth, total, i, w, cn = 0;
     u8 kill[RFU_PKT_QUEUE];
@@ -1648,7 +1659,9 @@ static u32 rfu_supersede_host(void)
       ;
     total = depth + (rfu_hold_n ? rfu_hold_count(1, c) : 0);
     if (!rfu_sup_gate(total, &rfu_host.clients[c].sup_run,
-                      &rfu_host.clients[c].sup_armed))
+                      &rfu_host.clients[c].sup_armed,
+                      &rfu_host.clients[c].q_run, 1) ||
+        !rfu_supersede_on)
       continue;
     if (rfu_host.clients[c].sup_run >= RFU_SUPERSEDE_ARM) {  /* standing lag */
       u32 t = 0;
@@ -2739,6 +2752,9 @@ void rfu_frame_update() {
                         MIN(rfu_sup_n_client + rfu_sup_n_host, 0xFFFu),
                         rfu_supersede_on);
     rfu_sup_n_client = rfu_sup_n_host = 0;
+    gpsp_rfu_trace_hook(RFU_TR_QRUN, MIN(rfu_qrun_max[0], 0xFFFu),
+                        MIN(rfu_qrun_max[1], 0xFFFu));
+    rfu_qrun_max[0] = rfu_qrun_max[1] = 0;
     if (rfu_hold_on) {
       gpsp_rfu_trace_hook(RFU_TR_HOLD, MIN(rfu_hold_hi, 0xFFFu),
                           MIN(rfu_hold_in, 0xFFFu));
