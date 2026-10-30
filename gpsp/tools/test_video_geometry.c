@@ -52,6 +52,86 @@ static void staging_edges(unsigned w, unsigned h)
                 fb_staging[(h - 1) * STAGE_STRIDE + x]);
 }
 
+
+/* GRID FILTERS: the darkness the GE gives screen pixel X of one axis --
+ * game_draw()'s strips, the mask's texel = GRID_N x the source coordinate,
+ * sampled at the pixel centre (LINEAR: between the two nearest texel
+ * centres; NEAREST: the texel under it) -- and in *pos that centre's source
+ * coordinate.  n source px over d screen px. */
+static float grid_sample(const float *prof, int filt, int n, int d, int X,
+                         float *pos)
+{
+   int x0 = (X * n) / d / 60 * 60, sw, dx0, dx1;
+   float u, f, w;
+   int i0;
+   for (;;)
+   {
+      sw  = n - x0 < 60 ? n - x0 : 60;
+      dx0 = x0 * d / n;
+      dx1 = (x0 + sw) * d / n;
+      if (X < dx0)      x0 -= 60;
+      else if (X >= dx1) x0 += 60;
+      else break;
+   }
+   u = ((float)X + 0.5f - (float)dx0) * (float)(sw * GRID_N) /
+       (float)(dx1 - dx0);
+   *pos = (float)x0 + u / GRID_N;
+   if (filt == GU_NEAREST)
+      return prof[(int)u % GRID_N];
+   f  = u - 0.5f;
+   i0 = (int)(f + GRID_N) - GRID_N;            /* floor */
+   w  = f - (float)i0;
+   return prof[(i0 + GRID_N) % GRID_N] * (1.0f - w) +
+          prof[(i0 + 1 + GRID_N) % GRID_N] * w;
+}
+
+static void grid_axis_check(int n, int d)
+{
+   float prof[GRID_N], sum[256], b = (float)n / (float)d, pos, tot = 0.0f;
+   /* Screen pixels of line per game pixel: 1 at an integer scale (the last
+    * pixel), else a half-game-pixel line = d / 2n pixels (as dark as 2x). */
+   float want = d % n == 0 ? 1.0f : (b < 0.5f ? 1.0f : 0.5f / b);
+   int filt = grid_axis(d, n, prof), X, i;
+   if (d <= n)
+   {
+      assert(filt == GRID_NONE);               /* 1x: nothing to draw */
+      return;
+   }
+   assert(filt == (d % n == 0 ? GRID_HARD : GRID_SOFT));
+   filt = filt == GRID_HARD ? GU_NEAREST : GU_LINEAR;
+   for (i = 0; i < n; i++)
+      sum[i] = 0.0f;
+   for (X = 0; X < d; X++)
+   {
+      float a = grid_sample(prof, filt, n, d, X, &pos);
+      /* The line belonging to game pixel i is centred about b/2 left of its
+       * right edge i + 1: credit the pixel to the nearest such centre. */
+      i = (int)(pos + b * 0.5f + 0.5f) - 1;
+      if (i >= 0 && i < n)
+         sum[i] += a;
+      tot += a;
+      if (d % n == 0)
+      {
+         /* Integer k: exactly the last screen pixel of each game pixel,
+          * under LINEAR (the other axis fractional) as under NEAREST. */
+         int last = (X + 1) % (d / n) == 0;
+         assert(a == (last ? 1.0f : 0.0f));
+         assert(grid_sample(prof, GU_LINEAR, n, d, X, &pos) == a);
+      }
+   }
+   /* The same amount of line per game pixel, overall and line by line at
+    * any phase (fractional: within the strips' rounding, the texel
+    * steps, and the soft edge that spills past the credit window). */
+   assert(tot > 0.97f * want * (float)n && tot < 1.03f * want * (float)n);
+   for (i = 0; i < n - 1; i++)
+      if (sum[i] < 0.8f * want || sum[i] > 1.2f * want)
+      {
+         fprintf(stderr, "FAIL grid n=%d d=%d: line %d darkness %.3f\n",
+                 n, d, i, sum[i]);
+         assert(0);
+      }
+}
+
 static void expect(int scale, unsigned w, unsigned h,
                    int ox, int oy, int dw, int dh, int sy0, int sh)
 {
@@ -193,5 +273,83 @@ int main(void)
    g_scale = VID_SCALE_INT2;                     /* from 2x: fit, as before */
    assert(strcmp(vid_cycle_preset(), "fit") == 0);
    puts("PASS sharp presets: TRIANGLE keeps the chosen smoothing");
+   /* GRID FILTERS: one period per GAME pixel, per axis, at every scale. */
+   {
+      static const int ax[][2] = {
+         { 240, 240 }, { 160, 160 }, { 144, 144 },      /* 1x: none        */
+         { 240, 480 }, { 136, 272 }, { 160, 320 },      /* 2x, GBA 2x crop */
+         { 240, 408 }, { 160, 272 },                    /* GBA fit         */
+         { 160, 302 }, { 144, 272 },                    /* GB fit          */
+         { 160, 480 },                                  /* GB stretch x 3  */
+      };
+      static const struct { int scale; unsigned w, h; int filt; } m[] = {
+         { VID_SCALE_1X,      240, 160, -1 },
+         { VID_SCALE_1X,      160, 144, -1 },
+         { VID_SCALE_INT2,    240, 160, GU_NEAREST },
+         { VID_SCALE_INT2,    160, 144, GU_NEAREST },
+         { VID_SCALE_FIT,     240, 160, GU_LINEAR },
+         { VID_SCALE_FIT,     160, 144, GU_LINEAR },
+         { VID_SCALE_STRETCH, 240, 160, GU_LINEAR },     /* rows 1.7x */
+         { VID_SCALE_STRETCH, 160, 144, GU_LINEAR },
+      };
+      unsigned i;
+      int k;
+      for (i = 0; i < sizeof(ax) / sizeof(ax[0]); i++)
+         grid_axis_check(ax[i][0], ax[i][1]);
+      for (i = 0; i < sizeof(m) / sizeof(m[0]); i++)
+         for (k = 0; k < 3; k++)
+         {
+            vid_geo g;
+            int filt = -1;
+            const unsigned int *t;
+            g_scale  = m[i].scale;
+            g_filter = VID_FILTER_LCD + k;
+            dest_geo(m[i].w, m[i].h, &g);
+            assert(game_filter() == GU_NEAREST);
+            assert(picture_filter(m[i].w, &g) == GU_NEAREST);
+            t = grid_tex(k, m[i].w, &g, &filt);
+            assert((t == NULL) == (m[i].filt < 0));
+            if (t)
+               assert(filt == m[i].filt);
+            if (t && m[i].scale == VID_SCALE_INT2)
+            {
+               /* 2x is the community patch's own pattern: texels 0-7 are
+                * the first screen pixel, 8-15 the second. */
+               int x, y;
+               for (y = 0; y < GRID_N; y++)
+                  for (x = 0; x < GRID_N; x++)
+                  {
+                     int ox = x >= GRID_N / 2, oy = y >= GRID_N / 2;
+                     unsigned int want =
+                        k == 0 ? ((ox || oy) ? 0x38000000u : 0)
+                      : k == 1 ? ((ox && oy) ? 0x68000000u : 0)
+                      :          (oy ? 0x58000000u : 0);
+                     assert(t[y * GRID_N + x] == want);
+                  }
+            }
+         }
+      /* The ring: a mode seen before reuses its slot, no rebuild. */
+      {
+         vid_geo g;
+         int filt;
+         const unsigned int *a, *b;
+         g_scale = VID_SCALE_FIT;
+         dest_geo(240, 160, &g);
+         a = grid_tex(0, 240, &g, &filt);
+         b = grid_tex(0, 240, &g, &filt);
+         assert(a == b);
+      }
+      /* Settings values and the TRIANGLE cycle. */
+      vid_set_mode(VID_SCALE_FIT, VID_FILTER_SCAN);
+      assert(g_filter == VID_FILTER_SCAN && g_smooth == VID_FILTER_SCAN);
+      assert(strcmp(vid_filter_name(VID_FILTER_LCD), "LCD grid") == 0);
+      assert(strcmp(vid_cycle_preset(), "stretch") == 0);
+      assert(strcmp(vid_cycle_preset(), "stretch scanlines") == 0);
+      assert(g_filter == VID_FILTER_SCAN);
+      vid_set_mode(VID_SCALE_FIT, 9);           /* out of range: bilinear */
+      assert(g_filter == VID_FILTER_BILINEAR);
+   }
+   puts("PASS grid filters: one period per game pixel (1x none, 2x the "
+        "patch's pattern, fit/stretch even), presets");
    return 0;
 }

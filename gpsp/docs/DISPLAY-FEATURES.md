@@ -65,6 +65,69 @@ The filter row has a third value, **sharp bilinear** (`filter_* = 2`), which
 was added later on `claude/sharp-bilinear`. See
 [SHARP-BILINEAR.md](SHARP-BILINEAR.md).
 
+### Grid filters: LCD grid, dot grid, scanlines (`filter_* = 3, 4, 5`)
+
+Based on a community patch (GBAdhoc 4.1.0 Filters; TODO: credit the
+contributor by name). The picture is drawn nearest, and then one small
+repeating alpha mask is blended over it (`grid_draw` in `psp/video_psp.c`).
+The patch repeated its mask every 2 SCREEN pixels, which only lined up at 2x.
+Here the mask's period is **one game pixel** on both axes. Its texture
+coordinates are the picture's own source coordinates × 16, on the same
+60-pixel strips the picture uses, so each period lands where the GE drew
+that game pixel.
+
+Each game pixel gets a darkened line at its right edge (columns) and bottom
+edge (rows). The line is one screen pixel wide, but never more than half a
+game pixel, so the picture is equally dark at every scale. LCD grid darkens the union of the two, dot
+grid their crossing, and scanlines the rows only. The alphas are the patch's
+(0x38, 0x68, 0x58).
+
+| scale | GBA 240x160 | GB/GBC 160x144 | mask |
+|---|---|---|---|
+| 1x | 1:1 | 1:1 | **none**: the picture is plain nearest and Settings reads "(off at 1x)" |
+| Fit | 1.7 x 1.7 | 1.89 x 1.89 | soft (LINEAR) both axes |
+| Stretch | 2 x 1.7 | 3 x 1.89 | hard columns, soft rows |
+| 2x | 2 x 2 | 2 x 2 | hard (NEAREST); same as the patch's 2x pattern |
+
+* **Integer axis (k = 2, 3):** the last screen pixel of each game pixel is
+  darkened, crisp. The profile's plateaus are several texels wide, so it
+  stays exact when the other axis makes the sampling LINEAR.
+* **Fractional axis:** a line half a game pixel wide, box-filtered over each
+  screen pixel (darkness = the fraction of the pixel on the line). These
+  fractions add up to the same amount per game pixel at any phase (0.85 px
+  at 1.7x), so every line is equally dark overall; a line is only soft where
+  it falls between two pixels. A crisp
+  NEAREST mask cannot do this at 1.7x: a game pixel there is 1 or 2 screen
+  pixels wide, so the narrow ones would go fully dark.
+* **1x has no mask** because a game pixel is a single screen pixel. Any mask
+  there darkens whole game pixels; the patch's mask darkened every other one.
+  The same applies to 2x of a source too wide to double, which is drawn 1x
+  (no GBA or GB picture is).
+* **Every picture path** gets the mask: the CPU and ME blits (so all FF
+  presets and rewind), the in-game menu backdrop and the wake overlay
+  (`vid_image_screen`). The translucent backdrop (alpha < 255) does not.
+* **GE state:** `grid_draw` leaves blend off, TexWrap CLAMP and TexFunc
+  REPLACE/RGB, as `game_draw` did. Every later textured draw sets its own
+  texture, mode and filter.
+* **TRIANGLE:** a grid filter counts as the player's chosen "smoothing", like
+  sharp. The smoothed presets become "fit LCD grid" and "stretch LCD grid".
+* **CONFIG.INI:** appended values. An older build reads 3 to 5 as bilinear.
+  The per-console profiles store them like any other filter.
+* **Cost:** one textured, alpha-blended pass over the picture rect, using a
+  16x16 texture that stays in the texture cache. That is 110,976 px at GBA
+  Fit, 130,560 at GBA Stretch and 2x, 82,144 at GB Fit, and 87,040 at GB 2x.
+  At the 4 to 6 ns/px calibration in SHARP-BILINEAR.md, that is about
+  +0.45 to +0.8 ms of GE time per presented frame. Playable builds defer the
+  sync (`gu_defer = 1`), so this lands on the otherwise idle GE. CPU list
+  building is +7 to 8 µs per frame (PPSSPP, Emerald: `blit_prof gu` 12 →
+  19 to 20 µs at Fit, Stretch and 2x). The one-off mask build on a mode
+  change is about 200 µs. PPSSPP cannot show GE time, so
+  this is an estimate until it is measured on hardware.
+* **Tests:** `tools/test_video_geometry.c` simulates the GE's sampling per
+  axis at every scale. It checks 1x has no mask, integer scales give exactly
+  the last pixel, fit and stretch give the same line per game pixel, 2x is
+  texel-for-texel the patch's pattern, and the presets.
+
 ## 2. Integer 2x (`VID_SCALE_INT2 = 3`)
 
 | source | drawn | rows shown | bars |

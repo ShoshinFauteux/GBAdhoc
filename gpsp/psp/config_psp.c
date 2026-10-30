@@ -16,13 +16,14 @@ static char cfg_path[256];
 static void pdisp_load(void);
 static int  pdisp_write(int console);
 
-/* VID_FILTER_*: 0 nearest, 2 sharp bilinear, and any other non-zero value is
- * bilinear -- what every value but 0 meant before sharp existed, so a file
- * written by anything older loads exactly as it did. */
+/* VID_FILTER_*: 0 nearest, 2 sharp bilinear, 3..5 the grid filters, and any
+ * other non-zero value is bilinear -- what every value but 0 meant before
+ * sharp existed, so a file written by anything older loads exactly as it did
+ * (and an older build reads 2..5 as bilinear). */
 static int pcfg_filter_clamp(int f)
 {
-   if (f == VID_FILTER_SHARP)
-      return VID_FILTER_SHARP;
+   if (f >= VID_FILTER_SHARP && f < VID_FILTER_MODES)
+      return f;
    return f ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
 }
 

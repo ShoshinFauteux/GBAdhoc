@@ -139,9 +139,9 @@ static int g_fb_filled;
 static int g_scale  = VID_SCALE_1X;
 static int g_filter = VID_FILTER_NEAREST;
 /* The smoothing TRIANGLE's smoothed presets use: the last non-nearest filter
- * vid_set_mode was given.  BILINEAR until a player picks sharp, so the cycle
- * is unchanged for everyone who never does.  Invariant: g_filter is always
- * NEAREST or g_smooth. */
+ * vid_set_mode was given (bilinear, sharp, or a grid filter).  BILINEAR until
+ * a player picks another, so the cycle is unchanged for everyone who never
+ * does.  Invariant: g_filter is always NEAREST or g_smooth. */
 static int g_smooth = VID_FILTER_BILINEAR;
 
 /* Where a w x h source lands, and which of its rows are drawn.  Only the
@@ -510,8 +510,9 @@ void vid_set_mode(int scale, int filter)
 {
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
-   /* Any other non-zero value is bilinear, as it always was. */
-   g_filter = filter == VID_FILTER_SHARP ? VID_FILTER_SHARP
+   /* 2..5 are themselves; any other non-zero value is bilinear, as it
+    * always was. */
+   g_filter = filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES ? filter
             : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
    if (g_filter != VID_FILTER_NEAREST)
       g_smooth = g_filter;
@@ -533,7 +534,10 @@ const char *vid_scale_name(int scale)
 
 const char *vid_filter_name(int filter)
 {
-   return filter == VID_FILTER_SHARP ? "sharp bilinear"
+   return filter == VID_FILTER_LCD ? "LCD grid"
+        : filter == VID_FILTER_DOT ? "dot grid"
+        : filter == VID_FILTER_SCAN ? "scanlines"
+        : filter == VID_FILTER_SHARP ? "sharp bilinear"
         : filter ? "bilinear" : "nearest";
 }
 
@@ -563,6 +567,14 @@ const char *vid_cycle_preset(void)
    i = (i + 1) % 5;
    g_scale  = preset[i].s;
    g_filter = preset[i].f ? g_smooth : VID_FILTER_NEAREST;
+   if (preset[i].f && g_smooth >= VID_FILTER_LCD)
+   {
+      /* A grid filter is the player's "smoothing" here too: "fit LCD grid". */
+      static char name[40];
+      snprintf(name, sizeof(name), "%s %s", vid_scale_name(g_scale),
+               vid_filter_name(g_smooth));
+      return name;
+   }
    return g_smooth == VID_FILTER_SHARP ? sharp_name[i] : preset[i].name;
 }
 
@@ -608,7 +620,8 @@ static int game_filter(void)
 {
    if (g_scale == VID_SCALE_INT2)
       return GU_NEAREST;
-   return g_filter ? GU_LINEAR : GU_NEAREST;
+   return g_filter == VID_FILTER_BILINEAR || g_filter == VID_FILTER_SHARP
+      ? GU_LINEAR : GU_NEAREST;
 }
 
 static void dest_rect(unsigned w, unsigned h,
@@ -634,6 +647,201 @@ static void dest_rect(unsigned w, unsigned h,
    }
    *ox = (VID_SCR_W - *dw) / 2;
    *oy = (VID_SCR_H - *dh) / 2;
+}
+
+/* ===========================================================================
+ * GRID FILTERS: LCD grid, dot grid, scanlines (docs/DISPLAY-FEATURES.md).
+ * Based on a community patch (GBAdhoc 4.1.0 Filters).
+ * TODO(credit): name the contributor once known.
+ *
+ * The game picture is drawn NEAREST, then one small repeating alpha mask is
+ * blended over it.  The mask's period is ONE GAME PIXEL on both axes at every
+ * scale: its texture coordinates are the picture's own source coordinates
+ * times GRID_N (texels per game pixel), on the same 60-source-pixel strips
+ * game_draw() uses, so a mask period lands exactly where the GE put that game
+ * pixel -- including the uneven 1-or-2 px columns of a 1.7x nearest scale.
+ *
+ * What is darkened, per axis: a line at the right (columns) or bottom (rows)
+ * edge of every game pixel -- one screen pixel wide, at most half the game
+ * pixel.
+ *   - integer k >= 2 (2x; GB stretch's 3x columns): exactly the last screen
+ *     pixel of each game pixel, a hard 0/1 profile.  Its plateaus are several
+ *     texels wide, so it stays exact even when the other axis makes the
+ *     sampling LINEAR.
+ *   - fractional s (fit 1.7x/1.89x, stretch rows): a line half a game pixel
+ *     wide, box-filtered over the screen pixel -- each screen pixel darkened
+ *     by the fraction of its area on the line -- sampled LINEAR.  Those
+ *     fractions sum to the same s/2 pixels per game pixel at any phase, so
+ *     every line is equally dark overall, and the picture as dark as at 2x;
+ *     a line is only soft where it straddles two pixels.
+ *   - k = 1 (1x): a game pixel IS one screen pixel; there is nowhere to put a
+ *     line, and any mask darkens whole game pixels (the patch's 2-screen-pixel
+ *     mask darkened every other one).  No mask: the picture is plain nearest
+ *     and Settings says "(off at 1x)".  Same for 2x of a source too wide to
+ *     double (drawn 1x by dest_geo; no GBA or GB picture is).
+ * The 2D combine is the area of the union (LCD grid), the intersection (dot
+ * grid) or the rows alone (scanlines), times the patch's alpha for each; at 2x
+ * that is the patch's own 2x pattern, pixel for pixel.
+ *
+ * Cost: one extra textured, alpha-blended pass over the picture rect (a
+ * 16x16 texture that never leaves the texture cache); no CPU pixel work and
+ * no extra framebuffer.  The texture is rebuilt only when the geometry or the
+ * filter changes, into a small ring, so a slot is never rewritten while a
+ * deferred list could still be reading it.
+ * ======================================================================== */
+
+#define GRID_N     16             /* texels per game pixel, each axis */
+#define GRID_SLOTS 4
+
+static unsigned int g_grid_tex[GRID_SLOTS][GRID_N * GRID_N]
+   __attribute__((aligned(16)));
+static struct { int kind, dw, w, dh, h, filt; } g_grid_key[GRID_SLOTS];
+static int g_grid_next;
+
+/* 0 LCD grid, 1 dot grid, 2 scanlines, -1 not a grid filter. */
+static int grid_kind(void)
+{
+   int k = g_filter - VID_FILTER_LCD;
+   return (k >= 0 && k <= 2) ? k : -1;
+}
+
+/* One axis's profile: prof[i] = darkness 0..1 of texel i, for d screen px
+ * per n game px.  Returns GRID_NONE when there is no profile (d <= n: 1x),
+ * GRID_HARD at an integer scale, GRID_SOFT otherwise (sampled LINEAR). */
+enum { GRID_NONE = 0, GRID_HARD = 1, GRID_SOFT = 2 };
+
+static int grid_axis(int d, int n, float *prof)
+{
+   int i, j;
+   if (n <= 0 || d <= n)
+      return 0;
+   if (d % n == 0)
+   {
+      /* The last of k screen pixels: t in [1 - 1/k, 1). */
+      float edge = 1.0f - (float)n / (float)d;
+      for (i = 0; i < GRID_N; i++)
+         prof[i] = ((float)i + 0.5f) / GRID_N >= edge ? 1.0f : 0.0f;
+      return GRID_HARD;
+   }
+   {
+      /* A box one screen pixel wide (b = n/d game px) over a line at the
+       * right edge, [1 - gap, 1): the covered fraction, by 64 taps across
+       * the box (runs once per mode change).  The line is half a game pixel
+       * wide, as at 2x, so a 1.7x picture is darkened as much as a 2x one
+       * (a one-screen-pixel line would cover 59 % of it, not 50 %). */
+      float b = (float)n / (float)d;
+      float gap = b < 0.5f ? b : 0.5f;
+      for (i = 0; i < GRID_N; i++)
+      {
+         float t = ((float)i + 0.5f) / GRID_N, hit = 0.0f;
+         for (j = 0; j < 64; j++)
+         {
+            float p = t - b * 0.5f + b * ((float)j + 0.5f) / 64.0f;
+            if (p < 0.0f)  p += 1.0f;
+            if (p >= 1.0f) p -= 1.0f;
+            if (p >= 1.0f - gap)
+               hit += 1.0f;
+         }
+         prof[i] = hit / 64.0f;
+      }
+      return GRID_SOFT;
+   }
+}
+
+/* The mask texture for grid `kind` over a w-wide picture at geometry g, and
+ * in *filt its GU filter.  NULL = no mask (1x). */
+static const unsigned int *grid_tex(int kind, unsigned w, const vid_geo *g,
+                                    int *filt)
+{
+   static const unsigned int alpha[3] = { 0x38, 0x68, 0x58 };  /* patch's */
+   float px[GRID_N], py[GRID_N];
+   int fx, fy, i, x, y, s;
+   unsigned int *t;
+
+   /* 1x (either axis the mask needs) has no profile: nothing to draw. */
+   if (g->dh <= g->sh || (kind != 2 && g->dw <= (int)w))
+      return NULL;
+   /* Per frame: only this lookup.  The profiles are built on a miss. */
+   for (i = 0; i < GRID_SLOTS; i++)
+      if (g_grid_key[i].kind == kind + 1 && g_grid_key[i].dw == g->dw &&
+          g_grid_key[i].w == (int)w && g_grid_key[i].dh == g->dh &&
+          g_grid_key[i].h == g->sh)
+      {
+         *filt = g_grid_key[i].filt;
+         return g_grid_tex[i];
+      }
+
+   fy = grid_axis(g->dh, g->sh, py);
+   fx = kind == 2 ? GRID_HARD : grid_axis(g->dw, (int)w, px);
+   *filt = (fx == GRID_SOFT || fy == GRID_SOFT) ? GU_LINEAR : GU_NEAREST;
+   s = g_grid_next;
+   g_grid_next = (s + 1) % GRID_SLOTS;
+   t = g_grid_tex[s];
+   for (y = 0; y < GRID_N; y++)
+      for (x = 0; x < GRID_N; x++)
+      {
+         float cx = kind == 2 ? 0.0f : px[x], cy = py[y], c;
+         c = kind == 0 ? 1.0f - (1.0f - cx) * (1.0f - cy)   /* union        */
+           : kind == 1 ? cx * cy                            /* intersection */
+           :             cy;                                /* rows         */
+         t[y * GRID_N + x] = (unsigned int)(c * (float)alpha[kind] + 0.5f)
+                             << 24;                         /* black, alpha */
+      }
+   sceKernelDcacheWritebackRange(t, sizeof(g_grid_tex[0]));
+   g_grid_key[s].kind = kind + 1;
+   g_grid_key[s].dw = g->dw;  g_grid_key[s].w = (int)w;
+   g_grid_key[s].dh = g->dh;  g_grid_key[s].h = g->sh;
+   g_grid_key[s].filt = *filt;
+   fe_evt("grid_mask kind=%d dw=%d w=%u dh=%d h=%d filt=%s slot=%d", kind,
+          g->dw, w, g->dh, g->sh, *filt == GU_LINEAR ? "linear" : "nearest",
+          s);
+   return t;
+}
+
+/* The mask over the picture game_draw() just drew: same rect, same strips.
+ * Leaves blend OFF, TexWrap CLAMP and TexFunc REPLACE/RGB, as game_draw did.
+ * The texture, its mode (8888) and filter differ, and need not be restored:
+ * every later textured draw sets all three itself (image_rows, the font, the
+ * logo, the ambient bars, sharp_draw, game_draw). */
+static void grid_draw(unsigned w, const vid_geo *g)
+{
+   int kind = grid_kind(), filt, x;
+   const unsigned int *t;
+
+   if (kind < 0 || !w)
+      return;
+   t = grid_tex(kind, w, g, &filt);
+   if (!t)
+      return;
+   sceGuEnable(GU_TEXTURE_2D);
+   sceGuEnable(GU_BLEND);
+   sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+   sceGuTexMode(GU_PSM_8888, 0, 0, GU_FALSE);
+   sceGuTexImage(0, GRID_N, GRID_N, GRID_N, t);
+   sceGuTexFlush();
+   sceGuTexFilter(filt, filt);
+   sceGuTexWrap(GU_REPEAT, GU_REPEAT);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGBA);
+   /* game_draw()'s strips exactly; texel = GRID_N x the source coordinate,
+    * restarted at 0 per strip (60 x 16 = 960, well inside 16 bits). */
+   for (x = 0; x < (int)w; x += 60)
+   {
+      int sw = ((int)w - x < 60) ? (int)w - x : 60;
+      int dx0 = g->ox + x * g->dw / (int)w;
+      int dx1 = g->ox + (x + sw) * g->dw / (int)w;
+      vtx_t *v = (vtx_t *)sceGuGetMemory(2 * sizeof(vtx_t));
+      v[0].u = 0;            v[0].v = (short)(g->sy0 * GRID_N);
+      v[0].x = (short)dx0;   v[0].y = (short)g->oy;            v[0].z = 0;
+      v[1].u = (short)(sw * GRID_N);
+      v[1].v = (short)((g->sy0 + g->sh) * GRID_N);
+      v[1].x = (short)dx1;   v[1].y = (short)(g->oy + g->dh);  v[1].z = 0;
+      sceGuDrawArray(GU_SPRITES,
+                     GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                     2, 0, v);
+   }
+   sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+   sceGuDisable(GU_BLEND);
+   sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
 }
 
 /* The picture as it has always been drawn: the clear (or the ambient bars in
@@ -673,6 +881,7 @@ static void game_draw(const uint16_t *tex, unsigned w, const vid_geo *g,
                      GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
                      2, 0, v);
    }
+   grid_draw(w, g);
 }
 
 void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
@@ -907,8 +1116,11 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
       if (texw == STAGE_STRIDE)
          game_draw(pix, (unsigned)srcw, &g, picture_filter((unsigned)srcw, &g));
       else
+      {
          image_rows(g.ox, g.oy, g.dw, g.dh, pix, texw, texh, srcw, g.sy0,
                     g.sy0 + g.sh, 255, game_filter());
+         grid_draw((unsigned)srcw, &g);
+      }
    }
    sceGuEnable(GU_BLEND);
 }
