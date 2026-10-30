@@ -841,7 +841,7 @@ else ifeq ($(platform), psp1)
 	ifneq ($(SMC_REUSE_SPARE_KB),)
 	CFLAGS += -DSMC_REUSE_SPARE_KB=$(SMC_REUSE_SPARE_KB)
 	endif
-	# SMC_REUSE_MODE=0|1|2 (default 2): off / record only / on, as one
+	# SMC_REUSE_MODE=0|1|2|3 (default 3): off / record only / on / on without cost rules, as one
 	# initialised word, so hardware A/B arms share the code layout.
 	ifneq ($(SMC_REUSE_MODE),)
 	CFLAGS += -DSMC_REUSE_MODE=$(SMC_REUSE_MODE)

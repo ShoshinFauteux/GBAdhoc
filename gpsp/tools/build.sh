@@ -255,12 +255,12 @@ fi
 
 # CAND2=1: cand2 = cand1 + the in-place immediate patch (SMC_IMM_PATCH with
 # XS_NOTE_FAST, ENTRY_GATES_RANGE, ENTRY_GATES_FAST; claude/xlat-cost) + SMC
-# reuse with its cost rules (SMC_REUSE, 256 KiB spare, mode 2; claude/reuse-
+# reuse (SMC_REUSE, 256 KiB spare, mode 3 since 4.5.0 -- HW r5ac510/r149b9c; claude/reuse-
 # modes), for a PLAYABLE owner test build -- the lab recipe passed these as
 # CORE_EXTRA, which a release refuses.  Needs CAND1=1.  Core only.
 if [ "${CAND2:-0}" = 1 ]; then
   [ "${CAND1:-0}" = 1 ] || { echo "FAIL: CAND2=1 needs CAND1=1"; exit 1; }
-  CORE_FLAGS="$CORE_FLAGS SMC_IMM_PATCH=1 XS_NOTE_FAST=1 ENTRY_GATES_RANGE=1 ENTRY_GATES_FAST=1 SMC_REUSE=1 SMC_REUSE_SPARE_KB=256 SMC_REUSE_MODE=2"
+  CORE_FLAGS="$CORE_FLAGS SMC_IMM_PATCH=1 XS_NOTE_FAST=1 ENTRY_GATES_RANGE=1 ENTRY_GATES_FAST=1 SMC_REUSE=1 SMC_REUSE_SPARE_KB=256 SMC_REUSE_MODE=3"
 fi
 
 # INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)

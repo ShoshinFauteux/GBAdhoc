@@ -7145,8 +7145,10 @@ static void smc_reuse_window(void)
   }
 }
 static struct { u32 gen, idle, cheat, pa, ngates, size; u8 *base; } smc_reuse_env;
-/* SMC_REUSE_MODE (root make, default 2): a hardware A/B with the code layout
- * held fixed -- the arms differ in this one initialised word only.
+/* SMC_REUSE_MODE (root make, default 3 since 4.5.0: hardware contest Lab runs
+ * r5ac510 (3000) / r149b9c (1000), mode 3 vs 2 = 5 better, 19 same, 0 worse,
+ * mean work -1.1 %): a hardware A/B with the code layout held fixed
+ * -- the arms differ in this one initialised word only.
  *   0 off: no record, no revival, every flush real (guest-exact as without
  *     SMC_REUSE, and the cache is used as without it)
  *   1 record only: the full recording cost, never a revival
@@ -7154,7 +7156,7 @@ static struct { u32 gen, idle, cheat, pa, ngates, size; u8 *base; } smc_reuse_en
  *   3 on without the cost rules (no recording/lookup pause, every matching
  *     record revived: the step-4 behaviour) */
 #ifndef SMC_REUSE_MODE
-#define SMC_REUSE_MODE 2
+#define SMC_REUSE_MODE 3
 #endif
 /* Biased so that no arm's value is 0: a zero would move the word to .bss. */
 u32 smc_reuse_mode_w = 0x100 + SMC_REUSE_MODE;
