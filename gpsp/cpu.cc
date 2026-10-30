@@ -346,7 +346,8 @@ static const u8 gba_header_logo[156] = {
     case 0x7:                                                                 \
     {                                                                         \
       get_shift_register(reg_sh);                                             \
-      ror(reg_sh, reg_sh, shift);                                             \
+      if(shift & 0x1F)                                                        \
+        ror(reg_sh, reg_sh, shift & 0x1F);                                    \
       break;                                                                  \
     }                                                                         \
   }                                                                           \
@@ -497,8 +498,9 @@ static const u8 gba_header_logo[156] = {
       get_shift_register(reg_sh);                                             \
       if(shift != 0)                                                          \
       {                                                                       \
-        c_flag = (reg_sh >> (shift - 1)) & 0x01;                              \
-        ror(reg_sh, reg_sh, shift);                                           \
+        c_flag = (reg_sh >> ((shift - 1) & 0x1F)) & 0x01;                     \
+        if(shift & 0x1F)                                                      \
+          ror(reg_sh, reg_sh, shift & 0x1F);                                  \
       }                                                                       \
       break;                                                                  \
     }                                                                         \
@@ -1165,7 +1167,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
 // Affects N/Z/C flags
 
 #define thumb_shift_lsl_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1185,7 +1187,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_lsr_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1205,7 +1207,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_asr_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1222,12 +1224,13 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_ror_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
-    c_flag = (dest >> (shift - 1)) & 0x01;                                    \
-    ror(dest, dest, shift);                                                   \
+    c_flag = (dest >> ((shift - 1) & 0x1F)) & 0x01;                           \
+    if(shift & 0x1F)                                                          \
+      ror(dest, dest, shift & 0x1F);                                          \
   }                                                                           \
 
 #define thumb_shift_lsl_imm()                                                 \
