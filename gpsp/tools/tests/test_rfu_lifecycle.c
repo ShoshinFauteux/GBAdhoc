@@ -125,9 +125,62 @@ static void test_disconnect_skips_empty_slots(void)
   puts("  disconnect: empty slots skipped, foreign device IDs ignored");
 }
 
+/* 2. An ACK the client can no longer use hands its slot back.  The game
+ *    gives up on a connection with CONCOMPL (state -> IDLE); an ACK landing
+ *    after that used to be dropped silently while the host kept the slot --
+ *    a phantom player in the host game's list for 4 s. */
+static void test_late_connect_ack_releases_the_slot(void)
+{
+  uint8_t p[16];
+  fresh();
+  rfu_peer_bcst[2].valid = 1;
+  rfu_peer_bcst[2].device_id = 0x2468;
+  assert(cmd(RFU_CMD_CONNECT, 1, 0x2468) == 0);
+  assert(rfu_state == RFU_STATE_CONNECTING);
+  assert(cmd(RFU_CMD_CONCOMPL, 0, 0) == 1);       /* the game gives up */
+  assert(rfu_buf[0] == RFU_CONN_COMP_FAIL && rfu_state == RFU_STATE_IDLE);
+
+  sends = 0;
+  packet(p, NET_RFU_CONNECT_ACK, 0x00010077);
+  rfu_net_receive(p, sizeof(p), 2);
+  assert(rfu_state == RFU_STATE_IDLE);
+  assert(sends == 1 && last_dst == 2 && last_type == NET_RFU_DISCONNECT);
+  assert(last_hdata == 0x00010077);
+
+  /* ... and the host that receives it frees exactly that slot. */
+  rfu_state = RFU_STATE_HOST;
+  memset(&rfu_host, 0, sizeof(rfu_host));
+  rfu_host.clients[1].devid = 0x77;
+  rfu_host.clients[1].client_id = 4;
+  packet(p, NET_RFU_DISCONNECT, last_hdata);
+  rfu_net_receive(p, sizeof(p), 4);
+  assert(rfu_host.clients[1].devid == 0);
+
+  /* A duplicate ACK for the link we hold is not a stray: no notice. */
+  make_client(2, 0x77, 1);
+  sends = 0;
+  packet(p, NET_RFU_CONNECT_ACK, 0x00010077);
+  rfu_net_receive(p, sizeof(p), 2);
+  assert(rfu_state == RFU_STATE_CLIENT && sends == 0);
+  /* An ACK from a host we never asked is handed back. */
+  packet(p, NET_RFU_CONNECT_ACK, 0x00020099);
+  rfu_net_receive(p, sizeof(p), 3);
+  assert(rfu_state == RFU_STATE_CLIENT && rfu_client.devid == 0x77);
+  assert(sends == 1 && last_dst == 3 && last_hdata == 0x00020099);
+  /* Malformed ACKs (no device ID, slot >= 4) are not answered. */
+  sends = 0;
+  packet(p, NET_RFU_CONNECT_ACK, 0x00010000);
+  rfu_net_receive(p, sizeof(p), 3);
+  packet(p, NET_RFU_CONNECT_ACK, 0x00040077);
+  rfu_net_receive(p, sizeof(p), 3);
+  assert(sends == 0);
+  puts("  connect: a late or foreign ACK hands its slot back");
+}
+
 int main(void)
 {
   test_disconnect_skips_empty_slots();
+  test_late_connect_ack_releases_the_slot();
   puts("RFU lifecycle tests passed");
   return 0;
 }

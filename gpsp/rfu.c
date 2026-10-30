@@ -2547,6 +2547,18 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         RFU_SET_STATE(RFU_STATE_CLIENT, RFU_TRC_CONN_ACK);
         RFU_DEBUG_LOG("Client connected with slot ID %d\n", rfu_client.clnum);
       }
+      /* An ACK we cannot use -- it arrived after the game gave up on the
+       * connection (CONCOMPL already failed it to IDLE), after an adapter
+       * reset, or from a host we did not ask -- still holds a slot on that
+       * host, which would show the game there a phantom player until its
+       * 240-frame clttl timeout.  Hand the slot back.  Not for the ACK of the
+       * link we hold (a duplicate): that one must not end it. */
+      else if ((hdata & 0xffff) != 0 && (hdata >> 16) < 4 &&
+               !(rfu_state == RFU_STATE_CLIENT &&
+                 client_id == rfu_client.host_id &&
+                 (hdata & 0xffff) == rfu_client.devid)) {
+        rfu_net_send_cmd(client_id, NET_RFU_DISCONNECT, hdata);
+      }
       break;
 
     case NET_RFU_CONNECT_NACK:
