@@ -59,6 +59,8 @@
     #define SMC_REUSE_VIRT_SIZE (1024 * RAM_CACHE_KB)
   #elif defined(SMALL_TRANSLATION_CACHE)
     #define SMC_REUSE_VIRT_SIZE (1024 * 384)
+  #elif defined(LAB_LOCKSTEP)
+    #define SMC_REUSE_VIRT_SIZE (1024 * 512 * 16)   /* the gate lockstep twin's 16x cache (twin only) */
   #else
     #define SMC_REUSE_VIRT_SIZE (1024 * 512)
   #endif
