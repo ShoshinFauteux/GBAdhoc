@@ -279,8 +279,9 @@ void sound_frequency_changed(void)
  *
  * Now both ends use the CPU's position in the slice at the access:
  * reg[REG_IO_CYCLES] holds the remaining cycles there (the interpreter keeps
- * its counter in that slot; the MIPS I/O stubs store reg_cycles after
- * syncing the block's pending count up to the access, generate_io_cycle_sync).
+ * its counter in that slot; the MIPS I/O stubs store reg_cycles minus the
+ * block's cycles still pending at the access, which the call site passes
+ * inside its PC argument at no cost: mips_emit.h iok_encode).
  * The position counts the cycles of every earlier instruction plus the
  * access's own data cycle, not its opcode fetch.
  *   start:  the write completes one fetch later and the counter begins on
@@ -289,8 +290,9 @@ void sound_frequency_changed(void)
  * Calibrated on nothing but that: subs+bne x1024 in IWRAM = 4094 cycles,
  * +2 nops, LDRH's fetch: hardware reads 4096 = 0x1000.
  *
- * Cost: one compare per I/O load in the MIPS stub (the C call only for the
- * timer registers) and none per instruction.  Counter rounding is the
+ * Cost: one compare per I/O load in the MIPS stub (the decode and the C
+ * call only for the timer registers), nothing at other loads and stores,
+ * and none per instruction.  Counter rounding is the
  * hardware's: a prescaled counter ticks at the END of each 2^p-cycle period
  * (update_timers' own refresh keeps its historic rounding; a running
  * prescaled timer is always read through timer_now). */

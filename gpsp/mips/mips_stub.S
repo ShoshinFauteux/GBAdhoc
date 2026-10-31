@@ -520,9 +520,49 @@ lookup_pc_noflags:
 # store lands on them, then stores.  After the retirement, smc_pipe_step
 # runs those old opcodes in the interpreter and the dispatch resumes after
 # them; any alert their execution raised goes through write_io_epilogue.
+#
+# $6 is the store site's PC argument with the I/O cycle position in it
+# (mips_emit.h iok_encode / emit_iok_decode: this decoder must match):
+# decoded here into the plain PC and the k cycles reg_cycles is ahead of the
+# store, which are charged now (the block is left with the rest of its
+# pending count dropped, as before).
 defsymbl(smc_write)
+  save_registers                  # $8/$9 are free after this
+  subu $8, $6, $19                # d = arg - block start PC
+  sltiu $9, $8, 5120              # IOK_PLAIN
+  bne $9, $0, 9f                  # 0 <= d < 5120: plain PC
+  andi $9, $8, 0xFFFF             # (delay)
+  xori $9, $9, 0x8000             # c, or c + 5120
+  srl $8, $9, 15
+  beq $8, $0, 1f                  # d < 0: c < 32768
+  addiu $8, $9, -6144             # (delay) c - 6144
+  addiu $9, $9, -5120             # c
+  addiu $8, $9, -6144
+1:
+  bltz $8, 3f                     # c < 6144: tier 0
+  srl $9, $8, 15                  # (delay)
+  bne $9, $0, 2f                  # c >= 38912: tier 2
+  srl $9, $8, 9                   # (delay) tier 1: k - 7
+  addiu $9, $9, 7
+  b 4f
+  andi $8, $8, 511                # (delay) h
+2:
+  andi $8, $8, 0x7FFF             # c - 38912
+  srl $9, $8, 7
+  addiu $9, $9, 71
+  b 4f
+  andi $8, $8, 127                # (delay) h
+3:
+  addiu $8, $8, 6144              # c
+  srl $9, $8, 10
+  addiu $9, $9, 1
+  andi $8, $8, 1023               # h
+4:
+  sll $8, $8, 1                   # pc_delta
+  addu $6, $19, $8                # the plain PC
+  subu reg_cycles, reg_cycles, $9 # charge k
+9:
   sw $6, REG_PC($16)              # save PC
-  save_registers
   sw $4, REG_SAVE($16)            # masked region offset
   sw $2, REG_SAVE2($16)           # lui constant + offset
   move $7, $1                     # arg3 = size

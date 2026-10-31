@@ -846,6 +846,10 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
 #define arm_data_trans_half_imm()                                             \
   arm_decode_half_trans_of()                                                  \
 
+/* reg[REG_IO_CYCLES] = the cycles left at this data access (gba_memory.c
+ * live timer counters; gbalink_core.c lk_io_now). */
+#define io_cycles_note() (*(s32 *)&reg[REG_IO_CYCLES] = cycles_remaining)
+
 #define aligned_address_mask8  0xF0000000
 #define aligned_address_mask16 0xF0000001
 #define aligned_address_mask32 0xF0000003
@@ -860,6 +864,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     /* Account for cycles and other stats */                                  \
     u8 region = _address >> 24;                                               \
     cycles_remaining -= ws_cyc_nseq[region][(size - 8) / 16];                 \
+    io_cycles_note();                                                         \
     STATS_MEMORY_ACCESS(read, type, region);                                  \
   }                                                                           \
                                                                               \
@@ -900,7 +905,7 @@ static u32 pipe_slot_op[2];
 static u32 pipe_slot_width;     /* 0 = no latch, else 2 (Thumb) or 4 (ARM) */
 static u32 pipe_slot_next;
 
-static void pipe_latch(void)
+static __attribute__((noinline)) void pipe_latch(void)
 {
   u32 w = (reg[REG_CPSR] & 0x20) ? 2 : 4;
   for (u32 i = 0; i < 2; i++)
@@ -921,7 +926,7 @@ static void pipe_latch(void)
 }
 
 /* Called at fetch only while a latch is live (pipe_slot_width != 0). */
-static u32 pipe_fetch(u32 pc, u32 w, u32 opcode)
+static __attribute__((noinline)) u32 pipe_fetch(u32 pc, u32 w, u32 opcode)
 {
   if (w == pipe_slot_width && pc == pipe_slot_addr[pipe_slot_next])
   {
@@ -965,6 +970,7 @@ static cpu_alert_type pipe_step_alert;
   {                                                                           \
     u8 region = _address >> 24;                                               \
     cycles_remaining -= ws_cyc_nseq[region][(size - 8) / 16];                 \
+    io_cycles_note();                                                         \
     STATS_MEMORY_ACCESS(write, type, region);                                 \
   }                                                                           \
                                                                               \
@@ -989,6 +995,7 @@ static cpu_alert_type pipe_step_alert;
   }                                                                           \
   else                                                                        \
   {                                                                           \
+    io_cycles_note();                                                         \
     dest = read_memory32(_address);                                           \
   }                                                                           \
 }                                                                             \
@@ -1003,6 +1010,7 @@ static cpu_alert_type pipe_step_alert;
     cycles_remaining -= ws_cyc_seq[region][1];                                \
     STATS_MEMORY_ACCESS(write, u32, region);                                  \
   }                                                                           \
+  io_cycles_note();                                                           \
   cpu_alert |= write_memory32(_address, value);                               \
 }                                                                             \
 
@@ -1674,9 +1682,10 @@ void execute_arm(u32 cycles)
   u32 pc_region = (reg[REG_PC] >> 15);
   u8 *pc_address_block = memory_map_read[pc_region];
   u32 new_pc_region;
-  /* Kept in reg[REG_IO_CYCLES] so C reached from a memory access (live
-   * timer counters, gba_memory.c) knows where in the slice it is. */
-  s32 &cycles_remaining = *(s32 *)&reg[REG_IO_CYCLES];
+  /* Copied to reg[REG_IO_CYCLES] at every data access (io_cycles_note) so
+   * C reached from it (live timer counters, gba_memory.c) knows where in
+   * the slice it is; a local everywhere else. */
+  s32 cycles_remaining;
   u32 update_ret;
   cpu_alert_type cpu_alert;
 
@@ -3774,6 +3783,7 @@ thumb_loop:
       if (pipe_step_active)
       {
         pipe_step_alert = cpu_alert;   /* back to the dynarec (smc_pipe_step) */
+        io_cycles_note();              /* what is left after the window */
         return;
       }
   }
