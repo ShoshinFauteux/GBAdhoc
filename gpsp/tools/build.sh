@@ -263,6 +263,14 @@ if [ "${CAND2:-0}" = 1 ]; then
   CORE_FLAGS="$CORE_FLAGS SMC_IMM_PATCH=1 XS_NOTE_FAST=1 ENTRY_GATES_RANGE=1 ENTRY_GATES_FAST=1 SMC_REUSE=1 SMC_REUSE_SPARE_KB=256 SMC_REUSE_MODE=3"
 fi
 
+# MSR_FAST=1: the mode-switch fast path (claude/codegen-q3; layout-identical
+# HW A/B rc26392: OpenLara -4.3 %, Unbound -3.7 %).  Needs CAND1=1 for
+# FIQ_BANK_FIX.  A switch of its own because a release refuses CORE_EXTRA.
+if [ "${MSR_FAST:-0}" = 1 ]; then
+  [ "${CAND1:-0}" = 1 ] || { echo "FAIL: MSR_FAST=1 needs CAND1=1"; exit 1; }
+  CORE_FLAGS="$CORE_FLAGS MSR_FAST=1"
+fi
+
 # INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
 # ON by default, for a side-by-side PLAYABLE test build, which cannot read the
 # harness ini.  Frontend only.  A switch of its own like REWIND, because a
