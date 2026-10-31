@@ -220,6 +220,9 @@ u32 function_cc read_memory16(u32 address);
 u16 function_cc read_memory16_signed(u32 address);
 u32 function_cc read_memory16s(u32 address);
 u32 function_cc read_memory32(u32 address);
+/* Refresh the counter register of the timer at a 0x04000100-0x0400010F
+ * address before an I/O read of it (gba_memory.c LIVE TIMER COUNTERS). */
+void function_cc timer_io_read_sync(u32 address);
 cpu_alert_type function_cc write_memory8(u32 address, u8 value);
 cpu_alert_type function_cc write_memory16(u32 address, u16 value);
 cpu_alert_type function_cc write_memory32(u32 address, u32 value);

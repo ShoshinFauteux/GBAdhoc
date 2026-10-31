@@ -848,6 +848,10 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
 #define arm_data_trans_half_imm()                                             \
   arm_decode_half_trans_of()                                                  \
 
+/* reg[REG_IO_CYCLES] = the cycles left at this data access (gba_memory.c
+ * live timer counters; gbalink_core.c lk_io_now). */
+#define io_cycles_note() (*(s32 *)&reg[REG_IO_CYCLES] = cycles_remaining)
+
 #define aligned_address_mask8  0xF0000000
 #define aligned_address_mask16 0xF0000001
 #define aligned_address_mask32 0xF0000003
@@ -862,6 +866,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     /* Account for cycles and other stats */                                  \
     u8 region = _address >> 24;                                               \
     cycles_remaining -= ws_cyc_nseq[region][(size - 8) / 16];                 \
+    io_cycles_note();                                                         \
     STATS_MEMORY_ACCESS(read, type, region);                                  \
   }                                                                           \
                                                                               \
@@ -880,6 +885,86 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   }                                                                           \
 }                                                                             \
 
+/* PIPELINE PREFETCH WINDOW (monomyth-compat, 2026-10-30).
+ * The ARM7TDMI has a three-stage pipeline: while an instruction executes, the
+ * next one is already decoded and the one after it already fetched.  A store
+ * that overwrites either of those two slots does not change what runs next:
+ * the old opcodes are already inside the CPU.  The pipeline is refilled only
+ * by a branch (or exception), so the new code is seen the next time control
+ * reaches it.  (GBATEK "ARM CPU Instruction Prefetch"; AGS aging cart and
+ * MonoMyth's "Insn Prefetch" probe test exactly this.)
+ *
+ * The interpreter fetches from memory at execute time, so it latches the two
+ * slots' old opcodes when a single-register store hits them, and the fetch
+ * takes the latched opcode while execution walks straight into those slots.
+ * Anything else (a branch, an exception, a mode switch) drops the latch, as a
+ * pipeline flush would.  During a store reg[REG_PC] is already the address of
+ * the next instruction (arm_access_memory / thumb_access_memory), so the
+ * window is [reg[REG_PC], reg[REG_PC] + 2 * width).  Cost on the store path:
+ * one subtract and compare.  LDM/STM (block stores) are not covered. */
+static u32 pipe_slot_addr[2];
+static u32 pipe_slot_op[2];
+static u32 pipe_slot_width;     /* 0 = no latch, else 2 (Thumb) or 4 (ARM) */
+static u32 pipe_slot_next;
+
+static __attribute__((noinline)) void pipe_latch(void)
+{
+  u32 w = (reg[REG_CPSR] & 0x20) ? 2 : 4;
+  for (u32 i = 0; i < 2; i++)
+  {
+    u32 a = reg[REG_PC] + i * w;
+    u8 *map = memory_map_read[a >> 15];
+    if (!map || a >= 0x10000000)
+    {
+      pipe_slot_width = 0;
+      return;
+    }
+    pipe_slot_addr[i] = a;
+    pipe_slot_op[i] = (w == 4) ? readaddress32(map, a & 0x7FFC)
+                               : readaddress16(map, a & 0x7FFE);
+  }
+  pipe_slot_width = w;
+  pipe_slot_next = 0;
+}
+
+/* Called at fetch only while a latch is live (pipe_slot_width != 0). */
+static __attribute__((noinline)) u32 pipe_fetch(u32 pc, u32 w, u32 opcode)
+{
+  if (w == pipe_slot_width && pc == pipe_slot_addr[pipe_slot_next])
+  {
+    opcode = pipe_slot_op[pipe_slot_next];
+    if (++pipe_slot_next == 2)
+      pipe_slot_width = 0;
+    return opcode;
+  }
+  pipe_slot_width = 0;
+  return opcode;
+}
+
+/* DYNAREC STEP (monomyth-compat).  The MIPS dynarec's single-store SMC trap
+ * (mips_stub.S smc_write) calls smc_pipe_store instead of storing in the
+ * stub: when the store lands in the writer's own pipeline window it latches
+ * the old opcodes here first.  After the trap has retired the stale
+ * translations, smc_pipe_step runs execute_arm in STEP mode from the window
+ * start: the interpreter executes the latched (old) opcodes and returns as
+ * soon as execution leaves the window (or on an IRQ/HALT alert), with the
+ * cycles it used taken from reg[REG_IO_CYCLES], where the trap put the
+ * dynarec's reg_cycles.  The dynarec then dispatches at the new PC: from
+ * there on the new code runs, as on hardware.  At most two or three
+ * interpreted instructions, only on a store that rewrites the next two
+ * instructions; every other path is untouched. */
+#define CPU_ALERT_STEP (1 << 3)
+static u8 pipe_step_active;
+static cpu_alert_type pipe_step_alert;
+
+#define pipe_store_check(_address, size)                                      \
+{                                                                             \
+  u32 w2 = (reg[REG_CPSR] & 0x20) ? 4 : 8;                                    \
+  if ((u32)((_address) + ((size) / 8) - 1 - reg[REG_PC]) <                    \
+      w2 + ((size) / 8) - 1)                                                  \
+    pipe_latch();                                                             \
+}                                                                             \
+
 #define fast_write_memory(size, type, address, value)                         \
 {                                                                             \
   u32 _address = (address) & ~(aligned_address_mask##size & 0x03);            \
@@ -887,9 +972,11 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   {                                                                           \
     u8 region = _address >> 24;                                               \
     cycles_remaining -= ws_cyc_nseq[region][(size - 8) / 16];                 \
+    io_cycles_note();                                                         \
     STATS_MEMORY_ACCESS(write, type, region);                                 \
   }                                                                           \
                                                                               \
+  pipe_store_check(_address, size);                                           \
   cpu_alert |= write_memory##size(_address, value);                           \
 }                                                                             \
 
@@ -910,6 +997,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   }                                                                           \
   else                                                                        \
   {                                                                           \
+    io_cycles_note();                                                         \
     dest = read_memory32(_address);                                           \
   }                                                                           \
 }                                                                             \
@@ -924,6 +1012,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     cycles_remaining -= ws_cyc_seq[region][1];                                \
     STATS_MEMORY_ACCESS(write, u32, region);                                  \
   }                                                                           \
+  io_cycles_note();                                                           \
   cpu_alert |= write_memory32(_address, value);                               \
 }                                                                             \
 
@@ -1347,12 +1436,24 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   access_type##_memory_##mem_type(address, reg_op);                           \
 }                                                                             \
 
+/* TAKEN-BRANCH REFILL (monomyth-compat).  A taken branch costs 2S + 1N:
+ * the N and one S were charged (ws_cyc_nseq + the end-of-instruction S);
+ * this is the second S, the refill of the pipeline's decode stage.  Only for
+ * a target outside the gamepak, whose S cost the model charges exactly; the
+ * gamepak's S without a prefetch buffer model already over-charges straight
+ * code, so adding the refill there would make ROM code less accurate, not
+ * more.  Same rule as the MIPS dynarec (mips_emit.h branch_refill_cycles). */
+#define taken_branch_refill(size)                                             \
+  if ((reg[REG_PC] >> 24) < 0x08)                                             \
+    cycles_remaining -= ws_cyc_seq[reg[REG_PC] >> 24][size]                   \
+
 #define thumb_conditional_branch(condition)                                   \
 {                                                                             \
   thumb_decode_branch_cond();                                                 \
   if(condition)                                                               \
   {                                                                           \
     thumb_pc_offset((offset * 2) + 4);                                        \
+    taken_branch_refill(0);                                                   \
   }                                                                           \
   else                                                                        \
   {                                                                           \
@@ -1584,6 +1685,9 @@ void execute_arm(u32 cycles)
   u32 pc_region = (reg[REG_PC] >> 15);
   u8 *pc_address_block = memory_map_read[pc_region];
   u32 new_pc_region;
+  /* Copied to reg[REG_IO_CYCLES] at every data access (io_cycles_note) so
+   * C reached from it (live timer counters, gba_memory.c) knows where in
+   * the slice it is; a local everywhere else. */
   s32 cycles_remaining;
   u32 update_ret;
   cpu_alert_type cpu_alert;
@@ -1625,6 +1729,12 @@ arm_loop:
        check_pc_region();
        reg[REG_PC] &= ~0x03;
        opcode = readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       if (pipe_slot_width)
+       {
+          opcode = pipe_fetch(reg[REG_PC], 4, opcode);
+          if (!pipe_slot_width && pipe_step_active)
+             cpu_alert |= CPU_ALERT_STEP;    /* last one: stop after it */
+       }
        condition = opcode >> 28;
 
        switch(condition)
@@ -3127,6 +3237,7 @@ arm_loop:
                 arm_decode_branch();
                 reg[REG_PC] += offset + 8;
                 cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                taken_branch_refill(1);
                 break;
              }
 
@@ -3137,6 +3248,7 @@ arm_loop:
                 reg[REG_LR] = reg[REG_PC] + 4;
                 reg[REG_PC] += offset + 8;
                 cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                taken_branch_refill(1);
                 break;
              }
 
@@ -3165,10 +3277,10 @@ skip_instruction:
 
        if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
 
-       if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
+       if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ | CPU_ALERT_STEP))
          goto alert;
 
-    } while(cycles_remaining > 0);
+    } while(cycles_remaining > 0 || pipe_step_active);
 
     collapse_flags();
     update_ret = update_gba(cycles_remaining);
@@ -3193,6 +3305,12 @@ thumb_loop:
        check_pc_region();
        reg[REG_PC] &= ~0x01;
        opcode = readaddress16(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       if (pipe_slot_width)
+       {
+          opcode = pipe_fetch(reg[REG_PC], 2, opcode);
+          if (!pipe_slot_width && pipe_step_active)
+             cpu_alert |= CPU_ALERT_STEP;    /* last one: stop after it */
+       }
 
        #ifdef TRACE_INSTRUCTIONS
        interp_trace_instruction(reg[REG_PC], 0);
@@ -3618,6 +3736,7 @@ thumb_loop:
                 s32 br_offset = ((s32)(offset << 21) >> 20) + 4;
                 reg[REG_PC] += br_offset;
                 cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][0];
+                taken_branch_refill(0);
                 break;
              }
 
@@ -3639,6 +3758,7 @@ thumb_loop:
                 reg[REG_LR] = newlr;
                 reg[REG_PC] = newpc;
                 cycles_remaining -= ws_cyc_nseq[newpc >> 24][0];
+                taken_branch_refill(0);
                 break;
              }
        }
@@ -3648,10 +3768,10 @@ thumb_loop:
 
        if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
 
-       if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
+       if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ | CPU_ALERT_STEP))
           goto alert;
 
-    } while(cycles_remaining > 0);
+    } while(cycles_remaining > 0 || pipe_step_active);
 
     collapse_flags();
     update_ret = update_gba(cycles_remaining);
@@ -3663,12 +3783,67 @@ thumb_loop:
     alert:
       /* CPU stopped or switch to IRQ handler */
       collapse_flags();
+      if (pipe_step_active)
+      {
+        pipe_step_alert = cpu_alert;   /* back to the dynarec (smc_pipe_step) */
+        io_cycles_note();              /* what is left after the window */
+        return;
+      }
   }
+}
+
+/* MIPS smc_write: the single store that hit translated code, not yet done.
+ *   base = reg_rv = the stub's lui constant + off, off = masked region
+ *   offset (as smc_prof_note_store), size 0/1/2 = byte/half/word.
+ * Latches the writer's pipeline window if the store lands in it, then
+ * stores.  Returns 1 when latched (smc_pipe_step must run). */
+u32 smc_pipe_store(u32 base, u32 off, u32 value, u32 size)
+{
+  u32 lui = base - off, gaddr, mask, w, bytes = 1u << size, latched = 0;
+  u8 *host;
+  if (lui == smc_prof_lui_iwram) {
+    mask = 0x7FFF;
+    host = iwram + 0x8000 + (off & mask);
+    gaddr = 0x03000000 | (off & mask);
+  } else {
+    mask = 0x3FFFF;
+    host = ewram + (off & mask);
+    gaddr = 0x02000000 | (off & mask);
+  }
+  /* reg[REG_PC] = the writer's pc + width (smc_write stored reg_a2) */
+  w = (reg[REG_CPSR] & 0x20) ? 2 : 4;
+  if ((reg[REG_PC] >> 24) == (gaddr >> 24) &&
+      ((gaddr + bytes - 1 - reg[REG_PC]) & mask) < 2 * w + bytes - 1) {
+    pipe_latch();
+    latched = (pipe_slot_width != 0);
+  }
+  if (size == 2)
+    *(u32 *)host = value;
+  else if (size == 1)
+    *(u16 *)host = (u16)value;
+  else
+    *host = (u8)value;
+  return latched;
+}
+
+/* Run the latched window in the interpreter (see DYNAREC STEP above).
+ * Returns the cpu alert (SMC / IRQ / HALT) its instructions raised. */
+u32 smc_pipe_step(void)
+{
+  u32 alert;
+  pipe_step_active = 1;
+  pipe_step_alert = CPU_ALERT_NONE;
+  execute_arm(reg[REG_IO_CYCLES]);
+  pipe_step_active = 0;
+  pipe_slot_width = 0;
+  alert = pipe_step_alert & ~CPU_ALERT_STEP;
+  return alert;
 }
 
 void init_cpu(void)
 {
   IRQCHK_RESET();
+  pipe_slot_width = 0;
   // Initialize CPU registers
   memset(reg, 0, REG_USERDEF * sizeof(u32));
   memset(reg_mode, 0, sizeof(reg_mode));
@@ -3732,6 +3907,7 @@ bool cpu_check_savestate(const u8 *src)
 bool cpu_read_savestate(const u8 *src)
 {
   const u8 *cpudoc = bson_find_key(src, "cpu");
+  pipe_slot_width = 0;   /* a loaded state starts with a refilled pipeline */
   return bson_read_int32(cpudoc, "bus-value", &reg[REG_BUS_VALUE]) &&
          bson_read_int32_array(cpudoc, "regs", reg, REG_ARCH_COUNT) &&
          bson_read_int32_array(cpudoc, "spsr", spsr, 6) &&

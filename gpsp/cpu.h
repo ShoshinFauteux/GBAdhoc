@@ -135,6 +135,15 @@ typedef enum
    * Never live across anything else; reg[40] is DRPROF_HW's phase word. */
   REG_SPIN_DESC     = 41,
 
+  /* The CPU's remaining slice cycles at the current I/O access, so C code
+   * reached from a load or store can tell WHEN in the slice it happens
+   * (elapsed = execute_cycles - reg[REG_IO_CYCLES]).  The MIPS I/O stubs
+   * store reg_cycles here (they sync the pending block count first, see
+   * generate_io_cycle_sync); the interpreter keeps its cycles_remaining in
+   * this very slot.  Read by the live timer counters (gba_memory.c
+   * timer_now) and the link cable's event stamps (gbalink_core.c). */
+  REG_IO_CYCLES     = 62,
+
   REG_MAX           = 64
 } ext_reg_numbers;
 
@@ -145,6 +154,8 @@ typedef enum
 extern u32 instruction_count;
 
 void execute_arm(u32 cycles);
+u32 smc_pipe_store(u32 base, u32 off, u32 value, u32 size);  /* MIPS smc_write */
+u32 smc_pipe_step(void);                                      /* MIPS smc_write */
 u32 check_and_raise_interrupts(void);
 cpu_alert_type check_interrupt(void);
 cpu_alert_type flag_interrupt(irq_type irq_raised);

@@ -224,6 +224,17 @@ u32 arm_to_mips_reg[] =
   mips_emit_addiu(reg_cycles, reg_cycles, -cycle_count);                      \
   cycle_count = 0                                                             \
 
+/* The delay slot of a direct exit's `j`: a conditional branch's taken-path
+ * refill (generate_branch_refill) rides there instead of a nop, so it costs
+ * no bytes.  Exit patching rewrites the j word only. */
+#define generate_refill_delay()                                               \
+  if (refill_ds) {                                                            \
+    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)refill_ds);                 \
+    refill_ds = 0;                                                            \
+  } else {                                                                    \
+    mips_emit_nop();                                                          \
+  }                                                                           \
+
 #define generate_branch_patch_conditional(dest, offset)                       \
   *((u16 *)(dest)) = mips_relative_offset(dest, offset)                       \
 
@@ -291,7 +302,7 @@ u32 arm_to_mips_reg[] =
   mips_emit_nop();                                                            \
   generate_branch_patch_conditional(sp_jump, translation_ptr);                \
   mips_emit_j_filler(writeback_location);                                     \
-  mips_emit_nop();                                                            \
+  generate_refill_delay();                                                    \
   sp_desc = (u32)translation_ptr;                                             \
   SMC_REUSE_MUTABLE(translation_ptr, spin_n);                                 \
   for (sp_k = 0; sp_k < spin_n; sp_k++) {                                     \
@@ -344,7 +355,7 @@ u32 arm_to_mips_reg[] =
     generate_idle_cycles();                                                   \
     generate_function_call_swap_delay(mips_update_gba);                       \
     mips_emit_j_filler(writeback_location);                                   \
-    mips_emit_nop();                                                          \
+    generate_refill_delay();                                                  \
   }                                                                           \
   else                                                                        \
   {                                                                           \
@@ -353,7 +364,7 @@ u32 arm_to_mips_reg[] =
      mips_relative_offset(translation_ptr, update_trampoline));               \
     generate_swap_delay();                                                    \
     mips_emit_j_filler(writeback_location);                                   \
-    mips_emit_nop();                                                          \
+    generate_refill_delay();                                                  \
   }                                                                           \
 
 #define generate_branch_cycle_update(writeback_location, new_pc)              \
@@ -747,6 +758,7 @@ u32 arm_to_mips_reg[] =
 
 #define generate_block_extra_vars()                                           \
   u32 stored_pc = pc;                                                         \
+  u32 refill_ds = 0;                                                          \
   u8 *update_trampoline;                                                      \
   u8 *spaccess_trampoline;                                                    \
 
@@ -936,6 +948,38 @@ u32 execute_spsr_restore_body(u32 address)
     default:                                                                  \
       break;                                                                  \
   }                                                                           \
+
+/* TAKEN-BRANCH REFILL (monomyth-compat, 2026-10-30).  A taken B/BL costs
+ * 2S + 1N on the ARM7TDMI: the branch's own S, then the N and S that refill
+ * the pipeline at the target.  The translator charges each instruction its
+ * own S (def_seq_cycles) and nothing for the refill, so a tight loop in RAM
+ * ran at half its real cost (MonoMyth's "Timer Prescaler" probe counts a
+ * 1024-iteration subs/bne loop against a timer).  Charged here only for a
+ * target outside the gamepak (BIOS, EWRAM, IWRAM, ...), where the S and N
+ * costs are exact; ROM code keeps today's timing, whose missing prefetch
+ * buffer model already over-charges straight-line gamepak code.  Same rule
+ * as the interpreter's taken_branch_refill (cpu.cc).  Direct branches only:
+ * BX / BL-suffix / MOV pc / LDR pc / POP {pc} are not charged. */
+#define branch_refill_cycles(target, arm)                                     \
+  ((((u32)(target)) >> 24) < 0x08 ?                                           \
+   2 * def_seq_cycles[((u32)(target)) >> 24][(arm)] : 0)
+
+/* Unconditional: the refill joins the pending count.  Conditional: the
+ * condition header already flushed the count, and the refill is charged on
+ * the taken path only, in the exit j's delay slot (generate_refill_delay):
+ * zero bytes.  It lands after the exit's bltzal check, so an update_gba due
+ * exactly at this branch sees it one exit later (no cycle is lost: s1 just
+ * carries it into the next slice). */
+#define generate_branch_refill(arm, uncond)                                   \
+{                                                                             \
+  u32 rf_cyc = branch_refill_cycles(                                          \
+    block_exits[block_exit_position].branch_target, (arm));                   \
+  if (uncond) {                                                               \
+    cycle_count += rf_cyc;                                                    \
+  } else {                                                                    \
+    refill_ds = rf_cyc;                                                       \
+  }                                                                           \
+}
 
 #define generate_branch()                                                     \
 {                                                                             \
@@ -1465,18 +1509,121 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_load_pc_pool_const(rd, value)                                   \
   generate_load_imm(arm_to_mips_reg[rd], (value));                            \
 
+/* I/O CYCLE POSITION (monomyth-compat).  reg_cycles lags the block's
+ * compile-time cycle_count until the next cycle update, so at a load or a
+ * store it is `k` cycles ahead of the access's real position: k = the
+ * pending cycles of the instructions before it plus the access's own data
+ * cycle (the interpreter's position: earlier instructions + data cycle, not
+ * the fetch S nor the load's I cycle).  Only an I/O access needs the real
+ * position (live timer counters, gba_memory.c; the link cable's event
+ * stamps, gbalink_core.c lk_io_now; the cycles left when an I/O write or an
+ * SMC trap leaves the block).
+ *
+ * ZERO BYTES AT THE SITE.  Every single load/store already hands its stub
+ * the guest PC as `addiu a1/a2, reg_pc, pc_delta` (reg_pc = the block's
+ * start PC, generate_load_pc).  A plain delta is 0 <= d < IOK_PLAIN (a block
+ * is at most 1024 instructions: d <= 4100).  k rides in the same immediate,
+ * in the 60416 values a plain delta never uses.  With h = pc_delta / 2, a
+ * code c in [0, 60416) is laid out in three tiers -- the more cycles are
+ * pending, the shorter the reach (k grows with the distance from the block
+ * start, ~1.5 cycles a byte in gamepak code; layout chosen on every
+ * load/store site of Doom II, Duke and OpenLara: 99.9 % fit):
+ *     k   1..6     h < 1024    c =         (k - 1) << 10 | h
+ *     k   7..70    h < 512     c =  6144 + (k - 7) << 9  | h
+ *     k  71..238   h < 128     c = 38912 + (k - 71) << 7 | h
+ *     imm = c - 32768 (c < 32768: [-32768, -1]), else c - 32768 + IOK_PLAIN
+ *     ([IOK_PLAIN, 32767]).
+ * The stubs decode it on their slow paths only (emit_iok_decode, and
+ * mips_stub.S smc_write, which must match); the fast path never looks at
+ * a1/a2.  A site that does not fit (or sits in a BIOS block, whose BIOS read
+ * check looks at a1) falls back to the old explicit sync (one addiu, outside
+ * a conditional run and not SP/PC based) and passes a plain PC.  Swap,
+ * LDM/STM and every other a1/a2 load stay plain (k = 0). */
+#define IOK_PLAIN   5120
+
+/* The encoded immediate for (pc_delta, k), or 0x10000 when it cannot be
+ * encoded (out of line: called at every load/store site). */
+static __attribute__((noinline)) u32 iok_encode(s32 pc_delta, u32 k, u32 block_pc)
+{
+  u32 h = (u32)pc_delta >> 1, c;
+  if (k == 0 || pc_delta < 0 || (pc_delta & 1) || (block_pc >> 24) == 0)
+    return 0x10000;
+  if (k <= 6 && h < 1024)
+    c = ((k - 1) << 10) | h;
+  else if (k >= 7 && k <= 70 && h < 512)
+    c = 6144 + (((k - 7) << 9) | h);
+  else if (k >= 71 && k <= 238 && h < 128)
+    c = 38912 + (((k - 71) << 7) | h);
+  else
+    return 0x10000;
+  return (u32)((c < 32768) ? (s32)c - 32768 : (s32)c - 32768 + IOK_PLAIN) & 0xFFFF;
+}
+
+/* Before a single load/store: the site's k (iok_encode).  Returns the
+ * immediate for generate_load_pc_k (0x10000 = plain) in the low 17 bits
+ * and, when k does not fit and the site may sync, k in the bits above:
+ * iok_take then emits the old explicit sync. */
+static __attribute__((noinline)) u32 iok_site(u32 cycle_count, u32 base,
+  s32 pc_delta, u32 block_pc, u32 may_sync)
+{
+  u32 k = (cycle_count >= base) ? cycle_count - base + 1 : 0;
+  u32 imm = iok_encode(pc_delta, k, block_pc);
+  if (imm == 0x10000 && may_sync)
+    imm |= k << 17;
+  return imm;
+}
+
+#define iok_take(iok)                                                         \
+  if ((iok) >> 17) {                                                          \
+    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)((iok) >> 17));             \
+    cycle_count -= (iok) >> 17;                                               \
+  }
+
+/* The site's PC argument: encoded (iok from iok_site) or plain. */
+static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
+  u32 ireg, u32 new_pc, u32 stored_pc, u32 iok)
+{
+  u32 imm = iok & 0x1FFFF;
+  if (imm != 0x10000) {
+    mips_emit_addiu(ireg, reg_pc, imm);
+  } else {
+    generate_load_pc(ireg, new_pc);
+  }
+  return translation_ptr;
+}
+
+#define generate_load_pc_k(ireg, new_pc, iok)                                 \
+  translation_ptr = emit_load_pc_k(translation_ptr, ireg, (new_pc),           \
+                                   stored_pc, (iok))
+
+/* ARM: the fallback sync only outside a conditional run (a skipped body
+ * would lose the subtraction) and not for SP/PC based addressing. */
+#define arm_iok_site(pc_arg)                                                  \
+  iok_site(cycle_count, def_seq_cycles[pc >> 24][1],                          \
+    (s32)((pc_arg) - stored_pc), stored_pc,                                   \
+    ((last_condition & 0x0F) == 0x0E) &&                                      \
+    (((opcode >> 16) & 0x0F) != REG_PC) && (((opcode >> 16) & 0x0F) != 13))
+
 #define arm_access_memory_load(mem_type)                                      \
+{                                                                             \
+  u32 iok_imm = arm_iok_site(pc);                                             \
+  iok_take(iok_imm);                                                          \
   cycle_count += 2;                                                           \
   mips_emit_jal(mips_absolute_offset(execute_load_##mem_type));               \
-  generate_load_pc(reg_a1, (pc));                                             \
+  generate_load_pc_k(reg_a1, (pc), iok_imm);                                  \
   generate_store_reg(reg_rv, rd);                                             \
   check_store_reg_pc_no_flags(rd)                                             \
+}
 
 #define arm_access_memory_store(mem_type)                                     \
+{                                                                             \
+  u32 iok_imm = arm_iok_site(pc + 4);                                         \
+  iok_take(iok_imm);                                                          \
   cycle_count++;                                                              \
-  generate_load_pc(reg_a2, (pc + 4));                                         \
+  generate_load_pc_k(reg_a2, (pc + 4), iok_imm);                              \
   generate_load_reg_pc(reg_a1, rd, 12);                                       \
   generate_function_call_swap_delay(execute_store_##mem_type)                 \
+}
 
 #define arm_access_memory_reg_pre_up()                                        \
   mips_emit_addu(reg_a0, arm_to_mips_reg[rn], arm_to_mips_reg[rm])            \
@@ -1869,17 +2016,29 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 // Operation types: imm, mem_reg, mem_imm
 
-#define thumb_access_memory_load(mem_type, reg_rd)                            \
+#define thumb_iok_site(pc_arg, may_sync)                                      \
+  iok_site(cycle_count, def_seq_cycles[pc >> 24][0],                          \
+    (s32)((pc_arg) - stored_pc), stored_pc, (may_sync))
+
+#define thumb_access_memory_load(mem_type, reg_rd, may_sync)                  \
+{                                                                             \
+  u32 iok_imm = thumb_iok_site(pc, may_sync);                                 \
+  iok_take(iok_imm);                                                          \
   cycle_count += 2;                                                           \
   mips_emit_jal(mips_absolute_offset(execute_load_##mem_type));               \
-  generate_load_pc(reg_a1, (pc));                                             \
-  generate_store_reg(reg_rv, reg_rd)                                          \
+  generate_load_pc_k(reg_a1, (pc), iok_imm);                                  \
+  generate_store_reg(reg_rv, reg_rd);                                         \
+}                                                                             \
 
-#define thumb_access_memory_store(mem_type, reg_rd)                           \
+#define thumb_access_memory_store(mem_type, reg_rd, may_sync)                 \
+{                                                                             \
+  u32 iok_imm = thumb_iok_site(pc + 2, may_sync);                             \
+  iok_take(iok_imm);                                                          \
   cycle_count++;                                                              \
-  generate_load_pc(reg_a2, (pc + 2));                                         \
+  generate_load_pc_k(reg_a2, (pc + 2), iok_imm);                              \
   mips_emit_jal(mips_absolute_offset(execute_store_##mem_type));              \
-  generate_load_reg(reg_a1, reg_rd)                                           \
+  generate_load_reg(reg_a1, reg_rd);                                          \
+}                                                                             \
 
 #define thumb_access_memory_generate_address_pc_relative(offset, reg_rb,      \
  reg_ro)                                                                      \
@@ -1894,13 +2053,21 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_access_memory_generate_address_reg_reg(offset, reg_rb, reg_ro)  \
   mips_emit_addu(reg_a0, arm_to_mips_reg[reg_rb], arm_to_mips_reg[reg_ro])    \
 
+/* May the site fall back to an explicit sync (iok_site)?  Not for
+ * PC-relative (literal pool) or SP based addressing. */
+#define thumb_access_sync_pc_relative() 0
+#define thumb_access_sync_reg_imm_sp()  0
+#define thumb_access_sync_reg_imm()     1
+#define thumb_access_sync_reg_reg()     1
+
 #define thumb_access_memory(access_type, op_type, reg_rd, reg_rb, reg_ro,     \
  address_type, offset, mem_type)                                              \
 {                                                                             \
   thumb_decode_##op_type();                                                   \
   thumb_access_memory_generate_address_##address_type(offset, reg_rb,         \
    reg_ro);                                                                   \
-  thumb_access_memory_##access_type(mem_type, reg_rd);                        \
+  thumb_access_memory_##access_type(mem_type, reg_rd,                         \
+   thumb_access_sync_##address_type());                                       \
 }                                                                             \
 
 #define thumb_block_address_preadjust_no(base_reg)                            \
@@ -2084,6 +2251,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_conditional_branch(condition)                                   \
 {                                                                             \
   generate_condition_##condition();                                           \
+  generate_branch_refill(0, 0);                                               \
   generate_branch_no_cycle_update(                                            \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2095,10 +2263,12 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   generate_condition();                                                       \
 
 #define arm_b()                                                               \
+  generate_branch_refill(1, condition == 0x0E);                               \
   generate_branch()                                                           \
 
 #define arm_bl()                                                              \
   generate_load_pc(reg_r14, (pc + 4));                                        \
+  generate_branch_refill(1, condition == 0x0E);                               \
   generate_branch()                                                           \
 
 #define arm_bx()                                                              \
@@ -2113,6 +2283,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   generate_branch()                                                           \
 
 #define thumb_b()                                                             \
+  generate_branch_refill(0, 1);                                               \
   generate_branch_cycle_update(                                               \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2120,6 +2291,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 #define thumb_bl()                                                            \
   generate_load_pc(reg_r14, ((pc + 2) | 0x01));                               \
+  generate_branch_refill(0, 1);                                               \
   generate_branch_cycle_update(                                               \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2412,6 +2584,87 @@ static __attribute__((noinline)) u8 *emit_shift_reg(u8 *translation_ptr,
   mips_emit_jr(mips_reg_ra);            \
   mips_emit_nop();
 
+/* Decode a load/store site's PC argument (iok_encode, above): kreg = the
+ * cycles reg_cycles runs ahead of the access, pcreg (if not reg_zero) = the
+ * guest PC the plain encoding would have passed.  src is left intact unless
+ * it is pcreg; t is scratch.  Slow paths only (13-17 instructions). */
+static void emit_iok_decode(u8 **tr_ptr, unsigned src, unsigned kreg,
+                            unsigned pcreg, unsigned t)
+{
+  u8 *translation_ptr = *tr_ptr;
+  u8 *b_plain, *b_neg, *b_t0, *b_t2, *b_h1, *b_h2, *b_done;
+  mips_emit_subu(t, src, reg_pc);              /* d = arg - block start */
+  mips_emit_sltiu(kreg, t, IOK_PLAIN);
+  b_plain = translation_ptr;
+  mips_emit_b(bne, kreg, reg_zero, 0);         /* 0 <= d < IOK_PLAIN: plain */
+  mips_emit_andi(kreg, t, 0xFFFF);             /* (delay) */
+  mips_emit_xori(kreg, kreg, 0x8000);          /* c, or c + IOK_PLAIN */
+  mips_emit_srl(t, kreg, 15);
+  b_neg = translation_ptr;
+  mips_emit_b(beq, t, reg_zero, 0);            /* d < 0: c < 32768 */
+  mips_emit_addiu(t, kreg, -6144);             /* (delay) t = c - 6144 */
+  mips_emit_addiu(kreg, kreg, -IOK_PLAIN);     /* c >= 32768 */
+  mips_emit_addiu(t, kreg, -6144);
+  generate_branch_patch_conditional(b_neg, translation_ptr);
+  b_t0 = translation_ptr;
+  mips_emit_bltz(t, 0);                        /* c < 6144: tier 0 */
+  mips_emit_srl(kreg, t, 15);                  /* (delay) */
+  b_t2 = translation_ptr;
+  mips_emit_b(bne, kreg, reg_zero, 0);         /* c >= 38912: tier 2 */
+  mips_emit_srl(kreg, t, 9);                   /* (delay) tier 1: k - 7 */
+  mips_emit_addiu(kreg, kreg, 7);
+  b_h1 = translation_ptr;
+  mips_emit_b(beq, reg_zero, reg_zero, 0);
+  mips_emit_andi(t, t, 511);                   /* (delay) h */
+  generate_branch_patch_conditional(b_t2, translation_ptr);
+  mips_emit_andi(t, t, 0x7FFF);                /* c - 38912 */
+  mips_emit_srl(kreg, t, 7);
+  mips_emit_addiu(kreg, kreg, 71);
+  b_h2 = translation_ptr;
+  mips_emit_b(beq, reg_zero, reg_zero, 0);
+  mips_emit_andi(t, t, 127);                   /* (delay) h */
+  generate_branch_patch_conditional(b_t0, translation_ptr);
+  mips_emit_addiu(t, t, 6144);                 /* c */
+  mips_emit_srl(kreg, t, 10);
+  mips_emit_addiu(kreg, kreg, 1);
+  mips_emit_andi(t, t, 1023);                  /* h */
+  generate_branch_patch_conditional(b_h1, translation_ptr);
+  generate_branch_patch_conditional(b_h2, translation_ptr);
+  if (pcreg != reg_zero) {
+    mips_emit_sll(t, t, 1);                    /* pc_delta */
+  }
+  b_done = translation_ptr;
+  mips_emit_b(beq, reg_zero, reg_zero, 0);
+  if (pcreg != reg_zero) {
+    mips_emit_addu(pcreg, reg_pc, t);          /* (delay) */
+  } else {
+    mips_emit_nop();
+  }
+  generate_branch_patch_conditional(b_plain, translation_ptr);
+  mips_emit_addu(kreg, reg_zero, reg_zero);    /* plain: k = 0 */
+  if (pcreg != reg_zero && pcreg != src) {
+    mips_emit_addu(pcreg, src, reg_zero);
+  }
+  generate_branch_patch_conditional(b_done, translation_ptr);
+  *tr_ptr = translation_ptr;
+}
+
+/* An I/O load stub: reg[REG_IO_CYCLES] = the cycles left at the access.
+ * Uses rv and temp only (a0/a1/ra intact).  The aligned (LDM) memop has no
+ * PC in a1 and is never encoded. */
+static void emit_iok_store_ld(u8 **tr_ptr, bool aligned)
+{
+  u8 *translation_ptr = *tr_ptr;
+  if (aligned) {
+    mips_emit_sw(reg_cycles, reg_base, REG_IO_CYCLES * 4);
+  } else {
+    emit_iok_decode(&translation_ptr, reg_a1, reg_rv, reg_zero, reg_temp);
+    mips_emit_subu(reg_rv, reg_cycles, reg_rv);
+    mips_emit_sw(reg_rv, reg_base, REG_IO_CYCLES * 4);
+  }
+  *tr_ptr = translation_ptr;
+}
+
 // Pointer table to stubs, indexed by type and region
 extern u32 tmemld[11][16];
 extern u32 tmemst[ 4][16];
@@ -2544,6 +2797,15 @@ static void emit_pmemld_stub(
     regioncheck >>= 2;   // Ignore the two LSB, don't care
   }
 
+#ifdef LAB_LOCKSTEP
+  /* The gate's lockstep patch sends every I/O read to C right after the
+   * region check (read_memory*, which brings a timer up to date the same
+   * way): the access's cycle (emit_iok_store_ld) is stored first. */
+  if (region == 4) {
+    emit_iok_store_ld(&translation_ptr, aligned);
+  }
+#endif
+
   // Address checking: jumps to handler if bad region/alignment
   mips_emit_srl(reg_temp, reg_a0, (32 - regionbits));
   if (!aligned && size != 0) {  // u8 or aligned u32 dont need to check alignment bits
@@ -2552,6 +2814,8 @@ static void emit_pmemld_stub(
   if (regioncheck || alignment) {  // If region and alignment are zero, can skip
     mips_emit_xori(reg_temp, reg_temp, regioncheck | (alignment << regionbits));
   }
+
+
 
   // The patcher to use depends on ld/st, access size, and sign extension
   // (so there's 10 of them). They live in the top stub addresses.
@@ -2637,6 +2901,30 @@ static void emit_pmemld_stub(
     *tr_ptr = translation_ptr;
     return;
   } else {
+    if (region == 4) {
+      /* LIVE TIMER COUNTERS (monomyth-compat): a read of TM0..TM3 (I/O
+       * 0x100..0x10F) first brings the counter in io_registers up to this
+       * cycle (reg[REG_IO_CYCLES], decoded from the site's a1 here);
+       * every other register is read straight from io_registers as before.
+       * Cost for other I/O reads: andi, xori, bne, nop. */
+      u8 *tm_skip;
+      mips_emit_andi(reg_temp, reg_a0, 0x3F0);
+      mips_emit_xori(reg_temp, reg_temp, 0x100);
+      mips_emit_b_filler(bne, reg_temp, reg_zero, tm_skip);
+      mips_emit_nop();
+#ifndef LAB_LOCKSTEP
+      emit_iok_store_ld(&translation_ptr, aligned);
+#endif
+      mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+      emit_save_regs(true);
+      genccall(&timer_io_read_sync);
+      mips_emit_nop();
+      mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
+      mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      emit_restore_regs(true);
+      generate_branch_patch_conditional(tm_skip, translation_ptr);
+    }
     // Generate upper bits of the addr and do addr mirroring
     // (The address hi16 is rounded up since load uses signed offset)
     if (!meminfo->baseoff) {
@@ -3022,6 +3310,26 @@ static void emit_pmemst_stub(
     return;
   }
 #endif
+  if (meminfo->check_smc && !aligned) {
+    /* PIPELINE PREFETCH WINDOW (monomyth-compat): the store moves out of
+     * the SMC branch's delay slot into the jr's, and the delay slot hands
+     * smc_write the store size (reg_temp is dead on the fast path).  The
+     * fast path runs the same four instructions as before; on a hit the
+     * store has NOT happened yet, so smc_pipe_store (cpu.cc) can keep the
+     * writer's two prefetched opcodes before it stores. */
+    mips_emit_ori(reg_temp, reg_zero, realsize);
+    mips_emit_jr(mips_reg_ra);
+    if (realsize == 2) {
+      mips_emit_sw(reg_a1, reg_rv, base_addr);
+    } else if (realsize == 1) {
+      mips_emit_sh(reg_a1, reg_rv, base_addr);
+    } else {
+      mips_emit_sb(reg_a1, reg_rv, base_addr);
+    }
+    *tr_ptr = translation_ptr;
+    return;
+  }
+
   // Store the data (delay slot from the SMC branch)
   if (realsize == 2) {
     mips_emit_sw(reg_a1, reg_rv, base_addr);
@@ -3345,7 +3653,10 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
       mips_emit_sh(reg_temp, reg_rv, 2);
       for (k = 0; k < nd; k++)
         generate_branch_patch_conditional(b_done[k], translation_ptr);
-      mips_emit_sw(reg_a2, reg_base, ReOff_RegPC);          /* as the full path */
+      /* No reg[REG_PC] store: a2 is the encoded site argument (iok_encode)
+       * and this path never leaves the block; every reader of reg[REG_PC]
+       * (lookup_pc after an alert, update_gba, smc_write, the openload
+       * stub) is preceded by its own store of it. */
       mips_emit_jr(mips_reg_ra);
       mips_emit_nop();
       generate_branch_patch_conditional(b_slow1, translation_ptr);
@@ -3355,25 +3666,41 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
     }
 #endif
     emit_save_regs(strop == 3);
-#ifdef GBA_LINK
-    /* Link cable: the cycle the write happened at (gbalink_core.c
-     * lk_io_now, reg[62]).  Only GBA_LINK cores carry this store. */
-    mips_emit_sw(reg_cycles, reg_base, 62 * 4);
-#endif
-    genccall(iowrtbl[strop]);
-
+    /* The cycle the write happens at (reg[REG_IO_CYCLES]): a timer started
+     * here counts from this cycle (gba_memory.c trigger_timer), and the
+     * link cable stamps its events with it (gbalink_core.c lk_io_now).
+     * The site passes k (the cycles reg_cycles is ahead) and the PC in a2
+     * (iok_encode); the guest registers are saved, so t0-t2 are free. */
     if (strop < 3) {
-      mips_emit_sw(reg_a2, reg_base, ReOff_RegPC);   // Save PC (delay)
+      u8 *b_alert;
+      emit_iok_decode(&translation_ptr, reg_a2, mips_reg_t0, mips_reg_t1,
+                      mips_reg_t2);
+      mips_emit_subu(mips_reg_t2, reg_cycles, mips_reg_t0);
+      mips_emit_sw(mips_reg_t2, reg_base, REG_IO_CYCLES * 4);
+      mips_emit_sw(mips_reg_t0, reg_base, ReOff_SaveR2);   // k, for an alert
+      genccall(iowrtbl[strop]);
+      mips_emit_sw(mips_reg_t1, reg_base, ReOff_RegPC);    // Save PC (delay)
       // If I/O writes returns non-zero, means we need to process side-effects.
-      mips_emit_b(bne, reg_zero, reg_rv, branch_offset(&rom_translation_cache[IOEPILOGUE_OFF]));
+      b_alert = translation_ptr;
+      mips_emit_b(bne, reg_zero, reg_rv, 0);
       mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR3);   // (in delay slot but not used)
       emit_restore_regs(false);
+      generate_function_return_swap_delay();
+      /* The block is left here: charge the k cycles up to the write (the
+       * rest of the block's pending count is dropped, as it always was). */
+      generate_branch_patch_conditional(b_alert, translation_ptr);
+      mips_emit_lw(mips_reg_t0, reg_base, ReOff_SaveR2);
+      mips_emit_b(beq, reg_zero, reg_zero,
+                  branch_offset(&rom_translation_cache[IOEPILOGUE_OFF]));
+      mips_emit_subu(reg_cycles, reg_cycles, mips_reg_t0); // (delay)
     } else {
+      mips_emit_sw(reg_cycles, reg_base, REG_IO_CYCLES * 4);
+      genccall(iowrtbl[strop]);
       mips_emit_nop();
       mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR3);
       emit_restore_regs(true);
+      generate_function_return_swap_delay();
     }
-    generate_function_return_swap_delay();
   }
 
   *tr_ptr = translation_ptr;
@@ -3410,9 +3737,16 @@ static void emit_openload_stub(unsigned opt, bool signext, unsigned size, u8 **t
 
   emit_save_regs(true);
   mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);   // Delay slot
+  if (opt < 5) {
+    /* a1 is the encoded site argument (iok_encode): the open-bus value and
+     * the BIOS protection read reg[REG_PC] (gba_memory.c), so the plain PC
+     * is decoded first (t0-t2 are free: the guest registers are saved). */
+    emit_iok_decode(&translation_ptr, reg_a1, mips_reg_t0, mips_reg_t1,
+                    mips_reg_t2);
+  }
   genccall(hndreadtbl[size + (signext ? 3 : 0)]);
   if (opt < 5) {
-    mips_emit_sw(reg_a1, reg_base, ReOff_RegPC);       // Save current PC
+    mips_emit_sw(mips_reg_t1, reg_base, ReOff_RegPC);  // Save current PC
   } else {
     // Aligned loads do not hold PC in a1 (imprecision)
     mips_emit_nop();

@@ -1582,6 +1582,11 @@ u32 function_cc update_gba(int remaining_cycles)
 #endif
   } while(reg[CPU_HALT_STATE] != CPU_ACTIVE && !frame_complete);
 
+  /* The slice starts here: until an I/O access stores a later cycle,
+   * reg[REG_IO_CYCLES] says "slice start" (live timer counters,
+   * gba_memory.c).  The value is the cycle budget returned below. */
+  reg[REG_IO_CYCLES] = execute_cycles - MIN(execute_cycles, MIN(64, dma_cycles));
+
 #ifdef GBA_LINK
   if (serial_mode == SERIAL_MODE_CABLE)
     gbalink_reseed_snapshot();
