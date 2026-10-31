@@ -263,3 +263,41 @@ GB/GBC and the CPU renderer already sit at the floor with tier 0: the
 `hist` mode on gb_crystal is 1 (Lab runs, 2026-10-30). Below 60 fps (Doom,
 ~3.2-3.4) no vblank wait happens, so neither tier applies. The follow-up for
 those games is still the vcount-160 flip (section 6).
+
+### 7.1 Hardware results (Lab, PSP-3000 + PSP-1000, 2026-10-30/31)
+
+Build llt1b (bde4a96, rc450 recipe, tier 1 off by default), arms by
+`me_lowlat`. Mean poll->latch in vblanks / ms; "eng" = share of iterations
+in tier 1 (mode 2). 3000 jobs j448482/jf05877/j414b08, 1000 jobs
+j21c902/j539653/j0f2d78.
+
+| fixture | tier 0 | mode 1 (3000) | mode 2 (3000) | mode 2 (1000) | eng (3000/1000) |
+|---|---|---|---|---|---|
+| own_fe8 | 2.00 / 33.4 | 1.21 / 20.1 | 1.06 / 17.7 | 1.18 / 19.6 | 94 / 83 % |
+| aw2_battle | 2.00 / 33.4 | 1.40 / 23.3 | 1.26 / 21.0 | 1.27 / 21.1 | 74 / 73 % |
+| em_battle | 2.00 / 33.4 | 1.51 / 25.2 | 1.28 / 21.4 | 1.35 / 22.5 | 72 / 66 % |
+| hns_light | 2.02 / 33.7 | 1.41 / 23.4 | 1.42 / 23.8 | 1.54 / 25.6 | 59 / 48 % |
+| nfsu2_race | 2.12 / 35.4 | 1.94 / 32.3 | 1.68 / 28.1 | 1.71 / 28.4 | 41 / 43 % |
+| hns_heavy | 2.02 / 33.8 | never entered | 1.94 / 32.3 | 1.91 / 31.9 | 9 / 12 % |
+| ub_rival_medium | 2.22 / 37.0 | never entered | never entered | never entered | 0 |
+| kf_doom_ii | 2.98 / 49.7 | never entered | never entered | never entered | 0 |
+| gb_crystal_walk | 1.00 / 16.7 | already 1 | already 1 | already 1 | n/a |
+
+fps, work and repeats equal tier 0 within noise in every arm. Every exit was
+a ME render that missed the deadline (3-8 per fixture). There were zero late
+GE blits and zero failed entries. Measured blit ~1.5 ms, so need is
+~2.0-2.4 ms; the smallest tier-1 lead was 269 us (1000) / 699 us (3000).
+`me_lowlat_recover=0` changed nothing measurable, so it stays at 60.
+
+* Exit cycles: 30/30 launch-play-exit per console (hns_heavy, em_battle,
+  nfsu2_race x10, mode 2), all exit code 0 on the first attempt.
+* Frame identity: vhash + mesum streams, tier 0 vs mode 2 on 5 fixtures with
+  tier 1 engaged 44-73 %. Zero differing frames.
+* Correctness gate: llt1b vs rc450 PASS (48/48, corpus 35/35).
+* Full-suite A/B: llt1c (mode 2 baked, cd2af77) vs rc450. Work is +0.03 %
+  (3000) / +0.05 % (1000) better overall, and fps is equal.
+  * Mario Tennis +3.3 % work on both consoles. It is not tier 1: llt1b at
+    me_lowlat=0 vs rc450 shows the same +3.3 %, and me_lowlat 0 vs 2 in one
+    binary is identical. The cause is code layout: the frontend change moves
+    ~3700 core .text symbols by +2956/+2976 bytes.
+  * fe8, aw2 and firered come out 3-4 % better from the same shift.
