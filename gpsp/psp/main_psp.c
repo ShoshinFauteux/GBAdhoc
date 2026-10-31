@@ -13852,8 +13852,9 @@ session_top:
       {
          extern uint32_t msr_fast __attribute__((weak));
          if (&msr_fast)
+            /* default: on unless the core was built MSR_FAST_DEFAULT=0 */
             msr_fast = fe_ini_get_int(p_config, "msr_fast",
-                                      PLAY_MSR_FAST) ? 1u : 0u;
+                                      PLAY_MSR_FAST && msr_fast) ? 1u : 0u;
       }
 #ifdef GBA_LINK
       {
