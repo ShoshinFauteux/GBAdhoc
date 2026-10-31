@@ -459,6 +459,10 @@ else ifeq ($(platform), psp1)
 	ifeq ($(MSR_FAST),1)
 	CFLAGS += -DMSR_FAST=1
 	endif
+	# MSR_FAST_DEFAULT=0: compiled in, msr_fast off (a layout-identical A/B arm).
+	ifneq ($(MSR_FAST_DEFAULT),)
+	CFLAGS += -DMSR_FAST_DEFAULT=$(MSR_FAST_DEFAULT)
+	endif
 	# BX_ALIGN_FIX=1: a BX into ARM state with address bit 1 set goes to the
 	# word below, as on the ARM7TDMI (cpu_threaded.c block_lookup_address_dual,
 	# mips_stub.S).  gpSP rounded UP and skipped the first ARM instruction of
