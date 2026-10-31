@@ -3,98 +3,161 @@
 # Linked FIRST in .text, in this order, from 0x08804040: the asm
 # stubs (@), the HOT core, then the WARM tail.  Do not hand-edit:
 # regenerate (tools/layout/regen.sh), which rewrites hot.ord too.
-# weights: profile_weights.txt; hot budget 6144 bytes (used 6140) after 2248 bytes of asm;
+# weights: profile_weights.txt; hot budget 6144 bytes (used 6140) after 2496 bytes of asm;
 # functions over 16384 bytes go last
 # name                                            weight     size
 @mips_stub.o
 @gbalink_core_b.o
-sound_timer                                       0.522358     884
-block_lookup_address_dual                         0.029787      52
-sound_read_samples                                0.102566     180
-check_and_raise_interrupts                        0.117249     292
-update_gba                                        1.318898    3868
-serial_next_event                                 0.036420     148
-sound_timer_queue32                               0.027255     112
-memset                                            0.064612     284 libc.a:libc_a-memset.o
-check_interrupt                                   0.012647      68
-execute_store_cpsr_body                           0.020876     168
-flag_interrupt                                    0.005793      76
-process_cheats                                    0.000323       8
+sound_timer                                       0.677621     884
+sound_read_samples                                0.130810     180
+check_and_raise_interrupts                        0.145173     292
+update_gba                                        1.775192    3856
+serial_next_event                                 0.045799     148
+sound_timer_queue32                               0.033961     112
+check_interrupt                                   0.014094      68
+memcmp                                            0.015236     128 libc.a:libc_a-memcmp.o
+block_lookup_address_dual                         0.005241      52
+process_cheats                                    0.000412       8
+strlen                                            0.000360      28 libc.a:libc_a-strlen.o
+update_scanline                                   0.076800    7740
 # ---- warm tail
-update_scanline                                   0.061440    7740
-update_serial                                     0.041468     368
-set_cpu_mode                                      0.039294     452
-execute_spsr_restore_body                         0.012861     184
-block_lookup_address_arm                          0.019563     356
-rfu_update                                        0.035748     904
-write_io_register32                               0.004315     152
-write_io_register16                               0.073814    3032
-block_lookup_translate_thumb                      0.031129    1328
-dma_transfer                                      0.070630    3088
-block_lookup_translate_arm                        0.028109    1308
-flush_translation_cache_ram_smc                   0.100813    6536
-core_phase_now                                    0.000502      52
-read_backup                                       0.001740     212
-write_io_register8                                0.001351     172
-memcpy                                            0.005821     880 libc.a:libc_a-memcpy.o
-dma_tf_loop32                                     0.085811   14188
-dma_tf_loop16                                     0.076796   12712
-core_phase_enter                                  0.000418      72
-block_lookup_address_thumb                        0.001830     348
-ramtag_note_extent                                0.001394     384
-fe_host_frame_count                               0.000043      12
-execute_arm_translate                             0.000036      12
-fe_host_sram_service                              0.001744     652
-core_phase_leave                                  0.000418     164
-audio_thread                                      0.000512     824
-input_poll                                        0.000014       8
-core_phase_frame_begin                            0.000194     108
-fe_autopilot_take_mark                            0.000029      16
-fe_autopilot_status                               0.000022      12
-fe_host_input_inject                              0.000022      12
-smc_prof_note_store                               0.000472     300
-retro_run                                         0.001486    1124
-rumble_frame_reset                                0.000050      40
-smc_blk_note_block                                0.001282    1164
-me_host_idle                                      0.000044      44
-me_host_post_render                               0.000116     116
-me_host_result                                    0.000024      24
-osd_draw                                          0.000128     660
-input_state                                       0.000187     192
-plat_audio_frames                                 0.000288     332
-smc_blk_check_silent                              0.000361     476
-me_host_watchdog_frame                            0.000108     144
-plat_video_frame                                  0.001056    1476
-update_input                                      0.000678     964
-write_gpio                                        0.000855    2084
-env_cb                                            0.000309     776
-video_refresh                                     0.000108     296
-core_phase_frame_end                              0.000266     924
-free                                              0.000005      16 libc.a:libc_a-malloc.o
-smc_blk_note_writer                               0.000095     348
-write                                             0.000007      28 libc.a:libc_a-syswrite.o
-serialpoke_frame_update                           0.000088     400
-audio_sample_batch                                0.000101     476
-fe_autopilot_frame                                0.000601    3484
+@mips_stub.o(.text.msr_fast)
+block_lookup_address_arm                          0.038072     356
+update_serial                                     0.038938     368
+xs_blocks_current                                 0.166025    1732
+flag_interrupt                                    0.006280      76
+memset                                            0.018631     284 libc.a:libc_a-memset.o
+block_lookup_address_thumb                        0.019709     348
+spin_check                                        0.026178     524
+block_lookup_translate_arm                        0.052539    1308
+rfu_update                                        0.033567     940
+write_io_register32                               0.005069     152
+iok_site                                          0.002197      72
+smc_pipe_store                                    0.009727     320
+write_io_register16                               0.082094    2760
+dma_transfer                                      0.088941    3088
+smc_prof_note_store                               0.008008     300
+jit_code_wrote_.part.0                            0.007611     300
+smc_prof_exact                                    0.013770     576
+vram_x_dma_note                                   0.006099     332
+block_lookup_translate_thumb                      0.023820    1328
+getenv                                            0.000705      40 libc.a:libc_a-getenv.o
+xs_trap_skip                                      0.003818     224
+smc_trap_entry                                    0.009492     572
+flush_translation_cache_ram_smc                   0.093982    6536
+iok_encode                                        0.002740     200
+core_phase_now                                    0.000641      52
+xlat_scan_arm_ram_fast.constprop.0                0.031467    2672
+memcpy                                            0.010117     880 libc.a:libc_a-memcpy.o
+jit_code_publish_                                 0.014377    1296
+smc_reuse_revive                                  0.017073    1640
+smc_reuse_env_ok                                  0.002911     292
+smc_reuse_find                                    0.006829     696
+write_io_register8                                0.001576     172
+trigger_dma                                       0.005252     592
+smc_blk_check_silent                              0.003792     476
+core_phase_enter                                  0.000560      72
+emit_load_pc_k                                    0.001723     224
+dma_tf_loop32                                     0.108231   14188
+ramtag_note_extent                                0.002909     384
+read_backup                                       0.001504     212
+dma_tf_loop16                                     0.088886   12712
+smc_window_first                                  0.001076     164
+xs_extent_note                                    0.004269     672
+xs_note_block                                     0.004578     732
+set_cpu_mode                                      0.002371     452
+smc_blk_note_writer                               0.001602     348
+fe_host_frame_count                               0.000055      12
+smc_stable_thunk_dispatch                         0.001594     396
+execute_arm_translate                             0.000046      12
+me_rend_retire_if_idle                            0.002160     576
+mer_lowlat_active                                 0.000780     208
+mer_sameframe_active                              0.000165      44
+smc_reuse_commit                                  0.006847    1876
+core_phase_leave                                  0.000560     164
+fe_host_sram_service                              0.002453     756
+dispatch_cache_clear                              0.000491     192
+entry_gates_walk                                  0.001646     652
+audio_thread                                      0.000640     824
+vid_flip_latched                                  0.000280     112
+smc_retire_span                                   0.006831    2792
+core_phase_frame_begin                            0.000247     108
+fe_autopilot_take_mark                            0.000037      16
+input_poll                                        0.000018       8
+rewind_backup_data                                0.000564     268
+fe_autopilot_status                               0.000023      12
+fe_host_input_inject                              0.000023      12
+smc_chain_store_iw                                0.000334     180
+retro_run                                         0.001920    1124
+smc_blk_note_block                                0.001972    1164
+smc_local_narrow.isra.0                           0.000215     132
+rumble_frame_reset                                0.000064      40
+lat_swap.isra.0                                   0.000790     632
+lat_wait_begin                                    0.000795     636
+ll_own_posted                                     0.000155     124
+ll_sample                                         0.000250     200
+ll_to_b.part.0                                    0.000045      36
+me_host_idle                                      0.000055      44
+me_host_post_render                               0.000145     116
+me_host_result                                    0.000030      24
+me_host_watchdog_frame                            0.000135     108
+me_rend_present                                   0.000295     236
+osd_draw                                          0.000160     660
+plat_audio_frames                                 0.000415     332
+vid_draw_prestaged                                0.000705     564
+vid_gu_flush                                      0.000040      32
+vid_swap                                          0.000555     444
+lat_wait_step                                     0.002900    2320
+ll_present                                        0.000205     164
+plat_video_frame                                  0.001385    1108
+vid_gu_busy                                       0.000070      56
+vid_gu_flush.part.0                               0.000130     104
+input_state                                       0.000238     192
+update_input                                      0.000864     964
+note_pc_limits_range.constprop.0                  0.000311     356
+env_cb                                            0.000394     776
+video_refresh                                     0.000137     296
+write_gpio                                        0.000936    2084
+free                                              0.000006      16 libc.a:libc_a-malloc.o
+write                                             0.000011      28 libc.a:libc_a-syswrite.o
+core_phase_frame_end                              0.000339     924
+sram_write_full_blocks                            0.000101     276
+audio_sample_batch                                0.000128     476
+fe_autopilot_frame                                0.000697    2604
+serialpoke_frame_update                           0.000107     400
+fe_host_run_frame                                 0.000843    3980
+fwrite                                            0.000006      32 libc.a:libc_a-fwrite.o
 gpsp_rfu_now_us                                   0.000004      28
-fe_host_sram_sync                                 0.000001       8
-rfu_frame_update                                  0.000758    5952
-fe_host_run_frame                                 0.000632    5828
-fwrite                                            0.000003      32 libc.a:libc_a-fwrite.o
-strlen                                            0.000002      28 libc.a:libc_a-strlen.o
-read_memory16                                     0.000017     584
-gpsp_visible_done_hook                            0.000014     528
-fe_host_sram_flush                                0.000007     280
-flush_translation_cache_ram                       0.000027    1176
-sram_scan                                         0.000017     796
-fe_evt                                            0.000001      76
-read_memory8                                      0.000007     596
-fflush                                            0.000002     244 libc.a:libc_a-fflush.o
+note_pc_limits_range.constprop.1                  0.000040     356
+rfu_frame_update                                  0.000780    8672
+spin_thumb_op                                     0.000150    2372
+execute_spsr_restore_body                         0.000010     184
+xs_clear_all                                      0.000015     292
+__popcountsi2                                     0.000004      88 libgcc.a:_popcountsi2.o
+sram_scan                                         0.000030     708
+flush_translation_cache_ram                       0.000042    1176
+gpsp_visible_done_hook                            0.000018     528
+read_memory16                                     0.000023     664
+fe_evt                                            0.000002      48
+fe_host_sram_flush                                0.000009     280
+fps_evt                                           0.000001      32
+trigger_timer                                     0.000025     824
+core_prof_evt                                     0.000002      84
+emit_shift_reg                                    0.000095    4228
+spin_load                                         0.000017     792
+execute_store_cpsr_body                           0.000003     168
+read_memory8                                      0.000012     628
+spin_arm_op                                       0.000045    3096
+fflush                                            0.000003     244 libc.a:libc_a-fflush.o
+entry_gates_harvest                               0.000004     316
+memory_term                                       0.000002     348
 reload_timing_info                                0.000002     336
-memory_term                                       0.000001     296
-__moddi3                                          0.000005    1392 libgcc.a:_moddi3.o
-__divdi3                                          0.000005    1404 libgcc.a:_divdi3.o
-core_prof_evt                                     0.000002     728
-render_gbc_sound                                  0.282188   25816
-translate_block_arm                               0.312053  386964
-translate_block_thumb                             0.051681  108284
+__moddi3                                          0.000006    1392 libgcc.a:_moddi3.o
+__divdi3                                          0.000006    1404 libgcc.a:_divdi3.o
+sram_sync_checked                                 0.000002     596
+rtc_current_time                                  0.000003     784
+flush_translation_cache_ram_dma                   0.000002     824
+__udivdi3                                         0.000001    1340 libgcc.a:_udivdi3.o
+render_gbc_sound                                  0.297837   25816
+translate_block_thumb                             0.049984   99048
+translate_block_arm                               0.090269  358672

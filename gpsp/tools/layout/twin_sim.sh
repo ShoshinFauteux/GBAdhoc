@@ -5,6 +5,7 @@
 #   OUT      run directory under $LP_HOME/runs (sim.txt, counts.txt, host.log,
 #            hash.txt)
 #   FIXTURE  aw2 | hns_heavy | ub_rival | em_battle (rows below = dr_suite.sh)
+#            | doom2 (the Lab twin set's Doom II state, unscripted, no save)
 #   VARIANT  twin binary $LP_HOME/bin/dr_host_VARIANT (twin_build.sh)
 #   LAYOUTS  layouts file (container paths, /w = $LP_HOME) or - for a
 #            counts-only profile run
@@ -23,6 +24,7 @@ case "$FX" in
   hns_light) ROM=hns.gba;     ST=heart_soul_light.st0;    SAV=hns.sav;          SCR=battle.txt;         FR=${FRAMES:-3100} ;;
   ub_rival)  ROM=unbound.gba; ST=unbound_rival_high.st0;  SAV=unbound.sav;      SCR=battle.txt;         FR=${FRAMES:-3100} ;;
   em_battle) ROM=emerald.gba; ST=emerald_3000.st0;        SAV=emerald_3000.sav; SCR=emerald_battle.txt; FR=${FRAMES:-2100} ;;
+  doom2)     ROM=doom2.gba;   ST=doom2.st0;               SAV=-;                SCR=-;                  FR=${FRAMES:-2100} ;;
   *) echo "unknown fixture $FX"; exit 2 ;;
 esac
 mkdir -p "$LP/runs/$OUT" "$LP/plug"
@@ -36,7 +38,7 @@ docker run --rm -v "$LP":/w -w /w/fx "$IMAGE" bash -c "
       -o /w/plug/lpsim_plugin.so.\$\$ /w/plug/lpsim_plugin.c \$(pkg-config --libs glib-2.0)
     mv -f /w/plug/lpsim_plugin.so.\$\$ /w/plug/lpsim_plugin.so
   fi
-  cp $SAV /tmp/run.sav
+  if [ $SAV = - ]; then : > /tmp/run.sav; else cp $SAV /tmp/run.sav; fi
   MARK=\$(awk '\$4==\"drprof_host_mark\"{print \$1}' $BIN.nm)
   JIT='${JIT:-}'
   if [ -z \"\$JIT\" ]; then
@@ -47,7 +49,7 @@ docker run --rm -v "$LP":/w -w /w/fx "$IMAGE" bash -c "
       /opt/qemu/bin/qemu-mipsel -cpu 74Kf -plugin /w/bin/drprof_plugin.so,out=/tmp/p.txt,symcat=/tmp/symcat.txt,ctl=\$CTL,zarg=\$ZARG \
         $BIN --rom $ROM --bios-dir . --save /tmp/run.sav --state $ST --frames 3 --log /tmp/h.log >/dev/null 2>&1 || true
       python3 -c \"import re,sys; t=open('/tmp/p.txt').read(); m=re.search(r'rom=([0-9a-f]+)\+([0-9a-f]+) ram=([0-9a-f]+)\+([0-9a-f]+)', t); print('%x:%x' % (int(m.group(1),16), int(m.group(3),16)+int(m.group(4),16)))\" > $BIN.jit
-      cp $SAV /tmp/run.sav
+      if [ $SAV = - ]; then : > /tmp/run.sav; else cp $SAV /tmp/run.sav; fi
     fi
     JIT=\$(cat $BIN.jit)
   fi
@@ -56,7 +58,7 @@ docker run --rm -v "$LP":/w -w /w/fx "$IMAGE" bash -c "
   echo \"jit=\$JIT mark=\$MARK\" > \$O/run.info
   ( time /opt/qemu/bin/qemu-mipsel -cpu 74Kf \
      -plugin /w/plug/lpsim_plugin.so,out=\$O/sim.txt,counts=\$O/counts.txt,jit=\$JIT,mark=\$MARK,skip=$WARM\$PL \
-     $BIN --rom $ROM --bios-dir . --save /tmp/run.sav --state $ST --script $SCR --frames $FR \
+     $BIN --rom $ROM --bios-dir . --save /tmp/run.sav --state $ST $( [ $SCR = - ] || echo --script $SCR ) --frames $FR \
      --hash \$O/hash.txt --log \$O/host.log ) > \$O/run.log 2>&1 || true
   tail -n 4 \$O/run.log
 "

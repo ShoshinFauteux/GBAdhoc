@@ -19,3 +19,26 @@ me_host_watchdog_frame   1
 plat_audio_frames        1
 audio_thread             2   256
 osd_draw                 1   128
+#
+# 4.5.0: the low-latency present path (COMBO3 / PLAY_ME_LOWLAT, main_psp.c
+# lat_* / ll_* / mer_*) and the GE flip (vid_*), run in the vblank wait of
+# every frame.  Their own speed is idle time; listed so they are pinned with
+# the frame path and the simulation sees the sets they take.  Counts are
+# placeholders like the rows above (the wait loop polls several times).
+lat_wait_begin           1
+lat_wait_step            1
+lat_swap.isra.0          1
+mer_lowlat_active        3
+mer_sameframe_active     3
+me_rend_retire_if_idle   3
+me_rend_present          1
+ll_own_posted            1
+ll_present               1
+ll_sample                1
+ll_to_b.part.0           1
+vid_draw_prestaged       1
+vid_gu_busy              1
+vid_gu_flush             1
+vid_gu_flush.part.0      1
+vid_flip_latched         2
+vid_swap                 1

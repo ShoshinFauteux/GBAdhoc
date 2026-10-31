@@ -60,6 +60,12 @@ WAY = 8192
 B_OBJECT = 'gbalink_core_b.o'
 ASM_OBJECTS = [('mips_stub.o', 'gpsp_libretro_psp1.a:mips_stub.o(.text)'),
                ('gbalink_core_b.o', 'gbalink_core_b.o(.text)')]
+# Assembly in its OWN section (not mips_stub.o's .text) that is still
+# per-frame code: MSR_FAST's mode-switch path (.text.msr_fast).  Placed at the
+# HEAD of the warm tail -- after the hot core, so the core's addresses are the
+# same with or without the switch -- for instance A, and after B's .text for
+# instance B.  A build without the section matches nothing.
+ASM_SECTIONS = [('mips_stub.o', '.text.msr_fast')]
 
 
 def profile_args(ap):
@@ -250,6 +256,8 @@ def write_order(path, hot, warm, used, a, asm_bytes, lib=None):
             fh.write(('%-48s %9.6f %7d %s' % (k, v, size, lib.get(k, '')))
                      .rstrip() + '\n')
         fh.write('# ---- warm tail\n')
+        for o, sec in ASM_SECTIONS:
+            fh.write('@%s(%s)\n' % (o, sec))
         for k, v, size in warm:
             fh.write(('%-48s %9.6f %7d %s' % (k, v, size, lib.get(k, '')))
                      .rstrip() + '\n')
@@ -271,11 +279,17 @@ def write_ord(order_path, out):
         fh.write('.text : {\n')
         seen = set()
         funcs = []
+        bsecs = []
         for n in names:
             if n in seen:
                 continue
             seen.add(n)
-            if n.startswith('@'):
+            if n.startswith('@') and '(' in n:     # ASM_SECTIONS
+                o, sec = n[1:].rstrip(')').split('(', 1)
+                fh.write('  *%s\n' % dict(ASM_OBJECTS)[o].replace(
+                    '(.text)', '(%s)' % sec))
+                bsecs.append(sec)
+            elif n.startswith('@'):
                 if n[1:] == B_OBJECT:
                     continue        # B's hot path goes after A's (below)
                 fh.write('  *%s\n' % dict(ASM_OBJECTS)[n[1:]])
@@ -293,6 +307,8 @@ def write_ord(order_path, out):
         # AFTER the whole of A's, so linking it in moves nothing of A's.
         # Matches nothing in any other build.
         fh.write('  *%s\n' % dict(ASM_OBJECTS)[B_OBJECT])
+        for sec in bsecs:
+            fh.write('  *%s(%s)\n' % (B_OBJECT, sec))
         for n in funcs:
             fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
         fh.write('}\n')

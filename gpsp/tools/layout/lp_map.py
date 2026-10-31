@@ -31,6 +31,7 @@ import collections
 import sys
 
 TEXT = set('tTwW')
+B_PREFIX = 'gbab_'   # GBA_LINK instance B's renamed globals
 
 
 def read_nm(path):
@@ -40,24 +41,33 @@ def read_nm(path):
     for l in open(path, errors='replace'):
         p = l.split()
         if len(p) == 4 and p[2] in TEXT:
-            rows.append([int(p[0], 16), int(p[1], 16), p[3]])
+            rows.append([int(p[0], 16), int(p[1], 16), p[3], p[2].isupper()])
         elif len(p) == 3 and p[1] in TEXT:
-            rows.append([int(p[0], 16), 0, p[2]])
+            rows.append([int(p[0], 16), 0, p[2], p[1].isupper()])
     rows.sort()
     out = []
-    for i, (a, s, n) in enumerate(rows):
+    for i, (a, s, n, g) in enumerate(rows):
         if s == 0:
             nxt = next((r[0] for r in rows[i + 1:] if r[0] > a), a + 4)
             s = min(nxt - a, 0x10000)
-        out.append((a, s, n))
+        out.append(_Row(a, s, n, g))
     # drop exact duplicates at one address (aliases): keep the first name
     seen = set()
     ded = []
-    for a, s, n in out:
-        if (a, n) not in seen:
-            seen.add((a, n))
-            ded.append((a, s, n))
+    for r in out:
+        if (r[0], r[2]) not in seen:
+            seen.add((r[0], r[2]))
+            ded.append(r)
     return ded
+
+
+class _Row(tuple):
+    """(addr, size, name) -- still unpacks as three -- plus .glob: the
+    symbol is global (nm type upper case)."""
+    def __new__(cls, a, s, n, g=False):
+        r = tuple.__new__(cls, (a, s, n))
+        r.glob = g
+        return r
 
 
 def base_name(n):
@@ -73,6 +83,11 @@ class Syms:
         for r in rows:
             self.by[r[2]].append(r)
             self.bybase[base_name(r[2])].append(r)
+        g = [(r[0], r[2]) for r in rows if getattr(r, 'glob', False)]
+        if not any(n.startswith(B_PREFIX) for _, n in g):
+            g = []                  # not a GBA_LINK build: no instance B
+        self.gaddrs = [a for a, _ in g]
+        self.gnames = [n for _, n in g]
 
     def at(self, addr):
         i = bisect.bisect_right(self.addrs, addr) - 1
@@ -85,14 +100,27 @@ class Syms:
             i -= 1
         return None
 
+    def _in_b(self, row):
+        """GBA_LINK builds (docs/GBA-LINK-MIRROR.md 17): instance B is the
+        core partial-linked with every GLOBAL renamed gbab_*, but its static
+        functions keep their names, so each core static exists twice.  B's
+        copy is the one with a gbab_ symbol as its nearest global neighbour
+        below or above (sections stay grouped by input object, pinned or
+        not); when both copies look like B, the name stays unplaced."""
+        i = bisect.bisect_right(self.gaddrs, row[0]) - 1
+        return any(0 <= j < len(self.gnames) and
+                   self.gnames[j].startswith(B_PREFIX) for j in (i, i + 1))
+
     def unique(self, name):
         r = self.by.get(name, [])
+        if not r:
+            r = self.bybase.get(base_name(name), [])
         if len(r) == 1:
             return r[0]
-        if not r:
-            b = self.bybase.get(base_name(name), [])
-            if len(b) == 1:
-                return b[0]
+        if len(r) == 2 and self.gaddrs and not name.startswith(B_PREFIX):
+            a = [x for x in r if not self._in_b(x)]
+            if len(a) == 1:
+                return a[0]
         return None
 
 
