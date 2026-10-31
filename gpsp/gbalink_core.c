@@ -171,7 +171,7 @@ static void lk_rewake(void)
 /* The cycle counter the I/O store stub saved (remaining cycles at the store),
  * see mips_emit.h / x86_stub.S.  update_gba re-seeds it with execute_cycles so
  * a C-side I/O write reads as "now". */
-#define GBALINK_REG_CYC 62
+#define GBALINK_REG_CYC REG_IO_CYCLES   /* cpu.h; 62 */
 
 static u32 lk_mode(u16 siocnt, u16 rcnt)
 {

@@ -513,19 +513,48 @@ lookup_pc_noflags:
 # exactly (the emitter publishes both constants). Both are dead after this
 # point -- smc_write never returns to the memop caller -- so passing them
 # costs two `move`s and one call, taken only on an actual SMC event.
+#
+# PIPELINE PREFETCH WINDOW (monomyth-compat): the stub has NOT stored yet
+# ($5 = value, $1 = size 0/1/2 from the branch's delay slot).
+# smc_pipe_store (cpu.cc) keeps the writer's two prefetched opcodes when the
+# store lands on them, then stores.  After the retirement, smc_pipe_step
+# runs those old opcodes in the interpreter and the dispatch resumes after
+# them; any alert their execution raised goes through write_io_epilogue.
 defsymbl(smc_write)
   sw $6, REG_PC($16)              # save PC
   save_registers
+  sw $4, REG_SAVE($16)            # masked region offset
+  sw $2, REG_SAVE2($16)           # lui constant + offset
+  move $7, $1                     # arg3 = size
+  move $6, $5                     # arg2 = value
   move $5, $4                     # arg1 = masked region offset
   move $4, $2                     # arg0 = lui constant + offset
+  cfncall smc_pipe_store, 13
+  sw $2, REG_SAVE3($16)           # 1: the window is latched
+  lw $5, REG_SAVE($16)            # arg1 = masked region offset
+  lw $4, REG_SAVE2($16)           # arg0 = lui constant + offset
   cfncall smc_prof_note_store, 12
 #ifdef SMC_STM_RANGE
   cfncall smc_trap_entry, 10        # SMC_STM_RANGE (cpu_threaded.c)
 #else
   cfncall flush_translation_cache_ram_smc, 10
 #endif
+  lw $2, REG_SAVE3($16)
+  bne $2, $0, 1f
+  nop
   b lookup_pc_noflags
   lw $1, REG_CPSR($16)            # (delay)
+1:
+  collapse_flags                  # the interpreter reads NZCV from CPSR
+  sw reg_cycles, (62 * 4)($16)    # reg[REG_IO_CYCLES]: its cycle budget
+  cfncall smc_pipe_step, 14
+  lw reg_cycles, (62 * 4)($16)    # what is left after the window
+  move $19, $2                    # alert ($19 is dead: we never return)
+  extract_flags                   # NZCV (and $1 = CPSR) as it left them
+  bne $19, $0, write_io_epilogue
+  move $2, $19                    # (delay)
+  b lookup_pc_noflags
+  nop
 
 
 # Return the current cpsr
@@ -802,6 +831,10 @@ fnptrs:
 #endif
   .long flush_translation_cache_ram_dma # 11
   .long smc_prof_note_store            # 12  (ADR-0030, counters only)
+#ifdef PIC
+  .long smc_pipe_store                 # 13  (smc_write, cpu.cc)
+  .long smc_pipe_step                  # 14  (smc_write, cpu.cc)
+#endif
 
 #ifdef REWIND
 # Rewind's written-page map (gba_memory.h, RW_CLEAN_BYTES = 360).  Here, a

@@ -878,6 +878,35 @@ u32 execute_spsr_restore_body(u32 address)
       break;                                                                  \
   }                                                                           \
 
+/* TAKEN-BRANCH REFILL (monomyth-compat, 2026-10-30).  A taken B/BL costs
+ * 2S + 1N on the ARM7TDMI: the branch's own S, then the N and S that refill
+ * the pipeline at the target.  The translator charges each instruction its
+ * own S (def_seq_cycles) and nothing for the refill, so a tight loop in RAM
+ * ran at half its real cost (MonoMyth's "Timer Prescaler" probe counts a
+ * 1024-iteration subs/bne loop against a timer).  Charged here only for a
+ * target outside the gamepak (BIOS, EWRAM, IWRAM, ...), where the S and N
+ * costs are exact; ROM code keeps today's timing, whose missing prefetch
+ * buffer model already over-charges straight-line gamepak code.  Same rule
+ * as the interpreter's taken_branch_refill (cpu.cc).  Direct branches only:
+ * BX / BL-suffix / MOV pc / LDR pc / POP {pc} are not charged. */
+#define branch_refill_cycles(target, arm)                                     \
+  ((((u32)(target)) >> 24) < 0x08 ?                                           \
+   2 * def_seq_cycles[((u32)(target)) >> 24][(arm)] : 0)
+
+/* Unconditional: the refill joins the pending count.  Conditional: the
+ * condition header already flushed the count, and the refill is charged on
+ * the taken path only. */
+#define generate_branch_refill(arm, uncond)                                   \
+{                                                                             \
+  u32 rf_cyc = branch_refill_cycles(                                          \
+    block_exits[block_exit_position].branch_target, (arm));                   \
+  if (uncond) {                                                               \
+    cycle_count += rf_cyc;                                                    \
+  } else if (rf_cyc) {                                                        \
+    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)rf_cyc);                    \
+  }                                                                           \
+}
+
 #define generate_branch()                                                     \
 {                                                                             \
   if(condition == 0x0E)                                                       \
@@ -1385,7 +1414,37 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_load_pc_pool_const(rd, value)                                   \
   generate_load_imm(arm_to_mips_reg[rd], (value));                            \
 
+/* I/O CYCLE SYNC (monomyth-compat, 2026-10-30).  reg_cycles normally lags
+ * the block's compile-time cycle_count until the next branch.  Before a
+ * single load or store the cycles of the instructions before it, plus the
+ * access's own data cycle, are subtracted now, so an I/O stub sees the
+ * cycle the access really happens at (it stores reg_cycles in
+ * reg[REG_IO_CYCLES]; timer counters are computed from it, gba_memory.c).
+ * Same position as the interpreter: earlier instructions + the data cycle,
+ * not the fetch S nor the load's I cycle.  The total charged per
+ * instruction is unchanged; the rest stays pending.  Cost: one addiu per
+ * load/store.  Skipped where an I/O access is not credible: PC-relative
+ * (literal pool) and SP-based addressing, and inside a conditional run (the
+ * subtraction must not be lost when the body is skipped). */
+#define generate_io_cycle_sync(base)                                          \
+  if (cycle_count >= (base)) {                                                \
+    u32 io_k = cycle_count - (base) + 1;                                      \
+    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)io_k);                      \
+    cycle_count -= io_k;                                                      \
+  }
+
+#define arm_io_cycle_sync()                                                   \
+  if (((last_condition & 0x0F) == 0x0E) &&                                    \
+      (((opcode >> 16) & 0x0F) != REG_PC) && (((opcode >> 16) & 0x0F) != 13)) \
+  {                                                                           \
+    generate_io_cycle_sync(def_seq_cycles[pc >> 24][1]);                      \
+  }
+
+#define thumb_io_cycle_sync()                                                 \
+  generate_io_cycle_sync(def_seq_cycles[pc >> 24][0])
+
 #define arm_access_memory_load(mem_type)                                      \
+  arm_io_cycle_sync();                                                        \
   cycle_count += 2;                                                           \
   mips_emit_jal(mips_absolute_offset(execute_load_##mem_type));               \
   generate_load_pc(reg_a1, (pc));                                             \
@@ -1393,6 +1452,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   check_store_reg_pc_no_flags(rd)                                             \
 
 #define arm_access_memory_store(mem_type)                                     \
+  arm_io_cycle_sync();                                                        \
   cycle_count++;                                                              \
   generate_load_pc(reg_a2, (pc + 4));                                         \
   generate_load_reg_pc(reg_a1, rd, 12);                                       \
@@ -1809,12 +1869,18 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_access_memory_generate_address_reg_reg(offset, reg_rb, reg_ro)  \
   mips_emit_addu(reg_a0, arm_to_mips_reg[reg_rb], arm_to_mips_reg[reg_ro])    \
 
+#define thumb_access_sync_pc_relative()
+#define thumb_access_sync_reg_imm_sp()
+#define thumb_access_sync_reg_imm()     thumb_io_cycle_sync()
+#define thumb_access_sync_reg_reg()     thumb_io_cycle_sync()
+
 #define thumb_access_memory(access_type, op_type, reg_rd, reg_rb, reg_ro,     \
  address_type, offset, mem_type)                                              \
 {                                                                             \
   thumb_decode_##op_type();                                                   \
   thumb_access_memory_generate_address_##address_type(offset, reg_rb,         \
    reg_ro);                                                                   \
+  thumb_access_sync_##address_type();                                         \
   thumb_access_memory_##access_type(mem_type, reg_rd);                        \
 }                                                                             \
 
@@ -1999,6 +2065,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 #define thumb_conditional_branch(condition)                                   \
 {                                                                             \
   generate_condition_##condition();                                           \
+  generate_branch_refill(0, 0);                                               \
   generate_branch_no_cycle_update(                                            \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2010,10 +2077,12 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   generate_condition();                                                       \
 
 #define arm_b()                                                               \
+  generate_branch_refill(1, condition == 0x0E);                               \
   generate_branch()                                                           \
 
 #define arm_bl()                                                              \
   generate_load_pc(reg_r14, (pc + 4));                                        \
+  generate_branch_refill(1, condition == 0x0E);                               \
   generate_branch()                                                           \
 
 #define arm_bx()                                                              \
@@ -2028,6 +2097,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
   generate_branch()                                                           \
 
 #define thumb_b()                                                             \
+  generate_branch_refill(0, 1);                                               \
   generate_branch_cycle_update(                                               \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2035,6 +2105,7 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 #define thumb_bl()                                                            \
   generate_load_pc(reg_r14, ((pc + 2) | 0x01));                               \
+  generate_branch_refill(0, 1);                                               \
   generate_branch_cycle_update(                                               \
    block_exits[block_exit_position].branch_source,                            \
    block_exits[block_exit_position].branch_target);                           \
@@ -2440,6 +2511,13 @@ static void emit_pmemld_stub(
     mips_emit_xori(reg_temp, reg_temp, regioncheck | (alignment << regionbits));
   }
 
+  if (region == 4) {
+    /* LIVE TIMER COUNTERS: the cycle of this I/O read, for C reached from
+     * it (gba_memory.c timer_io_read_sync, and read_memory* on the paths
+     * that call C).  reg_cycles was synced at the call site. */
+    mips_emit_sw(reg_cycles, reg_base, REG_IO_CYCLES * 4);
+  }
+
   // The patcher to use depends on ld/st, access size, and sign extension
   // (so there's 10 of them). They live in the top stub addresses.
   mips_emit_b(bne, reg_zero, reg_temp, ld_phndlr_branch(memop_number));
@@ -2524,6 +2602,26 @@ static void emit_pmemld_stub(
     *tr_ptr = translation_ptr;
     return;
   } else {
+    if (region == 4) {
+      /* LIVE TIMER COUNTERS (monomyth-compat): a read of TM0..TM3 (I/O
+       * 0x100..0x10F) first brings the counter in io_registers up to this
+       * cycle; every other register is read straight from io_registers as
+       * before.  Cost for other I/O reads: andi, xori, bne, nop. */
+      u8 *tm_skip;
+      mips_emit_andi(reg_temp, reg_a0, 0x3F0);
+      mips_emit_xori(reg_temp, reg_temp, 0x100);
+      mips_emit_b_filler(bne, reg_temp, reg_zero, tm_skip);
+      mips_emit_nop();
+      mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+      emit_save_regs(true);
+      genccall(&timer_io_read_sync);
+      mips_emit_nop();
+      mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
+      mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      emit_restore_regs(true);
+      generate_branch_patch_conditional(tm_skip, translation_ptr);
+    }
     // Generate upper bits of the addr and do addr mirroring
     // (The address hi16 is rounded up since load uses signed offset)
     if (!meminfo->baseoff) {
@@ -2909,6 +3007,26 @@ static void emit_pmemst_stub(
     return;
   }
 #endif
+  if (meminfo->check_smc && !aligned) {
+    /* PIPELINE PREFETCH WINDOW (monomyth-compat): the store moves out of
+     * the SMC branch's delay slot into the jr's, and the delay slot hands
+     * smc_write the store size (reg_temp is dead on the fast path).  The
+     * fast path runs the same four instructions as before; on a hit the
+     * store has NOT happened yet, so smc_pipe_store (cpu.cc) can keep the
+     * writer's two prefetched opcodes before it stores. */
+    mips_emit_ori(reg_temp, reg_zero, realsize);
+    mips_emit_jr(mips_reg_ra);
+    if (realsize == 2) {
+      mips_emit_sw(reg_a1, reg_rv, base_addr);
+    } else if (realsize == 1) {
+      mips_emit_sh(reg_a1, reg_rv, base_addr);
+    } else {
+      mips_emit_sb(reg_a1, reg_rv, base_addr);
+    }
+    *tr_ptr = translation_ptr;
+    return;
+  }
+
   // Store the data (delay slot from the SMC branch)
   if (realsize == 2) {
     mips_emit_sw(reg_a1, reg_rv, base_addr);
@@ -3242,11 +3360,11 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
     }
 #endif
     emit_save_regs(strop == 3);
-#ifdef GBA_LINK
-    /* Link cable: the cycle the write happened at (gbalink_core.c
-     * lk_io_now, reg[62]).  Only GBA_LINK cores carry this store. */
-    mips_emit_sw(reg_cycles, reg_base, 62 * 4);
-#endif
+    /* The cycle the write happens at (reg[REG_IO_CYCLES]; the call site
+     * synced reg_cycles): a timer started here counts from this cycle
+     * (gba_memory.c trigger_timer), and the link cable stamps its events
+     * with it (gbalink_core.c lk_io_now). */
+    mips_emit_sw(reg_cycles, reg_base, REG_IO_CYCLES * 4);
     genccall(iowrtbl[strop]);
 
     if (strop < 3) {

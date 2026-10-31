@@ -264,6 +264,66 @@ void sound_frequency_changed(void)
      (gbc_sound_buffer_index + buffer_adjust) % BUFFER_SIZE;                  \
   }                                                                           \
 
+/* LIVE TIMER COUNTERS (monomyth-compat, 2026-10-30).
+ *
+ * Real hardware: TMxCNT_L reads the counter as it is on the cycle of the
+ * read, and a timer enabled by a TMxCNT_H write starts counting right after
+ * that write.  gpSP refreshed the counter register only when update_timers
+ * ran (the end of a CPU slice, up to one H-blank edge = 1232 cycles apart),
+ * and a timer enabled mid-slice was charged the whole slice, including the
+ * part before it was enabled.  So a read returned a value up to a slice
+ * stale, and a short interval measured with a timer came out wrong: the
+ * "Timer Prescaler" probe of Pokemon MonoMyth (an AGS-aging-cart style test:
+ * start TMx, run a 1024-iteration IWRAM loop, read TMx; hardware gives
+ * exactly 0x1000/0x40/0x10/0x4 for the four prescalers) read 0xAAC.
+ *
+ * Now both ends use the CPU's position in the slice at the access:
+ * reg[REG_IO_CYCLES] holds the remaining cycles there (the interpreter keeps
+ * its counter in that slot; the MIPS I/O stubs store reg_cycles after
+ * syncing the block's pending count up to the access, generate_io_cycle_sync).
+ * The position counts the cycles of every earlier instruction plus the
+ * access's own data cycle, not its opcode fetch.
+ *   start:  the write completes one fetch later and the counter begins on
+ *           the cycle after that: +2 (0-wait code; IO_TIMER_START_DELAY);
+ *   read:   the counter as of the read cycle.
+ * Calibrated on nothing but that: subs+bne x1024 in IWRAM = 4094 cycles,
+ * +2 nops, LDRH's fetch: hardware reads 4096 = 0x1000.
+ *
+ * Cost: one compare per I/O load in the MIPS stub (the C call only for the
+ * timer registers) and none per instruction.  Counter rounding is the
+ * hardware's: a prescaled counter ticks at the END of each 2^p-cycle period
+ * (update_timers' own refresh keeps its historic rounding; a running
+ * prescaled timer is always read through timer_now). */
+#define IO_TIMER_START_DELAY 2
+
+static inline s32 timer_elapsed_now(void)
+{
+   s32 e = (s32)execute_cycles - (s32)reg[REG_IO_CYCLES];
+   return e < 0 ? 0 : e;
+}
+
+/* The counter of running (prescaled, not count-up) timer i, now. */
+static u32 timer_counter_now(u32 i)
+{
+   u32 p = timer[i].prescale;
+   s32 c = timer[i].count - timer_elapsed_now();   /* cycles to overflow */
+   s32 period = (s32)(timer[i].reload << p);
+   if (c <= 0 && period > 0)          /* overflowed; event not yet processed */
+      c = period - ((-c) % period);
+   if (c <= 0)
+      c = 0;
+   return (0x10000 - (((u32)c + (1u << p) - 1) >> p)) & 0xFFFF;
+}
+
+/* Called before an I/O read of 0x04000100-0x0400010F (the stubs and
+ * read_memory*): refresh the addressed timer's counter register. */
+void function_cc timer_io_read_sync(u32 address)
+{
+   u32 i = (address >> 2) & 3;
+   if (timer[i].status == TIMER_PRESCALE)
+      write_ioreg(REG_TMXD(i), timer_counter_now(i));
+}
+
 static void trigger_timer(u32 timer_number, u32 value)
 {
    if (value & 0x80)
@@ -272,6 +332,8 @@ static void trigger_timer(u32 timer_number, u32 value)
       {
          u32 prescale = prescale_table[value & 0x03];
          u32 timer_reload = timer[timer_number].reload;
+         /* where in the slice the enabling write lands (see above) */
+         s32 start_at = timer_elapsed_now() + IO_TIMER_START_DELAY;
 
          if((value >> 2) & 0x01)
             timer[timer_number].status = TIMER_CASCADE;
@@ -284,7 +346,11 @@ static void trigger_timer(u32 timer_number, u32 value)
          write_ioreg(REG_TMXD(timer_number), (u32)(-timer_reload));
 
          timer_reload <<= prescale;
-         timer[timer_number].count = timer_reload;
+         /* update_timers subtracts the WHOLE slice at its end; the cycles
+          * before the enable must not count, so they are added here.  A
+          * count-up timer counts overflows, not cycles. */
+         timer[timer_number].count = timer_reload +
+            ((value & 0x04) ? 0 : start_at);
 
          if(timer_reload < execute_cycles)
             execute_cycles = timer_reload;
@@ -305,6 +371,10 @@ static void trigger_timer(u32 timer_number, u32 value)
    {
       if(timer[timer_number].status != TIMER_INACTIVE)
       {
+         /* a stopped counter holds the value it had at the stop */
+         if (timer[timer_number].status == TIMER_PRESCALE)
+            write_ioreg(REG_TMXD(timer_number),
+                        timer_counter_now(timer_number));
          timer[timer_number].status = TIMER_INACTIVE;
       }
    }
@@ -2071,9 +2141,15 @@ void function_cc write_gpio(u32 address, u32 value) {
       break;                                                                  \
   }                                                                           \
 
+/* An I/O read of a timer counter sees it live (timer_io_read_sync). */
+#define io_read_sync(address)                                                 \
+  if (((address) & 0xFF0003F0) == 0x04000100)                                 \
+    timer_io_read_sync(address)
+
 u32 function_cc read_memory8(u32 address)
 {
   u8 value;
+  io_read_sync(address);
   read_memory(8);
   return value;
 }
@@ -2089,6 +2165,7 @@ u16 function_cc read_memory16_signed(u32 address)
   if(address & 0x01)
     return (s8)read_memory8(address);
 
+  io_read_sync(address);
   read_memory(16);
 
   return value;
@@ -2105,6 +2182,7 @@ u32 function_cc read_memory16(u32 address)
   u32 value;
   bool unaligned = (address & 0x01);
   address &= ~0x01;
+  io_read_sync(address);
   read_memory(16);
   if (unaligned) {
     ror(value, value, 8);
@@ -2119,6 +2197,7 @@ u32 function_cc read_memory32(u32 address)
   u32 value;
   u32 rotate = (address & 0x03) * 8;
   address &= ~0x03;
+  io_read_sync(address);
   read_memory(32);
   ror(value, value, rotate);
   return value;
@@ -3412,7 +3491,10 @@ void init_memory(void)
   map_null(read, 0x1000000, 0x2000000);
   map_region(read, 0x2000000, 0x3000000, 8, ewram);
   map_region(read, 0x3000000, 0x4000000, 1, &iwram[0x8000]);
-  map_region(read, 0x4000000, 0x5000000, 1, io_registers);
+  /* I/O reads take read_memory*: the interpreter's fast path would read a
+   * timer counter's stale register (io_read_sync; the dynarec's I/O stub
+   * never used this map).  Only the interpreter pays, one call per read. */
+  map_null(read, 0x4000000, 0x5000000);
   map_null(read, 0x5000000, 0x6000000);
   map_null(read, 0x6000000, 0x7000000);
   map_vram(read);
