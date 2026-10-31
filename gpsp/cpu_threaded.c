@@ -12612,8 +12612,10 @@ void gpsp_rewind_jit_used(u32 *rom, u32 *ram)
  * init_dynarec_caches calls it too, as a no-op after the first.
  *
  * The pointer is file-scope so dynarec_heap_tables_release() can give the
- * block back.  Instance A never does: its .bss lives for the process and the
- * block is reused by every reload.  Instance B's .bss (gbab_xs_heap_blk
+ * block back.  Instance A keeps it across its own reloads (a GBA link
+ * session's) and gives it back only in the in-process return's unload
+ * (psp/main_psp.c), so the next game's retro_init finds a fresh boot's heap
+ * and the heap census matches.  Instance B's .bss (gbab_xs_heap_blk
  * among it) is zeroed and lent to A's ROM cache between GBA link sessions
  * (fe_gbadual.c b_fresh / fe_gbadual_lend), so B MUST release the block
  * before it is unloaded: otherwise each session start finds a NULL pointer,

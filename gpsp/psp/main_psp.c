@@ -1096,6 +1096,9 @@ extern u32 rom_translation_cache_size;
 extern u32 ram_translation_cache_size;
 extern unsigned char *rom_translation_cache;
 void dynarec_release_translation_caches(void);   /* cpu_threaded.c */
+/* XS_HEAP builds only (a core flag the frontend cannot see): weak, NULL
+ * without it.  cpu_threaded.c */
+void dynarec_heap_tables_release(void) __attribute__((weak));
 void heap_trace_mark(void);                       /* heap_trace.c */
 void gbcore_prepare(void);                        /* gbcore/gbcore.h */
 void heap_trace_report(const char *where);
@@ -16554,6 +16557,15 @@ session_top:
          /* The rest of the unload: what the exit path leaves to the
           * process ending. */
          dynarec_release_translation_caches();
+         /* XS_HEAP's SMC tables (70,656 B): the first game's retro_init
+          * takes them, after the boot snapshot, and a reload of the same
+          * game reuses them -- but the next game's retro_init must find a
+          * fresh boot's heap, not the last game's block, or the census
+          * reads it as residue and refuses the return.  Given back here,
+          * the next retro_init takes it again at the same place, zeroed
+          * as on a fresh boot. */
+         if (dynarec_heap_tables_release)
+            dynarec_heap_tables_release();
 #ifdef GBA_LINK
          /* The GBA link's cable reserve (harness builds outside late mode;
           * a player's build is late and never takes one) is per game: taken
