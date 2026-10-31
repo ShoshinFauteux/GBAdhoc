@@ -91,6 +91,7 @@ static void test_host_only_admits_requests_for_its_device_id(void)
   rfu_state = RFU_STATE_HOST;
   memset(&rfu_host, 0, sizeof(rfu_host));
   rfu_host.devid = 0x3344;
+  rfu_host.accepting = 1;   /* an open room (StartHost, no EndHost yet) */
 
   packet(p, NET_RFU_CONNECT_REQ, 0x5566);
   rfu_net_receive(p, sizeof(p), 1);

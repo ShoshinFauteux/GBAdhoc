@@ -162,6 +162,14 @@ static void np_poll_receive_fn(void)
 
 /* ------------------------------------------------ driver -> core events -- */
 
+/* Peer loss for every role (np_peer_disconnected).  The core defines this
+ * (libretro.c); hosts built without it -- the GB and RTC host tests -- get
+ * this no-op. */
+__attribute__((weak)) void gpsp_netpacket_peer_lost(uint16_t client_id)
+{
+   (void)client_id;
+}
+
 static void np_deliver(void *user, const void *buf, size_t len, uint8_t src)
 {
    (void)user;
@@ -237,6 +245,10 @@ static void np_peer_disconnected(void *user, uint8_t id)
    }
    if (netdrv_local_id(np.nd) == 0 && np.rcb->disconnected)
       np.rcb->disconnected(id);
+   /* Every role: a client whose host vanished must hear it too (the core's
+    * wireless adapter otherwise reports the link as healthy for good). */
+   if (np.core_started)
+      gpsp_netpacket_peer_lost(id);
 }
 
 static void np_session_stopped(void *user, int reason)

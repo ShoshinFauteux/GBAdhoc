@@ -869,6 +869,14 @@ static void lk_cold_start(void)
 
 /* ---- the instance API (through gbalink_inst_ops) --------------------------- */
 
+/* The serial mode the game had before the cable took the port.  Outside
+ * `lk` (lk_begin clears that).  The pair ends with a state restore, not a
+ * cartridge reload, and serial_mode is not in a save state -- so lk_end used
+ * to leave the port DISABLED, and a game with both links (FireRed/LeafGreen/
+ * Emerald, Mario Tennis, MMBN5/6) had lost its wireless adapter until the
+ * next launch. */
+static int lk_prev_serial_mode = -1;
+
 static void lk_begin(unsigned slot, int headless)
 {
    lk_cold_start();
@@ -882,6 +890,8 @@ static void lk_begin(unsigned slot, int headless)
    gbalink_abort = 0;
    memset(&gbalink_hot, 0, sizeof(gbalink_hot));
    gbalink_hot.lean = gbalink_fast == 3;
+   if (serial_mode != SERIAL_MODE_CABLE)   /* a re-begin keeps the first */
+      lk_prev_serial_mode = serial_mode;
    serial_mode = SERIAL_MODE_CABLE;
    /* A transfer that was in flight when the state was saved has no partner
     * now: drop it. */
@@ -897,7 +907,9 @@ static void lk_end(void)
 {
    lk.active = 0;
    lk.yielded = 0;
-   serial_mode = SERIAL_MODE_DISABLED;
+   serial_mode = lk_prev_serial_mode >= 0 ? lk_prev_serial_mode
+                                          : SERIAL_MODE_DISABLED;
+   lk_prev_serial_mode = -1;
    sound_synth_off = 0;
 }
 
