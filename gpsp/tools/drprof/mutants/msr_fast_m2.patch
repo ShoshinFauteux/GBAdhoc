@@ -1,0 +1,10 @@
+--- a/mips/mips_stub.S	2026-10-30 16:51:00.888692100 -0400
++++ b/mips/mips_stub.S	2026-10-30 16:51:01.343358600 -0400
+@@ -803,7 +803,6 @@
+   nop
+   msr_mode_slot $1, $5, $6        # neither: r13/r14 only
+   sw $28, REGMODE_BASE+20($1)
+-  sw $30, REGMODE_BASE+24($1)
+   msr_mode_slot $1, $2, $6
+   lw $28, REGMODE_BASE+20($1)
+   b 4f

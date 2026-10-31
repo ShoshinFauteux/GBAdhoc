@@ -6104,6 +6104,8 @@ static void *g_cable_reserve;
  *                                IE & IF == 0 (SCHED_FAST builds; every game)
  *   irq_io_fast = 1              IE/IF/IME stores inline in the I/O store
  *                                stub (IRQ_IO_FAST builds; every game)
+ *   msr_fast = 1                 CPU mode switches (MSR, SPSR restore)
+ *                                banked in asm (MSR_FAST builds; every game)
  *   nd_ack_ride_us = 30000       acks ride on input packets: a GBA Link
  *                                Cable session, from RUNNING to its close
  *                                (netpacket_host.c fe_np_ack_ride_session) */
@@ -6111,6 +6113,7 @@ static void *g_cable_reserve;
 #define PLAY_GBA_LINK_HEADLESS_AUDIO 2
 #define PLAY_SCHED_FAST              1
 #define PLAY_IRQ_IO_FAST             1
+#define PLAY_MSR_FAST                1  /* MSR_FAST builds: mode switches in asm */
 #define PLAY_ND_ACK_RIDE_US          30000
 /* One pump period: the transport is serviced once per emulated frame, so an
  * ack that has waited out its ride leaves up to this much later.  The ride
@@ -14138,6 +14141,13 @@ session_top:
       if (&irq_io_fast)
          irq_io_fast = fe_ini_get_int(p_config, "irq_io_fast",
                                       PLAY_IRQ_IO_FAST) ? 1u : 0u;
+      {
+         extern uint32_t msr_fast __attribute__((weak));
+         if (&msr_fast)
+            /* default: on unless the core was built MSR_FAST_DEFAULT=0 */
+            msr_fast = fe_ini_get_int(p_config, "msr_fast",
+                                      PLAY_MSR_FAST && msr_fast) ? 1u : 0u;
+      }
 #ifdef GBA_LINK
       {
          long v = fe_ini_get_int(p_config, "gba_link_headless_audio",
@@ -14277,6 +14287,17 @@ session_top:
                irq_io_fast = qf ? 1u : 0u;
             fe_evt("irq_io_fast built=%d on=%d", &irq_io_fast != NULL,
                    &irq_io_fast ? (int)irq_io_fast : 0);
+         }
+         /* MSR_FAST builds: mode switches by MSR / SPSR restore banked in
+          * asm (mips_stub.S msr_fast_store); read on every switch. */
+         {
+            extern uint32_t msr_fast __attribute__((weak));
+            long mf = fe_ini_get_int(HARNESS_INI, "msr_fast",
+                                     &msr_fast ? (long)msr_fast : 0);
+            if (&msr_fast)
+               msr_fast = mf ? 1u : 0u;
+            fe_evt("msr_fast built=%d on=%d", &msr_fast != NULL,
+                   &msr_fast ? (int)msr_fast : 0);
          }
          /* 22: 2 = the checking mode (the full path decides, the fast
           * path's answers are compared with it and disagreements counted) */

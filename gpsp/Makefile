@@ -452,6 +452,17 @@ else ifeq ($(platform), psp1)
 	ifeq ($(FIQ_BANK_FIX),1)
 	CFLAGS += -DFIQ_BANK_FIX=1
 	endif
+	# MSR_FAST=1 (needs FIQ_BANK_FIX=1): CPSR writes that switch mode and SPSR
+	# restores bank the registers in mips/mips_stub.S instead of calling C
+	# (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path.
+	# Exact.  Run-time kill switch `msr_fast` (config.ini / harness key).
+	ifeq ($(MSR_FAST),1)
+	CFLAGS += -DMSR_FAST=1
+	endif
+	# MSR_FAST_DEFAULT=0: compiled in, msr_fast off (a layout-identical A/B arm).
+	ifneq ($(MSR_FAST_DEFAULT),)
+	CFLAGS += -DMSR_FAST_DEFAULT=$(MSR_FAST_DEFAULT)
+	endif
 	# BX_ALIGN_FIX=1: a BX into ARM state with address bit 1 set goes to the
 	# word below, as on the ARM7TDMI (cpu_threaded.c block_lookup_address_dual,
 	# mips_stub.S).  gpSP rounded UP and skipped the first ARM instruction of

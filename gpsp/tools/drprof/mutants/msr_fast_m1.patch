@@ -1,0 +1,10 @@
+--- a/mips/mips_stub.S	2026-10-30 16:51:00.888692100 -0400
++++ b/mips/mips_stub.S	2026-10-30 16:51:01.153842000 -0400
+@@ -851,7 +851,6 @@
+   lw $2, %lo(msr_fast)($2)
+   beqz $2, 9f                     # switched off
+   nop
+-  msr_irq_check 9f
+   msr_mode_swap
+   jr $ra
+   nop

@@ -257,6 +257,52 @@ if os.environ.get("DRCORPUS_SLOW") == "1":
     }
 
 
+# ---- DRCORPUS_Q3=1: codegen-q3 (register shifts, MSR_FAST, mode switches) --
+# Reference = the rc-4.5.0 twin defines (Lab gate_twin.core_defs of rc450's
+# coreFlags) on THIS tree, i.e. with the shift / MSR / LDM ^ correctness fixes.
+# "pre" is the same tree with those fixes reversed (refs/q3_pre_fixes.patch):
+# NOT a switch, expected to differ only where the old dynarec/interpreter
+# was wrong.  "msr" / "msroff" are switches (MSR_FAST on / compiled in, off).
+if os.environ.get("DRCORPUS_Q3") == "1":
+    R450 = ("-DSMC_GATES -DSMC_GATES_SIMPLE -DSMC_GATES_RANKED=1 -DSMC_GATE_BITMAP=1 -DSMC_PARTIAL_SAFE"
+            " -DSMC_PARTIAL_STABLE_THUNK -DSMC_PARTIAL_DIRECT_LINKS -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1"
+            " -DSMC_GATE_CHARGE=1 -DDISPATCH_CYCLE_CHECK=1 -DDMA_SMC_FLUSH=1 -DDISPATCH_CACHE=1"
+            " -DSMC_RETIRE_WINDOW=1 -DSERIAL_IDLE_FAST=1 -DJIT_CODE_DISCIPLINE=1 -DENTRY_GATES=1"
+            " -DSCHED_FAST=1 -DIRQ_IO_FAST=1 -DREWIND -DSMC_PARTIAL_SINGLE -DSMC_SINGLE_THUMB"
+            " -DSMC_SINGLE_HALF -DSMC_SINGLE_ANYPC -DSMC_SINGLE_EWRAM -DSMC_SINGLE_UNTAG"
+            " -DSMC_SINGLE_HOT=64 -DXLAT_FAST=1 -DJIT_COST=1 -DTIMER_RELOAD_FIX -DDISPATCH_PRECISE=1"
+            " -DSMC_SAME_SKIP=1 -DSMC_SAME_ADAPT=1 -DSMC_STM_RANGE=1 -DSMC_RETIRE_LOCAL=1"
+            " -DSMC_RETIRE_LIST=1 -DXS_HEAP=1 -DSMC_SAME_REPROBE=1024 -DXS_WALK_PAIR=1"
+            " -DSMC_STM_CHAIN=1 -DVRAM_EXEC=1 -DFIQ_BANK_FIX=1 -DHOT_DATA_GUARD=1"
+            " -DHOT_DATA_OFFSET=0x1b00 -DSMC_STM_WIDE=1 -DSMC_STM_AHEAD=1 -DDMA_SMC_RETIRE=1"
+            " -DDMA_SMC_ADAPT=1 -DDMA_ADAPT_V2=1 -DSPIN_SKIP=1 -DSMC_GATE_SELFPATCH=1"
+            " -DBX_ALIGN_FIX=1 -DCOND_ENTRY_FIX=1 -DBACKUP_BUS_FIX=1 -DXLAT_PURE=1"
+            " -DSMC_IMM_PATCH=1 -DXS_NOTE_FAST=1 -DENTRY_GATES_RANGE=1 -DENTRY_GATES_FAST=1"
+            " -DSMC_REUSE=1 -DSMC_REUSE_SPARE_KB=256 -DSMC_REUSE_MODE=3")
+    MF = " -DMSR_FAST=1"
+    VARIANTS = {
+        "base":   (R450, "ref", "rc450 twin defines, this tree (shift + mode-switch fixes)"),
+        "pre":    (R450, "switch", "the same with the fixes reversed (rc450 behaviour): may differ"),
+        "msr":    (R450 + MF, "switch", "MSR_FAST on"),
+        "msroff": (R450 + MF + " -DMSR_FAST_DEFAULT=0", "switch", "MSR_FAST compiled in, msr_fast=0"),
+        # which fix a "pre" divergence comes from: one fix reversed at a time
+        "preshf": (R450, "switch", "only the register-shift fix reversed"),
+        "preflg": (R450, "switch", "only the MSR CPSR_c NZCV + IRQ LR fix reversed"),
+        "preldm": (R450, "switch", "only the LDM {pc}^ fix reversed"),
+        "prelr":  (R450, "switch", "only the IRQ-from-MSR LR fix reversed"),
+    }
+    ORDER = list(VARIANTS)
+    REF_PATCHES = {"pre": "q3_pre_fixes.patch", "preshf": "q3_pre_shift.patch",
+                   "preflg": "q3_pre_msrflags.patch", "preldm": "q3_pre_ldm.patch",
+                   "prelr": "q3_pre_irqlr.patch"}
+    MUTANTS = {
+        "m_msr_irq": (R450 + MF, "msr_fast_m1.patch", "msr",
+                      "msr_fast_store skips the pending-IRQ test"),
+        "m_msr_lr":  (R450 + MF, "msr_fast_m2.patch", "msr",
+                      "the plain r13/r14 swap does not bank the old r14"),
+    }
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 
