@@ -2870,7 +2870,7 @@ static int mer_sameframe_active(void)
  * by proving it safe.
  * ======================================================================== */
 #ifndef PLAY_ME_LOWLAT
-#define PLAY_ME_LOWLAT 0     /* ME_LOWLAT=1 tools/build.sh: tier 1 by default */
+#define PLAY_ME_LOWLAT 2     /* tier 1 mode 2 on by default (ME_LOWLAT=0 builds it off) */
 #endif
 static int      g_flip_early       = 1;   /* `flip_early`      */
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
