@@ -4346,6 +4346,7 @@ static void dispatch_cache_forget(u32 pc, u32 thumb)
 } while (0)
 #else
 #define DC_PUT(tbl, key, ptr) do { } while (0)
+#define DC_FILL_OK(pc) 0
 #endif
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
