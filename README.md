@@ -1,8 +1,14 @@
 <!-- ============================================================================
+     DRAFT for GBAdhoc 4.5.0. NOT published. Written from claude/rc-4.5.0 @ cf91ebe.
+     Every number and claim is listed with its source in README-claims.md.
+
+     MEDIA: built by the scripts in tools/ (see README-claims.md section 6).
+     The hero clip, trailer copy and MonoMyth clips must be rebuilt from the final cuts.
+     MEDIA-NEEDED: search this file. The XMB Photo column shot needs a console and the owner.
+
      VERSION: the release number is written ONCE, on the "Version" line in the
-     hero block just below (4.1.1).  Every other sentence says "this release",
-     and the download button points at /releases/latest, so renaming the
-     release is a one-line edit.
+     hero block just below (4.5.0).  Every other sentence says "this release",
+     apart from the before/after figures, which have to name 4.1.0 and 4.5.0.
      ============================================================================ -->
 <p align="center">
   <picture>
@@ -15,12 +21,12 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.1.1</b> &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 4.5.0</b> &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
   <a href="https://github.com/ShoshinFauteux/GBAdhoc/releases/latest"><b>⬇&nbsp; Download the latest release</b></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp; <a href="gpsp/docs/video/trailer-4.0.0.mp4"><b>▶&nbsp; Watch the trailer</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp; <a href="gpsp/docs/video/trailer-4.5.0.mp4"><b>▶&nbsp; Watch the trailer</b></a>
   &nbsp;&nbsp;·&nbsp;&nbsp; <a href="#whats-new-in-this-release">What's new</a>
   &nbsp;&nbsp;·&nbsp;&nbsp; <a href="#install">Install</a>
   &nbsp;&nbsp;·&nbsp;&nbsp; <a href="#playing-together">Playing together</a>
@@ -28,61 +34,60 @@
 </p>
 
 <p align="center">
-  <a href="gpsp/docs/video/trailer-4.0.0.mp4">
+  <a href="gpsp/docs/video/trailer-4.5.0.mp4">
   <picture>
-    <source srcset="gpsp/docs/img/hero-400.webp" type="image/webp">
-    <img src="gpsp/docs/img/hero-400-poster.jpg" alt="A lost Fire Emblem battle runs backwards and pulls back out of a blue PSP's screen; the turn is played again, Eirika counter-attacks and wins, and a card reads: New feature, Rewind" width="880">
+    <source srcset="gpsp/docs/img/hero-450.webp" type="image/webp">
+    <img src="gpsp/docs/img/hero-450-poster.jpg" alt="From the trailer: Pokémon MonoMyth compatible on a real PSP, then Doom II with 4.1.0 and 4.5.0 side by side" width="880">
   </picture>
   </a>
   <br>
-  <sub><b>Hold a button. Take it back.</b> Rewind arrived in 4.0.0: the game runs backwards for as long as you hold, and you carry on from wherever you let go. The gameplay is real; the anime retelling is from the 4.0.0 trailer.</sub>
+  <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
-Race a friend in Mario Kart, fight them in Advance Wars, trade Pokémon across Game Boy
-generations: GBAdhoc links two PSPs the way a cable links two Game Boys, for Game Boy
-Advance games as well as Game Boy and Game Boy Color. This release improves save
-protection, Game Boy timer accuracy, rewind clock restoration and wireless session
-validation. It also adds a bounded GBA GameShark/Action Replay cheat subset.
+**GBAdhoc is compatible with Pokémon MonoMyth.** The game turns away inaccurate
+emulators such as VBA and tells you to use an accurate one like mGBA. This release passes
+its accuracy check through general accuracy work, with no game-specific hacks.
 
-It still runs the hard ROM hacks at full speed on a PSP-1000, because the renderer lives
-on the console's second processor, and you can still put the PSP to sleep and pick the
-game up tomorrow exactly where it was.
+It is also much faster. Across 46 test scenes from 36 games, the average frame rate is
+**up 26.7%** on both the PSP-1000 and the PSP-3000, and Doom II now runs at about full speed on
+average. There is lower input latency, a faster Game Boy core, Wireless Adapter
+fixes, three new screen filters, and screenshots that save to the PSP's PICTURE folder.
+
+Race a friend in Mario Kart, fight them in Advance Wars, trade Pokémon across Game Boy
+generations: GBAdhoc still links two PSPs the way a cable links two Game Boys, and you can
+still put the PSP to sleep and pick the game up tomorrow exactly where it was.
 
 <br>
 
 <table>
 <tr>
-<td width="33%" valign="top">
-<img src="gpsp/docs/img/rewind.webp" alt="Mario Kart, Street Fighter and Castlevania each running backwards for a moment under a REWIND badge, then carrying on" width="100%">
-<b>Rewind</b><br>
-<sub>Hold △ and the game runs backwards, sound and all. Let go and play on from there. Your in-game saves are never undone.</sub>
+<td colspan="2" width="33%" valign="top">
+<img src="gpsp/docs/img/tile-monomyth.webp" alt="Pokémon MonoMyth on a real PSP: 4.1.0 stops at the game's emulator screen, 4.5.0 passes the check" width="100%">
+<b>Pokémon MonoMyth</b><br>
+<sub>Compatible. It passes the game's accuracy check through general accuracy work, with no game-specific hacks.</sub>
 </td>
-<td width="33%" valign="top">
-<img src="gpsp/docs/img/share.gif" alt="Two PSPs side by side: one sends a save state, the other receives it and opens the game at the same spot" width="100%">
-<b>Share saves and states</b><br>
-<sub>Send a save file or a save state to the PSP next to you, over the PSP's own WiFi. ROMs are never sent.</sub>
+<td colspan="2" width="33%" valign="top">
+<img src="gpsp/docs/img/tile-speed.webp" alt="Doom II on a PSP-3000 with the FPS counter on, 4.1.0 beside 4.5.0" width="100%">
+<b>Much faster GBA games</b><br>
+<sub>Up 26.7% on average across the test suite, and 68% on the scenes that were struggling. Of the 18 scenes under 58 fps in 4.1.0, 5 still are.</sub>
 </td>
-<td width="33%" valign="top">
-<img src="gpsp/docs/img/link-sfa3.gif" alt="Street Fighter Alpha 3 versus mode on two PSPs, both screens showing the same fight" width="100%">
-<b>Faster link play</b><br>
-<sub>Link-cable games between two PSPs cost much less than before. Street Fighter Alpha 3 and Sonic Battle run at full speed.</sub>
+<td colspan="2" width="33%" valign="top">
+<img src="gpsp/docs/img/tile-latency.png" alt="Time from reading the buttons to the screen: about 67 ms on 4.1.0, 18 to 37 ms on 4.5.0, across six GBA scenes on a PSP-3000" width="100%">
+<b>Lower input latency</b><br>
+<sub>Up to about three frames less between reading your buttons and showing the result in lighter GBA games.</sub>
 </td>
 </tr>
 <tr>
-<td valign="top">
-<img src="gpsp/docs/img/cheats.gif" alt="The in-game menu opens over Pokémon FireRed, then the cheat list: 27 cheats scroll past, two are switched on, and the menu row reads Cheats 2 on" width="100%">
-<b>Cheats</b><br>
-<sub>Named cheats switched on and off from the menu. Ready-made packs, CodeBreaker and supported GameShark/Action Replay codes.</sub>
+<td colspan="3" valign="top">
+<img src="gpsp/docs/img/tile-filters.png" alt="The same sprite from Pokémon Emerald with the LCD grid, dot grid and scanlines filters" width="100%">
+<b>New screen filters</b><br>
+<sub>LCD grid, dot grid and scanlines, per console, lined up with the game's own pixels.</sub>
 </td>
-<td valign="top">
-<img src="gpsp/docs/img/turbo.png" alt="The Turbo buttons page: four rows, each with a button, a rate and a mode" width="100%">
-<b>Turbo buttons</b><br>
-<sub>Four of them, each with its own button, speed and hold-or-toggle mode.</sub>
-</td>
-<td valign="top">
+<!-- MEDIA-NEEDED: a "Better screenshots" tile, once the XMB shot exists. With six tiles, go back to three cells per row. -->
+<td colspan="3" valign="top">
 <img src="gpsp/docs/img/link-gb-trade.gif" alt="A Pokémon Crystal trade: the Poké Ball travels down the cable on both screens" width="100%">
-<b>Game Boy trades</b><br>
-<sub>Red, Blue, Yellow, Gold, Silver, Crystal: trade and battle like two Game Boys. Only one of you needs the cartridge.</sub>
+<b>Faster Game Boy trades</b><br>
+<sub>Crystal trades between two PSPs rose from about 50 fps to 58, Red from 55 to 59.</sub>
 </td>
 </tr>
 </table>
@@ -91,44 +96,231 @@ game up tomorrow exactly where it was.
 
 ## What's new in this release
 
-**4.1.1** fixes problems in 4.1.0:
+Everything below is new since 4.1.0, the last stable release. The fixes from the 4.1.1
+beta are included. Each item carries a <kbd>NEW</kbd> mark so you can tell it from the
+features that were already there.
 
-- **Game Boy Color games no longer hitch every few seconds.** Saving now happens in the
-  background, and only once the game has finished writing. Pokémon Gold, Silver and
-  Crystal write to their save constantly as you play; that used to mean a Memory
-  Stick write every 5 seconds.
-- **Installs to `PSP/GAME/GBAdhoc` again.** 4.1.0 installed to its own `GBAdhoc410`
-  folder, so it started without your games, saves or settings. If you played on
-  4.1.0, copy anything you want to keep from `PSP/GAME/GBAdhoc410` (saves, save
-  states, `config.ini`) into `PSP/GAME/GBAdhoc`, then delete `GBAdhoc410`.
-- **A save that cannot be read now says so.** The game still won't start over a
-  save it can't read (so it can't overwrite it), but it tells you why instead of
-  dropping back to the XMB.
-- **Rewind no longer restarts the game** in a rare case where 4.1.0 did.
+### <kbd>NEW</kbd> Pokémon MonoMyth
 
-4.1.0 focused on reliability:
+<p align="center">
+  <img src="gpsp/docs/img/monomyth.webp" alt="On a real PSP, 4.1.0 stops at Pokémon MonoMyth's 'emulator is incompatible' screen; 4.5.0 passes the check" width="720">
+</p>
 
-- Whole-image battery writes preserve the previous usable save when replacement fails;
-  failed battery reads refuse boot instead of later writing blank or partial RAM.
-- GBA cable startup completes pending battery writes before changing session RAM.
-- GB/GBC DIV and TIMA timing, delayed reloads, HALT wakeup, audio and display fixes.
-- Rewind restores cartridge clock context and handles failed restores safely.
-- Malformed save states are rejected before they can corrupt core state.
-- Media Engine, standby and USB fixes enforce buffer and file ownership.
-- Wireless admission and save sharing reject stale sessions. **Update both PSPs to
-  4.1.0:** these transports now use protocol version 2.
-- GBA GS1/AR3 cheats support a bounded RAM-only subset; new entries start disabled.
-  See [supported cheat commands](gpsp/docs/CHEATS.md).
+Pokémon MonoMyth refuses to run on inaccurate emulators such as VBA and points you to an
+accurate one like mGBA. **GBAdhoc is compatible with it.** On a real PSP, 4.1.0 lands on the game's
+"emulator is incompatible" screen; this release passes the check and plays on through the intro, the first battles and picking your starter.
 
-See the [4.1.0 release notes and validation scope](gpsp/docs/RELEASE-4.1.0.md).
+**There are no game-specific hacks.** Nothing in GBAdhoc looks for MonoMyth. It passes
+because the emulator now behaves more like a real GBA in the places the game probes, and
+every game gets the same fixes:
 
-[Download the ready-made cheat pack](https://github.com/ShoshinFauteux/GBAdhoc/releases/download/v4.1.1/GBAdhoc-4.1.1-cheats.zip): 48 game lists / 1,618 entries. Extract into `PSP/GAME/GBAdhoc/cheats`, match filenames to your ROMs, then open **Cheats** and press **X** to toggle an entry.
+- **Live timer counters.** Reading a hardware timer now returns its count at that moment.
+  The old core could only give the value from the last time it caught up.
+- **The ARM7 instruction prefetch window.** A real GBA has already fetched the next two
+  instructions, so code that overwrites them doesn't change what runs next. GBAdhoc now
+  gets that right.
+- **Branch timing.** A branch into RAM or the BIOS now costs what it costs on hardware.
 
-### Features introduced in 4.0.0
+### <kbd>NEW</kbd> Much faster GBA games
 
-The features below were introduced after 3.5.0.
+<p align="center">
+  <img src="gpsp/docs/img/speed.webp" alt="Doom II, 4.1.0 and 4.5.0 side by side on a real PSP-3000 from the same start frame, FPS counter on" width="720">
+</p>
 
-### <kbd>NEW</kbd> Rewind
+Some GBA games rewrite their own code while they run. GBAdhoc translates GBA code into PSP
+code once and reuses the result, so each rewrite used to mean throwing translations away
+and paying for them again. This release throws away only what changed, reuses translations
+it has already made, and patches a changed number straight into the translated code.
+
+Measured on a real PSP-3000 at Fit, sharp bilinear and Ambient bars from the game's art,
+with the FPS counter on:
+
+| Game | 4.1.0 | 4.5.0 |
+|---|---|---|
+| Doom II | 18.7 fps | **59.0** |
+| Back to Stone | 17.8 | **59.6** |
+| Duke Nukem Advance | 17.5 | **57.8** |
+| FIFA 07 | 21.8 | **59.5** |
+| Ice Nine | 24.6 | **58.5** |
+
+<sub>A full-speed GBA game reads about 59.7 here. These are 2400-frame runs of one saved
+scene per game, shorter than the benchmark runs below, so the two sets differ a little,
+most of all Ice Nine on 4.1.0. A different level can run faster or slower.</sub>
+
+Across the whole test suite (46 scenes from 36 games, on a PSP-1000 and a PSP-3000, each
+scene run twice per version in A-B-B-A order):
+
+- **Average frame rate is up 26.7%** on both consoles, and **68% on the scenes that were
+  struggling** (under 58 fps in 4.1.0). About **25% less CPU work** per frame.
+- **Of the 18 scenes under 58 fps in 4.1.0, 5 still are:** Hot Wheels: Stunt Track
+  Challenge (49.4), Top Gear Rally (56.4), LEGO Drome Racers (about 56.7), Duke Nukem
+  Advance (about 57.7) and Payback (6).
+- **Scenes that were above 58 fps in 4.1.0 stay where they were,** within about 0.15 fps.
+
+<details>
+<summary><b>The full table:</b> the games that changed most, on both consoles</summary>
+
+These runs are at 1x with no filtering, two runs per version per console.
+
+| Game | PSP-3000: 4.1.0 → 4.5.0 | PSP-1000: 4.1.0 → 4.5.0 |
+|---|---|---|
+| Doom II | 18.7 → **59.5** | 18.4 → **59.1** |
+| Back to Stone | 18.2 → **59.7** | 18.1 → **59.7** |
+| Duke Nukem Advance | 17.2 → **57.9** | 17.1 → **57.6** |
+| FIFA 07 | 21.7 → **59.6** | 21.7 → **59.6** |
+| Ice Nine | 22.1 → **58.3** | 21.9 → **58.2** |
+| Smashing Drive | 29.9 → **59.7** | 29.8 → **59.7** |
+| SSX 3 | 35.5 → **59.6** | 35.3 → **59.6** |
+| Kill.Switch | 36.3 → **58.4** | 36.1 → **58.3** |
+| Need for Speed: Most Wanted | 38.1 → **59.7** | 38.0 → **59.7** |
+| Need for Speed: Carbon – Own the City | 42.9 → **59.7** | 42.9 → **59.7** |
+| Max Payne | 50.0 → **59.7** | 49.2 → **59.6** |
+| Ford Racing 3 | 54.9 → **59.7** | 55.0 → **59.7** |
+| Mario Tennis: Power Tour | 56.9 → **59.7** | 56.8 → **59.6** |
+| LEGO Drome Racers | 50.7 → **56.6** | 51.0 → **56.8** |
+| Top Gear Rally | 49.4 → **56.4** | 49.6 → **56.4** |
+| Hot Wheels: Stunt Track Challenge | 42.2 → **49.4** | 42.3 → **49.4** |
+| Payback | 0.8 → **6.1** | 0.8 → **6.0** |
+
+</details>
+
+**Games that now run.** Need for Speed: Underground used to hang at its language screen. Big
+Mutha Truckers and Street Racing Syndicate used to stop with an emulation error. All three
+now run, and so does OpenLara. In our test scenes, on both consoles: Underground at 59.7 fps
+in a race, Big Mutha Truckers at 59.7, Street Racing Syndicate at 59.5, OpenLara at 59.3.
+
+Speed changes were checked frame by frame, with sound, against a slow reference emulator on
+up to 48 game scenes, then measured on real PSPs. Three long-standing bugs inherited from the
+original core turned up along the way and are fixed.
+
+### <kbd>NEW</kbd> Lower input latency
+
+Issue [#11](https://github.com/ShoshinFauteux/GBAdhoc/issues/11) asked why GBA games felt
+slower to respond than Game Boy games. The finished picture sat in a queue for longer than
+it had to, and that queue is now much shorter: GBAdhoc hands the picture to the screen
+sooner, and takes it straight from the second processor when the frame has room.
+
+Time from the emulator reading your buttons to that frame reaching the screen, one player:
+
+| Game | 4.1.0 | 4.5.0, PSP-3000 | 4.5.0, PSP-1000 |
+|---|---|---|---|
+| Fire Emblem: The Sacred Stones | about 67 ms | **18 ms** | **20 ms** |
+| Advance Wars 2 | about 67 ms | **21 ms** | **21 ms** |
+| Pokémon Emerald, battle | about 67 ms | **21 ms** | **23 ms** |
+| Need for Speed: Underground 2 | about 67 ms | **28 ms** | **28 ms** |
+| Pokémon Heart & Soul, heaviest battle | about 67 ms | **32 ms** | **32 ms** |
+| Pokémon Unbound, rival battle | about 67 ms | **37 ms** | **39 ms** |
+| Pokémon Crystal (Game Boy Color) | about 33 ms | **17 ms** | **17 ms** |
+
+- The buttons are also read later now, just before the frame starts. On real PSPs the pad
+  sample used to be about 16 ms old by the time GBAdhoc read it, and it is now under 1 ms
+  old. That comes on top of the table above.
+- Light games wait up to about a millisecond a frame for that fresh sample. They spend a
+  little more of each frame waiting, and they still run at full speed.
+- These figures come from the emulator's own timing logs, not from a camera, and they are
+  for one player. Link sessions are not faster in this release, and this is not a
+  link-latency improvement.
+
+### <kbd>NEW</kbd> Wireless Adapter fixes
+
+Link Cable play is in great shape. The Wireless Adapter path still needs work, and more is
+coming in following updates. These fixes are a first step:
+
+- **The adapter works after a cable session.** A link-cable session used to leave the game
+  with no adapter until the next launch. On two real PSPs, a Union Room session right after
+  a cable session failed both runs before this fix and passed both after it.
+- **When the host leaves, the other PSP finds out.** A host that crashed, slept, walked out
+  of range or quit could leave the other game waiting for good.
+- **A closed room is closed.** A game that stops hosting now leaves the room list and refuses
+  newcomers, as the real adapter does.
+- **No phantom players.** A connection that arrived after the game had given up used to hold
+  a player slot for about four seconds.
+- **Less lag piles up on the joining PSP** in Mario Golf: Advance Tour and Mario Tennis:
+  Power Tour, which send data every frame. GBAdhoc now drops what the real adapter would have
+  overwritten. Both games still struggle over the adapter; see
+  [known limitations](#status-and-known-limitations).
+
+### <kbd>NEW</kbd> Faster Game Boy and Game Boy Color
+
+The Game Boy core now brings its timer up to date only when a game looks at it, and two
+linked PSPs run more of each frame in one go instead of stopping to line the games up.
+
+| Pokémon trade between two PSPs | Before | Now | Lowest before | Lowest now |
+|---|---|---|---|---|
+| Red, Blue, Yellow | 55.1 fps | **59.1** | 40 | **55** |
+| Gold, Silver, Crystal | 49.7 fps | **58.4** | 37 | **55** |
+
+<sub>PSP-1000 + PSP-3000 pair, two runs each, no desyncs. "Before" is the same source with
+these two speedups switched off. Both PSPs need this release for the second speedup.</sub>
+
+In single player the saving is smaller: about 2–3% less CPU work on average across 12 Game
+Boy scenes, and up to 13% in Oracle of Ages. A Kirby's Dream Land 2 scene that sat at 58 fps
+now holds 59.8.
+
+### <kbd>NEW</kbd> Three new screen filters
+
+<p align="center">
+  <img src="gpsp/docs/img/filters.png" alt="Pokémon Emerald at 2x with the filter off, then LCD grid, dot grid and scanlines, captured in PPSSPP" width="720">
+  <br>
+  <sub>Pokémon Emerald at 2x, captured in PPSSPP.</sub>
+</p>
+
+***Settings → Video filter*** gains **LCD grid**, **dot grid** and **scanlines**. Each draws
+fine dark lines between the game's pixels, and the lines follow those pixels at every scale:
+crisp at 2x, soft and evenly spaced at Fit and Stretch. At 1x the filter is off (the row says
+so), because there is no room between pixels. GBA, GB and GBC each remember their own choice.
+Based on a community patch by **u/Far_Froyo_6317**. Nearest, bilinear and sharp bilinear are
+unchanged.
+
+### <kbd>NEW</kbd> Better screenshots
+
+<!-- MEDIA-NEEDED: screenshots.png, a photo of the XMB Photo column listing a GBAdhoc
+     screenshot. Add it here with align="right" and a <br clear="right"> after the list. -->
+
+Press **L + R + SELECT** (or your own shortcut) as before. What changed
+([#13](https://github.com/ShoshinFauteux/GBAdhoc/issues/13)):
+
+- **They go to `PICTURE/GBAdhoc` by default,** so you can open them from the XMB's Photo
+  column. To keep them beside the app instead, set ***Settings → Screenshots → Screenshot
+  folder*** to *GBAdhoc folder (log)*. On a Go running GBAdhoc from internal storage, they
+  save to internal storage.
+- **They are PNGs by default,** usually a few KB each. ***Screenshot format*** switches
+  back to BMP, about 115 KB each.
+- **They are named after the game and the time,** such as
+  `Pokemon - Emerald Version (USA)_2026-10-30_14-05-12.png`.
+- **A message tells you** the screenshot was saved, or that it failed.
+
+### <kbd>NEW</kbd> Fixes and smaller things
+
+- <kbd>NEW</kbd> ***Reset game*** in the in-game menu restarts the game as if you had
+  switched it off and on. It asks first and writes your battery save before it resets. It
+  works for GBA, GB and GBC games and is off during link play.
+- <kbd>NEW</kbd> **Game Boy Color games no longer hitch every few seconds** (a 4.1.0 bug).
+  Pokémon Gold, Silver and Crystal write to their save constantly as you play; that used to
+  mean a Memory Stick write every 5 seconds. Saving now happens in the background, once the
+  game has finished writing.
+- <kbd>NEW</kbd> **ROMs with accented or non-English names** now show up, open, and find
+  their box art ([#19](https://github.com/ShoshinFauteux/GBAdhoc/issues/19)). Accented
+  letters are shown without the accent, and other scripts show as `?`.
+- <kbd>NEW</kbd> **Sleep is steadier,** thanks to Chandler Hardy
+  ([#15](https://github.com/ShoshinFauteux/GBAdhoc/pull/15),
+  [#16](https://github.com/ShoshinFauteux/GBAdhoc/pull/16),
+  [#20](https://github.com/ShoshinFauteux/GBAdhoc/pull/20)). Sleeping from the in-game menu
+  or the pause screen wakes back to it, and sleeping from the game list and sleeping again on
+  the wake screen are handled safely. The button that closes a menu no longer reaches the game.
+- <kbd>NEW</kbd> **A save that cannot be read now says so.** The game still won't start over
+  a save it can't read, so it can't overwrite it, but you see why instead of dropping back
+  to the XMB.
+- <kbd>NEW</kbd> ***Thumbstick → Custom*** can now bind stick directions when *Controls* is
+  opened from the game list, not only in game.
+- <kbd>NEW</kbd> **Rewind no longer restarts the game** in a rare case where 4.1.0 did.
+- <kbd>NEW</kbd> **Installs to `PSP/GAME/GBAdhoc` again.** 4.1.0 installed to its own
+  `GBAdhoc410` folder; see [Install](#install) if you played on it.
+
+<details>
+<summary><b>Rewind, cheats, sharing and turbo</b>: how they work</summary>
+
+### Rewind
 
 <p align="center">
   <picture>
@@ -161,9 +353,9 @@ that moment.
 - GBA games only for now. Rewind is off during link play. △ no longer cycles the video
   preset by default; bind that wherever you like in *Controls*.
 
-### <kbd>NEW</kbd> Cheats
+### Cheats
 
-<img src="gpsp/docs/img/cheats.gif" alt="The cheat list for Pokémon FireRed scrolling: usable codes with on/off chips, GameShark and Action Replay codes greyed out, two codes switched on" width="480" align="right">
+<img src="gpsp/docs/img/cheats.gif" alt="The cheat list for Pokémon FireRed scrolling: usable codes with on/off chips, unsupported codes greyed out, two codes switched on" width="480" align="right">
 
 Per-game cheat lists you switch on and off from the menu.
 
@@ -172,18 +364,21 @@ Per-game cheat lists you switch on and off from the menu.
   `cheats/README.txt` in the download is a worked example.
 - **Switch codes on and off** from *Cheats* in the in-game menu, or with RIGHT on a game
   in the list. Every cheat starts off, and your choices are remembered per game.
-- **Game Boy Advance:** CodeBreaker codes and plain `ADDRESS:VALUE` writes.
+- **Game Boy Advance:** CodeBreaker codes, plain `ADDRESS:VALUE` writes, and a RAM-only
+  subset of GameShark and Action Replay codes (see
+  [supported cheat commands](gpsp/docs/CHEATS.md)).
   **Game Boy / Game Boy Color:** GameShark codes.
 - **Kept small on purpose.** A cheat can only write to the game's working memory, so a
-  bad code cannot damage a ROM or a save file. That is also why GameShark and Action
-  Replay codes for GBA, which are encrypted and often patch the cartridge, are listed
-  but cannot be switched on yet. **A larger cheat engine is planned for a following
-  update.**
+  bad code cannot damage a ROM or a save file. Codes that patch the cartridge are listed
+  but cannot be switched on.
+- **[A ready-made cheat pack](https://github.com/ShoshinFauteux/GBAdhoc/releases/download/v4.1.0/GBAdhoc-4.1.0-cheats.zip)**
+  has 48 game lists and 1,618 entries. Extract it into `PSP/GAME/GBAdhoc/cheats` and
+  match the filenames to your ROMs.
 - Cheats are paused during link play and come back afterwards.
 
 <br clear="right">
 
-### <kbd>NEW</kbd> Share game data between two PSPs
+### Share game data between two PSPs
 
 <p align="center">
   <img src="gpsp/docs/img/share.gif" alt="Two PSPs side by side: the red one sends a save state, the blue one receives it and opens Pokémon Emerald at the same spot" width="720">
@@ -200,7 +395,7 @@ Send a save file or a save state to a friend's PSP, or pull theirs onto yours.
 - Save states need the same GBAdhoc version on both PSPs; save files do not.
 - **Saves and states only.** ROMs are never sent.
 
-### <kbd>NEW</kbd> Turbo buttons
+### Turbo buttons
 
 <img src="gpsp/docs/img/turbo.png" alt="The Turbo buttons page: Turbo A on Triangle at 30 a second in Toggle mode, Turbo B on Square" width="480" align="right">
 
@@ -212,59 +407,27 @@ during link play.
 
 <br clear="right">
 
-### <kbd>NEW</kbd> Faster link play
-
-<p align="center">
-  <img src="gpsp/docs/img/link-sfa3.gif" alt="Street Fighter Alpha 3 versus mode on a red PSP and a blue PSP, both screens showing the same fight" width="720">
-</p>
-
-- <kbd>NEW</kbd> **GBA Link Cable sessions are faster.** Each PSP runs two Game Boy
-  Advances during a link, and the second one now costs much less. On a PSP-3000 +
-  PSP-1000 pair: Advance Wars 2 at 58.6–59.0 fps, a Mario Kart: Super Circuit race at
-  58.4, and Super Street Fighter II Turbo Revival, the heaviest game we test, up from
-  about 39 fps to 47.
-- <kbd>NEW</kbd> ***Wireless → Fast link.*** Off by default, and the host decides for
-  both PSPs. It halves the number of radio packets, which helps games that still run
-  below full speed (Street Fighter II Turbo Revival reaches about 50). If a link feels
-  worse with it on, turn it off.
-- <kbd>NEW</kbd> **More games played between two real consoles:** Street Fighter
-  Alpha 3 and Sonic Battle at full speed, and Kirby multiplayer a little under it.
-- <kbd>NEW</kbd> **A finished trade is written to the Memory Stick straight away,**
-  instead of at the next periodic save.
-- Update both PSPs to 4.1.0 or later before linking or sharing saves. Protocol version 2 refuses
-  older transports safely. The new speed and Fast
-  link need both sides.
-
-### <kbd>NEW</kbd> Fixes
-
-- <kbd>NEW</kbd> **Music is right again** in games that play samples faster than the
-  PSP's output rate: Golden Sun: The Lost Age, Castlevania: Harmony of Dissonance and
-  Iridion II had been wrong since 3.0.0.
-- <kbd>NEW</kbd> **A save always reaches the Memory Stick while you play.** When a game
-  ran below full speed, its save could sit in memory until you quit. It is now written
-  within a few seconds.
-- <kbd>NEW</kbd> **Saving after a sleep cannot leave an empty file.** The first save
-  after waking rewrote the whole file and emptied it first; it now overwrites in place.
-- <kbd>NEW</kbd> **A save is no longer dropped on exit** after a failed write.
-- <kbd>NEW</kbd> **Driver 2 Advance** runs at full speed instead of stuttering, with no
-  extra memory.
-- <kbd>NEW</kbd> **Need for Speed Underground 2** no longer flickers.
-- <kbd>NEW</kbd> **PSP-1000:** the second-processor renderer needs about 280 KB less
-  system memory, so it loads in more situations.
-- <kbd>NEW</kbd> **Sleeping again on the wake screen** no longer drops you to the XMB on
-  the next wake.
-- <kbd>NEW</kbd> **Game clocks** (Pokémon's time of day, Game Boy cartridge clocks) keep
-  better time across sleeps and time-zone changes.
-
-### <kbd>NEW</kbd> Smaller things
-
-- <kbd>NEW</kbd> **The thumbstick** can act as a second d-pad, or each direction can be
-  bound like a button. *Settings → Thumbstick*; off by default.
-- <kbd>NEW</kbd> **The battery level** is in the menu header.
-- The Shelf's placeholder card for a game with no box art is shorter.
+</details>
 
 <details>
-<summary><b>Release history</b>: 3.5.0 and earlier</summary>
+<summary><b>Release history</b>: 4.1.0 and earlier</summary>
+
+### 4.1.0
+
+A reliability release: safer battery saves (a failed write keeps the previous save, and a
+failed read refuses to boot), Game Boy timer accuracy, cartridge clocks restored by rewind,
+malformed save states rejected, Media Engine, standby and USB fixes, a new wireless
+protocol version that safely refuses older PSPs, and a RAM-only subset of GameShark and
+Action Replay codes for GBA. See the
+[4.1.0 release notes and validation scope](gpsp/docs/RELEASE-4.1.0.md).
+
+### 4.0.0
+
+Rewind, per-game cheats, save and save-state sharing between two PSPs, turbo buttons, a
+much cheaper second game in GBA link sessions, *Fast link*, music fixes in Golden Sun: The
+Lost Age, Castlevania: Harmony of Dissonance and Iridion II, steadier saving, Driver 2
+Advance at full speed, Need for Speed Underground 2 without flicker, and the thumbstick as
+a second d-pad.
 
 ### 3.5.0
 
@@ -381,7 +544,7 @@ The AGB-015 Wireless Adapter is emulated in full (that work is
 [davidgfnet's](#credits-this-project-stands-on-other-peoples-work)); GBAdhoc carries its
 radio traffic over the PSP's ad-hoc WiFi with a reliable transport of its own. Union Room
 trades, link battles (singles and doubles), the Trade Center and Mystery Gift, between
-any of Emerald, FireRed and LeafGreen. Link sessions are paced to 59.73 fps on both
+any of Emerald, FireRed and LeafGreen. Link sessions are paced to 57 fps on both
 consoles, because Gen-3 games count link timeouts in *frames*. At each battle menu the
 games themselves pause for about a second while both consoles sync, exactly as they do
 through the real adapter.
@@ -411,6 +574,10 @@ everything else is.
 **3. Start the session from the in-game menu**, *Wireless*, on both PSPs. Save states are
 locked while a session is live, because a mid-session load would desync both games.
 
+**4. Update both PSPs to this release.** In a Link Cable session each PSP runs both
+players' games, so the two PSPs must run the same emulator, and this release changes how
+GBA games are timed. Don't link it with an older version.
+
 ---
 
 ## Mystery Gift
@@ -438,8 +605,8 @@ app's repository.
 
 ## Screenshots
 
-New in this release, in the dark theme. The 3.0.0 screens (both browsers, every
-console skin, favourites, the state shelf) are unchanged and still apply.
+The menus in the dark theme. The 3.0.0 screens (both browsers, every console skin,
+favourites, the state shelf) are unchanged and still apply.
 
 <table>
 <tr>
@@ -469,7 +636,9 @@ console skin, favourites, the state shelf) are unchanged and still apply.
 
 **Consoles**
 - Game Boy Advance on the gpSP core with its MIPS dynarec and the translation gates that
-  make CFRU hacks (Pokémon Unbound, Heart & Soul) run at full speed.
+  make CFRU hacks (Pokémon Unbound, Heart & Soul) playable at about 59 fps.
+- <kbd>NEW</kbd> Pokémon MonoMyth compatibility, through live timer counters and the ARM7
+  prefetch window, with no game-specific hacks.
 - Game Boy and Game Boy Color on TGB Dual, full speed with sound, with Super Game Boy
   palettes, a GB palette setting and a cartridge real-time clock.
   GBC colour correction modelled on the real screen.
@@ -482,16 +651,19 @@ console skin, favourites, the state shelf) are unchanged and still apply.
 - AGB-015 Wireless Adapter emulation over PSP ad-hoc: Union Room, Trade Center, link
   battles, Mystery Gift.
 - Mystery Gift from an Android phone (Mystery Gift Station).
-- <kbd>NEW</kbd> Fast link, an option for games that run below full speed when linked.
-- <kbd>NEW</kbd> Share game data: send save files and save states between two PSPs.
+- Fast link, an option for games that run below full speed when linked.
+- Share game data: send save files and save states between two PSPs.
 - Save auto-backup before every session; save states locked while linked.
 
 **Performance**
 - The renderer runs on the PSP's Media Engine, so both processors work on every frame.
-- Three fast-forward presets: **3x**, **Unlimited** (flat out, at most
-  30 frames drawn a second) and **Unlimited Smooth** (flat out, up to 60
-  drawn). Hold or toggle.
+- Three fast-forward presets: **3x**, **Unlimited** (flat out, drawing fewer frames) and
+  **Unlimited Smooth** (flat out, up to 60 drawn). Hold or toggle.
 - Dynarec optimisations and a pinned instruction-cache layout.
+- <kbd>NEW</kbd> Much faster self-modifying GBA code: exact retirement, translation reuse
+  and in-place immediate patching.
+- <kbd>NEW</kbd> Lower input latency, and a fresher button read just before each frame.
+- <kbd>NEW</kbd> A faster Game Boy core, and faster Game Boy link sessions.
 
 **The browser**
 - Two shells, **Marquee** and **Shelf**, each in **dark** or **light**.
@@ -501,14 +673,16 @@ console skin, favourites, the state shelf) are unchanged and still apply.
 - Settings over the selected game's art; a loading screen with the art.
 
 **Playing**
-- <kbd>NEW</kbd> Rewind for GBA games: hold a button to run the game backwards.
-- <kbd>NEW</kbd> Per-game cheats: CodeBreaker and raw codes for GBA, GameShark for GB/GBC.
-- <kbd>NEW</kbd> Turbo buttons: four, each with its own button, speed and hold/toggle mode.
-- <kbd>NEW</kbd> The thumbstick as a second d-pad, or bound per direction.
+- Rewind for GBA games: hold a button to run the game backwards.
+- Per-game cheats: CodeBreaker and raw codes for GBA, GameShark for GB/GBC.
+- Turbo buttons: four, each with its own button, speed and hold/toggle mode.
+- The thumbstick as a second d-pad, or bound per direction.
 - The in-game menu over the paused game.
+- <kbd>NEW</kbd> Reset game, from the in-game menu.
 - Remap every button and shortcut; HOME as the menu button if you want it.
 - Per-console picture: scale (1x, fit, stretch, integer 2x), filter
-  (nearest, bilinear, sharp bilinear), Ambient bars, GB palette.
+  (nearest, bilinear, sharp bilinear, and <kbd>NEW</kbd> LCD grid, dot grid, scanlines),
+  Ambient bars, GB palette.
 
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
@@ -520,7 +694,8 @@ console skin, favourites, the state shelf) are unchanged and still apply.
 **The console**
 - Wake from sleep: slide it shut, flick the switch, come back whenever.
 - All three PSP models, tested on hardware. 333 MHz.
-- Screenshots to `log/`.
+- <kbd>NEW</kbd> Screenshots as named PNG files in `PICTURE/GBAdhoc` for the XMB's Photo
+  column, or BMP, or beside the app.
 
 </details>
 
@@ -535,7 +710,7 @@ console skin, favourites, the state shelf) are unchanged and still apply.
 | L / R | GBA L / R |
 | Start / Select | Start / Select |
 | **□** | Fast-forward (hold by default; preset and hold/toggle in Settings) |
-| **△** | <kbd>NEW</kbd> Rewind, while held (when *Rewind* is on; GBA) |
+| **△** | Rewind, while held (when *Rewind* is on; GBA) |
 | *(unbound)* | Cycle video preset |
 | **Select + L** | Quick save, slot 1 |
 | **Select + R** | Quick load, slot 1 |
@@ -561,10 +736,10 @@ confirm and ○ to go back.
 | Wireless | Room | Room 0–99 (Room 7 by default) |
 | | Link mode | Auto, Link Cable or Wireless Adapter, per game |
 | | Session overlay | show or hide the session chip during play |
-| | <kbd>NEW</kbd> Fast link | on or off; the host decides for both PSPs |
-| | <kbd>NEW</kbd> Share game data | from the game list: share, or scan for a room |
+| | Fast link | on or off; the host decides for both PSPs |
+| | Share game data | from the game list: share, or scan for a room |
 | Display per console | Video scale | 1x, fit, stretch, 2x (integer) |
-| | Video filter | nearest, bilinear, sharp bilinear |
+| | Video filter | nearest, bilinear, sharp bilinear, <kbd>NEW</kbd> LCD grid, dot grid, scanlines |
 | | Ambient bars | off, art, art else game |
 | | GB palette | Auto, Grey, DMG green, Pocket |
 | Interface | Theme | dark or light |
@@ -572,18 +747,21 @@ confirm and ○ to go back.
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
-| | <kbd>NEW</kbd> Rewind | on or off, from the next game |
-| | <kbd>NEW</kbd> Rewind length | Short, Medium or Long |
-| Controls | <kbd>NEW</kbd> Thumbstick | off, moves (a second d-pad) or custom |
+| | Rewind | on or off, from the next game |
+| | Rewind length | Short, Medium or Long |
+| Screenshots | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
+| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc folder (log)* |
+| Controls | Thumbstick | off, moves (a second d-pad) or custom |
 | | Button mapping | every button and shortcut; the menu button |
-| | <kbd>NEW</kbd> Turbo buttons | four turbo actions: button, rate, hold or toggle |
+| | Turbo buttons | four turbo actions: button, rate, hold or toggle |
 
 The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the
 running one. A few more keys live only in `config.ini`: `quick_return = 0` brings back
 the old relaunching Quit to game list, `gbc_color_correction = 0` the old GBC colours,
 `loading_art = 0` a plain loading screen, and `gblink_delay` (1–30 frames, default 4)
-the Game Boy link's input delay.
+the Game Boy link's input delay. The screenshot settings are `screenshot_format`
+(`png` or `bmp`) and `screenshot_folder` (`picture` or `app`).
 
 </details>
 
@@ -597,9 +775,10 @@ the Game Boy link's input delay.
   the Save States page).
 - **Favourites**: `roms/favourites.txt`. **Link mode overrides**:
   `roms/linkmode.txt`.
-- <kbd>NEW</kbd> **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the
+- **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the
   menu remembers what is switched on.
-- **Screenshots**: `log/`.
+- <kbd>NEW</kbd> **Screenshots**: `PICTURE/GBAdhoc/` at the root of the Memory Stick (or of
+  a Go's internal storage), or `log/` if you choose *GBAdhoc folder (log)*.
 - **Settings**: `config.ini` in the app folder.
 
 </details>
@@ -624,6 +803,10 @@ WLAN switch on, both on the same fixed ad-hoc channel.
 install, always all three together. Your `config.ini` carries over, and your settings are
 moved into the per-console profiles automatically. Your `roms/`, battery saves and save
 states are untouched.
+
+**Coming from 4.1.0?** It installed into its own `PSP/GAME/GBAdhoc410` folder. Copy anything
+you want to keep from there (saves, save states, `config.ini`, your `cheats` folder) into
+`PSP/GAME/GBAdhoc`, then delete `GBAdhoc410`.
 
 ### Artwork
 
@@ -650,37 +833,97 @@ repository because hero art derives from copyrighted box art.
 
 ---
 
-## What to expect from which games
+## Performance by game
 
-<p align="center">
-  <picture>
-    <source srcset="gpsp/docs/img/psp1000-unbound.webp" type="image/webp">
-    <img src="gpsp/docs/img/psp1000-unbound-poster.jpg" alt="Pokémon Unbound's rival battle on a PSP-1000 with the FPS counter at 59.9, then the console's PSP-1001 label" width="560">
-  </picture>
-  <br>
-  <sub><b>The slowest PSP, the heaviest game:</b> Pokémon Unbound's rival battle on a PSP-1000, FPS counter on. The middle of the fight is sped up 3× for the clip (labelled); the counter shows the real rate throughout. <a href="gpsp/docs/video/psp1000-unbound.mp4">MP4</a></sub>
-</p>
+Average frame rate in the release candidate's test suite: 46 scenes on real consoles, each run twice per version. A real GBA runs at about 59.7 fps. These are single scenes, so other parts of a game can run faster or slower.
 
-| | |
-|---|---|
-| **Pokémon Emerald / FireRed / LeafGreen** | Full speed. Wireless Adapter trades and battles on real consoles; Emerald's Cable Club by Link Cable in emulated pairs. |
-| **Pokémon Unbound** and other CFRU hacks | Full speed (59.9). Run it on the game's **medium music preset** for the best results. |
-| **Pokémon Heart & Soul** | Full speed (59.8) including its heaviest battles. Set its sound to **mono** for the best performance. |
-| **Advance Wars 2** | Linked battles between two PSPs, 58.6–59.0 fps on a PSP-3000 + PSP-1000 pair. |
-| **Mario Kart: Super Circuit** | Linked two-player races, 58.4 fps on the same pair. |
-| <kbd>NEW</kbd> **Street Fighter Alpha 3, Sonic Battle** | Linked play at full speed between two real consoles. |
-| <kbd>NEW</kbd> **Super Street Fighter II Turbo Revival** | Links and stays in sync at about 47 fps; about 50 with *Fast link*. |
-| <kbd>NEW</kbd> **Driver 2 Advance** | Full speed (it stuttered before this release). |
-| **Sonic Advance, Mario Tennis: Power Tour** | Linked play passes in emulated pairs; not yet on two real consoles. |
-| **Pokémon Red, Blue, Yellow, Gold, Silver, Crystal** | Trades and battles between two PSPs. |
-| **Mario Golf: Advance Tour** | Its cable link doesn't form, so GBAdhoc offers it the Wireless Adapter instead (not yet tested with it). |
-| Most commercial GBA titles | Full speed. |
-| Heavy 3D / Mode 7 GBA titles | Varies; fast-forward and frameskip are there if you need them. |
-| **Game Boy / Game Boy Color** | Full speed with sound on every model. Shantae is playable but shows glitches on this core. |
+### Game Boy Advance
+
+| Game | 4.1.0, PSP-1000 | 4.5.0, PSP-1000 | 4.1.0, PSP-3000 | 4.5.0, PSP-3000 |
+|---|--:|--:|--:|--:|
+| Advance Wars 2: map battle | 59.8 | 59.8 | 59.8 | 59.8 |
+| Advance Wars 2: second scene | 59.7 | 59.8 | 59.7 | 59.8 |
+| Back to Stone | 18.1 | 59.7 | 18.2 | 59.7 |
+| Doom II | 18.4 | 59.1 | 18.7 | 59.5 |
+| Driver 2 Advance | 59.9 | 59.8 | 59.9 | 59.8 |
+| Duke Nukem Advance | 17.1 | 57.6 | 17.2 | 57.9 |
+| FIFA 07 | 21.7 | 59.6 | 21.7 | 59.6 |
+| Fire Emblem: The Sacred Stones | 59.7 | 59.7 | 59.7 | 59.7 |
+| Ford Racing 3 | 55.0 | 59.7 | 54.9 | 59.7 |
+| Hot Wheels: Stunt Track Challenge | 42.3 | 49.4 | 42.2 | 49.4 |
+| Ice Nine | 21.9 | 58.2 | 22.1 | 58.3 |
+| Kill.Switch | 36.1 | 58.3 | 36.2 | 58.4 |
+| LEGO Drome Racers | 51.0 | 56.8 | 50.7 | 56.6 |
+| Mario Golf: Advance Tour | 59.6 | 59.7 | 59.7 | 59.7 |
+| Mario Tennis: Power Tour | 56.8 | 59.6 | 56.9 | 59.7 |
+| Mario Tennis: Power Tour, second scene | 55.0 | 59.7 | 54.8 | 59.7 |
+| Max Payne | 49.2 | 59.6 | 50.0 | 59.7 |
+| Mortal Kombat: Deadly Alliance | 59.6 | 59.6 | 59.7 | 59.8 |
+| Need for Speed Carbon: Own the City | 42.9 | 59.7 | 42.9 | 59.7 |
+| Need for Speed: Most Wanted | 38.0 | 59.7 | 38.1 | 59.7 |
+| Need for Speed: Underground 2 | 59.9 | 59.9 | 59.9 | 59.9 |
+| Payback | <1 | 6.0 | <1 | 6.1 |
+| Pokémon Emerald: battle | 59.6 | 59.6 | 59.7 | 59.7 |
+| Pokémon FireRed | 59.7 | 59.7 | 59.7 | 59.7 |
+| Pokémon Heart & Soul: heavy-music battle | 59.3 | 59.3 | 59.4 | 59.4 |
+| Pokémon Heart & Soul: light-music battle | 59.5 | 59.5 | 59.5 | 59.5 |
+| Pokémon Unbound: double battle, high music | 59.1 | 59.1 | 59.4 | 59.4 |
+| Pokémon Unbound: double battle, medium music | 59.1 | 59.2 | 59.4 | 59.3 |
+| Pokémon Unbound: overworld | 59.0 | 59.1 | 59.2 | 59.2 |
+| Pokémon Unbound: rival battle, high music | 59.0 | 58.9 | 59.2 | 59.2 |
+| Pokémon Unbound: rival battle, medium music | 59.2 | 59.1 | 59.4 | 59.5 |
+| Smashing Drive | 29.8 | 59.7 | 29.9 | 59.7 |
+| SSX 3 | 35.3 | 59.6 | 35.5 | 59.6 |
+| Top Gear Rally | 49.6 | 56.4 | 49.4 | 56.4 |
+
+Payback's 4.1.0 runs were too slow to finish. On 4.5.0 these four start too, measured on a PSP-1000 and PSP-3000 respectively: Need for Speed: Underground (59.7, 59.7), Big Mutha Truckers (59.7, 59.7), Street Racing Syndicate (59.6, 59.6) and OpenLara (59.3, 59.3).
+
+**Tips:** set Pokémon Unbound to its **medium music preset** and Pokémon Heart & Soul's sound to **mono** for the best results.
+
+### Game Boy and Game Boy Color
+
+| Game | 4.1.0, PSP-1000 | 4.5.0, PSP-1000 | 4.1.0, PSP-3000 | 4.5.0, PSP-3000 |
+|---|--:|--:|--:|--:|
+| Kirby's Dream Land | 59.8 | 59.8 | 59.8 | 59.8 |
+| Kirby's Dream Land 2 | 58.2 | 59.9 | 58.1 | 59.8 |
+| Pokémon Crystal | 59.8 | 59.8 | 59.8 | 59.9 |
+| Pokémon Crystal: walking | 59.8 | 59.9 | 59.8 | 59.9 |
+| Pokémon Red | 59.8 | 59.8 | 59.9 | 59.9 |
+| Pokémon Yellow | 59.8 | 59.8 | 59.8 | 59.8 |
+| Pokémon Yellow: route walk | 59.8 | 59.8 | 59.8 | 59.8 |
+| Shantae: Scuttle Town | 59.7 | 59.8 | 59.7 | 59.8 |
+| Shantae: status screen | 59.7 | 59.8 | 59.7 | 59.8 |
+| Super Mario Land | 59.8 | 59.8 | 59.8 | 59.8 |
+| The Legend of Zelda: Link's Awakening DX | 59.6 | 59.9 | 59.7 | 59.9 |
+| The Legend of Zelda: Oracle of Ages | 59.7 | 59.9 | 59.7 | 59.8 |
+
+Shantae is playable but shows glitches on this core.
+
+### Link Cable play
+
+Two linked consoles, a PSP-1000 and a PSP-3000.
+
+| Game | 4.1.0 | 4.5.0 |
+|---|--:|--:|
+| Advance Wars 2 | 59.8 | 59.7 |
+| Kirby & The Amazing Mirror | 53.8 | 53.9 |
+| Kirby: Nightmare in Dream Land | 59.7 | 59.6 |
+| Mario Kart: Super Circuit | 59.6 | 59.5 |
+| Pokémon Gen 1 trade | 55.1 | 59.1 |
+| Pokémon Gen 2 trade | 49.7 | 58.4 |
+| Sonic Advance | 53.2 | 53.6 |
+| Super Street Fighter II Turbo Revival | 48.3 | 46.1 |
+
+Pokémon MonoMyth passes the game's accuracy check and has been played through the intro, the first battles and picking a starter; it has no speed figure here. Mario Tennis: Power Tour and Mario Golf: Advance Tour have [known issues](#status-and-known-limitations) over the Wireless Adapter. Mario Golf's cable link doesn't form, so GBAdhoc offers it the adapter instead.
 
 ---
 
 ## Status and known limitations
+
+**Known issue:** Mario Tennis: Power Tour and Mario Golf: Advance Tour over the Wireless
+Adapter. The link can't keep up: Tennis's connection icon flickers
+through the match and play hitches constantly; Golf lags and eventually disconnects. The
+Wireless Adapter path is the focus of the next updates, and they will address both.
 
 **Works, tested on hardware, on all three PSP models:** Wireless Adapter link battles and
 trades, sleep/wake with the Media Engine live, GB/GBC at full speed, and Quit to game
@@ -697,23 +940,28 @@ cartridge-transfer runs).
 - **Not yet run between two real consoles:** the GBA Link Cable's menus as a player uses
   them (the hardware runs drove the link directly), the version check, and a third PSP
   finding a room full. They are covered on emulated pairs.
-- <kbd>NEW</kbd> **Rewind is GBA only,** and it is off during link play. With *Rewind* on, a
+- **Rewind is GBA only,** and it is off during link play. With *Rewind* on, a
   GBA game gives up a little memory to the history: on a PSP-1000 that comes out of the
   part of a large cartridge kept in memory, about 0.7 MB at Medium and 2.7 MB at Long,
   and it stays reserved during a link session. Use Short or Medium on a PSP-1000.
-- <kbd>NEW</kbd> **Cheats:** GameShark and Action Replay codes for GBA, and any code that patches
-  the cartridge, cannot be switched on yet.
+- **Cheats:** a code that patches the cartridge, or an encrypted CodeBreaker code, cannot
+  be switched on. GameShark and Action Replay codes are limited to a RAM-only subset.
 - **On a PSP-1000**, link support keeps about 2 MB less of the cartridge in memory in
   single player (the second GBA's code stays loaded; its working memory is lent back to
   your game until a session starts). A very large cartridge may page from the Memory
   Stick a little more.
+- <kbd>NEW</kbd> **The faster core is bigger.** A PSP-1000 has about 0.7 MB less free memory at
+  boot than on 4.1.0, which also comes out of the part of a large cartridge kept in memory.
+- <kbd>NEW</kbd> **Some games still run below full speed:** see
+  [Performance by game](#performance-by-game). Link sessions didn't get faster in this
+  release, and Super Street Fighter II Turbo Revival links about 2 fps slower than on 4.1.0.
 - **Sleep waits for a reload to finish.** While a game boots, a link session starts or
   ends, or Quit to game list unloads, the POWER switch is held for that second or two,
   then the PSP sleeps. While joining a room that has just disappeared it can wait up to
   about 15 seconds.
 - The wake prompt appears a beat after the screen lights: the LCD shows video memory the
   instant it powers on, and we blank it at suspend, so you get black then the prompt.
-- Wireless Adapter sessions are paced to 59.73 fps on both consoles.
+- Wireless Adapter sessions are paced to 57 fps on both consoles.
 - HOME as the menu button needs `gbadhoc_home.prx` beside the EBOOT; without it you get
   a message and START+SELECT keeps the job.
 - Hero art is not included in this repository; see
@@ -781,6 +1029,9 @@ set are in [`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.md).
 - [`docs/INPROC-RETURN.md`](gpsp/docs/INPROC-RETURN.md), Quit to game
   list without a relaunch
 - [`docs/ADHOC-NOTES.md`](gpsp/docs/ADHOC-NOTES.md), the RFU protocol as we found it
+- [`docs/LOW-LATENCY.md`](gpsp/docs/LOW-LATENCY.md), where input latency comes from and
+  how it was cut
+- [`docs/GB-CORE-PERF.md`](gpsp/docs/GB-CORE-PERF.md), the Game Boy core's speed work
 - [`docs/DECISIONS.md`](gpsp/docs/DECISIONS.md), every design decision and why, including
   the ones that were wrong
 - [`docs/TESTING.md`](gpsp/docs/TESTING.md), the harness
@@ -817,6 +1068,14 @@ a PSP shell and a radio transport around it.**
   consoles, pushed for sleep/wake after being told it probably was not worth the risk,
   designed the wake prompt, and reported what actually happened, including the times it
   contradicted what a build was meant to prove.
+- **Chandler Hardy**, the sleep fixes in this release
+  ([#15](https://github.com/ShoshinFauteux/GBAdhoc/pull/15),
+  [#16](https://github.com/ShoshinFauteux/GBAdhoc/pull/16),
+  [#20](https://github.com/ShoshinFauteux/GBAdhoc/pull/20)).
+- **KarnFu** ([#9](https://github.com/ShoshinFauteux/GBAdhoc/issues/9)), who sent save
+  states for the games that ran badly and retested build after build on a PSP-1000. Most
+  of the games in this release's speed table were measured from those states.
+- **u/Far_Froyo_6317**, the community patch behind the grid filters.
 - **Rodrigo Alfonso (afska)** and **Corwin (kuiper.dev)**, the community protocol work on
   the Wireless Adapter that the emulation is built on and cross-checked against:
   [gba-link-connection's `wireless_adapter.md`](https://github.com/afska/gba-link-connection/blob/master/docs/wireless_adapter.md)
@@ -838,7 +1097,7 @@ a PSP shell and a radio transport around it.**
   replaced with GBAdhoc footage. The renders, the trailer included, are ours; the game
   content on the screens is the games'.
 
-- **Voxel Revolution** by Kevin MacLeod ([incompetech.com](https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2000025)), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); excerpted and crossfaded for the trailer.
+- **Voxel Revolution** by Kevin MacLeod ([incompetech.com](https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2000025)), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); excerpted and crossfaded for the 4.0.0 trailer.
 
 Licensed **GPL-2.0**, same as gpSP (see `COPYING`). Upstream copyright headers are intact.
 Changes to the core itself are kept minimal and are intended to be offered upstream.

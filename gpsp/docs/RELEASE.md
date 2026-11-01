@@ -65,13 +65,13 @@ The script will:
 - refuse if the EBOOT is missing, implausibly small, or **older than any source in
   `psp/`, `frontend-common/`, `netdrv/`** or the core archive (`--allow-stale` overrides —
   never use it for a real release);
-- lay out `PSP/GAME/gpsp-adhoc/` with the EBOOT, Media Engine module, and empty
+- lay out `PSP/GAME/GBAdhoc/` with the EBOOT, Media Engine module, and empty
   `roms/`, `saves/`, `log/`;
 - write `README.txt` (install text with the WLAN-switch and ad-hoc-channel warnings first),
   `LICENSE` (copied from `COPYING`), and a `VERSION.txt` stamp with version + commit + date;
 - **refuse to package any ROM, BIOS image or save file** — by extension and by GBA header
   magic;
-- zip to `dist/psp-agb-<version>.zip` and print a manifest with every file's size and
+- zip to `dist/GBAdhoc-<version>.zip` and print a manifest with every file's size and
   sha256, plus the zip's own.
 
 **Keep the manifest.** Paste the zip's sha256 into the release notes.
@@ -108,7 +108,7 @@ Attach to the release:
 
 | Artefact | Notes |
 |---|---|
-| `psp-agb-<version>.zip` | the only thing an end user needs |
+| `GBAdhoc-<version>.zip` | the only thing an end user needs |
 | The sha256 of that zip | from the manifest |
 | Release notes | the `[0.1.0]` CHANGELOG section, verbatim — including **Known issues** |
 

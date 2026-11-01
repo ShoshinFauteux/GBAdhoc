@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# make_release.sh — assemble the distributable gpSP-AdHoc / "PSP AGB" zip.
+# make_release.sh — assemble the distributable GBAdhoc zip.
 #
 # This script BUILDS NOTHING.  It takes an already-built EBOOT.PBP, lays out
 # the memory-stick tree a stranger can drag onto their PSP, stamps it with the
@@ -18,8 +18,8 @@
 #                        (you must mean it; the default is to refuse)
 #
 # Produces:
-#   <out>/psp-agb-<version>.zip      the release
-#   <out>/psp-agb-<version>/         the staging tree it was zipped from
+#   <out>/GBAdhoc-<version>.zip      the release; PSP/ sits at the zip's root
+#   <out>/GBAdhoc-<version>/         the staging tree it was zipped from
 #   a manifest on stdout: every packaged file with size + sha256, then the
 #   zip's own size + sha256.
 #
@@ -30,8 +30,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-APPDIR_NAME="gpsp-adhoc"          # ms0:/PSP/GAME/<this>/
-PRODUCT="psp-agb"
+# Every release installs here, so unzipping over an install upgrades it.
+# Never version this folder: 4.1.0 did, and players got a second install.
+APPDIR_NAME="GBAdhoc"             # ms0:/PSP/GAME/<this>/
+PRODUCT="GBAdhoc"
 
 die()  { echo "FATAL: $*" >&2; exit 1; }
 note() { echo "== $*"; }
@@ -209,7 +211,7 @@ fi
 cp "$REPO/COPYING" "$STAGE/LICENSE"
 
 cat > "$STAGE/VERSION.txt" <<EOF
-PSP AGB (gpSP-AdHoc)
+GBAdhoc
 version : $VERSION
 commit  : ${COMMIT}${DIRTY}
 built   : $BUILT
@@ -218,8 +220,8 @@ EOF
 cp "$STAGE/VERSION.txt" "$APP/VERSION.txt"
 
 cat > "$STAGE/README.txt" <<EOF
-PSP AGB — gpSP-AdHoc  v$VERSION  (${COMMIT}${DIRTY})
-GBA emulation for CFW PSP, with Wireless-Adapter multiplayer over PSP ad-hoc WiFi.
+GBAdhoc v$VERSION  (${COMMIT}${DIRTY})
+GBA, Game Boy and Game Boy Color emulation for CFW PSP, with link play between two PSPs.
 
 ================================================================
 READ THIS FIRST — the two things that stop wireless from working
@@ -247,53 +249,33 @@ Copy the "PSP" folder in this zip to the ROOT of your memory stick.  You get:
         EBOOT.PBP     the app
         gbadhoc_me.prx  Media Engine renderer module
         gbadhoc_home.prx  HOME-as-menu-button module (Settings > Controls)
-        roms/         <- put your own .gba ROMs here
+        roms/         <- put your own .gba, .gb and .gbc files here
         cheats/       your own per-game cheat files (see cheats/README.txt)
         saves/        (used by per-game builds)
         log/          frontend.log lands here
 
-Put your legally dumped .gba ROMs in roms/.  Existing save files go NEXT TO
-the ROM with the same name: Emerald.gba -> Emerald.sav
+Put your legally dumped ROMs in roms/ (subfolders are fine).
 Optional: a real GBA BIOS dump as gba_bios.bin in the $APPDIR_NAME folder.
 Without it the built-in open-source BIOS replacement is used, which is fine.
 
-Do all of this on BOTH consoles, with the SAME ROM on each.
-Launch: XMB -> Game -> Memory Stick -> PSP AGB
+To link two PSPs, do all of this on BOTH consoles.
+Launch: XMB -> Game -> Memory Stick -> GBAdhoc
+
+UPGRADING: copy the "PSP" folder over your install, or at least EBOOT.PBP,
+gbadhoc_me.prx and gbadhoc_home.prx together.  Your config.ini, saves and save
+states carry over.
+Coming from 4.1.0: it installed to PSP/GAME/GBAdhoc410.  Copy what you want to
+keep into PSP/GAME/$APPDIR_NAME, then delete GBAdhoc410.
 
 ================================================================
-CONTROLS
+CONTROLS AND LINK PLAY
 ================================================================
 
-  D-pad / O / X / L / R / Start / Select   the GBA (O = A, X = B)
-  Triangle                                 cycle video scaling
-  Square                                   fast-forward (hold)
-  Select + Start, held ~1/4 second         in-game menu
+Select + Start opens the in-game menu (HOME can do it too: Settings > Controls).
+Wireless Adapter and Link Cable play start from that menu: Host on one PSP,
+Join on the other, with the same ROM on both for GBA games.
 
-Menu: Resume / Save state / Load state / Wireless / Settings / Exit.
-X selects, O goes back.
-
-================================================================
-PLAYING WIRELESS
-================================================================
-
-  Console A: Menu -> Wireless -> Host session   (note the room code, e.g. GPSP07)
-  Console B: Menu -> Wireless -> Join: scan for rooms -> pick A's room
-             (or "Join room code" and D-pad it to the same code)
-
-Then just use the game's own wireless feature — in Pokemon gen 3 that is the
-Pokemon Center 2F Union Room.  Stay in the same room as each other.
-
-Notes:
-  * Fast-forward is locked to 1x while a wireless session is live (on purpose —
-    the games' link timeouts are written against real time).
-  * Savestates are blocked during a wireless session (the emulator core does not
-    save Wireless-Adapter state, so loading one would desync your partner).
-  * Your .sav is copied to .sav.bak before every wireless session starts.
-
-Wireless quality varies by game.  Pokemon FireRed/LeafGreen/Emerald, Mario Golf
-and Mega Man Battle Network work well; Digimon Racing, Shrek SuperSlam and Mario
-Tennis are latency-sensitive and will feel worse than on real hardware; Hamtaro
-Ham-Ham Games and Nonono Puzzle Chalien are known broken.
+Full guide: https://github.com/ShoshinFauteux/GBAdhoc#readme
 
 ================================================================
 CREDITS
@@ -304,10 +286,11 @@ Wireless Adapter reverse-engineering and emulation: David Guillen Fandos
 Protocol documentation: Rodrigo Alfonso (afska), Corwin (blog.kuiper.dev)
 Emulator core: gpSP, https://github.com/libretro/gpsp (Exophase, notaz,
 davidgfnet and contributors)
+GB/GBC core: TGB Dual by Hii, as ported to the PSP in Brunni's MasterBoy
 
 GPL-2.0-or-later — see LICENSE.  No ROMs or BIOS images are included.
 
-Full documentation: README.md in the source repository.
+Full documentation: https://github.com/ShoshinFauteux/GBAdhoc#readme
 EOF
 
 # ------------------------------------------- refuse to ship anyone's data --
@@ -334,17 +317,19 @@ note "clean: no ROMs, BIOS images or saves in the package"
 # ------------------------------------------------------------------- zip ---
 ZIP="$OUTDIR/$REL.zip"
 rm -f "$ZIP"
+# From inside the stage: PSP/ has to land at the zip's root to unzip onto a stick.
 if command -v zip >/dev/null 2>&1; then
-  ( cd "$OUTDIR" && zip -qr "$REL.zip" "$REL" )
+  ( cd "$STAGE" && zip -qr "../$REL.zip" . )
 elif command -v python3 >/dev/null 2>&1; then
-  ( cd "$OUTDIR" && python3 -m zipfile -c "$REL.zip" "$REL" )
+  ( cd "$STAGE" && python3 -m zipfile -c "../$REL.zip" PSP LICENSE README.txt VERSION.txt )
 elif command -v powershell >/dev/null 2>&1; then
   powershell -NoProfile -Command \
-    "Compress-Archive -Path '$STAGE' -DestinationPath '$ZIP' -Force" >/dev/null
+    "Compress-Archive -Path '$STAGE/*' -DestinationPath '$ZIP' -Force" >/dev/null
 else
   die "no zip, python3 or powershell available to make the archive"
 fi
 [ -f "$ZIP" ] || die "zip step produced no archive at $ZIP"
+unzip -l "$ZIP" | grep -q " PSP/GAME/$APPDIR_NAME/EBOOT.PBP$" || die "zip has no PSP/GAME/$APPDIR_NAME/EBOOT.PBP at its root"
 
 # -------------------------------------------------------------- manifest ---
 sha256_of() {

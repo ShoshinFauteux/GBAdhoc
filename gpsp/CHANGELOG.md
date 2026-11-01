@@ -1,7 +1,7 @@
 # Changelog
 
-All notable changes to **PSP AGB / gpSP-AdHoc** — the native PSP frontend for the modern
-gpSP core with GBA Wireless Adapter multiplayer over PSP ad-hoc WiFi.
+All notable changes to **GBAdhoc**, the native PSP frontend for the modern gpSP core,
+with GB/GBC support and link play between two PSPs.
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Versions are
 semantic. The emulator core itself comes from
@@ -10,8 +10,23 @@ separately and are intended for upstream.
 
 ---
 
-## [4.1.1] — unreleased
+## [4.5.0] — 2026-11-01
 
+- Pokémon MonoMyth is compatible: live timer counters and the ARM7 instruction prefetch
+  window, with no game-specific code.
+- Self-modifying GBA code costs far less: rewritten code is patched or reused instead of
+  retranslated. 46 test scenes average 26.7% higher frame rates than 4.1.0, and 68% on the
+  scenes under 58 fps on 4.1.0, on both the PSP-1000 and PSP-3000.
+- Lower input latency, and buttons are read right before each frame starts.
+- Faster GB/GBC core: the timer catches up only when read, and linked PSPs run more of each
+  frame in one go.
+- Wireless Adapter: works after a cable session; the other PSP learns when a host leaves; a
+  closed room leaves the list; no phantom players; less lag builds up on the joining PSP.
+- New screen filters (LCD grid, dot grid, scanlines) and PNG screenshots in PICTURE/GBAdhoc.
+- *Reset game* in the in-game menu, for GBA, GB and GBC.
+- Need for Speed Underground, Big Mutha Truckers and Street Racing Syndicate start, and ROMs
+  with accented names show up and open.
+- Sleep is steadier around the menus; *Thumbstick → Custom* binds from the game list.
 - GB/GBC battery saves are written by the writer thread, once cartridge RAM has
   held still for one check (at most ~30 s while it keeps changing); exit, sleep and
   quit still write at once. Fixes a hitch every ~5 s in GBC games that use battery
@@ -21,6 +36,11 @@ separately and are intended for upstream.
   memory for it) instead of returning silently to the XMB.
 - Rewind: an unlogged save read during replay is reported again, not a game reset.
 - netdrv: the unreliable broadcast path sends each peer's nonce (was uninitialised).
+
+**Known issues:** Mario Tennis: Power Tour and Mario Golf: Advance Tour struggle over the
+Wireless Adapter. The adapter path is the focus of the next updates.
+
+Both PSPs must be updated for linking and sharing. See the [README](../README.md).
 
 ## [4.1.0] — 2026-10-14
 
