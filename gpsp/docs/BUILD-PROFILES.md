@@ -3,7 +3,7 @@
 Four builds, four names, one command each.
 
 ```
-tools/build.sh release      # what a player installs
+tools/build.sh release      # what a player installs; no environment needed
 tools/build.sh harness      # the hardware performance rig
 tools/build.sh diagnostic   # release plus investigation instruments
 tools/build.sh soak         # long-running harness plus bad-jump reporting
@@ -31,14 +31,10 @@ must match the `PSP_LARGE_MEMORY=0` policy documented in `psp/Makefile`.
 | PSP-1000 memory budget (`PSP_LARGE_MEMORY=0`) | no | yes | no | yes |
 | same emulation as release | — | yes | yes | yes |
 
-The dynarec flags are **shared by all four** on purpose: a diagnostic build
+The dynarec feature set is **shared by all four** on purpose: a diagnostic build
 must be the same emulator as the release, or it answers a different question.
-
-```
-SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 SMC_GATE_BITMAP=1
-SMC_PARTIAL_SAFE=1 SMC_PARTIAL_STABLE_THUNK=1 SMC_PARTIAL_DIRECT_LINKS=1
-GBA_PC_MASK=1 BADJUMP_SAFE=1
-```
+It is not a list in any recipe: `gpsp_features.h` is force-included into every
+PSP core object (`docs/BUILD-SWITCHES.md` has the off switches).
 
 `ROM_BUFFER_SIZE=15` is not on that list because the top-level Makefile sets it
 for every PSP build (a PSP-3000 can otherwise allocate all 32 one-megabyte

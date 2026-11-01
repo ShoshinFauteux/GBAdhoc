@@ -1,13 +1,56 @@
 # BUILD SWITCHES — the inventory
 
-Every dynarec and diagnostic switch in the tree, with a verdict. 27 in the
-top-level Makefile plus 6 frontend defines.
+Every dynarec and diagnostic switch in the tree, with a verdict.
 
-**Why this exists.** Nine of these ship. Five are experiments that were tried
-and rejected, with the measurement that rejected them. Several have no recorded
-verdict anywhere — not in `DECISIONS.md`, not in the Makefile — so the only way
-to know what they were for was to read `cpu_threaded.c`. A flag with no verdict
-is worse than no flag: it looks like an option.
+**Why this exists.** A flag with no verdict is worse than no flag: it looks like
+an option.
+
+## How the shipped set is built (since 4.6.0)
+
+**`tools/build.sh release`, with no environment, is the release.** The 62 core
+switches that ship are lines in `gpsp_features.h`, which the root Makefile
+force-includes (`-include`) into every core object of `platform=psp1` and
+`platform=drprof-mipsel`, assembler included. No recipe lists them.
+`GBA_LINK`, `REWIND` and `LAYOUT_PIN` change what is compiled and linked, so they
+stay make variables, default 1 for `psp1` in both makefiles. `LAYOUT_PAD_BYTES`
+5264 is the default in `psp/Makefile`, `HOT_DATA_GUARD`'s link script follows the
+core, `PLAY_INPUT_FRESH` is in every profile's frontend list. This produced the
+4.5.0 ELF and EBOOT byte for byte.
+
+Other platforms never see the header. `platform=unix`, the SDL desktop build and
+the host tests compile these switches off, so **the `#else` paths are not dead
+code** and stay.
+
+| to do this | write this |
+|---|---|
+| one feature off, an A/B arm | `CORE_EXTRA="XLAT_PURE=0" tools/build.sh harness` (root make `XLAT_PURE=0`, which is `-DGPSP_NO_XLAT_PURE`). A release refuses `CORE_EXTRA`. |
+| a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
+| the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N` |
+| a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works |
+| a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
+
+**`-UNAME` does not switch a baked feature off**: gcc applies `-D`/`-U` before any
+`-include`, so the header would define it again. That is what `GPSP_NO_NAME` is
+for. `gpsp_profile.h` still refuses a combination that is silently wrong, so
+turning off something another feature needs is a compile error.
+
+`CAND1`, `CAND2`, `COMBO3` and `MSR_FAST` as `tools/build.sh` switches are gone:
+`=1` from an old recipe does nothing, anything else fails the build.
+
+**The manifest.** `coreFlags` in `build-manifest.json` is what the compiler
+resolved (`make print-features`, `-dM` on the exact make line), not a copy of a
+recipe. GBAdhoc-Lab's `gate_twin.py` rebuilds the twin from it and its scheduler
+matches fixture `requires` against it, so an empty list would degrade both
+silently; `tools/build.sh` fails instead. `tools/make_release.sh` refuses any
+build whose list is not exactly the header's.
+
+The rest of this file records what each switch does. Where a section below says
+"OFF by default" or "root make (`NAME=1`)" about a switch in `gpsp_features.h`,
+that was its state when it was measured; the header is the state now.
+
+---
+
+## How this list came to be
 
 Two defects found while compiling this list and fixed in the same commit:
 
@@ -25,8 +68,8 @@ Two defects found while compiling this list and fixed in the same commit:
 
 ## Shipped in every profile
 
-These are the flags `tools/build.sh` passes for release, harness and diagnostic
-alike. Changing one changes emulation.
+Part of `gpsp_features.h`, so release, harness and diagnostic alike. Changing
+one changes emulation. Not the whole list: the header is.
 
 | switch | what it does |
 |---|---|
@@ -298,8 +341,8 @@ measurements.
 
 ## The rule for adding one
 
-A switch needs three things or it becomes another entry in the "no recorded
-verdict" table:
+A switch that ships goes in `gpsp_features.h`, and only there. A switch needs
+three things or it becomes another entry in the "no recorded verdict" table:
 
 1. A comment **immediately above its own `ifeq`**, saying what it does and what
    it would prove.

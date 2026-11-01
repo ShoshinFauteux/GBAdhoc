@@ -3,11 +3,15 @@
 #
 # This script BUILDS NOTHING.  It takes an already-built EBOOT.PBP, lays out
 # the memory-stick tree a stranger can drag onto their PSP, stamps it with the
-# version + commit, and zips it.  Build first (docs/RELEASE.md):
+# version + commit, and zips it.  Build first (docs/RELEASE.md), with no
+# environment and nothing else on the line:
 #
-#   docker run --rm -v "$PWD":/build -w /build pspdev/pspdev \
-#       sh -c 'make platform=psp1 clean && make platform=psp1'
-#   docker run --rm -v "$PWD":/build -w /build/psp pspdev/pspdev make
+#   tools/build.sh release --out dist/release-build
+#
+# It refuses any other build: the manifest beside the EBOOT must say profile
+# release and name the EBOOT and PRX you gave it, and its resolved features must
+# be exactly gpsp_features.h plus GBA_LINK and REWIND, with the release frontend
+# defines and the shipped layout.  Nothing here takes an override for that.
 #
 # Usage:
 #   tools/make_release.sh [EBOOT.PBP] [options]
@@ -45,7 +49,7 @@ while [ $# -gt 0 ]; do
     --version)     VERSION="${2:-}"; shift 2 ;;
     --out)         OUTDIR="${2:-}";  shift 2 ;;
     --allow-stale) ALLOW_STALE=1;    shift ;;
-    -h|--help)     sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)            die "unknown option: $1" ;;
     *)             [ -z "$EBOOT" ] || die "unexpected argument: $1"
                    EBOOT="$1"; shift ;;
@@ -59,9 +63,7 @@ EBOOT="$EBOOT_DIR/$(basename "$EBOOT")"
 # ----------------------------------------------------------- the EBOOT -----
 [ -f "$EBOOT" ] || die "no EBOOT at '$EBOOT'.
   Nothing is built by this script.  Build it first:
-    docker run --rm -v \"\$PWD\":/build -w /build pspdev/pspdev \\
-        sh -c 'make platform=psp1 clean && make platform=psp1'
-    docker run --rm -v \"\$PWD\":/build -w /build/psp pspdev/pspdev make"
+    tools/build.sh release --out dist/release-build"
 
 EBOOT_SIZE=$(wc -c < "$EBOOT" | tr -d ' ')
 [ "$EBOOT_SIZE" -gt 262144 ] || die "EBOOT at '$EBOOT' is only $EBOOT_SIZE bytes.
@@ -143,8 +145,8 @@ fi
 # are the exact pair recorded by the build, rather than unrelated fresh files.
 BUILD_MANIFEST="$EBOOT_DIR/build-manifest.json"
 [ -f "$BUILD_MANIFEST" ] || die "no build-manifest.json beside '$EBOOT'; build with tools/build.sh release --out DIR"
-python3 - "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" <<'PY' || die "build manifest does not describe this release EBOOT and Media Engine module"
-import hashlib, json, pathlib, sys
+python3 - "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" "$REPO/gpsp_features.h" "$REPO/psp/Makefile" <<'PY' || die "build manifest does not describe a release built by: tools/build.sh release"
+import hashlib, json, pathlib, re, sys
 m = json.loads(pathlib.Path(sys.argv[1]).read_text())
 def sha(path):
     h = hashlib.sha256()
@@ -158,6 +160,32 @@ if m.get("eboot", {}).get("sha256") != sha(sys.argv[2]):
     raise SystemExit("EBOOT hash differs from build manifest")
 if m.get("mePrxSha256") != sha(sys.argv[3]):
     raise SystemExit("Media Engine PRX hash differs from build manifest")
+# THE RIGHT BUILD, not merely a matching one.  A make line that drops a feature,
+# or an instrument that slipped in, still says profile=release and hashes fine.
+features = pathlib.Path(sys.argv[4]).read_text()
+want = {"%s=%s" % (n, v) for n, v in re.findall(r"^#define (\w+) (\S+)$", features, re.M)}
+if len(want) < 50:
+    raise SystemExit("gpsp_features.h lists only %d features" % len(want))
+want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
+have = set(m.get("coreFlags", "").split())
+if have != want:
+    raise SystemExit("coreFlags are not the release feature set: missing %s, extra %s"
+                     % (sorted(want - have), sorted(have - want)))
+fe = {"-DGPSP_PLAYABLE", "-DVID_TRIPLE", "-DGPSP_PROFILE_RELEASE=1", "-DPLAY_INPUT_FRESH=1"}
+if set(m.get("frontendDefines", "").split()) != fe:
+    raise SystemExit("frontendDefines are not the release set: %s" % m.get("frontendDefines"))
+psp = set(m.get("pspMakeFlags", "").split())
+need = {"ME_CATCH=1", "PSP_EBOOT_ICON1=assets/gbadhoc_icon1.pmf", "GBA_LINK=1", "REWIND=1", "HOT_DATA_GUARD=1"}
+if psp != need:
+    raise SystemExit("pspMakeFlags are not the release set: missing %s, extra %s"
+                     % (sorted(need - psp), sorted(psp - need)))
+pad = re.search(r"^LAYOUT_PAD_BYTES \?= (\d+)", pathlib.Path(sys.argv[5]).read_text(), re.M)
+if pad is None or m.get("layoutPin") != 1 or m.get("layoutPadBytes") != int(pad.group(1)):
+    raise SystemExit("layout is not the release layout: LAYOUT_PIN=%s LAYOUT_PAD_BYTES=%s"
+                     % (m.get("layoutPin"), m.get("layoutPadBytes")))
+if m.get("title") != "GBAdhoc" or m.get("cleanRebuild") is not True:
+    raise SystemExit("not a clean build titled GBAdhoc: title=%r cleanRebuild=%r"
+                     % (m.get("title"), m.get("cleanRebuild")))
 PY
 BUILD_ID=$(python3 - "$BUILD_MANIFEST" <<'PY'
 import json, pathlib, sys
@@ -329,7 +357,7 @@ else
   die "no zip, python3 or powershell available to make the archive"
 fi
 [ -f "$ZIP" ] || die "zip step produced no archive at $ZIP"
-unzip -l "$ZIP" | grep -q " PSP/GAME/$APPDIR_NAME/EBOOT.PBP$" || die "zip has no PSP/GAME/$APPDIR_NAME/EBOOT.PBP at its root"
+unzip -l "$ZIP" | grep " PSP/GAME/$APPDIR_NAME/EBOOT.PBP$" >/dev/null || die "zip has no PSP/GAME/$APPDIR_NAME/EBOOT.PBP at its root"
 
 # -------------------------------------------------------------- manifest ---
 sha256_of() {

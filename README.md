@@ -1008,8 +1008,8 @@ differs is the frontend: **release** has telemetry compiled out entirely; **harn
 adds telemetry and the autopilot so a job file can drive a console unattended (titled
 *GBAdhoc HARNESS* on the XMB so it is never mistaken for a playable build);
 **diagnostic** is release plus instruments that write to the Memory Stick. The GBA Link
-Cable is built in with `GBA_LINK=1`. The reproducible release procedure and current flag
-set are in [`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.md).
+Cable is built in. The reproducible release procedure (`tools/build.sh release`, nothing else) and the feature
+set (`gpsp/gpsp_features.h`) are in [`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.md).
 
 ## Documentation
 

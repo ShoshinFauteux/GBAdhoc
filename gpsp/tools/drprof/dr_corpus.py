@@ -59,6 +59,8 @@ FIELDS = ["a", "n", "r", "pc", "i", "e", "io", "p", "o", "v", "fb"]
 # kind: ref = the reference; switch = must be IDENTICAL to base;
 #       assert = a checking build: must be IDENTICAL *and* must not abort.
 # Add a future switch here (one line) and run `dr_corpus.py full NAME`.
+# A variant is a complete list: dr_build.sh's default FEATURES=explicit keeps
+# gpsp_features.h out of it, which is also why -UDISPATCH_CACHE below works.
 DC = "-DDISPATCH_CACHE=1"
 RW = "-DSMC_RETIRE_WINDOW=1"
 SI = "-DSERIAL_IDLE_FAST=1"

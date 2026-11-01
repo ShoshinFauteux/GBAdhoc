@@ -32,18 +32,25 @@ pre-release, with the README status section saying so in the same words the CHAN
 
 ## 2. Build
 
-Exactly these commands, from a clean checkout of the tagged commit. Docker supplies the
-toolchain so the build is reproducible on any machine.
+Exactly this command, from a clean checkout of the tagged commit, with **no environment
+variables and nothing added**. It is the whole release recipe: the feature set lives in
+`gpsp_features.h`, and GBA link, rewind, the pinned layout (`LAYOUT_PAD_BYTES` 5264) and the
+release frontend defines are the defaults. Docker supplies the toolchain so the build is
+reproducible on any machine.
 
 ```bash
-# One clean, profile-stamped build; stages the EBOOT, PRX and manifest together.
+# One clean, profile-stamped build; stages the EBOOT, PRXs and manifest together.
 tools/build.sh release --out dist/release-build
 ```
+
+The binary embeds the short commit hash and nothing else that varies, so the same commit
+rebuilds byte for byte; 4.5.0 is ELF md5 `1f08d8ec`, EBOOT md5 `3bdd4db4` with
+`GPSP_BUILD_VERSION=66cecd5`. A release is reproducible from its tag alone.
 
 Sanity-check the artefact before packaging it:
 
 ```bash
-ls -l psp/EBOOT.PBP          # ~1.5 MiB; a few-hundred-KiB EBOOT means the core didn't link
+ls -l psp/EBOOT.PBP          # ~3.7 MiB; a much smaller EBOOT means the core didn't link
 ```
 
 Then boot it once in PPSSPP (`tools/e2e/run_boot_test.sh`) — the last chance to catch a
@@ -57,8 +64,12 @@ broken link before it reaches a memory stick.
 tools/make_release.sh dist/release-build/EBOOT.PBP --version 0.1.0
 ```
 
-The script checks that the adjacent manifest says `release` and its EBOOT and
-Media Engine hashes match the selected artifacts. It also refuses to package
+The script checks that the adjacent manifest says `release`, that its EBOOT and Media Engine
+hashes match the selected artifacts, and that the build is the right one: `coreFlags` (what
+the compiler resolved) must be exactly `gpsp_features.h` plus `GBA_LINK=1 REWIND=1
+GPSP_PROFILE=release`, with the release frontend defines, make flags, pinned layout and pad,
+title `GBAdhoc` and a clean rebuild. There is no override for that check; an arm built with
+any switch off, or with an instrument on, cannot be packaged. It also refuses to package
 source files newer than the EBOOT unless `--allow-stale` is explicitly used.
 The script will:
 
