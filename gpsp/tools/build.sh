@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build.sh — THE build command.  One profile name, one artifact, one manifest.
 #
-#   tools/build.sh release      what a player installs
+#   tools/build.sh release      what a player installs, with no environment:
+#                               this command IS the release recipe
 #   tools/build.sh harness      the hardware performance rig (telemetry+autopilot)
 #   tools/build.sh harness64    the same rig with the 64 MiB layout (MEMSIZE=1)
 #   tools/build.sh diagnostic   release plus investigation instruments
@@ -57,34 +58,26 @@ DOCKER_IMAGE="pspdev/pspdev"
 # Core flags reach the ROOT make (anything touching the dynarec); frontend
 # defines reach psp/Makefile.  Keep them together so a profile is one thing.
 #
-# SHARED CORE FLAGS: the dynarec configuration the accepted candidate was
-# validated with.  Changing these changes emulation, so they are not per
-# profile -- a diagnostic build must be the same emulator as the release or it
-# answers a different question.
-# JIT_CODE_DISCIPLINE (2026-10-02, 3.1.0 beta): survived every 40-reload soak on
-# the Go and the 3000, corpus 26/26 identical; it never hands the kernel an
-# I-cache range >= 16 KiB (proven a silent no-op on hardware).
-CORE_COMMON="SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 SMC_GATE_BITMAP=1
-SMC_PARTIAL_SAFE=1 SMC_PARTIAL_STABLE_THUNK=1 SMC_PARTIAL_DIRECT_LINKS=1
-GBA_PC_MASK=1 BADJUMP_SAFE=1 SMC_GATE_CHARGE=1 DISPATCH_CYCLE_CHECK=1 DMA_SMC_FLUSH=1
-DISPATCH_CACHE=1 SMC_RETIRE_WINDOW=1 SERIAL_IDLE_FAST=1
-JIT_CODE_DISCIPLINE=1 ENTRY_GATES=1
-SCHED_FAST=1 IRQ_IO_FAST=1"
-# SCHED_FAST / IRQ_IO_FAST (2026-10-11, 4.0.0 beta; docs/GBA-LINK-MIRROR.md
-# 24-25): two exact scheduler / interrupt-register fast paths, for every game.
-# The build switch compiles them in; the run-time switches sched_fast and
-# irq_io_fast turn them on (psp/main_psp.c PLAY_SCHED_FAST / PLAY_IRQ_IO_FAST,
-# config.ini keys of the same names as kill switches).  Corpus oracle:
-# state-identical to the build without them over the whole library
-# (DRCORPUS_SHIP=1 tools/drprof/dr_corpus.py full base fast2 fast2off).
-# NOT here, on purpose: TIMER_LAZY (refuted: guest-visible, no gain),
+# THE CORE FEATURE SET is not a recipe: gpsp_features.h, force-included by the
+# root Makefile, is what every profile compiles, and GBA_LINK, REWIND and
+# LAYOUT_PIN default on in both makefiles.  A diagnostic build is the same
+# emulator as the release or it answers a different question.  Each profile
+# here adds only what makes it that profile, and `tools/build.sh release` with
+# no environment IS the release.  Off arms: CORE_EXTRA="NAME=0" (not a release),
+# GBA_LINK=0, REWIND=0, LAYOUT_PIN=0, INPUT_FRESH=0.
+#
+# SCHED_FAST / IRQ_IO_FAST compile the paths in; the run-time switches
+# sched_fast and irq_io_fast turn them on (psp/main_psp.c, config.ini keys of
+# the same names as kill switches).  JIT_COST is codegen, not telemetry; its
+# harness keys (FE_EXTRA=-DJIT_COST_KEYS) are not in any profile.
+# NOT in the header, on purpose: TIMER_LAZY (refuted: guest-visible, no gain),
 # DRPROF_HW (profiler build), HOT_ORD=layout/hot_pair.ord (withdrawn).
 
 profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
   PSP_MAKE_FLAGS=""
   case "$1" in
     release)
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=release"
+      CORE_FLAGS="GPSP_PROFILE=release"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_RELEASE=1"
       TITLE="GBAdhoc"
       # ME_CATCH=1 ships the Media Engine module WITH the CPU-exception screen
@@ -101,7 +94,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       ;;
     harness)
       # Telemetry plus autopilot, so a job file can drive a console unattended.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=harness"
+      CORE_FLAGS="GPSP_PROFILE=harness"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       # The title is the only thing a tester sees on the XMB, so the harness
@@ -115,7 +108,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # 32 MiB layout, so on a 3000 it can never hold a 32 MiB cart: the ROM
       # residency A/B (docs/ROM-RESIDENCY.md) needs this one.  Same core, same
       # frontend defines; only PARAM.SFO's MEMSIZE differs.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=harness"
+      CORE_FLAGS="GPSP_PROFILE=harness"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc HARNESS64"
@@ -129,7 +122,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # the `harness` profile plus the task runner -- queue from ms0:/GBALAB,
       # RAM telemetry, one USB window per process, relaunch.  Same core flags
       # as `harness`; its timings compare only with other lab builds.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=harness"
+      CORE_FLAGS="GPSP_PROFILE=harness"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc LAB"
@@ -148,7 +141,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # SMC_WRITE_HISTO is deliberately NOT set: it rewrites smchisto.txt every
       # 4000 flushes, and over ten minutes of fast-forward that is a lot of
       # Memory Stick traffic competing with the event log we actually want.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=soak BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
+      CORE_FLAGS="GPSP_PROFILE=soak BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc SOAK"
@@ -173,7 +166,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # r0-r14/CPSR/return address at each IRQ return against the entry
       # snapshot (the BIOS and ABI guarantee equality) and dumps guest RAM to
       # ms0:/irqlost-N-*.bin on the first mismatches.  One struct copy per IRQ.
-      CORE_FLAGS="$CORE_COMMON GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
+      CORE_FLAGS="GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
       FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_DIAGNOSTIC=1"
       TITLE="GBAdhoc DIAG"
       ;;
@@ -205,16 +198,28 @@ profile_flags "$PROFILE"
 # flags do not, and the manifest records the title used.  relabel_pbp.py
 # cannot do this for the release profile: "GBAdhoc" left no room in the SFO.
 [ -n "${GPSP_EBOOT_TITLE:-}" ] && TITLE="$GPSP_EBOOT_TITLE"
-# GBA_LINK=1: the GBA link mirror (two cores; docs/GBA-LINK-MIRROR.md).  A
-# core flag AND a frontend flag, set here together so they cannot drift apart.
-# A release may carry it (2026-10-03, GBA-LINK-MIRROR.md 17.6): instance B is
-# dormant until a cable session starts, single-player output is unchanged, and
-# the pinned layout keeps instance A exactly where a non-link build has it.
-# Its cost is image size (instance B's static state), which the boot memory
-# gate and docs/MEMORY-BUDGET.md account for.
-if [ "${GBA_LINK:-0}" = 1 ]; then
-  CORE_FLAGS="$CORE_FLAGS GBA_LINK=1"
-  PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS GBA_LINK=1"
+# The switches that replaced these are gone: CAND1, CAND2, COMBO3 and MSR_FAST
+# are in gpsp_features.h.  =1 from an old recipe changes nothing; anything else
+# asked for an arm that no longer exists this way, so say so.
+for v in CAND1 CAND2 COMBO3 MSR_FAST; do
+  case "${!v:-1}" in
+    1) ;;
+    *) echo "FAIL: $v=${!v} is gone: the core features are permanent; switch one off with CORE_EXTRA=\"NAME=0\""; exit 1 ;;
+  esac
+done
+
+# GBA_LINK (default 1; 0 for an arm without it): the GBA link mirror (two cores;
+# docs/GBA-LINK-MIRROR.md).  A core flag AND a frontend flag, set here together
+# so they cannot drift apart.  Instance B is dormant until a cable session
+# starts, single-player output is unchanged, and the pinned layout keeps
+# instance A exactly where a non-link build has it.  Its cost is image size
+# (instance B's static state), which the boot memory gate and
+# docs/MEMORY-BUDGET.md account for.
+GBA_LINK="${GBA_LINK:-1}"
+case "$GBA_LINK" in 0|1) ;; *) echo "FAIL: GBA_LINK must be 0 or 1"; exit 2 ;; esac
+CORE_FLAGS="$CORE_FLAGS GBA_LINK=$GBA_LINK"
+PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS GBA_LINK=$GBA_LINK"
+if [ "$GBA_LINK" = 1 ]; then
   # GBALINK_LEAN_OUTLINE=1 (serial.h): the lean cable hooks out of line, so
   # update_gba keeps its single-player size in the pinned hot core.
   if [ "${GBALINK_LEAN_OUTLINE:-0}" = 1 ]; then
@@ -223,59 +228,19 @@ if [ "${GBA_LINK:-0}" = 1 ]; then
   [ -n "${GPSP_EBOOT_TITLE:-}" ] || [ "$KIND" = release ] || TITLE="$TITLE LINK"
 fi
 
-# One-off VARIANTS of a non-release profile (tools/drprof/stage_hw_drprof.py):
-# REWIND=1: the rewind (docs/REWIND.md) compiled in, for any profile.  It is
-# a switch of its own, like GBA_LINK, because a release refuses CORE_EXTRA and
-# PSP_EXTRA: `GBA_LINK=1 REWIND=1 tools/build.sh release` is the playable
-# build with the Settings toggle (which stays off until the player turns it
-# on).  Both makes need it: the core's store marks and the frontend.
-if [ "${REWIND:-0}" = 1 ]; then
-  CORE_FLAGS="$CORE_FLAGS REWIND=1"
-  PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=1"
-fi
+# REWIND (default 1; 0 for an arm without it): the rewind (docs/REWIND.md) with
+# the Settings toggle, which stays off until the player turns it on.  Both
+# makes need it: the core's store marks and the frontend.
+REWIND="${REWIND:-1}"
+case "$REWIND" in 0|1) ;; *) echo "FAIL: REWIND must be 0 or 1"; exit 2 ;; esac
+CORE_FLAGS="$CORE_FLAGS REWIND=$REWIND"
+PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=$REWIND"
 
-# COMBO3=1: the lab-combo3 dynarec additions (a9f432c, Lab build 67e4f36a1357:
-# candidate A's single-store SMC retire, XLAT_FAST, JIT_COST, TIMER_RELOAD_FIX)
-# on top of CORE_COMMON, for a PLAYABLE owner test build of the validated Lab
-# core -- the lab profile passed these as CORE_EXTRA, which a release refuses.
-# Core only (ROOT make).  JIT_COST is codegen (publish by user line ops, fast
-# RAM scan; runtime defaults on), not telemetry; its harness keys
-# (-DJIT_COST_KEYS) are NOT added.
-if [ "${COMBO3:-0}" = 1 ]; then
-  CORE_FLAGS="$CORE_FLAGS SMC_PARTIAL_SINGLE=1 SMC_SINGLE_THUMB=1 SMC_SINGLE_HALF=1 SMC_SINGLE_ANYPC=1 SMC_SINGLE_EWRAM=1 SMC_SINGLE_UNTAG=1 SMC_SINGLE_HOT=64 XLAT_FAST=1 JIT_COST=1 TIMER_RELOAD_FIX=1"
-fi
-
-# CAND1=1: the cand1 core (f1c2-da2 + idle/gate learning + correctness fixes +
-# XLAT_PURE; Lab build 05638f0d21ae, gate PASS 2026-10-28) on top of COMBO3, for
-# a PLAYABLE owner test build -- the lab recipe (builds/cand-out/cand_build.sh)
-# passed these as CORE_EXTRA, which a release refuses.  Core only.
-if [ "${CAND1:-0}" = 1 ]; then
-  CORE_FLAGS="$CORE_FLAGS DISPATCH_PRECISE=1 SMC_SAME_SKIP=1 SMC_SAME_ADAPT=1 SMC_STM_RANGE=1 SMC_RETIRE_LOCAL=1 SMC_RETIRE_LIST=1 XS_HEAP=1 SMC_SAME_REPROBE=1024 XS_WALK_PAIR=1 SMC_STM_CHAIN=1 VRAM_EXEC=1 FIQ_BANK_FIX=1 HOT_DATA_GUARD=1 HOT_DATA_OFFSET=0x1b00 SMC_STM_WIDE=1 SMC_STM_AHEAD=1 DMA_SMC_RETIRE=1 DMA_SMC_ADAPT=1 DMA_ADAPT_V2=1 SPIN_SKIP=1 SMC_GATE_SELFPATCH=1 BX_ALIGN_FIX=1 COND_ENTRY_FIX=1 BACKUP_BUS_FIX=1 XLAT_PURE=1"
-fi
-
-# CAND2=1: cand2 = cand1 + the in-place immediate patch (SMC_IMM_PATCH with
-# XS_NOTE_FAST, ENTRY_GATES_RANGE, ENTRY_GATES_FAST; claude/xlat-cost) + SMC
-# reuse (SMC_REUSE, 256 KiB spare, mode 3 since 4.5.0 -- HW r5ac510/r149b9c; claude/reuse-
-# modes), for a PLAYABLE owner test build -- the lab recipe passed these as
-# CORE_EXTRA, which a release refuses.  Needs CAND1=1.  Core only.
-if [ "${CAND2:-0}" = 1 ]; then
-  [ "${CAND1:-0}" = 1 ] || { echo "FAIL: CAND2=1 needs CAND1=1"; exit 1; }
-  CORE_FLAGS="$CORE_FLAGS SMC_IMM_PATCH=1 XS_NOTE_FAST=1 ENTRY_GATES_RANGE=1 ENTRY_GATES_FAST=1 SMC_REUSE=1 SMC_REUSE_SPARE_KB=256 SMC_REUSE_MODE=3"
-fi
-
-# MSR_FAST=1: the mode-switch fast path (claude/codegen-q3; layout-identical
-# HW A/B rc26392: OpenLara -4.3 %, Unbound -3.7 %).  Needs CAND1=1 for
-# FIQ_BANK_FIX.  A switch of its own because a release refuses CORE_EXTRA.
-if [ "${MSR_FAST:-0}" = 1 ]; then
-  [ "${CAND1:-0}" = 1 ] || { echo "FAIL: MSR_FAST=1 needs CAND1=1"; exit 1; }
-  CORE_FLAGS="$CORE_FLAGS MSR_FAST=1"
-fi
-
-# INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
-# ON by default, for a side-by-side PLAYABLE test build, which cannot read the
-# harness ini.  Frontend only.  A switch of its own like REWIND, because a
-# release refuses FE_EXTRA.
-if [ "${INPUT_FRESH:-0}" = 1 ]; then
+# INPUT_FRESH (default 1): the low-latency pad re-peek (`input_fresh`,
+# docs/LOW-LATENCY.md) on by default in the frontend, in every profile; a
+# playable build cannot read the harness ini.  INPUT_FRESH=0 is the source
+# default, off.
+if [ "${INPUT_FRESH:-1}" = 1 ]; then
   FE_DEFS="$FE_DEFS -DPLAY_INPUT_FRESH=1"
 fi
 
@@ -298,9 +263,11 @@ if [ -n "${CORE_EXTRA:-}${FE_EXTRA:-}" ]; then
 fi
 
 # HOT_DATA_GUARD reaches the PSP link too: its placement is a link script
-# (psp/hot_data_guard.ld), which the core flag alone cannot add.
+# (psp/hot_data_guard.ld), which the core flag alone cannot add.  The link must
+# follow an arm that switches it off.
 case " $CORE_FLAGS " in
-  *" HOT_DATA_GUARD=1 "*) PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1" ;;
+  *" HOT_DATA_GUARD=0 "*) PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=0" ;;
+  *)                      PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1" ;;
 esac
 
 # PSP_EXTRA: extra psp/Makefile variables for a one-off variant, e.g. the
@@ -375,9 +342,11 @@ fi
 # 8.43, and a 2600-byte pad no longer moves the pinned build).  Every profile
 # gets it, so rigs measure the layout that ships.  LAYOUT_PIN=0 is the kill
 # switch: the pre-pinning layout, byte for byte.  BOTH makes must get the
-# same value.  LAYOUT_PAD_BYTES=N adds the stability probe (the bench's pad arm).
+# same value.  LAYOUT_PAD_BYTES is part of the shipped layout: psp/Makefile
+# holds the value, LAYOUT_PAD_BYTES=N here is the bench's pad arm.
 LAYOUT_PIN="${LAYOUT_PIN:-1}"
-LAYOUT_PAD_BYTES="${LAYOUT_PAD_BYTES:-0}"
+LAYOUT_PAD_DEFAULT=$(sed -n 's/^LAYOUT_PAD_BYTES ?= //p' "$ROOT/psp/Makefile" | tr -d '\r')
+LAYOUT_PAD_BYTES="${LAYOUT_PAD_BYTES:-$LAYOUT_PAD_DEFAULT}"
 case "$LAYOUT_PIN" in 0|1) ;; *) die "LAYOUT_PIN must be 0 or 1" ;; esac
 note "layout  : LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES"
 # CHEATS: the per-game cheats menu (docs/CHEATS.md), default on in every

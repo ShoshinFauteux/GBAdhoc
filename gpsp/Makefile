@@ -268,14 +268,18 @@ else ifeq ($(platform), psp1)
 	$(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
 	endif
 	CFLAGS += -DSMALL_TRANSLATION_CACHE -DRUNTIME_JIT_CACHE
-	# LAYOUT_PIN=1 (OPT-IN; docs/LAYOUT-PINNING.md): every function in its own
+	# GBA_LINK and REWIND are make variables and not gpsp_features.h lines
+	# because each changes what is compiled and linked, here and in
+	# psp/Makefile (same default); =0 is the arm without it.
+	GBA_LINK ?= 1
+	REWIND ?= 1
+	# LAYOUT_PIN (default 1; docs/LAYOUT-PINNING.md): every function in its own
 	# section, so psp/Makefile's link can put the hot path first in .text in a
 	# fixed order (psp/layout/hot.ord), and -DLAYOUT_PIN pins the translation
 	# cache's I-cache sets (gpsp_config.h JIT_PIN_*).  Code is unchanged; only
-	# addresses move.  OFF by default until a hardware bench validates it (owner
-	# guardrail); LAYOUT_PIN=0 is the pre-pinning layout, byte for byte.  Pass
-	# the SAME value to psp/Makefile (tools/build.sh does).
-	LAYOUT_PIN ?= 0
+	# addresses move.  LAYOUT_PIN=0 is the pre-pinning layout, byte for byte.
+	# Pass the SAME value to psp/Makefile (tools/build.sh does).
+	LAYOUT_PIN ?= 1
 	ifeq ($(LAYOUT_PIN),1)
 	CFLAGS += -ffunction-sections -DLAYOUT_PIN=1
 	endif
@@ -1406,8 +1410,8 @@ DEFINES += -DGBALINK_LEAN_OUTLINE
 endif
 endif
 
-# REWIND=1: the rewind prototype's core half (docs/REWIND.md) -- the two
-# pieces of machine state a save state does not carry.  Off by default.
+# REWIND=1: the rewind's core half (docs/REWIND.md) -- the two pieces of
+# machine state a save state does not carry.  Default 1 on psp1 only.
 ifeq ($(REWIND),1)
 CFLAGS += -DREWIND
 # REWIND_MUTANT=n: tests only (tools/rewind_test.py mutant).  A store path
