@@ -66,7 +66,7 @@ u32 flush_ram_dma = 0;   /* DMA into tagged IWRAM/EWRAM */
  * flush_translation_cache_ram_smc() in the smc_write stub, so the partial
  * invalidation path can retire just the block covering it. */
 u32 smc_last_write_addr = 0;
-u32 flush_ram_partial = 0;   /* single-block retirements (SMC_PARTIAL) */
+u32 flush_ram_partial = 0;   /* single-block retirements (SMC_PARTIAL_SAFE) */
 
 /* ---------------------------------------------------------------------------
  * ADR-0030: SMC write-ADDRESS profile.
@@ -391,17 +391,11 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
   unsigned i;
   smc_blk_xlat++;
   smc_blk_xlat_total++;
-#if defined(SMC_PARTIAL) || defined(SMC_PARTIAL_SAFE)
+#ifdef SMC_PARTIAL_SAFE
   /* Hand the block's source extent to the tag table while it is still this
    * block's — external-exit resolution below can recursively translate other
    * blocks and would otherwise overwrite it. */
   ramtag_note_extent(start_pc, end_pc, thumb);
-#endif
-#ifdef SMC_PARTIAL
-  /* And record the block end as a barrier when the scan stopped on an
-   * unconditional branch: nothing falls through one, so no block can span it. */
-  if (reason == SMC_SCAN_UNCOND)
-    ramtag_note_barrier(end_pc);
 #endif
   /* Does the range scan_block just tagged overlap the watched page? */
   if (!smc_blk_watch ||

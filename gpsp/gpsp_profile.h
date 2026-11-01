@@ -118,12 +118,6 @@
 #error "release + GPSP_CATCH_SELFTEST: L+R+UP+TRIANGLE crashes the PSP on purpose."
 #endif
 
-/* Rejected experiments.  SMC_SKIP_SAME white-screens Pokemon Heart & Soul at
- * boot (its compare is wrong); it is kept for the record, not for shipping. */
-#ifdef SMC_SKIP_SAME
-#error "release + SMC_SKIP_SAME: known to white-screen Heart & Soul at boot."
-#endif
-
 #endif /* GPSP_PROFILE_RELEASE */
 
 /* ---- the harness needs its telemetry ------------------------------------ */
@@ -136,10 +130,6 @@
 /* These are the ones that cost real hardware experiments: the build succeeds,
  * one rule quietly shadows the other, and the result is attributed to the flag
  * that was not in fact active.  See cpu_threaded.c for each rule. */
-
-#if defined(SMC_PARTIAL_SAFE) && defined(SMC_PARTIAL)
-#error "SMC_PARTIAL_SAFE and SMC_PARTIAL: SAFE silently wins. Pick one."
-#endif
 
 #if defined(SMC_GATES_CLUSTER) && defined(SMC_GATES_SIMPLE)
 #error "SMC_GATES_CLUSTER and SMC_GATES_SIMPLE: CLUSTER silently wins."

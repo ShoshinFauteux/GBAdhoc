@@ -134,14 +134,12 @@ the maximum freezes. Both crashed.
 ## Rejected, with the measurement
 
 Kept in the tree because the measurement is the point; refused in a release
-build where that applies.
+build where that applies. Those deleted since are under "Removed".
 
 | switch | verdict |
 |---|---|
-| `SMC_SKIP_SAME` | **White-screens Heart & Soul at boot** — the idempotent-store compare is wrong. `gpsp_profile.h` refuses it in a release. |
 | `SMC_GATES_CODED` | Demands the write address itself already be a block start, which rejects `0300168c` because at the moment of the write that address is *interior* to its block. 59.9 → 46-58 fps. |
 | `SMC_GATES_SNAP` | Snaps backwards to the block head: valid, but the block starting at that head still spans the SMC region, so isolation is lost. 1.43M flushes, 31-48 fps, against 116k and a locked 59.9 for add-only. |
-| `SMC_PARTIAL` | Superseded by `SMC_PARTIAL_SAFE`. Its block-copy detector is the ancestor of the current writer fingerprint. |
 | 2.0.2's evicting gate rule (no flag; the `#else` branch when neither `SIMPLE` nor `CLUSTER` is set) | Eviction reassigns a gate's address while blocks compiled against the old layout are live, and gpSP's tag map holds one slot per halfword — it cannot represent the resulting overlap. This is the Heart & Soul crash. |
 
 ---
@@ -347,6 +345,8 @@ script. The code is in the 4.5.0 tag.
 |---|---|
 | `GATE_NOCHECK`, `GATE_ONLY_FULLFLUSH`, `GATE_HIGH_ONLY`, `NO_GATE_TAG_FIX`, `NO_BL_FIX` | The 2026-09-24 gate-layout A/B arms: gate exits past the cycle check, endpoint gates without partial retirement, the one-gate layout, and the pre-fix behaviour of the gate-word tag and BL fixes. Their question is answered above. |
 | `SMC_REUSE_ARMING` | bb8b7b2's arming window for `SMC_REUSE`, kept as a cost knob. The spare invariant made reuse exact everywhere, so no arming was left to do. |
+| `SMC_SKIP_SAME` | **White-screens Heart & Soul at boot** — the idempotent-store compare is wrong. Measured dead on the merits too: at the H&S hot word 0x0300168c the stored value changed 11,613 times against 24 identical, so a working filter would remove 0.2 % of the flushes. `SMC_SAME_SKIP`, which compares what each translation read, is the idea done right. |
+| `SMC_PARTIAL` | Superseded by `SMC_PARTIAL_SAFE`. Its block-copy detector is the ancestor of the current writer fingerprint. |
 | `NO_GAME_SPEED_HINTS`, `NO_GAME_IDLE_HINT`, `NO_GAME_GATE_HINTS` | Ignore the game table's idle-loop and gate seeds. `gba_memory.c` keeps what the twin study found them worth. The table stays. |
 
 ---

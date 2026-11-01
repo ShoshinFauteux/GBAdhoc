@@ -3223,56 +3223,6 @@ static void emit_pmemst_stub(
     } else {
       mips_emit_lb(reg_temp, reg_temp, base_addr);
     }
-#ifdef SMC_SKIP_SAME
-    /* DO NOT SHIP AS-IS: white-screens Pokemon Heart & Soul at boot.
-     * Tested 2026-09-12 in PPSSPP as a single-variable change from a config
-     * that had just run three rival battles clean.  The game executed hard
-     * (68000 SMC flushes during boot alone, vs 56000 for three FULL battles
-     * on the same build without this) and then froze on a white screen --
-     * the OSD kept drawing 59.9 fps while the s/x counters stopped, i.e. the
-     * emulated CPU had stopped.  That is the pre-2.0.2 H&S boot symptom.
-     *
-     * The idea still targets the right thing: a histogram of 56000 flushes
-     * showed 97.8% came from ONE self-modifying routine at 0x030016xx
-     * writing to itself.  But the filter as written does not make that game
-     * boot, so the predicate or the emitted sequence is wrong somewhere --
-     * suspect what reg_temp/base_addr address the compare actually reads
-     * (tag mirror vs data), and note sb/sh are not filtered at all. */
-    /* Idempotent-store filter (word stores only).
-     *
-     * The stock check is "is there translated code at this address?" and, if
-     * so, wipes the ENTIRE RAM translation cache.  It never asks whether the
-     * store actually CHANGES anything — so a game that rewrites identical
-     * bytes over a region containing translated code triggers a full cache
-     * rebuild every time, for a write that altered nothing.  Measured on
-     * Pokemon Unbound (CFRU): >1000 wipes/second in battle, >2000 on the
-     * title screen, all of them CPU-store sourced (DMA count was zero).
-     *
-     * So: only flush when the value differs.  The predicate is exact — the
-     * comparison is against the very word the store is about to write, so
-     * "equal" provably means "memory unchanged", which means every already
-     * translated block covering it stays valid.
-     *
-     * Word stores only for now: sb/sh write partial registers, so a correct
-     * compare there needs masking (and a second scratch register).  Word
-     * stores are what code-copy loops and LDM/STM use, which is the pattern
-     * that generates the storm.
-     *
-     * Layout (offsets are delay-slot relative — the store at word 4 is both
-     * the fall-through and the bne's delay slot):
-     *   0 beq reg_temp, zero, +3   -> no code here, go straight to the store
-     *   1 nop                          (delay)
-     *   2 lw  reg_temp, off(reg_rv)    current value
-     *   3 bne reg_temp, reg_a1, smc    differs -> real SMC, flush
-     *   4 sw  reg_a1, off(reg_rv)      (delay slot / fall-through) */
-    if (realsize == 2) {
-      mips_emit_b(beq, reg_temp, reg_zero, 3);
-      mips_emit_nop();
-      mips_emit_lw(reg_temp, reg_rv, base_addr);
-      mips_emit_b(bne, reg_temp, reg_a1,
-                  branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));
-    } else
-#endif
     // If the data is non zero, we just wrote over code
     // Local-jump to the smc_write (which lives at offset:0)
     mips_emit_b(bne, reg_zero, reg_temp, branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));

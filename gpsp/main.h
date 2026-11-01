@@ -132,7 +132,7 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
 
 extern u32 smc_blk_watch;
 extern u32 smc_last_write_addr;  /* GBA addr of the store that forced a flush */
-extern u32 flush_ram_partial;    /* single-block retirements (SMC_PARTIAL) */
+extern u32 flush_ram_partial;    /* single-block retirements (SMC_PARTIAL_SAFE) */
 extern u32 smc_blk_xlat;
 extern u32 smc_blk_xlat_total;   /* monotonic; never reset by a take */
 
@@ -151,16 +151,13 @@ extern u32 smc_flush_bytes;
 extern u32 smc_flush_wide;
 
 void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason);
-#if defined(SMC_PARTIAL) || defined(SMC_PARTIAL_SAFE)
+#ifdef SMC_PARTIAL_SAFE
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb);
 #endif
 #ifdef SMC_PARTIAL_SAFE
 /* Runtime activation keeps the selective-retirement machinery out of games
  * that never present the proven SoundMainRAM patch layout. */
 extern u32 smc_partial_active;
-#endif
-#ifdef SMC_PARTIAL
-void ramtag_note_barrier(u32 end_pc);
 #endif
 void smc_blk_note_writer(u32 gba_addr, u32 pc);
 
