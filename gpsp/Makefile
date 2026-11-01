@@ -404,9 +404,9 @@ else ifeq ($(platform), psp1)
 	endif
 	# VRAM_EXEC=1: translate and run code the game copied into VRAM
 	# (cpu_threaded.c VRAM_EXEC; Big Mutha Truckers, Street Racing Syndicate,
-	# jsmolka nes.gba).  Off by default.
+	# jsmolka nes.gba).
 	# FIQ_BANK_FIX=1: bank FIQ's r8-r12 correctly in set_cpu_mode (cpu.cc;
-	# OpenLara).  Off by default.  (From claude/self-activate 950c5f3/25cab1b.)
+	# OpenLara).  (From claude/self-activate 950c5f3/25cab1b.)
 	ifeq ($(FIQ_BANK_FIX),1)
 	CFLAGS += -DFIQ_BANK_FIX=1
 	endif
@@ -448,7 +448,7 @@ else ifeq ($(platform), psp1)
 	# HOT_DATA_GUARD=1: the stub's hot data block (memory_map_read, reg,
 	# palette/OAM, spsr, reg_mode, patcher tables) at a FIXED D-cache set
 	# offset, HOT_DATA_OFFSET (default 0x1b00 = lab-cpl2xvf's placement;
-	# mips/mips_stub.S).  Off by default.
+	# mips/mips_stub.S).
 	ifeq ($(HOT_DATA_GUARD),1)
 	CFLAGS += -DHOT_DATA_GUARD=1
 	endif
@@ -476,7 +476,7 @@ else ifeq ($(platform), psp1)
 	# TIMER_RELOAD_FIX=1: a timer that has just overflowed reads its reload
 	# value instead of 0x0000 (main.c update_timers).  Need for Speed
 	# Underground computed a 4 GB mixer fill from the 0 and wiped IWRAM
-	# (dr2-nfsu 2026-10-21).  Guest-visible, so off by default.
+	# (dr2-nfsu 2026-10-21).  Guest-visible.
 	ifeq ($(TIMER_RELOAD_FIX),1)
 	CFLAGS += -DTIMER_RELOAD_FIX
 	endif
@@ -621,7 +621,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DRPROF_HW),1)
 	CFLAGS += -DDRPROF_HW=1
 	endif
-	# SMC_RETIRE_WINDOW=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
+	# SMC_RETIRE_WINDOW=1: (docs/DYNAREC-PROFILE.md).
 	# Bound the partial-retire tag walk by the longest live block extent
 	# instead of MAX_BLOCK_SIZE*4.  Measurement only.
 	ifeq ($(SMC_RETIRE_WINDOW),1)
@@ -634,7 +634,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_WINDOW_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_WINDOW_CHECK=1
 	endif
-	# SMC_RETIRE_LOCAL=1: OFF by default (slow-titles, needs SMC_RETIRE_WINDOW).
+	# SMC_RETIRE_LOCAL=1: (slow-titles, needs SMC_RETIRE_WINDOW).
 	# The retire walks start at a per-64-byte-chunk bound on where a block
 	# covering the write can start, instead of one longest-block-seen below
 	# it (cpu_threaded.c smc_back_*).  Same retirements, shorter walks.
@@ -646,26 +646,26 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_LOCAL_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_LOCAL_CHECK=1
 	endif
-	# SMC_RETIRE_LIST=1: OFF by default (slow-titles).  smc_retire_span's
+	# SMC_RETIRE_LIST=1: (slow-titles).  smc_retire_span's
 	# validation walk skips interior-mark pairs a word at a time and lists the
 	# block-start tags; the retire pass visits only those.  Same retirements.
 	ifeq ($(SMC_RETIRE_LIST),1)
 	CFLAGS += -DSMC_RETIRE_LIST=1
 	endif
-	# XS_HEAP=1: OFF by default (cpu-levers cpl2w).  The SMC_SAME_SKIP and
+	# XS_HEAP=1: (cpu-levers cpl2w).  The SMC_SAME_SKIP and
 	# SMC_RETIRE_LOCAL tables (up to 69 KiB) come from one heap block taken
 	# before the ROM cache instead of .bss, so the hot arrays after them in
 	# .bss keep the release layout (D-cache sets).
 	ifeq ($(XS_HEAP),1)
 	CFLAGS += -DXS_HEAP=1
 	endif
-	# XS_WALK_PAIR=1: OFF by default (cpu-levers cpl2w).  xs_blocks_current
+	# XS_WALK_PAIR=1: (cpu-levers cpl2w).  xs_blocks_current
 	# tests two tag slots per aligned load (a pair with every byte 0 or 1
 	# holds no block start).  Same blocks, same order.
 	ifeq ($(XS_WALK_PAIR),1)
 	CFLAGS += -DXS_WALK_PAIR=1
 	endif
-	# SMC_STM_CHAIN=1: OFF by default (cpu-levers).  A non-final block-store
+	# SMC_STM_CHAIN=1: (cpu-levers).  A non-final block-store
 	# word that lands on tagged IWRAM/EWRAM marks the next word, so the final
 	# word's checked store traps (the STM block-store hole: FIFA 07).  The
 	# aligned stub keeps its size; its tag test is a tail after all stubs,
@@ -688,7 +688,7 @@ else ifeq ($(platform), psp1)
 	ifneq ($(SMC_SAME_REPROBE),)
 	CFLAGS += -DSMC_SAME_REPROBE=$(SMC_SAME_REPROBE)
 	endif
-	# ENTRY_GATES_RANGE=1: OFF by default (slow-titles, needs ENTRY_GATES).
+	# ENTRY_GATES_RANGE=1: (slow-titles, needs ENTRY_GATES).
 	# The exhaustion-time gate harvest walks only the tag range the following
 	# full flush clears (iwram/ewram_code_min..max) instead of all 144K tags.
 	# ENTRY_GATES_RANGE_CHECK=1: diagnostic, abort on a live tag outside it.
@@ -698,21 +698,21 @@ else ifeq ($(platform), psp1)
 	ifeq ($(ENTRY_GATES_RANGE_CHECK),1)
 	CFLAGS += -DENTRY_GATES_RANGE_CHECK=1
 	endif
-	# DISPATCH_CACHE=1: PROTOTYPE, OFF by default (docs/DYNAREC-PROFILE.md).
+	# DISPATCH_CACHE=1: (docs/DYNAREC-PROFILE.md).
 	# A direct-mapped {guest pc -> host entry} table probed in asm by
 	# mips_indirect_branch_* before the register save + C block lookup.
 	# Speed only: guest timing is unchanged (tools/drprof/dr_oracle.py).
 	ifeq ($(DISPATCH_CACHE),1)
 	CFLAGS += -DDISPATCH_CACHE=1
 	endif
-	# DISPATCH_PRECISE=1: OFF by default (cpu-levers).  With DISPATCH_CACHE,
+	# DISPATCH_PRECISE=1: (cpu-levers).  With DISPATCH_CACHE,
 	# SMC retirement forgets only the retired blocks' entries instead of
 	# emptying the cache; only canonical RAM pcs are cached (mirror-safe).
 	# Exact: twin state hashes identical to the build without it.
 	ifeq ($(DISPATCH_PRECISE),1)
 	CFLAGS += -DDISPATCH_PRECISE=1
 	endif
-	# SMC_SAME_SKIP=1: OFF by default (cpu-levers).  A single-store SMC trap
+	# SMC_SAME_SKIP=1: (cpu-levers).  A single-store SMC trap
 	# in IWRAM skips the retirement when every block it would retire is still
 	# exactly what it was translated from (per-halfword record of what each
 	# translation read, checked over the blocks' whole extents).  The trap
@@ -721,7 +721,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_SAME_SKIP),1)
 	CFLAGS += -DSMC_SAME_SKIP=1
 	endif
-	# SPIN_SKIP=1: OFF by default (cpu-levers).  A loop the translator proves
+	# SPIN_SKIP=1: (cpu-levers).  A loop the translator proves
 	# side-effect free (loads + ALU only, every iteration a pure function of
 	# memory) ends the scheduler slice when it spins on locations only an
 	# event can change; anything else (timer counters, KEYINPUT, serial,
@@ -730,7 +730,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
 	endif
-	# SMC_GATE_SELFPATCH=1: OFF by default (claude/idle-general).  The ranked
+	# SMC_GATE_SELFPATCH=1: (claude/idle-general).  The ranked
 	# SMC gate rule also promotes a store that patches the code just ahead of
 	# itself (same contiguous translated run), even when it re-stores the
 	# same bytes, and gates the lowest word it wrote.  Learns Mario Golf's
@@ -738,27 +738,27 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_GATE_SELFPATCH),1)
 	CFLAGS += -DSMC_GATE_SELFPATCH=1
 	endif
-	# SMC_SAME_ADAPT=1: OFF by default (cpu-levers).  Refines SMC_SAME_SKIP:
+	# SMC_SAME_ADAPT=1: (cpu-levers).  Refines SMC_SAME_SKIP:
 	# stop recording translated IWRAM halfwords while the skip rate does not
 	# pay for the recording (Hot Wheels: all cost, no traps); re-probe after
 	# single-word retirements.  Exact like SMC_SAME_SKIP (it only skips less).
 	ifeq ($(SMC_SAME_ADAPT),1)
 	CFLAGS += -DSMC_SAME_ADAPT=1
 	endif
-	# SMC_STM_RANGE=1: OFF by default (cpu-levers).  A short writeback STMIA
+	# SMC_STM_RANGE=1: (cpu-levers).  A short writeback STMIA
 	# (2-4 registers) from IWRAM into IWRAM retires exactly its own span
 	# instead of taking a full RAM flush (FIFA 07's code generator).
 	ifeq ($(SMC_STM_RANGE),1)
 	CFLAGS += -DSMC_STM_RANGE=1
 	endif
-	# XLAT_PURE=1: OFF by default (multi-version reuse step 1).  scan_block
+	# XLAT_PURE=1: (multi-version reuse step 1).  scan_block
 	# clears every instruction's update_cycles slot at the top of its loop, so a
 	# block's translation depends only on its own guest bytes (a precondition of
 	# reusing translations).  Changes timing where a stale slot used to be 1.
 	ifeq ($(XLAT_PURE),1)
 	CFLAGS += -DXLAT_PURE=1
 	endif
-	# SMC_REUSE=1: OFF by default (multi-version reuse step 2).  A full RAM
+	# SMC_REUSE=1: (multi-version reuse step 2).  A full RAM
 	# flush keeps the native code; a RAM block whose guest bytes are unchanged
 	# is revived instead of translated again (cpu_threaded.c SMC_REUSE).
 	# Speed only; needs XLAT_PURE=1.
@@ -776,7 +776,7 @@ else ifeq ($(platform), psp1)
 	ifneq ($(SMC_REUSE_MODE),)
 	CFLAGS += -DSMC_REUSE_MODE=$(SMC_REUSE_MODE)
 	endif
-	# SMC_IMM_PATCH=1: OFF by default (xlat-cost 2026-10-28).  An IWRAM ARM
+	# SMC_IMM_PATCH=1: (xlat-cost 2026-10-28).  An IWRAM ARM
 	# data-processing immediate that the game keeps rewriting is emitted in a
 	# fixed lui/ori form and patched in place on the next imm-only store
 	# instead of retiring the block (Doom II / Duke / Ice Nine renderers).
@@ -787,45 +787,45 @@ else ifeq ($(platform), psp1)
 	endif
 	CFLAGS += -DSMC_IMM_PATCH=1
 	endif
-	# XS_NOTE_FAST=1: OFF by default (xlat-cost).  xs_note_block records eight
+	# XS_NOTE_FAST=1: (xlat-cost).  xs_note_block records eight
 	# halfwords at a time where that is exactly what the per-halfword path
 	# does.  Exact (hash-identical).  Needs SMC_SAME_SKIP.
 	ifeq ($(XS_NOTE_FAST),1)
 	CFLAGS += -DXS_NOTE_FAST=1
 	endif
-	# ENTRY_GATES_FAST=1: OFF by default (xlat-cost).  The entry-gate harvest
+	# ENTRY_GATES_FAST=1: (xlat-cost).  The entry-gate harvest
 	# tests four tag slots per load.  Exact.  Needs ENTRY_GATES.
 	ifeq ($(ENTRY_GATES_FAST),1)
 	CFLAGS += -DENTRY_GATES_FAST=1
 	endif
-	# SMC_STM_WIDE=1: OFF by default (cpu-levers, twin prototype).  Widens
+	# SMC_STM_WIDE=1: (cpu-levers, twin prototype).  Widens
 	# SMC_STM_RANGE to 2-16 registers and lets such a store ACTIVATE selective
 	# retirement (Hot Wheels' STMIA r0!,{r4-r11} code generator).  Needs
 	# SMC_STM_RANGE.
 	ifeq ($(SMC_STM_WIDE),1)
 	CFLAGS += -DSMC_STM_WIDE=1
 	endif
-	# DMA_SMC_RETIRE=1: OFF by default (cpu-levers, twin prototype).  A DMA that
+	# DMA_SMC_RETIRE=1: (cpu-levers, twin prototype).  A DMA that
 	# lands on translated code retires exactly the tagged words it wrote while
 	# selective retirement is active, instead of a full RAM flush (Top Gear
 	# Rally's ROM->IWRAM overlays).  Needs SMC_STM_RANGE.
 	ifeq ($(DMA_SMC_RETIRE),1)
 	CFLAGS += -DDMA_SMC_RETIRE=1
 	endif
-	# DMA_SMC_ADAPT=1: OFF by default (twin prototype).  DMA_SMC_RETIRE only
+	# DMA_SMC_ADAPT=1: (twin prototype).  DMA_SMC_RETIRE only
 	# while it measures cheaper than the full flush (probe/backoff controller,
 	# EVT dma_retire_mode logs each decision).  Needs DMA_SMC_RETIRE.
 	ifeq ($(DMA_SMC_ADAPT),1)
 	CFLAGS += -DDMA_SMC_ADAPT=1
 	endif
-	# DMA_ADAPT_V2=1: OFF by default (tgr-regression).  DMA_SMC_ADAPT's cost
+	# DMA_ADAPT_V2=1: (tgr-regression).  DMA_SMC_ADAPT's cost
 	# model re-priced from the twin (per translated halfword AND block, walk
 	# slot, full flush) and ties go to the full flush (cpu_threaded.c says
 	# why: Top Gear Rally +5 % on hardware).  Needs DMA_SMC_ADAPT.
 	ifeq ($(DMA_ADAPT_V2),1)
 	CFLAGS += -DDMA_ADAPT_V2=1
 	endif
-	# SMC_STM_AHEAD=1: OFF by default (twin prototype).  SMC_STM_WIDE retires
+	# SMC_STM_AHEAD=1: (twin prototype).  SMC_STM_WIDE retires
 	# forward over the tagged run after an advancing copy's write (bounded by
 	# SMC_STM_AHEAD_BYTES / SMC_STM_AHEAD_BLOCKS).  Needs SMC_STM_WIDE.
 	ifeq ($(SMC_STM_AHEAD),1)
@@ -842,7 +842,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_THUMB_NO_UNSWITCH),1)
 	CFLAGS += -DXLAT_THUMB_NO_UNSWITCH=1
 	endif
-	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
+	# SERIAL_IDLE_FAST=1: contender #3 (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).
 	ifeq ($(SERIAL_IDLE_FAST),1)
@@ -867,7 +867,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(TIMER_LAZY),1)
 	CFLAGS += -DTIMER_LAZY=1
 	endif
-	# JIT_CODE_DISCIPLINE=1: OFF by default (docs/JIT-CODE-DISCIPLINE.md).
+	# JIT_CODE_DISCIPLINE=1: (docs/JIT-CODE-DISCIPLINE.md).
 	# Code memory in three zones, every code write recorded through one API,
 	# one publish point (D writeback + I invalidate of exactly what was
 	# written), and a whole I-cache invalidate on every ownership change
