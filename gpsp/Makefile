@@ -290,15 +290,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_PARTIAL_SAFE),1)
 	CFLAGS += -DSMC_PARTIAL_SAFE
 	endif
-	ifeq ($(SMC_PARTIAL_SAFE_CONTROL),1)
-	CFLAGS += -DSMC_PARTIAL_SAFE_CONTROL
-	endif
-	ifeq ($(SMC_PARTIAL_SAFE_NO_TRAMP),1)
-	CFLAGS += -DSMC_PARTIAL_SAFE_NO_TRAMP
-	endif
-	ifeq ($(SMC_PARTIAL_SAFE_FRAMEFULL),1)
-	CFLAGS += -DSMC_PARTIAL_SAFE_FRAMEFULL
-	endif
 	# Keep a permanent per-block RAM entry thunk while selective invalidation is
 	# active.  Retiring a block redirects the thunk to the dispatcher; a later
 	# translation points the same thunk at the new body, so inbound RAM links do
@@ -309,11 +300,8 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_PARTIAL_DIRECT_LINKS),1)
 	CFLAGS += -DSMC_PARTIAL_DIRECT_LINKS
 	endif
-	ifeq ($(SMC_PARTIAL_DIRECT_GATE),1)
-	CFLAGS += -DSMC_PARTIAL_DIRECT_GATE
-	endif
 	# SMC_GATES=1: add a translation gate at each self-modified address so
-	# future blocks split there.  Independent of SMC_PARTIAL on purpose —
+	# future blocks split there.  Independent of SMC_PARTIAL_SAFE on purpose —
 	# gates are what bought Unbound its speed AND what broke its audio, so
 	# the two must be testable separately.
 	ifeq ($(SMC_GATES),1)

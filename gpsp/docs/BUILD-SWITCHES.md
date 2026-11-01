@@ -156,20 +156,10 @@ for that" is never mistaken for "that was tried".
 | `SMC_GATES_CLUSTER` | Add-only plus 2.0.2's cluster grouping, without its eviction — keeps the half that cut dispatcher lookups (196k → 59k) and drops the half that crashed H&S. | Never measured on hardware. |
 | `SMC_SCAN_SPCLAMP` | End `scan_block` at the stack pointer instead of the top of IWRAM, so scans stop tagging the live stack as code (10122 flushes measured in one battle from exactly that). | Never measured. Plausible performance win. |
 | `SMC_SP_CHECKED` | Send SP-based block stores down the general path so their final word reaches the SMC check; Thumb `PUSH {..., LR}` also uses the checked helper for LR. | Never measured. Does not check every word in a multiword store, so it is only a partial coverage fix. Likely costs speed on a hot memory path; measure on hardware. |
-| `SMC_PARTIAL_SAFE_FRAMEFULL` | One full flush per frame regardless. | Never measured; no comment in the Makefile. |
-| `SMC_PARTIAL_SAFE_NO_TRAMP` | Selective retirement without the trampoline. | Never measured; no comment. |
-| `SMC_PARTIAL_DIRECT_GATE` | Patch the gate fall-through directly instead of through the dispatcher. | Never measured; no comment. |
 | `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | Override `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. | Tuning knobs, not experiments. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart), not picked for roundness. |
 | `OVERCLOCK_60FPS` | Upstream's 60 fps overclock build. | Untouched by this project. |
 | `ME_AFFINE_LINES` (video.h, default 1 on `claude/me-midframe`) | The Media Engine capture records the affine reference counters per line and the engine installs them, so a BG2X/Y/BG3X/Y reload in HBlank (mode-7 floors and roads) reaches it. | Desktop model: Mario Golf's aim view 1558 wrong frames -> 23; clean frames bit-identical. Hardware pending. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
 | `ME_MIDFRAME_LOG` (video.h, default 1 on `claude/me-midframe`; harness key `me_midlog`) | Undo/redo log of palette/OAM/VRAM written during the visible lines, applied by the engine line by line. Adds one store to the MIPS palette stub (`PAL_UPDATED`) and one to the VRAM stub (`vram_clean[96]`). | Desktop model: all synthetic cases and H&S heavy's 5 remaining frames exact; recorder ~0.5 us/frame on the desktop. PSP cost not measured. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
-
-## Control arms
-
-`SMC_PARTIAL_SAFE_CONTROL` disables the selective-invalidation fast path while
-leaving everything else in place. It exists to make an A/B one variable. It is
-refused in a release, because shipping it reads as an unexplained performance
-regression with no apparent cause.
 
 ## Diagnostics
 
@@ -347,6 +337,10 @@ script. The code is in the 4.5.0 tag.
 | `SMC_REUSE_ARMING` | bb8b7b2's arming window for `SMC_REUSE`, kept as a cost knob. The spare invariant made reuse exact everywhere, so no arming was left to do. |
 | `SMC_SKIP_SAME` | **White-screens Heart & Soul at boot** — the idempotent-store compare is wrong. Measured dead on the merits too: at the H&S hot word 0x0300168c the stored value changed 11,613 times against 24 identical, so a working filter would remove 0.2 % of the flushes. `SMC_SAME_SKIP`, which compares what each translation read, is the idea done right. |
 | `SMC_PARTIAL` | Superseded by `SMC_PARTIAL_SAFE`. Its block-copy detector is the ancestor of the current writer fingerprint. |
+| `SMC_PARTIAL_SAFE_FRAMEFULL` | One full flush per frame regardless. Never measured; no comment in the Makefile. |
+| `SMC_PARTIAL_SAFE_NO_TRAMP` | Selective retirement without the trampoline. Never measured; no comment. |
+| `SMC_PARTIAL_DIRECT_GATE` | Patch the gate fall-through directly instead of through the dispatcher. Never measured; no comment. |
+| `SMC_PARTIAL_SAFE_CONTROL` | The A/B control arm: selective invalidation off, everything else in place. |
 | `NO_GAME_SPEED_HINTS`, `NO_GAME_IDLE_HINT`, `NO_GAME_GATE_HINTS` | Ignore the game table's idle-loop and gate seeds. `gba_memory.c` keeps what the twin study found them worth. The table stays. |
 
 ---

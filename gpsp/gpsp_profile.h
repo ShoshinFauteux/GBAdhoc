@@ -111,9 +111,6 @@
 /* Experiment control arms.  Each of these deliberately DISABLES something the
  * release depends on, so shipping one reads as a performance regression with no
  * apparent cause. */
-#ifdef SMC_PARTIAL_SAFE_CONTROL
-#error "release + SMC_PARTIAL_SAFE_CONTROL: the A/B control arm, not a release."
-#endif
 #ifdef GPSP_CATCH_SELFTEST
 #error "release + GPSP_CATCH_SELFTEST: L+R+UP+TRIANGLE crashes the PSP on purpose."
 #endif
@@ -191,22 +188,19 @@
 #if defined(SMC_REUSE) && defined(SMC_SCAN_SPCLAMP)
 #error "SMC_REUSE with SMC_SCAN_SPCLAMP: the scan end depends on the guest stack pointer."
 #endif
-#if defined(SMC_REUSE) && (defined(SMC_PARTIAL_DIRECT_GATE) || defined(STATIC_ALU_PC))
-#error "SMC_REUSE with SMC_PARTIAL_DIRECT_GATE / STATIC_ALU_PC: links a revival does not replay."
+#if defined(SMC_REUSE) && defined(STATIC_ALU_PC)
+#error "SMC_REUSE with STATIC_ALU_PC: links a revival does not replay."
 #endif
 
 /* Selective retirement redirects live blocks through a trampoline; a direct
  * link into one without the stable thunk points at a body that has moved. */
-#if (defined(SMC_PARTIAL_DIRECT_LINKS) || defined(SMC_PARTIAL_DIRECT_GATE)) && \
-    !defined(SMC_PARTIAL_STABLE_THUNK)
-#error "SMC_PARTIAL_DIRECT_* requires SMC_PARTIAL_STABLE_THUNK."
+#if defined(SMC_PARTIAL_DIRECT_LINKS) && !defined(SMC_PARTIAL_STABLE_THUNK)
+#error "SMC_PARTIAL_DIRECT_LINKS requires SMC_PARTIAL_STABLE_THUNK."
 #endif
 
 /* The SMC_PARTIAL_SAFE sub-flags are inert without it, same trap as above. */
 #ifndef SMC_PARTIAL_SAFE
-#if defined(SMC_PARTIAL_STABLE_THUNK) || defined(SMC_PARTIAL_DIRECT_LINKS) || \
-    defined(SMC_PARTIAL_DIRECT_GATE)  || defined(SMC_PARTIAL_SAFE_CONTROL) || \
-    defined(SMC_PARTIAL_SAFE_FRAMEFULL) || defined(SMC_PARTIAL_SAFE_NO_TRAMP)
+#if defined(SMC_PARTIAL_STABLE_THUNK) || defined(SMC_PARTIAL_DIRECT_LINKS)
 #error "An SMC_PARTIAL_SAFE sub-flag is set without SMC_PARTIAL_SAFE."
 #endif
 #endif

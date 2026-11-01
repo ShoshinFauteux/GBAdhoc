@@ -7996,10 +7996,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
   u8 *entry_gate_branch_source = NULL;
   u32 entry_gate_branch_target = 0;
 #endif
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  u8 *smc_gate_branch_source = NULL;
-  u32 smc_gate_branch_target = 0;
-#endif
 #ifdef STATIC_ALU_PC
   block_exit_type salu_exits[SALU_MAX_EXITS];
   u32 salu_n = 0;
@@ -8234,13 +8230,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
     mips_emit_nop();
   } else
 #endif
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  if (ram_region && smc_partial_active && scan_exit_reason == SMC_SCAN_GATE) {
-    smc_gate_branch_target = pc;
-    mips_emit_j_filler(smc_gate_branch_source);
-    mips_emit_nop();
-  } else
-#endif
   {
     /* Braced: generate_translation_gate is several statements, so the bare
      * `else` above used to guard only its first one. */
@@ -8388,14 +8377,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
                      external_block_exit_position);
 #endif
 
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  if (smc_gate_branch_source) {
-    translation_target = block_lookup_translate_arm(smc_gate_branch_target);
-    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
-      return false;
-    JIT_PATCH_BRANCH(smc_gate_branch_source, translation_target);
-  }
-#endif
 
   for(i = 0; i < external_block_exit_position; i++)
   {
@@ -8450,10 +8431,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   u32 entry_gate_stop = 0;
   u8 *entry_gate_branch_source = NULL;
   u32 entry_gate_branch_target = 0;
-#endif
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  u8 *smc_gate_branch_source = NULL;
-  u32 smc_gate_branch_target = 0;
 #endif
   block_exit_type external_block_exits[MAX_EXITS];
 #ifdef SMC_REUSE
@@ -8634,13 +8611,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     mips_emit_nop();
   } else
 #endif
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  if (ram_region && smc_partial_active && scan_exit_reason == SMC_SCAN_GATE) {
-    smc_gate_branch_target = pc;
-    mips_emit_j_filler(smc_gate_branch_source);
-    mips_emit_nop();
-  } else
-#endif
   {
     DRPROF_NOTE(translation_ptr, DRC_TAIL);
     SMC_GATE_CHARGE_TAIL();   /* braced for the same reason as the ARM side */
@@ -8772,14 +8742,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
                      external_block_exit_position);
 #endif
 
-#ifdef SMC_PARTIAL_DIRECT_GATE
-  if (smc_gate_branch_source) {
-    translation_target = block_lookup_translate_thumb(smc_gate_branch_target);
-    if (!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
-      return false;
-    JIT_PATCH_BRANCH(smc_gate_branch_source, translation_target);
-  }
-#endif
 
   for(i = 0; i < external_block_exit_position; i++)
   {
@@ -9559,16 +9521,12 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
       u32 start = base + (i << 1);
 
       if ((SMC_RAM_LIVE_OFFSET(te, arm) && (!te->blk_end_arm ||
-#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
            (start < high && te->blk_end_arm > low &&
             te->code_bytes_arm < 8) ||
-#endif
            0)) ||
           (SMC_RAM_LIVE_OFFSET(te, thumb) && (!te->blk_end_thumb ||
-#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
            (start < high && te->blk_end_thumb > low &&
             te->code_bytes_thumb < 8) ||
-#endif
            0))) {
         SMC_FB(7);
         flush_translation_cache_ram();
@@ -9589,7 +9547,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
         te->code_bytes_arm = 0;
 #else
-#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
         u8 *entry = &ram_translation_cache[te->offset_arm];
         u8 *translation_ptr = entry - 16;
         generate_load_imm(reg_a0, start);
@@ -9602,7 +9559,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 #else
         platform_cache_sync(entry - 16, entry + 8);
 #endif
-#endif
         te->offset_arm = 0;
 #endif
         flush_ram_partial++;
@@ -9614,7 +9570,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
         smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
         te->code_bytes_thumb = 0;
 #else
-#ifndef SMC_PARTIAL_SAFE_NO_TRAMP
         u8 *entry = &ram_translation_cache[te->offset_thumb];
         u8 *translation_ptr = entry - 16;
         generate_load_imm(reg_a0, start);
@@ -9626,7 +9581,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
         JIT_CODE_WROTE(entry - 16, entry + 8);
 #else
         platform_cache_sync(entry - 16, entry + 8);
-#endif
 #endif
         te->offset_thumb = 0;
 #endif
@@ -10435,11 +10389,6 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
   u32 op;
   u8 *blk;
 
-#ifdef SMC_PARTIAL_SAFE_CONTROL
-  (void)low;
-  (void)high;
-  return 0;
-#endif
 
   /* The first correctness oracle proved that selectively retiring arbitrary
    * single stores is still too broad for Heart & Soul. Only admit the exact
@@ -11242,9 +11191,6 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
 #endif
 #endif
 
-#ifdef SMC_PARTIAL_SAFE_FRAMEFULL
-static u32 smc_partial_last_full_frame = ~0u;
-#endif
 
 #ifdef SMC_GATES
 /* The ordinary gate is harvested from smc_last_write_addr, which is the
@@ -11663,12 +11609,6 @@ void flush_translation_cache_ram_smc(void)
                          * this range's high endpoint was added, low alone is
                          * not enough to prove the block layout. */
                         smc_partial_target_is_gated((partial_high - 4) & ~3u);
-#ifdef SMC_PARTIAL_SAFE_FRAMEFULL
-    if (partial_ready && smc_partial_last_full_frame != frame_counter) {
-      smc_partial_last_full_frame = frame_counter;
-      flush_translation_cache_ram();
-    } else
-#endif
     if (partial_ready) {
       SMC_FB(9);
       flush_translation_cache_ram_range(partial_low, partial_high);

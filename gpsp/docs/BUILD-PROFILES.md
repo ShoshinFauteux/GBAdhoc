@@ -65,15 +65,12 @@ taste filter.
 |---|---|
 | release + `BADJUMP_REPORT` / `SMC_WRITE_HISTO` / `GPSP_ROMLOAD_DIAGNOSTICS` | writes to the player's memory stick |
 | release + `GPSP_PERF_RIG` / `GPSP_KEEP_TELEMETRY` | that is the harness |
-| release + `SMC_PARTIAL_SAFE_CONTROL` | an A/B control arm; reads as an unexplained performance regression |
-| release + `SMC_SKIP_SAME` | white-screens Heart & Soul at boot |
-| `SMC_PARTIAL_SAFE` + `SMC_PARTIAL` | SAFE silently wins |
 | `SMC_GATES_CLUSTER` + `SMC_GATES_SIMPLE` | CLUSTER silently wins |
 | `SMC_GATES_SNAPF` + `SMC_GATES_SNAP` | SNAPF silently wins |
 | `SMC_GATES_CODED` + SNAP/SNAPF | two gate-address filters at once |
 | any `SMC_GATE*` sub-rule without `SMC_GATES` | compiles to nothing, so the experiment never ran |
 | any `SMC_PARTIAL_SAFE` sub-flag without its parent | same |
-| `SMC_PARTIAL_DIRECT_*` without `SMC_PARTIAL_STABLE_THUNK` | a direct link into a body that has moved |
+| `SMC_PARTIAL_DIRECT_LINKS` without `SMC_PARTIAL_STABLE_THUNK` | a direct link into a body that has moved |
 | `GPSP_PERF_RIG` without `GPSP_KEEP_TELEMETRY` | the rig reads the event log |
 
 A **pixel-format** mismatch between the two halves is a link error:
