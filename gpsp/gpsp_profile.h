@@ -128,25 +128,10 @@
  * one rule quietly shadows the other, and the result is attributed to the flag
  * that was not in fact active.  See cpu_threaded.c for each rule. */
 
-#if defined(SMC_GATES_CLUSTER) && defined(SMC_GATES_SIMPLE)
-#error "SMC_GATES_CLUSTER and SMC_GATES_SIMPLE: CLUSTER silently wins."
-#endif
-
-#if defined(SMC_GATES_SNAPF) && defined(SMC_GATES_SNAP)
-#error "SMC_GATES_SNAPF and SMC_GATES_SNAP: SNAPF silently wins."
-#endif
-
-#if defined(SMC_GATES_CODED) && (defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF))
-#error "SMC_GATES_CODED with SNAP/SNAPF: two gate-address filters at once."
-#endif
-
 /* A gate sub-rule without SMC_GATES compiles to nothing at all, so the
  * experiment it was meant to run never happened. */
 #ifndef SMC_GATES
-#if defined(SMC_GATES_SIMPLE)  || defined(SMC_GATES_CLUSTER) || \
-    defined(SMC_GATES_RANKED)  || defined(SMC_GATES_SNAP)    || \
-    defined(SMC_GATES_SNAPF)   || defined(SMC_GATES_CODED)   || \
-    defined(SMC_GATE_BITMAP)
+#if defined(SMC_GATES_SIMPLE) || defined(SMC_GATES_RANKED) || defined(SMC_GATE_BITMAP)
 #error "An SMC_GATE* sub-rule is set without SMC_GATES: it does nothing."
 #endif
 #endif

@@ -9665,7 +9665,7 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 
 /* frame_counter + 1 at the gate's last hit; 0 = loaded from the game table */
 static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
-#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE) && !defined(SMC_GATES_CLUSTER)
+#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE)
 static u32 smc_gate_prev_now;   /* detects savestate clock rewind */
 #endif
 
@@ -9686,7 +9686,7 @@ static void smc_cand_forget(void);   /* defined with the candidate table below *
 void smc_gates_reset(void)
 {
   memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
-#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE) && !defined(SMC_GATES_CLUSTER)
+#if defined(SMC_GATES) && !defined(SMC_GATES_SIMPLE)
   /* Savestate-rewind re-anchor: a stale stamp against a fresh frame_counter is
    * the underflow that made eviction fire on every write. */
   smc_gate_prev_now = 0;
@@ -9703,128 +9703,7 @@ void smc_gates_reset(void)
 #endif
 }
 
-/* SMC_GATES_CODED: only gate an address that is ALREADY the start of a
- * translated block.
- *
- * Gates are placed at smc_last_write_addr -- a DATA write address -- but a
- * gate is then used as a CODE entry: it forces blocks to end there, so the
- * next block STARTS there.  Nothing guarantees a write address is an
- * instruction boundary, and mid-copy it is not even finished code.  Scanning
- * from such an address yields nonsense: one PPSSPP battle logged 223 bad
- * branch targets (into OAM/VRAM/SRAM) and every one came from the block at
- * the gated address 0x03001404.  Most are never executed; when one is, the
- * dispatcher jumps to it and the console dies.
- *
- * A VALID_TAG at the address means a block was translated starting exactly
- * there, which is proof it is a real instruction boundary.  Gating it still
- * pays: it stops OTHER blocks from spanning the address, which is the
- * overlap the one-slot-per-halfword tag map cannot represent. */
-/* SMC_GATES_SNAP: gate the START OF THE BLOCK containing the write, not the
- * write address itself.
- *
- * Gates are harvested from smc_last_write_addr -- a DATA address -- but a
- * gate is consumed as a CODE entry: it forces blocks to end there, so the
- * next block STARTS there.  Nothing makes a data-write address an
- * instruction boundary, and mid-copy it is not finished code either.  That
- * is the whole crash: one battle logged 223 garbage branch targets, every
- * one from the block at the gated address 0x03001404.
- *
- * A VALID_TAG exists at an address ONLY because allocate_tag_* ran with that
- * exact pc, i.e. a block was translated starting there -- so it is a proven
- * instruction boundary, in the right mode.  Walk back over the interior
- * (CODE_TAG_BLOCK16) run to find it.
- *
- * This is what SMC_GATES_CODED should have been.  That one demanded the
- * write address ITSELF be a block start, which rejected 0x0300168c -- the
- * address behind 97.8% of all flushes, interior to its block -- and cost
- * 59.9 -> 46-58 fps.  Snapping keeps that gate, just anchored to the head of
- * its block, so scans still stop before the self-modifying region.
- *
- * Bonus: every write inside one block snaps to the same gate, so the table
- * stops churning through near-duplicates.  That is SMC_GATE_CLUSTER grouping
- * done by real block boundaries instead of a fixed byte window. */
-/* SMC_GATES_SNAPF: snap FORWARD to the first proven instruction boundary at
- * or after the write address.
- *
- * A gate address has to satisfy TWO things, and SMC_GATES_SNAP only got one:
- *   (1) validity  -- it is used as a code entry, so it must be a real
- *                    instruction boundary, else the block scanned from it is
- *                    garbage (223 bad jumps, all from gated 0x03001404);
- *   (2) isolation -- it must be at/after the write, so the previous block
- *                    ENDS before the self-modifying region instead of
- *                    spanning it.  That is the entire speed mechanism.
- * SNAP walked BACKWARDS to the block head: valid, but the block starting at
- * that head still covers the SMC region, so isolation was lost -- measured
- * 1,428,000 flushes and 31-48 fps, against 116,000 and a locked 59.9 for
- * add-only.  Snapping forward keeps the anchor AND the isolation.
- *
- * Stride is 4, unconditionally: start+4k is a valid boundary for ARM (whose
- * instructions are 4 bytes) and for Thumb (2 bytes, so every even offset is
- * one), which sidesteps needing the block mode.  A Thumb block that starts on
- * a BL second half is safe -- translate_block_thumb inits opcode = 0, so
- * last_opcode is 0 on the first instruction and thumb_branch_target takes the
- * no_direct_branch path instead of computing a target from stale bits. */
-#ifdef SMC_GATES_SNAPF
-static u32 smc_gate_snapf(u32 gba_addr)
-{
-  u8 *base; u32 off, region, mask, k, delta;
-  if (gba_addr >= 0x3000000) {
-    base = iwram;           mask = 0x7FFF;  region = 0x3000000;
-  } else {
-    base = ewram + 0x40000; mask = 0x3FFFF; region = 0x2000000;
-  }
-  off = (gba_addr & mask) & ~1u;
-  for (k = 0; k < 512; k++) {              /* find the enclosing block head */
-    u16 t = *(u16 *)(base + off);
-    if (VALID_TAG(t)) break;                /* proven instruction boundary */
-    if (t != CODE_TAG_BLOCK16) return 0;    /* data -- nothing to gate */
-    if (off < 2) return 0;
-    off -= 2;
-  }
-  if (k == 512) return 0;                   /* gave up; do not guess */
-  delta = ((gba_addr & mask) & ~1u) - off;  /* write, relative to the head */
-  return region + off + ((delta + 3u) & ~3u);
-}
-#define SMC_GATE_PICK(a) smc_gate_snapf(a)
-#elif defined(SMC_GATES_SNAP)
-
-#define SMC_GATE_SNAP_MAX 512        /* halfword slots (1 KB) before giving up */
-static u32 smc_gate_snap(u32 gba_addr)
-{
-  u8 *base; u32 off, region, k;
-  if (gba_addr >= 0x3000000) {
-    base = iwram;            off = gba_addr & 0x7FFF;  region = 0x3000000;
-  } else {
-    base = ewram + 0x40000;  off = gba_addr & 0x3FFFF; region = 0x2000000;
-  }
-  off &= ~1u;                          /* tags are one u16 per halfword */
-  for (k = 0; k < SMC_GATE_SNAP_MAX; k++) {
-    u16 t = *(u16 *)(base + off);
-    if (VALID_TAG(t))            return region + off;  /* proven block start */
-    if (t != CODE_TAG_BLOCK16)   return 0;   /* data -- nothing to gate */
-    if (off < 2)                 return 0;
-    off -= 2;
-  }
-  return 0;                              /* run too long; do not guess */
-}
-#define SMC_GATE_PICK(a) smc_gate_snap(a)
-#else
 #define SMC_GATE_PICK(a) ((a) & ~3u)
-#endif
-
-#ifdef SMC_GATES_CODED
-static int smc_gate_addr_is_block_start(u32 gba_addr)
-{
-  const u16 *tagp = (gba_addr >= 0x3000000)
-    ? (const u16 *)(iwram + (gba_addr & 0x7FFF))
-    : (const u16 *)(ewram + (gba_addr & 0x3FFFF) + 0x40000);
-  u16 t = *tagp;
-  return VALID_TAG(t);
-}
-#define SMC_GATE_REJECT(gpc) (!smc_gate_addr_is_block_start(gpc))
-#else
-#define SMC_GATE_REJECT(gpc) (0)
-#endif
 
 /* SMC_GATES_RANKED: promote an address to a gate only once it has proven
  * itself HOT.  Both shipped rules pick gates blind -- add-only takes the
@@ -9998,44 +9877,7 @@ static void smc_cand_forget(void)
 void smc_gates_refresh_values(void) {}
 #endif
 
-#ifdef SMC_GATES_CLUSTER
-/* Add-only, PLUS 2.0.2's cluster grouping -- and deliberately WITHOUT its idle
- * eviction, which is the part that crashed Heart & Soul.
- *
- * 2.0.2's rule did two separable things.  Clustering declines to spend a slot
- * on a write within SMC_GATE_CLUSTER bytes of an existing gate, because extra
- * gates inside one patched region save no translation and cost a dispatcher
- * lookup on every pass (measured: lookups 196k -> 59k).  Eviction reassigns a
- * quiet gate's ADDRESS, which is what let already-translated blocks disagree
- * with the table.  Only the second one moves a gate, so clustering can be kept
- * and eviction dropped.  Once a gate is placed here it is never moved.  */
-static void smc_add_gate(u32 gba_addr)
-{
-  u32 gpc = SMC_GATE_PICK(gba_addr), g;
-#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
-  if (!gpc) return;   /* no proven code entry for this write */
-#endif
-  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
-
-  for (g = 0; g < translation_gate_targets; g++)
-    if (translation_gate_target_pc[g] == gpc)
-      return;                       /* already gated */
-
-  for (g = 0; g < translation_gate_targets; g++)
-  {
-    u32 gp = translation_gate_target_pc[g];
-    if (gpc > gp && gpc - gp <= SMC_GATE_CLUSTER)
-      return;                       /* same patched region -- covered already */
-  }
-
-  if (!SMC_GATE_EARNED(gpc)) return;   /* not hot enough yet */
-  if (translation_gate_targets < MAX_TRANSLATION_GATES) {
-    translation_gate_target_pc[translation_gate_targets++] = gpc;
-    SMC_GATE_MAP_ADD(gpc);
-  }
-  /* Table full: leave every existing gate exactly where it is. */
-}
-#elif defined(SMC_GATES_SIMPLE)
+#if defined(SMC_GATES_SIMPLE)
 /* The 2.0.1 gate rule: ADD ONLY.  An address either already has a gate or
  * takes a free slot; once written, a gate's address is NEVER changed.
  *
@@ -10054,8 +9896,7 @@ static void smc_add_gate(u32 gba_addr)
  * Loading a state with a lower frame count underflows the idle comparison to
  * ~4.29e9, so every gate reads as infinitely idle and churns constantly. */
 #ifdef SMC_GATE_SELFPATCH
-#if !defined(SMC_GATES_RANKED) || defined(SMC_GATES_SNAP) || \
-    defined(SMC_GATES_SNAPF) || defined(SMC_GATES_CODED)
+#ifndef SMC_GATES_RANKED
 #error SMC_GATE_SELFPATCH is written for SMC_GATES_SIMPLE + SMC_GATES_RANKED
 #endif
 /* SMC_GATE_SELFPATCH (claude/idle-general, 2026-10-27): code that patches
@@ -10136,9 +9977,6 @@ static u32 smc_gate_selfpatch(u32 addr)
 static void smc_add_gate(u32 gba_addr)
 {
   u32 gpc = SMC_GATE_PICK(gba_addr), g;
-#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
-  if (!gpc) return;   /* no proven code entry for this write */
-#endif
 #ifdef SMC_GATE_SELFPATCH
   {
     u32 sp = smc_gate_selfpatch(gba_addr);
@@ -10146,7 +9984,6 @@ static void smc_add_gate(u32 gba_addr)
     if (sp) gpc = sp;
   }
 #endif
-  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
 
   for (g = 0; g < translation_gate_targets; g++)
     if (translation_gate_target_pc[g] == gpc)
@@ -10167,9 +10004,6 @@ static void smc_add_gate(u32 gba_addr)
 static void smc_add_gate(u32 gba_addr)
 {
   u32 gpc = SMC_GATE_PICK(gba_addr), now = frame_counter + 1, g, victim;
-#if defined(SMC_GATES_SNAP) || defined(SMC_GATES_SNAPF)
-  if (!gpc) return;   /* no proven code entry for this write */
-#endif
 
   /* frame_counter is RESTORED by savestates (main.c "frame-count") but
    * smc_gate_last_hit[] is not, so loading a state made earlier drags `now`
@@ -10187,7 +10021,6 @@ static void smc_add_gate(u32 gba_addr)
         smc_gate_last_hit[g] = now;
   smc_gate_prev_now = now;
 
-  if (SMC_GATE_REJECT(gpc)) return;   /* not a proven code entry */
 
   for (g = 0; g < translation_gate_targets; g++)
     if (translation_gate_target_pc[g] == gpc)

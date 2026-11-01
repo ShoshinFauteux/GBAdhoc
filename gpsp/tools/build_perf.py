@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--version', required=True)
     parser.add_argument('--core-option', action='append', default=[],
-                        help='one make option such as SMC_GATES_CLUSTER=1')
+                        help='one make option such as SMC_REUSE_MODE=2')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     branch = subprocess.check_output(['git','branch','--show-current'],cwd=repo,text=True).strip()

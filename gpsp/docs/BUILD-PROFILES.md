@@ -65,9 +65,6 @@ taste filter.
 |---|---|
 | release + `BADJUMP_REPORT` / `SMC_WRITE_HISTO` / `GPSP_ROMLOAD_DIAGNOSTICS` | writes to the player's memory stick |
 | release + `GPSP_PERF_RIG` / `GPSP_KEEP_TELEMETRY` | that is the harness |
-| `SMC_GATES_CLUSTER` + `SMC_GATES_SIMPLE` | CLUSTER silently wins |
-| `SMC_GATES_SNAPF` + `SMC_GATES_SNAP` | SNAPF silently wins |
-| `SMC_GATES_CODED` + SNAP/SNAPF | two gate-address filters at once |
 | any `SMC_GATE*` sub-rule without `SMC_GATES` | compiles to nothing, so the experiment never ran |
 | any `SMC_PARTIAL_SAFE` sub-flag without its parent | same |
 | `SMC_PARTIAL_DIRECT_LINKS` without `SMC_PARTIAL_STABLE_THUNK` | a direct link into a body that has moved |

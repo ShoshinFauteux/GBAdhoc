@@ -314,12 +314,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_GATES_SIMPLE),1)
 	CFLAGS += -DSMC_GATES_SIMPLE
 	endif
-	# SMC_GATES_CLUSTER=1: add-only AND cluster grouping, no eviction.  Keeps
-	# the half of 2.0.2's rule that cut dispatcher lookups and drops the half
-	# that moved gates and crashed Heart & Soul.  Overrides SMC_GATES_SIMPLE.
-	ifeq ($(SMC_GATES_CLUSTER),1)
-	CFLAGS += -DSMC_GATES_CLUSTER
-	endif
 	# CLUSTER_BYTES=N: gate-clustering window (default 128, cpu_threaded.c).
 	# Must stay BELOW the spacing between a game's distinct patched regions or
 	# they merge into one gate; H&S's two mixer copies are 152 bytes apart.
@@ -334,14 +328,6 @@ else ifeq ($(platform), psp1)
 	# smaller, so it rises even when the work falls.
 	ifneq ($(GATE_SLOTS),)
 	CFLAGS += -DMAX_TRANSLATION_GATES=$(GATE_SLOTS)
-	endif
-	# SMC_GATES_SNAPF=1: snap the gate FORWARD to the first proven instruction
-	# boundary at/after the write.  A gate must be both a valid code entry AND
-	# at/after the write (so the previous block ends before the SMC region).
-	# SNAP (backwards) kept validity but lost isolation: 1.43M flushes, 31-48
-	# fps vs 116k and 59.9 for add-only.
-	ifeq ($(SMC_GATES_SNAPF),1)
-	CFLAGS += -DSMC_GATES_SNAPF=1
 	endif
 	# SMC_GATES_RANKED=1: promote an address to a gate only once it has earned
 	# one.  SHIPPED.
@@ -471,28 +457,6 @@ else ifeq ($(platform), psp1)
 	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
-	endif
-	# SMC_GATES_SNAP=1: gate the START OF THE BLOCK containing the SMC write,
-	# found by walking back over the interior tag run to a VALID_TAG.  A gate
-	# is used as a code ENTRY point, but is harvested from a DATA write
-	# address; snapping guarantees it is a real instruction boundary without
-	# discarding the gate (which is what SMC_GATES_CODED did, at -13 fps).
-	# REJECTED: walking BACKWARDS keeps validity and loses isolation -- the
-	# block starting at that head still spans the SMC region.  1.43M flushes
-	# and 31-48 fps, against 116k and a locked 59.9 for add-only.
-	ifeq ($(SMC_GATES_SNAP),1)
-	CFLAGS += -DSMC_GATES_SNAP=1
-	endif
-	# SMC_GATES_CODED=1: refuse to gate an address that is not already the
-	# start of a translated block.  Gates come from smc_last_write_addr (a
-	# DATA address) but are used as CODE entries, so a gate can force a block
-	# to start mid-instruction or on half-written code; that block then scans
-	# garbage and emits branch targets into OAM/VRAM/SRAM.
-	# REJECTED: it rejects 0300168c, the address behind 97.8% of all flushes,
-	# because at the moment of the write that address is INTERIOR to its block
-	# (a block only starts there once the gate exists).  59.9 -> 46-58 fps.
-	ifeq ($(SMC_GATES_CODED),1)
-	CFLAGS += -DSMC_GATES_CODED=1
 	endif
 	# SMC_WRITE_HISTO=1: DIAGNOSTIC, and part of the `diagnostic` profile.
 	# Bucket the address written and the pc of the storing instruction for

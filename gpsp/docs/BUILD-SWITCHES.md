@@ -138,9 +138,7 @@ build where that applies. Those deleted since are under "Removed".
 
 | switch | verdict |
 |---|---|
-| `SMC_GATES_CODED` | Demands the write address itself already be a block start, which rejects `0300168c` because at the moment of the write that address is *interior* to its block. 59.9 → 46-58 fps. |
-| `SMC_GATES_SNAP` | Snaps backwards to the block head: valid, but the block starting at that head still spans the SMC region, so isolation is lost. 1.43M flushes, 31-48 fps, against 116k and a locked 59.9 for add-only. |
-| 2.0.2's evicting gate rule (no flag; the `#else` branch when neither `SIMPLE` nor `CLUSTER` is set) | Eviction reassigns a gate's address while blocks compiled against the old layout are live, and gpSP's tag map holds one slot per halfword — it cannot represent the resulting overlap. This is the Heart & Soul crash. |
+| 2.0.2's evicting gate rule (no flag; the `#else` branch when `SMC_GATES_SIMPLE` is off) | Eviction reassigns a gate's address while blocks compiled against the old layout are live, and gpSP's tag map holds one slot per halfword — it cannot represent the resulting overlap. This is the Heart & Soul crash. |
 
 ---
 
@@ -152,8 +150,6 @@ for that" is never mistaken for "that was tried".
 
 | switch | what it would do | status |
 |---|---|---|
-| `SMC_GATES_SNAPF` | Snap the gate *forward* to the first proven boundary at or after the write, which is the only variant designed to keep validity **and** isolation. | Never measured. The most interesting unexplored option here. |
-| `SMC_GATES_CLUSTER` | Add-only plus 2.0.2's cluster grouping, without its eviction — keeps the half that cut dispatcher lookups (196k → 59k) and drops the half that crashed H&S. | Never measured on hardware. |
 | `SMC_SCAN_SPCLAMP` | End `scan_block` at the stack pointer instead of the top of IWRAM, so scans stop tagging the live stack as code (10122 flushes measured in one battle from exactly that). | Never measured. Plausible performance win. |
 | `SMC_SP_CHECKED` | Send SP-based block stores down the general path so their final word reaches the SMC check; Thumb `PUSH {..., LR}` also uses the checked helper for LR. | Never measured. Does not check every word in a multiword store, so it is only a partial coverage fix. Likely costs speed on a hot memory path; measure on hardware. |
 | `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | Override `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. | Tuning knobs, not experiments. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart), not picked for roundness. |
@@ -341,6 +337,10 @@ script. The code is in the 4.5.0 tag.
 | `SMC_PARTIAL_SAFE_NO_TRAMP` | Selective retirement without the trampoline. Never measured; no comment. |
 | `SMC_PARTIAL_DIRECT_GATE` | Patch the gate fall-through directly instead of through the dispatcher. Never measured; no comment. |
 | `SMC_PARTIAL_SAFE_CONTROL` | The A/B control arm: selective invalidation off, everything else in place. |
+| `SMC_GATES_CODED` | Demands the write address itself already be a block start, which rejects `0300168c` because at the moment of the write that address is *interior* to its block. 59.9 → 46-58 fps. |
+| `SMC_GATES_SNAP` | Snaps backwards to the block head: valid, but the block starting at that head still spans the SMC region, so isolation is lost. 1.43M flushes, 31-48 fps, against 116k and a locked 59.9 for add-only. |
+| `SMC_GATES_SNAPF` | Snap the gate *forward* to the first proven boundary at or after the write, which is the only variant designed to keep validity **and** isolation. Never measured. The most interesting unexplored option here. |
+| `SMC_GATES_CLUSTER` | Add-only plus 2.0.2's cluster grouping, without its eviction — keeps the half that cut dispatcher lookups (196k → 59k) and drops the half that crashed H&S. Never measured on hardware. |
 | `NO_GAME_SPEED_HINTS`, `NO_GAME_IDLE_HINT`, `NO_GAME_GATE_HINTS` | Ignore the game table's idle-loop and gate seeds. `gba_memory.c` keeps what the twin study found them worth. The table stays. |
 
 ---
