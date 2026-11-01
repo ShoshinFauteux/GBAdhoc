@@ -6,6 +6,8 @@
 #   dr_build.sh                       -> bin/dr_host_base + the plugin
 #   dr_build.sh inline "-DDRPROF_INLINE_RAM=1"        -> bin/dr_host_inline
 #   TWIN=0 dr_build.sh base-notwin    -> the same core without DRPROF_TWIN
+#   FEATURES=baked dr_build.sh ship   -> gpsp_features.h instead of an explicit
+#                                        list (tools/drprof/Makefile FEATURES)
 #
 # The tree is rsynced to $DRPROF_HOME/src (native Linux filesystem: OneDrive
 # through /mnt/c is slow and the root make writes objects beside the sources),
@@ -20,6 +22,7 @@ IMAGE=${DRPROF_IMAGE:-drprof-qemu}
 VARIANT=${1:-base}
 VDEFS=${2:-}
 TWIN=${TWIN:-1}
+FEATURES=${FEATURES:-explicit}
 # DRPROF_SRC: the build tree's directory name under $DRPROF_HOME (default
 # src).  Give each concurrent build its own (dr_corpus.py does) -- the root
 # make writes objects beside the sources, so two builds must never share one.
@@ -43,7 +46,7 @@ docker run --rm -v "$DRPROF_HOME":/w -w /w/$SRCN/tools/drprof "$IMAGE" bash -c "
   set -e
   rm -f bin/dr_host_$VARIANT bin/libcore_$VARIANT.a
   make plugin >/dev/null
-  make VARIANT='$VARIANT' VDEFS='$VDEFS' TWIN='$TWIN' 2>&1 | grep -E 'error|warning: linking|Error' || true
+  make VARIANT='$VARIANT' VDEFS='$VDEFS' TWIN='$TWIN' FEATURES='$FEATURES' 2>&1 | grep -E 'error|warning: linking|Error' || true
   test -x bin/dr_host_$VARIANT
   cp bin/dr_host_$VARIANT* bin/drprof_plugin.so /w/bin/
 "

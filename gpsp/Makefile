@@ -409,7 +409,7 @@ else ifeq ($(platform), psp1)
 	# flush: a game that never fills the cache never gets one.  Needs
 	# SMC_GATES=1 and SMC_GATE_BITMAP=1 (cpu_threaded.c ENTRY_GATES).
 	ifeq ($(ENTRY_GATES),1)
-	ifneq ($(SMC_GATE_BITMAP),1)
+	ifeq ($(SMC_GATE_BITMAP),0)
 	$(error ENTRY_GATES=1 needs SMC_GATES=1 SMC_GATE_BITMAP=1)
 	endif
 	CFLAGS += -DENTRY_GATES=1
@@ -493,9 +493,9 @@ else ifeq ($(platform), psp1)
 	# mips/mips_stub.S).  Off by default.
 	ifeq ($(HOT_DATA_GUARD),1)
 	CFLAGS += -DHOT_DATA_GUARD=1
+	endif
 	ifneq ($(HOT_DATA_OFFSET),)
 	CFLAGS += -DHOT_DATA_OFFSET=$(HOT_DATA_OFFSET)
-	endif
 	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
@@ -845,10 +845,11 @@ else ifeq ($(platform), psp1)
 	# is revived instead of translated again (cpu_threaded.c SMC_REUSE).
 	# Speed only; needs XLAT_PURE=1.
 	ifeq ($(SMC_REUSE),1)
-	ifneq ($(XLAT_PURE),1)
+	ifeq ($(XLAT_PURE),0)
 	$(error SMC_REUSE=1 needs XLAT_PURE=1)
 	endif
 	CFLAGS += -DSMC_REUSE=1
+	endif
 	ifneq ($(SMC_REUSE_SPARE_KB),)
 	CFLAGS += -DSMC_REUSE_SPARE_KB=$(SMC_REUSE_SPARE_KB)
 	endif
@@ -860,14 +861,13 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_REUSE_ARMING),1)
 	CFLAGS += -DSMC_REUSE_ARMING=1
 	endif
-	endif
 	# SMC_IMM_PATCH=1: OFF by default (xlat-cost 2026-10-28).  An IWRAM ARM
 	# data-processing immediate that the game keeps rewriting is emitted in a
 	# fixed lui/ori form and patched in place on the next imm-only store
 	# instead of retiring the block (Doom II / Duke / Ice Nine renderers).
 	# Needs JIT_CODE_DISCIPLINE (and the SMC single-store path).
 	ifeq ($(SMC_IMM_PATCH),1)
-	ifneq ($(JIT_CODE_DISCIPLINE),1)
+	ifeq ($(JIT_CODE_DISCIPLINE),0)
 	$(error SMC_IMM_PATCH=1 needs JIT_CODE_DISCIPLINE=1)
 	endif
 	CFLAGS += -DSMC_IMM_PATCH=1
@@ -1454,6 +1454,19 @@ endif
 CFLAGS  += -I$(CTRULIB)/include
 
 endif
+endif
+
+# THE FEATURE SET (gpsp_features.h): what a PSP core is, force-included so no
+# recipe has to list it.  The twin gets the same header; tools/drprof/Makefile
+# says -DGPSP_FEATURES_EXPLICIT because its variants are complete lists.  NAME=0
+# on this make switches one feature off: a -U on the compile line would lose to
+# the header.  The `ifeq ($(NAME),1)` blocks above stay because NAME=1 and
+# NAME=N are still legal, and GBAdhoc-Lab's twin reads them to turn a manifest's
+# coreFlags back into defines.  Other platforms never see any of this.
+ifneq (,$(filter $(platform),psp1 drprof-mipsel))
+GPSP_FEATURE_NAMES := $(shell sed -n 's/^\#define \([A-Z0-9_]*\) .*/\1/p' $(CORE_DIR)/gpsp_features.h)
+CFLAGS += -include $(CORE_DIR)/gpsp_features.h
+CFLAGS += $(foreach f,$(GPSP_FEATURE_NAMES),$(if $(filter 0,$($(f))),-DGPSP_NO_$(f)))
 endif
 
 # Escape hatch for one-off builds (profiling probes, oracle perturbations):

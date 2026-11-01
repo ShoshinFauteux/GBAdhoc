@@ -9,10 +9,15 @@
 #   make VARIANT=x VDEFS="-DFOO=1"        -> bin/dr_host_x         (a translator variant)
 #   make plugin                           -> bin/drprof_plugin.so
 #
-# Every variant is the PSP release dynarec configuration (tools/build.sh
-# CORE_COMMON, translated to defines below) plus VDEFS.  The core is CLEAN
-# rebuilt per variant: the root make tracks neither headers nor CFLAGS
-# (core-vs-frontend-defines), and a stale object is exactly how an A/B
+# FEATURES=explicit (the default): a variant is RELEASE_DEFS below plus VDEFS
+# and NOTHING ELSE.  gpsp_features.h is force-included but stands aside
+# (-DGPSP_FEATURES_EXPLICIT), so a switch a variant does not name is off and
+# -UDISPATCH_CACHE works.  The oracles' tables and GBAdhoc-Lab's gate (VDEFS =
+# a manifest's whole coreFlags) depend on that.
+# FEATURES=baked: exactly what a PSP core is, gpsp_features.h plus REWIND, with
+# VDEFS on top (-DGPSP_NO_<NAME> to drop one).  GBA_LINK stays `make pair`'s.
+#
+# The core is CLEAN rebuilt per variant: a stale object is exactly how an A/B
 # silently compares a build with itself.
 CORE_DIR := ../..
 CROSS    ?= mipsel-linux-gnu-
@@ -24,12 +29,22 @@ VDEFS    ?=
 # byte-identical (verified by dr_oracle.py base vs base-notwin).
 TWIN     ?= 1
 
-# == tools/build.sh CORE_COMMON (the shipped dynarec configuration) ==========
-RELEASE_DEFS := -DSMC_GATES -DSMC_GATES_SIMPLE -DSMC_GATES_RANKED=1 \
+FEATURES ?= explicit
+ifeq ($(FEATURES),baked)
+RELEASE_DEFS := -DUSE_PSP_RGB565_FORMAT
+CORE_MAKE_VARS := REWIND=1
+else ifeq ($(FEATURES),explicit)
+# The configuration the oracle tables are written on top of (dr_corpus.py).
+RELEASE_DEFS := -DGPSP_FEATURES_EXPLICIT \
+  -DSMC_GATES -DSMC_GATES_SIMPLE -DSMC_GATES_RANKED=1 \
   -DSMC_GATE_BITMAP=1 -DSMC_PARTIAL_SAFE -DSMC_PARTIAL_STABLE_THUNK \
   -DSMC_PARTIAL_DIRECT_LINKS -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 \
   -DSMC_GATE_CHARGE=1 -DDISPATCH_CYCLE_CHECK=1 -DDMA_SMC_FLUSH=1 \
   -DUSE_PSP_RGB565_FORMAT
+CORE_MAKE_VARS :=
+else
+$(error FEATURES must be explicit or baked)
+endif
 ifeq ($(TWIN),1)
 TWIN_DEFS := -DDRPROF_TWIN
 endif
@@ -61,7 +76,7 @@ $(BIN): dr_host.c $(CORE) bin/libgb.a
 $(CORE):
 	mkdir -p bin
 	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel clean >/dev/null
-	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel CODE_DEFINES="$(CORE_DEFS)" -j$$(nproc) >/dev/null
+	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel $(CORE_MAKE_VARS) CODE_DEFINES="$(CORE_DEFS)" -j$$(nproc) >/dev/null
 	cp $(CORE_DIR)/gpsp_libretro_drprof_mipsel.a $@
 	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel clean >/dev/null
 
@@ -96,7 +111,7 @@ pair: $(PAIR)
 $(PCORE):
 	mkdir -p bin
 	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel clean >/dev/null
-	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel GBA_LINK=1 CODE_DEFINES="$(CORE_DEFS)" -j$$(nproc) >/dev/null
+	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel $(CORE_MAKE_VARS) GBA_LINK=1 CODE_DEFINES="$(CORE_DEFS)" -j$$(nproc) >/dev/null
 	cp $(CORE_DIR)/gpsp_libretro_drprof_mipsel.a $@
 	$(MAKE) -C $(CORE_DIR) platform=drprof-mipsel clean >/dev/null
 $(PAIR): $(GM)/gl_host.c $(PCORE)
