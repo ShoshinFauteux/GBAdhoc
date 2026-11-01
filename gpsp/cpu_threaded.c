@@ -2109,7 +2109,7 @@ void translate_icache_sync() {
 /* See the (low word) BL case in translate_thumb_instruction.  Only the MIPS
  * emitter is built and verified in this tree; other back ends keep upstream
  * behaviour. */
-#if defined(MIPS_ARCH) && !defined(NO_BL_FIX)
+#if defined(MIPS_ARCH)
 #define thumb_bl_low_alone(lr_value) {                                        \
   generate_load_imm(reg_a0, (lr_value));                                      \
   generate_store_reg(reg_a0, REG_LR);                                         \
@@ -5160,12 +5160,6 @@ block_exit_type block_exits[MAX_EXITS];
 #define smc_tag_gate_arm_no()
 #define smc_tag_gate_thumb_no()
 
-#ifdef NO_GATE_TAG_FIX   /* DIAGNOSTIC A/B only: restore the pre-fix hole */
-#undef smc_tag_gate_arm_yes
-#undef smc_tag_gate_thumb_yes
-#define smc_tag_gate_arm_yes()
-#define smc_tag_gate_thumb_yes()
-#endif
 
 /* SMC_SCAN_SPCLAMP: stop scanning at the STACK POINTER, not at the top of
  * IWRAM.
@@ -7115,9 +7109,7 @@ static u32 smc_reuse_find_on = 1;
 extern u32 smc_reuse_xlat, smc_reuse_hits, smc_reuse_paused;
 static void smc_reuse_window(void)
 {
-#ifndef SMC_REUSE_ARMING
   /* The spare invariant makes reuse exact everywhere: no arming needed.
-   * (make SMC_REUSE_ARMING=1 restores bb8b7b2's window as a cost knob.)
    * What remains is cost: a record costs its block a pass over the call
    * sites and a copy of the guest bytes, and pays only when it is revived.
    * So recording pauses for a window after one in which translations
@@ -7143,14 +7135,6 @@ static void smc_reuse_window(void)
     smc_reuse_find_on = (smc_reuse_win_n % SMC_REUSE_REC_PROBE) == 0 || h > 0;
     smc_reuse_win_xlat = smc_reuse_xlat;
     smc_reuse_win_hits = smc_reuse_hits;
-    smc_reuse_win_frame = frame_counter;
-  }
-  return;
-#endif
-  if ((u32)(frame_counter - smc_reuse_win_frame) >= SMC_REUSE_ARM_FRAMES) {
-    smc_reuse_armed = !smc_reuse_full_seen &&
-                      smc_reuse_win_flushes >= SMC_REUSE_ARM_FLUSHES;
-    smc_reuse_win_flushes = 0;
     smc_reuse_win_frame = frame_counter;
   }
 }
@@ -7983,7 +7967,6 @@ static bool smc_reuse_revive(smc_reuse_rec *r)
 static int smc_reuse_on_flush(void)
 {
   int keep;
-#ifndef SMC_REUSE_ARMING
   /* Exact by the spare invariant: always on.  A flush keeps the code when
    * all of it fits in the spare (the virtual pointer restarts at 0). */
   keep = smc_reuse_env_ok() && !smc_reuse_force_real && smc_reuse_mode &&
@@ -7991,29 +7974,6 @@ static int smc_reuse_on_flush(void)
   smc_reuse_force_real = 0;
   smc_reuse_vptr = 0;
   smc_reuse_epoch++;
-  if (keep)
-    smc_reuse_kept++;
-  else {
-    smc_reuse_resets++;
-    smc_reuse_drop();
-  }
-  return keep;
-#endif
-  if (flush_ram_full == smc_reuse_last_full)
-    smc_reuse_win_flushes++;             /* not a cache-full flush */
-  else
-    /* A game that fills its RAM cache is where contract point 5 can bite:
-     * stand down until the dynarec is reset (reset, state load, ROM load). */
-    smc_reuse_full_seen = 1, smc_reuse_armed = 0;
-  if (smc_reuse_force_real)
-    smc_reuse_full_seen = 0;
-  smc_reuse_last_full = flush_ram_full;
-  smc_reuse_window();
-  keep = smc_reuse_env_ok() && smc_reuse_armed && !smc_reuse_force_real &&
-             (u32)(ram_translation_ptr - ram_translation_cache) <=
-               ram_translation_cache_size / 2;
-  smc_reuse_force_real = 0;
-  smc_reuse_vptr = 0;
   if (keep)
     smc_reuse_kept++;
   else {
@@ -11686,9 +11646,6 @@ static int smc_partial_install_range_gate(u32 low, u32 high)
     SMC_GATE_MAP_ADD(high);
     changed = 1;
   }
-#ifdef GATE_HIGH_ONLY
-  found_low = 1;   /* DIAGNOSTIC: one-gate layout (checked word only) */
-#endif
   if (!found_low && translation_gate_targets < MAX_TRANSLATION_GATES) {
     translation_gate_target_pc[translation_gate_targets++] = low;
     SMC_GATE_MAP_ADD(low);
@@ -12072,13 +12029,7 @@ void flush_translation_cache_ram_smc(void)
              0));
 #endif
   int range_gate_changed = 0;
-#ifdef GATE_ONLY_FULLFLUSH
-  /* DIAGNOSTIC: install the endpoint gates but never activate partial
-   * retirement -- every SMC event is a full RAM flush. */
-  int activating = 0;
-#else
   int activating = range_safe && !smc_partial_active;
-#endif
 #endif
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
   flush_ram_smc++;

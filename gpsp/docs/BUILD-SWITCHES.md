@@ -229,20 +229,19 @@ variable it names. Protocol: `docs/ROM-RESIDENCY.md`.
 ### The 2026-09-24 gate-layout A/B apparatus
 
 Pass through `CODE_DEFINES='-D...'` on the root make. Each changes emulation or
-timing on purpose and is refused in a release.
+timing on purpose and is refused in a release. `GATE_NOCHECK`,
+`GATE_ONLY_FULLFLUSH`, `GATE_HIGH_ONLY`, `NO_GATE_TAG_FIX` and `NO_BL_FIX`, the
+arms that answered this question, were deleted in 4.6.0 (see "Removed").
 
 | switch | effect |
 |---|---|
-| `GATE_NOCHECK` | gate exits jump past the dispatcher's `DISPATCH_CYCLE_CHECK`, so a gate is never an `update_gba` point and block layout cannot move interrupt timing |
-| `GATE_ONLY_FULLFLUSH` | install the endpoint gates but never activate partial retirement |
-| `GATE_HIGH_ONLY` | install only the checked (high) endpoint gate — the one-gate layout |
 | `RTC_PIN=<epoch>` | fixed RTC, so boot is deterministic across runs (the wall clock otherwise leaks into IWRAM) |
 | `STATE_HASH_TRACE` | `ms0:/statehash.txt`: per-frame ticks, PC, IWRAM and EWRAM hashes; `STATE_DUMP_LO/HI` add raw dumps |
 | `UPDATE_TRACE_LO/HI` | `ms0:/utrace.txt`: every `update_gba` entry (ticks, overshoot, PC, registers, IWRAM hash) and every SMC event in the frame window; `UTRACE_DUMP_T/T0` dump RAM at exact tick values |
 | `STALE_STACKNOTE` | log IWRAM translations above 0x03007000 (H&S runs ARM routines copied onto the stack) |
 
-With `GATE_NOCHECK` + `GATE_ONLY_FULLFLUSH` + `RTC_PIN` the one-gate and
-two-gate layouts are timing-identical (same ticks, overshoot and PC at every
+With gate exits skipping the cycle check, no partial retirement and `RTC_PIN`, the
+one-gate and two-gate layouts are timing-identical (same ticks, overshoot and PC at every
 `update_gba`). Before the gate-word tagging fix they diverged at H&S frame 23100
 in exactly one mixed sample (stale `adds sb, r6, sb, asr #23` at 0x03001688);
 after it they are bit-identical over 1001 frames (audio `84b2bbff`).
@@ -336,6 +335,19 @@ measurements.
 | `JIT_CODE_AB` | root make, harness | the original sync model compiled in beside the discipline; harness key `jit_code_mode` 0 legacy / 1 + 8b48b48 / 2 discipline / 3 no ownership invalidate: one binary per hardware A/B | Oracle and PPSSPP IDENTICAL in every mode. Refused in a release. |
 | `JIT_SYNC_STATS` | `tools/drprof` only | counts of the original sync path | Twin only. Refused in a release. |
 | `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | `psp/Makefile` (via `tools/build.sh` `PSP_EXTRA=`) | link `psp/layout_pad.S` first so every object moves by N bytes | Hardware layout sweeps. `PSP_EXTRA` refused with `release`. |
+
+---
+
+## Removed
+
+Deleted in 4.6.0: rejected, superseded or spent, and in no oracle, mutant or Lab
+script. The code is in the 4.5.0 tag.
+
+| switch | what it was |
+|---|---|
+| `GATE_NOCHECK`, `GATE_ONLY_FULLFLUSH`, `GATE_HIGH_ONLY`, `NO_GATE_TAG_FIX`, `NO_BL_FIX` | The 2026-09-24 gate-layout A/B arms: gate exits past the cycle check, endpoint gates without partial retirement, the one-gate layout, and the pre-fix behaviour of the gate-word tag and BL fixes. Their question is answered above. |
+| `SMC_REUSE_ARMING` | bb8b7b2's arming window for `SMC_REUSE`, kept as a cost knob. The spare invariant made reuse exact everywhere, so no arming was left to do. |
+| `NO_GAME_SPEED_HINTS`, `NO_GAME_IDLE_HINT`, `NO_GAME_GATE_HINTS` | Ignore the game table's idle-loop and gate seeds. `gba_memory.c` keeps what the twin study found them worth. The table stays. |
 
 ---
 

@@ -2423,21 +2423,10 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   mips_emit_subu(reg_r3, reg_r3, reg_a0);                                     \
 
 
-#ifdef GATE_NOCHECK
-/* DIAGNOSTIC: gate exits skip the dispatcher's cycle check, so a gate is not
- * an update_gba point and block layout cannot move interrupt timing. */
-void mips_indirect_branch_arm_nocheck(u32 address);
-void mips_indirect_branch_thumb_nocheck(u32 address);
-#define generate_translation_gate(type)                                       \
-  generate_load_pc(reg_a0, pc);                                               \
-  mips_emit_j(mips_absolute_offset(mips_indirect_branch_##type##_nocheck));   \
-  mips_emit_nop()
-#else
 #define generate_translation_gate(type)                                       \
   generate_load_pc(reg_a0, pc);                                               \
   generate_indirect_branch_no_cycle_update(type)                              \
 
-#endif
 
 #define generate_update_pc_reg()                                              \
   generate_load_pc(reg_a0, pc);                                               \

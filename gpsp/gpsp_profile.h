@@ -85,12 +85,10 @@
 #ifdef STALE_CHECK
 #error "release + STALE_CHECK: PPSSPP stale-translation detector, slow and writes ms0."
 #endif
-/* The 2026-09-24 gate-layout A/B apparatus (cpu_threaded.c, main.c,
- * gba_memory.c, mips/): each changes emulation or timing on purpose. */
-#if defined(GATE_NOCHECK) || defined(GATE_ONLY_FULLFLUSH) || \
-    defined(GATE_HIGH_ONLY) || defined(STATE_HASH_TRACE) || \
-    defined(UPDATE_TRACE_LO) || defined(RTC_PIN) || defined(STALE_STACKNOTE) || \
-    defined(NO_GATE_TAG_FIX) || defined(NO_BL_FIX)
+/* The 2026-09-24 tracing apparatus (cpu_threaded.c, main.c, gba_memory.c):
+ * each changes emulation or timing on purpose. */
+#if defined(STATE_HASH_TRACE) || defined(UPDATE_TRACE_LO) || defined(RTC_PIN) || \
+    defined(STALE_STACKNOTE)
 #error "release + a gate-layout A/B diagnostic switch (docs/BUILD-SWITCHES.md)."
 #endif
 

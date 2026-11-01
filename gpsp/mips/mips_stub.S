@@ -396,9 +396,6 @@ return_to_main:
 
 defsymbl(mips_indirect_branch_arm)
   dispatch_cycle_check 2
-#ifdef GATE_NOCHECK
-defsymbl(mips_indirect_branch_arm_nocheck)
-#endif
 #ifdef DISPATCH_CACHE
   DC_KEY_ARM
   dc_probe dispatch_cache_arm, 8f
@@ -414,9 +411,6 @@ defsymbl(mips_indirect_branch_arm_nocheck)
 
 defsymbl(mips_indirect_branch_thumb)
   dispatch_cycle_check 1
-#ifdef GATE_NOCHECK
-defsymbl(mips_indirect_branch_thumb_nocheck)
-#endif
 #ifdef DISPATCH_CACHE
   DC_KEY_THUMB
   dc_probe dispatch_cache_thumb, 8f

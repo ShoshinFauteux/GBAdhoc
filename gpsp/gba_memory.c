@@ -2249,10 +2249,7 @@ typedef struct
 
 #include "gba_over.h"
 
-/* NO_GAME_SPEED_HINTS (root make NO_GAME_SPEED_HINTS=1, off by default;
- * claude/idle-general): use the table only for what the cartridge IS --
- * flash size, RTC, rumble, EEPROM, serial mode, and is_known_game -- and
- * ignore its two speed fields.  Twin study 2026-10-27:
+/* The table's two speed fields, what a 2026-10-27 twin study found them worth:
  *  - idle_loop_target_pc ends the scheduler slice at one branch address,
  *    unconditionally, whatever the code there does.  Half the matching
  *    library ROMs (other revisions; hacks keeping the code: Unbound, Heart &
@@ -2264,24 +2261,7 @@ typedef struct
  *    there trades game time for speed.
  *  - translation_gate_target_N seeds SMC gates.  The run-time rule
  *    (SMC_GATES) does NOT learn Mario Golf's two (~16% of its core
- *    instructions on the twin); Golden Sun 1's are worth ~1%.
- * -DNO_GAME_IDLE_HINT or -DNO_GAME_GATE_HINTS alone drops just one field. */
-#if defined(NO_GAME_SPEED_HINTS) && !defined(NO_GAME_IDLE_HINT)
-#define NO_GAME_IDLE_HINT 1
-#endif
-#if defined(NO_GAME_SPEED_HINTS) && !defined(NO_GAME_GATE_HINTS)
-#define NO_GAME_GATE_HINTS 1
-#endif
-#ifdef NO_GAME_IDLE_HINT
-#define OVER_IDLE_HINT 0
-#else
-#define OVER_IDLE_HINT 1
-#endif
-#ifdef NO_GAME_GATE_HINTS
-#define OVER_GATE_HINTS 0
-#else
-#define OVER_GATE_HINTS 1
-#endif
+ *    instructions on the twin); Golden Sun 1's are worth ~1%. */
 
 static void load_game_config_over(const char *gamecode)
 {
@@ -2300,7 +2280,7 @@ static void load_game_config_over(const char *gamecode)
       * session reload reads as a leak.  docs/INPROC-RETURN.md.) */
      is_known_game = true;
 
-     if (OVER_IDLE_HINT && gbaover[i].idle_loop_target_pc != 0)
+     if (gbaover[i].idle_loop_target_pc != 0)
         idle_loop_target_pc = gbaover[i].idle_loop_target_pc;
 
      if (gbaover[i].flags & FLAGS_FLASH_128KB) {
@@ -2322,9 +2302,6 @@ static void load_game_config_over(const char *gamecode)
        u32 m = gbaover[i].flags & FLAGS_SERIAL_MASK;
        serial_mode = m + 1;   // Maintain the serial mode list consistently.
      }
-
-     if (!OVER_GATE_HINTS)
-        continue;
 
      /* translation_gate_target_pc[] holds MAX_TRANSLATION_GATES entries and
       * several table rows may share one game code; never index past it. */

@@ -807,15 +807,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
 	endif
-	# NO_GAME_SPEED_HINTS=1: OFF by default (claude/idle-general).  The game
-	# table (gba_over.h) keeps its cartridge facts -- save type, RTC, rumble,
-	# serial mode -- but its idle-loop address and translation-gate seeds are
-	# ignored (gba_memory.c says what each was worth).  Pair it with
-	# SPIN_SKIP=1, which proves the real waits from the code itself.  Changes
-	# timing on the table's titles.
-	ifeq ($(NO_GAME_SPEED_HINTS),1)
-	CFLAGS += -DNO_GAME_SPEED_HINTS=1
-	endif
 	# SMC_GATE_SELFPATCH=1: OFF by default (claude/idle-general).  The ranked
 	# SMC gate rule also promotes a store that patches the code just ahead of
 	# itself (same contiguous translated run), even when it re-stores the
@@ -861,9 +852,6 @@ else ifeq ($(platform), psp1)
 	# initialised word, so hardware A/B arms share the code layout.
 	ifneq ($(SMC_REUSE_MODE),)
 	CFLAGS += -DSMC_REUSE_MODE=$(SMC_REUSE_MODE)
-	endif
-	ifeq ($(SMC_REUSE_ARMING),1)
-	CFLAGS += -DSMC_REUSE_ARMING=1
 	endif
 	# SMC_IMM_PATCH=1: OFF by default (xlat-cost 2026-10-28).  An IWRAM ARM
 	# data-processing immediate that the game keeps rewriting is emitted in a
