@@ -1790,24 +1790,8 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
 #define arm_block_memory_writeback_post_store(writeback_type)                 \
   arm_block_memory_writeback_##writeback_type()                               \
 
-/* SMC_SP_CHECKED — diagnostic/candidate fix for the Heart & Soul load crash.
- *
- * When the base register is SP both block-memory drivers take a fast path
- * that emits a raw mips_emit_sw per register, with NO SMC check on ANY word,
- * not even the final one.  So a register-list store through SP that lands on
- * translated code is never detected and its stale translations stay live.
- * Every other store form reaches execute_store_u32 on its last word.
- *
- * With this defined, SP-based block STORES fall through to the general path,
- * whose final word is checked.  Loads keep the fast path — a load cannot
- * modify code, so diverting them would cost speed for nothing. */
-#ifdef SMC_SP_CHECKED
-#define sp_fastpath_load   1
-#define sp_fastpath_store  0
-#else
 #define sp_fastpath_load   1
 #define sp_fastpath_store  1
-#endif
 
 #define arm_block_memory(access_type, offset_type, writeback_type, s_bit)     \
 {                                                                             \
@@ -2144,20 +2128,11 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
  * reg_a0 is computed from reg_a2 BEFORE reg_a2 is reloaded with the PC, so
  * the address is taken while the base is still live and the checked store
  * gets the writer PC it needs. */
-#ifdef SMC_SP_CHECKED
-#define thumb_block_memory_extra_push_lr()                                    \
-  mips_emit_addiu(reg_a0, reg_a2, (bit_count[reg_list] * 4));                 \
-  generate_load_pc(reg_a2, (pc + 2));                                         \
-  mips_emit_jal(mips_absolute_offset(execute_store_u32));                     \
-  generate_load_reg(reg_a1, REG_LR)                                           \
-
-#else
 #define thumb_block_memory_extra_push_lr()                                    \
   mips_emit_addiu(reg_a0, reg_a2, (bit_count[reg_list] * 4));                 \
   mips_emit_jal(mips_absolute_offset(execute_aligned_store32));               \
   generate_load_reg(reg_a1, REG_LR)                                           \
 
-#endif
 
 #define thumb_block_memory_extra_pop_pc()                                     \
   mips_emit_jal(mips_absolute_offset(execute_aligned_load32));                \

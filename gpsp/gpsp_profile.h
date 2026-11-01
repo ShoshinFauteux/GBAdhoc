@@ -136,10 +136,6 @@
 #endif
 #endif
 
-#if defined(STATIC_ALU_PC) && !defined(MIPS_ARCH)
-#error "STATIC_ALU_PC is wired for the MIPS dynarec only (cpu_threaded.c arm_static_alu_pc)."
-#endif
-
 #if defined(SMC_SAME_ADAPT) && !defined(SMC_SAME_SKIP)
 #error "SMC_SAME_ADAPT refines SMC_SAME_SKIP; set both."
 #endif
@@ -170,12 +166,6 @@
 /* SMC_REUSE's contract point 1 (cpu_threaded.c): the translator is a pure
  * function of the block's guest bytes and the environment it checks.  These
  * switches break that or add links a revival does not replay. */
-#if defined(SMC_REUSE) && defined(SMC_SCAN_SPCLAMP)
-#error "SMC_REUSE with SMC_SCAN_SPCLAMP: the scan end depends on the guest stack pointer."
-#endif
-#if defined(SMC_REUSE) && defined(STATIC_ALU_PC)
-#error "SMC_REUSE with STATIC_ALU_PC: links a revival does not replay."
-#endif
 
 /* Selective retirement redirects live blocks through a trampoline; a direct
  * link into one without the stable thunk points at a body that has moved. */

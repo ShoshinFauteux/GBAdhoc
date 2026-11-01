@@ -1462,7 +1462,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x24:                                                                \
       /* SUB rd, rn, imm */                                                   \
-      arm_static_alu_pc(0, sub);                                              \
+      arm_data_proc(sub, imm, no_flags);                                      \
       break;                                                                  \
                                                                               \
     case 0x25:                                                                \
@@ -1482,7 +1482,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x28:                                                                \
       /* ADD rd, rn, imm */                                                   \
-      arm_static_alu_pc(1, add);                                              \
+      arm_data_proc(add, imm, no_flags);                                      \
       break;                                                                  \
                                                                               \
     case 0x29:                                                                \
@@ -5143,35 +5143,6 @@ block_exit_type block_exits[MAX_EXITS];
 #define smc_tag_gate_thumb_no()
 
 
-/* SMC_SCAN_SPCLAMP: stop scanning at the STACK POINTER, not at the top of
- * IWRAM.
- *
- * The stock clamp is block_end_pc == 0x3007FF0 -- the last words of IWRAM --
- * so a scan starting in IWRAM code runs forward through the whole live stack
- * and tags every byte of it as code (SMC_SCAN_RAMEND names exactly this).
- * Once the stack is tagged, ordinary PUSH/STM traffic trips the SMC check and
- * forces a FULL cache flush: one PPSSPP battle measured 10122 SMC flushes,
- * and six of eight gate slots had been spent within a few hundred bytes of SP.
- *
- * Code does not live above SP, so stopping there costs nothing real, and the
- * clamp is safe by construction: worst case is an earlier block boundary,
- * which the translator already handles everywhere.
- *
- * MEASURED: NULL RESULT, do not retry as-is.  The stack grows DOWN, so the
- * live stack sits ABOVE sp and pushes land just BELOW it -- this clamp
- * protects [sp, 0x3008000), which is the wrong side.  The gated stack
- * addresses seen in the field (0x3007a38..0x3007c64) were all below an sp
- * of 0x3007c6c, so the clamp never covered them: s/x were unchanged
- * (s234 x7101 vs s242 x7355) and the crash still landed on b1c9. */
-#ifdef SMC_SCAN_SPCLAMP
-#define SMC_SCAN_PAST_SP(endpc)                                            \
-  ((endpc) >= 0x3000000 && (endpc) < 0x3008000 &&                          \
-   reg[REG_SP] >= 0x3000000 && reg[REG_SP] < 0x3008000 &&                  \
-   (endpc) >= reg[REG_SP])
-#else
-#define SMC_SCAN_PAST_SP(endpc) (0)
-#endif
-
 #ifdef SMC_WRITE_HISTO
 void smc_cover_note(u32 s, u32 e, u32 reason);
 #endif
@@ -5611,8 +5582,7 @@ u32 xpp_count, xpp_logged;
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
     if((block_data_position == MAX_BLOCK_SIZE) ||                             \
-     XLAT_SCAN_RAMEND(block_end_pc) ||                                        \
-     SMC_SCAN_PAST_SP(block_end_pc))                                          \
+     XLAT_SCAN_RAMEND(block_end_pc))                                          \
     {                                                                         \
       scan_exit_reason = (block_data_position == MAX_BLOCK_SIZE)              \
                        ? SMC_SCAN_MAXSIZE : SMC_SCAN_RAMEND;                  \
@@ -6901,91 +6871,6 @@ int spin_check(u32 *desc)
 }
 #endif /* SPIN_SKIP */
 
-/* STATIC_ALU_PC (make STATIC_ALU_PC=1; cpu-levers lever 5, OFF by default).
- *
- * `add pc, pc, #imm` / `sub pc, pc, #imm` (S clear, any condition) jumps to a
- * constant: the pc operand reads as this instruction + 8 and the immediate is
- * fixed.  Compilers emit it as a forward skip (Doom II's column loop at
- * 03002e18: `addcc pc, pc, #20`).  The translator handled it like any write to
- * r15 -- an indirect branch through mips_indirect_branch_arm, which probes the
- * dispatch cache (or calls block_lookup_address_arm) on every taken pass.
- *
- * Here it is emitted as the direct branch a `b`/`bcc` to the same address
- * gets, linked to the block that STARTS at the target -- always an external
- * link, never into the middle of this block.  That keeps it exact:
- *   - the scan is untouched (it already treats these as exit points that end
- *     the block only when unconditional), so block extents, update_cycles
- *     points and block_exits[] are what they were;
- *   - the indirect path entered the block keyed by the target too
- *     (block_lookup_address_arm), so the guest runs the same blocks;
- *   - cycles: conditional -> neither path charges the pending count;
- *     unconditional -> both subtract it first; then both run update_gba with
- *     the target in a0 when the budget is spent (bltzal update_trampoline
- *     here, DISPATCH_CYCLE_CHECK in the stub), which this switch requires.
- * Guest state must therefore be bit-identical with the switch on; only the
- * host path and when the target block is translated (eagerly, as for any
- * direct exit) change.  Not converted: S set (CPSR restore), a target not
- * word-aligned, in another region, or 0, and any past the SALU_MAX_EXITS-th
- * in one block -- all keep the indirect path. */
-#ifdef STATIC_ALU_PC
-#ifndef DISPATCH_CYCLE_CHECK
-#error "STATIC_ALU_PC relies on DISPATCH_CYCLE_CHECK for its cycle equivalence."
-#endif
-#define SALU_MAX_EXITS 8
-u32 salu_converted;    /* exits emitted direct (translation-time count) */
-#ifdef DRPROF_TWIN
-static void salu_report(void)
-{
-  fprintf(stderr, "STATIC_ALU_PC converted=%u\n", (unsigned)salu_converted);
-}
-__attribute__((constructor)) static void salu_report_init(void)
-{
-  atexit(salu_report);
-}
-#endif
-
-static inline u32 salu_static_target(u32 opcode, u32 pc, u32 is_add)
-{
-  u32 imm = opcode & 0xFF, ror = ((opcode >> 8) & 0x0F) * 2, v, t;
-  if ((((opcode >> 12) & 0x0F) != REG_PC) || (((opcode >> 16) & 0x0F) != REG_PC))
-    return 0;
-  v = ror ? ((imm >> ror) | (imm << (32 - ror))) : imm;
-  t = is_add ? (pc + 8 + v) : (pc + 8 - v);
-#ifdef STATIC_ALU_PC_MUTANT
-  t += 4;   /* oracle test only: the pc+8 bias got wrong by one word */
-#endif
-  if ((t & 3) || (t >> 24) != (pc >> 24))
-    return 0;
-  return t;
-}
-
-#define arm_static_alu_pc(is_add, name)                                       \
-{                                                                             \
-  u32 salu_t = (salu_n < SALU_MAX_EXITS) ?                                    \
-    salu_static_target(opcode, pc, is_add) : 0;                               \
-  if (salu_t)                                                                 \
-  {                                                                           \
-    salu_exits[salu_n].branch_target = salu_t;                                \
-    if(condition == 0x0E)                                                     \
-    {                                                                         \
-      generate_branch_cycle_update(salu_exits[salu_n].branch_source, salu_t); \
-    }                                                                         \
-    else                                                                      \
-    {                                                                         \
-      generate_branch_no_cycle_update(salu_exits[salu_n].branch_source,       \
-                                      salu_t);                                \
-    }                                                                         \
-    salu_n++;                                                                 \
-    salu_converted++;                                                         \
-  }                                                                           \
-  else                                                                        \
-  {                                                                           \
-    arm_data_proc(name, imm, no_flags);                                       \
-  }                                                                           \
-}
-#else
-#define arm_static_alu_pc(is_add, name) arm_data_proc(name, imm, no_flags)
-#endif
 
 #ifdef SMC_REUSE
 /* SMC_REUSE -- do not re-translate RAM code that has not changed.
@@ -7996,13 +7881,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   u8 *entry_gate_branch_source = NULL;
   u32 entry_gate_branch_target = 0;
 #endif
-#ifdef STATIC_ALU_PC
-  block_exit_type salu_exits[SALU_MAX_EXITS];
-  u32 salu_n = 0;
-  block_exit_type external_block_exits[MAX_EXITS + SALU_MAX_EXITS];
-#else
   block_exit_type external_block_exits[MAX_EXITS];
-#endif
 #ifdef SMC_REUSE
   u8 *smc_reuse_first = NULL;
   u32 smc_reuse_chk = 0;
@@ -8271,12 +8150,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
      entry_gate_branch_source;
     external_block_exit_position++;
   }
-#endif
-#ifdef STATIC_ALU_PC
-  /* Always external (see STATIC_ALU_PC): linked to the block that starts at
-   * the target, like the dispatcher would have found. */
-  for(i = 0; i < (s32)salu_n; i++)
-    external_block_exits[external_block_exit_position++] = salu_exits[i];
 #endif
 #ifdef SMC_PARTIAL_SAFE
   /* ROM survives a RAM-cache flush, so a direct ROM->RAM jump could later

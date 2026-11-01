@@ -564,15 +564,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_WRITER_PROBE),1)
 	CFLAGS += -DSMC_WRITER_PROBE=1
 	endif
-	# SMC_SCAN_SPCLAMP=1: end scan_block at the stack pointer instead of at the
-	# top of IWRAM (0x3007FF0).  Stock scans run forward through the live stack
-	# and tag it as code, so ordinary PUSH traffic then trips the SMC check and
-	# forces a full cache flush (10122 measured in one battle).  PERFORMANCE.
-	# NOT IN THE SHIPPED SET: no recorded hardware verdict.  See
-	# docs/BUILD-SWITCHES.md.
-	ifeq ($(SMC_SCAN_SPCLAMP),1)
-	CFLAGS += -DSMC_SCAN_SPCLAMP=1
-	endif
 	# GBA_PC_MASK=1: mask the emulated pc to 28 bits before the region lookup.
 	# The GBA ignores address bits 28-31, so a branch to 0x58581818 executes
 	# ROM at 0x08581818 on hardware; gpSP instead falls through to its ~0
@@ -851,13 +842,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_THUMB_NO_UNSWITCH),1)
 	CFLAGS += -DXLAT_THUMB_NO_UNSWITCH=1
 	endif
-	# STATIC_ALU_PC=1: OFF by default (cpu-levers).  `add/sub pc, pc, #imm`
-	# (S clear) becomes a direct branch linked to the target's block instead of
-	# an indirect dispatch.  Exact: guest state bit-identical (needs
-	# DISPATCH_CYCLE_CHECK=1).  MIPS dynarec only.
-	ifeq ($(STATIC_ALU_PC),1)
-	CFLAGS += -DSTATIC_ALU_PC=1
-	endif
 	# SERIAL_IDLE_FAST=1: contender #3, OFF by default (docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).
@@ -944,15 +928,6 @@ else ifeq ($(platform), psp1)
 	endif
 	ifeq ($(GPSP_PROFILE),diagnostic)
 	CFLAGS += -DGPSP_PROFILE_DIAGNOSTIC=1
-	endif
-	# SMC_SP_CHECKED=1: send SP-based block STORES down the general path so
-	# their final word reaches execute_store_u32 and the SMC check.  The SP
-	# fast path emits raw stores with no check at all, which is the last
-	# known hole after the STM detector fix (mips/mips_emit.h).  Costs speed
-	# on the hottest memory path, so it is a flag and not a default until
-	# hardware says it is the bug.
-	ifeq ($(SMC_SP_CHECKED),1)
-	CFLAGS += -DSMC_SP_CHECKED
 	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
 	# core decides the layout, the frontend's blit assumes it, and nothing
