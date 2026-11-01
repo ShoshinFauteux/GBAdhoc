@@ -388,6 +388,18 @@ case "$CHEATS" in 0|1) ;; *) die "CHEATS must be 0 or 1" ;; esac
 note "cheats  : CHEATS=$CHEATS"
 run core  /build      "make platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLAGS LAYOUT_PIN=$LAYOUT_PIN CHEATS=$CHEATS -j4"
 [ -f "$ROOT/gpsp_libretro_psp1.a" ] || die "core archive missing"
+# coreFlags IS WHAT THE COMPILER SAW, not what a recipe asked for: gate_twin.py
+# rebuilds the twin from it and the Lab's scheduler matches a fixture's
+# `requires` against it, and an empty or short list degrades both silently.
+run features /build "make -s platform=psp1 GIT_VERSION='$BUILD_VERSION' $CORE_FLAGS LAYOUT_PIN=$LAYOUT_PIN CHEATS=$CHEATS print-features"
+RESOLVED=$(tr -d '\r' < "$ROOT/.build-features.log" | grep -E '^[A-Z0-9_]+=' | sort | tr '\n' ' ')
+case " $RESOLVED " in *" SMC_GATES="*) ;; *) die "print-features resolved no core features: $RESOLVED" ;; esac
+FEATURE_NAMES=" $(sed -n 's/^#define \([A-Z0-9_]*\) .*/\1/p' "$ROOT/gpsp_features.h" | tr '\n' ' ') GBA_LINK REWIND "
+CORE_FLAGS_OTHER=""            # what is not a feature: GPSP_PROFILE, instruments
+for t in $CORE_FLAGS; do
+  case "$FEATURE_NAMES" in *" ${t%%=*} "*) ;; *) CORE_FLAGS_OTHER="$CORE_FLAGS_OTHER $t" ;; esac
+done
+CORE_FLAGS_RESOLVED=$(echo $CORE_FLAGS_OTHER $RESOLVED)
 run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES CHEATS=$CHEATS"
 [ -f "$ROOT/psp/EBOOT.PBP" ] || die "EBOOT missing"
 
@@ -604,7 +616,7 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"sourceTree\": \"$TREE\","
   echo "  \"workingTreeClean\": $([ -z "$BUILD_DIRTY" -o "$BUILD_DIRTY" = 0 ] && echo true || echo false),"
   echo "  \"dockerImage\": \"$IMG_ID\","
-  echo "  \"coreFlags\": \"$CORE_FLAGS\","
+  echo "  \"coreFlags\": \"$CORE_FLAGS_RESOLVED\","
   echo "  \"frontendDefines\": \"$FE_DEFS\","
   echo "  \"pspMakeFlags\": \"$PSP_MAKE_FLAGS\","
   echo "  \"cleanRebuild\": $([ "$CLEAN" -eq 1 ] && echo true || echo false),"
@@ -628,7 +640,7 @@ if [ -n "$OUTDIR" ]; then
 fi
 
 note "profile : $KIND ($TITLE)"
-note "core    : $CORE_FLAGS"
+note "core    : $CORE_FLAGS_RESOLVED"
 note "frontend: $FE_DEFS"
 note "elf md5 : $ELF_MD5"
 note "pbp md5 : $PBP_MD5"

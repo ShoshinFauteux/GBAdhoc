@@ -1504,11 +1504,19 @@ cpu_threaded.o: cpu_threaded.c
 %.o: %.cc
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(OPTIMIZE) -c  -o $@ $<
 
+# What the compiler really resolves for this make line, one NAME=VALUE per
+# feature.  tools/build.sh writes it into the manifest's coreFlags, so the list
+# is the build's own answer and not a copy of a recipe.
+print-features:
+	@$(CC) $(CFLAGS) -dM -E -x c /dev/null | \
+	  sed -n 's/^#define \([A-Z0-9_]*\) \(.*\)$$/\1=\2/p' | \
+	  grep $(foreach f,$(GPSP_FEATURE_NAMES) GBA_LINK REWIND,-e '^$(f)=')
+
 clean-objs:
 	rm -rf $(OBJECTS)
 
 clean:
 	rm -f $(OBJECTS) $(TARGET)
 
-.PHONY: clean
+.PHONY: clean print-features
 endif
