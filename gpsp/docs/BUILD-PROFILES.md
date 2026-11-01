@@ -9,7 +9,7 @@ tools/build.sh diagnostic   # release plus investigation instruments
 tools/build.sh soak         # long-running harness plus bad-jump reporting
 ```
 
-Options: `--no-clean` (only safe when no define changed — see below), `--out
+Options: `--no-clean` (only safe when no frontend define changed — see below), `--out
 DIR` to stage the artifacts, `--expect TOKEN` to require a string in the linked
 ELF.
 

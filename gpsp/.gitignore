@@ -28,6 +28,9 @@ tools/e2e/sandboxes/
 tools/e2e/artifacts/
 
 
+# the root make's compile-line stamp
+.core-flags-*
+
 # frontend build artifacts
 sdl/gpsp_sdl
 sdl/obj/

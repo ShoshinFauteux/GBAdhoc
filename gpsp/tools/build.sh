@@ -9,8 +9,8 @@
 #   tools/build.sh soak         the rig plus the bad-jump reporter, for long runs
 #
 # Options:
-#   --no-clean     skip the clean rebuild.  ONLY safe when no define changed;
-#                  neither makefile tracks CFLAGS (see below).
+#   --no-clean     skip the clean rebuild.  ONLY safe when no frontend define
+#                  changed; psp/Makefile does not track CFLAGS (see below).
 #   --out DIR      where to put the manifest and a copy of the artifacts
 #   --expect TOK   a string that must be present in the linked ELF; repeatable
 #
@@ -24,9 +24,10 @@
 #
 # WHAT THIS SCRIPT PROTECTS AGAINST, each learned the hard way:
 #
-#  * Neither makefile tracks define changes, so a build after a flag change with
-#    stale .o files silently drops the flag and the experiment reads as "no
-#    effect".  Default is therefore a full clean, psp/*.o included.
+#  * psp/Makefile does not track define changes (the root make does, since
+#    4.6.0, by its flags stamp), so a build after a flag change with stale .o
+#    files silently drops the flag and the experiment reads as "no effect".
+#    Default is therefore a full clean, psp/*.o included.
 #  * psp-fixup-imports fails as a WARNING and make still exits 0, leaving an
 #    EBOOT whose syscall imports are broken -- it builds clean and dies on
 #    hardware.  Grepped for explicitly.

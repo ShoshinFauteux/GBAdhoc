@@ -1384,24 +1384,41 @@ all: $(TARGET)
 
 # Linking with gcc on purpose, we do not use any libstdc++ dependencies at all, only libc is required.
 
+# rm: `ar r` only adds and replaces, so an arm that drops an object (GBA_LINK=0)
+# would otherwise keep it as a stale member.
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
+	rm -f $@
 	$(AR) rcs $@ $(OBJECTS)
 else
 	$(CC) $(fpic) $(SHARED) $(INCFLAGS) $(OPTIMIZE) -o $@ $(OBJECTS) $(LIBM) $(LDFLAGS)
 endif
 
+# STALE-OBJECT SAFETY (ADR-0035's trap, here in the core).  -MMD -MP: a changed
+# header rebuilds what includes it.  The flags stamp: a changed compile line
+# rebuilds everything, because make does not compare what it compiled with.
+# It is rewritten only when its text differs, so an unchanged line rebuilds
+# nothing.  Neither changes a byte of any object.  psp/Makefile has the header
+# half; its compile line is not stamped, so tools/build.sh still cleans first.
+DEPFLAGS := -MMD -MP
+FLAGS_STAMP := .core-flags-$(platform)
+$(FLAGS_STAMP): FORCE
+	@printf '%s\n' '$(subst ','"'"',$(CC) $(CXX) $(INCFLAGS) $(CXXFLAGS) $(ASFLAGS) $(OPTIMIZE))' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
+$(OBJECTS): $(FLAGS_STAMP)
+-include $(OBJECTS:.o=.d)
+
 cpu_threaded.o: cpu_threaded.c
-	$(CC) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -Wno-unused-variable -Wno-unused-label -c  -o $@ $<
+	$(CC) $(DEPFLAGS) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -Wno-unused-variable -Wno-unused-label -c  -o $@ $<
 
 %.o: %.S
-	$(CC) $(ASFLAGS) $(CFLAGS) $(OPTIMIZE) -c -o $@ $<
+	$(CC) $(DEPFLAGS) $(ASFLAGS) $(CFLAGS) $(OPTIMIZE) -c -o $@ $<
 
 %.o: %.c
-	$(CC) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -c  -o $@ $<
+	$(CC) $(DEPFLAGS) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -c  -o $@ $<
 
 %.o: %.cc
-	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(OPTIMIZE) -c  -o $@ $<
+	$(CXX) $(DEPFLAGS) $(INCFLAGS) $(CXXFLAGS) $(OPTIMIZE) -c  -o $@ $<
 
 # What the compiler really resolves for this make line, one NAME=VALUE per
 # feature.  tools/build.sh writes it into the manifest's coreFlags, so the list
@@ -1415,7 +1432,9 @@ clean-objs:
 	rm -rf $(OBJECTS)
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(OBJECTS:.o=.d) gbalink_core.o gbalink_core.d $(TARGET) $(FLAGS_STAMP)
 
-.PHONY: clean print-features
+FORCE:
+
+.PHONY: clean print-features FORCE
 endif
