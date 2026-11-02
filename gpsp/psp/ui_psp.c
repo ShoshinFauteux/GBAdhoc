@@ -8217,7 +8217,11 @@ static void ret_dump_frame(void)
  *     <frame> seq <last_frame> <name>  -> log/<name>_<frame>.bmp, every frame
  *     <frame> exit
  * Harness only (reached through the ini a release build cannot read). */
+#if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
+#define BSCRIPT_MAX 1      /* no ini, no script: keep the 6.9 KiB off the image */
+#else
 #define BSCRIPT_MAX 192
+#endif
 typedef struct { unsigned short at, until; unsigned btn; char name[24]; unsigned char verb; } bscript_step;
 enum { BS_PRESS = 1, BS_DUMP, BS_SEQ, BS_EXIT };
 static bscript_step g_bscript[BSCRIPT_MAX];
