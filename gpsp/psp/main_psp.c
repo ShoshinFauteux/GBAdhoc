@@ -2445,7 +2445,9 @@ static int g_ss_rom, g_ss_game, g_ss_browser, g_ss_fired, g_ss_nohold;
 static int g_ss_sav;
 static long g_ss_rw_tick, g_ss_rw_seen;
 static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
+#ifdef REWIND
 static void sleep_sim_trash_pool(void);
+#endif
 static char g_ss_window[16];
 static volatile int g_ss_asleep, g_ss_trigger;
 /* The thread exists from the harness config on (sleep_sim_start) and never
@@ -2495,8 +2497,10 @@ static int sleep_sim_thread(SceSize args, void *argp)
    }
    if (g_ss_sav)
       fe_evt("sleep_sim sav_handle_killed=%d", fe_host_sram_test_kill_handle());
+#ifdef REWIND
    if (g_ss_trash_pool)
       sleep_sim_trash_pool();
+#endif
    fe_evt("sleep_sim asleep parked=%d rom_closed=%d", g_pwr_parked, closed);
    sceKernelDelayThread((SceUInt)g_ss_ms * 1000u);
    g_ss_asleep = 0;
