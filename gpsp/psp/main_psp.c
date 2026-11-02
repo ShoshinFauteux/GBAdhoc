@@ -9240,9 +9240,13 @@ static int run_testpat(void)
       TESTPAT_PIX(31,  0, 31),   /* magenta */
       TESTPAT_PIX(16, 32, 16)    /* gray    */
    };
-   static uint16_t pat[FE_GBA_WIDTH * FE_GBA_HEIGHT];
+   /* The heap: this runs with no core loaded, so it has room, and a static
+    * array was 76,800 B of every build's image for a harness-only test. */
+   uint16_t *pat = (uint16_t *)malloc(FE_GBA_WIDTH * FE_GBA_HEIGHT * 2);
    int f, x, y;
 
+   if (!pat)
+      return -1;
    for (y = 0; y < FE_GBA_HEIGHT; y++)
       for (x = 0; x < FE_GBA_WIDTH; x++)
          pat[y * FE_GBA_WIDTH + x] = bar[x / 30];
@@ -9257,6 +9261,7 @@ static int run_testpat(void)
       vid_swap();
       g_drew = 0;
    }
+   free(pat);
    return 0;
 }
 
