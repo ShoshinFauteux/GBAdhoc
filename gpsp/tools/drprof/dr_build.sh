@@ -4,7 +4,7 @@
 #   tools/drprof/dr_build.sh [VARIANT [VDEFS...]]      (run in WSL/Linux)
 #
 #   dr_build.sh                       -> bin/dr_host_base + the plugin
-#   dr_build.sh inline "-DDRPROF_INLINE_RAM=1"        -> bin/dr_host_inline
+#   dr_build.sh nofast "-UXLAT_FAST"                   -> bin/dr_host_nofast
 #   TWIN=0 dr_build.sh base-notwin    -> the same core without DRPROF_TWIN
 #   FEATURES=baked dr_build.sh ship   -> gpsp_features.h instead of an explicit
 #                                        list (tools/drprof/Makefile FEATURES)

@@ -7,15 +7,25 @@ an option.
 
 ## How the shipped set is built (since 4.6.0)
 
-**`tools/build.sh release`, with no environment, is the release.** The 62 core
+**`tools/release.sh X.Y.Z` makes a release** (docs/RELEASE.md), and
+**`tools/build.sh release`, with no environment, is the release build.** The core
 switches that ship are lines in `gpsp_features.h`, which the root Makefile
 force-includes (`-include`) into every core object of `platform=psp1` and
-`platform=drprof-mipsel`, assembler included. No recipe lists them.
-`GBA_LINK`, `REWIND` and `LAYOUT_PIN` change what is compiled and linked, so they
-stay make variables, default 1 for `psp1` in both makefiles. `LAYOUT_PAD_BYTES`
-5264 is the default in `psp/Makefile`, `HOT_DATA_GUARD`'s link script follows the
-core, `PLAY_INPUT_FRESH` is in every profile's frontend list. This produced the
-4.5.0 ELF and EBOOT byte for byte.
+`platform=drprof-mipsel`, assembler included. The frontend's constants are lines
+in `psp/fe_features.h`, force-included by `psp/Makefile`: the `ND_*` transport
+profile always, `VID_TRIPLE` and `PLAY_INPUT_FRESH` when the build is
+`GPSP_PLAYABLE`. No recipe lists any of them, and `tools/flags.lock` pins all of
+them (see **The drift check** below).
+`GBA_LINK`, `REWIND`, `CHEATS` and `LAYOUT_PIN` change what is compiled and
+linked, so they stay make variables, default 1 for `psp1` in both makefiles.
+`LAYOUT_PAD_BYTES` 5264 is the default in `psp/Makefile`, `HOT_DATA_GUARD`'s link
+script follows the core, `PSP_PIXFMT` stays a variable because it reaches the ME
+sub-make, and the `TGB_*` switches stay scoped to the GB core's objects. This
+produced the 4.5.0 EBOOT byte for byte.
+
+The two sides do not share defines. The frontend never tests a core feature (it
+would always read as off there; core features reach it as weak symbols) and the
+core never tests a frontend one.
 
 Other platforms never see the header. `platform=unix`, the SDL desktop build and
 the host tests compile these switches off, so **the `#else` paths are not dead
@@ -26,6 +36,7 @@ code** and stay.
 | one feature off, an A/B arm | `CORE_EXTRA="XLAT_PURE=0" tools/build.sh harness` (root make `XLAT_PURE=0`, which is `-DGPSP_NO_XLAT_PURE`). A release refuses `CORE_EXTRA`. |
 | a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
 | the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N` |
+| a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_VID_TRIPLE` drops a playable default |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
 
@@ -43,6 +54,27 @@ recipe. GBAdhoc-Lab's `gate_twin.py` rebuilds the twin from it and its scheduler
 matches fixture `requires` against it, so an empty list would degrade both
 silently; `tools/build.sh` fails instead. `tools/make_release.sh` refuses any
 build whose list is not exactly the header's.
+
+`frontendDefines` is resolved the same way (`make -C psp print-features`): the
+profile's defines plus what `psp/fe_features.h` gave that make line.
+
+**The drift check.** `tools/check_flags.py` needs no build and takes a second;
+`--compile` adds what the compilers resolve (docker), `--build DIR` a release
+manifest. `tools/make_release.sh` runs the first and last and `tools/release.sh`
+all three. It fails when:
+
+| area | what drifted |
+|---|---|
+| `lock` | a feature list, make default or profile recipe differs from `tools/flags.lock` |
+| `recipes` | a profile, makefile or wrapper restates a baked feature, or a force-include is gone |
+| `removed` | a switch in **Removed** below is back in an `#if`, a `-D` or a make conditional |
+| `dead` | something is baked or passed and no source tests it |
+| `sides` | the frontend tests a core feature, or the core a frontend one |
+| `docs` | a baked switch has no line in this file |
+| `oracles` | the twin's tables or `dr_build.sh` name a `-D` no source mentions |
+
+Changing a shipped flag is deliberate: edit the header, run
+`tools/check_flags.py --update`, and commit the lock with it.
 
 The rest of this file records what each switch does. Where a section below says
 "OFF by default" or "root make (`NAME=1`)" about a switch in `gpsp_features.h`,
@@ -102,6 +134,59 @@ present; if gate-table capacity leaves either one missing, the operation falls
 back to a full RAM-cache flush. This closes a readiness-check gap, but there is
 no hardware evidence that the old half-installed case caused a freeze, or that
 a Heart & Soul soundtrack switch installs an invalid endpoint.
+
+### The rest of the shipped set
+
+One line each; the root Makefile's comment above each `ifeq` has the detail.
+"Exact" means the same guest state as without it (speed only).
+
+| switch | what it does |
+|---|---|
+| `SMC_GATE_SELFPATCH` | the ranked rule also promotes a store patching the code just ahead of itself, even re-storing the same bytes, and gates the lowest word written (Mario Golf's table gate). Needs `SMC_GATES_RANKED`. |
+| `ENTRY_GATES_RANGE` | the exhaustion-time gate harvest walks only the tag range the following full flush clears. Needs `ENTRY_GATES`. |
+| `ENTRY_GATES_FAST` | the entry-gate harvest tests four tag slots per load. Exact. |
+| `SMC_RETIRE_LOCAL` | retire walks start at a per-64-byte bound on where a covering block can start. Same retirements, shorter walks. Needs `SMC_RETIRE_WINDOW`. |
+| `SMC_RETIRE_LIST` | `smc_retire_span`'s validation walk lists the block-start tags and the retire pass visits only those. Same retirements. |
+| `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` | selective retirement from Thumb STR/STRH/STRB and from ARM STRH single stores. |
+| `SMC_SINGLE_ANYPC`, `SMC_SINGLE_EWRAM` | the same for writers outside IWRAM (ROM, EWRAM, BIOS) and for EWRAM targets. |
+| `SMC_SINGLE_UNTAG` | also lift dead block-start tags in the written range. |
+| `SMC_STM_RANGE` | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
+| `SMC_STM_CHAIN` | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
+| `SMC_STM_WIDE` | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
+| `SMC_STM_AHEAD` | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
+| `SMC_SAME_REPROBE` | `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. Ships at 1024. |
+| `SMC_IMM_PATCH` | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
+| `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
+| `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
+| `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
+| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 256. |
+| `SMC_REUSE_MODE` | 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
+| `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
+| `DMA_SMC_ADAPT` | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
+| `DMA_ADAPT_V2` | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
+| `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
+| `JIT_COST` | the cost of producing translated code (docs/JIT-COST.md). Exact. |
+| `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
+| `IRQ_IO_FAST` | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
+| `SERIAL_IDLE_FAST` | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
+| `FIQ_BANK_FIX` | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
+| `BX_ALIGN_FIX` | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
+| `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
+| `COND_ENTRY_FIX` | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
+| `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
+| `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
+| `HOT_DATA_OFFSET` | where `HOT_DATA_GUARD` places the stub hot block in its 8 KiB way. Ships at 0x1b00. |
+
+Frontend, `psp/fe_features.h` (its comments keep the field logs behind each value):
+
+| define | ships at | what it does |
+|---|---|---|
+| `ND_MAX_PAYLOAD` | 144 | largest reliable payload; netdrv refuses anything bigger, loudly |
+| `ND_WINDOW` | 256 | ARQ window, and the per-peer reorder buffer |
+| `ND_TXQ_CAP` | 384 | per-peer reliable backlog |
+| `ND_RTO_MIN_US` | 200000 | retransmit floor |
+| `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
+| `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
 
 ### What `SMC_GATES_RANKED` actually requires
 
@@ -347,7 +432,8 @@ script. The code is in the 4.5.0 tag.
 
 ## The rule for adding one
 
-A switch that ships goes in `gpsp_features.h`, and only there. A switch needs
+A switch that ships goes in `gpsp_features.h` (`psp/fe_features.h` for the frontend),
+and only there, with `tools/flags.lock` updated in the same commit. A switch needs
 three things or it becomes another entry in the "no recorded verdict" table:
 
 1. A comment **immediately above its own `ifeq`**, saying what it does and what

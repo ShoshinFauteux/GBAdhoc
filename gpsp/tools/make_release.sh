@@ -145,6 +145,9 @@ fi
 # are the exact pair recorded by the build, rather than unrelated fresh files.
 BUILD_MANIFEST="$EBOOT_DIR/build-manifest.json"
 [ -f "$BUILD_MANIFEST" ] || die "no build-manifest.json beside '$EBOOT'; build with tools/build.sh release --out DIR"
+# The tree's flags against tools/flags.lock, and this build's manifest against
+# the tree.  Same rule as below: no override.
+python3 "$REPO/tools/check_flags.py" --build "$EBOOT_DIR" || die "the build flags drifted (docs/BUILD-SWITCHES.md, The drift check)"
 python3 - "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" "$REPO/gpsp_features.h" "$REPO/psp/Makefile" <<'PY' || die "build manifest does not describe a release built by: tools/build.sh release"
 import hashlib, json, pathlib, re, sys
 m = json.loads(pathlib.Path(sys.argv[1]).read_text())
