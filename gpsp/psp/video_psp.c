@@ -4,6 +4,7 @@
 #include <pspgu.h>
 #include <pspge.h>
 
+#include <malloc.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -198,7 +199,9 @@ static int  picture_filter(unsigned w, const vid_geo *g);
 #define STAGE_STRIDE 256
 #define STAGE_ROWS   161
 #define STAGE_BYTES  (STAGE_STRIDE * STAGE_ROWS * 2)
-static uint16_t __attribute__((aligned(64))) fb_staging_ram[STAGE_STRIDE * STAGE_ROWS];
+/* Modes 0 and 1 only, taken when one is asked for: the default (VRAM) never
+ * touches RAM, and 82 KiB of image comes off the PSP-1000's ROM cache. */
+static uint16_t *fb_staging_ram;
 
 /* ---- staging placement (ADR-0034) ----------------------------------------
  * `fb_staging` is what everything below writes and what the GE is pointed
@@ -212,8 +215,8 @@ static uint16_t __attribute__((aligned(64))) fb_staging_ram[STAGE_STRIDE * STAGE
  * address-space decoration for the CPU; the GE resolves the physical page
  * either way, and vid_dump_ge() has been reading VRAM through 0x44000000
  * since Phase 2 on exactly that basis. */
-static uint16_t *fb_staging = fb_staging_ram;
-static int       g_blit_mode = VID_BLIT_CACHED;
+static uint16_t *fb_staging;
+static int       g_blit_mode = VID_BLIT_VRAM;
 
 /* Blit profile (ADR-0034).  Accumulated per frame, drained by the caller on
  * the heartbeat cadence — the whole reason all three modes ship is that the
@@ -305,29 +308,47 @@ const char *vid_blit_mode_name(int mode)
 
 int vid_blit_mode(void) { return g_blit_mode; }
 
+/* The staging texture's VRAM home, or 0 if it does not fit. */
+static uintptr_t stage_vram_base(void)
+{
+   uintptr_t off  = (uintptr_t)FB_BYTES * (VID_NBUF + 1u);
+   unsigned  size = sceGeEdramGetSize();
+   off = (off + 63u) & ~(uintptr_t)63u;
+   if (!size || off + (uintptr_t)STAGE_BYTES > (uintptr_t)size)
+      return 0;
+   return (uintptr_t)sceGeEdramGetAddr() + off;
+}
+
 int vid_set_blit_mode(int mode)
 {
-   uintptr_t base;
+   uintptr_t base = stage_vram_base();
 
    if (mode < 0 || mode >= VID_BLIT_MODES)
       mode = VID_BLIT_CACHED;
+   if (mode == VID_BLIT_VRAM && !base)
+      mode = VID_BLIT_CACHED;                    /* no room: stay in RAM */
+
+   /* The RAM buffer, once.  With no heap to give (a hand-edited config.ini on
+    * a game that already has the heap) the VRAM home stands in. */
+   if (mode != VID_BLIT_VRAM && !fb_staging_ram)
+   {
+      fb_staging_ram = (uint16_t *)memalign(64, STAGE_BYTES);
+      if (fb_staging_ram)
+         memset(fb_staging_ram, 0, STAGE_BYTES);
+      else if (base)
+         mode = VID_BLIT_VRAM;
+      else
+         return g_blit_mode;
+   }
 
    if (mode == VID_BLIT_VRAM)
    {
       /* Bump-allocate above the two display buffers and the depth buffer.
        * 2 MiB of VRAM against 3 x 512x272x2 = 816 KiB leaves ~1.2 MiB, so
-       * 82 KiB fits with room to spare — but check rather than assert, and
-       * fall back rather than scribble on the framebuffer if it ever moves. */
-      uintptr_t off  = (uintptr_t)FB_BYTES * (VID_NBUF + 1u);
-      unsigned  size = sceGeEdramGetSize();
-      off = (off + 63u) & ~(uintptr_t)63u;
-      if (!size || off + (uintptr_t)STAGE_BYTES > (uintptr_t)size)
-         mode = VID_BLIT_CACHED;                 /* no room: stay in RAM */
-      else
-      {
-         base = (uintptr_t)sceGeEdramGetAddr() + off;
-         fb_staging = (uint16_t *)(0x40000000u | base);
-      }
+       * 82 KiB fits with room to spare -- but check rather than assert, and
+       * fall back rather than scribble on the framebuffer if it ever moves
+       * (stage_vram_base, above). */
+      fb_staging = (uint16_t *)(0x40000000u | base);
    }
 
    if (mode == VID_BLIT_UNCACHED)
@@ -339,7 +360,8 @@ int vid_set_blit_mode(int mode)
     * the previous mode.  Flush AND invalidate: a stale dirty line evicting
     * later over uncached writes is a corrupted frame that would look like a
     * GE bug, and the aliasing is invisible in the source. */
-   sceKernelDcacheWritebackInvalidateRange(fb_staging_ram, STAGE_BYTES);
+   if (fb_staging_ram)
+      sceKernelDcacheWritebackInvalidateRange(fb_staging_ram, STAGE_BYTES);
 
    g_blit_mode = mode;
    return mode;
@@ -469,6 +491,8 @@ static void font_atlas_build(void)
 
 void vid_init(void)
 {
+   /* Staging has a home before the game asks for a mode. */
+   vid_set_blit_mode(VID_BLIT_VRAM);
    font_atlas_build();
 
    sceGuInit();
