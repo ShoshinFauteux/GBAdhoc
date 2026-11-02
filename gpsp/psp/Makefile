@@ -157,10 +157,10 @@ ASFLAGS  = $(CFLAGS)
 # LAYOUT_PAD_BYTES=N: an N-byte cold function that nothing calls (main_psp.c,
 # layout_pad_cold).  As a probe it is the stand-in for "an unrelated change":
 # pinned builds must not move a hot byte, unpinned ones shift everything after
-# main_psp.o.  5264 is part of the shipped 4.5.0 layout; changing it changes
+# main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 5264
+LAYOUT_PAD_BYTES ?= 528
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -172,6 +172,12 @@ endif
 ifneq ($(LAYOUT_PAD_BYTES),0)
 CFLAGS  += -DLAYOUT_PAD_BYTES=$(LAYOUT_PAD_BYTES)
 endif
+# LAYOUT_PAD_RO_BYTES=N: the same in .rodata, before instance A's.  Whoever
+# changes frontend code or strings re-tunes both pads so that instance A's
+# cold text and tables stay where 4.5.0 had them mod 8 KiB
+# (docs/LAYOUT-PINNING.md, "Keeping the pads").
+LAYOUT_PAD_RO_BYTES ?= 976
+CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half

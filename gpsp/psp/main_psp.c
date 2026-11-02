@@ -131,6 +131,14 @@ __asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
         ".size layout_pad_cold, . - layout_pad_cold\n"
         ".popsection\n");
 #endif
+/* LAYOUT_PAD_RO_BYTES: the same for .rodata, whose frontend part is linked
+ * before instance A's: A's tables stay in their cache sets when the frontend's
+ * strings change size (docs/LAYOUT-PINNING.md). */
+#if defined(LAYOUT_PAD_RO_BYTES) && LAYOUT_PAD_RO_BYTES > 0
+__asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
+        "  .fill " LAYOUT_PAD_STR(LAYOUT_PAD_RO_BYTES) ", 1, 0\n"
+        ".popsection\n");
+#endif
 
 #define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
 char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
