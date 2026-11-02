@@ -23,6 +23,8 @@
  *                  delivered, nothing crashes (the CRC+length wall the
  *                  garbage-intolerant core depends on)
  *   7. udp       — real UDP loopback with 20% loss + 10ms jitter
+ *   8. admission — the version/feature/build exchange, both roles, against
+ *                  this build and against a 4.5.0 peer scripted frame by frame
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -217,6 +219,8 @@ typedef struct app
    netdrv  *nd;                    /* for re-entrant echo tests */
    int      echo;                  /* reply reliably to sender from deliver() */
    uint32_t echo_rx;
+   int      refused;               /* version_refused calls */
+   char     refused_build[ND_BUILD_LEN + 4];
 } app;
 
 /* payload: u32 counter | u8 src_id | u8 kind | pattern bytes (len-6) */
@@ -304,6 +308,13 @@ static void app_stopped(void *user, int reason)
    a->stop_reason = reason;
 }
 
+static void app_refused(void *user, const char *peer_build)
+{
+   app *a = (app *)user;
+   a->refused++;
+   snprintf(a->refused_build, sizeof(a->refused_build), "%s", peer_build);
+}
+
 static netdrv *mk_node_cfg(sim *s, sim_ep *ep, int idx, app *a,
                            const char *name, uint32_t nonce,
                            const char *proto, const nd_config *extra)
@@ -330,6 +341,7 @@ static netdrv *mk_node_cfg(sim *s, sim_ep *ep, int idx, app *a,
    cb.peer_connected = app_connected;
    cb.peer_disconnected = app_disconnected;
    cb.session_stopped = app_stopped;
+   cb.version_refused = app_refused;
 
    if (extra)
       cfg = *extra;
@@ -1563,6 +1575,185 @@ static void test_peer_fps_absent_is_unknown(void)
    netdrv_destroy(nd[1]);
 }
 
+/* ---- the admission check (netdrv_wire.h) ---- */
+
+/* Two consoles with these settings: 1 when they get a session. */
+static int admitted(const char *build_a, unsigned feat_a, const char *build_b,
+                    unsigned feat_b, app a[2])
+{
+   sim s;
+   sim_ep ep[2];
+   netdrv *nd[2];
+   nd_config c;
+   int up;
+
+   sim_init(&s, 2, 0xAD317);
+   memset(&c, 0, sizeof(c));
+   c.build = build_a; c.link_features = (uint16_t)feat_a;
+   nd[0] = mk_node_cfg(&s, &ep[0], 0, &a[0], "host", 0xA1, NULL, &c);
+   c.build = build_b; c.link_features = (uint16_t)feat_b;
+   nd[1] = mk_node_cfg(&s, &ep[1], 1, &a[1], "cli", 0xB2, NULL, &c);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   sim_run(&s, nd, 2, 4000);
+   up = netdrv_active(nd[1]) && netdrv_peer_count(nd[0]) == 1 &&
+        a[1].started && a[0].conn_events == 1;
+   if (!up)
+   {
+      CHECK(!netdrv_active(nd[1]) && !a[1].started, "a half-open joiner");
+      CHECK(netdrv_peer_count(nd[0]) == 0, "a half-open host");
+      CHECK(netdrv_active(nd[0]) && !a[0].stopped, "the host stays up");
+   }
+   netdrv_destroy(nd[0]);
+   netdrv_destroy(nd[1]);
+   return up;
+}
+
+/* One frame out of a script's queue. */
+static int script_next(sim_ep *ep, nd_hdr *h, const uint8_t **pl, uint8_t mac[6])
+{
+   static uint8_t buf[ND_MAX_FRAME + 64];
+   int n = sim_recv(ep, mac, buf, sizeof(buf));
+   return n > 0 && nd_wire_parse(buf, (size_t)n, h, pl, NULL) == 0;
+}
+
+static void script_tx(sim *s, sim_ep *ep, const uint8_t mac[6], uint8_t type,
+                      uint8_t src, uint8_t dst, uint16_t seq, uint16_t ack,
+                      uint32_t own, uint32_t peer, const void *pl, uint16_t len)
+{
+   static uint8_t out[ND_MAX_FRAME];
+   nd_hdr h;
+   size_t sz;
+   memset(&h, 0, sizeof(h));
+   h.type = type; h.src = src; h.dst = dst; h.seq = seq; h.ack = ack;
+   h.len = len; h.src_nonce = own; h.dst_nonce = peer;
+   sz = nd_wire_build(out, &h, pl);
+   if (mac)
+      sim_send_to(ep, mac, out, sz);
+   else
+      sim_broadcast(ep, out, sz);
+   (void)s;
+}
+
+/* A JOIN at the wire level, as 4.5.0 sends it when ver == 0. */
+static int script_join(sim *s, sim_ep *ep, netdrv *host, uint16_t ver, int *caps,
+                       int *refused_caps)
+{
+   uint8_t pl[ND_JOIN_SIZE], mac[6];
+   const uint8_t *in;
+   nd_hdr h;
+   int offers = 0, t;
+   memset(pl, 0, sizeof(pl));
+   memcpy(pl, "gpSP v1.0", 9);
+   pl[40] = 0x77;
+   script_tx(s, ep, NULL, ND_T_JOIN, ND_ID_JOINING, ND_ID_BCAST, ver, 0, 0x77, 0,
+             pl, ND_JOIN_SIZE);
+   for (t = 0; t < 10; t++)
+   {
+      s->now += 1000;
+      netdrv_pump(host, s->now);
+      while (script_next(ep, &h, &in, mac))
+      {
+         if (h.type == ND_T_OFFER)
+            offers++;
+         if (h.type == ND_T_CAPS)
+         {
+            (*caps)++;
+            *refused_caps += in[0] == ND_CAPS_REFUSED;
+         }
+      }
+   }
+   return offers;
+}
+
+static void test_admission(void)
+{
+   static sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd;
+   nd_config c;
+   uint8_t mac[6];
+   const uint8_t *in;
+   nd_hdr h;
+   int t, i, offers, caps, ref, confirms = 0, joins = 0;
+   uint32_t host_nonce = 0xC1;
+
+   printf("[admission: version, features, build]\n");
+   CHECK(admitted("v1.1.0-aaaaaaa", 0, "v1.1.0-aaaaaaa", 0, a), "same build");
+   CHECK(!a[0].refused && !a[1].refused, "same build reported refused");
+   /* no identity to compare: every other test in this file */
+   CHECK(admitted(NULL, 0, "v1.1.0-aaaaaaa", 0, a), "build unknown");
+
+   CHECK(!admitted("v1.1.0-aaaaaaa", 0, "v1.1.0-bbbbbbb", 0, a), "other build");
+   CHECK(a[1].stopped && a[1].stop_reason == ND_STOP_VERSION,
+         "joiner stop %d", a[1].stop_reason);
+   CHECK(a[1].refused == 1 && !strcmp(a[1].refused_build, "v1.1.0-aaaaaaa"),
+         "joiner told %d '%s'", a[1].refused, a[1].refused_build);
+   CHECK(a[0].refused == 1 && !strcmp(a[0].refused_build, "v1.1.0-bbbbbbb"),
+         "host told %d '%s'", a[0].refused, a[0].refused_build);
+
+   /* the rfu-reference case: one console with scheduled ticks, one without */
+   CHECK(!admitted("x", ND_FEAT_RFU_SCHED, "x", 0, a), "feature differs");
+   CHECK(a[1].stop_reason == ND_STOP_VERSION, "joiner stop %d", a[1].stop_reason);
+   CHECK(a[0].refused == 1 && !strcmp(a[0].refused_build, "?"),
+         "host told %d '%s'", a[0].refused, a[0].refused_build);
+   CHECK(admitted("x", ND_FEAT_RFU_SCHED, "x", ND_FEAT_RFU_SCHED, a), "both on");
+   /* outside ND_FEAT_MUST_MATCH a peer may simply lack it */
+   CHECK(admitted("x", 0x0100, "x", 0, a), "optional feature");
+
+   /* A 4.5.0 joiner and another link version, at a host of this build. */
+   sim_init(&s, 2, 0xAD318);
+   nd = mk_node(&s, &ep[0], 0, &a[0], "host", host_nonce, NULL);
+   ep[1].s = &s; ep[1].idx = 1;
+   netdrv_host(nd);
+   caps = ref = 0;
+   for (i = 0; i < 4; i++)
+   {
+      offers = script_join(&s, &ep[1], nd, 0, &caps, &ref);
+      CHECK(!offers, "old joiner got an OFFER");
+   }
+   CHECK(!caps, "old joiner sent %d CAPS (it would count them as malformed)", caps);
+   CHECK(a[0].refused == 1 && !a[0].refused_build[0], "host told %d '%s'",
+         a[0].refused, a[0].refused_build);
+   CHECK(netdrv_peer_count(nd) == 0, "old joiner admitted");
+   offers = script_join(&s, &ep[1], nd, ND_LINK_VER + 1, &caps, &ref);
+   CHECK(!offers && caps == 1 && ref == 1, "other link version: %d offers, "
+         "%d caps, %d refused", offers, caps, ref);
+   netdrv_destroy(nd);
+
+   /* This build joining a 4.5.0 host, scripted: OFFER for each JOIN, no CAPS. */
+   sim_init(&s, 2, 0xAD319);
+   nd = mk_node(&s, &ep[1], 1, &a[1], "cli", 0xB2, NULL);
+   ep[0].s = &s; ep[0].idx = 0;
+   netdrv_join(nd);
+   for (t = 0; t < 8000 && !a[1].stopped; t++)
+   {
+      s.now += 1000;
+      netdrv_pump(nd, s.now);
+      while (script_next(&ep[0], &h, &in, mac))
+      {
+         if (h.type == ND_T_JOIN)
+         {
+            joins++;
+            CHECK(h.len == ND_JOIN_SIZE && h.seq == ND_LINK_VER,
+                  "JOIN len %u seq %u", h.len, h.seq);
+            script_tx(&s, &ep[0], mac, ND_T_OFFER, 0, ND_ID_JOINING, 7, 0,
+                      host_nonce, h.src_nonce, NULL, 0);
+         }
+         confirms += h.type == ND_T_CONFIRM;
+      }
+   }
+   CHECK(a[1].stopped && a[1].stop_reason == ND_STOP_VERSION,
+         "joiner stop %d", a[1].stop_reason);
+   CHECK(a[1].refused == 1 && !a[1].refused_build[0], "joiner told %d '%s'",
+         a[1].refused, a[1].refused_build);
+   CHECK(!confirms && joins >= ND_OLD_HOST_OFFERS, "%d CONFIRM, %d JOIN",
+         confirms, joins);
+   CHECK(!netdrv_active(nd) && !a[1].started, "joiner came up");
+   netdrv_destroy(nd);
+}
+
 int main(void)
 {
    netdrv_pump(NULL, 0); /* Public pump tolerates a missing instance. */
@@ -1583,6 +1774,7 @@ int main(void)
    test_fuzz();
    test_peer_fps_exchange();
    test_peer_fps_absent_is_unknown();
+   test_admission();
    test_udp_backend();
 
    if (g_fail)

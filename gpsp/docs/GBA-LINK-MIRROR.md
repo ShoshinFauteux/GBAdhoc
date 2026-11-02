@@ -375,6 +375,8 @@ The cable is an AGB-005 Game Link Cable, slot 0 at the parent end. Per GBATEK:
 
 **For the first PSP bench (milestone 3-4)** the rig stages identical ROM, save and state on both consoles, so no transfer is needed. The bench uses HELLO (identity: EBOOT CRC, ROM SHA-1, state CRC), CONFIG, INPUT, HASH and END.
 
+That was the plan. The HELLO that shipped (`fe_gblink.c`, `send_hello`) carries the protocol number, role, console, palette, ROM size, ROM hash, header, save and state sizes, and no build identity: two builds with the same `FE_GBLINK_PROTO` would start a session and fall out of step at the first HASH. Since 4.6.0 netdrv refuses them before HELLO (GBA-LINK-UI.md, Admission check).
+
 **GBA specifics the vtable must carry** (found while building milestone 3):
 - **The link is always live.** The player's machine is the running core (instance A), and a 32 MiB cart is never read into memory for hashing. So the own-ROM path is SHA-1 by streaming the file, and the partner's machine is B, started from the partner's STATE (a GBA state is ~0.4 MB; the bulk lane moves it in ~2 s).
 - **Both consoles must start both machines from states.** That includes A reloading its own just-serialized state. They must also reset both instances' SMC gates (`smc_gates_reset`) and flush the dynarec, per the feasibility cold-start rules.

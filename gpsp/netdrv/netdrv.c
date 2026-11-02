@@ -249,6 +249,7 @@ struct netdrv
    nd_config    cfg;
    char         proto[ND_PROTO_LEN];
    char         nick[ND_NICK_LEN];
+   char         build[ND_BUILD_LEN];
 
    int      state;
    int      is_host;
@@ -261,6 +262,9 @@ struct netdrv
    int ever_started;
    uint32_t challenge_next, offer_challenge, offer_host_nonce;
    nd_offer offers[ND_MAX_CLIENTS - 1];
+   uint32_t caps_host_nonce;     /* client: the host whose CAPS we accepted */
+   uint32_t refused_nonce;       /* host: last joiner turned away, told once */
+   unsigned offers_no_caps;      /* client: see ND_OLD_HOST_OFFERS */
 
    nd_peer  peers[ND_MAX_CLIENTS];   /* indexed by client_id; self unused */
 
@@ -1071,7 +1075,8 @@ static void client_send_join(netdrv *nd)
    memcpy(pl, nd->proto, strnlen(nd->proto, ND_PROTO_LEN - 1));
    memcpy(pl + 24, nd->nick, strnlen(nd->nick, ND_NICK_LEN - 1));
    put32(pl + 40, nd->cfg.join_nonce);
-   nd_xmit(nd, NULL, ND_T_JOIN, ND_ID_BCAST, 0, 0, pl, ND_JOIN_SIZE);
+   nd_xmit(nd, NULL, ND_T_JOIN, ND_ID_BCAST, ND_LINK_VER,
+           nd->cfg.link_features, pl, ND_JOIN_SIZE);
    nd->last_join_tx = nd->now;
 }
 
@@ -1085,7 +1090,64 @@ static void host_send_welcome(netdrv *nd, const uint8_t mac[6], uint8_t your_id,
                     pl, (uint16_t)n, nonce);
 }
 
-static void host_on_join(netdrv *nd, const uint8_t mac[6],
+/* The admission check, netdrv_wire.h. */
+static int caps_agree(const netdrv *nd, uint16_t ver, uint16_t features)
+{
+   return ver == ND_LINK_VER &&
+          !((features ^ nd->cfg.link_features) & ND_FEAT_MUST_MATCH);
+}
+
+static void send_caps(netdrv *nd, const uint8_t mac[6], uint8_t dst,
+                      uint8_t status, uint32_t nonce)
+{
+   uint8_t pl[ND_CAPS_SIZE];
+   memset(pl, 0, sizeof(pl));
+   pl[0] = status;
+   put16(pl + 2, ND_LINK_VER);
+   put16(pl + 4, nd->cfg.link_features);
+   memcpy(pl + 6, nd->build, strnlen(nd->build, ND_BUILD_LEN - 1));
+   nd_xmit_instance(nd, mac, ND_T_CAPS, dst, 0, 0, pl, ND_CAPS_SIZE, nonce);
+}
+
+/* Host: a joiner stays out.  Its JOINs repeat; the player hears once. */
+static void host_refused(netdrv *nd, uint32_t nonce, const char *build)
+{
+   if (nonce == nd->refused_nonce)
+      return;
+   nd->refused_nonce = nonce;
+   nd_logf(nd, "join refused: build '%s' here '%s'", build, nd->build);
+   if (nd->cb.version_refused)
+      nd->cb.version_refused(nd->cb.user, build);
+}
+
+static void client_refused(netdrv *nd, const char *build)
+{
+   nd_logf(nd, "host refused: build '%s' here '%s'", build, nd->build);
+   nd->state = ND_S_IDLE;
+   if (nd->cb.version_refused)
+      nd->cb.version_refused(nd->cb.user, build);
+   if (nd->cb.session_stopped)
+      nd->cb.session_stopped(nd->cb.user, ND_STOP_VERSION);
+}
+
+static void client_on_caps(netdrv *nd, const uint8_t mac[6], const nd_hdr *h,
+                           const uint8_t *pl, const char *build)
+{
+   if (nd->state != ND_S_JOINING)
+      return;
+   if (pl[0] != ND_CAPS_OK)
+      client_refused(nd, build);
+   else if (caps_agree(nd, get16(pl + 2), get16(pl + 4)) &&
+            (!build[0] || !nd->build[0] || !strcmp(build, nd->build)))
+      nd->caps_host_nonce = h->src_nonce;
+   else
+   {
+      send_caps(nd, mac, 0, ND_CAPS_REFUSED, h->src_nonce);
+      client_refused(nd, build);
+   }
+}
+
+static void host_on_join(netdrv *nd, const uint8_t mac[6], const nd_hdr *h,
                          const uint8_t *pl, uint16_t len)
 {
    char proto[ND_PROTO_LEN], nick[ND_NICK_LEN];
@@ -1105,6 +1167,20 @@ static void host_on_join(netdrv *nd, const uint8_t mac[6],
    {
       nd_logf(nd, "join refused: proto '%s' != '%s'", proto, nd->proto);
       return;                     /* silently ignore; wrong app/version */
+   }
+   /* An older joiner gets no answer, which it reports as another version
+    * after 12 s (docs/GBA-LINK-UI.md); a refused WELCOME would tell it the
+    * room is full. */
+   if (!h->seq)
+   {
+      host_refused(nd, nonce, "");
+      return;
+   }
+   if (!caps_agree(nd, h->seq, h->ack))
+   {
+      send_caps(nd, mac, ND_ID_JOINING, ND_CAPS_REFUSED, nonce);
+      host_refused(nd, nonce, "?");
+      return;
    }
 
    /* A repeated JOIN after a lost final WELCOME needs no new challenge.
@@ -1154,6 +1230,7 @@ static void host_on_join(netdrv *nd, const uint8_t mac[6],
       memcpy(offer->nick, nick, ND_NICK_LEN);
    }
    offer->expires = nd->now + tmo(nd->cfg.peer_dead_us, ND_PEER_DEAD_US);
+   send_caps(nd, mac, ND_ID_JOINING, ND_CAPS_OK, nonce);
    nd_xmit_instance(nd, mac, ND_T_OFFER, ND_ID_JOINING,
                     (uint16_t)offer->challenge, (uint16_t)(offer->challenge >> 16),
                     NULL, 0, nonce);
@@ -1203,6 +1280,12 @@ static void client_on_offer(netdrv *nd, const uint8_t mac[6], const nd_hdr *h)
    uint32_t challenge = (uint32_t)h->seq | ((uint32_t)h->ack << 16);
    if (nd->state != ND_S_JOINING || !challenge)
       return;
+   if (nd->caps_host_nonce != h->src_nonce)
+   {
+      if (++nd->offers_no_caps >= ND_OLD_HOST_OFFERS)
+         client_refused(nd, "");
+      return;
+   }
    memcpy(nd->host_mac, mac, 6);
    nd->offer_challenge = challenge;
    nd->offer_host_nonce = h->src_nonce;
@@ -1298,7 +1381,7 @@ static void handle_frame(netdrv *nd, const uint8_t mac[6],
           get32(pl + 40) != h->src_nonce || memcmp(mac, nd->local_mac, 6) == 0)
       { nd->st.rx_drop_malformed++; return; }
       if (nd->state == ND_S_ACTIVE && nd->is_host)
-         host_on_join(nd, mac, pl, h->len);
+         host_on_join(nd, mac, h, pl, h->len);
       return;
    case ND_T_OFFER:
       if (h->src != 0 || h->dst != ND_ID_JOINING || h->len ||
@@ -1313,6 +1396,23 @@ static void handle_frame(netdrv *nd, const uint8_t mac[6],
       if (nd->state == ND_S_ACTIVE && nd->is_host)
          host_on_confirm(nd, mac, h);
       return;
+   case ND_T_CAPS:
+   {
+      char build[ND_BUILD_LEN];
+      if (h->len != ND_CAPS_SIZE || !h->src_nonce ||
+          h->dst_nonce != nd->cfg.join_nonce ||
+          !(h->src == 0 ? h->dst == ND_ID_JOINING
+                        : h->src == ND_ID_JOINING && h->dst == 0))
+      { nd->st.rx_drop_malformed++; return; }
+      memcpy(build, pl + 6, ND_BUILD_LEN);
+      build[ND_BUILD_LEN - 1] = '\0';
+      if (h->src == 0)
+         client_on_caps(nd, mac, h, pl, build);
+      else if (nd->state == ND_S_ACTIVE && nd->is_host &&
+               pl[0] == ND_CAPS_REFUSED)
+         host_refused(nd, h->src_nonce, build);
+      return;
+   }
    case ND_T_WELCOME:
       if (h->src != 0 || h->dst != ND_ID_JOINING || !h->src_nonce ||
           h->dst_nonce != nd->cfg.join_nonce)
@@ -1664,6 +1764,8 @@ netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,
       memcpy(nd->proto, cfg->protocol, strnlen(cfg->protocol, ND_PROTO_LEN - 1));
    if (cfg->nick)
       memcpy(nd->nick, cfg->nick, strnlen(cfg->nick, ND_NICK_LEN - 1));
+   if (cfg->build)
+      memcpy(nd->build, cfg->build, strnlen(cfg->build, ND_BUILD_LEN - 1));
    if (!nd->cfg.join_nonce)
       nd->cfg.join_nonce = 1;     /* must be nonzero; caller should randomize */
    nd->challenge_next = nd->cfg.join_nonce;
@@ -1691,6 +1793,8 @@ static void session_begin(netdrv *nd)
       ++nd->cfg.join_nonce;
    nd->ever_started = 1;
    nd->offer_challenge = nd->offer_host_nonce = 0;
+   nd->caps_host_nonce = nd->refused_nonce = 0;
+   nd->offers_no_caps = 0;
    memset(nd->offers, 0, sizeof(nd->offers));
 }
 

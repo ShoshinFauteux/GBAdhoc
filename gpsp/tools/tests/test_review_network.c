@@ -57,7 +57,15 @@ static netdrv *joiner(void)
    CHECK(nd != NULL);
    if (nd) { netdrv_join(nd); netdrv_pump(nd, now); }
    if (nd) {
+      /* the host's version comes before its OFFER (netdrv_wire.h) */
+      uint8_t caps[ND_CAPS_SIZE] = { ND_CAPS_OK, 0, ND_LINK_VER };
       nd_hdr h; memset(&h, 0, sizeof(h));
+      h.type = ND_T_CAPS; h.src = 0; h.dst = ND_ID_JOINING;
+      h.len = ND_CAPS_SIZE;
+      h.src_nonce = 0x11223344; h.dst_nonce = local_nonce;
+      pending_len = (int)nd_wire_build(pending, &h, caps);
+      now += 10000; netdrv_pump(nd, now);
+      memset(&h, 0, sizeof(h));
       h.type = ND_T_OFFER; h.src = 0; h.dst = ND_ID_JOINING;
       h.src_nonce = 0x11223344; h.dst_nonce = local_nonce; h.seq = 42;
       pending_len = (int)nd_wire_build(pending, &h, NULL);

@@ -57,7 +57,7 @@ answers and my choices. 5 Deviations from the design. 6 Verification.
   "Link lost: the other PSP left. Your game carries on." A desync: "The games
   fell out of step. Link ended, nothing saved." (back to the link's start).
 * **Failures** (LINKING screen, joiner): the games do not match / a different
-  GBAdhoc version / the host left Room 7 / Room 7 is full / not enough memory.
+  or older GBAdhoc version / the host left Room 7 / Room 7 is full / not enough memory.
   The host of a cable room keeps hosting when a would-be partner fails ("A
   PSP with a different game tried to join.").
 * **Settings > Link mode**, between Room and Session overlay, per game:
@@ -88,6 +88,26 @@ there is told "The other PSP runs a different GBAdhoc version." (on a GB
 console joining a `GPSPnn` room: "Room N is a Game Boy Advance room.").
 A WELCOME refused (`ND_STOP_REFUSED`, `fe_np_stop_reason`) is "Room N is
 full: 2 players."
+
+**Admission check (4.6.0).** The string only says which kind of session a room
+is, and the adapter's has never changed, so netdrv also compares what the two
+consoles are before any session: link version (`ND_LINK_VER`), must-match
+features (`ND_FEAT_*`) and the exact build (the core's `library_version`, which
+carries the commit). `netdrv_wire.h`, THE ADMISSION CHECK, has the frames. All
+three session kinds go through it. Build means build: both PSPs need the same
+release, even where the wire happens to be unchanged.
+
+| Who | Meets | What happens | What the player sees |
+| --- | --- | --- | --- |
+| joiner | another build, version or features | `ND_STOP_VERSION` at once, no session | cable, GB: LINKING "The other PSP runs a different GBAdhoc version." / "Update both PSPs to the same release."; adapter: the first line as a toast, the game carries on alone |
+| joiner | a 4.5.0 or older host | 6 OFFERs with no CAPS (about 3 s), no CONFIRM, `ND_STOP_VERSION` | the same with "an older GBAdhoc version"; the old host notices nothing |
+| host | any refused joiner | stays up for the next PSP | toast "A PSP with a different GBAdhoc version could not join." (or "an older"); a GB host waiting on LINKING ends with the joiner's two lines instead of "Nobody joined" |
+| 4.5.0 joiner | this host | no OFFER, so its JOINs go unanswered | cable, GB: its own 12 s rule, "The other PSP runs a different GBAdhoc version."; adapter: the room simply never answers |
+
+A 4.5.0 joiner is left unanswered rather than sent a refused WELCOME because it
+would report that as "Room N is full". Adding something to a session that the
+other console must also have: set a feature bit where `NP_RFU_FEATURES` is
+defined (`netpacket_host.c`), or bump `ND_LINK_VER` if every session changes.
 
 **Identity (owner: game code + a quick sampled hash).** A cable session
 identifies the cartridge by SHA-1 over its size and 64 slices of 4 KiB spread
@@ -227,6 +247,7 @@ chip fix of commit "the session chip stays hidden..."). Outputs:
 | `t-wrong` | AW2 cable host + Super Circuit | c2 scan: Room 7 dimmed "Link Cable / Advance Wars 2"; X -> plate "Room 7 is playing Advance Wars 2. Open it to join."; Join room 7 looks for `GC07AMKE` -> "Room 7 not found - is the host still there?" | as designed |
 | `t-mismatch` | AW2 + AW2 with one byte changed at 0x200 | c2 joins by scan | sampled SHA-1s differ -> c2 LINKING "The games do not match: a different version or hack." (O back); c1 toast "A PSP with a different game tried to join.", `link_host_keeps_room`, `link_host_clear` once c2 left, chip "waiting" again |
 | `t-version` | **older build** (claude/gbalink-hw ebd76a0, `cd68b18f`) hosting `GC07AW2E` by harness role (GB link protocol) + this build | c2 joins by scan | no WELCOME for 12 s with the cell up -> "The other PSP runs a different GBAdhoc version." |
+| | The two `t-adapter_*` rows below were true to 4.5.0. Since the admission check these pairs are refused. | | |
 | `t-adapter_new_host` | this build hosts Emerald + **older build** joins by `join = 1 group = GPSP07` | c1 Host -> HOST chooser -> Wireless Adapter | `GPSP07`, both `net_up proto="gpSP v1.0"`, `peer_connected` both sides; chip "Wireless Adapter  Room 7", toast "Hosting Room 7" |
 | `t-adapter_old_host` | **older build** hosts FireRed `GPSP07` (`host = 1`) + this build | c2 Join room 7 (FireRed links both ways -> scan) | `wl_join_room cable=- adapter=GPSP07` -> joined, `gpSP v1.0`, `peer_connected` both |
 | `t-override` | Emerald with `linkmode.txt` "= cable"; AW2 with "= adapter" | Host on each | Emerald hosts `GC07BPEE` with no chooser ("Link mode: Link Cable (set in Settings)."); AW2 chose `GPSP07` (its radio start then lost the race for PPSSPP's ad-hoc server, launched at the same moment: a rig artifact) |

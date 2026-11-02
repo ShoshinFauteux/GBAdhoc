@@ -156,14 +156,23 @@ enum
    ND_STOP_REFUSED   = 3,   /* host refused our JOIN (session full / admission) */
    ND_STOP_LOCAL     = 4,   /* local netdrv_leave() */
    ND_STOP_EVICTED   = 5,   /* host dropped us from the roster */
-   ND_STOP_TX_FAILED = 6    /* LOCAL, unrecoverable: a RELIABLE payload could
+   ND_STOP_TX_FAILED = 6,   /* LOCAL, unrecoverable: a RELIABLE payload could
                                not be queued (spill exhausted / OOM) or was
                                oversize. The RELIABLE contract cannot be
                                honoured, so the session fails LOUDLY instead
                                of silently corrupting the core's RFU state
                                (ADR-0016). Frontends surface this to the
                                user; it is never a normal disconnect. */
+   ND_STOP_VERSION   = 7    /* refused at admission: another GBAdhoc build,
+                               link version or feature set (netdrv_wire.h,
+                               THE ADMISSION CHECK) */
 };
+
+/* Session features at admission: the bits under ND_FEAT_MUST_MATCH are ones
+ * both consoles must agree on, the rest are free for something a peer may
+ * simply not have.  Never reuse a bit. */
+#define ND_FEAT_RFU_SCHED  (1u << 0)   /* rfu.c scheduled ticks */
+#define ND_FEAT_MUST_MATCH 0x00FFu
 
 /* ---------------------------------------------------- transport interface -- */
 
@@ -215,6 +224,11 @@ typedef struct nd_callbacks
    /* Session torn down for a remote reason (ND_STOP_*). Not fired for a
     * local netdrv_leave(). */
    void (*session_stopped)(void *user, int reason);
+   /* Optional.  A peer was turned away for its version, on either role;
+    * peer_build is its build, "" when it predates the exchange (4.5.0 or
+    * older), "?" when a host only saw its JOIN.  A joiner's
+    * session_stopped(ND_STOP_VERSION) follows. */
+   void (*version_refused)(void *user, const char *peer_build);
    /* Optional debug log line (already formatted, no newline). May be NULL. */
    void (*log)(void *user, const char *line);
 } nd_callbacks;
@@ -336,6 +350,11 @@ typedef struct nd_config
     * protocol_version ("gpSP v1.0"). Truncated at ND_PROTO_LEN-1. */
    const char *protocol;
    const char *nick;              /* truncated at ND_NICK_LEN-1; may be NULL */
+   /* The admission check (netdrv_wire.h).  build: this binary's identity,
+    * compared exactly; NULL or "" compares with anything.  link_features:
+    * ND_FEAT_* this session runs with. */
+   const char *build;
+   uint16_t    link_features;
    uint32_t    join_nonce;        /* nonzero random per process instance;
                                      lets peers detect a rejoin and reset ARQ */
    /* Timing overrides in us; 0 = default (ND_*_US above).

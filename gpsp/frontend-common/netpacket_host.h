@@ -78,8 +78,16 @@ void fe_np_set_gb_protocol(const char *proto);
 
 /* The last netdrv session_stopped reason (ND_STOP_*, 0 = none since the last
  * fe_np_start*): a joiner told ND_STOP_REFUSED was turned away by a full
- * room. */
+ * room, ND_STOP_VERSION by the admission check. */
 int fe_np_stop_reason(void);
+
+/* A peer was turned away for its version (netdrv_wire.h, THE ADMISSION CHECK)
+ * since the last call: once, on either role, for the frontend to say so.  A
+ * joiner also ends with fe_np_stop_reason() == ND_STOP_VERSION. */
+int fe_np_take_refused(void);
+/* The last such peer this session: 0 none, 1 another version, 2 one that
+ * predates the check (4.5.0 or older).  Survives the stop. */
+int fe_np_refused_kind(void);
 
 /* Short human-readable reason for the last fe_np_start() failure, for the
  * frontend to show.  Never NULL. */

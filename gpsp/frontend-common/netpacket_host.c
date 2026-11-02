@@ -19,6 +19,26 @@
 #define NP_GB_PROTOCOL "GBAdhoc GB link v2"
 static const char *np_gb_proto;      /* fe_np_set_gb_protocol, NULL = above */
 static int np_stop_reason;           /* fe_np_stop_reason */
+/* The adapter's netdrv features (netdrv.h ND_FEAT_*), compared at admission.
+ * claude/rfu-reference: scheduled ticks set ND_FEAT_RFU_SCHED on this line. */
+#define NP_RFU_FEATURES 0u
+static int np_refused_new;           /* fe_np_take_refused */
+static int np_refused_kind;          /* fe_np_refused_kind */
+
+/* The build a session compares: the core's library_version, which carries the
+ * commit tools/build.sh stamped.  Weak for the host tests, which have no core:
+ * NULL compares with anything. */
+void retro_get_system_info(struct retro_system_info *info) __attribute__((weak));
+
+static const char *np_build(void)
+{
+   struct retro_system_info si;
+   if (!retro_get_system_info)
+      return NULL;
+   memset(&si, 0, sizeof(si));
+   retro_get_system_info(&si);
+   return si.library_version;
+}
 
 static struct
 {
@@ -280,6 +300,14 @@ static void np_session_stopped(void *user, int reason)
    }
 }
 
+static void np_version_refused(void *user, const char *peer_build)
+{
+   (void)user;
+   np_refused_kind = peer_build[0] ? 1 : 2;
+   np_refused_new = 1;
+   fe_evt("link_version_refused peer=\"%s\"", peer_build);
+}
+
 static void np_log(void *user, const char *line)
 {
    (void)user;
@@ -379,6 +407,7 @@ static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
 
    np.now_us = cfg->now_us;
    np_stop_reason = 0;
+   np_refused_new = np_refused_kind = 0;
    np.probe = gb_mode ? 0 : cfg->probe;
    np.core_started = 0;
    np.failed = 0;
@@ -394,11 +423,14 @@ static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
    cb.peer_connected    = np_peer_connected;
    cb.peer_disconnected = np_peer_disconnected;
    cb.session_stopped   = np_session_stopped;
+   cb.version_refused   = np_version_refused;
    cb.log               = np_log;
 
    memset(&nc, 0, sizeof(nc));
    nc.protocol = proto;             /* "gpSP v1.0" — matched in handshake */
    nc.nick = cfg->nick;
+   nc.build = np_build();
+   nc.link_features = gb_mode ? 0 : NP_RFU_FEATURES;
    nc.join_nonce = cfg->nonce ? cfg->nonce
                               : (uint32_t)(cfg->now_us() | 1);
    nc.prof_us    = cfg->now_us;     /* ADR-0021 pump rx/arq split */
@@ -657,6 +689,18 @@ void fe_np_set_gb_protocol(const char *proto)
 int fe_np_stop_reason(void)
 {
    return np_stop_reason;
+}
+
+int fe_np_take_refused(void)
+{
+   int r = np_refused_new;
+   np_refused_new = 0;
+   return r;
+}
+
+int fe_np_refused_kind(void)
+{
+   return np_refused_kind;
 }
 
 /* ---- peer frame-rate matching (ADR-0027) -------------------------------- */

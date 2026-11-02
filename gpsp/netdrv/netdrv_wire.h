@@ -51,6 +51,7 @@ enum
    ND_T_PING     = 8,   /* keepalive; ack field still meaningful */
    ND_T_OFFER    = 9,   /* host -> joiner; seq|ack<<16 is a fresh challenge */
    ND_T_CONFIRM  = 10,  /* joiner -> host; echo challenge before admission */
+   ND_T_CAPS     = 11,  /* version/feature exchange at admission (below) */
    ND_T__COUNT
 };
 
@@ -68,6 +69,39 @@ enum
 
 /* JOIN payload: char proto[24] (NUL-padded); char nick[16]; u32 nonce */
 #define ND_JOIN_SIZE (24 + 16 + 4)
+
+/* THE ADMISSION CHECK.  Two consoles that would misread each other must not
+ * get a session, and must both be able to say why.
+ *
+ * ND_WIRE_VER stays 2 on purpose: every frame of another version is dropped
+ * unread, so a bump would make an old peer silent instead of refusable.  What
+ * 4.5.0 and earlier do with the two additions, both harmless:
+ *   JOIN seq/ack   ignored (always 0 until now, and no host reads them), so
+ *                  JOIN carries ND_LINK_VER in seq and the features in ack,
+ *                  and seq == 0 means "predates this check";
+ *   ND_T_CAPS      an unknown type, dropped and counted as malformed.
+ *
+ * host: a JOIN with another version or features, or seq == 0, gets no OFFER.
+ *       Otherwise CAPS goes out just before the OFFER.
+ * joiner: CONFIRMs only after a CAPS from that host.  It compares the build as
+ *       well, and answers ND_CAPS_REFUSED so both consoles can tell the player.
+ *       A host sending OFFER after OFFER and no CAPS is 4.5.0 or older:
+ *       ND_OLD_HOST_OFFERS of them, not one, because a CAPS can be lost and an
+ *       OFFER repeats with every JOIN retry (~500 ms each).
+ *
+ * Bump ND_LINK_VER when what a netdrv frame means changes for every session.
+ * What one kind of session turns on is a feature bit instead (netdrv.h,
+ * ND_FEAT_*). */
+#ifndef ND_LINK_VER
+#define ND_LINK_VER 1
+#endif
+/* CAPS payload: u8 status; u8 0; u16 ND_LINK_VER; u16 features;
+ * char build[ND_BUILD_LEN] (NUL-padded, the core's library_version). */
+#define ND_BUILD_LEN       16
+#define ND_CAPS_SIZE       (6 + ND_BUILD_LEN)
+#define ND_CAPS_OK         0
+#define ND_CAPS_REFUSED    1
+#define ND_OLD_HOST_OFFERS 6
 
 typedef struct nd_hdr
 {

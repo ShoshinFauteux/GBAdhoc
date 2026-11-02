@@ -6369,6 +6369,14 @@ static void net_teardown(void)
  * whole session reports once, at teardown, and the log writer sleeps. */
 static unsigned g_telemetry_period;
 
+/* What the admission check tells a player (netdrv_wire.h). */
+static const char *link_version_text(void)
+{
+   return fe_np_refused_kind() == 2
+             ? "The other PSP runs an older GBAdhoc version."
+             : "The other PSP runs a different GBAdhoc version.";
+}
+
 /* Per-frame wireless service, called from the main loop (its own counter:
  * core frames freeze while the menu is open, the pump must not). */
 static void net_frame(void)
@@ -6393,6 +6401,22 @@ static void net_frame(void)
       osd_toast("Wireless error: link overloaded");
       net_teardown();
       return;
+   }
+
+   /* Turned away for its version (netdrv_wire.h).  A host stays up for the
+    * next PSP.  A cable or GB joiner has the LINKING screen for this
+    * (link_setup_watch); an adapter joiner's game is running. */
+   if (fe_np_take_refused())
+   {
+      if (g_net_is_host)
+         osd_toast("A PSP with %s GBAdhoc version could not join.",
+                   fe_np_refused_kind() == 2 ? "an older" : "a different");
+      else if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      {
+         osd_toast("%s", link_version_text());
+         net_teardown();
+         return;
+      }
    }
 
    if ((ticks % 60) == 0)
@@ -7309,6 +7333,12 @@ static void silent_frame(void)
    }
 
    /* SILST_JOINING */
+   if (fe_np_stop_reason() == ND_STOP_VERSION)
+   {
+      fe_evt("silent_fail reason=version");
+      g_silent_state = SILST_FAILED;
+      return;
+   }
    g_silent_ticks++;
    if (fe_np_session_active())
    {
@@ -7715,9 +7745,10 @@ static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
       snprintf(l1, c1, "%s is a Game Boy Advance room.", g_link_room);
       snprintf(l2, c2, "Open a Game Boy game there, or pick another room.");
    }
-   else if (g_link_why == LW_VERSION || e == FE_GBLINK_E_PROTO)
+   else if (g_link_why == LW_VERSION || e == FE_GBLINK_E_PROTO ||
+            (g_net_is_host && fe_np_refused_kind()))
    {
-      snprintf(l1, c1, "The other PSP runs a different GBAdhoc version.");
+      snprintf(l1, c1, "%s", link_version_text());
       snprintf(l2, c2, "Update both PSPs to the same release.");
    }
    else if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
@@ -8226,6 +8257,8 @@ static void link_setup_watch(void)
       return;
    if (fe_np_stop_reason() == ND_STOP_REFUSED)
       g_link_why = LW_FULL;
+   else if (fe_np_stop_reason() == ND_STOP_VERSION)
+      g_link_why = LW_VERSION;
    else if (g_link_setup_ticks > 12u * 60u && adhoc_transport_connected())
       g_link_why = g_pcfg.console != FE_CONSOLE_GBA &&
                    g_link_room_kind == ROOM_ADAPTER ? LW_GBA_ROOM

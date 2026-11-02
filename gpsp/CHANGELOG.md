@@ -10,6 +10,11 @@ separately and are intended for upstream.
 
 ---
 
+## Unreleased
+
+- Two PSPs on different GBAdhoc versions no longer start a link session: both are told, for
+  the Wireless Adapter, Link Cable and GB/GBC alike, instead of the session misbehaving.
+
 ## [4.5.0] — 2026-11-01
 
 - Pokémon MonoMyth is compatible: live timer counters and the ARM7 instruction prefetch
