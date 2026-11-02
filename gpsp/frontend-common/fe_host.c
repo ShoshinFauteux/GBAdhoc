@@ -3055,6 +3055,7 @@ void dynarec_release_translation_caches(void);     /* cpu_threaded.c */
 extern uint32_t jit_cache_replay;                   /* cpu_threaded.c */
 extern uint32_t gamepak_reload;                     /* gba_memory.c */
 extern uint32_t gamepak_hold_bytes;                 /* gba_memory.c */
+extern uint32_t gamepak_buffer_pages;
 extern void *gamepak_hold;
 extern uint32_t jit_cache_tier;                     /* 1 small, 2 large */
 /* A's translation-cache offset for its next load (LAYOUT_PIN link cores;
@@ -3183,6 +3184,8 @@ static int gba_reload_a(int lend, const uint8_t *scr, size_t sn,
       int ok = retro_load_game(&game);
       jit_cache_replay = gamepak_reload = 0;
       gamepak_hold_bytes = 0;
+      fe_evt("gba_reload_cache pages=%u lend=%d", (unsigned)gamepak_buffer_pages,
+             lend);
       if (hold)
          *hold = gamepak_hold;
       gamepak_hold = NULL;
