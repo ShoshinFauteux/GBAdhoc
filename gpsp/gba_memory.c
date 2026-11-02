@@ -571,6 +571,26 @@ void *gamepak_hold;
  * most that many blocks, so the game comes back with exactly the cache it
  * had (the heap has a block more to give without the post-load reserve). */
 static u32 gamepak_boot_blocks;
+/* The core's .bss keeps its cache sets (docs/LAYOUT-PINNING.md): state added
+ * to it moves everything linked after it.  .sbss sits in the gap before the
+ * 8 KiB-aligned .bss, so what goes there moves nothing that matters. */
+#if defined(PSP)
+#define GAMEPAK_SBSS __attribute__((section(".sbss")))
+#else
+#define GAMEPAK_SBSS
+#endif
+/* A third pool: the idle volatile pool above the ME's megabyte, lent with the
+ * rewind off (harness key rom_vmem, off everywhere else; docs/MEMORY-BUDGET.md).
+ * Its pages are the LAST of the cache, whole blocks.  They do NOT survive a
+ * sleep: gamepak_vol_drop unmaps them on the way down and they are read back
+ * from the card as play reaches them. */
+u8 *gamepak_spare_pool3 GAMEPAK_SBSS;
+u32 gamepak_spare_pool3_bytes GAMEPAK_SBSS;
+static u32 gamepak_vol_first GAMEPAK_SBSS;    /* first page in that pool */
+static u32 gamepak_vol_pages GAMEPAK_SBSS;
+static u32 gamepak_vol_down GAMEPAK_SBSS;     /* those pages are not ours now */
+static u32 gamepak_boot_pages GAMEPAK_SBSS;
+static u32 gamepak_boot_heap_out GAMEPAK_SBSS;
 /* gamepak_buffers[0 .. gamepak_static_blocks-1] point into the spare pools:
  * they are not heap blocks and are never freed. */
 u32 gamepak_static_blocks;
@@ -677,23 +697,35 @@ bool gamepak_mini_materialized;
 bool gamepak_header_nonstandard;
 // We allocate in 1MB chunks.
 const unsigned gamepak_buffer_blocksize = 1024*1024;
+/* What a reload keeps free when it takes the heap's last pages. */
+#define GAMEPAK_RELOAD_FLOOR (256u * 1024u)
 
-/* 32 KiB pages the ROM cache holds.  32 per block, except that the LAST block
- * may be a partial one: the tail of a lent pool that is not a whole MiB
- * (GBA_LINK instance B's state is lent at its exact size, psp/
- * gbalink_core_b.ld).  The cache was always managed in pages (the LRU below
- * and every fault are per 32 KiB page); only the allocation was per MiB, so
- * a partial block only has to be the last one for `entry -> block` to stay
- * entry / 32.  gamepak_tail_static: that last block is the lent tail
- * (static memory, never freed). */
+/* 32 KiB pages the ROM cache holds.  The cache was always managed in pages
+ * (the LRU below and every fault are per 32 KiB page); only the allocation was
+ * per MiB, and on a console that runs out of heap everything short of a whole
+ * MiB was wasted.  So a block holds gamepak_block_pages[i] pages: 32, or fewer
+ * for a TAIL: the end of a lent pool that is not a whole MiB (GBA_LINK instance
+ * B's state is lent at its exact size, psp/gbalink_core_b.ld), or a piece of
+ * what the heap has left when no whole block fits.  Tails come after every
+ * whole block, block 0 is whole, and a page's place is found by walking the
+ * blocks: a fault is a 32 KiB read, so the walk is not what it costs.
+ * gamepak_block_heap: bit i, block i came from malloc and is freed with the
+ * cache. */
 u32 gamepak_buffer_pages;
-static u32 gamepak_tail_static;
+static u8  gamepak_block_pages[32] GAMEPAK_SBSS;
+static u32 gamepak_block_heap;
 
 static u32 gamepak_block_bytes(u32 i)
 {
-  if (i < (gamepak_buffer_pages >> 5))
-    return gamepak_buffer_blocksize;
-  return (gamepak_buffer_pages & 31u) << 15;
+  return (u32)gamepak_block_pages[i] << 15;
+}
+
+static u8 *gamepak_entry_ptr(u32 entry)
+{
+  u32 i = 0;
+  while (entry >= gamepak_block_pages[i])
+    entry -= gamepak_block_pages[i++];
+  return gamepak_buffers[i] + entry * (32 * 1024);
 }
 
 // LRU queue with the loaded blocks and what they map to
@@ -3015,7 +3047,9 @@ static u32 evict_gamepak_page(void)
     gamepak_blk_queue[gamepak_lru_tail].next_lru = ret;
     gamepak_lru_tail = ret;
     // If this page is marked as sticky, we keep going through the list
-  } while (phyrom >= 0 && gamepak_sb_test(phyrom));
+    // (and past the volatile pool's pages while the OS has them).
+  } while ((phyrom >= 0 && gamepak_sb_test(phyrom)) ||
+           (gamepak_vol_down && ret - gamepak_vol_first < gamepak_vol_pages));
 
   // We unmap the ROM page if it was mapped, ensure we do not access it
   // without triggering a "page fault"
@@ -3092,7 +3126,7 @@ static s32 gamepak_share_adopt(const gbalink_rom_share *s)
   gamepak_buffers[0] = gamepak_page0_private;
   gamepak_buffer_count = 0;           /* nothing of ours to evict or free */
   gamepak_buffer_pages = 0;
-  gamepak_tail_static = 0;
+  gamepak_block_heap = 0;
   return 0;
 }
 #endif
@@ -3129,9 +3163,7 @@ u8 *load_gamepak_page(u32 physical_index)
     physical_index %= rom_blocks;
 
   u32 entry = evict_gamepak_page();
-  u32 block_idx = entry / 32;
-  u32 block_off = entry % 32;
-  u8 *swap_location = &gamepak_buffers[block_idx][32 * 1024 * block_off];
+  u8 *swap_location = gamepak_entry_ptr(entry);
 
   // Fill in the entry
   gamepak_blk_queue[entry].phy_rom = physical_index;
@@ -3218,7 +3250,7 @@ void init_gamepak_buffer(void)
     gamepak_buffers[0] = gamepak_page0_private;
     gamepak_buffer_count = 0;
     gamepak_buffer_pages = 0;
-    gamepak_tail_static = 0;
+    gamepak_block_heap = 0;
     for (i = 0; i < 1024; i++)
     {
       gamepak_blk_queue[i].next_lru = (u16)(i + 1);
@@ -3267,6 +3299,7 @@ void init_gamepak_buffer(void)
    * paged path makes: the loop fails at the same block either way. */
   u32 want = gamepak_resident_wanted;
   u32 target, full_target, pool2_blocks = 0;
+  bool heap_out = false;
   gamepak_cap_reason = "default";
   gamepak_resident_got = 0;
   if (gpsp_heap_census)
@@ -3290,6 +3323,7 @@ void init_gamepak_buffer(void)
     target = gamepak_boot_blocks;
 
   gamepak_buffer_count = 0;
+  gamepak_block_heap = 0;
   /* The spare pool first: memory nothing else will use, so every block
    * taken from it is a megabyte the heap keeps. */
   while (gamepak_spare_pool && gamepak_buffer_count < target &&
@@ -3317,7 +3351,11 @@ void init_gamepak_buffer(void)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
     if (!ptr)
+    {
+      heap_out = true;
       break;
+    }
+    gamepak_block_heap |= 1u << gamepak_buffer_count;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
   if (want > cap)
@@ -3332,22 +3370,26 @@ void init_gamepak_buffer(void)
       gamepak_cap_reason = "heap_short";
       while (gamepak_buffer_count > cap &&
              gamepak_buffer_count > gamepak_static_blocks)
+      {
+        heap_out = false;   /* the heap has blocks back: nothing to scrape */
+        gamepak_block_heap &= ~(1u << (gamepak_buffer_count - 1));
         free(gamepak_buffers[--gamepak_buffer_count]);
+      }
     }
   }
-  free(post_load_reserve);
   if (!gamepak_reload)
     gamepak_boot_blocks = gamepak_buffer_count;
   gamepak_buffer_pages = gamepak_buffer_count * 32;
-  gamepak_tail_static = 0;
-  /* THE SECOND POOL'S TAIL.  A pool that is not a whole number of MiB ends in
-   * a remainder no 1 MiB block can use; it joins the cache as its pages, the
-   * LAST block, and only when the cache still pages (fewer blocks than it
-   * wanted: a cart held whole needs nothing more).  Last, after the heap's
-   * blocks, so block i still starts at ROM offset i MiB and only the final
-   * block is short.  The decision reads the uncapped target, so a reload
-   * (capped at the boot's block count) adds it exactly when the boot did.
-   * Block 0 is never the tail: header logic reads a whole block 0. */
+  for (i = 0; i < gamepak_buffer_count; i++)
+    gamepak_block_pages[i] = 32;
+  /* THE TAILS.  Only when the cache still pages (fewer blocks than it wanted:
+   * a cart held whole needs nothing more) and with a whole block 0: header
+   * logic reads a whole block 0.  The decisions read the uncapped target, so
+   * a reload (capped at the boot's block count) adds them exactly when the
+   * boot did, and it never takes more pages than the boot had.
+   *
+   * First the second pool's: a pool that is not a whole number of MiB ends in
+   * a remainder no 1 MiB block can use. */
   if (gamepak_spare_pool2 && gamepak_buffer_count >= 1 &&
       gamepak_buffer_count < full_target &&
       gamepak_buffer_count < sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]) &&
@@ -3356,10 +3398,81 @@ void init_gamepak_buffer(void)
     u32 tail = (gamepak_spare_pool2_bytes % gamepak_buffer_blocksize) >> 15;
     if (tail)
     {
+      gamepak_block_pages[gamepak_buffer_count] = (u8)tail;
       gamepak_buffers[gamepak_buffer_count++] =
         gamepak_spare_pool2 + pool2_blocks * gamepak_buffer_blocksize;
       gamepak_buffer_pages += tail;
-      gamepak_tail_static = 1;
+    }
+  }
+  /* Then the heap's.  The whole-block loop stops at the first MiB the heap
+   * cannot give, and what it leaves (anything up to a MiB) was ROM cache
+   * nobody used: a PSP-1000 ran with 210,792 B idle above the reserve.  Taken
+   * in pages, largest piece first, while the post-load reserve is still held,
+   * so the floor of the POST-LOAD BUDGET above is untouched.  A reload holds
+   * no reserve (its frontend allocations still stand), so it keeps
+   * GAMEPAK_RELOAD_FLOOR back the same way: a link session's buffers come out
+   * of what the reload leaves, on top of the hold.  A console that reached
+   * its target never ran out of heap, so nothing here runs where the heap has
+   * plenty; a reload reaches its target (the boot's blocks) on purpose, so it
+   * goes by what the boot did. */
+  if (!gamepak_reload)
+    gamepak_boot_heap_out = heap_out ? 1 : 0;
+  if ((heap_out || (gamepak_reload && gamepak_boot_heap_out)) &&
+      gamepak_buffer_count >= 1 &&
+      (!want || gamepak_buffer_pages < want * 32))
+  {
+    void * volatile reload_floor =
+      gamepak_reload ? malloc(GAMEPAK_RELOAD_FLOOR) : NULL;
+    u32 page_cap = 1024;
+    if (gamepak_reload && gamepak_boot_pages)
+      page_cap = gamepak_boot_pages;
+    if (!gamepak_reload || reload_floor)
+    {
+      u32 p = 31;
+      while (p && gamepak_buffer_pages < page_cap &&
+             gamepak_buffer_count <
+               sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+      {
+        void *ptr;
+        if (p > page_cap - gamepak_buffer_pages)
+          p = page_cap - gamepak_buffer_pages;
+        ptr = malloc(p << 15);
+        if (!ptr)
+        {
+          p--;
+          continue;
+        }
+        gamepak_block_pages[gamepak_buffer_count] = (u8)p;
+        gamepak_block_heap |= 1u << gamepak_buffer_count;
+        gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
+        gamepak_buffer_pages += p;
+      }
+    }
+    free(reload_floor);
+  }
+  free(post_load_reserve);
+  if (!gamepak_reload)
+    gamepak_boot_pages = gamepak_buffer_pages;
+  /* The volatile pool last, after everything that survives a sleep.  Never
+   * counted as resident (gamepak_must_swap): a cart that fits only with it
+   * must keep the paged load stubs, because a sleep takes these pages. */
+  gamepak_vol_pages = gamepak_vol_down = 0;
+  if (gamepak_spare_pool3 && gamepak_buffer_count >= 1 &&
+      gamepak_buffer_count < full_target &&
+      (!want || gamepak_buffer_pages < want * 32))
+  {
+    u32 k = 0;
+    gamepak_vol_first = gamepak_buffer_pages;
+    while ((k + 1) * gamepak_buffer_blocksize <= gamepak_spare_pool3_bytes &&
+           gamepak_buffer_count <
+             sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+    {
+      gamepak_block_pages[gamepak_buffer_count] = 32;
+      gamepak_buffers[gamepak_buffer_count++] =
+        gamepak_spare_pool3 + k * gamepak_buffer_blocksize;
+      gamepak_buffer_pages += 32;
+      gamepak_vol_pages += 32;
+      k++;
     }
   }
 #else
@@ -3370,15 +3483,17 @@ void init_gamepak_buffer(void)
   if (cap < 1)
     cap = 1;
   gamepak_buffer_count = 0;
+  gamepak_block_heap = 0;
   while (gamepak_buffer_count < cap)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
     if (!ptr)
       break;
+    gamepak_block_heap |= 1u << gamepak_buffer_count;
+    gamepak_block_pages[gamepak_buffer_count] = 32;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
   gamepak_buffer_pages = gamepak_buffer_count * 32;
-  gamepak_tail_static = 0;
 #endif
 
 #ifdef GBA_LINK
@@ -3402,6 +3517,35 @@ void init_gamepak_buffer(void)
   gamepak_lru_tail = gamepak_buffer_pages - 1;
 }
 
+/* Unmap the volatile pool's pages: it is going back to the OS, or came back
+ * from a sleep that may have used it.  Between frames only.  The cache simply
+ * has fewer pages until gamepak_vol_back; a page play needs meanwhile comes
+ * from the card like any other fault. */
+void gamepak_vol_drop(void)
+{
+  u32 i;
+  for (i = 0; i < gamepak_vol_pages; i++)
+  {
+    u32 entry = gamepak_vol_first + i;
+    s16 phyrom = gamepak_blk_queue[entry].phy_rom;
+    if (phyrom >= 0)
+    {
+      map_rom_entry(read, phyrom, NULL, gamepak_size >> 15);
+#ifdef GBA_LINK
+      if (gamepak_evict_hook)
+        gamepak_evict_hook((u32)phyrom);
+#endif
+      gamepak_blk_queue[entry].phy_rom = -1;
+    }
+  }
+  gamepak_vol_down = gamepak_vol_pages != 0;
+}
+
+void gamepak_vol_back(void)
+{
+  gamepak_vol_down = 0;
+}
+
 bool gamepak_must_swap(void)
 {
 #ifdef GBA_LINK
@@ -3413,7 +3557,7 @@ bool gamepak_must_swap(void)
 
   // Returns whether the current gamepak buffer is not big enough to hold
   // the full gamepak ROM. In these cases the device must swap.
-  return gamepak_buffer_pages * (32 * 1024) < gamepak_size;
+  return (gamepak_buffer_pages - gamepak_vol_pages) * (32 * 1024) < gamepak_size;
 }
 
 /* ---- SOFT RESET AS A POWER-ON (the in-game menu's "Reset game") ----------
@@ -3550,15 +3694,12 @@ void memory_term(void)
   {
     --gamepak_buffer_count;
     /* Spare-pool blocks (and a lent pool's tail) are not the heap's. */
-    if (gamepak_buffer_count >= gamepak_static_blocks &&
-        !(gamepak_tail_static &&
-          gamepak_buffer_count + 1 == (gamepak_buffer_pages + 31) >> 5))
+    if (gamepak_block_heap & (1u << gamepak_buffer_count))
       free(gamepak_buffers[gamepak_buffer_count]);
     gamepak_buffers[gamepak_buffer_count] = NULL;
   }
   gamepak_static_blocks = 0;
   gamepak_buffer_pages = 0;
-  gamepak_tail_static = 0;
 }
 
 bool memory_check_savestate(const u8 *src)
@@ -3983,14 +4124,13 @@ static s32 load_gamepak_raw(const char *name)
       filestream_seek(gamepak_file_large, 0, SEEK_SET);
     }
 
-    // Load stuff in 1MB chunks
-    u32 buf_blocks = (raw_size + gamepak_buffer_blocksize-1) / (gamepak_buffer_blocksize);
+    // Load stuff in 1MB chunks (a tail is shorter), until the cart ends or
+    // the cache does.
     u32 rom_blocks = gamepak_size >> 15;
-    u32 ldblks = buf_blocks < gamepak_buffer_count ?
-                    buf_blocks : gamepak_buffer_count;
     u32 load_total = 0;
     u32 load_done = 0;
-    for (i = 0; i < ldblks; i++)
+    u32 phyn = 0;
+    for (i = 0; i < gamepak_buffer_count && load_total < raw_size; i++)
       load_total += gamepak_block_bytes(i);
     if (load_total > (u32)fsize) load_total = (u32)fsize;
     if (gpsp_rom_load_progress)
@@ -4000,9 +4140,9 @@ static s32 load_gamepak_raw(const char *name)
     map_null(read, 0x8000000, 0xD000000);
 
     // Proceed to read the whole ROM or as much as possible.
-    for (i = 0; i < ldblks; i++)
+    for (i = 0; i < gamepak_buffer_count && phyn < gamepak_file_blocks; i++)
     {
-      // Load 1MB chunk (the last block may be short) and map it
+      // Load 1MB chunk (a tail may be short) and map it
       u32 blk_bytes = gamepak_block_bytes(i);
       {
         int64_t read_result = filestream_read(gamepak_file_large, gamepak_buffers[i], blk_bytes);
@@ -4020,14 +4160,14 @@ static s32 load_gamepak_raw(const char *name)
         if (gpsp_rom_load_progress)
           gpsp_rom_load_progress(load_done, load_total);
       }
-      for (j = 0; j < (blk_bytes >> 15) && i*32 + j < gamepak_file_blocks; j++)
+      for (j = 0; j < (blk_bytes >> 15) && phyn < gamepak_file_blocks; j++)
       {
-        u32 phyn = i*32 + j;
         u8* blkptr = &gamepak_buffers[i][32 * 1024 * j];
         u32 entry = evict_gamepak_page();
         gamepak_blk_queue[entry].phy_rom = phyn;
         // Map it to the read handlers now
         map_rom_entry(read, phyn, blkptr, rom_blocks);
+        phyn++;
       }
     } 
 

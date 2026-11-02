@@ -100,6 +100,8 @@ int main(void)
   /* Keep the test's allocation small while retaining the production page
    * size and LRU metadata shape. */
   gamepak_buffer_count = 1;
+  gamepak_block_pages[0] = 32;
+  gamepak_block_heap = 1;
   gamepak_buffers[0] = (u8 *)malloc(gamepak_buffer_blocksize);
   assert(gamepak_buffers[0]);
   for (i = 0; i < 1024; i++)

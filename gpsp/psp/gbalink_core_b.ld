@@ -6,7 +6,8 @@
  *   bdata_start .. bdata_end        B's initialised data (relocated pointers
  *                                   included): copied once at boot into
  *                                   bdata_pristine, restored at every session
- *   bregion_start .. bregion_lend   B's zero-initialised state, rounded up
+ *   bregion_start .. bregion_lend   B's zero-initialised state and the
+ *                                   bus queues (bregion_bus), rounded up
  *                                   to a whole 32 KiB ROM page: LENT to
  *                                   instance A's ROM cache while no session
  *                                   runs (its whole MiB as blocks, the rest
@@ -30,6 +31,13 @@ SECTIONS
     bregion_start = .;
     *(.bss .bss.*)
     *(COMMON)
+    /* The two cores' bus queues (gbalink/gbalink_bus.c, which checks the size
+     * at every session): nothing but a session uses them, so they are lent
+     * with B instead of sitting in the image. */
+    . = ALIGN(16);
+    bregion_bus = .;
+    . += 0x10010;
+    bregion_bus_end = .;
     /* NOT whole MiB.  Padding to 1 MiB (as until cand2) put up to 1 MiB of
      * idle bytes in the image, i.e. off every console's heap, used by
      * nothing while a session runs: cand2's B state, 4,453,156 B, padded to

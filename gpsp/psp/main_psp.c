@@ -131,6 +131,14 @@ __asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
         ".size layout_pad_cold, . - layout_pad_cold\n"
         ".popsection\n");
 #endif
+/* LAYOUT_PAD_RO_BYTES: the same for .rodata, whose frontend part is linked
+ * before instance A's: A's tables stay in their cache sets when the frontend's
+ * strings change size (docs/LAYOUT-PINNING.md). */
+#if defined(LAYOUT_PAD_RO_BYTES) && LAYOUT_PAD_RO_BYTES > 0
+__asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
+        "  .fill " LAYOUT_PAD_STR(LAYOUT_PAD_RO_BYTES) ", 1, 0\n"
+        ".popsection\n");
+#endif
 
 #define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
 char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
@@ -2613,6 +2621,9 @@ static int g_mer_vmem;
 static void *g_vm_base;
 static int   g_vm_size, g_vm_locked;
 static unsigned g_vm_eng_top;            /* end of what the engine carved */
+/* A third tenant, harness-only for now (rom_vmem, docs/MEMORY-BUDGET.md): with
+ * the rewind off, the same part of the pool as ROM cache pages. */
+static int   g_rom_vm_lend, g_rom_vm_asleep;
 static int   psp_rewind_pool_tenant(void);
 static void  psp_rewind_pool_back(void);
 static void  psp_rewind_pool_lost(void);
@@ -4371,6 +4382,8 @@ extern u8 *gamepak_buffers[32];
 extern u32 gamepak_resident_got;
 extern u32 gamepak_static_blocks;
 int gamepak_must_swap(void);
+void gamepak_vol_drop(void);
+void gamepak_vol_back(void);
 
 static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
                              size_t pitch)
@@ -5292,31 +5305,49 @@ static int file_exists(const char *path)
  * Trading is the one operation users cannot afford to have corrupted. */
 static void backup_save(const char *save_path)
 {
-   static uint8_t buf[FE_SRAM_SIZE];
+   /* In pieces: a whole-save static buffer was 128 KiB of image (every byte of
+    * it off the PSP-1000's ROM cache, docs/MEMORY-BUDGET.md) used only here. */
+   uint8_t buf[4096];
    char bak[PSP_BACKUP_PATH_CAP];
    FILE *in, *out;
-   size_t n;
+   size_t n, total = 0;
    int path_len;
 
    in = fopen(save_path, "rb");
    if (!in)
       return;
    n = fread(buf, 1, sizeof(buf), in);
-   fclose(in);
    if (!n)
+   {
+      fclose(in);
       return;
+   }
    path_len = snprintf(bak, sizeof(bak), "%s.bak", save_path);
    if (path_len < 0 || (size_t)path_len >= sizeof(bak))
    {
+      fclose(in);
       fe_evt("sav_backup skip=path_too_long");
       return;
    }
    out = fopen(bak, "wb");
    if (!out)
+   {
+      fclose(in);
       return;
-   fwrite(buf, 1, n, out);
+   }
+   while (n)
+   {
+      fwrite(buf, 1, n, out);
+      total += n;
+      n = total < FE_SRAM_SIZE ? FE_SRAM_SIZE - total : 0;
+      if (n > sizeof(buf))
+         n = sizeof(buf);
+      if (n)
+         n = fread(buf, 1, n, in);
+   }
+   fclose(in);
    fclose(out);
-   fe_evt("sav_backup file=%s size=%u", bak, (unsigned)n);
+   fe_evt("sav_backup file=%s size=%u", bak, (unsigned)total);
 }
 
 /* ----------------------------------------------------------- wireless --- */
@@ -9255,9 +9286,13 @@ static int run_testpat(void)
       TESTPAT_PIX(31,  0, 31),   /* magenta */
       TESTPAT_PIX(16, 32, 16)    /* gray    */
    };
-   static uint16_t pat[FE_GBA_WIDTH * FE_GBA_HEIGHT];
+   /* The heap: this runs with no core loaded, so it has room, and a static
+    * array was 76,800 B of every build's image for a harness-only test. */
+   uint16_t *pat = (uint16_t *)malloc(FE_GBA_WIDTH * FE_GBA_HEIGHT * 2);
    int f, x, y;
 
+   if (!pat)
+      return -1;
    for (y = 0; y < FE_GBA_HEIGHT; y++)
       for (x = 0; x < FE_GBA_WIDTH; x++)
          pat[y * FE_GBA_WIDTH + x] = bar[x / 30];
@@ -9272,6 +9307,7 @@ static int run_testpat(void)
       vid_swap();
       g_drew = 0;
    }
+   free(pat);
    return 0;
 }
 
@@ -11003,7 +11039,42 @@ static void psp_rewind_read_ini(void)
 /* ---- the rewind as a tenant of the volatile pool (see vm_lock) ------------ */
 static int psp_rewind_pool_tenant(void)
 {
-   return g_rw_pool;
+   return g_rw_pool || g_rom_vm_lend;
+}
+
+/* Before the game loads, with the rewind's decision made. */
+static void psp_rom_pool_offer(void)
+{
+   extern u8 *gamepak_spare_pool3;
+   extern u32 gamepak_spare_pool3_bytes;
+   void *base = NULL;
+   int size = 0;
+   gamepak_spare_pool3 = NULL;
+   gamepak_spare_pool3_bytes = 0;
+   g_rom_vm_lend = g_rom_vm_asleep = 0;
+   if (!fe_ini_get_int(HARNESS_INI, "rom_vmem", 0) || g_rw_want ||
+       g_pcfg.console != FE_CONSOLE_GBA)
+      return;
+   if (vm_lock(&base, &size) != 0 || !base || size <= PSP_VM_ENGINE_BYTES)
+   {
+      fe_evt("rom_vmem unavailable size=%d", size);
+      return;
+   }
+   gamepak_spare_pool3 = (u8 *)base + PSP_VM_ENGINE_BYTES;
+   gamepak_spare_pool3_bytes = (u32)(size - PSP_VM_ENGINE_BYTES);
+   g_rom_vm_lend = 1;
+   fe_evt("rom_vmem base=%08x bytes=%u", (unsigned)gamepak_spare_pool3,
+          (unsigned)gamepak_spare_pool3_bytes);
+}
+
+/* The game is gone, and its ROM cache with it. */
+static void psp_rom_pool_over(void)
+{
+   extern u8 *gamepak_spare_pool3;
+   extern u32 gamepak_spare_pool3_bytes;
+   gamepak_spare_pool3 = NULL;
+   gamepak_spare_pool3_bytes = 0;
+   g_rom_vm_lend = g_rom_vm_asleep = 0;
 }
 
 /* Offer the rewind its end of the pool.  Before fe_host_rewind_reserve at
@@ -11039,6 +11110,12 @@ static void *psp_rewind_pool_offer(size_t *bytes)
  * fe_host_rewind_suspend decides it (vetted frame, or the game is reset). */
 static void psp_rewind_pool_lost(void)
 {
+   if (g_rom_vm_lend && !g_rom_vm_asleep)
+   {
+      gamepak_vol_drop();
+      g_rom_vm_asleep = 1;
+      fe_evt("rom_vmem dropped");
+   }
    if (!g_rw_pool &&
        !(g_pwr_parked && g_rw_on && fe_host_rewind_unvetted()))
       return;
@@ -11076,6 +11153,25 @@ static void psp_rewind_pool_back(void)
 {
    void *base;
    size_t bytes;
+   if (g_rom_vm_asleep)
+   {
+      /* The same pool again, or those pages stay out of the cache. */
+      int size = 0;
+      void *b = NULL;
+      extern u8 *gamepak_spare_pool3;
+      g_rom_vm_asleep = 0;
+      if (vm_lock(&b, &size) == 0 && b &&
+          (u8 *)b + PSP_VM_ENGINE_BYTES == gamepak_spare_pool3)
+      {
+         gamepak_vol_back();
+         fe_evt("rom_vmem back");
+      }
+      else
+      {
+         g_rom_vm_lend = 0;
+         fe_evt("rom_vmem lost size=%d", size);
+      }
+   }
    if (!g_rw_asleep)
       return;
    g_rw_asleep = 0;
@@ -11102,6 +11198,19 @@ static void psp_rewind_pool_restart(void)
 {
    void *base;
    size_t bytes;
+   /* ROM pages kept across that sleep cannot be believed either: read them
+    * again as play reaches them. */
+   if (g_rom_vm_lend)
+   {
+#ifdef GPSP_PERF_RIG
+      if (!g_ss_no_restart)
+#endif
+      {
+         gamepak_vol_drop();
+         gamepak_vol_back();
+         fe_evt("rom_vmem reread why=sleep_without_teardown");
+      }
+   }
    if (!g_rw_on || !g_rw_pool)
    {
       fe_evt("rewind_pool_restart skipped on=%d pool=%d", g_rw_on, g_rw_pool);
@@ -11136,6 +11245,14 @@ static void sleep_sim_trash_pool(void)
 {
    unsigned char *lo = (unsigned char *)fe_host_rewind_pool_low();
    unsigned char *hi = (unsigned char *)g_vm_base + g_vm_size;
+   if (g_rom_vm_lend)
+   {
+      lo = (unsigned char *)g_vm_base + PSP_VM_ENGINE_BYTES;
+      memset(lo, 0xA5, (size_t)(hi - lo));
+      fe_evt("sleep_sim trash_pool rom from=%08x bytes=%u", (unsigned)lo,
+             (unsigned)(hi - lo));
+      return;
+   }
    if (!g_rw_pool || !lo || !g_vm_base || lo >= hi)
    {
       fe_evt("sleep_sim trash_pool skipped pool=%d", g_rw_pool);
@@ -11159,6 +11276,13 @@ static void psp_rewind_pool_check(void)
    fe_evt("vmem engine_top=%08x boundary=%08x rewind_low=%08x %s",
           g_vm_eng_top, limit, low,
           g_vm_eng_top <= limit ? "ok" : "CONFLICT");
+   if (g_vm_eng_top > limit && g_rom_vm_lend)
+   {
+      /* (no ROM page may share a byte with the engine) */
+      gamepak_vol_drop();
+      g_rom_vm_lend = 0;
+      fe_evt("rom_vmem lost engine_top=%08x", g_vm_eng_top);
+   }
    if (g_vm_eng_top > limit && g_rw_pool)
    {
       /* (From inside me_rend_init: no frame can be run here to land a
@@ -11180,7 +11304,7 @@ static void psp_rewind_pool_check(void)
  * has one tenant again, so a sleep in the browser can hand it back. */
 static void psp_rewind_pwr(void);
 #define PSP_REWIND_GAME_OVER() \
-   (g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
+   (psp_rom_pool_over(), g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
 
 /* ---- the control and the ring (docs/REWIND.md, 10.7) ----------------------
  * The designer's "Big ring", alone: a hairline ring round the middle of the
@@ -12621,72 +12745,43 @@ int main(int argc, char *argv[])
     * the arena unset: netdrv_create falls back to calloc and behaves exactly
     * as it did before. */
    {
-      /* RESERVE EXACTLY ONE MEGABYTE, NOT THE STRUCT'S SIZE.
+      /* THE EXACT SIZE OF WHAT LIVES HERE.
        *
-       * The core's init_gamepak_buffer() mallocs 1 MiB blocks until one
-       * FAILS.  Write the heap as H = n*1MiB + R: the loop takes n blocks and
-       * leaves R, and R is the entire budget for everything allocated after
-       * it -- gba_screen_pixels (77,280 B), the sound ring, the ME stages.
+       * This block was exactly 1 MiB until 4.6.0, because init_gamepak_buffer
+       * used to leave the frontend only the remainder R of "1 MiB blocks until
+       * malloc fails", and reserving the struct's own 504 KiB once ate R on a
+       * PSP-1000: "Failed to allocate frame buffer (77280 bytes)", Emerald back
+       * at the XMB.  The loop's post-load reserve now holds that floor (>= 1
+       * MiB, whatever the binary's size), so nothing here depends on this
+       * block's size any more, and the ~150 KiB it left idle was ROM cache.
        *
-       * Take C bytes before the loop and the leftover becomes:
-       *     C <= R  ->  n blocks still fit, leftover R - C     (R is eaten)
-       *     C >  R  ->  one block fewer,   leftover R + 1MiB - C
-       *
-       * Reserving the struct's own 504 KiB landed in the first case on a
-       * PSP-1000 and took the slack that the frame buffer needed:
-       *     core[3]: Failed to allocate frame buffer (77280 bytes)
-       *     retro_load_game FAILED ... exit reason=load_failed
-       * -- Emerald dropped straight back to the XMB.
-       *
-       * C = 1 MiB is the only value that cannot do that: it exceeds every
-       * possible R, so the loop always takes exactly one block fewer and the
-       * leftover comes out at R again, less one malloc header.  The frontend's
-       * post-load budget is then bit-for-bit what it was before this existed,
-       * and the whole cost is one 1 MiB ROM page-cache block (on a 64 MiB
-       * console, where the loop stops at its 32-block cap with megabytes to
-       * spare, the cost is nothing at all).
-       *
-       * Do NOT "tighten" this to netdrv_sizeof(). The slack it leaves behind
-       * is the point, not the bytes it hands to netdrv. */
+       * In order: netdrv, the wake overlay's frozen frame, the menu's five
+       * state thumbnails (the Save/Load state screens show them in game,
+       * where the heap is gone, docs/UI-OVERLAY.md), the screenshot encoder's
+       * work memory (issue #13).  All of them cost nothing beyond this block,
+       * and each is laid out on a 64-byte line. */
       size_t need = netdrv_sizeof();
-      size_t take = 1024u * 1024u;
-      void  *blk  = (need <= take) ? malloc(take) : malloc(need);
+      size_t shot = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
+      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES +
+                    63u + shot;
+      void  *blk  = malloc(take);
       if (blk)
       {
-         netdrv_set_arena(blk, take > need ? take : need);
-         /* The tail is free real estate: netdrv uses `need`, the block is
-          * `take`.  The wake overlay's frozen frame lives there. */
-         if (take > need + WAKE_FRAME_BYTES + 64)
-            g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
-         /* ...and after it the menu's five state thumbnails (40 KiB), so the
-          * Save/Load state screens can show them in game, where the heap
-          * is gone (docs/UI-OVERLAY.md).  Same block, same zero cost. */
-         if (g_wake_frame &&
-             take > need + WAKE_FRAME_BYTES + UI_THUMB_BYTES + 128)
-            g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
-                                        WAKE_FRAME_BYTES + 63u) & ~63u);
+         uint8_t *lo;
+         netdrv_set_arena(blk, take);
+         g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
+         g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
+                                     WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
-         /* ...and after those the screenshot encoder's work memory (issue
-          * #13), if what is left of the megabyte holds it. */
-         if (g_ui_thumbs)
-         {
-            uint8_t *lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES +
-                                       63u) & ~63u);
-            uint8_t *hi = (uint8_t *)blk + (take > need ? take : need);
-            size_t want = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
-            if (hi > lo && (size_t)(hi - lo) >= want)
-            {
-               g_shot_work = lo;
-               g_shot_work_bytes = (size_t)(hi - lo);
-            }
-            fe_evt("shot_work bytes=%u want=%u %s",
-                   (unsigned)(hi > lo ? hi - lo : 0), (unsigned)want,
-                   g_shot_work ? "ok" : "NO_ROOM(bmp)");
-         }
+         lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES + 63u) &
+                          ~63u);
+         g_shot_work = lo;
+         g_shot_work_bytes = (size_t)((uint8_t *)blk + take - lo);
+         fe_evt("shot_work bytes=%u want=%u ok",
+                (unsigned)g_shot_work_bytes, (unsigned)shot);
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
-             (unsigned)need, (unsigned)(take > need ? take : need),
-             blk ? "reserved" : "FAILED",
+             (unsigned)need, (unsigned)take, blk ? "reserved" : "FAILED",
              sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
    }
 
@@ -14643,6 +14738,7 @@ session_top:
    }
    else
       fe_host_rewind_prepare(NULL);     /* off: the store paths carry no marks */
+   psp_rom_pool_offer();
 #endif
    int boot_rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;

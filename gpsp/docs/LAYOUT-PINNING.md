@@ -334,3 +334,15 @@ Gotchas met on the way:
   normalising.  A fuzzed hunk once landed a `.balign` inside the dispatcher.
 * `twin_sim.sh`'s JIT range for a `RUNTIME_JIT_CACHE` twin is wrong: dr_host
   reads the pointer variable's address.  Profile on the fixed-cache twin.
+
+## Keeping the pads
+
+The hot order and the JIT offset hold by themselves. Instance A's cold text, its `.rodata`, `.data` and `.bss` hold only if what is linked before them changes by a multiple of 8 KiB, so a change to the frontend's size re-tunes:
+
+- `LAYOUT_PAD_BYTES` (text) and `LAYOUT_PAD_RO_BYTES` (`.rodata`, frontend before A), psp/Makefile. A release is 528 and 976.
+- A Lab build has different frontend sizes: to match rc450g it was built with `LAYOUT_PAD_BYTES=8144 PSP_EXTRA="LAYOUT_PAD_RO_BYTES=992"`.
+- Nothing before B matters for `.bss` (B starts on an 8 KiB boundary), but the partner's `fe_autopilot_b.o` sits between B and A: the playable table is 6,232 B for that reason (22,528 less 16,296 keeps the sets).
+- New state in the core goes in `.sbss` (`GAMEPAK_SBSS`, gba_memory.c), not `.bss`.
+- A function in `layout/hot.ord` must keep its 32-byte-rounded size. `memory_term` and `fe_autopilot_frame` were held there on purpose.
+
+Check by comparing `psp-nm -S -n` of the two ELFs: symbols past `layout_pad_cold`, tables and A's `.bss` must move by multiples of 8192.

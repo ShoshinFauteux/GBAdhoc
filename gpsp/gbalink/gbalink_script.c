@@ -73,7 +73,9 @@ int gbalink_script_load(gbalink_script *sc, const char *path, unsigned cap)
 {
    FILE *f;
    char line[256];
-   static char rep[64][256];
+   /* The heap: a script is a harness run, and a static 16 KiB was in every
+    * image. */
+   char (*rep)[256];
    int in_rep = 0, nrep = 0, reps = 0;
 
    memset(sc, 0, sizeof(*sc));
@@ -87,6 +89,11 @@ int gbalink_script_load(gbalink_script *sc, const char *path, unsigned cap)
       return 0;
    if (!(f = fopen(path, "r")))
       return -1;
+   if (!(rep = (char (*)[256])malloc(64 * 256)))
+   {
+      fclose(f);
+      return -1;
+   }
    while (fgets(line, sizeof(line), f))
    {
       char *p = strpbrk(line, "#;\r\n");
@@ -122,6 +129,7 @@ int gbalink_script_load(gbalink_script *sc, const char *path, unsigned cap)
       step(sc, p);
    }
    fclose(f);
+   free(rep);
    return 0;
 }
 

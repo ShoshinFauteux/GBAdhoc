@@ -81,6 +81,58 @@ Measured on the link build in PPSSPP: `boot_ballast_kb` holds N KiB of heap from
   - **PASS**, with FINAL `a2eb2b47a9241ad3` at frame 14625. That is the same hash as r2/r3/r6.
   - The per-frame files are identical (29,249 lines), and 243/243 HASH messages matched on each side.
 
+## The PSP-1000's ROM cache (4.6.0, branch `claude/mem-1000`)
+
+The 1000 runs out of heap, so what the image and the boot take comes off the ROM cache. M = measured, D = derived from M.
+
+| | 4.5.0 | now |
+|---|---:|---:|
+| release image | 14,367,116 | 13,891,980 |
+| Lab build, solo (PPSSPP PSPModel 0) | 329 pages | 371 pages (M) |
+| harness build, late-mode session (two PPSSPP, AW2, join on model 0) | 160 pages | 179 pages; 363 again after it (M) |
+| release, solo | 361 pages, 11.28 MiB | ~387 pages, 12.1 MiB (D) |
+| release, late-mode session | 160 pages, 5 MiB | ~193 pages, 6.0 MiB (D) |
+
+Multi-tail: `init_gamepak_buffer` no longer loses what is short of a MiB. Blocks hold their own page count: whole blocks, the lent pool's tail, then pieces of what the heap has left, taken while the post-load reserve is held. So every 32 KiB saved is a page and there are no thresholds. A reload holds no reserve: it keeps `GAMEPAK_RELOAD_FLOOR`, 256 KiB, and never exceeds the boot's pages. That session's low-water (`gblink_end`) was 362,840 B free against 398,024 B before; its per-frame hashes match the old build's over 29,122 lines. A console that reaches its target never runs the new code.
+
+Bytes won (image, or heap for the arena):
+
+| change | bytes | budget |
+|---|---:|---|
+| net arena to its exact size (895,309) | 153,283 | both |
+| `backup_save` copies in 4 KiB pieces | 131,072 | both |
+| RAM staging buffer on demand (VRAM is the default) | 82,432 | both |
+| rewind picture copy on demand (the PSP draws directly) | 76,800 | both |
+| test pattern on the heap | 76,800 | both |
+| link bus queues in B's lent block | 65,552 | solo |
+| `-Os` menus, pad map, config, Mystery Gift, cheats | ~33,000 | both |
+| link script repeat lines, BIOS hash buffer | 32,768 | both |
+| playable autopilot table (6,144 stays as a layout pad) | 32,592 | both |
+| browser script table | 6,876 | both |
+
+Rejected or parked:
+- **`--gc-sections`** (~108 KiB): drops the import stubs ("no nid section found"). It needs a link script with KEEP for `.lib.stub`, `.rodata.sceNid` and friends.
+- `state_buf` (416 KiB), the post-load reserve below 1 MiB, the browser list on the heap: each needs a low-water fixture first. Rewind's heap ring lives in that reserve.
+
+### Lending the volatile pool (off)
+
+Harness key `rom_vmem = 1`, Rewind off: the 3 MiB above the ME's megabyte joins the cache as its last blocks (Lab build 467 pages). A release cannot turn it on: it reads no harness ini.
+
+- The pages never count as resident (`gamepak_must_swap`), so the paged load stubs stay.
+- Into a sleep: `gamepak_vol_drop` unmaps them and the LRU skips them; after the wake they fault back from the card.
+- A pool that does not come back stays out of the cache.
+- A sleep that tore nothing down re-reads them (`g_rw_pool_suspect`).
+
+PPSSPP (Unbound rival, 3,100 frames, vhash): identical to 4.5.0 with the lend, across a simulated sleep, and across a sleep with no teardown and the pool overwritten. The mutant `rewind_pool_restart = 0` differs from frame 1165, so the test can fail.
+
+Evidence it needs before it can be on, none of it available in PPSSPP:
+1. The sleep suite on a real 1000 with `rom_vmem = 1`: repeated sleeps in solo play, with a paged cart, and at the wake overlay. Sleep was never validated on 4.5.0, so run the same suite without the key as the control.
+2. `sceIoRead` into the pool on hardware: the first boot answers it.
+3. HOME and the utility dialogs open with the pool lent: does anything write it?
+4. Reads after a wake: how long the faulted-back pages stall play.
+5. A link session with the lend, including a sleep during one. PPSSPP has not run that.
+6. Rewind on forfeits the lend, so the player trade needs the owner's decision.
+
 ## The 2026-10-02 Go black screen was not memory
 
 **The report.** The session EBOOT `af98e599`, arm W of the pair rig: black screen at launch on the Go, with an empty `log/`. The same EBOOT ran on the 3000 and in PPSSPP.

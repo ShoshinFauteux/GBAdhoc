@@ -5,6 +5,7 @@
  * core reading it.  Events from one sender are in its time order (its clock
  * only moves forward).  See gbalink.h.
  */
+#include <stdlib.h>
 #include <string.h>
 
 #include "../gbalink.h"
@@ -20,12 +21,28 @@ typedef struct
    unsigned head, count;
 } bus_queue;
 
-static bus_queue q[GBALINK_SLOTS];      /* q[s] = events FOR slot s */
+/* q[s] = events FOR slot s.  On the PSP they live in instance B's block
+ * (psp/gbalink_core_b.ld, which sizes them): session-only memory, lent to the
+ * ROM cache with the rest of that block while no session runs.  Everywhere
+ * else, plain static memory. */
+#ifdef PSP
+extern char gbab_bregion_bus[], gbab_bregion_bus_end[];
+#define q ((bus_queue *)(void *)gbab_bregion_bus)
+#else
+static bus_queue q_mem[GBALINK_SLOTS];
+#define q q_mem
+#endif
 static gbalink_bus_stats bst;
 
 void gbalink_bus_reset(void)
 {
-   memset(q, 0, sizeof(q));
+#ifdef PSP
+   /* The reservation in the link script must hold the queues. */
+   if ((size_t)(gbab_bregion_bus_end - gbab_bregion_bus) <
+       sizeof(bus_queue) * GBALINK_SLOTS)
+      abort();
+#endif
+   memset(q, 0, sizeof(bus_queue) * GBALINK_SLOTS);
    memset(&bst, 0, sizeof(bst));
 }
 

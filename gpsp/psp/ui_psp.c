@@ -2159,10 +2159,11 @@ static void short_game_name(const char *full, char *out, size_t cap)
          *v = '\0';
       for (n = strlen(sub); n && sub[n - 1] == ' '; n--)
          sub[n - 1] = '\0';
-      snprintf(out, cap, "%s %s", t, sub);
+      if (snprintf(out, cap, "%s %s", t, sub) < 0)   /* a cut name is fine */
+         out[0] = 0;
    }
-   else
-      snprintf(out, cap, "%s", t);
+   else if (snprintf(out, cap, "%s", t) < 0)
+      out[0] = 0;
 }
 
 /* The game's name for screens: the table's, else the ROM's own, short. */
@@ -8217,7 +8218,11 @@ static void ret_dump_frame(void)
  *     <frame> seq <last_frame> <name>  -> log/<name>_<frame>.bmp, every frame
  *     <frame> exit
  * Harness only (reached through the ini a release build cannot read). */
+#if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
+#define BSCRIPT_MAX 1      /* no ini, no script: keep the 6.9 KiB off the image */
+#else
 #define BSCRIPT_MAX 192
+#endif
 typedef struct { unsigned short at, until; unsigned btn; char name[24]; unsigned char verb; } bscript_step;
 enum { BS_PRESS = 1, BS_DUMP, BS_SEQ, BS_EXIT };
 static bscript_step g_bscript[BSCRIPT_MAX];

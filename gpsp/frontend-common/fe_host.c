@@ -2765,7 +2765,7 @@ static void log_bios_evt(void)
 {
    char path[512];
    FILE *f;
-   static uint8_t bios[16384];
+   uint8_t bios[16384];        /* boot, main thread: the stack has it */
    size_t n;
    char sha[41];
 
@@ -3055,6 +3055,7 @@ void dynarec_release_translation_caches(void);     /* cpu_threaded.c */
 extern uint32_t jit_cache_replay;                   /* cpu_threaded.c */
 extern uint32_t gamepak_reload;                     /* gba_memory.c */
 extern uint32_t gamepak_hold_bytes;                 /* gba_memory.c */
+extern uint32_t gamepak_buffer_pages;
 extern void *gamepak_hold;
 extern uint32_t jit_cache_tier;                     /* 1 small, 2 large */
 /* A's translation-cache offset for its next load (LAYOUT_PIN link cores;
@@ -3183,6 +3184,8 @@ static int gba_reload_a(int lend, const uint8_t *scr, size_t sn,
       int ok = retro_load_game(&game);
       jit_cache_replay = gamepak_reload = 0;
       gamepak_hold_bytes = 0;
+      fe_evt("gba_reload_cache pages=%u lend=%d", (unsigned)gamepak_buffer_pages,
+             lend);
       if (hold)
          *hold = gamepak_hold;
       gamepak_hold = NULL;
@@ -4711,7 +4714,10 @@ static uint32_t rw_redo_high;       /* test: redo logged inputs up to here */
 static unsigned rw_barriers_cheat;
 static uint64_t rw_tick_us;
 static unsigned rw_tick_n, rw_tick_max_us;
-static uint16_t rw_present[FE_GBA_WIDTH * FE_GBA_HEIGHT];
+/* Taken at the first picture that needs a copy: a platform with its own
+ * rw_opt.show (the PSP) has none outside the rewind tests, and a static array
+ * was 76,800 B of its image. */
+static uint16_t *rw_present;
 static int      rw_present_valid;
 
 /* The core's rewind image (libretro/libretro.c): the save state plus the
@@ -5795,6 +5801,11 @@ static void rw_mem_drop(int keep_heap_ring)
    rw_buf = NULL;
    rw_buf_pool = 0;
    rw_buf_bytes = 0;
+   if (last_frame == rw_present)
+      last_frame = NULL;
+   free(rw_present);
+   rw_present = NULL;
+   rw_present_valid = 0;
    rw_ring_pool = NULL;
    rw_ring_pool_bytes = 0;
    gba_rewind_rlog = NULL;      /* (it was in rw_buf) */
@@ -6585,16 +6596,21 @@ int fe_host_rewind_tick_step(int held, uint32_t step)
       {
          unsigned y;
          uint32_t vc = 0;
-         if (!rw_opt.show || rw_hash_fp)
+         if ((!rw_opt.show || rw_hash_fp) && !rw_present)
+            rw_present = (uint16_t *)malloc(FE_GBA_WIDTH * FE_GBA_HEIGHT * 2);
+         if (rw_present && (!rw_opt.show || rw_hash_fp))
             for (y = 0; y < FE_GBA_HEIGHT; y++)
             {
                memcpy(rw_present + y * FE_GBA_WIDTH, s.pix + y * rw_pitch,
                       FE_GBA_WIDTH * 2);
                vc = fe_crc32(vc, s.pix + y * rw_pitch, FE_GBA_WIDTH * 2);
             }
-         rw_present_valid = 1;
-         last_frame = rw_present;
-         last_pitch = FE_GBA_WIDTH * 2;
+         rw_present_valid = rw_present != NULL;
+         if (rw_present)
+         {
+            last_frame = rw_present;
+            last_pitch = FE_GBA_WIDTH * 2;
+         }
          if (rw_hash_fp && (rw_opt.sound_mode || s.pix_frame != s.frame))
             /* (a rewind that keeps no sound, or a picture every few
              * frames: the picture only, and which frame it is of) */

@@ -386,6 +386,10 @@ static int fe_host_rewind_unvetted(void) { return unvetted; }
 static void pwr_hold(const char *why) { (void)why; holds++; }
 static void pwr_release(void) { holds--; }
 
+/* the ROM cache's lend of the pool: off in this model */
+static int g_rom_vm_lend, g_rom_vm_asleep;
+static void gamepak_vol_drop(void) {}
+#define fe_evt(...) ((void)0)
 @FUNCTIONS@
 
 static void standing(int pool, int unv)

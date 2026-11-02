@@ -18,7 +18,7 @@ profile always, `VID_TRIPLE` and `PLAY_INPUT_FRESH` when the build is
 them (see **The drift check** below).
 `GBA_LINK`, `REWIND`, `CHEATS` and `LAYOUT_PIN` change what is compiled and
 linked, so they stay make variables, default 1 for `psp1` in both makefiles.
-`LAYOUT_PAD_BYTES` 5264 is the default in `psp/Makefile`, `HOT_DATA_GUARD`'s link
+`LAYOUT_PAD_BYTES` 528 and `LAYOUT_PAD_RO_BYTES` 976 are the defaults in `psp/Makefile`, `HOT_DATA_GUARD`'s link
 script follows the core, `PSP_PIXFMT` stays a variable because it reaches the ME
 sub-make, and the `TGB_*` switches stay scoped to the GB core's objects. This
 produced the 4.5.0 EBOOT byte for byte.
