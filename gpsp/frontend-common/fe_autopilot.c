@@ -16,11 +16,14 @@
  * `mash` is not a way around it: it waits for a RAM predicate and ap_fail()s on
  * timeout, which scores the run invalid.
  *
- * Raised only for the rig.  steps[] is a static array, so this is BSS, and the
- * release build keeps the size it has always had rather than carrying 18 KB for
- * an automation feature a player cannot reach. */
+ * Raised only for the rig.  steps[] is a static array, so this is BSS: two of
+ * them with the link partner's copy.  A playable build has no harness ini, so
+ * no script ever loads (psp/main_psp.c ADR-0067) and one step keeps the code
+ * compiling without carrying 45 KB of a player's ROM cache. */
 #ifdef GPSP_PERF_RIG
 #define AP_MAX_STEPS   1024
+#elif defined(GPSP_PLAYABLE)
+#define AP_MAX_STEPS   1
 #else
 #define AP_MAX_STEPS   256
 #endif
