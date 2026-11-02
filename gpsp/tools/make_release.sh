@@ -171,7 +171,9 @@ have = set(m.get("coreFlags", "").split())
 if have != want:
     raise SystemExit("coreFlags are not the release feature set: missing %s, extra %s"
                      % (sorted(want - have), sorted(have - want)))
-fe = {"-DGPSP_PLAYABLE", "-DVID_TRIPLE", "-DGPSP_PROFILE_RELEASE=1", "-DPLAY_INPUT_FRESH=1"}
+fe = {"-DGPSP_PLAYABLE", "-DGPSP_PROFILE_RELEASE=1"}
+fe |= {"-D%s=%s" % (n, v) for n, v in re.findall(r"^#define (\w+) (\S+)$",
+                                                 pathlib.Path(sys.argv[5]).with_name("fe_features.h").read_text(), re.M)}
 if set(m.get("frontendDefines", "").split()) != fe:
     raise SystemExit("frontendDefines are not the release set: %s" % m.get("frontendDefines"))
 psp = set(m.get("pspMakeFlags", "").split())

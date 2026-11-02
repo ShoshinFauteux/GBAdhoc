@@ -79,7 +79,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
   case "$1" in
     release)
       CORE_FLAGS="GPSP_PROFILE=release"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_RELEASE=1"
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_PROFILE_RELEASE=1"
       TITLE="GBAdhoc"
       # ME_CATCH=1 ships the Media Engine module WITH the CPU-exception screen
       # (psp/me/catcher.c).  2026-09-26: this exact PRX (164633a0) ran hours of
@@ -96,7 +96,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
     harness)
       # Telemetry plus autopilot, so a job file can drive a console unattended.
       CORE_FLAGS="GPSP_PROFILE=harness"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       # The title is the only thing a tester sees on the XMB, so the harness
       # says so: a harness EBOOT must never be mistaken for a playable one.
@@ -110,7 +110,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # residency A/B (docs/ROM-RESIDENCY.md) needs this one.  Same core, same
       # frontend defines; only PARAM.SFO's MEMSIZE differs.
       CORE_FLAGS="GPSP_PROFILE=harness"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc HARNESS64"
       # ME_CATCH=1 as in the release: the residency rig runs on the PSP Go,
@@ -124,7 +124,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # RAM telemetry, one USB window per process, relaunch.  Same core flags
       # as `harness`; its timings compare only with other lab builds.
       CORE_FLAGS="GPSP_PROFILE=harness"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc LAB"
       PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0 LAB_HARNESS=1"
@@ -143,7 +143,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # 4000 flushes, and over ten minutes of fast-forward that is a lot of
       # Memory Stick traffic competing with the event log we actually want.
       CORE_FLAGS="GPSP_PROFILE=soak BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG
 -DGPSP_PROFILE_HARNESS=1"
       TITLE="GBAdhoc SOAK"
       PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0"
@@ -168,7 +168,7 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # snapshot (the BIOS and ABI guarantee equality) and dumps guest RAM to
       # ms0:/irqlost-N-*.bin on the first mismatches.  One struct copy per IRQ.
       CORE_FLAGS="GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
-      FE_DEFS="-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_DIAGNOSTIC=1"
+      FE_DEFS="-DGPSP_PLAYABLE -DGPSP_PROFILE_DIAGNOSTIC=1"
       TITLE="GBAdhoc DIAG"
       ;;
     *)
@@ -238,11 +238,11 @@ CORE_FLAGS="$CORE_FLAGS REWIND=$REWIND"
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=$REWIND"
 
 # INPUT_FRESH (default 1): the low-latency pad re-peek (`input_fresh`,
-# docs/LOW-LATENCY.md) on by default in the frontend, in every profile; a
-# playable build cannot read the harness ini.  INPUT_FRESH=0 is the source
-# default, off.
-if [ "${INPUT_FRESH:-1}" = 1 ]; then
-  FE_DEFS="$FE_DEFS -DPLAY_INPUT_FRESH=1"
+# docs/LOW-LATENCY.md) on by default in the frontend, in every profile
+# (psp/fe_features.h); a playable build cannot read the harness ini.
+# INPUT_FRESH=0 is the source default, off.
+if [ "${INPUT_FRESH:-1}" != 1 ]; then
+  FE_DEFS="$FE_DEFS -DGPSP_NO_PLAY_INPUT_FRESH"
 fi
 
 # ME_LOWLAT=0|1|2: low-latency tier 1 (`me_lowlat`, docs/LOW-LATENCY.md).
@@ -371,6 +371,13 @@ for t in $CORE_FLAGS; do
 done
 CORE_FLAGS_RESOLVED=$(echo $CORE_FLAGS_OTHER $RESOLVED)
 run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES CHEATS=$CHEATS"
+# frontendDefines is resolved the same way: the profile's defines plus what
+# psp/fe_features.h gave this make line.
+run fefeatures /build/psp "make -s EXTRA_DEFS='$FE_DEFS' $PSP_MAKE_FLAGS print-features"
+FE_RESOLVED=$(tr -d '' < "$ROOT/.build-fefeatures.log" | grep -E '^[A-Z0-9_]+=' | sort | sed 's/^/-D/' | tr '
+' ' ')
+case " $FE_RESOLVED " in *" -DND_WINDOW="*) ;; *) die "print-features resolved no frontend features: $FE_RESOLVED" ;; esac
+FE_DEFS_RESOLVED=$(echo $FE_DEFS $FE_RESOLVED)
 [ -f "$ROOT/psp/EBOOT.PBP" ] || die "EBOOT missing"
 
 # LOADABLE BY A REAL PSP.  The firmware's loader did not start an EBOOT whose
@@ -587,7 +594,7 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"workingTreeClean\": $([ -z "$BUILD_DIRTY" -o "$BUILD_DIRTY" = 0 ] && echo true || echo false),"
   echo "  \"dockerImage\": \"$IMG_ID\","
   echo "  \"coreFlags\": \"$CORE_FLAGS_RESOLVED\","
-  echo "  \"frontendDefines\": \"$FE_DEFS\","
+  echo "  \"frontendDefines\": \"$FE_DEFS_RESOLVED\","
   echo "  \"pspMakeFlags\": \"$PSP_MAKE_FLAGS\","
   echo "  \"cleanRebuild\": $([ "$CLEAN" -eq 1 ] && echo true || echo false),"
   echo "  \"layoutPin\": $LAYOUT_PIN,"
@@ -611,7 +618,7 @@ fi
 
 note "profile : $KIND ($TITLE)"
 note "core    : $CORE_FLAGS_RESOLVED"
-note "frontend: $FE_DEFS"
+note "frontend: $FE_DEFS_RESOLVED"
 note "elf md5 : $ELF_MD5"
 note "pbp md5 : $PBP_MD5"
 note "manifest: $MANIFEST"

@@ -47,7 +47,7 @@ cd /build
 make -C psp clean
 make platform=psp1 clean
 make platform=psp1 GIT_VERSION={args.version} SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 GBA_PC_MASK=1 BADJUMP_SAFE=1 {options} -j4
-make -C psp EXTRA_DEFS='-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG' PSP_EBOOT_TITLE='GBAdhoc Perf'
+make -C psp EXTRA_DEFS='-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG' PSP_EBOOT_TITLE='GBAdhoc Perf'
 sha256sum psp/EBOOT.PBP psp/me/gbadhoc_me.prx
 ''',newline='\n')
     command=['docker','run','--rm','-v',source.as_posix()+':/build','-v',audit.as_posix()+':/audit',IMAGE,'sh','/audit/build.sh']

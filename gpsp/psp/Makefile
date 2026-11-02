@@ -1,4 +1,4 @@
-# psp/Makefile â€” native PSP frontend -> EBOOT.PBP (Phase 1, plan Â§5).
+# psp/Makefile — native PSP frontend -> EBOOT.PBP (Phase 1, plan §5).
 #
 # Requires the core static lib first (built in the pspdev docker image):
 #   docker run --rm -v <repo>:/build -w /build pspdev/pspdev \
@@ -7,7 +7,7 @@
 #   docker run --rm -v <repo>:/build -w /build/psp pspdev/pspdev make
 #
 # Notes:
-#  - -G0 matches the core's CFLAGS (no small-data section; FRONTEND-AUDIT Â§10).
+#  - -G0 matches the core's CFLAGS (no small-data section; FRONTEND-AUDIT §10).
 #  - The core archive contains C++ objects (video.cc) built with
 #    -fno-rtti -fno-exceptions and no libstdc++ dependencies; linking with
 #    psp-gcc works (upstream links the .so with gcc on purpose).
@@ -93,28 +93,13 @@ GB_CORE_OBJS = ../gbcore/gbcore_tgbdual.o $(TGB_OBJS)
 # instance's .data/.bss for gbcore_power_on.
 
 INCDIR   = ../frontend-common ../netdrv ../libretro/libretro-common/include ..
-# ND_* knobs â€” the PSP/ad-hoc profile (ADR-0016, ADR-0017).  Two changes
-# from the Phase-4 halving, both driven by the 2026-08-01 field logs
-# (docs/HANDOFF.md issue #2):
-#
-#  * ND_MAX_PAYLOAD 560 -> 144.  ADR-0003 sized frames for the link-CABLE
-#    Advance Wars protocol (~520 B), which is out of scope; RFU â€” all this
-#    product carries â€” maxes at 104 B and the largest control payload is the
-#    138 B roster.  Right-sizing the slot pays for a 4x deeper tx ring
-#    (96 -> 384) and a 2x window at NEUTRAL memory: the netdrv instance goes
-#    ~322 KiB -> ~347 KiB while the transport's .bss ring drops ~37 -> ~11 KiB.
-#    An oversize payload is refused loudly, never truncated (netdrv.h).
-#  * RTO floor 30 ms -> 100 ms, ceiling 240 -> 800 ms.  Real ad-hoc RTT is
-#    40-80 ms; the loopback-tuned 30 ms floor fired before an ACK could
-#    physically arrive (measured retx/acked 2.8, 68 % duplicates, zero radio
-#    loss).  The floor only bounds the adaptive estimator from below.
-# -MMD -MP: AUTOMATIC HEADER DEPENDENCIES.  Do not remove â€” this closes a
+# -MMD -MP: AUTOMATIC HEADER DEPENDENCIES.  Do not remove — this closes a
 # silent, shipped, hardware-visible corruption bug (ADR-0035).
 #
 # build.mak supplies only an implicit `%.o: %.c` rule, so before this line a
 # change to a HEADER rebuilt nothing.  Adding a field to `psp_config` in
 # config_psp.h therefore left ui_psp.o and osd_psp.o compiled against the OLD
-# struct layout while config_psp.o and main_psp.o used the new one â€” every
+# struct layout while config_psp.o and main_psp.o used the new one — every
 # translation unit agreeing on the symbol and disagreeing on the offsets.  It
 # does not fail at link and it does not warn.  In the field it wrote
 # `blit_mode = 1347637319` (= 0x50535047, the ASCII "GPSP" of a room code
@@ -144,34 +129,6 @@ else
 PIXFMT_DEF =
 endif
 
-# ND_RTO_MAX_US: THE CEILING MUST NOT SIT BELOW WHAT THE ESTIMATOR COMPUTES.
-#
-# At 59.73 fps the client measured srtt=495ms rttvar=166ms, so RFC 6298 wants
-# an RTO of srtt + 4*rttvar = ~1157ms.  The ceiling was 800ms, so EVERY packet
-# was guaranteed to time out before its acknowledgement could arrive -- a
-# retransmit storm by construction, not by loss.  Measured: retx_pct 421% on
-# the client, 360% on the host, txq_hi 336.
-#
-# 2500000 leaves headroom above the ~1157ms observed without being unbounded;
-# the estimator still governs, this only stops the clamp from lying.  Note the
-# floor stays at 200000: the problem was never that we resend too slowly.
-#
-# This does NOT explain retx_age of 3063ms (host) against a 200ms RTO -- that
-# is a separate fault, the ARQ scan not running, and is tracked separately.
-# ND_WINDOW 128 -> 256: does the window STALL, or is it simply too small?
-#
-# At 59.73 the host reached txq_hi 886 against a 128-frame window -- a backlog
-# 7x deeper than the window can hold in flight -- while pumpgap measured 13-16ms
-# mean (the ARQ scan runs fine) and retx_age still hit 1.8-2.1 SECONDS. Two
-# explanations fit: the window stalls head-of-line on one unacknowledged packet
-# (cumulative-only ACK, no SACK), or it is just too narrow for full-speed
-# traffic. Doubling it separates them for one line instead of implementing
-# selective acknowledgement on a guess:
-#   retx_age and txq_hi collapse  -> the window was too small, keep this
-#   both unchanged                -> head-of-line blocking, SACK is the fix
-#
-# NOT FREE: ND_WINDOW sizes nd_rxslot reorder[ND_WINDOW] (netdrv.c:211), so
-# this also doubles the per-peer reorder buffer. Watch EVT mem_free.
 # EXTRA_DEFS: build-variant defines from the command line, e.g. the ADR-0067
 # playable build (`make EXTRA_DEFS=-DGPSP_PLAYABLE PSP_EBOOT_TITLE="..."`).
 # Empty for every normal build, so it cannot change the harness binary.
@@ -179,9 +136,13 @@ EXTRA_DEFS ?=
 # -g: line tables for tools/cachemap (docs/CACHE-MAP.md).  Debug info never
 # changes code, and the EBOOT is packed from the STRIPPED elf: the release
 # EBOOT is byte-identical with and without it (checked 2026-09-30).
+# fe_features.h is the frontend's half of gpsp_features.h: force-included, so
+# the transport profile and the playable defaults need no recipe.  What stays a
+# make variable below changes what is compiled or linked (REWIND, GBA_LINK,
+# CHEATS, LAB_HARNESS, LAYOUT_*, HOT_DATA_GUARD) or has to reach a sub-make
+# (PSP_PIXFMT); TGB_* are scoped to the GB core's objects on purpose.
 CFLAGS   = -O2 -g -G0 -Wall -Wextra -MMD -MP $(PIXFMT_DEF) $(EXTRA_DEFS) \
-           -DND_MAX_PAYLOAD=144 -DND_WINDOW=256 -DND_TXQ_CAP=384 \
-           -DND_RTO_MIN_US=200000 -DND_RTO_MAX_US=2500000
+           -include fe_features.h
 ASFLAGS  = $(CFLAGS)
 
 # LAYOUT_PIN (default 1; docs/LAYOUT-PINNING.md): link the hot path FIRST in
@@ -319,7 +280,7 @@ EXTRA_TARGETS   = EBOOT.PBP me/gbadhoc_me.prx home/gbadhoc_home.prx
 # icon + background derived from the user-supplied logo by assets/make_assets.py
 # (was "PSP AGB" after the adapter's AGB-015 model number).  The HARNESS build
 # overrides these on the command line with assets/harness_* so the instrumented
-# console is unmistakable at a glance â€” inverted to a dark amber field â€” and
+# console is unmistakable at a glance — inverted to a dark amber field — and
 # tools/make_variant.sh does the same per game.
 PSP_EBOOT_TITLE ?= GBAdhoc
 PSP_EBOOT_ICON  = assets/gbadhoc_icon0.png
@@ -342,7 +303,7 @@ PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 #    PSP-3000 Unbound divergence at 32 blocks was re-tested on the Go A/B
 #    rig: 21/21 frame-identical (docs/ROM-RESIDENCY.md).
 #  - HARNESS pins MEMSIZE=0 (the `harness` target below): PSP-1000 is the
-#    memory budget target (FRONTEND-AUDIT Â§8) and PPSSPP models MEMSIZE, so
+#    memory budget target (FRONTEND-AUDIT §8) and PPSSPP models MEMSIZE, so
 #    the Gate-1 mem_free measurement must stay honest for the 1000-series.
 PSP_LARGE_MEMORY ?= 1
 
@@ -358,11 +319,11 @@ endif
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
 
-# `make harness` â€” the branded harness build.  The [HARNESS] title + dark
+# `make harness` — the branded harness build.  The [HARNESS] title + dark
 # icon are the XMB half of the differentiation (the in-app half is the black
 # page background, ui_psp.c).  These lived only in hand-typed build commands
 # for months and silently dropped out twice; now the target owns them.
-# AFTER the include, or it becomes the default goal and recurses forever â€”
+# AFTER the include, or it becomes the default goal and recurses forever —
 # the same trap as me/Makefile's video.o rule.  Third strike.
 harness:
 	$(MAKE) clean
@@ -462,7 +423,7 @@ clean-gbcore:
 .PHONY: clean-deps clean-gbcore
 
 # ADR-0080: the ME kernel module (defined here, after the include, so it
-# never becomes the default goal â€” that bug once built the PRX and nothing
+# never becomes the default goal — that bug once built the PRX and nothing
 # else).  PHONY so its own sub-make owns dependency tracking.
 .PHONY: me/gbadhoc_me.prx clean-me
 me/gbadhoc_me.prx:
@@ -478,6 +439,16 @@ me/gbadhoc_me.prx:
 	        ME_PAD_BSS=$(ME_PAD_BSS)
 clean-me:
 	-$(MAKE) -C me clean
+
+# What fe_features.h resolved to on THIS make line (tools/build.sh records it in
+# the manifest's frontendDefines, as the root make's print-features does for
+# coreFlags).  -D only: the rest of CFLAGS would write a .d for /dev/null.
+FE_FEATURE_NAMES := $(filter-out FE_FEATURES_H,$(shell sed -n 's/^\#define \([A-Z0-9_]*\) .*/\1/p' fe_features.h))
+.PHONY: print-features
+print-features:
+	@$(CC) $(filter -D%,$(CFLAGS)) -include fe_features.h -dM -E -x c /dev/null | \
+	  sed -n 's/^#define \([A-Z0-9_]*\) \(.*\)$$/\1=\2/p' | \
+	  grep $(foreach f,$(FE_FEATURE_NAMES),-e '^$(f)=')
 
 # Menu = HOME (docs/CONTROL-REMAP.md section 10): the small kernel module that
 # reads HOME and switches the system popup off while a game owns it.  Its own
