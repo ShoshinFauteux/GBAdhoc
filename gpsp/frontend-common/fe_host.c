@@ -4711,7 +4711,10 @@ static uint32_t rw_redo_high;       /* test: redo logged inputs up to here */
 static unsigned rw_barriers_cheat;
 static uint64_t rw_tick_us;
 static unsigned rw_tick_n, rw_tick_max_us;
-static uint16_t rw_present[FE_GBA_WIDTH * FE_GBA_HEIGHT];
+/* Taken at the first picture that needs a copy: a platform with its own
+ * rw_opt.show (the PSP) has none outside the rewind tests, and a static array
+ * was 76,800 B of its image. */
+static uint16_t *rw_present;
 static int      rw_present_valid;
 
 /* The core's rewind image (libretro/libretro.c): the save state plus the
@@ -5795,6 +5798,11 @@ static void rw_mem_drop(int keep_heap_ring)
    rw_buf = NULL;
    rw_buf_pool = 0;
    rw_buf_bytes = 0;
+   if (last_frame == rw_present)
+      last_frame = NULL;
+   free(rw_present);
+   rw_present = NULL;
+   rw_present_valid = 0;
    rw_ring_pool = NULL;
    rw_ring_pool_bytes = 0;
    gba_rewind_rlog = NULL;      /* (it was in rw_buf) */
@@ -6585,16 +6593,21 @@ int fe_host_rewind_tick_step(int held, uint32_t step)
       {
          unsigned y;
          uint32_t vc = 0;
-         if (!rw_opt.show || rw_hash_fp)
+         if ((!rw_opt.show || rw_hash_fp) && !rw_present)
+            rw_present = (uint16_t *)malloc(FE_GBA_WIDTH * FE_GBA_HEIGHT * 2);
+         if (rw_present && (!rw_opt.show || rw_hash_fp))
             for (y = 0; y < FE_GBA_HEIGHT; y++)
             {
                memcpy(rw_present + y * FE_GBA_WIDTH, s.pix + y * rw_pitch,
                       FE_GBA_WIDTH * 2);
                vc = fe_crc32(vc, s.pix + y * rw_pitch, FE_GBA_WIDTH * 2);
             }
-         rw_present_valid = 1;
-         last_frame = rw_present;
-         last_pitch = FE_GBA_WIDTH * 2;
+         rw_present_valid = rw_present != NULL;
+         if (rw_present)
+         {
+            last_frame = rw_present;
+            last_pitch = FE_GBA_WIDTH * 2;
+         }
          if (rw_hash_fp && (rw_opt.sound_mode || s.pix_frame != s.frame))
             /* (a rewind that keeps no sound, or a picture every few
              * frames: the picture only, and which frame it is of) */
