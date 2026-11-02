@@ -293,8 +293,8 @@ No new heap allocation in any player-reachable path.
 * The frame snapshot is the existing wake snapshot (128 KiB in the netdrv
   arena's tail), taken at `menu_open()`.
 * The five slot thumbnails (5 x 64x64 x 2 = 40 KiB) are carved from the same
-  1 MiB block. netdrv uses 515,944 B, the snapshot 131,072, the thumbnails
-  40,960, so about 360 KiB is still spare. If the arena reservation ever
+  block, which is the exact size of what lives in it: netdrv, the snapshot,
+  the thumbnails, the screenshot encoder. If the arena reservation ever
   fails, both pointers stay NULL: the menu draws on a flat page and the slots
   show plates.
 * The harness-only `ui_backdrop` mallocs 512 KiB at boot, and only when that
