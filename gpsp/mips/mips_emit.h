@@ -928,6 +928,22 @@ u32 execute_spsr_restore_body(u32 address)
   mips_emit_b_filler(beq, reg_temp, reg_zero, backpatch_address);             \
   generate_cycle_update_force()                                               \
 
+/* NV (condition 0xF) never executes on the ARM7TDMI: ARMv4 reserves it, and
+ * the interpreter treats it as "never".  It used to fall into the default
+ * case below, which emitted no skip at all, so the instruction ran as AL and
+ * backpatch_address kept whatever it held: NULL when NV was the block's first
+ * conditional (the patch that closes the run wrote to address 0 -- a data
+ * bus error on the PSP, issue #10), else an older skip, which the close then
+ * re-aimed past the NV word.  Data scanned as code is where NV turns up: in
+ * The Morrow's Golden Country a bne in IWRAM ARM code targets 0x030075D0,
+ * which holds 0xFFxxFFxx data words (NV SWIs, every one an exit), and the
+ * eager link translates a block of 32 of them that ends on NV.  An
+ * always-taken skip is exact and keeps the backpatch contract.
+ * tools/drprof/synth/nv_cond.s covers all three shapes. */
+#define generate_condition_nv()                                               \
+  mips_emit_b_filler(beq, reg_zero, reg_zero, backpatch_address);             \
+  generate_cycle_update_force()                                               \
+
 #define generate_condition()                                                  \
   switch(condition)                                                           \
   {                                                                           \
@@ -945,6 +961,7 @@ u32 execute_spsr_restore_body(u32 address)
     case 0xB: generate_condition_lt(); break;                                 \
     case 0xC: generate_condition_gt(); break;                                 \
     case 0xD: generate_condition_le(); break;                                 \
+    case 0xF: generate_condition_nv(); break;                                 \
     default:                                                                  \
       break;                                                                  \
   }                                                                           \

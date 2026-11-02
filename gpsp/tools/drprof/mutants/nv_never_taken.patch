@@ -1,0 +1,12 @@
+mutant: NV opens a never-taken skip (backpatch valid, the NV word still runs); tools/drprof/synth/nv_cond.s must fail 6/6
+--- a/mips/mips_emit.h
++++ b/mips/mips_emit.h
+@@ -941,7 +941,7 @@
+  * always-taken skip is exact and keeps the backpatch contract.
+  * tools/drprof/synth/nv_cond.s covers all three shapes. */
+ #define generate_condition_nv()                                               \
+-  mips_emit_b_filler(beq, reg_zero, reg_zero, backpatch_address);             \
++  mips_emit_b_filler(bne, reg_zero, reg_zero, backpatch_address);             \
+   generate_cycle_update_force()                                               \
+ 
+ #define generate_condition()                                                  \
