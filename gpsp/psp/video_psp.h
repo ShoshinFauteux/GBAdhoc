@@ -153,6 +153,19 @@ void vid_blit_prof(unsigned *frames,
 void vid_overlay_begin(int clear);
 void vid_rect(int x, int y, int w, int h, uint16_t rgb565, int alpha);
 void vid_text(int x, int y, const char *str, uint16_t rgb565);
+#ifdef GPSP_PERF_RIG
+/* WHAT IS ON SCREEN, for a harness `ui_script` (docs/GBA-LINK-UI.md 9): every
+ * string drawn and every selection band, one frame at a time, so a fixture
+ * reads the menus the way a player does and a changed menu fails by name.
+ * Off (one branch per string) unless a script asks. */
+void vid_seen_enable(int on);
+void vid_seen_band(int y, int h);
+void vid_seen_frame(void);            /* a frame ended: it becomes "the view" */
+int  vid_seen_has(const char *alts);  /* "A|B": 1 if any is on the view */
+int  vid_seen_band_has(const char *alts); /* -1 no band, else on its row? */
+const char *vid_seen_band_row(void);  /* the band row's first string, or "" */
+void vid_seen_report(void);           /* EVT route_screen, last non-empty view */
+#endif
 /* PSP button glyphs, baked into both faces after the ASCII range
  * (tools/bake_font.py EXTRAS).  Ordinary proportional glyphs: vid_text_w
  * measures them and vid_text draws them, so a hint is a plain string.

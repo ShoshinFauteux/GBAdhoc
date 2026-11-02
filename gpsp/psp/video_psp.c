@@ -1285,6 +1285,123 @@ int vid_text_y_in(int box_y, int box_h)
 
 /* y is the TOP of the line box, as it was with the bitmap font, so every
  * existing call site keeps its coordinates. */
+#ifdef GPSP_PERF_RIG
+/* The view (video_psp.h).  Three frames' worth, rotated by index: being
+ * drawn, the view a script reads, the last view that had any text (what a
+ * failure reports: the game's own frames have none). */
+#define VID_SEEN_MAX 56
+#define VID_SEEN_LEN 60
+typedef struct
+{
+   int n, band_y, band_h;
+   struct { short y; char s[VID_SEEN_LEN]; } t[VID_SEEN_MAX];
+} vid_seen_t;
+static vid_seen_t g_seen[3];
+static int g_seen_on, g_seen_fill, g_seen_view = 1, g_seen_last = 2;
+
+void vid_seen_enable(int on)
+{
+   g_seen_on = on;
+}
+
+static void vid_seen_text(int y, const char *s)
+{
+   vid_seen_t *v = &g_seen[g_seen_fill];
+   if (!g_seen_on || v->n >= VID_SEEN_MAX)
+      return;
+   v->t[v->n].y = (short)y;
+   snprintf(v->t[v->n].s, VID_SEEN_LEN, "%s", s);
+   v->n++;
+}
+
+void vid_seen_band(int y, int h)
+{
+   vid_seen_t *v = &g_seen[g_seen_fill];
+   if (!g_seen_on)
+      return;
+   v->band_y = y;
+   v->band_h = h;
+}
+
+void vid_seen_frame(void)
+{
+   int done = g_seen_fill;
+   if (!g_seen_on)
+      return;
+   g_seen_fill = g_seen[g_seen_view].n ? g_seen_last : g_seen_view;
+   if (g_seen[g_seen_view].n)
+      g_seen_last = g_seen_view;
+   g_seen_view = done;
+   g_seen[g_seen_fill].n = 0;
+   g_seen[g_seen_fill].band_h = 0;
+}
+
+/* One alternative of "A|B" in `s`. */
+static int vid_seen_alt(const char *s, const char *alts)
+{
+   while (*alts)
+   {
+      const char *e = strchr(alts, '|');
+      size_t len = e ? (size_t)(e - alts) : strlen(alts);
+      const char *p;
+      for (p = s; *p; p++)
+         if (!strncmp(p, alts, len))
+            return 1;
+      if (!e)
+         break;
+      alts = e + 1;
+   }
+   return 0;
+}
+
+int vid_seen_has(const char *alts)
+{
+   const vid_seen_t *v = &g_seen[g_seen_view];
+   int i;
+   for (i = 0; i < v->n; i++)
+      if (vid_seen_alt(v->t[i].s, alts))
+         return 1;
+   return 0;
+}
+
+static int vid_seen_on_band(const vid_seen_t *v, int i)
+{
+   return v->t[i].y + 8 > v->band_y && v->t[i].y + 8 < v->band_y + v->band_h;
+}
+
+int vid_seen_band_has(const char *alts)
+{
+   const vid_seen_t *v = &g_seen[g_seen_view];
+   int i;
+   if (!v->band_h)
+      return -1;
+   for (i = 0; i < v->n; i++)
+      if (vid_seen_on_band(v, i) && vid_seen_alt(v->t[i].s, alts))
+         return 1;
+   return 0;
+}
+
+const char *vid_seen_band_row(void)
+{
+   const vid_seen_t *v = &g_seen[g_seen_view];
+   int i;
+   if (v->band_h)
+      for (i = 0; i < v->n; i++)
+         if (vid_seen_on_band(v, i))
+            return v->t[i].s;
+   return "";
+}
+
+void vid_seen_report(void)
+{
+   const vid_seen_t *v = &g_seen[g_seen[g_seen_view].n ? g_seen_view : g_seen_last];
+   int i;
+   FE_EVT_ONLY(v);
+   for (i = 0; i < v->n; i++)
+      fe_evt("route_screen y=%d text=\"%s\"", v->t[i].y, v->t[i].s);
+}
+#endif
+
 static void fu_draw(const fu_face *f, int x, int y, const char *str,
                     unsigned int col)
 {
@@ -1292,6 +1409,9 @@ static void fu_draw(const fu_face *f, int x, int y, const char *str,
    const char *s;
    tcvtx_t *v;
 
+#ifdef GPSP_PERF_RIG
+   vid_seen_text(y, str);
+#endif
    if (!fu_clut_ready)
       fu_clut_build();
 

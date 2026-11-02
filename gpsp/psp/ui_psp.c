@@ -1622,6 +1622,9 @@ static void ov_band(int y, int w, int h)
    int by = vid_band_y(y, h);
    vid_rect(0, by, w, h, C_ACCENT, 40);
    vid_rect(0, by, 4, h, C_ACCENT, 255);
+#ifdef GPSP_PERF_RIG
+   vid_seen_band(by, h);
+#endif
 }
 
 static void ov_text_right(int xr, int y, const char *s, uint16_t c)

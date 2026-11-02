@@ -10531,16 +10531,110 @@ static void boot_timeline_emit(void)
  *     +N fakescan G1,G2,..  the scan list answers with these ("-" none)
  *     +N census TAG         heap_census(TAG): EVT heap_census at=TAG
  *                           (docs/UI-OVERLAY.md section 13's heap proof)
+ * THE PLAYER'S ROUTE (docs/GBA-LINK-UI.md section 9), fixtures that read the
+ * screen.  TEXT is "quoted", "A|B" = either; TO_S is wall seconds; WHY names
+ * the failure (EVT route_fail, exit 8):
+ *     +N chord              SELECT+START through the pad until the menu opens
+ *     +N see TEXT TO_S WHY  until TEXT is drawn
+ *     +N pick TEXT WHY [nopress]  DOWN to the highlighted row holding TEXT,
+ *                           then X; a list that wraps round fails WHY
+ *     +N watch TEXT WHY     from now on TEXT on screen fails WHY
+ *     +N unwatch            none of those any more
+ *     +N wait COND TO_S WHY as `wait`, with a limit
+ *     +N route NAME         EVT route_step: the ladder the Lab scores
+ *     +N label NAME / goto NAME
+ *     +N ifsee TEXT LABEL MAX WHY  TEXT in this frame: jump, MAX times, then
+ *                           fail WHY
+ *     +N release            the game's script may start (adapter rooms)
+ *     +N fail WHY
  * '#' comments.  Not compiled into a release. */
 #define UISCRIPT_MAX 192
+#define UISCRIPT_WATCH_MAX 24
+#define UISCRIPT_DRIVES (g_uis_n != 0)
 enum { UIS_MENU = 1, UIS_PRESS, UIS_DUMP, UIS_WAIT, UIS_EXIT, UIS_LINKING,
-       UIS_FAKESCAN, UIS_CENSUS };
-static struct { unsigned delay, btn; unsigned char verb; char arg[64]; }
-   g_uis[UISCRIPT_MAX];
-static int g_uis_n, g_uis_i, g_uis_exit = -1;
+       UIS_FAKESCAN, UIS_CENSUS, UIS_CHORD, UIS_SEE, UIS_PICK, UIS_WATCH,
+       UIS_UNWATCH, UIS_ROUTE, UIS_LABEL, UIS_IFSEE, UIS_RELEASE, UIS_FAIL,
+       UIS_GOTO };
+static struct
+{
+   unsigned delay, btn, to_s;
+   unsigned char verb;
+   short jumps;
+   char arg[64], lbl[16], why[24];
+} g_uis[UISCRIPT_MAX];
+static struct { char text[48], why[24]; } g_uis_watch[UISCRIPT_WATCH_MAX];
+static int g_uis_n, g_uis_i, g_uis_exit = -1, g_uis_watches;
 static unsigned g_uis_wait;
+static unsigned long long g_uis_t0;  /* the step began (us) */
+static char g_uis_at[24] = "start";  /* the last `route` mark reached */
+/* pick: look at the band, press, let it land, look again */
+static int g_uis_pick_phase, g_uis_pick_moves;
+static char g_uis_pick_first[32], g_uis_pick_prev[32];
 static char g_uis_dump[24];
 static char g_uis_linking[24];     /* `linking PRESET` until `linking off` */
+
+/* "+N verb [arg] [a2] [a3] [a4]": an argument may be "quoted, with spaces".
+ * Returns how many of verb, arg, ... + the +N were read. */
+static int uiscript_tokens(const char *p, unsigned *d, char *verb, char *arg,
+                           char *a2, char *a3, char *a4)
+{
+   char *out[5];
+   size_t cap[5];
+   int i, n = 0;
+   if (*p == '#' || sscanf(p, " +%u", d) != 1)
+      return 0;
+   out[0] = verb; out[1] = arg; out[2] = a2; out[3] = a3; out[4] = a4;
+   cap[0] = 16; cap[1] = 64; cap[2] = cap[3] = cap[4] = 24;
+   while (*p == ' ' || *p == '\t')
+      p++;
+   while (*p && *p != ' ' && *p != '\t')
+      p++;                                /* the +N */
+   for (i = 0; i < 5; i++)
+   {
+      char end = ' ';
+      size_t k = 0;
+      while (*p == ' ' || *p == '\t')
+         p++;
+      if (!*p || *p == '\r' || *p == '\n')
+         break;
+      if (*p == '"')
+      {
+         end = '"';
+         p++;
+      }
+      while (*p && *p != end && *p != '\r' && *p != '\n' &&
+             (end == '"' || *p != '\t'))
+      {
+         if (k + 1 < cap[i])
+            out[i][k++] = *p;
+         p++;
+      }
+      out[i][k] = '\0';
+      if (*p == end)
+         p++;
+      n++;
+   }
+   return n + 1;
+}
+
+/* A fixture's route ends here, by name: the step, the reason, what the
+ * screen said (route_screen lines), a picture of it, an exit the Lab sees. */
+static void uiscript_fail(const char *why, const char *detail)
+{
+   char path[176];
+   FE_EVT_ONLY(detail);
+   fe_evt("route_fail at=%s reason=%s step=%d detail=\"%s\" frame=%u",
+          g_uis_at, why, g_uis_i, detail ? detail : "",
+          fe_host_frame_count());
+   vid_seen_report();
+#ifndef GPSP_NO_TELEMETRY
+   heap_census("route_fail");
+#endif
+   snprintf(path, sizeof(path), "%s/route_fail.bmp", LOG_DIR);
+   vid_dump_ge(path);
+   g_uis_exit = 8;
+   g_uis_i = g_uis_n;
+}
 
 static void uiscript_load(const char *path)
 {
@@ -10555,22 +10649,65 @@ static void uiscript_load(const char *path)
    {
       char verb[16], arg[64];
       unsigned d;
-      int n = sscanf(line, " +%u %15s %63s", &d, verb, arg);
+      char a2[24] = "", a3[24] = "", a4[24] = "";
+      int n = uiscript_tokens(line, &d, verb, arg, a2, a3, a4);
       if (line[0] == '#' || n < 2)
          continue;
       memset(&g_uis[g_uis_n], 0, sizeof(g_uis[0]));
       g_uis[g_uis_n].delay = d;
-      if (n == 3)
+      if (n >= 3)
          snprintf(g_uis[g_uis_n].arg, sizeof(g_uis[0].arg), "%.63s", arg);
-      if (!strcmp(verb, "menu"))
+      if (!strcmp(verb, "chord"))
+         g_uis[g_uis_n].verb = UIS_CHORD;
+      else if (!strcmp(verb, "see") && n == 5)
+      {
+         g_uis[g_uis_n].verb = UIS_SEE;
+         g_uis[g_uis_n].to_s = (unsigned)atoi(a2);
+         snprintf(g_uis[g_uis_n].why, sizeof(g_uis[0].why), "%s", a3);
+      }
+      else if (!strcmp(verb, "pick") && (n == 4 || n == 5))
+      {
+         g_uis[g_uis_n].verb = UIS_PICK;
+         snprintf(g_uis[g_uis_n].why, sizeof(g_uis[0].why), "%s", a2);
+         g_uis[g_uis_n].btn = !strcmp(a3, "nopress") ? 0 : PSP_CTRL_CROSS;
+      }
+      else if (!strcmp(verb, "watch") && n == 4)
+      {
+         g_uis[g_uis_n].verb = UIS_WATCH;
+         snprintf(g_uis[g_uis_n].why, sizeof(g_uis[0].why), "%s", a2);
+      }
+      else if (!strcmp(verb, "unwatch"))
+         g_uis[g_uis_n].verb = UIS_UNWATCH;
+      else if (!strcmp(verb, "route") && n == 3)
+         g_uis[g_uis_n].verb = UIS_ROUTE;
+      else if (!strcmp(verb, "label") && n == 3)
+         g_uis[g_uis_n].verb = UIS_LABEL;
+      else if (!strcmp(verb, "ifsee") && n == 6)
+      {
+         g_uis[g_uis_n].verb = UIS_IFSEE;
+         snprintf(g_uis[g_uis_n].lbl, sizeof(g_uis[0].lbl), "%s", a2);
+         g_uis[g_uis_n].to_s = (unsigned)atoi(a3);
+         snprintf(g_uis[g_uis_n].why, sizeof(g_uis[0].why), "%s", a4);
+      }
+      else if (!strcmp(verb, "release"))
+         g_uis[g_uis_n].verb = UIS_RELEASE;
+      else if (!strcmp(verb, "fail") && n == 3)
+         g_uis[g_uis_n].verb = UIS_FAIL;
+      else if (!strcmp(verb, "goto") && n == 3)
+         g_uis[g_uis_n].verb = UIS_GOTO;
+      else if (!strcmp(verb, "menu"))
          g_uis[g_uis_n].verb = UIS_MENU;
       else if (!strcmp(verb, "press") && n == 3 &&
                (g_uis[g_uis_n].btn = pad_script_buttons(arg)) != 0)
          g_uis[g_uis_n].verb = UIS_PRESS;
       else if (!strcmp(verb, "dump") && n == 3)
          g_uis[g_uis_n].verb = UIS_DUMP;
-      else if (!strcmp(verb, "wait") && n == 3)
+      else if (!strcmp(verb, "wait") && (n == 3 || n == 5))
+      {
          g_uis[g_uis_n].verb = UIS_WAIT;
+         g_uis[g_uis_n].to_s = (unsigned)atoi(a2);
+         snprintf(g_uis[g_uis_n].why, sizeof(g_uis[0].why), "%s", a3);
+      }
       else if (!strcmp(verb, "exit"))
          g_uis[g_uis_n].verb = UIS_EXIT;
       else if (!strcmp(verb, "linking") && n == 3)
@@ -10580,7 +10717,13 @@ static void uiscript_load(const char *path)
       else if (!strcmp(verb, "census") && n == 3)
          g_uis[g_uis_n].verb = UIS_CENSUS;
       else
+      {
+         /* a step nobody understood is a fixture that lies: say so, end it */
+         fe_evt("route_fail at=load reason=script_error step=%d detail=\"%s\"",
+                g_uis_n, verb);
+         g_uis_exit = 8;
          continue;
+      }
       g_uis_n++;
    }
    fclose(f);
@@ -10591,6 +10734,11 @@ static int uiscript_cond(const char *c)
 {
    int st = fe_host_gblink_active() ? fe_host_gblink_state() : -1;
    if (!strcmp(c, "linked"))     return st == FE_GBLINK_RUNNING;
+   if (!strcmp(c, "play"))       return !g_autoload_state &&
+                                        fe_host_frame_count() >= 60;
+   if (!strcmp(c, "started"))    return st >= 0;
+   if (!strcmp(c, "settled"))    return st == FE_GBLINK_RUNNING ||
+                                        g_link_fail_hold;
    if (!strcmp(c, "linking"))    return st == FE_GBLINK_SETUP;
    if (!strcmp(c, "hosting"))    return g_net_up && g_link_wait;
    if (!strcmp(c, "ended"))      return st < 0 && !g_net_up;
@@ -10602,17 +10750,157 @@ static int uiscript_cond(const char *c)
    return 0;
 }
 
+static void uiscript_jump(const char *label)
+{
+   int t;
+   for (t = 0; t < g_uis_n; t++)
+      if (g_uis[t].verb == UIS_LABEL && !strcmp(g_uis[t].arg, label))
+      {
+         g_uis_i = t;
+         return;
+      }
+   uiscript_fail("script_error", label);
+}
+
 /* At the pad read: the buttons to OR in this loop. */
 static unsigned uiscript_pad(void)
 {
    unsigned m = 0;
-   int adv = 1;
+   int adv = 1, k;
+   unsigned long long now = sceKernelGetSystemTimeWide();
+   vid_seen_frame();
    if (g_uis_i >= g_uis_n)
+   {
+      vid_seen_enable(0);            /* the session's frames pay nothing */
       return 0;
+   }
+   /* Text is read only while something needs it: a session's own frames must
+    * not pay for it. */
+   vid_seen_enable(g_uis_watches > 0 || g_uis[g_uis_i].verb == UIS_SEE ||
+                   g_uis[g_uis_i].verb == UIS_PICK ||
+                   g_uis[g_uis_i].verb == UIS_IFSEE ||
+                   g_uis[g_uis_i + 1 < g_uis_n ? g_uis_i + 1 : g_uis_i].verb ==
+                      UIS_IFSEE);
+   for (k = 0; k < g_uis_watches; k++)
+      if (vid_seen_has(g_uis_watch[k].text))
+      {
+         uiscript_fail(g_uis_watch[k].why, g_uis_watch[k].text);
+         return 0;
+      }
    if (++g_uis_wait < g_uis[g_uis_i].delay)
       return 0;
+   if (!g_uis_t0)
+      g_uis_t0 = now;
+   if (g_uis[g_uis_i].to_s && g_uis[g_uis_i].verb != UIS_IFSEE &&
+       now - g_uis_t0 > (unsigned long long)g_uis[g_uis_i].to_s * 1000000ull)
+   {
+      uiscript_fail(g_uis[g_uis_i].why[0] ? g_uis[g_uis_i].why : "timeout",
+                    g_uis[g_uis_i].arg);
+      return 0;
+   }
    switch (g_uis[g_uis_i].verb)
    {
+   case UIS_CHORD:
+      /* The player's own chord, through the pad: held until the menu opens. */
+      adv = ui_active();
+      if (!adv)
+      {
+         m = PSP_CTRL_SELECT | PSP_CTRL_START;
+         if (now - g_uis_t0 > 5000000ull)
+         {
+            uiscript_fail("menu_not_opening", "SELECT+START");
+            return 0;
+         }
+      }
+      break;
+   case UIS_SEE:
+      adv = vid_seen_has(g_uis[g_uis_i].arg);
+      break;
+   case UIS_PICK:
+   {
+      /* Down the list to the row, reading the band; a list that comes back
+       * round, or a band that will not move, is a menu that changed. */
+      const char *row = vid_seen_band_row();
+      int on = vid_seen_band_has(g_uis[g_uis_i].arg);
+      adv = 0;
+      if (g_uis_pick_phase)
+         g_uis_pick_phase--;
+      else if (on < 0)
+      {
+         if (now - g_uis_t0 > 5000000ull)
+         {
+            uiscript_fail(g_uis[g_uis_i].why, g_uis[g_uis_i].arg);
+            return 0;
+         }
+      }
+      else if (on)
+      {
+         m = g_uis[g_uis_i].btn;
+         adv = 1;
+      }
+      else
+      {
+         if (!g_uis_pick_moves)
+            snprintf(g_uis_pick_first, sizeof(g_uis_pick_first), "%s", row);
+         else if (!strcmp(row, g_uis_pick_first) ||
+                  (g_uis_pick_moves > 40 && !strcmp(row, g_uis_pick_prev)))
+         {
+            uiscript_fail(g_uis[g_uis_i].why, g_uis[g_uis_i].arg);
+            return 0;
+         }
+         snprintf(g_uis_pick_prev, sizeof(g_uis_pick_prev), "%s", row);
+         g_uis_pick_moves++;
+         m = PSP_CTRL_DOWN;
+         g_uis_pick_phase = 3;
+      }
+      if (adv)
+      {
+         g_uis_pick_moves = 0;
+         g_uis_pick_phase = 0;
+      }
+      break;
+   }
+   case UIS_WATCH:
+      if (g_uis_watches < UISCRIPT_WATCH_MAX)
+      {
+         snprintf(g_uis_watch[g_uis_watches].text,
+                  sizeof(g_uis_watch[0].text), "%s", g_uis[g_uis_i].arg);
+         snprintf(g_uis_watch[g_uis_watches].why,
+                  sizeof(g_uis_watch[0].why), "%s", g_uis[g_uis_i].why);
+         g_uis_watches++;
+      }
+      break;
+   case UIS_UNWATCH:
+      g_uis_watches = 0;
+      break;
+   case UIS_ROUTE:
+      snprintf(g_uis_at, sizeof(g_uis_at), "%s", g_uis[g_uis_i].arg);
+      fe_evt("route_step name=%s t_ms=%llu frame=%u", g_uis_at,
+             now / 1000ull, fe_host_frame_count());
+      break;
+   case UIS_LABEL:
+      break;
+   case UIS_IFSEE:
+      /* decided on this frame's view: run it right after a `see` */
+      if (vid_seen_has(g_uis[g_uis_i].arg))
+      {
+         if (g_uis[g_uis_i].jumps++ >= (short)g_uis[g_uis_i].to_s)
+         {
+            uiscript_fail(g_uis[g_uis_i].why, g_uis[g_uis_i].arg);
+            return 0;
+         }
+         uiscript_jump(g_uis[g_uis_i].lbl);
+      }
+      break;
+   case UIS_GOTO:
+      uiscript_jump(g_uis[g_uis_i].arg);
+      break;
+   case UIS_RELEASE:
+      fe_host_script_release();
+      break;
+   case UIS_FAIL:
+      uiscript_fail(g_uis[g_uis_i].arg, "script");
+      return 0;
    case UIS_MENU:
       if (!ui_active())
          menu_open();
@@ -10625,6 +10913,12 @@ static unsigned uiscript_pad(void)
       break;
    case UIS_WAIT:
       adv = uiscript_cond(g_uis[g_uis_i].arg);
+      if (!adv && !strcmp(g_uis[g_uis_i].arg, "ap_done") &&
+          fe_autopilot_status() == -1)
+      {
+         uiscript_fail("game_script", "ap_fail");
+         return 0;
+      }
       break;
    case UIS_EXIT:
       g_uis_exit = atoi(g_uis[g_uis_i].arg);
@@ -10649,6 +10943,7 @@ static unsigned uiscript_pad(void)
              (unsigned)g_loop_iter, fe_host_frame_count());
       g_uis_i++;
       g_uis_wait = 0;
+      g_uis_t0 = 0;
    }
    return m;
 }
@@ -10725,6 +11020,7 @@ static void uiscript_linking_draw(void)
 #define UISCRIPT_DUMP() uiscript_dump_now()
 #else
 #define UISCRIPT_DUMP() do { } while (0)
+#define UISCRIPT_DRIVES 0
 #endif
 
 #ifdef REWIND
@@ -13091,7 +13387,7 @@ int main(int argc, char *argv[])
           bscript[0])
       {
          char up[256];
-         snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript);
+         snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript); LAB_HOOK(lab_task_file(up, sizeof(up), bscript);)
          uiscript_load(up);               /* docs/GBA-LINK-UI.md */
       }
       if (fe_ini_get(HARNESS_INI, "ui_scan_fake", up_fake, sizeof(up_fake)) &&
@@ -15162,7 +15458,7 @@ session_top:
          if (g_uis_exit >= 0)
          {
             exit_code = g_uis_exit;
-            exit_reason = "ui_script";
+            exit_reason = exit_code == 8 ? "route_fail" : "ui_script";
             g_running = 0;
          }
       }
@@ -15476,7 +15772,8 @@ session_top:
             }
          }
          else if ((g_pad & (PSP_CTRL_SELECT | PSP_CTRL_START)) ==
-             (PSP_CTRL_SELECT | PSP_CTRL_START) && !have_script)
+             (PSP_CTRL_SELECT | PSP_CTRL_START) &&
+             (!have_script || UISCRIPT_DRIVES))
          {
             if (++chord_frames >= 15)
             {

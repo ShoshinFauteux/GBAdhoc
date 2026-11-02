@@ -86,6 +86,9 @@ static int gbl_primed;             /* autopilot had its power-on look */
 static uint8_t *gbl_prelink_state; /* the running game when the link began */
 static size_t gbl_prelink_state_n;
 static int gbl_hold;               /* harness: single machine held for a link */
+/* A harness ui_script says when the game's script may start: an adapter room
+ * has no session to wait for, the fixture plays once the room is up. */
+static int gbl_script_go;
 /* GBA link-cable session (GBA_LINK builds, host.gba_dual_session): the
  * player's machine is instance A, which keeps running the frontend's core;
  * its battery image is the session's to commit, so the writer is held. */
@@ -3599,6 +3602,7 @@ int fe_host_gblink_stalled(void)
    return gbl_repeat;
 }
 void fe_host_gblink_hold(int on) { gbl_hold = on ? 1 : 0; }
+void fe_host_script_release(void) { gbl_script_go = 1; }
 int fe_host_gblink_state(void) { return gbl ? fe_gblink_state(gbl) : -1; }
 void fe_host_set_fast_link(int on)
 {
@@ -3746,7 +3750,8 @@ int fe_host_autopilot_gate(void)
 {
    int st;
    if (!gbl)
-      return !host.gblink_script_waits || (gbl_sessions && !gbl_hold);
+      return !host.gblink_script_waits || (gbl_sessions && !gbl_hold) ||
+             gbl_script_go;
    st = fe_gblink_state(gbl);
    if (st != FE_GBLINK_RUNNING && st != FE_GBLINK_ENDING)
       return 0;
