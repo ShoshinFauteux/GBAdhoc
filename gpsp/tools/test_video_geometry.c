@@ -11,6 +11,7 @@
  * straight copy and the swapping one). */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #define VID_TRIPLE
 #include "../psp/video_psp.c"
 
@@ -37,6 +38,8 @@ static void staging_edges(unsigned w, unsigned h)
    for (y = 0; y < h; y++)
       for (x = 0; x < w; x++)
          src[y * 256 + x] = (uint16_t)(y * 251 + x * 7 + 1);
+   if (!fb_staging)
+      fb_staging = (uint16_t *)malloc(STAGE_BYTES);   /* vid_init is not run */
    memset(fb_staging, 0xA5, STAGE_BYTES);        /* stale picture */
    stage_convert_rgb565(src, w, h, pitch);
    for (y = 0; y < h; y++)
