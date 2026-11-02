@@ -19,6 +19,7 @@ mkdir -p "$DRPROF_HOME/fx" "$DRPROF_HOME/nv"
 cd "$DRPROF_HOME/nv" || exit 2
 python3 "$G" gen nv.gba
 python3 "$G" gen nv_issue.gba --only issue
+python3 "$G" gen nv_exits.gba --only exits
 if [ "${1:-}" = build ]; then
   B="$TREE/tools/drprof/dr_build.sh"
   FEATURES=baked DRPROF_SRC=src-fix bash "$B" fix "" | tail -1
@@ -45,6 +46,8 @@ docker run --rm -v "$DRPROF_HOME":/w -w /w/nv "$IMAGE" bash -c '
   bash run.sh nofix nv.gba nofix
   bash run.sh fix nv_issue.gba fix_issue
   bash run.sh nofix nv_issue.gba nofix_issue
+  bash run.sh fix nv_exits.gba fix_exits
+  bash run.sh nofix nv_exits.gba nofix_exits
   bash run.sh nv_emit_body nv.gba nv_emit_body
   bash run.sh nv_scan_keeps_cond nv.gba nv_scan_keeps_cond
   rm -rf pair; mkdir pair
@@ -65,6 +68,8 @@ expect pass int
 expect fail nofix
 expect pass fix_issue --only issue
 expect fail nofix_issue --only issue
+expect pass fix_exits --only exits
+expect fail nofix_exits --only exits
 expect fail nv_emit_body
 expect fail nv_scan_keeps_cond
 for s in 0 1; do

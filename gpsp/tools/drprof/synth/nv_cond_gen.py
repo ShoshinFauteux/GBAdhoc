@@ -10,7 +10,8 @@ No toolchain: the ROM is hand-encoded here, because the shape under test is data
 in the instruction stream.  An ARM7TDMI never executes an NV word (GBATEK: reserved
 from ARMv3; condition false costs 1S; mGBA and cpu.cc skip it).  Before
 NV_COND_FIX the translator stored through a NULL backpatch_address, so
-`gen --only issue` on a -DGPSP_NO_NV_COND_FIX twin is the issue #10 crash.
+`gen --only exits` on a -DGPSP_NO_NV_COND_FIX twin is the issue #10 crash: the
+store at the block-end check, `sh v0,0(v1)` with v1 = 0, last_condition 0x1F.
 
 Every case runs from ROM, IWRAM and EWRAM (the three scan paths: scan_block(arm,
 no), xlat_scan_arm_ram[_fast]): NV first, mid and last in a block, among
@@ -18,8 +19,9 @@ conditionals, as a branch target, in a loop, in every shape that would otherwise
 be an exit point (B, BL, SWI, HLE div, BX, MOV pc, LDR pc, LDM pc, coprocessor)
 or a side effect (flags, stores, loads, multiply, MSR).  RAM adds self-modifying
 words (AL <-> NV, and SMC_IMM_PATCH's alternating immediate).  Then fixed
-addresses: the crash's own word at 0x0300764C, and NV at the last word before the
-RAM-end clamp 0x03007FF0, where it is truly last in its block.
+addresses: the crash's own word at 0x0300764C, a run of it that MAX_EXITS ends (the
+crash's path), and NV at the last word before the RAM-end clamp 0x03007FF0, where
+it is truly last in its block.
 
 Results from EWRAM 0x02000100, five words a case: tag, r0..r3.  0x02000000 =
 0xC0DE600D, 0x02000004 = end.  The expected values are this file's model; the
@@ -456,8 +458,12 @@ def body(a, fn, n, exp):
 # Fixed addresses, written and called from ROM: (name, base, words, entry, r0)
 BX_LR = 0xE12FFF1E
 FRAGS = {
-    # issue #10: t5=FFF5FFF6, s3=block start 0300764C, s0=pc 03007650
+    # the word of the issue #10 dump, at its address: s3 = last pc translated
+    # 0300764C, s6 = last_condition 0x1F
     "stack": (0x0300764C, [0xFFF5FFF6, 0xE2800001, BX_LR], 0, 1),
+    # ...and that dump's path: no condition in the block but NV, every word an
+    # exit point, so MAX_EXITS ends the scan and the block-end patch takes NULL
+    "exits": (0x03007300, [0xFFF5FFF6] * 32 + [0xE2800004, BX_LR], 0, 4),
     "allnv": (0x03007700, [0xFFFFFFFF] * 3 + [0xE2800002, BX_LR], 0, 2),
     # the RAM-end clamp: 0x03007FEC is the block's last word
     "ramend": (0x03007FE0, [0xE2800001, 0xE2800002, 0xE2800004, 0xF2800008,
