@@ -1730,6 +1730,7 @@ static t_client_broadcast rfu_peer_bcst[MAX_RFU_PEERS];
 #define NET_RFU_HOST_SEND       0x05    // Host to client data send
 #define NET_RFU_CLIENT_SEND     0x06    // Client to host data send
 #define NET_RFU_CLIENT_ACK      0x07    // Client ACKs host received data.
+#define NET_RFU_BCAST_END       0x08    // Host closed its room: forget its broadcast.
 
 /* Tag byte of a client packet's frame stamp (last payload word). */
 #define RFU_STAMP_TAG           0xA5
@@ -2018,6 +2019,12 @@ static s32 rfu_process_command_inner(void) {
      * two-player group stayed on every other player's list and a third
      * console could still join it. */
     rfu_host.accepting = 0;
+    /* A real scan lists rooms that are on the air now; ours listed a closed
+     * room for its 255-frame ttl.  Two consoles swapping host/scan could then
+     * see the other's dead room just as a client attached: the game answered
+     * CONNECT to it while still a host (error, adapter wedged in the lobby).
+     * Older peers ignore this packet type. */
+    rfu_net_send_bcast(NET_RFU_BCAST_END, rfu_host.devid, rfu_host.bdata);
     if (rfu_state == RFU_STATE_HOST) {
       for (i = 0; i < 4; i++)
         if (rfu_host.clients[i].devid)
@@ -3018,6 +3025,12 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         for (j = 0; j < 6; j++)
           rfu_peer_bcst[client_id].data[j] = upack32(&payl[j*4]);
       }
+      break;
+
+    case NET_RFU_BCAST_END:
+      if (client_id < MAX_RFU_PEERS &&
+          rfu_peer_bcst[client_id].device_id == hdata)
+        rfu_peer_bcst[client_id].valid = 0;
       break;
 
     case NET_RFU_CONNECT_REQ:
