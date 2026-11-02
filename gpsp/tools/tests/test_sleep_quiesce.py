@@ -143,6 +143,10 @@ static void psp_rewind_pwr(void)
    if (rw_hold && !rw_unvetted) { rw_hold = 0; SQ_TRACE("rw_release"); }
 }
 
+/* the ROM cache's lend of the pool: off in this model */
+static int g_rom_vm_lend, g_rom_vm_asleep;
+static void gamepak_vol_drop(void) {}
+#define fe_evt(...) ((void)0)
 @FUNCTIONS@
 
 static void machine(void)
