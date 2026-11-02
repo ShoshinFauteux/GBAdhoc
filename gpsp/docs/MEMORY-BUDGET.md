@@ -89,10 +89,11 @@ The 1000 runs out of heap, so what the image and the boot take comes off the ROM
 |---|---:|---:|
 | release image | 14,367,116 | 13,891,980 |
 | Lab build, solo (PPSSPP PSPModel 0) | 329 pages | 371 pages (M) |
+| harness build, late-mode session (two PPSSPP, AW2, join on model 0) | 160 pages | 179 pages; 363 again after it (M) |
 | release, solo | 361 pages, 11.28 MiB | ~387 pages, 12.1 MiB (D) |
 | release, late-mode session | 160 pages, 5 MiB | ~193 pages, 6.0 MiB (D) |
 
-Multi-tail: `init_gamepak_buffer` no longer loses what is short of a MiB. Blocks hold their own page count: whole blocks, the lent pool's tail, then pieces of what the heap has left, taken while the post-load reserve is held. So every 32 KiB saved is a page and there are no thresholds. A reload holds no reserve: it keeps `GAMEPAK_RELOAD_FLOOR`, 256 KiB, and never exceeds the boot's pages. A console that reaches its target never runs the new code.
+Multi-tail: `init_gamepak_buffer` no longer loses what is short of a MiB. Blocks hold their own page count: whole blocks, the lent pool's tail, then pieces of what the heap has left, taken while the post-load reserve is held. So every 32 KiB saved is a page and there are no thresholds. A reload holds no reserve: it keeps `GAMEPAK_RELOAD_FLOOR`, 256 KiB, and never exceeds the boot's pages. That session's low-water (`gblink_end`) was 362,840 B free against 398,024 B before; its per-frame hashes match the old build's over 29,122 lines. A console that reaches its target never runs the new code.
 
 Bytes won (image, or heap for the arena):
 
