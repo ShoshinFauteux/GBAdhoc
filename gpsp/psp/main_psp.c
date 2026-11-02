@@ -5292,31 +5292,49 @@ static int file_exists(const char *path)
  * Trading is the one operation users cannot afford to have corrupted. */
 static void backup_save(const char *save_path)
 {
-   static uint8_t buf[FE_SRAM_SIZE];
+   /* In pieces: a whole-save static buffer was 128 KiB of image (every byte of
+    * it off the PSP-1000's ROM cache, docs/MEMORY-BUDGET.md) used only here. */
+   uint8_t buf[4096];
    char bak[PSP_BACKUP_PATH_CAP];
    FILE *in, *out;
-   size_t n;
+   size_t n, total = 0;
    int path_len;
 
    in = fopen(save_path, "rb");
    if (!in)
       return;
    n = fread(buf, 1, sizeof(buf), in);
-   fclose(in);
    if (!n)
+   {
+      fclose(in);
       return;
+   }
    path_len = snprintf(bak, sizeof(bak), "%s.bak", save_path);
    if (path_len < 0 || (size_t)path_len >= sizeof(bak))
    {
+      fclose(in);
       fe_evt("sav_backup skip=path_too_long");
       return;
    }
    out = fopen(bak, "wb");
    if (!out)
+   {
+      fclose(in);
       return;
-   fwrite(buf, 1, n, out);
+   }
+   while (n)
+   {
+      fwrite(buf, 1, n, out);
+      total += n;
+      n = total < FE_SRAM_SIZE ? FE_SRAM_SIZE - total : 0;
+      if (n > sizeof(buf))
+         n = sizeof(buf);
+      if (n)
+         n = fread(buf, 1, n, in);
+   }
+   fclose(in);
    fclose(out);
-   fe_evt("sav_backup file=%s size=%u", bak, (unsigned)n);
+   fe_evt("sav_backup file=%s size=%u", bak, (unsigned)total);
 }
 
 /* ----------------------------------------------------------- wireless --- */
