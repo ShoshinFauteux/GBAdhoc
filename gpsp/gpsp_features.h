@@ -229,6 +229,9 @@
 #if !defined(GPSP_NO_COND_ENTRY_FIX) && !defined(COND_ENTRY_FIX)
 #define COND_ENTRY_FIX 1
 #endif
+#if !defined(GPSP_NO_NV_COND_FIX) && !defined(NV_COND_FIX)
+#define NV_COND_FIX 1
+#endif
 #if !defined(GPSP_NO_TIMER_RELOAD_FIX) && !defined(TIMER_RELOAD_FIX)
 #define TIMER_RELOAD_FIX 1
 #endif

@@ -1,0 +1,4 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -665 +665 @@
+-    condition = 0x0E;                                                         \n+    condition = 0x0F;                                                         \n
