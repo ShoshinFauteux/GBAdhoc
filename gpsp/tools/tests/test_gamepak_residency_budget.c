@@ -289,6 +289,45 @@ int main(void)
     gamepak_spare_pool2_bytes = 0;
   }
 
+  /* 7. The volatile pool: last, whole blocks, never resident, never freed;
+   * dropped, its pages are skipped until they are back. */
+  {
+    static u8 pool3[3 * MIB];
+    heap = 1 * MIB + HDR + 3 * (MIB + HDR);
+    reset(heap, 15, 0, 0);
+    gamepak_spare_pool3 = pool3;
+    gamepak_spare_pool3_bytes = (u32)sizeof(pool3);
+    init_gamepak_buffer();
+    assert(gamepak_buffer_count == 6 && gamepak_buffer_pages == 6 * 32);
+    assert(gamepak_entry_ptr(3 * 32) == pool3);
+    assert(gamepak_lru_tail == 6 * 32 - 1);
+    gamepak_size = 4 * MIB;                 /* it fits only with the pool */
+    assert(gamepak_must_swap());
+    gamepak_size = 3 * MIB;
+    assert(!gamepak_must_swap());
+    gamepak_size = 64 * MIB;
+    /* map every entry, as a running game has */
+    for (i = 0; i < gamepak_buffer_pages; i++)
+      gamepak_blk_queue[i].phy_rom = (s16)i;
+    gamepak_lru_head = 0;
+    gamepak_vol_drop();
+    assert(gamepak_blk_queue[3 * 32].phy_rom == -1);
+    assert(gamepak_blk_queue[3 * 32 - 1].phy_rom == (s16)(3 * 32 - 1));
+    for (i = 0; i < 400; i++)                /* several laps of the queue */
+      assert(evict_gamepak_page() < 3 * 32);
+    gamepak_vol_back();
+    {
+      int seen = 0;
+      for (i = 0; i < 200; i++)
+        seen |= evict_gamepak_page() >= 3 * 32;
+      assert(seen);
+    }
+    gamepak_size = 0;
+    check_released_all(heap);
+    gamepak_spare_pool3 = NULL;
+    gamepak_spare_pool3_bytes = 0;
+  }
+
   puts("PASS gamepak residency budget: floor kept, short heap pages, "
        "1000 unchanged, spare pool used first and never freed, "
        "tails hold the floor and the boot's size");

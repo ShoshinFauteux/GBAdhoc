@@ -2613,6 +2613,9 @@ static int g_mer_vmem;
 static void *g_vm_base;
 static int   g_vm_size, g_vm_locked;
 static unsigned g_vm_eng_top;            /* end of what the engine carved */
+/* A third tenant, harness-only for now (rom_vmem, docs/MEMORY-BUDGET.md): with
+ * the rewind off, the same part of the pool as ROM cache pages. */
+static int   g_rom_vm_lend, g_rom_vm_asleep;
 static int   psp_rewind_pool_tenant(void);
 static void  psp_rewind_pool_back(void);
 static void  psp_rewind_pool_lost(void);
@@ -4371,6 +4374,8 @@ extern u8 *gamepak_buffers[32];
 extern u32 gamepak_resident_got;
 extern u32 gamepak_static_blocks;
 int gamepak_must_swap(void);
+void gamepak_vol_drop(void);
+void gamepak_vol_back(void);
 
 static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
                              size_t pitch)
@@ -10993,7 +10998,42 @@ static void psp_rewind_read_ini(void)
 /* ---- the rewind as a tenant of the volatile pool (see vm_lock) ------------ */
 static int psp_rewind_pool_tenant(void)
 {
-   return g_rw_pool;
+   return g_rw_pool || g_rom_vm_lend;
+}
+
+/* Before the game loads, with the rewind's decision made. */
+static void psp_rom_pool_offer(void)
+{
+   extern u8 *gamepak_spare_pool3;
+   extern u32 gamepak_spare_pool3_bytes;
+   void *base = NULL;
+   int size = 0;
+   gamepak_spare_pool3 = NULL;
+   gamepak_spare_pool3_bytes = 0;
+   g_rom_vm_lend = g_rom_vm_asleep = 0;
+   if (!fe_ini_get_int(HARNESS_INI, "rom_vmem", 0) || g_rw_want ||
+       g_pcfg.console != FE_CONSOLE_GBA)
+      return;
+   if (vm_lock(&base, &size) != 0 || !base || size <= PSP_VM_ENGINE_BYTES)
+   {
+      fe_evt("rom_vmem unavailable size=%d", size);
+      return;
+   }
+   gamepak_spare_pool3 = (u8 *)base + PSP_VM_ENGINE_BYTES;
+   gamepak_spare_pool3_bytes = (u32)(size - PSP_VM_ENGINE_BYTES);
+   g_rom_vm_lend = 1;
+   fe_evt("rom_vmem base=%08x bytes=%u", (unsigned)gamepak_spare_pool3,
+          (unsigned)gamepak_spare_pool3_bytes);
+}
+
+/* The game is gone, and its ROM cache with it. */
+static void psp_rom_pool_over(void)
+{
+   extern u8 *gamepak_spare_pool3;
+   extern u32 gamepak_spare_pool3_bytes;
+   gamepak_spare_pool3 = NULL;
+   gamepak_spare_pool3_bytes = 0;
+   g_rom_vm_lend = g_rom_vm_asleep = 0;
 }
 
 /* Offer the rewind its end of the pool.  Before fe_host_rewind_reserve at
@@ -11029,6 +11069,12 @@ static void *psp_rewind_pool_offer(size_t *bytes)
  * fe_host_rewind_suspend decides it (vetted frame, or the game is reset). */
 static void psp_rewind_pool_lost(void)
 {
+   if (g_rom_vm_lend && !g_rom_vm_asleep)
+   {
+      gamepak_vol_drop();
+      g_rom_vm_asleep = 1;
+      fe_evt("rom_vmem dropped");
+   }
    if (!g_rw_pool &&
        !(g_pwr_parked && g_rw_on && fe_host_rewind_unvetted()))
       return;
@@ -11066,6 +11112,25 @@ static void psp_rewind_pool_back(void)
 {
    void *base;
    size_t bytes;
+   if (g_rom_vm_asleep)
+   {
+      /* The same pool again, or those pages stay out of the cache. */
+      int size = 0;
+      void *b = NULL;
+      extern u8 *gamepak_spare_pool3;
+      g_rom_vm_asleep = 0;
+      if (vm_lock(&b, &size) == 0 && b &&
+          (u8 *)b + PSP_VM_ENGINE_BYTES == gamepak_spare_pool3)
+      {
+         gamepak_vol_back();
+         fe_evt("rom_vmem back");
+      }
+      else
+      {
+         g_rom_vm_lend = 0;
+         fe_evt("rom_vmem lost size=%d", size);
+      }
+   }
    if (!g_rw_asleep)
       return;
    g_rw_asleep = 0;
@@ -11092,6 +11157,19 @@ static void psp_rewind_pool_restart(void)
 {
    void *base;
    size_t bytes;
+   /* ROM pages kept across that sleep cannot be believed either: read them
+    * again as play reaches them. */
+   if (g_rom_vm_lend)
+   {
+#ifdef GPSP_PERF_RIG
+      if (!g_ss_no_restart)
+#endif
+      {
+         gamepak_vol_drop();
+         gamepak_vol_back();
+         fe_evt("rom_vmem reread why=sleep_without_teardown");
+      }
+   }
    if (!g_rw_on || !g_rw_pool)
    {
       fe_evt("rewind_pool_restart skipped on=%d pool=%d", g_rw_on, g_rw_pool);
@@ -11126,6 +11204,14 @@ static void sleep_sim_trash_pool(void)
 {
    unsigned char *lo = (unsigned char *)fe_host_rewind_pool_low();
    unsigned char *hi = (unsigned char *)g_vm_base + g_vm_size;
+   if (g_rom_vm_lend)
+   {
+      lo = (unsigned char *)g_vm_base + PSP_VM_ENGINE_BYTES;
+      memset(lo, 0xA5, (size_t)(hi - lo));
+      fe_evt("sleep_sim trash_pool rom from=%08x bytes=%u", (unsigned)lo,
+             (unsigned)(hi - lo));
+      return;
+   }
    if (!g_rw_pool || !lo || !g_vm_base || lo >= hi)
    {
       fe_evt("sleep_sim trash_pool skipped pool=%d", g_rw_pool);
@@ -11149,6 +11235,13 @@ static void psp_rewind_pool_check(void)
    fe_evt("vmem engine_top=%08x boundary=%08x rewind_low=%08x %s",
           g_vm_eng_top, limit, low,
           g_vm_eng_top <= limit ? "ok" : "CONFLICT");
+   if (g_vm_eng_top > limit && g_rom_vm_lend)
+   {
+      /* (no ROM page may share a byte with the engine) */
+      gamepak_vol_drop();
+      g_rom_vm_lend = 0;
+      fe_evt("rom_vmem lost engine_top=%08x", g_vm_eng_top);
+   }
    if (g_vm_eng_top > limit && g_rw_pool)
    {
       /* (From inside me_rend_init: no frame can be run here to land a
@@ -11170,7 +11263,7 @@ static void psp_rewind_pool_check(void)
  * has one tenant again, so a sleep in the browser can hand it back. */
 static void psp_rewind_pwr(void);
 #define PSP_REWIND_GAME_OVER() \
-   (g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
+   (psp_rom_pool_over(), g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
 
 /* ---- the control and the ring (docs/REWIND.md, 10.7) ----------------------
  * The designer's "Big ring", alone: a hairline ring round the middle of the
@@ -14604,6 +14697,7 @@ session_top:
    }
    else
       fe_host_rewind_prepare(NULL);     /* off: the store paths carry no marks */
+   psp_rom_pool_offer();
 #endif
    int boot_rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;

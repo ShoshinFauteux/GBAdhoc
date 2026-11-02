@@ -278,6 +278,10 @@ extern u32 gamepak_reload;
 extern u32 gamepak_hold_bytes;
 extern void *gamepak_hold;
 extern u32 gamepak_spare_pool2_bytes;
+extern u8 *gamepak_spare_pool3;
+extern u32 gamepak_spare_pool3_bytes;
+void gamepak_vol_drop(void);
+void gamepak_vol_back(void);
 extern u32 gamepak_static_blocks;
 /* Diagnostic: emit the paged-ROM load stubs (NULL page check + fault call)
  * even when the cart is resident, so a resident run executes exactly the

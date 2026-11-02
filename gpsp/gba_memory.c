@@ -579,6 +579,16 @@ static u32 gamepak_boot_blocks;
 #else
 #define GAMEPAK_SBSS
 #endif
+/* A third pool: the idle volatile pool above the ME's megabyte, lent with the
+ * rewind off (harness key rom_vmem, off everywhere else; docs/MEMORY-BUDGET.md).
+ * Its pages are the LAST of the cache, whole blocks.  They do NOT survive a
+ * sleep: gamepak_vol_drop unmaps them on the way down and they are read back
+ * from the card as play reaches them. */
+u8 *gamepak_spare_pool3 GAMEPAK_SBSS;
+u32 gamepak_spare_pool3_bytes GAMEPAK_SBSS;
+static u32 gamepak_vol_first GAMEPAK_SBSS;    /* first page in that pool */
+static u32 gamepak_vol_pages GAMEPAK_SBSS;
+static u32 gamepak_vol_down GAMEPAK_SBSS;     /* those pages are not ours now */
 static u32 gamepak_boot_pages GAMEPAK_SBSS;
 static u32 gamepak_boot_heap_out GAMEPAK_SBSS;
 /* gamepak_buffers[0 .. gamepak_static_blocks-1] point into the spare pools:
@@ -3037,7 +3047,9 @@ static u32 evict_gamepak_page(void)
     gamepak_blk_queue[gamepak_lru_tail].next_lru = ret;
     gamepak_lru_tail = ret;
     // If this page is marked as sticky, we keep going through the list
-  } while (phyrom >= 0 && gamepak_sb_test(phyrom));
+    // (and past the volatile pool's pages while the OS has them).
+  } while ((phyrom >= 0 && gamepak_sb_test(phyrom)) ||
+           (gamepak_vol_down && ret - gamepak_vol_first < gamepak_vol_pages));
 
   // We unmap the ROM page if it was mapped, ensure we do not access it
   // without triggering a "page fault"
@@ -3441,6 +3453,28 @@ void init_gamepak_buffer(void)
   free(post_load_reserve);
   if (!gamepak_reload)
     gamepak_boot_pages = gamepak_buffer_pages;
+  /* The volatile pool last, after everything that survives a sleep.  Never
+   * counted as resident (gamepak_must_swap): a cart that fits only with it
+   * must keep the paged load stubs, because a sleep takes these pages. */
+  gamepak_vol_pages = gamepak_vol_down = 0;
+  if (gamepak_spare_pool3 && gamepak_buffer_count >= 1 &&
+      gamepak_buffer_count < full_target &&
+      (!want || gamepak_buffer_pages < want * 32))
+  {
+    u32 k = 0;
+    gamepak_vol_first = gamepak_buffer_pages;
+    while ((k + 1) * gamepak_buffer_blocksize <= gamepak_spare_pool3_bytes &&
+           gamepak_buffer_count <
+             sizeof(gamepak_buffers) / sizeof(gamepak_buffers[0]))
+    {
+      gamepak_block_pages[gamepak_buffer_count] = 32;
+      gamepak_buffers[gamepak_buffer_count++] =
+        gamepak_spare_pool3 + k * gamepak_buffer_blocksize;
+      gamepak_buffer_pages += 32;
+      gamepak_vol_pages += 32;
+      k++;
+    }
+  }
 #else
   u32 cap = gamepak_buffer_cap;
   // Try to allocate up to 32 blocks of 1MB each
@@ -3483,6 +3517,35 @@ void init_gamepak_buffer(void)
   gamepak_lru_tail = gamepak_buffer_pages - 1;
 }
 
+/* Unmap the volatile pool's pages: it is going back to the OS, or came back
+ * from a sleep that may have used it.  Between frames only.  The cache simply
+ * has fewer pages until gamepak_vol_back; a page play needs meanwhile comes
+ * from the card like any other fault. */
+void gamepak_vol_drop(void)
+{
+  u32 i;
+  for (i = 0; i < gamepak_vol_pages; i++)
+  {
+    u32 entry = gamepak_vol_first + i;
+    s16 phyrom = gamepak_blk_queue[entry].phy_rom;
+    if (phyrom >= 0)
+    {
+      map_rom_entry(read, phyrom, NULL, gamepak_size >> 15);
+#ifdef GBA_LINK
+      if (gamepak_evict_hook)
+        gamepak_evict_hook((u32)phyrom);
+#endif
+      gamepak_blk_queue[entry].phy_rom = -1;
+    }
+  }
+  gamepak_vol_down = gamepak_vol_pages != 0;
+}
+
+void gamepak_vol_back(void)
+{
+  gamepak_vol_down = 0;
+}
+
 bool gamepak_must_swap(void)
 {
 #ifdef GBA_LINK
@@ -3494,7 +3557,7 @@ bool gamepak_must_swap(void)
 
   // Returns whether the current gamepak buffer is not big enough to hold
   // the full gamepak ROM. In these cases the device must swap.
-  return gamepak_buffer_pages * (32 * 1024) < gamepak_size;
+  return (gamepak_buffer_pages - gamepak_vol_pages) * (32 * 1024) < gamepak_size;
 }
 
 /* ---- SOFT RESET AS A POWER-ON (the in-game menu's "Reset game") ----------
