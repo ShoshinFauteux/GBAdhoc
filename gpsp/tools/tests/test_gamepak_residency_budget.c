@@ -10,7 +10,9 @@
  *     layout, with exactly the heap left that the paged path leaves;
  *   - a PSP-1000-sized heap makes the same successful mallocs with or
  *     without the wish;
- *   - blocks lent from the spare pool are used first and never freed.
+ *   - blocks lent from the spare pool are used first and never freed;
+ *   - what the heap leaves short of a block joins the cache as tails, with
+ *     the floor intact, and a reload keeps its own floor and the boot's size.
  */
 #include <assert.h>
 #include <stdint.h>
@@ -115,7 +117,10 @@ int main(void)
   heap = 1 * MIB + HDR + 13 * (MIB + HDR) + 700 * 1024;
   reset(heap, 15, 0, 0);
   init_gamepak_buffer();
-  assert(gamepak_buffer_count == 13);
+  /* 13 whole blocks and the 700 KiB as a 21-page tail (HDR off the top) */
+  assert(gamepak_buffer_count == 14 && gamepak_buffer_pages == 13 * 32 + 21);
+  assert(gamepak_block_bytes(12) == MIB && gamepak_block_bytes(13) == 21 * 32768);
+  assert(gamepak_lru_tail == 13 * 32 + 21 - 1);
   assert(strcmp(gamepak_cap_reason, "default") == 0);
   left_paged = budget_left;
   ok_paged = mallocs_ok;
@@ -124,7 +129,7 @@ int main(void)
 
   reset(heap, 15, 32, 0);
   init_gamepak_buffer();
-  assert(gamepak_buffer_count == 13);
+  assert(gamepak_buffer_count == 14 && gamepak_buffer_pages == 13 * 32 + 21);
   assert(strcmp(gamepak_cap_reason, "heap_short") == 0);
   assert(gamepak_resident_got == 13);
   left_wish = budget_left;
@@ -211,12 +216,20 @@ int main(void)
     gamepak_spare_pool2_bytes = (u32)sizeof(pool2);
     init_gamepak_buffer();
     assert(gamepak_static_blocks == 4);
-    assert(gamepak_buffer_count == 4 + 5 + 1);
-    assert(gamepak_buffer_pages == 9 * 32 + 8);
+    /* the 300 KiB the heap had left is a second tail, 9 pages */
+    assert(gamepak_buffer_count == 4 + 5 + 1 + 1);
+    assert(gamepak_buffer_pages == 9 * 32 + 8 + 9);
     assert(gamepak_buffers[9] == pool2 + 4 * MIB);
-    assert(gamepak_lru_tail == 9 * 32 + 8 - 1);
+    assert(gamepak_lru_tail == 9 * 32 + 8 + 9 - 1);
     assert(gamepak_block_bytes(8) == MIB && gamepak_block_bytes(9) == 8 * 32768);
-    gamepak_size = (9 * 32 + 8) * 32768;          /* held exactly whole */
+    assert(gamepak_block_bytes(10) == 9 * 32768);
+    /* a page's place: across the whole blocks and both tails */
+    assert(gamepak_entry_ptr(0) == gamepak_buffers[0]);
+    assert(gamepak_entry_ptr(9 * 32 - 1) == gamepak_buffers[8] + 31 * 32768);
+    assert(gamepak_entry_ptr(9 * 32) == pool2 + 4 * MIB);
+    assert(gamepak_entry_ptr(9 * 32 + 8) == gamepak_buffers[10]);
+    assert(gamepak_entry_ptr(9 * 32 + 8 + 8) == gamepak_buffers[10] + 8 * 32768);
+    gamepak_size = (9 * 32 + 8 + 9) * 32768;      /* held exactly whole */
     assert(!gamepak_must_swap());
     gamepak_size += 32768;                        /* one page more pages */
     assert(gamepak_must_swap());
@@ -229,10 +242,32 @@ int main(void)
     gamepak_reload = 1;
     budget_left = heap;
     init_gamepak_buffer();
-    assert(gamepak_buffer_count == 10 && gamepak_buffer_pages == pages_tail);
+    assert(gamepak_buffer_count == 11 && gamepak_buffer_pages == pages_tail);
+    assert(budget_left >= 256 * 1024);          /* the reload's own floor */
     (void)left_paged;
     gamepak_reload = 0;
-    check_released_all(heap);   /* the tail never reached free() */
+    check_released_all(heap);   /* the lent tail never reached free() */
+
+    /* a reload in a smaller heap (a link session's hold, no lend): the heap's
+     * tail stops at the floor, and takes nothing it does not have */
+    gamepak_reload = 1;
+    gamepak_spare_pool2 = NULL;
+    gamepak_spare_pool2_bytes = 0;
+    budget_left = 2 * (MIB + HDR) + 600 * 1024;
+    {
+      size_t h = budget_left;
+      init_gamepak_buffer();
+      assert(gamepak_buffer_count == 3);
+      assert(gamepak_buffer_pages == 2 * 32 + 10);  /* 600 - 256 - HDRs */
+      assert(budget_left >= 256 * 1024);
+      check_released_all(h);
+      budget_left = 2 * (MIB + HDR) + 100 * 1024;
+      h = budget_left;
+      init_gamepak_buffer();                 /* under the floor: no tail */
+      assert(gamepak_buffer_count == 2 && gamepak_buffer_pages == 2 * 32);
+      check_released_all(h);
+    }
+    gamepak_reload = 0;
 
     /* held whole without it: no tail */
     reset(heap, 6, 0, 0);
@@ -247,8 +282,8 @@ int main(void)
     gamepak_spare_pool2 = pool2;
     gamepak_spare_pool2_bytes = 4 * MIB;
     init_gamepak_buffer();
-    assert(gamepak_buffer_count == 9 && gamepak_buffer_pages == 9 * 32);
-    assert(gamepak_lru_tail == 9 * 32 - 1);
+    assert(gamepak_buffer_count == 10 && gamepak_buffer_pages == 9 * 32 + 9);
+    assert(gamepak_lru_tail == 9 * 32 + 9 - 1);
     check_released_all(heap);
     gamepak_spare_pool2 = NULL;
     gamepak_spare_pool2_bytes = 0;
@@ -256,6 +291,6 @@ int main(void)
 
   puts("PASS gamepak residency budget: floor kept, short heap pages, "
        "1000 unchanged, spare pool used first and never freed, "
-       "a lent pool's tail is the last partial block");
+       "tails hold the floor and the boot's size");
   return 0;
 }
