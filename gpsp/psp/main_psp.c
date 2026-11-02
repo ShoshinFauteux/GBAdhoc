@@ -2570,10 +2570,12 @@ static void sleep_sim_window_enter(const char *why)
 }
 #define SLEEP_SIM_ASLEEP() (g_ss_asleep)
 #define SLEEP_SIM_NOPARK() (g_ss_nopark)
+#define SLEEP_SIM_REQUEST() (g_ss_request)
 #define POWER_IS_REQUEST() \
    (!g_ss_nopoll && (g_ss_req_up || scePowerIsRequest() == 1))
 #else
 #define SLEEP_SIM_NOPARK() 0
+#define SLEEP_SIM_REQUEST() 0
 #define POWER_IS_REQUEST() (scePowerIsRequest() == 1)
 static void sleep_sim_window_enter(const char *why) { (void)why; }
 #define SLEEP_SIM_ASLEEP() 0
@@ -3496,7 +3498,7 @@ static void play_lock_take(void)
       return;
    {
       int rc = scePowerLock(0);
-      if (rc >= 0)
+      if (rc >= 0 || SLEEP_SIM_REQUEST())   /* PPSSPP has no scePowerLock */
          g_pwr_play_lock = 1;
       else
       {
