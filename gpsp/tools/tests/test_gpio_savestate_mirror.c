@@ -15,6 +15,8 @@ int filestream_close(RFILE *stream)
 
 u32 cpu_ticks;
 u32 frame_counter;   /* the savestate writer brings the RTC base up to date (rtc_clock.h) */
+timer_type timer[4];   /* live timer reads (timer_io_read_sync), linked in by the I/O paths */
+u32 execute_cycles;
 u32 reg[64];
 u32 cph_bkr, cph_bkw;
 u16 palette_ram[512];

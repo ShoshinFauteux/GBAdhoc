@@ -14,6 +14,7 @@ extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;
 extern uint32_t sched_fast __attribute__((weak)), gbab_sched_fast __attribute__((weak));
 extern uint32_t timer_lazy __attribute__((weak)), gbab_timer_lazy __attribute__((weak));
 extern uint32_t irq_io_fast __attribute__((weak)), gbab_irq_io_fast __attribute__((weak));
+extern uint32_t msr_fast __attribute__((weak)), gbab_msr_fast __attribute__((weak));
 #define GBA_LINK
 #include "../../frontend-common/fe_gbadual.c"
 
