@@ -110,6 +110,7 @@ static struct { int standby; } g_pcfg = { 1 };
 static volatile int g_running = 1;
 static volatile int g_pwr_slept, g_pwr_rebuild, g_pwr_park_req, g_pwr_parked;
 static volatile int g_pwr_park_ack, g_pwr_cb_done, g_pwr_sleep_pending;
+static int g_pwr_req_fires;
 static volatile int g_pwr_park_browser;
 static volatile int g_pwr_suspend, g_pwr_resume, g_pwr_gb_flush_req;
 static volatile unsigned g_pwr_park_t0;

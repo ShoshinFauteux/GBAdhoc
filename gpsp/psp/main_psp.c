@@ -423,6 +423,7 @@ static volatile int g_pwr_suspend, g_pwr_resume;
 static volatile int g_pwr_gb_flush_req;
 
 static int power_cb(int unknown, int pwrflags, void *common);
+static void power_request_poll(void);
 /* The GBA cartridge clock's wall time (gba_memory.c gpsp_rtc_wall,
  * rtc_clock.h): the console's local clock, refreshed at most five times a
  * second from the main loop.  A reading that fails (0) leaves the last one
@@ -454,6 +455,7 @@ static unsigned g_stick_state;      /* ctl_stick_bits: engaged directions */
 static unsigned char g_stick_min[2] = { 255, 255 }, g_stick_max[2] = { 0, 0 };
 #endif
 
+#define PWR_REQ_POLL_US 100000u
 static int cb_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
@@ -462,7 +464,12 @@ static int cb_thread(SceSize args, void *argp)
    sceKernelRegisterExitCallback(cbid);
    if (pcb >= 0)
       scePowerRegisterCallback(0, pcb);
-   sceKernelSleepThreadCB();
+   /* Callbacks run inside this wait, so the poll never overlaps power_cb. */
+   for (;;)
+   {
+      sceKernelDelayThreadCB(PWR_REQ_POLL_US);
+      power_request_poll();
+   }
    return 0;
 }
 
@@ -2095,6 +2102,10 @@ static volatile int g_pwr_parked;
 static volatile int g_pwr_park_ack;
 static volatile int g_pwr_cb_done;
 static volatile int g_pwr_sleep_pending;
+/* power_request_poll: sleeps it started that no wake has answered yet. */
+static int g_pwr_req_fires;
+/* The gameplay scePowerLock is held (play_lock_take). */
+static volatile int g_pwr_play_lock;
 /* The loop that answered `parked` is the game list's (browser_park), not the
  * game's: nothing to tear down but the volatile partition, no wake overlay
  * to ask for (g_pwr_slept stays 0). */
@@ -2314,6 +2325,7 @@ static int power_cb(int unknown, int pwrflags, void *common)
       g_pwr_park_req = 0;      /* releases a loop held in its park */
       g_pwr_cb_done = 0;
       g_pwr_sleep_pending = 0;
+      g_pwr_req_fires = 0;
       standby_note("resume_complete flags=0x%08X slept=%d",
                    (unsigned)pwrflags, g_pwr_slept);
       fe_evt("power resume_complete slept=%d", g_pwr_slept);
@@ -2344,9 +2356,10 @@ static int power_cb(int unknown, int pwrflags, void *common)
  * so the renderer kept pointers into a partition the OS may hand to someone
  * else while we sleep -- the exact failure the handshake was built against.
  *
- * scePowerLock defers the power switch: a request made while it is held is
- * delivered when the last scePowerUnlock runs, i.e. at a point where the
- * loop can park.  One nesting count, main thread only (every caller is on
+ * scePowerLock defers the power switch: a suspend requested while it is held
+ * runs when the last scePowerUnlock does, i.e. at a point where the loop can
+ * park.  (The switch's POWER_SWITCH flag is not deferred; only the suspend,
+ * and with it SUSPENDING -- see power_request_poll.)  One nesting count, main thread only (every caller is on
  * the main thread); the kernel lock is taken on 0 -> 1 and dropped on 1 -> 0.
  * Every exit of the process (handoff_run, relaunch_eboot, sceKernelExitGame)
  * drops it first (pwr_release_all), so no path can leave the console unable
@@ -2445,6 +2458,12 @@ static int g_ss_rom, g_ss_game, g_ss_browser, g_ss_fired, g_ss_nohold;
 static int g_ss_sav;
 static long g_ss_rw_tick, g_ss_rw_seen;
 static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
+/* `sleep_sim_request = 1`: the suspend is a software request (auto-sleep, the
+ * Go's slider): no flag at all until the gameplay lock is dropped, and only
+ * power_request_poll can get it dropped.  `sleep_sim_nopoll = 1` turns the
+ * poll off, the 4.5.0 behaviour: the run reports request_stuck. */
+static int g_ss_request, g_ss_nopoll;
+static volatile int g_ss_req_up;
 static void sleep_sim_trash_pool(void);
 static char g_ss_window[16];
 static volatile int g_ss_asleep, g_ss_trigger;
@@ -2478,6 +2497,23 @@ static int sleep_sim_thread(SceSize args, void *argp)
       sceKernelDelayThread(2000);
       waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
    }
+   if (g_ss_request)
+   {
+      g_ss_req_up = 1;
+      while (g_pwr_play_lock && waited < 10000000u)
+      {
+         sceKernelDelayThread(2000);
+         waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
+      }
+      fe_evt("sleep_sim request lock=%d waited_ms=%u%s", g_pwr_play_lock,
+             waited / 1000u, g_pwr_play_lock ? " request_stuck" : "");
+      if (g_pwr_play_lock)
+      {
+         g_ss_req_up = 0;
+         for (;;)
+            sceKernelSleepThread();
+      }
+   }
    fe_evt("sleep_sim suspend ms=%ld rom=%d browser=%d window=%s "
           "deferred_ms=%u hold=%d nohold=%d", g_ss_ms, g_ss_rom, g_ss_browser,
           g_ss_window[0] ? g_ss_window : "-", waited / 1000u, g_pwr_hold,
@@ -2500,6 +2536,7 @@ static int sleep_sim_thread(SceSize args, void *argp)
    fe_evt("sleep_sim asleep parked=%d rom_closed=%d", g_pwr_parked, closed);
    sceKernelDelayThread((SceUInt)g_ss_ms * 1000u);
    g_ss_asleep = 0;
+   g_ss_req_up = 0;
    power_cb(0, PSP_POWER_CB_RESUMING, NULL);
    power_cb(0, PSP_POWER_CB_RESUME_COMPLETE, NULL);
    fe_evt("sleep_sim resumed cycle=%d slept=%d rebuild=%d rend=%d vmem=%d",
@@ -2533,8 +2570,11 @@ static void sleep_sim_window_enter(const char *why)
 }
 #define SLEEP_SIM_ASLEEP() (g_ss_asleep)
 #define SLEEP_SIM_NOPARK() (g_ss_nopark)
+#define POWER_IS_REQUEST() \
+   (!g_ss_nopoll && (g_ss_req_up || scePowerIsRequest() == 1))
 #else
 #define SLEEP_SIM_NOPARK() 0
+#define POWER_IS_REQUEST() (scePowerIsRequest() == 1)
 static void sleep_sim_window_enter(const char *why) { (void)why; }
 #define SLEEP_SIM_ASLEEP() 0
 #endif
@@ -3446,7 +3486,6 @@ static sleep_q g_sq;
  * itself when nothing is parked, and every exit (pwr_release_all).  Separate
  * from g_pwr_hold's nesting count: the kernel counts locks, so the two
  * cannot unbalance each other. */
-static volatile int g_pwr_play_lock;
 
 static void play_lock_take(void)
 {
@@ -3481,6 +3520,42 @@ static void play_lock_drop(const char *who)
    standby_note("q play_unlock by=%s rc=%d", who, rc);
    FE_EVT_ONLY(rc);
    FE_EVT_ONLY(who);
+}
+
+/* A SUSPEND REQUEST THE GAMEPLAY LOCK HAS BEEN SITTING ON.
+ *
+ * Only the POWER switch tells us anything under scePowerLock: syscon's event
+ * raises POWER_SWITCH at once, and that is what starts the park which drops
+ * the lock.  A request made by software (scePowerRequestSuspend: the firmware's
+ * own, for auto-sleep, a dying battery and, it appears, the PSP Go's slider)
+ * raises no flag at all.  The kernel's power thread notes it and waits for the
+ * last unlock, and SUSPENDING comes only after that.  So with the lock held
+ * through play the request waited for a callback that was waiting for it, and
+ * the slider did nothing (4.5.0; the lock came with the PSP-3001 fix, 2510780).
+ * Decompiled power.prx: uOFW src/kd/power/powerSwitch.c, _scePowerOffThread.
+ * That the slider takes this path is inferred: the switch works, the slide
+ * does not, and it worked before the lock.
+ *
+ * scePowerIsRequest() reports the waiting request (PSPSDK's header says it
+ * always returns 0; uOFW shows it reading the two fields the power thread sets
+ * before it blocks).  Seen here, the request is answered as a switch: one sleep
+ * path, the one every model already takes.  Windows under pwr_hold wait for
+ * their release, as the suspend itself would.  On the callback's thread, so
+ * it also covers the blocking screens with no loop top (the wake overlay).
+ *
+ * A request that keeps reading true with no suspend following must not freeze
+ * the game for a hold's 5 s over and over: a few tries, then leave it alone. */
+#define PWR_REQ_MAX_FIRES 3
+int scePowerIsRequest(void);             /* in libpsppower, not in its header */
+static void power_request_poll(void)
+{
+   if (!g_pwr_play_lock || g_pwr_sleep_pending || g_pwr_hold > 0 ||
+       g_pwr_req_fires >= PWR_REQ_MAX_FIRES || !POWER_IS_REQUEST())
+      return;
+   g_pwr_req_fires++;
+   standby_note("deferred request fires=%d", g_pwr_req_fires);
+   fe_evt("power deferred_request fires=%d", g_pwr_req_fires);
+   power_cb(0, PSP_POWER_CB_POWER_SWITCH, NULL);
 }
 
 static int sq_audio_stop(void *c)
@@ -3661,11 +3736,10 @@ static void sleep_park_hold(void)
        * left the lock to us (park_req cleared). */
       int cb_over = g_pwr_cb_done || !g_pwr_park_req;
       /* Dropped only once a teardown has run for this sleep.  A callback
-       * that gave up tore nothing down: the lock is kept until the
-       * SUSPENDING that follows (delivered with it held) finds us parked
-       * and does, or the hold runs out and play resumes.  Dropped at once,
-       * the suspend would land with the renderer in the volatile
-       * partition. */
+       * that gave up tore nothing down: the lock is kept until the hold
+       * runs out and play resumes, and power_request_poll then asks again
+       * for the suspend still waiting on it.  Dropped at once, the suspend
+       * would land with the renderer in the volatile partition. */
       if (g_pwr_cb_done)
       {
          play_lock_drop("park");
@@ -12867,6 +12941,8 @@ int main(int argc, char *argv[])
    g_ss_nohold  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nohold", 0);
    g_ss_rw_tick = fe_ini_get_int(HARNESS_INI, "sleep_sim_rewind_tick", 0);
    g_ss_nopark  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopark", 0);
+   g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
+   g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
    g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
    g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
    g_ss_no_land = !fe_ini_get_int(HARNESS_INI, "rewind_park_land", 1);
