@@ -162,6 +162,7 @@ static struct { int theme, console, me_mode, osd_wireless; const char *last_rom;
 static volatile int g_running = 1;
 static volatile int g_pwr_slept, g_pwr_rebuild, g_pwr_park_req, g_pwr_parked;
 static volatile int g_pwr_park_ack, g_pwr_sleep_pending;
+static void power_request_poll(void) { }
 static int g_wake_menu, g_wake_have = 1, g_relaunch;
 static uint16_t g_wake_frame_buf[16];
 static uint16_t *g_wake_frame = g_wake_frame_buf;
@@ -493,7 +494,8 @@ MENU_CALL = """         if (g_pwr_rebuild || g_wake_menu)
             continue;
          }
 """
-YIELD_FN = "static int wake_overlay_yield(void)\n{\n   return g_pwr_park_req;\n}"
+YIELD_FN = ("static int wake_overlay_yield(void)\n{\n   power_request_poll();\n"
+            "   return g_pwr_park_req;\n}")
 MUTANTS = (
     # (label, file, old, new, expected text in stderr)
     ("the menu branch skips the wake",

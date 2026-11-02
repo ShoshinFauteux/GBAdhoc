@@ -423,7 +423,6 @@ static volatile int g_pwr_suspend, g_pwr_resume;
 static volatile int g_pwr_gb_flush_req;
 
 static int power_cb(int unknown, int pwrflags, void *common);
-static void power_request_poll(void);
 /* The GBA cartridge clock's wall time (gba_memory.c gpsp_rtc_wall,
  * rtc_clock.h): the console's local clock, refreshed at most five times a
  * second from the main loop.  A reading that fails (0) leaves the last one
@@ -455,7 +454,8 @@ static unsigned g_stick_state;      /* ctl_stick_bits: engaged directions */
 static unsigned char g_stick_min[2] = { 255, 255 }, g_stick_max[2] = { 0, 0 };
 #endif
 
-#define PWR_REQ_POLL_US 100000u
+static SceUID g_cb_thid = -1;
+static volatile int g_pwr_req_signal;   /* power_request_poll to cb_thread */
 static int cb_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
@@ -464,11 +464,16 @@ static int cb_thread(SceSize args, void *argp)
    sceKernelRegisterExitCallback(cbid);
    if (pcb >= 0)
       scePowerRegisterCallback(0, pcb);
-   /* Callbacks run inside this wait, so the poll never overlaps power_cb. */
+   g_cb_thid = sceKernelGetThreadId();
+   /* Nothing wakes this thread but a callback, or power_request_poll. */
    for (;;)
    {
-      sceKernelDelayThreadCB(PWR_REQ_POLL_US);
-      power_request_poll();
+      sceKernelSleepThreadCB();
+      if (g_pwr_req_signal)
+      {
+         g_pwr_req_signal = 0;
+         power_cb(0, PSP_POWER_CB_POWER_SWITCH, NULL);
+      }
    }
    return 0;
 }
@@ -3541,9 +3546,14 @@ static void play_lock_drop(const char *who)
  * scePowerIsRequest() reports the waiting request (PSPSDK's header says it
  * always returns 0; uOFW shows it reading the two fields the power thread sets
  * before it blocks).  Seen here, the request is answered as a switch: one sleep
- * path, the one every model already takes.  Windows under pwr_hold wait for
- * their release, as the suspend itself would.  On the callback's thread, so
- * it also covers the blocking screens with no loop top (the wake overlay).
+ * path, the one every model already takes.  power_cb cannot run on this thread
+ * (it waits for this thread to park), so cb_thread is woken to run it.  Windows
+ * under pwr_hold wait for their release, as the suspend itself would.
+ *
+ * Every 16th pass, only with the lock held, so never outside play.  Called from
+ * the loop's top, which play, the in-game menu and a link stall (a frame lost,
+ * plat_gblink_wait bounded by it) all reach, and from the wake and pause
+ * overlay's yield hook, which is the one place holding the lock that does not.
  *
  * A request that keeps reading true with no suspend following must not freeze
  * the game for a hold's 5 s over and over: a few tries, then leave it alone. */
@@ -3551,13 +3561,17 @@ static void play_lock_drop(const char *who)
 int scePowerIsRequest(void);             /* in libpsppower, not in its header */
 static void power_request_poll(void)
 {
-   if (!g_pwr_play_lock || g_pwr_sleep_pending || g_pwr_hold > 0 ||
+   static unsigned pass;
+   if (!g_pwr_play_lock || (++pass & 15u))
+      return;
+   if (g_pwr_sleep_pending || g_pwr_req_signal || g_pwr_hold > 0 ||
        g_pwr_req_fires >= PWR_REQ_MAX_FIRES || !POWER_IS_REQUEST())
       return;
    g_pwr_req_fires++;
    standby_note("deferred request fires=%d", g_pwr_req_fires);
    fe_evt("power deferred_request fires=%d", g_pwr_req_fires);
-   power_cb(0, PSP_POWER_CB_POWER_SWITCH, NULL);
+   g_pwr_req_signal = 1;
+   sceKernelWakeupThread(g_cb_thid);
 }
 
 static int sq_audio_stop(void *c)
@@ -12414,6 +12428,7 @@ static int browser_park(void)
  * rewind's power hold).  With one park point there is nothing to differ. */
 static int wake_overlay_yield(void)
 {
+   power_request_poll();
    return g_pwr_park_req;
 }
 
@@ -15017,6 +15032,7 @@ session_top:
       loop_unpark("resume");
       /* TYL holds scePowerLock through play. */
       play_lock_take();
+      power_request_poll();
 #ifdef REWIND
       if (g_rw_pool_suspect)
       {
