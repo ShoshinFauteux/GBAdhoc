@@ -773,6 +773,12 @@ static u32 rfu_client_queued(void);
  * second, gentle enough that it is nothing like the unpaced firehose that ate
  * the player's input in the first place. */
 static u32 rfu_gq_depth_peek(void);
+/* Queue depth catch-up may drain to.  RFU_PACE_LOW left a packet or two
+ * standing for good: arrivals and deliveries are both one a frame, so nothing
+ * ever removes them, and each one is a frame of round trip the lockstep game
+ * sees (Golf's lobby: q=1 every frame, NI rounds 16 frames instead of 8). */
+static u32 rfu_pace_floor = 0;
+void rfu_set_pace_floor(u32 n) { rfu_pace_floor = n; }
 static u32 rfu_listen_this_frame, rfu_catchgq_this_frame;
 static int rfu_pace_catchup(void)
 {
@@ -780,7 +786,7 @@ static int rfu_pace_catchup(void)
     return 0;
   if (rfu_rx_delivered > rfu_frame_pace)      /* one extra, never two */
     return 0;
-  if (rfu_client_queued() <= RFU_PACE_LOW)
+  if (rfu_client_queued() <= rfu_pace_floor)
     return 0;
   if (rfu_gq_depth_peek() != 0) {
     rfu_catchgq_this_frame = 1;
