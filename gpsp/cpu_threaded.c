@@ -12215,6 +12215,29 @@ void flush_translation_cache_ram_smc(void)
  * LAYOUT NEUTRALITY: this sits outside the pinned hot order, and
  * flush_translation_cache_ram_smc is byte-identical with the switch on or
  * off; only the stub's function-pointer slot changes. */
+#if defined(SMC_STM_FIXED) && !defined(SMC_STM_RANGE)
+#error SMC_STM_FIXED needs SMC_STM_RANGE
+#endif
+/* SMC_STM_FIXED (perf/tmgc 2026-11-02): the same span retirement for the
+ * fixed-base shape, STMIA Rn without writeback (P0 U1 S0 W0 L0).
+ *
+ * Measured on the twin (4.5.0 core defines): ipatix's "ImprovedSoundMixer"
+ * (The Morrow's Golden Country, and the other FE/Pokemon hacks that ship it)
+ * pastes its resampling inner loop into IWRAM whenever a channel's pitch
+ * ratio picks a different routine than the one in place --
+ * STMIA LR,{R0,R1} / STMIA LR,{R2,R8-R10}, eight stores, LR moved by
+ * ADD/SUB between them.  Every one was "writer not range-safe", a full RAM
+ * flush: ~4 a frame on the title screen, and translate + flush was 87 % of
+ * the core's instructions there (5.5 M a frame against base FE8's 0.27 M).
+ *
+ * Exactness: identical to the writeback shape.  Writeback changes Rn AFTER
+ * the store, not which words the store wrote: STMIA Rn,{n regs} writes
+ * [Rn, Rn + 4n), and its final (trapping) word is Rn + 4(n-1), so
+ * [final - 4(n-1), final + 4) is again the whole write.  SMC_STM_CHAIN
+ * carries a changed earlier word to that trap exactly as it does for
+ * STMIA Rn!.  The forward widening (SMC_STM_AHEAD) is for an ADVANCING copy
+ * and is not applied: a fixed-base patcher does not walk on into what
+ * follows, so widening would only retire code nobody is about to write. */
 #ifdef SMC_STM_AHEAD
 #ifndef SMC_STM_WIDE
 #error SMC_STM_AHEAD needs SMC_STM_WIDE
@@ -12286,7 +12309,13 @@ void smc_trap_entry(void)
 #ifdef SMC_STM_RANGE_MUTANT_LASTWORD
       lo = hi - 4;      /* MUTANT (oracle self-test only): final word only */
 #endif
-      if ((op & 0x0FF00000) == 0x08A00000 &&  /* STMIA Rn! (P0 U1 S0 W1 L0) */
+#ifdef SMC_STM_FIXED
+      /* STMIA Rn (W0): fixed base, no forward widening (see above) */
+      int fixed = (op & 0x0FF00000) == 0x08800000;
+#else
+      const int fixed = 0;
+#endif
+      if (((op & 0x0FF00000) == 0x08A00000 || fixed) && /* STMIA Rn! (P0 U1 S0 W1 L0) */
           n >= 2 && n <= SMC_STM_RANGE_MAX &&
           (lo >> 15) == ((hi - 4) >> 15) &&    /* one 32 KiB IWRAM mirror */
           smc_wide_gate()) {
@@ -12304,7 +12333,7 @@ void smc_trap_entry(void)
         } else
 #endif
 #ifdef SMC_STM_AHEAD
-        {
+        if (!fixed) {
           u32 hx = smc_stm_ahead(hi);
           smc_stm_ahead_bytes += hx - hi;
 #ifdef SMC_STM_AHEAD_MUTANT

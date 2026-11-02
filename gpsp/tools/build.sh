@@ -271,6 +271,15 @@ if [ "${MSR_FAST:-0}" = 1 ]; then
   CORE_FLAGS="$CORE_FLAGS MSR_FAST=1"
 fi
 
+# STM_FIXED=1: SMC_STM_FIXED, SMC_STM_RANGE's exact span retirement also for
+# STMIA Rn without writeback (perf/tmgc: ipatix's mixer, The Morrow's Golden
+# Country, full-flushed ~4x a frame).  Needs CAND1=1 for SMC_STM_RANGE.  A
+# switch of its own because a release refuses CORE_EXTRA.  Core only.
+if [ "${STM_FIXED:-0}" = 1 ]; then
+  [ "${CAND1:-0}" = 1 ] || { echo "FAIL: STM_FIXED=1 needs CAND1=1"; exit 1; }
+  CORE_FLAGS="$CORE_FLAGS SMC_STM_FIXED=1"
+fi
+
 # INPUT_FRESH=1: the low-latency pad re-peek (`input_fresh`, docs/LOW-LATENCY.md)
 # ON by default, for a side-by-side PLAYABLE test build, which cannot read the
 # harness ini.  Frontend only.  A switch of its own like REWIND, because a
