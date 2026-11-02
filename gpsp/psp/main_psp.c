@@ -12611,72 +12611,43 @@ int main(int argc, char *argv[])
     * the arena unset: netdrv_create falls back to calloc and behaves exactly
     * as it did before. */
    {
-      /* RESERVE EXACTLY ONE MEGABYTE, NOT THE STRUCT'S SIZE.
+      /* THE EXACT SIZE OF WHAT LIVES HERE.
        *
-       * The core's init_gamepak_buffer() mallocs 1 MiB blocks until one
-       * FAILS.  Write the heap as H = n*1MiB + R: the loop takes n blocks and
-       * leaves R, and R is the entire budget for everything allocated after
-       * it -- gba_screen_pixels (77,280 B), the sound ring, the ME stages.
+       * This block was exactly 1 MiB until 4.6.0, because init_gamepak_buffer
+       * used to leave the frontend only the remainder R of "1 MiB blocks until
+       * malloc fails", and reserving the struct's own 504 KiB once ate R on a
+       * PSP-1000: "Failed to allocate frame buffer (77280 bytes)", Emerald back
+       * at the XMB.  The loop's post-load reserve now holds that floor (>= 1
+       * MiB, whatever the binary's size), so nothing here depends on this
+       * block's size any more, and the ~150 KiB it left idle was ROM cache.
        *
-       * Take C bytes before the loop and the leftover becomes:
-       *     C <= R  ->  n blocks still fit, leftover R - C     (R is eaten)
-       *     C >  R  ->  one block fewer,   leftover R + 1MiB - C
-       *
-       * Reserving the struct's own 504 KiB landed in the first case on a
-       * PSP-1000 and took the slack that the frame buffer needed:
-       *     core[3]: Failed to allocate frame buffer (77280 bytes)
-       *     retro_load_game FAILED ... exit reason=load_failed
-       * -- Emerald dropped straight back to the XMB.
-       *
-       * C = 1 MiB is the only value that cannot do that: it exceeds every
-       * possible R, so the loop always takes exactly one block fewer and the
-       * leftover comes out at R again, less one malloc header.  The frontend's
-       * post-load budget is then bit-for-bit what it was before this existed,
-       * and the whole cost is one 1 MiB ROM page-cache block (on a 64 MiB
-       * console, where the loop stops at its 32-block cap with megabytes to
-       * spare, the cost is nothing at all).
-       *
-       * Do NOT "tighten" this to netdrv_sizeof(). The slack it leaves behind
-       * is the point, not the bytes it hands to netdrv. */
+       * In order: netdrv, the wake overlay's frozen frame, the menu's five
+       * state thumbnails (the Save/Load state screens show them in game,
+       * where the heap is gone, docs/UI-OVERLAY.md), the screenshot encoder's
+       * work memory (issue #13).  All of them cost nothing beyond this block,
+       * and each is laid out on a 64-byte line. */
       size_t need = netdrv_sizeof();
-      size_t take = 1024u * 1024u;
-      void  *blk  = (need <= take) ? malloc(take) : malloc(need);
+      size_t shot = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
+      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES +
+                    63u + shot;
+      void  *blk  = malloc(take);
       if (blk)
       {
-         netdrv_set_arena(blk, take > need ? take : need);
-         /* The tail is free real estate: netdrv uses `need`, the block is
-          * `take`.  The wake overlay's frozen frame lives there. */
-         if (take > need + WAKE_FRAME_BYTES + 64)
-            g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
-         /* ...and after it the menu's five state thumbnails (40 KiB), so the
-          * Save/Load state screens can show them in game, where the heap
-          * is gone (docs/UI-OVERLAY.md).  Same block, same zero cost. */
-         if (g_wake_frame &&
-             take > need + WAKE_FRAME_BYTES + UI_THUMB_BYTES + 128)
-            g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
-                                        WAKE_FRAME_BYTES + 63u) & ~63u);
+         uint8_t *lo;
+         netdrv_set_arena(blk, take);
+         g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
+         g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
+                                     WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
-         /* ...and after those the screenshot encoder's work memory (issue
-          * #13), if what is left of the megabyte holds it. */
-         if (g_ui_thumbs)
-         {
-            uint8_t *lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES +
-                                       63u) & ~63u);
-            uint8_t *hi = (uint8_t *)blk + (take > need ? take : need);
-            size_t want = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
-            if (hi > lo && (size_t)(hi - lo) >= want)
-            {
-               g_shot_work = lo;
-               g_shot_work_bytes = (size_t)(hi - lo);
-            }
-            fe_evt("shot_work bytes=%u want=%u %s",
-                   (unsigned)(hi > lo ? hi - lo : 0), (unsigned)want,
-                   g_shot_work ? "ok" : "NO_ROOM(bmp)");
-         }
+         lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES + 63u) &
+                          ~63u);
+         g_shot_work = lo;
+         g_shot_work_bytes = (size_t)((uint8_t *)blk + take - lo);
+         fe_evt("shot_work bytes=%u want=%u ok",
+                (unsigned)g_shot_work_bytes, (unsigned)shot);
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
-             (unsigned)need, (unsigned)(take > need ? take : need),
-             blk ? "reserved" : "FAILED",
+             (unsigned)need, (unsigned)take, blk ? "reserved" : "FAILED",
              sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
    }
 
