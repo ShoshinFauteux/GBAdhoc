@@ -325,6 +325,7 @@ after it they are bit-identical over 1001 frames (audio `84b2bbff`).
 | `GPSP_STANDBY_NOTES` | standby/resume tracing. |
 | `GPSP_STALL_RECORDER` | hard-freeze bisect arm: the harness stall watch (a 0x10-priority thread that wakes once a second) in a playable build, always on at 6 s. Writes `log/stall.txt` (main-thread state, loop phase, ME mailbox) only when the main loop has not iterated for 6 s. Adds two stores per loop iteration. |
 | `GPSP_CATCH_SELFTEST` | L+R+UP+TRIANGLE stores to address 0, so the `ME_CATCH` screen can be seen working once. Refused in a release. |
+| `JIT_COST_KEYS` | the harness ini keys for `JIT_COST`'s pieces. In no profile: Lab candidate builds add `FE_EXTRA=-DJIT_COST_KEYS`, so compare a Lab EBOOT only with one built the same way. |
 
 `ME_CATCH=1` on `psp/Makefile` (passed down to `psp/me`) links `psp/me/catcher.c`
 and `catcher_vec.S` into the Media Engine PRX. The PRX's `module_start` then
