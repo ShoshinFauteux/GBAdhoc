@@ -86,7 +86,15 @@ typedef struct
    char     name[AP_NAME_LEN]; /* evt text / log label */
 } ap_step;
 
+#if AP_MAX_STEPS == 1
+/* Reserved behind the compiler's back: a 1-element array it can see resizes
+ * fe_autopilot_frame, which is in the pinned hot order. */
+extern ap_step steps[] __asm__("ap_steps_mem");
+__asm__(".pushsection .bss\n.align 3\nap_steps_mem:\n.space 88\n.popsection");
+typedef char ap_step_fits[sizeof(ap_step) <= 88 ? 1 : -1];
+#else
 static ap_step  steps[AP_MAX_STEPS];
+#endif
 static int      step_count;
 static int      loaded;
 

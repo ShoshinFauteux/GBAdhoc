@@ -2159,10 +2159,11 @@ static void short_game_name(const char *full, char *out, size_t cap)
          *v = '\0';
       for (n = strlen(sub); n && sub[n - 1] == ' '; n--)
          sub[n - 1] = '\0';
-      snprintf(out, cap, "%s %s", t, sub);
+      if (snprintf(out, cap, "%s %s", t, sub) < 0)   /* a cut name is fine */
+         out[0] = 0;
    }
-   else
-      snprintf(out, cap, "%s", t);
+   else if (snprintf(out, cap, "%s", t) < 0)
+      out[0] = 0;
 }
 
 /* The game's name for screens: the table's, else the ROM's own, short. */

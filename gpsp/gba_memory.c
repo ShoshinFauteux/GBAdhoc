@@ -571,8 +571,16 @@ void *gamepak_hold;
  * most that many blocks, so the game comes back with exactly the cache it
  * had (the heap has a block more to give without the post-load reserve). */
 static u32 gamepak_boot_blocks;
-static u32 gamepak_boot_pages;
-static bool gamepak_boot_heap_out;
+/* The core's .bss keeps its cache sets (docs/LAYOUT-PINNING.md): state added
+ * to it moves everything linked after it.  .sbss sits in the gap before the
+ * 8 KiB-aligned .bss, so what goes there moves nothing that matters. */
+#if defined(PSP)
+#define GAMEPAK_SBSS __attribute__((section(".sbss")))
+#else
+#define GAMEPAK_SBSS
+#endif
+static u32 gamepak_boot_pages GAMEPAK_SBSS;
+static u32 gamepak_boot_heap_out GAMEPAK_SBSS;
 /* gamepak_buffers[0 .. gamepak_static_blocks-1] point into the spare pools:
  * they are not heap blocks and are never freed. */
 u32 gamepak_static_blocks;
@@ -694,7 +702,7 @@ const unsigned gamepak_buffer_blocksize = 1024*1024;
  * gamepak_block_heap: bit i, block i came from malloc and is freed with the
  * cache. */
 u32 gamepak_buffer_pages;
-static u8  gamepak_block_pages[32];
+static u8  gamepak_block_pages[32] GAMEPAK_SBSS;
 static u32 gamepak_block_heap;
 
 static u32 gamepak_block_bytes(u32 i)
@@ -3396,7 +3404,7 @@ void init_gamepak_buffer(void)
    * plenty; a reload reaches its target (the boot's blocks) on purpose, so it
    * goes by what the boot did. */
   if (!gamepak_reload)
-    gamepak_boot_heap_out = heap_out;
+    gamepak_boot_heap_out = heap_out ? 1 : 0;
   if ((heap_out || (gamepak_reload && gamepak_boot_heap_out)) &&
       gamepak_buffer_count >= 1 &&
       (!want || gamepak_buffer_pages < want * 32))
@@ -3441,6 +3449,7 @@ void init_gamepak_buffer(void)
   if (cap < 1)
     cap = 1;
   gamepak_buffer_count = 0;
+  gamepak_block_heap = 0;
   while (gamepak_buffer_count < cap)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
@@ -3628,7 +3637,6 @@ void memory_term(void)
   }
   gamepak_static_blocks = 0;
   gamepak_buffer_pages = 0;
-  gamepak_block_heap = 0;
 }
 
 bool memory_check_savestate(const u8 *src)

@@ -362,6 +362,9 @@ $(TGB_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += $(TGB_CFLAGS)
 # which comes out of the PSP-1000's heap.  -Os for its objects (the screens
 # in ui_share.inc carry the same switch as a pragma).
 ../frontend-common/fe_share.o share_psp.o: CFLAGS += -Os
+# The menus, the pad map, the config file, Mystery Gift and the cheat parser
+# are on no hot path either (none is in layout/hot.ord).
+ui_psp.o ctl_map.o config_psp.o mgift_cart.o mgift_net.o mgift_payload.o ../frontend-common/fe_cheats.o: CFLAGS += -Os
 # The GB core keeps one .text per object under LAYOUT_PIN too: it is partial-
 # linked twice (gbcore_instance.ld) and none of it is on the GBA hot path.
 $(GB_CORE_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += -fno-function-sections
