@@ -2765,7 +2765,7 @@ static void log_bios_evt(void)
 {
    char path[512];
    FILE *f;
-   static uint8_t bios[16384];
+   uint8_t bios[16384];        /* boot, main thread: the stack has it */
    size_t n;
    char sha[41];
 
