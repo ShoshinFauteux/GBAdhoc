@@ -88,10 +88,13 @@ typedef struct
 
 #if AP_MAX_STEPS == 1
 /* Reserved behind the compiler's back: a 1-element array it can see resizes
- * fe_autopilot_frame, which is in the pinned hot order. */
+ * fe_autopilot_frame, which is in the pinned hot order.  6,232 B, not 88: the
+ * partner's copy of this object is linked right before instance A's .bss, and
+ * this keeps that .bss in its cache sets (a multiple of 8 KiB off the 22,528 B
+ * it replaced, docs/LAYOUT-PINNING.md). */
 extern ap_step steps[] __asm__("ap_steps_mem");
-__asm__(".pushsection .bss\n.align 3\nap_steps_mem:\n.space 88\n.popsection");
-typedef char ap_step_fits[sizeof(ap_step) <= 88 ? 1 : -1];
+__asm__(".pushsection .bss\n.align 3\nap_steps_mem:\n.space 6232\n.popsection");
+typedef char ap_step_fits[sizeof(ap_step) <= 6232 ? 1 : -1];
 #else
 static ap_step  steps[AP_MAX_STEPS];
 #endif

@@ -49,10 +49,6 @@ SECTIONS
     bregion_lend = .;
     bdata_pristine = .;
     . += SIZEOF(.data);
-    /* Instance A's .bss comes after this object and fe_autopilot_b.o, and
-     * keeps its cache sets (docs/LAYOUT-PINNING.md): this makes up what the
-     * playable autopilot's smaller table took out, to a multiple of 8 KiB. */
-    . += 0x1800;
     . = ALIGN(64);
   }
 }
