@@ -2443,7 +2443,10 @@ static int g_ss_rom, g_ss_game, g_ss_browser, g_ss_fired, g_ss_nohold;
  * either (fe_host_sram_test_kill_handle), so the first save write after the
  * wake fails as it does on a console. */
 static int g_ss_sav;
-static long g_ss_rw_tick, g_ss_rw_seen;
+static long g_ss_rw_tick;
+#ifdef REWIND
+static long g_ss_rw_seen;
+#endif
 static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
 #ifdef REWIND
 static void sleep_sim_trash_pool(void);
