@@ -76,4 +76,28 @@ for s in 0 1; do
   if python3 "$G" check-ram pair/r${s}_000030.bin > r_pair$s.txt; then got=pass; else got=fail; rc=1; fi
   printf '%-22s %-9s want pass, got %s: %s\n' "pair slot $s" "$(cat e_pair.txt)" "$got" "$(tail -1 r_pair$s.txt)"
 done
+# Chandler Hardy's nv_cond.s (PR #26): needs arm-none-eabi-as, here or in an
+# image ($NVAS_IMAGE, e.g. debian:stable-slim + binutils-arm-none-eabi).
+AS_IMG=${NVAS_IMAGE:-armas:local}
+mkdir -p "$DRPROF_HOME/nvc"; cp "$HERE/nv_cond.s" "$DRPROF_HOME/nvc/"
+if command -v arm-none-eabi-as >/dev/null; then
+  (cd "$DRPROF_HOME/nvc" && arm-none-eabi-as -mcpu=arm7tdmi nv_cond.s -o n.o && arm-none-eabi-objcopy -O binary n.o nv_cond.gba)
+elif docker image inspect "$AS_IMG" >/dev/null 2>&1; then
+  docker run --rm -v "$DRPROF_HOME/nvc":/s -w /s "$AS_IMG" sh -c \
+    "arm-none-eabi-as -mcpu=arm7tdmi nv_cond.s -o n.o && arm-none-eabi-objcopy -O binary n.o nv_cond.gba"
+fi
+if [ -f "$DRPROF_HOME/nvc/nv_cond.gba" ]; then
+  docker run --rm -v "$DRPROF_HOME":/w -w /w/nvc "$IMAGE" bash -c '
+    rm -f d_fix.bin d_int.bin
+    DR_RAMDUMP=10 DR_RAMDUMP_FILE=/w/nvc/d_fix.bin /opt/qemu/bin/qemu-mipsel -cpu 74Kf /w/bin/dr_host_fix \
+      --rom /w/nvc/nv_cond.gba --bios-dir /w/fx --frames 12 >/dev/null 2>&1
+    DR_RAMDUMP=10 DR_RAMDUMP_FILE=/w/nvc/d_int.bin /opt/qemu/bin/qemu-mipsel -cpu 74Kf /w/bin/dr_host_fix \
+      --rom /w/nvc/nv_cond.gba --bios-dir /w/fx --frames 12 --option gpsp_drc=disabled >/dev/null 2>&1'
+  for t in fix int; do
+    if python3 "$HERE/nv_cond_check.py" "$DRPROF_HOME/nvc/d_$t.bin" > "r_nvc_$t.txt" 2>&1; then got=pass; else got=fail; rc=1; fi
+    printf '%-22s %-9s want pass, got %s\n' "nv_cond.s $t" "" "$got"
+  done
+else
+  echo "nv_cond.s: no ARM assembler, skipped"
+fi
 exit $rc
