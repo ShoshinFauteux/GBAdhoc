@@ -14,6 +14,7 @@
 #include "logo_ui.h"
 #include "fe_util.h"
 #include "fe_evt.h"
+#include "lab_ffpace.h"
 #include "ambient_look.h"
 #include "text_fold.h"   /* UTF-8 names drawn folded to ASCII (issue #19) */
 
@@ -1713,6 +1714,7 @@ int vid_swap(void)
    /* sceGuSwapBuffers() only knows two buffers, so drive the flip directly.
     * NEXTFRAME latches at vblank exactly as it did before -- the change is
     * WHICH buffer we start drawing into next, not when the flip happens. */
+   LAB_FFP(lab_ffpace_flip((unsigned)(edram + g_fb_off[g_fb_cur])); __asm__ __volatile__("nop");)  /* nop: vid_swap keeps its hot.ord size */
    if (sceDisplaySetFrameBuf((void *)(edram + g_fb_off[g_fb_cur]),
                          FB_STRIDE, PSP_DISPLAY_PIXEL_FORMAT_565,
                          PSP_DISPLAY_SETBUF_NEXTFRAME) < 0)

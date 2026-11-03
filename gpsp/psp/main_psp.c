@@ -104,6 +104,7 @@ PSP_MAIN_THREAD_STACK_SIZE_KB(256);
  * ROM blocks at retro_init until malloc fails (FRONTEND-AUDIT §8 gotcha). */
 PSP_HEAP_SIZE_KB(-1024);
 #include "lab_harness.h"
+#include "lab_ffpace.h"     /* Lab only: FF presentation cadence (LAB_FFP) */
 /* All paths are derived from the EBOOT's own directory at runtime (argv[0])
  * so per-game variant installs (docs/VARIANTS.md) work from any folder;
  * falls back to the canonical install dir. */
@@ -3035,6 +3036,43 @@ static int mer_sameframe_active(void)
 #define PLAY_ME_LOWLAT 2     /* tier 1 mode 2 on by default (ME_LOWLAT=0 builds it off) */
 #endif
 static int      g_flip_early       = 1;   /* `flip_early`      */
+/* FF FLIP PACING (`ff_flip_pace`, docs/FF-PRESETS.md): never replace a flip
+ * the LCD has not latched yet.  Bit 0 (3x only): the paced branch's early
+ * flip (tier 0a) waits for the previous one to latch -- under 3x a loop is about one
+ * vblank long, and an early flip landing in the interval the previous one is
+ * still pending in replaced it (a dropped picture, the next one 6 frames on).
+ * Bit 1: the draw gate's presets hold a finished picture in the back buffer
+ * until the previous flip has been on screen for the preset's interval (1
+ * vblank for Smooth, 2 for Unlimited), instead of flipping it the moment the
+ * loop finishes.  The gate's wall-clock grid (16667 us) beats against the
+ * LCD (16683 us); without the hold, the phase drifts through the vblank edge
+ * every ~17 s and for seconds at a time two flips land in one interval (one
+ * never shown) and the next has none.  Never blocks: the loop keeps
+ * emulating, the held picture goes out on the first loop that may flip it,
+ * and a newer render that is presented meanwhile replaces it.
+ * Bit 2: 3x presents the way Smooth does -- the draw gate at 60 pictures a
+ * second plus bit 1's hold -- under a ceiling of 3 frames per vblank
+ * (ffh_cap3), instead of one picture per 3-frame loop.  A console that runs
+ * 3x in full sees the same 180 fps and one picture per vblank as before.
+ * One that cannot (FireRed at 222 MHz: ~125 fps = 42 loops a second) used to
+ * flip each loop as it finished, 42 pictures a second on a 59.94 Hz LCD, so
+ * every picture stayed up 1 or 2 vblanks in a near 50/50 mix; 4.1.0's slower
+ * ~103 fps was 34 a second, mostly 2-vblank holds, a steadier rhythm.  Here
+ * it is one picture per vblank, each ~2 frames on, at the same speed. */
+#ifndef PLAY_FF_FLIP_PACE
+#define PLAY_FF_FLIP_PACE 0
+#endif
+/* Small data, so the layout pin's .data/.bss sets do not move (LAYOUT-PINNING.md). */
+static int      g_ff_flip_pace __attribute__((section(".sdata"))) = PLAY_FF_FLIP_PACE;
+static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer holds an unflipped picture */
+static unsigned g_ffh_holds __attribute__((section(".sbss")));
+static unsigned g_ffh_waits __attribute__((section(".sbss")));
+static unsigned g_ffh_vb __attribute__((section(".sbss")));
+static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop */
+static int      g_ffc_on __attribute__((section(".sbss")));    /* 3x ceiling anchored */
+static unsigned g_ffc_vc __attribute__((section(".sbss")));
+static unsigned g_ffc_f __attribute__((section(".sbss")));
+static unsigned g_ffc_waits __attribute__((section(".sbss")));
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
@@ -4393,7 +4431,7 @@ static void me_rend_frame(int emulated)
          else
 #endif
          g_mer_ready   = g_mer_pending;
-         mer_note_sum();
+         mer_note_sum(); LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
          g_mer_pending = -1;
          g_mer_miss    = 0;
          g_fps_drawn++;             /* a complete rendered frame landed */
@@ -4474,7 +4512,7 @@ static void me_rend_frame(int emulated)
             if (g_mer_dirty_cfg)
                g_mer_full_copy = 0;   /* mirror is now valid to patch */
          }
-         g_mer_pending = out;
+         g_mer_pending = out; LAB_FFP(lab_ffpace_me_post(out, fe_host_frame_count());)
          g_mer_stage_pvc[out] = g_lat_poll_vc;
          g_mer_stage_seq[out] = g_lat_seq;
 #ifdef REWIND
@@ -12506,6 +12544,50 @@ static int lat_swap(int early)
    return r;
 }
 
+/* FF FLIP PACING (see g_ff_flip_pace).  1 = a flip now would latch less than
+ * `n` vblanks after the last one (n = 1: the last one has not latched yet).
+ * g_lat_sub_vc is read just before the submit: a vblank inside that window
+ * (microseconds) makes the last flip latch one later than assumed here. */
+static __attribute__((noinline)) int ffh_too_soon(unsigned n)
+{
+   return (int)(sceDisplayGetVcount() - (g_lat_sub_vc + n)) < 0;
+}
+
+/* The uncapped branch: hold this loop's picture instead of flipping it? */
+static int ffh_hold(void)
+{
+   unsigned n;
+   if (!(g_ff_flip_pace & 2) || !g_ff_gate)
+      return 0;
+   n = pcfg_ff_mode() == PCFG_FF_UNLIMITED ? 2u : 1u;
+   if (!ffh_too_soon(n))
+      return 0;
+   if (!g_ffh_held)
+      g_ffh_holds++;
+   return 1;
+}
+
+/* FF FLIP PACING bit 2: the 3x ceiling for 3x run through the gate.  At most
+ * 3 frames per vblank since the anchor (the current interval's 3 included);
+ * ahead of that, block on the vblank, as the paced 3x loop does.  Behind by
+ * more than 8 vblanks' worth: re-anchor (forgive, never sprint). */
+static void ffh_cap3(void)
+{
+   unsigned f = fe_host_frame_count(), vc = sceDisplayGetVcount();
+   if (!g_ffc_on || (int)(3u * (vc - g_ffc_vc) - (f - g_ffc_f)) > 3 * 8)
+   {
+      g_ffc_on = 1;
+      g_ffc_vc = vc;
+      g_ffc_f  = f;
+      return;
+   }
+   while ((int)((f - g_ffc_f) - 3u * (sceDisplayGetVcount() - g_ffc_vc)) >= 3)
+   {
+      sceDisplayWaitVblankStart();
+      g_ffc_waits++;
+   }
+}
+
 /* The paced branch's vblank wait, in three calls: begin, one step per pass
  * of the wait loop (1 = poll again shortly instead of blocking on the
  * vblank), end.  Single thread, single owner: the main loop. */
@@ -12874,6 +12956,11 @@ static void lat_census(void)
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
           sceDisplayGetVcount() - g_lat_vc0, g_ll_pull);
+   if (g_ff_flip_pace && (g_ffh_holds || g_ffh_waits || g_ffc_waits))
+      fe_evt("ffh pace=%d holds=%u held_loops=%u waits=%u cap3_waits=%u 3x=%d",
+             g_ff_flip_pace, g_ffh_holds, g_ffh_vb, g_ffh_waits, g_ffc_waits,
+             g_ffh_3x);
+   g_ffh_holds = g_ffh_vb = g_ffh_waits = g_ffc_waits = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -13229,8 +13316,9 @@ int main(int argc, char *argv[])
    {
       long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
+      LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
-   psp_clock_apply("boot");
+   psp_clock_apply("boot"); LAB_FFP(lab_ffpace_clock_enforce();)
    fe_evt("clock=%d", scePowerGetCpuClockFrequency());
    boot_mark("config");
 
@@ -14083,6 +14171,8 @@ int main(int argc, char *argv[])
                                          g_flip_early) != 0;
       g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
                                                g_mer_early_retire) != 0;
+      g_ff_flip_pace = (int)fe_ini_get_int(HARNESS_INI, "ff_flip_pace",
+                                           g_ff_flip_pace) & 7;
       /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
        * on an early nudge (TIER 1 POLICY at g_flip_early) */
       g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", PLAY_ME_LOWLAT);
@@ -14105,9 +14195,9 @@ int main(int argc, char *argv[])
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
       fe_evt("latency flip_early=%d me_early_retire=%d me_lowlat=%d "
-             "recover=%u margin_us=%u me_sameframe=%d",
+             "recover=%u margin_us=%u me_sameframe=%d ff_flip_pace=%d",
              g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
-             g_ll_margin_us, g_mer_sameframe);
+             g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace);
       /* 0 restores the end-of-retro_run post for a one-binary A/B. */
       g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
       if (!g_mer_vispost)
@@ -15579,6 +15669,8 @@ session_top:
       unsigned ctl_fired;   /* CTL_FIRE_*: the player's shortcuts this frame */
       int home_mode;        /* Menu = HOME is in force this frame          */
       int home_pressed;     /* ...and HOME was pressed (consumed once)     */
+      int ffh_loop;         /* FF flip pacing: entered with a held picture */
+      int ffh_fe;           /* FF flip pacing: g_flip_early outside the wait */
       int session = fe_np_session_active();
       int harness_ff = ff_ini || fe_autopilot_ff();
       /* ADR-0021: the loop body without the vblank wait is the number that
@@ -16413,6 +16505,13 @@ session_top:
          g_ff_gate = ff_engaged && !g_pcfg.bench_mode &&
                      (pcfg_ff_mode() == PCFG_FF_SMOOTH ||
                       pcfg_ff_mode() == PCFG_FF_UNLIMITED);
+         /* FF FLIP PACING bit 2: 3x through the gate under a 3x ceiling. */
+         g_ffh_3x = (g_ff_flip_pace & 4) && g_ff_mult && !g_pcfg.bench_mode;
+         if (g_ffh_3x)
+         {
+            g_ff_mult = 0;
+            g_ff_uncapped = g_ff_gate = 1;
+         }
          if (session)
             g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
 #ifdef REWIND
@@ -16431,8 +16530,10 @@ session_top:
           * Off, the override is -1 and the frameskip option rules as before. */
          {
             unsigned period = !g_ff_gate ? 0u :
-               pcfg_ff_mode() == PCFG_FF_SMOOTH ? FF_GATE_PERIOD_SMOOTH_US :
-                                                  FF_GATE_PERIOD_UNLIMITED_US;
+               pcfg_ff_mode() == PCFG_FF_SMOOTH || g_ffh_3x ?
+                  FF_GATE_PERIOD_SMOOTH_US : FF_GATE_PERIOD_UNLIMITED_US;
+            if (!g_ffh_3x || !g_ff_uncapped)
+               g_ffc_on = 0;       /* the 3x ceiling re-anchors next time */
             int draw = 1;
             if (period != g_ff_gate_st.period_us)
                ff_gate_arm(&g_ff_gate_st, period);
@@ -16478,6 +16579,13 @@ session_top:
          pad_new = ctl_fired = 0;
       }
       FE_LP_SET(FELP_L_PRES0);
+      /* FF FLIP PACING: a picture held by the last loop is still the back
+       * buffer.  Whether this loop draws a NEW one is what g_drew says below
+       * (the HUD is drawn on a new one only); if none, the held one stands. */
+      ffh_loop = g_ffh_held && g_ff_gate;
+      g_ffh_held = 0;
+      if (ffh_loop)
+         g_drew = 0;
       me_video_present();
       /* LOW LATENCY tier 0b: a render that finished during the previous
        * iteration is shown NOW, not after the next post retires it. */
@@ -16511,6 +16619,11 @@ session_top:
       if (g_drew && (g_rw_on || g_rwh.denied))
          psp_rewind_hud();
 #endif
+      if (ffh_loop && !g_drew)
+      {
+         g_drew = 1;              /* nothing new: the held picture stands */
+         g_ffh_vb++;
+      }
       g_mer_posted = 0;
 
       /* FPS chip: emulated-frame rate over a ~1 s window, one decimal (a
@@ -17042,6 +17155,18 @@ session_top:
           * is genuinely in the radio and this whole line of reasoning is
           * wrong. */
          FE_LP_SET(FELP_VWAIT);
+         /* FF FLIP PACING bit 0, 3x only: the last flip has not latched yet
+          * (a loop that overran into the interval it is pending in): no early
+          * flip in this wait -- it would replace that one.  The swap after the
+          * wait flips this frame, as 4.1.0 always did.  Not at 1x: there a
+          * post-vblank flip would keep every later frame post-vblank (one
+          * frame of latency for good); low latency's recovery stands. */
+         ffh_fe = g_flip_early;
+         if ((g_ff_flip_pace & 1) && g_ff_mult && g_flip_early && ffh_too_soon(1))
+         {
+            g_flip_early = 0;
+            g_ffh_waits++;
+         }
          lat_wait_begin(want);
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
@@ -17083,6 +17208,7 @@ session_top:
             }
          }
          lat_wait_end();
+         g_flip_early = ffh_fe;
          FE_LP_SET(FELP_L_RETIRE);
 
          /* Counted here, after the wait: still pending at the swap means the
@@ -17137,24 +17263,36 @@ session_top:
          g_lw_swapped = 0;
          g_drew = 0;
       }
-      else if (g_drew)
+      else
       {
+         if (g_ffh_3x)
+            ffh_cap3();           /* FF FLIP PACING bit 2: the 3x ceiling */
+         if (g_drew)
+         {
          /* UNCAPPED FF: swap only when a frame was actually blitted.
           *
           * No same-frame handling here.  mer_sameframe_active() is false
           * whenever fast-forward is engaged, so the loop-top present ran
           * as it always did and this branch is untouched shipping code. */
-         osd_draw();
-         lat_swap(0);
-         g_drew = 0;
+         if (ffh_hold())
+            g_ffh_held = 1;       /* FF FLIP PACING: a later loop flips it */
+         else
+         {
+            osd_draw();
+            lat_swap(0);
+            g_drew = 0;
+            g_ffh_held = 0;
+         }
+         }
       }
       FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
       lat_census();
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
-      ff_win_note();
+      ff_win_note(); LAB_FFP(lab_ffpace_loop(g_ff_user, g_ff_gate, g_ff_mult, g_ff_uncapped, g_me_rend);)
       FE_LP_SET(FELP_LOOP);
    }
+   LAB_FFP(lab_ffpace_finish();)
 
    if (g_perf_rig)
    {

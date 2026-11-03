@@ -78,6 +78,7 @@ frontend ND_RTO_MAX_US=2500000
 frontend ND_RTO_MIN_US=200000
 frontend ND_TXQ_CAP=384
 frontend ND_WINDOW=256
+frontend PLAY_FF_FLIP_PACE=7
 frontend PLAY_INPUT_FRESH=1
 frontend VID_TRIPLE=1
 make:Makefile CHEATS=1

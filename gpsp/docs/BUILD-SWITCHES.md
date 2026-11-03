@@ -192,6 +192,7 @@ Frontend, `psp/fe_features.h` (its comments keep the field logs behind each valu
 | `ND_RTO_MIN_US` | 200000 | retransmit floor |
 | `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
 | `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
+| `PLAY_FF_FLIP_PACE` | 7 | fast-forward presentation pacing (`docs/FF-PRESETS.md`): bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. Presentation only. `-DGPSP_NO_PLAY_FF_FLIP_PACE` = 0 |
 
 ### What `SMC_GATES_RANKED` actually requires
 

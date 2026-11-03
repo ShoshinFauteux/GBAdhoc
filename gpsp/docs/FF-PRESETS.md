@@ -265,3 +265,95 @@ handoff loop; `ffrig.py` adds the fixtures and arms to drrig the way
 The release ships `gbadhoc_me.prx` 19ae57b6 (ME_CATCH, as `tools/build.sh
 release` builds it). Release EBOOT sha256
 `297b08b9e41a6b9fbc7abe823cd1be4a85d4f96dff74ad305791356ff419e08f`.
+
+## Presentation cadence: 4.1.0 vs 4.6.0-beta.2 (2026-11-03, claude/ff-pacing)
+
+Report: FireRed at 222 MHz, 4.1.0 103 fps vs 4.6.0 125 fps, 4.6.0 "stutters".
+
+**Instrument** (`psp/lab_ffpace.[ch]`, LAB_HARNESS only; same code on
+`claude/ffpace-4.1.0`): a 0x11 thread reads the displayed framebuffer every
+vblank; every flip is tagged before its SetFrameBuf with the game frame its
+picture holds. Keys `lab_pace` (1 on, >= 100 = pin that clock) and
+`lab_pace_every` (window, vblanks). EVT `ffpace_win` per window: `ivl` =
+vblanks between NEW pictures (1..6+), `gfc` = game frames per picture
+(1..9+), `drop` = flips overwritten before they latched, `adv_x100`/`sd_x100`
+= per-vblank advance mean/sd, `jerk_x100` = mean |adv(v) - adv(v-1)|; plus a
+per-vblank trace of the first 900 vblanks. No measurable cost (192 vs 193 fps
+uninstrumented, Smooth).
+
+**Rig limit.** Both Lab consoles' CFW hold 333/166: scePowerSetClockFrequency
+(rc 0, `held=1`), sctrlHENSetSpeed and the split setters all leave 333. No
+222 MHz run was possible; the user's rates were reproduced with `pace_slow_us`
+(busy-burn per loop: 4.6 ~125 fps, 4.1.0 ~103 fps; the ME still renders at
+333 speed). Fixture own_firered (Pewter walk), FF by `simff`, ME on, n = 2.
+
+| 333 MHz, PSP-3000 | fps | pictures/s | ivl 1/2/3 % | drops /1000 vb | sd | jerk |
+|---|---|---|---|---|---|---|
+| 4.1.0 3x | 158.8 | 53.0 | 87/13/0 | 0 | 0.95 | 0.69 |
+| beta.2 3x | 179.7 | 55.9 | 93/7/0 | 67-87 (gf jumps of 6) | 1.08-1.21 | 0.79-1.03 |
+| beta.2 3x flip_early=0 | 179.6 | 59.0 | 98/2/0 | 15 | 0.50 | 0.18 |
+| 4.1.0 Smooth | 167.7 | 57.1 | 95/5/0 | 47 | 0.79 | 0.77 |
+| beta.2 Smooth | 192.6 | 56.0 | 93/7/0 | 61-66 | 1.04-1.10 | 1.16-1.21 |
+| 4.1.0 Unlimited | 174.9 | 30.0 | 6/88/6 | 0 | 2.93 | 5.54 |
+| beta.2 Unlimited | 200.1 | 30.0 | 8/84/8 | 0 | 3.36 | 6.2 |
+
+| user-rate proxy (pace_slow_us), PSP-3000 | fps | pictures/s | ivl 1/2/3 % | drops /1000 vb | sd | jerk |
+|---|---|---|---|---|---|---|
+| 4.1.0 3x | 103.2 | 34.4 | 26/74/0 | 0 | 1.48 | 2.54 |
+| beta.2 3x | 127.5 | 42.5 | 59/41/0 | 0 | 1.35 | 1.74 |
+| 4.1.0 Smooth | 99.0 | 51.3 | 83/17/0 | 144 | 0.87 | 1.27 |
+| beta.2 Smooth | 121.3 | 56.1 | 93/7/0 | 63 | 0.71 | 0.65 |
+| 4.1.0 Unlimited | 101.2 | 30.0 | 15/70/15 | 0 | 1.72 | 2.92 |
+| beta.2 Unlimited | 123.6 | 30.0 | 9/83/8 | 0 | 2.08 | 3.79 |
+
+Findings:
+
+1. **3x (the default preset, `ff_mult_x10` = 30) at a speed the console cannot
+   hold 3x in:** the paced loop never waits, and each 3-frame loop flips as it
+   finishes. 125 fps = 42 loops/s on a 59.94 Hz LCD: pictures stay up 1 or 2
+   vblanks in a 59/41 mix; 4.1.0's 103 fps = 34 loops/s, 26/74, a steadier
+   2-vblank rhythm. Same code in both: the regression the user sees is the
+   faster emulation landing 3x's unsynchronised flip rate near 1.5 vblanks a
+   picture. (`sim3x.py` in builds/ffpace-out reproduces both rows exactly.)
+2. **3x at full speed (~180 fps):** tier 0a `flip_early` (LOW-LATENCY.md)
+   flips during the wait without checking that the previous flip latched; a
+   loop is ~1 vblank long, so after any overrun the early flip replaces the
+   pending one (7-9 % of pictures skip a whole 3-frame step). 4.1.0 flipped
+   after the vblank only. flip_early=0 removes it.
+3. **Smooth / Unlimited:** the gate's wall-clock grid (16667 / 33333 us) beats
+   against the LCD (16683 us). Every ~17 s the phase crosses the vblank edge
+   and for seconds two flips land in one interval (one never shown) and the
+   next has none: the `...3 0 6 3...` runs in the trace. Present in 4.1.0 too,
+   worse at lower fps (each flip's jitter is ~2 frame times). Not a 4.6
+   regression; beta.2 is no worse at the user's rates.
+
+**Fix: `ff_flip_pace` (PLAY_FF_FLIP_PACE, default 0 in this tree), never
+blocks emulation, no frame-rate cap:**
+
+* bit 0 (3x only): no early flip in a wait while the previous flip is still
+  pending (main_psp.c, before `lat_wait_begin`). At 1x it is NOT applied: it
+  kept every later frame post-vblank after one late frame (+1 frame latency;
+  seen as `early=0 post=388` in the `lat` census of the first candidate).
+* bit 1 (gate presets): `ffh_hold` keeps a finished picture in the back
+  buffer until the previous flip has been up 1 (Smooth) / 2 (Unlimited)
+  vblanks; a newer render replaces it if one arrives first.
+* bit 2: 3x runs through the Smooth gate + hold under a 3-frames-per-vblank
+  ceiling (`ffh_cap3`, blocks on the vblank only when ahead of 3x, as 3x
+  does today).
+
+| candidate (`ff_flip_pace` 7 unless noted), both consoles | fps | pictures/s | ivl 1/2 % | drops /1000 vb | sd | jerk |
+|---|---|---|---|---|---|---|
+| 3x full speed (fix3) | 179.8 | 59.8 | 100/0 | 0 | 0.42-0.46 | 0.30-0.37 |
+| 3x at ~125 fps proxy (fix3) | 129.9 | 59.9 | 100/0 | 0-0.4 | 0.48 | 0.48 |
+| 3x at ~103 fps proxy (fix3) | 105.0 | 57.5 | 96/4 | 0 | 0.74 | 0.78 |
+| Smooth full speed (fix2/3) | 197 | 59.9 | 100/0 | 0 | 0.48-0.54 | 0.61-0.65 |
+| Smooth at ~123 fps proxy (fix1) | 123.2 | 59.8 | 100/0 | 0.4 | 0.43 | 0.34 |
+| Unlimited full speed (fix2) | 205 | 30.0 | 0/100 | 0 | 3.44 | 6.8 |
+| Unlimited at ~125 fps proxy (fix1) | 125.2 | 30.0 | 0/100 | 0 | 2.10 | 4.16 |
+
+Emulated fps is unchanged or higher with the fix (Smooth 192.6 -> 197,
+Unlimited 200 -> 205: fewer presents thrown away). The harness key
+`ff_flip_pace` is not yet known to the Lab (needs this tree in
+`backend/lab/inikeys.py` EXTRA_SRC and a labd restart); the candidates set it
+with `FE_EXTRA=-DPLAY_FF_FLIP_PACE=7`. Not measured: real 222 MHz (above), and
+the CPU renderer (ME off).
