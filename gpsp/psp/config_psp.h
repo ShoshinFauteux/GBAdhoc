@@ -192,6 +192,12 @@ typedef struct
    int  rom_resident;
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
    int  cpu_clock;    /* PCFG_CLOCK_*: 333 (default), 222, 0 = System */
+   /* Settings > "Quick load asks first", CONFIG.INI `quick_load_ask`: 1
+    * (default) = the quick load (bind_quickload) opens the SAVE STATES page
+    * with "Load Slot 1?" on its plate; 0 = it loads slot 1 at once, as
+    * every release before it did (docs/UI-OVERLAY.md section 14.3).  The
+    * page's own load always asks. */
+   int  quick_load_ask;
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
     * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,

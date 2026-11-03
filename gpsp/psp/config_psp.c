@@ -161,6 +161,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
    g_pcfg.cpu_clock   = pcfg_clock_snap(
       fe_ini_get_int(cfg_path, "cpu_clock", PCFG_CLOCK_DEFAULT));
+   g_pcfg.quick_load_ask =
+      (int)fe_ini_get_int(cfg_path, "quick_load_ask", 1) ? 1 : 0;
    {
       /* Screenshots (issue #13).  Anything but the other word is the
        * default: PNG, into PICTURE. */
@@ -401,6 +403,7 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(me_boot,              0, 1, 1);
    PCFG_CHK(osd_wireless,         0, 1, 1);
    PCFG_CHK(fast_link,            0, 1, 0);
+   PCFG_CHK(quick_load_ask,       0, 1, 1);
    /* A range check cannot say "one of 0, 222, 333": snap says it. */
    if (g_pcfg.cpu_clock != pcfg_clock_snap(g_pcfg.cpu_clock))
    {
@@ -579,6 +582,10 @@ void pcfg_save(void)
       if (g_pcfg.cpu_clock != PCFG_CLOCK_DEFAULT ||
           fe_ini_get(cfg_path, "cpu_clock", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "cpu_clock", g_pcfg.cpu_clock);
+      /* And again: a player who keeps the question keeps the file. */
+      if (!g_pcfg.quick_load_ask ||
+          fe_ini_get(cfg_path, "quick_load_ask", sv, sizeof(sv)))
+         fe_ini_set_int(cfg_path, "quick_load_ask", g_pcfg.quick_load_ask);
    }
    fe_ini_set_int(cfg_path, "gbc_color_correction",
                   g_pcfg.gbc_color_correction);

@@ -664,6 +664,11 @@ def suites(env: Env, baseline: Path | None):
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_state_delete tools/tests/test_state_delete.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_state_delete && "
+          # A state load asks first, as overwrite and delete do, and the
+          # quick load asks too unless config.ini quick_load_ask = 0: the
+          # page's real screen_state_slots, main_psp.c's real quick-load
+          # dispatch and config_psp.c's key, each with mutants.
+          "python3 tools/tests/test_state_load_ask.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

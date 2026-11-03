@@ -15934,7 +15934,9 @@ session_top:
        *
        * The menu already offers both, but a quick-save you have to open a
        * menu for is not a quick-save. These shortcuts intentionally stay on
-       * slot 1 (.st0); the menu and browser can access all five slots.
+       * slot 1 (.st0); the menu and browser can access all five slots.  The
+       * save is immediate; the load asks first unless Settings > "Quick load
+       * asks first" is off (below).
        *
        * Edge-triggered on the shoulder button while SELECT is held, so
        * holding the chord fires once rather than every frame.  SELECT+START
@@ -15985,6 +15987,33 @@ session_top:
              * RFU state underneath a live transport. */
             if (link_locks_states())
                osd_toast("Cannot load during a wireless session");
+            /* THE QUICK LOAD ASKS FIRST (docs/UI-OVERLAY.md section 14.3),
+             * with the SAVE STATES page's own question, opened over the
+             * game.  The default quick load is a shoulder away from the
+             * quick save, and a load replaces everything since the last
+             * save.  X loads (UI_ACT_LOADSTATE in the menu branch below,
+             * exactly the page's load); any other key is Resume.  Nothing
+             * in slot 1: said at once, no menu -- one stat, after the
+             * interrupted-save recovery the page's own scan would run.
+             * Keyed on the action, so any binding of bind_quickload asks.
+             * Settings > "Quick load asks first" off (config.ini
+             * quick_load_ask = 0): the load below, as before. */
+            else if (g_pcfg.quick_load_ask)
+            {
+               if (fe_host_state_recover(state_path) < 0 ||
+                   !file_exists(state_path))
+                  osd_toast("No saved state");
+               else
+               {
+                  fe_evt("state_load_ask via=chord");
+                  menu_open();
+                  if (!ui_state_load_ask(1))
+                  {
+                     ui_close();
+                     osd_toast("No saved state");
+                  }
+               }
+            }
             else if (psp_state_load(state_path, "chord") == 0)
             {
                fe_evt("state_load via=chord");

@@ -314,12 +314,16 @@ static unsigned char g_ov_slot[PSP_STATE_SLOT_COUNT];
 static char g_ov_stamp[PSP_STATE_SLOT_COUNT][24];
 static int  g_ov_used;                      /* slots holding a state      */
 /* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13).  A question on the
- * plate -- 0 none, SLOT_ASK_DELETE or SLOT_ASK_OVERWRITE -- for the slot
- * g_slot_ask_n; while it is up X answers it and any other key keeps the
- * slot.  The plate that reports what happened is cleared by the next key. */
-enum { SLOT_ASK_DELETE = 1, SLOT_ASK_OVERWRITE = 2 };
+ * plate -- 0 none, SLOT_ASK_DELETE, SLOT_ASK_OVERWRITE or SLOT_ASK_LOAD --
+ * for the slot g_slot_ask_n; while it is up X answers it and any other key
+ * keeps the slot (and, for a load, the game).  The plate that reports what
+ * happened is cleared by the next key. */
+enum { SLOT_ASK_DELETE = 1, SLOT_ASK_OVERWRITE = 2, SLOT_ASK_LOAD = 3 };
 static int  g_slot_ask;
 static int  g_slot_ask_n;
+/* The load question was asked by the quick load (ui_state_load_ask), not
+ * from the page: keeping the game then goes straight back to it. */
+static int  g_slot_ask_back;
 static char g_slot_note[48];
 static int  g_slot_saving;                  /* slot a UI_ACT_SAVESTATE is for */
 static int  g_slots_dirty;                  /* rescan on the next frame   */
@@ -434,7 +438,9 @@ static const demo_step demo_script[] = {
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 3          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4, saved above */
-   { PSP_CTRL_CROSS,   2, 10 },  /* load it: the menu closes (demo ends) */
+   { PSP_CTRL_CROSS,   2, 6 },   /* load it?           */
+   { DEMO_DUMP,        1, 0 },   /* ge_ui_8: the load question */
+   { PSP_CTRL_CROSS,   2, 10 },  /* load: the menu closes (demo ends) */
 };
 /* ui_controls_demo=1: Settings > Controls end to end (docs/CONTROL-REMAP.md).
  * Cursor arithmetic assumes the harness build's table (no catch self-test
@@ -1162,7 +1168,8 @@ static void screen_to(int scr)
    g_screen = scr;
    g_cursor = 0;
    ctl_page_reset();             /* no capture survives a screen change */
-   g_slot_ask = 0;               /* nor a delete/overwrite question */
+   g_slot_ask = 0;               /* nor a delete/overwrite/load question */
+   g_slot_ask_back = 0;
    g_slot_note[0] = '\0';
    if (scr == SCR_SETTINGS)
    {
@@ -1820,7 +1827,8 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_FASTLINK,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_HDR_UI, SET_THEME, SET_SHELL,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_CPUCLK,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_QLOADASK,
+       SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
@@ -1863,6 +1871,12 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * harness walkers only ever cross rows ABOVE this point, or wrap UP to
     * Button mapping, so none of their arithmetic moved. */
    { 0, "FPS counter" },
+   /* The quick load's question (docs/UI-OVERLAY.md section 14.3), on by
+    * default.  Under FPS counter and above CPU clock: the walkers that come
+    * from below stop at CPU clock or before it, and the rest cross only rows
+    * above Fast-forward, so none of their counts moved.  The SAVE STATES
+    * page's own X always asks; this row is only the shortcut's. */
+   { 0, "Quick load asks first" },
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
     * their counts moved.  Applies at once (main_psp.c psp_clock_apply). */
@@ -2399,6 +2413,9 @@ static void settings_adjust(int id, int dir)
    case SET_FPS:
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
+   case SET_QLOADASK:
+      g_pcfg.quick_load_ask = !g_pcfg.quick_load_ask;
+      break;
    case SET_CPUCLK:
       /* 333 -> 222 -> System, live: the game keeps running at the new
        * clock the moment the row changes.  The player's choice outranks a
@@ -2646,6 +2663,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.show_fps ? "on" : "off");
          break;
+      case SET_QLOADASK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.quick_load_ask ? "on" : "off");
+         break;
       case SET_CPUCLK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              pcfg_clock_name(psp_clock_mode()));
@@ -2703,6 +2724,11 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
+   else if (g_cursor == SET_QLOADASK)
+      footer(g_pcfg.quick_load_ask
+                ? "The quick load asks first: " VID_GLYPH_X
+                  " loads, any other key plays on."
+                : "The quick load loads slot 1 at once, without asking.");
    else if (g_cursor == SET_CPUCLK)
    {
       /* A CFW clock setting can refuse ours: say what is really running. */
@@ -5044,20 +5070,55 @@ int ui_state_load_done(int rc)
    return 1;
 }
 
+/* THE QUICK LOAD ASKS TOO (docs/UI-OVERLAY.md section 14.3).  The quick
+ * load (bind_quickload, SELECT+R by default) loaded slot 1 the moment it was
+ * pressed, a shoulder away from the quick save -- the easiest wrong button
+ * there is.  With Settings > "Quick load asks first" on (the default),
+ * main_psp.c opens the menu and calls this: the SAVE STATES page, on `slot`,
+ * with the load question already on its plate.  X loads exactly as the
+ * page's X does (and the menu closes into the game); any other key goes
+ * straight back into the game, Resume, having loaded nothing -- the visit
+ * was only the question.  1 = asked; 0 = no menu open, or nothing saved in
+ * the slot (the caller says so, and closes the menu). */
+int ui_state_load_ask(int slot)
+{
+   if (!g_active || slot < 1 || slot > PSP_STATE_SLOT_COUNT)
+      return 0;
+   g_state_slot = slot;
+   screen_to(SCR_STATE_SLOTS);   /* the scan: what each slot holds */
+   if (!g_ov_slot[slot - 1])
+      return 0;
+   g_slot_ask = SLOT_ASK_LOAD;
+   g_slot_ask_n = slot;
+   g_slot_ask_back = 1;
+   /* A direction held from the game (walking, or part of the chord when
+    * bind_quickload is remapped onto the d-pad) is not an answer, and must
+    * not auto-repeat into one 18 frames from now: pad_edges counts a held
+    * direction up to its repeat, and from here it cannot get there before
+    * the direction is let go (any change resets the count; a fresh press is
+    * an edge as ever). */
+   g_rep_timer = -(1 << 30);
+   fe_evt("ui_load_ask slot=%d via=chord", slot);
+   return 1;
+}
+
 /* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13; Fable's direction A,
  * "Split", builds/savestate-mockups/README.md section 6).  One page for save
  * and load: the five slots on the left (the 64x42 thumbnail, the slot, its
  * time), the highlighted slot's picture 1:1 on the right.
  *
- *   X  load at once and back into the game     (empty: says so, plate)
+ *   X  load, after the plate's question; back into the game
+ *                                             (empty: says so, plate)
  *   [] save; over a saved slot the plate asks first; the page stays open
  *   /\ delete, after the plate's question        (empty: nothing)
  *   O  back to the menu
  *
- * Only load is immediate, and it sits on the key that always meant "go"
- * here.  Both destructive actions have their own key AND a question, and
- * while a question is up X answers it and every other key keeps the slot,
- * so an X meant for "overwrite" or "delete" can never load instead. */
+ * A load replaces the game being played, so it is destructive too: until
+ * 4.6.0 it was the one immediate action, and one X too many (or an X where
+ * [] was meant) lost whatever had not been saved.  All three now ask on the
+ * plate, the reset question's rule: X answers, every other key keeps the
+ * game and the slot, and no other key acts that frame -- so an X meant for
+ * one question can never answer another (docs/UI-OVERLAY.md section 14). */
 #define SS_ROW_Y(i)  (72 + 34 * (i))
 #define SS_PX 228                /* the preview panel */
 #define SS_PY 62
@@ -5122,14 +5183,15 @@ static ui_action screen_state_slots(unsigned edges)
    if (g_slots_dirty)
       ov_slots_scan();           /* after a save: the slot's new files */
 
-   /* A question on the plate (overwrite or delete): X answers it, any other
-    * key keeps the slot, and no other key acts this frame. */
+   /* A question on the plate (overwrite, delete or load): X answers it, any
+    * other key keeps the slot, and no other key acts this frame. */
    if (g_slot_ask)
    {
       if (edges & PSP_CTRL_CROSS)
       {
          int s = g_slot_ask_n, ask = g_slot_ask;
          g_slot_ask = 0;
+         g_slot_ask_back = 0;     /* a failed load stays, as the page's */
          if (ask == SLOT_ASK_DELETE)
          {
             if (state_delete(g_state_base, (unsigned)s) == 0)
@@ -5140,6 +5202,11 @@ static ui_action screen_state_slots(unsigned edges)
                         "Slot %d could not be deleted", s);
             ov_slots_scan();
          }
+         else if (ask == SLOT_ASK_LOAD)
+         {
+            g_state_slot = s;    /* (it is: nothing moves while asked) */
+            act = UI_ACT_LOADSTATE;
+         }
          else
          {
             g_slot_saving = s;
@@ -5147,7 +5214,16 @@ static ui_action screen_state_slots(unsigned edges)
          }
       }
       else if (edges)
+      {
          g_slot_ask = 0;
+         /* The quick load's question was the whole visit: a keep is
+          * Resume, before anything is drawn (screen_menu's O). */
+         if (g_slot_ask_back)
+         {
+            g_slot_ask_back = 0;
+            return UI_ACT_RESUME;
+         }
+      }
       edges = 0;
    }
    if (edges & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_CIRCLE |
@@ -5175,7 +5251,10 @@ static ui_action screen_state_slots(unsigned edges)
       if (edges & PSP_CTRL_CROSS)
       {
          if (g_ov_slot[cur])
-            act = UI_ACT_LOADSTATE;
+         {
+            g_slot_ask = SLOT_ASK_LOAD;
+            g_slot_ask_n = g_state_slot;
+         }
          else            /* on the plate, as every page message: a toast
                           * would sit on the header */
             snprintf(g_slot_note, sizeof(g_slot_note),
@@ -5259,6 +5338,11 @@ static ui_action screen_state_slots(unsigned edges)
       if (g_slot_ask == SLOT_ASK_DELETE)
          snprintf(q, sizeof(q), "Delete Slot %d?      " VID_GLYPH_X
                   " delete     " VID_GLYPH_O " keep", g_slot_ask_n);
+      else if (g_slot_ask == SLOT_ASK_LOAD)
+         /* The reset question's words: a load, like a reset, ends the
+          * game in front of the player. */
+         snprintf(q, sizeof(q), "Load Slot %d? Unsaved progress is lost.     "
+                  VID_GLYPH_X " load     " VID_GLYPH_O " cancel", g_slot_ask_n);
       else
          snprintf(q, sizeof(q), "Overwrite Slot %d?      " VID_GLYPH_X
                   " overwrite     " VID_GLYPH_O " keep", g_slot_ask_n);
