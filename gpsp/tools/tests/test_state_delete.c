@@ -7,10 +7,10 @@
  *      two preview paths the save writes (psp_state_thumb_path,
  *      psp_state_shot_path);
  *   2. nothing else can come out of it: a ROM path, a .sav, a directory, a
- *      bare ".st0", a slot outside 1..5 and a buffer too small are refused
+ *      bare ".st0", a slot outside 1..10 and a buffer too small are refused
  *      with both outputs empty;
  *   3. a random fuzz of path strings only ever yields "<input minus its last
- *      digit><0-4>" and that plus ".thumb" / ".shot";
+ *      digit><0-9>" and that plus ".thumb" / ".shot";
  *   4. on a real directory, deleting slot k removes exactly .st(k-1), its
  *      .thumb and its .shot and leaves the ROM, the .sav and every other
  *      slot alone;
@@ -100,6 +100,11 @@ int main(void)
    CHECK(psp_state_delete_paths(st, sizeof(st), th, sizeof(th), sh,
                                 sizeof(sh), "/r/EMERALD.ST0", 5) == 0 &&
          !strcmp(st, "/r/EMERALD.ST4"));
+   /* the last slot: still one digit, still beside the others */
+   CHECK(psp_state_delete_paths(st, sizeof(st), th, sizeof(th), sh,
+                                sizeof(sh), "/r/Gold.gbc.st0", 10) == 0 &&
+         !strcmp(st, "/r/Gold.gbc.st9") && !strcmp(th, "/r/Gold.gbc.st9.thumb") &&
+         !strcmp(sh, "/r/Gold.gbc.st9.shot"));
 
    /* 2. refusals leave both outputs empty */
    {
@@ -117,7 +122,7 @@ int main(void)
                                       sizeof(sh), bad[i], 1) == -1);
          CHECK(st[0] == '\0' && th[0] == '\0' && sh[0] == '\0');
       }
-      for (slot = 0; slot < 12; slot += (slot == 0 ? 6 : 1))
+      for (slot = 0; slot < 16; slot += (slot == 0 ? PSP_STATE_SLOT_COUNT + 1 : 1))
       {
          strcpy(st, "junk");
          strcpy(sh, "junk");
@@ -156,7 +161,7 @@ int main(void)
       in[n] = '\0';
       if (rand() % 3 == 0 && n < 15)
          strcat(in, rand() % 2 ? ".st0" : ".ST0");
-      slot = (unsigned)(rand() % 7);
+      slot = (unsigned)(rand() % (PSP_STATE_SLOT_COUNT + 3));
       if (psp_state_delete_paths(st, sizeof(st), th, sizeof(th), sh,
                                  sizeof(sh), in, slot) != 0)
       {
@@ -164,7 +169,7 @@ int main(void)
          continue;
       }
       ln = strlen(in);
-      CHECK(slot >= 1 && slot <= 5 && strlen(st) == ln);
+      CHECK(slot >= 1 && slot <= PSP_STATE_SLOT_COUNT && strlen(st) == ln);
       CHECK(memcmp(st, in, ln - 1) == 0 && st[ln - 1] == (char)('0' + slot - 1));
       CHECK(st[ln - 4] == '.' && (st[ln - 3] | 0x20) == 's' &&
             (st[ln - 2] | 0x20) == 't');
@@ -182,7 +187,8 @@ int main(void)
          "Ruby.st0.thumb", "Ruby.st0.shot", "Ruby.st1", "Ruby.st3",
          "Ruby.st3.thumb", "Ruby.st3.shot", "Ruby.st4", "Ruby.gb.st2",
          "Ruby.gb.st2.shot", "Other.st2", "Other.st2.thumb",
-         "Other.st2.shot" };
+         "Other.st2.shot", "Ruby.st5", "Ruby.st8", "Ruby.st8.thumb",
+         "Ruby.st8.shot" };
       CHECK(mkdtemp(dir) != NULL);
       for (i = 0; i < (int)(sizeof(keep) / sizeof(keep[0])); i++)
       {
@@ -214,6 +220,25 @@ int main(void)
       snprintf(p, sizeof(p), "%s/Ruby.st1", dir);
       CHECK(!exists(p));
       CHECK(do_delete(base, 3) == 0);
+      /* slot 10 (.st9) goes the same way, and only it */
+      snprintf(p, sizeof(p), "%s/Ruby.st9", dir);
+      touch(p);
+      snprintf(p, sizeof(p), "%s/Ruby.st9.thumb", dir);
+      touch(p);
+      snprintf(p, sizeof(p), "%s/Ruby.st9.shot", dir);
+      touch(p);
+      CHECK(do_delete(base, 10) == 0);
+      snprintf(p, sizeof(p), "%s/Ruby.st9", dir);
+      CHECK(!exists(p));
+      snprintf(p, sizeof(p), "%s/Ruby.st9.thumb", dir);
+      CHECK(!exists(p));
+      snprintf(p, sizeof(p), "%s/Ruby.st9.shot", dir);
+      CHECK(!exists(p));
+      for (i = 0; i < (int)(sizeof(keep) / sizeof(keep[0])); i++)
+      {
+         snprintf(p, sizeof(p), "%s/%s", dir, keep[i]);
+         CHECK(exists(p) || !strcmp(keep[i], "Ruby.st1"));
+      }
       /* the ROM path itself is refused before anything is touched */
       snprintf(p, sizeof(p), "%s/Ruby.gba", dir);
       CHECK(do_delete(p, 1) == -1 && exists(p));

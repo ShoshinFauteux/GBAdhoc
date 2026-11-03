@@ -7,7 +7,17 @@
 #include "rom_paths.h"
 #include "fe_console.h"
 
-#define PSP_STATE_SLOT_COUNT 5
+/* TEN SLOTS A GAME, .st0 TO .st9.  4.5.0 and earlier had five (.st0-.st4);
+ * those names keep their slots, and the five after them continue the same
+ * rule.  Ten is also where the rule stops: the slot is ONE digit, which is
+ * what lets psp_state_delete_paths (below) name a slot's files by replacing
+ * the last character of the slot-1 path and nothing else.  Share game data
+ * (fe_share.h FE_SHARE_SLOTS) still offers and receives slots 1-5 only: its
+ * manifest is a wire format, and both ends must agree on it. */
+#define PSP_STATE_SLOT_COUNT 10
+/* The lists (the in-game SAVE STATES page, the browser's state shelf) were
+ * drawn for five rows and keep them: with ten slots they scroll. */
+#define PSP_STATE_SLOT_ROWS 5
 #define PSP_STATE_THUMB_WIDTH 64
 #define PSP_STATE_THUMB_HEIGHT 42
 #define PSP_STATE_THUMB_TEX_HEIGHT 64
@@ -40,7 +50,7 @@ static inline const char *psp_state_slot1_suffix(fe_console_t console)
           console == FE_CONSOLE_GB  ? ".gb.st0"  : ".st0";
 }
 
-/* Slot 1 is the historic .st0 file; slots 2-5 use .st1 through .st4. */
+/* Slot 1 is the historic .st0 file; slots 2-10 use .st1 through .st9. */
 static inline int psp_state_path_for_slot(char *out, size_t out_sz,
                                           const char *slot1_path,
                                           unsigned slot)
@@ -158,6 +168,31 @@ static inline int psp_state_delete_paths(char *state, size_t state_sz,
       return -1;
    }
    return 0;
+}
+
+/* THE LIST WINDOW (docs/UI-OVERLAY.md section 15.2): the first row (0-based
+ * slot index) a list of `n` slots shows in `rows` rows, with the cursor on
+ * slot `cur` (1-based) and the window last at `top`.  The cheats list's rule
+ * (ui_psp.c g_cht_top): the window stays put while the cursor is in it and
+ * otherwise moves just far enough to show it -- so a wrap from slot 1 to slot
+ * 10 shows 6-10, and walking back up scrolls a row at a time.  With n <=
+ * rows it is always 0, the five-slot page exactly.  Pure, so the host test
+ * (tools/tests/test_state_slots.c) runs the code both lists run. */
+static inline int psp_state_slot_top(int cur, int top, int n, int rows)
+{
+   if (cur > n)
+      cur = n;
+   if (cur < 1)
+      cur = 1;
+   if (cur - 1 < top)
+      top = cur - 1;
+   if (cur - 1 >= top + rows)
+      top = cur - rows;
+   if (top > n - rows)
+      top = n - rows;
+   if (top < 0)
+      top = 0;
+   return top;
 }
 
 #endif

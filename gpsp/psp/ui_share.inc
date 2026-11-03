@@ -73,7 +73,11 @@ static void sh_end(void)
 /* ---- paths: a ROM's data files, the one place they are derived ----------- */
 
 /* rom_dir/rel is the ROM; out = its save, or slot's state / thumb / shot.
- * The same rules as main_psp.c's save_path / state_path. */
+ * The same rules as main_psp.c's save_path / state_path.  Share's slots are
+ * the FIRST FE_SHARE_SLOTS (5) of this PSP's PSP_STATE_SLOT_COUNT (10): the
+ * manifest is a wire format, so slots 6-10 are neither offered nor written,
+ * and a Share slot must always be one this PSP has. */
+typedef char share_slots_fit[FE_SHARE_SLOTS <= PSP_STATE_SLOT_COUNT ? 1 : -1];
 static int share_path(char *out, size_t cap, const char *rom_dir,
                       const char *rel, int con, int kind, int slot)
 {

@@ -51,8 +51,9 @@ typedef enum
  * (main_psp.c's wake snapshot), or NULL for a flat page.  Set before
  * ui_open(); the pointer is only read while the menu is up. */
 void ui_set_backdrop(const uint16_t *frame, int w, int h);
-/* Five 64x64 PSP-5650 textures the state-slot screen loads the previews
- * into (main_psp.c carves them from the netdrv arena's tail), or NULL. */
+/* Ten 64x64 PSP-5650 textures (one per slot, PSP_STATE_SLOT_COUNT) the
+ * state-slot screen loads the previews into (main_psp.c carves them from the
+ * netdrv arena's tail), or NULL. */
 void ui_set_thumb_buffer(uint16_t *buf);
 /* Harness `ui_backdrop = <file>`: a raw 480x272 PSP-5650 picture drawn 1:1
  * behind the menu instead of the game, for the pixel comparison with the
@@ -95,7 +96,7 @@ uint16_t ui_console_shade(int console);
  * the wireless status screen; session_info is the status line (or NULL). */
 ui_action ui_frame(unsigned pad, int session_active, const char *session_info);
 void ui_set_state_base(const char *slot1_path);
-int ui_state_slot(void); /* selected slot, 1..5 */
+int ui_state_slot(void); /* selected slot, 1..PSP_STATE_SLOT_COUNT (10) */
 /* The SAVE STATES page (docs/UI-OVERLAY.md section 13) after the main loop
  * acted on its UI_ACT_SAVESTATE / UI_ACT_LOADSTATE (rc 0 = done): a save
  * keeps the page open and reports on its plate; a load closes the menu, or

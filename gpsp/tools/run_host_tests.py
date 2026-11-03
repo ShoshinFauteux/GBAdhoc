@@ -664,6 +664,16 @@ def suites(env: Env, baseline: Path | None):
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_state_delete tools/tests/test_state_delete.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_state_delete && "
+          # ...and the slot names themselves (ten slots, the 4.5.0 names
+          # unchanged) and the slot lists' scroll window, beside it.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+          "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
+          "-o /tmp/t_state_slots tools/tests/test_state_slots.c && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_state_slots && "
+          # ...and the two lists that window them: the page's real
+          # screen_state_slots and the shelf's browser_state_panel against
+          # stubs, mutants of both, and Share's compile-time slot check.
+          "python3 tools/tests/test_state_page.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

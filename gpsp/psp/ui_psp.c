@@ -267,6 +267,10 @@ static int g_state_slot = 1;
 static int g_browser_state_open;
 static int g_ui_shell;                    /* 0 = Shelf, 1 = Marquee */
 static int g_browser_state_slot = 1;
+/* The first slot each list shows (0-based; state_slots.h psp_state_slot_top):
+ * ten slots, five rows. */
+static int g_state_top;
+static int g_browser_state_top;
 /* Shelf delete (docs/CONTROL-REMAP.md section 11): the slot whose delete is
  * waiting for X (0 = none), and the panel's one-line report of the last one,
  * kept until the next press. */
@@ -300,7 +304,7 @@ static char g_join_group[9];
 static const uint16_t *g_ov_frame;          /* the snapshot, or NULL      */
 static int   g_ov_fw = 240, g_ov_fh = 160;   /* its size in texels         */
 static uint16_t *g_ov_full;                 /* harness: 480x272 at 512    */
-static uint16_t *g_ov_thumbs;               /* 5 x 64x64, or NULL         */
+static uint16_t *g_ov_thumbs;               /* 10 x 64x64, or NULL        */
 static int   g_ov_browse;                   /* browser Settings: art bake */
 static int   g_ov_open_k = OV_OPEN_FRAMES;   /* frames into the transition */
 static int   g_ov_linked;                   /* a session is up            */
@@ -1103,8 +1107,8 @@ void ui_open(void)
    ov_title_take();
    g_prev_pad = 0xFFFFFFFFu;   /* swallow the opening chord */
    {
-      /* "n of 5 used" beside Save states: five stats, once, with the core
-       * paused -- before the opening transition, never inside it. */
+      /* "n of 10 used" beside Save states: a stat a slot, once, with the
+       * core paused -- before the opening transition, never inside it. */
       unsigned t0 = sceKernelGetSystemTimeLow();
       ov_slots_stat();
       FE_EVT_ONLY(t0);
@@ -1256,7 +1260,7 @@ static void footer(const char *hint)
  *
  * MEMORY.  Nothing here allocates.  The frame is the wake snapshot
  * (main_psp.c, the netdrv arena's tail) taken at menu_open(); the slot
- * thumbnails are five 64x64 textures from the same tail.  Either may be
+ * thumbnails are ten 64x64 textures from the same tail.  Either may be
  * NULL -- then the screen falls back to a flat page / empty plates. */
 static void clip_title(char *t, int px);    /* with the browser, below    */
 
@@ -4682,6 +4686,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
             break;
          }
          g_state_slot = 1;
+         g_state_top = 0;
          screen_to(SCR_STATE_SLOTS);
          return screen_state_slots(0);   /* draw this frame as the new page */
       case M_WIRELESS:  screen_to(SCR_WIRELESS); break;
@@ -4859,7 +4864,7 @@ static void ov_stamp(char *out, size_t n, const ScePspDateTime *t)
             t->year, t->hour, t->minute);
 }
 
-/* Which slots hold a state, and when each was saved: five stats.  Once per
+/* Which slots hold a state, and when each was saved: ten stats.  Once per
  * menu open and once per page scan -- never per frame. */
 static void ov_slots_stat_io(void)
 {
@@ -4892,7 +4897,7 @@ static void ov_slots_stat(void)
 
 /* Once, as the slots screen opens (and after a save or a delete on it):
  * which slots hold a state, their times, and their previews into the
- * thumbnail textures.  Five stats and at most five 5 KiB reads, with the
+ * thumbnail textures.  Ten stats and at most ten 5 KiB reads, with the
  * core paused -- never inside the draw loop.  The full preview is forgotten:
  * the slot it showed may have just changed, and it is read again on dwell. */
 static void ov_slots_scan_io(void)
@@ -5046,8 +5051,9 @@ int ui_state_load_done(int rc)
 
 /* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13; Fable's direction A,
  * "Split", builds/savestate-mockups/README.md section 6).  One page for save
- * and load: the five slots on the left (the 64x42 thumbnail, the slot, its
- * time), the highlighted slot's picture 1:1 on the right.
+ * and load: the slots on the left, five rows of the ten (the 64x42
+ * thumbnail, the slot, its time), the highlighted slot's picture 1:1 on the
+ * right.
  *
  *   X  load at once and back into the game     (empty: says so, plate)
  *   [] save; over a saved slot the plate asks first; the page stays open
@@ -5058,7 +5064,9 @@ int ui_state_load_done(int rc)
  * here.  Both destructive actions have their own key AND a question, and
  * while a question is up X answers it and every other key keeps the slot,
  * so an X meant for "overwrite" or "delete" can never load instead. */
-#define SS_ROW_Y(i)  (72 + 34 * (i))
+#define SS_PITCH     34
+#define SS_ROW_Y(r)  (72 + SS_PITCH * (r))   /* r: the row on screen, 0-4 */
+#define SS_BAR_X     218         /* the scrollbar, between rows and panel */
 #define SS_PX 228                /* the preview panel */
 #define SS_PY 62
 #define SS_PW 240
@@ -5169,6 +5177,8 @@ static ui_action screen_state_slots(unsigned edges)
                            ? g_state_slot + 1 : 1;
       g_ov_dwell = 0;
    }
+   g_state_top = psp_state_slot_top(g_state_slot, g_state_top,
+                                    PSP_STATE_SLOT_COUNT, PSP_STATE_SLOT_ROWS);
    cur = g_state_slot - 1;
    if (g_state_base[0])
    {
@@ -5218,10 +5228,14 @@ static ui_action screen_state_slots(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "SAVE STATES");
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   /* Five rows of the ten slots (state_slots.h PSP_STATE_SLOT_ROWS): the
+    * window follows the cursor, and the cheats list's 2 px scrollbar says
+    * where it is, in the gap between the rows and the preview. */
+   for (i = g_state_top; i < PSP_STATE_SLOT_COUNT &&
+                         i < g_state_top + PSP_STATE_SLOT_ROWS; i++)
    {
-      int y = SS_ROW_Y(i), by = y + 1, sel = (i == cur);
-      char lbl[16];
+      int y = SS_ROW_Y(i - g_state_top), by = y + 1, sel = (i == cur);
+      char lbl[24];              /* "Slot %d": room for any int, -Wformat */
       /* The band is the drawer card's rule, card = text + 1: two lines,
        * 32 rows, bleeding off the left edge. */
       if (sel)
@@ -5245,6 +5259,9 @@ static ui_action screen_state_slots(unsigned edges)
       else
          vid_text(64, y + 14, "empty", C_DIM);
    }
+   ov_scrollbar(SS_BAR_X, SS_ROW_Y(0) + 1, SS_PITCH * PSP_STATE_SLOT_ROWS - 2,
+                g_state_top * SS_PITCH, SS_PITCH * PSP_STATE_SLOT_ROWS,
+                SS_PITCH * PSP_STATE_SLOT_COUNT);
    ss_panel(cur);
    {
       char cap[48];
@@ -7588,7 +7605,15 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
    rom_display_name(&g_roms[cur], title, sizeof(title), 1);
    clip_title(title, 174);
    vid_text(x + 14, 34, title, C_DIM);
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   /* Five cards of the ten slots, as the in-game page: the window follows
+    * the cursor (g_browser_state_top), the scrollbar sits right of them. */
+   g_browser_state_top = psp_state_slot_top(g_browser_state_slot,
+                                            g_browser_state_top,
+                                            PSP_STATE_SLOT_COUNT,
+                                            PSP_STATE_SLOT_ROWS);
+   for (i = g_browser_state_top; i < PSP_STATE_SLOT_COUNT &&
+                                 i < g_browser_state_top + PSP_STATE_SLOT_ROWS;
+        i++)
    {
       /* The card is y-3..y+28 (32 rows).  Its two lines, 14 apart, are
        * placed as one block with their cap heights centred in it
@@ -7596,7 +7621,8 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
        * y to y+24, 3 rows of card above and 4 below.  They were at y+1 and
        * y+15, which put the second line's capitals on the card's bottom
        * edge and "empty"'s descenders 4 px past it. */
-      int y = 62 + i * 35, exists = g_browser_state_exists[i];
+      int y = 62 + (i - g_browser_state_top) * 35;
+      int exists = g_browser_state_exists[i];
       int ty = vid_text_y_in(y - 3, 32 - 14);
       vid_rect(x + 10, y - 3, 182, 32,
                i + 1 == g_browser_state_slot ? C_CARD : C_BG_TOP, 255);
@@ -7613,13 +7639,16 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
                   C_DIM);
       }
       {
-         char slot[16];
+         char slot[24];          /* "Slot %d": room for any int, -Wformat */
          snprintf(slot, sizeof(slot), "Slot %d", i + 1);
          vid_text(x + 66, ty, slot, C_SEL);
       }
       vid_text(x + 66, ty + 14, exists ? "saved" : "empty",
                exists ? C_VALUE : C_DIM);
    }
+   ov_scrollbar(x + 196, 59, 35 * PSP_STATE_SLOT_ROWS - 3,
+                g_browser_state_top * 35, 35 * PSP_STATE_SLOT_ROWS,
+                35 * PSP_STATE_SLOT_COUNT);
    vid_rect(x + 10, 238, 182, 1, C_CARD, 255);
    if (g_shelf_del)
    {
@@ -8852,6 +8881,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                   PSP_STATE_THUMB_TEX_HEIGHT * sizeof(uint16_t));
             g_browser_state_open = 1;
             g_browser_state_slot = 1;
+            g_browser_state_top = 0;
             g_shelf_del = 0;
             g_shelf_note[0] = '\0';
             g_browser_preview_rom = -1;

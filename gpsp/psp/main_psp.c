@@ -2064,9 +2064,14 @@ static int       g_wake_have;        /* 1 = it holds a real frame       */
  * stored at the texture's top-left and drawn with these dimensions, so it
  * lands exactly where (and as large as) the live picture did. */
 static unsigned  g_wake_w = 240, g_wake_h = 160;
-/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x64
- * PSP-5650 textures, also carved from the netdrv arena's tail -- no heap. */
-#define UI_THUMB_BYTES (5u * 64u * 64u * 2u)
+/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): one 64x64
+ * PSP-5650 texture per slot, ten of them (80 KiB), also carved from the
+ * netdrv arena's tail, which is the exact size of what lives in it: netdrv
+ * 516,224 B + the wake frame 131,072 + these 81,920 + the PNG encoder's
+ * 206,912 (fe_png_work_bytes(240, 160)) + three 64-byte alignments = a
+ * 936,317 B block, 40,960 more than five slots took (docs/UI-OVERLAY.md
+ * section 15.3). */
+#define UI_THUMB_BYTES ((unsigned)PSP_STATE_SLOT_COUNT * 64u * 64u * 2u)
 static uint16_t *g_ui_thumbs;
 static int       g_wake_menu;        /* main loop: show the overlay     */
 static const uint16_t *g_last_pix;   /* last frame the core handed us    */
@@ -13262,7 +13267,7 @@ int main(int argc, char *argv[])
        * MiB, whatever the binary's size), so nothing here depends on this
        * block's size any more, and the ~150 KiB it left idle was ROM cache.
        *
-       * In order: netdrv, the wake overlay's frozen frame, the menu's five
+       * In order: netdrv, the wake overlay's frozen frame, the menu's ten
        * state thumbnails (the Save/Load state screens show them in game,
        * where the heap is gone, docs/UI-OVERLAY.md), the screenshot encoder's
        * work memory (issue #13).  All of them cost nothing beyond this block,
@@ -15934,7 +15939,7 @@ session_top:
        *
        * The menu already offers both, but a quick-save you have to open a
        * menu for is not a quick-save. These shortcuts intentionally stay on
-       * slot 1 (.st0); the menu and browser can access all five slots.
+       * slot 1 (.st0); the menu and browser can access all ten slots.
        *
        * Edge-triggered on the shoulder button while SELECT is held, so
        * holding the chord fires once rather than every frame.  SELECT+START
