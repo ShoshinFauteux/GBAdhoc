@@ -3037,8 +3037,8 @@ static int mer_sameframe_active(void)
 #endif
 static int      g_flip_early       = 1;   /* `flip_early`      */
 /* FF FLIP PACING (`ff_flip_pace`, docs/FF-PRESETS.md): never replace a flip
- * the LCD has not latched yet.  Bit 0: the paced branch's early flip (tier
- * 0a) waits for the previous one to latch -- under 3x a loop is about one
+ * the LCD has not latched yet.  Bit 0 (3x only): the paced branch's early
+ * flip (tier 0a) waits for the previous one to latch -- under 3x a loop is about one
  * vblank long, and an early flip landing in the interval the previous one is
  * still pending in replaced it (a dropped picture, the next one 6 frames on).
  * Bit 1: the draw gate's presets hold a finished picture in the back buffer
@@ -17110,12 +17110,14 @@ session_top:
           * is genuinely in the radio and this whole line of reasoning is
           * wrong. */
          FE_LP_SET(FELP_VWAIT);
-         /* FF FLIP PACING bit 0: the last flip has not latched yet (a loop
-          * that overran into the interval it is pending in, as 3x does): no
-          * early flip in this wait -- it would replace that one.  The swap
-          * after the wait flips this frame, as 4.1.0 always did. */
+         /* FF FLIP PACING bit 0, 3x only: the last flip has not latched yet
+          * (a loop that overran into the interval it is pending in): no early
+          * flip in this wait -- it would replace that one.  The swap after the
+          * wait flips this frame, as 4.1.0 always did.  Not at 1x: there a
+          * post-vblank flip would keep every later frame post-vblank (one
+          * frame of latency for good); low latency's recovery stands. */
          ffh_fe = g_flip_early;
-         if ((g_ff_flip_pace & 1) && g_flip_early && ffh_too_soon(1))
+         if ((g_ff_flip_pace & 1) && g_ff_mult && g_flip_early && ffh_too_soon(1))
          {
             g_flip_early = 0;
             g_ffh_waits++;
