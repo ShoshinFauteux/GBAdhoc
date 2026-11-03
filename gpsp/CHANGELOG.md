@@ -10,10 +10,34 @@ separately and are intended for upstream.
 
 ---
 
-## Unreleased
+## [4.6.0-beta.2] - 2026-11-03
 
-- Two PSPs on different GBAdhoc versions no longer start a link session: both are told, for
-  the Wireless Adapter, Link Cable and GB/GBC alike, instead of the session misbehaving.
+Pre-release. Links only with the same beta (the Wireless Adapter protocol changed).
+
+- Wireless Adapter play is scheduled frame by frame: each PSP sends its frame's adapter traffic
+  with a marker and waits only when that marker is really missing. Lag no longer builds up,
+  resends fall from 40-60 % to under 5 % in Mario Tennis, and the 57 fps cap on wireless
+  sessions is gone.
+- Settings -> CPU clock: 333 MHz (default), 222 MHz, or System (leave the CFW's clock alone).
+- More ROM cache on the PSP-1000.
+- Two PSPs on different GBAdhoc builds no longer start a link session: both are told, for the
+  Wireless Adapter, Link Cable and GB/GBC alike.
+- Sleep after *Quit to game list* no longer powers the PSP off: the Media Engine module stays
+  loaded across the return to the list (#28; diagnosis and tests by Chandler Hardy).
+- PSP Go: sliding it shut sleeps again during play (4.5.0 regression).
+- Fire Emblem: The Morrow's Golden Country boots and plays (#10): an ARM word with condition
+  NV is never executed (PR #26 by Chandler Hardy, his test ROM included), and a bad jump at the
+  edge of the BIOS region no longer resets the game.
+- The Morrow's Golden Country no longer stutters at ~46 fps: a fixed-base STMIA that rewrites
+  code retires only its own span instead of flushing all RAM code (PR #27 by Chandler Hardy).
+  47.5 -> 58.8 fps on the PSP-1000 and PSP-3000. MonoMyth and other games using ipatix's
+  sound mixer benefit too.
+- Release builds come from one command (`tools/release.sh`) with the build flags fixed in the
+  source, so a release can't be built with the wrong set.
+
+**Known issues:** Mario Golf: Advance Tour's adapter lobby can still stick when both players
+press at the same moment (leave and rejoin). The Morrow's Golden Country has not had long play
+testing. 222 MHz speed has not been measured.
 
 ## [4.5.0] — 2026-11-01
 

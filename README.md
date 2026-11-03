@@ -21,7 +21,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.5.0</b> &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 4.6.0 beta 2</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -43,6 +43,24 @@
   <br>
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
+
+> **This is the `beta` branch: GBAdhoc 4.6.0 beta 2.**
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.2)
+> (the *latest release* link above is the stable 4.5.0). What the beta adds:
+>
+> - **Wireless Adapter play is scheduled frame by frame.** Each PSP sends its frame's
+>   adapter traffic with a marker and the other waits only when that marker is really
+>   missing. Lag no longer builds up, and the 57 fps cap on wireless sessions is gone.
+>   A beta links only with the same beta.
+> - **Fire Emblem: The Morrow's Golden Country** boots, and its ~46 fps stutter is gone
+>   (#10; fixes by Chandler Hardy, #26 and #27).
+> - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
+>   **PSP Go's slider** sleeps again during play.
+> - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the
+>   PSP-1000**, and **mismatched builds are refused** before they link.
+>
+> Full notes and known issues: [CHANGELOG](gpsp/CHANGELOG.md). Everything below describes
+> 4.5.0 unless it says otherwise.
 
 **GBAdhoc is compatible with Pokémon MonoMyth.** The game turns away inaccurate
 emulators such as VBA and tells you to use an accurate one like mGBA. This release passes
@@ -927,6 +945,10 @@ Pokémon MonoMyth passes the game's accuracy check and has been played through t
 Adapter. The link can't keep up: Tennis's connection icon flickers
 through the match and play hitches constantly; Golf lags and eventually disconnects. The
 Wireless Adapter path is the focus of the next updates, and they will address both.
+**4.6.0 beta:** the adapter is now scheduled frame by frame. On a PSP-1000 + PSP-3000 pair,
+Tennis resends under 5 % of packets (was 40-60 %) at 56 fps on both sides, and Golf drops
+none (was 13-15 %). Golf's lobby can still stick when both players press at the same moment:
+leave and rejoin.
 
 **Works, tested on hardware, on all three PSP models:** Wireless Adapter link battles and
 trades, sleep/wake with the Media Engine live, GB/GBC at full speed, and Quit to game
@@ -964,7 +986,8 @@ cartridge-transfer runs).
   about 15 seconds.
 - The wake prompt appears a beat after the screen lights: the LCD shows video memory the
   instant it powers on, and we blank it at suspend, so you get black then the prompt.
-- Wireless Adapter sessions are paced to 57 fps on both consoles.
+- Wireless Adapter sessions are paced to 57 fps on both consoles in 4.5.0. The 4.6.0 beta
+  removes that cap: a session runs as fast as the slower PSP allows.
 - HOME as the menu button needs `gbadhoc_home.prx` beside the EBOOT; without it you get
   a message and START+SELECT keeps the job.
 - Hero art is not included in this repository; see
@@ -974,6 +997,26 @@ cartridge-transfer runs).
   reset*) and your battery save stays in memory. If the PSP itself ever faults, the
   screen shows a diagnostic page; a photo of it is the most useful thing a bug report can
   carry.
+
+### Planned: launch a game straight from the XMB (#29)
+
+Each game will be able to have its own XMB entry, with its own icon and background, that
+opens straight into the game. The design:
+
+- **A small launcher per game, not a copy of the emulator.** The entry's EBOOT holds the
+  icon (ICON0, 144×80), the background (PIC1, 480×272), the title and a tiny launcher that
+  starts the installed `PSP/GAME/GBAdhoc` with the ROM's path. Each entry is tens of KB, and
+  updating GBAdhoc updates every entry. Saves, settings, cheats and sleep stay in one place.
+- **The ROM is not copied into the entry.** The launcher points at your ROM on the Memory
+  Stick (or the Go's internal storage), so an entry is never a shareable copy of a game.
+- **GBAdhoc gains a direct-boot mode:** given a ROM path, it opens that game, and *Quit*
+  returns to the XMB instead of the game list.
+- **Two ways to make an entry, one format:** on the PSP itself, picking a ROM and its art
+  (GBAdhoc's own box and hero art can be reused), and with a small desktop program for
+  Windows. Both use the same EBOOT-building code, so they make identical entries.
+
+The first step is proving the launcher on all three models, including a PSP Go launching
+from its internal storage.
 
 ---
 
