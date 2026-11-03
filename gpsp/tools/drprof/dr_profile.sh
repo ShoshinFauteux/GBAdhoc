@@ -2,6 +2,7 @@
 # dr_profile.sh -- one profiled twin run under qemu + the drprof plugin.
 #
 #   dr_profile.sh OUTDIR ROM STATE SCRIPT FRAMES [VARIANT] [extra dr_host args]
+# STATE '-' boots the ROM from power-on (no savestate); SCRIPT '-' runs no input.
 # SAV=file.sav (in fx/) is copied to a scratch path first: fixtures are never written.
 #
 # Paths are relative to $DRPROF_HOME/fx (fixtures) and $DRPROF_HOME/runs.
@@ -21,6 +22,7 @@ docker run --rm -e DR_RAMDUMP -e DR_RAMDUMP_FILE -e SMC_EVT_FILE -e SMC_EVT_LO -
   set -e
   O=/w/runs/$OUT
   SCR=''; [ '$SCRIPT' != '-' ] && SCR='--script $SCRIPT'
+  ST=''; [ '$STATE' != '-' ] && ST='--state $STATE'
   SV=''; [ -n '${SAV:-}' ] && cp '${SAV:-}' /tmp/run.sav && SV='--save /tmp/run.sav'
   PLUG=''
   if [ '$PROF' = 1 ]; then
@@ -31,6 +33,6 @@ docker run --rm -e DR_RAMDUMP -e DR_RAMDUMP_FILE -e SMC_EVT_FILE -e SMC_EVT_LO -
     PLUG=\"-plugin /w/bin/drprof_plugin.so,out=\$O/prof.txt,symcat=\$O/symcat.txt,ctl=\$CTL,zarg=\$ZARG\$BLKA${HOT:+,hot=$HOT}\"
   fi
   time /opt/qemu/bin/qemu-mipsel -cpu 74Kf \$PLUG $BIN \
-     --rom $ROM --bios-dir . \$SV --state $STATE \$SCR --frames $FRAMES \
+     --rom $ROM --bios-dir . \$SV \$ST \$SCR --frames $FRAMES \
      --hash \$O/hash.txt --log \$O/host.log --stubmap \$O/stubmap.txt $* 2>&1 | tail -12
 "
