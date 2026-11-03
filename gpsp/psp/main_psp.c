@@ -3049,7 +3049,16 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
  * every ~17 s and for seconds at a time two flips land in one interval (one
  * never shown) and the next has none.  Never blocks: the loop keeps
  * emulating, the held picture goes out on the first loop that may flip it,
- * and a newer render that is presented meanwhile replaces it. */
+ * and a newer render that is presented meanwhile replaces it.
+ * Bit 2: 3x presents the way Smooth does -- the draw gate at 60 pictures a
+ * second plus bit 1's hold -- under a ceiling of 3 frames per vblank
+ * (ffh_cap3), instead of one picture per 3-frame loop.  A console that runs
+ * 3x in full sees the same 180 fps and one picture per vblank as before.
+ * One that cannot (FireRed at 222 MHz: ~125 fps = 42 loops a second) used to
+ * flip each loop as it finished, 42 pictures a second on a 59.94 Hz LCD, so
+ * every picture stayed up 1 or 2 vblanks in a near 50/50 mix; 4.1.0's slower
+ * ~103 fps was 34 a second, mostly 2-vblank holds, a steadier rhythm.  Here
+ * it is one picture per vblank, each ~2 frames on, at the same speed. */
 #ifndef PLAY_FF_FLIP_PACE
 #define PLAY_FF_FLIP_PACE 0
 #endif
@@ -3059,6 +3068,11 @@ static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer ho
 static unsigned g_ffh_holds __attribute__((section(".sbss")));
 static unsigned g_ffh_waits __attribute__((section(".sbss")));
 static unsigned g_ffh_vb __attribute__((section(".sbss")));
+static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop */
+static int      g_ffc_on __attribute__((section(".sbss")));    /* 3x ceiling anchored */
+static unsigned g_ffc_vc __attribute__((section(".sbss")));
+static unsigned g_ffc_f __attribute__((section(".sbss")));
+static unsigned g_ffc_waits __attribute__((section(".sbss")));
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
@@ -12553,6 +12567,27 @@ static int ffh_hold(void)
    return 1;
 }
 
+/* FF FLIP PACING bit 2: the 3x ceiling for 3x run through the gate.  At most
+ * 3 frames per vblank since the anchor (the current interval's 3 included);
+ * ahead of that, block on the vblank, as the paced 3x loop does.  Behind by
+ * more than 8 vblanks' worth: re-anchor (forgive, never sprint). */
+static void ffh_cap3(void)
+{
+   unsigned f = fe_host_frame_count(), vc = sceDisplayGetVcount();
+   if (!g_ffc_on || (int)(3u * (vc - g_ffc_vc) - (f - g_ffc_f)) > 3 * 8)
+   {
+      g_ffc_on = 1;
+      g_ffc_vc = vc;
+      g_ffc_f  = f;
+      return;
+   }
+   while ((int)((f - g_ffc_f) - 3u * (sceDisplayGetVcount() - g_ffc_vc)) >= 3)
+   {
+      sceDisplayWaitVblankStart();
+      g_ffc_waits++;
+   }
+}
+
 /* The paced branch's vblank wait, in three calls: begin, one step per pass
  * of the wait loop (1 = poll again shortly instead of blocking on the
  * vblank), end.  Single thread, single owner: the main loop. */
@@ -12921,10 +12956,11 @@ static void lat_census(void)
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
           sceDisplayGetVcount() - g_lat_vc0, g_ll_pull);
-   if (g_ff_flip_pace && (g_ffh_holds || g_ffh_waits))
-      fe_evt("ffh pace=%d holds=%u held_loops=%u waits=%u", g_ff_flip_pace,
-             g_ffh_holds, g_ffh_vb, g_ffh_waits);
-   g_ffh_holds = g_ffh_vb = g_ffh_waits = 0;
+   if (g_ff_flip_pace && (g_ffh_holds || g_ffh_waits || g_ffc_waits))
+      fe_evt("ffh pace=%d holds=%u held_loops=%u waits=%u cap3_waits=%u 3x=%d",
+             g_ff_flip_pace, g_ffh_holds, g_ffh_vb, g_ffh_waits, g_ffc_waits,
+             g_ffh_3x);
+   g_ffh_holds = g_ffh_vb = g_ffh_waits = g_ffc_waits = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -14136,7 +14172,7 @@ int main(int argc, char *argv[])
       g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
                                                g_mer_early_retire) != 0;
       g_ff_flip_pace = (int)fe_ini_get_int(HARNESS_INI, "ff_flip_pace",
-                                           g_ff_flip_pace) & 3;
+                                           g_ff_flip_pace) & 7;
       /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
        * on an early nudge (TIER 1 POLICY at g_flip_early) */
       g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", PLAY_ME_LOWLAT);
@@ -16469,6 +16505,13 @@ session_top:
          g_ff_gate = ff_engaged && !g_pcfg.bench_mode &&
                      (pcfg_ff_mode() == PCFG_FF_SMOOTH ||
                       pcfg_ff_mode() == PCFG_FF_UNLIMITED);
+         /* FF FLIP PACING bit 2: 3x through the gate under a 3x ceiling. */
+         g_ffh_3x = (g_ff_flip_pace & 4) && g_ff_mult && !g_pcfg.bench_mode;
+         if (g_ffh_3x)
+         {
+            g_ff_mult = 0;
+            g_ff_uncapped = g_ff_gate = 1;
+         }
          if (session)
             g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
 #ifdef REWIND
@@ -16487,8 +16530,10 @@ session_top:
           * Off, the override is -1 and the frameskip option rules as before. */
          {
             unsigned period = !g_ff_gate ? 0u :
-               pcfg_ff_mode() == PCFG_FF_SMOOTH ? FF_GATE_PERIOD_SMOOTH_US :
-                                                  FF_GATE_PERIOD_UNLIMITED_US;
+               pcfg_ff_mode() == PCFG_FF_SMOOTH || g_ffh_3x ?
+                  FF_GATE_PERIOD_SMOOTH_US : FF_GATE_PERIOD_UNLIMITED_US;
+            if (!g_ffh_3x || !g_ff_uncapped)
+               g_ffc_on = 0;       /* the 3x ceiling re-anchors next time */
             int draw = 1;
             if (period != g_ff_gate_st.period_us)
                ff_gate_arm(&g_ff_gate_st, period);
@@ -17218,8 +17263,12 @@ session_top:
          g_lw_swapped = 0;
          g_drew = 0;
       }
-      else if (g_drew)
+      else
       {
+         if (g_ffh_3x)
+            ffh_cap3();           /* FF FLIP PACING bit 2: the 3x ceiling */
+         if (g_drew)
+         {
          /* UNCAPPED FF: swap only when a frame was actually blitted.
           *
           * No same-frame handling here.  mer_sameframe_active() is false
@@ -17233,6 +17282,7 @@ session_top:
             lat_swap(0);
             g_drew = 0;
             g_ffh_held = 0;
+         }
          }
       }
       FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
