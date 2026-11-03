@@ -3686,7 +3686,7 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
 #ifndef SMC_PARTIAL_SAFE
 #error XLAT_LAST_TRY_LAZY needs SMC_PARTIAL_SAFE (its dispatch islands)
 #endif
-u32 xlat_lazy_links;
+u32 xlat_lazy_links CORE_SBSS;     /* small data: docs/LAYOUT-PINNING.md */
 #define XLAT_LAZY_LINKS_NOW    xlat_lazy_links
 #define XLAT_LAZY_LINKS_SET(v) (xlat_lazy_links = (v))
 #else

@@ -47,28 +47,30 @@
 
 void rfu_net_receive(const void *buf, size_t len, uint16_t client_id);
 
-unsigned rfu_sched_d;                  /* D, 0 = off */
-unsigned rfu_sched_held_peak;
+unsigned rfu_sched_d CORE_SBSS;        /* D, 0 = off */
+unsigned rfu_sched_held_peak CORE_SBSS;
 static struct {
   s32 stamp;                        /* the partner's frame */
   u32 len, cid;
   u8  data[116];
-} rfu_sched_ring[RFU_SCHED_RING];
-static u32 rfu_sched_head, rfu_sched_tail;
-static u32 rfu_sched_replay;
-static u32 rfu_sched_linked, rfu_sched_on, rfu_sched_gave_up;
-static u32 rfu_sched_cid, rfu_sched_cfr;
-static s32 rfu_sched_off, rfu_sched_peer_start, rfu_sched_peer_done;
-static u32 rfu_sched_peer_ok;
-static u32 rfu_sched_peer_paused, rfu_sched_paused;
-unsigned rfu_sched_relock_n;
-unsigned rfu_sched_no_poll_on = 1;
-unsigned rfu_sched_ni_on = 1;
-static s32 rfu_sched_ni_at = -100000;
+} rfu_sched_ring[RFU_SCHED_RING] CORE_SBSS;
+static u32 rfu_sched_head CORE_SBSS, rfu_sched_tail CORE_SBSS;
+static u32 rfu_sched_replay CORE_SBSS;
+static u32 rfu_sched_linked CORE_SBSS, rfu_sched_on CORE_SBSS,
+           rfu_sched_gave_up CORE_SBSS;
+static u32 rfu_sched_cid CORE_SBSS, rfu_sched_cfr CORE_SBSS;
+static s32 rfu_sched_off CORE_SBSS, rfu_sched_peer_start CORE_SBSS,
+           rfu_sched_peer_done CORE_SBSS;
+static u32 rfu_sched_peer_ok CORE_SBSS;
+static u32 rfu_sched_peer_paused CORE_SBSS, rfu_sched_paused CORE_SBSS;
+unsigned rfu_sched_relock_n CORE_SBSS;
+unsigned rfu_sched_no_poll_on CORE_SDATA = 1;
+unsigned rfu_sched_ni_on CORE_SDATA = 1;
+static s32 rfu_sched_ni_at CORE_SDATA = -100000;
 static struct {
   u32 valid, ptype, h, plen, cid;
   u32 data[24];
-} rfu_sched_pend;
+} rfu_sched_pend CORE_SBSS;
 
 /* Turn ticks on (d >= 1) or off (0).  Ticks replace the older delivery rules:
  * frame pace with its hold bound, shedding, the overflow hold and supersede.

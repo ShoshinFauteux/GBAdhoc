@@ -102,7 +102,7 @@ def current() -> list[str]:
     """Everything the lock pins, as sorted `section key=value` lines."""
     lines = ["core %s=%s" % kv for kv in header_defs(CORE_HDR).items()]
     lines += ["frontend %s=%s" % kv for kv in header_defs(FE_HDR).items()]
-    pins = ("GBA_LINK", "REWIND", "LAYOUT_PIN", "LAYOUT_PAD_BYTES", "CHEATS", "HOT_DATA_GUARD",
+    pins = ("GBA_LINK", "REWIND", "LAYOUT_PIN", "LAYOUT_PAD_BYTES", "LAYOUT_PAD_RO_BYTES", "CHEATS", "HOT_DATA_GUARD",
             "PSP_PIXFMT", "TGB_LAZY_TIMER", "PSP_LARGE_MEMORY")
     for rel in ("Makefile", "psp/Makefile"):
         d = make_defaults(rel)

@@ -98,6 +98,21 @@
   typedef signed long long int s64;
 #endif
 
+/* Core state added after 4.5.0 lives in the small-data sections.  .sdata and
+ * .sbss sit in the gap before the 8 KiB-aligned .bss, so a variable there
+ * moves nothing; one in .data or .bss moves every core variable linked after
+ * it off its D-cache set (docs/LAYOUT-PINNING.md, "Keeping the pads").  The
+ * attribute makes the compiler address the variable from $gp, which -G0 code
+ * otherwise never does; the link fails if small data outgrows $gp's window.
+ * gba_memory.c's GAMEPAK_SBSS is the same thing. */
+#ifdef PSP
+#define CORE_SBSS  __attribute__((section(".sbss")))    /* zero-initialised */
+#define CORE_SDATA __attribute__((section(".sdata")))   /* initialised */
+#else
+#define CORE_SBSS
+#define CORE_SDATA
+#endif
+
 /* GBA palette entries are BGR555 (B 10-14, G 5-9, R 0-4).  Which 16-bit
  * layout we expand them into is a build-time choice, because every consumer
  * downstream -- the blend code in video.cc, the frontend blit -- just

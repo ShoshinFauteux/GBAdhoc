@@ -45,7 +45,7 @@ prints the EBOOT md5. It takes no options: a build it would refuse cannot become
 route either, because `make_release.sh` runs the same checks.
 
 The feature set lives in `gpsp_features.h` and `psp/fe_features.h`; GBA link, rewind, the pinned
-layout (`LAYOUT_PAD_BYTES` 528, `LAYOUT_PAD_RO_BYTES` 976) and the release frontend defines are the defaults. Docker supplies
+layout (`LAYOUT_PAD_BYTES`, `LAYOUT_PAD_RO_BYTES`) and the release frontend defines are the defaults. Docker supplies
 the toolchain so the build is reproducible on any machine. To change what ships, see "The drift
 check" in `docs/BUILD-SWITCHES.md`.
 

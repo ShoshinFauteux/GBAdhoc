@@ -777,7 +777,7 @@ static u32 rfu_gq_depth_peek(void);
  * standing for good: arrivals and deliveries are both one a frame, so nothing
  * ever removes them, and each one is a frame of round trip the lockstep game
  * sees (Golf's lobby: q=1 every frame, NI rounds 16 frames instead of 8). */
-static u32 rfu_pace_floor = 0;
+static u32 rfu_pace_floor CORE_SBSS;   /* small data: docs/LAYOUT-PINNING.md */
 void rfu_set_pace_floor(u32 n) { rfu_pace_floor = n; }
 static u32 rfu_listen_this_frame, rfu_catchgq_this_frame;
 static int rfu_pace_catchup(void)
@@ -1784,7 +1784,7 @@ static void rfu_net_send_bcast(u32 ptype, u32 h, const u32 *pload) {
 #define RFU_SCHED_MARK   0xA5
 #define RFU_SCHED_MARK_H 91
 #define RFU_SCHED_MARK_C 87
-static u32 rfu_sched_mark;
+static u32 rfu_sched_mark CORE_SBSS;
 static int rfu_sched_hold_send(int client_id, u32 ptype, u32 h, const u32 *pload,
                                unsigned plen);
 #endif

@@ -713,7 +713,7 @@ const unsigned gamepak_buffer_blocksize = 1024*1024;
  * cache. */
 u32 gamepak_buffer_pages;
 static u8  gamepak_block_pages[32] GAMEPAK_SBSS;
-static u32 gamepak_block_heap;
+static u32 gamepak_block_heap GAMEPAK_SBSS;
 
 static u32 gamepak_block_bytes(u32 i)
 {
