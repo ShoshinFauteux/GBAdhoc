@@ -151,6 +151,9 @@ static uint32_t no_input(void) { return 0; }
  * so every other variant links without them. */
 extern void jit_stats_report(FILE *f) __attribute__((weak));
 extern void jit_code_audit_now(void) __attribute__((weak));
+/* SMC_FALLBACK_STATS variants: [10]/[11] are STALE_CHECK's block-entry checks
+ * and mismatches, whose own log (ms0:/stale.txt) stops after 8 entries. */
+extern uint32_t smc_fallback_stats[16] __attribute__((weak));
 
 /* The GBA RTC (Unbound, Emerald) reads the host clock; a profiling/oracle
  * run must not depend on when it was started.  gba_memory.c's documented
@@ -389,6 +392,14 @@ int main(int argc, char **argv)
    if (hf) fclose(hf);
    if (jit_stats_report)
       jit_stats_report(stderr);
+   if (smc_fallback_stats)
+      fprintf(stderr, "SMC_FB stale_checks=%u stale_mismatch=%u full_flush_reasons=%u/%u/%u/%u/%u/%u/%u/%u retired=%u\n",
+              (unsigned)smc_fallback_stats[10], (unsigned)smc_fallback_stats[11],
+              (unsigned)smc_fallback_stats[0], (unsigned)smc_fallback_stats[1],
+              (unsigned)smc_fallback_stats[2], (unsigned)smc_fallback_stats[3],
+              (unsigned)smc_fallback_stats[4], (unsigned)smc_fallback_stats[5],
+              (unsigned)smc_fallback_stats[6], (unsigned)smc_fallback_stats[7],
+              (unsigned)smc_fallback_stats[9]);
    fprintf(stderr, "done frames=%u seg=%u ahash=%08x samples=%lu ap=%d\n",
            fe_host_frame_count(), seg, g_ahash, g_asamples,
            script ? fe_autopilot_status() : 0);

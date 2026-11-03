@@ -336,6 +336,21 @@ if os.environ.get("DRCORPUS_BB") == "1":
     MUTANTS = {}
 
 
+# ---- DRCORPUS_SF=1 (with FEATURES=baked): SMC_STM_FIXED (PR #27) -----------
+# Reference = what ships minus SMC_STM_FIXED.  Not an exact switch: a title
+# whose IWRAM writer is a fixed-base STMIA (ipatix's mixer: TMGC, MonoMyth)
+# retires a span instead of full-flushing, which moves block boundaries and so
+# guest timing.  Every other title must match.
+if os.environ.get("DRCORPUS_SF") == "1":
+    VARIANTS = {
+        "base": ("-DGPSP_NO_SMC_STM_FIXED", "ref", "shipped flags without SMC_STM_FIXED"),
+        "sf":   ("", "switch", "shipped flags"),
+    }
+    ORDER = list(VARIANTS)
+    REF_PATCHES = {}
+    MUTANTS = {}
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 
