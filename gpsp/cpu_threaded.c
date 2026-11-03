@@ -3674,6 +3674,64 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
 #define BIOS_BOUND_CHECK(region, pc)
 #endif
 
+/* RAM_MIRROR_FIX (issue #10, The Morrow's Golden Country slows to ~2 s a frame
+ * a few combats in, then freezes).  IWRAM repeats every 32 KiB across region 3
+ * and EWRAM every 256 KiB across region 2, so a RAM pc has many aliases.  The
+ * lookup gave them all ONE tag (iwram + (pc & 0x7FFF)) but translated at
+ * whichever alias asked first, and that code carries its pc: `mov lr, pc`,
+ * `add rN, pc, #k`, its own exits, the abort thunk's reload.  A canonical
+ * caller that met the tag then ran the alias's code.
+ *
+ * TMGC (twin): ipatix's mixer copy ends at 0x03007510, and its last block's
+ * `bne 0x030075d0` runs into the PCM buffer behind it.  The eager links
+ * translate that buffer as code, and a sample decodes as `beq 0x03249124`.
+ * The mixer's own blocks were then translated at such aliases (0x03fa6fa4,
+ * 0x03116e30, ...), and the mixer kept a pc it computed there
+ * (`add r0, pc, #0x1b0`, stored at 0x03007230) and compared it with the
+ * canonical one.  Each mismatch re-pasted the resampling loop.  Every alias
+ * dispatch took the C lookup, because DISPATCH_PRECISE caches canonical RAM
+ * pcs only.  In combat the RAM cache was flushed about once a frame (DMA and
+ * FB-7 fallbacks on the alias-translated mixer).
+ *
+ * Two parts:
+ *  - the lookup translates the CANONICAL pc for every alias (one AND in the
+ *    RAM case).  An alias gets the canonical block, and code, SMC extents,
+ *    thunks and SMC_REUSE keys are all canonical;
+ *  - an exit to an aliased RAM pc is linked lazily through a dispatch island
+ *    that loads the canonical pc.  Ordinary code does not branch to an alias,
+ *    so such an exit is almost always a speculative scan's garbage.  It is
+ *    not translated unless it is taken, as BIOS_BOUND_FIX does for region 0.
+ * Code that really runs at an alias now sees canonical pc values; the GBA
+ * would show the alias.  No game is known to depend on that, and before this
+ * a game saw whichever alias had been translated first. */
+#ifdef RAM_MIRROR_FIX
+#ifndef SMC_PARTIAL_SAFE
+#error RAM_MIRROR_FIX needs SMC_PARTIAL_SAFE (its dispatch islands)
+#endif
+/* pc has been through GBA_PC: region 2 or 3 in bits 24-27, the rest clear */
+#define RAM_MIRROR_CANON(region, pc)                                          \
+  ((pc) &= ((region) == 2) ? 0x0203FFFFu : 0x03007FFFu)
+static inline int ram_mirror_alias(u32 pc)
+{
+  u32 region = GBA_PC(pc) >> 24;
+  return (region == 3 && (pc & 0x00FF8000u)) ||
+         (region == 2 && (pc & 0x00FC0000u));
+}
+static inline u32 ram_mirror_link_pc(u32 pc)
+{
+  pc = GBA_PC(pc);
+  if (ram_mirror_alias(pc))
+    pc &= ((pc >> 24) == 2) ? 0x0203FFFFu : 0x03007FFFu;
+  return pc;
+}
+#define RAM_MIRROR_LAZY(target) ram_mirror_alias(target)
+#define RAM_MIRROR_LINK_PC(target) ram_mirror_link_pc(target)
+#else
+#define RAM_MIRROR_CANON(region, pc) ((void)0)
+#define RAM_MIRROR_LAZY(target) 0
+#define RAM_MIRROR_LINK_PC(target) GBA_PC(target)
+#endif
+
 /* XLAT_LAST_TRY_LAZY (issue #10).  A translation that fails is retried, and
  * after four failures BADJUMP_SAFE resets the game -- right for a pc with no
  * code, wrong for a legal one whose translation failed only because its eager
@@ -3709,6 +3767,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
     case 0x2:                                                                 \
     case 0x3:                                                                 \
     {                                                                         \
+      RAM_MIRROR_CANON(pcregion, pc);                                         \
       u16* tagp = (pcregion == 2) ? (u16 *)(ewram + (pc & 0x3FFFF) + 0x40000) \
                                   : (u16 *)(iwram + (pc & 0x7FFF));           \
       ramtag_type* trentry;                                                   \
@@ -8239,10 +8298,11 @@ bool translate_block_arm(u32 pc, bool ram_region)
     branch_target = external_block_exits[i].branch_target;
     if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
          (((GBA_PC(branch_target) >> 24) == 2) ||
-          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW)
+          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW ||
+        RAM_MIRROR_LAZY(branch_target))
     {
       translation_target = translation_ptr;
-      generate_load_pc(reg_a0, GBA_PC(branch_target));
+      generate_load_pc(reg_a0, RAM_MIRROR_LINK_PC(branch_target));
       mips_emit_j(mips_absolute_offset(mips_indirect_branch_arm));
       mips_emit_nop();
       generate_branch_patch_unconditional(
@@ -8608,10 +8668,11 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     branch_target = external_block_exits[i].branch_target;
     if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
          (((GBA_PC(branch_target) >> 24) == 2) ||
-          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW)
+          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW ||
+        RAM_MIRROR_LAZY(branch_target))
     {
       translation_target = translation_ptr;
-      generate_load_pc(reg_a0, GBA_PC(branch_target));
+      generate_load_pc(reg_a0, RAM_MIRROR_LINK_PC(branch_target));
       mips_emit_j(mips_absolute_offset(mips_indirect_branch_thumb));
       mips_emit_nop();
       generate_branch_patch_unconditional(
