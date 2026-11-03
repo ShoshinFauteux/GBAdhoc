@@ -49,6 +49,9 @@ the CPU clock setting; `NV_COND_FIX` (issue #10); and `BIOS_BOUND_FIX` with `XLA
    `claude/stm-fixed` (`builds/stmfixed-worktree`), with WIP commits as it goes. Finish its validation
    run (gate, corpus, TMGC, MonoMyth, Unbound, H&S, Golf on both consoles), merge it into
    `claude/460-dev`, re-pin the layout, and build `beta.2`. Credit Chandler.
+   Also merge the player-route harness verbs from `claude/link-ui-route` (`3939b1b` or later) so
+   `link_msc-connect` can run on the beta. beta.1 smoke and gate results are in `builds/beta-460/STATUS.md`
+   and `builds/gate-out/runs/labtip-vs-rc450g-20261103-024549/gate.md`.
 2. **Gate trust:** PPSSPP gate runs from 2026-11-02 until the BIOS was restored had no BIOS. Re-run
    the gate on the final beta (see `lab-correctness-gate`).
 3. **Before pushing,** check the diff since `v4.5.0`: no ROM data, rig paths or lab-only code
