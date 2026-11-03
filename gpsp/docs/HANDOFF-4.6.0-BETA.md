@@ -20,7 +20,7 @@ Its key files for this work are `housekeeping-460-plan.md`, `rfu-rework-post-450
 
 - Repo: git common dir `builds/github-main-inspect/.git`; worktrees under `builds/*-worktree`.
   Don't use isolation worktrees.
-- **Beta branch:** `claude/460-dev` in `builds/dev460-worktree`, tip `3683b73` (beta pin).
+- **Beta branch:** `claude/460-dev` in `builds/dev460-worktree`, tip `3adb1ce` (beta.2 pin; beta.1 was `3683b73`).
   `beta.1` is built in `builds/beta-460`, with `GBAdhoc-4.6.0-beta.1.zip` and `BETA-NOTES.md`.
   The beta agent writes `builds/beta-460/STATUS.md`. Release command: `tools/release.sh`
   (see `docs/RELEASE.md`); check flags with `python gpsp/tools/check_flags.py`.
@@ -45,13 +45,15 @@ the CPU clock setting; `NV_COND_FIX` (issue #10); and `BIOS_BOUND_FIX` with `XLA
 
 ## Still to do, in order
 
-1. **PR #27** (Chandler's `SMC_STM_FIXED`, which stops TMGC's ~46 fps stutter). It's on
-   `claude/stm-fixed` (`builds/stmfixed-worktree`), with WIP commits as it goes. Finish its validation
-   run (gate, corpus, TMGC, MonoMyth, Unbound, H&S, Golf on both consoles), merge it into
-   `claude/460-dev`, re-pin the layout, and build `beta.2`. Credit Chandler.
-   Also merge the player-route harness verbs from `claude/link-ui-route` (`3939b1b` or later) so
-   `link_msc-connect` can run on the beta. beta.1 smoke and gate results are in `builds/beta-460/STATUS.md`
-   and `builds/gate-out/runs/labtip-vs-rc450g-20261103-024549/gate.md`.
+1. **DONE 2026-11-03: PR #27 + route verbs merged, beta.2 built.** `SMC_STM_FIXED` validated on
+   `claude/stm-fixed-beta` (gate 47 PASS / 0 FAIL, stale 0, corpus 30/35 identical + 5 timing; Golf
+   INFRA-FAIL = interpreter replay dies on the base too, corpus lockstep says timing; HW ABBA TMGC
+   47.5 -> 58.8 fps both consoles, others +-0.1), squashed as `1d0e54f` (Chandler co-author), merged
+   `40e47d1`; `claude/link-ui-route` merged `3c373a5`; pin `3adb1ce` = pads 176/216 (layout vs beta.1:
+   only frontend text/.bss moved, `builds/beta460-out/tools/nmdelta.py`). `tools/release.sh 4.6.0-beta.2`
+   (run it WITHOUT MSYS_NO_PATHCONV) -> `builds/beta-460b2` (EBOOT 0f1adb8d, zip sha256 65ba736f...,
+   BETA-NOTES.md). Release boot 90 s in PPSSPP clean. Installed on the owner's Go (G:, old build kept
+   as *-c38f). NOT yet: Lab build of 3adb1ce, hardware smoke incl. `link_msc-connect` on the beta.
 2. **Gate trust:** PPSSPP gate runs from 2026-11-02 until the BIOS was restored had no BIOS. Re-run
    the gate on the final beta (see `lab-correctness-gate`).
 3. **Before pushing,** check the diff since `v4.5.0`: no ROM data, rig paths or lab-only code
