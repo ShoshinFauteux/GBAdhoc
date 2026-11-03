@@ -12845,10 +12845,7 @@ static int lat_wait_step(void)
    if (!g_lw_swapped && g_lw_ll == LL_OFF && g_flip_early &&
        !mer_sameframe_active())
    {
-      if ((g_ff_flip_pace & 1) && ffh_too_soon(1))
-         g_ffh_waits++;           /* the last flip is still pending: block on
-                                   * its vblank, flip after it (4.1.0's way) */
-      else if (vid_gu_busy())
+      if (vid_gu_busy())
          poll = 1;
       else
       {
@@ -15637,6 +15634,7 @@ session_top:
       int home_mode;        /* Menu = HOME is in force this frame          */
       int home_pressed;     /* ...and HOME was pressed (consumed once)     */
       int ffh_loop;         /* FF flip pacing: entered with a held picture */
+      int ffh_fe;           /* FF flip pacing: g_flip_early outside the wait */
       int session = fe_np_session_active();
       int harness_ff = ff_ini || fe_autopilot_ff();
       /* ADR-0021: the loop body without the vblank wait is the number that
@@ -17112,6 +17110,16 @@ session_top:
           * is genuinely in the radio and this whole line of reasoning is
           * wrong. */
          FE_LP_SET(FELP_VWAIT);
+         /* FF FLIP PACING bit 0: the last flip has not latched yet (a loop
+          * that overran into the interval it is pending in, as 3x does): no
+          * early flip in this wait -- it would replace that one.  The swap
+          * after the wait flips this frame, as 4.1.0 always did. */
+         ffh_fe = g_flip_early;
+         if ((g_ff_flip_pace & 1) && g_flip_early && ffh_too_soon(1))
+         {
+            g_flip_early = 0;
+            g_ffh_waits++;
+         }
          lat_wait_begin(want);
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
@@ -17153,6 +17161,7 @@ session_top:
             }
          }
          lat_wait_end();
+         g_flip_early = ffh_fe;
          FE_LP_SET(FELP_L_RETIRE);
 
          /* Counted here, after the wait: still pending at the swap means the
