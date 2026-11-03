@@ -4323,8 +4323,8 @@ static void me_rend_retire_if_idle(void)
       g_mer_priv[g_mer_pending] = 0;
    else
 #endif
-   g_mer_ready   = g_mer_pending; LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, 0);)
-   mer_note_sum();
+   g_mer_ready   = g_mer_pending;
+   mer_note_sum(); LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, 0);)
    g_mer_pending = -1;
    g_mer_miss    = 0;
    g_fps_drawn++;
@@ -4393,8 +4393,8 @@ static void me_rend_frame(int emulated)
             g_mer_priv[g_mer_pending] = 0;
          else
 #endif
-         g_mer_ready   = g_mer_pending; LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
-         mer_note_sum();
+         g_mer_ready   = g_mer_pending;
+         mer_note_sum(); LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
          g_mer_pending = -1;
          g_mer_miss    = 0;
          g_fps_drawn++;             /* a complete rendered frame landed */
