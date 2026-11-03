@@ -1779,8 +1779,22 @@ static void rfu_net_send_bcast(u32 ptype, u32 h, const u32 *pload) {
   netpacket_send(0xffff, pkt, sizeof(pkt));
 }
 
+#ifdef RFU_SCHED
+/* rfu_sched.h: this frame's mark, carried in a byte past the payload. */
+#define RFU_SCHED_MARK   0xA5
+#define RFU_SCHED_MARK_H 91
+#define RFU_SCHED_MARK_C 87
+static u32 rfu_sched_mark;
+static int rfu_sched_hold_send(int client_id, u32 ptype, u32 h, const u32 *pload,
+                               unsigned plen);
+#endif
+
 static void rfu_net_send_data(int client_id, u32 ptype, u32 h, const u32 *pload, unsigned plen) {
   u32 i;
+#ifdef RFU_SCHED
+  if (rfu_sched_hold_send(client_id, ptype, h, pload, plen))
+    return;
+#endif
   struct {
     u32 header[3];
     u8  data8[92];
@@ -1811,10 +1825,19 @@ static void rfu_net_send_data(int client_id, u32 ptype, u32 h, const u32 *pload,
     pkt.data8[91] = (u8)st;
   }
 
+#ifdef RFU_SCHED
+  if (rfu_sched_mark)
+    pkt.data8[ptype == NET_RFU_HOST_SEND ? RFU_SCHED_MARK_H : RFU_SCHED_MARK_C] =
+      RFU_SCHED_MARK;
+#endif
   if (rfu_state == RFU_STATE_CLIENT)
     rfu_cli_last_tx_us = rfu_frame_us;   /* ADR-0060 keepalive timebase */
   netpacket_send(client_id, &pkt, 104);
 }
+
+#ifdef RFU_SCHED
+#include "rfu_sched.h"
+#endif
 
 // This is called whenever the game uses the GPIO (pin D) to perform a reset
 // pin flip in the external reset pin. We reset the device to a known state.
@@ -2825,6 +2848,9 @@ void rfu_frame_update() {
     rfu_rx_frame_hi = rfu_rx_this_frame;
   }
   rfu_rx_this_frame = 0;
+#ifdef RFU_SCHED
+  rfu_sched_frame_end();
+#endif
   rfu_frame_no++;          /* ADR-0043 flight-recorder timebase */
   rfu_frame_us = gpsp_rfu_now_us();   /* ADR-0045: ONE clock read per frame */
 
@@ -3012,6 +3038,20 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
     u32 ptype = upack32(&buf8[4]);
     u32 hdata = upack32(&buf8[8]);
 
+#ifdef RFU_SCHED
+    if (ptype >= NET_RFU_SCHED_SYNC && ptype <= NET_RFU_SCHED_AGAIN) {
+      rfu_sched_net(ptype, hdata, client_id);
+      return;
+    }
+    if (ptype == NET_RFU_HOST_SEND &&
+        rfu_sched_take(buf, len, client_id, (hdata & 0x80) != 0, hdata >> 8))
+      return;
+    if (ptype == NET_RFU_CLIENT_SEND &&
+        rfu_sched_take(buf, len, client_id,
+                       len >= 12 + 92 && payl[88] == RFU_STAMP_TAG,
+                       ((u32)payl[89] << 16) | ((u32)payl[90] << 8) | payl[91]))
+      return;
+#endif
     switch (ptype) {
     case NET_RFU_BROADCAST:
       // Fill the broadcast slot for the peer
@@ -3317,7 +3357,11 @@ bool rfu_update(unsigned cycles) {
    * back into rfu_net_receive(), which mutates rfu_comstate and friends -- so
    * rfu_comstate is deliberately re-read by the `if` that follows rather than
    * cached across the call. */
-  if (rfu_idle_poll_cycles && rfu_comstate != RFU_COMSTATE_WAITEVENT) {
+  if (rfu_idle_poll_cycles && rfu_comstate != RFU_COMSTATE_WAITEVENT
+#ifdef RFU_SCHED
+      && !rfu_sched_no_poll()
+#endif
+      ) {
     rfu_idle_poll_acc += cycles;
     if (rfu_idle_poll_acc >= rfu_idle_poll_cycles) {
       rfu_idle_poll_acc = 0;
@@ -3342,7 +3386,11 @@ bool rfu_update(unsigned cycles) {
      * emulated frame preserves that eight times over while removing ~98 % of
      * the calls.  See rfu_set_poll_min_cycles(). */
     rfu_poll_acc += cycles;
-    if (!rfu_poll_min_cycles || rfu_poll_acc >= rfu_poll_min_cycles) {
+    if ((!rfu_poll_min_cycles || rfu_poll_acc >= rfu_poll_min_cycles)
+#ifdef RFU_SCHED
+        && !rfu_sched_no_poll()
+#endif
+        ) {
       rfu_poll_acc = 0;
       netpacket_poll_receive();
     }

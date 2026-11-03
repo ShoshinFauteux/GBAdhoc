@@ -316,6 +316,12 @@ int fe_host_boot(const fe_host_config *cfg);
 
 /* One emulated frame: retro_run + periodic SRAM dirty check + heartbeat. */
 void fe_host_run_frame(void);
+#ifdef RFU_SCHED
+/* Scheduled ticks (rfu_sched.h): call before a pass's autopilot step and
+ * fe_host_run_frame.  1 = run the frame; 0 = the partner's tick is still
+ * missing after a short wait, so skip both this pass and keep the loop live. */
+int fe_host_rfu_gate(void);
+#endif
 /* Force the NEXT fe_host_run_frame's video to be drawn (0) or skipped (1),
  * overriding the frameskip option; -1 hands the decision back to it.  A
  * skipped frame is emulated in full but neither rendered nor captured -- the

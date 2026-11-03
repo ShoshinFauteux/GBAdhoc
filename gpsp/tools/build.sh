@@ -237,6 +237,18 @@ case "$REWIND" in 0|1) ;; *) echo "FAIL: REWIND must be 0 or 1"; exit 2 ;; esac
 CORE_FLAGS="$CORE_FLAGS REWIND=$REWIND"
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=$REWIND"
 
+# RFU_SCHED (default 0): scheduled ticks for the emulated Wireless Adapter
+# (rfu_sched.h, docs/RFU-COUPLING.md).  Both makes need it: the core sends and
+# delivers by tick, the frontend waits for a missing one.  A console built with
+# it refuses an adapter session with one built without (ND_FEAT_RFU_SCHED).
+RFU_SCHED="${RFU_SCHED:-0}"
+case "$RFU_SCHED" in 0|1) ;; *) echo "FAIL: RFU_SCHED must be 0 or 1"; exit 2 ;; esac
+if [ "$RFU_SCHED" = 1 ]; then
+  CORE_FLAGS="$CORE_FLAGS RFU_SCHED=1"
+  PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS RFU_SCHED=1"
+  [ -n "${GPSP_EBOOT_TITLE:-}" ] || [ "$KIND" = release ] || TITLE="$TITLE TICKS"
+fi
+
 # INPUT_FRESH (default 1): the low-latency pad re-peek (`input_fresh`,
 # docs/LOW-LATENCY.md) on by default in the frontend, in every profile
 # (psp/fe_features.h); a playable build cannot read the harness ini.

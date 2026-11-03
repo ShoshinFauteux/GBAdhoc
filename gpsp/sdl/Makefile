@@ -45,6 +45,10 @@ ifeq ($(REWIND),1)
 CFLAGS += -DREWIND
 OBJS   += obj/fe_rewind.o obj/fe_rewind_pack.o
 endif
+# RFU_SCHED=1: scheduled ticks (rfu_sched.h); the core gets the same value.
+ifeq ($(RFU_SCHED),1)
+CFLAGS += -DRFU_SCHED
+endif
 # e.g. EXTRA_CFLAGS=-DGPSP_PERF_RIG for the harness's 1024-step scripts
 # (tools/rewind_test.py with a long input script needs it).
 CFLAGS += $(EXTRA_CFLAGS)
@@ -76,7 +80,7 @@ obj/transport_udp.o: $(CORE_DIR)/netdrv/transport_udp.c
 
 $(CORE_LIB):
 	$(MAKE) -C $(CORE_DIR) platform=unix clean
-	$(MAKE) -C $(CORE_DIR) platform=unix REWIND=$(REWIND) REWIND_MUTANT=$(REWIND_MUTANT) -j$(shell nproc)
+	$(MAKE) -C $(CORE_DIR) platform=unix REWIND=$(REWIND) RFU_SCHED=$(RFU_SCHED) REWIND_MUTANT=$(REWIND_MUTANT) -j$(shell nproc)
 	cd $(CORE_DIR) && ar rcs sdl/$(CORE_LIB) \
 	  $$(find . -name '*.o' \
 	       -not -path './sdl/*' -not -path './psp/*' \

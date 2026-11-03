@@ -5,6 +5,7 @@ build.sh GBA_LINK=1
 build.sh INPUT_FRESH=1
 build.sh LAYOUT_PIN=1
 build.sh REWIND=1
+build.sh RFU_SCHED=0
 core BACKUP_BUS_FIX=1
 core BADJUMP_SAFE=1
 core BX_ALIGN_FIX=1

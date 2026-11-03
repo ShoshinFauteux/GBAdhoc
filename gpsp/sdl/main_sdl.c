@@ -363,6 +363,12 @@ static volatile unsigned g_rfu_tr_head, g_rfu_tr_tail, g_rfu_tr_lost;
 /* ADR-0075 smoothing valve — set the client's per-frame delivery admission so
  * a jittered link can be A/B'd on the desktop (--rfu-pace N; N=0 = off). */
 extern void rfu_set_frame_pace(unsigned n);
+extern void rfu_set_pace_max_hold(unsigned n);
+extern void rfu_set_shed_keep(unsigned n);
+extern void rfu_set_hold(unsigned on);
+extern void rfu_set_disc_grace(unsigned frames);
+extern void rfu_set_idle_poll_cycles(unsigned cycles);
+#include "../rfu_sched_api.h"
 extern void rfu_set_cushion(unsigned n);   /* fixed-depth jitter buffer PoC */
 
 /* ME renderer capture validation (--me-capture-test): run the production
@@ -586,6 +592,10 @@ int main(int argc, char **argv)
    long autoexit = 0, dump_at = 0, dump_every = 0;
    int scale = 2, no_pacing = 0, force_sram_write = 0, force_ff = 0;
    int rtc_wall = 0;
+   int rfu_play = 0;    /* --rfu-play: the player build's adapter settings */
+#ifdef RFU_SCHED
+   unsigned rfu_sched_arg = 0;   /* --rfu-sched D */
+#endif
    int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
    int rfu_cush = -1;   /* -1 = leave default; >=0 = rfu_set_cushion(n)    */
    int exit_code = 0;
@@ -841,6 +851,12 @@ int main(int argc, char **argv)
                fprintf(stderr, "unknown core option: %s\n", kv);
          }
       }
+      else if (!strcmp(argv[i], "--rfu-play"))
+         rfu_play = 1;
+#ifdef RFU_SCHED
+      else if (!strcmp(argv[i], "--rfu-sched") && i + 1 < argc)
+         rfu_sched_arg = (unsigned)strtoul(argv[++i], NULL, 0);
+#endif
       else if (argv[i][0] != '-' && !rom_path)
          rom_path = argv[i];
       else
@@ -939,6 +955,20 @@ int main(int argc, char **argv)
       return 1;
    }
 
+   if (rfu_play)   /* psp/main_psp.c PLAY_RFU_*, PLAY_IDLE_POLL, config_psp.c */
+   {
+      rfu_set_frame_pace(1);
+      rfu_set_pace_max_hold(24);
+      rfu_set_shed_keep(2);
+      rfu_set_hold(1);
+      rfu_set_disc_grace(120);
+      rfu_set_idle_poll_cycles(34952);
+      fe_evt("rfu_play pace=1 hold=24 shed=2 hold_on=1 grace=120 idle=34952");
+   }
+#ifdef RFU_SCHED
+   rfu_sched_config(rfu_sched_arg);   /* after the rules: ticks retire them */
+   fe_evt("rfu_sched d=%u", rfu_sched_d);
+#endif
    if (rfu_pace >= 0)
    {
       rfu_set_frame_pace((unsigned)rfu_pace);
@@ -1044,6 +1074,10 @@ int main(int argc, char **argv)
              * here as it does on the PSP. */
             uint64_t w0 = net_now_us();
             fe_np_pump();  /* deliver inbound packets between retro_run calls */
+#ifdef RFU_SCHED
+            if (!fe_host_rfu_gate())
+               goto rfu_no_frame;   /* the partner's tick is still missing */
+#endif
             fe_autopilot_frame();
             if (rtc_wall)
             {
@@ -1189,6 +1223,9 @@ int main(int argc, char **argv)
             }
 #else
             fe_host_run_frame();
+#endif
+#ifdef RFU_SCHED
+rfu_no_frame:
 #endif
             fe_np_prof_frame((uint32_t)(net_now_us() - w0));
          }

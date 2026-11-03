@@ -272,6 +272,10 @@ def check_build(say, out: Path):
     want_core = {"%s=%s" % kv for kv in header_defs(CORE_HDR).items()} | {
         "GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
     have = norm(m.get("coreFlags", ""))
+    # RFU_SCHED=1, the adapter-ticks beta switch, is a release option when both
+    # makes had it (tools/make_release.sh applies the same rule).
+    if "RFU_SCHED=1" in have and "RFU_SCHED=1" in m.get("pspMakeFlags", "").split():
+        want_core.add("RFU_SCHED=1")
     for t in sorted(want_core ^ have):
         say("build", "coreFlags: %s %s" % (t, "missing" if t in want_core else "extra"))
     prof = profiles()["release"]

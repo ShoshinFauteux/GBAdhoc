@@ -6930,6 +6930,72 @@ int fe_host_reset(void)
    return 0;
 }
 
+#ifdef RFU_SCHED
+#include "../rfu_sched_api.h"
+/* SCHEDULED TICKS (rfu_sched.h, docs/RFU-COUPLING.md).  A frame may start only
+ * once the partner's tick for it has arrived.  Wait here up to about a frame,
+ * pumping the network; past that, hand the pass back so the menu, HOME and the
+ * screen stay live, and try again on the next.  A partner that has said its
+ * menu is open is waited for as long as that lasts, as on the cable; one that
+ * is silent for 2 s is given up on, the link runs free and the game's own
+ * timeout decides.  A lost link ends the wait at once (rfu_sched_may_run). */
+#define RFU_GATE_WAIT_US   12000u
+#define RFU_GATE_SILENT_US 2000000u
+int fe_host_rfu_gate(void)
+{
+   static uint64_t since, waited, wait_max;
+   static unsigned waits, skips, passes;
+   uint64_t t0, now;
+   int ok;
+
+   if (!rfu_sched_d || !host.time_us)
+      return 1;
+   if (++passes % 600 == 0)
+      fe_evt("rfu_sched on=%d waits=%u wait_ms=%u max_ms=%u skips=%u held_peak=%u",
+             rfu_sched_active(), waits, (unsigned)(waited / 1000),
+             (unsigned)(wait_max / 1000), skips, rfu_sched_held_peak);
+   if (rfu_sched_may_run())
+   {
+      since = 0;
+      return 1;
+   }
+   t0 = now = host.time_us();
+   if (!since)
+      since = t0;
+   do
+   {
+      fe_np_pump();
+      ok = rfu_sched_may_run();
+      if (ok)
+         break;
+      if (host.yield_thread)
+         host.yield_thread();
+      now = host.time_us();
+   } while (now - t0 < RFU_GATE_WAIT_US);
+   now = host.time_us();
+   waits++;
+   waited += now - t0;
+   if (now - t0 > wait_max)
+      wait_max = now - t0;
+   if (ok)
+   {
+      since = 0;
+      return 1;
+   }
+   if (rfu_sched_peer_is_paused())
+      since = now;
+   else if (now - since > RFU_GATE_SILENT_US)
+   {
+      rfu_sched_give_up();
+      fe_evt("rfu_sched state=off reason=stall frame=%u", frame_count);
+      since = 0;
+      return 1;
+   }
+   skips++;
+   return 0;
+}
+#endif
+
 void fe_host_run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;

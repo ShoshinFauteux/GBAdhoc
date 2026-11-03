@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include "fe_host.h"
+#include "../rfu_sched_api.h"   /* RFU_SCHED builds only */
 #include "fe_linkprof.h"
 #include "fe_evt.h"
 #include <psprtc.h>
@@ -13475,6 +13476,14 @@ int main(int argc, char *argv[])
       int sv = (int)fe_ini_get_int(HARNESS_INI, "rfu_supersede", 1);
       rfu_set_supersede(sv ? 1u : 0u);
       fe_evt("rfu_supersede on=%d", sv ? 1 : 0);
+#ifdef RFU_SCHED
+      /* Scheduled ticks (rfu_sched.h): D = 2 in an RFU_SCHED build; a harness
+       * may pick another D, or 0 for this run's A/B arm.  Last, because ticks
+       * retire the rules above. */
+      rfu_sched_config((unsigned)fe_ini_get_int(HARNESS_INI, "rfu_sched",
+                                                RFU_SCHED_D_DEFAULT));
+      fe_evt("rfu_sched d=%u", rfu_sched_d);
+#endif
    }
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in
@@ -15477,6 +15486,10 @@ session_top:
 
       FE_LP_SET(FELP_L_NETF);
       net_frame();
+#ifdef RFU_SCHED
+      if (rfu_sched_d)
+         rfu_sched_pause(ui_active());   /* the partner waits while our menu is open */
+#endif
       FE_LP_SET(FELP_L_GBLS);
       if (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable || g_gba_cable_ok)
       {
@@ -16235,6 +16248,12 @@ session_top:
          }
          g_blit_suppress = 0;
       }
+#ifdef RFU_SCHED
+      else if (!fe_host_rfu_gate())
+      {
+         /* scheduled ticks: the partner's tick is still missing; no frame */
+      }
+#endif
       else
       {
          FE_LP_SET(FELP_L_AP);

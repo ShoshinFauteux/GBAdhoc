@@ -1305,6 +1305,13 @@ DEFINES += -DGBALINK_LEAN_OUTLINE
 endif
 endif
 
+# RFU_SCHED=1: scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
+# docs/RFU-COUPLING.md).  Off by default.  The frontend needs the same value
+# (psp/Makefile, sdl/Makefile); tools/build.sh RFU_SCHED=1 sets both.
+ifeq ($(RFU_SCHED),1)
+DEFINES += -DRFU_SCHED
+endif
+
 # REWIND=1: the rewind's core half (docs/REWIND.md) -- the two pieces of
 # machine state a save state does not carry.  Default 1 on psp1 only.
 ifeq ($(REWIND),1)
@@ -1426,7 +1433,7 @@ cpu_threaded.o: cpu_threaded.c
 print-features:
 	@$(CC) $(CFLAGS) -dM -E -x c /dev/null | \
 	  sed -n 's/^#define \([A-Z0-9_]*\) \(.*\)$$/\1=\2/p' | \
-	  grep $(foreach f,$(GPSP_FEATURE_NAMES) GBA_LINK REWIND,-e '^$(f)=')
+	  grep $(foreach f,$(GPSP_FEATURE_NAMES) GBA_LINK REWIND RFU_SCHED,-e '^$(f)=')
 
 clean-objs:
 	rm -rf $(OBJECTS)

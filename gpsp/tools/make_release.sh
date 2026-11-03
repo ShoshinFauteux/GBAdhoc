@@ -171,6 +171,11 @@ if len(want) < 50:
     raise SystemExit("gpsp_features.h lists only %d features" % len(want))
 want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
 have = set(m.get("coreFlags", "").split())
+# RFU_SCHED=1 (scheduled adapter ticks, a beta switch) is allowed when both makes
+# had it; it changes the adapter's wire format, so the notes must say so.
+ticks = "RFU_SCHED=1" in have and "RFU_SCHED=1" in m.get("pspMakeFlags", "").split()
+if ticks:
+    want.add("RFU_SCHED=1")
 if have != want:
     raise SystemExit("coreFlags are not the release feature set: missing %s, extra %s"
                      % (sorted(want - have), sorted(have - want)))
@@ -181,6 +186,8 @@ if set(m.get("frontendDefines", "").split()) != fe:
     raise SystemExit("frontendDefines are not the release set: %s" % m.get("frontendDefines"))
 psp = set(m.get("pspMakeFlags", "").split())
 need = {"ME_CATCH=1", "PSP_EBOOT_ICON1=assets/gbadhoc_icon1.pmf", "GBA_LINK=1", "REWIND=1", "HOT_DATA_GUARD=1"}
+if ticks:
+    need.add("RFU_SCHED=1")
 if psp != need:
     raise SystemExit("pspMakeFlags are not the release set: missing %s, extra %s"
                      % (sorted(need - psp), sorted(psp - need)))

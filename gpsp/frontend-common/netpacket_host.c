@@ -20,8 +20,15 @@
 static const char *np_gb_proto;      /* fe_np_set_gb_protocol, NULL = above */
 static int np_stop_reason;           /* fe_np_stop_reason */
 /* The adapter's netdrv features (netdrv.h ND_FEAT_*), compared at admission.
- * claude/rfu-reference: scheduled ticks set ND_FEAT_RFU_SCHED on this line. */
+ * Scheduled ticks (rfu_sched.h) change what adapter packets mean, so a console
+ * running them and one that is not must refuse each other.  An RFU_SCHED build
+ * whose harness turned ticks off (rfu_sched = 0) says so too. */
+#ifdef RFU_SCHED
+#include "../rfu_sched_api.h"
+#define NP_RFU_FEATURES (rfu_sched_d ? ND_FEAT_RFU_SCHED : 0u)
+#else
 #define NP_RFU_FEATURES 0u
+#endif
 static int np_refused_new;           /* fe_np_take_refused */
 static int np_refused_kind;          /* fe_np_refused_kind */
 
