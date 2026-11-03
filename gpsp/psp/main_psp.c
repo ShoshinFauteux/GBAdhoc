@@ -2183,6 +2183,15 @@ void psp_clock_harness_drop(void)
    g_clk_harness = -1;
 }
 
+/* The clock actually in force, in MHz.  Not always the one asked for: a
+ * CFW with an in-game clock of its own (the Lab's PSP-1000, 2026-11-02)
+ * answers scePowerSetClockFrequency with 0 and keeps its clock, so the
+ * Settings row says when that happens (ui_psp.c). */
+int psp_clock_actual(void)
+{
+   return scePowerGetCpuClockFrequency();
+}
+
 void psp_clock_apply(const char *why)
 {
    int mode = psp_clock_mode();
@@ -2210,11 +2219,14 @@ void psp_clock_apply(const char *why)
       call = 1;
       g_clk_set = 0;
    }
+   /* held=1: the call was made and the clock did not move (a CFW's). */
    fe_evt("clock why=%s mode=%s src=%s was=%d/%d now=%d/%d entry=%d/%d "
-          "call=%d rc=%d", why, pcfg_clock_name(mode),
+          "call=%d rc=%d held=%d", why, pcfg_clock_name(mode),
           g_clk_harness >= 0 ? "harness" : "config", cpu0, bus0,
           scePowerGetCpuClockFrequency(), scePowerGetBusClockFrequency(),
-          g_clk_sys_cpu, g_clk_sys_bus, call, rc);
+          g_clk_sys_cpu, g_clk_sys_bus, call, rc,
+          call && mode != PCFG_CLOCK_SYSTEM &&
+             scePowerGetCpuClockFrequency() != mode);
    FE_EVT_ONLY(cpu0); FE_EVT_ONLY(bus0); FE_EVT_ONLY(rc); FE_EVT_ONLY(why);
    FE_EVT_ONLY(call);
 }

@@ -383,6 +383,7 @@ extern void osd_session_chip_refresh(void);
 int  psp_clock_mode(void);
 void psp_clock_apply(const char *why);
 void psp_clock_harness_drop(void);
+int  psp_clock_actual(void);
 
 /* ----- demo (harness self-drive) ------------------------------------------ */
 typedef struct { unsigned pad; unsigned char hold, gap; } demo_step;
@@ -2699,9 +2700,20 @@ static ui_action screen_settings(unsigned edges)
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
    else if (g_cursor == SET_CPUCLK)
-      footer(psp_clock_mode() == PCFG_CLOCK_SYSTEM
-                ? "System: as your firmware or CFW set it. Heavy games need 333."
-                : "Heavy games and link play need 333 MHz.");
+   {
+      /* A CFW clock setting can refuse ours: say what is really running. */
+      int want = psp_clock_mode(), mhz = psp_clock_actual();
+      char f[72];
+      if (want != PCFG_CLOCK_SYSTEM && mhz != want)
+         snprintf(f, sizeof(f), "Your CFW keeps the clock at %d MHz.", mhz);
+      else if (want == PCFG_CLOCK_SYSTEM)
+         snprintf(f, sizeof(f), mhz < 333
+                  ? "System: %d MHz, your CFW's. Heavy games need 333."
+                  : "System: %d MHz, as your firmware or CFW set it.", mhz);
+      else
+         snprintf(f, sizeof(f), "Heavy games and link play need 333 MHz.");
+      footer(f);
+   }
    else if (g_cursor == SET_SHOT_FMT)
       footer(g_pcfg.shot_format == PCFG_SHOT_BMP
                 ? "BMP: uncompressed, about 115 KB a picture."
