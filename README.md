@@ -705,7 +705,10 @@ favourites, the state shelf) are unchanged and still apply.
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
   in the browser (LEFT), delete (△ in game, □ on the shelf).
-- Select + L / Select + R for a quick save and load of slot 1.
+- <kbd>NEW</kbd> Loading a state over the game you are playing asks first: ✕ loads, any
+  other button keeps playing.
+- Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
+  you turn *Settings → Quick load asks first* off).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
   periodically as you play, with a `.sav.bak` kept. Sleeping never touches the save.
 
@@ -732,7 +735,7 @@ favourites, the state shelf) are unchanged and still apply.
 | **△** | Rewind, while held (when *Rewind* is on; GBA) |
 | *(unbound)* | Cycle video preset |
 | **Select + L** | Quick save, slot 1 |
-| **Select + R** | Quick load, slot 1 |
+| **Select + R** | Quick load, slot 1 (<kbd>NEW</kbd> asks first: ✕ loads, anything else keeps playing) |
 | **Select + △** | Pause screen |
 | **Select + Down** | Mystery Gift listener on/off |
 | **L + R + Select** | Screenshot |
@@ -766,6 +769,7 @@ confirm and ○ to go back.
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
+| | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question, or loads slot 1 at once |
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
@@ -782,7 +786,8 @@ the old relaunching Quit to game list, `gbc_color_correction = 0` the old GBC co
 `loading_art = 0` a plain loading screen, and `gblink_delay` (1–30 frames, default 4)
 the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 (`png` or `bmp`) and `screenshot_folder` (`picture` or `app`); the CPU clock is
-`cpu_clock` (`333`, `222`, or `0` for System).
+`cpu_clock` (`333`, `222`, or `0` for System), and the quick load's question is
+`quick_load_ask` (`1`, or `0` to load at once).
 
 </details>
 

@@ -10,6 +10,13 @@ separately and are intended for upstream.
 
 ---
 
+## [Unreleased]
+
+- Loading a state asks first, on the Save States page and from the Select + R quick load:
+  "Load Slot n? Unsaved progress is lost." ✕ loads; any other button keeps the game you are
+  playing. The quick load's question can be turned off under Settings -> Quick load asks
+  first (`quick_load_ask = 0`); it follows the quick load to whatever buttons it is mapped to.
+
 ## [4.6.0-beta.2] - 2026-11-03
 
 Pre-release. Links only with the same beta (the Wireless Adapter protocol changed).

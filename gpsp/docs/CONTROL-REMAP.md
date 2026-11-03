@@ -59,7 +59,7 @@ All of these act only in game. Triangle and Square have never been GBA buttons.
 | Fast-forward | `bind_ff` | SQUARE | Hold mode reads the chord's level. Toggle mode toggles on its press. | Locked to 1x with a toast during a wireless session. |
 | Video preset (scale/filter cycle) | `bind_video` | TRIANGLE | Fires on the press. Exempt from the longer-chord rule (§3). | Menu closed. |
 | Quick save, slot 1 | `bind_quicksave` | SELECT+L | Modifier chord: SELECT held, fires on L. Longer-chord rule. | Menu closed, no autopilot script, state path set. Refused in wireless. |
-| Quick load, slot 1 | `bind_quickload` | SELECT+R | As quick save. Never fires on the same frame as a save. | As quick save. |
+| Quick load, slot 1 | `bind_quickload` | SELECT+R | As quick save. Never fires on the same frame as a save. Opens the SAVE STATES page with "Load Slot 1?" on the plate: X loads, any other key goes back to the game; Settings > "Quick load asks first" off (`quick_load_ask = 0`) loads at once (docs/UI-OVERLAY.md section 14.3). | As quick save. |
 | Screenshot | `bind_screenshot` | L+R+SELECT | Chord complete plus any of its buttons newly pressed, START not held (ADR-0069). | Works with the menu open, as 3.0 did. Silent while Controls is capturing. |
 | Pause screen (the wake overlay) | `bind_pause` | SELECT+TRIANGLE | Modifier chord. | Menu closed, no script. |
 | Mystery Gift listener | `bind_mystery_gift` | SELECT+DOWN | Exclusive: the chord and nothing else held. Its buttons are withheld from the game until released. | GBA only, menu closed, no script, no pause screen. |
