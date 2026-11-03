@@ -24,6 +24,86 @@ static void *g_me_bench_retained[2];
  * path is never removed, the ME merely earns frames while healthy). */
 static unsigned g_me_misses, g_me_dead;
 static unsigned g_me_last_beat, g_me_beat_stale;
+/* See me_host.h.  g_me_retained: the module is loaded, its dispatcher idle and
+ * its D-cache empty, across an in-process return.  g_me_handed_back: a live
+ * engine was stopped and this process went on. */
+static int g_me_retained, g_me_handed_back;
+
+#ifdef GPSP_PERF_RIG
+/* THE MODULE'S STAND-IN (harness `me_fake`).  PPSSPP has no Media Engine: the
+ * real handshake fails, the module is gone before any game runs, and nothing
+ * below this line that matters here is ever reached.  So a user thread plays
+ * the module's part of the protocol: it answers the mailbox, beats the
+ * heartbeat, refuses renders (the host falls back to the main CPU, as it does
+ * for a real refusal), and, being a thread, takes kernel memory as the module
+ * does, which is what the return's census has to cope with.
+ *
+ * mode 1 is the healthy engine.  mode 2 is a wedged one: the first job sent to
+ * it never completes, for the path where retaining fails. */
+static int g_me_fake;
+static SceUID g_me_fake_th = -1;
+static volatile int g_me_fake_stop;
+
+static int me_fake_thread(SceSize args, void *argp)
+{
+   volatile me_mbox *mb = (volatile me_mbox *)ME_UNCACHED(&g_mbox_storage);
+   unsigned seen;
+   (void)args; (void)argp;
+   mb->version = ME_MBOX_VERSION;
+   mb->magic   = ME_MBOX_MAGIC;
+   seen = mb->cmd_seq;
+   mb->done_seq = seen;
+   while (!g_me_fake_stop)
+   {
+      unsigned seq = mb->cmd_seq;
+      if (g_me_fake == 2 && seq != seen)
+      {
+         sceKernelDelayThread(10000);
+         continue;
+      }
+      mb->heartbeat = mb->heartbeat + 1;
+      if (seq != seen)
+      {
+         seen = seq;
+         if (mb->cmd == ME_CMD_RENDER)
+         {
+            mb->refused_seq = seq;
+            mb->input_seq   = seq;
+         }
+         mb->result   = 0;
+         mb->done_seq = seq;
+      }
+      sceKernelDelayThread(100);
+   }
+   return 0;
+}
+
+static int me_fake_start(void)
+{
+   g_me_fake_stop = 0;
+   /* Above the power callback (0x11): me_host_sync spins, and the real ME
+    * does not need this CPU to answer. */
+   g_me_fake_th = sceKernelCreateThread("me_fake", me_fake_thread, 0x10, 0x1000,
+                                        THREAD_ATTR_USER, NULL);
+   if (g_me_fake_th < 0)
+      return -1;
+   sceKernelStartThread(g_me_fake_th, 0, NULL);
+   return g_me_fake_th;
+}
+
+static void me_fake_stop(void)
+{
+   g_me_fake_stop = 1;
+   sceKernelWaitThreadEnd(g_me_fake_th, NULL);
+   sceKernelDeleteThread(g_me_fake_th);
+   g_me_fake_th = -1;
+}
+
+void me_host_fake(int mode)
+{
+   g_me_fake = mode;
+}
+#endif
 
 int me_host_up(void)
 {
@@ -50,6 +130,69 @@ void me_host_require_sysevent(int on)
    g_me_need_seh = on ? 1 : 0;
 }
 
+int me_host_retained(void)
+{
+   return g_me_retained;
+}
+
+int me_host_handed_back(void)
+{
+   return g_me_handed_back;
+}
+
+int me_host_retain(unsigned timeout_us)
+{
+   unsigned t0;
+   if (!me_host_up())
+      return 0;
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   while (!me_host_idle())
+   {
+      if ((unsigned)sceKernelGetSystemTimeLow() - t0 >= timeout_us)
+      {
+         fe_evt("me_retain failed reason=busy");
+         return 0;
+      }
+      sceKernelDelayThread(1000);
+   }
+   /* The next game may be on the heap the last one's buffers came from, and
+    * this cache writes back when it pleases. */
+   if (me_host_sync(timeout_us) != 0)
+   {
+      fe_evt("me_retain failed reason=sync");
+      return 0;
+   }
+   g_me_retained = 1;
+   fe_evt("me_retain beat=%u", g_mb->heartbeat);
+   return 1;
+}
+
+/* The next game takes up the engine the last one left: the module is resident,
+ * nothing to load, nothing to clear (sequence numbers just carry on, and the
+ * render desc's new work_gen is what tells the ME to start from nothing).  A
+ * sleep may have reset the ME since, so believe only a heartbeat that moves. */
+static int me_host_take_up(void)
+{
+   unsigned beat = g_mb->heartbeat;
+   int i;
+   g_me_retained = 0;
+   for (i = 0; i < 50; i++)
+   {
+      sceKernelDelayThread(1000);
+      if (g_mb->heartbeat != beat)
+      {
+         g_me_misses = 0;
+         g_me_last_beat = g_mb->heartbeat;
+         g_me_beat_stale = 0;
+         fe_evt("me_init state=up retained=1 beat=%u", g_me_last_beat);
+         return 0;
+      }
+   }
+   g_me_dead = 1;
+   fe_evt("me_init state=unavailable reason=retained_silent beat=%u", beat);
+   return -1;
+}
+
 int me_host_init(const char *base_dir)
 {
    char path[192];
@@ -57,6 +200,8 @@ int me_host_init(const char *base_dir)
    SceUID mod;
    int st, i;
 
+   if (g_me_retained)
+      return me_host_take_up();
    /* Never clear a mailbox that a prior, unhealthy module may still use. */
    if (me_host_loaded())
       return -1;
@@ -65,6 +210,16 @@ int me_host_init(const char *base_dir)
    sceKernelDcacheWritebackInvalidateRange(&g_mbox_storage,
                                            sizeof(g_mbox_storage));
 
+#ifdef GPSP_PERF_RIG
+   if (g_me_fake)
+   {
+      mod = me_fake_start();
+      if (mod < 0)
+         return -1;
+      g_me_modid = mod;
+      goto handshake;
+   }
+#endif
    snprintf(path, sizeof(path), "%s/gbadhoc_me.prx", base_dir);
    mod = kuKernelLoadModule(path, 0, NULL);
    if (mod < 0)
@@ -96,6 +251,9 @@ int me_host_init(const char *base_dir)
       return -1;
    }
    g_me_modid = mod;
+#ifdef GPSP_PERF_RIG
+handshake:
+#endif
 
    /* Boot handshake: the dispatcher writes magic+version.  250 ms is two
     * orders of magnitude above an honest boot; a miss means the ME never
@@ -131,6 +289,17 @@ int me_host_init(const char *base_dir)
 
 void me_host_shutdown(void)
 {
+#ifdef GPSP_PERF_RIG
+   if (g_me_fake && g_me_modid >= 0)
+   {
+      me_fake_stop();
+      g_me_handed_back |= g_mb != NULL;
+      g_me_retained = 0;
+      g_me_modid = -1;
+      g_mb = NULL;
+      return;
+   }
+#endif
    if (g_me_modid >= 0)
    {
       int st = -1;
@@ -146,6 +315,10 @@ void me_host_shutdown(void)
        * cache line can no longer touch these quarantined allocations. */
       free(g_me_bench_retained[0]); g_me_bench_retained[0] = NULL;
       free(g_me_bench_retained[1]); g_me_bench_retained[1] = NULL;
+      /* module_stop put the kernel's SceMeRpc handler back in its slot, and
+       * that handler now waits for an ME firmware that is not running. */
+      g_me_handed_back |= g_mb != NULL;
+      g_me_retained = 0;
       g_mb = NULL;
       rc = sceKernelUnloadModule(g_me_modid);
       if (rc < 0)

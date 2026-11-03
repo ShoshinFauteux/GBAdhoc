@@ -38,6 +38,7 @@ stub = r'''
 static struct { int standby; } g_pcfg = { 1 };
 static int g_pwr_slept, g_pwr_parked = 1, g_pwr_park_req;
 static int g_pwr_park_ack, g_pwr_cb_done, g_pwr_sleep_pending;
+static int g_pwr_req_fires;
 static int g_pwr_park_browser;   /* the game list's park: not in these */
 static int g_pwr_suspend, g_pwr_resume, g_pwr_rebuild, g_pwr_gb_flush_req;
 static int down_calls, notes, scan_calls, wakes, disarms, delays;
@@ -268,3 +269,82 @@ assert mutant != callback
 bad = run(mutant, False)
 assert "g_pwr_cb_done == 0" in bad.stderr, bad.stderr
 print("mutant (give-up marked done): cb_done assertion failed")
+
+
+# power_request_poll: a software suspend request raises no flag under the
+# gameplay lock.  The poll answers it as a switch, and only then.
+poll = function(source, "power_request_poll")
+limit = re.search(r"^#define PWR_REQ_MAX_FIRES .*$", source, re.M).group(0)
+poll_stub = r'''
+#include <assert.h>
+#include <stdio.h>
+#define fe_evt(...) ((void)0)
+#define standby_note(...) ((void)0)
+@LIMIT@
+static int g_pwr_play_lock = 1, g_pwr_sleep_pending, g_pwr_hold, g_pwr_req_fires;
+static int g_pwr_req_signal, g_cb_thid = 7;
+static int request, wakes, reads;
+#define POWER_IS_REQUEST() (reads++, request)
+static void sceKernelWakeupThread(int th) { assert(th == 7); wakes++; }
+@POLL@
+static void passes(int n) { while (n--) power_request_poll(); }
+int main(void)
+{
+    passes(16);
+    assert(reads == 1 && wakes == 0);   /* every 16th pass: nothing asked */
+    request = 1;
+    g_pwr_hold = 1;
+    passes(16);
+    assert(wakes == 0);                 /* a pwr_hold window waits its release */
+    g_pwr_hold = 0;
+    g_pwr_sleep_pending = 1;
+    passes(16);
+    assert(wakes == 0);                 /* the switch got here first */
+    g_pwr_sleep_pending = 0;
+    g_pwr_play_lock = 0;
+    reads = 0;
+    passes(64);
+    assert(wakes == 0 && reads == 0);   /* outside play: no check at all */
+    g_pwr_play_lock = 1;
+    passes(16);
+    assert(wakes == 1 && g_pwr_req_signal == 1);
+    passes(16);
+    assert(wakes == 1);                 /* cb_thread has not run yet */
+    for (int i = 0; i < 8; i++)
+    {
+        g_pwr_req_signal = 0;
+        passes(16);
+    }
+    assert(wakes == PWR_REQ_MAX_FIRES); /* a request that never lands */
+    puts("power request poll: every 16, hold, switch-first, outside play, "
+         "fire, bounded pass");
+    return 0;
+}
+'''
+
+
+def run_poll(body, expect_pass):
+    with tempfile.TemporaryDirectory(prefix="gbadhoc-powerreq-") as folder:
+        cfile = Path(folder) / "poll.c"
+        binary = Path(folder) / "poll"
+        cfile.write_text(poll_stub.replace("@LIMIT@", limit)
+                                  .replace("@POLL@", body))
+        subprocess.run(["cc", "-std=c99", "-Wall", "-Wextra", "-Werror",
+                        str(cfile), "-o", str(binary)], check=True)
+        result = subprocess.run([str(binary)], capture_output=True, text=True)
+        if (result.returncode == 0) != expect_pass:
+            raise AssertionError(result.stdout + result.stderr)
+        return result
+
+
+print(run_poll(poll, True).stdout.strip())
+for guard in ("g_pwr_sleep_pending || ", "g_pwr_hold > 0 ||",
+              "g_pwr_req_fires >= PWR_REQ_MAX_FIRES || ", "!g_pwr_play_lock || ",
+              "g_pwr_req_signal || "):
+    gone = poll.replace(guard, "", 1)
+    assert gone != poll
+    run_poll(gone, False)
+# No timer in the callback thread: it sleeps until something wakes it.
+thread = function(source, "cb_thread")
+assert "sceKernelSleepThreadCB" in thread and "DelayThread" not in thread
+assert "power_request_poll();" in function(source, "wake_overlay_yield")

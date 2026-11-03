@@ -335,7 +335,14 @@ static int me_boot(volatile me_mbox *mb)
  * host set at boot -- so the second core simply reboots into our dispatcher.
  * The mailbox lives in memory the kernel preserves, so the host's view of it is
  * still valid; a re-run of the last command is harmless because the host tracks
- * completion by sequence number. */
+ * completion by sequence number.
+ *
+ * THE SLOT IS HELD FOR AS LONG AS THE PROCESS LIVES.  The handler asks Sony's ME
+ * firmware to save itself and then spins, with no bound, until that firmware
+ * answers (uOFW me_wrapper.c, event 0x4005).  Once this module has run nothing
+ * answers: stopping it does not restart the firmware.  So module_stop is for
+ * leaving the process, where the kernel reboots and boots the ME again, and
+ * never for going on without us (issue 28; docs/INPROC-RETURN.md, section 8). */
 #define HW_SYS_RESET_ENABLE  (*(volatile unsigned int *)0xbc10004c)
 #define ME_HW_RESET          0x14
 #define SE_EV_SUSPEND        0x00000402
@@ -471,13 +478,10 @@ int module_stop(SceSize args, void *argp)
     * and this only ever undid the reset half, so every shutdown left the ME's
     * clock domain running with nothing in it.
     *
-    * That asymmetry is the standby bug.  Measured on a PSP-1000: with the
-    * module never loaded, suspend/resume works -- and our own resume path then
-    * loads the ME and rebuilds the renderer successfully (standby.log: `wake
-    * host=0`, `wake rend=0 vmem=1`).  So the ME is fine to load AFTER a wake;
-    * what the kernel cannot survive is going to sleep with this clock domain
-    * enabled.  Unloading the module was not enough precisely because the
-    * unload never disabled it. */
+    * This was once taken for the standby bug.  It is not (see the note on
+    * SLEEP / WAKE): measured on a PSP-1000, with the module never loaded,
+    * suspend/resume works, because Sony's firmware is still there to answer
+    * the kernel.  A module that has run cannot put that back. */
    sceSysregMeBusClockDisable();
    /* Put the reset vector back — see the note on me_boot. */
    if (me_vec_saved)

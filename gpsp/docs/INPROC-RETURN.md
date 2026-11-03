@@ -43,8 +43,8 @@ that same teardown and adds the rows marked **new**.
 | GB/GBC core | TGB's static state. `gb_reset` leaves the sound registers, some CGB registers and the synthesiser's phases from the last game (gbcore.h). In-process, a second Crystal booted with different frames 1-13 than a fresh boot. | **new**: `fe_host_boot` calls `gbcore_power_on()` before every single-instance create. The link session's machines already start this way: every static byte of the instance is restored from a pristine image. |
 | GB/GBC core | that image: the instance's one process-lifetime malloc (4,180 B), taken by the first create | **new** `gbcore_prepare()` at boot, so no game takes it |
 | GB/GBC core | the video frame: malloc'd per create, not drawn while the boot keeps the LCD off | **new**: cleared at create. A reused block showed the last game's picture; fresh memory is zero. |
-| ME | `gbadhoc_me.prx`, a kernel module | `me_host_shutdown` stops and unloads it; the next game's `me_host_init` loads it again |
-| ME | renderer buffers: the volatile partition (or the heap if that lock fails); video staging | volatile: kept and reused by the next `me_rend_init`, none of it heap. Heap fallback: **new** `me_rend_suspend()` at unload. Staging: freed in the teardown. |
+| ME | `gbadhoc_me.prx`, a kernel module | **kept** (§8): `me_host_retain` waits out the last job and empties the ME's cache, and the next GBA game's `me_host_init` takes the module up again. It is stopped when the process ends, and only then |
+| ME | renderer buffers: the volatile partition (or the heap if that lock fails); video staging | volatile: kept and reused by the next `me_rend_init`, none of it heap; a sleep from the list hands the partition back as ever. Heap fallback: **new** `me_rend_suspend()` at unload. Staging: freed in the teardown. |
 | HOME | `gbadhoc_home.prx` (Menu = HOME) | `home_host_stop` unloads it; **new** `home_host_forget()` lets the next game load it again |
 | threads | SRAM/log writer, stall watch, drprof, priority boost | stopped in the teardown, started again by the next game (`emu_boost_start` is **new** on this path) |
 | threads | audio | **new**: stopped, ring, rate and oracle reset, started again (as at boot) |
@@ -129,6 +129,7 @@ compiled in, and the check costs about 30 malloc/free probes once per quit.
 | `guest_fault`: `badjump_recoveries > 0` | a contained guest fault: do not reuse the process |
 | `me_watchdog`: the ME's watchdog declared it dead | the second core's state is unknown |
 | `standby`: the console slept during this process | sleep invalidates handles and parks the ME; not proven in-process |
+| `me_stopped`: a live ME module was stopped in this process (it could not be retained, §8) | the kernel's sleep handler is back in its slot with no firmware to answer it |
 | `census` | §3 |
 
 The wake overlay's "Quit to game list" used to call `relaunch_eboot()`
@@ -259,7 +260,7 @@ PPSSPP proves the heap and the emulation. It cannot speak for these:
    `argv[1] = "gamelist"` to survive `sctrlKernelLoadExecVSHMs2` on ARK.
 7. **Sleep:** wake, then Quit to game list from the wake overlay. It now
    flushes SRAM and relaunches (the standby rule); before, it relaunched
-   without flushing.
+   without flushing. Sleep from the game list after a return: §8.
 
 The release build carries none of the harness keys. On a release console the
 only visible sign of a refusal is the black frame before the browser fades
@@ -274,3 +275,106 @@ in.
 | harness64 (3000 / Go) | `builds/splash-out/inproc-harness64/` | `5601772b28821b3fed5b06eccf9a5caa` | `19ae57b6` |
 
 HOME prx `d3434f4f` in all three.
+
+## 8. The return keeps the ME module (issue #28)
+
+**The bug.** Play a GBA game with the renderer on, Quit to game list, slide the
+power switch from the list: the console dies in the kernel's suspend and needs
+a power cycle. Reported on a PSP-3001 and confirmed by the owner. Every sleep in
+the reporter's logs sorts by the ME's state: never loaded wakes, loaded wakes
+(about 120), loaded and then unloaded is 2 of 2 dead.
+
+**The mechanism**, from uOFW's reconstruction of `me_wrapper.prx`
+(`src/kd/me_wrapper/me_wrapper.c`, not from anything we measured). The kernel
+registers a sysevent handler, `SceMeRpc`, whose suspend phase (event 0x4005)
+writes -1 to `0xbfc00700`, asks Sony's ME firmware to save its memory, and then
+spins until the firmware writes -2 there:
+
+```c
+while (*hwAddress != -2)
+    ;
+```
+
+Nothing bounds that loop. Our module takes the handler's slot while it runs
+(`psp/me/main.c`), and `module_stop` puts it back, with the ME held in reset.
+That is a firmware that will never answer. It stayed hidden for as long as the
+census refused the return; 4.5.0's cf91ebe made the return work.
+
+**Why the kernel's handler can not be made valid again.** `sceMeBootStart`
+returns at once when the requested image is the one it believes is running
+(`if (genArg == meStarted) return 0`), and the PSP-2000 and later map every
+request but 2 to 3, which it treats as the same image and only sends the running
+firmware an RPC: a call that would wait for ever. The routine that really boots
+the ME is private, and `meStarted` is a data word at a per-firmware address.
+Reaching either means firmware-specific pokes into a kernel module, on every
+model and firmware, tested by killing consoles. Rejected.
+
+**Also rejected:** refusing the return whenever the ME ran (the owner: the fast
+return stays). Unregistering the kernel's handler and unloading anyway would
+free the memory and stop the ME spinning at the list, but it is a sleep nobody
+has ever taken: no handler at all, against 120 logged wakes on the path below,
+and its first test is a console that may stop at the XMB's setup screen.
+
+**The fix.** A return is not a reason to stop the module, so it does not. The
+slot stays ours and the ME stays in the one state every in-game sleep has
+already proved: dispatcher running, `me_sysevent` parking it at suspend and
+releasing it at resume, the ME rebooting into the dispatcher from the vector.
+
+* `me_host_retain` (in the teardown, where `me_host_shutdown` was) waits out the
+  job in flight, because the core is about to be freed; the module used to be
+  reset on the spot. Then `ME_CMD_SYNC`, so no dirty line of the last game is
+  left for the next game's heap. PRX unchanged: not one byte of the module.
+* The next GBA game's `me_host_init` takes it up (`me_init state=up retained=1`):
+  nothing to load, and the render desc's new `work_gen` already tells the ME to
+  start from nothing. It believes only a heartbeat that moves, since a sleep may
+  have reset the ME; a silent one is the usual CPU fallback. GB games leave the
+  module idle.
+* Every exit of the process goes through `pwr_release_all`, which stops a
+  retained module, so exit to the XMB and every relaunch from the list find the
+  machine as before. The same goes for a quit that was going to relaunch anyway.
+* The invariant, enforced: never stay in this process with a live engine
+  stopped. A failed retain (ME busy or silent for 50 ms) stops the module and
+  refuses the return (`me_stopped`).
+* A list sleep gives the volatile partition back as it always did, without the
+  sync that needs a job posted: the retain already did it.
+
+**Census.** The module is not given back any more, so the reference moves by
+exactly what `me_host_init` took, measured around the call (on hardware
+nothing is expected: the module is in the kernel partition, and the census's
+`kfree`/`kmax` are the user partition's). The heap's counts are untouched.
+
+**Costs.** About 135 KB of kernel partition (`gbadhoc_me.prx`, code and data)
+stays taken at the list and in GB games after a GBA game, where it used to be
+free. It is not user memory, so the next game's heap, ROM cache and every census
+figure are the same; a GB link session that loads the network modules now does
+so with it taken, as a GBA session always has. The ME keeps spinning at the
+list and in those GB games: one uncached poll every ~50 µs (ADR-0080a) and some
+battery, not measured. The return itself loses the unload and the next game the
+load.
+
+**Not covered.** Two ways of stopping a live engine in-process are left, neither
+new, neither default: `standby >= 2` in CONFIG.INI unloads the module in the
+power callback (the ladder's old rung; the kernel's handler then spins, which is
+what that rung was found to do), and a failed boot handshake on a mismatched
+module. The window between `me_host_shutdown` and the LoadExec of a relaunch is
+also still there, but under the teardown's `pwr_hold`.
+
+**Tests.** PPSSPP has no ME, so the harness key `me_fake` puts a thread on the
+mailbox in the module's place (`me_fake = 2` is a wedged one), and
+`inproc_me_unload = 1` is the mutant, 4.5.0's behaviour: `power suspending ...
+handed_back=1` is what the bug looks like, and a sleep from the list must log
+`module=1 retained=1 handed_back=0`. PPSSPP cannot show the kernel's path:
+**only a real console sleeping from the list proves this.**
+`tools/inproc/batch_me_sleep.sh` has the arms: 12 returns over GBA, GB and GBC
+games, a list sleep through the real browser (once, twice, after a GB game), a
+sleep in the game after a return, the wake overlay, the wedged engine.
+
+Real ME, no sleep (Lab, build `51f50ed86a39`, `quit_soak` with `me_mode = 1`,
+12 returns on the PSP-3000 and on the PSP-1000, Emerald, AW2, Crystal, H&S): 0
+refused, census exact in all 25 readings with `kfree`/`kmax` unmoved, the ME up
+and rendering in all 10 GBA sessions (9 taken up, 0 drops), HOME and exit clean.
+Frames against the game's first session of the process: Emerald, H&S and
+Crystal identical (frame 1 of a boot differs on the 1000, the known boot noise).
+AW2 differs from frame 31 between its first session and its later ones, which
+agree with each other; a run with the renderer off shows the same, so it is not
+the engine. Not looked into further.

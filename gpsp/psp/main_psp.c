@@ -462,6 +462,8 @@ static unsigned g_stick_state;      /* ctl_stick_bits: engaged directions */
 static unsigned char g_stick_min[2] = { 255, 255 }, g_stick_max[2] = { 0, 0 };
 #endif
 
+static SceUID g_cb_thid = -1;
+static volatile int g_pwr_req_signal;   /* power_request_poll to cb_thread */
 static int cb_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
@@ -470,7 +472,17 @@ static int cb_thread(SceSize args, void *argp)
    sceKernelRegisterExitCallback(cbid);
    if (pcb >= 0)
       scePowerRegisterCallback(0, pcb);
-   sceKernelSleepThreadCB();
+   g_cb_thid = sceKernelGetThreadId();
+   /* Nothing wakes this thread but a callback, or power_request_poll. */
+   for (;;)
+   {
+      sceKernelSleepThreadCB();
+      if (g_pwr_req_signal)
+      {
+         g_pwr_req_signal = 0;
+         power_cb(0, PSP_POWER_CB_POWER_SWITCH, NULL);
+      }
+   }
    return 0;
 }
 
@@ -2103,6 +2115,10 @@ static volatile int g_pwr_parked;
 static volatile int g_pwr_park_ack;
 static volatile int g_pwr_cb_done;
 static volatile int g_pwr_sleep_pending;
+/* power_request_poll: sleeps it started that no wake has answered yet. */
+static int g_pwr_req_fires;
+/* The gameplay scePowerLock is held (play_lock_take). */
+static volatile int g_pwr_play_lock;
 /* The loop that answered `parked` is the game list's (browser_park), not the
  * game's: nothing to tear down but the volatile partition, no wake overlay
  * to ask for (g_pwr_slept stays 0). */
@@ -2173,8 +2189,9 @@ static int power_cb(int unknown, int pwrflags, void *common)
        * came round -- so a console put to sleep right after "saved the
        * game" slept with the save half on the stick or not at all. */
       fe_host_sram_request_scan();
-      fe_evt("power suspending net=%d me=%d standby=%d",
-             g_net_up, me_rend_active(), g_pcfg.standby);
+      fe_evt("power suspending net=%d me=%d standby=%d module=%d retained=%d "
+             "handed_back=%d", g_net_up, me_rend_active(), g_pcfg.standby,
+             me_host_loaded(), me_host_retained(), me_host_handed_back());
       /* FLUSH BEFORE TOUCHING ANYTHING.  The first attempt did the teardown
        * first and the console hard-reset -- taking the queued line with it, so
        * the log said nothing at all about the failure it was there to record.
@@ -2322,6 +2339,7 @@ static int power_cb(int unknown, int pwrflags, void *common)
       g_pwr_park_req = 0;      /* releases a loop held in its park */
       g_pwr_cb_done = 0;
       g_pwr_sleep_pending = 0;
+      g_pwr_req_fires = 0;
       standby_note("resume_complete flags=0x%08X slept=%d",
                    (unsigned)pwrflags, g_pwr_slept);
       fe_evt("power resume_complete slept=%d", g_pwr_slept);
@@ -2352,9 +2370,10 @@ static int power_cb(int unknown, int pwrflags, void *common)
  * so the renderer kept pointers into a partition the OS may hand to someone
  * else while we sleep -- the exact failure the handshake was built against.
  *
- * scePowerLock defers the power switch: a request made while it is held is
- * delivered when the last scePowerUnlock runs, i.e. at a point where the
- * loop can park.  One nesting count, main thread only (every caller is on
+ * scePowerLock defers the power switch: a suspend requested while it is held
+ * runs when the last scePowerUnlock does, i.e. at a point where the loop can
+ * park.  (The switch's POWER_SWITCH flag is not deferred; only the suspend,
+ * and with it SUSPENDING -- see power_request_poll.)  One nesting count, main thread only (every caller is on
  * the main thread); the kernel lock is taken on 0 -> 1 and dropped on 1 -> 0.
  * Every exit of the process (handoff_run, relaunch_eboot, sceKernelExitGame)
  * drops it first (pwr_release_all), so no path can leave the console unable
@@ -2390,6 +2409,11 @@ void pwr_release(void)
 }
 static void pwr_release_all(void)
 {
+   /* Every exit of the process comes through here, and a module the
+    * in-process return kept is the one thing of a game that the exit's
+    * teardown has not already stopped: the game list has no teardown. */
+   if (me_host_retained())
+      me_host_shutdown();
    if (g_pwr_hold > 0)
    {
       g_pwr_hold = 1;
@@ -2456,6 +2480,12 @@ static long g_ss_rw_tick;
 static long g_ss_rw_seen;
 #endif
 static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
+/* `sleep_sim_request = 1`: the suspend is a software request (auto-sleep, the
+ * Go's slider): no flag at all until the gameplay lock is dropped, and only
+ * power_request_poll can get it dropped.  `sleep_sim_nopoll = 1` turns the
+ * poll off, the 4.5.0 behaviour: the run reports request_stuck. */
+static int g_ss_request, g_ss_nopoll;
+static volatile int g_ss_req_up;
 #ifdef REWIND
 static void sleep_sim_trash_pool(void);
 #endif
@@ -2491,6 +2521,23 @@ static int sleep_sim_thread(SceSize args, void *argp)
       sceKernelDelayThread(2000);
       waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
    }
+   if (g_ss_request)
+   {
+      g_ss_req_up = 1;
+      while (g_pwr_play_lock && waited < 10000000u)
+      {
+         sceKernelDelayThread(2000);
+         waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
+      }
+      fe_evt("sleep_sim request lock=%d waited_ms=%u%s", g_pwr_play_lock,
+             waited / 1000u, g_pwr_play_lock ? " request_stuck" : "");
+      if (g_pwr_play_lock)
+      {
+         g_ss_req_up = 0;
+         for (;;)
+            sceKernelSleepThread();
+      }
+   }
    fe_evt("sleep_sim suspend ms=%ld rom=%d browser=%d window=%s "
           "deferred_ms=%u hold=%d nohold=%d", g_ss_ms, g_ss_rom, g_ss_browser,
           g_ss_window[0] ? g_ss_window : "-", waited / 1000u, g_pwr_hold,
@@ -2515,6 +2562,7 @@ static int sleep_sim_thread(SceSize args, void *argp)
    fe_evt("sleep_sim asleep parked=%d rom_closed=%d", g_pwr_parked, closed);
    sceKernelDelayThread((SceUInt)g_ss_ms * 1000u);
    g_ss_asleep = 0;
+   g_ss_req_up = 0;
    power_cb(0, PSP_POWER_CB_RESUMING, NULL);
    power_cb(0, PSP_POWER_CB_RESUME_COMPLETE, NULL);
    fe_evt("sleep_sim resumed cycle=%d slept=%d rebuild=%d rend=%d vmem=%d",
@@ -2548,8 +2596,13 @@ static void sleep_sim_window_enter(const char *why)
 }
 #define SLEEP_SIM_ASLEEP() (g_ss_asleep)
 #define SLEEP_SIM_NOPARK() (g_ss_nopark)
+#define SLEEP_SIM_REQUEST() (g_ss_request)
+#define POWER_IS_REQUEST() \
+   (!g_ss_nopoll && (g_ss_req_up || scePowerIsRequest() == 1))
 #else
 #define SLEEP_SIM_NOPARK() 0
+#define SLEEP_SIM_REQUEST() 0
+#define POWER_IS_REQUEST() (scePowerIsRequest() == 1)
 static void sleep_sim_window_enter(const char *why) { (void)why; }
 #define SLEEP_SIM_ASLEEP() 0
 #endif
@@ -3136,8 +3189,10 @@ static int me_rend_release_vmem(void)
    /* Disabling rendering (including a watchdog fallback) does not stop an
     * in-flight job or drop dirty work-cache lines. Do not return that memory
     * to the OS until the engine has relinquished it. Normally standby >= 2
-    * has already unloaded the module, so no extra command is needed. */
-   if (g_mer_vmem && me_host_loaded() && me_host_sync(50000u) != 0)
+    * has already unloaded the module, so no extra command is needed; nor does
+    * one kept across the in-process return (me_host_retain did this). */
+   if (g_mer_vmem && me_host_loaded() && !me_host_retained() &&
+       me_host_sync(50000u) != 0)
    {
       fe_evt("me_rend release_deferred reason=me_sync");
       return -1;
@@ -3464,7 +3519,6 @@ static sleep_q g_sq;
  * itself when nothing is parked, and every exit (pwr_release_all).  Separate
  * from g_pwr_hold's nesting count: the kernel counts locks, so the two
  * cannot unbalance each other. */
-static volatile int g_pwr_play_lock;
 
 static void play_lock_take(void)
 {
@@ -3475,7 +3529,7 @@ static void play_lock_take(void)
       return;
    {
       int rc = scePowerLock(0);
-      if (rc >= 0)
+      if (rc >= 0 || SLEEP_SIM_REQUEST())   /* PPSSPP has no scePowerLock */
          g_pwr_play_lock = 1;
       else
       {
@@ -3499,6 +3553,51 @@ static void play_lock_drop(const char *who)
    standby_note("q play_unlock by=%s rc=%d", who, rc);
    FE_EVT_ONLY(rc);
    FE_EVT_ONLY(who);
+}
+
+/* A SUSPEND REQUEST THE GAMEPLAY LOCK HAS BEEN SITTING ON.
+ *
+ * Only the POWER switch tells us anything under scePowerLock: syscon's event
+ * raises POWER_SWITCH at once, and that is what starts the park which drops
+ * the lock.  A request made by software (scePowerRequestSuspend: the firmware's
+ * own, for auto-sleep, a dying battery and, it appears, the PSP Go's slider)
+ * raises no flag at all.  The kernel's power thread notes it and waits for the
+ * last unlock, and SUSPENDING comes only after that.  So with the lock held
+ * through play the request waited for a callback that was waiting for it, and
+ * the slider did nothing (4.5.0; the lock came with the PSP-3001 fix, 2510780).
+ * Decompiled power.prx: uOFW src/kd/power/powerSwitch.c, _scePowerOffThread.
+ * That the slider takes this path is inferred: the switch works, the slide
+ * does not, and it worked before the lock.
+ *
+ * scePowerIsRequest() reports the waiting request (PSPSDK's header says it
+ * always returns 0; uOFW shows it reading the two fields the power thread sets
+ * before it blocks).  Seen here, the request is answered as a switch: one sleep
+ * path, the one every model already takes.  power_cb cannot run on this thread
+ * (it waits for this thread to park), so cb_thread is woken to run it.  Windows
+ * under pwr_hold wait for their release, as the suspend itself would.
+ *
+ * Every 16th pass, only with the lock held, so never outside play.  Called from
+ * the loop's top, which play, the in-game menu and a link stall (a frame lost,
+ * plat_gblink_wait bounded by it) all reach, and from the wake and pause
+ * overlay's yield hook, which is the one place holding the lock that does not.
+ *
+ * A request that keeps reading true with no suspend following must not freeze
+ * the game for a hold's 5 s over and over: a few tries, then leave it alone. */
+#define PWR_REQ_MAX_FIRES 3
+int scePowerIsRequest(void);             /* in libpsppower, not in its header */
+static void power_request_poll(void)
+{
+   static unsigned pass;
+   if (!g_pwr_play_lock || (++pass & 15u))
+      return;
+   if (g_pwr_sleep_pending || g_pwr_req_signal || g_pwr_hold > 0 ||
+       g_pwr_req_fires >= PWR_REQ_MAX_FIRES || !POWER_IS_REQUEST())
+      return;
+   g_pwr_req_fires++;
+   standby_note("deferred request fires=%d", g_pwr_req_fires);
+   fe_evt("power deferred_request fires=%d", g_pwr_req_fires);
+   g_pwr_req_signal = 1;
+   sceKernelWakeupThread(g_cb_thid);
 }
 
 static int sq_audio_stop(void *c)
@@ -3679,11 +3778,10 @@ static void sleep_park_hold(void)
        * left the lock to us (park_req cleared). */
       int cb_over = g_pwr_cb_done || !g_pwr_park_req;
       /* Dropped only once a teardown has run for this sleep.  A callback
-       * that gave up tore nothing down: the lock is kept until the
-       * SUSPENDING that follows (delivered with it held) finds us parked
-       * and does, or the hold runs out and play resumes.  Dropped at once,
-       * the suspend would land with the renderer in the volatile
-       * partition. */
+       * that gave up tore nothing down: the lock is kept until the hold
+       * runs out and play resumes, and power_request_poll then asks again
+       * for the suspend still waiting on it.  Dropped at once, the suspend
+       * would land with the renderer in the volatile partition. */
       if (g_pwr_cb_done)
       {
          play_lock_drop("park");
@@ -6641,6 +6739,15 @@ static int g_relaunch;
 #ifndef GPSP_INPROC_RETURN
 #define GPSP_INPROC_RETURN 1
 #endif
+#ifdef GPSP_PERF_RIG
+/* `inproc_me_unload = 1`, the MUTANT: the return unloads the module and stays
+ * in-process, as 4.5.0 did.  A sleep from the list must then report
+ * handed_back=1, or the test that looks for it proves nothing. */
+static int g_inproc_me_unload;
+#define INPROC_ME_UNLOAD_MUTANT() (g_inproc_me_unload)
+#else
+#define INPROC_ME_UNLOAD_MUTANT() 0
+#endif
 extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
 extern u32 badjump_recoveries __attribute__((weak));
 /* SMC_FALLBACK_STATS (diagnostic): why SMC traps took a full RAM flush. */
@@ -6664,6 +6771,11 @@ static const char *inproc_refusal(int have_variant)
       return "me_watchdog";
    if (g_pwr_suspend)
       return "standby";
+   /* The kernel's sleep handler is in its slot again, and it spins for ever
+    * on an ME with no firmware running (docs/INPROC-RETURN.md, section 8).
+    * Only a relaunch makes that safe, and it is what happens here. */
+   if (me_host_handed_back() && !INPROC_ME_UNLOAD_MUTANT())
+      return "me_stopped";
    return NULL;
 }
 
@@ -12502,6 +12614,7 @@ static int browser_park(void)
  * rewind's power hold).  With one park point there is nothing to differ. */
 static int wake_overlay_yield(void)
 {
+   power_request_poll();
    return g_pwr_park_req;
 }
 
@@ -13002,7 +13115,11 @@ int main(int argc, char *argv[])
    g_ss_nohold  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nohold", 0);
    g_ss_rw_tick = fe_ini_get_int(HARNESS_INI, "sleep_sim_rewind_tick", 0);
    g_ss_nopark  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopark", 0);
+   g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
+   g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
    g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
+   me_host_fake((int)fe_ini_get_int(HARNESS_INI, "me_fake", 0));
+   g_inproc_me_unload = (int)fe_ini_get_int(HARNESS_INI, "inproc_me_unload", 0);
    g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
    g_ss_no_land = !fe_ini_get_int(HARNESS_INI, "rewind_park_land", 1);
    fe_ini_get(HARNESS_INI, "sleep_sim_window", g_ss_window,
@@ -14836,7 +14953,18 @@ session_top:
          me_host_require_sysevent(g_pcfg.standby ? 1 : 0);
          if (meb || mbn || mev)
          {
+            /* The module stays resident across an in-process return, so this
+             * game's unload will not give back what its load takes: move
+             * the census's reference by exactly that (none at all when a
+             * retained module is taken up again). */
+            unsigned kf = (unsigned)sceKernelTotalFreeMemSize();
+            unsigned km = (unsigned)sceKernelMaxFreeMemSize();
             int me_rc = me_host_init(g_dir_base);
+            if (me_host_loaded())
+            {
+               snap_pre.kfree -= kf - (unsigned)sceKernelTotalFreeMemSize();
+               snap_pre.kmax  -= km - (unsigned)sceKernelMaxFreeMemSize();
+            }
             if (me_rc < 0 && g_pcfg.standby)
             {
                /* The one failure a player must be TOLD about.  With standby on
@@ -15075,6 +15203,7 @@ session_top:
       loop_unpark("resume");
       /* TYL holds scePowerLock through play. */
       play_lock_take();
+      power_request_poll();
 #ifdef REWIND
       if (g_rw_pool_suspect)
       {
@@ -16654,8 +16783,18 @@ session_top:
     * second core buffer to free; gba_screen_pixels was never reassigned). */
    me_rend_teardown("exit");
    me_video_teardown("exit", 1);
-   me_host_shutdown();
-   if (!me_host_loaded())
+   /* THE IN-PROCESS RETURN KEEPS THE MODULE (docs/INPROC-RETURN.md, section
+    * 8).  Stopping it would put the kernel's SceMeRpc handler back in charge
+    * of an ME that has no firmware to answer it, and the next sleep would
+    * hang in the kernel's suspend.  With the module kept the slot stays ours,
+    * and a sleep from the list is the sleep every game has.  The core can
+    * only be freed below because retaining waits out the ME's last job.
+    * A quit that will not stay in this process stops it as ever, and so
+    * does a return that goes wrong further down ("inproc_refused"). */
+   if (g_relaunch != RELAUNCH_GAMELIST || inproc_refusal(have_variant) ||
+       INPROC_ME_UNLOAD_MUTANT() || !me_host_retain(50000u))
+      me_host_shutdown();
+   if (!me_host_loaded() || me_host_retained())
    {
       free(g_me_stage[0]);   g_me_stage[0] = NULL;
       free(g_me_stage[1]);   g_me_stage[1] = NULL;
@@ -16798,6 +16937,7 @@ session_top:
       }
       fe_evt("inproc_refused why=%s", why);
       g_relaunch = RELAUNCH_GAMELIST;
+      me_host_shutdown();       /* kept for a return that is not happening */
    }
    audio_stop();
    vid_term();

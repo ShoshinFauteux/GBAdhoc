@@ -7,3 +7,6 @@ private namespace per run (run142.sh, a copy of builds/splash-out/wsl's run136.s
                                                                  # menu quit, light/GBC, fade-in
 Fixtures: ~/drprof/fx (aw2/emerald/hns + states) and ~/inproc-fx (red.gb, crystal.gbc and
 their .st0, made with `state_save_at = 600`).
+
+  bash tools/inproc/batch_me_sleep.sh <harness eboot dir> [arms]  # the return keeps the ME module (issue 28):
+                                                                 # sleep from the list, wedged engine, the mutant

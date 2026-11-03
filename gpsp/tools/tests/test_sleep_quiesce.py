@@ -71,6 +71,7 @@ STUB = r'''
 #define FE_EVT_ONLY(x) ((void)(x))
 #define fe_evt(...) ((void)0)
 #define SLEEP_SIM_ASLEEP() 0
+#define SLEEP_SIM_REQUEST() 0
 #define SQ_TRACE(s) do { strncat(trace, s " ", sizeof(trace) - strlen(trace) - 1); } while (0)
 typedef struct RFILE RFILE;
 static char trace[1024], notes[4096];
