@@ -103,7 +103,7 @@ def scenes(run, theme):
         for name, cur, note, ask in page:
             sl, shot, none, _ = st.get(name, ({}, None, set(), None))
             slots = [(sl.get(k, (0, ''))[0], sl.get(k, (0, ''))[1], thumbs.get(k))
-                     for k in range(1, 6)]
+                     for k in range(1, O.SLOTS + 1)]
             out.append((name, lambda s, cur=cur, slots=slots, shot=shot, none=none, note=note, ask=ask:
                         O.savestates(s, FRAME, cur, slots,
                                      shots.get(cur) if shot == cur else None,

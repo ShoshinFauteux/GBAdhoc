@@ -27,18 +27,24 @@ import pspdraw as P   # noqa: E402
 
 MON = {m: i + 1 for i, m in enumerate('Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split())}
 
-# savestate.py GAMES, verbatim: (native key or None, stamp, has .shot)
+# savestate.py GAMES, verbatim: (native key or None, stamp, has .shot) --
+# the design's five slots, then slots 6-10 (state_slots.h: ten a game, five
+# rows on screen).  GBA slot 8 holds one more state so the scrolled window
+# (ge_gba.ui `scrolled`, rows 4-8) has a picture in it; the rest are empty.
 GAMES = {
     'gba': dict(back='battle', slots=[('mauville2', '26 Sep 2026, 19:10', 1),
                                       ('mauville', '1 Oct 2026, 08:44', 1),
                                       ('battle', '3 Oct 2026, 14:32', 1),
                                       None,
-                                      ('OLD', '20 Sep 2026, 23:02', 0)]),
+                                      ('OLD', '20 Sep 2026, 23:02', 0),
+                                      None, None,
+                                      ('mauville', '4 Oct 2026, 10:05', 1),
+                                      None, None]),
     'gbc': dict(back='forest', slots=[('oak', '2 Oct 2026, 21:15', 1),
                                       ('forest', '3 Oct 2026, 09:58', 1),
-                                      None, None, None]),
+                                      None, None, None] + [None] * 5),
     'gb': dict(back='kirby', slots=[('kirby', '3 Oct 2026, 12:20', 1),
-                                    None, None, None, None]),
+                                    None, None, None, None] + [None] * 5),
 }
 
 

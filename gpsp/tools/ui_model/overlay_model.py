@@ -116,12 +116,36 @@ def menu(s, frame, k=OPEN_FRAMES, cur=0, used=None):
             band(s, y, s.text_w(l) + 44, 24)
         s.text(18, y, l, mix565(c, s.C['bg_bot'], fade))
         if i == 1 and used is not None:
-            s.text(18 + s.text_w(l) + 12, y, '%d of 5 used' % used,
+            s.text(18 + s.text_w(l) + 12, y, '%d of %d used' % (used, SLOTS),
                    mix565(s.C['accent_dk'], s.C['bg_bot'], fade))
     footer(s, G_X + ' select     ' + G_O + ' resume')
 
 
 # ---- the Save States page (docs/UI-OVERLAY.md section 13) -----------------
+# psp/state_slots.h: ten slots a game, five rows of them on screen.
+SLOTS, ROWS = 10, 5
+SS_PITCH, SS_BAR_X = 34, 218
+
+
+def slot_top(cur, top, n=SLOTS, rows=ROWS):
+    """state_slots.h psp_state_slot_top(): the first slot index shown."""
+    cur = max(1, min(cur, n))
+    if cur - 1 < top:
+        top = cur - 1
+    if cur - 1 >= top + rows:
+        top = cur - rows
+    return max(0, min(top, n - rows))
+
+
+def scrollbar(s, x, y, h, pos, view, total):
+    """ui_psp.c ov_scrollbar(): 2 px, C_CARD track, C_ACCENT_DK thumb."""
+    if total <= view or total <= 0:
+        return
+    ty, th = h * pos // total, max(8, h * view // total)
+    s.rect(x, y, 2, h, s.C['card'], 255)
+    s.rect(x, y + ty, 2, th, s.C['accent_dk'], 255)
+
+
 def outline(s, x, y, w, h, c, a):
     s.rect(x, y, w, 1, c, a)
     s.rect(x, y + h - 1, w, 1, c, a)
@@ -163,13 +187,19 @@ def ss_panel(s, slot, shot=None, shot_none=False):
 
 
 def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
-               ask=None):
-    """screen_state_slots(): cur 1..5; slots[i] = (have 0/1/2, stamp, 64x42
-    PIL thumb); ask = ('delete' | 'overwrite', n); note = the plate."""
+               ask=None, top=None):
+    """screen_state_slots(): cur 1..10; slots[i] = (have 0/1/2, stamp, 64x42
+    PIL thumb), all ten; ask = ('delete' | 'overwrite', n); note = the
+    plate; top = the window's first slot index (default: the window a walk
+    from slot 1 leaves, slot_top(cur, 0))."""
     backdrop(s, 170, frame)
     head(s, GAME, 'SAVE STATES')
+    if top is None:
+        top = slot_top(cur, 0)
     for i, (have, stamp, thumb) in enumerate(slots):
-        y = 72 + 34 * i
+        if not top <= i < top + ROWS:
+            continue
+        y = 72 + SS_PITCH * (i - top)
         by = y + 1
         sel = i + 1 == cur
         if sel:
@@ -184,6 +214,8 @@ def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
             s.text(64, y + 14, stamp or 'saved', s.C['value'] if sel else s.C['dim'])
         else:
             s.text(64, y + 14, 'empty', s.C['dim'])
+    scrollbar(s, SS_BAR_X, 73, SS_PITCH * ROWS - 2, top * SS_PITCH,
+              SS_PITCH * ROWS, SS_PITCH * len(slots))
     sl = slots[cur - 1]
     ss_panel(s, sl, shot, shot_none)
     s.text(228, 228, 'Slot %d  -  %s' % (cur, (sl[1] or 'saved') if sl[0] else 'empty'),
@@ -201,7 +233,7 @@ def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
         footer(s, G_SQ + ' save     ' + G_O + ' back')
 
 
-SS_THUMB_MASKS = [(20, 72 + 34 * i + 5, 36, 24) for i in range(5)]
+SS_THUMB_MASKS = [(20, 72 + SS_PITCH * r + 5, 36, 24) for r in range(ROWS)]
 
 
 # ---- settings --------------------------------------------------------------

@@ -5,7 +5,7 @@
 # ".gb" / ".gbc": the state names keep the ROM's extension), SSSTATE (a real
 # state to copy into every slot; default 4 KiB of zeros -- the page only
 # stats it).
-for k in 1 2 3 4 5; do
+for k in 1 2 3 4 5 6 7 8 9 10; do
   [ -f "$SSFX/slot$k.time" ] || continue
   st="$ROMSTEM${SSSUF:-}.st$((k - 1))"
   if [ -n "${SSSTATE:-}" ]; then cp "$SSSTATE" "$st"; else head -c 4096 /dev/zero > "$st"; fi
