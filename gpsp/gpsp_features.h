@@ -121,6 +121,9 @@
 #if !defined(GPSP_NO_SMC_STM_AHEAD) && !defined(SMC_STM_AHEAD)
 #define SMC_STM_AHEAD 1
 #endif
+#if !defined(GPSP_NO_SMC_STM_FIXED) && !defined(SMC_STM_FIXED)
+#define SMC_STM_FIXED 1
+#endif
 
 /* ---- unchanged-code filters and in-place patching -------------------------- */
 #if !defined(GPSP_NO_SMC_SAME_SKIP) && !defined(SMC_SAME_SKIP)
