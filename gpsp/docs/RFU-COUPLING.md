@@ -128,3 +128,25 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
 4. **Fixtures** for what is not covered yet: other adapter games, three consoles, disconnects, net conditions.
 5. **Retire the old rules** one at a time, with a hardware run after each. Review the 57 fps force.
 6. **Beta build**: a natural first nightly once Tennis and Golf hold up in real sessions.
+
+## Status (2026-11-03)
+
+Built and on hardware as the build switch `RFU_SCHED=1` (tools/build.sh, off by default; docs/BUILD-SWITCHES.md).
+
+- **Hardware, PSP-1000 + PSP-3000, D = 2.** Lab build d5973f7fc046 (`claude/rfu-ticks` 2e5c288), Lab notes `rfut460`:
+  11 of 11 passed across both console orders. Slice fps (the Lab's own measure, host/join): Tennis 56.2/56.1 and
+  55.9/55.8; Golf 46.3/46.6, 46.9/47.1, 46.6/46.6, 45.2/47.2, every lobby reached the round; long Golf (17 min)
+  48.7/48.6; Emerald trade 56.7/56.7; battle 56.3/56.3; host loss shows the join's error screen at D = 2 and D = 0.
+  The 57 fps session force (ADR-0073) still applies, which is why nothing passes 57.
+- **Earlier lab builds** (`claude/rfu-reference`, RFU_TL, flight recorder): resent 2.6-5 % against 43-60 % off,
+  dropped 0 against 13-15 %, client queue 0 against 32-48. With ticks on, frame pace, shedding, hold and supersede
+  off gave the same numbers as on, so ticks now switch them off.
+- **Client-vs-host work gap.** Off, the client works 2.7 ms (Tennis) to 4.7 ms (Golf) more than the host; with ticks
+  0.4-1.2 ms, because both run at the slower console's pace. Not pursued further.
+- **Frontend wait.** fe_host_rfu_gate waits up to 12 ms per pass, then gives the pass back without a frame so the
+  menu and HOME stay live. Long Golf: 3-4 % of passes gave up a frame, about 5 % of wall time spent waiting.
+- **Mixed builds.** netdrv admission carries ND_FEAT_RFU_SCHED: a ticks build and one without refuse each other.
+- **Open.** The Golf lobby race (Risks 3) is narrower, not gone: desktop launch-gap sweeps with steady presses pass
+  22/24 at D = 2 and 18/24 at D = 0; with uneven presses 47/48 and 48/48. Hardware with ticks 15 of 17 lobbies over
+  three builds, off about 5 of 9. Three consoles, sleep and in-game menu pauses on hardware, and the player-route
+  fixture for adapter rooms are not done.
