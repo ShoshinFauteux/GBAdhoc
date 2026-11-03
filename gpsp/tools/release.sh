@@ -19,13 +19,22 @@ PY=python3; command -v python3 >/dev/null 2>&1 || PY=python
 # a release stamps its own commit unless RELEASE_ALLOW_VERSION_PIN=1 says that
 # reproducing an older stamp is the point.
 for v in CORE_EXTRA FE_EXTRA PSP_EXTRA GBA_LINK REWIND LAYOUT_PIN LAYOUT_PAD_BYTES CHEATS INPUT_FRESH \
-         ME_LOWLAT GPSP_EBOOT_TITLE; do
+         ME_LOWLAT GPSP_EBOOT_TITLE RFU_SCHED; do
   [ -z "${!v+x}" ] || die "$v is set in the environment; a release has none"
 done
 if [ -n "${GPSP_BUILD_VERSION:-}" ] && [ "${RELEASE_ALLOW_VERSION_PIN:-0}" != 1 ]; then
   die "GPSP_BUILD_VERSION is set; a release stamps its own commit"
 fi
 [ -z "$(git status --porcelain -- . 2>/dev/null)" ] || die "the tree is not clean: git status"
+
+# THE VERSION SAYS WHICH ADAPTER PROTOCOL.  A beta or nightly (X.Y.Z-beta.N,
+# X.Y.Z-nightly...) ships scheduled ticks (RFU_SCHED=1, docs/RFU-COUPLING.md;
+# owner 2026-11-03: beta players link with beta builds only).  A plain X.Y.Z
+# is a stable release and builds without them, so it still links with 4.5.0.
+case "$VERSION" in
+  *-beta*|*-nightly*) export RFU_SCHED=1; echo "release: $VERSION is a beta: RFU_SCHED=1 (adapter ticks)" ;;
+  *) export RFU_SCHED=0 ;;
+esac
 
 OUT=dist/release-build
 "$PY" tools/check_flags.py --compile || die "flags drifted"
