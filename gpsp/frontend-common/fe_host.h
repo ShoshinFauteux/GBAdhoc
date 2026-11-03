@@ -582,6 +582,7 @@ void fe_host_gblink_hold(int on);
 /* 1 when the autopilot may take its per-frame step now (always, outside a
  * link session unless gblink_script_waits). */
 int  fe_host_autopilot_gate(void);
+void fe_host_script_release(void);
 /* The running session's facts for the LINKING screen (fe_gblink_progress);
  * 0 when there is no session (out is then FAILED/none), else 1. */
 struct fe_gblink_progress;
