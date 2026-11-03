@@ -63,7 +63,9 @@ the CPU clock setting; `NV_COND_FIX` (issue #10); and `BIOS_BOUND_FIX` with `XLA
 
 ## Not in the beta
 
-Kirby link speed (`claude/kirby-460`, `claude/kirby-prof`; finish it separately);
+Kirby link speed (`claude/kirby-460` tip `5b2872b`: HALT_HOP + HOP_DRAWN + end-of-frame link hash
+are merge-ready, corpus 35/35, KAM 50.9 -> 51.9; DS_BATCH reaches 53.3 but fails 26/35 corpus ROMs and
+needs a timing-exact redesign; KAM is 50.9 on 4.6.0-dev vs 51.6 on 4.5.0, unexplained);
 `ROM_MIRROR_RELOAD_FIX` (`claude/rom-mirror-reload`; its Golf "regression" was the missing BIOS,
 so re-check it); the full player-route fixture conversion; GBA-link pause handling (about 10 s in
 the in-game menu loses a linked session); the Golf lobby race (narrowed, not gone).
