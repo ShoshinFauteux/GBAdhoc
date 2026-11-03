@@ -3036,6 +3036,27 @@ static int mer_sameframe_active(void)
 #define PLAY_ME_LOWLAT 2     /* tier 1 mode 2 on by default (ME_LOWLAT=0 builds it off) */
 #endif
 static int      g_flip_early       = 1;   /* `flip_early`      */
+/* FF FLIP PACING (`ff_flip_pace`, docs/FF-PRESETS.md): never replace a flip
+ * the LCD has not latched yet.  Bit 0: the paced branch's early flip (tier
+ * 0a) waits for the previous one to latch -- under 3x a loop is about one
+ * vblank long, and an early flip landing in the interval the previous one is
+ * still pending in replaced it (a dropped picture, the next one 6 frames on).
+ * Bit 1: the draw gate's presets hold a finished picture in the back buffer
+ * until the previous flip has been on screen for the preset's interval (1
+ * vblank for Smooth, 2 for Unlimited), instead of flipping it the moment the
+ * loop finishes.  The gate's wall-clock grid (16667 us) beats against the
+ * LCD (16683 us); without the hold, the phase drifts through the vblank edge
+ * every ~17 s and for seconds at a time two flips land in one interval (one
+ * never shown) and the next has none.  Never blocks: the loop keeps
+ * emulating, the held picture goes out on the first loop that may flip it,
+ * and a newer render that is presented meanwhile replaces it. */
+#ifndef PLAY_FF_FLIP_PACE
+#define PLAY_FF_FLIP_PACE 0
+#endif
+static int      g_ff_flip_pace     = PLAY_FF_FLIP_PACE;
+static unsigned g_ffh_sub_vc;      /* vcount after the last successful submit */
+static int      g_ffh_held;        /* the back buffer holds an unflipped picture */
+static unsigned g_ffh_holds, g_ffh_waits, g_ffh_vb;
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
@@ -12478,6 +12499,12 @@ static int lat_swap(int early)
       g_lat_hold++;            /* nothing drawn: the screen holds */
       return 0;
    }
+   {
+      /* Latches at the vblank after the submit.  A vblank between the read
+       * above and this one leaves it ambiguous: take the later. */
+      unsigned vc2 = sceDisplayGetVcount();
+      g_ffh_sub_vc = vc2;
+   }
    g_lat_sub_vc = vc;
    g_lat_check  = 1;
    if (vid_flip_latched())
@@ -12505,6 +12532,27 @@ static int lat_swap(int early)
       g_bb_new = 0;
    }
    return r;
+}
+
+/* FF FLIP PACING (see g_ff_flip_pace).  1 = a flip now would latch less than
+ * `n` vblanks after the last one (n = 1: the last one has not latched yet). */
+static int ffh_too_soon(unsigned n)
+{
+   return (int)(sceDisplayGetVcount() - (g_ffh_sub_vc + n)) < 0;
+}
+
+/* The uncapped branch: hold this loop's picture instead of flipping it? */
+static int ffh_hold(void)
+{
+   unsigned n;
+   if (!(g_ff_flip_pace & 2) || !g_ff_gate)
+      return 0;
+   n = pcfg_ff_mode() == PCFG_FF_UNLIMITED ? 2u : 1u;
+   if (!ffh_too_soon(n))
+      return 0;
+   if (!g_ffh_held)
+      g_ffh_holds++;
+   return 1;
 }
 
 /* The paced branch's vblank wait, in three calls: begin, one step per pass
@@ -12799,7 +12847,10 @@ static int lat_wait_step(void)
    if (!g_lw_swapped && g_lw_ll == LL_OFF && g_flip_early &&
        !mer_sameframe_active())
    {
-      if (vid_gu_busy())
+      if ((g_ff_flip_pace & 1) && ffh_too_soon(1))
+         g_ffh_waits++;           /* the last flip is still pending: block on
+                                   * its vblank, flip after it (4.1.0's way) */
+      else if (vid_gu_busy())
          poll = 1;
       else
       {
@@ -12875,6 +12926,10 @@ static void lat_census(void)
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
           sceDisplayGetVcount() - g_lat_vc0, g_ll_pull);
+   if (g_ff_flip_pace && (g_ffh_holds || g_ffh_waits))
+      fe_evt("ffh pace=%d holds=%u held_loops=%u waits=%u", g_ff_flip_pace,
+             g_ffh_holds, g_ffh_vb, g_ffh_waits);
+   g_ffh_holds = g_ffh_vb = g_ffh_waits = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -14085,6 +14140,8 @@ int main(int argc, char *argv[])
                                          g_flip_early) != 0;
       g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
                                                g_mer_early_retire) != 0;
+      g_ff_flip_pace = (int)fe_ini_get_int(HARNESS_INI, "ff_flip_pace",
+                                           g_ff_flip_pace) & 3;
       /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
        * on an early nudge (TIER 1 POLICY at g_flip_early) */
       g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", PLAY_ME_LOWLAT);
@@ -14107,9 +14164,9 @@ int main(int argc, char *argv[])
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
       fe_evt("latency flip_early=%d me_early_retire=%d me_lowlat=%d "
-             "recover=%u margin_us=%u me_sameframe=%d",
+             "recover=%u margin_us=%u me_sameframe=%d ff_flip_pace=%d",
              g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
-             g_ll_margin_us, g_mer_sameframe);
+             g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace);
       /* 0 restores the end-of-retro_run post for a one-binary A/B. */
       g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
       if (!g_mer_vispost)
@@ -15581,6 +15638,7 @@ session_top:
       unsigned ctl_fired;   /* CTL_FIRE_*: the player's shortcuts this frame */
       int home_mode;        /* Menu = HOME is in force this frame          */
       int home_pressed;     /* ...and HOME was pressed (consumed once)     */
+      int ffh_loop;         /* FF flip pacing: entered with a held picture */
       int session = fe_np_session_active();
       int harness_ff = ff_ini || fe_autopilot_ff();
       /* ADR-0021: the loop body without the vblank wait is the number that
@@ -16480,6 +16538,13 @@ session_top:
          pad_new = ctl_fired = 0;
       }
       FE_LP_SET(FELP_L_PRES0);
+      /* FF FLIP PACING: a picture held by the last loop is still the back
+       * buffer.  Whether this loop draws a NEW one is what g_drew says below
+       * (the HUD is drawn on a new one only); if none, the held one stands. */
+      ffh_loop = g_ffh_held && g_ff_gate;
+      g_ffh_held = 0;
+      if (ffh_loop)
+         g_drew = 0;
       me_video_present();
       /* LOW LATENCY tier 0b: a render that finished during the previous
        * iteration is shown NOW, not after the next post retires it. */
@@ -16513,6 +16578,11 @@ session_top:
       if (g_drew && (g_rw_on || g_rwh.denied))
          psp_rewind_hud();
 #endif
+      if (ffh_loop && !g_drew)
+      {
+         g_drew = 1;              /* nothing new: the held picture stands */
+         g_ffh_vb++;
+      }
       g_mer_posted = 0;
 
       /* FPS chip: emulated-frame rate over a ~1 s window, one decimal (a
@@ -17146,9 +17216,15 @@ session_top:
           * No same-frame handling here.  mer_sameframe_active() is false
           * whenever fast-forward is engaged, so the loop-top present ran
           * as it always did and this branch is untouched shipping code. */
-         osd_draw();
-         lat_swap(0);
-         g_drew = 0;
+         if (ffh_hold())
+            g_ffh_held = 1;       /* FF FLIP PACING: a later loop flips it */
+         else
+         {
+            osd_draw();
+            lat_swap(0);
+            g_drew = 0;
+            g_ffh_held = 0;
+         }
       }
       FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
       lat_census();
