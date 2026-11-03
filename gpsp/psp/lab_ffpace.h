@@ -30,6 +30,9 @@
  * each flip (no hook inside the hot-ordered present path). */
 int  lab_ffpace_boot(const char *ini, int apply, const volatile int *me_rend,
                      const volatile int *me_shown);
+/* After the tree's own clock code: if the clock asked for did not take (a CFW
+ * holding its in-game clock), set it the way a CFW does. */
+void lab_ffpace_clock_enforce(void);
 /* Every flip, BEFORE sceDisplaySetFrameBuf: physical address it submits. */
 void lab_ffpace_flip(unsigned phys_addr);
 /* ME renderer: a render of game frame `frame` was posted into stage `stage`. */

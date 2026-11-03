@@ -6,13 +6,14 @@
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <psppower.h>
+#include <systemctrl.h>
 #include "fe_evt.h"
 #include "fe_host.h"
 #include "fe_util.h"
 #include "lab_ffpace.h"
 
 #define FFP_NTAG      4
-#define FFP_TRACE     3600          /* per-vblank advance digits kept (60 s) */
+#define FFP_TRACE     900           /* per-vblank advance digits kept (15 s) */
 #define FFP_SETTLE_US 2000000u      /* FF engaged this long before measuring */
 
 /* Everything the observer counts, all unsigned so a window is a plain diff. */
@@ -204,8 +205,23 @@ int lab_ffpace_boot(const char *ini, int apply, const volatile int *me_rend,
       int rc = scePowerSetClockFrequency(g_clock, g_clock, g_clock / 2);
       fe_evt("ffpace clock want=%d rc=%d now=%d/%d", g_clock, rc,
              scePowerGetCpuClockFrequency(), scePowerGetBusClockFrequency());
+      lab_ffpace_clock_enforce();
    }
    return g_clock;
+}
+
+/* The Lab consoles' CFW holds its own in-game clock: scePowerSetClockFrequency
+ * answers 0 and the clock stays (EVT clock ... held=1).  A player whose CFW
+ * sets 222 gets 222 from the CFW, so do what the CFW does: sctrlHENSetSpeed. */
+void lab_ffpace_clock_enforce(void)
+{
+   int c0 = scePowerGetCpuClockFrequency(), b0 = scePowerGetBusClockFrequency();
+   if (!g_on || !g_clock || (c0 == g_clock && b0 == g_clock / 2))
+      return;
+   sctrlHENSetSpeed(g_clock, g_clock / 2);
+   fe_evt("ffpace clock_enforce want=%d/%d was=%d/%d now=%d/%d via=sctrlHENSetSpeed",
+          g_clock, g_clock / 2, c0, b0, scePowerGetCpuClockFrequency(),
+          scePowerGetBusClockFrequency());
 }
 
 void lab_ffpace_flip(unsigned phys_addr)
@@ -420,7 +436,6 @@ void lab_ffpace_finish(void)
             p += snprintf(m + p, sizeof(m) - p, "%s%u", j ? "," : "", d.m2[i][j]);
       }
       fe_evt("ffpace_m2 rows=ivl1,2,3,4+ cols=gf1..8,9+ m=%s", m);
-      emit_trace(1);
    }
    g_meas = 0;
    g_run = 0;

@@ -13232,7 +13232,7 @@ int main(int argc, char *argv[])
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
       LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
-   psp_clock_apply("boot");
+   psp_clock_apply("boot"); LAB_FFP(lab_ffpace_clock_enforce();)
    fe_evt("clock=%d", scePowerGetCpuClockFrequency());
    boot_mark("config");
 
