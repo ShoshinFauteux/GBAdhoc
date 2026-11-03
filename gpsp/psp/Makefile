@@ -1,4 +1,4 @@
-# psp/Makefile — native PSP frontend -> EBOOT.PBP (Phase 1, plan §5).
+# psp/Makefile ï¿½ native PSP frontend -> EBOOT.PBP (Phase 1, plan ï¿½5).
 #
 # Requires the core static lib first (built in the pspdev docker image):
 #   docker run --rm -v <repo>:/build -w /build pspdev/pspdev \
@@ -7,7 +7,7 @@
 #   docker run --rm -v <repo>:/build -w /build/psp pspdev/pspdev make
 #
 # Notes:
-#  - -G0 matches the core's CFLAGS (no small-data section; FRONTEND-AUDIT §10).
+#  - -G0 matches the core's CFLAGS (no small-data section; FRONTEND-AUDIT ï¿½10).
 #  - The core archive contains C++ objects (video.cc) built with
 #    -fno-rtti -fno-exceptions and no libstdc++ dependencies; linking with
 #    psp-gcc works (upstream links the .so with gcc on purpose).
@@ -93,13 +93,13 @@ GB_CORE_OBJS = ../gbcore/gbcore_tgbdual.o $(TGB_OBJS)
 # instance's .data/.bss for gbcore_power_on.
 
 INCDIR   = ../frontend-common ../netdrv ../libretro/libretro-common/include ..
-# -MMD -MP: AUTOMATIC HEADER DEPENDENCIES.  Do not remove — this closes a
+# -MMD -MP: AUTOMATIC HEADER DEPENDENCIES.  Do not remove ï¿½ this closes a
 # silent, shipped, hardware-visible corruption bug (ADR-0035).
 #
 # build.mak supplies only an implicit `%.o: %.c` rule, so before this line a
 # change to a HEADER rebuilt nothing.  Adding a field to `psp_config` in
 # config_psp.h therefore left ui_psp.o and osd_psp.o compiled against the OLD
-# struct layout while config_psp.o and main_psp.o used the new one — every
+# struct layout while config_psp.o and main_psp.o used the new one ï¿½ every
 # translation unit agreeing on the symbol and disagreeing on the offsets.  It
 # does not fail at link and it does not warn.  In the field it wrote
 # `blit_mode = 1347637319` (= 0x50535047, the ASCII "GPSP" of a room code
@@ -226,7 +226,7 @@ endif
 # is not compiled and main_psp.c's LAB_HOOK()s expand to nothing.
 LAB_HARNESS ?= 0
 ifeq ($(LAB_HARNESS),1)
-OBJS += lab_harness.o labab/budget.o labab/ab_io.o
+OBJS += lab_harness.o labab/budget.o labab/ab_io.o lab_ffpace.o
 CFLAGS += -DLAB_HARNESS
 endif
 GBA_LINK ?= 1
@@ -293,7 +293,7 @@ EXTRA_TARGETS   = EBOOT.PBP me/gbadhoc_me.prx home/gbadhoc_home.prx
 # icon + background derived from the user-supplied logo by assets/make_assets.py
 # (was "PSP AGB" after the adapter's AGB-015 model number).  The HARNESS build
 # overrides these on the command line with assets/harness_* so the instrumented
-# console is unmistakable at a glance — inverted to a dark amber field — and
+# console is unmistakable at a glance ï¿½ inverted to a dark amber field ï¿½ and
 # tools/make_variant.sh does the same per game.
 PSP_EBOOT_TITLE ?= GBAdhoc
 PSP_EBOOT_ICON  = assets/gbadhoc_icon0.png
@@ -316,7 +316,7 @@ PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 #    PSP-3000 Unbound divergence at 32 blocks was re-tested on the Go A/B
 #    rig: 21/21 frame-identical (docs/ROM-RESIDENCY.md).
 #  - HARNESS pins MEMSIZE=0 (the `harness` target below): PSP-1000 is the
-#    memory budget target (FRONTEND-AUDIT §8) and PPSSPP models MEMSIZE, so
+#    memory budget target (FRONTEND-AUDIT ï¿½8) and PPSSPP models MEMSIZE, so
 #    the Gate-1 mem_free measurement must stay honest for the 1000-series.
 PSP_LARGE_MEMORY ?= 1
 
@@ -332,11 +332,11 @@ endif
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
 
-# `make harness` — the branded harness build.  The [HARNESS] title + dark
+# `make harness` ï¿½ the branded harness build.  The [HARNESS] title + dark
 # icon are the XMB half of the differentiation (the in-app half is the black
 # page background, ui_psp.c).  These lived only in hand-typed build commands
 # for months and silently dropped out twice; now the target owns them.
-# AFTER the include, or it becomes the default goal and recurses forever —
+# AFTER the include, or it becomes the default goal and recurses forever ï¿½
 # the same trap as me/Makefile's video.o rule.  Third strike.
 harness:
 	$(MAKE) clean
@@ -439,7 +439,7 @@ clean-gbcore:
 .PHONY: clean-deps clean-gbcore
 
 # ADR-0080: the ME kernel module (defined here, after the include, so it
-# never becomes the default goal — that bug once built the PRX and nothing
+# never becomes the default goal ï¿½ that bug once built the PRX and nothing
 # else).  PHONY so its own sub-make owns dependency tracking.
 .PHONY: me/gbadhoc_me.prx clean-me
 me/gbadhoc_me.prx:

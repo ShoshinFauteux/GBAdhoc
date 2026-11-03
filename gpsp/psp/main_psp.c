@@ -104,6 +104,7 @@ PSP_MAIN_THREAD_STACK_SIZE_KB(256);
  * ROM blocks at retro_init until malloc fails (FRONTEND-AUDIT §8 gotcha). */
 PSP_HEAP_SIZE_KB(-1024);
 #include "lab_harness.h"
+#include "lab_ffpace.h"     /* Lab only: FF presentation cadence (LAB_FFP) */
 /* All paths are derived from the EBOOT's own directory at runtime (argv[0])
  * so per-game variant installs (docs/VARIANTS.md) work from any folder;
  * falls back to the canonical install dir. */
@@ -4281,7 +4282,7 @@ static void me_rend_present(void)
       g_bb_new = 1;
       g_bb_pvc = g_mer_stage_pvc[g_mer_ready];
    }
-   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
+   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160); LAB_FFP(lab_ffpace_me_present(g_mer_ready);)
    g_mer_last_presented = g_mer_ready;
    g_drew = 1;
 }
@@ -4322,7 +4323,7 @@ static void me_rend_retire_if_idle(void)
       g_mer_priv[g_mer_pending] = 0;
    else
 #endif
-   g_mer_ready   = g_mer_pending;
+   g_mer_ready   = g_mer_pending; LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, 0);)
    mer_note_sum();
    g_mer_pending = -1;
    g_mer_miss    = 0;
@@ -4392,7 +4393,7 @@ static void me_rend_frame(int emulated)
             g_mer_priv[g_mer_pending] = 0;
          else
 #endif
-         g_mer_ready   = g_mer_pending;
+         g_mer_ready   = g_mer_pending; LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
          mer_note_sum();
          g_mer_pending = -1;
          g_mer_miss    = 0;
@@ -4474,7 +4475,7 @@ static void me_rend_frame(int emulated)
             if (g_mer_dirty_cfg)
                g_mer_full_copy = 0;   /* mirror is now valid to patch */
          }
-         g_mer_pending = out;
+         g_mer_pending = out; LAB_FFP(lab_ffpace_me_post(out, fe_host_frame_count());)
          g_mer_stage_pvc[out] = g_lat_poll_vc;
          g_mer_stage_seq[out] = g_lat_seq;
 #ifdef REWIND
@@ -13229,6 +13230,7 @@ int main(int argc, char *argv[])
    {
       long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
+      LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
    psp_clock_apply("boot");
    fe_evt("clock=%d", scePowerGetCpuClockFrequency());
@@ -17152,9 +17154,10 @@ session_top:
       lat_census();
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
-      ff_win_note();
+      ff_win_note(); LAB_FFP(lab_ffpace_loop(g_ff_user, g_ff_gate, g_ff_mult, g_ff_uncapped, g_me_rend);)
       FE_LP_SET(FELP_LOOP);
    }
+   LAB_FFP(lab_ffpace_finish();)
 
    if (g_perf_rig)
    {
