@@ -34,6 +34,29 @@ int  me_host_loaded(void);
 void me_host_shutdown(void);
 /* The watchdog declared the engine dead (it fell back to the CPU). */
 int  me_host_was_dead(void);
+/* THE ENGINE IS NEVER HANDED BACK WHILE THIS PROCESS GOES ON
+ * (docs/INPROC-RETURN.md, section 8).  me_host_shutdown does not give the
+ * firmware its Media Engine back: that takes a reboot of the console's ME
+ * image, which only leaving the process does.  The in-process return keeps the
+ * module instead.
+ *
+ * me_host_retain: wait out the job in flight (bounded by timeout_us, for each
+ * of the job and the cache flush), drop every line of the ME's cache, and mark
+ * the module idle and kept.  Returns 1 when kept, 0 when there is no healthy
+ * engine to keep: stop it, and do not stay in this process.  Nothing but a
+ * later me_host_init may post a job after it.
+ * me_host_retained: 1 from there until me_host_init takes it up again.
+ * me_host_handed_back: a live engine was stopped in this process, so the
+ * kernel's own sleep handler is back in its slot, against an ME that will not
+ * answer it. */
+int  me_host_retain(unsigned timeout_us);
+int  me_host_retained(void);
+int  me_host_handed_back(void);
+#ifdef GPSP_PERF_RIG
+/* Harness `me_fake`: a user thread answers the mailbox in place of the module
+ * (PPSSPP has no Media Engine; see me_host.c). */
+void me_host_fake(int mode);
+#endif
 
 /* Stage-0 microbenchmark: times ME copies of `len` bytes across access
  * modes against the same copy on the main CPU, verifies checksums, and

@@ -56,7 +56,8 @@ static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w, blank_calls;
 static void me_standby_step(const char *s) { (void)s; }
 static void wake_snapshot(void) {}
 static int me_rend_active(void) { return g_me_rend; }
-static void me_host_shutdown(void) { loaded=healthy=0; }
+static int retained, shutdowns;
+static void me_host_shutdown(void) { loaded=healthy=0; retained=0; shutdowns++; }
 static void vid_blank_all(void) { blank_calls++; }
 #define MER_VM_UNLOCK() (unlock_calls++)
 static int sceKernelWaitSema(int id, int n, unsigned *timeout)
@@ -65,6 +66,10 @@ static void fe_evt_service(void) { log_calls++; }
 static void fe_host_sram_service_io(void) { save_calls++; }
 static int me_host_up(void) { return healthy; }
 static int me_host_loaded(void) { return loaded; }
+static int me_host_retained(void) { return retained; }
+static int g_pwr_hold, pwr_releases, lock_drops;
+static void pwr_release(void) { g_pwr_hold--; pwr_releases++; }
+static void play_lock_drop(const char *who) { (void)who; lock_drops++; }
 static int me_host_idle(void) { return idle; }
 static int me_host_sync(unsigned timeout)
 { (void)timeout; sync_calls++; return healthy && idle && sync_ok ? 0 : -1; }
@@ -119,6 +124,22 @@ int main(int argc, char **argv)
    sync_ok=1;
    check(me_rend_release_vmem()==1 && unlock_calls==1 && !g_mer_work,
          "completed cache flush permits volatile pool release");
+   /* Issue 28: a sleep from the game list.  The retain already emptied the
+    * ME's cache, and a job posted from the callback would race the next
+    * game taking the module up. */
+   g_mer_vmem=1;g_mer_work=(void*)1;loaded=retained=1;healthy=idle=sync_ok=1;
+   sync_calls=0;unlock_calls=0;
+   check(me_rend_release_vmem()==1 && unlock_calls==1 && !sync_calls,
+         "a retained idle module gives the pool back with no job posted");
+   /* Every exit of the process is one call: a module kept for a game that
+    * never came is stopped there, one in use is left to the exit's teardown. */
+   loaded=retained=1; healthy=1; shutdowns=0; g_pwr_hold=2; pwr_releases=0;
+   pwr_release_all();
+   check(shutdowns==1 && !retained && !g_pwr_hold && pwr_releases==1 && lock_drops==1,
+         "leaving the process stops a retained module");
+   loaded=healthy=1; retained=0; shutdowns=0;
+   pwr_release_all();
+   check(!shutdowns, "leaving does not touch a module in use");
    g_mer_vmem=1; loaded=1; healthy=idle=sync_ok=0;
    g_pcfg.standby=1; g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
    me_standby_down();
@@ -157,7 +178,7 @@ DRIVER = r'''
 #undef ME_UNCACHED
 #define ME_UNCACHED(p) ((void *)(p))
 static int baseline, allocations, frees, stop_calls, stop_fail;
-static int complete_job, handshake;
+static int complete_job, handshake, answer_sync, load_calls, beats;
 static void *allocated[8];
 static void *tracked_align(size_t alignment, size_t size)
 {
@@ -179,7 +200,7 @@ static void tracked_free(void *p)
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 void sceKernelDcacheWritebackInvalidateRange(const void *p,unsigned n) {(void)p;(void)n;}
 void sceKernelDcacheWritebackRange(const void *p,unsigned n) {(void)p;(void)n;}
-SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;return 7;}
+SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;load_calls++;return 7;}
 int sceKernelStartModule(SceUID id,unsigned n,void *a,int *s,void *o)
 { (void)id;(void)n;(void)a;(void)o;if(s)*s=0;return 7; }
 int sceKernelStopModule(SceUID id,unsigned n,void *a,int *s,void *o)
@@ -189,6 +210,7 @@ int sceKernelDelayThread(unsigned us)
 {
    (void)us;
    if(handshake) {g_mbox_storage.magic=ME_MBOX_MAGIC;g_mbox_storage.version=ME_MBOX_VERSION;}
+   if(beats) g_mbox_storage.heartbeat++;
    if(complete_job && g_mb)
    {
       g_mb->result=host_sum32(allocated[allocations-2],g_mb->arg2);
@@ -197,9 +219,61 @@ int sceKernelDelayThread(unsigned us)
    return 0;
 }
 unsigned sceKernelGetSystemTimeLow(void)
-{ static unsigned t;return t+=1000; }
+{
+   static unsigned t;
+   /* the ME's side of ME_CMD_SYNC, which is spun on, not slept on */
+   if(answer_sync && g_mb && g_mbox_storage.cmd==ME_CMD_SYNC)
+      g_mbox_storage.done_seq=g_mbox_storage.cmd_seq;
+   return t+=1000;
+}
 static void check(int condition, const char *name)
 { printf("%s: %s\n", name, condition ? "PASS" : "FAIL"); if(!baseline) assert(condition); }
+/* Issue 28: the module outlives the game, and is stopped only by leaving. */
+static void retain_cases(void)
+{
+   int stops=stop_calls;
+   g_me_handed_back=0;      /* the cases above stopped their module */
+   handshake=1;complete_job=0;
+   check(me_host_init(".")==0,"retain: module up");
+   check(!me_host_handed_back() && !me_host_retained(),"retain: nothing retained yet");
+   /* a render still running: the core may not be freed under it */
+   g_mb->cmd=ME_CMD_RENDER;g_mb->cmd_seq=g_mb->cmd_seq+1;
+   check(me_host_retain(50000u)==0 && !me_host_retained(),
+         "retain refuses an engine that never finishes its job");
+   g_mb->done_seq=g_mb->cmd_seq;
+   answer_sync=0;
+   check(me_host_retain(50000u)==0 && !me_host_retained(),
+         "retain refuses an engine that does not flush its cache");
+   g_mb->done_seq=g_mb->cmd_seq;
+   answer_sync=1;
+   check(me_host_retain(50000u)==1 && me_host_retained() && me_host_loaded(),
+         "retain keeps a healthy idle engine, cache flushed");
+   check(stop_calls==stops,"retain does not stop the module");
+   check(g_mb->cmd==ME_CMD_SYNC,"retain flushes the ME cache");
+   /* the next game: no load, no cleared mailbox, a moving heartbeat */
+   {
+      int loads=load_calls;
+      unsigned seq=g_mb->cmd_seq;
+      g_me_beat_stale=29;beats=1;
+      check(me_host_init(".")==0 && load_calls==loads && g_mb->cmd_seq==seq &&
+            !me_host_retained(),"the next game takes the module up, no reload");
+      check(me_host_watchdog_frame()==0,"taking up resets the watchdog window");
+   }
+   /* quit again: retain; the process leaves: a real stop */
+   check(me_host_retain(50000u)==1,"second retain");
+   me_host_shutdown();
+   check(stop_calls==stops+1 && !me_host_loaded() && !me_host_retained() &&
+         me_host_handed_back(),"leaving stops a retained module");
+   /* a sleep that left the ME silent: CPU rendering, and the module stays */
+   g_me_handed_back=0;
+   check(me_host_init(".")==0,"retain: module up again");
+   check(me_host_retain(50000u)==1,"retained for the silent case");
+   beats=0;
+   check(me_host_init(".")<0 && me_host_loaded() && me_host_was_dead() &&
+         !me_host_up(),"a silent retained engine is declared dead, not trusted");
+   check(me_host_retain(50000u)==0,"a dead engine cannot be retained");
+   g_me_dead=0;answer_sync=0;
+}
 int main(int argc, char **argv)
 {
    int i;
@@ -226,6 +300,8 @@ int main(int argc, char **argv)
    complete_job=1;
    check(me_host_bench(64,1)==0,"completed benchmark still succeeds");
    check(frees==4,"completed benchmark releases its two allocations");
+   me_host_shutdown();
+   retain_cases();
    me_host_shutdown();
    for(i=0;i<allocations;i++) free(allocated[i]);
    return 0;
@@ -312,7 +388,8 @@ def main():
     source = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
     selected = "\n\n".join(function(source, name) for name in
                            ("io_thread", "mer_work_heap_free", "me_rend_suspend",
-                            "me_rend_release_vmem", "me_standby_down"))
+                            "me_rend_release_vmem", "me_standby_down",
+                            "pwr_release_all"))
     usb = (ROOT / "psp/usb_handoff.c").read_text(encoding="utf-8")
     usb_selected = "\n\n".join(function(usb, name) for name in ("h_usb_down", "handoff_run"))
     with tempfile.TemporaryDirectory(prefix="gbadhoc-psp-runtime-") as work:

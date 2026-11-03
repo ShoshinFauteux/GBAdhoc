@@ -2181,8 +2181,9 @@ static int power_cb(int unknown, int pwrflags, void *common)
        * came round -- so a console put to sleep right after "saved the
        * game" slept with the save half on the stick or not at all. */
       fe_host_sram_request_scan();
-      fe_evt("power suspending net=%d me=%d standby=%d",
-             g_net_up, me_rend_active(), g_pcfg.standby);
+      fe_evt("power suspending net=%d me=%d standby=%d module=%d retained=%d "
+             "handed_back=%d", g_net_up, me_rend_active(), g_pcfg.standby,
+             me_host_loaded(), me_host_retained(), me_host_handed_back());
       /* FLUSH BEFORE TOUCHING ANYTHING.  The first attempt did the teardown
        * first and the console hard-reset -- taking the queued line with it, so
        * the log said nothing at all about the failure it was there to record.
@@ -2400,6 +2401,11 @@ void pwr_release(void)
 }
 static void pwr_release_all(void)
 {
+   /* Every exit of the process comes through here, and a module the
+    * in-process return kept is the one thing of a game that the exit's
+    * teardown has not already stopped: the game list has no teardown. */
+   if (me_host_retained())
+      me_host_shutdown();
    if (g_pwr_hold > 0)
    {
       g_pwr_hold = 1;
@@ -3165,8 +3171,10 @@ static int me_rend_release_vmem(void)
    /* Disabling rendering (including a watchdog fallback) does not stop an
     * in-flight job or drop dirty work-cache lines. Do not return that memory
     * to the OS until the engine has relinquished it. Normally standby >= 2
-    * has already unloaded the module, so no extra command is needed. */
-   if (g_mer_vmem && me_host_loaded() && me_host_sync(50000u) != 0)
+    * has already unloaded the module, so no extra command is needed; nor does
+    * one kept across the in-process return (me_host_retain did this). */
+   if (g_mer_vmem && me_host_loaded() && !me_host_retained() &&
+       me_host_sync(50000u) != 0)
    {
       fe_evt("me_rend release_deferred reason=me_sync");
       return -1;
@@ -6669,6 +6677,15 @@ static int g_relaunch;
 #ifndef GPSP_INPROC_RETURN
 #define GPSP_INPROC_RETURN 1
 #endif
+#ifdef GPSP_PERF_RIG
+/* `inproc_me_unload = 1`, the MUTANT: the return unloads the module and stays
+ * in-process, as 4.5.0 did.  A sleep from the list must then report
+ * handed_back=1, or the test that looks for it proves nothing. */
+static int g_inproc_me_unload;
+#define INPROC_ME_UNLOAD_MUTANT() (g_inproc_me_unload)
+#else
+#define INPROC_ME_UNLOAD_MUTANT() 0
+#endif
 extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
 extern u32 badjump_recoveries __attribute__((weak));
 /* SMC_FALLBACK_STATS (diagnostic): why SMC traps took a full RAM flush. */
@@ -6692,6 +6709,11 @@ static const char *inproc_refusal(int have_variant)
       return "me_watchdog";
    if (g_pwr_suspend)
       return "standby";
+   /* The kernel's sleep handler is in its slot again, and it spins for ever
+    * on an ME with no firmware running (docs/INPROC-RETURN.md, section 8).
+    * Only a relaunch makes that safe, and it is what happens here. */
+   if (me_host_handed_back() && !INPROC_ME_UNLOAD_MUTANT())
+      return "me_stopped";
    return NULL;
 }
 
@@ -12961,6 +12983,8 @@ int main(int argc, char *argv[])
    g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
    g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
    g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
+   me_host_fake((int)fe_ini_get_int(HARNESS_INI, "me_fake", 0));
+   g_inproc_me_unload = (int)fe_ini_get_int(HARNESS_INI, "inproc_me_unload", 0);
    g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
    g_ss_no_land = !fe_ini_get_int(HARNESS_INI, "rewind_park_land", 1);
    fe_ini_get(HARNESS_INI, "sleep_sim_window", g_ss_window,
@@ -14793,7 +14817,18 @@ session_top:
          me_host_require_sysevent(g_pcfg.standby ? 1 : 0);
          if (meb || mbn || mev)
          {
+            /* The module stays resident across an in-process return, so this
+             * game's unload will not give back what its load takes: move
+             * the census's reference by exactly that (none at all when a
+             * retained module is taken up again). */
+            unsigned kf = (unsigned)sceKernelTotalFreeMemSize();
+            unsigned km = (unsigned)sceKernelMaxFreeMemSize();
             int me_rc = me_host_init(g_dir_base);
+            if (me_host_loaded())
+            {
+               snap_pre.kfree -= kf - (unsigned)sceKernelTotalFreeMemSize();
+               snap_pre.kmax  -= km - (unsigned)sceKernelMaxFreeMemSize();
+            }
             if (me_rc < 0 && g_pcfg.standby)
             {
                /* The one failure a player must be TOLD about.  With standby on
@@ -16612,8 +16647,18 @@ session_top:
     * second core buffer to free; gba_screen_pixels was never reassigned). */
    me_rend_teardown("exit");
    me_video_teardown("exit", 1);
-   me_host_shutdown();
-   if (!me_host_loaded())
+   /* THE IN-PROCESS RETURN KEEPS THE MODULE (docs/INPROC-RETURN.md, section
+    * 8).  Stopping it would put the kernel's SceMeRpc handler back in charge
+    * of an ME that has no firmware to answer it, and the next sleep would
+    * hang in the kernel's suspend.  With the module kept the slot stays ours,
+    * and a sleep from the list is the sleep every game has.  The core can
+    * only be freed below because retaining waits out the ME's last job.
+    * A quit that will not stay in this process stops it as ever, and so
+    * does a return that goes wrong further down ("inproc_refused"). */
+   if (g_relaunch != RELAUNCH_GAMELIST || inproc_refusal(have_variant) ||
+       INPROC_ME_UNLOAD_MUTANT() || !me_host_retain(50000u))
+      me_host_shutdown();
+   if (!me_host_loaded() || me_host_retained())
    {
       free(g_me_stage[0]);   g_me_stage[0] = NULL;
       free(g_me_stage[1]);   g_me_stage[1] = NULL;
@@ -16756,6 +16801,7 @@ session_top:
       }
       fe_evt("inproc_refused why=%s", why);
       g_relaunch = RELAUNCH_GAMELIST;
+      me_host_shutdown();       /* kept for a return that is not happening */
    }
    audio_stop();
    vid_term();

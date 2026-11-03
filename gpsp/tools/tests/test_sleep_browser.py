@@ -19,8 +19,9 @@ Extracted, unchanged, and run on the host with real threads:
 Stubbed: the audio thread, the ME, the partition, the clock (real time).
 
 The state is the one an in-process return leaves: the renderer off with its
-buffers still in the volatile partition, the ME module unloaded, the audio
-thread running, no play lock.  A switch is slid with the list drawing:
+buffers still in the volatile partition, the ME module loaded and idle (issue
+28: it is never stopped in-process), the audio thread running, no play lock.
+A switch is slid with the list drawing:
 
   1. the callback returns with the list PARKED and held (cb_done), the
      audio thread stopped and joined, the partition released, and NO game
@@ -127,7 +128,7 @@ static void io_wake(void) {}
 static void play_lock_drop(const char *who) { (void)who; lock_drops++; }
 static void psp_rewind_pwr(void) {}
 static int psp_rewind_pool_tenant(void) { return 0; }
-static int me_host_loaded(void) { return 0; }     /* shut down at the exit */
+static int me_host_loaded(void) { return 1; }     /* retained at the return */
 static int me_host_idle(void) { return 1; }
 static int me_rend_active(void) { return 0; }     /* torn down at the exit */
 static int me_rend_release_vmem(void)
