@@ -222,6 +222,14 @@ void lab_ffpace_clock_enforce(void)
    fe_evt("ffpace clock_enforce want=%d/%d was=%d/%d now=%d/%d via=sctrlHENSetSpeed",
           g_clock, g_clock / 2, c0, b0, scePowerGetCpuClockFrequency(),
           scePowerGetBusClockFrequency());
+   if (scePowerGetCpuClockFrequency() != g_clock)
+   {
+      /* The split setters: a CFW that hooks only the combined call. */
+      int r1 = scePowerSetCpuClockFrequency(g_clock);
+      int r2 = scePowerSetBusClockFrequency(g_clock / 2);
+      fe_evt("ffpace clock_enforce via=split rc=%d/%d now=%d/%d", r1, r2,
+             scePowerGetCpuClockFrequency(), scePowerGetBusClockFrequency());
+   }
 }
 
 void lab_ffpace_flip(unsigned phys_addr)
