@@ -3288,6 +3288,11 @@ static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 static inline int gba_pc_translatable(u32 pc)
 {
   u32 region = GBA_PC(pc) >> 24;
+#ifdef BIOS_BOUND_FIX
+  /* region 0 holds code only in the 16 KiB BIOS (see BIOS_BOUND_FIX) */
+  if (region == 0x0)
+    return GBA_PC(pc) < 0x4000;
+#endif
   return region == 0x0 || region == 0x2 || region == 0x3 ||
 #ifdef VRAM_EXEC
          region == 0x6 ||
@@ -3650,6 +3655,45 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
 #define SMC_REUSE_CODE_BYTES(te, type) do { } while (0)
 #endif
 
+/* BIOS_BOUND_FIX (issue #10, Fire Emblem: The Morrow's Golden Country).  Region
+ * 0 holds code only in the BIOS, 0x00000000-0x00003FFF; above it the bus reads
+ * open bus on the GBA.  gpSP translated any region-0 pc: check_pc_region found
+ * no map for it and paged in ROM (load_gamepak_page of the page number), so a
+ * branch decoded from scanned data into 0x00XXXXXX translated cartridge data as
+ * code, whose own "branches" led to more of it.  The eager links of one block
+ * chained through hundreds of such blocks until the ROM cache was full (twin,
+ * frame 360: 10.5 MB), the whole chain unwound as a failed translation, the
+ * mixer's legal entry at 0x03006dd0 failed four times and BADJUMP_SAFE reset the
+ * game.  Now such a pc is unmappable: an exit to it goes through the dispatcher
+ * (gba_pc_translatable), and only executing it is a guest fault. */
+#ifdef BIOS_BOUND_FIX
+#define BIOS_BOUND_CHECK(region, pc)                                          \
+  if ((region) == 0x0 && (pc) >= 0x4000)                                      \
+    return BADJUMP_SENTINEL(pc)
+#else
+#define BIOS_BOUND_CHECK(region, pc)
+#endif
+
+/* XLAT_LAST_TRY_LAZY (issue #10).  A translation that fails is retried, and
+ * after four failures BADJUMP_SAFE resets the game -- right for a pc with no
+ * code, wrong for a legal one whose translation failed only because its eager
+ * links (each exit translated at once, recursively) filled a cache: every retry
+ * repeated the same chain.  The fourth try therefore links lazily: every
+ * external exit goes through a dispatcher island (the SMC_PARTIAL_SAFE ones), so
+ * it translates this block alone, and the guard is reached only by a pc that
+ * cannot be translated at all.  The first three tries are unchanged. */
+#ifdef XLAT_LAST_TRY_LAZY
+#ifndef SMC_PARTIAL_SAFE
+#error XLAT_LAST_TRY_LAZY needs SMC_PARTIAL_SAFE (its dispatch islands)
+#endif
+u32 xlat_lazy_links;
+#define XLAT_LAZY_LINKS_NOW    xlat_lazy_links
+#define XLAT_LAZY_LINKS_SET(v) (xlat_lazy_links = (v))
+#else
+#define XLAT_LAZY_LINKS_NOW    0
+#define XLAT_LAZY_LINKS_SET(v) ((void)0)
+#endif
+
 #define block_lookup_translate_builder(type)                                  \
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
@@ -3658,6 +3702,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
   u32 block_tag;                                                              \
                                                                               \
   block_lookup_address_pc_##type();                                           \
+  BIOS_BOUND_CHECK(pcregion, pc);                                             \
                                                                               \
   switch(pcregion)                                                            \
   {                                                                           \
@@ -4380,7 +4425,10 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   DRPH_SCOPE(DRPH_DISP);
   STALE_SCAN(pc);
   for (i = 0; i < 4; i++) {
-    u8 *ret = block_lookup_translate_arm(pc);
+    u8 *ret;
+    XLAT_LAZY_LINKS_SET(i == 3);
+    ret = block_lookup_translate_arm(pc);
+    XLAT_LAZY_LINKS_SET(0);
     BADJUMP_GUARD_X(ret, pc, arm);
     if (ret) {
 #ifdef JIT_CODE_DISCIPLINE
@@ -4410,7 +4458,10 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   DRPH_SCOPE(DRPH_DISP);
   STALE_SCAN(pc | 1);
   for (i = 0; i < 4; i++) {
-    u8 *ret = block_lookup_translate_thumb(pc);
+    u8 *ret;
+    XLAT_LAZY_LINKS_SET(i == 3);
+    ret = block_lookup_translate_thumb(pc);
+    XLAT_LAZY_LINKS_SET(0);
     BADJUMP_GUARD_X(ret, pc, thumb);
     if (ret) {
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
@@ -8186,9 +8237,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
   for(i = 0; i < external_block_exit_position; i++)
   {
     branch_target = external_block_exits[i].branch_target;
-    if (STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
-        (((GBA_PC(branch_target) >> 24) == 2) ||
-         ((GBA_PC(branch_target) >> 24) == 3)))
+    if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
+         (((GBA_PC(branch_target) >> 24) == 2) ||
+          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW)
     {
       translation_target = translation_ptr;
       generate_load_pc(reg_a0, GBA_PC(branch_target));
@@ -8555,9 +8606,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   for(i = 0; i < external_block_exit_position; i++)
   {
     branch_target = external_block_exits[i].branch_target;
-    if (STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
-        (((GBA_PC(branch_target) >> 24) == 2) ||
-         ((GBA_PC(branch_target) >> 24) == 3)))
+    if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
+         (((GBA_PC(branch_target) >> 24) == 2) ||
+          ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW)
     {
       translation_target = translation_ptr;
       generate_load_pc(reg_a0, GBA_PC(branch_target));

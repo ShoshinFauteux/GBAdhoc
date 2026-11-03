@@ -232,6 +232,12 @@
 #if !defined(GPSP_NO_NV_COND_FIX) && !defined(NV_COND_FIX)
 #define NV_COND_FIX 1
 #endif
+#if !defined(GPSP_NO_BIOS_BOUND_FIX) && !defined(BIOS_BOUND_FIX)
+#define BIOS_BOUND_FIX 1
+#endif
+#if !defined(GPSP_NO_XLAT_LAST_TRY_LAZY) && !defined(XLAT_LAST_TRY_LAZY)
+#define XLAT_LAST_TRY_LAZY 1
+#endif
 #if !defined(GPSP_NO_TIMER_RELOAD_FIX) && !defined(TIMER_RELOAD_FIX)
 #define TIMER_RELOAD_FIX 1
 #endif

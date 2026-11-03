@@ -322,6 +322,20 @@ if os.environ.get("DRCORPUS_NV") == "1":
     MUTANTS = {}
 
 
+# ---- DRCORPUS_BB=1 (with FEATURES=baked): BIOS_BOUND_FIX + XLAT_LAST_TRY_LAZY
+# Reference = what ships minus both.  A title that never branches into region 0
+# above the BIOS, and never fails a translation three times, must match.
+if os.environ.get("DRCORPUS_BB") == "1":
+    VARIANTS = {
+        "base": ("-DGPSP_NO_BIOS_BOUND_FIX -DGPSP_NO_XLAT_LAST_TRY_LAZY", "ref",
+                 "shipped flags without BIOS_BOUND_FIX / XLAT_LAST_TRY_LAZY"),
+        "bb":   ("", "switch", "shipped flags"),
+    }
+    ORDER = list(VARIANTS)
+    REF_PATCHES = {}
+    MUTANTS = {}
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 

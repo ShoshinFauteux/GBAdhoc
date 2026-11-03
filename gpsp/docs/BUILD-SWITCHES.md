@@ -174,6 +174,8 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
 | `COND_ENTRY_FIX` | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
 | `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI: no code, 1S, not an exit. gpSP crashed in the translator on one (issue #10). Blocks without NV words are byte-identical. |
+| `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (an eager-link chain filled the ROM cache, issue #10). |
+| `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by BADJUMP_SAFE. |
 | `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
 | `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
 | `HOT_DATA_OFFSET` | where `HOT_DATA_GUARD` places the stub hot block in its 8 KiB way. Ships at 0x1b00. |
