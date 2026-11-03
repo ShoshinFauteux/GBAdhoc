@@ -1,5 +1,7 @@
 # GE walk of the Save States page, GBA (Fable's A-split scenes): the design's
-# card (slots 1-3 with .shot, 4 empty, 5 a 3.1 state) and backdrop.
+# card (slots 1-3 with .shot, 4 empty, 5 a 3.1 state) and backdrop.  After
+# the design's scenes: the load question on slot 5 (no design PNG; the model
+# draws it), answered O.
 +150 menu
 +12 press DOWN
 +12 dump menu
@@ -19,4 +21,7 @@
 +12 dump empty
 +2 press DOWN
 +12 dump old
++2 press CROSS
++4 dump load-ask
++2 press CIRCLE
 +4 exit 0
