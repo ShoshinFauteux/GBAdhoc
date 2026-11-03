@@ -379,6 +379,10 @@ static int  g_bset_have;
 
 /* main_psp.c: re-applies the session chip after the OSD toggle changes. */
 extern void osd_session_chip_refresh(void);
+/* Settings > CPU clock (main_psp.c, beside the power callback). */
+int  psp_clock_mode(void);
+void psp_clock_apply(const char *why);
+void psp_clock_harness_drop(void);
 
 /* ----- demo (harness self-drive) ------------------------------------------ */
 typedef struct { unsigned pad; unsigned char hold, gap; } demo_step;
@@ -630,6 +634,37 @@ static const demo_step rwl_demo_script[] = {
    { PSP_CTRL_CROSS,   2, 8 },   /* resume                                */
 };
 
+/* ui_controls_demo=9: Settings > "CPU clock" through all three values and
+ * back, in game, with GE dumps: each step is a live psp_clock_apply while
+ * the Media Engine is up.  From Room, UP wraps to Button mapping and climbs
+ * past Rewind to the row.  It ends on the value it found, so a console's
+ * config.ini is left as it was. */
+static const demo_step clk_demo_script[] = {
+   { 0,               30, 0 },   /* settle on menu                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Save states                        */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Wireless                           */
+   { PSP_CTRL_DOWN,    2, 4 },   /* -> Settings                           */
+   { PSP_CTRL_CROSS,   2, 8 },   /* enter settings                        */
+   { PSP_CTRL_UP,      2, 6 },   /* wraps to Button mapping               */
+   { PSP_CTRL_UP,      2, 6 },   /* Thumbstick                            */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot folder                     */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot format                     */
+#ifdef REWIND
+   { PSP_CTRL_UP,      2, 6 },   /* Rewind length                         */
+   { PSP_CTRL_UP,      2, 6 },   /* Rewind                                */
+#endif
+   { PSP_CTRL_UP,      2, 6 },   /* CPU clock                             */
+   { DEMO_DUMP,        1, 0 },   /* ge_clk_0: the value on the card       */
+   { PSP_CTRL_RIGHT,   2, 30 },
+   { DEMO_DUMP,        1, 0 },   /* ge_clk_1: the next                    */
+   { PSP_CTRL_RIGHT,   2, 30 },
+   { DEMO_DUMP,        1, 0 },   /* ge_clk_2: the third                   */
+   { PSP_CTRL_RIGHT,   2, 30 },  /* back to the first                     */
+   { DEMO_DUMP,        1, 0 },   /* ge_clk_3: as found                    */
+   { PSP_CTRL_CIRCLE,  2, 8 },   /* back to the menu: saves               */
+   { PSP_CTRL_CROSS,   2, 8 },   /* resume                                */
+};
+
 /* ui_controls_demo=2 (with browser=1): the same page reached from the ROM
  * browser's START settings, which run their own loop (browser_settings). */
 static const demo_step ctl_bdemo_script[] = {
@@ -736,7 +771,13 @@ void ui_controls_demo_start(void)
 
 void ui_home_demo_start(int which)
 {
-   if (which == 8)
+   if (which == 9)
+   {
+      g_demo_steps = clk_demo_script;
+      g_demo_len = (int)(sizeof(clk_demo_script) / sizeof(clk_demo_script[0]));
+      g_demo_prefix = "ge_clk";
+   }
+   else if (which == 8)
    {
       g_demo_steps = rst_demo_script;
       g_demo_len = (int)(sizeof(rst_demo_script) / sizeof(rst_demo_script[0]));
@@ -775,7 +816,7 @@ void ui_home_demo_start(int which)
    }
    g_demo_on = 0;
    g_demo_phase = 0;
-   fe_evt("ui_demo_start script=%s", which == 8 ? "reset" : which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
+   fe_evt("ui_demo_start script=%s", which == 9 ? "cpu_clock" : which == 8 ? "reset" : which == 7 ? "rewind_length" : which == 6 ? "turbo" : which == 5 ? "quit" :
           which == 4 ? "delete" : "menu_button");
 }
 
@@ -1774,7 +1815,7 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_FASTLINK,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_HDR_UI, SET_THEME, SET_SHELL,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
@@ -1817,6 +1858,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * harness walkers only ever cross rows ABOVE this point, or wrap UP to
     * Button mapping, so none of their arithmetic moved. */
    { 0, "FPS counter" },
+   /* Under FPS counter and above Rewind: every walker either crosses only
+    * rows above Fast-forward or wraps UP no further than Rewind, so none of
+    * their counts moved.  Applies at once (main_psp.c psp_clock_apply). */
+   { 0, "CPU clock" },
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
     * backwards.  Both rows are read when a game is started. */
@@ -2349,6 +2394,14 @@ static void settings_adjust(int id, int dir)
    case SET_FPS:
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
+   case SET_CPUCLK:
+      /* 333 -> 222 -> System, live: the game keeps running at the new
+       * clock the moment the row changes.  The player's choice outranks a
+       * Lab arm's harness value from here on. */
+      g_pcfg.cpu_clock = pcfg_clock_step(g_pcfg.cpu_clock, dir);
+      psp_clock_harness_drop();
+      psp_clock_apply("menu");
+      break;
 #ifdef REWIND
    case SET_REWIND:
       /* Takes effect when a game is next started: the memory is taken, and
@@ -2588,6 +2641,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.show_fps ? "on" : "off");
          break;
+      case SET_CPUCLK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             pcfg_clock_name(psp_clock_mode()));
+         break;
 #ifdef REWIND
       case SET_REWIND:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -2641,6 +2698,10 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
+   else if (g_cursor == SET_CPUCLK)
+      footer(psp_clock_mode() == PCFG_CLOCK_SYSTEM
+                ? "System: as your firmware or CFW set it. Heavy games need 333."
+                : "Heavy games and link play need 333 MHz.");
    else if (g_cursor == SET_SHOT_FMT)
       footer(g_pcfg.shot_format == PCFG_SHOT_BMP
                 ? "BMP: uncompressed, about 115 KB a picture."

@@ -693,7 +693,8 @@ favourites, the state shelf) are unchanged and still apply.
 
 **The console**
 - Wake from sleep: slide it shut, flick the switch, come back whenever.
-- All three PSP models, tested on hardware. 333 MHz.
+- All three PSP models, tested on hardware. 333 MHz by default; <kbd>NEW</kbd> 222 MHz or
+  your CFW's own clock under *Settings → CPU clock*.
 - <kbd>NEW</kbd> Screenshots as named PNG files in `PICTURE/GBAdhoc` for the XMB's Photo
   column, or BMP, or beside the app.
 
@@ -747,6 +748,7 @@ confirm and ○ to go back.
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
+| | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
 | Screenshots | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
@@ -761,7 +763,8 @@ running one. A few more keys live only in `config.ini`: `quick_return = 0` bring
 the old relaunching Quit to game list, `gbc_color_correction = 0` the old GBC colours,
 `loading_art = 0` a plain loading screen, and `gblink_delay` (1–30 frames, default 4)
 the Game Boy link's input delay. The screenshot settings are `screenshot_format`
-(`png` or `bmp`) and `screenshot_folder` (`picture` or `app`).
+(`png` or `bmp`) and `screenshot_folder` (`picture` or `app`); the CPU clock is
+`cpu_clock` (`333`, `222`, or `0` for System).
 
 </details>
 

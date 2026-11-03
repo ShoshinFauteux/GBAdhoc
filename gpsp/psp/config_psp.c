@@ -159,6 +159,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
    g_pcfg.show_fps    = (int)fe_ini_get_int(cfg_path, "show_fps", 0) ? 1 : 0;
+   g_pcfg.cpu_clock   = pcfg_clock_snap(
+      fe_ini_get_int(cfg_path, "cpu_clock", PCFG_CLOCK_DEFAULT));
    {
       /* Screenshots (issue #13).  Anything but the other word is the
        * default: PNG, into PICTURE. */
@@ -399,6 +401,14 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(me_boot,              0, 1, 1);
    PCFG_CHK(osd_wireless,         0, 1, 1);
    PCFG_CHK(fast_link,            0, 1, 0);
+   /* A range check cannot say "one of 0, 222, 333": snap says it. */
+   if (g_pcfg.cpu_clock != pcfg_clock_snap(g_pcfg.cpu_clock))
+   {
+      fe_evt("config_corrupt when=%s field=cpu_clock value=%d -> %d", when,
+             g_pcfg.cpu_clock, PCFG_CLOCK_DEFAULT);
+      g_pcfg.cpu_clock = PCFG_CLOCK_DEFAULT;
+      bad++;
+   }
    PCFG_CHK(net_session_fps_x100, PCFG_SESSION_FPS_MIN, PCFG_SESSION_FPS_MAX,
             PCFG_SESSION_FPS_DEF);
    PCFG_CHK(net_session_fps_snap, 0, 1, 1);
@@ -565,6 +575,10 @@ void pcfg_save(void)
       if (g_pcfg.stick_warned ||
           fe_ini_get(cfg_path, "stick_warned", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "stick_warned", g_pcfg.stick_warned);
+      /* The same rule: 333 players keep their file as it was. */
+      if (g_pcfg.cpu_clock != PCFG_CLOCK_DEFAULT ||
+          fe_ini_get(cfg_path, "cpu_clock", sv, sizeof(sv)))
+         fe_ini_set_int(cfg_path, "cpu_clock", g_pcfg.cpu_clock);
    }
    fe_ini_set_int(cfg_path, "gbc_color_correction",
                   g_pcfg.gbc_color_correction);

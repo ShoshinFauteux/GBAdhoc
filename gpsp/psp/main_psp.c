@@ -2144,6 +2144,81 @@ static int psp_rewind_land(const char *why, unsigned budget_us);
 #endif
 #define PWR_PARK_WAIT_US 250000u
 
+/* ---- CPU CLOCK (Settings > "CPU clock"; config.ini / harness cpu_clock) ----
+ *
+ * Every release since 3.5.0 forced 333/333/166 at entry (ADR-0004).  That
+ * stays the default; 222 and System are the player's choice (a CFW such as
+ * ARK-4 can set a clock of its own, and System leaves it alone: this file
+ * then never calls scePowerSetClockFrequency at all).
+ *
+ * Nothing else in the frontend assumes 333.  Every pacing, audio, FPS-chip,
+ * rewind-budget, link and Media Engine timeout is wall-clock time from
+ * sceKernelGetSystemTime*; the only iteration-counted waits are the ME's idle
+ * polls (psp/me/main.c ME_IDLE_SPIN, ~50 us at 333), which at 222 poll every
+ * ~75 us -- latency to start a posted job, not correctness.  What a lower
+ * clock costs is speed: a game that needs most of a frame at 333 drops
+ * frames at 222, and a link session runs at its slower console's pace.
+ *
+ * psp_clock_capture runs before anything can set a clock, so System can also
+ * give back what was there after a change from the menu. */
+static int g_clk_sys_cpu, g_clk_sys_bus;   /* the clock the EBOOT found */
+static int g_clk_set;                      /* 1 = ours is in force        */
+static int g_clk_harness = -1;             /* harness cpu_clock; -1 none  */
+
+static void psp_clock_capture(void)
+{
+   g_clk_sys_cpu = scePowerGetCpuClockFrequency();
+   g_clk_sys_bus = scePowerGetBusClockFrequency();
+}
+
+/* The mode in force: the harness key (Lab arms; never saved), else the
+ * setting.  A menu change drops the harness value (ui_psp.c). */
+int psp_clock_mode(void)
+{
+   return g_clk_harness >= 0 ? g_clk_harness : g_pcfg.cpu_clock;
+}
+
+void psp_clock_harness_drop(void)
+{
+   g_clk_harness = -1;
+}
+
+void psp_clock_apply(const char *why)
+{
+   int mode = psp_clock_mode();
+   int cpu0 = scePowerGetCpuClockFrequency();
+   int bus0 = scePowerGetBusClockFrequency();
+   int rc = 0, call = 0;
+
+   if (mode != PCFG_CLOCK_SYSTEM)
+   {
+      /* pll = cpu = bus * 2, as 333/333/166 always was. */
+      rc = scePowerSetClockFrequency(mode, mode, mode / 2);
+      call = 1;
+      g_clk_set = 1;
+   }
+   else if (g_clk_set && g_clk_sys_cpu > 0 && g_clk_sys_bus > 0)
+   {
+      /* System after one of ours: give back the clock found at entry.  The
+       * PLL is not readable through the SDK; the lowest one both fit under
+       * (cpu <= pll, bus * 2 <= pll) is what a CFW's own settings use. */
+      int pll = g_clk_sys_cpu > g_clk_sys_bus * 2 ? g_clk_sys_cpu
+                                                  : g_clk_sys_bus * 2;
+      if (pll > 333)
+         pll = 333;
+      rc = scePowerSetClockFrequency(pll, g_clk_sys_cpu, g_clk_sys_bus);
+      call = 1;
+      g_clk_set = 0;
+   }
+   fe_evt("clock why=%s mode=%s src=%s was=%d/%d now=%d/%d entry=%d/%d "
+          "call=%d rc=%d", why, pcfg_clock_name(mode),
+          g_clk_harness >= 0 ? "harness" : "config", cpu0, bus0,
+          scePowerGetCpuClockFrequency(), scePowerGetBusClockFrequency(),
+          g_clk_sys_cpu, g_clk_sys_bus, call, rc);
+   FE_EVT_ONLY(cpu0); FE_EVT_ONLY(bus0); FE_EVT_ONLY(rc); FE_EVT_ONLY(why);
+   FE_EVT_ONLY(call);
+}
+
 static int power_cb(int unknown, int pwrflags, void *common)
 {
    (void)unknown; (void)common;
@@ -12776,7 +12851,9 @@ int main(int argc, char *argv[])
    setvbuf(stdout, NULL, _IONBF, 0);
    setup_exit_callback();
 
-   scePowerSetClockFrequency(333, 333, 166);
+   /* The clock the firmware or CFW left us; ours is set once config.ini is
+    * read (psp_clock_apply "boot", below pcfg_load_doc). */
+   psp_clock_capture();
 
    init_paths(argc, argv);
 #ifdef GPSP_PERF_RIG
@@ -12815,7 +12892,6 @@ int main(int argc, char *argv[])
 #ifndef GPSP_NO_TELEMETRY
    boot_mem_census();                /* docs/MEMORY-BUDGET.md */
 #endif
-   fe_evt("clock=%d", scePowerGetCpuClockFrequency());
    /* ADR-0039: the core/frontend pixel-layout contract is a build flag on
     * both sides with nothing checking it at link time.  Say which one this
     * binary was built for, so a field log with wrong colors is one grep from
@@ -12838,6 +12914,15 @@ int main(int argc, char *argv[])
     * (docs/UI-OVERLAY.md §12.8). */
    cfg_ok = fe_ini_doc_load(&cfg_doc, CONFIG_INI) == 0;
    pcfg_load_doc(CONFIG_INI, cfg_ok ? &cfg_doc : NULL);
+   /* CPU clock: the setting, or the harness's `cpu_clock` for a Lab arm
+    * (kept apart from g_pcfg so a run never writes it into config.ini).
+    * Only ms of config reading ran at the entry clock before this. */
+   {
+      long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
+      g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
+   }
+   psp_clock_apply("boot");
+   fe_evt("clock=%d", scePowerGetCpuClockFrequency());
    boot_mark("config");
 
    /* RESERVE THE NETDRV BLOCK WHILE THE HEAP IS STILL PRISTINE.
@@ -15586,6 +15671,8 @@ session_top:
          g_pwr_resume = 0; LAB_HOOK(lab_power_resumed();)
          fe_evt("power back frames=%u net=%d me=%d me_up=%d",
                 fe_host_frame_count(), g_net_up, g_me_rend, me_host_up());
+         /* The firmware may wake at its own clock: `was=` says. */
+         psp_clock_apply("wake");
          osd_toast("Resumed");
       }
 
@@ -16899,6 +16986,10 @@ session_top:
          /* A fresh boot's per-game state, then the browser again. */
          fe_evt("inproc_return n=%d", inproc_n);
          inproc_n++;
+         /* The list and the next game run at the setting's clock, whatever
+          * the teardown met (a wake in the list itself is answered by the
+          * next game's "power back": g_pwr_resume waits for it). */
+         psp_clock_apply("inproc_return");
 #ifdef GPSP_PERF_RIG
          if (g_ss_browser && inproc_n == g_ss_game + 1)
             sleep_sim_fire();        /* fires in the browser, 300 ms on */
