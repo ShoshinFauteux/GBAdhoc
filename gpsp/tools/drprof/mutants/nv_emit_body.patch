@@ -1,0 +1,5 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -659 +659 @@
+-#define arm_emit_case(op)   (((op) >> 28) == 0xF ? 0xC0 : (((op) >> 20) & 0xFF))
++#define arm_emit_case(op)   (((op) >> 20) & 0xFF)

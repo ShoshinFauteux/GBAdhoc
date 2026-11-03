@@ -305,6 +305,23 @@ if os.environ.get("DRCORPUS_Q3") == "1":
     }
 
 
+# ---- DRCORPUS_NV=1 (with FEATURES=baked): NV_COND_FIX ----------------------
+# Reference = what ships minus the fix.  A title that never reaches an NV word
+# must match it frame for frame; "nvp" logs every NV word the scan meets (NVW
+# lines in stderr.txt, refs/nv_probe.patch).  The mutants of this switch are
+# tools/drprof/synth/nv_cond_run.sh's: the library has no execution they would
+# change.  Use a DRCORPUS_HOME of its own.
+if os.environ.get("DRCORPUS_NV") == "1":
+    VARIANTS = {
+        "base": ("-DGPSP_NO_NV_COND_FIX", "ref", "shipped flags without NV_COND_FIX"),
+        "nv":   ("", "switch", "shipped flags"),
+        "nvp":  ("", "switch", "shipped flags + the NVW log"),
+    }
+    ORDER = list(VARIANTS)
+    REF_PATCHES = {"nvp": "nv_probe.patch"}
+    MUTANTS = {}
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 

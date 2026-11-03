@@ -173,6 +173,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `BX_ALIGN_FIX` | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
 | `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
 | `COND_ENTRY_FIX` | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
+| `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI: no code, 1S, not an exit. gpSP crashed in the translator on one (issue #10). Blocks without NV words are byte-identical. |
 | `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
 | `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
 | `HOT_DATA_OFFSET` | where `HOT_DATA_GUARD` places the stub hot block in its 8 KiB way. Ships at 0x1b00. |

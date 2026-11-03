@@ -645,6 +645,31 @@ void translate_icache_sync() {
       pc_address_block = load_gamepak_page(pc_region & 0x3FF);                \
   }                                                                           \
 
+/* NV_COND_FIX (issue #10, Fire Emblem: The Morrow's Golden Country).  Condition
+ * 0xF is "never" on the ARM7TDMI: GBATEK lists it as reserved from ARMv3 on and
+ * a failed condition costs 1S; mGBA and our interpreter skip the word.  The
+ * scan (arm_load_opcode) turns such a word into a plain AL no-op, so it is no
+ * exit point, adds no block_exits[] entry, and closes any open condition run;
+ * here it emits nothing.  0xC0 stands for "no code": 0xC0..0xEF (coprocessor)
+ * has no case in the switch.  Its 1S is arm_base_cycles', as for any word.
+ *
+ * Without this, generate_condition has no case for 0xF, so no branch was
+ * emitted and the header's backpatch_address stayed NULL (a store to NULL in
+ * the translator when NV was the block's first condition) or stale (an earlier
+ * skip re-patched, and the word's code run as if AL). */
+#ifdef NV_COND_FIX
+#define arm_emit_case(op)   (((op) >> 28) == 0xF ? 0xC0 : (((op) >> 20) & 0xFF))
+#define arm_scan_nv_nop()                                                     \
+  if(condition == 0x0F)                                                       \
+  {                                                                           \
+    condition = 0x0E;                                                         \
+    opcode = 0;                                                               \
+  }
+#else
+#define arm_emit_case(op)   (((op) >> 20) & 0xFF)
+#define arm_scan_nv_nop()
+#endif
+
 #define translate_arm_instruction()                                           \
   check_pc_region(pc);                                                        \
   opcode = readaddress32(pc_address_block, (pc & 0x7FFF));                    \
@@ -668,7 +693,7 @@ void translate_icache_sync() {
   }                                                                           \
   emit_trace_arm_instruction(pc);                                             \
                                                                               \
-  switch((opcode >> 20) & 0xFF)                                               \
+  switch(arm_emit_case(opcode))                                               \
   {                                                                           \
     case 0x00:                                                                \
       if((opcode & 0x90) == 0x90)                                             \
@@ -4450,6 +4475,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   condition = opcode >> 28;                                                   \
                                                                               \
   opcode &= 0xFFFFFFF;                                                        \
+  arm_scan_nv_nop();                                                          \
                                                                               \
   block_end_pc += 4                                                           \
 

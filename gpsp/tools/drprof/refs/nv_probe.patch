@@ -1,0 +1,8 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -663,2 +663,4 @@
+   if(condition == 0x0F)                                                       \
+   {                                                                           \
++    static u32 nv_seen; if(nv_seen++ < 4000)                                  \
++      fprintf(stderr, "NVW pc=%08x start=%08x w=%07x\n", block_end_pc, pc, opcode); \
+     condition = 0x0E;                                                         \
