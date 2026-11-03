@@ -154,6 +154,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `SMC_STM_CHAIN` | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
 | `SMC_STM_WIDE` | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
 | `SMC_STM_AHEAD` | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
+| `SMC_STM_FIXED` | the same span retirement for a fixed-base `STMIA Rn,{..}` (no writeback), with no forward widening: ipatix's ImprovedSoundMixer pastes its IWRAM resampling loop this way (The Morrow's Golden Country, ~4 full RAM flushes a frame without it). Changes block boundaries, so timing (MonoMyth, Unbound diverge); not exact. Needs `SMC_STM_RANGE`. |
 | `SMC_SAME_REPROBE` | `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. Ships at 1024. |
 | `SMC_IMM_PATCH` | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |

@@ -834,6 +834,14 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_STM_AHEAD_MUTANT),1)
 	CFLAGS += -DSMC_STM_AHEAD_MUTANT=1
 	endif
+	# SMC_STM_FIXED=1: ON in gpsp_features.h (Chandler Hardy, PR #27; 4.6.0
+	# beta; =0 switches it off).  SMC_STM_RANGE's span
+	# retirement also for STMIA Rn WITHOUT writeback (ipatix's mixer pastes
+	# its resampling loop with STMIA LR,{..}: The Morrow's Golden Country).
+	# No forward widening for this shape.  Needs SMC_STM_RANGE.
+	ifeq ($(SMC_STM_FIXED),1)
+	CFLAGS += -DSMC_STM_FIXED=1
+	endif
 	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
 	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
 	# ram_region, which doubles the function and spills translation_ptr to
