@@ -403,3 +403,28 @@ python tools/gbamirror/linkmenu/compare_mockups.py CMP OUT1 OUT2 ...
 5. **Old builds in the field:** a 3.0/3.1 player joining a new adapter room
    (should be unchanged), and a 3.1-beta GB host joined from a new GB console.
 
+## 9. The validation route (2026-11-02)
+
+A Lab case can start its session the way a player does (owner: "the whole point
+is to validate the path the end user would take"). So far that is Super Circuit:
+`link_msc-route` and `link_msc-connect`; every other fixture keeps its harness
+role session. These cases set no `gba_dual`, `gblink_role`, `host`, `join` or
+`group`. Both consoles boot, reach play, and a `ui_script` (GBAdhoc-Lab
+`backend/suites/route.py` writes it) holds SELECT+START through the pad, picks
+Wireless, hosts or scans, picks the room.
+
+A script reads the screen. `fu_draw` and `ov_band` feed a per-frame view
+(`vid_seen_*`, harness only, off unless a step needs it), so `see` waits for
+text, `pick` walks the list reading the highlighted row, and `watch` turns any
+failure line the frontend draws into a named failure. A reworded menu fails as
+`menu_changed`; nothing is timed by counting frames.
+
+Every stop is `EVT route_fail at=<last route step> reason=<why>`, followed by
+`route_screen` lines (what the screen said), a `heap_census at=route_fail` and
+`log/route_fail.bmp`, and exit 8. The grammar is in main_psp.c above
+`UISCRIPT_MAX`; the reasons are in route.py. An unknown verb fails the run.
+
+Harness keys a route run still needs, none of which starts a session:
+`ui_script`, `gba_link_menu` + `gba_dual_late` (a player's boot: no reserve, B
+and the session's memory come out of the ROM cache at session start),
+`link_script_waits`, `link_exit_after`.
