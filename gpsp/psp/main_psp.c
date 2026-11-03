@@ -13392,6 +13392,17 @@ int main(int argc, char *argv[])
     * see the field's note.  Both consoles must carry the same value. */
    if (!g_pcfg.net_session_fps_force)
       g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
+#ifdef RFU_SCHED
+   /* Scheduled ticks (rfu_sched.h) remove ADR-0073's reason for 57.00: a host
+    * can no longer outrun its client and fill Emerald's receive queue, because
+    * neither console starts a frame without the other's tick for it.  The pair
+    * runs at the slower console's own rate, so the only clamp left is the real
+    * GBA's 59.73.  The compatibility profile and net_session_fps_force keep
+    * their meaning.  Same test as rfu_sched_config's, which runs later. */
+   if (!g_pcfg.net_session_fps_force && g_pcfg.profile != PCFG_PROFILE_COMPAT &&
+       fe_ini_get_int(HARNESS_INI, "rfu_sched", RFU_SCHED_D_DEFAULT) > 0)
+      g_pcfg.net_session_fps_x100 = PACE_NOMINAL_X100;
+#endif
    g_pcfg.net_session_fps_snap = 0;
    if (!g_perf_rig) g_pcfg.core_phase = 0;
    if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3) g_pcfg.core_phase = 0;
