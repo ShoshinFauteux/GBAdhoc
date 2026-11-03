@@ -662,6 +662,7 @@ static const demo_step clk_demo_script[] = {
    { DEMO_DUMP,        1, 0 },   /* ge_clk_2: the third                   */
    { PSP_CTRL_RIGHT,   2, 30 },  /* back to the first                     */
    { DEMO_DUMP,        1, 0 },   /* ge_clk_3: as found                    */
+   { PSP_CTRL_DOWN,    2, 6 },   /* off the row: Rewind's footer back     */
    { PSP_CTRL_CIRCLE,  2, 8 },   /* back to the menu: saves               */
    { PSP_CTRL_CROSS,   2, 8 },   /* resume                                */
 };
