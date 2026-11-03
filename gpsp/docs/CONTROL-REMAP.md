@@ -629,7 +629,8 @@ keeps it. An X meant for "delete" can never load or overwrite instead.
   named by `psp_state_delete_paths()` (`psp/state_slots.h`) from the SLOT-1
   path alone. It refuses anything that does not already end in `.st0` after
   a non-empty name, and only swaps the final digit. A ROM path, a `.sav`, a
-  directory or a slot outside 1-5 cannot come out of it. The preview is
+  directory or a slot outside 1-10 (1-5 before ten slots, UI-OVERLAY.md
+  section 15.1) cannot come out of it. The preview is
   removed only after the state is gone.
 - **"Gone" is checked, not assumed.** Success means the state no longer
   `getstat`s. PPSSPP returns 0 from `sceIoRemove` whether or not it removed

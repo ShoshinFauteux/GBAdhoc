@@ -10,6 +10,12 @@ separately and are intended for upstream.
 
 ---
 
+## [Unreleased]
+
+- Ten save-state slots per game instead of five, `.st0` … `.st9` (`.gb.st0` …, `.gbc.st0` …
+  likewise). Existing states keep their slots; the Save States page and the game list's
+  state shelf show five at a time and scroll. Share game data still offers slots 1-5.
+
 ## [4.6.0-beta.2] - 2026-11-03
 
 Pre-release. Links only with the same beta (the Wireless Adapter protocol changed).

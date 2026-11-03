@@ -629,7 +629,7 @@ favourites, the state shelf) are unchanged and still apply.
 <table>
 <tr>
 <td width="50%"><img src="gpsp/docs/img/shot-menu-overlay.png" alt="The in-game menu over the paused game"><br><sub><b>The in-game menu</b>, over the paused game.</sub></td>
-<td width="50%"><img src="gpsp/docs/img/shot-save-states.png" alt="The Save States page"><br><sub><b>Save States.</b> Five slots, a picture and a time each.</sub></td>
+<td width="50%"><img src="gpsp/docs/img/shot-save-states.png" alt="The Save States page"><br><sub><b>Save States.</b> Ten slots, a picture and a time each.</sub></td>
 </tr>
 <tr>
 <td><img src="gpsp/docs/img/shot-controls-page.png" alt="The Controls page"><br><sub><b>Controls.</b> Game buttons, shortcuts, and HOME as the menu.</sub></td>
@@ -703,7 +703,7 @@ favourites, the state shelf) are unchanged and still apply.
   Ambient bars, GB palette.
 
 **Saving**
-- Five save-state slots per game with pictures and times, the state shelf
+- <kbd>NEW</kbd> Ten save-state slots per game with pictures and times, the state shelf
   in the browser (LEFT), delete (△ in game, □ on the shelf).
 - Select + L / Select + R for a quick save and load of slot 1.
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
@@ -791,9 +791,10 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 
 - **Battery saves**: `roms/<game>.sav` for GBA, `roms/<game>.gb.sav` and
   `roms/<game>.gbc.sav` for Game Boy. A `.sav.bak` is kept.
-- **Save states**: `roms/<game>.st0` … `.st4`, and `.gb.st0` / `.gbc.st0` … likewise,
-  each with a `.thumb` beside it and, a `.shot` (the full-size picture on
-  the Save States page).
+- **Save states**: `roms/<game>.st0` … `.st9` (slots 1 to 10), and `.gb.st0` /
+  `.gbc.st0` … likewise, each with a `.thumb` beside it and, a `.shot` (the
+  full-size picture on the Save States page). States from earlier versions
+  (`.st0` … `.st4`) are slots 1 to 5, as they were.
 - **Favourites**: `roms/favourites.txt`. **Link mode overrides**:
   `roms/linkmode.txt`.
 - **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the

@@ -294,7 +294,8 @@ No new heap allocation in any player-reachable path.
   arena's tail), taken at `menu_open()`.
 * The five slot thumbnails (5 x 64x64 x 2 = 40 KiB) are carved from the same
   block, which is the exact size of what lives in it: netdrv, the snapshot,
-  the thumbnails, the screenshot encoder. If the arena reservation ever
+  the thumbnails, the screenshot encoder. (Ten slots since section 15: 80
+  KiB of thumbnails, a block of 936,317 B, 40,960 more; section 15.3.) If the arena reservation ever
   fails, both pointers stay NULL: the menu draws on a flat page and the slots
   show plates.
 * The harness-only `ui_backdrop` mallocs 512 KiB at boot, and only when that
@@ -1031,7 +1032,7 @@ Fable's direction A, "Split" (`builds/savestate-mockups/`, README there;
 the design is `savestate.py`, scenes in `A-split/` and `menu/`). Base:
 c746cca (GBA-LINK-UI final). The menu's two rows "Save state" / "Load
 state" and their two pages become one row, **Save states** ("n of 5 used"
-beside it), and one page: the five slots on the left (64x42 thumbnail at
+beside it; ten slots since section 15), and one page: the five slots on the left (64x42 thumbnail at
 36x24, the slot, its time), the highlighted slot's picture **1:1** on the
 right, the slot and its time under it.
 
@@ -1154,3 +1155,117 @@ GBA-LINK-UI finals in all three.
 * The 1:1 panel on the LCD, both themes; the 36x24 row thumbnails'
   sharpness (GU_LINEAR, see 13.3).
 * The PSP-1000: the `net_arena` / heap lines unchanged by opening the page.
+
+---
+
+## 15. Ten slots a game (`feat/ten-slots`, 2026-11-03)
+
+Base: 4.6.0-beta.2 (9082e3b). A player request: more than five slots.
+
+### 15.1 The names: nothing is renamed
+
+`PSP_STATE_SLOT_COUNT` is 10 (`psp/state_slots.h`). Slot k is still
+`.st(k-1)`, so every name 4.6.0-beta.2 and earlier wrote keeps its slot:
+
+| slot | GBA | GB | GBC |
+|---|---|---|---|
+| 1-5 (as before) | `Game.st0` .. `Game.st4` | `Game.gb.st0` .. `.st4` | `Game.gbc.st0` .. `.st4` |
+| 6-10 (new) | `Game.st5` .. `Game.st9` | `Game.gb.st5` .. `.st9` | `Game.gbc.st5` .. `.st9` |
+
+each with its `.thumb` and `.shot` beside it, unchanged in format. Nothing
+is renamed, moved or rewritten on upgrade; an older stick opens with the
+same states in the same slots and slots 6-10 empty. Ten is where the rule
+stops on purpose: the slot is one digit, which is what lets
+`psp_state_delete_paths` name a slot's files by replacing the last
+character of the slot-1 path and nothing else (CONTROL-REMAP.md section 11).
+
+### 15.2 The lists scroll
+
+The SAVE STATES page and the browser's state shelf keep their five rows
+(`PSP_STATE_SLOT_ROWS`); `psp_state_slot_top()` is the cheats list's window:
+it stays put while the cursor is in it and otherwise moves just far enough to
+show it. UP from slot 1 wraps to slot 10 and shows 6-10; DOWN from 10 wraps
+to 1 and shows 1-5. The cheats list's 2 px `ov_scrollbar` says where the
+window is: x=218 on the page, between the rows (to 212) and the preview's
+shadow (228), the rows' height (y 73..241); x+196 on the shelf, beside the
+cards. The page still opens on slot 1. The rows, the preview panel, the
+caption and the footer are where they were.
+
+### 15.3 Memory
+
+One 64x64 thumbnail texture a slot: 40 -> 80 KiB of the netdrv block's tail
+(section 7). Since 4.6.0 that block is the exact size of what lives in it
+(MEMORY-BUDGET.md), so the extra 40,960 B are heap taken at boot, not slack:
+
+| | five slots (4.6.0-beta.2) | ten slots |
+|---|---:|---:|
+| netdrv (`netdrv_sizeof()`, read from the release ELF) | 516,224 | 516,224 |
+| wake frame | 131,072 | 131,072 |
+| slot thumbnails | 40,960 | 81,920 |
+| PNG encoder (`fe_png_work_bytes(240, 160)`) | 206,912 | 206,912 |
+| three 64-byte alignments (at most) | 189 | 189 |
+| **the block** | **895,357** | **936,317** |
+
+The code itself does not change the image's size (release recipe:
+13,973,900 B, beta 2's); the re-tuned layout pad (LAYOUT-PINNING.md: the
+frontend's text grew 384 B ahead of instance A, so 176 -> 7984) adds 8,192
+B, so the heap at boot goes PSP-1000 10,122,652 -> 10,114,460 B and PSP Go
+38,434,204 -> 38,426,012 B (`build-manifest.json`). The block is taken from
+that heap right after boot. On a
+PSP-1000 the ROM page cache takes what the heap has left in 32 KiB pages, so
+the cost there is one page (two when the remainder sits within 8 KiB of a
+page edge); a 64 MiB console's cache stops at its cap with megabytes to
+spare, so there it costs nothing. The BSS grows by 8 B (two window tops).
+The shelf's previews are a browser-time `memalign`, 40 -> 80 KiB, freed when
+the shelf closes and before a game starts.
+
+(The alternative that would cost nothing: keep five textures and give slot
+i the texture i mod 5 -- a window of five consecutive slots always holds
+each residue once, so a scroll step reads exactly one 5 KiB `.thumb`. Not
+done: it reads during the scroll, which the page has avoided so far.)
+
+### 15.4 I/O
+
+"n of 10 used" beside Save states, and the page's scan, stat ten files
+instead of five (each after `fe_host_state_recover`, which stats the `.old`
+of a missing state too), once per menu open / page scan, never per frame.
+The page's scan reads at most ten 5 KiB `.thumb`s; the dwell read is
+unchanged (one `.shot`, after 6 frames' rest). The shelf loads one preview a
+frame once the panel has landed, ten instead of five.
+
+### 15.5 Share game data stays on slots 1-5
+
+Its manifest is a wire format (SAVE-SHARE.md), and `fe_share_classify`
+already ignores `.st5`-`.st9` (`tools/tests/test_fe_share.c`), so they are
+neither offered nor written. `ui_share.inc` refuses to build if
+`FE_SHARE_SLOTS` ever exceeds `PSP_STATE_SLOT_COUNT`. Widening Share is a
+protocol generation of its own.
+
+### 15.6 Verification
+
+* **Host** (`python3 tools/run_host_tests.py`, in the gcc:14 container; the
+  `fe_ini_bounds` suite): `tools/tests/test_state_slots.c` pins the old names
+  for every console, `.st5`-`.st9`, refusals outside 1-10 and the window over
+  a 200,000-step random walk; `test_state_delete.c` deletes slot 10 on disk
+  and leaves its neighbours; `tools/tests/test_state_page.py` runs the real
+  `screen_state_slots` and `browser_state_panel` against stubs (rows 1-5 at
+  open, the wrap to 6-10, a row at a time down and no jump back up, each
+  row's own slot, thumbnail and action, the scrollbar) with 8 mutants, each
+  of which fails, and compiles `ui_share.inc`'s check with ten slots
+  (builds) and with four (refused).
+* **Build**: beta 2's release recipe (`RFU_SCHED=1 tools/build.sh
+  release`), audits passing, no warnings in GBAdhoc-owned code, hot core
+  5,756 B of 6,144 and unmoved.
+* **Not run**: the GE rig and the model (`tools/ui_model/`; they need the
+  WSL PPSSPP harness and `builds/menu-mockups`, not in this checkout). The
+  model and the walkers are updated (the `scrolled` scene) but have not
+  produced a dump.
+
+### 15.7 What needs hardware
+
+* The page and the shelf with ten slots: the scrollbar's place and weight,
+  both themes; the wrap from slot 1 to slot 10.
+* The menu open's ten stats on a real Memory Stick (`ui_open slots_used=N
+  stat_us=`), against beta 2's five.
+* The PSP-1000: `net_arena need= took=` (936,317) and `shot_work ... ok`,
+  and the ROM cache's page count against beta 2's.

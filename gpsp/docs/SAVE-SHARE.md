@@ -32,7 +32,7 @@ data share its menu opens by itself. There is no other entry on this side.
 2. X opens **Their states** for that game over its hero art: a Save file row
    above Slots 1-5, the highlighted slot's picture 1:1 on the right. The
    save row shows the hero art in the frame with both dates on a runner.
-3. X on a slot opens **Your slots** (this PSP's five slots with their
+3. X on a slot opens **Your slots** (this PSP's first five slots with their
    thumbnails, the incoming picture on the right); X there fetches the state
    into the chosen slot. X on the Save file row fetches the save, after one
    question if this PSP already has a save for the game ("Your current save
@@ -160,7 +160,9 @@ States are offered only when `fe_share_states_ok` says so: the same state
 format id for that console (`GBA_STATE_VERSION`; a constant for the GB
 core) **and** -- `FE_SHARE_STATES_NEED_SAME_BUILD`, default 1 -- the same
 build string. Otherwise the five slots are greyed with the reason and the
-Save file row works as usual. Saves are plain cartridge data and always
+Save file row works as usual. Share offers and fills slots 1-5 only: a
+PSP has ten since UI-OVERLAY.md section 15.1, but the manifest's five per
+game is the wire format, and `.st5`-`.st9` are not shared. Saves are plain cartridge data and always
 cross. A GB/GBC save is copied byte for byte, RTC trailer included, exactly
 as moving the file by USB would.
 

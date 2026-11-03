@@ -48,7 +48,7 @@ that same teardown and adds the rows marked **new**.
 | HOME | `gbadhoc_home.prx` (Menu = HOME) | `home_host_stop` unloads it; **new** `home_host_forget()` lets the next game load it again |
 | threads | SRAM/log writer, stall watch, drprof, priority boost | stopped in the teardown, started again by the next game (`emu_boost_start` is **new** on this path) |
 | threads | audio | **new**: stopped, ring, rate and oracle reset, started again (as at boot) |
-| netdrv | the 1 MiB arena reserved at boot, with the wake snapshot and the five state thumbnails in its tail | process-lifetime by design, taken before the first census. The hold screen draws from the snapshot. |
+| netdrv | the 1 MiB arena reserved at boot, with the wake snapshot and the state thumbnails (five; ten since UI-OVERLAY.md section 15) in its tail | process-lifetime by design, taken before the first census. The hold screen draws from the snapshot. |
 | wireless | ad-hoc session, net modules, Mystery Gift's infrastructure modules | not unloaded provably → **relaunch** (§4) |
 | UI/OSD/video | in-game menu, toasts and chips, the ambient bake in VRAM | **new** `ui_close`, `osd_reset`, `vid_ambient_drop` |
 | main() | per-game values the session edits: renderer wanted, SRAM thread (off for GB), autoload, FF state, pad edges, wake flags | **new**: restored to what boot set before every return |
