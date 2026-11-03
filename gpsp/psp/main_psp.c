@@ -3053,10 +3053,12 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
 #ifndef PLAY_FF_FLIP_PACE
 #define PLAY_FF_FLIP_PACE 0
 #endif
-static int      g_ff_flip_pace     = PLAY_FF_FLIP_PACE;
-static unsigned g_ffh_sub_vc;      /* vcount after the last successful submit */
-static int      g_ffh_held;        /* the back buffer holds an unflipped picture */
-static unsigned g_ffh_holds, g_ffh_waits, g_ffh_vb;
+/* Small data, so the layout pin's .data/.bss sets do not move (LAYOUT-PINNING.md). */
+static int      g_ff_flip_pace __attribute__((section(".sdata"))) = PLAY_FF_FLIP_PACE;
+static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer holds an unflipped picture */
+static unsigned g_ffh_holds __attribute__((section(".sbss")));
+static unsigned g_ffh_waits __attribute__((section(".sbss")));
+static unsigned g_ffh_vb __attribute__((section(".sbss")));
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
@@ -12499,12 +12501,6 @@ static int lat_swap(int early)
       g_lat_hold++;            /* nothing drawn: the screen holds */
       return 0;
    }
-   {
-      /* Latches at the vblank after the submit.  A vblank between the read
-       * above and this one leaves it ambiguous: take the later. */
-      unsigned vc2 = sceDisplayGetVcount();
-      g_ffh_sub_vc = vc2;
-   }
    g_lat_sub_vc = vc;
    g_lat_check  = 1;
    if (vid_flip_latched())
@@ -12535,10 +12531,12 @@ static int lat_swap(int early)
 }
 
 /* FF FLIP PACING (see g_ff_flip_pace).  1 = a flip now would latch less than
- * `n` vblanks after the last one (n = 1: the last one has not latched yet). */
-static int ffh_too_soon(unsigned n)
+ * `n` vblanks after the last one (n = 1: the last one has not latched yet).
+ * g_lat_sub_vc is read just before the submit: a vblank inside that window
+ * (microseconds) makes the last flip latch one later than assumed here. */
+static __attribute__((noinline)) int ffh_too_soon(unsigned n)
 {
-   return (int)(sceDisplayGetVcount() - (g_ffh_sub_vc + n)) < 0;
+   return (int)(sceDisplayGetVcount() - (g_lat_sub_vc + n)) < 0;
 }
 
 /* The uncapped branch: hold this loop's picture instead of flipping it? */
