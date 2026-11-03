@@ -44,6 +44,38 @@ static inline const char *pcfg_rewind_mb_name(int mb)
    return mb == PCFG_REWIND_MB_LONG ? "Long" :
           mb == PCFG_REWIND_MB_MEDIUM ? "Medium" : "Short";
 }
+/* CPU CLOCK (Settings > "CPU clock", CONFIG.INI `cpu_clock`): 333 MHz, the
+ * default every release since 3.5.0 has forced (ADR-0004), 222 MHz, or 0 =
+ * System: whatever the firmware or the CFW set before the EBOOT started,
+ * with no scePowerSetClockFrequency call at all.  Applied at boot, when the
+ * row changes, after a wake and after the in-process return (main_psp.c
+ * psp_clock_apply).  Any other number is 333: a value we do not know must
+ * never leave a player slower than they asked for. */
+#define PCFG_CLOCK_SYSTEM  0
+#define PCFG_CLOCK_222     222
+#define PCFG_CLOCK_333     333
+#define PCFG_CLOCK_DEFAULT PCFG_CLOCK_333
+static inline int pcfg_clock_snap(long mhz)
+{
+   return mhz == PCFG_CLOCK_SYSTEM || mhz == PCFG_CLOCK_222 ? (int)mhz
+                                                           : PCFG_CLOCK_333;
+}
+/* 333 -> 222 -> System -> 333 (dir < 0: the other way). */
+static inline int pcfg_clock_step(int mhz, int dir)
+{
+   mhz = pcfg_clock_snap(mhz);
+   if (dir < 0)
+      return mhz == PCFG_CLOCK_333 ? PCFG_CLOCK_SYSTEM :
+             mhz == PCFG_CLOCK_222 ? PCFG_CLOCK_333 : PCFG_CLOCK_222;
+   return mhz == PCFG_CLOCK_333 ? PCFG_CLOCK_222 :
+          mhz == PCFG_CLOCK_222 ? PCFG_CLOCK_SYSTEM : PCFG_CLOCK_333;
+}
+static inline const char *pcfg_clock_name(int mhz)
+{
+   mhz = pcfg_clock_snap(mhz);
+   return mhz == PCFG_CLOCK_SYSTEM ? "System" :
+          mhz == PCFG_CLOCK_222 ? "222 MHz" : "333 MHz";
+}
 #include "fe_util.h"
 
 #ifdef __cplusplus
@@ -159,6 +191,7 @@ typedef struct
     * ON since 3.0.0 (the Go A/B rig, 21/21); `rom_resident = 0` pages. */
    int  rom_resident;
    int  show_fps;     /* 1 = OSD chip with emulated-frame rate (default 0) */
+   int  cpu_clock;    /* PCFG_CLOCK_*: 333 (default), 222, 0 = System */
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
     * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,

@@ -339,7 +339,7 @@ Gotchas met on the way:
 
 The hot order and the JIT offset hold by themselves. Instance A's cold text, its `.rodata`, `.data` and `.bss` hold only if what is linked before them changes by a multiple of 8 KiB, so a change to the frontend's size re-tunes:
 
-- `LAYOUT_PAD_BYTES` (text) and `LAYOUT_PAD_RO_BYTES` (`.rodata`, frontend before A), psp/Makefile. A release is 528 and 976.
+- `LAYOUT_PAD_BYTES` (text) and `LAYOUT_PAD_RO_BYTES` (`.rodata`, frontend before A), psp/Makefile. A release is 7920 and 488 (528 and 976 until the CPU clock setting, 2026-11-03: +800 B of text; .rodata moves in 16 B steps, so its last 8 B came from one more walker step). A Lab build of the same tree matches the 460-dev Lab build with `LAYOUT_PAD_BYTES=7152 PSP_EXTRA="LAYOUT_PAD_RO_BYTES=384"` (A's text and .bss exact, its .rodata 8 B over).
 - A Lab build has different frontend sizes: to match rc450g it was built with `LAYOUT_PAD_BYTES=8144 PSP_EXTRA="LAYOUT_PAD_RO_BYTES=992"`.
 - Nothing before B matters for `.bss` (B starts on an 8 KiB boundary), but the partner's `fe_autopilot_b.o` sits between B and A: the playable table is 6,232 B for that reason (22,528 less 16,296 keeps the sets).
 - New state in the core goes in `.sbss` (`GAMEPAK_SBSS`, gba_memory.c), not `.bss`.
