@@ -365,3 +365,16 @@ mailbox in the module's place (`me_fake = 2` is a wedged one), and
 handed_back=1` is what the bug looks like, and a sleep from the list must log
 `module=1 retained=1 handed_back=0`. PPSSPP cannot show the kernel's path:
 **only a real console sleeping from the list proves this.**
+`tools/inproc/batch_me_sleep.sh` has the arms: 12 returns over GBA, GB and GBC
+games, a list sleep through the real browser (once, twice, after a GB game), a
+sleep in the game after a return, the wake overlay, the wedged engine.
+
+Real ME, no sleep (Lab, build `51f50ed86a39`, `quit_soak` with `me_mode = 1`,
+12 returns on the PSP-3000 and on the PSP-1000, Emerald, AW2, Crystal, H&S): 0
+refused, census exact in all 25 readings with `kfree`/`kmax` unmoved, the ME up
+and rendering in all 10 GBA sessions (9 taken up, 0 drops), HOME and exit clean.
+Frames against the game's first session of the process: Emerald, H&S and
+Crystal identical (frame 1 of a boot differs on the 1000, the known boot noise).
+AW2 differs from frame 31 between its first session and its later ones, which
+agree with each other; a run with the renderer off shows the same, so it is not
+the engine. Not looked into further.
