@@ -48,7 +48,7 @@ static unsigned g_trace_out;
 static int g_every = 300, g_clock;
 
 /* main-thread side */
-static unsigned g_pend, g_pend_ok;
+static const volatile int *g_me_on, *g_me_shown;
 static unsigned g_stage_fr[4];
 static unsigned g_ff_t, g_w_t, g_w_frame, g_w_loops, g_w_flips, g_win;
 static unsigned g_w_mode[4];              /* loops in gate / mult / uncapped / other */
@@ -178,7 +178,8 @@ static int ffp_thread(SceSize args, void *argp)
    return 0;
 }
 
-int lab_ffpace_boot(const char *ini, int apply)
+int lab_ffpace_boot(const char *ini, int apply, const volatile int *me_rend,
+                    const volatile int *me_shown)
 {
    long pace = fe_ini_get_int(ini, "lab_pace", 0);
    long every = fe_ini_get_int(ini, "lab_pace_every", 300);
@@ -187,6 +188,8 @@ int lab_ffpace_boot(const char *ini, int apply)
       return 0;
    g_every = every >= 30 && every <= 36000 ? (int)every : 300;
    g_clock = pace >= 100 && pace <= 333 ? (int)pace : 0;
+   g_me_on = me_rend;
+   g_me_shown = me_shown;
    g_on = g_run = 1;
    th = sceKernelCreateThread("lab_ffpace", ffp_thread, 0x11, 0x1000,
                               THREAD_ATTR_USER, NULL);
@@ -211,8 +214,12 @@ void lab_ffpace_flip(unsigned phys_addr)
    int i, t = -1;
    if (!g_on)
       return;
-   fr = g_pend_ok ? g_pend : fe_host_frame_count();
-   g_pend_ok = 0;
+   /* ME renderer: the picture is the last-presented stage's render;
+    * otherwise the CPU renderer drew the current frame. */
+   if (g_me_on && *g_me_on && g_me_shown && *g_me_shown >= 0 && *g_me_shown < 4)
+      fr = g_stage_fr[*g_me_shown];
+   else
+      fr = fe_host_frame_count();
    phys_addr &= 0x1fffffffu;
    for (i = 0; i < FFP_NTAG; i++)
       if (g_tag[i].addr == phys_addr)
@@ -244,15 +251,6 @@ void lab_ffpace_me_post(int stage, unsigned frame)
 {
    if (g_on && stage >= 0 && stage < 4)
       g_stage_fr[stage] = frame;
-}
-
-void lab_ffpace_me_present(int stage)
-{
-   if (g_on && stage >= 0 && stage < 4)
-   {
-      g_pend = g_stage_fr[stage];
-      g_pend_ok = 1;
-   }
 }
 
 void lab_ffpace_me_retire(unsigned post_us, unsigned spin_us)

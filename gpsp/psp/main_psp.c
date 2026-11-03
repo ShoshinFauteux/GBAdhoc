@@ -4282,7 +4282,7 @@ static void me_rend_present(void)
       g_bb_new = 1;
       g_bb_pvc = g_mer_stage_pvc[g_mer_ready];
    }
-   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160); LAB_FFP(lab_ffpace_me_present(g_mer_ready);)
+   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
    g_mer_last_presented = g_mer_ready;
    g_drew = 1;
 }
@@ -4324,7 +4324,7 @@ static void me_rend_retire_if_idle(void)
    else
 #endif
    g_mer_ready   = g_mer_pending;
-   mer_note_sum(); LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, 0);)
+   mer_note_sum();
    g_mer_pending = -1;
    g_mer_miss    = 0;
    g_fps_drawn++;
@@ -13230,7 +13230,7 @@ int main(int argc, char *argv[])
    {
       long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
-      LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
+      LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
    psp_clock_apply("boot");
    fe_evt("clock=%d", scePowerGetCpuClockFrequency());

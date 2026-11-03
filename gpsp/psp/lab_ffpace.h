@@ -25,14 +25,15 @@
 #ifdef LAB_HARNESS
 /* Boot: read the keys from `ini`, start the observer.  Returns the clock to
  * pin (0 = leave it).  apply = 1: set it here (a tree without its own clock
- * setting); 0: the caller routes it through its own clock code. */
-int  lab_ffpace_boot(const char *ini, int apply);
+ * setting); 0: the caller routes it through its own clock code.  me_rend /
+ * me_shown: the ME renderer's active flag and last-presented stage, read at
+ * each flip (no hook inside the hot-ordered present path). */
+int  lab_ffpace_boot(const char *ini, int apply, const volatile int *me_rend,
+                     const volatile int *me_shown);
 /* Every flip, BEFORE sceDisplaySetFrameBuf: physical address it submits. */
 void lab_ffpace_flip(unsigned phys_addr);
-/* ME renderer: a render of game frame `frame` was posted into stage `stage`;
- * stage `stage` was drawn into the back buffer (its frame is the picture). */
+/* ME renderer: a render of game frame `frame` was posted into stage `stage`. */
 void lab_ffpace_me_post(int stage, unsigned frame);
-void lab_ffpace_me_present(int stage);
 /* ME renderer: a render retired.  post_us = sceKernelGetSystemTimeLow() at its
  * post, spin_us = how long the main thread spun waiting for it (0 if none). */
 void lab_ffpace_me_retire(unsigned post_us, unsigned spin_us);
