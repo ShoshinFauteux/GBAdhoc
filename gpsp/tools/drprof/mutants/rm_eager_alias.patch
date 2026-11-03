@@ -1,0 +1,20 @@
+--- a/cpu_threaded.c	2026-11-03 13:24:13
++++ b/cpu_threaded.c	2026-11-03 13:24:13
+@@ -8299,7 +8299,7 @@
+     if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
+          (((GBA_PC(branch_target) >> 24) == 2) ||
+           ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW ||
+-        RAM_MIRROR_LAZY(branch_target))
++        0 /* MUTANT: RAM_MIRROR_LAZY(branch_target) */)
+     {
+       translation_target = translation_ptr;
+       generate_load_pc(reg_a0, RAM_MIRROR_LINK_PC(branch_target));
+@@ -8669,7 +8669,7 @@
+     if ((STALE_ALL_ENTRIES_COND(ram_region, branch_target) &&
+          (((GBA_PC(branch_target) >> 24) == 2) ||
+           ((GBA_PC(branch_target) >> 24) == 3))) || XLAT_LAZY_LINKS_NOW ||
+-        RAM_MIRROR_LAZY(branch_target))
++        0 /* MUTANT: RAM_MIRROR_LAZY(branch_target) */)
+     {
+       translation_target = translation_ptr;
+       generate_load_pc(reg_a0, RAM_MIRROR_LINK_PC(branch_target));

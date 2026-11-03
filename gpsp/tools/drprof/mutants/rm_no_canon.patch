@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c	2026-11-03 13:24:13
++++ b/cpu_threaded.c	2026-11-03 13:24:13
+@@ -3767,7 +3767,7 @@
+     case 0x2:                                                                 \
+     case 0x3:                                                                 \
+     {                                                                         \
+-      RAM_MIRROR_CANON(pcregion, pc);                                         \
++      /* MUTANT: RAM_MIRROR_CANON(pcregion, pc); */                          \
+       u16* tagp = (pcregion == 2) ? (u16 *)(ewram + (pc & 0x3FFFF) + 0x40000) \
+                                   : (u16 *)(iwram + (pc & 0x7FFF));           \
+       ramtag_type* trentry;                                                   \
