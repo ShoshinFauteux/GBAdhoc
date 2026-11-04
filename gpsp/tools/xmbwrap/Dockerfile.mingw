@@ -1,0 +1,5 @@
+# The Windows build of xmbwrap (tools/xmbwrap/build_win.sh): mingw-w64, nothing else.
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 make ca-certificates \
+    && rm -rf /var/lib/apt/lists/*

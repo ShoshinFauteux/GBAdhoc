@@ -56,3 +56,11 @@ __pycache__/
 # its intermediate .elf is not.
 psp/home/gbadhoc_home.elf
 .build-elf.nm
+
+# XMB launcher + entry maker build outputs (docs/XMB-LAUNCH.md)
+psp/launcher/EBOOT.PBP
+psp/launcher/PARAM.SFO
+psp/launcher/launcher.elf
+psp/launcher/*.o
+tools/xmbwrap/dist/
+tools/xmbwrap/launcher_pbp.h
