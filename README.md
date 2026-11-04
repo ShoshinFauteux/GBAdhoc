@@ -1006,25 +1006,27 @@ cartridge-transfer runs).
   screen shows a diagnostic page; a photo of it is the most useful thing a bug report can
   carry.
 
-### Planned: launch a game straight from the XMB (#29)
+### In testing: launch a game straight from the XMB (#29)
 
-Each game will be able to have its own XMB entry, with its own icon and background, that
-opens straight into the game. The design:
+Each game can have its own XMB entry, with its own icon and background, that opens straight
+into the game. The Windows maker and the launcher are built and in testing on a PSP Go; a
+maker that runs on the PSP itself comes next. How it works
+([`gpsp/docs/XMB-LAUNCH.md`](gpsp/docs/XMB-LAUNCH.md)):
 
 - **A small launcher per game, not a copy of the emulator.** The entry's EBOOT holds the
-  icon (ICON0, 144×80), the background (PIC1, 480×272), the title and a tiny launcher that
-  starts the installed `PSP/GAME/GBAdhoc` with the ROM's path. Each entry is tens of KB, and
-  updating GBAdhoc updates every entry. Saves, settings, cheats and sleep stay in one place.
-- **The ROM is not copied into the entry.** The launcher points at your ROM on the Memory
-  Stick (or the Go's internal storage), so an entry is never a shareable copy of a game.
-- **GBAdhoc gains a direct-boot mode:** given a ROM path, it opens that game, and *Quit*
-  returns to the XMB instead of the game list.
-- **Two ways to make an entry, one format:** on the PSP itself, picking a ROM and its art
-  (GBAdhoc's own box and hero art can be reused), and with a small desktop program for
-  Windows. Both use the same EBOOT-building code, so they make identical entries.
-
-The first step is proving the launcher on all three models, including a PSP Go launching
-from its internal storage.
+  icon (ICON0, 144×80), the background (PIC1, 480×272), the title and a small launcher
+  (about 130 KB) that starts the installed GBAdhoc with the ROM's path. Updating GBAdhoc
+  updates every entry. Saves, save states, settings, cheats and sleep stay in one place: a
+  game is the same game from its entry or from the game list.
+- **The ROM is not copied into the entry.** The launcher points at your ROM in GBAdhoc's
+  `roms` folder, on the Memory Stick or the Go's internal storage, so an entry is never a
+  shareable copy of a game.
+- **GBAdhoc's launch mode:** given a ROM, it opens that game. *Exit* returns to the XMB and
+  *Quit to game list* opens the list.
+- **Two ways to make an entry, one format:** with **GBAdhoc XMB Entry Maker** on Windows
+  (pick the game in GBAdhoc's `roms` folder with the PSP in USB mode; GBAdhoc's own box and
+  hero art are filled in, and you can choose your own), and next, on the PSP itself. Both use
+  the same EBOOT-building code, so they make identical entries.
 
 ---
 
