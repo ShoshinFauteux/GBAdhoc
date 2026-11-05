@@ -84,7 +84,16 @@ void sound_flush_ring(void);
  * and must not.  These carry the part of the ring that is still in flight
  * (mixed, not yet read out): at most SOUND_REWIND_WINDOW entries from the
  * read position, as 16-bit values when they all fit, else 32-bit. */
-#define SOUND_REWIND_WINDOW       8192u
+/* In flight is the read-out holdback (512) plus up to a frame: ~1,600
+ * entries at 32768 Hz, ~2,700 at 65536 Hz; 4096 covers both (it was 8192,
+ * which made every rewind snapshot 16 KiB larger than it needs). */
+#define SOUND_REWIND_WINDOW       4096u
+/* How far ahead of the mixer a direct-sound channel's ring position may be
+ * and still count as in flight: a channel writes up to its last FIFO
+ * sample, a few entries past the mixer (states show 6 behind to 32 ahead;
+ * 1024 entries is a DS timer below 64 Hz).  Behind the mixer never extends
+ * what is in flight. */
+#define SOUND_REWIND_DS_AHEAD     1024u
 #define SOUND_REWIND_EXTRA_BYTES  (8u + SOUND_REWIND_WINDOW * 4u)
 void sound_rewind_extra_save(u8 *dst);          /* writes EXTRA_BYTES */
 /* The same into a buffer whose first `stale` bytes may hold an older save

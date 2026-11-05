@@ -501,7 +501,7 @@ frames. Counted in bytes moved through a 16 KiB data cache:
 |---|---|
 | gather: clear the 416 KiB image | 416 KiB written |
 | gather: the save-state writers copy the six arrays | 387 KiB read, 387 KiB written again |
-| gather: sound in flight | 32 KiB written |
+| gather: sound in flight | 16 KiB written (32 KiB before the 4096-entry window) |
 | pack: compare image with reference | 459 KiB + 459 KiB read |
 | pack: delta + bring the reference up to date | 5-30 KiB written twice |
 

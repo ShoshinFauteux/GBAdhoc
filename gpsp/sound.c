@@ -1085,6 +1085,9 @@ void sound_flush_ring(void)
 
 #ifdef REWIND
 u32 gba_rewind_ring_cleared;
+_Static_assert(SOUND_REWIND_WINDOW >= 512 + 2 * (GBA_SOUND_FREQUENCY / 59 + 1) +
+               SOUND_REWIND_DS_AHEAD && SOUND_REWIND_WINDOW < BUFFER_SIZE,
+               "SOUND_REWIND_WINDOW: holdback + a frame at 65536 Hz + DS lead");
 
 /* Zero what is in flight NOW (between the read position and the furthest
  * producer), before the positions are replaced by a restore.  With the
@@ -1129,8 +1132,15 @@ u32 sound_rewind_extra_save_part(u8 *dst, u32 stale)
   for (i = 0; i < 3; i++)
   {
     /* A producer further ahead than the window is a channel that is not
-     * running (its index is stale), not a second of pending sound. */
+     * running (its index is stale), not a second of pending sound.  A
+     * direct-sound channel counts only when it is beside the mixer as well
+     * (SOUND_REWIND_DS_AHEAD): a stopped channel's index is anywhere in the
+     * ring, and inside the window alone it landed a quarter of the time
+     * with the 16K-entry ring, each time copying and XORing up to the whole
+     * window of zeros into every capture. */
     u32 d = (idx[i] - sound_buffer_base) & BUFFER_SIZE_MASK;
+    if (i && ((idx[i] - idx[0]) & BUFFER_SIZE_MASK) > SOUND_REWIND_DS_AHEAD)
+      continue;
     if (d <= SOUND_REWIND_WINDOW && d > n)
       n = d;
   }
