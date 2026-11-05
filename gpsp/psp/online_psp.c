@@ -93,9 +93,8 @@ static int prx_load(void)
    {
       unsigned e = (unsigned)O.mod;
       snprintf(O.why, sizeof(O.why), "%s",
-               e == 0x80010002u || e == 0x8002012Fu ? "the online module (gbadhoc_online.prx) is missing"
-               : e == 0x800200D9u || e == 0x80020190u ? "not enough memory for the online module"
-               : "the online module did not load");
+               e == 0x80010002u || e == 0x8002012Fu ? "gbadhoc_online.prx is missing"
+                                                    : "no memory for the online module");
       fe_evt("online_prx at=load_failed rc=0x%08X", e);
       O.mod = -1;
       return -1;
@@ -108,8 +107,7 @@ static int prx_load(void)
    if (rc < 0 || st < 0 || O.api.magic != OL_MAGIC_API ||
        O.api.version != OL_VERSION || O.api.size != sizeof(online_api))
    {
-      snprintf(O.why, sizeof(O.why), "%s", st == OL_ERR_ABI || (rc >= 0 && st >= 0)
-               ? "the online module is a different version" : "the online module did not start");
+      snprintf(O.why, sizeof(O.why), "%s", "gbadhoc_online.prx is another version");
       fe_evt("online_prx at=start_failed rc=0x%08X st=%d api=%08X/%u", (unsigned)rc, st,
              (unsigned)O.api.magic, (unsigned)O.api.version);
       if (rc >= 0 && st >= 0)
@@ -154,18 +152,10 @@ static long get_int(const char *h, const char *c, const char *k, long def)
 }
 #endif
 
+/* the text as given; the module keeps only its first four letters, upper-cased */
 static void set_room(const char *s)
 {
-   int i, j = 0;
-   for (i = 0; s && s[i] && j < RL_CODE_LEN; i++)
-   {
-      char ch = s[i];
-      if (ch >= 'a' && ch <= 'z')
-         ch = (char)(ch - 32);
-      if (ch >= 'A' && ch <= 'Z')
-         O.cfg.room[j++] = ch;
-   }
-   O.cfg.room[j] = 0;
+   snprintf(O.cfg.room, sizeof(O.cfg.room), "%s", s ? s : "");
 }
 
 #ifdef GPSP_PERF_RIG

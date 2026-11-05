@@ -2934,8 +2934,8 @@ static ui_action screen_settings(unsigned edges)
 #ifdef GBADHOC_ONLINE
    else if (g_cursor == SET_ONLINE)
       footer(g_pcfg.online_play
-                ? "Experimental: Wireless > Online links over the internet."
-                : "Off: Wireless links PSPs in the same room only.");
+                ? "Experimental: Wireless > Online."
+                : "Wireless > Online, over the internet.");
 #endif
    else if (g_cursor == SET_CPUCLK)
    {
@@ -4276,8 +4276,8 @@ static ui_action screen_online(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "ONLINE");
-   snprintf(l1, sizeof(l1), "Experimental. Through the GBAdhoc server, over Wi-Fi.");
-   snprintf(l2, sizeof(l2), "Create gives a code for your friend; or enter theirs.");
+   snprintf(l1, sizeof(l1), "Experimental: link over the internet (Wi-Fi).");
+   snprintf(l2, sizeof(l2), "Create a room, or join a friend's code.");
    vid_text(22, 72, l1, C_DIM);
    vid_text(22, 72 + FE_FONT_H + 2, l2, C_DIM);
    nw = online_psp_wifi_count();
