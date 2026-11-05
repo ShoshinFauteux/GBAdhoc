@@ -44,6 +44,34 @@ static inline const char *pcfg_rewind_mb_name(int mb)
    return mb == PCFG_REWIND_MB_LONG ? "Long" :
           mb == PCFG_REWIND_MB_MEDIUM ? "Medium" : "Short";
 }
+/* VOLUME (Settings > "Volume", CONFIG.INI `volume`, issue #31): 0..100 in
+ * steps of 10 from the menu, 100 by default.  Applied as the PSP's own
+ * channel volume, the argument sceAudioOutputBlocking already takes
+ * (main_psp.c audio_thread): no sample is touched at any setting, and at 100
+ * the argument is PSP_AUDIO_VOLUME_MAX (0x8000) exactly as before, so the
+ * output is bit-identical; the audio thread loads one precomputed word per
+ * 1024-sample chunk (psp_audio_volume_apply).  Anything outside 0..100
+ * reads as 100. */
+#define PCFG_VOLUME_DEFAULT 100
+#define PCFG_VOLUME_STEP    10
+#define PCFG_AUDIO_HW_MAX   0x8000      /* PSP_AUDIO_VOLUME_MAX */
+static inline int pcfg_volume_snap(long v)
+{
+   return v >= 0 && v <= 100 ? (int)v : PCFG_VOLUME_DEFAULT;
+}
+static inline int pcfg_volume_step(int v, int dir)
+{
+   v = pcfg_volume_snap(v) + (dir < 0 ? -PCFG_VOLUME_STEP : PCFG_VOLUME_STEP);
+   return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+/* The channel volume for a setting: 100 (and anything unknown) is the full
+ * 0x8000, untouched; 0 is silence. */
+static inline int pcfg_audio_hw_volume(int v)
+{
+   if (v >= 100 || v < 0)
+      return PCFG_AUDIO_HW_MAX;
+   return PCFG_AUDIO_HW_MAX * v / 100;
+}
 /* CPU CLOCK (Settings > "CPU clock", CONFIG.INI `cpu_clock`): 333 MHz, the
  * default every release since 3.5.0 has forced (ADR-0004), 222 MHz, or 0 =
  * System: whatever the firmware or the CFW set before the EBOOT started,
@@ -204,6 +232,7 @@ typedef struct
     * every release before it did (docs/UI-OVERLAY.md section 14.3).  The
     * page's own load always asks. */
    int  quick_load_ask;
+   int  volume;       /* 0..100 (pcfg_volume_snap); 100 = full, the default */
    /* Settings > "Quick save asks first", CONFIG.INI `quick_save_ask`: 0
     * (default) = the quick save (bind_quicksave) saves slot 1 at once, as
     * every release has; 1 = over a saved slot 1 it opens the SAVE STATES

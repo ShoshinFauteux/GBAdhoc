@@ -1383,3 +1383,36 @@ Not a row: no cursor stop, so no walker's count moves.
 Host: `tools/tests/test_build_line.py` parses the file `make_release.sh`'s
 own heredoc writes, CRLF, reordered and missing keys, and the read-once
 rule; 4 mutants, each failing.
+
+### 15.5 Volume
+
+Settings > GAMEPLAY > **Volume**, 0 to 100 in steps of 10 (LEFT / RIGHT;
+it stops at the ends rather than wrapping from full to silent), **100 by
+default**, `config.ini` `volume`. Under *FPS counter*, above *CPU clock*:
+no walker's count moves.
+
+**Where the gain goes: nowhere in the samples.** The mix (`amix` / `dsnd`
+in the core, the resampler in `audio_thread`) is untouched at every
+setting. The setting becomes the PSP's own channel volume, the argument
+`sceAudioOutputBlocking` already takes for every 1024-sample chunk:
+`pcfg_audio_hw_volume()` is `PSP_AUDIO_VOLUME_MAX` (0x8000) at 100 -- the
+constant every release passed, so at 100 the buffer and the call are
+bit-identical -- and 0x8000 * v / 100 below it. It is precomputed into a
+word (`psp_audio_volume_apply`, at boot before `audio_start` and when the
+row changes), so `audio_thread`, which sits in the pinned hot order
+(`psp/layout/hot.ord`), only loads that word where it had an immediate: one
+instruction per chunk (~17 ms of sound), nothing on the emulation thread,
+nothing in `aout`. A `_Static_assert` holds the 0x8000 to the SDK's
+constant. Live: the next chunk uses the new value.
+
+The key is written only once it is not 100 or already in the file (the
+`cpu_clock` rule), so a default `config.ini` stays byte-identical; anything
+outside 0..100 reads as 100; `pcfg_validate` repairs a corrupt value to 100.
+
+Host: `tools/tests/test_volume.py`: the key's round trip and default file,
+the channel volume (0x8000 at 100, 0 at 0, monotonic, never above), the
+step, and that `main_psp.c` has one output call, taking the setting, with no
+sample scaled; 8 mutants, each failing.
+
+Needs hardware: that the PSP's channel volume is heard linearly enough at
+the low steps (10-30) to be useful, on speakers and headphones.

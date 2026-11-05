@@ -775,6 +775,7 @@ confirm and ○ to go back.
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
+| | <kbd>NEW</kbd> Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
 | | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question, or loads slot 1 at once |
 | | <kbd>NEW</kbd> Quick save asks first | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |

@@ -393,6 +393,7 @@ void psp_clock_harness_drop(void);
 void psp_display_apply(const char *why);    /* main_psp.c, filters v2 */
 void psp_color_preview(void);               /* main_psp.c, filters v2 */
 int  psp_clock_actual(void);
+void psp_audio_volume_apply(void);          /* main_psp.c, Settings > Volume */
 
 /* ----- demo (harness self-drive) ------------------------------------------ */
 typedef struct { unsigned pad; unsigned char hold, gap; } demo_step;
@@ -1833,7 +1834,8 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_FASTLINK,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_EFFECT, SET_GBPAL, SET_AMBIENT,
        SET_HDR_UI, SET_THEME, SET_SHELL,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_QLOADASK,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_VOLUME,
+       SET_QLOADASK,
        SET_QSAVEASK, SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
@@ -1884,6 +1886,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * harness walkers only ever cross rows ABOVE this point, or wrap UP to
     * Button mapping, so none of their arithmetic moved. */
    { 0, "FPS counter" },
+   /* Issue #31: 0..100, the PSP's channel volume (config_psp.h VOLUME).
+    * Under FPS counter and above CPU clock: no walker's count moves. */
+   { 0, "Volume" },
    /* The quick load's question (docs/UI-OVERLAY.md section 14.3), on by
     * default.  Under FPS counter and above CPU clock: the walkers that come
     * from below stop at CPU clock or before it, and the rest cross only rows
@@ -2438,6 +2443,12 @@ static void settings_adjust(int id, int dir)
    case SET_FPS:
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
+   case SET_VOLUME:
+      /* Live: the audio thread reads it for the next chunk.  It stops at
+       * 0 and 100 rather than wrapping from full to silent. */
+      g_pcfg.volume = pcfg_volume_step(g_pcfg.volume, dir);
+      psp_audio_volume_apply();
+      break;
    case SET_QLOADASK:
       g_pcfg.quick_load_ask = !g_pcfg.quick_load_ask;
       break;
@@ -2776,6 +2787,13 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.show_fps ? "on" : "off");
          break;
+      case SET_VOLUME:
+      {
+         char v[8];
+         snprintf(v, sizeof(v), "%d", pcfg_volume_snap(g_pcfg.volume));
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
       case SET_QLOADASK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.quick_load_ask ? "on" : "off");
@@ -2865,6 +2883,10 @@ static ui_action screen_settings(unsigned edges)
              : g_pcfg.color == 2
                 ? "Black & white: every colour as its brightness."
                 : "Native: the game's colours as stored.");
+   else if (g_cursor == SET_VOLUME)
+      footer(g_pcfg.volume >= 100 ? "Sound at full volume, as the game plays it."
+             : g_pcfg.volume <= 0 ? "Sound off."
+             : "Sound volume, 0 to 100.");
    else if (g_cursor == SET_QLOADASK)
       footer(g_pcfg.quick_load_ask
                 ? "The quick load asks first: " VID_GLYPH_X

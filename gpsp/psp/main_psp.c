@@ -861,6 +861,21 @@ static void audio_ring_note(void)
    }
 }
 
+_Static_assert(PCFG_AUDIO_HW_MAX == PSP_AUDIO_VOLUME_MAX,
+               "Settings > Volume at 100 must be the channel's full volume");
+
+/* Settings > Volume as the channel volume sceAudioOutputBlocking takes
+ * (config_psp.h VOLUME).  Precomputed by psp_audio_volume_apply (at boot,
+ * before audio_start, and when the row changes) so audio_thread -- in the
+ * pinned hot order (psp/layout/hot.ord) -- only loads a word where it had
+ * an immediate: one instruction, not the clamp and the divide. */
+static volatile int g_audio_hw_vol;
+
+void psp_audio_volume_apply(void)
+{
+   g_audio_hw_vol = pcfg_audio_hw_volume(g_pcfg.volume);
+}
+
 static int audio_thread(SceSize args, void *argp)
 {
    static int16_t out[OUT_CHUNK * 2];
@@ -957,7 +972,9 @@ static int audio_thread(SceSize args, void *argp)
          frac &= 0xFFFF;
       }
       {
-         int rc = sceAudioOutputBlocking(ch, PSP_AUDIO_VOLUME_MAX, out);
+         /* Settings > Volume as the channel's own volume: no sample is
+          * scaled, and at 100 this is PSP_AUDIO_VOLUME_MAX as it was. */
+         int rc = sceAudioOutputBlocking(ch, g_audio_hw_vol, out);
          if (rc < 0)
          {
             /* A failed blocking write may return immediately.  This thread
@@ -13597,6 +13614,7 @@ int main(int argc, char *argv[])
     * (docs/UI-OVERLAY.md §12.8). */
    cfg_ok = fe_ini_doc_load(&cfg_doc, CONFIG_INI) == 0;
    pcfg_load_doc(CONFIG_INI, cfg_ok ? &cfg_doc : NULL);
+   psp_audio_volume_apply();          /* before audio_start (Settings > Volume) */
    /* CPU clock: the setting, or the harness's `cpu_clock` for a Lab arm
     * (kept apart from g_pcfg so a run never writes it into config.ini).
     * Only ms of config reading ran at the entry clock before this. */

@@ -163,6 +163,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       fe_ini_get_int(cfg_path, "cpu_clock", PCFG_CLOCK_DEFAULT));
    g_pcfg.quick_load_ask =
       (int)fe_ini_get_int(cfg_path, "quick_load_ask", 1) ? 1 : 0;
+   g_pcfg.volume = pcfg_volume_snap(
+      fe_ini_get_int(cfg_path, "volume", PCFG_VOLUME_DEFAULT));
    /* Off unless it is exactly on: anything but a 1 keeps the quick save
     * every release has had. */
    g_pcfg.quick_save_ask =
@@ -408,6 +410,7 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(osd_wireless,         0, 1, 1);
    PCFG_CHK(fast_link,            0, 1, 0);
    PCFG_CHK(quick_load_ask,       0, 1, 1);
+   PCFG_CHK(volume,               0, 100, PCFG_VOLUME_DEFAULT);
    PCFG_CHK(quick_save_ask,       0, 1, 0);
    /* A range check cannot say "one of 0, 222, 333": snap says it. */
    if (g_pcfg.cpu_clock != pcfg_clock_snap(g_pcfg.cpu_clock))
@@ -587,6 +590,10 @@ void pcfg_save(void)
       if (g_pcfg.cpu_clock != PCFG_CLOCK_DEFAULT ||
           fe_ini_get(cfg_path, "cpu_clock", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "cpu_clock", g_pcfg.cpu_clock);
+      /* Full volume keeps the file too. */
+      if (g_pcfg.volume != PCFG_VOLUME_DEFAULT ||
+          fe_ini_get(cfg_path, "volume", sv, sizeof(sv)))
+         fe_ini_set_int(cfg_path, "volume", g_pcfg.volume);
       /* And again: a player who keeps the question keeps the file. */
       if (!g_pcfg.quick_load_ask ||
           fe_ini_get(cfg_path, "quick_load_ask", sv, sizeof(sv)))

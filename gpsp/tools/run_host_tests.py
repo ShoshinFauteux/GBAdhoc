@@ -692,6 +692,9 @@ def suites(env: Env, baseline: Path | None):
           "python3 tools/tests/test_quick_save_ask.py && "
           # Settings' build line from VERSION.txt (issue #31), with mutants.
           "python3 tools/tests/test_build_line.py && "
+          # Settings > Volume (issue #31): the key, the channel volume, the
+          # audio thread's one output call, with mutants.
+          "python3 tools/tests/test_volume.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
