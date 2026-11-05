@@ -841,6 +841,16 @@ static uint64_t m_sync_hash(void *user)
    return ((uint64_t)h0[7] << 32) | h1[7];
 }
 
+static uint32_t m_slot_hash(void *user, int slot)
+{
+   uint32_t h[8];
+   (void)user;
+   if (!D.active)
+      return 0;
+   D.pair.m[slot & 1].hash(h);
+   return h[7];
+}
+
 /* The session's "is the game saving" watch (fe_gblink.c, every 30 slot-0
  * frames: an end is deferred while the battery is changing).  Default: the
  * machine's count of backup-chip writes (gba_memory.c backup_writes) -- free,
@@ -974,6 +984,7 @@ const fe_gblink_machines *fe_gbadual_machines(void)
    gbadual_m.start = m_start;
    gbadual_m.advance = m_advance;
    gbadual_m.sync_hash = m_sync_hash;
+   gbadual_m.slot_hash = m_slot_hash;
    gbadual_m.cart_crc = m_cart_crc;
    gbadual_m.save_size = m_save_size;
    gbadual_m.save_read = m_save_read;

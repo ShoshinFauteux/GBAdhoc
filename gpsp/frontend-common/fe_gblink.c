@@ -235,6 +235,10 @@ struct fe_gblink
    uint64_t have[GBDUAL_SLOTS];      /* inputs known for frames < have */
    uint16_t pending_buttons;
    struct { uint32_t frame; uint64_t hash; } own_h[HASH_RING], peer_h[HASH_RING];
+   /* Slot 1's half of a sync hash, taken at slot 1's own frame boundary (the
+    * frame before slot 0's hash frame): [0] the periodic one, [1] the final.
+    * frame = the slot-0 frame it belongs to, 0 = none. */
+   struct { uint32_t frame; uint32_t hash; } b_h[2];
    uint32_t sram_crc[GBDUAL_SLOTS];
    uint8_t *crc_buf;                 /* cartridge RAM image for sram_crc */
    size_t crc_cap;
@@ -2004,11 +2008,49 @@ static void capture_end(fe_gblink *s, uint32_t frame)
           (unsigned long long)s->final_hash, (unsigned)n, evt_ms(s));
 }
 
+/* The GBA pair's sync hash: each machine at a boundary of its own.  Slot 1's
+ * position when slot 0 completes a frame depends on how its run was sliced,
+ * and the slicing may differ between the consoles (HALT_HOP hops the partner
+ * machine's undrawn lines; the local machine draws them), so slot 1 is hashed
+ * when it completes frame f - 1 -- the pair rule keeps it less than a frame
+ * behind slot 0 -- and slot 0 when it completes f. */
+static uint64_t pair_sync_hash(fe_gblink *s, uint32_t f, int final)
+{
+   uint32_t b;
+   if (!s->m->slot_hash)
+      return s->m->sync_hash(s->m->user);
+   if (s->b_h[final].frame == f)
+      b = s->b_h[final].hash;
+   else
+   {
+      b = s->m->slot_hash(s->m->user, 1);
+      fe_evt("gblink_hash_b_missing frame=%u have=%u final=%d", f,
+             s->b_h[final].frame, final);
+   }
+   return ((uint64_t)s->m->slot_hash(s->m->user, 0) << 32) | b;
+}
+
 static void frame_hook(void *user, int slot, uint64_t frame)
 {
    fe_gblink *s = (fe_gblink *)user;
    uint32_t f = (uint32_t)frame;
    s->st.frames[slot] = frame;
+   if (slot == 1 && s->m && s->m->slot_hash && s->state != FE_GBLINK_FAILED)
+   {
+      uint32_t n = f + 1;            /* the slot-0 frame this half belongs to */
+      if (s->hash_interval && n % s->hash_interval == 0)
+      {
+         FE_LP_SCOPE(FELP_HASH);
+         s->b_h[0].frame = n;
+         s->b_h[0].hash = s->m->slot_hash(s->m->user, 1);
+      }
+      if (s->end_frame && n == s->end_frame && !s->final_hashed)
+      {
+         FE_LP_SCOPE(FELP_HASH);
+         s->b_h[1].frame = n;
+         s->b_h[1].hash = s->m->slot_hash(s->m->user, 1);
+      }
+   }
    if (s->m && s->final_hashed && !s->captured && slot == s->local_slot &&
        f >= s->final_frame && s->state != FE_GBLINK_FAILED)
    {
@@ -2045,7 +2087,7 @@ static void frame_hook(void *user, int slot, uint64_t frame)
       uint64_t t0 = clock_us(s);
       FE_LP_SCOPE(FELP_HASH);
       s->own_h[i].frame = f;
-      s->own_h[i].hash = s->m ? s->m->sync_hash(s->m->user)
+      s->own_h[i].hash = s->m ? pair_sync_hash(s, f, 0)
                               : gbdual_sync_hash(s->dual);
       {
          uint64_t t1 = clock_us(s);
@@ -2089,7 +2131,7 @@ static void frame_hook(void *user, int slot, uint64_t frame)
           * local machine is captured at its own (above, or at once if it is
           * slot 0). */
          FE_LP_SET(FELP_HASH);
-         s->final_hash = s->m->sync_hash(s->m->user);
+         s->final_hash = pair_sync_hash(s, f, 1);
          FE_LP_SET(FELP_CORE);
          s->final_frame = f;
          s->final_hashed = 1;

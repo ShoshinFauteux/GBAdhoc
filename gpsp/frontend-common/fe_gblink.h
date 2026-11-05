@@ -121,6 +121,9 @@ typedef struct fe_gblink_machines
                   void *input_user);
    /* Both machines' guest state; equal on both consoles at equal points. */
    uint64_t (*sync_hash)(void *user);
+   /* One machine's guest state (32 bits of sync_hash), for a hash taken at
+    * each machine's own frame boundary.  NULL = use sync_hash. */
+   uint32_t (*slot_hash)(void *user, int slot);
    /* A cheap fingerprint of `slot`'s battery RAM (end deferral). */
    uint32_t (*cart_crc)(void *user, int slot);
    size_t (*save_size)(void *user, int slot);

@@ -984,6 +984,9 @@ static uint32_t lk_fnv(const void *p, size_t n)
    return h;
 }
 
+/* Exact at the machine's own frame boundary.  Mid-frame (a HALT_HOP jump may
+ * be running) it reads the jump's counters: the session hashes each machine
+ * at its own boundary (fe_gblink.c pair_sync_hash). */
 static void lk_hash(uint32_t out[8])
 {
    uint32_t all = 2166136261u;

@@ -824,6 +824,116 @@ u32 timer_lazy = TIMER_LAZY_DEFAULT;
 #define TIMER_IS_LAZY(i) 0
 #endif
 
+#ifdef HALT_HOP
+/* HALT_HOP's run-time switch: the harness key / session core mask
+ * `timer_lazy` (main_psp.c, fe_gbadual.c copies it to machine B), as a bit
+ * mask: bit 1 = HALT_HOP, bit 2 = HOP_DRAWN.  HALT_HOP_DEFAULT is the value a
+ * build starts with (6 = both). */
+#ifdef TIMER_LAZY
+#error "HALT_HOP shares the timer_lazy key with TIMER_LAZY"
+#endif
+#ifndef HALT_HOP_DEFAULT
+#define HALT_HOP_DEFAULT 6
+#endif
+u32 timer_lazy = HALT_HOP_DEFAULT;
+#define hop_mask timer_lazy
+#endif
+
+#ifdef HALT_HOP
+/* HALT_HOP=1 (build) + timer_lazy bit 1 (run time).  While the CPU is halted
+ * nothing can read DISPSTAT or VCOUNT, so the scheduler need not stop at the
+ * H-blank edges of a line where those edges do nothing else (no H-blank IRQ
+ * or DMA, nothing to draw: a skipped frame, the partner machine, V-blank
+ * lines).  One jump covers those lines, up to the first edge with an effect
+ * of its own (V-blank, frame end, a V-count match with its IRQ enabled); an
+ * interrupt that wakes the CPU on the way puts the counters back exactly
+ * where they would be.  Nothing moves by a cycle, and no slice with a running
+ * CPU changes, so update_gba's overshoot clamp is not involved. */
+static u32 hop_vcount;     /* the jump's last line, 0 = no jump running */
+static u32 hop_active;
+static s32 hop_hb_at;      /* cycles left at the first H-blank edge, -1 = no IF */
+static u32 hop_vstart;     /* the jump's first line (its H-blank edge was ahead) */
+
+/* timer_lazy bit 2 (HOP_DRAWN): jump over drawn lines too.  While the CPU is
+ * halted nothing writes the LCD registers, VRAM, OAM or palette (no H-blank
+ * DMA runs, see halt_hop_begin; a sound DMA writes only its FIFO), so each
+ * line whose H-blank edge the jump passed is drawn afterwards exactly as it
+ * would have been at its edge, VCOUNT and DISPSTAT showing that line.  Then
+ * the jump no longer depends on whether this console draws the machine, and
+ * both consoles slice both machines alike. */
+static __attribute__((noinline)) void halt_hop_lines(u32 from, u32 to)
+{
+   u32 ds = read_ioreg(REG_DISPSTAT), vc = read_ioreg(REG_VCOUNT), l;
+   for (l = from; l <= to && l < 160; l++)
+   {
+      write_ioreg(REG_VCOUNT, l);
+      write_ioreg(REG_DISPSTAT, (ds & ~0x07u) | (l == (ds >> 8) ? 0x04u : 0u));
+      if (reg[OAM_UPDATED])
+         oam_update_count++;
+      update_scanline();
+   }
+   write_ioreg(REG_DISPSTAT, ds);
+   write_ioreg(REG_VCOUNT, vc);
+}
+
+static __attribute__((noinline)) void halt_hop_begin(void)
+{
+   u32 dispstat = read_ioreg(REG_DISPSTAT);
+   u32 vcount = read_ioreg(REG_VCOUNT), last, i;
+   /* In H-blank: wait for the next line.  An H-blank IRQ that IE masks only
+    * sets its IF bit, which can be done when the CPU can see it. */
+   if ((dispstat & 2) || ((dispstat & 0x10) && (read_ioreg(REG_IE) & IRQ_HBLANK)))
+      return;
+   for (i = 0; i < 4; i++)
+      if (dma[i].start_type == DMA_START_HBLANK)
+         return;
+   if (vcount < 160 && !skip_next_frame && !(hop_mask & 4))
+      return;
+   hop_vstart = vcount;
+   last = vcount;
+   /* vcount -> vcount + 1 is free unless it starts V-blank, ends the frame
+    * or raises the V-count IRQ */
+   while (last + 1 != 160 && last + 1 != 228 &&
+          !((dispstat & 0x20) && last + 1 == (dispstat >> 8)))
+      last++;
+   hop_hb_at = (dispstat & 0x10) ? (s32)(last - vcount) * 1232 + 272 : -1;
+   video_count += (s32)(last - vcount) * 1232 + 272;
+   write_ioreg(REG_DISPSTAT, dispstat | 0x02);
+   write_ioreg(REG_VCOUNT, last);
+   hop_vcount = last;
+   hop_active = 1;
+}
+
+/* The CPU woke with the jump running: where are we really? */
+static __attribute__((noinline)) void halt_hop_wake(void)
+{
+   s32 r = video_count;
+   u32 dispstat = read_ioreg(REG_DISPSTAT);
+   u32 back = (u32)(r - 1) / 1232u, rest = (u32)(r - 1) % 1232u + 1u;
+   u32 vcount = hop_vcount - back;
+   hop_active = 0;
+   if (r <= hop_hb_at)
+      write_ioreg(REG_IF, read_ioreg(REG_IF) | IRQ_HBLANK);
+   /* the drawn lines whose H-blank edge has passed: up to this one if it is
+    * in its H-blank */
+   if (rest <= 272)
+      halt_hop_lines(hop_vstart, vcount);
+   else if (vcount > hop_vstart)
+      halt_hop_lines(hop_vstart, vcount - 1);
+   if (rest > 272)
+   {
+      dispstat &= ~0x02u;
+      video_count = (s32)rest - 272;
+   }
+   else
+      video_count = (s32)rest;
+   dispstat = vcount == (dispstat >> 8) ? (dispstat | 0x04) : (dispstat & ~0x04u);
+   write_ioreg(REG_DISPSTAT, dispstat);
+   write_ioreg(REG_VCOUNT, vcount);
+}
+#endif
+
+
 static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
 {
    unsigned i, ret = 0;
@@ -1175,6 +1285,8 @@ static void spin_report(void)
 }
 #endif
 
+
+
 u32 function_cc update_gba(int remaining_cycles)
 {
   DRPH_SCOPE(DRPH_UPD);
@@ -1238,7 +1350,9 @@ u32 function_cc update_gba(int remaining_cycles)
    * dynarec returns to the stepper, which later makes exactly this call with
    * exactly this argument.  Invisible to the guest. */
   if (serial_mode == SERIAL_MODE_CABLE && gbalink_entry_yield_q(remaining_cycles))
+  {
     return 0x80000000;
+  }
 #endif
   trace_update_gba(remaining_cycles);
 #ifdef STALE_CHECK
@@ -1326,6 +1440,15 @@ u32 function_cc update_gba(int remaining_cycles)
     // Ran out of cycles, move to the next video area
     if(video_count <= 0)
     {
+#ifdef HALT_HOP
+      if (hop_active)
+      {
+        hop_active = 0;
+        if (hop_hb_at >= 0)
+          write_ioreg(REG_IF, read_ioreg(REG_IF) | IRQ_HBLANK);
+        halt_hop_lines(hop_vstart, hop_vcount);
+      }
+#endif
       u32 vcount = read_ioreg(REG_VCOUNT);
       u32 dispstat = read_ioreg(REG_DISPSTAT);
 
@@ -1550,6 +1673,15 @@ u32 function_cc update_gba(int remaining_cycles)
       changed_pc = 0x40000000;
     }
 
+#ifdef HALT_HOP
+    if (reg[CPU_HALT_STATE] != CPU_HALT)
+    {
+      if (hop_active)      /* woken in this pass: before the next stop is set */
+        halt_hop_wake();
+    }
+    else if ((hop_mask & 2) && !hop_active && !frame_complete)
+      halt_hop_begin();
+#endif
     // Figure out when we need to stop CPU execution. The next event is
     // a video event or a timer event, whatever happens first.
     execute_cycles = MAX(video_count, 0);

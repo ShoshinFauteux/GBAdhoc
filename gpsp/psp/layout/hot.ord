@@ -296,4 +296,10 @@
   *gbalink_core_b.o(.text.render_gbc_sound)
   *gbalink_core_b.o(.text.translate_block_thumb)
   *gbalink_core_b.o(.text.translate_block_arm)
+  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.halt_hop_begin)
+  *gbalink_core_b.o(.text.halt_hop_begin)
+  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.halt_hop_wake)
+  *gbalink_core_b.o(.text.halt_hop_wake)
+  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.halt_hop_lines)
+  *gbalink_core_b.o(.text.halt_hop_lines)
 }

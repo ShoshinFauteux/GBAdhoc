@@ -872,6 +872,17 @@ else ifeq ($(platform), psp1)
 	# timers with no interrupt and no cascade are not scheduler events).
 	# Compiled in but OFF until `timer_lazy` is set (harness key timer_lazy;
 	# docs/GBA-LINK-MIRROR.md 26).  Not a decision to ship.
+	# HALT_HOP=1: while the CPU is halted, one scheduler jump over H-blank
+	# edges nothing can see (main.c halt_hop_begin); exact (corpus 35/35, pair
+	# twin hash-identical, claude/kirby-hop2).  Run-time mask timer_lazy
+	# (bit 1 HALT_HOP, bit 2 HOP_DRAWN); HALT_HOP_DEFAULT=N its start value
+	# (default 6 = both on).
+	ifeq ($(HALT_HOP),1)
+	CFLAGS += -DHALT_HOP=1
+	endif
+	ifneq ($(HALT_HOP_DEFAULT),)
+	CFLAGS += -DHALT_HOP_DEFAULT=$(HALT_HOP_DEFAULT)
+	endif
 	ifeq ($(TIMER_LAZY),1)
 	CFLAGS += -DTIMER_LAZY=1
 	endif
