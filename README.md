@@ -865,8 +865,8 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 PSP-1000, 2000/3000 and Go are all tested. To play together: two PSPs, both with the
 WLAN switch on, both on the same fixed ad-hoc channel.
 
-**Upgrading:** copy `EBOOT.PBP`, `gbadhoc_me.prx` **and `gbadhoc_home.prx`** over your
-install, always all three together. Your `config.ini` carries over, and your settings are
+**Upgrading:** copy `EBOOT.PBP`, `gbadhoc_me.prx`, `gbadhoc_home.prx` **and
+`gbadhoc_online.prx`** over your install, always all four together. Your `config.ini` carries over, and your settings are
 moved into the per-console profiles automatically. Your ROMs are never moved; battery saves
 and save states move from `roms/` to `saves/` and `states/` as you open each game (see
 *Where things are saved*).

@@ -72,8 +72,9 @@ Pre-release. Links only with the same beta.
   the fallback. The link sessions are the ad hoc ones, but the GB cartridge stream and Share game
   data are not offered online, so both players need the game. Recent partners are not built yet.
   This is the first build with it: the relay, its NAT tests and a fuzzer pass on the PC, but no
-  session has yet run end to end between two PSPs over the internet. With the setting off nothing
-  changes, per frame or otherwise.
+  session has yet run end to end between two PSPs over the internet. The session code lives in its
+  own module, gbadhoc_online.prx (14 KB), loaded only when an online session starts, so online play
+  costs no memory and nothing per frame until it is used.
 - 222 MHz plays smoothly again at normal speed (reported by ingo3643). The lower-latency
   presentation added in 4.5.0 shows each frame the moment it is ready; at 222 MHz the Media
   Engine often finished a frame just after the screen refreshed, so that frame showed late and
@@ -86,12 +87,12 @@ Pre-release. Links only with the same beta.
 - The game list scrolls without lag again: the new state/cheat hints and the SAVE badge looked
   files up on the Memory Stick for every step (a regression in beta.4 test builds only); each
   game's marks are now cached and filled in on idle frames.
-- Layout re-pinned for the new code (pads 5312 / 200).
+- Layout re-pinned for the new code (pads 304 / 0).
 
 **Known issues:** on hardware each frame takes about 1-3 % more CPU time than in beta.3 (Lab,
 both consoles): frame rates are unchanged in the 8 single-player scenes and CPU-bound link
-sessions are within 1 %; the cause is not yet attributed. The PSP-1000 has 48 KiB less free
-memory than with beta.3 (filters v2 24 KiB, online play 16 KiB, folders 8 KiB). Mario Golf's adapter lobby can
+sessions are within 1 %; the cause is not yet attributed. The PSP-1000 has 32 KiB less free
+memory than with beta.3 (filters v2 24 KiB, folders 8 KiB). Mario Golf's adapter lobby can
 still stick when both players press at the same moment (leave and rejoin). **Downgrading:**
 4.6.0-beta.3 and older look only in `roms/` and will not see moved saves or states; move them
 back from `saves/` and `states/` by hand before going back.
