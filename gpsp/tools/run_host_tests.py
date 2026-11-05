@@ -707,6 +707,9 @@ def suites(env: Env, baseline: Path | None):
           "python3 tools/tests/test_volume.py && "
           # The game list's marks, marquee and position bar (issue #31).
           "python3 tools/tests/test_list_marks.py && "
+          # Its per-game facts cache and idle pump (psp/list_marks.h, the
+          # beta.4 list lag): no I/O to draw or move, with mutants.
+          "python3 tools/tests/test_list_marks_cache.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

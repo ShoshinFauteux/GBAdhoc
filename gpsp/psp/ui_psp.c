@@ -46,6 +46,8 @@
 #include "fe_linkmode.h"
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #include "text_fold.h"      /* non-ASCII file names (issue #19) */
+#define LM_SLOTS PSP_STATE_SLOT_COUNT
+#include "list_marks.h"     /* the list's per-game facts, no I/O to draw */
 #ifdef GPSP_CHEATS
 #include "fe_cheats.h"
 #endif
@@ -274,12 +276,12 @@ static int g_browser_state_slot = 1;
 static int  g_shelf_del;
 static char g_shelf_note[32];
 /* GAME LIST MARKS (issue #31): does the highlighted game have save states,
- * a cheats file?  Looked up once the cursor rests (browser_marks), for that
- * one game only -- a handful of stats, never per row, never while
- * scrolling -- and shown by colouring its footer hint.  g_mark_rom = the
- * game they were looked up for, -1 = none yet. */
-static int         g_mark_rom = -1;
+ * a cheats file?  Shown by colouring its footer hint; read from the game's
+ * rom_entry.marks byte (list_marks.h), which the idle pump fills -- the
+ * cursor arriving never stats anything (the 4.6.0-beta.4 list lag).
+ * -1 = not known yet, drawn unlit. */
 static signed char g_mark_states, g_mark_cheats;
+static lm_pump     g_marks_pump;
 /* State-shelf slide, 0 (closed) .. PANEL_FRAMES (open), eased at draw time.
  * It was a linear 26 px/frame step that also stat()ed all five slots and
  * read a thumbnail from the stick on the same frames -- Memory Stick I/O
@@ -5716,9 +5718,11 @@ typedef struct {
                          * is shown while `name` holds the FAT 8.3 name it is
                          * opened by (text_fold.h fat_rom_pick, issue #19)  */
    unsigned    size;
-   signed char has_sav; /* -1 = not looked up yet; see rom_has_sav()         */
+   unsigned char marks; /* save / states / cheats, each with a KNOWN bit
+                         * (list_marks.h LM_*); 0 = nothing known yet.  It
+                         * was has_sav (-1/0/1): the same byte, no memory  */
    signed char is_fav;  /* in favourites.txt; set by favs_mark(), and it
-                         * sits in the padding beside has_sav, so the 1024
+                         * sits in the padding beside marks, so the 1024
                          * entry table costs nothing more for it            */
    unsigned short scan_order; /* preserves traversal order for equal basenames */
 } rom_entry;
@@ -6210,42 +6214,38 @@ static void list_position(int x, int y, int h, int cur, int n, int rows)
    vid_rect(x, y + ty, 2, th, C_ACCENT_DK, 255);
 }
 
-/* One stat per ROM during the scan was ~2 s of boot on a large library, and
- * it was wasted work: only the handful of entries actually drawn need this. */
+/* The battery save of game `idx`, `pass` 0 = saves/<rel> (4.6.0-beta.4
+ * folders), 1 = beside the ROM.  GB/GBC saves keep the .gb/.gbc stem so a
+ * GB and a GBA game of the same name cannot share one battery file.
+ * 0 = the path fits. */
+static int rom_sav_path(int idx, int pass, char *sav, size_t cap)
+{
+   extern char g_dir_base[];
+   char root[PSP_FILE_PATH_CAP];
+   int n = pass == 0
+      ? snprintf(root, sizeof(root), "%s/" SC_SAVES_DIR, g_dir_base)
+      : snprintf(root, sizeof(root), "%s", g_rom_root);
+   if (n < 0 || (size_t)n >= sizeof(root))
+      return -1;
+   n = g_pcfg.console == FE_CONSOLE_GBA
+      ? snprintf(sav, cap, "%s/%.*s.sav", root,
+                 (int)ui_rom_stem_length(g_roms[idx].name), g_roms[idx].name)
+      : snprintf(sav, cap, "%s/%s.sav", root, g_roms[idx].name);
+   return (n < 0 || (size_t)n >= cap) ? -1 : 0;
+}
+
+/* Does the game have a battery save, as far as the list knows?  NO I/O: a
+ * stat here, per row scrolling into view, was one per step in beta.3 and two
+ * in beta.4 (saves/, then beside the ROM).  The idle pump (list_marks.h)
+ * answers it; until then the row shows no SAVE. */
 static int rom_has_sav(int idx)
 {
-   if (g_roms[idx].has_sav < 0)
-   {
-      extern char g_dir_base[];
-      char sav[PSP_FILE_PATH_CAP];
-      SceIoStat st;
-      int pass, have = 0;
-      /* saves/<rel> first (4.6.0-beta.4 folders), then beside the ROM.
-       * GB/GBC saves keep the .gb/.gbc stem so a GB and a GBA game of the
-       * same name cannot share one battery file. */
-      for (pass = 0; pass < 2 && !have; pass++)
-      {
-         char root[PSP_FILE_PATH_CAP];
-         int n;
-         if (pass == 0)
-            n = snprintf(root, sizeof(root), "%s/" SC_SAVES_DIR, g_dir_base);
-         else
-            n = snprintf(root, sizeof(root), "%s", g_rom_root);
-         if (n < 0 || (size_t)n >= sizeof(root))
-            continue;
-         n = g_pcfg.console == FE_CONSOLE_GBA
-            ? snprintf(sav, sizeof(sav), "%s/%.*s.sav", root,
-                       (int)ui_rom_stem_length(g_roms[idx].name),
-                       g_roms[idx].name)
-            : snprintf(sav, sizeof(sav), "%s/%s.sav", root,
-                       g_roms[idx].name);
-         if (n < 0 || (size_t)n >= sizeof(sav))
-            continue;
-         have = sceIoGetstat(sav, &st) >= 0;
-      }
-      g_roms[idx].has_sav = (signed char)have;
-   }
-   return g_roms[idx].has_sav;
+   return (g_roms[idx].marks & LM_SAV) != 0;
+}
+
+static int rom_sav_known(int idx)
+{
+   return (g_roms[idx].marks & LM_SAV_K) != 0;
 }
 
 static const char *rom_pool_add(const char *s, size_t len)
@@ -6395,7 +6395,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                if (disp)
                   fe_evt("rom_scan_short open=%s show=%s", stored, disp);
                g_roms[*n].size    = (unsigned)ent.d_stat.st_size;
-               g_roms[*n].has_sav = -1;
+               g_roms[*n].marks   = 0;
                g_roms[*n].is_fav  = 0;       /* favs_mark() after the sort */
                g_roms[*n].scan_order = (unsigned short)*n;
                (*n)++;
@@ -6461,6 +6461,7 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
 {
    int n = 0;
 
+   lm_reset(&g_marks_pump);          /* new entries: every fact unknown (marks = 0) */
    g_rom_pool_used = 0;
    g_rom_found     = 0;
    g_rom_scan_path_errors = 0;
@@ -7320,6 +7321,9 @@ static int scroll_settled(void)
 #define IDLE_SELECTED  10        /* ~170 ms */
 #define IDLE_HERO      14        /* ~230 ms */
 #define IDLE_PREFETCH  24        /* ~400 ms */
+/* The marks pump (list_marks.h) waits this long after the scroll has
+ * settled: a tap in progress is never charged a stat. */
+#define IDLE_MARKS     2
 
 /* Pixels the column is offset by, relative to the selected row's slot. */
 static int scroll_px(int cur, int row_h)
@@ -7850,6 +7854,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
       meta_line(&g_roms[rom], buf, sizeof(buf));
       vid_text(ART_X, bot + 10, buf, mix565(C_DIM, C_BG_TOP, g_fx_fade));
       vid_text(ART_X, bot + 28,
+               !rom_sav_known(rom) ? "" :
                rom_has_sav(rom) ? "save present" : "no save",
                mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP,
                       g_fx_fade));
@@ -7927,47 +7932,128 @@ static int browser_rom_has_state(const char *rom_dir, int rom_idx)
          sceIoGetstat(path, &st) >= 0;
       any |= g_browser_state_exists[slot - 1];
    }
+   lm_set(&g_roms[rom_idx].marks, LM_ST_K, any);
    return any;
 }
 
-/* The marks for the game under the cursor (see g_mark_rom), once it has
- * rested: stats only, nothing recovered or renamed (opening the shelf does
- * that, browser_rom_has_state). */
-static void browser_marks(const char *rom_dir, int rom, int idle)
+/* The marks for the game under the cursor, from its marks byte: NO I/O.
+ * Known facts light at once (also while scrolling); an unknown one stays
+ * unlit until the idle pump answers it.  beta.4 statted up to 27 files
+ * here the moment the cursor settled, which is when the next tap comes. */
+static void browser_marks(int rom)
 {
+   unsigned m = g_roms[rom].marks;
+   g_mark_states = (m & LM_ST_K) ? (signed char)((m & LM_ST) != 0) : -1;
+   g_mark_cheats = (m & LM_CHT_K) ? (signed char)((m & LM_CHT) != 0) : -1;
+}
+
+/* list_marks.h's probes, as stats.  Exactly the paths the game uses: the
+ * save as rom_sav_path, a state slot in its states/ mirror or beside the
+ * ROM (browser_rom_state_base's two places), cheats/<stem>.cht or .txt. */
+static int browser_probe(void *user, int rom, int probe)
+{
+   extern char g_dir_base[];
+   const char *rom_dir = (const char *)user;
+   char path[PSP_FILE_PATH_CAP + 8], base[PSP_FILE_PATH_CAP];
    SceIoStat st;
-   char path[PSP_FILE_PATH_CAP];
-   unsigned slot;
-   if (rom == g_mark_rom)
-      return;
-   g_mark_states = g_mark_cheats = -1;
-   if (idle < IDLE_SELECTED || !scroll_settled())
-      return;
-   g_mark_rom = rom;
-   g_mark_states = 0;
-   for (slot = 1; slot <= PSP_STATE_SLOT_COUNT && !g_mark_states; slot++)
-      g_mark_states = browser_rom_state_path(rom_dir, rom, slot, path,
-                                             sizeof(path)) == 0 &&
-                      sceIoGetstat(path, &st) >= 0;
-   g_mark_cheats = 0;
-#ifdef GPSP_CHEATS
+   if (probe <= LM_P_SAV_OLD)
    {
-      extern char g_dir_base[];
+      if (rom_sav_path(rom, probe - LM_P_SAV_NEW, path, sizeof(path)) != 0)
+         return 0;
+   }
+   else if (probe < LM_P_CHT)
+   {
+      const char *sfx = psp_state_slot1_suffix((fe_console_t)g_pcfg.console);
+      unsigned slot = (unsigned)(probe - LM_P_ST0) / 2 + 1;
+      if ((probe - LM_P_ST0) & 1)
+      {
+         char rom_path[PSP_FILE_PATH_CAP];
+         if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
+                               g_roms[rom].name) != 0 ||
+             psp_rom_path_suffix(base, sizeof(base), rom_path, sfx) != 0)
+            return 0;
+      }
+      else
+      {
+         char mir[PSP_FILE_PATH_CAP];
+         if (sc_mirror(mir, sizeof(mir), g_dir_base, SC_STATES_DIR,
+                       g_roms[rom].name) != 0 ||
+             psp_rom_path_suffix(base, sizeof(base), mir, sfx) != 0)
+            return 0;
+      }
+      if (psp_state_path_for_slot(path, sizeof(path), base, slot) != 0)
+         return 0;
+   }
+   else
+   {
+#ifdef GPSP_CHEATS
       char stem[PSP_ROM_REL_PATH_CAP], *dot;
       const char *b = strrchr(g_roms[rom].name, '/');
       snprintf(stem, sizeof(stem), "%s", b ? b + 1 : g_roms[rom].name);
       dot = strrchr(stem, '.');
       if (dot && dot != stem)
          *dot = '\0';
-      if (snprintf(path, sizeof(path), "%s/cheats/%s.cht", g_dir_base,
-                   stem) < (int)sizeof(path))
-         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
-      if (!g_mark_cheats &&
-          snprintf(path, sizeof(path), "%s/cheats/%s.txt", g_dir_base,
-                   stem) < (int)sizeof(path))
-         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
-   }
+      if (snprintf(path, sizeof(path), "%s/cheats/%s.%s", g_dir_base, stem,
+                   probe == LM_P_CHT ? "cht" : "txt") >= (int)sizeof(path))
+         return 0;
+#else
+      return 0;
 #endif
+   }
+   return sceIoGetstat(path, &st) >= 0;
+}
+
+static unsigned char *browser_marks_of(void *user, int rom)
+{
+   (void)user;
+   return &g_roms[rom].marks;
+}
+
+static int browser_view_rom(void *user, int v)
+{
+   (void)user;
+   return view_rom(v);
+}
+
+/* THE BUDGET.  One stat is ~1-5 ms on a Memory Stick and more on the Go's
+ * internal storage, so a frame makes at most a few: at least one, then more
+ * only while this frame's pump has spent under 3 ms and the frame itself is
+ * under 12 ms of its 16.7 (it runs after the frame is drawn, before the
+ * vblank wait, so the stat overlaps time the frame spends waiting anyway). */
+static unsigned g_lm_t0, g_lm_frame_t0;
+static int browser_lm_more(void *user, int probes)
+{
+   unsigned now;
+   (void)user;
+   if (probes == 0)
+      return 1;
+   now = sceKernelGetSystemTimeLow();
+   return probes < 8 && now - g_lm_t0 < 3000u && now - g_lm_frame_t0 < 12000u;
+}
+
+/* One idle frame of the pump: the cursor's game, the rows on screen, the
+ * neighbours, then the whole list. */
+static void browser_marks_pump(const char *rom_dir, int cur, int n)
+{
+   static int s_n = -1;
+   lm_io io;
+   io.user = (void *)rom_dir;
+   io.exists = browser_probe;
+   io.marks = browser_marks_of;
+   io.view_rom = browser_view_rom;
+   io.more = browser_lm_more;
+#ifdef GPSP_CHEATS
+   io.cheats = 1;
+#else
+   io.cheats = 0;
+#endif
+   if (n != s_n)                    /* the view changed: sweep it afresh */
+   {
+      s_n = n;
+      g_marks_pump.swept = 0;
+   }
+   g_lm_t0 = sceKernelGetSystemTimeLow();
+   lm_run(&g_marks_pump, &io, cur, n, 4, 4, 12);
 }
 
 static void browser_preview_load_one(const char *rom_dir, int rom_idx)
@@ -8184,7 +8270,8 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
    meta_line(&g_roms[rom], buf, sizeof(buf));
    vid_text(20, 102 - g_fx_dy, buf, mix565(C_ITEM, C_BG_TOP, g_fx_fade));
    vid_text(20 + vid_text_w(buf) + 14, 102 - g_fx_dy,
-            rom_has_sav(rom) ? "save present" : "no save",
+            !rom_sav_known(rom) ? "" :
+               rom_has_sav(rom) ? "save present" : "no save",
             mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP, g_fx_fade));
 
    /* FIVE rows, not three.  At 24 px pitch they span 128..224, which clears
@@ -8965,7 +9052,6 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
 
-   g_mark_rom = -1;          /* a game played since may have new states */
    if (out_state_slot)
       *out_state_slot = 0;
    if (console_out)
@@ -9066,6 +9152,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       sceCtrlPeekBufferPositive(&pd, 1);
       edges = pad_edges(pd.Buttons);
       g_bframe++;
+      g_lm_frame_t0 = sceKernelGetSystemTimeLow();
 
       /* L+R+SELECT in the browser: dump the gallery screen as displayed
        * pixels (plain file I/O — works in every build, including the
@@ -9258,7 +9345,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                 * nothing left to offer: it closes. */
                if (ok)
                   g_browser_preview_status[s - 1] = 2;
-               g_mark_rom = -1;        /* the marks look again */
+               /* (browser_rom_has_state below records the states fact
+                * afresh, list_marks.h lm_set) */
                if (!browser_rom_has_state(rom_dir, rom))
                {
                   g_browser_state_open = 0;
@@ -9320,7 +9408,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          ; /* nothing to move over; the empty notice below handles O */
       else if ((edges & PSP_CTRL_LEFT) && !g_ui_shots)
       {
-         if (browser_rom_has_state(rom_dir, rom))
+         /* Known to have none (list_marks.h): nothing to open, no stat. */
+         if ((g_roms[rom].marks & (LM_ST_K | LM_ST)) != LM_ST_K &&
+             browser_rom_has_state(rom_dir, rom))
          {
             if (!g_browser_previews)
                g_browser_previews = (uint16_t *)memalign(16,
@@ -9346,7 +9436,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          g_bpage.n_scan = n_scan;
          g_bpage.idle = idle;
          browser_cheats(rom);
-         g_mark_rom = -1;
+         /* the page can make or remove the cheats file: ask again */
+         lm_forget(&g_marks_pump, &g_roms[rom].marks, LM_CHT_K);
          idle = 0;
          continue;
       }
@@ -9457,7 +9548,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if (idle >= IDLE_PREFETCH && scroll_settled())
          art_prefetch(rom_dir, cur, n);
 
-      browser_marks(rom_dir, view_rom(cur), idle);
+      browser_marks(view_rom(cur));
       if (g_ui_shell)
          shell_marquee(rom_dir, cur, n, n_scan, idle);
       else
@@ -9468,6 +9559,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 
       vid_overlay_end();
       ret_dump_frame();
+      /* THE MARKS PUMP (list_marks.h): the stick is asked only here -- the
+       * frame drawn, nothing pressed this frame, nothing moving, the shelf
+       * shut -- a few stats at most, in the time the frame would spend
+       * waiting for the vblank anyway.  Never on the frame a press acts. */
+      if (!edges && idle >= IDLE_MARKS && scroll_settled() && !g_sw.active &&
+          !g_swap.active && !g_browser_panel_t)
+         browser_marks_pump(rom_dir, cur, n);
       sceDisplayWaitVblankStart();
       vid_swap();
       if (idle < 1000)

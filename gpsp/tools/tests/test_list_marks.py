@@ -8,10 +8,10 @@ as written, against stubs, in both the cheats build and the one without:
   1. The footer: "✕ play  ◀ states  ▶ cheats  □ star  START settings";
      "◀ states" lit (C_VALUE) only when the game has states, "▶ cheats" only
      when it has a cheats file; everything else C_DIM.
-  2. browser_marks looks nothing up until the cursor rests (idle and
-     scroll), then stats once for that game: a state in any slot lights the
-     states hint, <app>/cheats/<stem>.cht or .txt the cheats one; the next
-     frames stat nothing; another game looks again.
+  2. browser_marks reads the game's marks byte (psp/list_marks.h) and
+     never stats anything (the 4.6.0-beta.4 list lag): a KNOWN fact lights
+     its hint when it is there, an unknown one stays unlit.  Filling the
+     byte is tools/tests/test_list_marks_cache.c.
   3. list_position: nothing when the list fits; the thumb at the top for the
      first game, flush with the bottom for the last, inside the track always,
      never shorter than 8 px.
@@ -53,7 +53,7 @@ def static_fn(source, signature):
 FOOT = "static void browser_footer(int n_view, int cur_is_fav)"
 POS = "static void list_position(int x, int y, int h, int cur, int n, int rows)"
 MARQ = "static int marquee_step(int rom_idx, int over)"
-MARKS = "static void browser_marks(const char *rom_dir, int rom, int idle)"
+MARKS = "static void browser_marks(int rom)"
 
 
 def production(src):
@@ -68,6 +68,7 @@ STUB = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "list_marks.h"
 #define CHECK(c) do { if (!(c)) { \
    fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); exit(1); } } while (0)
 #define PSP_FILE_PATH_CAP 256
@@ -82,20 +83,16 @@ STUB = r'''
 #define VID_GLYPH_RIGHT "\x86"
 enum { C_DIM = 1, C_VALUE, C_CARD, C_ACCENT_DK };
 typedef struct { int st_size; } SceIoStat;
-typedef struct { const char *name; } rom_entry;
-static rom_entry g_roms[2] = { { "Pokemon/Ruby.gba" }, { "Golf.gba" } };
+typedef struct { const char *name; unsigned char marks; } rom_entry;
+static rom_entry g_roms[2] = { { "Pokemon/Ruby.gba", 0 }, { "Golf.gba", 0 } };
 char g_dir_base[128] = "ms0:/PSP/GAME/GBAdhoc";
 static int g_browser_state_open, g_browser_favs;
-static int         g_mark_rom = -1;
 static signed char g_mark_states, g_mark_cheats;
 static int g_marq_t, g_marq_idx = -1;
 static int settled = 1, stats;
 static const char *files[8];          /* what "exists" */
 
 static int scroll_settled(void) { return settled; }
-static int browser_rom_state_path(const char *d, int r, unsigned s, char *o,
-                                  size_t n)
-{ (void)d; snprintf(o, n, "state:%d:%u", r, s); return 0; }
 static int sceIoGetstat(const char *p, SceIoStat *st)
 {
    int i;
@@ -133,20 +130,15 @@ int main(void)
    int c, prev, f, top, bot;
    /* 1, 2 */
    memset(files, 0, sizeof(files));
-   g_mark_rom = -1;
-   browser_marks("ms0:/roms", 0, 3);           /* not resting yet */
-   CHECK(stats == 0 && g_mark_rom == -1);
+   g_roms[0].marks = 0;                        /* nothing known yet */
+   browser_marks(0);
+   CHECK(stats == 0 && g_mark_states == -1 && g_mark_cheats == -1);
    foot();
    CHECK(col_of(VID_GLYPH_LEFT " states") == C_DIM);
    CHECK(col_of(VID_GLYPH_X " play") == C_DIM && col_of("START settings") == C_DIM);
-   settled = 0;
-   browser_marks("ms0:/roms", 0, 50);
-   CHECK(stats == 0);
-   settled = 1;
-   files[0] = "state:0:4";
-   files[1] = "ms0:/PSP/GAME/GBAdhoc/cheats/Ruby.txt";
-   browser_marks("ms0:/roms", 0, 50);
-   CHECK(g_mark_rom == 0 && g_mark_states == 1);
+   g_roms[0].marks = LM_ST_K | LM_ST | LM_CHT_K | LM_CHT | LM_SAV_K;
+   browser_marks(0);
+   CHECK(g_mark_states == 1);
    foot();
    CHECK(col_of(VID_GLYPH_LEFT " states") == C_VALUE);
 #ifdef GPSP_CHEATS
@@ -155,26 +147,24 @@ int main(void)
    CHECK(col_of("L/R page") == C_DIM);
 #endif
    CHECK(col_of(VID_GLYPH_SQ " star") == C_DIM);
-   stats = 0;
-   browser_marks("ms0:/roms", 0, 51);          /* the same game: no stat */
-   CHECK(stats == 0);
-   browser_marks("ms0:/roms", 1, 2);           /* another, moving: dim */
-   foot();
-   CHECK(col_of(VID_GLYPH_LEFT " states") == C_DIM && stats == 0);
-   browser_marks("ms0:/roms", 1, 20);
+   g_roms[1].marks = LM_ST_K | LM_CHT_K;        /* known: neither */
+   browser_marks(1);
    CHECK(g_mark_states == 0 && g_mark_cheats == 0);
    foot();
    CHECK(col_of(VID_GLYPH_LEFT " states") == C_DIM);
 #ifdef GPSP_CHEATS
    CHECK(col_of(VID_GLYPH_RIGHT " cheats") == C_DIM);
-   files[2] = "ms0:/PSP/GAME/GBAdhoc/cheats/Golf.cht";
-   g_mark_rom = -1;
-   browser_marks("ms0:/roms", 1, 20);
+   g_roms[1].marks = LM_ST_K | LM_CHT_K | LM_CHT;   /* cheats, no states */
+   browser_marks(1);
    CHECK(g_mark_cheats == 1 && g_mark_states == 0);
    foot();
    CHECK(col_of(VID_GLYPH_RIGHT " cheats") == C_VALUE);
    CHECK(col_of(VID_GLYPH_LEFT " states") == C_DIM);
 #endif
+   g_roms[1].marks = LM_ST;                     /* a value without KNOWN */
+   browser_marks(1);
+   CHECK(g_mark_states == -1);
+   CHECK(stats == 0);                           /* never a stat */
 
    /* 3 */
    n_rects = 0;
@@ -219,13 +209,13 @@ int main(void)
    CHECK(f < 2 * MARQ_DWELL + 30 * MARQ_SPEED);   /* it starts again */
    marquee_step(5, 30);
    CHECK(marquee_step(6, 30) == 0 && g_marq_t <= 1);  /* a new game */
-   puts("list: marks lit only when there, looked up once at rest; the "
+   puts("list: marks lit only when known and there, never a stat; the "
         "position bar spans first to last; the marquee rests, slides, rests");
    return 0;
 }
 '''
 
-CC = ["cc", "-std=gnu99", "-Wall", "-Wextra", "-Werror",
+CC = ["cc", "-I" + str(ROOT / "psp"), "-std=gnu99", "-Wall", "-Wextra", "-Werror",
       "-Wno-unused-function", "-Wno-unused-variable", "-Wno-format-truncation",
       "-Wno-maybe-uninitialized"]
 
@@ -263,12 +253,12 @@ MUTANTS = (
      "C_DIM", True),
     ("cheats hint lit by states", in_fn(FOOT, "if (g_mark_cheats > 0)", "if (g_mark_states > 0)"),
      "cheats", True),
-    ("looked up while moving", in_fn(MARKS, "if (idle < IDLE_SELECTED || !scroll_settled())", "if (idle < 0)"),
-     "stats == 0", True),
-    ("looked up every frame", in_fn(MARKS, "   if (rom == g_mark_rom)\n      return;\n", ""),
-     "stats == 0", True),
-    ("the .txt file ignored", in_fn(MARKS, "if (!g_mark_cheats &&", "if (0 &&"),
-     "g_mark_cheats == 1", True),
+    ("unknown states read as there", in_fn(MARKS, "(m & LM_ST) != 0) : -1;", "(m & LM_ST) != 0) : 1;"),
+     "g_mark_states == -1", True),
+    ("cheats from the states bit", in_fn(MARKS, "(m & LM_CHT) != 0", "(m & LM_ST) != 0"),
+     "g_mark_cheats", True),
+    ("states without the KNOWN bit", in_fn(MARKS, "(m & LM_ST_K) ?", "(m & (LM_ST_K | LM_ST)) ?"),
+     "g_mark_states == -1", True),
     ("the thumb overruns the bottom", in_fn(POS, "ty = (h - th) * cur / (n - 1);", "ty = h * cur / n;"),
      "bot", True),
     ("the bar on a list that fits", in_fn(POS, "if (n <= rows || n < 2)", "if (n < 2)"),

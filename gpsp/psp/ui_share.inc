@@ -1401,11 +1401,13 @@ static void shj_xf_commit(share_join_t *j)
       j->mark[j->ent] |= MARK_SAVE;
       snprintf(j->note, sizeof(j->note), j->y_save
                ? "Save file replaced yours" : "Save file saved");
-      g_roms[j->rom].has_sav = -1;
+      /* the list asks again (list_marks.h) */
+      lm_forget(&g_marks_pump, &g_roms[j->rom].marks, LM_SAV_K);
    }
    else
    {
       j->mark[j->ent] |= (unsigned char)(1u << j->xf_src);
+      lm_forget(&g_marks_pump, &g_roms[j->rom].marks, LM_ST_K);
       snprintf(j->note, sizeof(j->note), "Saved to your Slot %d", j->xf_dst);
    }
    j->note_ok = 1;
