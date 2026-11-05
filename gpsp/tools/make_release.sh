@@ -186,6 +186,9 @@ if set(m.get("frontendDefines", "").split()) != fe:
     raise SystemExit("frontendDefines are not the release set: %s" % m.get("frontendDefines"))
 psp = set(m.get("pspMakeFlags", "").split())
 need = {"ME_CATCH=1", "PSP_EBOOT_ICON1=assets/gbadhoc_icon1.pmf", "GBA_LINK=1", "REWIND=1", "HOT_DATA_GUARD=1"}
+# ONLINE=1 is baked (tools/build.sh, flags.lock): the release carries online play,
+# off in Settings until the player turns it on (docs/ONLINE-TUNNEL.md).
+need.add("ONLINE=1")
 if ticks:
     need.add("RFU_SCHED=1")
 if psp != need:
