@@ -139,6 +139,126 @@ __attribute__((constructor)) static void me_work_test_poison(void)
 
 u16* gba_screen_pixels = NULL;
 
+/* ---- PRESENTATION COLOUR (video.h "PRESENTATION COLOUR") ------------------
+ * Mode 0 is the shipped renderer, exactly: every hook below is one load of
+ * video_color_mode and a not-taken branch. */
+/* The mid-frame log's palette values are transformed as they are replayed
+ * only where the replay targets the RENDERER'S OWN copy: the engine.  On the
+ * host a replay (the desktop models) writes the core's live array, which
+ * must keep the game's values; a host test can opt in with -D. */
+#ifndef VIDEO_COLOR_IN_REPLAY
+#ifdef ME_PRX_BUILD
+#define VIDEO_COLOR_IN_REPLAY 1
+#else
+#define VIDEO_COLOR_IN_REPLAY 0
+#endif
+#endif
+/* Small data (docs/LAYOUT-PINNING.md): nothing in the core's .bss moves. */
+u32 video_color_mode CORE_SBSS;
+const u16 *video_color_lut CORE_SBSS;
+
+/* The model itself: video_color.h (shared with the host test). */
+static inline u16 video_color_raw(u32 v)
+{
+  return vcol_raw(v, video_color_mode, video_color_lut);
+}
+static inline u16 video_color_conv(u32 c)
+{
+  return vcol_conv(c, video_color_mode, video_color_lut);
+}
+
+extern "C" u16 video_color_pixel(u32 c)
+{
+  return video_color_mode == VIDEO_COLOR_NATIVE ? (u16)c : video_color_conv(c);
+}
+
+extern "C" void video_color_palette(u16 *pal)
+{
+  u32 i;
+  if (video_color_mode == VIDEO_COLOR_NATIVE)
+    return;
+  for (i = 0; i < 512; i++)
+    pal[i] = video_color_conv(pal[i]);
+}
+
+/* A bitmap (mode 3/5) pixel: direct colour, so it never passes through the
+ * palette and is transformed where it enters the line instead. */
+/* Out of line: the bitmap writer is instantiated for every mode, blend and
+ * mosaic combination, and the model inlined into each of them cost ~50 KB
+ * of text (and the engine's I-cache).  Native pays a load and a branch. */
+static u16 __attribute__((noinline)) video_color_direct_xf(u32 v)
+{
+  return video_color_raw(v);
+}
+static inline u16 video_color_direct(u32 v)
+{
+  if (video_color_mode != VIDEO_COLOR_NATIVE)
+    return video_color_direct_xf(v);
+  return convert_palette(v);
+}
+
+#ifndef ME_PRX_BUILD
+/* THE CPU RENDERER (host).  palette_ram_converted is written by the dynarec's
+ * own store stubs, so there is no write path to hook.  Instead each rendered
+ * line brings a transformed copy up to date -- only the entries that differ
+ * from the last line's, so a frame without palette writes costs a 1 KiB
+ * compare per line -- swaps it in for the render and puts the real one back.
+ * Nothing but the renderer runs between the two copies. */
+/* The two 1 KiB copies are the frontend's (video_color_set), so the core's
+ * .bss -- and every address after it -- is unchanged by this feature. */
+static u16 *vc_src CORE_SBSS;          /* last seen, native (512)     */
+static u16 *vc_xf CORE_SBSS;           /* transformed (512)           */
+static u32 vc_mode_seen CORE_SBSS;     /* mode vc_xf was built for    */
+
+static void vc_line_begin(void)
+{
+  const u32 *live = (const u32 *)palette_ram_converted;
+  u32 *src = (u32 *)vc_src;
+  u32 w;
+  if (vc_mode_seen != video_color_mode)
+  {
+    vc_mode_seen = video_color_mode;
+    for (w = 0; w < 512; w++)
+    {
+      vc_src[w] = palette_ram_converted[w];
+      vc_xf[w]  = video_color_conv(vc_src[w]);
+    }
+  }
+  else
+    for (w = 0; w < 256; w++)
+      if (live[w] != src[w])
+      {
+        src[w] = live[w];
+        vc_xf[w * 2]     = video_color_conv(vc_src[w * 2]);
+        vc_xf[w * 2 + 1] = video_color_conv(vc_src[w * 2 + 1]);
+      }
+  memcpy(palette_ram_converted, vc_xf, 512 * 2);
+}
+
+static void vc_line_end(void)
+{
+  memcpy(palette_ram_converted, vc_src, 512 * 2);
+}
+
+extern "C" void video_color_set(u32 mode, const u16 *lut, u16 *work)
+{
+  if (mode >= VIDEO_COLOR_MODES || (mode == VIDEO_COLOR_GBA && !lut) ||
+      !work)
+    mode = VIDEO_COLOR_NATIVE;
+  if (work != vc_src)
+    vc_mode_seen = VIDEO_COLOR_MODES;      /* new copies: rebuild them */
+  if (work)
+  {
+    vc_src = work;
+    vc_xf  = work + 512;
+  }
+  video_color_lut  = lut;
+  video_color_mode = mode;
+  if (mode == VIDEO_COLOR_NATIVE)
+    vc_mode_seen = VIDEO_COLOR_MODES;      /* rebuild on the next use */
+}
+#endif
+
 /* ME renderer capture (see video.h).  Both default off/NULL: zero cost and
  * byte-identical behaviour for every build that never sets them. */
 u32 me_capture_mode = 0;
@@ -986,7 +1106,7 @@ static inline void bitmap_pixel_write(
   buftype *dst_ptr, pixfmt val, const u16 * palptr, u16 px_attr
 ) {
   if (mode != 4)
-    *dst_ptr = convert_palette(val); // Direct color, u16 bitmap
+    *dst_ptr = video_color_direct(val); // Direct color, u16 bitmap
   else if (val) {
     if (rdmode == FULLCOLOR)
       *dst_ptr = palptr[val];
@@ -3163,6 +3283,14 @@ void update_scanline(void)
   // If the screen is in in forced blank draw pure white.
   if(dispcnt & 0x80)
     memset(screen_offset, 0xff, 240*sizeof(u16));
+#ifndef ME_PRX_BUILD
+  else if (video_color_mode != VIDEO_COLOR_NATIVE)
+  {
+    vc_line_begin();               /* the transformed palette, for this line */
+    render_scanline_window(screen_offset);
+    vc_line_end();                 /* the core's own, back */
+  }
+#endif
   else
     render_scanline_window(screen_offset);
 

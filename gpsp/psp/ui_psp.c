@@ -383,6 +383,8 @@ extern void osd_session_chip_refresh(void);
 int  psp_clock_mode(void);
 void psp_clock_apply(const char *why);
 void psp_clock_harness_drop(void);
+void psp_display_apply(const char *why);    /* main_psp.c, filters v2 */
+void psp_color_preview(void);               /* main_psp.c, filters v2 */
 int  psp_clock_actual(void);
 
 /* ----- demo (harness self-drive) ------------------------------------------ */
@@ -1818,7 +1820,7 @@ static void cht_page_reset(void);
  * which.  Everything else on this screen is global. */
 enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_FASTLINK,
-       SET_HDR_VID, SET_SCALE, SET_FILTER, SET_AMBIENT, SET_GBPAL,
+       SET_HDR_VID, SET_SCALE, SET_FILTER, SET_EFFECT, SET_GBPAL, SET_AMBIENT,
        SET_HDR_UI, SET_THEME, SET_SHELL,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_CPUCLK,
 #ifdef REWIND
@@ -1848,9 +1850,16 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Fast link" },
    { 1, "DISPLAY" },              /* + " (GBA)" etc., drawn per console */
    { 0, "Video scale" },
-   { 0, "Video filter" },
+   /* FILTERS V2 (docs/DISPLAY-FEATURES.md): the old single "Video filter"
+    * cycle is three rows -- Smoothing, Screen effect, Colour -- each showing
+    * only what applies to the console in context.  Colour is the DMG palette
+    * row on GB/GBC (its label is drawn per console).  All inside DISPLAY:
+    * every harness walker reaches Video scale from the top or wraps up from
+    * the bottom no further than CPU clock, so none of their counts move. */
+   { 0, "Smoothing" },
+   { 0, "Screen effect" },
+   { 0, "Colour" },
    { 0, "Ambient bars" },
-   { 0, "GB palette" },
    { 1, "INTERFACE" },
    { 0, "Theme" },
    { 0, "Menu style" },
@@ -1914,8 +1923,6 @@ static int set_row_enabled(int idx)
 {
    if (!set_row_shown(idx))
       return 0;
-   if (idx == SET_GBPAL)
-      return pcfg_display_console() != FE_CONSOLE_GBA;
    if (idx == SET_LINKMODE)
       return linkmode_row_enabled();
    if (idx == SET_FASTLINK)
@@ -2354,22 +2361,32 @@ static void settings_adjust(int id, int dir)
    case SET_SCALE:
       g_pcfg.scale = (g_pcfg.scale + VID_SCALE_MODES + dir) % VID_SCALE_MODES;
       pcfg_display_commit();
-      vid_set_mode(g_pcfg.scale, g_pcfg.filter);
-      fe_evt("video_mode scale=%s filter=%s profile=%s",
-             vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
-             pcfg_console_tag(pcfg_display_console()));
+      psp_display_apply("menu_scale");
       break;
    case SET_FILTER:
-      /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md) ->
-       * LCD grid -> dot grid -> scanlines (video_psp.c GRID FILTERS). */
-      g_pcfg.filter = (g_pcfg.filter + VID_FILTER_MODES + dir) %
-                      VID_FILTER_MODES;
-      pcfg_display_commit();
-      vid_set_mode(g_pcfg.scale, g_pcfg.filter);
-      fe_evt("video_mode scale=%s filter=%s profile=%s",
-             vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
-             pcfg_console_tag(pcfg_display_console()));
+      /* Smoothing: nearest -> bilinear -> sharp bilinear
+       * (docs/SHARP-BILINEAR.md).  Live: the picture behind the menu is
+       * drawn through the same code next frame. */
+      pcfg_display_set_rows((g_pcfg.smooth + VID_SMOOTH_MODES + dir) %
+                            VID_SMOOTH_MODES, g_pcfg.effect, g_pcfg.color);
+      psp_display_apply("menu_smooth");
       break;
+   case SET_EFFECT:
+   {
+      /* Screen effect: only the ones this console offers (vid_fx_offered;
+       * RGB stripes are GB/GBC only). */
+      int gb = pcfg_display_console() != FE_CONSOLE_GBA, fx = g_pcfg.effect,
+          n;
+      for (n = 0; n < VID_FX_MODES; n++)
+      {
+         fx = (fx + VID_FX_MODES + (dir < 0 ? -1 : 1)) % VID_FX_MODES;
+         if (vid_fx_offered(fx, gb))
+            break;
+      }
+      pcfg_display_set_rows(g_pcfg.smooth, fx, g_pcfg.color);
+      psp_display_apply("menu_effect");
+      break;
+   }
    case SET_AMBIENT:
       g_pcfg.ambient = (g_pcfg.ambient + PCFG_AMB_MODES + dir) % PCFG_AMB_MODES;
       pcfg_display_commit();
@@ -2440,8 +2457,18 @@ static void settings_adjust(int id, int dir)
        * console: GB and GBC keep their own; a GBA profile has none. */
       int n = fe_host_gb_palette_count();
       int cur = g_pcfg.gb_palette < n ? g_pcfg.gb_palette : 0;
-      if (!set_row_enabled(SET_GBPAL))
-         return;
+      if (pcfg_display_console() == FE_CONSOLE_GBA)
+      {
+         /* GBA Colour: native -> GBA LCD colour -> black & white, applied by
+          * the renderer (video.h PRESENTATION COLOUR); the picture behind
+          * the menu is redrawn in it (psp_color_preview). */
+         pcfg_display_set_rows(g_pcfg.smooth, g_pcfg.effect,
+                               (g_pcfg.color + PCFG_COLOR_MODES + dir) %
+                               PCFG_COLOR_MODES);
+         psp_display_apply("menu_color");
+         psp_color_preview();
+         break;
+      }
       g_pcfg.gb_palette = (cur + n + dir) % n;
       pcfg_display_commit();
       fe_host_gb_palette_set(g_pcfg.gb_palette);
@@ -2588,23 +2615,31 @@ static ui_action screen_settings(unsigned edges)
              vid_scale_name(g_pcfg.scale));
          break;
       case SET_FILTER:
-         if (g_pcfg.filter >= VID_FILTER_LCD)
-         {
-            /* The grid filters draw at every scale but 1x, where a game
-             * pixel is one screen pixel (video_psp.c GRID FILTERS). */
-            char v[40];
-            int on = g_pcfg.scale != VID_SCALE_1X;
-            snprintf(v, sizeof(v), on ? "%s" : "%s (off at 1x)",
-                     vid_filter_name(g_pcfg.filter));
-            set_item(y, g_cursor == i, on, set_rows[i].label, v);
-            break;
-         }
          /* 2x samples nearest whatever this says; say so. */
          set_item(y, g_cursor == i, g_pcfg.scale != VID_SCALE_INT2,
              set_rows[i].label,
              g_pcfg.scale == VID_SCALE_INT2 ? "sharp (2x)"
-                                            : vid_filter_name(g_pcfg.filter));
+                                            : vid_smooth_name(g_pcfg.smooth));
          break;
+      case SET_EFFECT:
+      {
+         /* What the effect does at THIS scale (vid_fx_state): the grids are
+          * off at 1x, where a game pixel is one screen pixel; RGB stripes
+          * need 3 screen px per game px (GB/GBC Stretch). */
+         char v[48];
+         int gb = pcfg_display_console() != FE_CONSOLE_GBA;
+         int st = vid_fx_state(g_pcfg.effect, g_pcfg.scale, gb ? 160 : 240,
+                               gb ? 144 : 160);
+         const char *nm = vid_fx_name(g_pcfg.effect);
+         snprintf(v, sizeof(v),
+                  st == VID_FXS_OFF_1X  ? "%s (off at 1x)" :
+                  st == VID_FXS_TONE_1X ? "%s (tone only at 1x)" :
+                  st == VID_FXS_NEED_3X ? "%s (Stretch only)" : "%s", nm);
+         set_item(y, g_cursor == i,
+                  st == VID_FXS_ON || st == VID_FXS_TONE_1X,
+                  set_rows[i].label, v);
+         break;
+      }
       case SET_AMBIENT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              pcfg_ambient_name(g_pcfg.ambient));
@@ -2686,9 +2721,13 @@ static ui_action screen_settings(unsigned edges)
       {
          int gp = g_pcfg.gb_palette < fe_host_gb_palette_count()
                   ? g_pcfg.gb_palette : 0;
-         int en = set_row_enabled(i);
-         set_item(y, g_cursor == i, en, set_rows[i].label,
-             en ? fe_host_gb_palette_name(gp) : "GB / GBC only");
+         if (pcfg_display_console() == FE_CONSOLE_GBA)
+            set_item(y, g_cursor == i, 1, set_rows[i].label,
+                     g_pcfg.color == 1 ? "GBA LCD colour"
+                     : g_pcfg.color == 2 ? "black & white" : "native");
+         else
+            set_item(y, g_cursor == i, 1, "GB palette",
+                     fe_host_gb_palette_name(gp));
          break;
       }
       }
@@ -2703,6 +2742,26 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
+   else if (g_cursor == SET_FILTER)
+      footer(g_pcfg.smooth == VID_SMOOTH_SHARP
+                ? "Sharp bilinear: crisp square pixels, no shimmer."
+             : g_pcfg.smooth == VID_SMOOTH_BILINEAR
+                ? "Bilinear: soft, blended pixels."
+                : "Nearest: hard pixels, exactly as drawn.");
+   else if (g_cursor == SET_EFFECT)
+      footer(g_pcfg.effect == VID_FX_RGB || g_pcfg.effect == VID_FX_RGB_VIVID
+                ? "Red, green and blue stripes per pixel. Needs Stretch."
+             : g_pcfg.effect == VID_FX_VINTAGE
+                ? "A faint LCD grid and the warm tone of an unlit screen."
+             : g_pcfg.effect == VID_FX_NONE
+                ? "The picture with nothing over it."
+                : "Lined up with the game's own pixels at every scale.");
+   else if (g_cursor == SET_GBPAL && pcfg_display_console() == FE_CONSOLE_GBA)
+      footer(g_pcfg.color == 1
+                ? "GBA LCD colour: the softer colours of the GBA's screen."
+             : g_pcfg.color == 2
+                ? "Black & white: every colour as its brightness."
+                : "Native: the game's colours as stored.");
    else if (g_cursor == SET_CPUCLK)
    {
       /* A CFW clock setting can refuse ours: say what is really running. */

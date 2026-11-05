@@ -136,6 +136,12 @@ typedef struct
 {
    int  scale;        /* VID_SCALE_* (default 1x) */
    int  filter;       /* VID_FILTER_* (default nearest; 2 = sharp bilinear) */
+   /* FILTERS V2 (docs/DISPLAY-FEATURES.md): the three Settings rows of the
+    * live display profile.  `filter` above is kept equal to
+    * vid_filter_join(smooth, effect) -- what an older build reads. */
+   int  smooth;       /* VID_SMOOTH_*                                    */
+   int  effect;       /* VID_FX_*                                        */
+   int  color;        /* VIDEO_COLOR_* (GBA only; 0 on GB/GBC)           */
    /* ADR-0071: TRADING PROFILE.  0 = speed (DEFAULT), 1 = compatibility.
     *
     * Only the playable/variant builds consult this; the harness sets its rate
@@ -566,10 +572,16 @@ enum
 };
 /* Off until the owner picks a look (Fable's mockups). */
 #define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
+/* GBA colour rows (video.h VIDEO_COLOR_*): config_psp.c cannot include the
+ * core's headers, so the count is restated and checked by the host test. */
+#define PCFG_COLOR_MODES  3
 
 typedef struct
 {
    int scale, filter, ambient, gb_palette;
+   /* Filters v2: smooth_<c>, effect_<c>, color_gba.  `filter` is always
+    * vid_filter_join(smooth, effect) once loaded or committed. */
+   int smooth, effect, color;
 } pcfg_display;
 
 extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
@@ -578,6 +590,9 @@ extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
  * and make it the live console.  Touches no file and no video state: the
  * caller applies it (vid_set_mode etc.) when a picture is on screen. */
 void pcfg_display_select(int console);
+/* Filters v2 row edits for the live profile: set one row, clamp it for the
+ * console, keep `filter` the legacy join.  The caller applies it. */
+void pcfg_display_set_rows(int smooth, int effect, int color);
 /* Copy g_pcfg's live display fields back into the live console's profile. */
 void pcfg_display_commit(void);
 /* The console whose profile g_pcfg currently mirrors. */

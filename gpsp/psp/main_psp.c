@@ -2194,6 +2194,39 @@ int psp_clock_actual(void)
    return scePowerGetCpuClockFrequency();
 }
 
+/* FILTERS V2: apply the live display profile's Smoothing / Screen effect
+ * rows (the GE) and its Colour row (the core, GBA only; video.h).  The CPU
+ * renderer's two 1 KiB palette copies are this frontend array, so the core's
+ * own .bss is unchanged (docs/LAYOUT-PINNING.md). */
+static u16 g_vc_work[1024] __attribute__((aligned(64)));
+extern const u16 gba_cc_lut[];
+#ifdef GPSP_PERF_RIG
+static int g_h_smooth = -1, g_h_effect = -1, g_h_color = -1, g_h_scale = -1;
+#endif
+void psp_display_apply(const char *why)
+{
+   int scale = g_pcfg.scale, sm = g_pcfg.smooth, fx = g_pcfg.effect;
+   int color = pcfg_display_console() == FE_CONSOLE_GBA ? g_pcfg.color : 0;
+#ifdef GPSP_PERF_RIG
+   /* Rig overrides reach the video layer only, never g_pcfg: nothing a rig
+    * run forces can be saved into a console's CONFIG.INI. */
+   if (g_h_scale >= 0 && g_h_scale < VID_SCALE_MODES)   scale = g_h_scale;
+   if (g_h_smooth >= 0 && g_h_smooth < VID_SMOOTH_MODES) sm = g_h_smooth;
+   if (g_h_effect >= 0 &&
+       vid_fx_offered(g_h_effect, pcfg_display_console() != FE_CONSOLE_GBA))
+      fx = g_h_effect;
+   if (g_h_color >= 0 && pcfg_display_console() == FE_CONSOLE_GBA)
+      color = g_h_color;
+#endif
+   vid_set_look(scale, sm, fx);
+   video_color_set((u32)color, gba_cc_lut, g_vc_work);
+   fe_evt("display_apply why=%s console=%s scale=%s smooth=%s effect=%s "
+          "color=%d", why, pcfg_console_tag(pcfg_display_console()),
+          vid_scale_name(scale), vid_smooth_name(sm), vid_fx_name(fx),
+          (int)video_color_mode);
+   FE_EVT_ONLY(why); FE_EVT_ONLY(scale);
+}
+
 void psp_clock_apply(const char *why)
 {
    int mode = psp_clock_mode();
@@ -2893,6 +2926,9 @@ static unsigned g_mer_sh_us, g_mer_sh_max;
  * the wait yields no sample, so `n` being small is itself informative --
  * it means the render is longer than the frame's slack. */
 static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+static unsigned g_fxs_rn, g_fxs_ru;    /* the cost sweep's own ME sums */
+#endif
 /* WHEN IS THE CAPTURE ACTUALLY READY?
  *
  * The plan to present a frame in its OWN frame hinges on handing the ME its
@@ -3102,6 +3138,9 @@ static unsigned g_lat_poll_vc;
 static unsigned g_mer_stage_pvc[2];   /* poll vcount of each stage's frame */
 static unsigned g_lat_seq;            /* loop iterations (input polls)     */
 static unsigned g_mer_stage_seq[2];   /* ...the one each stage was posted in */
+/* FILTERS V2 colour preview: per stage, the colour mode it was drawn in, the
+ * capture it was drawn from, and the ME's checksum of it. */
+static unsigned g_mer_stage_mode[2], g_mer_stage_cap[2], g_mer_stage_sum[2];
 static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
 static int      g_bb_new;             /* back buffer holds an unshown frame */
 static unsigned g_lat_hist[8], g_lat_over, g_lat_early, g_lat_post, g_lat_hold;
@@ -3378,19 +3417,31 @@ static int me_rend_release_vmem(void)
  * the renderer is up, otherwise the core's own frame buffer (the CPU path, and
  * what PPSSPP always uses -- which is what makes the overlay workshoppable off
  * hardware at all). */
+static void wake_snapshot_from(const uint16_t *src, unsigned pitch,
+                               unsigned src_w, unsigned src_h);
+/* The colour mode the snapshot's frame was drawn in (filters v2). */
+static unsigned g_wake_color;
 static void wake_snapshot(void)
 {
    const uint16_t *src = NULL;
    unsigned pitch = 240;
-   unsigned src_w = 240, src_h = 160, y;
+   unsigned src_w = 240, src_h = 160;
 
    if (!g_wake_frame)
       return;
    src = me_rend_present_src(&pitch);
+   g_wake_color = src ? g_mer_stage_mode[g_mer_ready] : video_color_mode;
    if (!src && g_last_pix)
       { src = g_last_pix; pitch = g_last_pitch; src_w = g_last_w; src_h = g_last_h; }
    if (!src)
       return;
+   wake_snapshot_from(src, pitch, src_w, src_h);
+}
+
+static void wake_snapshot_from(const uint16_t *src, unsigned pitch,
+                               unsigned src_w, unsigned src_h)
+{
+   unsigned y;
    memset(g_wake_frame, 0, WAKE_FRAME_BYTES);
    if (src_w > 240) src_w = 240;
    if (src_h > 160) src_h = 160;
@@ -3428,6 +3479,144 @@ static void menu_open(void)
    ui_set_backdrop(g_wake_have ? g_wake_frame : NULL,
                    (int)g_wake_w, (int)g_wake_h);
    ui_open();
+}
+
+/* FILTERS V2: REDRAW THE MENU'S BACKDROP IN A NEW COLOUR MODE.
+ *
+ * The core is paused at the end of the frame (vcount 228), so its memory is
+ * no longer the frame on screen: the VBlank has run since.  But that frame's
+ * INPUTS still exist untouched -- its capture (per-line registers and the
+ * mid-frame log), the line-160 palette and OAM the log was built against
+ * (video_me_log.h, or the input shadows), and the engine's own VRAM mirror,
+ * which no post has changed since.  So the engine can draw that frame again,
+ * in any colour mode, without the core being touched at all.
+ *
+ * TRUSTED ONLY IF IT REPRODUCES.  The first redraw is in the mode the frame
+ * was shown in, and its checksum must equal the one the engine reported for
+ * the frame itself; anything that does not reproduce bit for bit (a dropped
+ * frame after it, a log that overflowed, a state load) leaves the backdrop as
+ * it was.  Then the second redraw, in the new mode, becomes the backdrop.
+ * The frame on screen and the core's state are never touched: the redraws go
+ * to the stage that is not being shown.
+ *
+ * Without the engine (the CPU renderer, PPSSPP), or when the check fails: a
+ * snapshot taken in native colour is transformed on this CPU (exact for a
+ * frame without blending); otherwise the new colour shows on resume. */
+extern const u16 *me_log_line160_pal(void);
+extern const u16 *me_log_line160_oam(void);
+static const unsigned char g_all_clean[VRAM_DIRTY_PAGES + 64]
+   __attribute__((aligned(64))) = { [0 ... VRAM_DIRTY_PAGES - 1] = 1 };
+
+static int me_rend_redraw(unsigned mode, uint16_t *out, unsigned *sum)
+{
+   unsigned st = (unsigned)g_mer_ready, t0;
+   me_capture_frame *cap;
+   const u16 *pal, *oam;
+   const void *vr;
+   int all_clean;
+
+   cap = g_mer_cap[g_mer_stage_cap[st]];
+   if (!cap || g_mer_stage_cap[st] != (unsigned)(g_mer_cur ^ 1))
+      return -1;                       /* a later post took the capture */
+   if (g_mer_sh_on)
+   {
+      pal = (const u16 *)g_mer_sh_pal;  oam = (const u16 *)g_mer_sh_oam;
+      vr  = g_mer_sh_vram;
+      all_clean = 0;                   /* the shadow IS the frame's VRAM */
+   }
+#if ME_MIDFRAME_LOG
+   else if (cap->log_n)
+   {
+      pal = me_log_line160_pal();
+      oam = me_log_line160_oam();
+      vr  = vram;
+      all_clean = 1;                   /* keep the engine's own mirror */
+   }
+#endif
+   else
+   {
+      pal = palette_ram_converted;     /* an end-of-frame post: now */
+      oam = (const u16 *)oam_ram;
+      vr  = vram;
+      all_clean = 1;
+   }
+   if (!pal || !oam)
+      return -1;
+   sceKernelDcacheWritebackRange((void *)pal, 512 * 2);
+   sceKernelDcacheWritebackRange((void *)oam, 512 * 2);
+   g_mer_desc->vram       = (unsigned)vr;
+   g_mer_desc->oam        = (unsigned)oam;
+   g_mer_desc->palette    = (unsigned)pal;
+   g_mer_desc->vram_clean = all_clean ? (unsigned)g_all_clean : 0u;
+   g_mer_desc->capture    = (unsigned)cap;
+   g_mer_desc->out        = (unsigned)out;
+   g_mer_desc->out_pitch  = MER_STAGE_PITCH;
+   g_mer_desc->work       = (unsigned)g_mer_work;
+   g_mer_desc->work_bytes = ME_WORK_BYTES;
+   g_mer_desc->work_gen   = g_mer_work_gen;
+   g_mer_desc->color_magic = ME_COLOR_MAGIC;
+   g_mer_desc->color_mode  = mode;
+   g_mer_desc->color_lut   = (unsigned)gba_cc_lut;
+   sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
+   if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) != 0)
+      return -1;
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   while (!me_host_idle() &&
+          (unsigned)sceKernelGetSystemTimeLow() - t0 < 200000u)
+      ;
+   if (!me_host_idle() || me_host_render_refused())
+      return -2;
+   *sum = me_host_result();
+   return 0;
+}
+
+void psp_color_preview(void)
+{
+   unsigned want = video_color_mode, sum = 0, t0 = 0;
+   int rc = -9;
+   uint16_t *out = NULL;
+
+   if (!g_wake_have || !g_wake_frame || g_wake_color == want)
+      return;
+   if (g_me_rend && g_mer_desc && g_mer_ready >= 0 && g_mer_pending < 0 &&
+       me_host_up() && me_host_idle())
+   {
+      unsigned st = (unsigned)g_mer_ready;
+#ifdef REWIND
+      out = g_mer_stage_own[st ^ 1];
+#else
+      out = g_mer_stage[st ^ 1];
+#endif
+      t0 = (unsigned)sceKernelGetSystemTimeLow();
+      vid_gu_flush();                  /* the GE may still read that stage */
+      rc = out ? me_rend_redraw(g_mer_stage_mode[st], out, &sum) : -1;
+      if (rc == 0 && sum != g_mer_stage_sum[st])
+         rc = -3;                      /* did not reproduce: not trusted */
+      if (rc == 0)
+         rc = me_rend_redraw(want, out, &sum);
+      if (rc == 0)
+      {
+         sceKernelDcacheInvalidateRange(out, MER_STAGE_PITCH * 161 * 2);
+         wake_snapshot_from(out, MER_STAGE_PITCH, 240, 160);
+         g_wake_color = want;
+      }
+      t0 = (unsigned)sceKernelGetSystemTimeLow() - t0;
+   }
+   if (rc != 0 && g_wake_color == VIDEO_COLOR_NATIVE)
+   {
+      /* A native snapshot: transform it here.  Blended pixels are
+       * transformed after their blend, the rest exactly. */
+      unsigned y, x;
+      for (y = 0; y < g_wake_h; y++)
+         for (x = 0; x <= g_wake_w && x < WAKE_TEX; x++)
+            g_wake_frame[y * WAKE_TEX + x] =
+               video_color_pixel(g_wake_frame[y * WAKE_TEX + x]);
+      sceKernelDcacheWritebackRange(g_wake_frame, WAKE_FRAME_BYTES);
+      g_wake_color = want;
+      rc = 1;
+   }
+   fe_evt("color_preview mode=%u rc=%d us=%u", want, rc, t0);
+   FE_EVT_ONLY(t0);
 }
 
 /* STANDBY halves.  See the note on power_cb for why the teardown runs in the
@@ -4295,6 +4484,12 @@ static void me_rend_fill_desc(int out)
    g_mer_desc->work       = (unsigned)g_mer_work;
    g_mer_desc->work_bytes = ME_WORK_BYTES;
    g_mer_desc->work_gen   = g_mer_work_gen;
+   /* PRESENTATION COLOUR: the mode and the EBOOT's own LUT (me_mbox.h). */
+   g_mer_desc->color_magic = ME_COLOR_MAGIC;
+   g_mer_desc->color_mode  = video_color_mode;
+   g_mer_desc->color_lut   = (unsigned)video_color_lut;
+   g_mer_stage_mode[out] = video_color_mode;
+   g_mer_stage_cap[out]  = (unsigned)g_mer_cur;
    sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
 }
 
@@ -5124,6 +5319,8 @@ static int state_save_slot(const char *slot1_path, unsigned slot)
  * in the frame loop and therefore conflates the two. */
 static void mer_note_sum(void)
 {
+   if (g_mer_pending >= 0)
+      g_mer_stage_sum[g_mer_pending] = me_host_result();
    if (g_vhash_on)
       fe_evt("mesum f=%u s=%08x", fe_host_frame_count(), me_host_result());
 }
@@ -6446,6 +6643,79 @@ void osd_session_chip_refresh(void)
 /* The fast-forward and session-pacing engine moved to psp/ff_psp.c.
  * 1052 lines and 23 state variables; see ff_psp.h for the interface and
  * for the six host symbols it still reads. */
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+/* FILTERS V2 COST SWEEP (rig builds with -DFX_SWEEP only): one run walks the
+ * display arms below, FXS_WIN frames each, and prints per arm what the frame
+ * cost -- the blit's CPU stage copy, its GE list build, the CPU's stall on
+ * the GE, the Media Engine's render time and the core's own time, per frame
+ * -- so every filter is priced in ONE run on one console, against arm 0
+ * (and arm 0 again last, for drift).  The core state never sees the arms. */
+static const struct { signed char sc, sm, fx, col; const char *nm; }
+g_fxs_gba[] = {
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit" },
+   { VID_SCALE_FIT, 2, VID_FX_NONE, 0, "fit_sharp" },
+   { VID_SCALE_FIT, 0, VID_FX_LCD, 0, "fit_lcd" },
+   { VID_SCALE_FIT, 2, VID_FX_VINTAGE, 0, "fit_sharp_vintage" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 1, "fit_gbacolor" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 2, "fit_bw" },
+   { VID_SCALE_STRETCH, 0, VID_FX_NONE, 0, "stretch" },
+   { VID_SCALE_STRETCH, 2, VID_FX_DOT, 1, "stretch_sharp_dot_gbacolor" },
+   { VID_SCALE_INT2, 0, VID_FX_NONE, 0, "2x" },
+   { VID_SCALE_INT2, 0, VID_FX_SCAN, 2, "2x_scan_bw" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit_again" },
+}, g_fxs_gb[] = {
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit" },
+   { VID_SCALE_FIT, 2, VID_FX_LCD, 0, "fit_sharp_lcd" },
+   { VID_SCALE_STRETCH, 0, VID_FX_NONE, 0, "stretch" },
+   { VID_SCALE_STRETCH, 0, VID_FX_RGB, 0, "stretch_rgb" },
+   { VID_SCALE_STRETCH, 2, VID_FX_RGB_VIVID, 0, "stretch_sharp_rgbstrong" },
+   { VID_SCALE_INT2, 0, VID_FX_NONE, 0, "2x" },
+   { VID_SCALE_INT2, 0, VID_FX_VINTAGE, 0, "2x_vintage" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit_again" },
+};
+static int g_fxs_arm = -1;
+#define FXS_WIN 300u   /* frames per arm */
+static void fx_sweep_step(unsigned frames)
+{
+   static unsigned rn0, rus0, cc0, t0;
+   static uint32_t ct0;
+   unsigned n, st, stm, gu, gum, wt, wtm, cc, now;
+   uint32_t ct, cm;
+   int gb = pcfg_display_console() != FE_CONSOLE_GBA;
+   int narm = gb ? (int)(sizeof(g_fxs_gb) / sizeof(g_fxs_gb[0]))
+                 : (int)(sizeof(g_fxs_gba) / sizeof(g_fxs_gba[0]));
+   if (!frames || (frames % FXS_WIN) != 0)
+      return;
+   now = (unsigned)sceKernelGetSystemTimeLow();
+   vid_blit_prof(&n, &st, &stm, &gu, &gum, &wt, &wtm);
+   fe_host_core_prof(&cc, &ct, &cm);
+   if (g_fxs_arm >= 0 && g_fxs_arm < narm && n)
+   {
+      unsigned rn = g_fxs_rn - rn0, ru = g_fxs_ru - rus0;
+      fe_evt("fxcost console=%s arm=%d name=%s n=%u stage=%u gu=%u wait=%u "
+             "me_rend=%u me_n=%u core=%u wall=%u",
+             pcfg_console_tag(pcfg_display_console()), g_fxs_arm,
+             gb ? g_fxs_gb[g_fxs_arm].nm : g_fxs_gba[g_fxs_arm].nm, n,
+             st / n, gu / n, wt / n, rn ? ru / rn : 0u, rn,
+             cc - cc0 ? (unsigned)(ct - ct0) / (cc - cc0) : 0u,
+             (now - t0) / FXS_WIN);
+   }
+   if (++g_fxs_arm < narm)
+   {
+      g_h_scale  = gb ? g_fxs_gb[g_fxs_arm].sc : g_fxs_gba[g_fxs_arm].sc;
+      g_h_smooth = gb ? g_fxs_gb[g_fxs_arm].sm : g_fxs_gba[g_fxs_arm].sm;
+      g_h_effect = gb ? g_fxs_gb[g_fxs_arm].fx : g_fxs_gba[g_fxs_arm].fx;
+      g_h_color  = gb ? 0 : g_fxs_gba[g_fxs_arm].col;
+      psp_display_apply("sweep");
+   }
+   /* The window that follows is the arm's: counters from here. */
+   vid_blit_prof(&n, &st, &stm, &gu, &gum, &wt, &wtm);
+   rn0 = g_fxs_rn;  rus0 = g_fxs_ru;
+   fe_host_core_prof(&cc0, &ct0, &cm);
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+}
+#endif
+
 static void blit_prof_evt(unsigned frames)
 {
    static unsigned last;
@@ -13382,7 +13652,7 @@ int main(int argc, char *argv[])
 
    boot_mark("arena");
    vid_init();
-   vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   psp_display_apply("boot");
    audio_start();
 
    have_harness = file_exists(HARNESS_INI);
@@ -13582,6 +13852,12 @@ int main(int argc, char *argv[])
                                                  "telemetry_period", 0);
 #ifdef GPSP_PERF_RIG
    g_shash_on = (int)fe_ini_get_int(HARNESS_INI, "shash", 0);
+   /* Filters v2 rig keys: force the three display rows for every console
+    * (the state-identity and cost runs).  -1 = the player's own. */
+   g_h_smooth = (int)fe_ini_get_int(HARNESS_INI, "fx_smooth", -1);
+   g_h_effect = (int)fe_ini_get_int(HARNESS_INI, "fx_effect", -1);
+   g_h_color  = (int)fe_ini_get_int(HARNESS_INI, "fx_color", -1);
+   g_h_scale  = (int)fe_ini_get_int(HARNESS_INI, "fx_scale", -1);
    /* the sleep simulator (sleep_sim_thread) */
    g_ss_at      = fe_ini_get_int(HARNESS_INI, "sleep_sim_at", 0);
    g_ss_ms      = fe_ini_get_int(HARNESS_INI, "sleep_sim_ms", 1500);
@@ -14759,7 +15035,7 @@ session_top:
     * Before ui_loading_begin (which bakes the ambient texture) and before
     * cfg.gb_palette is read below. */
    pcfg_display_select(g_pcfg.console);
-   vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   psp_display_apply("rom");
    vid_ambient_mode(g_pcfg.ambient);
    vid_ambient_fallback(ui_console_shade(g_pcfg.console));
    fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
@@ -16441,6 +16717,7 @@ session_top:
       {
          const char *name = vid_cycle_preset();
          g_pcfg.scale  = vid_scale_mode();
+         g_pcfg.smooth = vid_smooth();     /* the effect row is untouched */
          g_pcfg.filter = vid_filter();
          /* This console's profile only: 2-4 INI rewrites, not ~50. */
          pcfg_display_save();
@@ -16981,6 +17258,9 @@ session_top:
       if (g_yield_us && g_yield_every &&
           (frames % (unsigned)g_yield_every) == 0)
          sceKernelDelayThread((SceUInt)g_yield_us);
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+      fx_sweep_step(frames);
+#endif
       blit_prof_evt(frames);
       rig_romload_evt(frames);
       rig_watch_evt(frames);
@@ -17188,6 +17468,9 @@ session_top:
                g_mer_rend_seen = 1;
                g_mer_rend_n++;
                g_mer_rend_us += d;
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+               g_fxs_rn++;  g_fxs_ru += d;
+#endif
                if (d > g_mer_rend_max)
                   g_mer_rend_max = d;
             }

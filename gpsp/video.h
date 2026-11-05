@@ -28,6 +28,40 @@ extern s32 affine_reference_y[2];
 
 extern u16* gba_screen_pixels;
 
+/* ---- PRESENTATION COLOUR (docs/DISPLAY-FEATURES.md "Colour") --------------
+ *
+ * GBA LCD colour (gpSP's gba_cc_lut model) and black & white, applied where a
+ * colour ENTERS the renderer: the renderer's copy of the converted palette
+ * and the direct-colour pixel of bitmap modes 3/5.  Guest memory is never
+ * touched -- palette_ram, VRAM and the core's palette_ram_converted keep the
+ * game's values -- so emulation is bit-identical in every mode.
+ *
+ * Because the transform is applied before the GBA's blending and brightness
+ * effects (they mix already-transformed colours), a blended or faded pixel
+ * can differ by a step or two from transforming the finished picture.
+ *
+ *   CPU renderer (host): video_color_set(); update_scanline() swaps a
+ *     transformed copy in for each rendered line (video.cc).
+ *   Media Engine: the render desc carries the mode and the LUT's address
+ *     (psp/me/me_mbox.h); the engine transforms its own snapshot and the
+ *     mid-frame log values it replays (VIDEO_COLOR_IN_REPLAY). */
+#include "video_color.h"   /* VIDEO_COLOR_*, the model */
+extern u32 video_color_mode;
+extern const u16 *video_color_lut;   /* gba_cc_lut, read only */
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Transform a 512-entry converted palette in place (no-op for NATIVE). */
+void video_color_palette(u16 *pal);
+/* One converted-format pixel through the current mode (menu previews). */
+u16  video_color_pixel(u32 c);
+/* Host: select the mode.  lut = gba_cc_lut (required for VIDEO_COLOR_GBA);
+ * work = 1024 u16 of the frontend's (the CPU renderer's two palette copies). */
+void video_color_set(u32 mode, const u16 *lut, u16 *work);
+#ifdef __cplusplus
+}
+#endif
+
 /* ---- ME RENDERER CAPTURE (the production path for the second-core render) --
  *
  * Captured replay inputs are a frame-start snapshot of {affine reference

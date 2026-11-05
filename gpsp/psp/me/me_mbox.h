@@ -150,7 +150,22 @@ typedef struct me_render_desc
    volatile unsigned int work;
    volatile unsigned int work_bytes;
    volatile unsigned int work_gen;
+   /* PRESENTATION COLOUR (video.h).  APPENDED, and guarded by its own magic
+    * rather than a version bump, so either half can meet the other:
+    *   - a module older than these fields never reads them: the host's
+    *     palette and the bitmap pixels reach the screen untransformed, as
+    *     before (the picture is native; nothing else changes);
+    *   - this module driven by an older EBOOT reads past that EBOOT's desc
+    *     and finds no ME_COLOR_MAGIC there: colour stays native.
+    * color_lut is the EBOOT's own gba_cc_lut (.rodata, 64 KiB, never
+    * written): the engine reads it through its D-cache and invalidates it
+    * once per address it has not seen.  Nothing new is allocated anywhere. */
+   volatile unsigned int color_magic;  /* ME_COLOR_MAGIC: the two below hold */
+   volatile unsigned int color_mode;   /* VIDEO_COLOR_* (0 = native)        */
+   volatile unsigned int color_lut;    /* gba_cc_lut, for VIDEO_COLOR_GBA   */
 } me_render_desc;
+#define ME_COLOR_MAGIC 0x434F4C31u     /* "COL1" */
+#define ME_COLOR_LUT_BYTES (32768u * 2u)
 
 typedef struct me_mbox
 {

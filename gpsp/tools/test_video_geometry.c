@@ -276,6 +276,7 @@ int main(void)
    g_scale = VID_SCALE_INT2;                     /* from 2x: fit, as before */
    assert(strcmp(vid_cycle_preset(), "fit") == 0);
    puts("PASS sharp presets: TRIANGLE keeps the chosen smoothing");
+
    /* GRID FILTERS: one period per GAME pixel, per axis, at every scale. */
    {
       static const int ax[][2] = {
@@ -296,22 +297,28 @@ int main(void)
          { VID_SCALE_STRETCH, 160, 144, GU_LINEAR },
       };
       unsigned i;
-      int k;
+      int k, sm;
       for (i = 0; i < sizeof(ax) / sizeof(ax[0]); i++)
          grid_axis_check(ax[i][0], ax[i][1]);
       for (i = 0; i < sizeof(m) / sizeof(m[0]); i++)
          for (k = 0; k < 3; k++)
+            for (sm = 0; sm < VID_SMOOTH_MODES; sm++)
          {
             vid_geo g;
             int filt = -1;
             const unsigned int *t;
-            g_scale  = m[i].scale;
-            g_filter = VID_FILTER_LCD + k;
+            vid_set_look(m[i].scale, sm, VID_FX_LCD + k);
             dest_geo(m[i].w, m[i].h, &g);
-            assert(game_filter() == GU_NEAREST);
-            assert(picture_filter(m[i].w, &g) == GU_NEAREST);
-            t = grid_tex(k, m[i].w, &g, &filt);
+            /* The effect never changes how the PICTURE is sampled. */
+            if (sm == VID_SMOOTH_NEAREST)
+            {
+               assert(game_filter() == GU_NEAREST);
+               assert(picture_filter(m[i].w, &g) == GU_NEAREST);
+            }
+            t = grid_tex(VID_FX_LCD + k, m[i].w, &g, &filt);
             assert((t == NULL) == (m[i].filt < 0));
+            assert(vid_fx_state(VID_FX_LCD + k, m[i].scale, m[i].w, m[i].h)
+                   == (t ? VID_FXS_ON : VID_FXS_OFF_1X));
             if (t)
                assert(filt == m[i].filt);
             if (t && m[i].scale == VID_SCALE_INT2)
@@ -338,21 +345,145 @@ int main(void)
          const unsigned int *a, *b;
          g_scale = VID_SCALE_FIT;
          dest_geo(240, 160, &g);
-         a = grid_tex(0, 240, &g, &filt);
-         b = grid_tex(0, 240, &g, &filt);
+         a = grid_tex(VID_FX_LCD, 240, &g, &filt);
+         b = grid_tex(VID_FX_LCD, 240, &g, &filt);
          assert(a == b);
       }
-      /* Settings values and the TRIANGLE cycle. */
+      /* Legacy values 3..5 are nearest + that grid; TRIANGLE keeps the
+       * effect and cycles only the smoothing. */
+      vid_set_mode(VID_SCALE_FIT, VID_FILTER_BILINEAR);   /* g_smooth */
       vid_set_mode(VID_SCALE_FIT, VID_FILTER_SCAN);
-      assert(g_filter == VID_FILTER_SCAN && g_smooth == VID_FILTER_SCAN);
+      assert(g_filter == VID_FILTER_NEAREST && g_fx == VID_FX_SCAN);
+      assert(g_smooth == VID_FILTER_BILINEAR);   /* nearest is not a choice */
+      assert(vid_filter() == VID_FILTER_SCAN);
       assert(strcmp(vid_filter_name(VID_FILTER_LCD), "LCD grid") == 0);
-      assert(strcmp(vid_cycle_preset(), "stretch") == 0);
-      assert(strcmp(vid_cycle_preset(), "stretch scanlines") == 0);
-      assert(g_filter == VID_FILTER_SCAN);
+      assert(strcmp(vid_cycle_preset(), "fit bilinear, scanlines") == 0);
+      assert(g_filter == VID_FILTER_BILINEAR && g_fx == VID_FX_SCAN);
+      assert(strcmp(vid_cycle_preset(), "stretch, scanlines") == 0);
+      assert(g_filter == VID_FILTER_NEAREST && g_fx == VID_FX_SCAN);
       vid_set_mode(VID_SCALE_FIT, 9);           /* out of range: bilinear */
-      assert(g_filter == VID_FILTER_BILINEAR);
+      assert(g_filter == VID_FILTER_BILINEAR && g_fx == VID_FX_NONE);
    }
    puts("PASS grid filters: one period per game pixel (1x none, 2x the "
-        "patch's pattern, fit/stretch even), presets");
+        "patch's pattern, fit/stretch even), any smoothing, presets");
+
+   /* FILTERS V2: the legacy value and the two GE rows. */
+   {
+      int f, sm, fx;
+      for (f = 0; f < VID_FILTER_MODES; f++)
+      {
+         vid_filter_split(f, &sm, &fx);
+         assert(vid_filter_join(sm, fx) == f);
+         vid_set_mode(VID_SCALE_FIT, f);
+         assert(vid_filter() == f && vid_smooth() == sm && vid_fx() == fx);
+      }
+      for (sm = 0; sm < VID_SMOOTH_MODES; sm++)
+         for (fx = 0; fx < VID_FX_MODES; fx++)
+         {
+            int j = vid_filter_join(sm, fx);
+            assert(j >= 0 && j < VID_FILTER_MODES);
+            /* An older build shows the grid when there is one, else the
+             * smoothing. */
+            assert(fx == VID_FX_NONE ? j == sm : j >= VID_FILTER_LCD);
+         }
+      assert(!vid_fx_offered(VID_FX_RGB, 0) && vid_fx_offered(VID_FX_RGB, 1));
+      assert(!vid_fx_offered(VID_FX_RGB_VIVID, 0));
+      assert(vid_fx_offered(VID_FX_VINTAGE, 0) && vid_fx_offered(VID_FX_LCD, 0));
+      assert(!vid_fx_offered(VID_FX_MODES, 1) && !vid_fx_offered(-1, 1));
+   }
+   puts("PASS filters v2 rows: 0..5 split and join exactly");
+
+   /* VINTAGE: the LCD grid's shape at 0x15, and its tone even at 1x. */
+   {
+      vid_geo g;
+      int filt, x, y;
+      const unsigned int *t, *l;
+      vid_set_look(VID_SCALE_INT2, 0, VID_FX_VINTAGE);
+      dest_geo(240, 160, &g);
+      t = grid_tex(VID_FX_VINTAGE, 240, &g, &filt);
+      l = grid_tex(VID_FX_LCD, 240, &g, &filt);
+      assert(t && l && t != l);
+      for (y = 0; y < GRID_N; y++)
+         for (x = 0; x < GRID_N; x++)
+            assert((t[y * GRID_N + x] != 0) == (l[y * GRID_N + x] != 0) &&
+                   (t[y * GRID_N + x] == 0 ||
+                    t[y * GRID_N + x] == 0x15000000u));
+      g_scale = VID_SCALE_1X;
+      dest_geo(240, 160, &g);
+      assert(grid_tex(VID_FX_VINTAGE, 240, &g, &filt) == NULL);
+      assert(vid_fx_state(VID_FX_VINTAGE, VID_SCALE_1X, 240, 160) ==
+             VID_FXS_TONE_1X);
+      assert(vid_fx_state(VID_FX_VINTAGE, VID_SCALE_FIT, 160, 144) ==
+             VID_FXS_ON);
+   }
+   puts("PASS vintage: the LCD grid's shape, faint; tone only at 1x");
+
+   /* RGB STRIPES: only where a game pixel is an exact 3+ screen pixels wide
+    * (GB/GBC Stretch), and there every screen column is exactly one stripe,
+    * R, G, B, R, G, B ... in step with the game pixels across the whole
+    * width -- the GE sampling the texel at each column centre through
+    * game_draw's strips (grid_sample's model). */
+   {
+      static const struct { int scale; unsigned w, h; int on; } c[] = {
+         { VID_SCALE_STRETCH, 160, 144, 1 },
+         { VID_SCALE_FIT,     160, 144, 0 },
+         { VID_SCALE_INT2,    160, 144, 0 },
+         { VID_SCALE_1X,      160, 144, 0 },
+         { VID_SCALE_STRETCH, 240, 160, 0 },     /* GBA: 2x at most */
+         { VID_SCALE_FIT,     240, 160, 0 },
+         { VID_SCALE_INT2,    240, 160, 0 },
+         { VID_SCALE_1X,      240, 160, 0 },
+      };
+      unsigned i;
+      int v;
+      for (v = VID_FX_RGB; v <= VID_FX_RGB_VIVID; v++)
+         for (i = 0; i < sizeof(c) / sizeof(c[0]); i++)
+         {
+            vid_geo g;
+            int filt = -1, X, y;
+            const unsigned int *t;
+            vid_set_look(c[i].scale, 0, v);
+            dest_geo(c[i].w, c[i].h, &g);
+            t = grid_tex(v, c[i].w, &g, &filt);
+            assert((t != NULL) == c[i].on);
+            assert(vid_fx_state(v, c[i].scale, c[i].w, c[i].h) ==
+                   (c[i].on ? VID_FXS_ON : VID_FXS_NEED_3X));
+            if (!t)
+               continue;
+            for (X = 0; X < g.dw; X++)
+            {
+               /* Column texel under screen column X (rows: texel 0, above
+                * the row line). */
+               float prof[GRID_N], pos;
+               int s, want = X % 3, tx;
+               for (tx = 0; tx < GRID_N; tx++)
+                  prof[tx] = (float)tx;
+               tx = (int)grid_sample(prof, GU_NEAREST, (int)c[i].w, g.dw, X,
+                                     &pos);
+               s = rgb_stripe(tx, g.dw / (int)c[i].w);
+               assert(s == want);
+               {
+                  unsigned int px = t[tx];
+                  unsigned int ch = (px >> (8 * s)) & 0xFFu;
+                  assert(ch > 0);                       /* its own tint */
+                  assert(((px >> (8 * ((s + 1) % 3))) & 0xFFu) == 0);
+                  assert(((px >> (8 * ((s + 2) % 3))) & 0xFFu) == 0);
+                  assert((px >> 24) >= (v == VID_FX_RGB ? 20u : 48u) &&
+                         (px >> 24) <= (v == VID_FX_RGB ? 48u : 56u));
+               }
+            }
+            /* The bottom texel row carries the row line: darker, more
+             * opaque than the tint (the row profile is soft at 1.89x). */
+            /* The line is the bottom half [0.5, 1) of the game pixel,
+             * box-filtered: darkest at its centre (texel 12), lightest
+             * opposite it (texel 4). */
+            for (y = 0; y < GRID_N; y++)
+               assert((t[12 * GRID_N] >> 24) >= (t[y * GRID_N] >> 24) &&
+                      (t[4 * GRID_N] >> 24) <= (t[y * GRID_N] >> 24));
+            assert((t[12 * GRID_N] >> 24) > (t[4 * GRID_N] >> 24));
+         }
+   }
+   puts("PASS RGB stripes: GB/GBC Stretch only, one stripe per screen "
+        "column in step with every game pixel");
    return 0;
 }

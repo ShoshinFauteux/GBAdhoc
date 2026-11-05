@@ -563,6 +563,20 @@ def suites(env: Env, baseline: Path | None):
           "-ffunction-sections -fdata-sections "
           "-I%s -Ifrontend-common -Ipsp tools/test_video_geometry.c "
           "-Wl,--gc-sections -o /tmp/t_vgeo565 && /tmp/t_vgeo565 && "
+          # Filters v2's Colour row: the model video.cc and the ME run
+          # (video_color.h) against gba_cc_lut, both pixel orders; and the
+          # three-row config mapping (it also rides in the ff suite, whose
+          # pipeline step fails first on this tree).
+          "{ echo 'typedef unsigned short u16;'; grep -v '#include' "
+          "gba_cc_lut.c; } > /tmp/t_cclut.c && "
+          "gcc -std=gnu99 -O2 tools/test_color_rows.c /tmp/t_cclut.c "
+          "-o /tmp/t_col && /tmp/t_col && "
+          "gcc -std=gnu99 -O2 -DUSE_PSP_RGB565_FORMAT tools/test_color_rows.c "
+          "/tmp/t_cclut.c -o /tmp/t_col565 && /tmp/t_col565 && "
+          "gcc -std=gnu99 -O2 -DGPSP_PLAYABLE -Ifrontend-common -Ipsp "
+          "tools/test_display_profiles.c psp/config_psp.c psp/ctl_map.c "
+          "frontend-common/fe_util.c -Wl,--wrap=fopen -o /tmp/t_dprof && "
+          "/tmp/t_dprof && "
           "python3 tools/tests/test_psp_runtime.py && "
           "python3 tools/tests/test_power_callback.py && "
           # The in-game sleep quiesce (psp/sleep_q.h): the production park

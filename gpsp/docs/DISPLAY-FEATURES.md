@@ -109,8 +109,8 @@ grid their crossing, and scanlines the rows only. The alphas are the patch's
 * **GE state:** `grid_draw` leaves blend off, TexWrap CLAMP and TexFunc
   REPLACE/RGB, as `game_draw` did. Every later textured draw sets its own
   texture, mode and filter.
-* **TRIANGLE:** a grid filter counts as the player's chosen "smoothing", like
-  sharp. The smoothed presets become "fit LCD grid" and "stretch LCD grid".
+* **TRIANGLE:** since filters v2 (below) TRIANGLE cycles the scale and the
+  smoothing only. The effect stays on and the toast names it: "fit, LCD grid".
 * **CONFIG.INI:** appended values. An older build reads 3 to 5 as bilinear.
   The per-console profiles store them like any other filter.
 * **Cost:** one textured, alpha-blended pass over the picture rect, using a
@@ -127,6 +127,90 @@ grid their crossing, and scanlines the rows only. The alphas are the patch's
   axis at every scale. It checks 1x has no mask, integer scales give exactly
   the last pixel, fit and stretch give the same line per game pixel, 2x is
   texel-for-texel the patch's pattern, and the presets.
+
+### Filters v2: Smoothing, Screen effect, Colour (`claude/filters-v2`)
+
+The single filter cycle became three rows per console profile. Ideas, but
+no code, come from the community package "GBAdhoc LCD Filters Test 4", which
+was built on 4.1.0.
+
+| row | GBA | GB / GBC | where |
+|---|---|---|---|
+| Smoothing | nearest, bilinear, sharp bilinear | same | GE (`g_filter`) |
+| Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD | the same, plus RGB stripes and RGB stripes strong | GE (`g_fx`, `grid_draw`) |
+| Colour | native, GBA LCD colour, black & white | the existing GB palette row | core (`video.h` PRESENTATION COLOUR) |
+
+**CONFIG.INI.** New keys are written beside the old ones:
+`smooth_<c>`, `effect_<c>` and `color_gba`. `filter_<c>` and the legacy
+`filter` are always `vid_filter_join(smooth, effect)`. That join gives the
+grid if one is on (vintage and RGB stripes join to LCD grid), else the
+smoothing, so an older build reading the file shows the nearest equivalent.
+Loading trusts the rows only while `filter_<c>` still equals their join. An
+older build that changed the filter rewrote only `filter_<c>`, so then the
+filter wins and is split. The split maps 0..5 exactly: 0..2 are the
+smoothing with no effect, and 3..5 are nearest plus that grid. Code that sets
+only `g_pcfg.filter` is obeyed the same way on commit.
+`tools/test_display_profiles.c` 6d covers this.
+
+**Effects, all on the game-pixel mask above.**
+
+* **Vintage LCD:** the LCD grid's shape at alpha 0x15, plus the package's warm
+  tone. Its modulate (F8,EE,E5) and veil (DC,D0,B8 at 0x10) fold into one
+  untextured `GU_FIX` blend, `out = dst*(E8,DF,D7) + (0E,0D,0C)`. At 1x the
+  grid draws nothing and the tone still applies ("tone only at 1x").
+* **RGB stripes:** the game pixel is split into R, G and B columns (the
+  package's x3 alphas: tint 20 / dark 48; strong 48 / 56), with the LCD
+  grid's row line. A stripe only lines up where a game pixel is an exact 3+
+  screen pixels wide, which is GB/GBC Stretch (480/160). No GBA scale
+  reaches that, so GBA is not offered the effect. On GB/GBC at Fit, 1x and 2x
+  nothing is drawn and the row says "(Stretch only)".
+  `tools/test_video_geometry.c` checks that every screen column at GB
+  Stretch samples exactly stripe X mod 3, in step with every game pixel.
+* **Dropped:** "dense RGB" / "dense color+" differ from x3 only in the panel
+  row period, and on a game-pixel mask the period is always one game pixel,
+  so they are the same picture. "Micro RGB", "micro fine", "dots tight" and
+  "dots tight RGB" are sub-game-pixel patterns that need 3+ screen pixels on
+  both axes, which no scale has; at 2x their checkerboard is the dot grid's
+  corner. The package's colour presets (GBA colour / B&W, with or without
+  tight dots) are the Colour row combined with any effect.
+* Effects draw over sharp bilinear too (`sharp_draw` ends in `grid_draw`).
+
+**Colour.** It is transformed where a colour enters the renderer: the
+renderer's copy of the converted palette, and the direct-colour pixel of
+modes 3/5 (`video_color_direct`, out of line). Guest memory, including the
+core's `palette_ram_converted`, keeps the game's values. The model is
+`video_color.h`. GBA LCD colour is gpSP's `gba_cc_lut` (64 KiB `.rodata`
+already linked, so nothing new). Black & white is BT.601 luma on the 5-bit
+channels (77/151/28, neutral).
+
+* *CPU renderer* (PPSSPP, ME fallback): `update_scanline` brings a
+  transformed copy up to date with a 1 KiB diff per line (only changed
+  entries are transformed), swaps it in for the render and swaps the core's
+  back. The two 1 KiB copies are a frontend array (`g_vc_work`), so the
+  core's `.bss` is unchanged. The new globals are `.sbss`.
+* *Media Engine:* the render desc grew three appended fields guarded by
+  `ME_COLOR_MAGIC`, with no version bump: the mode and the address of the
+  EBOOT's own `gba_cc_lut`. The engine transforms its palette snapshot in
+  place and the log's palette values as it replays them
+  (`VIDEO_COLOR_IN_REPLAY`, engine only). It invalidates the LUT once per
+  address. An older module ignores the fields (the picture stays native), and
+  this module under an older EBOOT finds no magic (native).
+* *Caveat:* because the transform happens before GBA blending and
+  brightness, a blended or faded pixel can differ by a step from
+  transforming the finished picture. Solid colours are exact.
+* *Live behind the menu:* the frame on screen was drawn from inputs that
+  still exist: its capture, the line-160 palette and OAM (`video_me_log.h`,
+  or the input shadows) and the engine's VRAM mirror. `psp_color_preview`
+  has the engine redraw it into the stage that is not shown. The first
+  redraw is in the frame's own mode and must reproduce the engine's checksum
+  for that frame, or nothing is used. Then a second redraw in the new mode
+  becomes the backdrop. Without the engine, or if the check fails, a native
+  snapshot is transformed on the CPU; otherwise the colour shows on resume.
+
+**Rig keys** (harness builds): `fx_scale`, `fx_smooth`, `fx_effect` and
+`fx_color` force the rows for every console. They reach the video layer
+only and are never saved. `-DFX_SWEEP` (FE_EXTRA, rig builds) walks
+display arms 300 frames each and prints `EVT fxcost` per arm.
 
 ## 2. Integer 2x (`VID_SCALE_INT2 = 3`)
 

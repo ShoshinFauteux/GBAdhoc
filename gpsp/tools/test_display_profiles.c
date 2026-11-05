@@ -156,6 +156,74 @@ int main(void)
    assert(g_pdisp[FE_CONSOLE_GBA].filter == VID_FILTER_BILINEAR);
    puts("PASS grid filters: values 3..5 load per console, 6+ is bilinear");
 
+   /* 6d. FILTERS V2: the three rows.  An old single value 0..5 splits
+    *     exactly; the rows are written beside it (filter = their join, so
+    *     an older build reading the file keeps the same smoothing or grid);
+    *     an older build that CHANGED the filter afterwards wins over the
+    *     stale rows; colour is GBA only; GB/GBC-only effects clamp on GBA. */
+   {
+      static const int sm_of[6] = { 0, 1, 2, 0, 0, 0 };
+      static const int fx_of[6] = { 0, 0, 0, VID_FX_LCD, VID_FX_DOT,
+                                    VID_FX_SCAN };
+      int f;
+      for (f = 0; f < 6; f++)
+      {
+         char t[64];
+         snprintf(t, sizeof(t), "filter_gba = %d\nfilter_gb = %d\n", f, f);
+         write_file(t);
+         pcfg_load(path);
+         assert(g_pdisp[FE_CONSOLE_GBA].smooth == sm_of[f]);
+         assert(g_pdisp[FE_CONSOLE_GBA].effect == fx_of[f]);
+         assert(g_pdisp[FE_CONSOLE_GB].smooth == sm_of[f]);
+         assert(g_pdisp[FE_CONSOLE_GB].effect == fx_of[f]);
+         assert(g_pdisp[FE_CONSOLE_GBA].filter == f);
+         assert(g_pdisp[FE_CONSOLE_GBA].color == 0);
+         assert(vid_filter_join(sm_of[f], fx_of[f]) == f);
+      }
+      /* New combinations round-trip through the new keys. */
+      write_file("console = 0\n");
+      pcfg_load(path);
+      pcfg_display_select(FE_CONSOLE_GBA);
+      pcfg_display_set_rows(VID_SMOOTH_SHARP, VID_FX_VINTAGE, 2);
+      assert(g_pcfg.smooth == VID_SMOOTH_SHARP &&
+             g_pcfg.effect == VID_FX_VINTAGE && g_pcfg.color == 2);
+      assert(g_pcfg.filter == VID_FILTER_LCD);       /* the legacy join */
+      assert(pcfg_display_save() == 0);
+      assert(key("smooth_gba") == VID_SMOOTH_SHARP);
+      assert(key("effect_gba") == VID_FX_VINTAGE);
+      assert(key("color_gba") == 2);
+      assert(key("filter_gba") == VID_FILTER_LCD && key("filter") == 3);
+      pcfg_load(path);
+      assert(g_pdisp[FE_CONSOLE_GBA].smooth == VID_SMOOTH_SHARP);
+      assert(g_pdisp[FE_CONSOLE_GBA].effect == VID_FX_VINTAGE);
+      assert(g_pdisp[FE_CONSOLE_GBA].color == 2);
+      /* An older build changes the filter to 1 (bilinear) and rewrites only
+       * filter_gba: the stale rows no longer join to it, so it wins. */
+      fe_ini_set_int(path, "filter_gba", 1);
+      pcfg_load(path);
+      assert(g_pdisp[FE_CONSOLE_GBA].smooth == VID_SMOOTH_BILINEAR);
+      assert(g_pdisp[FE_CONSOLE_GBA].effect == VID_FX_NONE);
+      assert(g_pdisp[FE_CONSOLE_GBA].color == 2);     /* untouched key */
+      /* RGB stripes are GB/GBC only; colour is GBA only. */
+      write_file("smooth_gba = 0\neffect_gba = 5\nfilter_gba = 3\n"
+                 "smooth_gb = 0\neffect_gb = 5\nfilter_gb = 3\n"
+                 "color_gb = 2\ncolor_gba = 7\n");
+      pcfg_load(path);
+      assert(g_pdisp[FE_CONSOLE_GBA].effect == VID_FX_NONE);
+      assert(g_pdisp[FE_CONSOLE_GB].effect == VID_FX_RGB);
+      assert(g_pdisp[FE_CONSOLE_GB].color == 0);
+      assert(g_pdisp[FE_CONSOLE_GBA].color == 0);      /* 7 out of range */
+      /* A legacy-only write by old code (g_pcfg.filter) still decides. */
+      pcfg_display_select(FE_CONSOLE_GB);
+      g_pcfg.filter = VID_FILTER_SCAN;
+      pcfg_display_commit();
+      assert(g_pdisp[FE_CONSOLE_GB].smooth == VID_SMOOTH_NEAREST);
+      assert(g_pdisp[FE_CONSOLE_GB].effect == VID_FX_SCAN);
+      assert(PCFG_COLOR_MODES == 3);
+   }
+   puts("PASS filters v2: 0..5 split exactly, rows beside the legacy key, "
+        "older-build edits win, per-console clamps");
+
    /* 7. No config path: nothing persists, nothing crashes. */
    pcfg_load("");
    assert(pcfg_display_save() == -1);
