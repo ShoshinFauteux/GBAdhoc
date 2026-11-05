@@ -712,7 +712,8 @@ favourites, the state shelf) are unchanged and still apply.
   game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
   deleting each ask first: ✕ answers, any other button keeps what you have.
 - Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
-  you turn *Settings → Quick load asks first* off).
+  you turn *Settings → Quick load asks first* off; <kbd>NEW</kbd> the save can ask before
+  overwriting with *Settings → Quick save asks first*).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
   periodically as you play, with a `.sav.bak` kept. Sleeping never touches the save.
 
@@ -774,6 +775,7 @@ confirm and ○ to go back.
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
 | | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question, or loads slot 1 at once |
+| | <kbd>NEW</kbd> Quick save asks first | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |

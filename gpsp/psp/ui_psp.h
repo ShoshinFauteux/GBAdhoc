@@ -107,6 +107,11 @@ int ui_state_load_done(int rc);
  * (UI_ACT_LOADSTATE, as the page's); any other key is Resume.  1 = asked,
  * 0 = slot empty / no menu. */
 int ui_state_load_ask(int slot);
+/* The quick save, Settings > "Quick save asks first" on (docs/UI-OVERLAY.md
+ * section 15.2), after menu_open(): the page on `slot` with the overwrite
+ * question up.  X saves (UI_ACT_SAVESTATE) and the menu closes; any other
+ * key is Resume.  1 = asked, 0 = slot empty / no menu (save at once). */
+int ui_state_save_ask(int slot);
 /* Harness `shot_probe = 1`: four timed .shot reads as the page first opens,
  * EVT shot_read n= us=. */
 void ui_shot_probe_arm(int on);

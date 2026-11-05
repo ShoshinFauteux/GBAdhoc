@@ -326,6 +326,9 @@ static int  g_slot_ask_n;
 static int  g_slot_ask_back;
 static char g_slot_note[48];
 static int  g_slot_saving;                  /* slot a UI_ACT_SAVESTATE is for */
+/* That save answers the quick save's question (ui_state_save_ask): when it
+ * is done the menu closes, back into the game, as the quick save would. */
+static int  g_slot_save_back;
 static int  g_slots_dirty;                  /* rescan on the next frame   */
 /* The full preview: ONE slot's .shot, read lazily into the VRAM texture
  * (vid_shot_tex) once the cursor has rested OV_SHOT_DWELL frames -- more
@@ -1172,6 +1175,7 @@ static void screen_to(int scr)
    ctl_page_reset();             /* no capture survives a screen change */
    g_slot_ask = 0;               /* nor a delete/overwrite/load question */
    g_slot_ask_back = 0;
+   g_slot_save_back = 0;
    g_slot_note[0] = '\0';
    if (scr == SCR_SETTINGS)
    {
@@ -1830,7 +1834,7 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_EFFECT, SET_GBPAL, SET_AMBIENT,
        SET_HDR_UI, SET_THEME, SET_SHELL,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_QLOADASK,
-       SET_CPUCLK,
+       SET_QSAVEASK, SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
@@ -1886,6 +1890,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * above Fast-forward, so none of their counts moved.  The SAVE STATES
     * page's own load (SQUARE) always asks; this row is only the shortcut's. */
    { 0, "Quick load asks first" },
+   /* The quick save's overwrite question (docs/UI-OVERLAY.md section 15.2,
+    * issue #31), OFF by default.  Under the quick load's row and above CPU
+    * clock, for the same reason: no walker's count moves. */
+   { 0, "Quick save asks first" },
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
     * their counts moved.  Applies at once (main_psp.c psp_clock_apply). */
@@ -2433,6 +2441,9 @@ static void settings_adjust(int id, int dir)
    case SET_QLOADASK:
       g_pcfg.quick_load_ask = !g_pcfg.quick_load_ask;
       break;
+   case SET_QSAVEASK:
+      g_pcfg.quick_save_ask = !g_pcfg.quick_save_ask;
+      break;
    case SET_CPUCLK:
       /* 333 -> 222 -> System, live: the game keeps running at the new
        * clock the moment the row changes.  The player's choice outranks a
@@ -2702,6 +2713,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.quick_load_ask ? "on" : "off");
          break;
+      case SET_QSAVEASK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.quick_save_ask ? "on" : "off");
+         break;
       case SET_CPUCLK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              pcfg_clock_name(psp_clock_mode()));
@@ -2788,6 +2803,11 @@ static ui_action screen_settings(unsigned edges)
                 ? "The quick load asks first: " VID_GLYPH_X
                   " loads, any other key plays on."
                 : "The quick load loads slot 1 at once, without asking.");
+   else if (g_cursor == SET_QSAVEASK)
+      footer(g_pcfg.quick_save_ask
+                ? "Over a saved slot 1 the quick save asks: " VID_GLYPH_X
+                  " saves."
+                : "The quick save saves slot 1 at once, without asking.");
    else if (g_cursor == SET_CPUCLK)
    {
       /* A CFW clock setting can refuse ours: say what is really running. */
@@ -5132,10 +5152,18 @@ static void ov_shot_probe(void)
  * Return 1 when the page reported it (no toast wanted). */
 int ui_state_save_done(int rc)
 {
-   int s = g_slot_saving;
+   int s = g_slot_saving, back = g_slot_save_back;
    g_slot_saving = 0;
+   g_slot_save_back = 0;
    if (!g_active || g_screen != SCR_STATE_SLOTS || !s)
       return 0;
+   if (back)
+   {
+      /* The quick save's question, answered: back into the game, and the
+       * toast says it there, exactly as an unasked quick save does. */
+      ui_close();
+      return 0;
+   }
    snprintf(g_slot_note, sizeof(g_slot_note),
             rc == 0 ? "Slot %d saved" : "Slot %d could not be saved", s);
    g_slots_dirty = 1;
@@ -5185,6 +5213,31 @@ int ui_state_load_ask(int slot)
     * an edge as ever). */
    g_rep_timer = -(1 << 30);
    fe_evt("ui_load_ask slot=%d via=chord", slot);
+   return 1;
+}
+
+/* THE QUICK SAVE CAN ASK TOO (docs/UI-OVERLAY.md section 15.2; issue #31).
+ * Settings > "Quick save asks first", OFF by default: on, a quick save
+ * (bind_quicksave, SELECT+L by default) over a saved slot opens the SAVE
+ * STATES page on `slot` with the overwrite question up -- the page's own
+ * question, the load question's rules (ui_state_load_ask above).  X saves
+ * through UI_ACT_SAVESTATE and the menu closes back into the game (the
+ * toast says "State saved"); any other key is Resume, having saved nothing.
+ * 1 = asked; 0 = no menu open, or the slot is empty (the caller saves at
+ * once, as an unasked quick save does). */
+int ui_state_save_ask(int slot)
+{
+   if (!g_active || slot < 1 || slot > PSP_STATE_SLOT_COUNT)
+      return 0;
+   g_state_slot = slot;
+   screen_to(SCR_STATE_SLOTS);
+   if (!g_ov_slot[slot - 1])
+      return 0;
+   g_slot_ask = SLOT_ASK_OVERWRITE;
+   g_slot_ask_n = slot;
+   g_slot_ask_back = 1;
+   g_rep_timer = -(1 << 30);      /* a held direction is no answer */
+   fe_evt("ui_save_ask slot=%d via=chord", slot);
    return 1;
 }
 
@@ -5280,7 +5333,7 @@ static ui_action screen_state_slots(unsigned edges)
    {
       if (edges & PSP_CTRL_CROSS)
       {
-         int s = g_slot_ask_n, ask = g_slot_ask;
+         int s = g_slot_ask_n, ask = g_slot_ask, back = g_slot_ask_back;
          g_slot_ask = 0;
          g_slot_ask_back = 0;     /* a failed load stays, as the page's */
          if (ask == SLOT_ASK_DELETE)
@@ -5301,6 +5354,7 @@ static ui_action screen_state_slots(unsigned edges)
          else
          {
             g_slot_saving = s;
+            g_slot_save_back = back;  /* the quick save's: back to the game */
             act = UI_ACT_SAVESTATE;
          }
       }

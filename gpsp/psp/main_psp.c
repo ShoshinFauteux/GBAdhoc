@@ -16378,6 +16378,27 @@ session_top:
          {
             if (link_locks_states())
                osd_toast("Cannot save during a wireless session");
+            /* THE QUICK SAVE CAN ASK (docs/UI-OVERLAY.md section 15.2,
+             * issue #31): Settings > "Quick save asks first", off by
+             * default (config.ini quick_save_ask).  On, a quick save over a
+             * saved slot 1 opens the SAVE STATES page with its overwrite
+             * question: X saves (UI_ACT_SAVESTATE below, and the menu
+             * closes), any other key is Resume.  An empty slot 1 has
+             * nothing to lose: it saves at once.  Off: not one call more
+             * than before (the && stops at the setting). */
+            else if (g_pcfg.quick_save_ask &&
+                     fe_host_state_recover(state_path) >= 0 &&
+                     file_exists(state_path))
+            {
+               fe_evt("state_save_ask via=chord");
+               menu_open();
+               if (!ui_state_save_ask(1))
+               {
+                  ui_close();
+                  osd_toast(state_save_slot(state_path, 1) == 0
+                               ? "State saved" : "Save failed");
+               }
+            }
             else if (state_save_slot(state_path, 1) == 0)
             {
                osd_toast("State saved");

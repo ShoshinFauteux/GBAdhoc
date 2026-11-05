@@ -687,6 +687,9 @@ def suites(env: Env, baseline: Path | None):
           # load / TRIANGLE delete and the shelf's X load / TRIANGLE delete,
           # the real page and shelf block, with mutants.
           "python3 tools/tests/test_state_buttons.py && "
+          # The quick save's optional overwrite question (quick_save_ask,
+          # off by default): page, call site and config key, with mutants.
+          "python3 tools/tests/test_quick_save_ask.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

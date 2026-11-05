@@ -450,6 +450,7 @@ static int fe_host_state_recover(const char *p) { say("recover %s", p); return r
 static int file_exists(const char *p) { say("exists %s", p); return have_state; }
 static void menu_open(void) { say("menu_open"); }
 static int ui_state_load_ask(int s) { say("ask %d", s); return ask_rc; }
+static int ui_state_save_ask(int s) { say("save_ask %d", s); return ask_rc; }
 static void ui_close(void) { say("ui_close"); }
 static int psp_state_load(const char *p, const char *via)
 { say("load %s %s", p, via); return load_rc; }

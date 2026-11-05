@@ -204,6 +204,12 @@ typedef struct
     * every release before it did (docs/UI-OVERLAY.md section 14.3).  The
     * page's own load always asks. */
    int  quick_load_ask;
+   /* Settings > "Quick save asks first", CONFIG.INI `quick_save_ask`: 0
+    * (default) = the quick save (bind_quicksave) saves slot 1 at once, as
+    * every release has; 1 = over a saved slot 1 it opens the SAVE STATES
+    * page with "Overwrite Slot 1?" on its plate (docs/UI-OVERLAY.md section
+    * 15.2, issue #31).  The page's own save over a saved slot always asks. */
+   int  quick_save_ask;
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
     * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,

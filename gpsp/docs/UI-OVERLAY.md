@@ -1329,3 +1329,30 @@ asks and X deletes, six other keys keep, SQUARE does nothing, a question's X
 never launches; 11 mutants (beta.3's page, beta.3's shelf, no question, the
 wrong slot, old words), each failing. `test_state_load_ask.py` presses
 SQUARE where it pressed X for a load.
+
+### 15.2 The quick save can ask before overwriting
+
+Settings > GAMEPLAY > **Quick save asks first**, under *Quick load asks
+first*, **off by default**, `config.ini` `quick_save_ask` (1 / 0). On, a
+quick save (`bind_quicksave`, SELECT+L unless remapped; keyed on the action,
+so any binding) over a saved slot 1 opens the menu on the SAVE STATES page
+with "Overwrite Slot 1?" up (`ui_state_save_ask`), the load question's
+rules: X saves through the page's `UI_ACT_SAVESTATE` and the menu closes
+back into the game with "State saved"; any other key is Resume, nothing
+saved; a held direction never answers. Slot 1 empty: saved at once, as
+before -- there is nothing to lose. A wireless session still refuses.
+
+Off, the quick save is exactly the branch every release had: the `&&`
+stops at the setting, so not one stat or call is added (the host test
+traces it). The key is written only once it is on or already in the file,
+so a default `config.ini` stays byte-identical; anything but a 1 reads as
+off; `pcfg_validate` repairs a corrupt value to off.
+
+The in-game page's own save over a saved slot has always asked (section 13)
+and still does; the setting is only the shortcut's, as *Quick load asks
+first* is. The row sits between *Quick load asks first* and *CPU clock*, so
+no harness walker's count moves.
+
+Host: `tools/tests/test_quick_save_ask.py` (the real page, `ui_state_save_ask`,
+`ui_state_save_done`, `main_psp.c`'s dispatch with the real `ctl_map.c` /
+`config_psp.c`, and the key's round trip); 16 mutants, each failing.
