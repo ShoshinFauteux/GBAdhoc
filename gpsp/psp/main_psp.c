@@ -13237,10 +13237,25 @@ static int wake_service(void)
  * post-wait swap flushes the GE first), which is what a late frame does
  * anyway.  Off under FF, the draw gate, a rewind and same-frame, as tier 0b
  * is; tier 1's own wait-present is untouched. */
+/* BELOW FULL CLOCK ONLY.  At 333 MHz the ME renders a light game in ~7 ms
+ * and tier 0b / tier 1 make their deadlines: beta.3's presentation is kept
+ * there exactly (owner: 333 latency must not move; the hold below would
+ * keep tier 1 out while the picture runs late).  The clock read is the one
+ * running, whatever set it (the setting, the harness, a CFW holding its
+ * own), re-read every 64 loops (~1 s) so a change in the menu applies. */
+static unsigned g_dfr_clk_n __attribute__((section(".sbss")));
+static int      g_dfr_slow __attribute__((section(".sbss")));
+static int dfr_clock_low(void)
+{
+   if ((g_dfr_clk_n++ & 63u) == 0u)
+      g_dfr_slow = scePowerGetCpuClockFrequency() < 300;
+   return g_dfr_slow;
+}
+
 static int dfr_defer(void)
 {
    g_dfr = 0;
-   if (!g_dfr_cfg || !g_me_rend || g_mer_pending < 0 ||
+   if (!g_dfr_cfg || !dfr_clock_low() || !g_me_rend || g_mer_pending < 0 ||
        g_mer_ready == -1 || g_mer_ready != g_mer_last_presented ||
        g_ff_mult || g_ff_uncapped || g_ff_gate ||
        !mer_retire_early_active() || mer_sameframe_active() ||
@@ -13281,7 +13296,7 @@ static void dfr_present(void)
 static void lf_hold_begin(void)
 {
    g_lf_hold = 0;
-   if (!g_dfr_cfg || !g_flip_early || g_ff_mult || g_ff_uncapped || g_ff_gate ||
+   if (!g_dfr_cfg || !g_dfr_slow || !g_flip_early || g_ff_mult || g_ff_uncapped || g_ff_gate ||
        g_ll_iter_h || mer_sameframe_active() || !ffh_too_soon(1))
       return;
    g_flip_early = 0;

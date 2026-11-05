@@ -196,6 +196,9 @@ static void fe_np_pump(void) { }
 enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH };
 static int pcfg_ff_mode(void) { return PCFG_FF_3X; }
 static unsigned fe_host_frame_count(void) { return 0; }
+/* the clock the late present / late flip hold look at (below 333 only) */
+static int g_model_mhz = 222;
+static int scePowerGetCpuClockFrequency(void) { return g_model_mhz; }
 
 #include "lowlat.inc"
 
