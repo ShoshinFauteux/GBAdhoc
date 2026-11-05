@@ -4152,9 +4152,11 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       case WL_MGIFT:
          wl_row(i, g_cursor == i, "Mystery Gift", "phone");
          break;
+#ifdef GBADHOC_ONLINE
       case WL_ONLINE:
          wl_row(i, g_cursor == i, s_ol_row, NULL);
          break;
+#endif
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
             wl_row_at(WL_ROW_Y0 + i * 22, g_cursor == i, 0, "Fast link",
