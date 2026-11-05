@@ -139,6 +139,7 @@ static void prx_unload(void)
 }
 
 /* ---- configuration --------------------------------------------------------- */
+#ifdef GPSP_PERF_RIG
 static int get_str(const char *h, const char *c, const char *k, char *o, size_t n)
 {
    return fe_ini_get(h, k, o, n) || (c && fe_ini_get(c, k, o, n));
@@ -151,6 +152,7 @@ static long get_int(const char *h, const char *c, const char *k, long def)
       return fe_ini_get_int(h, k, def);
    return c ? fe_ini_get_int(c, k, def) : def;
 }
+#endif
 
 static void set_room(const char *s)
 {
@@ -166,16 +168,24 @@ static void set_room(const char *s)
    O.cfg.room[j] = 0;
 }
 
+#ifdef GPSP_PERF_RIG
 static void cycle_test(int n);
+#endif
 
 int online_psp_configure(const char *h, const char *c)
 {
+#ifdef GPSP_PERF_RIG
    char s[64] = "";
    int cycles;
+#endif
    O.enabled = 0;
    g_cfg_relay[0] = 0;
    if (c)
       fe_ini_get(c, "online_relay", g_cfg_relay, sizeof(g_cfg_relay));
+#ifndef GPSP_PERF_RIG
+   (void)h;
+   return 0;      /* a player's build: online only per session, from the menu */
+#else
    cycles = (int)fe_ini_get_int(h, "online_prx_cycles", 0);
    /* every-session online: only the harness ini turns it on (a player turns
     * it on per session from the menu) */
@@ -200,6 +210,7 @@ int online_psp_configure(const char *h, const char *c)
    if (cycles > 0)
       cycle_test(cycles);
    return 1;
+#endif
 }
 
 void online_psp_set(const char *relay, const char *room, int wifi, int mode)
@@ -264,14 +275,7 @@ void online_psp_stats_evt(const char *at)
       O.api.stats_evt(at);
 }
 
-void online_psp_status(char *out, unsigned cap)
-{
-   if (O.loaded)
-      O.api.status(out, cap);
-   else if (cap)
-      out[0] = 0;
-}
-
+#ifdef GPSP_PERF_RIG
 /* Harness: online_prx_cycles = N loads, starts, stops and unloads the module
  * N times (with online_relay set, each cycle also creates a room and leaves
  * it, or tries a join), logging the partition's free memory at every step:
@@ -305,5 +309,6 @@ static void cycle_test(int n)
           sceKernelTotalFreeMemSize() - f0);
    O.why[0] = 0;
 }
+#endif
 
 #endif /* GBADHOC_ONLINE */
