@@ -10,23 +10,76 @@ separately and are intended for upstream.
 
 ---
 
-## [Unreleased]
+## [4.6.0-beta.4] - 2026-11-05
 
-- Loading a state asks first, on the Save States page and from the Select + R quick load:
-  "Load Slot n? Unsaved progress is lost." ✕ loads; any other button keeps the game you are
-  playing. The quick load's question can be turned off under Settings -> Quick load asks
-  first (`quick_load_ask = 0`); it follows the quick load to whatever buttons it is mapped to.
-- Battery saves now live in `saves/` and save states (with their pictures) in `states/`,
-  instead of beside the ROMs (#31, asked for by MXPHunter). Both folders mirror `roms/`, so
+Pre-release. Links only with the same beta.
+
+- Screen filters are three rows per console under Settings > DISPLAY: **Smoothing** (nearest,
+  bilinear, sharp bilinear), **Screen effect** (none, LCD grid, dot grid, scanlines, vintage
+  LCD; GB/GBC also RGB stripes and RGB stripes strong) and **Colour** (GBA: native, GBA LCD
+  colour, black & white; GB/GBC keep the GB palette row). The old single Video filter row could
+  not combine smoothing with an effect, and its masks repeated every screen pixel, so at Fit
+  (1.7x GBA, 1.89x GB) and Stretch they drifted and banded. Each mask now repeats once per game
+  pixel at every scale. Effects are off at 1x, where a game pixel is one screen pixel, and RGB
+  stripes need GB/GBC at Stretch (exactly 3 screen pixels per game pixel). GBA colour is applied
+  inside the renderer, to the palette and to bitmap pixels; game memory is never changed. Old
+  `filter_*` values carry over, and TRIANGLE's presets keep your effect and colour.
+- Battery saves live in `saves/` and save states (with their pictures) in `states/`, instead of
+  beside the ROMs (#31, asked for by MXPHunter). Both folders mirror `roms/`, so
   `roms/GBA/hacks/Game.gba` saves to `saves/GBA/hacks/Game.sav`. Empty `roms/GBA`, `roms/GB`
-  and `roms/GBC` folders are made on first run for sorting by console; ROMs anywhere in
-  `roms/` keep working and are never moved, so XMB entries and old folder layouts still work.
+  and `roms/GBC` folders are made on first run for sorting by console; ROMs anywhere in `roms/`
+  keep working and are never moved, so XMB entries and old folder layouts still work.
 - Existing saves and states move the first time you open each game: copied, read back and
-  checked (size and CRC32), then the original is removed. If anything fails, the old files
-  stay and are used, and the move is tried again next time. Share game data moves a game's
-  files the same way before replacing them.
-- **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` and will not see moved saves
-  or states. Move them back from `saves/` and `states/` by hand before going back.
+  checked (size and CRC32), then the original is removed. If anything fails, the old files stay
+  and are used, and the move is tried again next time. Share game data moves a game's files the
+  same way before replacing them.
+- **The Save States page's buttons changed** (#31, MXPHunter): in game, X saves, Square loads
+  and Triangle deletes (X used to load and Square to save); on the game list's state shelf X
+  loads and Triangle deletes (Square used to delete). Every question is the same as before and
+  X answers it.
+- Loading a state asks first, on the Save States page and from the Select + R quick load:
+  "Load Slot n? Unsaved progress is lost." X loads; any other button keeps the game you are
+  playing. A load replaces everything since the last save, and the quick load sits one shoulder
+  away from the quick save. The quick load's question can be turned off under Settings > Quick
+  load asks first (`quick_load_ask = 0`); it follows the quick load to whatever buttons it is
+  mapped to (PR #32 by Chandler Hardy).
+- More of MXPHunter's requests (#31): Settings > Quick save asks first (off by default,
+  `quick_save_ask`) before the quick save overwrites slot 1; Settings > Volume, 0 to 100 in
+  steps of 10, applied as the PSP's own channel volume (100 is the output of every earlier
+  release, bit for bit); the build you are running under the SETTINGS title, read from
+  `VERSION.txt`; d-pad arrows instead of the words Left/Right/Up/Down in the hints; on the game
+  list, `◀ states` / `▶ cheats` light up when the highlighted game has states or a cheats file,
+  long names scroll on the selected row, and a thin bar shows your place in a long list; and the
+  "app" screenshot folder is now `GBAdhoc/Screenshots/` instead of `log/`.
+- The in-game Video preset bound to **none** (Square on the Controls page) is really none (#31,
+  reported by MXPHunter). In a rewind build an unbound preset lets the rewind button cycle the
+  preset while rewind is off, and an explicit none was the same setting, so it was overridden.
+  Unbound is now *auto* (the old behaviour, a grey "auto" chip) or *none* (`bind_video = OFF`).
+  Older builds read OFF as their default.
+- **XMB launch mode** (#29, asked for by lipowskm): GBAdhoc can be started with a ROM, so a game
+  can have its own entry in the XMB's Game column that opens straight into it. An entry is a
+  small launcher, its art and a `launch.ini` naming the ROM inside GBAdhoc's `roms` folder; no
+  ROM is copied. *Exit* returns to the XMB, *Quit to game list* opens the list, and a ROM that is
+  not there opens the list. Entries are made with the GBAdhoc XMB apps (Windows and PSP), which
+  ship separately. A game is the same game from its entry and from the list: the same saves,
+  states, settings and cheats.
+- 222 MHz plays smoothly again at normal speed (reported by ingo3643). The lower-latency
+  presentation added in 4.5.0 shows each frame the moment it is ready; at 222 MHz the Media
+  Engine often finished a frame just after the screen refreshed, so that frame showed late and
+  the next one was skipped (about 140 hitches a minute in FireRed on beta.3). Below 333 MHz a
+  frame that misses its refresh is now presented on the next one, and the early flip waits for
+  it instead of replacing it: 0 hitches a minute in FireRed and Fire Emblem on both PSP-1000 and
+  PSP-3000, at about half a frame more latency at 222 MHz only. At 333 MHz GBAdhoc presents
+  exactly as in beta.3.
+- Layout re-pinned for the new code (pads 6224 / 200).
+
+**Known issues:** on hardware each frame takes about 1-3 % more CPU time than in beta.3 (Lab,
+both consoles): frame rates are unchanged in the 8 single-player scenes and CPU-bound link
+sessions are within 1 %; the cause is not yet attributed. The PSP-1000 has 32 KiB less free
+memory than with beta.3 (filters v2 24 KiB, folders 8 KiB). Mario Golf's adapter lobby can
+still stick when both players press at the same moment (leave and rejoin). **Downgrading:**
+4.6.0-beta.3 and older look only in `roms/` and will not see moved saves or states; move them
+back from `saves/` and `states/` by hand before going back.
 
 ## [4.6.0-beta.3] - 2026-11-05
 
