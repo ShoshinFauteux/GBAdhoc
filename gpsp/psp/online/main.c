@@ -381,6 +381,8 @@ static void ol_stats_evt(const char *at)
 #define STK_PAINT 0x5354414Bu
 static unsigned *g_stk_lo;
 static unsigned g_stk_top;
+static int g_stk_rc;                 /* why a paint was skipped (logged) */
+static unsigned g_stk_base, g_stk_size, g_stk_sp;
 
 static void __attribute__((noinline)) stk_paint(void)
 {
@@ -389,13 +391,18 @@ static void __attribute__((noinline)) stk_paint(void)
    g_stk_lo = 0;
    memset(&ti, 0, sizeof(ti));
    ti.size = sizeof(ti);
-   if (sceKernelReferThreadStatus(sceKernelGetThreadId(), &ti) < 0 || !ti.stack || ti.stackSize <= 0)
-      return;
    __asm__ volatile("move %0, $sp" : "=r"(sp));
+   g_stk_sp = sp;
+   g_stk_rc = sceKernelReferThreadStatus(sceKernelGetThreadId(), &ti);
+   g_stk_base = (unsigned)ti.stack;
+   g_stk_size = (unsigned)ti.stackSize;
+   if (g_stk_rc < 0 || !ti.stack || ti.stackSize <= 0)
+      return;
    g_stk_lo = (unsigned *)ti.stack;
    g_stk_top = (unsigned)ti.stack + (unsigned)ti.stackSize;
    if (sp < (unsigned)g_stk_lo + 512 || sp > g_stk_top)
    {
+      g_stk_rc = 1;                  /* sp outside the reported stack */
       g_stk_lo = 0;
       return;
    }
@@ -406,8 +413,14 @@ static void __attribute__((noinline)) stk_paint(void)
 static void __attribute__((noinline)) stk_report(const char *at)
 {
    unsigned *p = g_stk_lo;
-   if (!p || !g_ol_host)
+   if (!g_ol_host)
       return;
+   if (!p)
+   {
+      evt("online_prx_stack at=%s skipped rc=0x%08X base=0x%08X size=%u sp=0x%08X", at,
+          (unsigned)g_stk_rc, g_stk_base, g_stk_size, g_stk_sp);
+      return;
+   }
    while ((unsigned)p < g_stk_top && *p == STK_PAINT)
       p++;
    evt("online_prx_stack at=%s used=%u size=%u", at, g_stk_top - (unsigned)p,
