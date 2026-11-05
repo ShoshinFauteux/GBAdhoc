@@ -2744,7 +2744,7 @@ static ui_action screen_settings(unsigned edges)
          break;
       case SET_SHOT_DIR:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc folder (log)"
+             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc/Screenshots"
                                                  : "PICTURE/GBAdhoc");
          break;
       case SET_STICK:
@@ -2829,7 +2829,7 @@ static ui_action screen_settings(unsigned edges)
                 : "PNG: compressed, usually a few KB a picture.");
    else if (g_cursor == SET_SHOT_DIR)
       footer(g_pcfg.shot_folder == PCFG_SHOT_APP
-                ? "In log/ beside GBAdhoc, as before."
+                ? "In the Screenshots folder beside GBAdhoc's EBOOT."
                 : "In PICTURE/GBAdhoc: open them from the XMB Photo menu.");
 #ifdef REWIND
    else if (g_cursor == SET_REWIND_MB)

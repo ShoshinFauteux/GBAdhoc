@@ -213,8 +213,8 @@ typedef struct
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
     * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,
-    * where the XMB's Photo column lists them; PCFG_SHOT_APP = log/ beside the
-    * EBOOT, where 4.x and earlier wrote them.
+    * where the XMB's Photo column lists them; PCFG_SHOT_APP = Screenshots/
+    * beside the EBOOT (4.6.0-beta.4, issue #31; log/ until beta.3).
     * CONFIG.INI `screenshot_format = png | bmp`,
     *            `screenshot_folder = picture | app`. */
    int  shot_format;

@@ -1356,3 +1356,13 @@ no harness walker's count moves.
 Host: `tools/tests/test_quick_save_ask.py` (the real page, `ui_state_save_ask`,
 `ui_state_save_done`, `main_psp.c`'s dispatch with the real `ctl_map.c` /
 `config_psp.c`, and the key's round trip); 16 mutants, each failing.
+
+### 15.3 Screenshots in their own folder
+
+Settings > SCREENSHOTS > *Screenshot folder*'s second value (`config.ini`
+`screenshot_folder = app`, `PCFG_SHOT_APP`) wrote into `log/`, among the
+diagnostic logs. It now writes `<app folder>/Screenshots/` (created on the
+first shot, `sceIoMkdir`), and the row reads *GBAdhoc/Screenshots*.
+`PICTURE/GBAdhoc` stays the default; the key and its words are unchanged,
+so no `config.ini` changes. Harness frame dumps (`dump_frame_bmp`) still go
+to `log/`: rigs read them by name there.

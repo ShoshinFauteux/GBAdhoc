@@ -303,7 +303,8 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
 
 - **They go to `PICTURE/GBAdhoc` by default,** so you can open them from the XMB's Photo
   column. To keep them beside the app instead, set ***Settings → Screenshots → Screenshot
-  folder*** to *GBAdhoc folder (log)*. On a Go running GBAdhoc from internal storage, they
+  folder*** to *GBAdhoc/Screenshots* (<kbd>NEW</kbd> its own `Screenshots` folder in the app
+  folder; it was `log/` until 4.6.0-beta.3). On a Go running GBAdhoc from internal storage, they
   save to internal storage.
 - **They are PNGs by default,** usually a few KB each. ***Screenshot format*** switches
   back to BMP, about 115 KB each.
@@ -780,7 +781,7 @@ confirm and ○ to go back.
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
 | Screenshots | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
-| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc folder (log)* |
+| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc/Screenshots* |
 | Controls | Thumbstick | off, moves (a second d-pad) or custom |
 | | Button mapping | every button and shortcut; the menu button |
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
@@ -810,7 +811,8 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 - **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the
   menu remembers what is switched on.
 - <kbd>NEW</kbd> **Screenshots**: `PICTURE/GBAdhoc/` at the root of the Memory Stick (or of
-  a Go's internal storage), or `log/` if you choose *GBAdhoc folder (log)*.
+  a Go's internal storage), or `Screenshots/` in the app folder if you choose
+  *GBAdhoc/Screenshots*.
 - **Settings**: `config.ini` in the app folder.
 
 </details>

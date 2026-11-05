@@ -5027,7 +5027,8 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
  *   where   Settings > Screenshot folder: <dev>:/PICTURE/GBAdhoc/ (default),
  *           the XMB Photo column's own folder -- on the device the EBOOT runs
  *           from, so a PSP Go running from internal storage writes ef0: -- or
- *           log/ beside the EBOOT, where 4.x put them.
+ *           Screenshots/ beside the EBOOT (since 4.6.0-beta.4, issue #31;
+ *           4.x up to beta.3 put the "app" choice in log/).
  *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
  *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
  *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
@@ -5051,7 +5052,8 @@ static int shot_folder(char *dir, size_t cap)
 {
    SceIoStat st;
    if (g_pcfg.shot_folder == PCFG_SHOT_APP)
-      snprintf(dir, cap, "%s", LOG_DIR);
+      /* Its own folder, not log/ among the diagnostics (issue #31). */
+      snprintf(dir, cap, "%s/Screenshots", g_dir_base);
    else
    {
       /* "ms0:/PSP/GAME/X" -> "ms0:"; no device prefix -> ms0: */
