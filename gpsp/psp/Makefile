@@ -218,6 +218,15 @@ endif
 # RFU_SCHED=1: scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
 # docs/RFU-COUPLING.md).  Off by default.  The core must be built with the
 # same value (root make; tools/build.sh passes both).
+# ONLINE=1: EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): the link over a
+# GBR1 relay / hole-punched direct path on infrastructure Wi-Fi.  Off by
+# default; a release never sets it.  Active only when a key names a relay
+# (online_relay, psp/online_psp.h).
+ONLINE ?= 0
+ifeq ($(ONLINE),1)
+OBJS += online_psp.o transport_relay.o
+CFLAGS += -DGBADHOC_ONLINE
+endif
 RFU_SCHED ?= 0
 ifeq ($(RFU_SCHED),1)
 CFLAGS += -DRFU_SCHED
@@ -364,6 +373,9 @@ transport_adhoc.o: ../netdrv/transport_adhoc.c ../netdrv/transport_adhoc.h ../ne
 # Mystery Gift's netdrv backend (2.0.5).  Same out-of-tree rule and the same
 # reason as transport_adhoc above: a MIPS .o left in ../netdrv would be swept
 # into the desktop core archive by sdl/Makefile's find (ADR-0005).
+transport_relay.o: ../netdrv/transport_relay.c ../netdrv/transport_relay.h ../netdrv/relay_proto.h ../netdrv/netdrv.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 transport_inet.o: ../netdrv/transport_inet.c ../netdrv/transport_inet.h ../netdrv/netdrv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 

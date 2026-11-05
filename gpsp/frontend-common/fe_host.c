@@ -2861,6 +2861,13 @@ static int gbl_room(void *user)
    return GBL_BULK_BACKLOG - fe_np_gb_unacked();
 }
 
+/* fe_gblink_platform.rtt_us (auto input delay) */
+static uint32_t gbl_rtt(void *user, uint32_t *rttvar_us, uint32_t *samples)
+{
+   (void)user;
+   return fe_np_rtt(rttvar_us, samples);
+}
+
 int fe_host_gblink_flushed(void)
 {
    return fe_np_gb_unacked() == 0;
@@ -3399,6 +3406,8 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
     * kill switch (gblink_absorb / gblink_nack). */
    p.wait = host.gblink_wait ? gbl_wait : NULL;
    p.nack = host.gblink_nack;
+   if (host.gblink_delay_auto)
+      p.rtt_us = gbl_rtt;
    if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
        (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
    {
@@ -3419,6 +3428,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
                                                          : time(NULL));
    l.audio_rate = core_sample_rate;
    l.input_delay = input_delay;
+   l.delay_auto = host.gblink_delay_auto;
    /* Every 240 slot-0 frames, as the GB session (was 60): each check
     * hashes both GBAs on the emulation thread; the FINAL hash at the
     * agreed end is what protects the saves, regardless. */
@@ -3533,6 +3543,8 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    p.audio = gb_audio_batch;
    p.wait = host.gblink_wait ? gbl_wait : NULL;
    p.nack = host.gblink_nack;
+   if (host.gblink_delay_auto)
+      p.rtt_us = gbl_rtt;
    if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
        (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
    {
@@ -3554,6 +3566,7 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
                                                          : time(NULL));
    l.audio_rate = core_sample_rate;
    l.input_delay = input_delay;
+   l.delay_auto = host.gblink_delay_auto;
    /* Every 240 slot-0 frames (4 s), not 60: each check hashes both
     * machines' memory on the emulation thread (~1.5 ms on a PSP even after
     * the word hash, an 8-9 ms spike before it -- GB-LINK.md section 14), and

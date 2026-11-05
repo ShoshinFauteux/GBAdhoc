@@ -222,6 +222,28 @@ def main() -> int:
               "with; %d sync hashes identical" %
               (res[0][0], res[1][0], len(both)))
 
+        # Auto input delay (fe_gblink_local.delay_auto, docs/ONLINE-TUNNEL.md):
+        # on a long round trip the host picks a delay that covers it.  The
+        # machines run on the same inputs either way, so the session must
+        # end DONE; with the delay matched to the wire, it must stall less.
+        res = {}
+        for au in (0, 30):
+            rc, out = run(sim, t, "auto%d" % au, "rom_h=%s/dmg.gb" % t,
+                          "rom_g=%s/dmg.gb" % t, "lat=6", "auto=%d" % au,
+                          *common)
+            check(rc == 0 and out.count("gblink_done") == 2,
+                  "auto delay run (auto %d) failed" % au, out)
+            d = re.findall(r"gblink_config delay=(\d+)", out)
+            res[au] = ([int(x) for x in re.findall(r" stalls=(\d+) streak_max",
+                                                   out)[-2:]], d)
+        check(res[0][1] == ["3", "3"] and res[30][1] and
+              all(int(x) > 3 for x in res[30][1]) and
+              len(set(res[30][1])) == 1 and sum(res[30][0]) < sum(res[0][0]),
+              "auto delay: %s" % res, out)
+        print("gblink session: auto input delay at a 12-frame round trip -- "
+              "delay %s stalls %s, auto delay %s stalls %s" %
+              (res[0][1][0], res[0][0], res[30][1][0], res[30][0]))
+
         rc, out = run(sim, t, "corrupt", "rom_h=%s/cgb.gbc" % t,
                       "rom_g=%s/dmg.gb" % t, "lat=2", "corrupt_rom=40", *common)
         check(rc != 0 and "rom_hash_mismatch" in out and

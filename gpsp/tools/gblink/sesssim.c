@@ -36,6 +36,7 @@
  *           [absorb=1]    stall absorption: a stalled console also gets
  *                         what arrives during the rest of the frame
  *           [nack=1]      resend requests on the bulk lane (needs bulk=)
+ *           [auto=N]      auto input delay on the host, capped at N frames
  *           [hash_legacy=1] the 3.1 beta's byte-wise sync hash
  *           [arq_loss=PCT] [arq_rto=FRAMES]  that share of ordered-channel
  *                         messages arrives arq_rto frames late (a resend),
@@ -291,6 +292,16 @@ static console_t con[2];
 static int p_send(void *u, const void *b, size_t n) { return net_send(((console_t *)u)->id, b, n); }
 static int p_bulk(void *u, const void *b, size_t n) { return bulk_send(((console_t *)u)->id, b, n); }
 static int p_room(void *u) { int id = ((console_t *)u)->id; return (int)room_slots - (int)in_flight[id]; }
+/* auto=N: the host's auto input delay (fe_gblink_local.delay_auto) reads the
+ * simulated network's round trip -- 2 x lat frames, jitter as the variance --
+ * as netdrv's smoothed estimate would settle on it. */
+static uint32_t p_rtt(void *u, uint32_t *var, uint32_t *n)
+{
+   (void)u;
+   if (var) *var = jit * 16743u / 2u;
+   if (n) *n = 8;
+   return 2u * lat * 16743u;
+}
 /* absorb=1: stall absorption (fe_gblink_platform.wait).  A waiting console
  * gets what arrives during the rest of this display frame -- everything due
  * by the next tick -- once; then the frame is out of time.  Only when the
@@ -474,6 +485,8 @@ int main(int argc, char **argv)
       p.input_copies = (unsigned)atoi(arg(argc, argv, "input_copies", "0"));
       p.wait = atoi(arg(argc, argv, "absorb", "0")) ? p_wait : NULL;
       p.nack = atoi(arg(argc, argv, "nack", "0"));
+      l.delay_auto = (unsigned)atoi(arg(argc, argv, "auto", "0"));
+      p.rtt_us = l.delay_auto ? p_rtt : NULL;
       l.is_host = i == 0;
       l.rom_path = rom[i];
       l.console = console_of(rom[i]);
