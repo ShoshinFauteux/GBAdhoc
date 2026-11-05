@@ -597,6 +597,12 @@ PBP_SHA=$(sha256sum "$ROOT/psp/EBOOT.PBP"   | cut -d' ' -f1)
 PRX_SHA=$(sha256sum "$ROOT/psp/me/gbadhoc_me.prx" 2>/dev/null | cut -d' ' -f1)
 HOME_PRX_SHA=$(sha256sum "$ROOT/psp/home/gbadhoc_home.prx" 2>/dev/null | cut -d' ' -f1)
 [ -n "$HOME_PRX_SHA" ] || die "psp/home/gbadhoc_home.prx missing (Menu = HOME module)"
+# ONLINE=1: the on-demand online-play module (psp/online/, docs/ONLINE-TUNNEL.md 8)
+ONLINE_PRX_SHA=""
+if [ "$ONLINE" = 1 ]; then
+  ONLINE_PRX_SHA=$(sha256sum "$ROOT/psp/online/gbadhoc_online.prx" 2>/dev/null | cut -d' ' -f1)
+  [ -n "$ONLINE_PRX_SHA" ] || die "psp/online/gbadhoc_online.prx missing (ONLINE=1 online-play module)"
+fi
 IMG_ID=$(docker image inspect --format '{{index .RepoDigests 0}}' "$DOCKER_IMAGE" 2>/dev/null \
          || docker image inspect --format '{{.Id}}' "$DOCKER_IMAGE" 2>/dev/null)
 COMMIT="$BUILD_COMMIT"
@@ -622,7 +628,8 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"elfMd5\": \"$ELF_MD5\","
   echo "  \"memory\": { \"imageBytes\": $IMAGE_BYTES, \"bootHeapPsp1000\": $BOOT_HEAP_1000, \"bootHeapPspGo\": $BOOT_HEAP_GO },"
   echo "  \"mePrxSha256\": \"$PRX_SHA\","
-  echo "  \"homePrxSha256\": \"$HOME_PRX_SHA\""
+  echo "  \"homePrxSha256\": \"$HOME_PRX_SHA\","
+  echo "  \"onlinePrxSha256\": \"$ONLINE_PRX_SHA\""
   echo '}'
 } > "$MANIFEST"
 
@@ -632,6 +639,7 @@ if [ -n "$OUTDIR" ]; then
   cp "$ROOT/psp/EBOOT.PBP" "$OUTDIR/" 2>/dev/null
   cp "$ROOT/psp/me/gbadhoc_me.prx" "$OUTDIR/" 2>/dev/null
   cp "$ROOT/psp/home/gbadhoc_home.prx" "$OUTDIR/" 2>/dev/null
+  [ "$ONLINE" = 1 ] && cp "$ROOT/psp/online/gbadhoc_online.prx" "$OUTDIR/" 2>/dev/null
   note "staged to $OUTDIR"
 fi
 

@@ -111,6 +111,15 @@ int mgnet_config_name(int index, char *out, unsigned out_sz)
 
 /* ---- bring-up ----------------------------------------------------------- */
 
+#ifdef GPSP_PERF_RIG
+/* main_psp.c (harness/lab builds only): a bounded network wait counts as the
+ * main loop turning, for the harness stall exit.  Nothing in a release. */
+void gpsp_net_wait_beat(void);
+#define NET_WAIT_BEAT() gpsp_net_wait_beat()
+#else
+#define NET_WAIT_BEAT() ((void)0)
+#endif
+
 static int fail(int rc, const char *where, unsigned sce)
 {
    N.last_sce = sce;
@@ -209,6 +218,7 @@ int mgnet_wifi_up(int conf, unsigned timeout_us)
       if ((unsigned)sceKernelGetSystemTimeLow() - t0 > timeout_us)
          return fail(MGNET_ERR_CONNECT_TIMEOUT, "apctl_wait",
                      (unsigned)state);
+      NET_WAIT_BEAT();
       sceKernelDelayThread(50000);
    }
    N.progress = ST_ASSOCIATED;
