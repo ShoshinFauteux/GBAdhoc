@@ -1366,3 +1366,20 @@ first shot, `sceIoMkdir`), and the row reads *GBAdhoc/Screenshots*.
 `PICTURE/GBAdhoc` stays the default; the key and its words are unchanged,
 so no `config.ini` changes. Harness frame dumps (`dump_frame_bmp`) still go
 to `log/`: rigs read them by name there.
+
+### 15.4 The build, in Settings
+
+Line 2 under the SETTINGS title (where other pages put the game's name) now
+reads the build, read-only: **GBAdhoc 4.6.0-beta.4 (abc1234)**, in game and
+from the game list. It comes from `VERSION.txt` beside the EBOOT, which
+`tools/make_release.sh` writes into every release with the version and the
+commit (`-dirty` when it was), so the EBOOT carries no stamp of its own and
+its layout does not move from commit to commit. Read once, on the first
+Settings frame (one `sceIo` read into a stack buffer; 64 B of `.bss` for the
+line). No file -- a build copied straight from `tools/build.sh`, and every
+harness run -- reads **development build**, which is what the model draws.
+Not a row: no cursor stop, so no walker's count moves.
+
+Host: `tools/tests/test_build_line.py` parses the file `make_release.sh`'s
+own heredoc writes, CRLF, reordered and missing keys, and the read-once
+rule; 4 mutants, each failing.

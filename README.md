@@ -786,6 +786,9 @@ confirm and ○ to go back.
 | | Button mapping | every button and shortcut; the menu button |
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
 
+<kbd>NEW</kbd> Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
+4.6.0-beta.4 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
+
 The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the
 running one. A few more keys live only in `config.ini`: `quick_return = 0` brings back

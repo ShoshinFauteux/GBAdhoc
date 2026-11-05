@@ -2536,6 +2536,73 @@ static void set_item(int y, int sel, int enabled, const char *label,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
 }
 
+/* THE BUILD, read-only, under the SETTINGS title (issue #31): "GBAdhoc
+ * 4.6.0-beta.4 (abc1234)".  From VERSION.txt beside the EBOOT, which
+ * tools/make_release.sh writes into every release (version and commit), so
+ * the EBOOT itself carries no stamp and its layout does not move with the
+ * commit.  Read once, on the first Settings frame: one small sceIo read, no
+ * heap.  No file (a build run straight from tools/build.sh): "development
+ * build". */
+static char g_build_line[64];
+
+static void build_line_value(const char *buf, const char *key, char *out,
+                             size_t cap)
+{
+   const char *p = buf;
+   size_t kl = strlen(key), n = 0;
+   out[0] = '\0';
+   while (*p)
+   {
+      if (!strncmp(p, key, kl) && (p[kl] == ' ' || p[kl] == ':'))
+      {
+         p += kl;
+         while (*p == ' ' || *p == ':' || *p == '\t')
+            p++;
+         while (p[n] && p[n] != '\r' && p[n] != '\n' && n + 1 < cap)
+         {
+            out[n] = p[n];
+            n++;
+         }
+         while (n > 0 && out[n - 1] == ' ')
+            n--;
+         out[n] = '\0';
+         return;
+      }
+      while (*p && *p != '\n')
+         p++;
+      if (*p)
+         p++;
+   }
+}
+
+static const char *build_line(void)
+{
+   extern char g_dir_base[];
+   char path[176], buf[256], ver[24], com[16];
+   SceUID fd;
+   int n;
+   if (g_build_line[0])
+      return g_build_line;
+   snprintf(g_build_line, sizeof(g_build_line), "development build");
+   snprintf(path, sizeof(path), "%s/VERSION.txt", g_dir_base);
+   fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+   if (fd < 0)
+      return g_build_line;
+   n = sceIoRead(fd, buf, (SceSize)sizeof(buf) - 1);
+   sceIoClose(fd);
+   if (n <= 0)
+      return g_build_line;
+   buf[n] = '\0';
+   build_line_value(buf, "version", ver, sizeof(ver));
+   build_line_value(buf, "commit", com, sizeof(com));
+   if (ver[0] && com[0])
+      snprintf(g_build_line, sizeof(g_build_line), "GBAdhoc %s (%s)", ver,
+               com);
+   else if (ver[0])
+      snprintf(g_build_line, sizeof(g_build_line), "GBAdhoc %s", ver);
+   return g_build_line;
+}
+
 static ui_action screen_settings(unsigned edges)
 {
    int i;
@@ -2577,7 +2644,7 @@ static ui_action screen_settings(unsigned edges)
    /* Scrim 200 over the frame (the browser's page, from START there): a
     * long list needs more hold-back than the menu's 170. */
    ov_backdrop(OV_SCRIM_DENSE);
-   ov_head(NULL, "SETTINGS");
+   ov_head(build_line(), "SETTINGS");   /* the build on line 2, read-only */
    set_scroll_follow();
    vid_clip(0, SET_VIEW_TOP - 2, VID_SCR_W, SET_VIEW_BOT - SET_VIEW_TOP + 4);
    for (i = 0; i < SET_COUNT; i++)

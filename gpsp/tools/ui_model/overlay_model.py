@@ -257,7 +257,8 @@ def set_scroll(rows, cur, scroll=0):
 
 def settings(s, frame, rows, cur, scroll=0, console_tag='GBA'):
     backdrop(s, 200, frame)
-    head(s, None, 'SETTINGS')      # the room is in the cluster, once
+    # line 2: the build (ui_psp.c build_line); no VERSION.txt under the harness
+    head(s, 'development build', 'SETTINGS')   # the room is in the cluster
     scroll = set_scroll(rows, cur, scroll)
     s.clip(0, TOP - 2, 480, BOT - TOP + 4)
     for i, (hdr, lab, val, en) in enumerate(rows):

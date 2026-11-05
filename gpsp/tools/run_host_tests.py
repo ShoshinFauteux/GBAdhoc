@@ -690,6 +690,8 @@ def suites(env: Env, baseline: Path | None):
           # The quick save's optional overwrite question (quick_save_ask,
           # off by default): page, call site and config key, with mutants.
           "python3 tools/tests/test_quick_save_ask.py && "
+          # Settings' build line from VERSION.txt (issue #31), with mutants.
+          "python3 tools/tests/test_build_line.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
