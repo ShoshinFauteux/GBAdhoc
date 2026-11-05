@@ -88,6 +88,21 @@ static void mem_evt(const char *at, unsigned ms)
    FE_EVT_ONLY(at); FE_EVT_ONLY(ms);
 }
 
+/* module_start/module_stop thread stack.  The firmware default is 256 KiB, but
+ * with Wi-Fi up on hardware only ~140 KiB is free (largest block ~80 KiB): a
+ * NULL option failed with 0x80020190 NO_MEMORY on the 3000 (PPSSPP had room).
+ * Both entry points only check the ABI / call down(), on a small stack. */
+static SceKernelSMOption *sm_opt(void)
+{
+   static SceKernelSMOption so;
+   memset(&so, 0, sizeof(so));
+   so.size = sizeof(so);
+   so.mpidstack = 2;                  /* user partition */
+   so.stacksize = 16 * 1024;
+   so.priority = 0x20;
+   return &so;
+}
+
 static int prx_load(void)
 {
    char path[192];
@@ -113,7 +128,7 @@ static int prx_load(void)
    link.host = &g_host;
    link.api = &O.api;
    arg[0] = &link;
-   rc = sceKernelStartModule(O.mod, sizeof(arg), arg, &st, NULL);
+   rc = sceKernelStartModule(O.mod, sizeof(arg), arg, &st, sm_opt());
    if (rc < 0 || st < 0 || O.api.magic != OL_MAGIC_API ||
        O.api.version != OL_VERSION || O.api.size != sizeof(online_api))
    {
@@ -121,7 +136,7 @@ static int prx_load(void)
       fe_evt("online_prx at=start_failed rc=0x%08X st=%d api=%08X/%u", (unsigned)rc, st,
              (unsigned)O.api.magic, (unsigned)O.api.version);
       if (rc >= 0 && st >= 0)
-         sceKernelStopModule(O.mod, 0, NULL, &st, NULL);
+         sceKernelStopModule(O.mod, 0, NULL, &st, sm_opt());
       sceKernelUnloadModule(O.mod);
       O.mod = -1;
       return -1;
@@ -138,7 +153,7 @@ static void prx_unload(void)
    if (O.mod < 0)
       return;
    if (O.loaded)
-      sceKernelStopModule(O.mod, 0, NULL, &st, NULL);   /* module_stop: down() */
+      sceKernelStopModule(O.mod, 0, NULL, &st, sm_opt());   /* module_stop: down() */
    sceKernelUnloadModule(O.mod);
    O.mod = -1;
    O.loaded = 0;
