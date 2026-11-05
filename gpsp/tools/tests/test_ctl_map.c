@@ -1796,6 +1796,117 @@ static void test_turbo_rewind(void)
 #endif
 }
 
+/* VIDEO PRESET: AUTO vs NONE (GitHub #31, docs/CONTROL-REMAP.md section 14).
+ * In a REWIND build an unbound Video preset is AUTO -- the rewind button
+ * cycles it while rewind is off (main_psp.c, ctl_video_auto) -- unless the
+ * player chose none, which CONFIG.INI spells `bind_video = OFF`.  `NONE`
+ * stays AUTO: every older file says it whether or not the player meant it.
+ * An older build cannot parse OFF and returns the key to its default. */
+static void test_video_none(void)
+{
+   ctl_map m;
+   unsigned mask = 0x1234;
+   char *t;
+   int s;
+
+   /* what an older build does with OFF: its parser (ctl_parse, unchanged)
+    * refuses it, so ctl_load_ini there reports config_bind_invalid and
+    * keeps the default -- never a garbage binding */
+   CHECK(ctl_parse(CTL_VIDEO_OFF_WORD, &mask) == -1 && mask == 0x1234);
+   CHECK(ctl_parse("NONE", &mask) == 0 && mask == 0);
+#ifdef REWIND
+   /* DEFAULT, never touched: AUTO, and nothing is written */
+   ctl_defaults(&m);
+   CHECK(m.bind[CTL_SC_VIDEO] == 0 && !m.video_off && ctl_video_auto(&m));
+   write_file("scale = 1\n");
+   CHECK(ctl_load_ini(&m, ini) == 0 && ctl_video_auto(&m));
+   CHECK(ctl_save_ini(&m, ini) == 0 && strcmp(read_file(), "scale = 1\n") == 0);
+   /* AN OLD FILE's NONE (written whether or not the player chose it):
+    * still AUTO, and it is written back as NONE, byte for byte */
+   write_file("bind_video = NONE\n");
+   CHECK(ctl_load_ini(&m, ini) == 0 && ctl_video_auto(&m) &&
+         ctl_is_default(&m));
+   CHECK(ctl_save_ini(&m, ini) == 0 &&
+         strcmp(read_file(), "bind_video = NONE\n") == 0);
+   /* THE PLAYER'S NONE (the Controls page's Square): off for good */
+   ctl_defaults(&m);
+   CHECK(ctl_unbind(&m, CTL_SC_VIDEO) == CTL_OK);
+   CHECK(m.bind[CTL_SC_VIDEO] == 0 && m.video_off && !ctl_video_auto(&m) &&
+         !ctl_is_default(&m));
+   /* it changes nothing that fires: the rewind button is still rewind's */
+   CHECK(ctl_shortcuts(&m, TRI, TRI) ==
+         (CTL_FIRE_REWIND | CTL_FIRE_REWIND_PRESS));
+   remove(ini);
+   CHECK(ctl_save_ini(&m, ini) == 0 &&
+         strcmp(read_file(), "bind_video = OFF\n") == 0);
+   CHECK(ctl_load_ini(&m, ini) == 0 && m.video_off && !ctl_video_auto(&m) &&
+         m.keep[CTL_SC_VIDEO] && m.bind[CTL_SC_VIDEO] == 0);
+   write_file("bind_video =  off \r\n");     /* any case, blanks allowed */
+   CHECK(ctl_load_ini(&m, ini) == 0 && m.video_off);
+   /* ...and through the real pcfg_load/pcfg_save, from a dirty struct */
+   write_file("scale = 1\nbind_video = OFF\n");
+   memset(&g_pcfg, 0x5A, sizeof(g_pcfg));
+   pcfg_load(ini);
+   CHECK(g_pcfg.controls.video_off == 1 &&
+         !ctl_video_auto(&g_pcfg.controls) &&
+         g_pcfg.controls.bind[CTL_SC_REWIND] == TRI);
+   pcfg_save();
+   t = read_file();
+   CHECK(strstr(t, "bind_video = OFF\n") != NULL);
+   write_file("scale = 1\nbind_video = NONE\n");
+   memset(&g_pcfg, 0x5A, sizeof(g_pcfg));
+   pcfg_load(ini);
+   CHECK(g_pcfg.controls.video_off == 0 && ctl_video_auto(&g_pcfg.controls));
+   /* back to AUTO: the default (Triangle on the page), a reset */
+   ctl_unbind(&m, CTL_SC_VIDEO);
+   CHECK(ctl_assign(&m, CTL_SC_VIDEO, ctl_default(CTL_SC_VIDEO), &s) ==
+         CTL_OK && ctl_video_auto(&m));
+   ctl_unbind(&m, CTL_SC_VIDEO);
+   ctl_reset(&m);
+   CHECK(ctl_video_auto(&m) && ctl_is_default(&m));
+   remove(ini);
+   CHECK(ctl_save_ini(&m, ini) == 0 &&
+         strcmp(read_file(), "bind_video = NONE\n") == 0);  /* keep: AUTO */
+   /* ANY EXPLICIT BINDING: unchanged, and it clears the none */
+   ctl_unbind(&m, CTL_SC_VIDEO);
+   CHECK(ctl_assign(&m, CTL_SC_VIDEO, L | R, &s) == CTL_OK &&
+         !m.video_off && !ctl_video_auto(&m));
+   CHECK(ctl_shortcuts(&m, L | R, R) & CTL_FIRE_VIDEO);
+   /* bound, then stolen: blank again, and that blank is AUTO (as today) */
+   CHECK(ctl_assign(&m, CTL_SC_FF, L | R, &s) == CTL_OK &&
+         s == CTL_SC_VIDEO && ctl_video_auto(&m));
+   /* a file that says OFF and also binds it elsewhere cannot exist, but a
+    * corrupt struct is repaired: bound wins, the flag goes */
+   ctl_defaults(&m);
+   m.bind[CTL_SC_VIDEO] = SQ;
+   m.bind[CTL_SC_FF] = 0;
+   m.video_off = 1;
+   CHECK(ctl_repair(&m, NULL, NULL) == 1 && !m.video_off);
+   m.bind[CTL_SC_VIDEO] = 0;
+   m.video_off = 7;
+   CHECK(ctl_repair(&m, NULL, NULL) == 1 && !m.video_off);
+   /* other rows' none is what it always was */
+   ctl_defaults(&m);
+   CHECK(ctl_unbind(&m, CTL_SC_FF) == CTL_OK && m.bind[CTL_SC_FF] == 0 &&
+         !m.video_off && ctl_video_auto(&m));
+#else
+   /* without rewind there is no AUTO: Square is plain none, and a file
+    * from a rewind build that says OFF reads as none too */
+   ctl_defaults(&m);
+   CHECK(m.bind[CTL_SC_VIDEO] == TRI && !ctl_video_auto(&m));
+   CHECK(ctl_unbind(&m, CTL_SC_VIDEO) == CTL_OK &&
+         m.bind[CTL_SC_VIDEO] == 0 && !m.video_off && !ctl_video_auto(&m));
+   write_file("bind_video = OFF\n");
+   CHECK(ctl_load_ini(&m, ini) == 0 && m.bind[CTL_SC_VIDEO] == 0 &&
+         !m.video_off);
+   CHECK(ctl_save_ini(&m, ini) == 0 &&
+         strcmp(read_file(), "bind_video = NONE\n") == 0);
+   (void)t;
+   (void)s;
+#endif
+   remove(ini);
+}
+
 #ifdef REWIND
 /* REWIND LENGTH (config_psp.h, docs/REWIND.md 26): CONFIG.INI `rewind_mb`
  * stays an integer of megabytes; the player's setting is one of three. */
@@ -1888,6 +1999,7 @@ int main(void)
     * length setting, and nothing else (see test_turbo_rewind). */
    test_turbo_rewind();
    test_rewind_length();
+   test_video_none();
    printf("test_ctl_map: OK (%d checks, REWIND table + turbo)\n", checks);
    return 0;
 #endif
@@ -1903,6 +2015,7 @@ int main(void)
    test_remapped();
    test_turbo();
    test_turbo_rewind();
+   test_video_none();
    test_defaults_are_30();
    printf("test_ctl_map: OK (%d checks%s)\n", checks,
 #ifdef GPSP_CATCH_SELFTEST

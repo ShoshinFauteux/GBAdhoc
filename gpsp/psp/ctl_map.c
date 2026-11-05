@@ -145,6 +145,7 @@ static void defaults_in(ctl_map *m, int legacy_swap)
    }
    m->menu_home = CTL_MENU_START_SELECT;
    m->menu_keep = 0;
+   m->video_off = 0;
    for (a = 0; a < CTL_TURBO_N; a++)
    {
       m->turbo_half[a] = CTL_TURBO_HALF_DEF;
@@ -165,6 +166,7 @@ void ctl_reset(ctl_map *m)
    for (a = 0; a < CTL_ACTIONS; a++)
       m->bind[a] = (uint16_t)ctl_default(a);
    m->menu_home = CTL_MENU_START_SELECT;
+   m->video_off = 0;
    for (a = 0; a < CTL_TURBO_N; a++)
    {
       m->turbo_half[a] = CTL_TURBO_HALF_DEF;
@@ -181,7 +183,7 @@ int ctl_is_default(const ctl_map *m)
    for (a = 0; a < CTL_TURBO_N; a++)
       if (m->turbo_half[a] != CTL_TURBO_HALF_DEF || m->turbo_toggle[a])
          return 0;
-   return m->menu_home == CTL_MENU_START_SELECT;
+   return m->menu_home == CTL_MENU_START_SELECT && !m->video_off;
 }
 
 int ctl_popcount(unsigned mask)
@@ -240,6 +242,20 @@ static int name_eq(const char *s, size_t n, const char *name)
       if (!name[i] || up((unsigned char)s[i]) != name[i])
          return 0;
    return name[n] == '\0';
+}
+
+/* Case-insensitive compare of `s`, surrounding blanks ignored, against an
+ * upper-case word. */
+static int ctl_word_eq(const char *s, const char *word)
+{
+   const char *e;
+   while (*s == ' ' || *s == '\t')
+      s++;
+   e = s + strlen(s);
+   while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' ||
+                    e[-1] == '\n'))
+      e--;
+   return name_eq(s, (size_t)(e - s), word);
 }
 
 static unsigned button_bit(const char *s, size_t n)
@@ -468,7 +484,23 @@ int ctl_assign(ctl_map *m, int a, unsigned mask, int *stolen)
          *stolen = j;
    }
    m->bind[a] = (uint16_t)mask;
+   /* Any assignment to Video preset -- a binding, its default, a blank --
+    * is not the player's "none": that is ctl_unbind().  (A Video preset
+    * whose input is stolen was bound, so video_off was already 0: it goes
+    * blank as AUTO.) */
+   if (a == CTL_SC_VIDEO)
+      m->video_off = 0;
    return CTL_OK;
+}
+
+int ctl_unbind(ctl_map *m, int a)
+{
+   int err = ctl_assign(m, a, 0, NULL);
+#ifdef REWIND
+   if (err == CTL_OK && a == CTL_SC_VIDEO)
+      m->video_off = 1;
+#endif
+   return err;
 }
 
 static int repair_in(ctl_map *m, int legacy_swap,
@@ -538,6 +570,16 @@ static int repair_in(ctl_map *m, int legacy_swap,
                note(user, b, w);
          }
    }
+   /* Video preset's explicit none only means anything while it is unbound
+    * (ctl_map.h); a bound row, or anything but 0/1, is AUTO. */
+   if (m->video_off && (m->video_off > 1 || m->bind[CTL_SC_VIDEO]))
+   {
+      m->video_off = 0;
+      changed++;
+   }
+#ifndef REWIND
+   m->video_off = 0;
+#endif
    return changed;
 }
 
@@ -589,6 +631,17 @@ int ctl_load_ini(ctl_map *m, const char *path)
       m->keep[a] = 1;      /* in the file: always rewritten from now on */
       if (strlen(v) >= sizeof(v) - 1)
          err = -1;         /* fe_ini_get truncated it: not a value we know */
+      else if (a == CTL_SC_VIDEO && ctl_parse(v, &mask) != 0 &&
+               ctl_word_eq(v, CTL_VIDEO_OFF_WORD))
+      {
+         /* The player's explicit none (ctl_map.video_off).  Plain NONE is
+          * AUTO: files from before this word say it either way. */
+         m->bind[a] = 0;
+#ifdef REWIND
+         m->video_off = 1;
+#endif
+         continue;
+      }
       else if (ctl_parse(v, &mask) != 0)
          err = -1;
       else
@@ -681,9 +734,12 @@ int ctl_save_ini(ctl_map *m, const char *path)
       char v[64];
       if (!ctl_available(a))
          continue;
-      if (!m->keep[a] && m->bind[a] == ctl_default(a))
+      if (a == CTL_SC_VIDEO && m->video_off && !m->bind[a])
+         snprintf(v, sizeof(v), "%s", CTL_VIDEO_OFF_WORD);
+      else if (!m->keep[a] && m->bind[a] == ctl_default(a))
          continue;
-      ctl_format(m->bind[a], v, sizeof(v), NULL, NULL);
+      else
+         ctl_format(m->bind[a], v, sizeof(v), NULL, NULL);
       if (fe_ini_set(path, INFO[a].key, v) != 0)
          rc = -1;
       else

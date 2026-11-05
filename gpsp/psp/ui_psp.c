@@ -2968,8 +2968,18 @@ static void ctl_note_result(int a, unsigned mask, int err, int stolen)
                ctl_error_text(err));
    else if (stolen >= 0)
       snprintf(g_ctl_note, sizeof(g_ctl_note),
-               "%s was %s  -  %s is now blank (disabled)", v,
+               ctl_video_auto(&g_pcfg.controls) && stolen == CTL_SC_VIDEO
+                  ? "%s was %s  -  %s is now auto"
+                  : "%s was %s  -  %s is now blank (disabled)", v,
                ctl_info(stolen)->label, ctl_info(stolen)->label);
+#ifdef REWIND
+   /* Video preset's two blanks (GitHub #31) say which one it is. */
+   else if (a == CTL_SC_VIDEO && !mask)
+      snprintf(g_ctl_note, sizeof(g_ctl_note), "%s",
+               ctl_video_auto(&g_pcfg.controls)
+                  ? "Auto: the rewind button cycles it when rewind is off"
+                  : "None: no button cycles the video preset");
+#endif
    else
       g_ctl_note[0] = '\0';
 }
@@ -3009,9 +3019,14 @@ static void ctl_warn_draw(void)
    vid_text_center(y + 16 + CTL_WARN_N * lh + 10, VID_GLYPH_X " OK", C_SEL);
 }
 
+/* `via` "none" is the player's Square: ctl_unbind(), which for Video preset
+ * is its explicit none rather than AUTO (ctl_map.h). */
 static void ctl_apply(int a, unsigned mask, const char *via)
 {
-   int stolen = -1, err = ctl_assign(&g_pcfg.controls, a, mask, &stolen);
+   int stolen = -1;
+   int err = (!mask && strcmp(via, "none") == 0)
+                ? ctl_unbind(&g_pcfg.controls, a)
+                : ctl_assign(&g_pcfg.controls, a, mask, &stolen);
    ctl_note_result(a, mask, err, stolen);
    if (err == CTL_OK)
       g_settings_dirty = 1;
@@ -3475,6 +3490,18 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
                }
                combo_right(xr, y, parts, n, CHIP_CAPTURE, ctl_pulse());
             }
+#ifdef REWIND
+            else if (ri->act == CTL_SC_VIDEO &&
+                     ctl_video_auto(&g_pcfg.controls))
+            {
+               /* AUTO (GitHub #31): the rewind button, as a locked chip --
+                * it is Rewind's binding, lent to this row while rewind is
+                * off.  Square makes it a true none, which reads "none". */
+               n = chord_parts(g_pcfg.controls.bind[CTL_SC_REWIND], parts);
+               w = combo_right(xr, y, parts, n, CHIP_LOCKED, 255);
+               ov_text_right(xr - w - 8, y, "auto", C_DIM);
+            }
+#endif
             else
             {
                n = chord_parts(g_pcfg.controls.bind[ri->act], parts);
