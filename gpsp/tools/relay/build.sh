@@ -11,7 +11,8 @@ CF=(-std=gnu11 -O1 -g -Wall -Wextra -I"$ND")
 SAN=(-fsanitize=address,undefined)
 gcc "${CF[@]}" "${SAN[@]}" -o "$OUT/test_relay_nat" "$HERE/test_relay_nat.c" \
     "$ND/relay_core.c" "$ND/transport_relay.c" "$ND/netdrv.c"
-gcc "${CF[@]}" -o "$OUT/gbadhoc-relay" "$HERE/relay_server.c" "$ND/relay_core.c"
+gcc "${CF[@]}" "${SAN[@]}" -o "$OUT/fuzz_relay" "$HERE/fuzz_relay.c" "$ND/relay_core.c" "$ND/transport_relay.c"
+gcc "${CF[@]}" -O2 -o "$OUT/gbadhoc-relay" "$HERE/relay_server.c" "$ND/relay_core.c"
 gcc "${CF[@]}" -o "$OUT/relay_client" "$HERE/relay_client.c" \
     "$ND/transport_relay.c" "$ND/netdrv.c"
-echo "built $OUT/{test_relay_nat,gbadhoc-relay,relay_client}"
+echo "built $OUT/{test_relay_nat,fuzz_relay,gbadhoc-relay,relay_client}"

@@ -48,6 +48,7 @@ typedef struct rl_client_cfg
    uint32_t priv_ip_be;            /* this console's LAN address and port */
    uint16_t priv_port;             /*   (the same-LAN punch candidate) */
    int direct;                     /* 1 = try the direct path; 0 = relay only */
+   int mode;                       /* host: the room's link mode (RL_MODE_*) */
    uint64_t (*now_us)(void);
    void (*log)(void *user, const char *line);   /* optional, EVT lines */
    void *log_user;
@@ -74,6 +75,8 @@ void relay_transport_destroy(relay_transport *t);   /* sends BYE */
 int relay_transport_poll(relay_transport *t);
 int relay_transport_error(const relay_transport *t, const char **text);
 const char *relay_transport_code(const relay_transport *t);
+/* The room's link mode as the server tells it (RL_MODE_*; valid IN_ROOM). */
+int relay_transport_mode(const relay_transport *t);
 int relay_transport_slot(const relay_transport *t);
 
 void relay_transport_iface(relay_transport *t, nd_transport *out);

@@ -218,11 +218,12 @@ endif
 # RFU_SCHED=1: scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
 # docs/RFU-COUPLING.md).  Off by default.  The core must be built with the
 # same value (root make; tools/build.sh passes both).
-# ONLINE=1: EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): the link over a
-# GBR1 relay / hole-punched direct path on infrastructure Wi-Fi.  Off by
-# default; a release never sets it.  Active only when a key names a relay
-# (online_relay, psp/online_psp.h).
-ONLINE ?= 0
+# ONLINE (default 1; ONLINE=0 compiles out every line of it): EXPERIMENTAL
+# online play (docs/ONLINE-TUNNEL.md), the link over the GBR1 relay /
+# hole-punched direct path on infrastructure Wi-Fi.  Compiled in, OFF for the
+# player until Settings > Online play is turned on; costs nothing per frame.
+# Frontend only.
+ONLINE ?= 1
 ifeq ($(ONLINE),1)
 OBJS += online_psp.o transport_relay.o
 CFLAGS += -DGBADHOC_ONLINE

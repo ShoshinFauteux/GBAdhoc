@@ -39,6 +39,7 @@
 #define RL_BUILD_LEN 16
 #define RL_MAX_DGRAM 600       /* RL_HDR + the largest netdrv frame, rounded */
 #define RL_DEFAULT_PORT 27420  /* the server also listens on port + 1 (PROBE) */
+#define RL_COOKIE_LEN 8
 
 enum
 {
@@ -57,12 +58,20 @@ enum
                                          priv_port[2] nonce[8] start_ms[2] punch[1] */
    RL_T_PUNCH = 13,      /* c<->c body: counter[4] */
    RL_T_PUNCH_ACK = 14,  /* c<->c body: counter[4] (echoed) */
-   RL_T_PATH = 15        /* c->s  body: slot[1] path[1] (RL_PATH_*); the server
+   RL_T_PATH = 15,       /* c->s  body: slot[1] path[1] (RL_PATH_*); the server
                                      tells that slot with PEER */
+   RL_T_COOKIE = 16      /* s->c  body: cookie[8].  The answer to a CREATE/JOIN
+                                     without a valid cookie: resend it with this
+                                     one (after the nat byte).  Proves the source
+                                     address is real before any room state is
+                                     spent on it (spoofed-source floods). */
 };
 
 enum { RL_PEER_LEFT = 0, RL_PEER_IN = 1, RL_PEER_RELAY = 2, RL_PEER_DIRECT = 3 };
 enum { RL_PATH_RELAY = 0, RL_PATH_DIRECT = 1 };
+/* The room's link mode (CREATE body after the cookie; CREATED/JOINED after
+ * the slot): the host picks it, a joiner follows. */
+enum { RL_MODE_ANY = 0, RL_MODE_CABLE = 1, RL_MODE_ADAPTER = 2 };
 /* nat byte in CREATE/JOIN, from the client's two PROBEs */
 enum { RL_NAT_UNKNOWN = 0, RL_NAT_EIM = 1, RL_NAT_SYMMETRIC = 2 };
 enum

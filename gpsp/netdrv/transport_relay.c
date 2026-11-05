@@ -67,6 +67,8 @@ struct relay_transport
    uint32_t pub_ip;
    uint8_t nat;
    uint64_t next_us;
+   uint64_t cookie;              /* the server's COOKIE, echoed in CREATE/JOIN */
+   int room_mode;                /* RL_MODE_* from CREATED/JOINED */
    /* room */
    int slot;
    uint64_t token;
@@ -141,6 +143,8 @@ static void send_enter(relay_transport *t)
    rl_put_ip(p + RL_BUILD_LEN + RL_CODE_LEN, t->cfg.priv_ip_be);
    rl_put16(p + RL_BUILD_LEN + RL_CODE_LEN + 4, t->cfg.priv_port);
    p[RL_BUILD_LEN + RL_CODE_LEN + 6] = t->nat;
+   rl_put64(p + RL_BUILD_LEN + RL_CODE_LEN + 7, t->cookie);
+   p[RL_BUILD_LEN + RL_CODE_LEN + 15] = (uint8_t)t->cfg.mode;
    to_server(t, 0, b, sizeof(b));
 }
 
@@ -314,6 +318,7 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          memcpy(t->code, body, RL_CODE_LEN);
          t->code[RL_CODE_LEN] = 0;
          t->slot = body[RL_CODE_LEN];
+         t->room_mode = n >= RL_CODE_LEN + 2 ? body[RL_CODE_LEN + 1] : RL_MODE_ANY;
          t->token = rl_get64(b + 8);
          t->state = RL_ST_IN_ROOM;
          t->next_keep_us = tn + KEEP_EVERY_US;
@@ -393,6 +398,14 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          ipfmt(q->priv_ip, q->priv_port, a2);
          lg(t, "relay_candidates peer=%d public=%s private=%s punch=%d", j,
             a1, a2, q->punch);
+      }
+      break;
+   case RL_T_COOKIE:
+      if (n >= RL_COOKIE_LEN && t->state == RL_ST_ENTERING)
+      {
+         t->cookie = rl_get64(body);
+         send_enter(t);                 /* answer the challenge at once */
+         t->next_us = tn + ENTER_EVERY_US;
       }
       break;
    case RL_T_KEEP:
@@ -620,6 +633,7 @@ int relay_transport_error(const relay_transport *t, const char **text)
 }
 
 const char *relay_transport_code(const relay_transport *t) { return t->code; }
+int relay_transport_mode(const relay_transport *t) { return t->room_mode; }
 int relay_transport_slot(const relay_transport *t) { return t->slot; }
 
 void relay_transport_iface(relay_transport *t, nd_transport *out)

@@ -150,6 +150,12 @@ int ui_host_mode(void);
 int ui_link_mode_for(const char *gba_code, const char *key);
 /* The mode the last UI_ACT_NET_HOST chose: 1 = Link Cable, 0 = adapter. */
 int ui_host_cable(void);
+#ifdef GBADHOC_ONLINE
+/* The last UI_ACT_NET_HOST / _JOIN came from Wireless > Online: 1, with the
+ * role, the code (the join's; a host's is the server's), the host's link
+ * mode for a both-ways game, and the Wi-Fi profile.  Cleared by the call. */
+int ui_online_take(int *is_host, char code[5], int *cable, int *wifi);
+#endif
 
 /* The session as the menus draw it.  Set by main_psp.c before ui_frame. */
 enum { UI_LINK_OFF = 0, UI_LINK_HOSTING, UI_LINK_LINKED };

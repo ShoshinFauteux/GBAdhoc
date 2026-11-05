@@ -24,6 +24,7 @@ typedef struct
    uint64_t last_ms, repin_ms;
    uint8_t nat;
    uint32_t bucket;          /* packets this second */
+   uint32_t bucket_bytes;    /* bytes this second */
    uint64_t bucket_s;
 } rl_slot;
 
@@ -32,6 +33,7 @@ typedef struct
    int used;
    char code[RL_CODE_LEN];
    uint8_t build[RL_BUILD_LEN];
+   uint8_t mode;             /* the host's link mode (RL_MODE_*), told to joiners */
    rl_slot s[RL_SLOTS];
    uint64_t created_ms, last_ms;
    int joined_ever;
@@ -46,6 +48,7 @@ struct rl_core
    rl_room *rooms;
    unsigned nrooms;
    rl_ipent ipt[IPT_N];
+   uint64_t secret[2];       /* cookie key, random per process */
    rl_core_stats st;
 };
 
@@ -92,6 +95,10 @@ rl_core *relay_core_create(const rl_core_cfg *cfg)
    if (!c->cfg.pkt_per_s) c->cfg.pkt_per_s = 300;
    if (!c->cfg.joins_per_min) c->cfg.joins_per_min = 30;
    if (!c->cfg.punch_start_ms) c->cfg.punch_start_ms = 150;
+   if (!c->cfg.rooms_per_ip) c->cfg.rooms_per_ip = 3;
+   if (!c->cfg.bytes_per_s) c->cfg.bytes_per_s = 65536;
+   c->secret[0] = c->cfg.random64(c->cfg.user);
+   c->secret[1] = c->cfg.random64(c->cfg.user);
    c->nrooms = c->cfg.max_rooms;
    c->rooms = (rl_room *)calloc(c->nrooms, sizeof(rl_room));
    if (!c->rooms)
@@ -162,6 +169,7 @@ static void send_candidates(rl_core *c, rl_room *r, int to, int about,
 static int ip_allow(rl_core *c, uint32_t ip, uint64_t now)
 {
    unsigned h = (ip ^ (ip >> 13)) % IPT_N, i;
+   rl_ipent *old = NULL;
    for (i = 0; i < IPT_N; i++)
    {
       rl_ipent *e = &c->ipt[(h + i) % IPT_N];
@@ -175,8 +183,15 @@ static int ip_allow(rl_core *c, uint32_t ip, uint64_t now)
          }
          return ++e->n <= c->cfg.joins_per_min;
       }
+      if (!old || e->win_ms < old->win_ms)
+         old = e;
    }
-   return 0;                       /* table full of live entries: refuse */
+   /* full of live entries: recycle the stalest (sources are cookie-verified,
+    * so filling the table takes real addresses) */
+   old->ip = ip;
+   old->n = 1;
+   old->win_ms = now;
+   return 1;
 }
 
 static int code_ok(const uint8_t *p)
@@ -225,14 +240,62 @@ static void slot_leave(rl_core *c, rl_room *r, int k, const char *why)
 
 /* CREATE / JOIN body: build[16] code[6] priv_ip[4] priv_port[2] nat[1] */
 #define CJ_BODY (RL_BUILD_LEN + RL_CODE_LEN + 4 + 2 + 1)
+#define CJ_COOKIE CJ_BODY            /* cookie[8] follows the nat byte */
+
+static uint64_t mix64(uint64_t x)
+{
+   x ^= x >> 30; x *= 0xBF58476D1CE4E5B9ull;
+   x ^= x >> 27; x *= 0x94D049BB133111EBull;
+   return x ^ (x >> 31);
+}
+
+/* A stateless proof that the sender receives at its address: keyed hash of
+ * ip:port and the 30 s epoch; the current and the previous epoch verify. */
+static uint64_t cookie_of(const rl_core *c, const rl_addr *a, uint64_t epoch)
+{
+   uint64_t v = mix64(c->secret[0] ^ ((uint64_t)a->ip_be << 16) ^ a->port);
+   return mix64(v ^ c->secret[1] ^ (epoch * 0x9E3779B97F4A7C15ull)) | 1u;
+}
+
+/* 1 = the body carries a valid cookie; 0 = it does not, and a COOKIE has
+ * been sent (never larger than the request). */
+static int cookie_check(rl_core *c, int sock, const rl_addr *from,
+                        const uint8_t *body, size_t n, uint64_t now)
+{
+   uint64_t e = now / 30000, got;
+   uint8_t b[RL_HDR + RL_COOKIE_LEN];
+   if (n >= CJ_COOKIE + RL_COOKIE_LEN)
+   {
+      got = rl_get64(body + CJ_COOKIE);
+      if (got && (got == cookie_of(c, from, e) || got == cookie_of(c, from, e - 1)))
+         return 1;
+      if (got)
+         c->st.cookie_bad++;
+   }
+   rl_hdr(b, RL_T_COOKIE, RL_SLOT_NONE, RL_SLOT_NONE, 0);
+   rl_put64(b + RL_HDR, cookie_of(c, from, e));
+   c->st.cookies_sent++;
+   tx(c, sock, from, b, sizeof(b));
+   return 0;
+}
+
+static unsigned rooms_hosted_by(const rl_core *c, uint32_t ip)
+{
+   unsigned i, n = 0;
+   for (i = 0; i < c->nrooms; i++)
+      if (c->rooms[i].used && c->rooms[i].s[0].used && c->rooms[i].s[0].addr.ip_be == ip)
+         n++;
+   return n;
+}
 
 static void reply_slot(rl_core *c, int sock, const rl_addr *to, int type,
                        rl_room *r, int k)
 {
-   uint8_t b[RL_HDR + RL_CODE_LEN + 1];
+   uint8_t b[RL_HDR + RL_CODE_LEN + 2];
    rl_hdr(b, type, RL_SLOT_NONE, k, r->s[k].token);
    memcpy(b + RL_HDR, r->code, RL_CODE_LEN);
    b[RL_HDR + RL_CODE_LEN] = (uint8_t)k;
+   b[RL_HDR + RL_CODE_LEN + 1] = r->mode;
    tx(c, sock, to, b, sizeof(b));
 }
 
@@ -272,12 +335,15 @@ static void on_create(rl_core *c, int sock, const rl_addr *from,
          reply_slot(c, sock, from, RL_T_CREATED, &c->rooms[i], 0);
          return;
       }
+   if (!cookie_check(c, sock, from, body, n, now))
+      return;
    if (c->cfg.paused)
    {
       send_error(c, sock, from, RL_E_PAUSED, "online play is paused");
       return;
    }
-   if (!ip_allow(c, from->ip_be, now))
+   if (!ip_allow(c, from->ip_be, now) ||
+       rooms_hosted_by(c, from->ip_be) >= c->cfg.rooms_per_ip)
    {
       c->st.rx_rate++;
       send_error(c, sock, from, RL_E_RATE, "too many rooms");
@@ -315,6 +381,7 @@ static void on_create(rl_core *c, int sock, const rl_addr *from,
    }
    r->used = 1;
    memcpy(r->build, body, RL_BUILD_LEN);
+   r->mode = n > CJ_COOKIE + RL_COOKIE_LEN ? body[CJ_COOKIE + RL_COOKIE_LEN] : 0;
    r->created_ms = r->last_ms = now;
    fill_slot(c, &r->s[0], from, body, now);
    c->st.rooms_now++;
@@ -343,6 +410,8 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
             reply_slot(c, sock, from, RL_T_JOINED, r, k);   /* a retry */
             return;
          }
+   if (!cookie_check(c, sock, from, body, n, now))
+      return;
    if (c->cfg.paused)
    {
       send_error(c, sock, from, RL_E_PAUSED, "online play is paused");
@@ -432,13 +501,20 @@ static rl_slot *auth(rl_core *c, const uint8_t *b, const rl_addr *from,
    return NULL;
 }
 
-static int slot_rate(rl_core *c, rl_slot *s, uint64_t now)
+static int slot_rate(rl_core *c, rl_slot *s, size_t len, uint64_t now)
 {
    uint64_t sec = now / 1000;
    if (s->bucket_s != sec)
    {
       s->bucket_s = sec;
       s->bucket = 0;
+      s->bucket_bytes = 0;
+   }
+   s->bucket_bytes += (uint32_t)len;
+   if (s->bucket_bytes > c->cfg.bytes_per_s)
+   {
+      c->st.rx_bytes_rate++;
+      return 0;
    }
    return ++s->bucket <= c->cfg.pkt_per_s;
 }
@@ -492,7 +568,7 @@ void relay_core_input(rl_core *c, int sock, const rl_addr *from,
       c->st.rx_token++;
       return;
    }
-   if (!slot_rate(c, s, now_ms))
+   if (!slot_rate(c, s, len, now_ms))
    {
       c->st.rx_rate++;
       return;

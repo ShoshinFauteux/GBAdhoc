@@ -86,6 +86,17 @@
 #include "online_psp.h"      /* EXPERIMENTAL online play (ONLINE=1 builds) */
 #ifdef GBADHOC_ONLINE
 #include "libretro.h"        /* retro_get_system_info: the build the room matches */
+#include "../netdrv/relay_proto.h"
+/* 1 = the harness turned online on for every session (online_relay); else a
+ * session is online only when Wireless > Online asked for it. */
+static int g_online_boot;
+static const char *online_build_id(void)
+{
+   struct retro_system_info si;
+   memset(&si, 0, sizeof(si));
+   retro_get_system_info(&si);
+   return si.library_version;
+}
 #endif
 #include "mgift_cart.h"
 #include "me_host.h"
@@ -6851,10 +6862,7 @@ static int net_bringup_io(int is_host, const char *group, const char *nick,
     * a relay / direct path on infrastructure Wi-Fi instead of ad hoc. */
    if (online_psp_enabled())
    {
-      struct retro_system_info si;
-      memset(&si, 0, sizeof(si));
-      retro_get_system_info(&si);
-      rc = online_psp_up(is_host, si.library_version,
+      rc = online_psp_up(is_host, online_build_id(),
                          g_gblink_role ? 120000u : 30000u);
       if (rc != 0)
       {
@@ -6977,7 +6985,13 @@ static void net_teardown_io(void)
    fe_np_stop();
    fe_evt("td_step name=pre_transport_term");
    if (online_psp_enabled())
+   {
       online_psp_down();
+#ifdef GBADHOC_ONLINE
+      if (!g_online_boot)
+         online_psp_clear();     /* the next session is ad hoc unless asked */
+#endif
+   }
    else
       adhoc_transport_term();
    fe_evt("td_step name=post_transport_term");
@@ -9340,6 +9354,9 @@ static void ui_net_action(int is_host)
    char room[ROOM_LABEL_CAP], group[9], code[5];
    char l1[80], l2[80];
    ui_linking_view lv;
+#ifdef GBADHOC_ONLINE
+   int ol = 0;                         /* this session is an Online one */
+#endif
    if (g_net_up)
    {
       osd_toast("Already in a session");
@@ -9354,6 +9371,43 @@ static void ui_net_action(int is_host)
       osd_toast("Stop Mystery Gift first");
       return;
    }
+#ifdef GBADHOC_ONLINE
+   /* EXPERIMENTAL online play (Wireless > Online; docs/ONLINE-TUNNEL.md):
+    * the room on the GBAdhoc server first -- a joiner learns the host's link
+    * mode from it -- then the same session as a room in the air. */
+   {
+      int ol_host = 0, ol_cable = 1, ol_wifi = 1;
+      char ol_code[5];
+      ol = ui_online_take(&ol_host, ol_code, &ol_cable, &ol_wifi);
+      if (!ol && !g_online_boot)
+         online_psp_clear();
+      if (ol)
+      {
+         ui_linking_view ov;
+         char o1[80], o2[80];
+         online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
+                        !is_host ? RL_MODE_ANY
+                        : !gba || ui_host_cable() ? RL_MODE_CABLE
+                                                  : RL_MODE_ADAPTER);
+         link_bringup_view(is_host, "Online", &ov, o1, sizeof(o1), o2,
+                           sizeof(o2));
+         snprintf(o1, sizeof(o1), "%s", is_host ? "Connecting to the GBAdhoc server..."
+                                                : "Looking for the room online...");
+         link_backdrop_take();
+         ui_linking_draw(&ov);
+         vid_swap();
+         me_rend_suspend();
+         rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);
+         me_rend_resume();
+         if (rc != 0)
+         {
+            osd_toast("Online: %s", online_psp_why());
+            online_psp_clear();
+            return;
+         }
+      }
+   }
+#endif
    if (is_host)
    {
       int cable = gba && ui_host_cable();
@@ -9377,6 +9431,25 @@ static void ui_net_action(int is_host)
    else
    {
       snprintf(group, sizeof(group), "%.8s", ui_group());
+#ifdef GBADHOC_ONLINE
+      if (ol)
+      {
+         /* the host's link mode, from the server */
+         int m = online_psp_room_mode();
+         if (!gba)
+         {
+            room_code_gb(g_gb_title, sizeof(g_gb_title), code);
+            room_make(ROOM_CABLE_GB, 1, code, group, sizeof(group));
+         }
+         else if (m == RL_MODE_ADAPTER)
+            room_make(ROOM_ADAPTER, 1, NULL, group, sizeof(group));
+         else
+         {
+            room_code_gba(g_game_code, code);
+            room_make(ROOM_CABLE_GBA, 1, code, group, sizeof(group));
+         }
+      }
+#endif
       kind = room_parse(group, &num, code);
    }
    g_link_room_kind = kind;
@@ -9390,6 +9463,10 @@ static void ui_net_action(int is_host)
    g_gba_cable = g_link_kind == LK_CABLE;
    fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
    room_label(group, room, sizeof(room));
+#ifdef GBADHOC_ONLINE
+   if (ol)
+      snprintf(room, sizeof(room), "Online %s", online_psp_room());
+#endif
    snprintf(g_link_room, sizeof(g_link_room), "%s", room);
    fe_evt("link_action role=%s group=%s kind=%d link=%d", is_host ? "host"
           : "join", group, kind, g_link_kind);
@@ -14939,7 +15016,9 @@ int main(int argc, char *argv[])
     * microseconds; real PSP ad-hoc is tens of ms, which is the whole
     * reason the ARQ storm of docs/HANDOFF.md issue #2 escaped the harness.
     * Each side adds net_latency_ms to the one-way path -> RTT = 2x. */
-   online_psp_configure(HARNESS_INI, p_config);   /* EXPERIMENTAL, ONLINE=1 */
+#ifdef GBADHOC_ONLINE
+   g_online_boot = online_psp_configure(HARNESS_INI, p_config);   /* EXPERIMENTAL */
+#endif
    {
       int nl = (int)fe_ini_get_int(HARNESS_INI, "net_latency_ms", 0);
       int nj = (int)fe_ini_get_int(HARNESS_INI, "net_jitter_ms", 0);

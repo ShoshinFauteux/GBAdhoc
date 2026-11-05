@@ -3,6 +3,10 @@
  *
  *   gbadhoc-relay [--bind IP] [--port P] [--no-direct] [--quiet]
  *       listens on P (default 27420) and P + 1 (the PROBE port)
+ *   gbadhoc-relay ... [--status SPORT] [--pidfile FILE]
+ *       --status: any datagram to 127.0.0.1:SPORT is answered with one line of
+ *       counters (monitoring; loopback only, never the public interface).
+ *       --pidfile: this process's PID, for a stop script.
  *   gbadhoc-relay --fwd PORT [--port P]
  *       FORWARDED mode, for a host the consoles cannot reach directly (WSL2
  *       behind Windows' NAT): one socket on PORT receives datagrams framed
@@ -32,7 +36,9 @@ static int g_fwd = -1;
 static struct sockaddr_in g_fwd_peer;
 static int g_have_fwd_peer;
 static int g_quiet;
+static int g_status = -1;
 
+static uint64_t g_t0;
 static uint64_t now_ms(void)
 {
    struct timespec ts;
@@ -112,7 +118,8 @@ static int open_udp(const char *ip, int port)
 int main(int argc, char **argv)
 {
    const char *bind_ip = "127.0.0.1";
-   int port = RL_DEFAULT_PORT, fwd_port = 0, i;
+   int port = RL_DEFAULT_PORT, fwd_port = 0, status_port = 0, i;
+   const char *pidfile = NULL;
    rl_core_cfg cfg;
    rl_core *core;
    uint64_t last_stat = now_ms(), last_tick = 0;
@@ -124,6 +131,8 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--fwd") && i + 1 < argc) fwd_port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--no-direct")) cfg.no_direct = 1;
       else if (!strcmp(argv[i], "--quiet")) g_quiet = 1;
+      else if (!strcmp(argv[i], "--status") && i + 1 < argc) status_port = atoi(argv[++i]);
+      else if (!strcmp(argv[i], "--pidfile") && i + 1 < argc) pidfile = argv[++i];
       else
       {
          fprintf(stderr, "usage: gbadhoc-relay [--bind IP] [--port P] [--fwd PORT] [--no-direct] [--quiet]\n");
@@ -143,18 +152,36 @@ int main(int argc, char **argv)
       if (g_fd[0] < 0 || g_fd[1] < 0)
          return 1;
    }
+   if (status_port)
+   {
+      g_status = open_udp("127.0.0.1", status_port);
+      if (g_status < 0)
+         return 1;
+   }
+   if (pidfile)
+   {
+      FILE *f = fopen(pidfile, "w");
+      if (f)
+      {
+         fprintf(f, "%d\n", (int)getpid());
+         fclose(f);
+      }
+   }
+   if (getuid() == 0)
+      fprintf(stderr, "warning: running as root; run the relay as an unprivileged user\n");
    cfg.send = do_send;
    cfg.random64 = rnd64;
    cfg.log = say;
    core = relay_core_create(&cfg);
    if (!core)
       return 1;
+   g_t0 = now_ms();
    printf("gbadhoc-relay up %s port=%d%s%s\n", bind_ip, fwd_port ? fwd_port : port,
           fwd_port ? " (forwarded)" : "", cfg.no_direct ? " no-direct" : "");
    fflush(stdout);
    for (;;)
    {
-      struct pollfd pf[2];
+      struct pollfd pf[3];
       int n = 0, k;
       if (g_fwd >= 0)
       {
@@ -165,7 +192,34 @@ int main(int argc, char **argv)
          {
             pf[n].fd = g_fd[k]; pf[n].events = POLLIN; n++;
          }
+      if (g_status >= 0)
+      {
+         pf[n].fd = g_status; pf[n].events = POLLIN; n++;
+      }
       poll(pf, (nfds_t)n, 50);
+      if (g_status >= 0 && (pf[n - 1].revents & POLLIN))
+      {
+         uint8_t q[64];
+         struct sockaddr_in a;
+         socklen_t al = sizeof(a);
+         while (recvfrom(g_status, q, sizeof(q), 0, (struct sockaddr *)&a, &al) >= 0)
+         {
+            rl_core_stats st;
+            char l[400];
+            int m;
+            relay_core_stats(core, &st);
+            m = snprintf(l, sizeof(l), "gbadhoc-relay ok rooms=%u made=%u joins=%u refused=%u "
+                         "rx=%u tx=%u fwd=%u fwd_bytes=%u bad=%u token=%u rate=%u bytes_rate=%u "
+                         "cookies=%u cookie_bad=%u punch=%u direct=%u uptime_s=%llu\n",
+                         st.rooms_now, st.rooms_made, st.joins, st.refused, st.rx, st.tx, st.fwd,
+                         st.fwd_bytes, st.rx_bad, st.rx_token, st.rx_rate, st.rx_bytes_rate,
+                         st.cookies_sent, st.cookie_bad, st.punches_offered, st.paths_direct,
+                         (unsigned long long)((now_ms() - g_t0) / 1000));
+            sendto(g_status, l, (size_t)m, 0, (struct sockaddr *)&a, al);
+            al = sizeof(a);
+         }
+         n--;
+      }
       for (k = 0; k < n; k++)
       {
          uint8_t b[RL_MAX_DGRAM + 8];

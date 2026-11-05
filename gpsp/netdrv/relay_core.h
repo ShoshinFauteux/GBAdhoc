@@ -32,6 +32,8 @@ typedef struct rl_core_cfg
    unsigned slot_idle_ms;        /* drop a silent slot; 0 = 20000 */
    unsigned pkt_per_s;           /* per-slot / per-source rate; 0 = 300 */
    unsigned joins_per_min;       /* CREATE+JOIN per source IP; 0 = 30 */
+   unsigned rooms_per_ip;        /* live rooms one IP may host; 0 = 3 */
+   unsigned bytes_per_s;         /* per-slot byte rate; 0 = 65536 */
    unsigned punch_start_ms;      /* CANDIDATES start offset; 0 = 150 */
    int      no_direct;           /* 1 = never offer a punch (relay only) */
    int      paused;              /* 1 = refuse CREATE/JOIN with RL_E_PAUSED */
@@ -47,6 +49,7 @@ typedef struct rl_core_stats
 {
    uint32_t rx, tx, rx_bad, rx_token, rx_rate, fwd, fwd_bytes;
    uint32_t rooms_now, rooms_made, joins, refused, punches_offered, paths_direct;
+   uint32_t cookies_sent, cookie_bad, rx_bytes_rate;
 } rl_core_stats;
 
 typedef struct rl_core rl_core;
