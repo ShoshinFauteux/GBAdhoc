@@ -5944,7 +5944,15 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
     defined(SMC_GATE_BITMAP) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP) && \
     (!defined(JIT_COST_NO_SCANWIN) || !defined(JIT_COST_NO_SCANCOND))
 #define JIT_SCAN_FAST 1
+#ifdef GPSP_PROFILE_RELEASE
+/* A release has no harness to flip it (the key is read only with the
+ * frontend's JIT_COST_KEYS, through a weak reference that finds no symbol
+ * here): the fast scan is a constant, and xlat_scan_arm_ram's RAM call --
+ * its only caller in the ARM translator -- folds away. */
+#define xlat_scan_fast 1u
+#else
 u32 xlat_scan_fast = 1;
+#endif
 
 #ifndef JIT_COST_NO_SCANCOND
 static u16 xlat_arm_flagset[256];
