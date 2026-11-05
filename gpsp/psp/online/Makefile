@@ -24,6 +24,9 @@ PSP_FW_VERSION = 500
 # prx_libc.h renames calloc/free/printf-family before any libc header (not
 # for the generated exports.c, which defines its own NULL)
 main.o transport_relay.o prx_libc.o: CFLAGS += -include prx_libc.h
+# the string routines themselves: gcc would turn their loops back into calls
+# to memset/memcpy -- that is, into themselves (infinite recursion)
+prx_libc.o: CFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
