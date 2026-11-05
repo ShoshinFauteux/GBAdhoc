@@ -90,6 +90,8 @@
 /* 1 = the harness turned online on for every session (online_relay); else a
  * session is online only when Wireless > Online asked for it. */
 static int g_online_boot;
+/* writable on purpose: .rodata growth costs 8 KiB of boot heap (online_psp.c) */
+static char s_online_fmt[] = "Online: %s";
 static const char *online_build_id(void)
 {
    struct retro_system_info si;
@@ -9409,7 +9411,7 @@ static void ui_net_action(int is_host)
          me_rend_resume();
          if (rc != 0)
          {
-            osd_toast("Online: %s", online_psp_why());
+            osd_toast(s_online_fmt, online_psp_why());
             online_psp_clear();
             return;
          }
@@ -9473,7 +9475,7 @@ static void ui_net_action(int is_host)
    room_label(group, room, sizeof(room));
 #ifdef GBADHOC_ONLINE
    if (ol)
-      snprintf(room, sizeof(room), "Online %s", online_psp_room());
+      snprintf(room, sizeof(room), s_online_fmt, online_psp_room());
 #endif
    snprintf(g_link_room, sizeof(g_link_room), "%s", room);
    fe_evt("link_action role=%s group=%s kind=%d link=%d", is_host ? "host"

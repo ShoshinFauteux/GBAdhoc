@@ -26,7 +26,7 @@ static struct
    online_cfg cfg;
    int fd;
    uint16_t port;               /* the bound port (ONLINE_PORT unless taken) */
-   int wifi_up, resolver_up;
+   int resolver_up;
    relay_transport *rt;
 } O = { .fd = -1 };
 
@@ -120,16 +120,6 @@ static void rl_log(void *u, const char *line)
    g_ol_host->evt(line);
 }
 
-static void list_wifi(void)
-{
-   int n = g_ol_host->cfg_count(), i;
-   char nm[64];
-   evt("online_wifi profiles=%d chosen=%d", n, O.cfg.wifi);
-   for (i = 1; i <= n && i <= 10; i++)
-      if (g_ol_host->cfg_name(i, nm, sizeof(nm)) == 0)
-         evt("online_wifi profile=%d name=\"%s\"", i, nm);
-}
-
 static int resolve(uint32_t *ip, uint16_t *port)
 {
    char host[64];
@@ -204,11 +194,6 @@ static void ol_down(void)
       sceNetResolverTerm();
       O.resolver_up = 0;
    }
-   if (O.wifi_up)
-   {
-      g_ol_host->wifi_down();
-      O.wifi_up = 0;
-   }
 }
 
 static int ol_up(const online_cfg *cfg, int is_host, const char *build,
@@ -238,21 +223,7 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       }
       O.cfg.room[j] = 0;
    }
-   rc = g_ol_host->wifi_up(O.cfg.wifi, 30000000u);
-   if (rc != 0)
-   {
-      snprintf(why, why_cap, "%s", rc == -2 ? "WLAN switch off"
-               : rc == -7 ? "no saved Wi-Fi network"
-               : rc == -9 ? "Wi-Fi: no address" : "Wi-Fi did not connect");
-      evt("online_error stage=wifi rc=%d at=%s sce=0x%08X", rc, g_ol_host->wifi_stage(),
-          g_ol_host->wifi_last_sce());
-      list_wifi();
-      return -1;
-   }
-   O.wifi_up = 1;
-   beat();
-   list_wifi();
-   evt("online_wifi_up ip=%s", g_ol_host->local_ip());
+   (void)rc;
    if (resolve(&sip, &sport) != 0)
    {
       snprintf(why, why_cap, "server name not found");

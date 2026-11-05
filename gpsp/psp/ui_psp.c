@@ -1859,6 +1859,12 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_HDR_CTL, SET_STICK, SET_CONTROLS,
        SET_COUNT };
 
+#ifdef GBADHOC_ONLINE
+/* writable, as the Online page's texts (see s_ol_title) */
+static char s_ol_setting[] = "Online play";
+static char s_ol_hint[] = "Then Wireless > Online.";
+static char s_ol_row[] = "Online";
+#endif
 static const struct { unsigned char header; const char *label; } set_rows[SET_COUNT] = {
    { 1, "WIRELESS" },
    { 0, "Room" },
@@ -1918,7 +1924,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md), off by default.  On,
     * Wireless gets an Online row.  Above CPU clock, below the quick-state
     * rows: the same place no walker's count moves (see the rows above). */
-   { 0, "Online play" },
+   { 0, s_ol_setting },
 #endif
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
@@ -2931,7 +2937,7 @@ static ui_action screen_settings(unsigned edges)
                 : "The quick save saves slot 1 at once, without asking.");
 #ifdef GBADHOC_ONLINE
    else if (g_cursor == SET_ONLINE)
-      footer("Then Wireless > Online.");
+      footer(s_ol_hint);
 #endif
    else if (g_cursor == SET_CPUCLK)
    {
@@ -4141,7 +4147,7 @@ static ui_action screen_wireless(unsigned edges, int session_active,
          wl_row(i, g_cursor == i, "Mystery Gift", "phone");
          break;
       case WL_ONLINE:
-         wl_row(i, g_cursor == i, "Online", NULL);
+         wl_row(i, g_cursor == i, s_ol_row, NULL);
          break;
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
@@ -4175,6 +4181,19 @@ static char g_ol_code[5] = "AAAA";
 static int  g_ol_pos = -1;             /* letter being edited, -1 = not editing */
 static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
 static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
+
+/* Writable on purpose (see online_psp.c, g_host): .rodata growth costs a
+ * whole 8 KiB of boot heap, .data has room. */
+static char s_ol_title[] = "ONLINE";
+static char s_ol_line[] = "Online link play (experimental).";
+static char s_ol_net[] = "Network";
+static char s_ol_mode[] = "Link mode";
+static char s_ol_create[] = "Create room";
+static char s_ol_code[] = "Room code";
+static char s_ol_join[] = "Join room";
+static char s_ol_fmt[] = "%.*s[%c]%s";
+static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " letter   " VID_GLYPH_LEFT
+                          VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
 
 int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
 {
@@ -4271,41 +4290,41 @@ static ui_action screen_online(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM);
-   ov_head(g_ov_title, "ONLINE");
-   vid_text(22, 72, "Online link play (experimental).", C_DIM);
+   ov_head(g_ov_title, s_ol_title);
+   vid_text(22, 72, s_ol_line, C_DIM);
    nw = online_psp_wifi_count();
    if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
                                        net, sizeof(net)) != 0)
-      snprintf(net, sizeof(net), "%s", nw <= 0 ? "saved #1" : "?");
+      snprintf(net, sizeof(net), "%s", "?");
    for (i = 0; i < OL_COUNT; i++)
    {
       int y = WL_ROW_Y0 + i * 22, sel = g_cursor == i && g_ol_pos < 0;
       switch (i)
       {
       case OL_NET:
-         wl_row_at(y, sel, 1, "Network", net);
+         wl_row_at(y, sel, 1, s_ol_net, net);
          break;
       case OL_MODE:
-         wl_row_at(y, sel, ask, "Link mode",
+         wl_row_at(y, sel, ask, s_ol_mode,
                    !ask ? (ui_host_mode() == UI_HOST_CABLE ? "Link Cable" : "Wireless Adapter")
                         : g_ol_cable ? "Link Cable" : "Wireless Adapter");
          break;
       case OL_CREATE:
-         wl_row_at(y, sel, 1, "Create room", NULL);
+         wl_row_at(y, sel, 1, s_ol_create, NULL);
          break;
       case OL_CODE:
       {
          char v[16];
          if (g_ol_pos >= 0)
-            snprintf(v, sizeof(v), "%.*s[%c]%s", g_ol_pos, g_ol_code,
+            snprintf(v, sizeof(v), s_ol_fmt, g_ol_pos, g_ol_code,
                      g_ol_code[g_ol_pos], g_ol_code + g_ol_pos + 1);
          else
             snprintf(v, sizeof(v), "%s", g_ol_code);
-         wl_row_at(y, g_cursor == i, 1, "Room code", v);
+         wl_row_at(y, g_cursor == i, 1, s_ol_code, v);
          break;
       }
       case OL_JOIN:
-         wl_row_at(y, sel, 1, "Join room", g_ol_code);
+         wl_row_at(y, sel, 1, s_ol_join, g_ol_code);
          break;
       default:
          wl_row_at(y, sel, 1, "Back", NULL);
@@ -4313,8 +4332,7 @@ static ui_action screen_online(unsigned edges)
       }
    }
    if (g_ol_pos >= 0)
-      footer(VID_GLYPH_UP VID_GLYPH_DOWN " letter   " VID_GLYPH_LEFT VID_GLYPH_RIGHT
-             " move   " VID_GLYPH_X " done");
+      footer(s_ol_edit);
    else if (g_cursor == OL_NET || g_cursor == OL_MODE)
       footer(VID_GLYPH_LEFT VID_GLYPH_RIGHT " change   " VID_GLYPH_O " back");
    else
