@@ -441,3 +441,26 @@ dr_host.c DR_MECAP hunk> b3cap "" "<manifest coreFlags as -D>"`, then
 0 1 50 100 159` per layout (`FOLLOW=me_capture_line` on the split), `cap_map.py
 ... --path NAME=update_scanline:FILE`, `capsim.sh sim/X em_battle b3cap
 /w/sim/S/em_battle.lay`, `cap_missdiff.py` for per-symbol / per-set deltas.
+
+**Re-applying the fix on a re-pinned base (method).**  The fix has two parts
+with different rules.
+1. *The per-line path* (video.cc split, the seven hot.ord entries, hot_order.txt)
+   sits in the hot section ahead of `layout_pad_cold`, so no pad moves it.
+   Checked: instance A's `update_scanline` 0x1420, `me_capture_line` 0x0e00,
+   `ml_line_body` 0x0220, `ml_update_relevance` 0x08e0, `ml_diff_page` 0x0b80,
+   `ml_relevance` 0x0c60, `spin_check` 0x1c20 (mod 8 KiB) are identical in the
+   release (pad 0), the release at pad 304 (an earlier arm) and the lab build
+   (6064), and again after cherry-picking onto c7a74a88 (lab 5600/2864).  After
+   any rebase, check these offsets (`psp-nm -n`, instance A = the lower copy).
+2. *The pads* only hold memory.  The fix adds 404 B of `.text` (the split, plus
+   32 B function rounding of the newly ordered functions in both instances).
+   Lab: keep the base's lab pads (delta 0; 6064/2832 -> image 14,612,876 as
+   the base).  Release: text pad -304 so `.data` stays on its page (needs
+   `.eh_frame` end + 272 B + 1 B of `.data.pin` <= the page boundary).
+   On f176816a (304/0) that is 0/0: image 14,014,860, PSP-1000 heap 10,081,692,
+   as beta.4.  On c7a74a88 (144/32) the pad cannot go below 0: 0/32 builds
+   `.data` 101 B over the page (image 14,023,052, heap 10,073,500, -8 KiB).
+   There the fix needs >= 101 B found before `.data` (RO pad 32 -> 0 gives
+   32) before it is heap-free.
+- `LAYOUT_PAD_STR` now builds with a text pad of 0 and a `.rodata` pad > 0
+  (it was defined only inside the text pad's #if).

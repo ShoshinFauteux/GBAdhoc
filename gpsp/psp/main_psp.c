@@ -138,9 +138,9 @@ PSP_HEAP_SIZE_KB(-1024);
  * linked, so without LAYOUT_PIN it moves every function after it (and, through
  * the heap, the translation cache); with LAYOUT_PIN the pinned hot path must
  * not move by a byte.  The hardware bench's "pad" arm is built with it. */
-#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
-#define LAYOUT_PAD_STR2(x) #x
+#define LAYOUT_PAD_STR2(x) #x   /* both pads use it: text 0 with .rodata > 0 must build */
 #define LAYOUT_PAD_STR(x) LAYOUT_PAD_STR2(x)
+#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
 __asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
         ".globl layout_pad_cold\n"
         ".type layout_pad_cold, @function\n"
