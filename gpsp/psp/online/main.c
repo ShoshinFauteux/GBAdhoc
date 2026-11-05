@@ -374,76 +374,7 @@ static void ol_stats_evt(const char *at)
        (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad);
 }
 
-/* Stack paint for module_start / module_stop: both run on a thread the EBOOT
- * sizes (online_psp.c sm_opt, 16 KiB), so log the peak they really touch.
- * Paints from the thread's stack base to just below the caller's frame, then
- * scans for the deepest overwritten word.  ~16 KiB of stores per load. */
-#define STK_PAINT 0x5354414Bu
-/* The firmware keeps the thread's UID in the lowest stack word as its
- * overflow canary (uOFW threadman); painting over it hung module_start on
- * both rig PSPs (PPSSPP does not check it).  Leave the bottom alone. */
-#define STK_GUARD_WORDS 16
-static unsigned *g_stk_lo;
-static unsigned g_stk_top;
-static int g_stk_rc;                 /* why a paint was skipped (logged) */
-static unsigned g_stk_base, g_stk_size, g_stk_sp;
-
-static void __attribute__((noinline)) stk_paint(void)
-{
-   SceKernelThreadInfo ti;
-   unsigned sp, *p;
-   g_stk_lo = 0;
-   memset(&ti, 0, sizeof(ti));
-   ti.size = sizeof(ti);
-   __asm__ volatile("move %0, $sp" : "=r"(sp));
-   g_stk_sp = sp;
-   g_stk_rc = sceKernelReferThreadStatus(sceKernelGetThreadId(), &ti);
-   g_stk_base = (unsigned)ti.stack;
-   g_stk_size = (unsigned)ti.stackSize;
-   if (g_stk_rc < 0 || !ti.stack || ti.stackSize <= 0)
-      return;
-   g_stk_lo = (unsigned *)ti.stack;
-   g_stk_top = (unsigned)ti.stack + (unsigned)ti.stackSize;
-   if (sp < (unsigned)g_stk_lo + 512 || sp > g_stk_top)
-   {
-      g_stk_rc = 1;                  /* sp outside the reported stack */
-      g_stk_lo = 0;
-      return;
-   }
-   for (p = g_stk_lo + STK_GUARD_WORDS; (unsigned)p < sp - 256; p++)
-      *p = STK_PAINT;
-}
-
-static void __attribute__((noinline)) stk_report(const char *at)
-{
-   unsigned *p = g_stk_lo ? g_stk_lo + STK_GUARD_WORDS : 0;
-   if (!g_ol_host)
-      return;
-   if (!p)
-   {
-      evt("online_prx_stack at=%s skipped rc=0x%08X base=0x%08X size=%u sp=0x%08X", at,
-          (unsigned)g_stk_rc, g_stk_base, g_stk_size, g_stk_sp);
-      return;
-   }
-   while ((unsigned)p < g_stk_top && *p == STK_PAINT)
-      p++;
-   evt("online_prx_stack at=%s used=%u size=%u", at, g_stk_top - (unsigned)p,
-       g_stk_top - (unsigned)g_stk_lo);
-}
-
-static int module_start_body(SceSize args, void *argp);
-
 int module_start(SceSize args, void *argp)
-{
-   int rc;
-   stk_paint();
-   rc = module_start_body(args, argp);
-   if (rc == 0)
-      stk_report("start");
-   return rc;
-}
-
-static int module_start_body(SceSize args, void *argp)
 {
    online_link *l;
    if (args < sizeof(void *) || !argp)
@@ -474,8 +405,6 @@ int module_stop(SceSize args, void *argp)
 {
    (void)args;
    (void)argp;
-   stk_paint();
    ol_down();               /* never leave Wi-Fi or a socket behind */
-   stk_report("stop");
    return 0;
 }
