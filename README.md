@@ -21,7 +21,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.6.0 beta 2</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 4.6.0 beta 3</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -44,16 +44,19 @@
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
-> **This is the `beta` branch: GBAdhoc 4.6.0 beta 2.**
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.2)
+> **This is the `beta` branch: GBAdhoc 4.6.0 beta 3.**
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.3)
 > (the *latest release* link above is the stable 4.5.0). What the beta adds:
 >
 > - **Wireless Adapter play is scheduled frame by frame.** Each PSP sends its frame's
 >   adapter traffic with a marker and the other waits only when that marker is really
 >   missing. Lag no longer builds up, and the 57 fps cap on wireless sessions is gone.
 >   A beta links only with the same beta.
-> - **Fire Emblem: The Morrow's Golden Country** boots, and its ~46 fps stutter is gone
->   (#10; fixes by Chandler Hardy, #26 and #27).
+> - **Fire Emblem: The Morrow's Golden Country** boots, its ~46 fps stutter is gone, and
+>   *new in beta 3*, the combat slowdown and freeze after a few rounds is fixed
+>   (#10; fixes by Chandler Hardy, #26, #27 and #30).
+> - *New in beta 3:* **smoother fast-forward**: 3x, Smooth and Unlimited show their pictures
+>   evenly instead of skipping or doubling some.
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
 > - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the

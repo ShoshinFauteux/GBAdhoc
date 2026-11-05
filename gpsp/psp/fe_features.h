@@ -99,6 +99,14 @@
 #if !defined(GPSP_NO_PLAY_INPUT_FRESH) && !defined(PLAY_INPUT_FRESH)
 #define PLAY_INPUT_FRESH 1
 #endif
+/* PLAY_FF_FLIP_PACE: fast-forward presentation pacing (docs/FF-PRESETS.md,
+ * main_psp.c g_ff_flip_pace).  7 = all three bits: no early flip over an
+ * unlatched one under 3x, the Smooth/Unlimited hold, and 3x presented
+ * through the draw gate under a 3-frames-per-vblank ceiling.  Presentation
+ * only; emulation is untouched.  GPSP_NO_PLAY_FF_FLIP_PACE = 0 (off). */
+#if !defined(GPSP_NO_PLAY_FF_FLIP_PACE) && !defined(PLAY_FF_FLIP_PACE)
+#define PLAY_FF_FLIP_PACE 7
+#endif
 #endif /* GPSP_PLAYABLE */
 
 #endif /* FE_FEATURES_H */

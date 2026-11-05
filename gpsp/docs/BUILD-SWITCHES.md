@@ -177,6 +177,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI: no code, 1S, not an exit. gpSP crashed in the translator on one (issue #10). Blocks without NV words are byte-identical. |
 | `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (an eager-link chain filled the ROM cache, issue #10). |
 | `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by BADJUMP_SAFE. |
+| `RAM_MIRROR_FIX` | a RAM pc reached through a mirror alias (IWRAM repeats every 32 KiB in region 3, EWRAM every 256 KiB in region 2) shares the canonical tag, but each mode's translation records the alias it was made at, and a lookup at another alias flushes the RAM cache and retranslates; a block exit to an alias other than the block's own is linked lazily through the dispatcher. Before, one tag served every alias but held the translation of whichever alias came first, so canonical callers could run code carrying an alias's pc (issue #10: The Morrow's Golden Country's mixer ended up at 0x03xxEE30 aliases and the game slowed to ~2 s a frame). Code that really runs at an alias sees the alias's pc, as on the GBA: Pokemon MonoMyth's battle code runs at 0x02F0xxxx and bl's 1 MiB up into IWRAM; the 4.6.0-beta.3 version translated the canonical pc and froze that battle (fixture mono_trainer_crash). Twin counters: `RAM_MIRROR conflicts= alias_xlat=`. |
 | `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
 | `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
 | `HOT_DATA_OFFSET` | where `HOT_DATA_GUARD` places the stub hot block in its 8 KiB way. Ships at 0x1b00. |
@@ -191,6 +192,7 @@ Frontend, `psp/fe_features.h` (its comments keep the field logs behind each valu
 | `ND_RTO_MIN_US` | 200000 | retransmit floor |
 | `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
 | `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
+| `PLAY_FF_FLIP_PACE` | 7 | fast-forward presentation pacing (`docs/FF-PRESETS.md`): bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. Presentation only. `-DGPSP_NO_PLAY_FF_FLIP_PACE` = 0 |
 
 ### What `SMC_GATES_RANKED` actually requires
 

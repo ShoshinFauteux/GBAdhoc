@@ -10,6 +10,29 @@ separately and are intended for upstream.
 
 ---
 
+## [4.6.0-beta.3] - 2026-11-05
+
+Pre-release. Links only with the same beta.
+
+- The Morrow's Golden Country no longer slows to ~2 s a frame and freezes after a few combat
+  rounds (#10; PR #30 by Chandler Hardy). Its sound mixer ran code through RAM mirror addresses
+  (IWRAM repeats every 32 KiB, EWRAM every 256 KiB), each mirror got its own translation, and
+  RAM code was flushed about once a frame. Code reached through a mirror now shares one
+  translation.
+- That fix first broke Pokémon MonoMyth's first trainer battle in testing: MonoMyth runs battle
+  code from an EWRAM mirror on purpose, and its branches depend on the mirrored address. Code
+  reached through a mirror now keeps its mirrored address while sharing the translation. Fixed
+  before release; it never shipped.
+- Fast-forward shows its pictures evenly. 3x flipped its pictures unsynchronised with the LCD
+  and an early flip could replace one that had not yet been shown, and Smooth and Unlimited
+  drifted against the LCD's refresh. On the PSP-3000 at full speed, 3x now shows ~60 new
+  pictures a second with none skipped (was ~56, with 7-9 % skipped).
+
+**Known issues:** at 222 MHz, normal-speed play hitches (about 100 per minute in FireRed),
+because the lower-latency presentation added in 4.5.0 misses the screen refresh when the PSP
+is this slow. 333 MHz is unaffected. A fix is planned for the next beta. Mario Golf's adapter
+lobby can still stick when both players press at the same moment (leave and rejoin).
+
 ## [4.6.0-beta.2] - 2026-11-03
 
 Pre-release. Links only with the same beta (the Wireless Adapter protocol changed).

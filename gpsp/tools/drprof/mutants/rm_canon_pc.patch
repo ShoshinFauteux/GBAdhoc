@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -3813,7 +3813,8 @@
+     case 0x2:                                                                 \
+     case 0x3:                                                                 \
+     {                                                                         \
++      pc &= (pcregion == 2) ? 0x0203FFFFu : 0x03007FFFu; /* MUTANT */        \
+       u16* tagp = (pcregion == 2) ? (u16 *)(ewram + (pc & 0x3FFFF) + 0x40000) \
+                                   : (u16 *)(iwram + (pc & 0x7FFF));           \
+       ramtag_type* trentry;                                                   \
+       SMC_RESTORE_RETIRED_TAG_##type(pc, tagp);                               \

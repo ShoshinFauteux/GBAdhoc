@@ -241,6 +241,9 @@
 #if !defined(GPSP_NO_XLAT_LAST_TRY_LAZY) && !defined(XLAT_LAST_TRY_LAZY)
 #define XLAT_LAST_TRY_LAZY 1
 #endif
+#if !defined(GPSP_NO_RAM_MIRROR_FIX) && !defined(RAM_MIRROR_FIX)
+#define RAM_MIRROR_FIX 1
+#endif
 #if !defined(GPSP_NO_TIMER_RELOAD_FIX) && !defined(TIMER_RELOAD_FIX)
 #define TIMER_RELOAD_FIX 1
 #endif
