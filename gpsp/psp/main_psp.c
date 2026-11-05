@@ -5602,8 +5602,10 @@ static void vhash_frame(void)
  * worst scanline-render frame — the phase maxima must never be summed
  * (ADR-0032), so `vid_worst` is what a max is allowed to be read against.
  * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
 static unsigned vp_core_mean;
+#endif
 static unsigned vp_build_crc;   /* CRC32 of the EBOOT actually running */
 
 /* ADR-0035: identify the BINARY in the profile line, not just the run.
@@ -5615,21 +5617,30 @@ static unsigned vp_build_crc;   /* CRC32 of the EBOOT actually running */
 static unsigned eboot_crc(void)
 {
    char path[160];
-   static unsigned char buf[4096];
+   /* Borrowed for the read, not a static: it runs once, on harness or
+    * vid_prof runs only, and was 4 KiB of every player's .bss. */
+   unsigned char *buf;
    SceUID fd;
    unsigned crc = 0, total = 0;
    int n;
 
    snprintf(path, sizeof(path), "%s/EBOOT.PBP", g_dir_base);
+   buf = (unsigned char *)malloc(4096);
+   if (!buf)
+      return 0;
    fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
    if (fd < 0)
+   {
+      free(buf);
       return 0;
-   while ((n = sceIoRead(fd, buf, sizeof(buf))) > 0)
+   }
+   while ((n = sceIoRead(fd, buf, 4096)) > 0)
    {
       crc = fe_crc32(crc, buf, (size_t)n);
       total += (unsigned)n;
    }
    sceIoClose(fd);
+   free(buf);
    fe_evt("build eboot_crc=%08x size=%u", crc, total);
    return crc;
 }
@@ -5757,6 +5768,7 @@ static void vram_probe_frame(void)
    (void)g_vp_fail;
 }
 
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static void vid_prof_frame(unsigned win)
 {
    unsigned cur[VP_COUNT];
@@ -5808,6 +5820,16 @@ static void vid_prof_frame(unsigned win)
    vp_max_tot = 0;
    vp_win_n   = 0;
 }
+#else
+/* Every output of the window is an fe_evt line, compiled out here; the
+ * core's counters are still drained so they cannot wrap. */
+static void vid_prof_frame(unsigned win)
+{
+   unsigned cur[VP_COUNT];
+   (void)win;
+   (void)video_prof_read_reset(cur, VP_COUNT);
+}
+#endif
 
 static void dump_ge_bmp(void)
 {
@@ -11214,10 +11236,12 @@ static void ff_win_note(void)
  * without a bound document, plus document loads) had run and how many found
  * no file, at each milestone up to the browser; doc_hits = the lookups
  * answered from CONFIG.INI's in-memory copy instead.  One EVT line in telemetry builds; nothing in a release. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 #define BOOT_MARKS 12
 static struct { const char *tag; unsigned us, ini, miss; } g_boot_mark[BOOT_MARKS];
 static int g_boot_marks;
 static uint64_t g_boot_t0;
+#define BOOT_T0_SET() (g_boot_t0 = sceKernelGetSystemTimeWide())
 
 static void boot_mark(const char *tag)
 {
@@ -11234,7 +11258,6 @@ static void boot_mark(const char *tag)
 
 static void boot_timeline_emit(void)
 {
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
    char line[400];
    int i, o = 0;
    for (i = 0; i < g_boot_marks && o < (int)sizeof(line) - 40; i++)
@@ -11243,8 +11266,14 @@ static void boot_timeline_emit(void)
                     g_boot_mark[i].ini, g_boot_mark[i].miss);
    fe_evt("boot_timeline us/opens/miss:%s doc_hits=%u", line,
           fe_ini_doc_hits());
-#endif
 }
+#else
+/* A release reports no boot timeline, so it records none either
+ * (g_boot_mark: 192 B of .bss and an INI-stats call per milestone). */
+#define BOOT_T0_SET()          ((void)0)
+#define boot_mark(tag)         ((void)(tag))
+#define boot_timeline_emit()   ((void)0)
+#endif
 
 #ifdef GPSP_PERF_RIG
 /* Harness `ui_script = <file>` (docs/GBA-LINK-UI.md): the in-game menus and
@@ -11841,7 +11870,9 @@ static int g_rw_pool;           /* the rewind is a tenant of the pool now */
 static int g_rw_asleep;         /* suspended for a sleep: resume on wake */
 static int g_rw_held;           /* the control's level, this loop */
 static fe_host_rewind_opts g_rw_opts;
+#ifdef GPSP_PERF_RIG
 static char g_rw_hash_path[192], g_rw_dump_dir[192];
+#endif
 
 /* ---- the pictures (fe_host_rewind_opts.pix_begin / pix_end / show) ------- */
 static const uint16_t *g_rw_show;   /* the slot on screen while rewinding */
@@ -12047,6 +12078,9 @@ static void psp_rewind_read_ini(void)
    g_rw_opts.pix_begin = psp_rw_pix_begin;
    g_rw_opts.pix_end   = psp_rw_pix_end;
    g_rw_opts.show      = psp_rw_show;
+#ifdef GPSP_PERF_RIG
+   /* A test instrument of harness/lab builds (tools/rewind_*.sh build
+    * them); a release has no rewind_hash, nor its audio tee (fe_host.c). */
    if (fe_ini_get_int(HARNESS_INI, "rewind_hash", 0))
    {
       snprintf(g_rw_hash_path, sizeof(g_rw_hash_path), "%s/log/rewind_hash.txt",
@@ -12058,6 +12092,7 @@ static void psp_rewind_read_ini(void)
       snprintf(g_rw_dump_dir, sizeof(g_rw_dump_dir), "%s/log", g_dir_base);
       g_rw_opts.dump_dir = g_rw_dump_dir;
    }
+#endif
    g_rw_opts.redo_inputs = fe_ini_get_int(HARNESS_INI, "rewind_redo", 0) != 0;
    g_rw_opts.fuzz_from = (uint32_t)fe_ini_get_int(HARNESS_INI,
                                                   "rewind_fuzz_from", 0);
@@ -13867,7 +13902,7 @@ int main(int argc, char *argv[])
    int inproc_rom_n = 0;
    heap_snap_t snap_pre;
 
-   g_boot_t0 = sceKernelGetSystemTimeWide();
+   BOOT_T0_SET();
    /* stdout unbuffered: nothing reads it on a PSP, and a buffered stdout
     * takes a 1 KiB heap buffer at its first printf and keeps it for the
     * process -- possibly mid-game or mid-session (docs/INPROC-RETURN.md). */
