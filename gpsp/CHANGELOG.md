@@ -85,7 +85,7 @@ Pre-release. Links only with the same beta.
 - The game list scrolls without lag again: the new state/cheat hints and the SAVE badge looked
   files up on the Memory Stick for every step (a regression in beta.4 test builds only); each
   game's marks are now cached and filled in on idle frames.
-- Layout re-pinned for the new code (pads 6224 / 200).
+- Layout re-pinned for the new code (pads 5584 / 200).
 
 **Known issues:** on hardware each frame takes about 1-3 % more CPU time than in beta.3 (Lab,
 both consoles): frame rates are unchanged in the 8 single-player scenes and CPU-bound link
