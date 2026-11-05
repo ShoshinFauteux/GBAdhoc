@@ -695,6 +695,8 @@ def suites(env: Env, baseline: Path | None):
           # Settings > Volume (issue #31): the key, the channel volume, the
           # audio thread's one output call, with mutants.
           "python3 tools/tests/test_volume.py && "
+          # The game list's marks, marquee and position bar (issue #31).
+          "python3 tools/tests/test_list_marks.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

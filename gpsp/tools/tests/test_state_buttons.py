@@ -271,6 +271,7 @@ typedef struct { const char *name; } rom_entry;
 static struct { int console; } g_pcfg = { 2 };
 static rom_entry g_roms[1] = { { "Ruby.gba" } };
 static int g_browser_state_open, g_browser_state_slot = 1, g_shelf_del;
+static int g_mark_rom = -1;           /* the list marks, dropped on a delete */
 static char g_shelf_note[32];
 static unsigned char g_browser_state_exists[PSP_STATE_SLOT_COUNT];
 static unsigned char g_browser_preview_status[PSP_STATE_SLOT_COUNT];

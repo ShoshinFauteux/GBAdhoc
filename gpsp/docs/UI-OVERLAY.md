@@ -1441,3 +1441,33 @@ keep their atlas positions and the four new ones are packed after them.
 A file-name byte 0x85..0x88 that is not part of a UTF-8 sequence now draws
 as an arrow rather than `?`, as 0x80..0x84 already drew as buttons
 (text_fold.h). `overlay_model.py` names them `G_LEFT`..`G_DOWN`.
+
+### 15.7 The game list: marks, the long name, where you are
+
+* **Marks.** The footer's `◀ states` lights (C_VALUE, the colour of "save
+  present") when the highlighted game has a save state in any slot, and
+  `▶ cheats` when it has `cheats/<name>.cht` or `.txt` -- MXPHunter's own
+  suggestion, so no row, column or icon moves. Looked up only for the game
+  under the cursor, once it has rested (`IDLE_SELECTED`, ~170 ms, and the
+  scroll settled): up to five stats for the states and two for the cheats,
+  then nothing until the cursor moves; never while scrolling, never per
+  row. Stats only: nothing is recovered or renamed (opening the shelf still
+  does that). Looked up again after a delete on the shelf, after the cheats
+  page, and on every return to the list. No table grows: two bytes and an
+  int of `.bss`.
+* **Long names scroll** on the Shelf's selected row, on the Marquee
+  title's clock (`marquee_step`, shared): rest ~1.3 s, slide at half a pixel
+  a frame to the end, rest, again, under a 208 px scissor. Other rows keep
+  the ellipsis. The Marquee shell's own selected title already scrolled.
+* **Where you are**: a 2 px bar in the overlay scrollbar's colours beside
+  the list (Shelf x 304, Marquee x 10), its thumb at the top on the first
+  game and flush with the bottom on the last; only when the list is longer
+  than the rows on screen.
+
+Host: `tools/tests/test_list_marks.py` runs the real `browser_footer`,
+`browser_marks`, `list_position` and `marquee_step`, in the cheats build and
+without; 8 mutants, each failing.
+
+Needs eyes on hardware: the lit hint's contrast in both themes, the bar
+beside the Shelf's art and under the Marquee's hero, and that a long name's
+slide reads well at 30 px/s.

@@ -272,6 +272,13 @@ static int g_browser_state_slot = 1;
  * kept until the next press. */
 static int  g_shelf_del;
 static char g_shelf_note[32];
+/* GAME LIST MARKS (issue #31): does the highlighted game have save states,
+ * a cheats file?  Looked up once the cursor rests (browser_marks), for that
+ * one game only -- a handful of stats, never per row, never while
+ * scrolling -- and shown by colouring its footer hint.  g_mark_rom = the
+ * game they were looked up for, -1 = none yet. */
+static int         g_mark_rom = -1;
+static signed char g_mark_states, g_mark_cheats;
 /* State-shelf slide, 0 (closed) .. PANEL_FRAMES (open), eased at draw time.
  * It was a linear 26 px/frame step that also stat()ed all five slots and
  * read a thumbnail from the stick on the same frames -- Memory Stick I/O
@@ -6144,6 +6151,7 @@ static void browser_header(int n_scan)
 static void browser_footer(int n_view, int cur_is_fav)
 {
    const char *hint[6];
+   uint16_t col[6] = { C_DIM, C_DIM, C_DIM, C_DIM, C_DIM, C_DIM };
    int count = 0, x = 20, i;
    if (g_browser_state_open)
       return;
@@ -6161,10 +6169,18 @@ static void browser_footer(int n_view, int cur_is_fav)
        * shoulder buttons still page the list). */
       /* The d-pad arrows, not "Left:" / "Right:" (issue #31: "X play,
        * Left: states" read as one sentence with two styles). */
+      /* Lit (C_VALUE, the "save present" colour) when the highlighted game
+       * has what the arrow opens (issue #31). */
+      if (g_mark_states > 0)
+         col[count] = C_VALUE;
       hint[count++] = VID_GLYPH_LEFT " states";
+      if (g_mark_cheats > 0)
+         col[count] = C_VALUE;
       hint[count++] = VID_GLYPH_RIGHT " cheats";
 #else
       hint[count++] = "L/R page";
+      if (g_mark_states > 0)
+         col[count] = C_VALUE;
       hint[count++] = VID_GLYPH_LEFT " states";
 #endif
       hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
@@ -6172,9 +6188,25 @@ static void browser_footer(int n_view, int cur_is_fav)
    }
    for (i = 0; i < count; i++)
    {
-      vid_text(x, 252, hint[i], C_DIM);
+      vid_text(x, 252, hint[i], col[i]);
       x += vid_text_w(hint[i]) + 18;
    }
+}
+
+/* WHERE IN THE LIST (issue #31): a 2 px bar in the overlay scrollbar's
+ * colours, its thumb at cur's place among n -- top at the first game,
+ * bottom at the last.  Only when the list is longer than the rows shown. */
+static void list_position(int x, int y, int h, int cur, int n, int rows)
+{
+   int th, ty;
+   if (n <= rows || n < 2)
+      return;
+   th = h * rows / n;
+   if (th < 8)
+      th = 8;
+   ty = (h - th) * cur / (n - 1);
+   vid_rect(x, y, 2, h, C_CARD, 255);
+   vid_rect(x, y + ty, 2, th, C_ACCENT_DK, 255);
 }
 
 /* One stat per ROM during the scan was ~2 s of boot on a large library, and
@@ -7646,15 +7678,10 @@ void ui_loading_finish(int success)
 static int g_marq_t;
 static int g_marq_idx = -1;
 
-/* Pixels to shift the selected title left; 0 when it fits or is resting. */
-static int marquee_offset(int rom_idx, const char *full, int px)
+/* Pixels to shift a title that is `over` px too wide; 0 when it fits or is
+ * resting.  One clock for the selected game, whichever shell draws it. */
+static int marquee_step(int rom_idx, int over)
 {
-   /* MEASURE WITH THE FACE IT IS DRAWN IN.  This asked vid_text_w (Regular
-    * 15 px) about a string rendered with vid_text_hd (SemiBold 19 px), so
-    * anything that overflowed at 19 but fitted at 15 never scrolled -- which
-    * is most of them.  The ones that did scroll also stopped short, because
-    * `over` was computed from the narrower face. */
-   int over = vid_text_hd_w(full) - px;
    int travel, cycle, t;
 
    if (rom_idx != g_marq_idx)
@@ -7673,6 +7700,16 @@ static int marquee_offset(int rom_idx, const char *full, int px)
    if (t < MARQ_DWELL + travel)
       return (t - MARQ_DWELL) / MARQ_SPEED;
    return over;
+}
+
+static int marquee_offset(int rom_idx, const char *full, int px)
+{
+   /* MEASURE WITH THE FACE IT IS DRAWN IN.  This asked vid_text_w (Regular
+    * 15 px) about a string rendered with vid_text_hd (SemiBold 19 px), so
+    * anything that overflowed at 19 but fitted at 15 never scrolled -- which
+    * is most of them.  The ones that did scroll also stopped short, because
+    * `over` was computed from the narrower face. */
+   return marquee_step(rom_idx, vid_text_hd_w(full) - px);
 }
 
 /* ---- SHELL A: Shelf ---------------------------------------------------- */
@@ -7739,9 +7776,22 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
       row_fx(rel, &dx, &fade);
       col = mix565(col, C_BG_TOP, fade);
       rom_display_name(&g_roms[idx], title, sizeof(title), 1);
-      /* 208, not 232: the star column sits between the title and SAVE. */
-      clip_title(title, 208);
-      vid_text(20 + dx, y, title, col);
+      if (d == 0 && vid_text_w(title) > 208)
+      {
+         /* THE SELECTED ROW SCROLLS a name too long for it (issue #31), on
+          * the marquee's clock: rest, slide to its end, rest, again.  Drawn
+          * shifted under a 208 px scissor, then the list's own is back. */
+         int off = marquee_step(idx, vid_text_w(title) - 208);
+         vid_clip(20 + dx, y - 4, 208, FE_FONT_H + 8);
+         vid_text(20 + dx - off, y, title, col);
+         vid_clip(0, SHELF_TOP - 6, 300, 246 - (SHELF_TOP - 6));
+      }
+      else
+      {
+         /* 208, not 232: the star column sits between the title and SAVE. */
+         clip_title(title, 208);
+         vid_text(20 + dx, y, title, col);
+      }
       if (g_roms[idx].is_fav && !(g_pop.active && g_pop.view == cur + rel))
          vid_text(234 + dx, y, VID_GLYPH_STAR,
                   mix565(d == 0 ? C_CON : mix565(C_CON, C_BG_TOP, 115),
@@ -7751,6 +7801,8 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
                   mix565(d == 0 ? C_ACCENT : C_ACCENT_DK, C_BG_TOP, fade));
    }
    vid_clip_off();
+   list_position(304, SHELF_TOP - 4, 242 - (SHELF_TOP - 4), cur, n,
+                 SHELF_ROWS);
    browser_pop_draw(234, SHELF_TOP + SHELF_SEL * SHELF_ROW_H + sy,
                     SHELF_ROW_H, cur);
 
@@ -7828,6 +7880,46 @@ static int browser_rom_has_state(const char *rom_dir, int rom_idx)
       any |= g_browser_state_exists[slot - 1];
    }
    return any;
+}
+
+/* The marks for the game under the cursor (see g_mark_rom), once it has
+ * rested: stats only, nothing recovered or renamed (opening the shelf does
+ * that, browser_rom_has_state). */
+static void browser_marks(const char *rom_dir, int rom, int idle)
+{
+   SceIoStat st;
+   char path[PSP_FILE_PATH_CAP];
+   unsigned slot;
+   if (rom == g_mark_rom)
+      return;
+   g_mark_states = g_mark_cheats = -1;
+   if (idle < IDLE_SELECTED || !scroll_settled())
+      return;
+   g_mark_rom = rom;
+   g_mark_states = 0;
+   for (slot = 1; slot <= PSP_STATE_SLOT_COUNT && !g_mark_states; slot++)
+      g_mark_states = browser_rom_state_path(rom_dir, rom, slot, path,
+                                             sizeof(path)) == 0 &&
+                      sceIoGetstat(path, &st) >= 0;
+   g_mark_cheats = 0;
+#ifdef GPSP_CHEATS
+   {
+      extern char g_dir_base[];
+      char stem[PSP_ROM_REL_PATH_CAP], *dot;
+      const char *b = strrchr(g_roms[rom].name, '/');
+      snprintf(stem, sizeof(stem), "%s", b ? b + 1 : g_roms[rom].name);
+      dot = strrchr(stem, '.');
+      if (dot && dot != stem)
+         *dot = '\0';
+      if (snprintf(path, sizeof(path), "%s/cheats/%s.cht", g_dir_base,
+                   stem) < (int)sizeof(path))
+         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
+      if (!g_mark_cheats &&
+          snprintf(path, sizeof(path), "%s/cheats/%s.txt", g_dir_base,
+                   stem) < (int)sizeof(path))
+         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
+   }
+#endif
 }
 
 static void browser_preview_load_one(const char *rom_dir, int rom_idx)
@@ -8093,6 +8185,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
                   255);
    }
    browser_pop_draw(270, MQ_MID + sy, MQ_ROW_H, cur);
+   list_position(10, MQ_MID - 2 * MQ_ROW_H, 4 * MQ_ROW_H + 20, cur, n, 5);
 
    browser_footer(n, g_roms[rom].is_fav);
 }
@@ -8824,6 +8917,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
 
+   g_mark_rom = -1;          /* a game played since may have new states */
    if (out_state_slot)
       *out_state_slot = 0;
    if (console_out)
@@ -9115,6 +9209,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                 * nothing left to offer: it closes. */
                if (ok)
                   g_browser_preview_status[s - 1] = 2;
+               g_mark_rom = -1;        /* the marks look again */
                if (!browser_rom_has_state(rom_dir, rom))
                {
                   g_browser_state_open = 0;
@@ -9202,6 +9297,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          g_bpage.n_scan = n_scan;
          g_bpage.idle = idle;
          browser_cheats(rom);
+         g_mark_rom = -1;
          idle = 0;
          continue;
       }
@@ -9312,6 +9408,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if (idle >= IDLE_PREFETCH && scroll_settled())
          art_prefetch(rom_dir, cur, n);
 
+      browser_marks(rom_dir, view_rom(cur), idle);
       if (g_ui_shell)
          shell_marquee(rom_dir, cur, n, n_scan, idle);
       else

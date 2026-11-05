@@ -708,7 +708,9 @@ favourites, the state shelf) are unchanged and still apply.
 
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
-  in the browser (LEFT).
+  in the browser (LEFT). <kbd>NEW</kbd> The game list's `◀ states` / `▶ cheats` hints light
+  up when the highlighted game has states or a cheats file, a long name scrolls on the
+  selected row, and a thin bar beside the list shows where you are in it.
 - <kbd>NEW</kbd> On the in-game *Save States* page ✕ saves, □ loads and △ deletes; on the
   game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
   deleting each ask first: ✕ answers, any other button keeps what you have.
