@@ -149,8 +149,8 @@ talks to one well-known address, and the server cost is trivial (below). On top 
 UDP hole punching, section 5) takes the relay out of the path when both NATs allow it, and falls back
 to the relay automatically when they do not.
 
-**Room codes.** The host asks the server for a room and gets a 6-character code from a 31-symbol
-alphabet (no 0/O/1/I/L), about 887 million codes, and shows it. The joiner types it on the OSK. A room
+**Room codes.** The host asks the server for a room and gets a **4-letter** code (A-Z, 456,976 codes;
+owner decision, section 5 "Matchmaking"), and shows it. The joiner enters it on a D-pad letter wheel. A room
 holds 2 players (5 later: netdrv already supports up to 4 clients), expires 10 minutes after creation if
 nobody joins, and 60 s after its last packet.
 
@@ -307,6 +307,60 @@ retried mid-session. A new room tries again.
 None of these touch the real internet. A real-internet punch test (home Wi-Fi against a phone hotspot)
 is step 6 of the plan and needs the owner's go-ahead.
 
+### Matchmaking (owner decisions, 2026-11-05)
+
+UI reference: the online-play mockup (claude.ai/artifact/4i55Tc1mgfisHUnZ9fPoRv), direction approved.
+
+**Room codes: four letters.** A-Z, 26^4 = 456,976 rooms (`RL_CODE_LEN 4`, built). Shown big on the
+host's screen. The code lives while the host's room screen is open, 10 minutes at most. The join screen
+warns about O/Q and I/J. Guessing is bounded: 30 CREATE+JOIN a minute per IP. With 1,000 live rooms a
+blind guess hits one about 0.2 % of the time, and a stranger who lands in a room still sits in the
+host's lobby, where the host sees the name and does not have to press Ready. The host can also remove a
+joiner (KICK).
+
+**Quick match, per game.** A public room is a room the host marks public at CREATE (flag bit). The
+server keys it by **game id**: the cartridge's 4-character game code plus the 64-sample SHA-1 that the
+link session already checks. Different releases are therefore different games, the same rule a cable
+applies. New messages:
+
+    LIST    c->s  game_id[24] page[1]           (padded to the size of the reply page: no amplification)
+    ROOMS   s->c  up to 6 x { code[4], host nickname[16], console[1], region[2], link mode[1],
+                              host->server RTT ms[2] } + total open rooms for this game[2]
+
+The ping column is an estimate (both sides' RTT to the server). The real figure appears in the lobby
+once the path is up. The list shows **"N players online"** for the game, so an empty list says why it is
+empty.
+
+**Recent partners.** Not a friends list: the last few consoles you linked with, with "online now" and
+an invite.
+
+- **Console ID:** 64 random bits plus a 128-bit secret, made on the PSP the first time online play is
+  turned on and kept in `config.ini`. It is never the PSP's MAC, PSID or nickname. The secret
+  authenticates every recent-partner request, so nobody can read a list by guessing an ID.
+- **What the server stores** per console ID: at most **8** partners, each as {partner console ID, the
+  partner's nickname at the time, game id, last-linked date}, plus "online now" while a connection is
+  open. **No IP addresses** are stored with the history, and no session contents.
+- **How long:** a partner entry expires **30 days** after the last link with that partner. A console ID
+  unseen for 90 days is deleted with its list.
+- **How to clear it:** Settings > Online > *Forget recent partners* sends `FORGET(id, secret)`, which
+  deletes the list on the server. *Reset online identity* also makes a new ID, so the old one is
+  orphaned and expires. The server's page states the same retention.
+- **Invites:** `INVITE(my id, secret, partner id, game id, room code)`. If the partner is online in GBAdhoc,
+  they get a toast ("Mara invites you: Pokemon Emerald, room KQTR") and accept from Wireless > Online.
+  Invites are rate-limited (10 per hour per ID) and only reach consoles in your recent list.
+
+**The host picks the link mode in the lobby.** For a game that links both ways (Link Cable and Wireless
+Adapter, e.g. Emerald), the host's lobby row cycles the mode. The choice travels as room metadata
+(`MODE host->server->guests`), and the session starts in that mode on both consoles. The guest sees it
+and cannot change it.
+
+**The connection-quality chip's position is a user setting:** bottom right (default, where the session
+chip sits today), top left (the FPS chip's slot), or "only when the ping class changes". It is
+client-side only; the server is not involved.
+
+**Ping thresholds per game come from the latency sweep** (section 2, the per-game table): the lobby's
+verdict ("Great for trades, battles may pause") uses each game's measured tolerances, not guesses.
+
 ### How the lockstep maps onto it
 
 The lockstep needs nothing new: the partner's buttons arrive later, and D absorbs that (section 2). The
@@ -390,7 +444,7 @@ know the difference: it is the same GBR1 protocol at another address.
 
 **What the Online tab shows** (the app's WebView2 UI, beside the entry maker's tabs):
 
-- **Status line:** "Not hosting" / "Hosting room **K7QH2M** on this PC (port 27420 open via UPnP)" /
+- **Status line:** "Not hosting" / "Hosting room **KQTR** on this PC (port 27420 open via UPnP)" /
   "Hosting on the shared relay: your router didn't open a port".
 - **Room code**, large, with a copy button. Under it, players: slot, nickname (netdrv's), PSP model if
   known, connected time, **ping to this PC** in ms (from the relay's KEEP/DATA timing), packets/s, and

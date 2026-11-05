@@ -83,6 +83,10 @@
 #include "shot_name.h"      /* screenshot file names (issue #13) */
 #include "fe_png.h"
 #include "mgift_net.h"
+#include "online_psp.h"      /* EXPERIMENTAL online play (ONLINE=1 builds) */
+#ifdef GBADHOC_ONLINE
+#include "libretro.h"        /* retro_get_system_info: the build the room matches */
+#endif
 #include "mgift_cart.h"
 #include "me_host.h"
 #include "home_host.h"
@@ -6394,7 +6398,10 @@ static int net_start_np(int is_host, const char *group, const char *nick,
    static nd_transport tp;               /* fe_np copies the vtable */
    fe_np_config npc;
 
-   adhoc_transport_iface(&tp);
+   if (online_psp_enabled())
+      online_psp_iface(&tp);
+   else
+      adhoc_transport_iface(&tp);
    memset(&npc, 0, sizeof(npc));
    npc.transport = &tp;
    npc.is_host   = is_host;
@@ -6482,6 +6489,31 @@ static int net_bringup_io(int is_host, const char *group, const char *nick,
     * user turned it off for an A/B.  Must precede init (the thread is part
     * of the bring-up ladder). */
    adhoc_transport_set_tx_thread(g_pcfg.net_tx_thread);
+
+   /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): the same session over
+    * a relay / direct path on infrastructure Wi-Fi instead of ad hoc. */
+   if (online_psp_enabled())
+   {
+      struct retro_system_info si;
+      memset(&si, 0, sizeof(si));
+      retro_get_system_info(&si);
+      rc = online_psp_up(is_host, si.library_version,
+                         g_gblink_role ? 120000u : 30000u);
+      if (rc != 0)
+      {
+         fe_evt("net_error reason=online why=\"%s\"", online_psp_why());
+         return -1;
+      }
+      fe_evt("adhoc_up group=%s via=online", group && group[0] ? group : "-");
+      if (net_start_np(is_host, group, nick, probe) != 0)
+      {
+         online_psp_down();
+         return -1;
+      }
+      fe_evt("mem_free=%d max_block=%d net=up via=online",
+             sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+      return 0;
+   }
 
    /* A join joins the host's scanned BSS and never creates a group:
     * connect-by-name made a second GBLNK7 whenever its own quick scan
@@ -6587,7 +6619,10 @@ static void net_teardown_io(void)
    fe_evt("td_step name=pre_np_stop");
    fe_np_stop();
    fe_evt("td_step name=pre_transport_term");
-   adhoc_transport_term();
+   if (online_psp_enabled())
+      online_psp_down();
+   else
+      adhoc_transport_term();
    fe_evt("td_step name=post_transport_term");
    g_net_up = 0;
    if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
@@ -6681,11 +6716,14 @@ static void net_frame(void)
    {
       adhoc_ctl_evt("hb");
       adhoc_stats_evt();
+      online_psp_stats_evt("hb");
       sess_cost_evt(0);                    /* ADR-0021 */
    }
    if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
       skip_policy_frame();                /* ADR-0019 */
-   if (!adhoc_transport_connected() && !g_group_lost_logged)
+   if (!(online_psp_enabled() ? online_psp_connected()
+                              : adhoc_transport_connected()) &&
+       !g_group_lost_logged)
    {
       /* adhocctl DISCONNECT event (group dissolved / radio lost): netdrv
        * will also see peer death — log the root cause once. */
@@ -7770,6 +7808,10 @@ static int g_gblink_after_code;
 static const char *g_gblink_after_why;
 static int psp_gb_bulk_enable(int on)
 {
+   /* online: no bulk lane -- the ordered channel carries transfers, and the
+    * partner-cartridge transfer must not cross a server (ONLINE-TUNNEL.md 6) */
+   if (online_psp_enabled())
+      return on ? -1 : 0;
    if (!on)
    {
       adhoc_transport_bulk_close();
@@ -8532,7 +8574,9 @@ static void link_setup_watch(void)
       g_link_why = LW_FULL;
    else if (fe_np_stop_reason() == ND_STOP_VERSION)
       g_link_why = LW_VERSION;
-   else if (g_link_setup_ticks > 12u * 60u && adhoc_transport_connected())
+   else if (g_link_setup_ticks > 12u * 60u &&
+            (online_psp_enabled() ? online_psp_connected()
+                                  : adhoc_transport_connected()))
       g_link_why = g_pcfg.console != FE_CONSOLE_GBA &&
                    g_link_room_kind == ROOM_ADAPTER ? LW_GBA_ROOM
                                                     : LW_VERSION;
@@ -14398,6 +14442,7 @@ int main(int argc, char *argv[])
     * microseconds; real PSP ad-hoc is tens of ms, which is the whole
     * reason the ARQ storm of docs/HANDOFF.md issue #2 escaped the harness.
     * Each side adds net_latency_ms to the one-way path -> RTT = 2x. */
+   online_psp_configure(HARNESS_INI, p_config);   /* EXPERIMENTAL, ONLINE=1 */
    {
       int nl = (int)fe_ini_get_int(HARNESS_INI, "net_latency_ms", 0);
       int nj = (int)fe_ini_get_int(HARNESS_INI, "net_jitter_ms", 0);
