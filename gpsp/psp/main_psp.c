@@ -7539,11 +7539,13 @@ static void exit_assist_frame(void)
  * store and an index bump, and the main loop does the log write.  Entries
  * are dropped rather than overwritten if the ring fills (the count says so),
  * because the FIRST error is the interesting one. */
+#ifndef GPSP_NO_TELEMETRY
 #define RFU_TRACE_RING 64
 static volatile unsigned g_rfu_tr_buf[RFU_TRACE_RING];
 static volatile unsigned g_rfu_tr_head;   /* producer: emulation thread   */
 static volatile unsigned g_rfu_tr_tail;   /* consumer: main loop          */
 static volatile unsigned g_rfu_tr_lost;
+#endif
 
 /* Fired by the core at vcount==160 -- see g_vis_n. Defined here, below
  * frame_t0 and net_now_us. */
@@ -7620,7 +7622,9 @@ static volatile unsigned g_rfu_seen_bcrd, g_rfu_seen_conn;
 
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
 {
+#ifndef GPSP_NO_TELEMETRY
    unsigned head = g_rfu_tr_head;
+#endif
 
    /* Flag-writes only, like the adhocctl handler: this runs on the emulation
     * thread inside the adapter emulation and must not do work. */
@@ -7634,6 +7638,12 @@ void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
    else if (ev == 2)                    /* RFU_TR_STATE */
       g_rfu_last_state = a;
 
+#ifdef GPSP_NO_TELEMETRY
+   /* The ring's only reader is rfu_trace_drain's fe_evt lines: a player
+    * build keeps the peek above (the Mystery Gift screen prints it) and
+    * not the ring. */
+   (void)b;
+#else
    if (head - g_rfu_tr_tail >= RFU_TRACE_RING)
    {
       g_rfu_tr_lost++;
@@ -7642,6 +7652,7 @@ void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
    g_rfu_tr_buf[head % RFU_TRACE_RING] =
       ((ev & 0xFF) << 24) | ((a & 0xFFF) << 12) | (b & 0xFFF);
    g_rfu_tr_head = head + 1;
+#endif
 }
 
 /* Reported, never branched on: gone with telemetry. */
@@ -7652,6 +7663,9 @@ static const char *rfu_tr_state_name(unsigned s)
    return s < 4 ? n[s] : "?";
 }
 
+#ifdef GPSP_NO_TELEMETRY
+#define rfu_trace_drain() ((void)0)
+#else
 static void rfu_trace_drain(void)
 {
    static unsigned reported_lost;
@@ -7966,6 +7980,7 @@ static void rfu_trace_drain(void)
       fe_evt("rfu_trace_lost n=%u", reported_lost);
    }
 }
+#endif
 
 enum { SIL_OFF = 0, SIL_AUTO, SIL_HOST, SIL_JOIN };
 enum { SILST_IDLE = 0, SILST_JOINING, SILST_UP, SILST_FAILED };
