@@ -63,6 +63,17 @@ Pre-release. Links only with the same beta.
   not there opens the list. Entries are made with the GBAdhoc XMB apps (Windows and PSP), which
   ship separately. A game is the same game from its entry and from the list: the same saves,
   states, settings and cheats.
+- **Online play (experimental, off by default).** Two PSPs can link over the internet instead of
+  ad hoc Wi-Fi: turn on Settings > Online play, then in game open Wireless > Online. The host
+  creates a room and gets a 4-letter code; the other player enters it and joins. Both PSPs use an
+  infrastructure Wi-Fi connection saved in the XMB (2.4 GHz only; WPA2 needs ARK-4's WPA2 plugin)
+  and meet through the GBAdhoc relay at relay.rayquaza.ca, which forwards the same link traffic two
+  PSPs exchange over ad hoc; a direct path is tried when both routers allow it, with the relay as
+  the fallback. The link sessions are the ad hoc ones, but the GB cartridge stream and Share game
+  data are not offered online, so both players need the game. Recent partners are not built yet.
+  This is the first build with it: the relay, its NAT tests and a fuzzer pass on the PC, but no
+  session has yet run end to end between two PSPs over the internet. With the setting off nothing
+  changes, per frame or otherwise.
 - 222 MHz plays smoothly again at normal speed (reported by ingo3643). The lower-latency
   presentation added in 4.5.0 shows each frame the moment it is ready; at 222 MHz the Media
   Engine often finished a frame just after the screen refreshed, so that frame showed late and
@@ -75,8 +86,8 @@ Pre-release. Links only with the same beta.
 
 **Known issues:** on hardware each frame takes about 1-3 % more CPU time than in beta.3 (Lab,
 both consoles): frame rates are unchanged in the 8 single-player scenes and CPU-bound link
-sessions are within 1 %; the cause is not yet attributed. The PSP-1000 has 32 KiB less free
-memory than with beta.3 (filters v2 24 KiB, folders 8 KiB). Mario Golf's adapter lobby can
+sessions are within 1 %; the cause is not yet attributed. The PSP-1000 has 48 KiB less free
+memory than with beta.3 (filters v2 24 KiB, online play 16 KiB, folders 8 KiB). Mario Golf's adapter lobby can
 still stick when both players press at the same moment (leave and rejoin). **Downgrading:**
 4.6.0-beta.3 and older look only in `roms/` and will not see moved saves or states; move them
 back from `saves/` and `states/` by hand before going back.

@@ -68,6 +68,8 @@
 >   arrows in the hints, state/cheat marks and a position bar on the game list, a
 >   `Screenshots` folder, and a Video preset that can really be set to none.
 > - *New in beta 4:* **XMB launch mode** (#29): a game's own XMB entry can start it directly.
+> - *New in beta 4:* **online play (experimental, off by default)**: *Settings → Online play*,
+>   then *Wireless → Online*; two PSPs link over the internet through relay.rayquaza.ca.
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
 > - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the
