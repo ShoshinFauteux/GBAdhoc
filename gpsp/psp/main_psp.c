@@ -9801,10 +9801,14 @@ static void mgift_start_io(void)
 
    /* Now become a distribution cart to the emulated game.  This attaches to the
     * core's netpacket seam; it does not touch netdrv or the ad-hoc path. */
+   /* mgift_game_ok() above has refused every game without Mystery Gift, so
+    * this fails only if the core gave no netpacket interface (a defensive
+    * path: the GBA core always has one).  Say what failed, not "no
+    * wireless", which the game check now answers. */
    if (mgift_cart_start() != 0)
    {
-      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no wireless");
-      snprintf(g_mg_l2, sizeof(g_mg_l2), "Mystery Gift needs FR/LG or Emerald");
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not attach to the game");
+      g_mg_l2[0] = '\0';
       osd_toast("%s", g_mg_l1);
       mgnet_card_close();
       mgnet_wifi_down();
