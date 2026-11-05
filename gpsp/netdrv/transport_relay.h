@@ -55,6 +55,11 @@ typedef struct rl_client_cfg
    /* harness only: drop every DIRECT datagram received from this moment on
     * (microseconds since create; 0 = never) -- forces the fallback */
    uint64_t drop_direct_after_us;
+   /* 1 = a four-letter code is first looked up at the server (RL_T_LOOKUP):
+    * a desktop host's code redirects this client to that host, which is then
+    * its server for everything (PROBE, CREATE/JOIN, relay, rendezvous).  No
+    * answer in 1.6 s (an older server) = carry on at the server. */
+   int lookup;
 } rl_client_cfg;
 
 enum
@@ -62,7 +67,8 @@ enum
    RL_ST_PROBING = 1,    /* PROBEs out, classifying the NAT */
    RL_ST_ENTERING,       /* CREATE/JOIN out, waiting for the slot */
    RL_ST_IN_ROOM,        /* have a slot: netdrv can run */
-   RL_ST_FAILED          /* refused (see relay_transport_error) */
+   RL_ST_FAILED,         /* refused (see relay_transport_error) */
+   RL_ST_LOOKUP          /* LOOKUP out (cfg.lookup): where the code lives */
 };
 
 typedef struct relay_transport relay_transport;
@@ -93,6 +99,9 @@ typedef struct rl_client_stats
    uint32_t direct_rtt_us[RL_SLOTS];
    uint32_t relay_rtt_us;
    uint32_t fallbacks;
+   uint8_t located;                /* RL_LOC_* of the lookup (0 = none or not asked) */
+   uint32_t host_ip_be;            /* the server actually used (a desktop host when located) */
+   uint16_t host_port;
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

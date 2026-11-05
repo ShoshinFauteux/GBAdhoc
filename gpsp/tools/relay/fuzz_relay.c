@@ -37,7 +37,8 @@ static unsigned long g_fail;
 static uint8_t g_seen[64][RL_MAX_DGRAM];     /* replies, replayed later */
 static size_t g_seen_len[64];
 static unsigned g_seen_n;
-static rl_core *g_core;
+static rl_core *g_core, *g_desk;   /* the shared server (directory on) and a desktop host (home code) */
+static uint64_t g_dtok[24];
 
 static int addr_holds_slot(const rl_addr *a);
 
@@ -101,6 +102,11 @@ static void learn(int who, unsigned first)
          continue;
       if (b[5] == RL_T_COOKIE && g_seen_len[k % 64] >= RL_HDR + 8)
          g_cookie[who] = rl_get64(b + RL_HDR);
+      if (b[5] == RL_T_REGISTERED && g_seen_len[k % 64] >= RL_HDR + 8)
+      {
+         g_dtok[who] = rl_get64(b + 8);
+         memcpy(g_codes[g_ncodes++ % 16], b + RL_HDR, RL_CODE_LEN);
+      }
       if ((b[5] == RL_T_CREATED || b[5] == RL_T_JOINED) && g_seen_len[k % 64] >= RL_HDR + RL_CODE_LEN + 1)
       {
          g_tok[who] = rl_get64(b + 8);
@@ -132,8 +138,10 @@ static size_t gen(uint8_t *b, int who)
       return len;
    }
    {
-      int type = (int)rn(18);
+      int type = (int)rn(24);
       uint64_t tok = rn(3) ? g_tok[who] : r64();
+      if (type == RL_T_REGISTER || type == RL_T_UNREGISTER)
+         tok = rn(3) ? g_dtok[who] : rn(2) ? 0 : r64();
       size_t i;
       len = RL_HDR + rn(80);
       if (rn(4) == 0)
@@ -158,6 +166,25 @@ static size_t gen(uint8_t *b, int who)
                memcpy(p + RL_BUILD_LEN, g_codes[rn(g_ncodes < 16 ? g_ncodes : 16)], RL_CODE_LEN);
             if (rn(4))
                rl_put64(p + RL_BUILD_LEN + RL_CODE_LEN + 7, g_cookie[who]);
+         }
+      }
+      if ((type == RL_T_REGISTER || type == RL_T_LOOKUP || type == RL_T_UNREGISTER) && len >= RL_HDR)
+      {
+         uint8_t *p = b + RL_HDR;
+         if (rn(3) && len < RL_DIR_PAD)
+         {
+            for (i = len; i < RL_DIR_PAD + 8; i++)
+               b[i] = (uint8_t)r64();
+            len = RL_DIR_PAD + rn(8);              /* padded as a client pads */
+         }
+         if (len >= RL_HDR + 21)
+         {
+            for (i = 0; i < RL_CODE_LEN; i++)
+               p[i] = rn(4) ? (uint8_t)('A' + rn(3)) : rn(2) ? 0 : (uint8_t)r64();
+            if (g_ncodes && rn(3))
+               memcpy(p, g_codes[rn(g_ncodes < 16 ? g_ncodes : 16)], RL_CODE_LEN);
+            if (type == RL_T_REGISTER && rn(4))
+               rl_put64(p + 13, g_cookie[who]);
          }
       }
       return len;
@@ -212,7 +239,12 @@ int main(int argc, char **argv)
    cfg.send = core_send;
    cfg.random64 = core_rand;
    cfg.max_rooms = 32;
+   cfg.directory = 1;
+   cfg.max_dir = 8;
    g_core = relay_core_create(&cfg);
+   cfg.directory = 0;
+   g_desk = relay_core_create(&cfg);
+   relay_core_set_home(g_desk, "ABBA");
    for (i = 0; i < NSRC; i++)
    {
       g_pop[i].ip_be = (uint32_t)(0x0A000000u + (unsigned)i / 3);   /* some share an IP */
@@ -227,6 +259,7 @@ int main(int argc, char **argv)
    {
       cc.is_host = i == 0;
       strcpy(cc.code, "FUZZ");
+      cc.lookup = i == 1;
       cl[i] = relay_transport_create(&sk, &cc);
    }
    for (it = 0; it < iters; it++)
@@ -239,15 +272,21 @@ int main(int argc, char **argv)
       g_in_len = len;
       g_src_has_slot = g_tok[who] != 0 && b[5] != RL_T_PROBE && b[5] != RL_T_CREATE &&
                        b[5] != RL_T_JOIN;
-      if (len >= RL_HDR && (b[5] == RL_T_CREATE || b[5] == RL_T_JOIN))
+      if (len >= RL_HDR && (b[5] == RL_T_CREATE || b[5] == RL_T_JOIN || b[5] == RL_T_REGISTER ||
+                            b[5] == RL_T_LOOKUP || b[5] == RL_T_UNREGISTER))
          g_src_has_slot = 0;
-      relay_core_input(g_core, (int)rn(2), &g_src, b, len, now);
+      {
+         int sock = (int)rn(2);
+         relay_core_input(g_core, sock, &g_src, b, len, now);
+         relay_core_input(g_desk, sock, &g_src, b, len, now);
+      }
       if (g_seen_n != first)
          learn(who, first);
       if (rn(64) == 0)
       {
          now += rn(30000);
          relay_core_tick(g_core, now);
+         relay_core_tick(g_desk, now);
       }
       now += rn(3);
       /* the client: the same datagram, from the server or from a stranger */
@@ -269,6 +308,11 @@ int main(int argc, char **argv)
          c_now += rn(40000);
       }
       relay_core_stats(g_core, &st);
+      if (st.dir_now > 8)
+      {
+         printf("FAIL dir_now %u > max\n", st.dir_now);
+         g_fail++;
+      }
       if (st.rooms_now > 32)
       {
          printf("FAIL rooms_now %u > max\n", st.rooms_now);
@@ -278,11 +322,12 @@ int main(int argc, char **argv)
          break;
    }
    relay_core_stats(g_core, &st);
-   printf("%s: %lu datagrams; rx=%u bad=%u token=%u rate=%u rooms_made=%u joins=%u cookies=%u/%u bad_cookie=%u fwd=%u\n",
+   printf("%s: %lu datagrams; rx=%u bad=%u token=%u rate=%u rooms_made=%u joins=%u cookies=%u/%u bad_cookie=%u fwd=%u dir_made=%u refreshed=%u lookups=%u located=%u\n",
           g_fail ? "FAIL" : "PASS", it, st.rx, st.rx_bad, st.rx_token, st.rx_rate, st.rooms_made,
-          st.joins, st.cookies_sent, st.rx, st.cookie_bad, st.fwd);
+          st.joins, st.cookies_sent, st.rx, st.cookie_bad, st.fwd, st.dir_made, st.dir_refreshed, st.lookups, st.located);
    for (i = 0; i < 2; i++)
       relay_transport_destroy(cl[i]);
    relay_core_destroy(g_core);
+   relay_core_destroy(g_desk);
    return g_fail ? 1 : 0;
 }

@@ -18,6 +18,8 @@
  * public address unless --bind says so: the default is 127.0.0.1.
  */
 #include "relay_core.h"
+#include "relay_dirclient.h"
+#include "invite_code.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -37,6 +39,20 @@ static struct sockaddr_in g_fwd_peer;
 static int g_have_fwd_peer;
 static int g_quiet;
 static int g_status = -1;
+/* desktop-host mode (--home / --register): GBAdhoc XMB's relay, for natlab */
+static rl_dirc g_dc;
+static int g_dc_on;
+
+static void dc_send(void *u, uint32_t ip, uint16_t port, const void *buf, size_t len)
+{
+   struct sockaddr_in a;
+   (void)u;
+   memset(&a, 0, sizeof(a));
+   a.sin_family = AF_INET;
+   a.sin_addr.s_addr = ip;
+   a.sin_port = htons(port);
+   sendto(g_fd[0], buf, len, 0, (struct sockaddr *)&a, sizeof(a));
+}
 
 static uint64_t g_t0;
 static uint64_t now_ms(void)
@@ -119,7 +135,8 @@ int main(int argc, char **argv)
 {
    const char *bind_ip = "127.0.0.1";
    int port = RL_DEFAULT_PORT, fwd_port = 0, status_port = 0, i;
-   const char *pidfile = NULL;
+   const char *pidfile = NULL, *home = NULL, *reg = NULL, *pub = NULL, *lan = NULL;
+   int adv_port = 0;
    rl_core_cfg cfg;
    rl_core *core;
    uint64_t last_stat = now_ms(), last_tick = 0;
@@ -130,12 +147,21 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--port") && i + 1 < argc) port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--fwd") && i + 1 < argc) fwd_port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--no-direct")) cfg.no_direct = 1;
+      else if (!strcmp(argv[i], "--no-directory")) cfg.directory = -1;
+      else if (!strcmp(argv[i], "--home") && i + 1 < argc) home = argv[++i];
+      else if (!strcmp(argv[i], "--register") && i + 1 < argc) reg = argv[++i];
+      else if (!strcmp(argv[i], "--advertise-port") && i + 1 < argc) adv_port = atoi(argv[++i]);
+      else if (!strcmp(argv[i], "--public") && i + 1 < argc) pub = argv[++i];
+      else if (!strcmp(argv[i], "--lan-ip") && i + 1 < argc) lan = argv[++i];
       else if (!strcmp(argv[i], "--quiet")) g_quiet = 1;
       else if (!strcmp(argv[i], "--status") && i + 1 < argc) status_port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--pidfile") && i + 1 < argc) pidfile = argv[++i];
       else
       {
-         fprintf(stderr, "usage: gbadhoc-relay [--bind IP] [--port P] [--fwd PORT] [--no-direct] [--quiet]\n");
+         fprintf(stderr, "usage: gbadhoc-relay [--bind IP] [--port P] [--fwd PORT] [--no-direct] [--quiet]\n"
+                         "  [--no-directory]   do not keep the desktop-host directory (on by default)\n"
+                         "  desktop-host mode (GBAdhoc XMB's relay): [--home CODE] [--register DIR_IP[:PORT]]\n"
+                         "      [--advertise-port P] [--lan-ip IP] [--public IP (prints the invite code)]\n");
          return 2;
       }
    }
@@ -172,9 +198,46 @@ int main(int argc, char **argv)
    cfg.send = do_send;
    cfg.random64 = rnd64;
    cfg.log = say;
+   /* the shared server keeps the directory; a desktop host does not */
+   cfg.directory = cfg.directory < 0 || home || reg ? 0 : 1;
    core = relay_core_create(&cfg);
    if (!core)
       return 1;
+   if (home)
+      relay_core_set_home(core, home);
+   if (reg && !fwd_port)
+   {
+      rl_dirc_cfg dc;
+      char h[64], *c;
+      memset(&dc, 0, sizeof(dc));
+      snprintf(h, sizeof(h), "%s", reg);
+      c = strchr(h, ':');
+      dc.dir_port = RL_DEFAULT_PORT;
+      if (c)
+      {
+         *c = 0;
+         dc.dir_port = (uint16_t)atoi(c + 1);
+      }
+      dc.dir_ip_be = inet_addr(h);
+      dc.adv_port = (uint16_t)(adv_port ? adv_port : port);
+      dc.priv_ip_be = inet_addr(lan ? lan : bind_ip);
+      dc.priv_port = (uint16_t)port;
+      if (home)
+         snprintf(dc.want, sizeof(dc.want), "%.4s", home);
+      dc.send = dc_send;
+      dc.log = say;
+      rl_dirc_start(&g_dc, &dc, now_ms());
+      g_dc_on = 1;
+   }
+   if (pub)
+   {
+      uint32_t ip = inet_addr(pub);
+      char inv[16];
+      if (inv_encode((const uint8_t *)&ip, (unsigned)(adv_port ? adv_port : port), 1, inv) == INV_OK)
+         printf("invite %s\n", inv);
+      else
+         printf("invite none (port %d has no invite code)\n", adv_port ? adv_port : port);
+   }
    g_t0 = now_ms();
    printf("gbadhoc-relay up %s port=%d%s%s\n", bind_ip, fwd_port ? fwd_port : port,
           fwd_port ? " (forwarded)" : "", cfg.no_direct ? " no-direct" : "");
@@ -245,6 +308,18 @@ int main(int argc, char **argv)
             {
                from.ip_be = a.sin_addr.s_addr;
                from.port = ntohs(a.sin_port);
+               if (g_dc_on && k == 0 &&
+                   rl_dirc_input(&g_dc, from.ip_be, from.port, b, (size_t)r, now_ms()))
+               {
+                  if (g_dc.code_changed)
+                  {
+                     g_dc.code_changed = 0;
+                     relay_core_set_home(core, g_dc.code);
+                     printf("home code=%s registered\n", g_dc.code);
+                     fflush(stdout);
+                  }
+                  continue;
+               }
                relay_core_input(core, k, &from, b, (size_t)r, now_ms());
             }
          }
@@ -253,6 +328,8 @@ int main(int argc, char **argv)
       {
          last_tick = now_ms();
          relay_core_tick(core, last_tick);
+         if (g_dc_on)
+            rl_dirc_tick(&g_dc, last_tick);
       }
       if (now_ms() - last_stat >= 10000)
       {
@@ -260,10 +337,10 @@ int main(int argc, char **argv)
          char l[200];
          relay_core_stats(core, &s);
          snprintf(l, sizeof(l), "stats rx=%u tx=%u fwd=%u bytes=%u bad=%u token=%u rate=%u "
-                  "rooms=%u made=%u joins=%u refused=%u punch=%u direct=%u",
+                  "rooms=%u made=%u joins=%u refused=%u punch=%u direct=%u dir=%u lookups=%u located=%u dir_bytes=%u",
                   s.rx, s.tx, s.fwd, s.fwd_bytes, s.rx_bad, s.rx_token, s.rx_rate,
                   s.rooms_now, s.rooms_made, s.joins, s.refused, s.punches_offered,
-                  s.paths_direct);
+                  s.paths_direct, s.dir_now, s.lookups, s.located, s.dir_rx_bytes + s.dir_tx_bytes);
          say(NULL, l);
          last_stat = now_ms();
       }
