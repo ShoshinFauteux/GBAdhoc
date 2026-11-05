@@ -3074,6 +3074,14 @@ static unsigned g_ffc_vc __attribute__((section(".sbss")));
 static unsigned g_ffc_f __attribute__((section(".sbss")));
 static unsigned g_ffc_waits __attribute__((section(".sbss")));
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
+/* LATE PRESENT (tier 0b, `me_late_present`, default 1): see dfr_present(). */
+#ifndef PLAY_ME_LATE_PRESENT
+#define PLAY_ME_LATE_PRESENT 1
+#endif
+static int      g_dfr_cfg __attribute__((section(".sdata"))) = PLAY_ME_LATE_PRESENT;
+static int      g_dfr __attribute__((section(".sbss")));      /* this loop's present waits for its render */
+static unsigned g_dfr_n __attribute__((section(".sbss")));    /* loop tops that deferred */
+static unsigned g_dfr_late __attribute__((section(".sbss")));  /* ...whose render was still not there */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
 static unsigned g_ll_margin_us = 250;     /* `me_lowlat_margin_us` */
@@ -12961,6 +12969,9 @@ static void lat_census(void)
              g_ff_flip_pace, g_ffh_holds, g_ffh_vb, g_ffh_waits, g_ffc_waits,
              g_ffh_3x);
    g_ffh_holds = g_ffh_vb = g_ffh_waits = g_ffc_waits = 0;
+   if (g_dfr_n)
+      fe_evt("late_present n=%u late=%u", g_dfr_n, g_dfr_late);
+   g_dfr_n = g_dfr_late = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -13197,6 +13208,58 @@ static int wake_service(void)
       }
    }
    return 0;
+}
+
+/* LATE PRESENT (tier 0b).  me_early_retire shows the render of frame N at
+ * the loop top of N+1 when the ME finished it during N's wait.  That loop
+ * top only BLITS; the flip is the early flip in N+1's own wait, a whole
+ * frame later.  When the render was still running at the loop top (the ME at
+ * 222 MHz renders FireRed's overworld in ~11.5 ms from the vcount-160 post,
+ * which ends within a millisecond either side of the vblank), the loop top
+ * used to blit N-1 again and flip it -- a repeat -- and step 1 of
+ * me_rend_frame then retired N at vcount 160.  N+1's render usually made its
+ * own loop top, replaced N as the one to show, and N was never presented: a
+ * repeat and a skip, the judder ingo3643 saw at 1x, ~250 times a minute.
+ *
+ * Instead the loop top presents nothing; the wait presents (blit + HUD +
+ * OSD) whatever has retired by then -- N, retired by step 1 at the latest --
+ * before the in-wait retire can look at N+1, and the early flip waits for
+ * that blit as it waits for any GE work.  N latches on the very vblank it
+ * would have on time: no repeat, no skip, no extra latency.  A render still
+ * running at the wait (more than a frame late) shows the previous picture,
+ * as before.  The blit moves from beside emulation into the wait, where the
+ * loop was idle; a frame with no wait left flips after the vblank (the
+ * post-wait swap flushes the GE first), which is what a late frame does
+ * anyway.  Off under FF, the draw gate, a rewind and same-frame, as tier 0b
+ * is; tier 1's own wait-present is untouched. */
+static int dfr_defer(void)
+{
+   g_dfr = 0;
+   if (!g_dfr_cfg || !g_me_rend || g_mer_pending < 0 ||
+       g_mer_ready == -1 || g_mer_ready != g_mer_last_presented ||
+       g_ff_mult || g_ff_uncapped || g_ff_gate ||
+       !mer_retire_early_active() || mer_sameframe_active() ||
+       mer_rewind_busy())
+      return 0;
+   g_dfr = 1;
+   g_dfr_n++;
+   return 1;
+}
+
+static void dfr_present(void)
+{
+   if (!g_dfr)
+      return;
+   g_dfr = 0;
+   if (g_mer_ready == g_mer_last_presented)
+      g_dfr_late++;             /* still rendering: the old picture again */
+   me_rend_present();
+#ifdef REWIND
+   if (g_drew && (g_rw_on || g_rwh.denied))
+      psp_rewind_hud();
+#endif
+   if (g_drew)
+      osd_draw();
 }
 
 int main(int argc, char *argv[])
@@ -14171,6 +14234,8 @@ int main(int argc, char *argv[])
                                          g_flip_early) != 0;
       g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
                                                g_mer_early_retire) != 0;
+      g_dfr_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_late_present",
+                                      g_dfr_cfg) != 0;
       g_ff_flip_pace = (int)fe_ini_get_int(HARNESS_INI, "ff_flip_pace",
                                            g_ff_flip_pace) & 7;
       /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
@@ -14195,9 +14260,10 @@ int main(int argc, char *argv[])
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
       fe_evt("latency flip_early=%d me_early_retire=%d me_lowlat=%d "
-             "recover=%u margin_us=%u me_sameframe=%d ff_flip_pace=%d",
+             "recover=%u margin_us=%u me_sameframe=%d ff_flip_pace=%d "
+             "late_present=%d",
              g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
-             g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace);
+             g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace, g_dfr_cfg);
       /* 0 restores the end-of-retro_run post for a one-binary A/B. */
       g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
       if (!g_mer_vispost)
@@ -16612,7 +16678,7 @@ session_top:
             ll_to_b();
          if (g_ll_mode_h)
             g_ll_iter_h = 1;
-         else
+         else if (!dfr_defer())   /* LATE PRESENT: N's render not in yet */
             me_rend_present(); /* ME renderer: swap-phase present (FF triage) */
       }
 #ifdef REWIND
@@ -17110,7 +17176,7 @@ session_top:
          }
          audio_ring_note();
          FE_LP_SET(FELP_L_OSD);
-         if (g_drew)
+         if (g_drew && !g_dfr)
             osd_draw();
 
          g_vc_target += want;
@@ -17168,6 +17234,7 @@ session_top:
             g_ffh_waits++;
          }
          lat_wait_begin(want);
+         dfr_present();           /* LATE PRESENT: before any retire/flip */
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
             if (g_net_up)

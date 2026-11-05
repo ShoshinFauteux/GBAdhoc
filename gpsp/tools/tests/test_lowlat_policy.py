@@ -30,6 +30,7 @@ RANGES = (
     ("static void me_rend_present(void)", "/* SAME-FRAME RETIREMENT."),
     ("static void me_rend_retire_if_idle(void)", "/* Called from plat_video_frame"),
     ("static int lat_swap(int early)", "static void lat_census(void)"),
+    ("/* LATE PRESENT (tier 0b).", "int main(int argc"),
 )
 
 
@@ -103,6 +104,11 @@ MUTANTS = (
     ("no exit",
      "static void ll_to_b(void)\n{\n   if (g_ll_mode_h)",
      "static void ll_to_b(void)\n{\n   if (0)"),
+    # tier 0b without the late present: a render that misses its loop top
+    # repeats the previous frame and is then skipped (FireRed at 222 MHz)
+    ("no late present",
+     "   g_dfr = 1;\n   g_dfr_n++;\n   return 1;",
+     "   return 0;"),
     # an early nudge with the ring nowhere near the high-water mark
     ("pull anytime",
      "level + in_rate / 60u > RING_HIGH_WATER",
