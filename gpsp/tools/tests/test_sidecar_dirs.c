@@ -474,6 +474,17 @@ static void test_migrate_ok(void)
       CHECK(same_file(p, q));
    }
    CHECK(exists(f.rom));                       /* ROMs are never moved */
+   /* an orphan preview (slot 5: a .thumb, no state) is not game data */
+   {
+      char st4[PSP_FILE_PATH_CAP], th4[PSP_FILE_PATH_CAP + 8];
+      sc_report r;
+      psp_state_path_for_slot(st4, sizeof(st4), f.lst, 5);
+      snprintf(th4, sizeof(th4), "%s.thumb", st4);
+      put(th4, "orphan", 100);
+      CHECK(sc_migrate(&FS, SC_GROUP_STATES, f.lst, f.nst, &r) ==
+            SC_MIG_NONE && exists(th4));
+      remove(th4);
+   }
    CHECK(count_files(ROOT, SC_MIG_SUFFIX) == 0);
    /* opened again: nothing to do, the new files are used */
    open_game(&f, &s, &t, &rs, &rt);

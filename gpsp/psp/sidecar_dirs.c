@@ -13,11 +13,31 @@
 #include "sidecar_dirs.h"
 #include "state_slots.h"
 #include "fe_util.h"
+#include "fe_evt.h"            /* GPSP_NO_TELEMETRY */
 
 #define SC_PATH  (PSP_FILE_PATH_CAP + 16)
 #define SC_CHUNK 2048
 
 /* ------------------------------------------------------------------ paths */
+
+/* strncasecmp's job, here: newlib's strncasecmp is linked after instance A's
+ * cold text, so pulling it in moved A's tail 128 B (docs/LAYOUT-PINNING.md);
+ * this lands before the pad.  ASCII only, as FAT folds. */
+static int sc_prefix_ci(const char *a, const char *b, size_t n)
+{
+   size_t i;
+   for (i = 0; i < n; i++)
+   {
+      unsigned char x = (unsigned char)a[i], y = (unsigned char)b[i];
+      if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + 32);
+      if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + 32);
+      if (x != y)
+         return 1;
+      if (!x)
+         break;
+   }
+   return 0;
+}
 
 const char *sc_rel_of(const char *rom_dir, const char *rom_path)
 {
@@ -27,14 +47,26 @@ const char *sc_rel_of(const char *rom_dir, const char *rom_path)
    n = strlen(rom_dir);
    while (n && rom_dir[n - 1] == '/')
       n--;
-   if (!n || strncasecmp(rom_path, rom_dir, n) != 0 || rom_path[n] != '/')
+   if (!n || sc_prefix_ci(rom_path, rom_dir, n) != 0 || rom_path[n] != '/')
       return NULL;
    rom_path += n;
    while (*rom_path == '/')
       rom_path++;
-   /* a rel that climbs out of roms/ is not inside it */
-   if (!*rom_path || strstr(rom_path, "../") || !strcmp(rom_path, ".."))
+   if (!*rom_path)
       return NULL;
+   /* a rel that climbs out of roms/ (a ".." part) is not inside it */
+   {
+      const char *q = rom_path;
+      for (;;)
+      {
+         if (q[0] == '.' && q[1] == '.' && (q[2] == '/' || !q[2]))
+            return NULL;
+         q = strchr(q, '/');
+         if (!q)
+            break;
+         q++;
+      }
+   }
    return rom_path;
 }
 
@@ -56,6 +88,12 @@ int sc_mirror(char *out, size_t cap, const char *base, const char *dir,
    return 0;
 }
 
+/* The log lines are telemetry: a playable build compiles them out with
+ * fe_evt (fe_evt.h), strings included -- frontend .rodata is pinned
+ * (docs/LAYOUT-PINNING.md), so every byte here moves instance A's tables. */
+#ifdef GPSP_NO_TELEMETRY
+#define sc_logf(fs, ...) ((void)(fs))
+#else
 static void sc_logf(const sc_fs *fs, const char *fmt, ...)
 {
    char line[2 * SC_PATH + 64];
@@ -67,6 +105,7 @@ static void sc_logf(const sc_fs *fs, const char *fmt, ...)
    va_end(ap);
    fs->log(fs->user, line);
 }
+#endif
 
 int sc_mkdirs_for(const sc_fs *fs, const char *base, const char *file_path)
 {
@@ -80,7 +119,7 @@ int sc_mkdirs_for(const sc_fs *fs, const char *base, const char *file_path)
       return -1;
    slash = strrchr(dir, '/');
    if (!slash || (size_t)(slash - dir) < bl ||
-       strncasecmp(dir, base, bl) != 0)
+       sc_prefix_ci(dir, base, bl) != 0)
       return -1;
    *slash = '\0';
    if (fs->exists(fs->user, dir) == 1)
@@ -104,7 +143,6 @@ int sc_mkdirs_for(const sc_fs *fs, const char *base, const char *file_path)
 
 void sc_first_run(const sc_fs *fs, const char *base, const char *rom_dir)
 {
-   static const char *const con[3] = { "GBA", "GB", "GBC" };
    char p[SC_PATH];
    int i;
    if (!fs || !base || !rom_dir)
@@ -113,19 +151,22 @@ void sc_first_run(const sc_fs *fs, const char *base, const char *rom_dir)
       fs->mkdir(fs->user, rom_dir);
    for (i = 0; i < 3; i++)
    {
-      if (snprintf(p, sizeof(p), "%s/%s", rom_dir, con[i]) >= (int)sizeof(p))
+      /* no pointer table: frontend .rodata is pinned (sc_logf) */
+      const char *con = i == 0 ? "GBA" : i == 1 ? "GB" : "GBC";
+      if (snprintf(p, sizeof(p), "%s/%s", rom_dir, con) >= (int)sizeof(p))
          continue;
       if (fs->exists(fs->user, p) == 1)
          continue;
       fs->mkdir(fs->user, p);
-      if (snprintf(p, sizeof(p), "%s/%s/.keep", rom_dir, con[i]) <
-          (int)sizeof(p))
+      if (strlen(p) + sizeof("/.keep") <= sizeof(p))
       {
-         void *h = fs->open(fs->user, p, 1);
+         void *h;
+         memcpy(p + strlen(p), "/.keep", sizeof("/.keep"));
+         h = fs->open(fs->user, p, 1);
          if (h)
             fs->close(fs->user, h);
       }
-      sc_logf(fs, "folders_made dir=%s/%s", rom_dir, con[i]);
+      sc_logf(fs, "folders_made dir=%s/%s", rom_dir, con);
    }
    if (snprintf(p, sizeof(p), "%s/" SC_SAVES_DIR, base) < (int)sizeof(p) &&
        fs->exists(fs->user, p) != 1)
@@ -137,12 +178,12 @@ void sc_first_run(const sc_fs *fs, const char *base, const char *rom_dir)
 
 /* ----------------------------------------------------------------- groups */
 
-static const char *const k_save_sfx[] = { "", ".bak", ".old" };
-static const char *const k_state_sfx[] = { "", ".old", ".thumb",
-                                           ".thumb.old", ".shot",
-                                           ".shot.old" };
-#define N_SAVE_SFX  (sizeof(k_save_sfx) / sizeof(k_save_sfx[0]))
-#define N_STATE_SFX (sizeof(k_state_sfx) / sizeof(k_state_sfx[0]))
+/* save: "", ".bak", ".old"; each state slot: "", ".old", ".thumb",
+ * ".thumb.old", ".shot", ".shot.old".  Conditionals, not a table or a
+ * switch (a jump table): the literals merge with the ones the frontend
+ * already has, and frontend .rodata is pinned (sc_logf). */
+#define N_SAVE_SFX   3u
+#define N_STATE_SFX  6u
 #define SC_GROUP_MAX (PSP_STATE_SLOT_COUNT * N_STATE_SFX)
 
 const char *sc_member(int group, unsigned i, unsigned *slot)
@@ -151,13 +192,17 @@ const char *sc_member(int group, unsigned i, unsigned *slot)
    {
       if (slot)
          *slot = 0;
-      return i < N_SAVE_SFX ? k_save_sfx[i] : NULL;
+      /* "", ".bak", ".old" as offsets 0, 1, 6 of one literal */
+      return i < N_SAVE_SFX ? "\0.bak\0.old" + (i ? i * 5 - 4 : 0) : NULL;
    }
    if (i >= SC_GROUP_MAX)
       return NULL;
    if (slot)
       *slot = i / N_STATE_SFX + 1;
-   return k_state_sfx[i % N_STATE_SFX];
+   i %= N_STATE_SFX;                       /* (picture, .old) pairs */
+   if (i & 1)
+      return i == 1 ? ".old" : i == 3 ? ".thumb.old" : ".shot.old";
+   return i == 0 ? "" : i == 2 ? ".thumb" : ".shot";
 }
 
 /* The path of member i of the group at `path`.  0 = fits. */
@@ -320,11 +365,14 @@ int sc_migrate(const sc_fs *fs, int group, const char *legacy_path,
 {
    char op[SC_PATH], np[SC_PATH];
    uint32_t copied = 0, drop = 0;          /* per member: made / remove old */
+   unsigned slot_has = 0;                  /* per slot: its state or .old */
    sc_report r;
    unsigned i;
    int any = 0, bad = 0;
    memset(&r, 0, sizeof(r));
-   if (!fs || !legacy_path || !new_path || !strcasecmp(legacy_path, new_path))
+   if (!fs || !legacy_path || !new_path ||
+       (strlen(legacy_path) == strlen(new_path) &&
+        !sc_prefix_ci(legacy_path, new_path, strlen(new_path))))
    {
       if (rep)
          *rep = r;
@@ -332,13 +380,22 @@ int sc_migrate(const sc_fs *fs, int group, const char *legacy_path,
    }
    for (i = 0; !bad && sc_member(group, i, NULL); i++)
    {
+      unsigned slot = 0;
       int e;
+      sc_member(group, i, &slot);
+      /* A slot's pictures go with its state (or its .old): without either
+       * they are orphans, and not stat'ing them keeps an open to ~13 stats
+       * instead of 33 on a roms/ folder that may hold a thousand games. */
+      if (group == SC_GROUP_STATES && i % N_STATE_SFX >= 2 &&
+          !(slot_has & (1u << slot)))
+         continue;
       if (sc_member_path(op, sizeof(op), group, legacy_path, i) != 0 ||
           sc_member_path(np, sizeof(np), group, new_path, i) != 0)
          continue;
       e = fs->exists(fs->user, op);
       if (e == 0)
          continue;
+      slot_has |= 1u << slot;
       any = 1;
       if (e < 0)
       {
@@ -502,7 +559,18 @@ static void psp_log(void *u, const char *line)
    (void)line;
 }
 
-const sc_fs sc_fs_psp = { NULL, psp_open, psp_read, psp_write, psp_close,
-                          psp_exists, psp_rename, psp_remove, psp_mkdir,
-                          psp_log };
+const sc_fs *sc_fs_psp_fill(sc_fs *fs)
+{
+   fs->user = NULL;
+   fs->open = psp_open;
+   fs->read = psp_read;
+   fs->write = psp_write;
+   fs->close = psp_close;
+   fs->exists = psp_exists;
+   fs->rename = psp_rename;
+   fs->remove = psp_remove;
+   fs->mkdir = psp_mkdir;
+   fs->log = psp_log;
+   return fs;
+}
 #endif

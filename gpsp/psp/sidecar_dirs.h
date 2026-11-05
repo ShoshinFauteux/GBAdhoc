@@ -56,8 +56,11 @@ typedef struct sc_fs
    void  (*log)(void *user, const char *line);          /* may be NULL */
 } sc_fs;
 
-/* The PSP's (sceIo), built unless SC_HOST_TEST. */
-extern const sc_fs sc_fs_psp;
+/* The PSP's (sceIo), built unless SC_HOST_TEST.  Filled on the caller's
+ * stack, not a const table: frontend .rodata is pinned
+ * (docs/LAYOUT-PINNING.md), and this costs no data at all. */
+const sc_fs *sc_fs_psp_fill(sc_fs *fs);
+#define SC_FS_PSP (sc_fs_psp_fill(&(sc_fs){ 0 }))
 
 /* rom_path's part under rom_dir ("GBA/x.gba"), compared case-insensitively
  * as FAT does; NULL when the ROM is not inside rom_dir. */

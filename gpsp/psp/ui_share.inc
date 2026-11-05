@@ -162,7 +162,7 @@ static void share_settle(const char *rom_dir, const char *rel, int con)
           share_new_root(root, sizeof(root), kind) != 0 ||
           share_path_in(np, sizeof(np), root, rel, con, kind, 0) != 0)
          continue;
-      rc = sc_settle(&sc_fs_psp, g_dir_base,
+      rc = sc_settle(SC_FS_PSP, g_dir_base,
                      g == 0 ? SC_GROUP_SAVE : SC_GROUP_STATES, lp, np, &use,
                      NULL);
       fe_evt("share_folders group=%d mig=%d", g, rc);

@@ -45,6 +45,11 @@ MS="$SANDBOX_ROOT/inst1/ppsspp"
 GAME="$MS/PSP/GAME/gpsp-adhoc"
 mkdir -p "$GAME/roms" "$GAME/log"
 cp "$EBOOT" "$GAME/EBOOT.PBP"
+for x in gbadhoc_me.prx gbadhoc_home.prx; do
+  for d in "$(dirname "$EBOOT")" "$(dirname "$EBOOT")/me" "$(dirname "$EBOOT")/home"; do
+    [ -f "$d/$x" ] && { cp "$d/$x" "$GAME/"; break; }
+  done
+done
 cp "$BIOS" "$GAME/gba_bios.bin"
 EVTLOG="$GAME/log/frontend.log"
 
@@ -52,7 +57,7 @@ EVTLOG="$GAME/log/frontend.log"
 one_run() {
   local tag="$1"; shift
   printf '%s\n' "$@" > "$GAME/.gpsp-harness.ini"
-  rm -f "$EVTLOG" /dev/shm/PPSSPP_ID
+  rm -f "$EVTLOG"
   ( cd "$PPSSPP_DIR/build" && \
     XDG_CONFIG_HOME="$SANDBOX_ROOT/inst1" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 \
     timeout $((TIMEOUT_S + 30)) xvfb-run -a -s "-screen 0 1280x720x24 +extension GLX +render -noreset" \
@@ -72,7 +77,7 @@ one_run() {
   grep -q "^EVT exit code=0" "$ART/$tag.frontend.log" \
     || fail "$tag: $(grep '^EVT exit code=' "$ART/$tag.frontend.log")"
 }
-ev() { grep "$2" "$ART/$1.frontend.log"; }
+ev() { grep -i "$2" "$ART/$1.frontend.log"; }
 md5() { md5sum "$1" | cut -d' ' -f1; }
 
 # ------------------------------------------------------- A: old layout

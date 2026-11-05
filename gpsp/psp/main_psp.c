@@ -4753,22 +4753,24 @@ static int make_suffixed_path(const char *rom, const char *suffix,
    return psp_rom_path_suffix(out, out_sz, rom, suffix);
 }
 
-/* FOLDERS (4.6.0-beta.4, psp/sidecar_dirs.h): 1 = a game's battery save is
- * <app>/saves/<its path under roms/>, its states <app>/states/..., moved
+/* FOLDERS (4.6.0-beta.4, psp/sidecar_dirs.h): main's `folders` = 1: a
+ * game's battery save is <app>/saves/<its path under roms/>, its states
+ * <app>/states/..., moved
  * there from beside the ROM the first time the game is opened.  On for
  * every player path (the browser, an XMB launch, a playable build); a
  * harness that boots a ROM by itself (rom = / the first ROM) keeps the
  * files beside the ROM unless it says `folders = 1`, because the e2e and
  * rig drivers stage and read back roms/<game>.sav.  A Lab run is unaffected
  * either way: lab_sidecars moves both files to its work folder. */
-static int g_folders;
 
 /* save_path / state_path hold the files beside the ROM (the legacy layout);
  * when the folders apply, make the new ones, move the game's files there
  * once (verified copy, then the originals removed), and use them -- or keep
- * the legacy ones if anything failed.  `skip` = a Lab work folder took the
- * paths.  Returns nothing: a failure only ever leaves the legacy paths. */
-static void folders_settle(const char *rom_path, const char *save_suffix,
+ * the legacy ones if anything failed.  `lab_save` is save_path before
+ * lab_sidecars: when they differ, a Lab work folder took the paths and they
+ * are left alone.  A failure only ever leaves the legacy paths. */
+static void folders_settle(int folders, const char *rom_path,
+                           const char *save_suffix,
                            fe_console_t console, char *save_path,
                            size_t save_sz, char *state_path, size_t state_sz,
                            const char *lab_save)
@@ -4776,7 +4778,7 @@ static void folders_settle(const char *rom_path, const char *save_suffix,
    char mir[PSP_FILE_PATH_CAP], ns[PSP_FILE_PATH_CAP], nst[PSP_FILE_PATH_CAP];
    const char *rel, *use;
    int rs, rt;
-   if (!g_folders || strcmp(lab_save, save_path) != 0)
+   if (!folders || strcmp(lab_save, save_path) != 0)
       return;
    rel = sc_rel_of(ROM_DIR, rom_path);
    if (!rel)
@@ -4793,11 +4795,11 @@ static void folders_settle(const char *rom_path, const char *save_suffix,
       fe_evt("folders path_too_long keep_beside=%s", save_path);
       return;
    }
-   rs = sc_settle(&sc_fs_psp, g_dir_base, SC_GROUP_SAVE, save_path, ns,
+   rs = sc_settle(SC_FS_PSP, g_dir_base, SC_GROUP_SAVE, save_path, ns,
                   &use, NULL);
    if (use == ns)
       snprintf(save_path, save_sz, "%s", ns);
-   rt = sc_settle(&sc_fs_psp, g_dir_base, SC_GROUP_STATES, state_path, nst,
+   rt = sc_settle(SC_FS_PSP, g_dir_base, SC_GROUP_STATES, state_path, nst,
                   &use, NULL);
    if (use == nst)
       snprintf(state_path, state_sz, "%s", nst);
@@ -13288,6 +13290,7 @@ int main(int argc, char *argv[])
     * starts every game from, and the heap as it was when this game's ROM
     * was picked. */
    int inproc_n = 0;
+   int folders = 0;      /* FOLDERS (folders_settle): saves/ and states/ */
    int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
    long inproc_cycles = 0, inproc_frames = 0, state_save_at = 0;
    int inproc_via_menu = 0, inproc_menu_armed = 0;
@@ -13470,11 +13473,11 @@ int main(int argc, char *argv[])
              HARNESS_INI);
    /* FOLDERS (at make_suffixed_path): the player's layout, and the empty
     * roms/GBA, roms/GB, roms/GBC, saves/ and states/ on first run. */
-   g_folders = (int)fe_ini_get_int(HARNESS_INI, "folders",
+   folders = (int)fe_ini_get_int(HARNESS_INI, "folders",
       !have_variant && (!have_harness ||
                         fe_ini_get_int(HARNESS_INI, "browser", 0) != 0));
-   if (g_folders)
-      sc_first_run(&sc_fs_psp, g_dir_base, ROM_DIR);
+   if (folders)
+      sc_first_run(SC_FS_PSP, g_dir_base, ROM_DIR);
    autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
    {
       /* GB link session harness keys (see gblink_service). */
@@ -14856,7 +14859,7 @@ session_top:
       snprintf(before_lab, sizeof(before_lab), "%s", save_path);
       LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));)
       if (!have_variant)
-         folders_settle(rom_path,
+         folders_settle(folders, rom_path,
                         g_pcfg.console == FE_CONSOLE_GBA ? ".sav" :
                         g_pcfg.console == FE_CONSOLE_GBC ? ".gbc.sav"
                                                          : ".gb.sav",
