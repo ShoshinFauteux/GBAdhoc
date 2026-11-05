@@ -132,7 +132,7 @@ static int prx_load(void)
    if (rc < 0 || st < 0 || O.api.magic != OL_MAGIC_API ||
        O.api.version != OL_VERSION || O.api.size != sizeof(online_api))
    {
-      snprintf(O.why, sizeof(O.why), "%s", s_version);
+      snprintf(O.why, sizeof(O.why), "%s", rc < 0 ? s_nomem : s_version);
       fe_evt("online_prx at=start_failed rc=0x%08X st=%d api=%08X/%u", (unsigned)rc, st,
              (unsigned)O.api.magic, (unsigned)O.api.version);
       if (rc >= 0 && st >= 0)
