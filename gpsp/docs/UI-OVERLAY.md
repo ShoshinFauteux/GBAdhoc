@@ -1416,3 +1416,28 @@ sample scaled; 8 mutants, each failing.
 
 Needs hardware: that the PSP's channel volume is heard linearly enough at
 the low steps (10-30) to be useful, on speakers and headphones.
+
+### 15.6 The d-pad as arrows in the hints
+
+Four glyphs join the button glyphs in both faces, at bytes 0x85..0x88
+(`VID_GLYPH_LEFT`, `_RIGHT`, `_UP`, `_DOWN`; `tools/bake_font.py` EXTRAS,
+synthesised like the cross: a solid triangle drawn 4x and averaged down,
+on the cap midline). The hints that spelled the d-pad out now draw it:
+
+| where | was | now |
+|---|---|---|
+| game list footer | `X play  Left: states  Right: cheats` | `✕ play  ◀ states  ▶ cheats` |
+| state shelf | `UP/DN: slot  △: delete` / `X: load  O: close` | `▲▼ slot  △ delete` / `✕ load  ○ close` |
+| state shelf, delete question | `X: delete  O: keep` | `✕ delete  ○ keep` |
+| Settings footer | `DPAD move/change  ✕ select  ○ back` | `▲▼ move  ◀▶ change  ✕ select  ○ back` |
+| Wireless footers | `DPAD change`, `DPAD change room`, `DPAD pick network` | `◀▶ change`, `◀▶ change room`, `▲▼ pick network` |
+| wake / pause overlay | `X select  O resume  DPAD change` | `✕ select  ○ resume  ◀▶ change` |
+
+That also settles MXPHunter's "x play, Left: states" (mixed glyph and
+word-with-colon styles in one row): every hint is now glyph, space, verb.
+`tools/bake_font.py` still reproduces the committed `font_ui.h` byte for
+byte from `assets/fonts` (checked before and after); the existing glyphs
+keep their atlas positions and the four new ones are packed after them.
+A file-name byte 0x85..0x88 that is not part of a UTF-8 sequence now draws
+as an arrow rather than `?`, as 0x80..0x84 already drew as buttons
+(text_fold.h). `overlay_model.py` names them `G_LEFT`..`G_DOWN`.

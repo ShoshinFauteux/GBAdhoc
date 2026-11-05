@@ -3,7 +3,7 @@
  * TWO SEPARATE JOBS, KEPT SEPARATE ON PURPOSE:
  *
  *  1. DISPLAY.  The UI fonts are baked ASCII plus the PSP button glyphs at
- *     0x7F..0x84 (font_ui.h).  A file name is UTF-8 (PPSSPP; the firmware's
+ *     0x7F..0x88 (font_ui.h).  A file name is UTF-8 (PPSSPP; the firmware's
  *     FAT driver for long names), so "Pokémon" arrives as 'P','o','k',0xC3,
  *     0xA9,... -- and 0xA9 is not a glyph, while 0x80..0x84 continuation
  *     bytes WOULD draw as button glyphs.  utf8_fold_next() reads one whole

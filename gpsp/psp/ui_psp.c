@@ -1085,7 +1085,8 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 
       /* 5. Hints on the screen's own bottom edge, in the same footer the
        *    rest of the UI uses -- not floating under a box. */
-      footer("X select     O resume     DPAD change");
+      footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume     "
+             VID_GLYPH_LEFT VID_GLYPH_RIGHT " change");
 
       vid_overlay_end();
       if (g_wake_shot && ++shot_frames == 3)
@@ -2931,7 +2932,9 @@ static ui_action screen_settings(unsigned edges)
                 : "Long: 4 MB. Needs the extra memory of a PSP-2000, 3000 or Go.");
 #endif
    else
-      footer("DPAD move/change   " VID_GLYPH_X " select   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_UP VID_GLYPH_DOWN " move   " VID_GLYPH_LEFT
+             VID_GLYPH_RIGHT " change   " VID_GLYPH_X " select   "
+             VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 
@@ -4101,9 +4104,10 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       }
    }
    if (id == WL_FAST)
-      footer("DPAD change   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_LEFT VID_GLYPH_RIGHT " change   " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_X " select   DPAD change room   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " select   " VID_GLYPH_LEFT VID_GLYPH_RIGHT
+             " change room   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 
@@ -4296,7 +4300,8 @@ static ui_action screen_mgift(unsigned edges)
       footer("SELECT+DOWN toggles in game.  " VID_GLYPH_X " start   "
              VID_GLYPH_O " back");
    else
-      footer("DPAD pick network   " VID_GLYPH_X " start   " VID_GLYPH_O
+      footer(VID_GLYPH_UP VID_GLYPH_DOWN " pick network   " VID_GLYPH_X
+             " start   " VID_GLYPH_O
              " back");
    return UI_ACT_NONE;
 }
@@ -6154,11 +6159,13 @@ static void browser_footer(int n_view, int cur_is_fav)
 #ifdef GPSP_CHEATS
       /* "L/R page" gave its place to the cheats hint: the row is full (the
        * shoulder buttons still page the list). */
-      hint[count++] = "Left: states";
-      hint[count++] = "Right: cheats";
+      /* The d-pad arrows, not "Left:" / "Right:" (issue #31: "X play,
+       * Left: states" read as one sentence with two styles). */
+      hint[count++] = VID_GLYPH_LEFT " states";
+      hint[count++] = VID_GLYPH_RIGHT " cheats";
 #else
       hint[count++] = "L/R page";
-      hint[count++] = "Left: states";
+      hint[count++] = VID_GLYPH_LEFT " states";
 #endif
       hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
       hint[count++] = "START settings";
@@ -7947,20 +7954,24 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
       snprintf(q, sizeof(q), "Delete Slot %d?", g_shelf_del);
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, q, C_SEL);
-      vid_text(x + 14, 254, "X: delete   O: keep", C_SEL);
+      vid_text(x + 14, 254, VID_GLYPH_X " delete   " VID_GLYPH_O " keep",
+               C_SEL);
    }
    else if (g_shelf_note[0])
    {
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, g_shelf_note, C_SEL);
-      vid_text(x + 14, 254, "X: load   O: close", C_DIM);
+      vid_text(x + 14, 254, VID_GLYPH_X " load   " VID_GLYPH_O " close",
+               C_DIM);
    }
    else
    {
       vid_text(x + 14, 241, g_browser_state_exists[g_browser_state_slot - 1]
-                  ? "UP/DN: slot   " VID_GLYPH_TRI ": delete" : "UP/DN: slot",
+                  ? VID_GLYPH_UP VID_GLYPH_DOWN " slot   " VID_GLYPH_TRI
+                    " delete"
+                  : VID_GLYPH_UP VID_GLYPH_DOWN " slot", C_DIM);
+      vid_text(x + 14, 254, VID_GLYPH_X " load   " VID_GLYPH_O " close",
                C_DIM);
-      vid_text(x + 14, 254, "X: load   O: close", C_DIM);
    }
    (void)n;
 }

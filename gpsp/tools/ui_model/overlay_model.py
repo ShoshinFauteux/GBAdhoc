@@ -23,6 +23,8 @@ import pspdraw as P                       # noqa: E402
 import mockups as M                       # noqa: E402
 from gesurface import GESurface           # noqa: E402
 from pspdraw import mix565, G_TRI, G_O, G_X, G_SQ, FE_FONT_H  # noqa: E402
+# The d-pad arrows (video_psp.h VID_GLYPH_LEFT..DOWN, font_ui.h 0x85..0x88).
+G_LEFT, G_RIGHT, G_UP, G_DOWN = '\x85', '\x86', '\x87', '\x88'
 
 # The wordmark THIS tree draws (psp/logo_ui.h, 151x24 since claude/splash-logo):
 # pspdraw parses another worktree's atlas, so point it at ours.
@@ -287,7 +289,8 @@ def settings(s, frame, rows, cur, scroll=0, console_tag='GBA'):
         th = max(8, view * view // total)
         s.rect(470, TOP, 2, view, s.C['card'], 255)
         s.rect(470, TOP + view * scroll // total, 2, th, s.C['accent_dk'], 255)
-    footer(s, 'DPAD move/change   ' + G_X + ' select   ' + G_O + ' back')
+    footer(s, G_UP + G_DOWN + ' move   ' + G_LEFT + G_RIGHT + ' change   ' +
+           G_X + ' select   ' + G_O + ' back')
 
 
 # ---- controls --------------------------------------------------------------
@@ -415,4 +418,4 @@ def wireless(s, frame, cur=0):
         s.text(18, y, lab, s.C['sel'] if i == cur else s.C['item'])
         if val:
             s.text_right(300, y, val, s.C['accent_dk'])
-    footer(s, G_X + ' select   DPAD change room   ' + G_O + ' back')
+    footer(s, G_X + ' select   ' + G_LEFT + G_RIGHT + ' change room   ' + G_O + ' back')

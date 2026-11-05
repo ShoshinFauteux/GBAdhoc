@@ -133,6 +133,10 @@ STUB = r'''
 #define PSP_CTRL_CROSS  0x4000u
 #define PSP_CTRL_CIRCLE 0x2000u
 #define UI_WAKE_YIELD 2
+#define VID_GLYPH_O     "\x80"
+#define VID_GLYPH_X     "\x81"
+#define VID_GLYPH_LEFT  "\x85"
+#define VID_GLYPH_RIGHT "\x86"
 #define VID_SCR_W 480
 #define VID_SCR_H 272
 #define FE_FONT_H 16

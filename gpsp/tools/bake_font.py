@@ -13,11 +13,17 @@ Usage: bake_font.py <out.h> [<font dir>]        (default: assets/fonts)
 
 BUTTON GLYPHS.  The browser's hints name PSP face buttons, and "TRI" / "SQ"
 in text both cost more pixels than the 480 px footer has and read worse than
-the symbols the PSP's own dialogs use.  The EXTRAS table below appends six
-glyphs after the printable ASCII range, at bytes 0x7F..0x84:
+the symbols the PSP's own dialogs use.  The EXTRAS table below appends ten
+glyphs after the printable ASCII range, at bytes 0x7F..0x88:
 
     0x7F  triangle    0x80  circle    0x81  cross
     0x82  square      0x83  star      0x84  star outline
+    0x85  d-pad left  0x86  d-pad right
+    0x87  d-pad up    0x88  d-pad down
+
+The four d-pad arrows (issue #31: "Left: states" read as a sentence, and
+hints said DPAD / UP/DN in words) are synthesised like the cross: a solid
+triangle pointing the way the d-pad is pressed, drawn 4x and averaged down.
 
 Five come from Inter itself (U+25B3 U+25CB U+25A1 U+2605 U+2606), rasterised
 SMALLER than the text so a 9-10 px shape sits on the cap midline of the line
@@ -52,6 +58,10 @@ EXTRAS = [
     (0x82, '□', (10, 13), (12, 15)),   # square
     (0x83, '★', (11, 14), (12, 15)),   # star (a point larger: its
     (0x84, '☆', (11, 14), (12, 15)),   # outline is thin at 10 px)
+    (0x85, 'left',   (8, 10), (10, 13)),    # d-pad arrows, synthesised:
+    (0x86, 'right',  (8, 10), (10, 13)),    # a solid triangle the size of
+    (0x87, 'up',     (8, 10), (10, 13)),    # a lowercase letter, on the
+    (0x88, 'down',   (8, 10), (10, 13)),    # cap midline like the others
 ]
 # Where an extra's vertical centre goes, in line-box rows: the middle of the
 # capitals.  Inter caps at 15 px span rows 4..15 of the ui line (asc 15),
@@ -73,9 +83,26 @@ def render_cross(size):
     return big.resize((size, size), Image.LANCZOS)
 
 
+def render_arrow(size, way):
+    """A solid triangle pointing `way`, drawn 4x and averaged down."""
+    s = 4
+    n = size * s
+    big = Image.new('L', (n, n), 0)
+    d = ImageDraw.Draw(big)
+    lo, hi, mid = int(n * 0.12), int(n * 0.88) - 1, (n - 1) / 2.0
+    pts = {'left':  [(lo, mid), (hi, lo), (hi, hi)],
+           'right': [(hi, mid), (lo, lo), (lo, hi)],
+           'up':    [(mid, lo), (lo, hi), (hi, hi)],
+           'down':  [(mid, hi), (lo, lo), (hi, lo)]}[way]
+    d.polygon(pts, fill=255)
+    return big.resize((size, size), Image.LANCZOS)
+
+
 def render_extra(path, src, px):
     if src == 'cross':
         return render_cross(px)
+    if src in ('left', 'right', 'up', 'down'):
+        return render_arrow(px, src)
     font = ImageFont.truetype(path, px)
     x0, y0, x1, y1 = font.getbbox(src)
     cell = Image.new('L', (max(1, x1 - x0), max(1, y1 - y0)), 0)
