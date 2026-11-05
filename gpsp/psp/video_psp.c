@@ -145,6 +145,10 @@ static int g_filter = VID_FILTER_NEAREST;
  * a player picks another, so the cycle is unchanged for everyone who never
  * does.  Invariant: g_filter is always NEAREST or g_smooth. */
 static int g_smooth = VID_FILTER_BILINEAR;
+/* The Screen effect row (VID_FX_*), drawn over whatever the smoothing drew.
+ * Independent of g_filter: since filters v2 g_filter is smoothing only
+ * (NEAREST, BILINEAR or SHARP), and TRIANGLE never touches the effect. */
+static int g_fx = VID_FX_NONE;
 
 /* Where a w x h source lands, and which of its rows are drawn.  Only the
  * integer 2x mode crops (sy0 > 0, sh < h); every other mode draws all rows. */
@@ -531,20 +535,50 @@ void vid_term(void)
    sceGuTerm();
 }
 
-void vid_set_mode(int scale, int filter)
+void vid_set_look(int scale, int smooth, int fx)
 {
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
-   /* 2..5 are themselves; any other non-zero value is bilinear, as it
-    * always was. */
-   g_filter = filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES ? filter
-            : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
+   g_filter = smooth == VID_SMOOTH_SHARP ? VID_FILTER_SHARP
+            : smooth ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
    if (g_filter != VID_FILTER_NEAREST)
       g_smooth = g_filter;
+   g_fx = fx > 0 && fx < VID_FX_MODES ? fx : VID_FX_NONE;
+}
+
+/* The single legacy value: 0..5 are the rows vid_filter_split names; any
+ * other non-zero value is bilinear, as it always was. */
+void vid_set_mode(int scale, int filter)
+{
+   int sm, fx;
+   vid_filter_split(filter, &sm, &fx);
+   vid_set_look(scale, sm, fx);
 }
 
 int vid_scale_mode(void) { return g_scale; }
-int vid_filter(void)     { return g_filter; }
+int vid_filter(void)     { return vid_filter_join(g_filter, g_fx); }
+int vid_smooth(void)     { return g_filter; }
+int vid_fx(void)         { return g_fx; }
+
+const char *vid_smooth_name(int smooth)
+{
+   return smooth == VID_SMOOTH_SHARP ? "sharp bilinear"
+        : smooth == VID_SMOOTH_BILINEAR ? "bilinear" : "nearest";
+}
+
+const char *vid_fx_name(int fx)
+{
+   switch (fx)
+   {
+   case VID_FX_LCD:       return "LCD grid";
+   case VID_FX_DOT:       return "dot grid";
+   case VID_FX_SCAN:      return "scanlines";
+   case VID_FX_VINTAGE:   return "vintage LCD";
+   case VID_FX_RGB:       return "RGB stripes";
+   case VID_FX_RGB_VIVID: return "RGB stripes strong";
+   default:               return "none";
+   }
+}
 
 const char *vid_scale_name(int scale)
 {
@@ -592,12 +626,13 @@ const char *vid_cycle_preset(void)
    i = (i + 1) % 5;
    g_scale  = preset[i].s;
    g_filter = preset[i].f ? g_smooth : VID_FILTER_NEAREST;
-   if (preset[i].f && g_smooth >= VID_FILTER_LCD)
+   if (g_fx != VID_FX_NONE)
    {
-      /* A grid filter is the player's "smoothing" here too: "fit LCD grid". */
-      static char name[40];
-      snprintf(name, sizeof(name), "%s %s", vid_scale_name(g_scale),
-               vid_filter_name(g_smooth));
+      /* The effect stays on through the cycle: say so ("fit, LCD grid"). */
+      static char name[48];
+      snprintf(name, sizeof(name), "%s, %s",
+               g_smooth == VID_FILTER_SHARP ? sharp_name[i] : preset[i].name,
+               vid_fx_name(g_fx));
       return name;
    }
    return g_smooth == VID_FILTER_SHARP ? sharp_name[i] : preset[i].name;
@@ -722,11 +757,10 @@ static unsigned int g_grid_tex[GRID_SLOTS][GRID_N * GRID_N]
 static struct { int kind, dw, w, dh, h, filt; } g_grid_key[GRID_SLOTS];
 static int g_grid_next;
 
-/* 0 LCD grid, 1 dot grid, 2 scanlines, -1 not a grid filter. */
+/* The mask kind: the effect itself (VID_FX_*), or -1 for none. */
 static int grid_kind(void)
 {
-   int k = g_filter - VID_FILTER_LCD;
-   return (k >= 0 && k <= 2) ? k : -1;
+   return g_fx > VID_FX_NONE && g_fx < VID_FX_MODES ? g_fx : -1;
 }
 
 /* One axis's profile: prof[i] = darkness 0..1 of texel i, for d screen px
@@ -772,18 +806,63 @@ static int grid_axis(int d, int n, float *prof)
    }
 }
 
-/* The mask texture for grid `kind` over a w-wide picture at geometry g, and
- * in *filt its GU filter.  NULL = no mask (1x). */
+/* SCREEN EFFECTS BEYOND THE THREE GRIDS (filters v2; ideas from the community
+ * "GBAdhoc LCD Filters Test 4" package, redrawn on the game-pixel mask):
+ *
+ *   vintage LCD   the LCD grid's shape at a faint alpha (0x15), plus a warm
+ *                 reflective-screen tone over the picture (vid_tone_draw).
+ *                 At 1x the grid has nowhere to go; the tone still applies.
+ *   RGB stripes   each game pixel split into a red, a green and a blue
+ *                 column, with the LCD grid's dark row under it.  A stripe
+ *                 is a third of a game pixel, so it lines up only where a
+ *                 game pixel is an exact 3 (or more) screen pixels wide: GB
+ *                 and GBC at Stretch (480 / 160).  No GBA scale reaches it
+ *                 (2x is the most), so the effect is not offered for GBA,
+ *                 and on GB/GBC it draws nothing at Fit, 1x and 2x rather
+ *                 than a smeared tint (Settings says "Stretch only").
+ *
+ * The package's other masks are not here: "dense" differs from "x3" only in
+ * the PANEL row period, which on a game-pixel mask is always one game pixel
+ * (the same picture); "micro" and "tight dots" are patterns finer than a
+ * game pixel that need 3+ screen pixels on BOTH axes, which no scale has, and
+ * on a 2x game pixel their checkerboard is the dot grid's corner.  Their
+ * colour presets are the Colour row now, combinable with any effect. */
+#define RGB_TINT_A      20        /* the package's x3 RGB          */
+#define RGB_DARK_A      48
+#define RGB_VIVID_TINT  48        /* the package's x3 color+       */
+#define RGB_VIVID_DARK  56
+#define VINTAGE_A       0x15
+
+/* Stripe column of texel i at an exact k-screen-px game pixel (k >= 3): the
+ * screen sub-pixel the texel lies under, in thirds of the game pixel. */
+static int rgb_stripe(int i, int k)
+{
+   int sub = (2 * i + 1) * k / (2 * GRID_N);   /* screen px 0..k-1 */
+   return sub * 3 / k;                         /* 0 R, 1 G, 2 B    */
+}
+
+/* The mask texture for effect `kind` over a w-wide picture at geometry g, and
+ * in *filt its GU filter.  NULL = nothing to draw (1x; RGB below 3x). */
 static const unsigned int *grid_tex(int kind, unsigned w, const vid_geo *g,
                                     int *filt)
 {
    static const unsigned int alpha[3] = { 0x38, 0x68, 0x58 };  /* patch's */
    float px[GRID_N], py[GRID_N];
-   int fx, fy, i, x, y, s;
+   int fx, fy, i, x, y, s, kx = 0;
    unsigned int *t;
+   int rows_only = kind == VID_FX_SCAN;
+   int rgb = kind == VID_FX_RGB || kind == VID_FX_RGB_VIVID;
 
+   if (kind < VID_FX_LCD || kind >= VID_FX_MODES || !w)
+      return NULL;
+   if (rgb)
+   {
+      if (g->dw % (int)w != 0 || g->dw / (int)w < 3)
+         return NULL;               /* a stripe would not be a screen px */
+      kx = g->dw / (int)w;
+   }
    /* 1x (either axis the mask needs) has no profile: nothing to draw. */
-   if (g->dh <= g->sh || (kind != 2 && g->dw <= (int)w))
+   else if (g->dh <= g->sh || (!rows_only && g->dw <= (int)w))
       return NULL;
    /* Per frame: only this lookup.  The profiles are built on a miss. */
    for (i = 0; i < GRID_SLOTS; i++)
@@ -796,7 +875,10 @@ static const unsigned int *grid_tex(int kind, unsigned w, const vid_geo *g,
       }
 
    fy = grid_axis(g->dh, g->sh, py);
-   fx = kind == 2 ? GRID_HARD : grid_axis(g->dw, (int)w, px);
+   if (fy == GRID_NONE)
+      for (i = 0; i < GRID_N; i++)
+         py[i] = 0.0f;               /* RGB at 1x rows: stripes, no row */
+   fx = (rows_only || rgb) ? GRID_HARD : grid_axis(g->dw, (int)w, px);
    *filt = (fx == GRID_SOFT || fy == GRID_SOFT) ? GU_LINEAR : GU_NEAREST;
    s = g_grid_next;
    g_grid_next = (s + 1) % GRID_SLOTS;
@@ -804,12 +886,37 @@ static const unsigned int *grid_tex(int kind, unsigned w, const vid_geo *g,
    for (y = 0; y < GRID_N; y++)
       for (x = 0; x < GRID_N; x++)
       {
-         float cx = kind == 2 ? 0.0f : px[x], cy = py[y], c;
-         c = kind == 0 ? 1.0f - (1.0f - cx) * (1.0f - cy)   /* union        */
-           : kind == 1 ? cx * cy                            /* intersection */
-           :             cy;                                /* rows         */
-         t[y * GRID_N + x] = (unsigned int)(c * (float)alpha[kind] + 0.5f)
-                             << 24;                         /* black, alpha */
+         float cy = py[y], cx, c;
+         if (rgb)
+         {
+            /* Tint over the pixel, dark under the row line: premultiplied
+             * mix of the two by the row's coverage. */
+            static const unsigned int tint[3] = { 0x0000FFu, 0x00FF00u,
+                                                  0xFF0000u };   /* ABGR */
+            float ta = (float)(kind == VID_FX_RGB ? RGB_TINT_A
+                                                  : RGB_VIVID_TINT);
+            float da = (float)(kind == VID_FX_RGB ? RGB_DARK_A
+                                                  : RGB_VIVID_DARK);
+            float a = ta * (1.0f - cy) + da * cy;
+            float k = a > 0.0f ? ta * (1.0f - cy) / a : 0.0f; /* tint share */
+            unsigned int col = tint[rgb_stripe(x, kx)], rgbv = 0;
+            int ch;
+            for (ch = 0; ch < 3; ch++)
+            {
+               unsigned int v = (col >> (ch * 8)) & 0xFFu;
+               rgbv |= (unsigned int)((float)v * k + 0.5f) << (ch * 8);
+            }
+            t[y * GRID_N + x] = ((unsigned int)(a + 0.5f) << 24) | rgbv;
+            continue;
+         }
+         cx = rows_only ? 0.0f : px[x];
+         c = kind == VID_FX_DOT  ? cx * cy                           /* and */
+           : kind == VID_FX_SCAN ? cy                                /* rows */
+           :                       1.0f - (1.0f - cx) * (1.0f - cy); /* or */
+         t[y * GRID_N + x] =
+            (unsigned int)(c * (float)(kind == VID_FX_VINTAGE ? VINTAGE_A
+                                       : alpha[kind - VID_FX_LCD]) + 0.5f)
+            << 24;                                          /* black, alpha */
       }
    sceKernelDcacheWritebackRange(t, sizeof(g_grid_tex[0]));
    g_grid_key[s].kind = kind + 1;
@@ -822,11 +929,51 @@ static const unsigned int *grid_tex(int kind, unsigned w, const vid_geo *g,
    return t;
 }
 
-/* The mask over the picture game_draw() just drew: same rect, same strips.
- * Leaves blend OFF, TexWrap CLAMP and TexFunc REPLACE/RGB, as game_draw did.
- * The texture, its mode (8888) and filter differ, and need not be restored:
- * every later textured draw sets all three itself (image_rows, the font, the
- * logo, the ambient bars, sharp_draw, game_draw). */
+int vid_fx_state(int fx, int scale, unsigned w, unsigned h)
+{
+   int save = g_scale, st = VID_FXS_ON;
+   vid_geo g;
+   if (fx <= VID_FX_NONE || fx >= VID_FX_MODES || !w || !h)
+      return VID_FXS_ON;
+   g_scale = scale;
+   dest_geo(w, h, &g);
+   g_scale = save;
+   if (fx == VID_FX_RGB || fx == VID_FX_RGB_VIVID)
+   {
+      if (g.dw % (int)w != 0 || g.dw / (int)w < 3)
+         st = VID_FXS_NEED_3X;
+   }
+   else if (g.dh <= g.sh || (fx != VID_FX_SCAN && g.dw <= (int)w))
+      st = fx == VID_FX_VINTAGE ? VID_FXS_TONE_1X : VID_FXS_OFF_1X;
+   return st;
+}
+
+/* VINTAGE's tone: one untextured sprite over the picture rect blended
+ * out = dst * M + C, i.e. the package's modulate by (F8,EE,E5) and its warm
+ * veil (DC,D0,B8) at alpha 0x10, folded into a single pass:
+ *   M = m * (1 - a) = (E8,DF,D7)    C = veil * a = (0E,0D,0C). */
+static void vid_tone_draw(const vid_geo *g)
+{
+   cvtx_t *v = (cvtx_t *)sceGuGetMemory(2 * sizeof(cvtx_t));
+   sceGuDisable(GU_TEXTURE_2D);
+   sceGuEnable(GU_BLEND);
+   sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, 0xFFFFFFu, 0xD7DFE8u);
+   v[0].color = v[1].color = 0xFF0C0D0Eu;              /* ABGR */
+   v[0].x = (short)g->ox;           v[0].y = (short)g->oy;           v[0].z = 0;
+   v[1].x = (short)(g->ox + g->dw); v[1].y = (short)(g->oy + g->dh); v[1].z = 0;
+   sceGuDrawArray(GU_SPRITES,
+                  GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
+   sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+   sceGuDisable(GU_BLEND);
+   sceGuEnable(GU_TEXTURE_2D);
+}
+
+/* The effect over the picture game_draw() or sharp_draw() just drew: same
+ * rect, same strips.  Leaves blend OFF, TexWrap CLAMP and TexFunc
+ * REPLACE/RGB, as game_draw did.  The texture, its mode (8888) and filter
+ * differ, and need not be restored: every later textured draw sets all three
+ * itself (image_rows, the font, the logo, the ambient bars, sharp_draw,
+ * game_draw). */
 static void grid_draw(unsigned w, const vid_geo *g)
 {
    int kind = grid_kind(), filt, x;
@@ -834,6 +981,8 @@ static void grid_draw(unsigned w, const vid_geo *g)
 
    if (kind < 0 || !w)
       return;
+   if (kind == VID_FX_VINTAGE)
+      vid_tone_draw(g);
    t = grid_tex(kind, w, g, &filt);
    if (!t)
       return;
@@ -2432,6 +2581,9 @@ static int sharp_draw(const uint16_t *tex, unsigned w, const vid_geo *g)
                  g->ox + x * g->dw / iw, g->oy,
                  g->ox + (x + sw) * g->dw / iw, g->oy + g->dh);
    }
+   /* The effect row over the sharp picture: the mask follows game pixels,
+    * which sit where the source pixels do whatever drew them. */
+   grid_draw(w, g);
    return 1;
 }
 

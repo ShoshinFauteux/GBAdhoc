@@ -27,7 +27,14 @@ static inline void ml_store(u32 tag, u32 v)
   switch (MLT_REGION(tag))
   {
     case ME_LOG_PAL:
+#if VIDEO_COLOR_IN_REPLAY
+      /* The engine's palette copy is the transformed one (video.h,
+       * PRESENTATION COLOUR); the log carries the core's values. */
+      if (i < 512) palette_ram_converted[i] =
+        video_color_mode ? video_color_conv(v) : (u16)v;
+#else
       if (i < 512) palette_ram_converted[i] = (u16)v;
+#endif
       break;
     case ME_LOG_OAM:
       if (i < 512) oam_ram[i] = (u16)v;
@@ -458,6 +465,12 @@ static void ml_line_body(u32 line)
       ml_flush_pending(160);        /* back to the snapshot state, like redo */
   }
 }
+
+/* FILTERS V2 colour preview (main_psp.c psp_color_preview): the palette and
+ * OAM as the line-160 check left them -- the memory the last vcount-160 post
+ * described -- or NULL when this frame was not logged.  Read only. */
+extern "C" const u16 *me_log_line160_pal(void) { return g_ml.on ? g_ml.pal : NULL; }
+extern "C" const u16 *me_log_line160_oam(void) { return g_ml.on ? g_ml.oam : NULL; }
 
 /* Right after me_capture_visible_end() (the vcount-160 post) every marked
  * page's shadow validity is already exact.  Any later clear (the FF profiles

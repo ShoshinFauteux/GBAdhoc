@@ -667,6 +667,15 @@ static void pdisp_clamp(pcfg_display *d)
    if (d->scale < 0 || d->scale >= VID_SCALE_MODES)
       d->scale = VID_SCALE_1X;
    d->filter = pcfg_filter_clamp(d->filter);
+   if (d->smooth < 0 || d->smooth >= VID_SMOOTH_MODES)
+      d->smooth = VID_SMOOTH_NEAREST;
+   if (!vid_fx_offered(d->effect, d != &g_pdisp[FE_CONSOLE_GBA]))
+      d->effect = VID_FX_NONE;
+   if (d != &g_pdisp[FE_CONSOLE_GBA] || d->color < 0 ||
+       d->color >= PCFG_COLOR_MODES)
+      d->color = 0;
+   /* The legacy value always follows the rows (see pdisp_load). */
+   d->filter = vid_filter_join(d->smooth, d->effect);
    if (d->ambient < 0 || d->ambient >= PCFG_AMB_MODES)
       d->ambient = PCFG_AMBIENT_DEF;
    if (d->gb_palette < 0 || d->gb_palette > 15)
@@ -709,6 +718,20 @@ static void pdisp_load(void)
          migrated++;
       d->scale   = (int)pdisp_get("scale", c, g_pcfg.scale);
       d->filter  = (int)pdisp_get("filter", c, g_pcfg.filter);
+      /* FILTERS V2.  The rows are trusted only while `filter` still says
+       * what they join to: an older build that changed the filter rewrote
+       * filter_<c> and left the rows behind, and then the filter wins.  A
+       * file from before v2 has no rows: 0..5 split exactly. */
+      {
+         int sm = (int)pdisp_get("smooth", c, -1);
+         int fx = (int)pdisp_get("effect", c, -1);
+         int f  = pcfg_filter_clamp(d->filter);
+         if (sm < 0 || fx < 0 || vid_filter_join(sm, fx) != f)
+            vid_filter_split(f, &sm, &fx);
+         d->smooth = sm;
+         d->effect = fx;
+         d->color  = c == FE_CONSOLE_GBA ? (int)pdisp_get("color", c, 0) : 0;
+      }
       d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
       /* GBA has no DMG palette; its slot just carries the legacy value. */
       d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
@@ -736,6 +759,18 @@ void pcfg_display_select(int console)
    g_pcfg.filter     = d->filter;
    g_pcfg.ambient    = d->ambient;
    g_pcfg.gb_palette = d->gb_palette;
+   g_pcfg.smooth     = d->smooth;
+   g_pcfg.effect     = d->effect;
+   g_pcfg.color      = d->color;
+}
+
+void pcfg_display_set_rows(int smooth, int effect, int color)
+{
+   g_pcfg.smooth = smooth;
+   g_pcfg.effect = effect;
+   g_pcfg.color  = color;
+   pcfg_display_commit();
+   pcfg_display_select(g_pdisp_live);   /* clamped values back to g_pcfg */
 }
 
 void pcfg_display_commit(void)
@@ -745,7 +780,11 @@ void pcfg_display_commit(void)
    d->filter     = g_pcfg.filter;
    d->ambient    = g_pcfg.ambient;
    d->gb_palette = g_pcfg.gb_palette;
+   d->smooth     = g_pcfg.smooth;
+   d->effect     = g_pcfg.effect;
+   d->color      = g_pcfg.color;
    pdisp_clamp(d);
+   g_pcfg.filter = d->filter;
 }
 
 int pcfg_display_console(void)
@@ -759,6 +798,10 @@ static int pdisp_write(int c)
    int rc = 0;
    rc |= pdisp_set("scale", c, d->scale);
    rc |= pdisp_set("filter", c, d->filter);
+   rc |= pdisp_set("smooth", c, d->smooth);
+   rc |= pdisp_set("effect", c, d->effect);
+   if (c == FE_CONSOLE_GBA)
+      rc |= pdisp_set("color", c, d->color);
    rc |= pdisp_set("ambient", c, d->ambient);
    if (c != FE_CONSOLE_GBA)
       rc |= pdisp_set("gb_palette", c, d->gb_palette);

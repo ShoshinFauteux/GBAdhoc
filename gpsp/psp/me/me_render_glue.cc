@@ -54,6 +54,8 @@ static_assert((ME_WORK_BYTES & 63u) == 0 && (ME_WORK_OBJ_OFF & 63u) == 0 &&
  * generation for it.  Module .bss, so zero -- "none" -- after every load; the
  * host's generations start at 1. */
 static unsigned int me_work_seen, me_work_gen_seen;
+/* The colour LUT address this module has invalidated (0 = none yet). */
+static unsigned int me_lut_seen;
 
 /* Called by the dispatcher every time the ME comes out of reset.  The host
  * rebuilds the renderer after a sleep and says so with a new work_gen; this
@@ -63,6 +65,7 @@ extern "C" void me_render_boot(void)
 {
    me_work_seen     = 0;
    me_work_gen_seen = 0;
+   me_lut_seen      = 0;
 }
 
 /* Invalidate a main-RAM span in the ME D-cache before a cached read, so we see
@@ -155,6 +158,23 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
    me_inv(d->palette & ~0x40000000u, 512 * 2);
    memcpy(palette_ram_converted, (const void *)(d->palette & ~0x40000000u),
           512 * 2);
+   /* PRESENTATION COLOUR (me_mbox.h, video.h): this copy is the renderer's
+    * own, so it is transformed in place; the log's palette values are
+    * transformed as they are replayed (video_me_log.h ml_store). */
+   {
+      unsigned int mode = d->color_magic == ME_COLOR_MAGIC ? d->color_mode : 0;
+      unsigned int lut  = d->color_lut & ~0x40000000u;
+      if (mode >= VIDEO_COLOR_MODES || (mode == VIDEO_COLOR_GBA && !lut))
+         mode = VIDEO_COLOR_NATIVE;
+      if (mode == VIDEO_COLOR_GBA && lut != me_lut_seen)
+      {
+         me_inv(lut, ME_COLOR_LUT_BYTES);   /* read only: never dirty here */
+         me_lut_seen = lut;
+      }
+      video_color_mode = mode;
+      video_color_lut  = (const u16 *)lut;
+      video_color_palette(palette_ram_converted);
+   }
    me_inv(d->capture & ~0x40000000u, sizeof(me_capture_frame));
 #if ME_MIDFRAME_LOG
    {

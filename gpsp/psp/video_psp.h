@@ -60,14 +60,100 @@ enum
    VID_FILTER_MODES    = 6
 };
 
+/* ---- THE PICTURE AS THREE ROWS (docs/DISPLAY-FEATURES.md "Filters v2") ----
+ *
+ * Settings shows the look as Smoothing x Screen effect x Colour.  Smoothing
+ * and Screen effect are drawn here (the GE); Colour is the core's
+ * (video.h PRESENTATION COLOUR) for GBA and the DMG palette for GB/GBC.
+ *
+ * VID_FILTER_* above stays the CONFIG.INI `filter` value an older build reads:
+ * vid_filter_split() turns one into the two rows (0..5 map exactly), and
+ * vid_filter_join() gives the closest value for a pair, so an older build
+ * reading a new file still shows the same smoothing or grid. */
+enum
+{
+   VID_SMOOTH_NEAREST  = VID_FILTER_NEAREST,
+   VID_SMOOTH_BILINEAR = VID_FILTER_BILINEAR,
+   VID_SMOOTH_SHARP    = VID_FILTER_SHARP,
+   VID_SMOOTH_MODES    = 3
+};
+/* Screen effects.  Every mask's period is ONE GAME PIXEL at every scale
+ * (video_psp.c "GRID FILTERS"); what cannot line up at a scale is not drawn
+ * there (vid_fx_state).  The values are CONFIG.INI's `effect_<console>`:
+ * append only. */
+enum
+{
+   VID_FX_NONE      = 0,
+   VID_FX_LCD       = 1,   /* rows and columns              (GBA, GB, GBC) */
+   VID_FX_DOT       = 2,   /* their crossings               (GBA, GB, GBC) */
+   VID_FX_SCAN      = 3,   /* rows                          (GBA, GB, GBC) */
+   VID_FX_VINTAGE   = 4,   /* faint grid + warm reflective tone   (all)    */
+   VID_FX_RGB       = 5,   /* R|G|B stripes per pixel: 3x columns (GB, GBC) */
+   VID_FX_RGB_VIVID = 6,   /* the same, stronger                  (GB, GBC) */
+   VID_FX_MODES     = 7
+};
+/* What an effect does at a geometry, for the Settings value text. */
+enum
+{
+   VID_FXS_ON      = 0,    /* drawn as designed                            */
+   VID_FXS_OFF_1X  = 1,    /* 1x: a game pixel is one screen pixel: none   */
+   VID_FXS_TONE_1X = 2,    /* vintage at 1x: the tone only, no grid        */
+   VID_FXS_NEED_3X = 3,    /* RGB stripes need 3 screen px per game px:
+                            * GB/GBC Stretch only; nothing drawn elsewhere  */
+   VID_FXS_NA      = 4     /* not offered for this console                 */
+};
+
+static inline void vid_filter_split(int filter, int *smooth, int *fx)
+{
+   if (filter >= VID_FILTER_LCD && filter < VID_FILTER_MODES)
+   {
+      *smooth = VID_SMOOTH_NEAREST;          /* the grids drew nearest */
+      *fx = VID_FX_LCD + (filter - VID_FILTER_LCD);
+      return;
+   }
+   *smooth = filter == VID_FILTER_SHARP ? VID_SMOOTH_SHARP
+           : filter ? VID_SMOOTH_BILINEAR : VID_SMOOTH_NEAREST;
+   *fx = VID_FX_NONE;
+}
+
+static inline int vid_filter_join(int smooth, int fx)
+{
+   /* An older build has one value: the grid when one is on (vintage is the
+    * LCD grid's shape, RGB stripes are an LCD grid with tint), else the
+    * smoothing. */
+   if (fx == VID_FX_LCD || fx == VID_FX_VINTAGE || fx == VID_FX_RGB ||
+       fx == VID_FX_RGB_VIVID)
+      return VID_FILTER_LCD;
+   if (fx == VID_FX_DOT)  return VID_FILTER_DOT;
+   if (fx == VID_FX_SCAN) return VID_FILTER_SCAN;
+   return smooth >= 0 && smooth < VID_SMOOTH_MODES ? smooth
+                                                   : VID_FILTER_NEAREST;
+}
+
+/* Is `fx` offered for this console (gb: the picture is GB/GBC)? */
+static inline int vid_fx_offered(int fx, int gb)
+{
+   if (fx < 0 || fx >= VID_FX_MODES)
+      return 0;
+   return gb || (fx != VID_FX_RGB && fx != VID_FX_RGB_VIVID);
+}
+
 void vid_init(void);
 void vid_term(void);
 
 void vid_set_mode(int scale, int filter);
+/* The two GE rows directly (Settings). */
+void vid_set_look(int scale, int smooth, int fx);
 int  vid_scale_mode(void);
-int  vid_filter(void);
+int  vid_filter(void);           /* legacy join of the two rows */
+int  vid_smooth(void);
+int  vid_fx(void);
 const char *vid_scale_name(int scale);
 const char *vid_filter_name(int filter);
+const char *vid_smooth_name(int smooth);
+const char *vid_fx_name(int fx);
+/* VID_FXS_* for effect `fx` at scale `scale` over a w x h source. */
+int  vid_fx_state(int fx, int scale, unsigned w, unsigned h);
 
 /* Cycle the runtime presets (Triangle, plan §8): 1x → fit → fit+bilinear
  * → stretch → stretch+bilinear → 1x. Returns the new preset's name.  2x is
