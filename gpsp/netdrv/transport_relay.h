@@ -83,6 +83,8 @@ int relay_transport_error(const relay_transport *t, const char **text);
 const char *relay_transport_code(const relay_transport *t);
 /* The room's link mode as the server tells it (RL_MODE_*; valid IN_ROOM). */
 int relay_transport_mode(const relay_transport *t);
+/* The slot the server gave: 0 = this console hosts the room (a JOIN can be
+ * told 0 when it opened a desktop host's home room: run netdrv_host then). */
 int relay_transport_slot(const relay_transport *t);
 
 void relay_transport_iface(relay_transport *t, nd_transport *out);

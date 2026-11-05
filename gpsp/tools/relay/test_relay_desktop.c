@@ -375,6 +375,7 @@ typedef struct
    int expect_direct;
    int desk_nat;                /* the desktop's router: NAT_CONE (+UPnP) or NAT_NONE */
    int hairpin;
+   int both_join;               /* both PSPs "Join with code" (the mockup's flow): slot 0 hosts */
 } case_t;
 
 static void put_ent(int e, int where, int nattype, int own_nat)
@@ -418,7 +419,7 @@ static int run_case(const case_t *c)
    char invite[16];
    uint8_t pubip[4];
    uint32_t desk_pub;
-   int i, ok = 1, sent[2] = { 0, 0 };
+   int i, hs, ok = 1, sent[2] = { 0, 0 };
    const int N_PAY = 600;
    uint64_t t_end, t_reg;
 
@@ -524,7 +525,7 @@ static int run_case(const case_t *c)
          cfg[i].server_port = (uint16_t)port;
          cfg[i].code[0] = 0;                     /* the host's home room */
       }
-      cfg[i].is_host = i == 0;
+      cfg[i].is_host = i == 0 && !c->both_join;
       memcpy(cfg[i].build, "gbadhoc-test-b1", 15);
       cfg[i].priv_ip_be = E[i].priv.ip;
       cfg[i].priv_port = E[i].priv.port;
@@ -573,8 +574,16 @@ static int run_case(const case_t *c)
       nc.join_nonce = i ? 0xBEEF : 0xF00D;
       nd[i] = netdrv_create(&tp[i], &cb[i], &nc);
    }
-   netdrv_host(nd[0]);
-   netdrv_join(nd[1]);
+   /* the netdrv host is the console the server gave slot 0 */
+   hs = relay_transport_slot(rt[0]) == 0 ? 0 : 1;
+   if (relay_transport_slot(rt[hs]) != 0 || relay_transport_slot(rt[1 - hs]) == 0)
+   {
+      printf("FAIL %s: slots %d/%d, want one 0\n", c->name, relay_transport_slot(rt[0]),
+             relay_transport_slot(rt[1]));
+      return 0;
+   }
+   netdrv_host(nd[hs]);
+   netdrv_join(nd[1 - hs]);
    for (t_end = g_now + 40000 * MS; g_now < t_end; g_now += MS)
    {
       net_step();
@@ -591,7 +600,8 @@ static int run_case(const case_t *c)
             uint32_t v = (uint32_t)sent[i];
             memcpy(p, &v, 4);
             memset(p + 4, 0xA5, 4);
-            if (netdrv_send(nd[i], ND_RELIABLE | ND_FLUSH_HINT, p, sizeof(p), i ? 0 : 1) == 0)
+            if (netdrv_send(nd[i], ND_RELIABLE | ND_FLUSH_HINT, p, sizeof(p),
+                            i == hs ? relay_transport_slot(rt[1 - hs]) : 0) == 0)
                sent[i]++;
          }
       }
@@ -603,7 +613,7 @@ static int run_case(const case_t *c)
    relay_core_stats(g_dir, &ds);
    relay_core_stats(g_desk, &ks);
    {
-      int p0 = st[0].path[1], p1 = st[1].path[0];
+      int p0 = st[0].path[relay_transport_slot(rt[1])], p1 = st[1].path[relay_transport_slot(rt[0])];
       int direct = p0 == 3 && p1 == 3;
       int relayed = (p0 == 1 || p0 == 4) && (p1 == 1 || p1 == 4);
       if (app[0].got != (uint32_t)N_PAY || app[1].got != (uint32_t)N_PAY || app[0].bad || app[1].bad)
@@ -753,14 +763,17 @@ int main(int argc, char **argv)
 {
    static const case_t cases[] = {
       /* name                                     nat0      nat1   where0      where1    by0        by1     direct desk      hairpin */
-      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0 },
-      { "code: cone x symmetric, relayed by PC",  NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0 },
-      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0 },
-      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0 },
-      { "invite: cone x symmetric, relayed",      NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0 },
-      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0 },
-      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0 },
-      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0 },
+      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0 },
+      { "code: cone x symmetric, relayed by PC",  NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0 },
+      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0 },
+      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0 },
+      { "invite: cone x symmetric, relayed",      NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 0 },
+      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0, 0 },
+      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0 },
+      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0, 0 },
+      { "both join by code: cone x cone, direct", NAT_CONE, NAT_CONE, W_OWN, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 1 },
+      { "both join by invite: cone x symmetric", NAT_CONE, NAT_SYM, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 1 },
+      { "both join, code + invite, symmetric x sym", NAT_SYM, NAT_SYM, W_OWN, W_OWN, BY_DIR, BY_INVITE, 0, NAT_CONE, 0, 1 },
    };
    unsigned i, fails = 0, n = sizeof(cases) / sizeof(cases[0]);
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");

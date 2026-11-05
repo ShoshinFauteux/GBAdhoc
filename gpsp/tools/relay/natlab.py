@@ -291,9 +291,10 @@ class FwdNat(Nat):
         return Nat.inb(self, src, port)
 
 
-def run_desktop_case(binp, name, kinds, by, expect):
+def run_desktop_case(binp, name, kinds, by, expect, first="join"):
     """kinds: each PSP 'cone' | 'sym' | 'home' (behind the desktop's router);
-    by: each PSP 'code' | 'invite'"""
+    by: each PSP 'code' | 'invite'; first: the first PSP 'join's (the mockup's
+    flow: the first into the home room is told slot 0 and hosts) or 'host's"""
     nats, by_ip = {}, {}
     srv = Node("dir", SERVER, 32)
     srv.nat = None
@@ -391,11 +392,11 @@ def run_desktop_case(binp, name, kinds, by, expect):
                      "--lan-ip", DESK_IP, "--public", DESK_PUB)
     watch("dir", dirp)
     watch("desk", deskp)
-    pump(lambda: "registered" in "".join(outs["desk"]), 8)
+    pump(lambda: "home code=" in "".join(outs["desk"]), 8)
     dtext = "".join(outs["desk"])
     invite = [l.split()[1] for l in dtext.splitlines() if l.startswith("invite ")]
     code = [l.split("=")[1].split()[0] for l in dtext.splitlines() if l.startswith("home code=")]
-    if "registered" not in dtext or not invite or not code:
+    if not invite or not code:
         for f in pipes:
             os.set_blocking(f, True)
         print("FAIL %-40s the desktop did not register: %r" % (name, dtext[-300:]))
@@ -406,7 +407,7 @@ def run_desktop_case(binp, name, kinds, by, expect):
         return False
     cl = []
     for i in (0, 1):
-        role = "--host" if i == 0 else "--join"
+        role = "--host" if i == 0 and first == "host" else "--join"
         if by[i] == "code":
             a = [binp + "/relay_client", "--server", SERVER + ":27420", "--lookup", "--code", code[0]]
         else:
@@ -469,6 +470,7 @@ SHARED_CASES = [
 
 DESKTOP_CASES = [
     ("desk code: cone x cone", ("cone", "cone"), ("code", "code"), "direct"),
+    ("desk code: cone x cone, Create + Join", ("cone", "cone"), ("code", "code"), "direct", "host"),
     ("desk code: cone x symmetric", ("cone", "sym"), ("code", "code"), "relay"),
     ("desk code: symmetric x symmetric", ("sym", "sym"), ("code", "code"), "relay"),
     ("desk invite: cone x cone", ("cone", "cone"), ("invite", "invite"), "direct"),

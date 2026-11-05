@@ -199,6 +199,13 @@ int main(int argc, char **argv)
       }
       usleep(1000);
    }
+   /* the role is the slot: a JOIN that opened a desktop host's home room is
+    * told slot 0 and hosts the netdrv session */
+   if (relay_transport_slot(rt) == 0 && !cfg.is_host)
+   {
+      cfg.is_host = 1;
+      tag = "host";
+   }
    memset(&app, 0, sizeof(app));
    memset(&cb, 0, sizeof(cb));
    cb.user = &app;

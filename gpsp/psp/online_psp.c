@@ -305,6 +305,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
 int online_psp_is_up(void) { return O.loaded && O.api.is_up(); }
 const char *online_psp_room(void) { return O.loaded ? O.api.room() : ""; }
 int online_psp_room_mode(void) { return O.loaded ? O.api.room_mode() : 0; }
+int online_psp_slot(void) { return O.loaded ? O.api.slot() : -1; }
 void online_psp_iface(nd_transport *out) { if (O.loaded) O.api.iface(out); }
 int online_psp_connected(void) { return O.loaded && O.api.connected(); }
 

@@ -37,6 +37,9 @@ int  online_psp_up(int is_host, const char *build, unsigned timeout_ms);
 int  online_psp_is_up(void);
 const char *online_psp_room(void);     /* the 4 letters, once up */
 int  online_psp_room_mode(void);       /* RL_MODE_* the server reported */
+/* The slot the server gave; 0 = this console hosts.  "Join with code" into a
+ * desktop host's room: the first PSP in is told 0 and hosts the session. */
+int  online_psp_slot(void);
 void online_psp_iface(nd_transport *out);
 void online_psp_down(void);
 int  online_psp_connected(void);
@@ -55,6 +58,7 @@ int  online_psp_wifi_name(int index, char *out, unsigned cap);
 #define online_psp_is_up() 0
 #define online_psp_room() ""
 #define online_psp_room_mode() 0
+#define online_psp_slot() (-1)
 #define online_psp_iface(o) ((void)0)
 #define online_psp_down() ((void)0)
 #define online_psp_connected() 0

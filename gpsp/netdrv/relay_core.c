@@ -34,6 +34,7 @@ typedef struct
    char code[RL_CODE_LEN];
    uint8_t build[RL_BUILD_LEN];
    uint8_t mode;             /* the host's link mode (RL_MODE_*), told to joiners */
+   int by_join;              /* a desktop host's home room, opened by its first JOIN */
    rl_slot s[RL_SLOTS];
    uint64_t created_ms, last_ms;
    int joined_ever;
@@ -504,6 +505,46 @@ static void on_create(rl_core *c, int sock, const rl_addr *from,
    reply_slot(c, sock, from, RL_T_CREATED, r, 0);
 }
 
+/* A desktop host has no PSP that "creates": both players "Join with code"
+ * (the design mockup).  The first JOIN of the home code opens the home room
+ * and takes slot 0 -- the room's host, whose link mode the room keeps (the
+ * mode byte after the cookie, as in CREATE); the PSP that is told slot 0
+ * runs the netdrv host.  Same limits as a CREATE. */
+static void open_home(rl_core *c, int sock, const rl_addr *from,
+                      const uint8_t *body, size_t n, uint64_t now)
+{
+   unsigned i;
+   rl_room *r = NULL;
+   char ab[24];
+   if (!ip_allow(c, from->ip_be, now) ||
+       rooms_hosted_by(c, from->ip_be) >= c->cfg.rooms_per_ip)
+   {
+      c->st.rx_rate++;
+      send_error(c, sock, from, RL_E_RATE, "too many rooms");
+      return;
+   }
+   for (i = 0; i < c->nrooms && !r; i++)
+      if (!c->rooms[i].used)
+         r = &c->rooms[i];
+   if (!r)
+   {
+      send_error(c, sock, from, RL_E_BUSY, "server full");
+      return;
+   }
+   r->used = 1;
+   r->by_join = 1;
+   memcpy(r->code, c->home, RL_CODE_LEN);
+   memcpy(r->build, body, RL_BUILD_LEN);
+   r->mode = n > CJ_COOKIE + RL_COOKIE_LEN ? body[CJ_COOKIE + RL_COOKIE_LEN] : 0;
+   r->created_ms = r->last_ms = now;
+   fill_slot(c, &r->s[0], from, body, now);
+   c->st.rooms_now++;
+   c->st.rooms_made++;
+   lg(c, "room_create code=%.4s host=%s nat=%u by=join", r->code, ipstr(from, ab),
+      r->s[0].nat);
+   reply_slot(c, sock, from, RL_T_JOINED, r, 0);
+}
+
 static void on_join(rl_core *c, int sock, const rl_addr *from,
                     const uint8_t *body, size_t n, uint64_t now)
 {
@@ -521,7 +562,7 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
                                                         : (const uint8_t *)c->home;
    r = room_by_code(c, code);
    if (r)
-      for (k = 1; k < RL_SLOTS; k++)
+      for (k = r->by_join ? 0 : 1; k < RL_SLOTS; k++)
          if (r->s[k].used && addr_eq(&r->s[k].addr, from))
          {
             reply_slot(c, sock, from, RL_T_JOINED, r, k);   /* a retry */
@@ -536,6 +577,11 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
    }
    if (!r)
    {
+      if (c->has_home && !memcmp(code, c->home, RL_CODE_LEN))
+      {
+         open_home(c, sock, from, body, n, now);
+         return;
+      }
       if (!guess_allow(c, from->ip_be, code, now))
       {
          c->st.rx_rate++;

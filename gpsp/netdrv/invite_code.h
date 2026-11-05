@@ -39,7 +39,12 @@
 #define INV_DEFAULT_PORT 27420u          /* RL_DEFAULT_PORT */
 #define INV_TAG          0x5Au
 
-static const char INV_ALPHABET[33] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/* The EBOOT defines INV_ALPHABET_STORAGE as plain `static` (writable .data):
+ * .rodata growth moves its pinned layout in 8 KiB steps (docs/LAYOUT-PINNING.md). */
+#ifndef INV_ALPHABET_STORAGE
+#define INV_ALPHABET_STORAGE static const
+#endif
+INV_ALPHABET_STORAGE char INV_ALPHABET[33] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 enum { INV_OK = 0, INV_E_LENGTH = -1, INV_E_SYMBOL = -2, INV_E_CHECK = -3,
        INV_E_ADDRESS = -4, INV_E_PORT = -5 };

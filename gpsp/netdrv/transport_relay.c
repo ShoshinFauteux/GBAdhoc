@@ -395,9 +395,11 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          t->next_keep_us = tn + KEEP_EVERY_US;
          lg(t, "relay_room code=%s slot=%d host=%d nat=%u", t->code, t->slot,
             t->cfg.is_host, t->nat);
-         if (!t->cfg.is_host)
+         /* a room always has its host -- unless we are it: the first PSP into
+          * a desktop host's home room is told slot 0 (relay_core open_home) */
+         if (!t->cfg.is_host && t->slot != 0)
          {
-            t->p[0].present = 1;       /* a room always has its host */
+            t->p[0].present = 1;
             if (!t->p[0].path)
                t->p[0].path = P_RELAY;
          }

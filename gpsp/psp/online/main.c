@@ -14,6 +14,7 @@
 
 #include "online_link.h"
 #include "../../netdrv/transport_relay.h"
+#include "../../netdrv/invite_code.h"
 
 PSP_MODULE_INFO("gbadhoc_online", 0, 1, 0);
 
@@ -28,6 +29,7 @@ static struct
    uint16_t port;               /* the bound port (ONLINE_PORT unless taken) */
    int resolver_up;
    relay_transport *rt;
+   int invite;                  /* joined by an invite code: the server is a desktop host */
 } O = { .fd = -1 };
 
 static online_api g_api;
@@ -210,8 +212,32 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    if (O.rt)
       return 0;
    O.cfg = *cfg;
+   O.invite = 0;
    {
-      /* the room as typed: its first four letters, upper-cased */
+      int nsym = inv_count(cfg->room);
+      if (nsym == INV_SHORT || nsym == INV_LONG)
+      {
+         /* an invite code: a desktop host's address, no server to ask.  The
+          * join screen checked it already; check again (the harness ini) */
+         uint8_t ip[4];
+         unsigned port;
+         int r = inv_decode(cfg->room, ip, &port);
+         if (r != INV_OK)
+         {
+            snprintf(why, why_cap, "invite code does not check out");
+            evt("online_error stage=invite rc=%d", r);
+            return -1;
+         }
+         memcpy(&sip, ip, 4);
+         sport = (uint16_t)port;
+         O.cfg.room[0] = 0;               /* the host's home room */
+         O.invite = 1;
+         evt("online_invite ip=%u.%u.%u.%u port=%u", ip[0], ip[1], ip[2], ip[3], port);
+         goto have_server;
+      }
+   }
+   {
+      /* a room code: its first four letters, upper-cased */
       int i, j = 0;
       for (i = 0; cfg->room[i] && j < RL_CODE_LEN; i++)
       {
@@ -230,6 +256,7 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       ol_down();
       return -1;
    }
+have_server:
    beat();
    O.fd = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
    if (O.fd < 0)
@@ -286,6 +313,8 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    }
    rc_cfg.priv_port = O.port;
    rc_cfg.direct = O.cfg.direct;
+   /* a room code is looked up first: a desktop host's code redirects to it */
+   rc_cfg.lookup = !O.invite && O.cfg.room[0] != 0;
    rc_cfg.mode = O.cfg.mode;
    rc_cfg.now_us = now_us;
    rc_cfg.log = rl_log;
@@ -308,6 +337,7 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
          const char *tx = "";
          relay_transport_error(O.rt, &tx);
          snprintf(why, why_cap, "%s", st == RL_ST_FAILED ? tx
+                  : O.invite ? "the host did not answer"
                   : is_host ? "the server did not answer"
                             : "no such room, or the server did not answer");
          evt("online_error stage=room state=%d why=\"%s\"", st, why);
@@ -327,6 +357,7 @@ static const char *ol_room(void) { return O.rt ? relay_transport_code(O.rt) : ""
 static int ol_room_mode(void) { return O.rt ? relay_transport_mode(O.rt) : 0; }
 static void ol_iface(nd_transport *out) { relay_transport_iface(O.rt, out); }
 static int ol_connected(void) { return O.rt != NULL && g_ol_host->wifi_is_up(); }
+static int ol_slot(void) { return O.rt ? relay_transport_slot(O.rt) : -1; }
 
 static void ol_status(char *out, unsigned cap)
 {
@@ -349,7 +380,10 @@ static void ol_status(char *out, unsigned cap)
       snprintf(out, cap, "Online %s  direct %u ms", relay_transport_code(O.rt),
                (unsigned)(s.direct_rtt_us[peer] / 1000));
    else
-      snprintf(out, cap, "Online %s  relay %u ms", relay_transport_code(O.rt),
+      /* through a desktop host: "via host" (the design mockup's word), so a
+       * player knows a PC is in the path; the shared server: "relay" */
+      snprintf(out, cap, "Online %s  %s %u ms", relay_transport_code(O.rt),
+               O.invite || s.located == RL_LOC_HOST ? "via host" : "relay",
                (unsigned)(s.relay_rtt_us / 1000 * 2));
 }
 
@@ -366,12 +400,12 @@ static void ol_stats_evt(const char *at)
    paths[RL_SLOTS] = 0;
    evt("online_stats at=%s nat=%u paths=%s tx=%u rx=%u tx_direct=%u rx_direct=%u "
        "tx_relay=%u rx_relay=%u punches=%u/%u acks=%u fallbacks=%u "
-       "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u", at, s.nat, paths,
+       "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u located=%u invite=%d", at, s.nat, paths,
        (unsigned)s.tx, (unsigned)s.rx, (unsigned)s.tx_direct, (unsigned)s.rx_direct,
        (unsigned)s.tx_relay, (unsigned)s.rx_relay, (unsigned)s.punches_tx,
        (unsigned)s.punches_rx, (unsigned)s.acks_rx, (unsigned)s.fallbacks,
        (unsigned)(s.relay_rtt_us / 1000), (unsigned)(s.direct_rtt_us[0] / 1000),
-       (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad);
+       (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad, s.located, O.invite);
 }
 
 int module_start(SceSize args, void *argp)
@@ -397,6 +431,7 @@ int module_start(SceSize args, void *argp)
    g_api.connected = ol_connected;
    g_api.stats_evt = ol_stats_evt;
    g_api.status = ol_status;
+   g_api.slot = ol_slot;
    *l->api = g_api;
    return 0;
 }

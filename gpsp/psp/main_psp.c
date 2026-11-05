@@ -9392,17 +9392,17 @@ static void ui_net_action(int is_host)
     * mode from it -- then the same session as a room in the air. */
    {
       int ol_host = 0, ol_cable = 1, ol_wifi = 1;
-      char ol_code[5];
+      char ol_code[16];
       ol = ui_online_take(&ol_host, ol_code, &ol_cable, &ol_wifi);
       if (!ol && !g_online_boot)
          online_psp_clear();
       if (ol)
       {
          /* the same LINKING screen as below, so the code is shared, not cloned */
+         /* a joiner sends the host mode too: "Join with code" into a desktop
+          * host's room makes the first PSP in its host (slot 0) */
          online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
-                        !is_host ? RL_MODE_ANY
-                        : !gba || ui_host_cable() ? RL_MODE_CABLE
-                                                  : RL_MODE_ADAPTER);
+                        !gba || ui_host_cable() ? RL_MODE_CABLE : RL_MODE_ADAPTER);
          snprintf(room, sizeof(room), "Online");
          link_bringup_view(is_host, room, &lv, l1, sizeof(l1), l2, sizeof(l2));
          link_backdrop_take();
@@ -9417,6 +9417,8 @@ static void ui_net_action(int is_host)
             online_psp_clear();
             return;
          }
+         if (!is_host && online_psp_slot() == 0)
+            is_host = 1;          /* the first into a desktop host's room hosts it */
       }
    }
 #endif
