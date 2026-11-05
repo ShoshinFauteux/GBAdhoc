@@ -27,13 +27,12 @@ if (Test-Path (Join-Path $state "winfwd.pid")) {
 # the source tree as WSL sees it
 $src = (& wsl -d $Distro -- wslpath -a ($here -replace '\\','/')).Trim()
 # build into ~/gbrelay (not /tmp: survives WSL restarts)
-& wsl -d $Distro -- bash -lc "mkdir -p ~/gbrelay && bash '$src/build.sh' ~/gbrelay/bin >/dev/null && echo built"
+& wsl -d $Distro -- bash -lc "mkdir -p ~/gbrelay && bash '$src/build.sh' ~/gbrelay/bin >/dev/null && printf '%s\n' '#!/bin/sh' 'exec ~/gbrelay/bin/gbadhoc-relay --bind 0.0.0.0 --fwd 27430 --status 27429 --pidfile ~/gbrelay/relay.pid >> ~/gbrelay/relay.log 2>&1' > ~/gbrelay/run.sh && chmod +x ~/gbrelay/run.sh && echo built"
 if ($LASTEXITCODE -ne 0) { throw "relay build failed" }
 
 # the relay: a hidden wsl.exe that stays attached (WSL stops a distro with no client)
-$wsl = Start-Process -FilePath "wsl.exe" -WindowStyle Hidden -PassThru -ArgumentList @(
-  "-d", $Distro, "--", "bash", "-lc",
-  "exec ~/gbrelay/bin/gbadhoc-relay --bind 0.0.0.0 --fwd 27430 --status 27429 --pidfile ~/gbrelay/relay.pid >> ~/gbrelay/relay.log 2>&1")
+$wsl = Start-Process -FilePath "wsl.exe" -WindowStyle Hidden -PassThru `
+  -ArgumentList "-d $Distro -- bash -l ~/gbrelay/run.sh"
 Set-Content -Path (Join-Path $state "wsl.pid") -Value $wsl.Id
 Start-Sleep -Seconds 2
 $relayPid = (& wsl -d $Distro -- bash -lc "cat ~/gbrelay/relay.pid").Trim()
