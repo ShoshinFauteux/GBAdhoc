@@ -16,7 +16,9 @@ serial_next_event                                 0.045799     148
 sound_timer_queue32                               0.033961     112
 check_interrupt                                   0.014094      68
 process_cheats                                    0.000412       8
-update_scanline                                   0.076800    7740
+update_scanline                                   0.076800      88
+me_capture_line                                   0.076800    1556
+update_scanline_render                            0.000001    6080
 # ---- warm tail
 @mips_stub.o(.text.msr_fast)
 block_lookup_address_arm                          0.038072     356
@@ -167,3 +169,7 @@ strlen                                            0.000360      28 libc.a:libc_a
 halt_hop_begin                                    0.000000       0
 halt_hop_wake                                     0.000000       0
 halt_hop_lines                                    0.000000       0
+_ZL12ml_line_bodym                                0.076800    1712
+_ZL19ml_update_relevancem                         0.050000     656
+_ZL12ml_diff_pagemm                               0.010000     204
+_ZL12ml_relevancePKtPm.isra.0                     0.005000     396

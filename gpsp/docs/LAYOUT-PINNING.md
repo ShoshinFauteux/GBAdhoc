@@ -361,3 +361,83 @@ The hot order and the JIT offset hold by themselves. Instance A's cold text, its
 **The lock.** `tools/layout/layout.lock` has a `[release]` and a `[lab]` section: the offsets mod 8 KiB of `main`, `pace_frame`, the first symbol after each text pad, the pinned hot lookups and `update_gba` of both instances, A's cold text and tables, `gbahot_start`, `reg`, `_gp`, `iwram`, `ewram` and `_end`; B's region (`gbab_bregion_start`, `gbab_bregion_lend`), both instances' `rom_branch_hash` and their four JIT bases (`rom_`/`ram_translation_cache_static`, 0x1500: the code cache's colouring and the hot-data guard rest on it; `_end` alone misses a `.bss` change that grows before them and shrinks after, critique-8 MF3); `main`'s size (a change moves the frame loop's window); the warm hole in front of A's thumb lookup (`gap`, 32) and the 32 B after B's (`tail`, 32). tools/build.sh runs `tools/layout/layout_lock.py check` on every release and every lab build with `tools/layout/lab-pads.env` and records the result in the manifest as `layoutLock` (`release:ok`, `lab:differs`, `release:unchecked` when psp-nm gave nothing, or `none`). It fails the build on a difference only for the default switch set (RFU_SCHED=1, GBA_LINK, REWIND, ONLINE, CHEATS, INPUT_FRESH, MGIFT and LAYOUT_PIN on, ME_LOWLAT unset or 2, no PSP_EXTRA/CORE_EXTRA/FE_EXTRA/LAYOUT_PAD_BYTES); any other arm is reported. That policy, and what the check's exit code means, is `layout_lock.py strict` / `verdict` (tested in tools/tests/test_layout_lock.py, critique-9 SF3); build.sh only calls it. `tools/make_release.sh` packages only a manifest with `layoutLock` `release:ok`, so a release built another way (a stable RFU_SCHED=0 one included) must re-pin and record its own lock before it can ship (critique-8 MF2). A re-pin goes: build, `layout_lock.py solve FLAVOUR .build-elf.nm --makefile psp/Makefile` (release) or `--pads tools/layout/lab-pads.env` (lab) for first-order pad values (it does not model the next section's alignment or `.rodata`'s steps, and the RO pad has no symbol), relink, prove it (loop_diff, moddiff, hotord_check), then `layout_lock.py write FLAVOUR .build-elf.nm` and commit the lock with the pads. **`--gc-sections` would delete every pad and both holes** (nothing references them): the lock fails such a build, and the linker script would have to `KEEP()` them first.
 
 Check by comparing `psp-nm -S -n` of the two ELFs: symbols past `layout_pad_cold`, tables and A's `.bss` must move by multiples of 8192.
+
+## 9. The capture line (4.6.0-beta.4 filters cost, claude/b4-cachefix)
+
+**Finding.**  Filters v2 cost beta.4 +0.22 ms (em_battle) / +0.27 ms (d2_drive)
+of work per frame on hardware with filters off.  The cause is the PSP CPU's
+per-scanline video path under the Media Engine renderer: update_scanline()'s
+capture block (~100 instructions) plus the mid-frame log helpers
+(`ml_line_body`, `ml_update_relevance`, ...).  The model above never saw it:
+it excluded all of video.o (the renderer runs on the ME) and stood in for
+update_scanline with "the first 384 bytes, 160 times".
+
+* The capture block sat INSIDE update_scanline, wherever the compiler put it.
+  Filters v2 only touched the renderer part of that 7.7 KB function, but the
+  capture path moved from sets 34 / 58-62 (beta.3) to 44 / 68-72 (beta.4).
+  Sets 69-72 also hold update_gba's per-line lines and spin_check: three
+  per-line paths in a 2-way cache, thrashed on every scanline.
+* The ml_* helpers were never pinned: they float in instance A's cold text,
+  so any text growth before them moves them too (beta.3 0x0660, beta.4 0x09e0
+  mod 8 KiB).  Driver 2 runs ml_line_body ~340k instructions a frame.
+* The hot core, the warm tail (−32 B), `.data`/`.bss` and the heap were not
+  the cause: the integrator's warm-tail re-pin, `.bss` pad and single-call-site
+  arms all left the capture path where it was.
+
+**The model (I-cache, 16 KiB 2-way, 64 B lines, 215.3 ns/miss).**  The twin
+runs in capture mode 1 (`DR_MECAP=1`, tools/drprof/dr_host.c), so its CPU
+executes exactly the PSP CPU's per-line video work, and video.o is placed like
+any other object (tools/layout/cap_map.py).  update_scanline's own per-line
+path cannot be placed by function fraction (two compilers lay it out
+differently), so tools/layout/uspath.py runs the PSP ELF's code (a small MIPS
+interpreter, capture mode 1, a typical line) and the twin's per-line
+instructions are placed onto that path.  tools/layout/lpsimd_plugin.c adds a
+D-cache (every named object placed by name, the translation cache at the JIT
+base, heap/stack unplaced) and per-layout miss maps.  Lab builds, ms of miss
+time per frame:
+
+| layout | em_battle I | d2_drive I | em D | d2 D |
+|---|---|---|---|---|
+| beta.3 (beta460b3-lab) | 0.891 | 3.657 | 0.542 | 1.304 |
+| filters-only (e94cdd0, beta460b4filt-lab) | 1.185 | 3.979 | 0.514 | 1.303 |
+| beta.4 (beta460b4-zero-lab) | 1.185 | 3.979 | 0.503 | 1.310 |
+| **fix (claude/b4-cachefix)** | **0.964** | **3.601** | 0.511 | 1.388 |
+| fix, path block -64 / +64 B | 0.964 / 0.969 | 3.546 / 3.695 | | |
+
+Predicted b3 -> b4 delta +0.29 / +0.32 ms (hardware +0.22 / +0.27); the fix
+recovers 0.22 ms (75 %) of em_battle and all of d2_drive (I-cache).  The D-cache model
+shows no b3/b4 difference above its noise (unplaced heap data), consistent with
+the `.bss` pad arm; it gives the fix +0.01 / +0.08 ms (net -0.21 / -0.30 ms),
+which is within what that crude placement can resolve.  The model does not rank the integrator's warm-tail arm
+correctly (hardware 6.82 ms, model slightly better than beta.4): treat it as
+right about the mechanism and the size, not about every arm.
+
+**The fix (layout only for the core; the ME PRX is byte-identical).**
+* video.cc: update_scanline() is now the capture dispatch only (88 B, two tail calls):
+  `me_capture_line()` (the block, out of line; capture mode 2 tail-calls the renderer) or
+  `update_scanline_render()` (the CPU renderer).  In the engine
+  (`ME_PRX_BUILD`) `update_scanline_render` IS update_scanline, so the ME
+  module's code is unchanged (gbadhoc_me.prx rebuilt bit-identical, cc723d23).
+* hot.ord: after the hot core's 35 unmoved functions, `ml_line_body,
+  ml_update_relevance, ml_diff_page, ml_relevance, me_capture_line,
+  update_scanline, update_scanline_render`, then the warm tail.  The per-line
+  path is now pinned: no renderer change can move it.  The order was chosen
+  from 8 orders x 5 pads (tools/layout/cap_orders.py) and a 2-D sweep of the
+  block's offset; this one needs no pad, and moving the block 64 B either way
+  keeps it (table).
+* Cost: none in memory.  `LAYOUT_PAD_BYTES` 304 -> 0 (psp/Makefile, flags.lock)
+  absorbs the +292 B of section alignment, so the release image (14,014,860 B)
+  and PSP-1000 boot heap (10,081,692 B) equal beta.4's; the lab build (pads
+  6064 / 2832) keeps 14,612,876 B.  A's cold text and tables move (cold;
+  the D-cache column above includes it for the lab build).
+
+**Hardware A/B still owed** (the model is not a frame time): Lab `ab`,
+beta460b4-zero-lab vs the fix's lab build, ABBA, em_battle + d2_drive, plus
+the whole bench-ready set for losses (judge by docs/LAB noise rules).
+
+Reproduce: `LP_HOME=~/lpcf tools/layout/twin_build.sh <beta.3 tree with the
+dr_host.c DR_MECAP hunk> b3cap "" "<manifest coreFlags as -D>"`, then
+`capsim.sh prof/em_battle em_battle b3cap -` (profile), `uspath.py ELF DIS NM
+0 1 50 100 159` per layout (`FOLLOW=me_capture_line` on the split), `cap_map.py
+... --path NAME=update_scanline:FILE`, `capsim.sh sim/X em_battle b3cap
+/w/sim/S/em_battle.lay`, `cap_missdiff.py` for per-symbol / per-set deltas.

@@ -34,6 +34,39 @@ extern unsigned short palette_ram[], oam_ram[], io_registers[];
 extern unsigned int reg[64];
 extern unsigned char vram_clean[96];
 
+/* DR_MECAP (layout study): the PSP's ME capture mode 1, double-buffered. */
+extern unsigned int me_capture_mode;
+extern void *me_capture_buf;
+extern unsigned char *me_vram_shadow;
+extern void me_capture_log_setup(void *cap, void *entries, unsigned n);
+extern void me_vram_map_consumed(void);
+static void *g_mecap[2];
+static unsigned g_mecap_i;
+static int g_mecap_on;
+static void mecap_init(void)
+{
+   unsigned i;
+   const char *e = getenv("DR_MECAP");
+   if (!e || *e != '1')
+      return;
+   for (i = 0; i < 2; i++)
+   {
+      g_mecap[i] = calloc(1, 64 * 1024);
+      me_capture_log_setup(g_mecap[i], calloc(12288, 12), 12288);
+   }
+   me_vram_shadow = calloc(1, 96 * 1024);
+   memcpy(me_vram_shadow, vram, 96 * 1024);
+   me_capture_buf = g_mecap[0];
+   me_capture_mode = 1;
+   g_mecap_on = 1;
+}
+static void mecap_frame(void)
+{
+   me_vram_map_consumed();
+   g_mecap_i ^= 1;
+   me_capture_buf = g_mecap[g_mecap_i];
+}
+
 #ifdef DRPROF_TWIN
 extern unsigned int tmemld[11][16], tmemst[4][16];
 /* the twin is a static Linux build: the caches are ARRAYS (mips_stub.S
@@ -215,6 +248,7 @@ int main(int argc, char **argv)
    cfg.audio_frames = a_frames;
    cfg.input_bitmask = no_input;
    if (fe_host_boot(&cfg) != 0) { fprintf(stderr, "boot failed\n"); return 3; }
+   mecap_init();
 
    drprof_ctl.magic = 0x46505244u;   /* "DRPF" */
    drprof_ctl.version = DRPROF_CTL_VERSION;
@@ -303,6 +337,7 @@ int main(int argc, char **argv)
          drprof_ctl.frame = fe_host_frame_count();
          mark(3 /* DRM_START */, "start");
       }
+      if (g_mecap_on) mecap_frame(); else
       memset(vram_clean, 1, 96);
       fe_autopilot_frame();
       m = fe_autopilot_take_mark();
