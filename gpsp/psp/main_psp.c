@@ -685,8 +685,14 @@ static void evt_shutdown(void)
 
 /* OUT_RATE lives in ff_psp.h: the pacing engine needs it too. */
 #define OUT_CHUNK      1024                 /* output frames per blocking write */
-#define RING_FRAMES    32768                /* power of two, 1.0 s at the
-                                             * core's 32768 Hz (ADR-0028) */
+/* Power of two, 0.5 s at the core's 32768 Hz (ADR-0028).  The pacer holds
+ * the level at AUDIO_RING_TARGET (4096, 125 ms) and a GB link session at
+ * its 3072-frame cushion (trim RING_HIGH_WATER + 1024); only an ff_audio
+ * fast-forward fills it to the top, and every frame of it is heard as lag
+ * once FF ends.  It was 32768 (1.0 s, 128 KiB of .bss) up to 4.6.0-beta.4;
+ * 16384 keeps the harness audio_ring_target range up to 16383, room for
+ * the "raise the target to 8192 if it gaps" fallback. */
+#define RING_FRAMES    16384
 #define RING_MASK      (RING_FRAMES - 1)
 /* Audio-master pacing nudge (plan §4.4): skip an extra vblank when the ring
  * holds more than the target — bleeds off the 59.94-vs-59.7275 Hz surplus.
