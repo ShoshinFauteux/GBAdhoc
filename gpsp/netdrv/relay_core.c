@@ -40,7 +40,10 @@ typedef struct
 } rl_room;
 
 #define IPT_N 128
-typedef struct { uint32_t ip; uint32_t n; uint64_t win_ms; } rl_ipent;
+/* per source IP: CREATE/JOIN attempts this minute, and the last code it
+ * asked for that did not exist (a joiner waiting for its host retries that
+ * same code twice a second; only a NEW code counts as a guess) */
+typedef struct { uint32_t ip; uint32_t n; uint64_t win_ms; char miss[RL_CODE_LEN]; } rl_ipent;
 
 struct rl_core
 {
@@ -164,6 +167,20 @@ static void send_candidates(rl_core *c, rl_room *r, int to, int about,
    rl_put16(p + 21, c->cfg.punch_start_ms);
    p[23] = (uint8_t)punch;
    tx(c, 0, &r->s[to].addr, b, sizeof(b));
+}
+
+static rl_ipent *ip_find(rl_core *c, uint32_t ip, uint64_t now)
+{
+   unsigned h = (ip ^ (ip >> 13)) % IPT_N, i;
+   for (i = 0; i < IPT_N; i++)
+   {
+      rl_ipent *e = &c->ipt[(h + i) % IPT_N];
+      if (e->ip == ip && now - e->win_ms <= 60000)
+         return e;
+      if (!e->ip)
+         return NULL;
+   }
+   return NULL;
 }
 
 static int ip_allow(rl_core *c, uint32_t ip, uint64_t now)
@@ -417,15 +434,30 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
       send_error(c, sock, from, RL_E_PAUSED, "online play is paused");
       return;
    }
+   if (!r)
+   {
+      /* waiting for a host on the same code is not guessing: only a code
+       * this IP has not just missed counts against its limit */
+      rl_ipent *e = ip_find(c, from->ip_be, now);
+      if (!e || memcmp(e->miss, body + RL_BUILD_LEN, RL_CODE_LEN))
+      {
+         if (!ip_allow(c, from->ip_be, now))
+         {
+            c->st.rx_rate++;
+            send_error(c, sock, from, RL_E_RATE, "too many joins");
+            return;
+         }
+         e = ip_find(c, from->ip_be, now);
+         if (e)
+            memcpy(e->miss, body + RL_BUILD_LEN, RL_CODE_LEN);
+      }
+      send_error(c, sock, from, RL_E_NO_ROOM, "no such room");
+      return;
+   }
    if (!ip_allow(c, from->ip_be, now))
    {
       c->st.rx_rate++;
       send_error(c, sock, from, RL_E_RATE, "too many joins");
-      return;
-   }
-   if (!r)
-   {
-      send_error(c, sock, from, RL_E_NO_ROOM, "no such room");
       return;
    }
    if (memcmp(r->build, body, RL_BUILD_LEN))
