@@ -5620,14 +5620,17 @@ static void vhash_frame(void)
 static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
 static unsigned vp_core_mean;
 #endif
-static unsigned vp_build_crc;   /* CRC32 of the EBOOT actually running */
+/* (unused in a player build: every reader is telemetry or rig code) */
+static unsigned vp_build_crc __attribute__((unused));   /* CRC32 of the running EBOOT */
 
 /* ADR-0035: identify the BINARY in the profile line, not just the run.
  * A stale EBOOT in a sandbox produced two "different" builds with identical
  * timings and cost most of a session to spot.  A profile whose build cannot be
  * identified is not a measurement, so the CRC of the running EBOOT goes in
  * every `vid_prof` line and is emitted once at boot.  ~1.6 MiB of CRC, only
- * when profiling is enabled. */
+ * when profiling is enabled.  Telemetry builds only: its only outputs are
+ * fe_evt lines and the rig's run identity. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static unsigned eboot_crc(void)
 {
    char path[160];
@@ -5658,6 +5661,7 @@ static unsigned eboot_crc(void)
    fe_evt("build eboot_crc=%08x size=%u", crc, total);
    return crc;
 }
+#endif
 
 /* ---- VRAM DIRTY-PAGE PROBE ---------------------------------------------
  *
@@ -5984,11 +5988,13 @@ static void gb_serial_yield(void)
    sceKernelDelayThread(1000);
 }
 
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 /* Same clock, video_prof's prototype (ADR-0034 renderer profile). */
 static unsigned vprof_clock_us(void)
 {
    return (unsigned)sceKernelGetSystemTimeLow();
 }
+#endif
 
 /* Same clock, fe_evt's prototype (ADR-0021 log-I/O accounting).  The ADR-0067
  * playable build never installs it, because there is no log to account for. */
@@ -13924,7 +13930,7 @@ int main(int argc, char *argv[])
     * shortcut's own path, which a script cannot press (issue #13). */
    long player_shot_at = 0, player_shot_n = 1;
    long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
-   long vid_prof_win;           /* ADR-0034(coreopt) renderer path profile */
+   long vid_prof_win = 0;       /* ADR-0034(coreopt) renderer path profile */
    int have_script = 0, have_harness, have_variant;
    int autoload_state_slot = 1;
    int net_host = 0, net_join = 0, net_probe = 0;
@@ -14299,12 +14305,17 @@ int main(int argc, char *argv[])
     * autopilot.ini -> .gpsp-harness.ini rename.  vhash=1 is shorthand for
     * "hash every frame"; vid_prof only produces a line if the core was
     * built with -DVIDEO_PROF=1. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   /* Every vid_prof output is an fe_evt line, so a player build leaves the
+    * key alone: a stray harness file on a player's card must not cost a
+    * boot-time EBOOT read (and its 4 KiB borrow) ahead of the ROM load. */
    vid_prof_win = fe_ini_get_int(HARNESS_INI, "vid_prof", 0);
    if (vid_prof_win > 0)
    {
       video_prof_set_clock(vprof_clock_us);
       vp_build_crc = eboot_crc();
    }
+#endif
    vhash_from = fe_ini_get_int(HARNESS_INI, "vhash_from", 0);
    g_vhash_on = (int)fe_ini_get_int(HARNESS_INI, "vhash", 0);
    g_vhash_legacy_rb = (int)fe_ini_get_int(HARNESS_INI, "vhash_legacy_rb", 0);
