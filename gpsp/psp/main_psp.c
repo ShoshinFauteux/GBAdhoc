@@ -9689,6 +9689,17 @@ static void mgift_stop(int quiet)
    pwr_release();
 }
 
+/* The games the cart serves: mgift_cart.c answers a GAME_DATA only with
+ * these codes (English scripts).  Anything else never asks, so Wi-Fi must
+ * not come up for it: that association blocks the main thread for up to
+ * MGNET_CONNECT_US (30 s) and writes a network profile, all for a game
+ * that cannot receive a gift. */
+static int mgift_game_ok(void)
+{
+   return !strcmp(g_mg_game, "BPRE") || !strcmp(g_mg_game, "BPGE") ||
+          !strcmp(g_mg_game, "BPEE");
+}
+
 static void mgift_start_io(void)
 {
    int rc;
@@ -9703,6 +9714,17 @@ static void mgift_start_io(void)
    if (g_mg_on)
    {
       osd_toast("Mystery Gift is already listening");
+      return;
+   }
+   /* Before Wi-Fi, not after: mgift_cart_start() succeeds for every GBA
+    * game (the netpacket seam always exists), so its "no wireless" answer
+    * below could only come after a 30 s association. */
+   if (!mgift_game_ok())
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no Mystery Gift");
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "Needs FireRed, LeafGreen or Emerald (US/EU English)");
+      osd_toast("%s", g_mg_l1);
+      fe_evt("mg_refused game=%s", g_mg_game[0] ? g_mg_game : "?");
       return;
    }
 
