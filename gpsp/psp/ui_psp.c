@@ -33,6 +33,7 @@
 #include "config_psp.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "sidecar_dirs.h"     /* saves/ and states/ (4.6.0-beta.4) */
 #include "font_8x16.h"
 #include "fe_favs.h"
 #include "fe_evt.h"
@@ -5858,22 +5859,34 @@ static int rom_has_sav(int idx)
 {
    if (g_roms[idx].has_sav < 0)
    {
+      extern char g_dir_base[];
       char sav[PSP_FILE_PATH_CAP];
       SceIoStat st;
-      /* GB/GBC saves keep the .gb/.gbc stem so a GB and a GBA game of the
+      int pass, have = 0;
+      /* saves/<rel> first (4.6.0-beta.4 folders), then beside the ROM.
+       * GB/GBC saves keep the .gb/.gbc stem so a GB and a GBA game of the
        * same name cannot share one battery file. */
-      int n = g_pcfg.console == FE_CONSOLE_GBA
-         ? snprintf(sav, sizeof(sav), "%s/%.*s.sav", g_rom_root,
-                    (int)ui_rom_stem_length(g_roms[idx].name),
-                    g_roms[idx].name)
-         : snprintf(sav, sizeof(sav), "%s/%s.sav", g_rom_root,
-                    g_roms[idx].name);
-      if (n < 0 || (size_t)n >= sizeof(sav))
+      for (pass = 0; pass < 2 && !have; pass++)
       {
-         g_roms[idx].has_sav = 0;
-         return 0;
+         char root[PSP_FILE_PATH_CAP];
+         int n;
+         if (pass == 0)
+            n = snprintf(root, sizeof(root), "%s/" SC_SAVES_DIR, g_dir_base);
+         else
+            n = snprintf(root, sizeof(root), "%s", g_rom_root);
+         if (n < 0 || (size_t)n >= sizeof(root))
+            continue;
+         n = g_pcfg.console == FE_CONSOLE_GBA
+            ? snprintf(sav, sizeof(sav), "%s/%.*s.sav", root,
+                       (int)ui_rom_stem_length(g_roms[idx].name),
+                       g_roms[idx].name)
+            : snprintf(sav, sizeof(sav), "%s/%s.sav", root,
+                       g_roms[idx].name);
+         if (n < 0 || (size_t)n >= sizeof(sav))
+            continue;
+         have = sceIoGetstat(sav, &st) >= 0;
       }
-      g_roms[idx].has_sav = (signed char)(sceIoGetstat(sav, &st) >= 0);
+      g_roms[idx].has_sav = (signed char)have;
    }
    return g_roms[idx].has_sav;
 }
@@ -7473,17 +7486,52 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
 #define MQ_ROW_H  24
 #define MQ_MID    176            /* the selected row; everything else moves */
 
+/* The SLOT-1 path of the folder slot `slot` of the game lives in: its
+ * states/ mirror (4.6.0-beta.4 folders) when that slot is there, else beside
+ * the ROM when it is there (not opened since the update), else the mirror.
+ * Per slot, so the shelf shows everything either place holds; the game
+ * itself moves them all on its first open (main_psp.c folders_settle). */
+static int browser_rom_state_base(const char *rom_dir, int rom_idx,
+                                  unsigned slot, char *out, size_t out_sz)
+{
+   extern char g_dir_base[];
+   char rom_path[PSP_FILE_PATH_CAP], mir[PSP_FILE_PATH_CAP];
+   char nw[PSP_FILE_PATH_CAP], p[PSP_FILE_PATH_CAP + 8];
+   /* The browsing console is the console the game will boot as. */
+   const char *sfx = psp_state_slot1_suffix((fe_console_t)g_pcfg.console);
+   SceIoStat st;
+   int i;
+   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
+                         g_roms[rom_idx].name) != 0 ||
+       psp_rom_path_suffix(out, out_sz, rom_path, sfx) != 0)
+      return -1;
+   if (sc_mirror(mir, sizeof(mir), g_dir_base, SC_STATES_DIR,
+                 g_roms[rom_idx].name) != 0 ||
+       psp_rom_path_suffix(nw, sizeof(nw), mir, sfx) != 0)
+      return 0;                            /* too long: beside the ROM */
+   for (i = 0; i < 2; i++)                 /* the mirror, then legacy */
+   {
+      if (psp_state_path_for_slot(p, sizeof(p), i ? out : nw, slot) != 0)
+         continue;
+      if (sceIoGetstat(p, &st) < 0)
+      {
+         size_t n = strlen(p);
+         snprintf(p + n, sizeof(p) - n, ".old");
+         if (sceIoGetstat(p, &st) < 0)
+            continue;
+      }
+      if (i == 0)
+         snprintf(out, out_sz, "%s", nw);
+      return 0;
+   }
+   snprintf(out, out_sz, "%s", nw);
+   return 0;
+}
+
 static int browser_rom_state_path(const char *rom_dir, int rom_idx,
                                   unsigned slot, char *out, size_t out_sz)
 {
-   char rom_path[PSP_FILE_PATH_CAP];
-   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
-                         g_roms[rom_idx].name) != 0)
-      return -1;
-   /* The browsing console is the console the game will boot as. */
-   if (psp_rom_path_suffix(out, out_sz, rom_path,
-                           psp_state_slot1_suffix(
-                              (fe_console_t)g_pcfg.console)) != 0)
+   if (browser_rom_state_base(rom_dir, rom_idx, slot, out, out_sz) != 0)
       return -1;
    return psp_state_path_for_slot(out, out_sz, out, slot);
 }
@@ -8772,7 +8820,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             {
                int s = g_shelf_del, ok;
                g_shelf_del = 0;
-               ok = browser_rom_state_path(rom_dir, rom, 1, state_path,
+               ok = browser_rom_state_base(rom_dir, rom, (unsigned)s,
+                                           state_path,
                                            sizeof(state_path)) == 0 &&
                     state_delete(state_path, (unsigned)s) == 0;
                snprintf(g_shelf_note, sizeof(g_shelf_note),

@@ -72,15 +72,18 @@ static void sh_end(void)
 
 /* ---- paths: a ROM's data files, the one place they are derived ----------- */
 
-/* rom_dir/rel is the ROM; out = its save, or slot's state / thumb / shot.
- * The same rules as main_psp.c's save_path / state_path. */
-static int share_path(char *out, size_t cap, const char *rom_dir,
-                      const char *rel, int con, int kind, int slot)
+/* One file of a ROM's data, under `root`: root/rel is the ROM (roms/ for
+ * the legacy layout, saves/ or states/ for the 4.6.0-beta.4 folders, which
+ * mirror it); out = its save, or slot's state / thumb / shot.  For slot 0
+ * of a state kind, out is the SLOT-1 state (the group's path).  The same
+ * rules as main_psp.c's save_path / state_path. */
+static int share_path_in(char *out, size_t cap, const char *root,
+                         const char *rel, int con, int kind, int slot)
 {
    char rom[PSP_FILE_PATH_CAP], st[PSP_FILE_PATH_CAP];
    int n;
    out[0] = '\0';
-   if (psp_rom_path_join(rom, sizeof(rom), rom_dir, rel) != 0)
+   if (psp_rom_path_join(rom, sizeof(rom), root, rel) != 0)
       return -1;
    if (kind == FE_SHARE_OBJ_SAVE)
    {
@@ -91,12 +94,80 @@ static int share_path(char *out, size_t cap, const char *rom_dir,
    }
    if (psp_rom_path_suffix(st, sizeof(st), rom,
                            psp_state_slot1_suffix((fe_console_t)con)) != 0 ||
-       psp_state_path_for_slot(st, sizeof(st), st, (unsigned)slot) != 0)
+       (slot && psp_state_path_for_slot(st, sizeof(st), st,
+                                        (unsigned)slot) != 0))
       return -1;
    n = snprintf(out, cap, "%s%s", st,
                 kind == FE_SHARE_OBJ_THUMB ? ".thumb" :
                 kind == FE_SHARE_OBJ_SHOT ? ".shot" : "");
    return (n > 0 && (size_t)n < cap) ? 0 : -1;
+}
+
+/* saves/ or states/ under the app folder: where the folders put `kind`. */
+static int share_new_root(char *out, size_t cap, int kind)
+{
+   extern char g_dir_base[];
+   int n = snprintf(out, cap, "%s/%s", g_dir_base,
+                    kind == FE_SHARE_OBJ_SAVE ? SC_SAVES_DIR : SC_STATES_DIR);
+   return n > 0 && (size_t)n < cap ? 0 : -1;
+}
+
+/* The file to read or replace: in the folders when the save (or the slot's
+ * state) is there, else beside the ROM when it is there (a game not opened
+ * since the update, or one whose move failed), else in the folders.  A
+ * slot's pictures go where its state is. */
+static int share_path(char *out, size_t cap, const char *rom_dir,
+                      const char *rel, int con, int kind, int slot)
+{
+   char root[PSP_FILE_PATH_CAP], p[PSP_FILE_PATH_CAP + 8];
+   int pass, probe = kind == FE_SHARE_OBJ_SAVE ? FE_SHARE_OBJ_SAVE
+                                               : FE_SHARE_OBJ_STATE;
+   SceIoStat st;
+   for (pass = 0; pass < 2; pass++)       /* the folders, then legacy */
+   {
+      if (pass == 0 ? share_new_root(root, sizeof(root), kind) != 0
+                    : snprintf(root, sizeof(root), "%s", rom_dir) >=
+                         (int)sizeof(root))
+         continue;
+      if (share_path_in(p, sizeof(p), root, rel, con, probe, slot) != 0)
+         continue;
+      if (sceIoGetstat(p, &st) < 0)
+      {
+         size_t n = strlen(p);
+         snprintf(p + n, sizeof(p) - n, probe == FE_SHARE_OBJ_SAVE ? ".bak"
+                                                                   : ".old");
+         if (sceIoGetstat(p, &st) < 0)
+            continue;
+      }
+      return share_path_in(out, cap, root, rel, con, kind, slot);
+   }
+   if (share_new_root(root, sizeof(root), kind) == 0 &&
+       share_path_in(out, cap, root, rel, con, kind, slot) == 0)
+      return 0;
+   return share_path_in(out, cap, rom_dir, rel, con, kind, slot);
+}
+
+/* The open game's files move to the folders before a pull touches them,
+ * exactly as opening the game would (main_psp.c folders_settle). */
+static void share_settle(const char *rom_dir, const char *rel, int con)
+{
+   extern char g_dir_base[];
+   char lp[PSP_FILE_PATH_CAP], np[PSP_FILE_PATH_CAP], root[PSP_FILE_PATH_CAP];
+   const char *use;
+   int g, rc;
+   for (g = 0; g < 2; g++)
+   {
+      int kind = g == 0 ? FE_SHARE_OBJ_SAVE : FE_SHARE_OBJ_STATE;
+      if (share_path_in(lp, sizeof(lp), rom_dir, rel, con, kind, 0) != 0 ||
+          share_new_root(root, sizeof(root), kind) != 0 ||
+          share_path_in(np, sizeof(np), root, rel, con, kind, 0) != 0)
+         continue;
+      rc = sc_settle(&sc_fs_psp, g_dir_base,
+                     g == 0 ? SC_GROUP_SAVE : SC_GROUP_STATES, lp, np, &use,
+                     NULL);
+      fe_evt("share_folders group=%d mig=%d", g, rc);
+      (void)rc;
+   }
 }
 
 static int sh_rom_read(void *user, uint32_t off, void *buf, uint32_t len)
@@ -419,19 +490,19 @@ static int shh_entry(share_host_t *h, short *map, int rom, int con)
 /* Walk roms/ as the browser's scan does (same depth, same skipped
  * folders) and note every save, state and preview beside a ROM of `con`.
  * The directory entries carry size and date: no stat per file. */
-static void shh_walk(share_host_t *h, short *map, const char *rel, int depth,
-                     int con, int n_roms)
+static void shh_walk(share_host_t *h, short *map, const char *root,
+                     const char *rel, int depth, int con, int n_roms)
 {
    char dir[PSP_FILE_PATH_CAP];
    SceUID d;
    SceIoDirent ent;
    if (rel[0])
    {
-      if (psp_rom_path_join(dir, sizeof(dir), h->rom_dir, rel) != 0)
+      if (psp_rom_path_join(dir, sizeof(dir), root, rel) != 0)
          return;
    }
    else
-      snprintf(dir, sizeof(dir), "%s", h->rom_dir);
+      snprintf(dir, sizeof(dir), "%s", root);
    d = sceIoDopen(dir);
    if (d < 0)
       return;
@@ -452,7 +523,7 @@ static void shh_walk(share_host_t *h, short *map, const char *rel, int depth,
                                       ent.d_name)
                            : snprintf(sub, sizeof(sub), "%s", ent.d_name);
             if (n > 0 && (size_t)n < sizeof(sub))
-               shh_walk(h, map, sub, depth - 1, con, n_roms);
+               shh_walk(h, map, root, sub, depth - 1, con, n_roms);
          }
       }
       else if (fe_share_classify(ent.d_name, &fcon, &kind, &slot, &klen) &&
@@ -512,7 +583,16 @@ static int shh_scan(share_host_t *h)
       if (n_roms <= 0)
          continue;
       memset(map, 0xFF, BROWSER_MAX * sizeof(short));
-      shh_walk(h, map, "", ROM_SCAN_DEPTH, con, n_roms);
+      shh_walk(h, map, h->rom_dir, "", ROM_SCAN_DEPTH, con, n_roms);
+      /* ...then the 4.6.0-beta.4 folders, which mirror roms/: a file there
+       * is the one share_path opens, so its size and date win. */
+      {
+         char root[PSP_FILE_PATH_CAP];
+         if (share_new_root(root, sizeof(root), FE_SHARE_OBJ_SAVE) == 0)
+            shh_walk(h, map, root, "", ROM_SCAN_DEPTH, con, n_roms);
+         if (share_new_root(root, sizeof(root), FE_SHARE_OBJ_STATE) == 0)
+            shh_walk(h, map, root, "", ROM_SCAN_DEPTH, con, n_roms);
+      }
       /* Keep the entries that hold something and whose ROM can be
        * identified; a preview without its state is nothing. */
       for (i = w = first; i < h->n; i++)
@@ -956,6 +1036,7 @@ static void shj_scan_yours(share_join_t *j)
    int con = g_pcfg.console, i;
    j->y_save = 0;
    j->y_save_time = j->y_save_size = 0;
+   share_settle(j->rom_dir, rel, con);
    /* an interrupted replace is mended before the player's files are read
     * (fe_share_recover; no transfer is in progress here) */
    {

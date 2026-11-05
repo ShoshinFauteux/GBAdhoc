@@ -664,6 +664,15 @@ def suites(env: Env, baseline: Path | None):
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_state_delete tools/tests/test_state_delete.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_state_delete && "
+          # The saves/ and states/ folders (psp/sidecar_dirs.c, 4.6.0-beta.4):
+          # path mapping, mirrored subpaths, launch-mode ROM paths and the
+          # one-time move with failure injection.  Here for the suite cap.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror -Wno-format-truncation "
+          "-fsanitize=address,undefined -DSC_HOST_TEST -Ipsp -Ifrontend-common "
+          "-o /tmp/t_sidecar_dirs tools/tests/test_sidecar_dirs.c "
+          "psp/sidecar_dirs.c frontend-common/fe_util.c "
+          "frontend-common/fe_share.c && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sidecar_dirs && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
