@@ -161,7 +161,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 5584
+LAYOUT_PAD_BYTES ?= 5312
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link

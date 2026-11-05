@@ -80,12 +80,13 @@ Pre-release. Links only with the same beta.
   the next one was skipped (about 140 hitches a minute in FireRed on beta.3). Below 333 MHz a
   frame that misses its refresh is now presented on the next one, and the early flip waits for
   it instead of replacing it: 0 hitches a minute in FireRed and Fire Emblem on both PSP-1000 and
-  PSP-3000, at about half a frame more latency at 222 MHz only. At 333 MHz GBAdhoc presents
-  exactly as in beta.3.
+  PSP-3000, with input latency about 33 ms below 333 MHz (4.1.0 was about 67 ms). When the picture
+  does fall a refresh behind, the audio nudge now comes early, so it catches up within frames
+  instead of up to about 5 seconds. At 333 MHz GBAdhoc presents exactly as in beta.3.
 - The game list scrolls without lag again: the new state/cheat hints and the SAVE badge looked
   files up on the Memory Stick for every step (a regression in beta.4 test builds only); each
   game's marks are now cached and filled in on idle frames.
-- Layout re-pinned for the new code (pads 5584 / 200).
+- Layout re-pinned for the new code (pads 5312 / 200).
 
 **Known issues:** on hardware each frame takes about 1-3 % more CPU time than in beta.3 (Lab,
 both consoles): frame rates are unchanged in the 8 single-player scenes and CPU-bound link
