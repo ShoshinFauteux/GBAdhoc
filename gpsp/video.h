@@ -45,10 +45,7 @@ extern u16* gba_screen_pixels;
  *   Media Engine: the render desc carries the mode and the LUT's address
  *     (psp/me/me_mbox.h); the engine transforms its own snapshot and the
  *     mid-frame log values it replays (VIDEO_COLOR_IN_REPLAY). */
-#define VIDEO_COLOR_NATIVE 0
-#define VIDEO_COLOR_GBA    1
-#define VIDEO_COLOR_BW     2
-#define VIDEO_COLOR_MODES  3
+#include "video_color.h"   /* VIDEO_COLOR_*, the model */
 extern u32 video_color_mode;
 extern const u16 *video_color_lut;   /* gba_cc_lut, read only */
 #ifdef __cplusplus

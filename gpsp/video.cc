@@ -157,43 +157,14 @@ u16* gba_screen_pixels = NULL;
 u32 video_color_mode CORE_SBSS;
 const u16 *video_color_lut CORE_SBSS;
 
-/* One GBA colour (BGR555 as the guest stores it: R bits 0-4, G 5-9, B 10-14)
- * through the model, in this build's output format. */
+/* The model itself: video_color.h (shared with the host test). */
 static inline u16 video_color_raw(u32 v)
 {
-  u32 r = v & 0x1F, g = (v >> 5) & 0x1F, b = (v >> 10) & 0x1F;
-  if (video_color_mode == VIDEO_COLOR_GBA && video_color_lut)
-  {
-    /* gba_cc_lut: index R<<10 | G<<5 | B, value r<<11 | g<<6 | b. */
-    u32 c = video_color_lut[(r << 10) | (g << 5) | b];
-    r = (c >> 11) & 0x1F;  g = (c >> 6) & 0x1F;  b = c & 0x1F;
-  }
-  else if (video_color_mode == VIDEO_COLOR_BW)
-  {
-    /* BT.601 luma on the 5-bit channels (77 + 151 + 28 = 256): neutral,
-     * white stays white, black stays black. */
-    r = g = b = (r * 77 + g * 151 + b * 28 + 128) >> 8;
-  }
-#if defined(USE_XBGR1555_FORMAT)
-  return (u16)(r | (g << 5) | (b << 10));
-#elif defined(USE_PSP_RGB565_FORMAT)
-  return (u16)(r | (g << 6) | (b << 11));
-#else
-  return (u16)((r << 11) | (g << 6) | b);
-#endif
+  return vcol_raw(v, video_color_mode, video_color_lut);
 }
-
-/* The same for a value convert_palette() produced. */
 static inline u16 video_color_conv(u32 c)
 {
-#if defined(USE_XBGR1555_FORMAT)
-  return video_color_raw(c & 0x7FFF);
-#elif defined(USE_PSP_RGB565_FORMAT)
-  return video_color_raw((c & 0x1F) | ((c >> 1) & 0x7FE0));
-#else
-  return video_color_raw(((c >> 11) & 0x1F) | ((c >> 1) & 0x3E0) |
-                         ((c & 0x1F) << 10));
-#endif
+  return vcol_conv(c, video_color_mode, video_color_lut);
 }
 
 extern "C" u16 video_color_pixel(u32 c)
@@ -212,10 +183,17 @@ extern "C" void video_color_palette(u16 *pal)
 
 /* A bitmap (mode 3/5) pixel: direct colour, so it never passes through the
  * palette and is transformed where it enters the line instead. */
+/* Out of line: the bitmap writer is instantiated for every mode, blend and
+ * mosaic combination, and the model inlined into each of them cost ~50 KB
+ * of text (and the engine's I-cache).  Native pays a load and a branch. */
+static u16 __attribute__((noinline)) video_color_direct_xf(u32 v)
+{
+  return video_color_raw(v);
+}
 static inline u16 video_color_direct(u32 v)
 {
   if (video_color_mode != VIDEO_COLOR_NATIVE)
-    return video_color_raw(v);
+    return video_color_direct_xf(v);
   return convert_palette(v);
 }
 

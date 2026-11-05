@@ -2200,16 +2200,31 @@ int psp_clock_actual(void)
  * own .bss is unchanged (docs/LAYOUT-PINNING.md). */
 static u16 g_vc_work[1024] __attribute__((aligned(64)));
 extern const u16 gba_cc_lut[];
+#ifdef GPSP_PERF_RIG
+static int g_h_smooth = -1, g_h_effect = -1, g_h_color = -1, g_h_scale = -1;
+#endif
 void psp_display_apply(const char *why)
 {
+   int scale = g_pcfg.scale, sm = g_pcfg.smooth, fx = g_pcfg.effect;
    int color = pcfg_display_console() == FE_CONSOLE_GBA ? g_pcfg.color : 0;
-   vid_set_look(g_pcfg.scale, g_pcfg.smooth, g_pcfg.effect);
+#ifdef GPSP_PERF_RIG
+   /* Rig overrides reach the video layer only, never g_pcfg: nothing a rig
+    * run forces can be saved into a console's CONFIG.INI. */
+   if (g_h_scale >= 0 && g_h_scale < VID_SCALE_MODES)   scale = g_h_scale;
+   if (g_h_smooth >= 0 && g_h_smooth < VID_SMOOTH_MODES) sm = g_h_smooth;
+   if (g_h_effect >= 0 &&
+       vid_fx_offered(g_h_effect, pcfg_display_console() != FE_CONSOLE_GBA))
+      fx = g_h_effect;
+   if (g_h_color >= 0 && pcfg_display_console() == FE_CONSOLE_GBA)
+      color = g_h_color;
+#endif
+   vid_set_look(scale, sm, fx);
    video_color_set((u32)color, gba_cc_lut, g_vc_work);
    fe_evt("display_apply why=%s console=%s scale=%s smooth=%s effect=%s "
           "color=%d", why, pcfg_console_tag(pcfg_display_console()),
-          vid_scale_name(g_pcfg.scale), vid_smooth_name(g_pcfg.smooth),
-          vid_fx_name(g_pcfg.effect), color);
-   FE_EVT_ONLY(why);
+          vid_scale_name(scale), vid_smooth_name(sm), vid_fx_name(fx),
+          (int)video_color_mode);
+   FE_EVT_ONLY(why); FE_EVT_ONLY(scale);
 }
 
 void psp_clock_apply(const char *why)
@@ -13761,6 +13776,12 @@ int main(int argc, char *argv[])
                                                  "telemetry_period", 0);
 #ifdef GPSP_PERF_RIG
    g_shash_on = (int)fe_ini_get_int(HARNESS_INI, "shash", 0);
+   /* Filters v2 rig keys: force the three display rows for every console
+    * (the state-identity and cost runs).  -1 = the player's own. */
+   g_h_smooth = (int)fe_ini_get_int(HARNESS_INI, "fx_smooth", -1);
+   g_h_effect = (int)fe_ini_get_int(HARNESS_INI, "fx_effect", -1);
+   g_h_color  = (int)fe_ini_get_int(HARNESS_INI, "fx_color", -1);
+   g_h_scale  = (int)fe_ini_get_int(HARNESS_INI, "fx_scale", -1);
    /* the sleep simulator (sleep_sim_thread) */
    g_ss_at      = fe_ini_get_int(HARNESS_INI, "sleep_sim_at", 0);
    g_ss_ms      = fe_ini_get_int(HARNESS_INI, "sleep_sim_ms", 1500);

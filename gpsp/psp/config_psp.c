@@ -769,6 +769,7 @@ void pcfg_display_set_rows(int smooth, int effect, int color)
    g_pcfg.smooth = smooth;
    g_pcfg.effect = effect;
    g_pcfg.color  = color;
+   g_pcfg.filter = vid_filter_join(smooth, effect);
    pcfg_display_commit();
    pcfg_display_select(g_pdisp_live);   /* clamped values back to g_pcfg */
 }
@@ -783,8 +784,17 @@ void pcfg_display_commit(void)
    d->smooth     = g_pcfg.smooth;
    d->effect     = g_pcfg.effect;
    d->color      = g_pcfg.color;
+   /* A caller that set only the legacy value (older code, a harness) is
+    * obeyed: it no longer matches the rows, so it decides them. */
+   if (pcfg_filter_clamp(g_pcfg.filter) !=
+       vid_filter_join(g_pcfg.smooth, g_pcfg.effect))
+      vid_filter_split(pcfg_filter_clamp(g_pcfg.filter), &d->smooth,
+                       &d->effect);
    pdisp_clamp(d);
    g_pcfg.filter = d->filter;
+   g_pcfg.smooth = d->smooth;
+   g_pcfg.effect = d->effect;
+   g_pcfg.color  = d->color;
 }
 
 int pcfg_display_console(void)
