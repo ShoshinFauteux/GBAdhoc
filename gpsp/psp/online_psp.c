@@ -34,6 +34,16 @@
 
 #define ONLINE_PORT 27500
 
+#ifdef GPSP_PERF_RIG
+/* main_psp.c (harness/lab builds only): a bounded network wait counts as the
+ * main loop turning, for the harness stall exit.  Nothing in a release. */
+void gpsp_net_wait_beat(void);
+#define NET_WAIT_BEAT() gpsp_net_wait_beat()
+#else
+#define NET_WAIT_BEAT() ((void)0)
+#endif
+#define BEAT() NET_WAIT_BEAT()
+
 /* The Lab validates harness keys by grepping this exact call form
  * (backend/lab/inikeys.py).  online_psp_configure() reads each of them from
  * the harness ini first, then config.ini:
@@ -283,6 +293,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
       return -1;
    }
    O.wifi_up = 1;
+   BEAT();
    list_wifi();
    fe_evt("online_wifi_up ip=%s", mgnet_local_ip());
    if (resolve(&sip, &sport) != 0)
@@ -291,6 +302,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
       online_psp_down();
       return -1;
    }
+   BEAT();
    O.fd = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
    if (O.fd < 0)
    {
@@ -358,6 +370,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
          online_psp_down();
          return -1;
       }
+      BEAT();
       sceKernelDelayThread(2000);
    }
    fe_evt("online_up room=%s slot=%d host=%d mode=%d", relay_transport_code(O.rt),
