@@ -715,6 +715,11 @@ static unsigned g_ring_high_water = AUDIO_RING_TARGET;
 static int16_t audio_ring[RING_FRAMES * 2];
 static volatile unsigned ring_w;            /* producer: emu thread  */
 static volatile unsigned ring_r;            /* consumer: audio thread */
+/* `volatile` orders the two indices, not the samples: a compiler barrier
+ * (no instruction) keeps the plain sample stores before the publish of
+ * ring_w, and the sample loads after the level check and before the
+ * release of ring_r.  Single CPU, so no hardware fence is needed. */
+#define RING_BARRIER() __asm__ __volatile__("" ::: "memory")
 /* A link session's connecting / result screen: no game is running, so the
  * ring is emptied once and the producer drops everything until the screen
  * goes (hw2 W: the host's "buggy audio" through the transfer). */
@@ -820,6 +825,7 @@ static void plat_audio_frames(const int16_t *lr, size_t frames)
          unsigned idx = ring_w & RING_MASK;
          audio_ring[idx * 2 + 0] = lr[i * 2 + 0];
          audio_ring[idx * 2 + 1] = lr[i * 2 + 1];
+         RING_BARRIER();
          ring_w++;
       }
    }
@@ -954,6 +960,7 @@ static int audio_thread(SceSize args, void *argp)
             g_audio_starved++;               /* EVT audio_ring starved= */
             continue;
          }
+         RING_BARRIER();
          {
             unsigned i0 = ring_r & RING_MASK;
             unsigned i1 = (ring_r + 1) & RING_MASK;
@@ -984,6 +991,7 @@ static int audio_thread(SceSize args, void *argp)
             out[i * 2 + 1] = (int16_t)sr;
          }
          frac += step;
+         RING_BARRIER();
          ring_r += frac >> 16;
          frac &= 0xFFFF;
       }
