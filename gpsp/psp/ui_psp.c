@@ -2933,7 +2933,7 @@ static ui_action screen_settings(unsigned edges)
                 : "The quick save saves slot 1 at once, without asking.");
 #ifdef GBADHOC_ONLINE
    else if (g_cursor == SET_ONLINE)
-      footer("Experimental: online link play (Wireless > Online).");
+      footer("Then Wireless > Online.");
 #endif
    else if (g_cursor == SET_CPUCLK)
    {
@@ -4143,7 +4143,7 @@ static ui_action screen_wireless(unsigned edges, int session_active,
          wl_row(i, g_cursor == i, "Mystery Gift", "phone");
          break;
       case WL_ONLINE:
-         wl_row(i, g_cursor == i, "Online", "experimental");
+         wl_row(i, g_cursor == i, "Online", NULL);
          break;
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
@@ -4274,7 +4274,7 @@ static ui_action screen_online(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "ONLINE");
-   vid_text(22, 72, "Experimental: link over the internet (Wi-Fi).", C_DIM);
+   vid_text(22, 72, "Online link play (experimental).", C_DIM);
    nw = online_psp_wifi_count();
    if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
                                        net, sizeof(net)) != 0)
@@ -4293,7 +4293,7 @@ static ui_action screen_online(unsigned edges)
                         : g_ol_cable ? "Link Cable" : "Wireless Adapter");
          break;
       case OL_CREATE:
-         wl_row_at(y, sel, 1, "Create room", "host");
+         wl_row_at(y, sel, 1, "Create room", NULL);
          break;
       case OL_CODE:
       {
