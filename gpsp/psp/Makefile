@@ -176,7 +176,7 @@ endif
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 6600
+LAYOUT_PAD_RO_BYTES ?= 6664
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
