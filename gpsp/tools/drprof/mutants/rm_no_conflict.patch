@@ -1,0 +1,11 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -3831,7 +3831,7 @@
+       }                                                                       \
+                                                                               \
+       SMC_REUSE_LKTRACE(pc | thumb, trentry, type);                           \
+-      if (RAM_MIRROR_CONFLICT(trentry, type, pc)) {                           \
++      if (0 /* MUTANT: RAM_MIRROR_CONFLICT(trentry, type, pc) */) {          \
+         RAM_MIRROR_RESOLVE_CONFLICT();                                        \
+         return NULL;                                                          \
+       }                                                                       \

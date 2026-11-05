@@ -7,11 +7,10 @@
 @
 @ RAM_MIRROR_FIX test: RAM code reached through a mirror alias (IWRAM repeats
 @ every 32 KiB in region 3, EWRAM every 256 KiB in region 2) is the code at
-@ the canonical address.  Every function below that returns its own pc
-@ ("mov r0, pc") is checked only when it is called at its CANONICAL address,
-@ where the GBA, the interpreter and the fixed dynarec agree; what a call
-@ through the alias returns is stored but not checked (the GBA says the
-@ alias, the fixed dynarec the canonical address).
+@ the canonical address, and sees the pc it runs at, as on the GBA.  Every
+@ function below that returns its own pc ("mov r0, pc") is checked at both
+@ addresses.  The calls through an alias are checked by mirror_pc_check.py
+@ only (the ROM's own count r11 covers the canonical ones and xbl).
 @
 @   arm      F1 called at an IWRAM alias first, then at its canonical
 @            address: the lookup shared F1's tag with the alias and handed the
@@ -22,6 +21,10 @@
 @   thumb    F3 (Thumb, "mov r0, pc") as "arm".
 @   ewram    F4 in EWRAM as "arm", through a 256 KiB alias.
 @   ewexit   H5 in IWRAM, a never-taken bne to an EWRAM alias of F5, as "exit".
+@   xbl      K, an ARM bl at the EWRAM alias 0x02F01204 that lands 1 MiB up in
+@            IWRAM (XI, 7), as Pokemon MonoMyth's battle code does; at K's
+@            canonical address the same bl lands in EWRAM (XE, 9).  The
+@            4.6.0-beta.3 core ran the alias call canonically and got 9.
 @   smc      G: translated at an alias, then patched by a store to its
 @            canonical address, then by a store to an alias: every call, at
 @            either address, sees the newest code (1, 2, 2, 3, 3).
@@ -29,10 +32,11 @@
 @            words into a live block through an ALIAS of it (2, 10, 10).
 @
 @ Expected: the fixed dynarec and the interpreter pass; the 4.6.0-beta.2 core
-@ (no RAM_MIRROR_FIX) fails arm, exit, thumb, ewram and ewexit; the
-@ rm_no_canon mutant (lookup not canonical, lazy alias exits kept) fails arm,
-@ thumb and ewram -- the call site in block_lookup_translate_* is the one the
-@ test exercises.
+@ (no RAM_MIRROR_FIX) fails the canonical arm, exit, thumb, ewram, ewexit and
+@ xbl calls; the 4.6.0-beta.3 core (canonical pc for every alias: mutant
+@ rm_canon_pc) fails the alias arm, thumb, ewram and xbl calls; the
+@ rm_no_conflict mutant (no alias check in the lookup, lazy exits kept)
+@ fails the canonical arm, thumb, ewram and xbl calls.
     .arm
     .section .text
     .global _start
@@ -53,6 +57,11 @@
     .equ FA,    IW + 0xD00      @ churn function: mov r0, #n ; bx lr
     .equ F4,    EW + 0x1000     @ mov r0, pc ; bx lr
     .equ F5,    EW + 0x1100     @ mov r0, pc ; bx lr
+    .equ EAL3,  0x02F00000      @ EWRAM alias (+60 x 256 KiB): MonoMyth's
+    .equ K,     EW + 0x1200     @ mov r8, lr ; bl XI (from EAL3) ; bx r8
+    .equ XI,    IW + 0xE00      @ mov r0, #7 ; bx lr  (K's bl at EAL3)
+    .equ XE,    EW + 0xE00      @ mov r0, #9 ; bx lr  (K's bl at K)
+    .equ BLK,   0xEB000000 | ((((XI) - (EAL3 + 0x1204 + 8)) >> 2) & 0xFFFFFF)
     .equ RES,   EW
     .equ MOVPC, 0xE1A0000F      @ mov r0, pc
     .equ BX_LR, 0xE12FFF1E
@@ -116,6 +125,13 @@ init:
     ldr     r4, =F5
     ldr     r7, =F5 + 8
     bl      call_check
+    @ ---------------------------------------------------- xbl
+    ldr     r4, =EAL3 + 0x1200
+    mov     r7, #7
+    bl      call_check          @ K at its alias: the bl lands in IWRAM
+    ldr     r4, =K
+    mov     r7, #9
+    bl      call_check          @ K canonical: the same bl lands in EWRAM
     @ ---------------------------------------------------- smc
     ldr     r4, =AL + 0x800
     mov     r7, #1
@@ -233,5 +249,12 @@ code:                           @ (address, word), ended by address 0
     .word   F4 + 4,  BX_LR
     .word   F5,      MOVPC
     .word   F5 + 4,  BX_LR
+    .word   K,       0xE1A0800E @ mov r8, lr
+    .word   K + 4,   BLK
+    .word   K + 8,   0xE12FFF18 @ bx r8
+    .word   XI,      0xE3A00007
+    .word   XI + 4,  BX_LR
+    .word   XE,      0xE3A00009
+    .word   XE + 4,  BX_LR
     .word   0, 0
     .fill   0x1000, 1, 0

@@ -5,15 +5,19 @@
 #   tools/drprof/synth/mirror_pc_run.sh [build]
 #
 # Twins in $DRPROF_HOME (default ~/mirror-drprof): mfix (what ships), mnofix
-# (-DGPSP_NO_RAM_MIRROR_FIX: the 4.6.0-beta.2 lookup), and the two mutants of
+# (-DGPSP_NO_RAM_MIRROR_FIX: the 4.6.0-beta.2 lookup), and the mutants of
 # tools/drprof/mutants/:
-#   rm_no_canon     the lookup does not canonicalize (the lazy alias exits stay)
+#   rm_canon_pc     the lookup translates the canonical pc for every alias
+#                   (the 4.6.0-beta.3 core: MonoMyth's battle freeze)
+#   rm_no_conflict  no alias check on a tag hit (the lazy alias exits stay)
 #   rm_eager_alias  alias exits are linked eagerly again (the lookup stays)
-# Expected: mfix and the interpreter PASS; mnofix FAILs arm, exit, thumb,
-# ewram, ewexit; rm_no_canon FAILs arm, thumb, ewram (so the call site in
-# block_lookup_translate_* is the one exercised).  rm_eager_alias PASSes:
-# with a canonical lookup an eager alias link is only slower, not wrong; it
-# is caught by the twin's counters instead (TMGC: alias translations and RAM
+# Expected: mfix and the interpreter PASS; mnofix FAILs the canonical arm,
+# exit, thumb, ewram, ewexit and xbl calls; rm_canon_pc FAILs the alias arm,
+# thumb, ewram and xbl calls; rm_no_conflict FAILs the canonical arm, thumb,
+# ewram and xbl calls (so the check in block_lookup_translate_* is the one
+# exercised).  rm_eager_alias PASSes: with the alias check an eager alias
+# link is only slower (a conflict flush), not wrong; it is caught by the
+# twin's counters instead (TMGC: RAM_MIRROR conflicts/alias_xlat and RAM
 # flushes, docs/BUILD-SWITCHES.md RAM_MIRROR_FIX).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -37,7 +41,7 @@ if [ "${1:-}" = build ]; then
   B="$TREE/tools/drprof/dr_build.sh"
   FEATURES=baked DRPROF_SRC=src-mfix bash "$B" mfix "" | tail -1
   FEATURES=baked DRPROF_SRC=src-mnofix bash "$B" mnofix "-DGPSP_NO_RAM_MIRROR_FIX" | tail -1
-  for m in rm_no_canon rm_eager_alias; do
+  for m in rm_canon_pc rm_no_conflict rm_eager_alias; do
     FEATURES=baked DRPROF_SRC=src-$m DRPROF_PATCH="$TREE/tools/drprof/mutants/$m.patch" \
       bash "$B" "$m" "" | tail -1
   done
@@ -55,7 +59,8 @@ docker run --rm -v "$DRPROF_HOME":/w -w /w/mp "$IMAGE" bash -c '
   bash run.sh mfix fix
   bash run.sh mfix int --option gpsp_drc=disabled
   bash run.sh mnofix nofix
-  bash run.sh rm_no_canon rm_no_canon
+  bash run.sh rm_canon_pc rm_canon_pc
+  bash run.sh rm_no_conflict rm_no_conflict
   bash run.sh rm_eager_alias rm_eager_alias
 '
 cd "$DRPROF_HOME/mp" || exit 2
@@ -74,7 +79,8 @@ expect() {   # expect pass|fail TAG [case ...]: the listed cases must be the fai
 }
 expect pass fix
 expect pass int
-expect fail nofix "arm canonical" "exit F2" "thumb canonical" "ewram canonical" "ewexit F5"
-expect fail rm_no_canon "arm canonical" "thumb canonical" "ewram canonical"
+expect fail nofix "arm canonical" "exit F2" "thumb canonical" "ewram canonical" "ewexit F5" "xbl canonical"
+expect fail rm_canon_pc "arm via alias" "thumb via alias" "ewram via alias" "xbl alias"
+expect fail rm_no_conflict "arm canonical" "thumb canonical" "ewram canonical" "xbl canonical"
 expect pass rm_eager_alias
 exit $rc

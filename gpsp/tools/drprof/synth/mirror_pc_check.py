@@ -4,16 +4,16 @@
     python3 mirror_pc_check.py ramdump.bin    # exit 0 = every case passed
 
 The dump is dr_host's: r0-r16 (17 words), IWRAM (32 KiB), EWRAM (256 KiB).
-A want of None is a call through an alias: stored, printed, not checked (the
-GBA returns the alias there, the fixed dynarec the canonical address).
+A call through an alias must return the alias, as on the GBA.
 """
 import struct, sys
 
-CASES = [("arm via alias", None), ("arm canonical", 0x03000408),
+CASES = [("arm via alias", 0x03100408), ("arm canonical", 0x03000408),
          ("exit H2", 5), ("exit F2", 0x03000488),
-         ("thumb via alias", None), ("thumb canonical", 0x03000604),
-         ("ewram via alias", None), ("ewram canonical", 0x02001008),
+         ("thumb via alias", 0x03100604), ("thumb canonical", 0x03000604),
+         ("ewram via alias", 0x02041008), ("ewram canonical", 0x02001008),
          ("ewexit H5", 6), ("ewexit F5", 0x02001108),
+         ("xbl alias", 7), ("xbl canonical", 9),
          ("smc alias", 1), ("smc alias after", 2), ("smc canon after", 2),
          ("smc canon alias-st", 3), ("smc alias alias-st", 3),
          ("stm alias first", 2), ("stm canon pasted", 10),
