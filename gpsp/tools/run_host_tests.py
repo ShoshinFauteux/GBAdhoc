@@ -245,6 +245,11 @@ def suites(env: Env, baseline: Path | None):
         ("smc_safety", True, lambda: None,
          "gcc -Wall -Wextra -O1 -o /tmp/t_smc tools/test_smc_safety.c && /tmp/t_smc"),
 
+        # Every SPSC ring publish/release behind its compiler barrier, and
+        # the Mystery Gift game gate: exactly the cart's codes, before Wi-Fi.
+        ("spsc_mg_wiring", True, lambda: None,
+         "python3 tools/tests/test_spsc_mg_wiring.py"),
+
         ("ff", True, lambda: None,
          # + the low-latency tier-1 policy (docs/LOW-LATENCY.md): the
          # production wait/present code in a model of the vblank, GE and ME

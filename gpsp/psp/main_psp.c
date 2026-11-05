@@ -8759,6 +8759,7 @@ static void gblink_audio_session(int on)
          audio_ring[idx * 2 + 0] = 0;
          audio_ring[idx * 2 + 1] = 0;
       }
+      RING_BARRIER();
       ring_w += n;
       g_gbl_rate_ema = (ring_w - ring_r) * 16u;
       g_gbl_rate_i = 0;
