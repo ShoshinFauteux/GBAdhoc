@@ -47,10 +47,6 @@
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #include "text_fold.h"      /* non-ASCII file names (issue #19) */
 #include "online_psp.h"     /* EXPERIMENTAL online play (ONLINE=1) */
-#ifdef GBADHOC_ONLINE
-#define INV_ALPHABET_STORAGE static   /* .data, not .rodata: invite_code.h */
-#include "../netdrv/invite_code.h"
-#endif
 #define LM_SLOTS PSP_STATE_SLOT_COUNT
 #include "list_marks.h"     /* the list's per-game facts, no I/O to draw */
 #ifdef GPSP_CHEATS
@@ -4190,9 +4186,13 @@ static ui_action screen_wireless(unsigned edges, int session_active,
  * looked up on the GBAdhoc server (a room there, or a desktop host's room);
  * 8 or 11 symbols = an INVITE code, a desktop host's address with a check
  * (netdrv/invite_code.h), so no server is asked.  The wheel has every letter,
- * the digits and a blank; an invite is checked here, before Wi-Fi comes up,
- * so a mistyped one never tries a wrong address. */
-static char g_ol_code[12] = "AAAA       ";  /* 11 places, blank = unused */
+ * the digits and a blank, which ends the code.  It goes to the online module as
+ * typed: it refuses any other length and checks the invite's CRC before it
+ * opens a socket, so a mistyped code never sends a packet.  Not checked here:
+ * this screen must stay small, because ONLINE's EBOOT text has ~150 B left
+ * below the 8 KiB step that .data is pinned to (the boot-heap rule, 2026-11-05;
+ * a decoder here cost 976 B and a whole 8 KiB of heap). */
+static char g_ol_code[12] = "AAAA";   /* 11 places; a blank (NUL) ends the code */
 static int  g_ol_pos = -1;             /* place being edited, -1 = not editing */
 static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
 static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
@@ -4206,75 +4206,10 @@ static char s_ol_mode[] = "Link mode";
 static char s_ol_create[] = "Create room";
 static char s_ol_code[] = "Code";
 static char s_ol_join[] = "Join with code";
-static char s_ol_wheel[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-static char s_ol_bad[] = "Invite code %s does not check out: one character is off.";
-static char s_ol_len[] = "A room code is 4 letters; an invite code 8 or 11 characters.";
+static char s_ol_wheel[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";  /* + its NUL = blank */
+static char s_ol_fmt[] = "%.*s[%c]%s";
 static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " change   " VID_GLYPH_LEFT
                           VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
-
-/* the code as shown: a room code as is; an invite in groups of four; '_' for
- * a blank place and [x] around the place being edited while editing */
-static void ol_code_show(char *o, int mark)
-{
-   int i, n = 0, last = 3, groups;
-   for (i = 4; i < 11; i++)
-      if (g_ol_code[i] != ' ')
-         last = i;
-   if (mark > last)
-      last = mark;
-   groups = last >= 4;
-   for (i = 0; i <= last; i++)
-   {
-      char ch = g_ol_code[i] == ' ' ? (mark >= 0 ? '_' : 0) : g_ol_code[i];
-      if (!ch)
-         continue;
-      if (groups && i && i % 4 == 0)
-         o[n++] = '-';
-      if (i == mark)
-      {
-         o[n++] = '[';
-         o[n++] = ch;
-         o[n++] = ']';
-      }
-      else
-         o[n++] = ch;
-   }
-   o[n] = 0;
-}
-
-static void ol_code_compact(char *o)
-{
-   int i, n = 0;
-   for (i = 0; i < 11; i++)
-      if (g_ol_code[i] != ' ')
-         o[n++] = g_ol_code[i];
-   o[n] = 0;
-}
-
-/* 0 = a code to join with, else the toast has said why not */
-static int ol_code_check(void)
-{
-   char c[12], shown[20];
-   uint8_t ip[4];
-   unsigned port;
-   int i, n, letters = 1;
-   ol_code_compact(c);
-   n = (int)strlen(c);
-   for (i = 0; i < n; i++)
-      letters &= c[i] >= 'A' && c[i] <= 'Z';
-   if (n == 4 && letters)
-      return 0;
-   if (n == INV_SHORT || n == INV_LONG)
-   {
-      if (inv_decode(c, ip, &port) == INV_OK)
-         return 0;
-      ol_code_show(shown, -1);
-      osd_toast(s_ol_bad, shown);
-      return -1;
-   }
-   osd_toast(s_ol_len);
-   return -1;
-}
 
 int ui_online_take(int *is_host, char code[16], int *cable, int *wifi)
 {
@@ -4283,7 +4218,7 @@ int ui_online_take(int *is_host, char code[16], int *cable, int *wifi)
    if (!r)
       return 0;
    *is_host = r == 1;
-   ol_code_compact(code);
+   memcpy(code, g_ol_code, sizeof(g_ol_code));    /* blanks and all */
    *cable = g_ol_cable;
    *wifi = g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1;
    return 1;
@@ -4296,17 +4231,19 @@ static ui_action screen_online(unsigned edges)
    if (g_ol_pos >= 0)
    {
       /* editing the code: up/down spin the place, left/right move */
-      char *c = &g_ol_code[g_ol_pos], *w = strchr(s_ol_wheel, *c);
-      int k = w ? (int)(w - s_ol_wheel) : 0, m = (int)sizeof(s_ol_wheel) - 1;
+      char *c = &g_ol_code[g_ol_pos];      /* strchr finds the NUL too: the blank */
+      int k = (int)(strchr(s_ol_wheel, *c) - s_ol_wheel), m = (int)sizeof(s_ol_wheel);
       if (edges & PSP_CTRL_UP)
          k = (k + 1) % m;
       if (edges & PSP_CTRL_DOWN)
          k = (k + m - 1) % m;
       *c = s_ol_wheel[k];
-      if (edges & PSP_CTRL_LEFT)
-         g_ol_pos = (g_ol_pos + 10) % 11;
-      if (edges & PSP_CTRL_RIGHT)
-         g_ol_pos = (g_ol_pos + 1) % 11;
+      /* no wrap, and never past a blank: the place being edited is always
+       * the one the row shows bracketed (it prints up to the first blank) */
+      if ((edges & PSP_CTRL_LEFT) && g_ol_pos > 0)
+         g_ol_pos--;
+      if ((edges & PSP_CTRL_RIGHT) && *c && g_ol_pos < 10)
+         g_ol_pos++;
       if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
       {
          g_ol_pos = -1;
@@ -4353,24 +4290,15 @@ static ui_action screen_online(unsigned edges)
             g_ol_pos = 0;
             break;
          case OL_CREATE:
-            g_ol_req = 1;
-            g_host_cable = ask ? g_ol_cable : ui_host_mode() == UI_HOST_CABLE;
-            snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
-            screen_to(SCR_MENU);
-            return UI_ACT_NET_HOST;
          case OL_JOIN:
-            if (ol_code_check() != 0)
-            {
-               g_cursor = OL_CODE;
-               break;
-            }
-            g_ol_req = 2;
-            /* a joiner may become the host of a desktop host's room (the
-             * first PSP in): it takes this screen's link-mode choice along */
+            /* one tail for both: a joiner may become the host of a desktop
+             * host's room (the first PSP in), so it takes the link-mode
+             * choice along too */
+            g_ol_req = g_cursor == OL_CREATE ? 1 : 2;
             g_host_cable = ask ? g_ol_cable : ui_host_mode() == UI_HOST_CABLE;
             snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
             screen_to(SCR_MENU);
-            return UI_ACT_NET_JOIN;
+            return g_ol_req == 1 ? UI_ACT_NET_HOST : UI_ACT_NET_JOIN;
          case OL_BACK:
             screen_to(SCR_WIRELESS);
             return UI_ACT_NONE;
@@ -4406,10 +4334,18 @@ static ui_action screen_online(unsigned edges)
       case OL_CODE:
       case OL_JOIN:
       {
-         char v[24];
-         ol_code_show(v, i == OL_CODE ? g_ol_pos : -1);
+         /* the code up to its first blank (what Join sends); [x] = being edited */
+         char v[16];
+         const char *s = g_ol_code;
+         if (i == OL_CODE && g_ol_pos >= 0)
+         {
+            char ch = g_ol_code[g_ol_pos];
+            snprintf(v, sizeof(v), s_ol_fmt, g_ol_pos, g_ol_code, ch ? ch : '_',
+                     ch ? g_ol_code + g_ol_pos + 1 : "");
+            s = v;
+         }
          wl_row_at(y, i == OL_CODE ? g_cursor == i : sel, 1,
-                   i == OL_CODE ? s_ol_code : s_ol_join, v);
+                   i == OL_CODE ? s_ol_code : s_ol_join, s);
          break;
       }
       default:

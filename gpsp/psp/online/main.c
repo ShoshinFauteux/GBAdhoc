@@ -218,7 +218,8 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       if (nsym == INV_SHORT || nsym == INV_LONG)
       {
          /* an invite code: a desktop host's address, no server to ask.  The
-          * join screen checked it already; check again (the harness ini) */
+          * Join screen passes the code as typed (it is too small to check
+          * one), so this is THE check, before any socket exists */
          uint8_t ip[4];
          unsigned port;
          int r = inv_decode(cfg->room, ip, &port);
@@ -234,6 +235,22 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
          O.invite = 1;
          evt("online_invite ip=%u.%u.%u.%u port=%u", ip[0], ip[1], ip[2], ip[3], port);
          goto have_server;
+      }
+      /* otherwise nothing (Create: the server picks) or a room code, exactly
+       * four letters: a code one symbol short of an invite must not become a
+       * LOOKUP of its first four letters */
+      if (nsym != 0)
+      {
+         const char *p = cfg->room;
+         int ok = nsym == RL_CODE_LEN;
+         for (; ok && *p; p++)
+            ok = *p == ' ' || *p == '-' || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
+         if (!ok)
+         {
+            snprintf(why, why_cap, "a room code is 4 letters, an invite 8 or 11");
+            evt("online_error stage=code n=%d", nsym);
+            return -1;
+         }
       }
    }
    {

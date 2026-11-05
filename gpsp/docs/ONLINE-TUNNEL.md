@@ -484,8 +484,15 @@ is shown first, the invite code is the backup):
   server as before. So existing shared-server rooms are unchanged, and the joiner's wait for a host that
   is not up yet works as before.
 - **Invite code**: 8 characters (11 for a host on another port) that carry the PC's IPv4 address and a
-  check. No server is asked at all. The PSP checks the code on the Join screen, before Wi-Fi comes up, so
-  a mistyped code never tries a wrong address. Format below.
+  check. No server is asked at all. The online module checks the code before it opens a socket (the Join
+  screen passes it on as typed: a decoder in the EBOOT cost 976 B of text and, past the 8 KiB step that
+  `.data` is pinned to, 8 KiB of boot heap), so a mistyped code never sends a packet; the toast says
+  "a room code is 4 letters, an invite 8 or 11" or that the invite does not check out. Format below.
+
+**The Join box** (Wireless > Online > *Code*): 11 places, each spun with up/down through `A-Z`, `0-9` and
+a blank; left/right move, never past a blank, and the first blank ends the code. Four letters is a room
+code, 8 or 11 characters an invite (dashes are only for display on the PC; the PSP shows the code
+ungrouped).
 
 **The desktop is the host.** Both players press *Join with code* (the design mockup's flow). The first
 PSP into a desktop host's room opens it and is told **slot 0**: it runs the netdrv host, and its link
@@ -594,6 +601,11 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
   invite can find the host. Both decoded 127.0.0.1:27420 and landed in the home room QWER. A was slot 0 and
   hosted, and the path was direct. The Emerald Union Room trade (`rfu_em_trade`) logged `trade_complete` on
   both, with clean exits after 162 s. Jobs and logs: `builds/online-out/ppsspp-invite`.
+- **Boot heap, ONLINE=0 against ONLINE=1** (release, `RFU_SCHED=1`, this branch): both 14,014,860 B
+  image and 10,081,692 B PSP-1000 boot heap, the same as 4.6.0-beta.4 (c7a74a88). The pads are 112/48
+  (beta.4: 144/32): against beta.4's ELF the hot core, A's cold text, `.bss` and the guard's block are
+  unmoved, A's tables sit -24 B (the `.rodata` pad moves them in 64 B steps: 72 puts them at +40) and
+  B's `.data` +64 B. The module's imports are unchanged (ThreadManForUser, sceNetInet, sceNetResolver).
 
 **Still to test on hardware and the real internet:**
 

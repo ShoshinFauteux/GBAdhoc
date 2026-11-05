@@ -6879,7 +6879,7 @@ static int net_bringup_io(int is_host, const char *group, const char *nick,
    {
       rc = online_psp_up(is_host, online_build_id(),
                          g_gblink_role ? 120000u : 30000u);
-      if (rc != 0)
+      if (rc < 0)
       {
          fe_evt("net_error reason=online why=\"%s\"", online_psp_why());
          return -1;
@@ -9411,13 +9411,13 @@ static void ui_net_action(int is_host)
          me_rend_suspend();
          rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);
          me_rend_resume();
-         if (rc != 0)
+         if (rc < 0)
          {
             osd_toast(s_online_fmt, online_psp_why());
             online_psp_clear();
             return;
          }
-         if (!is_host && online_psp_slot() == 0)
+         if (rc > 0)
             is_host = 1;          /* the first into a desktop host's room hosts it */
       }
    }
