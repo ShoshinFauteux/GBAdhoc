@@ -85,6 +85,7 @@ cat > "$GAME/.gpsp-harness.ini" <<EOF
 script = run.inputs
 autoexit_frames = 60000
 pace_slow_us = $SLOW
+folders = ${FOLDERS:-0}
 EOF
 rm -f "$GAME"/log/frontend.log
 

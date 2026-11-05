@@ -112,6 +112,7 @@ PSP_HEAP_SIZE_KB(-1024);
 #include "icprobe.h"
 #include <kubridge.h>        /* kuKernelGetModel: the rig's psp_model line */
 #include "perf_rig.h"
+#include "sidecar_dirs.h"   /* saves/ and states/ (4.6.0-beta.4) */
 
 /* LAYOUT_PAD_BYTES (psp/Makefile; docs/LAYOUT-PINNING.md): the layout
  * STABILITY PROBE, off unless a build asks for it.  An N-byte function that
@@ -4962,6 +4963,62 @@ static int make_suffixed_path(const char *rom, const char *suffix,
                               char *out, size_t out_sz)
 {
    return psp_rom_path_suffix(out, out_sz, rom, suffix);
+}
+
+/* FOLDERS (4.6.0-beta.4, psp/sidecar_dirs.h): main's `folders` = 1: a
+ * game's battery save is <app>/saves/<its path under roms/>, its states
+ * <app>/states/..., moved
+ * there from beside the ROM the first time the game is opened.  On for
+ * every player path (the browser, an XMB launch, a playable build); a
+ * harness that boots a ROM by itself (rom = / the first ROM) keeps the
+ * files beside the ROM unless it says `folders = 1`, because the e2e and
+ * rig drivers stage and read back roms/<game>.sav.  A Lab run is unaffected
+ * either way: lab_sidecars moves both files to its work folder. */
+
+/* save_path / state_path hold the files beside the ROM (the legacy layout);
+ * when the folders apply, make the new ones, move the game's files there
+ * once (verified copy, then the originals removed), and use them -- or keep
+ * the legacy ones if anything failed.  `lab_save` is save_path before
+ * lab_sidecars: when they differ, a Lab work folder took the paths and they
+ * are left alone.  A failure only ever leaves the legacy paths. */
+static void folders_settle(int folders, const char *rom_path,
+                           const char *save_suffix,
+                           fe_console_t console, char *save_path,
+                           size_t save_sz, char *state_path, size_t state_sz,
+                           const char *lab_save)
+{
+   char mir[PSP_FILE_PATH_CAP], ns[PSP_FILE_PATH_CAP], nst[PSP_FILE_PATH_CAP];
+   const char *rel, *use;
+   int rs, rt;
+   if (!folders || strcmp(lab_save, save_path) != 0)
+      return;
+   rel = sc_rel_of(ROM_DIR, rom_path);
+   if (!rel)
+   {
+      fe_evt("folders rom_outside_roms keep_beside=%s", save_path);
+      return;
+   }
+   if (sc_mirror(mir, sizeof(mir), g_dir_base, SC_SAVES_DIR, rel) != 0 ||
+       make_suffixed_path(mir, save_suffix, ns, sizeof(ns)) != 0 ||
+       sc_mirror(mir, sizeof(mir), g_dir_base, SC_STATES_DIR, rel) != 0 ||
+       make_suffixed_path(mir, psp_state_slot1_suffix(console), nst,
+                          sizeof(nst)) != 0)
+   {
+      fe_evt("folders path_too_long keep_beside=%s", save_path);
+      return;
+   }
+   rs = sc_settle(SC_FS_PSP, g_dir_base, SC_GROUP_SAVE, save_path, ns,
+                  &use, NULL);
+   if (use == ns)
+      snprintf(save_path, save_sz, "%s", ns);
+   rt = sc_settle(SC_FS_PSP, g_dir_base, SC_GROUP_STATES, state_path, nst,
+                  &use, NULL);
+   if (use == nst)
+      snprintf(state_path, state_sz, "%s", nst);
+   fe_evt("folders save_mig=%d state_mig=%d save=%s state=%s", rs, rt,
+          save_path, state_path);
+   (void)rs;
+   (void)rt;
 }
 
 static fe_console_t console_from_rom_path(const char *path)
@@ -13534,6 +13591,7 @@ int main(int argc, char *argv[])
     * was picked. */
    int inproc_n = 0;
    int launch_now = 0;   /* this session is an XMB launch (g_launch_rom) */
+   int folders = 0;      /* FOLDERS (folders_settle): saves/ and states/ */
    int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
    long inproc_cycles = 0, inproc_frames = 0, state_save_at = 0;
    int inproc_via_menu = 0, inproc_menu_armed = 0;
@@ -13718,6 +13776,13 @@ int main(int argc, char *argv[])
       fe_evt("harness_ini active file=%s — automated control channel is "
              "present; ROM browser suppressed and harness keys apply",
              HARNESS_INI);
+   /* FOLDERS (at make_suffixed_path): the player's layout, and the empty
+    * roms/GBA, roms/GB, roms/GBC, saves/ and states/ on first run. */
+   folders = (int)fe_ini_get_int(HARNESS_INI, "folders",
+      !have_variant && (!have_harness ||
+                        fe_ini_get_int(HARNESS_INI, "browser", 0) != 0));
+   if (folders)
+      sc_first_run(SC_FS_PSP, g_dir_base, ROM_DIR);
    autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
    {
       /* GB link session harness keys (see gblink_service). */
@@ -15120,7 +15185,22 @@ session_top:
          return 0;
       }
    }
-   LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));) ui_set_state_base(state_path);
+   {
+      /* FOLDERS: the legacy paths are in place; a Lab run's work folder
+       * replaces them (lab_sidecars), otherwise the folders may. */
+      char before_lab[PSP_FILE_PATH_CAP];
+      snprintf(before_lab, sizeof(before_lab), "%s", save_path);
+      LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));)
+      if (!have_variant)
+         folders_settle(folders, rom_path,
+                        g_pcfg.console == FE_CONSOLE_GBA ? ".sav" :
+                        g_pcfg.console == FE_CONSOLE_GBC ? ".gbc.sav"
+                                                         : ".gb.sav",
+                        (fe_console_t)g_pcfg.console, save_path,
+                        sizeof(save_path), state_path, sizeof(state_path),
+                        before_lab);
+   }
+   ui_set_state_base(state_path);
    g_save_path_for_backup = save_path;
    ui_loading_begin(rom_path); /* also covers harness/variant auto-boot */
    /* Four bytes at 0xAC name the game for Mystery Gift: which title a card

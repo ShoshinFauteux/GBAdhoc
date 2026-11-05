@@ -16,6 +16,17 @@ separately and are intended for upstream.
   "Load Slot n? Unsaved progress is lost." ✕ loads; any other button keeps the game you are
   playing. The quick load's question can be turned off under Settings -> Quick load asks
   first (`quick_load_ask = 0`); it follows the quick load to whatever buttons it is mapped to.
+- Battery saves now live in `saves/` and save states (with their pictures) in `states/`,
+  instead of beside the ROMs (#31, asked for by MXPHunter). Both folders mirror `roms/`, so
+  `roms/GBA/hacks/Game.gba` saves to `saves/GBA/hacks/Game.sav`. Empty `roms/GBA`, `roms/GB`
+  and `roms/GBC` folders are made on first run for sorting by console; ROMs anywhere in
+  `roms/` keep working and are never moved, so XMB entries and old folder layouts still work.
+- Existing saves and states move the first time you open each game: copied, read back and
+  checked (size and CRC32), then the original is removed. If anything fails, the old files
+  stay and are used, and the move is tried again next time. Share game data moves a game's
+  files the same way before replacing them.
+- **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` and will not see moved saves
+  or states. Move them back from `saves/` and `states/` by hand before going back.
 
 ## [4.6.0-beta.3] - 2026-11-05
 

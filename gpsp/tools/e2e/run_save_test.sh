@@ -61,6 +61,8 @@ one_run() {
   cat > "$GAME/.gpsp-harness.ini" <<EOF
 script = run.inputs
 autoexit_frames = 60000
+folders = ${FOLDERS:-0}
+$( [ "${FOLDERS:-0}" = 1 ] && echo "rom = emerald.gba" )
 EOF
   rm -f "$GAME"/log/frontend.log "$GAME"/log/frame_*.bmp /dev/shm/PPSSPP_ID
   ( cd "$PPSSPP_DIR/build" && \
@@ -108,7 +110,19 @@ CRC_FLUSH1=$(evt1 "^EVT sram_flush" | tail -1 | sed -n 's/.*crc=\([0-9a-f]*\).*/
 [ "$CRC_FLUSH1" != "$CRC_LOAD1" ] || fail "run1: sram crc unchanged ($CRC_LOAD1)"
 ok "run1 sram crc changed: $CRC_LOAD1 -> $CRC_FLUSH1"
 
-SAV_MD5_AFTER=$(md5sum "$GAME/roms/emerald.sav" | cut -d' ' -f1)
+# FOLDERS=1 (4.6.0-beta.4): run 1 moved the save to saves/ before playing.
+# The ROM is named by `rom = emerald.gba` there: PPSSPP on a case-sensitive
+# host opens EMERALD.sav as emerald.sav but does not remove it under that
+# name, and find_first_rom gets the 8.3 EMERALD.GBA (a FAT stick does not
+# care).
+SAV_NOW="$GAME/roms/emerald.sav"
+if [ "${FOLDERS:-0}" = 1 ]; then
+  [ ! -e "$SAV_NOW" ] || fail "run1: roms/emerald.sav still there with folders = 1"
+  SAV_NOW="$GAME/saves/emerald.sav"
+  evt1 "^EVT folders save_mig=1 .*save=.*/saves/emerald.sav" >/dev/null     || fail "run1: save not moved to saves/"
+  ok "run1 save moved to saves/emerald.sav"
+fi
+SAV_MD5_AFTER=$(md5sum "$SAV_NOW" | cut -d' ' -f1)
 [ "$SAV_MD5_BEFORE" != "$SAV_MD5_AFTER" ] || fail "run1: .sav file not rewritten"
 ok "run1 .sav rewritten: $SAV_MD5_BEFORE -> $SAV_MD5_AFTER"
 

@@ -807,11 +807,20 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 <details>
 <summary><b>Where things are saved</b></summary>
 
-- **Battery saves**: `roms/<game>.sav` for GBA, `roms/<game>.gb.sav` and
-  `roms/<game>.gbc.sav` for Game Boy. A `.sav.bak` is kept.
-- **Save states**: `roms/<game>.st0` … `.st4`, and `.gb.st0` / `.gbc.st0` … likewise,
-  each with a `.thumb` beside it and, a `.shot` (the full-size picture on
-  the Save States page).
+- <kbd>NEW</kbd> **Battery saves**: `saves/<game>.sav` for GBA, `saves/<game>.gb.sav` and
+  `saves/<game>.gbc.sav` for Game Boy. A `.sav.bak` is kept.
+- <kbd>NEW</kbd> **Save states**: `states/<game>.st0` … `.st4`, and `.gb.st0` / `.gbc.st0` …
+  likewise, each with a `.thumb` beside it and a `.shot` (the full-size picture on the Save
+  States page).
+- `saves/` and `states/` mirror `roms/`: `roms/GBA/hacks/Game.gba` saves to
+  `saves/GBA/hacks/Game.sav`, so two games with the same name in different folders never
+  share a file. A game an XMB entry starts from outside `roms/` keeps its files beside it.
+- **Saves from 4.6.0-beta.3 and earlier** (beside the ROM in `roms/`) move to `saves/` and
+  `states/` the first time you open that game: each file is copied, the copy is read back and
+  checked against the original, and only then is the original removed. If anything goes
+  wrong the game keeps using the old files and tries again next time. ROMs are never moved.
+  **Going back to beta.3 or older after that:** those builds look only in `roms/`, so move the
+  files back from `saves/` and `states/` by hand first.
 - **Favourites**: `roms/favourites.txt`. **Link mode overrides**:
   `roms/linkmode.txt`.
 - **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the
@@ -830,7 +839,8 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 1. Download the [latest release](https://github.com/ShoshinFauteux/GBAdhoc/releases/latest)
    and unzip it to the **root of your Memory Stick**. It lands in `PSP/GAME/GBAdhoc`.
 2. Put your `.gba`, `.gb` and `.gbc` files in `GBAdhoc/roms/`, loose or in subfolders
-   (two levels).
+   (two levels). `roms/GBA`, `roms/GB` and `roms/GBC` are made for you on first run if you
+   like to sort by console; a game's console comes from its file type, not its folder.
 3. Optional: box art in `GBAdhoc/boxart/`, hero art in `GBAdhoc/hero/` (see
    [Artwork](#artwork)), cheat files in `GBAdhoc/cheats/`.
 4. Launch it from the XMB. No BIOS needed.
@@ -841,8 +851,9 @@ WLAN switch on, both on the same fixed ad-hoc channel.
 
 **Upgrading:** copy `EBOOT.PBP`, `gbadhoc_me.prx` **and `gbadhoc_home.prx`** over your
 install, always all three together. Your `config.ini` carries over, and your settings are
-moved into the per-console profiles automatically. Your `roms/`, battery saves and save
-states are untouched.
+moved into the per-console profiles automatically. Your ROMs are never moved; battery saves
+and save states move from `roms/` to `saves/` and `states/` as you open each game (see
+*Where things are saved*).
 
 **Coming from 4.1.0?** It installed into its own `PSP/GAME/GBAdhoc410` folder. Copy anything
 you want to keep from there (saves, save states, `config.ini`, your `cheats` folder) into
