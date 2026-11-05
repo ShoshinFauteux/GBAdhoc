@@ -89,11 +89,12 @@ enum
 #ifdef REWIND
    /* Rewind (docs/REWIND.md): a LEVEL, read every frame while held.  Its
     * default is Triangle, which in a REWIND build is taken from "Video
-    * preset" (that one starts unbound; main_psp.c lets the rewind button
+    * preset" (that one starts on AUTO: main_psp.c lets the rewind button
     * cycle the preset when rewind is switched off or cannot be used, so
-    * Triangle is never a dead button).  The LAST SHORTCUT: an existing
-    * CONFIG.INI that binds Triangle to something else keeps that.  (The
-    * turbo rows after it have no default, so they cannot contest it.) */
+    * Triangle is never a dead button -- unless the player set Video preset
+    * to none: ctl_map.video_off, ctl_video_auto()).  The LAST SHORTCUT: an
+    * existing CONFIG.INI that binds Triangle to something else keeps that.
+    * (The turbo rows after it have no default, so they cannot contest it.) */
    CTL_SC_REWIND,
 #endif
    /* One past the last shortcut.  The longer-chord scan (ctl_yields) stops
@@ -146,6 +147,16 @@ typedef struct
     * the default or is already on the card. */
    uint8_t  menu_home;
    uint8_t  menu_keep;
+   /* VIDEO PRESET SET TO NONE BY THE PLAYER (REWIND builds; GitHub #31).
+    * With bind[CTL_SC_VIDEO] == 0 the row is either AUTO (video_off 0, the
+    * default: the rewind button cycles the preset while rewind is off) or
+    * truly NONE (video_off 1: nothing ever cycles it).  CONFIG.INI spells
+    * the second `bind_video = OFF` (CTL_VIDEO_OFF_WORD); `NONE` stays AUTO,
+    * because every file written before this flag existed says NONE whether
+    * or not the player chose it.  An older build cannot parse OFF and falls
+    * back to its default (config_bind_invalid).  Always 0 while
+    * bind[CTL_SC_VIDEO] is nonzero, and always 0 outside a REWIND build. */
+   uint8_t  video_off;
    /* TURBO BEHAVIOUR, one pair per turbo action (index: action -
     * CTL_TURBO_FIRST).  turbo_half is the pulse's half period in EMULATED
     * frames: 1 = 30 presses a second (1 on, 1 off), 2 = 15 (the default),
@@ -253,6 +264,26 @@ int  ctl_find(const ctl_map *m, unsigned mask, int except);
  * holder is left UNBOUND; its index goes to *stolen (else -1).  Nothing
  * else moves.  Returns CTL_OK or a CTL_E_* with the map unchanged. */
 int  ctl_assign(ctl_map *m, int a, unsigned mask, int *stolen);
+/* "The player chose none" (the Controls page's Square): ctl_assign(m, a, 0)
+ * and, for Video preset in a REWIND build, video_off -- the rewind button
+ * then never cycles the preset.  ctl_assign() itself, with any mask, leaves
+ * Video preset on AUTO when it ends up unbound (a reset to default, a
+ * binding stolen by another row). */
+int  ctl_unbind(ctl_map *m, int a);
+/* CONFIG.INI value of an explicit Video preset none (ctl_map.video_off). */
+#define CTL_VIDEO_OFF_WORD "OFF"
+/* 1 when the rewind button stands in for Video preset: a REWIND build,
+ * Video preset unbound and not set to none.  main_psp.c then fires the
+ * preset from the rewind button's press while rewind is off. */
+static inline int ctl_video_auto(const ctl_map *m)
+{
+#ifdef REWIND
+   return !m->bind[CTL_SC_VIDEO] && !m->video_off;
+#else
+   (void)m;
+   return 0;
+#endif
+}
 /* Load-time repair: every binding validated (an illegal one returns to its
  * default) and every duplicate settled by the same rule the menu applies --
  * an explicit (non-default) binding beats a default one, and between equals

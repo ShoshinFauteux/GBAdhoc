@@ -16704,13 +16704,14 @@ session_top:
        * the defaults reproduce 3.0 exactly (docs/CONTROL-REMAP.md). */
 #ifdef REWIND
       /* The rewind button: a level, read every loop.  Where the setting is
-       * off the same button cycles the video preset if nothing else is
-       * bound to that, so Triangle is never dead (ctl_map.h).  With the
+       * off the same button cycles the video preset while that is on AUTO
+       * (unbound, and not set to none: ctl_video_auto), so Triangle is
+       * never dead unless the player asked for it (GitHub #31).  With the
        * setting on in a GB / GBC game it says why nothing happens. */
       g_rw_held = (g_rw_on || g_rw_gb) &&
                   ((ctl_fired & CTL_FIRE_REWIND) || fe_autopilot_rewind());
       if (!g_rw_on && !g_rw_gb && (ctl_fired & CTL_FIRE_REWIND_PRESS) &&
-          !g_pcfg.controls.bind[CTL_SC_VIDEO])
+          ctl_video_auto(&g_pcfg.controls))
          ctl_fired |= CTL_FIRE_VIDEO;
 #endif
       if (ctl_fired & CTL_FIRE_VIDEO)

@@ -209,7 +209,8 @@ bind_quicksave = SELECT+L
   TRIANGLE CIRCLE CROSS SQUARE`. `LTRIGGER` and `RTRIGGER` are also accepted.
   Names are case-insensitive, may appear in any order, and may have spaces
   around `+`. `NONE` unbinds. Values are written in a fixed order, modifiers
-  first.
+  first. `bind_video` alone also takes `OFF` in a REWIND build: the player's
+  explicit none, where `NONE` means auto (§14).
 - **Validation (`ctl_load_ini`).** A missing key falls back to the default. So
   does an empty value (`bind_a =`), an unknown name, a repeated name, a value
   `fe_ini_get` truncated, a second button on a game action, START+SELECT
@@ -1179,3 +1180,54 @@ code, not by a PPSSPP run.
 
 Builds of 7d46dad, clean tree, `GBA_LINK=1 REWIND=1`: `builds/rc-out/rc1-harness`
 (`BUILD_PRX=1`) and `builds/rc-out/rc1-play` (title "GBAdhoc BETA").
+
+---
+
+## 14. Video preset: auto or none (GitHub #31)
+
+**The report.** Rewind off, Video preset set to none, Rewind on Triangle: in
+game Triangle still cycled the video preset.
+
+**The cause.** In a REWIND build Video preset starts unbound and Rewind takes
+Triangle. With rewind off, `main_psp.c` lets the rewind button cycle the
+preset whenever Video preset is unbound, so Triangle is never dead. "Unbound"
+was the only state there was: the player's none (Square) and the factory
+blank were the same `bind_video = 0`, and every CONFIG.INI written so far says
+`bind_video = NONE` (or nothing) in both cases. The player's none was
+overridden by the fallback.
+
+**The fix.** An unbound Video preset now has two meanings (`ctl_map.video_off`,
+REWIND builds only):
+
+| State | How you get it | Controls shows | In game (rewind off) | CONFIG.INI |
+|---|---|---|---|---|
+| **auto** (the default) | never touched; Triangle (default) on the row; Reset; its button stolen by another row | the rewind button as a grey chip, tagged `auto` | the rewind button cycles the preset | no key, or `bind_video = NONE` |
+| **none** | Square on the row | the `none` outline | nothing cycles the preset | `bind_video = OFF` |
+| a binding | X on the row | the chord | that chord cycles it (unchanged) | the chord (unchanged) |
+
+- **Old files keep today's behaviour.** `NONE` still means auto, because we
+  cannot know which players chose it. A player who set none before this fix
+  presses Square on the row once more; the page then shows `none`, and the
+  plate says "None: no button cycles the video preset".
+- **`OFF` is a new word for this one key**, never a button name, so no other
+  key accepts it. A build from before the fix cannot parse it: `ctl_load_ini`
+  logs `config_bind_invalid key=bind_video value="OFF" reason=unparseable ->
+  default`, keeps its default (auto in a REWIND build, Triangle without one)
+  and rewrites the key on the next save. It never crashes and never makes a
+  garbage binding (checked by building the 356d6d4 `ctl_map.c` against a new
+  file). A build without REWIND reads `OFF` as none.
+- **Nothing that fires changes.** `ctl_shortcuts()` still never fires an
+  unbound row. Only the rewind-button fallback in `main_psp.c` reads the flag,
+  through `ctl_video_auto()`. A none counts as a change from the defaults
+  (Settings shows Controls as "custom").
+- **The API.** `ctl_unbind()` is "the player chose none" (the page's Square).
+  `ctl_assign()`, with any mask, leaves Video preset on auto. `ctl_repair()`
+  clears the flag on a bound row or a value other than 0/1.
+
+**Tests.** `test_video_none` in `tools/tests/test_ctl_map.c`, in all three
+flavours (`-DREWIND` included): default is auto and writes nothing; an old
+`NONE` loads as auto and is written back byte for byte; Square is off, saved
+as `OFF` and reloaded off, through `ctl_load_ini` and through the real
+`pcfg_load`/`pcfg_save`; default and Reset return to auto; an explicit binding
+clears it; a stolen binding becomes auto; repair; `ctl_parse("OFF")` (the old
+builds' parser) refuses the word.
