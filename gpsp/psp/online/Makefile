@@ -17,7 +17,7 @@ PRX_EXPORTS = exports.exp
 # spec's library tail, so the stubs this module needs are named here once
 # each -- the stub-order trap is a library linked TWICE; none is, here.
 LDFLAGS = -nostartfiles -nostdlib
-LIBS = -lpspnet_resolver -lpspnet_inet -lpspmodinfo -lpspsdk -lpspkernel -lgcc
+LIBS = -lpspnet_resolver -lpspnet_inet -lpspmodinfo -lpspsdk -lpspuser -lgcc
 
 PSP_FW_VERSION = 500
 
