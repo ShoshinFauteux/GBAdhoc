@@ -61,13 +61,24 @@ static char g_cfg_relay[64];    /* config.ini online_relay, for menu sessions */
 static void h_evt(const char *line) { fe_evt("%s", line); FE_EVT_ONLY(line); }
 static int h_vsnprintf(char *o, size_t c, const char *f, va_list ap) { return vsnprintf(o, c, f, ap); }
 static void h_free(void *p) { free(p); }
-static const online_host g_host = {
+/* Not const, and the texts below are char arrays, on purpose: .rodata is
+ * the section whose growth moves the pinned .data a whole 8 KiB step
+ * (docs/LAYOUT-PINNING.md), .data has room before its next boundary.
+ * Online's few EBOOT strings live there so the image stays an ONLINE=0
+ * build's (boot heap equal).  ui_psp.c and main_psp.c use them too. */
+static online_host g_host = {
    OL_MAGIC_HOST, OL_VERSION, sizeof(online_host),
    calloc, h_free, h_vsnprintf, h_evt,
-   mgnet_wifi_up, mgnet_wifi_down, mgnet_wifi_is_up, mgnet_stage, mgnet_last_sce,
-   mgnet_local_ip, mgnet_config_count, mgnet_config_name,
+   mgnet_wifi_is_up, mgnet_local_ip,
    HOST_BEAT
 };
+static char s_prx_fmt[] = "%s/gbadhoc_online.prx";
+static char s_missing[] = "online module missing";
+static char s_nomem[] = "online module: no memory";
+static char s_version[] = "online module: wrong version";
+static char s_wifi_fmt[] = "Wi-Fi: %s";
+static char s_relay_key[] = "online_relay";
+static char s_relay_default[] = ONLINE_RELAY_DEFAULT;
 
 /* ---- the module ---------------------------------------------------------- */
 static void mem_evt(const char *at, unsigned ms)
@@ -87,14 +98,13 @@ static int prx_load(void)
    if (O.loaded)
       return 0;
    mem_evt("load_begin", 0);
-   snprintf(path, sizeof(path), "%s/gbadhoc_online.prx", g_dir_base);
+   snprintf(path, sizeof(path), s_prx_fmt, g_dir_base);
    O.mod = sceKernelLoadModule(path, 0, NULL);
    if (O.mod < 0)
    {
       unsigned e = (unsigned)O.mod;
       snprintf(O.why, sizeof(O.why), "%s",
-               e == 0x80010002u || e == 0x8002012Fu ? "online module missing"
-                                                    : "online module: no memory");
+               e == 0x80010002u || e == 0x8002012Fu ? s_missing : s_nomem);
       fe_evt("online_prx at=load_failed rc=0x%08X", e);
       O.mod = -1;
       return -1;
@@ -107,7 +117,7 @@ static int prx_load(void)
    if (rc < 0 || st < 0 || O.api.magic != OL_MAGIC_API ||
        O.api.version != OL_VERSION || O.api.size != sizeof(online_api))
    {
-      snprintf(O.why, sizeof(O.why), "%s", "online module: wrong version");
+      snprintf(O.why, sizeof(O.why), "%s", s_version);
       fe_evt("online_prx at=start_failed rc=0x%08X st=%d api=%08X/%u", (unsigned)rc, st,
              (unsigned)O.api.magic, (unsigned)O.api.version);
       if (rc >= 0 && st >= 0)
@@ -171,7 +181,7 @@ int online_psp_configure(const char *h, const char *c)
    O.enabled = 0;
    g_cfg_relay[0] = 0;
    if (c)
-      fe_ini_get(c, "online_relay", g_cfg_relay, sizeof(g_cfg_relay));
+      fe_ini_get(c, s_relay_key, g_cfg_relay, sizeof(g_cfg_relay));
 #ifndef GPSP_PERF_RIG
    (void)h;
    return 0;      /* a player's build: online only per session, from the menu */
@@ -207,7 +217,7 @@ void online_psp_set(const char *relay, const char *room, int wifi, int mode)
 {
    snprintf(O.cfg.relay, sizeof(O.cfg.relay), "%s",
             relay && relay[0] ? relay : g_cfg_relay[0] ? g_cfg_relay
-                                                      : ONLINE_RELAY_DEFAULT);
+                                                      : s_relay_default);
    set_room(room);
    O.cfg.wifi = wifi > 0 ? wifi : 1;
    O.cfg.mode = mode;
@@ -230,16 +240,48 @@ int online_psp_wifi_count(void) { return mgnet_config_count(); }
 int online_psp_wifi_name(int i, char *o, unsigned c) { return mgnet_config_name(i, o, c); }
 
 /* ---- the session ----------------------------------------------------------- */
+#ifdef GPSP_PERF_RIG
+static void list_wifi(void)
+{
+   int n = mgnet_config_count(), i;
+   char nm[64];
+   fe_evt("online_wifi profiles=%d chosen=%d", n, O.cfg.wifi);
+   for (i = 1; i <= n && i <= 10; i++)
+      if (mgnet_config_name(i, nm, sizeof(nm)) == 0)
+         fe_evt("online_wifi profile=%d name=\"%s\"", i, nm);
+}
+#else
+#define list_wifi() ((void)0)
+#endif
+
+/* Wi-Fi first (the net modules the module imports from), then the module,
+ * then its session; every failure undoes exactly what was done. */
 int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
 {
+   int rc;
    O.why[0] = 0;
    if (online_psp_is_up())
       return 0;
+   rc = mgnet_wifi_up(O.cfg.wifi, 30000000u);
+   if (rc != MGNET_OK)
+   {
+      snprintf(O.why, sizeof(O.why), s_wifi_fmt, mgnet_stage());
+      fe_evt("online_error stage=wifi rc=%d at=%s sce=0x%08X", rc, mgnet_stage(),
+             mgnet_last_sce());
+      list_wifi();
+      return -1;
+   }
+   list_wifi();
+   fe_evt("online_wifi_up ip=%s", mgnet_local_ip());
    if (prx_load() != 0)
-      return -1;                          /* why[] says why; nothing is up */
+   {
+      mgnet_wifi_down();                  /* why[] says why */
+      return -1;
+   }
    if (O.api.up(&O.cfg, is_host, build, timeout_ms, O.why, sizeof(O.why)) != 0)
    {
-      prx_unload();                       /* the module took everything down */
+      prx_unload();                       /* the module took its part down */
+      mgnet_wifi_down();
       return -1;
    }
    return 0;
@@ -257,6 +299,7 @@ void online_psp_down(void)
       return;
    O.api.down();
    prx_unload();
+   mgnet_wifi_down();
 }
 
 void online_psp_stats_evt(const char *at)
@@ -289,7 +332,7 @@ static void cycle_test(int n)
          online_psp_down();
       }
       else if ((rc = prx_load()) == 0)
-         prx_unload();
+         prx_unload();                    /* (no Wi-Fi: imports unresolved, never called) */
       fe_evt("online_prx_cycle i=%d rc=%d free=%d delta=%d max_block=%d", i, rc,
              sceKernelTotalFreeMemSize(), sceKernelTotalFreeMemSize() - f0,
              sceKernelMaxFreeMemSize());

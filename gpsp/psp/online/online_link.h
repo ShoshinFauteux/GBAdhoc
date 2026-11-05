@@ -31,7 +31,7 @@
 #define OL_MAGIC_HOST 0x474F4C48u   /* 'GOLH' */
 #define OL_MAGIC_API  0x474F4C41u   /* 'GOLA' */
 /* Bump on ANY change to either table or to the semantics of a call. */
-#define OL_VERSION    1u
+#define OL_VERSION    2u
 #define OL_ERR_ABI    (-0x4F4C)
 
 typedef struct online_host
@@ -41,15 +41,12 @@ typedef struct online_host
    void  (*free_)(void *p);
    int   (*vsnprintf_)(char *out, size_t cap, const char *fmt, va_list ap);
    void  (*evt)(const char *line);              /* one EVT line, no newline */
-   /* infrastructure Wi-Fi (psp/mgift_net.c, stays in the EBOOT) */
-   int   (*wifi_up)(int conf, unsigned timeout_us);
-   void  (*wifi_down)(void);
+   /* infrastructure Wi-Fi (psp/mgift_net.c): the EBOOT brings it up BEFORE
+    * loading the module -- the module imports sceNetInet / sceNetResolver,
+    * whose libraries exist only once the net modules are loaded -- and takes
+    * it down after unloading it.  The module only asks. */
    int   (*wifi_is_up)(void);
-   const char *(*wifi_stage)(void);
-   unsigned (*wifi_last_sce)(void);
    const char *(*local_ip)(void);
-   int   (*cfg_count)(void);
-   int   (*cfg_name)(int index, char *out, unsigned cap);
    /* a bounded wait is progress for the harness stall exit; NULL in a release */
    void  (*beat)(void);
 } online_host;
@@ -66,8 +63,9 @@ typedef struct online_cfg
 typedef struct online_api
 {
    uint32_t magic, version, size;
-   /* Wi-Fi up, DNS, socket, room; blocks up to timeout_ms.  0 = in the room;
-    * otherwise why[] says why, and nothing is left up. */
+   /* DNS, socket, room (Wi-Fi is already up); blocks up to timeout_ms.
+    * 0 = in the room; otherwise why[] says why, and nothing of the module's
+    * is left up (Wi-Fi is the EBOOT's to take down). */
    int  (*up)(const online_cfg *cfg, int is_host, const char *build,
               unsigned timeout_ms, char *why, unsigned why_cap);
    void (*down)(void);
