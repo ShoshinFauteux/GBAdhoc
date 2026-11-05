@@ -7873,23 +7873,32 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
  * the ROM when it is there (not opened since the update), else the mirror.
  * Per slot, so the shelf shows everything either place holds; the game
  * itself moves them all on its first open (main_psp.c folders_settle). */
+/* One of the two places a game's states can be: `legacy` = beside the ROM,
+ * else its states/ mirror.  The SLOT-1 path; 0 = it fits.  The browsing
+ * console is the console the game will boot as. */
+static int rom_state_base_at(const char *rom_dir, int rom_idx, int legacy,
+                             char *out, size_t out_sz)
+{
+   extern char g_dir_base[];
+   char where[PSP_FILE_PATH_CAP];
+   if ((legacy ? psp_rom_path_join(where, sizeof(where), rom_dir,
+                                   g_roms[rom_idx].name)
+               : sc_mirror(where, sizeof(where), g_dir_base, SC_STATES_DIR,
+                           g_roms[rom_idx].name)) != 0)
+      return -1;
+   return psp_rom_path_suffix(out, out_sz, where,
+             psp_state_slot1_suffix((fe_console_t)g_pcfg.console));
+}
+
 static int browser_rom_state_base(const char *rom_dir, int rom_idx,
                                   unsigned slot, char *out, size_t out_sz)
 {
-   extern char g_dir_base[];
-   char rom_path[PSP_FILE_PATH_CAP], mir[PSP_FILE_PATH_CAP];
    char nw[PSP_FILE_PATH_CAP], p[PSP_FILE_PATH_CAP + 8];
-   /* The browsing console is the console the game will boot as. */
-   const char *sfx = psp_state_slot1_suffix((fe_console_t)g_pcfg.console);
    SceIoStat st;
    int i;
-   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
-                         g_roms[rom_idx].name) != 0 ||
-       psp_rom_path_suffix(out, out_sz, rom_path, sfx) != 0)
+   if (rom_state_base_at(rom_dir, rom_idx, 1, out, out_sz) != 0)
       return -1;
-   if (sc_mirror(mir, sizeof(mir), g_dir_base, SC_STATES_DIR,
-                 g_roms[rom_idx].name) != 0 ||
-       psp_rom_path_suffix(nw, sizeof(nw), mir, sfx) != 0)
+   if (rom_state_base_at(rom_dir, rom_idx, 0, nw, sizeof(nw)) != 0)
       return 0;                            /* too long: beside the ROM */
    for (i = 0; i < 2; i++)                 /* the mirror, then legacy */
    {
@@ -7963,37 +7972,23 @@ static int browser_probe(void *user, int rom, int probe)
    }
    else if (probe < LM_P_CHT)
    {
-      const char *sfx = psp_state_slot1_suffix((fe_console_t)g_pcfg.console);
-      unsigned slot = (unsigned)(probe - LM_P_ST0) / 2 + 1;
-      if ((probe - LM_P_ST0) & 1)
-      {
-         char rom_path[PSP_FILE_PATH_CAP];
-         if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
-                               g_roms[rom].name) != 0 ||
-             psp_rom_path_suffix(base, sizeof(base), rom_path, sfx) != 0)
-            return 0;
-      }
-      else
-      {
-         char mir[PSP_FILE_PATH_CAP];
-         if (sc_mirror(mir, sizeof(mir), g_dir_base, SC_STATES_DIR,
-                       g_roms[rom].name) != 0 ||
-             psp_rom_path_suffix(base, sizeof(base), mir, sfx) != 0)
-            return 0;
-      }
-      if (psp_state_path_for_slot(path, sizeof(path), base, slot) != 0)
+      if (rom_state_base_at(rom_dir, rom, (probe - LM_P_ST0) & 1, base,
+                            sizeof(base)) != 0 ||
+          psp_state_path_for_slot(path, sizeof(path), base,
+                                  (unsigned)(probe - LM_P_ST0) / 2 + 1) != 0)
          return 0;
    }
    else
    {
 #ifdef GPSP_CHEATS
-      char stem[PSP_ROM_REL_PATH_CAP], *dot;
+      /* The file name less its extension (ui_cheats_load's g_cht_stem: a
+       * name that is all extension, ".gba", keeps it). */
       const char *b = strrchr(g_roms[rom].name, '/');
-      snprintf(stem, sizeof(stem), "%s", b ? b + 1 : g_roms[rom].name);
-      dot = strrchr(stem, '.');
-      if (dot && dot != stem)
-         *dot = '\0';
-      if (snprintf(path, sizeof(path), "%s/cheats/%s.%s", g_dir_base, stem,
+      size_t len;
+      b = b ? b + 1 : g_roms[rom].name;
+      len = ui_rom_stem_length(b);
+      if (snprintf(path, sizeof(path), "%s/cheats/%.*s.%s", g_dir_base,
+                   (int)(len ? len : strlen(b)), b,
                    probe == LM_P_CHT ? "cht" : "txt") >= (int)sizeof(path))
          return 0;
 #else
@@ -8053,7 +8048,7 @@ static void browser_marks_pump(const char *rom_dir, int cur, int n)
       g_marks_pump.swept = 0;
    }
    g_lm_t0 = sceKernelGetSystemTimeLow();
-   lm_run(&g_marks_pump, &io, cur, n, 4, 4, 12);
+   lm_run(&g_marks_pump, &io, cur, n, 4, 12);
 }
 
 static void browser_preview_load_one(const char *rom_dir, int rom_idx)

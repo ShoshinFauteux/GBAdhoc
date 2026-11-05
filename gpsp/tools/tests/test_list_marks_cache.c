@@ -98,7 +98,7 @@ static int drain(lm_pump *p, const lm_io *io, int cur, int n)
 {
    int frames = 0;
    g_budget = 3;
-   while (lm_run(p, io, cur, n, 4, 4, 12) > 0)
+   while (lm_run(p, io, cur, n, 4, 12) > 0)
       CHECK(++frames < 100000);
    return frames;
 }
@@ -128,7 +128,7 @@ int main(void)
    fresh(&p);
    g_there[3][LM_P_SAV_NEW] = 1;
    g_budget = 1000;
-   lm_run(&p, &io, 3, N, 4, 4, 12);
+   lm_run(&p, &io, 3, N, 4, 12);
    for (i = 0; i < 13; i++)                      /* the cursor's game first */
       CHECK(g_log_rom[i] == 3);
    CHECK(g_log_probe[1] == LM_P_ST0);            /* saves/ answered: 1 probe */
@@ -137,7 +137,7 @@ int main(void)
    /* 2: rows on screen (SAVE only), neighbours, sweep; then nothing */
    fresh(&p);
    g_budget = 1000;
-   lm_run(&p, &io, 20, N, 4, 4, 12);
+   lm_run(&p, &io, 20, N, 4, 12);
    /* after the cursor's 14: 8 rows x 2 save probes, alternating below/above */
    for (i = 14; i < 14 + 16; i++)
    {
@@ -154,7 +154,7 @@ int main(void)
    before = g_probes;
    g_budget = 1000;
    for (i = 0; i < 50; i++)
-      CHECK(lm_run(&p, &io, i % N, N, 4, 4, 12) == 0);
+      CHECK(lm_run(&p, &io, i % N, N, 4, 12) == 0);
    CHECK(g_probes == before);                    /* built: zero I/O */
 
    /* 3: random files everywhere, answers exact */
@@ -181,12 +181,12 @@ int main(void)
    lm_forget(&p, &g_marks[25], LM_CHT_K);
    CHECK(!(g_marks[25] & LM_CHT_K) && (g_marks[25] & LM_ST_K));
    g_budget = 1000;
-   lm_run(&p, &io, 0, N, 4, 4, 12);
+   lm_run(&p, &io, 0, N, 4, 12);
    CHECK(g_probes == before + 1 && g_log_rom[before] == 25);
    CHECK(g_marks[25] & LM_CHT);
    lm_forget(&p, &g_marks[2], LM_ST_K);          /* a state deleted */
    before = g_probes;
-   lm_run(&p, &io, 0, N, 4, 4, 12);
+   lm_run(&p, &io, 0, N, 4, 12);
    CHECK(g_probes == before + 10);               /* all five slots, both places */
    for (i = before; i < g_probes; i++)
       CHECK(g_log_rom[i] == 2 && g_log_probe[i] >= LM_P_ST0 &&
@@ -202,33 +202,33 @@ int main(void)
    g_there[5][LM_P_ST0] = 1;                     /* slot 1 mirror: probe 2 */
    g_there[6][LM_P_SAV_NEW] = 1;
    g_budget = 3;                                 /* sav new, sav old, st1m */
-   lm_run(&p, &io, 6, N, 0, 0, 0);               /* cursor on 6 */
+   lm_run(&p, &io, 6, N, 0, 0);               /* cursor on 6 */
    g_budget = 1;
-   lm_run(&p, &io, 5, N, 0, 0, 0);               /* 5: sav new */
-   lm_run(&p, &io, 6, N, 0, 0, 0);               /* back to 6, mid-states */
-   lm_run(&p, &io, 5, N, 0, 0, 0);               /* 5 again */
+   lm_run(&p, &io, 5, N, 0, 0);               /* 5: sav new */
+   lm_run(&p, &io, 6, N, 0, 0);               /* back to 6, mid-states */
+   lm_run(&p, &io, 5, N, 0, 0);               /* 5 again */
    g_budget = 1000;
-   lm_run(&p, &io, 5, N, 0, 0, 0);
+   lm_run(&p, &io, 5, N, 0, 0);
    CHECK(g_marks[5] & LM_ST);                    /* probe 2 was not skipped */
    /* two games in the same question: 6's progress must not carry to 5 */
    fresh(&p);
    g_marks[5] = g_marks[6] = LM_SAV_K;
    g_there[5][LM_P_ST0 + 1] = 1;                 /* 5: slot 1 beside the ROM */
    g_budget = 3;                                 /* 6: st1m, st1l, st2m */
-   lm_run(&p, &io, 6, N, 0, 0, 0);
+   lm_run(&p, &io, 6, N, 0, 0);
    g_budget = 1000;
-   lm_run(&p, &io, 5, N, 0, 0, 0);
+   lm_run(&p, &io, 5, N, 0, 0);
    CHECK(g_marks[5] & LM_ST);
    /* a rescan: same index, everything unknown again, from the first probe
     * -- even with that game's save question half asked when it came */
    g_marks[6] = 0;
    g_budget = 1;
-   lm_run(&p, &io, 6, N, 0, 0, 0);               /* 6: saves/ asked, no */
+   lm_run(&p, &io, 6, N, 0, 0);               /* 6: saves/ asked, no */
    memset(g_marks, 0, sizeof(g_marks));
    lm_reset(&p);
    before = g_probes;
    g_budget = 1;
-   lm_run(&p, &io, 6, N, 0, 0, 0);
+   lm_run(&p, &io, 6, N, 0, 0);
    CHECK(g_log_rom[before] == 6 && g_log_probe[before] == LM_P_SAV_NEW);
    drain(&p, &io, 6, N);
    check_answers(N, 1);
@@ -252,7 +252,7 @@ int main(void)
       CHECK(g_probes == r * 14);
       for (i = r; i < N; i++)
          CHECK(g_marks[i] == 0);                 /* outside the view: untouched */
-      CHECK(lm_run(&p, &io, 0, r, 4, 4, 12) == 0);
+      CHECK(lm_run(&p, &io, 0, r, 4, 12) == 0);
    }
    fresh(&p);
    g_favs = 1;
@@ -266,7 +266,7 @@ int main(void)
       CHECK(in ? (g_marks[r] & LM_ALL_K) == LM_ALL_K : g_marks[r] == 0);
    }
    CHECK(g_marks[30] & LM_ST);
-   CHECK(lm_run(&p, &io, 0, 0, 4, 4, 12) == 0);  /* an empty view */
+   CHECK(lm_run(&p, &io, 0, 0, 4, 12) == 0);  /* an empty view */
 
    /* 8: the budget */
    fresh(&p);
@@ -274,7 +274,7 @@ int main(void)
    {
       before = g_probes;
       g_budget = i;
-      CHECK(lm_run(&p, &io, 0, N, 4, 4, 12) == i);
+      CHECK(lm_run(&p, &io, 0, N, 4, 12) == i);
       CHECK(g_probes - before == i);
    }
 

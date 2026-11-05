@@ -149,13 +149,13 @@ static inline int lm_wrap(int v, int n)
 }
 
 /* What to ask next: a game (g_roms index) and the questions wanted of it,
- * or -1 when every game in the view is answered.  `rows_up`/`rows_dn` are
+ * or -1 when every game in the view is answered.  `rows` is
  * the rows on screen either side of the cursor, `win` the neighbours whose
  * every fact is fetched ahead of the cursor. */
 static inline int lm_pick(lm_pump *p, const lm_io *io, int cur, int n,
-                          int rows_up, int rows_dn, int win, unsigned *want)
+                          int rows, int win, unsigned *want)
 {
-   int d, rom;
+   int d, s, pass, rom;
    if (n <= 0)
       return -1;
    rom = io->view_rom(io->user, lm_wrap(cur, n));
@@ -164,25 +164,16 @@ static inline int lm_pick(lm_pump *p, const lm_io *io, int cur, int n,
       *want = LM_ALL_K;
       return rom;
    }
-   for (d = 1; d <= (rows_up > rows_dn ? rows_up : rows_dn); d++)
+   /* pass 0: the SAVE of the rows on screen; pass 1: all of the
+    * neighbours'.  Nearest first, below before above. */
+   for (pass = 0; pass < 2; pass++)
    {
-      if (d <= rows_dn && d < n &&
-          lm_open(io, rom = io->view_rom(io->user, lm_wrap(cur + d, n)),
-                  LM_SAV_K))
-         return *want = LM_SAV_K, rom;
-      if (d <= rows_up && d < n &&
-          lm_open(io, rom = io->view_rom(io->user, lm_wrap(cur - d, n)),
-                  LM_SAV_K))
-         return *want = LM_SAV_K, rom;
-   }
-   for (d = 1; d <= win && d < n; d++)
-   {
-      if (lm_open(io, rom = io->view_rom(io->user, lm_wrap(cur + d, n)),
-                  LM_ALL_K))
-         return *want = LM_ALL_K, rom;
-      if (lm_open(io, rom = io->view_rom(io->user, lm_wrap(cur - d, n)),
-                  LM_ALL_K))
-         return *want = LM_ALL_K, rom;
+      unsigned w = pass ? LM_ALL_K : LM_SAV_K;
+      for (d = 1; d < n && d <= (pass ? win : rows); d++)
+         for (s = 1; s >= -1; s -= 2)
+            if (lm_open(io, rom = io->view_rom(io->user,
+                                               lm_wrap(cur + s * d, n)), w))
+               return *want = w, rom;
    }
    if (p->sweep >= n)
       p->sweep = 0;
@@ -201,13 +192,13 @@ static inline int lm_pick(lm_pump *p, const lm_io *io, int cur, int n,
  * Returns the probes made.  Call it only on a frame where nothing was
  * pressed and nothing moves. */
 static inline int lm_run(lm_pump *p, const lm_io *io, int cur, int n,
-                         int rows_up, int rows_dn, int win)
+                         int rows, int win)
 {
    int done = 0, rom;
    unsigned want;
    while (io->more(io->user, done))
    {
-      rom = lm_pick(p, io, cur, n, rows_up, rows_dn, win, &want);
+      rom = lm_pick(p, io, cur, n, rows, win, &want);
       if (rom < 0)
          break;
       if (lm_step(p, io, rom, want))
