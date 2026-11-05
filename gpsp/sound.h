@@ -20,8 +20,24 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#define BUFFER_SIZE        (1 << 16)
+/* The mix ring, in s32 entries (two per stereo output sample).  What is in
+ * flight is about one frame plus sound_read_samples' 512-entry holdback:
+ * audio_run (libretro.c) reads one frame's worth after every retro_run, and
+ * trigger_timer re-anchors a direct-sound channel to the mixer at every
+ * timer start.  At GBA_SOUND_FREQUENCY (65536 Hz, the most the core runs)
+ * a frame is ~2,195 entries, so 16384 is ~6x the worst span (0.25 s at the
+ * PSP's 32768 Hz).  It was 1 << 16 (256 KiB per core instance) up to
+ * 4.6.0-beta.4; BUFFER_SIZE_MASK is how a state saved then is loaded
+ * (SOUND_STATE_INDEX_RANGE below).  Must stay a power of two. */
+#define BUFFER_SIZE        (1 << 14)
 #define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
+/* The range of the ring indices a save state may hold (buf-base,
+ * gbc-buf-idx and buf-idx of ds0/ds1): the ring size of every build up to
+ * 4.6.0-beta.4.  sound_read_savestate masks them with BUFFER_SIZE_MASK;
+ * 65536 is a multiple of BUFFER_SIZE, so every distance between them -- the
+ * only thing the mixer and the read-out use -- is kept, and an old state
+ * plays exactly as it did. */
+#define SOUND_STATE_INDEX_RANGE (1u << 16)
 
 /* Runtime output rate, restricted to powers of two so that all fixed point
  * frequency steps below remain exact against the 2^24 Hz master clock.

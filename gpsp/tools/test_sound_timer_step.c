@@ -65,6 +65,38 @@ static void check_load_distance(int dist, int expect_resync)
    }
 }
 
+/* A state saved with the 64K-entry ring (4.6.0-beta.4 and older) holds
+ * indices up to SOUND_STATE_INDEX_RANGE: they load masked into the ring,
+ * every distance kept, and a healthy channel is not resynced. */
+static void check_old_ring_indices(void)
+{
+   const u32 lap = SOUND_STATE_INDEX_RANGE - BUFFER_SIZE;
+   u8 *w = st_doc + 4;
+   unsigned n;
+   sound_buffer_base = lap + 1000;
+   gbc_sound_buffer_index = lap + 2200;
+   direct_sound_channel[0].buffer_index = lap + 2232;   /* 32 ahead */
+   direct_sound_channel[0].fifo_fractional = 0x2345678u;
+   direct_sound_channel[1].buffer_index = lap + 2194;   /* 6 behind */
+   n = sound_write_savestate(w);
+   w[n] = 0;
+   st_doc[0] = (u8)(n + 5); st_doc[1] = (u8)((n + 5) >> 8);
+   st_doc[2] = st_doc[3] = 0;
+   assert(sound_check_savestate(st_doc));
+   sound_buffer_base = gbc_sound_buffer_index = 0;
+   assert(sound_read_savestate(st_doc));
+   assert(sound_buffer_base == 1000);
+   assert(gbc_sound_buffer_index == 2200);
+   assert(direct_sound_channel[0].buffer_index == 2232);
+   assert(direct_sound_channel[0].fifo_fractional == 0x2345678u);
+   assert(direct_sound_channel[1].buffer_index == 2194);
+   /* and one past the format's range is refused */
+   gbc_sound_buffer_index = SOUND_STATE_INDEX_RANGE;
+   n = sound_write_savestate(w);
+   w[n] = 0;
+   assert(!sound_check_savestate(st_doc));
+}
+
 static void reference_silent_advance(u32 step, u32 *fractional,
                                      u32 *buffer_index)
 {
@@ -182,6 +214,7 @@ int main(void)
    check_load_distance(-4096, 1);
    check_load_distance(20000, 1);
    check_load_distance(-20000, 1);
+   check_old_ring_indices();
    puts("PASS timer-derived audio steps stay nonzero and accumulator-safe; "
         "state load keeps a healthy channel, resyncs a runaway one");
    return 0;

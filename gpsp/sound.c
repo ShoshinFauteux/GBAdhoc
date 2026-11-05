@@ -38,6 +38,14 @@ u32 sound_synth_off;   /* sound.h */
  * left the bottom 4 bits of the libretro output permanently zero. */
 static s32 sound_buffer[BUFFER_SIZE];
 static u32 sound_buffer_base;
+/* sound.h BUFFER_SIZE: the ring must hold the read-out holdback (512) plus a
+ * frame at the fastest rate the core runs, with room to spare; and an old
+ * state's indices must mask into it without changing their distances. */
+_Static_assert((BUFFER_SIZE & BUFFER_SIZE_MASK) == 0, "BUFFER_SIZE: power of two");
+_Static_assert(BUFFER_SIZE >= 4 * (512 + 2 * (GBA_SOUND_FREQUENCY / 59 + 1)),
+               "BUFFER_SIZE: at least 4x the in-flight span at 65536 Hz");
+_Static_assert(SOUND_STATE_INDEX_RANGE % BUFFER_SIZE == 0,
+               "an old state's ring indices must keep their distances");
 
 static fixed16_16 gbc_sound_tick_step;
 
@@ -729,11 +737,13 @@ bool sound_check_savestate(const u8 *src)
   if (!bson_has_bytes(snddoc, "wav-samples", sizeof(wave_samples)))
     return false;
 
+  /* (SOUND_STATE_INDEX_RANGE, not BUFFER_SIZE: a state from a build with
+   * the 64K-entry ring is valid; sound_read_savestate masks it) */
   if (!bson_read_int32(snddoc, "buf-base", &index) ||
-      index >= BUFFER_SIZE || (index & 1))
+      index >= SOUND_STATE_INDEX_RANGE || (index & 1))
     return false;
   if (!bson_read_int32(snddoc, "gbc-buf-idx", &index) ||
-      index >= BUFFER_SIZE || (index & 1))
+      index >= SOUND_STATE_INDEX_RANGE || (index & 1))
     return false;
   /* These values directly index the mixer's tables. Register writes mask
    * them, but imported/damaged states bypass those write paths. */
@@ -768,7 +778,7 @@ bool sound_check_savestate(const u8 *src)
     if (!bson_read_int32(sndchan, "volume", &index) || index > 1)
       return false;
     if (!bson_read_int32(sndchan, "buf-idx", &index) ||
-        index >= BUFFER_SIZE || (index & 1))
+        index >= SOUND_STATE_INDEX_RANGE || (index & 1))
       return false;
   }
 
@@ -819,7 +829,7 @@ bool sound_read_savestate(const u8 *src)
   int i;
   const u8 *snddoc = bson_find_key(src, "sound");
 
-  /* The 256KiB ring buffer holding rendered samples is intentionally not
+  /* The ring buffer holding rendered samples is intentionally not
    * serialized (it would inflate the savestate well beyond its hard size
    * cap). Zero it on load so that the gbc_sound and direct_sound mixers,
    * which use += into this buffer, do not pick up stale data from before
@@ -832,7 +842,8 @@ bool sound_read_savestate(const u8 *src)
   /* A rewind's quick restore (docs/REWIND.md): the ring is zero everywhere
    * but in the stretch still in flight -- the read-out zeroes what it takes
    * -- and sound_rewind_clear_inflight() has just zeroed that stretch.
-   * Clearing all 256 KiB again was a millisecond of every restore. */
+   * Clearing the whole ring again (256 KiB until the ring shrank to
+   * 64 KiB) was a millisecond of every restore. */
   if (!gba_rewind_ring_cleared)
 #endif
   memset(sound_buffer, 0, sizeof(sound_buffer));
@@ -848,6 +859,9 @@ bool sound_read_savestate(const u8 *src)
     bson_read_int32(snddoc, "gbc-ms-vol", &gbc_sound_master_volume) &&
     bson_read_bytes(snddoc, "wav-samples", wave_samples, sizeof(wave_samples))))
     return false;
+  /* sound.h SOUND_STATE_INDEX_RANGE: a state saved with the 64K-entry ring */
+  sound_buffer_base      &= BUFFER_SIZE_MASK;
+  gbc_sound_buffer_index &= BUFFER_SIZE_MASK;
 
   for (i = 0; i < 2; i++)
   {
@@ -863,6 +877,7 @@ bool sound_read_savestate(const u8 *src)
       bson_read_bytes(sndchan, "fifo-bytes", ds->fifo, sizeof(ds->fifo)) &&
       bson_read_int32(sndchan, "buf-idx", &ds->buffer_index)))
       return false;
+    ds->buffer_index &= BUFFER_SIZE_MASK;   /* (as buf-base above) */
 #ifdef REWIND
     if (!gba_rewind_ring_cleared)   /* (a rewind's own restore: as saved) */
 #endif
