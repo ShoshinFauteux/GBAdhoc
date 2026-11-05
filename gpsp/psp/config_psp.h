@@ -239,6 +239,11 @@ typedef struct
     * page with "Overwrite Slot 1?" on its plate (docs/UI-OVERLAY.md section
     * 15.2, issue #31).  The page's own save over a saved slot always asks. */
    int  quick_save_ask;
+   /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): Settings > Online
+    * play, CONFIG.INI `online_play` (0 = off, the default), and the saved
+    * Wi-Fi connection it uses, `online_wifi` (1-based). */
+   int  online_play;
+   int  online_wifi;
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).
     * shot_format: PCFG_SHOT_PNG (default) or PCFG_SHOT_BMP.
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,

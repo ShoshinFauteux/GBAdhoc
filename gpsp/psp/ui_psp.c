@@ -46,6 +46,7 @@
 #include "fe_linkmode.h"
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #include "text_fold.h"      /* non-ASCII file names (issue #19) */
+#include "online_psp.h"     /* EXPERIMENTAL online play (ONLINE=1) */
 #ifdef GPSP_CHEATS
 #include "fe_cheats.h"
 #endif
@@ -254,7 +255,8 @@ static uint16_t mix565(uint16_t a, uint16_t b, int t)
 
 /* ----- state -------------------------------------------------------------- */
 enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
-       SCR_STATE_SLOTS, SCR_CONTROLS, SCR_HOST, SCR_JOINASK, SCR_CHEATS };
+       SCR_STATE_SLOTS, SCR_CONTROLS, SCR_HOST, SCR_JOINASK, SCR_CHEATS,
+       SCR_ONLINE };
 
 static int g_active;
 static int g_screen;
@@ -1845,7 +1847,11 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_HDR_UI, SET_THEME, SET_SHELL,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_VOLUME,
        SET_QLOADASK,
-       SET_QSAVEASK, SET_CPUCLK,
+       SET_QSAVEASK,
+#ifdef GBADHOC_ONLINE
+       SET_ONLINE,
+#endif
+       SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
@@ -1908,6 +1914,12 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * issue #31), OFF by default.  Under the quick load's row and above CPU
     * clock, for the same reason: no walker's count moves. */
    { 0, "Quick save asks first" },
+#ifdef GBADHOC_ONLINE
+   /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md), off by default.  On,
+    * Wireless gets an Online row.  Above CPU clock, below the quick-state
+    * rows: the same place no walker's count moves (see the rows above). */
+   { 0, "Online play" },
+#endif
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
     * their counts moved.  Applies at once (main_psp.c psp_clock_apply). */
@@ -2464,6 +2476,11 @@ static void settings_adjust(int id, int dir)
    case SET_QSAVEASK:
       g_pcfg.quick_save_ask = !g_pcfg.quick_save_ask;
       break;
+#ifdef GBADHOC_ONLINE
+   case SET_ONLINE:
+      g_pcfg.online_play = !g_pcfg.online_play;
+      break;
+#endif
    case SET_CPUCLK:
       /* 333 -> 222 -> System, live: the game keeps running at the new
        * clock the moment the row changes.  The player's choice outranks a
@@ -2811,6 +2828,12 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.quick_save_ask ? "on" : "off");
          break;
+#ifdef GBADHOC_ONLINE
+      case SET_ONLINE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.online_play ? "on (experimental)" : "off");
+         break;
+#endif
       case SET_CPUCLK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              pcfg_clock_name(psp_clock_mode()));
@@ -2906,6 +2929,12 @@ static ui_action screen_settings(unsigned edges)
                 ? "Over a saved slot 1 the quick save asks: " VID_GLYPH_X
                   " saves."
                 : "The quick save saves slot 1 at once, without asking.");
+#ifdef GBADHOC_ONLINE
+   else if (g_cursor == SET_ONLINE)
+      footer(g_pcfg.online_play
+                ? "Experimental: Wireless > Online links over the internet."
+                : "Off: Wireless links PSPs in the same room only.");
+#endif
    else if (g_cursor == SET_CPUCLK)
    {
       /* A CFW clock setting can refuse ours: say what is really running. */
@@ -3749,7 +3778,10 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
  * and the two explainer lines name the game and say the one thing the
  * player must know.  Only a game that links both ways asks (SCR_HOST). */
 
-enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_FAST, WL_BACK, WL_COUNT };
+enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_FAST, WL_ONLINE, WL_BACK,
+       WL_COUNT };
+/* the ONLINE screen's rows (screen_online) */
+enum { OL_NET, OL_MODE, OL_CREATE, OL_CODE, OL_JOIN, OL_BACK, OL_COUNT };
 enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
 
 /* One wireless-family row: 22 px pitch from y=120, the band 300 wide,
@@ -3791,6 +3823,12 @@ static int wl_rows(int ids[WL_COUNT])
     * only, so Host / Join keep the rows the rig's menu scripts count. */
    if (g_pcfg.console == FE_CONSOLE_GBA)
       ids[n++] = WL_FAST;
+#ifdef GBADHOC_ONLINE
+   /* EXPERIMENTAL, only with Settings > Online play on; above Back, so no
+    * menu script's count moves while it is off (the default). */
+   if (g_pcfg.online_play)
+      ids[n++] = WL_ONLINE;
+#endif
    ids[n++] = WL_BACK;
    return n;
 }
@@ -4064,6 +4102,12 @@ static ui_action screen_wireless(unsigned edges, int session_active,
           * comment on MGF_NET. */
          screen_to(SCR_MGIFT);
          return UI_ACT_NONE;
+#ifdef GBADHOC_ONLINE
+      case WL_ONLINE:
+         screen_to(SCR_ONLINE);
+         g_cursor = OL_CREATE;
+         return UI_ACT_NONE;
+#endif
       case WL_BACK:
          screen_to(SCR_MENU);
          return UI_ACT_NONE;
@@ -4098,6 +4142,9 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       case WL_MGIFT:
          wl_row(i, g_cursor == i, "Mystery Gift", "phone");
          break;
+      case WL_ONLINE:
+         wl_row(i, g_cursor == i, "Online", "experimental");
+         break;
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
             wl_row_at(WL_ROW_Y0 + i * 22, g_cursor == i, 0, "Fast link",
@@ -4118,6 +4165,168 @@ static ui_action screen_wireless(unsigned edges, int session_active,
              " change room   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
+
+#ifdef GBADHOC_ONLINE
+/* ONLINE (EXPERIMENTAL; docs/ONLINE-TUNNEL.md, the mockup's minimal flow):
+ * the same Host / Join as WIRELESS, over the internet through the GBAdhoc
+ * server instead of a room in the air.  The host gets a 4-letter code from
+ * the server and reads it to the friend; the friend enters it here.  For a
+ * game that links both ways the host picks the link mode, the joiner follows
+ * it.  Nothing touches the network until Create or Join. */
+static char g_ol_code[5] = "AAAA";
+static int  g_ol_pos = -1;             /* letter being edited, -1 = not editing */
+static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
+static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
+
+int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
+{
+   int r = g_ol_req;
+   g_ol_req = 0;
+   if (!r)
+      return 0;
+   *is_host = r == 1;
+   snprintf(code, 5, "%s", g_ol_code);
+   *cable = g_ol_cable;
+   *wifi = g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1;
+   return 1;
+}
+
+static ui_action screen_online(unsigned edges)
+{
+   char l1[96], l2[96], net[48];
+   int i, nw, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
+   if (g_ol_pos >= 0)
+   {
+      /* editing the code: up/down change the letter, left/right move */
+      char *c = &g_ol_code[g_ol_pos];
+      if (edges & PSP_CTRL_UP)
+         *c = (char)(*c == 'Z' ? 'A' : *c + 1);
+      if (edges & PSP_CTRL_DOWN)
+         *c = (char)(*c == 'A' ? 'Z' : *c - 1);
+      if (edges & PSP_CTRL_LEFT)
+         g_ol_pos = (g_ol_pos + 3) % 4;
+      if (edges & PSP_CTRL_RIGHT)
+         g_ol_pos = (g_ol_pos + 1) % 4;
+      if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
+      {
+         g_ol_pos = -1;
+         g_cursor = OL_JOIN;
+      }
+      edges = 0;
+   }
+   else
+   {
+      if (edges & PSP_CTRL_UP)
+      {
+         g_cursor = (g_cursor + OL_COUNT - 1) % OL_COUNT;
+         if (g_cursor == OL_MODE && !ask)
+            g_cursor = OL_NET;
+      }
+      if (edges & PSP_CTRL_DOWN)
+      {
+         g_cursor = (g_cursor + 1) % OL_COUNT;
+         if (g_cursor == OL_MODE && !ask)
+            g_cursor = OL_CREATE;
+      }
+      if (g_cursor == OL_NET && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
+      {
+         int n = online_psp_wifi_count();
+         if (n > 0)
+         {
+            int w = g_pcfg.online_wifi + ((edges & PSP_CTRL_LEFT) ? -1 : 1);
+            g_pcfg.online_wifi = w < 1 ? n : w > n ? 1 : w;
+            g_settings_dirty = 1;
+         }
+      }
+      if (g_cursor == OL_MODE && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
+         g_ol_cable = !g_ol_cable;
+      if (edges & PSP_CTRL_CIRCLE)
+      {
+         screen_to(SCR_WIRELESS);
+         return UI_ACT_NONE;
+      }
+      if (edges & PSP_CTRL_CROSS)
+      {
+         switch (g_cursor)
+         {
+         case OL_CODE:
+            g_ol_pos = 0;
+            break;
+         case OL_CREATE:
+            g_ol_req = 1;
+            g_host_cable = ask ? g_ol_cable : ui_host_mode() == UI_HOST_CABLE;
+            snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
+            screen_to(SCR_MENU);
+            return UI_ACT_NET_HOST;
+         case OL_JOIN:
+            g_ol_req = 2;
+            snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
+            screen_to(SCR_MENU);
+            return UI_ACT_NET_JOIN;
+         case OL_BACK:
+            screen_to(SCR_WIRELESS);
+            return UI_ACT_NONE;
+         default:
+            break;
+         }
+      }
+   }
+
+   ov_backdrop(OV_SCRIM);
+   ov_head(g_ov_title, "ONLINE");
+   snprintf(l1, sizeof(l1), "Experimental. Through the GBAdhoc server, over Wi-Fi.");
+   snprintf(l2, sizeof(l2), "Create gives a code for your friend; or enter theirs.");
+   vid_text(22, 72, l1, C_DIM);
+   vid_text(22, 72 + FE_FONT_H + 2, l2, C_DIM);
+   nw = online_psp_wifi_count();
+   if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
+                                       net, sizeof(net)) != 0)
+      snprintf(net, sizeof(net), "%s", nw <= 0 ? "first saved connection" : "?");
+   for (i = 0; i < OL_COUNT; i++)
+   {
+      int y = WL_ROW_Y0 + i * 22, sel = g_cursor == i && g_ol_pos < 0;
+      switch (i)
+      {
+      case OL_NET:
+         wl_row_at(y, sel, 1, "Network", net);
+         break;
+      case OL_MODE:
+         wl_row_at(y, sel, ask, "Link mode",
+                   !ask ? (ui_host_mode() == UI_HOST_CABLE ? "Link Cable" : "Wireless Adapter")
+                        : g_ol_cable ? "Link Cable" : "Wireless Adapter");
+         break;
+      case OL_CREATE:
+         wl_row_at(y, sel, 1, "Create room", "host");
+         break;
+      case OL_CODE:
+      {
+         char v[16];
+         if (g_ol_pos >= 0)
+            snprintf(v, sizeof(v), "%.*s[%c]%s", g_ol_pos, g_ol_code,
+                     g_ol_code[g_ol_pos], g_ol_code + g_ol_pos + 1);
+         else
+            snprintf(v, sizeof(v), "%s", g_ol_code);
+         wl_row_at(y, g_cursor == i, 1, "Room code", v);
+         break;
+      }
+      case OL_JOIN:
+         wl_row_at(y, sel, 1, "Join room", g_ol_code);
+         break;
+      default:
+         wl_row_at(y, sel, 1, "Back", NULL);
+         break;
+      }
+   }
+   if (g_ol_pos >= 0)
+      footer(VID_GLYPH_UP VID_GLYPH_DOWN " letter   " VID_GLYPH_LEFT VID_GLYPH_RIGHT
+             " move   " VID_GLYPH_X " done");
+   else if (g_cursor == OL_NET || g_cursor == OL_MODE)
+      footer(VID_GLYPH_LEFT VID_GLYPH_RIGHT " change   " VID_GLYPH_O " back");
+   else
+      footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+   return UI_ACT_NONE;
+}
+#endif
 
 /* HOST, for a game that links both ways: the one question, asked once. */
 static ui_action screen_host(unsigned edges)
@@ -5638,6 +5847,11 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
    case SCR_HOST:
       act = screen_host(edges);
       break;
+#ifdef GBADHOC_ONLINE
+   case SCR_ONLINE:
+      act = screen_online(edges);
+      break;
+#endif
    case SCR_JOINASK:
       act = screen_joinask(edges);
       break;

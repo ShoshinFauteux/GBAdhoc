@@ -237,6 +237,13 @@ case "$REWIND" in 0|1) ;; *) echo "FAIL: REWIND must be 0 or 1"; exit 2 ;; esac
 CORE_FLAGS="$CORE_FLAGS REWIND=$REWIND"
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=$REWIND"
 
+# ONLINE (default 1; 0 for an arm without it): EXPERIMENTAL online play
+# (docs/ONLINE-TUNNEL.md) with its Settings toggle, which stays off until the
+# player turns it on.  Frontend only.
+ONLINE="${ONLINE:-1}"
+case "$ONLINE" in 0|1) ;; *) echo "FAIL: ONLINE must be 0 or 1"; exit 2 ;; esac
+PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS ONLINE=$ONLINE"
+
 # RFU_SCHED (default 0): scheduled ticks for the emulated Wireless Adapter
 # (rfu_sched.h, docs/RFU-COUPLING.md).  Both makes need it: the core sends and
 # delivers by tick, the frontend waits for a missing one.  A console built with

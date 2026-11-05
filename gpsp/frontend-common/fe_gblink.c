@@ -205,6 +205,8 @@ struct fe_gblink
 
    /* configuration (host decides) */
    int have_config;
+   int config_defer;                 /* host: auto delay waits for RTT */
+   unsigned config_defer_steps;
    unsigned delay, hash_interval, batch;
    int64_t seed;
    uint32_t save_tx_off;
@@ -1156,6 +1158,53 @@ static void config_known(fe_gblink *s)
           s->delay, (long long)s->seed, s->hash_interval, s->batch);
 }
 
+/* AUTO INPUT DELAY (host, fe_gblink_local.delay_auto; docs/ONLINE-TUNNEL.md
+ * section 2).  A lockstep machine needs the partner's buttons for frame f
+ * when it starts f; they left the partner D frames earlier, so a frame is
+ * on time while
+ *
+ *     one-way latency + one pump period + one batching frame  <  D frames.
+ *
+ * One-way is half the smoothed RTT, plus two deviations of headroom for the
+ * jitter; the pump and the batch each cost up to a frame.  Hence
+ *
+ *     D = ceil((srtt / 2 + 2 * rttvar + T) / T) + 1,   T = one GBA frame,
+ *
+ * clamped to [input_delay, delay_auto].  On the PSP-to-PSP radio (srtt
+ * ~35 ms, rttvar ~4 ms) that is 4, today's default, so the radio is
+ * unchanged.  CONFIG waits until the transport has two RTT samples (the
+ * HELLOs' acknowledgements bring them) or DEFER_STEPS steps have passed. */
+#define AUTO_FRAME_US     16743u
+#define AUTO_DEFER_STEPS  90u
+static void config_auto_step(fe_gblink *s)
+{
+   uint32_t var = 0, n = 0, rtt;
+   unsigned d = s->l.input_delay;
+   rtt = s->p.rtt_us(s->p.user, &var, &n);
+   if (n < 2 && ++s->config_defer_steps < AUTO_DEFER_STEPS)
+      return;
+   if (n && rtt)
+   {
+      uint64_t need = (uint64_t)rtt / 2 + 2ull * var + AUTO_FRAME_US;
+      unsigned a = (unsigned)((need + AUTO_FRAME_US - 1) / AUTO_FRAME_US) + 1;
+      if (a > d)
+         d = a;
+   }
+   if (d > s->l.delay_auto)
+      d = s->l.delay_auto > s->l.input_delay ? s->l.delay_auto
+                                             : s->l.input_delay;
+   if (d > CONFIG_DELAY_MAX)
+      d = CONFIG_DELAY_MAX;
+   fe_evt("gblink_delay_auto srtt_us=%u rttvar_us=%u samples=%u steps=%u "
+          "base=%u cap=%u delay=%u", (unsigned)rtt, (unsigned)var,
+          (unsigned)n, s->config_defer_steps, s->l.input_delay,
+          s->l.delay_auto, d);
+   s->delay = d;
+   s->config_defer = 0;
+   send_config(s);
+   config_known(s);
+}
+
 static void send_need(fe_gblink *s, int need)
 {
    uint8_t m[2] = { M_NEED, (uint8_t)need };
@@ -1614,6 +1663,8 @@ static void setup_step(fe_gblink *s)
       send_hello(s);
    if (!s->have_hello)
       return;
+   if (s->config_defer)
+      config_auto_step(s);
    if (s->verifying)
       verify_step(s);
    s->tick++;
@@ -2368,8 +2419,13 @@ void fe_gblink_receive(fe_gblink *s, const void *buf, size_t len)
          s->hash_interval = s->l.hash_interval ? s->l.hash_interval : 60;
          s->batch = s->l.batch_lines > 1 ? s->l.batch_lines : 1;
          s->seed = s->l.wallclock_now;
-         send_config(s);
-         config_known(s);
+         if (s->l.delay_auto && s->p.rtt_us)
+            s->config_defer = 1;     /* setup_step: config_auto_step */
+         else
+         {
+            send_config(s);
+            config_known(s);
+         }
       }
       else if (s->host_caps & FE_GBLINK_HOSTCAP_NEGOTIATE)
       {

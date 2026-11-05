@@ -169,6 +169,9 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
     * every release has had. */
    g_pcfg.quick_save_ask =
       fe_ini_get_int(cfg_path, "quick_save_ask", 0) == 1 ? 1 : 0;
+   g_pcfg.online_play =
+      fe_ini_get_int(cfg_path, "online_play", 0) == 1 ? 1 : 0;
+   g_pcfg.online_wifi = (int)fe_ini_get_int(cfg_path, "online_wifi", 1);
    {
       /* Screenshots (issue #13).  Anything but the other word is the
        * default: PNG, into PICTURE. */
@@ -412,6 +415,8 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(quick_load_ask,       0, 1, 1);
    PCFG_CHK(volume,               0, 100, PCFG_VOLUME_DEFAULT);
    PCFG_CHK(quick_save_ask,       0, 1, 0);
+   PCFG_CHK(online_play,          0, 1, 0);
+   PCFG_CHK(online_wifi,          1, 10, 1);
    /* A range check cannot say "one of 0, 222, 333": snap says it. */
    if (g_pcfg.cpu_clock != pcfg_clock_snap(g_pcfg.cpu_clock))
    {
@@ -603,6 +608,13 @@ void pcfg_save(void)
       if (g_pcfg.quick_save_ask ||
           fe_ini_get(cfg_path, "quick_save_ask", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "quick_save_ask", g_pcfg.quick_save_ask);
+      /* online play: written once it is on or already in the file */
+      if (g_pcfg.online_play ||
+          fe_ini_get(cfg_path, "online_play", sv, sizeof(sv)))
+      {
+         fe_ini_set_int(cfg_path, "online_play", g_pcfg.online_play);
+         fe_ini_set_int(cfg_path, "online_wifi", g_pcfg.online_wifi);
+      }
    }
    fe_ini_set_int(cfg_path, "gbc_color_correction",
                   g_pcfg.gbc_color_correction);
