@@ -7184,6 +7184,17 @@ static const char *inproc_refusal(int have_variant)
  * in-process return; argv[1] = "gamelist" tells the new process, whose
  * browser then fades in from black instead of cutting in. */
 #define RELAUNCH_ARGV1 "gamelist"
+
+/* XMB LAUNCH (issue #29, docs/XMB-LAUNCH.md).  A per-game launcher EBOOT in
+ * the XMB starts this install with argv[1] = "launch" and argv[2] = the ROM:
+ * an absolute "dev:/..." path, or one relative to roms/.  The first session
+ * boots that ROM with the game list's own save and state paths, so a game
+ * is the same game from the list or from its XMB entry; Exit goes back to
+ * the XMB and Quit to game list opens the list.  Taken once: the in-process
+ * return and every relaunch come back to the browser. */
+#define LAUNCH_ARGV1 "launch"
+static char g_launch_rom[PSP_ROM_REL_PATH_CAP];
+
 static void relaunch_eboot(int gamelist)
 {
    pwr_release_all();
@@ -13503,6 +13514,7 @@ int main(int argc, char *argv[])
     * starts every game from, and the heap as it was when this game's ROM
     * was picked. */
    int inproc_n = 0;
+   int launch_now = 0;   /* this session is an XMB launch (g_launch_rom) */
    int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
    long inproc_cycles = 0, inproc_frames = 0, state_save_at = 0;
    int inproc_via_menu = 0, inproc_menu_armed = 0;
@@ -13529,6 +13541,9 @@ int main(int argc, char *argv[])
     * in from the firmware's black instead of cutting in. */
    if (argc > 1 && argv[1] && strcmp(argv[1], RELAUNCH_ARGV1) == 0)
       ui_return_fade_in();
+   /* Started from a game's XMB entry (XMB LAUNCH, at relaunch_eboot). */
+   if (argc > 2 && argv[1] && argv[2] && strcmp(argv[1], LAUNCH_ARGV1) == 0)
+      snprintf(g_launch_rom, sizeof(g_launch_rom), "%s", argv[2]);
 #if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
    /* ADR-0067's harness path cannot exist in this build, and every one of
     * main()'s ~130 harness keys used to pay a Memory Stick negative lookup
@@ -14871,7 +14886,29 @@ session_top:
       heap_census("pre_select");
    }
 #endif
-   if (have_variant)
+   /* XMB LAUNCH (at relaunch_eboot): the first session boots the ROM the
+    * launcher named.  A ROM that is not there falls through to the list,
+    * where the player can see what is. */
+   launch_now = 0;
+   if (g_launch_rom[0] && !inproc_n && !have_variant)
+   {
+      int bad = strchr(g_launch_rom, ':')
+         ? snprintf(rom_path, sizeof(rom_path), "%s", g_launch_rom) >=
+              (int)sizeof(rom_path)
+         : psp_rom_path_join(rom_path, sizeof(rom_path), ROM_DIR,
+                             g_launch_rom) != 0;
+      if (!bad && file_exists(rom_path))
+      {
+         launch_now = 1;
+         fe_evt("launch rom=%s", rom_path);
+      }
+      else
+         fe_evt("launch_missing rom=%s", g_launch_rom);
+      g_launch_rom[0] = '\0';
+   }
+   if (launch_now)
+      ;   /* rom_path is set; the sidecars below are the game list's */
+   else if (have_variant)
    {
       char vrom[PSP_ROM_REL_PATH_CAP] = "", savedir[160];
       char stem[PSP_ROM_REL_PATH_CAP];
@@ -15027,7 +15064,7 @@ session_top:
    /* Baked variant and harness launches have no interactive filter, so the
     * file type selects the matching GB hardware model. Browser launches use
     * the model explicitly chosen by the player. */
-   if (have_variant || (have_harness &&
+   if (launch_now || have_variant || (have_harness &&
        !fe_ini_get_int(HARNESS_INI, "browser", 0)))
       g_pcfg.console = (int)console_from_rom_path(rom_path);
    /* PER-CONSOLE DISPLAY PROFILE (docs/DISPLAY-FEATURES.md): the running
