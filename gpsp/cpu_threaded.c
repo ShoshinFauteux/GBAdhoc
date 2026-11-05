@@ -6143,6 +6143,13 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 #error "SMC_IMM_PATCH records its code patches through JIT_CODE_DISCIPLINE"
 #endif
 #define IMMP_K      16
+/* IMMP_ESC: the sites also hold EXEC_STALE_CHECK's opcode load (mips_emit.h
+ * IMMP_ESC_OP), which only twin/lockstep builds emit.  Elsewhere every esc
+ * pointer is NULL, so the fields and their tests are compiled out: 16 KiB of
+ * immp_tab and 4 KiB of immp_pend in a release, same emitted code. */
+#if defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP)
+#define IMMP_ESC 1
+#endif
 #define IMMP_SLOTS  255
 static u8 immp_bit[0x8000 / 32], immp_bad[0x8000 / 32];
 static u8 immp_slot[0x8000 / 4];
@@ -6151,7 +6158,9 @@ typedef struct
   u32 old;                 /* the ARM word every registered site encodes  */
   u32 n;
   u8 *site[IMMP_K];        /* host address of the `lui a0`                */
+#ifdef IMMP_ESC
   u8 *esc[IMMP_K];         /* EXEC_STALE_CHECK's opcode lui (twin), or 0  */
+#endif
   u8 cl[IMMP_K];           /* 1 = shifter carry live at that site         */
 } immp_ent;
 static immp_ent immp_tab[IMMP_SLOTS + 1];
@@ -6159,13 +6168,19 @@ static u32 immp_nslots, immp_dirty;
 u32 immp_patches, immp_learned, immp_refused[8], immp_sites, immp_selftest_fail;
 static inline u32 immp_rot(u32 op);
 static inline int immp_site_ok(u8 *p, u32 v, u32 rlui);
+#ifdef IMMP_ESC
 static u32 immp_esc_pc;
+#endif
 /* 1 while translate_block_arm emits a RAM block whose extent holds a learned
  * word (set once after the scan): every per-instruction hook tests it first,
  * so blocks without one translate as before at the cost of one load. */
 static u32 immp_blk_on;
+#ifdef IMMP_ESC
 static u8 *immp_cur_esc;
 static struct { u8 *host, *esc; u32 pc, op; u8 cl; } immp_pend[MAX_BLOCK_SIZE];
+#else
+static struct { u8 *host; u32 pc, op; u8 cl; } immp_pend[MAX_BLOCK_SIZE];
+#endif
 static u32 immp_npend;
 #define IMMP_W(pc)       (((pc) & 0x7FFF) >> 2)
 #define IMMP_GET(m, w)   ((m)[(w) >> 3] & (1u << ((w) & 7)))
@@ -6205,13 +6220,17 @@ static void immp_note(u8 *host, u32 pc, u32 op, u32 cl)
 {
   if (immp_npend < MAX_BLOCK_SIZE) {
     immp_pend[immp_npend].host = host;
+#ifdef IMMP_ESC
     immp_pend[immp_npend].esc = immp_esc_pc == pc ? immp_cur_esc : NULL;
+#endif
     immp_pend[immp_npend].pc = pc;
     immp_pend[immp_npend].op = op;
     immp_pend[immp_npend].cl = (u8)cl;
     immp_npend++;
   }
+#ifdef IMMP_ESC
   immp_cur_esc = NULL;
+#endif
 }
 /* after the scan: does [start, end) of a RAM block hold a learned word? */
 static void immp_blk_begin(int ram_region, u32 start, u32 end)
@@ -6309,7 +6328,9 @@ static void immp_commit(u32 start, u32 end)
       immp_selftest_fail++;
 #endif
     e->site[e->n] = immp_pend[k].host;
+#ifdef IMMP_ESC
     e->esc[e->n] = immp_pend[k].esc;
+#endif
     e->cl[e->n] = immp_pend[k].cl;
     e->n++;
     immp_sites++;
@@ -6389,7 +6410,9 @@ static int immp_try(u32 word)
   u32 w, nw, ow, k, vo, vn;
   immp_ent *e;
   const u32 lui_a0 = (0x0Fu << 26) | ((u32)reg_a0 << 16);
+#ifdef IMMP_ESC
   const u32 lui_a2 = (0x0Fu << 26) | ((u32)reg_a2 << 16);
+#endif
   if ((word >> 24) != 3)
     return 0;
   w = IMMP_W(word);
@@ -6412,8 +6435,11 @@ static int immp_try(u32 word)
       immp_refused[3]++;
       return 0;                     /* the rotation's carry would change */
     }
-    if (!immp_site_ok(e->site[k], vo, lui_a0) ||
-        (e->esc[k] && !immp_site_ok(e->esc[k], ow, lui_a2))) {
+    if (!immp_site_ok(e->site[k], vo, lui_a0)
+#ifdef IMMP_ESC
+        || (e->esc[k] && !immp_site_ok(e->esc[k], ow, lui_a2))
+#endif
+        ) {
       immp_refused[4]++;
       return 0;
     }
@@ -6430,8 +6456,10 @@ static int immp_try(u32 word)
 #else
     immp_site_put(e->site[k], vn);
 #endif
+#ifdef IMMP_ESC
     if (e->esc[k])
       immp_site_put(e->esc[k], nw);
+#endif
   }
   e->old = nw;
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
