@@ -3085,6 +3085,8 @@ static unsigned g_dfr_late __attribute__((section(".sbss")));  /* ...whose rende
 static int      g_lf_hold __attribute__((section(".sbss")));  /* this wait's early flip is held */
 static unsigned g_lf_n __attribute__((section(".sbss")));     /* waits that held it */
 static unsigned g_lf_caught __attribute__((section(".sbss"))); /* ...and caught up in a nudge's 2nd interval */
+static int      g_lf_behind __attribute__((section(".sbss")));  /* the picture runs a vblank late */
+static unsigned g_lf_pull __attribute__((section(".sbss")));    /* nudges taken early to catch up */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
 static unsigned g_ll_margin_us = 250;     /* `me_lowlat_margin_us` */
@@ -12975,8 +12977,8 @@ static void lat_census(void)
    if (g_dfr_n)
       fe_evt("late_present n=%u late=%u", g_dfr_n, g_dfr_late);
    if (g_lf_n)
-      fe_evt("late_flip held=%u caught=%u", g_lf_n, g_lf_caught);
-   g_dfr_n = g_dfr_late = g_lf_n = g_lf_caught = 0;
+      fe_evt("late_flip held=%u caught=%u pull=%u", g_lf_n, g_lf_caught, g_lf_pull);
+   g_dfr_n = g_dfr_late = g_lf_n = g_lf_caught = g_lf_pull = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -13298,7 +13300,11 @@ static void lf_hold_begin(void)
    g_lf_hold = 0;
    if (!g_dfr_cfg || !g_dfr_slow || !g_flip_early || g_ff_mult || g_ff_uncapped || g_ff_gate ||
        g_ll_iter_h || mer_sameframe_active() || !ffh_too_soon(1))
+   {
+      g_lf_behind = 0;
       return;
+   }
+   g_lf_behind  = 1;
    g_flip_early = 0;
    g_lw_slot    = 0;             /* no tier-1 entry in this wait either */
    g_lf_hold    = 1;
@@ -13313,8 +13319,27 @@ static void lf_hold_vblank(int saved)
       g_lf_hold    = 0;
       g_flip_early = saved;
       if ((int)(g_vc_target - sceDisplayGetVcount()) > 0)
+      {
          g_lf_caught++;          /* a vblank left: flipped early in it */
+         g_lf_behind = 0;
+      }
    }
+}
+
+/* CATCH UP SOON.  Running a vblank late (the last wait held and did not
+ * catch up), take the audio-ring nudge now instead of in up to ~5 s.  Its
+ * two-vblank wait is where the hold catches up: the held frame latches on
+ * the first vblank, this one on the second, so the screen shows no repeat at
+ * all -- the late frame's own repeat stands in for the clock-mismatch repeat
+ * the nudge exists to make.  A nudge taken early moves, it is not added: the
+ * next one comes a frame of ring later, so their long-run rate stays set by
+ * 59.94 vs 59.73 Hz.  The ring sits up to a frame lower until then; it is
+ * only taken while that leaves half the high-water mark (~3.7 frames of
+ * audio) in the ring, so a run of late frames cannot starve the audio. */
+static int lf_want_slot(unsigned level)
+{
+   return g_lf_behind && g_dfr_cfg && !link_session_any() &&
+          level > RING_HIGH_WATER / 2u + in_rate / 60u;
 }
 
 int main(int argc, char *argv[])
@@ -17228,6 +17253,14 @@ session_top:
             g_fh_nudge++;
             g_ar_nudge++;
             g_ll_pull++;
+         }
+         else if (want == 1u && !g_ff_mult && !g_ff_uncapped && !g_gbl_audio_on &&
+                  lf_want_slot(ring_w - ring_r))
+         {
+            want++;               /* CATCH UP SOON: the same nudge, early */
+            g_fh_nudge++;
+            g_ar_nudge++;
+            g_lf_pull++;
          }
          audio_ring_note();
          FE_LP_SET(FELP_L_OSD);
