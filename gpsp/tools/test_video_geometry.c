@@ -474,10 +474,13 @@ int main(void)
             }
             /* The bottom texel row carries the row line: darker, more
              * opaque than the tint (the row profile is soft at 1.89x). */
+            /* The line is the bottom half [0.5, 1) of the game pixel,
+             * box-filtered: darkest at its centre (texel 12), lightest
+             * opposite it (texel 4). */
             for (y = 0; y < GRID_N; y++)
-               assert((t[y * GRID_N] >> 24) >= (t[(GRID_N / 2) * GRID_N] >> 24));
-            assert((t[(GRID_N - 1) * GRID_N] >> 24) >
-                   (t[(GRID_N / 2) * GRID_N] >> 24));
+               assert((t[12 * GRID_N] >> 24) >= (t[y * GRID_N] >> 24) &&
+                      (t[4 * GRID_N] >> 24) <= (t[y * GRID_N] >> 24));
+            assert((t[12 * GRID_N] >> 24) > (t[4 * GRID_N] >> 24));
          }
    }
    puts("PASS RGB stripes: GB/GBC Stretch only, one stripe per screen "
