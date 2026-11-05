@@ -439,16 +439,15 @@ int main(void)
          check(r2.entries == 0, s->name, "mode 2 engaged with no room");
       /* C1 */
       check(r1.skipped <= r0.skipped, s->name, "tier 1 skipped a frame tier 0 showed");
-      /* C1 at full speed (LATE PRESENT): tier 0 never skips a frame, and
-       * repeats only on the audio nudge (+ the start-up vblank or two); after
-       * the first 300 frames.  Heavy spikes are out: a frame late past its
-       * vblank flips after it and the next early flip replaces it (tier 0a) */
-      if (!s->heavy_pct && s->work_us + s->work_jit < 16000u)
-      {
+      /* C1 at full speed (LATE PRESENT + LATE FLIP HOLD): after the first
+       * 300 frames tier 0 never skips a frame, heavy spikes included (a
+       * frame late past its vblank is shown a vblank late, never replaced),
+       * and without spikes it repeats only on the audio nudges */
+      if (s->work_us + s->work_jit < 16000u)
          check(r0.skip300 == 0, s->name, "tier 0 skipped a frame at full speed");
+      if (!s->heavy_pct && s->work_us + s->work_jit < 16000u)
          check(r0.repeats <= r0.nudges + 3u, s->name,
                "tier 0 repeats beyond the nudge at full speed");
-      }
       /* C2 */
       for (f = 0; f < frames; f++)
          if (r0.poll_vb[f] != r1.poll_vb[f])

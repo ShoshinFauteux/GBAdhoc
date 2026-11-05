@@ -3082,6 +3082,9 @@ static int      g_dfr_cfg __attribute__((section(".sdata"))) = PLAY_ME_LATE_PRES
 static int      g_dfr __attribute__((section(".sbss")));      /* this loop's present waits for its render */
 static unsigned g_dfr_n __attribute__((section(".sbss")));    /* loop tops that deferred */
 static unsigned g_dfr_late __attribute__((section(".sbss")));  /* ...whose render was still not there */
+static int      g_lf_hold __attribute__((section(".sbss")));  /* this wait's early flip is held */
+static unsigned g_lf_n __attribute__((section(".sbss")));     /* waits that held it */
+static unsigned g_lf_caught __attribute__((section(".sbss"))); /* ...and caught up in a nudge's 2nd interval */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
 static unsigned g_ll_margin_us = 250;     /* `me_lowlat_margin_us` */
@@ -12971,7 +12974,9 @@ static void lat_census(void)
    g_ffh_holds = g_ffh_vb = g_ffh_waits = g_ffc_waits = 0;
    if (g_dfr_n)
       fe_evt("late_present n=%u late=%u", g_dfr_n, g_dfr_late);
-   g_dfr_n = g_dfr_late = 0;
+   if (g_lf_n)
+      fe_evt("late_flip held=%u caught=%u", g_lf_n, g_lf_caught);
+   g_dfr_n = g_dfr_late = g_lf_n = g_lf_caught = 0;
    g_lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
       g_lat_hist[i] = 0;
@@ -13260,6 +13265,41 @@ static void dfr_present(void)
 #endif
    if (g_drew)
       osd_draw();
+}
+
+/* LATE FLIP HOLD (tier 0a at 1x, with the late present).  A frame that
+ * overran its vblank is flipped after it (the post-wait swap) and latches on
+ * the NEXT vblank.  The next loop's early flip, submitted before that same
+ * vblank, used to replace it: the late frame was never shown, a repeat and a
+ * skip.  Now a wait that finds the last flip still unlatched holds its early
+ * flip, so every frame is shown, one vblank later than on time (the 4.1.0
+ * cadence) -- until a nudge: in a two-vblank wait the hold ends at the first
+ * vblank, and the early flip in the second interval brings the picture back
+ * to the low-latency timing, consuming the repeat the nudge would show.  The
+ * same rule FF flip pacing bit 0 uses at 3x (ffh_too_soon).  Off in tier 1
+ * (its flips have their own deadline) and under any FF. */
+static void lf_hold_begin(void)
+{
+   g_lf_hold = 0;
+   if (!g_dfr_cfg || !g_flip_early || g_ff_mult || g_ff_uncapped || g_ff_gate ||
+       g_ll_iter_h || mer_sameframe_active() || !ffh_too_soon(1))
+      return;
+   g_flip_early = 0;
+   g_lw_slot    = 0;             /* no tier-1 entry in this wait either */
+   g_lf_hold    = 1;
+   g_lf_n++;
+}
+
+/* After each vblank of the wait: the held flip has latched. */
+static void lf_hold_vblank(int saved)
+{
+   if (g_lf_hold && !ffh_too_soon(1))
+   {
+      g_lf_hold    = 0;
+      g_flip_early = saved;
+      if ((int)(g_vc_target - sceDisplayGetVcount()) > 0)
+         g_lf_caught++;          /* a vblank left: flipped early in it */
+   }
 }
 
 int main(int argc, char *argv[])
@@ -17235,6 +17275,7 @@ session_top:
          }
          lat_wait_begin(want);
          dfr_present();           /* LATE PRESENT: before any retire/flip */
+         lf_hold_begin();         /* LATE FLIP HOLD: never replace an unlatched flip */
          while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
          {
             if (g_net_up)
@@ -17263,6 +17304,7 @@ session_top:
              * of those waits on the GE or the ME, poll in short sleeps --
              * still a wait, other threads still run -- instead of
              * sleeping through the moment the work became possible. */
+            lf_hold_vblank(ffh_fe);   /* LATE FLIP HOLD: latched -> flip early again */
             if (lat_wait_step())
                sceKernelDelayThread(LAT_POLL_US);
             else

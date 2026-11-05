@@ -109,6 +109,10 @@ MUTANTS = (
     ("no late present",
      "   g_dfr = 1;\n   g_dfr_n++;\n   return 1;",
      "   return 0;"),
+    # tier 0a replacing a late (post-vblank) flip with the next early one
+    ("no late flip hold",
+     "   g_flip_early = 0;\n   g_lw_slot    = 0;",
+     "   return;\n   g_lw_slot    = 0;"),
     # an early nudge with the ring nowhere near the high-water mark
     ("pull anytime",
      "level + in_rate / 60u > RING_HIGH_WATER",
