@@ -93,8 +93,8 @@ static int prx_load(void)
    {
       unsigned e = (unsigned)O.mod;
       snprintf(O.why, sizeof(O.why), "%s",
-               e == 0x80010002u || e == 0x8002012Fu ? "gbadhoc_online.prx is missing"
-                                                    : "no memory for the online module");
+               e == 0x80010002u || e == 0x8002012Fu ? "online module missing"
+                                                    : "online module: no memory");
       fe_evt("online_prx at=load_failed rc=0x%08X", e);
       O.mod = -1;
       return -1;
@@ -107,7 +107,7 @@ static int prx_load(void)
    if (rc < 0 || st < 0 || O.api.magic != OL_MAGIC_API ||
        O.api.version != OL_VERSION || O.api.size != sizeof(online_api))
    {
-      snprintf(O.why, sizeof(O.why), "%s", "gbadhoc_online.prx is another version");
+      snprintf(O.why, sizeof(O.why), "%s", "online module: wrong version");
       fe_evt("online_prx at=start_failed rc=0x%08X st=%d api=%08X/%u", (unsigned)rc, st,
              (unsigned)O.api.magic, (unsigned)O.api.version);
       if (rc >= 0 && st >= 0)
