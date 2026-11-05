@@ -374,7 +374,59 @@ static void ol_stats_evt(const char *at)
        (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad);
 }
 
+/* Stack paint for module_start / module_stop: both run on a thread the EBOOT
+ * sizes (online_psp.c sm_opt, 16 KiB), so log the peak they really touch.
+ * Paints from the thread's stack base to just below the caller's frame, then
+ * scans for the deepest overwritten word.  ~16 KiB of stores per load. */
+#define STK_PAINT 0x5354414Bu
+static unsigned *g_stk_lo;
+static unsigned g_stk_top;
+
+static void __attribute__((noinline)) stk_paint(void)
+{
+   SceKernelThreadInfo ti;
+   unsigned sp, *p;
+   g_stk_lo = 0;
+   memset(&ti, 0, sizeof(ti));
+   ti.size = sizeof(ti);
+   if (sceKernelReferThreadStatus(sceKernelGetThreadId(), &ti) < 0 || !ti.stack || ti.stackSize <= 0)
+      return;
+   __asm__ volatile("move %0, $sp" : "=r"(sp));
+   g_stk_lo = (unsigned *)ti.stack;
+   g_stk_top = (unsigned)ti.stack + (unsigned)ti.stackSize;
+   if (sp < (unsigned)g_stk_lo + 512 || sp > g_stk_top)
+   {
+      g_stk_lo = 0;
+      return;
+   }
+   for (p = g_stk_lo; (unsigned)p < sp - 256; p++)
+      *p = STK_PAINT;
+}
+
+static void __attribute__((noinline)) stk_report(const char *at)
+{
+   unsigned *p = g_stk_lo;
+   if (!p || !g_ol_host)
+      return;
+   while ((unsigned)p < g_stk_top && *p == STK_PAINT)
+      p++;
+   evt("online_prx_stack at=%s used=%u size=%u", at, g_stk_top - (unsigned)p,
+       g_stk_top - (unsigned)g_stk_lo);
+}
+
+static int module_start_body(SceSize args, void *argp);
+
 int module_start(SceSize args, void *argp)
+{
+   int rc;
+   stk_paint();
+   rc = module_start_body(args, argp);
+   if (rc == 0)
+      stk_report("start");
+   return rc;
+}
+
+static int module_start_body(SceSize args, void *argp)
 {
    online_link *l;
    if (args < sizeof(void *) || !argp)
@@ -405,6 +457,8 @@ int module_stop(SceSize args, void *argp)
 {
    (void)args;
    (void)argp;
+   stk_paint();
    ol_down();               /* never leave Wi-Fi or a socket behind */
+   stk_report("stop");
    return 0;
 }
