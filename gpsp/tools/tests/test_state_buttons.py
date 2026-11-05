@@ -281,6 +281,11 @@ static char toast[64];
 static int browser_rom_state_path(const char *d, int r, unsigned s, char *o,
                                   size_t n)
 { (void)d; (void)r; snprintf(o, n, "slot%u", s); return 0; }
+/* claude/folders: the shelf's delete names the slot's base path (the states/
+ * mirror or the legacy one) and state_delete adds the slot suffixes. */
+static int browser_rom_state_base(const char *d, int r, unsigned s, char *o,
+                                  size_t n)
+{ (void)d; (void)r; snprintf(o, n, "slot%u", s); return 0; }
 static int state_delete(const char *p, unsigned s)
 { (void)p; deletes++; deleted_slot = (int)s;
   g_browser_state_exists[s - 1] = 0; return 0; }
