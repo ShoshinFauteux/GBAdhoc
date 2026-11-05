@@ -27,7 +27,6 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        mgift_net.o \
        mgift_cart.o \
        mgift_payload.o \
-       font_8x16.o \
        stb_impl.o \
        netdrv_core.o \
        transport_adhoc.o \

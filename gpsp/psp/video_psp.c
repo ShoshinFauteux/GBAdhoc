@@ -232,10 +232,6 @@ static unsigned g_gu_us_tot,    g_gu_us_max;
 /* ADR-0038: the sceGuSync alone, carved out of `gu`.  See video_psp.h. */
 static unsigned g_wait_us_tot,  g_wait_us_max;
 
-/* Font atlas: 16x16 grid of 8x16 glyphs, GU_PSM_5551 (PSP order: A bit 15),
- * white-on-transparent so text tints via TFX_MODULATE vertex color. */
-static uint16_t __attribute__((aligned(64))) font_tex[128 * 256];
-
 static void stage_convert_rgb565(const uint16_t *src, unsigned w, unsigned h,
                                  size_t pitch_bytes)
 {
@@ -476,29 +472,10 @@ static unsigned int rgb565_to_abgr(uint16_t c, int alpha)
    return ((unsigned)alpha << 24) | (b << 16) | (g << 8) | r;
 }
 
-static void font_atlas_build(void)
-{
-   int c, row, bit;
-   for (c = 0; c < 256; c++)
-   {
-      int cx = (c & 15) * FE_FONT_W;
-      int cy = (c >> 4) * FE_FONT_H;
-      for (row = 0; row < FE_FONT_H; row++)
-      {
-         unsigned char bits = fe_font8x16[c * FE_FONT_H + row];
-         uint16_t *d = &font_tex[(cy + row) * 128 + cx];
-         for (bit = 0; bit < 8; bit++)
-            d[bit] = (bits & (0x80 >> bit)) ? 0xFFFF : 0x0000;
-      }
-   }
-   sceKernelDcacheWritebackRange(font_tex, sizeof(font_tex));
-}
-
 void vid_init(void)
 {
    /* Staging has a home before the game asks for a mode. */
    vid_set_blit_mode(VID_BLIT_VRAM);
-   font_atlas_build();
 
    sceGuInit();
    sceGuStart(GU_DIRECT, gu_next_list());
