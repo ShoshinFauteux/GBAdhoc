@@ -2926,6 +2926,9 @@ static unsigned g_mer_sh_us, g_mer_sh_max;
  * the wait yields no sample, so `n` being small is itself informative --
  * it means the render is longer than the frame's slack. */
 static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+static unsigned g_fxs_rn, g_fxs_ru;    /* the cost sweep's own ME sums */
+#endif
 /* WHEN IS THE CAPTURE ACTUALLY READY?
  *
  * The plan to present a frame in its OWN frame hinges on handing the ME its
@@ -6640,6 +6643,79 @@ void osd_session_chip_refresh(void)
 /* The fast-forward and session-pacing engine moved to psp/ff_psp.c.
  * 1052 lines and 23 state variables; see ff_psp.h for the interface and
  * for the six host symbols it still reads. */
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+/* FILTERS V2 COST SWEEP (rig builds with -DFX_SWEEP only): one run walks the
+ * display arms below, FXS_WIN frames each, and prints per arm what the frame
+ * cost -- the blit's CPU stage copy, its GE list build, the CPU's stall on
+ * the GE, the Media Engine's render time and the core's own time, per frame
+ * -- so every filter is priced in ONE run on one console, against arm 0
+ * (and arm 0 again last, for drift).  The core state never sees the arms. */
+static const struct { signed char sc, sm, fx, col; const char *nm; }
+g_fxs_gba[] = {
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit" },
+   { VID_SCALE_FIT, 2, VID_FX_NONE, 0, "fit_sharp" },
+   { VID_SCALE_FIT, 0, VID_FX_LCD, 0, "fit_lcd" },
+   { VID_SCALE_FIT, 2, VID_FX_VINTAGE, 0, "fit_sharp_vintage" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 1, "fit_gbacolor" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 2, "fit_bw" },
+   { VID_SCALE_STRETCH, 0, VID_FX_NONE, 0, "stretch" },
+   { VID_SCALE_STRETCH, 2, VID_FX_DOT, 1, "stretch_sharp_dot_gbacolor" },
+   { VID_SCALE_INT2, 0, VID_FX_NONE, 0, "2x" },
+   { VID_SCALE_INT2, 0, VID_FX_SCAN, 2, "2x_scan_bw" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit_again" },
+}, g_fxs_gb[] = {
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit" },
+   { VID_SCALE_FIT, 2, VID_FX_LCD, 0, "fit_sharp_lcd" },
+   { VID_SCALE_STRETCH, 0, VID_FX_NONE, 0, "stretch" },
+   { VID_SCALE_STRETCH, 0, VID_FX_RGB, 0, "stretch_rgb" },
+   { VID_SCALE_STRETCH, 2, VID_FX_RGB_VIVID, 0, "stretch_sharp_rgbstrong" },
+   { VID_SCALE_INT2, 0, VID_FX_NONE, 0, "2x" },
+   { VID_SCALE_INT2, 0, VID_FX_VINTAGE, 0, "2x_vintage" },
+   { VID_SCALE_FIT, 0, VID_FX_NONE, 0, "fit_again" },
+};
+static int g_fxs_arm = -1;
+#define FXS_WIN 300u   /* frames per arm */
+static void fx_sweep_step(unsigned frames)
+{
+   static unsigned rn0, rus0, cc0, t0;
+   static uint32_t ct0;
+   unsigned n, st, stm, gu, gum, wt, wtm, cc, now;
+   uint32_t ct, cm;
+   int gb = pcfg_display_console() != FE_CONSOLE_GBA;
+   int narm = gb ? (int)(sizeof(g_fxs_gb) / sizeof(g_fxs_gb[0]))
+                 : (int)(sizeof(g_fxs_gba) / sizeof(g_fxs_gba[0]));
+   if (!frames || (frames % FXS_WIN) != 0)
+      return;
+   now = (unsigned)sceKernelGetSystemTimeLow();
+   vid_blit_prof(&n, &st, &stm, &gu, &gum, &wt, &wtm);
+   fe_host_core_prof(&cc, &ct, &cm);
+   if (g_fxs_arm >= 0 && g_fxs_arm < narm && n)
+   {
+      unsigned rn = g_fxs_rn - rn0, ru = g_fxs_ru - rus0;
+      fe_evt("fxcost console=%s arm=%d name=%s n=%u stage=%u gu=%u wait=%u "
+             "me_rend=%u me_n=%u core=%u wall=%u",
+             pcfg_console_tag(pcfg_display_console()), g_fxs_arm,
+             gb ? g_fxs_gb[g_fxs_arm].nm : g_fxs_gba[g_fxs_arm].nm, n,
+             st / n, gu / n, wt / n, rn ? ru / rn : 0u, rn,
+             cc - cc0 ? (unsigned)(ct - ct0) / (cc - cc0) : 0u,
+             (now - t0) / FXS_WIN);
+   }
+   if (++g_fxs_arm < narm)
+   {
+      g_h_scale  = gb ? g_fxs_gb[g_fxs_arm].sc : g_fxs_gba[g_fxs_arm].sc;
+      g_h_smooth = gb ? g_fxs_gb[g_fxs_arm].sm : g_fxs_gba[g_fxs_arm].sm;
+      g_h_effect = gb ? g_fxs_gb[g_fxs_arm].fx : g_fxs_gba[g_fxs_arm].fx;
+      g_h_color  = gb ? 0 : g_fxs_gba[g_fxs_arm].col;
+      psp_display_apply("sweep");
+   }
+   /* The window that follows is the arm's: counters from here. */
+   vid_blit_prof(&n, &st, &stm, &gu, &gum, &wt, &wtm);
+   rn0 = g_fxs_rn;  rus0 = g_fxs_ru;
+   fe_host_core_prof(&cc0, &ct0, &cm);
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+}
+#endif
+
 static void blit_prof_evt(unsigned frames)
 {
    static unsigned last;
@@ -17182,6 +17258,9 @@ session_top:
       if (g_yield_us && g_yield_every &&
           (frames % (unsigned)g_yield_every) == 0)
          sceKernelDelayThread((SceUInt)g_yield_us);
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+      fx_sweep_step(frames);
+#endif
       blit_prof_evt(frames);
       rig_romload_evt(frames);
       rig_watch_evt(frames);
@@ -17389,6 +17468,9 @@ session_top:
                g_mer_rend_seen = 1;
                g_mer_rend_n++;
                g_mer_rend_us += d;
+#if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
+               g_fxs_rn++;  g_fxs_ru += d;
+#endif
                if (d > g_mer_rend_max)
                   g_mer_rend_max = d;
             }
