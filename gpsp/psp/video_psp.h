@@ -263,6 +263,11 @@ void vid_seen_report(void);           /* EVT route_screen, last non-empty view *
 #define VID_GLYPH_SQ     "\x82"
 #define VID_GLYPH_STAR   "\x83"
 #define VID_GLYPH_STAR_O "\x84"
+/* The d-pad, as arrows (issue #31): VID_GLYPH_UP VID_GLYPH_DOWN " move". */
+#define VID_GLYPH_LEFT   "\x85"
+#define VID_GLYPH_RIGHT  "\x86"
+#define VID_GLYPH_UP     "\x87"
+#define VID_GLYPH_DOWN   "\x88"
 /* Larger semibold face, for screen titles. */
 void vid_text_hd(int x, int y, const char *str, uint16_t rgb565);
 /* Text is PROPORTIONAL: ask for the width, never strlen * FE_FONT_W. */

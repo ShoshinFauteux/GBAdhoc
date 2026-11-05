@@ -303,7 +303,8 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
 
 - **They go to `PICTURE/GBAdhoc` by default,** so you can open them from the XMB's Photo
   column. To keep them beside the app instead, set ***Settings → Screenshots → Screenshot
-  folder*** to *GBAdhoc folder (log)*. On a Go running GBAdhoc from internal storage, they
+  folder*** to *GBAdhoc/Screenshots* (<kbd>NEW</kbd> its own `Screenshots` folder in the app
+  folder; it was `log/` until 4.6.0-beta.3). On a Go running GBAdhoc from internal storage, they
   save to internal storage.
 - **They are PNGs by default,** usually a few KB each. ***Screenshot format*** switches
   back to BMP, about 115 KB each.
@@ -707,11 +708,15 @@ favourites, the state shelf) are unchanged and still apply.
 
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
-  in the browser (LEFT), delete (△ in game, □ on the shelf).
-- <kbd>NEW</kbd> Loading a state over the game you are playing asks first: ✕ loads, any
-  other button keeps playing.
+  in the browser (LEFT). <kbd>NEW</kbd> The game list's `◀ states` / `▶ cheats` hints light
+  up when the highlighted game has states or a cheats file, a long name scrolls on the
+  selected row, and a thin bar beside the list shows where you are in it.
+- <kbd>NEW</kbd> On the in-game *Save States* page ✕ saves, □ loads and △ deletes; on the
+  game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
+  deleting each ask first: ✕ answers, any other button keeps what you have.
 - Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
-  you turn *Settings → Quick load asks first* off).
+  you turn *Settings → Quick load asks first* off; <kbd>NEW</kbd> the save can ask before
+  overwriting with *Settings → Quick save asks first*).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
   periodically as you play, with a `.sav.bak` kept. Sleeping never touches the save.
 
@@ -772,15 +777,20 @@ confirm and ○ to go back.
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
+| | <kbd>NEW</kbd> Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
 | | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question, or loads slot 1 at once |
+| | <kbd>NEW</kbd> Quick save asks first | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
 | Screenshots | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
-| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc folder (log)* |
+| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc/Screenshots* |
 | Controls | Thumbstick | off, moves (a second d-pad) or custom |
 | | Button mapping | every button and shortcut; the menu button |
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
+
+<kbd>NEW</kbd> Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
+4.6.0-beta.4 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
 
 The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the
@@ -807,7 +817,8 @@ the Game Boy link's input delay. The screenshot settings are `screenshot_format`
 - **Cheats**: `cheats/<game>.cht`, which you write, and `cheats/<game>.on`, where the
   menu remembers what is switched on.
 - <kbd>NEW</kbd> **Screenshots**: `PICTURE/GBAdhoc/` at the root of the Memory Stick (or of
-  a Go's internal storage), or `log/` if you choose *GBAdhoc folder (log)*.
+  a Go's internal storage), or `Screenshots/` in the app folder if you choose
+  *GBAdhoc/Screenshots*.
 - **Settings**: `config.ini` in the app folder.
 
 </details>

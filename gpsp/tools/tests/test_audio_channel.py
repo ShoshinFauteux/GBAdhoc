@@ -54,6 +54,8 @@ typedef int SceUID;
 #define PSP_AUDIO_NEXT_CHANNEL (-1)
 #define PSP_AUDIO_FORMAT_STEREO 0
 #define PSP_AUDIO_VOLUME_MAX 0x8000
+/* Settings > Volume's precomputed channel volume (main_psp.c, issue #31) */
+static volatile int g_audio_hw_vol = PSP_AUDIO_VOLUME_MAX;
 #define THREAD_ATTR_USER 0x80000000
 #define WAIT_TIMEOUT (-0x7FFDFE58)
 static int16_t audio_ring[RING_FRAMES * 2];

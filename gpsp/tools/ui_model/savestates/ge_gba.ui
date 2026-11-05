@@ -8,7 +8,7 @@
 +2 press CROSS
 +4 press DOWN
 +12 dump filled
-+2 press SQUARE
++2 press CROSS
 +4 dump overwrite
 +2 press CIRCLE
 +4 press TRIANGLE
@@ -21,7 +21,7 @@
 +12 dump empty
 +2 press DOWN
 +12 dump old
-+2 press CROSS
++2 press SQUARE
 +4 dump load-ask
 +2 press CIRCLE
 +4 exit 0

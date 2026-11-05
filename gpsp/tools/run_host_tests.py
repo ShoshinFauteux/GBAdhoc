@@ -683,6 +683,20 @@ def suites(env: Env, baseline: Path | None):
           # page's real screen_state_slots, main_psp.c's real quick-load
           # dispatch and config_psp.c's key, each with mutants.
           "python3 tools/tests/test_state_load_ask.py && "
+          # The save-state buttons (issue #31): the page's X save / SQUARE
+          # load / TRIANGLE delete and the shelf's X load / TRIANGLE delete,
+          # the real page and shelf block, with mutants.
+          "python3 tools/tests/test_state_buttons.py && "
+          # The quick save's optional overwrite question (quick_save_ask,
+          # off by default): page, call site and config key, with mutants.
+          "python3 tools/tests/test_quick_save_ask.py && "
+          # Settings' build line from VERSION.txt (issue #31), with mutants.
+          "python3 tools/tests/test_build_line.py && "
+          # Settings > Volume (issue #31): the key, the channel volume, the
+          # audio thread's one output call, with mutants.
+          "python3 tools/tests/test_volume.py && "
+          # The game list's marks, marquee and position bar (issue #31).
+          "python3 tools/tests/test_list_marks.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

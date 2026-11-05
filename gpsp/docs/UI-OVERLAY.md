@@ -1037,11 +1037,14 @@ right, the slot and its time under it.
 
 | key | on a saved slot | on an empty slot |
 |---|---|---|
-| X | load, and the menu closes (since section 14.2: the plate asks "Load Slot n?" first) | the plate says "Slot n is empty" |
-| SQUARE | the plate asks "Overwrite Slot n?"; X overwrites | save; the page stays, the plate says "Slot n saved" |
+| X | the plate asks "Overwrite Slot n?"; X overwrites | save; the page stays, the plate says "Slot n saved" |
+| SQUARE | load, and the menu closes (since section 14.2: the plate asks "Load Slot n?" first) | the plate says "Slot n is empty" |
 | TRIANGLE | the plate asks "Delete Slot n?"; X deletes | nothing |
 | UP / DOWN | move (wraps) | move |
 | O | back to the menu | back to the menu |
+
+(The table is 4.6.0-beta.4's, section 15.1. Until 4.6.0-beta.3 X loaded and
+SQUARE saved.)
 
 While a question is up, X answers it and any other key keeps the slot, and
 no other key acts that frame, so an X meant for "overwrite" can never load.
@@ -1168,7 +1171,7 @@ load's SELECT+R where SELECT+L (the quick save) was meant.
 
 | path | loads into | now |
 |---|---|---|
-| SAVE STATES page, X on a saved slot | the running game | asks (14.2), always |
+| SAVE STATES page, SQUARE on a saved slot (X until 4.6.0-beta.3, section 15.1) | the running game | asks (14.2), always |
 | Quick load, `bind_quickload` (SELECT+R by default, any binding) | the running game | asks (14.3); Settings > "Quick load asks first" off: loads at once, as before |
 | Browser state shelf (LEFT on a game), X on a slot | a game not yet running: it boots, then loads the slot (`autoload_state_slot`, ~30 frames in) | unchanged: nothing is running to lose, and the shelf's X is "play from here" |
 | Harness `load_state = 1` (perf rig) | the booted game | unchanged, harness only |
@@ -1283,3 +1286,188 @@ which the quick load would have read anyway.
   same with the quick save and load swapped in Button mapping.
 * Settings > Quick load asks first, both values, in game and from the game
   list, and `quick_load_ask` in `config.ini` after each.
+
+## 15. MXPHunter's requests (GitHub issue #31, `claude/mxp-ui`, 4.6.0-beta.4)
+
+Base: `claude/460-beta4` at 07c851b (filters v2, the Video-preset fix) with
+PR #32 (section 14) merged ahead of it. One commit per request, so each can
+be taken or left on its own. The Triangle/Video-preset bug (b25ec31) and the
+separate save/state folders (`claude/folders`) are other branches.
+
+### 15.1 The save-state buttons
+
+| where | X | SQUARE | TRIANGLE | O |
+|---|---|---|---|---|
+| in game, SAVE STATES page (4.6.0-beta.3) | load (asks) | save (asks over a saved slot) | delete (asks) | back |
+| in game, SAVE STATES page (now) | **save** (asks over a saved slot) | **load** (asks) | delete (asks) | back |
+| game list, state shelf (4.6.0-beta.3) | load: boot the game from the slot | delete (asks) | -- | close |
+| game list, state shelf (now) | load: boot the game from the slot | -- | **delete** (asks) | close |
+
+X is the button a player presses most, so it does the thing done most; the
+load, which throws the running game away, moved to SQUARE, and still asks
+(14.2) -- so a stray SQUARE costs nothing either. Every question is
+unchanged: X answers it, every other key keeps, and no other key acts that
+frame. The quick load's question (14.3) is the page's load question and is
+answered the same way. On the shelf TRIANGLE is the in-game delete's
+button; the console switch's TRIANGLE already stands down while the shelf is
+open, and SQUARE (the favourite star) does too, so SQUARE is simply nothing
+there now.
+
+The footer, the empty slot's panel ("X save"), the shelf's hint line,
+`ui_demo`'s and the delete demo's presses, the savestates walkers
+(`ge_gba.ui`, `ss_rt.ui`, `ss_rt_gbx.ui`: every save is X, every load SQUARE
+then X) and `overlay_model.py` follow. The design PNGs under
+`builds/savestate-mockups/` still draw the old footer: the model, not the
+design, is the reference for the footer row from here.
+
+Host: `tools/tests/test_state_buttons.py` (the `fe_ini_bounds` suite) runs
+the real `screen_state_slots` / `ss_panel` and the browser's shelf block as
+written: X saves an empty slot and asks over a saved one, SQUARE asks to load
+and says "Slot n is empty" on an empty one, TRIANGLE asks to delete, the
+footer and panel words; on the shelf X boots the highlighted slot, TRIANGLE
+asks and X deletes, six other keys keep, SQUARE does nothing, a question's X
+never launches; 11 mutants (beta.3's page, beta.3's shelf, no question, the
+wrong slot, old words), each failing. `test_state_load_ask.py` presses
+SQUARE where it pressed X for a load.
+
+### 15.2 The quick save can ask before overwriting
+
+Settings > GAMEPLAY > **Quick save asks first**, under *Quick load asks
+first*, **off by default**, `config.ini` `quick_save_ask` (1 / 0). On, a
+quick save (`bind_quicksave`, SELECT+L unless remapped; keyed on the action,
+so any binding) over a saved slot 1 opens the menu on the SAVE STATES page
+with "Overwrite Slot 1?" up (`ui_state_save_ask`), the load question's
+rules: X saves through the page's `UI_ACT_SAVESTATE` and the menu closes
+back into the game with "State saved"; any other key is Resume, nothing
+saved; a held direction never answers. Slot 1 empty: saved at once, as
+before -- there is nothing to lose. A wireless session still refuses.
+
+Off, the quick save is exactly the branch every release had: the `&&`
+stops at the setting, so not one stat or call is added (the host test
+traces it). The key is written only once it is on or already in the file,
+so a default `config.ini` stays byte-identical; anything but a 1 reads as
+off; `pcfg_validate` repairs a corrupt value to off.
+
+The in-game page's own save over a saved slot has always asked (section 13)
+and still does; the setting is only the shortcut's, as *Quick load asks
+first* is. The row sits between *Quick load asks first* and *CPU clock*, so
+no harness walker's count moves.
+
+Host: `tools/tests/test_quick_save_ask.py` (the real page, `ui_state_save_ask`,
+`ui_state_save_done`, `main_psp.c`'s dispatch with the real `ctl_map.c` /
+`config_psp.c`, and the key's round trip); 16 mutants, each failing.
+
+### 15.3 Screenshots in their own folder
+
+Settings > SCREENSHOTS > *Screenshot folder*'s second value (`config.ini`
+`screenshot_folder = app`, `PCFG_SHOT_APP`) wrote into `log/`, among the
+diagnostic logs. It now writes `<app folder>/Screenshots/` (created on the
+first shot, `sceIoMkdir`), and the row reads *GBAdhoc/Screenshots*.
+`PICTURE/GBAdhoc` stays the default; the key and its words are unchanged,
+so no `config.ini` changes. Harness frame dumps (`dump_frame_bmp`) still go
+to `log/`: rigs read them by name there.
+
+### 15.4 The build, in Settings
+
+Line 2 under the SETTINGS title (where other pages put the game's name) now
+reads the build, read-only: **GBAdhoc 4.6.0-beta.4 (abc1234)**, in game and
+from the game list. It comes from `VERSION.txt` beside the EBOOT, which
+`tools/make_release.sh` writes into every release with the version and the
+commit (`-dirty` when it was), so the EBOOT carries no stamp of its own and
+its layout does not move from commit to commit. Read once, on the first
+Settings frame (one `sceIo` read into a stack buffer; 64 B of `.bss` for the
+line). No file -- a build copied straight from `tools/build.sh`, and every
+harness run -- reads **development build**, which is what the model draws.
+Not a row: no cursor stop, so no walker's count moves.
+
+Host: `tools/tests/test_build_line.py` parses the file `make_release.sh`'s
+own heredoc writes, CRLF, reordered and missing keys, and the read-once
+rule; 4 mutants, each failing.
+
+### 15.5 Volume
+
+Settings > GAMEPLAY > **Volume**, 0 to 100 in steps of 10 (LEFT / RIGHT;
+it stops at the ends rather than wrapping from full to silent), **100 by
+default**, `config.ini` `volume`. Under *FPS counter*, above *CPU clock*:
+no walker's count moves.
+
+**Where the gain goes: nowhere in the samples.** The mix (`amix` / `dsnd`
+in the core, the resampler in `audio_thread`) is untouched at every
+setting. The setting becomes the PSP's own channel volume, the argument
+`sceAudioOutputBlocking` already takes for every 1024-sample chunk:
+`pcfg_audio_hw_volume()` is `PSP_AUDIO_VOLUME_MAX` (0x8000) at 100 -- the
+constant every release passed, so at 100 the buffer and the call are
+bit-identical -- and 0x8000 * v / 100 below it. It is precomputed into a
+word (`psp_audio_volume_apply`, at boot before `audio_start` and when the
+row changes), so `audio_thread`, which sits in the pinned hot order
+(`psp/layout/hot.ord`), only loads that word where it had an immediate: one
+instruction per chunk (~17 ms of sound), nothing on the emulation thread,
+nothing in `aout`. A `_Static_assert` holds the 0x8000 to the SDK's
+constant. Live: the next chunk uses the new value.
+
+The key is written only once it is not 100 or already in the file (the
+`cpu_clock` rule), so a default `config.ini` stays byte-identical; anything
+outside 0..100 reads as 100; `pcfg_validate` repairs a corrupt value to 100.
+
+Host: `tools/tests/test_volume.py`: the key's round trip and default file,
+the channel volume (0x8000 at 100, 0 at 0, monotonic, never above), the
+step, and that `main_psp.c` has one output call, taking the setting, with no
+sample scaled; 8 mutants, each failing.
+
+Needs hardware: that the PSP's channel volume is heard linearly enough at
+the low steps (10-30) to be useful, on speakers and headphones.
+
+### 15.6 The d-pad as arrows in the hints
+
+Four glyphs join the button glyphs in both faces, at bytes 0x85..0x88
+(`VID_GLYPH_LEFT`, `_RIGHT`, `_UP`, `_DOWN`; `tools/bake_font.py` EXTRAS,
+synthesised like the cross: a solid triangle drawn 4x and averaged down,
+on the cap midline). The hints that spelled the d-pad out now draw it:
+
+| where | was | now |
+|---|---|---|
+| game list footer | `X play  Left: states  Right: cheats` | `✕ play  ◀ states  ▶ cheats` |
+| state shelf | `UP/DN: slot  △: delete` / `X: load  O: close` | `▲▼ slot  △ delete` / `✕ load  ○ close` |
+| state shelf, delete question | `X: delete  O: keep` | `✕ delete  ○ keep` |
+| Settings footer | `DPAD move/change  ✕ select  ○ back` | `▲▼ move  ◀▶ change  ✕ select  ○ back` |
+| Wireless footers | `DPAD change`, `DPAD change room`, `DPAD pick network` | `◀▶ change`, `◀▶ change room`, `▲▼ pick network` |
+| wake / pause overlay | `X select  O resume  DPAD change` | `✕ select  ○ resume  ◀▶ change` |
+
+That also settles MXPHunter's "x play, Left: states" (mixed glyph and
+word-with-colon styles in one row): every hint is now glyph, space, verb.
+`tools/bake_font.py` still reproduces the committed `font_ui.h` byte for
+byte from `assets/fonts` (checked before and after); the existing glyphs
+keep their atlas positions and the four new ones are packed after them.
+A file-name byte 0x85..0x88 that is not part of a UTF-8 sequence now draws
+as an arrow rather than `?`, as 0x80..0x84 already drew as buttons
+(text_fold.h). `overlay_model.py` names them `G_LEFT`..`G_DOWN`.
+
+### 15.7 The game list: marks, the long name, where you are
+
+* **Marks.** The footer's `◀ states` lights (C_VALUE, the colour of "save
+  present") when the highlighted game has a save state in any slot, and
+  `▶ cheats` when it has `cheats/<name>.cht` or `.txt` -- MXPHunter's own
+  suggestion, so no row, column or icon moves. Looked up only for the game
+  under the cursor, once it has rested (`IDLE_SELECTED`, ~170 ms, and the
+  scroll settled): up to five stats for the states and two for the cheats,
+  then nothing until the cursor moves; never while scrolling, never per
+  row. Stats only: nothing is recovered or renamed (opening the shelf still
+  does that). Looked up again after a delete on the shelf, after the cheats
+  page, and on every return to the list. No table grows: two bytes and an
+  int of `.bss`.
+* **Long names scroll** on the Shelf's selected row, on the Marquee
+  title's clock (`marquee_step`, shared): rest ~1.3 s, slide at half a pixel
+  a frame to the end, rest, again, under a 208 px scissor. Other rows keep
+  the ellipsis. The Marquee shell's own selected title already scrolled.
+* **Where you are**: a 2 px bar in the overlay scrollbar's colours beside
+  the list (Shelf x 304, Marquee x 10), its thumb at the top on the first
+  game and flush with the bottom on the last; only when the list is longer
+  than the rows on screen.
+
+Host: `tools/tests/test_list_marks.py` runs the real `browser_footer`,
+`browser_marks`, `list_position` and `marquee_step`, in the cheats build and
+without; 8 mutants, each failing.
+
+Needs eyes on hardware: the lit hint's contrast in both themes, the bar
+beside the Shelf's art and under the Marquee's hero, and that a long name's
+slide reads well at 30 px/s.

@@ -58,7 +58,7 @@ All of these act only in game. Triangle and Square have never been GBA buttons.
 |---|---|---|---|---|
 | Fast-forward | `bind_ff` | SQUARE | Hold mode reads the chord's level. Toggle mode toggles on its press. | Locked to 1x with a toast during a wireless session. |
 | Video preset (scale/filter cycle) | `bind_video` | TRIANGLE | Fires on the press. Exempt from the longer-chord rule (§3). | Menu closed. |
-| Quick save, slot 1 | `bind_quicksave` | SELECT+L | Modifier chord: SELECT held, fires on L. Longer-chord rule. | Menu closed, no autopilot script, state path set. Refused in wireless. |
+| Quick save, slot 1 | `bind_quicksave` | SELECT+L | Modifier chord: SELECT held, fires on L. Longer-chord rule. Saves at once; with Settings > "Quick save asks first" on (`quick_save_ask = 1`, off by default) a save over a saved slot 1 opens the SAVE STATES page with "Overwrite Slot 1?" (docs/UI-OVERLAY.md section 15.2). | Menu closed, no autopilot script, state path set. Refused in wireless. |
 | Quick load, slot 1 | `bind_quickload` | SELECT+R | As quick save. Never fires on the same frame as a save. Opens the SAVE STATES page with "Load Slot 1?" on the plate: X loads, any other key goes back to the game; Settings > "Quick load asks first" off (`quick_load_ask = 0`) loads at once (docs/UI-OVERLAY.md section 14.3). | As quick save. |
 | Screenshot | `bind_screenshot` | L+R+SELECT | Chord complete plus any of its buttons newly pressed, START not held (ADR-0069). | Works with the menu open, as 3.0 did. Silent while Controls is capturing. |
 | Pause screen (the wake overlay) | `bind_pause` | SELECT+TRIANGLE | Modifier chord. | Menu closed, no script. |
@@ -91,14 +91,17 @@ the raw pad.
 
 - **In-game menu, Settings, Controls, save-state slots, Wireless:** d-pad moves,
   X selects, O goes back. On the Controls page, Square means "none" and
-  Triangle means "this row's default". On the save-state slots, Square
-  deletes the highlighted state, after an X on the plate (section 11).
+  Triangle means "this row's default". On the SAVE STATES page X saves,
+  Square loads and Triangle deletes, each asking on the plate where it would
+  replace something (section 11; docs/UI-OVERLAY.md section 15.1; until
+  4.6.0-beta.3 X loaded and Square saved).
 - **Wake/pause overlay:** d-pad, X selects, O resumes.
 - **ROM browser:** d-pad moves, L/R page, X plays, O exits, Square stars,
   SELECT shows favourites, Triangle switches console, START opens settings,
   LEFT opens the state shelf, L+R+SELECT takes a gallery screenshot (one-shot).
   In the open shelf: UP/DOWN pick a slot, X loads, O (or RIGHT) closes,
-  Square deletes after an X (section 11). HOME is always the system's here.
+  Triangle deletes after an X (section 11; Square until 4.6.0-beta.3). HOME
+  is always the system's here.
 
 These stay fixed because they are how you navigate to the screen that undoes a
 mapping.
@@ -607,9 +610,10 @@ The release audit forbids the string `home_stall_frame`.
 ## 11. Save-state delete
 
 Delete a state from the browser's state shelf (LEFT on a ROM) or from the
-in-game Save state / Load state pages. **Square** asks, on the cursor's slot
-only, and only if that slot holds a state. The question is a plate in the
-Overlay style:
+in-game SAVE STATES page. **Triangle** asks, on the cursor's slot only, and
+only if that slot holds a state (4.6.0-beta.4, issue #31: the shelf deleted
+with Square until beta.3, and the in-game page has used Triangle since it
+became one page). The question is a plate in the Overlay style:
 
 - in game, it replaces the footer: "Delete Slot 2?  X delete  O keep";
 - in the shelf, it replaces the panel's two hint lines.
@@ -622,10 +626,10 @@ keeps it. An X meant for "delete" can never load or overwrite instead.
 | ![In game: the question](img/control-remap/12-delete-ask-dark.png) | ![In game: deleted, light theme](img/control-remap/13-delete-done-light.png) |
 | ![Shelf: the question](img/control-remap/14-shelf-ask-dark.png) | ![Shelf: slot 1 gone, slot 3 kept](img/control-remap/15-shelf-deleted-light.png) |
 
-- **Square was free on both screens.** The browser's Square (star) and
-  Triangle (console switch) are already gated off while the shelf is open,
-  and the in-game slot pages used only the d-pad, X and O. The footer shows
-  "Square delete" only on a slot that has something to delete.
+- **Triangle is free on both screens.** The browser's Square (star) and
+  Triangle (console switch) are already gated off while the shelf is open.
+  The footer shows "Triangle delete" only on a slot that has something to
+  delete. (The screenshots above predate the move and show Square.)
 - **Exactly two files go:** `<stem>.stN` and `<stem>.stN.thumb`. They are
   named by `psp_state_delete_paths()` (`psp/state_slots.h`) from the SLOT-1
   path alone. It refuses anything that does not already end in `.st0` after

@@ -228,7 +228,8 @@ the browser clips titles, the state on the right.
 In-game menu: `Cheats` sits between Settings and Quit to game list (rows 0-3
 keep their positions; `quit_demo_script` takes one more DOWN). Browser: RIGHT
 opens the page (LEFT is the save-state shelf); the footer's `L/R page` hint
-gave its place to `Right: cheats` because the row was full.
+gave its place to the cheats hint (`▶ cheats` since 4.6.0-beta.4, `Right: cheats`
+before) because the row was full.
 
 ## 5. Safety: a cheat file is hostile input
 

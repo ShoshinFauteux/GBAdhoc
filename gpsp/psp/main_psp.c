@@ -861,6 +861,21 @@ static void audio_ring_note(void)
    }
 }
 
+_Static_assert(PCFG_AUDIO_HW_MAX == PSP_AUDIO_VOLUME_MAX,
+               "Settings > Volume at 100 must be the channel's full volume");
+
+/* Settings > Volume as the channel volume sceAudioOutputBlocking takes
+ * (config_psp.h VOLUME).  Precomputed by psp_audio_volume_apply (at boot,
+ * before audio_start, and when the row changes) so audio_thread -- in the
+ * pinned hot order (psp/layout/hot.ord) -- only loads a word where it had
+ * an immediate: one instruction, not the clamp and the divide. */
+static volatile int g_audio_hw_vol;
+
+void psp_audio_volume_apply(void)
+{
+   g_audio_hw_vol = pcfg_audio_hw_volume(g_pcfg.volume);
+}
+
 static int audio_thread(SceSize args, void *argp)
 {
    static int16_t out[OUT_CHUNK * 2];
@@ -957,7 +972,9 @@ static int audio_thread(SceSize args, void *argp)
          frac &= 0xFFFF;
       }
       {
-         int rc = sceAudioOutputBlocking(ch, PSP_AUDIO_VOLUME_MAX, out);
+         /* Settings > Volume as the channel's own volume: no sample is
+          * scaled, and at 100 this is PSP_AUDIO_VOLUME_MAX as it was. */
+         int rc = sceAudioOutputBlocking(ch, g_audio_hw_vol, out);
          if (rc < 0)
          {
             /* A failed blocking write may return immediately.  This thread
@@ -5027,7 +5044,8 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
  *   where   Settings > Screenshot folder: <dev>:/PICTURE/GBAdhoc/ (default),
  *           the XMB Photo column's own folder -- on the device the EBOOT runs
  *           from, so a PSP Go running from internal storage writes ef0: -- or
- *           log/ beside the EBOOT, where 4.x put them.
+ *           Screenshots/ beside the EBOOT (since 4.6.0-beta.4, issue #31;
+ *           4.x up to beta.3 put the "app" choice in log/).
  *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
  *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
  *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
@@ -5051,7 +5069,8 @@ static int shot_folder(char *dir, size_t cap)
 {
    SceIoStat st;
    if (g_pcfg.shot_folder == PCFG_SHOT_APP)
-      snprintf(dir, cap, "%s", LOG_DIR);
+      /* Its own folder, not log/ among the diagnostics (issue #31). */
+      snprintf(dir, cap, "%s/Screenshots", g_dir_base);
    else
    {
       /* "ms0:/PSP/GAME/X" -> "ms0:"; no device prefix -> ms0: */
@@ -13595,6 +13614,7 @@ int main(int argc, char *argv[])
     * (docs/UI-OVERLAY.md §12.8). */
    cfg_ok = fe_ini_doc_load(&cfg_doc, CONFIG_INI) == 0;
    pcfg_load_doc(CONFIG_INI, cfg_ok ? &cfg_doc : NULL);
+   psp_audio_volume_apply();          /* before audio_start (Settings > Volume) */
    /* CPU clock: the setting, or the harness's `cpu_clock` for a Lab arm
     * (kept apart from g_pcfg so a run never writes it into config.ini).
     * Only ms of config reading ran at the entry clock before this. */
@@ -16378,6 +16398,27 @@ session_top:
          {
             if (link_locks_states())
                osd_toast("Cannot save during a wireless session");
+            /* THE QUICK SAVE CAN ASK (docs/UI-OVERLAY.md section 15.2,
+             * issue #31): Settings > "Quick save asks first", off by
+             * default (config.ini quick_save_ask).  On, a quick save over a
+             * saved slot 1 opens the SAVE STATES page with its overwrite
+             * question: X saves (UI_ACT_SAVESTATE below, and the menu
+             * closes), any other key is Resume.  An empty slot 1 has
+             * nothing to lose: it saves at once.  Off: not one call more
+             * than before (the && stops at the setting). */
+            else if (g_pcfg.quick_save_ask &&
+                     fe_host_state_recover(state_path) >= 0 &&
+                     file_exists(state_path))
+            {
+               fe_evt("state_save_ask via=chord");
+               menu_open();
+               if (!ui_state_save_ask(1))
+               {
+                  ui_close();
+                  osd_toast(state_save_slot(state_path, 1) == 0
+                               ? "State saved" : "Save failed");
+               }
+            }
             else if (state_save_slot(state_path, 1) == 0)
             {
                osd_toast("State saved");

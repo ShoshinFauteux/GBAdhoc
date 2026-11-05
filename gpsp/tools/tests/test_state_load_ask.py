@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """A state load asks first (docs/UI-OVERLAY.md sections 14.2-14.3).
 
-X on a saved slot of the SAVE STATES page loaded it at once and closed the
-menu: one press too many, or X where SQUARE was meant, and the game the
-player was in was gone.  It now puts the page's question on the plate --
+A load on the SAVE STATES page loaded a saved slot at once and closed the
+menu: one press too many and the game the player was in was gone.  It now
+puts the page's question on the plate --
 "Load Slot n? Unsaved progress is lost.  X load  O cancel" -- the same plate
 and the same rule as overwrite and delete: X answers it, every other key
 keeps the game, and no other key acts that frame.  The quick load
@@ -17,12 +17,17 @@ edge filter (pad_edges), screen_state_slots() and ui_state_load_ask().
 Stubbed: drawing (vid_text and the plate / footer record what was said), the
 scan, the dwell read, the delete, screen_to / screen_menu.
 
-  1. X on a saved slot asks, and loads nothing; the plate names the slot.
+  (Since 4.6.0-beta.4, issue #31, SQUARE is the page's load and X its save;
+  tools/tests/test_state_buttons.py holds the mapping itself.)
+
+  1. SQUARE on a saved slot asks, and loads nothing; the plate names the
+     slot.
   2. X on the question loads that slot (UI_ACT_LOADSTATE, ui slot = it).
   3. Every other key on the question keeps the game: nothing loads, saves,
      deletes or moves, the page stays (O does not go back to the menu), and
-     the next X asks again rather than loading.
-  4. X on an empty slot asks nothing and loads nothing ("Slot n is empty").
+     the next SQUARE asks again rather than loading.
+  4. SQUARE on an empty slot asks nothing and loads nothing ("Slot n is
+     empty").
   5. Overwrite and delete still ask and still answer to X.
   6. The last slot: UP from slot 1 reaches it; the question and the load
      are its own (PSP_STATE_SLOT_COUNT, whatever it is).
@@ -264,9 +269,9 @@ int main(void)
    unsigned k;
    int f;
 
-   /* 1, 2. X asks; X answers; the load is slot 1's */
+   /* 1, 2. SQUARE asks; X answers; the load is slot 1's */
    page();
-   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE);
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE);
    CHECK(!strncmp(plate, "Load Slot 1? Unsaved progress is lost.", 38));
    CHECK(strstr(plate, VID_GLYPH_X " load") && strstr(plate, VID_GLYPH_O " cancel"));
    CHECK(press(0) == UI_ACT_NONE && plate[0]);        /* it waits */
@@ -277,12 +282,12 @@ int main(void)
    for (k = 0; k < sizeof(others) / sizeof(others[0]); k++)
    {
       page();
-      CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && plate[0]);
+      CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && plate[0]);
       CHECK(press(others[k]) == UI_ACT_NONE);
       CHECK(!g_slot_ask && !plate[0]);
       CHECK(g_state_slot == 1 && g_screen == SCR_STATE_SLOTS && !menus);
       CHECK(!deletes && !g_slot_saving && g_ov_slot[0] == 1);
-      CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE);   /* asks again */
+      CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE);  /* asks again */
       CHECK(!strncmp(plate, "Load Slot 1? ", 13));
    }
 
@@ -290,26 +295,26 @@ int main(void)
    page();
    CHECK(press(PSP_CTRL_DOWN) == UI_ACT_NONE && g_state_slot == 2);
    CHECK(press(PSP_CTRL_DOWN) == UI_ACT_NONE && g_state_slot == 3);
-   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && !g_slot_ask);
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && !g_slot_ask);
    CHECK(!strcmp(plate, "Slot 3 is empty"));
-   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE);
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE);
 
    /* 5. overwrite and delete: unchanged */
    page();
-   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && !strncmp(plate, "Overwrite Slot 1?", 17));
+   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && !strncmp(plate, "Overwrite Slot 1?", 17));
    CHECK(press(PSP_CTRL_CROSS) == UI_ACT_SAVESTATE && g_slot_saving == 1);
    page();
    CHECK(press(PSP_CTRL_TRIANGLE) == UI_ACT_NONE && !strncmp(plate, "Delete Slot 1?", 14));
    CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && deletes == 1 && !g_ov_slot[0]);
    page();
-   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE);
+   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE);
    CHECK(press(PSP_CTRL_CIRCLE) == UI_ACT_NONE && !g_slot_saving && !menus);
 
    /* 6. the last slot: UP wraps to it; its question, its load */
    page();
    snprintf(want, sizeof(want), "Load Slot %d? ", N);
    CHECK(press(PSP_CTRL_UP) == UI_ACT_NONE && g_state_slot == N);
-   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && !strncmp(plate, want, strlen(want)));
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && !strncmp(plate, want, strlen(want)));
    CHECK(press(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == N);
 
    /* 7. the quick load: the question over the game, slot 1 */
@@ -334,7 +339,7 @@ int main(void)
    menu_open();
    CHECK(ui_state_load_ask(1) == 1);
    CHECK(press(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE);   /* a failed load: */
-   CHECK(press(PSP_CTRL_CROSS) == UI_ACT_NONE && plate[0]);   /* asks */
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && plate[0]);  /* asks */
    CHECK(press(PSP_CTRL_CIRCLE) == UI_ACT_NONE && g_screen == SCR_STATE_SLOTS);
    /* an empty slot 1 asks nothing (main_psp.c then says "No saved state") */
    menu_open();
@@ -370,7 +375,7 @@ int main(void)
       frame(PSP_CTRL_DOWN);
    CHECK(g_state_slot == 3);
 
-   puts("page: X asks and X loads, every other key keeps the game; the quick "
+   puts("page: SQUARE asks and X loads, every other key keeps the game; the quick "
         "load asks over the game; a held direction never answers");
    return 0;
 }
@@ -445,6 +450,7 @@ static int fe_host_state_recover(const char *p) { say("recover %s", p); return r
 static int file_exists(const char *p) { say("exists %s", p); return have_state; }
 static void menu_open(void) { say("menu_open"); }
 static int ui_state_load_ask(int s) { say("ask %d", s); return ask_rc; }
+static int ui_state_save_ask(int s) { say("save_ask %d", s); return ask_rc; }
 static void ui_close(void) { say("ui_close"); }
 static int psp_state_load(const char *p, const char *via)
 { say("load %s %s", p, via); return load_rc; }
@@ -759,9 +765,9 @@ def text(old, new):
 
 PAGE_MUTANTS = (
     # (label, mutate(ui_psp.c) -> text, text expected in the failure)
-    ("X loads at once, as 4.6.0-beta.2 did",
+    ("the load loads at once, as 4.6.0-beta.2 did",
      in_fn(PAGE, r"g_slot_ask = SLOT_ASK_LOAD;", "act = UI_ACT_LOADSTATE;"),
-     "press(PSP_CTRL_CROSS) == UI_ACT_NONE"),
+     "press(PSP_CTRL_SQUARE) == UI_ACT_NONE"),
     ("the answer does not load",
      in_fn(PAGE, r"act = UI_ACT_LOADSTATE;", "(void)0;"),
      "UI_ACT_LOADSTATE"),

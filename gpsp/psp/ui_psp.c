@@ -272,6 +272,13 @@ static int g_browser_state_slot = 1;
  * kept until the next press. */
 static int  g_shelf_del;
 static char g_shelf_note[32];
+/* GAME LIST MARKS (issue #31): does the highlighted game have save states,
+ * a cheats file?  Looked up once the cursor rests (browser_marks), for that
+ * one game only -- a handful of stats, never per row, never while
+ * scrolling -- and shown by colouring its footer hint.  g_mark_rom = the
+ * game they were looked up for, -1 = none yet. */
+static int         g_mark_rom = -1;
+static signed char g_mark_states, g_mark_cheats;
 /* State-shelf slide, 0 (closed) .. PANEL_FRAMES (open), eased at draw time.
  * It was a linear 26 px/frame step that also stat()ed all five slots and
  * read a thumbnail from the stick on the same frames -- Memory Stick I/O
@@ -326,6 +333,9 @@ static int  g_slot_ask_n;
 static int  g_slot_ask_back;
 static char g_slot_note[48];
 static int  g_slot_saving;                  /* slot a UI_ACT_SAVESTATE is for */
+/* That save answers the quick save's question (ui_state_save_ask): when it
+ * is done the menu closes, back into the game, as the quick save would. */
+static int  g_slot_save_back;
 static int  g_slots_dirty;                  /* rescan on the next frame   */
 /* The full preview: ONE slot's .shot, read lazily into the VRAM texture
  * (vid_shot_tex) once the cursor has rested OV_SHOT_DWELL frames -- more
@@ -390,6 +400,7 @@ void psp_clock_harness_drop(void);
 void psp_display_apply(const char *why);    /* main_psp.c, filters v2 */
 void psp_color_preview(void);               /* main_psp.c, filters v2 */
 int  psp_clock_actual(void);
+void psp_audio_volume_apply(void);          /* main_psp.c, Settings > Volume */
 
 /* ----- demo (harness self-drive) ------------------------------------------ */
 typedef struct { unsigned pad; unsigned char hold, gap; } demo_step;
@@ -405,14 +416,14 @@ static const demo_step demo_script[] = {
    { DEMO_DUMP,        1, 0 },   /* ge_ui_1: slot 3 (fixtures: .thumb only) */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4 (empty)  */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_2: the empty slot */
-   { PSP_CTRL_SQUARE,  2, 14 },  /* save slot 4: the page stays */
+   { PSP_CTRL_CROSS,   2, 14 },  /* save slot 4: the page stays */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_3: "Slot 4 saved", its picture */
    { PSP_CTRL_UP,      2, 4 },   /* -> slot 3          */
    { PSP_CTRL_TRIANGLE, 2, 4 },  /* delete?            */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_4: the delete question */
    { PSP_CTRL_CIRCLE,  2, 4 },   /* keep it            */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4          */
-   { PSP_CTRL_SQUARE,  2, 4 },   /* overwrite?         */
+   { PSP_CTRL_CROSS,   2, 4 },   /* overwrite?         */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_5: the overwrite question */
    { PSP_CTRL_CIRCLE,  2, 4 },   /* keep it            */
    { PSP_CTRL_CIRCLE,  2, 8 },   /* back to the menu (cursor -> Resume) */
@@ -440,7 +451,7 @@ static const demo_step demo_script[] = {
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 3          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4, saved above */
-   { PSP_CTRL_CROSS,   2, 6 },   /* load it?           */
+   { PSP_CTRL_SQUARE,  2, 6 },   /* load it?           */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_8: the load question */
    { PSP_CTRL_CROSS,   2, 10 },  /* load: the menu closes (demo ends) */
 };
@@ -553,7 +564,7 @@ static const demo_step del_demo_script[] = {
    { PSP_CTRL_CROSS,   2, 8 },   /* open the page (cursor: slot 1)        */
    { DEMO_DUMP,        1, 0 },   /* ge_del_0: empty slot 1, no triangle   */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2                             */
-   { PSP_CTRL_SQUARE,  2, 12 },  /* save slot 2 (the page stays)          */
+   { PSP_CTRL_CROSS,   2, 12 },  /* save slot 2 (the page stays)          */
    { DEMO_DUMP,        1, 0 },   /* ge_del_1: slot 2 saved, its plate     */
    { PSP_CTRL_TRIANGLE, 2, 6 },  /* ask                                   */
    { DEMO_DUMP,        1, 0 },   /* ge_del_2: the question on the plate   */
@@ -1081,7 +1092,8 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 
       /* 5. Hints on the screen's own bottom edge, in the same footer the
        *    rest of the UI uses -- not floating under a box. */
-      footer("X select     O resume     DPAD change");
+      footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume     "
+             VID_GLYPH_LEFT VID_GLYPH_RIGHT " change");
 
       vid_overlay_end();
       if (g_wake_shot && ++shot_frames == 3)
@@ -1172,6 +1184,7 @@ static void screen_to(int scr)
    ctl_page_reset();             /* no capture survives a screen change */
    g_slot_ask = 0;               /* nor a delete/overwrite/load question */
    g_slot_ask_back = 0;
+   g_slot_save_back = 0;
    g_slot_note[0] = '\0';
    if (scr == SCR_SETTINGS)
    {
@@ -1829,8 +1842,9 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_FASTLINK,
        SET_HDR_VID, SET_SCALE, SET_FILTER, SET_EFFECT, SET_GBPAL, SET_AMBIENT,
        SET_HDR_UI, SET_THEME, SET_SHELL,
-       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_QLOADASK,
-       SET_CPUCLK,
+       SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_FPS, SET_VOLUME,
+       SET_QLOADASK,
+       SET_QSAVEASK, SET_CPUCLK,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
@@ -1880,12 +1894,19 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * harness walkers only ever cross rows ABOVE this point, or wrap UP to
     * Button mapping, so none of their arithmetic moved. */
    { 0, "FPS counter" },
+   /* Issue #31: 0..100, the PSP's channel volume (config_psp.h VOLUME).
+    * Under FPS counter and above CPU clock: no walker's count moves. */
+   { 0, "Volume" },
    /* The quick load's question (docs/UI-OVERLAY.md section 14.3), on by
     * default.  Under FPS counter and above CPU clock: the walkers that come
     * from below stop at CPU clock or before it, and the rest cross only rows
     * above Fast-forward, so none of their counts moved.  The SAVE STATES
-    * page's own X always asks; this row is only the shortcut's. */
+    * page's own load (SQUARE) always asks; this row is only the shortcut's. */
    { 0, "Quick load asks first" },
+   /* The quick save's overwrite question (docs/UI-OVERLAY.md section 15.2,
+    * issue #31), OFF by default.  Under the quick load's row and above CPU
+    * clock, for the same reason: no walker's count moves. */
+   { 0, "Quick save asks first" },
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
     * their counts moved.  Applies at once (main_psp.c psp_clock_apply). */
@@ -2430,8 +2451,17 @@ static void settings_adjust(int id, int dir)
    case SET_FPS:
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
+   case SET_VOLUME:
+      /* Live: the audio thread reads it for the next chunk.  It stops at
+       * 0 and 100 rather than wrapping from full to silent. */
+      g_pcfg.volume = pcfg_volume_step(g_pcfg.volume, dir);
+      psp_audio_volume_apply();
+      break;
    case SET_QLOADASK:
       g_pcfg.quick_load_ask = !g_pcfg.quick_load_ask;
+      break;
+   case SET_QSAVEASK:
+      g_pcfg.quick_save_ask = !g_pcfg.quick_save_ask;
       break;
    case SET_CPUCLK:
       /* 333 -> 222 -> System, live: the game keeps running at the new
@@ -2525,6 +2555,73 @@ static void set_item(int y, int sel, int enabled, const char *label,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
 }
 
+/* THE BUILD, read-only, under the SETTINGS title (issue #31): "GBAdhoc
+ * 4.6.0-beta.4 (abc1234)".  From VERSION.txt beside the EBOOT, which
+ * tools/make_release.sh writes into every release (version and commit), so
+ * the EBOOT itself carries no stamp and its layout does not move with the
+ * commit.  Read once, on the first Settings frame: one small sceIo read, no
+ * heap.  No file (a build run straight from tools/build.sh): "development
+ * build". */
+static char g_build_line[64];
+
+static void build_line_value(const char *buf, const char *key, char *out,
+                             size_t cap)
+{
+   const char *p = buf;
+   size_t kl = strlen(key), n = 0;
+   out[0] = '\0';
+   while (*p)
+   {
+      if (!strncmp(p, key, kl) && (p[kl] == ' ' || p[kl] == ':'))
+      {
+         p += kl;
+         while (*p == ' ' || *p == ':' || *p == '\t')
+            p++;
+         while (p[n] && p[n] != '\r' && p[n] != '\n' && n + 1 < cap)
+         {
+            out[n] = p[n];
+            n++;
+         }
+         while (n > 0 && out[n - 1] == ' ')
+            n--;
+         out[n] = '\0';
+         return;
+      }
+      while (*p && *p != '\n')
+         p++;
+      if (*p)
+         p++;
+   }
+}
+
+static const char *build_line(void)
+{
+   extern char g_dir_base[];
+   char path[176], buf[256], ver[24], com[16];
+   SceUID fd;
+   int n;
+   if (g_build_line[0])
+      return g_build_line;
+   snprintf(g_build_line, sizeof(g_build_line), "development build");
+   snprintf(path, sizeof(path), "%s/VERSION.txt", g_dir_base);
+   fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+   if (fd < 0)
+      return g_build_line;
+   n = sceIoRead(fd, buf, (SceSize)sizeof(buf) - 1);
+   sceIoClose(fd);
+   if (n <= 0)
+      return g_build_line;
+   buf[n] = '\0';
+   build_line_value(buf, "version", ver, sizeof(ver));
+   build_line_value(buf, "commit", com, sizeof(com));
+   if (ver[0] && com[0])
+      snprintf(g_build_line, sizeof(g_build_line), "GBAdhoc %s (%s)", ver,
+               com);
+   else if (ver[0])
+      snprintf(g_build_line, sizeof(g_build_line), "GBAdhoc %s", ver);
+   return g_build_line;
+}
+
 static ui_action screen_settings(unsigned edges)
 {
    int i;
@@ -2566,7 +2663,7 @@ static ui_action screen_settings(unsigned edges)
    /* Scrim 200 over the frame (the browser's page, from START there): a
     * long list needs more hold-back than the menu's 170. */
    ov_backdrop(OV_SCRIM_DENSE);
-   ov_head(NULL, "SETTINGS");
+   ov_head(build_line(), "SETTINGS");   /* the build on line 2, read-only */
    set_scroll_follow();
    vid_clip(0, SET_VIEW_TOP - 2, VID_SCR_W, SET_VIEW_BOT - SET_VIEW_TOP + 4);
    for (i = 0; i < SET_COUNT; i++)
@@ -2698,9 +2795,20 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.show_fps ? "on" : "off");
          break;
+      case SET_VOLUME:
+      {
+         char v[8];
+         snprintf(v, sizeof(v), "%d", pcfg_volume_snap(g_pcfg.volume));
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
       case SET_QLOADASK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.quick_load_ask ? "on" : "off");
+         break;
+      case SET_QSAVEASK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.quick_save_ask ? "on" : "off");
          break;
       case SET_CPUCLK:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -2729,7 +2837,7 @@ static ui_action screen_settings(unsigned edges)
          break;
       case SET_SHOT_DIR:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc folder (log)"
+             g_pcfg.shot_folder == PCFG_SHOT_APP ? "GBAdhoc/Screenshots"
                                                  : "PICTURE/GBAdhoc");
          break;
       case SET_STICK:
@@ -2783,11 +2891,20 @@ static ui_action screen_settings(unsigned edges)
              : g_pcfg.color == 2
                 ? "Black & white: every colour as its brightness."
                 : "Native: the game's colours as stored.");
+   else if (g_cursor == SET_VOLUME)
+      footer(g_pcfg.volume >= 100 ? "Sound at full volume, as the game plays it."
+             : g_pcfg.volume <= 0 ? "Sound off."
+             : "Sound volume, 0 to 100.");
    else if (g_cursor == SET_QLOADASK)
       footer(g_pcfg.quick_load_ask
                 ? "The quick load asks first: " VID_GLYPH_X
                   " loads, any other key plays on."
                 : "The quick load loads slot 1 at once, without asking.");
+   else if (g_cursor == SET_QSAVEASK)
+      footer(g_pcfg.quick_save_ask
+                ? "Over a saved slot 1 the quick save asks: " VID_GLYPH_X
+                  " saves."
+                : "The quick save saves slot 1 at once, without asking.");
    else if (g_cursor == SET_CPUCLK)
    {
       /* A CFW clock setting can refuse ours: say what is really running. */
@@ -2809,7 +2926,7 @@ static ui_action screen_settings(unsigned edges)
                 : "PNG: compressed, usually a few KB a picture.");
    else if (g_cursor == SET_SHOT_DIR)
       footer(g_pcfg.shot_folder == PCFG_SHOT_APP
-                ? "In log/ beside GBAdhoc, as before."
+                ? "In the Screenshots folder beside GBAdhoc's EBOOT."
                 : "In PICTURE/GBAdhoc: open them from the XMB Photo menu.");
 #ifdef REWIND
    else if (g_cursor == SET_REWIND_MB)
@@ -2822,7 +2939,9 @@ static ui_action screen_settings(unsigned edges)
                 : "Long: 4 MB. Needs the extra memory of a PSP-2000, 3000 or Go.");
 #endif
    else
-      footer("DPAD move/change   " VID_GLYPH_X " select   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_UP VID_GLYPH_DOWN " move   " VID_GLYPH_LEFT
+             VID_GLYPH_RIGHT " change   " VID_GLYPH_X " select   "
+             VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 
@@ -3992,9 +4111,10 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       }
    }
    if (id == WL_FAST)
-      footer("DPAD change   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_LEFT VID_GLYPH_RIGHT " change   " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_X " select   DPAD change room   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " select   " VID_GLYPH_LEFT VID_GLYPH_RIGHT
+             " change room   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 
@@ -4187,7 +4307,8 @@ static ui_action screen_mgift(unsigned edges)
       footer("SELECT+DOWN toggles in game.  " VID_GLYPH_X " start   "
              VID_GLYPH_O " back");
    else
-      footer("DPAD pick network   " VID_GLYPH_X " start   " VID_GLYPH_O
+      footer(VID_GLYPH_UP VID_GLYPH_DOWN " pick network   " VID_GLYPH_X
+             " start   " VID_GLYPH_O
              " back");
    return UI_ACT_NONE;
 }
@@ -5132,10 +5253,18 @@ static void ov_shot_probe(void)
  * Return 1 when the page reported it (no toast wanted). */
 int ui_state_save_done(int rc)
 {
-   int s = g_slot_saving;
+   int s = g_slot_saving, back = g_slot_save_back;
    g_slot_saving = 0;
+   g_slot_save_back = 0;
    if (!g_active || g_screen != SCR_STATE_SLOTS || !s)
       return 0;
+   if (back)
+   {
+      /* The quick save's question, answered: back into the game, and the
+       * toast says it there, exactly as an unasked quick save does. */
+      ui_close();
+      return 0;
+   }
    snprintf(g_slot_note, sizeof(g_slot_note),
             rc == 0 ? "Slot %d saved" : "Slot %d could not be saved", s);
    g_slots_dirty = 1;
@@ -5161,9 +5290,9 @@ int ui_state_load_done(int rc)
  * pressed, a shoulder away from the quick save -- the easiest wrong button
  * there is.  With Settings > "Quick load asks first" on (the default),
  * main_psp.c opens the menu and calls this: the SAVE STATES page, on `slot`,
- * with the load question already on its plate.  X loads exactly as the
- * page's X does (and the menu closes into the game); any other key goes
- * straight back into the game, Resume, having loaded nothing -- the visit
+ * with the load question already on its plate.  X loads exactly as X on
+ * the page's own load question does (and the menu closes into the game);
+ * any other key goes straight back into the game, Resume, having loaded nothing -- the visit
  * was only the question.  1 = asked; 0 = no menu open, or nothing saved in
  * the slot (the caller says so, and closes the menu). */
 int ui_state_load_ask(int slot)
@@ -5188,23 +5317,53 @@ int ui_state_load_ask(int slot)
    return 1;
 }
 
+/* THE QUICK SAVE CAN ASK TOO (docs/UI-OVERLAY.md section 15.2; issue #31).
+ * Settings > "Quick save asks first", OFF by default: on, a quick save
+ * (bind_quicksave, SELECT+L by default) over a saved slot opens the SAVE
+ * STATES page on `slot` with the overwrite question up -- the page's own
+ * question, the load question's rules (ui_state_load_ask above).  X saves
+ * through UI_ACT_SAVESTATE and the menu closes back into the game (the
+ * toast says "State saved"); any other key is Resume, having saved nothing.
+ * 1 = asked; 0 = no menu open, or the slot is empty (the caller saves at
+ * once, as an unasked quick save does). */
+int ui_state_save_ask(int slot)
+{
+   if (!g_active || slot < 1 || slot > PSP_STATE_SLOT_COUNT)
+      return 0;
+   g_state_slot = slot;
+   screen_to(SCR_STATE_SLOTS);
+   if (!g_ov_slot[slot - 1])
+      return 0;
+   g_slot_ask = SLOT_ASK_OVERWRITE;
+   g_slot_ask_n = slot;
+   g_slot_ask_back = 1;
+   g_rep_timer = -(1 << 30);      /* a held direction is no answer */
+   fe_evt("ui_save_ask slot=%d via=chord", slot);
+   return 1;
+}
+
 /* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13; Fable's direction A,
  * "Split", builds/savestate-mockups/README.md section 6).  One page for save
  * and load: the five slots on the left (the 64x42 thumbnail, the slot, its
  * time), the highlighted slot's picture 1:1 on the right.
  *
- *   X  load, after the plate's question; back into the game
+ *   X  save; over a saved slot the plate asks first; the page stays open
+ *   [] load, after the plate's question; back into the game
  *                                             (empty: says so, plate)
- *   [] save; over a saved slot the plate asks first; the page stays open
  *   /\ delete, after the plate's question        (empty: nothing)
  *   O  back to the menu
  *
+ * X saves and [] loads since 4.6.0-beta.4 (GitHub issue #31, MXPHunter):
+ * the confirm button makes the thing a player does most, and the button
+ * that throws the running game away is the one that is never pressed by
+ * accident.  Until 4.6.0-beta.3 X loaded and [] saved.
+ *
  * A load replaces the game being played, so it is destructive too: until
- * 4.6.0 it was the one immediate action, and one X too many (or an X where
- * [] was meant) lost whatever had not been saved.  All three now ask on the
- * plate, the reset question's rule: X answers, every other key keeps the
- * game and the slot, and no other key acts that frame -- so an X meant for
- * one question can never answer another (docs/UI-OVERLAY.md section 14). */
+ * 4.6.0 it was the one immediate action, and one press too many lost
+ * whatever had not been saved.  All three now ask on the plate, the reset
+ * question's rule: X answers, every other key keeps the game and the slot,
+ * and no other key acts that frame -- so an X meant for one question can
+ * never answer another (docs/UI-OVERLAY.md section 14). */
 #define SS_ROW_Y(i)  (72 + 34 * (i))
 #define SS_PX 228                /* the preview panel */
 #define SS_PY 62
@@ -5221,7 +5380,7 @@ static void ss_panel(int i)
    if (!g_ov_slot[i])
    {
       static const char l1[] = "Nothing saved here";
-      static const char l2[] = VID_GLYPH_SQ " save";
+      static const char l2[] = VID_GLYPH_X " save";
       vid_rect(x, y, w, h, C_CARD, 230);
       ov_outline(x, y, w, h, C_ACCENT_DK, 120);
       vid_text(x + (w - vid_text_w(l1)) / 2, y + h / 2 - 18, l1, C_DIM);
@@ -5275,7 +5434,7 @@ static ui_action screen_state_slots(unsigned edges)
    {
       if (edges & PSP_CTRL_CROSS)
       {
-         int s = g_slot_ask_n, ask = g_slot_ask;
+         int s = g_slot_ask_n, ask = g_slot_ask, back = g_slot_ask_back;
          g_slot_ask = 0;
          g_slot_ask_back = 0;     /* a failed load stays, as the page's */
          if (ask == SLOT_ASK_DELETE)
@@ -5296,6 +5455,7 @@ static ui_action screen_state_slots(unsigned edges)
          else
          {
             g_slot_saving = s;
+            g_slot_save_back = back;  /* the quick save's: back to the game */
             act = UI_ACT_SAVESTATE;
          }
       }
@@ -5338,18 +5498,6 @@ static ui_action screen_state_slots(unsigned edges)
       {
          if (g_ov_slot[cur])
          {
-            g_slot_ask = SLOT_ASK_LOAD;
-            g_slot_ask_n = g_state_slot;
-         }
-         else            /* on the plate, as every page message: a toast
-                          * would sit on the header */
-            snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d is empty", g_state_slot);
-      }
-      else if (edges & PSP_CTRL_SQUARE)
-      {
-         if (g_ov_slot[cur])
-         {
             g_slot_ask = SLOT_ASK_OVERWRITE;
             g_slot_ask_n = g_state_slot;
          }
@@ -5358,6 +5506,18 @@ static ui_action screen_state_slots(unsigned edges)
             g_slot_saving = g_state_slot;
             act = UI_ACT_SAVESTATE;
          }
+      }
+      else if (edges & PSP_CTRL_SQUARE)
+      {
+         if (g_ov_slot[cur])
+         {
+            g_slot_ask = SLOT_ASK_LOAD;
+            g_slot_ask_n = g_state_slot;
+         }
+         else            /* on the plate, as every page message: a toast
+                          * would sit on the header */
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Slot %d is empty", g_state_slot);
       }
       else if ((edges & PSP_CTRL_TRIANGLE) && g_ov_slot[cur])
       {
@@ -5437,10 +5597,10 @@ static ui_action screen_state_slots(unsigned edges)
    else if (g_slot_note[0])
       ov_plate(g_slot_note);
    else if (g_ov_slot[cur])
-      footer(VID_GLYPH_X " load     " VID_GLYPH_SQ " save     " VID_GLYPH_TRI
+      footer(VID_GLYPH_X " save     " VID_GLYPH_SQ " load     " VID_GLYPH_TRI
              " delete     " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_SQ " save     " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " save     " VID_GLYPH_O " back");
    return act;
 }
 
@@ -5991,6 +6151,7 @@ static void browser_header(int n_scan)
 static void browser_footer(int n_view, int cur_is_fav)
 {
    const char *hint[6];
+   uint16_t col[6] = { C_DIM, C_DIM, C_DIM, C_DIM, C_DIM, C_DIM };
    int count = 0, x = 20, i;
    if (g_browser_state_open)
       return;
@@ -6006,20 +6167,46 @@ static void browser_footer(int n_view, int cur_is_fav)
 #ifdef GPSP_CHEATS
       /* "L/R page" gave its place to the cheats hint: the row is full (the
        * shoulder buttons still page the list). */
-      hint[count++] = "Left: states";
-      hint[count++] = "Right: cheats";
+      /* The d-pad arrows, not "Left:" / "Right:" (issue #31: "X play,
+       * Left: states" read as one sentence with two styles). */
+      /* Lit (C_VALUE, the "save present" colour) when the highlighted game
+       * has what the arrow opens (issue #31). */
+      if (g_mark_states > 0)
+         col[count] = C_VALUE;
+      hint[count++] = VID_GLYPH_LEFT " states";
+      if (g_mark_cheats > 0)
+         col[count] = C_VALUE;
+      hint[count++] = VID_GLYPH_RIGHT " cheats";
 #else
       hint[count++] = "L/R page";
-      hint[count++] = "Left: states";
+      if (g_mark_states > 0)
+         col[count] = C_VALUE;
+      hint[count++] = VID_GLYPH_LEFT " states";
 #endif
       hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
       hint[count++] = "START settings";
    }
    for (i = 0; i < count; i++)
    {
-      vid_text(x, 252, hint[i], C_DIM);
+      vid_text(x, 252, hint[i], col[i]);
       x += vid_text_w(hint[i]) + 18;
    }
+}
+
+/* WHERE IN THE LIST (issue #31): a 2 px bar in the overlay scrollbar's
+ * colours, its thumb at cur's place among n -- top at the first game,
+ * bottom at the last.  Only when the list is longer than the rows shown. */
+static void list_position(int x, int y, int h, int cur, int n, int rows)
+{
+   int th, ty;
+   if (n <= rows || n < 2)
+      return;
+   th = h * rows / n;
+   if (th < 8)
+      th = 8;
+   ty = (h - th) * cur / (n - 1);
+   vid_rect(x, y, 2, h, C_CARD, 255);
+   vid_rect(x, y + ty, 2, th, C_ACCENT_DK, 255);
 }
 
 /* One stat per ROM during the scan was ~2 s of boot on a large library, and
@@ -7491,15 +7678,10 @@ void ui_loading_finish(int success)
 static int g_marq_t;
 static int g_marq_idx = -1;
 
-/* Pixels to shift the selected title left; 0 when it fits or is resting. */
-static int marquee_offset(int rom_idx, const char *full, int px)
+/* Pixels to shift a title that is `over` px too wide; 0 when it fits or is
+ * resting.  One clock for the selected game, whichever shell draws it. */
+static int marquee_step(int rom_idx, int over)
 {
-   /* MEASURE WITH THE FACE IT IS DRAWN IN.  This asked vid_text_w (Regular
-    * 15 px) about a string rendered with vid_text_hd (SemiBold 19 px), so
-    * anything that overflowed at 19 but fitted at 15 never scrolled -- which
-    * is most of them.  The ones that did scroll also stopped short, because
-    * `over` was computed from the narrower face. */
-   int over = vid_text_hd_w(full) - px;
    int travel, cycle, t;
 
    if (rom_idx != g_marq_idx)
@@ -7518,6 +7700,16 @@ static int marquee_offset(int rom_idx, const char *full, int px)
    if (t < MARQ_DWELL + travel)
       return (t - MARQ_DWELL) / MARQ_SPEED;
    return over;
+}
+
+static int marquee_offset(int rom_idx, const char *full, int px)
+{
+   /* MEASURE WITH THE FACE IT IS DRAWN IN.  This asked vid_text_w (Regular
+    * 15 px) about a string rendered with vid_text_hd (SemiBold 19 px), so
+    * anything that overflowed at 19 but fitted at 15 never scrolled -- which
+    * is most of them.  The ones that did scroll also stopped short, because
+    * `over` was computed from the narrower face. */
+   return marquee_step(rom_idx, vid_text_hd_w(full) - px);
 }
 
 /* ---- SHELL A: Shelf ---------------------------------------------------- */
@@ -7584,9 +7776,22 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
       row_fx(rel, &dx, &fade);
       col = mix565(col, C_BG_TOP, fade);
       rom_display_name(&g_roms[idx], title, sizeof(title), 1);
-      /* 208, not 232: the star column sits between the title and SAVE. */
-      clip_title(title, 208);
-      vid_text(20 + dx, y, title, col);
+      if (d == 0 && vid_text_w(title) > 208)
+      {
+         /* THE SELECTED ROW SCROLLS a name too long for it (issue #31), on
+          * the marquee's clock: rest, slide to its end, rest, again.  Drawn
+          * shifted under a 208 px scissor, then the list's own is back. */
+         int off = marquee_step(idx, vid_text_w(title) - 208);
+         vid_clip(20 + dx, y - 4, 208, FE_FONT_H + 8);
+         vid_text(20 + dx - off, y, title, col);
+         vid_clip(0, SHELF_TOP - 6, 300, 246 - (SHELF_TOP - 6));
+      }
+      else
+      {
+         /* 208, not 232: the star column sits between the title and SAVE. */
+         clip_title(title, 208);
+         vid_text(20 + dx, y, title, col);
+      }
       if (g_roms[idx].is_fav && !(g_pop.active && g_pop.view == cur + rel))
          vid_text(234 + dx, y, VID_GLYPH_STAR,
                   mix565(d == 0 ? C_CON : mix565(C_CON, C_BG_TOP, 115),
@@ -7596,6 +7801,8 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
                   mix565(d == 0 ? C_ACCENT : C_ACCENT_DK, C_BG_TOP, fade));
    }
    vid_clip_off();
+   list_position(304, SHELF_TOP - 4, 242 - (SHELF_TOP - 4), cur, n,
+                 SHELF_ROWS);
    browser_pop_draw(234, SHELF_TOP + SHELF_SEL * SHELF_ROW_H + sy,
                     SHELF_ROW_H, cur);
 
@@ -7673,6 +7880,46 @@ static int browser_rom_has_state(const char *rom_dir, int rom_idx)
       any |= g_browser_state_exists[slot - 1];
    }
    return any;
+}
+
+/* The marks for the game under the cursor (see g_mark_rom), once it has
+ * rested: stats only, nothing recovered or renamed (opening the shelf does
+ * that, browser_rom_has_state). */
+static void browser_marks(const char *rom_dir, int rom, int idle)
+{
+   SceIoStat st;
+   char path[PSP_FILE_PATH_CAP];
+   unsigned slot;
+   if (rom == g_mark_rom)
+      return;
+   g_mark_states = g_mark_cheats = -1;
+   if (idle < IDLE_SELECTED || !scroll_settled())
+      return;
+   g_mark_rom = rom;
+   g_mark_states = 0;
+   for (slot = 1; slot <= PSP_STATE_SLOT_COUNT && !g_mark_states; slot++)
+      g_mark_states = browser_rom_state_path(rom_dir, rom, slot, path,
+                                             sizeof(path)) == 0 &&
+                      sceIoGetstat(path, &st) >= 0;
+   g_mark_cheats = 0;
+#ifdef GPSP_CHEATS
+   {
+      extern char g_dir_base[];
+      char stem[PSP_ROM_REL_PATH_CAP], *dot;
+      const char *b = strrchr(g_roms[rom].name, '/');
+      snprintf(stem, sizeof(stem), "%s", b ? b + 1 : g_roms[rom].name);
+      dot = strrchr(stem, '.');
+      if (dot && dot != stem)
+         *dot = '\0';
+      if (snprintf(path, sizeof(path), "%s/cheats/%s.cht", g_dir_base,
+                   stem) < (int)sizeof(path))
+         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
+      if (!g_mark_cheats &&
+          snprintf(path, sizeof(path), "%s/cheats/%s.txt", g_dir_base,
+                   stem) < (int)sizeof(path))
+         g_mark_cheats = sceIoGetstat(path, &st) >= 0;
+   }
+#endif
 }
 
 static void browser_preview_load_one(const char *rom_dir, int rom_idx)
@@ -7799,20 +8046,24 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
       snprintf(q, sizeof(q), "Delete Slot %d?", g_shelf_del);
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, q, C_SEL);
-      vid_text(x + 14, 254, "X: delete   O: keep", C_SEL);
+      vid_text(x + 14, 254, VID_GLYPH_X " delete   " VID_GLYPH_O " keep",
+               C_SEL);
    }
    else if (g_shelf_note[0])
    {
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, g_shelf_note, C_SEL);
-      vid_text(x + 14, 254, "X: load   O: close", C_DIM);
+      vid_text(x + 14, 254, VID_GLYPH_X " load   " VID_GLYPH_O " close",
+               C_DIM);
    }
    else
    {
       vid_text(x + 14, 241, g_browser_state_exists[g_browser_state_slot - 1]
-                  ? "UP/DN: slot   " VID_GLYPH_SQ ": delete" : "UP/DN: slot",
+                  ? VID_GLYPH_UP VID_GLYPH_DOWN " slot   " VID_GLYPH_TRI
+                    " delete"
+                  : VID_GLYPH_UP VID_GLYPH_DOWN " slot", C_DIM);
+      vid_text(x + 14, 254, VID_GLYPH_X " load   " VID_GLYPH_O " close",
                C_DIM);
-      vid_text(x + 14, 254, "X: load   O: close", C_DIM);
    }
    (void)n;
 }
@@ -7934,6 +8185,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
                   255);
    }
    browser_pop_draw(270, MQ_MID + sy, MQ_ROW_H, cur);
+   list_position(10, MQ_MID - 2 * MQ_ROW_H, 4 * MQ_ROW_H + 20, cur, n, 5);
 
    browser_footer(n, g_roms[rom].is_fav);
 }
@@ -8665,6 +8917,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
 
+   g_mark_rom = -1;          /* a game played since may have new states */
    if (out_state_slot)
       *out_state_slot = 0;
    if (console_out)
@@ -8933,9 +9186,12 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       {
          char state_path[PSP_FILE_PATH_CAP];
          SceIoStat st;
-         /* SQUARE deletes the highlighted slot after an X on the panel's
-          * plate; O or any other key keeps it, and while the question is
-          * up nothing else acts (an X can never load instead). */
+         /* TRIANGLE deletes the highlighted slot after an X on the
+          * panel's plate (the in-game page's delete button; it was SQUARE
+          * until 4.6.0-beta.4, issue #31); O or any other key keeps it, and
+          * while the question is up nothing else acts (an X can never load
+          * instead).  The console switch's TRIANGLE stands down while the
+          * shelf is open. */
          if (g_shelf_del)
          {
             if (edges & PSP_CTRL_CROSS)
@@ -8953,6 +9209,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                 * nothing left to offer: it closes. */
                if (ok)
                   g_browser_preview_status[s - 1] = 2;
+               g_mark_rom = -1;        /* the marks look again */
                if (!browser_rom_has_state(rom_dir, rom))
                {
                   g_browser_state_open = 0;
@@ -8965,7 +9222,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          }
          if (edges)
             g_shelf_note[0] = '\0';
-         if ((edges & PSP_CTRL_SQUARE) &&
+         if ((edges & PSP_CTRL_TRIANGLE) &&
              g_browser_state_exists[g_browser_state_slot - 1])
          {
             g_shelf_del = g_browser_state_slot;
@@ -9040,6 +9297,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          g_bpage.n_scan = n_scan;
          g_bpage.idle = idle;
          browser_cheats(rom);
+         g_mark_rom = -1;
          idle = 0;
          continue;
       }
@@ -9150,6 +9408,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if (idle >= IDLE_PREFETCH && scroll_settled())
          art_prefetch(rom_dir, cur, n);
 
+      browser_marks(rom_dir, view_rom(cur), idle);
       if (g_ui_shell)
          shell_marquee(rom_dir, cur, n, n_scan, idle);
       else
