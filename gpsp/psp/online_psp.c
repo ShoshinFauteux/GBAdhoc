@@ -49,7 +49,7 @@ static struct
 {
    int enabled;
    online_cfg cfg;
-   char why[48];
+   char why[64];
    SceUID mod;
    online_api api;
    int loaded;                  /* module started and api checked */
