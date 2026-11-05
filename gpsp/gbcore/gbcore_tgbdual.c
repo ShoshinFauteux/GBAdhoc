@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "tgbdual/gb.h"
+#include "tgbdual/_cgb_dmg_pal.h"
 
 /* Largest cartridge any supported mapper addresses (MBC5: 512 x 16 KiB). */
 #define GBCORE_ROM_MAX (8u * 1024u * 1024u)
@@ -141,7 +142,7 @@ word tgb_dmg_palette[12];
                             ((((rgb) >> 11) & 0x1f) << 5) | \
                             ((((rgb) >> 3) & 0x1f) << 10)))
 
-static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
+static const uint32_t palette_rgb[GBCORE_PALETTE_GBC_AUTO][4] = {
   /* AUTO outside SGB: MasterBoy's default greys. */
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
@@ -152,15 +153,41 @@ static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
 };
 
 static const char *const palette_names[GBCORE_PALETTE_COUNT] = {
-  "Auto", "Grey", "DMG green", "Pocket"
+  "Auto", "Grey", "DMG green", "Pocket",
+  "GBC (auto)",
+  "GBC Up", "GBC Up+A", "GBC Up+B",
+  "GBC Left", "GBC Left+A", "GBC Left+B",
+  "GBC Down", "GBC Down+A", "GBC Down+B",
+  "GBC Right", "GBC Right+A", "GBC Right+B"
 };
 
+/* tgb_port.h: the DMG palette holds GBC colours (lcd.c shows them through
+ * the GBC LCD model, as a GBC's screen shows them). */
+int tgb_dmg_is_cgb;
+
+/* The GBC palettes come from the shared table (_cgb_dmg_pal.h): GBC_AUTO
+ * by this cartridge's header, as the GBC boot ROM chooses, so the colours
+ * are a function of the ROM and the setting alone.  Before a game is loaded
+ * GBC_AUTO shows combination 0, the boot ROM's default; gbcore_create
+ * applies the palette again once the header is known. */
 static void palette_apply(void)
 {
   unsigned i;
-  const uint32_t *p = palette_rgb[palette_id];
-  for (i = 0; i < 12; i++)
-    tgb_dmg_palette[i] = BGR555(p[i & 3]);
+  if (palette_id >= GBCORE_PALETTE_GBC_AUTO)
+  {
+    unsigned combo = palette_id == GBCORE_PALETTE_GBC_AUTO
+      ? (active ? tgbshared_cgbpal_auto(active->header) : 0)
+      : tgbshared_cgbpal_manual(palette_id - GBCORE_PALETTE_GBC_UP);
+    tgbshared_cgbpal_colors(combo, tgb_dmg_palette);
+    tgb_dmg_is_cgb = 1;
+  }
+  else
+  {
+    const uint32_t *p = palette_rgb[palette_id];
+    for (i = 0; i < 12; i++)
+      tgb_dmg_palette[i] = BGR555(p[i & 3]);
+    tgb_dmg_is_cgb = 0;
+  }
   gb_invalidate_palette(0);
 }
 

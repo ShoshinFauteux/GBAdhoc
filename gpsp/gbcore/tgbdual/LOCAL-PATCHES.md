@@ -78,6 +78,14 @@ their original encodings (Shift-JIS, some CP1252). `diff -w -B
   turns it off. The tables and the switch (`tgbshared_cgb_lcd`) are defined
   once in `tgb_shared.c`. DMG and SGB colours are unchanged. Why:
   `docs/GB-PALETTE-FIXES.md`.
+- **GBC colours for DMG games (issue #34).** When the adapter's DMG palette
+  is one of the GBC ones (`GBCORE_PALETTE_GBC_*`, new global
+  `tgb_dmg_is_cgb`), `gb_recreate_colors` converts the twelve DMG entries
+  through `cgb_lcd_color` as well, as a GBC's screen shows them. The
+  palette data and the boot ROM's per-game selection (`_cgb_dmg_pal.h`,
+  data only, 622 bytes of .rodata) are defined once in `tgb_shared.c`.
+  Display only: the machine, its state and its sync hash are unchanged
+  (`gbcore/tests/cgb_dmg_pal.c`).
 - **`gb_run` frame boundary.** Unchanged in the core; the adapter ends a
   frame at VBlank (LY 144) rather than at LY 0, so a presented frame is
   lines 0-143 of one frame.

@@ -7,6 +7,7 @@
 #include "video_psp.h"
 #include "fe_util.h"
 #include "fe_evt.h"
+#include "../gbcore/gbcore.h"   /* GBCORE_PALETTE_COUNT */
 
 psp_config g_pcfg;
 
@@ -208,7 +209,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
          (int)fe_ini_get_int(cfg_path, "stick_warned", 0) ? 1 : 0;
    }
    g_pcfg.gb_palette  = (int)fe_ini_get_int(cfg_path, "gb_palette", 0);
-   if (g_pcfg.gb_palette < 0 || g_pcfg.gb_palette > 15)
+   if (g_pcfg.gb_palette < 0 || g_pcfg.gb_palette >= GBCORE_PALETTE_COUNT)
       g_pcfg.gb_palette = 0;
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
 #ifdef GPSP_PLAYABLE
@@ -714,7 +715,7 @@ static void pdisp_clamp(pcfg_display *d)
    d->filter = vid_filter_join(d->smooth, d->effect);
    if (d->ambient < 0 || d->ambient >= PCFG_AMB_MODES)
       d->ambient = PCFG_AMBIENT_DEF;
-   if (d->gb_palette < 0 || d->gb_palette > 15)
+   if (d->gb_palette < 0 || d->gb_palette >= GBCORE_PALETTE_COUNT)
       d->gb_palette = 0;
 }
 

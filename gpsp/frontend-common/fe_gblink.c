@@ -1119,7 +1119,9 @@ static void send_hello(fe_gblink *s)
     * negotiate says so in bit 1 (fe_gblink.h, core_mask) */
    *q++ = (uint8_t)(s->l.is_host ? (1u | FE_GBLINK_HOSTCAP_NEGOTIATE) : 0u);
    *q++ = s->own.console;
-   *q++ = s->own.palette;
+   /* The peer runs our machine headless: it needs the model the palette
+    * implies, not the colours (GBCORE_PALETTE_WIRE, gbcore.h). */
+   *q++ = (uint8_t)GBCORE_PALETTE_WIRE(s->own.palette);
    put32(q, s->own.rom_size); q += 4;
    memcpy(q, s->own.sha1, 20); q += 20;
    memcpy(q, s->own.header, 0x1C); q += 0x1C;

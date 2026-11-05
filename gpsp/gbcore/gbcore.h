@@ -160,14 +160,40 @@ void gbcore_set_wallclock(time_t (*wallclock)(void));
  * the SGB (decided when the game boots) and GREY otherwise; the others are
  * plain four-shade palettes.  Colour-only changes apply to a running game
  * at once; switching an SGB game in or out of SGB colours takes effect the
- * next time it boots.  Unknown ids fall back to AUTO. */
+ * next time it boots.  Unknown ids fall back to AUTO.
+ *
+ * GBC_AUTO and the twelve GBC_* after it are the Game Boy Color's colours
+ * for DMG games (issue #34).  GBC_AUTO is the BG/OBJ0/OBJ1 combination the
+ * GBC boot ROM picks from the cartridge header (Nintendo licensee, title
+ * sum, 4th letter: gbcore/tgbdual/_cgb_dmg_pal.h); the others are the
+ * palettes a player gets by holding a d-pad direction (+A/B) at boot.  Like
+ * GREY they boot the game as a plain DMG and change only the display, never
+ * the machine, its state or its timing.  They apply wherever a DMG palette
+ * is shown (DMG games on FE_CONSOLE_GB and FE_CONSOLE_GBC), never to CGB
+ * games, and go through the GBC LCD model (gbcore_set_color_correction). */
 enum {
   GBCORE_PALETTE_AUTO = 0,
   GBCORE_PALETTE_GREY,
   GBCORE_PALETTE_GREEN,
   GBCORE_PALETTE_POCKET,
+  GBCORE_PALETTE_GBC_AUTO,
+  GBCORE_PALETTE_GBC_UP, GBCORE_PALETTE_GBC_UP_A, GBCORE_PALETTE_GBC_UP_B,
+  GBCORE_PALETTE_GBC_LEFT, GBCORE_PALETTE_GBC_LEFT_A,
+  GBCORE_PALETTE_GBC_LEFT_B,
+  GBCORE_PALETTE_GBC_DOWN, GBCORE_PALETTE_GBC_DOWN_A,
+  GBCORE_PALETTE_GBC_DOWN_B,
+  GBCORE_PALETTE_GBC_RIGHT, GBCORE_PALETTE_GBC_RIGHT_A,
+  GBCORE_PALETTE_GBC_RIGHT_B,
   GBCORE_PALETTE_COUNT
 };
+/* What a GB link session tells the peer about this side's palette.  The
+ * peer runs this machine headless, so only the model the palette implies
+ * matters to it (AUTO: SGB for SGB carts; anything else: DMG).  The GBC
+ * palettes go out as GREY, which a build without them reads the same way:
+ * mixed builds still boot the same machine. */
+#define GBCORE_PALETTE_WIRE(p) \
+  ((p) >= GBCORE_PALETTE_GBC_AUTO && (p) < GBCORE_PALETTE_COUNT \
+   ? GBCORE_PALETTE_GREY : (p))
 void gbcore_set_palette(unsigned palette);
 const char *gbcore_palette_name(unsigned palette);
 
@@ -176,8 +202,8 @@ const char *gbcore_palette_name(unsigned palette);
  * its green picks up some blue (SameBoy's measured model, "Modern -
  * Balanced").  Off, it is the plain 5-to-8-bit expansion, which on a modern
  * display makes CGB games too dark and too saturated
- * (docs/GB-PALETTE-FIXES.md).  DMG palettes (gbcore_set_palette) and Super
- * Game Boy colours are not affected.  One setting for the whole program
+ * (docs/GB-PALETTE-FIXES.md).  DMG palettes (gbcore_set_palette) other
+ * than the GBC ones, and Super Game Boy colours, are not affected.  One setting for the whole program
  * (both instances), applied at once and kept across gbcore_power_on. */
 void gbcore_set_color_correction(int on);
 int gbcore_color_correction(void);

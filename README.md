@@ -791,7 +791,7 @@ confirm and ○ to go back.
 | | <kbd>NEW</kbd> Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD; GB/GBC also RGB stripes and RGB stripes strong (Stretch only). Off at 1x |
 | | <kbd>NEW</kbd> Colour (GBA) | native, GBA LCD colour, black & white |
 | | Ambient bars | None, Art (else the edge glow), Game (live edge glow) |
-| | GB palette | Auto, Grey, DMG green, Pocket |
+| | GB palette | Auto, Grey, DMG green, Pocket, GBC (auto) (the Game Boy Color's own colours for each original Game Boy game), and the 12 GBC button palettes (GBC Up ... GBC Right+B) |
 | Interface | Theme | dark or light |
 | | Menu style | Marquee or Shelf |
 | Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |

@@ -236,6 +236,16 @@ def main() -> int:
              *core_objs, str(shared), "-lm"])
         run([str(t / "cgb_lcd")], asan)
 
+        # GBC colours for DMG games (issue #34): the boot ROM's selection
+        # against known headers, the table, the LCD model, CGB untouched,
+        # and a machine that does not depend on the palette.  Linked as the
+        # PSP links it -- the instance partial link (gbcore_power_on works,
+        # only gbcore_* global) with the table in the shared object.
+        run(["gcc", "-std=gnu11", *WARN, *SAN, "-Igbcore", "-o",
+             str(t / "cgb_dmg_pal"), "gbcore/tests/cgb_dmg_pal.c", inst_a,
+             str(shared), "-lm"])
+        run([str(t / "cgb_dmg_pal")], asan)
+
         # The cable hook in the core: SC write -> callback -> SB/IF.
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-Igbcore", "-o",
              str(t / "serial"), "gbcore/tests/serial.c", str(glue),

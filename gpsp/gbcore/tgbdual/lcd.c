@@ -827,7 +827,9 @@ static void gb_recreate_colors()		{
 		word *dmg = &m_pal16[0][0][0];	/* GBAdhoc: flat, see gbc_recreate_colors */
 		for (i=0;i<12;i++)		{
 			word col = tgb_dmg_palette[i];	/* GBAdhoc: BGR555 from the adapter */
-			dmg[i] = CONVERT_COLOR15(col);
+			/* GBAdhoc: GBC colours for a DMG game (issue #34) are shown as the
+			 * GBC screen shows them; the four-shade palettes as before. */
+			dmg[i] = tgb_dmg_is_cgb ? cgb_lcd_color(col) : CONVERT_COLOR15(col);
 		}
 
 		gb_pal_is_invalidated = 0;
