@@ -28,7 +28,8 @@ struct gb_regs g_regs;
 struct gbc_regs cg_regs;
 int gb_lastVramCrc = 0;
 
-word dmy[160*5]; // vframe ÇÕÇ›èoÇµÇΩéûóp
+/* GBAdhoc: word dmy[160*5] (the overflow guard of the removed static
+ * vframe_mem) deleted; nothing referenced it.  1,600 B per instance. */
 /* GBAdhoc: VFRAME_SIZE bytes allocated by the adapter (gbcore_tgbdual.c)
  * rather than 128 KiB of .bss that every GBA session would also pay for. */
 word *vframe = NULL;
