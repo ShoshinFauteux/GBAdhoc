@@ -379,6 +379,10 @@ static void ol_stats_evt(const char *at)
  * Paints from the thread's stack base to just below the caller's frame, then
  * scans for the deepest overwritten word.  ~16 KiB of stores per load. */
 #define STK_PAINT 0x5354414Bu
+/* The firmware keeps the thread's UID in the lowest stack word as its
+ * overflow canary (uOFW threadman); painting over it hung module_start on
+ * both rig PSPs (PPSSPP does not check it).  Leave the bottom alone. */
+#define STK_GUARD_WORDS 16
 static unsigned *g_stk_lo;
 static unsigned g_stk_top;
 static int g_stk_rc;                 /* why a paint was skipped (logged) */
@@ -406,13 +410,13 @@ static void __attribute__((noinline)) stk_paint(void)
       g_stk_lo = 0;
       return;
    }
-   for (p = g_stk_lo; (unsigned)p < sp - 256; p++)
+   for (p = g_stk_lo + STK_GUARD_WORDS; (unsigned)p < sp - 256; p++)
       *p = STK_PAINT;
 }
 
 static void __attribute__((noinline)) stk_report(const char *at)
 {
-   unsigned *p = g_stk_lo;
+   unsigned *p = g_stk_lo ? g_stk_lo + STK_GUARD_WORDS : 0;
    if (!g_ol_host)
       return;
    if (!p)
