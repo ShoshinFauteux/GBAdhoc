@@ -3727,8 +3727,13 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
 #ifndef SMC_PARTIAL_SAFE
 #error RAM_MIRROR_FIX needs SMC_PARTIAL_SAFE (its dispatch islands)
 #endif
-u32 ram_mirror_conflicts;      /* alias conflicts: RAM cache flushes */
-u32 ram_mirror_alias_xlat;     /* translations made at a non-canonical alias */
+#ifdef DRPROF_TWIN   /* counters: the twin only (no new PSP .bss) */
+static u32 ram_mirror_conflicts;      /* alias conflicts: RAM cache flushes */
+static u32 ram_mirror_alias_xlat;     /* translations made at a non-canonical alias */
+#define RAM_MIRROR_COUNT(c) ((c)++)
+#else
+#define RAM_MIRROR_COUNT(c) ((void)0)
+#endif
 /* 0 = canonical (or not RAM); else the mirror index, with bit 9 set for
  * EWRAM so that an IWRAM and an EWRAM alias never compare equal. */
 static inline u32 ram_mirror_id(u32 pc)
@@ -3746,13 +3751,13 @@ static inline u32 ram_mirror_id(u32 pc)
   ((te)->offset_##type && (te)->alias_##type != ram_mirror_id(pc))
 #define RAM_MIRROR_RESOLVE_CONFLICT()                                         \
   do {                                                                        \
-    ram_mirror_conflicts++;                                                   \
+    RAM_MIRROR_COUNT(ram_mirror_conflicts);                                   \
     flush_translation_cache_ram();                                            \
   } while (0)
 #define RAM_MIRROR_NOTE_XLAT(te, type, pc)                                    \
   do {                                                                        \
     (te)->alias_##type = (u16)ram_mirror_id(pc);                              \
-    if ((te)->alias_##type) ram_mirror_alias_xlat++;                          \
+    if ((te)->alias_##type) RAM_MIRROR_COUNT(ram_mirror_alias_xlat);          \
   } while (0)
 #ifdef DRPROF_TWIN
 static void ram_mirror_report(void)
