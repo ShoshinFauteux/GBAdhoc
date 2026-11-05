@@ -113,6 +113,10 @@ MUTANTS = (
     ("no late flip hold",
      "   g_flip_early = 0;\n   g_lw_slot    = 0;",
      "   return;\n   g_lw_slot    = 0;"),
+    # stay a vblank late after an overrun until the natural nudge
+    ("no catch up soon",
+     "   return g_lf_behind && g_dfr_cfg && !link_session_any() &&",
+     "   return 0 && g_dfr_cfg && !link_session_any() &&"),
     # an early nudge with the ring nowhere near the high-water mark
     ("pull anytime",
      "level + in_rate / 60u > RING_HIGH_WATER",

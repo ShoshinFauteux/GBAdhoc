@@ -223,7 +223,7 @@ static uint32_t rnd(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8;
 typedef struct
 {
    unsigned frames, vb, hist[8], repeats, skipped, skip300, engaged, entries, exits;
-   unsigned nudges, pulls, starved;
+   unsigned nudges, pulls, lfpulls, starved;
    double   mean;
    unsigned poll_vb[MAXF];
 } result;
@@ -252,6 +252,7 @@ static void reset_world(int ll)
    g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_to_h = g_ll_to_b = 0;
    g_ll_eng = g_ll_slot = g_ll_slot_fail = 0;
    g_flip_early = 1; g_mer_early_retire = 1;
+   g_lf_n = g_lf_caught = g_lf_pull = 0; g_lf_behind = g_lf_hold = 0; g_dfr = 0;
    g_dfr_cfg = getenv("LOWLAT_NO_DFR") ? 0 : 1;   /* A/B: tier 0b without the late present */
 }
 
@@ -319,6 +320,8 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
             g_vc_target = sceDisplayGetVcount();
          int ffh_fe = g_flip_early;   /* main(): the FF flip pacing's save */
 #include "lowlat_wait.inc"
+         if (getenv("LOWLAT_TRACE") && !strcmp(getenv("LOWLAT_TRACE"), s->name) && ll == 0 && f >= 1020 && f < 1050)
+            printf("f %u want %u lvl %u behind %d hold %d fe %d vc %u tgt %u sub %u\n", f, want, ring_w - ring_r, g_lf_behind, g_lf_hold, g_flip_early, vb_count, g_vc_target, g_lat_sub_vc);
          g_drew = 0;
       }
       if (g_ll_iter_h)
@@ -338,7 +341,11 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
    r->exits = g_ll_to_b;
    r->nudges = g_ar_nudge;
    r->pulls = g_ll_pull;
+   r->lfpulls = g_lf_pull;
    r->starved = starved;
+   if (getenv("LOWLAT_DEBUG"))
+      printf("  %s ll=%d lf held=%u caught=%u pull=%u dfr=%u late=%u\n",
+             s->name, ll, g_lf_n, g_lf_caught, g_lf_pull, g_dfr_n, g_dfr_late);
    memcpy(r->hist, g_lat_hist, sizeof(r->hist));
    {
       unsigned n = 0, sum = 0;
@@ -348,6 +355,16 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
          sum += g_lat_hist[i] * i;
       }
       r->mean = n ? (double)sum / n : 0.0;
+   }
+   if (getenv("LOWLAT_TRACE") && !strcmp(getenv("LOWLAT_TRACE"), s->name) && ll == 0)
+   {
+      /* vblank: frame shown, and for that frame its poll vblank (latency) */
+      for (i = 1000; i < 1120 && i < n_vb_rec; i++)
+      {
+         int fr = shown_on_vb[i];
+         printf("vb %u shows %d lat %d\n", i + 1, fr,
+                fr >= 0 ? (int)(i + 1) - (int)r->poll_vb[fr] : -1);
+      }
    }
    /* C1: monotonic, nothing skipped (after the first frame on screen) */
    {
@@ -408,6 +425,8 @@ int main(void)
        * the vblank (FireRed's overworld, 4.6.0-beta.3 on the Lab) */
       { "render_at_vb", 8800, 800,   0,     0,  0, 9800,1500, 1500, 200, 70, -1 },
       { "render_late",  8800, 800,   0,     0,  0,11500,2500, 1500, 200, 70, -1 },
+      /* ...plus a frame now and then that overruns its vblank (a 20 ms frame) */
+      { "spikes_222",   8800, 800,   1, 11000,400, 9800,1500, 1500, 200, 70, -1 },
    };
    static result r0, r1, r2;
    unsigned k, f;
@@ -437,6 +456,11 @@ int main(void)
       check(r2.nudges <= r0.nudges + 1u && r2.nudges + 1u >= r0.nudges, s->name,
             "mode 2 changed the number of nudges");
       check(r2.starved <= r0.starved, s->name, "mode 2 starved the audio");
+      if (!s->heavy_pct && s->work_us + s->work_jit < 16000u)
+         check(r0.starved == 0, s->name, "tier 0 starved the audio at full speed");
+      /* CATCH UP SOON: an overrun costs its one repeat, not seconds a vblank late */
+      if (!strcmp(s->name, "spikes_222"))
+         check(r0.mean < 2.35, s->name, "tier 0 stayed a vblank late after overruns");
       check(r2.mean <= r1.mean + 0.01, s->name, "mode 2 is slower than mode 1");
       if (s->expect_engage == 0)
          check(r2.entries == 0, s->name, "mode 2 engaged with no room");
@@ -453,7 +477,8 @@ int main(void)
                "tier 0 repeats beyond the nudge at full speed");
       /* C2 */
       for (f = 0; f < frames; f++)
-         if (r0.poll_vb[f] != r1.poll_vb[f])
+         if ((int)(r0.poll_vb[f] - r1.poll_vb[f]) > (int)(r0.lfpulls + r1.lfpulls) ||
+             (int)(r1.poll_vb[f] - r0.poll_vb[f]) > (int)(r0.lfpulls + r1.lfpulls))
          {
             printf("  frame %u polled on vblank %u (t0) vs %u (t1)\n",
                    f, r0.poll_vb[f], r1.poll_vb[f]);
