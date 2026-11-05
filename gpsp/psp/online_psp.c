@@ -34,9 +34,15 @@
 
 #define ONLINE_PORT 27500
 
-/* main_psp.c: a bounded network wait is progress for the stall watchdog */
-void gpsp_net_wait_beat(void) __attribute__((weak));
-#define BEAT() do { if (gpsp_net_wait_beat) gpsp_net_wait_beat(); } while (0)
+#ifdef GPSP_PERF_RIG
+/* main_psp.c (harness/lab builds only): a bounded network wait counts as the
+ * main loop turning, for the harness stall exit.  Nothing in a release. */
+void gpsp_net_wait_beat(void);
+#define NET_WAIT_BEAT() gpsp_net_wait_beat()
+#else
+#define NET_WAIT_BEAT() ((void)0)
+#endif
+#define BEAT() NET_WAIT_BEAT()
 
 /* The Lab validates harness keys by grepping this exact call form
  * (backend/lab/inikeys.py).  online_psp_configure() reads each of them from

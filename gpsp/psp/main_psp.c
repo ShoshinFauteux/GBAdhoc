@@ -383,10 +383,12 @@ static volatile int      g_loop_phase;
 #define LOOP_TOP()      do { } while (0)
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
-#ifdef GBADHOC_ONLINE
-/* mgift_net.c / online_psp.c: a bounded network wait counts as the main loop
- * turning, so the harness stall exit does not end a Wi-Fi association that is
- * still inside its own timeout. */
+#ifdef GPSP_PERF_RIG
+/* mgift_net.c / online_psp.c (NET_WAIT_BEAT, harness/lab builds only): a
+ * bounded network wait counts as the main loop turning, so the harness stall
+ * exit does not end a Wi-Fi association still inside its own timeout.  A
+ * release has neither this function nor its call sites. */
+void gpsp_net_wait_beat(void);
 void gpsp_net_wait_beat(void)
 {
    LOOP_TOP();
