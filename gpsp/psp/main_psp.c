@@ -9396,18 +9396,15 @@ static void ui_net_action(int is_host)
          online_psp_clear();
       if (ol)
       {
-         ui_linking_view ov;
-         char o1[80], o2[80];
+         /* the same LINKING screen as below, so the code is shared, not cloned */
          online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
                         !is_host ? RL_MODE_ANY
                         : !gba || ui_host_cable() ? RL_MODE_CABLE
                                                   : RL_MODE_ADAPTER);
-         link_bringup_view(is_host, "Online", &ov, o1, sizeof(o1), o2,
-                           sizeof(o2));
-         snprintf(o1, sizeof(o1), "%s", is_host ? "Connecting to the GBAdhoc server..."
-                                                : "Looking for the room online...");
+         snprintf(room, sizeof(room), "Online");
+         link_bringup_view(is_host, room, &lv, l1, sizeof(l1), l2, sizeof(l2));
          link_backdrop_take();
-         ui_linking_draw(&ov);
+         ui_linking_draw(&lv);
          vid_swap();
          me_rend_suspend();
          rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);

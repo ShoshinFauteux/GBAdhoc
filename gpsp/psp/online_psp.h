@@ -42,8 +42,6 @@ void online_psp_down(void);
 int  online_psp_connected(void);
 /* EVT online_stats (heartbeat); nothing when no online session */
 void online_psp_stats_evt(const char *at);
-/* Path and ping for the session chip ("Online KQTR  direct 48 ms"). */
-void online_psp_status(char *out, unsigned cap);
 const char *online_psp_why(void);
 /* The PSP's saved connections, for the Online screen's Network row. */
 int  online_psp_wifi_count(void);
@@ -61,7 +59,6 @@ int  online_psp_wifi_name(int index, char *out, unsigned cap);
 #define online_psp_down() ((void)0)
 #define online_psp_connected() 0
 #define online_psp_stats_evt(a) ((void)0)
-#define online_psp_status(o, c) ((void)0)
 #define online_psp_why() ""
 #define online_psp_wifi_count() 0
 #define online_psp_wifi_name(i, o, c) (-1)
