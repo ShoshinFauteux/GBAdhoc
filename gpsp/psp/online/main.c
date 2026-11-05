@@ -25,6 +25,7 @@ static struct
 {
    online_cfg cfg;
    int fd;
+   uint16_t port;               /* the bound port (ONLINE_PORT unless taken) */
    int wifi_up, resolver_up;
    relay_transport *rt;
 } O = { .fd = -1 };
@@ -275,10 +276,25 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    a.sin_addr.s_addr = htonl(INADDR_ANY);
    if (sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a)) < 0)
    {
-      snprintf(why, why_cap, "socket bind");
-      evt("online_error stage=bind port=%d", ONLINE_PORT);
-      ol_down();
-      return -1;
+      /* the port is taken (another program on this network stack, or two
+       * emulated consoles on one PC): any port will do -- the server and the
+       * peer learn it from the datagrams, and the private candidate below
+       * reads it back */
+      a.sin_port = 0;
+      if (sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a)) < 0)
+      {
+         snprintf(why, why_cap, "socket bind");
+         evt("online_error stage=bind port=%d", ONLINE_PORT);
+         ol_down();
+         return -1;
+      }
+   }
+   {
+      struct sockaddr_in me;
+      socklen_t ml = sizeof(me);
+      memset(&me, 0, sizeof(me));
+      O.port = sceNetInetGetsockname(O.fd, (struct sockaddr *)&me, &ml) >= 0 && me.sin_port
+               ? ntohs(me.sin_port) : ONLINE_PORT;
    }
    sk.ctx = NULL;
    sk.send = sk_send;
@@ -297,7 +313,7 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       snprintf(ipb, sizeof(ipb), "%s:1", g_ol_host->local_ip());
       rc_cfg.priv_ip_be = parse_ip(ipb, &dummy);
    }
-   rc_cfg.priv_port = ONLINE_PORT;
+   rc_cfg.priv_port = O.port;
    rc_cfg.direct = O.cfg.direct;
    rc_cfg.mode = O.cfg.mode;
    rc_cfg.now_us = now_us;
