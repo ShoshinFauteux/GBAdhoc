@@ -45,6 +45,21 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
 
+# The in-game present: the FELP_L_PRES0 breadcrumb, then (within the same
+# block, before any other breadcrumb) the me_video_present() call.  Lines may
+# sit between the two -- FF flip pacing does (main_psp.c) -- so this matches
+# the shape that matters, not the exact text, and a refactor between them no
+# longer reads as "the wake is gone".
+PRESENT_RE = re.compile(r"      FE_LP_SET\(FELP_L_PRES0\);\n"
+                        r"(?:(?![ \t]*FE_LP_SET\().*\n){0,24}?"
+                        r"      me_video_present\(\);")
+
+
+def present_at(body):
+    m = PRESENT_RE.search(body)
+    return m.start() if m else -1
+
+
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
                     r"'(?:\\.|[^'\\])*'|[{}]", re.S)
 
@@ -398,7 +413,7 @@ def wiring(src):
     if not re.search(r"\bg_wake_answered = 1;", overlay_continue(src)):
         bad.append("overlay Continue does not flag its caller")
     drop = answered_drop(body)
-    present = body.find("      FE_LP_SET(FELP_L_PRES0);\n      me_video_present();")
+    present = present_at(body)
     call = body.find("int w = wake_service();\n         if (w)\n")
     at = body.find(ANSWERED)
     if not drop or at < 0 or at > present or call < 0 or call > at:

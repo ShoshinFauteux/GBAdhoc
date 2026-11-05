@@ -3,6 +3,7 @@
 # the commit to tag, with no environment (docs/RELEASE.md section 2).
 #
 #   tools/check_flags.py --compile   the flags are the committed ones
+#   tools/run_host_tests.py --strict every host suite green (none skipped)
 #   tools/build.sh release           the one clean build
 #   tools/make_release.sh            refuses anything but that build; packages it
 #
@@ -38,6 +39,16 @@ esac
 
 OUT=dist/release-build
 "$PY" tools/check_flags.py --compile || die "flags drifted"
+# THE HOST TESTS GATE THE RELEASE.  4.6.0-beta.4 went out with three red
+# suites because nothing here ran them.  --strict: a suite that could not run
+# (no compiler, no baseline commit -- use a full clone) is not a pass either.
+# RELEASE_SKIP_HOST_TESTS=1 is for a box without WSL/gcc; it is printed.
+if [ "${RELEASE_SKIP_HOST_TESTS:-0}" = 1 ]; then
+  echo "release: WARNING host tests SKIPPED (RELEASE_SKIP_HOST_TESTS=1)"
+else
+  mkdir -p dist && "$PY" tools/run_host_tests.py --strict --json "dist/host-tests.json" || \
+    die "host tests are not green (dist/host-tests.json)"
+fi
 bash tools/build.sh release --out "$OUT" || die "build failed"
 "$PY" tools/check_flags.py --build "$OUT" || die "the build is not the release set"
 bash tools/make_release.sh "$OUT/EBOOT.PBP" --version "$VERSION" || die "packaging refused"

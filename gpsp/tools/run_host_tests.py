@@ -40,7 +40,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
-MAX_HOST_SUITES = 30
+# A sanity bound on the registry, not a budget.  It used to be 30, and the
+# cap pushed unrelated tests into shared `a && b && c` suites: a failure was
+# reported under another test's name and hid every test chained after it
+# (4.6.0-beta.4 shipped with rtc_clock, state_delete, sleep_q, fe_share and
+# ini_doc never run, behind a brittle wiring check in fe_ini_bounds).  One
+# suite per subject; older comments that say "here for the suite cap"
+# describe where a test came from, not a rule.
+MAX_HOST_SUITES = 96
 
 
 # --------------------------------------------------------------- environment
@@ -576,7 +583,10 @@ def suites(env: Env, baseline: Path | None):
           "gcc -std=gnu99 -O2 -DGPSP_PLAYABLE -Ifrontend-common -Ipsp "
           "tools/test_display_profiles.c psp/config_psp.c psp/ctl_map.c "
           "frontend-common/fe_util.c -Wl,--wrap=fopen -o /tmp/t_dprof && "
-          "/tmp/t_dprof && "
+          "/tmp/t_dprof")
+         % (sdk, sdk, sdk)),
+
+        ("sleep_power", True, lambda: None, (
           "python3 tools/tests/test_psp_runtime.py && "
           "python3 tools/tests/test_power_callback.py && "
           # The in-game sleep quiesce (psp/sleep_q.h): the production park
@@ -590,8 +600,7 @@ def suites(env: Env, baseline: Path | None):
           "python3 tools/tests/test_sleep_menu.py && "
           # A sleep from the game list (after a game was left): the list
           # parks like the game loop (browser_park + ui_browser), mutants.
-          "python3 tools/tests/test_sleep_browser.py")
-         % (sdk, sdk, sdk)),
+          "python3 tools/tests/test_sleep_browser.py")),
 
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
@@ -642,7 +651,9 @@ def suites(env: Env, baseline: Path | None):
          ("gcc -std=gnu99 -Wall -Wextra -Werror -ffunction-sections "
           "-fdata-sections -Ifrontend-common -o /tmp/t_fe_ini_bounds "
           "tools/test_fe_ini_bounds.c -Wl,--gc-sections && "
-          "/tmp/t_fe_ini_bounds && "
+          "/tmp/t_fe_ini_bounds")),
+
+        ("sidecar_dirs", True, lambda: None, (
           # The saves/ and states/ folders (psp/sidecar_dirs.c, 4.6.0-beta.4):
           # path mapping, mirrored subpaths, launch-mode ROM paths and the
           # one-time move with failure injection.  Here for the suite cap; first,
@@ -652,7 +663,9 @@ def suites(env: Env, baseline: Path | None):
           "-o /tmp/t_sidecar_dirs tools/tests/test_sidecar_dirs.c "
           "psp/sidecar_dirs.c frontend-common/fe_util.c "
           "frontend-common/fe_share.c && "
-          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sidecar_dirs && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sidecar_dirs")),
+
+        ("ctl_map", True, lambda: None, (
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_ctl_map tools/tests/test_ctl_map.c psp/ctl_map.c "
@@ -673,13 +686,17 @@ def suites(env: Env, baseline: Path | None):
           # The button that answers an in-game UI (the menu's Resume, a
           # state load, the pause screen / wake overlay) is not the game's
           # until released: main_psp.c's pad swallow and its wiring, mutants.
-          "python3 tools/tests/test_menu_press.py && "
+          "python3 tools/tests/test_menu_press.py")),
+
+        ("rtc_clock", True, lambda: None, (
           # The GBA cartridge clock's source rule (rtc_clock.h): frames
           # unchanged, wall clock immune to fast-forward / sleep / state
           # load, the guard, the link-session hand-over.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
           "-fsanitize=address,undefined -I. -o /tmp/t_rtc_clock "
-          "tools/tests/test_rtc_clock.c && /tmp/t_rtc_clock && "
+          "tools/tests/test_rtc_clock.c && /tmp/t_rtc_clock")),
+
+        ("state_ui", True, lambda: None, (
           # Save-state delete (docs/CONTROL-REMAP.md section 11): the one
           # function that names the files a delete removes.  Here because the
           # runner caps the suite count and this suite owns ctl_map, whose
@@ -709,13 +726,17 @@ def suites(env: Env, baseline: Path | None):
           "python3 tools/tests/test_list_marks.py && "
           # Its per-game facts cache and idle pump (psp/list_marks.h, the
           # beta.4 list lag): no I/O to draw or move, with mutants.
-          "python3 tools/tests/test_list_marks_cache.py && "
+          "python3 tools/tests/test_list_marks_cache.py")),
+
+        ("sleep_q", True, lambda: None, (
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
           "-fsanitize=address,undefined -Ipsp "
           "-o /tmp/t_sleep_q tools/tests/test_sleep_q.c psp/sleep_q.c && "
-          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sleep_q && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sleep_q")),
+
+        ("fe_share", True, lambda: None, (
           # Share game data (docs/SAVE-SHARE.md): the protocol with both ends
           # in one process over a lossy fake radio, hostile requests, mixed
           # versions and the temp/verify/swap commit.  Here for the same
@@ -724,7 +745,9 @@ def suites(env: Env, baseline: Path | None):
           "-fsanitize=address,undefined -Ifrontend-common "
           "-o /tmp/t_fe_share tools/tests/test_fe_share.c "
           "frontend-common/fe_share.c && "
-          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_share && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_share")),
+
+        ("ini_doc", True, lambda: None, (
           # CONFIG.INI read once / written once (fe_ini_doc): the unit tests,
           # then the same pcfg_load/pcfg_save built on the old per-key path
           # (-DFE_INI_DOC_LEGACY) against the new one, on a real 3.0.0 and a

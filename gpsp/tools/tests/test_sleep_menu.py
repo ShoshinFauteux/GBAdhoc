@@ -38,6 +38,21 @@ import tempfile
 
 from test_psp_runtime import function
 
+# The in-game present: the FELP_L_PRES0 breadcrumb, then (within the same
+# block, before any other breadcrumb) the me_video_present() call.  Lines may
+# sit between the two -- FF flip pacing does (main_psp.c) -- so this matches
+# the shape that matters, not the exact text, and a refactor between them no
+# longer reads as "the wake is gone".
+PRESENT_RE = re.compile(r"      FE_LP_SET\(FELP_L_PRES0\);\n"
+                        r"(?:(?![ \t]*FE_LP_SET\().*\n){0,24}?"
+                        r"      me_video_present\(\);")
+
+
+def present_at(body):
+    m = PRESENT_RE.search(body)
+    return m.start() if m else -1
+
+
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
@@ -475,7 +490,7 @@ def wiring(main_src):
         bad.append("loop top no longer parks")
     if len(re.findall(r"\bloop_park\(\)", main_src)) != 1:   # the loop top
         bad.append("loop_park called from somewhere other than the loop top")
-    present = body.find("      FE_LP_SET(FELP_L_PRES0);\n      me_video_present();")
+    present = present_at(body)
     ingame = body.rfind(PRESENT_HEAD, 0, present)
     if present < 0 or ingame < 0 or ingame < body.find(MENU_HEAD):
         bad.append("in-game present no longer runs wake_service")
