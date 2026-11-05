@@ -21,7 +21,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.6.0 beta 3</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 4.6.0 beta 4</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -44,8 +44,8 @@
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
-> **This is the `beta` branch: GBAdhoc 4.6.0 beta 3.**
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.3)
+> **This is the `beta` branch: GBAdhoc 4.6.0 beta 4.**
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4)
 > (the *latest release* link above is the stable 4.5.0). What the beta adds:
 >
 > - **Wireless Adapter play is scheduled frame by frame.** Each PSP sends its frame's
@@ -57,6 +57,17 @@
 >   (#10; fixes by Chandler Hardy, #26, #27 and #30).
 > - *New in beta 3:* **smoother fast-forward**: 3x, Smooth and Unlimited show their pictures
 >   evenly instead of skipping or doubling some.
+> - *New in beta 4:* **screen filters in three rows** (Smoothing, Screen effect, Colour) that
+>   line up with the game's own pixels at every scale, plus GBA LCD colour and black & white.
+> - *New in beta 4:* **saves and states in their own folders** (`saves/`, `states/`), moved
+>   safely the first time you open each game; ROMs are never moved.
+> - *New in beta 4:* **the Save States page's buttons changed**: ✕ saves, □ loads, △ deletes
+>   (on the game list's shelf ✕ loads, △ deletes). Loading a state now asks first (PR #32 by
+>   Chandler Hardy), and a quick save can ask too.
+> - *New in beta 4:* MXPHunter's requests (#31): Volume, the build under *SETTINGS*, d-pad
+>   arrows in the hints, state/cheat marks and a position bar on the game list, a
+>   `Screenshots` folder, and a Video preset that can really be set to none.
+> - *New in beta 4:* **XMB launch mode** (#29): a game's own XMB entry can start it directly.
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
 > - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the
@@ -702,9 +713,10 @@ favourites, the state shelf) are unchanged and still apply.
 - The in-game menu over the paused game.
 - <kbd>NEW</kbd> Reset game, from the in-game menu.
 - Remap every button and shortcut; HOME as the menu button if you want it.
-- Per-console picture: scale (1x, fit, stretch, integer 2x), filter
-  (nearest, bilinear, sharp bilinear, and <kbd>NEW</kbd> LCD grid, dot grid, scanlines),
-  Ambient bars, GB palette.
+- Per-console picture: scale (1x, fit, stretch, integer 2x), <kbd>NEW</kbd> smoothing
+  (nearest, bilinear, sharp bilinear), a screen effect lined up with the game's pixels
+  (LCD grid, dot grid, scanlines, vintage LCD; RGB stripes for GB/GBC at Stretch) and, for
+  GBA, colour (native, GBA LCD colour, black & white); Ambient bars, GB palette.
 
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
@@ -769,7 +781,9 @@ confirm and ○ to go back.
 | | Fast link | on or off; the host decides for both PSPs |
 | | Share game data | from the game list: share, or scan for a room |
 | Display per console | Video scale | 1x, fit, stretch, 2x (integer) |
-| | Video filter | nearest, bilinear, sharp bilinear, <kbd>NEW</kbd> LCD grid, dot grid, scanlines |
+| | <kbd>NEW</kbd> Smoothing | nearest, bilinear, sharp bilinear |
+| | <kbd>NEW</kbd> Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD; GB/GBC also RGB stripes and RGB stripes strong (Stretch only). Off at 1x |
+| | <kbd>NEW</kbd> Colour (GBA) | native, GBA LCD colour, black & white |
 | | Ambient bars | off, art, art else game |
 | | GB palette | Auto, Grey, DMG green, Pocket |
 | Interface | Theme | dark or light |
