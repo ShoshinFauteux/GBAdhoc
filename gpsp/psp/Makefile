@@ -225,7 +225,10 @@ endif
 # Frontend only.
 ONLINE ?= 1
 ifeq ($(ONLINE),1)
-OBJS += online_psp.o transport_relay.o
+# the session code is gbadhoc_online.prx (online/), loaded on demand: only
+# the loader and the configuration are in the EBOOT (online_psp.c)
+OBJS += online_psp.o
+ONLINE_PRX = online/gbadhoc_online.prx
 CFLAGS += -DGBADHOC_ONLINE
 endif
 RFU_SCHED ?= 0
@@ -299,7 +302,7 @@ LIBS = $(CORE_LIB) -lpspgu -lpspge -lpspaudio -lpsppower \
 # against it).  The rule is defined AFTER the build.mak include below, so it
 # does not steal the default goal; it is listed here as an EXTRA_TARGET so
 # `all` builds it.
-EXTRA_TARGETS   = EBOOT.PBP me/gbadhoc_me.prx home/gbadhoc_home.prx
+EXTRA_TARGETS   = EBOOT.PBP me/gbadhoc_me.prx home/gbadhoc_home.prx $(ONLINE_PRX)
 # Generic-build XMB branding (user direction, 2026-08-08): title "GBAdhoc",
 # icon + background derived from the user-supplied logo by assets/make_assets.py
 # (was "PSP AGB" after the adapter's AGB-015 model number).  The HARNESS build
@@ -374,8 +377,6 @@ transport_adhoc.o: ../netdrv/transport_adhoc.c ../netdrv/transport_adhoc.h ../ne
 # Mystery Gift's netdrv backend (2.0.5).  Same out-of-tree rule and the same
 # reason as transport_adhoc above: a MIPS .o left in ../netdrv would be swept
 # into the desktop core archive by sdl/Makefile's find (ADR-0005).
-transport_relay.o: ../netdrv/transport_relay.c ../netdrv/transport_relay.h ../netdrv/relay_proto.h ../netdrv/netdrv.h
-	$(CC) $(CFLAGS) -c -o $@ $<
 
 transport_inet.o: ../netdrv/transport_inet.c ../netdrv/transport_inet.h ../netdrv/netdrv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -444,7 +445,7 @@ DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 # `clean` is build.mak's; the .d files are ours, so sweep them too or a
 # stale one outlives the object it describes.  The GB core's objects are
 # not in OBJS (only their linked product is), so they are ours as well.
-clean: clean-deps clean-me clean-home clean-gbcore
+clean: clean-deps clean-me clean-home clean-online clean-gbcore
 clean-deps:
 	-@rm -f $(DEPS)
 clean-gbcore:
@@ -483,6 +484,11 @@ print-features:
 # Menu = HOME (docs/CONTROL-REMAP.md section 10): the small kernel module that
 # reads HOME and switches the system popup off while a game owns it.  Its own
 # sub-make and its own PRX, so the Media Engine module is untouched.
+.PHONY: online/gbadhoc_online.prx clean-online
+online/gbadhoc_online.prx:
+	$(MAKE) -C online
+clean-online:
+	-$(MAKE) -C online clean
 .PHONY: home/gbadhoc_home.prx clean-home
 home/gbadhoc_home.prx:
 	$(MAKE) -C home

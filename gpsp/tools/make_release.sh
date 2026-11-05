@@ -76,6 +76,15 @@ ME_PRX="$EBOOT_DIR/gbadhoc_me.prx"
 HOME_PRX="$EBOOT_DIR/gbadhoc_home.prx"
 [ -f "$HOME_PRX" ] || HOME_PRX="$REPO/psp/home/gbadhoc_home.prx"
 [ -f "$HOME_PRX" ] || die "no HOME-button module at '$HOME_PRX'. Build the PSP frontend before packaging."
+# The on-demand online-play module (psp/online/, ONLINE=1 builds; docs/ONLINE-TUNNEL.md
+# section 8).  Required when the build manifest says ONLINE=1 (checked below).
+ONLINE_PRX="$EBOOT_DIR/gbadhoc_online.prx"
+[ -f "$ONLINE_PRX" ] || ONLINE_PRX="$REPO/psp/online/gbadhoc_online.prx"
+WANT_ONLINE=0
+if grep -q 'ONLINE=1' "$EBOOT_DIR/build-manifest.json" 2>/dev/null; then
+  WANT_ONLINE=1
+  [ -f "$ONLINE_PRX" ] || die "no online-play module at '$ONLINE_PRX' (the build has ONLINE=1). Build the PSP frontend before packaging."
+fi
 
 # Staleness: any recursively included PSP/frontend/transport source or build
 # input, including artwork embedded in EBOOT.PBP, newer than the EBOOT means
@@ -101,6 +110,30 @@ ME_STALE=$(find "$REPO/psp/me" -type f \( -name '*.c' -o -name '*.cc' \
 HOME_STALE=$(find "$REPO/psp/home" -type f \( -name '*.c' -o -name '*.h' \
                -o -name '*.exp' -o -name 'Makefile' \) \
                -newer "$HOME_PRX" -print 2>/dev/null || true)
+ONLINE_STALE=""
+if [ "$WANT_ONLINE" = 1 ]; then
+  ONLINE_STALE=$(find "$REPO/psp/online" -type f \( -name '*.c' -o -name '*.h' \
+                   -o -name '*.exp' -o -name 'Makefile' \) \
+                   -newer "$ONLINE_PRX" -print 2>/dev/null || true)
+  for od in netdrv/transport_relay.c netdrv/transport_relay.h netdrv/relay_proto.h netdrv/netdrv.h; do
+    if [ "$REPO/$od" -nt "$ONLINE_PRX" ]; then
+      ONLINE_STALE="$ONLINE_STALE
+$REPO/$od"
+    fi
+  done
+  ONLINE_STALE=$(echo "$ONLINE_STALE" | sed '/^$/d')
+fi
+if [ -n "$ONLINE_STALE" ]; then
+  if [ "$ALLOW_STALE" -eq 1 ]; then
+    echo "WARNING: online-play module is older than these sources (--allow-stale given):" >&2
+    echo "$ONLINE_STALE" | sed 's/^/  /' >&2
+  else
+    echo "FATAL: '$ONLINE_PRX' is OLDER than its sources:" >&2
+    echo "$ONLINE_STALE" | sed 's/^/  /' >&2
+    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
+    exit 1
+  fi
+fi
 for me_dep in psp/Makefile video.cc video.h video_prof.h video_me_log.h common.h; do
   if [ "$REPO/$me_dep" -nt "$ME_PRX" ]; then
     ME_STALE="$ME_STALE
@@ -238,6 +271,7 @@ cp "$EBOOT" "$APP/EBOOT.PBP"
 [ -f "$ME_PRX" ] || die "no Media Engine module at '$ME_PRX' — build the PSP frontend before packaging"
 cp "$ME_PRX" "$APP/gbadhoc_me.prx"
 cp "$HOME_PRX" "$APP/gbadhoc_home.prx"
+[ "$WANT_ONLINE" = 1 ] && cp "$ONLINE_PRX" "$APP/gbadhoc_online.prx"
 # Keep the empty folders alive through zip/unzip on every extractor.
 : > "$APP/roms/.keep"; : > "$APP/saves/.keep"; : > "$APP/log/.keep"
 # cheats/: where a player's own per-game cheat files go (docs/CHEATS.md).
@@ -289,6 +323,7 @@ Copy the "PSP" folder in this zip to the ROOT of your memory stick.  You get:
         EBOOT.PBP     the app
         gbadhoc_me.prx  Media Engine renderer module
         gbadhoc_home.prx  HOME-as-menu-button module (Settings > Controls)
+        gbadhoc_online.prx  online play module (experimental; loaded only online)
         roms/         <- put your own .gba, .gb and .gbc files here
         cheats/       your own per-game cheat files (see cheats/README.txt)
         saves/        (used by per-game builds)
@@ -302,7 +337,7 @@ To link two PSPs, do all of this on BOTH consoles.
 Launch: XMB -> Game -> Memory Stick -> GBAdhoc
 
 UPGRADING: copy the "PSP" folder over your install, or at least EBOOT.PBP,
-gbadhoc_me.prx and gbadhoc_home.prx together.  Your config.ini, saves and save
+gbadhoc_me.prx, gbadhoc_home.prx and gbadhoc_online.prx together.  Your config.ini, saves and save
 states carry over.
 Coming from 4.1.0: it installed to PSP/GAME/GBAdhoc410.  Copy what you want to
 keep into PSP/GAME/$APPDIR_NAME, then delete GBAdhoc410.
