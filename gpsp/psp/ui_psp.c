@@ -2833,7 +2833,7 @@ static ui_action screen_settings(unsigned edges)
 #ifdef GBADHOC_ONLINE
       case SET_ONLINE:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-             g_pcfg.online_play ? "on (experimental)" : "off");
+             g_pcfg.online_play ? "on" : "off");
          break;
 #endif
       case SET_CPUCLK:
@@ -2933,9 +2933,7 @@ static ui_action screen_settings(unsigned edges)
                 : "The quick save saves slot 1 at once, without asking.");
 #ifdef GBADHOC_ONLINE
    else if (g_cursor == SET_ONLINE)
-      footer(g_pcfg.online_play
-                ? "Experimental: Wireless > Online."
-                : "Wireless > Online, over the internet.");
+      footer("Experimental: online link play (Wireless > Online).");
 #endif
    else if (g_cursor == SET_CPUCLK)
    {
@@ -4195,7 +4193,7 @@ int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
 
 static ui_action screen_online(unsigned edges)
 {
-   char l1[96], l2[96], net[48];
+   char net[48];
    int i, nw, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
    if (g_ol_pos >= 0)
    {
@@ -4276,14 +4274,11 @@ static ui_action screen_online(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "ONLINE");
-   snprintf(l1, sizeof(l1), "Experimental: link over the internet (Wi-Fi).");
-   snprintf(l2, sizeof(l2), "Create a room, or join a friend's code.");
-   vid_text(22, 72, l1, C_DIM);
-   vid_text(22, 72 + FE_FONT_H + 2, l2, C_DIM);
+   vid_text(22, 72, "Experimental: link over the internet (Wi-Fi).", C_DIM);
    nw = online_psp_wifi_count();
    if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
                                        net, sizeof(net)) != 0)
-      snprintf(net, sizeof(net), "%s", nw <= 0 ? "first saved connection" : "?");
+      snprintf(net, sizeof(net), "%s", nw <= 0 ? "saved #1" : "?");
    for (i = 0; i < OL_COUNT; i++)
    {
       int y = WL_ROW_Y0 + i * 22, sel = g_cursor == i && g_ol_pos < 0;
