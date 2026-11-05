@@ -304,7 +304,7 @@ def suites(env: Env, baseline: Path | None):
          "-o /tmp/t_fe_rewind tools/tests/test_fe_rewind.c "
          "frontend-common/fe_rewind.c frontend-common/fe_rewind_pack.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_rewind && "
-         "python3 tools/run_clock_reliability.py && "
+         "python3 tools/run_clock_reliability.py --out /tmp/clock-rewind && "
          "gcc -std=gnu99 -O1 -g -DREWIND -ffunction-sections -fdata-sections "
          "-fsanitize=address,undefined -I. -Inetdrv -Ifrontend-common "
          "-Ilibretro -Ilibretro/libretro-common/include "
