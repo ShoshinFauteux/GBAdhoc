@@ -285,6 +285,9 @@ int main(int argc, char **argv)
       if (rn(64) == 0)
       {
          now += rn(30000);
+         /* a timer's sends (PEER LEFT to the members still in a room) answer no
+            datagram: no source, so the amplification check never matches them */
+         memset(&g_src, 0, sizeof(g_src));
          relay_core_tick(g_core, now);
          relay_core_tick(g_desk, now);
       }

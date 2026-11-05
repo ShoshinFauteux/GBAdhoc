@@ -153,12 +153,18 @@ static inline int inv_count(const char *s)
    return n;
 }
 
+/* Decoding is bit-serial and 32-bit only: the PSP EBOOT checks invites on the
+ * Join screen, and 64-bit shifts plus two inlined byte CRCs cost it ~1 KB of
+ * text, which broke the boot-heap rule (docs/ONLINE-TUNNEL.md).  A CRC fed one
+ * bit at a time MSB first equals the byte-wise inv_crc8 / inv_crc7 above (both
+ * start from 0 and are not reflected); test_invite checks every vector,
+ * single typo and swap against the encoder. */
 static inline int inv_decode(const char *s, uint8_t ip[4], unsigned *port)
 {
-   uint64_t v = 0;
-   uint8_t b[6];
-   unsigned chk, p = INV_DEFAULT_PORT;
-   int n = 0, x;
+   uint8_t q[INV_LONG];
+   uint32_t a = 0, t = 0;       /* a: the address bits; t: every bit after them */
+   unsigned c = 0, top, mask, poly, p = INV_DEFAULT_PORT;
+   int n = 0, x, j, k, i = 0, nd;
    for (; *s; s++)
    {
       x = inv_sym(*s);
@@ -166,31 +172,40 @@ static inline int inv_decode(const char *s, uint8_t ip[4], unsigned *port)
          continue;
       if (x < 0)
          return INV_E_SYMBOL;
-      if (++n > INV_LONG)
+      if (n == INV_LONG)
          return INV_E_LENGTH;
-      v = (v << 5) | (unsigned)x;
+      q[n++] = (uint8_t)x;
    }
-   if (n == INV_SHORT)
-   {
-      chk = (unsigned)(v & 0xFF);
-      v >>= 8;
-   }
-   else if (n == INV_LONG)
-   {
-      chk = (unsigned)(v & 0x7F);
-      p = (unsigned)((v >> 7) & 0xFFFF);
-      v >>= 23;
-   }
-   else
+   if (n != INV_SHORT && n != INV_LONG)
       return INV_E_LENGTH;
-   ip[0] = b[0] = (uint8_t)(v >> 24);
-   ip[1] = b[1] = (uint8_t)(v >> 16);
-   ip[2] = b[2] = (uint8_t)(v >> 8);
-   ip[3] = b[3] = (uint8_t)v;
-   b[4] = (uint8_t)(p >> 8);
-   b[5] = (uint8_t)p;
-   if (n == INV_SHORT ? ((inv_crc8(b, 4) ^ INV_TAG) & 0xFF) != chk
-                      : ((inv_crc7(b, 6) ^ INV_TAG) & 0x7F) != chk)
+   /* short: CRC-8 (0x07) over 32 address bits; long: CRC-7 (0x09) over 48 */
+   top = n == INV_SHORT ? 0x80u : 0x40u;
+   mask = top * 2 - 1;
+   poly = n == INV_SHORT ? 0x07u : 0x09u;
+   nd = n == INV_SHORT ? 32 : 48;
+   for (j = 0; j < n; j++)
+      for (k = 4; k >= 0; k--, i++)
+      {
+         unsigned b = ((unsigned)q[j] >> k) & 1;
+         if (i < nd)
+         {
+            unsigned fb = (c & top) ? 1 ^ b : b;
+            c = (c << 1) & mask;
+            if (fb)
+               c ^= poly;
+         }
+         if (i < 32)
+            a = (a << 1) | b;
+         else
+            t = (t << 1) | b;
+      }
+   if (n == INV_LONG)
+      p = (unsigned)(t >> 7);
+   ip[0] = (uint8_t)(a >> 24);
+   ip[1] = (uint8_t)(a >> 16);
+   ip[2] = (uint8_t)(a >> 8);
+   ip[3] = (uint8_t)a;
+   if (((c ^ INV_TAG) & mask) != (t & mask))
       return INV_E_CHECK;
    if (!inv_ip_ok(ip))
       return INV_E_ADDRESS;

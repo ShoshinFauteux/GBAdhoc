@@ -579,11 +579,21 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
   PSP in the PC's home without NAT loopback, and both players joining. There is also a one-hour directory
   run with a server restart (the code is kept) and UNREGISTER.
 - `test_invite`, and `fuzz_relay` over the new types on a directory core and a home-code core: 2 M
-  datagrams x 2 seeds under ASan/UBSan, with no amplification.
+  datagrams x 6 seeds under ASan/UBSan, with no amplification. (Seed 7 once reported "18 bytes out for
+  15 in (type 5)". That was the fuzzer's fault: a timer's PEER LEFT to a member still in a room was
+  checked as if it answered the last datagram, whose source happened to be that member. The fuzzer now
+  clears the source before ticking the cores.)
 - `natlab.py BIN desktop`: real sockets in network namespaces. The directory is on 203.0.113.1. The
   desktop host is `gbadhoc-relay --home --register` behind a cone NAT with UPnP as two static forwards.
   PSPs are behind cone and symmetric NATs. The paths are direct where both NATs allow it and relayed
-  otherwise.
+  otherwise. 8/8 on 2026-11-05.
+- **PPSSPP, two GBAdhoc instances by invite code** (2026-11-05, the lab build of this branch,
+  `RFU_SCHED=1`): `tools/relay/ppsspp_online.sh` with `RELAY_ARGS="--home QWER --public 127.0.0.1"`, which is
+  the desktop host's mode in a loopback-only namespace. Both harness inis set `online_room` to the invite
+  `FW00-00DX` (B typed it as `fw0000dx`) and `online_relay` to an unreachable TEST-NET address, so only the
+  invite can find the host. Both decoded 127.0.0.1:27420 and landed in the home room QWER. A was slot 0 and
+  hosted, and the path was direct. The Emerald Union Room trade (`rfu_em_trade`) logged `trade_complete` on
+  both, with clean exits after 162 s. Jobs and logs: `builds/online-out/ppsspp-invite`.
 
 **Still to test on hardware and the real internet:**
 

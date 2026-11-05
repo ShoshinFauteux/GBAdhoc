@@ -84,6 +84,92 @@ static double rate_random(int n, unsigned long tries)
    return 100.0 * pass / tries;
 }
 
+/* The first decoder (24e3e2dd): 64-bit accumulator, byte-wise CRCs.  The
+ * shipped one is bit-serial and 32-bit (smaller PSP text); both must give the
+ * same answer and the same address and port for every input. */
+static int ref_decode(const char *s, uint8_t ip[4], unsigned *port)
+{
+   uint64_t v = 0;
+   uint8_t b[6];
+   unsigned chk, p = INV_DEFAULT_PORT;
+   int n = 0, x;
+   for (; *s; s++)
+   {
+      x = inv_sym(*s);
+      if (x == -2)
+         continue;
+      if (x < 0)
+         return INV_E_SYMBOL;
+      if (++n > INV_LONG)
+         return INV_E_LENGTH;
+      v = (v << 5) | (unsigned)x;
+   }
+   if (n == INV_SHORT)
+   {
+      chk = (unsigned)(v & 0xFF);
+      v >>= 8;
+   }
+   else if (n == INV_LONG)
+   {
+      chk = (unsigned)(v & 0x7F);
+      p = (unsigned)((v >> 7) & 0xFFFF);
+      v >>= 23;
+   }
+   else
+      return INV_E_LENGTH;
+   ip[0] = b[0] = (uint8_t)(v >> 24);
+   ip[1] = b[1] = (uint8_t)(v >> 16);
+   ip[2] = b[2] = (uint8_t)(v >> 8);
+   ip[3] = b[3] = (uint8_t)v;
+   b[4] = (uint8_t)(p >> 8);
+   b[5] = (uint8_t)p;
+   if (n == INV_SHORT ? ((inv_crc8(b, 4) ^ INV_TAG) & 0xFF) != chk
+                      : ((inv_crc7(b, 6) ^ INV_TAG) & 0x7F) != chk)
+      return INV_E_CHECK;
+   if (!inv_ip_ok(ip))
+      return INV_E_ADDRESS;
+   if (!p)
+      return INV_E_PORT;
+   *port = p;
+   return INV_OK;
+}
+
+/* random strings of 0..13 symbols, mostly the alphabet, some folds, dashes and junk */
+static void same_as_ref(unsigned long tries, unsigned long *ok)
+{
+   static const char extra[] = "-- oiluOILU*#";
+   char t[20];
+   uint8_t a[4], b[4];
+   unsigned pa, pb;
+   unsigned long k;
+   int i, n, ra, rb;
+   for (k = 0; k < tries; k++)
+   {
+      n = (int)(rnd() % 14);
+      if (k & 1)
+         n = rnd() & 1 ? 8 : 11;      /* half at the real lengths */
+      for (i = 0; i < n; i++)
+         t[i] = rnd() % 16 ? INV_ALPHABET[rnd() % 32] : extra[rnd() % (sizeof(extra) - 1)];
+      t[n] = 0;
+      if (k % 4 == 3)
+      {
+         /* a real code, any address (impossible ones too) and port */
+         uint8_t ip[4];
+         unsigned port = rnd() % 3 ? (rnd() & 0xFFFF) : INV_DEFAULT_PORT;
+         rand_ip(ip);
+         if (inv_encode(ip, port, (int)(rnd() & 1), t) != INV_OK)
+            continue;
+      }
+      pa = pb = 12345;
+      ra = inv_decode(t, a, &pa);
+      rb = ref_decode(t, b, &pb);
+      CHECK(ra == rb, "decode(%s) = %d, reference %d", t, ra, rb);
+      if (ra == INV_OK && rb == INV_OK)
+         CHECK(!memcmp(a, b, 4) && pa == pb, "decode(%s): a different address or port", t);
+      *ok += ra == INV_OK;
+   }
+}
+
 int main(void)
 {
    uint8_t ip[4], got[4];
@@ -184,6 +270,13 @@ int main(void)
       printf("     random strings accepted: short %.3f%% (1/256 = 0.391%%, less impossible addresses), "
              "long %.3f%% (1/128 = 0.781%%)\n", r8, r11);
       CHECK(r8 < 0.45 && r11 < 0.85, "random acceptance too high");
+   }
+   /* the 32-bit bit-serial decoder against the first (64-bit, byte-wise) one */
+   {
+      unsigned long ok = 0, before = g_fail;
+      same_as_ref(4000000ul, &ok);
+      printf("     same as the reference decoder: 4000000 inputs (%lu valid), %s\n", ok,
+             g_fail == before ? "identical" : "DIFFERENT");
    }
    printf("%s\n", g_fail ? "FAILED" : "PASS: invite codes");
    return g_fail ? 1 : 0;
