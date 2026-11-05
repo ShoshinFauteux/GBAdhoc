@@ -1029,8 +1029,13 @@ static void audio_start(void)
    audio_running = 1;
    /* Nominal until the pace policy says otherwise (ADR-0027). */
    g_audio_step = (unsigned)(((uint64_t)in_rate << 16) / OUT_RATE);
+   /* 8 KiB stack (was 16).  audio_thread is a leaf loop: its frame is 64 B
+    * (release ELF: addiu sp,sp,-64; `out` is static), and its only calls
+    * are sceAudioChReserve / OutputBlocking / ChRelease, syscalls that run
+    * on the kernel stack.  Created before the ROM load, so the 8 KiB is one
+    * whole step of the PSP-1000's boot heap. */
    audio_thid = sceKernelCreateThread("gpsp_audio", audio_thread, 0x12,
-                                      0x4000, THREAD_ATTR_USER, NULL);
+                                      0x2000, THREAD_ATTR_USER, NULL);
    if (audio_thid >= 0)
    {
       int rc = sceKernelStartThread(audio_thid, 0, NULL);
