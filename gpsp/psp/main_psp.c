@@ -7659,6 +7659,10 @@ static void silent_frame(void)
  * session is DONE (exit 0) or FAILED (exit 4). */
 #define GBLINK_DELAY_DEFAULT 4
 static unsigned g_gblink_delay = GBLINK_DELAY_DEFAULT;
+/* Harness: the auto input delay's cap in frames (fe_gblink_local.delay_auto,
+ * docs/ONLINE-TUNNEL.md section 2); 0 = off, every build's behaviour so far.
+ * Host only: the guest takes the delay from CONFIG. */
+static unsigned g_gblink_delay_auto;
 static int g_gblink_role;             /* harness: 0 off, 1 host, 2 join */
 static long long g_gblink_seed;       /* harness: 0 = this console's clock */
 static unsigned g_gblink_end_after = 300;
@@ -13429,6 +13433,12 @@ int main(int argc, char *argv[])
                                                 g_gblink_delay);
       if (g_gblink_delay > 60)
          g_gblink_delay = 60;
+      g_gblink_delay_auto = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                     "gblink_delay_auto", 0);
+      if (g_gblink_delay_auto > 30)
+         g_gblink_delay_auto = 30;
+      if (g_gblink_delay_auto)
+         fe_evt("gblink_delay_auto cap=%u", g_gblink_delay_auto);
       g_gblink_seed = (long long)fe_ini_get_int(HARNESS_INI,
                                                 "gblink_rtc_seed", 0);
       g_gblink_end_after = (unsigned)fe_ini_get_int(HARNESS_INI,
@@ -14867,6 +14877,7 @@ session_top:
    cfg.gblink_rtc_keep_session_stamp = g_gblink_keep_stamp;
    cfg.gblink_wait   = plat_gblink_wait;    /* stall absorption */
    cfg.gblink_nack   = g_gbl_nack;          /* resend requests */
+   cfg.gblink_delay_auto = g_gblink_delay_auto; /* 0 = off */
    cfg.gblink_hash_every  = g_gbl_hash_every;   /* harness A/B */
    cfg.gblink_hash_legacy = g_gbl_hash_legacy;
    if (g_gblink_bulk_bytes)

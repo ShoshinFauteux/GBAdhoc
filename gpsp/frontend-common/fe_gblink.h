@@ -189,6 +189,11 @@ typedef struct fe_gblink_platform
     * (BK_NACK, fe_gblink.c) instead of waiting for the ordered channel's
     * retransmission timeout behind a lost datagram.  0 = off. */
    int nack;
+   /* AUTO INPUT DELAY (docs/ONLINE-TUNNEL.md section 2; optional): the
+    * transport's smoothed round trip and its variance in microseconds, and
+    * how many samples stand behind them (0 = none yet).  Only a HOST with
+    * fe_gblink_local.delay_auto set calls it. */
+   uint32_t (*rtt_us)(void *user, uint32_t *rttvar_us, uint32_t *samples);
 } fe_gblink_platform;
 
 typedef struct fe_gblink_local
@@ -221,6 +226,12 @@ typedef struct fe_gblink_local
    /* Host only (the guest takes the host's): input delay in frames,
     * hash interval in slot-0 frames. */
    unsigned input_delay;
+   /* Host only; 0 = off, what every build so far does.  N > 0: choose the
+    * input delay from the measured round trip (platform rtt_us), never
+    * below input_delay and never above N.  The guest takes the delay from
+    * CONFIG as always, so the wire and a guest of any build are unchanged
+    * (docs/ONLINE-TUNNEL.md section 2). */
+   unsigned delay_auto;
    unsigned hash_interval;
    /* Host only: gbdual_config_t.batch_lines for both consoles (0/1 =
     * strict line-by-line alternation); a vtable pair's quantum. */

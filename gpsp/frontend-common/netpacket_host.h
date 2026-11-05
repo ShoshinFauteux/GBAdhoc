@@ -137,6 +137,11 @@ unsigned fe_np_peer_min_fps(void);
  * noise.  See nd_stats.txq_now. */
 uint32_t fe_np_txq_now(void);
 
+/* Smoothed round trip to the peer (worst active peer) in microseconds, its
+ * variance, and the RTT samples behind it; all 0 with no session or before
+ * the first sample.  The auto input delay reads it once per session. */
+uint32_t fe_np_rtt(uint32_t *rttvar_us, uint32_t *samples);
+
 /* ---- per-frame session cost accounting (ADR-0021) -----------------------
  *
  * A live session cost the PSP-1000 ~20 fps and no log line could say where

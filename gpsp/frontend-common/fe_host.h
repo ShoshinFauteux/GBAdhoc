@@ -196,6 +196,9 @@ typedef struct fe_host_config
    int (*gblink_wait)(uint32_t waited_us);
    /* GB link resend requests on the bulk lane (fe_gblink_platform.nack). */
    int gblink_nack;
+   /* Auto input delay, host only (fe_gblink_local.delay_auto: the cap in
+    * frames; 0 = off).  The round trip comes from fe_np_rtt(). */
+   unsigned gblink_delay_auto;
    /* Harness A/B: slot-0 frames between sync hashes (0 = 240, GB and GBA
     * sessions alike), and the 3.1 beta's byte-wise GB hash
     * (fe_gblink_local.hash_legacy). */

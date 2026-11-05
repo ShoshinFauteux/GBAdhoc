@@ -733,6 +733,23 @@ uint32_t fe_np_txq_now(void)
    return st.txq_now;
 }
 
+uint32_t fe_np_rtt(uint32_t *rttvar_us, uint32_t *samples)
+{
+   nd_stats st;
+   if (rttvar_us)
+      *rttvar_us = 0;
+   if (samples)
+      *samples = 0;
+   if (!np.active)
+      return 0;
+   netdrv_get_stats(np.nd, &st);
+   if (rttvar_us)
+      *rttvar_us = st.rttvar_us;
+   if (samples)
+      *samples = st.rtt_samples;
+   return st.srtt_us;
+}
+
 /* A GBA Link Cable session's acks ride (np_ack_ride_product, 30 ms by
  * default: psp/main_psp.c PLAY_ND_ACK_RIDE_US) from the moment it is RUNNING
  * -- both consoles then send a packet every frame or two for an ack to ride
