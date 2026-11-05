@@ -17645,10 +17645,6 @@ session_top:
       if (frames % 300u == 0)
          drprof_window(frames);
 #endif
-#ifdef DRPROF_HW
-      if (frames % 300u == 0)
-         drprof_window(frames);
-#endif
 
       if (dump_at && frames >= (unsigned)dump_at)
       {
