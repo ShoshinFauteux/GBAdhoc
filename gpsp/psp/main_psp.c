@@ -90,6 +90,8 @@
 /* 1 = the harness turned online on for every session (online_relay); else a
  * session is online only when Wireless > Online asked for it. */
 static int g_online_boot;
+/* writable on purpose: .rodata growth costs 8 KiB of boot heap (online_psp.c) */
+static char s_online_fmt[] = "Online: %s";
 static const char *online_build_id(void)
 {
    struct retro_system_info si;
@@ -9396,25 +9398,22 @@ static void ui_net_action(int is_host)
          online_psp_clear();
       if (ol)
       {
-         ui_linking_view ov;
-         char o1[80], o2[80];
+         /* the same LINKING screen as below, so the code is shared, not cloned */
          online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
                         !is_host ? RL_MODE_ANY
                         : !gba || ui_host_cable() ? RL_MODE_CABLE
                                                   : RL_MODE_ADAPTER);
-         link_bringup_view(is_host, "Online", &ov, o1, sizeof(o1), o2,
-                           sizeof(o2));
-         snprintf(o1, sizeof(o1), "%s", is_host ? "Connecting to the GBAdhoc server..."
-                                                : "Looking for the room online...");
+         snprintf(room, sizeof(room), "Online");
+         link_bringup_view(is_host, room, &lv, l1, sizeof(l1), l2, sizeof(l2));
          link_backdrop_take();
-         ui_linking_draw(&ov);
+         ui_linking_draw(&lv);
          vid_swap();
          me_rend_suspend();
          rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);
          me_rend_resume();
          if (rc != 0)
          {
-            osd_toast("Online: %s", online_psp_why());
+            osd_toast(s_online_fmt, online_psp_why());
             online_psp_clear();
             return;
          }
@@ -9478,7 +9477,7 @@ static void ui_net_action(int is_host)
    room_label(group, room, sizeof(room));
 #ifdef GBADHOC_ONLINE
    if (ol)
-      snprintf(room, sizeof(room), "Online %s", online_psp_room());
+      snprintf(room, sizeof(room), s_online_fmt, online_psp_room());
 #endif
    snprintf(g_link_room, sizeof(g_link_room), "%s", room);
    fe_evt("link_action role=%s group=%s kind=%d link=%d", is_host ? "host"
