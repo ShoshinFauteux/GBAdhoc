@@ -394,8 +394,6 @@ struct drprof_ctl_s
    uint32_t rom_base, rom_size, ram_base, ram_size, stub_end;
    uint32_t rom_map, ram_map;
    char     name[48];
-   /* v2 (dr_host.c; machine A only): per-word guest pc / opcode / block maps */
-   uint32_t rom_gpc, ram_gpc, rom_gop, ram_gop, rom_blk, ram_blk;
 };
 struct drprof_ctl_s drprof_ctl;
 __attribute__((noinline, used)) void drprof_host_mark(void)
@@ -435,24 +433,11 @@ static void dr_scenes_parse(const char *s)
 static void dr_geom(void)
 {
    drprof_ctl.magic = 0x46505244u;
-   drprof_ctl.version = 2;
+   drprof_ctl.version = 1;
    drprof_ctl.rom_base = (uint32_t)(uintptr_t)rom_translation_cache;
    drprof_ctl.ram_base = (uint32_t)(uintptr_t)ram_translation_cache;
    drprof_ctl.rom_size = 10u * 1024 * 1024;
-   {
-      extern uint32_t drprof_ram_cache_bytes;
-      drprof_ctl.ram_size = drprof_ram_cache_bytes;
-   }
-   {
-      extern uint32_t *drprof_rom_gpc, *drprof_ram_gpc, *drprof_rom_gop,
-                      *drprof_ram_gop, *drprof_rom_blk, *drprof_ram_blk;
-      drprof_ctl.rom_gpc = (uint32_t)(uintptr_t)drprof_rom_gpc;
-      drprof_ctl.ram_gpc = (uint32_t)(uintptr_t)drprof_ram_gpc;
-      drprof_ctl.rom_gop = (uint32_t)(uintptr_t)drprof_rom_gop;
-      drprof_ctl.ram_gop = (uint32_t)(uintptr_t)drprof_ram_gop;
-      drprof_ctl.rom_blk = (uint32_t)(uintptr_t)drprof_rom_blk;
-      drprof_ctl.ram_blk = (uint32_t)(uintptr_t)drprof_ram_blk;
-   }
+   drprof_ctl.ram_size = 512u * 1024;
    drprof_ctl.stub_end = (uint32_t)(uintptr_t)drprof_stub_end;
    drprof_ctl.rom_map = (uint32_t)(uintptr_t)drprof_rom_map;
    drprof_ctl.ram_map = (uint32_t)(uintptr_t)drprof_ram_map;
