@@ -99,7 +99,9 @@ def scenes(run, theme):
         shots = {4: load_shot(stem + '.st3.shot')} if os.path.exists(stem + '.st3.shot') else {}
         page = [('ge_ui_1', 3, None, None), ('ge_ui_2', 4, None, None),
                 ('ge_ui_3', 4, 'Slot 4 saved', None), ('ge_ui_4', 3, None, ('delete', 3)),
-                ('ge_ui_5', 4, None, ('overwrite', 4))]
+                ('ge_ui_5', 4, None, ('overwrite', 4)),
+                # the walk's last stop: X on slot 4 asks before it loads
+                ('ge_ui_8', 4, None, ('load', 4))]
         for name, cur, note, ask in page:
             sl, shot, none, _ = st.get(name, ({}, None, set(), None))
             slots = [(sl.get(k, (0, ''))[0], sl.get(k, (0, ''))[1], thumbs.get(k))

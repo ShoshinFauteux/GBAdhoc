@@ -165,7 +165,8 @@ def ss_panel(s, slot, shot=None, shot_none=False):
 def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
                ask=None):
     """screen_state_slots(): cur 1..5; slots[i] = (have 0/1/2, stamp, 64x42
-    PIL thumb); ask = ('delete' | 'overwrite', n); note = the plate."""
+    PIL thumb); ask = ('delete' | 'overwrite' | 'load', n); note = the
+    plate."""
     backdrop(s, 170, frame)
     head(s, GAME, 'SAVE STATES')
     for i, (have, stamp, thumb) in enumerate(slots):
@@ -192,6 +193,9 @@ def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
         what, n = ask
         plate(s, ('Delete Slot %d?      ' + G_X + ' delete     ' + G_O + ' keep') % n
               if what == 'delete' else
+              ('Load Slot %d? Unsaved progress is lost.     ' + G_X + ' load     ' +
+               G_O + ' cancel') % n
+              if what == 'load' else
               ('Overwrite Slot %d?      ' + G_X + ' overwrite     ' + G_O + ' keep') % n)
     elif note:
         plate(s, note)

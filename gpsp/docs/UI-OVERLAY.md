@@ -1037,7 +1037,7 @@ right, the slot and its time under it.
 
 | key | on a saved slot | on an empty slot |
 |---|---|---|
-| X | load, and the menu closes | the plate says "Slot n is empty" |
+| X | load, and the menu closes (since section 14.2: the plate asks "Load Slot n?" first) | the plate says "Slot n is empty" |
 | SQUARE | the plate asks "Overwrite Slot n?"; X overwrites | save; the page stays, the plate says "Slot n saved" |
 | TRIANGLE | the plate asks "Delete Slot n?"; X deletes | nothing |
 | UP / DOWN | move (wraps) | move |
@@ -1061,7 +1061,8 @@ The page opens on slot 1 every time, as 3.1's pages did.
 
 ### 13.2 Deliberate differences from the design and the brief
 
-* **Quick save / quick load stay on slot 1.** SELECT+L / SELECT+R always
+* **Quick save / quick load stay on slot 1** (the quick load asks first
+  since section 14.3). SELECT+L / SELECT+R always
   used slot 1 in 3.1, not "the highlighted slot" as the brief assumed; left
   unchanged (making them follow the page's cursor is a one-line change, the
   owner's call).
@@ -1154,3 +1155,131 @@ GBA-LINK-UI finals in all three.
 * The 1:1 panel on the LCD, both themes; the 36x24 row thumbnails'
   sharpness (GU_LINEAR, see 13.3).
 * The PSP-1000: the `net_arena` / heap lines unchanged by opening the page.
+
+---
+
+## 14. A state load asks first (`feat/load-confirm`, 2026-11-03)
+
+Base: 4.6.0-beta.2 (9082e3b). A player request: no more losing a game to a
+load nobody meant -- an X too many on the SAVE STATES page, or the quick
+load's SELECT+R where SELECT+L (the quick save) was meant.
+
+### 14.1 Every path that loads a state
+
+| path | loads into | now |
+|---|---|---|
+| SAVE STATES page, X on a saved slot | the running game | asks (14.2), always |
+| Quick load, `bind_quickload` (SELECT+R by default, any binding) | the running game | asks (14.3); Settings > "Quick load asks first" off: loads at once, as before |
+| Browser state shelf (LEFT on a game), X on a slot | a game not yet running: it boots, then loads the slot (`autoload_state_slot`, ~30 frames in) | unchanged: nothing is running to lose, and the shelf's X is "play from here" |
+| Harness `load_state = 1` (perf rig) | the booted game | unchanged, harness only |
+| Autopilot `state` reload (`GPSP_PERF_RIG` builds) | the running game | unchanged, rig only, never with a player |
+| Lab timer `lab_state_load_every_s` (`LAB_HOOK`, lab builds) | the running game | unchanged, lab only |
+| Share game data, a fetched state | a slot FILE (temp, verify, swap), never the running game | unchanged; browser only |
+
+The rewind ring, the GB/GBA link hand-offs (`fe_gblink`, `fe_gbadual`) and
+the pre-link state restore load core state too, but from memory and inside
+their own protocols; none reads a slot.
+
+### 14.2 The page's question
+
+X on a saved slot loaded it at once and closed the menu -- the page's one
+immediate action, and the one that throws away the game being played. It
+now asks on the plate, as overwrite and delete do:
+
+    Load Slot n? Unsaved progress is lost.     X load     O cancel
+
+(the reset question's words). The rule is the page's: X answers, every other
+key keeps the game and the slot, and no other key acts that frame, so an X
+meant for one question can never answer another. There is no focus to put on
+"cancel": the safe answer is every key but X. An empty slot still says "Slot
+n is empty" and asks nothing. A load that fails keeps the page open and says
+so, as before. This question has no setting.
+
+| key | on a saved slot (4.6.0-beta.2) | on a saved slot (now) |
+|---|---|---|
+| X | load, and the menu closes | the plate asks "Load Slot n?"; X loads, and the menu closes |
+
+`ui_demo` answers it (one more X) and dumps it as `ge_ui_8`, after the
+existing seven, so the earlier dump names and `run_ui_smoke.sh`'s ladder are
+unchanged.
+
+### 14.3 The quick load asks too, and its setting
+
+The quick load (`bind_quickload`, SELECT+R unless remapped) loaded slot 1 the
+moment it was pressed, a shoulder away from SELECT+L's quick save. It now
+opens the menu over the game on the SAVE STATES page, slot 1, with the load
+question already up (`ui_state_load_ask`): the same component, the same rule.
+X loads through the menu's `UI_ACT_LOADSTATE` (the page's own load) and the
+menu closes into the game with the usual "State loaded"; any other key is
+Resume, before anything else is drawn, and the game goes on untouched. Slot 1
+empty: "No saved state" at once and no menu, as before (one stat, after the
+interrupted-save recovery the page's scan runs). A wireless session still
+refuses. The opened menu is the ordinary one: the wake snapshot behind it,
+`ui_open`'s swallow of the chord still held, a rewind landed first, and the
+close arming the pad swallow, so the answering X or O is not the game's.
+
+**Any binding.** `main_psp.c` keys on the action (`CTL_FIRE_LOAD` from
+`ctl_shortcuts`), not on buttons, so a swapped pair (quick save on SELECT+R,
+quick load on SELECT+L) asks on SELECT+L and saves on SELECT+R, and a quick
+load moved onto the d-pad asks too. A direction held from the game -- or in
+the chord itself -- does not auto-repeat into an answer, however long it is
+held (`ui_state_load_ask` parks `pad_edges`' repeat count until the
+direction is let go); a fresh press answers as ever.
+
+**The setting.** Settings > GAMEPLAY > **Quick load asks first**, on or off,
+**on by default**, `config.ini` `quick_load_ask` (1 / 0). It sits under FPS
+counter and above CPU clock, so no harness walker's count moved. Its footer
+says what each value does. Written only once it is off or already in the file
+(the `cpu_clock` rule), so a player who keeps the default keeps the file
+4.6.0-beta.2 wrote; anything but a 0 reads as on; `pcfg_validate` repairs a
+corrupt value to on. Off, the quick load is 4.6.0-beta.2's branch, call for
+call (the host test compiles both and compares them). The page's own
+question (14.2) does not read it.
+
+Why the page and not a toast ("press again to load"): a toast is not
+interactive anywhere else in the UI, and a second press of the same chord is
+exactly the mistake being guarded against; the plate question is the one
+confirmation idiom the overlay already has (reset, overwrite, delete). The
+quick SAVE is unchanged: it never asked, and what it replaces is slot 1,
+which the quick load would have read anyway.
+
+### 14.4 Verification
+
+* **Host** (`python3 tools/run_host_tests.py`, in the gcc:14 container):
+  `tools/tests/test_state_load_ask.py` (the `fe_ini_bounds` suite) runs
+  * the real `screen_state_slots`, `ui_state_load_ask` and `pad_edges`
+    against stubs: X asks, X answers, twelve other keys keep the game, an
+    empty slot asks nothing, overwrite/delete unchanged, the last slot's
+    question, the quick load's X and keep, a failed quick load staying on
+    the page, a held direction (600 frames) never answering;
+  * `main_psp.c`'s quick-save / quick-load dispatch as written, with the
+    real `ctl_map.c`, `config_psp.c` and `fe_util.c`, fed `ctl_shortcuts()`
+    of real pads after `pcfg_load()`: the default asks; a swapped binding
+    asks on SELECT+L; a d-pad binding asks; `quick_load_ask = 0` traces the
+    same calls as 4.6.0-beta.2's branch (embedded verbatim) in all eight
+    combinations of session / load result / state on the card;
+  * the `quick_load_ask` round trip through `pcfg_load` / `pcfg_save`;
+  * 28 mutants (12 of the page, 10 of the call site and the menu branch, 6
+    of the config key), each of which fails.
+* **Build**: beta 2's release recipe (`RFU_SCHED=1 tools/build.sh
+  release`), audits passing, no warnings in GBAdhoc-owned code, hot core
+  5,756 B of 6,144 and unmoved. Before the pads are re-tuned the image is
+  beta 2's size (13,973,900 B); the feature grows frontend text 576 B and
+  `.rodata` 288 B ahead of instance A, and the re-tuned pads (7792 / 8120,
+  LAYOUT-PINNING.md) cost 16,384 B of image: PSP-1000 heap at boot
+  10,122,652 -> 10,106,268 B. No heap at run time: the question is a few
+  ints and a format string.
+* **Not run**: the GE rig and the model (`tools/ui_model/`; they need the
+  WSL PPSSPP harness and `builds/menu-mockups`, not in this checkout). The
+  model and the walkers are updated (`ge_ui_8`, the `load-ask` scene, every
+  round trip answering its question) but have not produced a dump.
+
+### 14.5 What needs hardware
+
+* The question on the plate, both themes, and its width for "Slot 5".
+* The quick load over a running game: the menu opening with the question,
+  X loading, O (and a d-pad press) going straight back; a held SELECT+R
+  (and a held d-pad from walking) not repeating or answering anything; the
+  same with the quick save and load swapped in Button mapping.
+* Settings > Quick load asks first, both values, in game and from the game
+  list, and `quick_load_ask` in `config.ini` after each.

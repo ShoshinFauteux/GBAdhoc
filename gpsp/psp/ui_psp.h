@@ -102,6 +102,11 @@ int ui_state_slot(void); /* selected slot, 1..5 */
  * stays and reports if it failed.  1 = the page reported it (no toast). */
 int ui_state_save_done(int rc);
 int ui_state_load_done(int rc);
+/* The quick load (docs/UI-OVERLAY.md section 14.3) after menu_open(): the
+ * SAVE STATES page on `slot` with the load question up.  X loads
+ * (UI_ACT_LOADSTATE, as the page's); any other key is Resume.  1 = asked,
+ * 0 = slot empty / no menu. */
+int ui_state_load_ask(int slot);
 /* Harness `shot_probe = 1`: four timed .shot reads as the page first opens,
  * EVT shot_read n= us=. */
 void ui_shot_probe_arm(int on);

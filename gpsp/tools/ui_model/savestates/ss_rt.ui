@@ -1,5 +1,6 @@
 # Round trips on the Save States page (ss_rt.spec).  The page always opens
-# on slot 1 (as 3.1's did); UP from slot 1 wraps to slot 5.
+# on slot 1 (as 3.1's did); UP from slot 1 wraps to slot 5.  Every load is
+# X, then X on the question.
 +600 menu
 +12 press DOWN
 +2 press CROSS
@@ -19,6 +20,7 @@
 +2 press DOWN
 +2 press DOWN
 +12 press CROSS
++4 press CROSS
 +60 dump B
 +2 menu
 +12 press DOWN
@@ -26,11 +28,13 @@
 +12 press UP
 +12 dump old-before
 +2 press CROSS
++4 press CROSS
 +60 dump C
 +2 menu
 +12 press DOWN
 +2 press CROSS
 +12 press CROSS
++4 press CROSS
 +60 dump D
 +2 menu
 +12 press DOWN
