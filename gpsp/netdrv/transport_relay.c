@@ -504,7 +504,7 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
                q->last_rx_us = q->last_tx_us = tn;
                ipfmt(ip, port, a);
                lg(t, "relay_path peer=%d path=direct via=%s rtt_us=%u", j, a,
-                  q->rtt_us);
+                  (unsigned)q->rtt_us);
                send_path(t, j, RL_PATH_DIRECT);
             }
             else if (q->path == P_DIRECT)

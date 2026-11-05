@@ -125,7 +125,7 @@ static int sk_send(void *ctx, uint32_t ip, uint16_t port, const void *buf, size_
    a.sin_family = AF_INET;
    a.sin_addr.s_addr = ip;
    a.sin_port = htons(port);
-   return sceNetInetSendto(O.fd, buf, len, 0, (struct sockaddr *)&a, sizeof(a)) < 0
+   return (int)sceNetInetSendto(O.fd, buf, len, 0, (struct sockaddr *)&a, sizeof(a)) < 0
           ? 0 : 0;                       /* UDP: a failed send is a loss */
 }
 
@@ -210,7 +210,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
    cfg.is_host = is_host;
    memcpy(cfg.code, O.room, sizeof(cfg.code));
    if (build)
-      strncpy((char *)cfg.build, build, RL_BUILD_LEN);
+      memcpy(cfg.build, build, strlen(build) < RL_BUILD_LEN ? strlen(build) : RL_BUILD_LEN);
    {
       uint16_t dummy;
       char ipb[24];
