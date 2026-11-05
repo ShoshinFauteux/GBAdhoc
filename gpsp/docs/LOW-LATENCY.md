@@ -301,3 +301,75 @@ GE blits and zero failed entries. Measured blit ~1.5 ms, so need is
     binary is identical. The cause is code layout: the frontend change moves
     ~3700 core .text symbols by +2956/+2976 bytes.
   * fe8, aw2 and firered come out 3-4 % better from the same shift.
+
+## 8. 1x stutter at 222 MHz and the late present (claude/t0b-guard)
+
+Report (Discord, ingo3643): FireRed at 222 MHz, 4.1.0 presents evenly,
+4.6.0 stutters at 1x.  Cause, measured on both Lab consoles: **tier 0b**
+(`me_early_retire`, and `me_lowlat`, which turns it on too).  It blits
+frame N at the loop top of N+1 only if the ME has finished N by then.  At
+222 MHz the ME renders FireRed's overworld in ~11.5 ms from the vcount-160
+post, so the render ends within about a millisecond of the vblank.  When it
+ends just after, the loop top re-blits N-1 (a repeat), step 1 of
+`me_rend_frame` retires N at vcount 160, and N+1's render, on time,
+replaces N before N is shown (a skip).  At 333 MHz the render takes ~7 ms
+and always makes it.  4.1.0 has no tier 0b: it always presents a frame
+later, so the ME has a whole frame of slack.
+
+**Fix: LATE PRESENT** (`me_late_present`, default 1).  The loop top blits
+only; the flip happens a frame later, in N+1's own wait (tier 0a).  So when
+N's render is not in yet, the loop top now presents nothing.  The wait
+presents (blit + rewind HUD + OSD) whatever step 1 retired, before its own
+retire can look at N+1, and the early flip waits for that blit as it waits
+for any GE work.  N latches on the vblank it would have hit on time: no
+repeat, no skip, no extra latency.  A render more than a frame late still
+shows the previous picture, as before.  Only main() and one cold helper
+changed (no hot-ordered function).
+
+Host model (`tools/tests/test_lowlat_policy.py`, repaired for the
+`ff_flip_pace` code): scenario `render_at_vb` (a render ending at the
+vblank), 12000 frames: without the late present, 2586 repeats and 2542
+skips, mean poll->latch 2.84.  With it, 44 repeats (the audio nudges), 0
+skips, 2.00.  A new check (tier 0 never skips at full speed) and a "no late
+present" mutant (killed) keep it that way.
+
+### 8.1 Measuring true stutter (lab_ffpace at 1x)
+
+The lab_ffpace instrument (LAB_HARNESS only, harness key `lab_pace`)
+measures 1x as well as FF.  It also logs a per-vblank trace
+(`EVT ffpace_trace ff=0 adv=...`: the game frames advanced at each vblank,
+lower case = ME still rendering at vblank start, upper case = in tier 1).
+The Lab turns it into `counters.stutter` (backend/lab/stutter.py):
+
+* **rep**: a vblank with no new picture.  The GBA runs at 59.7275 Hz, so
+  ~12.8/min of these are inherent (the clock-mismatch repeat).
+* **skip**: an emulated frame never shown.
+* **pair**: a repeat and a skip within 8 vblanks of each other.
+* **hitch** (true stutter): pairs, plus unpaired skips, plus repeats above
+  the inherent rate.
+* **worst1s**: the most irregular vblanks in any 1 s.  **burst**: the
+  longest chain of hitches each less than 30 vblanks apart.
+
+### 8.2 Hardware (Lab, 2026-11-05, both consoles, own_firered / own_fe8 / em_battle)
+
+Hitches per minute, matrix B rep 0 (lab_pace_every=36000), 3000 / 1000:
+
+| arm | 222 FireRed | 222 FE8 | 222 em_battle | 333 FireRed | 333 FE8 | 333 em_battle | poll->latch 222 / 333 |
+|---|---|---|---|---|---|---|---|
+| 4.1.0 | 0 / 0 | 0 / 0 | 22 / 26 | 0.1 / 0.1 | 0.1 / 1.1 | 0 / 7 | 4 vblanks (code) |
+| beta.3 | 138 / 144 | 22 / 17 | 123 / 183 | 0 / 0 | 0.1 / 0 | 8 / 27 | 2.0 / 1.1 |
+| + late present (2ad71e5) | 10 / 10 | 8 / 7 | 47 / 103 | 0 / 0 | 1 / 0 | 2 / 20 | 2.0 / 1.1 |
+| + late flip hold (97ec658) | 0 / 0 | 0 / 0 | 15 / 65 | 0 / 0 | 0.1 / 0 | 0 / 4 | 2.5-2.6 / 1.0-1.4 |
+
+Matrix A (2 reps, lab_pace_every=300) attributes the beta.3 stutter at 222:
+me_lowlat=0, input_fresh=0: unchanged; me_early_retire off (me_lowlat=0
+me_early_retire=0): ~9/min, 3 vblanks; all three off: 0/min, 4 vblanks.
+fps is unchanged in every arm (within 0.1 fps).
+
+The ~10/min left after the late present are all pairs at a fixed 300-frame
+period: a Lab-harness frame (perf_window / TLM window, ~20 ms of work at
+222) overruns its vblank, flips late, and the next early flip replaced it.
+The hold removes the skip; the picture then runs one vblank late until the
+next audio nudge (<= ~5 s), which is the 2.5 vblank mean in the Lab.
+Release builds have no such periodic frame: a telemetry-quiet run
+(perf_rig=0, lab_tlm_every=6000) is queued to confirm the 2.0 vblank mean.

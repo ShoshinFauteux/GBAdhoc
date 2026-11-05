@@ -192,6 +192,14 @@ static unsigned g_mer_sf_miss, g_mer_sf_wouldhit;
 static void fe_np_pump(void) { }
 #define FE_LP_SET(x) do { } while (0)
 
+/* FF FLIP PACING (ff_flip_pace) refers to these; the model runs at 1x */
+enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH };
+static int pcfg_ff_mode(void) { return PCFG_FF_3X; }
+static unsigned fe_host_frame_count(void) { return 0; }
+/* the clock the late present / late flip hold look at (below 333 only) */
+static int g_model_mhz = 222;
+static int scePowerGetCpuClockFrequency(void) { return g_model_mhz; }
+
 #include "lowlat.inc"
 
 /* ---- the scenario ----------------------------------------------------- */
@@ -214,7 +222,7 @@ static uint32_t rnd(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8;
 
 typedef struct
 {
-   unsigned frames, vb, hist[8], repeats, skipped, engaged, entries, exits;
+   unsigned frames, vb, hist[8], repeats, skipped, skip300, engaged, entries, exits;
    unsigned nudges, pulls, starved;
    double   mean;
    unsigned poll_vb[MAXF];
@@ -244,6 +252,7 @@ static void reset_world(int ll)
    g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_to_h = g_ll_to_b = 0;
    g_ll_eng = g_ll_slot = g_ll_slot_fail = 0;
    g_flip_early = 1; g_mer_early_retire = 1;
+   g_dfr_cfg = getenv("LOWLAT_NO_DFR") ? 0 : 1;   /* A/B: tier 0b without the late present */
 }
 
 /* the core's vcount-160 post (me_rend_frame steps 1-2, vispost) */
@@ -308,6 +317,7 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
          g_vc_target += want;
          if ((int)(sceDisplayGetVcount() - g_vc_target) > 4)
             g_vc_target = sceDisplayGetVcount();
+         int ffh_fe = g_flip_early;   /* main(): the FF flip pacing's save */
 #include "lowlat_wait.inc"
          g_drew = 0;
       }
@@ -358,10 +368,17 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
             r->repeats++;
          last = fr;
       }
-      r->skipped = 0;
+      r->skipped = r->skip300 = 0;
       for (f = 1; f + 1 < frames && f < MAXF; f++)
          if (!ever_shown[f])
+         {
             r->skipped++;
+            if (f >= 300u)
+               r->skip300++;
+            if (getenv("LOWLAT_DEBUG"))
+               printf("  %s ll=%d skipped frame %u (polled vb %u)\n",
+                      s->name, ll, f, r->poll_vb[f]);
+         }
    }
 }
 
@@ -387,6 +404,10 @@ int main(void)
       { "heavy",       13200, 900,   0,     0,  0, 4000, 800, 1500, 200, 70, 0 },
       { "ub_like",     11500,1500,  10,  2500,  0, 7000,1000, 1500, 200, 60, -1 },
       { "sub60",       19000,2000,   0,     0,  0, 4500, 500, 1500, 200, 70, 0 },
+      /* the ME at 222 MHz: the render of a light game ends within ~1 ms of
+       * the vblank (FireRed's overworld, 4.6.0-beta.3 on the Lab) */
+      { "render_at_vb", 8800, 800,   0,     0,  0, 9800,1500, 1500, 200, 70, -1 },
+      { "render_late",  8800, 800,   0,     0,  0,11500,2500, 1500, 200, 70, -1 },
    };
    static result r0, r1, r2;
    unsigned k, f;
@@ -421,6 +442,15 @@ int main(void)
          check(r2.entries == 0, s->name, "mode 2 engaged with no room");
       /* C1 */
       check(r1.skipped <= r0.skipped, s->name, "tier 1 skipped a frame tier 0 showed");
+      /* C1 at full speed (LATE PRESENT + LATE FLIP HOLD): after the first
+       * 300 frames tier 0 never skips a frame, heavy spikes included (a
+       * frame late past its vblank is shown a vblank late, never replaced),
+       * and without spikes it repeats only on the audio nudges */
+      if (s->work_us + s->work_jit < 16000u)
+         check(r0.skip300 == 0, s->name, "tier 0 skipped a frame at full speed");
+      if (!s->heavy_pct && s->work_us + s->work_jit < 16000u)
+         check(r0.repeats <= r0.nudges + 3u, s->name,
+               "tier 0 repeats beyond the nudge at full speed");
       /* C2 */
       for (f = 0; f < frames; f++)
          if (r0.poll_vb[f] != r1.poll_vb[f])
