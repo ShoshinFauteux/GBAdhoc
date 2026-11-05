@@ -92,10 +92,13 @@ extern uint32_t jit_big_d_calls GBAD_WEAK, gbab_jit_big_d_calls GBAD_WEAK;
 extern uint32_t gbab_reg[] GBAD_WEAK;
 #define GBAD_U(sym) (&(sym) ? (unsigned)(sym) : 0u)
 
-/* The partner's autopilot: fe_autopilot.o renamed (psp/Makefile). */
-int  gbab_fe_autopilot_load(const char *path);
-void gbab_fe_autopilot_frame(void);
-int  gbab_fe_autopilot_status(void);
+/* The partner's autopilot: fe_autopilot.o renamed (psp/Makefile), linked
+ * into rig builds only (harness/lab, or no GPSP_PLAYABLE).  Weak: a player
+ * build has no partner autopilot, and gba_dual_autopilot is then refused
+ * (EVT gbadual_autopilot ... ok=0) instead of failing to link. */
+int  gbab_fe_autopilot_load(const char *path) GBAD_WEAK;
+void gbab_fe_autopilot_frame(void) GBAD_WEAK;
+int  gbab_fe_autopilot_status(void) GBAD_WEAK;
 static uint32_t b_ap_mask;
 static gbalink_inst_ops *b_ops_for_ap;
 void gbab_fe_host_input_inject(uint32_t m) { b_ap_mask = m; }
@@ -357,7 +360,8 @@ int fe_gbadual_load(const fe_gbadual_config *cfg)
    }
    if (cfg->autopilot && cfg->autopilot[0])
    {
-      D.use_ap = gbab_fe_autopilot_load(cfg->autopilot) == 0;
+      D.use_ap = gbab_fe_autopilot_load &&
+                 gbab_fe_autopilot_load(cfg->autopilot) == 0;
       snprintf(msg, sizeof(msg), "gbadual_autopilot path=%s ok=%d",
                cfg->autopilot, D.use_ap);
       lg(msg);

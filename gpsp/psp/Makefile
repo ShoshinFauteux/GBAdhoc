@@ -249,9 +249,18 @@ LDFLAGS += -Wl,-T,hot_data_guard.ld
 endif
 ifeq ($(GBA_LINK),1)
 OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
-        ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o \
-        fe_autopilot_b.o
+        ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o
 CFLAGS += -DGBA_LINK
+# The partner's autopilot (bench only; fe_gbadual.c weak-references it) in rig
+# builds only: GPSP_PERF_RIG, or the bare harness flavour (no GPSP_PLAYABLE).
+# A player build saves its 8.2 KB of text and 6.3 KB of data/bss.
+ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS))$(if $(findstring -DGPSP_PLAYABLE,$(EXTRA_DEFS)),,bare),)
+OBJS += fe_autopilot_b.o
+else ifeq ($(LAYOUT_PIN),1)
+# ...and its 2,636 B in the pinned warm tail stay, as zeros
+# (psp/layout_pad_apb.S says why).
+OBJS += layout_pad_apb.o
+endif
 endif
 # NOTE: deliberately NO -lpspnet / -lpsputility here.  build.mak's default
 # tail links -lpspnet, and gcc's implicit spec closure links libpsputility
