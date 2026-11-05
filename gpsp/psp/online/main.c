@@ -224,6 +224,19 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    if (O.rt)
       return 0;
    O.cfg = *cfg;
+   {
+      /* the room as typed: its first four letters, upper-cased */
+      int i, j = 0;
+      for (i = 0; cfg->room[i] && j < RL_CODE_LEN; i++)
+      {
+         char ch = cfg->room[i];
+         if (ch >= 'a' && ch <= 'z')
+            ch = (char)(ch - 32);
+         if (ch >= 'A' && ch <= 'Z')
+            O.cfg.room[j++] = ch;
+      }
+      O.cfg.room[j] = 0;
+   }
    rc = g_ol_host->wifi_up(O.cfg.wifi, 30000000u);
    if (rc != 0)
    {
