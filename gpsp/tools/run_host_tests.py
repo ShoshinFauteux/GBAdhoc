@@ -683,6 +683,10 @@ def suites(env: Env, baseline: Path | None):
           # page's real screen_state_slots, main_psp.c's real quick-load
           # dispatch and config_psp.c's key, each with mutants.
           "python3 tools/tests/test_state_load_ask.py && "
+          # The save-state buttons (issue #31): the page's X save / SQUARE
+          # load / TRIANGLE delete and the shelf's X load / TRIANGLE delete,
+          # the real page and shelf block, with mutants.
+          "python3 tools/tests/test_state_buttons.py && "
           # The sleep quiesce's order (psp/sleep_q.c).  Here for the same
           # reason.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "

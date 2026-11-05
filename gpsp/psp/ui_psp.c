@@ -405,14 +405,14 @@ static const demo_step demo_script[] = {
    { DEMO_DUMP,        1, 0 },   /* ge_ui_1: slot 3 (fixtures: .thumb only) */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4 (empty)  */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_2: the empty slot */
-   { PSP_CTRL_SQUARE,  2, 14 },  /* save slot 4: the page stays */
+   { PSP_CTRL_CROSS,   2, 14 },  /* save slot 4: the page stays */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_3: "Slot 4 saved", its picture */
    { PSP_CTRL_UP,      2, 4 },   /* -> slot 3          */
    { PSP_CTRL_TRIANGLE, 2, 4 },  /* delete?            */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_4: the delete question */
    { PSP_CTRL_CIRCLE,  2, 4 },   /* keep it            */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4          */
-   { PSP_CTRL_SQUARE,  2, 4 },   /* overwrite?         */
+   { PSP_CTRL_CROSS,   2, 4 },   /* overwrite?         */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_5: the overwrite question */
    { PSP_CTRL_CIRCLE,  2, 4 },   /* keep it            */
    { PSP_CTRL_CIRCLE,  2, 8 },   /* back to the menu (cursor -> Resume) */
@@ -440,7 +440,7 @@ static const demo_step demo_script[] = {
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 3          */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 4, saved above */
-   { PSP_CTRL_CROSS,   2, 6 },   /* load it?           */
+   { PSP_CTRL_SQUARE,  2, 6 },   /* load it?           */
    { DEMO_DUMP,        1, 0 },   /* ge_ui_8: the load question */
    { PSP_CTRL_CROSS,   2, 10 },  /* load: the menu closes (demo ends) */
 };
@@ -553,7 +553,7 @@ static const demo_step del_demo_script[] = {
    { PSP_CTRL_CROSS,   2, 8 },   /* open the page (cursor: slot 1)        */
    { DEMO_DUMP,        1, 0 },   /* ge_del_0: empty slot 1, no triangle   */
    { PSP_CTRL_DOWN,    2, 4 },   /* -> slot 2                             */
-   { PSP_CTRL_SQUARE,  2, 12 },  /* save slot 2 (the page stays)          */
+   { PSP_CTRL_CROSS,   2, 12 },  /* save slot 2 (the page stays)          */
    { DEMO_DUMP,        1, 0 },   /* ge_del_1: slot 2 saved, its plate     */
    { PSP_CTRL_TRIANGLE, 2, 6 },  /* ask                                   */
    { DEMO_DUMP,        1, 0 },   /* ge_del_2: the question on the plate   */
@@ -1884,7 +1884,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * default.  Under FPS counter and above CPU clock: the walkers that come
     * from below stop at CPU clock or before it, and the rest cross only rows
     * above Fast-forward, so none of their counts moved.  The SAVE STATES
-    * page's own X always asks; this row is only the shortcut's. */
+    * page's own load (SQUARE) always asks; this row is only the shortcut's. */
    { 0, "Quick load asks first" },
    /* Under FPS counter and above Rewind: every walker either crosses only
     * rows above Fast-forward or wraps UP no further than Rewind, so none of
@@ -5161,9 +5161,9 @@ int ui_state_load_done(int rc)
  * pressed, a shoulder away from the quick save -- the easiest wrong button
  * there is.  With Settings > "Quick load asks first" on (the default),
  * main_psp.c opens the menu and calls this: the SAVE STATES page, on `slot`,
- * with the load question already on its plate.  X loads exactly as the
- * page's X does (and the menu closes into the game); any other key goes
- * straight back into the game, Resume, having loaded nothing -- the visit
+ * with the load question already on its plate.  X loads exactly as X on
+ * the page's own load question does (and the menu closes into the game);
+ * any other key goes straight back into the game, Resume, having loaded nothing -- the visit
  * was only the question.  1 = asked; 0 = no menu open, or nothing saved in
  * the slot (the caller says so, and closes the menu). */
 int ui_state_load_ask(int slot)
@@ -5193,18 +5193,23 @@ int ui_state_load_ask(int slot)
  * and load: the five slots on the left (the 64x42 thumbnail, the slot, its
  * time), the highlighted slot's picture 1:1 on the right.
  *
- *   X  load, after the plate's question; back into the game
+ *   X  save; over a saved slot the plate asks first; the page stays open
+ *   [] load, after the plate's question; back into the game
  *                                             (empty: says so, plate)
- *   [] save; over a saved slot the plate asks first; the page stays open
  *   /\ delete, after the plate's question        (empty: nothing)
  *   O  back to the menu
  *
+ * X saves and [] loads since 4.6.0-beta.4 (GitHub issue #31, MXPHunter):
+ * the confirm button makes the thing a player does most, and the button
+ * that throws the running game away is the one that is never pressed by
+ * accident.  Until 4.6.0-beta.3 X loaded and [] saved.
+ *
  * A load replaces the game being played, so it is destructive too: until
- * 4.6.0 it was the one immediate action, and one X too many (or an X where
- * [] was meant) lost whatever had not been saved.  All three now ask on the
- * plate, the reset question's rule: X answers, every other key keeps the
- * game and the slot, and no other key acts that frame -- so an X meant for
- * one question can never answer another (docs/UI-OVERLAY.md section 14). */
+ * 4.6.0 it was the one immediate action, and one press too many lost
+ * whatever had not been saved.  All three now ask on the plate, the reset
+ * question's rule: X answers, every other key keeps the game and the slot,
+ * and no other key acts that frame -- so an X meant for one question can
+ * never answer another (docs/UI-OVERLAY.md section 14). */
 #define SS_ROW_Y(i)  (72 + 34 * (i))
 #define SS_PX 228                /* the preview panel */
 #define SS_PY 62
@@ -5221,7 +5226,7 @@ static void ss_panel(int i)
    if (!g_ov_slot[i])
    {
       static const char l1[] = "Nothing saved here";
-      static const char l2[] = VID_GLYPH_SQ " save";
+      static const char l2[] = VID_GLYPH_X " save";
       vid_rect(x, y, w, h, C_CARD, 230);
       ov_outline(x, y, w, h, C_ACCENT_DK, 120);
       vid_text(x + (w - vid_text_w(l1)) / 2, y + h / 2 - 18, l1, C_DIM);
@@ -5338,18 +5343,6 @@ static ui_action screen_state_slots(unsigned edges)
       {
          if (g_ov_slot[cur])
          {
-            g_slot_ask = SLOT_ASK_LOAD;
-            g_slot_ask_n = g_state_slot;
-         }
-         else            /* on the plate, as every page message: a toast
-                          * would sit on the header */
-            snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d is empty", g_state_slot);
-      }
-      else if (edges & PSP_CTRL_SQUARE)
-      {
-         if (g_ov_slot[cur])
-         {
             g_slot_ask = SLOT_ASK_OVERWRITE;
             g_slot_ask_n = g_state_slot;
          }
@@ -5358,6 +5351,18 @@ static ui_action screen_state_slots(unsigned edges)
             g_slot_saving = g_state_slot;
             act = UI_ACT_SAVESTATE;
          }
+      }
+      else if (edges & PSP_CTRL_SQUARE)
+      {
+         if (g_ov_slot[cur])
+         {
+            g_slot_ask = SLOT_ASK_LOAD;
+            g_slot_ask_n = g_state_slot;
+         }
+         else            /* on the plate, as every page message: a toast
+                          * would sit on the header */
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Slot %d is empty", g_state_slot);
       }
       else if ((edges & PSP_CTRL_TRIANGLE) && g_ov_slot[cur])
       {
@@ -5437,10 +5442,10 @@ static ui_action screen_state_slots(unsigned edges)
    else if (g_slot_note[0])
       ov_plate(g_slot_note);
    else if (g_ov_slot[cur])
-      footer(VID_GLYPH_X " load     " VID_GLYPH_SQ " save     " VID_GLYPH_TRI
+      footer(VID_GLYPH_X " save     " VID_GLYPH_SQ " load     " VID_GLYPH_TRI
              " delete     " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_SQ " save     " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " save     " VID_GLYPH_O " back");
    return act;
 }
 
@@ -7810,7 +7815,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
    else
    {
       vid_text(x + 14, 241, g_browser_state_exists[g_browser_state_slot - 1]
-                  ? "UP/DN: slot   " VID_GLYPH_SQ ": delete" : "UP/DN: slot",
+                  ? "UP/DN: slot   " VID_GLYPH_TRI ": delete" : "UP/DN: slot",
                C_DIM);
       vid_text(x + 14, 254, "X: load   O: close", C_DIM);
    }
@@ -8933,9 +8938,12 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       {
          char state_path[PSP_FILE_PATH_CAP];
          SceIoStat st;
-         /* SQUARE deletes the highlighted slot after an X on the panel's
-          * plate; O or any other key keeps it, and while the question is
-          * up nothing else acts (an X can never load instead). */
+         /* TRIANGLE deletes the highlighted slot after an X on the
+          * panel's plate (the in-game page's delete button; it was SQUARE
+          * until 4.6.0-beta.4, issue #31); O or any other key keeps it, and
+          * while the question is up nothing else acts (an X can never load
+          * instead).  The console switch's TRIANGLE stands down while the
+          * shelf is open. */
          if (g_shelf_del)
          {
             if (edges & PSP_CTRL_CROSS)
@@ -8965,7 +8973,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          }
          if (edges)
             g_shelf_note[0] = '\0';
-         if ((edges & PSP_CTRL_SQUARE) &&
+         if ((edges & PSP_CTRL_TRIANGLE) &&
              g_browser_state_exists[g_browser_state_slot - 1])
          {
             g_shelf_del = g_browser_state_slot;

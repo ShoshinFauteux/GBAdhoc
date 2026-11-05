@@ -136,7 +136,7 @@ def ss_panel(s, slot, shot=None, shot_none=False):
     have, _, thumb = slot
     s.rect(x + 3, y + 3, w, h, s.C['shadow'], 90)
     if not have:
-        l1, l2 = 'Nothing saved here', G_SQ + ' save'
+        l1, l2 = 'Nothing saved here', G_X + ' save'
         s.rect(x, y, w, h, s.C['card'], 230)
         outline(s, x, y, w, h, s.C['accent_dk'], 120)
         s.text(x + (w - s.text_w(l1)) // 2, y + h // 2 - 18, l1, s.C['dim'])
@@ -200,9 +200,9 @@ def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
     elif note:
         plate(s, note)
     elif sl[0]:
-        footer(s, G_X + ' load     ' + G_SQ + ' save     ' + G_TRI + ' delete     ' + G_O + ' back')
+        footer(s, G_X + ' save     ' + G_SQ + ' load     ' + G_TRI + ' delete     ' + G_O + ' back')
     else:
-        footer(s, G_SQ + ' save     ' + G_O + ' back')
+        footer(s, G_X + ' save     ' + G_O + ' back')
 
 
 SS_THUMB_MASKS = [(20, 72 + 34 * i + 5, 36, 24) for i in range(5)]

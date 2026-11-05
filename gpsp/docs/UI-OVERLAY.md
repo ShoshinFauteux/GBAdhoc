@@ -1037,11 +1037,14 @@ right, the slot and its time under it.
 
 | key | on a saved slot | on an empty slot |
 |---|---|---|
-| X | load, and the menu closes (since section 14.2: the plate asks "Load Slot n?" first) | the plate says "Slot n is empty" |
-| SQUARE | the plate asks "Overwrite Slot n?"; X overwrites | save; the page stays, the plate says "Slot n saved" |
+| X | the plate asks "Overwrite Slot n?"; X overwrites | save; the page stays, the plate says "Slot n saved" |
+| SQUARE | load, and the menu closes (since section 14.2: the plate asks "Load Slot n?" first) | the plate says "Slot n is empty" |
 | TRIANGLE | the plate asks "Delete Slot n?"; X deletes | nothing |
 | UP / DOWN | move (wraps) | move |
 | O | back to the menu | back to the menu |
+
+(The table is 4.6.0-beta.4's, section 15.1. Until 4.6.0-beta.3 X loaded and
+SQUARE saved.)
 
 While a question is up, X answers it and any other key keeps the slot, and
 no other key acts that frame, so an X meant for "overwrite" can never load.
@@ -1168,7 +1171,7 @@ load's SELECT+R where SELECT+L (the quick save) was meant.
 
 | path | loads into | now |
 |---|---|---|
-| SAVE STATES page, X on a saved slot | the running game | asks (14.2), always |
+| SAVE STATES page, SQUARE on a saved slot (X until 4.6.0-beta.3, section 15.1) | the running game | asks (14.2), always |
 | Quick load, `bind_quickload` (SELECT+R by default, any binding) | the running game | asks (14.3); Settings > "Quick load asks first" off: loads at once, as before |
 | Browser state shelf (LEFT on a game), X on a slot | a game not yet running: it boots, then loads the slot (`autoload_state_slot`, ~30 frames in) | unchanged: nothing is running to lose, and the shelf's X is "play from here" |
 | Harness `load_state = 1` (perf rig) | the booted game | unchanged, harness only |
@@ -1283,3 +1286,46 @@ which the quick load would have read anyway.
   same with the quick save and load swapped in Button mapping.
 * Settings > Quick load asks first, both values, in game and from the game
   list, and `quick_load_ask` in `config.ini` after each.
+
+## 15. MXPHunter's requests (GitHub issue #31, `claude/mxp-ui`, 4.6.0-beta.4)
+
+Base: `claude/460-beta4` at 07c851b (filters v2, the Video-preset fix) with
+PR #32 (section 14) merged ahead of it. One commit per request, so each can
+be taken or left on its own. The Triangle/Video-preset bug (b25ec31) and the
+separate save/state folders (`claude/folders`) are other branches.
+
+### 15.1 The save-state buttons
+
+| where | X | SQUARE | TRIANGLE | O |
+|---|---|---|---|---|
+| in game, SAVE STATES page (4.6.0-beta.3) | load (asks) | save (asks over a saved slot) | delete (asks) | back |
+| in game, SAVE STATES page (now) | **save** (asks over a saved slot) | **load** (asks) | delete (asks) | back |
+| game list, state shelf (4.6.0-beta.3) | load: boot the game from the slot | delete (asks) | -- | close |
+| game list, state shelf (now) | load: boot the game from the slot | -- | **delete** (asks) | close |
+
+X is the button a player presses most, so it does the thing done most; the
+load, which throws the running game away, moved to SQUARE, and still asks
+(14.2) -- so a stray SQUARE costs nothing either. Every question is
+unchanged: X answers it, every other key keeps, and no other key acts that
+frame. The quick load's question (14.3) is the page's load question and is
+answered the same way. On the shelf TRIANGLE is the in-game delete's
+button; the console switch's TRIANGLE already stands down while the shelf is
+open, and SQUARE (the favourite star) does too, so SQUARE is simply nothing
+there now.
+
+The footer, the empty slot's panel ("X save"), the shelf's hint line,
+`ui_demo`'s and the delete demo's presses, the savestates walkers
+(`ge_gba.ui`, `ss_rt.ui`, `ss_rt_gbx.ui`: every save is X, every load SQUARE
+then X) and `overlay_model.py` follow. The design PNGs under
+`builds/savestate-mockups/` still draw the old footer: the model, not the
+design, is the reference for the footer row from here.
+
+Host: `tools/tests/test_state_buttons.py` (the `fe_ini_bounds` suite) runs
+the real `screen_state_slots` / `ss_panel` and the browser's shelf block as
+written: X saves an empty slot and asks over a saved one, SQUARE asks to load
+and says "Slot n is empty" on an empty one, TRIANGLE asks to delete, the
+footer and panel words; on the shelf X boots the highlighted slot, TRIANGLE
+asks and X deletes, six other keys keep, SQUARE does nothing, a question's X
+never launches; 11 mutants (beta.3's page, beta.3's shelf, no question, the
+wrong slot, old words), each failing. `test_state_load_ask.py` presses
+SQUARE where it pressed X for a load.

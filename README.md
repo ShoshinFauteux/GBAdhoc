@@ -707,9 +707,10 @@ favourites, the state shelf) are unchanged and still apply.
 
 **Saving**
 - Five save-state slots per game with pictures and times, the state shelf
-  in the browser (LEFT), delete (△ in game, □ on the shelf).
-- <kbd>NEW</kbd> Loading a state over the game you are playing asks first: ✕ loads, any
-  other button keeps playing.
+  in the browser (LEFT).
+- <kbd>NEW</kbd> On the in-game *Save States* page ✕ saves, □ loads and △ deletes; on the
+  game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
+  deleting each ask first: ✕ answers, any other button keeps what you have.
 - Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
   you turn *Settings → Quick load asks first* off).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
