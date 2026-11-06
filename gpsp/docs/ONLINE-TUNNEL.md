@@ -593,7 +593,9 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
 - `natlab.py BIN desktop`: real sockets in network namespaces. The directory is on 203.0.113.1. The
   desktop host is `gbadhoc-relay --home --register` behind a cone NAT with UPnP as two static forwards.
   PSPs are behind cone and symmetric NATs. The paths are direct where both NATs allow it and relayed
-  otherwise. 8/8 on 2026-11-05.
+  otherwise. 8/8 on 2026-11-05; again on 092a4879 with the shared matrix, 14/14 (`unshare -rn`, no
+  root). `fuzz_relay` 2 M x seeds 1, 3, 5, 7 (even seeds equal odd ones: the seed is OR 1), and
+  `test_invite` / `test_relay_nat` 8/8 / `test_relay_desktop` 12/12, all PASS under ASan/UBSan.
 - **PPSSPP, two GBAdhoc instances by invite code** (2026-11-05, the lab build of this branch,
   `RFU_SCHED=1`): `tools/relay/ppsspp_online.sh` with `RELAY_ARGS="--home QWER --public 127.0.0.1"`, which is
   the desktop host's mode in a loopback-only namespace. Both harness inis set `online_room` to the invite
@@ -601,6 +603,13 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
   invite can find the host. Both decoded 127.0.0.1:27420 and landed in the home room QWER. A was slot 0 and
   hosted, and the path was direct. The Emerald Union Room trade (`rfu_em_trade`) logged `trade_complete` on
   both, with clean exits after 162 s. Jobs and logs: `builds/online-out/ppsspp-invite`.
+- **PPSSPP, room code + invite code** (2026-11-05, lab build of 092a4879, the module checking codes):
+  two relays in the loopback namespace, a directory on 127.0.0.1:27430 and the desktop host
+  (`--home QWER --register 127.0.0.1:27430`) on 27420 (`builds/desktop-relay-kit/work/ppsspp_dh.sh`).
+  A typed the room code `QWER` with `online_relay` at the directory: one LOOKUP, LOCATED as a desktop
+  host. B typed the invite `fw0000dx` with an unreachable `online_relay`. Both in room QWER, path
+  direct both ways, `trade_complete` on both, clean exits after 161 s. The directory saw 1 REGISTER,
+  1 LOOKUP, no room and no forwarded byte: 393 B of payload for the session.
 - **Boot heap, ONLINE=0 against ONLINE=1** (release, `RFU_SCHED=1`, this branch): both 14,014,860 B
   image and 10,081,692 B PSP-1000 boot heap, the same as 4.6.0-beta.4 (c7a74a88). The pads are 112/48
   (beta.4: 144/32): against beta.4's ELF the hot core, A's cold text, `.bss` and the guard's block are
