@@ -32,11 +32,32 @@ PUBLISH = [
 ]
 
 
+# Every other write to a ring index must be one of these: flushes that only
+# drop data and resets.  A write that is neither (a publish reworded as
+# `ring_w = ring_w + n` or `A.rx_head = (head + 1) & M`) fails as
+# unclassified until it is added to one list or the other.
+WRITE = re.compile(r"^\s*(A\.\w+_(head|tail)\s*(=|\+=|-=|\+\+)|ring_[wr]\s*(=(?!=)|\+=|-=|\+\+|--)|(\+\+|--)\s*ring_[wr])")
+NON_PUBLISH = [
+    re.compile(r"^\s*A\.(\w+)_tail = A\.\1_head;"),
+    re.compile(r"^\s*A\.\w+_head = A\.\w+_tail = 0;"),
+    re.compile(r"^\s*ring_r = ring_w;"),
+    re.compile(r"^\s*ring_w = ring_r = 0;"),
+]
+# Exact site counts: 6 transport publishes/releases (bulk, rx ring and tx,
+# each a head and a tail) + 3 audio ring ones (producer, GB-link cushion,
+# consumer).  A new site fails until it is classified here.
+SITES = {"transport_adhoc.c": 6, "main_psp.c": 3}
+
+
 def barrier_faults(text, name):
-    """Publish lines whose previous code line is not the barrier."""
+    """Publish lines whose previous code line is not the barrier, and ring
+    index writes that are neither a known publish nor a known flush."""
     lines = text.splitlines()
     faults, seen = [], 0
     for i, ln in enumerate(lines):
+        if WRITE.match(ln) and not any(rx.match(ln) for rx, _ in PUBLISH) \
+                and not any(rx.match(ln) for rx in NON_PUBLISH):
+            faults.append("%s:%d unclassified ring index write: %s" % (name, i + 1, ln.strip()))
         for rx, barrier in PUBLISH:
             if rx.match(ln):
                 seen += 1
@@ -44,7 +65,7 @@ def barrier_faults(text, name):
                 while j >= 0 and (not lines[j].strip() or lines[j].strip().startswith(("/*", "*"))):
                     j -= 1
                 if j < 0 or lines[j].strip() != barrier:
-                    faults.append("%s:%d %s" % (name, i + 1, ln.strip()))
+                    faults.append("no barrier before %s:%d %s" % (name, i + 1, ln.strip()))
     return seen, faults
 
 
@@ -74,12 +95,12 @@ def main():
 
     n1, f1 = barrier_faults(adhoc, "transport_adhoc.c")
     n2, f2 = barrier_faults(mainc, "main_psp.c")
-    # 5 transport publishes/releases + 3 audio ring ones (producer, cushion, consumer)
-    if n1 < 5 or n2 < 3:
-        print("FAIL spsc: found %d + %d publish sites, expected >= 5 + 3" % (n1, n2))
+    if n1 != SITES["transport_adhoc.c"] or n2 != SITES["main_psp.c"]:
+        print("FAIL spsc: found %d + %d publish sites, expected exactly %d + %d" %
+              (n1, n2, SITES["transport_adhoc.c"], SITES["main_psp.c"]))
         fails += 1
     for f in f1 + f2:
-        print("FAIL spsc: no barrier before %s" % f)
+        print("FAIL spsc: %s" % f)
         fails += 1
     # mutant: drop one barrier, the check must see it
     mut = adhoc.replace("SPSC_BARRIER();\n            A.bulk_head = head + 1;",
@@ -87,6 +108,14 @@ def main():
     if mut == adhoc or not barrier_faults(mut, "m")[1]:
         print("FAIL spsc: the dropped-barrier mutant was not caught")
         fails += 1
+    # mutants: publishes reworded out of the known forms (critique-2)
+    for a, b in (("ring_w += n;", "ring_w = ring_w + n;"),
+                 ("A.tx_head = head + 1;", "A.tx_head = (head + 1) & 63;")):
+        src = mainc if a.startswith("ring") else adhoc
+        mut = src.replace(a, b, 1)
+        if mut == src or not barrier_faults(mut, "m")[1]:
+            print("FAIL spsc: the reworded-publish mutant %r was not caught" % b)
+            fails += 1
     if not fails:
         print("PASS spsc: %d publish/release sites, each behind its barrier" % (n1 + n2))
 
