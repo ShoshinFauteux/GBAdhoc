@@ -145,6 +145,8 @@ static void smc_prof_exact(u32 gba_addr)
 
 void smc_prof_note_iwram(u32 offset)
 {
+  if (!smc_blk_watch)
+    return;                     /* the profile is off (a release) */
   smc_prof_hits_iw++;
   smc_prof_bump((offset & 0x7FFF) >> SMC_PROF_PAGE_SHIFT);
   smc_prof_exact(0x03000000 + (offset & 0x7FFF));
@@ -152,6 +154,8 @@ void smc_prof_note_iwram(u32 offset)
 
 void smc_prof_note_ewram(u32 offset)
 {
+  if (!smc_blk_watch)
+    return;
   smc_prof_hits_ew++;
   smc_prof_bump(SMC_PROF_IW_PAGES +
                 ((offset & 0x3FFFF) >> SMC_PROF_PAGE_SHIFT));
@@ -170,20 +174,24 @@ void smc_prof_note_store(u32 base, u32 off)
   u32 lui = base - off;
   if (lui == smc_prof_lui_iwram)
   {
-    smc_prof_note_iwram(off);
     /* Phase 5g: reg[REG_PC] was stored by the smc_write stub from reg_a2,
      * which the store emitter loads with (pc + 4) for ARM and (pc + 2) for
      * Thumb -- i.e. the GBA PC of the instruction doing the write.  Only the
      * CPU-store path reaches here; DMA writes go through write_io_epilogue and
      * are already counted separately as flush_ram_dma. */
     smc_last_write_addr = 0x03000000 + (off & 0x7FFF);
+    if (!smc_blk_watch)
+      return;                   /* the address is all a release needs */
+    smc_prof_note_iwram(off);
     smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
     smc_blk_check_silent(smc_last_write_addr);
   }
   else if (lui == smc_prof_lui_ewram)
   {
-    smc_prof_note_ewram(off);
     smc_last_write_addr = 0x02000000 + (off & 0x3FFFF);
+    if (!smc_blk_watch)
+      return;
+    smc_prof_note_ewram(off);
     smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
     smc_blk_check_silent(smc_last_write_addr);
   }
@@ -274,7 +282,22 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
  *
  * Everything here is fixed-size .bss and only writes on a path that is already
  * about to flush the entire translation cache.  No behaviour change. */
+/* 0 = the whole SMC profile is off: the ADR-0030 counters, the exact-address
+ * slots and this block/writer probe (smc_prof_note_* and smc_blk_note_block
+ * test it first).  A release starts at 0: the profile's only reader is
+ * `EVT smc_addr` / `EVT smc_block`, and fe_evt compiles out of a release,
+ * while the work cost every SMC trap a page bump, an 8-slot scan and a
+ * memcmp (twin, opt round 6: Doom II -0.53 % host instructions).  The code
+ * stays linked, so the pinned warm tail (psp/layout/hot.ord) does not move.
+ * Explicitly .data, as the nonzero default is in every other build.
+ * -DGPSP_NO_SMC_PROFILE gives any build the release behaviour (the twin);
+ * -DGPSP_SMC_PROFILE keeps the profile in a release. */
+#if (defined(GPSP_PROFILE_RELEASE) && !defined(GPSP_SMC_PROFILE)) || \
+    defined(GPSP_NO_SMC_PROFILE)
+u32 smc_blk_watch __attribute__((section(".data"))) = 0;
+#else
 u32 smc_blk_watch = SMC_BLK_WATCH_DEFAULT;
+#endif
 u32 smc_blk_xlat  = 0;   /* RAM blocks translated since the last take */
 /* Same count, but NEVER reset by a take — the on-screen profiler needs a
  * monotonic source it can difference itself.  This is the re-translation
