@@ -5912,12 +5912,16 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
  * on a typical name instead of 96, and put the length limit somewhere no real
  * filename reaches.
  *
- * This is in BSS on purpose.  gpSP's init_gamepak_buffer() mallocs 1 MiB
- * blocks until malloc fails, so once a game is loaded there is no heap left
- * to allocate a list from: a dynamic list would work on the first boot and
- * fail when someone backed out to the game list mid-game, on a PSP-1000
- * only.  BSS is taken before that loop runs, and 112 KB of it costs at most
- * one of those 1 MiB blocks.
+ * WHERE IT LIVES (claude/opt-1000 round 5).  It was BSS, because gpSP's
+ * init_gamepak_buffer() mallocs until malloc fails and so no heap is left
+ * once a game is loaded.  But the list is never on screen while a game is
+ * loaded: ui_browser() runs only before the load (the first boot, and the
+ * in-process return after the game's full unload and heap census,
+ * main_psp.c), and it hands the pick back as a path copied into the
+ * caller's buffer.  So the lists are one heap block that ui_browser()
+ * takes at entry and frees on every way out, before main() snapshots the
+ * heap (snap_pre) and the ROM cache's malloc loop runs.  The 134,664 B the
+ * image held for them are boot heap now, i.e. ROM cache on a PSP-1000.
  */
 #define BROWSER_MAX    1024
 #define ROM_POOL_BYTES (96 * 1024)
@@ -5942,8 +5946,19 @@ typedef struct {
    unsigned short scan_order; /* preserves traversal order for equal basenames */
 } rom_entry;
 
-static rom_entry g_roms[BROWSER_MAX];
-static char      g_rom_pool[ROM_POOL_BYTES];
+/* Only between ui_browser()'s entry and its return (see above).  Every
+ * user is reached from inside ui_browser(); g_bl is NULL otherwise. */
+typedef struct {
+   rom_entry      roms[BROWSER_MAX];
+   char           pool[ROM_POOL_BYTES];
+   fe_favs        favs;
+   unsigned short view_idx[BROWSER_MAX];  /* favourites view -> rom */
+} browser_lists;
+static browser_lists *g_bl;
+#define g_roms     (g_bl->roms)
+#define g_rom_pool (g_bl->pool)
+#define g_favs     (g_bl->favs)
+#define g_view_idx (g_bl->view_idx)
 static unsigned  g_rom_pool_used;
 static int       g_rom_found;   /* matching ROM files seen, including names
                                  * skipped for path/storage limits; the browser
@@ -5962,11 +5977,8 @@ static unsigned  g_rom_scan_path_errors;
  * once (it is a few hundred bytes); SELECT swaps the list for the tagged
  * subset and back.
  *
- * STATIC, like g_roms and for the same reason: the heap is gone once a game
- * has loaded, and this must work when the player backs out to the list. */
-static fe_favs        g_favs;                   /* ~14 KB, BSS            */
+ * In the browser's heap block with g_roms (g_bl, above): ~14 KB. */
 static int            g_fav_count;              /* tagged entries in scan */
-static unsigned short g_view_idx[BROWSER_MAX];  /* favourites view -> rom */
 static int            g_view_n;
 static int            g_browser_favs;           /* 1 = favourites view    */
 
@@ -9256,8 +9268,8 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
           g_pcfg.console, *n_scan, g_rom_found);
 }
 
-int ui_browser(const char *rom_dir, char *out, size_t out_sz,
-               int *out_state_slot, fe_console_t *console_out)
+static int ui_browser_run(const char *rom_dir, char *out, size_t out_sz,
+                          int *out_state_slot, fe_console_t *console_out)
 {
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
@@ -9784,4 +9796,37 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    art_free_all();
    browser_state_cache_free();
    return -1;
+}
+
+/* The lists' block lives exactly as long as this call: every return of
+ * ui_browser_run() comes back through here, so no exit path can keep it.
+ * calloc, not malloc: the BSS it replaces started zeroed. */
+int ui_browser(const char *rom_dir, char *out, size_t out_sz,
+               int *out_state_slot, fe_console_t *console_out)
+{
+   int rc;
+   g_bl = (browser_lists *)calloc(1, sizeof(*g_bl));
+   if (!g_bl)
+   {
+      /* Not reachable on a console (the heap is whole before a load, and
+       * the block is 134,664 B); said out loud rather than an empty list. */
+      int i;
+      fe_evt("ui_browser lists=NO_MEMORY bytes=%u", (unsigned)sizeof(*g_bl));
+      if (out_state_slot)
+         *out_state_slot = 0;
+      for (i = 0; i < 180 && g_running; i++)
+      {
+         vid_overlay_begin(1);
+         page("GBAdhoc", NULL);
+         vid_text_center(110, "Not enough memory for the game list", C_WARN);
+         vid_overlay_end();
+         sceDisplayWaitVblankStart();
+         vid_swap();
+      }
+      return -1;
+   }
+   rc = ui_browser_run(rom_dir, out, out_sz, out_state_slot, console_out);
+   free(g_bl);
+   g_bl = NULL;
+   return rc;
 }
