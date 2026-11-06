@@ -1032,8 +1032,11 @@ static void audio_start(void)
    /* 8 KiB stack (was 16).  audio_thread is a leaf loop: its frame is 64 B
     * (release ELF: addiu sp,sp,-64; `out` is static), and its only calls
     * are sceAudioChReserve / OutputBlocking / ChRelease, syscalls that run
-    * on the kernel stack.  Created before the ROM load, so the 8 KiB is one
-    * whole step of the PSP-1000's boot heap. */
+    * on the kernel stack.  The stack does NOT come from the heap: newlib's
+    * heap is one partition block taken before main (PSP_HEAP_SIZE_KB(-1024),
+    * docs/MEMORY-BUDGET.md), so thread stacks come out of the 1 MiB left
+    * outside it, which sceUtility and the net modules share.  The 8 KiB is
+    * headroom there, not ROM cache. */
    audio_thid = sceKernelCreateThread("gpsp_audio", audio_thread, 0x12,
                                       0x2000, THREAD_ATTR_USER, NULL);
    if (audio_thid >= 0)
