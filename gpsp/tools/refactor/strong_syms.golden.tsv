@@ -1,0 +1,137 @@
+# strong_syms golden: flavour name kind owner stubs refs
+release	gpsp_visible_done_hook	hook	main_psp.o	main.o	spec
+release	gpsp_rfu_activated_hook	hook	main_psp.o	rfu.o	spec
+release	gpsp_rfu_link_down_hook	hook	main_psp.o	rfu.o	spec
+release	gpsp_rfu_trace_hook	hook	main_psp.o	rfu.o	spec
+release	gpsp_rfu_now_us	hook	main_psp.o	rfu.o	spec
+release	gpsp_rfu_flight_dump_hook	hook	main_psp.o	rfu.o	spec
+release	g_ff_uncapped	abi	main_psp.o	-	spec
+release	g_ff_mult	abi	main_psp.o	-	spec
+release	in_rate	abi	main_psp.o	-	spec
+release	g_audio_step	abi	main_psp.o	-	spec
+release	g_net_up	abi	main_psp.o	-	spec
+release	g_net_is_host	abi	main_psp.o	-	spec
+release	g_running	abi	main_psp.o	-	spec
+release	g_dir_base	abi	main_psp.o	-	spec
+release	g_audio_step	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	g_dir_base	abi-derived	main_psp.o	-	c:psp/online_psp.c c:psp/ui_psp.c c:psp/usb_handoff.c
+release	g_ff_mult	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	g_ff_uncapped	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	g_net_is_host	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	g_net_up	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	g_running	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	gpsp_adhoc_step	abi-derived	main_psp.o	-	c:netdrv/transport_adhoc.c
+release	gpsp_rfu_activated_hook	abi-derived	main_psp.o	-	c:rfu.c
+release	gpsp_rfu_flight_dump_hook	abi-derived	main_psp.o	-	c:rfu.c
+release	gpsp_rfu_link_down_hook	abi-derived	main_psp.o	-	c:rfu.c
+release	gpsp_rfu_now_us	abi-derived	main_psp.o	-	c:rfu.c
+release	gpsp_rfu_trace_hook	abi-derived	main_psp.o	-	c:rfu.c
+release	gpsp_visible_done_hook	abi-derived	main_psp.o	-	c:main.c h:main.h
+release	in_rate	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+release	mgift_ui_active	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+release	mgift_ui_line1	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+release	mgift_ui_line2	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+release	net_now_us	abi-derived	main_psp.o	-	c:psp/ff_psp.c h:psp/ff_psp.h
+release	osd_session_chip_refresh	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_audio_volume_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_clock_actual	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_clock_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_clock_harness_drop	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_clock_mode	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_color_preview	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	psp_display_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+release	pwr_hold	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+release	pwr_release	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+release	sess_cost_evt	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	gpsp_visible_done_hook	hook	main_psp.o	main.o	spec
+lab	gpsp_rfu_activated_hook	hook	main_psp.o	rfu.o	spec
+lab	gpsp_rfu_link_down_hook	hook	main_psp.o	rfu.o	spec
+lab	gpsp_rfu_trace_hook	hook	main_psp.o	rfu.o	spec
+lab	gpsp_rfu_now_us	hook	main_psp.o	rfu.o	spec
+lab	gpsp_rfu_flight_dump_hook	hook	main_psp.o	rfu.o	spec
+lab	g_ff_uncapped	abi	main_psp.o	-	spec
+lab	g_ff_mult	abi	main_psp.o	-	spec
+lab	in_rate	abi	main_psp.o	-	spec
+lab	g_audio_step	abi	main_psp.o	-	spec
+lab	g_net_up	abi	main_psp.o	-	spec
+lab	g_net_is_host	abi	main_psp.o	-	spec
+lab	g_running	abi	main_psp.o	-	spec
+lab	g_dir_base	abi	main_psp.o	-	spec
+lab	gpsp_net_wait_beat	abi	main_psp.o	-	spec
+lab	g_audio_step	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	g_dir_base	abi-derived	main_psp.o	-	c:psp/online_psp.c c:psp/ui_psp.c c:psp/usb_handoff.c
+lab	g_ff_mult	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	g_ff_uncapped	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	g_net_is_host	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	g_net_up	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	g_running	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	gpsp_adhoc_step	abi-derived	main_psp.o	-	c:netdrv/transport_adhoc.c
+lab	gpsp_net_wait_beat	abi-derived	main_psp.o	-	c:psp/mgift_net.c c:psp/online_psp.c
+lab	gpsp_rfu_activated_hook	abi-derived	main_psp.o	-	c:rfu.c
+lab	gpsp_rfu_flight_dump_hook	abi-derived	main_psp.o	-	c:rfu.c
+lab	gpsp_rfu_link_down_hook	abi-derived	main_psp.o	-	c:rfu.c
+lab	gpsp_rfu_now_us	abi-derived	main_psp.o	-	c:rfu.c
+lab	gpsp_rfu_trace_hook	abi-derived	main_psp.o	-	c:rfu.c
+lab	gpsp_visible_done_hook	abi-derived	main_psp.o	-	c:main.c h:main.h
+lab	in_rate	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+lab	mgift_ui_active	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+lab	mgift_ui_line1	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+lab	mgift_ui_line2	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+lab	net_now_us	abi-derived	main_psp.o	-	c:psp/ff_psp.c h:psp/ff_psp.h
+lab	osd_session_chip_refresh	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_audio_volume_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_clock_actual	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_clock_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_clock_harness_drop	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_clock_mode	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_color_preview	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	psp_display_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+lab	pwr_hold	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+lab	pwr_release	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+lab	sess_cost_evt	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	gpsp_visible_done_hook	hook	main_psp.o	main.o	spec
+harness	gpsp_rfu_activated_hook	hook	main_psp.o	rfu.o	spec
+harness	gpsp_rfu_link_down_hook	hook	main_psp.o	rfu.o	spec
+harness	gpsp_rfu_trace_hook	hook	main_psp.o	rfu.o	spec
+harness	gpsp_rfu_now_us	hook	main_psp.o	rfu.o	spec
+harness	gpsp_rfu_flight_dump_hook	hook	main_psp.o	rfu.o	spec
+harness	g_ff_uncapped	abi	main_psp.o	-	spec
+harness	g_ff_mult	abi	main_psp.o	-	spec
+harness	in_rate	abi	main_psp.o	-	spec
+harness	g_audio_step	abi	main_psp.o	-	spec
+harness	g_net_up	abi	main_psp.o	-	spec
+harness	g_net_is_host	abi	main_psp.o	-	spec
+harness	g_running	abi	main_psp.o	-	spec
+harness	g_dir_base	abi	main_psp.o	-	spec
+harness	gpsp_net_wait_beat	abi	main_psp.o	-	spec
+harness	g_audio_step	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	g_dir_base	abi-derived	main_psp.o	-	c:psp/online_psp.c c:psp/ui_psp.c c:psp/usb_handoff.c
+harness	g_ff_mult	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	g_ff_uncapped	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	g_net_is_host	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	g_net_up	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	g_running	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	gpsp_adhoc_step	abi-derived	main_psp.o	-	c:netdrv/transport_adhoc.c
+harness	gpsp_net_wait_beat	abi-derived	main_psp.o	-	c:psp/mgift_net.c c:psp/online_psp.c
+harness	gpsp_rfu_activated_hook	abi-derived	main_psp.o	-	c:rfu.c
+harness	gpsp_rfu_flight_dump_hook	abi-derived	main_psp.o	-	c:rfu.c
+harness	gpsp_rfu_link_down_hook	abi-derived	main_psp.o	-	c:rfu.c
+harness	gpsp_rfu_now_us	abi-derived	main_psp.o	-	c:rfu.c
+harness	gpsp_rfu_trace_hook	abi-derived	main_psp.o	-	c:rfu.c
+harness	gpsp_visible_done_hook	abi-derived	main_psp.o	-	c:main.c h:main.h
+harness	in_rate	abi-derived	main_psp.o	-	h:psp/ff_psp.h
+harness	mgift_ui_active	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+harness	mgift_ui_line1	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+harness	mgift_ui_line2	abi-derived	main_psp.o	-	c:psp/ui_psp.c h:psp/ui_psp.h
+harness	net_now_us	abi-derived	main_psp.o	-	c:psp/ff_psp.c h:psp/ff_psp.h
+harness	osd_session_chip_refresh	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_audio_volume_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_clock_actual	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_clock_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_clock_harness_drop	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_clock_mode	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_color_preview	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	psp_display_apply	abi-derived	main_psp.o	-	c:psp/ui_psp.c
+harness	pwr_hold	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+harness	pwr_release	abi-derived	main_psp.o	-	c:psp/share_psp.c c:psp/ui_psp.c
+harness	sess_cost_evt	abi-derived	main_psp.o	-	h:psp/ff_psp.h
