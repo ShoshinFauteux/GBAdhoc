@@ -31,7 +31,7 @@
 #define OL_MAGIC_HOST 0x474F4C48u   /* 'GOLH' */
 #define OL_MAGIC_API  0x474F4C41u   /* 'GOLA' */
 /* Bump on ANY change to either table or to the semantics of a call. */
-#define OL_VERSION    2u
+#define OL_VERSION    3u
 #define OL_ERR_ABI    (-0x4F4C)
 
 typedef struct online_host
@@ -49,6 +49,12 @@ typedef struct online_host
    const char *(*local_ip)(void);
    /* a bounded wait is progress for the harness stall exit; NULL in a release */
    void  (*beat)(void);
+   /* the session chip and a toast (osd_psp.c): the module shows the path
+    * to the other PSP and its ping, "Online ABCD  Direct 12 ms", and a
+    * change of path.  In the host TABLE, not EBOOT code: the EBOOT has no
+    * text to spare (docs/LAYOUT-PINNING.md) */
+   void  (*chip)(const char *text);
+   void  (*toast)(const char *fmt, ...);
 } online_host;
 
 /* What the session needs from the EBOOT's configuration (online_psp.c). */

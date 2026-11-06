@@ -49,6 +49,10 @@ typedef struct rl_client_cfg
    uint16_t priv_port;             /*   (the same-LAN punch candidate) */
    int direct;                     /* 1 = try the direct path; 0 = relay only */
    int mode;                       /* host: the room's link mode (RL_MODE_*) */
+   /* the external port of a router forward (UPnP) to this socket on the
+    * public IP; 0 = none, or the same port as priv_port (the server then
+    * offers public-IP:priv_port anyway) */
+   uint16_t map_port;
    uint64_t (*now_us)(void);
    void (*log)(void *user, const char *line);   /* optional, EVT lines */
    void *log_user;
@@ -95,6 +99,9 @@ typedef struct rl_client_stats
    uint32_t relay_rtt_us;
    uint32_t fallbacks;
    uint32_t reenters;              /* host: lobby room lost, entered again */
+   uint32_t bursts;                /* punch bursts started (first + retries) */
+   uint32_t directs;               /* times a peer path became direct */
+   uint32_t stalls;                /* timer gaps > 100 ms (nobody pumped us) */
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

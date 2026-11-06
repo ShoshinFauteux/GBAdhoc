@@ -8,14 +8,20 @@
  *   ENTERING  CREATE or JOIN (resent every 500 ms; a JOIN to a room that does
  *             not exist yet keeps trying -- the host may still be coming up).
  *   IN_ROOM   KEEP to the server every 2 s.  Per peer, on CANDIDATES with
- *             punch = 1: from start, PUNCH to its public AND private endpoint
- *             every 20 ms for 2 s.  Answer every PUNCH with PUNCH_ACK; the
- *             path is DIRECT on the first PUNCH_ACK we receive.  On DIRECT:
- *             a PUNCH keep-alive whenever we sent nothing direct for 500 ms;
- *             FALL BACK to the relay when nothing direct arrived for 1.5 s
- *             while the server still answers, or when no PUNCH_ACK came in
- *             2 s, or when the peer says it fell back (PEER RELAY).  Direct
- *             is never retried in a session.
+ *             punch = 1: from start, PUNCH every 20 ms for 2 s of PUMPED time
+ *             (a stall of the caller extends the window) to each distinct
+ *             candidate: private (same LAN), public, the router forward, and
+ *             the address the peer's own punches came from (peer-
+ *             reflexive).  Answer EVERY PUNCH with PUNCH_ACK, in any state;
+ *             a punch arriving while we are on the relay starts our burst
+ *             at once.  The path is DIRECT on the first PUNCH_ACK (the round
+ *             trip), and moves to the private endpoint if that answers
+ *             later.  On DIRECT: a PUNCH keep-alive whenever we sent nothing
+ *             direct for 500 ms; FALL BACK to the relay when nothing direct
+ *             arrived for 1.5 s while the server still answers, when no
+ *             PUNCH_ACK came in the burst, or when a direct peer says it fell
+ *             back (PEER RELAY).  The relay is the last resort, not the end:
+ *             another burst follows after 3 s, then 6, 12, 24, 30, 30 ... s.
  */
 #include "transport_relay.h"
 
@@ -31,7 +37,11 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define ENTER_EVERY_US   500000ull
 #define KEEP_EVERY_US    2000000ull
 #define PUNCH_EVERY_US   20000ull
-#define PUNCH_FOR_US     2000000ull
+#define PUNCH_FOR_US     2000000ull  /* of PUMPED time: a stall extends it */
+#define STALL_US         100000ull   /* a gap between timer runs this long
+                                        is a stall (a save backup, a load) */
+#define RETRY_FIRST_US   3000000ull  /* relay -> another punch burst after */
+#define RETRY_MAX_US     30000000ull /*   3, 6, 12, 24, 30, 30 ... s */
 #define DIRECT_IDLE_US   500000ull
 #define DIRECT_DEAD_US   1500000ull
 #define RELAY_ALIVE_US   6000000ull
@@ -43,8 +53,9 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 typedef struct
 {
    int present, path;
-   uint32_t pub_ip, priv_ip, dir_ip;
-   uint16_t pub_port, priv_port, dir_port;
+   uint32_t pub_ip, priv_ip, map_ip, rfx_ip, dir_ip;
+   uint16_t pub_port, priv_port, map_port, rfx_port, dir_port;
+   uint64_t retry_us, backoff_us;   /* next punch burst while on the relay */
    uint64_t nonce;
    int punch;
    uint64_t start_us, end_us, next_punch_us;
@@ -61,6 +72,7 @@ struct relay_transport
    int state, err;
    char errtext[32];
    uint64_t t0;
+   uint64_t last_tick_us;        /* the last timers() run (stall detection) */
    /* probing */
    uint32_t probe_nonce;
    int probe_tries, probed[2];
@@ -148,6 +160,7 @@ static void send_enter(relay_transport *t)
    p[RL_BUILD_LEN + RL_CODE_LEN + 6] = t->nat;
    rl_put64(p + RL_BUILD_LEN + RL_CODE_LEN + 7, t->cookie);
    p[RL_BUILD_LEN + RL_CODE_LEN + 15] = (uint8_t)t->cfg.mode;
+   rl_put16(p + RL_BUILD_LEN + RL_CODE_LEN + 16, t->cfg.map_port);
    to_server(t, 0, b, sizeof(b));
 }
 
@@ -187,9 +200,65 @@ static void fall_back(relay_transport *t, int j, const char *why, int tell)
       return;
    q->path = P_FALLBACK;
    t->st.fallbacks++;
-   lg(t, "relay_path peer=%d path=relay why=%s", j, why);
+   /* the relay is the last resort, not the end: punch again later (a peer
+    * that was busy, a NAT that settled, a Wi-Fi gap), backing off */
+   if (q->punch)
+   {
+      if (!q->backoff_us)
+         q->backoff_us = RETRY_FIRST_US;
+      q->retry_us = now(t) + q->backoff_us;
+      q->backoff_us = q->backoff_us * 2 > RETRY_MAX_US ? RETRY_MAX_US
+                                                       : q->backoff_us * 2;
+   }
+   lg(t, "relay_path peer=%d path=relay why=%s retry_ms=%u", j, why,
+      q->punch ? (unsigned)((q->retry_us - now(t)) / 1000u) : 0u);
    if (tell)
       send_path(t, j, RL_PATH_RELAY);
+}
+
+/* A punch burst to every candidate the peer has, from now. */
+static void burst(relay_transport *t, rl_peer *q, uint64_t n)
+{
+   q->path = P_PUNCH;
+   q->start_us = n;
+   q->end_us = n + PUNCH_FOR_US;
+   q->next_punch_us = n;
+   t->st.bursts++;
+}
+
+static int ep_is(uint32_t ip, uint16_t port, uint32_t ip2, uint16_t port2)
+{
+   return ip && ip == ip2 && port == port2;
+}
+
+/* One PUNCH to each distinct candidate: private first (same LAN: the
+ * shortest path, and the one a router without hairpin needs), then the
+ * public endpoint the server saw, the router forward, and the address the
+ * peer's own punches came from (peer-reflexive: a symmetric NAT's port for
+ * US, which the server never sees). */
+static void punch_all(relay_transport *t, int j, uint32_t c)
+{
+   rl_peer *q = &t->p[j];
+   uint32_t ip[4];
+   uint16_t pt[4];
+   int k, m, n = 0;
+   ip[0] = q->priv_ip; pt[0] = q->priv_port;
+   ip[1] = q->pub_ip;  pt[1] = q->pub_port;
+   ip[2] = q->map_ip;  pt[2] = q->map_port;
+   ip[3] = q->rfx_ip;  pt[3] = q->rfx_port;
+   for (k = 0; k < 4; k++)
+   {
+      if (!ip[k] || !pt[k])
+         continue;
+      for (m = 0; m < k; m++)
+         if (ep_is(ip[m], pt[m], ip[k], pt[k]))
+            break;
+      if (m < k)
+         continue;
+      send_punch(t, j, RL_T_PUNCH, c, ip[k], pt[k]);
+      n++;
+   }
+   (void)n;
 }
 
 /* A host waiting alone in its room (no peer yet) whose room the server no
@@ -228,6 +297,34 @@ static void timers(relay_transport *t)
 {
    uint64_t n = now(t);
    int j;
+   /* A stall: nobody pumped us (the EBOOT backing a save up, a load, a
+    * slow screen).  Nothing was read or punched meanwhile, and what the
+    * peer sent waits in the socket: the windows do not count that time.
+    * (Measured cause of a same-LAN pair never going direct: the joiner
+    * stopped pumping right after JOINED, its 2 s punch window ran out
+    * unseen and it never answered the host.) */
+   if (t->last_tick_us && n - t->last_tick_us > STALL_US &&
+       t->state == RL_ST_IN_ROOM)
+   {
+      uint64_t gap = n - t->last_tick_us;
+      t->st.stalls++;
+      for (j = 0; j < RL_SLOTS; j++)
+      {
+         rl_peer *q = &t->p[j];
+         if (!q->present)
+            continue;
+         if (q->path == P_PUNCH)
+         {
+            if (q->start_us < t->last_tick_us)
+               q->end_us += gap;
+            else if (q->end_us - q->start_us < PUNCH_FOR_US)
+               q->end_us = q->start_us + PUNCH_FOR_US;
+         }
+         else if (q->path == P_DIRECT)
+            q->last_rx_us += gap;
+      }
+   }
+   t->last_tick_us = n;
    if (lobby_alone(t) && n - t->last_server_rx_us > LOBBY_LOST_US &&
        n - t->reenter_us > LOBBY_LOST_US)
       lobby_reenter(t, "server_silent");
@@ -294,13 +391,17 @@ static void timers(relay_transport *t)
             {
                uint32_t c = ++q->counter;
                q->sent_us[c % TS_RING] = n;
-               send_punch(t, j, RL_T_PUNCH, c, q->pub_ip, q->pub_port);
-               if (q->priv_ip && (q->priv_ip != q->pub_ip ||
-                                  q->priv_port != q->pub_port))
-                  send_punch(t, j, RL_T_PUNCH, c, q->priv_ip, q->priv_port);
+               punch_all(t, j, c);
                t->st.punches_tx++;
                q->next_punch_us = n + PUNCH_EVERY_US;
             }
+         }
+         else if ((q->path == P_FALLBACK || q->path == P_RELAY) && q->punch &&
+                  q->retry_us && n >= q->retry_us)
+         {
+            q->retry_us = 0;
+            lg(t, "relay_retry peer=%d", j);
+            burst(t, q, n);
          }
          else if (q->path == P_DIRECT)
          {
@@ -430,8 +531,10 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
             memset(q, 0, sizeof(*q));
             lg(t, "relay_peer slot=%d left", j);
          }
-         else if (stt == RL_PEER_RELAY)
+         else if (stt == RL_PEER_RELAY && q->path == P_DIRECT)
             fall_back(t, j, "peer_said", 0);
+         /* while punching: our own burst decides (the peer may have
+          * given up before we even started -- it answers our punches) */
       }
       break;
    case RL_T_CANDIDATES:
@@ -439,7 +542,7 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
       {
          int j = body[0];
          rl_peer *q = &t->p[j];
-         char a1[24], a2[24];
+         char a1[24], a2[24], a3[24];
          if (!q->present)
          {
             memset(q, 0, sizeof(*q));
@@ -455,10 +558,24 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          q->end_us = q->start_us + PUNCH_FOR_US;
          q->next_punch_us = q->start_us;
          q->path = q->punch ? P_PUNCH : P_RELAY;
+         if (q->punch)
+            t->st.bursts++;
+         q->backoff_us = RETRY_FIRST_US;
+         q->retry_us = 0;
+         q->map_ip = 0;
+         q->map_port = 0;
+         q->rfx_ip = 0;
+         q->rfx_port = 0;
+         if (n >= 30)
+         {
+            q->map_ip = rl_get_ip(body + 24);
+            q->map_port = (uint16_t)rl_get16(body + 28);
+         }
          ipfmt(q->pub_ip, q->pub_port, a1);
          ipfmt(q->priv_ip, q->priv_port, a2);
-         lg(t, "relay_candidates peer=%d public=%s private=%s punch=%d", j,
-            a1, a2, q->punch);
+         ipfmt(q->map_ip, q->map_port, a3);
+         lg(t, "relay_candidates peer=%d public=%s private=%s forward=%s punch=%d",
+            j, a1, a2, a3, q->punch);
       }
       break;
    case RL_T_COOKIE:
@@ -551,38 +668,88 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
          if (b[5] == RL_T_PUNCH && len >= RL_HDR + 4)
          {
             t->st.punches_rx++;
-            if (q->path == P_PUNCH || q->path == P_DIRECT)
+            if (!t->cfg.direct)
+               continue;
+            /* Always answer, whatever our state: the peer's punch got
+             * through, and the ACK proves the way back. */
+            send_punch(t, j, RL_T_PUNCH_ACK, rl_get32(b + RL_HDR), ip, port);
+            if (q->path == P_DIRECT)
             {
-               send_punch(t, j, RL_T_PUNCH_ACK, rl_get32(b + RL_HDR), ip, port);
-               if (q->path == P_DIRECT)
-                  q->last_rx_us = tn;
+               q->last_rx_us = tn;
+               continue;
+            }
+            /* peer-reflexive: an address the server never told us (a
+             * symmetric NAT's port for us) -- punch it too */
+            if (!ep_is(ip, port, q->priv_ip, q->priv_port) &&
+                !ep_is(ip, port, q->pub_ip, q->pub_port) &&
+                !ep_is(ip, port, q->map_ip, q->map_port) &&
+                !ep_is(ip, port, q->rfx_ip, q->rfx_port))
+            {
+               char a[24];
+               q->rfx_ip = ip;
+               q->rfx_port = port;
+               ipfmt(ip, port, a);
+               lg(t, "relay_candidate peer=%d reflexive=%s", j, a);
+            }
+            /* the peer is punching and we had given up (it was late, or we
+             * were): punch back now, the two bursts overlap */
+            if (q->path == P_FALLBACK || q->path == P_RELAY)
+            {
+               q->retry_us = 0;
+               lg(t, "relay_retry peer=%d why=peer_punch", j);
+               burst(t, q, tn);
+            }
+            {
+               uint32_t c = ++q->counter;
+               q->sent_us[c % TS_RING] = tn;
+               send_punch(t, j, RL_T_PUNCH, c, ip, port);
             }
             continue;
          }
          if (b[5] == RL_T_PUNCH_ACK && len >= RL_HDR + 4)
          {
             uint32_t c = rl_get32(b + RL_HDR);
+            int priv = ep_is(ip, port, q->priv_ip, q->priv_port);
             t->st.acks_rx++;
+            if (!t->cfg.direct)
+               continue;
             /* an RTT sample only from the endpoint the path uses (the peer
              * may still be punching our other candidate) */
             if (c && c <= q->counter && q->counter - c < TS_RING &&
-                (q->path == P_PUNCH || (ip == q->dir_ip && port == q->dir_port)))
+                (q->path != P_DIRECT || (ip == q->dir_ip && port == q->dir_port)))
                q->rtt_us = (uint32_t)(tn - q->sent_us[c % TS_RING]);
             t->st.direct_rtt_us[j] = q->rtt_us;
-            if (q->path == P_PUNCH)
+            if (q->path != P_DIRECT)
             {
+               /* an ACK is the round trip: direct works both ways (also a
+                * late one, after we had fallen back) */
                char a[24];
                q->path = P_DIRECT;
                q->dir_ip = ip;
                q->dir_port = port;
+               q->retry_us = 0;
+               q->backoff_us = RETRY_FIRST_US;
                q->last_rx_us = q->last_tx_us = tn;
+               t->st.directs++;
                ipfmt(ip, port, a);
-               lg(t, "relay_path peer=%d path=direct via=%s rtt_us=%u", j, a,
-                  (unsigned)q->rtt_us);
+               lg(t, "relay_path peer=%d path=direct via=%s%s rtt_us=%u", j, a,
+                  priv ? " (lan)" : "", (unsigned)q->rtt_us);
                send_path(t, j, RL_PATH_DIRECT);
             }
-            else if (q->path == P_DIRECT)
+            else
+            {
                q->last_rx_us = tn;
+               /* the LAN beats a hairpin through the router: switch to the
+                * private endpoint once it answers */
+               if (priv && !ep_is(q->dir_ip, q->dir_port, ip, port))
+               {
+                  char a[24];
+                  q->dir_ip = ip;
+                  q->dir_port = port;
+                  ipfmt(ip, port, a);
+                  lg(t, "relay_path peer=%d path=direct via=%s (lan)", j, a);
+               }
+            }
             continue;
          }
          if (b[5] == RL_T_DATA)

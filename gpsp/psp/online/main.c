@@ -28,6 +28,12 @@ static struct
    uint16_t port;               /* the bound port (ONLINE_PORT unless taken) */
    int resolver_up;
    relay_transport *rt;
+   /* the path display (ol_recv): the transport's own recv, the next
+    * refresh, the path last shown ('D'irect / 'R'elay, a toast on change) */
+   int (*recv)(void *ctx, uint8_t mac[6], void *buf, size_t cap);
+   uint64_t show_us;
+   char shown;
+   char chip[48];
 } O = { .fd = -1 };
 
 static online_api g_api;
@@ -183,6 +189,10 @@ static void ol_down(void)
       g_api.stats_evt("down");
       relay_transport_destroy(O.rt);
       O.rt = NULL;
+      O.shown = 0;
+      O.show_us = 0;
+      if (g_ol_host->chip)
+         g_ol_host->chip(NULL);
    }
    if (O.fd >= 0)
    {
@@ -325,7 +335,37 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
 static int ol_is_up(void) { return O.rt != NULL; }
 static const char *ol_room(void) { return O.rt ? relay_transport_code(O.rt) : ""; }
 static int ol_room_mode(void) { return O.rt ? relay_transport_mode(O.rt) : 0; }
-static void ol_iface(nd_transport *out) { relay_transport_iface(O.rt, out); }
+static char ol_text(char *out, unsigned cap);
+
+/* netdrv's recv, once per pump: the transport's, plus once a second the
+ * session chip ("Online ABCD  Direct 12 ms") and a toast when the path
+ * changes -- the owner sees at a glance whether the relay is in the way. */
+static int ol_recv(void *ctx, uint8_t mac[6], void *buf, size_t cap)
+{
+   int n = O.recv(ctx, mac, buf, cap);
+   uint64_t t = now_us();
+   if (t >= O.show_us && g_ol_host->chip)
+   {
+      char k;
+      O.show_us = t + 1000000u;
+      k = ol_text(O.chip, sizeof(O.chip));
+      if (k && k != O.shown)
+      {
+         g_ol_host->toast("%s", O.chip);
+         evt("online_path shown=\"%s\"", O.chip);
+      }
+      O.shown = k;
+      g_ol_host->chip(O.chip);
+   }
+   return n;
+}
+
+static void ol_iface(nd_transport *out)
+{
+   relay_transport_iface(O.rt, out);
+   O.recv = out->recv;
+   out->recv = ol_recv;
+}
 /* Not connected once the server has been silent for 30 s: a lobby host's
  * room is presumed gone (transport_relay keeps entering it again with the
  * same code), and the EBOOT says "Wireless group lost" instead of showing a
@@ -336,15 +376,16 @@ static int ol_connected(void)
           relay_transport_server_silent_us(O.rt) < 30000000ull;
 }
 
-static void ol_status(char *out, unsigned cap)
+/* the chip text; 'D' direct, 'R' relay, 0 no peer yet */
+static char ol_text(char *out, unsigned cap)
 {
    rl_client_stats s;
    int j, p = 0, peer = -1;
    if (!cap)
-      return;
+      return 0;
    out[0] = 0;
    if (!O.rt)
-      return;
+      return 0;
    relay_transport_stats(O.rt, &s);
    for (j = 0; j < RL_SLOTS; j++)
       if (j != relay_transport_slot(O.rt) && s.path[j])
@@ -353,13 +394,25 @@ static void ol_status(char *out, unsigned cap)
          p = s.path[j];
          break;
       }
-   if (peer >= 0 && p == 3)
-      snprintf(out, cap, "Online %s  direct %u ms", relay_transport_code(O.rt),
+   /* the ping: the direct round trip (PUNCH keep-alive every 500 ms), or
+    * on the relay ours to the server twice (the peer's leg is about ours) */
+   if (peer < 0)
+   {
+      snprintf(out, cap, "Online %s  waiting", relay_transport_code(O.rt));
+      return 0;
+   }
+   if (p == 3)
+   {
+      snprintf(out, cap, "Online %s  Direct %u ms", relay_transport_code(O.rt),
                (unsigned)(s.direct_rtt_us[peer] / 1000));
-   else
-      snprintf(out, cap, "Online %s  relay %u ms", relay_transport_code(O.rt),
-               (unsigned)(s.relay_rtt_us / 1000 * 2));
+      return 'D';
+   }
+   snprintf(out, cap, "Online %s  Via relay %u ms", relay_transport_code(O.rt),
+            (unsigned)(s.relay_rtt_us / 1000 * 2));
+   return 'R';
 }
+
+static void ol_status(char *out, unsigned cap) { (void)ol_text(out, cap); }
 
 static void ol_stats_evt(const char *at)
 {
@@ -374,12 +427,13 @@ static void ol_stats_evt(const char *at)
    paths[RL_SLOTS] = 0;
    evt("online_stats at=%s nat=%u paths=%s tx=%u rx=%u tx_direct=%u rx_direct=%u "
        "tx_relay=%u rx_relay=%u punches=%u/%u acks=%u fallbacks=%u "
-       "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u", at, s.nat, paths,
+       "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u bursts=%u directs=%u stalls=%u", at, s.nat, paths,
        (unsigned)s.tx, (unsigned)s.rx, (unsigned)s.tx_direct, (unsigned)s.rx_direct,
        (unsigned)s.tx_relay, (unsigned)s.rx_relay, (unsigned)s.punches_tx,
        (unsigned)s.punches_rx, (unsigned)s.acks_rx, (unsigned)s.fallbacks,
        (unsigned)(s.relay_rtt_us / 1000), (unsigned)(s.direct_rtt_us[0] / 1000),
-       (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad);
+       (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad,
+       (unsigned)s.bursts, (unsigned)s.directs, (unsigned)s.stalls);
 }
 
 int module_start(SceSize args, void *argp)

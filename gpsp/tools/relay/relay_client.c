@@ -4,7 +4,7 @@
  *
  *   relay_client --server IP:PORT (--host|--join) --code CODE
  *                [--bind IP:PORT] [--relay-only] [--payloads N] [--secs S]
- *                [--drop-direct-after MS]
+ *                [--drop-direct-after MS] [--map-port N] [--stall-after-join MS]
  *
  * Sends N reliable 8-byte payloads (a counter) one per 16 ms frame once the
  * session is up, expects N from the peer in order, then exits 0 with one
@@ -109,7 +109,7 @@ int main(int argc, char **argv)
    rl_client_stats st;
    uint32_t bind_ip = htonl(INADDR_ANY);
    uint16_t bind_port = 27500;
-   int i, n_pay = 600, secs = 40, sent = 0, ok;
+   int i, n_pay = 600, secs = 40, sent = 0, ok, stall_ms = 0;
    uint64_t t0, next_frame;
    const char *tag;
    struct sockaddr_in a;
@@ -129,6 +129,10 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--relay-only")) cfg.direct = 0;
       else if (!strcmp(argv[i], "--payloads") && i + 1 < argc) n_pay = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = atoi(argv[++i]);
+      else if (!strcmp(argv[i], "--map-port") && i + 1 < argc)
+         cfg.map_port = (uint16_t)atoi(argv[++i]);
+      else if (!strcmp(argv[i], "--stall-after-join") && i + 1 < argc)
+         stall_ms = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--drop-direct-after") && i + 1 < argc)
          cfg.drop_direct_after_us = (uint64_t)atoi(argv[++i]) * 1000u;
       else
@@ -181,6 +185,10 @@ int main(int argc, char **argv)
       }
       usleep(1000);
    }
+   /* a PSP that stops pumping right after its room (the EBOOT backing the
+    * save up, a slow screen): nothing is read or punched meanwhile */
+   if (stall_ms > 0)
+      usleep((useconds_t)stall_ms * 1000u);
    memset(&app, 0, sizeof(app));
    memset(&cb, 0, sizeof(cb));
    cb.user = &app;
@@ -229,11 +237,11 @@ int main(int argc, char **argv)
       ok = app.got == (uint32_t)n_pay && !app.bad && !app.lost && !app.stopped;
       printf("RESULT ok=%d side=%s got=%u bad=%u sent=%d lost=%d path=%s nat=%u "
              "rx_direct=%u rx_relay=%u fallbacks=%u rtt_direct_ms=%u rtt_relay_ms=%u "
-             "srtt_ms=%u retx=%u secs=%.1f\n",
+             "srtt_ms=%u retx=%u bursts=%u stalls=%u secs=%.1f\n",
              ok, tag, app.got, app.bad, sent, app.lost,
              p == 3 ? "direct" : p == 4 ? "fellback" : p == 2 ? "punching" : "relay",
              st.nat, st.rx_direct, st.rx_relay, st.fallbacks, st.direct_rtt_us[peer] / 1000,
-             st.relay_rtt_us / 1000, ns.srtt_us / 1000, ns.retx,
+             st.relay_rtt_us / 1000, ns.srtt_us / 1000, ns.retx, st.bursts, st.stalls,
              (now_us() - t0) / 1e6);
    }
    /* linger: answer the peer's last acks */
