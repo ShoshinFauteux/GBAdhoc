@@ -114,6 +114,19 @@ static u32 old_ring_distance(const u8 *snd, const char *chan, u32 base)
    return (v - base) & (SOUND_STATE_INDEX_RANGE - 1);
 }
 
+/* beta.4's sound_read_savestate DS resync, on the stored values as it reads
+ * them (each < 65536, so its 64K ring takes them as they are). */
+static int old_ds_resyncs(const u8 *snd, const char *chan)
+{
+   const u8 *doc = bson_find_key(snd, chan);
+   u32 gbc, ds, d;
+   assert(doc);
+   assert(bson_read_int32(snd, "gbc-buf-idx", &gbc));
+   assert(bson_read_int32(doc, "buf-idx", &ds));
+   d = (ds - gbc) & 0xFFFFu;
+   return d > 256u && d < 65536u - 512u;
+}
+
 static void check_downgrade_indices(void)
 {
    u8 *w = st_doc + 4;
@@ -138,6 +151,26 @@ static void check_downgrade_indices(void)
    assert(old_ring_distance(snd, NULL, base) == 584);
    assert(old_ring_distance(snd, "ds0", base) == 616);
    assert(old_ring_distance(snd, "ds1", base) == 578);
+   /* the old reader's own DS resync test (beta.4 sound.c, 64K ring, 256
+    * ahead / 512 behind the mixer): both channels stay where they were */
+   assert(!old_ds_resyncs(snd, "ds0"));
+   assert(!old_ds_resyncs(snd, "ds1"));
+   /* a DS index behind buf-base (no healthy state has one: read-out stops
+    * 512 short of the mixer) encodes ~16K ahead; the old reader resyncs
+    * that channel to the mixer instead of placing it -- benign, pinned */
+   direct_sound_channel[0].buffer_index = (16000u - 10u) & BUFFER_SIZE_MASK;
+   n = sound_write_savestate(w);
+   w[n] = 0;
+   st_doc[0] = (u8)(n + 5); st_doc[1] = (u8)((n + 5) >> 8);
+   assert(sound_check_savestate(st_doc));
+   snd = bson_find_key(st_doc, "sound");
+   assert(snd && old_ds_resyncs(snd, "ds0"));
+   assert(!old_ds_resyncs(snd, "ds1"));
+   direct_sound_channel[0].buffer_index = 232;
+   n = sound_write_savestate(w);
+   w[n] = 0;
+   st_doc[0] = (u8)(n + 5); st_doc[1] = (u8)((n + 5) >> 8);
+   assert(sound_check_savestate(st_doc));
    /* and this build reads back exactly what it saved */
    sound_buffer_base = gbc_sound_buffer_index = 0;
    assert(sound_read_savestate(st_doc));
