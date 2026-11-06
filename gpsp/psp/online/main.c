@@ -9,6 +9,7 @@
 #include <pspkernel.h>
 #include <pspnet_inet.h>
 #include <pspnet_resolver.h>
+#include <pspsysmem.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -31,6 +32,25 @@ static struct
 } O = { .fd = -1 };
 
 static online_api g_api;
+
+/* WHAT THE SOCKET DID, for the failure text.  A release build has no log
+ * (fe_evt is compiled out), and "the server did not answer" alone cannot
+ * tell "nothing left the PSP" from "nothing came back": owner's Go,
+ * 2026-11-05, the relay saw no datagram at all.  Counted from ol_up. */
+static struct
+{
+   unsigned tx, tx_ok, rx;
+   int tx_rc, tx_errno;      /* the first failed sendto */
+   int rx_errno;             /* the last recvfrom error that is not EAGAIN */
+} D;
+
+/* "t<ok>/<sent> e<rc>/<errno> r<recv>/<errno> p<port> m<free KB>" */
+static void diag(char *why, unsigned cap, const char *what)
+{
+   snprintf(why, cap, "%s t%u/%u e%X/%d r%u/%d p%u m%uK", what, D.tx_ok, D.tx,
+            (unsigned)D.tx_rc, D.tx_errno, D.rx, D.rx_errno, (unsigned)O.port,
+            (unsigned)(sceKernelTotalFreeMemSize() >> 10));
+}
 
 static void evt(const char *fmt, ...)
 {
@@ -90,12 +110,23 @@ static uint32_t parse_ip(const char *s, uint16_t *port)
 static int sk_send(void *ctx, uint32_t ip, uint16_t port, const void *buf, size_t len)
 {
    struct sockaddr_in a;
+   int n;
    (void)ctx;
    memset(&a, 0, sizeof(a));
    a.sin_family = AF_INET;
    a.sin_addr.s_addr = ip;
    a.sin_port = htons(port);
-   (void)sceNetInetSendto(O.fd, buf, len, 0, (struct sockaddr *)&a, sizeof(a));
+   /* sceNetInetSendto is declared returning size_t: an error is negative */
+   n = (int)sceNetInetSendto(O.fd, buf, len, 0, (struct sockaddr *)&a, sizeof(a));
+   D.tx++;
+   if (n >= 0)
+      D.tx_ok++;
+   else if (!D.tx_rc)
+   {
+      D.tx_rc = n;
+      D.tx_errno = sceNetInetGetErrno();
+      evt("online_error stage=sendto rc=0x%08X errno=%d", (unsigned)n, D.tx_errno);
+   }
    return 0;                            /* UDP: a failed send is a loss */
 }
 
@@ -107,8 +138,15 @@ static int sk_recv(void *ctx, uint32_t *ip, uint16_t *port, void *buf, size_t ca
    (void)ctx;
    memset(&a, 0, sizeof(a));
    n = (int)sceNetInetRecvfrom(O.fd, buf, cap, MSG_DONTWAIT, (struct sockaddr *)&a, &al);
+   if (n < 0)
+   {
+      int e = sceNetInetGetErrno();
+      if (e != 11 && e != 35)           /* EAGAIN / EWOULDBLOCK: nothing yet */
+         D.rx_errno = e;
+   }
    if (n <= 0)
       return 0;
+   D.rx++;
    *ip = a.sin_addr.s_addr;
    *port = ntohs(a.sin_port);
    return n;
@@ -147,13 +185,13 @@ static int resolve(uint32_t *ip, uint16_t *port)
       if (rc < 0)
       {
          evt("online_error stage=dns_init rc=0x%08X", (unsigned)rc);
-         return -1;
+         return rc;
       }
       O.resolver_up = 1;
    }
    buf = calloc(1, 1024);
    if (!buf)
-      return -1;
+      return -2;
    memset(&a, 0, sizeof(a));
    rc = sceNetResolverCreate(&rid, buf, 1024);
    if (rc >= 0)
@@ -165,7 +203,7 @@ static int resolve(uint32_t *ip, uint16_t *port)
    if (rc < 0 || !a.s_addr)
    {
       evt("online_error stage=dns host=%s rc=0x%08X", host, (unsigned)rc);
-      return -1;
+      return rc < 0 ? rc : -1;
    }
    *ip = a.s_addr;
    {
@@ -223,18 +261,26 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       }
       O.cfg.room[j] = 0;
    }
-   (void)rc;
-   if (resolve(&sip, &sport) != 0)
+   memset(&D, 0, sizeof(D));
+   O.port = 0;
+   rc = resolve(&sip, &sport);
+   if (rc != 0)
    {
-      snprintf(why, why_cap, "server name not found");
+      snprintf(why, why_cap, "server name not found 0x%08X m%uK", (unsigned)rc,
+               (unsigned)(sceKernelTotalFreeMemSize() >> 10));
       ol_down();
       return -1;
+   }
+   {
+      const uint8_t *p = (const uint8_t *)&sip;
+      evt("online_server ip=%u.%u.%u.%u port=%u", p[0], p[1], p[2], p[3], sport);
    }
    beat();
    O.fd = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
    if (O.fd < 0)
    {
-      snprintf(why, why_cap, "socket");
+      snprintf(why, why_cap, "socket 0x%08X e%d m%uK", (unsigned)O.fd,
+               sceNetInetGetErrno(), (unsigned)(sceKernelTotalFreeMemSize() >> 10));
       evt("online_error stage=socket rc=%d", O.fd);
       ol_down();
       return -1;
@@ -245,16 +291,19 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    a.sin_family = AF_INET;
    a.sin_port = htons(ONLINE_PORT);
    a.sin_addr.s_addr = htonl(INADDR_ANY);
-   if (sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a)) < 0)
+   if ((rc = sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a))) < 0)
    {
+      evt("online_error stage=bind port=%d rc=0x%08X errno=%d", ONLINE_PORT,
+          (unsigned)rc, sceNetInetGetErrno());
       /* the port is taken (another program on this network stack, or two
        * emulated consoles on one PC): any port will do -- the server and the
        * peer learn it from the datagrams, and the private candidate below
        * reads it back */
       a.sin_port = 0;
-      if (sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a)) < 0)
+      if ((rc = sceNetInetBind(O.fd, (struct sockaddr *)&a, sizeof(a))) < 0)
       {
-         snprintf(why, why_cap, "socket bind");
+         snprintf(why, why_cap, "bind 0x%08X e%d", (unsigned)rc,
+                  sceNetInetGetErrno());
          evt("online_error stage=bind port=%d", ONLINE_PORT);
          ol_down();
          return -1;
@@ -307,9 +356,13 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       {
          const char *tx = "";
          relay_transport_error(O.rt, &tx);
-         snprintf(why, why_cap, "%s", st == RL_ST_FAILED ? tx
-                  : is_host ? "the server did not answer"
-                            : "no such room, or the server did not answer");
+         if (st == RL_ST_FAILED)
+            snprintf(why, why_cap, "%s", tx);
+         else
+            /* the counts say which: t0/N = nothing left the PSP (the
+             * first failed sendto's rc/errno follow), tN/N r0 = sent but
+             * nothing came back */
+            diag(why, why_cap, is_host ? "no answer" : "no room/answer");
          evt("online_error stage=room state=%d why=\"%s\"", st, why);
          ol_down();
          return -1;
