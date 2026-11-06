@@ -187,6 +187,18 @@ static bool b_env(unsigned cmd, void *data)
    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
    case RETRO_ENVIRONMENT_GET_VARIABLE:
+      /* B's picture is dropped (b_video), so it never post-processes it;
+       * B also links no colour LUT (psp/gbalink_b_stubs.c). */
+      if (data && ((struct retro_variable *)data)->key &&
+          (!strcmp(((struct retro_variable *)data)->key,
+                   "gpsp_color_correction") ||
+           !strcmp(((struct retro_variable *)data)->key,
+                   "gpsp_frame_mixing")))
+      {
+         ((struct retro_variable *)data)->value = "disabled";
+         return true;
+      }
+      /* fall through */
    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
    case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:

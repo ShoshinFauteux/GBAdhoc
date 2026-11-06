@@ -418,11 +418,34 @@ $(GB_CORE_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += -fno-function-sections
 	psp-objcopy --redefine-syms=$@.syms $< $@
 	rm -f $@.syms
 
-gbalink_core_b.o: $(CORE_LIB) gbalink_core_b.ld
-	psp-ld -r -d -T gbalink_core_b.ld -o $@.tmp --whole-archive $(CORE_LIB)
+# B is the core archive minus what a headless partner never runs, plus
+# gbalink_b_stubs.o in its place (that file says why each stub is exact):
+#   video.o, gba_cc_lut.o  the renderer and its colour LUT (B never draws)
+#   cheats.o               the cheat engine (B never has a cheat)
+#   bios_data.o            the built-in BIOS image: read-only, so B's
+#                          reference stays unrenamed and reads A's copy
+# The check after the partial link fails the build if B still references
+# any other symbol those members define: an unrenamed reference would bind
+# to instance A's copy silently.
+B_DROP     := video.o gba_cc_lut.o cheats.o bios_data.o
+B_SHARED   := open_gba_bios_rom
+gbalink_core_b.o: $(CORE_LIB) gbalink_core_b.ld gbalink_b_stubs.o
+	rm -rf $@.dir && mkdir -p $@.dir
+	cp $(CORE_LIB) $@.dir/b.a
+	cd $@.dir && psp-ar x b.a $(B_DROP) && psp-ar d b.a $(B_DROP)
+	psp-ar q $@.dir/b.a gbalink_b_stubs.o
+	psp-ld -r -d -T gbalink_core_b.ld -o $@.tmp --whole-archive $@.dir/b.a
+	psp-nm -g --defined-only $(addprefix $@.dir/,$(B_DROP)) | \
+	  awk 'NF == 3 { print $$3 }' | sort -u > $@.dir/dropped
+	psp-nm -u $@.tmp | awk '{ print $$2 }' | sort -u | \
+	  comm -12 - $@.dir/dropped > $@.dir/bound
+	printf '%s\n' $(B_SHARED) | sort > $@.dir/allowed
+	@if ! cmp -s $@.dir/bound $@.dir/allowed; then \
+	  echo "gbalink_core_b.o: B binds to A's copy of:"; cat $@.dir/bound; \
+	  echo "allowed: $(B_SHARED)"; exit 1; fi
 	psp-nm -g --defined-only $@.tmp | awk 'NF == 3 { print $$3 " gbab_" $$3 }' > $@.syms
 	psp-objcopy --redefine-syms=$@.syms $@.tmp $@
-	rm -f $@.tmp $@.syms
+	rm -rf $@.tmp $@.syms $@.dir
 
 # The partner machine's autopilot (bench only): fe_autopilot.o again, its
 # API renamed gbab_fe_autopilot_* and its three host hooks pointed at the
@@ -457,7 +480,7 @@ clean-deps:
 	-@rm -f $(DEPS)
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
-	-@rm -f gbalink_core_b.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o
+	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o
 .PHONY: clean-deps clean-gbcore
 
 # ADR-0080: the ME kernel module (defined here, after the include, so it
