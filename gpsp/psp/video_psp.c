@@ -2085,8 +2085,10 @@ static int amb_draw_bg(const vid_geo *g)
       return 0;
    if (x0 <= 0 && y0 <= 0 && x1 >= VID_SCR_W && y1 >= VID_SCR_H)
       return 0;                  /* no bars: stretch, or 2x on a GBA */
-   textured = g_amb_tex && (g_amb_src == AMB_SRC_ART ||
-                            (g_amb_src == AMB_SRC_SNAP && g_amb_mode == 2));
+   /* Art: the art, else the game frame.  Game: only ever the game frame
+    * (the palette until it is taken, as Art without art always did). */
+   textured = g_amb_tex && (g_amb_src == AMB_SRC_SNAP ||
+                            (g_amb_src == AMB_SRC_ART && g_amb_mode == 1));
    if (!textured && !g_amb_have_shade)
       return 0;
    if (x0 < 0) x0 = 0;
@@ -2335,15 +2337,17 @@ int vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h)
    return rc == 0 ? 0 : -1;
 }
 
-/* The snapshot fallback: called once per presented frame; does nothing
- * unless "art, else game" is on and there is no art.  One tap per texel, so
- * the read is ~8k pixels (uncached for an ME-written stage). */
+/* The game-frame bake: called once per presented frame; does nothing unless
+ * the bars are "game" (and none is taken yet), or "art" with no art.  It
+ * replaces art in the texture.  One tap per texel, so the read is ~8k
+ * pixels (uncached for an ME-written stage). */
 static void amb_snap_maybe(const uint16_t *src, int stride, unsigned w,
                            unsigned h, int uncached)
 {
    unsigned t0, us;
    int rc;
-   if (g_amb_mode != 2 || g_amb_src != AMB_SRC_NONE || g_amb_snap_done || !src)
+   if (!g_amb_mode || g_amb_src == AMB_SRC_SNAP || g_amb_snap_done || !src ||
+       (g_amb_src == AMB_SRC_ART && g_amb_mode != 2))
       return;
    g_amb_frames++;
    if (g_amb_frames < AMB_SNAP_AFTER ||

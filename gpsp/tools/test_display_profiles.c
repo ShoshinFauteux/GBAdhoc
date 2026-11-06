@@ -70,7 +70,8 @@ int main(void)
    reads = writes = 0;
    assert(pcfg_display_save() == 0);
    assert(reads == 1 && writes == 1);           /* path.tmp, then renames */
-   assert(key("scale_gb") == VID_SCALE_INT2 && key("ambient_gb") == 1);
+   assert(key("scale_gb") == VID_SCALE_INT2 && key("bars_gb") == 1 &&
+          key("ambient_gb") == -99);
    assert(key("scale_gba") == -99);             /* untouched consoles: absent */
    assert(key("scale") == 2);                   /* legacy key untouched */
    printf("PASS display save: %u read, %u write for one console\n", reads,
@@ -118,10 +119,24 @@ int main(void)
    assert(g_pdisp[FE_CONSOLE_GB].scale == VID_SCALE_INT2);
    assert(g_pdisp[FE_CONSOLE_GBC].scale == VID_SCALE_1X);
    assert(g_pdisp[FE_CONSOLE_GB].ambient == PCFG_AMBIENT_DEF);
-   assert(g_pdisp[FE_CONSOLE_GBC].ambient == PCFG_AMB_ART_GAME);
+   /* the old "art, else game" (2) is Art (with its game fallback) */
+   assert(g_pdisp[FE_CONSOLE_GBC].ambient == PCFG_AMB_ART);
    assert(g_pdisp[FE_CONSOLE_GBA].filter == 1);
    assert(g_pcfg.console == FE_CONSOLE_GBA && g_pcfg.scale == 1);
    puts("PASS partial files and clamping");
+
+   /* 6a. Ambient bars none / art / game: bars_<c> wins over the old key;
+    *     the old 1 (art, palette fallback) is Art too. */
+   write_file("ambient_gba = 1\nambient_gb = 2\nbars_gb = 2\n"
+              "ambient_gbc = 2\nbars_gbc = 0\n");
+   pcfg_load(path);
+   assert(g_pdisp[FE_CONSOLE_GBA].ambient == PCFG_AMB_ART);
+   assert(g_pdisp[FE_CONSOLE_GB].ambient == PCFG_AMB_GAME);
+   assert(g_pdisp[FE_CONSOLE_GBC].ambient == PCFG_AMB_OFF);
+   assert(strcmp(pcfg_ambient_name(PCFG_AMB_OFF), "none") == 0 &&
+          strcmp(pcfg_ambient_name(PCFG_AMB_ART), "art") == 0 &&
+          strcmp(pcfg_ambient_name(PCFG_AMB_GAME), "game") == 0);
+   puts("PASS ambient bars: none/art/game, old key migrated");
 
    /* 6b. Sharp bilinear (VID_FILTER_SHARP = 2) is a third filter value: it
     *     loads per console and through the legacy key, any OTHER non-zero

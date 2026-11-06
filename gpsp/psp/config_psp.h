@@ -598,7 +598,7 @@ int pcfg_remember_console(int console);
  *
  *     scale_gba / scale_gb / scale_gbc         VID_SCALE_*
  *     filter_gba / filter_gb / filter_gbc      VID_FILTER_*
- *     ambient_gba / ambient_gb / ambient_gbc   PCFG_AMB_*
+ *     bars_gba / bars_gb / bars_gbc            PCFG_AMB_* (was ambient_<c>)
  *     gb_palette_gb / gb_palette_gbc           GBCORE_PALETTE_* id
  *
  * MIGRATION: a key that is absent takes the pre-profile value -- `scale`,
@@ -613,11 +613,14 @@ int pcfg_remember_console(int console);
  * that CHANGES one calls pcfg_display_commit() so the profile follows. */
 enum
 {
-   PCFG_AMB_OFF      = 0,   /* black bars (the 3.1 look)                    */
-   PCFG_AMB_ART      = 1,   /* blurred hero art; black when there is none   */
-   PCFG_AMB_ART_GAME = 2,   /* hero art, else a blurred early game frame    */
+   PCFG_AMB_OFF      = 0,   /* "none": black bars (the 3.1 look)            */
+   PCFG_AMB_ART      = 1,   /* hero art, else a blurred early game frame    */
+   PCFG_AMB_GAME     = 2,   /* a blurred early game frame, art or not       */
    PCFG_AMB_MODES    = 3
 };
+/* The profile key is bars_<c>.  Up to beta.4 it was ambient_<c>, where 1 was
+ * art-or-palette and 2 art-else-game: both read as PCFG_AMB_ART (the old 2
+ * exactly; the old 1 gains the game fallback).  Only bars_<c> is written. */
 /* Off until the owner picks a look (Fable's mockups). */
 #define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
 /* GBA colour rows (video.h VIDEO_COLOR_*): config_psp.c cannot include the

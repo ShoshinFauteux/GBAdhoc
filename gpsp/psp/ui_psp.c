@@ -1142,7 +1142,7 @@ void ui_open(void)
 void ui_close(void)
 {
    /* Back to the game, maybe after a state load: an ambient snapshot (no
-    * art, "art, else game") is retaken from what is on screen now. */
+    * art, or "game") is retaken from what is on screen now. */
    vid_ambient_resnap();
    if (g_settings_dirty)
    {
