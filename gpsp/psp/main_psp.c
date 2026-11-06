@@ -2111,9 +2111,15 @@ static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
 static volatile int g_pwr_had_host;  /* the ME module was up when we slept */
 /* The GE samples power-of-two textures only, and vid_image uses stride ==
  * texw, so the snapshot is stored 256 wide with the live 240x160 as its
- * top-left sub-rect.  256x256 allocated because texh is declared 256. */
+ * top-left sub-rect.  The texture is DECLARED 256x256 (texh must be a power
+ * of two), but only rows 0..160 are ever sampled: the picture is at most 160
+ * rows and row src_h holds the bottom-edge copy for bilinear taps -- the
+ * same 161 rows the ME/CPU staging buffer the live frame is drawn from has
+ * (MER_STAGE_PITCH * 161), drawn by the same code (vid_image_screen).  So
+ * only those 161 rows are stored: 82,432 B instead of 131,072. */
 #define WAKE_TEX     256
-#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_TEX * 2)
+#define WAKE_ROWS    161
+#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_ROWS * 2)
 static uint16_t *g_wake_frame;       /* the picture the overlay sits on */
 static int       g_wake_have;        /* 1 = it holds a real frame       */
 /* The snapshot's own size: 240x160 for a GBA, 160x144 for a GB/GBC.  It is
@@ -3477,8 +3483,9 @@ static int me_rend_release_vmem(void)
 /* KEEP THE LAST FRAME for the wake overlay.
  *
  * It normally lives in the volatile partition we are about to hand back, so it
- * has to be copied into memory that survives: 76.8 KB in the tail of the
- * netdrv arena, which is 1 MiB while netdrv uses 516 KB.  No heap cost, which
+ * has to be copied into memory that survives: 82 KB (161 rows of 256) in
+ * the tail of
+ * the netdrv arena, after netdrv's own part.  No heap cost, which
  * matters on the console with none to spare.
  *
  * Two sources, because the ME is not always the one drawing: its stage when
@@ -3524,7 +3531,7 @@ static void wake_snapshot_from(const uint16_t *src, unsigned pitch,
       if (src_w < WAKE_TEX)
          g_wake_frame[y * WAKE_TEX + src_w] = src[y * pitch + src_w - 1];
    }
-   if (src_h < WAKE_TEX)
+   if (src_h < WAKE_ROWS)
       memcpy(g_wake_frame + src_h * WAKE_TEX,
              g_wake_frame + (src_h - 1) * WAKE_TEX, (src_w + 1) * 2);
    g_wake_w = src_w;
