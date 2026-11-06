@@ -1754,9 +1754,53 @@ static void test_admission(void)
    netdrv_destroy(nd);
 }
 
+/* The host's reserved block (netdrv_set_arena) lent to short-lived work:
+ * never while a driver lives in it, never twice, and a driver created while
+ * it is lent falls back to calloc instead of building over the borrower. */
+static void test_arena_borrow(void)
+{
+   sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd, *nd2;
+   size_t sz = netdrv_sizeof();
+   void *blk = malloc(sz), *b;
+
+   printf("[arena borrow]\n");
+   CHECK(netdrv_arena_borrow(1) == NULL, "no arena: nothing to lend");
+   netdrv_set_arena(blk, sz);
+   CHECK(netdrv_arena_borrow(sz + 1) == NULL, "larger than the block refused");
+   b = netdrv_arena_borrow(sz);
+   CHECK(b == blk, "idle arena is lent");
+   CHECK(netdrv_arena_borrow(16) == NULL, "lent once only");
+   memset(b, 0xA5, sz);
+   sim_init(&s, 2, 0xB0220);
+   nd = mk_node(&s, &ep[0], 0, &a[0], "host", 0x10u, NULL);
+   CHECK(nd && (void *)nd != blk, "a driver made while lent is calloc'd");
+   CHECK(((unsigned char *)blk)[sz - 1] == 0xA5, "the borrower's bytes stand");
+   netdrv_destroy(nd);
+   netdrv_arena_return(NULL);
+   CHECK(netdrv_arena_borrow(16) == NULL, "return(NULL) does not release it");
+   netdrv_arena_return(b);
+   nd = mk_node(&s, &ep[0], 0, &a[0], "host", 0x11u, NULL);
+   CHECK((void *)nd == blk, "returned: the next driver builds in the arena");
+   CHECK(netdrv_arena_borrow(16) == NULL, "not lent while a driver lives there");
+   netdrv_arena_return(blk);                     /* not a borrow: no effect */
+   nd2 = mk_node(&s, &ep[1], 1, &a[1], "cli", 0x12u, NULL);
+   CHECK(nd2 && (void *)nd2 != blk, "second driver is calloc'd");
+   netdrv_destroy(nd2);
+   netdrv_destroy(nd);
+   b = netdrv_arena_borrow(sz);
+   CHECK(b == blk, "lent again once the driver is gone");
+   netdrv_arena_return(b);
+   netdrv_set_arena(NULL, 0);
+   free(blk);
+}
+
 int main(void)
 {
    netdrv_pump(NULL, 0); /* Public pump tolerates a missing instance. */
+   test_arena_borrow();
    test_wire();
    test_handshake_loss();
    test_arq();

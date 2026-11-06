@@ -1725,7 +1725,7 @@ int netdrv_poll_needed(const netdrv *nd)
 
 static void  *nd_arena;        /* reserved block, or NULL for calloc */
 static size_t nd_arena_bytes;
-static int    nd_arena_busy;
+static int    nd_arena_busy;   /* 1 = a driver lives there, 2 = lent out */
 
 size_t netdrv_sizeof(void)
 {
@@ -1736,8 +1736,24 @@ void netdrv_set_arena(void *mem, size_t bytes)
 {
    if (mem && bytes < sizeof(netdrv))
       return;                     /* too small -- refuse rather than overrun */
+   if (nd_arena_busy)
+      return;                     /* never swap the block out from under a user */
    nd_arena = mem;
    nd_arena_bytes = mem ? bytes : 0;
+}
+
+void *netdrv_arena_borrow(size_t bytes)
+{
+   if (!nd_arena || nd_arena_busy || bytes > nd_arena_bytes)
+      return NULL;
+   nd_arena_busy = 2;
+   return nd_arena;
+}
+
+void netdrv_arena_return(void *mem)
+{
+   if (mem && mem == nd_arena && nd_arena_busy == 2)
+      nd_arena_busy = 0;
 }
 
 netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,

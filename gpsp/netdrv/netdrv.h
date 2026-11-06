@@ -410,6 +410,15 @@ size_t netdrv_sizeof(void);
  * once) are unaffected. */
 void netdrv_set_arena(void *mem, size_t bytes);
 
+/* Lend the reserved block, while no driver is built in it, to short-lived
+ * work on the creating thread (the screenshot encoder): 600 KiB that sit
+ * idle whenever there is no session.  NULL when there is no arena, it is
+ * smaller than `bytes`, or a driver (or another borrow) holds it.  While it
+ * is lent, netdrv_create() falls back to calloc.  Hand it back with
+ * netdrv_arena_return() before anything can start a session. */
+void *netdrv_arena_borrow(size_t bytes);
+void  netdrv_arena_return(void *mem);
+
 /* Allocate a driver bound to a transport. Copies cfg/cb/tp by value. */
 netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,
                       const nd_config *cfg);
