@@ -9399,7 +9399,8 @@ static void ui_net_action(int is_host)
       if (ol)
       {
          /* the same LINKING screen as below, so the code is shared, not cloned */
-         online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
+         /* ol_code is already "" for a host who typed none (online_room.h) */
+         online_psp_set(NULL, ol_code, ol_wifi,
                         !is_host ? RL_MODE_ANY
                         : !gba || ui_host_cable() ? RL_MODE_CABLE
                                                   : RL_MODE_ADAPTER);
@@ -9707,10 +9708,12 @@ static void mgift_start_io(void)
       case MGNET_ERR_CONNECT:
       case MGNET_ERR_CONNECT_TIMEOUT:
          snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not join the network");
-         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the phone hotspot on?");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the hotspot on? (%s 0x%08X)",
+                  mgnet_stage(), mgnet_last_sce());
          break;
       default:
-         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s)", mgnet_stage());
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s 0x%08X)",
+                  mgnet_stage(), mgnet_last_sce());
          break;
       }
       osd_toast("%s", g_mg_l1);

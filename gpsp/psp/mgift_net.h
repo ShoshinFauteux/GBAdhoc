@@ -102,8 +102,16 @@ int  mgnet_profile_ensure(const char *ssid, const char *key);
 /* Failure cleanup: delete only a profile created by the current attempt. */
 void mgnet_profile_release(void);
 
-/* Stored network profiles, for the picker.  index is 1-based. */
-int  mgnet_config_count(void);
-int  mgnet_config_name(int index, char *out, unsigned out_sz);
+/* The Network picker (Online and Mystery Gift).  Choices are 0 = Automatic
+ * and each saved connection by its 1-based slot NUMBER: the XMB does not
+ * compact slots, so they can have gaps.
+ *   mgnet_pick(sel, 0)   re-reads the saved slots (once per screen visit)
+ *                        and returns sel if it still exists, else the first
+ *                        saved slot, else Automatic;
+ *   mgnet_pick(sel, +-1) the next / previous choice, wrapping.
+ * mgnet_config_label: the connection's name, "connection N" if it has none,
+ * or "Automatic (Mystery Gift)" for 0. */
+int  mgnet_pick(int sel, int dir);
+void mgnet_config_label(int sel, char *out, unsigned out_sz);
 
 #endif /* MGIFT_NET_H */

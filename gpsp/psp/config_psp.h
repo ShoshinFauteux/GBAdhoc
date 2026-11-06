@@ -241,7 +241,9 @@ typedef struct
    int  quick_save_ask;
    /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): Settings > Online
     * play, CONFIG.INI `online_play` (0 = off, the default), and the saved
-    * Wi-Fi connection it uses, `online_wifi` (1-based). */
+    * Wi-Fi connection it uses, `online_wifi`: a 1-based XMB slot number
+    * (slots can have gaps), or 0 = Automatic (the open "Mystery Gift"
+    * hotspot profile, see mgnet_wifi_up). */
    int  online_play;
    int  online_wifi;
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).

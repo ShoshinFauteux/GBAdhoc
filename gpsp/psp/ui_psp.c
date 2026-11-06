@@ -47,6 +47,7 @@
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #include "text_fold.h"      /* non-ASCII file names (issue #19) */
 #include "online_psp.h"     /* EXPERIMENTAL online play (ONLINE=1) */
+#include "online_room.h"    /* the room code a host or joiner asks for */
 #define LM_SLOTS PSP_STATE_SLOT_COUNT
 #include "list_marks.h"     /* the list's per-game facts, no I/O to draw */
 #ifdef GPSP_CHEATS
@@ -1191,6 +1192,13 @@ static void screen_to(int scr)
    g_slot_ask_back = 0;
    g_slot_save_back = 0;
    g_slot_note[0] = '\0';
+   /* THE NETWORK PICKER (mgnet_pick): the saved connections are read once
+    * per visit to either screen; a saved Online choice that no longer exists
+    * falls back to the first saved one, else Automatic (not marked dirty:
+    * nothing the player chose).  The Mystery Gift choice starts at Automatic
+    * and only ever holds a slot listed during this run. */
+   if (scr == SCR_ONLINE || scr == SCR_MGIFT)
+      g_pcfg.online_wifi = mgnet_pick(g_pcfg.online_wifi, 0);
    if (scr == SCR_SETTINGS)
    {
       g_profile_at_open = g_pcfg.me_mode;
@@ -3790,9 +3798,12 @@ enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_FAST, WL_ONLINE, WL_BACK,
 enum { OL_NET, OL_MODE, OL_CREATE, OL_CODE, OL_JOIN, OL_BACK, OL_COUNT };
 enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
 
-/* One wireless-family row: 22 px pitch from y=120, the band 300 wide,
- * the value right-aligned at its end. */
-#define WL_ROW_Y0 120
+/* One wireless-family row: 20 px pitch from y=112 (the main menu's dense
+ * pitch), the band 300 wide, the value right-aligned at its end.  Seven rows
+ * (GBA with Online play on) end at y=232, so the last band (y-4 .. y+20)
+ * stops at the footer's top edge (272 - FTR_H) instead of under it. */
+#define WL_ROW_Y0 112
+#define WL_PITCH  20
 #define WL_STATUS_ROW_Y0 136     /* hosting / linked: under three lines  */
 static void wl_row_at_w(int y, int w, int sel, int enabled, const char *label,
                         const char *value)
@@ -3812,7 +3823,7 @@ static void wl_row_at(int y, int sel, int enabled, const char *label,
 
 static void wl_row(int i, int sel, const char *label, const char *value)
 {
-   wl_row_at(WL_ROW_Y0 + i * 22, sel, 1, label, value);
+   wl_row_at(WL_ROW_Y0 + i * WL_PITCH, sel, 1, label, value);
 }
 
 /* The Wireless screen's rows for this console: GB/GBC has no Mystery Gift
@@ -4153,7 +4164,7 @@ static ui_action screen_wireless(unsigned edges, int session_active,
          break;
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
-            wl_row_at(WL_ROW_Y0 + i * 22, g_cursor == i, 0, "Fast link",
+            wl_row_at(WL_ROW_Y0 + i * WL_PITCH, g_cursor == i, 0, "Fast link",
                       "Link Cable only");
          else
             wl_row(i, g_cursor == i, "Fast link",
@@ -4183,6 +4194,7 @@ static char g_ol_code[5] = "AAAA";
 static int  g_ol_pos = -1;             /* letter being edited, -1 = not editing */
 static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
 static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
+static int  g_ol_typed;                /* the player set the code: a host asks for it */
 
 /* Writable on purpose (see online_psp.c, g_host): .rodata growth costs a
  * whole 8 KiB of boot heap, .data has room. */
@@ -4204,16 +4216,16 @@ int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
    if (!r)
       return 0;
    *is_host = r == 1;
-   snprintf(code, 5, "%s", g_ol_code);
    *cable = g_ol_cable;
-   *wifi = g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1;
+   *wifi = g_pcfg.online_wifi;       /* 0 = Automatic; screen_to checked it */
+   online_room_request(r == 1, g_ol_typed, g_ol_code, code);
    return 1;
 }
 
 static ui_action screen_online(unsigned edges)
 {
    char net[48];
-   int i, nw, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
+   int i, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
    if (g_ol_pos >= 0)
    {
       /* editing the code: up/down change the letter, left/right move */
@@ -4229,6 +4241,7 @@ static ui_action screen_online(unsigned edges)
       if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
       {
          g_ol_pos = -1;
+         g_ol_typed = 1;
          g_cursor = OL_JOIN;
       }
       edges = 0;
@@ -4249,13 +4262,9 @@ static ui_action screen_online(unsigned edges)
       }
       if (g_cursor == OL_NET && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
       {
-         int n = online_psp_wifi_count();
-         if (n > 0)
-         {
-            int w = g_pcfg.online_wifi + ((edges & PSP_CTRL_LEFT) ? -1 : 1);
-            g_pcfg.online_wifi = w < 1 ? n : w > n ? 1 : w;
-            g_settings_dirty = 1;
-         }
+         g_pcfg.online_wifi = mgnet_pick(g_pcfg.online_wifi,
+                                         (edges & PSP_CTRL_LEFT) ? -1 : 1);
+         g_settings_dirty = 1;
       }
       if (g_cursor == OL_MODE && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
          g_ol_cable = !g_ol_cable;
@@ -4294,13 +4303,10 @@ static ui_action screen_online(unsigned edges)
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, s_ol_title);
    vid_text(22, 72, s_ol_line, C_DIM);
-   nw = online_psp_wifi_count();
-   if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
-                                       net, sizeof(net)) != 0)
-      snprintf(net, sizeof(net), "%s", "?");
+   mgnet_config_label(g_pcfg.online_wifi, net, sizeof(net));
    for (i = 0; i < OL_COUNT; i++)
    {
-      int y = WL_ROW_Y0 + i * 22, sel = g_cursor == i && g_ol_pos < 0;
+      int y = WL_ROW_Y0 + i * WL_PITCH, sel = g_cursor == i && g_ol_pos < 0;
       switch (i)
       {
       case OL_NET:
@@ -4454,7 +4460,6 @@ static ui_action screen_mgift(unsigned edges)
    const char *l1 = mgift_ui_line1();
    const char *l2 = mgift_ui_line2();
    int  running   = mgift_ui_active();
-   int  nconf     = mgnet_config_count();
    static char cname[36];
 
    if (edges & PSP_CTRL_UP)
@@ -4466,13 +4471,13 @@ static ui_action screen_mgift(unsigned edges)
     * association would mean tearing the radio down mid-transfer. */
    if (!running && g_cursor == MGF_NET)
    {
-      /* 0..nconf, wrapping: 0 is Automatic and is always offered, even when the
-       * console has no saved connections at all -- which is exactly the case
-       * Automatic exists for. */
+      /* Automatic and every saved slot, wrapping (mgnet_pick): 0 is
+       * always offered, even when the console has no saved connections at
+       * all -- which is exactly the case Automatic exists for. */
       if (edges & PSP_CTRL_LEFT)
-         g_mg_conf = (g_mg_conf <= 0) ? nconf : g_mg_conf - 1;
+         g_mg_conf = mgnet_pick(g_mg_conf, -1);
       if (edges & PSP_CTRL_RIGHT)
-         g_mg_conf = (g_mg_conf >= nconf) ? 0 : g_mg_conf + 1;
+         g_mg_conf = mgnet_pick(g_mg_conf, 1);
    }
 
    /* O backs out but deliberately does NOT stop the listener: a gift can be
@@ -4516,10 +4521,7 @@ static ui_action screen_mgift(unsigned edges)
    /* Name the profile, so "which network is this going to join" is answered on
     * screen instead of guessed.  No profiles at all is the one failure worth
     * spelling out in full -- it is a trip to XMB, not a retry. */
-   if (g_mg_conf == 0)
-      snprintf(cname, sizeof(cname), "Automatic (Mystery Gift)");
-   else if (mgnet_config_name(g_mg_conf, cname, sizeof(cname)) != 0 || !cname[0])
-      snprintf(cname, sizeof(cname), "connection %d", g_mg_conf);
+   mgnet_config_label(g_mg_conf, cname, sizeof(cname));
 
    wl_row_at(WL_ROW_Y0, g_cursor == MGF_NET, !running, "Network", cname);
    wl_row(1, g_cursor == MGF_START,

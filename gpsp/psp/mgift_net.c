@@ -77,36 +77,66 @@ unsigned    mgnet_last_sce(void){ return N.last_sce; }
 int         mgnet_wifi_is_up(void){ return N.progress >= ST_ASSOCIATED; }
 const char *mgnet_local_ip(void){ return N.ip; }
 
-int mgnet_config_count(void)
-{
-   netData d;
-   int i, n = 0;
+/* sceUtilityCheckNetParam returns 0 when the slot EXISTS.  The PSP's own
+ * Network Settings list is 1-based and short; 10 is well past what it shows. */
+#define MGNET_PROFILE_MAX 10
 
-   /* The XMB stores network configurations 1..N with no count to ask for, so
-    * probe until one is missing.  10 is well past what the XMB itself lists. */
-   for (i = 1; i <= 10; i++)
-   {
-      memset(&d, 0, sizeof(d));
-      if (sceUtilityGetNetParam(i, PSP_NETPARAM_NAME, &d) < 0)
-         break;
-      n = i;
-   }
-   return n;
+/* The picker's choices: [0] = 0 (Automatic), then the saved slots. */
+static unsigned char Cslot[MGNET_PROFILE_MAX + 1];
+static int Cn = 1;
+
+/* The XMB never compacts its slots: delete connection 1 and the survivor
+ * stays in slot 2 (the owner's PSP Go held its only connection away from
+ * slot 1).  So every slot is probed and a gap is skipped, never a stop. */
+static __attribute__((noinline)) int probe_slots(void)
+{
+   int i, n = 1;
+   /* CheckNetParam, not GetNetParam: PPSSPP answers GetNetParam for every
+    * id 0..24, CheckNetParam only for the connections it has. */
+   for (i = 1; i <= MGNET_PROFILE_MAX; i++)
+      if (sceUtilityCheckNetParam(i) == 0)
+         Cslot[n++] = (unsigned char)i;
+   return Cn = n;
 }
 
-int mgnet_config_name(int index, char *out, unsigned out_sz)
+int mgnet_pick(int sel, int dir)
+{
+   int i;
+
+   /* Nothing found: read the slots again with the common net module loaded,
+    * in case the firmware will not hand out parameters without it, then
+    * unload it.  Only a load that succeeded here is undone: "already loaded"
+    * (Wi-Fi, Mystery Gift or a link session is up) belongs to whoever loaded
+    * it.  A console that has connections never gets that far, so the picker
+    * costs no module load at all and nothing stays resident.  Loading any net
+    * module counts as wireless for the in-process return (INPROC-RETURN.md). */
+   if (!dir && probe_slots() == 1 &&
+       sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON) == 0)
+   {
+      extern volatile int gbadhoc_net_touched;   /* transport_adhoc.c */
+      gbadhoc_net_touched = 1;
+      probe_slots();
+      sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
+   }
+   for (i = Cn; --i > 0 && Cslot[i] != sel;)
+      ;
+   if (Cslot[i] != sel)                 /* gone: the first saved, or Automatic */
+      return Cslot[Cn > 1];
+   i += dir;
+   return Cslot[i < 0 ? Cn - 1 : i < Cn ? i : 0];
+}
+
+void mgnet_config_label(int sel, char *out, unsigned out_sz)
 {
    netData d;
 
-   if (!out || out_sz == 0)
-      return -1;
-   out[0] = '\0';
-   memset(&d, 0, sizeof(d));
-   if (sceUtilityGetNetParam(index, PSP_NETPARAM_NAME, &d) < 0)
-      return -1;
-   /* netData.asString is not promised to be NUL-terminated. */
-   snprintf(out, out_sz, "%.*s", (int)sizeof(d.asString), d.asString);
-   return 0;
+   if (sel > 0 && sceUtilityGetNetParam(sel, PSP_NETPARAM_NAME, &d) >= 0 &&
+       d.asString[0])
+      /* netData.asString is not promised to be NUL-terminated. */
+      snprintf(out, out_sz, "%.*s", (int)sizeof(d.asString), d.asString);
+   else
+      snprintf(out, out_sz, sel > 0 ? "connection %d" : "Automatic (Mystery Gift)",
+               sel);
 }
 
 /* ---- bring-up ----------------------------------------------------------- */
@@ -278,10 +308,6 @@ void mgnet_wifi_down(void)
 
 /* Only a profile newly created by this attempt may be removed on failure.
  * Existing profiles are borrowed and must never be deleted or overwritten. */
-
-/* sceUtilityCheckNetParam returns 0 when the slot EXISTS.  The PSP's own
- * Network Settings list is 1-based and short; 10 is well past what it shows. */
-#define MGNET_PROFILE_MAX 10
 
 static int profile_name_is_ours(int slot)
 {
