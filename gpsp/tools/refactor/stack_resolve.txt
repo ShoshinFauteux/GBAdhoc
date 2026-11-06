@@ -1,0 +1,41 @@
+# stack_resolve.txt -- reviewed indirect-call targets and prunes for stack_depth.py (T12)
+# Format:  caller  callee[,callee...]  sites=N  # evidence   (resolves EVERY jalr/jr in caller)
+#          caller  -  sites=N                    # evidence   (the indirect sites make no call)
+#   sites=N is REQUIRED: the caller's jalr + jr(rX != ra) count when the line was reviewed.  A
+#   different count in an ELF (a new function-pointer call in a reviewed caller) is RESOLVE_STALE
+#   and the verdict is INCOMPLETE until the line is re-reviewed.  Every callee must exist in an ELF
+#   that has the caller (a renamed clone would otherwise drop out silently); write ?name for a
+#   callee that legitimately exists in some flavours only.
+#          !prune  NAME                 # evidence      (NAME's subtree is not summed; the
+#                                                          raw bound without prunes is always printed)
+# A caller absent from an ELF (flavour) is skipped; an absent callee is skipped.
+# Every line must carry its evidence.  Re-review when the cited code changes.
+
+# --- our code ---------------------------------------------------------------
+emit                       evt_clock_us,io_wake  sites=3   # fe_evt.c emit(): evt_clock() and evt_wake(); set only by main_psp.c fe_evt_set_clock(evt_clock_us) L:13918 and fe_evt_set_async(io_wake) L:634 (NULL at L:677)
+fe_host_sram_request_scan  io_wake  sites=1                # fe_host.c:2340 io->wake(); host_io is only &g_io_iface = { io_wake, io_yield } (main_psp.c:581); indirect TAIL call (jr)
+rtc_current_time           psp_local_wallclock,sess_clock  sites=1  # gba_memory.c gpsp_wallclock(); writers: main_psp.c:15941 psp_local_wallclock, fe_gbadual.c:670 sess_clock, :630 restores sess_saved_wallclock (a static pointer VARIABLE, fe_gbadual.c:620, saved from gpsp_wallclock at :664, so one of the two above)
+gamepak_vol_drop           gbab_gamepak_share_unmap  sites=1  # gba_memory.c gamepak_evict_hook(); only writer fe_gbadual.c:299 (NULL at :1054/:1062)
+
+# --- newlib stdio cookies (newlib stdio/findfp.c std(): _read/_write/_seek/_close = __sread/__swrite/__sseek/__sclose; no funopen/fopencookie in the tree)
+__sfvwrite_r               __swrite  sites=3               # fp->_write
+__sflush_r                 __sseek,__swrite  sites=3       # fp->_seek, fp->_write
+_fclose_r                  __sclose  sites=1               # fp->_close
+_fseeko_r                  __sseek  sites=4                # fp->_seek (4 sites)
+__srefill_r                __sread  sites=1                # fp->_read
+_fwalk_sglue               _fflush_r,_fclose_r,lflush,__fp_lock,__fp_unlock  sites=1  # every function passed to _fwalk_sglue by its 5 callers (fflush, __srefill_r, stdio_exit_handler, __fp_lock_all, __fp_unlock_all)
+__ssvfiscanf_r             _strtol_r,_strtoul_r  sites=4   # ccfn pointer (newlib vfscanf.c); its jr is a switch (jump table found)
+_mbrtowc_r                 __ascii_mbtowc  sites=2         # __MBTOWC of the C locale; setlocale/_setlocale_r have no caller in the ELF (stack_depth callers check)
+raise                      -  sites=1                      # _sig_func handler: signal/_signal_r have no caller in the ELF, so only SIG_DFL/SIG_IGN (no jalr executes)
+
+# --- crt -------------------------------------------------------------------
+deregister_tm_clones       -  sites=1                      # crtstuff: jr to weak _ITM_deregisterTMCloneTable, guarded by a NULL test (absent in the ELF)
+__do_global_dtors_aux      -  sites=1                      # crtstuff: jal 0 = weak __deregister_frame_info, guarded by a NULL test
+
+# --- prunes: termination paths (noreturn) -----------------------------------
+!prune __assert_func       # newlib assert: fiprintf(stderr) + abort(); reached from _dtoa_r's Balloc only when malloc fails; the process ends on that path
+!prune abort               # raise(SIGABRT) + _exit: the process ends on that path
+
+# --- bounded recursion --------------------------------------------------------
+!unroll __sbprintf _vfprintf_r  -__smakebuf_r   # newlib vfprintf.c: _vfprintf_r calls __sbprintf only for an unbuffered (__SNBF) stream; __sbprintf calls _vfprintf_r on a fake FILE with _flags & ~__SNBF and _bf._base = buf, so the cycle runs at most once, and __swsetup_r (which calls __smakebuf_r only when _bf._base == NULL) cannot reach __smakebuf_r in that pass
+!unroll __sbprintf _vfiprintf_r -__smakebuf_r   # same in vfiprintf.c
