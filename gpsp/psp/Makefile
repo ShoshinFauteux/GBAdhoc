@@ -400,6 +400,9 @@ $(TGB_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += $(TGB_CFLAGS)
 # The menus, the pad map, the config file, Mystery Gift and the cheat parser
 # are on no hot path either (none is in layout/hot.ord).
 ui_psp.o sidecar_dirs.o ctl_map.o config_psp.o mgift_cart.o mgift_net.o mgift_payload.o ../frontend-common/fe_cheats.o: CFLAGS += -Os
+# The box-art / screenshot-viewer PNG and JPEG decoder (stb_image) runs in
+# the ROM browser only, at most one decode a frame, never in a game.
+stb_impl.o: CFLAGS += -Os
 # The GB core keeps one .text per object under LAYOUT_PIN too: it is partial-
 # linked twice (gbcore_instance.ld) and none of it is on the GBA hot path.
 $(GB_CORE_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += -fno-function-sections
