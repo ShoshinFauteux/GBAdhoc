@@ -294,6 +294,10 @@ int fe_gbadual_lent(void)
 
 /* B fresh: never while the block is lent or A's ROM cache still holds
  * blocks carved from it (the caller unloaded A first). */
+static int b_headless_ok(const gbalink_inst_ops *s0,
+                         const gbalink_inst_ops *s1,
+                         const gbalink_pair_config *pc);
+
 static void b_fresh(void)
 {
    size_t n;
@@ -501,6 +505,11 @@ int fe_gbadual_state_loaded(const void *state, size_t n)
    if (D.use_ap)
       pc.input = b_input;
    pair_guard_cfg(&pc);
+   if (!b_headless_ok(&D.ops[0], &D.ops[1], &pc))
+   {
+      D.failed = 1;
+      return -1;
+   }
    g_fault = 0;
    gbalink_pair_init(&D.pair, &D.ops[0], &D.ops[1], &pc);
    D.fed1 = 0;
@@ -604,6 +613,26 @@ int fe_gbadual_frame(uint16_t local_keys)
 static gbalink_inst_ops *slot_ops(int slot)
 {
    return &D.ops[slot == D.local_slot ? 0 : 1];
+}
+
+/* Instance B links empty stubs for the renderer (psp/gbalink_b_stubs.c):
+ * they are exact only because B always runs headless, so lk_frame_begin
+ * sets its skip_next_frame and the real update_scanline would have
+ * returned at once.  Nothing else enforces that, so the pair is checked
+ * here before it starts: whichever slot B's ops drive must be headless.
+ * (B's retro_run, which would reset the flag, has no caller at all: the
+ * pair driver runs B's frames.)  critique-4 SF2. */
+static int b_headless_ok(const gbalink_inst_ops *s0,
+                         const gbalink_inst_ops *s1,
+                         const gbalink_pair_config *pc)
+{
+   if ((s0 == &D.ops[1] && !pc->headless[0]) ||
+       (s1 == &D.ops[1] && !pc->headless[1]))
+   {
+      lg("gbadual_start FAILED reason=b_not_headless (B links no renderer)");
+      return 0;
+   }
+   return 1;
 }
 
 static void *slot_sram(int slot)
@@ -739,6 +768,11 @@ static int m_start(void *user, int local_slot, unsigned batch,
    pc.on_frame = sess_on_frame;
    pc.input = sess_input;
    pair_guard_cfg(&pc);
+   if (!b_headless_ok(slot_ops(0), slot_ops(1), &pc))
+   {
+      sess_clock_restore();
+      return -1;
+   }
    g_fault = 0;
    D.sess_hook = hook;
    D.sess_hook_user = hook_user;
