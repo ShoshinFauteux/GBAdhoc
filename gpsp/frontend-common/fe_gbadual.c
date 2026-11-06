@@ -53,6 +53,10 @@ extern char gbab_bdata_end[] __attribute__((weak));
 extern char gbab_bdata_pristine[] __attribute__((weak));
 extern char gbab_bregion_start[] __attribute__((weak));
 extern char gbab_bregion_lend[] __attribute__((weak));
+extern char gbab_bsdata_start[] __attribute__((weak));
+extern char gbab_bsdata_end[] __attribute__((weak));
+extern char gbab_bsbss_start[] __attribute__((weak));
+extern char gbab_bsbss_end[] __attribute__((weak));
 extern uint8_t *gamepak_spare_pool2;
 extern uint32_t gamepak_spare_pool2_bytes;
 extern int32_t gbab_jit_pin_at __attribute__((weak));
@@ -246,6 +250,13 @@ uint16_t fe_gbadual_keys_from_retro(uint32_t pad)
  * gives it, however the last session or the lending left them. */
 static int g_bpristine;
 
+/* B's small data ($gp-relative, so outside bregion and never lent): .sdata
+ * is 12 B today (rfu_sched_ni_at, which a session writes, and two switches).
+ * The copy lives here, in A's frontend .bss.  Too small a copy is refused
+ * at boot and every session start says so (b_small_ok). */
+static unsigned char g_bsdata_pristine[32];
+static int g_bsdata_ok;
+
 void fe_gbadual_boot(void)
 {
    size_t n;
@@ -253,6 +264,12 @@ void fe_gbadual_boot(void)
       return;
    n = (size_t)(gbab_bdata_end - gbab_bdata_start);
    memcpy(gbab_bdata_pristine, gbab_bdata_start, n);
+   n = gbab_bsdata_start ? (size_t)(gbab_bsdata_end - gbab_bsdata_start) : 0;
+   if (gbab_bsdata_start && n <= sizeof(g_bsdata_pristine))
+   {
+      memcpy(g_bsdata_pristine, gbab_bsdata_start, n);
+      g_bsdata_ok = 1;
+   }
    g_bpristine = 1;
 }
 
@@ -285,6 +302,16 @@ static void b_fresh(void)
    n = (size_t)(gbab_bdata_end - gbab_bdata_start);
    memcpy(gbab_bdata_start, gbab_bdata_pristine, n);
    memset(gbab_bregion_start, 0, fe_gbadual_lendable());
+   /* The small data too: the last session left pointers into heap it
+    * freed at unload (gamepak_block_pages, rfu_sched_ring's state) and a
+    * session-relative frame number (rfu_sched_ni_at).  critique-4 SF1. */
+   if (g_bsdata_ok)
+      memcpy(gbab_bsdata_start, g_bsdata_pristine,
+             (size_t)(gbab_bsdata_end - gbab_bsdata_start));
+   else
+      lg("gbadual_fresh sdata=UNRESTORED (the boot copy is too small)");
+   if (gbab_bsbss_start)
+      memset(gbab_bsbss_start, 0, (size_t)(gbab_bsbss_end - gbab_bsbss_start));
 }
 
 int fe_gbadual_load(const fe_gbadual_config *cfg)
