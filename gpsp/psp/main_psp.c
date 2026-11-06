@@ -5224,6 +5224,16 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
    return 0;
 }
 
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+/* critique-3 SF6: netdrv_arena_borrow/_return and netdrv_create share one
+ * busy flag with no lock, so the screenshot's borrow is only safe on the
+ * thread that starts sessions (net_start_np -> fe_np_start -> netdrv_create).
+ * Both run on the main thread today.  The diagnostic builds check it: the
+ * thread of the last session start, and an EVT if a borrow happens elsewhere.
+ * Nothing in a release (no code, no data). */
+static SceUID g_np_start_tid = -1;
+#endif
+
 static void player_screenshot(void)
 {
    const uint16_t *pix;
@@ -5254,6 +5264,14 @@ static void player_screenshot(void)
        * this thread can reach anything that starts a session. */
       work_bytes = fe_png_work_bytes(w, h);
       work = (uint8_t *)netdrv_arena_borrow(work_bytes);
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+      {
+         SceUID tid = sceKernelGetThreadId();
+         if (g_np_start_tid >= 0 && tid != g_np_start_tid)
+            fe_evt("arena_thread_mismatch borrow=%08x np_start=%08x",
+                   (unsigned)tid, (unsigned)g_np_start_tid);
+      }
+#endif
    }
    png = work != NULL;
    now = psp_local_wallclock();     /* local time, held as if UTC */
@@ -6766,6 +6784,9 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       online_psp_iface(&tp);
    else
       adhoc_transport_iface(&tp);
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
+#endif
    memset(&npc, 0, sizeof(npc));
    npc.transport = &tp;
    npc.is_host   = is_host;
