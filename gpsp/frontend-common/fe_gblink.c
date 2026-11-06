@@ -1719,7 +1719,8 @@ static void setup_step(fe_gblink *s)
          /* the two consoles would compute different machines: refuse */
          fe_evt("gblink_core_mismatch host=%08x own=%08x",
                 (unsigned)s->core_rx, (unsigned)s->l.core_mask);
-         fail(s, FE_GBLINK_E_PROTO, 1);
+         fail(s, (s->core_rx ^ s->l.core_mask) & FE_GBLINK_MASK_BIOS_OTHER
+                    ? FE_GBLINK_E_BIOS : FE_GBLINK_E_PROTO, 1);
          return;
       }
       /* the negotiable bits are the host's (0 from a host that sent none) */
