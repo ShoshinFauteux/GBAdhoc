@@ -272,15 +272,89 @@ KEEP every 15 s to the relay so the fallback slot stays alive.
 
 **Fallback rule** (any one of these, decided per PSP, and both follow the first to decide):
 
-- the NAT test says symmetric on either side, or CGNAT, so no punch is attempted;
-- no PUNCH_ACK within 2 s of the start;
+- the NAT test says symmetric on BOTH sides (and neither names a router forward), so no punch is
+  attempted;
+- no PUNCH_ACK within 2 s of the start (of pumped time: a stall of the caller does not count);
 - on an established direct path, nothing from the peer for **1.5 s** while the relay still answers
   KEEP (a NAT rebinding or a dropped mapping).
 
 The PSP that decides sends PATH RELAY to the server, which tells the other (`PEER path=relay`), and both
 send DATA via the relay from the next packet. netdrv's ARQ covers the packets lost in the switch: it is
-reliable and ordered, and a few hundred ms of loss is under its 8 s peer-death rule. Direct is never
-retried mid-session. A new room tries again.
+reliable and ordered, and a few hundred ms of loss is under its 8 s peer-death rule. The relay is the
+last resort, not the end: a PSP on the relay punches again after 3 s, then 6, 12, 24 and every 30 s,
+and a punch that arrives while it is on the relay starts its own burst at once (see below).
+
+### Direct wherever possible (2026-11-05, after the first real tests)
+
+The owner's rule: every millisecond counts, so the relay carries a session only when no direct path
+exists. Two real sessions went through the relay that should not have:
+
+1. **Same Wi-Fi, PPSSPP (this PC) and the Go: relay (room EYPJ).** Not the firewall: Windows Defender
+   Firewall was off on the active Private profile all evening (no profile change in its event log),
+   and the same PC went direct with the 3000 (LANT). The relay log tells the story. The host reported
+   `path=relay` exactly 2 s 150 ms after the join (its whole punch window, not one PUNCH_ACK), and the
+   Go never reported a path of its own. The joiner had stopped pumping its socket right after JOINED:
+   the menu path brings the room up first, then backs the save up (128 KiB onto the Go's internal
+   storage), draws the LINKING screen and starts netdrv, and only netdrv's recv runs the punch timers.
+   The host's 2 s window passed while the Go read nothing. The in-process model reproduces it exactly
+   with a 3 s joiner stall (both sides `fellback`, no direct), and the harness path, which brings the
+   room up after the backup, never showed it.
+2. **The Go on cellular (symmetric carrier NAT) to PPSSPP at home: relay.** By design then: the server
+   offered no punch if either side was symmetric.
+
+What the transport does now (`transport_relay.c`, `relay_core.c`):
+
+- **The punch window counts pumped time.** A gap of more than 100 ms between timer runs is a stall;
+  the burst's end moves by the gap, and so does a direct path's silence clock (the packets wait in the
+  socket, they were not lost).
+- **Every PUNCH is answered, in any state**, and a PUNCH that arrives while we are on the relay starts
+  our burst at once, so two bursts that missed each other line up. A late PUNCH_ACK still makes the
+  path direct: it is the round trip.
+- **Retries.** On the relay a PSP bursts again after 3, 6, 12, 24 and then every 30 s (20-byte PUNCHes,
+  ~2 KB a burst). It stops only while the path is direct.
+- **Candidates, private first:** the LAN address, the public endpoint the server saw, the **router
+  forward** (the peer's public IP with its own socket port, or the port it names in `map_port`), and
+  the **peer-reflexive** address: where the peer's punches actually came from. A symmetric NAT gives
+  the peer a new port toward us that the server never sees; we answer it and punch it. If the LAN
+  candidate answers after a public one, the path moves to the LAN.
+- **The server offers a punch unless both sides are symmetric** (and neither names a forward). One
+  reachable side is enough.
+
+What goes direct (in-process model `test_relay_nat`, 19/19, and the real-socket `natlab.py`, 12/12):
+
+| host | guest | path |
+|---|---|---|
+| same LAN (with or without a 3 s joiner stall) | | direct, 5-6 ms |
+| cone (EIM) | cone, public, or cone with a 3 s stall | direct |
+| address-restricted cone (any port of an IP it sent to) | symmetric / CGNAT | direct (peer-reflexive) |
+| cone + UPnP forward of 27500 (or another port with `map_port`) | symmetric / CGNAT | direct |
+| symmetric + UPnP forward, `map_port` set | symmetric | direct |
+| port-restricted cone, no forward | symmetric | relay: the cone drops the CGNAT's new port, and the CGNAT drops ours |
+| symmetric, no forward | symmetric | relay: neither side has an address the other can predict |
+
+**Who can open a forward:**
+
+- **A PPSSPP or PC host:** `python gpsp/tools/relay/upnp_map.py add` maps UDP 27500 on the router to
+  this PC (`del` removes it). No GBAdhoc setting is needed: the relay already offers public-IP:27500.
+- **The desktop host (GBAdhoc XMB):** it maps its own socket's port with UPnP and sends that external
+  port as `map_port` in CREATE/JOIN (bytes 36-37 of the body; `relay_client --map-port N` tests it).
+- **A PSP host:** not from the firmware. The PSP's `sceNetUpnp` library is used by a few games, but
+  the publicly known NIDs are only init/term/start/stop and a NAT-info query; no add-port-mapping
+  entry is documented, so homebrew cannot ask it for a forward (unverified on hardware). What would
+  work is our own minimal IGD client in `gbadhoc_online.prx`: SSDP over `sceNetInet` multicast, one
+  HTTP GET of the description and one SOAP `AddPortMapping` over a `sceNetInet` TCP socket, a few KB of
+  code, loaded only online. Not built. Meanwhile a PSP host gets the same result if the owner forwards
+  UDP 27500 to it once on the router, and most home routers are at least address-restricted, which
+  needs nothing.
+
+**On screen.** The session chip reads `Online ABCD  Direct 12 ms` or `Online ABCD  Via relay 48 ms`
+(the direct round trip from the 500 ms PUNCH keep-alive, or twice our KEEP round trip to the server),
+updated every second, and a change of path is a toast. The module does it (a shim on netdrv's recv
+in `psp/online/main.c`) through two new host-table entries, the chip and the toast (`OL_VERSION` 3):
+the EBOOT gains no code. Its layout has no text to spare (the 48 B pad is the only slack and
+`.data.pin` has none), and the two pointers fit in `.data`'s alignment padding: the release ELF's
+sections and symbols sit exactly where b9005900's do, boot heap 10,081,692 B on the PSP-1000.
+
 
 **Expected win.** Direct removes the detour through the VPS. For two players in one region the relay's
 +20-60 ms (section 6) becomes 0. For players far apart it matters less: the geography dominates.

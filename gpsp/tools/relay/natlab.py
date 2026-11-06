@@ -69,13 +69,18 @@ class Node:
 
 
 class Nat:
-    def __init__(self, kind, pub, lan):
+    def __init__(self, kind, pub, lan, fwd=0):
+        # kind: "cone" (EIM, port-restricted), "acone" (EIM, address-
+        # restricted), "sym" (a mapping per destination: a carrier NAT)
         self.kind, self.pub, self.lan = kind, pub, lan    # lan = "10.0.N."
+        self.fwd, self.fwd_to, self.fwd_peers = fwd, None, set()  # UPnP forward
         self.maps = {}          # key -> [pub_port, allowed set]
         self.rev = {}           # pub_port -> (key, priv)
         self.next = 40000 + 1000 * int(lan.split(".")[2])
 
     def out(self, priv, dst):
+        if self.fwd and priv == self.fwd_to and dst in self.fwd_peers:
+            return (self.pub, self.fwd)       # conntrack: the reply leaves the forward
         key = (priv, dst) if self.kind == "sym" else (priv,)
         if key not in self.maps:
             self.maps[key] = [self.next, set()]
@@ -86,10 +91,14 @@ class Nat:
         return (self.pub, m[0])
 
     def inb(self, src, port):
+        if self.fwd and port == self.fwd and self.fwd_to:
+            self.fwd_peers.add(src)
+            return self.fwd_to
         if port not in self.rev:
             return None
         key, priv = self.rev[port]
-        if src not in self.maps[key][1]:
+        if src not in self.maps[key][1] and not (
+                self.kind == "acone" and any(a[0] == src[0] for a in self.maps[key][1])):
             return None          # port-restricted filtering
         return priv
 
@@ -131,8 +140,10 @@ def parse(pkt):
     return (s, sp), (d, dp)
 
 
-def run_case(binp, name, kinds, same_lan, expect, drop_ms=0):
-    """kinds: (host, guest) each 'cone' | 'sym' | 'none' (public address)"""
+def run_case(binp, name, kinds, same_lan, expect, drop_ms=0, fwd=0, map_port=0, stall_ms=0):
+    """kinds: (host, guest) each 'cone' | 'acone' | 'sym' | 'none' (public address);
+    fwd: the host's router forwards that UDP port to it (UPnP), map_port: the host
+    says so (--map-port); stall_ms: the guest pumps nothing that long after its room"""
     nodes, nats, by_ip = {}, {}, {}
     srv = Node("server", SERVER, 32)
     by_ip[SERVER] = srv
@@ -145,8 +156,10 @@ def run_case(binp, name, kinds, same_lan, expect, drop_ms=0):
         else:
             lan = "10.0.%d." % lan_n
             if lan_n not in nats:
-                nats[lan_n] = Nat(k, "198.51.100.%d" % (10 + lan_n), lan)
+                nats[lan_n] = Nat(k, "198.51.100.%d" % (10 + lan_n), lan, fwd if i == 0 else 0)
             ip = lan + str(20 + i)
+            if i == 0 and fwd:
+                nats[lan_n].fwd_to = (ip, 27500)
             n = Node("c%d" % i, ip, 24)
             n.nat = nats[lan_n]
         nodes[i] = n
@@ -192,6 +205,10 @@ def run_case(binp, name, kinds, same_lan, expect, drop_ms=0):
              "--code", "NATS", "--bind", "0.0.0.0:27500", "--secs", "40"]
         if drop_ms and i == 1:
             a += ["--drop-direct-after", str(drop_ms)]
+        if map_port and i == 0:
+            a += ["--map-port", str(map_port)]
+        if stall_ms and i == 1:
+            a += ["--stall-after-join", str(stall_ms)]
         cl.append(nodes[i].run(*a))
         time.sleep(0.2)
     out = {0: [], 1: []}
@@ -246,7 +263,8 @@ def run_case(binp, name, kinds, same_lan, expect, drop_ms=0):
         n.close()
     ok = all(res[i].get("ok") == "1" for i in (0, 1))
     paths = [res[i].get("path", "?") for i in (0, 1)]
-    want = {"direct": ("direct",), "relay": ("relay", "fellback")}[expect]
+    # "punching": a retry burst, riding the relay meanwhile
+    want = {"direct": ("direct",), "relay": ("relay", "fellback", "punching")}[expect]
     ok = ok and all(p in want for p in paths)
     print("%s %-30s path=%s/%s nat=%s/%s got=%s/%s rtt_direct=%s/%s rtt_relay=%s/%s srtt=%s/%s secs=%s/%s" % (
         "ok  " if ok else "FAIL", name, paths[0], paths[1], res[0].get("nat"), res[1].get("nat"),
@@ -266,6 +284,15 @@ def main():
         ("symmetric x symmetric", ("sym", "sym"), False, "relay", 0),
         ("same LAN, one NAT", ("cone", "cone"), True, "direct", 0),
         ("direct dies at 6 s", ("cone", "cone"), False, "relay", 6000),
+        # 2026-11-05 PPSSPP x Go on one Wi-Fi went relay: the joiner stopped
+        # pumping right after its room and the host's punch window ran out
+        ("same LAN, joiner stalls 3 s", ("cone", "cone"), True, "direct", 0, 0, 0, 3000),
+        ("cone, joiner stalls 3 s", ("cone", "cone"), False, "direct", 0, 0, 0, 3000),
+        # a home host vs a phone on a carrier NAT
+        ("addr-restricted x symmetric", ("acone", "sym"), False, "direct"),
+        ("cone+UPnP 27500 x symmetric", ("cone", "sym"), False, "direct", 0, 27500),
+        ("cone+UPnP 31000 x symmetric", ("cone", "sym"), False, "direct", 0, 31000, 31000),
+        ("sym+UPnP 27500 x symmetric", ("sym", "sym"), False, "direct", 0, 27500, 27500),
     ]
     fails = 0
     for c in cases:

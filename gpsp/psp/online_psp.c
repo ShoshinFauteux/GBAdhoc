@@ -16,6 +16,7 @@
 #include "online_psp.h"
 #include "online/online_link.h"
 #include "mgift_net.h"
+#include "osd_psp.h"
 #include "../netdrv/relay_proto.h"
 #include "../frontend-common/fe_evt.h"
 #include "../frontend-common/fe_util.h"
@@ -70,7 +71,8 @@ static online_host g_host = {
    OL_MAGIC_HOST, OL_VERSION, sizeof(online_host),
    calloc, h_free, h_vsnprintf, h_evt,
    mgnet_wifi_is_up, mgnet_local_ip,
-   HOST_BEAT
+   HOST_BEAT,
+   osd_chip_session, osd_toast
 };
 static char s_prx_fmt[] = "%s/gbadhoc_online.prx";
 static char s_missing[] = "online module missing";

@@ -20,6 +20,7 @@ typedef struct
 {
    int used;
    rl_addr addr, priv;
+   uint16_t map_port;        /* a router forward to this socket, 0 = none */
    uint64_t token;
    uint64_t last_ms, repin_ms;
    uint8_t nat;
@@ -160,8 +161,10 @@ static void send_peer(rl_core *c, rl_room *r, int to, int slot, int state)
 static void send_candidates(rl_core *c, rl_room *r, int to, int about,
                             uint64_t nonce, int punch)
 {
-   uint8_t b[RL_HDR + 24];
+   uint8_t b[RL_HDR + 30];
    uint8_t *p = b + RL_HDR;
+   const rl_slot *s = &r->s[about];
+   uint16_t mp = s->map_port ? s->map_port : s->priv.port;
    rl_hdr(b, RL_T_CANDIDATES, RL_SLOT_NONE, to, 0);
    p[0] = (uint8_t)about;
    rl_put_ip(p + 1, r->s[about].addr.ip_be);
@@ -171,6 +174,15 @@ static void send_candidates(rl_core *c, rl_room *r, int to, int about,
    rl_put64(p + 13, nonce);
    rl_put16(p + 21, c->cfg.punch_start_ms);
    p[23] = (uint8_t)punch;
+   /* the forward candidate: public IP, the forwarded port -- only when it
+    * is a different endpoint from the one we saw */
+   if (mp && mp != s->addr.port)
+   {
+      rl_put_ip(p + 24, s->addr.ip_be);
+      rl_put16(p + 28, mp);
+   }
+   else
+      memset(p + 24, 0, 6);
    tx(c, 0, &r->s[to].addr, b, sizeof(b));
 }
 
@@ -322,7 +334,7 @@ static void reply_slot(rl_core *c, int sock, const rl_addr *to, int type,
 }
 
 static void fill_slot(rl_core *c, rl_slot *s, const rl_addr *from,
-                      const uint8_t *body, uint64_t now)
+                      const uint8_t *body, size_t n, uint64_t now)
 {
    memset(s, 0, sizeof(*s));
    s->used = 1;
@@ -330,6 +342,8 @@ static void fill_slot(rl_core *c, rl_slot *s, const rl_addr *from,
    s->priv.ip_be = rl_get_ip(body + RL_BUILD_LEN + RL_CODE_LEN);
    s->priv.port = (uint16_t)rl_get16(body + RL_BUILD_LEN + RL_CODE_LEN + 4);
    s->nat = body[RL_BUILD_LEN + RL_CODE_LEN + 6];
+   s->map_port = n >= CJ_COOKIE + RL_COOKIE_LEN + 3
+                 ? (uint16_t)rl_get16(body + CJ_COOKIE + RL_COOKIE_LEN + 1) : 0;
    do
       s->token = c->cfg.random64(c->cfg.user);
    while (!s->token);
@@ -405,7 +419,7 @@ static void on_create(rl_core *c, int sock, const rl_addr *from,
    memcpy(r->build, body, RL_BUILD_LEN);
    r->mode = n > CJ_COOKIE + RL_COOKIE_LEN ? body[CJ_COOKIE + RL_COOKIE_LEN] : 0;
    r->created_ms = r->last_ms = now;
-   fill_slot(c, &r->s[0], from, body, now);
+   fill_slot(c, &r->s[0], from, body, n, now);
    c->st.rooms_now++;
    c->st.rooms_made++;
    lg(c, "room_create code=%.4s host=%s nat=%u", r->code, ipstr(from, ab),
@@ -479,7 +493,7 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
       send_error(c, sock, from, RL_E_FULL, "room full");
       return;
    }
-   fill_slot(c, &r->s[k], from, body, now);
+   fill_slot(c, &r->s[k], from, body, n, now);
    r->joined_ever = 1;
    r->last_ms = now;
    c->st.joins++;
@@ -494,8 +508,13 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
          continue;
       send_peer(c, r, k, j, RL_PEER_IN);
       send_peer(c, r, j, k, RL_PEER_IN);
-      punch = !c->cfg.no_direct && r->s[j].nat != RL_NAT_SYMMETRIC &&
-              r->s[k].nat != RL_NAT_SYMMETRIC;
+      /* Direct is worth a try unless BOTH sides are symmetric with no
+       * forward: one reachable side is enough (the other punches it, and
+       * it answers the address the punch came from -- peer-reflexive), so
+       * a carrier-NAT phone reaches a home host directly. */
+      punch = !c->cfg.no_direct &&
+              (r->s[j].nat != RL_NAT_SYMMETRIC || r->s[k].nat != RL_NAT_SYMMETRIC ||
+               r->s[j].map_port || r->s[k].map_port);
       do
          nonce = c->cfg.random64(c->cfg.user);
       while (!nonce);

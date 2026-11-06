@@ -43,7 +43,11 @@
 
 enum
 {
-   RL_T_CREATE = 1,      /* c->s  body: build[16] code[4] (0s = any) priv_ip[4] priv_port[2] nat[1] */
+   RL_T_CREATE = 1,      /* c->s  body: build[16] code[4] (0s = any) priv_ip[4] priv_port[2] nat[1]
+                                     then cookie[8] mode[1] map_port[2]
+                                     (JOIN the same; map_port: the external
+                                     port of a UPnP / router forward to this
+                                     socket, 0 = none or the same port) */
    RL_T_CREATED = 2,     /* s->c  body: code[4] slot[1]; header token = the new slot's token */
    RL_T_JOIN = 3,        /* c->s  body: build[16] code[4] priv_ip[4] priv_port[2] nat[1] */
    RL_T_JOINED = 4,      /* s->c  body: code[4] slot[1]; header token = this slot's token */
@@ -55,7 +59,13 @@ enum
    RL_T_PROBE = 10,      /* c->s  (to port and port + 1) body: nonce[4] */
    RL_T_PROBED = 11,     /* s->c  body: nonce[4] pub_ip[4] pub_port[2] sock[1] */
    RL_T_CANDIDATES = 12, /* s->c  body: slot[1] pub_ip[4] pub_port[2] priv_ip[4]
-                                         priv_port[2] nonce[8] start_ms[2] punch[1] */
+                                         priv_port[2] nonce[8] start_ms[2] punch[1]
+                                         [map_ip[4] map_port[2]]: a third
+                                         candidate, the peer's port forward
+                                         (UPnP) on its public IP -- the port
+                                         it asked for in CREATE/JOIN, else its
+                                         own socket port (the usual "forward
+                                         UDP 27500" setup); 0s = none */
    RL_T_PUNCH = 13,      /* c<->c body: counter[4] */
    RL_T_PUNCH_ACK = 14,  /* c<->c body: counter[4] (echoed) */
    RL_T_PATH = 15,       /* c->s  body: slot[1] path[1] (RL_PATH_*); the server
