@@ -354,7 +354,8 @@ static int ol_recv(void *ctx, uint8_t mac[6], void *buf, size_t cap)
          g_ol_host->toast("%s", O.chip);
          evt("online_path shown=\"%s\"", O.chip);
       }
-      O.shown = k;
+      if (k)
+         O.shown = k;
       g_ol_host->chip(O.chip);
    }
    return n;
@@ -406,6 +407,12 @@ static char ol_text(char *out, unsigned cap)
       snprintf(out, cap, "Online %s  Direct %u ms", relay_transport_code(O.rt),
                (unsigned)(s.direct_rtt_us[peer] / 1000));
       return 'D';
+   }
+   if (p == 2 && !s.fallbacks)
+   {
+      /* the first punch burst (on the relay meanwhile): no verdict yet */
+      snprintf(out, cap, "Online %s  connecting", relay_transport_code(O.rt));
+      return 0;
    }
    snprintf(out, cap, "Online %s  Via relay %u ms", relay_transport_code(O.rt),
             (unsigned)(s.relay_rtt_us / 1000 * 2));
