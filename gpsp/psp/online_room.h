@@ -14,9 +14,15 @@
 #include <stdio.h>
 
 static inline void online_room_request(int is_host, int typed, const char *shown,
-                                       char out[5])
+                                       char out[16])
 {
-   snprintf(out, 5, "%s", !is_host || typed ? shown : "");
+   /* a host asks for a room code (four letters); a joiner sends what is on
+    * screen: a room code, or an 8/11-character invite code that the online
+    * module decodes (claude/online-desktophost) */
+   if (is_host)
+      snprintf(out, 5, "%s", typed ? shown : "");
+   else
+      snprintf(out, 16, "%s", shown);
 }
 
 #endif

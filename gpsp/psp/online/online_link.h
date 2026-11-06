@@ -31,7 +31,7 @@
 #define OL_MAGIC_HOST 0x474F4C48u   /* 'GOLH' */
 #define OL_MAGIC_API  0x474F4C41u   /* 'GOLA' */
 /* Bump on ANY change to either table or to the semantics of a call. */
-#define OL_VERSION    3u
+#define OL_VERSION    4u   /* 3: room[16] (invite codes), api.slot; the host chip/toast. 4: both (beta.4 fix 1) */
 #define OL_ERR_ABI    (-0x4F4C)
 
 typedef struct online_host
@@ -61,7 +61,9 @@ typedef struct online_host
 typedef struct online_cfg
 {
    char relay[64];              /* host name or a.b.c.d[:port] */
-   char room[8];                /* 4 letters, "" = host: server picks */
+   char room[16];               /* as typed: 4 letters (a room code, looked up),
+                                   8 or 11 symbols (an invite code), "" = host:
+                                   the server picks */
    int  direct, wifi, mode;
    unsigned drop_direct_ms;
 } online_cfg;
@@ -82,6 +84,7 @@ typedef struct online_api
    int  (*connected)(void);
    void (*stats_evt)(const char *at);
    void (*status)(char *out, unsigned cap);
+   int  (*slot)(void);          /* 0 = this console hosts the room (v3) */
 } online_api;
 
 typedef struct online_link

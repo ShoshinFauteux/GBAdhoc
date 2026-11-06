@@ -37,6 +37,12 @@ typedef struct rl_core_cfg
    unsigned punch_start_ms;      /* CANDIDATES start offset; 0 = 150 */
    int      no_direct;           /* 1 = never offer a punch (relay only) */
    int      paused;              /* 1 = refuse CREATE/JOIN with RL_E_PAUSED */
+   /* the directory (RL_T_REGISTER / RL_T_LOOKUP): the shared server keeps it,
+    * a desktop host does not (it still answers LOOKUP for its own rooms) */
+   int      directory;           /* 1 = accept REGISTER */
+   unsigned max_dir;             /* entries; 0 = 256 */
+   unsigned dir_per_ip;          /* live entries one IP may hold; 0 = 2 */
+   unsigned lookups_per_min;     /* LOOKUPs per source IP, any code; 0 = 120 */
    /* send one datagram from socket `sock` (0 = main port, 1 = probe port) */
    void (*send)(void *user, int sock, const rl_addr *to, const void *buf, size_t len);
    /* 64 random bits (tokens, nonces, codes) */
@@ -50,6 +56,7 @@ typedef struct rl_core_stats
    uint32_t rx, tx, rx_bad, rx_token, rx_rate, fwd, fwd_bytes;
    uint32_t rooms_now, rooms_made, joins, refused, punches_offered, paths_direct;
    uint32_t cookies_sent, cookie_bad, rx_bytes_rate;
+   uint32_t dir_now, dir_made, dir_refreshed, lookups, located, dir_rx_bytes, dir_tx_bytes;
 } rl_core_stats;
 
 typedef struct rl_core rl_core;
@@ -62,6 +69,11 @@ void relay_core_input(rl_core *c, int sock, const rl_addr *from,
 /* Timers: expire rooms and slots.  Call every ~100 ms. */
 void relay_core_tick(rl_core *c, uint64_t now_ms);
 void relay_core_stats(const rl_core *c, rl_core_stats *out);
+
+/* A desktop host's own room code (four letters; NULL clears it).  A CREATE
+ * without a code gets it while no room holds it, and a JOIN without a code
+ * (a PSP that came by an invite code) joins that room. */
+void relay_core_set_home(rl_core *c, const char *code);
 
 #ifdef __cplusplus
 }

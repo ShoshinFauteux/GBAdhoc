@@ -59,6 +59,11 @@ typedef struct rl_client_cfg
    /* harness only: drop every DIRECT datagram received from this moment on
     * (microseconds since create; 0 = never) -- forces the fallback */
    uint64_t drop_direct_after_us;
+   /* 1 = a four-letter code is first looked up at the server (RL_T_LOOKUP):
+    * a desktop host's code redirects this client to that host, which is then
+    * its server for everything (PROBE, CREATE/JOIN, relay, rendezvous).  No
+    * answer in 1.6 s (an older server) = carry on at the server. */
+   int lookup;
 } rl_client_cfg;
 
 enum
@@ -66,7 +71,8 @@ enum
    RL_ST_PROBING = 1,    /* PROBEs out, classifying the NAT */
    RL_ST_ENTERING,       /* CREATE/JOIN out, waiting for the slot */
    RL_ST_IN_ROOM,        /* have a slot: netdrv can run */
-   RL_ST_FAILED          /* refused (see relay_transport_error) */
+   RL_ST_FAILED,         /* refused (see relay_transport_error) */
+   RL_ST_LOOKUP          /* LOOKUP out (cfg.lookup): where the code lives */
 };
 
 typedef struct relay_transport relay_transport;
@@ -81,6 +87,8 @@ int relay_transport_error(const relay_transport *t, const char **text);
 const char *relay_transport_code(const relay_transport *t);
 /* The room's link mode as the server tells it (RL_MODE_*; valid IN_ROOM). */
 int relay_transport_mode(const relay_transport *t);
+/* The slot the server gave: 0 = this console hosts the room (a JOIN can be
+ * told 0 when it opened a desktop host's home room: run netdrv_host then). */
 int relay_transport_slot(const relay_transport *t);
 uint64_t relay_transport_server_silent_us(relay_transport *t);
 
@@ -102,6 +110,9 @@ typedef struct rl_client_stats
    uint32_t bursts;                /* punch bursts started (first + retries) */
    uint32_t directs;               /* times a peer path became direct */
    uint32_t stalls;                /* timer gaps > 100 ms (nobody pumped us) */
+   uint8_t located;                /* RL_LOC_* of the lookup (0 = none or not asked) */
+   uint32_t host_ip_be;            /* the server actually used (a desktop host when located) */
+   uint16_t host_port;
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

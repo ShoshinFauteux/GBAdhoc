@@ -33,6 +33,8 @@ void online_psp_set(const char *relay, const char *room, int wifi, int mode);
 void online_psp_clear(void);
 int  online_psp_enabled(void);
 /* Wi-Fi up, DNS, socket, room.  Blocks up to timeout_ms.  0 = in the room. */
+/* < 0 failed (online_psp_why); 0 up; 1 up, and this joiner was told slot 0:
+ * "Join with code" into a desktop host's room, the first PSP in hosts. */
 int  online_psp_up(int is_host, const char *build, unsigned timeout_ms);
 int  online_psp_is_up(void);
 const char *online_psp_room(void);     /* the 4 letters, once up */

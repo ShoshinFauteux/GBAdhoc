@@ -8,7 +8,7 @@
 
 int main(void)
 {
-   char out[5];
+   char out[16];
 
    /* the owner's case: typed ZAZA, Create room -> ask for ZAZA */
    online_room_request(1, 1, "ZAZA", out);
@@ -25,6 +25,11 @@ int main(void)
    memset(out, 'x', sizeof(out));
    online_room_request(1, 1, "ZAZAQ", out);
    assert(!strcmp(out, "ZAZA"));
+   /* a joiner may send an invite code: 8 or 11 characters, kept whole */
+   online_room_request(0, 0, "AB3D5F7H9JK", out);
+   assert(!strcmp(out, "AB3D5F7H9JK"));
+   online_room_request(0, 1, "AB3D5F7H", out);
+   assert(!strcmp(out, "AB3D5F7H"));
    puts("PASS: online room code (host typed / host default / joiner)");
    return 0;
 }

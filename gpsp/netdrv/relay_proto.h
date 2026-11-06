@@ -70,12 +70,38 @@ enum
    RL_T_PUNCH_ACK = 14,  /* c<->c body: counter[4] (echoed) */
    RL_T_PATH = 15,       /* c->s  body: slot[1] path[1] (RL_PATH_*); the server
                                      tells that slot with PEER */
-   RL_T_COOKIE = 16      /* s->c  body: cookie[8].  The answer to a CREATE/JOIN
+   RL_T_COOKIE = 16,     /* s->c  body: cookie[8].  The answer to a CREATE/JOIN
                                      without a valid cookie: resend it with this
                                      one (after the nat byte).  Proves the source
                                      address is real before any room state is
                                      spent on it (spoofed-source floods). */
+   /* ---- the directory (docs/ONLINE-TUNNEL.md, "Desktop hosts and
+    * discovery").  A desktop host (GBAdhoc XMB) registers a four-letter code
+    * with the shared server; a PSP looks the code up and then talks GBR1 to
+    * the desktop as its server.  The shared server answers lookups only and
+    * never carries a directory room's traffic. */
+   RL_T_REGISTER = 17,   /* c->s  body: code[4] (0s = server picks) adv_port[2]
+                                         (0 = the port seen) priv_ip[4] priv_port[2]
+                                         flags[1] cookie[8]; header token = 0, or
+                                         the entry's token to refresh (no cookie
+                                         needed then).  Padded to RL_DIR_PAD. */
+   RL_T_REGISTERED = 18, /* s->c  body: code[4] ttl_s[2] adv_port[2]; header token =
+                                         the entry's token */
+   RL_T_LOOKUP = 19,     /* c->s  body: code[4] nonce[4]; padded to RL_DIR_PAD */
+   RL_T_LOCATED = 20,    /* s->c  body: code[4] nonce[4] kind[1] (RL_LOC_*)
+                                         pub_ip[4] pub_port[2] priv_ip[4] priv_port[2]
+                                         your_ip[4].  priv_* only when your_ip is the
+                                         host's own public address (the same home). */
+   RL_T_UNREGISTER = 21  /* c->s  body: code[4]; header token = the entry's token */
 };
+
+/* LOCATED kind */
+enum { RL_LOC_NONE = 0, RL_LOC_HERE = 1, RL_LOC_HOST = 2 };
+#define RL_DIR_PAD      64        /* REGISTER / LOOKUP are padded to this */
+#define RL_REFRESH_LEN  32        /* a REGISTER that carries the entry's token: no padding needed */
+#define RL_LOCATED_LEN  (RL_HDR + 25)
+#define RL_DIR_TTL_S    180       /* an entry lives this long after its last REGISTER */
+#define RL_DIR_REFRESH_S 60       /* the host refreshes this often (the mockup's 60 s) */
 
 enum { RL_PEER_LEFT = 0, RL_PEER_IN = 1, RL_PEER_RELAY = 2, RL_PEER_DIRECT = 3 };
 enum { RL_PATH_RELAY = 0, RL_PATH_DIRECT = 1 };
@@ -87,7 +113,8 @@ enum { RL_NAT_UNKNOWN = 0, RL_NAT_EIM = 1, RL_NAT_SYMMETRIC = 2 };
 enum
 {
    RL_E_NO_ROOM = 1, RL_E_FULL = 2, RL_E_VERSION = 3, RL_E_RATE = 4,
-   RL_E_BAD = 5, RL_E_TOKEN = 6, RL_E_BUSY = 7, RL_E_PAUSED = 8
+   RL_E_BAD = 5, RL_E_TOKEN = 6, RL_E_BUSY = 7, RL_E_PAUSED = 8,
+   RL_E_NO_DIR = 9            /* REGISTER to a server that keeps no directory */
 };
 
 /* Room-code alphabet: letters only, A-Z (owner decision; the join screen warns about O/Q and I/J). */

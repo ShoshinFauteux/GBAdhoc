@@ -5,6 +5,8 @@
  *   relay_client --server IP:PORT (--host|--join) --code CODE
  *                [--bind IP:PORT] [--relay-only] [--payloads N] [--secs S]
  *                [--drop-direct-after MS] [--map-port N] [--stall-after-join MS]
+ *                [--lookup]          look the code up first (a desktop host's code)
+ *   relay_client --invite XXXX-XXXX (--host|--join) ...   a desktop host, no server
  *
  * Sends N reliable 8-byte payloads (a counter) one per 16 ms frame once the
  * session is up, expects N from the peer in order, then exits 0 with one
@@ -12,6 +14,7 @@
  */
 #include "transport_relay.h"
 #include "netdrv.h"
+#include "invite_code.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -127,6 +130,21 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--code") && i + 1 < argc)
          snprintf(cfg.code, sizeof(cfg.code), "%s", argv[++i]);
       else if (!strcmp(argv[i], "--relay-only")) cfg.direct = 0;
+      else if (!strcmp(argv[i], "--lookup")) cfg.lookup = 1;
+      else if (!strcmp(argv[i], "--invite") && i + 1 < argc)
+      {
+         uint8_t ip[4];
+         unsigned port;
+         int r = inv_decode(argv[++i], ip, &port);
+         if (r != INV_OK)
+         {
+            printf("RESULT ok=0 why=invite rc=%d\n", r);
+            return 2;
+         }
+         memcpy(&cfg.server_ip_be, ip, 4);
+         cfg.server_port = (uint16_t)port;
+         cfg.code[0] = 0;
+      }
       else if (!strcmp(argv[i], "--payloads") && i + 1 < argc) n_pay = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--map-port") && i + 1 < argc)
@@ -189,6 +207,13 @@ int main(int argc, char **argv)
     * save up, a slow screen): nothing is read or punched meanwhile */
    if (stall_ms > 0)
       usleep((useconds_t)stall_ms * 1000u);
+   /* the role is the slot: a JOIN that opened a desktop host's home room is
+    * told slot 0 and hosts the netdrv session */
+   if (relay_transport_slot(rt) == 0 && !cfg.is_host)
+   {
+      cfg.is_host = 1;
+      tag = "host";
+   }
    memset(&app, 0, sizeof(app));
    memset(&cb, 0, sizeof(cb));
    cb.user = &app;
@@ -237,11 +262,12 @@ int main(int argc, char **argv)
       ok = app.got == (uint32_t)n_pay && !app.bad && !app.lost && !app.stopped;
       printf("RESULT ok=%d side=%s got=%u bad=%u sent=%d lost=%d path=%s nat=%u "
              "rx_direct=%u rx_relay=%u fallbacks=%u rtt_direct_ms=%u rtt_relay_ms=%u "
-             "srtt_ms=%u retx=%u bursts=%u stalls=%u secs=%.1f\n",
+             "srtt_ms=%u retx=%u bursts=%u stalls=%u located=%u server=%s:%u secs=%.1f\n",
              ok, tag, app.got, app.bad, sent, app.lost,
              p == 3 ? "direct" : p == 4 ? "fellback" : p == 2 ? "punching" : "relay",
              st.nat, st.rx_direct, st.rx_relay, st.fallbacks, st.direct_rtt_us[peer] / 1000,
              st.relay_rtt_us / 1000, ns.srtt_us / 1000, ns.retx, st.bursts, st.stalls,
+             st.located, inet_ntoa(*(struct in_addr *)&st.host_ip_be), st.host_port,
              (now_us() - t0) / 1e6);
    }
    /* linger: answer the peer's last acks */

@@ -539,6 +539,167 @@ game". The battery-image and save-state exchange that every GB/GBA cable session
 consoles run identical machines) stays, as link play already does it. "Share game data" (save sharing) is
 not offered online.
 
+### Desktop hosts and discovery (built 2026-11-05, branch claude/online-desktophost)
+
+**Why.** Desktop hosting is the encouraged path, so the project does not have to run a public relay for
+everyone forever. `relay.rayquaza.ca` stays up while traffic is low. A desktop host runs the same core as
+the server (`relay_core.c`, the cookie challenge, CANDIDATES, PUNCH), so it does what the server does:
+two PSPs that join a desktop-hosted room are introduced and punch a direct path, and the PC relays only
+when the punch fails. Relaying through the PC is the default when the punch fails (owner, 2026-11-05).
+
+**How a PSP finds a desktop host: two codes, one Join box.** Wireless > Online > *Join with code* takes
+either code, and the PSP tells them apart by length (owner, 2026-11-05: both codes, kept separate; the room code
+is shown first, the invite code is the backup):
+
+- **Room code**: four letters, looked up on `relay.rayquaza.ca` (the directory). The PSP sends LOOKUP. If
+  the code is a desktop host's, the answer is that host's address, and the PSP talks GBR1 to the host as
+  its server from then on: PROBE, JOIN, KEEP, relay, rendezvous. If it is a room on the shared server
+  ("here"), or nothing, or an older server that does not answer within 1.6 s, the PSP carries on at the
+  server as before. So existing shared-server rooms are unchanged, and the joiner's wait for a host that
+  is not up yet works as before.
+- **Invite code**: 8 characters (11 for a host on another port) that carry the PC's IPv4 address and a
+  check. No server is asked at all. The online module checks the code before it opens a socket (the Join
+  screen passes it on as typed: a decoder in the EBOOT cost 976 B of text and, past the 8 KiB step that
+  `.data` is pinned to, 8 KiB of boot heap), so a mistyped code never sends a packet; the toast says
+  "a room code is 4 letters, an invite 8 or 11" or that the invite does not check out. Format below.
+
+**The Join box** (Wireless > Online > *Code*): 11 places, each spun with up/down through `A-Z`, `0-9` and
+a blank; left/right move, never past a blank, and the first blank ends the code. Four letters is a room
+code, 8 or 11 characters an invite (dashes are only for display on the PC; the PSP shows the code
+ungrouped).
+
+**The desktop is the host.** Both players press *Join with code* (the design mockup's flow). The first
+PSP into a desktop host's room opens it and is told **slot 0**: it runs the netdrv host, and its link
+mode becomes the room's (`relay_core.c open_home`). The second is slot 1 and follows that mode. *Create
+room* still makes a private room on the shared server. A PSP that Creates with a desktop's code also
+works: the desktop's home code may be named in a CREATE. A JOIN with no code (a PSP that came by an
+invite) lands in the host's **home room** (`relay_core_set_home`), the room whose code the desktop shows
+and registers.
+
+**Wire format** (new GBR1 types, same 16-byte header; `relay_proto.h`):
+
+    REGISTER    17  host -> directory: code[4] (0s = server picks) adv_port[2] priv_ip[4] priv_port[2]
+                    flags[1] cookie[8]; header token = 0, or the entry's token to refresh.  Padded to 64 B,
+                    a refresh to 32 B.
+    REGISTERED  18  directory -> host: code[4] ttl_s[2] adv_port[2]; header token = the entry's token
+    LOOKUP      19  PSP -> server: code[4] nonce[4]; padded to 64 B
+    LOCATED     20  server -> PSP: code[4] nonce[4] kind[1] (0 none, 1 a room here, 2 a desktop host)
+                    host_pub_ip[4] host_pub_port[2] host_priv_ip[4] host_priv_port[2] your_ip[4]
+    UNREGISTER  21  host -> directory: code[4]; header token = the entry's token
+
+**Directory rules** (the same as rooms):
+
+- A first REGISTER needs the cookie (a COOKIE answers it). The entry's address is the **source** of the
+  REGISTER and never an address the host claims, so nobody can point a code at a victim. Only the port is
+  advertised: it is the router's UPnP mapping, which the app requests port-for-port.
+- No reply is larger than its request: REGISTER and LOOKUP are padded. A refresh can only be answered by
+  REGISTERED or COOKIE (24 B each), so it may be 32 B. A server without a directory answers a short
+  REGISTER with nothing.
+- Limits: 120 LOOKUPs a minute per IP. A LOOKUP of a code that names nothing counts as a join guess (30
+  a minute per IP, shared with JOIN; repeating the same missed code is waiting, not guessing). 2 codes per
+  IP, 256 entries (`max_dir`). An entry lives `RL_DIR_TTL_S` = 180 s after its last REGISTER; the host
+  refreshes every 60 s and sends UNREGISTER on Stop.
+- One namespace: a directory code is never a room code on the shared server, and the other way round.
+- **The shared server answers lookups only.** It never makes a room for a directory code and never
+  forwards a directory room's traffic. The tests assert both: `test_relay_desktop` counts forwarded DATA
+  at the directory, and `natlab.py` greps its log for rooms.
+- **Privacy.** The directory stores a code, the host's source address, the advertised port, the host's
+  LAN endpoint and a token. It never stores who looked a code up. A LOOKUP tells the asker the host's
+  public address, which is the price of a direct connection to a PC. The host's LAN endpoint is given
+  only to a PSP that asks from the host's own public address (the same home), because many routers do not
+  loop their public address back. That PSP then connects over the LAN.
+
+**What it costs `relay.rayquaza.ca`** (UDP payload; add 28 B of IP and UDP headers per datagram on the wire):
+
+| what | datagrams | bytes |
+|---|---|---|
+| a desktop host starts (REGISTER, COOKIE, REGISTER, REGISTERED) | 4 | 176 B |
+| keeping it listed (32 B refresh + 24 B answer, every 60 s) | 2/min | 3.4 KB per hour (measured 3,480 B in `test_relay_desktop`'s one-hour run) |
+| each PSP that joins by room code (LOOKUP + LOCATED) | 2 | 105 B |
+| each PSP that joins by invite code | 0 | 0 |
+| Stop (UNREGISTER) | 1 | 20 B |
+
+A two-player hour by room code costs the shared server about **3.8 KB** of payload, about 7 KB on the
+wire. For comparison, relaying that same hour would be roughly 70-180 MB (10-25 KB/s a player each way,
+section 5). Measured per session in the NAT model: 386 B with both players by room code, 176 B with both
+by invite code (registration only). The design mockup's estimate was about 4 KB per room-hour.
+
+**Invite codes** (`netdrv/invite_code.h`; tests in `tools/relay/test_invite.c`). The alphabet is Crockford
+base32: `0-9 A-Z` without `I L O U`. Codes are shown in groups of four with dashes. On input, case, dashes
+and spaces do not matter, and `O`->`0`, `I`/`L`->`1`, `U`->`V` are folded.
+
+- **Short form, 8 characters = 40 bits:** the IPv4 address (32 bits, `a` first), then
+  `CRC-8(a,b,c,d) ^ 0x5A` (8 bits). The port is GBAdhoc's default, 27420, and its probe port is 27421. This
+  is exactly the mockup's format, and the test checks vectors made by the mockup's own encoder.
+- **Long form, 11 characters = 55 bits:** the IPv4 address, the port (16 bits), then
+  `CRC-7(a,b,c,d,port_hi,port_lo) ^ 0x5A & 0x7F` (7 bits). This is for a host on another port.
+- CRC-8 uses polynomial 0x07 and CRC-7 uses 0x09 (x^7+x^3+1, primitive). Both start from 0, are not
+  reflected, and run MSB first. 0x5A is the format's version tag.
+- **Deviation from the mockup:** the mockup's long form used the low 7 bits of the CRC-8, and
+  `test_invite` found it lets about 1 in 128 single-character typos through. A real CRC-7 lets none
+  through. The short form is unchanged.
+- **What the check catches, measured exhaustively:** every single wrong character and every swap of two
+  different characters, in both forms (4.96 M + 0.54 M short-form and 6.8 M + 1.07 M long-form cases).
+  About 1 in 256 (short) or 1 in 128 (long) other mistakes get through: random strings pass 0.34 % /
+  0.68 % of the time. Decoding also refuses 0.x.x.x, 224.0.0.0 and above, and port 0.
+- **Codes never expire** (owner, 2026-11-05). An invite is valid while the PC keeps its address and port.
+  It encodes the PC's IP, so hiding the public IP on the Online tab (the default) is cosmetic for anyone
+  who holds the code. The app says so.
+
+**Desktop app (GBAdhoc XMB, branch `relay-discovery`).** When hosting, the app picks a home code,
+registers it with the directory (on by default; a setting, and `XMB_DIRECTORY=off`), and shows the room
+code first while the directory is reachable, with the invite code as the backup. When the directory is
+down, the invite code becomes the main option. It also shows a LAN invite for PSPs at home, and each
+player's path as **Direct** / **Via host** (the PSP's session chip says *direct* / *via host* too). The
+public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
+
+**Tests, all offline:**
+
+- `test_relay_desktop`: the NAT model with a directory, a desktop host behind a UPnP-forwarding router,
+  and two PSPs with real netdrv sessions. 11 cases: by code / invite / mixed, cone, symmetric, public, a
+  PSP in the PC's home without NAT loopback, and both players joining. There is also a one-hour directory
+  run with a server restart (the code is kept) and UNREGISTER.
+- `test_invite`, and `fuzz_relay` over the new types on a directory core and a home-code core: 2 M
+  datagrams x 6 seeds under ASan/UBSan, with no amplification. (Seed 7 once reported "18 bytes out for
+  15 in (type 5)". That was the fuzzer's fault: a timer's PEER LEFT to a member still in a room was
+  checked as if it answered the last datagram, whose source happened to be that member. The fuzzer now
+  clears the source before ticking the cores.)
+- `natlab.py BIN desktop`: real sockets in network namespaces. The directory is on 203.0.113.1. The
+  desktop host is `gbadhoc-relay --home --register` behind a cone NAT with UPnP as two static forwards.
+  PSPs are behind cone and symmetric NATs. The paths are direct where both NATs allow it and relayed
+  otherwise. 8/8 on 2026-11-05; again on 092a4879 with the shared matrix, 14/14 (`unshare -rn`, no
+  root). `fuzz_relay` 2 M x seeds 1, 3, 5, 7 (even seeds equal odd ones: the seed is OR 1), and
+  `test_invite` / `test_relay_nat` 8/8 / `test_relay_desktop` 12/12, all PASS under ASan/UBSan.
+- **PPSSPP, two GBAdhoc instances by invite code** (2026-11-05, the lab build of this branch,
+  `RFU_SCHED=1`): `tools/relay/ppsspp_online.sh` with `RELAY_ARGS="--home QWER --public 127.0.0.1"`, which is
+  the desktop host's mode in a loopback-only namespace. Both harness inis set `online_room` to the invite
+  `FW00-00DX` (B typed it as `fw0000dx`) and `online_relay` to an unreachable TEST-NET address, so only the
+  invite can find the host. Both decoded 127.0.0.1:27420 and landed in the home room QWER. A was slot 0 and
+  hosted, and the path was direct. The Emerald Union Room trade (`rfu_em_trade`) logged `trade_complete` on
+  both, with clean exits after 162 s. Jobs and logs: `builds/online-out/ppsspp-invite`.
+- **PPSSPP, room code + invite code** (2026-11-05, lab build of 092a4879, the module checking codes):
+  two relays in the loopback namespace, a directory on 127.0.0.1:27430 and the desktop host
+  (`--home QWER --register 127.0.0.1:27430`) on 27420 (`builds/desktop-relay-kit/work/ppsspp_dh.sh`).
+  A typed the room code `QWER` with `online_relay` at the directory: one LOOKUP, LOCATED as a desktop
+  host. B typed the invite `fw0000dx` with an unreachable `online_relay`. Both in room QWER, path
+  direct both ways, `trade_complete` on both, clean exits after 161 s. The directory saw 1 REGISTER,
+  1 LOOKUP, no room and no forwarded byte: 393 B of payload for the session.
+- **Boot heap, ONLINE=0 against ONLINE=1** (release, `RFU_SCHED=1`, this branch): both 14,014,860 B
+  image and 10,081,692 B PSP-1000 boot heap, the same as 4.6.0-beta.4 (c7a74a88). The pads are 112/48
+  (beta.4: 144/32): against beta.4's ELF the hot core, A's cold text, `.bss` and the guard's block are
+  unmoved, A's tables sit -24 B (the `.rodata` pad moves them in 64 B steps: 72 puts them at +40) and
+  B's `.data` +64 B. The module's imports are unchanged (ThreadManForUser, sceNetInet, sceNetResolver).
+
+**Still to test on hardware and the real internet:**
+
+- a real PSP decoding an invite and joining a PC;
+- the slot-0 joiner as netdrv host on hardware;
+- a real router's UPnP mapping as the advertised port;
+- hairpin-less routers with a PSP at home;
+- carrier-grade NAT on the host side (the app says "players outside cannot reach this PC");
+- the directory on the VPS;
+- real-internet punching (home Wi-Fi against a phone hotspot), which needs the owner's go-ahead.
+
 ## 7. Implementation plan
 
 1. **Relay server and a desktop twin.** Write the relay. Add `transport_relay` to the SDL build first

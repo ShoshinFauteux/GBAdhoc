@@ -4159,9 +4159,11 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       case WL_MGIFT:
          wl_row(i, g_cursor == i, "Mystery Gift", "phone");
          break;
+#ifdef GBADHOC_ONLINE
       case WL_ONLINE:
          wl_row(i, g_cursor == i, s_ol_row, NULL);
          break;
+#endif
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
             wl_row_at(WL_ROW_Y0 + i * WL_PITCH, g_cursor == i, 0, "Fast link",
@@ -4190,8 +4192,19 @@ static ui_action screen_wireless(unsigned edges, int session_active,
  * the server and reads it to the friend; the friend enters it here.  For a
  * game that links both ways the host picks the link mode, the joiner follows
  * it.  Nothing touches the network until Create or Join. */
-static char g_ol_code[5] = "AAAA";
-static int  g_ol_pos = -1;             /* letter being edited, -1 = not editing */
+/* One code box takes either code, told apart by length (owner, 2026-11-05;
+ * the design mockup, builds/xmb-relay-mockup): 4 letters = a ROOM code,
+ * looked up on the GBAdhoc server (a room there, or a desktop host's room);
+ * 8 or 11 symbols = an INVITE code, a desktop host's address with a check
+ * (netdrv/invite_code.h), so no server is asked.  The wheel has every letter,
+ * the digits and a blank, which ends the code.  It goes to the online module as
+ * typed: it refuses any other length and checks the invite's CRC before it
+ * opens a socket, so a mistyped code never sends a packet.  Not checked here:
+ * this screen must stay small, because ONLINE's EBOOT text has ~150 B left
+ * below the 8 KiB step that .data is pinned to (the boot-heap rule, 2026-11-05;
+ * a decoder here cost 976 B and a whole 8 KiB of heap). */
+static char g_ol_code[12] = "AAAA";   /* 11 places; a blank (NUL) ends the code */
+static int  g_ol_pos = -1;             /* place being edited, -1 = not editing */
 static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
 static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
 static int  g_ol_typed;                /* the player set the code: a host asks for it */
@@ -4203,13 +4216,14 @@ static char s_ol_line[] = "Online link play (experimental).";
 static char s_ol_net[] = "Network";
 static char s_ol_mode[] = "Link mode";
 static char s_ol_create[] = "Create room";
-static char s_ol_code[] = "Room code";
-static char s_ol_join[] = "Join room";
+static char s_ol_code[] = "Code";
+static char s_ol_join[] = "Join with code";
+static char s_ol_wheel[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";  /* + its NUL = blank */
 static char s_ol_fmt[] = "%.*s[%c]%s";
-static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " letter   " VID_GLYPH_LEFT
+static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " change   " VID_GLYPH_LEFT
                           VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
 
-int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
+int ui_online_take(int *is_host, char code[16], int *cable, int *wifi)
 {
    int r = g_ol_req;
    g_ol_req = 0;
@@ -4228,16 +4242,20 @@ static ui_action screen_online(unsigned edges)
    int i, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
    if (g_ol_pos >= 0)
    {
-      /* editing the code: up/down change the letter, left/right move */
-      char *c = &g_ol_code[g_ol_pos];
+      /* editing the code: up/down spin the place, left/right move */
+      char *c = &g_ol_code[g_ol_pos];      /* strchr finds the NUL too: the blank */
+      int k = (int)(strchr(s_ol_wheel, *c) - s_ol_wheel), m = (int)sizeof(s_ol_wheel);
       if (edges & PSP_CTRL_UP)
-         *c = (char)(*c == 'Z' ? 'A' : *c + 1);
+         k = (k + 1) % m;
       if (edges & PSP_CTRL_DOWN)
-         *c = (char)(*c == 'A' ? 'Z' : *c - 1);
-      if (edges & PSP_CTRL_LEFT)
-         g_ol_pos = (g_ol_pos + 3) % 4;
-      if (edges & PSP_CTRL_RIGHT)
-         g_ol_pos = (g_ol_pos + 1) % 4;
+         k = (k + m - 1) % m;
+      *c = s_ol_wheel[k];
+      /* no wrap, and never past a blank: the place being edited is always
+       * the one the row shows bracketed (it prints up to the first blank) */
+      if ((edges & PSP_CTRL_LEFT) && g_ol_pos > 0)
+         g_ol_pos--;
+      if ((edges & PSP_CTRL_RIGHT) && *c && g_ol_pos < 10)
+         g_ol_pos++;
       if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
       {
          g_ol_pos = -1;
@@ -4281,16 +4299,15 @@ static ui_action screen_online(unsigned edges)
             g_ol_pos = 0;
             break;
          case OL_CREATE:
-            g_ol_req = 1;
+         case OL_JOIN:
+            /* one tail for both: a joiner may become the host of a desktop
+             * host's room (the first PSP in), so it takes the link-mode
+             * choice along too */
+            g_ol_req = g_cursor == OL_CREATE ? 1 : 2;
             g_host_cable = ask ? g_ol_cable : ui_host_mode() == UI_HOST_CABLE;
             snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
             screen_to(SCR_MENU);
-            return UI_ACT_NET_HOST;
-         case OL_JOIN:
-            g_ol_req = 2;
-            snprintf(g_join_group, sizeof(g_join_group), "%s", g_pcfg.group);
-            screen_to(SCR_MENU);
-            return UI_ACT_NET_JOIN;
+            return g_ol_req == 1 ? UI_ACT_NET_HOST : UI_ACT_NET_JOIN;
          case OL_BACK:
             screen_to(SCR_WIRELESS);
             return UI_ACT_NONE;
@@ -4321,19 +4338,22 @@ static ui_action screen_online(unsigned edges)
          wl_row_at(y, sel, 1, s_ol_create, NULL);
          break;
       case OL_CODE:
+      case OL_JOIN:
       {
+         /* the code up to its first blank (what Join sends); [x] = being edited */
          char v[16];
-         if (g_ol_pos >= 0)
-            snprintf(v, sizeof(v), s_ol_fmt, g_ol_pos, g_ol_code,
-                     g_ol_code[g_ol_pos], g_ol_code + g_ol_pos + 1);
-         else
-            snprintf(v, sizeof(v), "%s", g_ol_code);
-         wl_row_at(y, g_cursor == i, 1, s_ol_code, v);
+         const char *s = g_ol_code;
+         if (i == OL_CODE && g_ol_pos >= 0)
+         {
+            char ch = g_ol_code[g_ol_pos];
+            snprintf(v, sizeof(v), s_ol_fmt, g_ol_pos, g_ol_code, ch ? ch : '_',
+                     ch ? g_ol_code + g_ol_pos + 1 : "");
+            s = v;
+         }
+         wl_row_at(y, i == OL_CODE ? g_cursor == i : sel, 1,
+                   i == OL_CODE ? s_ol_code : s_ol_join, s);
          break;
       }
-      case OL_JOIN:
-         wl_row_at(y, sel, 1, s_ol_join, g_ol_code);
-         break;
       default:
          wl_row_at(y, sel, 1, "Back", NULL);
          break;

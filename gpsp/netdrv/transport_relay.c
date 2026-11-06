@@ -49,6 +49,8 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define CJ_PAD           64          /* CREATE/JOIN/PROBE padded: the server
                                         never answers larger than asked */
 #define TS_RING          64
+#define LOOKUP_EVERY_US  400000ull
+#define LOOKUP_TRIES     4
 
 typedef struct
 {
@@ -82,6 +84,9 @@ struct relay_transport
    uint64_t next_us;
    uint64_t cookie;              /* the server's COOKIE, echoed in CREATE/JOIN */
    int room_mode;                /* RL_MODE_* from CREATED/JOINED */
+   /* lookup */
+   uint32_t lookup_nonce;
+   int lookup_tries;
    /* room */
    int slot;
    uint64_t token;
@@ -143,6 +148,25 @@ static void send_probe(relay_transport *t)
    for (k = 0; k < 2; k++)
       if (!t->probed[k])
          to_server(t, k, b, sizeof(b));
+}
+
+static void send_lookup(relay_transport *t)
+{
+   uint8_t b[RL_DIR_PAD];                /* padded: the reply is never larger */
+   memset(b, 0, sizeof(b));
+   rl_hdr(b, RL_T_LOOKUP, RL_SLOT_NONE, RL_SLOT_NONE, 0);
+   memcpy(b + RL_HDR, t->cfg.code, RL_CODE_LEN);
+   rl_put32(b + RL_HDR + 4, t->lookup_nonce);
+   to_server(t, 0, b, sizeof(b));
+}
+
+/* after the lookup (or without one): classify the NAT, then enter */
+static void begin(relay_transport *t)
+{
+   t->state = t->cfg.direct ? RL_ST_PROBING : RL_ST_ENTERING;
+   t->next_us = 0;
+   t->st.host_ip_be = t->cfg.server_ip_be;
+   t->st.host_port = t->cfg.server_port;
 }
 
 static void send_enter(relay_transport *t)
@@ -338,6 +362,20 @@ static void timers(relay_transport *t)
    }
    switch (t->state)
    {
+   case RL_ST_LOOKUP:
+      if (n >= t->next_us)
+      {
+         if (t->lookup_tries >= LOOKUP_TRIES)
+         {
+            lg(t, "relay_lookup code=%s kind=noanswer", t->cfg.code);
+            begin(t);                    /* an older server: carry on there */
+            break;
+         }
+         send_lookup(t);
+         t->lookup_tries++;
+         t->next_us = n + LOOKUP_EVERY_US;
+      }
+      break;
    case RL_ST_PROBING:
       if ((t->probed[0] && t->probed[1]) || t->probe_tries >= PROBE_TRIES)
       {
@@ -444,6 +482,39 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
    t->last_server_rx_us = tn;
    switch (b[5])
    {
+   case RL_T_LOCATED:
+      if (n >= 25 && t->state == RL_ST_LOOKUP && rl_get32(body + 4) == t->lookup_nonce &&
+          !memcmp(body, t->cfg.code, RL_CODE_LEN))
+      {
+         int kind = body[8];
+         uint32_t pub = rl_get_ip(body + 9), priv = rl_get_ip(body + 15);
+         uint16_t pport = (uint16_t)rl_get16(body + 13), vport = (uint16_t)rl_get16(body + 19);
+         uint32_t me = rl_get_ip(body + 21);
+         char a[24];
+         t->st.located = (uint8_t)kind;
+         if (kind == RL_LOC_HOST && pub && pport && pport < 65535)
+         {
+            /* a desktop host: it is our server from now on.  In its own home
+             * (the directory saw us both at one address) its LAN endpoint,
+             * since many routers do not loop their public address back. */
+            if (me == pub && priv && vport && vport < 65535)
+            {
+               t->cfg.server_ip_be = priv;
+               t->cfg.server_port = vport;
+            }
+            else
+            {
+               t->cfg.server_ip_be = pub;
+               t->cfg.server_port = pport;
+            }
+            t->last_server_rx_us = tn;
+         }
+         ipfmt(t->cfg.server_ip_be, t->cfg.server_port, a);
+         lg(t, "relay_lookup code=%s kind=%s server=%s", t->cfg.code,
+            kind == RL_LOC_HOST ? "host" : kind == RL_LOC_HERE ? "here" : "none", a);
+         begin(t);
+      }
+      break;
    case RL_T_PROBED:
       if (n >= 11 && rl_get32(body) == t->probe_nonce && body[10] < 2 &&
           t->state == RL_ST_PROBING)
@@ -472,9 +543,11 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          t->next_keep_us = tn + KEEP_EVERY_US;
          lg(t, "relay_room code=%s slot=%d host=%d nat=%u", t->code, t->slot,
             t->cfg.is_host, t->nat);
-         if (!t->cfg.is_host)
+         /* a room always has its host -- unless we are it: the first PSP into
+          * a desktop host's home room is told slot 0 (relay_core open_home) */
+         if (!t->cfg.is_host && t->slot != 0)
          {
-            t->p[0].present = 1;       /* a room always has its host */
+            t->p[0].present = 1;
             if (!t->p[0].path)
                t->p[0].path = P_RELAY;
          }
@@ -500,7 +573,8 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
             lg(t, "relay_room_kept code=%s error=%d", t->code, code);
             break;
          }
-         if (t->state == RL_ST_ENTERING || t->state == RL_ST_PROBING)
+         if (t->state == RL_ST_ENTERING || t->state == RL_ST_PROBING ||
+             t->state == RL_ST_LOOKUP)
          {
             int tl = n - 1 < (int)sizeof(t->errtext) - 1 ? n - 1
                                                          : (int)sizeof(t->errtext) - 1;
@@ -832,9 +906,21 @@ relay_transport *relay_transport_create(const rl_sock *s, const rl_client_cfg *c
    t->probe_nonce = (uint32_t)(t->t0 * 2654435761u) ^ 0x5A17u;
    if (!t->probe_nonce)
       t->probe_nonce = 1;
-   t->state = cfg->direct ? RL_ST_PROBING : RL_ST_ENTERING;
    t->nat = RL_NAT_UNKNOWN;
    t->last_server_rx_us = t->t0;
+   begin(t);
+   {
+      int i, letters = (int)strlen(cfg->code) == RL_CODE_LEN;
+      for (i = 0; letters && i < RL_CODE_LEN; i++)
+         letters = cfg->code[i] >= 'A' && cfg->code[i] <= 'Z';
+      if (cfg->lookup && letters)
+      {
+         t->state = RL_ST_LOOKUP;
+         t->lookup_nonce = t->probe_nonce ^ 0x10C0FFEEu;
+         if (!t->lookup_nonce)
+            t->lookup_nonce = 1;
+      }
+   }
    lg(t, "relay_start host=%d code=%s direct=%d", cfg->is_host,
       cfg->code[0] ? cfg->code : "-", cfg->direct);
    return t;
