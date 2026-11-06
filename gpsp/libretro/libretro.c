@@ -144,6 +144,11 @@ u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
 u32 translation_gate_targets = 0;
 
 static u16 *gba_screen_pixels_prev = NULL;
+#ifdef XS_HEAP
+/* retro_init could not take the dynarec's heap tables: retro_load_game
+ * refuses (instance B's session start then fails instead of aborting). */
+static bool xs_heap_failed;
+#endif
 static u16 *gba_processed_pixels   = NULL;
 
 static void (*video_post_process)(void) = NULL;
@@ -785,8 +790,11 @@ void retro_init(void)
 
 #ifdef XS_HEAP
    {  /* before the 1 MiB ROM loop takes the heap (cpu_threaded.c) */
-      extern void dynarec_heap_tables_init(void);
-      dynarec_heap_tables_init();
+      extern int dynarec_heap_tables_init(void);
+      xs_heap_failed = dynarec_heap_tables_init() != 0;
+      if (xs_heap_failed && log_cb)
+         log_cb(RETRO_LOG_ERROR, "Failed to allocate the dynarec SMC "
+                "tables; core will refuse to load content\n");
    }
 #endif
    init_gamepak_buffer();
@@ -1801,6 +1809,10 @@ bool retro_load_game(const struct retro_game_info* info)
     * to decide whether the core can usefully run. */
    if (!gba_screen_pixels)
       return false;
+#ifdef XS_HEAP
+   if (xs_heap_failed)
+      return false;
+#endif
 
    check_variables(true);
    set_input_descriptors();

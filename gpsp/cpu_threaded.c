@@ -12053,12 +12053,16 @@ void dynarec_heap_tables_release(void)
   smc_back_iw = smc_back_ew = NULL;
 #endif
 }
-void dynarec_heap_tables_init(void)
+/* 0, or -1 when malloc refused the block (nothing is changed then).  At
+ * retro_init that is reported, not fatal: retro_load_game refuses the game,
+ * so instance B's session start fails with an EVT instead of abort()ing the
+ * console (fe_gbadual.c "gbadual_load FAILED"). */
+int dynarec_heap_tables_init(void)
 {
   u8 *blk;
   u32 sz = 0;
   if (xs_heap_blk)
-    return;
+    return 0;
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
   sz += 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2;
 #ifdef SMC_SAME_ADAPT
@@ -12071,7 +12075,7 @@ void dynarec_heap_tables_init(void)
   blk = malloc(sz ? sz : 64);
   if (!blk) {
     fprintf(stderr, "dynarec_heap_tables_init: %u bytes refused\n", (unsigned)sz);
-    abort();
+    return -1;
   }
   xs_heap_blk = blk;
   memset(blk, 0, sz ? sz : 64);
@@ -12092,12 +12096,17 @@ void dynarec_heap_tables_init(void)
 #endif
     (void)p;
   }
+  return 0;
 }
 #endif
 void init_dynarec_caches(void)
 {
 #ifdef XS_HEAP
-  dynarec_heap_tables_init();
+  /* retro_load_game refuses a game whose retro_init could not take the
+   * block, so this is the no-op second call; were it ever the first, the
+   * SMC tables would be NULL, and stopping here is what it always did. */
+  if (dynarec_heap_tables_init() != 0)
+    abort();
 #endif
   /* Initialize caches so that we can start initalizing the emitter. */
 #ifdef JIT_CODE_DISCIPLINE
