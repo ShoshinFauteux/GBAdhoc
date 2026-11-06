@@ -639,7 +639,14 @@ def suites(env: Env, baseline: Path | None):
           "-Ilibretro/libretro-common/include "
           "-o /tmp/t_sound_timer_step "
           "tools/test_sound_timer_step.c -Wl,--gc-sections && "
-          "/tmp/t_sound_timer_step")),
+          "/tmp/t_sound_timer_step && "
+          # the rewind capture rules (SOUND_REWIND_DS_AHEAD) are REWIND-only
+          "gcc -std=gnu99 -Wall -Wextra -Wno-old-style-declaration "
+          "-ffunction-sections -fdata-sections -DINLINE=inline -DREWIND -I. "
+          "-Ilibretro/libretro-common/include "
+          "-o /tmp/t_sound_timer_step_rw "
+          "tools/test_sound_timer_step.c -Wl,--gc-sections && "
+          "/tmp/t_sound_timer_step_rw")),
 
         # GB/GBC: gb_link protocol, GB netpacket routing, browser console
         # filter, TGB Dual smoke and serial hook, and the production fe_host

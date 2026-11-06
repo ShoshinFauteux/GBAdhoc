@@ -950,6 +950,19 @@ bool sound_read_savestate(const u8 *src)
   return true;
 }
 
+/* A ring index as a state stores it: buf-base itself, every other index as
+ * buf-base plus its distance in this build's ring.  Written raw, a producer
+ * that had wrapped past the ring's end (gbc-buf-idx 200 with buf-base 16000)
+ * reads back on a build with the 64K-entry ring (4.6.0-beta.4 and older;
+ * Save share moves states between builds) as ~49K entries in flight: that
+ * build's sound runs ~0.75 s late until the next load.  base + distance stays
+ * below 2 x BUFFER_SIZE (32768 < SOUND_STATE_INDEX_RANGE) and keeps the same
+ * distance in both rings; this build's reader masks it back. */
+static u32 sound_state_index(u32 index)
+{
+  return sound_buffer_base + ((index - sound_buffer_base) & BUFFER_SIZE_MASK);
+}
+
 unsigned sound_write_savestate(u8 *dst)
 {
   int i;
@@ -957,7 +970,8 @@ unsigned sound_write_savestate(u8 *dst)
   bson_start_document(dst, "sound", wbptr);
   bson_write_int32(dst, "on", sound_on);
   bson_write_int32(dst, "buf-base", sound_buffer_base);
-  bson_write_int32(dst, "gbc-buf-idx", gbc_sound_buffer_index);
+  bson_write_int32(dst, "gbc-buf-idx",
+                   sound_state_index(gbc_sound_buffer_index));
   bson_write_int32(dst, "gbc-last-cpu-ticks", gbc_sound_last_cpu_ticks);
   bson_write_int32(dst, "gbc-partial-ticks", gbc_sound_partial_ticks);
   bson_write_int32(dst, "gbc-ms-vol-left", gbc_sound_master_volume_left);
@@ -977,7 +991,8 @@ unsigned sound_write_savestate(u8 *dst)
     bson_write_int32(dst, "fifo-frac", direct_sound_channel[i].fifo_fractional);
     bson_write_bytes(dst, "fifo-bytes", direct_sound_channel[i].fifo,
                           sizeof(direct_sound_channel[i].fifo));
-    bson_write_int32(dst, "buf-idx", direct_sound_channel[i].buffer_index);
+    bson_write_int32(dst, "buf-idx",
+                     sound_state_index(direct_sound_channel[i].buffer_index));
     bson_finish_document(dst, wbptr2);
   }
 

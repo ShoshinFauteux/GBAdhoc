@@ -90,12 +90,94 @@ static void check_old_ring_indices(void)
    assert(direct_sound_channel[0].buffer_index == 2232);
    assert(direct_sound_channel[0].fifo_fractional == 0x2345678u);
    assert(direct_sound_channel[1].buffer_index == 2194);
-   /* and one past the format's range is refused */
-   gbc_sound_buffer_index = SOUND_STATE_INDEX_RANGE;
+   /* and one past the format's range is refused (buf-base: the writer
+    * stores the other indices relative to it, always inside the range) */
+   sound_buffer_base = SOUND_STATE_INDEX_RANGE;
    n = sound_write_savestate(w);
    w[n] = 0;
    assert(!sound_check_savestate(st_doc));
 }
+
+/* A state saved by this build and loaded by one with the 64K-entry ring
+ * (4.6.0-beta.4 / 4.5.0, which Save share can send it to): the old reader
+ * computes (index - buf-base) & 0xFFFF.  With the producer wrapped past the
+ * 16K ring's end (base 16000, mixer 200), a raw write gave the old reader
+ * ~49K entries in flight; every index must carry the same distance in both
+ * spaces, and stay inside the format's range. */
+static u32 old_ring_distance(const u8 *snd, const char *chan, u32 base)
+{
+   const u8 *doc = chan ? bson_find_key(snd, chan) : snd;
+   u32 v;
+   assert(doc);
+   assert(bson_read_int32(doc, chan ? "buf-idx" : "gbc-buf-idx", &v));
+   assert(v < SOUND_STATE_INDEX_RANGE && !(v & 1));
+   return (v - base) & (SOUND_STATE_INDEX_RANGE - 1);
+}
+
+static void check_downgrade_indices(void)
+{
+   u8 *w = st_doc + 4;
+   const u8 *snd;
+   unsigned n;
+   u32 base;
+   sound_buffer_base = 16000;
+   gbc_sound_buffer_index = 200;                    /* wrapped: 584 ahead */
+   direct_sound_channel[0].buffer_index = 232;      /* 32 past the mixer */
+   direct_sound_channel[0].fifo_fractional = 0;
+   direct_sound_channel[1].buffer_index = 194;      /* 6 behind it */
+   n = sound_write_savestate(w);
+   w[n] = 0;
+   st_doc[0] = (u8)(n + 5); st_doc[1] = (u8)((n + 5) >> 8);
+   st_doc[2] = st_doc[3] = 0;
+   assert(sound_check_savestate(st_doc));
+   snd = bson_find_key(st_doc, "sound");
+   assert(snd && bson_read_int32(snd, "buf-base", &base) && base == 16000);
+   /* the old reader's view: as many in flight as this build's */
+   assert(old_ring_distance(snd, NULL, base) ==
+          ((200u - 16000u) & BUFFER_SIZE_MASK));
+   assert(old_ring_distance(snd, NULL, base) == 584);
+   assert(old_ring_distance(snd, "ds0", base) == 616);
+   assert(old_ring_distance(snd, "ds1", base) == 578);
+   /* and this build reads back exactly what it saved */
+   sound_buffer_base = gbc_sound_buffer_index = 0;
+   assert(sound_read_savestate(st_doc));
+   assert(sound_buffer_base == 16000);
+   assert(gbc_sound_buffer_index == 200);
+   assert(direct_sound_channel[0].buffer_index == 232);
+   assert(direct_sound_channel[1].buffer_index == 194);
+}
+
+#ifdef REWIND
+/* sound.c SOUND_REWIND_DS_AHEAD: a direct-sound channel extends what a
+ * rewind capture carries only while it is beside the mixer.  30 entries
+ * ahead counts; 2,000 ahead (a stopped channel's stale index, inside the
+ * window) does not. */
+static u8 rw_extra[SOUND_REWIND_EXTRA_BYTES];
+static u32 rewind_capture_len(u32 ds0_ahead, u32 ds1_ahead)
+{
+   u32 n;
+   sound_buffer_base = 15000;                      /* wraps inside the window */
+   gbc_sound_buffer_index = (15000 + 600) & BUFFER_SIZE_MASK;
+   direct_sound_channel[0].buffer_index =
+      (gbc_sound_buffer_index + ds0_ahead) & BUFFER_SIZE_MASK;
+   direct_sound_channel[1].buffer_index =
+      (gbc_sound_buffer_index + ds1_ahead) & BUFFER_SIZE_MASK;
+   (void)sound_rewind_extra_save_part(rw_extra, 0);
+   memcpy(&n, rw_extra, 4);
+   return n;
+}
+
+static void check_rewind_ds_ahead(void)
+{
+   assert(rewind_capture_len(0, 0) == 600);
+   assert(rewind_capture_len(30, 0) == 630);          /* counted */
+   assert(rewind_capture_len(0, 2000) == 600);        /* skipped */
+   assert(rewind_capture_len(30, 2000) == 630);
+   assert(rewind_capture_len(SOUND_REWIND_DS_AHEAD, 0) ==
+          600 + SOUND_REWIND_DS_AHEAD);               /* the bound itself */
+   assert(rewind_capture_len(SOUND_REWIND_DS_AHEAD + 2, 0) == 600);
+}
+#endif
 
 static void reference_silent_advance(u32 step, u32 *fractional,
                                      u32 *buffer_index)
@@ -215,6 +297,10 @@ int main(void)
    check_load_distance(20000, 1);
    check_load_distance(-20000, 1);
    check_old_ring_indices();
+   check_downgrade_indices();
+#ifdef REWIND
+   check_rewind_ds_ahead();
+#endif
    puts("PASS timer-derived audio steps stay nonzero and accumulator-safe; "
         "state load keeps a healthy channel, resyncs a runaway one");
    return 0;

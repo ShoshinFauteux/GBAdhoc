@@ -90,8 +90,10 @@ void sound_flush_ring(void);
 #define SOUND_REWIND_WINDOW       4096u
 /* How far ahead of the mixer a direct-sound channel's ring position may be
  * and still count as in flight: a channel writes up to its last FIFO
- * sample, a few entries past the mixer (states show 6 behind to 32 ahead;
- * 1024 entries is a DS timer below 64 Hz).  Behind the mixer never extends
+ * sample, a few entries past the mixer (states show 6 behind to 32 ahead).
+ * 1024 entries are 512 stereo samples: the lead a DS channel would have if
+ * it wrote ~1/64 s ahead at the PSP's 32768 Hz (1/128 s at 65536 Hz), far
+ * past any healthy channel.  Behind the mixer never extends
  * what is in flight. */
 #define SOUND_REWIND_DS_AHEAD     1024u
 #define SOUND_REWIND_EXTRA_BYTES  (8u + SOUND_REWIND_WINDOW * 4u)
