@@ -78,6 +78,7 @@ const char *relay_transport_code(const relay_transport *t);
 /* The room's link mode as the server tells it (RL_MODE_*; valid IN_ROOM). */
 int relay_transport_mode(const relay_transport *t);
 int relay_transport_slot(const relay_transport *t);
+uint64_t relay_transport_server_silent_us(relay_transport *t);
 
 void relay_transport_iface(relay_transport *t, nd_transport *out);
 
@@ -93,6 +94,7 @@ typedef struct rl_client_stats
    uint32_t direct_rtt_us[RL_SLOTS];
    uint32_t relay_rtt_us;
    uint32_t fallbacks;
+   uint32_t reenters;              /* host: lobby room lost, entered again */
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

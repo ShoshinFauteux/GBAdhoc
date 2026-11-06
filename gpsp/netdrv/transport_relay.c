@@ -35,6 +35,7 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define DIRECT_IDLE_US   500000ull
 #define DIRECT_DEAD_US   1500000ull
 #define RELAY_ALIVE_US   6000000ull
+#define LOBBY_LOST_US    8000000ull  /* 4 unanswered KEEPs: the room is gone */
 #define CJ_PAD           64          /* CREATE/JOIN/PROBE padded: the server
                                         never answers larger than asked */
 #define TS_RING          64
@@ -74,6 +75,8 @@ struct relay_transport
    uint64_t token;
    char code[RL_CODE_LEN + 1];
    uint64_t next_keep_us, last_server_rx_us;
+   int reentering;               /* host: lost its lobby room, CREATE again */
+   uint64_t reenter_us;
    uint32_t keep_ctr;
    uint64_t keep_sent_us;
    rl_peer p[RL_SLOTS];
@@ -189,10 +192,53 @@ static void fall_back(relay_transport *t, int j, const char *why, int tell)
       send_path(t, j, RL_PATH_RELAY);
 }
 
+/* A host waiting alone in its room (no peer yet) whose room the server no
+ * longer has -- it went quiet (our KEEPs unanswered for LOBBY_LOST_US: a
+ * Wi-Fi or carrier-NAT gap longer than the server's 20 s slot timeout, or the
+ * 10-minute lobby limit) or it says our token is unknown (RL_E_TOKEN) --
+ * enters again with the SAME code: the code read out to a friend stays good.
+ * If the room is in fact still there, the server answers the CREATE with it
+ * (same address) or "code in use" (a new NAT mapping): then we keep the old
+ * slot, and the next KEEP re-pins it.  Never with a peer in the room: that
+ * is the session's to handle (netdrv's peer timeout). */
+static int lobby_alone(const relay_transport *t)
+{
+   int j;
+   if (!t->cfg.is_host || t->state != RL_ST_IN_ROOM)
+      return 0;
+   for (j = 0; j < RL_SLOTS; j++)
+      if (j != t->slot && t->p[j].present)
+         return 0;
+   return 1;
+}
+
+static void lobby_reenter(relay_transport *t, const char *why)
+{
+   memcpy(t->cfg.code, t->code, sizeof(t->cfg.code));
+   t->reentering = 1;
+   t->reenter_us = now(t);
+   t->cookie = 0;
+   t->state = RL_ST_ENTERING;
+   t->next_us = 0;
+   t->st.reenters++;
+   lg(t, "relay_room_lost code=%s why=%s: entering again", t->code, why);
+}
+
 static void timers(relay_transport *t)
 {
    uint64_t n = now(t);
    int j;
+   if (lobby_alone(t) && n - t->last_server_rx_us > LOBBY_LOST_US &&
+       n - t->reenter_us > LOBBY_LOST_US)
+      lobby_reenter(t, "server_silent");
+   else if (t->reentering && t->state == RL_ST_ENTERING &&
+            n - t->reenter_us > LOBBY_LOST_US / 2)
+   {
+      /* nothing back at all (Wi-Fi gone): KEEP on the old slot for a while,
+       * then CREATE again (every LOBBY_LOST_US), for as long as it lasts */
+      t->state = RL_ST_IN_ROOM;
+      t->reentering = 0;
+   }
    switch (t->state)
    {
    case RL_ST_PROBING:
@@ -321,6 +367,7 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          t->room_mode = n >= RL_CODE_LEN + 2 ? body[RL_CODE_LEN + 1] : RL_MODE_ANY;
          t->token = rl_get64(b + 8);
          t->state = RL_ST_IN_ROOM;
+         t->reentering = 0;
          t->next_keep_us = tn + KEEP_EVERY_US;
          lg(t, "relay_room code=%s slot=%d host=%d nat=%u", t->code, t->slot,
             t->cfg.is_host, t->nat);
@@ -338,6 +385,20 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          int code = body[0];
          if (code == RL_E_NO_ROOM && t->state == RL_ST_ENTERING)
             break;                      /* the host is not up yet: retry */
+         if (code == RL_E_TOKEN && lobby_alone(t))
+         {
+            lobby_reenter(t, "token_unknown");
+            break;
+         }
+         if (t->reentering && t->state == RL_ST_ENTERING)
+         {
+            /* "code in use": our room is still there (a new NAT mapping);
+             * keep the old slot -- the next KEEP re-pins it */
+            t->state = RL_ST_IN_ROOM;
+            t->reentering = 0;
+            lg(t, "relay_room_kept code=%s error=%d", t->code, code);
+            break;
+         }
          if (t->state == RL_ST_ENTERING || t->state == RL_ST_PROBING)
          {
             int tl = n - 1 < (int)sizeof(t->errtext) - 1 ? n - 1
@@ -438,7 +499,7 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
    relay_transport *t = (relay_transport *)ctx;
    uint8_t b[RL_MAX_DGRAM];
    int guard;
-   if (t->state == RL_ST_IN_ROOM)
+   if (t->state == RL_ST_IN_ROOM || t->reentering)
       timers(t);
    for (guard = 0; guard < 64; guard++)
    {
@@ -635,6 +696,12 @@ int relay_transport_error(const relay_transport *t, const char **text)
 const char *relay_transport_code(const relay_transport *t) { return t->code; }
 int relay_transport_mode(const relay_transport *t) { return t->room_mode; }
 int relay_transport_slot(const relay_transport *t) { return t->slot; }
+/* How long the server has not answered (us): the room is presumed lost
+ * while a host keeps entering it again (lobby_reenter). */
+uint64_t relay_transport_server_silent_us(relay_transport *t)
+{
+   return now(t) - t->last_server_rx_us;
+}
 
 void relay_transport_iface(relay_transport *t, nd_transport *out)
 {

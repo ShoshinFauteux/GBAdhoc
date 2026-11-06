@@ -30,10 +30,10 @@ typedef struct rl_core_cfg
    unsigned room_idle_ms;        /* drop a room this long after its last packet; 0 = 60000 */
    unsigned lobby_ms;            /* a room nobody joined expires; 0 = 600000 */
    unsigned slot_idle_ms;        /* drop a silent slot; 0 = 20000 */
-   unsigned pkt_per_s;           /* per-slot / per-source rate; 0 = 300 */
+   unsigned pkt_per_s;           /* per-slot / per-source rate; 0 = 1000 */
    unsigned joins_per_min;       /* CREATE+JOIN per source IP; 0 = 30 */
    unsigned rooms_per_ip;        /* live rooms one IP may host; 0 = 3 */
-   unsigned bytes_per_s;         /* per-slot byte rate; 0 = 65536 */
+   unsigned bytes_per_s;         /* per-slot byte rate; 0 = 262144 */
    unsigned punch_start_ms;      /* CANDIDATES start offset; 0 = 150 */
    int      no_direct;           /* 1 = never offer a punch (relay only) */
    int      paused;              /* 1 = refuse CREATE/JOIN with RL_E_PAUSED */
