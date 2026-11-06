@@ -39,8 +39,9 @@
 #define INV_DEFAULT_PORT 27420u          /* RL_DEFAULT_PORT */
 #define INV_TAG          0x5Au
 
-/* The EBOOT defines INV_ALPHABET_STORAGE as plain `static` (writable .data):
- * .rodata growth moves its pinned layout in 8 KiB steps (docs/LAYOUT-PINNING.md). */
+/* INV_ALPHABET_STORAGE: define it as plain `static` to put the table in .data
+ * (an includer whose .rodata is layout-pinned, docs/LAYOUT-PINNING.md; the
+ * EBOOT no longer includes this file). */
 #ifndef INV_ALPHABET_STORAGE
 #define INV_ALPHABET_STORAGE static const
 #endif
@@ -153,9 +154,9 @@ static inline int inv_count(const char *s)
    return n;
 }
 
-/* Decoding is bit-serial and 32-bit only: the PSP EBOOT checks invites on the
- * Join screen, and 64-bit shifts plus two inlined byte CRCs cost it ~1 KB of
- * text, which broke the boot-heap rule (docs/ONLINE-TUNNEL.md).  A CRC fed one
+/* Decoding is bit-serial and 32-bit only: 64-bit shifts plus two inlined byte
+ * CRCs cost ~1 KB of MIPS text.  (The PSP now checks invites in the online
+ * module, not the EBOOT, whose boot-heap rule that broke: docs/ONLINE-TUNNEL.md.)  A CRC fed one
  * bit at a time MSB first equals the byte-wise inv_crc8 / inv_crc7 above (both
  * start from 0 and are not reflected); test_invite checks every vector,
  * single typo and swap against the encoder. */
