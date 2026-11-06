@@ -46,17 +46,8 @@ void gbab_gamepak_share_unmap(uint32_t);
 extern uint32_t gamepak_page_loads, gbab_gamepak_page_loads;
 #if defined(PSP)
 extern uint32_t gbab_jit_cache_force_small;
-/* Instance B's static state (psp/gbalink_core_b.ld, GBA-LINK-MIRROR.md 19).
- * Weak: only the PSP's scripted partial link defines them. */
-extern char gbab_bdata_start[] __attribute__((weak));
-extern char gbab_bdata_end[] __attribute__((weak));
-extern char gbab_bdata_pristine[] __attribute__((weak));
-extern char gbab_bregion_start[] __attribute__((weak));
-extern char gbab_bregion_lend[] __attribute__((weak));
-extern char gbab_bsdata_start[] __attribute__((weak));
-extern char gbab_bsdata_end[] __attribute__((weak));
-extern char gbab_bsbss_start[] __attribute__((weak));
-extern char gbab_bsbss_end[] __attribute__((weak));
+/* Instance B's static state: the section markers. */
+#include "fe_gbadual_b.h"
 extern uint8_t *gamepak_spare_pool2;
 extern uint32_t gamepak_spare_pool2_bytes;
 extern int32_t gbab_jit_pin_at __attribute__((weak));
