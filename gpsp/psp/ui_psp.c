@@ -47,6 +47,7 @@
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #include "text_fold.h"      /* non-ASCII file names (issue #19) */
 #include "online_psp.h"     /* EXPERIMENTAL online play (ONLINE=1) */
+#include "online_room.h"    /* the room code a host or joiner asks for */
 #define LM_SLOTS PSP_STATE_SLOT_COUNT
 #include "list_marks.h"     /* the list's per-game facts, no I/O to draw */
 #ifdef GPSP_CHEATS
@@ -4236,6 +4237,7 @@ static char g_ol_code[5] = "AAAA";
 static int  g_ol_pos = -1;             /* letter being edited, -1 = not editing */
 static int  g_ol_cable = 1;            /* host's choice for a both-ways game */
 static int  g_ol_req;                  /* 1 host, 2 join; taken by main_psp.c */
+static int  g_ol_typed;                /* the player set the code: a host asks for it */
 
 /* Writable on purpose (see online_psp.c, g_host): .rodata growth costs a
  * whole 8 KiB of boot heap, .data has room. */
@@ -4257,7 +4259,7 @@ int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
    if (!r)
       return 0;
    *is_host = r == 1;
-   snprintf(code, 5, "%s", g_ol_code);
+   online_room_request(*is_host, g_ol_typed, g_ol_code, code);
    *cable = g_ol_cable;
    *wifi = g_pcfg.online_wifi;       /* 0 = Automatic; screen_to checked it */
    return 1;
@@ -4282,6 +4284,7 @@ static ui_action screen_online(unsigned edges)
       if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
       {
          g_ol_pos = -1;
+         g_ol_typed = 1;
          g_cursor = OL_JOIN;
       }
       edges = 0;

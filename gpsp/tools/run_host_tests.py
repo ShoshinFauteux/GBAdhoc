@@ -461,7 +461,8 @@ def suites(env: Env, baseline: Path | None):
          ("gcc -std=gnu99 -w -ffunction-sections -fdata-sections -I%s "
           "-Ifrontend-common -Ipsp -Ilibretro/libretro-common/include "
           "tools/test_mgift_profiles.c -Wl,--gc-sections -o /tmp/t_mgp "
-          "&& /tmp/t_mgp") % sdk),
+          "&& /tmp/t_mgp && gcc -std=gnu99 -Wall -Wextra -Werror "
+          "-o /tmp/t_olroom tools/test_online_room.c && /tmp/t_olroom") % sdk),
 
         ("rom_load", True, no_baseline,
          "python3 tools/run_rom_load_tests.py"),

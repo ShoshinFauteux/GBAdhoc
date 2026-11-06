@@ -9399,7 +9399,8 @@ static void ui_net_action(int is_host)
       if (ol)
       {
          /* the same LINKING screen as below, so the code is shared, not cloned */
-         online_psp_set(NULL, is_host ? "" : ol_code, ol_wifi,
+         /* ol_code is already "" for a host who typed none (online_room.h) */
+         online_psp_set(NULL, ol_code, ol_wifi,
                         !is_host ? RL_MODE_ANY
                         : !gba || ui_host_cable() ? RL_MODE_CABLE
                                                   : RL_MODE_ADAPTER);
