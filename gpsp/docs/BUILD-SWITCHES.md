@@ -163,7 +163,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
 | `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
 | `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
-| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 256. |
+| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 128 (256 until opt round 6: the SMALL-tier twin on Doom II, Duke, AW2, Emerald, Smash and Unbound ran identically at 128; Hot Wheels kept 32 fewer flushes, +0.04 % host instructions). |
 | `SMC_REUSE_MODE` | 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
 | `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
 | `DMA_SMC_ADAPT` | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
