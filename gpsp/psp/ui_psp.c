@@ -312,7 +312,7 @@ static char g_join_group[9];
 static const uint16_t *g_ov_frame;          /* the snapshot, or NULL      */
 static int   g_ov_fw = 240, g_ov_fh = 160;   /* its size in texels         */
 static uint16_t *g_ov_full;                 /* harness: 480x272 at 512    */
-static uint16_t *g_ov_thumbs;               /* 5 x 64x64, or NULL         */
+static uint16_t *g_ov_thumbs;               /* 5 x 64x43 (declared 64x64)   */
 static int   g_ov_browse;                   /* browser Settings: art bake */
 static int   g_ov_open_k = OV_OPEN_FRAMES;   /* frames into the transition */
 static int   g_ov_linked;                   /* a session is up            */
@@ -1283,7 +1283,8 @@ static void footer(const char *hint)
  *
  * MEMORY.  Nothing here allocates.  The frame is the wake snapshot
  * (main_psp.c, the netdrv arena's tail) taken at menu_open(); the slot
- * thumbnails are five 64x64 textures from the same tail.  Either may be
+ * thumbnails are five textures (declared 64x64, stored 64x43) from the same
+ * tail.  Either may be
  * NULL -- then the screen falls back to a flat page / empty plates. */
 static void clip_title(char *t, int px);    /* with the browser, below    */
 
@@ -5283,6 +5284,10 @@ static int state_thumb_read(const char *state_path, uint16_t *dst)
         hdr[8] == PSP_STATE_THUMB_WIDTH && hdr[9] == 0 &&
         sceIoRead(fd, dst, bytes) == (int)bytes;
    sceIoClose(fd);
+   if (ok)   /* the edge row a bilinear tap at the bottom reads */
+      memcpy(dst + PSP_STATE_THUMB_HEIGHT * PSP_STATE_THUMB_WIDTH,
+             dst + (PSP_STATE_THUMB_HEIGHT - 1) * PSP_STATE_THUMB_WIDTH,
+             PSP_STATE_THUMB_WIDTH * 2);
    return ok ? 0 : -1;
 }
 
@@ -5352,8 +5357,7 @@ static void ov_slots_scan_io(void)
           psp_state_path_for_slot(path, sizeof(path), g_state_base,
                                   (unsigned)i + 1) == 0 &&
           state_thumb_read(path, g_ov_thumbs + (size_t)i *
-                           PSP_STATE_THUMB_WIDTH *
-                           PSP_STATE_THUMB_TEX_HEIGHT) == 0)
+                           PSP_STATE_THUMB_SLOT_PIXELS) == 0)
          g_ov_slot[i] = 2;
       /* What the page will draw for the slot (0 none, 1 state, 2 state +
        * thumbnail) and its time: the GE model's input (tools/ui_model). */
@@ -5362,8 +5366,7 @@ static void ov_slots_scan_io(void)
    }
    if (g_ov_thumbs)
       sceKernelDcacheWritebackRange(g_ov_thumbs, PSP_STATE_SLOT_COUNT *
-                                    PSP_STATE_THUMB_WIDTH *
-                                    PSP_STATE_THUMB_TEX_HEIGHT * 2);
+                                    PSP_STATE_THUMB_SLOT_PIXELS * 2);
    g_ov_shot_slot = -1;
    g_ov_dwell = 0;
    g_slots_dirty = 0;
@@ -5586,8 +5589,7 @@ static void ss_panel(int i)
 {
    const int x = SS_PX, y = SS_PY, w = SS_PW, h = SS_PH;
    const uint16_t *th = g_ov_thumbs ? g_ov_thumbs + (size_t)i *
-                        PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_TEX_HEIGHT
-                                    : NULL;
+                        PSP_STATE_THUMB_SLOT_PIXELS : NULL;
    vid_rect(x + 3, y + 3, w, h, C_SHADOW, 90);
    if (!g_ov_slot[i])
    {
@@ -5768,8 +5770,7 @@ static ui_action screen_state_slots(unsigned edges)
       }
       if (g_ov_slot[i] == 2)
          vid_image(20, by + 4, 36, 24,
-                   g_ov_thumbs + (size_t)i * PSP_STATE_THUMB_WIDTH *
-                      PSP_STATE_THUMB_TEX_HEIGHT,
+                   g_ov_thumbs + (size_t)i * PSP_STATE_THUMB_SLOT_PIXELS,
                    PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_TEX_HEIGHT,
                    PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT, 255);
       else

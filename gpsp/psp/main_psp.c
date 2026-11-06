@@ -2126,9 +2126,10 @@ static int       g_wake_have;        /* 1 = it holds a real frame       */
  * stored at the texture's top-left and drawn with these dimensions, so it
  * lands exactly where (and as large as) the live picture did. */
 static unsigned  g_wake_w = 240, g_wake_h = 160;
-/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x64
+/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x43
  * PSP-5650 textures, also carved from the netdrv arena's tail -- no heap. */
-#define UI_THUMB_BYTES (5u * 64u * 64u * 2u)
+#define UI_THUMB_BYTES (PSP_STATE_SLOT_COUNT * PSP_STATE_THUMB_SLOT_PIXELS * 2u)
+_Static_assert(PSP_STATE_SLOT_COUNT == 5, "UI_THUMB_BYTES: five slots");
 static uint16_t *g_ui_thumbs;
 static int       g_wake_menu;        /* main loop: show the overlay     */
 static const uint16_t *g_last_pix;   /* last frame the core handed us    */
@@ -3484,9 +3485,8 @@ static int me_rend_release_vmem(void)
  *
  * It normally lives in the volatile partition we are about to hand back, so it
  * has to be copied into memory that survives: 82 KB (161 rows of 256) in
- * the tail of
- * the netdrv arena, after netdrv's own part.  No heap cost, which
- * matters on the console with none to spare.
+ * the tail of the netdrv arena, after netdrv's own part.  No heap cost,
+ * which matters on the console with none to spare.
  *
  * Two sources, because the ME is not always the one drawing: its stage when
  * the renderer is up, otherwise the core's own frame buffer (the CPU path, and
