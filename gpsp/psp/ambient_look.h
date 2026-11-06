@@ -51,7 +51,7 @@
 #define AMB_PAL_RAMP_TOP   60
 #define AMB_PAL_RAMP_BOT   200
 
-/* ---- snapshot fallback (ambient = "art, else game") ----------------------
+/* ---- game-frame bars (ambient = "game", or "art" with no art) -----------
  * With no art, the bars come from a game frame instead: the first frame at
  * or after AMB_SNAP_AFTER whose mean luma reaches AMB_SNAP_MIN_LUMA (0-255)
  * -- the BIOS logo and black title cards are skipped -- retried every

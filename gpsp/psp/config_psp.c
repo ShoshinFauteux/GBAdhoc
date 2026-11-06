@@ -692,8 +692,8 @@ const char *pcfg_ambient_name(int mode)
    switch (mode)
    {
    case PCFG_AMB_ART:      return "art";
-   case PCFG_AMB_ART_GAME: return "art, else game";
-   default:                return "off";
+   case PCFG_AMB_GAME:     return "game";
+   default:                return "none";
    }
 }
 
@@ -768,7 +768,13 @@ static void pdisp_load(void)
          d->effect = fx;
          d->color  = c == FE_CONSOLE_GBA ? (int)pdisp_get("color", c, 0) : 0;
       }
-      d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
+      d->ambient = (int)pdisp_get("bars", c, -1);
+      if (d->ambient < 0)               /* the old key (config_psp.h) */
+      {
+         d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
+         if (d->ambient == 1 || d->ambient == 2)
+            d->ambient = PCFG_AMB_ART;
+      }
       /* GBA has no DMG palette; its slot just carries the legacy value. */
       d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
                     : (int)pdisp_get("gb_palette", c, g_pcfg.gb_palette);
@@ -848,7 +854,7 @@ static int pdisp_write(int c)
    rc |= pdisp_set("effect", c, d->effect);
    if (c == FE_CONSOLE_GBA)
       rc |= pdisp_set("color", c, d->color);
-   rc |= pdisp_set("ambient", c, d->ambient);
+   rc |= pdisp_set("bars", c, d->ambient);
    if (c != FE_CONSOLE_GBA)
       rc |= pdisp_set("gb_palette", c, d->gb_palette);
    return rc ? -1 : 0;

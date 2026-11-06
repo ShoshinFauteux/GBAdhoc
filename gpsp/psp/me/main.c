@@ -142,6 +142,17 @@ static void me_dispatch(volatile me_mbox *mb)
 {
    unsigned int seen;
 
+   /* $gp first.  me_stub.S never loads it, and video.cc's small data
+    * (common.h CORE_SBSS: video_color_mode, video_color_lut) is addressed
+    * from it -- while me_render_glue.cc writes those by absolute address.
+    * Without this the renderer read some other word and drew every colour
+    * mode as native (beta.4 on hardware).  -G0 code never touches $gp, so
+    * nothing below clobbers it. */
+   __asm__ volatile(".set push\n.set noreorder\n"
+                    "lui $gp, %%hi(_gp)\n"
+                    "addiu $gp, $gp, %%lo(_gp)\n"
+                    ".set pop" ::: "memory");
+
    /* We are here because the ME just left reset: at load, or on the way out
     * of a sleep (me_sysevent below), where the module and its statics stay
     * but the renderer's work area, which is the host's volatile memory, does
