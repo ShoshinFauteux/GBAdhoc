@@ -76,7 +76,7 @@ static char s_prx_fmt[] = "%s/gbadhoc_online.prx";
 static char s_missing[] = "online module missing";
 static char s_nomem[] = "online module: no memory";
 static char s_version[] = "online module: wrong version";
-static char s_wifi_fmt[] = "Wi-Fi: %s 0x%08X";
+static char s_wifi_fmt[] = "Wi-Fi: %s 0x%08X m%uK";
 static char s_relay_key[] = "online_relay";
 static char s_relay_default[] = ONLINE_RELAY_DEFAULT;
 
@@ -234,7 +234,7 @@ void online_psp_set(const char *relay, const char *room, int wifi, int mode)
             relay && relay[0] ? relay : g_cfg_relay[0] ? g_cfg_relay
                                                       : s_relay_default);
    set_room(room);
-   O.cfg.wifi = wifi > 0 ? wifi : 0;        /* 0 = Automatic (mgnet_wifi_up) */
+   O.cfg.wifi = wifi;                       /* 0 = Automatic (mgnet_wifi_up) */
    O.cfg.mode = mode;
    O.cfg.direct = 1;
    O.cfg.drop_direct_ms = 0;
@@ -256,13 +256,16 @@ const char *online_psp_why(void) { return O.why; }
 #ifdef GPSP_PERF_RIG
 static void list_wifi(void)
 {
-   unsigned char slot[10];
-   int n = mgnet_config_list(slot, 10), i;
+   /* every choice the picker offers, from Automatic round to Automatic */
+   int s = mgnet_pick(0, 0), n = 0;
    char nm[64];
-   fe_evt("online_wifi profiles=%d chosen=%d", n, O.cfg.wifi);
-   for (i = 0; i < n && i < 10; i++)
-      if (mgnet_config_name(slot[i], nm, sizeof(nm)) == 0)
-         fe_evt("online_wifi profile=%d name=\"%s\"", slot[i], nm);
+   fe_evt("online_wifi chosen=%d", O.cfg.wifi);
+   do
+   {
+      mgnet_config_label(s, nm, sizeof(nm));
+      fe_evt("online_wifi profile=%d name=\"%s\"", s, nm);
+      s = mgnet_pick(s, 1);
+   } while (s != 0 && ++n < 12);
 }
 #else
 #define list_wifi() ((void)0)
@@ -282,7 +285,7 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
       /* The SCE code goes on screen: a release build has no log, and
        * "apctl_connect" alone cannot tell a missing slot from a bad one. */
       snprintf(O.why, sizeof(O.why), s_wifi_fmt, mgnet_stage(),
-               mgnet_last_sce());
+               mgnet_last_sce(), (unsigned)(sceKernelTotalFreeMemSize() >> 10));
       fe_evt("online_error stage=wifi rc=%d at=%s sce=0x%08X", rc, mgnet_stage(),
              mgnet_last_sce());
       list_wifi();

@@ -33,9 +33,16 @@ int sceWlanGetSwitchState(void) { return 1; }
  * firmware behaviour the picker must survive if it is real).  load_rc forces
  * a load result, e.g. "already loaded". */
 static int need_common, common_loaded, loads, unloads, load_rc;
+volatile int gbadhoc_net_touched;    /* transport_adhoc.c in the EBOOT */
 int sceUtilityLoadNetModule(int module)
 {
-   if (module == PSP_NET_MODULE_COMMON) { loads++; if (load_rc) return load_rc; common_loaded = 1; }
+   if (module == PSP_NET_MODULE_COMMON)
+   {
+      loads++;
+      if (load_rc) return load_rc;
+      if (common_loaded) return (int)0x80110802;   /* already loaded */
+      common_loaded = 1;
+   }
    return 0;
 }
 int sceUtilityUnloadNetModule(int module)
@@ -56,7 +63,11 @@ int sceNetApctlGetInfo(int code,union SceNetApctlInfo *info) { (void)code;strcpy
 unsigned sceKernelGetSystemTimeLow(void) { return 100; }
 int sceKernelDelayThread(SceUInt delay) { (void)delay;return 0; }
 void fe_evt(const char *fmt, ...) { (void)fmt; }
-int sceUtilityCheckNetParam(int id) { return profiles[id].exists ? 0 : -1; }
+int sceUtilityCheckNetParam(int id)
+{
+   if (need_common && !common_loaded) return (int)0x80110601;
+   return profiles[id].exists ? 0 : -1;
+}
 int sceUtilityGetNetParam(int id, int param, netData *out)
 {
    assert(!require_ready || apctl_ready);
@@ -106,6 +117,7 @@ static void reset(void)
    memset(profiles, 0, sizeof(profiles));
    Cprofile_slot = created = deleted = fail_copy = corrupt_copy = 0;
    need_common = common_loaded = loads = unloads = load_rc = 0;
+   gbadhoc_net_touched = 0;
    fail_param = -1;
 }
 int main(void)
@@ -151,40 +163,47 @@ int main(void)
    add(10, "Phone", MGNET_AUTO_SSID, 0);
    assert(mgnet_profile_ensure(MGNET_AUTO_SSID, "") == 10 && !created);
 
-   /* The picker's slot list.  The XMB never compacts slots: the owner's Go
-    * had its only connection away from slot 1, and the old probe stopped at
-    * the first gap, so it listed nothing ("?") and joined empty slot 1. */
+   /* The Network picker.  The XMB never compacts slots: the owner's Go had
+    * its only connection away from slot 1, and the old probe stopped at the
+    * first gap, so it listed nothing ("?") and joined empty slot 1. */
    {
-      unsigned char sl[10];
-      memset(sl, 0, sizeof(sl));
+      char nm[64];
       reset(); add(2, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);
-      assert(mgnet_config_list(sl, 10) == 1 && sl[0] == 2 && mgnet_config_count() == 1);
-      assert(!loads && !unloads);                 /* found: no module load */
+      /* the ini default (1) is gone: the first saved slot, not slot 1 */
+      assert(mgnet_pick(1, 0) == 2 && !loads && !unloads);  /* found: no load */
+      assert(!gbadhoc_net_touched);        /* nor a wireless mark (in-proc return) */
+      assert(mgnet_pick(2, 1) == 0 && mgnet_pick(0, 1) == 2);   /* 2 <-> Auto */
+      assert(mgnet_pick(2, -1) == 0 && mgnet_pick(0, -1) == 2);
+      mgnet_config_label(2, nm, sizeof(nm)); assert(!strcmp(nm, "GBAdhoc Relay"));
+      mgnet_config_label(0, nm, sizeof(nm)); assert(!strcmp(nm, "Automatic (Mystery Gift)"));
+      mgnet_config_label(7, nm, sizeof(nm)); assert(!strcmp(nm, "connection 7"));
       add(5, "Home", "Home", 2); add(10, "Cafe", "Cafe", 0);
-      assert(mgnet_config_list(sl, 10) == 3 && sl[0] == 2 && sl[1] == 5 && sl[2] == 10);
-      assert(mgnet_config_list(sl, 2) == 3 && sl[1] == 5);   /* max respected */
-      assert(mgnet_config_list(NULL, 0) == 3);
+      assert(mgnet_pick(5, 0) == 5);                       /* saved and present */
+      assert(mgnet_pick(0, 0) == 0);                       /* Automatic stays */
+      assert(mgnet_pick(0, 1) == 2 && mgnet_pick(2, 1) == 5 && mgnet_pick(5, 1) == 10 &&
+             mgnet_pick(10, 1) == 0);
+      assert(mgnet_pick(0, -1) == 10 && mgnet_pick(10, -1) == 5);
       /* Manual choice of a non-first slot connects THAT slot. */
       assert(mgnet_wifi_up(5, 0) == MGNET_OK && connected_slot == 5 && !created);
       mgnet_wifi_down();
       /* Firmware that wants the common module first: one load, one unload,
        * the same answer, nothing left loaded. */
       reset(); need_common = 1; add(3, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);
-      assert(mgnet_config_list(sl, 10) == 1 && sl[0] == 3);
-      assert(loads == 1 && unloads == 1 && !common_loaded);
-      /* No connections at all: still balanced, and Automatic remains. */
+      assert(mgnet_pick(1, 0) == 3 && mgnet_pick(3, 1) == 0);
+      assert(loads == 1 && unloads == 1 && !common_loaded && gbadhoc_net_touched);
+      /* No connections at all: Automatic, still balanced. */
       reset(); need_common = 1;
-      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && unloads == 1);
+      assert(mgnet_pick(4, 0) == 0 && mgnet_pick(0, 1) == 0 && loads == 1 && unloads == 1);
       reset();
-      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && unloads == 1);
+      assert(mgnet_pick(1, 0) == 0 && loads == 1 && unloads == 1);
       /* A load that did not succeed here ("already loaded") is not undone. */
       reset(); load_rc = (int)0x80110F02;
-      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && !unloads);
+      assert(mgnet_pick(1, 0) == 0 && loads == 1 && !unloads);
       /* With the radio up the probe never touches the modules. */
       reset(); add(1, "Home", "Home", 0);
       assert(mgnet_wifi_up(1, 0) == MGNET_OK);
       loads = unloads = 0; profiles[1].exists = 0;
-      assert(mgnet_config_list(sl, 10) == 0 && !loads && !unloads);
+      assert(mgnet_pick(1, 0) == 0 && !unloads && common_loaded);  /* already loaded: kept */
       mgnet_wifi_down();
       /* A failed connect keeps its SCE code for the on-screen message. */
       reset(); add(2, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);

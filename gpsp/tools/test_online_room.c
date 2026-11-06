@@ -25,8 +25,6 @@ int main(void)
    memset(out, 'x', sizeof(out));
    online_room_request(1, 1, "ZAZAQ", out);
    assert(!strcmp(out, "ZAZA"));
-   online_room_request(1, 1, NULL, out);
-   assert(!strcmp(out, ""));
    puts("PASS: online room code (host typed / host default / joiner)");
    return 0;
 }

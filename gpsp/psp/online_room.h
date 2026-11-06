@@ -16,7 +16,7 @@
 static inline void online_room_request(int is_host, int typed, const char *shown,
                                        char out[5])
 {
-   snprintf(out, 5, "%s", (!is_host || typed) && shown ? shown : "");
+   snprintf(out, 5, "%s", !is_host || typed ? shown : "");
 }
 
 #endif
