@@ -3353,6 +3353,8 @@ int fe_host_gba_sessmem_cycle(int up)
    return gba_session_mem(up);
 }
 
+extern uint8_t bios_rom[];                           /* gba_memory.c */
+
 static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
    fe_gblink_platform p;
@@ -3438,6 +3440,10 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
                                            : 114u;
    l.machines = m;
    l.core_mask = host.gba_core_mask;
+   /* the core's own test for a real BIOS (libretro.c: its first branch, to
+    * 0x68); the built-in open BIOS starts elsewhere */
+   if (bios_rom[0] != 0x18)
+      l.core_mask |= FE_GBLINK_MASK_BIOS_OTHER;
    l.rom_sampled = gba_rom_sampled;
    gba_sram_hold = 1;
    gbl = fe_gblink_create(&p, &l);

@@ -379,7 +379,15 @@ static int ol_is_up(void) { return O.rt != NULL; }
 static const char *ol_room(void) { return O.rt ? relay_transport_code(O.rt) : ""; }
 static int ol_room_mode(void) { return O.rt ? relay_transport_mode(O.rt) : 0; }
 static void ol_iface(nd_transport *out) { relay_transport_iface(O.rt, out); }
-static int ol_connected(void) { return O.rt != NULL && g_ol_host->wifi_is_up(); }
+/* Not connected once the server has been silent for 30 s: a lobby host's
+ * room is presumed gone (transport_relay keeps entering it again with the
+ * same code), and the EBOOT says "Wireless group lost" instead of showing a
+ * dead room. */
+static int ol_connected(void)
+{
+   return O.rt != NULL && g_ol_host->wifi_is_up() &&
+          relay_transport_server_silent_us(O.rt) < 30000000ull;
+}
 
 static void ol_status(char *out, unsigned cap)
 {

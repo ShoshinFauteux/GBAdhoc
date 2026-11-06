@@ -95,11 +95,16 @@ rl_core *relay_core_create(const rl_core_cfg *cfg)
    if (!c->cfg.room_idle_ms) c->cfg.room_idle_ms = 60000;
    if (!c->cfg.lobby_ms) c->cfg.lobby_ms = 600000;
    if (!c->cfg.slot_idle_ms) c->cfg.slot_idle_ms = 20000;
-   if (!c->cfg.pkt_per_s) c->cfg.pkt_per_s = 300;
+   /* Per-slot caps, against a measured link session (PPSSPP pair through
+    * this relay, 2026-11-05): the 1.1 MB "Sharing where you are" offers
+    * ~390 datagrams/s and ~70 KB/s per slot, play ~65/s and ~3 KB/s.  The
+    * old 300/s and 64 KB/s dropped 3,000-7,000 datagrams per share.  ~2.5x
+    * headroom; the anti-abuse limits are the per-IP room and join counts. */
+   if (!c->cfg.pkt_per_s) c->cfg.pkt_per_s = 1000;
    if (!c->cfg.joins_per_min) c->cfg.joins_per_min = 30;
    if (!c->cfg.punch_start_ms) c->cfg.punch_start_ms = 150;
    if (!c->cfg.rooms_per_ip) c->cfg.rooms_per_ip = 3;
-   if (!c->cfg.bytes_per_s) c->cfg.bytes_per_s = 65536;
+   if (!c->cfg.bytes_per_s) c->cfg.bytes_per_s = 262144;
    c->secret[0] = c->cfg.random64(c->cfg.user);
    c->secret[1] = c->cfg.random64(c->cfg.user);
    c->nrooms = c->cfg.max_rooms;
@@ -519,8 +524,9 @@ static rl_slot *auth(rl_core *c, const uint8_t *b, const rl_addr *from,
       if (!addr_eq(&s->addr, from))
       {
          /* NAT rebinding: the same token from a new port.  Re-pin, at most
-          * once every 10 s. */
-         if (now - s->repin_ms < 10000)
+          * once a second (a carrier NAT may move a mapping more than once;
+          * only a holder of the 64-bit token can re-pin at all). */
+         if (now - s->repin_ms < 1000)
             return NULL;
          s->repin_ms = now;
          s->addr = *from;
@@ -598,6 +604,16 @@ void relay_core_input(rl_core *c, int sock, const rl_addr *from,
    if (!s)
    {
       c->st.rx_token++;
+      /* a KEEP for a slot we no longer have (its room expired or went
+       * silent): say so, so a waiting host enters again at once.  17 B
+       * back for a 20 B KEEP: never an amplifier. */
+      if (b[5] == RL_T_KEEP && len >= RL_HDR + 4)
+      {
+         uint8_t o[RL_HDR + 1];
+         rl_hdr(o, RL_T_ERROR, RL_SLOT_NONE, RL_SLOT_NONE, 0);
+         o[RL_HDR] = RL_E_TOKEN;
+         tx(c, sock, from, o, sizeof(o));
+      }
       return;
    }
    if (!slot_rate(c, s, len, now_ms))

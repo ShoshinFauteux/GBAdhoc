@@ -91,6 +91,8 @@ typedef struct
 static host_t H[2];
 static nat_t N[2];
 static int g_same_lan;          /* both consoles behind N[0] */
+static uint64_t g_host_dark_from, g_host_dark_to;   /* host 0 off the air */
+static int host_dark(int h) { return h == 0 && g_now >= g_host_dark_from && g_now < g_host_dark_to; }
 static rl_core *g_core;
 
 static void enqueue(ep_t src, ep_t dst, const void *b, size_t n, unsigned delay_ms)
@@ -144,6 +146,8 @@ static void host_send(int h, ep_t dst, const void *b, size_t n)
    host_t *x = &H[h];
    ep_t src = x->priv;
    nat_t *nt = x->nat;
+   if (host_dark(h))
+      return;
    if (nt && lan_of(dst.ip))
    {
       /* LAN delivery: only inside this NAT's own /24 -- another home's
@@ -174,6 +178,8 @@ static void deliver_host(int h, pkt_t *p)
 {
    host_t *x = &H[h];
    int nx = (x->in_head + 1) % 256;
+   if (host_dark(h))
+      return;
    if (nx == x->in_tail)
       return;
    x->inbox[x->in_head] = *p;
@@ -519,6 +525,180 @@ static int run_case(const case_t *c)
    return ok;
 }
 
+/* ------------------------------------------------------- lobby cases */
+
+/* A host waits ALONE in its room (as a PSP does while the code is read out to
+ * a friend), behind a carrier NAT whose mappings expire after nat_timeout_ms
+ * and are re-made on a new port every flush_every_ms, optionally off the air
+ * (dark) for longer than the server's 20 s slot timeout, under the server's
+ * lobby limit lobby_ms.  The guest joins by the SAME code at join_at_ms and
+ * both sides must exchange N payloads. */
+typedef struct
+{
+   const char *name;
+   int nat0;
+   unsigned nat_timeout_ms, flush_every_ms, lobby_ms;
+   unsigned dark_at_ms, dark_ms, join_at_ms;
+   int want_reenter;
+} lobby_t;
+
+static int run_lobby(const lobby_t *c)
+{
+   rl_core_cfg cc;
+   rl_sock sk[2];
+   rl_client_cfg cfg[2];
+   relay_transport *rt[2] = { NULL, NULL };
+   nd_transport tp[2];
+   nd_callbacks cb[2];
+   nd_config nc;
+   netdrv *nd[2] = { NULL, NULL };
+   app_t app[2];
+   rl_client_stats st;
+   int i, ok = 1, sent[2] = { 0, 0 };
+   const int N_PAY = 300;
+   uint64_t t0, t_end, last_flush;
+   char code0[RL_CODE_LEN + 1] = "";
+
+   memset(q, 0, sizeof(q));
+   qn = 0;
+   g_now = 1000000;
+   t0 = g_now;
+   memset(H, 0, sizeof(H));
+   memset(N, 0, sizeof(N));
+   g_same_lan = 0;
+   for (i = 0; i < 2; i++)
+   {
+      N[i].type = i ? NAT_CONE : c->nat0;
+      N[i].pub_ip = ip4(198, 51, 100, 10 + i);
+      N[i].next_port = (uint16_t)(40000 + 1000 * i);
+      N[i].timeout_ms = i ? 30000 : c->nat_timeout_ms;
+      H[i].priv.ip = ip4(10, 0, i, 20 + i);
+      H[i].priv.port = 27500;
+      H[i].nat = &N[i];
+   }
+   g_host_dark_from = t0 + (uint64_t)c->dark_at_ms * MS;
+   g_host_dark_to = g_host_dark_from + (uint64_t)c->dark_ms * MS;
+   memset(&cc, 0, sizeof(cc));
+   cc.send = server_send;
+   cc.random64 = core_rand;
+   cc.log = core_log;
+   cc.lobby_ms = c->lobby_ms;
+   g_core = relay_core_create(&cc);
+   memset(&nc, 0, sizeof(nc));
+   nc.protocol = "gpSP v1.0";
+   for (i = 0; i < 2; i++)
+   {
+      sk[i].ctx = (void *)(intptr_t)i;
+      sk[i].send = sk_send;
+      sk[i].recv = sk_recv;
+      memset(&cfg[i], 0, sizeof(cfg[i]));
+      cfg[i].server_ip_be = SERVER_IP;
+      cfg[i].server_port = SERVER_PORT;
+      cfg[i].is_host = i == 0;
+      strcpy(cfg[i].code, "ZAZA");
+      memcpy(cfg[i].build, "gbadhoc-test-b1", 15);
+      cfg[i].priv_ip_be = H[i].priv.ip;
+      cfg[i].priv_port = H[i].priv.port;
+      cfg[i].direct = 1;
+      cfg[i].now_us = now_us;
+      cfg[i].log = cli_log;
+      cfg[i].log_user = (void *)(i ? "guest" : "host");
+      memset(&app[i], 0, sizeof(app[i]));
+      app[i].name = i ? "guest" : "host";
+      memset(&cb[i], 0, sizeof(cb[i]));
+      cb[i].user = &app[i];
+      cb[i].deliver = app_deliver;
+      cb[i].session_started = app_started;
+      cb[i].peer_connected = app_connected;
+      cb[i].peer_disconnected = app_disconnected;
+      cb[i].session_stopped = app_stopped;
+   }
+   rt[0] = relay_transport_create(&sk[0], &cfg[0]);
+   last_flush = g_now;
+   t_end = t0 + ((uint64_t)c->join_at_ms + 40000) * MS;
+   for (; g_now < t_end; g_now += MS)
+   {
+      net_step();
+      relay_core_tick(g_core, g_now / 1000);
+      if (c->flush_every_ms && g_now - last_flush >= (uint64_t)c->flush_every_ms * MS)
+      {
+         memset(N[0].m, 0, sizeof(N[0].m));   /* carrier NAT: a new mapping */
+         last_flush = g_now;
+      }
+      if (!nd[0])
+      {
+         if (relay_transport_poll(rt[0]) == RL_ST_IN_ROOM)
+         {
+            snprintf(code0, sizeof(code0), "%s", relay_transport_code(rt[0]));
+            relay_transport_iface(rt[0], &tp[0]);
+            nc.join_nonce = 0xF00D;
+            nd[0] = netdrv_create(&tp[0], &cb[0], &nc);
+            netdrv_host(nd[0]);
+         }
+         continue;
+      }
+      if (!rt[1] && g_now >= t0 + (uint64_t)c->join_at_ms * MS)
+         rt[1] = relay_transport_create(&sk[1], &cfg[1]);
+      if (rt[1] && !nd[1] && relay_transport_poll(rt[1]) == RL_ST_IN_ROOM)
+      {
+         relay_transport_iface(rt[1], &tp[1]);
+         nc.join_nonce = 0xBEEF;
+         nd[1] = netdrv_create(&tp[1], &cb[1], &nc);
+         netdrv_join(nd[1]);
+      }
+      for (i = 0; i < 2; i++)
+      {
+         if (!nd[i])
+            continue;
+         netdrv_pump(nd[i], g_now);
+         if (netdrv_active(nd[i]) && netdrv_peer_count(nd[i]) > 0 &&
+             sent[i] < N_PAY && (g_now / MS) % 16 == (unsigned)i * 8)
+         {
+            uint8_t p[8];
+            uint32_t v = (uint32_t)sent[i];
+            memcpy(p, &v, 4);
+            memset(p + 4, 0xA5, 4);
+            if (netdrv_send(nd[i], ND_RELIABLE | ND_FLUSH_HINT, p, sizeof(p),
+                            i ? 0 : 1) == 0)
+               sent[i]++;
+         }
+      }
+      if (app[0].got >= (uint32_t)N_PAY && app[1].got >= (uint32_t)N_PAY)
+         break;
+   }
+   relay_transport_stats(rt[0], &st);
+   if (!nd[0] || strcmp(code0, "ZAZA") || strcmp(relay_transport_code(rt[0]), "ZAZA"))
+   {
+      printf("FAIL %s: host room code %s\n", c->name, relay_transport_code(rt[0]));
+      ok = 0;
+   }
+   if (app[0].got != (uint32_t)N_PAY || app[1].got != (uint32_t)N_PAY ||
+       app[0].bad || app[1].bad)
+   {
+      printf("FAIL %s: payloads host got %u, guest got %u (join at %u s)\n",
+             c->name, app[0].got, app[1].got, c->join_at_ms / 1000);
+      ok = 0;
+   }
+   if (c->want_reenter ? !st.reenters : st.reenters != 0)
+   {
+      printf("FAIL %s: reenters=%u\n", c->name, st.reenters);
+      ok = 0;
+   }
+   if (ok)
+      printf("ok   %-36s joined at %us, reenters=%u keeps=%u/%u\n", c->name,
+             c->join_at_ms / 1000, st.reenters, st.keeps_tx, st.keeps_rx);
+   for (i = 0; i < 2; i++)
+   {
+      if (nd[i])
+         netdrv_destroy(nd[i]);
+      if (rt[i])
+         relay_transport_destroy(rt[i]);
+   }
+   relay_core_destroy(g_core);
+   g_host_dark_from = g_host_dark_to = 0;
+   return ok;
+}
+
 int main(int argc, char **argv)
 {
    static const case_t cases[] = {
@@ -531,13 +711,21 @@ int main(int argc, char **argv)
       { "host NAT forgets: relay",          NAT_CONE, NAT_CONE, 0, 0, 0, 0, 6000 },
       { "short NAT timeout (5 s): direct",  NAT_CONE, NAT_CONE, 0, 1, 0, 5000, 0 },
    };
-   unsigned i, fails = 0;
+   static const lobby_t lobbies[] = {
+      /* name                                   nat      nat_to flush  lobby  dark@  dark   join@   reenter */
+      { "lobby: carrier NAT 30 s, join 5 min",  NAT_SYM, 30000, 0,     0,     0,     0,     300000, 0 },
+      { "lobby: NAT re-maps every 45 s",        NAT_SYM, 30000, 45000, 0,     0,     0,     200000, 0 },
+      { "lobby: 25 s off the air at 40 s",      NAT_SYM, 30000, 0,     0,     40000, 25000, 120000, 1 },
+      { "lobby: server limit 60 s, join 3 min", NAT_SYM, 30000, 0,     60000, 0,     0,     180000, 1 },
+   };
+   unsigned i, fails = 0, n = 0;
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");
-   for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+   for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++, n++)
       if (!run_case(&cases[i]))
          fails++;
-   printf("%s: %u/%u cases\n", fails ? "FAILED" : "PASS",
-          (unsigned)(sizeof(cases) / sizeof(cases[0])) - fails,
-          (unsigned)(sizeof(cases) / sizeof(cases[0])));
+   for (i = 0; i < sizeof(lobbies) / sizeof(lobbies[0]); i++, n++)
+      if (!run_lobby(&lobbies[i]))
+         fails++;
+   printf("%s: %u/%u cases\n", fails ? "FAILED" : "PASS", n - fails, n);
    return fails ? 1 : 0;
 }

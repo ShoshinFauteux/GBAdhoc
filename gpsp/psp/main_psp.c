@@ -8442,6 +8442,10 @@ static void link_amount(char *out, size_t cap, uint32_t done, uint32_t total)
 
 /* A setup that did not become a link, in two lines (docs/GBA-LINK-UI.md,
  * the wording table).  No RFU, mirror or lockstep anywhere. */
+/* in .data, not .rodata, on purpose: .data has room before its pinned
+ * neighbour, .rodata moves instance A's tables (docs/LAYOUT-PINNING.md) */
+static char s_link_bios[] = "One PSP lacks gba_bios.bin.";
+
 static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
                            char *l2, size_t c2)
 {
@@ -8469,6 +8473,8 @@ static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
                "hack.");
       snprintf(l2, c2, "Both PSPs need the same ROM.");
    }
+   else if (e == FE_GBLINK_E_BIOS)
+      snprintf(l1, c1, "%s", s_link_bios);
    else if (e == FE_GBLINK_E_MEMORY || e == FE_GBLINK_E_START)
    {
       snprintf(l1, c1, "The link could not start: not enough memory.");

@@ -263,6 +263,13 @@ typedef struct fe_gblink_local
  * points read slot 1 mid-frame, so both consoles must step alike: the host
  * decides, and an older build on either side means it is off. */
 #define FE_GBLINK_MASK_ARMED_BATCH 0x4u
+/* strict: this console runs the built-in open BIOS, not a real one (no
+ * gba_bios.bin, or the core forced it for the ROM).  The BIOS is in no save state and both machines run
+ * on it, so an official BIOS on one console and another on the other fall out
+ * of step at the first BIOS call (the first HASH, 4 s in: the 2026-11-05
+ * PPSSPP-vs-Go desync).  Set = "open" so that a build without the bit reads
+ * as real: the common case still links with one. */
+#define FE_GBLINK_MASK_BIOS_OTHER  0x8u
 #define FE_GBLINK_MASK_NEGOTIABLE  (FE_GBLINK_MASK_INPUT_BATCH | \
                                     FE_GBLINK_MASK_ARMED_BATCH)
 #define FE_GBLINK_HOSTCAP_NEGOTIATE 0x02u /* in the host's HELLO role byte     */
@@ -300,7 +307,8 @@ enum fe_gblink_error
    FE_GBLINK_E_PEER_ABORT,
    FE_GBLINK_E_COMMIT,          /* agreed, but the save write failed */
    FE_GBLINK_E_LOCAL,           /* we ended it before it started */
-   FE_GBLINK_E_NO_PEER          /* nobody answered within the connect time */
+   FE_GBLINK_E_NO_PEER,         /* nobody answered within the connect time */
+   FE_GBLINK_E_BIOS             /* one real GBA BIOS, one built-in (strict mask) */
 };
 
 /* Step results */
