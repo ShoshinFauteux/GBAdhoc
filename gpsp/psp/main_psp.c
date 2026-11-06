@@ -5156,14 +5156,13 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
  *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
  *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
  *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
- *           ROM is in (memory heap-exhausted-by-design), so it is carved at
- *           boot from the netdrv arena's tail, after the wake frame and the
- *           state thumbnails -- the same free real estate, no heap cost.  No
- *           room there (the arena reservation failed): the shot is a BMP.
+ *           ROM is in (memory heap-exhausted-by-design), so it borrows the
+ *           netdrv arena (netdrv_arena_borrow) for the encode: reserved at
+ *           boot for wireless and idle whenever no session is up, so no
+ *           heap of its own.  Arena lent to a session, or never reserved:
+ *           the shot is a BMP (toast "Screenshot saved (as BMP)").
  *   cost    one-off, on the emulation thread, with the power switch held
  *           off for the write (EVT screenshot ... us=). */
-static uint8_t *g_shot_work;
-static size_t   g_shot_work_bytes;
 static char     g_shot_rom[PSP_FILE_PATH_CAP];   /* the running game's path */
 
 static int shot_fd_write(void *ctx, const void *d, size_t n)
@@ -5194,7 +5193,8 @@ static int shot_folder(char *dir, size_t cap)
 }
 
 static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
-                          unsigned h, size_t pitch, fe_png_info *info)
+                          unsigned h, size_t pitch, fe_png_info *info,
+                          uint8_t *work, size_t work_bytes)
 {
    SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    int rc, crc;
@@ -5206,7 +5206,7 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
 #else
                       FE_PNG_RGB565,
 #endif
-                      g_shot_work, g_shot_work_bytes, shot_fd_write, &fd,
+                      work, work_bytes, shot_fd_write, &fd,
                       info);
    crc = sceIoClose(fd);
    if (rc != 0 || crc < 0)
@@ -5230,6 +5230,8 @@ static void player_screenshot(void)
    struct tm tmv;
    int png, rc = -1;
    SceIoStat st;
+   size_t work_bytes = 0;
+   uint8_t *work = NULL;
 
    memset(&info, 0, sizeof(info));
    if (state_preview_src(&pix, &pitch, &w, &h) != 0)
@@ -5239,8 +5241,14 @@ static void player_screenshot(void)
    }
    pwr_hold("screenshot");
    t0 = sceKernelGetSystemTimeLow();
-   png = g_pcfg.shot_format == PCFG_SHOT_PNG && g_shot_work &&
-         g_shot_work_bytes >= fe_png_work_bytes(w, h);
+   if (g_pcfg.shot_format == PCFG_SHOT_PNG)
+   {
+      /* Lent only while no driver lives in it; handed back below, before
+       * this thread can reach anything that starts a session. */
+      work_bytes = fe_png_work_bytes(w, h);
+      work = (uint8_t *)netdrv_arena_borrow(work_bytes);
+   }
+   png = work != NULL;
    now = psp_local_wallclock();     /* local time, held as if UTC */
    memset(&tmv, 0, sizeof(tmv));
    gmtime_r(&now, &tmv);
@@ -5265,7 +5273,8 @@ static void player_screenshot(void)
    if (path[0])
    {
       if (png)
-         rc = shot_write_png(path, pix, w, h, pitch, &info);
+         rc = shot_write_png(path, pix, w, h, pitch, &info, work,
+                             work_bytes);
       else
 #ifdef USE_PSP_RGB565_FORMAT
          rc = fe_bmp_write_psp565(path, pix, w, h, pitch);
@@ -5273,6 +5282,7 @@ static void player_screenshot(void)
          rc = fe_bmp_write_rgb565(path, pix, w, h, pitch);
 #endif
    }
+   netdrv_arena_return(work);
    us = sceKernelGetSystemTimeLow() - t0;
    pwr_release();
    FE_EVT_ONLY(us);
@@ -14088,28 +14098,29 @@ int main(int argc, char *argv[])
        *
        * In order: netdrv, the wake overlay's frozen frame, the menu's five
        * state thumbnails (the Save/Load state screens show them in game,
-       * where the heap is gone, docs/UI-OVERLAY.md), the screenshot encoder's
-       * work memory (issue #13).  All of them cost nothing beyond this block,
-       * and each is laid out on a 64-byte line. */
+       * where the heap is gone, docs/UI-OVERLAY.md).  Both cost nothing
+       * beyond this block, and each is laid out on a 64-byte line.
+       *
+       * The screenshot encoder's work memory (issue #13, 206,912 B for a
+       * GBA frame) is NOT a fourth tenant any more: it borrows netdrv's own
+       * part, which is idle whenever no session is up
+       * (netdrv_arena_borrow; player_screenshot falls back to BMP while a
+       * session holds it).  That was 6.3 ROM-cache pages held for every
+       * player for a one-off encode. */
       size_t need = netdrv_sizeof();
-      size_t shot = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
-      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES +
-                    63u + shot;
+      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES;
       void  *blk  = malloc(take);
       if (blk)
       {
-         uint8_t *lo;
-         netdrv_set_arena(blk, take);
+         netdrv_set_arena(blk, need);
          g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
          g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
                                      WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
-         lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES + 63u) &
-                          ~63u);
-         g_shot_work = lo;
-         g_shot_work_bytes = (size_t)((uint8_t *)blk + take - lo);
-         fe_evt("shot_work bytes=%u want=%u ok",
-                (unsigned)g_shot_work_bytes, (unsigned)shot);
+         fe_evt("shot_work bytes=%u want=%u %s", (unsigned)need,
+                (unsigned)fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT),
+                need >= fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT)
+                   ? "borrow" : "bmp-only");
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
              (unsigned)need, (unsigned)take, blk ? "reserved" : "FAILED",
