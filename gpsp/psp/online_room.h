@@ -19,10 +19,11 @@ static inline void online_room_request(int is_host, int typed, const char *shown
    /* a host asks for a room code (four letters); a joiner sends what is on
     * screen: a room code, or an 8/11-character invite code that the online
     * module decodes (claude/online-desktophost) */
-   if (is_host)
-      snprintf(out, 5, "%s", typed ? shown : "");
-   else
-      snprintf(out, 16, "%s", shown);
+   int i = 0;
+   if (!is_host || typed)
+      for (; i < (is_host ? 4 : 15) && shown[i]; i++)
+         out[i] = shown[i];
+   out[i] = 0;
 }
 
 #endif
