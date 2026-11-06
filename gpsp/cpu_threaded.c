@@ -233,7 +233,24 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
+#if defined(RUNTIME_JIT_CACHE)
+/* The SMALL tier's table is static (ROM_BRANCH_HASH_SIZE, sized for its 2 MiB
+ * cache); the LARGE tier's 64 K-bucket table rides at the end of its heap
+ * block (dynarec_select_translation_caches).  The lookup reads the shift, so
+ * the bucket of a key is the top ROM_BRANCH_HASH_BITS of the product on
+ * either tier. */
+u32 rom_branch_hash_static[ROM_BRANCH_HASH_SIZE];
+u32 *rom_branch_hash = rom_branch_hash_static;
+u32 rom_branch_hash_shift = 32 - ROM_BRANCH_HASH_BITS;
+u32 rom_branch_hash_n = ROM_BRANCH_HASH_SIZE;
+#define ROM_BRANCH_HASH_SHIFT   rom_branch_hash_shift
+#define ROM_BRANCH_HASH_N       rom_branch_hash_n
+#define ROM_BRANCH_HASH_LARGE_BYTES ((u32)(4u << ROM_BRANCH_HASH_BITS_LARGE))
+#else
 u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
+#define ROM_BRANCH_HASH_SHIFT   (32 - ROM_BRANCH_HASH_BITS)
+#define ROM_BRANCH_HASH_N       ROM_BRANCH_HASH_SIZE
+#endif
 
 typedef struct
 {
@@ -3884,8 +3901,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
     case 0x8 ... 0xD:                                                         \
     {                                                                         \
       u32 key = pc | thumb;                                                   \
-      u32 hash_target = ((key * 2654435761U) >> (32 - ROM_BRANCH_HASH_BITS))  \
-                                              & (ROM_BRANCH_HASH_SIZE - 1);   \
+      u32 hash_target = (key * 2654435761U) >> ROM_BRANCH_HASH_SHIFT;         \
                                                                               \
       hashhdr_type *bhdr;                                                     \
       u32 blk_offset = rom_branch_hash[hash_target];                          \
@@ -11995,7 +12011,7 @@ void flush_translation_cache_rom(void)
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
-  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+  memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
 #ifdef VRAM_EXEC
   vram_code_forget();
 #endif
@@ -12113,7 +12129,7 @@ void init_dynarec_caches(void)
   jit_code_owner_changed(JOWN_INIT);
 #endif
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
-  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+  memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
 #ifdef VRAM_EXEC
   vram_code_forget();
 #endif
@@ -12191,8 +12207,10 @@ const char *jit_cache_reason = "undecided";
  * across its loop, and 4 MiB for what the frontend allocates after the load
  * (frame buffer, sound ring, ME stages -- each a few hundred KiB). */
 #define JIT_LARGE_HEADROOM  ((u32)(ROM_BUFFER_SIZE + 1 + 4) * 1024u * 1024u)
+/* The LARGE tier's ROM hash table (64 K buckets) is the block's tail. */
 #define JIT_LARGE_BYTES     ((u32)(ROM_TRANSLATION_CACHE_SIZE_LARGE + \
-                                   RAM_TRANSLATION_CACHE_SIZE_LARGE))
+                                   RAM_TRANSLATION_CACHE_SIZE_LARGE + \
+                                   ROM_BRANCH_HASH_LARGE_BYTES))
 /* Cache-line alignment.  The emitter itself only needs 4 (the static arrays
  * are .align 2); 64 keeps every sync range line-exact.
  * LAYOUT_PIN (gpsp_config.h): align to the I-cache WAY instead and start the
@@ -12331,6 +12349,11 @@ void dynarec_select_translation_caches(void)
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  rom_branch_hash       = (u32 *)(ram_translation_cache +
+                                  RAM_TRANSLATION_CACHE_SIZE_LARGE);
+  rom_branch_hash_shift = 32 - ROM_BRANCH_HASH_BITS_LARGE;
+  rom_branch_hash_n     = 1u << ROM_BRANCH_HASH_BITS_LARGE;
+  memset(rom_branch_hash, 0, ROM_BRANCH_HASH_LARGE_BYTES);
   jit_cache_tier   = JIT_CACHE_LARGE;
   jit_cache_reason = "heap_ok";
 #ifdef JIT_CODE_DISCIPLINE
@@ -12388,6 +12411,10 @@ void dynarec_release_translation_caches(void)
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  rom_branch_hash       = rom_branch_hash_static;
+  rom_branch_hash_shift = 32 - ROM_BRANCH_HASH_BITS;
+  rom_branch_hash_n     = ROM_BRANCH_HASH_SIZE;
+  memset(rom_branch_hash, 0, sizeof(rom_branch_hash_static));
   gamepak_spare_pool       = NULL;
   gamepak_spare_pool_bytes = 0;
   jit_cache_last_tier = jit_cache_tier;
@@ -12620,7 +12647,7 @@ void jit_code_meta_(u8 *lo, u8 *hi)
   if (lo < rom_translation_cache ||
       hi > rom_translation_cache + rom_translation_cache_size) {
     if (!(lo >= (u8 *)rom_branch_hash &&
-          hi <= (u8 *)(rom_branch_hash + ROM_BRANCH_HASH_SIZE)))
+          hi <= (u8 *)(rom_branch_hash + ROM_BRANCH_HASH_N)))
       jit_check_fail("metadata outside the ROM zone", lo, hi);
     return;
   }

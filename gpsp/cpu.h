@@ -262,7 +262,11 @@ extern u32 xlat_sp_min;
 void xlat_depth_probe_reset(void);
 #endif
 
+#if defined(RUNTIME_JIT_CACHE)
+extern u32 *rom_branch_hash;   /* the static SMALL table, or the LARGE tier's */
+#else
 extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
+#endif
 
 void flush_translation_cache_rom(void);
 void flush_translation_cache_ram(void);
