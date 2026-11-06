@@ -633,6 +633,12 @@ def suites(env: Env, baseline: Path | None):
           "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "
           "/tmp/t_review_network_psp")),
 
+        # The dynarec SMC tables' block: a refused malloc fails the game
+        # load instead of abort()ing (instance B's session start on a
+        # starved PSP-1000 heap), and init/release cycles balance.  Mutants.
+        ("xs_heap_refuse", True, lambda: None,
+         "python3 tools/tests/test_xs_heap_refuse.py"),
+
         ("sound_timer_step", True, lambda: None,
          ("gcc -std=gnu99 -Wall -Wextra -Wno-old-style-declaration "
           "-ffunction-sections -fdata-sections -DINLINE=inline -I. "
