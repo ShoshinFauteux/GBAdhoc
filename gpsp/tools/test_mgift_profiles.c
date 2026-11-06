@@ -29,15 +29,27 @@ static struct { int exists; netData values[17]; } profiles[11];
 static int created, deleted, fail_param = -1, fail_copy, corrupt_copy;
 static int require_ready, apctl_ready, connected_slot;
 int sceWlanGetSwitchState(void) { return 1; }
-int sceUtilityLoadNetModule(int module) { (void)module; return 0; }
-int sceUtilityUnloadNetModule(int module) { (void)module; return 0; }
+/* need_common: GetNetParam fails until PSP_NET_MODULE_COMMON is loaded (the
+ * firmware behaviour the picker must survive if it is real).  load_rc forces
+ * a load result, e.g. "already loaded". */
+static int need_common, common_loaded, loads, unloads, load_rc;
+int sceUtilityLoadNetModule(int module)
+{
+   if (module == PSP_NET_MODULE_COMMON) { loads++; if (load_rc) return load_rc; common_loaded = 1; }
+   return 0;
+}
+int sceUtilityUnloadNetModule(int module)
+{
+   if (module == PSP_NET_MODULE_COMMON) { unloads++; assert(common_loaded); common_loaded = 0; }
+   return 0;
+}
 int sceNetInit(int a,int b,int c,int d,int e) { (void)a;(void)b;(void)c;(void)d;(void)e;return 0; }
 int sceNetTerm(void) { return 0; }
 int sceNetInetInit(void) { return 0; }
 int sceNetInetTerm(void) { return 0; }
 int sceNetApctlInit(int a,int b) { (void)a;(void)b;apctl_ready=1;return 0; }
 int sceNetApctlTerm(void) { apctl_ready=0;return 0; }
-int sceNetApctlConnect(int slot) { assert(apctl_ready);connected_slot=slot;return 0; }
+int sceNetApctlConnect(int slot) { assert(apctl_ready);if(!profiles[slot].exists)return (int)0x80410A0B;connected_slot=slot;return 0; }
 int sceNetApctlDisconnect(void) { connected_slot=0;return 0; }
 int sceNetApctlGetState(int *s) { *s=connected_slot?PSP_NET_APCTL_STATE_GOT_IP:PSP_NET_APCTL_STATE_DISCONNECTED;return 0; }
 int sceNetApctlGetInfo(int code,union SceNetApctlInfo *info) { (void)code;strcpy(info->ip,"192.168.1.20");return 0; }
@@ -48,6 +60,7 @@ int sceUtilityCheckNetParam(int id) { return profiles[id].exists ? 0 : -1; }
 int sceUtilityGetNetParam(int id, int param, netData *out)
 {
    assert(!require_ready || apctl_ready);
+   if (need_common && !common_loaded) return (int)0x80110601;
    if (!profiles[id].exists) return -1;
    *out = profiles[id].values[param];
    return 0;
@@ -92,6 +105,7 @@ static void reset(void)
 {
    memset(profiles, 0, sizeof(profiles));
    Cprofile_slot = created = deleted = fail_copy = corrupt_copy = 0;
+   need_common = common_loaded = loads = unloads = load_rc = 0;
    fail_param = -1;
 }
 int main(void)
@@ -137,6 +151,48 @@ int main(void)
    add(10, "Phone", MGNET_AUTO_SSID, 0);
    assert(mgnet_profile_ensure(MGNET_AUTO_SSID, "") == 10 && !created);
 
+   /* The picker's slot list.  The XMB never compacts slots: the owner's Go
+    * had its only connection away from slot 1, and the old probe stopped at
+    * the first gap, so it listed nothing ("?") and joined empty slot 1. */
+   {
+      unsigned char sl[10];
+      memset(sl, 0, sizeof(sl));
+      reset(); add(2, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);
+      assert(mgnet_config_list(sl, 10) == 1 && sl[0] == 2 && mgnet_config_count() == 1);
+      assert(!loads && !unloads);                 /* found: no module load */
+      add(5, "Home", "Home", 2); add(10, "Cafe", "Cafe", 0);
+      assert(mgnet_config_list(sl, 10) == 3 && sl[0] == 2 && sl[1] == 5 && sl[2] == 10);
+      assert(mgnet_config_list(sl, 2) == 3 && sl[1] == 5);   /* max respected */
+      assert(mgnet_config_list(NULL, 0) == 3);
+      /* Manual choice of a non-first slot connects THAT slot. */
+      assert(mgnet_wifi_up(5, 0) == MGNET_OK && connected_slot == 5 && !created);
+      mgnet_wifi_down();
+      /* Firmware that wants the common module first: one load, one unload,
+       * the same answer, nothing left loaded. */
+      reset(); need_common = 1; add(3, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);
+      assert(mgnet_config_list(sl, 10) == 1 && sl[0] == 3);
+      assert(loads == 1 && unloads == 1 && !common_loaded);
+      /* No connections at all: still balanced, and Automatic remains. */
+      reset(); need_common = 1;
+      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && unloads == 1);
+      reset();
+      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && unloads == 1);
+      /* A load that did not succeed here ("already loaded") is not undone. */
+      reset(); load_rc = (int)0x80110F02;
+      assert(mgnet_config_list(sl, 10) == 0 && loads == 1 && !unloads);
+      /* With the radio up the probe never touches the modules. */
+      reset(); add(1, "Home", "Home", 0);
+      assert(mgnet_wifi_up(1, 0) == MGNET_OK);
+      loads = unloads = 0; profiles[1].exists = 0;
+      assert(mgnet_config_list(sl, 10) == 0 && !loads && !unloads);
+      mgnet_wifi_down();
+      /* A failed connect keeps its SCE code for the on-screen message. */
+      reset(); add(2, "GBAdhoc Relay", MGNET_AUTO_SSID, 0);
+      assert(mgnet_wifi_up(1, 0) == MGNET_ERR_CONNECT);
+      assert(mgnet_last_sce() == 0x80410A0Bu && !strcmp(mgnet_stage(), "apctl_connect"));
+      assert(!common_loaded && !apctl_ready);
+   }
+
    assert(!mgift_shortcut_update(PSP_CTRL_SELECT, 1, &consumed));
    assert(mgift_shortcut_update(chord, 1, &consumed) && consumed == chord);
    for (i = 0; i < 120; i++) assert(!mgift_shortcut_update(chord, 1, &consumed));
@@ -179,6 +235,6 @@ int main(void)
                                          1, &consumed) &&
              consumed == (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER));
    }
-   puts("PASS: Automatic profile reuse/create/failure cleanup and Select+Down debounce/consumption");
+   puts("PASS: Automatic profile reuse/create/failure cleanup, gapped slot list, and Select+Down debounce/consumption");
    return 0;
 }

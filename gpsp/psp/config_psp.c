@@ -416,7 +416,7 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(volume,               0, 100, PCFG_VOLUME_DEFAULT);
    PCFG_CHK(quick_save_ask,       0, 1, 0);
    PCFG_CHK(online_play,          0, 1, 0);
-   PCFG_CHK(online_wifi,          1, 10, 1);
+   PCFG_CHK(online_wifi,          0, 10, 1);   /* 0 = Automatic */
    /* A range check cannot say "one of 0, 222, 333": snap says it. */
    if (g_pcfg.cpu_clock != pcfg_clock_snap(g_pcfg.cpu_clock))
    {

@@ -102,7 +102,11 @@ int  mgnet_profile_ensure(const char *ssid, const char *key);
 /* Failure cleanup: delete only a profile created by the current attempt. */
 void mgnet_profile_release(void);
 
-/* Stored network profiles, for the picker.  index is 1-based. */
+/* Stored network profiles, for the picker.  Slots are 1-based and may have
+ * gaps (the XMB does not compact them), so the list is of slot NUMBERS:
+ * mgnet_config_list fills out[0..max) with the existing slots in ascending
+ * order and returns how many exist; count is the same without the list. */
+int  mgnet_config_list(unsigned char *out, int max);
 int  mgnet_config_count(void);
 int  mgnet_config_name(int index, char *out, unsigned out_sz);
 

@@ -1174,6 +1174,57 @@ int ui_home_press(void)
    return 1;
 }
 
+/* THE NETWORK PICKER, shared by the Online and Mystery Gift screens.  The
+ * choices are Automatic (0: the open "Mystery Gift" hotspot profile, see
+ * mgnet_wifi_up) and every saved connection, by slot NUMBER: the XMB never
+ * compacts its slots, so a console's only connection can sit in slot 2 with
+ * slot 1 empty (the owner's PSP Go).  Read once per visit, in screen_to. */
+static unsigned char g_net_slot[10];
+static int g_net_n;
+static int g_mg_conf;            /* the Mystery Gift choice; see screen_mgift */
+
+static int net_choice_valid(int sel)
+{
+   int i;
+   if (sel == 0)
+      return 1;
+   for (i = 0; i < g_net_n; i++)
+      if (g_net_slot[i] == sel)
+         return 1;
+   return 0;
+}
+
+/* Left/right over [Automatic, slot, slot...], wrapping. */
+static int net_choice_step(int sel, int dir)
+{
+   int i, pos = 0;
+   for (i = 0; i < g_net_n; i++)
+      if (g_net_slot[i] == sel)
+         pos = i + 1;
+   pos = (pos + dir + g_net_n + 1) % (g_net_n + 1);
+   return pos ? g_net_slot[pos - 1] : 0;
+}
+
+static void net_choice_label(int sel, char *out, unsigned cap)
+{
+   if (sel <= 0)
+      snprintf(out, cap, "Automatic (Mystery Gift)");
+   else if (mgnet_config_name(sel, out, cap) != 0 || !out[0])
+      snprintf(out, cap, "connection %d", sel);
+}
+
+/* Default: the saved choice while it still exists, else the first saved
+ * connection, else Automatic.  Not marked dirty: nothing the player chose. */
+static void net_choices_read(void)
+{
+   int n = mgnet_config_list(g_net_slot, (int)sizeof(g_net_slot));
+   g_net_n = n < 0 ? 0 : n > (int)sizeof(g_net_slot) ? (int)sizeof(g_net_slot) : n;
+   if (!net_choice_valid(g_pcfg.online_wifi))
+      g_pcfg.online_wifi = g_net_n ? g_net_slot[0] : 0;
+   if (!net_choice_valid(g_mg_conf))
+      g_mg_conf = 0;
+}
+
 static void screen_to(int scr)
 {
    static const char *names[] __attribute__((unused)) =
@@ -1191,6 +1242,8 @@ static void screen_to(int scr)
    g_slot_ask_back = 0;
    g_slot_save_back = 0;
    g_slot_note[0] = '\0';
+   if (scr == SCR_ONLINE || scr == SCR_MGIFT)
+      net_choices_read();
    if (scr == SCR_SETTINGS)
    {
       g_profile_at_open = g_pcfg.me_mode;
@@ -4206,14 +4259,14 @@ int ui_online_take(int *is_host, char code[5], int *cable, int *wifi)
    *is_host = r == 1;
    snprintf(code, 5, "%s", g_ol_code);
    *cable = g_ol_cable;
-   *wifi = g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1;
+   *wifi = g_pcfg.online_wifi;       /* 0 = Automatic; screen_to checked it */
    return 1;
 }
 
 static ui_action screen_online(unsigned edges)
 {
    char net[48];
-   int i, nw, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
+   int i, ask = g_pcfg.console == FE_CONSOLE_GBA && ui_host_mode() == UI_HOST_ASK;
    if (g_ol_pos >= 0)
    {
       /* editing the code: up/down change the letter, left/right move */
@@ -4249,13 +4302,9 @@ static ui_action screen_online(unsigned edges)
       }
       if (g_cursor == OL_NET && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
       {
-         int n = online_psp_wifi_count();
-         if (n > 0)
-         {
-            int w = g_pcfg.online_wifi + ((edges & PSP_CTRL_LEFT) ? -1 : 1);
-            g_pcfg.online_wifi = w < 1 ? n : w > n ? 1 : w;
-            g_settings_dirty = 1;
-         }
+         g_pcfg.online_wifi = net_choice_step(g_pcfg.online_wifi,
+                                              (edges & PSP_CTRL_LEFT) ? -1 : 1);
+         g_settings_dirty = 1;
       }
       if (g_cursor == OL_MODE && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
          g_ol_cable = !g_ol_cable;
@@ -4294,10 +4343,7 @@ static ui_action screen_online(unsigned edges)
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, s_ol_title);
    vid_text(22, 72, s_ol_line, C_DIM);
-   nw = online_psp_wifi_count();
-   if (nw <= 0 || online_psp_wifi_name(g_pcfg.online_wifi > 0 ? g_pcfg.online_wifi : 1,
-                                       net, sizeof(net)) != 0)
-      snprintf(net, sizeof(net), "%s", "?");
+   net_choice_label(g_pcfg.online_wifi, net, sizeof(net));
    for (i = 0; i < OL_COUNT; i++)
    {
       int y = WL_ROW_Y0 + i * 22, sel = g_cursor == i && g_ol_pos < 0;
@@ -4445,8 +4491,6 @@ enum { MGF_NET, MGF_START, MGF_BACK, MGF_COUNT };
 
 /* 0 = AUTOMATIC: select/create the open Mystery Gift hotspot profile.
  * A nonzero selection overrides this with a saved PSP connection. */
-static int g_mg_conf;
-
 int ui_mgift_conf(void) { return g_mg_conf; }
 
 static ui_action screen_mgift(unsigned edges)
@@ -4454,7 +4498,6 @@ static ui_action screen_mgift(unsigned edges)
    const char *l1 = mgift_ui_line1();
    const char *l2 = mgift_ui_line2();
    int  running   = mgift_ui_active();
-   int  nconf     = mgnet_config_count();
    static char cname[36];
 
    if (edges & PSP_CTRL_UP)
@@ -4466,13 +4509,13 @@ static ui_action screen_mgift(unsigned edges)
     * association would mean tearing the radio down mid-transfer. */
    if (!running && g_cursor == MGF_NET)
    {
-      /* 0..nconf, wrapping: 0 is Automatic and is always offered, even when the
-       * console has no saved connections at all -- which is exactly the case
-       * Automatic exists for. */
+      /* Automatic and every saved slot, wrapping (net_choice_step): 0 is
+       * always offered, even when the console has no saved connections at
+       * all -- which is exactly the case Automatic exists for. */
       if (edges & PSP_CTRL_LEFT)
-         g_mg_conf = (g_mg_conf <= 0) ? nconf : g_mg_conf - 1;
+         g_mg_conf = net_choice_step(g_mg_conf, -1);
       if (edges & PSP_CTRL_RIGHT)
-         g_mg_conf = (g_mg_conf >= nconf) ? 0 : g_mg_conf + 1;
+         g_mg_conf = net_choice_step(g_mg_conf, 1);
    }
 
    /* O backs out but deliberately does NOT stop the listener: a gift can be
@@ -4516,10 +4559,7 @@ static ui_action screen_mgift(unsigned edges)
    /* Name the profile, so "which network is this going to join" is answered on
     * screen instead of guessed.  No profiles at all is the one failure worth
     * spelling out in full -- it is a trip to XMB, not a retry. */
-   if (g_mg_conf == 0)
-      snprintf(cname, sizeof(cname), "Automatic (Mystery Gift)");
-   else if (mgnet_config_name(g_mg_conf, cname, sizeof(cname)) != 0 || !cname[0])
-      snprintf(cname, sizeof(cname), "connection %d", g_mg_conf);
+   net_choice_label(g_mg_conf, cname, sizeof(cname));
 
    wl_row_at(WL_ROW_Y0, g_cursor == MGF_NET, !running, "Network", cname);
    wl_row(1, g_cursor == MGF_START,

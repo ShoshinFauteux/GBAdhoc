@@ -9707,10 +9707,12 @@ static void mgift_start_io(void)
       case MGNET_ERR_CONNECT:
       case MGNET_ERR_CONNECT_TIMEOUT:
          snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not join the network");
-         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the phone hotspot on?");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the hotspot on? (%s 0x%08X)",
+                  mgnet_stage(), mgnet_last_sce());
          break;
       default:
-         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s)", mgnet_stage());
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s 0x%08X)",
+                  mgnet_stage(), mgnet_last_sce());
          break;
       }
       osd_toast("%s", g_mg_l1);

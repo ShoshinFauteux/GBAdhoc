@@ -77,21 +77,60 @@ unsigned    mgnet_last_sce(void){ return N.last_sce; }
 int         mgnet_wifi_is_up(void){ return N.progress >= ST_ASSOCIATED; }
 const char *mgnet_local_ip(void){ return N.ip; }
 
-int mgnet_config_count(void)
+/* sceUtilityCheckNetParam returns 0 when the slot EXISTS.  The PSP's own
+ * Network Settings list is 1-based and short; 10 is well past what it shows. */
+#define MGNET_PROFILE_MAX 10
+
+static int probe_slots(unsigned char *out, int max)
 {
    netData d;
    int i, n = 0;
 
-   /* The XMB stores network configurations 1..N with no count to ask for, so
-    * probe until one is missing.  10 is well past what the XMB itself lists. */
-   for (i = 1; i <= 10; i++)
+   /* The XMB never compacts its slots: delete connection 1 and the survivor
+    * stays in slot 2 (the owner's PSP Go held its only connection away from
+    * slot 1).  So every slot is probed and a gap is skipped, never a stop. */
+   for (i = 1; i <= MGNET_PROFILE_MAX; i++)
    {
       memset(&d, 0, sizeof(d));
       if (sceUtilityGetNetParam(i, PSP_NETPARAM_NAME, &d) < 0)
-         break;
-      n = i;
+         continue;
+      if (out && n < max)
+         out[n] = (unsigned char)i;
+      n++;
    }
    return n;
+}
+
+int mgnet_config_list(unsigned char *out, int max)
+{
+   int n = probe_slots(out, max), rc;
+
+   /* Nothing found while the radio is down: read the slots again with the
+    * common net module loaded, in case the firmware will not hand out
+    * parameters without it, then unload it.  Only a load that succeeded here
+    * is undone (an "already loaded" belongs to whoever loaded it), and a
+    * console that really has connections never reaches this, so the normal
+    * picker costs no module load at all and nothing stays resident. */
+   if (n == 0 && N.progress == ST_DOWN)
+   {
+      rc = sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
+      if (rc == 0)
+      {
+         extern volatile int gbadhoc_net_touched __attribute__((weak));
+         if (&gbadhoc_net_touched)
+            gbadhoc_net_touched = 1;
+         n = probe_slots(out, max);
+         sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
+      }
+      fe_evt("mg_profiles retry_with_common rc=0x%08X found=%d",
+             (unsigned)rc, n);
+   }
+   return n;
+}
+
+int mgnet_config_count(void)
+{
+   return mgnet_config_list(NULL, 0);
 }
 
 int mgnet_config_name(int index, char *out, unsigned out_sz)
@@ -278,10 +317,6 @@ void mgnet_wifi_down(void)
 
 /* Only a profile newly created by this attempt may be removed on failure.
  * Existing profiles are borrowed and must never be deleted or overwritten. */
-
-/* sceUtilityCheckNetParam returns 0 when the slot EXISTS.  The PSP's own
- * Network Settings list is 1-based and short; 10 is well past what it shows. */
-#define MGNET_PROFILE_MAX 10
 
 static int profile_name_is_ours(int slot)
 {
