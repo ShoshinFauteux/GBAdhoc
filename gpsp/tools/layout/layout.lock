@@ -9,6 +9,8 @@
 #            release ELF 2f3e3aae (9e41b91e).
 # [lab]:     tools/build.sh lab with RFU_SCHED=1 and tools/layout/lab-pads.env,
 #            recorded from the round-7 lab arm C ELF 0f31d0a6 (9e41b91e).
+# The B-region, hash-table and JIT-base lines were added in round 9 and
+# measured on the round-8 ELFs fb410a57 / 51d607c5 (nm identical to round 7).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -36,6 +38,17 @@ at   reg                                0x1b00
 at   _gp                                0x11f0
 at   iwram                              0x0000
 at   ewram                              0x0000
+# B's region, the hash tables and the JIT bases (0x1500: the code cache's
+# colouring and the hot-data guard depend on it; critique-8 MF3).  _end
+# alone misses a .bss change that grows before them and shrinks after.
+at   gbab_bregion_start                 0x0000
+at   gbab_rom_branch_hash               0x1168
+at   gbab_rom_translation_cache_static  0x1500
+at   gbab_ram_translation_cache_static  0x1500
+at   gbab_bregion_lend                  0x0000
+at   rom_branch_hash                    0x0c68
+at   rom_translation_cache_static       0x1500
+at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
@@ -69,6 +82,17 @@ at   reg                                0x1b00
 at   _gp                                0x11f0
 at   iwram                              0x0000
 at   ewram                              0x0000
+# B's region, the hash tables and the JIT bases (0x1500: the code cache's
+# colouring and the hot-data guard depend on it; critique-8 MF3).  _end
+# alone misses a .bss change that grows before them and shrinks after.
+at   gbab_bregion_start                 0x0000
+at   gbab_rom_branch_hash               0x0168
+at   gbab_rom_translation_cache_static  0x1500
+at   gbab_ram_translation_cache_static  0x1500
+at   gbab_bregion_lend                  0x0000
+at   rom_branch_hash                    0x1c68
+at   rom_translation_cache_static       0x1500
+at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main

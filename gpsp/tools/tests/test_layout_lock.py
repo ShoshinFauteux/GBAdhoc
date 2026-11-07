@@ -6,7 +6,8 @@
 * tools/layout/lab-pads.env names only psp/Makefile pads;
 * on a synthetic nm: write then check passes; a moved symbol, a closed hole,
   a missing pad symbol and a resized `main` each fail (mutants);
-* `solve` gives back the shift a pad needs, after an earlier pad's change.
+* `solve` gives back the shift a pad needs, after an earlier pad's change;
+* a .bss shuffle that keeps `_end` but moves the JIT base fails on the base.
 """
 import os
 import re
@@ -148,6 +149,28 @@ def main():
         check("7704 ->  7224" in out, "solve: BSCAN takes back the +480")
         check("1600 ->  1600" in out, "solve: the text pad needs nothing once BSCAN moved")
         check("3512 ->  3576" in out, "solve: FE takes the -64")
+
+        # the JIT base and the .bss behind it (critique-8 MF3): .bss grows 16 B
+        # before the JIT cache and shrinks 16 B after it.  _end does not move,
+        # so only an `at` on the cache base catches it.
+        bss = SYMS + [
+            (0x09024c68, 0x10000, "B", "rom_branch_hash"),
+            (0x090fd500, None, "B", "rom_translation_cache_static"),
+            (0x092fd500, None, "B", "ram_translation_cache_static"),
+            (0x0937f98c, None, "B", "_end"),
+        ]
+        jl = os.path.join(d, "j.lock")
+        open(jl, "w").write("[release]\nat rom_branch_hash 0\nat rom_translation_cache_static 0\n"
+                            "at ram_translation_cache_static 0\nat _end 0\n")
+        write_nm(nm, bss)
+        rc, out = run("write", "release", nm, "--lock", jl)
+        rc, out = run("check", "release", nm, "--lock", jl)
+        check(rc == 0 and "0 differ" in out, "JIT lock: check passes on the recorded ELF")
+        jm = shifted(shifted(bss, 0x09024c68, 16), 0x092fd500 + 16, -16)
+        write_nm(m, jm)
+        rc, out = run("check", "release", m, "--lock", jl, "-q")
+        check(rc == 1 and "rom_translation_cache_static" in out and "_end" not in out,
+              "mutant: .bss +16 before the JIT, -16 after -> the cache base fails, _end does not")
     print("%d failure(s)" % fails)
     return 1 if fails else 0
 
