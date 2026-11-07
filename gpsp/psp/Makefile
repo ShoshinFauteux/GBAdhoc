@@ -186,21 +186,21 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 2792
-LAYOUT_PAD_CORE_BYTES ?= 6348
+LAYOUT_PAD_CORE_BYTES ?= 6252
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
 # it (fe_rewind's per-frame capture, the link glue, B's cold text).
-LAYOUT_PAD_GB_BYTES ?= 1040
+LAYOUT_PAD_GB_BYTES ?= 532
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
-LAYOUT_PAD_BSCAN_BYTES ?= 7704
+LAYOUT_PAD_BSCAN_BYTES ?= 7224
 CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
 # says why): they place main's frame loop without moving instance B's hot text.
 # beta.5 base: main's code before the loop grew 212 B, so this pad puts the
 # loop window back on round 7's sets.  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 7980
+LAYOUT_PAD_MAIN_BYTES ?= 5804
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half

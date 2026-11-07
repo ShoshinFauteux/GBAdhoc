@@ -182,6 +182,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
 | `IRQ_IO_FAST` | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
 | `SERIAL_IDLE_FAST` | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
+| `HALT_HOP` | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN: drawn lines too, rendered afterwards with their own VCOUNT/DISPSTAT) starts at `HALT_HOP_DEFAULT` 6. The GBA link session hashes each machine at its own frame boundary (`fe_gblink.c` `pair_sync_hash`). Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL (KAM -4.9 % instructions/frame). |
 | `FIQ_BANK_FIX` | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
 | `BX_ALIGN_FIX` | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
 | `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
