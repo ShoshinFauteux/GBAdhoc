@@ -102,6 +102,12 @@ static int g_same_lan;          /* both consoles behind N[0] */
 static uint64_t g_host_dark_from, g_host_dark_to;   /* host 0 off the air */
 static int host_dark(int h) { return h == 0 && g_now >= g_host_dark_from && g_now < g_host_dark_to; }
 static rl_core *g_core;
+/* the START cases (run_start, below) */
+#define GUEST_LAN_SRV ip4(10, 0, 1, 40)
+static int g_srv_guest_lan;
+static int g_oneway;            /* 1: nothing the guest sends DIRECT reaches the
+                                   host (an asymmetric path: the host's punches
+                                   arrive, the guest's answers never do) */
 
 static void enqueue(ep_t src, ep_t dst, const void *b, size_t n, unsigned delay_ms)
 {
@@ -155,6 +161,8 @@ static void host_send(int h, ep_t dst, const void *b, size_t n)
    ep_t src = x->priv;
    nat_t *nt = x->nat;
    if (host_dark(h))
+      return;
+   if (g_oneway && h == 1 && dst.ip != SERVER_IP && dst.ip != GUEST_LAN_SRV)
       return;
    if (nt && lan_of(dst.ip))
    {
@@ -210,8 +218,6 @@ static void deliver_host(int h, pkt_t *p)
  * (the owner's relay on 2026-11-07, the Go joining it at 10.0.0.40): the
  * guest reaches it on the LAN, so the server sees -- and offers the host --
  * a PRIVATE address; the host is elsewhere and reaches it at SERVER_IP. */
-#define GUEST_LAN_SRV ip4(10, 0, 1, 40)
-static int g_srv_guest_lan;
 static int srv_lan_send(ep_t *src, const ep_t *dst, const void *buf, size_t len)
 {
    if (!g_srv_guest_lan || !lan_of(dst->ip))
@@ -815,6 +821,7 @@ typedef struct
                                    joiner reloads before its first JOIN) */
    unsigned guest_ka_ms;        /* ...but calls netdrv_keepalive this often */
    unsigned slot_idle_ms;       /* the server's slot timeout, 0 = default */
+   int oneway;                  /* g_oneway */
 } start_t;
 
 #define START_MAX_MS 3000       /* host's first payload at the guest, no stall */
@@ -843,6 +850,7 @@ static int run_start(const start_t *c)
    memset(N, 0, sizeof(N));
    g_same_lan = 0;
    g_srv_guest_lan = 1;
+   g_oneway = c->oneway;
    for (i = 0; i < 2; i++)
    {
       N[i].type = i ? c->nat1 : c->nat0;
@@ -873,7 +881,8 @@ static int run_start(const start_t *c)
       sk[i].send = sk_send;
       sk[i].recv = sk_recv;
       memset(&cfg[i], 0, sizeof(cfg[i]));
-      cfg[i].server_ip_be = i ? GUEST_LAN_SRV : SERVER_IP;
+      /* the guest on the server's LAN, unless it is itself public */
+      cfg[i].server_ip_be = i && H[1].nat ? GUEST_LAN_SRV : SERVER_IP;
       cfg[i].server_port = SERVER_PORT;
       cfg[i].is_host = i == 0;
       strcpy(cfg[i].code, "TEST");
@@ -898,7 +907,11 @@ static int run_start(const start_t *c)
        relay_transport_poll(rt[1]) != RL_ST_IN_ROOM)
    {
       printf("FAIL %s: room never formed\n", c->name);
+      for (i = 0; i < 2; i++)
+         relay_transport_destroy(rt[i]);
+      relay_core_destroy(g_core);
       g_srv_guest_lan = 0;
+      g_oneway = 0;
       return 0;
    }
    memset(&nc, 0, sizeof(nc));
@@ -1049,6 +1062,7 @@ static int run_start(const start_t *c)
    }
    relay_core_destroy(g_core);
    g_srv_guest_lan = 0;
+   g_oneway = 0;
    return ok;
 }
 
@@ -1081,31 +1095,40 @@ int main(int argc, char **argv)
       { "lobby: 25 s off the air at 40 s",      NAT_SYM, 30000, 0,     0,     40000, 25000, 120000, 1 },
       { "lobby: server limit 60 s, join 3 min", NAT_SYM, 30000, 0,     60000, 0,     0,     180000, 1 },
    };
+   /* B4 = 20 s: the server beta.4 shipped with (relay_core is 45 s since) */
+#define B4 20000
    static const start_t starts[] = {
-      /* name                                          nat0      nat1      dir stall  ka    grace  lost */
-      { "start: cone host x guest on relay LAN",       NAT_CONE, NAT_CONE, 0,  0,     0,    0,     0 },
-      { "start: cone host x sym guest on relay LAN",   NAT_CONE, NAT_SYM,  0,  0,     0,    0,     0 },
-      { "start: public host x guest on relay LAN",     NAT_NONE, NAT_CONE, 1,  0,     0,    0,     0 },
-      { "start: public host x sym guest on relay LAN", NAT_NONE, NAT_SYM,  1,  0,     0,    0,     0 },
+      /* name                                     nat0 nat1 direct | host: stall ka | guest: grace lost stall ka | srv | oneway */
+      { "start: cone host x guest on relay LAN",          NAT_CONE, NAT_CONE, 0, 0,     0,    0,     0, 0,     0,    0,     0 },
+      { "start: cone host x sym guest on relay LAN",      NAT_CONE, NAT_SYM,  0, 0,     0,    0,     0, 0,     0,    0,     0 },
+      { "start: public host x guest on relay LAN",        NAT_NONE, NAT_CONE, 1, 0,     0,    0,     0, 0,     0,    0,     0 },
+      { "start: public host x sym guest on relay LAN",    NAT_NONE, NAT_SYM,  1, 0,     0,    0,     0, 0,     0,    0,     0 },
       /* the host's 18 s session start (2026-11-07), beta.4 both sides */
-      { "start: host starts 18 s, beta.4 pair",        NAT_CONE, NAT_CONE, 0,  18000, 0,    0,     1 },
+      { "start: host starts 18 s, beta.4 pair",           NAT_CONE, NAT_CONE, 0, 18000, 0,    0,     1, 0,     0,    B4,    0 },
       /* fixed host (keepalive from its ROM-load hook) x beta.4 guest */
-      { "start: host starts 18 s, fixed host",         NAT_CONE, NAT_CONE, 0,  18000, 1000, 0,     0 },
+      { "start: host starts 18 s, fixed host",            NAT_CONE, NAT_CONE, 0, 18000, 1000, 0,     0, 0,     0,    B4,    0 },
       /* beta.4 host x fixed guest (30 s grace until the host speaks) */
-      { "start: host starts 18 s, fixed guest",        NAT_CONE, NAT_CONE, 0,  18000, 0,    30000, 0 },
-      { "start: host starts 18 s, both fixed",         NAT_CONE, NAT_CONE, 0,  18000, 1000, 30000, 0 },
-      { "start: host starts 18 s, fixed, public host", NAT_NONE, NAT_SYM,  1,  18000, 1000, 30000, 0 },
-      /* the host's 22 s start (2026-11-07 run 2): beyond the server's 20 s
-       * slot timeout -- survives with a fixed host, or a 45 s server */
-      { "start: host starts 22 s, fixed guest",          NAT_CONE, NAT_SYM, 0, 22000, 0,    30000, 1 },
-      { "start: host starts 22 s, fixed guest, srv 45 s", NAT_CONE, NAT_SYM, 0, 22000, 0,    30000, 0, 0, 0, 45000 },
-      { "start: host starts 22 s, fixed host",           NAT_CONE, NAT_SYM, 0, 22000, 1000, 0,     0 },
+      { "start: host starts 18 s, fixed guest",           NAT_CONE, NAT_CONE, 0, 18000, 0,    30000, 0, 0,     0,    B4,    0 },
+      { "start: host starts 18 s, both fixed",            NAT_CONE, NAT_CONE, 0, 18000, 1000, 30000, 0, 0,     0,    B4,    0 },
+      { "start: host starts 18 s, fixed, public host",    NAT_NONE, NAT_SYM,  1, 18000, 1000, 30000, 0, 0,     0,    B4,    0 },
+      /* the host's 22 s start (run 2): beyond beta.4's 20 s slot timeout --
+       * survives with a fixed host, or this branch's 45 s server */
+      { "start: host starts 22 s, fixed guest, srv 20 s", NAT_CONE, NAT_SYM,  0, 22000, 0,    30000, 1, 0,     0,    B4,    0 },
+      { "start: host starts 22 s, fixed guest, srv 45 s", NAT_CONE, NAT_SYM,  0, 22000, 0,    30000, 0, 0,     0,    0,     0 },
+      { "start: host starts 22 s, fixed host, srv 20 s",  NAT_CONE, NAT_SYM,  0, 22000, 1000, 0,     0, 0,     0,    B4,    0 },
       /* roles reversed (run 3): the slow console JOINS and reloads 22 s
        * before its first JOIN -- its slot went silent at 20 s */
-      { "start: guest starts 22 s, beta.4 guest",        NAT_SYM, NAT_CONE, 0, 0, 0, 0, 1, 22000, 0,    0 },
-      { "start: guest starts 22 s, beta.4, srv 45 s",    NAT_SYM, NAT_CONE, 0, 0, 0, 0, 0, 22000, 0,    45000 },
-      { "start: guest starts 22 s, fixed guest",         NAT_SYM, NAT_CONE, 0, 0, 0, 0, 0, 22000, 1000, 0 },
+      { "start: guest starts 22 s, beta.4, srv 20 s",     NAT_SYM,  NAT_CONE, 0, 0,     0,    0,     1, 22000, 0,    B4,    0 },
+      { "start: guest starts 22 s, beta.4, srv 45 s",     NAT_SYM,  NAT_CONE, 0, 0,     0,    0,     0, 22000, 0,    0,     0 },
+      { "start: guest starts 22 s, fixed, srv 20 s",      NAT_SYM,  NAT_CONE, 0, 0,     0,    0,     0, 22000, 1000, B4,    0 },
+      /* a one-way direct path (2026-11-07 question): the host's punches reach
+       * a permissive guest, nothing the guest sends direct reaches the host.
+       * DIRECT needs a PUNCH_ACK (a round trip), so both stay on the relay
+       * and the session runs there; data never leaves the relay early. */
+      { "start: one-way direct, public guest",            NAT_CONE, NAT_NONE, 0, 0,     0,    0,     0, 0,     0,    0,     1 },
+      { "start: one-way direct, addr-restricted pair",    NAT_ACONE,NAT_ACONE,0, 0,     0,    0,     0, 0,     0,    0,     1 },
    };
+#undef B4
    unsigned i, fails = 0, n = 0;
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");
    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++, n++)
