@@ -470,17 +470,17 @@ def main(argv):
         return 4 if expect is not None and n != expect else 0
     results = []
     if len(args) == 3 and args[0] == '--runs':
-        fl = [f for f in FLAVOURS if all(os.path.isfile(os.path.join(r, f, 'gpsp_adhoc.elf')) for r in args[1:])]
+        import runs                      # flavours discovered, never a fixed list
+        fl, one = runs.pair(args[1], args[2])
         if not fl:
             print('no flavour in both run dirs')
             return 2
         rc = 0
         # a flavour built in one run only is not "identical": never skip it silently
-        for f in FLAVOURS:
-            if f not in fl and any(os.path.isfile(os.path.join(r, f, 'gpsp_adhoc.elf')) for r in args[1:]):
-                print('[%s] FAIL: gpsp_adhoc.elf in only one of the run dirs' % f)
-                results.append({'flavour': f, 'rc': 1, 'missing_in_one_run': True})
-                rc = 1
+        for f in one:
+            print('[%s] FAIL: gpsp_adhoc.elf in only one of the run dirs' % f)
+            results.append({'flavour': f, 'rc': 1, 'missing_in_one_run': True})
+            rc = 1
         for f in fl:
             r, res = run_pair(os.path.join(args[1], f), os.path.join(args[2], f), f, expect)
             res['flavour'] = f
