@@ -521,22 +521,14 @@ inline short snd_noi_produce(int freq)
 		noi_cur_pos+=freq;
 		sc=0;
 
-		if( snd_stat.noi_step == 7 ){
+		/* GBAdhoc: one loop over the packed table of the selected width
+		 * (_mrand_table.h); upstream had a copy per table. */
+		{
+			const unsigned char *tbl =
+				snd_stat.noi_step == 7 ? _mrand7 : _mrand15;
 			while(noi_cur_pos>(dword)snd_rate){
-				if(sc==0)
-					noi_sample=MRAND_BIT(_mrand7, noise_index)?12000:-10000;
-				else
-					noi_sample+=MRAND_BIT(_mrand7, noise_index)?12000:-10000;
-				noi_cur_pos-=snd_rate;
-				sc++;
-				noise_index++ ;
-			}
-		}else{
-			while(noi_cur_pos>(dword)snd_rate){
-				if(sc==0)
-					noi_sample=MRAND_BIT(_mrand15, noise_index)?12000:-10000;
-				else
-					noi_sample+=MRAND_BIT(_mrand15, noise_index)?12000:-10000;
+				int v = MRAND_BIT(tbl, noise_index)?12000:-10000;
+				noi_sample = sc ? noi_sample + v : v;
 				noi_cur_pos-=snd_rate;
 				sc++;
 				noise_index++ ;
