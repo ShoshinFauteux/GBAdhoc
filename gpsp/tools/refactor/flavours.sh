@@ -130,7 +130,14 @@ G() {   # G <dir> <git args...>
   if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then git -C "$d" "$@"
   elif command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
     w=$(winpath "$d") || return 128
-    git.exe -C "$w" "$@" | tr -d '\r'
+    # WSL interop was seen to fail a git.exe call transiently (2026-11-07: "no such
+    # commit" for a commit the previous run had just built): retry before failing
+    local i o rc
+    for i in 1 2 3; do
+      o=$(git.exe -C "$w" "$@" 2>/dev/null) && { printf '%s\n' "$o" | tr -d '\r'; return 0; }
+      rc=$?; sleep 2
+    done
+    return $rc
   else return 128; fi
 }
 GB() {  # G without the CR strip: for binary output (git archive)

@@ -58,9 +58,33 @@ python3 loop_lpsim/loop_lpsim.py setmap A.elf B.elf         # LP (static part)
 python3 stack_depth.py B.elf --su OUT/harness/su --resolve stack_resolve.txt   # ST
 python3 strong_syms.py checkrun --run OUT --golden strong_syms.golden.tsv     # SS
 python3 exit_matrix.py check --golden GOLD --cand CAND      # XS
-bash pp_diff.sh --ref TREE_A --new TREE_B                   # G0
+bash pp_diff.sh --ref TREE_A --new TREE_B --logs RUN        # G0 (--logs is required since P0a)
+bash pp_sweep.sh --ref TREE_A --new TREE_B --logs RUN       # G0 on the variant arms (-E only)
 bash ci_greps.sh --phase P                                  # CI rules
 ```
+
+### P0a (PLAN-P-beta5 §3): what changed for the beta.5 base
+
+- `flavours.sh` builds four flavours (`release`, `release-stable` = RFU_SCHED=0, `lab`, `harness`).
+  Pins: `DOCKER_IMAGE=pspdev/pspdev@sha256:...` (build.sh honours it too), `--build-version V`,
+  `--sde N`; all recorded in `flavour.json` with the image id and `psp-gcc --version`.
+  `--against REF` refuses (exit 2) a reference with another image id, version, SDE or RFU_SCHED,
+  then runs every tool by its real interface (absent = FAIL) and writes `checks.txt` and the
+  generated gate line `gate.txt`. `--check-only --out RUN --against REF` re-checks a build.
+  A P step: `flavours.sh --commit STEP --out OUT --lock L --against PARENT_RUN --build-version H --sde N`.
+- The loop window of T1b/T10/T16 is found by anchor (`loop_anchor.py`) in the source the ELF was
+  built from (its `flavour.json` commit), checked against main's `DW_AT_decl_line`; an explicit
+  range must be the anchored one. 01067e74: 16368-18089 (x4's 16368-18090, same code lines).
+- T8 `exit_matrix.py`: x2's sites by anchor (reason string + order), `FE_EXIT_GAME`/`FE_HANDOFF`
+  read as the calls they wrap, raw view through `#include "fe/X.inc.c"` with (file, line) keys.
+- T9 `globals.py`: owners from the cutlist (modules.py must agree), define sets derived from
+  psp/Makefile, macro-globals tagged, refuses a split shell and a cutlist of another source.
+- `pp_diff.sh --extra-defs`, `pp_sweep.sh`; T12 `.su` statics by object stem; T13 MGIFT and
+  release-stable/harness configs; T11 R3 roots `gba_reload_note`/`gba_reload_progress`;
+  `check_flags.py` scans `psp/fe`; the sidecar joins `\`-continued compile lines.
+- The repairs and their mutants on another tree: `tests/p0a_b5.sh --tree T --run RUN [--cutlist C]`
+  (also `B5_TREES=... run_all.sh`). `tests/fixtures/cutlist_fbe9da63.txt` is a P4-simulation
+  stand-in (cutlist_b5 carried, §2.1 applied), not the P0b cutlist.
 
 ## What is proven, and what is not
 

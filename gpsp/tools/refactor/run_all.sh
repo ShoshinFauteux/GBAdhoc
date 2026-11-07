@@ -60,6 +60,20 @@ step stack     "T12 stack_depth"                               "ST" \
   env PYTHON="$PY" bash "$T/stack-cache_test_stack_depth.sh" "$B/run1"
 step lpsim     "T16 loop_lpsim (static part)"                  "LP" \
   env PYTHON="$PY" bash "$T/stack-cache_test_loop_lpsim.sh" "$B/run1"
+# P0a (PLAN-P-beta5 §3): the repaired tools' own unit tests, then the "b5 row set": every
+# P0a repair with its mutant on another tree.  B5_TREES="TREE:RUN[:CUTLIST] ..." (a clean
+# source tree of the commit, its flavours.sh --baseline run, the cutlist of that source);
+# RUN2 / TWIN as tests/p0a_b5.sh documents them (applied to the first tree).
+step p0a_unit  "P0a loop_anchor, flavours_gate, exit_matrix raw" "G2L XS G1" bash -c '
+  set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
+  '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"'
+k=0
+for spec in ${B5_TREES:-}; do
+  IFS=: read -r bt br bc <<< "$spec"; k=$((k + 1))
+  if [ $k = 1 ]; then XR2=${RUN2:-} XTW=${TWIN:-}; else XR2= XTW=; fi
+  step "b5_$k" "P0a b5 rows on $(basename "$(dirname "$bt")")"    "all" \
+    env RUN2="$XR2" TWIN="$XTW" bash "$T/p0a_b5.sh" --tree "$bt" --run "$br" ${bc:+--cutlist "$bc"} --out "$S/b5_$k"
+done
 
 echo
 printf '%-10s %-48s %-9s %-4s %3s %6s %6s\n' step tools gates res rc ok/F time

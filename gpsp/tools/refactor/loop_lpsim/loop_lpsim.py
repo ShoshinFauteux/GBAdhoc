@@ -9,9 +9,10 @@ adds it, WITHOUT changing the existing layout tooling (lp_map.py is imported
 read-only; the plugin is a copy with one extra group, loop_lpsim_plugin.c).
 
 Subcommands
-  window ELF [--src 16368:18090] [--json]
+  window ELF [--src auto|LO:HI] [--main-c SRC] [--json]
         main's loop window from DWARF .debug_line: by LINE (rows of main_psp.c
-        lines in --src inside `main`; x4's 220 lines / 115 sets) and by ADDRESS
+        lines in --src inside `main`, by default the window found by anchor,
+        loop_anchor.py; x4's 220 lines / 115 sets) and by ADDRESS
         (every byte of main between the first and last such row, i.e. inlined
         helper code included).  Prints main's start mod 8192 and the set map.
   loopfile ELF --out F [--model window|bylines] [--rates R] [--shift N]
@@ -64,7 +65,8 @@ LINE = 64
 WAY = 8192
 NSETS = WAY // LINE
 MISS_NS = 215.3            # docs/CACHE-MAP.md, as sim_report.py
-SRC_DEFAULT = (16368, 18090)   # PLAN 5/T1b: the loop, L:16368-18090
+SRC_DEFAULT = None   # by anchor (loop_anchor.py; 16368-18090 on 01067e74), checked vs DW_AT_decl_line
+import loop_anchor  # noqa: E402
 JIT_DEFAULT = 0x09001500   # LAYOUT_PIN: both tiers at JIT_PIN_OFFSET 0x1500 mod 8 KiB
 
 
@@ -76,11 +78,17 @@ def main_sym(e, name='main'):
     return fs[0]['value'], fs[0]['size']
 
 
-def window(elf_path, src=SRC_DEFAULT, fn='main'):
+def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None):
     e = Elf(elf_path)
     mlo, msz = main_sym(e, fn)
     mhi = mlo + msz
     rws = dwline.rows(e, 'main_psp.c')
+    if src is None or main_c:
+        r = loop_anchor.for_elf(elf_path, main_c)
+        if src is not None:
+            loop_anchor.check_explicit(r, src[0], src[1], 'loop_lpsim')
+        src = (r['lo'], r['hi'])
+        sys.stderr.write(loop_anchor.describe(r) + '\n')
     lo, hi = src
     bylines = set()
     amin, amax = 1 << 40, 0
@@ -486,7 +494,8 @@ def main(argv):
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('window')
     p.add_argument('elf')
-    p.add_argument('--src', default='%d:%d' % SRC_DEFAULT)
+    p.add_argument('--src', default='auto')
+    p.add_argument('--main-c')
     p.add_argument('--json')
     p = sub.add_parser('loopfile')
     p.add_argument('elf')
@@ -520,8 +529,14 @@ def main(argv):
     p.add_argument('--accepted', default='acc')
     a = ap.parse_args(argv)
     if a.cmd == 'window':
-        lo, hi = (int(x) for x in a.src.split(':'))
-        w = window(a.elf, (lo, hi))
+        if a.src == 'auto':
+            w = window(a.elf, None, main_c=a.main_c)
+        else:
+            lo, hi = (int(x) for x in a.src.split(':'))
+            # an explicit range is held to the anchored window of the ELF's source
+            r = loop_anchor.for_elf(a.elf, a.main_c)
+            loop_anchor.check_explicit(r, lo, hi, 'loop_lpsim')
+            w = window(a.elf, (lo, hi))
         print_window(w)
         if a.json:
             json.dump({k: v for k, v in w.items() if k not in ('bylines', 'window_lines')},

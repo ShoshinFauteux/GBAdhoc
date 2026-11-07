@@ -17,7 +17,8 @@ THE REPORT (one candidate; with --ref, every figure also as a delta):
      before .data -- and with it .bss and the heap -- moves a whole 8 KiB page)
   4. the first 20 .bss symbols of main_psp.o and the watched ones (out.0, ring_r,
      ring_w, audio_ring) with their D-cache sets
-  5. main's loop set map BY LINE (DWARF rows of main_psp.c lines 16368-18090
+  5. main's loop set map BY LINE (DWARF rows of main_psp.c's loop window, found by
+     anchor: loop_anchor.py; 16368-18090 on 01067e74
      inside main; x4's 220 lines / 115 sets): lines, sets, max lines per set.
      T1b loop_diff.py owns the by-address window with inlined ranges.
   6. the INPUT-SECTION AUDIT: the input-section name of every function of the
@@ -54,7 +55,7 @@ import sl_ldmap  # noqa: E402
 WAY = 8192
 LINE = 64
 SETS = WAY // LINE                  # 128 sets per way (16 KiB 2-way I and D caches)
-LOOP_LINES = (16368, 18090)         # PLAN T1b / x4: the per-frame loop body of main
+LOOP_LINES = None   # by anchor (loop_anchor.py), checked against main's DW_AT_decl_line
 WATCH_BSS = ('out.0', 'ring_r', 'ring_w', 'audio_ring')
 SPECIAL = re.compile(r'^\.text\.(unlikely|hot|startup|exit)(\.|$)')
 DEFAULT_PLAN = ['.text.startup.main']
@@ -181,6 +182,12 @@ def loop_sets(b, lines=LOOP_LINES):
         return None
     import sl_dwline
     m = b.sym['main']
+    import loop_anchor
+    r = loop_anchor.for_elf(b.e.path)
+    if lines is not None:     # an explicit window must be this ELF's anchored one
+        loop_anchor.check_explicit(r, lines[0], lines[1], 'layout_report')
+    lines = (r['lo'], r['hi'])
+    print('  ' + loop_anchor.describe(r))
     lo, hi = m['value'], m['value'] + m['size']
     rws = sl_dwline.rows(b.e, 'main_psp.c')
     cl = set()
@@ -406,7 +413,7 @@ def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, 
         span = 'all %d sets' % SETS if x['size'] >= WAY else 'sets %d..%d' % (x['set'], x['last_set'])
         out('  %#010x %7d  mod8192 %#06x %-12s %s%s' % (x['addr'], x['size'], x['mod8192'], span, x['name'],
                                                       '' if x['unique'] else ' (name not unique)'))
-    lp = loop_sets(cand)
+    lp = loop_sets(cand, LOOP_LINES)
     res['loop'] = lp
     if lp:
         out('\n-- main loop by line (main_psp.c %d-%d inside main): %d cache lines over %d sets, max %d per set,'
@@ -574,6 +581,7 @@ def main():
     ap.add_argument('--objects', default=r'(^|/)main_psp\.o$', help='regex of objects to audit')
     ap.add_argument('--order', default=os.path.join(GPSP, 'psp', 'layout', 'hot_order.txt'))
     ap.add_argument('--no-pad-check', action='store_true')
+    ap.add_argument('--loop-lines', help='LO-HI: held to the anchored window (default: by anchor)')
     ap.add_argument('--json')
     ap.add_argument('--selftest', metavar='DIR')
     a = ap.parse_args()
@@ -581,6 +589,9 @@ def main():
         return selftest(a.selftest, a.ref)
     if not a.cand:
         ap.error('CAND is required')
+    global LOOP_LINES
+    if a.loop_lines:
+        LOOP_LINES = tuple(int(x) for x in a.loop_lines.split('-'))
     cand = Build(a.cand, a.map)
     ref = Build(a.ref, a.ref_map) if a.ref else None
     rc, res = report(cand, ref, read_plan(a.plan), a.objects, a.order, pad_check=not a.no_pad_check)

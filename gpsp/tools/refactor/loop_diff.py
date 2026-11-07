@@ -32,7 +32,7 @@ With two ELFs it compares (ef_mips.compare_words, the func_diff normaliser):
 usage:
   loop_diff.py ELF                      report one ELF
   loop_diff.py BASE.elf CAND.elf        compare
-      [--func main] [--file main_psp.c] [--loop-lines 16368-18090]
+      [--func main] [--file main_psp.c] [--loop-lines auto|LO-HI] [--main-c SRC[,SRC]]
       [--body-strict] [--json OUT] [-v] [--any-flavour]
       --selftest                        run tests/elf-func_test_loop_diff.py
 exit 0  loop window same (bytes or modulo address) and placed the same
@@ -55,7 +55,8 @@ from elf32 import Elf                       # noqa: E402
 import ef_dwarf as D                        # noqa: E402
 import ef_mips as M                         # noqa: E402
 
-DEFAULT_LOOP = '16368-18090'                # x4's range; the old 18067 bound is dropped
+DEFAULT_LOOP = 'auto'   # by anchor (loop_anchor.py): x4's 16368-18090 on 01067e74, found in any tree
+import loop_anchor     # noqa: E402
 
 
 def _sets(lines):
@@ -69,7 +70,7 @@ def _sets(lines):
 class Loop:
     """Everything loop_diff needs from one ELF."""
 
-    def __init__(self, path, func='main', srcfile='main_psp.c', loop=(16368, 18090)):
+    def __init__(self, path, func='main', srcfile='main_psp.c', loop=None):
         self.path = path
         self.elf = e = Elf(path)
         syms = [s for s in e.funcs() if s['name'] == func]
@@ -79,12 +80,15 @@ class Loop:
         self.lo, self.size = syms[0]['value'], syms[0]['size']
         self.hi = self.lo + self.size
         self.code = e.read(self.lo, self.size)
-        self.loop = loop
         info = D.Info(e)
         cu = info.cu_named(srcfile)
         self.cu = cu
         sp = [s for s in cu.subprograms() if s['name'] == func and s['concrete']]
         self.decl_line = sp[0]['decl_line'] if sp else None
+        if loop is None:      # by anchor, checked against this ELF's main DW_AT_decl_line
+            r = loop_anchor.for_elf(path, decl_line=self.decl_line)
+            loop = (r['lo'], r['hi'])
+        self.loop = loop
         rows = D.line_rows(e, srcfile)
         self.spans = [(a, b, f, l) for a, b, f, l in D.row_spans(rows)
                       if self.lo <= a < self.hi and f is not None]
@@ -330,6 +334,7 @@ def main(argv=None):
     ap.add_argument('elfs', nargs='+')
     ap.add_argument('--func', default='main'); ap.add_argument('--file', default='main_psp.c')
     ap.add_argument('--loop-lines', default=DEFAULT_LOOP)
+    ap.add_argument('--main-c', help='main_psp.c the ELF(s) were built from (comma pair for two ELFs)')
     ap.add_argument('--body-strict', action='store_true')
     ap.add_argument('--any-flavour', action='store_true')
     ap.add_argument('--json'); ap.add_argument('-v', action='store_true')
@@ -347,7 +352,15 @@ def main(argv=None):
             print('loop_diff: REFUSED: flavour %s vs %s (--any-flavour to override)' % (fa, fb))
             return 2
     try:
-        Ls = [Loop(p, o.func, o.file, parse_range(o.loop_lines)) for p in o.elfs]
+        mcs = (o.main_c.split(',') if o.main_c else [None]) * 2
+        Ls = []
+        for i, p in enumerate(o.elfs):
+            r = loop_anchor.for_elf(p, mcs[i] if o.main_c and ',' in o.main_c else mcs[0])
+            if o.loop_lines != 'auto':
+                lo, hi = parse_range(o.loop_lines)
+                loop_anchor.check_explicit(r, lo, hi, 'loop_diff')
+            print(loop_anchor.describe(r))
+            Ls.append(Loop(p, o.func, o.file, (r['lo'], r['hi'])))
     except (LookupError, ValueError, KeyError) as ex:
         print('loop_diff: %s' % ex); return 2
     out = dict(elfs=[print_one(L, o.v) for L in Ls])

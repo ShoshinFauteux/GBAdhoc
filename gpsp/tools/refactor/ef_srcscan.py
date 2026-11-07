@@ -30,7 +30,17 @@ LAB = dict(GPSP_PLAYABLE=1, GPSP_KEEP_TELEMETRY=1, GPSP_PERF_RIG=1,
            RFU_SCHED=1, GPSP_CHEATS=1, VID_TRIPLE=1, PLAY_INPUT_FRESH=1,
            PLAY_FF_FLIP_PACE=7, LAYOUT_PAD_BYTES=5904,
            LAYOUT_PAD_RO_BYTES=2864, LAB_HARNESS=1, ND_MAX_PAYLOAD=144)
-CONFIGS = dict(release=RELEASE, lab=LAB)
+# P0a (PLAN-P-beta5, review 2 #8): round 10 made Mystery Gift a switch (psp/Makefile
+# MGIFT ?= 1 -> -DGBADHOC_MGIFT), so every built flavour defines it; without it the
+# 13 #ifdef GBADHOC_MGIFT blocks of main_psp.c read as compiled out.  A tree whose
+# Makefile has no MGIFT switch (01067e74) tests no GBADHOC_MGIFT either, so its
+# census is unchanged.  release-stable is the stable line (RFU_SCHED=0); harness is
+# the lab set without LAB_HARNESS (tools/build.sh harness).
+RELEASE['GBADHOC_MGIFT'] = 1
+LAB['GBADHOC_MGIFT'] = 1
+RELEASE_STABLE = {k: v for k, v in RELEASE.items() if k != 'RFU_SCHED'}
+HARNESS = {k: v for k, v in LAB.items() if k != 'LAB_HARNESS'}
+CONFIGS = {'release': RELEASE, 'release-stable': RELEASE_STABLE, 'lab': LAB, 'harness': HARNESS}
 
 KEYWORDS = {"if", "while", "for", "switch", "return", "sizeof", "defined",
             "__attribute__", "__asm__", "asm", "typeof", "__typeof__"}
@@ -222,8 +232,6 @@ def find_functions(code):
     return funcs
 
 
-HARNESS = {k: v for k, v in LAB.items() if k != 'LAB_HARNESS'}
-CONFIGS['harness'] = HARNESS
 
 
 # PLAN §1.1 modules are fragments `psp/fe/<name>.inc.c` #included into

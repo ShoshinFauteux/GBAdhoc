@@ -39,11 +39,52 @@ _TOK = re.compile(r'''
 ''', re.X)
 
 
-class Tok(object):
-    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair')
+class FLine(int):
+    """A source line of a FRAGMENT (psp/fe/X.inc.c) that main_psp.c includes: compares
+    and hashes as (file, line), so a fragment's line 100 is never main_psp.c's line 100
+    (P0a: T8's raw view and -E views key sites on (file, line) after the split).  Lines
+    of main_psp.c itself stay plain ints, so a tree without fragments is unchanged.
+    Prints as 'fe/X.inc.c:N'; '%d' gives the bare number."""
+    def __new__(cls, n, file):
+        o = int.__new__(cls, n)
+        o.file = file
+        return o
 
-    def __init__(self, kind, text, line, ifs=()):
-        self.kind, self.text, self.line, self.ifs = kind, text, line, ifs
+    def __eq__(self, other):
+        if isinstance(other, FLine):
+            return int(self) == int(other) and self.file == other.file
+        return False if isinstance(other, int) else NotImplemented
+
+    def __ne__(self, other):
+        r = self.__eq__(other)
+        return r if r is NotImplemented else not r
+
+    def __hash__(self):
+        return hash((int(self), self.file))
+
+    def __str__(self):
+        return '%s:%d' % (self.file, int(self))
+    __repr__ = __str__
+
+
+def norm_file(cur):
+    """a linemarker / include path -> 'main_psp.c' or 'fe/X.inc.c' (relative to psp/)."""
+    f = cur.replace('\\', '/')
+    if '/psp/' in f:
+        f = f[f.rindex('/psp/') + 5:]
+    while f.startswith('./'):
+        f = f[2:]
+    return f
+
+
+class Tok(object):
+    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair', 'file')
+
+    def __init__(self, kind, text, line, ifs=(), file=None):
+        self.kind, self.text, self.ifs = kind, text, ifs
+        self.file = file or 'main_psp.c'
+        self.line = line if file is None or file == 'main_psp.c' or isinstance(line, FLine) \
+            else FLine(line, file)
         self.idx, self.pair = -1, None
 
 
@@ -67,7 +108,7 @@ def link(toks):
         return '%s@%d' % (self.text, self.line)
 
 
-def _lex_line(text, line, ifs, out):
+def _lex_line(text, line, ifs, out, file=None, alias=None):
     pos = 0
     while pos < len(text):
         m = _TOK.match(text, pos)
@@ -78,7 +119,10 @@ def _lex_line(text, line, ifs, out):
         k = m.lastgroup
         if k == 'ws':
             continue
-        out.append(Tok(k, m.group(k), line, ifs))
+        t = m.group(k)
+        if alias and k == 'id' and t in alias:
+            t = alias[t]
+        out.append(Tok(k, t, line, ifs, file))
 
 
 _MARK = re.compile(r'^#\s*(\d+)\s+"([^"]*)"')
@@ -109,19 +153,45 @@ def load_pp(path, fname='main_psp.c'):
                 ln += 1
                 continue
             if cur is not None and _own_file(cur, fname):
-                _lex_line(raw, ln, (), toks)
+                nf = norm_file(cur)
+                _lex_line(raw, ln, (), toks, None if nf == fname or nf.endswith('/' + fname) else nf)
             ln += 1
     return link(toks)
 
 
-def load_raw(path):
-    """Tokens of a raw C file: comments removed, directives removed, all #if branches
-    kept.  tok.ifs = tuple of the enclosing #if/#ifdef/#ifndef/#elif/#else texts."""
-    toks, stack = [], []
-    in_cmt, cont = False, False
+FRAG_INC = re.compile(r'^#include "(fe/[A-Za-z0-9_.]+\.inc\.c)"\s*$')
+
+
+def raw_lines(path, follow=False):
+    """[(file, line, text)] of a source file; with follow, every `#include "fe/X.inc.c"`
+    line of main_psp.c is replaced by that fragment's lines (in place, in source order:
+    the view split.py inverse gives), each line keeping its own file and line number."""
+    import os
     with open(path, encoding='utf-8', errors='replace') as f:
         lines = f.read().split('\n')
-    for i, raw in enumerate(lines, 1):
+    out = []
+    base = os.path.dirname(os.path.abspath(path))
+    for i, ln in enumerate(lines, 1):
+        m = FRAG_INC.match(ln) if follow else None
+        if m:
+            fp = os.path.join(base, m.group(1))
+            if not os.path.exists(fp):
+                raise ValueError('%s:%d: fragment %s missing' % (path, i, fp))
+            with open(fp, encoding='utf-8', errors='replace') as f:
+                out += [(m.group(1), j, x) for j, x in enumerate(f.read().split('\n'), 1)]
+        else:
+            out.append((None, i, ln))
+    return out
+
+
+def load_raw(path, follow=False, alias=None):
+    """Tokens of a raw C file: comments removed, directives removed, all #if branches
+    kept.  tok.ifs = tuple of the enclosing #if/#ifdef/#ifndef/#elif/#else texts.
+    follow: expand main_psp.c's `#include "fe/X.inc.c"` (raw_lines); fragment tokens
+    carry tok.file and an FLine.  alias: {identifier: identifier} renames at lex time."""
+    toks, stack = [], []
+    in_cmt, cont = False, False
+    for fl, i, raw in raw_lines(path, follow):
         s = raw
         if in_cmt:
             e = s.find('*/')
@@ -170,7 +240,7 @@ def load_raw(path):
             else:
                 out.append(c)
                 j += 1
-        _lex_line(''.join(out), i, tuple(stack), toks)
+        _lex_line(''.join(out), i, tuple(stack), toks, fl, alias)
     return link(toks)
 
 

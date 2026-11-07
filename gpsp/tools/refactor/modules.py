@@ -195,6 +195,12 @@ GROUP_MODULE = {
 NAME_OWNER = {
     'g_relaunch': 'inproc',      # #14 "Owns g_relaunch"
     'g_online_boot': 'paths',    # #20 "Its definition stays here and link only reads it"
+    # PLAN-P-beta5 §2.1 (beta.5 base): the GB-link start knobs are boot's, like #16's 24
+    # knobs (G19 g_reload_* / G20 g_gblink_* would give two of them to link); the
+    # NetPlay start thread id and the link BIOS notice are link's
+    'g_start_keepalive': 'boot', 'g_start_grace': 'boot', 'g_start_heard': 'boot',
+    'g_reload_slow_ms': 'boot', 'g_gblink_host_wait_peer': 'boot',
+    'g_np_start_tid': 'link', 's_link_bios': 'link',
 }
 # #11 mgift owns "G21 g_mg_*, parcel": the plan's G21 is x1's G22 (Mystery Gift / silent);
 # g_mg_* -> mgift, g_silent_* stays with link (#10 "g_silent_*").  parcel is a function-local static.

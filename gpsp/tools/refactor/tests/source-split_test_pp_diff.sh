@@ -25,7 +25,8 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/ppdifftest.XXXXXX"); trap 'rm -rf "$T"' EXIT
 FAILS=0
 ok()  { echo "  ok    $*"; }
 bad() { echo "  FAIL  $*"; FAILS=$((FAILS + 1)); }
-PP() { bash "$HERE/pp_diff.sh" --ref "$G" --new "$G" "$@" > "$T/out.log" 2>&1; echo $?; }
+PPLOGS=${PP_LOGS:-$HERE/../../../../mainpsp-tools-out/baseline/run1}   # pp_diff needs --logs since P0a
+PP() { bash "$HERE/pp_diff.sh" --logs "$PPLOGS" --ref "$G" --new "$G" "$@" > "$T/out.log" 2>&1; echo $?; }
 verdict() { grep -E "^  $1: " "$T/out.log" | awk '{print $2}'; }
 mk() { rm -rf "$T/ovl"; mkdir -p "$T/ovl/psp"; cp "$G/psp/main_psp.c" "$T/ovl/psp/main_psp.c"; }
 expect() {  # expect <label> <want_rc> <release> <lab> <harness>  (I=IDENTICAL D=DIFFERENT)
@@ -62,9 +63,9 @@ mkdir -p "$T/ref/psp"; cp "$T/ovl/psp/main_psp.c" "$T/refmain.c"
 sed -i '1i\\' "$T/ovl/psp/main_psp.c"
 # compare overlay-with-blank against overlay-without-blank: run pp_diff with ref = a tree copy is heavy,
 # so instead check the new side against base twice: both differ from base, and their streams differ
-bash "$HERE/pp_diff.sh" --ref "$G" --new "$G" --overlay "$T/ovl" --flavours release --keep "$T/k1" > /dev/null 2>&1
+bash "$HERE/pp_diff.sh" --logs "$PPLOGS" --ref "$G" --new "$G" --overlay "$T/ovl" --flavours release --keep "$T/k1" > /dev/null 2>&1
 mkdir -p "$T/ovl2/psp"; cp "$T/refmain.c" "$T/ovl2/psp/main_psp.c"
-bash "$HERE/pp_diff.sh" --ref "$G" --new "$G" --overlay "$T/ovl2" --flavours release --keep "$T/k2" > /dev/null 2>&1
+bash "$HERE/pp_diff.sh" --logs "$PPLOGS" --ref "$G" --new "$G" --overlay "$T/ovl2" --flavours release --keep "$T/k2" > /dev/null 2>&1
 if [ -f "$T/k1/release/new.tok" ] && ! cmp -s "$T/k1/release/new.tok" "$T/k2/release/new.tok"; then
   ok "M3 __LINE__ shifted by one blank line is a token difference ($(grep -o 'pp_line = [0-9]*' "$T/k1/release/new.tok") vs $(grep -o 'pp_line = [0-9]*' "$T/k2/release/new.tok"))"
 else bad "M3 a blank line above __LINE__ was not seen"; fi
