@@ -26,4 +26,15 @@ static inline void online_room_request(int is_host, int typed, const char *shown
    out[i] = 0;
 }
 
+/* What the Code box shows (beta.5, owner 2026-11-07): an untouched code is
+ * NOT a room -- a host gets a random one -- so the box says so ("random")
+ * instead of showing the AAAA the wheel starts from.  Once typed (even AAAA,
+ * X on the wheel), it shows the code and that is the room asked for.  A Join
+ * with an untouched code opens the wheel instead (ui_psp.c). */
+static inline const char *online_code_shown(int typed, const char *code,
+                                            const char *random_label)
+{
+   return typed ? code : random_label;
+}
+
 #endif

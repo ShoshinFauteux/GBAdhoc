@@ -49,6 +49,24 @@ typedef struct rl_core_cfg
    uint64_t (*random64)(void *user);
    void (*log)(void *user, const char *line);
    void *user;
+   /* this server's public IPv4 (network order), 0 = unknown.  A console the
+    * server sees at a private address shares the server's router; its peers
+    * are then offered public_ip:<its port> (routers that keep the source
+    * port make that reachable).  relay_core_set_public_ip changes it later. */
+   uint32_t public_ip_be;
+   /* home relay discovery (RL_T_DISCOVER): answer a console on this
+    * server's own LAN with who this server is, so a console configured with
+    * the public name can use the LAN address (routers without NAT hairpin).
+    * Answered only for LAN sources (rl_ip_lan), only with an identity
+    * (public_ip_be and/or served_name), rate-limited, never amplified. */
+   int      discover;            /* 1 = answer DISCOVER */
+   uint16_t public_port;         /* the main socket's public port (a router
+                                    forward); 0 = unknown (a console then
+                                    matches on the IP or the name alone) */
+   const char *served_name;      /* the DNS name consoles are given for this
+                                    server ("relay.example.org"); copied at
+                                    create; NULL = none */
+   unsigned discovers_per_s;     /* answers per second, all sources; 0 = 20 */
 } rl_core_cfg;
 
 typedef struct rl_core_stats
@@ -57,6 +75,7 @@ typedef struct rl_core_stats
    uint32_t rooms_now, rooms_made, joins, refused, punches_offered, paths_direct;
    uint32_t cookies_sent, cookie_bad, rx_bytes_rate;
    uint32_t dir_now, dir_made, dir_refreshed, lookups, located, dir_rx_bytes, dir_tx_bytes;
+   uint32_t discovers, discovered, discover_refused;  /* DISCOVER in / answered / not */
 } rl_core_stats;
 
 typedef struct rl_core rl_core;
@@ -74,6 +93,15 @@ void relay_core_stats(const rl_core *c, rl_core_stats *out);
  * without a code gets it while no room holds it, and a JOIN without a code
  * (a PSP that came by an invite code) joins that room. */
 void relay_core_set_home(rl_core *c, const char *code);
+/* This server's public IPv4 (network order; 0 = unknown), e.g. from UPnP's
+ * GetExternalIPAddress on a desktop host.  See rl_core_cfg.public_ip_be. */
+void relay_core_set_public_ip(rl_core *c, uint32_t ip_be);
+/* Home relay discovery, changed later (rl_core_cfg.discover, public_port,
+ * served_name).  A desktop host enables it once UPnP told it its public
+ * address and port; a name longer than RL_NAME_MAX is refused (cleared). */
+void relay_core_set_discover(rl_core *c, int on);
+void relay_core_set_public_port(rl_core *c, uint16_t port);
+void relay_core_set_name(rl_core *c, const char *name);
 
 #ifdef __cplusplus
 }

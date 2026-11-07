@@ -45,7 +45,10 @@ class Node:
         pid = self.proc.pid
         sh("ip", "link", "set", "lo", "up", ns=pid)
         sh("ip", "tuntap", "add", "dev", "tun0", "mode", "tun", ns=pid)
-        sh("ip", "addr", "add", "%s/%d" % (ip, prefix), "dev", "tun0", ns=pid)
+        # brd +: a LAN's directed broadcast (10.0.N.255) is local, as on a
+        # real Wi-Fi (home relay discovery)
+        sh("ip", "addr", "add", "%s/%d" % (ip, prefix), *(("brd", "+") if prefix < 32 else ()),
+           "dev", "tun0", ns=pid)
         sh("ip", "link", "set", "tun0", "up", ns=pid)
         sh("ip", "route", "add", "default", "dev", "tun0", ns=pid)
         # open the TUN from inside its namespace (the fd stays bound to it)
@@ -71,21 +74,35 @@ class Node:
 class Nat:
     def __init__(self, kind, pub, lan, fwd=0):
         # kind: "cone" (EIM, port-restricted), "acone" (EIM, address-
-        # restricted), "sym" (a mapping per destination: a carrier NAT)
+        # restricted), "sym" (a mapping per destination: a carrier NAT,
+        # ports in sequence), "symr" (sym with random ports); keep = an EIM
+        # router that keeps the source port when it is free
         self.kind, self.pub, self.lan = kind, pub, lan    # lan = "10.0.N."
         self.fwd, self.fwd_to, self.fwd_peers = fwd, None, set()  # UPnP forward
         self.maps = {}          # key -> [pub_port, allowed set]
         self.rev = {}           # pub_port -> (key, priv)
         self.next = 40000 + 1000 * int(lan.split(".")[2])
+        self.keep = False
+        self.rng = 0x2545F491 ^ int(lan.split(".")[2])
 
     def out(self, priv, dst):
         if self.fwd and priv == self.fwd_to and dst in self.fwd_peers:
             return (self.pub, self.fwd)       # conntrack: the reply leaves the forward
-        key = (priv, dst) if self.kind == "sym" else (priv,)
+        key = (priv, dst) if self.kind in ("sym", "symr") else (priv,)
         if key not in self.maps:
-            self.maps[key] = [self.next, set()]
-            self.rev[self.next] = (key, priv)
-            self.next += 1
+            if self.kind == "symr":
+                while True:
+                    self.rng = (self.rng * 1103515245 + 12345) & 0x7FFFFFFF
+                    port = 20000 + (self.rng >> 8) % 40000
+                    if port not in self.rev:
+                        break
+            elif self.keep and priv[1] not in self.rev:
+                port = priv[1]
+            else:
+                port = self.next
+                self.next += 1
+            self.maps[key] = [port, set()]
+            self.rev[port] = (key, priv)
         m = self.maps[key]
         m[1].add(dst)
         return (self.pub, m[0])
@@ -309,15 +326,18 @@ class FwdNat(Nat):
         return Nat.inb(self, src, port)
 
 
-def run_desktop_case(binp, name, kinds, by, expect, first="join"):
+def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=False, disc=False):
     """kinds: each PSP 'cone' | 'sym' | 'home' (behind the desktop's router);
     by: each PSP 'code' | 'invite'; first: the first PSP 'join's (the mockup's
-    flow: the first into the home room is told slot 0 and hosts) or 'host's"""
+    flow: the first into the home room is told slot 0 and hosts) or 'host's;
+    disc: home relay discovery -- every PSP broadcasts a DISCOVER first (the
+    desktop answers: it knows its public IP), and the routers do no hairpin"""
     nats, by_ip = {}, {}
     srv = Node("dir", SERVER, 32)
     srv.nat = None
     by_ip[SERVER] = srv
     dn = FwdNat("cone", DESK_PUB, DESK_LAN, {27420: (DESK_IP, 27420), 27421: (DESK_IP, 27421)})
+    dn.keep = desk_keep
     nats[9] = dn
     desk = Node("desk", DESK_IP, 24)
     desk.nat = dn
@@ -350,6 +370,13 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
             return
         src, dst = p
         nat = src_node.nat
+        if dst[0] == "255.255.255.255" or (nat and dst[0] == nat.lan + "255"):
+            # a broadcast: every other node on the sender's LAN, never out
+            if nat:
+                for n in allnodes:
+                    if n is not src_node and n.nat is nat and n.ip.startswith(nat.lan):
+                        emit(n, pkt, 0.002)
+            return
         if nat and dst[0].startswith("10."):
             if dst[0].startswith(nat.lan) and dst[0] in by_ip:
                 emit(by_ip[dst[0]], pkt, 0.002)     # same LAN
@@ -431,6 +458,8 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
         else:
             a = [binp + "/relay_client", "--invite", invite[0]]
         a += [role, "--bind", "0.0.0.0:27500", "--secs", "40"]
+        if disc:
+            a += ["--discover"]
         cl.append(nodes[i].run(*a))
         watch(i, cl[i])
         pump(lambda: False, 0.2)
@@ -465,12 +494,19 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
     carried = "room_create" in dirlog or "room_join" in dirlog
     ok = ok and not carried
     servers = [res[i].get("server", "?") for i in (0, 1)]
+    lan = [res[i].get("lan_relay", "?") for i in (0, 1)]
     for i in (0, 1):
-        want_srv = (DESK_IP if kinds[i] == "home" and by[i] == "code" else DESK_PUB) + ":27420"
+        home = kinds[i] == "home"
+        want_srv = (DESK_IP if home and (by[i] == "code" or disc) else DESK_PUB) + ":27420"
         if servers[i] != want_srv:
             ok = False
-    print("%s %-36s path=%s/%s by=%s/%s server=%s/%s nat=%s/%s got=%s/%s invite=%s dir_rooms=%s secs=%s/%s" % (
+        if disc and lan[i] != ("1" if home and by[i] == "invite" else "0"):
+            ok = False
+        if disc and home and res[i].get("disc_answers", "0") == "0":
+            ok = False
+    print("%s %-36s path=%s/%s by=%s/%s server=%s/%s lan=%s/%s nat=%s/%s got=%s/%s invite=%s dir_rooms=%s secs=%s/%s" % (
         "ok  " if ok else "FAIL", name, paths[0], paths[1], by[0], by[1], servers[0], servers[1],
+        lan[0], lan[1],
         res[0].get("nat"), res[1].get("nat"), res[0].get("got"), res[1].get("got"), invite[0],
         "yes" if carried else "none", res[0].get("secs"), res[1].get("secs")))
     sys.stdout.flush()
@@ -480,7 +516,9 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
 SHARED_CASES = [
     ("cone x cone", ("cone", "cone"), False, "direct", 0),
     ("public x cone", ("none", "cone"), False, "direct", 0),
-    ("cone x symmetric", ("cone", "sym"), False, "relay", 0),
+    # sequential carrier NAT: port prediction (2026-11-06); random: relay
+    ("cone x symmetric (predicted)", ("cone", "sym"), False, "direct", 0),
+    ("cone x random symmetric", ("cone", "symr"), False, "relay", 0),
     ("symmetric x symmetric", ("sym", "sym"), False, "relay", 0),
     ("same LAN, one NAT", ("cone", "cone"), True, "direct", 0),
     ("direct dies at 6 s", ("cone", "cone"), False, "relay", 6000),
@@ -498,12 +536,26 @@ SHARED_CASES = [
 DESKTOP_CASES = [
     ("desk code: cone x cone", ("cone", "cone"), ("code", "code"), "direct"),
     ("desk code: cone x cone, Create + Join", ("cone", "cone"), ("code", "code"), "direct", "host"),
-    ("desk code: cone x symmetric", ("cone", "sym"), ("code", "code"), "relay"),
+    ("desk code: cone x symmetric (pred)", ("cone", "sym"), ("code", "code"), "direct"),
+    ("desk code: cone x random sym", ("cone", "symr"), ("code", "code"), "relay"),
     ("desk code: symmetric x symmetric", ("sym", "sym"), ("code", "code"), "relay"),
     ("desk invite: cone x cone", ("cone", "cone"), ("invite", "invite"), "direct"),
-    ("desk invite: symmetric x cone", ("sym", "cone"), ("invite", "invite"), "relay"),
+    ("desk invite: symmetric x cone (pred)", ("sym", "cone"), ("invite", "invite"), "direct"),
+    ("desk invite: random sym x cone", ("symr", "cone"), ("invite", "invite"), "relay"),
     ("desk code+invite: cone x cone", ("cone", "cone"), ("code", "invite"), "direct"),
     ("desk code: host in the PC's home", ("home", "cone"), ("code", "code"), "relay"),
+    # the relay's own home with a port-keeping router (the 2026-11-06 trade)
+    ("desk code: PC's home x cone, keeps ports", ("home", "cone"), ("code", "code"), "direct", "join", True),
+    ("desk code: PC's home x sym, keeps ports", ("home", "sym"), ("code", "code"), "direct", "join", True),
+    ("desk code: PC's home x rand sym", ("home", "symr"), ("code", "code"), "relay", "join", True),
+    # home relay discovery (beta.5): no hairpin, so an invite (the PC's PUBLIC
+    # address) from the PC's own LAN needs the DISCOVER answer; the away PSP
+    # broadcasts too and hears nothing; a code goes to the shared server
+    # (configured), whose redirect -- not the desktop's answer -- applies
+    ("discover: invite, PC's home x cone", ("home", "cone"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: invite, PC's home x sym", ("home", "sym"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: invite, both in PC's home", ("home", "home"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: code, PC's home (ignored)", ("home", "cone"), ("code", "code"), "direct", "join", True, True),
 ]
 
 

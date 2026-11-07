@@ -7,6 +7,8 @@
  *                [--drop-direct-after MS] [--map-port N] [--stall-after-join MS]
  *                [--lookup]          look the code up first (a desktop host's code)
  *   relay_client --invite XXXX-XXXX (--host|--join) ...   a desktop host, no server
+ *   ... [--discover] [--discover-name NAME]   home relay discovery first (a
+ *                PSP's: 255.255.255.255 and the /24 broadcast, SO_BROADCAST)
  *
  * Sends N reliable 8-byte payloads (a counter) one per 16 ms frame once the
  * session is up, expects N from the peer in order, then exits 0 with one
@@ -112,7 +114,7 @@ int main(int argc, char **argv)
    rl_client_stats st;
    uint32_t bind_ip = htonl(INADDR_ANY);
    uint16_t bind_port = 27500;
-   int i, n_pay = 600, secs = 40, sent = 0, ok, stall_ms = 0;
+   int i, n_pay = 600, secs = 40, sent = 0, ok, stall_ms = 0, discover = 0;
    uint64_t t0, next_frame;
    const char *tag;
    struct sockaddr_in a;
@@ -153,6 +155,12 @@ int main(int argc, char **argv)
          stall_ms = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--drop-direct-after") && i + 1 < argc)
          cfg.drop_direct_after_us = (uint64_t)atoi(argv[++i]) * 1000u;
+      else if (!strcmp(argv[i], "--discover")) discover = 1;
+      else if (!strcmp(argv[i], "--discover-name") && i + 1 < argc)
+      {
+         discover = 1;
+         cfg.discover_name = argv[++i];
+      }
       else
       {
          fprintf(stderr, "usage: see relay_client.c\n");
@@ -187,6 +195,18 @@ int main(int argc, char **argv)
       if (f2 >= 0)
          close(f2);
       cfg.priv_port = bind_port;
+   }
+   if (discover)
+   {
+      /* what the PSP sends (psp/online/main.c): the limited broadcast and
+       * the /24 one of this console's LAN address */
+      int one = 1;
+      uint8_t b[4];
+      setsockopt(g_fd, SOL_SOCKET, SO_BROADCAST, (const void *)&one, sizeof(one));
+      cfg.discover_bcast_be[0] = htonl(INADDR_BROADCAST);
+      memcpy(b, &cfg.priv_ip_be, 4);
+      b[3] = 255;
+      memcpy(&cfg.discover_bcast_be[1], b, 4);
    }
    memcpy(cfg.build, "gbadhoc-relaytest", 16);
    cfg.now_us = now_us;
@@ -262,12 +282,14 @@ int main(int argc, char **argv)
       ok = app.got == (uint32_t)n_pay && !app.bad && !app.lost && !app.stopped;
       printf("RESULT ok=%d side=%s got=%u bad=%u sent=%d lost=%d path=%s nat=%u "
              "rx_direct=%u rx_relay=%u fallbacks=%u rtt_direct_ms=%u rtt_relay_ms=%u "
-             "srtt_ms=%u retx=%u bursts=%u stalls=%u located=%u server=%s:%u secs=%.1f\n",
+             "srtt_ms=%u retx=%u bursts=%u stalls=%u located=%u lan_relay=%u disc_answers=%u "
+             "server=%s:%u secs=%.1f\n",
              ok, tag, app.got, app.bad, sent, app.lost,
              p == 3 ? "direct" : p == 4 ? "fellback" : p == 2 ? "punching" : "relay",
              st.nat, st.rx_direct, st.rx_relay, st.fallbacks, st.direct_rtt_us[peer] / 1000,
              st.relay_rtt_us / 1000, ns.srtt_us / 1000, ns.retx, st.bursts, st.stalls,
-             st.located, inet_ntoa(*(struct in_addr *)&st.host_ip_be), st.host_port,
+             st.located, st.lan_relay, st.disc_answers,
+             inet_ntoa(*(struct in_addr *)&st.host_ip_be), st.host_port,
              (now_us() - t0) / 1e6);
    }
    /* linger: answer the peer's last acks */
