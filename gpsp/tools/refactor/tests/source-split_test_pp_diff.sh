@@ -70,7 +70,12 @@ if [ -f "$T/k1/release/new.tok" ] && ! cmp -s "$T/k1/release/new.tok" "$T/k2/rel
   ok "M3 __LINE__ shifted by one blank line is a token difference ($(grep -o 'pp_line = [0-9]*' "$T/k1/release/new.tok") vs $(grep -o 'pp_line = [0-9]*' "$T/k2/release/new.tok"))"
 else bad "M3 a blank line above __LINE__ was not seen"; fi
 
-expect "M4 unpinned SOURCE_DATE_EPOCH" 1 "$(sleep 1; PP --sde '')" IDD
+# M4: the two sides of one flavour can preprocess within the same second (then that
+# flavour's __TIME__ agrees by chance; seen 2026-11-07 on lab): the stamp must differ in
+# at least one of lab/harness, never in release (it has no stamp)
+rc=$(sleep 1; PP --sde ''); got=""; for f in release lab harness; do got="$got$(verdict $f | cut -c1)"; done
+case "$rc:$got" in 1:IDD|1:IDI|1:IID) ok "M4 unpinned SOURCE_DATE_EPOCH (exit $rc, rel/lab/har $got)" ;;
+  *) bad "M4 unpinned SOURCE_DATE_EPOCH: exit $rc, rel/lab/har $got (want I + a D in lab/harness)" ;; esac
 
 mk; f="$T/ovl/psp/main_psp.c"
 # psp/fe_util.h does not exist; frontend-common/fe_util.h does.  Point one include at a
