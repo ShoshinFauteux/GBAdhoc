@@ -110,8 +110,24 @@ enum
                                          pub_ip[4] pub_port[2] priv_ip[4] priv_port[2]
                                          your_ip[4].  priv_* only when your_ip is the
                                          host's own public address (the same home). */
-   RL_T_UNREGISTER = 21  /* c->s  body: code[4]; header token = the entry's token */
+   RL_T_UNREGISTER = 21, /* c->s  body: code[4]; header token = the entry's token */
+   /* ---- home relay discovery (docs/ONLINE-TUNNEL.md, "Home relay
+    * discovery", beta.5).  A console on the relay's own LAN cannot reach it
+    * through its public address when the router does no NAT hairpin, so it
+    * asks the LAN first: one DISCOVER to the broadcast address, main port. */
+   RL_T_DISCOVER = 22,   /* c->bcast body: nonce[4]; padded to RL_DISC_PAD */
+   RL_T_DISCOVERED = 23  /* s->c  body: nonce[4] pub_ip[4] pub_port[2] name_len[1]
+                                     name[name_len] (not NUL-terminated): the
+                                     public address and the DNS name this relay
+                                     serves (0s / 0 = unknown).  Sent from the
+                                     main socket: its source address IS the
+                                     relay's LAN endpoint.  Answered only for a
+                                     LAN source, rate-limited, never larger
+                                     than the DISCOVER */
 };
+#define RL_DISC_PAD   96          /* DISCOVER is padded to this */
+#define RL_NAME_MAX   63          /* a served name; DISCOVERED <= 16+11+63 = 90 B */
+#define RL_DISCOVERED_MIN (RL_HDR + 11)
 
 /* LOCATED kind */
 enum { RL_LOC_NONE = 0, RL_LOC_HERE = 1, RL_LOC_HOST = 2 };
@@ -173,6 +189,18 @@ static inline int rl_ip_private(uint32_t ip_be)
           (p[0] == 192 && p[1] == 168) ||
           (p[0] == 169 && p[1] == 254) ||
           (p[0] == 100 && (p[1] & 0xC0) == 64);
+}
+
+/* 1 = a LAN source: RFC 1918, link-local or loopback (NOT carrier-grade NAT,
+ * 100.64/10: that is the ISP's network, not this home).  The relay answers
+ * DISCOVER only from these. */
+static inline int rl_ip_lan(uint32_t ip_be)
+{
+   const uint8_t *p = (const uint8_t *)&ip_be;
+   return p[0] == 10 || p[0] == 127 ||
+          (p[0] == 172 && (p[1] & 0xF0) == 16) ||
+          (p[0] == 192 && p[1] == 168) ||
+          (p[0] == 169 && p[1] == 254);
 }
 
 /* An IPv4 address in network order as 4 bytes <-> uint32 holding those

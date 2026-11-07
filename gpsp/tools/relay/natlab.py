@@ -45,7 +45,10 @@ class Node:
         pid = self.proc.pid
         sh("ip", "link", "set", "lo", "up", ns=pid)
         sh("ip", "tuntap", "add", "dev", "tun0", "mode", "tun", ns=pid)
-        sh("ip", "addr", "add", "%s/%d" % (ip, prefix), "dev", "tun0", ns=pid)
+        # brd +: a LAN's directed broadcast (10.0.N.255) is local, as on a
+        # real Wi-Fi (home relay discovery)
+        sh("ip", "addr", "add", "%s/%d" % (ip, prefix), *(("brd", "+") if prefix < 32 else ()),
+           "dev", "tun0", ns=pid)
         sh("ip", "link", "set", "tun0", "up", ns=pid)
         sh("ip", "route", "add", "default", "dev", "tun0", ns=pid)
         # open the TUN from inside its namespace (the fd stays bound to it)
@@ -323,10 +326,12 @@ class FwdNat(Nat):
         return Nat.inb(self, src, port)
 
 
-def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=False):
+def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=False, disc=False):
     """kinds: each PSP 'cone' | 'sym' | 'home' (behind the desktop's router);
     by: each PSP 'code' | 'invite'; first: the first PSP 'join's (the mockup's
-    flow: the first into the home room is told slot 0 and hosts) or 'host's"""
+    flow: the first into the home room is told slot 0 and hosts) or 'host's;
+    disc: home relay discovery -- every PSP broadcasts a DISCOVER first (the
+    desktop answers: it knows its public IP), and the routers do no hairpin"""
     nats, by_ip = {}, {}
     srv = Node("dir", SERVER, 32)
     srv.nat = None
@@ -365,6 +370,13 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=Fals
             return
         src, dst = p
         nat = src_node.nat
+        if dst[0] == "255.255.255.255" or (nat and dst[0] == nat.lan + "255"):
+            # a broadcast: every other node on the sender's LAN, never out
+            if nat:
+                for n in allnodes:
+                    if n is not src_node and n.nat is nat and n.ip.startswith(nat.lan):
+                        emit(n, pkt, 0.002)
+            return
         if nat and dst[0].startswith("10."):
             if dst[0].startswith(nat.lan) and dst[0] in by_ip:
                 emit(by_ip[dst[0]], pkt, 0.002)     # same LAN
@@ -446,6 +458,8 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=Fals
         else:
             a = [binp + "/relay_client", "--invite", invite[0]]
         a += [role, "--bind", "0.0.0.0:27500", "--secs", "40"]
+        if disc:
+            a += ["--discover"]
         cl.append(nodes[i].run(*a))
         watch(i, cl[i])
         pump(lambda: False, 0.2)
@@ -480,12 +494,19 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=Fals
     carried = "room_create" in dirlog or "room_join" in dirlog
     ok = ok and not carried
     servers = [res[i].get("server", "?") for i in (0, 1)]
+    lan = [res[i].get("lan_relay", "?") for i in (0, 1)]
     for i in (0, 1):
-        want_srv = (DESK_IP if kinds[i] == "home" and by[i] == "code" else DESK_PUB) + ":27420"
+        home = kinds[i] == "home"
+        want_srv = (DESK_IP if home and (by[i] == "code" or disc) else DESK_PUB) + ":27420"
         if servers[i] != want_srv:
             ok = False
-    print("%s %-36s path=%s/%s by=%s/%s server=%s/%s nat=%s/%s got=%s/%s invite=%s dir_rooms=%s secs=%s/%s" % (
+        if disc and lan[i] != ("1" if home and by[i] == "invite" else "0"):
+            ok = False
+        if disc and home and res[i].get("disc_answers", "0") == "0":
+            ok = False
+    print("%s %-36s path=%s/%s by=%s/%s server=%s/%s lan=%s/%s nat=%s/%s got=%s/%s invite=%s dir_rooms=%s secs=%s/%s" % (
         "ok  " if ok else "FAIL", name, paths[0], paths[1], by[0], by[1], servers[0], servers[1],
+        lan[0], lan[1],
         res[0].get("nat"), res[1].get("nat"), res[0].get("got"), res[1].get("got"), invite[0],
         "yes" if carried else "none", res[0].get("secs"), res[1].get("secs")))
     sys.stdout.flush()
@@ -527,6 +548,14 @@ DESKTOP_CASES = [
     ("desk code: PC's home x cone, keeps ports", ("home", "cone"), ("code", "code"), "direct", "join", True),
     ("desk code: PC's home x sym, keeps ports", ("home", "sym"), ("code", "code"), "direct", "join", True),
     ("desk code: PC's home x rand sym", ("home", "symr"), ("code", "code"), "relay", "join", True),
+    # home relay discovery (beta.5): no hairpin, so an invite (the PC's PUBLIC
+    # address) from the PC's own LAN needs the DISCOVER answer; the away PSP
+    # broadcasts too and hears nothing; a code goes to the shared server
+    # (configured), whose redirect -- not the desktop's answer -- applies
+    ("discover: invite, PC's home x cone", ("home", "cone"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: invite, PC's home x sym", ("home", "sym"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: invite, both in PC's home", ("home", "home"), ("invite", "invite"), "direct", "join", True, True),
+    ("discover: code, PC's home (ignored)", ("home", "cone"), ("code", "code"), "direct", "join", True, True),
 ]
 
 

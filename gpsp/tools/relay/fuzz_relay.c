@@ -143,7 +143,7 @@ static size_t gen(uint8_t *b, int who)
       if (type == RL_T_REGISTER || type == RL_T_UNREGISTER)
          tok = rn(3) ? g_dtok[who] : rn(2) ? 0 : r64();
       size_t i;
-      len = RL_HDR + rn(80);
+      len = RL_HDR + rn(type == RL_T_DISCOVER ? 100 : 80);   /* DISCOVER: past its pad */
       if (rn(4) == 0)
          len = rn(RL_HDR + 2);                       /* truncated */
       for (i = 0; i < len && i < RL_MAX_DGRAM; i++)
@@ -241,6 +241,11 @@ int main(int argc, char **argv)
    cfg.max_rooms = 32;
    cfg.directory = 1;
    cfg.max_dir = 8;
+   /* home relay discovery on, with an identity: the answers are checked
+    * for amplification like every other reply (some sources are 10/8) */
+   cfg.discover = 1;
+   cfg.public_ip_be = 0x0A0B0CCBu;
+   cfg.served_name = "relay.fuzz.example";
    g_core = relay_core_create(&cfg);
    cfg.directory = 0;
    g_desk = relay_core_create(&cfg);
@@ -253,6 +258,8 @@ int main(int argc, char **argv)
    memset(&cc, 0, sizeof(cc));
    cc.server_ip_be = 0x01020304;
    cc.server_port = 27420;
+   cc.discover_bcast_be[0] = 0xFFFFFFFFu;   /* DISCOVERED parsing, fuzzed too */
+   cc.discover_name = "relay.fuzz.example";
    cc.direct = 1;
    cc.now_us = c_clock;
    for (i = 0; i < 2; i++)
@@ -325,9 +332,10 @@ int main(int argc, char **argv)
          break;
    }
    relay_core_stats(g_core, &st);
-   printf("%s: %lu datagrams; rx=%u bad=%u token=%u rate=%u rooms_made=%u joins=%u cookies=%u/%u bad_cookie=%u fwd=%u dir_made=%u refreshed=%u lookups=%u located=%u\n",
+   printf("%s: %lu datagrams; rx=%u bad=%u token=%u rate=%u rooms_made=%u joins=%u cookies=%u/%u bad_cookie=%u fwd=%u dir_made=%u refreshed=%u lookups=%u located=%u discovered=%u/%u\n",
           g_fail ? "FAIL" : "PASS", it, st.rx, st.rx_bad, st.rx_token, st.rx_rate, st.rooms_made,
-          st.joins, st.cookies_sent, st.rx, st.cookie_bad, st.fwd, st.dir_made, st.dir_refreshed, st.lookups, st.located);
+          st.joins, st.cookies_sent, st.rx, st.cookie_bad, st.fwd, st.dir_made, st.dir_refreshed, st.lookups, st.located,
+          st.discovered, st.discovers);
    for (i = 0; i < 2; i++)
       relay_transport_destroy(cl[i]);
    relay_core_destroy(g_core);

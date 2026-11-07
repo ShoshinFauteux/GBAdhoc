@@ -9,6 +9,12 @@ matching LAN socket.  docs/ONLINE-TUNNEL.md section 7 (the LAN test).
 
     python winfwd.py --lan 10.0.0.40 --wsl 172.23.21.144 [--port 27420] [--fwd 27430]
 
+Home relay discovery (beta.5): a console's DISCOVER goes to the LAN broadcast
+address (10.0.0.255 / 255.255.255.255), port P.  Windows delivers those to a
+socket bound to the unicast LAN address too (measured 2026-11-07 on this PC),
+so nothing changes here: it is forwarded like any datagram and the answer
+leaves from the P socket -- the address the console then uses.
+
 Bind a LAN address explicitly (never 0.0.0.0): the relay is LAN-only unless the
 owner forwards a port on the router himself (builds/online-out/REAL-TEST.md).
 """

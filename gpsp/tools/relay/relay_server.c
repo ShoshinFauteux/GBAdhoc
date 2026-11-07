@@ -14,6 +14,16 @@
  *       replies go back framed the same way, so the core still sees every
  *       console's real address.
  *
+ *   gbadhoc-relay ... [--name DNS-NAME] [--public-port P] [--no-discover]
+ *       HOME RELAY DISCOVERY: a console on this server's own LAN asks the
+ *       LAN broadcast address first (RL_T_DISCOVER) and is told the name and
+ *       public address this server serves, so it can use the LAN address
+ *       when the router does no NAT hairpin.  On whenever the server knows
+ *       who it is (--name and/or --public-ip); --name without --public-ip
+ *       resolves the name for the public IP (again every 10 minutes: a home
+ *       IP changes).  --public-port: the router's public port for the main
+ *       port, if it is not the same.
+ *
  * Prints one line per event and a counter line every 10 s.  Never binds a
  * public address unless --bind says so: the default is 127.0.0.1.
  */
@@ -22,6 +32,7 @@
 #include "invite_code.h"
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -42,6 +53,26 @@ static int g_status = -1;
 /* desktop-host mode (--home / --register): GBAdhoc XMB's relay, for natlab */
 static rl_dirc g_dc;
 static int g_dc_on;
+
+/* --name's IPv4, 0 = none or private (a split-horizon DNS answer is no
+ * public address).  Blocking, but only at start and every 10 minutes. */
+static uint32_t resolve_public(const char *name)
+{
+   struct addrinfo hints, *res = NULL;
+   uint32_t ip = 0;
+   memset(&hints, 0, sizeof(hints));
+   hints.ai_family = AF_INET;
+   hints.ai_socktype = SOCK_DGRAM;
+   if (getaddrinfo(name, NULL, &hints, &res) == 0 && res)
+   {
+      ip = ((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr;
+      if (rl_ip_private(ip))
+         ip = 0;
+   }
+   if (res)
+      freeaddrinfo(res);
+   return ip;
+}
 
 static void dc_send(void *u, uint32_t ip, uint16_t port, const void *buf, size_t len)
 {
@@ -136,8 +167,9 @@ int main(int argc, char **argv)
    const char *bind_ip = "127.0.0.1";
    int port = RL_DEFAULT_PORT, fwd_port = 0, status_port = 0, i;
    const char *pidfile = NULL, *home = NULL, *reg = NULL, *pub = NULL, *lan = NULL;
-   const char *pubip = NULL;
-   int adv_port = 0;
+   const char *pubip = NULL, *name = NULL;
+   int adv_port = 0, no_discover = 0, pub_port = 0;
+   uint64_t last_resolve = 0;
    rl_core_cfg cfg;
    rl_core *core;
    uint64_t last_stat = now_ms(), last_tick = 0;
@@ -155,6 +187,9 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--public") && i + 1 < argc) pub = argv[++i];
       else if (!strcmp(argv[i], "--public-ip") && i + 1 < argc) pubip = argv[++i];
       else if (!strcmp(argv[i], "--lan-ip") && i + 1 < argc) lan = argv[++i];
+      else if (!strcmp(argv[i], "--name") && i + 1 < argc) name = argv[++i];
+      else if (!strcmp(argv[i], "--public-port") && i + 1 < argc) pub_port = atoi(argv[++i]);
+      else if (!strcmp(argv[i], "--no-discover")) no_discover = 1;
       else if (!strcmp(argv[i], "--quiet")) g_quiet = 1;
       else if (!strcmp(argv[i], "--status") && i + 1 < argc) status_port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--pidfile") && i + 1 < argc) pidfile = argv[++i];
@@ -165,7 +200,11 @@ int main(int argc, char **argv)
                          "  desktop-host mode (GBAdhoc XMB's relay): [--home CODE] [--register DIR_IP[:PORT]]\n"
                          "      [--advertise-port P] [--lan-ip IP] [--public IP (prints the invite code)]\n"
                          "  [--public-ip IP]   this server's public IPv4 (default: --public): consoles\n"
-                         "                     on the server's own LAN are offered to remote peers there\n");
+                         "                     on the server's own LAN are offered to remote peers there\n"
+                         "  [--name DNS-NAME]  the name consoles are configured with (home relay\n"
+                         "                     discovery; also the public IP when --public-ip is absent)\n"
+                         "  [--public-port P]  the router's public port for --port, if different\n"
+                         "  [--no-discover]    never answer a LAN console's DISCOVER\n");
          return 2;
       }
    }
@@ -213,9 +252,25 @@ int main(int argc, char **argv)
       else
          cfg.public_ip_be = ip;
    }
+   if (name && !cfg.public_ip_be)
+   {
+      cfg.public_ip_be = resolve_public(name);
+      last_resolve = now_ms();
+   }
+   cfg.served_name = name;
+   cfg.public_port = (uint16_t)(pub_port > 0 && pub_port < 65535 ? pub_port : 0);
+   cfg.discover = !no_discover && (name || cfg.public_ip_be);
    core = relay_core_create(&cfg);
    if (!core)
       return 1;
+   if (name && strlen(name) > RL_NAME_MAX)
+      fprintf(stderr, "warning: --name is longer than %d characters; not served\n", RL_NAME_MAX);
+   if (cfg.discover)
+   {
+      const uint8_t *q = (const uint8_t *)&cfg.public_ip_be;
+      printf("discover on: name=%s public=%u.%u.%u.%u:%d\n", name ? name : "-",
+             q[0], q[1], q[2], q[3], cfg.public_port ? cfg.public_port : 0);
+   }
    if (home)
       relay_core_set_home(core, home);
    if (reg && !fwd_port)
@@ -344,16 +399,31 @@ int main(int argc, char **argv)
          if (g_dc_on)
             rl_dirc_tick(&g_dc, last_tick);
       }
+      if (name && !pubip && !pub && now_ms() - last_resolve >= 600000)
+      {
+         uint32_t ip = resolve_public(name);
+         last_resolve = now_ms();
+         if (ip && ip != cfg.public_ip_be)
+         {
+            const uint8_t *q = (const uint8_t *)&ip;
+            cfg.public_ip_be = ip;
+            relay_core_set_public_ip(core, ip);
+            printf("public ip %u.%u.%u.%u (from %s)\n", q[0], q[1], q[2], q[3], name);
+            fflush(stdout);
+         }
+      }
       if (now_ms() - last_stat >= 10000)
       {
          rl_core_stats s;
-         char l[200];
+         char l[288];
          relay_core_stats(core, &s);
          snprintf(l, sizeof(l), "stats rx=%u tx=%u fwd=%u bytes=%u bad=%u token=%u rate=%u "
-                  "rooms=%u made=%u joins=%u refused=%u punch=%u direct=%u dir=%u lookups=%u located=%u dir_bytes=%u",
+                  "rooms=%u made=%u joins=%u refused=%u punch=%u direct=%u dir=%u lookups=%u located=%u dir_bytes=%u "
+                  "discovers=%u discovered=%u",
                   s.rx, s.tx, s.fwd, s.fwd_bytes, s.rx_bad, s.rx_token, s.rx_rate,
                   s.rooms_now, s.rooms_made, s.joins, s.refused, s.punches_offered,
-                  s.paths_direct, s.dir_now, s.lookups, s.located, s.dir_rx_bytes + s.dir_tx_bytes);
+                  s.paths_direct, s.dir_now, s.lookups, s.located, s.dir_rx_bytes + s.dir_tx_bytes,
+                  s.discovers, s.discovered);
          say(NULL, l);
          last_stat = now_ms();
       }

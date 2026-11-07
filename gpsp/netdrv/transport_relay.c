@@ -70,6 +70,9 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define TS_RING          64
 #define LOOKUP_EVERY_US  400000ull
 #define LOOKUP_TRIES     4
+#define DISC_EVERY_US    130000ull   /* DISCOVER at 0, 130, 260 ms ... */
+#define DISC_TRIES       3
+#define DISC_WINDOW_US   400000ull   /* ... answers until 400 ms, then on */
 
 typedef struct
 {
@@ -110,6 +113,11 @@ struct relay_transport
    /* lookup */
    uint32_t lookup_nonce;
    int lookup_tries;
+   /* home relay discovery */
+   uint32_t disc_nonce;
+   int disc_tries, after_disc;   /* the state to go on to */
+   uint64_t disc_end_us;
+   char disc_name[RL_NAME_MAX + 1];
    /* room */
    int slot;
    uint64_t token;
@@ -181,6 +189,62 @@ static void send_lookup(relay_transport *t)
    memcpy(b + RL_HDR, t->cfg.code, RL_CODE_LEN);
    rl_put32(b + RL_HDR + 4, t->lookup_nonce);
    to_server(t, 0, b, sizeof(b));
+}
+
+static void send_discover(relay_transport *t)
+{
+   uint8_t b[RL_DISC_PAD];               /* padded: the reply is never larger */
+   int k;
+   memset(b, 0, sizeof(b));
+   rl_hdr(b, RL_T_DISCOVER, RL_SLOT_NONE, RL_SLOT_NONE, 0);
+   rl_put32(b + RL_HDR, t->disc_nonce);
+   for (k = 0; k < 2; k++)
+      if (t->cfg.discover_bcast_be[k] &&
+          (k == 0 || t->cfg.discover_bcast_be[1] != t->cfg.discover_bcast_be[0]))
+         raw(t, t->cfg.discover_bcast_be[k], t->cfg.server_port, b, sizeof(b));
+}
+
+static int lc(int ch) { return ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch; }
+
+/* A DISCOVERED from (ip, port): the configured server, seen on our LAN? */
+static void on_discovered(relay_transport *t, const uint8_t *b, int len,
+                          uint32_t ip, uint16_t port)
+{
+   const uint8_t *body = b + RL_HDR;
+   uint32_t pub;
+   unsigned pport, nl, i;
+   int by_name, by_ip;
+   char a[24];
+   if (len < RL_DISCOVERED_MIN || rl_get32(body) != t->disc_nonce)
+      return;
+   nl = body[10];
+   if (nl > RL_NAME_MAX || RL_DISCOVERED_MIN + (int)nl > len)
+      return;
+   if (t->st.disc_answers < 255)
+      t->st.disc_answers++;
+   pub = rl_get_ip(body + 4);
+   pport = rl_get16(body + 8);
+   by_name = nl && t->disc_name[0] && strlen(t->disc_name) == nl;
+   for (i = 0; by_name && i < nl; i++)
+      by_name = lc(t->disc_name[i]) == lc(body[11 + i]);
+   by_ip = pub && pub == t->cfg.server_ip_be &&
+           (!pport || pport == t->cfg.server_port);
+   ipfmt(ip, port, a);
+   if (!rl_ip_lan(ip) || !port || port == 65535 || (!by_name && !by_ip))
+   {
+      lg(t, "relay_discover from=%s ignored (another relay)", a);
+      return;
+   }
+   lg(t, "relay_discover from=%s match=%s: the server's LAN address", a,
+      by_name ? "name" : "ip");
+   t->cfg.server_ip_be = ip;
+   t->cfg.server_port = port;
+   t->st.lan_relay = 1;
+   t->last_server_rx_us = now(t);
+   t->state = t->after_disc;
+   t->next_us = 0;
+   t->st.host_ip_be = ip;
+   t->st.host_port = port;
 }
 
 /* after the lookup (or without one): classify the NAT, then enter */
@@ -413,6 +477,20 @@ static void timers(relay_transport *t)
    }
    switch (t->state)
    {
+   case RL_ST_DISCOVER:
+      if (n >= t->disc_end_us)
+      {
+         lg(t, "relay_discover result=none answers=%u", t->st.disc_answers);
+         t->state = t->after_disc;      /* exactly as without discovery */
+         t->next_us = 0;
+      }
+      else if (n >= t->next_us && t->disc_tries < DISC_TRIES)
+      {
+         send_discover(t);
+         t->disc_tries++;
+         t->next_us = n + DISC_EVERY_US;
+      }
+      break;
    case RL_ST_LOOKUP:
       if (n >= t->next_us)
       {
@@ -625,7 +703,7 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
             break;
          }
          if (t->state == RL_ST_ENTERING || t->state == RL_ST_PROBING ||
-             t->state == RL_ST_LOOKUP)
+             t->state == RL_ST_LOOKUP || t->state == RL_ST_DISCOVER)
          {
             int tl = n - 1 < (int)sizeof(t->errtext) - 1 ? n - 1
                                                          : (int)sizeof(t->errtext) - 1;
@@ -789,6 +867,12 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
       if (rl_check(b, len) != 0)
       {
          t->st.rx_bad++;
+         continue;
+      }
+      if (b[5] == RL_T_DISCOVERED)
+      {
+         if (t->state == RL_ST_DISCOVER)
+            on_discovered(t, b, len, ip, port);
          continue;
       }
       from_server = ip == t->cfg.server_ip_be &&
@@ -1009,6 +1093,22 @@ relay_transport *relay_transport_create(const rl_sock *s, const rl_client_cfg *c
             t->lookup_nonce = 1;
       }
    }
+   /* home relay discovery first (also before a LOOKUP: the home relay is
+    * the directory too), unless the server is already a LAN address */
+   if ((cfg->discover_bcast_be[0] || cfg->discover_bcast_be[1]) &&
+       !rl_ip_private(cfg->server_ip_be))
+   {
+      if (cfg->discover_name && strlen(cfg->discover_name) <= RL_NAME_MAX)
+         memcpy(t->disc_name, cfg->discover_name, strlen(cfg->discover_name) + 1);
+      t->after_disc = t->state;
+      t->state = RL_ST_DISCOVER;
+      t->next_us = 0;
+      t->disc_nonce = t->probe_nonce ^ 0xD15C0u;
+      if (!t->disc_nonce)
+         t->disc_nonce = 1;
+      t->disc_end_us = t->t0 + DISC_WINDOW_US;
+   }
+   t->cfg.discover_name = NULL;         /* copied: the caller's string may go */
    lg(t, "relay_start host=%d code=%s direct=%d", cfg->is_host,
       cfg->code[0] ? cfg->code : "-", cfg->direct);
    return t;

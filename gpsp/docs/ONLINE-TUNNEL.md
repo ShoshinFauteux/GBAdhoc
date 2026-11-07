@@ -788,6 +788,66 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
 - the directory on the VPS;
 - real-internet punching (home Wi-Fi against a phone hotspot), which needs the owner's go-ahead.
 
+### Home relay discovery (beta.5, branch claude/b5-online)
+
+**The problem.** A PSP on the relay's own LAN cannot reach it through its public address when the
+router does no NAT hairpin (the owner's Rogers gateway, and many others). The owner had to switch
+`online_relay` between `10.0.0.40:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
+host's own PSPs have the same problem with an invite code (it names the PC's public address).
+
+**Wire.** Two new types, no version bump (an older relay ignores them; an older console never sends
+them):
+
+| type | direction | body |
+|---|---|---|
+| `RL_T_DISCOVER` 22 | console -> LAN broadcast, main port | `nonce[4]`, padded to `RL_DISC_PAD` = 96 B |
+| `RL_T_DISCOVERED` 23 | relay -> console, from the MAIN socket | `nonce[4] pub_ip[4] pub_port[2] name_len[1] name[<=63]` (<= 90 B) |
+
+The answer's **source address is the LAN endpoint** (the relay may not know its own LAN address: the
+owner's runs in WSL behind winfwd). `pub_ip`/`pub_port` 0 = unknown.
+
+**Console (transport_relay.c, state `RL_ST_DISCOVER`, first of all states).** DISCOVER to
+255.255.255.255 and the console's /24 broadcast at 0, 130 and 260 ms; answers read until 400 ms. An
+answer is used only when it is the configured server: its name equals the configured name
+(case-insensitive), or its `pub_ip` equals the address the name resolved to (or the invite's) and
+its `pub_port`, when given, equals the configured port. It must also come from a LAN address. Then
+that address becomes the server for everything (LOOKUP, PROBE, CREATE/JOIN, relay); `lan_relay=1`
+in the stats. Anything else is logged (`relay_discover ... ignored`) and changes nothing; no answer
+= exactly the old path, 400 ms later. Skipped when the configured server is already a LAN address.
+DNS still runs first (a failed lookup fails as before). The PRX sets `SO_BROADCAST`; broadcast sends
+are kept out of the failure text's counters. No new import, no new heap (96 B on the stack).
+
+**Relay (relay_core.c `on_discover`).** Answers only: when enabled (`cfg.discover`,
+`relay_core_set_discover`); when it knows who it is (a public IP, from `--public-ip`/UPnP, and/or a
+served name, `--name`/`relay_core_set_name`); to a LAN source (`rl_ip_lan`: RFC 1918, link-local,
+loopback; NOT 100.64/10); on the main socket; to a request padded to 96 B, with an answer never
+larger than it; within 20 answers/s from all sources and 30/min per source. Refusals are silent.
+`gbadhoc-relay` turns it on whenever it has `--name` or `--public-ip` (`--no-discover` to stop);
+`--name` without `--public-ip` resolves the name for the public IP (again every 10 min).
+
+**A LAN-discovered relay is still the same relay**: a remote peer joins the same room through the
+public address, the room/invite codes are unchanged, and direct-connect's site candidate (the
+relay's public IP with the home console's port) applies as for a console configured with the LAN
+address. For a code (LOOKUP at the shared server) a desktop host's own answer is ignored -- the
+shared server is the configured one -- and the directory's same-home redirect does the job.
+
+**Trust.** Anything on the LAN can answer DISCOVER; the console trusts a LAN device naming its
+server as it trusts the LAN's DNS. It never trusts a relay that names another server, nor one
+claiming the right IP with another port.
+
+**winfwd.** Windows delivers subnet and limited broadcasts to a socket bound to the unicast LAN
+address (measured 2026-11-07 on the relay PC: a socket bound to 10.0.0.40 received datagrams sent to
+10.0.0.255 and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
+socket. A Linux relay must bind 0.0.0.0 (a socket bound to a unicast address there gets no
+broadcasts).
+
+**Tests.** test_relay_nat: no-hairpin home host x away cone / symmetric / random symmetric, by name
+without a public IP, both consoles at home, discovery off (the room must NOT form: the problem
+itself), a foreign relay on the LAN, a foreign relay claiming our IP with another port, a 10-minute
+session; plus the core's rules one by one. test_relay_desktop and natlab (real sockets): invite from
+the PC's home x cone / symmetric, both PSPs at the PC's home, a code from the PC's home (answer
+ignored). fuzz_relay fuzzes both sides with discovery on.
+
 ## 7. Implementation plan
 
 1. **Relay server and a desktop twin.** Write the relay. Add `transport_relay` to the SDL build first

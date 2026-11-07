@@ -11,9 +11,17 @@ Both run hidden in the background.  Their PIDs go to %LOCALAPPDATA%\GBAdhocRelay
 stop_relay.ps1 stops exactly those PIDs.  Logs: relay.log (in WSL, ~/gbrelay/),
 winfwd.log here.
 
-  powershell -ExecutionPolicy Bypass -File start_relay.ps1 [-Lan 10.0.0.40]
+  powershell -ExecutionPolicy Bypass -File start_relay.ps1 [-Lan 10.0.0.40] [-Name relay.rayquaza.ca]
+
+-Name: the DNS name consoles are configured with.  The relay then answers a
+LAN console's home relay discovery (DISCOVER, beta.5) with it, so a PSP on
+this LAN set to the public name uses 10.0.0.40 (the router does no hairpin).
+winfwd needs no change: Windows delivers subnet and limited broadcasts to a
+socket bound to the LAN address (measured 2026-11-07, docs/ONLINE-TUNNEL.md,
+"Home relay discovery").
 #>
-param([string]$Lan = "10.0.0.40", [string]$Distro = "Ubuntu")
+param([string]$Lan = "10.0.0.40", [string]$Distro = "Ubuntu", [string]$Name = "")
+$nameArg = if ($Name) { " --name $Name" } else { "" }
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $state = Join-Path $env:LOCALAPPDATA "GBAdhocRelay"
@@ -27,7 +35,7 @@ if (Test-Path (Join-Path $state "winfwd.pid")) {
 # the source tree as WSL sees it
 $src = (& wsl -d $Distro -- wslpath -a ($here -replace '\\','/')).Trim()
 # build into ~/gbrelay (not /tmp: survives WSL restarts)
-& wsl -d $Distro -- bash -lc "mkdir -p ~/gbrelay && bash '$src/build.sh' ~/gbrelay/bin >/dev/null && printf '%s\n' '#!/bin/sh' 'exec ~/gbrelay/bin/gbadhoc-relay --bind 0.0.0.0 --fwd 27430 --status 27429 --pidfile ~/gbrelay/relay.pid >> ~/gbrelay/relay.log 2>&1' > ~/gbrelay/run.sh && chmod +x ~/gbrelay/run.sh && echo built"
+& wsl -d $Distro -- bash -lc "mkdir -p ~/gbrelay && bash '$src/build.sh' ~/gbrelay/bin >/dev/null && printf '%s\n' '#!/bin/sh' 'exec ~/gbrelay/bin/gbadhoc-relay --bind 0.0.0.0 --fwd 27430 --status 27429 --pidfile ~/gbrelay/relay.pid$nameArg >> ~/gbrelay/relay.log 2>&1' > ~/gbrelay/run.sh && chmod +x ~/gbrelay/run.sh && echo built"
 if ($LASTEXITCODE -ne 0) { throw "relay build failed" }
 
 # the relay: a hidden wsl.exe that stays attached (WSL stops a distro with no client)

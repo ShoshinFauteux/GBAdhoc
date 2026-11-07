@@ -153,6 +153,9 @@ static nmap_t *nat_out(nat_t *n, ep_t priv, ep_t dst)
 }
 
 static int is_lan(uint32_t ip) { return octet(ip, 0) == 10; }
+/* 255.255.255.255 or 10.0.N.255: stays on the sender's LAN (home relay
+ * discovery, beta.5) */
+static int is_bcast(uint32_t ip) { return ip == 0xFFFFFFFFu || (is_lan(ip) && octet(ip, 3) == 255); }
 
 /* an entity sends from priv endpoint `src` */
 static void ent_send(int e, ep_t src, ep_t dst, const void *b, size_t n)
@@ -162,6 +165,12 @@ static void ent_send(int e, ep_t src, ep_t dst, const void *b, size_t n)
    {
       nat_t *nt = &N[x->nat];
       int i, fw = -1;
+      if (is_bcast(dst.ip))
+      {
+         if (dst.ip == 0xFFFFFFFFu || octet(dst.ip, 2) == nt->lan)
+            enqueue(src, dst, b, n, 2, x->nat);   /* from_inside: the sender's LAN */
+         return;
+      }
       if (is_lan(dst.ip))
       {
          if (octet(dst.ip, 2) == nt->lan)
@@ -232,6 +241,13 @@ static int ent_at(ep_t d)
 static void route(pkt_t *p)
 {
    int e, i, k;
+   if (is_bcast(p->dst.ip))
+   {
+      /* the desktop hears it if it is on that LAN, on its main port */
+      if (p->from_inside == 2 && E[2].nat == 2 && p->dst.port == PORT)
+         deliver(2, p);
+      return;
+   }
    if (p->dst.ip == DIR_IP)
    {
       rl_addr from = { p->src.ip, p->src.port };
@@ -390,6 +406,9 @@ typedef struct
    int both_join;               /* both PSPs "Join with code" (the mockup's flow): slot 0 hosts */
    int desk_keep;               /* the desktop's router keeps source ports */
    int desk_pubip;              /* the desktop's relay knows its public IP (UPnP) */
+   int disc;                    /* home relay discovery: the desktop answers
+                                   DISCOVER (UPnP gave it its public IP and
+                                   port), every PSP broadcasts one first */
 } case_t;
 
 static void put_ent(int e, int where, int nattype, int own_nat)
@@ -488,6 +507,12 @@ static int run_case(const case_t *c)
    relay_core_set_home(g_desk, "QWER");          /* a local pick, asked for */
    if (c->desk_pubip)
       relay_core_set_public_ip(g_desk, desk_pub);
+   if (c->disc)
+   {
+      /* what desktop/online.c does once UPnP answered */
+      relay_core_set_public_port(g_desk, PORT);
+      relay_core_set_discover(g_desk, 1);
+   }
 
    memset(&dcfg, 0, sizeof(dcfg));
    dcfg.dir_ip_be = DIR_IP;
@@ -550,6 +575,11 @@ static int run_case(const case_t *c)
       cfg[i].now_us = now_us;
       cfg[i].log = lg;
       cfg[i].log_user = (void *)(i ? "guest" : "host");
+      if (c->disc)
+      {
+         cfg[i].discover_bcast_be[0] = 0xFFFFFFFFu;
+         cfg[i].discover_bcast_be[1] = ip4(10, 0, E[i].nat >= 0 ? N[E[i].nat].lan : 0, 255);
+      }
       rt[i] = relay_transport_create(&sk[i], &cfg[i]);
    }
    for (t_end = g_now + 10000 * MS; g_now < t_end; g_now += MS)
@@ -654,7 +684,22 @@ static int run_case(const case_t *c)
       {
          int by = i ? c->by1 : c->by0;
          int where = i ? c->where1 : c->where0;
-         uint32_t want_ip = where == W_DESKHOME && by == BY_DIR ? E[2].priv.ip : desk_pub;
+         /* in the PC's home: its LAN address -- from the directory (a code),
+          * or (an invite) from home relay discovery */
+         uint32_t want_ip = where == W_DESKHOME && (by == BY_DIR || c->disc) ? E[2].priv.ip
+                                                                         : desk_pub;
+         int want_lan = c->disc && where == W_DESKHOME && by == BY_INVITE;
+         if (st[i].lan_relay != want_lan)
+         {
+            printf("FAIL %s: psp %d lan_relay %u, want %d\n", c->name, i, st[i].lan_relay,
+                   want_lan);
+            ok = 0;
+         }
+         if (c->disc && where == W_DESKHOME && !st[i].disc_answers)
+         {
+            printf("FAIL %s: psp %d heard no DISCOVERED\n", c->name, i);
+            ok = 0;
+         }
          if (by == BY_DIR && st[i].located != RL_LOC_HOST)
          {
             printf("FAIL %s: psp %d lookup kind %u, want host\n", c->name, i, st[i].located);
@@ -780,27 +825,38 @@ int main(int argc, char **argv)
 {
    static const case_t cases[] = {
       /* name                                     nat0      nat1   where0      where1    by0        by1     direct desk      hairpin */
-      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0 },
+      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0, 0 },
       /* sequential carrier NATs: port prediction finds the way (was "relayed by PC") */
-      { "code: cone x symmetric, direct (predicted)", NAT_CONE, NAT_SYM, W_OWN,  W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0 },
-      { "code: cone x random sym, relayed by PC", NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0 },
-      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0 },
-      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
-      { "invite: cone x symmetric, direct (pred)", NAT_CONE, NAT_SYM, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
-      { "invite: cone x random sym, relayed",     NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 0, 0, 0 },
-      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
+      { "code: cone x symmetric, direct (predicted)", NAT_CONE, NAT_SYM, W_OWN,  W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "code: cone x random sym, relayed by PC", NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "invite: cone x symmetric, direct (pred)", NAT_CONE, NAT_SYM, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "invite: cone x random sym, relayed",     NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 0, 0, 0, 0 },
+      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0, 0 },
       /* the router changes ports: the site candidate misses */
-      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 0, 0 },
+      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 0, 0, 0 },
       /* ... and keeps them (2026-11-06: the relay's own home) */
-      { "code: PC's home x cone, port-keeping router", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 0 },
-      { "code: PC's home x cone, + desktop public IP", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1 },
-      { "code: PC's home x symmetric, port-keeping",  NAT_CONE, NAT_SYM,  W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1 },
-      { "code: PC's home x random sym, relayed",      NAT_CONE, NAT_SYMR, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 1, 1 },
-      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0, 0, 0, 0 },
-      { "both join by code: cone x cone, direct", NAT_CONE, NAT_CONE, W_OWN, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 1, 0, 0 },
-      { "both join by invite: cone x symmetric", NAT_CONE, NAT_SYM, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 1, 0, 0 },
-      { "both join by invite: cone x random sym", NAT_CONE, NAT_SYMR, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0 },
-      { "both join, code + invite, symmetric x sym", NAT_SYM, NAT_SYM, W_OWN, W_OWN, BY_DIR, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0 },
+      { "code: PC's home x cone, port-keeping router", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 0, 0 },
+      { "code: PC's home x cone, + desktop public IP", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1, 0 },
+      { "code: PC's home x symmetric, port-keeping",  NAT_CONE, NAT_SYM,  W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1, 0 },
+      { "code: PC's home x random sym, relayed",      NAT_CONE, NAT_SYMR, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 1, 1, 0 },
+      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0, 0, 0, 0, 0 },
+      { "both join by code: cone x cone, direct", NAT_CONE, NAT_CONE, W_OWN, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 1, 0, 0, 0 },
+      { "both join by invite: cone x symmetric", NAT_CONE, NAT_SYM, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 1, 0, 0, 0 },
+      { "both join by invite: cone x random sym", NAT_CONE, NAT_SYMR, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0, 0 },
+      { "both join, code + invite, symmetric x sym", NAT_SYM, NAT_SYM, W_OWN, W_OWN, BY_DIR, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0, 0 },
+      /* ---- home relay discovery (beta.5): no hairpin; the desktop answers
+       * DISCOVER with its UPnP public IP and port ---- */
+      /* an invite names the PC's PUBLIC address: unreachable from its own LAN
+       * without hairpin -- discovery finds the PC there */
+      { "discover: invite from the PC's home x cone", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 1, 1, 1 },
+      { "discover: invite, PC's home x symmetric",   NAT_CONE, NAT_SYM,  W_DESKHOME, W_OWN, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 1, 1, 1 },
+      { "discover: both PSPs in the PC's home",      NAT_CONE, NAT_CONE, W_DESKHOME, W_DESKHOME, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 1, 1, 1, 1 },
+      /* a code: the shared server is configured, the PC is not it -- its
+       * answer is ignored and the directory's LAN redirect does the job */
+      { "discover: code from the PC's home (ignored)", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1, 1 },
+      { "discover: code + invite, PC's home host",   NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_INVITE, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1, 1 },
    };
    unsigned i, fails = 0, n = sizeof(cases) / sizeof(cases[0]);
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");

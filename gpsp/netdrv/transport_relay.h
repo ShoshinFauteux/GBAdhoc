@@ -64,6 +64,19 @@ typedef struct rl_client_cfg
     * its server for everything (PROBE, CREATE/JOIN, relay, rendezvous).  No
     * answer in 1.6 s (an older server) = carry on at the server. */
    int lookup;
+   /* HOME RELAY DISCOVERY (beta.5): before anything else, one DISCOVER to
+    * each of these LAN broadcast addresses (0 = none; network order), on the
+    * server's port; the answers are read for DISC_WINDOW_US (400 ms, three
+    * sends).  A relay on this LAN that IS the configured server -- its name
+    * equals discover_name, or the public IP it reports equals server_ip_be
+    * (and its public port, when it says one, server_port) -- becomes the
+    * server at its LAN address: a router without NAT hairpin cannot carry
+    * our datagrams to its own public address.  Anything else is ignored, and
+    * no answer changes nothing.  Skipped when the server is already a
+    * private address. */
+   uint32_t discover_bcast_be[2];
+   const char *discover_name;      /* the configured server's DNS name, or NULL
+                                      (a dotted quad, an invite); copied */
 } rl_client_cfg;
 
 enum
@@ -72,7 +85,8 @@ enum
    RL_ST_ENTERING,       /* CREATE/JOIN out, waiting for the slot */
    RL_ST_IN_ROOM,        /* have a slot: netdrv can run */
    RL_ST_FAILED,         /* refused (see relay_transport_error) */
-   RL_ST_LOOKUP          /* LOOKUP out (cfg.lookup): where the code lives */
+   RL_ST_LOOKUP,         /* LOOKUP out (cfg.lookup): where the code lives */
+   RL_ST_DISCOVER        /* DISCOVER out (cfg.discover_bcast_be): a home relay? */
 };
 
 typedef struct relay_transport relay_transport;
@@ -114,6 +128,9 @@ typedef struct rl_client_stats
    uint32_t host_ip_be;            /* the server actually used (a desktop host when located) */
    uint16_t host_port;
    uint32_t predicted_tx;          /* PUNCHes to predicted ports (symmetric peer) */
+   uint8_t lan_relay;              /* 1 = the server is used at its LAN address
+                                      (home relay discovery) */
+   uint8_t disc_answers;           /* DISCOVERED answers seen (any relay) */
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

@@ -47,7 +47,7 @@ typedef struct
 /* per source IP: CREATE/JOIN attempts this minute, and the last code it
  * asked for that did not exist (a joiner waiting for its host retries that
  * same code twice a second; only a NEW code counts as a guess) */
-typedef struct { uint32_t ip; uint32_t n, nl; uint64_t win_ms; char miss[RL_CODE_LEN]; } rl_ipent;
+typedef struct { uint32_t ip; uint32_t n, nl, nd; uint64_t win_ms; char miss[RL_CODE_LEN]; } rl_ipent;
 
 /* a directory entry: a desktop host's code -> its public endpoint.  The
  * address is the one the REGISTER came from (never one the host claims), the
@@ -73,6 +73,11 @@ struct rl_core
    rl_dir *dir;              /* cfg.directory: max_dir entries */
    char home[RL_CODE_LEN];   /* a desktop host's own code (relay_core_set_home) */
    int has_home;
+   /* home relay discovery: the served name (cfg.served_name, copied) and
+    * the all-sources answer budget for the current second */
+   char name[RL_NAME_MAX + 1];
+   uint32_t disc_n;
+   uint64_t disc_s;
 };
 
 static void lg(rl_core *c, const char *fmt, ...)
@@ -133,6 +138,9 @@ rl_core *relay_core_create(const rl_core_cfg *cfg)
    if (!c->cfg.dir_per_ip) c->cfg.dir_per_ip = 2;
    if (!c->cfg.lookups_per_min) c->cfg.lookups_per_min = 120;
    if (rl_ip_private(c->cfg.public_ip_be)) c->cfg.public_ip_be = 0;
+   if (!c->cfg.discovers_per_s) c->cfg.discovers_per_s = 20;
+   relay_core_set_name(c, c->cfg.served_name);
+   c->cfg.served_name = NULL;   /* copied: the caller's string may go */
    c->secret[0] = c->cfg.random64(c->cfg.user);
    c->secret[1] = c->cfg.random64(c->cfg.user);
    c->nrooms = c->cfg.max_rooms;
@@ -238,6 +246,30 @@ void relay_core_set_public_ip(rl_core *c, uint32_t ip_be)
    c->cfg.public_ip_be = rl_ip_private(ip_be) ? 0 : ip_be;
 }
 
+void relay_core_set_discover(rl_core *c, int on) { c->cfg.discover = on != 0; }
+void relay_core_set_public_port(rl_core *c, uint16_t port) { c->cfg.public_port = port; }
+
+void relay_core_set_name(rl_core *c, const char *name)
+{
+   size_t n = name ? strlen(name) : 0, i;
+   c->name[0] = 0;
+   if (n > RL_NAME_MAX)
+      return;
+   for (i = 0; i < n; i++)               /* a DNS name, lower-cased */
+   {
+      char ch = name[i];
+      if (ch >= 'A' && ch <= 'Z')
+         ch = (char)(ch - 'A' + 'a');
+      if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '.'))
+      {
+         c->name[0] = 0;
+         return;
+      }
+      c->name[i] = ch;
+   }
+   c->name[n] = 0;
+}
+
 static rl_ipent *ip_find(rl_core *c, uint32_t ip, uint64_t now)
 {
    unsigned h = (ip ^ (ip >> 13)) % IPT_N, i;
@@ -267,7 +299,7 @@ static rl_ipent *ip_entry(rl_core *c, uint32_t ip, uint64_t now)
             if (e->ip != ip)
                memset(e->miss, 0, sizeof(e->miss));
             e->ip = ip;
-            e->n = e->nl = 0;
+            e->n = e->nl = e->nd = 0;
             e->win_ms = now;
          }
          return e;
@@ -909,6 +941,53 @@ static void on_lookup(rl_core *c, int sock, const rl_addr *from, const uint8_t *
    dir_tx(c, sock, from, o, sizeof(o));
 }
 
+/* Home relay discovery.  A console on this server's own LAN broadcasts a
+ * DISCOVER before it talks to the configured server; the answer says which
+ * server this is (its public IP and port, its DNS name) and comes from the
+ * main socket, so its source address is the LAN endpoint to use.  The
+ * console decides whether it is the server it was configured for.
+ * Answered only: when enabled and this server knows who it is; for a LAN
+ * source (rl_ip_lan); on the main socket; within discovers_per_s for all
+ * sources and 30 a minute per source; and never larger than the request. */
+#define DISC_PER_IP_MIN 30
+static void on_discover(rl_core *c, int sock, const rl_addr *from, const uint8_t *b,
+                        size_t len, uint64_t now)
+{
+   uint8_t o[RL_DISCOVERED_MIN + RL_NAME_MAX];
+   uint8_t *p = o + RL_HDR;
+   size_t nl = strlen(c->name), olen = RL_DISCOVERED_MIN + nl;
+   uint64_t sec = now / 1000;
+   char a[24];
+   c->st.discovers++;
+   if (!c->cfg.discover || sock != 0 || !rl_ip_lan(from->ip_be) ||
+       len < RL_DISC_PAD || olen > len || (!c->cfg.public_ip_be && !nl))
+   {
+      c->st.discover_refused++;
+      return;                                         /* silently: no oracle */
+   }
+   if (c->disc_s != sec)
+   {
+      c->disc_s = sec;
+      c->disc_n = 0;
+   }
+   if (++c->disc_n > c->cfg.discovers_per_s ||
+       ++ip_entry(c, from->ip_be, now)->nd > DISC_PER_IP_MIN)
+   {
+      c->st.discover_refused++;
+      c->st.rx_rate++;
+      return;
+   }
+   rl_hdr(o, RL_T_DISCOVERED, RL_SLOT_NONE, RL_SLOT_NONE, 0);
+   memcpy(p, b + RL_HDR, 4);                          /* the nonce */
+   rl_put_ip(p + 4, c->cfg.public_ip_be);
+   rl_put16(p + 8, c->cfg.public_port);
+   p[10] = (uint8_t)nl;
+   memcpy(p + 11, c->name, nl);
+   c->st.discovered++;
+   lg(c, "discover from=%s answered name=%s", ipstr(from, a), nl ? c->name : "-");
+   tx(c, 0, from, o, olen);
+}
+
 /* The slot a token-bearing datagram claims, or NULL. */
 static rl_slot *auth(rl_core *c, const uint8_t *b, const rl_addr *from,
                      rl_room **room, int *slot, uint64_t now)
@@ -1008,6 +1087,9 @@ void relay_core_input(rl_core *c, int sock, const rl_addr *from,
       return;
    case RL_T_LOOKUP:
       on_lookup(c, sock, from, b, len, now_ms);
+      return;
+   case RL_T_DISCOVER:
+      on_discover(c, sock, from, b, len, now_ms);
       return;
    default:
       break;
