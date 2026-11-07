@@ -70,7 +70,7 @@ def _sets(lines):
 class Loop:
     """Everything loop_diff needs from one ELF."""
 
-    def __init__(self, path, func='main', srcfile='main_psp.c', loop=None):
+    def __init__(self, path, func='main', srcfile='main_psp.c', loop=None, includes=None):
         self.path = path
         self.elf = e = Elf(path)
         syms = [s for s in e.funcs() if s['name'] == func]
@@ -88,12 +88,34 @@ class Loop:
         if loop is None:      # by anchor, checked against this ELF's main DW_AT_decl_line
             r = loop_anchor.for_elf(path, decl_line=self.decl_line)
             loop = (r['lo'], r['hi'])
+            includes = r.get('includes') if includes is None else includes
         self.loop = loop
         rows = D.line_rows(e, srcfile)
         self.spans = [(a, b, f, l) for a, b, f, l in D.row_spans(rows)
                       if self.lo <= a < self.hi and f is not None]
+        # isrc: the primary file (loop-line tests: the window's lines are main_psp.c's).
+        # isown: the compile unit's own text, the primary file or a *.inc.c fragment it
+        # includes (adversarial review 2026-11-07: matched by decl_file = main_psp.c,
+        # "inlined helpers in main" fell from 9,640 B to 0 on a real P4 split).
         isrc = lambda f: f == srcfile or f.endswith('/' + srcfile)
-        self.isrc = isrc
+        isown = lambda f: isrc(f) or f.endswith('.inc.c')
+        self.isrc, self.isown = isrc, isown
+        incl = includes or {}
+        frag_files = {f for _, _, f, _ in self.spans if f.endswith('.inc.c')}
+        frag_files |= {x['decl_file'] for x in cu.inlined() if x['decl_file'] and x['decl_file'].endswith('.inc.c')}
+        missing = sorted(os.path.basename(f) for f in frag_files if os.path.basename(f) not in incl)
+        if missing:
+            raise LookupError('%s: fragments %s are in main_psp.o but their #include lines are not '
+                              'known (pass --main-c with the split shell)' % (path, ', '.join(missing[:5])))
+
+        def before_main(f, l):
+            """a (file, line) of the CU's own text precedes main's definition."""
+            if not self.decl_line or l is None:
+                return False
+            if isrc(f):
+                return l < self.decl_line
+            return incl[os.path.basename(f)] < self.decl_line
+        self.before_main = before_main
         # ---- by line (x4v_loopsets.py)
         lines = set(); amin, amax = None, None
         for a, b, f, l in self.spans:
@@ -140,7 +162,7 @@ class Loop:
                 helper_bytes[h['name']] = helper_bytes.get(h['name'], 0) + t - s
             elif isrc(f) and loop[0] <= l <= loop[1]:
                 comp['loop_lines'] += t - s
-            elif isrc(f):
+            elif isown(f):
                 comp['other_main_lines'] += t - s
             else:
                 comp['other_files'] += t - s
@@ -149,10 +171,10 @@ class Loop:
         self.helper_bytes = helper_bytes
         # ---- x4:90 inlined-helper totals
         self.pre_main_bytes = sum(min(b, self.hi) - a for a, b, f, l in self.spans
-                                  if isrc(f) and self.decl_line and l < self.decl_line)
+                                  if isown(f) and before_main(f, l))
         top = [x for x in inl if x['depth'] == 0]
-        self.dwarf_inl_src_bytes = sum(b - a for x in top if x['decl_file'] and isrc(x['decl_file'])
-                                       and self.decl_line and (x['decl_line'] or 0) < self.decl_line
+        self.dwarf_inl_src_bytes = sum(b - a for x in top if x['decl_file'] and isown(x['decl_file'])
+                                       and before_main(x['decl_file'], x['decl_line'] or 0)
                                        for a, b in x['ranges'])
         self.dwarf_inl_all_bytes = sum(b - a for x in top for a, b in x['ranges'])
 
@@ -173,8 +195,10 @@ class Loop:
             return 'loop-helper'
         for a, b, f, l in self.spans:
             if a <= addr < b:
-                if self.isrc(f):
-                    return 'loop-line' if self.loop[0] <= l <= self.loop[1] else 'other-main-line'
+                if self.isrc(f) and self.loop[0] <= l <= self.loop[1]:
+                    return 'loop-line'
+                if self.isown(f):
+                    return 'other-main-line'
                 return 'other-file'
         return 'unattributed'
 
@@ -360,7 +384,7 @@ def main(argv=None):
                 lo, hi = parse_range(o.loop_lines)
                 loop_anchor.check_explicit(r, lo, hi, 'loop_diff')
             print(loop_anchor.describe(r))
-            Ls.append(Loop(p, o.func, o.file, (r['lo'], r['hi'])))
+            Ls.append(Loop(p, o.func, o.file, (r['lo'], r['hi']), r.get('includes')))
     except (LookupError, ValueError, KeyError) as ex:
         print('loop_diff: %s' % ex); return 2
     out = dict(elfs=[print_one(L, o.v) for L in Ls])

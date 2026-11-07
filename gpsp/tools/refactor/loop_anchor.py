@@ -157,6 +157,13 @@ def for_elf(elf_path, main_c=None, decl_line=None):
                           'line %s (DW_AT_decl_line): not the source this ELF was built from '
                           '(pass --main-c)' % (where, r['main'], dl))
     r['where'] = where
+    # a split shell (P4): where each fragment is #included, so a tool can order a
+    # fragment's definitions against main (loop_diff's "defined before main")
+    r['includes'] = {}
+    for k, ln in enumerate(text.split('\n'), 1):
+        m = re.match(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.inc\.c)"', ln)
+        if m:
+            r['includes'][m.group(1).split('/')[-1]] = k
     return r
 
 

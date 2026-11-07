@@ -111,7 +111,8 @@ def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None):
     for (f, ln), n in acc.items():
         if f.endswith('main_psp.c') and lo <= ln <= hi:
             inl['loop rows'] += n
-        elif f.endswith('main_psp.c'):
+        elif f.endswith('main_psp.c') or f.endswith('.inc.c'):
+            # by compile unit: a P4 fragment is main_psp.o's own text (review 2026-11-07)
             inl['main_psp.c rows outside the loop (inlined helpers)'] += n
         else:
             inl['other files (%s)' % os.path.basename(f)] += n
