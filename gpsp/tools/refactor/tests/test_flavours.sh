@@ -13,6 +13,9 @@
 #   C2 --commit HEAD exports the COMMITTED tree: a dirty edit is not built
 #   M4 a failing build.sh fails the run (exit 1)
 #   M5 an unknown flavour is a usage error (exit 2)
+#   M10 hermetic: a caller variable (ME_LOWLAT=0) never reaches build.sh, and is recorded
+#   M11 the --against contract: clean tree, lock, extraEnv, buildEnv, hermetic, ancestry,
+#       all four flavours: each clause refused with exit 2
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d "${TMPDIR:-/tmp}/flavtest.XXXXXX")
@@ -49,6 +52,8 @@ fi
 EOF
 chmod +x "$T/bin/docker"
 export PATH="$T/bin:$PATH" FAKE_DOCKER_LOG="$T/docker.log" FAKE_STAMP="$T/stamp"
+# build.sh runs under env -i (HERMETIC): the fakes' controls are passed through on purpose
+export FLAV_TEST_PASSENV="FAKE_DOCKER_LOG FAKE_STAMP FAKE_FAIL FAKE_FIXUP FAKE_NOSDE FAKE_IMAGE_ID"
 
 # --- fake repo: gpsp/tools/build.sh + the real flavours scripts under test
 R="$T/repo"; mkdir -p "$R/gpsp/tools/refactor/tests" "$R/gpsp/psp"
@@ -66,10 +71,11 @@ else
   echo "psp-fixup-imports gpsp_adhoc.elf" > .build-eboot.log
 fi
 V="${GPSP_BUILD_VERSION:-${GPSP_BUILD_COMMIT:0:7}}"
-{ printf 'ELF '; tr '|' '\n' < "$FAKE_STAMP"; printf '\n'; cat marker.txt; printf 'gpSP v1.1.0-%s rfu=%s\n' "$V" "${RFU_SCHED:-0}"; } > psp/gpsp_adhoc.elf
+{ printf 'ELF '; tr '|' '\n' < "$FAKE_STAMP"; printf '\n'; cat marker.txt; printf 'gpSP v1.1.0-%s rfu=%s lowlat=%s\n' "$V" "${RFU_SCHED:-0}" "${ME_LOWLAT:-unset}"; } > psp/gpsp_adhoc.elf
 cp psp/gpsp_adhoc.elf psp/EBOOT.PBP
 if [ "$1" = release ] && [ "${RFU_SCHED:-0}" = 1 ]; then echo "[build] layout  : layout.lock [release] OK"; LL=release:ok
 elif [ "$1" = release ]; then echo "[build] layout  : variant arm, the lock is not enforced (RFU_SCHED=0)"; echo "[build] layout  : layout.lock [release] differs (variant arm: reported, not enforced)"; LL=release:variant
+elif [ "$1" = lab ] && [ "${LAYOUT_PIN:-1}" = 1 ]; then echo "[build] layout  : layout.lock [lab] OK"; LL=lab:ok
 else LL=none; fi
 echo "{\"profile\":\"$1\",\"dirty\":\"${GPSP_BUILD_DIRTY:-unset}\", \"layoutLock\": \"$LL\"}" > psp/build-manifest.json
 [ "${2:-}" = --out ] && mkdir -p "$3" && cp psp/build-manifest.json "$3/"
@@ -122,7 +128,7 @@ grep -q '"layout": "variant arm, the lock is not enforced (RFU_SCHED=0)' "$T/o8/
 grep -q '"dockerId": "sha256:fakeid"' "$T/o8/release/flavour.json" && grep -q '"pspGcc": "psp-gcc (GCC) 15.2.0"' "$T/o8/release/flavour.json" \
   && ok "C3 image id and psp-gcc version recorded" || bad "C3 compiler identity not recorded"
 # M6 --sde pins SOURCE_DATE_EPOCH (stamp follows it), --build-version pins the version string
-expect_rc 0 "M6 --sde 1700000000 --build-version pin7" bash "$F" --src "$R/gpsp" --out "$T/o9" --no-sidecars --flavours "release harness" --sde 1700000000 --build-version pin7
+expect_rc 0 "M6 --sde 1700000000 --build-version pin7" bash "$F" --src "$R/gpsp" --out "$T/o9" --no-sidecars --sde 1700000000 --build-version pin7
 grep -q '"sourceDateEpoch": "1700000000"' "$T/o9/harness/flavour.json" && grep -q 'Nov 14 2023' "$T/o9/harness/gpsp_adhoc.elf" \
   && ok "M6 --sde reached the compiler (stamp Nov 14 2023)" || bad "M6 --sde not applied"
 grep -q 'gpSP v1.1.0-pin7 ' "$T/o9/release/gpsp_adhoc.elf" && grep -q '"buildVersion": "pin7"' "$T/o9/release/flavour.json" \
@@ -130,20 +136,20 @@ grep -q 'gpSP v1.1.0-pin7 ' "$T/o9/release/gpsp_adhoc.elf" && grep -q '"buildVer
 expect_rc 2 "M6' --sde not a number" bash "$F" --src "$R/gpsp" --out "$T/o9b" --sde yesterday
 # a second commit with the same tree: unpinned it differs (hash), pinned it is identical
 (cd "$R" && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m same-tree)
-expect_rc 0 "C4 same-tree commit, pinned" bash "$F" --src "$R/gpsp" --out "$T/o10" --no-sidecars --flavours "release harness" --sde 1700000000 --build-version pin7
+expect_rc 0 "C4 same-tree commit, pinned" bash "$F" --src "$R/gpsp" --out "$T/o10" --no-sidecars --sde 1700000000 --build-version pin7
 cmp -s "$T/o9/release/gpsp_adhoc.elf" "$T/o10/release/gpsp_adhoc.elf" && cmp -s "$T/o9/harness/gpsp_adhoc.elf" "$T/o10/harness/gpsp_adhoc.elf" \
   && ok "C4 two commits, one tree, pinned: identical ELFs" || bad "C4 pinned same-tree builds differ"
 expect_rc 0 "C4' same-tree commit, unpinned" bash "$F" --src "$R/gpsp" --out "$T/o11" --no-sidecars --flavours release
 cmp -s "$T/o9/release/gpsp_adhoc.elf" "$T/o11/release/gpsp_adhoc.elf" && bad "C4' unpinned build equals the pinned one" || ok "C4' without the pin the version string differs"
 # M7 --against refuses (exit 2) a reference built with another image / version / SDE
 cp -r "$T/o9" "$T/ref_img"; sed -i 's/"dockerId": "sha256:fakeid"/"dockerId": "sha256:doctored"/' "$T/ref_img/release/flavour.json"
-expect_rc 2 "M7 --against with a doctored dockerId" bash "$F" --check-only --out "$T/o10" --against "$T/ref_img" --flavours "release harness"
+expect_rc 2 "M7 --against with a doctored dockerId" bash "$F" --check-only --out "$T/o10" --against "$T/ref_img"
 grep -q "dockerId differs" "$T/last.log" && ok "M7 message names dockerId" || bad "M7 wrong refusal"
 cp -r "$T/o9" "$T/ref_ver"; sed -i 's/"buildVersion": "pin7"/"buildVersion": "abc1234"/' "$T/ref_ver/harness/flavour.json"
-expect_rc 2 "M7' --against with another build version" bash "$F" --check-only --out "$T/o10" --against "$T/ref_ver" --flavours "release harness"
+expect_rc 2 "M7' --against with another build version" bash "$F" --check-only --out "$T/o10" --against "$T/ref_ver"
 expect_rc 2 "M7'' --against an unpinned build (other version + SDE)" bash "$F" --check-only --out "$T/o11" --against "$T/o9" --flavours release
 # M8 --against in a tree whose checks are ABSENT: every check FAILs (never a note), gate.txt says so
-expect_rc 6 "M8 absent tools are FAIL, not skipped" bash "$F" --check-only --out "$T/o10" --against "$T/o9" --flavours "release harness"
+expect_rc 6 "M8 absent tools are FAIL, not skipped" bash "$F" --check-only --out "$T/o10" --against "$T/o9"
 if [ -f "$T/o10/gate.txt" ] && grep -q 'G1 FAIL' "$T/o10/gate.txt" && grep -q 'CI FAIL' "$T/o10/gate.txt"; then
   ok "M8 gate line generated from checks.txt: $(cat "$T/o10/gate.txt")"; else bad "M8 gate line: $(cat "$T/o10/gate.txt" 2>/dev/null)"; fi
 # M9 sidecar: a \-continued compile line (layout_pad_gb.o, psp/Makefile) is joined before replay
@@ -164,13 +170,51 @@ if cmp -s "$HERE/flavours_sidecar.sh" "$T/sidecar_nojoin.sh"; then bad "M9 mutan
 elif printf '%s\n' "$E2" | grep -q -- '-DLAYOUT_PAD_MID_NAME=layout_pad_gb$'; then bad "M9 mutant without the join still passed"
 else ok "M9 mutant (no join) loses -DLAYOUT_PAD_MID_NAME: caught"; fi
 
+
+# ---- adversarial review 2026-11-07: hermetic builds, the strict --against contract ----
+# M10 a variable left in the caller's shell (ME_LOWLAT=0, MGIFT=0) does not reach build.sh
+expect_rc 0 "M10 build with ME_LOWLAT=0 MGIFT=0 exported" env ME_LOWLAT=0 MGIFT=0 bash "$F" --src "$R/gpsp" --out "$T/o12" --no-sidecars --sde 1700000000 --build-version pin7
+grep -q 'lowlat=unset' "$T/o12/release/gpsp_adhoc.elf" && ok "M10 build.sh saw no ME_LOWLAT (hermetic env -i)" || bad "M10 ME_LOWLAT leaked into build.sh"
+grep -q '"callerEnvDropped": ".*ME_LOWLAT=0' "$T/o12/release/flavour.json" && grep -q '"hermetic": "yes"' "$T/o12/release/flavour.json" \
+  && ok "M10 the dropped variable is recorded (callerEnvDropped)" || bad "M10 callerEnvDropped not recorded"
+cmp -s "$T/o10/release/gpsp_adhoc.elf" "$T/o12/release/gpsp_adhoc.elf" && ok "M10 the leaky shell builds the same ELF" || bad "M10 ELF differs"
+# M11 each clause of the contract refuses (exit 2) before any check
+doct() {  # doct <name> <flavour> <sed expr>: a copy of o9 with one flavour.json doctored
+  rm -rf "$T/d_$1"; cp -r "$T/o9" "$T/d_$1"; sed -i "$3" "$T/d_$1/$2/flavour.json"
+}
+doct clean lab 's/"workingTreeClean": true/"workingTreeClean": false/'
+expect_rc 2 "M11a reference with workingTreeClean false" bash "$F" --check-only --out "$T/o10" --against "$T/d_clean"
+grep -q "workingTreeClean false" "$T/last.log" && ok "M11a names workingTreeClean" || bad "M11a wrong refusal"
+doct lock lab 's/"layoutLock": "lab:ok"/"layoutLock": "lab:differs"/'
+expect_rc 2 "M11b reference whose lab lock is not ok" bash "$F" --check-only --out "$T/o10" --against "$T/d_lock"
+grep -q "layoutLock is 'lab:differs'" "$T/last.log" && ok "M11b names the lock" || bad "M11b wrong refusal"
+doct xenv harness 's/"extraEnv": ""/"extraEnv": "LAYOUT_PIN=0"/'
+expect_rc 2 "M11c reference with another extraEnv" bash "$F" --check-only --out "$T/o10" --against "$T/d_xenv"
+grep -q "extraEnv differs" "$T/last.log" && ok "M11c names extraEnv" || bad "M11c wrong refusal"
+doct benv release 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
+expect_rc 2 "M11d reference with another buildEnv (ME_LOWLAT=0 passed)" bash "$F" --check-only --out "$T/o10" --against "$T/d_benv"
+grep -q "buildEnv differs" "$T/last.log" && ok "M11d names buildEnv" || bad "M11d wrong refusal"
+doct herm release-stable 's/"hermetic": "yes"/"hermetic": "no"/'
+expect_rc 2 "M11e a non-hermetic reference" bash "$F" --check-only --out "$T/o10" --against "$T/d_herm"
+rm -rf "$T/d_anc"; cp -r "$T/o9" "$T/d_anc"
+for f in release release-stable lab harness; do sed -i 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/; s/"gpspTree": "[0-9a-f]*"/"gpspTree": "1111111111111111111111111111111111111111"/' "$T/d_anc/$f/flavour.json"; done
+expect_rc 2 "M11f a reference that is neither the commit, its parent nor its gpsp/ tree" bash "$F" --check-only --out "$T/o10" --against "$T/d_anc"
+grep -q "nothing ties the step to its parent" "$T/last.log" && ok "M11f names the ancestry" || bad "M11f wrong refusal"
+rm -rf "$T/d_miss"; cp -r "$T/o9" "$T/d_miss"; rm -rf "$T/d_miss/harness"
+expect_rc 2 "M11g a reference without the harness flavour" bash "$F" --check-only --out "$T/o10" --against "$T/d_miss"
+expect_rc 2 "M11h --against with --flavours release only" bash "$F" --check-only --out "$T/o10" --against "$T/o9" --flavours release
+expect_rc 2 "M11i FLAV_LAB_ENV on this build only (extraEnv differs)" env FLAV_LAB_ENV="LAYOUT_PIN=0" bash "$F" --src "$R/gpsp" --out "$T/o13" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
+echo dirty >> "$R/gpsp/marker.txt"
+expect_rc 2 "M11j a dirty --src (no --baseline) gated --against" bash "$F" --src "$R/gpsp" --out "$T/o14" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
+(cd "$R" && git checkout -q -- gpsp/marker.txt)
+
 # C5 (optional, needs a real build pair): --check-only with the REAL tools on two
 # runs of one commit, e.g. FLAV_REAL_RUNS=$HOME/p0a/fbe/baseline (run1, run2)
 if [ -n "${FLAV_REAL_RUNS:-}" ] && [ -d "$FLAV_REAL_RUNS/run2" ]; then
   expect_rc 0 "C5 real tools: --check-only run2 --against run1" bash "$HERE/flavours.sh" --check-only \
     --out "$FLAV_REAL_RUNS/run2" --against "$FLAV_REAL_RUNS/run1"
   G=$(cat "$FLAV_REAL_RUNS/run2/gate.txt" 2>/dev/null)
-  for g in G1 G2 HO SS ST CI; do
+  for g in G0 G0var G1 G2 HO SS ST LL CF BF DS CI; do
     case " $G " in *" $g ok"*) ;; *) bad "C5 gate $g missing or red: $G"; continue 2 ;; esac
   done
   ok "C5 every check present and green: $G"

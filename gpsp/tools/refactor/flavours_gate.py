@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """flavours_gate.py -- helpers of flavours.sh --against (T15).
 
-    flavours_gate.py CHECKS.txt          print the commit gate line generated
+    flavours_gate.py [--any] CHECKS.txt  print the commit gate line generated
                                          from the '== <flavour> <gate> PASS|FAIL'
-                                         lines of flavours.sh's checks.txt
+                                         lines of flavours.sh's checks.txt; every
+                                         gate of REQUIRED must be there with all
+                                         its flavours (--any: no required set)
     flavours_gate.py jsoneq A.json B.json  equal JSON reports (path keys ignored)
     flavours_gate.py --selftest
 
@@ -18,12 +20,21 @@ import re
 import sys
 
 ABBR = {'release': 'rel', 'release-stable': 'stb', 'lab': 'lab', 'harness': 'har', '-': ''}
-ORDER = ['G1', 'G2', 'HO', 'SS', 'ST', 'CI']
+FOUR = ('release', 'release-stable', 'lab', 'harness')
+# every gate a P step needs, and the flavours each must cover (adversarial review
+# 2026-11-07: G0/G0var/LL/CF and the build-file diff were typed by hand, and a gate
+# with one flavour was accepted).  A missing gate or flavour is a FAIL.
+REQUIRED = {'G0': FOUR, 'G0var': ('-',), 'G1': FOUR, 'G2': FOUR, 'HO': FOUR, 'SS': FOUR,
+            'ST': FOUR, 'LL': ('release', 'lab'), 'CF': ('-',), 'BF': ('-',), 'DS': ('-',),
+            'CI': ('-',)}
+ORDER = ['G0', 'G0var', 'G1', 'G2', 'HO', 'SS', 'ST', 'LL', 'CF', 'BF', 'DS', 'CI']
 VERDICT = re.compile(r'^== (\S+) (\S+) (PASS|FAIL)(?: \((.*)\))?\s*$')
 
 
-def gate_line(lines):
-    """-> (line, ok).  A gate is ok only if every one of its verdicts passed."""
+def gate_line(lines, required=None):
+    """-> (line, ok).  A gate is ok only if every one of its verdicts passed and,
+    with `required` ({gate: flavours}), every required gate has a PASS verdict
+    for each of its flavours."""
     per = {}   # gate -> list of (flavour, verdict, label)
     for ln in lines:
         m = VERDICT.match(ln.rstrip('\r\n'))
@@ -32,8 +43,16 @@ def gate_line(lines):
     if not per:
         return 'NO VERDICTS (checks.txt empty: nothing was checked)', False
     out, ok = [], True
+    for g in (required or {}):
+        if g not in per:
+            per[g] = []
     for g in ORDER + sorted(set(per) - set(ORDER)):
         if g not in per:
+            continue
+        missing = [f for f in (required or {}).get(g, ()) if f not in {x for x, _, _ in per[g]}]
+        if missing:
+            ok = False
+            out.append('%s MISSING %s' % (g, ','.join(ABBR.get(f, f) or '-' for f in missing)))
             continue
         fails = [(f, lab) for f, v, lab in per[g] if v != 'PASS']
         fls = []
@@ -85,6 +104,17 @@ def selftest():
     t(not ok, 'no verdict lines is not a pass -> %r' % line)
     line, ok = gate_line(good[:1] + ['== - CI FAIL (ci_greps rc absent)'])
     t(not ok and 'CI FAIL' in line, 'an absent tool (failchk) is a FAIL -> %r' % line)
+    full = ['== %s %s PASS (x)' % (f, g) for g in ('G0', 'G1', 'G2', 'HO', 'SS', 'ST') for f in FOUR]
+    full += ['== release LL PASS (x)', '== lab LL PASS (x)'] + ['== - %s PASS (x)' % g for g in ('G0var', 'CF', 'BF', 'DS', 'CI')]
+    line, ok = gate_line(full, REQUIRED)
+    t(ok and line.startswith('G0 ok rel/stb/lab/har G0var ok G1 ok') and 'LL ok rel/lab' in line and line.endswith('DS ok CI ok'),
+      'the whole required set -> %r' % line)
+    line, ok = gate_line([x for x in full if 'G0var' not in x], REQUIRED)
+    t(not ok and 'G0var MISSING' in line, 'a required gate missing (G0var) is a FAIL -> %r' % line)
+    line, ok = gate_line([x for x in full if not x.startswith('== harness G1')], REQUIRED)
+    t(not ok and 'G1 MISSING har' in line, 'a gate covering 3 of 4 flavours is a FAIL -> %r' % line)
+    line, ok = gate_line(good, REQUIRED)
+    t(not ok, 'the old six-gate set is not a full gate -> %r' % line[:80])
     print('flavours_gate selftest: %s' % ('PASS' if not bad else '%d FAILED' % bad))
     return 1 if bad else 0
 
@@ -94,11 +124,14 @@ def main(argv):
         return selftest()
     if len(argv) == 3 and argv[0] == 'jsoneq':
         return jsoneq(argv[1], argv[2])
+    req = REQUIRED
+    if argv[:1] == ['--any']:          # no required set (ad-hoc checks files)
+        req, argv = None, argv[1:]
     if len(argv) != 1:
         print(__doc__)
         return 2
     with open(argv[0], encoding='utf-8', errors='replace') as f:
-        line, ok = gate_line(f)
+        line, ok = gate_line(f, req)
     print(line)
     return 0 if ok else 1
 
