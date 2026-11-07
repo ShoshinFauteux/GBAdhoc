@@ -307,6 +307,146 @@ def suggest(ref, cand, kind):
             'distinct_moves': len(cnt)}
 
 
+# --------------------------------------------------------------------------- pad discovery + lock
+
+PAD_VAR = re.compile(r'^\s*(LAYOUT_PAD_[A-Z0-9_]*BYTES)\s*\??=\s*(\d+)')
+PAD_KV = re.compile(r'\b(LAYOUT_PAD_[A-Z0-9_]*BYTES)=(\d+)\b')
+
+
+def flavour_of(b):
+    """flavours.sh's flavour name (flavour.json), else the manifest profile, else None."""
+    if b.dir:
+        fj = os.path.join(b.dir, 'flavour.json')
+        if os.path.isfile(fj):
+            try:
+                return json.load(open(fj)).get('flavour')
+            except ValueError:
+                pass
+    return b.manifest.get('profile')
+
+
+def lock_pad_lines(lock_path):
+    """{VAR: PADSYM} from every `pad VAR PADSYM ANCHOR` line of the lock (any section)."""
+    out = {}
+    if lock_path and os.path.isfile(lock_path):
+        for l in open(lock_path, encoding='utf-8', errors='replace'):
+            p = l.split('#', 1)[0].split()
+            if len(p) >= 3 and p[0] == 'pad':
+                out.setdefault(p[1], p[2])
+    return out
+
+
+def discover_pads(b, src, flavour, lock_path=None):
+    """Every LAYOUT_PAD_*BYTES the tree declares, no fixed list (PLAN-P-beta5 §3 P0a T10,
+    critic MF11): the `?=` defaults of SRC/psp/Makefile, for a lab build overridden by
+    SRC/tools/layout/lab-pads.env, then by what the build recorded (the manifest's
+    pspMakeFlags; layoutPadBytes for LAYOUT_PAD_BYTES).  Each is matched to its pad
+    symbol (the lock's `pad` line, else layout_pad_<x>) and measured in the ELF (sized
+    symbol) or the map (.rodata.layout_pad_<x>); a measured size must be the value
+    (+4 for layout_pad_cold's jr ra; nop).  Sized layout_pad_* symbols / sections no
+    variable claims are UNDECLARED.  -> (rows, problems)"""
+    mk = os.path.join(src, 'psp', 'Makefile')
+    vals, how = collections.OrderedDict(), {}
+    if os.path.isfile(mk):
+        for l in open(mk, encoding='latin-1'):
+            m = PAD_VAR.match(l)
+            if m and m.group(1) not in vals:
+                vals[m.group(1)] = int(m.group(2))
+                how[m.group(1)] = 'psp/Makefile'
+    if flavour == 'lab':
+        env = os.path.join(src, 'tools', 'layout', 'lab-pads.env')
+        if os.path.isfile(env):
+            for l in open(env, encoding='utf-8', errors='replace'):
+                m = PAD_VAR.match(l.split('#', 1)[0])
+                if m:
+                    vals[m.group(1)] = int(m.group(2))
+                    how[m.group(1)] = 'lab-pads.env'
+    for k, v in PAD_KV.findall(b.manifest.get('pspMakeFlags', '')):
+        if k not in vals or vals[k] != int(v):
+            how[k] = 'manifest pspMakeFlags'
+        vals[k] = int(v)
+    if 'layoutPadBytes' in b.manifest:
+        k = 'LAYOUT_PAD_BYTES'
+        if vals.get(k) != int(b.manifest['layoutPadBytes']):
+            how[k] = 'manifest layoutPadBytes'
+        vals[k] = int(b.manifest['layoutPadBytes'])
+    lp = lock_pad_lines(lock_path)
+    sized = {s['name']: s for s in b.e.symbols if s['name'].startswith('layout_pad_') and s['size']}
+    secs = {}
+    if b.map is not None:
+        for i in b.map.inputs:
+            mm = re.match(r'^\.[a-z]+\.(layout_pad_\w+)$', i.name)
+            if mm and i.size and not i.name.startswith('.text'):
+                secs[mm.group(1)] = i
+    rows, problems, claimed = [], [], set()
+    for var, v in vals.items():
+        mid = var[len('LAYOUT_PAD_'):-len('BYTES')].rstrip('_').lower()
+        sym = lp.get(var) or ('layout_pad_' + mid if mid else 'layout_pad_cold')
+        claimed.add(sym)
+        size, where, obj = None, '', ''
+        if sym in sized:
+            size, where = sized[sym]['size'], 'ELF symbol'
+            if b.map is not None:
+                i = b.map.input_at(sized[sym]['value'])
+                obj = i.file if i else ''
+        elif sym in secs:
+            size, where, obj = secs[sym].size, 'map %s' % secs[sym].name, secs[sym].file
+        elif sym in b.sym:
+            where = 'placed in %s\'s section (not measured)' % sym
+        verdict = 'ok'
+        if size is not None:
+            if size not in (v, v + 4):
+                verdict = 'MISMATCH'
+                problems.append('%s=%d (%s) but %s is %d B' % (var, v, how[var], sym, size))
+        elif v and sym not in b.sym:
+            verdict = 'MISSING'
+            problems.append('%s=%d (%s): no %s in the ELF or the map' % (var, v, how[var], sym))
+        rows.append({'var': var, 'value': v, 'from': how[var], 'sym': sym, 'size': size,
+                     'where': where, 'object': obj, 'verdict': verdict})
+    for name in sorted(set(sized) | set(secs)):
+        if name not in claimed:
+            sz = sized[name]['size'] if name in sized else secs[name].size
+            problems.append('UNDECLARED pad %s (%d B): no LAYOUT_PAD_*BYTES in psp/Makefile claims it' % (name, sz))
+            rows.append({'var': '-', 'value': None, 'from': '-', 'sym': name, 'size': sz, 'where': '',
+                         'object': '', 'verdict': 'UNDECLARED'})
+    return rows, problems
+
+
+def lock_check(b, src, flavour, lock_path=None):
+    """tools/layout/layout_lock.py check on this build (PLAN-P-beta5 §3 P0a T10).  The
+    lock section is the flavour's (release-stable is checked against [release]); a
+    release / lab build with RFU_SCHED=1 is enforced, release-stable is reported only
+    (PLAN-P-beta5 §0-4, review-2 byte-identity), harness has no section.
+    -> dict(section, enforced, rc, out)"""
+    lock_path = lock_path or os.path.join(src, 'tools', 'layout', 'layout.lock')
+    ll = os.path.join(src, 'tools', 'layout', 'layout_lock.py')
+    sec = {'release': 'release', 'release-stable': 'release', 'lab': 'lab'}.get(flavour)
+    res = {'section': sec, 'enforced': False, 'rc': None, 'out': '', 'lock': lock_path}
+    if sec is None:
+        res['out'] = 'no layout.lock section for flavour %s: not checked' % flavour
+        return res
+    if not (os.path.isfile(lock_path) and os.path.isfile(ll)):
+        res['out'] = 'no tools/layout/layout.lock in %s: not checked' % src
+        return res
+    rfu = None
+    if b.dir and os.path.isfile(os.path.join(b.dir, 'flavour.json')):
+        rfu = json.load(open(os.path.join(b.dir, 'flavour.json'))).get('rfuSched')
+    res['enforced'] = flavour in ('release', 'lab') and rfu in (None, '1')
+    t = tempfile.mkdtemp(prefix='layoutrep_ll_')
+    try:
+        nm = os.path.join(b.dir, 'elf.nm') if b.dir else None
+        if not (nm and os.path.isfile(nm)):
+            nm = os.path.join(t, 'elf.nm')
+            write_nm(b, nm)
+        p = subprocess.run([sys.executable, ll, 'check', sec, nm, '--lock', lock_path, '-q'],
+                           capture_output=True, text=True)
+        res['rc'], res['out'] = p.returncode, (p.stdout + p.stderr).rstrip()
+    finally:
+        import shutil
+        shutil.rmtree(t, ignore_errors=True)
+    return res
+
+
 def write_nm(b, path):
     """psp-nm -n -S style lines from the ELF symtab (what pad_check.py/lp_map read)."""
     rows = []
@@ -367,7 +507,8 @@ def run_pad_check(ref, cand, order):
 
 # --------------------------------------------------------------------------- report
 
-def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, out=print, pad_check=True):
+def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, out=print, pad_check=True,
+           src=GPSP, lock_path=None, pads=True, lock=True):
     plan = plan or list(DEFAULT_PLAN)
     res = collections.OrderedDict()
     res['cand'] = cand.elf_path
@@ -377,6 +518,38 @@ def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, 
     res['pads'] = {'text': tp, 'text_from': tph, 'ro': rp, 'ro_from': rph}
     out('layout_report: %s%s' % (cand.elf_path, '\n          ref: %s' % ref.elf_path if ref else ''))
     out('pads: LAYOUT_PAD_BYTES=%d (%s), LAYOUT_PAD_RO_BYTES=%d (%s)' % (tp, tph, rp, rph))
+    fl = flavour_of(cand)
+    pad_fail = lock_fail = 0
+    if pads:
+        lk = lock_path or os.path.join(src, 'tools', 'layout', 'layout.lock')
+        rows, probs = discover_pads(cand, src, fl, lk)
+        res['pad_list'] = rows
+        res['pad_problems'] = probs
+        out('\n-- pads (discovered: %s psp/Makefile LAYOUT_PAD_*BYTES%s, the manifest; flavour %s): %d'
+            % (src, ' + tools/layout/lab-pads.env' if fl == 'lab' else '', fl, sum(r['var'] != '-' for r in rows)))
+        for r in rows:
+            out('  %-10s %-24s %6s  %-24s %-26s %6s %s' % (
+                r['verdict'], r['var'], '' if r['value'] is None else r['value'], '(%s)' % r['from'], r['sym'],
+                '' if r['size'] is None else r['size'], (r['where'] + (' ' + r['object'] if r['object'] else ''))))
+        if cand.manifest:
+            for p_ in probs:
+                out('  PAD FAIL %s' % p_)
+            pad_fail = 1 if probs else 0
+        elif probs:
+            # a bare ELF (no flavours.sh dir / build manifest) is not known to be a build
+            # of SRC with its pads: listed, not failed
+            out('  (no build manifest: %d pad problem(s) reported, not checked)' % len(probs))
+    if lock:
+        lc = lock_check(cand, src, fl, lock_path)
+        res['lock'] = lc
+        out('\n-- tools/layout/layout_lock.py check %s (%s)' % (
+            lc['section'] or '-', 'enforced' if lc['enforced'] else 'reported only'))
+        for l in lc['out'].splitlines():
+            out('  ' + l)
+        if lc['rc'] is not None:
+            out('  layout lock: %s' % ('ok' if lc['rc'] == 0 else 'DIFFERS (rc %d)%s' % (
+                lc['rc'], '' if lc['enforced'] else ' -- not enforced for this flavour')))
+        lock_fail = 1 if lc['enforced'] and lc['rc'] not in (None, 0) else 0
     ka = key_addresses(cand)
     kr = key_addresses(ref) if ref else {}
     res['key'] = ka
@@ -472,6 +645,11 @@ def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, 
                 out('  ' + l)
     out('\nG3 %s' % ('ok' if not fail else 'FAIL (unplanned .text.unlikely/.hot/.startup/.exit input section)'
                      if au.get('unplanned') else 'FAIL (%s)' % au.get('error')))
+    if pad_fail:
+        out('PADS FAIL (%d problem(s) above)' % len(res['pad_problems']))
+    if lock_fail:
+        out('LAYOUT LOCK FAIL ([%s] differs on an enforced flavour)' % res['lock']['section'])
+    fail = fail or pad_fail or lock_fail
     res['fail'] = fail
     return fail, res
 
@@ -492,7 +670,7 @@ def selftest(d, ref_dir=None):
         print('  %-72s %s' % (label, 'ok' if cond else 'FAILED'))
         fails[0] += not cond
 
-    rc, r = report(cand, out=quiet, pad_check=False)
+    rc, r = report(cand, out=quiet, pad_check=False, pads=False, lock=False)
     expect('control: G3 passes on the baseline (only .text.startup.main special; got %s)'
            % [s['name'] for s in r['audit']['special']], rc == 0)
     expect('control: main is in .text.startup.main', any(s['name'] == '.text.startup.main'
@@ -512,38 +690,38 @@ def selftest(d, ref_dir=None):
         anchor = ' *(.text.unlikely .text.*_unlikely .text.unlikely.*)\n'
         m1 = with_map(txt.replace(anchor, anchor + ' .text.unlikely.fe_seeded_cold\n'
                                   '                0x0893bb00       0x40 main_psp.o\n', 1), 'm1')
-        rc, r = report(m1, out=quiet, pad_check=False)
+        rc, r = report(m1, out=quiet, pad_check=False, pads=False, lock=False)
         expect('mutant: cold fn -> .text.unlikely.fe_seeded_cold in main_psp.o', rc == 1 and any(
             s['name'] == '.text.unlikely.fe_seeded_cold' for s in r['audit']['unplanned']))
         # M2: the same in a plain .text.unlikely (no -ffunction-sections name)
         m2 = with_map(txt.replace(anchor, anchor + ' .text.unlikely\n'
                                   '                0x0893bb00       0x40 main_psp.o\n', 1), 'm2')
-        rc, r = report(m2, out=quiet, pad_check=False)
+        rc, r = report(m2, out=quiet, pad_check=False, pads=False, lock=False)
         expect('mutant: a plain .text.unlikely input section of main_psp.o', rc == 1)
         # M3: .text.hot.* and a second .text.startup.* (an unplanned boot phase)
         for nm_ in ('.text.hot.fe_seeded', '.text.startup.fe_boot_run'):
             m3 = with_map(txt.replace(anchor, anchor + ' %s\n                0x0893bb00       0x40 main_psp.o\n'
                                       % nm_, 1), 'm3')
-            rc, r = report(m3, out=quiet, pad_check=False)
+            rc, r = report(m3, out=quiet, pad_check=False, pads=False, lock=False)
             expect('mutant: unplanned %s' % nm_, rc == 1)
         # C: the same .text.startup.fe_boot_run passes once the plan lists it
-        rc, r = report(m3, plan=['.text.startup.main', '.text.startup.fe_*'], out=quiet, pad_check=False)
+        rc, r = report(m3, plan=['.text.startup.main', '.text.startup.fe_*'], out=quiet, pad_check=False, pads=False, lock=False)
         expect('control: .text.startup.fe_boot_run with plan .text.startup.fe_* passes', rc == 0)
         # C: an explicit section (what PLAN §0.2-5 requires) is not special
         m4 = with_map(txt.replace(' .text.exit_cb  ', ' .text.fe_seeded_cold\n                0x08944700       0x10 main_psp.o\n .text.exit_cb  ', 1), 'm4')
-        rc, r = report(m4, out=quiet, pad_check=False)
+        rc, r = report(m4, out=quiet, pad_check=False, pads=False, lock=False)
         expect('control: an explicitly sectioned .text.fe_seeded_cold passes', rc == 0)
         # C: another object's .text.unlikely is not main_psp.o's (default --objects)
         m5 = with_map(txt.replace(anchor, anchor + ' .text.unlikely.x\n                0x0893bb00       0x40 ui_psp.o\n', 1),
                       'm5')
-        rc, r = report(m5, out=quiet, pad_check=False)
+        rc, r = report(m5, out=quiet, pad_check=False, pads=False, lock=False)
         expect('control: ui_psp.o .text.unlikely ignored with the default --objects', rc == 0)
-        rc, r = report(m5, objects=r'(^|/)(main_psp|ui_psp)\.o$', out=quiet, pad_check=False)
+        rc, r = report(m5, objects=r'(^|/)(main_psp|ui_psp)\.o$', out=quiet, pad_check=False, pads=False, lock=False)
         expect('mutant: ...but caught with --objects main_psp|ui_psp', rc == 1)
         # no map at all: the audit cannot run -> fail, never a silent pass
-        rc, r = report(Build(cand.elf_path), out=quiet, pad_check=False)
+        rc, r = report(Build(cand.elf_path), out=quiet, pad_check=False, pads=False, lock=False)
         expect('mutant: no map -> the audit fails (never a silent pass)', rc == 1)
-        rc, r = report(cand, objects=r'(^|/)fe_nonexistent\.o$', out=quiet, pad_check=False)
+        rc, r = report(cand, objects=r'(^|/)fe_nonexistent\.o$', out=quiet, pad_check=False, pads=False, lock=False)
         expect('mutant: --objects matching no object -> fails (an empty audit is no pass)', rc == 1)
     finally:
         import shutil
@@ -563,7 +741,7 @@ def selftest(d, ref_dir=None):
                    % (a.text_pad()[0], b.text_pad()[0], sg.get('suggested'), want, 100 * sg.get('share', 0),
                       sg.get('anchors', 0)), sg.get('suggested') == want and sg.get('share', 0) >= 0.99)
             # the ro suggestion holds for an unchanged text pad; the report must say so
-            _, r_ = report(b, a, out=quiet, pad_check=False)
+            _, r_ = report(b, a, out=quiet, pad_check=False, pads=False, lock=False)
             so = r_['suggest']['ro']
             expect('pair: ro suggestion %s flagged as depending on the text pad' % so.get('suggested'),
                    so.get('depends_on_text', False) == (sg.get('suggested') != b.text_pad()[0]))
@@ -581,6 +759,10 @@ def main():
     ap.add_argument('--objects', default=r'(^|/)main_psp\.o$', help='regex of objects to audit')
     ap.add_argument('--order', default=os.path.join(GPSP, 'psp', 'layout', 'hot_order.txt'))
     ap.add_argument('--no-pad-check', action='store_true')
+    ap.add_argument('--src', default=GPSP, help='the source tree CAND was built from (psp/Makefile, '
+                    'tools/layout/lab-pads.env, layout.lock, layout_lock.py); default this tool\'s tree')
+    ap.add_argument('--lock', help='layout.lock to check against (default SRC/tools/layout/layout.lock)')
+    ap.add_argument('--no-lock-check', action='store_true')
     ap.add_argument('--loop-lines', help='LO-HI: held to the anchored window (default: by anchor)')
     ap.add_argument('--json')
     ap.add_argument('--selftest', metavar='DIR')
@@ -594,7 +776,8 @@ def main():
         LOOP_LINES = tuple(int(x) for x in a.loop_lines.split('-'))
     cand = Build(a.cand, a.map)
     ref = Build(a.ref, a.ref_map) if a.ref else None
-    rc, res = report(cand, ref, read_plan(a.plan), a.objects, a.order, pad_check=not a.no_pad_check)
+    rc, res = report(cand, ref, read_plan(a.plan), a.objects, a.order, pad_check=not a.no_pad_check,
+                     src=os.path.abspath(a.src), lock_path=a.lock, lock=not a.no_lock_check)
     if a.json:
         json.dump(res, open(a.json, 'w'), indent=1, default=str)
     return rc

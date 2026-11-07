@@ -48,12 +48,12 @@ if want loop; then
     $PY "$R/loop_anchor.py" --elf "$E" --main-c "$M" | sed "s/^/  [$fl] /"
     expect_rc 0 "[$fl] loop_diff by anchor" $PY "$R/loop_diff.py" "$E"
     grep -E "^loop window by anchor|by line|by address" "$OUT/last.log" | sed 's/^/        /'
-    expect_rc 0 "[$fl] layout_report by anchor" $PY "$R/layout_report.py" "$RUN/$fl" --no-pad-check
+    expect_rc 0 "[$fl] layout_report by anchor" $PY "$R/layout_report.py" "$RUN/$fl" --src "$TREE" --no-pad-check
     grep -E "main loop by line" "$OUT/last.log" | sed 's/^/        /'
     expect_rc 0 "[$fl] loop_lpsim window by anchor" $PY "$R/loop_lpsim/loop_lpsim.py" window "$E"
     if ! $PY "$R/loop_anchor.py" "$M" | grep -q "lines 16368-180"; then   # not 01067e74 (there the old window IS the anchored code lines)
       expect_rc 2 "[$fl] loop_diff --loop-lines 16368-18090 (the old window) refused" $PY "$R/loop_diff.py" "$E" --loop-lines 16368-18090
-      $PY "$R/layout_report.py" "$RUN/$fl" --no-pad-check --loop-lines 16368-18090 > "$OUT/last.log" 2>&1
+      $PY "$R/layout_report.py" "$RUN/$fl" --src "$TREE" --no-pad-check --loop-lines 16368-18090 > "$OUT/last.log" 2>&1
       grep -q "explicit loop lines 16368-18090 are not the anchored window" "$OUT/last.log" \
         && ok "[$fl] layout_report --loop-lines 16368-18090 fails loudly" || bad "[$fl] layout_report accepted the old window"
       $PY "$R/loop_lpsim/loop_lpsim.py" window "$E" --src 16368:18090 > "$OUT/last.log" 2>&1
@@ -64,6 +64,133 @@ if want loop; then
     sed '1i /* shifted */' "$M" > "$OUT/shifted_main_psp.c"
     expect_rc 2 "[$fl] a source one line off the ELF's (main's DW_AT_decl_line) is refused" $PY "$R/loop_anchor.py" --elf "$E" --main-c "$OUT/shifted_main_psp.c"
   done
+fi
+
+# ---- T10 layout_report: every LAYOUT_PAD_*BYTES discovered (no fixed list), each pad
+# measured in the ELF/map, and tools/layout/layout_lock.py check called (P0a T10)
+if want t10; then
+  echo "== T10 layout_report pads + layout.lock"
+  npad=$(grep -oE '^LAYOUT_PAD_[A-Z0-9_]*BYTES *\?=' "$TREE/psp/Makefile" | sed 's/ *?=//' | sort -u | wc -l)
+  HAVE_LOCK=0; [ -f "$TREE/tools/layout/layout.lock" ] && HAVE_LOCK=1
+  for fl in release release-stable lab harness; do
+    [ -f "$RUN/$fl/gpsp_adhoc.elf" ] || continue
+    expect_rc 0 "[$fl] layout_report: pads discovered and measured, lock as the flavour requires" \
+      $PY "$R/layout_report.py" "$RUN/$fl" --src "$TREE" --no-pad-check --json "$OUT/t10_$fl.json"
+    cp "$OUT/last.log" "$OUT/t10_$fl.log"
+    got=$(sed -nE 's/^-- pads \(discovered.*\): ([0-9]+)$/\1/p' "$OUT/t10_$fl.log")
+    [ "$got" = "$npad" ] && ok "[$fl] $got pads reported = the $npad LAYOUT_PAD_*BYTES of psp/Makefile" \
+      || bad "[$fl] $got pads reported, psp/Makefile declares $npad"
+    grep -E "^  (ok|MISMATCH|MISSING|UNDECLARED) " "$OUT/t10_$fl.log" | sed 's/^/      /' | cut -c1-120
+    if [ $HAVE_LOCK = 1 ]; then
+      case $fl in
+        release|lab) grep -q "^  layout lock: ok" "$OUT/t10_$fl.log" && ok "[$fl] layout_lock check $fl: ok (enforced)" \
+                       || bad "[$fl] layout_lock check did not report ok" ;;
+        release-stable) grep -q "check release (reported only)" "$OUT/t10_$fl.log" && ok "[$fl] layout_lock check release: reported, not enforced" \
+                       || bad "[$fl] release-stable lock not reported as variant" ;;
+        harness) grep -q "no layout.lock section for flavour harness" "$OUT/t10_$fl.log" && ok "[$fl] no lock section: not checked" \
+                       || bad "[$fl] harness lock handling" ;;
+      esac
+    fi
+  done
+  # fbe9da63: PLAN-P-beta5 §3 P0a T10's seven pads, release and Lab
+  if [ "${COMMIT:0:8}" = fbe9da63 ]; then
+    for spec in "release:LAYOUT_PAD_BYTES=1632 LAYOUT_PAD_RO_BYTES=1488 LAYOUT_PAD_FE_BYTES=2792 LAYOUT_PAD_CORE_BYTES=6348 LAYOUT_PAD_GB_BYTES=1040 LAYOUT_PAD_BSCAN_BYTES=7704 LAYOUT_PAD_MAIN_BYTES=7980" \
+                "lab:LAYOUT_PAD_BYTES=708 LAYOUT_PAD_RO_BYTES=1320 LAYOUT_PAD_FE_BYTES=2668 LAYOUT_PAD_CORE_BYTES=4908 LAYOUT_PAD_GB_BYTES=1040 LAYOUT_PAD_BSCAN_BYTES=7928 LAYOUT_PAD_MAIN_BYTES=8016"; do
+      fl=${spec%%:*}; miss=""
+      for kv in ${spec#*:}; do
+        grep -qE "^  ok +${kv%%=*} +${kv#*=} " "$OUT/t10_$fl.log" || miss="$miss $kv"
+      done
+      [ -z "$miss" ] && ok "[$fl] fbe9da63's seven pads: ${spec#*:}" | cut -c1-200 || bad "[$fl] pads not as the plan records:$miss"
+    done
+  fi
+  # mutants on a copy of the files the report reads (psp/Makefile, lab-pads.env, the lock)
+  PT="$OUT/padsrc"
+  mkpt() { rm -rf "$PT"; mkdir -p "$PT/psp" "$PT/tools/layout"; cp "$TREE/psp/Makefile" "$PT/psp/"
+           for f in lab-pads.env layout.lock layout_lock.py; do [ -f "$TREE/tools/layout/$f" ] && cp "$TREE/tools/layout/$f" "$PT/tools/layout/"; done; }
+  LR() { $PY "$R/layout_report.py" "$RUN/release" --src "$PT" --no-pad-check "$@"; }
+  mkpt; printf '\nLAYOUT_PAD_ZZ_BYTES ?= 64\n' >> "$PT/psp/Makefile"
+  LR > "$OUT/last.log" 2>&1; rc=$?
+  [ $rc = 1 ] && grep -qE "^  MISSING +LAYOUT_PAD_ZZ_BYTES" "$OUT/last.log" \
+    && ok "M-T10a a new LAYOUT_PAD_ZZ_BYTES in psp/Makefile is discovered (no fixed list) and has no pad: caught" \
+    || bad "M-T10a new pad variable not discovered (rc $rc)"
+  v=$(grep -oE '^LAYOUT_PAD_[A-Z0-9_]+_BYTES *\?= *[1-9][0-9]*' "$TREE/psp/Makefile" | grep -v '^LAYOUT_PAD_RO_' | head -1)
+  if [ -n "$v" ]; then
+    var=${v%% *}; val=${v##* }
+    mkpt; sed -i -E "s/^($var *\?= *)$val\b/\1$((val + 16))/" "$PT/psp/Makefile"
+    LR > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -qE "^  MISMATCH +$var +$((val + 16)) " "$OUT/last.log" \
+      && ok "M-T10b $var $val -> $((val + 16)) in psp/Makefile: the ELF pad size disagrees: caught" \
+      || bad "M-T10b $var value change not caught (rc $rc)"
+    mkpt; sed -i -E "/^$var *\?=/d" "$PT/psp/Makefile"
+    LR > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "UNDECLARED pad" "$OUT/last.log" \
+      && ok "M-T10c $var removed from psp/Makefile: its ELF pad is UNDECLARED: caught" \
+      || bad "M-T10c undeclared pad not caught (rc $rc)"
+  else echo "        (no sized named pad variable in this tree: M-T10b/c not applicable)"; fi
+  if [ $HAVE_LOCK = 1 ]; then
+    mkpt; sed -i -E '0,/^at   main +0x[0-9a-f]+/s//at   main                               0x0000/' "$PT/tools/layout/layout.lock"
+    LR > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "LAYOUT LOCK FAIL (\[release\]" "$OUT/last.log" \
+      && ok "M-T10d [release] at main moved in a lock copy: the layout_lock check fails the report" \
+      || bad "M-T10d lock mutant not caught (rc $rc)"
+    if [ -f "$RUN/release-stable/gpsp_adhoc.elf" ]; then
+      expect_rc 0 "C-T10d the same lock on release-stable is reported, not enforced" \
+        $PY "$R/layout_report.py" "$RUN/release-stable" --src "$PT" --no-pad-check
+    fi
+  else echo "        (no tools/layout/layout.lock in this tree: lock not checked, M-T10d not applicable)"; fi
+fi
+
+# ---- T14 abi_asserts: every copy site asserted (gpsp_rom_load_progress has two from 7ffe4236)
+if want t14; then
+  echo "== T14 abi_asserts (docker)"
+  AS="$OUT/t14"; rm -rf "$AS"; mkdir -p "$AS"
+  sites=$(grep -nE '^\s*extern void \(\*gpsp_rom_load_progress\)' "$M" | cut -d: -f1 | tr '\n' ' ')
+  for fl in release lab harness; do
+    expect_rc 0 "[$fl] fe_abi_asserts.h generated, compiles, pin 0 lost" $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/$fl" --src "$TREE" --out "$AS/$fl"
+    grep -E "^T14|^pin:|more than one site" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    grep -qE "^pin: [0-9]+ pinned, 0 lost" "$OUT/last.log" || bad "[$fl] pin lost names"
+    hs=$(grep -oE '"main_psp.c:[0-9]+ gpsp_rom_load_progress:' "$AS/$fl/fe_abi_asserts.h" | sed -E 's/.*:([0-9]+) .*/\1/' | tr '\n' ' ')
+    [ "$hs" = "$sites" ] && ok "[$fl] gpsp_rom_load_progress asserted at every copy: main_psp.c lines $sites(by anchor)" \
+      || bad "[$fl] gpsp_rom_load_progress asserted at '$hs', copies at '$sites'"
+  done
+  for kind in file block; do
+    if [ $kind = file ]; then pat='^extern void \(\*gpsp_rom_load_progress\)\(unsigned, unsigned\);'
+    else pat='^\s+extern void \(\*gpsp_rom_load_progress\)\(unsigned, unsigned\);'; fi
+    ln=$(grep -nE "$pat" "$M" | head -1 | cut -d: -f1)
+    [ -n "$ln" ] || { echo "        (no $kind-scope copy of gpsp_rom_load_progress here: mutant not applicable)"; continue; }
+    sed -E "${ln}s/\(unsigned, unsigned\)/(unsigned, int)/" "$M" > "$AS/mut_$kind.c"
+    $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/mut_$kind" --main-c "$AS/mut_$kind.c" > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "static assertion failed: \"main_psp.c:$ln gpsp_rom_load_progress" "$OUT/last.log" \
+      && ok "M-T14 $kind-scope copy (main_psp.c:$ln) -> (unsigned, int): its own static assert fails" \
+      || { bad "M-T14 $kind-scope copy mutant (rc $rc)"; grep -m3 "assert\|PIN" "$OUT/last.log" | sed 's/^/        /'; }
+  done
+  if [ "$(echo $sites | wc -w)" -gt 1 ]; then
+    # the old tool folded token-identical copies into the first: one site only
+    sed 's/        key = (r\[0\], r\[1\], tuple(x.text for x in r\[2\]))/        key = (r[0], tuple(x.text for x in r[2]))/' "$R/abi_asserts.py" > "$R/.abi_asserts_mut.py"
+    cmp -s "$R/abi_asserts.py" "$R/.abi_asserts_mut.py" && bad "tool mutant (old dedupe) not applied"
+    $PY "$R/.abi_asserts_mut.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/toolmut" > /dev/null 2>&1
+    rm -f "$R/.abi_asserts_mut.py"
+    hs=$(grep -oE '"main_psp.c:[0-9]+ gpsp_rom_load_progress:' "$AS/toolmut/fe_abi_asserts.h" | sed -E 's/.*:([0-9]+) .*/\1/' | tr '\n' ' ')
+    [ "$hs" != "$sites" ] && ok "tool mutant (dedupe by tokens, the old rule): asserts '$hs' only, not '$sites': caught" \
+      || bad "tool mutant (old dedupe) still asserts every copy"
+  fi
+fi
+
+# ---- T6 strong_syms.spec: the comments cite fbe9da63's lines (P0a T6)
+if want t6; then
+  echo "== T6 strong_syms.spec cites"
+  if [ "${COMMIT:0:8}" = fbe9da63 ]; then
+    expect_rc 0 "every spec cite names its symbol on fbe9da63" $PY "$HERE/p0a_test_cites.py" "$R/strong_syms.spec" "$TREE"
+    tail -1 "$OUT/last.log" | sed 's/^/        /'
+    sed -E 's/rfu\.c:411/rfu.c:403/; s/rfu\.c:452/rfu.c:440/; s/main\.c:958/main.c:935/; s/main_psp\.c:7638/main_psp.c:7541/; s/mgift_net\.c:147-148/mgift_net.c:117-118/' \
+      "$R/strong_syms.spec" > "$OUT/old_cites.spec"
+    expect_rc 1 "mutant: the 01067e74 cites (rfu.c:403/440, main.c:935, main_psp.c:7541, mgift_net.c:117-118) are caught" \
+      $PY "$HERE/p0a_test_cites.py" "$OUT/old_cites.spec" "$TREE"
+    tail -1 "$OUT/last.log" | sed 's/^/        /'
+  else
+    $PY "$HERE/p0a_test_cites.py" "$R/strong_syms.spec" "$TREE" > "$OUT/last.log" 2>&1
+    echo "        (cites are fbe9da63's; on ${COMMIT:0:8}: $(tail -1 "$OUT/last.log"), informational)"
+  fi
 fi
 
 # ---- T8 exit_matrix: anchors, FE_* names, file-keyed raw view (raw part, no compiler)

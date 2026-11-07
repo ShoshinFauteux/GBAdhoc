@@ -30,8 +30,10 @@ for f in release lab harness; do
 done
 printf '# empty: strict mode\n' > "$OUT/none.known"
 $AA gen --flavour-dir "$R" --src "$SRC" --out "$OUT/strict" --known "$OUT/none.known" > "$OUT/c2.log" 2>&1; rc=$?
-n=$(grep -c 'static assertion failed' "$OUT/c2.log")
-[ $rc = 1 ] && [ "$n" = 7 ] && ok "C2 strict: exactly 7 static assertion failures (the abi_asserts.known list)" \
+# P0a T14: every copy SITE is asserted, so a name with two copies (translation_gate_*)
+# fails twice; the known list is per name, so count the distinct names that fail
+n=$(grep -o 'static assertion failed: "main_psp.c:[0-9]* [A-Za-z_0-9]*' "$OUT/c2.log" | awk '{print $NF}' | sort -u | wc -l)
+[ $rc = 1 ] && [ "$n" = 7 ] && ok "C2 strict: exactly 7 names fail a static assertion (the abi_asserts.known list)" \
   || { bad "C2 strict rc=$rc n=$n"; grep 'assertion' "$OUT/c2.log"; }
 
 mutant() {  # mutant <label> <name in message> <gen extra args...>

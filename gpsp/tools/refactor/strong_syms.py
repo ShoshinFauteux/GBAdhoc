@@ -2,8 +2,8 @@
 """strong_syms.py -- T6 (PLAN §5, gate SS): the weak-override hooks and the exported ABI
 of psp/main_psp.c are still STRONG, GLOBAL and defined by main_psp.o in the linked ELF.
 
-Why: the core declares its frontend hooks as weak no-ops (rfu.c:96/113/351/403/440,
-main.c:935).  If an override in main_psp.c is renamed, made static, or #if'ed away, the
+Why: the core declares its frontend hooks as weak no-ops (fbe9da63: rfu.c:96/113/351/411/452,
+main.c:958; strong_syms.spec cites each).  If an override in main_psp.c is renamed, made static, or #if'ed away, the
 weak no-op links silently and the feature dies with no build error (x1 H6).  The same
 goes for globals other TUs use (x1 H5): a `static` added during the split breaks the
 link (good), but a renamed definition plus a stale extern elsewhere does not always.

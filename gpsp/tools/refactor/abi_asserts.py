@@ -140,15 +140,20 @@ def extract(toks):
         else:
             stmt.append(t)
         i += 1
-    # externs of variables main_psp.c defines itself are not copies
+    # externs of variables main_psp.c defines itself are not copies.  Every SITE is its
+    # own copy (P0a T14, PLAN-P-beta5 C12): a token-identical copy at another line is
+    # asserted too, so a second copy (gpsp_rom_load_progress's file-scope one before
+    # gba_reload_note beside the block-scope one in main) is checked where it is, not
+    # folded into the first; only the same site seen twice is dropped.
     out = []
     seen = set()
     for r in res:
         if r[0] in defined or r[0] in own_vars:
             continue
-        if (r[0], tuple(x.text for x in r[2])) in seen:
+        key = (r[0], r[1], tuple(x.text for x in r[2]))
+        if key in seen:
             continue
-        seen.add((r[0], tuple(x.text for x in r[2])))
+        seen.add(key)
         out.append(r)
     return out
 
@@ -253,12 +258,17 @@ def load_known(path=KNOWN):
     return k
 
 
-def typedef_of(name, d, norm=None):
+def tname(name, nth=1):
+    """the typedef of a name's nth copy (abi_fe_t_NAME, then abi_fe_t_NAME__2, ...)"""
+    return 'abi_fe_t_' + name + ('' if nth == 1 else '__%d' % nth)
+
+
+def typedef_of(name, d, norm=None, nth=1):
     toks = [t for t in d if t.text not in ('extern',)]
     k = next(i for i, t in enumerate(toks) if t.text == name)
     txt = []
     for i, t in enumerate(toks):
-        txt.append('abi_fe_t_' + name if i == k else t.text)
+        txt.append(tname(name, nth) if i == k else t.text)
     if norm == 'uint':
         s, out, i = txt, [], 0
         while i < len(s):
@@ -302,13 +312,15 @@ def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=No
          ' * checked: %d declarations, %d constants; unchecked: %d (listed at the end). */' % (
              len(items), len(macros_fe) + len(macros_test), len(unchecked)),
          '#ifndef FE_ABI_ASSERTS_H', '#define FE_ABI_ASSERTS_H', '']
+    nth = {}
     for name, line, d, kind in items:
         kn = known.get(name)
+        nth[name] = nth.get(name, 0) + 1
         L.append('/* main_psp.c:%d (%s)%s */' % (line, kind, (' KNOWN, normalised %s: %s' % kn) if kn else ''))
-        L.append(typedef_of(name, d, kn[0] if kn else None))
-        L.append('_Static_assert(__builtin_types_compatible_p(__typeof__(&%s), abi_fe_t_%s *),\n'
+        L.append(typedef_of(name, d, kn[0] if kn else None, nth[name]))
+        L.append('_Static_assert(__builtin_types_compatible_p(__typeof__(&%s), %s *),\n'
                  '               "main_psp.c:%d %s: the frontend copy differs from the core declaration");'
-                 % (name, name, line, name))
+                 % (name, tname(name, nth[name]), line, name))
     if macros_fe:
         L.append('')
         L.append('/* constants copied from the core (r2 H-8) */')
@@ -402,7 +414,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
                 continue                        # a real mismatch: never dropped
             # which item does the line belong to?  the typedef line names abi_fe_t_NAME
             txt = hl[ln - 1] if ln - 1 < len(hl) else ''
-            mm = re.search(r'abi_fe_t_(\w+)', txt) or re.search(r'__typeof__\(&(\w+)\)', txt)
+            mm = re.search(r'abi_fe_t_(\w+?)(?:__\d+)?\b', txt) or re.search(r'__typeof__\(&(\w+)\)', txt)
             if not mm and ln >= 2:
                 mm = re.search(r'__typeof__\(&(\w+)\)', hl[ln - 2])
             if mm:
@@ -423,9 +435,13 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
         f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known))
     rc, so, se = compile_check(src, flavour_dir, outdir, core_h=core_h)
     fails = [l for l in se.split('\n') if 'error' in l]
+    multi = sorted({n for n, _, _, _ in items if sum(1 for x in items if x[0] == n) > 1})
     rep = ['T14 %s: %d copied declarations found, %d asserted, %d unchecked; %d constants asserted'
            % (flavour, len(items) + len(unchecked), len(items), len(unchecked),
               len(macros_fe) + len(macros_test)),
+           'copies asserted at more than one site: %s' % (', '.join(
+               '%s (%s)' % (n, ', '.join('main_psp.c:%d' % x[1] for x in items if x[0] == n)) for n in multi)
+               or 'none'),
            'compile (psp-gcc -fsyntax-only, core flags): %s' % ('ok' if rc == 0 else 'FAILED'),
            'known mismatches normalised (abi_asserts.known): %s' % (
                ', '.join(n for n in known if n in set(i[0] for i in items)) or 'none')]
