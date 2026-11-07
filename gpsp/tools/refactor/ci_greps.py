@@ -334,12 +334,14 @@ def rule_r3(src):
 
 
 # ------------------------------------------------------------- R4
-def fe_evt_args(src):
-    """yield (rel, line, arg tokens) for every fe_evt( call in scope (not its definition)."""
+def fe_evt_args(src, with_fn=False):
+    """yield (rel, line, arg tokens[, enclosing function]) for every fe_evt( call in
+    scope (not its definition)."""
     for rel in files(src):
         if rel.endswith(('fe_evt.c', 'fe_evt.h')):
             continue
         t = raw_lex(src, rel)
+        spans = _function_spans(t) if with_fn else None
         for k in range(len(t) - 1):
             if t[k].text == 'fe_evt' and t[k + 1].text == '(' and not (k > 0 and t[k - 1].text in ('void', '*')):
                 d, j = 0, k + 1
@@ -351,7 +353,17 @@ def fe_evt_args(src):
                         if d == 0:
                             break
                     j += 1
-                yield rel, t[k].line, t[k + 2:j]
+                if with_fn:
+                    yield rel, t[k].line, t[k + 2:j], _fn_at(spans, k) or '-'
+                else:
+                    yield rel, t[k].line, t[k + 2:j]
+
+
+def r4_key(fn, what, args):
+    """KNOWN key of an R4 hit: the enclosing function, the offending token and the whole
+    argument list's tokens (adversarial review 2026-11-07: keyed by call name and file,
+    one KNOWN row excused every such call anywhere in main_psp.c, and none after the split)."""
+    return '%s|%s|%s' % (fn, what, ' '.join(x.text for x in args))
 
 
 def rule_r4(src, allow):
@@ -366,17 +378,17 @@ def rule_r4(src, allow):
             if m and m.group(1) != 'fe_evt' and re.search(r'\bfe_evt\s*\(', m.group(2)):
                 hits.append(Hit('R4', rel, i, '#define ' + m.group(1),
                                 'macro %s forwards to fe_evt: its arguments escape R4' % m.group(1)))
-    for rel, line, args in fe_evt_args(src):
+    for rel, line, args, fn in fe_evt_args(src, with_fn=True):
         nsite += 1
         for i, a in enumerate(args):
             if a.text in ('=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '++', '--'):
-                hits.append(Hit('R4', rel, a.line, a.text, 'operator %s in fe_evt args' % a.text))
+                hits.append(Hit('R4', rel, a.line, r4_key(fn, a.text, args), 'operator %s in fe_evt args' % a.text))
             if a.kind == 'id' and i + 1 < len(args) and args[i + 1].text == '(' and a.text not in C.KEYWORDS:
                 ncall += 1
                 if MUTATOR.search(a.text):
-                    hits.append(Hit('R4', rel, a.line, a.text, 'mutating call %s() in fe_evt args' % a.text))
+                    hits.append(Hit('R4', rel, a.line, r4_key(fn, a.text, args), 'mutating call %s() in fe_evt args' % a.text))
                 elif allow is not None and a.text not in allow:
-                    hits.append(Hit('R4', rel, a.line, a.text,
+                    hits.append(Hit('R4', rel, a.line, r4_key(fn, a.text, args),
                                     'call %s() in fe_evt args is not in ci_greps.fe_evt_calls' % a.text))
     return hits, nsite, ncall
 
@@ -456,8 +468,95 @@ def _resolve(src, from_rel, inc):
     return None
 
 
+# ------------------------------------------------------------- logical files
+_FRAG_INC = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.inc\.c)"[ \t]*$')
+
+
+def logical_view(src):
+    """A `*.inc.c` fragment is part of the file that #includes it (adversarial review
+    2026-11-07: on a real P4 split R5 flagged fragments that use GPSP_NO_TELEMETRY
+    without including fe_evt.h themselves, R1's base-phase hijack exemption only looked
+    inside the file defining the hijack, and KNOWN rows keyed to psp/main_psp.c missed).
+    -> (dir, origin): a mirror of the scanned tree where every host has its fragments
+    expanded in place of their #include line (split.py's inverse: the text of the
+    unsplit file, line for line) and
+    the fragments themselves are gone; origin[(host, line)] = (file, line).  When no
+    fragment is included anywhere: (src, {})."""
+    import shutil
+    import tempfile
+    hosts = []
+    for rel in files(src, ('.c',)):
+        if rel.endswith('.inc.c'):
+            continue
+        txt = open(os.path.join(src, rel), encoding='utf-8', errors='replace').read()
+        if any(_FRAG_INC.match(l) for l in txt.split('\n')):
+            hosts.append(rel)
+    if not hosts:
+        return src, {}
+    d = tempfile.mkdtemp(prefix='ci_greps_view.')
+    for top in ('psp', 'frontend-common', 'netdrv', '.'):
+        base = os.path.join(src, top)
+        for root, dirs, fns in os.walk(base):
+            if top == '.':
+                dirs[:] = []
+            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+            for fn in fns:
+                if fn.endswith(('.c', '.h', '.inc')):
+                    p = os.path.join(root, fn)
+                    q = os.path.join(d, os.path.relpath(p, src))
+                    os.makedirs(os.path.dirname(q), exist_ok=True)
+                    shutil.copyfile(p, q)
+    origin, used = {}, set()
+
+    def expand(rel, depth=0):
+        out = []
+        for k, ln in enumerate(open(os.path.join(src, rel), encoding='utf-8', errors='replace').read().split('\n'), 1):
+            m = _FRAG_INC.match(ln)
+            q = os.path.normpath(os.path.join(os.path.dirname(rel), m.group(1))).replace('\\', '/') if m else None
+            if q and os.path.exists(os.path.join(src, q)) and depth < 8:
+                used.add(q)
+                frag = expand(q, depth + 1)
+                if frag and frag[-1][0] == '':
+                    frag = frag[:-1]      # the fragment's final newline ends the #include's line
+                out.extend(frag)
+            else:
+                out.append((ln, (rel, k)))
+        return out
+    for h in hosts:
+        lines = expand(h)
+        with open(os.path.join(d, h), 'w', encoding='utf-8', newline='\n') as f:
+            f.write('\n'.join(x for x, _ in lines))
+        for i, (_, o) in enumerate(lines, 1):
+            origin[(h, i)] = o
+    for q in used:
+        try:
+            os.remove(os.path.join(d, q))
+        except OSError:
+            pass
+    return d, origin
+
+
 # ------------------------------------------------------------- driver
-def run(src, phase, known_path, allow_path, pp_dir, only=None):
+def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True):
+    view, origin = logical_view(src) if logical else (src, {})
+    try:
+        fails, out = _run(view, phase, known_path, allow_path, pp_dir, only, origin)
+    finally:
+        if view != src:
+            import shutil
+            shutil.rmtree(view, ignore_errors=True)
+    if origin:
+        out.insert(0, 'logical files: %d *.inc.c fragment(s) read as part of their includer' %
+                   len({o[0] for o in origin.values() if o[0].endswith('.inc.c')}))
+    return fails, out
+
+
+def _where(origin, h):
+    o = origin.get((h.file, h.line))
+    return '%s:%d%s' % (h.file, h.line, ' (%s:%d)' % o if o and o[0] != h.file else '')
+
+
+def _run(src, phase, known_path, allow_path, pp_dir, only, origin):
     known = load_known(known_path)
     allow = load_allow(allow_path)
     out, hits = [], []
@@ -489,10 +588,10 @@ def run(src, phase, known_path, allow_path, pp_dir, only=None):
         kn = [k for k in known if k['rule'] == h.rule and k['file'] == h.file and k['key'] == h.key
               and (not k['phase'] or k['phase'] == phase)]
         if kn:
-            out.append('  KNOWN %s %s:%d %s -- %s (%s)' % (h.rule, h.file, h.line, h.msg, kn[0]['reason'], h.key))
+            out.append('  KNOWN %s %s %s -- %s (%s)' % (h.rule, _where(origin, h), h.msg, kn[0]['reason'], h.key))
         else:
             fails += 1
-            out.append('  FAIL  %s %s:%d %s [%s]' % (h.rule, h.file, h.line, h.msg, h.key))
+            out.append('  FAIL  %s %s %s [%s]' % (h.rule, _where(origin, h), h.msg, h.key))
     out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
     return fails, out
 
@@ -506,11 +605,14 @@ def main():
     ap.add_argument('--pp', help='dir with main_psp.<flavour>.i (exit_matrix/aec_pspcc output)')
     ap.add_argument('--rules', help='comma list, default all')
     ap.add_argument('--write-allow', action='store_true')
+    ap.add_argument('--no-logical', action='store_true',
+                    help='read *.inc.c fragments as files of their own (the pre-2026-11-07 view; a mutant)')
     o = ap.parse_args()
     if o.write_allow:
         print('wrote %d names to %s' % (write_allow(o.src, o.allow), o.allow))
         return 0
-    fails, out = run(o.src, o.phase, o.known, o.allow, o.pp, o.rules.split(',') if o.rules else None)
+    fails, out = run(o.src, o.phase, o.known, o.allow, o.pp, o.rules.split(',') if o.rules else None,
+                     logical=not o.no_logical)
     print('\n'.join(out))
     return 1 if fails else 0
 
