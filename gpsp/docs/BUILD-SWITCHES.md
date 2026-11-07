@@ -412,6 +412,7 @@ linked, so the pinned layout does not depend on it.  A release starts it at
 
 **The layout pads (psp/Makefile, pinned by tools/flags.lock).**
 `LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_FE_BYTES` (after stb_impl.o),
+`LAYOUT_PAD_GB_BYTES` (after both GB cores),
 `LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
 `LAYOUT_PAD_BSCAN_BYTES` (B's `update_scanline` held at the renderer's size)
 and `LAYOUT_PAD_RO_BYTES` (`.rodata`).  docs/LAYOUT-PINNING.md "Keeping the
@@ -422,7 +423,8 @@ refuses for the release profile.  `tools/layout/layout.lock` records where
 the pads put the symbols that carry the layout; build.sh fails a release,
 or a lab build with the committed set, that differs (`LAYOUT_LOCK=0` lets a
 lab build through during a re-pin, never a release).  Any other arm is
-checked and reported only.
+checked and reported only.  The manifest records the result as
+`layoutLock`, and tools/make_release.sh packages only `release:ok`.
 
 `BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
 the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.
