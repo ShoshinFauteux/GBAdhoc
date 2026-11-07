@@ -8966,8 +8966,11 @@ void flush_translation_cache_ram(void)
    ewram_code_min, ewram_code_max);*/
 
   /* Phase 5g: price the flush directly instead of inferring it from a frame
-   * spike.  Two clock reads on a path that is already the expensive one. */
-  u32 flush_t0 = smc_prof_clock ? smc_prof_clock() : 0;
+   * spike.  Two clock reads on a path that is already the expensive one.
+   * Only while the ADR-0030 profile is on (smc_blk_watch != 0): the reader,
+   * smc_flush_us, feeds EVT smc_block and the bench-mode OSD, neither of
+   * which a release has, so a release skips both syscalls. */
+  u32 flush_t0 = (smc_blk_watch && smc_prof_clock) ? smc_prof_clock() : 0;
 
 #ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;
@@ -9025,7 +9028,7 @@ void flush_translation_cache_ram(void)
     }
   }
 
-  if (smc_prof_clock)
+  if (smc_blk_watch && smc_prof_clock)
     smc_flush_us += smc_prof_clock() - flush_t0;
 
   iwram_code_min = ~0U;
