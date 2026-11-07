@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""ci_greps.py -- the rule engine behind T11 ci_greps.sh (PLAN §5).  Source rules for the
+main_psp.c split, run over psp/ and frontend-common/ (comments and strings are not code:
+every rule works on aec_cparse tokens, not on raw grep lines).
+
+  R1  exits: no raw `sceKernelExitGame(` / `handoff_run(` call outside fe_priv.h.
+      --phase base   today's contract: in main_psp.c every call sits after the hijack
+                     macros (L:2596-2597), so each one is wrapped; with --pp DIR the -E
+                     output of each flavour is checked too: every sceKernelExitGame and
+                     handoff_run call in main_psp.c is preceded by `pwr_release_all(),`.
+      --phase P      the P3 contract: zero raw calls outside fe_priv.h (no exception).
+      --phase HW2    as P, plus the allow-file entries marked phase=HW2 (stall_exit).
+      Files that ARE the handoff/exit implementation are allow-listed with a reason.
+  R2  no function declared `cold` / `noreturn` (attribute, _Noreturn, or a macro whose
+      body says so) without an explicit `section(...)` in the same declaration
+      (PLAN §0.2-5, §4.3-2: either would land in .text.unlikely ahead of main).
+  R3  no pwr_hold reachable from a gpsp_* hook (they run nested in fe_host_run_frame,
+      r4): direct calls and calls through same-file functions, with the path.
+  R4  no logic inside fe_evt(...) arguments (they vanish in release, r6 B3):
+      assignments, ++/--, calls to mutating functions (name pattern), and any call whose
+      name is not in the reviewed list ci_greps.fe_evt_calls (pure getters seen at base).
+  R5  every .c that tests GPSP_NO_TELEMETRY includes fe_evt.h (directly or through a
+      tree header) BEFORE the first test (fe_evt.h:44-46 derives it).
+Known exceptions live in ci_greps.known (rule, file, key, reason); they are reported as
+KNOWN and do not fail.  Exit: 0 green, 1 violations, 2 usage.
+"""
+import argparse
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import aec_cparse as C  # noqa: E402
+
+SCOPE = ('psp', 'frontend-common')
+SKIP_DIRS = ('launcher', 'tests', 'labab')
+# a call that DOES something: an SDK verb (sceCtrlSetSamplingCycle, sceKernelDelete...) or a
+# snake_case name whose first or last word is a verb (audio_stop, set_x); getters such as
+# fe_np_start_reason or vram_free_base end in a noun and pass.
+_VERBS = ('set|start|stop|init|apply|write|free|alloc|open|close|reset|push|pop|send|flush|'
+          'enqueue|clear|hold|release|take|drop|kick|fire|load|save|delete|create|signal|wait|'
+          'lock|unlock|resume|suspend|teardown|shutdown|kill|destroy|inject')
+MUTATOR = re.compile(r'^sce[A-Z][A-Za-z]*?(Set|Start|Stop|Create|Delete|Write|Change|Lock|Unlock|'
+                     r'Signal|Wait|Sleep|Delay|Exit|Load|Unload)(?=[A-Z]|$)'
+                     r'|^(%s)(_|$)|_(%s)$|(^|_)(kill|destroy|inject|corrupt|trash)(_|$)'
+                     % (_VERBS, _VERBS))
+
+
+def files(src, exts=('.c', '.h', '.inc', '.inc.c')):
+    out = []
+    for d in SCOPE:
+        for root, dirs, fns in os.walk(os.path.join(src, d)):
+            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+            for fn in fns:
+                if fn.endswith(exts):
+                    out.append(os.path.relpath(os.path.join(root, fn), src).replace('\\', '/'))
+    return sorted(out)
+
+
+def load_known(path):
+    k = []
+    if path and os.path.exists(path):
+        for line in open(path, encoding='utf-8'):
+            if line.startswith('#') or not line.strip():
+                continue
+            p = line.rstrip('\n').split('\t')
+            k.append(dict(rule=p[0], file=p[1], key=p[2], reason=p[3] if len(p) > 3 else '',
+                          phase=p[4] if len(p) > 4 else ''))
+    return k
+
+
+class Hit(object):
+    def __init__(self, rule, file, line, key, msg):
+        self.rule, self.file, self.line, self.key, self.msg = rule, file, line, key, msg
+
+
+def toks_of(src, rel, cache={}):
+    p = os.path.join(src, rel)
+    if p not in cache:
+        try:
+            cache[p] = C.load_raw(p)
+        except ValueError:            # unbalanced across #if branches: lex only
+            cache[p] = None
+    return cache[p]
+
+
+def raw_lex(src, rel):
+    """tokens without bracket linking (for files whose #if branches unbalance braces)."""
+    t = toks_of(src, rel)
+    if t is not None:
+        return t
+    out = []
+    in_c = False
+    for i, line in enumerate(open(os.path.join(src, rel), encoding='utf-8', errors='replace'), 1):
+        s = line
+        if in_c:
+            e = s.find('*/')
+            if e < 0:
+                continue
+            s = s[e + 2:]
+            in_c = False
+        if s.lstrip().startswith('#'):
+            continue
+        s = re.sub(r'/\*.*?\*/', ' ', s)
+        if '/*' in s:
+            s, in_c = s[:s.index('/*')], True
+        s = re.sub(r'//.*', '', s)
+        C._lex_line(s, i, (), out)
+    return out
+
+
+# ------------------------------------------------------------- R1
+def rule_r1(src, phase, known, pp_dir):
+    hits, info = [], []
+    allow_files = set(k['file'] for k in known if k['rule'] == 'R1' and k['key'] == '*')
+    for rel in files(src, ('.c', '.inc', '.inc.c', '.h')):
+        if rel.endswith('fe_priv.h') or rel in allow_files:
+            continue
+        t = raw_lex(src, rel)
+        hijack = {}
+        if rel == 'psp/main_psp.c':
+            for i, line in enumerate(open(os.path.join(src, rel), encoding='utf-8', errors='replace'), 1):
+                m = re.match(r'\s*#\s*define\s+(sceKernelExitGame|handoff_run)\s*\(', line)
+                if m:
+                    hijack[m.group(1)] = i
+        fn_at = _function_spans(t)
+        for k in range(len(t) - 1):
+            a = t[k]
+            if a.text in ('sceKernelExitGame', 'handoff_run') and t[k + 1].text == '(' and \
+                    not (k > 0 and t[k - 1].kind == 'id' and t[k - 1].text in ('void', 'int')):
+                fn = _fn_at(fn_at, k)
+                key = '%s@%s' % (a.text, fn or '-')
+                if phase == 'base' and a.text in hijack and a.line > hijack[a.text]:
+                    info.append((rel, a.line, key))
+                    continue
+                if phase == 'HW2' and any(x['rule'] == 'R1' and x['file'] == rel and x['key'] == key
+                                          and x['phase'] == 'HW2' for x in known):
+                    info.append((rel, a.line, key + ' (HW2 whitelist)'))
+                    continue
+                hits.append(Hit('R1', rel, a.line, key, 'raw %s( outside fe_priv.h' % a.text))
+            elif a.text in ('sceKernelExitGame', 'handoff_run') and t[k + 1].text != '(':
+                # address taken (`q = sceKernelExitGame; q();`): an unwrapped exit
+                fn = _fn_at(fn_at, k)
+                hits.append(Hit('R1', rel, a.line, '%s&@%s' % (a.text, fn or '-'),
+                                '%s referenced without a call (address taken)' % a.text))
+        # macro bodies: the token pass drops preprocessor lines, so a raw exit inside a
+        # `#define` of any other file was invisible (verifier 2026-11-05)
+        lines = open(os.path.join(src, rel), encoding='utf-8', errors='replace').read().split('\n')
+        i = 0
+        while i < len(lines):
+            line, first = lines[i], i + 1
+            while line.rstrip().endswith('\\') and i + 1 < len(lines):
+                i += 1
+                line = line.rstrip()[:-1] + ' ' + lines[i]
+            i += 1
+            m = re.match(r'\s*#\s*define\s+(\w+)(\([^)]*\))?(.*)', line)
+            if not m:
+                continue
+            body = re.sub(r'/\*.*?\*/|//.*', ' ', m.group(3))
+            for nm in ('sceKernelExitGame', 'handoff_run'):
+                if not re.search(r'\b%s\b' % nm, body):
+                    continue
+                if phase == 'base' and rel == 'psp/main_psp.c' and m.group(1) == nm:
+                    info.append((rel, first, '%s@#define %s (the hijack)' % (nm, m.group(1))))
+                    continue
+                hits.append(Hit('R1', rel, first, '%s@#define %s' % (nm, m.group(1)),
+                                'raw %s in the body of macro %s outside fe_priv.h' % (nm, m.group(1))))
+    extra = []
+    if pp_dir:
+        for fl in ('release', 'lab', 'harness'):
+            p = os.path.join(pp_dir, 'main_psp.%s.i' % fl)
+            if not os.path.exists(p):
+                continue
+            t = C.load_pp(p)
+            n = w = 0
+            for k in range(len(t) - 1):
+                if t[k].text in ('sceKernelExitGame', 'handoff_run') and t[k + 1].text == '(':
+                    if k > 0 and t[k - 1].text in ('void', 'int'):
+                        continue                      # a declaration
+                    n += 1
+                    if _wrapped(t, k):
+                        w += 1
+                    else:
+                        hits.append(Hit('R1e', 'psp/main_psp.c[%s -E]' % fl, t[k].line, t[k].text,
+                                        'call not wrapped by pwr_release_all()'))
+            extra.append('  R1e %-8s -E: %d exit/handoff calls in main_psp.c, %d wrapped' % (fl, n, w))
+    return hits, info, extra
+
+
+def _wrapped(t, k, levels=3):
+    """True when the call at t[k] sits inside a parenthesised group, at most `levels`
+    groups out, whose first tokens are `pwr_release_all ( ) ,` -- the hijack's shape in
+    release `(pwr_release_all(), handoff_run(..))` and in lab/harness
+    `(pwr_release_all(), (lab_active() ? lab_finish(..) : handoff_run(..)))`.
+    (Verifier 2026-11-05: the old token-window test accepted any call after `:` and
+    skipped any call after `?`, so a raw `c ? 0 : sceKernelExitGame()` passed.)"""
+    j, depth = k - 1, 0
+    while j >= 0 and levels > 0:
+        x = t[j].text
+        if x == ')':
+            depth += 1
+        elif x == '(':
+            if depth == 0:
+                if [y.text for y in t[j + 1:j + 5]] == ['pwr_release_all', '(', ')', ',']:
+                    return True
+                levels -= 1
+            else:
+                depth -= 1
+        elif x in (';', '{', '}') and depth == 0:
+            return False
+        j -= 1
+    return False
+
+
+def _function_spans(t):
+    try:
+        f = C.functions(t)
+    except Exception:
+        return []
+    return sorted((lo, hi, name) for name, (lo, hi) in f.items())
+
+
+def _fn_at(spans, k):
+    for lo, hi, name in spans:
+        if lo <= k <= hi:
+            return name
+    return None
+
+
+# ------------------------------------------------------------- R2
+def rule_r2(src):
+    hits, n = [], 0
+    macros = {}
+    for rel in files(src):
+        for line in open(os.path.join(src, rel), encoding='utf-8', errors='replace'):
+            m = re.match(r'\s*#\s*define\s+(\w+)\s+(.*)', line)
+            if m and re.search(r'\bcold\b|noreturn', m.group(2)) and '__attribute__' in m.group(2):
+                macros[m.group(1)] = 'section' in m.group(2)
+    for rel in files(src):
+        t = raw_lex(src, rel)
+        k = 0
+        while k < len(t):
+            x = t[k].text
+            bad = None
+            if x == '__attribute__' and k + 2 < len(t):
+                j = k + 1
+                depth = 0
+                inner = []
+                while j < len(t):
+                    if t[j].text == '(':
+                        depth += 1
+                    elif t[j].text == ')':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    inner.append(t[j].text)
+                    j += 1
+                if 'cold' in inner or 'noreturn' in inner or '__cold__' in inner or '__noreturn__' in inner:
+                    bad = 'attribute'
+            elif x in ('_Noreturn', 'noreturn'):
+                bad = x
+            elif x in macros and not macros[x]:
+                bad = 'macro ' + x
+            if bad:
+                n += 1
+                # the declaration: back to the previous ; } { and forward to ; or {
+                a = k
+                while a > 0 and t[a - 1].text not in (';', '}', '{'):
+                    a -= 1
+                b = k
+                while b < len(t) and t[b].text not in (';', '{'):
+                    b += 1
+                decl = [y.text for y in t[a:b]]
+                if 'section' not in decl and '__section__' not in decl:
+                    name = next((t[i].text for i in range(b - 1, a - 1, -1)
+                                 if t[i].kind == 'id' and i + 1 < len(t) and t[i + 1].text == '('
+                                 and t[i].text not in C.KEYWORDS), '?')
+                    hits.append(Hit('R2', rel, t[k].line, name, '%s without section()' % bad))
+            k += 1
+    return hits, n
+
+
+# ------------------------------------------------------------- R3
+def rule_r3(src):
+    """The call graph is the UNION over every file in scope, not per file: after phase P a
+    hook and its callees sit in different psp/fe/*.inc.c fragments of one TU, and a
+    per-file graph would stop at the fragment edge (verifier 2026-11-05).  A name defined
+    static in two TUs is merged (over-approximation: can only add paths, never hide one)."""
+    hits, hooks = [], 0
+    calls, per_file = {}, []
+    for rel in files(src, ('.c', '.inc.c')):
+        t = toks_of(src, rel)
+        if t is None:
+            continue
+        fns = C.functions(t)
+        for name, (lo, hi) in fns.items():
+            try:
+                cl = [c.name for c in C.walk_calls(C.parse_body(t, lo, hi))]
+            except Exception:
+                cl = [x.text for i, x in enumerate(t[lo:hi]) if x.kind == 'id'
+                      and t[lo + i + 1].text == '(']
+            calls.setdefault(name, []).extend(cl)
+        per_file.append((rel, t, fns))
+    # a function-like macro whose body calls pwr_hold is pwr_hold for this rule
+    holds = {'pwr_hold'}
+    for rel in files(src):
+        for line in open(os.path.join(src, rel), encoding='utf-8', errors='replace'):
+            m = re.match(r'\s*#\s*define\s+(\w+)\s*\((.*)', line)
+            if m and re.search(r'\bpwr_hold\s*\(', m.group(2)):
+                holds.add(m.group(1))
+    for rel, t, fns in per_file:
+        for name in sorted(fns):
+            if not name.startswith('gpsp_'):
+                continue
+            hooks += 1
+            seen, stack = {name}, [(name, [name])]
+            while stack:
+                f, path = stack.pop()
+                for c in calls.get(f, []):
+                    if c in holds:
+                        hits.append(Hit('R3', rel, t[fns[name][0]].line, name,
+                                        'pwr_hold reachable: %s' % ' -> '.join(
+                                            path + ([c] if c == 'pwr_hold' else [c, 'pwr_hold']))))
+                    elif c in calls and c not in seen:
+                        seen.add(c)
+                        stack.append((c, path + [c]))
+    return hits, hooks
+
+
+# ------------------------------------------------------------- R4
+def fe_evt_args(src):
+    """yield (rel, line, arg tokens) for every fe_evt( call in scope (not its definition)."""
+    for rel in files(src):
+        if rel.endswith(('fe_evt.c', 'fe_evt.h')):
+            continue
+        t = raw_lex(src, rel)
+        for k in range(len(t) - 1):
+            if t[k].text == 'fe_evt' and t[k + 1].text == '(' and not (k > 0 and t[k - 1].text in ('void', '*')):
+                d, j = 0, k + 1
+                while j < len(t):
+                    if t[j].text == '(':
+                        d += 1
+                    elif t[j].text == ')':
+                        d -= 1
+                        if d == 0:
+                            break
+                    j += 1
+                yield rel, t[k].line, t[k + 2:j]
+
+
+def rule_r4(src, allow):
+    hits, ncall, nsite = [], 0, 0
+    # a macro that forwards to fe_evt hides its call sites' arguments from this rule
+    # (none at 01067e74; verifier 2026-11-05)
+    for rel in files(src):
+        if rel.endswith(('fe_evt.c', 'fe_evt.h')):
+            continue
+        for i, line in enumerate(open(os.path.join(src, rel), encoding='utf-8', errors='replace'), 1):
+            m = re.match(r'\s*#\s*define\s+(\w+)\b(.*)', line)
+            if m and m.group(1) != 'fe_evt' and re.search(r'\bfe_evt\s*\(', m.group(2)):
+                hits.append(Hit('R4', rel, i, '#define ' + m.group(1),
+                                'macro %s forwards to fe_evt: its arguments escape R4' % m.group(1)))
+    for rel, line, args in fe_evt_args(src):
+        nsite += 1
+        for i, a in enumerate(args):
+            if a.text in ('=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '++', '--'):
+                hits.append(Hit('R4', rel, a.line, a.text, 'operator %s in fe_evt args' % a.text))
+            if a.kind == 'id' and i + 1 < len(args) and args[i + 1].text == '(' and a.text not in C.KEYWORDS:
+                ncall += 1
+                if MUTATOR.search(a.text):
+                    hits.append(Hit('R4', rel, a.line, a.text, 'mutating call %s() in fe_evt args' % a.text))
+                elif allow is not None and a.text not in allow:
+                    hits.append(Hit('R4', rel, a.line, a.text,
+                                    'call %s() in fe_evt args is not in ci_greps.fe_evt_calls' % a.text))
+    return hits, nsite, ncall
+
+
+def write_allow(src, path):
+    names = set()
+    for rel, line, args in fe_evt_args(src):
+        for i, a in enumerate(args):
+            if a.kind == 'id' and i + 1 < len(args) and args[i + 1].text == '(' \
+                    and a.text not in C.KEYWORDS and not MUTATOR.search(a.text):
+                names.add(a.text)
+    with open(path, 'w', newline='\n') as f:
+        f.write('# T11 R4: functions reviewed as side-effect-free getters, allowed inside fe_evt(...)\n'
+                '# arguments (generated from 01067e74, then reviewed; one name per line).\n')
+        for n in sorted(names):
+            f.write(n + '\n')
+    return len(names)
+
+
+def load_allow(path):
+    if not path or not os.path.exists(path):
+        return None
+    return set(l.split('#')[0].strip() for l in open(path) if l.split('#')[0].strip())
+
+
+# ------------------------------------------------------------- R5
+def rule_r5(src):
+    hits, n = [], 0
+    provides = {}
+
+    def gives(hdr_rel, depth=0):
+        if hdr_rel in provides:
+            return provides[hdr_rel]
+        provides[hdr_rel] = False
+        p = os.path.join(src, hdr_rel)
+        if not os.path.exists(p) or depth > 8:
+            return False
+        for line in open(p, encoding='utf-8', errors='replace'):
+            m = re.match(r'\s*#\s*include\s+"([^"]+)"', line)
+            if m:
+                inc = m.group(1)
+                if os.path.basename(inc) == 'fe_evt.h':
+                    provides[hdr_rel] = True
+                    return True
+                r = _resolve(src, hdr_rel, inc)
+                if r and gives(r, depth + 1):
+                    provides[hdr_rel] = True
+                    return True
+        return False
+    for rel in files(src, ('.c', '.inc.c')):
+        inc_ok = False
+        for i, line in enumerate(open(os.path.join(src, rel), encoding='utf-8', errors='replace'), 1):
+            m = re.match(r'\s*#\s*include\s+"([^"]+)"', line)
+            if m:
+                inc = m.group(1)
+                if os.path.basename(inc) == 'fe_evt.h':
+                    inc_ok = True
+                else:
+                    r = _resolve(src, rel, inc)
+                    if r and gives(r):
+                        inc_ok = True
+            if re.match(r'\s*#\s*(if|ifdef|ifndef|elif)\b.*\bGPSP_NO_TELEMETRY\b', line):
+                n += 1
+                if not inc_ok:
+                    hits.append(Hit('R5', rel, i, 'GPSP_NO_TELEMETRY',
+                                    'tested before fe_evt.h is included'))
+                break
+    return hits, n
+
+
+def _resolve(src, from_rel, inc):
+    base = os.path.dirname(from_rel)
+    for d in (base, 'psp', 'frontend-common', 'netdrv', '.'):
+        p = os.path.normpath(os.path.join(d, inc)).replace('\\', '/')
+        if os.path.exists(os.path.join(src, p)):
+            return p
+    return None
+
+
+# ------------------------------------------------------------- driver
+def run(src, phase, known_path, allow_path, pp_dir, only=None):
+    known = load_known(known_path)
+    allow = load_allow(allow_path)
+    out, hits = [], []
+    rules = only or ['R1', 'R2', 'R3', 'R4', 'R5']
+    if 'R1' in rules:
+        h, info, extra = rule_r1(src, phase, known, pp_dir)
+        hits += h
+        out.append('R1 exits (phase %s): %d raw calls accepted as wrapped/whitelisted, %d violations'
+                   % (phase, len(info), len(h)))
+        out += extra
+    if 'R2' in rules:
+        h, n = rule_r2(src)
+        hits += h
+        out.append('R2 cold/noreturn: %d declarations, %d without section()' % (n, len(h)))
+    if 'R3' in rules:
+        h, n = rule_r3(src)
+        hits += h
+        out.append('R3 hooks: %d gpsp_* functions scanned, %d reach pwr_hold' % (n, len(h)))
+    if 'R4' in rules:
+        h, ns, nc = rule_r4(src, allow)
+        hits += h
+        out.append('R4 fe_evt args: %d call sites, %d calls in arguments, %d flagged' % (ns, nc, len(h)))
+    if 'R5' in rules:
+        h, n = rule_r5(src)
+        hits += h
+        out.append('R5 telemetry include order: %d files test GPSP_NO_TELEMETRY, %d too early' % (n, len(h)))
+    fails = 0
+    for h in hits:
+        kn = [k for k in known if k['rule'] == h.rule and k['file'] == h.file and k['key'] == h.key
+              and (not k['phase'] or k['phase'] == phase)]
+        if kn:
+            out.append('  KNOWN %s %s:%d %s -- %s (%s)' % (h.rule, h.file, h.line, h.msg, kn[0]['reason'], h.key))
+        else:
+            fails += 1
+            out.append('  FAIL  %s %s:%d %s [%s]' % (h.rule, h.file, h.line, h.msg, h.key))
+    out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
+    return fails, out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--src', required=True, help='gpsp root')
+    ap.add_argument('--phase', default='base', choices=('base', 'P', 'HW2'))
+    ap.add_argument('--known', default=os.path.join(HERE, 'ci_greps.known'))
+    ap.add_argument('--allow', default=os.path.join(HERE, 'ci_greps.fe_evt_calls'))
+    ap.add_argument('--pp', help='dir with main_psp.<flavour>.i (exit_matrix/aec_pspcc output)')
+    ap.add_argument('--rules', help='comma list, default all')
+    ap.add_argument('--write-allow', action='store_true')
+    o = ap.parse_args()
+    if o.write_allow:
+        print('wrote %d names to %s' % (write_allow(o.src, o.allow), o.allow))
+        return 0
+    fails, out = run(o.src, o.phase, o.known, o.allow, o.pp, o.rules.split(',') if o.rules else None)
+    print('\n'.join(out))
+    return 1 if fails else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

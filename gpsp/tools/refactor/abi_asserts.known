@@ -1,0 +1,16 @@
+# T14 known mismatches at 01067e74: name <TAB> normalisation <TAB> reason
+# On the PSP, u32 is pspkernel's uint32_t = `long unsigned int` (psp-gcc __UINT32_TYPE__),
+# so main_psp.c's `unsigned int` copies are NOT the core's type in C, although both are 32-bit
+# and pass in the same registers (the ABI is the same; the C type check is not).
+# Normalisations (applied to the frontend copy only, then compared exactly as usual):
+#   uint      `unsigned int` / bare `unsigned` -> u32
+#   ret=bool  the return type `int` -> bool
+# Everything else about the declaration (arity, order, pointer levels, qualifiers, other
+# types) is still asserted exactly; a NEW mismatch or a change here fails the header.
+smc_prof_clock	uint	main_psp.c:1595 unsigned int (*)(void) vs main.h:148 u32 (*)(void)
+vram_dirty_marks	uint	main_psp.c:2049 unsigned int vs gba_memory.h:453 u32
+reg	uint	main_psp.c:2053 unsigned int[] vs gba_memory.h:461 u32[64]
+gpsp_rom_load_progress	uint	main_psp.c:16042 void (*)(unsigned, unsigned) vs gba_memory.h:500 (u32, u32)
+translation_gate_targets	uint	main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32
+translation_gate_target_pc	uint	main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES]
+gamepak_must_swap	ret=bool	main_psp.c:4862 int (void) vs gba_memory.h:315 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch
