@@ -186,6 +186,8 @@ typedef struct nd_rxslot
    uint8_t  payload[ND_MAX_PAYLOAD];
 } nd_rxslot;
 
+typedef char nd_window_pow2_assert[(ND_WINDOW & (ND_WINDOW - 1)) == 0 ? 1 : -1];
+
 typedef struct nd_peer
 {
    uint8_t  active;
@@ -211,8 +213,13 @@ typedef struct nd_peer
    uint32_t  rtt_samples;
    uint64_t  last_backoff_us;    /* rate-limits the backoff to 1 per RTO */
 
-   /* ARQ rx */
+   /* ARQ rx.  reorder[] is direct-mapped: a stashed seq S sits in
+    * reorder[S % ND_WINDOW].  Every stashed seq lies in (rx_expect,
+    * rx_expect + ND_WINDOW), so no two share a slot (ND_WINDOW divides
+    * 65536, asserted below), and insert and drain are one slot each, not a
+    * scan of the window (256 x 150 B: the whole D-cache per packet). */
    uint16_t  rx_expect;
+   uint16_t  reorder_n;          /* slots in use (the reorder_hi stat) */
    nd_rxslot reorder[ND_WINDOW];
    uint8_t   need_ack;
    uint64_t  ack_since_us;       /* when need_ack was first set (ack riding) */
@@ -434,6 +441,7 @@ static void arq_reset(nd_peer *p)
    p->txq_head = p->txq_count = 0;
    p->tx_next_seq = 0;
    p->rx_expect = 0;
+   p->reorder_n = 0;
    memset(p->reorder, 0, sizeof(p->reorder));
    p->need_ack = 0;
    p->urx_any = 0;
@@ -812,53 +820,46 @@ static void arq_rx_data(netdrv *nd, nd_peer *p, uint16_t seq,
    {
       uint8_t local[ND_MAX_PAYLOAD];
       uint16_t llen = len;
-      int i, progressed = 1;
       /* Copy out: deliver() may re-enter send paths that reuse buffers. */
       memcpy(local, payload, len);
       p->rx_expect++;
       nd_deliver(nd, p, local, llen, 1);
-      /* Drain any buffered successors now unblocked. */
-      while (progressed)
+      /* Drain the buffered successors now unblocked: each is in its own
+       * slot, so the walk stops at the first gap. */
+      for (;;)
       {
-         progressed = 0;
-         for (i = 0; i < ND_WINDOW; i++)
-         {
-            nd_rxslot *r = &p->reorder[i];
-            if (r->used && r->seq == p->rx_expect)
-            {
-               r->used = 0;
-               p->rx_expect++;
-               nd_deliver(nd, p, r->payload, r->len, 1);
-               progressed = 1;
-            }
-            else if (r->used && seq_lt(r->seq, p->rx_expect))
-               r->used = 0;   /* stale stash */
-         }
+         nd_rxslot *r = &p->reorder[p->rx_expect % ND_WINDOW];
+         if (!r->used || r->seq != p->rx_expect)
+            break;
+         r->used = 0;
+         p->reorder_n--;
+         p->rx_expect++;
+         nd_deliver(nd, p, r->payload, r->len, 1);
       }
       return;
    }
    if (d < ND_WINDOW)
    {
       /* Out of order but within window: stash (dup-safe). */
-      int i, free_i = -1, used = 0;
-      for (i = 0; i < ND_WINDOW; i++)
+      nd_rxslot *r = &p->reorder[seq % ND_WINDOW];
+      if (r->used)
       {
-         if (p->reorder[i].used && p->reorder[i].seq == seq)
+         if (r->seq == seq)
             return;                       /* already stashed */
-         if (p->reorder[i].used)
-            used++;
-         else if (free_i < 0)
-            free_i = i;
+         /* Another live seq in this slot would be ND_WINDOW away from this
+          * one, which the window forbids; a stale one (behind rx_expect,
+          * which the drain cannot leave behind) is overwritten. */
+         if (!seq_lt(r->seq, p->rx_expect))
+            return;
+         p->reorder_n--;
       }
-      if ((uint32_t)used + 1u > nd->st.reorder_hi)
-         nd->st.reorder_hi = (uint32_t)used + 1u;
-      if (free_i >= 0)
-      {
-         p->reorder[free_i].used = 1;
-         p->reorder[free_i].seq  = seq;
-         p->reorder[free_i].len  = len;
-         memcpy(p->reorder[free_i].payload, payload, len);
-      }
+      if ((uint32_t)p->reorder_n + 1u > nd->st.reorder_hi)
+         nd->st.reorder_hi = (uint32_t)p->reorder_n + 1u;
+      p->reorder_n++;
+      r->used = 1;
+      r->seq  = seq;
+      r->len  = len;
+      memcpy(r->payload, payload, len);
       return;
    }
    /* Beyond window: sender can't legally be here; drop. Counted separately
