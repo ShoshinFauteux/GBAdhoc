@@ -13,6 +13,9 @@ C15 = {'g_start_keepalive', 'g_start_grace', 'g_start_heard', 'g_reload_slow_ms'
        'g_gblink_host_wait_peer', 'g_mgift_consumed', 'g_mg_on'}
 
 rows = [r for r in json.load(open(sys.argv[1])) if not r['extern']]
+# a tree before round 10 (7ffe4236) has no MGIFT switch: its two MGIFT names are plain objects
+if len(sys.argv) > 2 and '#ifdef GBADHOC_MGIFT' not in open(sys.argv[2], encoding='utf-8', errors='replace').read():
+    C15 -= {'g_mgift_consumed', 'g_mg_on'}
 bad = []
 got = {}
 for r in rows:

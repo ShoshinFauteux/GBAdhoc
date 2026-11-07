@@ -105,7 +105,7 @@ if want t9; then
   if [ -n "$CUT" ]; then
     expect_rc 0 "census with the cutlist: 0 UNASSIGNED, modules.py agrees" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist "$CUT" --tsv "$OUT/g_tree.tsv" --json "$OUT/g_tree.json"
     grep -E "definitions|UNASSIGNED|define sets|macro-globals|owners from" "$OUT/last.log" | sed 's/^/        /'
-    $PY "$HERE/p0a_t9_owners.py" "$OUT/g_tree.json" > "$OUT/own.log" 2>&1 && ok "$(tail -1 "$OUT/own.log")" || { bad "owners: $(tail -3 "$OUT/own.log")"; }
+    $PY "$HERE/p0a_t9_owners.py" "$OUT/g_tree.json" "$M" > "$OUT/own.log" 2>&1 && ok "$(tail -1 "$OUT/own.log")" || { bad "owners: $(tail -3 "$OUT/own.log")"; }
     mkdir -p "$OUT/gcopy"; cp "$M" "$OUT/gcopy/main_psp.c"
     $PY "$R/globals.py" census --src "$OUT/gcopy/main_psp.c" --root "$TREE" --cutlist "$CUT" --tsv "$OUT/g_copy.tsv" > /dev/null 2>&1
     cmp -s <(cut -f2- "$OUT/g_tree.tsv") <(cut -f2- "$OUT/g_copy.tsv") && ok "census of a copy == in-tree (597-row TSV identical)" || bad "census of a copy differs from in-tree"
