@@ -70,6 +70,10 @@
 > - *New in beta 4:* **XMB launch mode** (#29): a game's own XMB entry can start it directly.
 > - *New in beta 4:* **online play (experimental, off by default)**: *Settings → Online play*,
 >   then *Wireless → Online*; two PSPs link over the internet through relay.rayquaza.ca.
+>   Only Pokémon Emerald has been tested so far. The step-by-step guide is in the
+>   [release notes](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4).
+> - *New in beta 4:* **Ambient bars: Game is a live edge glow** that takes its colours from
+>   the edges of the picture.
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
 > - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the
@@ -786,7 +790,7 @@ confirm and ○ to go back.
 | | <kbd>NEW</kbd> Smoothing | nearest, bilinear, sharp bilinear |
 | | <kbd>NEW</kbd> Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD; GB/GBC also RGB stripes and RGB stripes strong (Stretch only). Off at 1x |
 | | <kbd>NEW</kbd> Colour (GBA) | native, GBA LCD colour, black & white |
-| | Ambient bars | off, art, art else game |
+| | Ambient bars | None, Art (else the edge glow), Game (live edge glow) |
 | | GB palette | Auto, Grey, DMG green, Pocket |
 | Interface | Theme | dark or light |
 | | Menu style | Marquee or Shelf |

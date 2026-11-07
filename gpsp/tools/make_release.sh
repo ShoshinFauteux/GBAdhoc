@@ -329,12 +329,13 @@ Copy the "PSP" folder in this zip to the ROOT of your memory stick.  You get:
         gbadhoc_online.prx  online play module (experimental; loaded only online)
         roms/         <- put your own .gba, .gb and .gbc files here
         cheats/       your own per-game cheat files (see cheats/README.txt)
-        saves/        (used by per-game builds)
+        saves/        battery saves (save states go in states/, made on first run)
         log/          frontend.log lands here
 
 Put your legally dumped ROMs in roms/ (subfolders are fine).
 Optional: a real GBA BIOS dump as gba_bios.bin in the $APPDIR_NAME folder.
 Without it the built-in open-source BIOS replacement is used, which is fine.
+For online play both PSPs need gba_bios.bin, or neither.
 
 To link two PSPs, do all of this on BOTH consoles.
 Launch: XMB -> Game -> Memory Stick -> GBAdhoc

@@ -10,7 +10,7 @@ separately and are intended for upstream.
 
 ---
 
-## [4.6.0-beta.4] - 2026-11-05
+## [4.6.0-beta.4] - 2026-11-07
 
 Pre-release. Links only with the same beta.
 
@@ -71,10 +71,20 @@ Pre-release. Links only with the same beta.
   PSPs exchange over ad hoc; a direct path is tried when both routers allow it, with the relay as
   the fallback. The link sessions are the ad hoc ones, but the GB cartridge stream and Share game
   data are not offered online, so both players need the game. Recent partners are not built yet.
-  This is the first build with it: the relay, its NAT tests and a fuzzer pass on the PC, but no
-  session has yet run end to end between two PSPs over the internet. The session code lives in its
-  own module, gbadhoc_online.prx (14 KB), loaded only when an online session starts, so online play
-  costs no memory and nothing per frame until it is used.
+  Only Pokemon Emerald has been tested online: a Cable Club trade ran start to finish between a
+  PSP Go on a phone's mobile data and a PSP-3000 on home Wi-Fi, through the relay (36 ms ping,
+  about 42 fps: a relayed session waits for each frame). The Network row lists Automatic and every
+  connection saved in the XMB by name, also on the Mystery Gift screen; a room code the host types
+  is the room it gets; Join takes a 4-letter room code or an 8/11-character invite code from
+  GBAdhoc XMB 0.2.0-beta.1 or later; a host waiting alone keeps its room; a chip shows the path
+  and ping (Direct or Via relay); and a failed connection says what happened. A link between a PSP
+  with gba_bios.bin and one without falls out of step within seconds, so it is refused before it
+  starts. The session code lives in its own module, gbadhoc_online.prx (28 KB), loaded only when an
+  online session starts, so online play costs no memory and nothing per frame until it is used.
+- Ambient bars are None, Art or Game. **Game is a live edge glow**: the bars take their colours
+  from the edges of the picture and follow the game smoothly (48 samples every other frame, eased
+  over 8 frames), at no measurable speed cost on the PSP-1000 or PSP-3000. Art shows the game's art,
+  or the edge glow for a game without art, and switching back to Art mid-session works.
 - 222 MHz plays smoothly again at normal speed (reported by ingo3643). The lower-latency
   presentation added in 4.5.0 shows each frame the moment it is ready; at 222 MHz the Media
   Engine often finished a frame just after the screen refreshed, so that frame showed late and
