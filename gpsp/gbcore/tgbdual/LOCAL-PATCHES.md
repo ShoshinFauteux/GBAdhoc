@@ -95,7 +95,7 @@ that:
 |---|---|
 | `cpu.c` | Serial completion (`seri_occer` expiring in `cpu_exec`) asks the adapter for the byte that lands in SB (`tgb_port_serial_complete`). With an in-memory cable the byte is exchanged THEN, with the peer machine's SB (`cpu_seri_send`), which is what upstream TGB Dual did between its two machines; otherwise the adapter returns `seri_rx`, the byte chosen at the SC write, exactly as before. |
 | `gb.c` | `gb_fill_vframe` returns when there is no frame buffer: a headless machine (the partner's Game Boy) has none. It is reached from `gb_reset` and from SGB `MASK_EN` packets whatever `gbSkip` says. |
-| `_mrand_table.h` | The noise tables are `const` and named `tgbshared_mrand7/15`, defined once by the new `tgb_shared.c` outside the per-instance link: 64 KiB the second machine does not duplicate. |
+| `_mrand_table.h` | The noise tables are `const` and named `tgbshared_mrand7/15`, defined once by the new `tgb_shared.c` outside the per-instance link: 64 KiB the second machine does not duplicate. They are packed 8 bits to a byte (2 x 4 KiB, -57,344 B of `.rodata`) and read through `MRAND_BIT()` in `apu.c`'s `snd_noi_produce`; `tools/gen_mrand_packed.py --check` proves every bit equal to the pristine table. |
 | `tgb_port.h` | Prototypes for `tgb_port_serial_complete` and `cpu_seri_send`. |
 
 Headless (`gbcore_set_headless`) suppresses scanline and sample production,

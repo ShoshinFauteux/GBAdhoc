@@ -524,9 +524,9 @@ inline short snd_noi_produce(int freq)
 		if( snd_stat.noi_step == 7 ){
 			while(noi_cur_pos>(dword)snd_rate){
 				if(sc==0)
-					noi_sample=(_mrand7[ noise_index & MASK_MRAND ])?12000:-10000;
+					noi_sample=MRAND_BIT(_mrand7, noise_index)?12000:-10000;
 				else
-					noi_sample+=(_mrand7[ noise_index & MASK_MRAND ])?12000:-10000;
+					noi_sample+=MRAND_BIT(_mrand7, noise_index)?12000:-10000;
 				noi_cur_pos-=snd_rate;
 				sc++;
 				noise_index++ ;
@@ -534,9 +534,9 @@ inline short snd_noi_produce(int freq)
 		}else{
 			while(noi_cur_pos>(dword)snd_rate){
 				if(sc==0)
-					noi_sample=(_mrand15[ noise_index & MASK_MRAND ])?12000:-10000;
+					noi_sample=MRAND_BIT(_mrand15, noise_index)?12000:-10000;
 				else
-					noi_sample+=(_mrand15[ noise_index & MASK_MRAND ])?12000:-10000;
+					noi_sample+=MRAND_BIT(_mrand15, noise_index)?12000:-10000;
 				noi_cur_pos-=snd_rate;
 				sc++;
 				noise_index++ ;
