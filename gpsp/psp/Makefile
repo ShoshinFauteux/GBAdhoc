@@ -187,6 +187,10 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 3512
 LAYOUT_PAD_CORE_BYTES ?= 5544
+# LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
+# the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
+LAYOUT_PAD_BSCAN_BYTES ?= 7704
+CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half

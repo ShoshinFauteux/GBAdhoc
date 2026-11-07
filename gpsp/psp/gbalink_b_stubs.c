@@ -53,9 +53,15 @@ void update_scanline(void) { }
  * 1.2-1.7 % on hardware (hw-batch-3).  The section keeps the renderer's size
  * (zeros plus the 8 B stub, never executed; same trick as layout_pad_apb.S)
  * so they stay where round 3 and beta.4 had them mod 8 KiB.
- * -ffunction-sections puts the stub in this section. */
+ * -ffunction-sections puts the stub in this section.  LAYOUT_PAD_BSCAN_BYTES
+ * (psp/Makefile, pinned) is the zeros' size. */
+#ifndef LAYOUT_PAD_BSCAN_BYTES
+#define LAYOUT_PAD_BSCAN_BYTES 7704
+#endif
+#define BSCAN_STR2(x) #x
+#define BSCAN_STR(x) BSCAN_STR2(x)
 __asm__(".pushsection .text.update_scanline,\"ax\",@progbits\n"
-        "  .fill 7704 / 4, 4, 0\n"
+        "  .fill " BSCAN_STR(LAYOUT_PAD_BSCAN_BYTES) " / 4, 4, 0\n"
         ".popsection\n");
 void video_reload_counters(void) { }
 void me_capture_visible_end(void) { }
