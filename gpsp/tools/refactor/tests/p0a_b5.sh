@@ -408,7 +408,7 @@ if want flav; then
       cp "$RUN/flavours.json" "$RUN/ci_greps.txt" "$d/" 2>/dev/null; sed -i "$3" "$d/$2/flavour.json"
     }
     doct dirty release 's/"workingTreeClean": true/"workingTreeClean": false/'
-    doct lock release 's/"layoutLock": "release:ok"/"layoutLock": "release:differs"/'
+    doct lock release 's/"layoutLock": "[^"]*"/"layoutLock": "release:differs"/'
     doct xenv lab 's/"extraEnv": ""/"extraEnv": "ME_LOWLAT=0 LAYOUT_PIN=0"/'
     doct benv harness 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
     doct anc release-stable 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/'

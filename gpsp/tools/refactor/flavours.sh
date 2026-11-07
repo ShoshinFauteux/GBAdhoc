@@ -513,8 +513,8 @@ if [ -n "$AGAINST" ]; then
   lock_at() {     # yes / no: the commit carries gpsp/tools/layout/layout.lock
     local c="$1" k
     for k in "${LOCK_AT[@]+"${LOCK_AT[@]}"}"; do [ "${k%%=*}" = "$c" ] && { echo "${k#*=}"; return; }; done
-    if G "$REPO" cat-file -e "$c:gpsp/tools/layout/layout.lock" 2>/dev/null; then k=yes
-    elif G "$REPO" cat-file -e "$c^{commit}" 2>/dev/null; then k=no
+    if G "$REPO" cat-file -e "$c:gpsp/tools/layout/layout.lock" >/dev/null 2>&1; then k=yes
+    elif G "$REPO" cat-file -e "$c^{commit}" >/dev/null 2>&1; then k=no
     else k=yes; fi      # a commit this repo does not have: held to the strict rule
     LOCK_AT+=("$c=$k"); echo "$k"
   }
