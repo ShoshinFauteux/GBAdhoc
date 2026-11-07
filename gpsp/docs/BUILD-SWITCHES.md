@@ -260,6 +260,14 @@ for that" is never mistaken for "that was tried".
 Both write to the memory stick from inside the dynarec dispatch path, on the
 emulation thread. Both are refused in a release by `gpsp_profile.h`.
 
+`ROM_HASH_CENSUS` (in no profile; `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
+FE_EXTRA=-DROM_HASH_CENSUS`, both halves or it does not link) walks
+`rom_branch_hash` at each `core_health` EVT (heartbeat, exit) and logs
+`EVT rom_hash at= entries= buckets=used/16384 max_chain= hit_hops_x100=
+rom_used=`: the chain depth of the 14-bit table after a long LARGE-tier
+session on a 3000/Go.  The lookup is untouched; the walk is cold code
+(176 B per instance), so the arm's layout differs from the lab's.
+
 `XLAT_DEPTH_PROBE` (profiles `soak`, `diagnostic`; refused in a release) writes
 nothing itself: it records the deepest nested block translation and the lowest
 frame address at translation entry (`xlat_depth_max`, `xlat_sp_min`,
