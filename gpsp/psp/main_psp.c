@@ -698,8 +698,14 @@ static void evt_shutdown(void)
 
 /* OUT_RATE lives in ff_psp.h: the pacing engine needs it too. */
 #define OUT_CHUNK      1024                 /* output frames per blocking write */
-#define RING_FRAMES    32768                /* power of two, 1.0 s at the
-                                             * core's 32768 Hz (ADR-0028) */
+/* Power of two, 0.5 s at the core's 32768 Hz (ADR-0028).  The pacer holds
+ * the level at AUDIO_RING_TARGET (4096, 125 ms) and a GB link session at
+ * its 3072-frame cushion (trim RING_HIGH_WATER + 1024); only an ff_audio
+ * fast-forward fills it to the top, and every frame of it is heard as lag
+ * once FF ends.  It was 32768 (1.0 s, 128 KiB of .bss) up to 4.6.0-beta.4;
+ * 16384 keeps the harness audio_ring_target range up to 16383, room for
+ * the "raise the target to 8192 if it gaps" fallback. */
+#define RING_FRAMES    16384
 #define RING_MASK      (RING_FRAMES - 1)
 /* Audio-master pacing nudge (plan §4.4): skip an extra vblank when the ring
  * holds more than the target — bleeds off the 59.94-vs-59.7275 Hz surplus.
@@ -728,6 +734,11 @@ static unsigned g_ring_high_water = AUDIO_RING_TARGET;
 static int16_t audio_ring[RING_FRAMES * 2];
 static volatile unsigned ring_w;            /* producer: emu thread  */
 static volatile unsigned ring_r;            /* consumer: audio thread */
+/* `volatile` orders the two indices, not the samples: a compiler barrier
+ * (no instruction) keeps the plain sample stores before the publish of
+ * ring_w, and the sample loads after the level check and before the
+ * release of ring_r.  Single CPU, so no hardware fence is needed. */
+#define RING_BARRIER() __asm__ __volatile__("" ::: "memory")
 /* A link session's connecting / result screen: no game is running, so the
  * ring is emptied once and the producer drops everything until the screen
  * goes (hw2 W: the host's "buggy audio" through the transfer). */
@@ -833,6 +844,7 @@ static void plat_audio_frames(const int16_t *lr, size_t frames)
          unsigned idx = ring_w & RING_MASK;
          audio_ring[idx * 2 + 0] = lr[i * 2 + 0];
          audio_ring[idx * 2 + 1] = lr[i * 2 + 1];
+         RING_BARRIER();
          ring_w++;
       }
    }
@@ -967,6 +979,7 @@ static int audio_thread(SceSize args, void *argp)
             g_audio_starved++;               /* EVT audio_ring starved= */
             continue;
          }
+         RING_BARRIER();
          {
             unsigned i0 = ring_r & RING_MASK;
             unsigned i1 = (ring_r + 1) & RING_MASK;
@@ -997,6 +1010,7 @@ static int audio_thread(SceSize args, void *argp)
             out[i * 2 + 1] = (int16_t)sr;
          }
          frac += step;
+         RING_BARRIER();
          ring_r += frac >> 16;
          frac &= 0xFFFF;
       }
@@ -1028,8 +1042,16 @@ static void audio_start(void)
    audio_running = 1;
    /* Nominal until the pace policy says otherwise (ADR-0027). */
    g_audio_step = (unsigned)(((uint64_t)in_rate << 16) / OUT_RATE);
+   /* 8 KiB stack (was 16).  audio_thread is a leaf loop: its frame is 64 B
+    * (release ELF: addiu sp,sp,-64; `out` is static), and its only calls
+    * are sceAudioChReserve / OutputBlocking / ChRelease, syscalls that run
+    * on the kernel stack.  The stack does NOT come from the heap: newlib's
+    * heap is one partition block taken before main (PSP_HEAP_SIZE_KB(-1024),
+    * docs/MEMORY-BUDGET.md), so thread stacks come out of the 1 MiB left
+    * outside it, which sceUtility and the net modules share.  The 8 KiB is
+    * headroom there, not ROM cache. */
    audio_thid = sceKernelCreateThread("gpsp_audio", audio_thread, 0x12,
-                                      0x4000, THREAD_ATTR_USER, NULL);
+                                      0x2000, THREAD_ATTR_USER, NULL);
    if (audio_thid >= 0)
    {
       int rc = sceKernelStartThread(audio_thid, 0, NULL);
@@ -2102,18 +2124,25 @@ static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
 static volatile int g_pwr_had_host;  /* the ME module was up when we slept */
 /* The GE samples power-of-two textures only, and vid_image uses stride ==
  * texw, so the snapshot is stored 256 wide with the live 240x160 as its
- * top-left sub-rect.  256x256 allocated because texh is declared 256. */
+ * top-left sub-rect.  The texture is DECLARED 256x256 (texh must be a power
+ * of two), but only rows 0..160 are ever sampled: the picture is at most 160
+ * rows and row src_h holds the bottom-edge copy for bilinear taps -- the
+ * same 161 rows the ME/CPU staging buffer the live frame is drawn from has
+ * (MER_STAGE_PITCH * 161), drawn by the same code (vid_image_screen).  So
+ * only those 161 rows are stored: 82,432 B instead of 131,072. */
 #define WAKE_TEX     256
-#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_TEX * 2)
+#define WAKE_ROWS    161
+#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_ROWS * 2)
 static uint16_t *g_wake_frame;       /* the picture the overlay sits on */
 static int       g_wake_have;        /* 1 = it holds a real frame       */
 /* The snapshot's own size: 240x160 for a GBA, 160x144 for a GB/GBC.  It is
  * stored at the texture's top-left and drawn with these dimensions, so it
  * lands exactly where (and as large as) the live picture did. */
 static unsigned  g_wake_w = 240, g_wake_h = 160;
-/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x64
+/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x43
  * PSP-5650 textures, also carved from the netdrv arena's tail -- no heap. */
-#define UI_THUMB_BYTES (5u * 64u * 64u * 2u)
+#define UI_THUMB_BYTES (PSP_STATE_SLOT_COUNT * PSP_STATE_THUMB_SLOT_PIXELS * 2u)
+_Static_assert(PSP_STATE_SLOT_COUNT == 5, "UI_THUMB_BYTES: five slots");
 static uint16_t *g_ui_thumbs;
 static int       g_wake_menu;        /* main loop: show the overlay     */
 static const uint16_t *g_last_pix;   /* last frame the core handed us    */
@@ -3468,9 +3497,9 @@ static int me_rend_release_vmem(void)
 /* KEEP THE LAST FRAME for the wake overlay.
  *
  * It normally lives in the volatile partition we are about to hand back, so it
- * has to be copied into memory that survives: 76.8 KB in the tail of the
- * netdrv arena, which is 1 MiB while netdrv uses 516 KB.  No heap cost, which
- * matters on the console with none to spare.
+ * has to be copied into memory that survives: 82 KB (161 rows of 256) in
+ * the tail of the netdrv arena, after netdrv's own part.  No heap cost,
+ * which matters on the console with none to spare.
  *
  * Two sources, because the ME is not always the one drawing: its stage when
  * the renderer is up, otherwise the core's own frame buffer (the CPU path, and
@@ -3515,7 +3544,7 @@ static void wake_snapshot_from(const uint16_t *src, unsigned pitch,
       if (src_w < WAKE_TEX)
          g_wake_frame[y * WAKE_TEX + src_w] = src[y * pitch + src_w - 1];
    }
-   if (src_h < WAKE_TEX)
+   if (src_h < WAKE_ROWS)
       memcpy(g_wake_frame + src_h * WAKE_TEX,
              g_wake_frame + (src_h - 1) * WAKE_TEX, (src_w + 1) * 2);
    g_wake_w = src_w;
@@ -5147,14 +5176,13 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
  *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
  *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
  *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
- *           ROM is in (memory heap-exhausted-by-design), so it is carved at
- *           boot from the netdrv arena's tail, after the wake frame and the
- *           state thumbnails -- the same free real estate, no heap cost.  No
- *           room there (the arena reservation failed): the shot is a BMP.
+ *           ROM is in (memory heap-exhausted-by-design), so it borrows the
+ *           netdrv arena (netdrv_arena_borrow) for the encode: reserved at
+ *           boot for wireless and idle whenever no session is up, so no
+ *           heap of its own.  Arena lent to a session, or never reserved:
+ *           the shot is a BMP (toast "Screenshot saved (as BMP)").
  *   cost    one-off, on the emulation thread, with the power switch held
  *           off for the write (EVT screenshot ... us=). */
-static uint8_t *g_shot_work;
-static size_t   g_shot_work_bytes;
 static char     g_shot_rom[PSP_FILE_PATH_CAP];   /* the running game's path */
 
 static int shot_fd_write(void *ctx, const void *d, size_t n)
@@ -5185,7 +5213,8 @@ static int shot_folder(char *dir, size_t cap)
 }
 
 static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
-                          unsigned h, size_t pitch, fe_png_info *info)
+                          unsigned h, size_t pitch, fe_png_info *info,
+                          uint8_t *work, size_t work_bytes)
 {
    SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    int rc, crc;
@@ -5197,7 +5226,7 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
 #else
                       FE_PNG_RGB565,
 #endif
-                      g_shot_work, g_shot_work_bytes, shot_fd_write, &fd,
+                      work, work_bytes, shot_fd_write, &fd,
                       info);
    crc = sceIoClose(fd);
    if (rc != 0 || crc < 0)
@@ -5207,6 +5236,16 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
    }
    return 0;
 }
+
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+/* critique-3 SF6: netdrv_arena_borrow/_return and netdrv_create share one
+ * busy flag with no lock, so the screenshot's borrow is only safe on the
+ * thread that starts sessions (net_start_np -> fe_np_start -> netdrv_create).
+ * Both run on the main thread today.  The diagnostic builds check it: the
+ * thread of the last session start, and an EVT if a borrow happens elsewhere.
+ * Nothing in a release (no code, no data). */
+static SceUID g_np_start_tid = -1;
+#endif
 
 static void player_screenshot(void)
 {
@@ -5221,6 +5260,8 @@ static void player_screenshot(void)
    struct tm tmv;
    int png, rc = -1;
    SceIoStat st;
+   size_t work_bytes = 0;
+   uint8_t *work = NULL;
 
    memset(&info, 0, sizeof(info));
    if (state_preview_src(&pix, &pitch, &w, &h) != 0)
@@ -5230,8 +5271,22 @@ static void player_screenshot(void)
    }
    pwr_hold("screenshot");
    t0 = sceKernelGetSystemTimeLow();
-   png = g_pcfg.shot_format == PCFG_SHOT_PNG && g_shot_work &&
-         g_shot_work_bytes >= fe_png_work_bytes(w, h);
+   if (g_pcfg.shot_format == PCFG_SHOT_PNG)
+   {
+      /* Lent only while no driver lives in it; handed back below, before
+       * this thread can reach anything that starts a session. */
+      work_bytes = fe_png_work_bytes(w, h);
+      work = (uint8_t *)netdrv_arena_borrow(work_bytes);
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+      {
+         SceUID tid = sceKernelGetThreadId();
+         if (g_np_start_tid >= 0 && tid != g_np_start_tid)
+            fe_evt("arena_thread_mismatch borrow=%08x np_start=%08x",
+                   (unsigned)tid, (unsigned)g_np_start_tid);
+      }
+#endif
+   }
+   png = work != NULL;
    now = psp_local_wallclock();     /* local time, held as if UTC */
    memset(&tmv, 0, sizeof(tmv));
    gmtime_r(&now, &tmv);
@@ -5256,7 +5311,8 @@ static void player_screenshot(void)
    if (path[0])
    {
       if (png)
-         rc = shot_write_png(path, pix, w, h, pitch, &info);
+         rc = shot_write_png(path, pix, w, h, pitch, &info, work,
+                             work_bytes);
       else
 #ifdef USE_PSP_RGB565_FORMAT
          rc = fe_bmp_write_psp565(path, pix, w, h, pitch);
@@ -5264,6 +5320,7 @@ static void player_screenshot(void)
          rc = fe_bmp_write_rgb565(path, pix, w, h, pitch);
 #endif
    }
+   netdrv_arena_return(work);
    us = sceKernelGetSystemTimeLow() - t0;
    pwr_release();
    FE_EVT_ONLY(us);
@@ -5615,37 +5672,52 @@ static void vhash_frame(void)
  * worst scanline-render frame — the phase maxima must never be summed
  * (ADR-0032), so `vid_worst` is what a max is allowed to be read against.
  * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
 static unsigned vp_core_mean;
-static unsigned vp_build_crc;   /* CRC32 of the EBOOT actually running */
+#endif
+/* (unused in a player build: every reader is telemetry or rig code) */
+static unsigned vp_build_crc __attribute__((unused));   /* CRC32 of the running EBOOT */
 
 /* ADR-0035: identify the BINARY in the profile line, not just the run.
  * A stale EBOOT in a sandbox produced two "different" builds with identical
  * timings and cost most of a session to spot.  A profile whose build cannot be
  * identified is not a measurement, so the CRC of the running EBOOT goes in
  * every `vid_prof` line and is emitted once at boot.  ~1.6 MiB of CRC, only
- * when profiling is enabled. */
+ * when profiling is enabled.  Telemetry builds only: its only outputs are
+ * fe_evt lines and the rig's run identity. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static unsigned eboot_crc(void)
 {
    char path[160];
-   static unsigned char buf[4096];
+   /* Borrowed for the read, not a static: it runs once, on harness or
+    * vid_prof runs only, and was 4 KiB of every player's .bss. */
+   unsigned char *buf;
    SceUID fd;
    unsigned crc = 0, total = 0;
    int n;
 
    snprintf(path, sizeof(path), "%s/EBOOT.PBP", g_dir_base);
+   buf = (unsigned char *)malloc(4096);
+   if (!buf)
+      return 0;
    fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
    if (fd < 0)
+   {
+      free(buf);
       return 0;
-   while ((n = sceIoRead(fd, buf, sizeof(buf))) > 0)
+   }
+   while ((n = sceIoRead(fd, buf, 4096)) > 0)
    {
       crc = fe_crc32(crc, buf, (size_t)n);
       total += (unsigned)n;
    }
    sceIoClose(fd);
+   free(buf);
    fe_evt("build eboot_crc=%08x size=%u", crc, total);
    return crc;
 }
+#endif
 
 /* ---- VRAM DIRTY-PAGE PROBE ---------------------------------------------
  *
@@ -5770,6 +5842,7 @@ static void vram_probe_frame(void)
    (void)g_vp_fail;
 }
 
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 static void vid_prof_frame(unsigned win)
 {
    unsigned cur[VP_COUNT];
@@ -5821,6 +5894,16 @@ static void vid_prof_frame(unsigned win)
    vp_max_tot = 0;
    vp_win_n   = 0;
 }
+#else
+/* Every output of the window is an fe_evt line, compiled out here; the
+ * core's counters are still drained so they cannot wrap. */
+static void vid_prof_frame(unsigned win)
+{
+   unsigned cur[VP_COUNT];
+   (void)win;
+   (void)video_prof_read_reset(cur, VP_COUNT);
+}
+#endif
 
 static void dump_ge_bmp(void)
 {
@@ -5961,11 +6044,13 @@ static void gb_serial_yield(void)
    sceKernelDelayThread(1000);
 }
 
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 /* Same clock, video_prof's prototype (ADR-0034 renderer profile). */
 static unsigned vprof_clock_us(void)
 {
    return (unsigned)sceKernelGetSystemTimeLow();
 }
+#endif
 
 /* Same clock, fe_evt's prototype (ADR-0021 log-I/O accounting).  The ADR-0067
  * playable build never installs it, because there is no log to account for. */
@@ -6712,6 +6797,9 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       online_psp_iface(&tp);
    else
       adhoc_transport_iface(&tp);
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
+#endif
    memset(&npc, 0, sizeof(npc));
    npc.transport = &tp;
    npc.is_host   = is_host;
@@ -7530,11 +7618,13 @@ static void exit_assist_frame(void)
  * store and an index bump, and the main loop does the log write.  Entries
  * are dropped rather than overwritten if the ring fills (the count says so),
  * because the FIRST error is the interesting one. */
+#ifndef GPSP_NO_TELEMETRY
 #define RFU_TRACE_RING 64
 static volatile unsigned g_rfu_tr_buf[RFU_TRACE_RING];
 static volatile unsigned g_rfu_tr_head;   /* producer: emulation thread   */
 static volatile unsigned g_rfu_tr_tail;   /* consumer: main loop          */
 static volatile unsigned g_rfu_tr_lost;
+#endif
 
 /* Fired by the core at vcount==160 -- see g_vis_n. Defined here, below
  * frame_t0 and net_now_us. */
@@ -7611,7 +7701,9 @@ static volatile unsigned g_rfu_seen_bcrd, g_rfu_seen_conn;
 
 void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
 {
+#ifndef GPSP_NO_TELEMETRY
    unsigned head = g_rfu_tr_head;
+#endif
 
    /* Flag-writes only, like the adhocctl handler: this runs on the emulation
     * thread inside the adapter emulation and must not do work. */
@@ -7625,6 +7717,12 @@ void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
    else if (ev == 2)                    /* RFU_TR_STATE */
       g_rfu_last_state = a;
 
+#ifdef GPSP_NO_TELEMETRY
+   /* The ring's only reader is rfu_trace_drain's fe_evt lines: a player
+    * build keeps the peek above (the Mystery Gift screen prints it) and
+    * not the ring. */
+   (void)b;
+#else
    if (head - g_rfu_tr_tail >= RFU_TRACE_RING)
    {
       g_rfu_tr_lost++;
@@ -7633,6 +7731,7 @@ void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
    g_rfu_tr_buf[head % RFU_TRACE_RING] =
       ((ev & 0xFF) << 24) | ((a & 0xFFF) << 12) | (b & 0xFFF);
    g_rfu_tr_head = head + 1;
+#endif
 }
 
 /* Reported, never branched on: gone with telemetry. */
@@ -7643,6 +7742,9 @@ static const char *rfu_tr_state_name(unsigned s)
    return s < 4 ? n[s] : "?";
 }
 
+#ifdef GPSP_NO_TELEMETRY
+#define rfu_trace_drain() ((void)0)
+#else
 static void rfu_trace_drain(void)
 {
    static unsigned reported_lost;
@@ -7957,6 +8059,7 @@ static void rfu_trace_drain(void)
       fe_evt("rfu_trace_lost n=%u", reported_lost);
    }
 }
+#endif
 
 enum { SIL_OFF = 0, SIL_AUTO, SIL_HOST, SIL_JOIN };
 enum { SILST_IDLE = 0, SILST_JOINING, SILST_UP, SILST_FAILED };
@@ -8762,6 +8865,7 @@ static void gblink_audio_session(int on)
          audio_ring[idx * 2 + 0] = 0;
          audio_ring[idx * 2 + 1] = 0;
       }
+      RING_BARRIER();
       ring_w += n;
       g_gbl_rate_ema = (ring_w - ring_r) * 16u;
       g_gbl_rate_i = 0;
@@ -9755,6 +9859,17 @@ static void mgift_stop(int quiet)
    pwr_release();
 }
 
+/* The games the cart serves: mgift_cart.c answers a GAME_DATA only with
+ * these codes (English scripts).  Anything else never asks, so Wi-Fi must
+ * not come up for it: that association blocks the main thread for up to
+ * MGNET_CONNECT_US (30 s) and writes a network profile, all for a game
+ * that cannot receive a gift. */
+static int mgift_game_ok(void)
+{
+   return !strcmp(g_mg_game, "BPRE") || !strcmp(g_mg_game, "BPGE") ||
+          !strcmp(g_mg_game, "BPEE");
+}
+
 static void mgift_start_io(void)
 {
    int rc;
@@ -9769,6 +9884,17 @@ static void mgift_start_io(void)
    if (g_mg_on)
    {
       osd_toast("Mystery Gift is already listening");
+      return;
+   }
+   /* Before Wi-Fi, not after: mgift_cart_start() succeeds for every GBA
+    * game (the netpacket seam always exists), so its "no wireless" answer
+    * below could only come after a 30 s association. */
+   if (!mgift_game_ok())
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no Mystery Gift");
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "Needs FireRed, LeafGreen or Emerald (US/EU English)");
+      osd_toast("%s", g_mg_l1);
+      fe_evt("mg_refused game=%s", g_mg_game[0] ? g_mg_game : "?");
       return;
    }
 
@@ -9834,10 +9960,14 @@ static void mgift_start_io(void)
 
    /* Now become a distribution cart to the emulated game.  This attaches to the
     * core's netpacket seam; it does not touch netdrv or the ad-hoc path. */
+   /* mgift_game_ok() above has refused every game without Mystery Gift, so
+    * this fails only if the core gave no netpacket interface (a defensive
+    * path: the GBA core always has one).  Say what failed, not "no
+    * wireless", which the game check now answers. */
    if (mgift_cart_start() != 0)
    {
-      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no wireless");
-      snprintf(g_mg_l2, sizeof(g_mg_l2), "Mystery Gift needs FR/LG or Emerald");
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not attach to the game");
+      g_mg_l2[0] = '\0';
       osd_toast("%s", g_mg_l1);
       mgnet_card_close();
       mgnet_wifi_down();
@@ -10913,6 +11043,32 @@ static void core_health_evt(const char *at)
           "rom_flush=%u%s%s%s%s", at, fe_host_frame_count(),
           (unsigned)gamepak_reopens, (unsigned)gamepak_short_reads,
           (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc, fb);
+#ifdef ROM_HASH_CENSUS
+   /* cpu_threaded.c: the ROM hash's chain depth (an arm for long LARGE-tier
+    * sessions; critique-7 SF4).  hit_hops_x100 = mean hops for a hit. */
+   /* The walk is not free (critique-8 SF1: a full LARGE cache is ~44 K
+    * dependent loads, estimated 8-13 ms), so it runs on every 10th
+    * heartbeat and at every other call (exit), and times itself. */
+   {
+      extern void rom_hash_census(u32 out[10]);
+      static unsigned hb_calls;
+      int is_hb = at[0] == 'h' && at[1] == 'b' && !at[2];
+      if (!is_hb || (hb_calls++ % 10u) == 0)
+      {
+         u32 hc[10], t0, walk_us;
+         t0 = sceKernelGetSystemTimeLow();
+         rom_hash_census(hc);
+         walk_us = sceKernelGetSystemTimeLow() - t0;
+         fe_evt("rom_hash at=%s entries=%u buckets=%u/%u max_chain=%u "
+                "hit_hops_x100=%u rom_used=%u chains=%u/%u/%u/%u walk_us=%u",
+                at, (unsigned)hc[0], (unsigned)hc[1], (unsigned)hc[5],
+                (unsigned)hc[2],
+                hc[0] ? (unsigned)((unsigned long long)hc[3] * 100u / hc[0]) : 0u,
+                (unsigned)hc[4], (unsigned)hc[6], (unsigned)hc[7],
+                (unsigned)hc[8], (unsigned)hc[9], (unsigned)walk_us);
+      }
+   }
+#endif
 #ifdef JIT_COST_KEYS
    /* JIT_COST cores append kcalls and lineops (words 11, 12) after big_i
     * (word 10): the cache work publishes handed out, cumulative. */
@@ -11327,10 +11483,12 @@ static void ff_win_note(void)
  * without a bound document, plus document loads) had run and how many found
  * no file, at each milestone up to the browser; doc_hits = the lookups
  * answered from CONFIG.INI's in-memory copy instead.  One EVT line in telemetry builds; nothing in a release. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 #define BOOT_MARKS 12
 static struct { const char *tag; unsigned us, ini, miss; } g_boot_mark[BOOT_MARKS];
 static int g_boot_marks;
 static uint64_t g_boot_t0;
+#define BOOT_T0_SET() (g_boot_t0 = sceKernelGetSystemTimeWide())
 
 static void boot_mark(const char *tag)
 {
@@ -11347,7 +11505,6 @@ static void boot_mark(const char *tag)
 
 static void boot_timeline_emit(void)
 {
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
    char line[400];
    int i, o = 0;
    for (i = 0; i < g_boot_marks && o < (int)sizeof(line) - 40; i++)
@@ -11356,8 +11513,14 @@ static void boot_timeline_emit(void)
                     g_boot_mark[i].ini, g_boot_mark[i].miss);
    fe_evt("boot_timeline us/opens/miss:%s doc_hits=%u", line,
           fe_ini_doc_hits());
-#endif
 }
+#else
+/* A release reports no boot timeline, so it records none either
+ * (g_boot_mark: 192 B of .bss and an INI-stats call per milestone). */
+#define BOOT_T0_SET()          ((void)0)
+#define boot_mark(tag)         ((void)(tag))
+#define boot_timeline_emit()   ((void)0)
+#endif
 
 #ifdef GPSP_PERF_RIG
 /* Harness `ui_script = <file>` (docs/GBA-LINK-UI.md): the in-game menus and
@@ -11954,7 +12117,9 @@ static int g_rw_pool;           /* the rewind is a tenant of the pool now */
 static int g_rw_asleep;         /* suspended for a sleep: resume on wake */
 static int g_rw_held;           /* the control's level, this loop */
 static fe_host_rewind_opts g_rw_opts;
+#ifdef GPSP_PERF_RIG
 static char g_rw_hash_path[192], g_rw_dump_dir[192];
+#endif
 
 /* ---- the pictures (fe_host_rewind_opts.pix_begin / pix_end / show) ------- */
 static const uint16_t *g_rw_show;   /* the slot on screen while rewinding */
@@ -12160,6 +12325,9 @@ static void psp_rewind_read_ini(void)
    g_rw_opts.pix_begin = psp_rw_pix_begin;
    g_rw_opts.pix_end   = psp_rw_pix_end;
    g_rw_opts.show      = psp_rw_show;
+#ifdef GPSP_PERF_RIG
+   /* A test instrument of harness/lab builds (tools/rewind_*.sh build
+    * them); a release has no rewind_hash, nor its audio tee (fe_host.c). */
    if (fe_ini_get_int(HARNESS_INI, "rewind_hash", 0))
    {
       snprintf(g_rw_hash_path, sizeof(g_rw_hash_path), "%s/log/rewind_hash.txt",
@@ -12171,6 +12339,7 @@ static void psp_rewind_read_ini(void)
       snprintf(g_rw_dump_dir, sizeof(g_rw_dump_dir), "%s/log", g_dir_base);
       g_rw_opts.dump_dir = g_rw_dump_dir;
    }
+#endif
    g_rw_opts.redo_inputs = fe_ini_get_int(HARNESS_INI, "rewind_redo", 0) != 0;
    g_rw_opts.fuzz_from = (uint32_t)fe_ini_get_int(HARNESS_INI,
                                                   "rewind_fuzz_from", 0);
@@ -13951,7 +14120,7 @@ int main(int argc, char *argv[])
     * shortcut's own path, which a script cannot press (issue #13). */
    long player_shot_at = 0, player_shot_n = 1;
    long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
-   long vid_prof_win;           /* ADR-0034(coreopt) renderer path profile */
+   long vid_prof_win = 0;       /* ADR-0034(coreopt) renderer path profile */
    int have_script = 0, have_harness, have_variant;
    int autoload_state_slot = 1;
    int net_host = 0, net_join = 0, net_probe = 0;
@@ -13980,7 +14149,7 @@ int main(int argc, char *argv[])
    int inproc_rom_n = 0;
    heap_snap_t snap_pre;
 
-   g_boot_t0 = sceKernelGetSystemTimeWide();
+   BOOT_T0_SET();
    /* stdout unbuffered: nothing reads it on a PSP, and a buffered stdout
     * takes a 1 KiB heap buffer at its first printf and keeps it for the
     * process -- possibly mid-game or mid-session (docs/INPROC-RETURN.md). */
@@ -14096,28 +14265,29 @@ int main(int argc, char *argv[])
        *
        * In order: netdrv, the wake overlay's frozen frame, the menu's five
        * state thumbnails (the Save/Load state screens show them in game,
-       * where the heap is gone, docs/UI-OVERLAY.md), the screenshot encoder's
-       * work memory (issue #13).  All of them cost nothing beyond this block,
-       * and each is laid out on a 64-byte line. */
+       * where the heap is gone, docs/UI-OVERLAY.md).  Both cost nothing
+       * beyond this block, and each is laid out on a 64-byte line.
+       *
+       * The screenshot encoder's work memory (issue #13, 206,912 B for a
+       * GBA frame) is NOT a fourth tenant any more: it borrows netdrv's own
+       * part, which is idle whenever no session is up
+       * (netdrv_arena_borrow; player_screenshot falls back to BMP while a
+       * session holds it).  That was 6.3 ROM-cache pages held for every
+       * player for a one-off encode. */
       size_t need = netdrv_sizeof();
-      size_t shot = fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT);
-      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES +
-                    63u + shot;
+      size_t take = need + 63u + WAKE_FRAME_BYTES + 63u + UI_THUMB_BYTES;
       void  *blk  = malloc(take);
       if (blk)
       {
-         uint8_t *lo;
-         netdrv_set_arena(blk, take);
+         netdrv_set_arena(blk, need);
          g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
          g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
                                      WAKE_FRAME_BYTES + 63u) & ~63u);
          ui_set_thumb_buffer(g_ui_thumbs);
-         lo = (uint8_t *)(((unsigned)g_ui_thumbs + UI_THUMB_BYTES + 63u) &
-                          ~63u);
-         g_shot_work = lo;
-         g_shot_work_bytes = (size_t)((uint8_t *)blk + take - lo);
-         fe_evt("shot_work bytes=%u want=%u ok",
-                (unsigned)g_shot_work_bytes, (unsigned)shot);
+         fe_evt("shot_work bytes=%u want=%u %s", (unsigned)need,
+                (unsigned)fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT),
+                need >= fe_png_work_bytes(FE_GBA_WIDTH, FE_GBA_HEIGHT)
+                   ? "borrow" : "bmp-only");
       }
       fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
              (unsigned)need, (unsigned)take, blk ? "reserved" : "FAILED",
@@ -14336,12 +14506,17 @@ int main(int argc, char *argv[])
     * autopilot.ini -> .gpsp-harness.ini rename.  vhash=1 is shorthand for
     * "hash every frame"; vid_prof only produces a line if the core was
     * built with -DVIDEO_PROF=1. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   /* Every vid_prof output is an fe_evt line, so a player build leaves the
+    * key alone: a stray harness file on a player's card must not cost a
+    * boot-time EBOOT read (and its 4 KiB borrow) ahead of the ROM load. */
    vid_prof_win = fe_ini_get_int(HARNESS_INI, "vid_prof", 0);
    if (vid_prof_win > 0)
    {
       video_prof_set_clock(vprof_clock_us);
       vp_build_crc = eboot_crc();
    }
+#endif
    vhash_from = fe_ini_get_int(HARNESS_INI, "vhash_from", 0);
    g_vhash_on = (int)fe_ini_get_int(HARNESS_INI, "vhash", 0);
    g_vhash_legacy_rb = (int)fe_ini_get_int(HARNESS_INI, "vhash_legacy_rb", 0);
@@ -17712,10 +17887,6 @@ session_top:
          shash_frame();
       jit_coh_frame(frames);
       FE_LP_SET(FELP_L_POST);
-#endif
-#ifdef DRPROF_HW
-      if (frames % 300u == 0)
-         drprof_window(frames);
 #endif
 #ifdef DRPROF_HW
       if (frames % 300u == 0)

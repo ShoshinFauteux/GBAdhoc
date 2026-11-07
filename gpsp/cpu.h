@@ -262,7 +262,7 @@ extern u32 xlat_sp_min;
 void xlat_depth_probe_reset(void);
 #endif
 
-extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
+extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];   /* both tiers' (gpsp_config.h) */
 
 void flush_translation_cache_rom(void);
 void flush_translation_cache_ram(void);

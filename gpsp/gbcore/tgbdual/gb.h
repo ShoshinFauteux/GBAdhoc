@@ -391,8 +391,10 @@ extern unsigned short sgb_palette_memory[512*4];
 extern byte sgb_buffer[16*7];
 extern byte sgb_ATF[18*20];
 extern byte sgb_ATF_list[45 * 20 * 18];
+#ifdef TGB_SGB_BORDER
 extern byte sgb_border[2048];
 extern byte sgb_borderchar[32*256];
+#endif
 extern unsigned short sgb_border_buffer[256*224];
 extern int border_uploaded;
 

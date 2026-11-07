@@ -21,6 +21,7 @@ suites = [
     ("rewind_rtc", ["-w", "-DREWIND", "tools/tests/test_rewind_rtc.c",
                     "frontend-common/fe_rewind.c", "frontend-common/fe_rewind_pack.c"]),
     ("gbadual_clock", ["-Wall", "-Wextra", "-Werror", "tools/tests/test_gbadual_clock.c"]),
+    ("gbadual_bfresh", ["-Wall", "-Wextra", "-Werror", "tools/tests/test_gbadual_bfresh.c"]),
     ("rtc_protocol", ["-w", "tools/tests/test_rtc_protocol.c"]),
     ("rtc_clock", ["-Wall", "-Wextra", "-Werror", "tools/tests/test_rtc_clock.c"]),
 ]

@@ -75,12 +75,15 @@ byte sgb_buffer[16*7];
 byte sgb_ATF[20 * 18];
 byte sgb_ATF_list[45 * 20 * 18];
 
+/* GBAdhoc: SGB borders are not presented, so the 112 KiB border image, its
+ * renderer and the border tile/map uploads it draws from (sgb_border 2 KiB,
+ * sgb_borderchar 8 KiB: written by CHR_TRN/PCT_TRN, read only by the
+ * renderer, not in save states) are compiled only with TGB_SGB_BORDER.  The
+ * packets that carry a border are still parsed (palettes ride along with
+ * them: sgb_pct_trn reads its palettes from sgb_screenbuffer). */
+#ifdef TGB_SGB_BORDER
 byte sgb_border[2048];
 byte sgb_borderchar[32*256];
-/* GBAdhoc: SGB borders are not presented, so the 112 KiB border image and
- * its renderer are compiled only with TGB_SGB_BORDER.  The packets that
- * carry a border are still parsed (palettes ride along with them). */
-#ifdef TGB_SGB_BORDER
 unsigned short sgb_border_buffer[256*224];
 #endif
 //byte sgb_sound_score[8192];
@@ -280,15 +283,17 @@ void sgb_reset()
 	memset(sgb_ATF, 0, 20*18);
 	memset(sgb_ATF_list, 0, 45 * 20 * 18);
 	memset(sgb_buffer, 0, 16 * 7);
+#ifdef TGB_SGB_BORDER
 	memset(sgb_borderchar, 0, 32*256);
 	memset(sgb_border, 0, 2048);
-#ifdef TGB_SGB_BORDER
 	memset(sgb_border_buffer, 0, sizeof(sgb_border_buffer));
 #endif
 	//memset(sgb_sound_score,0,8192);
 
+#ifdef TGB_SGB_BORDER
 	for(i = 1; i < 2048; i+=2)
 		sgb_border[i] = 1 << 2;
+#endif
 }
 
 void sgb_reset_state()
@@ -652,14 +657,18 @@ void sgb_chr_trn()
 {
 	sgb_render_screen();
 
+#ifdef TGB_SGB_BORDER
 	int address = (sgb_buffer[1] & 1) * (128*32);
+#endif
 
 	if(sgb_buffer[1] & 1)
 		sgb_CGB_support |= 2;
 	else
 		sgb_CGB_support |= 1;
 
+#ifdef TGB_SGB_BORDER
 	memcpy(&sgb_borderchar[address], sgb_screenbuffer, 128 * 32);
+#endif
 
 	if(sgb_CGB_support == 7)
 	{
@@ -691,7 +700,9 @@ void sgb_pct_trn()
 
 	sgb_render_screen();
 
+#ifdef TGB_SGB_BORDER
 	memcpy(sgb_border, sgb_screenbuffer, 2048);
+#endif
 
 	int j=2048;
 	for(i = 64; i < 128; i++,j+=2)		{

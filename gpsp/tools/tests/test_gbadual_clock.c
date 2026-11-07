@@ -3,11 +3,7 @@
 #include <stdint.h>
 uint32_t gbalink_fast, gbab_gbalink_fast, backup_writes, gbab_backup_writes;
 extern volatile uint32_t gbalink_abort, gbab_gbalink_abort;
-extern char gbab_bdata_start[] __attribute__((weak));
-extern char gbab_bdata_end[] __attribute__((weak));
-extern char gbab_bdata_pristine[] __attribute__((weak));
-extern char gbab_bregion_start[] __attribute__((weak));
-extern char gbab_bregion_lend[] __attribute__((weak));
+#include "../../frontend-common/fe_gbadual_b.h"
 extern uint8_t *gamepak_spare_pool2;
 extern uint32_t gamepak_spare_pool2_bytes;
 extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;

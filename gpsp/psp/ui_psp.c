@@ -313,7 +313,7 @@ static char g_join_group[9];
 static const uint16_t *g_ov_frame;          /* the snapshot, or NULL      */
 static int   g_ov_fw = 240, g_ov_fh = 160;   /* its size in texels         */
 static uint16_t *g_ov_full;                 /* harness: 480x272 at 512    */
-static uint16_t *g_ov_thumbs;               /* 5 x 64x64, or NULL         */
+static uint16_t *g_ov_thumbs;               /* 5 x 64x43 (declared 64x64)   */
 static int   g_ov_browse;                   /* browser Settings: art bake */
 static int   g_ov_open_k = OV_OPEN_FRAMES;   /* frames into the transition */
 static int   g_ov_linked;                   /* a session is up            */
@@ -1288,7 +1288,8 @@ static void footer(const char *hint)
  *
  * MEMORY.  Nothing here allocates.  The frame is the wake snapshot
  * (main_psp.c, the netdrv arena's tail) taken at menu_open(); the slot
- * thumbnails are five 64x64 textures from the same tail.  Either may be
+ * thumbnails are five textures (declared 64x64, stored 64x43) from the same
+ * tail.  Either may be
  * NULL -- then the screen falls back to a flat page / empty plates. */
 static void clip_title(char *t, int px);    /* with the browser, below    */
 
@@ -5315,6 +5316,10 @@ static int state_thumb_read(const char *state_path, uint16_t *dst)
         hdr[8] == PSP_STATE_THUMB_WIDTH && hdr[9] == 0 &&
         sceIoRead(fd, dst, bytes) == (int)bytes;
    sceIoClose(fd);
+   if (ok)   /* the edge row a bilinear tap at the bottom reads */
+      memcpy(dst + PSP_STATE_THUMB_HEIGHT * PSP_STATE_THUMB_WIDTH,
+             dst + (PSP_STATE_THUMB_HEIGHT - 1) * PSP_STATE_THUMB_WIDTH,
+             PSP_STATE_THUMB_WIDTH * 2);
    return ok ? 0 : -1;
 }
 
@@ -5384,8 +5389,7 @@ static void ov_slots_scan_io(void)
           psp_state_path_for_slot(path, sizeof(path), g_state_base,
                                   (unsigned)i + 1) == 0 &&
           state_thumb_read(path, g_ov_thumbs + (size_t)i *
-                           PSP_STATE_THUMB_WIDTH *
-                           PSP_STATE_THUMB_TEX_HEIGHT) == 0)
+                           PSP_STATE_THUMB_SLOT_PIXELS) == 0)
          g_ov_slot[i] = 2;
       /* What the page will draw for the slot (0 none, 1 state, 2 state +
        * thumbnail) and its time: the GE model's input (tools/ui_model). */
@@ -5394,8 +5398,7 @@ static void ov_slots_scan_io(void)
    }
    if (g_ov_thumbs)
       sceKernelDcacheWritebackRange(g_ov_thumbs, PSP_STATE_SLOT_COUNT *
-                                    PSP_STATE_THUMB_WIDTH *
-                                    PSP_STATE_THUMB_TEX_HEIGHT * 2);
+                                    PSP_STATE_THUMB_SLOT_PIXELS * 2);
    g_ov_shot_slot = -1;
    g_ov_dwell = 0;
    g_slots_dirty = 0;
@@ -5618,8 +5621,7 @@ static void ss_panel(int i)
 {
    const int x = SS_PX, y = SS_PY, w = SS_PW, h = SS_PH;
    const uint16_t *th = g_ov_thumbs ? g_ov_thumbs + (size_t)i *
-                        PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_TEX_HEIGHT
-                                    : NULL;
+                        PSP_STATE_THUMB_SLOT_PIXELS : NULL;
    vid_rect(x + 3, y + 3, w, h, C_SHADOW, 90);
    if (!g_ov_slot[i])
    {
@@ -5800,8 +5802,7 @@ static ui_action screen_state_slots(unsigned edges)
       }
       if (g_ov_slot[i] == 2)
          vid_image(20, by + 4, 36, 24,
-                   g_ov_thumbs + (size_t)i * PSP_STATE_THUMB_WIDTH *
-                      PSP_STATE_THUMB_TEX_HEIGHT,
+                   g_ov_thumbs + (size_t)i * PSP_STATE_THUMB_SLOT_PIXELS,
                    PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_TEX_HEIGHT,
                    PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT, 255);
       else
@@ -5943,12 +5944,16 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
  * on a typical name instead of 96, and put the length limit somewhere no real
  * filename reaches.
  *
- * This is in BSS on purpose.  gpSP's init_gamepak_buffer() mallocs 1 MiB
- * blocks until malloc fails, so once a game is loaded there is no heap left
- * to allocate a list from: a dynamic list would work on the first boot and
- * fail when someone backed out to the game list mid-game, on a PSP-1000
- * only.  BSS is taken before that loop runs, and 112 KB of it costs at most
- * one of those 1 MiB blocks.
+ * WHERE IT LIVES (claude/opt-1000 round 5).  It was BSS, because gpSP's
+ * init_gamepak_buffer() mallocs until malloc fails and so no heap is left
+ * once a game is loaded.  But the list is never on screen while a game is
+ * loaded: ui_browser() runs only before the load (the first boot, and the
+ * in-process return after the game's full unload and heap census,
+ * main_psp.c), and it hands the pick back as a path copied into the
+ * caller's buffer.  So the lists are one heap block that ui_browser()
+ * takes at entry and frees on every way out, before main() snapshots the
+ * heap (snap_pre) and the ROM cache's malloc loop runs.  The 134,664 B the
+ * image held for them are boot heap now, i.e. ROM cache on a PSP-1000.
  */
 #define BROWSER_MAX    1024
 #define ROM_POOL_BYTES (96 * 1024)
@@ -5973,8 +5978,19 @@ typedef struct {
    unsigned short scan_order; /* preserves traversal order for equal basenames */
 } rom_entry;
 
-static rom_entry g_roms[BROWSER_MAX];
-static char      g_rom_pool[ROM_POOL_BYTES];
+/* Only between ui_browser()'s entry and its return (see above).  Every
+ * user is reached from inside ui_browser(); g_bl is NULL otherwise. */
+typedef struct {
+   rom_entry      roms[BROWSER_MAX];
+   char           pool[ROM_POOL_BYTES];
+   fe_favs        favs;
+   unsigned short view_idx[BROWSER_MAX];  /* favourites view -> rom */
+} browser_lists;
+static browser_lists *g_bl;
+#define g_roms     (g_bl->roms)
+#define g_rom_pool (g_bl->pool)
+#define g_favs     (g_bl->favs)
+#define g_view_idx (g_bl->view_idx)
 static unsigned  g_rom_pool_used;
 static int       g_rom_found;   /* matching ROM files seen, including names
                                  * skipped for path/storage limits; the browser
@@ -5993,11 +6009,8 @@ static unsigned  g_rom_scan_path_errors;
  * once (it is a few hundred bytes); SELECT swaps the list for the tagged
  * subset and back.
  *
- * STATIC, like g_roms and for the same reason: the heap is gone once a game
- * has loaded, and this must work when the player backs out to the list. */
-static fe_favs        g_favs;                   /* ~14 KB, BSS            */
+ * In the browser's heap block with g_roms (g_bl, above): ~14 KB. */
 static int            g_fav_count;              /* tagged entries in scan */
-static unsigned short g_view_idx[BROWSER_MAX];  /* favourites view -> rom */
 static int            g_view_n;
 static int            g_browser_favs;           /* 1 = favourites view    */
 
@@ -9279,8 +9292,8 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
           g_pcfg.console, *n_scan, g_rom_found);
 }
 
-int ui_browser(const char *rom_dir, char *out, size_t out_sz,
-               int *out_state_slot, fe_console_t *console_out)
+static int ui_browser_run(const char *rom_dir, char *out, size_t out_sz,
+                          int *out_state_slot, fe_console_t *console_out)
 {
    int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
@@ -9807,4 +9820,37 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    art_free_all();
    browser_state_cache_free();
    return -1;
+}
+
+/* The lists' block lives exactly as long as this call: every return of
+ * ui_browser_run() comes back through here, so no exit path can keep it.
+ * calloc, not malloc: the BSS it replaces started zeroed. */
+int ui_browser(const char *rom_dir, char *out, size_t out_sz,
+               int *out_state_slot, fe_console_t *console_out)
+{
+   int rc;
+   g_bl = (browser_lists *)calloc(1, sizeof(*g_bl));
+   if (!g_bl)
+   {
+      /* Not reachable on a console (the heap is whole before a load, and
+       * the block is 134,664 B); said out loud rather than an empty list. */
+      int i;
+      fe_evt("ui_browser lists=NO_MEMORY bytes=%u", (unsigned)sizeof(*g_bl));
+      if (out_state_slot)
+         *out_state_slot = 0;
+      for (i = 0; i < 180 && g_running; i++)
+      {
+         vid_overlay_begin(1);
+         page("GBAdhoc", NULL);
+         vid_text_center(110, "Not enough memory for the game list", C_WARN);
+         vid_overlay_end();
+         sceDisplayWaitVblankStart();
+         vid_swap();
+      }
+      return -1;
+   }
+   rc = ui_browser_run(rom_dir, out, out_sz, out_state_slot, console_out);
+   free(g_bl);
+   g_bl = NULL;
+   return rc;
 }

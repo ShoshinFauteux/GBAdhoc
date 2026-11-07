@@ -103,8 +103,30 @@
    instruction can take. STM/LDM are tipically the biggest ones */
 #define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 2)
 
-/* Hash table size for ROM trans cache lookups */
-#define ROM_BRANCH_HASH_BITS                           16
+/* Hash table size for ROM trans cache lookups: buckets of chained block
+ * headers, keyed by guest PC.  Sized to the ROM code cache it indexes.  The
+ * LARGE size (64 K buckets, 256 KiB) was chosen for the 10 MiB cache; the
+ * SMALL tier's 2 MiB cache holds a fifth of the blocks, so it takes a
+ * smaller static table (cpu_threaded.c).  On RUNTIME_JIT_CACHE builds (the
+ * PSP) both tiers share that static table: the lookup is the hottest C path
+ * of the dynarec, and one table keeps its shift a constant and its address
+ * an immediate (a per-tier table cost two loads and a variable shift per
+ * lookup).  The LARGE tier's chains are longer for it; claude/opt-1000
+ * round 7 measured that on the twin's 10 MiB cache.  Only the chain
+ * lengths change: which block a PC finds, and every emitted byte, do not.
+ * Both _SMALL and _LARGE are overridable for the twin's sizing studies;
+ * ROM_BRANCH_HASH_BITS/_SIZE are the static array's. */
+#ifndef ROM_BRANCH_HASH_BITS_SMALL
+#define ROM_BRANCH_HASH_BITS_SMALL                     14
+#endif
+#ifndef ROM_BRANCH_HASH_BITS_LARGE
+#define ROM_BRANCH_HASH_BITS_LARGE                     16
+#endif
+#if defined(SMALL_TRANSLATION_CACHE)
+#define ROM_BRANCH_HASH_BITS          ROM_BRANCH_HASH_BITS_SMALL
+#else
+#define ROM_BRANCH_HASH_BITS          ROM_BRANCH_HASH_BITS_LARGE
+#endif
 #define ROM_BRANCH_HASH_SIZE   (1 << ROM_BRANCH_HASH_BITS)
 
 /* RFU Multiplayer config, do not mess around too much with it */

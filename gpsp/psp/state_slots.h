@@ -11,6 +11,15 @@
 #define PSP_STATE_THUMB_WIDTH 64
 #define PSP_STATE_THUMB_HEIGHT 42
 #define PSP_STATE_THUMB_TEX_HEIGHT 64
+/* The in-game menu's five thumbnail textures (main_psp.c, the netdrv arena's
+ * tail) are DECLARED 64x64 -- the GE samples power-of-two textures -- but
+ * hold only the 42 picture rows plus one bottom-edge row for bilinear taps,
+ * packed back to back: 64 x 43 texels each, 26,880 B for five instead of
+ * 40,960.  Row 43 onwards of a declared texture is never sampled (the draws
+ * stop at v = PSP_STATE_THUMB_HEIGHT).  5,504 B per slot keeps every slot
+ * on the GE's 16-byte texture alignment. */
+#define PSP_STATE_THUMB_SLOT_ROWS (PSP_STATE_THUMB_HEIGHT + 1)
+#define PSP_STATE_THUMB_SLOT_PIXELS    (PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_SLOT_ROWS)
 #define PSP_STATE_THUMB_HEADER_SIZE 16
 #define PSP_STATE_THUMB_MAGIC "STH1"
 #define PSP_STATE_THUMB_PATH_CAP (PSP_FILE_PATH_CAP + 7)

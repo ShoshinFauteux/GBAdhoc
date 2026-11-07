@@ -20,8 +20,24 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#define BUFFER_SIZE        (1 << 16)
+/* The mix ring, in s32 entries (two per stereo output sample).  What is in
+ * flight is about one frame plus sound_read_samples' 512-entry holdback:
+ * audio_run (libretro.c) reads one frame's worth after every retro_run, and
+ * trigger_timer re-anchors a direct-sound channel to the mixer at every
+ * timer start.  At GBA_SOUND_FREQUENCY (65536 Hz, the most the core runs)
+ * a frame is ~2,195 entries, so 16384 is ~6x the worst span (0.25 s at the
+ * PSP's 32768 Hz).  It was 1 << 16 (256 KiB per core instance) up to
+ * 4.6.0-beta.4; BUFFER_SIZE_MASK is how a state saved then is loaded
+ * (SOUND_STATE_INDEX_RANGE below).  Must stay a power of two. */
+#define BUFFER_SIZE        (1 << 14)
 #define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
+/* The range of the ring indices a save state may hold (buf-base,
+ * gbc-buf-idx and buf-idx of ds0/ds1): the ring size of every build up to
+ * 4.6.0-beta.4.  sound_read_savestate masks them with BUFFER_SIZE_MASK;
+ * 65536 is a multiple of BUFFER_SIZE, so every distance between them -- the
+ * only thing the mixer and the read-out use -- is kept, and an old state
+ * plays exactly as it did. */
+#define SOUND_STATE_INDEX_RANGE (1u << 16)
 
 /* Runtime output rate, restricted to powers of two so that all fixed point
  * frequency steps below remain exact against the 2^24 Hz master clock.
@@ -68,7 +84,18 @@ void sound_flush_ring(void);
  * and must not.  These carry the part of the ring that is still in flight
  * (mixed, not yet read out): at most SOUND_REWIND_WINDOW entries from the
  * read position, as 16-bit values when they all fit, else 32-bit. */
-#define SOUND_REWIND_WINDOW       8192u
+/* In flight is the read-out holdback (512) plus up to a frame: ~1,600
+ * entries at 32768 Hz, ~2,700 at 65536 Hz; 4096 covers both (it was 8192,
+ * which made every rewind snapshot 16 KiB larger than it needs). */
+#define SOUND_REWIND_WINDOW       4096u
+/* How far ahead of the mixer a direct-sound channel's ring position may be
+ * and still count as in flight: a channel writes up to its last FIFO
+ * sample, a few entries past the mixer (states show 6 behind to 32 ahead).
+ * 1024 entries are 512 stereo samples: the lead a DS channel would have if
+ * it wrote ~1/64 s ahead at the PSP's 32768 Hz (1/128 s at 65536 Hz), far
+ * past any healthy channel.  Behind the mixer never extends
+ * what is in flight. */
+#define SOUND_REWIND_DS_AHEAD     1024u
 #define SOUND_REWIND_EXTRA_BYTES  (8u + SOUND_REWIND_WINDOW * 4u)
 void sound_rewind_extra_save(u8 *dst);          /* writes EXTRA_BYTES */
 /* The same into a buffer whose first `stale` bytes may hold an older save

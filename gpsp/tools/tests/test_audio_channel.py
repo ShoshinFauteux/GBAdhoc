@@ -50,6 +50,7 @@ typedef int SceUID;
 #define OUT_RATE 44100
 #define RING_FRAMES 256
 #define RING_MASK (RING_FRAMES - 1)
+#define RING_BARRIER() __asm__ __volatile__("" ::: "memory")
 #define AUDIO_FADE_STEP (65536 / 64)
 #define PSP_AUDIO_NEXT_CHANNEL (-1)
 #define PSP_AUDIO_FORMAT_STEREO 0

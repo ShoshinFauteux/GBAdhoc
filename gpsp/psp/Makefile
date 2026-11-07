@@ -27,8 +27,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        mgift_net.o \
        mgift_cart.o \
        mgift_payload.o \
-       font_8x16.o \
-       stb_impl.o \
+       stb_impl.o layout_pad_fe.o \
        netdrv_core.o \
        transport_adhoc.o \
        ../frontend-common/fe_host.o \
@@ -161,7 +160,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 200
+LAYOUT_PAD_BYTES ?= 1600
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -177,8 +176,21 @@ endif
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 0
+LAYOUT_PAD_RO_BYTES ?= 152
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
+# LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
+# psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
+# they hold main_psp.o's code after main, frontend-common, and instance A's cold
+# text each in its own sets.  Part of the shipped layout; tools/flags.lock pins
+# them.  claude/opt-1000 round 7 sets them so main's frame loop and the
+# per-frame frontend code sit where round 3 (the last layout measured neutral
+# on hardware) had them, mod 8 KiB.
+LAYOUT_PAD_FE_BYTES ?= 3512
+LAYOUT_PAD_CORE_BYTES ?= 5544
+# LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
+# the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
+LAYOUT_PAD_BSCAN_BYTES ?= 7704
+CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -253,9 +265,18 @@ LDFLAGS += -Wl,-T,hot_data_guard.ld
 endif
 ifeq ($(GBA_LINK),1)
 OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
-        ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o \
-        fe_autopilot_b.o
+        ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o
 CFLAGS += -DGBA_LINK
+# The partner's autopilot (bench only; fe_gbadual.c weak-references it) in rig
+# builds only: GPSP_PERF_RIG, or the bare harness flavour (no GPSP_PLAYABLE).
+# A player build saves its 8.2 KB of text and 6.3 KB of data/bss.
+ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS))$(if $(findstring -DGPSP_PLAYABLE,$(EXTRA_DEFS)),,bare),)
+OBJS += fe_autopilot_b.o
+else ifeq ($(LAYOUT_PIN),1)
+# ...and its 2,636 B in the pinned warm tail stay, as zeros
+# (psp/layout_pad_apb.S says why).
+OBJS += layout_pad_apb.o
+endif
 endif
 # NOTE: deliberately NO -lpspnet / -lpsputility here.  build.mak's default
 # tail links -lpspnet, and gcc's implicit spec closure links libpsputility
@@ -342,6 +363,12 @@ PSP_LARGE_MEMORY ?= 1
 ifneq ($(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),)
 OBJS := layout_pad.o $(OBJS)
 endif
+# Last of the objects: instance A's core archive follows (layout_pad_mid.S).
+OBJS += layout_pad_core.o
+# The pinned warm tail's 32 B holes (psp/layout_pad_warm.S says why).
+ifeq ($(LAYOUT_PIN),1)
+OBJS := layout_pad_warm.o $(OBJS)
+endif
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
@@ -393,6 +420,9 @@ $(TGB_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += $(TGB_CFLAGS)
 # The menus, the pad map, the config file, Mystery Gift and the cheat parser
 # are on no hot path either (none is in layout/hot.ord).
 ui_psp.o sidecar_dirs.o ctl_map.o config_psp.o mgift_cart.o mgift_net.o mgift_payload.o ../frontend-common/fe_cheats.o: CFLAGS += -Os
+# The box-art / screenshot-viewer PNG and JPEG decoder (stb_image) runs in
+# the ROM browser only, at most one decode a frame, never in a game.
+stb_impl.o: CFLAGS += -Os
 # The GB core keeps one .text per object under LAYOUT_PIN too: it is partial-
 # linked twice (gbcore_instance.ld) and none of it is on the GBA hot path.
 $(GB_CORE_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += -fno-function-sections
@@ -411,11 +441,34 @@ $(GB_CORE_OBJS) ../gbcore/tgbdual/tgb_shared.o: CFLAGS += -fno-function-sections
 	psp-objcopy --redefine-syms=$@.syms $< $@
 	rm -f $@.syms
 
-gbalink_core_b.o: $(CORE_LIB) gbalink_core_b.ld
-	psp-ld -r -d -T gbalink_core_b.ld -o $@.tmp --whole-archive $(CORE_LIB)
+# B is the core archive minus what a headless partner never runs, plus
+# gbalink_b_stubs.o in its place (that file says why each stub is exact):
+#   video.o, gba_cc_lut.o  the renderer and its colour LUT (B never draws)
+#   cheats.o               the cheat engine (B never has a cheat)
+#   bios_data.o            the built-in BIOS image: read-only, so B's
+#                          reference stays unrenamed and reads A's copy
+# The check after the partial link fails the build if B still references
+# any other symbol those members define: an unrenamed reference would bind
+# to instance A's copy silently.
+B_DROP     := video.o gba_cc_lut.o cheats.o bios_data.o
+B_SHARED   := open_gba_bios_rom
+gbalink_core_b.o: $(CORE_LIB) gbalink_core_b.ld gbalink_b_stubs.o
+	rm -rf $@.dir && mkdir -p $@.dir
+	cp $(CORE_LIB) $@.dir/b.a
+	cd $@.dir && psp-ar x b.a $(B_DROP) && psp-ar d b.a $(B_DROP)
+	psp-ar q $@.dir/b.a gbalink_b_stubs.o
+	psp-ld -r -d -T gbalink_core_b.ld -o $@.tmp --whole-archive $@.dir/b.a
+	psp-nm -g --defined-only $(addprefix $@.dir/,$(B_DROP)) | \
+	  awk 'NF == 3 { print $$3 }' | sort -u > $@.dir/dropped
+	psp-nm -u $@.tmp | awk '{ print $$2 }' | sort -u | \
+	  comm -12 - $@.dir/dropped > $@.dir/bound
+	printf '%s\n' $(B_SHARED) | sort > $@.dir/allowed
+	@if ! cmp -s $@.dir/bound $@.dir/allowed; then \
+	  echo "gbalink_core_b.o: B binds to A's copy of:"; cat $@.dir/bound; \
+	  echo "allowed: $(B_SHARED)"; exit 1; fi
 	psp-nm -g --defined-only $@.tmp | awk 'NF == 3 { print $$3 " gbab_" $$3 }' > $@.syms
 	psp-objcopy --redefine-syms=$@.syms $@.tmp $@
-	rm -f $@.tmp $@.syms
+	rm -rf $@.tmp $@.syms $@.dir
 
 # The partner machine's autopilot (bench only): fe_autopilot.o again, its
 # API renamed gbab_fe_autopilot_* and its three host hooks pointed at the
@@ -430,6 +483,13 @@ fe_autopilot_b.o: ../frontend-common/fe_autopilot.o
 
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
+
+layout_pad_fe.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_FE_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_fe
+layout_pad_core.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_CORE_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_core
 
 layout_pad.o: layout_pad.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_TEXT=$(or $(LAYOUT_PAD_TEXT),0) \
@@ -450,7 +510,7 @@ clean-deps:
 	-@rm -f $(DEPS)
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
-	-@rm -f gbalink_core_b.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o
+	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o
 .PHONY: clean-deps clean-gbcore
 
 # ADR-0080: the ME kernel module (defined here, after the include, so it

@@ -231,6 +231,14 @@ pad = re.search(r"^LAYOUT_PAD_BYTES \?= (\d+)", pathlib.Path(sys.argv[5]).read_t
 if pad is None or m.get("layoutPin") != 1 or m.get("layoutPadBytes") != int(pad.group(1)):
     raise SystemExit("layout is not the release layout: LAYOUT_PIN=%s LAYOUT_PAD_BYTES=%s"
                      % (m.get("layoutPin"), m.get("layoutPadBytes")))
+# THE LOCKED LAYOUT (critique-8 MF2).  tools/build.sh enforces layout.lock only
+# for the default switch set (RFU_SCHED=1 among them); a release built any other
+# way records "release:differs" and would ship an unchecked layout.  A stable
+# RFU_SCHED=0 release re-pins and records its own lock first
+# (docs/LAYOUT-PINNING.md, "Keeping the pads").
+if m.get("layoutLock") != "release:ok":
+    raise SystemExit("layout.lock [release] did not pass: layoutLock=%r (docs/LAYOUT-PINNING.md)"
+                     % m.get("layoutLock"))
 if m.get("title") != "GBAdhoc" or m.get("cleanRebuild") is not True:
     raise SystemExit("not a clean build titled GBAdhoc: title=%r cleanRebuild=%r"
                      % (m.get("title"), m.get("cleanRebuild")))

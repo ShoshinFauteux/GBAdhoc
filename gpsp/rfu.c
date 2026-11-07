@@ -391,9 +391,17 @@ __attribute__((weak)) void gpsp_rfu_trace_hook(unsigned ev, unsigned a,
  * costs milliseconds per frame.  Each command copies the cached value, which
  * is a load.  Per-frame resolution is all this needs -- the question is which
  * frames took 38 ms, not what happened inside one. */
+/* RFU_FLIGHT: the recorder exists where its dump can be read.  A release
+ * core's frontend formats nothing (gpsp_rfu_flight_dump_hook returns at
+ * once under GPSP_NO_TELEMETRY), so a release core records nothing: 4 KiB
+ * of .bss and two stores per adapter command.  CORE_EXTRA=RFU_FLIGHT=1 on a
+ * non-release profile, or any harness/lab/diagnostic core, keeps it. */
+#if !defined(GPSP_PROFILE_RELEASE) || defined(RFU_FLIGHT)
+#define RFU_FLIGHT_ON 1
 #define RFU_FLIGHT_N 512
 static u32 rfu_flight[RFU_FLIGHT_N * 2];   /* interleaved: word0, then us */
 static u32 rfu_flight_head;      /* total entries ever written */
+#endif
 static u32 rfu_frame_no;
 static u32 rfu_frame_us;         /* wall clock at the start of this frame */
 
@@ -419,6 +427,7 @@ static void rfu_q_note(unsigned side, unsigned depth)
 
 /* cmd:8 | state:2 | frame:22, plus the frame's wall clock — two stores and a
  * load, no clock read, no branches beyond the mask. */
+#ifdef RFU_FLIGHT_ON
 #define RFU_FLIGHT_REC(cmd, st) do { \
     u32 sl_ = (rfu_flight_head % RFU_FLIGHT_N) * 2; \
     rfu_flight[sl_] = \
@@ -427,6 +436,9 @@ static void rfu_q_note(unsigned side, unsigned depth)
     rfu_flight[sl_ + 1] = rfu_frame_us; \
     rfu_flight_head++; \
   } while (0)
+#else
+#define RFU_FLIGHT_REC(cmd, st) do { (void)(cmd); (void)(st); } while (0)
+#endif
 
 /* Pseudo-command codes for non-command entries.  Real RFU commands are all
  * below 0x40, so 0xFx cannot collide with one. */
@@ -444,8 +456,10 @@ __attribute__((weak)) void gpsp_rfu_flight_dump_hook(const u32 *ring,
 
 static void rfu_flight_dump(void)
 {
+#ifdef RFU_FLIGHT_ON
   unsigned n = rfu_flight_head < RFU_FLIGHT_N ? rfu_flight_head : RFU_FLIGHT_N;
   gpsp_rfu_flight_dump_hook(rfu_flight, RFU_FLIGHT_N, rfu_flight_head - n, n);
+#endif
 }
 
 /* ADR-0052: the flight recorder dumps on ANY transition that ends a live

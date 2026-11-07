@@ -1,0 +1,101 @@
+# tools/layout/layout.lock -- where the pinned layout puts the symbols that
+# carry it (tools/layout/layout_lock.py; docs/LAYOUT-PINNING.md "Keeping the
+# pads").  tools/build.sh checks a release and a default lab build against
+# their section and fails on any difference.  Values are re-recorded with
+# `layout_lock.py write FLAVOUR NM` after a re-pin that was checked, never to
+# make a build pass.
+#
+# [release]: tools/build.sh release with RFU_SCHED=1, recorded from the round-7
+#            release ELF 2f3e3aae (9e41b91e).
+# [lab]:     tools/build.sh lab with RFU_SCHED=1 and tools/layout/lab-pads.env,
+#            recorded from the round-7 lab arm C ELF 0f31d0a6 (9e41b91e).
+# The B-region, hash-table and JIT-base lines were added in round 9 and
+# measured on the round-8 ELFs fb410a57 / 51d607c5 (nm identical to round 7).
+
+[release]
+# the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
+at   main                               0x14e0
+size main                               33724
+at   pace_frame                         0x0a20
+# the first symbol after each text pad (the anchor `solve` aims at)
+at   exit_cb                            0x02f0
+at   roster_valid                       0x0a90
+at   pte_mutex_check_need_init          0x1220
+# the pinned hot core and the two 32 B holes of round 7
+at   update_gba                         0x1080
+at   block_lookup_translate_arm         0x1240
+at   block_lookup_translate_thumb       0x1b80
+gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
+at   gbab_update_gba                    0x0b60
+at   gbab_block_lookup_translate_arm    0x0880
+at   gbab_block_lookup_translate_thumb  0x11a0
+tail gbab_block_lookup_translate_thumb  32
+# A cold text, tables, data, the guard block, bss
+at   me_replay_lines                    0x17c0
+at   netpacket_iface                    0x1ed8
+at   gbahot_start                       0x0000
+at   reg                                0x1b00
+at   _gp                                0x11f0
+at   iwram                              0x0000
+at   ewram                              0x0000
+# B's region, the hash tables and the JIT bases (0x1500: the code cache's
+# colouring and the hot-data guard depend on it; critique-8 MF3).  _end
+# alone misses a .bss change that grows before them and shrinks after.
+at   gbab_bregion_start                 0x0000
+at   gbab_rom_branch_hash               0x1168
+at   gbab_rom_translation_cache_static  0x1500
+at   gbab_ram_translation_cache_static  0x1500
+at   gbab_bregion_lend                  0x0000
+at   rom_branch_hash                    0x0c68
+at   rom_translation_cache_static       0x1500
+at   ram_translation_cache_static       0x1500
+at   _end                               0x198c
+# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
+pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
+pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
+
+[lab]
+# the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
+at   main                               0x0c80
+size main                               48440
+at   pace_frame                         0x0b0c
+# the first symbol after each text pad (the anchor `solve` aims at)
+at   exit_cb                            0x136c
+at   roster_valid                       0x147c
+at   pte_mutex_check_need_init          0x07f4
+# the pinned hot core and the two 32 B holes of round 7
+at   update_gba                         0x1080
+at   block_lookup_translate_arm         0x1240
+at   block_lookup_translate_thumb       0x1b80
+gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
+at   gbab_update_gba                    0x01e0
+at   gbab_block_lookup_translate_arm    0x1fa0
+at   gbab_block_lookup_translate_thumb  0x08c0
+tail gbab_block_lookup_translate_thumb  32
+# A cold text, tables, data, the guard block, bss
+at   me_replay_lines                    0x1a40
+at   netpacket_iface                    0x0178
+at   gbahot_start                       0x0000
+at   reg                                0x1b00
+at   _gp                                0x11f0
+at   iwram                              0x0000
+at   ewram                              0x0000
+# B's region, the hash tables and the JIT bases (0x1500: the code cache's
+# colouring and the hot-data guard depend on it; critique-8 MF3).  _end
+# alone misses a .bss change that grows before them and shrinks after.
+at   gbab_bregion_start                 0x0000
+at   gbab_rom_branch_hash               0x0168
+at   gbab_rom_translation_cache_static  0x1500
+at   gbab_ram_translation_cache_static  0x1500
+at   gbab_bregion_lend                  0x0000
+at   rom_branch_hash                    0x1c68
+at   rom_translation_cache_static       0x1500
+at   ram_translation_cache_static       0x1500
+at   _end                               0x198c
+# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
+pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
+pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init

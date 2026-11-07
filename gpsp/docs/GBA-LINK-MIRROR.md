@@ -1133,7 +1133,7 @@ Restaged after the merge (section 17.4): every arm comes from `claude/gbalink-hw
 |---|---|---|---|---|
 | .text | 1,721,008 | 2,765,660 | **+1,044,652** | instance B's whole core (800 KB: `translate_block_arm` 367 KB, `_thumb` 150 KB, `execute_arm` 73 KB, ...), the frontend link code (~22 KB), A's functions grown by the cable branches (13 KB) |
 | .rodata + .data | 378,032 | 534,040 | +156,008 | B's tables (`gba_cc_lut` 64 KB, option defs) and data |
-| .bss | 5,519,616 | 9,722,112 | **+4,202,496** | B's SMALL translation cache 2.4 MiB (+ way alignment/slack), `rom_branch_hash` 256 KiB, `gamepak_backup` 128 KiB, sound buffer 256 KiB, sprite lists, guest RAM (EWRAM/IWRAM/VRAM/OAM/palette/IO), memory maps; the frontend's session buffers (`q` 64 KiB) |
+| .bss | 5,519,616 | 9,722,112 | **+4,202,496** | B's SMALL translation cache 2.4 MiB (+ way alignment/slack), `rom_branch_hash` 256 KiB (at cfb015e; 64 KiB since claude/opt-1000 round 6), `gamepak_backup` 128 KiB, sound buffer 256 KiB, sprite lists, guest RAM (EWRAM/IWRAM/VRAM/OAM/palette/IO), memory maps; the frontend's session buffers (`q` 64 KiB) |
 | **image** | 7,624,960 | 13,031,680 | **+5,406,720** | heap at boot on the PSP-1000: 16.47 MB -> 11.06 MB |
 
 All of it is static because instance B is the core archive linked into the EBOOT under renamed symbols (section 3). Making it session-owned means taking B out of the image:

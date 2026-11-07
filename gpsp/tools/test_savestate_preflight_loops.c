@@ -175,6 +175,31 @@ static int rejects_input_range(const char *label, const char *field,
   return 0;
 }
 
+/* A state saved with the 64K-entry ring (4.6.0-beta.4 and older): indices
+ * up to SOUND_STATE_INDEX_RANGE pass the preflight (sound_read_savestate
+ * masks them into the ring). */
+static int accepts_old_ring_indices(void)
+{
+  const u8 *doc;
+  const u32 lap = SOUND_STATE_INDEX_RANGE - BUFFER_SIZE;  /* a multiple of it */
+  make_state(-1, -1, -1, -1);
+  doc = bson_find_key(state, "sound");
+  /* read position 1000, mixer 1000 + 1200, ds0 32 ahead, ds1 6 behind */
+  put_u32((u8 *)bson_find_key(doc, "buf-base"), lap + 1000);
+  put_u32((u8 *)bson_find_key(doc, "gbc-buf-idx"), lap + 2200);
+  put_u32((u8 *)bson_find_key(bson_find_key(doc, "ds0"), "buf-idx"), lap + 2232);
+  put_u32((u8 *)bson_find_key(bson_find_key(doc, "ds1"), "buf-idx"), lap + 2194);
+  component_reads = 0;
+  if (!gba_load_state(state) || component_reads != 5)
+  {
+    fprintf(stderr, "FAIL a state with 64K-ring indices was rejected\n");
+    return 1;
+  }
+  /* (the masking itself: sound_timer_step, check_old_ring_indices) */
+  puts("PASS a state with 64K-ring indices passes preflight");
+  return 0;
+}
+
 static int rejects_sound_range(const char *label, const char *channel,
                                const char *field, u32 value)
 {
@@ -422,7 +447,10 @@ int main(int argc, char **argv)
   component_reads = 0;
   assert(gba_load_state(state)); assert(component_reads == 5);
   puts("PASS supported direct-sound phase accepted");
-  failures += rejects_sound_range("direct-sound buffer index out of range", "ds0", "buf-idx", BUFFER_SIZE);
+  failures += rejects_sound_range("direct-sound buffer index out of range", "ds0", "buf-idx", SOUND_STATE_INDEX_RANGE);
+  failures += rejects_sound_range("odd direct-sound buffer index", "ds0", "buf-idx", 3);
+  failures += rejects_sound_range("read position out of range", NULL, "buf-base", SOUND_STATE_INDEX_RANGE);
+  failures += accepts_old_ring_indices();
   failures += rejects_sound_range("direct-sound shift count out of range", "ds0", "volume", 32);
   failures += rejects_sound_range("PSG square pattern index out of range", "gs0", "sample-tbl", 4);
   failures += rejects_sound_range("PSG envelope table index out of range", "gs0", "env-vol", 16);

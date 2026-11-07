@@ -138,6 +138,9 @@ enum
  * proves it can unload, so it relaunches the EBOOT as it always did. */
 volatile int gbadhoc_net_touched;
 
+/* Compiler-only fence for the SPSC rings below (single CPU, see A.ring). */
+#define SPSC_BARRIER() __asm__ __volatile__("" ::: "memory")
+
 static struct
 {
    int      progress;           /* ST_* ladder */
@@ -169,7 +172,11 @@ static struct
    uint32_t fault_prng;
 
    /* SPSC ring: rx thread produces (head), main thread consumes (tail).
-    * Single-CPU MIPS: volatile index ordering is sufficient. */
+    * Single-CPU MIPS: no hardware fence is needed, but `volatile` orders
+    * only the index accesses -- the slot's plain stores and loads may be
+    * moved across them by the compiler.  SPSC_BARRIER() (a compiler
+    * barrier, no instruction) sits before every publish/release store and
+    * after every emptiness check. */
    adhoc_ring_slot ring[ADHOC_RING_SLOTS];
    volatile uint32_t ring_head;   /* next write */
    volatile uint32_t ring_tail;   /* next read */
@@ -313,6 +320,7 @@ static int rx_thread(SceSize args, void *argp)
             A.bulk_ring[head % A.bulk_slots].len = (uint16_t)len;
             memcpy(A.bulk_ring[head % A.bulk_slots].data, scratch,
                    (size_t)len);
+            SPSC_BARRIER();
             A.bulk_head = head + 1;      /* publish after the copy */
             A.st.bulk_rx++;
             continue;
@@ -366,6 +374,7 @@ static int rx_thread(SceSize args, void *argp)
                s->len = (uint16_t)len;
                s->due_us = due;
                memcpy(s->data, scratch, (size_t)len);
+               SPSC_BARRIER();
                A.ring_head = head + 1;   /* publish after the copy */
                A.st.rx_pkts++;
             }
@@ -450,8 +459,11 @@ static int tx_thread(SceSize args, void *argp)
       while (A.tx_tail != A.tx_head)
       {
          uint32_t tail = A.tx_tail;
-         adhoc_tx_slot *s = &A.tx_ring[tail % ADHOC_TX_SLOTS];
+         adhoc_tx_slot *s;
+         SPSC_BARRIER();
+         s = &A.tx_ring[tail % ADHOC_TX_SLOTS];
          adhoc_pdp_send(s->mac, s->data, s->len, adhoc_now_us(), 0);
+         SPSC_BARRIER();
          A.tx_tail = tail + 1;      /* release after the send */
       }
    }
@@ -473,6 +485,7 @@ static int adhoc_send_raw(const uint8_t mac[6], const void *buf, size_t len)
          memcpy(s->mac, mac, 6);
          s->len = (uint16_t)len;
          memcpy(s->data, buf, len);
+         SPSC_BARRIER();
          A.tx_head = head + 1;      /* publish after the copy */
          A.st.tx_queued++;
          sceKernelSignalSema(A.tx_sema, 1);
@@ -514,6 +527,7 @@ static int adhoc_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
    tail = A.ring_tail;
    if (tail == A.ring_head)
       return 0;                           /* nothing pending */
+   SPSC_BARRIER();
    s = &A.ring[tail % ADHOC_RING_SLOTS];
    if (s->due_us && adhoc_now_us() < s->due_us)
       return 0;                           /* debug shim: not due yet */
@@ -522,6 +536,7 @@ static int adhoc_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
       len = (int)cap;                     /* cap >= ND_MAX_FRAME per contract */
    memcpy(src_mac, s->mac, 6);
    memcpy(buf, s->data, (size_t)len);
+   SPSC_BARRIER();
    A.ring_tail = tail + 1;                /* release after the copy */
    return len;
 }
@@ -538,6 +553,7 @@ static int adhoc_pending(void *ctx)
    (void)ctx;
    if (tail == A.ring_head)
       return 0;
+   SPSC_BARRIER();
    s = &A.ring[tail % ADHOC_RING_SLOTS];
    if (s->due_us && adhoc_now_us() < s->due_us)
       return 0;
@@ -595,11 +611,13 @@ int adhoc_transport_bulk_recv(void *buf, size_t cap)
    int len;
    if (!A.bulk_ring || tail == A.bulk_head)
       return 0;
+   SPSC_BARRIER();
    s = &A.bulk_ring[tail % A.bulk_slots];
    len = s->len;
    if ((size_t)len > cap)
       len = (int)cap;
    memcpy(buf, s->data, (size_t)len);
+   SPSC_BARRIER();
    A.bulk_tail = tail + 1;                /* release after the copy */
    return len;
 }

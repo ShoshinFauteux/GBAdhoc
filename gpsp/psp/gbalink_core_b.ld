@@ -14,6 +14,13 @@
  *                                   as the cache's last, partial block),
  *                                   zeroed at session start
  *   bdata_pristine                  the pristine .data copy (never lent)
+ *   bsdata_start .. bsdata_end      B's small initialised data and
+ *   bsbss_start .. bsbss_end        B's small zeroed data: reached $gp-
+ *                                   relative (CORE_SDATA / CORE_SBSS), so
+ *                                   they cannot be placed here, only
+ *                                   marked; the final link keeps them next
+ *                                   to A's.  b_fresh puts them back too
+ *                                   (.sdata from a copy taken at boot)
  * (Instance A's state waits across a reload in A's own static code array
  * or the heap: fe_host.c gba_scratch_get.)
  */
@@ -26,6 +33,19 @@ SECTIONS
     bdata_start = .;
     *(.data .data.*)
     bdata_end = .;
+  }
+  /* Marked, not moved (see above): the same input sections in the same
+   * order as the orphan placement they replace. */
+  .sdata 0 : {
+    bsdata_start = .;
+    *(.sdata .sdata.*)
+    bsdata_end = .;
+  }
+  .sbss 0 : {
+    bsbss_start = .;
+    *(.sbss .sbss.*)
+    *(.scommon)
+    bsbss_end = .;
   }
   .bss 0 : {
     bregion_start = .;

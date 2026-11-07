@@ -233,7 +233,11 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
+/* One static table on every tier (gpsp_config.h says why): the bucket of a
+ * key is the top ROM_BRANCH_HASH_BITS of the product, a constant shift. */
 u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
+#define ROM_BRANCH_HASH_SHIFT   (32 - ROM_BRANCH_HASH_BITS)
+#define ROM_BRANCH_HASH_N       ROM_BRANCH_HASH_SIZE
 
 typedef struct
 {
@@ -3884,8 +3888,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
     case 0x8 ... 0xD:                                                         \
     {                                                                         \
       u32 key = pc | thumb;                                                   \
-      u32 hash_target = ((key * 2654435761U) >> (32 - ROM_BRANCH_HASH_BITS))  \
-                                              & (ROM_BRANCH_HASH_SIZE - 1);   \
+      u32 hash_target = (key * 2654435761U) >> ROM_BRANCH_HASH_SHIFT;         \
                                                                               \
       hashhdr_type *bhdr;                                                     \
       u32 blk_offset = rom_branch_hash[hash_target];                          \
@@ -5944,7 +5947,15 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
     defined(SMC_GATE_BITMAP) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP) && \
     (!defined(JIT_COST_NO_SCANWIN) || !defined(JIT_COST_NO_SCANCOND))
 #define JIT_SCAN_FAST 1
+#ifdef GPSP_PROFILE_RELEASE
+/* A release has no harness to flip it (the key is read only with the
+ * frontend's JIT_COST_KEYS, through a weak reference that finds no symbol
+ * here): the fast scan is a constant, and xlat_scan_arm_ram's RAM call --
+ * its only caller in the ARM translator -- folds away. */
+#define xlat_scan_fast 1u
+#else
 u32 xlat_scan_fast = 1;
+#endif
 
 #ifndef JIT_COST_NO_SCANCOND
 static u16 xlat_arm_flagset[256];
@@ -6143,6 +6154,13 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 #error "SMC_IMM_PATCH records its code patches through JIT_CODE_DISCIPLINE"
 #endif
 #define IMMP_K      16
+/* IMMP_ESC: the sites also hold EXEC_STALE_CHECK's opcode load (mips_emit.h
+ * IMMP_ESC_OP), which only twin/lockstep builds emit.  Elsewhere every esc
+ * pointer is NULL, so the fields and their tests are compiled out: 16 KiB of
+ * immp_tab and 4 KiB of immp_pend in a release, same emitted code. */
+#if defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP)
+#define IMMP_ESC 1
+#endif
 #define IMMP_SLOTS  255
 static u8 immp_bit[0x8000 / 32], immp_bad[0x8000 / 32];
 static u8 immp_slot[0x8000 / 4];
@@ -6151,7 +6169,9 @@ typedef struct
   u32 old;                 /* the ARM word every registered site encodes  */
   u32 n;
   u8 *site[IMMP_K];        /* host address of the `lui a0`                */
+#ifdef IMMP_ESC
   u8 *esc[IMMP_K];         /* EXEC_STALE_CHECK's opcode lui (twin), or 0  */
+#endif
   u8 cl[IMMP_K];           /* 1 = shifter carry live at that site         */
 } immp_ent;
 static immp_ent immp_tab[IMMP_SLOTS + 1];
@@ -6159,13 +6179,19 @@ static u32 immp_nslots, immp_dirty;
 u32 immp_patches, immp_learned, immp_refused[8], immp_sites, immp_selftest_fail;
 static inline u32 immp_rot(u32 op);
 static inline int immp_site_ok(u8 *p, u32 v, u32 rlui);
+#ifdef IMMP_ESC
 static u32 immp_esc_pc;
+#endif
 /* 1 while translate_block_arm emits a RAM block whose extent holds a learned
  * word (set once after the scan): every per-instruction hook tests it first,
  * so blocks without one translate as before at the cost of one load. */
 static u32 immp_blk_on;
+#ifdef IMMP_ESC
 static u8 *immp_cur_esc;
 static struct { u8 *host, *esc; u32 pc, op; u8 cl; } immp_pend[MAX_BLOCK_SIZE];
+#else
+static struct { u8 *host; u32 pc, op; u8 cl; } immp_pend[MAX_BLOCK_SIZE];
+#endif
 static u32 immp_npend;
 #define IMMP_W(pc)       (((pc) & 0x7FFF) >> 2)
 #define IMMP_GET(m, w)   ((m)[(w) >> 3] & (1u << ((w) & 7)))
@@ -6205,13 +6231,17 @@ static void immp_note(u8 *host, u32 pc, u32 op, u32 cl)
 {
   if (immp_npend < MAX_BLOCK_SIZE) {
     immp_pend[immp_npend].host = host;
+#ifdef IMMP_ESC
     immp_pend[immp_npend].esc = immp_esc_pc == pc ? immp_cur_esc : NULL;
+#endif
     immp_pend[immp_npend].pc = pc;
     immp_pend[immp_npend].op = op;
     immp_pend[immp_npend].cl = (u8)cl;
     immp_npend++;
   }
+#ifdef IMMP_ESC
   immp_cur_esc = NULL;
+#endif
 }
 /* after the scan: does [start, end) of a RAM block hold a learned word? */
 static void immp_blk_begin(int ram_region, u32 start, u32 end)
@@ -6309,7 +6339,9 @@ static void immp_commit(u32 start, u32 end)
       immp_selftest_fail++;
 #endif
     e->site[e->n] = immp_pend[k].host;
+#ifdef IMMP_ESC
     e->esc[e->n] = immp_pend[k].esc;
+#endif
     e->cl[e->n] = immp_pend[k].cl;
     e->n++;
     immp_sites++;
@@ -6389,7 +6421,9 @@ static int immp_try(u32 word)
   u32 w, nw, ow, k, vo, vn;
   immp_ent *e;
   const u32 lui_a0 = (0x0Fu << 26) | ((u32)reg_a0 << 16);
+#ifdef IMMP_ESC
   const u32 lui_a2 = (0x0Fu << 26) | ((u32)reg_a2 << 16);
+#endif
   if ((word >> 24) != 3)
     return 0;
   w = IMMP_W(word);
@@ -6412,8 +6446,11 @@ static int immp_try(u32 word)
       immp_refused[3]++;
       return 0;                     /* the rotation's carry would change */
     }
-    if (!immp_site_ok(e->site[k], vo, lui_a0) ||
-        (e->esc[k] && !immp_site_ok(e->esc[k], ow, lui_a2))) {
+    if (!immp_site_ok(e->site[k], vo, lui_a0)
+#ifdef IMMP_ESC
+        || (e->esc[k] && !immp_site_ok(e->esc[k], ow, lui_a2))
+#endif
+        ) {
       immp_refused[4]++;
       return 0;
     }
@@ -6430,8 +6467,10 @@ static int immp_try(u32 word)
 #else
     immp_site_put(e->site[k], vn);
 #endif
+#ifdef IMMP_ESC
     if (e->esc[k])
       immp_site_put(e->esc[k], nw);
+#endif
   }
   e->old = nw;
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
@@ -8914,8 +8953,11 @@ void flush_translation_cache_ram(void)
    ewram_code_min, ewram_code_max);*/
 
   /* Phase 5g: price the flush directly instead of inferring it from a frame
-   * spike.  Two clock reads on a path that is already the expensive one. */
-  u32 flush_t0 = smc_prof_clock ? smc_prof_clock() : 0;
+   * spike.  Two clock reads on a path that is already the expensive one.
+   * Only while the ADR-0030 profile is on (smc_blk_watch != 0): the reader,
+   * smc_flush_us, feeds EVT smc_block and the bench-mode OSD, neither of
+   * which a release has, so a release skips both syscalls. */
+  u32 flush_t0 = (smc_blk_watch && smc_prof_clock) ? smc_prof_clock() : 0;
 
 #ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;
@@ -8973,7 +9015,7 @@ void flush_translation_cache_ram(void)
     }
   }
 
-  if (smc_prof_clock)
+  if (smc_blk_watch && smc_prof_clock)
     smc_flush_us += smc_prof_clock() - flush_t0;
 
   iwram_code_min = ~0U;
@@ -11959,7 +12001,7 @@ void flush_translation_cache_rom(void)
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
-  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+  memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
 #ifdef VRAM_EXEC
   vram_code_forget();
 #endif
@@ -12017,12 +12059,16 @@ void dynarec_heap_tables_release(void)
   smc_back_iw = smc_back_ew = NULL;
 #endif
 }
-void dynarec_heap_tables_init(void)
+/* 0, or -1 when malloc refused the block (nothing is changed then).  At
+ * retro_init that is reported, not fatal: retro_load_game refuses the game,
+ * so instance B's session start fails with an EVT instead of abort()ing the
+ * console (fe_gbadual.c "gbadual_load FAILED"). */
+int dynarec_heap_tables_init(void)
 {
   u8 *blk;
   u32 sz = 0;
   if (xs_heap_blk)
-    return;
+    return 0;
 #if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
   sz += 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2;
 #ifdef SMC_SAME_ADAPT
@@ -12035,7 +12081,7 @@ void dynarec_heap_tables_init(void)
   blk = malloc(sz ? sz : 64);
   if (!blk) {
     fprintf(stderr, "dynarec_heap_tables_init: %u bytes refused\n", (unsigned)sz);
-    abort();
+    return -1;
   }
   xs_heap_blk = blk;
   memset(blk, 0, sz ? sz : 64);
@@ -12056,19 +12102,24 @@ void dynarec_heap_tables_init(void)
 #endif
     (void)p;
   }
+  return 0;
 }
 #endif
 void init_dynarec_caches(void)
 {
 #ifdef XS_HEAP
-  dynarec_heap_tables_init();
+  /* retro_load_game refuses a game whose retro_init could not take the
+   * block, so this is the no-op second call; were it ever the first, the
+   * SMC tables would be NULL, and stopping here is what it always did. */
+  if (dynarec_heap_tables_init() != 0)
+    abort();
 #endif
   /* Initialize caches so that we can start initalizing the emitter. */
 #ifdef JIT_CODE_DISCIPLINE
   jit_code_owner_changed(JOWN_INIT);
 #endif
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
-  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+  memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
 #ifdef VRAM_EXEC
   vram_code_forget();
 #endif
@@ -12286,6 +12337,7 @@ void dynarec_select_translation_caches(void)
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));   /* both tiers share it */
   jit_cache_tier   = JIT_CACHE_LARGE;
   jit_cache_reason = "heap_ok";
 #ifdef JIT_CODE_DISCIPLINE
@@ -12343,11 +12395,67 @@ void dynarec_release_translation_caches(void)
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));   /* offsets of the old tier's cache */
   gamepak_spare_pool       = NULL;
   gamepak_spare_pool_bytes = 0;
   jit_cache_last_tier = jit_cache_tier;
   jit_cache_tier   = JIT_CACHE_UNDECIDED;
   jit_cache_reason = "released";
+}
+#endif
+
+#ifdef ROM_HASH_CENSUS
+/* ROM_HASH_CENSUS (off in every profile; critique-7 SF4): how deep the
+ * 14-bit rom_branch_hash chains are after a long session.  On the LARGE tier
+ * (3000/Go, 10 MiB of ROM translation cache) a full cache is about 44 K
+ * blocks over 16 K buckets, a load factor near 2.7 (estimate, from
+ * ub_rival's 236 B per block), and only a session of hours gets there.
+ * This walks the table when asked (the frontend's core_health EVT: every
+ * heartbeat and at exit), so the lookup itself is the shipped code.  Build
+ * the arm with CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
+ * FE_EXTRA=-DROM_HASH_CENSUS; with only the frontend half it does not link.
+ * out: entries, buckets used, longest chain, sum over entries of their
+ *      1-based position in the chain (mean hit hops = out[3] / out[0]),
+ *      ROM cache bytes used, buckets, then the number of buckets whose
+ *      chain is 1, 2, 3 and 4+ long (critique-8 SF1: a mean and a max
+ *      cannot tell "uniformly 2.7" from "a few hot buckets"). */
+void rom_hash_census(u32 out[10])
+{
+  u32 i, n = 0, used = 0, maxc = 0, hops = 0;
+  u32 h1 = 0, h2 = 0, h3 = 0, h4 = 0;
+  for (i = 0; i < ROM_BRANCH_HASH_N; i++)
+  {
+    u32 off = rom_branch_hash[i], c = 0;
+    if (off)
+      used++;
+    while (off && c < 0x10000)
+    {
+      c++;
+      hops += c;
+      off = ((hashhdr_type *)&rom_translation_cache[off])->next_entry;
+    }
+    n += c;
+    if (c > maxc)
+      maxc = c;
+    if (c == 1)
+      h1++;
+    else if (c == 2)
+      h2++;
+    else if (c == 3)
+      h3++;
+    else if (c)
+      h4++;
+  }
+  out[6] = h1;
+  out[7] = h2;
+  out[8] = h3;
+  out[9] = h4;
+  out[0] = n;
+  out[1] = used;
+  out[2] = maxc;
+  out[3] = hops;
+  out[4] = (u32)(rom_translation_ptr - rom_translation_cache);
+  out[5] = ROM_BRANCH_HASH_N;
 }
 #endif
 
@@ -12575,7 +12683,7 @@ void jit_code_meta_(u8 *lo, u8 *hi)
   if (lo < rom_translation_cache ||
       hi > rom_translation_cache + rom_translation_cache_size) {
     if (!(lo >= (u8 *)rom_branch_hash &&
-          hi <= (u8 *)(rom_branch_hash + ROM_BRANCH_HASH_SIZE)))
+          hi <= (u8 *)(rom_branch_hash + ROM_BRANCH_HASH_N)))
       jit_check_fail("metadata outside the ROM zone", lo, hi);
     return;
   }

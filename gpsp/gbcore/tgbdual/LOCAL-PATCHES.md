@@ -28,12 +28,12 @@ their original encodings (Shift-JIS, some CP1252). `diff -w -B
 |---|---|
 | `gb.h`, `gb.c`, `cpu.c`, `lcd.c`, `apu.c` | `../psp/pspcommon.h`, `../renderer.h`, `../syscall.h`, `../lib/zlib.h` and `<oslib/oslib.h>` replaced by `tgb_port.h` (via `gb.h`). The port header supplies `MAKE_COLOR`, `pad_state`, the DMG palette and the adapter callbacks (`gbe_*`, `set_gb_type`, `tgb_port_serial`), all implemented in `../gbcore_tgbdual.c`. |
 | `gb.h` | `CHEAT_SUPPORT` only with `TGB_CHEATS` (off): it put a 64 KiB `cheat_map` lookup on every emulated write. `inline` dropped from ten prototypes (the definitions keep it; an inline declaration warns in every other file that includes the header). Declarations for the buffer-based state functions; externs of removed arrays deleted. |
-| `gb.c` | `gb_save_state`/`gb_restore_state` work on memory only (MasterBoy's `VIRTUAL_FILE` path removed); `gb_save_state(NULL)` measures, `gb_restore_state` is bounds-checked. `vframe_mem` (128 KiB .bss) removed: the adapter allocates `vframe` so GBA sessions do not pay for it. `exiting_lcdc()` (ColorIt palette-file lookup) removed. |
+| `gb.c` | `gb_save_state`/`gb_restore_state` work on memory only (MasterBoy's `VIRTUAL_FILE` path removed); `gb_save_state(NULL)` measures, `gb_restore_state` is bounds-checked. `vframe_mem` (128 KiB .bss) removed: the adapter allocates `vframe` so GBA sessions do not pay for it; its overflow guard `dmy` (1,600 B) removed with it. `exiting_lcdc()` (ColorIt palette-file lookup) removed. |
 | `cpu.c` | `gblCpuCycles` (MasterBoy's "Z80 clock" percentage) removed. GBC infrared bridge to the PSP's `irda0:` removed (`cpu_io.h`): the port reads "no light". |
 | `lcd.c` | MasterBoy's ColorIt colourisation (tile palettes, VRAM CRC, `*_colored` renderers) compiled only with `TGB_COLORIT` (off). The DMG palette comes from `tgb_dmg_palette[]` (BGR555, set by the adapter) instead of OSLib colours from palette files. The SGB path's `oslGetCachedPtr`/`oslUncacheData` pair removed (the frame is ordinary cached memory). |
 | `apu.c` | Output rate `snd_rate` (set by the adapter) replaces the literal 44100 in the four generators. `snd_render_orig`'s menu-volume scaling replaced by a fixed gain `TGB_SND_GAIN` with int16 saturation (see *Volume* below). The register-write queue is `SND_QUE_SIZE` (16384) entries allocated by the adapter instead of a 768 KiB .bss array. |
 | `rom.c` | `sram_space` (128 KiB .bss) removed; the adapter passes its own cartridge RAM. |
-| `sgb.c` | The SGB border image (112 KiB) and its renderer compiled only with `TGB_SGB_BORDER` (off): borders are not presented. Border packets are still parsed, since palettes ride along with them. |
+| `sgb.c` | The SGB border image (112 KiB), its renderer and the border tile/map uploads (`sgb_border` 2 KiB, `sgb_borderchar` 8 KiB) compiled only with `TGB_SGB_BORDER` (off): borders are not presented. Border packets are still parsed, since palettes ride along with them. |
 
 ## Portability (host tests and modern GCC)
 
@@ -95,7 +95,7 @@ that:
 |---|---|
 | `cpu.c` | Serial completion (`seri_occer` expiring in `cpu_exec`) asks the adapter for the byte that lands in SB (`tgb_port_serial_complete`). With an in-memory cable the byte is exchanged THEN, with the peer machine's SB (`cpu_seri_send`), which is what upstream TGB Dual did between its two machines; otherwise the adapter returns `seri_rx`, the byte chosen at the SC write, exactly as before. |
 | `gb.c` | `gb_fill_vframe` returns when there is no frame buffer: a headless machine (the partner's Game Boy) has none. It is reached from `gb_reset` and from SGB `MASK_EN` packets whatever `gbSkip` says. |
-| `_mrand_table.h` | The noise tables are `const` and named `tgbshared_mrand7/15`, defined once by the new `tgb_shared.c` outside the per-instance link: 64 KiB the second machine does not duplicate. |
+| `_mrand_table.h` | The noise tables are `const` and named `tgbshared_mrand7/15`, defined once by the new `tgb_shared.c` outside the per-instance link: 64 KiB the second machine does not duplicate. They are packed 8 bits to a byte (2 x 4 KiB, -57,344 B of `.rodata`) and read through `MRAND_BIT()` in `apu.c`'s `snd_noi_produce`; `tools/gen_mrand_packed.py --check` proves every bit equal to the pristine table. |
 | `tgb_port.h` | Prototypes for `tgb_port_serial_complete` and `cpu_seri_send`. |
 
 Headless (`gbcore_set_headless`) suppresses scanline and sample production,

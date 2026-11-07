@@ -163,7 +163,7 @@ One line each; the root Makefile's comment above each `ifeq` has the detail.
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
 | `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
 | `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
-| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 256. |
+| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 128 (256 until opt round 6: the SMALL-tier twin on Doom II, Duke, AW2, Emerald, Smash and Unbound ran identically at 128; Hot Wheels kept 32 fewer flushes, +0.04 % host instructions). |
 | `SMC_REUSE_MODE` | 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
 | `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
 | `DMA_SMC_ADAPT` | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
@@ -259,6 +259,18 @@ for that" is never mistaken for "that was tried".
 
 Both write to the memory stick from inside the dynarec dispatch path, on the
 emulation thread. Both are refused in a release by `gpsp_profile.h`.
+
+`ROM_HASH_CENSUS` (in no profile; `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
+FE_EXTRA=-DROM_HASH_CENSUS`, both halves or it does not link) walks
+`rom_branch_hash` at every 10th heartbeat and at every other `core_health`
+EVT (exit, load, reset) and logs `EVT rom_hash at= entries=
+buckets=used/16384 max_chain= hit_hops_x100= rom_used= chains=c1/c2/c3/c4+
+walk_us=`: the chain depth of the 14-bit table after a long LARGE-tier
+session on a 3000/Go, the number of buckets whose chain is 1, 2, 3 and 4+
+long, and what the walk itself cost (a full LARGE cache is ~44 K dependent
+loads, estimated 8-13 ms: a dropped frame every 6,000 frames, so discount
+the arm's audio/link behaviour at those frames).  The lookup is untouched;
+the walk is cold code, so the arm's layout differs from the lab's.
 
 `XLAT_DEPTH_PROBE` (profiles `soak`, `diagnostic`; refused in a release) writes
 nothing itself: it records the deepest nested block translation and the lowest
@@ -374,6 +386,43 @@ from the heap, otherwise it keeps the static arrays and touches nothing.
 Harness builds log the result as `EVT jit_cache tier=... reason=...` and the
 post-load malloc budget as `EVT heap_budget`; `jit_small = 1` in
 `.gpsp-harness.ini` forces the SMALL tier for an A/B on one console.
+
+The ROM block hash (`rom_branch_hash`, gpsp_config.h) is one static table on
+both tiers: `ROM_BRANCH_HASH_BITS_SMALL` (default 14, 16 K buckets, 64 KiB)
+on every PSP build, so the lookup shifts by a constant.
+`ROM_BRANCH_HASH_BITS_LARGE` (default 16) sizes it only on builds without
+`SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model).  Both
+are `#ifndef` overrides for the twin's sizing studies (claude/opt-1000
+rounds 6 and 7: 16 vs 14 bits, guest hash identical, host instructions
+-0.004..-0.014 % on both tiers' models); a shipped build never sets them.
+
+**The SMC profile switch (ADR-0030; main.c).**  `smc_blk_watch == 0` turns
+the store/DMA profile and the RAM flush timer off at run time; the code stays
+linked, so the pinned layout does not depend on it.  A release starts it at
+0, every other profile at `SMC_BLK_WATCH_DEFAULT`:
+- `-DGPSP_SMC_PROFILE`: keep the profile ON in a release.
+- `-DGPSP_NO_SMC_PROFILE`: give any build the release behaviour (the twin's
+  `fr` variants; the lab A/B arm "profile off").  For a lab build it goes in
+  through `CORE_EXTRA="EXTRA_CFLAGS=-DGPSP_NO_SMC_PROFILE"`: a core define
+  (core-vs-frontend-defines), and `CORE_EXTRA` is not checked for spelling.
+  Verify an arm from its ELF, not from its name: `psp-objdump -s -j .data`
+  at `smc_blk_watch` (psp-nm) reads 0 with the profile off, `0x03007d00`
+  with it on.  The two arms are otherwise layout-identical (same code linked;
+  only the word's initial value differs).
+
+**The layout pads (psp/Makefile, pinned by tools/flags.lock).**
+`LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_FE_BYTES` (after stb_impl.o),
+`LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
+`LAYOUT_PAD_BSCAN_BYTES` (B's `update_scanline` held at the renderer's size)
+and `LAYOUT_PAD_RO_BYTES` (`.rodata`).  docs/LAYOUT-PINNING.md "Keeping the
+pads" says what each holds.  A lab build takes the committed lab set,
+`tools/layout/lab-pads.env` (`LAB_PADS=0` for the release pads); a sweep
+overrides it through `LAYOUT_PAD_BYTES=` and `PSP_EXTRA=`, which build.sh
+refuses for the release profile.  `tools/layout/layout.lock` records where
+the pads put the symbols that carry the layout; build.sh fails a release,
+or a lab build with the committed set, that differs (`LAYOUT_LOCK=0` lets a
+lab build through during a re-pin, never a release).  Any other arm is
+checked and reported only.
 
 `BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
 the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.

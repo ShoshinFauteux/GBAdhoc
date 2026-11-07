@@ -104,6 +104,16 @@ static int mer_sameframe_active(void)
 #ifndef FFW_DRAWN
 #define FFW_DRAWN() ((void)0)
 #endif
+/* The Lab-only hooks (psp/lab_ffpace.h, psp/lab_harness.h) as a player build
+ * compiles them: to nothing.  The sliced functions carry LAB_FFP(...) on the
+ * same lines as production statements, so without these the extract does
+ * not even parse. */
+#ifndef LAB_FFP
+#define LAB_FFP(x)
+#endif
+#ifndef LAB_HOOK
+#define LAB_HOOK(x)
+#endif
 
 #include "ff_pipeline.inc"
 

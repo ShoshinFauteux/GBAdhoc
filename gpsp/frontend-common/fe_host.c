@@ -1070,8 +1070,15 @@ static uint32_t  rw_cap_aud_n;
 static uint32_t  rw_mask;         /* the input latched for this run */
 static int       rw_mask_on;
 static FILE     *rw_hash_fp;      /* test instrument (rewind_check.py) */
+#ifdef GPSP_PERF_RIG
+/* rewind_hash's audio tee: only a harness/lab build can open rw_hash_fp
+ * (main_psp.c psp_rewind_read_ini), so only it carries the 4,800 B. */
 static int16_t   rw_test_aud[RW_AUD_CAP * 2];
 static uint32_t  rw_test_aud_n;
+#define RW_TEST_AUD_RESET() (rw_test_aud_n = 0)
+#else
+#define RW_TEST_AUD_RESET() ((void)0)
+#endif
 static int       rw_poked;        /* the platform wrote guest RAM itself */
 static uint32_t  rw_pitch = FE_GBA_WIDTH;   /* pixels per row of a slot */
 static int       rw_cap_got;      /* this frame's slot received a picture */
@@ -1173,6 +1180,7 @@ static size_t audio_sample_batch(const int16_t *data, size_t frames)
       }
       rw_cap_aud_n += (uint32_t)frames;
    }
+#ifdef GPSP_PERF_RIG
    if (rw_hash_fp && rw_test_aud_n < RW_AUD_CAP)
    {
       size_t n = RW_AUD_CAP - rw_test_aud_n;
@@ -1181,6 +1189,7 @@ static size_t audio_sample_batch(const int16_t *data, size_t frames)
       memcpy(rw_test_aud + rw_test_aud_n * 2, data, n * 4);
       rw_test_aud_n += (uint32_t)n;
    }
+#endif
 #endif
    if (host.audio_frames)
       host.audio_frames(data, frames);
@@ -5266,6 +5275,7 @@ int fe_host_rewind_replaying(void)
    return rw_replay;
 }
 
+#ifdef GPSP_PERF_RIG
 static uint32_t rw_crc_rev(const int16_t *a, uint32_t n)
 {
    /* CRC of the stereo frames in reverse order: what a rewind plays. */
@@ -5274,6 +5284,7 @@ static uint32_t rw_crc_rev(const int16_t *a, uint32_t n)
       crc = fe_crc32(crc, a + n * 2, 4);
    return crc;
 }
+#endif
 
 /* Test instrument: buttons as a pure function of the timeline frame, so a
  * run that rewinds and a run that never does play the same game. */
@@ -5308,7 +5319,7 @@ static void rw_latch_input(void)
    else if (rw_opt.redo_inputs && f <= rw_redo_high)
       rw_mask = fe_rewind_logged_input(f);
    rw_mask_on = 1;
-   rw_test_aud_n = 0;
+   RW_TEST_AUD_RESET();
    rw_cap_aud_n = 0;
    rw_cap_got = 0;
    rw_play_ext = 0;
@@ -5590,8 +5601,13 @@ static void rw_after_frame(void)
       bc = rw_sav_crc();
       fprintf(rw_hash_fp, "F %u %08x %s %08x %u %04x %08x %u %u\n",
               (unsigned)fe_rewind_frame_now(), (unsigned)sc, vtxt,
+#ifdef GPSP_PERF_RIG
               (unsigned)rw_crc_rev(rw_test_aud, rw_test_aud_n),
-              (unsigned)rw_test_aud_n, (unsigned)(rw_mask & FE_RW_IN_KEYS),
+              (unsigned)rw_test_aud_n,
+#else
+              0u, 0u,
+#endif
+              (unsigned)(rw_mask & FE_RW_IN_KEYS),
               (unsigned)bc, (unsigned)gba_rewind_rlog_end,
               (unsigned)((bk_flags & FE_RW_IN_BUSY) != 0));
    }
