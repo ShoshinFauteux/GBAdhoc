@@ -18,6 +18,10 @@
 #       all four flavours: each clause refused with exit 2
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+# the caller's flavours.sh settings would point the fake repo's runs elsewhere
+# (run_all with FLAV_REPO=<worktree> exported the worktree's HEAD in C2)
+unset FLAV_REPO FLAV_WORK FLAV_LOCKED RFU_SCHED
+for v in $(compgen -e | grep -E '^FLAV_[A-Z_]+_ENV$'); do unset "$v"; done
 T=$(mktemp -d "${TMPDIR:-/tmp}/flavtest.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 FAILS=0
