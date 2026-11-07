@@ -45,9 +45,16 @@ enum
 {
    RL_T_CREATE = 1,      /* c->s  body: build[16] code[4] (0s = any) priv_ip[4] priv_port[2] nat[1]
                                      then cookie[8] mode[1] map_port[2]
+                                     probe_port[2]
                                      (JOIN the same; map_port: the external
                                      port of a UPnP / router forward to this
-                                     socket, 0 = none or the same port) */
+                                     socket, 0 = none or the same port;
+                                     probe_port: the public port the PROBE
+                                     socket (port + 1) saw, 0 = unknown --
+                                     against the port this datagram comes
+                                     from, a symmetric NAT's allocation step.
+                                     The body is padded to 48 B, so a beta.4
+                                     client's zeros there read as unknown) */
    RL_T_CREATED = 2,     /* s->c  body: code[4] slot[1]; header token = the new slot's token */
    RL_T_JOIN = 3,        /* c->s  body: build[16] code[4] priv_ip[4] priv_port[2] nat[1] */
    RL_T_JOINED = 4,      /* s->c  body: code[4] slot[1]; header token = this slot's token */
@@ -65,7 +72,18 @@ enum
                                          (UPnP) on its public IP -- the port
                                          it asked for in CREATE/JOIN, else its
                                          own socket port (the usual "forward
-                                         UDP 27500" setup); 0s = none */
+                                         UDP 27500" setup); 0s = none.  For a
+                                         peer the server saw at a PRIVATE
+                                         address (it sits behind the server's
+                                         own router) this is the server's
+                                         public IP with that port, when the
+                                         server knows it (--public-ip).
+                                         [nat[1] probe_port[2]]: the peer's
+                                         NAT class (RL_NAT_*) and its PROBE-
+                                         port mapping, for port prediction
+                                         against a symmetric peer.  A beta.4
+                                         server sends 30 B; a beta.4 client
+                                         reads 30 and ignores the rest */
    RL_T_PUNCH = 13,      /* c<->c body: counter[4] */
    RL_T_PUNCH_ACK = 14,  /* c<->c body: counter[4] (echoed) */
    RL_T_PATH = 15,       /* c->s  body: slot[1] path[1] (RL_PATH_*); the server
@@ -142,6 +160,19 @@ static inline int rl_check(const uint8_t *b, int len)
 {
    return (len >= RL_HDR && b[0] == RL_MAGIC0 && b[1] == RL_MAGIC1 &&
            b[2] == RL_MAGIC2 && b[3] == RL_MAGIC3 && b[4] == RL_VER) ? 0 : -1;
+}
+
+/* 1 = an address no other home can route to: RFC 1918, carrier-grade NAT
+ * (100.64/10), loopback, link-local, 0/8.  A server that sees a console at
+ * one of these shares that console's LAN (it sits behind the same router). */
+static inline int rl_ip_private(uint32_t ip_be)
+{
+   const uint8_t *p = (const uint8_t *)&ip_be;
+   return p[0] == 10 || p[0] == 127 || p[0] == 0 ||
+          (p[0] == 172 && (p[1] & 0xF0) == 16) ||
+          (p[0] == 192 && p[1] == 168) ||
+          (p[0] == 169 && p[1] == 254) ||
+          (p[0] == 100 && (p[1] & 0xC0) == 64);
 }
 
 /* An IPv4 address in network order as 4 bytes <-> uint32 holding those

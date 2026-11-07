@@ -24,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { NAT_NONE = 0, NAT_CONE = 1, NAT_SYM = 2 };
+enum { NAT_NONE = 0, NAT_CONE = 1, NAT_SYM = 2, NAT_SYMR = 3 };   /* SYMR: random ports */
 #define NMAP 64
 #define QCAP 8192
 #define MS 1000ull
@@ -47,6 +47,7 @@ typedef struct
    uint32_t pub_ip;
    int lan;                     /* 10.0.<lan>.0/24 */
    uint16_t next_port;
+   int preserve;                /* EIM: keep the source port when free */
    nmap_t m[NMAP];
    int nfwd;                    /* UPnP: pub_port -> priv, no filtering */
    uint16_t fwd_port[2];
@@ -127,7 +128,8 @@ static nmap_t *nat_out(nat_t *n, ep_t priv, ep_t dst)
          continue;
       }
       if (m->priv.ip == priv.ip && m->priv.port == priv.port &&
-          (n->type != NAT_SYM || (m->dst.ip == dst.ip && m->dst.port == dst.port)))
+          ((n->type != NAT_SYM && n->type != NAT_SYMR) ||
+           (m->dst.ip == dst.ip && m->dst.port == dst.port)))
          return m;
    }
    if (fr < 0)
@@ -136,7 +138,17 @@ static nmap_t *nat_out(nat_t *n, ep_t priv, ep_t dst)
    n->m[fr].used = 1;
    n->m[fr].priv = priv;
    n->m[fr].dst = dst;
-   n->m[fr].pub_port = n->next_port++;
+   n->m[fr].pub_port = n->type == NAT_SYMR ? (uint16_t)(20000 + rnd() % 40000)
+                                           : n->next_port++;
+   if (n->preserve && n->type == NAT_CONE)
+   {
+      int k, taken = 0;
+      for (k = 0; k < NMAP; k++)
+         if (k != fr && n->m[k].used && n->m[k].pub_port == priv.port)
+            taken = 1;
+      if (!taken)
+         n->m[fr].pub_port = priv.port;
+   }
    return &n->m[fr];
 }
 
@@ -376,6 +388,8 @@ typedef struct
    int desk_nat;                /* the desktop's router: NAT_CONE (+UPnP) or NAT_NONE */
    int hairpin;
    int both_join;               /* both PSPs "Join with code" (the mockup's flow): slot 0 hosts */
+   int desk_keep;               /* the desktop's router keeps source ports */
+   int desk_pubip;              /* the desktop's relay knows its public IP (UPnP) */
 } case_t;
 
 static void put_ent(int e, int where, int nattype, int own_nat)
@@ -445,6 +459,7 @@ static int run_case(const case_t *c)
       N[2].pub_ip = desk_pub = ip4(198, 51, 100, 99);
       N[2].lan = 9;
       N[2].next_port = 45000;
+      N[2].preserve = c->desk_keep;
       N[2].nfwd = 2;
       E[2].nat = 2;
       E[2].priv.ip = ip4(10, 0, 9, 2);
@@ -471,6 +486,8 @@ static int run_case(const case_t *c)
    cc.user = (void *)"desk";
    g_desk = relay_core_create(&cc);
    relay_core_set_home(g_desk, "QWER");          /* a local pick, asked for */
+   if (c->desk_pubip)
+      relay_core_set_public_ip(g_desk, desk_pub);
 
    memset(&dcfg, 0, sizeof(dcfg));
    dcfg.dir_ip_be = DIR_IP;
@@ -763,17 +780,27 @@ int main(int argc, char **argv)
 {
    static const case_t cases[] = {
       /* name                                     nat0      nat1   where0      where1    by0        by1     direct desk      hairpin */
-      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0 },
-      { "code: cone x symmetric, relayed by PC",  NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0 },
-      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0 },
-      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0 },
-      { "invite: cone x symmetric, relayed",      NAT_CONE, NAT_SYM,  W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 0 },
-      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0, 0 },
-      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0 },
-      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0, 0 },
-      { "both join by code: cone x cone, direct", NAT_CONE, NAT_CONE, W_OWN, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 1 },
-      { "both join by invite: cone x symmetric", NAT_CONE, NAT_SYM, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 1 },
-      { "both join, code + invite, symmetric x sym", NAT_SYM, NAT_SYM, W_OWN, W_OWN, BY_DIR, BY_INVITE, 0, NAT_CONE, 0, 1 },
+      { "code: cone x cone, direct",              NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0 },
+      /* sequential carrier NATs: port prediction finds the way (was "relayed by PC") */
+      { "code: cone x symmetric, direct (predicted)", NAT_CONE, NAT_SYM, W_OWN,  W_OWN,     BY_DIR,    BY_DIR,    1, NAT_CONE, 0, 0, 0, 0 },
+      { "code: cone x random sym, relayed by PC", NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0 },
+      { "code: symmetric x symmetric, relayed",   NAT_SYM,  NAT_SYM,  W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    0, NAT_CONE, 0, 0, 0, 0 },
+      { "invite: cone x cone, direct",            NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
+      { "invite: cone x symmetric, direct (pred)", NAT_CONE, NAT_SYM, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
+      { "invite: cone x random sym, relayed",     NAT_CONE, NAT_SYMR, W_OWN,    W_OWN,     BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 0, 0, 0 },
+      { "code + invite mixed, cone x cone",       NAT_CONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_INVITE, 1, NAT_CONE, 0, 0, 0, 0 },
+      /* the router changes ports: the site candidate misses */
+      { "code: host PSP in the PC's home, relayed on LAN", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 0, 0 },
+      /* ... and keeps them (2026-11-06: the relay's own home) */
+      { "code: PC's home x cone, port-keeping router", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 0 },
+      { "code: PC's home x cone, + desktop public IP", NAT_CONE, NAT_CONE, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1 },
+      { "code: PC's home x symmetric, port-keeping",  NAT_CONE, NAT_SYM,  W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 0, 1, 1 },
+      { "code: PC's home x random sym, relayed",      NAT_CONE, NAT_SYMR, W_DESKHOME, W_OWN, BY_DIR, BY_DIR, 0, NAT_CONE, 0, 0, 1, 1 },
+      { "code: public x cone, PC on a public IP", NAT_NONE, NAT_CONE, W_OWN,    W_OWN,     BY_DIR,    BY_DIR,    1, NAT_NONE, 0, 0, 0, 0 },
+      { "both join by code: cone x cone, direct", NAT_CONE, NAT_CONE, W_OWN, W_OWN, BY_DIR, BY_DIR, 1, NAT_CONE, 0, 1, 0, 0 },
+      { "both join by invite: cone x symmetric", NAT_CONE, NAT_SYM, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 1, NAT_CONE, 0, 1, 0, 0 },
+      { "both join by invite: cone x random sym", NAT_CONE, NAT_SYMR, W_OWN, W_OWN, BY_INVITE, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0 },
+      { "both join, code + invite, symmetric x sym", NAT_SYM, NAT_SYM, W_OWN, W_OWN, BY_DIR, BY_INVITE, 0, NAT_CONE, 0, 1, 0, 0 },
    };
    unsigned i, fails = 0, n = sizeof(cases) / sizeof(cases[0]);
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");

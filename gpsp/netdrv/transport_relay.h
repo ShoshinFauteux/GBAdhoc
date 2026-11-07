@@ -113,6 +113,7 @@ typedef struct rl_client_stats
    uint8_t located;                /* RL_LOC_* of the lookup (0 = none or not asked) */
    uint32_t host_ip_be;            /* the server actually used (a desktop host when located) */
    uint16_t host_port;
+   uint32_t predicted_tx;          /* PUNCHes to predicted ports (symmetric peer) */
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

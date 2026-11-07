@@ -49,6 +49,11 @@ typedef struct rl_core_cfg
    uint64_t (*random64)(void *user);
    void (*log)(void *user, const char *line);
    void *user;
+   /* this server's public IPv4 (network order), 0 = unknown.  A console the
+    * server sees at a private address shares the server's router; its peers
+    * are then offered public_ip:<its port> (routers that keep the source
+    * port make that reachable).  relay_core_set_public_ip changes it later. */
+   uint32_t public_ip_be;
 } rl_core_cfg;
 
 typedef struct rl_core_stats
@@ -74,6 +79,9 @@ void relay_core_stats(const rl_core *c, rl_core_stats *out);
  * without a code gets it while no room holds it, and a JOIN without a code
  * (a PSP that came by an invite code) joins that room. */
 void relay_core_set_home(rl_core *c, const char *code);
+/* This server's public IPv4 (network order; 0 = unknown), e.g. from UPnP's
+ * GetExternalIPAddress on a desktop host.  See rl_core_cfg.public_ip_be. */
+void relay_core_set_public_ip(rl_core *c, uint32_t ip_be);
 
 #ifdef __cplusplus
 }

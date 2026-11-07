@@ -21,9 +21,11 @@ typedef struct
    int used;
    rl_addr addr, priv;
    uint16_t map_port;        /* a router forward to this socket, 0 = none */
+   uint16_t probe_port;      /* the PROBE port's mapping (CREATE/JOIN), 0 = unknown */
    uint64_t token;
    uint64_t last_ms, repin_ms;
    uint8_t nat;
+   uint8_t path_to[RL_SLOTS];/* the path this slot last reported per peer (RL_PATH_*) */
    uint32_t bucket;          /* packets this second */
    uint32_t bucket_bytes;    /* bytes this second */
    uint64_t bucket_s;
@@ -130,6 +132,7 @@ rl_core *relay_core_create(const rl_core_cfg *cfg)
    if (!c->cfg.max_dir) c->cfg.max_dir = 256;
    if (!c->cfg.dir_per_ip) c->cfg.dir_per_ip = 2;
    if (!c->cfg.lookups_per_min) c->cfg.lookups_per_min = 120;
+   if (rl_ip_private(c->cfg.public_ip_be)) c->cfg.public_ip_be = 0;
    c->secret[0] = c->cfg.random64(c->cfg.user);
    c->secret[1] = c->cfg.random64(c->cfg.user);
    c->nrooms = c->cfg.max_rooms;
@@ -190,10 +193,17 @@ static void send_peer(rl_core *c, rl_room *r, int to, int slot, int state)
 static void send_candidates(rl_core *c, rl_room *r, int to, int about,
                             uint64_t nonce, int punch)
 {
-   uint8_t b[RL_HDR + 30];
+   uint8_t b[RL_HDR + 33];
    uint8_t *p = b + RL_HDR;
    const rl_slot *s = &r->s[about];
    uint16_t mp = s->map_port ? s->map_port : s->priv.port;
+   /* a console behind this server's own router (we see its LAN address):
+    * the other side cannot use that address, so offer our public IP with
+    * its port (the router forward if it named one, else the socket's own
+    * port -- reachable when the router keeps source ports, as many do).
+    * The private candidate stays: a peer on the same LAN uses that. */
+   int lan_host = c->cfg.public_ip_be && rl_ip_private(s->addr.ip_be) &&
+                  !rl_ip_private(r->s[to].addr.ip_be);
    rl_hdr(b, RL_T_CANDIDATES, RL_SLOT_NONE, to, 0);
    p[0] = (uint8_t)about;
    rl_put_ip(p + 1, r->s[about].addr.ip_be);
@@ -205,14 +215,27 @@ static void send_candidates(rl_core *c, rl_room *r, int to, int about,
    p[23] = (uint8_t)punch;
    /* the forward candidate: public IP, the forwarded port -- only when it
     * is a different endpoint from the one we saw */
-   if (mp && mp != s->addr.port)
+   if (lan_host)
+   {
+      rl_put_ip(p + 24, c->cfg.public_ip_be);
+      rl_put16(p + 28, s->map_port ? s->map_port : s->addr.port);
+   }
+   else if (mp && mp != s->addr.port)
    {
       rl_put_ip(p + 24, s->addr.ip_be);
       rl_put16(p + 28, mp);
    }
    else
       memset(p + 24, 0, 6);
+   /* port prediction input: the peer's NAT class and PROBE-port mapping */
+   p[30] = s->nat;
+   rl_put16(p + 31, s->probe_port);
    tx(c, 0, &r->s[to].addr, b, sizeof(b));
+}
+
+void relay_core_set_public_ip(rl_core *c, uint32_t ip_be)
+{
+   c->cfg.public_ip_be = rl_ip_private(ip_be) ? 0 : ip_be;
 }
 
 static rl_ipent *ip_find(rl_core *c, uint32_t ip, uint64_t now)
@@ -450,6 +473,8 @@ static void fill_slot(rl_core *c, rl_slot *s, const rl_addr *from,
    s->nat = body[RL_BUILD_LEN + RL_CODE_LEN + 6];
    s->map_port = n >= CJ_COOKIE + RL_COOKIE_LEN + 3
                  ? (uint16_t)rl_get16(body + CJ_COOKIE + RL_COOKIE_LEN + 1) : 0;
+   s->probe_port = n >= CJ_COOKIE + RL_COOKIE_LEN + 5
+                   ? (uint16_t)rl_get16(body + CJ_COOKIE + RL_COOKIE_LEN + 3) : 0;
    do
       s->token = c->cfg.random64(c->cfg.user);
    while (!s->token);
@@ -635,6 +660,8 @@ static void on_join(rl_core *c, int sock, const rl_addr *from,
       return;
    }
    fill_slot(c, &r->s[k], from, body, n, now);
+   for (j = 0; j < RL_SLOTS; j++)
+      r->s[j].path_to[k] = RL_PATH_RELAY;      /* a new console: no path yet */
    r->joined_ever = 1;
    r->last_ms = now;
    c->st.joins++;
@@ -1040,10 +1067,18 @@ void relay_core_input(rl_core *c, int sock, const rl_addr *from,
    case RL_T_PATH:
       if (n >= 2 && body[0] < RL_SLOTS && r->s[body[0]].used && body[0] != k)
       {
-         if (body[1] == RL_PATH_DIRECT)
-            c->st.paths_direct++;
-         lg(c, "path code=%.4s slot=%d peer=%d path=%s", r->code, k, body[0],
-            body[1] == RL_PATH_DIRECT ? "direct" : "relay");
+         int pth = body[1] == RL_PATH_DIRECT ? RL_PATH_DIRECT : RL_PATH_RELAY;
+         /* logged (and counted) on a change only: a beta.4 client repeats
+          * "relay" after every failed punch burst (every ~32 s), which says
+          * nothing new.  The peer is still told: it may think it is direct. */
+         if (s->path_to[body[0]] != pth)
+         {
+            s->path_to[body[0]] = (uint8_t)pth;
+            if (pth == RL_PATH_DIRECT)
+               c->st.paths_direct++;
+            lg(c, "path code=%.4s slot=%d peer=%d path=%s", r->code, k, body[0],
+               pth == RL_PATH_DIRECT ? "direct" : "relay");
+         }
          send_peer(c, r, body[0], k,
                    body[1] == RL_PATH_DIRECT ? RL_PEER_DIRECT : RL_PEER_RELAY);
       }
