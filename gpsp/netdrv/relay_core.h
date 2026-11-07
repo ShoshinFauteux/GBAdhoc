@@ -29,7 +29,7 @@ typedef struct rl_core_cfg
    unsigned max_rooms;           /* 0 = 256 */
    unsigned room_idle_ms;        /* drop a room this long after its last packet; 0 = 60000 */
    unsigned lobby_ms;            /* a room nobody joined expires; 0 = 600000 */
-   unsigned slot_idle_ms;        /* drop a silent slot; 0 = 20000 */
+   unsigned slot_idle_ms;        /* drop a silent slot; 0 = 45000 */
    unsigned pkt_per_s;           /* per-slot / per-source rate; 0 = 1000 */
    unsigned joins_per_min;       /* CREATE+JOIN per source IP; 0 = 30 */
    unsigned rooms_per_ip;        /* live rooms one IP may host; 0 = 3 */

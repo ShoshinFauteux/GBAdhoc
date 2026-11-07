@@ -502,6 +502,26 @@ void netdrv_set_local_fps(netdrv *nd, unsigned fps_x100);
 void netdrv_set_ack_ride(netdrv *nd, uint32_t us);
 uint32_t netdrv_ack_ride(const netdrv *nd);
 
+/* A SESSION THAT IS STARTING (beta.4 hotfix, online "The host left").  A
+ * link session's start blocks the caller for seconds: the GBA cable host
+ * reloads the game (the ROM from the card) the moment the joiner is
+ * admitted, and pumps nothing meanwhile.  A partner that hears nothing for
+ * peer_dead_us (8 s) tears down -- a slow card, or a big ROM, is enough.
+ *
+ * netdrv_keepalive: a PING to every live peer we sent nothing to for a
+ * keepalive period (a joiner not yet admitted: its JOIN, at the JOIN
+ * cadence), and nothing else: no receive, no retransmission, no
+ * timers, no callbacks.  Safe to call from inside such a blocking stretch
+ * (a ROM-load progress hook); netdrv_pump resumes everything after it.
+ * A no-op inside a pump, with no session, or without a peer.
+ *
+ * netdrv_set_peer_dead_us: nd_config.peer_dead_us on a live driver (0 =
+ * ND_PEER_DEAD_US): the silence after which a peer (a client: its host) is
+ * dead.  Local only; the wire is unchanged. */
+void netdrv_keepalive(netdrv *nd, uint64_t now_us);
+void netdrv_set_peer_dead_us(netdrv *nd, uint32_t us);
+uint32_t netdrv_peer_dead_us(const netdrv *nd);
+
 /* Slowest ACTIVE peer that has reported a rate, in hundredths.
  * 0 = no peer has reported one (no session, or all peers are silent/old). */
 unsigned netdrv_peer_min_fps(const netdrv *nd);

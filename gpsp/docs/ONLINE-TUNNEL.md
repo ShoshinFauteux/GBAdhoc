@@ -207,8 +207,48 @@ plus a 168-byte frame is far below any internet MTU.
   every NAT binding open with no extra traffic.
 - In the lobby (room created, nobody joined), the transport sends KEEP every 15 s. Home NATs commonly drop
   idle UDP bindings after 30-120 s.
-- The server drops a slot after 20 s of silence and tells the others (BYE). netdrv's own 8 s peer-death
-  rule fires first, so the session sees an ordinary disconnect.
+- The server drops a slot after 45 s of silence and tells the others (BYE). netdrv's own 8 s peer-death
+  rule fires first, so the session sees an ordinary disconnect. It was 20 s until 2026-11-07: a console
+  starting a cable session reloads its game first (18-25 s on a slow card, sending nothing on beta.4),
+  and the server dropped it mid-start. Since then a starting console also keeps its link alive during
+  the reload (netdrv_keepalive from the ROM-load hook), and a joiner waits up to 30 s for a host that is
+  still starting (section 5, "A session that is starting").
+
+### A session that is starting (2026-11-07, beta.4 "The host left")
+
+Seen on hardware, both directions, with one tester's PSP (beta.4 on both): the joiner showed "The host
+left" 12-13 s after joining, and with the roles reversed the server dropped the joiner after 20 s of
+silence. Nothing waited on the punching: data goes over the relay from the first frame, and every
+"path ... relay" line came from a console that was running normally. The cause is the cable session's
+start:
+
+- A GBA cable session reloads the game first (late mode: instance A out and in, B loaded). The ROM comes
+  from the card, and nothing is pumped meanwhile: 2-4 s on the 3000 and the Go, **18-25 s** on the
+  tester's console (a slow card is enough). The joiner reloads before its first JOIN; the host reloads
+  the moment it admits the joiner.
+- A partner hears nothing for that long. netdrv's 8 s peer-death fires (the joiner admitted at ~4 s,
+  dead at ~12 s: the logs' 12.2-13.0 s), or the server's slot timeout (20 s) drops the silent console.
+- Re-joining while the host was still in its end-of-session reload: no answer to the JOIN for 12 s read
+  as "a different GBAdhoc version".
+
+The fix, wire-compatible (no new message):
+
+1. **Keepalive during the reload** (`netdrv_keepalive`, called from the ROM-load progress hook once per
+   MiB and at each reload stage): a PING to the partner, or a not-yet-admitted joiner's JOIN, and nothing
+   else. A fixed console never goes silent while it starts.
+2. **A joiner waits for a host that is starting**: during setup, until the partner's HELLO, netdrv's
+   peer-death limit is the session's own no-partner limit (30 s, `fe_gblink` `NO_PEER_STEPS`), then 8 s.
+3. **The version verdict needs a host that is there**: the 12 s "different version" rule fires only if
+   the host sent anything in the last 2 s (a host on another protocol still sends its roster every
+   second). A silent host ends as "The host left" at 30 s instead.
+4. **Server slot timeout 45 s** (was 20 s): a beta.4 console reloading silently keeps its slot.
+
+| host / joiner | beta.4 / beta.4 | fixed / beta.4 | beta.4 / fixed | fixed / fixed |
+|---|---|---|---|---|
+| slow host start (<= 30 s) | fails (8 s) | ok (1) | ok (2, + 4 if > 20 s) | ok |
+| slow joiner start | ok with 4 | ok with 4 | ok (1) | ok |
+
+`tools/relay/test_relay_nat.c`, the `start:` cases, models each row (and fails the beta.4 pair).
 
 ### Reliability over UDP
 

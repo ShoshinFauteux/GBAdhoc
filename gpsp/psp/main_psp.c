@@ -8197,6 +8197,24 @@ static int g_gblink_pace0;                    /* harness gblink_pace_slot0 */
  * session starts (no hold) -- the connecting screen then has a game to dim,
  * as in a player's session.  0 = hold from boot (the rig's default). */
 static unsigned g_gblink_start_frames;
+/* The beta.4 start fix's three parts as harness A/B arms (PERF_RIG only;
+ * 0 = beta.4's behaviour), and a slow card for PPSSPP: link_start_keepalive
+ * (the reload keeps the link alive), link_start_grace (a joiner waits 30 s
+ * for a starting host), link_start_heard (the version verdict needs a host
+ * that is there), gblink_reload_slow_ms (ms per MiB the reload reads), and
+ * gblink_host_wait_peer (a role host starts its session when the joiner is
+ * admitted, as a menu host does, instead of at once). */
+#ifdef GPSP_PERF_RIG
+static int g_start_keepalive = 1, g_start_grace = 1, g_start_heard = 1;
+static unsigned g_reload_slow_ms;
+static int g_gblink_host_wait_peer;
+#else
+#define g_start_keepalive 1
+#define g_start_grace 1
+#define g_start_heard 1
+#define g_reload_slow_ms 0u
+#define g_gblink_host_wait_peer 0
+#endif
 static int g_gblink_keep_stamp;               /* harness A/B: the old stamp */
 static int g_gblink_auto_started;             /* harness: the one session */
 static unsigned g_gblink_after;               /* harness: frames to play on */
@@ -8272,16 +8290,39 @@ static void gba_reload_draw(const char *what)
    vid_swap();
 }
 
+/* The link stays alive through the reload (beta.4 hotfix, online "The host
+ * left"): the reload reads the whole ROM from the card and pumps nothing --
+ * 2-4 s here, 18-25 s on a tester's console -- and the other PSP gives up
+ * on a silent partner after 8 s (netdrv), the relay after 20 s.  Once per
+ * MiB read, and at each stage: a PING to the partner (a joiner not yet
+ * admitted: its JOIN), nothing else (fe_np_keepalive). */
+extern void (*gpsp_rom_load_progress)(unsigned, unsigned);
+static void (*g_reload_prev_progress)(unsigned, unsigned);
+static void gba_reload_progress(unsigned loaded, unsigned total)
+{
+   (void)loaded; (void)total;
+   if (g_reload_slow_ms)
+      sceKernelDelayThread(g_reload_slow_ms * 1000u);
+   if (g_net_up && g_start_keepalive)
+      fe_np_keepalive();
+}
+
 static void gba_reload_note(int phase, const char *what)
 {
    static uint64_t t0;
+   if (g_net_up && g_start_keepalive)
+      fe_np_keepalive();
    if (phase == 0)
    {
       t0 = net_now_us();
       g_reload_steps = 0;
       g_reload_l1 = what;
       me_rend_suspend();
+      g_reload_prev_progress = gpsp_rom_load_progress;
+      gpsp_rom_load_progress = gba_reload_progress;
    }
+   if (phase == 2 || phase == -1)
+      gpsp_rom_load_progress = g_reload_prev_progress;
    if (phase == 0)
       gba_reload_draw(NULL);
    else if (phase == 1)
@@ -8953,9 +8994,36 @@ static unsigned g_link_exit_after;
  * room has its two players), or nobody answered our JOIN while the room's
  * radio cell is plainly there (the host runs another protocol: a different
  * GBAdhoc release, or a GBA room seen from a GB console). */
+/* "The other PSP runs a different version" needs a host that is THERE and
+ * does not answer our JOIN: a host on another protocol still pumps (its
+ * roster, every second, reaches us).  A host that sends nothing at all is
+ * busy -- reloading its game for a session start or end, 18-25 s on a slow
+ * card (2026-11-07: a re-join during the host's end-of-session reload read
+ * as a version mismatch) -- or gone, and fe_gblink's own no-partner limit
+ * (30 s, "The host left") covers that.  Heard = a frame in the last 2 s. */
+static int link_host_heard(void)
+{
+   static uint32_t last_rx;
+   static unsigned last_tick, heard_at;     /* heard_at: tick + 1, 0 = never */
+   uint32_t rx = fe_np_rx_frames();
+   if (g_link_setup_ticks <= 1 || g_link_setup_ticks < last_tick)
+   {
+      heard_at = 0;                          /* a new session's setup */
+      last_rx = rx;
+   }
+   last_tick = g_link_setup_ticks;
+   if (rx != last_rx)
+   {
+      last_rx = rx;
+      heard_at = g_link_setup_ticks + 1;
+   }
+   return heard_at && g_link_setup_ticks + 1 - heard_at < 2u * 60u;
+}
+
 static void link_setup_watch(void)
 {
    unsigned pad_new = g_pad & ~g_link_prev_pad;
+   int heard;
    fe_gblink_progress pr;
    g_link_prev_pad = g_pad;
    g_link_setup_ticks++;
@@ -8970,6 +9038,7 @@ static void link_setup_watch(void)
    }
    if (g_net_is_host)
       return;
+   heard = link_host_heard();          /* every frame: it tracks the rx count */
    fe_host_gblink_facts(&pr);
    if (pr.peer_up)
       return;
@@ -8977,7 +9046,7 @@ static void link_setup_watch(void)
       g_link_why = LW_FULL;
    else if (fe_np_stop_reason() == ND_STOP_VERSION)
       g_link_why = LW_VERSION;
-   else if (g_link_setup_ticks > 12u * 60u &&
+   else if (g_link_setup_ticks > 12u * 60u && (heard || !g_start_heard) &&
             (online_psp_enabled() ? online_psp_connected()
                                   : adhoc_transport_connected()))
       g_link_why = g_pcfg.console != FE_CONSOLE_GBA &&
@@ -9100,6 +9169,8 @@ static int link_end(int st)
 
 /* Once per loop iteration.  Returns 1 when a harness run should exit now,
  * with *code set. */
+/* fe_gblink.c NO_PEER_STEPS: the session's own wait for the partner's HELLO */
+#define LINK_START_GRACE_US 30000000u
 static int gblink_service(int have_script, int *code, const char **why)
 {
    static unsigned ticks, script_done_ticks;
@@ -9132,6 +9203,7 @@ static int gblink_service(int have_script, int *code, const char **why)
     * here once the harness's save state was in. */
    if (g_gblink_role && !g_gblink_auto_started && g_net_up &&
        !g_autoload_state && !fe_host_gblink_active() &&
+       (g_gblink_role != 1 || !g_gblink_host_wait_peer || fe_np_gb_peer_ready(NULL)) &&
        fe_host_frame_count() >= g_gblink_start_frames &&
        (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable))
    {
@@ -9155,6 +9227,12 @@ static int gblink_service(int have_script, int *code, const char **why)
       me_rend_suspend();
       rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);
       me_rend_resume();
+      if (rc == 0 && g_gblink_role == 1 && g_gblink_host_wait_peer)
+      {
+         /* the block above starts the session once the joiner is in */
+         g_gblink_auto_started = 0;
+         return 0;
+      }
       if (rc != 0 || gblink_begin(g_gblink_role == 1) != 0)
       {
          fe_evt("gblink_auto_fail rc=%d stage=%s", rc, adhoc_transport_stage());
@@ -9189,9 +9267,23 @@ static int gblink_service(int have_script, int *code, const char **why)
    {
       g_link_mute = 0;
       gblink_audio_session(0);
+      fe_np_set_peer_dead_us(0);       /* no session starting: netdrv's 8 s */
       return 0;
    }
    st = fe_host_gblink_state();
+   {
+      /* A partner that is STARTING (beta.4 hotfix): until its HELLO, the
+       * partner may be reloading its game (a cable host does that the
+       * moment it admits us, 18-25 s on a slow card, silent on beta.4), so
+       * its silence counts against the session's own no-partner limit
+       * (fe_gblink NO_PEER_STEPS, 30 s), not netdrv's 8 s.  After it: 8 s. */
+      fe_gblink_progress gp;
+      gp.have_peer_header = 1;
+      if (st == FE_GBLINK_SETUP)
+         fe_host_gblink_facts(&gp);
+      fe_np_set_peer_dead_us(!gp.have_peer_header && g_start_grace
+                             ? LINK_START_GRACE_US : 0u);
+   }
    if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
    {
       char l1[64], l2[64];
@@ -14144,6 +14236,16 @@ int main(int argc, char *argv[])
       g_gblink_pace0 = fe_ini_get_int(HARNESS_INI, "gblink_pace_slot0", 0) != 0;
       g_gblink_start_frames = (unsigned)fe_ini_get_int(HARNESS_INI,
                                                       "gblink_start_frames", 0);
+#ifdef GPSP_PERF_RIG
+      g_start_keepalive = fe_ini_get_int(HARNESS_INI, "link_start_keepalive", 1) != 0;
+      g_start_grace = fe_ini_get_int(HARNESS_INI, "link_start_grace", 1) != 0;
+      g_start_heard = fe_ini_get_int(HARNESS_INI, "link_start_heard", 1) != 0;
+      g_reload_slow_ms = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_reload_slow_ms", 0);
+      g_gblink_host_wait_peer = fe_ini_get_int(HARNESS_INI, "gblink_host_wait_peer", 0) != 0;
+      fe_evt("link_start_arms keepalive=%d grace=%d heard=%d slow_ms=%u host_wait_peer=%d",
+             g_start_keepalive, g_start_grace, g_start_heard, g_reload_slow_ms,
+             g_gblink_host_wait_peer);
+#endif
       g_gblink_keep_stamp = fe_ini_get_int(HARNESS_INI,
                                            "gblink_rtc_keep_session", 0) != 0;
       /* Smoothness (gblink_service's block comment): config.ini is the

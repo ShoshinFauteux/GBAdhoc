@@ -114,6 +114,15 @@ void fe_np_pump(void);
 /* Tear down: core stop(), BYE to peers, driver freed. */
 void fe_np_stop(void);
 
+/* A session that is starting (netdrv.h, netdrv_keepalive): keep the link
+ * alive from inside a blocking stretch (a session start's game reload); a
+ * live peer's silence limit, 0 = netdrv's default (8 s); frames received
+ * so far (any, from anyone: "is the other side there at all").  No-ops / 0
+ * with no session up. */
+void fe_np_keepalive(void);
+void fe_np_set_peer_dead_us(uint32_t us);
+uint32_t fe_np_rx_frames(void);
+
 /* 1 while a session is established (start() called, not stopped). */
 int fe_np_session_active(void);
 
