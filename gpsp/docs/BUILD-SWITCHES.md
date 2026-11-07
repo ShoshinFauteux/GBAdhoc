@@ -21,6 +21,15 @@ linked, so they stay make variables, default 1 for `psp1` in both makefiles.
 `ONLINE` (psp/Makefile only, default 1) is the same kind: experimental online
 play (docs/ONLINE-TUNNEL.md), compiled in and off until Settings > Online play
 is turned on; `ONLINE=0` compiles it out.
+
+`MGIFT` (psp/Makefile and tools/build.sh, default 1) is Mystery Gift, the
+Wonder Card receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c).
+`MGIFT=0` compiles out its objects, the Wireless > Mystery Gift row and
+screen, the Controls binding row, the chord and the per-frame poll; the
+infrastructure Wi-Fi bring-up (mgift_net.o) stays while online play is in,
+and the `bind_mystery_gift` config key is still read and written.  MGIFT=1
+is the same program as before the switch (psp-nm identical, round 10).
+MGIFT=0 is a variant arm (the lock is reported, not enforced): on the round-10 release layout (unpinned) it is .text -13,088 B, .bss -8,192 B, .data +4,864 B (the .data pin's slack moves), image -16,384 B, so +16,384 B (2 x 8 KiB) of PSP-1000 boot heap; the lab layout gains 24,576 B. About 19.7 KiB of symbols go (20,157 B) (scratch mgsum in builds/opt-review/scratch/r10). A shipped MGIFT=0 build would need its own re-pin: `main` shrinks 684 B.
 `LAYOUT_PAD_BYTES` and `LAYOUT_PAD_RO_BYTES` (docs/LAYOUT-PINNING.md, "Keeping the pads") are the defaults in `psp/Makefile`, `HOT_DATA_GUARD`'s link
 script follows the core, `PSP_PIXFMT` stays a variable because it reaches the ME
 sub-make, and the `TGB_*` switches stay scoped to the GB core's objects. This
@@ -38,7 +47,7 @@ code** and stay.
 |---|---|
 | one feature off, an A/B arm | `CORE_EXTRA="XLAT_PURE=0" tools/build.sh harness` (root make `XLAT_PURE=0`, which is `-DGPSP_NO_XLAT_PURE`). A release refuses `CORE_EXTRA`. |
 | a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
-| the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0` (frontend only) |
+| the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only) |
 | a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_VID_TRIPLE` drops a playable default |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
