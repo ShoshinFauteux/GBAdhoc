@@ -11,14 +11,11 @@
 sound_timer                                       0.677621     884
 sound_read_samples                                0.130810     180
 check_and_raise_interrupts                        0.145173     292
-update_gba                                        1.775192    3856
+update_gba                                        1.775192    4068
 serial_next_event                                 0.045799     148
 sound_timer_queue32                               0.033961     112
 check_interrupt                                   0.014094      68
-memcmp                                            0.015236     128 libc.a:libc_a-memcmp.o
-block_lookup_address_dual                         0.005241      52
 process_cheats                                    0.000412       8
-strlen                                            0.000360      28 libc.a:libc_a-strlen.o
 update_scanline                                   0.076800    7740
 # ---- warm tail
 @mips_stub.o(.text.msr_fast)
@@ -161,3 +158,12 @@ __udivdi3                                         0.000001    1340 libgcc.a:_udi
 render_gbc_sound                                  0.297837   25816
 translate_block_thumb                             0.049984   99048
 translate_block_arm                               0.090269  358672
+# ---- late: linked after B's hot path, A's copy then B's (gen_layout.py write_ord).  Three small
+# hot-core functions give back update_gba's HALT_HOP growth (212 B; 208 out, so the warm tail lands on its sets);
+# halt_hop_* (claude/kirby-hop2) are the only per-halt code and run at most a few times a frame.
+memcmp                                            0.015236     128 libc.a:libc_a-memcmp.o
+block_lookup_address_dual                         0.005241      52
+strlen                                            0.000360      28 libc.a:libc_a-strlen.o
+halt_hop_begin                                    0.000000       0
+halt_hop_wake                                     0.000000       0
+halt_hop_lines                                    0.000000       0

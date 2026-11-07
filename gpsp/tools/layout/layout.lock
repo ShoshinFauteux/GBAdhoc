@@ -39,10 +39,10 @@ at   hex_val                            0x1a14
 at   pte_mutex_check_need_init          0x1224
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
-at   block_lookup_translate_arm         0x1320
-at   block_lookup_translate_thumb       0x1c60
+at   block_lookup_translate_arm         0x1240
+at   block_lookup_translate_thumb       0x1b80
 gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
-at   gbab_update_gba                    0x0c60
+at   gbab_update_gba                    0x0b60
 at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
@@ -78,7 +78,7 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x0bd0
-size main                               48640
+size main                               48648
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
@@ -89,10 +89,10 @@ at   hex_val                            0x01cc
 at   pte_mutex_check_need_init          0x07e4
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
-at   block_lookup_translate_arm         0x1320
-at   block_lookup_translate_thumb       0x1c60
+at   block_lookup_translate_arm         0x1240
+at   block_lookup_translate_thumb       0x1b80
 gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
-at   gbab_update_gba                    0x0260
+at   gbab_update_gba                    0x01a0
 at   gbab_block_lookup_translate_arm    0x1fa0
 at   gbab_block_lookup_address_arm      0x11a0
 at   gbab_block_lookup_translate_thumb  0x08c0
