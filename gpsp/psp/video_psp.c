@@ -163,8 +163,10 @@ static void dest_rect(unsigned w, unsigned h,
 
 /* Ambient bars, defined at the end of this file. */
 static int  amb_draw_bg(const vid_geo *g);
-static void amb_snap_maybe(const uint16_t *src, int stride, unsigned w,
-                           unsigned h, int uncached);
+static void amb_glow_sample(const uint16_t *src, int stride, unsigned w,
+                            int sy0, int sy1, int ge_order);
+/* The uncached alias of a buffer the ME (or the GE) wrote behind the D-cache. */
+#define VID_UNCACHED(p) ((const uint16_t *)(0x40000000u | (uintptr_t)(p)))
 
 /* Sharp bilinear (docs/SHARP-BILINEAR.md), defined after the ambient bars:
  * its render target sits above their texture in VRAM. */
@@ -1113,9 +1115,8 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    if (d > g_gu_us_max)
       g_gu_us_max = d;
    g_blit_frames++;
-   /* Outside the blit_prof brackets: a snapshot is a one-off, priced by its
-    * own EVT line, and must not read as a blit regression. */
-   amb_snap_maybe(pix, (int)(pitch_bytes / 2), w, h, 0);
+   /* The edge glow's samples, for the next frame's bars. */
+   amb_glow_sample(pix, (int)(pitch_bytes / 2), w, g.sy0, g.sy0 + g.sh, 0);
 }
 
 /* ADR-0080: draw a frame that something else (the Media Engine) already
@@ -1157,8 +1158,10 @@ void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
    if (d > g_gu_us_max)
       g_gu_us_max = d;
    g_blit_frames++;
-   /* The ME wrote `staged` behind the D-cache: read it uncached. */
-   amb_snap_maybe(staged, STAGE_STRIDE, w, h, 1);
+   /* The edge glow's samples, for the next frame's bars.  The ME wrote
+    * `staged` behind the D-cache: read it uncached. */
+   amb_glow_sample(VID_UNCACHED(staged), STAGE_STRIDE, w, g.sy0,
+                   g.sy0 + g.sh, 1);
 }
 
 /* ---------------------------------------------------------------- overlay */
@@ -1284,6 +1287,9 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
     * does not visibly resample the game behind it.  (It was one GU_LINEAR
     * quad, which softened a nearest picture the moment the menu came up.)
     * The snapshot is a 256-stride texture like the staging buffer. */
+   if (texw == STAGE_STRIDE)     /* the glow behind a menu: this picture's */
+      amb_glow_sample(VID_UNCACHED(pix), STAGE_STRIDE, (unsigned)srcw,
+                      g.sy0, g.sy0 + g.sh, 1);
    if (texw != STAGE_STRIDE || !sharp_draw(pix, (unsigned)srcw, &g))
    {
       if (texw == STAGE_STRIDE)
@@ -1921,6 +1927,9 @@ int vid_dump_ge(const char *path)
 /* ===========================================================================
  * AMBIENT BARS (docs/DISPLAY-FEATURES.md, look in ambient_look.h)
  *
+ * Two looks: the ART (hero art or a cover, baked once into a texture) and
+ * the EDGE GLOW (the picture's own left/right edges, live).
+ *
  * THE TEXTURE LIVES IN VRAM, NOT IN RAM.  The 2 MiB of eDRAM hold the
  * display buffers, the depth buffer and the 82 KiB staging buffer -- 1.17 MiB
  * with triple buffering -- and nothing else, on every model.  The 32 KiB
@@ -1929,35 +1938,51 @@ int vid_dump_ge(const char *path)
  * (PSP_HEAP_SIZE_KB(-1024) is "all of it but 1 MiB"), so 32 KiB of BSS is
  * 32 KiB less for the core's ROM-cache loop -- the PSP-1000 post-load budget
  * the core exhausts by design.  VRAM costs it nothing.  The offset does not
- * depend on blit_mode, so a staging fallback to RAM cannot move it.
+ * depend on blit_mode, so a staging fallback to RAM cannot move it.  The
+ * glow's 144 B of state live there too, in a texture row the bake never
+ * writes (AMB_GLOW_ROW): not one byte of BSS.
  *
  *   [display x VID_NBUF][depth][staging 82 KiB][ambient 32 KiB]
  *
  * PER FRAME: the bars are drawn IN PLACE OF the clear the frame already
- * paid for -- one textured sprite per bar (2 at Fit, 4 at 1x, 0 at Stretch
- * and GBA 2x), GU_LINEAR, the scrim folded into the texture function as a
- * MODULATE colour.  Fewer pixels than the clear, no blending, no CPU work
- * beyond the vertices.  The bake is the only per-pixel CPU work, and it runs
- * once.
+ * paid for (2 bars at Fit, 4 at 1x, 0 at Stretch and GBA 2x), no blending.
+ * Art: one textured sprite per bar, GU_LINEAR, the scrim folded into the
+ * texture function as a MODULATE colour.  Glow: one gouraud strip per bar.
+ * The glow's only CPU work is 4 * AMB_GLOW_BANDS 32-bit reads of the frame
+ * every AMB_GLOW_EVERY frames and the vertices; the art's is the bake, once.
  * ======================================================================== */
 
 #define AMB_TEX_W   128          /* power-of-two home for AMB_W x AMB_H */
 #define AMB_TEX_H   128
 #define AMB_TEX_BYTES (AMB_TEX_W * AMB_TEX_H * 2)
+/* The glow state: [side][band][r,g,b], 8.8 fixed point, in one texture row
+ * past the bake's AMB_H + 1. */
+#define AMB_GLOW_ROW (AMB_H + 4)
+#define AMB_GLOW_N   (AMB_GLOW_BANDS * 3)
+#define AMB_GLOW_IN  (255 - AMB_GLOW_SCRIM)
+#define AMB_GLOW_OUT (AMB_GLOW_IN * AMB_GLOW_OUTER / 255)
+
+/* The ambient code is size-optimised: it runs once per frame at most, over a
+ * few dozen values, and every byte of frontend text past layout_pad_cold
+ * moves the pinned layout (docs/LAYOUT-PINNING.md, "Keeping the pads"). */
+#define AMB_SMALL __attribute__((optimize("Os"), noinline))
 
 typedef char amb_w_fits[(AMB_W + 1 <= AMB_TEX_W && AMB_W % 4 == 0) ? 1 : -1];
-typedef char amb_h_fits[(AMB_H + 1 <= AMB_TEX_H) ? 1 : -1];
+typedef char amb_h_fits[(AMB_GLOW_ROW < AMB_TEX_H &&
+                         2 * AMB_GLOW_N <= AMB_TEX_W) ? 1 : -1];
 
-enum { AMB_SRC_NONE = 0, AMB_SRC_ART = 1, AMB_SRC_SNAP = 2 };
+enum { AMB_SRC_NONE = 0, AMB_SRC_ART = 1 };
 
-static uint16_t *g_amb_tex;      /* uncached VRAM, NULL until first bake */
-static int       g_amb_mode;     /* PCFG_AMB_* (0 off, 1 art, 2 art|game) */
+static uint16_t *g_amb_tex;      /* uncached VRAM, NULL until first use   */
+static int       g_amb_mode;     /* PCFG_AMB_* (0 off, 1 art, 2 glow)     */
 static int       g_amb_src;      /* AMB_SRC_* of what g_amb_tex holds     */
-static int       g_amb_scrim;    /* alpha of the black scrim for g_amb_src */
-static uint16_t  g_amb_shade;    /* palette fallback, libretro RGB565      */
-static int       g_amb_have_shade;
-static unsigned  g_amb_frames;   /* presented frames, snapshot clock      */
-static int       g_amb_snap_done;
+static int       g_amb_scrim;    /* alpha of the black scrim for the art  */
+static int       g_amb_glow;     /* AMB_GLOW_LIVE | AMB_GLOW_UNLIT        */
+enum
+{
+   AMB_GLOW_LIVE  = 1,           /* the state holds a sample              */
+   AMB_GLOW_UNLIT = 2            /* the last frame drawn had no bars      */
+};
 
 typedef struct
 {
@@ -1984,34 +2009,23 @@ static uint16_t *vram_at(uintptr_t off, uintptr_t bytes)
                        ((uintptr_t)sceGeEdramGetAddr() + off));
 }
 
+/* The ambient texture, placed on first use (bake or glow). */
+static uint16_t *amb_tex(void)
+{
+   if (!g_amb_tex)
+      g_amb_tex = vram_at(vram_free_base(), AMB_TEX_BYTES);
+   return g_amb_tex;
+}
+
 void vid_ambient_mode(int mode)
 {
    g_amb_mode = (mode >= 0 && mode <= 2) ? mode : 0;
-   g_amb_frames = 0;             /* a newly enabled snapshot waits again */
-}
-
-void vid_ambient_fallback(uint16_t rgb565)
-{
-   g_amb_shade = rgb565;
-   g_amb_have_shade = 1;
+   g_amb_glow = 0;               /* the next sample starts the glow afresh */
 }
 
 int vid_ambient_source(void)
 {
    return g_amb_src;
-}
-
-void vid_ambient_resnap(void)
-{
-   /* Only a snapshot is ever retaken; art is the art. */
-   if (g_amb_src == AMB_SRC_SNAP || (g_amb_src == AMB_SRC_NONE &&
-                                     g_amb_snap_done))
-   {
-      g_amb_snap_done = 0;
-      g_amb_frames = AMB_SNAP_AFTER - 1;   /* the next presented frame */
-      if (g_amb_src == AMB_SRC_SNAP)
-         g_amb_src = AMB_SRC_NONE;          /* palette until it lands */
-   }
 }
 
 void vid_ambient_drop(void)
@@ -2029,67 +2043,194 @@ int vid_ambient_image(int x, int y, int w, int h, int alpha)
    return 1;
 }
 
-/* One bar: screen rect [x0,x1) x [y0,y1), textured from the matching part
- * of the screen-sized texture, or a vertical palette ramp when tex == 0. */
-static void amb_bar(int x0, int y0, int x1, int y1, int textured,
-                    unsigned int top, unsigned int bot)
+/* The bars show the art: "art" mode with art baked.  Otherwise (glow mode,
+ * or no art) they show the glow. */
+static int amb_art(void)
 {
+   return g_amb_mode == 1 && g_amb_src == AMB_SRC_ART && g_amb_tex;
+}
+
+/* One art bar: screen rect [x0,x1) x [y0,y1), textured from the matching
+ * part of the screen-sized texture. */
+AMB_SMALL static void amb_bar(int x0, int y0, int x1, int y1)
+{
+   ftvtx_t *v;
    if (x1 <= x0 || y1 <= y0)
       return;
-   if (textured)
+   v = (ftvtx_t *)sceGuGetMemory(2 * sizeof(ftvtx_t));
+   v[0].u = (float)x0 * AMB_W / VID_SCR_W;
+   v[0].v = (float)y0 * AMB_H / VID_SCR_H;
+   v[0].x = (float)x0; v[0].y = (float)y0; v[0].z = 0.0f;
+   v[1].u = (float)x1 * AMB_W / VID_SCR_W;
+   v[1].v = (float)y1 * AMB_H / VID_SCR_H;
+   v[1].x = (float)x1; v[1].y = (float)y1; v[1].z = 0.0f;
+   sceGuDrawArray(GU_SPRITES,
+                  GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D,
+                  2, 0, v);
+}
+
+/* THE GLOW'S SAMPLES.  Called with every presented frame (and the menu's
+ * backdrop); does nothing while the bars show art or are off, and samples
+ * only every AMB_GLOW_EVERY frames once the glow has started, and not at
+ * all while the picture leaves no bars.  Per side, AMB_GLOW_BANDS rows
+ * spread over the drawn source rows [sy0, sy1), 4 pixels each at
+ * x 0,1,4,5 (left) or w-6,w-5,w-2,w-1 (right): two 32-bit reads.
+ * The bands are softened [1 2 1] and eased into the state in VRAM.  An
+ * ME- or GE-written `src` comes as its VID_UNCACHED alias.  `ge_order`: the
+ * pixels are in the GE's channel order (an ME stage, the menu's snapshot);
+ * 0 is the core's own frame, libretro order unless USE_PSP_RGB565_FORMAT. */
+/* noipa: keep the signature as written (see vid_draw_prestaged, on the pinned
+ * warm tail: its size is part of the layout). */
+AMB_SMALL __attribute__((noipa))
+static void amb_glow_sample(const uint16_t *src, int stride,
+                            unsigned w, int sy0, int sy1,
+                            int ge_order)
+{
+   unsigned c[AMB_GLOW_N];
+   uint16_t *st;
+   int side, i, k, sh = sy1 - sy0;
+
+   if (!g_amb_mode || amb_art() || !src || w < 8 || sh <= 0 || sy0 < 0 ||
+       (((uintptr_t)src | (uintptr_t)stride | w) & 1u))
+      return;
+   if ((g_amb_glow & AMB_GLOW_LIVE) &&
+       ((g_amb_glow & AMB_GLOW_UNLIT) || g_blit_frames % AMB_GLOW_EVERY))
+      return;
+   st = amb_tex();
+   if (!st)
+      return;
+   st += AMB_GLOW_ROW * AMB_TEX_W;
+
+   for (side = 0; side < 2; side++, st += AMB_GLOW_N)
    {
-      ftvtx_t *v = (ftvtx_t *)sceGuGetMemory(2 * sizeof(ftvtx_t));
-      v[0].u = (float)x0 * AMB_W / VID_SCR_W;
-      v[0].v = (float)y0 * AMB_H / VID_SCR_H;
-      v[0].x = (float)x0; v[0].y = (float)y0; v[0].z = 0.0f;
-      v[1].u = (float)x1 * AMB_W / VID_SCR_W;
-      v[1].v = (float)y1 * AMB_H / VID_SCR_H;
-      v[1].x = (float)x1; v[1].y = (float)y1; v[1].z = 0.0f;
-      sceGuDrawArray(GU_SPRITES,
-                     GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D,
-                     2, 0, v);
+      const uint16_t *col = src + (side ? (int)w - 6 : 0);
+      for (i = 0; i < AMB_GLOW_BANDS; i++)
+      {
+         int y = sy0 + (2 * i + 1) * sh / (2 * AMB_GLOW_BANDS);
+         const uint32_t *p = (const uint32_t *)(col + (long)y * stride);
+         uint32_t a = p[0], b = p[2];
+         /* Four GE 5650 pixels, R in the low bits: sum per channel. */
+         unsigned r  = (a & 31) + ((a >> 16) & 31) + (b & 31) +
+                       ((b >> 16) & 31);
+         unsigned gg = ((a >> 5) & 63) + ((a >> 21) & 63) +
+                       ((b >> 5) & 63) + ((b >> 21) & 63);
+         unsigned bl = ((a >> 11) & 31) + (a >> 27) + ((b >> 11) & 31) +
+                       (b >> 27);
+#ifndef USE_PSP_RGB565_FORMAT
+         if (!ge_order)          /* the core's libretro order: R high */
+         {
+            unsigned t = r; r = bl; bl = t;
+         }
+#else
+         (void)ge_order;
+#endif
+         c[i * 3]     = (r  * 33) >> 4;      /* 4 x 31 -> 255 */
+         c[i * 3 + 1] = (gg * 65) >> 6;      /* 4 x 63 -> 255 */
+         c[i * 3 + 2] = (bl * 33) >> 4;
+      }
+      for (i = 0; i < AMB_GLOW_BANDS; i++)
+         for (k = 0; k < 3; k++)
+         {
+            int up = i > 0 ? i - 1 : 0;
+            int dn = i < AMB_GLOW_BANDS - 1 ? i + 1 : i;
+            int t = (int)((c[up * 3 + k] + 2 * c[i * 3 + k] +
+                           c[dn * 3 + k]) << 6);          /* x4, 8.8 */
+            int s = st[i * 3 + k];
+            st[i * 3 + k] = (uint16_t)((g_amb_glow & AMB_GLOW_LIVE) ?
+                                       s + ((t - s) >> AMB_GLOW_EASE) : t);
+         }
    }
-   else
+   g_amb_glow |= AMB_GLOW_LIVE;
+}
+
+/* A glow colour, ABGR: state `s` (3 x 8.8) at brightness k/256. */
+AMB_SMALL static unsigned int amb_glow_col(const uint16_t *s, unsigned k)
+{
+   return 0xFF000000u | ((s[2] * k >> 16) << 16) |
+          ((s[1] * k >> 16) << 8) | (s[0] * k >> 16);
+}
+
+/* The glow bars around the picture [x0,x1) x [y0,y1) (clamped to the
+ * screen).  A side bar is one strip, a vertex pair (inner edge, outer edge)
+ * per band at its centre row plus the screen's top and bottom rows; above
+ * and below a picture that does not reach them (1x), the inner edge fades
+ * to the outer brightness, and the top and bottom bars blend the two sides'
+ * end bands across. */
+AMB_SMALL static void amb_glow_draw(const vid_geo *g, int x0, int y0, int x1, int y1)
+{
+   const uint16_t *st = g_amb_tex + AMB_GLOW_ROW * AMB_TEX_W;
+   const int rows = AMB_GLOW_BANDS + 2;
+   int side, r;
+
+   sceGuDisable(GU_TEXTURE_2D);
+   sceGuShadeModel(GU_SMOOTH);
+   for (side = 0; side < 2; side++)
    {
-      cvtx_t *v = (cvtx_t *)sceGuGetMemory(4 * sizeof(cvtx_t));
-      v[0].color = top; v[0].x = (short)x0; v[0].y = (short)y0; v[0].z = 0;
-      v[1].color = top; v[1].x = (short)x1; v[1].y = (short)y0; v[1].z = 0;
-      v[2].color = bot; v[2].x = (short)x0; v[2].y = (short)y1; v[2].z = 0;
-      v[3].color = bot; v[3].x = (short)x1; v[3].y = (short)y1; v[3].z = 0;
+      const uint16_t *s = st + side * AMB_GLOW_N;
+      int xi = side ? x1 : x0, xo = side ? VID_SCR_W : 0;
+      cvtx_t *v;
+      if (xi == xo)
+         continue;
+      v = (cvtx_t *)sceGuGetMemory(2 * rows * sizeof(cvtx_t));
+      for (r = 0; r < rows; r++)
+      {
+         int b = r == 0 ? 0 : r > AMB_GLOW_BANDS ? AMB_GLOW_BANDS - 1 : r - 1;
+         int y = r == 0 ? 0 : r > AMB_GLOW_BANDS ? VID_SCR_H :
+                 g->oy + (2 * b + 1) * g->dh / (2 * AMB_GLOW_BANDS);
+         int dim = (r == 0 && y0 > 0) || (r > AMB_GLOW_BANDS && y1 < VID_SCR_H);
+         if (y < 0) y = 0;
+         if (y > VID_SCR_H) y = VID_SCR_H;
+         v[2 * r].color = amb_glow_col(s + 3 * b,
+                                       dim ? AMB_GLOW_OUT : AMB_GLOW_IN);
+         v[2 * r].x = (short)xi;     v[2 * r].y = (short)y;
+         v[2 * r].z = 0;
+         v[2 * r + 1].color = amb_glow_col(s + 3 * b, AMB_GLOW_OUT);
+         v[2 * r + 1].x = (short)xo; v[2 * r + 1].y = (short)y;
+         v[2 * r + 1].z = 0;
+      }
+      sceGuDrawArray(GU_TRIANGLE_STRIP,
+                     GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                     2 * rows, 0, v);
+   }
+   /* Top (r = 0) and bottom (r = 1) bars between the side bars. */
+   for (r = 0; r < 2; r++)
+   {
+      int b = r ? AMB_GLOW_BANDS - 1 : 0;
+      int ye = r ? y1 : y0, yo = r ? VID_SCR_H : 0;
+      const uint16_t *l = st + 3 * b, *rt = st + AMB_GLOW_N + 3 * b;
+      cvtx_t *v;
+      if (ye == yo || x1 <= x0)
+         continue;
+      v = (cvtx_t *)sceGuGetMemory(4 * sizeof(cvtx_t));
+      v[0].color = amb_glow_col(l, AMB_GLOW_IN);
+      v[1].color = amb_glow_col(rt, AMB_GLOW_IN);
+      v[2].color = amb_glow_col(l, AMB_GLOW_OUT);
+      v[3].color = amb_glow_col(rt, AMB_GLOW_OUT);
+      v[0].x = v[2].x = (short)x0;  v[1].x = v[3].x = (short)x1;
+      v[0].y = v[1].y = (short)ye;  v[2].y = v[3].y = (short)yo;
+      v[0].z = v[1].z = v[2].z = v[3].z = 0;
       sceGuDrawArray(GU_TRIANGLE_STRIP,
                      GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
                      4, 0, v);
    }
 }
 
-/* `c` darkened as a black scrim of alpha `a` over it would leave it. */
-static unsigned int amb_dim(uint16_t c, int a)
-{
-   unsigned int abgr = rgb565_to_abgr(c, 255);
-   unsigned k = 255u - (unsigned)a;
-   unsigned r = (abgr & 0xFF) * k / 255u;
-   unsigned g = ((abgr >> 8) & 0xFF) * k / 255u;
-   unsigned b = ((abgr >> 16) & 0xFF) * k / 255u;
-   return 0xFF000000u | (b << 16) | (g << 8) | r;
-}
-
 /* Draw the bars around g, in place of the clear.  Returns 0 (the caller
- * clears as before) when ambient is off or the picture covers the screen. */
-static int amb_draw_bg(const vid_geo *g)
+ * clears as before) when ambient is off, the picture covers the screen, or
+ * there is neither art nor a glow sample yet. */
+AMB_SMALL static int amb_draw_bg(const vid_geo *g)
 {
-   int textured, x0 = g->ox, x1 = g->ox + g->dw;
+   int x0 = g->ox, x1 = g->ox + g->dw;
    int y0 = g->oy, y1 = g->oy + g->dh;
-   unsigned int top = 0, bot = 0;
+   int art = amb_art();
 
    if (!g_amb_mode)
       return 0;
+   g_amb_glow |= AMB_GLOW_UNLIT;
    if (x0 <= 0 && y0 <= 0 && x1 >= VID_SCR_W && y1 >= VID_SCR_H)
       return 0;                  /* no bars: stretch, or 2x on a GBA */
-   /* Art: the art, else the game frame.  Game: only ever the game frame
-    * (the palette until it is taken, as Art without art always did). */
-   textured = g_amb_tex && (g_amb_src == AMB_SRC_SNAP ||
-                            (g_amb_src == AMB_SRC_ART && g_amb_mode == 1));
-   if (!textured && !g_amb_have_shade)
+   g_amb_glow &= ~AMB_GLOW_UNLIT;
+   if (!art && !((g_amb_glow & AMB_GLOW_LIVE) && g_amb_tex))
       return 0;
    if (x0 < 0) x0 = 0;
    if (y0 < 0) y0 = 0;
@@ -2097,7 +2238,7 @@ static int amb_draw_bg(const vid_geo *g)
    if (y1 > VID_SCR_H) y1 = VID_SCR_H;
 
    sceGuDisable(GU_BLEND);
-   if (textured)
+   if (art)
    {
       unsigned k = 255u - (unsigned)g_amb_scrim;
       sceGuEnable(GU_TEXTURE_2D);
@@ -2107,38 +2248,17 @@ static int amb_draw_bg(const vid_geo *g)
       /* The scrim, for free: texel x (k,k,k) is the black-alpha blend. */
       sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGB);
       sceGuColor(0xFF000000u | (k << 16) | (k << 8) | k);
+      /* Full-height side bars, then the top and bottom between them. */
+      amb_bar(0, 0, x0, VID_SCR_H);
+      amb_bar(x1, 0, VID_SCR_W, VID_SCR_H);
+      amb_bar(x0, 0, x1, y0);
+      amb_bar(x0, y1, x1, VID_SCR_H);
+      sceGuColor(0xFFFFFFFFu);
    }
    else
-   {
-      sceGuDisable(GU_TEXTURE_2D);
-      sceGuShadeModel(GU_SMOOTH);
-      top = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP);
-      bot = amb_dim(g_amb_shade, AMB_PAL_RAMP_BOT);
-   }
-   /* Full-height side bars, then the top and bottom between them.  A ramp
-    * is interpolated over each bar's own height, so the top/bottom bars of a
-    * 1x picture would restart it -- give them the colour at their rows. */
-   amb_bar(0, 0, x0, VID_SCR_H, textured, top, bot);
-   amb_bar(x1, 0, VID_SCR_W, VID_SCR_H, textured, top, bot);
-   if (!textured)
-   {
-      unsigned int mid0 = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP +
-                          (AMB_PAL_RAMP_BOT - AMB_PAL_RAMP_TOP) * y0 /
-                          VID_SCR_H);
-      unsigned int mid1 = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP +
-                          (AMB_PAL_RAMP_BOT - AMB_PAL_RAMP_TOP) * y1 /
-                          VID_SCR_H);
-      amb_bar(x0, 0, x1, y0, 0, top, mid0);
-      amb_bar(x0, y1, x1, VID_SCR_H, 0, mid1, bot);
-   }
-   else
-   {
-      amb_bar(x0, 0, x1, y0, 1, 0, 0);
-      amb_bar(x0, y1, x1, VID_SCR_H, 1, 0, 0);
-   }
+      amb_glow_draw(g, x0, y0, x1, y1);
    /* The game quad that follows sets its own texture state; restore what it
     * does not set. */
-   sceGuColor(0xFFFFFFFFu);
    sceGuEnable(GU_TEXTURE_2D);
    return 1;
 }
@@ -2183,30 +2303,23 @@ static int amb_clamp255(int v)
    return v < 0 ? 0 : (v > 255 ? 255 : v);
 }
 
-/* THE BAKE.  Cover-crop `src` to the screen's 480:272, box-average it into
- * AMB_W x AMB_H (at most `max_taps` samples per axis per texel; the blur that
- * follows hides the rest), blur, grade, write VRAM.  The working image is
- * 24 KiB on the STACK (main thread, 256 KiB): a static would be BSS, which
- * is heap on a PSP (see the section comment).
- *
- * `luma_min` > 0 rejects a too-dark image (the snapshot's "is there a
- * picture yet" test) and returns 1 without touching the texture.
+/* THE BAKE.  Cover-crop `src` (PSP-order RGB565) to the screen's 480:272,
+ * box-average it into AMB_W x AMB_H (at most 4 samples per axis per texel;
+ * the blur that follows hides the rest), blur, grade, write VRAM.  The
+ * working image is 24 KiB on the STACK (main thread, 256 KiB): a static
+ * would be BSS, which is heap on a PSP (see the section comment).
  * Returns 0 on success, -1 with no VRAM room. */
 static int amb_bake(const uint16_t *src, int stride, int sw, int sh,
-                    int max_taps, int luma_min, int libretro_order,
                     int extra_passes)
 {
    unsigned char img[AMB_H * AMB_W * 3];
    unsigned char line[(AMB_W > AMB_H ? AMB_W : AMB_H) * 3];
    int cx = 0, cy = 0, cw = sw, ch = sh, tx, ty, p;
-   unsigned luma = 0;
    uint16_t *tex;
 
    if (!src || sw <= 0 || sh <= 0)
       return -1;
-   if (!g_amb_tex)
-      g_amb_tex = vram_at(vram_free_base(), AMB_TEX_BYTES);
-   tex = g_amb_tex;
+   tex = amb_tex();
    if (!tex)
       return -1;                 /* no VRAM room: ambient simply stays off */
 
@@ -2229,46 +2342,31 @@ static int amb_bake(const uint16_t *src, int stride, int sw, int sh,
       int y0 = cy + ty * ch / AMB_H, y1 = cy + (ty + 1) * ch / AMB_H;
       int ys;
       if (y1 <= y0) y1 = y0 + 1;
-      ys = (y1 - y0 + max_taps - 1) / max_taps;
+      ys = (y1 - y0 + 3) / 4;
       for (tx = 0; tx < AMB_W; tx++)
       {
          int x0 = cx + tx * cw / AMB_W, x1 = cx + (tx + 1) * cw / AMB_W;
          unsigned r = 0, gg = 0, b = 0, n = 0;
          int xs, x, y;
          if (x1 <= x0) x1 = x0 + 1;
-         xs = (x1 - x0 + max_taps - 1) / max_taps;
-         /* One tap per axis samples the middle of the block. */
-         for (y = (max_taps == 1 ? (y0 + y1) / 2 : y0); y < y1; y += ys)
-         {
-            for (x = (max_taps == 1 ? (x0 + x1) / 2 : x0); x < x1; x += xs)
+         xs = (x1 - x0 + 3) / 4;
+         for (y = y0; y < y1; y += ys)
+            for (x = x0; x < x1; x += xs)
             {
                unsigned c = src[(long)y * stride + x];
                unsigned cr = c & 31, cg = (c >> 5) & 63, cb = (c >> 11) & 31;
-               if (libretro_order)
-               {
-                  unsigned t = cr; cr = cb; cb = t;
-               }
                r  += (cr << 3) | (cr >> 2);
                gg += (cg << 2) | (cg >> 4);
                b  += (cb << 3) | (cb >> 2);
                n++;
-               if (max_taps == 1)
-                  break;
             }
-            if (max_taps == 1)
-               break;
-         }
          if (!n) n = 1;
          p = (ty * AMB_W + tx) * 3;
          img[p]     = (unsigned char)(r / n);
          img[p + 1] = (unsigned char)(gg / n);
          img[p + 2] = (unsigned char)(b / n);
-         luma += (77u * img[p] + 150u * img[p + 1] + 29u * img[p + 2]) >> 8;
       }
    }
-   luma /= (unsigned)(AMB_W * AMB_H);
-   if (luma_min > 0 && (int)luma < luma_min)
-      return 1;
 
    for (p = 0; p < AMB_BLUR_PASSES; p++)
    {
@@ -2315,7 +2413,7 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
                          int precomposed)
 {
    unsigned t0 = sceKernelGetSystemTimeLow(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
+   int rc = amb_bake(src, stride, w, h, 0);
    us = sceKernelGetSystemTimeLow() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = precomposed ? AMB_SCRIM_HERO : AMB_SCRIM_BOXART;
@@ -2328,60 +2426,13 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
 int vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h)
 {
    unsigned t0 = sceKernelGetSystemTimeLow(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
+   int rc = amb_bake(src, stride, w, h, AMB_COVER_BLUR_PASSES);
    us = sceKernelGetSystemTimeLow() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = AMB_SCRIM_BOXART;
    fe_evt("ambient_bake src=cover w=%d h=%d rc=%d us=%u", w, h, rc, us);
    FE_EVT_ONLY(us);
    return rc == 0 ? 0 : -1;
-}
-
-/* The game-frame bake: called once per presented frame; does nothing unless
- * the bars are "game" (and none is taken yet), or "art" with no art.  It
- * replaces art in the texture.  One tap per texel, so the read is ~8k
- * pixels (uncached for an ME-written stage). */
-static void amb_snap_maybe(const uint16_t *src, int stride, unsigned w,
-                           unsigned h, int uncached)
-{
-   unsigned t0, us;
-   int rc;
-   if (!g_amb_mode || g_amb_src == AMB_SRC_SNAP || g_amb_snap_done || !src ||
-       (g_amb_src == AMB_SRC_ART && g_amb_mode != 2))
-      return;
-   g_amb_frames++;
-   if (g_amb_frames < AMB_SNAP_AFTER ||
-       (g_amb_frames - AMB_SNAP_AFTER) % AMB_SNAP_RETRY)
-      return;
-   if (g_amb_frames > AMB_SNAP_GIVE_UP)
-   {
-      g_amb_snap_done = 1;
-      fe_evt("ambient_bake src=game rc=gave_up frame=%u", g_amb_frames);
-      return;
-   }
-   if (uncached)
-      src = (const uint16_t *)(0x40000000u | (uintptr_t)src);
-   t0 = sceKernelGetSystemTimeLow();
-#ifdef USE_PSP_RGB565_FORMAT
-   rc = amb_bake(src, stride, (int)w, (int)h, 1, AMB_SNAP_MIN_LUMA, 0, 0);
-#else
-   /* Without ADR-0039 the core emits libretro order (R high); an ME stage
-    * is already in the GE's order. */
-   rc = amb_bake(src, stride, (int)w, (int)h, 1, AMB_SNAP_MIN_LUMA,
-                 !uncached, 0);
-#endif
-   us = sceKernelGetSystemTimeLow() - t0;
-   if (rc == 0)
-   {
-      g_amb_src = AMB_SRC_SNAP;
-      g_amb_scrim = AMB_SCRIM_FRAME;
-      g_amb_snap_done = 1;
-   }
-   else if (rc < 0)
-      g_amb_snap_done = 1;       /* no VRAM: stop asking */
-   fe_evt("ambient_bake src=game rc=%d frame=%u w=%u h=%u us=%u",
-          rc, g_amb_frames, w, h, us);
-   FE_EVT_ONLY(us);
 }
 
 /* ===========================================================================

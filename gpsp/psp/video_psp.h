@@ -390,34 +390,31 @@ int vid_dump_ge(const char *path);
 
 /* ---- ambient bars (docs/DISPLAY-FEATURES.md, look in ambient_look.h) -----
  *
- * One AMB_W x AMB_H texture in VRAM above the staging buffer (no main RAM:
- * on a PSP-1000 the core takes every heap byte at ROM load), baked once from
- * the hero art at launch or, failing that, from an early game frame.  While
- * a mode is set, vid_draw_frame/vid_draw_prestaged draw the BARS -- the
- * screen outside the picture -- from it IN PLACE OF the clear they already
- * did: one textured sprite per bar, the scrim folded in as a MODULATE
- * colour.  Nothing is drawn when the picture covers the screen.
- * `mode` is a PCFG_AMB_* value. */
+ * What fills the screen outside the picture, drawn by vid_draw_frame /
+ * vid_draw_prestaged IN PLACE OF the clear they already did; nothing when
+ * the picture covers the screen.  Two looks:
+ *   ART   one AMB_W x AMB_H texture in VRAM above the staging buffer (no
+ *         main RAM: on a PSP-1000 the core takes every heap byte at ROM
+ *         load), baked once from the hero art at launch; one textured sprite
+ *         per bar, the scrim folded in as a MODULATE colour.
+ *   GLOW  the picture's own left and right edges, sampled live (a few dozen
+ *         pixels every other frame), eased, drawn as gouraud strips.
+ * `mode` is a PCFG_AMB_*: none, art (the art, else the glow), game (the
+ * glow).  Setting it restarts the glow from the next frame. */
 void vid_ambient_mode(int mode);
-/* The bar colour when there is no picture: the console's darkest palette
- * shade (libretro RGB565), drawn under ambient_look.h's black ramp. */
-void vid_ambient_fallback(uint16_t rgb565);
 /* Bake from a PSP-order RGB565 image (w x h at `stride` texels), cover-
  * cropped to the screen's shape.  `precomposed` = it came from hero/ (the
- * lighter scrim).  0 = ok, -1 = no VRAM room (ambient then shows the
- * palette, never an error anywhere else).  Logs EVT ambient_bake. */
+ * lighter scrim).  0 = ok, -1 = no VRAM room (the bars then show the
+ * glow, never an error anywhere else).  Logs EVT ambient_bake. */
 int  vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
                           int precomposed);
 /* The same from a small box-art cover (the browser's 128-px cache), blurred
  * AMB_COVER_BLUR_PASSES more so its lettering does not read through a
  * menu.  The browser's Settings backdrop only. */
 int  vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h);
-/* 0 = nothing baked, 1 = art, 2 = game snapshot. */
+/* 0 = nothing baked, 1 = art. */
 int  vid_ambient_source(void);
-/* Retake a game snapshot on the next presented frame (if that is what the
- * bars show): the in-game menu closing is a state load or a new scene. */
-void vid_ambient_resnap(void);
-/* Draw the baked ART (not a snapshot) at x,y,w,h inside an overlay pass --
+/* Draw the baked ART at x,y,w,h inside an overlay pass --
  * the loading screen's background.  Returns 0 when there is none. */
 int  vid_ambient_image(int x, int y, int w, int h, int alpha);
 /* Forget a baked ART source (the texture's bytes stay, unused): the

@@ -253,24 +253,34 @@ display arms 300 frames each and prints `EVT fxcost` per arm.
    (`PSP_HEAP_SIZE_KB(-1024)`), so 32 KiB of BSS would be 32 KiB less for the
    PSP-1000's ROM-cache loop. VRAM costs the heap nothing, and the offset does
    not depend on `blit_mode`. If VRAM has no room, the bake returns -1 and the
-   bars fall back to the palette shade. A ROM load never fails because of it.
+   bars show the edge glow. A ROM load never fails because of it.
 3. **Each frame:** inside the blit's own display list, **in place of the
    clear**, one textured sprite is drawn per bar: 2 at Fit, 4 at 1x, 0 at
    Stretch and at GBA 2x. They use float UVs and GU_LINEAR. The scrim is the
-   MODULATE colour (255 − alpha): 96 for `hero/` art, 150 for box art, 130 for
-   a game frame. That is the same arithmetic as Fable's black rect, without a
-   second blended fill. The bars cover fewer pixels than the clear did, and
-   there is no per-pixel CPU work.
-4. **Fallback with no art:**
-   * Mode **"art"**: the console's `pal[0]` under a black vertical ramp from
-     60 to 200 (Fable's palette fallback), drawn as one Gouraud strip per bar.
-   * Mode **"art, else game"**: a game snapshot replaces the palette. It is the
-     first frame at or after frame 180 with mean luma ≥ 24, retried every 60
-     frames, giving up at 3600. It reads one tap per texel (about 8k pixels;
-     uncached reads for the ME stage), and is retaken when the in-game menu
-     closes (covering state loads and new areas). It is never taken per frame.
-5. **Setting:** Ambient bars `off` / `art` / `art, else game`, per console,
-   default **off** (`PCFG_AMBIENT_DEF`).
+   MODULATE colour (255 − alpha): 96 for `hero/` art, 150 for box art. That
+   is the same arithmetic as Fable's black rect, without a second blended
+   fill. The bars cover fewer pixels than the clear did, and there is no
+   per-pixel CPU work.
+4. **The edge glow** (mode **"game"**, and mode **"art"** with no art):
+   * Every 2nd presented frame (`AMB_GLOW_EVERY`), 12 rows (`AMB_GLOW_BANDS`)
+     spread down each side edge of the drawn picture are read: 4 pixels per
+     row (x 0,1,4,5 on the left, w-6,w-5,w-2,w-1 on the right) as two 32-bit
+     reads, 48 reads in all, uncached for the ME stage. The bands are softened
+     [1 2 1] and eased in by 1/4 per sample (`AMB_GLOW_EASE`), so a scene
+     change crosses in about 8 frames without flicker.
+   * The state (2 x 12 x RGB, 8.8 fixed point, 144 B) lives in a row of the
+     ambient texture the bake never writes (`AMB_GLOW_ROW`): no BSS, no heap.
+   * Each side bar is one Gouraud strip, a vertex pair (inner edge, outer
+     edge) per band: no texture, no blend. The inner edge carries the colour
+     under a 100 scrim (`AMB_GLOW_SCRIM`), the outer edge 72/255 of that
+     (`AMB_GLOW_OUTER`). At 1x the top and bottom bars blend the two sides'
+     end bands and fade to the outer brightness at the screen edge.
+   * The in-game menu's backdrop seeds the glow from its own picture, so a
+     mode picked there shows at once behind the menu.
+5. **Setting:** Ambient bars `none` / `art` / `game`, per console
+   (`bars_<c>`), default **none** (`PCFG_AMBIENT_DEF`). Art keeps the baked
+   art in the texture whatever the mode, so art -> game -> art returns to it
+   in the same session.
 
 ### Measured (PPSSPP; CPU-side only, so hardware numbers are needed)
 

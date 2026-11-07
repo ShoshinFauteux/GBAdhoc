@@ -15460,7 +15460,6 @@ session_top:
    pcfg_display_select(g_pcfg.console);
    psp_display_apply("rom");
    vid_ambient_mode(g_pcfg.ambient);
-   vid_ambient_fallback(ui_console_shade(g_pcfg.console));
    fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
           "gb_palette=%d", pcfg_console_tag(g_pcfg.console),
           vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),

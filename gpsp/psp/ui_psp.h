@@ -86,9 +86,6 @@ void ui_notice(const char *title, const char *l1, const char *l2,
 /* Harness `loading_dump = N`: GE-dump the first N loading-screen redraws to
  * log/ge_loading_<n>.bmp (docs/DISPLAY-FEATURES.md screenshots). */
 void ui_loading_dump_shots(int n);
-/* The console's darkest palette shade (its browser skin's first stripe
- * colour), libretro RGB565 -- the ambient bars' no-art fallback. */
-uint16_t ui_console_shade(int console);
 
 /* One frame of menu UI: input edges + draw (vid_overlay_begin(1)..end).
  * pad = raw SceCtrl button mask; session_active gates savestates + shows
