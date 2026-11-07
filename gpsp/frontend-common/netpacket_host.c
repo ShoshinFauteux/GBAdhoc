@@ -723,6 +723,30 @@ unsigned fe_np_peer_min_fps(void)
    return np.active ? netdrv_peer_min_fps(np.nd) : 0;
 }
 
+void fe_np_keepalive(void)
+{
+   if (np.active && np.nd && np.now_us)
+      netdrv_keepalive(np.nd, np.now_us());
+}
+
+void fe_np_set_peer_dead_us(uint32_t us)
+{
+   if (np.active && np.nd && netdrv_peer_dead_us(np.nd) != (us ? us : ND_PEER_DEAD_US))
+   {
+      fe_evt("net_peer_dead_us us=%u", (unsigned)us);
+      netdrv_set_peer_dead_us(np.nd, us);
+   }
+}
+
+uint32_t fe_np_rx_frames(void)
+{
+   nd_stats st;
+   if (!np.active || !np.nd)
+      return 0;
+   netdrv_get_stats(np.nd, &st);
+   return st.rx_frames;
+}
+
 /* ADR-0078: the backpressure pacer's signal.  See netpacket_host.h. */
 uint32_t fe_np_txq_now(void)
 {

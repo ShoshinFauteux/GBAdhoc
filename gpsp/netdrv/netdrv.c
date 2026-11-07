@@ -1985,6 +1985,47 @@ uint32_t netdrv_ack_ride(const netdrv *nd)
    return nd ? nd->cfg.ack_ride_us : 0u;
 }
 
+/* ---- a session that is starting (netdrv.h) ------------------------------ */
+
+void netdrv_keepalive(netdrv *nd, uint64_t now_us)
+{
+   uint32_t ka;
+   int i;
+   if (!nd || nd->in_pump)
+      return;
+   if (now_us > nd->now)
+      nd->now = now_us;
+   if (nd->state == ND_S_JOINING)
+   {
+      /* a joiner reloading before its admission: the JOIN at its cadence,
+       * so the relay keeps its slot and the host sees it waiting */
+      if (nd->now - nd->last_join_tx >= tmo(nd->cfg.join_retry_us, ND_JOIN_RETRY_US) ||
+          nd->last_join_tx == 0)
+         client_send_join(nd);
+      return;
+   }
+   if (nd->state != ND_S_ACTIVE)
+      return;
+   ka = tmo(nd->cfg.keepalive_us, ND_KEEPALIVE_US);
+   for (i = 0; i < ND_MAX_CLIENTS; i++)
+   {
+      nd_peer *p = &nd->peers[i];
+      if (p->active && nd->now - p->last_tx_us >= ka)
+         nd_xmit_ping(nd, p);
+   }
+}
+
+void netdrv_set_peer_dead_us(netdrv *nd, uint32_t us)
+{
+   if (nd)
+      nd->cfg.peer_dead_us = us;
+}
+
+uint32_t netdrv_peer_dead_us(const netdrv *nd)
+{
+   return nd ? tmo(nd->cfg.peer_dead_us, ND_PEER_DEAD_US) : 0u;
+}
+
 /* ---- peer frame-rate matching (ADR-0027) -------------------------------- */
 
 void netdrv_set_local_fps(netdrv *nd, unsigned fps_x100)

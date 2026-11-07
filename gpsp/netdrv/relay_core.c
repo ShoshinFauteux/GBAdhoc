@@ -112,7 +112,11 @@ rl_core *relay_core_create(const rl_core_cfg *cfg)
    if (!c->cfg.max_rooms) c->cfg.max_rooms = 256;
    if (!c->cfg.room_idle_ms) c->cfg.room_idle_ms = 60000;
    if (!c->cfg.lobby_ms) c->cfg.lobby_ms = 600000;
-   if (!c->cfg.slot_idle_ms) c->cfg.slot_idle_ms = 20000;
+   /* 45 s, not 20 (2026-11-07): a cable session's start blocks a console
+    * for its game reload -- 18-25 s measured on a tester's PSP with a slow
+    * card, longer than 20 s -- and a beta.4 console sends nothing meanwhile.
+    * A dead peer is netdrv's to notice (8 s); this only reclaims slots. */
+   if (!c->cfg.slot_idle_ms) c->cfg.slot_idle_ms = 45000;
    /* Per-slot caps, against a measured link session (PPSSPP pair through
     * this relay, 2026-11-05): the 1.1 MB "Sharing where you are" offers
     * ~390 datagrams/s and ~70 KB/s per slot, play ~65/s and ~3 KB/s.  The

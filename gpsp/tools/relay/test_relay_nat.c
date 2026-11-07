@@ -206,17 +206,49 @@ static void deliver_host(int h, pkt_t *p)
    x->in_head = nx;
 }
 
+/* START cases (run_start): the server is a PC on the GUEST's LAN, 10.0.1.40
+ * (the owner's relay on 2026-11-07, the Go joining it at 10.0.0.40): the
+ * guest reaches it on the LAN, so the server sees -- and offers the host --
+ * a PRIVATE address; the host is elsewhere and reaches it at SERVER_IP. */
+#define GUEST_LAN_SRV ip4(10, 0, 1, 40)
+static int g_srv_guest_lan;
+static int srv_lan_send(ep_t *src, const ep_t *dst, const void *buf, size_t len)
+{
+   if (!g_srv_guest_lan || !lan_of(dst->ip))
+      return 0;
+   src->ip = GUEST_LAN_SRV;
+   if (((const uint8_t *)&dst->ip)[2] == 1)
+      enqueue(*src, *dst, buf, len, 2);
+   return 1;
+}
+static int srv_lan_route(pkt_t *p)
+{
+   rl_addr from;
+   if (!g_srv_guest_lan || p->dst.ip != GUEST_LAN_SRV)
+      return 0;
+   from.ip_be = p->src.ip;
+   from.port = p->src.port;
+   if (p->dst.port == SERVER_PORT || p->dst.port == SERVER_PORT + 1)
+      relay_core_input(g_core, p->dst.port - SERVER_PORT, &from, p->data,
+                       p->len, g_now / 1000);
+   return 1;
+}
+
 static void server_send(void *user, int sock, const rl_addr *to, const void *buf, size_t len)
 {
    ep_t src = { SERVER_IP, (uint16_t)(SERVER_PORT + sock) };
    ep_t dst = { to->ip_be, to->port };
    (void)user;
+   if (srv_lan_send(&src, &dst, buf, len))
+      return;
    enqueue(src, dst, buf, len, g_lat_ms);
 }
 
 static void route(pkt_t *p)
 {
    int h, i;
+   if (srv_lan_route(p))
+      return;
    if (p->dst.ip == SERVER_IP)
    {
       rl_addr from = { p->src.ip, p->src.port };
@@ -753,6 +785,273 @@ static int run_lobby(const lobby_t *c)
    return ok;
 }
 
+/* ------------------------------------------------------- start cases */
+
+/* How a session STARTS (2026-11-07, beta.4 "The host left"): the guest on
+ * the server's own LAN (seen at a private address), the host elsewhere.
+ * The session must start over the relay at once, whatever the punching does
+ * (direct is a later upgrade, never a precondition), and survive a host that
+ * blocks right after admitting the guest -- the GBA cable host reloads the
+ * game from its card then, pumping nothing (18 s on the tester's console).
+ *
+ * The apps here are request/response like the link session: the guest
+ * sends its HELLO (payload 0) and the rest only once the host has spoken,
+ * the host speaks once admitted (after its stall).  A guest's "first data"
+ * is the host's first payload, from the guest's netdrv session start. */
+typedef struct
+{
+   const char *name;
+   int nat0, nat1;
+   int expect_direct;           /* 1 = must end DIRECT, 0 = must end RELAY */
+   unsigned host_stall_ms;      /* the host pumps nothing this long once it
+                                   admitted the guest (its session start) */
+   unsigned host_ka_ms;         /* ...but calls netdrv_keepalive this often
+                                   (the fixed host's ROM-load hook), 0 = no */
+   unsigned guest_grace_ms;     /* the fixed joiner: its host-dead timeout
+                                   until the host's first payload, 0 = no */
+   int expect_lost;             /* 1 = beta.4: the guest must give up */
+   unsigned guest_stall_ms;     /* the guest pumps nothing this long from its
+                                   netdrv_join (ITS session start: a cable
+                                   joiner reloads before its first JOIN) */
+   unsigned guest_ka_ms;        /* ...but calls netdrv_keepalive this often */
+   unsigned slot_idle_ms;       /* the server's slot timeout, 0 = default */
+} start_t;
+
+#define START_MAX_MS 3000       /* host's first payload at the guest, no stall */
+
+static int run_start(const start_t *c)
+{
+   rl_core_cfg cc;
+   rl_sock sk[2];
+   rl_client_cfg cfg[2];
+   relay_transport *rt[2];
+   nd_transport tp[2];
+   nd_callbacks cb[2];
+   nd_config nc;
+   netdrv *nd[2] = { NULL, NULL };
+   app_t app[2];
+   rl_client_stats st[2];
+   int i, ok = 1, sent[2] = { 0, 0 };
+   const int N_PAY = 600;
+   uint64_t t_end, sess1 = 0, first1 = 0, stall_from = 0, stall_to = 0, last_ka = 0;
+   uint64_t g_stall_to = 0, g_last_ka = 0;
+
+   memset(q, 0, sizeof(q));
+   qn = 0;
+   g_now = 1000000;
+   memset(H, 0, sizeof(H));
+   memset(N, 0, sizeof(N));
+   g_same_lan = 0;
+   g_srv_guest_lan = 1;
+   for (i = 0; i < 2; i++)
+   {
+      N[i].type = i ? c->nat1 : c->nat0;
+      N[i].pub_ip = ip4(198, 51, 100, 10 + i);
+      N[i].next_port = (uint16_t)(40000 + 1000 * i);
+      N[i].timeout_ms = 30000;
+      if (N[i].type == NAT_NONE)
+      {
+         H[i].priv.ip = ip4(192, 0, 2, 10 + i);
+         H[i].nat = NULL;
+      }
+      else
+      {
+         H[i].priv.ip = ip4(10, 0, i, 20 + i);
+         H[i].nat = &N[i];
+      }
+      H[i].priv.port = 27500;
+   }
+   memset(&cc, 0, sizeof(cc));
+   cc.send = server_send;
+   cc.random64 = core_rand;
+   cc.log = core_log;
+   cc.slot_idle_ms = c->slot_idle_ms;
+   g_core = relay_core_create(&cc);
+   for (i = 0; i < 2; i++)
+   {
+      sk[i].ctx = (void *)(intptr_t)i;
+      sk[i].send = sk_send;
+      sk[i].recv = sk_recv;
+      memset(&cfg[i], 0, sizeof(cfg[i]));
+      cfg[i].server_ip_be = i ? GUEST_LAN_SRV : SERVER_IP;
+      cfg[i].server_port = SERVER_PORT;
+      cfg[i].is_host = i == 0;
+      strcpy(cfg[i].code, "TEST");
+      memcpy(cfg[i].build, "gbadhoc-test-b1", 15);
+      cfg[i].priv_ip_be = H[i].priv.ip;
+      cfg[i].priv_port = H[i].priv.port;
+      cfg[i].direct = 1;
+      cfg[i].now_us = now_us;
+      cfg[i].log = cli_log;
+      cfg[i].log_user = (void *)(i ? "guest" : "host");
+      rt[i] = relay_transport_create(&sk[i], &cfg[i]);
+   }
+   for (t_end = g_now + 10000 * MS; g_now < t_end; g_now += MS)
+   {
+      net_step();
+      relay_core_tick(g_core, g_now / 1000);
+      if (relay_transport_poll(rt[0]) == RL_ST_IN_ROOM &&
+          relay_transport_poll(rt[1]) == RL_ST_IN_ROOM)
+         break;
+   }
+   if (relay_transport_poll(rt[0]) != RL_ST_IN_ROOM ||
+       relay_transport_poll(rt[1]) != RL_ST_IN_ROOM)
+   {
+      printf("FAIL %s: room never formed\n", c->name);
+      g_srv_guest_lan = 0;
+      return 0;
+   }
+   memset(&nc, 0, sizeof(nc));
+   nc.protocol = "gpSP v1.0";
+   for (i = 0; i < 2; i++)
+   {
+      memset(&app[i], 0, sizeof(app[i]));
+      app[i].name = i ? "guest" : "host";
+      memset(&cb[i], 0, sizeof(cb[i]));
+      cb[i].user = &app[i];
+      cb[i].deliver = app_deliver;
+      cb[i].session_started = app_started;
+      cb[i].peer_connected = app_connected;
+      cb[i].peer_disconnected = app_disconnected;
+      cb[i].session_stopped = app_stopped;
+      relay_transport_iface(rt[i], &tp[i]);
+      nc.join_nonce = i ? 0xBEEF : 0xF00D;
+      nd[i] = netdrv_create(&tp[i], &cb[i], &nc);
+   }
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   g_stall_to = g_now + (uint64_t)c->guest_stall_ms * MS;
+   g_last_ka = g_now;
+   for (t_end = g_now + 90000 * MS; g_now < t_end; g_now += MS)
+   {
+      net_step();
+      relay_core_tick(g_core, g_now / 1000);
+      for (i = 0; i < 2; i++)
+      {
+         if (i == 1 && g_now < g_stall_to)
+         {
+            /* the joiner reloads before its first JOIN: at most the hook */
+            if (c->guest_ka_ms && g_now - g_last_ka >= (uint64_t)c->guest_ka_ms * MS)
+            {
+               netdrv_keepalive(nd[1], g_now);
+               g_last_ka = g_now;
+            }
+            continue;
+         }
+         if (i == 0 && g_now >= stall_from && g_now < stall_to)
+         {
+            /* the host reloads its game: no pump -- at most the hook */
+            if (c->host_ka_ms && g_now - last_ka >= (uint64_t)c->host_ka_ms * MS)
+            {
+               netdrv_keepalive(nd[0], g_now);
+               last_ka = g_now;
+            }
+            continue;
+         }
+         if (i == 1 && c->guest_grace_ms)
+            netdrv_set_peer_dead_us(nd[1], app[1].got ? 0u : c->guest_grace_ms * 1000u);
+         netdrv_pump(nd[i], g_now);
+         if (i == 0 && !stall_from && app[0].connected)
+         {
+            /* the session start blocks in the frame that admitted the guest,
+             * before the host has said anything (gblink_begin) */
+            stall_from = g_now + MS;
+            stall_to = stall_from + (uint64_t)c->host_stall_ms * MS;
+            last_ka = g_now;
+            if (c->host_stall_ms)
+               continue;
+         }
+         if (i == 1 && !sess1 && netdrv_active(nd[1]))
+            sess1 = g_now;
+         if (i == 1 && !first1 && app[1].got)
+            first1 = g_now;
+         if (netdrv_active(nd[i]) && netdrv_peer_count(nd[i]) > 0 &&
+             sent[i] < N_PAY && (g_now / MS) % 16 == (unsigned)i * 8 &&
+             (sent[i] == 0 || app[i].got || i == 0))
+         {
+            uint8_t p[8];
+            uint32_t v = (uint32_t)sent[i];
+            memcpy(p, &v, 4);
+            memset(p + 4, 0xA5, 4);
+            if (netdrv_send(nd[i], ND_RELIABLE | ND_FLUSH_HINT, p, sizeof(p),
+                            i ? 0 : 1) == 0)
+               sent[i]++;
+         }
+      }
+      if ((app[0].got >= (uint32_t)N_PAY && app[1].got >= (uint32_t)N_PAY) ||
+          app[1].stopped)
+         break;
+   }
+   for (i = 0; i < 2; i++)
+      relay_transport_stats(rt[i], &st[i]);
+   {
+      int path0 = st[0].path[1], path1 = st[1].path[0];
+      int direct = path0 == 3 && path1 == 3;
+      int relayed = (path0 == 1 || path0 == 2 || path0 == 4) &&
+                    (path1 == 1 || path1 == 2 || path1 == 4);
+      unsigned start_ms = first1 && sess1 ? (unsigned)((first1 - sess1) / MS) : 0;
+      if (c->expect_lost)
+      {
+         /* beta.4's failure, reproduced: the guest's netdrv gives up on a
+          * host that is only starting, after ND_PEER_DEAD_US */
+         if (!app[1].stopped && app[1].got >= (uint32_t)N_PAY)
+         {
+            printf("FAIL %s: expected the guest to give up (beta.4), it did not\n",
+                   c->name);
+            ok = 0;
+         }
+         else
+            printf("ok   %-44s REPRODUCED: no session (guest %s), "
+                   "host got %u, guest got %u\n", c->name,
+                   app[1].stopped ? "gave up" : "never linked",
+                   app[0].got, app[1].got);
+      }
+      else
+      {
+         if (app[0].got != (uint32_t)N_PAY || app[1].got != (uint32_t)N_PAY ||
+             app[0].bad || app[1].bad)
+         {
+            printf("FAIL %s: payloads host got %u bad %u, guest got %u bad %u\n",
+                   c->name, app[0].got, app[0].bad, app[1].got, app[1].bad);
+            ok = 0;
+         }
+         if (app[0].lost || app[1].lost || app[0].stopped || app[1].stopped)
+         {
+            printf("FAIL %s: netdrv session lost (lost %d/%d stopped %d/%d)\n",
+                   c->name, app[0].lost, app[1].lost, app[0].stopped, app[1].stopped);
+            ok = 0;
+         }
+         if (!c->host_stall_ms && (!first1 || start_ms > START_MAX_MS))
+         {
+            printf("FAIL %s: the host's first data reached the guest %u ms into "
+                   "its session, want <= %u (relay while punching)\n", c->name,
+                   start_ms, START_MAX_MS);
+            ok = 0;
+         }
+         if (c->expect_direct ? !direct : !relayed)
+         {
+            printf("FAIL %s: path host=%d guest=%d, want %s\n", c->name, path0,
+                   path1, c->expect_direct ? "direct (3)" : "relay (1/4)");
+            ok = 0;
+         }
+         if (ok)
+            printf("ok   %-44s path=%s/%s first_data=%ums relay_rx=%u/%u direct_rx=%u/%u\n",
+                   c->name, path0 == 3 ? "direct" : path0 == 4 ? "fellback" : "relay",
+                   path1 == 3 ? "direct" : path1 == 4 ? "fellback" : "relay",
+                   start_ms, st[0].rx_relay, st[1].rx_relay, st[0].rx_direct,
+                   st[1].rx_direct);
+      }
+   }
+   for (i = 0; i < 2; i++)
+   {
+      netdrv_destroy(nd[i]);
+      relay_transport_destroy(rt[i]);
+   }
+   relay_core_destroy(g_core);
+   g_srv_guest_lan = 0;
+   return ok;
+}
+
 int main(int argc, char **argv)
 {
    static const case_t cases[] = {
@@ -782,10 +1081,38 @@ int main(int argc, char **argv)
       { "lobby: 25 s off the air at 40 s",      NAT_SYM, 30000, 0,     0,     40000, 25000, 120000, 1 },
       { "lobby: server limit 60 s, join 3 min", NAT_SYM, 30000, 0,     60000, 0,     0,     180000, 1 },
    };
+   static const start_t starts[] = {
+      /* name                                          nat0      nat1      dir stall  ka    grace  lost */
+      { "start: cone host x guest on relay LAN",       NAT_CONE, NAT_CONE, 0,  0,     0,    0,     0 },
+      { "start: cone host x sym guest on relay LAN",   NAT_CONE, NAT_SYM,  0,  0,     0,    0,     0 },
+      { "start: public host x guest on relay LAN",     NAT_NONE, NAT_CONE, 1,  0,     0,    0,     0 },
+      { "start: public host x sym guest on relay LAN", NAT_NONE, NAT_SYM,  1,  0,     0,    0,     0 },
+      /* the host's 18 s session start (2026-11-07), beta.4 both sides */
+      { "start: host starts 18 s, beta.4 pair",        NAT_CONE, NAT_CONE, 0,  18000, 0,    0,     1 },
+      /* fixed host (keepalive from its ROM-load hook) x beta.4 guest */
+      { "start: host starts 18 s, fixed host",         NAT_CONE, NAT_CONE, 0,  18000, 1000, 0,     0 },
+      /* beta.4 host x fixed guest (30 s grace until the host speaks) */
+      { "start: host starts 18 s, fixed guest",        NAT_CONE, NAT_CONE, 0,  18000, 0,    30000, 0 },
+      { "start: host starts 18 s, both fixed",         NAT_CONE, NAT_CONE, 0,  18000, 1000, 30000, 0 },
+      { "start: host starts 18 s, fixed, public host", NAT_NONE, NAT_SYM,  1,  18000, 1000, 30000, 0 },
+      /* the host's 22 s start (2026-11-07 run 2): beyond the server's 20 s
+       * slot timeout -- survives with a fixed host, or a 45 s server */
+      { "start: host starts 22 s, fixed guest",          NAT_CONE, NAT_SYM, 0, 22000, 0,    30000, 1 },
+      { "start: host starts 22 s, fixed guest, srv 45 s", NAT_CONE, NAT_SYM, 0, 22000, 0,    30000, 0, 0, 0, 45000 },
+      { "start: host starts 22 s, fixed host",           NAT_CONE, NAT_SYM, 0, 22000, 1000, 0,     0 },
+      /* roles reversed (run 3): the slow console JOINS and reloads 22 s
+       * before its first JOIN -- its slot went silent at 20 s */
+      { "start: guest starts 22 s, beta.4 guest",        NAT_SYM, NAT_CONE, 0, 0, 0, 0, 1, 22000, 0,    0 },
+      { "start: guest starts 22 s, beta.4, srv 45 s",    NAT_SYM, NAT_CONE, 0, 0, 0, 0, 0, 22000, 0,    45000 },
+      { "start: guest starts 22 s, fixed guest",         NAT_SYM, NAT_CONE, 0, 0, 0, 0, 0, 22000, 1000, 0 },
+   };
    unsigned i, fails = 0, n = 0;
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");
    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++, n++)
       if (!run_case(&cases[i]))
+         fails++;
+   for (i = 0; i < sizeof(starts) / sizeof(starts[0]); i++, n++)
+      if (!run_start(&starts[i]))
          fails++;
    for (i = 0; i < sizeof(lobbies) / sizeof(lobbies[0]); i++, n++)
       if (!run_lobby(&lobbies[i]))
