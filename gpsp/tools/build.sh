@@ -332,20 +332,28 @@ note() { printf '%s\n' "$*"; }
 # this build, put it back on the way out: always on failure, and on success
 # once the build has been staged with --out (the staged directory holds this
 # build's PRX).  A build without --out keeps its PRX beside its EBOOT.
-ME_PRX_REL=psp/me/gbadhoc_me.prx
+# The HOME module (psp/home/gbadhoc_home.prx) is tracked too, and a build that
+# fails after `make clean` leaves it deleted; it is restored the same way.
+ME_PRX_REL="psp/me/gbadhoc_me.prx psp/home/gbadhoc_home.prx"
 ME_PRX_RESTORE=0
-if git ls-files --error-unmatch "$ME_PRX_REL" >/dev/null 2>&1 &&
-   git diff --quiet HEAD -- "$ME_PRX_REL" 2>/dev/null; then
-  ME_PRX_RESTORE=1
-fi
+ME_PRX_CLEAN=""
+for f in $ME_PRX_REL; do
+  if git ls-files --error-unmatch "$f" >/dev/null 2>&1 &&
+     git diff --quiet HEAD -- "$f" 2>/dev/null; then
+    ME_PRX_CLEAN="$ME_PRX_CLEAN $f"; ME_PRX_RESTORE=1
+  fi
+done
 me_prx_restore() {
   [ "$ME_PRX_RESTORE" = 1 ] || return 0
-  git diff --quiet HEAD -- "$ME_PRX_REL" 2>/dev/null && return 0
-  if git checkout HEAD -- "$ME_PRX_REL" 2>/dev/null; then
-    printf '%s\n' "me prx  : restored the tracked $ME_PRX_REL (this build's copy is staged)"
-  else
-    printf '%s\n' "me prx  : could NOT restore the tracked $ME_PRX_REL; the tree now reads dirty"
-  fi
+  local f
+  for f in $ME_PRX_CLEAN; do
+    git diff --quiet HEAD -- "$f" 2>/dev/null && continue
+    if git checkout HEAD -- "$f" 2>/dev/null; then
+      printf '%s\n' "prx     : restored the tracked $f (this build's copy, if any, is staged)"
+    else
+      printf '%s\n' "prx     : could NOT restore the tracked $f; the tree now reads dirty"
+    fi
+  done
 }
 trap me_prx_restore EXIT
 
