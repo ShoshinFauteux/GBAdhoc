@@ -403,9 +403,14 @@ linked, so the pinned layout does not depend on it.  A release starts it at
 `LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
 `LAYOUT_PAD_BSCAN_BYTES` (B's `update_scanline` held at the renderer's size)
 and `LAYOUT_PAD_RO_BYTES` (`.rodata`).  docs/LAYOUT-PINNING.md "Keeping the
-pads" says what each holds.  A lab build that must match an older lab
-build's sets takes its own values through `LAYOUT_PAD_BYTES=` and
-`PSP_EXTRA=`, which build.sh refuses for the release profile.
+pads" says what each holds.  A lab build takes the committed lab set,
+`tools/layout/lab-pads.env` (`LAB_PADS=0` for the release pads); a sweep
+overrides it through `LAYOUT_PAD_BYTES=` and `PSP_EXTRA=`, which build.sh
+refuses for the release profile.  `tools/layout/layout.lock` records where
+the pads put the symbols that carry the layout; build.sh fails a release,
+or a lab build with the committed set, that differs (`LAYOUT_LOCK=0` lets a
+lab build through during a re-pin, never a release).  Any other arm is
+checked and reported only.
 
 `BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
 the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.

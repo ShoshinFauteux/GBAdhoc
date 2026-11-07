@@ -468,6 +468,35 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
   else
     "$PYB" "$HB_PY" "$HB_ORD" "$HB_NM" || true
   fi
+
+  # LAYOUT LOCK (tools/layout/layout.lock, critique-7 SF1).  The pads, the two
+  # 32 B holes in the warm tail and `main`'s frame loop depend on link order
+  # and on the size of everything linked before them; a change that moves
+  # them builds clean and costs frames on hardware.  A release, and a lab
+  # build with the committed lab pads, must match the lock exactly.  Any other
+  # arm (a sweep, CORE_EXTRA, a switch off) is checked and reported only.
+  LL_PY="$ROOT/tools/layout/layout_lock.py"; LL_LOCK="$ROOT/tools/layout/layout.lock"
+  if command -v cygpath >/dev/null; then LL_PY=$(cygpath -w "$LL_PY"); LL_LOCK=$(cygpath -w "$LL_LOCK"); fi
+  LL_FLAVOUR=""; LL_STRICT=0
+  case "$KIND" in
+    release) LL_FLAVOUR=release ;;
+    lab)     [ "$LAB_PADS_USED" = 1 ] && LL_FLAVOUR=lab ;;
+  esac
+  if [ -n "$LL_FLAVOUR" ]; then
+    LL_STRICT=1
+    [ -n "$LAYOUT_PAD_ENV${PSP_EXTRA:-}${CORE_EXTRA:-}${FE_EXTRA:-}${ME_LOWLAT:-}" ] && LL_STRICT=0
+    [ "$RFU_SCHED$GBA_LINK$REWIND$ONLINE$CHEATS${INPUT_FRESH:-1}$LAYOUT_PIN" = 1111111 ] || LL_STRICT=0
+    [ -n "${GBALINK_LEAN_OUTLINE:-}" ] && [ "${GBALINK_LEAN_OUTLINE}" != 0 ] && LL_STRICT=0
+    if "$PYB" "$LL_PY" check "$LL_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" -q; then
+      note "layout  : layout.lock [$LL_FLAVOUR] OK"
+    elif [ "$LL_STRICT" = 1 ] && { [ "$KIND" = release ] || [ "${LAYOUT_LOCK:-1}" != 0 ]; }; then
+      # LAYOUT_LOCK=0 lets a lab build through while a re-pin is in progress;
+      # a release never.
+      die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: re-pin with layout_lock.py solve, then re-record with write)"
+    else
+      note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)"
+    fi
+  fi
 fi
 
 # XLAT_THUMB_NO_UNSWITCH: fail if translate_block_thumb's translation_ptr

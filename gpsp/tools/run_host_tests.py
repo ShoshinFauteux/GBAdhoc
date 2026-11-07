@@ -610,6 +610,12 @@ def suites(env: Env, baseline: Path | None):
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 
+        # The layout lock checker (tools/layout/layout_lock.py) and the
+        # committed lock / lab pad set: moved symbols, closed holes, a
+        # resized main and a missing pad symbol must fail; solve's shifts.
+        ("layout_lock", False, lambda: None,
+         "python3 tools/tests/test_layout_lock.py"),
+
         # The residency rig's summarizer refuses runs it cannot vouch for:
         # wrong arm, foreign EBOOT, un-echoed or unknown keys, applied values
         # that differ from the staged ones, and a diverged or missing oracle.
