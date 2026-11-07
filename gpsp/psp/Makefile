@@ -44,7 +44,8 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        ../gbcore/gbcore_dual.o \
        ../gbcore/tgbdual/tgb_shared.o \
        ../gbcore/gbcore_tgbdual_linked.o \
-       ../gbcore/gbcore_tgbdual_linked_b.o
+       ../gbcore/gbcore_tgbdual_linked_b.o \
+       layout_pad_gb.o
 
 # Vendored TGB Dual (GB/GBC; gbcore/tgbdual/, from MasterBoy).  Its flags are
 # scoped to its own objects and assigned after the build.mak include, beside
@@ -185,8 +186,13 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # them.  claude/opt-1000 round 7 sets them so main's frame loop and the
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 3512
+LAYOUT_PAD_FE_BYTES ?= 3608
 LAYOUT_PAD_CORE_BYTES ?= 5544
+# LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
+# GB cores' partial links, so a change inside the vendored GB core (round 9:
+# the packed noise tables) does not move the frontend-common code linked after
+# it (fe_rewind's per-frame capture, the link glue, B's cold text).
+LAYOUT_PAD_GB_BYTES ?= 696
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 LAYOUT_PAD_BSCAN_BYTES ?= 7704
@@ -486,6 +492,9 @@ $(CORE_LIB):
 layout_pad_fe.o: layout_pad_mid.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_FE_BYTES) \
 	      -DLAYOUT_PAD_MID_NAME=layout_pad_fe
+layout_pad_gb.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_GB_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_gb
 layout_pad_core.o: layout_pad_mid.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_CORE_BYTES) \
 	      -DLAYOUT_PAD_MID_NAME=layout_pad_core

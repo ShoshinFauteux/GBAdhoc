@@ -11,6 +11,10 @@
 #            recorded from the round-7 lab arm C ELF 0f31d0a6 (9e41b91e).
 # The B-region, hash-table and JIT-base lines were added in round 9 and
 # measured on the round-8 ELFs fb410a57 / 51d607c5 (nm identical to round 7).
+# Round 9: the FE pad's anchor is netdrv_poll_needed, the first symbol after
+# netdrv's ARQ code (round 9 shrank it; netdrv's first 1,808 B, roster_valid ..
+# peer_remove, moved +96), and the GB pad (after both GB cores) holds hex_val,
+# the first symbol after it.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -19,7 +23,8 @@ size main                               33724
 at   pace_frame                         0x0a20
 # the first symbol after each text pad (the anchor `solve` aims at)
 at   exit_cb                            0x02f0
-at   roster_valid                       0x0a90
+at   netdrv_poll_needed                 0x0e98
+at   hex_val                            0x1784
 at   pte_mutex_check_need_init          0x1220
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
@@ -53,7 +58,8 @@ at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        netdrv_poll_needed
+pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
 
 [lab]
@@ -63,7 +69,8 @@ size main                               48440
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad (the anchor `solve` aims at)
 at   exit_cb                            0x136c
-at   roster_valid                       0x147c
+at   netdrv_poll_needed                 0x1884
+at   hex_val                            0x1f20
 at   pte_mutex_check_need_init          0x07f4
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
@@ -97,5 +104,6 @@ at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        netdrv_poll_needed
+pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
