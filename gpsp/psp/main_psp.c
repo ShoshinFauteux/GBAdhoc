@@ -10935,7 +10935,7 @@ static void core_health_evt(const char *at)
     * sessions; critique-7 SF4).  hit_hops_x100 = mean hops for a hit. */
    /* The walk is not free (critique-8 SF1: a full LARGE cache is ~44 K
     * dependent loads, estimated 8-13 ms), so it runs on every 10th
-    * heartbeat and at every other call (exit), and times itself. */
+    * heartbeat (counted across reloads) and at every other call, and times itself. */
    {
       extern void rom_hash_census(u32 out[10]);
       static unsigned hb_calls;
