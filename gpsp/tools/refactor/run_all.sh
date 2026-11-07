@@ -63,16 +63,18 @@ step lpsim     "T16 loop_lpsim (static part)"                  "LP" \
 # P0a (PLAN-P-beta5 §3): the repaired tools' own unit tests, then the "b5 row set": every
 # P0a repair with its mutant on another tree.  B5_TREES="TREE:RUN[:CUTLIST] ..." (a clean
 # source tree of the commit, its flavours.sh --baseline run, the cutlist of that source);
-# RUN2 / TWIN as tests/p0a_b5.sh documents them (applied to the first tree).
+# RUN2 / TWIN / P4_RUN as tests/p0a_b5.sh documents them (applied to the first tree).  With a
+# cutlist the b5 rows include a REAL P4 build (split.py + the cutlist as a commit, flavours.sh
+# --commit --against RUN, the whole generated gate line; ~15 min, under LOCK).
 step p0a_unit  "P0a loop_anchor, flavours_gate, exit_matrix raw" "G2L XS G1" bash -c '
   set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
   '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"'
 k=0
 for spec in ${B5_TREES:-}; do
   IFS=: read -r bt br bc <<< "$spec"; k=$((k + 1))
-  if [ $k = 1 ]; then XR2=${RUN2:-} XTW=${TWIN:-}; else XR2= XTW=; fi
+  if [ $k = 1 ]; then XR2=${RUN2:-} XTW=${TWIN:-} XP4=${P4_RUN:-}; else XR2= XTW= XP4=; fi
   step "b5_$k" "P0a b5 rows on $(basename "$(dirname "$bt")")"    "all" \
-    env RUN2="$XR2" TWIN="$XTW" bash "$T/p0a_b5.sh" --tree "$bt" --run "$br" ${bc:+--cutlist "$bc"} --out "$S/b5_$k"
+    env RUN2="$XR2" TWIN="$XTW" P4_RUN="$XP4" LOCK="$LOCK" bash "$T/p0a_b5.sh" --tree "$bt" --run "$br" ${bc:+--cutlist "$bc"} --out "$S/b5_$k"
 done
 
 echo

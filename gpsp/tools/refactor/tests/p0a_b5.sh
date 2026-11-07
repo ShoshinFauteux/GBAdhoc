@@ -11,6 +11,14 @@
 #     RUN2      (env) a second run of the same commit, for the --against case
 #     TWIN      (env) a run of a DIFFERENT commit with the same gpsp/ tree, built with
 #               the same --build-version/--sde pins (G1 two-commit case)
+#     P4_RUN    (env) where the real P4 build lives (default OUT/p4run); reused when it
+#               holds the P4 commit already, else built (LOCK=FILE serialises it)
+#   Steps (--only): loop t10 t14 t6 xs_raw xs_e t9 cf st t13 pp flav runs t11split p4.
+#   pp/flav/t11split/p4 carry the adversarial review's mutants (2026-11-07): the pair
+#   arms (MA, MB), the build.sh rewrite prune, missing/leaky logs, another TU, a header,
+#   step scope (DS/BF), the --against contract field by field, ci_greps on the split
+#   (logical files, KNOWN keys), and the census/loop numbers on the real P4.
+#   RUN must be a hermetic flavours.sh run (2026-11-07) for flav's contract cases and p4.
 #   Needs WSL: docker (pspdev/pspdev, DOCKER_IMAGE pins it), python3, git.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd); R=$(cd "$HERE/.." && pwd)
@@ -301,14 +309,79 @@ if want pp; then
   expect_rc 2 "pp_diff without --logs is refused" bash "$R/pp_diff.sh" --ref "$TREE" --new "$TREE"
   expect_rc 0 "G0 base vs base, every flavour in the run (the -D sets printed)" bash "$R/pp_diff.sh" --ref "$TREE" --new "$TREE" --logs "$RUN"
   grep -E "\-D set|IDENTICAL|G0" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
-  expect_rc 0 "variant sweep, every arm build.sh accepts preprocesses" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN"
-  grep -E "^pp_sweep|^G0var" "$OUT/last.log" | sed 's/^/        /'
+  expect_rc 0 "variant sweep: every build.sh switch alone and in pairs, 4 flavours, derived lines = the logs" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN"
+  grep -E "^pp_sweep: ([0-9]+ (switches|flavour)|\[)|^G0var" "$OUT/last.log" | sed 's/^/        /' | cut -c1-220
+  sweep_mut() {  # sweep_mut <want rc> <label> <overlay dir> [extra args]: one overlay mutant through the full sweep
+    local w=$1 l=$2 o=$3; shift 3
+    expect_rc "$w" "$l" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$o" "$@"
+    grep -E "^pp_sweep: DIFFERENT|^G0var" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+  }
   if grep -q '^#define g_mg_on 0' "$M"; then
     mkdir -p "$OUT/ppovl/psp"; sed 's/^#define g_mg_on 0\b/#define g_mg_on (0)/' "$M" > "$OUT/ppovl/psp/main_psp.c"
     cmp -s "$M" "$OUT/ppovl/psp/main_psp.c" && bad "MGIFT=0-arm mutant was not applied"
     expect_rc 0 "MGIFT=0-arm mutant: the 4 built flavours stay G0-identical (they never see it)" bash "$R/pp_diff.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl"
-    expect_rc 1 "MGIFT=0-arm mutant: the mgift0 arm of the sweep catches it" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl" --arms mgift0
+    sweep_mut 1 "MGIFT=0-arm mutant: the sweep catches it" "$OUT/ppovl"
+    expect_rc 1 "  ... and the chosen arm alone (--arms MGIFT=0) too" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl" --arms MGIFT=0
+    expect_rc 3 "a chosen subset that is identical is PARTIAL (exit 3), never a gate pass" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --arms CHEATS=0
   fi
+  # adversarial review 2026-11-07 (scratchpad adv/mk_ppmut.sh, run_prune.sh, other_tu.sh)
+  if grep -q '^#define g_mgift_consumed 0u$' "$M"; then
+    mkdir -p "$OUT/ppMA/psp"
+    awk '{ if ($0=="#define g_mgift_consumed 0u") { print "#ifdef RFU_SCHED"; print $0; print "#else"; print "#define g_mgift_consumed 1u"; print "#endif" } else print }' "$M" > "$OUT/ppMA/psp/main_psp.c"
+    sweep_mut 1 "MA: a change only under MGIFT=0 x RFU_SCHED=0 (g_mgift_consumed): a pair arm catches it" "$OUT/ppMA"
+  fi
+  if grep -q '^#define g_mg_on 0   /\* MGIFT=0: never listening \*/$' "$M"; then
+    mkdir -p "$OUT/ppMB/psp"
+    awk '{ if ($0=="#define g_mg_on 0   /* MGIFT=0: never listening */") { print "#ifdef REWIND"; print $0; print "#else"; print "#define g_mg_on 1"; print "#endif" } else print }' "$M" > "$OUT/ppMB/psp/main_psp.c"
+    sweep_mut 1 "MB: a change only under REWIND=0 x MGIFT=0 (g_mg_on): caught on every flavour" "$OUT/ppMB"
+    # a same-meaning rewrite of build.sh's MGIFT line + an MGIFT=0-only change (it pruned the arm, exit 0)
+    NT="$OUT/pptree"; rm -rf "$NT"; cp -a "$TREE" "$NT"
+    sed -i 's/^MGIFT="\${MGIFT:-1}"$/MGIFT=${MGIFT:-1}/' "$NT/tools/build.sh"
+    sed -i 's/^#define g_mg_on 0   \/\* MGIFT=0: never listening \*\//#define g_mg_on 1   \/* MGIFT=0: never listening *\//' "$NT/psp/main_psp.c"
+    if cmp -s "$TREE/tools/build.sh" "$NT/tools/build.sh" || cmp -s "$M" "$NT/psp/main_psp.c"; then bad "prune mutant not applied"
+    else
+      expect_rc 1 "prune mutant: MGIFT=\${MGIFT:-1} (unquoted) is still the MGIFT switch; the MGIFT=0 change is caught" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$NT" --logs "$RUN"
+      grep -E "^pp_sweep: (changed|pruned)" "$OUT/last.log" | sed 's/^/        /' | cut -c1-160
+    fi
+  fi
+  L3="$OUT/logs3"; rm -rf "$L3"
+  for f in release lab harness; do mkdir -p "$L3/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$L3/$f/logs/"; cp "$RUN/$f/flavour.json" "$L3/$f/"; done
+  expect_rc 2 "logs without release-stable: a skipped flavour is exit 2" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3"
+  expect_rc 0 "  --allow-prune release-stable lets the sweep pass on the other three" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3" --allow-prune release-stable
+  grep -E "^pp_sweep: pruned" "$OUT/last.log" | sed 's/^/        /'
+  # a leaky log (the run built with ME_LOWLAT=0 in the shell): the derived line is not the logged one
+  LL="$OUT/logsll"; rm -rf "$LL"; cp -r "$RUN" "$LL" 2>/dev/null || { mkdir -p "$LL"; for f in release release-stable lab harness; do mkdir -p "$LL/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$LL/$f/logs/"; cp "$RUN/$f/flavour.json" "$LL/$f/"; done; }
+  sed -i -E '/ -c -o main_psp\.o main_psp\.c$/ s/ -include fe_features\.h/ -DPLAY_ME_LOWLAT=0 -include fe_features.h/' "$LL/release/logs/.build-eboot.log"
+  expect_rc 2 "leaky log (-DPLAY_ME_LOWLAT=0 on release's line): the derivation check refuses it" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$LL"
+  grep -E "derived .* line is not the logged one" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+  # another TU (ui_psp.c) under REWIND=0: the sweep covers every file the step changes
+  ul=$(grep -n '^#endif' "$TREE/psp/ui_psp.c" | head -1 | cut -d: -f1)
+  mkdir -p "$OUT/ppui/psp"
+  awk -v n="$ul" 'NR==n { print "#else"; print "int g_adv_ui_mutant = 1;"; } { print }' "$TREE/psp/ui_psp.c" > "$OUT/ppui/psp/ui_psp.c"
+  if grep -B3 "int g_adv_ui_mutant" "$OUT/ppui/psp/ui_psp.c" | grep -qE '^#if'; then
+    sweep_mut 1 "other TU: an #else arm added to ui_psp.c's first #if: ui_psp.c is swept and caught" "$OUT/ppui"
+  else
+    awk 'NR==1 { print "#ifndef REWIND"; print "int g_adv_ui_mutant = 1;"; print "#endif" } { print }' "$TREE/psp/ui_psp.c" > "$OUT/ppui/psp/ui_psp.c"
+    sweep_mut 1 "other TU: a REWIND=0-only object in ui_psp.c: ui_psp.c is swept and caught" "$OUT/ppui"
+  fi
+  # a header only main_psp.c includes, changed under MGIFT=0: swept through its includer
+  if [ -f "$TREE/psp/mgift_shortcut.h" ]; then
+    mkdir -p "$OUT/pphdr/psp"; { cat "$TREE/psp/mgift_shortcut.h"; printf '#ifndef GBADHOC_MGIFT\n#define GBADHOC_ADV_HDR 1\n#endif\n'; } > "$OUT/pphdr/psp/mgift_shortcut.h"
+    expect_rc 0 "a header change that adds only an unused macro: swept through its includers, identical (-P)" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/pphdr"
+    grep -E "swept through" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+  fi
+  # step scope (DS) and build files (BF) on trees
+  expect_rc 0 "DS: a tree against itself is in scope" bash "$R/step_scope.sh" ds --ref "$TREE" --new "$TREE"
+  ST="$OUT/sstree"; rm -rf "$ST"; cp -a "$TREE" "$ST"; echo "/* x */" >> "$ST/psp/ui_psp.c"
+  expect_rc 1 "DS: a step that touches psp/ui_psp.c is out of scope" bash "$R/step_scope.sh" ds --ref "$TREE" --new "$ST"
+  expect_rc 0 "DS: ... unless --scope-allow psp/ui_psp.c (printed)" bash "$R/step_scope.sh" ds --ref "$TREE" --new "$ST" --scope-allow psp/ui_psp.c
+  rm -rf "$ST"; cp -a "$TREE" "$ST"; mkdir -p "$ST/psp/fe"; echo "/* frag */" > "$ST/psp/fe/x.inc.c"; echo "/* y */" >> "$ST/psp/main_psp.c"
+  expect_rc 0 "DS: main_psp.c and a new psp/fe/ fragment are in scope" bash "$R/step_scope.sh" ds --ref "$TREE" --new "$ST"
+  if [ -d "$OUT/pptree" ]; then
+    expect_rc 1 "BF: the build.sh rewrite is a build-file change" bash "$R/step_scope.sh" bf --ref "$TREE" --new "$OUT/pptree"
+    expect_rc 1 "DS: ... and out of scope" bash "$R/step_scope.sh" ds --ref "$TREE" --new "$OUT/pptree"
+  fi
+  expect_rc 0 "BF: identical trees" bash "$R/step_scope.sh" bf --ref "$TREE" --new "$TREE"
 fi
 
 # ---- T15 flavours --against with the real tools
@@ -324,8 +397,136 @@ if want flav; then
   fi
   # a reference with a doctored image is refused before any check
   DR="$OUT/doctored"; rm -rf "$DR"; mkdir -p "$DR"
-  for fl in release; do mkdir -p "$DR/$fl"; cp "$RUN/$fl/flavour.json" "$DR/$fl/"; sed -i 's/"dockerId": "sha256:[0-9a-f]*"/"dockerId": "sha256:doctored"/' "$DR/$fl/flavour.json"; done
-  expect_rc 2 "--against a manifest with a doctored dockerId exits 2" bash "$R/flavours.sh" --check-only --out "$RUN" --against "$DR" --flavours release
+  for fl in release release-stable lab harness; do mkdir -p "$DR/$fl"; cp "$RUN/$fl/flavour.json" "$DR/$fl/"; sed -i 's/"dockerId": "sha256:[0-9a-f]*"/"dockerId": "sha256:doctored"/' "$DR/$fl/flavour.json"; done
+  expect_rc 2 "--against a manifest with a doctored dockerId exits 2" bash "$R/flavours.sh" --check-only --out "$RUN" --against "$DR"
+  grep -qE "dockerId differs|not a hermetic build" "$OUT/last.log" && ok "  refused for: $(grep -oE '(dockerId differs|not a hermetic build)' "$OUT/last.log" | head -1)" || bad "doctored refusal reason"
+  # adversarial doctor.sh: each field of the contract on its own (needs a hermetic run)
+  if grep -q '"hermetic": "yes"' "$RUN/release/flavour.json"; then
+    doct() {  # doct <name> <flavour> <sed>: RUN's records with one field doctored (no ELF needed: refused first)
+      local d="$OUT/doct_$1" f; rm -rf "$d"
+      for f in release release-stable lab harness; do mkdir -p "$d/$f"; cp "$RUN/$f/flavour.json" "$d/$f/"; done
+      cp "$RUN/flavours.json" "$RUN/ci_greps.txt" "$d/" 2>/dev/null; sed -i "$3" "$d/$2/flavour.json"
+    }
+    doct dirty release 's/"workingTreeClean": true/"workingTreeClean": false/'
+    doct lock release 's/"layoutLock": "release:ok"/"layoutLock": "release:differs"/'
+    doct xenv lab 's/"extraEnv": ""/"extraEnv": "ME_LOWLAT=0 LAYOUT_PIN=0"/'
+    doct benv harness 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
+    doct anc release-stable 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/'
+    for k in dirty lock xenv benv anc; do
+      expect_rc 2 "contract: a reference with a doctored field ($k) is refused" bash "$R/flavours.sh" --check-only --out "$RUN" --against "$OUT/doct_$k"
+      grep -m1 "FAIL:" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    done
+  else echo "        (RUN is not hermetic: the field-by-field contract cases need a hermetic run)"; fi
+fi
+
+# ---- --runs discover the run's flavours (release-stable was skipped by det_check/sect_cmp/SS)
+if want runs; then
+  echo "== --runs flavour discovery (det_check, sect_cmp, strong_syms checkrun)"
+  RS1="$OUT/runs1"; RS2="$OUT/runs2"; rm -rf "$RS1" "$RS2"
+  for f in release release-stable lab harness; do
+    [ -f "$RUN/$f/gpsp_adhoc.elf" ] || continue
+    for d in "$RS1" "$RS2"; do mkdir -p "$d/$f"; cp "$RUN/$f/gpsp_adhoc.elf" "$RUN/$f/flavour.json" "$d/$f/"; cp "$RUN/$f/gpsp_adhoc.map" "$d/$f/" 2>/dev/null; done
+  done
+  expect_rc 0 "det_check --runs on two copies: identical in every discovered flavour" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
+  tail -1 "$OUT/last.log" | sed 's/^/        /'
+  if [ -d "$RS2/release-stable" ]; then
+    $PY "$HERE/p0a_flip_text.py" "$RS2/release-stable/gpsp_adhoc.elf" > /dev/null
+    expect_rc 1 "runs_stb mutant: one .text byte flipped in release-stable: det_check --runs FAILS" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
+    expect_rc 1 "runs_stb mutant: sect_cmp --runs FAILS" $PY "$R/sect_cmp.py" --runs "$RS1" "$RS2"
+    rm -rf "$RS2/lab"
+    expect_rc 1 "a flavour in one run only (lab) is a FAIL, not a skip" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
+    expect_rc 0 "strong_syms checkrun: every discovered flavour (release-stable held to the release rows)" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
+    grep -E "^SS:|held to" "$OUT/last.log" | sed 's/^/        /'
+    rm -f "$RS1/release-stable/gpsp_adhoc.map"
+    expect_rc 1 "strong_syms checkrun: release-stable without its map FAILS (it used to be skipped)" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
+  fi
+fi
+
+# ---- T11 on the split tree: *.inc.c are part of their includer; KNOWN rows by function + content
+if want t11split && [ -n "$CUT" ]; then
+  echo "== T11 ci_greps on the P4 split"
+  SP="$OUT/split11"; rm -rf "$SP"; $PY "$R/split.py" split --src "$M" --cutlist "$CUT" --out "$SP" > /dev/null 2>&1 || bad "split.py split"
+  PT="$OUT/p4ci"; rm -rf "$PT"; mkdir -p "$PT"; cp -a "$TREE/psp" "$TREE/frontend-common" "$PT/"
+  for d in netdrv gbcore; do [ -d "$TREE/$d" ] && cp -a "$TREE/$d" "$PT/"; done
+  cp "$TREE"/*.h "$PT/" 2>/dev/null
+  cp "$SP/psp/main_psp.c" "$PT/psp/"; cp -r "$SP/psp/fe" "$PT/psp/"
+  $PY "$R/ci_greps.py" --src "$TREE" --phase base > "$OUT/ci_base.txt" 2>&1; rb=$?
+  expect_rc 0 "ci_greps --phase base on the P4 split: green" $PY "$R/ci_greps.py" --src "$PT" --phase base
+  cp "$OUT/last.log" "$OUT/ci_p4.txt"
+  if diff <(grep -v '^logical files' "$OUT/ci_p4.txt" | sed -E 's/ \(psp\/fe\/[^)]*\)//') "$OUT/ci_base.txt" > /dev/null && [ $rb = 0 ]; then
+    ok "P4 ci_greps output == base output line for line (fragment locations aside): $(grep -c KNOWN "$OUT/ci_p4.txt") KNOWN"
+  else bad "P4 ci_greps output differs from the base's"; diff <(grep -v '^logical files' "$OUT/ci_p4.txt" | sed -E 's/ \(psp\/fe\/[^)]*\)//') "$OUT/ci_base.txt" | head -8 | sed 's/^/        /'; fi
+  # mutant: the old file-by-file view (fragments read on their own) fails the correct split
+  expect_rc 1 "mutant --no-logical (the old per-file view): the correct split FAILS (R1/R4/R5)" $PY "$R/ci_greps.py" --src "$PT" --phase base --no-logical
+  grep -E "FAIL  R[0-9]" "$OUT/last.log" | sed -E 's/^ *FAIL  (R[0-9]+) .*/\1/' | sort | uniq -c | tr '\n' ' ' | sed 's/^/        /'; echo
+  # mutant: the KNOWN R4 call copied into another function is not excused by the row
+  fk=$(grep -l "fe_host_sram_test_kill_handle" "$PT/psp/fe/"*.inc.c 2>/dev/null | head -1)
+  if [ -n "$fk" ]; then
+    printf '\nstatic void p0a_adv_r4(void) { fe_evt("x %%d", fe_host_sram_test_kill_handle()); }\n' >> "$fk"
+    expect_rc 1 "KNOWN key mutant: the same call in another function (fragment $(basename "$fk")) FAILS" $PY "$R/ci_greps.py" --src "$PT" --phase base --rules R4
+    grep -E "FAIL  R4" "$OUT/last.log" | head -1 | sed 's/^/        /' | cut -c1-200
+  fi
+fi
+
+# ---- the REAL P4: split.py + the cutlist as a commit on this run's commit, built by
+# flavours.sh --commit and gated --against RUN on every check (G0 G0var G1 G2 HO SS ST LL CF
+# BF DS CI), then the non-byte metrics (T13 census, T1b helpers, T10/T16 window by anchor)
+if want p4 && [ -n "$CUT" ]; then
+  echo "== P4: a real split build gated --against the run"
+  if ! grep -q '"hermetic": "yes"' "$RUN/release/flavour.json"; then
+    bad "P4 needs a hermetic RUN (flavours.sh of 2026-11-07): rebuild $RUN"
+  else
+    REPO=${FLAV_REPO:-$(cd "$R/../../.." && pwd)}    # FLAV_REPO: tools run from a copy (run_all on a tree export)
+    P4C=$(bash "$HERE/p4_commit.sh" --repo "$REPO" --base "$COMMIT" --cutlist "$CUT" --out "$OUT/p4c" 2> "$OUT/p4c.err" | tail -1)
+    if ! [[ "$P4C" =~ ^[0-9a-f]{40}$ ]]; then bad "p4_commit.sh: $(cat "$OUT/p4c.err")"
+    else
+      ok "P4 commit ${P4C:0:10} = ${COMMIT:0:10} + split ($(ls "$OUT/p4c/split/psp/fe" | wc -l) fragments)"
+      BV=$(sed -nE 's/.*"buildVersion": *"([^"]*)".*/\1/p' "$RUN/release/flavour.json")
+      SD=$(sed -nE 's/.*"sourceDateEpoch": *"([^"]*)".*/\1/p' "$RUN/release/flavour.json")
+      P4R=${P4_RUN:-$OUT/p4run}
+      if [ -f "$P4R/release/flavour.json" ] && grep -q "\"sourceCommit\": \"$P4C\"" "$P4R/release/flavour.json"; then
+        expect_rc 0 "P4 (built run $P4R) --check-only --against RUN: the whole generated gate line green" \
+          bash "$R/flavours.sh" --check-only --out "$P4R" --against "$RUN"
+      else
+        expect_rc 0 "P4 built (flavours.sh --commit ${P4C:0:10} --against RUN): the whole generated gate line green" \
+          bash "$R/flavours.sh" --commit "$P4C" --out "$P4R" --against "$RUN" --build-version "$BV" --sde "$SD" ${LOCK:+--lock "$LOCK"}
+      fi
+      echo "        gate: $(cat "$P4R/gate.txt" 2>/dev/null)"
+      grep -E "^== .* FAIL" "$P4R/checks.txt" 2>/dev/null | sed 's/^/        /'
+      P4T="$OUT/p4src"; rm -rf "$P4T"; cp -a "$TREE" "$P4T"
+      cp "$OUT/p4c/split/psp/main_psp.c" "$P4T/psp/"; cp -r "$OUT/p4c/split/psp/fe" "$P4T/psp/"
+      for fl in release lab harness; do
+        [ -f "$P4R/$fl/gpsp_adhoc.elf" ] || continue
+        expect_rc 0 "[$fl] T13 census of P4 --against the base: no function changed status/symbols/callers" \
+          $PY "$R/inline_census.py" "$P4R/$fl/gpsp_adhoc.elf" --src "$OUT/p4c/split/psp/main_psp.c" --flavour "$fl" \
+          --against "$RUN/$fl/gpsp_adhoc.elf" --src-base "$M"
+        grep -E "inlined|IC|change" "$OUT/last.log" | tail -2 | sed 's/^/        /' | cut -c1-200
+        $PY "$R/loop_diff.py" "$RUN/$fl/gpsp_adhoc.elf" --main-c "$M" > "$OUT/ld_base_$fl.txt" 2>&1
+        $PY "$R/loop_diff.py" "$P4R/$fl/gpsp_adhoc.elf" --main-c "$OUT/p4c/split/psp/main_psp.c" > "$OUT/ld_p4_$fl.txt" 2>&1
+        hb=$(grep -E "inlined helpers in|composition" "$OUT/ld_base_$fl.txt" | sed -E 's/ before L:[0-9]+//'); hp=$(grep -E "inlined helpers in|composition" "$OUT/ld_p4_$fl.txt" | sed -E 's/ before L:[0-9]+//')
+        [ -n "$hb" ] && [ "$hb" = "$hp" ] && ok "[$fl] T1b inlined helpers in main + window composition equal on P4:$(echo "$hp" | grep "helpers in" | sed -E 's/.*main: //' | cut -c1-110)" \
+          || bad "[$fl] T1b inlined helpers: base '$hb' vs P4 '$hp'"
+        wb=$(grep -E "^  by (line|address)" "$OUT/ld_base_$fl.txt" | sed -E 's/by line [0-9]+-[0-9]+/by line/'); wp=$(grep -E "^  by (line|address)" "$OUT/ld_p4_$fl.txt" | sed -E 's/by line [0-9]+-[0-9]+/by line/')
+        [ -n "$wb" ] && [ "$wb" = "$wp" ] && ok "[$fl] T1b loop window by line and by address equal on P4" || bad "[$fl] T1b window differs"
+        if [ "$fl" != harness ]; then
+          expect_rc 0 "[$fl] T10 layout_report on P4 (window by anchor in the split shell) --ref the base" $PY "$R/layout_report.py" "$P4R/$fl" --src "$P4T" --ref "$RUN/$fl" --no-pad-check
+          grep -E "main loop by line|layout lock" "$OUT/last.log" | sed 's/^/        /' | cut -c1-160
+          expect_rc 0 "[$fl] T16 loop_lpsim window by anchor on P4" $PY "$R/loop_lpsim/loop_lpsim.py" window "$P4R/$fl/gpsp_adhoc.elf"
+        fi
+      done
+      # the tool mutants: the old decl_file rule (main_psp.c only) loses the fragments' functions
+      sed 's/or f.endswith(.\.inc\.c.))$/)/' "$R/inline_census.py" > "$R/.ic_mut.py"
+      if cmp -s "$R/inline_census.py" "$R/.ic_mut.py"; then bad "inline_census mutant not applied"
+      else
+        $PY "$R/.ic_mut.py" "$P4R/release/gpsp_adhoc.elf" --src "$OUT/p4c/split/psp/main_psp.c" --flavour release \
+          --against "$RUN/release/gpsp_adhoc.elf" --src-base "$M" > "$OUT/last.log" 2>&1; rc=$?
+        if [ $rc = 1 ] && ! grep -q Traceback "$OUT/last.log"; then
+          ok "mutant inline_census by decl_file = main_psp.c: P4 reads as changed (caught): $(grep -cE '^ +[a-z_0-9.]+ +' "$OUT/last.log") rows"
+        else bad "inline_census mutant rc $rc"; tail -3 "$OUT/last.log" | sed 's/^/        /'; fi
+      fi
+      rm -f "$R/.ic_mut.py"
+    fi
+  fi
 fi
 
 echo "p0a_b5: $([ $FAILS -eq 0 ] && echo PASS || echo "$FAILS FAILED")  (out $OUT)"

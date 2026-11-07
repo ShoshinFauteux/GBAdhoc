@@ -63,6 +63,45 @@ bash pp_sweep.sh --ref TREE_A --new TREE_B --logs RUN       # G0 on the variant 
 bash ci_greps.sh --phase P                                  # CI rules
 ```
 
+All of these are also run by `flavours.sh --against`, which writes every verdict to
+`checks.txt` and GENERATES the gate line (`gate.txt`) from it. A P step's gate line is that
+file, never typed: `G0 ok rel/stb/lab/har G0var ok G1 ok rel/stb/lab/har G2 ... ST ok
+rel/stb/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
+a flavour it must cover, makes the line red (`flavours_gate.py`).
+
+### Fix pass after the adversarial review of P0a (2026-11-07)
+
+- **Hermetic builds.** `flavours.sh` runs `build.sh` under `env -i` (fixed PATH, HOME, the docker
+  client variables) with only DOCKER_IMAGE, GPSP_BUILD_*, RFU_SCHED and `FLAV_<NAME>_ENV`. All of
+  it is in `flavour.json` `buildEnv`. Caller variables that build.sh would have read are listed in
+  `callerEnvDropped`. With ME_LOWLAT=0 exported, the build is now the default build.
+- **The `--against` contract** (exit 2 before any check). Both sides must be hermetic and clean,
+  with all four flavours. The image, version, SDE, RFU_SCHED, buildEnv and extraEnv must be equal.
+  layoutLock must be release:ok and lab:ok. The reference must be this commit, its first parent,
+  or a commit with the same gpsp/ tree.
+- **New verdicts in `checks.txt`:** G0 (`pp_diff.sh` on both commits' exports, per flavour), G0var
+  (`pp_sweep.sh`), LL, CF (`check_flags.py` rc 0 and the same output on both trees), BF and DS
+  (`step_scope.sh`: the build files are byte-identical, and the diff stays inside
+  `psp/main_psp.c` and `psp/fe/`; `--scope-allow GLOB` widens that and is printed in the verdict).
+- **`pp_sweep`** (`pp_sweep.py`) generates its arms from build.sh's own switch list: every value
+  alone and every pair, on all four flavours. It derives each arm's compile lines by running
+  build.sh dry plus `make -n`, and the base lines must equal the run's logs. It sweeps every file
+  the step changes, plus every TU that includes a changed header or fragment. A skipped arm,
+  flavour or file exits 2; the only escape is `--allow-prune NAME`. A `--arms`/`--flavours`
+  subset exits 3 (not a gate).
+- **`--runs` discovery** (`runs.py`). `det_check.py --runs`, `sect_cmp.py --runs` and
+  `strong_syms.py checkrun` find the run's flavours themselves, so release-stable is included.
+- **`ci_greps`** reads a `*.inc.c` fragment as part of its includer, through a logical view that
+  is the unsplit text line for line. Hits name the fragment line. KNOWN R4 rows are keyed by
+  function, offending token and argument tokens. `--no-logical` is the old view, kept as a mutant.
+- **T13 / T1b attribute DWARF by compile unit.** An inline instance or line row belongs to
+  main_psp.o's own text if its file is main_psp.c or a `*.inc.c` fragment. loop_diff orders a
+  fragment against `main` by its `#include` line in the shell.
+- **A real P4 build.** `tests/p4_commit.sh` writes split.py's output as a commit object on the
+  run's commit; it is deterministic and on no branch. `tests/p0a_b5.sh` (step `p4`) builds that
+  commit with `flavours.sh --commit --against RUN` and requires the whole generated gate line,
+  then T13/T1b/T10/T16 on the P4 ELFs. This replaces the simulated `.su` approach as the P4 proof.
+
 ### P0a (PLAN-P-beta5 §3): what changed for the beta.5 base
 
 - `flavours.sh` builds four flavours (`release`, `release-stable` = RFU_SCHED=0, `lab`, `harness`).
