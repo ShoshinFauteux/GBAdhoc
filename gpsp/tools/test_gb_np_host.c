@@ -103,6 +103,11 @@ unsigned netdrv_peer_min_fps(const netdrv *nd) { (void)nd; return 0; }
 void netdrv_set_local_fps(netdrv *nd, unsigned fps) { (void)nd; (void)fps; }
 void netdrv_set_ack_ride(netdrv *nd, uint32_t us) { nd->ride = us; }
 uint32_t netdrv_ack_ride(const netdrv *nd) { return nd->ride; }
+/* beta.4's starting-session keepalive (netpacket_host.c fe_np_keepalive /
+ * fe_np_set_peer_dead_us): the GB routing test never exercises them. */
+void netdrv_keepalive(netdrv *nd, uint64_t now_us) { (void)nd; (void)now_us; }
+void netdrv_set_peer_dead_us(netdrv *nd, uint32_t us) { (void)nd; (void)us; }
+uint32_t netdrv_peer_dead_us(const netdrv *nd) { (void)nd; return 0; }
 
 static void gb_receive(void *userdata, const void *payload, size_t len,
                        uint8_t src_id)
