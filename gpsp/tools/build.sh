@@ -53,7 +53,7 @@ else
 fi
 BUILD_VERSION="${GPSP_BUILD_VERSION:-${BUILD_COMMIT:0:7}}"
 
-DOCKER_IMAGE="pspdev/pspdev"
+DOCKER_IMAGE="${DOCKER_IMAGE:-pspdev/pspdev}"   # override (e.g. pspdev/pspdev@sha256:...) to pin the compiler by digest
 
 # ------------------------------------------------------------- profiles ----
 # Core flags reach the ROOT make (anything touching the dynarec); frontend

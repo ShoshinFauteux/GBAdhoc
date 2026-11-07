@@ -121,3 +121,6 @@ vid_scale_name
 vid_smooth_name
 view_count
 vram_free_base
+# P0a (PLAN-P-beta5 C9), reviewed 2026-11-07: fe_png_work_bytes (frontend-common/fe_png.c:28) is
+# pure arithmetic on its two arguments (no state, no I/O); fe_evt args at main_psp.c:14311-14312.
+fe_png_work_bytes

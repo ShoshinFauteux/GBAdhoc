@@ -282,6 +282,11 @@ def rule_r2(src):
 
 
 # ------------------------------------------------------------- R3
+# Non-gpsp_* functions that ALSO run nested in fe_host_run_frame and are roots of
+# R3: the core's ROM-load progress hook and the session-memory reload note run inside
+# fe_host_gba_sessmem_cycle (PLAN-P-beta5 §2.1, P0a).
+R3_EXTRA_ROOTS = ('gba_reload_note', 'gba_reload_progress')
+
 def rule_r3(src):
     """The call graph is the UNION over every file in scope, not per file: after phase P a
     hook and its callees sit in different psp/fe/*.inc.c fragments of one TU, and a
@@ -311,7 +316,7 @@ def rule_r3(src):
                 holds.add(m.group(1))
     for rel, t, fns in per_file:
         for name in sorted(fns):
-            if not name.startswith('gpsp_'):
+            if not name.startswith('gpsp_') and name not in R3_EXTRA_ROOTS:
                 continue
             hooks += 1
             seen, stack = {name}, [(name, [name])]

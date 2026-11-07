@@ -30,6 +30,12 @@ expect_rc() {   # expect_rc <want> <label> <cmd...>
 mkdir -p "$T/bin"
 cat > "$T/bin/docker" <<'EOF'
 #!/bin/sh
+# image identity and the compiler version (flavours.sh records both)
+case "$*" in
+  "image inspect --format {{index .RepoDigests 0}} "*) echo "pspdev/pspdev@sha256:fakedigest"; exit 0 ;;
+  "image inspect --format {{.Id}} "*) echo "${FAKE_IMAGE_ID:-sha256:fakeid}"; exit 0 ;;
+  *"psp-gcc --version"*) echo "psp-gcc (GCC) 15.2.0"; exit 0 ;;
+esac
 echo "$*" >> "$FAKE_DOCKER_LOG"
 [ "$1" = run ] || exit 0
 sde=""
@@ -46,7 +52,7 @@ export PATH="$T/bin:$PATH" FAKE_DOCKER_LOG="$T/docker.log" FAKE_STAMP="$T/stamp"
 
 # --- fake repo: gpsp/tools/build.sh + the real flavours scripts under test
 R="$T/repo"; mkdir -p "$R/gpsp/tools/refactor/tests" "$R/gpsp/psp"
-cp "$HERE/flavours.sh" "$HERE/flavours_sidecar.sh" "$R/gpsp/tools/refactor/"
+cp "$HERE/flavours.sh" "$HERE/flavours_sidecar.sh" "$HERE/flavours_gate.py" "$R/gpsp/tools/refactor/"
 cat > "$R/gpsp/tools/build.sh" <<'EOF'
 #!/usr/bin/env bash
 # fake build.sh: one docker run, an ELF holding the stamp and the source marker
@@ -59,9 +65,14 @@ if [ -n "${FAKE_FIXUP:-}" ]; then
 else
   echo "psp-fixup-imports gpsp_adhoc.elf" > .build-eboot.log
 fi
-{ printf 'ELF '; tr '|' '\n' < "$FAKE_STAMP"; printf '\n'; cat marker.txt; } > psp/gpsp_adhoc.elf
+V="${GPSP_BUILD_VERSION:-${GPSP_BUILD_COMMIT:0:7}}"
+{ printf 'ELF '; tr '|' '\n' < "$FAKE_STAMP"; printf '\n'; cat marker.txt; printf 'gpSP v1.1.0-%s rfu=%s\n' "$V" "${RFU_SCHED:-0}"; } > psp/gpsp_adhoc.elf
 cp psp/gpsp_adhoc.elf psp/EBOOT.PBP
-echo "{\"profile\":\"$1\",\"dirty\":\"${GPSP_BUILD_DIRTY:-unset}\"}" > psp/build-manifest.json
+if [ "$1" = release ] && [ "${RFU_SCHED:-0}" = 1 ]; then echo "[build] layout  : layout.lock [release] OK"; LL=release:ok
+elif [ "$1" = release ]; then echo "[build] layout  : variant arm, the lock is not enforced (RFU_SCHED=0)"; echo "[build] layout  : layout.lock [release] differs (variant arm: reported, not enforced)"; LL=release:variant
+else LL=none; fi
+echo "{\"profile\":\"$1\",\"dirty\":\"${GPSP_BUILD_DIRTY:-unset}\", \"layoutLock\": \"$LL\"}" > psp/build-manifest.json
+[ "${2:-}" = --out ] && mkdir -p "$3" && cp psp/build-manifest.json "$3/"
 exit 0
 EOF
 echo committed > "$R/gpsp/marker.txt"; : > "$R/gpsp/psp/.keep"
@@ -99,6 +110,73 @@ grep -q "SOURCE_DATE_EPOCH did not reach" "$T/last.log" && ok "M3 message names 
 expect_rc 1 "M4 failing build.sh" env FAKE_FAIL=1 bash "$F" --src "$R/gpsp" --out "$T/o6" --no-sidecars --flavours release
 # M5
 expect_rc 2 "M5 unknown flavour" bash "$F" --src "$R/gpsp" --out "$T/o7" --flavours "release bogus"
+
+# ---- P0a (PLAN-P-beta5 §3): pins, release-stable, --against contract ----
+# C3 release-stable = build.sh release with RFU_SCHED=0; its layout line is recorded
+expect_rc 0 "C3 release-stable builds" bash "$F" --src "$R/gpsp" --out "$T/o8" --no-sidecars --flavours "release release-stable"
+grep -q 'rfu=0' "$T/o8/release-stable/gpsp_adhoc.elf" && grep -q 'rfu=1' "$T/o8/release/gpsp_adhoc.elf" \
+  && ok "C3 release-stable built with RFU_SCHED=0, release with 1" || bad "C3 RFU_SCHED per flavour wrong"
+grep -q '"buildShProfile": "release"' "$T/o8/release-stable/flavour.json" && ok "C3 release-stable uses build.sh release" || bad "C3 profile"
+grep -q '"layout": "variant arm, the lock is not enforced (RFU_SCHED=0)' "$T/o8/release-stable/flavour.json" \
+  && ok "C3 manifest records 'layout: variant arm, the lock is not enforced (RFU_SCHED=0)'" || bad "C3 layout line not recorded"
+grep -q '"dockerId": "sha256:fakeid"' "$T/o8/release/flavour.json" && grep -q '"pspGcc": "psp-gcc (GCC) 15.2.0"' "$T/o8/release/flavour.json" \
+  && ok "C3 image id and psp-gcc version recorded" || bad "C3 compiler identity not recorded"
+# M6 --sde pins SOURCE_DATE_EPOCH (stamp follows it), --build-version pins the version string
+expect_rc 0 "M6 --sde 1700000000 --build-version pin7" bash "$F" --src "$R/gpsp" --out "$T/o9" --no-sidecars --flavours "release harness" --sde 1700000000 --build-version pin7
+grep -q '"sourceDateEpoch": "1700000000"' "$T/o9/harness/flavour.json" && grep -q 'Nov 14 2023' "$T/o9/harness/gpsp_adhoc.elf" \
+  && ok "M6 --sde reached the compiler (stamp Nov 14 2023)" || bad "M6 --sde not applied"
+grep -q 'gpSP v1.1.0-pin7 ' "$T/o9/release/gpsp_adhoc.elf" && grep -q '"buildVersion": "pin7"' "$T/o9/release/flavour.json" \
+  && ok "M6 --build-version reached build.sh (GPSP_BUILD_VERSION) and is recorded" || bad "M6 version pin not applied"
+expect_rc 2 "M6' --sde not a number" bash "$F" --src "$R/gpsp" --out "$T/o9b" --sde yesterday
+# a second commit with the same tree: unpinned it differs (hash), pinned it is identical
+(cd "$R" && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m same-tree)
+expect_rc 0 "C4 same-tree commit, pinned" bash "$F" --src "$R/gpsp" --out "$T/o10" --no-sidecars --flavours "release harness" --sde 1700000000 --build-version pin7
+cmp -s "$T/o9/release/gpsp_adhoc.elf" "$T/o10/release/gpsp_adhoc.elf" && cmp -s "$T/o9/harness/gpsp_adhoc.elf" "$T/o10/harness/gpsp_adhoc.elf" \
+  && ok "C4 two commits, one tree, pinned: identical ELFs" || bad "C4 pinned same-tree builds differ"
+expect_rc 0 "C4' same-tree commit, unpinned" bash "$F" --src "$R/gpsp" --out "$T/o11" --no-sidecars --flavours release
+cmp -s "$T/o9/release/gpsp_adhoc.elf" "$T/o11/release/gpsp_adhoc.elf" && bad "C4' unpinned build equals the pinned one" || ok "C4' without the pin the version string differs"
+# M7 --against refuses (exit 2) a reference built with another image / version / SDE
+cp -r "$T/o9" "$T/ref_img"; sed -i 's/"dockerId": "sha256:fakeid"/"dockerId": "sha256:doctored"/' "$T/ref_img/release/flavour.json"
+expect_rc 2 "M7 --against with a doctored dockerId" bash "$F" --check-only --out "$T/o10" --against "$T/ref_img" --flavours "release harness"
+grep -q "dockerId differs" "$T/last.log" && ok "M7 message names dockerId" || bad "M7 wrong refusal"
+cp -r "$T/o9" "$T/ref_ver"; sed -i 's/"buildVersion": "pin7"/"buildVersion": "abc1234"/' "$T/ref_ver/harness/flavour.json"
+expect_rc 2 "M7' --against with another build version" bash "$F" --check-only --out "$T/o10" --against "$T/ref_ver" --flavours "release harness"
+expect_rc 2 "M7'' --against an unpinned build (other version + SDE)" bash "$F" --check-only --out "$T/o11" --against "$T/o9" --flavours release
+# M8 --against in a tree whose checks are ABSENT: every check FAILs (never a note), gate.txt says so
+expect_rc 6 "M8 absent tools are FAIL, not skipped" bash "$F" --check-only --out "$T/o10" --against "$T/o9" --flavours "release harness"
+if [ -f "$T/o10/gate.txt" ] && grep -q 'G1 FAIL' "$T/o10/gate.txt" && grep -q 'CI FAIL' "$T/o10/gate.txt"; then
+  ok "M8 gate line generated from checks.txt: $(cat "$T/o10/gate.txt")"; else bad "M8 gate line: $(cat "$T/o10/gate.txt" 2>/dev/null)"; fi
+# M9 sidecar: a \-continued compile line (layout_pad_gb.o, psp/Makefile) is joined before replay
+SL="$T/eboot.log"
+printf '%s\n' 'make: Entering directory '"'"'/build/psp'"'"'' \
+  'psp-gcc -c -o layout_pad_gb.o layout_pad_mid.S -DLAYOUT_PAD_MID_BYTES=1040 \' \
+  '      -DLAYOUT_PAD_MID_NAME=layout_pad_gb' \
+  'psp-gcc -O2 -G0 -c -o main_psp.o main_psp.c' > "$SL"
+E1=$(bash "$HERE/flavours_sidecar.sh" emit "$SL" /build/psp)
+if printf '%s\n' "$E1" | grep -q -- '-o layout_pad_gb.o layout_pad_mid.S -DLAYOUT_PAD_MID_BYTES=1040 *-DLAYOUT_PAD_MID_NAME=layout_pad_gb$' \
+   && ! printf '%s\n' "$E1" | grep -q '\\$' && [ "$(printf '%s\n' "$E1" | wc -l)" = 2 ]; then
+  ok "M9 continued layout_pad_gb.o line joined (2 compiles, no trailing backslash)"; else bad "M9 emit: $E1"; fi
+# the mutant: the sidecar without the join (the pre-P0a emit) is caught by the same check
+sed 's/while (\$0 ~ \/\\\\\$\/ &&/while (0 \&\&/' "$HERE/flavours_sidecar.sh" > "$T/sidecar_nojoin.sh"
+E2=$(bash "$T/sidecar_nojoin.sh" emit "$SL" /build/psp 2>/dev/null)
+[ "$(printf '%s\n' "$E2" | wc -l)" = 2 ] || bad "M9 mutant emit is not the old 2-line output: $E2"
+if cmp -s "$HERE/flavours_sidecar.sh" "$T/sidecar_nojoin.sh"; then bad "M9 mutant: the join line was not removed"
+elif printf '%s\n' "$E2" | grep -q -- '-DLAYOUT_PAD_MID_NAME=layout_pad_gb$'; then bad "M9 mutant without the join still passed"
+else ok "M9 mutant (no join) loses -DLAYOUT_PAD_MID_NAME: caught"; fi
+
+# C5 (optional, needs a real build pair): --check-only with the REAL tools on two
+# runs of one commit, e.g. FLAV_REAL_RUNS=$HOME/p0a/fbe/baseline (run1, run2)
+if [ -n "${FLAV_REAL_RUNS:-}" ] && [ -d "$FLAV_REAL_RUNS/run2" ]; then
+  expect_rc 0 "C5 real tools: --check-only run2 --against run1" bash "$HERE/flavours.sh" --check-only \
+    --out "$FLAV_REAL_RUNS/run2" --against "$FLAV_REAL_RUNS/run1"
+  G=$(cat "$FLAV_REAL_RUNS/run2/gate.txt" 2>/dev/null)
+  for g in G1 G2 HO SS ST CI; do
+    case " $G " in *" $g ok"*) ;; *) bad "C5 gate $g missing or red: $G"; continue 2 ;; esac
+  done
+  ok "C5 every check present and green: $G"
+else
+  echo "  (C5 real-tools --against skipped: set FLAV_REAL_RUNS=<dir with run1/ run2/>)"
+fi
 
 echo "test_flavours: $([ "$FAILS" -eq 0 ] && echo PASS || echo "$FAILS FAILED")"
 exit $([ "$FAILS" -eq 0 ] && echo 0 || echo 1)
