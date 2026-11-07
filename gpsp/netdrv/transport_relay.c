@@ -21,7 +21,22 @@
  *             arrived for 1.5 s while the server still answers, when no
  *             PUNCH_ACK came in the burst, or when a direct peer says it fell
  *             back (PEER RELAY).  The relay is the last resort, not the end:
- *             another burst follows after 3 s, then 6, 12, 24, 30, 30 ... s.
+ *             another burst follows after 3 s, then 6, 12, 24, 48 s, then one
+ *             every 5 minutes (a pair whose NATs never let a punch through
+ *             stays quietly on the relay; going direct resets the budget).
+ *             The server hears PATH relay only when it heard direct before,
+ *             or the peer's punches reached us (it may think it is direct).
+ *   SITE      A peer the server saw at a private address shares the server's
+ *             router: its "public" candidate is useless to us.  If WE reached
+ *             the server at a public address, that address is the peer's
+ *             router too: punch server_ip:<the peer's port> (port-preserving
+ *             routers).  Needs nothing from the server.
+ *   PREDICT   Against a symmetric peer (and only if we are not symmetric
+ *             ourselves): its NAT gives each new destination a new port, so
+ *             the port it uses towards us is unknown -- but sequential NATs
+ *             step by the delta seen between its two PROBE ports.  Each punch
+ *             tick also sends ONE PUNCH to the next of PREDICT_N predicted
+ *             ports, round robin (50/s extra for the 2 s burst).
  */
 #include "transport_relay.h"
 
@@ -41,7 +56,11 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define STALL_US         100000ull   /* a gap between timer runs this long
                                         is a stall (a save backup, a load) */
 #define RETRY_FIRST_US   3000000ull  /* relay -> another punch burst after */
-#define RETRY_MAX_US     30000000ull /*   3, 6, 12, 24, 30, 30 ... s */
+#define RETRY_MAX_US     48000000ull /*   3, 6, 12, 24, 48 s ... */
+#define RETRY_BUDGET     5           /* ... then only every RETRY_RARE_US */
+#define RETRY_RARE_US    300000000ull
+#define PREDICT_N        16          /* predicted ports per symmetric peer */
+#define PREDICT_MAX_DELTA 8          /* a larger PROBE-port step: random ports */
 #define DIRECT_IDLE_US   500000ull
 #define DIRECT_DEAD_US   1500000ull
 #define RELAY_ALIVE_US   6000000ull
@@ -55,9 +74,13 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 typedef struct
 {
    int present, path;
-   uint32_t pub_ip, priv_ip, map_ip, rfx_ip, dir_ip;
-   uint16_t pub_port, priv_port, map_port, rfx_port, dir_port;
+   uint32_t pub_ip, priv_ip, map_ip, rfx_ip, dir_ip, site_ip;
+   uint16_t pub_port, priv_port, map_port, rfx_port, dir_port, site_port;
    uint64_t retry_us, backoff_us;   /* next punch burst while on the relay */
+   int retries;                     /* failed bursts since CANDIDATES / direct */
+   int told_direct;                 /* the server last heard PATH direct */
+   uint64_t heard_us;               /* the last direct datagram from the peer */
+   int pred_base, pred_delta, pred_n, pred_i;   /* port prediction (PREDICT) */
    uint64_t nonce;
    int punch;
    uint64_t start_us, end_us, next_punch_us;
@@ -185,6 +208,8 @@ static void send_enter(relay_transport *t)
    rl_put64(p + RL_BUILD_LEN + RL_CODE_LEN + 7, t->cookie);
    p[RL_BUILD_LEN + RL_CODE_LEN + 15] = (uint8_t)t->cfg.mode;
    rl_put16(p + RL_BUILD_LEN + RL_CODE_LEN + 16, t->cfg.map_port);
+   /* the PROBE port's mapping: a symmetric NAT's step, for the peer */
+   rl_put16(p + RL_BUILD_LEN + RL_CODE_LEN + 18, t->probed[1] ? t->pub_port[1] : 0);
    to_server(t, 0, b, sizeof(b));
 }
 
@@ -204,6 +229,7 @@ static void send_path(relay_transport *t, int peer, int path)
    rl_hdr(b, RL_T_PATH, t->slot, RL_SLOT_NONE, t->token);
    b[RL_HDR] = (uint8_t)peer;
    b[RL_HDR + 1] = (uint8_t)path;
+   t->p[peer].told_direct = path == RL_PATH_DIRECT;
    to_server(t, 0, b, sizeof(b));
 }
 
@@ -220,23 +246,36 @@ static void send_punch(relay_transport *t, int j, int type, uint32_t ctr,
 static void fall_back(relay_transport *t, int j, const char *why, int tell)
 {
    rl_peer *q = &t->p[j];
+   int was_direct = q->path == P_DIRECT;
+   uint64_t n = now(t);
    if (q->path == P_FALLBACK || q->path == P_RELAY)
       return;
    q->path = P_FALLBACK;
    t->st.fallbacks++;
    /* the relay is the last resort, not the end: punch again later (a peer
-    * that was busy, a NAT that settled, a Wi-Fi gap), backing off */
+    * that was busy, a NAT that settled, a Wi-Fi gap), backing off -- and
+    * after RETRY_BUDGET failed bursts only rarely: a relay session between
+    * two NATs that never pass a punch stays steady */
    if (q->punch)
    {
       if (!q->backoff_us)
          q->backoff_us = RETRY_FIRST_US;
-      q->retry_us = now(t) + q->backoff_us;
-      q->backoff_us = q->backoff_us * 2 > RETRY_MAX_US ? RETRY_MAX_US
+      q->retry_us = n + q->backoff_us;
+      q->retries++;
+      q->backoff_us = q->retries >= RETRY_BUDGET ? RETRY_RARE_US
+                    : q->backoff_us * 2 > RETRY_MAX_US ? RETRY_MAX_US
                                                        : q->backoff_us * 2;
    }
-   lg(t, "relay_path peer=%d path=relay why=%s retry_ms=%u", j, why,
-      q->punch ? (unsigned)((q->retry_us - now(t)) / 1000u) : 0u);
-   if (tell)
+   if (was_direct)
+      lg(t, "relay_path peer=%d path=relay why=%s retry_ms=%u", j, why,
+         q->punch ? (unsigned)((q->retry_us - n) / 1000u) : 0u);
+   else
+      lg(t, "relay_punch peer=%d result=%s tries=%d retry_ms=%u", j, why,
+         q->retries, q->punch ? (unsigned)((q->retry_us - n) / 1000u) : 0u);
+   /* tell the server only what it does not know: it heard direct from us,
+    * or the peer's punches reached us during this burst (our ACKs may have
+    * made IT direct) -- not after every burst that simply found nothing */
+   if (tell && (q->told_direct || (q->heard_us && q->heard_us >= q->start_us)))
       send_path(t, j, RL_PATH_RELAY);
 }
 
@@ -263,14 +302,15 @@ static int ep_is(uint32_t ip, uint16_t port, uint32_t ip2, uint16_t port2)
 static void punch_all(relay_transport *t, int j, uint32_t c)
 {
    rl_peer *q = &t->p[j];
-   uint32_t ip[4];
-   uint16_t pt[4];
+   uint32_t ip[5];
+   uint16_t pt[5];
    int k, m, n = 0;
    ip[0] = q->priv_ip; pt[0] = q->priv_port;
    ip[1] = q->pub_ip;  pt[1] = q->pub_port;
    ip[2] = q->map_ip;  pt[2] = q->map_port;
-   ip[3] = q->rfx_ip;  pt[3] = q->rfx_port;
-   for (k = 0; k < 4; k++)
+   ip[3] = q->site_ip; pt[3] = q->site_port;
+   ip[4] = q->rfx_ip;  pt[4] = q->rfx_port;
+   for (k = 0; k < 5; k++)
    {
       if (!ip[k] || !pt[k])
          continue;
@@ -283,6 +323,17 @@ static void punch_all(relay_transport *t, int j, uint32_t c)
       n++;
    }
    (void)n;
+   /* PREDICT: one more, to the next predicted port of a symmetric peer */
+   if (q->pred_n)
+   {
+      int port = q->pred_base + q->pred_delta * (q->pred_i + 1);
+      q->pred_i = (q->pred_i + 1) % q->pred_n;
+      if (port > 0 && port < 65536 && port != q->pub_port)
+      {
+         send_punch(t, j, RL_T_PUNCH, c, q->pub_ip, (uint16_t)port);
+         t->st.predicted_tx++;
+      }
+   }
 }
 
 /* A host waiting alone in its room (no peer yet) whose room the server no
@@ -645,11 +696,45 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
             q->map_ip = rl_get_ip(body + 24);
             q->map_port = (uint16_t)rl_get16(body + 28);
          }
+         q->retries = 0;
+         q->told_direct = 0;
+         q->heard_us = 0;
+         q->site_ip = 0;
+         q->site_port = 0;
+         q->pred_n = q->pred_i = 0;
+         /* SITE: the server saw the peer at a private address, so it shares
+          * the server's router -- and we reached the server at a public one:
+          * that is the peer's router as the internet sees it */
+         if (!rl_ip_private(t->cfg.server_ip_be))
+         {
+            if (q->pub_ip && rl_ip_private(q->pub_ip) && q->pub_port)
+            {
+               q->site_ip = t->cfg.server_ip_be;
+               q->site_port = q->pub_port;
+            }
+            if (q->map_ip && rl_ip_private(q->map_ip))
+               q->map_ip = t->cfg.server_ip_be;   /* (a beta.4 server's forward) */
+         }
+         /* PREDICT (a newer server says the peer's NAT class) */
+         if (n >= 33 && q->punch && body[30] == RL_NAT_SYMMETRIC &&
+             t->nat != RL_NAT_SYMMETRIC && q->pub_ip && !rl_ip_private(q->pub_ip))
+         {
+            int pp = (int)rl_get16(body + 31);
+            int d = pp ? pp - (int)q->pub_port : 1;
+            if (d != 0 && d >= -PREDICT_MAX_DELTA && d <= PREDICT_MAX_DELTA)
+            {
+               /* after the PROBE port's mapping (or, unknown, the next one) */
+               q->pred_base = pp ? pp : (int)q->pub_port + 1;
+               q->pred_delta = d;
+               q->pred_n = PREDICT_N;
+            }
+         }
          ipfmt(q->pub_ip, q->pub_port, a1);
          ipfmt(q->priv_ip, q->priv_port, a2);
          ipfmt(q->map_ip, q->map_port, a3);
-         lg(t, "relay_candidates peer=%d public=%s private=%s forward=%s punch=%d",
-            j, a1, a2, a3, q->punch);
+         lg(t, "relay_candidates peer=%d public=%s private=%s forward=%s punch=%d "
+            "site=%d predict=%d/%d", j, a1, a2, a3, q->punch, q->site_ip != 0,
+            q->pred_n ? q->pred_base : 0, q->pred_n ? q->pred_delta : 0);
       }
       break;
    case RL_T_COOKIE:
@@ -739,6 +824,7 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
          }
          q = &t->p[j];
          t->st.rx_direct++;
+         q->heard_us = tn;
          if (b[5] == RL_T_PUNCH && len >= RL_HDR + 4)
          {
             t->st.punches_rx++;
@@ -757,6 +843,7 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
             if (!ep_is(ip, port, q->priv_ip, q->priv_port) &&
                 !ep_is(ip, port, q->pub_ip, q->pub_port) &&
                 !ep_is(ip, port, q->map_ip, q->map_port) &&
+                !ep_is(ip, port, q->site_ip, q->site_port) &&
                 !ep_is(ip, port, q->rfx_ip, q->rfx_port))
             {
                char a[24];
@@ -803,6 +890,7 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
                q->dir_port = port;
                q->retry_us = 0;
                q->backoff_us = RETRY_FIRST_US;
+               q->retries = 0;
                q->last_rx_us = q->last_tx_us = tn;
                t->st.directs++;
                ipfmt(ip, port, a);

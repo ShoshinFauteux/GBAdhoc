@@ -136,6 +136,7 @@ int main(int argc, char **argv)
    const char *bind_ip = "127.0.0.1";
    int port = RL_DEFAULT_PORT, fwd_port = 0, status_port = 0, i;
    const char *pidfile = NULL, *home = NULL, *reg = NULL, *pub = NULL, *lan = NULL;
+   const char *pubip = NULL;
    int adv_port = 0;
    rl_core_cfg cfg;
    rl_core *core;
@@ -152,6 +153,7 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[i], "--register") && i + 1 < argc) reg = argv[++i];
       else if (!strcmp(argv[i], "--advertise-port") && i + 1 < argc) adv_port = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--public") && i + 1 < argc) pub = argv[++i];
+      else if (!strcmp(argv[i], "--public-ip") && i + 1 < argc) pubip = argv[++i];
       else if (!strcmp(argv[i], "--lan-ip") && i + 1 < argc) lan = argv[++i];
       else if (!strcmp(argv[i], "--quiet")) g_quiet = 1;
       else if (!strcmp(argv[i], "--status") && i + 1 < argc) status_port = atoi(argv[++i]);
@@ -161,7 +163,9 @@ int main(int argc, char **argv)
          fprintf(stderr, "usage: gbadhoc-relay [--bind IP] [--port P] [--fwd PORT] [--no-direct] [--quiet]\n"
                          "  [--no-directory]   do not keep the desktop-host directory (on by default)\n"
                          "  desktop-host mode (GBAdhoc XMB's relay): [--home CODE] [--register DIR_IP[:PORT]]\n"
-                         "      [--advertise-port P] [--lan-ip IP] [--public IP (prints the invite code)]\n");
+                         "      [--advertise-port P] [--lan-ip IP] [--public IP (prints the invite code)]\n"
+                         "  [--public-ip IP]   this server's public IPv4 (default: --public): consoles\n"
+                         "                     on the server's own LAN are offered to remote peers there\n");
          return 2;
       }
    }
@@ -200,6 +204,15 @@ int main(int argc, char **argv)
    cfg.log = say;
    /* the shared server keeps the directory; a desktop host does not */
    cfg.directory = cfg.directory < 0 || home || reg ? 0 : 1;
+   if (pubip || pub)
+   {
+      uint32_t ip = inet_addr(pubip ? pubip : pub);
+      if (ip == INADDR_NONE || rl_ip_private(ip))
+         fprintf(stderr, "warning: --public-ip %s is not a public IPv4; ignored\n",
+                 pubip ? pubip : pub);
+      else
+         cfg.public_ip_be = ip;
+   }
    core = relay_core_create(&cfg);
    if (!core)
       return 1;

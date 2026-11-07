@@ -71,21 +71,35 @@ class Node:
 class Nat:
     def __init__(self, kind, pub, lan, fwd=0):
         # kind: "cone" (EIM, port-restricted), "acone" (EIM, address-
-        # restricted), "sym" (a mapping per destination: a carrier NAT)
+        # restricted), "sym" (a mapping per destination: a carrier NAT,
+        # ports in sequence), "symr" (sym with random ports); keep = an EIM
+        # router that keeps the source port when it is free
         self.kind, self.pub, self.lan = kind, pub, lan    # lan = "10.0.N."
         self.fwd, self.fwd_to, self.fwd_peers = fwd, None, set()  # UPnP forward
         self.maps = {}          # key -> [pub_port, allowed set]
         self.rev = {}           # pub_port -> (key, priv)
         self.next = 40000 + 1000 * int(lan.split(".")[2])
+        self.keep = False
+        self.rng = 0x2545F491 ^ int(lan.split(".")[2])
 
     def out(self, priv, dst):
         if self.fwd and priv == self.fwd_to and dst in self.fwd_peers:
             return (self.pub, self.fwd)       # conntrack: the reply leaves the forward
-        key = (priv, dst) if self.kind == "sym" else (priv,)
+        key = (priv, dst) if self.kind in ("sym", "symr") else (priv,)
         if key not in self.maps:
-            self.maps[key] = [self.next, set()]
-            self.rev[self.next] = (key, priv)
-            self.next += 1
+            if self.kind == "symr":
+                while True:
+                    self.rng = (self.rng * 1103515245 + 12345) & 0x7FFFFFFF
+                    port = 20000 + (self.rng >> 8) % 40000
+                    if port not in self.rev:
+                        break
+            elif self.keep and priv[1] not in self.rev:
+                port = priv[1]
+            else:
+                port = self.next
+                self.next += 1
+            self.maps[key] = [port, set()]
+            self.rev[port] = (key, priv)
         m = self.maps[key]
         m[1].add(dst)
         return (self.pub, m[0])
@@ -309,7 +323,7 @@ class FwdNat(Nat):
         return Nat.inb(self, src, port)
 
 
-def run_desktop_case(binp, name, kinds, by, expect, first="join"):
+def run_desktop_case(binp, name, kinds, by, expect, first="join", desk_keep=False):
     """kinds: each PSP 'cone' | 'sym' | 'home' (behind the desktop's router);
     by: each PSP 'code' | 'invite'; first: the first PSP 'join's (the mockup's
     flow: the first into the home room is told slot 0 and hosts) or 'host's"""
@@ -318,6 +332,7 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
     srv.nat = None
     by_ip[SERVER] = srv
     dn = FwdNat("cone", DESK_PUB, DESK_LAN, {27420: (DESK_IP, 27420), 27421: (DESK_IP, 27421)})
+    dn.keep = desk_keep
     nats[9] = dn
     desk = Node("desk", DESK_IP, 24)
     desk.nat = dn
@@ -480,7 +495,9 @@ def run_desktop_case(binp, name, kinds, by, expect, first="join"):
 SHARED_CASES = [
     ("cone x cone", ("cone", "cone"), False, "direct", 0),
     ("public x cone", ("none", "cone"), False, "direct", 0),
-    ("cone x symmetric", ("cone", "sym"), False, "relay", 0),
+    # sequential carrier NAT: port prediction (2026-11-06); random: relay
+    ("cone x symmetric (predicted)", ("cone", "sym"), False, "direct", 0),
+    ("cone x random symmetric", ("cone", "symr"), False, "relay", 0),
     ("symmetric x symmetric", ("sym", "sym"), False, "relay", 0),
     ("same LAN, one NAT", ("cone", "cone"), True, "direct", 0),
     ("direct dies at 6 s", ("cone", "cone"), False, "relay", 6000),
@@ -498,12 +515,18 @@ SHARED_CASES = [
 DESKTOP_CASES = [
     ("desk code: cone x cone", ("cone", "cone"), ("code", "code"), "direct"),
     ("desk code: cone x cone, Create + Join", ("cone", "cone"), ("code", "code"), "direct", "host"),
-    ("desk code: cone x symmetric", ("cone", "sym"), ("code", "code"), "relay"),
+    ("desk code: cone x symmetric (pred)", ("cone", "sym"), ("code", "code"), "direct"),
+    ("desk code: cone x random sym", ("cone", "symr"), ("code", "code"), "relay"),
     ("desk code: symmetric x symmetric", ("sym", "sym"), ("code", "code"), "relay"),
     ("desk invite: cone x cone", ("cone", "cone"), ("invite", "invite"), "direct"),
-    ("desk invite: symmetric x cone", ("sym", "cone"), ("invite", "invite"), "relay"),
+    ("desk invite: symmetric x cone (pred)", ("sym", "cone"), ("invite", "invite"), "direct"),
+    ("desk invite: random sym x cone", ("symr", "cone"), ("invite", "invite"), "relay"),
     ("desk code+invite: cone x cone", ("cone", "cone"), ("code", "invite"), "direct"),
     ("desk code: host in the PC's home", ("home", "cone"), ("code", "code"), "relay"),
+    # the relay's own home with a port-keeping router (the 2026-11-06 trade)
+    ("desk code: PC's home x cone, keeps ports", ("home", "cone"), ("code", "code"), "direct", "join", True),
+    ("desk code: PC's home x sym, keeps ports", ("home", "sym"), ("code", "code"), "direct", "join", True),
+    ("desk code: PC's home x rand sym", ("home", "symr"), ("code", "code"), "relay", "join", True),
 ]
 
 

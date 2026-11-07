@@ -310,8 +310,9 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
 - **Every PUNCH is answered, in any state**, and a PUNCH that arrives while we are on the relay starts
   our burst at once, so two bursts that missed each other line up. A late PUNCH_ACK still makes the
   path direct: it is the round trip.
-- **Retries.** On the relay a PSP bursts again after 3, 6, 12, 24 and then every 30 s (20-byte PUNCHes,
-  ~2 KB a burst). It stops only while the path is direct.
+- **Retries.** On the relay a PSP bursts again after 3, 6, 12, 24 and 48 s, then only every 5 minutes
+  (20-byte PUNCHes, ~2 KB a burst; it was every 30 s for good until 2026-11-06, see below). Going
+  direct resets the budget.
 - **Candidates, private first:** the LAN address, the public endpoint the server saw, the **router
   forward** (the peer's public IP with its own socket port, or the port it names in `map_port`), and
   the **peer-reflexive** address: where the peer's punches actually came from. A symmetric NAT gives
@@ -320,7 +321,7 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
 - **The server offers a punch unless both sides are symmetric** (and neither names a forward). One
   reachable side is enough.
 
-What goes direct (in-process model `test_relay_nat`, 19/19, and the real-socket `natlab.py`, 12/12):
+What goes direct (in-process model `test_relay_nat`, 31/31, and the real-socket `natlab.py`, 26/26, 2026-11-06):
 
 | host | guest | path |
 |---|---|---|
@@ -329,8 +330,55 @@ What goes direct (in-process model `test_relay_nat`, 19/19, and the real-socket 
 | address-restricted cone (any port of an IP it sent to) | symmetric / CGNAT | direct (peer-reflexive) |
 | cone + UPnP forward of 27500 (or another port with `map_port`) | symmetric / CGNAT | direct |
 | symmetric + UPnP forward, `map_port` set | symmetric | direct |
-| port-restricted cone, no forward | symmetric | relay: the cone drops the CGNAT's new port, and the CGNAT drops ours |
+| port-restricted cone, no forward | symmetric, sequential ports | direct by port prediction (2026-11-06) |
+| port-restricted cone, no forward | symmetric, random ports | relay: the cone drops the CGNAT's new port, and the CGNAT drops ours |
 | symmetric, no forward | symmetric | relay: neither side has an address the other can predict |
+| on the relay's own LAN, port-keeping router | cone, or sequential symmetric | direct (2026-11-06) |
+
+### Direct more often (2026-11-06, branch claude/direct-connect)
+
+The first real internet trade (ZAZA) ran through the relay for its whole length: the PSP-3000 on the
+relay PC's home LAN (`host=10.0.0.22:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
+NAT). Three causes, three changes:
+
+1. **A host on the relay's own LAN had no usable candidate.** The relay saw it at its private address
+   (winfwd carries the LAN source through), so the Go was told `public=10.0.0.22:27500`, an address
+   that leads nowhere from cellular, and no forward candidate (the "forward" was the same endpoint).
+   Now:
+   - **client side, needs no server change:** a peer whose server-seen address is private
+     (`rl_ip_private`: RFC 1918, 100.64/10, loopback, link-local) shares the server's router. If we
+     reached the server at a PUBLIC address, that address is the peer's router as the internet sees
+     it: we also punch `server_ip:<peer's port>` (the "site" candidate). A beta.4 server's private
+     forward candidate is rewritten the same way.
+   - **server side, optional:** `gbadhoc-relay --public-ip IP` (or the existing `--public`), or
+     `relay_core_set_public_ip()` from a desktop host's UPnP `GetExternalIPAddress`, puts
+     `public_ip:<port or map_port>` in the forward slot of CANDIDATES, so beta.4 clients benefit too.
+   The candidate assumes the router keeps the console's source port (many do; the Rogers gateway
+   appears to). If it does not, the punch misses and the pair stays on the relay; the private
+   candidate stays first for a peer on the same LAN.
+2. **Symmetric peers were unpredictable by construction.** CREATE/JOIN now carry `probe_port` (body
+   bytes 38-39: the public port the PROBE socket, port + 1, saw) and CANDIDATES carries the peer's
+   `nat` and `probe_port` (body bytes 30-32). Against a symmetric peer, a non-symmetric console adds
+   ONE PUNCH per 20 ms tick to the next of 16 predicted ports, `probe_port + delta * i` (delta = probe
+   port - main port, used only when 1 <= |delta| <= 8), round robin: +50 datagrams/s during a 2 s burst,
+   ~100 a burst, nothing through the relay. A random-port CGNAT gives a large delta and no spray.
+3. **Endless re-punching.** The ~32 s `path ... path=relay` lines were the 30 s retry cap plus the 2 s
+   burst: after every failed burst each console sent PATH relay, which the server logged and passed on
+   as PEER RELAY. Each burst is ~100 PUNCH sendto() calls from the emulation thread over 2 s
+   (4 candidates per 20 ms), cheap but pointless on a pair that cannot go direct. Now the retries stop
+   at 5 (3-48 s), then every 5 minutes; PATH relay is sent only if the server heard direct from us or
+   the peer's punches reached us in that burst; the server logs `path` only when a slot's reported
+   path changes (beta.4 clients' repeats are no longer logged).
+
+Wire compatibility: no version bump. Every new field sits in bytes a beta.4 peer already pads with
+zeros (CREATE/JOIN are 64 B) or ignores (CANDIDATES beyond 30 B). beta.4 client + new server: gets the
+--public-ip forward candidate, no prediction (its probe_port reads 0, so its peers predict from
+`pub_port + 1`). New client + beta.4 server: site candidate yes, prediction no (no nat byte).
+
+Measured in the in-process model (`test_relay_nat`, 31/31; the same cases against the beta.4 sources:
+21/31): a relay-LAN host against a cone or sequential-symmetric guest goes direct; against a
+random-port guest over 10 minutes the old code made 21 bursts a side and 42 server path lines, the new
+code 7 bursts and 0 lines. `test_relay_desktop` 19/19 adds the same cases for a desktop host's home.
 
 **Who can open a forward:**
 

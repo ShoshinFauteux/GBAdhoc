@@ -23,10 +23,11 @@
 
 /* ---------------------------------------------------------------- network */
 
-enum { NAT_NONE = 0, NAT_CONE = 1, NAT_SYM = 2, NAT_ACONE = 3 };
+enum { NAT_NONE = 0, NAT_CONE = 1, NAT_SYM = 2, NAT_ACONE = 3, NAT_SYMR = 4 };
 /* CONE = EIM mapping, port-restricted filter; ACONE = EIM mapping, address-
  * restricted filter (any port of an IP we sent to); SYM = a mapping per
- * destination, port-restricted (a carrier NAT) */
+ * destination, port-restricted, ports handed out in sequence (a carrier NAT);
+ * SYMR = SYM with random ports (nothing to predict) */
 #define NMAP 64
 #define QCAP 4096
 #define MS 1000ull
@@ -50,6 +51,7 @@ typedef struct
    uint32_t lan;                /* 10.0.N.0/24 */
    uint16_t next_port;
    unsigned timeout_ms;
+   int preserve;                /* EIM: keep the console's own port when free */
    nmap_t m[NMAP];
    /* a router forward (UPnP): external fwd_port -> fwd_to, no filtering;
     * replies to whoever came in through it leave from fwd_port (conntrack) */
@@ -86,6 +88,12 @@ static uint32_t ip4(int a, int b, int c, int d)
 
 #define SERVER_IP ip4(203, 0, 113, 1)
 #define SERVER_PORT 27420
+/* g_relay_lan: the relay is a PC on the HOST's LAN (10.0.0.40) behind N[0],
+ * whose router forwards UDP 27420/27421 to it (the owner's setup, 2026-11-06):
+ * the host reaches it on the LAN, the guest at N[0]'s public address */
+#define RELAY_LAN_IP ip4(10, 0, 0, 40)
+static int g_relay_lan;
+static unsigned g_path_lines;   /* the server's "path ..." log lines */
 
 /* hosts: index 0 = host console, 1 = guest console */
 typedef struct
@@ -133,7 +141,8 @@ static nmap_t *nat_out(nat_t *n, ep_t priv, ep_t dst)
          continue;
       }
       if (m->priv.ip == priv.ip && m->priv.port == priv.port &&
-          (n->type != NAT_SYM || (m->dst.ip == dst.ip && m->dst.port == dst.port)))
+          ((n->type != NAT_SYM && n->type != NAT_SYMR) ||
+           (m->dst.ip == dst.ip && m->dst.port == dst.port)))
          return m;
    }
    if (fr < 0)
@@ -142,7 +151,17 @@ static nmap_t *nat_out(nat_t *n, ep_t priv, ep_t dst)
    n->m[fr].used = 1;
    n->m[fr].priv = priv;
    n->m[fr].dst = dst;
-   n->m[fr].pub_port = n->next_port++;
+   n->m[fr].pub_port = n->type == NAT_SYMR ? (uint16_t)(20000 + rnd() % 40000)
+                                           : n->next_port++;
+   if (n->preserve && n->type != NAT_SYM && n->type != NAT_SYMR)
+   {
+      int k, taken = 0;
+      for (k = 0; k < NMAP; k++)
+         if (k != fr && n->m[k].used && n->m[k].pub_port == priv.port)
+            taken = 1;
+      if (!taken)
+         n->m[fr].pub_port = priv.port;
+   }
    return &n->m[fr];
 }
 
@@ -211,12 +230,32 @@ static void server_send(void *user, int sock, const rl_addr *to, const void *buf
    ep_t src = { SERVER_IP, (uint16_t)(SERVER_PORT + sock) };
    ep_t dst = { to->ip_be, to->port };
    (void)user;
+   if (g_relay_lan)
+   {
+      if (lan_of(to->ip_be))
+      {
+         src.ip = RELAY_LAN_IP;          /* on the LAN */
+         if (((const uint8_t *)&to->ip_be)[2] == 0)
+            enqueue(src, dst, buf, len, 2);
+         return;
+      }
+      src.ip = N[0].pub_ip;              /* out through the static forward */
+   }
    enqueue(src, dst, buf, len, g_lat_ms);
 }
 
 static void route(pkt_t *p)
 {
    int h, i;
+   if (g_relay_lan &&
+       (p->dst.ip == RELAY_LAN_IP || p->dst.ip == N[0].pub_ip) &&
+       (p->dst.port == SERVER_PORT || p->dst.port == SERVER_PORT + 1))
+   {
+      rl_addr from = { p->src.ip, p->src.port };
+      relay_core_input(g_core, p->dst.port - SERVER_PORT, &from, p->data,
+                       p->len, g_now / 1000);
+      return;
+   }
    if (p->dst.ip == SERVER_IP)
    {
       rl_addr from = { p->src.ip, p->src.port };
@@ -337,7 +376,14 @@ static int sk_recv(void *ctx, uint32_t *ip, uint16_t *port, void *buf, size_t ca
 static uint64_t core_rand(void *u) { (void)u; return ((uint64_t)rnd() << 40) ^ ((uint64_t)rnd() << 16) ^ rnd(); }
 
 static int g_verbose;
-static void core_log(void *u, const char *l) { (void)u; if (g_verbose) printf("  [srv] %s\n", l); }
+static void core_log(void *u, const char *l)
+{
+   (void)u;
+   if (!strncmp(l, "path ", 5))
+      g_path_lines++;
+   if (g_verbose)
+      printf("  [srv] %s\n", l);
+}
 static void cli_log(void *u, const char *l) { if (g_verbose) printf("  [%s] %s\n", (const char *)u, l); }
 
 /* --------------------------------------------------------- netdrv apps */
@@ -380,6 +426,13 @@ typedef struct
    uint16_t fwd0;               /* the host's router forwards this port to it */
    uint16_t map0;               /* the host tells the server that forward port */
    unsigned stall1_ms;          /* the guest pumps nothing this long after its room */
+   /* --- direct-connect (2026-11-06) --- */
+   int relay_lan;               /* the relay sits on the host's LAN (g_relay_lan) */
+   int relay_pub;               /* ... and is told its public IP (--public-ip) */
+   int preserve0;               /* the host's router keeps source ports */
+   unsigned long_ms;            /* keep the session up this long (churn check) */
+   int max_bursts;              /* per side, 0 = unchecked */
+   int max_path_lines;          /* the server's path log lines, -1 = unchecked */
 } case_t;
 
 static int run_case(const case_t *c)
@@ -404,6 +457,8 @@ static int run_case(const case_t *c)
    memset(H, 0, sizeof(H));
    memset(N, 0, sizeof(N));
    g_same_lan = c->same_lan;
+   g_relay_lan = c->relay_lan;
+   g_path_lines = 0;
    for (i = 0; i < 2; i++)
    {
       N[i].type = i ? c->nat1 : c->nat0;
@@ -411,6 +466,7 @@ static int run_case(const case_t *c)
       N[i].next_port = (uint16_t)(40000 + 1000 * i);
       N[i].timeout_ms = c->nat_timeout_ms ? c->nat_timeout_ms : 30000;
    }
+   N[0].preserve = c->preserve0;
    for (i = 0; i < 2; i++)
    {
       int behind = c->same_lan ? 0 : i;
@@ -437,6 +493,8 @@ static int run_case(const case_t *c)
    cc.send = server_send;
    cc.random64 = core_rand;
    cc.log = core_log;
+   if (c->relay_pub)
+      cc.public_ip_be = N[0].pub_ip;
    g_core = relay_core_create(&cc);
 
    for (i = 0; i < 2; i++)
@@ -445,7 +503,8 @@ static int run_case(const case_t *c)
       sk[i].send = sk_send;
       sk[i].recv = sk_recv;
       memset(&cfg[i], 0, sizeof(cfg[i]));
-      cfg[i].server_ip_be = SERVER_IP;
+      cfg[i].server_ip_be = !c->relay_lan ? SERVER_IP
+                          : i == 0 || c->same_lan ? RELAY_LAN_IP : N[0].pub_ip;
       cfg[i].server_port = SERVER_PORT;
       cfg[i].is_host = i == 0;
       strcpy(cfg[i].code, "TEST");
@@ -504,8 +563,10 @@ static int run_case(const case_t *c)
 
    {
    uint64_t stall_end = g_now + (uint64_t)c->stall1_ms * MS;
+   uint64_t sess0 = g_now;
    /* the session: one payload a side every 16 ms frame */
-   for (t_end = g_now + 40000 * MS; g_now < t_end; g_now += MS)
+   for (t_end = g_now + (c->long_ms > 40000 ? c->long_ms : 40000) * MS; g_now < t_end;
+        g_now += MS)
    {
       net_step();
       relay_core_tick(g_core, g_now / 1000);
@@ -528,7 +589,8 @@ static int run_case(const case_t *c)
                sent[i]++;
          }
       }
-      if (app[0].got >= (uint32_t)N_PAY && app[1].got >= (uint32_t)N_PAY)
+      if (app[0].got >= (uint32_t)N_PAY && app[1].got >= (uint32_t)N_PAY &&
+          g_now - sess0 >= (uint64_t)c->long_ms * MS)
          break;
    }
    }
@@ -560,15 +622,31 @@ static int run_case(const case_t *c)
                 path1, c->expect_direct ? "direct (3)" : "relay (1/4)");
          ok = 0;
       }
+      if (c->max_bursts && ((int)st[0].bursts > c->max_bursts ||
+                            (int)st[1].bursts > c->max_bursts))
+      {
+         printf("FAIL %s: punch bursts %u/%u, want <= %d (re-punch churn)\n",
+                c->name, st[0].bursts, st[1].bursts, c->max_bursts);
+         ok = 0;
+      }
+      if (c->max_path_lines >= 0 && g_path_lines > (unsigned)c->max_path_lines)
+      {
+         printf("FAIL %s: %u server path lines, want <= %d\n", c->name,
+                g_path_lines, c->max_path_lines);
+         ok = 0;
+      }
       if (ok)
-         printf("ok   %-34s nat=%u/%u path=%s/%s direct_rx=%u/%u relay_rx=%u/%u "
-                "fallbacks=%u/%u rtt_direct=%ums rtt_relay=%ums\n",
+         printf("ok   %-44s nat=%u/%u path=%s/%s direct_rx=%u/%u relay_rx=%u/%u "
+                "fallbacks=%u/%u bursts=%u/%u predicted=%u/%u srv_path=%u "
+                "rtt_direct=%ums rtt_relay=%ums%s\n",
                 c->name, st[0].nat, st[1].nat,
                 path0 == 3 ? "direct" : path0 == 4 ? "fellback" : "relay",
                 path1 == 3 ? "direct" : path1 == 4 ? "fellback" : "relay",
                 st[0].rx_direct, st[1].rx_direct, st[0].rx_relay, st[1].rx_relay,
-                st[0].fallbacks, st[1].fallbacks,
-                st[0].direct_rtt_us[1] / 1000, st[0].relay_rtt_us / 1000);
+                st[0].fallbacks, st[1].fallbacks, st[0].bursts, st[1].bursts,
+                st[0].predicted_tx, st[1].predicted_tx, g_path_lines,
+                st[0].direct_rtt_us[1] / 1000, st[0].relay_rtt_us / 1000,
+                c->long_ms ? " (long)" : "");
    }
    for (i = 0; i < 2; i++)
    {
@@ -576,6 +654,7 @@ static int run_case(const case_t *c)
       relay_transport_destroy(rt[i]);
    }
    relay_core_destroy(g_core);
+   g_relay_lan = 0;
    return ok;
 }
 
@@ -755,26 +834,51 @@ static int run_lobby(const lobby_t *c)
 
 int main(int argc, char **argv)
 {
+   /* the trailing direct-connect fields: relay_lan relay_pub preserve0
+    * long_ms max_bursts max_path_lines (-1 = unchecked) */
+#define X0 0, 0, 0, 0, 0, -1
    static const case_t cases[] = {
-      { "cone x cone: direct",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0 },
-      { "public x cone: direct",            NAT_NONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0 },
-      { "cone x symmetric: relay",          NAT_CONE, NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0 },
-      { "symmetric x symmetric: relay",     NAT_SYM,  NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0 },
-      { "same LAN behind one NAT: direct",  NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0 },
-      { "direct dies mid-session: relay",   NAT_CONE, NAT_CONE, 0, 0, 5000, 0, 0, 0, 0, 0 },
-      { "host NAT forgets: relay",          NAT_CONE, NAT_CONE, 0, 0, 0, 0, 6000, 0, 0, 0 },
-      { "short NAT timeout (5 s): direct",  NAT_CONE, NAT_CONE, 0, 1, 0, 5000, 0, 0, 0, 0 },
+      { "cone x cone: direct",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
+      { "public x cone: direct",            NAT_NONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
+      /* was "relay" before port prediction: the sequential carrier NAT's
+       * port towards us is the PROBE port's + 1, 2 ... */
+      { "cone x symmetric: direct (predicted)", NAT_CONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
+      { "cone x random symmetric: relay",   NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, X0 },
+      { "symmetric x symmetric: relay",     NAT_SYM,  NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0, X0 },
+      { "same LAN behind one NAT: direct",  NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0, X0 },
+      { "direct dies mid-session: relay",   NAT_CONE, NAT_CONE, 0, 0, 5000, 0, 0, 0, 0, 0, X0 },
+      { "host NAT forgets: relay",          NAT_CONE, NAT_CONE, 0, 0, 0, 0, 6000, 0, 0, 0, X0 },
+      { "short NAT timeout (5 s): direct",  NAT_CONE, NAT_CONE, 0, 1, 0, 5000, 0, 0, 0, 0, X0 },
       /* the 2026-11-05 same-LAN miss: the joiner stopped pumping right
        * after its room (3 s), the host's whole punch window passed unseen */
-      { "same LAN, guest stalls 3 s: direct",  NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 3000 },
-      { "cone, guest stalls 3 s: direct",      NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 3000 },
+      { "same LAN, guest stalls 3 s: direct",  NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 3000, X0 },
+      { "cone, guest stalls 3 s: direct",      NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 3000, X0 },
       /* a home host vs a phone on a carrier NAT */
-      { "addr-restricted x symmetric: direct", NAT_ACONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0 },
-      { "cone + forward 27500 x sym: direct",  NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 27500, 0, 0 },
-      { "cone + forward 31000 x sym: direct",  NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 31000, 31000, 0 },
-      { "cone + forward, no map x sym: relay", NAT_CONE, NAT_SYM,  0, 0, 0, 0, 0, 31000, 0, 0 },
-      { "sym + forward 27500 x sym: direct",   NAT_SYM,  NAT_SYM,  0, 1, 0, 0, 0, 27500, 27500, 0 },
+      { "addr-restricted x symmetric: direct", NAT_ACONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
+      { "cone + forward 27500 x sym: direct",  NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 27500, 0, 0, X0 },
+      { "cone + forward 31000 x sym: direct",  NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 31000, 31000, 0, X0 },
+      /* (random ports: prediction would otherwise find the way, and this
+       * case is about the untold forward) */
+      { "cone + forward, no map x rand sym: relay", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 31000, 0, 0, X0 },
+      { "sym + forward 27500 x sym: direct",   NAT_SYM,  NAT_SYM,  0, 1, 0, 0, 0, 27500, 27500, 0, X0 },
+      /* ---- the relay on the host's LAN (2026-11-06 trade: PSP-3000 at the
+       * relay's home, Go on a phone hotspot) ---- */
+      /*                                            nat0      nat1      lan dir drop to flush fwd map stall rlan rpub pres long    bursts lines */
+      { "relay LAN host x cone: direct",            NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1 },
+      { "relay LAN host x cone (--public-ip)",      NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1 },
+      { "relay LAN host x symmetric: direct",       NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1 },
+      { "relay LAN host x symmetric (--public-ip)", NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1 },
+      { "relay LAN host x addr-restr sym: direct",  NAT_ACONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1 },
+      { "relay LAN, both on it: direct (lan)",      NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1 },
+      /* the router does NOT keep ports: the candidate misses; steady relay */
+      { "relay LAN host, no port keep x cone: relay", NAT_CONE, NAT_CONE, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 600000, 8, 0 },
+      { "relay LAN host x random sym: relay, 10 min", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 600000, 8, 0 },
+      /* ---- steady relay sessions: no re-punch churn ---- */
+      { "symmetric x symmetric: relay, 10 min",     NAT_SYM,  NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 1, 0 },
+      { "cone x random sym: relay, 10 min",         NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 8, 0 },
+      { "cone x cone: direct, 10 min",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 2, 2 },
    };
+#undef X0
    static const lobby_t lobbies[] = {
       /* name                                   nat      nat_to flush  lobby  dark@  dark   join@   reenter */
       { "lobby: carrier NAT 30 s, join 5 min",  NAT_SYM, 30000, 0,     0,     0,     0,     300000, 0 },
