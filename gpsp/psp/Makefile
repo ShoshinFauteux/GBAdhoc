@@ -186,7 +186,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 3512
-LAYOUT_PAD_CORE_BYTES ?= 5416
+LAYOUT_PAD_CORE_BYTES ?= 5544
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -358,6 +358,10 @@ OBJS := layout_pad.o $(OBJS)
 endif
 # Last of the objects: instance A's core archive follows (layout_pad_mid.S).
 OBJS += layout_pad_core.o
+# The pinned warm tail's 32 B holes (psp/layout_pad_warm.S says why).
+ifeq ($(LAYOUT_PIN),1)
+OBJS := layout_pad_warm.o $(OBJS)
+endif
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak

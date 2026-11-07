@@ -75,3 +75,14 @@ cheat_error cheat_parse(unsigned index, const char *code)
    (void)index; (void)code;
    return CheatErrorNotSupported;
 }
+
+/* ---- layout ------------------------------------------------------------- */
+/* B's block_lookup_translate_thumb became one 32 B step smaller in
+ * claude/opt-1000 round 7 (the constant hash shift).  The partial link
+ * merges same-named sections in member order and this file is the last
+ * member, so these zeros sit right after B's copy and keep B's hot text
+ * after it where round 6 had it (A's copy is held by psp/layout_pad_warm.S,
+ * in front of it). */
+__asm__(".pushsection .text.block_lookup_translate_thumb,\"ax\",@progbits\n"
+        "  .fill 32 / 4, 4, 0\n"
+        ".popsection\n");
