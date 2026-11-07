@@ -20,6 +20,10 @@
 # its code before the loop grew 212 B, so LAYOUT_PAD_MAIN_BYTES (new,
 # psp/layout_pad_main.S) places the loop, not main's first byte.  The pad
 # anchors now name what each pad is tuned for.
+# Round 9 merged (claude/opt-1000 a27c15fe): netdrv's ARQ receive path
+# shrank 96 B (FE pad +96 holds fe_host_reset; roster_valid .. peer_remove
+# move +96) and both GB cores 696 B (LAYOUT_PAD_GB_BYTES, after both GB
+# cores, holds hex_val: fe_cheats onward unmoved vs 7ffe4236).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -31,6 +35,7 @@ at   pace_frame                         0x0a20
 at   exit_cb                            0x0264
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
+at   hex_val                            0x1a14
 at   pte_mutex_check_need_init          0x1224
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
@@ -67,6 +72,7 @@ pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
 pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
 pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
+pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
 
 [lab]
@@ -79,6 +85,7 @@ at   pace_frame                         0x0b0c
 at   exit_cb                            0x10a0
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
+at   hex_val                            0x01cc
 at   pte_mutex_check_need_init          0x07e4
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
@@ -115,4 +122,5 @@ pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
 pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
 pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
+pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init

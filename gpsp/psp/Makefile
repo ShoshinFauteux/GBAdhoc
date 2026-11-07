@@ -24,9 +24,8 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        sidecar_dirs.o \
        config_psp.o \
        ctl_map.o \
-       mgift_net.o \
-       mgift_cart.o \
-       mgift_payload.o \
+       $(MGNET_OBJS) \
+       $(MGIFT_OBJS) \
        stb_impl.o layout_pad_fe.o \
        netdrv_core.o \
        transport_adhoc.o \
@@ -44,7 +43,8 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        ../gbcore/gbcore_dual.o \
        ../gbcore/tgbdual/tgb_shared.o \
        ../gbcore/gbcore_tgbdual_linked.o \
-       ../gbcore/gbcore_tgbdual_linked_b.o
+       ../gbcore/gbcore_tgbdual_linked_b.o \
+       layout_pad_gb.o
 
 # Vendored TGB Dual (GB/GBC; gbcore/tgbdual/, from MasterBoy).  Its flags are
 # scoped to its own objects and assigned after the build.mak include, beside
@@ -187,6 +187,11 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 2792
 LAYOUT_PAD_CORE_BYTES ?= 6348
+# LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
+# GB cores' partial links, so a change inside the vendored GB core (round 9:
+# the packed noise tables) does not move the frontend-common code linked after
+# it (fe_rewind's per-frame capture, the link glue, B's cold text).
+LAYOUT_PAD_GB_BYTES ?= 1040
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 LAYOUT_PAD_BSCAN_BYTES ?= 7704
@@ -248,6 +253,19 @@ OBJS += online_psp.o
 ONLINE_PRX = online/gbadhoc_online.prx
 CFLAGS += -DGBADHOC_ONLINE
 endif
+# MGIFT (default 1; MGIFT=0 compiles it out): Mystery Gift, the Wonder Card
+# receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c).  Its objects keep
+# their place in OBJS above, so MGIFT=1 links exactly as before.  The Wi-Fi
+# bring-up (mgift_net.o) is shared with online play and stays while either
+# is on.  MGIFT=0 removes the Wireless row, its screen, the Controls binding
+# row and the chord; the config key bind_mystery_gift is still read and
+# written, so a config.ini survives a round trip.  Frontend only.
+MGIFT ?= 1
+ifeq ($(MGIFT),1)
+MGIFT_OBJS = mgift_cart.o mgift_payload.o
+CFLAGS += -DGBADHOC_MGIFT
+endif
+MGNET_OBJS = $(if $(filter 1,$(MGIFT) $(ONLINE)),mgift_net.o)
 RFU_SCHED ?= 0
 ifeq ($(RFU_SCHED),1)
 CFLAGS += -DRFU_SCHED
@@ -494,6 +512,9 @@ $(CORE_LIB):
 layout_pad_fe.o: layout_pad_mid.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_FE_BYTES) \
 	      -DLAYOUT_PAD_MID_NAME=layout_pad_fe
+layout_pad_gb.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_GB_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_gb
 layout_pad_core.o: layout_pad_mid.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_CORE_BYTES) \
 	      -DLAYOUT_PAD_MID_NAME=layout_pad_core

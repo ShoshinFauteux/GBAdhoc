@@ -633,12 +633,23 @@ def suites(env: Env, baseline: Path | None):
           "-o /tmp/t_review_network && "
           "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "
           "/tmp/t_review_network && "
+          # the PSP profile (psp/fe_features.h), window included: the
+          # suite never ran ND_WINDOW=256 before round 10 (critique-9 SF2)
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
-          "-DND_MAX_PAYLOAD=144 -DND_TXQ_CAP=384 -Inetdrv "
+          "-DND_MAX_PAYLOAD=144 -DND_TXQ_CAP=384 -DND_WINDOW=256 -Inetdrv "
           "tools/tests/test_review_network.c netdrv/netdrv.c "
           "-o /tmp/t_review_network_psp && "
           "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "
-          "/tmp/t_review_network_psp")),
+          "/tmp/t_review_network_psp && "
+          # the direct-mapped reorder buffer against the old scan as a
+          # reference model, packet by packet, at both windows
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
+          "-Inetdrv tools/tests/test_netdrv_reorder.c -o /tmp/t_netdrv_reorder && "
+          "/tmp/t_netdrv_reorder && "
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
+          "-DND_MAX_PAYLOAD=144 -DND_TXQ_CAP=384 -DND_WINDOW=256 -Inetdrv "
+          "tools/tests/test_netdrv_reorder.c -o /tmp/t_netdrv_reorder_psp && "
+          "/tmp/t_netdrv_reorder_psp")),
 
         # The dynarec SMC tables' block: a refused malloc fails the game
         # load instead of abort()ing (instance B's session start on a

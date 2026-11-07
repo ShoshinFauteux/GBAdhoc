@@ -8,7 +8,10 @@
   a missing pad symbol and a resized `main` each fail (mutants);
 * `solve` gives back the shift a pad needs, after an earlier pad's change,
   and refuses while a hole differs;
-* a .bss shuffle that keeps `_end` but moves the JIT base fails on the base.
+* a .bss shuffle that keeps `_end` but moves the JIT base fails on the base;
+* build.sh's policy (`strict`, `verdict`; critique-9 SF3): which arms are
+  enforced, ME_LOWLAT 0/1/2/unset, MGIFT, rc 0/1/2 and LAYOUT_LOCK=0, and
+  build.sh passes every switch the policy reads.
 """
 import os
 import re
@@ -183,8 +186,73 @@ def main():
         rc, out = run("check", "release", m, "--lock", jl, "-q")
         check(rc == 1 and "rom_translation_cache_static" in out and "_end" not in out,
               "mutant: .bss +16 before the JIT, -16 after -> the cache base fails, _end does not")
+    policy_tests()
     print("%d failure(s)" % fails)
     return 1 if fails else 0
+
+
+REL = ["RFU_SCHED=1", "GBA_LINK=1", "REWIND=1", "ONLINE=1", "CHEATS=1",
+       "LAYOUT_PIN=1", "INPUT_FRESH=", "MGIFT=", "ME_LOWLAT=", "LAYOUT_PAD_ENV=",
+       "PSP_EXTRA=", "CORE_EXTRA=", "FE_EXTRA=", "GBALINK_LEAN_OUTLINE="]
+
+
+def strict_of(*over):
+    env = dict(kv.split("=", 1) for kv in REL)
+    env.update(dict(kv.split("=", 1) for kv in over))
+    rc, out = run("strict", *["%s=%s" % kv for kv in env.items()])
+    return rc, out.strip()
+
+
+def policy_tests():
+    rc, out = strict_of()
+    check(rc == 0 and out == "1", "strict: the release switches (all defaults) -> 1")
+    for v, want in (("", "1"), ("2", "1"), ("0", "0"), ("1", "0")):
+        rc, out = strict_of("ME_LOWLAT=" + v)
+        check(out.split(" ")[0] == want, "strict: ME_LOWLAT=%r -> %s" % (v, want))
+    for over in ("RFU_SCHED=0", "RFU_SCHED=", "GBA_LINK=0", "REWIND=0", "ONLINE=0",
+                 "CHEATS=0", "LAYOUT_PIN=0", "INPUT_FRESH=0", "MGIFT=0",
+                 "LAYOUT_PAD_ENV=x.env", "PSP_EXTRA=FOO=1", "CORE_EXTRA=X=0",
+                 "FE_EXTRA=-DX", "GBALINK_LEAN_OUTLINE=1"):
+        rc, out = strict_of(over)
+        check(out.startswith("0 ") and over.split("=")[0] in out,
+              "strict: %s -> 0, and says why" % over)
+    for over in ("INPUT_FRESH=1", "MGIFT=1", "GBALINK_LEAN_OUTLINE=0"):
+        rc, out = strict_of(over)
+        check(out == "1", "strict: %s (the default) stays strict" % over)
+    rc, out = run("strict", "NOT_KV")
+    check(rc == 2, "strict: a word that is not KEY=VALUE -> rc 2")
+
+    cases = [
+        # kind, flavour, rc, strict, LAYOUT_LOCK -> result, action
+        ("release", "release", 0, 1, "", "release:ok", "ok"),
+        ("release", "release", 1, 1, "", "release:differs", "die"),
+        ("release", "release", 1, 1, "0", "release:differs", "die"),   # never for a release
+        ("release", "release", 1, 0, "", "release:differs", "note"),   # variant arm
+        ("release", "release", 2, 1, "", "release:unchecked", "die"),  # psp-nm failed
+        ("release", "release", 2, 0, "", "release:unchecked", "note"),
+        ("lab", "lab", 0, 1, "", "lab:ok", "ok"),
+        ("lab", "lab", 1, 1, "", "lab:differs", "die"),
+        ("lab", "lab", 1, 1, "0", "lab:differs", "note"),              # re-pin in progress
+        ("lab", "lab", 1, 1, "1", "lab:differs", "die"),
+        ("lab", "lab", 3, 1, "0", "lab:unchecked", "die"),
+    ]
+    for kind, fl, rcv, st, ll, res, act in cases:
+        args = ["verdict", kind, fl, str(rcv), str(st)] + ([ll] if ll else [])
+        rc, out = run(*args)
+        check(rc == 0 and out.split() == [res, act],
+              "verdict %s %s rc=%d strict=%d LAYOUT_LOCK=%r -> %s %s" % (kind, fl, rcv, st, ll, res, act))
+    rc, out = run("verdict", "release", "release", "1")
+    check(rc == 2, "verdict: missing arguments -> rc 2")
+
+    # build.sh hands the policy every switch it reads, and nothing parses the
+    # old inline rules any more.
+    sh = open(os.path.join(ROOT, "tools", "build.sh")).read()
+    i = sh.index('"$LL_PY" strict')
+    call = sh[i:sh.index(")", sh.index("GBALINK_LEAN_OUTLINE=", i))]
+    for kv in REL:
+        k = kv.split("=")[0]
+        check('"%s=' % k in call, "build.sh passes %s to layout_lock.py strict" % k)
+    check("1111111" not in sh, "build.sh no longer carries the inline strictness string")
 
 
 if __name__ == "__main__":

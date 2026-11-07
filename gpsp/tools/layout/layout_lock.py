@@ -12,6 +12,14 @@ the lock and fails on any difference.
     layout_lock.py check FLAVOUR NM [--lock FILE]
     layout_lock.py write FLAVOUR NM [--lock FILE]     re-record the values
     layout_lock.py solve FLAVOUR NM [--lock FILE] [--pads FILE|--makefile FILE]
+    layout_lock.py strict KEY=VALUE...                 1 if the lock is enforced
+    layout_lock.py verdict KIND FLAVOUR RC STRICT [LAYOUT_LOCK]
+                                                       manifest result + action
+
+`strict` and `verdict` are tools/build.sh's policy (critique-9 SF3), here so
+it is tested: which arms must match the lock, and what a check's exit code
+means for the build and for the manifest's layoutLock (make_release.sh ships
+only `release:ok`).
 
 FLAVOUR is a [section] of the lock: `release` (tools/build.sh release,
 RFU_SCHED=1) or `lab` (tools/build.sh lab with tools/layout/lab-pads.env).
@@ -264,7 +272,74 @@ def cmd_solve(lock, flavour, by, text_addrs, pads):
     return rc
 
 
+# The switches a strict arm must have at their release values.  ME_LOWLAT=2 is
+# the source default (main_psp.c PLAY_ME_LOWLAT), so unset/empty/2 is the
+# same program; INPUT_FRESH and MGIFT default to 1 (unset = the default).
+STRICT_ON = ("RFU_SCHED", "GBA_LINK", "REWIND", "ONLINE", "CHEATS", "LAYOUT_PIN")
+STRICT_DEFAULT_ON = ("INPUT_FRESH", "MGIFT")
+STRICT_EMPTY = ("LAYOUT_PAD_ENV", "PSP_EXTRA", "CORE_EXTRA", "FE_EXTRA")
+
+
+def strictness(env):
+    """-> (strict, reasons): must a release / committed-lab-pads arm with
+    these tools/build.sh variables match the lock?  The rules of the shell it
+    replaces (build.sh before round 10), plus MGIFT."""
+    why = []
+    for k in STRICT_EMPTY:
+        if env.get(k, ""):
+            why.append("%s set" % k)
+    if env.get("ME_LOWLAT", "") not in ("", "2"):
+        why.append("ME_LOWLAT=%s" % env["ME_LOWLAT"])
+    for k in STRICT_ON:
+        if env.get(k, "") != "1":
+            why.append("%s=%s" % (k, env.get(k, "")))
+    for k in STRICT_DEFAULT_ON:
+        if env.get(k, "") not in ("", "1"):
+            why.append("%s=%s" % (k, env[k]))
+    lean = env.get("GBALINK_LEAN_OUTLINE", "")
+    if lean and lean != "0":
+        why.append("GBALINK_LEAN_OUTLINE=%s" % lean)
+    return (not why), why
+
+
+def verdict(kind, flavour, rc, strict, layout_lock=""):
+    """-> (manifest layoutLock, action): action is ok | note | die."""
+    if rc == 0:
+        return flavour + ":ok", "ok"
+    if rc != 1:
+        # psp-nm failed or no such section: never "differs"
+        return flavour + ":unchecked", ("die" if strict else "note")
+    # LAYOUT_LOCK=0 lets a lab build through while a re-pin is in progress;
+    # a release never.
+    if strict and (kind == "release" or (layout_lock or "1") != "0"):
+        return flavour + ":differs", "die"
+    return flavour + ":differs", "note"
+
+
+def policy_main(argv):
+    if argv[0] == "strict":
+        env = {}
+        for kv in argv[1:]:
+            k, sep, v = kv.partition("=")
+            if not sep:
+                print("strict: %r is not KEY=VALUE" % kv)
+                return 2
+            env[k] = v
+        ok, why = strictness(env)
+        print("1" if ok else "0 " + ", ".join(why))
+        return 0
+    if len(argv) not in (5, 6):
+        print("usage: layout_lock.py verdict KIND FLAVOUR RC STRICT [LAYOUT_LOCK]")
+        return 2
+    res, act = verdict(argv[1], argv[2], int(argv[3]), argv[4] == "1",
+                       argv[5] if len(argv) == 6 else "")
+    print(res, act)
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("strict", "verdict"):
+        return policy_main(sys.argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("cmd", choices=["check", "write", "solve"])
     ap.add_argument("flavour")

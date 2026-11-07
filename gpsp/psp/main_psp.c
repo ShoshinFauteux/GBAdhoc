@@ -1651,9 +1651,16 @@ static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 
 /* ------------------------------------------------------------------ input */
 
+#ifdef GBADHOC_MGIFT
 #include "mgift_shortcut.h"
+#endif
 static unsigned g_pad;   /* raw SceCtrl buttons, sampled once per loop */
+#ifdef GBADHOC_MGIFT
 static unsigned g_mgift_consumed;
+#else
+/* MGIFT=0 (psp/Makefile): no chord, nothing consumed. */
+#define g_mgift_consumed 0u
+#endif
 
 /* AN ANSWER IS NOT INPUT.  The button that closes the START+SELECT menu
  * (Resume, a state load, Host/Join) or answers the SELECT+TRIANGLE pause
@@ -8068,7 +8075,11 @@ static int g_silent_mode;   /* SIL_* */
 static int g_silent_state;  /* SILST_* */
 static unsigned g_silent_ticks, g_silent_deadline;
 static char g_silent_group[16], g_silent_nick[24];
+#ifdef GBADHOC_MGIFT
 static int g_mg_on; /* listener up; also gates silent RFU bring-up */
+#else
+#define g_mg_on 0   /* MGIFT=0: never listening */
+#endif
 
 static void silent_frame(void)
 {
@@ -8081,12 +8092,14 @@ static void silent_frame(void)
    /* Mystery Gift owns infrastructure Wi-Fi directly. This automatic path
     * bypasses the menu interlock, so consume the attempt while MG is active
     * instead of bringing up ad-hoc underneath its AP association. */
+#ifdef GBADHOC_MGIFT
    if (g_mg_on)
    {
       g_silent_state = SILST_FAILED;
       fe_evt("silent_fail reason=mystery_gift_active");
       return;
    }
+#endif /* GBADHOC_MGIFT */
 
    if (g_silent_state == SILST_IDLE)
    {
@@ -9583,11 +9596,13 @@ static void ui_net_action(int is_host)
     * has the radio associated with an access point; adhoc_transport_init would
     * take it into IBSS mode underneath the listener.  Refuse rather than
     * silently break one of the two. */
+#ifdef GBADHOC_MGIFT
    if (mgift_ui_active())
    {
       osd_toast("Stop Mystery Gift first");
       return;
    }
+#endif /* GBADHOC_MGIFT */
 #ifdef GBADHOC_ONLINE
    /* EXPERIMENTAL online play (Wireless > Online; docs/ONLINE-TUNNEL.md):
     * the room on the GBAdhoc server first -- a joiner learns the host's link
@@ -9760,9 +9775,12 @@ static void ui_net_action(int is_host)
  *
  * Protocol spec: MysteryGiftStation/GBAdhoc_MysteryGift_Protocol_v2.md.
  */
+#ifdef GBADHOC_MGIFT
 static char       g_mg_l1[64];         /* screen line 1: what is happening */
 static char       g_mg_l2[64];         /* screen line 2: detail */
+#endif /* GBADHOC_MGIFT */
 static char       g_mg_game[5];        /* running ROM header code at 0xAC */
+#ifdef GBADHOC_MGIFT
 static int        g_mg_linked;         /* the game connected to the cart */
 
 /* THE DISTRIBUTION NETWORK.
@@ -9783,6 +9801,7 @@ static unsigned   g_mg_secs;           /* seconds spent waiting, for the UI */
 int         mgift_ui_active(void) { return g_mg_on; }
 const char *mgift_ui_line1(void)  { return g_mg_l1; }
 const char *mgift_ui_line2(void)  { return g_mg_l2; }
+#endif /* GBADHOC_MGIFT */
 
 /* The running game 4-character header code, read from the ROM FILE rather than
  * from the core.  gba_memory.h declares `extern char gamepak_code[5]` but
@@ -9816,6 +9835,7 @@ static void mgift_read_game_code(const char *rom_path)
    fclose(fh);
 }
 
+#ifdef GBADHOC_MGIFT
 /* The OSD must read "Mystery Gift", not "joined" or "host" (user direction).
  * It reuses the session chip because the two modes are mutually exclusive, so
  * nothing can ever need both at once. */
@@ -9992,6 +10012,7 @@ static void mgift_start(void)
    mgift_start_io();
    pwr_release();
 }
+#endif /* GBADHOC_MGIFT */
 
 /* The running game as the link menus need it, read once at boot while the
  * path is in scope: the GBA header code (g_mg_game, read just before), the
@@ -10156,6 +10177,7 @@ static void link_ui_view(void)
    ui_set_link(&v);
 }
 
+#ifdef GBADHOC_MGIFT
 /* Once per frontend frame: poll the phone's parcel and advance the local cart.
  * Keep this separate from net_frame(), which owns trading-session pacing. */
 static void mgift_frame(void)
@@ -10230,6 +10252,7 @@ static void mgift_frame(void)
     * console suspend in the middle of one. */
    scePowerTick(PSP_POWER_TICK_ALL);
 }
+#endif /* GBADHOC_MGIFT */
 
 /* ---- GU color-order test pattern (testpat = 1; no core, no ROM) --------
  * Renders 8 vertical 30px bars of known RGB565 values through the exact
@@ -11048,7 +11071,7 @@ static void core_health_evt(const char *at)
     * sessions; critique-7 SF4).  hit_hops_x100 = mean hops for a hit. */
    /* The walk is not free (critique-8 SF1: a full LARGE cache is ~44 K
     * dependent loads, estimated 8-13 ms), so it runs on every 10th
-    * heartbeat and at every other call (exit), and times itself. */
+    * heartbeat (counted across reloads) and at every other call, and times itself. */
    {
       extern void rom_hash_census(u32 out[10]);
       static unsigned hb_calls;
@@ -16992,7 +17015,9 @@ session_top:
       FE_LP_SET(FELP_L_MISC);
       if (g_pcfg.console == FE_CONSOLE_GBA)
       {
+#ifdef GBADHOC_MGIFT
          mgift_frame();    /* Mystery Gift is GBA cartridge-specific. */
+#endif /* GBADHOC_MGIFT */
          silent_frame();   /* variant silent-wireless policy (ADR-0013) */
          rfu_link_down_drain();
          rfu_trace_drain();
@@ -17001,6 +17026,7 @@ session_top:
       audio_status_frame();   /* feeds core frameskip when engaged (ADR-0019) */
       audio_report_error();   /* keeps output failures from starving emulation */
 
+#ifdef GBADHOC_MGIFT
       if (g_pcfg.console == FE_CONSOLE_GBA &&
           mgift_shortcut_update_chord(g_pad, CTL_BIND(CTL_SC_MGIFT),
                                       !ui_active() && !have_script &&
@@ -17012,6 +17038,7 @@ session_top:
          if (g_mg_on) mgift_stop(0);
          else mgift_start();
       }
+#endif /* GBADHOC_MGIFT */
 
       /* ---- SELECT+L save state / SELECT+R load state ------------------
        *
@@ -17382,6 +17409,7 @@ session_top:
             net_teardown();
             osd_toast("Disconnected");
             break;
+#ifdef GBADHOC_MGIFT
          case UI_ACT_NET_MGIFT:
             if (g_pcfg.console == FE_CONSOLE_GBA)
                mgift_start();
@@ -17392,6 +17420,7 @@ session_top:
             if (g_pcfg.console == FE_CONSOLE_GBA)
                mgift_stop(0);
             break;
+#endif /* GBADHOC_MGIFT */
          case UI_ACT_RESET:
          {
             /* "Reset game" (soft reset, fe_host_reset): the menu has
@@ -18421,7 +18450,9 @@ session_top:
    }
    ui_return_tick();   /* the hold's ring keeps moving (no-op otherwise) */
    net_teardown();
+#ifdef GBADHOC_MGIFT
    mgift_stop(1);      /* drops the AP association and unloads the net modules */
+#endif /* GBADHOC_MGIFT */
    emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
    ui_return_tick();

@@ -216,7 +216,7 @@ typedef struct nd_peer
    /* ARQ rx.  reorder[] is direct-mapped: a stashed seq S sits in
     * reorder[S % ND_WINDOW].  Every stashed seq lies in (rx_expect,
     * rx_expect + ND_WINDOW), so no two share a slot (ND_WINDOW divides
-    * 65536, asserted below), and insert and drain are one slot each, not a
+    * 65536, asserted above), and insert and drain are one slot each, not a
     * scan of the window (256 x 150 B: the whole D-cache per packet). */
    uint16_t  rx_expect;
    uint16_t  reorder_n;          /* slots in use (the reorder_hi stat) */
