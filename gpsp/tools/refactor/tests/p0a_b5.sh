@@ -123,8 +123,12 @@ if want t9; then
     $PY "$R/globals.py" census --src "$OUT/inverse_main_psp.c" --root "$TREE" --cutlist "$CUT" --tsv "$OUT/g_inv.tsv" > /dev/null 2>&1
     cmp -s <(cut -f2- "$OUT/g_tree.tsv") <(cut -f2- "$OUT/g_inv.tsv") && ok "census of split.py inverse == base" || bad "census of the inverse differs"
   fi
-  expect_rc 2 "no --cutlist on a non-01067e74 source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist /nonexistent
-  expect_rc 2 "the 01067e74 cutlist on this source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist "$R/cutlist.txt"
+  if [ "$(sha256sum < "$M" | cut -c1-64)" != 942c8b546d6b159bf80660081fde816e31082a99aa6e4442a8b45e8272fe5cd1 ]; then
+    expect_rc 2 "no --cutlist on a non-01067e74 source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist /nonexistent
+    expect_rc 2 "the 01067e74 cutlist on this source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist "$R/cutlist.txt"
+  else
+    expect_rc 0 "01067e74 without --cutlist: the modules.py fallback is allowed" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist /nonexistent
+  fi
 fi
 
 # ---- check_flags scans psp/fe
