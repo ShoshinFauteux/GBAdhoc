@@ -454,6 +454,9 @@ fi
 # 8,400 I-cache misses a frame on a PSP-3000 and nothing in the build said
 # so).  Report the core against its budget on every pinned build;
 # HOT_BUDGET_STRICT=1 makes an overrun fail the build.
+# The manifest's layoutLock: none | FLAVOUR:ok | FLAVOUR:differs |
+# FLAVOUR:unchecked.  tools/make_release.sh ships only release:ok.
+LAYOUT_LOCK_RESULT=none
 if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
   docker run --rm -v "$ROOT":/build -w /build "$DOCKER_IMAGE" sh -c     "psp-nm -S -n psp/gpsp_adhoc.elf" > "$ROOT/.build-elf.nm" 2>/dev/null || true
   PYB=python3; command -v python3 >/dev/null 2>&1 || PYB=python
@@ -484,16 +487,28 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
   esac
   if [ -n "$LL_FLAVOUR" ]; then
     LL_STRICT=1
-    [ -n "$LAYOUT_PAD_ENV${PSP_EXTRA:-}${CORE_EXTRA:-}${FE_EXTRA:-}${ME_LOWLAT:-}" ] && LL_STRICT=0
+    [ -n "$LAYOUT_PAD_ENV${PSP_EXTRA:-}${CORE_EXTRA:-}${FE_EXTRA:-}" ] && LL_STRICT=0
+    # ME_LOWLAT=2 is the source default (main_psp.c PLAY_ME_LOWLAT): the same
+    # program, so it stays strict; 0 and 1 are variants (critique-8 SF4).
+    case "${ME_LOWLAT:-2}" in 2) ;; *) LL_STRICT=0 ;; esac
     [ "$RFU_SCHED$GBA_LINK$REWIND$ONLINE$CHEATS${INPUT_FRESH:-1}$LAYOUT_PIN" = 1111111 ] || LL_STRICT=0
     [ -n "${GBALINK_LEAN_OUTLINE:-}" ] && [ "${GBALINK_LEAN_OUTLINE}" != 0 ] && LL_STRICT=0
-    if "$PYB" "$LL_PY" check "$LL_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" -q; then
+    LL_RC=0
+    "$PYB" "$LL_PY" check "$LL_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" -q || LL_RC=$?
+    if [ "$LL_RC" = 0 ]; then
+      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:ok"
       note "layout  : layout.lock [$LL_FLAVOUR] OK"
+    elif [ "$LL_RC" != 1 ]; then
+      # rc 2: psp-nm failed or the lock has no such section.  Never "differs".
+      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:unchecked"
+      [ "$LL_STRICT" = 1 ] && die "layout.lock [$LL_FLAVOUR] could not be checked (rc $LL_RC: no psp-nm output in .build-elf.nm?)"
+      note "layout  : layout.lock [$LL_FLAVOUR] NOT CHECKED (rc $LL_RC: no psp-nm output?)"
     elif [ "$LL_STRICT" = 1 ] && { [ "$KIND" = release ] || [ "${LAYOUT_LOCK:-1}" != 0 ]; }; then
       # LAYOUT_LOCK=0 lets a lab build through while a re-pin is in progress;
       # a release never.
       die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: re-pin with layout_lock.py solve, then re-record with write)"
     else
+      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:differs"
       note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)"
     fi
   fi
@@ -666,6 +681,7 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"cleanRebuild\": $([ "$CLEAN" -eq 1 ] && echo true || echo false),"
   echo "  \"layoutPin\": $LAYOUT_PIN,"
   echo "  \"layoutPadBytes\": $LAYOUT_PAD_BYTES,"
+  echo "  \"layoutLock\": \"$LAYOUT_LOCK_RESULT\","
   echo "  \"eboot\": { \"md5\": \"$PBP_MD5\", \"sha256\": \"$PBP_SHA\" },"
   echo "  \"elfMd5\": \"$ELF_MD5\","
   echo "  \"memory\": { \"imageBytes\": $IMAGE_BYTES, \"bootHeapPsp1000\": $BOOT_HEAP_1000, \"bootHeapPspGo\": $BOOT_HEAP_GO },"
