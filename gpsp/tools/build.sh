@@ -319,6 +319,31 @@ fi
 die()  { echo "FAIL: $*"; exit 1; }
 note() { printf '%s\n' "$*"; }
 
+# THE TRACKED ME MODULE (critique-9 SF1).  psp/me/gbadhoc_me.prx is committed
+# (the release's, ME_CATCH=1) and every build rebuilds it in place, so a lab or
+# harness build leaves a different PRX in the tree.  The NEXT build then reads
+# the tree as dirty, and tools/make_release.sh stamps a release built after it
+# `commit|dirty` although nothing was edited.  When the PRX matched HEAD before
+# this build, put it back on the way out: always on failure, and on success
+# once the build has been staged with --out (the staged directory holds this
+# build's PRX).  A build without --out keeps its PRX beside its EBOOT.
+ME_PRX_REL=psp/me/gbadhoc_me.prx
+ME_PRX_RESTORE=0
+if git ls-files --error-unmatch "$ME_PRX_REL" >/dev/null 2>&1 &&
+   git diff --quiet HEAD -- "$ME_PRX_REL" 2>/dev/null; then
+  ME_PRX_RESTORE=1
+fi
+me_prx_restore() {
+  [ "$ME_PRX_RESTORE" = 1 ] || return 0
+  git diff --quiet HEAD -- "$ME_PRX_REL" 2>/dev/null && return 0
+  if git checkout HEAD -- "$ME_PRX_REL" 2>/dev/null; then
+    printf '%s\n' "me prx  : restored the tracked $ME_PRX_REL (this build's copy is staged)"
+  else
+    printf '%s\n' "me prx  : could NOT restore the tracked $ME_PRX_REL; the tree now reads dirty"
+  fi
+}
+trap me_prx_restore EXIT
+
 NEWEST_SRC=$(find "$ROOT" \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
              -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \) \
              -type f -print | xargs ls -t 2>/dev/null | head -1)
@@ -486,31 +511,31 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
     lab)     [ "$LAB_PADS_USED" = 1 ] && LL_FLAVOUR=lab ;;
   esac
   if [ -n "$LL_FLAVOUR" ]; then
-    LL_STRICT=1
-    [ -n "$LAYOUT_PAD_ENV${PSP_EXTRA:-}${CORE_EXTRA:-}${FE_EXTRA:-}" ] && LL_STRICT=0
-    # ME_LOWLAT=2 is the source default (main_psp.c PLAY_ME_LOWLAT): the same
-    # program, so it stays strict; 0 and 1 are variants (critique-8 SF4).
-    case "${ME_LOWLAT:-2}" in 2) ;; *) LL_STRICT=0 ;; esac
-    [ "$RFU_SCHED$GBA_LINK$REWIND$ONLINE$CHEATS${INPUT_FRESH:-1}$LAYOUT_PIN" = 1111111 ] || LL_STRICT=0
-    [ -n "${GBALINK_LEAN_OUTLINE:-}" ] && [ "${GBALINK_LEAN_OUTLINE}" != 0 ] && LL_STRICT=0
+    # Which arms are strict, and what the check's rc means, is
+    # layout_lock.py's `strict` / `verdict`, tested by
+    # tools/tests/test_layout_lock.py (critique-9 SF3).  ME_LOWLAT=2 is the
+    # source default and stays strict; 0 and 1 are variants.
+    LL_STRICT_OUT=$("$PYB" "$LL_PY" strict "LAYOUT_PAD_ENV=$LAYOUT_PAD_ENV" \
+      "PSP_EXTRA=${PSP_EXTRA:-}" "CORE_EXTRA=${CORE_EXTRA:-}" "FE_EXTRA=${FE_EXTRA:-}" \
+      "ME_LOWLAT=${ME_LOWLAT:-}" "RFU_SCHED=$RFU_SCHED" "GBA_LINK=$GBA_LINK" \
+      "REWIND=$REWIND" "ONLINE=$ONLINE" "CHEATS=$CHEATS" "INPUT_FRESH=${INPUT_FRESH:-}" \
+      "MGIFT=${MGIFT:-}" "LAYOUT_PIN=$LAYOUT_PIN" \
+      "GBALINK_LEAN_OUTLINE=${GBALINK_LEAN_OUTLINE:-}") ||
+      die "layout_lock.py strict failed: $LL_STRICT_OUT"
+    LL_STRICT=${LL_STRICT_OUT%% *}
+    [ "$LL_STRICT" = 1 ] || note "layout  : variant arm, the lock is not enforced (${LL_STRICT_OUT#0 })"
     LL_RC=0
     "$PYB" "$LL_PY" check "$LL_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" -q || LL_RC=$?
-    if [ "$LL_RC" = 0 ]; then
-      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:ok"
-      note "layout  : layout.lock [$LL_FLAVOUR] OK"
-    elif [ "$LL_RC" != 1 ]; then
-      # rc 2: psp-nm failed or the lock has no such section.  Never "differs".
-      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:unchecked"
-      [ "$LL_STRICT" = 1 ] && die "layout.lock [$LL_FLAVOUR] could not be checked (rc $LL_RC: no psp-nm output in .build-elf.nm?)"
-      note "layout  : layout.lock [$LL_FLAVOUR] NOT CHECKED (rc $LL_RC: no psp-nm output?)"
-    elif [ "$LL_STRICT" = 1 ] && { [ "$KIND" = release ] || [ "${LAYOUT_LOCK:-1}" != 0 ]; }; then
-      # LAYOUT_LOCK=0 lets a lab build through while a re-pin is in progress;
-      # a release never.
-      die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: re-pin with layout_lock.py solve, then re-record with write)"
-    else
-      LAYOUT_LOCK_RESULT="$LL_FLAVOUR:differs"
-      note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)"
-    fi
+    LL_V=$("$PYB" "$LL_PY" verdict "$KIND" "$LL_FLAVOUR" "$LL_RC" "$LL_STRICT" "${LAYOUT_LOCK:-}") ||
+      die "layout_lock.py verdict failed: $LL_V"
+    LAYOUT_LOCK_RESULT=${LL_V%% *}
+    case "${LL_V#* }:$LL_RC" in
+      ok:*)   note "layout  : layout.lock [$LL_FLAVOUR] OK" ;;
+      die:1)  die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: re-pin with layout_lock.py solve, then re-record with write)" ;;
+      die:*)  die "layout.lock [$LL_FLAVOUR] could not be checked (rc $LL_RC: no psp-nm output in .build-elf.nm?)" ;;
+      note:1) note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)" ;;
+      *)      note "layout  : layout.lock [$LL_FLAVOUR] NOT CHECKED (rc $LL_RC: no psp-nm output?)" ;;
+    esac
   fi
 fi
 
@@ -708,4 +733,6 @@ note "manifest: $MANIFEST"
 if [ -n "$BUILD_DIRTY" ] && [ "$BUILD_DIRTY" != 0 ]; then
   note "NOTE: working tree is dirty; this artifact is not reproducible from a commit."
 fi
+# No --out: this build's PRX stays in psp/me/ beside its EBOOT (see me_prx_restore).
+[ -n "$OUTDIR" ] || ME_PRX_RESTORE=0
 exit 0
