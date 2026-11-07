@@ -10,6 +10,21 @@ separately and are intended for upstream.
 
 ---
 
+## [4.6.0-beta.4.1] - 2026-11-07
+
+Online hotfix. Links with 4.6.0-beta.4 (the link version is unchanged), but update both PSPs.
+
+- Online sessions between two PSPs on the released beta.4 could end before they started: "The
+  host left" on one side, or the joiner simply dropped. A cable session reloads the game first, and
+  during that reload a PSP sent nothing at all; on a PSP with a slow Memory Stick the 16 MB Emerald
+  reload took 18-25 s, so the partner gave up after 8-12 s and the relay dropped a silent player at
+  20 s. A PSP that is starting now sends a keepalive for every megabyte it reads, a joiner waits up
+  to 30 s for a host that is starting, and the relay (relay.rayquaza.ca, updated the same day) waits
+  45 s before it drops a silent player.
+- "The other PSP runs a different GBAdhoc version" no longer appears when the other PSP is only busy
+  starting: that verdict now needs a host that is answering.
+- The PSP-1000 has 8 KB less free memory than with beta.4 (one layout step).
+
 ## [4.6.0-beta.4] - 2026-11-07
 
 Pre-release. Links only with the same beta.

@@ -44,8 +44,8 @@
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
-> **This is the `beta` branch: GBAdhoc 4.6.0 beta 4.**
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4)
+> **This is the `beta` branch: GBAdhoc 4.6.0 beta 4.1** (beta 4 plus an online hotfix).
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4.1)
 > (the *latest release* link above is the stable 4.5.0). What the beta adds:
 >
 > - **Wireless Adapter play is scheduled frame by frame.** Each PSP sends its frame's
