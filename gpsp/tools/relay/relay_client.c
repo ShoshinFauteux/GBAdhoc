@@ -202,7 +202,7 @@ int main(int argc, char **argv)
        * the /24 one of this console's LAN address */
       int one = 1;
       uint8_t b[4];
-      setsockopt(g_fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+      setsockopt(g_fd, SOL_SOCKET, SO_BROADCAST, (const void *)&one, sizeof(one));
       cfg.discover_bcast_be[0] = htonl(INADDR_BROADCAST);
       memcpy(b, &cfg.priv_ip_be, 4);
       b[3] = 255;
