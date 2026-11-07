@@ -846,7 +846,20 @@ without a public IP, both consoles at home, discovery off (the room must NOT for
 itself), a foreign relay on the LAN, a foreign relay claiming our IP with another port, a 10-minute
 session; plus the core's rules one by one. test_relay_desktop and natlab (real sockets): invite from
 the PC's home x cone / symmetric, both PSPs at the PC's home, a code from the PC's home (answer
-ignored). fuzz_relay fuzzes both sides with discovery on.
+ignored). fuzz_relay fuzzes both sides with discovery on (2504 answers in 2 M datagrams, no
+amplification). GBAdhoc XMB's tests/online step 5b checks the desktop host's answers (UPnP's IP and
+port; `XMB_ONLINE_NAME`; no identity, no answer).
+
+**PPSSPP, Emerald Union Room trade by discovery only** (2026-11-07, lab build of this branch):
+`builds/b5-online-out/ppsspp-disc/ppsspp_disc.sh` -- a loopback-only namespace with a dummy
+10.0.5.2/24 "Wi-Fi" carrying the default route, `gbadhoc-relay --bind 0.0.0.0 --public-ip
+203.0.113.7`, both consoles configured with `online_relay = 203.0.113.7:27420` (which goes nowhere)
+and room DSCV. Both logged `relay_discover ... match=ip`, `online_up ... lan_relay=1`, the path went
+direct, `trade_complete` on both, clean exits after 159 s.
+
+**Size.** gbadhoc_online.prx 32,174 B (beta.5 base 28,158; direct-connect alone 29,926). EBOOT: the
+room-code box adds 68 B to ui_psp.o; `LAYOUT_PAD_FE_BYTES` 2792 -> 2724 (lab 2668 -> 2600) holds every
+layout.lock anchor; PSP-1000 boot heap unchanged.
 
 ## 7. Implementation plan
 
