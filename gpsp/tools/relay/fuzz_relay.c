@@ -252,7 +252,9 @@ int main(int argc, char **argv)
    relay_core_set_home(g_desk, "ABBA");
    for (i = 0; i < NSRC; i++)
    {
-      g_pop[i].ip_be = (uint32_t)(0x0A000000u + (unsigned)i / 3);   /* some share an IP */
+      /* some share an IP; half are on a LAN (10.0.0.x: DISCOVER is answered) */
+      g_pop[i].ip_be = (i / 3) % 2 ? (uint32_t)(0x0A000000u + (unsigned)i / 3)
+                                   : (uint32_t)(0x0000000Au | ((unsigned)(i / 3) << 24));
       g_pop[i].port = (uint16_t)(1000 + i);
    }
    memset(&cc, 0, sizeof(cc));
