@@ -177,7 +177,14 @@ GB() {  # G without the CR strip: for binary output (git archive)
   if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then git -C "$d" "$@"
   elif command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
     w=$(winpath "$d") || return 128
-    git.exe -C "$w" "$@"
+    # retried like G (2026-11-07: both exports of one --against failed in the same second)
+    local i rc t="${TMPDIR:-/tmp}/flavours-gb.$$.out"
+    for i in 1 2 3 4 5 6; do
+      if git.exe -C "$w" "$@" > "$t" 2>"$t.err"; then cat "$t"; rm -f "$t" "$t.err"; return 0; fi
+      rc=$?; sleep 5
+    done
+    echo "flavours: git.exe $1 failed $i times: $(tail -2 "$t.err" | tr -d '\r')" >&2
+    rm -f "$t" "$t.err"; return $rc
   else return 128; fi
 }
 
@@ -502,6 +509,13 @@ if [ -n "$AGAINST" ]; then
   for FL in $ALL_FLAVOURS; do
     [ -f "$AGAINST/$FL/flavour.json" ] || die 2 "--against: no $AGAINST/$FL/flavour.json (the reference lacks $FL; all four are required)"
   done
+  LOCK_AT=()
+  lock_at() {     # yes / no: the commit carries gpsp/tools/layout/layout.lock
+    local c="$1" k
+    for k in "${LOCK_AT[@]+"${LOCK_AT[@]}"}"; do [ "${k%%=*}" = "$c" ] && { echo "${k#*=}"; return; }; done
+    if G "$REPO" cat-file -e "$c:gpsp/tools/layout/layout.lock" 2>/dev/null; then k=yes; else k=no; fi
+    LOCK_AT+=("$c=$k"); echo "$k"
+  }
   benv_cmp() { json_get "$1" buildEnv | tr ' ' '\n' | grep -vE '^GPSP_BUILD_(COMMIT|TREE)=' | tr '\n' ' '; }
   jbool() { sed -nE "s/.*\"$2\": *(true|false).*/\1/p" "$1" | head -1; }
   REF_COMMIT=$(json_get "$AGAINST/release/flavour.json" sourceCommit)
@@ -526,7 +540,14 @@ if [ -n "$AGAINST" ]; then
     case "$FL" in
       release|lab)
         for j in "$RJ" "$NJ"; do
-          [ "$(json_get "$j" layoutLock)" = "$FL:ok" ] || die 2 "--against [$FL]: $j layoutLock is '$(json_get "$j" layoutLock)', not $FL:ok"
+          if [ "$(lock_at "$(json_get "$j" sourceCommit)")" = yes ]; then
+            [ "$(json_get "$j" layoutLock)" = "$FL:ok" ] || die 2 "--against [$FL]: $j layoutLock is '$(json_get "$j" layoutLock)', not $FL:ok"
+          else
+            # a commit from before tools/layout/layout.lock (01067e74): nothing to hold,
+            # and nothing may claim a result (the LL verdict says which)
+            [ -z "$(json_get "$j" layoutLock)" ] || [ "$(json_get "$j" layoutLock)" = none ] ||
+              die 2 "--against [$FL]: $j records layoutLock '$(json_get "$j" layoutLock)' but its commit has no tools/layout/layout.lock"
+          fi
         done ;;
     esac
   done
@@ -600,7 +621,11 @@ if [ -n "$AGAINST" ]; then
     else failchk "$FL" ST "stack_depth.py absent"; fi
     # LL: the lock the contract above required, as a verdict of the gate line
     case "$FL" in release|lab)
-      echo "== $FL LL PASS (layoutLock ref $(json_get "$R/flavour.json" layoutLock), new $(json_get "$N/flavour.json" layoutLock))" >> "$OUT/checks.txt" ;;
+      if [ "$(lock_at "$NEW_COMMIT")" = yes ] || [ "$(lock_at "$REF_COMMIT")" = yes ]; then
+        echo "== $FL LL PASS (layoutLock ref $(json_get "$R/flavour.json" layoutLock), new $(json_get "$N/flavour.json" layoutLock))" >> "$OUT/checks.txt"
+      else
+        echo "== $FL LL PASS (no tools/layout/layout.lock at either commit: nothing to hold; BF holds the pads)" >> "$OUT/checks.txt"
+      fi ;;
     esac
   done
   if [ "$SRC_OK" = 1 ]; then

@@ -30,7 +30,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
+# FLAV_REPO: the repo when these tools run from a copy (run_all on a tree export),
+# as flavours.sh and tests/p0a_b5.sh take it
+REPO = os.environ.get('FLAV_REPO') or os.path.normpath(os.path.join(HERE, '..', '..', '..'))
 TREE_MAIN = os.path.normpath(os.path.join(HERE, '..', '..', 'psp', 'main_psp.c'))
 
 
@@ -109,13 +111,16 @@ def _git_show(commit, path):
                 return r.stdout.decode('utf-8', 'replace').replace('\r\n', '\n')
         except OSError:
             pass
-    # WSL on a Windows worktree: plain git cannot follow the .git file
+    # WSL on a Windows worktree: plain git cannot follow the .git file.  git.exe through
+    # WSL interop fails transiently under load (2026-11-07): retried, like flavours.sh
+    import time
     try:
         w = subprocess.run(['wslpath', '-w', REPO], capture_output=True, text=True).stdout.strip()
-        if w:
+        for _ in range(6 if w else 0):
             r = subprocess.run(['git.exe', '-C', w, 'show', '%s:%s' % (commit, path)], capture_output=True)
             if r.returncode == 0:
                 return r.stdout.decode('utf-8', 'replace').replace('\r\n', '\n')
+            time.sleep(5)
     except OSError:
         pass
     return None
