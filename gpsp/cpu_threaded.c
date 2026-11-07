@@ -12416,10 +12416,13 @@ void dynarec_release_translation_caches(void)
  * FE_EXTRA=-DROM_HASH_CENSUS; with only the frontend half it does not link.
  * out: entries, buckets used, longest chain, sum over entries of their
  *      1-based position in the chain (mean hit hops = out[3] / out[0]),
- *      ROM cache bytes used, buckets. */
-void rom_hash_census(u32 out[6])
+ *      ROM cache bytes used, buckets, then the number of buckets whose
+ *      chain is 1, 2, 3 and 4+ long (critique-8 SF1: a mean and a max
+ *      cannot tell "uniformly 2.7" from "a few hot buckets"). */
+void rom_hash_census(u32 out[10])
 {
   u32 i, n = 0, used = 0, maxc = 0, hops = 0;
+  u32 h1 = 0, h2 = 0, h3 = 0, h4 = 0;
   for (i = 0; i < ROM_BRANCH_HASH_N; i++)
   {
     u32 off = rom_branch_hash[i], c = 0;
@@ -12434,7 +12437,19 @@ void rom_hash_census(u32 out[6])
     n += c;
     if (c > maxc)
       maxc = c;
+    if (c == 1)
+      h1++;
+    else if (c == 2)
+      h2++;
+    else if (c == 3)
+      h3++;
+    else if (c)
+      h4++;
   }
+  out[6] = h1;
+  out[7] = h2;
+  out[8] = h3;
+  out[9] = h4;
   out[0] = n;
   out[1] = used;
   out[2] = maxc;

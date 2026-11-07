@@ -262,11 +262,15 @@ emulation thread. Both are refused in a release by `gpsp_profile.h`.
 
 `ROM_HASH_CENSUS` (in no profile; `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
 FE_EXTRA=-DROM_HASH_CENSUS`, both halves or it does not link) walks
-`rom_branch_hash` at each `core_health` EVT (heartbeat, exit) and logs
-`EVT rom_hash at= entries= buckets=used/16384 max_chain= hit_hops_x100=
-rom_used=`: the chain depth of the 14-bit table after a long LARGE-tier
-session on a 3000/Go.  The lookup is untouched; the walk is cold code
-(176 B per instance), so the arm's layout differs from the lab's.
+`rom_branch_hash` at every 10th heartbeat and at every other `core_health`
+EVT (exit, load, reset) and logs `EVT rom_hash at= entries=
+buckets=used/16384 max_chain= hit_hops_x100= rom_used= chains=c1/c2/c3/c4+
+walk_us=`: the chain depth of the 14-bit table after a long LARGE-tier
+session on a 3000/Go, the number of buckets whose chain is 1, 2, 3 and 4+
+long, and what the walk itself cost (a full LARGE cache is ~44 K dependent
+loads, estimated 8-13 ms: a dropped frame every 6,000 frames, so discount
+the arm's audio/link behaviour at those frames).  The lookup is untouched;
+the walk is cold code, so the arm's layout differs from the lab's.
 
 `XLAT_DEPTH_PROBE` (profiles `soak`, `diagnostic`; refused in a release) writes
 nothing itself: it records the deepest nested block translation and the lowest

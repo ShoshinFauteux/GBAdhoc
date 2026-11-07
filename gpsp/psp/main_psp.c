@@ -10933,15 +10933,27 @@ static void core_health_evt(const char *at)
 #ifdef ROM_HASH_CENSUS
    /* cpu_threaded.c: the ROM hash's chain depth (an arm for long LARGE-tier
     * sessions; critique-7 SF4).  hit_hops_x100 = mean hops for a hit. */
+   /* The walk is not free (critique-8 SF1: a full LARGE cache is ~44 K
+    * dependent loads, estimated 8-13 ms), so it runs on every 10th
+    * heartbeat and at every other call (exit), and times itself. */
    {
-      extern void rom_hash_census(u32 out[6]);
-      u32 hc[6];
-      rom_hash_census(hc);
-      fe_evt("rom_hash at=%s entries=%u buckets=%u/%u max_chain=%u "
-             "hit_hops_x100=%u rom_used=%u", at, (unsigned)hc[0],
-             (unsigned)hc[1], (unsigned)hc[5], (unsigned)hc[2],
-             hc[0] ? (unsigned)((unsigned long long)hc[3] * 100u / hc[0]) : 0u,
-             (unsigned)hc[4]);
+      extern void rom_hash_census(u32 out[10]);
+      static unsigned hb_calls;
+      int is_hb = at[0] == 'h' && at[1] == 'b' && !at[2];
+      if (!is_hb || (hb_calls++ % 10u) == 0)
+      {
+         u32 hc[10], t0, walk_us;
+         t0 = sceKernelGetSystemTimeLow();
+         rom_hash_census(hc);
+         walk_us = sceKernelGetSystemTimeLow() - t0;
+         fe_evt("rom_hash at=%s entries=%u buckets=%u/%u max_chain=%u "
+                "hit_hops_x100=%u rom_used=%u chains=%u/%u/%u/%u walk_us=%u",
+                at, (unsigned)hc[0], (unsigned)hc[1], (unsigned)hc[5],
+                (unsigned)hc[2],
+                hc[0] ? (unsigned)((unsigned long long)hc[3] * 100u / hc[0]) : 0u,
+                (unsigned)hc[4], (unsigned)hc[6], (unsigned)hc[7],
+                (unsigned)hc[8], (unsigned)hc[9], (unsigned)walk_us);
+      }
    }
 #endif
 #ifdef JIT_COST_KEYS
