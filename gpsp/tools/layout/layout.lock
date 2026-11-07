@@ -11,16 +11,27 @@
 #            recorded from the round-7 lab arm C ELF 0f31d0a6 (9e41b91e).
 # The B-region, hash-table and JIT-base lines were added in round 9 and
 # measured on the round-8 ELFs fb410a57 / 51d607c5 (nm identical to round 7).
+#
+# beta.5 base (claude/beta5-base: beta.4.1 + claude/opt-1000 7a39eb40): both
+# sections re-recorded after the re-pin that puts the frame loop's window,
+# B's hot text, main_psp.o's per-frame code (pace_frame, net_frame ..),
+# fe_host's run (fe_host_reset ..) and A's cold text back on the round-8
+# ELFs' sets (r8.elf fb410a57, r8lab.elf 51d607c5).  `main` itself moves:
+# its code before the loop grew 212 B, so LAYOUT_PAD_MAIN_BYTES (new,
+# psp/layout_pad_main.S) places the loop, not main's first byte.  The pad
+# anchors now name what each pad is tuned for.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x14e0
-size main                               33724
+at   main                               0x140c
+size main                               33764
 at   pace_frame                         0x0a20
-# the first symbol after each text pad (the anchor `solve` aims at)
-at   exit_cb                            0x02f0
-at   roster_valid                       0x0a90
-at   pte_mutex_check_need_init          0x1220
+# the first symbol after each text pad, and what each pad is tuned for
+# (`pad` lines below name the anchor `solve` aims at)
+at   exit_cb                            0x0264
+at   roster_valid                       0x07c0
+at   fe_host_reset                      0x0b00
+at   pte_mutex_check_need_init          0x1224
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -28,11 +39,12 @@ at   block_lookup_translate_thumb       0x1b80
 gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
 at   gbab_update_gba                    0x0b60
 at   gbab_block_lookup_translate_arm    0x0880
+at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
 tail gbab_block_lookup_translate_thumb  32
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x17c0
-at   netpacket_iface                    0x1ed8
+at   netpacket_iface                    0x1ec0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -51,32 +63,36 @@ at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
-pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
-pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
+pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
+pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x0c80
-size main                               48440
+at   main                               0x0bd0
+size main                               48632
 at   pace_frame                         0x0b0c
-# the first symbol after each text pad (the anchor `solve` aims at)
-at   exit_cb                            0x136c
-at   roster_valid                       0x147c
-at   pte_mutex_check_need_init          0x07f4
+# the first symbol after each text pad, and what each pad is tuned for
+# (`pad` lines below name the anchor `solve` aims at)
+at   exit_cb                            0x10a0
+at   roster_valid                       0x11ac
+at   fe_host_reset                      0x1308
+at   pte_mutex_check_need_init          0x07e4
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
 at   block_lookup_translate_thumb       0x1b80
 gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
-at   gbab_update_gba                    0x01e0
+at   gbab_update_gba                    0x01a0
 at   gbab_block_lookup_translate_arm    0x1fa0
+at   gbab_block_lookup_address_arm      0x11a0
 at   gbab_block_lookup_translate_thumb  0x08c0
 tail gbab_block_lookup_translate_thumb  32
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x1a40
-at   netpacket_iface                    0x0178
+at   netpacket_iface                    0x0160
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -95,7 +111,8 @@ at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
 # pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
-pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
-pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
+pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
+pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
+pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
+pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
 pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      pte_mutex_check_need_init
