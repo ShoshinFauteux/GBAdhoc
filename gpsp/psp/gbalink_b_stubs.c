@@ -45,6 +45,18 @@ extern const u16 gba_cc_lut[];         /* gba_cc_lut.h, verbatim */
 const u16 gba_cc_lut[1];
 
 void update_scanline(void) { }
+/* Layout: B's renderer was 7,712 B of text in the pinned hot order
+ * (psp/layout/hot.ord: update_scanline sits between B's update_gba group and
+ * its block lookups).  This stub is 8 B, so everything after it -- the rest
+ * of B's hot text, then main (the first frontend function) and its frame
+ * loop -- moved 7,712 B in claude/opt-1000 round 4, and solo Doom II lost
+ * 1.2-1.7 % on hardware (hw-batch-3).  The section keeps the renderer's size
+ * (zeros plus the 8 B stub, never executed; same trick as layout_pad_apb.S)
+ * so they stay where round 3 and beta.4 had them mod 8 KiB.
+ * -ffunction-sections puts the stub in this section. */
+__asm__(".pushsection .text.update_scanline,\"ax\",@progbits\n"
+        "  .fill 7704 / 4, 4, 0\n"
+        ".popsection\n");
 void video_reload_counters(void) { }
 void me_capture_visible_end(void) { }
 void me_capture_visible_resume(void) { }

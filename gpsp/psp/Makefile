@@ -27,7 +27,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        mgift_net.o \
        mgift_cart.o \
        mgift_payload.o \
-       stb_impl.o \
+       stb_impl.o layout_pad_fe.o \
        netdrv_core.o \
        transport_adhoc.o \
        ../frontend-common/fe_host.o \
@@ -160,7 +160,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 1824
+LAYOUT_PAD_BYTES ?= 1600
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -178,6 +178,15 @@ endif
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
 LAYOUT_PAD_RO_BYTES ?= 152
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
+# LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
+# psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
+# they hold main_psp.o's code after main, frontend-common, and instance A's cold
+# text each in its own sets.  Part of the shipped layout; tools/flags.lock pins
+# them.  claude/opt-1000 round 7 sets them so main's frame loop and the
+# per-frame frontend code sit where round 3 (the last layout measured neutral
+# on hardware) had them, mod 8 KiB.
+LAYOUT_PAD_FE_BYTES ?= 3512
+LAYOUT_PAD_CORE_BYTES ?= 5416
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -347,6 +356,8 @@ PSP_LARGE_MEMORY ?= 1
 ifneq ($(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),)
 OBJS := layout_pad.o $(OBJS)
 endif
+# Last of the objects: instance A's core archive follows (layout_pad_mid.S).
+OBJS += layout_pad_core.o
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
@@ -463,6 +474,13 @@ fe_autopilot_b.o: ../frontend-common/fe_autopilot.o
 
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
+
+layout_pad_fe.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_FE_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_fe
+layout_pad_core.o: layout_pad_mid.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_CORE_BYTES) \
+	      -DLAYOUT_PAD_MID_NAME=layout_pad_core
 
 layout_pad.o: layout_pad.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_TEXT=$(or $(LAYOUT_PAD_TEXT),0) \
