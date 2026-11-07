@@ -51,7 +51,7 @@ if want loop; then
     expect_rc 0 "[$fl] layout_report by anchor" $PY "$R/layout_report.py" "$RUN/$fl" --no-pad-check
     grep -E "main loop by line" "$OUT/last.log" | sed 's/^/        /'
     expect_rc 0 "[$fl] loop_lpsim window by anchor" $PY "$R/loop_lpsim/loop_lpsim.py" window "$E"
-    if ! $PY "$R/loop_anchor.py" "$M" | grep -q "lines 16368-1809"; then
+    if ! $PY "$R/loop_anchor.py" "$M" | grep -q "lines 16368-180"; then   # not 01067e74 (there the old window IS the anchored code lines)
       expect_rc 2 "[$fl] loop_diff --loop-lines 16368-18090 (the old window) refused" $PY "$R/loop_diff.py" "$E" --loop-lines 16368-18090
       $PY "$R/layout_report.py" "$RUN/$fl" --no-pad-check --loop-lines 16368-18090 > "$OUT/last.log" 2>&1
       grep -q "explicit loop lines 16368-18090 are not the anchored window" "$OUT/last.log" \
