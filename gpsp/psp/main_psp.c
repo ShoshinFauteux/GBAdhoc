@@ -10930,6 +10930,20 @@ static void core_health_evt(const char *at)
           "rom_flush=%u%s%s%s%s", at, fe_host_frame_count(),
           (unsigned)gamepak_reopens, (unsigned)gamepak_short_reads,
           (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc, fb);
+#ifdef ROM_HASH_CENSUS
+   /* cpu_threaded.c: the ROM hash's chain depth (an arm for long LARGE-tier
+    * sessions; critique-7 SF4).  hit_hops_x100 = mean hops for a hit. */
+   {
+      extern void rom_hash_census(u32 out[6]);
+      u32 hc[6];
+      rom_hash_census(hc);
+      fe_evt("rom_hash at=%s entries=%u buckets=%u/%u max_chain=%u "
+             "hit_hops_x100=%u rom_used=%u", at, (unsigned)hc[0],
+             (unsigned)hc[1], (unsigned)hc[5], (unsigned)hc[2],
+             hc[0] ? (unsigned)((unsigned long long)hc[3] * 100u / hc[0]) : 0u,
+             (unsigned)hc[4]);
+   }
+#endif
 #ifdef JIT_COST_KEYS
    /* JIT_COST cores append kcalls and lineops (words 11, 12) after big_i
     * (word 10): the cache work publishes handed out, cumulative. */

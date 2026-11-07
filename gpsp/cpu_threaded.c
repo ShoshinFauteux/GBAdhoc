@@ -12404,6 +12404,46 @@ void dynarec_release_translation_caches(void)
 }
 #endif
 
+#ifdef ROM_HASH_CENSUS
+/* ROM_HASH_CENSUS (off in every profile; critique-7 SF4): how deep the
+ * 14-bit rom_branch_hash chains are after a long session.  On the LARGE tier
+ * (3000/Go, 10 MiB of ROM translation cache) a full cache is about 44 K
+ * blocks over 16 K buckets, a load factor near 2.7 (estimate, from
+ * ub_rival's 236 B per block), and only a session of hours gets there.
+ * This walks the table when asked (the frontend's core_health EVT: every
+ * heartbeat and at exit), so the lookup itself is the shipped code.  Build
+ * the arm with CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
+ * FE_EXTRA=-DROM_HASH_CENSUS; with only the frontend half it does not link.
+ * out: entries, buckets used, longest chain, sum over entries of their
+ *      1-based position in the chain (mean hit hops = out[3] / out[0]),
+ *      ROM cache bytes used, buckets. */
+void rom_hash_census(u32 out[6])
+{
+  u32 i, n = 0, used = 0, maxc = 0, hops = 0;
+  for (i = 0; i < ROM_BRANCH_HASH_N; i++)
+  {
+    u32 off = rom_branch_hash[i], c = 0;
+    if (off)
+      used++;
+    while (off && c < 0x10000)
+    {
+      c++;
+      hops += c;
+      off = ((hashhdr_type *)&rom_translation_cache[off])->next_entry;
+    }
+    n += c;
+    if (c > maxc)
+      maxc = c;
+  }
+  out[0] = n;
+  out[1] = used;
+  out[2] = maxc;
+  out[3] = hops;
+  out[4] = (u32)(rom_translation_ptr - rom_translation_cache);
+  out[5] = ROM_BRANCH_HASH_N;
+}
+#endif
+
 /* WITHDRAWN: CLEARING THE GATE CANDIDATE TABLE HERE, AND IN
  * init_dynarec_caches.  This cost 2-16% of frame time on hardware.
  *
