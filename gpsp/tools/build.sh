@@ -243,6 +243,11 @@ PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS REWIND=$REWIND"
 ONLINE="${ONLINE:-1}"
 case "$ONLINE" in 0|1) ;; *) echo "FAIL: ONLINE must be 0 or 1"; exit 2 ;; esac
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS ONLINE=$ONLINE"
+# MGIFT (default 1; 0 for an arm without it): Mystery Gift (psp/Makefile).
+# MGIFT=0 is a variant: the layout lock is reported, not enforced.
+MGIFT="${MGIFT:-1}"
+case "$MGIFT" in 0|1) ;; *) echo "FAIL: MGIFT must be 0 or 1"; exit 2 ;; esac
+PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS MGIFT=$MGIFT"
 
 # RFU_SCHED (default 0): scheduled ticks for the emulated Wireless Adapter
 # (rfu_sched.h, docs/RFU-COUPLING.md).  Both makes need it: the core sends and

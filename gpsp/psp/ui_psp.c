@@ -3029,7 +3029,9 @@ static const ctl_row CTL_ROWS[] = {
    { CR_ACT, 1, CTL_SC_LOAD, NULL, NULL },
    { CR_ACT, 1, CTL_SC_SHOT, NULL, NULL },
    { CR_ACT, 1, CTL_SC_PAUSE, NULL, NULL },
+#ifdef GBADHOC_MGIFT
    { CR_ACT, 1, CTL_SC_MGIFT, NULL, NULL },
+#endif /* GBADHOC_MGIFT */
    { CR_ACT, 1, CTL_SC_CATCH, NULL, NULL },     /* bisect builds only */
 #ifdef REWIND
    { CR_ACT, 1, CTL_SC_REWIND, NULL, NULL },
@@ -3820,8 +3822,10 @@ static int wl_rows(int ids[WL_COUNT])
    ids[n++] = WL_HOST;
    ids[n++] = WL_SCAN;
    ids[n++] = WL_JOINCODE;
+#ifdef GBADHOC_MGIFT
    if (g_pcfg.console == FE_CONSOLE_GBA)
       ids[n++] = WL_MGIFT;
+#endif /* GBADHOC_MGIFT */
    /* Fast link: GBA only (it does nothing for the GB link), and above Back
     * only, so Host / Join keep the rows the rig's menu scripts count. */
    if (g_pcfg.console == FE_CONSOLE_GBA)
@@ -4429,6 +4433,7 @@ static ui_action screen_joinask(unsigned edges)
  * has their home Wi-Fi saved as profile 1 and the phone hotspot as profile 2 --
  * we would join the house and then wait forever for a phone that is not on it.
  * Hence: pick the profile, by name, before starting. */
+#ifdef GBADHOC_MGIFT
 enum { MGF_NET, MGF_START, MGF_BACK, MGF_COUNT };
 
 /* 0 = AUTOMATIC: select/create the open Mystery Gift hotspot profile.
@@ -4525,6 +4530,7 @@ static ui_action screen_mgift(unsigned edges)
              " back");
    return UI_ACT_NONE;
 }
+#endif /* GBADHOC_MGIFT */
 
 /* The scan list: three columns, room / mode / game (docs/GBA-LINK-UI.md).
  * A row this game can join is lit; the others are dimmed but still listed,
@@ -5844,9 +5850,11 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
    case SCR_SCAN:
       act = screen_scan(edges);
       break;
+#ifdef GBADHOC_MGIFT
    case SCR_MGIFT:
       act = screen_mgift(edges);
       break;
+#endif /* GBADHOC_MGIFT */
    case SCR_HOST:
       act = screen_host(edges);
       break;

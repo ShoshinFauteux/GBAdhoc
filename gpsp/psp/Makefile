@@ -24,9 +24,8 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        sidecar_dirs.o \
        config_psp.o \
        ctl_map.o \
-       mgift_net.o \
-       mgift_cart.o \
-       mgift_payload.o \
+       $(MGNET_OBJS) \
+       $(MGIFT_OBJS) \
        stb_impl.o layout_pad_fe.o \
        netdrv_core.o \
        transport_adhoc.o \
@@ -246,6 +245,19 @@ ifeq ($(ONLINE),1)
 OBJS += online_psp.o transport_relay.o
 CFLAGS += -DGBADHOC_ONLINE
 endif
+# MGIFT (default 1; MGIFT=0 compiles it out): Mystery Gift, the Wonder Card
+# receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c).  Its objects keep
+# their place in OBJS above, so MGIFT=1 links exactly as before.  The Wi-Fi
+# bring-up (mgift_net.o) is shared with online play and stays while either
+# is on.  MGIFT=0 removes the Wireless row, its screen, the Controls binding
+# row and the chord; the config key bind_mystery_gift is still read and
+# written, so a config.ini survives a round trip.  Frontend only.
+MGIFT ?= 1
+ifeq ($(MGIFT),1)
+MGIFT_OBJS = mgift_cart.o mgift_payload.o
+CFLAGS += -DGBADHOC_MGIFT
+endif
+MGNET_OBJS = $(if $(filter 1,$(MGIFT) $(ONLINE)),mgift_net.o)
 RFU_SCHED ?= 0
 ifeq ($(RFU_SCHED),1)
 CFLAGS += -DRFU_SCHED
