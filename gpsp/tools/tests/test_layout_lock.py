@@ -6,7 +6,8 @@
 * tools/layout/lab-pads.env names only psp/Makefile pads;
 * on a synthetic nm: write then check passes; a moved symbol, a closed hole,
   a missing pad symbol and a resized `main` each fail (mutants);
-* `solve` gives back the shift a pad needs, after an earlier pad's change;
+* `solve` gives back the shift a pad needs, after an earlier pad's change,
+  and refuses while a hole differs;
 * a .bss shuffle that keeps `_end` but moves the JIT base fails on the base.
 """
 import os
@@ -149,6 +150,17 @@ def main():
         check("7704 ->  7224" in out, "solve: BSCAN takes back the +480")
         check("1600 ->  1600" in out, "solve: the text pad needs nothing once BSCAN moved")
         check("3512 ->  3576" in out, "solve: FE takes the -64")
+
+        # solve refuses while a hole differs (critique-8 SF2): the same
+        # shifts, plus the warm hole closed -> exit 3, no pad values
+        write_nm(m, shifted(sv, 0x0880bb60, -32))
+        rc, out = run("solve", "release", m, "--lock", lk, "--pads", pads)
+        check(rc == 3 and "HOLE MOVED" in out and "->" not in out,
+              "solve: a closed warm hole -> refuses, suggests no pads")
+        write_nm(m, shifted(sv, 0x088ab1a0 + 480, -32))  # sv moved B +480
+        rc, out = run("solve", "release", m, "--lock", lk, "--pads", pads)
+        check(rc == 3 and "tail" in out and "->" not in out,
+              "solve: B's hole closed -> refuses, suggests no pads")
 
         # the JIT base and the .bss behind it (critique-8 MF3): .bss grows 16 B
         # before the JIT cache and shrinks 16 B after it.  _end does not move,

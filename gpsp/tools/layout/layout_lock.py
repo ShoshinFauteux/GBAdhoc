@@ -39,6 +39,9 @@ computes how far its anchor is from the locked offset, after the shift the
 earlier pads' changes cause, and prints new values (rounded to 4 B, kept in
 0..8191).  Alignment of the next input section, `.rodata`'s 16-64 B steps and
 `.data.pin` are not modelled, so relink with the printed values and `check`.
+It refuses (exit 3, no values) while a `gap` or `tail` differs: a hole is not
+a pad, and a pad that compensates for a missing hole moves the hole's
+neighbours instead.
 """
 import argparse
 import collections
@@ -201,6 +204,29 @@ def read_pads(pads_file, makefile):
 
 
 def cmd_solve(lock, flavour, by, text_addrs, pads):
+    # A hole (`gap`/`tail`) is not a pad variable: a closed or resized hole
+    # moves everything after it, and a pad change that "fixes" the anchor
+    # would move the hole's neighbours instead (critique-8 SF2: on arm L the
+    # missing warm hole made solve suggest CORE +64, which would move A's
+    # thumb lookup again).  Fix the holes first; only then solve the pads.
+    holes = 0
+    for i, kind, args, raw in lock[flavour]:
+        if kind not in ("gap", "tail"):
+            continue
+        vi = value_arg(kind)
+        try:
+            got = measure(by, text_addrs, kind, args)
+        except KeyError as e:
+            print("  HOLE MISSING %-5s %-40s %s" % (kind, " ".join(args[:vi]), e))
+            holes += 1
+            continue
+        if int(got) != int(args[vi]):
+            print("  HOLE MOVED   %-5s %-40s lock %s, build %s" % (kind, " ".join(args[:vi]), args[vi], got))
+            holes += 1
+    if holes:
+        print("solve: %d hole(s) differ; restore them (psp/layout_pad_warm.S, "
+              "psp/gbalink_b_stubs.c) before solving the pads -- no pad values suggested" % holes)
+        return 3
     want = {}
     for i, kind, args, raw in lock[flavour]:
         if kind == "at":
