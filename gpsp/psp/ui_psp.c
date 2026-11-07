@@ -1141,9 +1141,6 @@ void ui_open(void)
 
 void ui_close(void)
 {
-   /* Back to the game, maybe after a state load: an ambient snapshot (no
-    * art, or "game") is retaken from what is on screen now. */
-   vid_ambient_resnap();
    if (g_settings_dirty)
    {
       pcfg_save();
@@ -7696,14 +7693,6 @@ static int g_loading_dumps;      /* harness `loading_dump = N`             */
 void ui_loading_dump_shots(int n) { g_loading_dumps = n > 0 ? n : 0; }
 
 static void browser_cart(int cx, int cy, const ui_skin *s);
-
-/* The ambient bars' no-art colour: the console's darkest palette shade. */
-uint16_t ui_console_shade(int console)
-{
-   if (console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
-      console = FE_CONSOLE_GBA;
-   return SKIN_DARK[console].pal[0];
-}
 
 static void launch_art_take(void)
 {

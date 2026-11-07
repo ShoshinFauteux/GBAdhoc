@@ -614,8 +614,8 @@ int pcfg_remember_console(int console);
 enum
 {
    PCFG_AMB_OFF      = 0,   /* "none": black bars (the 3.1 look)            */
-   PCFG_AMB_ART      = 1,   /* hero art, else a blurred early game frame    */
-   PCFG_AMB_GAME     = 2,   /* a blurred early game frame, art or not       */
+   PCFG_AMB_ART      = 1,   /* hero art, else the edge glow                 */
+   PCFG_AMB_GAME     = 2,   /* the live edge glow, art or not               */
    PCFG_AMB_MODES    = 3
 };
 /* The profile key is bars_<c>.  Up to beta.4 it was ambient_<c>, where 1 was
