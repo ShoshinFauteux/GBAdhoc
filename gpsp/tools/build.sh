@@ -290,6 +290,25 @@ case " $CORE_FLAGS " in
   *)                      PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1" ;;
 esac
 
+# LAB PADS (tools/layout/lab-pads.env): a lab build has lab-only code in
+# main() and around pace_frame, so it needs its own layout pads to put the
+# frame loop where a lab build of round 3 had it.  Committed, so "the lab arm"
+# is a build command and not a string copied from a round log.  LAB_PADS=0
+# builds a lab EBOOT with the release pads; an explicit LAYOUT_PAD_BYTES= or
+# PSP_EXTRA= (below, later on the make line) still wins for a sweep.
+LAYOUT_PAD_ENV="${LAYOUT_PAD_BYTES:-}"
+LAB_PADS_USED=0
+if [ "$KIND" = lab ] && [ "${LAB_PADS:-1}" = 1 ]; then
+  [ -f "$ROOT/tools/layout/lab-pads.env" ] || { echo "FAIL: tools/layout/lab-pads.env missing"; exit 1; }
+  while IFS='=' read -r k v; do
+    case "$k" in
+      LAYOUT_PAD_BYTES) [ -n "$LAYOUT_PAD_ENV" ] || LAYOUT_PAD_BYTES="$v" ;;
+      LAYOUT_PAD_*)     PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS $k=$v" ;;
+    esac
+  done < <(tr -d '\r' < "$ROOT/tools/layout/lab-pads.env" | grep -E '^LAYOUT_PAD_[A-Z_]+=[0-9]+$')
+  LAB_PADS_USED=1
+fi
+
 # PSP_EXTRA: extra psp/Makefile variables for a one-off variant, e.g. the
 # layout sweep's LAYOUT_PAD_TEXT=N (docs/JIT-CODE-DISCIPLINE.md).  Same rule.
 if [ -n "${PSP_EXTRA:-}" ]; then
