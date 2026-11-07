@@ -375,6 +375,38 @@ Harness builds log the result as `EVT jit_cache tier=... reason=...` and the
 post-load malloc budget as `EVT heap_budget`; `jit_small = 1` in
 `.gpsp-harness.ini` forces the SMALL tier for an A/B on one console.
 
+The ROM block hash (`rom_branch_hash`, gpsp_config.h) is one static table on
+both tiers: `ROM_BRANCH_HASH_BITS_SMALL` (default 14, 16 K buckets, 64 KiB)
+on every PSP build, so the lookup shifts by a constant.
+`ROM_BRANCH_HASH_BITS_LARGE` (default 16) sizes it only on builds without
+`SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model).  Both
+are `#ifndef` overrides for the twin's sizing studies (claude/opt-1000
+rounds 6 and 7: 16 vs 14 bits, guest hash identical, host instructions
+-0.004..-0.014 % on both tiers' models); a shipped build never sets them.
+
+**The SMC profile switch (ADR-0030; main.c).**  `smc_blk_watch == 0` turns
+the store/DMA profile and the RAM flush timer off at run time; the code stays
+linked, so the pinned layout does not depend on it.  A release starts it at
+0, every other profile at `SMC_BLK_WATCH_DEFAULT`:
+- `-DGPSP_SMC_PROFILE`: keep the profile ON in a release.
+- `-DGPSP_NO_SMC_PROFILE`: give any build the release behaviour (the twin's
+  `fr` variants; the lab A/B arm "profile off").  For a lab build it goes in
+  through `CORE_EXTRA="EXTRA_CFLAGS=-DGPSP_NO_SMC_PROFILE"`: a core define
+  (core-vs-frontend-defines), and `CORE_EXTRA` is not checked for spelling.
+  Verify an arm from its ELF, not from its name: `psp-objdump -s -j .data`
+  at `smc_blk_watch` (psp-nm) reads 0 with the profile off, `0x03007d00`
+  with it on.  The two arms are otherwise layout-identical (same code linked;
+  only the word's initial value differs).
+
+**The layout pads (psp/Makefile, pinned by tools/flags.lock).**
+`LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_FE_BYTES` (after stb_impl.o),
+`LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
+`LAYOUT_PAD_BSCAN_BYTES` (B's `update_scanline` held at the renderer's size)
+and `LAYOUT_PAD_RO_BYTES` (`.rodata`).  docs/LAYOUT-PINNING.md "Keeping the
+pads" says what each holds.  A lab build that must match an older lab
+build's sets takes its own values through `LAYOUT_PAD_BYTES=` and
+`PSP_EXTRA=`, which build.sh refuses for the release profile.
+
 `BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
 the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.
 
