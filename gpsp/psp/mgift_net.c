@@ -398,6 +398,10 @@ void mgnet_profile_release(void)
    Cprofile_slot = 0;
 }
 
+/* The card carrier is Mystery Gift's alone (online play uses only the
+ * bring-up above), so MGIFT=0 (psp/Makefile) leaves it out with
+ * mgift_payload.o. */
+#ifdef GBADHOC_MGIFT
 /* ---- the card carrier --------------------------------------------------- */
 
 static int      Csock = -1;
@@ -493,3 +497,4 @@ void mgnet_card_reply(uint32_t id, unsigned result)
    sceNetInetSendto(Csock, ack, sizeof(ack), 0,
                    (struct sockaddr *)&Cfrom, sizeof(Cfrom));
 }
+#endif /* GBADHOC_MGIFT */
