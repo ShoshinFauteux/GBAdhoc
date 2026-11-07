@@ -86,6 +86,7 @@ echo "{\"profile\":\"$1\",\"dirty\":\"${GPSP_BUILD_DIRTY:-unset}\", \"layoutLock
 exit 0
 EOF
 echo committed > "$R/gpsp/marker.txt"; : > "$R/gpsp/psp/.keep"
+mkdir -p "$R/gpsp/tools/layout"; echo "# fake lock: the fake build.sh reports release:ok / lab:ok" > "$R/gpsp/tools/layout/layout.lock"
 printf 'psp/gpsp_adhoc.elf\npsp/EBOOT.PBP\npsp/build-manifest.json\n.build-*.log\n' > "$R/gpsp/.gitignore"
 (cd "$R" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m base) || { echo "git unavailable"; exit 2; }
 F="$R/gpsp/tools/refactor/flavours.sh"

@@ -513,7 +513,9 @@ if [ -n "$AGAINST" ]; then
   lock_at() {     # yes / no: the commit carries gpsp/tools/layout/layout.lock
     local c="$1" k
     for k in "${LOCK_AT[@]+"${LOCK_AT[@]}"}"; do [ "${k%%=*}" = "$c" ] && { echo "${k#*=}"; return; }; done
-    if G "$REPO" cat-file -e "$c:gpsp/tools/layout/layout.lock" 2>/dev/null; then k=yes; else k=no; fi
+    if G "$REPO" cat-file -e "$c:gpsp/tools/layout/layout.lock" 2>/dev/null; then k=yes
+    elif G "$REPO" cat-file -e "$c^{commit}" 2>/dev/null; then k=no
+    else k=yes; fi      # a commit this repo does not have: held to the strict rule
     LOCK_AT+=("$c=$k"); echo "$k"
   }
   benv_cmp() { json_get "$1" buildEnv | tr ' ' '\n' | grep -vE '^GPSP_BUILD_(COMMIT|TREE)=' | tr '\n' ' '; }
@@ -662,7 +664,7 @@ if [ -n "$AGAINST" ]; then
   if [ -z "$CI_RC" ]; then
     if [ "$SRC_OK" = 1 ] && [ -f "$HERE/ci_greps.py" ]; then
       "$PY" "$HERE/ci_greps.py" --src "$NS" --phase "$PHASE" > "$OUT/ci_greps.txt" 2>&1; CI_RC=$?
-    else CI_RC="no source export"; fi
+    elif [ "$SRC_OK" = 1 ]; then CI_RC="absent (no ci_greps.py)"; else CI_RC="no source export"; fi
   fi
   { echo "-- ci_greps --phase $PHASE (build-time, $OUT/ci_greps.txt):"; cat "$OUT/ci_greps.txt" 2>/dev/null; } >> "$OUT/checks.txt"
   case "$CI_RC" in
