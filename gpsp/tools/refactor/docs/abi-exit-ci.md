@@ -232,7 +232,7 @@ Tests (`abi-exit-ci_test_ci_greps.sh`, all pass):
 
 ```
 abi_asserts.py all --run RUNDIR --src GPSP --out DIR          # DIR/<fl>/fe_abi_asserts.h
-abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--core-h F TREEPATH] [--test-c F] [--known K]
+abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--frag F fe/X.inc.c]... [--core-h F TREEPATH] [--test-c F] [--known K]
 ```
 
 **How it builds the header.**
@@ -242,7 +242,9 @@ abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--c
 4. A discovery pass moves names the core headers do not declare, and frontend types the core TU cannot see, into an UNCHECKED list in the header, with the reason.
 5. Constants are asserted too: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h, and MER_INPUT_US/MER_RETIRE_US/MER_MISS_LIMIT/VRAM_DIRTY_PAGES against `tools/test_ff_pipeline.c`.
 
-The headers are generated into `generated/<flavour>/` and the scratch dirs. **They are not wired into the emulator build.** Since PLAN-P-beta5 P1, `generated/<flavour>/` holds the check TU of the P1 tree (`abi_check.c` + `fe_abi_asserts.h`, from `abi_asserts.py all` on that tree): compile-only (`-fsyntax-only`, core flags), never in any OBJS list, so no linked object changes. Its `main_psp.c:N` comments cite the tree it was generated on; regenerate rather than edit.
+The headers are generated into `generated/<flavour>/` and the scratch dirs. **They are not wired into the emulator build.** Since PLAN-P-beta5 P1, `generated/<flavour>/` holds the check TU of the P1 tree (`abi_check.c` + `fe_abi_asserts.h`, from `abi_asserts.py all` on that tree): compile-only (`-fsyntax-only`, core flags), never in any OBJS list, so no linked object changes. Its cites name the tree it was generated on; regenerate rather than edit.
+
+**On the split tree (PLAN-P-beta5 P4; P-review 2026-11-08, B3).** `psp/main_psp.c` is then a shell that includes `psp/fe/X.inc.c`. The `-E` view already follows the includes, and every cite is the file and line that hold the copy: `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (a single-file tree keeps its old `main_psp.c:N` cites). The constants are read from the raw text in TU order (`tu_lines`: the shell with each `#include "fe/..."` expanded, `fe_priv.h` and `play_defaults.h` included), and **a constant that is not found fails the gen** (exit 1, `constants: CONSTANT MISSING`): before the fix, a split shell lost all six constant asserts at rc 0. `--frag FILE fe/X.inc.c` lays a mutated copy of one fragment over the tree (for `-E` and the constants). A KNOWN reason is printed with the label `abi_asserts.known reason, its line cites are main_psp.c at 01067e74`, because those cites are 01067e74 lines. `tests/p0a_b5.sh t14` holds the split-tree rows: every cite of the generated header must name its line (`tests/p0a_t14_tu.py cites`), the gpsp_rom_load_progress sites are found through the includes, a fragment copy and a constant mutated with `--frag` fail their asserts, a renamed constant fails the gen, and a tool that reads the constants from the raw shell only (the pre-review rule) is caught. `tests/abi-exit-ci_test_abi.sh` edits the split tree's `split.py inverse` (laid over the shell with `--main-c`) for its main_psp.c mutants.
 
 **What it proves.** Each asserted copy has the core's exact C type: arity, parameter order and types, pointer levels, qualifiers and return type. This covers the 21-parameter `core_phase_take`, `smc_prof_take`, `smc_blk_take`, the 2041-2053 and 4856-4864 externs, and the copied constants.
 

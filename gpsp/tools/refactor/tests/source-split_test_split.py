@@ -28,6 +28,9 @@ Controls (must pass) and mutants (must be REFUSED by split.py):
   (review 2026-11-05) M12 row module misspelled, M13 FRAG module misspelled, M14 FRAG module / name
   disagree, M15 a function moved into another fragment -> all refused
   M16 a FRAG anchor on an own-line @extract:end marker -> refused
+  (P-review 2026-11-08) C7 gen --split DIR (the inverse of a split tree) gives the single file's rows;
+  M17 gen / split / cover --src on the split shell -> refused, and gen leaves -o untouched;
+  M18 a gen whose split check refuses leaves -o untouched (temp file + rename)
 """
 import difflib
 import io
@@ -131,6 +134,51 @@ def run(src, committed=None):
             ok('C4 gen --carry reproduces the cutlist')
         else:
             bad('C4 gen --carry differs')
+        # C7 / M17 / M18 (P-review 2026-11-08, B4): on a split tree the cutlist describes the inverse.
+        # gen --split reads it; gen / split / cover --src on the shell are refused, and gen leaves -o
+        # untouched (it used to write a 1-FRAG cutlist over -o before refusing)
+        s9 = os.path.join(work, 's9')
+        split.write_split(s9, out, shell)
+        sh9 = os.path.join(s9, 'psp', 'main_psp.c')
+        c7 = os.path.join(work, 'c7.txt')
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc7 = split.main(['gen', '--split', s9, '--carry', cpath, '-o', c7])
+        if rc7 == 0 and rows_text(*split.read_cutlist(c7)) == t1 and \
+                'inverse' in open(c7, encoding='utf-8').read().split('#\n# FRAG')[0]:
+            ok('C7 gen --split <split tree> --carry: the rows of the single file, header names the inverse')
+        else:
+            bad('C7 gen --split rc %d' % rc7)
+        sent = os.path.join(work, 'sentinel.txt')
+        open(sent, 'w', encoding='utf-8', newline='\n').write('# the committed cutlist\n')
+        for cmd in (['gen', '--src', sh9, '--carry', cpath, '-o', sent], ['gen', '--src', sh9, '-o', sent],
+                    ['split', '--src', sh9, '--cutlist', cpath, '--out', os.path.join(work, 's10')],
+                    ['cover', '--src', sh9]):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = split.main(cmd)
+            kept = open(sent, encoding='utf-8').read() == '# the committed cutlist\n'
+            left = [f for f in os.listdir(work) if f.startswith('sentinel.txt.gen-')]
+            if rc == 1 and 'is a split shell' in err.getvalue() and kept and not left and \
+                    not os.path.exists(os.path.join(work, 's10')):
+                ok('M17 %s --src <split shell> refused, -o untouched: %s' % (cmd[0], err.getvalue().strip()[:90]))
+            else:
+                bad('M17 %s on the shell: rc %d, -o kept %s, temp left %s: %s' % (cmd[0], rc, kept, left, err.getvalue()[:200]))
+        # M18: a gen whose own split check fails leaves -o as it was (temp file + rename): the
+        # check is forced to fail by a do_split that refuses
+        real = split.do_split
+        split.do_split = lambda *a_, **k_: (_ for _ in ()).throw(split.Refused('forced'))
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = split.main(['gen', '--split', s9, '--carry', cpath, '-o', sent])
+        finally:
+            split.do_split = real
+        kept = open(sent, encoding='utf-8').read() == '# the committed cutlist\n'
+        left = [f for f in os.listdir(work) if f.startswith('sentinel.txt.gen-')]
+        if rc == 1 and kept and not left:
+            ok('M18 gen whose split check refuses: -o untouched, no temp file left')
+        else:
+            bad('M18 rc %d, -o kept %s, temp left %s' % (rc, kept, left))
         # C6 (PLAN-P-beta5 P1): own-line @extract markers around the last function of a
         # fragment (as P1 plants them): the end marker stays in that fragment, so the
         # carried cutlist is unchanged; M16 a FRAG anchor put on that end marker is refused

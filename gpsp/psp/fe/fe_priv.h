@@ -1,72 +1,90 @@
-/* fe_priv.h -- main_psp.c's own macros (PLAN-P-beta5 §4 P5, the macro hoist).
+/* fe_priv.h -- the macros P5 hoisted out of main_psp.c (PLAN-P-beta5 §4 P5, the macro hoist).
  *
- * PRIVATE TO main_psp.o: main_psp.c includes it once, after its last top-of-file
- * project header (sidecar_dirs.h), where every condition below is final -- in
- * particular GPSP_NO_TELEMETRY, which fe_evt.h derives from GPSP_PLAYABLE.  Never
- * include it from another translation unit.
+ * "main_psp.c" in this file means the translation unit: the shell psp/main_psp.c plus the
+ * fe/X.inc.c fragments it includes, in include order ("above"/"below" follow that order).
+ * psp/fe/README.md (generated from the cutlist) maps fragments to modules and lists where
+ * each definition sits.
+ *
+ * PRIVATE TO main_psp.o: the shell includes it once, after its last top-of-file project
+ * header (sidecar_dirs.h), where every condition below is final -- in particular
+ * GPSP_NO_TELEMETRY, which fe_evt.h derives from GPSP_PLAYABLE.  Never include it from
+ * another translation unit.
  *
  * Every #define here was moved verbatim from main_psp.c, in its old relative order,
  * re-wrapped under the condition it sat under there (both arms of one condition
- * together).  The objects and functions those conditions also hold stayed in
- * main_psp.c, at their lines; a macro whose expansion names one of them is still
- * legal, because a macro expands where it is used.
+ * together).  The objects and functions those conditions also hold stayed where they
+ * were (the note above each block names the fragment); a macro whose expansion names one
+ * of them is still legal, because a macro expands where it is used.
  *
- * Deliberately NOT here:
- *  - the core-ABI hand copies: main_psp.c's own declarations of core objects and
- *    functions.  They are declarations, not macros, and their order is the
- *    tentative-definition and .bss order, so they stay where they are.  Index, by
- *    name and in source order (grep the name: their line numbers move):
- *    at file scope
- *      core perf counters: flush_rom_total, flush_ram_full, flush_ram_smc,
- *        flush_ram_dma, gamepak_page_loads, smc_flush_us, smc_flush_bytes,
- *        smc_flush_wide, smc_blk_xlat_total, cph_jit_total, smc_blk_watch;
- *      translation-cache tier and heap hooks: jit_cache_tier,
- *        jit_cache_force_small, jit_cache_reason, rom_translation_cache_size,
- *        ram_translation_cache_size, rom_translation_cache,
- *        dynarec_release_translation_caches, dynarec_heap_tables_release,
- *        heap_trace_mark, gbcore_prepare, heap_trace_report;
- *      ROM-cache budget: gamepak_buffer_cap, gamepak_resident_wanted,
- *        gamepak_cap_reason, gamepak_force_swap_stubs;
- *      SMC and phase probes: smc_prof_take, smc_blk_take, smc_prof_clock,
- *        core_phase_take, core_phase_set_level;
- *      gba_screen_pixels;
- *      the ME renderer's view of GBA memory: vram, vram_clean, vram_dirty_marks,
- *        io_registers, oam_ram, palette_ram_converted, reg (with the
- *        VRAM_DIRTY_SHIFT / VRAM_DIRTY_PAGES constants beside them);
- *      skip_next_frame;
- *      ROM-cache stats: gamepak_size, gamepak_buffer_count, gamepak_buffer_pages,
- *        gamepak_buffers, gamepak_resident_got, gamepak_static_blocks,
- *        gamepak_must_swap, gamepak_vol_drop, gamepak_vol_back;
- *      iwram, ewram, palette_ram (the state hash);
- *      gpsp_rom_load_progress (above gba_reload_progress);
- *      gamepak_reopens, gamepak_short_reads, badjump_contained, dma_smc_flushes
- *        (telemetry builds only, above the heartbeat's xlat probes);
- *    at block scope
- *      smc_gates_reload_evt() and main(): translation_gate_targets,
- *        translation_gate_target_pc;
- *      rig_romload_evt(): gamepak_reopens, gamepak_short_reads;
- *      psp_rom_pool_offer(), psp_rom_pool_over(), psp_rewind_pool_back():
- *        gamepak_spare_pool3, gamepak_spare_pool3_bytes;
- *      main(): me_log_vram_always, gpsp_heap_census, gpsp_rom_load_progress.
- *    T14 asserts each one against the core's header in a compile-only check TU
- *    that is never linked: tools/refactor/abi_asserts.py ->
- *    tools/refactor/generated/<flavour>/{abi_check.c, fe_abi_asserts.h}.  Those
- *    files are the complete per-flavour list: they cite each copy's current line
- *    and also list, as UNCHECKED, the declarations with no core header to compare;
+ * NOT every TU-local macro: this file is P5's inventory only.  About 120 #define lines
+ * stay in the shell and the fragments, at their definition points (psp/fe/README.md
+ * counts them):
  *  - the macro-globals (g_start_keepalive/_grace/_heard, g_reload_slow_ms,
  *    g_gblink_host_wait_peer, g_mgift_consumed, g_mg_on, g_log_input, g_gba_late,
  *    g_turbo_lock_sim): in another arm each is an object, and the two stay together;
- *  - the macros a host test reads as text through main_psp.c's @extract markers
- *    (tools/tests: IO_JOIN_US, AUDIO_JOIN_US, g_wake_hold, the sleep-quiesce bounds,
- *    PWR_REQ_MAX_FIRES, SLEEP_HOLD_NAPS, the low-latency defaults, ...).
+ *  - the macros a host test reads as text through an @extract marker (tools/tests:
+ *    IO_JOIN_US, AUDIO_JOIN_US, g_wake_hold, the sleep-quiesce bounds, PWR_REQ_MAX_FIRES,
+ *    SLEEP_HOLD_NAPS, the low-latency defaults, ...);
+ *  - release no-op stubs like the rig_* ones below that P5's inventory did not list: they
+ *    stay in the #else arm beside the telemetry function they replace (stall_watch_start/
+ *    _stop, drprof_start/_stop/_window, DRPROF_PHASE, core_health_evt, ff_win_note,
+ *    UISCRIPT_DUMP: fe/harness.f.inc.c);
+ *  - local helpers and constants defined beside their users.
+ * So a macro that is not here is not necessarily a macro-global or one a test reads.
+ *
+ * Also NOT here: the core-ABI hand copies, main_psp.c's own declarations of core objects
+ * and functions.  They are declarations, not macros, and their order is the
+ * tentative-definition and .bss order, so they stay where they are.  Index, by name, in
+ * TU order, with the file that holds each group (grep the name for its line):
+ *    at file scope
+ *      fe/input.a.inc.c  core perf counters: flush_rom_total, flush_ram_full,
+ *        flush_ram_smc, flush_ram_dma, gamepak_page_loads, smc_flush_us, smc_flush_bytes,
+ *        smc_flush_wide, smc_blk_xlat_total, cph_jit_total, smc_blk_watch;
+ *        translation-cache tier and heap hooks: jit_cache_tier, jit_cache_force_small,
+ *        jit_cache_reason, rom_translation_cache_size, ram_translation_cache_size,
+ *        rom_translation_cache, dynarec_release_translation_caches,
+ *        dynarec_heap_tables_release, heap_trace_mark, gbcore_prepare, heap_trace_report;
+ *      fe/inproc.a.inc.c  ROM-cache budget: gamepak_buffer_cap, gamepak_resident_wanted,
+ *        gamepak_cap_reason, gamepak_force_swap_stubs;
+ *      fe/input.b.inc.c  SMC and phase probes: smc_prof_take, smc_blk_take,
+ *        smc_prof_clock, core_phase_take, core_phase_set_level;
+ *      fe/merend.a.inc.c  gba_screen_pixels;
+ *      fe/display.a.inc.c  the ME renderer's view of GBA memory: vram, vram_clean,
+ *        vram_dirty_marks, io_registers, oam_ram, palette_ram_converted, reg (with the
+ *        VRAM_DIRTY_SHIFT / VRAM_DIRTY_PAGES constants beside them);
+ *      fe/merend.c.inc.c  skip_next_frame;
+ *      fe/merend.d.inc.c  ROM-cache stats: gamepak_size, gamepak_buffer_count,
+ *        gamepak_buffer_pages, gamepak_buffers, gamepak_resident_got,
+ *        gamepak_static_blocks, gamepak_must_swap, gamepak_vol_drop, gamepak_vol_back;
+ *      fe/misc.a.inc.c  iwram, ewram, palette_ram (the state hash);
+ *      fe/link.d.inc.c  gpsp_rom_load_progress (above gba_reload_progress);
+ *      fe/harness.f.inc.c  gamepak_reopens, gamepak_short_reads, badjump_contained,
+ *        dma_smc_flushes (telemetry builds only, above the heartbeat's xlat probes);
+ *    at block scope
+ *      fe/harness.f.inc.c  smc_gates_reload_evt(): translation_gate_targets,
+ *        translation_gate_target_pc; rig_romload_evt(): gamepak_reopens,
+ *        gamepak_short_reads;
+ *      fe/rewind.inc.c  psp_rom_pool_offer(), psp_rom_pool_over(),
+ *        psp_rewind_pool_back(): gamepak_spare_pool3, gamepak_spare_pool3_bytes;
+ *      main_psp.c (the shell), main(): me_log_vram_always, gpsp_heap_census,
+ *        gpsp_rom_load_progress, translation_gate_targets, translation_gate_target_pc,
+ *        and gamepak_reopens (GPSP_STANDBY_NOTES builds only).
+ *    T14 asserts every copy it can compare with the core's headers, in a compile-only
+ *    check TU that is never linked: tools/refactor/abi_asserts.py ->
+ *    tools/refactor/generated/<flavour>/{abi_check.c, fe_abi_asserts.h}.  Those files are
+ *    the per-flavour list: they cite each copy as fe/X.inc.c:N (main_psp.c:N in the shell)
+ *    of the tree they were generated on.  NOT asserted, and listed there as UNCHECKED
+ *    because no core header declares them: dynarec_heap_tables_release, heap_trace_mark,
+ *    gbcore_prepare, heap_trace_report, gamepak_buffers, badjump_contained.  main()'s
+ *    gamepak_reopens is in no T14 flavour (none defines GPSP_STANDBY_NOTES).
  */
 #ifndef FE_PRIV_H
 #define FE_PRIV_H
 
 #include "play_defaults.h"   /* the PLAY_* ship constants and link defaults */
 
-/* STALL WATCH breadcrumbs: the two stores into main_psp.c's g_loop_iter /
- * g_loop_phase, compiled out of a player build (see the comment there). */
+/* STALL WATCH breadcrumbs: the two stores into g_loop_iter / g_loop_phase
+ * (fe/harness.a.inc.c), compiled out of a player build (see the comment there). */
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
 #define LOOP_TOP()      do { g_loop_iter++; g_loop_phase = 1; } while (0)
@@ -76,7 +94,7 @@
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
 
-/* EVT ff_win counters: main_psp.c's g_ffw_drawn / g_ffw_gated (telemetry
+/* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
  * builds only; a player build compiles the counter out). */
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 #define FFW_DRAWN() (g_ffw_drawn++)
@@ -104,20 +122,20 @@
 #define WAKE_ROWS    161
 #define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_ROWS * 2)
 
-/* The in-game menu's five state-slot thumbnails (main_psp.c: g_ui_thumbs, carved
- * from the netdrv arena's tail; its _Static_assert on the slot count stays there). */
+/* The in-game menu's five state-slot thumbnails (g_ui_thumbs, fe/display.a.inc.c,
+ * carved from the netdrv arena's tail; its _Static_assert on the slot count stays there). */
 #define UI_THUMB_BYTES (PSP_STATE_SLOT_COUNT * PSP_STATE_THUMB_SLOT_PIXELS * 2u)
 
 /* THE EXIT MACROS (P3 retired the SDK-name hijack): every process exit and USB
  * handoff of main_psp.c goes through these, so no exit leaves the power switch
- * held (main_psp.c: the comment above the sleep simulator, harness.b's head).
- * pwr_release_all() is main_psp.c's; LAB_HANDOFF is lab_harness.h's. */
+ * held (the comment above the sleep simulator, fe/harness.b.inc.c's head).
+ * pwr_release_all() is fe/power.b.inc.c's; LAB_HANDOFF is lab_harness.h's. */
 #define FE_HANDOFF(c,w) (pwr_release_all(), LAB_HANDOFF((c),(w),handoff_run))
 #define FE_EXIT_GAME() (pwr_release_all(), sceKernelExitGame())
 
-/* THE SLEEP SIMULATOR's hooks into the power code (harness only: main_psp.c's
- * g_ss_* and sleep_sim_*); without GPSP_PERF_RIG they are the real request
- * poll and constant 0s. */
+/* THE SLEEP SIMULATOR's hooks into the power code (harness only: the g_ss_* and
+ * sleep_sim_* of fe/harness.b.inc.c); without GPSP_PERF_RIG they are the real
+ * request poll and constant 0s. */
 #ifdef GPSP_PERF_RIG
 #define SLEEP_SIM_ASLEEP() (g_ss_asleep)
 #define SLEEP_SIM_NOPARK() (g_ss_nopark)
@@ -131,9 +149,9 @@
 #define SLEEP_SIM_ASLEEP() 0
 #endif
 
-/* The ME renderer's hold on the volatile pool: through main_psp.c's vm_lock /
- * vm_unlock (the rewind shares the pool) when REWIND is built, else straight
- * to the kernel. */
+/* The ME renderer's hold on the volatile pool: through vm_lock / vm_unlock
+ * (fe/merend.b.inc.c; the rewind shares the pool) when REWIND is built, else
+ * straight to the kernel. */
 #ifdef REWIND
 #define MER_VM_TRYLOCK(b, s)   vm_lock((b), (s))
 #define MER_VM_REJECT()        vm_unlock_engine()
@@ -144,15 +162,15 @@
 #define MER_VM_UNLOCK()        sceKernelVolatileMemUnlock(0)
 #endif
 
-/* `inproc_me_unload = 1`, the harness MUTANT of the in-process return (main_psp.c:
- * g_inproc_me_unload and its comment); 0 in every other build. */
+/* `inproc_me_unload = 1`, the harness MUTANT of the in-process return
+ * (g_inproc_me_unload and its comment, fe/inproc.b.inc.c); 0 in every other build. */
 #ifdef GPSP_PERF_RIG
 #define INPROC_ME_UNLOAD_MUTANT() (g_inproc_me_unload)
 #else
 #define INPROC_ME_UNLOAD_MUTANT() 0
 #endif
 
-/* The RFU trace ring is drained by main_psp.c's rfu_trace_drain() in a
+/* The RFU trace ring is drained by rfu_trace_drain() (fe/link.d.inc.c) in a
  * telemetry build; without telemetry the call is nothing. */
 #ifdef GPSP_NO_TELEMETRY
 #define rfu_trace_drain() ((void)0)
@@ -161,11 +179,11 @@
 /* fe_gblink.c NO_PEER_STEPS: the session's own wait for the partner's HELLO */
 #define LINK_START_GRACE_US 30000000u
 
-/* The rig's identity, audit and watch lines are functions of main_psp.c in a
- * telemetry build; a player build calls these no-ops instead.  (g_log_input,
+/* The rig's identity, audit and watch lines are functions of fe/harness.f.inc.c in
+ * a telemetry build; a player build calls these no-ops instead.  (g_log_input,
  * the #define beside them there, is a macro-global: it stays.) */
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
-/* (this arm: no macro; main_psp.c defines the functions) */
+/* (this arm: no macro; fe/harness.f.inc.c defines the functions) */
 #else
 #define rig_preserve_log()          do { } while (0)
 #define rig_boot_identity(h)        do { (void)(h); } while (0)
@@ -176,8 +194,8 @@
 #define rig_watch_evt(f)            do { (void)(f); } while (0)
 #endif
 
-/* The boot timeline (docs/UI-OVERLAY.md §12.2.1): main_psp.c's g_boot_mark[],
- * g_boot_t0, boot_mark() and boot_timeline_emit() in a telemetry build. */
+/* The boot timeline (docs/UI-OVERLAY.md §12.2.1): g_boot_mark[], g_boot_t0,
+ * boot_mark() and boot_timeline_emit() of fe/harness.f.inc.c in a telemetry build. */
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 #define BOOT_MARKS 12
 #define BOOT_T0_SET() (g_boot_t0 = sceKernelGetSystemTimeWide())

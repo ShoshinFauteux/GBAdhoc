@@ -17,6 +17,9 @@
 #   --against REFDIR    run the T-checks of each flavour against REFDIR/<flavour>
 #                       (refuses, exit 2, when the two sides name a different
 #                       docker image, build version or SOURCE_DATE_EPOCH)
+#   --ref-ancestor REV  accept a reference that is an ANCESTOR of this build's commit
+#                       (a merge's other parent such as the beta tip, or P0c; PLAN-P-beta5
+#                       P7), only when named: REV must be the reference's own commit
 #   --phase P           ci_greps.sh phase (base|P|HW2, default base)
 #   --build-version V   pin the version string (GPSP_BUILD_VERSION, build.sh:54;
 #                       default: the commit's 7-char hash, so two commits differ)
@@ -128,8 +131,9 @@
 # one of the four flavours: hermetic is yes; dockerId, buildVersion,
 # sourceDateEpoch, rfuSched, buildEnv (less GPSP_BUILD_COMMIT/TREE) and extraEnv
 # are equal; workingTreeClean is true; layoutLock is release:ok on release and
-# lab:ok on lab; and the reference is this build's commit, its first parent, or a
-# commit with the same gpsp/ tree (gpspTree).
+# lab:ok on lab; and the reference is this build's commit, its first parent, a
+# commit with the same gpsp/ tree (gpspTree), or the ancestor --ref-ancestor names
+# (it must be the reference's commit and an ancestor; anything else is refused).
 #
 # Exit: 0 ok, 1 build failed, 2 usage (or --against pin mismatch), 3 dirty tree
 #       refused, 4 broken imports, 5 sidecar changed a byte, 6 a check failed.
@@ -145,7 +149,12 @@ note() { printf 'flavours: %s\n' "$*"; }
 # git that works from WSL on a Windows worktree (its .git file holds a C:/ path
 # WSL's git cannot follow): fall back to git.exe with a Windows path.
 # The Windows path is resolved once per dir and cached: wslpath on a /mnt/c
-# path was seen to fail transiently mid-run.
+# path was seen to fail transiently mid-run.  THE CACHE IS FILLED IN THIS SHELL
+# (winpath_prime, P-review 2026-11-08, F5): winpath() runs inside `$(...)`, a
+# subshell, so its own WINP[$d]= assignment never reached the script and every
+# git.exe call re-ran wslpath; one transient failure then failed G silently
+# ("no such commit", or a failed export).  The dirs G is called on (REPO, SRC)
+# are primed right after they are known; a subshell reads the parent's cache.
 declare -A WINP=()
 winpath() {
   local d="$1" w i
@@ -154,11 +163,20 @@ winpath() {
   [ -n "$w" ] || return 1
   WINP[$d]="$w"; printf '%s' "$w"
 }
+winpath_prime() {   # winpath_prime <dir>: resolve and cache in THIS shell (never call it in $(...))
+  local d="$1" w="" i
+  [ -n "${WINP[$d]:-}" ] && return 0
+  git -C "$d" rev-parse --git-dir >/dev/null 2>&1 && return 0      # WSL's git reads it: no git.exe
+  { command -v git.exe && command -v wslpath; } >/dev/null 2>&1 || return 0
+  for i in 1 2 3 4 5 6; do w=$(wslpath -w "$d" 2>/dev/null) && [ -n "$w" ] && break; w=""; sleep 2; done
+  [ -n "$w" ] || die 1 "wslpath -w $d failed $i times: the repo cannot be reached through git.exe"
+  WINP[$d]="$w"
+}
 G() {   # G <dir> <git args...>
   local d="$1" w; shift
   if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then git -C "$d" "$@"
   elif command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
-    w=$(winpath "$d") || return 128
+    w=$(winpath "$d") || { echo "flavours: wslpath -w $d failed (3 tries; not primed?): git $1 not run" >&2; return 128; }
     # WSL interop was seen to fail a git.exe call transiently (2026-11-07: "no such
     # commit" for a commit the previous run had just built): retry before failing
     # (again 2026-11-07, two builds in one second: three tries 2 s apart were not enough)
@@ -176,7 +194,7 @@ GB() {  # G without the CR strip: for binary output (git archive)
   local d="$1" w; shift
   if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then git -C "$d" "$@"
   elif command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
-    w=$(winpath "$d") || return 128
+    w=$(winpath "$d") || { echo "flavours: wslpath -w $d failed (3 tries; not primed?): git $1 not run" >&2; return 128; }
     # retried like G (2026-11-07: both exports of one --against failed in the same second)
     local i rc t="${TMPDIR:-/tmp}/flavours-gb.$$.out"
     for i in 1 2 3 4 5 6; do
@@ -231,7 +249,7 @@ json_get() { sed -nE "s/.*\"$2\": *\"([^\"]*)\".*/\1/p" "$1" 2>/dev/null | head 
 # ----------------------------------------------------------------- args ----
 COMMIT=""; SRC=""; OUT=""; BASELINE=0; FLAVOURS="release release-stable lab harness"
 AGAINST=""; SIDECARS=1; SDE_ON=1; KEEP_SRC=0; LOCK=""; WORK="${FLAV_WORK:-}"
-BVER=""; SDE_PIN=""; PHASE=base; CHECK_ONLY=0; REPO_ARG="${FLAV_REPO:-}"
+BVER=""; SDE_PIN=""; PHASE=base; CHECK_ONLY=0; REPO_ARG="${FLAV_REPO:-}"; REF_ANCESTOR=""
 SCOPE_ALLOW=(); PRUNE_ALLOW=()
 ALL_FLAVOURS="release release-stable lab harness"
 ORIG_ARGS=("$@")
@@ -243,6 +261,7 @@ while [ $# -gt 0 ]; do
     --baseline)    BASELINE=1; shift ;;
     --flavours)    FLAVOURS="$2"; shift 2 ;;
     --against)     AGAINST="$2"; shift 2 ;;
+    --ref-ancestor) REF_ANCESTOR="$2"; shift 2 ;;
     --phase)       PHASE="$2"; shift 2 ;;
     --build-version) BVER="$2"; shift 2 ;;
     --sde)         SDE_PIN="$2"; shift 2 ;;
@@ -275,6 +294,7 @@ if [ "$CHECK_ONLY" = 1 ]; then
   [ -n "$AGAINST" ] || die 2 "--check-only needs --against"
   [ -d "$OUT" ] || die 2 "--check-only: no such dir $OUT"
 fi
+[ -z "$REF_ANCESTOR" ] || [ -n "$AGAINST" ] || die 2 "--ref-ancestor needs --against"
 if [ -n "$AGAINST" ]; then
   # a gate that covers one flavour is no gate (adversarial review 2026-11-07)
   [ "$(echo $FLAVOURS | tr ' ' '\n' | sort | tr '\n' ' ')" = "$(echo $ALL_FLAVOURS | tr ' ' '\n' | sort | tr '\n' ' ')" ] ||
@@ -285,6 +305,7 @@ mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 # the top of the git repo (default: the one this script lives in, gpsp/tools/refactor/..).
 # --repo / FLAV_REPO: run a snapshot of these tools against another checkout of the repo.
 REPO=$(cd "${REPO_ARG:-$HERE/../../..}" && pwd) || die 2 "--repo: no such dir"
+winpath_prime "$REPO"     # F5: before the first G/GB call, in this shell
 
 RESULTS=(); CI_RC=""
 if [ "$CHECK_ONLY" = 1 ]; then
@@ -307,6 +328,7 @@ if [ -z "$COMMIT" ]; then
   SRC="${SRC:-$(cd "$HERE/../.." && pwd)}"
   SRC=$(cd "$SRC" && pwd) || die 2 "--src: no such dir"
   [ -f "$SRC/tools/build.sh" ] || die 2 "$SRC is not a gpsp/ tree (no tools/build.sh)"
+  winpath_prime "$SRC"
   REV=$(G "$SRC" rev-parse HEAD) || die 2 "$SRC is not in a git checkout"
   TREE=$(G "$SRC" rev-parse 'HEAD^{tree}')
   DIRTY=$(G "$SRC" status --porcelain -- . | head -5)
@@ -559,7 +581,20 @@ if [ -n "$AGAINST" ]; then
   if [ "$REF_COMMIT" = "$NEW_COMMIT" ]; then ANCESTRY="same commit ${NEW_COMMIT:0:10}"
   elif [ "$REF_COMMIT" = "$NEW_PARENT" ]; then ANCESTRY="reference = first parent ${REF_COMMIT:0:10}"
   elif [ -n "$REF_GTREE" ] && [ "$REF_GTREE" != unknown ] && [ "$REF_GTREE" = "$NEW_GTREE" ]; then ANCESTRY="same gpsp/ tree ${NEW_GTREE:0:10}"
-  else die 2 "--against: the reference ${REF_COMMIT:0:10} is not this build's commit, its first parent (${NEW_PARENT:0:10}) or a commit with its gpsp/ tree: nothing ties the step to its parent"
+  elif [ -n "$REF_ANCESTOR" ]; then
+    # F4 (P-review 2026-11-08; PLAN-P-beta5 P7): an EXPLICITLY named ancestor (a merge's other
+    # parent, e.g. the beta tip, or the P0c commit) is accepted, nothing implicit: the name must
+    # resolve to the reference's own commit, and that commit must be an ancestor of this one
+    RA=$(G "$REPO" rev-parse --verify -q "$REF_ANCESTOR^{commit}") || die 2 "--ref-ancestor: no such commit '$REF_ANCESTOR'"
+    [ "$RA" = "$REF_COMMIT" ] || die 2 "--ref-ancestor ${RA:0:10} is not the reference's commit ${REF_COMMIT:0:10} (name the commit the reference was built from)"
+    MB=$(G "$REPO" merge-base "$REF_COMMIT" "$NEW_COMMIT" 2>/dev/null) || MB=""
+    [ "$MB" = "$REF_COMMIT" ] || die 2 "--ref-ancestor: the reference ${REF_COMMIT:0:10} is not an ancestor of this build's ${NEW_COMMIT:0:10} (merge-base ${MB:-none})"
+    PARENTS=$(G "$REPO" rev-list --parents -n 1 "$NEW_COMMIT") || die 2 "--ref-ancestor: cannot list the parents of ${NEW_COMMIT:0:10}"
+    k=0; PIDX=""
+    for p in $PARENTS; do [ "$p" = "$REF_COMMIT" ] && PIDX=$k; k=$((k + 1)); done
+    if [ -n "$PIDX" ]; then ANCESTRY="reference = named ancestor ${REF_COMMIT:0:10}, parent $PIDX of ${NEW_COMMIT:0:10} (--ref-ancestor)"
+    else ANCESTRY="reference = named ancestor ${REF_COMMIT:0:10}, $(G "$REPO" rev-list --count "$REF_COMMIT..$NEW_COMMIT") commit(s) before ${NEW_COMMIT:0:10} (--ref-ancestor)"; fi
+  else die 2 "--against: the reference ${REF_COMMIT:0:10} is not this build's commit, its first parent (${NEW_PARENT:0:10}) or a commit with its gpsp/ tree: nothing ties the step to its parent (an ancestor is accepted only when named: --ref-ancestor REV)"
   fi
   note "--against contract ok ($ANCESTRY; env, lock, clean tree, four flavours)"
   : > "$OUT/checks.txt"

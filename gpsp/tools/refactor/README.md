@@ -26,6 +26,7 @@ per flavour by `flavours.sh`. It is G1-identical and byte-identical (`builds/mai
 | (CI) | no raw exits outside fe_priv.h, no `pwr_hold` in hooks, no logic in `fe_evt()` args, ... | T11 `ci_greps.sh` | docs/abi-exit-ci.md |
 | (ABI) | `fe_abi_asserts.h` static asserts of shared prototypes/constants | T14 `abi_asserts.py` | docs/abi-exit-ci.md |
 | (split) | deterministic split of main_psp.c into fragments by `cutlist.txt`; inverse; replay | T4 `split.py`, T9 `globals.py`, T7 `../tests/extract.py` | docs/source-split.md |
+| (doc) | `psp/fe/README.md` (module map, owners, conventions of the split) generated from the cutlist and the split tree; `--check` fails a stale one | `fe_readme.py` | docs/source-split.md |
 | (build) | release + lab + harness with the right ROOT/psp make split; refuses a dirty baseline; fails on broken imports | T15 `flavours.sh` (+ `flavours_sidecar.sh` for `.su` and the map without changing the ELF) | docs/baseline.md (copy of mainpsp-tools-out/baseline/BASELINE.md) |
 
 Shared libraries: `elf32.py`, `ef_mips.py`, `ef_dwarf.py`, `ef_srcscan.py`, `sl_dwline.py`, `sl_ldmap.py`,
@@ -50,6 +51,8 @@ A candidate against the accepted tree (typical P-commit use):
 
 ```
 bash flavours.sh --commit REV --out OUT --lock .../build.lock --against ACCEPTED_RUN
+#   ACCEPTED_RUN must be REV's own commit, its first parent or a commit with REV's gpsp/ tree;
+#   an older ancestor (P7: the beta tip a merge brings in, or P0c) only with --ref-ancestor <its commit>
 python3 sect_cmp.py ACCEPTED/release OUT/release            # G1
 python3 func_diff.py A.elf B.elf --hot ../../psp/layout/hot_order.txt   # G2
 python3 loop_diff.py A.elf B.elf                            # G2L

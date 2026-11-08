@@ -16,6 +16,12 @@
 #   M10 hermetic: a caller variable (ME_LOWLAT=0) never reaches build.sh, and is recorded
 #   M11 the --against contract: clean tree, lock, extraEnv, buildEnv, hermetic, ancestry,
 #       all four flavours: each clause refused with exit 2
+#   (P-review 2026-11-08)
+#   C6/M12 F4 --ref-ancestor: an ancestor reference passes the contract only when named, and
+#       only if the name is the reference's commit and an ancestor (M12a-d refused, exit 2)
+#   C7/M13 F5 the winpath cache: with WSL's git unable to read the repo (only git.exe can, as
+#       on a Windows worktree) and wslpath failing after its first call, a --commit build
+#       passes and calls wslpath once; the same script without the priming fails (exit 2)
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 # the caller's flavours.sh settings would point the fake repo's runs elsewhere
@@ -212,6 +218,62 @@ expect_rc 2 "M11i FLAV_LAB_ENV on this build only (extraEnv differs)" env FLAV_L
 echo dirty >> "$R/gpsp/marker.txt"
 expect_rc 2 "M11j a dirty --src (no --baseline) gated --against" bash "$F" --src "$R/gpsp" --out "$T/o14" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
 (cd "$R" && git checkout -q -- gpsp/marker.txt)
+
+# ---- P-review 2026-11-08: F4 --ref-ancestor, F5 the winpath cache ----
+# C6 / M12 (F4): a third commit with another gpsp/ tree; o9 (two commits back) is its ancestor
+echo tree2 > "$R/gpsp/marker.txt"
+(cd "$R" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m tree2)
+expect_rc 0 "C6 a third commit (another gpsp/ tree), pinned" bash "$F" --src "$R/gpsp" --out "$T/o15" --no-sidecars --sde 1700000000 --build-version pin7
+BASE_C=$(sed -nE 's/.*"sourceCommit": *"([0-9a-f]+)".*/\1/p' "$T/o9/release/flavour.json")
+MID_C=$(cd "$R" && git rev-parse HEAD~1)
+expect_rc 2 "M12a an ancestor reference (two commits back, another tree), not named" bash "$F" --check-only --out "$T/o15" --against "$T/o9"
+grep -q "nothing ties the step to its parent" "$T/last.log" && ok "M12a names the ancestry" || bad "M12a wrong refusal"
+expect_rc 6 "C6 the same with --ref-ancestor <its commit>: contract ok (exit 6 = this fake repo's absent tools)" \
+  bash "$F" --check-only --out "$T/o15" --against "$T/o9" --ref-ancestor "$BASE_C"
+grep -q "contract ok (reference = named ancestor ${BASE_C:0:10}, 2 commit(s) before" "$T/last.log" \
+  && grep -q -- "-- contract: reference = named ancestor ${BASE_C:0:10}" "$T/o15/checks.txt" \
+  && ok "C6 the named ancestor is the recorded ancestry (log and checks.txt)" || bad "C6 ancestry not recorded"
+expect_rc 2 "M12b --ref-ancestor naming another commit than the reference's" bash "$F" --check-only --out "$T/o15" --against "$T/o9" --ref-ancestor "$MID_C"
+grep -q "is not the reference's commit" "$T/last.log" && ok "M12b names the mismatch" || bad "M12b wrong refusal"
+SIDE_C=$(cd "$R" && git -c user.email=t@t -c user.name=t commit-tree "$BASE_C^{tree}" -p "$BASE_C" -m side)
+rm -rf "$T/d_side"; cp -r "$T/o9" "$T/d_side"
+for f in release release-stable lab harness; do sed -i "s/\"sourceCommit\": \"[0-9a-f]*\"/\"sourceCommit\": \"$SIDE_C\"/" "$T/d_side/$f/flavour.json"; done
+expect_rc 2 "M12c --ref-ancestor naming a side commit that is not an ancestor" bash "$F" --check-only --out "$T/o15" --against "$T/d_side" --ref-ancestor "$SIDE_C"
+grep -q "is not an ancestor of this build" "$T/last.log" && ok "M12c names it" || bad "M12c wrong refusal"
+expect_rc 2 "M12d --ref-ancestor without --against" bash "$F" --src "$R/gpsp" --out "$T/o16" --no-sidecars --ref-ancestor "$BASE_C"
+grep -q -- "--ref-ancestor needs --against" "$T/last.log" && ok "M12d usage" || bad "M12d wrong refusal"
+# C7 / M13 (F5): WSL's git cannot read the repo (only git.exe can), wslpath works once then fails
+REALGIT=$(command -v git); mkdir -p "$T/wsl"
+cat > "$T/wsl/git" <<EOF
+#!/bin/sh
+# fake: WSL's own git cannot read the repo (a Windows worktree's .git file); git.exe can
+if [ "\$1" = -C ]; then case "\$2" in "$R"|"$R"/*) echo "fatal: not a git repository" >&2; exit 128 ;; esac; fi
+exec "$REALGIT" "\$@"
+EOF
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$REALGIT" > "$T/wsl/git.exe"
+cat > "$T/wsl/wslpath" <<'EOF'
+#!/bin/sh
+# fake: -w DIR prints DIR; every call after the first $FAKE_WSLPATH_OK fails (a transient fault)
+n=$(cat "$FAKE_WSLPATH_N" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_WSLPATH_N"
+[ "$1" = -w ] || exit 1
+[ "$n" -le "${FAKE_WSLPATH_OK:-99}" ] || { echo "wslpath: transient fault" >&2; exit 1; }
+printf '%s\n' "$2"
+EOF
+chmod +x "$T/wsl/git" "$T/wsl/git.exe" "$T/wsl/wslpath"
+rm -f "$T/wslpath.n"
+expect_rc 0 "C7 --commit build through git.exe with wslpath failing after its first call" \
+  env PATH="$T/wsl:$PATH" FAKE_WSLPATH_N="$T/wslpath.n" FAKE_WSLPATH_OK=1 bash "$F" --commit HEAD --out "$T/o17" --no-sidecars --flavours release
+[ "$(cat "$T/wslpath.n" 2>/dev/null)" = 1 ] && ok "C7 wslpath called once (the cache is filled in flavours.sh's own shell)" \
+  || bad "C7 wslpath called $(cat "$T/wslpath.n" 2>/dev/null) times"
+sed -e '/^winpath_prime "\$REPO"/d' -e '/^  winpath_prime "\$SRC"$/d' "$F" > "$R/gpsp/tools/refactor/flavours_noprime.sh"
+if cmp -s "$F" "$R/gpsp/tools/refactor/flavours_noprime.sh"; then bad "M13 mutant (no priming) not applied"
+else
+  rm -f "$T/wslpath.n"
+  expect_rc 2 "M13 the same without the priming (the pre-review cache in a subshell) fails" \
+    env PATH="$T/wsl:$PATH" FAKE_WSLPATH_N="$T/wslpath.n" FAKE_WSLPATH_OK=1 bash "$R/gpsp/tools/refactor/flavours_noprime.sh" --commit HEAD --out "$T/o18" --no-sidecars --flavours release
+  grep -q "wslpath -w .* failed" "$T/last.log" && ok "M13 the failure names wslpath (it used to be a bare 'no such commit')" || bad "M13 message: $(tail -2 "$T/last.log")"
+fi
+rm -f "$R/gpsp/tools/refactor/flavours_noprime.sh"
 
 # C5 (optional, needs a real build pair): --check-only with the REAL tools on two
 # runs of one commit, e.g. FLAV_REAL_RUNS=$HOME/p0a/fbe/baseline (run1, run2)

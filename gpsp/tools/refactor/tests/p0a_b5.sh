@@ -148,37 +148,95 @@ if want t10; then
   else echo "        (no tools/layout/layout.lock in this tree: lock not checked, M-T10d not applicable)"; fi
 fi
 
-# ---- T14 abi_asserts: every copy site asserted (gpsp_rom_load_progress has two from 7ffe4236)
+# ---- T14 abi_asserts: every copy site asserted (gpsp_rom_load_progress has two from 7ffe4236).
+# P-review 2026-11-08 (B3): on a split tree (P4) the copies sit in psp/fe/X.inc.c, so sites are
+# found in TU order through the includes (p0a_t14_tu.py grep) and named by their cite (main_psp.c:N
+# or fe/X.inc.c:N); a mutant of a fragment copy is laid over the tree with --frag.  Every cite of
+# the generated headers must name the right line (p0a_t14_tu.py cites), and the 6 constant asserts
+# must be there: a tool that reads the constants from the raw shell only (the pre-review rule) is
+# caught, as is a constant that is not found (it fails, never drops silently).
 if want t14; then
   echo "== T14 abi_asserts (docker)"
   AS="$OUT/t14"; rm -rf "$AS"; mkdir -p "$AS"
-  sites=$(grep -nE '^\s*extern void \(\*gpsp_rom_load_progress\)' "$M" | cut -d: -f1 | tr '\n' ' ')
+  TU="$PY $HERE/p0a_t14_tu.py"
+  sites=$($TU grep '^\s*extern void \(\*gpsp_rom_load_progress\)' "$TREE" | tr '\n' ' ')
   for fl in release lab harness; do
     expect_rc 0 "[$fl] fe_abi_asserts.h generated, compiles, pin 0 lost" $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/$fl" --src "$TREE" --out "$AS/$fl"
-    grep -E "^T14|^pin:|more than one site" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    grep -E "^T14|^pin:|more than one site|^constants:" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
     grep -qE "^pin: [0-9]+ pinned, 0 lost" "$OUT/last.log" || bad "[$fl] pin lost names"
-    hs=$(grep -oE '"main_psp.c:[0-9]+ gpsp_rom_load_progress:' "$AS/$fl/fe_abi_asserts.h" | sed -E 's/.*:([0-9]+) .*/\1/' | tr '\n' ' ')
-    [ "$hs" = "$sites" ] && ok "[$fl] gpsp_rom_load_progress asserted at every copy: main_psp.c lines $sites(by anchor)" \
+    grep -qE "^T14 $fl: .*; 6 constants asserted$" "$OUT/last.log" && grep -q '^constants: all 6 found' "$OUT/last.log" \
+      && ok "[$fl] the 6 constant asserts are there" || bad "[$fl] constant asserts missing"
+    hs=$(grep -oE '"(main_psp\.c|fe/[A-Za-z0-9_.]+):[0-9]+ gpsp_rom_load_progress:' "$AS/$fl/fe_abi_asserts.h" | sed -E 's/^"([^ ]+) .*/\1/' | tr '\n' ' ')
+    [ "$hs" = "$sites" ] && ok "[$fl] gpsp_rom_load_progress asserted at every copy: $sites(by anchor)" \
       || bad "[$fl] gpsp_rom_load_progress asserted at '$hs', copies at '$sites'"
+    expect_rc 0 "[$fl] every cite of the header names its line on this tree" $TU cites "$AS/$fl/fe_abi_asserts.h" "$TREE"
+    tail -1 "$OUT/last.log" | sed 's/^/        /'
   done
+  # the copy at a cite, mutated: through --main-c (the shell or a single file) or --frag (a fragment)
+  mutate() {  # mutate <cite> <sed expr> <out file> -> echoes the gen args
+    local f=${1%:*} n=${1##*:}
+    sed -E "${n}$2" "$TREE/psp/$f" > "$3"
+    cmp -s "$TREE/psp/$f" "$3" && { echo "MUTANT-NOT-APPLIED"; return; }
+    if [ "$f" = main_psp.c ]; then echo "--main-c $3"; else echo "--frag $3 $f"; fi
+  }
   for kind in file block; do
     if [ $kind = file ]; then pat='^extern void \(\*gpsp_rom_load_progress\)\(unsigned, unsigned\);'
     else pat='^\s+extern void \(\*gpsp_rom_load_progress\)\(unsigned, unsigned\);'; fi
-    ln=$(grep -nE "$pat" "$M" | head -1 | cut -d: -f1)
-    [ -n "$ln" ] || { echo "        (no $kind-scope copy of gpsp_rom_load_progress here: mutant not applicable)"; continue; }
-    sed -E "${ln}s/\(unsigned, unsigned\)/(unsigned, int)/" "$M" > "$AS/mut_$kind.c"
-    $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/mut_$kind" --main-c "$AS/mut_$kind.c" > "$OUT/last.log" 2>&1; rc=$?
-    [ $rc = 1 ] && grep -q "static assertion failed: \"main_psp.c:$ln gpsp_rom_load_progress" "$OUT/last.log" \
-      && ok "M-T14 $kind-scope copy (main_psp.c:$ln) -> (unsigned, int): its own static assert fails" \
-      || { bad "M-T14 $kind-scope copy mutant (rc $rc)"; grep -m3 "assert\|PIN" "$OUT/last.log" | sed 's/^/        /'; }
+    c=$($TU grep "$pat" "$TREE" | head -1)
+    [ -n "$c" ] || { echo "        (no $kind-scope copy of gpsp_rom_load_progress here: mutant not applicable)"; continue; }
+    args=$(mutate "$c" 's/\(unsigned, unsigned\)/(unsigned, int)/' "$AS/mut_$kind.c")
+    [ "$args" = MUTANT-NOT-APPLIED ] && { bad "M-T14 $kind-scope mutant not applied at $c"; continue; }
+    $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/mut_$kind" $args > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "static assertion failed: \"$c gpsp_rom_load_progress" "$OUT/last.log" \
+      && ok "M-T14 $kind-scope copy ($c) -> (unsigned, int): its own static assert fails" \
+      || { bad "M-T14 $kind-scope copy mutant at $c (rc $rc)"; grep -m3 "assert\|PIN" "$OUT/last.log" | sed 's/^/        /'; }
   done
+  # a constant copy, mutated where it is (a fragment after P4): its assert fails; deleted: the gen fails
+  c=$($TU grep '^#define VRAM_DIRTY_SHIFT 10' "$TREE" | head -1)
+  if [ -n "$c" ]; then
+    args=$(mutate "$c" 's/VRAM_DIRTY_SHIFT 10/VRAM_DIRTY_SHIFT 11/' "$AS/mut_shift.c")
+    $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/mut_shift" $args > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "static assertion failed: \"$c VRAM_DIRTY_SHIFT differs from the core header" "$OUT/last.log" \
+      && ok "M-T14c VRAM_DIRTY_SHIFT 10 -> 11 at $c: its constant assert fails" \
+      || { bad "M-T14c VRAM_DIRTY_SHIFT mutant at $c (rc $rc)"; grep -m3 "assert\|CONSTANT" "$OUT/last.log" | sed 's/^/        /'; }
+  else bad "M-T14c no '#define VRAM_DIRTY_SHIFT 10' in the TU"; fi
+  c=$($TU grep '^#define MER_MISS_LIMIT ' "$TREE" | head -1)
+  if [ -n "$c" ]; then
+    args=$(mutate "$c" 's/^#define MER_MISS_LIMIT /#define MER_MISS_LIMIT_GONE /' "$AS/mut_gone.c")
+    $PY "$R/abi_asserts.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/mut_gone" $args > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 1 ] && grep -q "^constants: CONSTANT MISSING: MER_MISS_LIMIT" "$OUT/last.log" \
+      && ok "M-T14d MER_MISS_LIMIT renamed away at $c: the gen FAILS (CONSTANT MISSING), not a silent drop" \
+      || { bad "M-T14d missing-constant mutant (rc $rc)"; grep -m3 "^constants\|^T14" "$OUT/last.log" | sed 's/^/        /'; }
+  else bad "M-T14d no '#define MER_MISS_LIMIT' in the TU"; fi
+  # tool mutant: the constants read from the raw shell only (the pre-review rule, abi_asserts.py
+  # macro_values(main_raw)): on a split tree it must now FAIL; on a single file it changes nothing
+  sed 's/^    tu = tu_lines(main_raw, os.path.join(src, .psp.), over)$/    tu = file_lines(main_raw, "main_psp.c")/' "$R/abi_asserts.py" > "$R/.abi_asserts_raw.py"
+  if cmp -s "$R/abi_asserts.py" "$R/.abi_asserts_raw.py"; then bad "tool mutant (raw shell constants) not applied"
+  else
+    $PY "$R/.abi_asserts_raw.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/toolraw" > "$OUT/last.log" 2>&1; rc=$?
+    if grep -q '^#include "fe/[A-Za-z0-9_.]*\.inc\.c"' "$TREE/psp/main_psp.c"; then
+      [ $rc = 1 ] && grep -q "^constants: CONSTANT MISSING" "$OUT/last.log" \
+        && ok "tool mutant (constants from the raw shell only): FAILS on the split tree (rc 1, CONSTANT MISSING)" \
+        || bad "tool mutant (raw shell constants) passed on the split tree (rc $rc)"
+    else
+      [ $rc = 0 ] && ok "tool mutant (raw shell constants): no fragments here, same verdict (rc 0)" || bad "tool mutant on a single file (rc $rc)"
+    fi
+  fi
+  rm -f "$R/.abi_asserts_raw.py"
+  # the pre-review header cited fragment lines as main_psp.c:N: on a split tree the cite check catches it
+  if grep -q '^#include "fe/[A-Za-z0-9_.]*\.inc\.c"' "$TREE/psp/main_psp.c"; then
+    sed -E 's#^/\* fe/[A-Za-z0-9_.]+:([0-9]+) \(#/* main_psp.c:\1 (#' "$AS/release/fe_abi_asserts.h" > "$AS/oldcites.h"
+    expect_rc 1 "mutant: the header with its fragment cites relabelled main_psp.c:N (the pre-review form) fails the cite check" \
+      $TU cites "$AS/oldcites.h" "$TREE"
+    tail -1 "$OUT/last.log" | sed 's/^/        /'
+  fi
   if [ "$(echo $sites | wc -w)" -gt 1 ]; then
     # the old tool folded token-identical copies into the first: one site only
     sed 's/        key = (r\[0\], r\[1\], tuple(x.text for x in r\[2\]))/        key = (r[0], tuple(x.text for x in r[2]))/' "$R/abi_asserts.py" > "$R/.abi_asserts_mut.py"
     cmp -s "$R/abi_asserts.py" "$R/.abi_asserts_mut.py" && bad "tool mutant (old dedupe) not applied"
     $PY "$R/.abi_asserts_mut.py" gen --flavour-dir "$RUN/release" --src "$TREE" --out "$AS/toolmut" > /dev/null 2>&1
     rm -f "$R/.abi_asserts_mut.py"
-    hs=$(grep -oE '"main_psp.c:[0-9]+ gpsp_rom_load_progress:' "$AS/toolmut/fe_abi_asserts.h" | sed -E 's/.*:([0-9]+) .*/\1/' | tr '\n' ' ')
+    hs=$(grep -oE '"(main_psp\.c|fe/[A-Za-z0-9_.]+):[0-9]+ gpsp_rom_load_progress:' "$AS/toolmut/fe_abi_asserts.h" | sed -E 's/^"([^ ]+) .*/\1/' | tr '\n' ' ')
     [ "$hs" != "$sites" ] && ok "tool mutant (dedupe by tokens, the old rule): asserts '$hs' only, not '$sites': caught" \
       || bad "tool mutant (old dedupe) still asserts every copy"
   fi

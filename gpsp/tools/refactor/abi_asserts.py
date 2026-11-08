@@ -4,7 +4,7 @@ compile-time proof that psp/main_psp.c's HAND-COPIED core declarations still mat
 core's own headers.
 
 main_psp.c redeclares core functions and globals instead of including the core headers
-(main_psp.c:1108-1112: frontend-common stays core-agnostic; 4851-4853: including
+(at 01067e74, main_psp.c:1108-1112: frontend-common stays core-agnostic; 4851-4853: including
 gba_memory.h conflicts).  Nothing checks the copies: core_phase_take has 21 parameters
 (r1 H-ABI), VRAM_DIRTY_PAGES and the MER_* constants are copied by hand (r2 H-8, and
 tools/test_ff_pipeline.c:12-15 copies MER_* again).
@@ -22,15 +22,26 @@ How:
     A discovery pass drops names the core headers do not declare and frontend types the
     core TU cannot see; they are listed in the header as UNCHECKED, with the reason.
  4. Constants: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h; MER_INPUT_US, MER_RETIRE_US,
-    MER_MISS_LIMIT and VRAM_DIRTY_PAGES against tools/test_ff_pipeline.c's copies.
+    MER_MISS_LIMIT and VRAM_DIRTY_PAGES against tools/test_ff_pipeline.c's copies.  All six
+    are required: one that is not found is a FAILURE (exit 1), never a silent drop.
 Nothing is wired into the emulator build: the header is generated into --out and only
 compiled by this tool's own check TU.
 
+THE SPLIT TREE (PLAN-P-beta5 P4; P-review 2026-11-08).  After the unity split psp/main_psp.c
+is a shell that includes psp/fe/X.inc.c.  The -E view already follows the includes (its
+linemarkers name each fragment, aec_cparse.load_pp), and every cite is the file and line that
+hold the copy: `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (and for a single-file tree, so
+01067e74 output is unchanged).  The raw view the constants are read from follows the shell's
+`#include "fe/..."` lines the same way (tu_lines), so the six constant asserts hold on a split
+shell too.  --frag FILE fe/X.inc.c bind-mounts a MUTATED copy of one fragment over the tree's,
+for -E and for the constants alike.
+
 Usage:
-  abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--core-h H]
+  abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--frag F fe/X.inc.c]...
+        [--core-h H TREEPATH] [--test-c F]
         -> DIR/fe_abi_asserts.h, DIR/abi_check.c, DIR/report.txt; exit 1 if it does not compile
   abi_asserts.py all --run RUN --src GPSP --out DIR      (release, lab, harness)
-Exit: 0 generated and compiles, 1 an assertion or compile failure, 2 usage.
+Exit: 0 generated and compiles, 1 an assertion or compile failure (or a constant missing), 2 usage.
 """
 import argparse
 import os
@@ -258,6 +269,17 @@ def load_known(path=KNOWN):
     return k
 
 
+def known_label(path=KNOWN):
+    """where the reasons' line cites come from: abi_asserts.known's header says 'known
+    mismatches at REV' (its cites are REV's main_psp.c lines, not this tree's)."""
+    if path and os.path.exists(path):
+        for line in open(path, encoding='utf-8'):
+            m = re.match(r'#.*\bknown mismatches at (\w+)', line)
+            if m:
+                return 'its line cites are main_psp.c at %s' % m.group(1)
+    return 'its line cites are of the tree it was written on'
+
+
 def tname(name, nth=1):
     """the typedef of a name's nth copy (abi_fe_t_NAME, then abi_fe_t_NAME__2, ...)"""
     return 'abi_fe_t_' + name + ('' if nth == 1 else '__%d' % nth)
@@ -289,12 +311,50 @@ def typedef_of(name, d, norm=None, nth=1):
     return 'typedef ' + ' '.join(txt) + ';'
 
 
-def macro_values(path, names):
+def cite(line):
+    """the file:line of a copy: an aec_cparse.FLine (a fragment's line) prints as fe/X.inc.c:N,
+    a plain int is a line of main_psp.c (the shell, or the single file)."""
+    return str(line) if isinstance(line, C.FLine) else 'main_psp.c:%d' % line
+
+
+FE_INC = re.compile(r'^\s*#\s*include\s+"(fe/[A-Za-z0-9_.]+)"')
+LOCAL_INC = re.compile(r'^\s*#\s*include\s+"([A-Za-z0-9_.]+)"')
+
+
+def file_lines(path, label):
+    return [(label, i, ln) for i, ln in
+            enumerate(open(path, encoding='utf-8', errors='replace').read().split('\n'), 1)]
+
+
+def tu_lines(main_raw, psp_dir, over=None, _label='main_psp.c', _depth=0):
+    """[(file, line, text)] of main_psp.c's own text in TU order: the shell (or single file),
+    with every `#include "fe/X"` line followed by fe/X's lines (a fragment fe/X.inc.c, or
+    fe/fe_priv.h and what it includes from psp/fe/).  over = {'fe/X': mutated copy}."""
+    over = over or {}
+    out = []
+    for lab, i, ln in file_lines(main_raw, _label):
+        out.append((lab, i, ln))
+        m = FE_INC.match(ln)
+        tgt = m.group(1) if m else None
+        if tgt is None and _label.startswith('fe/'):
+            m = LOCAL_INC.match(ln)
+            if m and (('fe/' + m.group(1)) in over or os.path.exists(os.path.join(psp_dir, 'fe', m.group(1)))):
+                tgt = 'fe/' + m.group(1)
+        if tgt and _depth < 4:
+            p = over.get(tgt) or os.path.join(psp_dir, tgt)
+            if not os.path.exists(p):
+                raise SystemExit('abi_asserts: %s:%d includes "%s", which is missing (%s)' % (lab, i, tgt, p))
+            out += tu_lines(p, psp_dir, over, tgt, _depth + 1)
+    return out
+
+
+def macro_values(lines, names):
+    """{name: (value, 'file:line')} of the FIRST #define of each name in lines [(file, line, text)]."""
     vals = {}
-    for i, line in enumerate(open(path, encoding='utf-8', errors='replace'), 1):
+    for lab, i, line in lines:
         m = re.match(r'\s*#\s*define\s+(\w+)\s+(.*?)\s*(/\*.*)?$', line)
         if m and m.group(1) in names and m.group(1) not in vals:
-            vals[m.group(1)] = (re.sub(r'//.*', '', m.group(2)).strip(), i)
+            vals[m.group(1)] = (re.sub(r'//.*', '', m.group(2)).strip(), '%s:%d' % (lab, i))
     return vals
 
 
@@ -303,12 +363,14 @@ def prefixed(expr, names, pre):
 
 
 # ------------------------------------------------------------- generation
-def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=None):
+def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=None, known_at=''):
     known = known or {}
     L = ['/* fe_abi_asserts.h -- GENERATED by gpsp/tools/refactor/abi_asserts.py; do not edit.',
          ' * Flavour: %s.  Source: %s.' % (flavour, src_desc),
          ' * Include AFTER the core headers (common.h) in a TU compiled with the core flags.',
-         ' * Each assert compares main_psp.c\'s hand-copied declaration with the core\'s own.',
+         ' * Each assert compares a hand-copied declaration of main_psp.c\'s TU with the core\'s own.',
+         ' * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or',
+         ' * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).',
          ' * checked: %d declarations, %d constants; unchecked: %d (listed at the end). */' % (
              len(items), len(macros_fe) + len(macros_test), len(unchecked)),
          '#ifndef FE_ABI_ASSERTS_H', '#define FE_ABI_ASSERTS_H', '']
@@ -316,30 +378,31 @@ def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=No
     for name, line, d, kind in items:
         kn = known.get(name)
         nth[name] = nth.get(name, 0) + 1
-        L.append('/* main_psp.c:%d (%s)%s */' % (line, kind, (' KNOWN, normalised %s: %s' % kn) if kn else ''))
+        L.append('/* %s (%s)%s */' % (cite(line), kind, (' KNOWN, normalised %s (abi_asserts.known reason, %s): %s'
+                                                         % (kn[0], known_at, kn[1])) if kn else ''))
         L.append(typedef_of(name, d, kn[0] if kn else None, nth[name]))
         L.append('_Static_assert(__builtin_types_compatible_p(__typeof__(&%s), %s *),\n'
-                 '               "main_psp.c:%d %s: the frontend copy differs from the core declaration");'
-                 % (name, tname(name, nth[name]), line, name))
+                 '               "%s %s: the frontend copy differs from the core declaration");'
+                 % (name, tname(name, nth[name]), cite(line), name))
     if macros_fe:
         L.append('')
         L.append('/* constants copied from the core (r2 H-8) */')
         names = list(macros_fe)
-        for nm, (val, line) in macros_fe.items():
-            L.append('#define ABI_FE_%s (%s)   /* main_psp.c:%d */' % (nm, prefixed(val, names, 'ABI_FE_'), line))
-        for nm, (val, line) in macros_fe.items():
-            L.append('_Static_assert(ABI_FE_%s == (%s), "main_psp.c:%d %s differs from the core header");'
-                     % (nm, nm, line, nm))
+        for nm, (val, at) in macros_fe.items():
+            L.append('#define ABI_FE_%s (%s)   /* %s */' % (nm, prefixed(val, names, 'ABI_FE_'), at))
+        for nm, (val, at) in macros_fe.items():
+            L.append('_Static_assert(ABI_FE_%s == (%s), "%s %s differs from the core header");'
+                     % (nm, nm, at, nm))
     if macros_test:
         L.append('')
         L.append('/* constants copied again by %s (r2 H-8) */' % TEST_FILE)
-        for nm, (val, line, feval, feline) in macros_test.items():
-            L.append('#define ABI_TEST_%s (%s)   /* %s:%d */' % (nm, val, TEST_FILE, line))
-            L.append('#define ABI_FET_%s (%s)   /* main_psp.c:%d */' % (
+        for nm, (val, at, feval, feat) in macros_test.items():
+            L.append('#define ABI_TEST_%s (%s)   /* %s */' % (nm, val, at))
+            L.append('#define ABI_FET_%s (%s)   /* %s */' % (
                 nm, prefixed(feval, list(macros_fe) + [nm], 'ABI_FE_') if nm in macros_fe else
-                prefixed(feval, [], ''), feline))
-            L.append('_Static_assert(ABI_FET_%s == ABI_TEST_%s, "%s:%d %s differs from main_psp.c:%d");'
-                     % (nm, nm, TEST_FILE, line, nm, feline))
+                prefixed(feval, [], ''), feat))
+            L.append('_Static_assert(ABI_FET_%s == ABI_TEST_%s, "%s %s differs from %s");'
+                     % (nm, nm, at, nm, feat))
     L.append('')
     L.append('/* the sleep-quiesce stop protocol (r1 H-SQ, PLAN §1.4): audio_stop / io_thread_stop')
     L.append(' * return 0 = joined, 1 = none, which must stay SQ_DONE / SQ_NONE (psp/sleep_q.h:37-38) */')
@@ -350,7 +413,7 @@ def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=No
     L.append('')
     L.append('/* UNCHECKED (%d): no core declaration to compare with, or a frontend-only type.' % len(unchecked))
     for name, line, why in unchecked:
-        L.append(' *   main_psp.c:%-6d %-36s %s' % (line, name, why))
+        L.append(' *   %-24s %-36s %s' % (cite(line), name, why))
     L.append(' */')
     L.append('#endif')
     return '\n'.join(L) + '\n'
@@ -379,30 +442,46 @@ def compile_check(src, flavour_dir, workdir, header_name='fe_abi_asserts.h', cor
 
 
 def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None, known_path=KNOWN,
-        pin_path=PIN):
+        pin_path=PIN, frags=None):
+    """frags: [(mutated copy, 'fe/X.inc.c')] laid over the tree's fragments (-E and constants)."""
     os.makedirs(outdir, exist_ok=True)
     known = load_known(known_path)
+    over = {}
+    for host, rel in (frags or []):
+        if not re.match(r'^fe/[A-Za-z0-9_.]+$', rel) or not os.path.exists(host):
+            raise SystemExit('abi_asserts: --frag %s %s: want an existing file and fe/<name>' % (host, rel))
+        over[rel] = host
     ip = os.path.join(outdir, 'main_psp.i')
     with open(ip, 'w', newline='\n') as f:
-        f.write(P.preprocess(src, flavour_dir, override=main_c))
+        f.write(P.preprocess(src, flavour_dir, override=main_c, extra=[(h, r) for r, h in sorted(over.items())]))
     toks = C.load_pp(ip)
     items = extract(toks)
     unchecked = []
     main_raw = main_c or os.path.join(src, 'psp', 'main_psp.c')
-    mfe = macro_values(main_raw, set(CORE_MACROS) | set(TEST_MACROS))
+    tu = tu_lines(main_raw, os.path.join(src, 'psp'), over)
+    nfe = len({lab for lab, _, _ in tu if lab.endswith('.inc.c')})
+    mfe = macro_values(tu, set(CORE_MACROS) | set(TEST_MACROS))
     macros_fe = {k: mfe[k] for k in CORE_MACROS if k in mfe}
-    tvals = macro_values(test_c or os.path.join(src, TEST_FILE), set(TEST_MACROS))
+    tvals = macro_values(file_lines(test_c or os.path.join(src, TEST_FILE), TEST_FILE), set(TEST_MACROS))
     macros_test = {k: (tvals[k][0], tvals[k][1], mfe[k][0], mfe[k][1]) for k in TEST_MACROS
                    if k in tvals and k in mfe}
+    # a constant that is not found is a failure, never a silent drop (P-review 2026-11-08: on the
+    # split shell the raw read saw no fragment, lost all six asserts and still exited 0)
+    missing = (['%s (not #defined in main_psp.c\'s TU text)' % k for k in CORE_MACROS + TEST_MACROS if k not in mfe]
+               + ['%s (not #defined in %s)' % (k, TEST_FILE) for k in TEST_MACROS if k not in tvals])
     with open(os.path.join(outdir, 'abi_check.c'), 'w', newline='\n') as f:
         f.write('/* T14 check TU: the core header chain, then the generated asserts. */\n'
                 '#include "common.h"\n#include "psp/sleep_q.h"\n#include "fe_abi_asserts.h"\n')
     hp = os.path.join(outdir, 'fe_abi_asserts.h')
-    desc = 'main_psp.c%s via psp-gcc -E' % (' (MUTANT %s)' % os.path.basename(main_c) if main_c else '')
+    muts = (['MUTANT %s' % os.path.basename(main_c)] if main_c else []) + \
+        ['MUTANT %s=%s' % (r, os.path.basename(h)) for r, h in sorted(over.items())]
+    desc = ('psp/main_psp.c%s%s via psp-gcc -E' % (
+        ' and the %d fragments (fe/X.inc.c) it includes' % nfe if nfe else '', (' (%s)' % ', '.join(muts)) if muts else ''))
+    kat = known_label(known_path)
     # discovery: drop items whose name the core does not declare or whose type does not compile
     for rnd in range(6):
         with open(hp, 'w', newline='\n') as f:
-            f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known))
+            f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known, kat))
         rc, so, se = compile_check(src, flavour_dir, outdir, core_h=core_h)
         if rc == 0:
             break
@@ -432,7 +511,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
                 keep.append(it)
         items = keep
     with open(hp, 'w', newline='\n') as f:
-        f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known))
+        f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known, kat))
     rc, so, se = compile_check(src, flavour_dir, outdir, core_h=core_h)
     fails = [l for l in se.split('\n') if 'error' in l]
     multi = sorted({n for n, _, _, _ in items if sum(1 for x in items if x[0] == n) > 1})
@@ -440,9 +519,12 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
            % (flavour, len(items) + len(unchecked), len(items), len(unchecked),
               len(macros_fe) + len(macros_test)),
            'copies asserted at more than one site: %s' % (', '.join(
-               '%s (%s)' % (n, ', '.join('main_psp.c:%d' % x[1] for x in items if x[0] == n)) for n in multi)
+               '%s (%s)' % (n, ', '.join(cite(x[1]) for x in items if x[0] == n)) for n in multi)
                or 'none'),
            'compile (psp-gcc -fsyntax-only, core flags): %s' % ('ok' if rc == 0 else 'FAILED'),
+           'constants: %s' % ('all %d found (%s)' % (len(CORE_MACROS) + len(TEST_MACROS), ', '.join(
+               '%s %s' % (k, mfe[k][1]) for k in CORE_MACROS + [t for t in TEST_MACROS if t not in CORE_MACROS]))
+               if not missing else 'CONSTANT MISSING: ' + '; '.join(missing)),
            'known mismatches normalised (abi_asserts.known): %s' % (
                ', '.join(n for n in known if n in set(i[0] for i in items)) or 'none')]
     unused = [n for n in known if n not in set(i[0] for i in items)]
@@ -470,7 +552,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     with open(os.path.join(outdir, 'report.txt'), 'w', newline='\n') as f:
         f.write('\n'.join(rep) + '\n' + se)
     print('\n'.join(rep))
-    return 0 if rc == 0 and not pin_fail else 1
+    return 0 if rc == 0 and not pin_fail and not missing else 1
 
 
 def main():
@@ -482,6 +564,9 @@ def main():
     g.add_argument('--src', required=True)
     g.add_argument('--out', required=True)
     g.add_argument('--main-c', help='a mutated copy of psp/main_psp.c (bind-mounted over the tree)')
+    g.add_argument('--frag', nargs=2, action='append', metavar=('FILE', 'fe/X.inc.c'),
+                   help='a mutated copy of one fragment of a split main_psp.c (bind-mounted over psp/fe/X.inc.c '
+                        'for -E, and read for the constants); repeatable')
     g.add_argument('--core-h', nargs=2, metavar=('FILE', 'TREEPATH'),
                    help='a mutated copy of a core header, e.g. /tmp/main.h main.h')
     g.add_argument('--test-c', help='a mutated copy of tools/test_ff_pipeline.c')
@@ -497,7 +582,7 @@ def main():
     if o.cmd == 'gen':
         fl = o.flavour or os.path.basename(os.path.normpath(o.flavour_dir))
         return gen(o.flavour_dir, o.src, o.out, fl, o.main_c, o.core_h, o.test_c, o.known,
-                   'WRITE' if o.write_pin else o.pin)
+                   'WRITE' if o.write_pin else o.pin, [tuple(x) for x in (o.frag or [])])
     if o.cmd == 'all':
         rc = 0
         for fl in FLAVOURS:
