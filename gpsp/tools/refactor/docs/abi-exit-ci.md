@@ -171,7 +171,7 @@ Tests (`abi-exit-ci_test_exit.sh`, 17/17 pass):
 |---|---|
 | `tools/tests/test_sram_exit_retry.c` `exit_like_the_psp()` (comment "What the PSP's exit does to the save, in order") | the teardown's save order: `io_thread_stop()` (the writer's last pass, then synchronous ownership and a sync), then `fe_host_shutdown()`'s flush / sync / close |
 | `tools/tests/test_ctl_map.c` `plat_mask()` and `rig_step()` (comments "composed exactly as main_psp.c's plat_input_bitmask()" and "One loop iteration as main_psp.c runs it") | `plat_input_bitmask()`'s game mask plus turbo, and the loop's pad sample / turbo step / per-frame input order |
-| `frontend-common/fe_gblink.c` `NO_PEER_STEPS` (30 × 60 setup steps) | `LINK_START_GRACE_US` (30 s, above `gblink_service`), the peer-dead grace `gblink_service` sets while the partner's HELLO is still missing: the same wait, in display steps there and in microseconds here |
+| `frontend-common/fe_gblink.c` `NO_PEER_STEPS` (30 × 60 setup steps) | `LINK_START_GRACE_US` (30 s; in `fe/fe_priv.h` since P5, used by `gblink_service`), the peer-dead grace `gblink_service` sets while the partner's HELLO is still missing: the same wait, in display steps there and in microseconds here |
 
 ---
 
