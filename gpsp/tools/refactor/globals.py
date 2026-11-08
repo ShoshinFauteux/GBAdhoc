@@ -50,7 +50,8 @@ RIG_FIXED = {'GPSP_PLAYABLE': 1, 'GPSP_KEEP_TELEMETRY': 1, 'GPSP_PERF_RIG': 1, '
 # Makefile-derived sets equal these on 01067e74 for every name its main_psp.c tests
 REL = dict(REL_FIXED, REWIND=1, GBA_LINK=1, GBADHOC_ONLINE=1)
 RIG = dict(RIG_FIXED, REWIND=1, GBA_LINK=1, GBADHOC_ONLINE=1)
-# the main_psp.c sha256 the fixed modules.py ranges were written for (cutlist.txt header)
+# the main_psp.c sha256 the fixed modules.py ranges were written for (the header of
+# tests/fixtures/cutlist_01067e74.txt; tools/refactor/cutlist.txt follows the tree since P1)
 SHA_01067E74 = '942c8b546d6b159bf80660081fde816e31082a99aa6e4442a8b45e8272fe5cd1'
 
 
@@ -581,7 +582,7 @@ def main(argv=None):
                   'would see only the shell.  Run it on `split.py inverse` output.' % a.src, file=sys.stderr)
             return 2
         sha = src_sha(a.src)
-        # the fixed modules.py ranges / the committed cutlist describe 01067e74 only
+        # the fixed modules.py ranges describe 01067e74 only; a cutlist only the source its header names
         if cut and cutlist_sha(cut) not in (sha, None):
             print('globals census: REFUSED: %s describes main_psp.c sha256 %s..., not this source (%s...): '
                   'pass the cutlist generated for this tree (split.py gen)' % (cut, (cutlist_sha(cut) or '?')[:12], sha[:12]),

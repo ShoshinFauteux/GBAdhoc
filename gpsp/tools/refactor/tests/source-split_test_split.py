@@ -7,10 +7,13 @@ source-split_test_pp_diff.sh C3).  Also run by `split.py --selftest`.
 
 Controls (must pass) and mutants (must be REFUSED by split.py):
   C1 cover: 5 functions in no §1.2 range and 69 in several (crit_cover), 0/0 after the plan's assignments
-  C2 gen is deterministic (two runs, identical bytes) and equals the committed cutlist.txt (if given)
+  C2 gen is deterministic (two runs, identical bytes) and equals the given cutlist (default: the
+     01067e74 fixture, tests/fixtures/cutlist_01067e74.txt)
   C3 split -> inverse is byte-identical; every item in exactly one fragment; no fragment has an open #if
   C4 gen --carry on the same source reproduces the same cutlist
   C5 replay of a patch that edits one function body: accepted, exactly one fragment changes
+  C6 own-line @extract markers around a fragment's last function (as PLAN-P-beta5 P1 plants
+     them): the end marker stays in that fragment; the carried cutlist is unchanged
   M1 a function row deleted              -> unlisted
   M2 a global row duplicated             -> listed twice
   M3 a FRAG anchor moved inside an #if   -> refused (open #if)
@@ -24,6 +27,7 @@ Controls (must pass) and mutants (must be REFUSED by split.py):
   M11 gen --carry with a new function    -> refused (never guessed from line numbers)
   (review 2026-11-05) M12 row module misspelled, M13 FRAG module misspelled, M14 FRAG module / name
   disagree, M15 a function moved into another fragment -> all refused
+  M16 a FRAG anchor on an own-line @extract:end marker -> refused
 """
 import difflib
 import io
@@ -127,6 +131,50 @@ def run(src, committed=None):
             ok('C4 gen --carry reproduces the cutlist')
         else:
             bad('C4 gen --carry differs')
+        # C6 (PLAN-P-beta5 P1): own-line @extract markers around the last function of a
+        # fragment (as P1 plants them): the end marker stays in that fragment, so the
+        # carried cutlist is unchanged; M16 a FRAG anchor put on that end marker is refused
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), 'tests'))
+        import extract as X
+        lines = text.splitlines(keepends=True)
+        pick = None
+        for k in range(1, len(frags)):
+            L = m.resolve(frags[k]['occ'], frags[k]['anchor'])
+            L0 = m.resolve(frags[k - 1]['occ'], frags[k - 1]['anchor'])
+            prev = [it for it in m.items if it['end'] < L]
+            xi = max(prev, key=lambda it: it['end'])
+            # the fragment ends with that function, then only blank lines (P1's power.b case)
+            if xi['kind'] == 'F' and xi['start'] > L0 and L > modules.SHELL_RANGES[0][1] and \
+                    m.cuttable(xi['end'] + 1) and all(not m.lines[q - 1].strip() for q in range(xi['end'] + 1, L)):
+                pick = (k, xi)
+                break
+        if pick is None:
+            bad('C6 no fragment ending in a function found')
+        else:
+            k, xi = pick
+            a0 = sum(len(x) for x in lines[:xi['start'] - 1])
+            b0 = sum(len(x) for x in lines[:xi['end']])
+            planted = X.plant(text, {'C6': (a0, b0)})
+            pm = split.Model(planted)
+            lend = xi['end'] + 2
+            vac = not (pm.lines[lend - 1].strip() == '/* @extract:end C6 */' and pm.cuttable(lend))
+            pf, pr, prep = split.gen(pm, carry=(frags, rows))
+            pout, pshell, _ = split.do_split(pm, pf, pr)
+            holder = next(r['frag'] for r in pr if r['key'] == xi['key'])
+            if vac:
+                bad('C6 vacuous: L:%d is not a cuttable own-line end marker' % lend)
+            elif (rows_text(pf, pr) == t1 and prep['units'] == rep['units'] and '/* @extract:end C6 */' in pout[holder]
+                  and split.inverse_text(pshell, pout) == planted and not pm.unit_start_ok(lend)):
+                ok('C6 markers planted around %s (last function of %s): the end marker (L:%d, cuttable) stays in %s; '
+                   'carried cutlist unchanged, %d units' % (xi['key'], frags[k - 1]['frag'], lend, holder, prep['units']))
+            else:
+                bad('C6 end marker after %s: cutlist same %s, units %d/%d, in %s: %s'
+                    % (xi['key'], rows_text(pf, pr) == t1, prep['units'], rep['units'], holder,
+                       '/* @extract:end C6 */' in pout[holder]))
+            mf16 = [dict(f) for f in pf]
+            mf16[k]['occ'], mf16[k]['anchor'] = 1, '/* @extract:end C6 */'
+            refused('M16 FRAG %s anchored on the end marker' % pf[k]['frag'], lambda: split.do_split(pm, mf16, pr),
+                    'own-line @extract:end marker')
 
         # mutants on the cutlist
         frow = next(i for i, r in enumerate(rows) if r['kind'] == 'F' and r['name'] == 'power_cb')
@@ -218,5 +266,7 @@ def run(src, committed=None):
 
 if __name__ == '__main__':
     src = sys.argv[1] if len(sys.argv) > 1 else split.default_src()
-    cut = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(HERE), 'cutlist.txt')
+    # default: the 01067e74 cutlist this test was written for (tools/refactor/cutlist.txt
+    # follows the tree since PLAN-P-beta5 P1; the 01067e74 one is the fixture)
+    cut = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'fixtures', 'cutlist_01067e74.txt')
     sys.exit(run(src, cut if os.path.exists(cut) else None))

@@ -12,7 +12,20 @@ import re
 import subprocess
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def marked_function(source, name):
+    """A function of main_psp.c (source: extract.read_source() of it, which
+    expands a split shell's fe/*.inc.c fragments in place), read through its
+    @extract marker fn:NAME: the region is the definition's lines, function()
+    returns it through its closing brace."""
+    region = extract.extract(source, "fn:" + name)
+    text = function(region, name)
+    assert region.startswith(text), "fn:%s does not start at its definition" % name
+    return text
 
 
 def function(source, name):
@@ -385,8 +398,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", action="store_true")
     args = parser.parse_args()
-    source = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
-    selected = "\n\n".join(function(source, name) for name in
+    source = extract.read_source(str(ROOT / "psp/main_psp.c"))
+    selected = "\n\n".join(marked_function(source, name) for name in
                            ("io_thread", "mer_work_heap_free", "me_rend_suspend",
                             "me_rend_release_vmem", "me_standby_down",
                             "pwr_release_all"))

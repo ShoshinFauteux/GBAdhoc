@@ -36,7 +36,8 @@ import re
 import subprocess
 import tempfile
 
-from test_psp_runtime import function
+import extract
+from test_psp_runtime import function, marked_function
 
 # The in-game present: the FELP_L_PRES0 breadcrumb, then (within the same
 # block, before any other breadcrumb) the me_video_present() call.  Lines may
@@ -54,8 +55,15 @@ def present_at(body):
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
+
+
+def main_fn(main_src):
+    """main(), read through its @extract marker fn:main."""
+    body = extract.extract(main_src, "fn:main")
+    assert body.startswith("int main(int argc, char *argv[])"), "fn:main"
+    return body
 
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
                     r"'(?:\\.|[^'\\])*'|[{}]", re.S)
@@ -77,6 +85,7 @@ MENU_HEAD = "      if (ui_active())\n      {\n         /* Core paused"
 
 
 def menu_block(main_src):
+    main_src = main_fn(main_src)
     i = main_src.find(MENU_HEAD)
     assert i >= 0, "the game loop's in-game menu branch not found"
     return braced(main_src, i)
@@ -86,6 +95,7 @@ PRESENT_HEAD = "      {\n         int w = wake_service();\n         if (w)\n"
 
 
 def present_block(main_src):
+    main_src = main_fn(main_src)
     i = main_src.find(PRESENT_HEAD)
     assert i >= 0, "the in-game present's wake call not found"
     return braced(main_src, i)
@@ -99,9 +109,10 @@ def static_fn(source, signature):
 
 def production(main_src, ui_src):
     parts = []
-    for pattern in (r"^#define g_wake_hold .*$", r"^#define WAKE_QUIT .*$",
-                    r"^#define WAKE_YIELD .*$"):
-        m = re.search(pattern, main_src, re.M)
+    for pattern, region in ((r"^#define g_wake_hold .*$", "def:g_wake_hold"),
+                            (r"^#define WAKE_QUIT .*$", "def:wake_answers"),
+                            (r"^#define WAKE_YIELD .*$", "def:wake_answers")):
+        m = re.search(pattern, extract.extract(main_src, region), re.M)
         assert m, pattern + " not found"
         parts.append(m.group(0))
     m = re.search(r"^static int \(\*g_wake_yield\)\(void\);$", ui_src, re.M)
@@ -110,8 +121,8 @@ def production(main_src, ui_src):
     for name in ("ui_set_wake_yield", "ui_swallow_pad", "ui_wake_menu"):
         parts.append(function(ui_src, name))
     for name in ("loop_park", "loop_unpark", "wake_overlay_yield"):
-        parts.append(function(main_src, name))
-    ws = function(main_src, "wake_service")
+        parts.append(marked_function(main_src, name))
+    ws = marked_function(main_src, "wake_service")
     peek = "sceCtrlPeekBufferPositive(&pd, 1);\n         pad_swallow_arm"
     if peek in ws:
         ws = ws.replace(peek, "answer_pad_read(&pd);\n         pad_swallow_arm")
@@ -480,7 +491,7 @@ def wiring(main_src):
     """main(): hook registered before the game loop; the loop top parks;
     the in-game present still runs the wake.  Returns a list of failures."""
     bad = []
-    body = main_src[main_src.index("int main(int argc, char *argv[])"):]
+    body = main_fn(main_src)
     reg = body.find("ui_set_wake_yield(wake_overlay_yield);")
     loop = body.find("   while (g_running)\n   {\n      unsigned frames;")
     if reg < 0 or loop < 0 or reg > loop:

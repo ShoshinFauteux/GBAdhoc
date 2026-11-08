@@ -32,10 +32,11 @@ import re
 import subprocess
 import tempfile
 
-from test_psp_runtime import function
+import extract
+from test_psp_runtime import marked_function
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+SOURCE = extract.read_source(str(ROOT / "psp/main_psp.c"))
 
 NAMES = ("play_lock_take", "play_lock_drop", "sq_audio_stop", "sq_audio_start",
          "sq_writer_stop", "sq_writer_start", "sq_files_close",
@@ -47,14 +48,15 @@ NAMES = ("play_lock_take", "play_lock_drop", "sq_audio_stop", "sq_audio_start",
 def production(source):
     parts = []
     for name in NAMES:
-        parts.append(function(source, name))
+        parts.append(marked_function(source, name))
         if name == "sq_note":
             m = re.search(r"^static const sleep_q_ops g_sq_ops = \{.*?\};",
-                          source, re.S | re.M)
+                          extract.extract(source, "decl:g_sq_ops"), re.S | re.M)
             assert m, "g_sq_ops not found"
             parts.append(m.group(0))
         if name == "sleep_quiesce_up":
-            m = re.search(r"^#define SLEEP_HOLD_NAPS .*$", source, re.M)
+            m = re.search(r"^#define SLEEP_HOLD_NAPS .*$",
+                          extract.extract(source, "def:SLEEP_HOLD_NAPS"), re.M)
             assert m, "SLEEP_HOLD_NAPS not found"
             parts.append(m.group(0))
     return "\n\n".join(parts)
@@ -441,10 +443,10 @@ int main(void)
 
 
 def rw_production(source):
-    m = re.search(r"^static int g_rw_pwr;$", source, re.M)
+    m = re.search(r"^static int g_rw_pwr;$", extract.extract(source, "decl:g_rw_pwr"), re.M)
     assert m, "g_rw_pwr not found"
-    return "\n\n".join((m.group(0), function(source, "psp_rewind_pwr"),
-                        function(source, "psp_rewind_pool_lost")))
+    return "\n\n".join((m.group(0), marked_function(source, "psp_rewind_pwr"),
+                        marked_function(source, "psp_rewind_pool_lost")))
 
 
 def rw_run(functions, expect_pass):

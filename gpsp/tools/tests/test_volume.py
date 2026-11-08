@@ -22,10 +22,12 @@ import re
 import subprocess
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
 CFG = (ROOT / "psp/config_psp.c").read_text(encoding="utf-8")
 CFGH = (ROOT / "psp/config_psp.h").read_text(encoding="utf-8")
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 
 TEST = r'''
 #include <stdarg.h>
@@ -153,7 +155,9 @@ def run(cfg, cfgh, expect_pass):
 
 
 def audio_call(src):
-    """4: the one output call, and the volume nowhere near a sample."""
+    """4: the one output call, and the volume nowhere near a sample.  The call
+    count and the apply are whole-file facts (src is all of main_psp.c); the
+    boot order and the thread body are read through their @extract markers."""
     bad = []
     calls = re.findall(r"sceAudioOutputBlocking\(([^;]*)\);", src)
     if len(calls) != 1:
@@ -162,13 +166,15 @@ def audio_call(src):
         bad.append("the output call does not take the setting")
     if "g_audio_hw_vol = pcfg_audio_hw_volume(g_pcfg.volume);" not in src:
         bad.append("the apply does not map the setting")
-    load = src.find("pcfg_load_doc(CONFIG_INI")
-    if (load < 0 or src.find("psp_audio_volume_apply();", load) < 0 or
-            src.find("psp_audio_volume_apply();", load) >
-            src.find("   audio_start();", load)):
+    boot = extract.extract(src, "vol:boot_apply")
+    load = boot.find("pcfg_load_doc(CONFIG_INI")
+    if (load < 0 or boot.find("psp_audio_volume_apply();", load) < 0 or
+            boot.find("psp_audio_volume_apply();", load) >
+            boot.find("   audio_start();", load)):
         bad.append("the volume is not applied before audio_start")
-    i = src.find("static int audio_thread(SceSize args, void *argp)")
-    body = src[i:src.find("sceAudioOutputBlocking", i)]
+    th = extract.extract(src, "fn:audio_thread")
+    i = th.find("static int audio_thread(SceSize args, void *argp)")
+    body = th[i:th.find("sceAudioOutputBlocking", i)]
     if re.search(r"out\[[^\]]*\]\s*=[^;]*(volume|hw_vol)", body):
         bad.append("a sample is scaled by the volume")
     return bad

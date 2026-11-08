@@ -19,21 +19,22 @@ import re
 import subprocess
 import tempfile
 
-from test_psp_runtime import function
+import extract
+from test_psp_runtime import marked_function
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+SOURCE = extract.read_source(str(ROOT / "psp/main_psp.c"))
 
 
 def production(source):
     parts = []
-    for pattern, what in ((r"^static volatile int audio_ch\b.*$", "audio_ch"),
-                          (r"^#define AUDIO_JOIN_US .*$", "AUDIO_JOIN_US")):
-        m = re.search(pattern, source, re.M)
+    for pattern, what, region in ((r"^static volatile int audio_ch\b.*$", "audio_ch", "decl:audio_ch"),
+                                  (r"^#define AUDIO_JOIN_US .*$", "AUDIO_JOIN_US", "def:AUDIO_JOIN_US")):
+        m = re.search(pattern, extract.extract(source, region), re.M)
         assert m, what + " not found"
         parts.append(m.group(0))
     for name in ("audio_thread", "audio_start", "audio_stop"):
-        parts.append(function(source, name))
+        parts.append(marked_function(source, name))
     return "\n\n".join(parts)
 
 

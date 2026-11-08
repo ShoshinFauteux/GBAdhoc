@@ -6,11 +6,17 @@ import tempfile
 
 import re
 
-from test_psp_runtime import function
+import extract
+from test_psp_runtime import marked_function
 
 ROOT = Path(__file__).resolve().parents[2]
-source = (ROOT / "psp/main_psp.c").read_text()
-callback = function(source, "power_cb")
+source = extract.read_source(str(ROOT / "psp/main_psp.c"))
+callback = marked_function(source, "power_cb")
+
+# the @extract region each bound's #define is read from
+BOUND_REGION = {"AUDIO_JOIN_US": "def:AUDIO_JOIN_US", "IO_JOIN_US": "def:IO_JOIN_US",
+                "SQ_SAV_LAND_US": "def:sq_bounds", "SQ_NET_TERM_US": "def:sq_bounds",
+                "PWR_QUIESCE_WAIT_US": "def:sq_bounds"}
 
 
 def bounds(src):
@@ -18,7 +24,8 @@ def bounds(src):
     out = []
     for name in ("AUDIO_JOIN_US", "IO_JOIN_US", "SQ_SAV_LAND_US",
                  "SQ_NET_TERM_US", "PWR_QUIESCE_WAIT_US"):
-        m = re.search(r"^#define " + name + r"\b(?:.*\\\n)*.*$", src, re.M)
+        m = re.search(r"^#define " + name + r"\b(?:.*\\\n)*.*$",
+                      extract.extract(src, BOUND_REGION[name]), re.M)
         assert m, name + " not found"
         out.append(m.group(0))
     return "\n".join(out)
@@ -254,7 +261,8 @@ assert re.search(r"[(`]lock_drops == 1[)']", bad.stderr), bad.stderr
 print("mutant (callback drops the lock mid-quiesce): lock assertion failed")
 
 # The old budget (1.5 s) is shorter than the writer's join alone.
-m = re.search(r"^#define PWR_QUIESCE_WAIT_US\b(?:.*\\\n)*.*$", source, re.M)
+m = re.search(r"^#define PWR_QUIESCE_WAIT_US\b(?:.*\\\n)*.*$",
+              extract.extract(source, "def:sq_bounds"), re.M)
 bad_src = source.replace(m.group(0), "#define PWR_QUIESCE_WAIT_US 1500000u", 1)
 bad = run(callback, False, bad_src)
 assert "AUDIO_JOIN_US + IO_JOIN_US" in bad.stderr, bad.stderr
@@ -273,8 +281,9 @@ print("mutant (give-up marked done): cb_done assertion failed")
 
 # power_request_poll: a software suspend request raises no flag under the
 # gameplay lock.  The poll answers it as a switch, and only then.
-poll = function(source, "power_request_poll")
-limit = re.search(r"^#define PWR_REQ_MAX_FIRES .*$", source, re.M).group(0)
+poll = marked_function(source, "power_request_poll")
+limit = re.search(r"^#define PWR_REQ_MAX_FIRES .*$",
+                  extract.extract(source, "def:PWR_REQ_MAX_FIRES"), re.M).group(0)
 poll_stub = r'''
 #include <assert.h>
 #include <stdio.h>
@@ -345,6 +354,6 @@ for guard in ("g_pwr_sleep_pending || ", "g_pwr_hold > 0 ||",
     assert gone != poll
     run_poll(gone, False)
 # No timer in the callback thread: it sleeps until something wakes it.
-thread = function(source, "cb_thread")
+thread = marked_function(source, "cb_thread")
 assert "sceKernelSleepThreadCB" in thread and "DelayThread" not in thread
-assert "power_request_poll();" in function(source, "wake_overlay_yield")
+assert "power_request_poll();" in marked_function(source, "wake_overlay_yield")

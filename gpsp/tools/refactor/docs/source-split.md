@@ -14,7 +14,8 @@ All numbers are from 01067e74 (beta.4 base) unless marked. The scratch evidence 
 |---|---|
 | `pp_diff.sh` | T3, gate G0 |
 | `split.py` | T4: `cover`, `gen`, `split`, `inverse`, `replay`, `--selftest` |
-| `cutlist.txt` | T4's output, generated on 01067e74. Regenerate it; never hand-edit it |
+| `cutlist.txt` | T4's output for this tree's `psp/main_psp.c` (its header names the source sha256). Since PLAN-P-beta5 P1 it follows the P branch: every step that edits main_psp.c regenerates it (`gen --carry` the previous one) in the same commit. Regenerate it; never hand-edit it |
+| `tests/fixtures/cutlist_01067e74.txt` | the 01067e74 cutlist (was `cutlist.txt` until P1), used by the self-tests that run on the 01067e74 tree |
 | `modules.py` | PLAN §1.2/§1.3 as data: module ranges, the plan's name list, x1 groups, owner modules |
 | `csrc.py` | shared C-source model: census.py ported, with the `__attribute__` fix |
 | `globals.py` | T9: `census`, `rename`, `--selftest` |
@@ -63,6 +64,7 @@ Cuts are found by anchor text, never by line number. A cut is legal only where a
 - `#if` depth is 0.
 - It is not inside an item, a comment or a directive continuation.
 - Glue such as comments, externs and `#define`s goes with the following item.
+- An own-line `/* @extract:end NAME */` (T7) goes with the PRECEDING item: it closes text above it, so `gen` never starts a unit (or a fragment) with one, and `split` refuses a FRAG anchor on one (PLAN-P-beta5 P1; self-test C6/M16). A begin marker is glue like a comment: a fragment can start with one.
 
 The generator also follows these rules:
 - **Head.** Module info, thread attributes and the pads (L:1-160) stay in the shell when the gap allows it.
@@ -120,7 +122,14 @@ Limits of the trace: compiled-pattern methods, `split`/`partition` pieces, and s
 
 **Does not prove:**
 - That every region a future test needs is marked. P1 enumerates them by grep at that time.
-- Anything about the C hand-mirrors `test_sram_exit_retry.c` and `test_ctl_map.c`. They read no text; they belong to the XS allow-list review.
+- Anything about the C hand-mirrors `test_sram_exit_retry.c` and `test_ctl_map.c`. They read no text; they belong to the XS allow-list review (abi-exit-ci.md, T8: "C hand mirrors").
+
+**P1 (PLAN-P-beta5 §4 P1, on the beta.5 base).** The 13 readers `--enumerate` finds read `psp/main_psp.c` through `read_source()` and take their regions through 65 marker pairs, each on its own lines around whole lines (no code line is edited by a marker):
+- `fn:NAME`: a function's definition through its closing brace's line; the tests' brace matcher (`test_psp_runtime.function`, via `marked_function`) still runs inside the region and returns the same text.
+- `def:`/`decl:`: the `#define` or declaration lines a test greps.
+- `ff:`, `lowlat:`, `menu:`, `qs:`, `sl:`, `sb:`, `vol:`, `spsc:`: the range a test slices (its old start/end anchors are still checked inside the region).
+
+Whole-file facts stay whole-file, over `read_source()`'s text: the ring-index classification of test_spsc_mg_wiring, the `sceAudioOutputBlocking` count and the apply's presence (test_volume), the single `loop_park()` (test_sleep_menu) and the single `"menu"` load (test_state_load_ask). `enumerate_readers` counts `read_source(` as a read, so a converted reader is still found, and it walks all of `gpsp/` recursively (paths relative to it), so a reader added in any subdirectory is found; `tools/refactor/` (the gate tools, which read main_psp.c by design) is left out unless `--gate` is given (12 on 01067e74, 13 on the P0c tree and on P1; 8 more with `--gate`). The cutlist P1 commits (`cutlist.txt`, carried from the P0b cutlist) keeps every row's module, fragment and occurrence; with the end-marker rule above every region stays inside one fragment (each `fe/*.inc.c` passes `extract.py --check` on its own), every fragment is the parent's text plus its own markers and `@lab` tags, and three FRAG rows re-anchor on the begin marker that now opens them (power.b `fn:power_cb`, pacing.d `lowlat:late_present`, shell.b `fn:main`). Every marker is checkable from the tree alone: main_psp.c minus its 130 own-line marker lines and its 18 `/* @lab */ ` tags is the parent byte for byte. The step's record, the planting script and the old-vs-new evidence are kept with the other P evidence outside the repository (`builds/mainpsp-p-out/p1/` in the owner's workspace, not tracked).
 
 ## T9 `globals.py`
 
@@ -204,7 +213,7 @@ Still open (documented, not fixed): a global defined through a macro (`PIN(g_x);
 
 ```
 python gpsp/tools/refactor/split.py cover
-python gpsp/tools/refactor/split.py gen --label "01067e74:gpsp/psp/main_psp.c" -o gpsp/tools/refactor/cutlist.txt
+python gpsp/tools/refactor/split.py gen --label "01067e74:gpsp/psp/main_psp.c" -o gpsp/tools/refactor/cutlist.txt   # now tests/fixtures/cutlist_01067e74.txt
 python gpsp/tools/refactor/split.py split --cutlist gpsp/tools/refactor/cutlist.txt --out <scratch>/split-base
 bash gpsp/tools/refactor/pp_diff.sh --ref gpsp --new gpsp --overlay <scratch>/split-base          # WSL
 python gpsp/tools/refactor/globals.py census --basis builds/mainpsp-map/out/scratch/vars_g.json

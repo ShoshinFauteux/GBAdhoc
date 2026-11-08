@@ -165,6 +165,14 @@ Tests (`abi-exit-ci_test_exit.sh`, 17/17 pass):
 
 **Regenerating the golden.** §3.6 says HW-1/HW-2 change the pre-image first, so the golden is regenerated from their tip, not from 01067e74. `exit_matrix.py all` on that tip writes the new golden. `check --allow` takes `flavour<TAB>site<TAB>fix-commit` rows for reviewed differences.
 
+**C hand mirrors (part of every allow-list review; PLAN-P-beta5 P1).** These C tests copy an order or a constant of main_psp.c by hand. They read no text, so no `@extract` marker protects them, and XS cannot see them. A commit that changes what they mirror updates them in the same commit, and the allow-list review checks that it did:
+
+| Mirror | Mirrors in main_psp.c |
+|---|---|
+| `tools/tests/test_sram_exit_retry.c` `exit_like_the_psp()` (comment "What the PSP's exit does to the save, in order") | the teardown's save order: `io_thread_stop()` (the writer's last pass, then synchronous ownership and a sync), then `fe_host_shutdown()`'s flush / sync / close |
+| `tools/tests/test_ctl_map.c` `plat_mask()` and `rig_step()` (comments "composed exactly as main_psp.c's plat_input_bitmask()" and "One loop iteration as main_psp.c runs it") | `plat_input_bitmask()`'s game mask plus turbo, and the loop's pad sample / turbo step / per-frame input order |
+| `frontend-common/fe_gblink.c` `NO_PEER_STEPS` (30 × 60 setup steps) | `LINK_START_GRACE_US` (30 s, above `gblink_service`), the peer-dead grace `gblink_service` sets while the partner's HELLO is still missing: the same wait, in display steps there and in microseconds here |
+
 ---
 
 ## T11 `ci_greps.sh`
@@ -234,7 +242,7 @@ abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--c
 4. A discovery pass moves names the core headers do not declare, and frontend types the core TU cannot see, into an UNCHECKED list in the header, with the reason.
 5. Constants are asserted too: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h, and MER_INPUT_US/MER_RETIRE_US/MER_MISS_LIMIT/VRAM_DIRTY_PAGES against `tools/test_ff_pipeline.c`.
 
-The headers are generated into `generated/<flavour>/` (01067e74) and the scratch dirs. **They are not wired into the emulator build.**
+The headers are generated into `generated/<flavour>/` and the scratch dirs. **They are not wired into the emulator build.** Since PLAN-P-beta5 P1, `generated/<flavour>/` holds the check TU of the P1 tree (`abi_check.c` + `fe_abi_asserts.h`, from `abi_asserts.py all` on that tree): compile-only (`-fsyntax-only`, core flags), never in any OBJS list, so no linked object changes. Its `main_psp.c:N` comments cite the tree it was generated on; regenerate rather than edit.
 
 **What it proves.** Each asserted copy has the core's exact C type: arity, parameter order and types, pointer levels, qualifiers and return type. This covers the 21-parameter `core_phase_take`, `smc_prof_take`, `smc_blk_take`, the 2041-2053 and 4856-4864 externs, and the copied constants.
 

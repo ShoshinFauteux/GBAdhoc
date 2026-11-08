@@ -347,7 +347,7 @@ static void init_paths(int argc, char *argv[])
    snprintf(p_legacy_ap, sizeof(p_legacy_ap), "%s/autopilot.ini", g_dir_base);
    snprintf(p_config, sizeof(p_config), "%s/config.ini", g_dir_base);
    snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base);
-   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base); LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
+   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base); /* @lab */ LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
 }
 
 /* libretro joypad ids (kept local; matches libretro.h) */
@@ -495,6 +495,7 @@ static unsigned char g_stick_min[2] = { 255, 255 }, g_stick_max[2] = { 0, 0 };
 
 static SceUID g_cb_thid = -1;
 static volatile int g_pwr_req_signal;   /* power_request_poll to cb_thread */
+/* @extract:begin fn:cb_thread */
 static int cb_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
@@ -516,6 +517,7 @@ static int cb_thread(SceSize args, void *argp)
    }
    return 0;
 }
+/* @extract:end fn:cb_thread */
 
 static void setup_exit_callback(void)
 {
@@ -546,7 +548,9 @@ static void setup_exit_callback(void)
 #define IO_PRIO        0x22
 #define IO_STACK       0x1000
 #define IO_WAIT_US     250000     /* only bounds teardown latency */
+/* @extract:begin def:IO_JOIN_US */
 #define IO_JOIN_US     5000000u   /* the last pass may be flushing 128 KiB */
+/* @extract:end def:IO_JOIN_US */
 #define IO_SEMA_MAX    64
 
 static SceUID g_io_thid = -1, g_io_sema = -1;
@@ -580,6 +584,7 @@ static void io_yield(void)
 
 static const fe_host_io g_io_iface = { io_wake, io_yield };
 
+/* @extract:begin fn:io_thread */
 static int io_thread(SceSize args, void *argp)
 {
    (void)args; (void)argp;
@@ -600,6 +605,7 @@ static int io_thread(SceSize args, void *argp)
       fe_evt_service();
    return 0;
 }
+/* @extract:end fn:io_thread */
 
 static void io_thread_start(void)
 {
@@ -779,7 +785,9 @@ static SceUID audio_thid = -1;
  * back on its way out; a worker terminated in its output (audio_stop) never
  * gets there, so the stop does, or each restart would take another of the
  * eight until the game went silent. */
+/* @extract:begin decl:audio_ch */
 static volatile int audio_ch = -1;
+/* @extract:end decl:audio_ch */
 
 /* Resampler phase increment, 16.16, read fresh by the audio thread on every
  * output chunk.  Normally (in_rate << 16) / OUT_RATE.  ADR-0027 lowers it in
@@ -917,6 +925,7 @@ void psp_audio_volume_apply(void)
    g_audio_hw_vol = pcfg_audio_hw_volume(g_pcfg.volume);
 }
 
+/* @extract:begin fn:audio_thread */
 static int audio_thread(SceSize args, void *argp)
 {
    static int16_t out[OUT_CHUNK * 2];
@@ -1035,7 +1044,9 @@ static int audio_thread(SceSize args, void *argp)
    sceAudioChRelease(ch);
    return 0;
 }
+/* @extract:end fn:audio_thread */
 
+/* @extract:begin fn:audio_start */
 static void audio_start(void)
 {
    audio_output_error = 0;
@@ -1069,6 +1080,7 @@ static void audio_start(void)
       audio_running = 0;
    }
 }
+/* @extract:end fn:audio_start */
 
 static void audio_ring_reset(void)
 {
@@ -1081,7 +1093,10 @@ static void audio_ring_reset(void)
 /* Returns 0 = joined (the worker released its channel on the way out),
  * 1 = there was no worker, < 0 = the join timed out and it was terminated
  * (its channel released here). */
+/* @extract:begin def:AUDIO_JOIN_US */
 #define AUDIO_JOIN_US 1000000u
+/* @extract:end def:AUDIO_JOIN_US */
+/* @extract:begin fn:audio_stop */
 static int audio_stop(void)
 {
    int rc = 1;
@@ -1111,6 +1126,7 @@ static int audio_stop(void)
    }
    return rc;
 }
+/* @extract:end fn:audio_stop */
 
 /* Report audio-device failures from the main thread, never the high-priority
  * audio worker.  Emulation can continue silently after an output API error. */
@@ -1671,6 +1687,7 @@ static unsigned g_mgift_consumed;
  * to the core (GBA and GB/GBC alike: ctl_game_mask reads g_pad) and to the
  * shortcuts.  A button first pressed after the answer (while Host/Join or a
  * state load works, say) is the game's at once. */
+/* @extract:begin menu:pad_swallow */
 static unsigned g_pad_swallow;
 static void pad_swallow_arm(unsigned held)
 {
@@ -1681,6 +1698,7 @@ static unsigned pad_swallow(unsigned pad)
    g_pad_swallow &= pad;         /* a released button is free again */
    return pad & ~g_pad_swallow;
 }
+/* @extract:end menu:pad_swallow */
 
 #ifdef GPSP_PERF_RIG
 /* HARNESS ONLY: RAW PAD REPLAY (`pad_script = <file>`).
@@ -2163,7 +2181,9 @@ static const uint16_t *g_last_pix;   /* last frame the core handed us    */
  * RESUME_COMPLETE (g_pwr_rebuild) let the loop swap a few more frames of
  * gameplay over the blank in those 80 ms, so the LCD lit with the old frame
  * and the overlay replaced it ~0.4 s later (PSP-1000, 3.0.0, on video). */
+/* @extract:begin def:g_wake_hold */
 #define g_wake_hold  (g_pwr_slept || g_pwr_rebuild || g_wake_menu)
+/* @extract:end def:g_wake_hold */
 static unsigned  g_last_pitch = 240;
 static unsigned  g_last_w = 240, g_last_h = 160;
 static volatile int g_pwr_rebuild;   /* main loop: rebuild it now */
@@ -2212,10 +2232,12 @@ static volatile int g_pwr_park_browser;
  * stick that has not taken 128 KiB in that is broken"), the radio
  * (adhoc_transport_term: two 1.5 s joins, a 0.2 s drain, a 2 s spin), and a
  * second for the rest (the HOME module's stop, the handles). */
+/* @extract:begin def:sq_bounds */
 #define SQ_SAV_LAND_US 4000000u
 #define SQ_NET_TERM_US 5500000u
 #define PWR_QUIESCE_WAIT_US (AUDIO_JOIN_US + IO_JOIN_US + SQ_SAV_LAND_US + \
                              SQ_NET_TERM_US + 1000000u)
+/* @extract:end def:sq_bounds */
 static void play_lock_drop(const char *who);
 #ifdef REWIND
 /* When the callback asked (it waits PWR_PARK_WAIT_US for the answer): what
@@ -2348,6 +2370,7 @@ void psp_clock_apply(const char *why)
    FE_EVT_ONLY(call);
 }
 
+/* @extract:begin fn:power_cb */
 static int power_cb(int unknown, int pwrflags, void *common)
 {
    (void)unknown; (void)common;
@@ -2559,6 +2582,7 @@ static int power_cb(int unknown, int pwrflags, void *common)
    }
    return 0;
 }
+/* @extract:end fn:power_cb */
 
 /* ---- HOLDING THE POWER SWITCH OVER WINDOWS THAT CANNOT PARK ---------------
  *
@@ -2611,6 +2635,7 @@ void pwr_release(void)
       fe_evt("pwr_hold why=%s ms=%u", g_pwr_hold_why, ms);
    }
 }
+/* @extract:begin fn:pwr_release_all */
 static void pwr_release_all(void)
 {
    /* Every exit of the process comes through here, and a module the
@@ -2625,6 +2650,7 @@ static void pwr_release_all(void)
    }
    play_lock_drop("exit");   /* the gameplay lock too */
 }
+/* @extract:end fn:pwr_release_all */
 
 /* No process exit may leave the switch held: handoff_run (the USB handoff),
  * relaunch_eboot and sceKernelExitGame drop every hold first.  (A macro's own
@@ -3150,6 +3176,7 @@ static int mer_sameframe_active(void)
  * (link_session_any): there the pacing is the link's and nothing is gained
  * by proving it safe.
  * ======================================================================== */
+/* @extract:begin lowlat:defaults */
 #ifndef PLAY_ME_LOWLAT
 #define PLAY_ME_LOWLAT 2     /* tier 1 mode 2 on by default (ME_LOWLAT=0 builds it off) */
 #endif
@@ -3256,9 +3283,12 @@ static unsigned g_lat_vc0;            /* vcount at the last census: `vb=` */
 static int      g_in_fresh, g_ctrl_cycle;
 static unsigned g_in_fresh_n, g_in_fresh_us, g_in_fresh_got;
 
+/* @extract:end lowlat:defaults */
 static int mer_rewind_busy(void);     /* below, beside the rewind's state */
 static int link_session_any(void);    /* below, beside the link UI */
 
+/* @extract:begin ff:mer_retire_early_active */
+/* @extract:begin lowlat:mer_retire_early_active */
 static int mer_retire_early_active(void)
 {
    if (g_ff_mult || g_ff_uncapped)
@@ -3266,6 +3296,7 @@ static int mer_retire_early_active(void)
    return g_mer_sameframe || g_mer_early_retire || g_ll_cfg;
 }
 
+/* @extract:end ff:mer_retire_early_active */
 static int mer_lowlat_active(void)
 {
    return g_ll_cfg && g_me_rend && !g_ff_mult && !g_ff_uncapped &&
@@ -3288,6 +3319,7 @@ static int us_to_vblank(unsigned now)
       n--;
    return (int)(VB_PERIOD_US(n) - el);
 }
+/* @extract:end lowlat:mer_retire_early_active */
 /* VISIBLE-END POST (`me_vispost`, harness only, default 1): hand the ME its
  * render at vcount 160 even when presentation stays at the loop top.
  *
@@ -3444,6 +3476,7 @@ static const uint16_t *me_rend_present_src(unsigned *pitch)
  * re-locking would rebuild onto a partition we no longer held -- which is a
  * plausible way to reset the machine, and the machine did reset.  The full
  * history is at the call site in me_standby_down(). */
+/* @extract:begin fn:me_rend_release_vmem */
 static int me_rend_release_vmem(void)
 {
    /* Disabling rendering (including a watchdog fallback) does not stop an
@@ -3493,6 +3526,7 @@ static int me_rend_release_vmem(void)
    g_mer_ready = g_mer_pending = g_mer_last_presented = -1;
    return 1;
 }
+/* @extract:end fn:me_rend_release_vmem */
 
 /* ADR-0080d, applied to the engine: the host's np_start needs a clean heap.
  * The dual-engine gate run (host run 407) confirmed it — the engine's ~205 KB
@@ -3780,6 +3814,7 @@ static void me_standby_step(const char *what)
    standby_note("step %s", what);
 }
 
+/* @extract:begin fn:me_standby_down */
 static void me_standby_down(void)
 {
    me_standby_step("begin");
@@ -3832,6 +3867,7 @@ static void me_standby_down(void)
    g_pwr_slept = 1;
    me_standby_step("done");
 }
+/* @extract:end fn:me_standby_down */
 
 /* Main thread, once per wake -- AFTER the player answers the wake overlay
  * with Continue, not before it.
@@ -3930,6 +3966,7 @@ static sleep_q g_sq;
  * from g_pwr_hold's nesting count: the kernel counts locks, so the two
  * cannot unbalance each other. */
 
+/* @extract:begin fn:play_lock_take */
 static void play_lock_take(void)
 {
    /* Held over the wake overlay too: it yields to the park
@@ -3952,7 +3989,9 @@ static void play_lock_take(void)
       }
    }
 }
+/* @extract:end fn:play_lock_take */
 
+/* @extract:begin fn:play_lock_drop */
 static void play_lock_drop(const char *who)
 {
    int rc;
@@ -3964,6 +4003,7 @@ static void play_lock_drop(const char *who)
    FE_EVT_ONLY(rc);
    FE_EVT_ONLY(who);
 }
+/* @extract:end fn:play_lock_drop */
 
 /* A SUSPEND REQUEST THE GAMEPLAY LOCK HAS BEEN SITTING ON.
  *
@@ -3993,8 +4033,11 @@ static void play_lock_drop(const char *who)
  *
  * A request that keeps reading true with no suspend following must not freeze
  * the game for a hold's 5 s over and over: a few tries, then leave it alone. */
+/* @extract:begin def:PWR_REQ_MAX_FIRES */
 #define PWR_REQ_MAX_FIRES 3
+/* @extract:end def:PWR_REQ_MAX_FIRES */
 int scePowerIsRequest(void);             /* in libpsppower, not in its header */
+/* @extract:begin fn:power_request_poll */
 static void power_request_poll(void)
 {
    static unsigned pass;
@@ -4009,7 +4052,9 @@ static void power_request_poll(void)
    g_pwr_req_signal = 1;
    sceKernelWakeupThread(g_cb_thid);
 }
+/* @extract:end fn:power_request_poll */
 
+/* @extract:begin fn:sq_audio_stop */
 static int sq_audio_stop(void *c)
 {
    int rc;
@@ -4025,7 +4070,9 @@ static int sq_audio_stop(void *c)
    ring_r = ring_w;             /* nothing from before the sleep is replayed */
    return rc;
 }
+/* @extract:end fn:sq_audio_stop */
 
+/* @extract:begin fn:sq_audio_start */
 static int sq_audio_start(void *c)
 {
    (void)c;
@@ -4035,7 +4082,9 @@ static int sq_audio_start(void *c)
       return SQ_DONE;
    return audio_output_error < 0 ? audio_output_error : -1;
 }
+/* @extract:end fn:sq_audio_start */
 
+/* @extract:begin fn:sq_writer_stop */
 static int sq_writer_stop(void *c)
 {
    int rc;
@@ -4050,16 +4099,20 @@ static int sq_writer_stop(void *c)
    fe_host_sram_sync();
    return rc;
 }
+/* @extract:end fn:sq_writer_stop */
 
+/* @extract:begin fn:sq_writer_start */
 static int sq_writer_start(void *c)
 {
    (void)c;
    io_thread_start();
    return g_io_thid >= 0 ? SQ_DONE : -1;
 }
+/* @extract:end fn:sq_writer_start */
 
 /* After sq_writer_stop: the .sav and the event log are the writer's while
  * it runs, and it is gone now. */
+/* @extract:begin fn:sq_files_close */
 static int sq_files_close(void *c, char *d, size_t n)
 {
    int sav, rom = 0, evt, closed = 0;
@@ -4084,7 +4137,9 @@ static int sq_files_close(void *c, char *d, size_t n)
    snprintf(d, n, "sav=%d rom=%d evt=%d", sav, rom, evt);
    return closed;
 }
+/* @extract:end fn:sq_files_close */
 
+/* @extract:begin fn:sq_files_reopen */
 static int sq_files_reopen(void *c, char *d, size_t n)
 {
    int evt = 1;
@@ -4095,7 +4150,9 @@ static int sq_files_reopen(void *c, char *d, size_t n)
    snprintf(d, n, "evt=%d sav=lazy rom=lazy", evt);
    return evt;
 }
+/* @extract:end fn:sq_files_reopen */
 
+/* @extract:begin fn:sq_home_stop */
 static int sq_home_stop(void *c)
 {
    (void)c;
@@ -4104,7 +4161,9 @@ static int sq_home_stop(void *c)
    home_host_stop();
    return home_host_loaded() ? -1 : SQ_DONE;
 }
+/* @extract:end fn:sq_home_stop */
 
+/* @extract:begin fn:sq_home_rearm */
 static int sq_home_rearm(void *c)
 {
    (void)c;
@@ -4113,7 +4172,9 @@ static int sq_home_rearm(void *c)
    home_host_forget();
    return SQ_DONE;
 }
+/* @extract:end fn:sq_home_rearm */
 
+/* @extract:begin fn:sq_net_term */
 static int sq_net_term(void *c)
 {
    (void)c;
@@ -4122,14 +4183,18 @@ static int sq_net_term(void *c)
    net_teardown_io();           /* BYE, adhoc term, modules unloaded */
    return g_net_up ? -1 : SQ_DONE;
 }
+/* @extract:end fn:sq_net_term */
 
+/* @extract:begin fn:sq_note */
 static void sq_note(void *c, const char *line)
 {
    (void)c;
    standby_note("%s", line);
    fe_evt("sleep %s", line);
 }
+/* @extract:end fn:sq_note */
 
+/* @extract:begin decl:g_sq_ops */
 static const sleep_q_ops g_sq_ops = {
    NULL,
    sq_audio_stop, sq_audio_start,
@@ -4139,8 +4204,10 @@ static const sleep_q_ops g_sq_ops = {
    sq_net_term,
    sq_note
 };
+/* @extract:end decl:g_sq_ops */
 
 /* Emulation thread, at the park point, before it reports `parked`. */
+/* @extract:begin fn:sleep_quiesce_down */
 static void sleep_quiesce_down(void)
 {
    unsigned t0;
@@ -4151,9 +4218,11 @@ static void sleep_quiesce_down(void)
    standby_note("q down us=%u stopped=0x%X",
                 (unsigned)sceKernelGetSystemTimeLow() - t0, g_sq.stopped);
 }
+/* @extract:end fn:sleep_quiesce_down */
 
 /* Emulation thread, once the wake has come (RESUME_COMPLETE), or at a hold's
  * timeout, or when the loop ends with the quiesce still in force. */
+/* @extract:begin fn:sleep_quiesce_up */
 static void sleep_quiesce_up(const char *why)
 {
    if (!g_sq.down)
@@ -4161,6 +4230,7 @@ static void sleep_quiesce_up(const char *why)
    standby_note("q up why=%s stopped=0x%X", why, g_sq.stopped);
    (void)sleep_q_up(&g_sq, &g_sq_ops);
 }
+/* @extract:end fn:sleep_quiesce_up */
 
 /* The loop's park, held the way TYL's main loop sits in
  * sceKernelDelayThread while the console sleeps: no frame, no ROM read, no
@@ -4170,10 +4240,13 @@ static void sleep_quiesce_up(const char *why)
  * the hold.  Bounded by a count of 5 ms naps rather than the clock: the naps
  * stop while the CPU is suspended, so only a suspend that never came can run
  * the count out. */
+/* @extract:begin def:SLEEP_HOLD_NAPS */
 #define SLEEP_HOLD_NAPS 1000u            /* 5 s awake without a suspend */
+/* @extract:end def:SLEEP_HOLD_NAPS */
 #ifdef REWIND
 static void psp_rewind_pwr(void);         /* defined with the rewind */
 #endif
+/* @extract:begin fn:sleep_park_hold */
 static void sleep_park_hold(void)
 {
    unsigned naps = 0;
@@ -4222,6 +4295,7 @@ static void sleep_park_hold(void)
    if (g_pwr_sleep_pending)
       play_lock_drop("park_exit");
 }
+/* @extract:end fn:sleep_park_hold */
 
 /* Heap fallback only: give the work area back to malloc.  0 = freed (or there
  * was none), -1 = it must be kept for now.
@@ -4236,6 +4310,7 @@ static void sleep_park_hold(void)
  * (The volatile pool needs none of this.  It is only ever handed back on the
  * way into a sleep, with the ME idle and about to be reset, and whatever is
  * carved from it next is ours again.) */
+/* @extract:begin fn:mer_work_heap_free */
 static int mer_work_heap_free(void)
 {
    if (!g_mer_work)
@@ -4246,7 +4321,9 @@ static int mer_work_heap_free(void)
    g_mer_work = NULL;
    return 0;
 }
+/* @extract:end fn:mer_work_heap_free */
 
+/* @extract:begin fn:me_rend_suspend */
 static void me_rend_suspend(void)
 {
    int i, idle;
@@ -4294,6 +4371,7 @@ static void me_rend_suspend(void)
    }
    free(g_mer_desc); g_mer_desc = NULL;
 }
+/* @extract:end fn:me_rend_suspend */
 
 static void me_rend_resume(void)
 {
@@ -4595,6 +4673,8 @@ static void me_rend_fill_desc(int out)
 static unsigned g_fps_drawn;
 
 /* Loop-top presentation for Media Engine mode (ADR-0082). */
+/* @extract:begin ff:me_rend_present */
+/* @extract:begin lowlat:me_rend_present */
 static void me_rend_present(void)
 {
    if (!g_me_rend || g_mer_ready < 0)
@@ -4614,6 +4694,7 @@ static void me_rend_present(void)
    g_drew = 1;
 }
 
+/* @extract:end lowlat:me_rend_present */
 /* SAME-FRAME RETIREMENT.  Promote the stage the ME has just finished to
  * "ready" so this frame's own render is what gets presented this frame -- the
  * whole point of the feature.
@@ -4627,6 +4708,7 @@ static void me_rend_present(void)
  * swap, so a frame that never retires still leaves something in the back
  * buffer.  And there is exactly one producer: a second one from the
  * visible-end hook would corrupt stage/capture ownership. */
+/* @extract:begin lowlat:me_rend_retire_if_idle */
 static void me_rend_retire_if_idle(void)
 {
    if (!g_me_rend || g_mer_pending < 0)
@@ -4659,8 +4741,11 @@ static void me_rend_retire_if_idle(void)
       g_mer_sf_hit++;
 }
 
+/* @extract:end ff:me_rend_present */
+/* @extract:end lowlat:me_rend_retire_if_idle */
 /* Called from plat_video_frame at the end of every emulated frame.
  * `emulated` is false for duped/skipped frames (no capture happened). */
+/* @extract:begin ff:me_rend_frame */
 static void me_rend_frame(int emulated)
 {
    unsigned t0, t1;
@@ -4721,7 +4806,7 @@ static void me_rend_frame(int emulated)
          else
 #endif
          g_mer_ready   = g_mer_pending;
-         mer_note_sum(); LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
+         mer_note_sum(); /* @lab */ LAB_FFP(lab_ffpace_me_retire(g_mer_post_us, (unsigned)sceKernelGetSystemTimeLow() - t0);)
          g_mer_pending = -1;
          g_mer_miss    = 0;
          g_fps_drawn++;             /* a complete rendered frame landed */
@@ -4802,7 +4887,7 @@ static void me_rend_frame(int emulated)
             if (g_mer_dirty_cfg)
                g_mer_full_copy = 0;   /* mirror is now valid to patch */
          }
-         g_mer_pending = out; LAB_FFP(lab_ffpace_me_post(out, fe_host_frame_count());)
+         g_mer_pending = out; /* @lab */ LAB_FFP(lab_ffpace_me_post(out, fe_host_frame_count());)
          g_mer_stage_pvc[out] = g_lat_poll_vc;
          g_mer_stage_seq[out] = g_lat_seq;
 #ifdef REWIND
@@ -4873,6 +4958,7 @@ present:
    LOOP_PHASE(2);   /* back in the core's frame (always called from it) */
 }
 
+/* @extract:end ff:me_rend_frame */
 /* FPS counter (Settings -> "FPS counter").  Counts EMULATED frames — the
  * increment sits above the blit-suppress and FF-cadence returns, so during
  * multiplier/uncapped FF the chip reads the true emulation speed (~179 at
@@ -8878,8 +8964,10 @@ static void gblink_audio_session(int on)
          audio_ring[idx * 2 + 0] = 0;
          audio_ring[idx * 2 + 1] = 0;
       }
+/* @extract:begin spsc:gblink_publish */
       RING_BARRIER();
       ring_w += n;
+/* @extract:end spsc:gblink_publish */
       g_gbl_rate_ema = (ring_w - ring_r) * 16u;
       g_gbl_rate_i = 0;
       g_audio_soft = g_gbl_soft;
@@ -9884,12 +9972,15 @@ static void mgift_stop(int quiet)
  * not come up for it: that association blocks the main thread for up to
  * MGNET_CONNECT_US (30 s) and writes a network profile, all for a game
  * that cannot receive a gift. */
+/* @extract:begin fn:mgift_game_ok */
 static int mgift_game_ok(void)
 {
    return !strcmp(g_mg_game, "BPRE") || !strcmp(g_mg_game, "BPGE") ||
           !strcmp(g_mg_game, "BPEE");
 }
+/* @extract:end fn:mgift_game_ok */
 
+/* @extract:begin fn:mgift_start_io */
 static void mgift_start_io(void)
 {
    int rc;
@@ -10004,6 +10095,7 @@ static void mgift_start_io(void)
    fe_evt("mg_start ip=%s game=%s port=%d", mgnet_local_ip(), g_mg_game,
           MGNET_LISTEN_PORT);
 }
+/* @extract:end fn:mgift_start_io */
 
 /* pwr_hold: see power_cb -- this runs outside the loop's park point. */
 static void mgift_start(void)
@@ -10626,7 +10718,7 @@ static void stall_exit(unsigned iter)
 #ifdef GBA_LINK
    fe_gbadual_abort();
 #endif
-   sceKernelDelayThread(3000000); LAB_HOOK(if (g_loop_iter == iter) lab_stalled(iter, g_loop_phase);)
+   sceKernelDelayThread(3000000); /* @lab */ LAB_HOOK(if (g_loop_iter == iter) lab_stalled(iter, g_loop_phase);)
    if (g_loop_iter != iter || !g_stall_exit_hard)
       return;
    if (g_hb_s > 0)
@@ -11152,7 +11244,7 @@ static int psp_state_load_io(const char *path, const char *why)
     * until it is pressed again, a Hold still down starts a fresh train. */
    ctl_turbo_stop(&g_turbo);
    rc = fe_host_state_load(path);
-   core_health_evt("load"); LAB_HOOK(lab_event(LAB_EVT_STATE_LOAD, (unsigned)rc, why);)
+   core_health_evt("load"); /* @lab */ LAB_HOOK(lab_event(LAB_EVT_STATE_LOAD, (unsigned)rc, why);)
    return rc;
 }
 
@@ -12442,6 +12534,7 @@ static void *psp_rewind_pool_offer(size_t *bytes)
  * keep the suspend off until the park's hold gave up, and the slide would
  * be lost.  With the loop parked it is ended here as the pool's is, and
  * fe_host_rewind_suspend decides it (vetted frame, or the game is reset). */
+/* @extract:begin fn:psp_rewind_pool_lost */
 static void psp_rewind_pool_lost(void)
 {
    if (g_rom_vm_lend && !g_rom_vm_asleep)
@@ -12465,6 +12558,7 @@ static void psp_rewind_pool_lost(void)
    g_rw_slot = NULL;
    g_rw_pool = 0;
 }
+/* @extract:end fn:psp_rewind_pool_lost */
 
 /* The last resort of docs/REWIND.md 22 was taken (the game was reset
  * because a sleep ended a rewind with the machine inside an old save): say
@@ -13220,7 +13314,10 @@ static int psp_rewind_tick_run(int ff)
  * when the control is let go.  Outside that state nothing is held: the
  * switch works at once, and the park point lands the rewind.  Main thread,
  * every loop and after every rewind tick. */
+/* @extract:begin decl:g_rw_pwr */
 static int g_rw_pwr;
+/* @extract:end decl:g_rw_pwr */
+/* @extract:begin fn:psp_rewind_pwr */
 static void psp_rewind_pwr(void)
 {
    int want = g_rw_on && fe_host_rewind_unvetted();
@@ -13232,6 +13329,7 @@ static void psp_rewind_pwr(void)
    else
       pwr_release();
 }
+/* @extract:end fn:psp_rewind_pwr */
 
 static int psp_rewind_land(const char *why, unsigned budget_us)
 {
@@ -13290,12 +13388,13 @@ static int mer_rewind_busy(void)
 
 /* THE swap of a loop iteration, with its bookkeeping.  `early` = submitted
  * before the vblank the loop is waiting for. */
+/* @extract:begin lowlat:lat_swap */
 static int lat_swap(int early)
 {
    unsigned vc, now;
    int r;
 
-   UISCRIPT_DUMP(); LAB_HOOK(lab_blink_draw();)
+   UISCRIPT_DUMP(); /* @lab */ LAB_HOOK(lab_blink_draw();)
    if (g_wake_hold)
       return 0;
    vc  = sceDisplayGetVcount();
@@ -13727,6 +13826,7 @@ static void lat_wait_end(void)
    g_lw_measure = g_lw_slot = g_lw_entering = 0;
 }
 
+/* @extract:end lowlat:lat_swap */
 static void lat_census(void)
 {
    unsigned i;
@@ -13792,6 +13892,7 @@ static void lat_census(void)
  * overlay yields to it (wake_overlay_yield), the SELECT+TRIANGLE pause
  * screen too: every in-game sleep is entered from this one place, in the
  * same state. */
+/* @extract:begin fn:loop_park */
 static int loop_park(void)
 {
    if (!g_pwr_park_req)
@@ -13830,16 +13931,19 @@ static int loop_park(void)
    }
    return 1;
 }
+/* @extract:end fn:loop_park */
 
 /* The wake has come (or a hold ran out): undo the quiesce -- reopen what
  * reopens, restart the writer, then sound -- before anything else, the wake
  * overlay included.  A loop the callback let go before the wake runs on
  * without its sound until then, as TYL's does. */
+/* @extract:begin fn:loop_unpark */
 static void loop_unpark(const char *why)
 {
    if (g_sq.down && !g_pwr_sleep_pending)
       sleep_quiesce_up(why);
 }
+/* @extract:end fn:loop_unpark */
 
 /* THE GAME LIST'S PARK POINT (ui_set_browser_park), once a frame, before
  * the browser reads the pad or draws.
@@ -13859,6 +13963,7 @@ static void loop_unpark(const char *why)
  * teardown), report `parked`, and sleep in sleep_park_hold until the wake.
  * The callback sees g_pwr_park_browser and does only the list's half of
  * the teardown (the partition), so no wake overlay follows. */
+/* @extract:begin fn:browser_park */
 static int browser_park(void)
 {
    int audio;
@@ -13878,6 +13983,7 @@ static int browser_park(void)
    standby_note("browser unpark audio_start=%d", audio_running);
    return 1;
 }
+/* @extract:end fn:browser_park */
 
 /* The wake overlay's yield hook (ui_set_wake_yield), once a frame: the
  * power callback wants the loop parked, so the overlay leaves and the loop
@@ -13888,11 +13994,13 @@ static int browser_park(void)
  * pad read and before the ME's staged frame is presented, and without the
  * loop top's own work (the GB cart-RAM flush the callback asks for, the
  * rewind's power hold).  With one park point there is nothing to differ. */
+/* @extract:begin fn:wake_overlay_yield */
 static int wake_overlay_yield(void)
 {
    power_request_poll();
    return g_pwr_park_req;
 }
+/* @extract:end fn:wake_overlay_yield */
 
 /* THE WAKE: one rebuild, after the overlay's answer, on this thread.
  * Returns WAKE_QUIT when the player chose `Quit to game list` (g_running is
@@ -13909,9 +14017,12 @@ static int wake_overlay_yield(void)
  * volatile partition stayed down: a black screen with the menu live
  * underneath.  Now the overlay comes up over the menu, and Continue
  * rebuilds and returns to the menu where it was. */
+/* @extract:begin def:wake_answers */
 #define WAKE_QUIT  1
 #define WAKE_YIELD 2
+/* @extract:end def:wake_answers */
 static int g_wake_answered;   /* Continue taken: the pad is the answer's */
+/* @extract:begin fn:wake_service */
 static int wake_service(void)
 {
    g_wake_answered = 0;   /* (also drops one the menu branch left) */
@@ -14003,7 +14114,9 @@ static int wake_service(void)
    }
    return 0;
 }
+/* @extract:end fn:wake_service */
 
+/* @extract:begin lowlat:late_present */
 /* LATE PRESENT (tier 0b).  me_early_retire shows the render of frame N at
  * the loop top of N+1 when the ME finished it during N's wait.  That loop
  * top only BLITS; the flip is the early flip in N+1's own wait, a whole
@@ -14129,6 +14242,8 @@ static int lf_want_slot(unsigned level)
           level > RING_HIGH_WATER / 2u + in_rate / 60u;
 }
 
+/* @extract:end lowlat:late_present */
+/* @extract:begin fn:main */
 int main(int argc, char *argv[])
 {
    char rom_path[PSP_FILE_PATH_CAP];
@@ -14208,7 +14323,7 @@ int main(int argc, char *argv[])
    fe_evt_init(LOG_PATH, 0);
    /* Every lookup of these two files is recorded from here on, so the report
     * before the main loop can name a key nothing ever read. */
-   fe_ini_audit(HARNESS_INI); LAB_HOOK(lab_audit_keys();)
+   fe_ini_audit(HARNESS_INI); /* @lab */ LAB_HOOK(lab_audit_keys();)
    fe_ini_audit(CONFIG_INI);
    fe_evt_set_clock(evt_clock_us);   /* ADR-0021: price the ms0 flushes */
 #endif
@@ -14244,6 +14359,7 @@ int main(int argc, char *argv[])
     * once, into cfg_doc, and every pcfg_load key is answered from it
     * (docs/UI-OVERLAY.md §12.8). */
    cfg_ok = fe_ini_doc_load(&cfg_doc, CONFIG_INI) == 0;
+/* @extract:begin vol:boot_apply */
    pcfg_load_doc(CONFIG_INI, cfg_ok ? &cfg_doc : NULL);
    psp_audio_volume_apply();          /* before audio_start (Settings > Volume) */
    /* CPU clock: the setting, or the harness's `cpu_clock` for a Lab arm
@@ -14252,9 +14368,9 @@ int main(int argc, char *argv[])
    {
       long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
-      LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
+      /* @lab */ LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
-   psp_clock_apply("boot"); LAB_FFP(lab_ffpace_clock_enforce();)
+   psp_clock_apply("boot"); /* @lab */ LAB_FFP(lab_ffpace_clock_enforce();)
    fe_evt("clock=%d", scePowerGetCpuClockFrequency());
    boot_mark("config");
 
@@ -14321,6 +14437,7 @@ int main(int argc, char *argv[])
    vid_init();
    psp_display_apply("boot");
    audio_start();
+/* @extract:end vol:boot_apply */
 
    have_harness = file_exists(HARNESS_INI);
    have_variant = file_exists(VARIANT_INI);
@@ -14357,7 +14474,7 @@ int main(int argc, char *argv[])
                         fe_ini_get_int(HARNESS_INI, "browser", 0) != 0));
    if (folders)
       sc_first_run(SC_FS_PSP, g_dir_base, ROM_DIR);
-   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
+   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); /* @lab */ LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
    {
       /* GB link session harness keys (see gblink_service). */
       char gr[8] = "";
@@ -14661,7 +14778,7 @@ int main(int argc, char *argv[])
           bscript[0])
       {
          char up[256];
-         snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript); LAB_HOOK(lab_task_file(up, sizeof(up), bscript);)
+         snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript); /* @lab */ LAB_HOOK(lab_task_file(up, sizeof(up), bscript);)
          uiscript_load(up);               /* docs/GBA-LINK-UI.md */
       }
       if (fe_ini_get(HARNESS_INI, "ui_scan_fake", up_fake, sizeof(up_fake)) &&
@@ -14714,7 +14831,7 @@ int main(int argc, char *argv[])
       char pad_name[64], pad_path[192];
       if (fe_ini_get(HARNESS_INI, "pad_script", pad_name, sizeof(pad_name)))
       {
-         snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name); LAB_HOOK(lab_task_file(pad_path, sizeof(pad_path), pad_name);)
+         snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name); /* @lab */ LAB_HOOK(lab_task_file(pad_path, sizeof(pad_path), pad_name);)
          pad_script_load(pad_path);
       }
    }
@@ -15709,6 +15826,7 @@ session_top:
       if (!inproc_n)
       {
          boot_mark("browser");
+/* @extract:begin sb:list_call */
          boot_timeline_emit();
       }
       ui_set_browser_park(browser_park);   /* the list parks too */
@@ -15716,6 +15834,7 @@ session_top:
                           &browser_state_slot, &selected_console);
       ui_set_browser_park(NULL);
       if (br > 0)
+/* @extract:end sb:list_call */
       {
          /* Settings changed Media Engine mode, which was latched above.
           * Nothing is emulating yet -- no SRAM to flush, no core thread to
@@ -15790,7 +15909,7 @@ session_top:
        * replaces them (lab_sidecars), otherwise the folders may. */
       char before_lab[PSP_FILE_PATH_CAP];
       snprintf(before_lab, sizeof(before_lab), "%s", save_path);
-      LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));)
+      /* @lab */ LAB_HOOK(if (!have_variant) lab_sidecars(save_path, sizeof(save_path), state_path, sizeof(state_path));)
       if (!have_variant)
          folders_settle(folders, rom_path,
                         g_pcfg.console == FE_CONSOLE_GBA ? ".sav" :
@@ -16601,7 +16720,7 @@ session_top:
 
    if (have_script)
    {
-      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name); LAB_HOOK(lab_task_file(script_path, sizeof(script_path), script_name);)
+      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name); /* @lab */ LAB_HOOK(lab_task_file(script_path, sizeof(script_path), script_name);)
 #if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
       snprintf(g_script_path, sizeof(g_script_path), "%s", script_path);
 #endif
@@ -17087,6 +17206,7 @@ session_top:
           * form is the longer-chord rule (ctl_yields): a quick save/load
           * stands down while any longer shortcut containing its chord is
           * held, which for the defaults is exactly "the other shoulder". */
+/* @extract:begin qs:dispatch */
          if (ctl_fired & CTL_FIRE_SAVE)
          {
             if (link_locks_states())
@@ -17161,6 +17281,7 @@ session_top:
             else
                osd_toast("No saved state");
          }
+/* @extract:end qs:dispatch */
       }
 
       /* Did we come back?  This line existing at all is the answer to
@@ -17168,7 +17289,7 @@ session_top:
        * whether resuming is a re-init job or a much larger one. */
       if (g_pwr_resume)
       {
-         g_pwr_resume = 0; LAB_HOOK(lab_power_resumed();)
+         g_pwr_resume = 0; /* @lab */ LAB_HOOK(lab_power_resumed();)
          fe_evt("power back frames=%u net=%d me=%d me_up=%d",
                 fe_host_frame_count(), g_net_up, g_me_rend, me_host_up());
          /* The firmware may wake at its own clock: `was=` says. */
@@ -17376,6 +17497,7 @@ session_top:
                osd_toast(rc == 0 ? "State saved" : "State save FAILED");
             break;
          }
+/* @extract:begin sl:case_loadstate */
          case UI_ACT_LOADSTATE:
          {
             char selected_state[PSP_FILE_PATH_CAP];
@@ -17391,6 +17513,7 @@ session_top:
             break;
          }
          case UI_ACT_NET_HOST:
+/* @extract:end sl:case_loadstate */
             ui_net_action(1);
             break;
          case UI_ACT_NET_JOIN:
@@ -17667,6 +17790,7 @@ session_top:
       if (ffh_loop)
          g_drew = 0;
       me_video_present();
+/* @extract:begin lowlat:top */
       /* LOW LATENCY tier 0b: a render that finished during the previous
        * iteration is shown NOW, not after the next post retires it. */
       g_ll_iter_h = 0;
@@ -17697,6 +17821,7 @@ session_top:
       }
 #ifdef REWIND
       if (g_drew && (g_rw_on || g_rwh.denied))
+/* @extract:end lowlat:top */
          psp_rewind_hud();
 #endif
       if (ffh_loop && !g_drew)
@@ -18173,6 +18298,7 @@ session_top:
          /* Not while a GB link session's rate follow holds the ring: there
           * the surplus is consumed by the resampler, and a whole extra
           * vblank here is a stall for the partner console. */
+/* @extract:begin lowlat:want */
          if (!g_ff_mult && ring_w - ring_r > RING_HIGH_WATER &&
              !(g_gbl_audio_on && g_gbl_follow))
          {
@@ -18196,6 +18322,7 @@ session_top:
             g_lf_pull++;
          }
          audio_ring_note();
+/* @extract:end lowlat:want */
          FE_LP_SET(FELP_L_OSD);
          if (g_drew && !g_dfr)
             osd_draw();
@@ -18254,6 +18381,7 @@ session_top:
             g_flip_early = 0;
             g_ffh_waits++;
          }
+/* @extract:begin lowlat:wait */
          lat_wait_begin(want);
          dfr_present();           /* LATE PRESENT: before any retire/flip */
          lf_hold_begin();         /* LATE FLIP HOLD: never replace an unlatched flip */
@@ -18354,6 +18482,7 @@ session_top:
          if (!g_lw_swapped)
             lat_swap(0);
          g_lw_swapped = 0;
+/* @extract:end lowlat:wait */
          g_drew = 0;
       }
       else
@@ -18378,14 +18507,14 @@ session_top:
          }
          }
       }
-      FE_LP_SET(FELP_L_RIGN); LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
+      FE_LP_SET(FELP_L_RIGN); /* @lab */ LAB_HOOK(if (lab_frame(fe_host_frame_count(), (unsigned)(net_now_us() - g_frame_start_us), rig_work_us, g_loop_iter, g_loop_phase) && g_running) { exit_code = 6; exit_reason = "lab_wall_limit"; g_running = 0; } lab_power_poll((unsigned)g_pwr_suspend, ui_active()); { int lab_sl = lab_state_due(); if (lab_sl == 1 && state_path[0]) lab_state_done(1, state_save_slot(state_path, 1)); else if (lab_sl == 2 && state_path[0]) lab_state_done(2, psp_state_load(state_path, "lab_timer")); })
       lat_census();
       if (g_perf_rig)
          rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
-      ff_win_note(); LAB_FFP(lab_ffpace_loop(g_ff_user, g_ff_gate, g_ff_mult, g_ff_uncapped, g_me_rend);)
+      ff_win_note(); /* @lab */ LAB_FFP(lab_ffpace_loop(g_ff_user, g_ff_gate, g_ff_mult, g_ff_uncapped, g_me_rend);)
       FE_LP_SET(FELP_LOOP);
    }
-   LAB_FFP(lab_ffpace_finish();)
+   /* @lab */ LAB_FFP(lab_ffpace_finish();)
 
    if (g_perf_rig)
    {
@@ -18653,3 +18782,4 @@ session_top:
    sceKernelExitGame();
    return 0;
 }
+/* @extract:end fn:main */

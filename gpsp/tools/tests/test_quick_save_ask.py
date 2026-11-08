@@ -43,9 +43,11 @@ import re
 import subprocess
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 CFG = (ROOT / "psp/config_psp.c").read_text(encoding="utf-8")
 
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
@@ -468,6 +470,7 @@ int main(void)
 
 
 def dispatch_block(src):
+    src = extract.extract(src, "qs:dispatch")     # main()'s quick save / load branches
     i = src.find("         if (ctl_fired & CTL_FIRE_SAVE)\n")
     assert i >= 0, "the quick-save dispatch is gone"
     j = src.find("         else if (ctl_fired & CTL_FIRE_LOAD)\n", i)

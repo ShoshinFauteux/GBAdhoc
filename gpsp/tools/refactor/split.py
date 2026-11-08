@@ -20,7 +20,8 @@ of psp/main_psp.c into fragments, driven by a generated cutlist.txt.
         other fragment, in source order) and DIR/psp/fe/X.inc.c.  REFUSES
         (exit 1, nothing written) on: an item of the source unlisted, listed
         twice, or listed but absent; an anchor not found / out of order /
-        not on a cuttable line; a fragment whose #if/#endif do not balance;
+        not on a cuttable line, or on an own-line `@extract:end` marker
+        (gen keeps those with the unit above); a fragment whose #if/#endif do not balance;
         an item that does not lie in the fragment its row names; a `../`
         include inside a fragment; a result whose --inverse is not
         byte-identical to the source.
@@ -51,6 +52,12 @@ import csrc      # noqa: E402
 import modules   # noqa: E402
 
 INC_RE = re.compile(r'^#include "fe/([A-Za-z0-9_.]+)\.inc\.c"\n$')
+# An own-line `/* @extract:end NAME */` (tools/tests/extract.py; PLAN-P-beta5 P1) closes
+# a region whose text lies ABOVE it, so it stays with the unit above: gen never starts a
+# unit (or a fragment) with one, and split refuses a FRAG anchor on one.  Without the
+# rule the end marker after a fragment's last function opened the next fragment (its
+# region then crossed the cut, and the blank line after it moved across too).
+END_MARK_LINE = re.compile(r'^[ \t]*/\* @extract:end [A-Za-z0-9_.:-]+ \*/\s*$')
 
 
 class Refused(Exception):
@@ -125,6 +132,11 @@ class Model:
 
     def cuttable(self, L):
         return (1 <= L <= len(self.lines) and self.p['pp_depth'][L] == 0 and not self.uncuttable[L])
+
+    def unit_start_ok(self, L):
+        """gen may start a unit at L: cuttable, not blank, not an own-line end marker."""
+        ln = self.lines[L - 1] if 1 <= L <= len(self.lines) else ''
+        return self.cuttable(L) and ln.strip() != '' and not END_MARK_LINE.match(ln)
 
     def anchor_of(self, L):
         return (self.line_occ[L], self.lines[L - 1].rstrip('\n'))
@@ -220,7 +232,7 @@ def gen(m, carry=None, assign=None):
     head_cut = None
     if last_inc:
         for L in range(last_inc + 1, items[0]['start'] + 1):
-            if m.cuttable(L) and m.lines[L - 1].strip() != '':
+            if m.unit_start_ok(L):
                 head_cut = L
                 break
     if head_cut and head_cut > 1:
@@ -228,8 +240,7 @@ def gen(m, carry=None, assign=None):
         cutline[1] = head_cut
     cur = [items[0]]
     for a, b in zip(items, items[1:]):
-        cands = [L for L in range(a['end'] + 1, b['start'] + 1)
-                 if m.cuttable(L) and m.lines[L - 1].strip() != '']
+        cands = [L for L in range(a['end'] + 1, b['start'] + 1) if m.unit_start_ok(L)]
         # the shell's head range (L:1-160: module info, thread attributes, pads)
         # keeps its glue: prefer a cut past it when the gap allows one
         late = [L for L in cands if L > modules.SHELL_RANGES[0][1]]
@@ -364,6 +375,9 @@ def do_split(m, frags, rows):
         if L != 1 and not m.cuttable(L):
             why = ('inside an open #if (depth %d)' % m.p['pp_depth'][L]) if m.p['pp_depth'][L] else 'inside an item, comment or directive'
             errs.append('FRAG %s: cut at L:%d is %s' % (f['frag'], L, why))
+        elif END_MARK_LINE.match(m.lines[L - 1]):
+            errs.append('FRAG %s: anchor L:%d is an own-line @extract:end marker (it closes the region above and '
+                        'stays with the previous fragment; regenerate the cutlist with split.py gen)' % (f['frag'], L))
         cuts.append((L, f))
     if errs:
         raise Refused('; '.join(errs))

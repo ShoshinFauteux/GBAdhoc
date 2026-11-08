@@ -32,7 +32,9 @@ CLI:
                                              in place, read_source(); other FILEs appended)
   extract.py --list [--src FILE]             list the region names
   extract.py --check [--src FILE]            validate every marker pair (exit 1 on error)
-  extract.py --enumerate [GPSP_DIR]          the host tests that read main_psp.c as text
+  extract.py --enumerate [GPSP_DIR] [--gate] the host tests that read main_psp.c as text
+                                             (all of GPSP_DIR, recursively; --gate also
+                                             lists tools/refactor/, the gate tools)
 """
 import os
 import re
@@ -220,35 +222,53 @@ def plant(src, regions):
 
 
 READ_RE = re.compile(r'main_psp\.c')
-CALL_RE = re.compile(r'read_text\(|open\(|read_bytes\(')
+# read_source( is this module's own read: a test that reads main_psp.c through its
+# @extract markers (P1) is still a reader
+CALL_RE = re.compile(r'read_text\(|open\(|read_bytes\(|read_source\(')
 
 
-def enumerate_readers(gpsp):
-    """Python host tests that READ main_psp.c (a path mention plus a read call
-    within 2 lines).  C hand-mirrors that only cite it in comments are not readers."""
+# tools/refactor/ holds the gate tools and their self-tests: they read main_psp.c by
+# design (through read_source / split.py inverse since P0a) and are not host tests
+GATE_DIR = 'tools/refactor'
+SELF = 'tools/tests/extract.py'
+
+
+def _reads_main(text):
+    lines = text.split('\n')
+    for i, ln in enumerate(lines):
+        if READ_RE.search(ln) and not ln.lstrip().startswith('#') and \
+                any(CALL_RE.search(x) for x in lines[i:i + 3]):
+            return True
+    # a path variable read elsewhere: MAIN = ROOT / "psp" / "main_psp.c" ... MAIN.read_text()
+    for var in re.findall(r'^\s*([A-Za-z_]\w*)\s*=[^\n]*main_psp\.c', text, re.M):
+        if re.search(r'\b%s\s*\.\s*(read_text|read_bytes|open)\(|open\(\s*%s\b|'
+                     r'read_source\(\s*(?:str\(\s*)?%s\b' % (var, var, var), text):
+            return True
+    return False
+
+
+def enumerate_readers(gpsp, gate=False):
+    """Python files that READ main_psp.c (a path mention plus a read call within 2
+    lines, read_source() included, or a path variable read elsewhere), found by
+    walking ALL of GPSP_DIR recursively (PLAN-P-beta5 P1: a reader added in any
+    subdirectory is found).  Paths are relative to GPSP_DIR, '/'-separated, sorted.
+    tools/refactor/ (the gate tools) is left out unless gate=True; this file is
+    never listed.  C hand-mirrors that only cite main_psp.c in comments are not
+    readers."""
     found = []
-    for d in ('tools', os.path.join('tools', 'tests')):
-        p = os.path.join(gpsp, d)
-        if not os.path.isdir(p):
+    for root, dirs, files in os.walk(gpsp):
+        dirs[:] = sorted(d for d in dirs if d not in ('.git', '__pycache__'))
+        rel = os.path.relpath(root, gpsp).replace('\\', '/')
+        rel = '' if rel == '.' else rel + '/'
+        if not gate and rel.startswith(GATE_DIR + '/'):
+            dirs[:] = []
             continue
-        for fn in sorted(os.listdir(p)):
-            if not fn.endswith('.py') or fn == 'extract.py':
+        for fn in files:
+            if not fn.endswith('.py') or rel + fn == SELF:
                 continue
-            text = open(os.path.join(p, fn), encoding='utf-8', errors='replace').read()
-            lines = text.split('\n')
-            hit = False
-            for i, ln in enumerate(lines):
-                if READ_RE.search(ln) and not ln.lstrip().startswith('#') and \
-                        any(CALL_RE.search(x) for x in lines[i:i + 3]):
-                    hit = True
-                    break
-            # a path variable read elsewhere: MAIN = ROOT / "psp" / "main_psp.c" ... MAIN.read_text()
-            for var in re.findall(r'^\s*([A-Za-z_]\w*)\s*=[^\n]*main_psp\.c', text, re.M):
-                if re.search(r'\b%s\s*\.\s*(read_text|read_bytes|open)\(|open\(\s*%s\b' % (var, var), text):
-                    hit = True
-            if hit:
-                found.append(os.path.join(d, fn).replace('\\', '/'))
-    return found
+            if _reads_main(open(os.path.join(root, fn), encoding='utf-8', errors='replace').read()):
+                found.append(rel + fn)
+    return sorted(found)
 
 
 FRAG_INC = re.compile(r'^#include "fe/([A-Za-z0-9_.]+\.inc\.c)"\n', re.M)
@@ -299,10 +319,13 @@ def main(argv):
     if not src_files:
         src_files = [os.path.join(gpsp, 'psp', 'main_psp.c')]
     if args and args[0] == '--enumerate':
-        g = args[1] if len(args) > 1 else gpsp
-        r = enumerate_readers(g)
+        gate = '--gate' in args
+        rest = [x for x in args[1:] if x != '--gate']
+        g = rest[0] if rest else gpsp
+        r = enumerate_readers(g, gate)
         print('\n'.join(r))
-        print('%d host test(s) read main_psp.c as text' % len(r), file=sys.stderr)
+        print('%d host test(s) read main_psp.c as text%s' % (len(r), ' (with the tools/refactor gate tools)' if gate else ''),
+              file=sys.stderr)
         return 0
     src = _read_sources(src_files)
     if args and args[0] == '--list':

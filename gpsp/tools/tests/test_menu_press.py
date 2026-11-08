@@ -42,8 +42,10 @@ import re
 import subprocess
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 
 # The in-game present: the FELP_L_PRES0 breadcrumb, then (within the same
 # block, before any other breadcrumb) the me_video_present() call.  Lines may
@@ -90,7 +92,10 @@ CONTINUE = 'fe_evt("wake_menu choice=continue'
 
 
 def main_body(src):
-    return src[src.index("int main(int argc, char *argv[])"):]
+    """main(), read through its @extract marker fn:main."""
+    body = extract.extract(src, "fn:main")
+    assert body.startswith("int main(int argc, char *argv[])"), "fn:main"
+    return body
 
 
 def home_close(src):
@@ -106,7 +111,9 @@ def home_close(src):
 
 def overlay_continue(src):
     """What the overlay's Continue runs between clearing g_wake_have and
-    the leaving check: the arm and the cleared pad."""
+    the leaving check: the arm and the cleared pad (in wake_service, read
+    through its @extract marker fn:wake_service)."""
+    src = extract.extract(src, "fn:wake_service")
     i = src.find(CONTINUE)
     if i < 0:
         return ""
@@ -140,6 +147,7 @@ def menu_close(src):
 
 def inproc_reset(src):
     """The in-process return's per-game reset, before goto session_top."""
+    src = main_body(src)
     i = src.find('fe_evt("inproc_return')
     j = src.find("goto session_top;", i)
     return src[i:j] if 0 <= i < j else ""
@@ -147,11 +155,12 @@ def inproc_reset(src):
 
 def production(src):
     parts = []
-    m = re.search(r"^static unsigned g_pad_swallow;$", src, re.M)
+    swallow = extract.extract(src, "menu:pad_swallow")
+    m = re.search(r"^static unsigned g_pad_swallow;$", swallow, re.M)
     assert m, "g_pad_swallow not found"
     parts.append(m.group(0))
-    parts.append(static_fn(src, "static void pad_swallow_arm(unsigned held)"))
-    parts.append(static_fn(src, "static unsigned pad_swallow(unsigned pad)"))
+    parts.append(static_fn(swallow, "static void pad_swallow_arm(unsigned held)"))
+    parts.append(static_fn(swallow, "static unsigned pad_swallow(unsigned pad)"))
     body = main_body(src)
     m = READ.search(body)
     read = m.group(0) if m else ""

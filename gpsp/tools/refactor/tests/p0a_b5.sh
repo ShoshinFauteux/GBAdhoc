@@ -266,7 +266,7 @@ if want t9; then
   fi
   if [ "$(sha256sum < "$M" | cut -c1-64)" != 942c8b546d6b159bf80660081fde816e31082a99aa6e4442a8b45e8272fe5cd1 ]; then
     expect_rc 2 "no --cutlist on a non-01067e74 source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist /nonexistent
-    expect_rc 2 "the 01067e74 cutlist on this source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist "$R/cutlist.txt"
+    expect_rc 2 "the 01067e74 cutlist on this source is refused" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist "$HERE/fixtures/cutlist_01067e74.txt"
   else
     expect_rc 0 "01067e74 without --cutlist: the modules.py fallback is allowed" $PY "$R/globals.py" census --src "$M" --root "$TREE" --cutlist /nonexistent
   fi
