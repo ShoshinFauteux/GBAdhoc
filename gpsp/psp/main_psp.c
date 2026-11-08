@@ -138,9 +138,9 @@ PSP_HEAP_SIZE_KB(-1024);
  * linked, so without LAYOUT_PIN it moves every function after it (and, through
  * the heap, the translation cache); with LAYOUT_PIN the pinned hot path must
  * not move by a byte.  The hardware bench's "pad" arm is built with it. */
-#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
-#define LAYOUT_PAD_STR2(x) #x
+#define LAYOUT_PAD_STR2(x) #x   /* both pads use it: text 0 with .rodata > 0 must build */
 #define LAYOUT_PAD_STR(x) LAYOUT_PAD_STR2(x)
+#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
 __asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
         ".globl layout_pad_cold\n"
         ".type layout_pad_cold, @function\n"
@@ -16035,14 +16035,22 @@ session_top:
             fe_evt("sched_fast built=%d on=%d", &sched_fast != NULL,
                    &sched_fast ? (int)sched_fast : 0);
          }
-         /* 26: PROTOTYPE, guest-visible (TIMER_LAZY builds only; default 0).
-          * Part of the session's core mask: both consoles must agree. */
+         /* 26: TIMER_LAZY (prototype, guest-visible, a 0/1 switch) or HALT_HOP
+          * (exact; a bit mask, bit 1 HALT_HOP, bit 2 HOP_DRAWN; the build's
+          * default when the key is absent).  Only TIMER_LAZY's bit 0 enters
+          * the session's core mask (FE_GBLINK_MASK_TIMER_LAZY, strict: both
+          * consoles must agree).  HALT_HOP's bits stay here: it is exact and
+          * each machine is hashed at its own boundary, so the consoles need
+          * not agree, and the mask's bits 1-2 are the negotiable batching
+          * bits (fe_gblink.h). */
          {
             extern uint32_t timer_lazy __attribute__((weak));
-            long tl = fe_ini_get_int(HARNESS_INI, "timer_lazy", 0);
+            long tl = fe_ini_get_int(HARNESS_INI, "timer_lazy",
+                                     &timer_lazy ? (long)timer_lazy : 0);
             if (&timer_lazy)
-               timer_lazy = tl ? 1u : 0u;
-            cfg.gba_core_mask = (&timer_lazy && timer_lazy) ? 1u : 0u;
+               timer_lazy = (uint32_t)tl;
+            cfg.gba_core_mask = (&timer_lazy && (timer_lazy & 1u))
+                                   ? FE_GBLINK_MASK_TIMER_LAZY : 0u;
             /* 28/29: "Fast link" is NOT set here: it is the player's
              * setting, read when a session starts (gblink_begin). */
             fe_evt("timer_lazy built=%d on=%d core_mask=%08x",

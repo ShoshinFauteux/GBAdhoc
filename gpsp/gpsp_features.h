@@ -209,6 +209,12 @@
 #if !defined(GPSP_NO_MSR_FAST) && !defined(MSR_FAST)
 #define MSR_FAST 1
 #endif
+/* HALT_HOP: a halted CPU jumps over the H-blank edges nothing can see; the
+ * run-time mask timer_lazy defaults to HALT_HOP_DEFAULT (6 = HALT_HOP +
+ * HOP_DRAWN).  Exact (corpus, pair twin hashes; claude/kirby-hop2). */
+#if !defined(GPSP_NO_HALT_HOP) && !defined(HALT_HOP)
+#define HALT_HOP 1
+#endif
 
 /* ---- guest correctness ----------------------------------------------------- */
 #if !defined(GPSP_NO_GBA_PC_MASK) && !defined(GBA_PC_MASK)

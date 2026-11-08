@@ -4222,6 +4222,10 @@ static char s_ol_code[] = "Code";
 static char s_ol_join[] = "Join with code";
 static char s_ol_wheel[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";  /* + its NUL = blank */
 static char s_ol_fmt[] = "%.*s[%c]%s";
+/* the untouched code: a host gets a random room.  .rodata, not .data: these
+ * 8 B in .data moved A's .data (smc_back_lo ..) 64 B onto cpu_ticks's D-cache set
+ * (beta.5 integration, I+D model); the pads take .rodata growth. */
+static const char s_ol_random[] = "random";
 static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " change   " VID_GLYPH_LEFT
                           VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
 
@@ -4300,8 +4304,16 @@ static ui_action screen_online(unsigned edges)
          case OL_CODE:
             g_ol_pos = 0;
             break;
-         case OL_CREATE:
          case OL_JOIN:
+            if (!g_ol_typed)
+            {
+               /* nothing to join yet ("random" is no room): the wheel */
+               g_cursor = OL_CODE;
+               g_ol_pos = 0;
+               break;
+            }
+            /* fall through */
+         case OL_CREATE:
             /* one tail for both: a joiner may become the host of a desktop
              * host's room (the first PSP in), so it takes the link-mode
              * choice along too */
@@ -4344,7 +4356,9 @@ static ui_action screen_online(unsigned edges)
       {
          /* the code up to its first blank (what Join sends); [x] = being edited */
          char v[16];
-         const char *s = g_ol_code;
+         /* untouched: the Code box says "random", Join shows no code */
+         const char *s = online_code_shown(g_ol_typed, g_ol_code,
+                                           i == OL_CODE ? s_ol_random : NULL);
          if (i == OL_CODE && g_ol_pos >= 0)
          {
             char ch = g_ol_code[g_ol_pos];

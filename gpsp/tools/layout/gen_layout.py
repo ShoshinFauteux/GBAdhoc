@@ -263,12 +263,32 @@ def write_order(path, hot, warm, used, a, asm_bytes, lib=None):
                      .rstrip() + '\n')
 
 
+LATE_MARK = '# ---- late'
+LAST_MARK = '# ---- last'
+
+
 def write_ord(order_path, out):
-    names = []
-    for l in open(order_path):
-        l = l.split('#', 1)[0].split()
+    # Rows after a `# ---- late` line (a reviewed hot_order.txt only: `generate`
+    # never writes one) are linked after B's whole hot path, A's copy then B's,
+    # so they move nothing of A's or B's ordered text: small functions taken
+    # out of the hot core to give its bytes back (update_gba's HALT_HOP growth,
+    # docs/LAYOUT-PINNING.md), and code that must not sit among the pinned
+    # functions at all.  Rows after a `# ---- last` line (after the late
+    # section's) link after B's late copies, A's copy then B's: the ME
+    # capture's ml_* helpers, placed there by psp/layout_pad_late.S so the
+    # same pad bytes place them in the release and the lab build.
+    names, late, last = [], [], []
+    dest = names
+    for raw in open(order_path):
+        if raw.startswith(LAST_MARK):
+            dest = last
+            continue
+        if raw.startswith(LATE_MARK):
+            dest = late
+            continue
+        l = raw.split('#', 1)[0].split()
         if l:
-            names.append(l[3] if len(l) > 3 else l[0])
+            dest.append(l[3] if len(l) > 3 else l[0])
     with open(out, 'w', newline='\n') as fh:
         fh.write('/* hot.ord -- GENERATED from hot_order.txt by '
                  'tools/layout/gen_layout.py.\n'
@@ -311,8 +331,25 @@ def write_ord(order_path, out):
             fh.write('  *%s(%s)\n' % (B_OBJECT, sec))
         for n in funcs:
             fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
+        # the late rows, then the last rows: A's copy (or the library
+        # member), then B's, per group
+        for group in (late, last):
+            lfuncs = []
+            for n in group:
+                if n in seen:
+                    continue
+                seen.add(n)
+                if n.startswith('@'):
+                    raise SystemExit('%s: an asm object cannot be late (%s)' % (order_path, n))
+                if ':' in n:
+                    fh.write('  *:%s(.text .text.*)\n' % n.split(':', 1)[1])
+                else:
+                    fh.write('  *(EXCLUDE_FILE(*%s) .text.%s)\n' % (B_OBJECT, n))
+                    lfuncs.append(n)
+            for n in lfuncs:
+                fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
         fh.write('}\n')
-    print('wrote %s (%d entries)' % (out, len(names)))
+    print('wrote %s (%d entries, %d late, %d last)' % (out, len(names), len(late), len(last)))
 
 
 def cmd_generate(a):

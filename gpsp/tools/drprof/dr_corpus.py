@@ -118,6 +118,14 @@ if os.environ.get("DRCORPUS_SHIP") == "1":
         "sndpre": (SHIP, "switch",
                    "reference BEFORE the direct-sound phase fix (audio-only difference expected)"),
     }
+# ---- DRCORPUS_HOP=1 (with FEATURES=baked): HALT_HOP (claude/kirby-hop2) ------
+# Reference = what beta.4 ships.  Both arms must equal it frame for frame.
+if os.environ.get("DRCORPUS_HOP") == "1":
+    VARIANTS = {
+        "base": ("", "ref", "4.6.0-beta.4 shipped flags"),
+        "hop":  ("-DHALT_HOP=1 -DHALT_HOP_DEFAULT=2", "switch", "HALT_HOP (halted lines not drawn)"),
+        "hopd": ("-DHALT_HOP=1", "switch", "HALT_HOP + HOP_DRAWN (default mask 6)"),
+    }
 ORDER = list(VARIANTS)
 
 # A variant built from a patched private copy of the tree (as the mutants

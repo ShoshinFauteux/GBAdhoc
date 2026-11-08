@@ -2,7 +2,10 @@
  * session (online_link.h says why and how).  The session itself: one
  * sceNetInet UDP socket, the relay's name resolved with sceNetResolver, and
  * transport_relay.c (rendezvous, punch, relay fallback) under the EBOOT's
- * netdrv.  Wi-Fi association stays in the EBOOT (mgift_net.c, shared with
+ * netdrv.  Before the server is contacted, home relay discovery (beta.5): one
+ * DISCOVER to the LAN broadcast addresses, answers read for 400 ms -- a relay
+ * on this LAN that is the configured one is used at its LAN address (routers
+ * without NAT hairpin).  No answer: exactly as before.  Wi-Fi association stays in the EBOOT (mgift_net.c, shared with
  * Mystery Gift) and is reached through the host table.
  */
 #include <pspsdk.h>
@@ -37,6 +40,10 @@ static struct
    char shown;
    char chip[48];
    int invite;                  /* joined by an invite code: the server is a desktop host */
+   /* home relay discovery: the configured server's name (none for a dotted
+    * quad or an invite) and the broadcast addresses DISCOVER goes to */
+   char name[64];
+   uint32_t bcast[2];
 } O = { .fd = -1 };
 
 static online_api g_api;
@@ -126,6 +133,15 @@ static int sk_send(void *ctx, uint32_t ip, uint16_t port, const void *buf, size_
    a.sin_port = htons(port);
    /* sceNetInetSendto is declared returning size_t: an error is negative */
    n = (int)sceNetInetSendto(O.fd, buf, len, 0, (struct sockaddr *)&a, sizeof(a));
+   if (ip == O.bcast[0] || ip == O.bcast[1])
+   {
+      /* a DISCOVER: not in the counts the failure text reads (a network
+       * that refuses broadcasts must not look like "nothing left the PSP") */
+      if (n < 0)
+         evt("online_discover stage=sendto rc=0x%08X errno=%d", (unsigned)n,
+             sceNetInetGetErrno());
+      return 0;
+   }
    D.tx++;
    if (n >= 0)
       D.tx_ok++;
@@ -178,6 +194,11 @@ static int resolve(uint32_t *ip, uint16_t *port)
       return 0;
    snprintf(host, sizeof(host), "%s", O.cfg.relay);
    colon = strchr(host, ':');
+   if (colon)
+      *colon = 0;
+   snprintf(O.name, sizeof(O.name), "%s", host);   /* home relay discovery */
+   if (colon)
+      *colon = ':';
    if (colon)
    {
       uint16_t p2;
@@ -261,6 +282,8 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
       return 0;
    O.cfg = *cfg;
    O.invite = 0;
+   O.name[0] = 0;
+   O.bcast[0] = O.bcast[1] = 0;
    memset(&D, 0, sizeof(D));     /* an invite skips to have_server */
    O.port = 0;
    {
@@ -343,6 +366,8 @@ have_server:
    }
    sceNetInetSetsockopt(O.fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
    sceNetInetSetsockopt(O.fd, SOL_SOCKET, SO_NONBLOCK, &opt, sizeof(opt));
+   /* home relay discovery sends to the LAN broadcast addresses */
+   sceNetInetSetsockopt(O.fd, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
    memset(&a, 0, sizeof(a));
    a.sin_family = AF_INET;
    a.sin_port = htons(ONLINE_PORT);
@@ -389,6 +414,21 @@ have_server:
       snprintf(ipb, sizeof(ipb), "%s:1", g_ol_host->local_ip());
       rc_cfg.priv_ip_be = parse_ip(ipb, &dummy);
    }
+   /* HOME RELAY DISCOVERY: 255.255.255.255 and this LAN's /24 broadcast
+    * (most homes; the netmask is the EBOOT's, and one more datagram costs
+    * nothing).  transport_relay skips it when the server is a LAN address
+    * already, and matches an answer by the name or the public IP. */
+   O.bcast[0] = 0xFFFFFFFFu;
+   if (rc_cfg.priv_ip_be && rl_ip_lan(rc_cfg.priv_ip_be))
+   {
+      uint8_t b[4];
+      memcpy(b, &rc_cfg.priv_ip_be, 4);
+      b[3] = 255;
+      memcpy(&O.bcast[1], b, 4);
+   }
+   rc_cfg.discover_bcast_be[0] = O.bcast[0];
+   rc_cfg.discover_bcast_be[1] = O.bcast[1];
+   rc_cfg.discover_name = O.name[0] ? O.name : NULL;
    rc_cfg.priv_port = O.port;
    rc_cfg.direct = O.cfg.direct;
    /* a room code is looked up first: a desktop host's code redirects to it */
@@ -429,8 +469,13 @@ have_server:
       beat();
       sceKernelDelayThread(2000);
    }
-   evt("online_up room=%s slot=%d host=%d mode=%d", relay_transport_code(O.rt),
-       relay_transport_slot(O.rt), is_host, relay_transport_mode(O.rt));
+   {
+      rl_client_stats s;
+      relay_transport_stats(O.rt, &s);
+      evt("online_up room=%s slot=%d host=%d mode=%d lan_relay=%u answers=%u",
+          relay_transport_code(O.rt), relay_transport_slot(O.rt), is_host,
+          relay_transport_mode(O.rt), s.lan_relay, s.disc_answers);
+   }
    return 0;
 }
 
@@ -541,14 +586,14 @@ static void ol_stats_evt(const char *at)
    evt("online_stats at=%s nat=%u paths=%s tx=%u rx=%u tx_direct=%u rx_direct=%u "
        "tx_relay=%u rx_relay=%u punches=%u/%u acks=%u fallbacks=%u "
        "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u bursts=%u directs=%u stalls=%u "
-       "located=%u invite=%d", at, s.nat, paths,
+       "located=%u invite=%d lan_relay=%u", at, s.nat, paths,
        (unsigned)s.tx, (unsigned)s.rx, (unsigned)s.tx_direct, (unsigned)s.rx_direct,
        (unsigned)s.tx_relay, (unsigned)s.rx_relay, (unsigned)s.punches_tx,
        (unsigned)s.punches_rx, (unsigned)s.acks_rx, (unsigned)s.fallbacks,
        (unsigned)(s.relay_rtt_us / 1000), (unsigned)(s.direct_rtt_us[0] / 1000),
        (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad,
        (unsigned)s.bursts, (unsigned)s.directs, (unsigned)s.stalls,
-       (unsigned)s.located, O.invite);
+       (unsigned)s.located, O.invite, (unsigned)s.lan_relay);
 }
 
 int module_start(SceSize args, void *argp)

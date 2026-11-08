@@ -339,6 +339,8 @@ Gotchas met on the way:
 
 The hot order and the JIT offset hold by themselves. Instance A's cold text, its `.rodata`, `.data` and `.bss` hold only if what is linked before them changes by a multiple of 8 KiB, so a change to the frontend's size re-tunes:
 
+- **beta.5 integration (claude/beta5-base: HALT_HOP 343dd94d + claude/b5-online + the GBC palettes + the filters cache fix): release BSCAN 7576, LATE 128 (new), MAIN 2284, GB 996, CORE 932, RO 576 (text 1632, FE 2724 unchanged); lab BSCAN 7800, LATE 2272, MAIN 176, GB 956, CORE 7708, RO 384 (text 692, FE 2600 unchanged).** The cache fix (0fb93954, below "The capture line") was cut for beta.4's hot order; on this base it is re-cut so the hot core and A's warm tail do not move. `update_scanline` (the 88 B dispatch), `me_capture_line` and `update_scanline_render` take the renderer's old place at the end of the hot core (`update_scanline` 0x0200, `me_capture_line` 0x0260); the split is 32 B more than the renderer was, so `process_cheats` (8 B) joins the late section. The four `ml_*` helpers leave A's cold text for a new `# ---- last` section (gen_layout.py write_ord: after B's late copies, A then B; hotord_check knows it) in the order `ml_diff_page`, `ml_relevance`, `ml_line_body`, `ml_update_relevance`, and `psp/layout_pad_late.S` (LAYOUT_PAD_LATE_BYTES, in front of `ml_diff_page`) puts `ml_line_body` at 0x01c0. The placement comes from the I+D model (cap_map.py + capsim.sh, the b3cap twin profile in ~/lpcf, maps reproduced bit-identical for the fin7 c7 layout first): sweeping the helpers in 1 KiB then 128 B steps gave a plateau from +1792 to +2176 B after the late section's natural spot (em_battle I 1.102-1.125 ms, d2_drive 3.899-3.930) and 0x01c0 is its middle; the capture block +-64/128 B and `ml_diff_page`/`ml_relevance` moved in front of `ml_line_body` change nothing (<= 0.01 ms). Putting the helpers after B's late copies, not before, is what keeps the pads small in both flavours (before them the lab needed LATE 4096 + MAIN 6568 and lost two heap pages). Model, ms of I-cache miss per frame, fbe9da63-line base (HALT_HOP 343dd94d) -> this: release em_battle 1.700 -> 1.107, d2_drive 4.685 -> 3.894; lab 1.457 -> 1.117, 4.542 -> 3.895; D-cache 0.599 -> 0.601 / 1.322 -> 1.345 (release). CORE now holds A's cold text after video.o's helpers (`_ZL10pipe_latchv#1` .. the syscall stubs, 251 KB, +0; the lock's new CORE anchor) and lets the part before them (`pte_mutex_check_need_init` .. video.o's renderers, 230 KB) move +2880: holding that part instead (CORE 6252) needs RO +2016 for the tables and costs the release an 8 KiB page; the model ranks the two equal. `me_replay_lines` itself sits -160 (re-recorded). A's tables (`netpacket_iface`) -24 (`.rodata` moves in 64 B steps; +40 was the other side and models 0.01 ms worse in D). b5-online's `s_ol_random` moved from `.data` to `.rodata` (const): its 8 B pushed A's `.data` (`smc_back_lo` ..) 64 B onto `cpu_ticks`'s D-cache set (+0.07 ms modelled on d2_drive); `.data`, `.bss`, the guard block, B's region and the JIT are now +0. moddiff vs the 343dd94d release ELF: 2,120,200 B of text +0 (A's hot core and warm tail, B's hot text, main and the frame loop, fe_host, A's cold text after video.o); moved: the capture split and the late and last sections (by design), A's cold text before video.o's helpers (+2880), video.o's renderers after them (-160), the two GB cores (+948 / -3776: the GBC palettes, the GB pad holds `hex_val`), frontend `.rodata` (-768: the RO pad and its 64 B steps). layout.lock [release] and [lab] 37 entries, 0 differ (new: `update_scanline`, `me_capture_line`, `_ZL12ml_line_bodym`, `_ZL10pipe_latchv#1`, the LATE `pad` line). PSP-1000 boot heap: release unchanged from fbe9da63 (11,982,236 B); lab -8,192 B (11,367,836 B; its `.data.pin` lands 484 B over the page, and no pad can give that back without moving a held region). **Hardware 2026-11-07 (Lab, lab build 32a7db5e1071 vs fbe9da63's ef3d26117a48, ABBA x2, work ms/frame):** em_battle -6.1 % (1000) / -5.3 % (3000); with filters on (harness fx_scale 1, LCD grid) em_battle -5.4 / -5.5 % and d2_drive -3.6 / -3.7 %; Doom II -0.6 / -1.2 % (1000 58.90 fps); gb_crystal_walk -0.2 / 0.0 %; gb_sml_run -1.2 / -1.2 %; link set (1000 host, 3000 join) +1.06 % fps geomean (link_kam +1.8 %, link_em +1.3 %, link_nidl +0.0 %), 0 desyncs. PPSSPP gate 48/48, 0 stale, corpus 35/35.
+- **claude/beta5-hop (the beta.5 base + HALT_HOP, claude/kirby-hop2), second arm: a `# ---- late` section in hot_order.txt; release BSCAN 7544, MAIN 5516, GB 532, CORE 6252 (text 1632, FE 2792, RO 1488 unchanged); lab text 692, BSCAN 7768, MAIN 5552, GB 492, CORE 4812, RO 1256 (FE 2668 unchanged).** HALT_HOP grows `update_gba` 212 B in each instance. The first arm (9e048401) held only what the pads could: A's hot core after `update_gba` and its whole warm tail (`serial_next_event` .. `translate_block_arm`, 640 KB) sat +224 B mod 8 KiB and B's hot text +256/+480, and hardware paid for it in solo play (em_battle +4.3/+4.5 % work on the 1000/3000, Doom II +1.9/+1.5 %, the same with HALT_HOP off at run time: the layout, not the hops). Now `memcmp`, `block_lookup_address_dual` and `strlen` (208 B; `process_cheats` stays, or the warm tail lands 32 B under) leave the hot core for a late section that `gen_layout.py write_ord` links after B's whole hot path (A's copy, then B's), with the `halt_hop_*` trio that hop2 had appended to hot.ord by hand; hot_order.txt records `update_gba` at 4068 B (hot core 5,760/6,144). moddiff vs the fbe9da63 ELFs: release 2,281,620 B of text +0 (A's warm tail, B's hot text, main, the frame loop, fe_host, A's cold text), `.rodata`, `.data`, `.bss`, B's region and the JIT +0; what still moves is A's and B's three small functions between `update_gba` and `update_scanline` (656 B, +224), the late section, the GB cores (+508: fe_gblink.c grew in front of them and the GB pad is anchored after them on `hex_val`) and B's cold text (+96). The lock's hot lookups and `gbab_update_gba` are back at fbe9da63's values; only `size main` differs (lab 48648, +16: the timer_lazy mask read). Layout.lock [release] and [lab] 33 entries, 0 differ. PSP-1000 boot heap unchanged from fbe9da63 (release 11,982,236 B, lab 11,376,028 B, image-derived).
 - **claude/beta5-base + claude/opt-1000 a27c15fe (rounds 9-10): LAYOUT_PAD_GB_BYTES 1040 (release and lab), every other pad unchanged** (release FE 2792, CORE 6348; lab FE 2668, CORE 4908). netdrv's direct-mapped reorder buffer (044ef9c6) and the packed noise tables (7a39eb40) were already in the beta.5 base, so round 9's FE +96 does not apply here; what the merge adds is c9f61a13 (one noise loop over the packed table), which shrinks each GB core by 520 B (`snd_noi_produce` -180, `snd_render` -164, `snd_render_orig` -176; round 9 measured 348 on its own base). The GB pad after both GB cores takes the -1040, so `hex_val` (fe_cheats) onward is unmoved. moddiff vs the 7ffe4236 ELFs: release 2,610,220 B of text +0 and lab 2,744,580 B +0; only the GB cores' own code after the change moves (-520 / -1040). `.rodata`, `.data`, `.bss`, B's region and the JIT +0; layout.lock [release] and [lab] 33 entries, 0 differ (one new `at hex_val` line per section, recorded at 7ffe4236's offset, and the GB `pad` line). PSP-1000 boot heap unchanged from 7ffe4236 (release 11,982,236 B, lab 11,376,028 B, image-derived): the round-9 table gain is already in the base.
 - **claude/beta5-base (4.6.0-beta.4.1 d27dc908 + claude/opt-1000 7a39eb40): release 1632 and 1488, FE 2792, CORE 6348, BSCAN 7704, and a new pad, LAYOUT_PAD_MAIN_BYTES 7980; lab (tools/layout/lab-pads.env) 708 / RO 1320 / FE 2668 / CORE 4908 / BSCAN 7928 / MAIN 8016** (against the round-8 ELFs r8.elf fb410a57 and r8lab.elf 51d607c5, which are nm-identical to round 7's shipped release and lab arm C; RFU_SCHED=1). beta.4's work after 7025085 (online play, the Wi-Fi picker, the edge glow, the hotfix) grew `main`'s code *before* the frame loop by 212 B, so with `main` at round 7's 0x14e0 the loop's code sat 212 B (mostly 176-212 B) off round 8's sets: 3.7 % of the loop-line words on their round-8 set. No existing pad could fix it: `main` is the first `.text.startup` section, linked straight after the ordered text, and LAYOUT_PAD_BSCAN_BYTES sits inside B's hot text, so moving it moves B's hot text after B's `update_scanline` (tried: -212 on BSCAN put B's lookups 224 B off). `psp/layout_pad_main.S` (`layout_pad_main`, a `.text.startup.layout_pad_main` section in an object linked before main_psp.o) is the missing degree of freedom: it moves `main` and everything after it and leaves the ordered text alone. 7980 (= -212 mod 8 KiB) puts the release loop at the best placement a word-by-word scan finds (48.3 % of loop-line words on round 8's set; the lab: 90.6 %); `main` itself now starts at 0x140c (release) / 0x0bd0 (lab). The other pads were re-tuned for what each region's per-frame code is, not for the first symbol after the pad: LAYOUT_PAD_BYTES for main_psp.o's per-frame run (`net_frame` .. `dest_geo`, with `pace_frame`; `exit_cb` stays +0x28-ish off because the code between it and pace_frame changed), FE for fe_host's run (`fe_host_reset` .. `fe_np_peer_min_fps`; netdrv/relay before it and the GB cores after it grew in beta.4 and sit off), CORE for A's cold text (99.4 % of it at +0, `me_replay_lines` 0x17c0), RO for A's tables (`netpacket_iface` 0x1ec0, 24 B under round 8's 0x1ed8: `.rodata` moves in 64 B steps here, +40 is the other side). B's hot text, A's hot core and warm tail, the JIT bases (0x1500), `reg`/gbahot, `_gp`, B's region and `_end` are unchanged; hotord_check 151/151 placed, hot core 5,756/6,144. **Cost: one 8 KiB step of PSP-1000 boot heap in the release** (the MAIN pad's 7,980 B cannot be taken back by the later pads, so `.data` moves one page: `.data.pin` slack 164 B); the lab had 7 KiB of slack and does not move. **Lab:** since beta.4 the lab's `vid_draw_prestaged` is the release's size (564 B; it was 648 B in the round-8 lab), so the lab's A warm tail (`update_input` .. `translate_block_arm`) sits 96 B and B's hot text before B's `update_scanline` (`gbab_sound_timer` .. `gbab_update_gba`) 64 B under round 8's lab, and no pad in the hot order can hold them; BSCAN +64 puts B's text after `update_scanline` (its lookups and the warm tail, ~600 KB) back. The lock now has a `pad` line for the new pad, anchors that name what each pad is tuned for (`gbab_block_lookup_address_arm`, `main`, `pace_frame`, `fe_host_reset`, `pte_mutex_check_need_init`), and both sections re-recorded from these builds.
 - **claude/opt-1000 round 9: LAYOUT_PAD_FE_BYTES 3512 -> 3608 and a new LAYOUT_PAD_GB_BYTES 696** (psp/layout_pad_mid.S built a third time as `layout_pad_gb.o`, linked after `gbcore_tgbdual_linked_b.o`; lab: FE 3236 -> 3332, GB 696; the other pads unchanged), against round 9's layout-neutral tip c5ab9266 (nm identical to round 8's). netdrv's ARQ receive path shrank 96 B (direct-mapped reorder buffer) and each GB core's noise code 348 B (packed tables, one loop). The FE pad takes back the -96, so everything from `netdrv_poll_needed` to the GB cores is unmoved; netdrv's own first 1,808 B (`roster_valid` .. `peer_remove`, before the change) move +96, and the lock's FE anchor moved from `roster_valid` to `netdrv_poll_needed`. The GB pad takes the -696, so `hex_val` (fe_cheats) onward, i.e. fe_rewind, online, the link glue, B's cold text, A's cold text and tables, are unmoved. `.rodata` is 57,344 B (7 x 8 KiB) smaller, so `.data`, the guard block, `_gp`, `.bss`, B's region and the JIT move by whole pages. moddiff vs c5ab9266: 3,386 text symbols (2,593,332 B) +0, rodata/data/bss +0 but the two tables; layout.lock [release] 31 entries, 0 differ. PSP-1000 boot heap +57,344 B (image-derived).
@@ -360,3 +362,106 @@ The hot order and the JIT offset hold by themselves. Instance A's cold text, its
 **The lock.** `tools/layout/layout.lock` has a `[release]` and a `[lab]` section: the offsets mod 8 KiB of `main`, `pace_frame`, the first symbol after each text pad, the pinned hot lookups and `update_gba` of both instances, A's cold text and tables, `gbahot_start`, `reg`, `_gp`, `iwram`, `ewram` and `_end`; B's region (`gbab_bregion_start`, `gbab_bregion_lend`), both instances' `rom_branch_hash` and their four JIT bases (`rom_`/`ram_translation_cache_static`, 0x1500: the code cache's colouring and the hot-data guard rest on it; `_end` alone misses a `.bss` change that grows before them and shrinks after, critique-8 MF3); `main`'s size (a change moves the frame loop's window); the warm hole in front of A's thumb lookup (`gap`, 32) and the 32 B after B's (`tail`, 32). tools/build.sh runs `tools/layout/layout_lock.py check` on every release and every lab build with `tools/layout/lab-pads.env` and records the result in the manifest as `layoutLock` (`release:ok`, `lab:differs`, `release:unchecked` when psp-nm gave nothing, or `none`). It fails the build on a difference only for the default switch set (RFU_SCHED=1, GBA_LINK, REWIND, ONLINE, CHEATS, INPUT_FRESH, MGIFT and LAYOUT_PIN on, ME_LOWLAT unset or 2, no PSP_EXTRA/CORE_EXTRA/FE_EXTRA/LAYOUT_PAD_BYTES); any other arm is reported. That policy, and what the check's exit code means, is `layout_lock.py strict` / `verdict` (tested in tools/tests/test_layout_lock.py, critique-9 SF3); build.sh only calls it. `tools/make_release.sh` packages only a manifest with `layoutLock` `release:ok`, so a release built another way (a stable RFU_SCHED=0 one included) must re-pin and record its own lock before it can ship (critique-8 MF2). A re-pin goes: build, `layout_lock.py solve FLAVOUR .build-elf.nm --makefile psp/Makefile` (release) or `--pads tools/layout/lab-pads.env` (lab) for first-order pad values (it does not model the next section's alignment or `.rodata`'s steps, and the RO pad has no symbol), relink, prove it (loop_diff, moddiff, hotord_check), then `layout_lock.py write FLAVOUR .build-elf.nm` and commit the lock with the pads. **`--gc-sections` would delete every pad and both holes** (nothing references them): the lock fails such a build, and the linker script would have to `KEEP()` them first.
 
 Check by comparing `psp-nm -S -n` of the two ELFs: symbols past `layout_pad_cold`, tables and A's `.bss` must move by multiples of 8192.
+
+## 9. The capture line (4.6.0-beta.4 filters cost, claude/b4-cachefix)
+
+**Finding.**  Filters v2 cost beta.4 +0.22 ms (em_battle) / +0.27 ms (d2_drive)
+of work per frame on hardware with filters off.  The cause is the PSP CPU's
+per-scanline video path under the Media Engine renderer: update_scanline()'s
+capture block (~100 instructions) plus the mid-frame log helpers
+(`ml_line_body`, `ml_update_relevance`, ...).  The model above never saw it:
+it excluded all of video.o (the renderer runs on the ME) and stood in for
+update_scanline with "the first 384 bytes, 160 times".
+
+* The capture block sat INSIDE update_scanline, wherever the compiler put it.
+  Filters v2 only touched the renderer part of that 7.7 KB function, but the
+  capture path moved from sets 34 / 58-62 (beta.3) to 44 / 68-72 (beta.4).
+  Sets 69-72 also hold update_gba's per-line lines and spin_check: three
+  per-line paths in a 2-way cache, thrashed on every scanline.
+* The ml_* helpers were never pinned: they float in instance A's cold text,
+  so any text growth before them moves them too (beta.3 0x0660, beta.4 0x09e0
+  mod 8 KiB).  Driver 2 runs ml_line_body ~340k instructions a frame.
+* The hot core, the warm tail (−32 B), `.data`/`.bss` and the heap were not
+  the cause: the integrator's warm-tail re-pin, `.bss` pad and single-call-site
+  arms all left the capture path where it was.
+
+**The model (I-cache, 16 KiB 2-way, 64 B lines, 215.3 ns/miss).**  The twin
+runs in capture mode 1 (`DR_MECAP=1`, tools/drprof/dr_host.c), so its CPU
+executes exactly the PSP CPU's per-line video work, and video.o is placed like
+any other object (tools/layout/cap_map.py).  update_scanline's own per-line
+path cannot be placed by function fraction (two compilers lay it out
+differently), so tools/layout/uspath.py runs the PSP ELF's code (a small MIPS
+interpreter, capture mode 1, a typical line) and the twin's per-line
+instructions are placed onto that path.  tools/layout/lpsimd_plugin.c adds a
+D-cache (every named object placed by name, the translation cache at the JIT
+base, heap/stack unplaced) and per-layout miss maps.  Lab builds, ms of miss
+time per frame:
+
+| layout | em_battle I | d2_drive I | em D | d2 D |
+|---|---|---|---|---|
+| beta.3 (beta460b3-lab) | 0.891 | 3.657 | 0.542 | 1.304 |
+| filters-only (e94cdd0, beta460b4filt-lab) | 1.185 | 3.979 | 0.514 | 1.303 |
+| beta.4 (beta460b4-zero-lab) | 1.185 | 3.979 | 0.503 | 1.310 |
+| **fix (claude/b4-cachefix)** | **0.964** | **3.601** | 0.511 | 1.388 |
+| fix, path block -64 / +64 B | 0.964 / 0.969 | 3.546 / 3.695 | | |
+
+Predicted b3 -> b4 delta +0.29 / +0.32 ms (hardware +0.22 / +0.27); the fix
+recovers 0.22 ms (75 %) of em_battle and all of d2_drive (I-cache).  The D-cache model
+shows no b3/b4 difference above its noise (unplaced heap data), consistent with
+the `.bss` pad arm; it gives the fix +0.01 / +0.08 ms (net -0.21 / -0.30 ms),
+which is within what that crude placement can resolve.  The model does not rank the integrator's warm-tail arm
+correctly (hardware 6.82 ms, model slightly better than beta.4): treat it as
+right about the mechanism and the size, not about every arm.
+
+**The fix (layout only for the core; the ME PRX is byte-identical).**
+* video.cc: update_scanline() is now the capture dispatch only (88 B, two tail calls):
+  `me_capture_line()` (the block, out of line; capture mode 2 tail-calls the renderer) or
+  `update_scanline_render()` (the CPU renderer).  In the engine
+  (`ME_PRX_BUILD`) `update_scanline_render` IS update_scanline, so the ME
+  module's code is unchanged (gbadhoc_me.prx rebuilt bit-identical, cc723d23).
+* hot.ord: after the hot core's 35 unmoved functions, `ml_line_body,
+  ml_update_relevance, ml_diff_page, ml_relevance, me_capture_line,
+  update_scanline, update_scanline_render`, then the warm tail.  The per-line
+  path is now pinned: no renderer change can move it.  The order was chosen
+  from 8 orders x 5 pads (tools/layout/cap_orders.py) and a 2-D sweep of the
+  block's offset; this one needs no pad, and moving the block 64 B either way
+  keeps it (table).
+* Cost: none in memory.  `LAYOUT_PAD_BYTES` 304 -> 0 (psp/Makefile, flags.lock)
+  absorbs the +292 B of section alignment, so the release image (14,014,860 B)
+  and PSP-1000 boot heap (10,081,692 B) equal beta.4's; the lab build (pads
+  6064 / 2832) keeps 14,612,876 B.  A's cold text and tables move (cold;
+  the D-cache column above includes it for the lab build).
+
+**Hardware A/B still owed** (the model is not a frame time): Lab `ab`,
+beta460b4-zero-lab vs the fix's lab build, ABBA, em_battle + d2_drive, plus
+the whole bench-ready set for losses (judge by docs/LAB noise rules).
+
+Reproduce: `LP_HOME=~/lpcf tools/layout/twin_build.sh <beta.3 tree with the
+dr_host.c DR_MECAP hunk> b3cap "" "<manifest coreFlags as -D>"`, then
+`capsim.sh prof/em_battle em_battle b3cap -` (profile), `uspath.py ELF DIS NM
+0 1 50 100 159` per layout (`FOLLOW=me_capture_line` on the split), `cap_map.py
+... --path NAME=update_scanline:FILE`, `capsim.sh sim/X em_battle b3cap
+/w/sim/S/em_battle.lay`, `cap_missdiff.py` for per-symbol / per-set deltas.
+
+**Re-applying the fix on a re-pinned base (method).**  The fix has two parts
+with different rules.
+1. *The per-line path* (video.cc split, the seven hot.ord entries, hot_order.txt)
+   sits in the hot section ahead of `layout_pad_cold`, so no pad moves it.
+   Checked: instance A's `update_scanline` 0x1420, `me_capture_line` 0x0e00,
+   `ml_line_body` 0x0220, `ml_update_relevance` 0x08e0, `ml_diff_page` 0x0b80,
+   `ml_relevance` 0x0c60, `spin_check` 0x1c20 (mod 8 KiB) are identical in the
+   release (pad 0), the release at pad 304 (an earlier arm) and the lab build
+   (6064), and again after cherry-picking onto c7a74a88 (lab 5600/2864).  After
+   any rebase, check these offsets (`psp-nm -n`, instance A = the lower copy).
+2. *The pads* only hold memory.  The fix adds 404 B of `.text` (the split, plus
+   32 B function rounding of the newly ordered functions in both instances).
+   Lab: keep the base's lab pads (delta 0; 6064/2832 -> image 14,612,876 as
+   the base).  Release: text pad -304 so `.data` stays on its page (needs
+   `.eh_frame` end + 272 B + 1 B of `.data.pin` <= the page boundary).
+   On f176816a (304/0) that is 0/0: image 14,014,860, PSP-1000 heap 10,081,692,
+   as beta.4.  On c7a74a88 (144/32) the pad cannot go below 0: 0/32 builds
+   `.data` 101 B over the page (image 14,023,052, heap 10,073,500, -8 KiB).
+   There the fix needs >= 101 B found before `.data` (RO pad 32 -> 0 gives
+   32) before it is heap-free.
+- `LAYOUT_PAD_STR` now builds with a text pad of 0 and a `.rodata` pad > 0
+  (it was defined only inside the text pad's #if).

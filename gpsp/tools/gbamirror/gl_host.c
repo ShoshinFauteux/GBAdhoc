@@ -571,10 +571,36 @@ static void write_bmp(const char *path, const uint16_t *pix, size_t pitch)
    fclose(f);
 }
 
+static int g_sdiag;   /* --sdiag: B's clock and counters beside each S line */
 static void emit_hash(unsigned slot, uint32_t frame)
 {
    uint32_t h[8];
    g_ops[slot].hash(h);
+   /* the session's sync hash (fe_gblink.c pair_sync_hash): slot 1's half at
+    * its own boundary, the frame before slot 0's */
+   if (g_hash && slot == 1 && (frame + 1) % 60 == 0)
+      fprintf(g_hash, "S f=%u h=%08x\n", frame + 1, h[7]);
+   /* the 4.5.0 sync hash: the OTHER slot as slot 0's frame ends (depends on
+    * how slot 1's run was sliced) */
+   if (g_hash && slot == 0 && frame % 60 == 0)
+   {
+      uint32_t o[8];
+      g_ops[1].hash(o);
+      fprintf(g_hash, "O f=%u r=%08x i=%08x e=%08x io=%08x p=%08x o=%08x v=%08x\n",
+              frame, o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
+      if (g_sdiag)
+      {
+         extern uint32_t gbab_reg[];
+         extern uint16_t gbab_io_registers[];
+         extern int32_t gbab_video_count, gbab_execute_cycles;
+         fprintf(g_hash, "D f=%u now=%llu pc=%08x halt=%u vc=%u ds=%04x if=%04x "
+                 "vcnt=%d ex=%d\n", frame,
+                 (unsigned long long)g_ops[1].now(), gbab_reg[15],
+                 gbab_reg[18 /* CPU_HALT_STATE */], gbab_io_registers[0x06 / 2],
+                 gbab_io_registers[0x04 / 2], gbab_io_registers[0x202 / 2],
+                 gbab_video_count, gbab_execute_cycles);
+      }
+   }
    if (g_hash)
       fprintf(g_hash, "s=%u f=%u r=%08x i=%08x e=%08x io=%08x p=%08x o=%08x "
               "v=%08x\n", slot, frame, h[0], h[1], h[2], h[3], h[4], h[5], h[6]);
@@ -692,6 +718,16 @@ int main(int argc, char **argv)
       {
          extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;
          headless1 = 1;
+         gbalink_headless_audio = gbab_gbalink_headless_audio = 2;
+      }
+      /* the joining console's view: slot 0 is the partner (headless, quiet)
+       * and slot 1 the local machine.  The session's sync hash must not
+       * care which console computed it. */
+      else if (!strcmp(argv[i], "--sdiag")) g_sdiag = 1;
+      else if (!strcmp(argv[i], "--headless0q"))
+      {
+         extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;
+         headless1 = -1;
          gbalink_headless_audio = gbab_gbalink_headless_audio = 2;
       }
 #ifdef DRPROF_TWIN
@@ -867,10 +903,11 @@ int main(int argc, char **argv)
       uint32_t fed[2] = { 0, 0 };
       memset(&cfg, 0, sizeof(cfg));
       cfg.lookahead = lookahead;
-      cfg.local_slot = 0;
+      cfg.local_slot = headless1 < 0 ? 1 : 0;
       cfg.on_frame = on_frame;
       cfg.stress_seed = stress;
-      cfg.headless[1] = headless1;
+      cfg.headless[0] = headless1 < 0;
+      cfg.headless[1] = headless1 > 0;
       if (g_use_ap)
          cfg.input = ap_input;
       /* both drawn on the desktop, so dumps work; rendering is not guest

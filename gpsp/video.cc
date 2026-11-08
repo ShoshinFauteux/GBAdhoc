@@ -3190,7 +3190,96 @@ void me_replay_lines(const me_capture_frame *cap, int *reloads, int use_log)
     *reloads = n;
 }
 
+#ifndef ME_PRX_BUILD
+/* The PSP CPU's per-line video work under the Media Engine renderer:
+ * update_scanline()'s capture block, out of line.  Inside update_scanline
+ * the compiler placed these ~100 instructions wherever the renderer's
+ * code put them, and any change to the renderer (filters v2, 4.6.0-beta.4)
+ * moved them onto other I-cache sets: on beta.4 they shared sets 68-72 with
+ * update_gba and spin_check, three per-line paths in a 2-way cache
+ * (+0.2 ms a frame on hardware).  Its own section, so psp/layout/hot.ord
+ * pins it (docs/LAYOUT-PINNING.md, "The capture line").  Capture mode 2
+ * (validation) then renders on the CPU too, as a tail call. */
+extern "C" void __attribute__((noinline)) update_scanline_render(void);
+extern "C" void __attribute__((noinline)) me_capture_line(u32 vcount, u32 video_mode);
+extern "C" void __attribute__((noinline)) me_capture_line(u32 vcount, u32 video_mode)
+{
+  (void)video_mode;            /* unused without ME_AFFINE_LINES */
+#if ME_MIDFRAME_LOG
+  /* Before the OAM flag is latched (line 0) or consumed (mode 2 render). */
+  if (vcount == 0)
+    MFL_FRAME_START();
+  else
+    MFL_LINE(vcount);
+#endif
+  if (vcount == 0)
+  {
+    me_capture_buf->affine_seed[0] = affine_reference_x[0];
+    me_capture_buf->affine_seed[1] = affine_reference_x[1];
+    me_capture_buf->affine_seed[2] = affine_reference_y[0];
+    me_capture_buf->affine_seed[3] = affine_reference_y[1];
+    me_capture_buf->oam_updated    = reg[OAM_UPDATED];
+    if (me_capture_mode == 1)
+      reg[OAM_UPDATED] = 0;     /* the ME's order_obj consumes the flag */
+  }
+  memcpy(me_capture_buf->ioregs[vcount], io_registers,
+         ME_CAP_IOREGS * sizeof(u16));
+#if ME_AFFINE_LINES
+  me_capture_buf->affine_line[vcount][0] = affine_reference_x[0];
+  me_capture_buf->affine_line[vcount][1] = affine_reference_x[1];
+  me_capture_buf->affine_line[vcount][2] = affine_reference_y[0];
+  me_capture_buf->affine_line[vcount][3] = affine_reference_y[1];
+#endif
+  MTS_CAPTURE_LINE(vcount);
+  if (me_capture_mode == 1)
+  {
+#if ME_AFFINE_LINES
+    /* The render is skipped, the counters are not: the next line's
+     * recorded value must be where the CPU renderer would have been. */
+    if (video_mode)
+      affine_advance(vcount);
+#endif
+    return;                     /* the render happens on the ME */
+  }
+  update_scanline_render();
+}
+#endif
+
+#ifdef ME_PRX_BUILD
+/* The engine never captures: its update_scanline is the renderer itself. */
+#define update_scanline_render update_scanline
+#define USR_LINKAGE
+#else
+#define USR_LINKAGE extern "C"
+/* The PSP CPU's per-line entry under the Media Engine renderer: the
+ * capture (me_capture_line) or the CPU renderer (update_scanline_render,
+ * out of line).  Kept this small on
+ * purpose: the per-line path is this function and me_capture_line, both
+ * pinned in psp/layout/hot.ord, so a change to the renderer can no
+ * longer move it onto other I-cache sets (4.6.0-beta.4: +0.2 ms a frame
+ * on hardware, docs/LAYOUT-PINNING.md "The capture line"). */
 void update_scanline(void)
+{
+  /* ME renderer capture: log this line's LCD registers; at line 0 also latch
+   * the affine seed (video_reload_counters ran at the last vblank) and the
+   * OAM_UPDATED flag.  Mode 1 then SKIPS the render entirely — the ME renders
+   * this frame from the capture, and the ~6 ms/frame stays with the emulator.
+   * Compiled out of the engine itself (ME_PRX_BUILD): it never captures.
+   * skip_next_frame is tested first, as the renderer below tests it. */
+  if (__builtin_expect(me_capture_mode != 0, 1) && !skip_next_frame)
+  {
+    u32 vc = read_ioreg(REG_VCOUNT);
+    if (me_capture_buf && vc < 160)
+    {
+      me_capture_line(vc, read_ioreg(REG_DISPCNT) & 0x07);
+      return;
+    }
+  }
+  update_scanline_render();
+}
+#endif
+
+USR_LINKAGE void update_scanline_render(void)
 {
   DRPH_SCOPE(DRPH_VIDEO);
   u32 pitch = get_screen_pitch();
@@ -3202,53 +3291,9 @@ void update_scanline(void)
   if(skip_next_frame)
     return;
 
-  /* ME renderer capture: log this line's LCD registers; at line 0 also latch
-   * the affine seed (video_reload_counters ran at the last vblank) and the
-   * OAM_UPDATED flag.  Mode 1 then SKIPS the render entirely — the ME renders
-   * this frame from the capture, and the ~6 ms/frame stays with the emulator.
-   * Compiled out of the engine itself (ME_PRX_BUILD): it never captures, and
-   * this is the hottest function in its 16 KiB I-cache. */
-#ifndef ME_PRX_BUILD
-  if (me_capture_mode && me_capture_buf && vcount < 160)
-  {
-#if ME_MIDFRAME_LOG
-    /* Before the OAM flag is latched (line 0) or consumed (mode 2 render). */
-    if (vcount == 0)
-      MFL_FRAME_START();
-    else
-      MFL_LINE(vcount);
-#endif
-    if (vcount == 0)
-    {
-      me_capture_buf->affine_seed[0] = affine_reference_x[0];
-      me_capture_buf->affine_seed[1] = affine_reference_x[1];
-      me_capture_buf->affine_seed[2] = affine_reference_y[0];
-      me_capture_buf->affine_seed[3] = affine_reference_y[1];
-      me_capture_buf->oam_updated    = reg[OAM_UPDATED];
-      if (me_capture_mode == 1)
-        reg[OAM_UPDATED] = 0;     /* the ME's order_obj consumes the flag */
-    }
-    memcpy(me_capture_buf->ioregs[vcount], io_registers,
-           ME_CAP_IOREGS * sizeof(u16));
-#if ME_AFFINE_LINES
-    me_capture_buf->affine_line[vcount][0] = affine_reference_x[0];
-    me_capture_buf->affine_line[vcount][1] = affine_reference_x[1];
-    me_capture_buf->affine_line[vcount][2] = affine_reference_y[0];
-    me_capture_buf->affine_line[vcount][3] = affine_reference_y[1];
-#endif
-    MTS_CAPTURE_LINE(vcount);
-    if (me_capture_mode == 1)
-    {
-#if ME_AFFINE_LINES
-      /* The render is skipped, the counters are not: the next line's
-       * recorded value must be where the CPU renderer would have been. */
-      if (video_mode)
-        affine_advance(vcount);
-#endif
-      return;                     /* the render happens on the ME */
-    }
-  }
-#endif
+  /* (The ME capture is update_scanline()'s, above.  In the engine itself,
+   * ME_PRX_BUILD, this is update_scanline: the hottest function in its
+   * 16 KiB I-cache.) */
 #if ME_TIMING_SIM && ME_MIDFRAME_LOG
   /* Desktop cost reference: the CPU renderer's own time (mode 2 only). */
   unsigned long long mts_t0 =

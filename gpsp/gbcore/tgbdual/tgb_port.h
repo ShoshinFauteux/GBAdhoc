@@ -44,6 +44,9 @@
 extern int pad_state;
 /* DMG palette as BGR555: BG[4], OBJ0[4], OBJ1[4].  Adapter. */
 extern word tgb_dmg_palette[12];
+/* Nonzero: tgb_dmg_palette holds Game Boy Color colours (a GBC palette for
+ * a DMG game), which lcd.c shows through the GBC LCD model.  Adapter. */
+extern int tgb_dmg_is_cgb;
 /* Nonzero (the default): CGB colours are shown through the Game Boy Color
  * LCD model (lcd.c, _cgb_lcd_table.h); zero: the raw 5-to-8-bit expansion.
  * Defined once in tgb_shared.c; set by gbcore_set_color_correction. */

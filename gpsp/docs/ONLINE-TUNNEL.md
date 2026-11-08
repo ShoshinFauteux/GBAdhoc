@@ -350,8 +350,9 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
 - **Every PUNCH is answered, in any state**, and a PUNCH that arrives while we are on the relay starts
   our burst at once, so two bursts that missed each other line up. A late PUNCH_ACK still makes the
   path direct: it is the round trip.
-- **Retries.** On the relay a PSP bursts again after 3, 6, 12, 24 and then every 30 s (20-byte PUNCHes,
-  ~2 KB a burst). It stops only while the path is direct.
+- **Retries.** On the relay a PSP bursts again after 3, 6, 12, 24 and 48 s, then only every 5 minutes
+  (20-byte PUNCHes, ~2 KB a burst; it was every 30 s for good until 2026-11-06, see below). Going
+  direct resets the budget.
 - **Candidates, private first:** the LAN address, the public endpoint the server saw, the **router
   forward** (the peer's public IP with its own socket port, or the port it names in `map_port`), and
   the **peer-reflexive** address: where the peer's punches actually came from. A symmetric NAT gives
@@ -360,7 +361,7 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
 - **The server offers a punch unless both sides are symmetric** (and neither names a forward). One
   reachable side is enough.
 
-What goes direct (in-process model `test_relay_nat`, 19/19, and the real-socket `natlab.py`, 12/12):
+What goes direct (in-process model `test_relay_nat`, 31/31, and the real-socket `natlab.py`, 26/26, 2026-11-06):
 
 | host | guest | path |
 |---|---|---|
@@ -369,8 +370,55 @@ What goes direct (in-process model `test_relay_nat`, 19/19, and the real-socket 
 | address-restricted cone (any port of an IP it sent to) | symmetric / CGNAT | direct (peer-reflexive) |
 | cone + UPnP forward of 27500 (or another port with `map_port`) | symmetric / CGNAT | direct |
 | symmetric + UPnP forward, `map_port` set | symmetric | direct |
-| port-restricted cone, no forward | symmetric | relay: the cone drops the CGNAT's new port, and the CGNAT drops ours |
+| port-restricted cone, no forward | symmetric, sequential ports | direct by port prediction (2026-11-06) |
+| port-restricted cone, no forward | symmetric, random ports | relay: the cone drops the CGNAT's new port, and the CGNAT drops ours |
 | symmetric, no forward | symmetric | relay: neither side has an address the other can predict |
+| on the relay's own LAN, port-keeping router | cone, or sequential symmetric | direct (2026-11-06) |
+
+### Direct more often (2026-11-06, branch claude/direct-connect)
+
+The first real internet trade (ZAZA) ran through the relay for its whole length: the PSP-3000 on the
+relay PC's home LAN (`host=10.0.0.22:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
+NAT). Three causes, three changes:
+
+1. **A host on the relay's own LAN had no usable candidate.** The relay saw it at its private address
+   (winfwd carries the LAN source through), so the Go was told `public=10.0.0.22:27500`, an address
+   that leads nowhere from cellular, and no forward candidate (the "forward" was the same endpoint).
+   Now:
+   - **client side, needs no server change:** a peer whose server-seen address is private
+     (`rl_ip_private`: RFC 1918, 100.64/10, loopback, link-local) shares the server's router. If we
+     reached the server at a PUBLIC address, that address is the peer's router as the internet sees
+     it: we also punch `server_ip:<peer's port>` (the "site" candidate). A beta.4 server's private
+     forward candidate is rewritten the same way.
+   - **server side, optional:** `gbadhoc-relay --public-ip IP` (or the existing `--public`), or
+     `relay_core_set_public_ip()` from a desktop host's UPnP `GetExternalIPAddress`, puts
+     `public_ip:<port or map_port>` in the forward slot of CANDIDATES, so beta.4 clients benefit too.
+   The candidate assumes the router keeps the console's source port (many do; the Rogers gateway
+   appears to). If it does not, the punch misses and the pair stays on the relay; the private
+   candidate stays first for a peer on the same LAN.
+2. **Symmetric peers were unpredictable by construction.** CREATE/JOIN now carry `probe_port` (body
+   bytes 38-39: the public port the PROBE socket, port + 1, saw) and CANDIDATES carries the peer's
+   `nat` and `probe_port` (body bytes 30-32). Against a symmetric peer, a non-symmetric console adds
+   ONE PUNCH per 20 ms tick to the next of 16 predicted ports, `probe_port + delta * i` (delta = probe
+   port - main port, used only when 1 <= |delta| <= 8), round robin: +50 datagrams/s during a 2 s burst,
+   ~100 a burst, nothing through the relay. A random-port CGNAT gives a large delta and no spray.
+3. **Endless re-punching.** The ~32 s `path ... path=relay` lines were the 30 s retry cap plus the 2 s
+   burst: after every failed burst each console sent PATH relay, which the server logged and passed on
+   as PEER RELAY. Each burst is ~100 PUNCH sendto() calls from the emulation thread over 2 s
+   (4 candidates per 20 ms), cheap but pointless on a pair that cannot go direct. Now the retries stop
+   at 5 (3-48 s), then every 5 minutes; PATH relay is sent only if the server heard direct from us or
+   the peer's punches reached us in that burst; the server logs `path` only when a slot's reported
+   path changes (beta.4 clients' repeats are no longer logged).
+
+Wire compatibility: no version bump. Every new field sits in bytes a beta.4 peer already pads with
+zeros (CREATE/JOIN are 64 B) or ignores (CANDIDATES beyond 30 B). beta.4 client + new server: gets the
+--public-ip forward candidate, no prediction (its probe_port reads 0, so its peers predict from
+`pub_port + 1`). New client + beta.4 server: site candidate yes, prediction no (no nat byte).
+
+Measured in the in-process model (`test_relay_nat`, 31/31; the same cases against the beta.4 sources:
+21/31): a relay-LAN host against a cone or sequential-symmetric guest goes direct; against a
+random-port guest over 10 minutes the old code made 21 bursts a side and 42 server path lines, the new
+code 7 bursts and 0 lines. `test_relay_desktop` 19/19 adds the same cases for a desktop host's home.
 
 **Who can open a forward:**
 
@@ -739,6 +787,79 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
 - carrier-grade NAT on the host side (the app says "players outside cannot reach this PC");
 - the directory on the VPS;
 - real-internet punching (home Wi-Fi against a phone hotspot), which needs the owner's go-ahead.
+
+### Home relay discovery (beta.5, branch claude/b5-online)
+
+**The problem.** A PSP on the relay's own LAN cannot reach it through its public address when the
+router does no NAT hairpin (the owner's Rogers gateway, and many others). The owner had to switch
+`online_relay` between `10.0.0.40:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
+host's own PSPs have the same problem with an invite code (it names the PC's public address).
+
+**Wire.** Two new types, no version bump (an older relay ignores them; an older console never sends
+them):
+
+| type | direction | body |
+|---|---|---|
+| `RL_T_DISCOVER` 22 | console -> LAN broadcast, main port | `nonce[4]`, padded to `RL_DISC_PAD` = 96 B |
+| `RL_T_DISCOVERED` 23 | relay -> console, from the MAIN socket | `nonce[4] pub_ip[4] pub_port[2] name_len[1] name[<=63]` (<= 90 B) |
+
+The answer's **source address is the LAN endpoint** (the relay may not know its own LAN address: the
+owner's runs in WSL behind winfwd). `pub_ip`/`pub_port` 0 = unknown.
+
+**Console (transport_relay.c, state `RL_ST_DISCOVER`, first of all states).** DISCOVER to
+255.255.255.255 and the console's /24 broadcast at 0, 130 and 260 ms; answers read until 400 ms. An
+answer is used only when it is the configured server: its name equals the configured name
+(case-insensitive), or its `pub_ip` equals the address the name resolved to (or the invite's) and
+its `pub_port`, when given, equals the configured port. It must also come from a LAN address. Then
+that address becomes the server for everything (LOOKUP, PROBE, CREATE/JOIN, relay); `lan_relay=1`
+in the stats. Anything else is logged (`relay_discover ... ignored`) and changes nothing; no answer
+= exactly the old path, 400 ms later. Skipped when the configured server is already a LAN address.
+DNS still runs first (a failed lookup fails as before). The PRX sets `SO_BROADCAST`; broadcast sends
+are kept out of the failure text's counters. No new import, no new heap (96 B on the stack).
+
+**Relay (relay_core.c `on_discover`).** Answers only: when enabled (`cfg.discover`,
+`relay_core_set_discover`); when it knows who it is (a public IP, from `--public-ip`/UPnP, and/or a
+served name, `--name`/`relay_core_set_name`); to a LAN source (`rl_ip_lan`: RFC 1918, link-local,
+loopback; NOT 100.64/10); on the main socket; to a request padded to 96 B, with an answer never
+larger than it; within 20 answers/s from all sources and 30/min per source. Refusals are silent.
+`gbadhoc-relay` turns it on whenever it has `--name` or `--public-ip` (`--no-discover` to stop);
+`--name` without `--public-ip` resolves the name for the public IP (again every 10 min).
+
+**A LAN-discovered relay is still the same relay**: a remote peer joins the same room through the
+public address, the room/invite codes are unchanged, and direct-connect's site candidate (the
+relay's public IP with the home console's port) applies as for a console configured with the LAN
+address. For a code (LOOKUP at the shared server) a desktop host's own answer is ignored -- the
+shared server is the configured one -- and the directory's same-home redirect does the job.
+
+**Trust.** Anything on the LAN can answer DISCOVER; the console trusts a LAN device naming its
+server as it trusts the LAN's DNS. It never trusts a relay that names another server, nor one
+claiming the right IP with another port.
+
+**winfwd.** Windows delivers subnet and limited broadcasts to a socket bound to the unicast LAN
+address (measured 2026-11-07 on the relay PC: a socket bound to 10.0.0.40 received datagrams sent to
+10.0.0.255 and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
+socket. A Linux relay must bind 0.0.0.0 (a socket bound to a unicast address there gets no
+broadcasts).
+
+**Tests.** test_relay_nat: no-hairpin home host x away cone / symmetric / random symmetric, by name
+without a public IP, both consoles at home, discovery off (the room must NOT form: the problem
+itself), a foreign relay on the LAN, a foreign relay claiming our IP with another port, a 10-minute
+session; plus the core's rules one by one. test_relay_desktop and natlab (real sockets): invite from
+the PC's home x cone / symmetric, both PSPs at the PC's home, a code from the PC's home (answer
+ignored). fuzz_relay fuzzes both sides with discovery on (2504 answers in 2 M datagrams, no
+amplification). GBAdhoc XMB's tests/online step 5b checks the desktop host's answers (UPnP's IP and
+port; `XMB_ONLINE_NAME`; no identity, no answer).
+
+**PPSSPP, Emerald Union Room trade by discovery only** (2026-11-07, lab build of this branch):
+`builds/b5-online-out/ppsspp-disc/ppsspp_disc.sh` -- a loopback-only namespace with a dummy
+10.0.5.2/24 "Wi-Fi" carrying the default route, `gbadhoc-relay --bind 0.0.0.0 --public-ip
+203.0.113.7`, both consoles configured with `online_relay = 203.0.113.7:27420` (which goes nowhere)
+and room DSCV. Both logged `relay_discover ... match=ip`, `online_up ... lan_relay=1`, the path went
+direct, `trade_complete` on both, clean exits after 159 s.
+
+**Size.** gbadhoc_online.prx 32,174 B (beta.5 base 28,158; direct-connect alone 29,926). EBOOT: the
+room-code box adds 68 B to ui_psp.o; `LAYOUT_PAD_FE_BYTES` 2792 -> 2724 (lab 2668 -> 2600) holds every
+layout.lock anchor; PSP-1000 boot heap unchanged.
 
 ## 7. Implementation plan
 

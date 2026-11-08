@@ -30,6 +30,13 @@ int main(void)
    assert(!strcmp(out, "AB3D5F7H9JK"));
    online_room_request(0, 1, "AB3D5F7H", out);
    assert(!strcmp(out, "AB3D5F7H"));
-   puts("PASS: online room code (host typed / host default / joiner)");
+   /* the box: an untouched code reads "random" (it IS random for a host);
+    * a typed one -- AAAA included -- reads as typed */
+   assert(!strcmp(online_code_shown(0, "AAAA", "random"), "random"));
+   assert(!strcmp(online_code_shown(1, "AAAA", "random"), "AAAA"));
+   assert(!strcmp(online_code_shown(1, "ZAZA", "random"), "ZAZA"));
+   online_room_request(1, 1, "AAAA", out);       /* typed AAAA: room AAAA */
+   assert(!strcmp(out, "AAAA"));
+   puts("PASS: online room code (host typed / host default / joiner / box)");
    return 0;
 }
