@@ -6,6 +6,12 @@ R1	psp/usb_handoff.c	*	handoff_run's own implementation (ADR-0053); reached only
 R1	psp/lab_harness.c	*	lab build's lab_finish / ownership loss (x2 E3); reached via LAB_HANDOFF
 # HW-2 (§3.4): stall_exit leaves raw from the stall thread.  Whitelisted ONLY with --phase HW2.
 R1	psp/main_psp.c	sceKernelExitGame@stall_exit	HW-2 harness batch: raw exit from the stall thread, retained-ME decision made there	HW2
+# P3 (PLAN-P-beta5 §4 P3): the hijack is retired; the exit macros FE_EXIT_GAME / FE_HANDOFF name
+# the real calls in their bodies and sit in main_psp.c until P5 moves them into fe_priv.h (which
+# R1 exempts), and P5 deletes these two rows.  Keyed on the macro names: any OTHER #define whose
+# body names an exit still fails.
+R1	psp/main_psp.c	sceKernelExitGame@#define FE_EXIT_GAME	until P5 hoists them
+R1	psp/main_psp.c	handoff_run@#define FE_HANDOFF	until P5 hoists them
 # R4: r6 B3 -- sceCtrlSetSamplingCycle(g_ctrl_cycle) inside fe_evt args (main_psp.c:14853-14855),
 # never executed in a GPSP_NO_TELEMETRY build.  Fixed in HW-2 (PLAN §5 T11 acceptance).
 R4	psp/main_psp.c	main|sceCtrlSetSamplingCycle|"ctrl_cycle %d rc=%d" , g_ctrl_cycle , sceCtrlSetSamplingCycle ( g_ctrl_cycle )	r6 B3: ctrl_cycle is elided with telemetry; fixed in HW-2

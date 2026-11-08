@@ -2630,10 +2630,10 @@ static void pwr_release_all(void)
 /* @extract:end fn:pwr_release_all */
 
 /* No process exit may leave the switch held: handoff_run (the USB handoff),
- * relaunch_eboot and sceKernelExitGame drop every hold first.  (A macro's own
- * name is not re-expanded inside it, so these call the real functions.) */
-#define handoff_run(code, why) (pwr_release_all(), LAB_HANDOFF((code), (why), handoff_run))
-#define sceKernelExitGame() (pwr_release_all(), sceKernelExitGame())
+ * relaunch_eboot and sceKernelExitGame drop every hold first: every exit site
+ * calls FE_HANDOFF / FE_EXIT_GAME, which release and then call the real one. */
+#define FE_HANDOFF(c,w) (pwr_release_all(), LAB_HANDOFF((c),(w),handoff_run))
+#define FE_EXIT_GAME() (pwr_release_all(), sceKernelExitGame())
 
 #ifdef GPSP_PERF_RIG
 /* ---- THE SLEEP SIMULATOR (harness only) -----------------------------------
@@ -10694,7 +10694,7 @@ static void stall_exit(unsigned iter)
       return;
    if (g_hb_s > 0)
       heartbeat_write(200000u + (unsigned)g_stall_exit_s);
-   sceKernelExitGame();
+   FE_EXIT_GAME();
 }
 #endif
 
@@ -15505,8 +15505,8 @@ int main(int argc, char *argv[])
       vid_term();
       fe_evt("exit code=7 reason=prev_run_uncollected");
       evt_shutdown();
-      handoff_run(7, "prev_run_uncollected");
-      sceKernelExitGame();
+      FE_HANDOFF(7, "prev_run_uncollected");
+      FE_EXIT_GAME();
       return 0;
    }
 #endif
@@ -15519,8 +15519,8 @@ int main(int argc, char *argv[])
       vid_term();
       fe_evt("exit code=0");
       evt_shutdown();
-      handoff_run(0, NULL);   /* ADR-0053 */
-      sceKernelExitGame();
+      FE_HANDOFF(0, NULL);   /* ADR-0053 */
+      FE_EXIT_GAME();
       return 0;
    }
 
@@ -15538,8 +15538,8 @@ int main(int argc, char *argv[])
       else
          fe_evt("exit code=5 reason=icinv_fail");
       evt_shutdown();
-      handoff_run(rc ? 5 : 0, rc ? "icinv_fail" : "icache_inval_probe");
-      sceKernelExitGame();
+      FE_HANDOFF(rc ? 5 : 0, rc ? "icinv_fail" : "icache_inval_probe");
+      FE_EXIT_GAME();
       return 0;
    }
    /* icache_probe = 1: the I-cache geometry, measured (psp/icprobe.c,
@@ -15554,8 +15554,8 @@ int main(int argc, char *argv[])
       else
          fe_evt("exit code=5 reason=icprobe_fail");
       evt_shutdown();
-      handoff_run(rc ? 5 : 0, rc ? "icprobe_fail" : "icache_probe");
-      sceKernelExitGame();
+      FE_HANDOFF(rc ? 5 : 0, rc ? "icprobe_fail" : "icache_probe");
+      FE_EXIT_GAME();
       return 0;
    }
 #endif
@@ -15572,8 +15572,8 @@ int main(int argc, char *argv[])
       else
          fe_evt("exit code=5 reason=nettest_fail");
       evt_shutdown();
-      handoff_run(5, "nettest_fail");   /* ADR-0053 */
-      sceKernelExitGame();
+      FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
+      FE_EXIT_GAME();
       return 0;
    }
 
@@ -15695,8 +15695,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "bad_variant");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(2, "bad_variant");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
       if (psp_rom_path_join(rom_path, sizeof(rom_path), g_dir_base, vrom) != 0)
@@ -15705,8 +15705,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "rom_path_too_long");
-         sceKernelExitGame();
+         FE_HANDOFF(2, "rom_path_too_long");
+         FE_EXIT_GAME();
          return 0;
       }
       snprintf(savedir, sizeof(savedir), "%s/saves", g_dir_base);
@@ -15721,8 +15721,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "sidecar_path_too_long");
-         sceKernelExitGame();
+         FE_HANDOFF(2, "sidecar_path_too_long");
+         FE_EXIT_GAME();
          return 0;
       }
       snprintf(state_path, sizeof(state_path), "%s/saves/%s", g_dir_base,
@@ -15734,8 +15734,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "sidecar_path_too_long");
-         sceKernelExitGame();
+         FE_HANDOFF(2, "sidecar_path_too_long");
+         FE_EXIT_GAME();
          return 0;
       }
       fe_evt("variant rom=%s silent=%d group=%s", vrom, g_silent_mode,
@@ -15763,8 +15763,8 @@ session_top:
             fe_evt("exit code=2 reason=rom_path_too_long rom=%s", kr);
             evt_shutdown();
             audio_stop();
-            handoff_run(2, "rom_path_too_long");
-            sceKernelExitGame();
+            FE_HANDOFF(2, "rom_path_too_long");
+            FE_EXIT_GAME();
             return 0;
          }
          if (!file_exists(rom_path))
@@ -15774,8 +15774,8 @@ session_top:
             fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
             evt_shutdown();
             audio_stop();
-            handoff_run(2, "rom_missing");
-            sceKernelExitGame();
+            FE_HANDOFF(2, "rom_missing");
+            FE_EXIT_GAME();
             return 0;
          }
          fe_evt("rom selected=%s (harness key)", kr);
@@ -15785,8 +15785,8 @@ session_top:
          fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
          audio_stop();
-         handoff_run(2, "no_rom");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
    }
@@ -15816,7 +15816,7 @@ session_top:
          audio_stop();
          vid_term();
          relaunch_eboot(0);
-         sceKernelExitGame();
+         FE_EXIT_GAME();
          return 0;
       }
       if (br != 0)
@@ -15825,8 +15825,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "no_rom");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
       g_pcfg.console = (int)selected_console;
@@ -15871,8 +15871,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(2, "sidecar_path_too_long");
-         sceKernelExitGame();
+         FE_HANDOFF(2, "sidecar_path_too_long");
+         FE_EXIT_GAME();
          return 0;
       }
    }
@@ -16438,8 +16438,8 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         handoff_run(1, "mem_budget");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(1, "mem_budget");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
    }
@@ -16643,8 +16643,8 @@ session_top:
       evt_shutdown();
       audio_stop();
       vid_term();
-      handoff_run(1, "load_failed");   /* ADR-0053 */
-      sceKernelExitGame();
+      FE_HANDOFF(1, "load_failed");   /* ADR-0053 */
+      FE_EXIT_GAME();
       return 0;
    }
 
@@ -16707,8 +16707,8 @@ session_top:
          vid_term();
          fe_evt("exit code=2 reason=bad_script");
          evt_shutdown();
-         handoff_run(2, "bad_script");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(2, "bad_script");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
    }
@@ -16730,8 +16730,8 @@ session_top:
          vid_term();
          fe_evt("exit code=4 reason=net_failed");
          evt_shutdown();
-         handoff_run(4, "net_failed");   /* ADR-0053 */
-         sceKernelExitGame();
+         FE_HANDOFF(4, "net_failed");   /* ADR-0053 */
+         FE_EXIT_GAME();
          return 0;
       }
       me_rend_resume();                /* re-alloc from the post-np_start heap */
@@ -18740,7 +18740,7 @@ session_top:
    /* ADR-0053: last thing before the XMB.  Every ms0 writer is stopped and the
     * log is closed, so it is safe to hand the stick to the PC here and nowhere
     * earlier.  Does not return if the PC asks for another run. */
-   handoff_run(exit_code, exit_reason);
+   FE_HANDOFF(exit_code, exit_reason);
    /* ADR-0071: relaunch ourselves so the new trading profile is latched at
     * startup like any other boot.  Same call the USB handoff uses and for the
     * same reason: on CFW an EBOOT.PBP is launched the way the FIRMWARE
@@ -18751,7 +18751,7 @@ session_top:
    /* Returns only if it failed: fall through to the XMB rather than hang. */
    if (g_relaunch)
       relaunch_eboot(g_relaunch == RELAUNCH_GAMELIST);
-   sceKernelExitGame();
+   FE_EXIT_GAME();
    return 0;
 }
 /* @extract:end fn:main */
