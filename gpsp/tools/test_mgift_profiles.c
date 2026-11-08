@@ -28,7 +28,17 @@ static int legacy_mgift(unsigned pad, int enabled, unsigned *consumed)
 static struct { int exists; netData values[17]; } profiles[11];
 static int created, deleted, fail_param = -1, fail_copy, corrupt_copy;
 static int require_ready, apctl_ready, connected_slot;
-int sceWlanGetSwitchState(void) { return 1; }
+/* switch_off_polls: the switch reads 0 for this many polls, then 1; -1 = off
+ * for good (a PSP Go reads 0 just after its net modules load, 2026-11-08) */
+static int switch_off_polls, switch_polls;
+static unsigned fake_us = 100;
+int sceWlanGetSwitchState(void)
+{
+   switch_polls++;
+   if (switch_off_polls < 0) return 0;
+   if (switch_off_polls > 0) { switch_off_polls--; return 0; }
+   return 1;
+}
 /* need_common: GetNetParam fails until PSP_NET_MODULE_COMMON is loaded (the
  * firmware behaviour the picker must survive if it is real).  load_rc forces
  * a load result, e.g. "already loaded". */
@@ -60,8 +70,8 @@ int sceNetApctlConnect(int slot) { assert(apctl_ready);if(!profiles[slot].exists
 int sceNetApctlDisconnect(void) { connected_slot=0;return 0; }
 int sceNetApctlGetState(int *s) { *s=connected_slot?PSP_NET_APCTL_STATE_GOT_IP:PSP_NET_APCTL_STATE_DISCONNECTED;return 0; }
 int sceNetApctlGetInfo(int code,union SceNetApctlInfo *info) { (void)code;strcpy(info->ip,"192.168.1.20");return 0; }
-unsigned sceKernelGetSystemTimeLow(void) { return 100; }
-int sceKernelDelayThread(SceUInt delay) { (void)delay;return 0; }
+unsigned sceKernelGetSystemTimeLow(void) { return fake_us; }
+int sceKernelDelayThread(SceUInt delay) { fake_us += delay;return 0; }
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 int sceUtilityCheckNetParam(int id)
 {
@@ -254,6 +264,21 @@ int main(void)
                                          1, &consumed) &&
              consumed == (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER));
    }
-   puts("PASS: Automatic profile reuse/create/failure cleanup, gapped slot list, and Select+Down debounce/consumption");
+   /* The WLAN switch is read only after the modules load, and waited for. */
+   reset(); add(1, "Home", "Home", 2);
+   switch_off_polls = 3; switch_polls = 0;
+   assert(mgnet_wifi_up(0, 0) == MGNET_OK && connected_slot == 2);
+   assert(switch_polls == 4 && loads > 0);     /* read after a module load */
+   mgnet_wifi_down();
+   reset(); add(1, "Home", "Home", 2);
+   switch_off_polls = -1; switch_polls = 0;
+   {
+      unsigned before = fake_us;
+      assert(mgnet_wifi_up(0, 0) == MGNET_ERR_WLAN_OFF);
+      assert(fake_us - before >= 5000000u && fake_us - before < 5200000u);
+      assert(!apctl_ready && !connected_slot);  /* unwound */
+   }
+   switch_off_polls = 0;
+   puts("PASS: Automatic profile reuse/create/failure cleanup, gapped slot list, Select+Down debounce/consumption, and the WLAN switch wait");
    return 0;
 }

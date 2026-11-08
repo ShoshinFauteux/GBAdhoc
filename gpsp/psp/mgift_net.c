@@ -174,14 +174,6 @@ int mgnet_wifi_up(int conf, unsigned timeout_us)
    if (!timeout_us)
       timeout_us = MGNET_CONNECT_US;
 
-   /* The switch is the single most common reason wireless "does not work",
-    * and it is free to check before touching a module. */
-   if (sceWlanGetSwitchState() == 0)
-   {
-      stage("wlan_switch");
-      return MGNET_ERR_WLAN_OFF;
-   }
-
    stage("mod_common");
    {
       /* transport_adhoc.c; weak, so a host test of this file links alone. */
@@ -199,6 +191,20 @@ int mgnet_wifi_up(int conf, unsigned timeout_us)
    if (rc < 0)
       return fail(MGNET_ERR_MODULES, "mod_inet", (unsigned)rc);
    N.progress = ST_MOD_INET;
+
+   /* The WLAN switch, read only once the modules are loaded and waited for:
+    * a PSP Go read 0 about 0.4 s after its net modules loaded, with the
+    * switch on (2026-11-08). Up to 5 s, then report off truthfully. */
+   stage("wlan_switch");
+   {
+      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+      while (sceWlanGetSwitchState() == 0)
+      {
+         if ((unsigned)sceKernelGetSystemTimeLow() - t0 >= 5000000u)
+            return fail(MGNET_ERR_WLAN_OFF, "wlan_switch", 0);
+         sceKernelDelayThread(100000);
+      }
+   }
 
    stage("net_init");
    rc = sceNetInit(MGNET_POOL, MGNET_PRIO, MGNET_STACK, MGNET_PRIO,
