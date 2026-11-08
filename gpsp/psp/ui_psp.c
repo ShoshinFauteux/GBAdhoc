@@ -4222,7 +4222,10 @@ static char s_ol_code[] = "Code";
 static char s_ol_join[] = "Join with code";
 static char s_ol_wheel[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";  /* + its NUL = blank */
 static char s_ol_fmt[] = "%.*s[%c]%s";
-static char s_ol_random[] = "random";  /* the untouched code: a host gets a random room */
+/* the untouched code: a host gets a random room.  .rodata, not .data: these
+ * 8 B in .data moved A's .data (smc_back_lo ..) 64 B onto cpu_ticks's D-cache set
+ * (beta.5 integration, I+D model); the pads take .rodata growth. */
+static const char s_ol_random[] = "random";
 static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " change   " VID_GLYPH_LEFT
                           VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
 

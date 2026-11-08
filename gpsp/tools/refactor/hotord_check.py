@@ -69,15 +69,19 @@ def r32(n):
 
 
 LATE_LINE = [None]   # hot_order.txt line of gen_layout's `# ---- late` marker, if any
+LAST_LINE = [None]   # ... and of its `# ---- last` marker (rows after B's late copies)
 
 
 def read_order(path):
     """[(lineno, name, size or None, libmember or None, kind)]; kind: func|lib|asm|asmsec."""
     rows = []
     LATE_LINE[0] = None
+    LAST_LINE[0] = None
     for k, l in enumerate(open(path), 1):
         if l.startswith('# ---- late') and LATE_LINE[0] is None:
             LATE_LINE[0] = k     # rows below link after B's whole hot path
+        if l.startswith('# ---- last') and LAST_LINE[0] is None:
+            LAST_LINE[0] = k     # rows below link after B's late copies (and the late pad)
         p = l.split('#', 1)[0].split()
         if not p:
             continue
@@ -337,9 +341,10 @@ def check(order_path, ord_path, build, sizes='fail', out=print, placement=True):
             why = None
             if i not in keep:
                 why = 'at %#010x, out of hot.ord order' % a
-            elif last is not None and a - (last[2] + last[3]) > PLACE_GAP and not (
-                    LATE_LINE[0] is not None and last[0] < LATE_LINE[0] < k):
-                # (the first late row follows B's whole hot path, by design)
+            elif last is not None and a - (last[2] + last[3]) > PLACE_GAP and not any(
+                    m is not None and last[0] < m < k for m in (LATE_LINE[0], LAST_LINE[0])):
+                # (the first late row follows B's whole hot path, and the
+                # first last row B's late copies and the late pad, by design)
                 why = 'at %#010x, %d B after %s ends: not linked by its hot.ord line' % (
                     a, a - (last[2] + last[3]), last[1])
             if why:
