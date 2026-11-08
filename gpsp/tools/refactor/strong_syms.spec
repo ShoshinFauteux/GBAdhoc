@@ -3,12 +3,14 @@
 # hook: overrides a weak no-op in the core; the stub object must still be in the link.
 # abi:  a main_psp.c global another TU links against (x1 H5, re-verified in x1's
 #       verification); `strong_syms.py golden` adds every other derived one per flavour.
-# Line cites are fbe9da63's (PLAN-P-beta5 §3 P0a T6); each names the line that holds the
-# row's symbol, and tests/p0a_test_cites.py holds them to that tree.  main_psp.c's lines
+# Line cites are the P0c cut base's (claude/beta5-base 3bc947d0; HALT_HOP moved main.c's weak
+# stub 110 lines down from fbe9da63's; PLAN-P-beta5 §3 P0a T6); each names the line that holds the
+# row's symbol, and tests/p0a_test_cites.py holds them to that tree (tests/p0a_b5.sh: strict on
+# the tree whose psp/main_psp.c is the cut base's, sha256 9032d9543ad5...).  main_psp.c's lines
 # move in P4; the anchor is the symbol's definition, which split.py carries unchanged.
 
 # weak-override hooks (x1 H6; weak stubs rfu.c:96, rfu.c:113, rfu.c:351, rfu.c:411, rfu.c:452
-# and main.c:958)
+# and main.c:1068)
 gpsp_visible_done_hook     hook  all  main_psp.o  main.o      # main_psp.c:7638
 gpsp_rfu_activated_hook    hook  all  main_psp.o  rfu.o       # main_psp.c:7469
 gpsp_rfu_link_down_hook    hook  all  main_psp.o  rfu.o       # main_psp.c:7508

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """p0a_test_cites.py -- P0a T6 (PLAN-P-beta5 §3): strong_syms.spec's `file:line` cites
-point at lines that hold what they cite, on the tree they are written for (fbe9da63).
+point at lines that hold what they cite, on the tree they are written for (the P0c cut base).
 
     p0a_test_cites.py SPEC GPSP_TREE
 

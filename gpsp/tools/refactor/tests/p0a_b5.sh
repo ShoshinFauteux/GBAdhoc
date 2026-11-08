@@ -184,20 +184,26 @@ if want t14; then
   fi
 fi
 
-# ---- T6 strong_syms.spec: the comments cite fbe9da63's lines (P0a T6)
+# ---- T6 strong_syms.spec: the comments cite the P0c cut base's lines (P0a T6); strict on the
+# tree whose psp/main_psp.c is the cut base's (claude/beta5-base 3bc947d0, = phase-p's P0c tree)
+CUT_BASE_MAIN=9032d9543ad59ac56a40413f4dccb654f4be6845f8192ad552fc10f40a69ba9a
 if want t6; then
   echo "== T6 strong_syms.spec cites"
-  if [ "${COMMIT:0:8}" = fbe9da63 ]; then
-    expect_rc 0 "every spec cite names its symbol on fbe9da63" $PY "$HERE/p0a_test_cites.py" "$R/strong_syms.spec" "$TREE"
+  if [ "$(sha256sum < "$M" | cut -c1-64)" = "$CUT_BASE_MAIN" ]; then
+    expect_rc 0 "every spec cite names its symbol on the cut base (main_psp.c ${CUT_BASE_MAIN:0:12})" $PY "$HERE/p0a_test_cites.py" "$R/strong_syms.spec" "$TREE"
     tail -1 "$OUT/last.log" | sed 's/^/        /'
-    sed -E 's/rfu\.c:411/rfu.c:403/; s/rfu\.c:452/rfu.c:440/; s/main\.c:958/main.c:935/; s/main_psp\.c:7638/main_psp.c:7541/; s/mgift_net\.c:147-148/mgift_net.c:117-118/' \
+    sed -E 's/main\.c:1068/main.c:958/' "$R/strong_syms.spec" > "$OUT/fbe_cites.spec"
+    expect_rc 1 "mutant: fbe9da63's main.c:958 (before HALT_HOP's +110 lines) is caught" \
+      $PY "$HERE/p0a_test_cites.py" "$OUT/fbe_cites.spec" "$TREE"
+    tail -1 "$OUT/last.log" | sed 's/^/        /'
+    sed -E 's/rfu\.c:411/rfu.c:403/; s/rfu\.c:452/rfu.c:440/; s/main\.c:1068/main.c:935/; s/main_psp\.c:7638/main_psp.c:7541/; s/mgift_net\.c:147-148/mgift_net.c:117-118/' \
       "$R/strong_syms.spec" > "$OUT/old_cites.spec"
     expect_rc 1 "mutant: the 01067e74 cites (rfu.c:403/440, main.c:935, main_psp.c:7541, mgift_net.c:117-118) are caught" \
       $PY "$HERE/p0a_test_cites.py" "$OUT/old_cites.spec" "$TREE"
     tail -1 "$OUT/last.log" | sed 's/^/        /'
   else
     $PY "$HERE/p0a_test_cites.py" "$R/strong_syms.spec" "$TREE" > "$OUT/last.log" 2>&1
-    echo "        (cites are fbe9da63's; on ${COMMIT:0:8}: $(tail -1 "$OUT/last.log"), informational)"
+    echo "        (cites are the cut base's; on ${COMMIT:0:8}: $(tail -1 "$OUT/last.log"), informational)"
   fi
 fi
 
