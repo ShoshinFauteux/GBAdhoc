@@ -48,7 +48,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>   /* ADR-0080: memalign for the ME double/stage buffers */
-#include <unistd.h>   /* sbrk -- heap_budget(), telemetry builds only */
+#include <math.h>     /* cosf/sinf -- the rewind HUD */
+#include <unistd.h>   /* sbrk -- heap_budget(), every build (heap_snap) */
 #include <string.h>
 
 #include "fe_host.h"
@@ -240,9 +241,6 @@ static int g_perf_rig;
  * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
  * players: this is the input-eating fix. */
 #define PLAY_RFU_FRAME_PACE  1
-/* Bound on frame_pace's hold, in frames.  Now a config.ini key (the player
- * owns the latency dial); this constant is only the harness-side default. */
-#define PLAY_RFU_PACE_MAX_HOLD 24
 /* Fixed-depth cushion (jitter buffer) PoC: hold each host packet N frames so a
  * stall must drain the whole reserve before the client underruns.  OFF by
  * default — UNVALIDATED on hardware; the desktop cannot exercise it (injected
@@ -297,7 +295,6 @@ static int g_perf_rig;
  * we choose.  Set `dump_marker_poll = 60` to get the old mechanism back. */
 #define PLAY_DUMP_MARKER     0
 #define PLAY_RFU_FRAME_PACE  0          /* ADR-0075 off by default (harness) */
-#define PLAY_RFU_PACE_MAX_HOLD 0        /* unbounded hold by default (harness) */
 #define PLAY_RFU_CUSHION     0          /* fixed-depth cushion PoC off (harness) */
 #define PLAY_RFU_SHED_KEEP   0          /* link shedding off (legacy harness) */
 #define PLAY_RFU_HOLD        0          /* historical discards (legacy harness) */
@@ -349,20 +346,6 @@ static void init_paths(int argc, char *argv[])
    snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base);
    snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base); /* @lab */ LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
 }
-
-/* libretro joypad ids (kept local; matches libretro.h) */
-#define JP_B      0
-#define JP_Y      1
-#define JP_SELECT 2
-#define JP_START  3
-#define JP_UP     4
-#define JP_DOWN   5
-#define JP_LEFT   6
-#define JP_RIGHT  7
-#define JP_A      8
-#define JP_X      9
-#define JP_L      10
-#define JP_R      11
 
 volatile int g_running = 1;
 #ifdef GPSP_CATCH_SELFTEST
@@ -955,11 +938,13 @@ static int audio_thread(SceSize args, void *argp)
        * target moves at most once a second and a chunk boundary is the
        * natural place to take the step change. */
       step = g_audio_step;
-      /* me_standby_down() flushes with `ring_r = ring_w` from the power
-       * callback thread, which outranks this one.  Landing between the
-       * `avail` check and `ring_r +=` below leaves ring_r AHEAD of ring_w:
-       * the level then reads ~4 G for good, the producer drops everything and
-       * the pacer's high-water nudge halves the frame rate.  Resynchronise. */
+      /* A flush (`ring_r = ring_w`) from a thread that outranks this one,
+       * landing between the `avail` check and `ring_r +=` below, would leave
+       * ring_r AHEAD of ring_w: the level then reads ~4 G for good, the
+       * producer drops everything and the pacer's high-water nudge halves the
+       * frame rate.  Resynchronise.  The power callback's me_standby_down()
+       * was that flush; it now runs only after the sleep quiesce has stopped
+       * this thread (sq_audio_stop), so this is a guard, not a fix. */
       if (ring_w - ring_r > RING_FRAMES)
          ring_r = ring_w;
       for (i = 0; i < OUT_CHUNK; i++)
@@ -1177,7 +1162,6 @@ extern u32 smc_flush_us;
 extern u32 smc_flush_bytes;
 extern u32 smc_flush_wide;
 extern u32 smc_blk_xlat_total;   /* RAM blocks re-translated (monotonic) */
-extern u32 flush_rom_total;      /* ROM translation-cache wipes */
 extern u32 cph_jit_total;        /* dynarec compilation us (monotonic) */
 extern u32 smc_blk_watch;        /* 256-byte page the block/writer probe eyes */
 
@@ -1220,7 +1204,7 @@ void heap_trace_report(const char *where);
  * every probe straight back.  Under the (recursive) malloc lock, so no other
  * thread can allocate while a probe is outstanding.  `top` is the largest
  * block that is certainly allocatable: the releasable top chunk plus the
- * un-sbrk'd tail.  Telemetry builds only. */
+ * un-sbrk'd tail. */
 static void heap_budget(unsigned *total, unsigned *top)
 {
    struct mallinfo mi;
@@ -1717,7 +1701,6 @@ static unsigned pad_swallow(unsigned pad)
 static struct { unsigned f, n, mask; } g_pad_script[PAD_SCRIPT_MAX];
 static int g_pad_script_n;
 
-#ifdef GPSP_PERF_RIG
 /* Menu = HOME harness keys (docs/CONTROL-REMAP.md section 10).
  *   home_sim = 1          the menu behaves as if gbadhoc_home.prx were up
  *                         (PPSSPP cannot run it), and a HOME bit in the pad --
@@ -1729,7 +1712,6 @@ static int g_pad_script_n;
  *                         after the loop resumes. */
 static int      g_home_sim;
 static unsigned g_home_stall_frame, g_home_stall_ms;
-#endif
 
 static unsigned pad_script_buttons(const char *t)
 {
@@ -1818,10 +1800,6 @@ typedef char ctl_bits_match_sdk[
     CTL_L == PSP_CTRL_LTRIGGER && CTL_R == PSP_CTRL_RTRIGGER &&
     CTL_TRIANGLE == PSP_CTRL_TRIANGLE && CTL_CIRCLE == PSP_CTRL_CIRCLE &&
     CTL_CROSS == PSP_CTRL_CROSS && CTL_SQUARE == PSP_CTRL_SQUARE) ? 1 : -1];
-typedef char ctl_retro_ids_match[
-   (JP_A == 8 && JP_B == 0 && JP_L == 10 && JP_R == 11 && JP_START == 3 &&
-    JP_SELECT == 2 && JP_UP == 4 && JP_DOWN == 5 && JP_LEFT == 6 &&
-    JP_RIGHT == 7) ? 1 : -1];
 
 /* Turbo buttons: which trains are running (ctl_map.h).  Stepped by
  * turbo_frame() once per loop iteration that runs the game; not part of the
@@ -2144,7 +2122,6 @@ static int psp_rewind_pool_tenant(void);   /* the pool's second tenant */
 #endif
 static int me_rend_release_vmem(void);
 static void standby_note(const char *fmt, ...);   /* defined below */
-static int  me_rend_active(void);                 /* renderer, defined below */
 static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
 static volatile int g_pwr_had_host;  /* the ME module was up when we slept */
 /* The GE samples power-of-two textures only, and vid_image uses stride ==
@@ -2907,7 +2884,6 @@ static unsigned g_vm_eng_top;            /* end of what the engine carved */
 /* A third tenant, harness-only for now (rom_vmem, docs/MEMORY-BUDGET.md): with
  * the rewind off, the same part of the pool as ROM cache pages. */
 static int   g_rom_vm_lend, g_rom_vm_asleep;
-static int   psp_rewind_pool_tenant(void);
 static void  psp_rewind_pool_back(void);
 static void  psp_rewind_pool_lost(void);
 static void  psp_rewind_pool_check(void);
@@ -5853,7 +5829,7 @@ static unsigned eboot_crc(void)
 static int      g_vp_period;              /* harness key `vram_probe`, 0=off */
 static unsigned char *g_vp_shadow;
 static int      g_vp_phase;               /* 0 idle, 1 shadow taken          */
-static unsigned g_vp_ctr, g_vp_n, g_vp_sum, g_vp_max, g_vp_cost, g_vp_fail;
+static unsigned g_vp_ctr, g_vp_n, g_vp_sum, g_vp_max, g_vp_cost;
 static unsigned g_vp_marked, g_vp_missed, g_vp_marks0;
 
 static void vram_probe_frame(void)
@@ -5932,7 +5908,6 @@ static void vram_probe_frame(void)
       g_vp_n = g_vp_sum = g_vp_max = g_vp_cost = 0;
       g_vp_marked = g_vp_missed = 0;
    }
-   (void)g_vp_fail;
 }
 
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
@@ -7350,19 +7325,19 @@ extern void rfu_set_disc_defer(unsigned n);
  * 0 = off = historical.  60 (~1 s) is the arm to try first. */
 extern void rfu_set_disc_grace(unsigned frames);
 
-/* ADR-0043 flight recorder.  Called from the EMULATION thread at the moment
- * the adapter is reset out of an active session — i.e. after the game has
- * already declared its fatal error.  Writing the log synchronously from here
- * violates the standing "no ms0: I/O on the emu thread" rule, and that is
- * deliberate and confined to this one call: the session is dead, there is no
- * frame timing left to protect, and the alternative is losing the only record
- * of what happened.  Emits a compact decoded transcript, oldest first. */
 /* ADR-0045: the core reads this once per emulated frame, never per command. */
 unsigned gpsp_rfu_now_us(void)
 {
    return (unsigned)net_now_us();
 }
 
+/* ADR-0043 flight recorder.  Called from the EMULATION thread at the moment
+ * the adapter is reset out of an active session — i.e. after the game has
+ * already declared its fatal error.  It writes no file itself: its lines go
+ * through fe_evt like every other event (queued for the io thread while the
+ * game runs), so the "no ms0: I/O on the emu thread" rule holds here too, and
+ * a release, where fe_evt compiles out, returns before formatting anything.
+ * Emits a compact decoded transcript, oldest first. */
 void gpsp_rfu_flight_dump_hook(const unsigned *ring, unsigned cap,
                                unsigned start, unsigned n)
 {
@@ -7663,8 +7638,8 @@ static void rfu_link_down_drain(void)
  * skipped: the game executes its own negotiated exit, one lost byte later.
  *
  * The failure mode if the write is wrong is the status quo (the watchdog
- * fires at 61 as it does today).  Default OFF; Emerald USA only by the
- * pointer gate. */
+ * fires at 61 as it does today).  Default PLAY_EXIT_ASSIST: on for players,
+ * off in the harness; Emerald USA only by the pointer gate. */
 static int g_exit_assist;              /* harness key rfu_exit_assist */
 static unsigned g_exit_assist_n;       /* fired this session */
 
@@ -8300,7 +8275,6 @@ static unsigned g_gblink_delay = GBLINK_DELAY_DEFAULT;
  * docs/ONLINE-TUNNEL.md section 2); 0 = off, every build's behaviour so far.
  * Host only: the guest takes the delay from CONFIG. */
 static unsigned g_gblink_delay_auto;
-static int g_gblink_role;             /* harness: 0 off, 1 host, 2 join */
 static long long g_gblink_seed;       /* harness: 0 = this console's clock */
 static unsigned g_gblink_end_after = 300;
 static unsigned g_gblink_ended_ticks; /* frames since DONE/FAILED */
@@ -8458,7 +8432,6 @@ static int psp_gb_find_rom(uint32_t size, const uint8_t header[0x1C],
  * the menu's own snapshot (wake_snapshot, the netdrv arena's tail), taken
  * before the session owns the cartridge -- the single machine and its frame
  * may be gone after that (GB/GBC). */
-static void wake_snapshot(void);
 static void link_backdrop_take(void)
 {
    wake_snapshot();
@@ -8560,8 +8533,6 @@ static void heap_exact(const char *where, unsigned cyc)
           (unsigned)mi.fordblks, (unsigned)mi.keepcost, heap_largest(), total,
           (unsigned)gamepak_buffer_count);
 }
-void heap_trace_mark(void);                       /* heap_trace.c */
-void heap_trace_report(const char *where);
 void heap_trace_mark0(void);
 static int sessmem_cycle_test(void)
 {
@@ -11109,10 +11080,10 @@ extern u32 dma_smc_flushes __attribute__((weak));
  * changes by reason (ROM flush, RAM flush, rebuild, init, tier).  Weak, read
  * as words so the frontend needs none of the core's headers. */
 extern u32 jit_code_stats[10] __attribute__((weak));
-/* BADJUMP_SAFE: unmappable guest pcs caught and turned into a GBA reset.  A
- * run whose script reloads the state (reload_soak.txt) recovers from such a
- * derail at the next load, so its last frame cannot show one; this can. */
-extern u32 badjump_recoveries __attribute__((weak));
+/* badjump_recoveries (BADJUMP_SAFE, declared above): unmappable guest pcs
+ * caught and turned into a GBA reset.  A run whose script reloads the state
+ * (reload_soak.txt) recovers from such a derail at the next load, so its last
+ * frame cannot show one; this can. */
 
 static void core_health_evt(const char *at)
 {
@@ -12730,7 +12701,6 @@ static void psp_rewind_pool_check(void)
 
 /* The game is gone (fe_host_shutdown dropped every rewind pointer): the pool
  * has one tenant again, so a sleep in the browser can hand it back. */
-static void psp_rewind_pwr(void);
 #define PSP_REWIND_GAME_OVER() \
    (psp_rom_pool_over(), g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
 
@@ -12862,7 +12832,6 @@ static void psp_rewind_hud_step(int held, int rewinding, uint32_t stepped,
  *      that drains as in 1.
  *   0  the first version: the lit arc turns with the head, its length is
  *      the history left. */
-#include <math.h>
 static void psp_rewind_hud(void)
 {
    const float cx = 240.0f, cy = 130.0f, r = 92.0f;
@@ -15209,9 +15178,12 @@ int main(int argc, char *argv[])
     * it cannot break bring-up the same way.  Our own RX (0x1E) and TX (0x1F)
     * threads stay above everything, which is what they were placed for.
     *
-    * Note this also drops main below the IO thread (0x22): a log or SRAM write
-    * will now preempt emulation.  That is visible in `EVT fps emu=` and is
-    * part of what the arm is measuring, not a hidden cost.
+    * Note this also drops main below the IO thread's default 0x22, so a log or
+    * SRAM write then preempts emulation; `io_prio` (ADR-0062c, below) puts
+    * that thread back under the emulator.  The release sets both (main 0x2B,
+    * io 0x2C: a lower number is a higher priority, so main outranks io).  With
+    * emu_prio alone the preemption is visible in `EVT fps emu=` and is part of
+    * what that arm measures, not a hidden cost.
     *
     * 0 = leave main at its default 0x20. */
    {
