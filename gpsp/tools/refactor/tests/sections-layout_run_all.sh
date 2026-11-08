@@ -48,13 +48,19 @@ for f in release lab harness; do step "T5 selftest $f" 0 $PY hotord_check.py --s
 # 2026-11-07 "5 FAILED" is kept as a mutant: this tree's order on another commit's ELF
 GS() {  # git show from this repo (git.exe from WSL on a Windows worktree)
   if git -C "$HERE" rev-parse --git-dir >/dev/null 2>&1; then git -C "$HERE" show "$1"
-  else git.exe -C "$(wslpath -w "$HERE")" show "$1" | tr -d '\r'; fi
+  else   # (not `git.exe ... | tr`: the pipe's status would be tr's, so a tree that is no repo
+         # at all, e.g. a git-archive export, read as an empty order and ran the mutant)
+    local o; o=$(git.exe -C "$(wslpath -w "$HERE" 2>/dev/null)" show "$1" 2>/dev/null) || return 1
+    printf '%s\n' "$o" | tr -d '\r'
+  fi
 }
 BC=$(sed -nE 's/.*"sourceCommit": *"([0-9a-f]+)".*/\1/p' "$B/run2/release/flavour.json" 2>/dev/null)
 if [ -n "$BC" ] && GS "$BC:gpsp/psp/layout/hot_order.txt" > /dev/null 2>&1 &&
    ! cmp -s <(GS "$BC:gpsp/psp/layout/hot_order.txt") ../../psp/layout/hot_order.txt; then
   step "T5 selftest with THIS tree's order on $BC's ELF (mismatch: expect exit 1)" 1 \
     $PY hotord_check.py --selftest "$B/run2/release" --order ../../psp/layout/hot_order.txt --ord ../../psp/layout/hot.ord
+else
+  echo "(T5 order-mismatch mutant not run: this tree's hot_order.txt is ${BC:-the baseline}'s, or no git history to read it)"
 fi
 step "T5 release today, --sizes fail (stale: expect exit 1)" 1 $PY hotord_check.py --build "$B/run1/release"
 step "T5 regen.sh opt-in wiring" 0 bash tests/sections-layout_test_regen.sh "$B/run2/release"
