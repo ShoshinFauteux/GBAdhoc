@@ -1139,13 +1139,25 @@ void ui_open(void)
    }
 }
 
-void ui_close(void)
+void ui_settings_flush(void)
 {
    if (g_settings_dirty)
    {
+      fe_evt("ui_settings_flush");
       pcfg_save();
       g_settings_dirty = 0;
    }
+}
+
+void ui_settings_save(void)
+{
+   pcfg_save();
+   g_settings_dirty = 0;
+}
+
+void ui_close(void)
+{
+   ui_settings_flush();
    g_active = 0;
    ctl_page_reset();
    if (g_demo_on >= 0)

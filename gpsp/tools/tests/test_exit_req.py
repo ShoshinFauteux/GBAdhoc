@@ -254,6 +254,10 @@ int main(void)
    r = teardown_tail();
    assert(r == 1 && g_running == 1 && !exited && relaunched == -1);
    assert(HAS("[inproc_return n=0]") && HAS("unload"));
+   /* F3: the settings flush runs on every quit, after the writer stopped
+    *     (ADR-0025, PLAN §3.2 D16b) and before the SRAM flush. */
+   assert(HAS("io_stop settings_flush ") &&
+          strstr(trace, "settings_flush") < strstr(trace, "fe_host_shutdown"));
 
    /* B: HOME before the second refusal check: refused "home", no unload, the
     *    ME shut down for the refused tail, and an exit -- not a relaunch. */
@@ -297,6 +301,7 @@ int main(void)
    machine(RELAUNCH_PROFILE, "net_teardown");
    r = teardown_tail();
    assert(r == 0 && exited && relaunched == -1);
+   assert(HAS("io_stop settings_flush "));   /* F3 on a HOME exit too */
    machine(RELAUNCH_PROFILE, NULL);
    r = teardown_tail();
    assert(r == 0 && relaunched == 0);    /* control */
@@ -361,6 +366,8 @@ MUTANTS = (
      "   if (g_exit_req)\n      g_relaunch = 0;\n", ""),
     ("the list's HOME exit says no_rom", "LISTEXIT",
      "!g_running", "0"),
+    ("the teardown does not flush the settings (F3)", "TEARDOWN",
+     "   ui_settings_flush();\n", ""),
 )
 for what, part, old, new in MUTANTS:
     parts = dict(good)

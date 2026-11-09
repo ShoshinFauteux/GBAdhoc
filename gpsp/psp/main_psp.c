@@ -3531,7 +3531,7 @@ session_top:
             if (rc == -1)
             {
                osd_toast("Reset failed: back to the game list");
-               pcfg_save();
+               ui_settings_save();
                g_relaunch = RELAUNCH_GAMELIST;
                exit_reason = "reset_failed";
                g_running = 0;
@@ -3549,8 +3549,10 @@ session_top:
             /* Full clean shutdown (SRAM flushed, threads stopped), then
              * back to the ROM browser -- in this process when the unload is
              * proven (inproc_refusal), by the ADR-0071 relaunch otherwise.
-             * The hold screen after the loop says what is happening. */
-            pcfg_save();
+             * The hold screen after the loop says what is happening.
+             * One config.ini write: ui_close (the return) and the
+             * teardown's flush find nothing left unsaved (F3). */
+            ui_settings_save();
             g_relaunch = RELAUNCH_GAMELIST;
             exit_reason = "game_list";
             g_running = 0;
@@ -3560,7 +3562,7 @@ session_top:
              * the loop by the NORMAL exit path — SRAM flushed, io thread
              * stopped, log closed — and relaunch at the very end, where the
              * USB handoff already proves it is safe to replace the process. */
-            pcfg_save();
+            ui_settings_save();
             g_relaunch = RELAUNCH_PROFILE;
             exit_reason = "profile_change";
             g_running = 0;
@@ -4562,6 +4564,11 @@ session_top:
 #endif /* GBADHOC_MGIFT */
    emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
+   /* A Settings/Controls/Online page still open at a HOME, START+SELECT or
+    * wake-quit kept its changes unsaved (F3).  Written here, synchronously,
+    * on the same side of the writer's stop as ui_close's write always was
+    * (PLAN §3.2 D16b), and before the SRAM flush that can be slow. */
+   ui_settings_flush();
    ui_return_tick();
    /* The log's own loss, written SYNCHRONOUSLY now the writer is stopped, and
     * the liveness facts into RESULT.TXT, which is written with sceIo after the
