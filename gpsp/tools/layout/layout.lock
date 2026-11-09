@@ -37,11 +37,12 @@
 # (the code between it and pace_frame grew: me_standby_down, the online
 # cancel) and pte_mutex_check_need_init (+24 B release, -16 B lab; the CORE
 # pad puts me_replay_lines and _ZL10pipe_latchv#1 back on their values).
-# HW-1 review r2 (claude/hw1-sleep-r2): power_cb shrank (a failed sleep sync
-# no longer stops the ME module), so TEXT/CORE give it back (release 872 ->
-# 856, 892 -> 876; lab 7792 -> 7784, 7628 -> 7636); main, pace_frame and the
-# rest hold.  Re-recorded: exit_cb (-16 B release, -8 B lab: the code before
-# it shrank) and pte_mutex_check_need_init (-16 B release, +8 B lab).
+# HW-1 review r2 (claude/hw1-sleep-r2): power_cb grew 16 B release, 8 B lab (a
+# failed sleep sync no longer stops the ME module; the standby>=2 rung's three
+# labels), so TEXT/CORE take it back (release 872 -> 856, 892 -> 876; lab
+# 7792 -> 7784, 7628 -> 7636); main, pace_frame and the rest hold.
+# Re-recorded: exit_cb (-16 B release, -8 B lab: it sits between the TEXT pad
+# and power_cb) and pte_mutex_check_need_init (-16 B release, +8 B lab).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
