@@ -271,8 +271,10 @@ def r3_rows(gpsp, root):
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
     got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
-            ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
-            ('rom_hash_census', 'fe/harness.f.inc.c:613'), ('gamepak_reopens', 'main_psp.c:2828')]
+            # HW-2 (claude/hw2-exit) moved the last four: harness.f +16 (stall_exit's
+            # comment and checks), the shell +37 (F10/F5/W8/r6-B3/F7/F8/F9/exit_sim lines)
+            ('gbab_reg', 'fe/harness.f.inc.c:303'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:304'),
+            ('rom_hash_census', 'fe/harness.f.inc.c:629'), ('gamepak_reopens', 'main_psp.c:2865')]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 
