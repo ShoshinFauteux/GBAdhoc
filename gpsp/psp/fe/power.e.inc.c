@@ -153,6 +153,24 @@ static int wake_service(void)
       fe_evt("standby wake overlay_first slept=%d rend=%d vmem=%d",
              g_pwr_slept, me_rend_active(), me_rend_vmem_held());
    }
+   /* THE ME DID NOT SURVIVE THE SLEEP (me_standby_down's failed sync, PLAN
+    * r2-B-1).  No overlay and no rebuild: the session ends here, as `Quit to
+    * game list` ends it, through the teardown (the save written) to the
+    * list.  Continuing would be a game on one core, which this build never
+    * runs (owner 2026-11-08). */
+   if (g_wake_menu && g_pwr_me_lost)
+   {
+      g_wake_menu = 0;
+      g_pwr_me_lost = 0;
+      home_host_disarm();
+      fe_evt("wake_menu choice=game_list reason=me_lost slept=%d",
+             g_pwr_slept);
+      g_pwr_slept = 0;
+      g_pwr_rebuild = 0;
+      g_relaunch = RELAUNCH_GAMELIST;
+      g_running = 0;
+      return WAKE_QUIT;
+   }
    /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
     * emulated while it is up (the frame is a still and any link is long
     * gone), so it owns the pad and the swap chain until the player picks.

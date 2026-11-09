@@ -58,6 +58,11 @@ static long g_ss_rw_tick;
 static long g_ss_rw_seen;
 #endif
 static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
+/* `sleep_sim_me_sync_fail = 1` is the MUTANT of PLAN S-9 (r2-B-1): the ME's
+ * cache-flush sync fails while asleep (SLEEP_SIM_ME_SYNC_FAIL, fe_priv.h),
+ * so me_standby_down takes its shutdown-and-release path and the wake ends
+ * the session (wake_service). */
+static int g_ss_me_sync_fail;
 /* `sleep_sim_request = 1`: the suspend is a software request (auto-sleep, the
  * Go's slider): no flag at all until the gameplay lock is dropped, and only
  * power_request_poll can get it dropped.  `sleep_sim_nopoll = 1` turns the

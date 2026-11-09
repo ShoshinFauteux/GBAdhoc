@@ -64,6 +64,11 @@ static void me_standby_step(const char *what)
    standby_note("step %s", what);
 }
 
+/* 1 once a sleep's teardown had to shut the ME down because it would not
+ * confirm its cache flush (me_standby_down): the engine is gone for this
+ * session, and the wake ends the session (wake_service).  Set on the
+ * callback's thread, read on the main thread. */
+static volatile int g_pwr_me_lost;
 /* @extract:begin fn:me_standby_down */
 static void me_standby_down(void)
 {
@@ -101,8 +106,24 @@ static void me_standby_down(void)
    int release_result = me_rend_release_vmem();
    if (release_result < 0)
    {
-      me_standby_step("vmem_retained");
-      return;
+      /* SHUTDOWN-AND-RELEASE (PLAN r2-B-1; owner 2026-11-08).  The engine
+       * did not confirm its cache flush.  This used to return here with the
+       * pool still locked across the suspend: the OS may hand it on while
+       * we sleep, and the next me_rend_init re-used the pointers ("volatile
+       * already locked") and wrote into it.  Instead: stop the module --
+       * module_stop holds the ME in reset, so no late job or dirty line can
+       * reach the pool; a stop that fails marks the engine dead, the
+       * watchdog's state (me_host_shutdown) -- and give the pool back
+       * either way.  The ME is gone for this session, and a game never goes
+       * on without it (the ME is always available by design): the wake
+       * ends the session to the game list through the quit's teardown,
+       * which writes the save (wake_service). */
+      me_standby_step("vmem_sync_failed");
+      g_pwr_me_lost = 1;
+      me_host_shutdown();
+      me_standby_step(me_host_loaded() ? "module_stop_failed"
+                                       : "module_unloaded");
+      release_result = me_rend_drop_vmem();
    }
    if (release_result > 0)
       me_standby_step("vmem_released");

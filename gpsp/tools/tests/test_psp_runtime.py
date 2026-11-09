@@ -69,8 +69,13 @@ static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w, blank_calls;
 static void me_standby_step(const char *s) { (void)s; }
 static void wake_snapshot(void) {}
 static int me_rend_active(void) { return g_me_rend; }
-static int retained, shutdowns;
-static void me_host_shutdown(void) { loaded=healthy=0; retained=0; shutdowns++; }
+static int retained, shutdowns, stop_fails;
+/* stop_fails: module_stop refused -- me_host.c marks the engine dead and
+ * keeps the module loaded */
+static void me_host_shutdown(void)
+{ shutdowns++; healthy=0; if (stop_fails) return; loaded=0; retained=0; }
+#define SLEEP_SIM_ME_SYNC_FAIL() 0
+static volatile int g_pwr_me_lost;
 static void vid_blank_all(void) { blank_calls++; }
 #define MER_VM_UNLOCK() (unlock_calls++)
 static int sceKernelWaitSema(int id, int n, unsigned *timeout)
@@ -153,14 +158,33 @@ int main(int argc, char **argv)
    loaded=healthy=1; retained=0; shutdowns=0;
    pwr_release_all();
    check(!shutdowns, "leaving does not touch a module in use");
-   g_mer_vmem=1; loaded=1; healthy=idle=sync_ok=0;
+   /* PLAN r2-B-1 (shutdown-and-release): a sync that fails at the suspend
+    * stops the module and gives the pool back all the same -- never kept
+    * across the sleep -- and the wake is told the engine is gone. */
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=1; idle=1; sync_ok=0;
    g_pcfg.standby=1; g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=0;
    me_standby_down();
-   check(!g_pwr_slept && g_mer_vmem && ring_r==2 && !blank_calls,
-         "deferred standby release preserves unslept retained-pool state");
+   check(shutdowns==1 && !loaded && unlock_calls==1 && !g_mer_vmem &&
+         !g_mer_work && g_pwr_slept && g_pwr_me_lost && ring_r==7 &&
+         blank_calls==1,
+         "failed standby sync stops the module and releases the pool");
+   /* The stop itself refused (me_host.c: dead, still loaded): the pool
+    * still goes back, the module is not touched again. */
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=1; idle=1; sync_ok=0;
+   g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=1; sync_calls=0;
+   me_standby_down();
+   check(shutdowns==1 && loaded && unlock_calls==1 && !g_mer_vmem &&
+         g_pwr_slept && g_pwr_me_lost && sync_calls==1,
+         "failed standby sync and failed stop still release the pool");
+   stop_fails=0;
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; g_pwr_slept=0; g_pwr_me_lost=0;
+   shutdowns=0; ring_r=2; ring_w=7; blank_calls=0;
    healthy=idle=sync_ok=1;
    me_standby_down();
-   check(g_pwr_slept && !g_mer_vmem && ring_r==7 && blank_calls==1,
+   check(g_pwr_slept && !g_mer_vmem && ring_r==7 && blank_calls==1 &&
+         !shutdowns && !g_pwr_me_lost,
          "successful standby release marks sleep and clears presentation");
    return 0;
 }
@@ -401,7 +425,8 @@ def main():
     source = extract.read_source(str(ROOT / "psp/main_psp.c"))
     selected = "\n\n".join(marked_function(source, name) for name in
                            ("io_thread", "mer_work_heap_free", "me_rend_suspend",
-                            "me_rend_release_vmem", "me_standby_down",
+                            "me_rend_drop_vmem", "me_rend_release_vmem",
+                            "me_standby_down",
                             "pwr_release_all"))
     usb = (ROOT / "psp/usb_handoff.c").read_text(encoding="utf-8")
     usb_selected = "\n\n".join(function(usb, name) for name in ("h_usb_down", "handoff_run"))

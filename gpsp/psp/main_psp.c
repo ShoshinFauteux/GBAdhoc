@@ -648,6 +648,9 @@ int main(int argc, char *argv[])
    g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
    g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
    g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
+   g_ss_me_sync_fail = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_me_sync_fail", 0);
+   if (g_ss_me_sync_fail)
+      fe_evt("sleep_sim mutant me_sync_fail=%d", g_ss_me_sync_fail);
    me_host_fake((int)fe_ini_get_int(HARNESS_INI, "me_fake", 0));
    g_inproc_me_unload = (int)fe_ini_get_int(HARNESS_INI, "inproc_me_unload", 0);
    g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
