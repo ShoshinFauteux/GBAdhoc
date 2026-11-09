@@ -20,27 +20,27 @@ me_capture_line                                   0.076800    1540
 update_scanline_render                            0.000001    6080
 # ---- warm tail
 @mips_stub.o(.text.msr_fast)
-block_lookup_address_arm                          0.038072     356
+block_lookup_address_arm                          0.038072     388
 update_serial                                     0.038938     368
 xs_blocks_current                                 0.166025    1732
 flag_interrupt                                    0.006280      76
 memset                                            0.018631     284 libc.a:libc_a-memset.o
-block_lookup_address_thumb                        0.019709     348
+block_lookup_address_thumb                        0.019709     380
 spin_check                                        0.026178     524
 block_lookup_translate_arm                        0.052539    1744
-rfu_update                                        0.033567     940
+rfu_update                                        0.033567    1000
 smc_pipe_store                                    0.009727     320
 write_io_register16                               0.082094    2760
 dma_transfer                                      0.088941    3088
-smc_prof_note_store                               0.008008     300
+smc_prof_note_store                               0.008008     288
 jit_code_wrote_.part.0                            0.007611     300
 smc_prof_exact                                    0.013770     576
 vram_x_dma_note                                   0.006099     332
 block_lookup_translate_thumb                      0.023820    1792
 getenv                                            0.000705      40 libc.a:libc_a-getenv.o
-smc_trap_entry                                    0.009492     572
+smc_trap_entry                                    0.009492     600
 flush_translation_cache_ram_smc                   0.093982    6572
-xlat_scan_arm_ram_fast.constprop.0                0.031467    2672
+xlat_scan_arm_ram_fast.constprop.0                0.031467    2624
 memcpy                                            0.010117     880 libc.a:libc_a-memcpy.o
 jit_code_publish_                                 0.014377    1296
 smc_reuse_revive                                  0.017073    1640
@@ -64,7 +64,7 @@ fe_host_frame_count                               0.000055      12
 smc_stable_thunk_dispatch                         0.001594     312
 iok_site                                          0.002197      72
 execute_arm_translate                             0.000046      12
-me_rend_retire_if_idle                            0.002160     576
+me_rend_retire_if_idle                            0.002160     616
 mer_lowlat_active                                 0.000780     208
 mer_sameframe_active                              0.000165      44
 smc_reuse_commit                                  0.006847    1876
@@ -72,7 +72,7 @@ core_phase_leave                                  0.000560     164
 fe_host_sram_service                              0.002453     756
 dispatch_cache_clear                              0.000491     192
 entry_gates_walk                                  0.001646     652
-audio_thread                                      0.000640     824
+audio_thread                                      0.000640     804
 vid_flip_latched                                  0.000280     112
 smc_retire_span                                   0.006831    3292
 fe_autopilot_take_mark                            0.000037      16
@@ -113,20 +113,20 @@ free                                              0.000006      16 libc.a:libc_a
 write                                             0.000011      28 libc.a:libc_a-syswrite.o
 core_phase_frame_end                              0.000339     924
 sram_write_full_blocks                            0.000101     276
-audio_sample_batch                                0.000128     476
-fe_autopilot_frame                                0.000697    2604
+audio_sample_batch                                0.000128     328
+fe_autopilot_frame                                0.000697    2612
 serialpoke_frame_update                           0.000107     400
-fe_host_run_frame                                 0.000843    3980
+fe_host_run_frame                                 0.000843    3972
 fwrite                                            0.000006      32 libc.a:libc_a-fwrite.o
 gpsp_rfu_now_us                                   0.000004      28
 note_pc_limits_range.constprop.1                  0.000040     356
-rfu_frame_update                                  0.000780    8672
+rfu_frame_update                                  0.000780    8988
 spin_thumb_op                                     0.000150    2372
 execute_spsr_restore_body                         0.000010     184
 xs_clear_all                                      0.000015     292
 __popcountsi2                                     0.000004      88 libgcc.a:_popcountsi2.o
 sram_scan                                         0.000030     708
-flush_translation_cache_ram                       0.000042    1176
+flush_translation_cache_ram                       0.000042    1184
 gpsp_visible_done_hook                            0.000018     528
 read_memory16                                     0.000023     664
 fe_evt                                            0.000002      48
@@ -141,7 +141,7 @@ read_memory8                                      0.000012     628
 spin_arm_op                                       0.000045    3096
 fflush                                            0.000003     244 libc.a:libc_a-fflush.o
 entry_gates_harvest                               0.000004     316
-memory_term                                       0.000002     348
+memory_term                                       0.000002     340
 reload_timing_info                                0.000002     336
 __moddi3                                          0.000006    1392 libgcc.a:_moddi3.o
 __divdi3                                          0.000006    1404 libgcc.a:_divdi3.o
@@ -150,8 +150,8 @@ rtc_current_time                                  0.000003     784
 flush_translation_cache_ram_dma                   0.000002     824
 __udivdi3                                         0.000001    1340 libgcc.a:_udivdi3.o
 render_gbc_sound                                  0.297837   25816
-translate_block_thumb                             0.049984   99048
-translate_block_arm                               0.090269  358672
+translate_block_thumb                             0.049984   99816
+translate_block_arm                               0.090269  376860
 # ---- bscan: linked inside B's hot path, just before B's update_scanline (its LAYOUT_PAD_BSCAN_BYTES
 # zeros), A's copy then B's (gen_layout.py write_ord).  The beta.5 JIT fix (claude/jit-thrash-fix bf7a68bd)
 # grows block_lookup_translate_arm (+256 B 32 B-rounded), block_lookup_translate_thumb (+256),
@@ -180,9 +180,9 @@ smc_local_narrow.isra.0                           0.000215     132
 memcmp                                            0.015236     128 libc.a:libc_a-memcmp.o
 block_lookup_address_dual                         0.005241      52
 strlen                                            0.000360      28 libc.a:libc_a-strlen.o
-halt_hop_begin                                    0.000000       0
-halt_hop_wake                                     0.000000       0
-halt_hop_lines                                    0.000000       0
+halt_hop_begin                                    0.000000     384
+halt_hop_wake                                     0.000000     368
+halt_hop_lines                                    0.000000     304
 process_cheats                                    0.000412       8
 # ---- last: linked after B's late copies (gen_layout.py write_ord).  The ME capture's mid-frame-log
 # helpers (beta.5 integration, the filters cache fix); psp/layout_pad_late.S, in front of the first,

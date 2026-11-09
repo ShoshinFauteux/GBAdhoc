@@ -99,6 +99,10 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   A gap that holds a carried FRAG anchor is now cut there; the committed cutlist regenerates byte for
   byte on b7d0cafd and on this tree. `tests/source-split_test_carry_shift.py [GPSP]` (shell shrunk,
   grown; the pre-fix rule as a mutant).
+- **`psp/layout/hot_order.txt`'s size column** is the b7d0cafd release ELF's (19 rows; T5 on release:
+  0 size / 0 rounding rows, was 19 / 14). Data only: hot.ord (names) is byte-identical and
+  `hot_budget.py` reads the HOT core's rows, none of which changed. That commit's gate has HO and BF
+  red by design (the staleness report and psp/layout/ differ from b7d0cafd's); the bytes are equal.
 
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 
