@@ -43,6 +43,8 @@ code bigger (RAM translation flushes 229 -> 276).
   to the openload C path, which applies the same protection (`read_memory*`). Every rewritten slow path is
   padded to its old size (`pcarg_pad_to`): no stub moves, so the hot stubs keep their I-cache sets, and
   `mips_stub.o(.text)` (the head of the hot order) keeps its size (`pcarg_dec` has its own section).
+  In DRPROF_HW builds the miss path's `pcarg_lookup` publishes hardware phase 5 (`DRPH_PCARG`, "pcarg"), not
+  flush/SMC; the front cache itself writes no phase (JIT glue, phase 0).
 * **Determinism.** The table's content is a function of the translation history alone; the front cache only
   changes how fast an answer comes. The JIT code's guest effect is identical by construction (section 3).
 
@@ -55,6 +57,32 @@ on Doom II, Duke, Ice Nine, Top Gear Rally, Hot Wheels, Emerald battle and FireR
 sites past the ROM cap, so both forms mixed). The real arm (no pad) is identical on Emerald and FireRed and
 diverges by timing on the others (smaller RAM code moves a full flush; first difference at frame 179 Hot
 Wheels .. 3,667 Doom): Hot Wheels' cache resets 286 -> 237 in the window.
+
+**Camelot and SMC_REUSE-heavy titles** (added after review: the gate's lockstep cannot tell a wrong `k` from
+timing, because its interpreter replays the candidate's own I/O values and IRQ times, and its LAB_LOCKSTEP build
+takes another timer-read path). Plain gate twins (`gate_twin.build`, TWIN=0, shipping paths, no LAB_LOCKSTEP)
+of e70d60aa vs 474f7899 + PCARG_SIDE_PAD, both `-DRAM_CACHE_KB=384` (the PSP's RAM cache), state + framebuffer
+hash every frame (builds/pcarg-out/pad_smc.py, pad_smc.json): **identical on all nine runs**: Lab fixtures
+kf_mario_golf_advance_tour (3,900), kf_mario_tennis_power_tour (3,900), own_mario_tennis (3,900), kf_payback
+(2,200), and corpus power-on runs of Golden Sun: The Lost Age, Golden Sun, Mario Golf, Mario Tennis and Payback
+(3,000 each). The pad arm's counters on the same runs (TWIN=1 bookkeeping, same emitted code; pad_ctr.py):
+
+| run | new-form sites | old (table full) | truncations | C lookups | SMC_IMM_PATCH patches |
+|---|---:|---:|---:|---:|---:|
+| kf_payback | 25,591,330 | 3,091,306 | 3,732 | 183,687 | 1,537 (SMC_REUSE norec 1,589) |
+| Payback corpus | 22,042,020 | 2,584,091 | 3,016 | 153,399 | 714 (norec 1,376) |
+| kf_mario_golf_advance_tour | 159,960 | 0 | 100 | 5,262 | 0 (learned 79) |
+| kf_mario_tennis_power_tour | 138,889 | 0 | 61 | 7,746 | 0 |
+| own_mario_tennis | 112,251 | 0 | 51 | 4,766 | 0 |
+| Mario Golf corpus | 105,967 | 0 | 72 | 4,808 | 0 |
+| Mario Tennis corpus | 84,883 | 0 | 71 | 7,693 | 0 |
+| Golden Sun TLA corpus | 31,012 | 0 | 36 | 5,884 | 0 |
+| Golden Sun corpus | 15,975 | 0 | 18 | 1,831 | 0 |
+
+`bad=0` everywhere. Payback fills both tables (max ROM 12,288, RAM 8,192 entries) and mixes the site forms,
+rewinds the tables thousands of times and runs SMC_IMM_PATCH over revived SMC_REUSE bodies; it stays
+hash-identical. So the Ice Nine, Golden Sun TLA and Mario Golf divergences of the gate (section 7) are not a
+wrong recovered argument: with the code size held, the guest runs exactly as the base.
 
 ## 4. Twin prediction (cache-aware twin, docs/CACHE-AWARE-CODEGEN.md)
 
@@ -111,8 +139,23 @@ cf44b8a9e624 lab ELF (and the e70d60aa release ELF): layout.lock [lab] and [rele
 values; every data/bss symbol at the same offset mod 8 KiB; of the hot-order functions only the two
 translate_block_arm copies moved (their code changed); 62 (lab) / 60 (release) text symbols moved in all, all
 of them the core's rewritten cold code. PSP-1000 boot heap: release 11,228,572 B, lab 10,614,172 B (both
--229,376 B: A's and B's 128 KiB tables less 32 KiB of translator text; B's table sits in B's region, which a
-solo game lends to A's ROM cache, so a solo game loses 96 KiB of ROM page room).
+-229,376 B: A's and B's 128 KiB tables less 32 KiB of translator text).
+
+**ROM page cache: the arm gets one block MORE in solo play, not less** (an earlier version of this section had
+the sign wrong). A solo game lends B's region (`gbab_bregion_start` .. `gbab_bregion_lend`) to A's ROM cache
+as spare pool 2, in whole 1 MiB blocks. B's 128 KiB table lies inside that span, so it grows from 0x3F0000
+(4,032 KiB: 3 blocks) to 0x410000 (4,160 KiB: 4 blocks), in both the lab and the release ELF. Heap blocks are
+taken after the spare pools. In PPSSPP's model the 224 KiB smaller heap costs no heap block, so the total rises
+by one: `EVT rom_cache` Hot Wheels blocks 12 -> 13, spare 3 -> 4, pages 382 -> 386; Duke and TGR 12 -> 13; Doom
+II (`plan=heap_short`, a 16 MiB cart that pages) 14 -> 15. On a PSP-1000, whose heap is ~5 MiB smaller than
+PPSSPP's, the smaller heap could still cost a heap block, so there the net is +1 or 0 blocks per game.
+
+So the hardware A/B is NOT controlled for the ROM cache by the layout lock alone: on a cart that pages (Doom
+II, any `resident=0` fixture) an extra ROM block can speed the arm up by itself. For a codegen verdict, stage
+the same `rom_cap = N` (GPSP_PERF_RIG harness key, both arms) at the base's block count, or read each arm's
+`EVT rom_cache blocks=` / `rom_diag` and report the difference with the result. A cart that is resident
+(`resident=1`: Duke, Hot Wheels and TGR in PPSSPP's model) never pages, so the extra block goes unused; check
+the flag on the hardware runs, since a PSP-1000 has less room.
 
 ## 6. JIT counters (PPSSPP, lab builds, 3,900-frame fixtures)
 
@@ -148,8 +191,10 @@ entry, whose two single loads each lost their word; the emitted stubs themselves
   for 53.97 M (Ice Nine), 19.98 M (Golden Sun TLA) and 40.00 M (Mario Golf) instructions; the builds first
   differ at a timer-counter read one tick apart (Ice Nine, TM0CNT_L 0xd07e / 0xd07d) and at an IRQ taken
   at a different instruction (the other two).
-* With the pad oracle (section 3: same code size, hash-identical to the base on seven fixtures), this puts every
-  difference on flush timing.
+* With the pad oracle (section 3: same code size, hash-identical to the base on seven fixtures plus nine
+  Camelot / SMC_REUSE runs, Golden Sun TLA and Mario Golf among them), this puts every difference on flush timing.
 
 Lab build **ff63e05c6264** (`pcarg-bef8021-lab`, builds on cf44b8a9e624). The hardware A/B against cf44b8a9e624
-is layout-identical by the lock (section 5), so it measures the codegen.
+is layout-identical by the lock (section 5). 474f7899 (the hardware phase fix) changes DRPROF_HW builds only;
+the lab and release builds compile it out, so ff63e05c6264 stays the build under test. The A/B is not
+ROM-cache-identical, though: pin `rom_cap` or report the `EVT rom_cache` block counts (section 5) before crediting a speed difference to the codegen.
