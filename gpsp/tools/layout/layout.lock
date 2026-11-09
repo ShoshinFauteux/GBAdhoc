@@ -35,8 +35,8 @@
 # TEXT/FE/CORE (+ lab RO) put pace_frame, fe_host_reset, A's cold text and
 # tables back.  Re-recorded in both sections: `at main`, `size main`, exit_cb
 # (the code between it and pace_frame grew: me_standby_down, the online
-# cancel), pte_mutex_check_need_init and me_replay_lines (online_psp.c and
-# mgift_net.c grew between the GB and CORE pads; -8/-32 B release, +16/+32 lab).
+# cancel) and pte_mutex_check_need_init (+24 B release, -16 B lab; the CORE
+# pad puts me_replay_lines and _ZL10pipe_latchv#1 back on their values).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -49,7 +49,7 @@ at   exit_cb                            0x0068
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d54
+at   pte_mutex_check_need_init          0x1d74
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -65,7 +65,7 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x1700
+at   me_replay_lines                    0x1720
 at   _ZL10pipe_latchv#1                 0x01e0
 at   netpacket_iface                    0x1ea8
 at   gbahot_start                       0x0000
@@ -105,7 +105,7 @@ at   exit_cb                            0x0c00
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x1344
+at   pte_mutex_check_need_init          0x1324
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -121,7 +121,7 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x19c0
+at   me_replay_lines                    0x19a0
 at   _ZL10pipe_latchv#1                 0x0460
 at   netpacket_iface                    0x0148
 at   gbahot_start                       0x0000
