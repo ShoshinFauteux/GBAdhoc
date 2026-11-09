@@ -12,15 +12,20 @@ On 01067e74 this resolves to exactly 16368-18090 (the self-test proves it).
 
 The SOURCE must be the one the ELF was built from.  Found in this order:
   1. --main-c PATH (explicit);
-  2. the ELF's flavours.sh record: <elf dir>/flavour.json sourceCommit ->
+  2. --tree DIR (explicit): DIR/psp/main_psp.c of the source tree the ELF was
+     built from (a gpsp/ dir, or a checkout or export holding gpsp/); the
+     callers' own source-tree options (layout_report.py --src / --ref-src,
+     loop_lpsim.py --tree / --tree-b) pass it here (P-tidy F3: they used to
+     read the window from 3./4. whatever tree they were told);
+  3. the ELF's flavours.sh record: <elf dir>/flavour.json sourceCommit ->
      `git show <commit>:gpsp/psp/main_psp.c` in the repo these tools live in;
-  3. this tree's psp/main_psp.c.
+  4. this tool's own tree's psp/main_psp.c, named as such in `where`.
 and then CHECKED: main's DW_AT_decl_line in the ELF must equal the source's
 `int main(` line, else LookupError (a stale or wrong source would silently
 measure other code; that is how the hard-coded windows failed).
 
     loop_anchor.py MAIN_C            print the resolved lines of a source file
-    loop_anchor.py --elf ELF [--main-c P]   resolve for an ELF (with the check)
+    loop_anchor.py --elf ELF [--main-c P | --tree DIR]   resolve for an ELF (with the check)
     loop_anchor.py --selftest
 """
 import json
@@ -126,10 +131,23 @@ def _git_show(commit, path):
     return None
 
 
-def source_for(elf_path, main_c=None):
+def tree_main(tree):
+    """psp/main_psp.c of a source tree: TREE is a gpsp/ dir (TREE/psp/main_psp.c) or a checkout
+    or export that holds one (TREE/gpsp/psp/main_psp.c).  LookupError when it has neither."""
+    for p in (os.path.join(tree, 'psp', 'main_psp.c'), os.path.join(tree, 'gpsp', 'psp', 'main_psp.c')):
+        if os.path.isfile(p):
+            return p
+    raise LookupError('source tree %s has no psp/main_psp.c (nor gpsp/psp/main_psp.c): pass the gpsp/ '
+                      'tree the ELF was built from' % tree)
+
+
+def source_for(elf_path, main_c=None, tree=None):
     """-> (text, where) of the main_psp.c the ELF was (claimed to be) built from."""
     if main_c:
         return open(main_c, encoding='utf-8', errors='replace').read().replace('\r\n', '\n'), main_c
+    if tree:
+        p = tree_main(tree)
+        return open(p, encoding='utf-8', errors='replace').read().replace('\r\n', '\n'), p
     fj = os.path.join(os.path.dirname(os.path.abspath(elf_path)), 'flavour.json')
     if os.path.exists(fj):
         try:
@@ -140,7 +158,8 @@ def source_for(elf_path, main_c=None):
             t = _git_show(c, 'gpsp/psp/main_psp.c')
             if t is not None:
                 return t, '%s:gpsp/psp/main_psp.c' % c[:10]
-    return open(TREE_MAIN, encoding='utf-8', errors='replace').read().replace('\r\n', '\n'), TREE_MAIN
+    return (open(TREE_MAIN, encoding='utf-8', errors='replace').read().replace('\r\n', '\n'),
+            '%s (this tool\'s own tree: no --main-c/--tree, and no flavour.json commit this repo shows)' % TREE_MAIN)
 
 
 def main_decl_line(elf_path, func='main', srcfile='main_psp.c'):
@@ -152,9 +171,10 @@ def main_decl_line(elf_path, func='main', srcfile='main_psp.c'):
     return sp[0]['decl_line'] if sp else None
 
 
-def for_elf(elf_path, main_c=None, decl_line=None):
-    """resolve the window for ELF; LookupError when the source is not the ELF's."""
-    text, where = source_for(elf_path, main_c)
+def for_elf(elf_path, main_c=None, decl_line=None, tree=None):
+    """resolve the window for ELF; LookupError when the source is not the ELF's.
+    main_c / tree: the explicit source (a main_psp.c, or the gpsp/ tree holding it)."""
+    text, where = source_for(elf_path, main_c, tree)
     r = resolve(text)
     dl = decl_line if decl_line is not None else main_decl_line(elf_path)
     if dl != r['main']:
@@ -226,6 +246,28 @@ def selftest():
         check_explicit(dict(lo=16678, hi=18402), 16368, 18090, 'x'); t(False, 'old window accepted')
     except LookupError:
         t(True, 'the old hard-coded 16368-18090 on fbe9da63 fails loudly')
+    # --tree (P-tidy F3): the source is read from the tree given, in either layout, before
+    # any flavour.json commit or this tool's own tree; a tree without main_psp.c is refused
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix='loop_anchor.')
+    try:
+        for lay in ('psp', os.path.join('gpsp', 'psp')):
+            os.makedirs(os.path.join(d, lay), exist_ok=True)
+        open(os.path.join(d, 'gpsp', 'psp', 'main_psp.c'), 'w').write(base)
+        txt, where = source_for(os.path.join(d, 'none.elf'), tree=d)
+        t(txt == base and where == os.path.join(d, 'gpsp', 'psp', 'main_psp.c'),
+          '--tree CHECKOUT (holding gpsp/): its gpsp/psp/main_psp.c is read')
+        open(os.path.join(d, 'gpsp', 'psp', 'main_psp.c'), 'w').write('/* shifted */\n' + base)
+        txt, where = source_for(os.path.join(d, 'none.elf'), tree=os.path.join(d, 'gpsp'))
+        t(resolve(txt)['main'] == 2 and where == os.path.join(d, 'gpsp', 'psp', 'main_psp.c'),
+          '--tree GPSP_DIR: its psp/main_psp.c is read (main at L:%d)' % resolve(txt)['main'])
+        try:
+            source_for(os.path.join(d, 'none.elf'), tree=os.path.join(d, 'psp')); t(False, 'a tree without main_psp.c accepted')
+        except LookupError:
+            t(True, 'mutant: a --tree without psp/main_psp.c -> LookupError')
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
     print('loop_anchor selftest: %s' % ('PASS' if not bad else '%d FAILED' % bad))
     return 1 if bad else 0
 
@@ -236,8 +278,9 @@ if __name__ == '__main__':
         sys.exit(selftest())
     if a[:1] == ['--elf']:
         mc = a[a.index('--main-c') + 1] if '--main-c' in a else None
+        tr = a[a.index('--tree') + 1] if '--tree' in a else None
         try:
-            print(describe(for_elf(a[1], mc)))
+            print(describe(for_elf(a[1], mc, tree=tr)))
         except LookupError as ex:
             print('loop_anchor: %s' % ex); sys.exit(2)
         sys.exit(0)

@@ -72,6 +72,10 @@ if want loop; then
     sed '1i /* shifted */' "$M" > "$OUT/shifted_main_psp.c"
     expect_rc 2 "[$fl] a source one line off the ELF's (main's DW_AT_decl_line) is refused" $PY "$R/loop_anchor.py" --elf "$E" --main-c "$OUT/shifted_main_psp.c"
   done
+  # P-tidy F3: T10 --src/--ref-src and T16 --tree/--tree-b are the trees the window is read from
+  expect_rc 0 "T10/T16 read the loop window from the tree given (--src/--ref-src, --tree/--tree-b; 2 tool mutants)" \
+    $PY -I "$HERE/p0a_test_src_tree.py" "$RUN" "$TREE"
+  grep -cE "^  ok  " "$OUT/last.log" | sed 's/^/        ok rows: /'
 fi
 
 # ---- T10 layout_report: every LAYOUT_PAD_*BYTES discovered (no fixed list), each pad

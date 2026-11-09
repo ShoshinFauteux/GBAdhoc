@@ -81,6 +81,13 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   b7d0cafd tool regenerates the committed `generated/` byte for byte. New: `abi_asserts.py selftest`
   proves it with no docker (this tree, the committed headers' constant blocks, the raw-shell read
   as a mutant, synthetic split and single-file trees); `run_all.sh` runs it in `p0a_unit`.
+- **The loop window's source is the tree given (F3).** `layout_report.py --src` now feeds main's
+  loop window too (it fed only the pads, the lock and, now, the hot order), `--ref-src` REF's;
+  `loop_lpsim.py window|loopfile --tree DIR`, `setmap --tree A --tree-b B`, `layouts --tree
+  NAME=DIR`; `loop_anchor.for_elf(tree=)`. Without them the window still comes from the ELF's
+  flavour.json commit, else the tools' own tree, which the report now names as such. A source that
+  is not the ELF's is REFUSED (exit 2). `tests/p0a_test_src_tree.py RUN TREE` (in `p0a_b5.sh`
+  step `loop`) proves each option is read, with the pre-fix calls as mutants.
 
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 
