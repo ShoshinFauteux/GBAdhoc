@@ -25,7 +25,7 @@ import statistics as st
 import sys
 from pathlib import Path
 
-PH = ["jit", "upd", "disp", "flush", "cmisc", "-5", "xlat", "memc", "sound",
+PH = ["jit", "upd", "disp", "flush", "cmisc", "pcarg", "xlat", "memc", "sound",
       "dma", "serial", "video", "irq", "retro", "-14", "outside"]
 FIX = [("AW2 scene tour", ["GBADHOC-DRPROF1", "GBADHOC-DRPROF2", "GBADHOC-DRPROF3"]),
        ("H&S heavy-music battle", ["GBADHOC-DRPROF4", "GBADHOC-DRPROF5", "GBADHOC-DRPROF6"])]

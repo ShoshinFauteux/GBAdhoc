@@ -179,7 +179,7 @@ def main():
     # (= relative cycles per instruction of each phase on the real CPU)
     ASM_JIT = ("mips_indirect_branch", "lookup_pc", "mips_update_gba", "execute_",
                "write_io_epilogue", "smc_write", "return_to_main", "cpu_sleep_loop",
-               "mips_cheat_hook")
+               "mips_cheat_hook", "pcarg_dec")
     PHASE_OF = [("disp", ("block_lookup_",)), ("upd", ("update_gba",)),
                 ("sound", ("sound_", "render_gbc_sound")), ("dma", ("dma_",)),
                 ("serial", ("update_serial", "serial", "rfu_")),

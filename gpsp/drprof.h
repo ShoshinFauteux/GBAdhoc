@@ -140,6 +140,7 @@ enum
   DRPH_DISP = 2,     /* block lookup (C dispatch)                           */
   DRPH_FLUSH = 3,    /* cache flush / SMC handling                          */
   DRPH_CMISC = 4,    /* mode switch, cpsr/spsr bodies, cheats               */
+  DRPH_PCARG = 5,    /* PCARG_SIDE: pcarg_lookup (side-table miss, C)       */
   DRPH_XLAT = 6,     /* translation                                         */
   DRPH_MEMC = 7,     /* C memory slow paths (io, backup, eeprom, gpio, rom) */
   DRPH_SOUND = 8,

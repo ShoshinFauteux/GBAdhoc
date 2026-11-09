@@ -254,6 +254,8 @@ symbol:
   addiu $1, $0, 1                 # update_gba
   .elseif \targetid <= 3
   addiu $1, $0, 2                 # block lookups
+  .elseif \targetid == 15
+  addiu $1, $0, 5                 # PCARG_SIDE: pcarg_lookup (side-table miss)
   .elseif (\targetid == 4) || (\targetid >= 10)
   addiu $1, $0, 3                 # flush / smc
   .elseif \targetid == 9
