@@ -849,6 +849,10 @@ static void ui_net_action(int is_host)
       osd_toast("%s not found - is the host still there?", room);
    else if (rc == ADHOC_ERR_NP_START)
       osd_toast("Radio OK, netdrv failed: %s", g_np_start_why);
+#ifdef GBADHOC_ONLINE
+   else if (rc == ADHOC_ERR_ONLINE)
+      osd_toast(s_online_fmt, online_psp_why());
+#endif
    else
       osd_toast("Wireless start failed (%s)", adhoc_transport_stage());
 }

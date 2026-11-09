@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 1f19f8d9d34dbaf2; split.py inverse of the shell sha256 40c9e519f938ee2f (18626 lines) -->
+     inputs: cutlist.txt sha256 ad4700500a0ff9d6; split.py inverse of the shell sha256 4c00ab1ded276543 (18635 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -34,7 +34,7 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 
 ### @extract markers
 
-`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 14 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
+`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 15 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
 
 | prefix | meaning | regions | in | read by |
 |---|---|---|---|---|
@@ -119,6 +119,8 @@ Every region, in TU order, and the host tests that read it:
 | `def:wake_answers` | `fe/power.e.inc.c:136` | `test_sleep_menu.py` |
 | `fn:wake_service` | `fe/power.e.inc.c:141` | `test_menu_press.py`, `test_sleep_menu.py` |
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
+
+Readers that read the TU text but no region: `test_net_codes.py`.
 
 ## Modules
 
@@ -267,11 +269,11 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 27 | link.b | `fe/link.b.inc.c` | 1-163 | link | 3 / 21 | harness 21 |
 | 28 | boost | `fe/boost.inc.c` | 1-164 | boost | 7 / 11 | - |
 | 29 | harness.d | `fe/harness.d.inc.c` | 1-107 | harness | 2 / 0 | - |
-| 30 | link.c | `fe/link.c.inc.c` | 1-612 | link | 14 / 13 | merend 3, harness 1 |
+| 30 | link.c | `fe/link.c.inc.c` | 1-617 | link | 14 / 13 | merend 3, harness 1 |
 | 31 | inproc.b | `fe/inproc.b.inc.c` | 1-74 | inproc | 1 / 2 | power 1 |
 | 32 | link.d | `fe/link.d.inc.c` | 1-1433 | link | 29 / 86 | power 3, mgift 1, boot 5, harness 2 |
 | 33 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
-| 34 | link.e | `fe/link.e.inc.c` | 1-855 | link | 12 / 14 | - |
+| 34 | link.e | `fe/link.e.inc.c` | 1-859 | link | 12 / 14 | - |
 | 35 | mgift | `fe/mgift.inc.c` | 1-510 | mgift | 19 / 6 | input 1 |
 | 36 | harness.e | `fe/harness.e.inc.c` | 1-156 | harness | 2 / 0 | - |
 | 37 | misc.c | `fe/misc.c.inc.c` | 1-51 | misc | 3 / 2 | - |
@@ -470,7 +472,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 - `fe/link.c.inc.c:124` G `g_fxs_gba` -> merend
 - `fe/link.c.inc.c:124` G `g_fxs_gb` -> merend
 - `fe/link.c.inc.c:147` G `g_fxs_arm` -> merend
-- `fe/link.c.inc.c:397` G `g_telemetry_period` -> harness
+- `fe/link.c.inc.c:402` G `g_telemetry_period` -> harness
 
 **inproc.b** (module inproc):
 
@@ -531,7 +533,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **link.b** (`fe/link.b.inc.c`): preempt_mark:84, preempt_frame_end:124, preempt_evt:138
 - **boost** (`fe/boost.inc.c`): emu_boost_drop:59, boost_warden:67, emu_boost_open:87, emu_boost_close:99, emu_boost_start:107, emu_boost_stop:137, boost_evt:154
 - **harness.d** (`fe/harness.d.inc.c`): sess_cost_evt:1, adhoc_ctl_evt:93
-- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:323, gpsp_adhoc_step:337, net_teardown_io:343, net_teardown:386, link_version_text:400, net_frame:409, gpsp_rfu_now_us:524, gpsp_rfu_flight_dump_hook:536
+- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:328, gpsp_adhoc_step:342, net_teardown_io:348, net_teardown:391, link_version_text:405, net_frame:414, gpsp_rfu_now_us:529, gpsp_rfu_flight_dump_hook:541
 - **inproc.b** (`fe/inproc.b.inc.c`): inproc_refusal:46
 - **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:283, rfu_tr_state_name:320, rfu_trace_drain:329, silent_frame:658, gblink_seed_wallclock:800, gblink_find_in:810, psp_gb_bulk_enable:918, psp_gb_bulk_send:931, psp_gb_bulk_recv:935, psp_gb_find_rom:940, link_backdrop_take:953, gba_reload_draw:970, gba_reload_progress:994, gba_reload_note:1003, heap_exact:1043, sessmem_cycle_test:1055, gblink_close_held:1098, gblink_begin:1107, link_amount:1162, link_fail_text:1183, link_draw_facts:1233, gblink_draw_status:1333, plat_gblink_wait:1408
 - **audio.b** (`fe/audio.b.inc.c`): audio_nominal_step:1, gblink_audio_session:8

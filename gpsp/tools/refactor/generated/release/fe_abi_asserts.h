@@ -274,22 +274,22 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/power.d.inc.c:209     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
  *   fe/power.d.inc.c:289     scePowerIsRequest                    not declared by the check TU's headers
  *   fe/merend.d.inc.c:682    gamepak_buffers                      not declared by the check TU's headers
- *   fe/link.c.inc.c:485      rfu_set_rx_cap                       not declared by the check TU's headers
- *   fe/link.c.inc.c:490      rfu_set_frame_pace                   not declared by the check TU's headers
- *   fe/link.c.inc.c:491      rfu_set_pace_max_hold                not declared by the check TU's headers
- *   fe/link.c.inc.c:492      rfu_set_cushion                      not declared by the check TU's headers
- *   fe/link.c.inc.c:493      rfu_set_shed_keep                    not declared by the check TU's headers
- *   fe/link.c.inc.c:494      rfu_set_hold                         not declared by the check TU's headers
- *   fe/link.c.inc.c:495      rfu_set_supersede                    not declared by the check TU's headers
- *   fe/link.c.inc.c:496      rfu_set_fault_corrupt                not declared by the check TU's headers
- *   fe/link.c.inc.c:497      rfu_set_fault_span                   not declared by the check TU's headers
- *   fe/link.c.inc.c:498      rfu_set_fault_mode                   not declared by the check TU's headers
- *   fe/link.c.inc.c:499      adhoc_set_disc_await                 not declared by the check TU's headers
- *   fe/link.c.inc.c:503      rfu_set_timeout_scale                not declared by the check TU's headers
- *   fe/link.c.inc.c:506      rfu_set_poll_min_cycles              not declared by the check TU's headers
- *   fe/link.c.inc.c:510      rfu_set_idle_poll_cycles             not declared by the check TU's headers
- *   fe/link.c.inc.c:514      rfu_set_disc_defer                   not declared by the check TU's headers
- *   fe/link.c.inc.c:521      rfu_set_disc_grace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:490      rfu_set_rx_cap                       not declared by the check TU's headers
+ *   fe/link.c.inc.c:495      rfu_set_frame_pace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:496      rfu_set_pace_max_hold                not declared by the check TU's headers
+ *   fe/link.c.inc.c:497      rfu_set_cushion                      not declared by the check TU's headers
+ *   fe/link.c.inc.c:498      rfu_set_shed_keep                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:499      rfu_set_hold                         not declared by the check TU's headers
+ *   fe/link.c.inc.c:500      rfu_set_supersede                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:501      rfu_set_fault_corrupt                not declared by the check TU's headers
+ *   fe/link.c.inc.c:502      rfu_set_fault_span                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:503      rfu_set_fault_mode                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:504      adhoc_set_disc_await                 not declared by the check TU's headers
+ *   fe/link.c.inc.c:508      rfu_set_timeout_scale                not declared by the check TU's headers
+ *   fe/link.c.inc.c:511      rfu_set_poll_min_cycles              not declared by the check TU's headers
+ *   fe/link.c.inc.c:515      rfu_set_idle_poll_cycles             not declared by the check TU's headers
+ *   fe/link.c.inc.c:519      rfu_set_disc_defer                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:526      rfu_set_disc_grace                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers

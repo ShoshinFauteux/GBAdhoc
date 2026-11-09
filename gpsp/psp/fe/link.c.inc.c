@@ -233,13 +233,14 @@ static int net_bringup_io(int is_host, const char *group, const char *nick,
       if (rc < 0)
       {
          fe_evt("net_error reason=online why=\"%s\"", online_psp_why());
-         return -1;
+         return ADHOC_ERR_ONLINE;   /* never -1: that reads "WLAN switch is OFF" */
       }
       fe_evt("adhoc_up group=%s via=online", group && group[0] ? group : "-");
-      if (net_start_np(is_host, group, nick, probe) != 0)
+      rc = net_start_np(is_host, group, nick, probe);
+      if (rc != 0)
       {
          online_psp_down();
-         return -1;
+         return rc;                 /* ADHOC_ERR_NP_START */
       }
       fe_evt("mem_free=%d max_block=%d net=up via=online",
              sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
@@ -275,10 +276,14 @@ static int net_bringup_io(int is_host, const char *group, const char *nick,
    }
    log_adhoc_up(group);
 
-   if (net_start_np(is_host, group, nick, probe) != 0)
+   rc = net_start_np(is_host, group, nick, probe);
+   if (rc != 0)
    {
+      /* Its own code, ADHOC_ERR_NP_START: -1 was ADHOC_ERR_WLAN_OFF, and
+       * the 1000 field report (net arena) said "WLAN switch is OFF" with
+       * the switch on (r3-B1). */
       adhoc_transport_term();
-      return -1;
+      return rc;
    }
    if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
       skip_policy_session_begin();       /* ADR-0019 */

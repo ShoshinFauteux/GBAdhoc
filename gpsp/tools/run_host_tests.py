@@ -614,6 +614,11 @@ def suites(env: Env, baseline: Path | None):
         ("exit_req", True, lambda: None,
          "python3 tools/tests/test_exit_req.py"),
 
+        # The wireless bring-up's failure codes (PLAN HW-2 r3-B1): an online
+        # or netdrv failure is never -1 (ADHOC_ERR_WLAN_OFF), plus the toasts.
+        ("net_codes", True, lambda: None,
+         "python3 tools/tests/test_net_codes.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 
