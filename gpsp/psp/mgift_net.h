@@ -37,8 +37,15 @@ enum
    MGNET_ERR_NO_CONFIG       = -7,  /* no stored network profile to connect */
    MGNET_ERR_CONNECT         = -8,  /* sceNetApctlConnect failed */
    MGNET_ERR_CONNECT_TIMEOUT = -9,  /* never reached GOT_IP */
-   MGNET_ERR_ALREADY         = -12  /* already up */
+   MGNET_ERR_ALREADY         = -12, /* already up */
+   MGNET_ERR_CANCELLED       = -13  /* the cancel hook asked (mgnet_set_cancel) */
 };
+
+/* Polled while mgnet_wifi_up waits for the association (up to timeout_us):
+ * nonzero ends the wait as a failure, MGNET_ERR_CANCELLED, with the partial
+ * init unwound.  NULL (the default) = no cancel.  Online play's LINKING
+ * screen sets it for its bring-up (O cancels; HW-1 r4-L3). */
+void mgnet_set_cancel(int (*cancel)(void));
 
 /* Associate with a stored network profile. `conf` is 1-based;
  * 0 selects/creates the open MGNET_AUTO_SSID profile. `timeout_us`

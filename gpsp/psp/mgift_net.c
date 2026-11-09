@@ -150,6 +150,13 @@ void gpsp_net_wait_beat(void);
 #define NET_WAIT_BEAT() ((void)0)
 #endif
 
+static int (*g_mgnet_cancel)(void);
+
+void mgnet_set_cancel(int (*cancel)(void))
+{
+   g_mgnet_cancel = cancel;
+}
+
 static int fail(int rc, const char *where, unsigned sce)
 {
    N.last_sce = sce;
@@ -248,6 +255,8 @@ int mgnet_wifi_up(int conf, unsigned timeout_us)
       if ((unsigned)sceKernelGetSystemTimeLow() - t0 > timeout_us)
          return fail(MGNET_ERR_CONNECT_TIMEOUT, "apctl_wait",
                      (unsigned)state);
+      if (g_mgnet_cancel && g_mgnet_cancel())
+         return fail(MGNET_ERR_CANCELLED, "cancelled", (unsigned)state);
       NET_WAIT_BEAT();
       sceKernelDelayThread(50000);
    }

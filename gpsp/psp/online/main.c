@@ -83,6 +83,16 @@ static void beat(void)
       g_ol_host->beat();
 }
 
+/* v5: the player's O on the LINKING screen (host.cancel; NULL = none). */
+static int cancelled(char *why, unsigned why_cap)
+{
+   if (!g_ol_host->cancel || !g_ol_host->cancel())
+      return 0;
+   snprintf(why, why_cap, "cancelled");
+   evt("online_error stage=cancel");
+   return 1;
+}
+
 static uint64_t now_us(void) { return (uint64_t)sceKernelGetSystemTimeWide(); }
 
 /* "a.b.c.d[:port]" -> ip (network order); 0 = not a dotted quad */
@@ -341,6 +351,11 @@ static int ol_up(const online_cfg *cfg, int is_host, const char *build,
    }
    memset(&D, 0, sizeof(D));
    O.port = 0;
+   if (cancelled(why, why_cap))
+   {
+      ol_down();
+      return -1;
+   }
    rc = resolve(&sip, &sport);
    if (rc != 0)
    {
@@ -355,6 +370,11 @@ have_server:
       evt("online_server ip=%u.%u.%u.%u port=%u", p[0], p[1], p[2], p[3], sport);
    }
    beat();
+   if (cancelled(why, why_cap))       /* the lookup can take ~6 s */
+   {
+      ol_down();
+      return -1;
+   }
    O.fd = sceNetInetSocket(AF_INET, SOCK_DGRAM, 0);
    if (O.fd < 0)
    {
@@ -463,6 +483,11 @@ have_server:
             diag(why, why_cap, O.invite ? "the host did not answer"
                                : is_host ? "no answer" : "no room/answer");
          evt("online_error stage=room state=%d why=\"%s\"", st, why);
+         ol_down();
+         return -1;
+      }
+      if (cancelled(why, why_cap))
+      {
          ol_down();
          return -1;
       }

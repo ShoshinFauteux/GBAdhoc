@@ -72,8 +72,10 @@ static online_host g_host = {
    calloc, h_free, h_vsnprintf, h_evt,
    mgnet_wifi_is_up, mgnet_local_ip,
    HOST_BEAT,
-   osd_chip_session, osd_toast
+   osd_chip_session, osd_toast,
+   NULL                         /* cancel: online_psp_cancel_hook */
 };
+static char s_cancelled[] = "cancelled";
 static char s_prx_fmt[] = "%s/gbadhoc_online.prx";
 static char s_missing[] = "online module missing";
 static char s_nomem[] = "online module: no memory";
@@ -282,6 +284,12 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
    if (online_psp_is_up())
       return 0;
    rc = mgnet_wifi_up(O.cfg.wifi, 30000000u);
+   if (rc == MGNET_ERR_CANCELLED)
+   {
+      snprintf(O.why, sizeof(O.why), "%s", s_cancelled);
+      fe_evt("online_error stage=cancel at=wifi");
+      return -1;
+   }
    if (rc != MGNET_OK)
    {
       /* The SCE code goes on screen: a release build has no log, and
@@ -310,6 +318,12 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
     * room) hosts the session.  A return value, not an accessor: ONLINE's
     * EBOOT text has almost no room left (ui_psp.c, screen_online). */
    return !is_host && O.api.slot() == 0;
+}
+
+void online_psp_cancel_hook(int (*cancel)(void))
+{
+   g_host.cancel = cancel;
+   mgnet_set_cancel(cancel);
 }
 
 int online_psp_is_up(void) { return O.loaded && O.api.is_up(); }
