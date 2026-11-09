@@ -885,10 +885,13 @@ int main(int argc, char *argv[])
       fe_evt("sram_ff_nudge on=%d", nudge != 0);
    }
    /* Same, for session pacing.  ADR-0033 REMAPPED THE VALUES: 0 off,
-    * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher. */
+    * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher,
+    * 3 backpressure (ff_psp.h).  3 was clamped to 1 here and then
+    * persisted by pcfg_save (r6-B1). */
    g_pcfg.net_pace_match = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
                                                g_pcfg.net_pace_match);
-   if (g_pcfg.net_pace_match < 0 || g_pcfg.net_pace_match > 2)
+   if (g_pcfg.net_pace_match < PACE_MODE_OFF ||
+       g_pcfg.net_pace_match > PACE_MODE_BACKPRESSURE)
       g_pcfg.net_pace_match = PACE_MODE_FIXED;
    g_pcfg.net_session_fps_x100 =
       pcfg_fps_x100(HARNESS_INI, "net_session_fps",
