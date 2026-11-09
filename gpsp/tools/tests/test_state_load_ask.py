@@ -32,13 +32,30 @@ scan, the dwell read, the delete, screen_to / screen_menu.
   6. The last slot: UP from slot 1 reaches it; the question and the load
      are its own (PSP_STATE_SLOT_COUNT, whatever it is).
   7. The quick load: ui_state_load_ask(1) opens the page on slot 1 with the
-     question up; X loads; every other key closes the menu straight back
-     into the game (UI_ACT_RESUME) having loaded nothing; a failed load then
-     behaves as the page's.  An empty slot 1, a slot out of range or no
-     menu asks nothing.
+     question up; X loads; O closes the menu straight back into the game
+     (UI_ACT_RESUME) having loaded nothing; every other key that is not a
+     direction does nothing (the question stays, on the same slot); a
+     failed load then behaves as the page's.  An empty slot 1, a slot out
+     of range or no menu asks nothing.
+  7b. The quick load BROWSES: its plate reads "Load Slot n?  UP DOWN choose
+     X load  O back" with "Unsaved progress is lost." under the preview;
+     DOWN/RIGHT move the question to the next saved slot, UP/LEFT to the
+     previous one, wrapping and skipping empty slots, with the list
+     highlight following; X loads the chosen slot, O is Resume.  Every
+     pattern of saved slots (one slot, some, all) is walked both ways.
+  7c. The pictures follow: each row's thumbnail is drawn, and the full
+     preview is read once the question rests on a slot (OV_SHOT_DWELL
+     frames), again for each slot browsed to; with one slot, the d-pad
+     reads nothing again.  A slot with a state but no usable thumbnail is
+     browsed like any other.
+  7d. A corrupt slot: the load fails (ui_state_load_done(-1)), the page
+     stays with "Slot n could not be loaded", and from there the page's own
+     rules hold (the d-pad walks every slot, O goes to the menu).
+  7e. GB, GBC and GBA states: whatever the slot-1 name (.st0, .gb.st0,
+     .gbc.st0), the browsed slot is the file the menu branch loads.
   8. A direction held from the game (or a chord on the d-pad) does not
-     auto-repeat into an answer, however long it is held; a fresh press
-     still answers.
+     auto-repeat into an answer or a move, however long it is held; a
+     fresh press still browses, and O still answers.
 
 PART B, the call site.  psp/main_psp.c's quick-save / quick-load dispatch,
 taken as written (`if (ctl_fired & CTL_FIRE_SAVE) ... else if (ctl_fired &
@@ -113,6 +130,7 @@ def span(source, first, last):
 
 PAGE = "static ui_action screen_state_slots(unsigned edges)"
 ASK = "int ui_state_load_ask(int slot)"
+DONE = "int ui_state_load_done(int rc)"
 EDGES = "static unsigned pad_edges(unsigned pad)"
 
 
@@ -122,7 +140,8 @@ def production(src):
         span(src, "#define SS_", "#define SS_PH "),
         static_fn(src, EDGES),
         static_fn(src, PAGE),
-        static_fn(src, ASK)))
+        static_fn(src, ASK),
+        static_fn(src, DONE)))
 
 
 CC = ["cc", "-std=gnu99", "-Wall", "-Wextra", "-Werror",
@@ -162,6 +181,8 @@ PAGE_STUB = r'''
 #define VID_GLYPH_O   "\x80"
 #define VID_GLYPH_X   "\x81"
 #define VID_GLYPH_SQ  "\x82"
+#define VID_GLYPH_UP  "\x87"
+#define VID_GLYPH_DOWN "\x88"
 enum { C_SEL = 1, C_ITEM, C_DIM, C_VALUE, C_ACCENT, C_CARD };
 #define OV_SCRIM 170
 #define OV_SHOT_DWELL 6
@@ -182,22 +203,45 @@ static char g_ov_title[100] = "Ruby";
 static int g_active = 1;
 static unsigned g_prev_pad;
 static int g_rep_timer;
-static int deletes, menus;
+static int deletes, menus, closes;
 
-/* What a frame said: every vid_text, and the plate or the footer. */
+/* What a frame said: every vid_text, and the plate or the footer; the
+ * highlighted list row (the row's C_SEL text) and the row thumbnails drawn. */
 static char drawn[64][96];
-static int n_drawn;
-static char plate[128], foot[128];
+static int n_drawn, images;
+static char plate[128], foot[128], sel_row[96];
+
+/* The full preview: off unless a case turns the texture on; each read is
+ * recorded (0-based slot) and succeeds. */
+static int shot_tex_on, n_shot_reads, shot_reads[64];
+static uint16_t shot_tex[4];
 
 static void ov_slots_scan(void) {}
 static int state_delete(const char *b, unsigned s)
 { (void)b; deletes++; g_ov_slot[s - 1] = 0; return 0; }
-static void screen_to(int s) { g_screen = s; }
+/* ui_psp.c's screen_to(SCR_STATE_SLOTS) runs the scan, which forgets the
+ * full preview and restarts the dwell (ov_slots_scan_io). */
+static void screen_to(int s)
+{
+   g_screen = s;
+   if (s == SCR_STATE_SLOTS)
+   {
+      g_ov_shot_slot = -1;
+      g_ov_dwell = 0;
+   }
+}
 static ui_action screen_menu(unsigned e, int l)
 { (void)e; (void)l; menus++; return UI_ACT_NONE; }
+static void ui_close(void) { closes++; g_active = 0; }
 static unsigned sceKernelGetSystemTimeLow(void) { return 0; }
-static int ov_shot_read(int i) { (void)i; return -1; }
-static uint16_t *vid_shot_tex(void) { return NULL; }
+static int ov_shot_read(int i)
+{
+   if (n_shot_reads < 64)
+      shot_reads[n_shot_reads++] = i;
+   g_ov_shot_slot = i;
+   return 0;
+}
+static uint16_t *vid_shot_tex(void) { return shot_tex_on ? shot_tex : NULL; }
 static void ov_backdrop(int a) { (void)a; }
 static void ov_head(const char *t, const char *r) { (void)t; (void)r; }
 static void vid_rect(int x, int y, int w, int h, int c, int a)
@@ -205,12 +249,14 @@ static void vid_rect(int x, int y, int w, int h, int c, int a)
 static void vid_image(int x, int y, int w, int h, const uint16_t *p, int tw,
                       int th, int sw, int sh, int a)
 { (void)x; (void)y; (void)w; (void)h; (void)p; (void)tw; (void)th;
-  (void)sw; (void)sh; (void)a; }
+  (void)sw; (void)sh; (void)a; images++; }
 static void vid_text(int x, int y, const char *s, int c)
 {
-   (void)x; (void)y; (void)c;
+   (void)x; (void)y;
    if (n_drawn < 64)
       snprintf(drawn[n_drawn++], sizeof(drawn[0]), "%s", s);
+   if (c == C_SEL)
+      snprintf(sel_row, sizeof(sel_row), "%s", s);
 }
 static void ov_scrollbar(int x, int y, int h, int p, int v, int t)
 { (void)x; (void)y; (void)h; (void)p; (void)v; (void)t; }
@@ -222,8 +268,8 @@ static void footer(const char *m) { snprintf(foot, sizeof(foot), "%s", m); }
 
 static ui_action press(unsigned edges)
 {
-   n_drawn = 0;
-   plate[0] = foot[0] = '\0';
+   n_drawn = images = 0;
+   plate[0] = foot[0] = sel_row[0] = '\0';
    return screen_state_slots(edges);
 }
 
@@ -231,6 +277,38 @@ static ui_action press(unsigned edges)
 static ui_action frame(unsigned pad)
 {
    return press(pad_edges(pad));
+}
+
+/* A key pressed for one frame and let go: 1 when neither frame left the
+ * page and the quick load's question is still up. */
+static int tap(unsigned key)
+{
+   ui_action a = frame(key), b = frame(0);
+   return a == UI_ACT_NONE && b == UI_ACT_NONE &&
+          g_slot_ask == SLOT_ASK_LOAD && g_slot_ask_back;
+}
+
+/* Something this frame drew with vid_text, word for word. */
+static int was_drawn(const char *s)
+{
+   int i;
+   for (i = 0; i < n_drawn; i++)
+      if (!strcmp(drawn[i], s))
+         return 1;
+   return 0;
+}
+
+/* The quick load's question as it must read for slot n, its row
+ * highlighted, its warning under the preview. */
+static int asks_for(int n)
+{
+   char q[96], row[16];
+   snprintf(q, sizeof(q), "Load Slot %d?      " VID_GLYPH_UP VID_GLYPH_DOWN
+            " choose     " VID_GLYPH_X " load     " VID_GLYPH_O " back", n);
+   snprintf(row, sizeof(row), "Slot %d", n);
+   return !strcmp(plate, q) && !strcmp(sel_row, row) &&
+          g_slot_ask_n == n && g_state_slot == n &&
+          was_drawn("Unsaved progress is lost.");
 }
 
 static void page(void)
@@ -247,7 +325,12 @@ static void page(void)
    g_screen = SCR_STATE_SLOTS;
    g_slot_ask = g_slot_ask_n = g_slot_saving = g_slot_ask_back = 0;
    g_slot_note[0] = '\0';
-   deletes = menus = 0;
+   deletes = menus = closes = 0;
+   g_active = 1;
+   shot_tex_on = n_shot_reads = 0;
+   g_ov_shot_slot = -1;
+   g_ov_dwell = 0;
+   strcpy(g_state_base, "/r/Ruby.st0");
    g_prev_pad = 0;
    g_rep_timer = 0;
    press(0);
@@ -267,8 +350,12 @@ int main(void)
       PSP_CTRL_TRIANGLE, PSP_CTRL_UP, PSP_CTRL_DOWN, PSP_CTRL_LEFT,
       PSP_CTRL_RIGHT, PSP_CTRL_START, PSP_CTRL_SELECT, PSP_CTRL_LTRIGGER,
       PSP_CTRL_RTRIGGER, PSP_CTRL_CIRCLE | PSP_CTRL_SQUARE };
+   /* the keys the quick load's question ignores (not X, O or a direction) */
+   static const unsigned idle[] = { PSP_CTRL_SQUARE, PSP_CTRL_TRIANGLE,
+      PSP_CTRL_START, PSP_CTRL_SELECT, PSP_CTRL_LTRIGGER, PSP_CTRL_RTRIGGER,
+      PSP_CTRL_SQUARE | PSP_CTRL_TRIANGLE };
    char want[24];
-   unsigned k;
+   unsigned k, mask;
    int f;
 
    /* 1, 2. SQUARE asks; X answers; the load is slot 1's */
@@ -328,13 +415,162 @@ int main(void)
    CHECK(!strncmp(plate, "Load Slot 1? ", 13));
    CHECK(frame(0) == UI_ACT_NONE && plate[0]);
    CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 1);
-   for (k = 0; k < sizeof(others) / sizeof(others[0]); k++)
+   /* O: straight back into the game, nothing loaded */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(frame(PSP_CTRL_CIRCLE) == UI_ACT_RESUME);   /* back into the game */
+   CHECK(!g_slot_ask && !g_slot_ask_back && !deletes && !g_slot_saving && !menus);
+   /* every key that is neither X, O nor a direction does nothing: the
+    * question stays, on slot 1, and X then loads slot 1 */
+   for (k = 0; k < sizeof(idle) / sizeof(idle[0]); k++)
    {
       menu_open();
       CHECK(ui_state_load_ask(1) == 1);
       CHECK(frame(0) == UI_ACT_NONE);
-      CHECK(frame(others[k]) == UI_ACT_RESUME);   /* back into the game */
-      CHECK(!g_slot_ask && !deletes && !g_slot_saving && !menus);
+      CHECK(tap(idle[k]) && asks_for(1));
+      CHECK(!deletes && !g_slot_saving && !menus && g_screen == SCR_STATE_SLOTS);
+      CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 1);
+   }
+
+   /* 7b. the quick load browses: slots 1, 2 and N hold states */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE && asks_for(1));
+   CHECK(tap(PSP_CTRL_DOWN) && asks_for(2));
+   CHECK(tap(PSP_CTRL_DOWN) && asks_for(N));        /* 3 .. N-1 skipped */
+   CHECK(tap(PSP_CTRL_DOWN) && asks_for(1));        /* wraps */
+   CHECK(tap(PSP_CTRL_UP) && asks_for(N));          /* wraps back */
+   CHECK(tap(PSP_CTRL_UP) && asks_for(2));
+   CHECK(tap(PSP_CTRL_RIGHT) && asks_for(N));       /* RIGHT is DOWN */
+   CHECK(tap(PSP_CTRL_LEFT) && asks_for(2));        /* LEFT is UP */
+   CHECK(!deletes && !g_slot_saving && !menus && g_screen == SCR_STATE_SLOTS);
+   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 2);
+   CHECK(!g_slot_ask && !g_slot_ask_back);
+   /* browsed, then O: nothing loaded, back into the game */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_UP) && asks_for(N));
+   CHECK(frame(PSP_CTRL_CIRCLE) == UI_ACT_RESUME && !g_slot_ask);
+   /* a fresh press held walks on, as the page's cursor does */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE && asks_for(2));
+   for (f = 0; f < 18; f++)
+      CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE);
+   CHECK(asks_for(N));
+   /* the page's own question does not browse (section 3 holds) */
+   page();
+   CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && plate[0]);
+   CHECK(press(PSP_CTRL_DOWN) == UI_ACT_NONE && !g_slot_ask && g_state_slot == 1);
+
+   /* 7b, exhaustively: every pattern of saved slots, slot 1 among them (the call site
+    * asks only over a saved slot 1): one slot, some, all; both ways */
+   for (mask = 1; mask < (1u << N); mask += 2)
+   {
+      static const unsigned keys[4] = { PSP_CTRL_DOWN, PSP_CTRL_RIGHT,
+                                        PSP_CTRL_UP, PSP_CTRL_LEFT };
+      int saved[N], ns = 0, pos, d, i;
+      for (i = 0; i < N; i++)
+         if (mask & (1u << i))
+            saved[ns++] = i + 1;
+      for (d = 0; d < 4; d++)
+      {
+         menu_open();
+         for (i = 0; i < N; i++)
+            g_ov_slot[i] = (mask >> i) & 1u;
+         CHECK(ui_state_load_ask(1) == 1);
+         CHECK(frame(0) == UI_ACT_NONE && asks_for(1));
+         pos = 0;
+         for (f = 0; f < 2 * N + 1; f++)
+         {
+            CHECK(tap(keys[d]));
+            pos = d < 2 ? (pos + 1) % ns : (pos + ns - 1) % ns;
+            CHECK(asks_for(saved[pos]) && g_ov_slot[saved[pos] - 1]);
+         }
+         CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE &&
+               g_state_slot == saved[pos]);
+         CHECK(!deletes && !g_slot_saving && !menus);
+      }
+   }
+
+   /* 7c. the pictures follow the question.  Slot 1 and N have thumbnails,
+    * slot 2 a state whose thumbnail could not be read (a 3.1 state, or a
+    * damaged .thumb): it is browsed like any other. */
+   menu_open();
+   g_ov_slot[0] = 2;
+   g_ov_slot[1] = 1;
+   g_ov_slot[N - 1] = 2;
+   shot_tex_on = 1;
+   CHECK(ui_state_load_ask(1) == 1);
+   for (f = 0; f < OV_SHOT_DWELL + 3; f++)
+      CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(images == 2 && n_shot_reads == 1 && shot_reads[0] == 0);
+   CHECK(tap(PSP_CTRL_DOWN) && asks_for(2));
+   for (f = 0; f < OV_SHOT_DWELL + 3; f++)
+      CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(n_shot_reads == 2 && shot_reads[1] == 1);
+   CHECK(tap(PSP_CTRL_DOWN) && asks_for(N));
+   for (f = 0; f < OV_SHOT_DWELL + 3; f++)
+      CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(n_shot_reads == 3 && shot_reads[2] == N - 1 && images == 2);
+   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == N);
+   /* one saved slot: the d-pad moves nothing and reads nothing again */
+   menu_open();
+   memset(g_ov_slot, 0, sizeof(g_ov_slot));
+   g_ov_slot[0] = 2;
+   shot_tex_on = 1;
+   CHECK(ui_state_load_ask(1) == 1);
+   for (f = 0; f < OV_SHOT_DWELL + 3; f++)
+      CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(n_shot_reads == 1);
+   for (k = 0; k < 4; k++)
+   {
+      CHECK(tap(k & 1 ? PSP_CTRL_UP : PSP_CTRL_RIGHT) && asks_for(1));
+      for (f = 0; f < OV_SHOT_DWELL + 3; f++)
+         CHECK(frame(0) == UI_ACT_NONE);
+   }
+   CHECK(n_shot_reads == 1);
+
+   /* 7d. a corrupt slot: browsed to, X, and the load fails */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_DOWN) && asks_for(2));
+   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 2);
+   CHECK(ui_state_load_done(-1) == 1 && !closes && g_active);
+   CHECK(frame(0) == UI_ACT_NONE && g_screen == SCR_STATE_SLOTS);
+   CHECK(!strcmp(plate, "Slot 2 could not be loaded") && !g_slot_ask);
+   /* from here the page's rules: the d-pad walks every slot, empty ones
+    * too, and O goes to the menu, not into the game */
+   CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE && g_state_slot == 3 && !g_slot_ask);
+   CHECK(frame(0) == UI_ACT_NONE);
+   CHECK(frame(PSP_CTRL_CIRCLE) == UI_ACT_NONE && menus == 1);
+   /* a load that works closes the menu into the game */
+   menu_open();
+   CHECK(ui_state_load_ask(1) == 1);
+   CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_UP) && asks_for(N));
+   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == N);
+   CHECK(ui_state_load_done(0) == 0 && closes == 1);
+
+   /* 7e. GBA, GB and GBC states: the slot browsed to is the file the menu
+    * branch loads (psp_state_path_for_slot(.., ui_state_slot())) */
+   for (k = 0; k < 3; k++)
+   {
+      static const char *base[3] = { "/r/Ruby.st0", "/r/Tetris.gb.st0",
+                                     "/r/Zelda.gbc.st0" };
+      static const char *stem[3] = { "/r/Ruby.st", "/r/Tetris.gb.st",
+                                     "/r/Zelda.gbc.st" };
+      char path[PSP_FILE_PATH_CAP], want_path[PSP_FILE_PATH_CAP];
+      snprintf(want_path, sizeof(want_path), "%s%d", stem[k], N - 1);
+      menu_open();
+      strcpy(g_state_base, base[k]);
+      CHECK(ui_state_load_ask(1) == 1);
+      CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_LEFT) && asks_for(N));
+      CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE);
+      CHECK(psp_state_path_for_slot(path, sizeof(path), g_state_base,
+                                    (unsigned)g_state_slot) == 0);
+      CHECK(!strcmp(path, want_path));
    }
    /* after a keep from the page itself, the page stays (section 3) -- the
     * quick load's "back to the game" does not outlive its question */
@@ -353,23 +589,26 @@ int main(void)
    CHECK(ui_state_load_ask(1) == 0 && !g_slot_ask);   /* no menu: no question */
    g_active = 1;
 
-   /* 8. a direction held from the game is not an answer, however long */
+   /* 8. a direction held from the game is not an answer, nor a move,
+    * however long */
    menu_open();
    CHECK(ui_state_load_ask(1) == 1);
    for (f = 0; f < 600; f++)
-      CHECK(frame(PSP_CTRL_RIGHT) == UI_ACT_NONE && g_slot_ask);
-   CHECK(frame(0) == UI_ACT_NONE && g_slot_ask);
-   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE);
+      CHECK(frame(PSP_CTRL_RIGHT) == UI_ACT_NONE && g_slot_ask && g_slot_ask_n == 1);
+   CHECK(frame(0) == UI_ACT_NONE && g_slot_ask && asks_for(1));
+   CHECK(frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 1);
    menu_open();                       /* a quick load bound to SELECT+UP */
    CHECK(ui_state_load_ask(1) == 1);
    for (f = 0; f < 600; f++)
-      CHECK(frame(PSP_CTRL_SELECT | PSP_CTRL_UP) == UI_ACT_NONE && g_slot_ask);
-   CHECK(frame(PSP_CTRL_SELECT) == UI_ACT_NONE && g_slot_ask);
+      CHECK(frame(PSP_CTRL_SELECT | PSP_CTRL_UP) == UI_ACT_NONE && g_slot_ask && g_slot_ask_n == 1);
+   CHECK(frame(PSP_CTRL_SELECT) == UI_ACT_NONE && g_slot_ask && asks_for(1));
    CHECK(frame(0) == UI_ACT_NONE && frame(PSP_CTRL_CROSS) == UI_ACT_LOADSTATE);
-   menu_open();                       /* ...and a fresh press still keeps */
+   CHECK(g_state_slot == 1);
+   menu_open();                       /* ...and a fresh press still browses */
    CHECK(ui_state_load_ask(1) == 1);
    CHECK(frame(PSP_CTRL_RIGHT) == UI_ACT_NONE && frame(0) == UI_ACT_NONE);
-   CHECK(frame(PSP_CTRL_RIGHT) == UI_ACT_RESUME);
+   CHECK(frame(PSP_CTRL_RIGHT) == UI_ACT_NONE && asks_for(2));
+   CHECK(frame(0) == UI_ACT_NONE && frame(PSP_CTRL_CIRCLE) == UI_ACT_RESUME);
    /* the page's own d-pad still repeats (the cursor walks while held) */
    page();
    CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE && g_state_slot == 2);
@@ -378,7 +617,9 @@ int main(void)
    CHECK(g_state_slot == 3);
 
    puts("page: SQUARE asks and X loads, every other key keeps the game; the quick "
-        "load asks over the game; a held direction never answers");
+        "load asks over the game and browses the saved slots (every pattern of "
+        "saved slots, both ways; pictures, a corrupt slot, GB/GBC/GBA names); "
+        "a held direction never answers or moves");
    return 0;
 }
 '''
@@ -787,13 +1028,51 @@ PAGE_MUTANTS = (
      "strncmp(plate, want, strlen(want))"),
     ("a keep after the quick load stays on the page",
      in_fn(PAGE, r"return UI_ACT_RESUME;", "(void)0;"),
-     "frame(others[k]) == UI_ACT_RESUME"),
+     "frame(PSP_CTRL_CIRCLE) == UI_ACT_RESUME"),
+    # the browser (7b-7e, 8)
+    ("the quick load does not browse (adcab86b's parent: any key is Resume)",
+     in_fn(PAGE, r"if \(g_slot_ask_back && g_slot_ask == SLOT_ASK_LOAD\)", "if (0)"),
+     "tap(idle[k]) && asks_for(1)"),
+    ("a stray key still throws the quick load's question away",
+     in_fn(PAGE, r"\n\s*edges &= PSP_CTRL_CROSS \| PSP_CTRL_CIRCLE;", ""),
+     "tap(idle[k]) && asks_for(1)"),
+    ("the page's own question browses too",
+     in_fn(PAGE, r"if \(g_slot_ask_back && g_slot_ask == SLOT_ASK_LOAD\)",
+           "if (g_slot_ask == SLOT_ASK_LOAD)"),
+     "!g_slot_ask && !plate[0]"),
+    ("browsing stops on an empty slot",
+     in_fn(PAGE, r"while \(--k && !g_ov_slot\[n - 1\]\);", "while (0);"),
+     "asks_for("),
+    ("browsing does not wrap past the last slot",
+     in_fn(PAGE, r"n < PSP_STATE_SLOT_COUNT \? n \+ 1 : 1",
+           "n < PSP_STATE_SLOT_COUNT ? n + 1 : n"),
+     "asks_for("),
+    ("UP and DOWN swapped",
+     in_fn(PAGE, r"edges & \(PSP_CTRL_UP \| PSP_CTRL_LEFT\)",
+           "edges & (PSP_CTRL_DOWN | PSP_CTRL_LEFT)"),
+     "asks_for("),
+    ("LEFT and RIGHT do not browse",
+     in_fn(PAGE, r"edges & \(PSP_CTRL_DOWN \| PSP_CTRL_RIGHT\)", "edges & PSP_CTRL_DOWN"),
+     "asks_for("),
+    ("the list highlight stays on slot 1",
+     in_fn(PAGE, r"g_slot_ask_n = g_state_slot = n;", "g_slot_ask_n = n;"),
+     "asks_for("),
+    ("the preview does not follow",
+     in_fn(PAGE, r"g_slot_ask_n = g_state_slot = n;\s*g_ov_dwell = 0;",
+           "g_slot_ask_n = g_state_slot = n;"),
+     "n_shot_reads == 2"),
+    ("the quick load's plate keeps the page's words",
+     in_fn(PAGE, r"if \(g_slot_ask == SLOT_ASK_LOAD && g_slot_ask_back\)", "if (0)"),
+     "asks_for(1)"),
+    ("the warning is not under the preview",
+     in_fn(PAGE, r'\? "Unsaved progress is lost\." : cap', "? cap : cap"),
+     "asks_for(1)"),
     ("the page's own question also leaves for the game",
      in_fn(PAGE, r"if \(g_slot_ask_back\)", "if (1)"),
      "press(others[k]) == UI_ACT_NONE"),
     ("a failed quick load leaves for the game on the next keep",
      in_fn(PAGE, r"\n\s*g_slot_ask_back = 0;\s*/\* a failed load stays[^\n]*", ""),
-     "g_screen == SCR_STATE_SLOTS"),
+     "!g_slot_ask && !g_slot_ask_back"),
     ("the quick load asks for the slot the page was left on",
      in_fn(ASK, r"\n   g_state_slot = slot;", ""),
      "g_state_slot == 1"),
@@ -805,7 +1084,10 @@ PAGE_MUTANTS = (
      "ui_state_load_ask(1) == 0 && !g_slot_ask"),
     ("a held direction repeats into an answer",
      in_fn(ASK, r"\n   g_rep_timer = -\(1 << 30\);", ""),
-     "frame(PSP_CTRL_RIGHT) == UI_ACT_NONE && g_slot_ask"),
+     "g_slot_ask_n == 1"),
+    ("a failed load leaves the menu",
+     in_fn(DONE, r"snprintf\(g_slot_note", "ui_close(); snprintf(g_slot_note"),
+     "ui_state_load_done(-1) == 1 && !closes"),
 )
 for label, mutate, expect in PAGE_MUTANTS:
     bad = run_page(mutate(UI), False)

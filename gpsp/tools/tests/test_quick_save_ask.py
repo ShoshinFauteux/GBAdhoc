@@ -129,6 +129,8 @@ PAGE_STUB = r'''
 #define VID_GLYPH_O   "\x80"
 #define VID_GLYPH_X   "\x81"
 #define VID_GLYPH_SQ  "\x82"
+#define VID_GLYPH_UP  "\x87"
+#define VID_GLYPH_DOWN "\x88"
 enum { C_SEL = 1, C_ITEM, C_DIM, C_VALUE, C_ACCENT, C_CARD };
 #define OV_SCRIM 170
 #define OV_SHOT_DWELL 6

@@ -167,8 +167,9 @@ def ss_panel(s, slot, shot=None, shot_none=False):
 def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
                ask=None):
     """screen_state_slots(): cur 1..5; slots[i] = (have 0/1/2, stamp, 64x42
-    PIL thumb); ask = ('delete' | 'overwrite' | 'load', n); note = the
-    plate."""
+    PIL thumb); ask = ('delete' | 'overwrite' | 'load' | 'quickload', n)
+    ('quickload': the quick load's browsing question, ui_state_load_ask);
+    note = the plate."""
     backdrop(s, 170, frame)
     head(s, GAME, 'SAVE STATES')
     for i, (have, stamp, thumb) in enumerate(slots):
@@ -189,11 +190,15 @@ def savestates(s, frame, cur, slots, shot=None, shot_none=False, note=None,
             s.text(64, y + 14, 'empty', s.C['dim'])
     sl = slots[cur - 1]
     ss_panel(s, sl, shot, shot_none)
-    s.text(228, 228, 'Slot %d  -  %s' % (cur, (sl[1] or 'saved') if sl[0] else 'empty'),
+    s.text(228, 228, 'Unsaved progress is lost.' if ask and ask[0] == 'quickload' else
+           'Slot %d  -  %s' % (cur, (sl[1] or 'saved') if sl[0] else 'empty'),
            s.C['dim'])
     if ask:
         what, n = ask
-        plate(s, ('Delete Slot %d?      ' + G_X + ' delete     ' + G_O + ' keep') % n
+        plate(s, ('Load Slot %d?      ' + G_UP + G_DOWN + ' choose     ' + G_X + ' load     ' +
+                  G_O + ' back') % n
+              if what == 'quickload' else
+              ('Delete Slot %d?      ' + G_X + ' delete     ' + G_O + ' keep') % n
               if what == 'delete' else
               ('Load Slot %d? Unsaved progress is lost.     ' + G_X + ' load     ' +
                G_O + ' cancel') % n

@@ -1213,21 +1213,38 @@ moment it was pressed, a shoulder away from SELECT+L's quick save. It now
 opens the menu over the game on the SAVE STATES page, slot 1, with the load
 question already up (`ui_state_load_ask`): the same component, the same rule.
 X loads through the menu's `UI_ACT_LOADSTATE` (the page's own load) and the
-menu closes into the game with the usual "State loaded"; any other key is
-Resume, before anything else is drawn, and the game goes on untouched. Slot 1
-empty: "No saved state" at once and no menu, as before (one stat, after the
+menu closes into the game with the usual "State loaded"; O is Resume, before
+anything else is drawn, and the game goes on untouched. Slot 1 empty: "No
+saved state" at once and no menu, as before (one stat, after the
 interrupted-save recovery the page's scan runs). A wireless session still
 refuses. The opened menu is the ordinary one: the wake snapshot behind it,
 `ui_open`'s swallow of the chord still held, a rewind landed first, and the
 close arming the pad swallow, so the answering X or O is not the game's.
 
+**The quick load browses** (owner-approved 2026-11-07, `claude/quickload-browse`
+adcab86b, replayed onto the split tree as `claude/quickload-split`). The
+question is the whole visit, so the d-pad picks which state it is about:
+DOWN or RIGHT moves it to the next saved slot, UP or LEFT to the previous
+one, wrapping, empty slots skipped (X always has a state to load). The list
+highlight, the 1:1 preview (read again after `OV_SHOT_DWELL` frames on the
+new slot) and the row's time follow. The plate reads "Load Slot n? ▲▼ choose
+✕ load ○ back"; "Unsaved progress is lost." moves to the caption under the
+preview, where the slot's time was (the row still shows it). Every key that
+is not X, O or a direction does nothing: a stray press no longer throws the
+question away. A load that fails leaves the page up with "Slot n could not
+be loaded", and from there the page's own rules hold. The page's own load
+question (SQUARE on a slot, 14.2) does not browse. No buffers: the existing
+thumbnails, stamps and dwell preview; a few instructions and one format
+string.
+
 **Any binding.** `main_psp.c` keys on the action (`CTL_FIRE_LOAD` from
 `ctl_shortcuts`), not on buttons, so a swapped pair (quick save on SELECT+R,
 quick load on SELECT+L) asks on SELECT+L and saves on SELECT+R, and a quick
 load moved onto the d-pad asks too. A direction held from the game -- or in
-the chord itself -- does not auto-repeat into an answer, however long it is
-held (`ui_state_load_ask` parks `pad_edges`' repeat count until the
-direction is let go); a fresh press answers as ever.
+the chord itself -- does not auto-repeat into an answer or a move, however
+long it is held (`ui_state_load_ask` parks `pad_edges`' repeat count until
+the direction is let go); a fresh press browses as ever, and a fresh press
+held walks on at the page's repeat rate.
 
 **The setting.** Settings > GAMEPLAY > **Quick load asks first**, on or off,
 **on by default**, `config.ini` `quick_load_ask` (1 / 0). It sits under FPS
@@ -1264,6 +1281,16 @@ which the quick load would have read anyway.
   * the `quick_load_ask` round trip through `pcfg_load` / `pcfg_save`;
   * 28 mutants (12 of the page, 10 of the call site and the menu branch, 6
     of the config key), each of which fails.
+  * The browser (with `ui_state_load_done`): the quick load's plate,
+    caption and highlighted row for each slot; X, O and the seven keys it
+    ignores; DOWN/RIGHT and UP/LEFT over every pattern of saved slots with
+    slot 1 saved (16 patterns, both ways, 2N+1 steps each, never an empty
+    slot); the dwell preview read for each slot browsed to and not again
+    with one slot; a slot without a usable thumbnail; a corrupt slot whose
+    load fails (the page stays, its own rules from there); `.st0`,
+    `.gb.st0` and `.gbc.st0` names giving the browsed slot's file; a held
+    direction neither answering nor moving. 12 more page mutants and one
+    of `ui_state_load_done` (40 in all), each of which fails.
 * **Build**: beta 2's release recipe (`RFU_SCHED=1 tools/build.sh
   release`), audits passing, no warnings in GBAdhoc-owned code, hot core
   5,756 B of 6,144 and unmoved. Before the pads are re-tuned the image is
@@ -1281,9 +1308,12 @@ which the quick load would have read anyway.
 
 * The question on the plate, both themes, and its width for "Slot 5".
 * The quick load over a running game: the menu opening with the question,
-  X loading, O (and a d-pad press) going straight back; a held SELECT+R
-  (and a held d-pad from walking) not repeating or answering anything; the
-  same with the quick save and load swapped in Button mapping.
+  X loading, O going straight back, the d-pad browsing the saved slots
+  (preview and time following) and any other key doing nothing; a held
+  SELECT+R (and a held d-pad from walking) not repeating, answering or
+  moving anything; the same with the quick save and load swapped in Button
+  mapping; the browsed plate's width ("Load Slot 5? ▲▼ choose ✕ load ○
+  back") in both themes; a GB/GBC game's states the same.
 * Settings > Quick load asks first, both values, in game and from the game
   list, and `quick_load_ask` in `config.ini` after each.
 
