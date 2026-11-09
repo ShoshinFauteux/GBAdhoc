@@ -27,10 +27,8 @@ flag_interrupt                                    0.006280      76
 memset                                            0.018631     284 libc.a:libc_a-memset.o
 block_lookup_address_thumb                        0.019709     348
 spin_check                                        0.026178     524
-block_lookup_translate_arm                        0.052539    1308
+block_lookup_translate_arm                        0.052539    1744
 rfu_update                                        0.033567     940
-write_io_register32                               0.005069     152
-iok_site                                          0.002197      72
 smc_pipe_store                                    0.009727     320
 write_io_register16                               0.082094    2760
 dma_transfer                                      0.088941    3088
@@ -38,13 +36,10 @@ smc_prof_note_store                               0.008008     300
 jit_code_wrote_.part.0                            0.007611     300
 smc_prof_exact                                    0.013770     576
 vram_x_dma_note                                   0.006099     332
-block_lookup_translate_thumb                      0.023820    1328
+block_lookup_translate_thumb                      0.023820    1792
 getenv                                            0.000705      40 libc.a:libc_a-getenv.o
-xs_trap_skip                                      0.003818     224
 smc_trap_entry                                    0.009492     572
-flush_translation_cache_ram_smc                   0.093982    6536
-iok_encode                                        0.002740     200
-core_phase_now                                    0.000641      52
+flush_translation_cache_ram_smc                   0.093982    6572
 xlat_scan_arm_ram_fast.constprop.0                0.031467    2672
 memcpy                                            0.010117     880 libc.a:libc_a-memcpy.o
 jit_code_publish_                                 0.014377    1296
@@ -66,7 +61,8 @@ xs_note_block                                     0.004578     732
 set_cpu_mode                                      0.002371     452
 smc_blk_note_writer                               0.001602     348
 fe_host_frame_count                               0.000055      12
-smc_stable_thunk_dispatch                         0.001594     396
+smc_stable_thunk_dispatch                         0.001594     312
+iok_site                                          0.002197      72
 execute_arm_translate                             0.000046      12
 me_rend_retire_if_idle                            0.002160     576
 mer_lowlat_active                                 0.000780     208
@@ -78,17 +74,14 @@ dispatch_cache_clear                              0.000491     192
 entry_gates_walk                                  0.001646     652
 audio_thread                                      0.000640     824
 vid_flip_latched                                  0.000280     112
-smc_retire_span                                   0.006831    2792
-core_phase_frame_begin                            0.000247     108
+smc_retire_span                                   0.006831    3292
 fe_autopilot_take_mark                            0.000037      16
 input_poll                                        0.000018       8
 rewind_backup_data                                0.000564     268
 fe_autopilot_status                               0.000023      12
 fe_host_input_inject                              0.000023      12
-smc_chain_store_iw                                0.000334     180
 retro_run                                         0.001920    1124
 smc_blk_note_block                                0.001972    1164
-smc_local_narrow.isra.0                           0.000215     132
 rumble_frame_reset                                0.000064      40
 lat_swap.isra.0                                   0.000790     632
 lat_wait_begin                                    0.000795     636
@@ -159,6 +152,26 @@ __udivdi3                                         0.000001    1340 libgcc.a:_udi
 render_gbc_sound                                  0.297837   25816
 translate_block_thumb                             0.049984   99048
 translate_block_arm                               0.090269  358672
+# ---- bscan: linked inside B's hot path, just before B's update_scanline (its LAYOUT_PAD_BSCAN_BYTES
+# zeros), A's copy then B's (gen_layout.py write_ord).  The beta.5 JIT fix (claude/jit-thrash-fix bf7a68bd)
+# grows block_lookup_translate_arm (+256 B 32 B-rounded), block_lookup_translate_thumb (+256),
+# flush_translation_cache_ram_smc (+256) and smc_retire_span (+480) and shrinks smc_stable_thunk_dispatch
+# (-96): +1,152 B per instance.  These seven give it back right after each growth (write_io_register32,
+# 160, before the thumb lookup; xs_trap_skip, iok_encode and core_phase_now, 512, around
+# flush_translation_cache_ram_smc; core_phase_frame_begin, smc_chain_store_iw and smc_local_narrow, 480,
+# after smc_retire_span -- rewind_backup_data stays: its 32 B-padded end keeps the partner autopilot's
+# 4 B-aligned run on its sets), and iok_site (96) moved behind smc_stable_thunk_dispatch fills its -96.
+# Both instances' lookups, warm tails and B's hot core stay on 9c1b279f's sets; only rfu_update and
+# getenv (+256), smc_trap_entry and flush_translation_cache_ram_smc (+32), retro_run and
+# smc_blk_note_block (+160) and the per-frame fe/input stubs before rewind_backup_data (+352) move.
+# The BSCAN pad takes the 2,304 B (release 7576 -> 5272, lab 7800 -> 5496): nothing after B moves.
+write_io_register32                               0.005069     152
+xs_trap_skip                                      0.003818     224
+iok_encode                                        0.002740     200
+core_phase_now                                    0.000641      52
+core_phase_frame_begin                            0.000247     108
+smc_chain_store_iw                                0.000334     180
+smc_local_narrow.isra.0                           0.000215     132
 # ---- late: linked after B's hot path, A's copy then B's (gen_layout.py write_ord).  Three small
 # hot-core functions give back update_gba's HALT_HOP growth (212 B; 208 out, so the warm tail lands on its sets);
 # halt_hop_* (claude/kirby-hop2) are the only per-halt code and run at most a few times a frame.

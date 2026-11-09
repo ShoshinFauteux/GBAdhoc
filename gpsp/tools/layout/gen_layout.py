@@ -265,6 +265,7 @@ def write_order(path, hot, warm, used, a, asm_bytes, lib=None):
 
 LATE_MARK = '# ---- late'
 LAST_MARK = '# ---- last'
+BSCAN_MARK = '# ---- bscan'
 
 
 def write_ord(order_path, out):
@@ -276,8 +277,14 @@ def write_ord(order_path, out):
     # functions at all.  Rows after a `# ---- last` line (after the late
     # section's) link after B's late copies, A's copy then B's: the ME
     # capture's ml_* helpers, placed there by psp/layout_pad_late.S so the
-    # same pad bytes place them in the release and the lab build.
-    names, late, last = [], [], []
+    # same pad bytes place them in the release and the lab build.  Rows after
+    # a `# ---- bscan` line link INSIDE B's hot path, just before B's
+    # update_scanline (whose LAYOUT_PAD_BSCAN_BYTES zeros come first in its
+    # section), A's copy then B's: warm-tail functions taken out to give back
+    # growth of A's and B's warm tails, so that nothing of A's or B's ordered
+    # text moves and the BSCAN pad, not the late or main pad, takes the bytes
+    # (the beta.5 JIT fix, docs/LAYOUT-PINNING.md).
+    names, late, last, bscan = [], [], [], []
     dest = names
     for raw in open(order_path):
         if raw.startswith(LAST_MARK):
@@ -285,6 +292,9 @@ def write_ord(order_path, out):
             continue
         if raw.startswith(LATE_MARK):
             dest = late
+            continue
+        if raw.startswith(BSCAN_MARK):
+            dest = bscan
             continue
         l = raw.split('#', 1)[0].split()
         if l:
@@ -322,18 +332,8 @@ def write_ord(order_path, out):
                 # A must sit exactly where it sits in every other build
                 fh.write('  *(EXCLUDE_FILE(*%s) .text.%s)\n' % (B_OBJECT, n))
                 funcs.append(n)
-        # GBA_LINK instance B (the core archive partial-linked and renamed,
-        # docs/GBA-LINK-MIRROR.md 17.6): its own hot path, in the same order,
-        # AFTER the whole of A's, so linking it in moves nothing of A's.
-        # Matches nothing in any other build.
-        fh.write('  *%s\n' % dict(ASM_OBJECTS)[B_OBJECT])
-        for sec in bsecs:
-            fh.write('  *%s(%s)\n' % (B_OBJECT, sec))
-        for n in funcs:
-            fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
-        # the late rows, then the last rows: A's copy (or the library
-        # member), then B's, per group
-        for group in (late, last):
+        def emit_group(group):
+            # A's copy (or the library member) of each row, then B's
             lfuncs = []
             for n in group:
                 if n in seen:
@@ -348,8 +348,28 @@ def write_ord(order_path, out):
                     lfuncs.append(n)
             for n in lfuncs:
                 fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
+
+        if bscan and 'update_scanline' not in funcs:
+            raise SystemExit('%s: bscan rows need update_scanline in the ordered '
+                             'rows (they link in front of B\'s copy)' % order_path)
+        # GBA_LINK instance B (the core archive partial-linked and renamed,
+        # docs/GBA-LINK-MIRROR.md 17.6): its own hot path, in the same order,
+        # AFTER the whole of A's, so linking it in moves nothing of A's.
+        # Matches nothing in any other build.
+        fh.write('  *%s\n' % dict(ASM_OBJECTS)[B_OBJECT])
+        for sec in bsecs:
+            fh.write('  *%s(%s)\n' % (B_OBJECT, sec))
+        for n in funcs:
+            if n == 'update_scanline':
+                emit_group(bscan)       # in front of B's BSCAN zeros
+            fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
+        # the late rows, then the last rows: A's copy (or the library
+        # member), then B's, per group
+        for group in (late, last):
+            emit_group(group)
         fh.write('}\n')
-    print('wrote %s (%d entries, %d late, %d last)' % (out, len(names), len(late), len(last)))
+    print('wrote %s (%d entries, %d late, %d last, %d bscan)'
+          % (out, len(names), len(late), len(last), len(bscan)))
 
 
 def cmd_generate(a):
