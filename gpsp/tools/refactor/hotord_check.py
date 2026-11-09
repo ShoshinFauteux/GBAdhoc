@@ -71,6 +71,7 @@ def r32(n):
 
 LATE_LINE = [None]   # hot_order.txt line of gen_layout's `# ---- late` marker, if any
 LAST_LINE = [None]   # ... and of its `# ---- last` marker (rows after B's late copies)
+BSCAN_LINE = [None]  # ... and of its `# ---- bscan` marker (rows in B's hot path, before B's update_scanline)
 
 
 def read_order(path):
@@ -78,11 +79,14 @@ def read_order(path):
     rows = []
     LATE_LINE[0] = None
     LAST_LINE[0] = None
+    BSCAN_LINE[0] = None
     for k, l in enumerate(open(path), 1):
         if l.startswith('# ---- late') and LATE_LINE[0] is None:
             LATE_LINE[0] = k     # rows below link after B's whole hot path
         if l.startswith('# ---- last') and LAST_LINE[0] is None:
             LAST_LINE[0] = k     # rows below link after B's late copies (and the late pad)
+        if l.startswith('# ---- bscan') and BSCAN_LINE[0] is None:
+            BSCAN_LINE[0] = k    # rows below link in B's hot path, before B's update_scanline
         p = l.split('#', 1)[0].split()
         if not p:
             continue
@@ -343,9 +347,11 @@ def check(order_path, ord_path, build, sizes='fail', out=print, placement=True):
             if i not in keep:
                 why = 'at %#010x, out of hot.ord order' % a
             elif last is not None and a - (last[2] + last[3]) > PLACE_GAP and not any(
-                    m is not None and last[0] < m < k for m in (LATE_LINE[0], LAST_LINE[0])):
-                # (the first late row follows B's whole hot path, and the
-                # first last row B's late copies and the late pad, by design)
+                    m is not None and last[0] < m < k
+                    for m in (LATE_LINE[0], LAST_LINE[0], BSCAN_LINE[0])):
+                # (the first bscan row follows B's hot core, the first late
+                # row B's whole hot path, and the first last row B's late
+                # copies and the late pad, by design)
                 why = 'at %#010x, %d B after %s ends: not linked by its hot.ord line' % (
                     a, a - (last[2] + last[3]), last[1])
             if why:

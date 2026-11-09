@@ -194,7 +194,9 @@ LAYOUT_PAD_CORE_BYTES ?= 932
 LAYOUT_PAD_GB_BYTES ?= 996
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
-LAYOUT_PAD_BSCAN_BYTES ?= 7576
+# beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link
+# in front of them and the zeros give the bytes back (7576 -> 5272).
+LAYOUT_PAD_BSCAN_BYTES ?= 5272
 CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
 # says why): they place main's frame loop without moving instance B's hot text.

@@ -24,6 +24,10 @@
 # shrank 96 B (FE pad +96 holds fe_host_reset; roster_valid .. peer_remove
 # move +96) and both GB cores 696 B (LAYOUT_PAD_GB_BYTES, after both GB
 # cores, holds hex_val: fe_cheats onward unmoved vs 7ffe4236).
+# beta.5 JIT fix (claude/jit-thrash-fix merged into claude/beta5-base): the
+# lookups' and smc_retire_span's growth is given back in the hot order (the
+# bscan rows) and the BSCAN pad takes it, so both sections hold as recorded
+# for 9c1b279f (37 entries, 0 differ; nothing re-recorded).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
