@@ -1766,6 +1766,7 @@ session_top:
             fe_evt("exit code=2 reason=rom_path_too_long rom=%s", kr);
             evt_shutdown();
             audio_stop();
+            vid_term();      /* F8: as every other early exit */
             FE_HANDOFF(2, "rom_path_too_long");
             FE_EXIT_GAME();
             return 0;
@@ -1777,6 +1778,7 @@ session_top:
             fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
             evt_shutdown();
             audio_stop();
+            vid_term();      /* F8 */
             FE_HANDOFF(2, "rom_missing");
             FE_EXIT_GAME();
             return 0;
@@ -1788,6 +1790,7 @@ session_top:
          fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
          audio_stop();
+         vid_term();      /* F8 */
          FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
