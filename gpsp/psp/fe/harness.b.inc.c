@@ -22,7 +22,11 @@
  * wake): the switch pressed inside that window.  Like the firmware it is
  * deferred while a power hold is up (scePowerLock; PPSSPP does not implement
  * it) -- `sleep_sim_nohold = 1` ignores the holds, i.e. the behaviour before
- * them, for the A/B.
+ * them, for the A/B.  `boot` opens with the game's selection (HW-1 r7-L5):
+ * as the game list returns, or at the top of a harness, variant or XMB
+ * launch -- before the sidecars, the ROM header and config.ini, which it
+ * used to follow -- so a switch in the `boot` window (PLAN S-6) waits for
+ * the loop's park from the list's return on, with no unheld stretch.
  * `sleep_sim_rewind_tick = N` (REWIND) fires it at the Nth loop on which a
  * rewind is in progress: the switch slid while the control is held
  * (docs/REWIND.md 22); N < 0: at the -Nth loop on which the machine stands

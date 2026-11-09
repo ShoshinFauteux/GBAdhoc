@@ -1672,13 +1672,22 @@ session_top:
          fe_evt("launch_missing rom=%s", g_launch_rom);
       g_launch_rom[0] = '\0';
    }
+   /* THE BOOT'S POWER HOLD (pwr_hold, see power_cb) starts with the game's
+    * selection: right after the game list returns, or at the top of the
+    * launches that have no list (PLAN r7-L5).  Between the two there is no
+    * park point -- the list's ended with it, the loop's is far off -- while
+    * the sidecars are settled (a save can be mid-move), the ROM's header
+    * and the link mode are read and config.ini is read again.  The switch
+    * now waits for the loop, as it did from here on already; every exit
+    * below releases it through FE_HANDOFF / FE_EXIT_GAME / relaunch_eboot. */
    if (launch_now)
-      ;   /* rom_path is set; the sidecars below are the game list's */
+      pwr_hold("boot");   /* rom_path is set; the sidecars below are the game list's */
    else if (have_variant)
    {
       char vrom[PSP_ROM_REL_PATH_CAP] = "", savedir[160];
       char stem[PSP_ROM_REL_PATH_CAP];
       const char *slash;
+      pwr_hold("boot");
       fe_ini_get(VARIANT_INI, "rom", vrom, sizeof(vrom));
       if (!vrom[0])
       {
@@ -1744,6 +1753,7 @@ session_top:
        * The key lets an arm switch games by staging the ini alone, which
        * matters because ROMs are far too big to stage. */
       char kr[PSP_ROM_REL_PATH_CAP] = "";
+      pwr_hold("boot");
       fe_ini_get(HARNESS_INI, "rom", kr, sizeof(kr));
       if (inproc_rom_n)
          snprintf(kr, sizeof(kr), "%s", inproc_roms[inproc_n % inproc_rom_n]);
@@ -1796,6 +1806,7 @@ session_top:
       br = ui_browser(ROM_DIR, rom_path, sizeof(rom_path),
                           &browser_state_slot, &selected_console);
       ui_set_browser_park(NULL);
+      pwr_hold("boot");   /* the list's park is over: see above (r7-L5) */
       if (br > 0)
 /* @extract:end sb:list_call */
       {
@@ -2367,9 +2378,9 @@ session_top:
    /* The boot runs outside the loop's park point for up to seconds: the ROM
     * load (a resident 32 MiB cart), the battery, the ME module and renderer
     * (me_rend_init), the wireless bring-up of a harness role.  The power
-    * switch waits for the loop (pwr_hold, see power_cb); every failure exit
-    * below releases it through handoff_run / sceKernelExitGame. */
-   pwr_hold("boot");
+    * switch waits for the loop under pwr_hold("boot"), taken with the game's
+    * selection (at session_top, r7-L5); every failure exit below releases
+    * it through FE_HANDOFF / FE_EXIT_GAME. */
 #ifndef GPSP_NO_TELEMETRY
    heap_census("post_select");
 #endif
