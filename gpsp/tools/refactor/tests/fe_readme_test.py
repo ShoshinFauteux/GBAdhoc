@@ -272,7 +272,9 @@ def r3_rows(gpsp, root):
     got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
             ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
-            ('rom_hash_census', 'fe/harness.f.inc.c:613'), ('gamepak_reopens', 'main_psp.c:2828')]
+            # HW-1 (claude/hw1-sleep) moved the last two: harness.f 613 -> 625 (the cb_stack
+            # EVT in core_health_evt), the shell's 2828 -> 2842 (r7-L5's holds, the S-9 key)
+            ('rom_hash_census', 'fe/harness.f.inc.c:625'), ('gamepak_reopens', 'main_psp.c:2842')]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 
