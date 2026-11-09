@@ -156,6 +156,7 @@ static void emu_boost_stop(void) { hit("boost_stop"); }
 static void emu_boost_start(void) { hit("boost_start"); }
 static void io_thread_stop(void) { hit("io_stop"); }
 static void ui_settings_flush(void) { hit("settings_flush"); }
+static void exit_sim(const char *w) { (void)w; }   /* harness HOME hook */
 static unsigned fe_evt_drops(void) { return 0; }
 static unsigned long long net_now_us(void) { return 1000000ull; }
 static void handoff_set_extra(const char *x) { (void)x; }

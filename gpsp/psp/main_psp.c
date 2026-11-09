@@ -796,6 +796,8 @@ int main(int argc, char *argv[])
       }
    }
    g_home_sim = (int)fe_ini_get_int(HARNESS_INI, "home_sim", 0);
+   fe_ini_get(HARNESS_INI, "exit_sim_at", g_exit_sim_at,
+              sizeof(g_exit_sim_at));
    g_home_stall_frame =
       (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_frame", 0);
    g_home_stall_ms =
@@ -4566,6 +4568,7 @@ session_top:
       ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, (int)g_wake_w,
                       (int)g_wake_h);
       ui_return_hold();
+      exit_sim("return");        /* harness: HOME here (S-4 c) */
    }
    /* Clean exit (incl. HOME): stop the netdrv session + full adhoc
     * teardown first (BYE to peers while the radio is still up), then SRAM
@@ -4679,6 +4682,7 @@ session_top:
          audio_ring_reset();
          audio_start();
          heap_snap(&after);
+         exit_sim("unload");        /* harness: HOME here (S-4 d) */
 #ifndef GPSP_NO_TELEMETRY
          heap_census("post_unload");
 #endif
