@@ -14,6 +14,20 @@ headers), never the tree itself.  Also run by `fe_readme.py --selftest [--gpsp D
   C5 --plan on a synthetic PLAN.md made from the transcribed tables: rc 0
   C6 the #if context of the harness rows the 2026-11-08 review named (run_testpat, psp_state_load: none)
      and of a GBADHOC_MGIFT one (mgift_start)
+  P-review r3:
+  C7 every table row of the generated README has its header's GFM cell count (gfm_table_errors), and
+     eboot_crc's #if context cell, split the GFM way and unescaped, keeps its `|| defined(GPSP_KEEP_TELEMETRY)` (B5)
+  C8 row names (B7): a name defined once is bare everywhere (no `#1` in "Rows outside their owner's
+     fragments"); a name defined twice is name#1 / name#2; the "Row names" convention comes before the first
+     name#N
+  C9 the Macros sentence counts fe_priv.h's and play_defaults.h's #define lines without their include
+     guards, and names the guards (B8a)
+  C10 the qs: prefix row says two tests slice it (two read qs:dispatch); a third reader -> "three tests" (B8c)
+  C11 the no-fragment-yet sentence names boot's G rows where they sit and no longer says "in `main()` today" (B8b)
+  C12 the copy sites in no T14 flavour are listed (abi_asserts.unbuilt), the six of 2026-11-09 (B6)
+  M15 gfm_table_errors on a row with an unescaped `||` in a code span -> 1 error, escaped -> 0; the
+      generator with cell escaping removed -> refused (its own GFM check)
+  M16 a fragment copy gains an extern in an arm no flavour defines -> the README lists it (7 sites)
   M1 a hand edit of the README                         -> --check STALE (rc 1)
   M2 a G row filed in another fragment than it sits in -> refused
   M3 the cutlist's source sha256 is not the inverse's  -> refused (a stale cutlist)
@@ -189,6 +203,103 @@ def pp_unit():
         ok('M11 an #endif with no #if: refused (%s)' % e)
 
 
+def section(text, head):
+    """the text of a `## ` / `### ` section, up to the next heading of any level"""
+    i = text.find('\n%s\n' % head)
+    if i < 0:
+        return None
+    j = re.search(r'\n#{2,3} ', text[i + len(head) + 2:])
+    return text[i:i + len(head) + 2 + (j.start() if j else len(text))]
+
+
+def r3_rows(gpsp, root):
+    """P-review r3 (B5-B8): C7-C12, M15, M16"""
+    d = scratch(gpsp, root)
+    text, msg = gen_text(d)
+    if text is None:
+        bad('C7-C12 generation failed: %s' % msg.strip()[:200])
+        return
+    errs = fe_readme.gfm_table_errors(text)
+    m = re.search(r'^\| `eboot_crc` \|.*$', text, re.M)
+    cells = fe_readme.gfm_cells(m.group(0)) if m else []
+    ctx = cells[2].strip().replace('\\|', '|') if len(cells) == 3 else ''
+    ntab = len(re.findall(r'^\|[-|]+\|$', text, re.M))
+    (ok if not errs and ntab >= 6 and '|| defined(GPSP_KEEP_TELEMETRY)' in ctx else bad)(
+        'C7 %d tables, %d rows with another GFM cell count than their header; eboot_crc context cell: %s'
+        % (ntab, len(errs), ctx[:90]))
+
+    out = section(text, "## Rows outside their owner's fragments") or ''
+    hashed = re.findall(r'^- `[^`]+` [FG] `(\w+#\d+)` -> ', out, re.M)
+    conv = text.find('- **Row names.**')
+    first = min([text.find(x) for x in ('`sleep_sim_window_enter#1`', '`vid_prof_frame#1`') if text.find(x) >= 0] or [-1])
+    (ok if out and not hashed and '`g_running` -> power' in out and '| `sleep_sim_window_enter#1` |' in text
+     and '| `sleep_sim_window_enter#2` |' in text and 'sleep_sim_window_enter:' not in text
+     and 0 <= conv < first else bad)(
+        'C8 row names: %d #N names among the rows outside their owner (want 0); name#1/#2 for the two-arm names; '
+        '"Row names" at %d, first name#N at %d' % (len(hashed), conv, first))
+
+    dc, guards = fe_readme.defines(fe_readme.load(d))
+    raw = {h: sum(1 for ln in open(os.path.join(d, 'psp', 'fe', h), encoding='utf-8')
+                  if re.match(r'^\s*#\s*define\b', ln)) for h in ('fe_priv.h', 'play_defaults.h')}
+    mac = re.search(r'^- \*\*Macros\.\*\*.*$', text, re.M)
+    mac = mac.group(0) if mac else ''
+    (ok if guards == {'fe_priv.h': 'FE_PRIV_H', 'play_defaults.h': 'PLAY_DEFAULTS_H'}
+     and dc['fe_priv.h'] == raw['fe_priv.h'] - 1 and dc['play_defaults.h'] == raw['play_defaults.h'] - 1
+     and '(%d `#define` lines, not counting its include guard `FE_PRIV_H`)' % dc['fe_priv.h'] in mac
+     and '(%d, not counting its include guard `PLAY_DEFAULTS_H`)' % dc['play_defaults.h'] in mac else bad)(
+        'C9 Macros: fe_priv.h %d of %d #define lines, play_defaults.h %d of %d (guards %s)'
+        % (dc['fe_priv.h'], raw['fe_priv.h'], dc['play_defaults.h'], raw['play_defaults.h'], guards))
+
+    qs = re.search(r'^\| `qs:` \| ([^|]*) \|', text, re.M)
+    sl = re.search(r'^\| `sl:` \| ([^|]*) \|', text, re.M)
+    good = (qs and qs.group(1).startswith('a statement range two tests slice ')
+            and sl and sl.group(1).startswith('a statement range one test slices '))
+    d2 = scratch(gpsp, root)
+    edit(os.path.join(d2, 'tools/tests/test_volume.py'), lambda t: t + '\n_r3 = extract.extract(src, "qs:dispatch")\n')
+    t2, msg2 = gen_text(d2)
+    qs2 = re.search(r'^\| `qs:` \| ([^|]*) \|', t2 or '', re.M)
+    (ok if good and qs2 and qs2.group(1).startswith('a statement range three tests slice ') else bad)(
+        'C10 qs: %r, sl: %r; with a third reader of qs:dispatch: %r'
+        % (qs and qs.group(1)[:40], sl and sl.group(1)[:40], qs2 and qs2.group(1)[:40]))
+
+    later = re.search(r'^teardown, boot, session, loop have no fragment yet.*$', text, re.M)
+    later = later.group(0) if later else ''
+    (ok if later and 'in `main()` today' not in later and 'boot owns 5 G rows, which sit in `fe/link.d.inc.c` '
+     '(lines 897, 898, 899: `g_start_keepalive`' in later and 'teardown, session and loop own none' in later else bad)(
+        'C11 the no-fragment-yet sentence: %s' % later[:260])
+
+    unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
+    got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
+    want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
+            ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
+            ('rom_hash_census', 'fe/harness.f.inc.c:613'), ('gamepak_reopens', 'main_psp.c:2828')]
+    (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
+        'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
+
+    one = '| a | b | c |\n|---|---|---|\n| `x` | `y` | `#if A || B` |\n'
+    esc = '| a | b | c |\n|---|---|---|\n| `x` | `y` | `#if A \\|\\| B` |\n'
+    e1, e0 = fe_readme.gfm_table_errors(one), fe_readme.gfm_table_errors(esc)
+    (ok if len(e1) == 1 and e1[0][1:3] == (3, 5) and not e0 else bad)(
+        'M15a gfm_table_errors: unescaped `||` in a code span -> %r; escaped -> %r' % (e1, e0))
+    keep = fe_readme.cell
+    fe_readme.cell = lambda s: str(s)
+    try:
+        d3 = scratch(gpsp, root)
+        refused('M15b the generator with cell escaping removed', d3, r'table row\(s\) would render with another GFM cell count')
+    finally:
+        fe_readme.cell = keep
+
+    d4 = scratch(gpsp, root)
+    edit(os.path.join(d4, 'psp/fe/paths.inc.c'),
+         lambda t: t + '#ifdef T14_NO_FLAVOUR_DEFINES_THIS\nextern unsigned t14_unbuilt_probe;\n#endif\n')
+    resha(d4)
+    t4, msg4 = gen_text(d4)
+    u4 = re.findall(r'^\| `(\w+)` \| `([^`]+)` \|', section(t4 or '', '### Core-ABI copies in no T14 flavour') or '', re.M)
+    (ok if t4 and len(u4) == 7 and any(n == 't14_unbuilt_probe' and c.startswith('fe/paths.inc.c:') for n, c in u4)
+     else bad)('M16 an extern in an arm no flavour defines, added to fe/paths.inc.c: %d sites listed (%s)'
+               % (len(u4), msg4.strip()[:120] if t4 is None else ', '.join(n for n, _ in u4)))
+
+
 def run(gpsp):
     gpsp = os.path.abspath(gpsp)
     print('fe_readme self-test on %s' % gpsp)
@@ -304,6 +415,8 @@ def run(gpsp):
         edit(os.path.join(d, 'tools/refactor/cutlist.txt'),
              lambda t: re.sub(r'^(G\tg_running#1\t)power\t', r'\1input\t', t, count=1, flags=re.M))
         refused('M14 g_running (exported, power) owned by input in the cutlist', d, 'EXPORTED g_running: owned by input')
+
+        r3_rows(gpsp, root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print('fe_readme self-test: %s' % ('PASS' if not FAILS else '%d FAILED' % len(FAILS)))

@@ -11,16 +11,23 @@
       `/* FILE:N */` must name a line of that file holding NAME (a #define of it for constants).
       Exit 1 on any wrong cite or none checked.  A header that cites fragment lines as
       main_psp.c:N (the pre-review tool) fails on a split tree.
-  p0a_t14_tu.py index FE_PRIV_H HEADER...
+  p0a_t14_tu.py index FE_PRIV_H HEADER... [--src GPSP]
       fe_priv.h's core-ABI index says what it is (P-review r2, N4): "PLAN-P-beta5 §5.2's set ...
       the names T14 asserts (in any flavour) plus six it cannot".  Checked against the generated
       headers (one per flavour): every name any HEADER asserts is in the index; the index's names
       that no HEADER asserts are exactly the six its "The six of this index that are UNCHECKED"
-      sentence names, and each of them is in an UNCHECKED list.  Exit 1 otherwise.
+      sentence names, and each of them is in an UNCHECKED list.  P-review r3 (B6): the text from
+      "main()'s" to the end of the comment names exactly the copy sites in no T14 flavour, i.e.
+      `abi_asserts.py unbuilt` of GPSP with these HEADERs (the copy names it mentions == the names
+      of the sites unbuilt lists).  GPSP defaults to the tree FE_PRIV_H sits in (GPSP/psp/fe/);
+      a fe_priv.h elsewhere (a mutant copy) needs --src.  Exit 1 otherwise, 2 usage.
 """
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import abi_asserts  # noqa: E402  (unbuilt, raw_sites)
 
 
 def tu(gpsp):
@@ -105,14 +112,21 @@ def header_names(header):
     return asserted, set(re.findall(r'^ \*\s+\S+:\d+\s+(\w+)\s', h[i:], re.M))
 
 
-def index(fe_priv, headers):
+def index(fe_priv, headers, gpsp=None):
     t = open(fe_priv, encoding='utf-8').read()
     a, b = t.find(IDX_BEGIN), t.find(IDX_END)
     s = t.find(SIX, b)
     e = t.find("main()'s", s)
-    if a < 0 or b < a or s < 0 or e < s:
-        print('index: %s has no "%s" ... "%s" ... "%s" comment' % (fe_priv, IDX_BEGIN, IDX_END, SIX))
+    z = t.find('*/', e)
+    if a < 0 or b < a or s < 0 or e < s or z < e:
+        print('index: %s has no "%s" ... "%s" ... "%s" ... "main()\'s" ... */ comment' % (fe_priv, IDX_BEGIN, IDX_END, SIX))
         return 1
+    if gpsp is None:
+        p = os.path.abspath(fe_priv).replace('\\', '/')
+        if not p.endswith('/psp/fe/fe_priv.h'):
+            print('index: %s is not GPSP/psp/fe/fe_priv.h: give --src GPSP' % fe_priv)
+            return 2
+        gpsp = p[:-len('/psp/fe/fe_priv.h')]
     asserted, unchecked = set(), set()
     for hd in headers:
         x, u = header_names(hd)
@@ -138,12 +152,35 @@ def index(fe_priv, headers):
     if not rc:
         print('  ok   every asserted name is in the index; the six it cannot assert: %s' % ', '.join(sorted(six)))
         print('  ok   UNCHECKED names the index does not list: %d' % len(unchecked - idx))
+    # B6: the "main()'s ..." text names the sites no T14 flavour compiles, all of them and only them
+    try:
+        unc, st = abi_asserts.unbuilt(gpsp, headers)
+    except (abi_asserts.Unbuilt, ValueError) as x:
+        print('  FAIL abi_asserts unbuilt on %s refused: %s' % (gpsp, x))
+        return 1
+    copy_names = {n for _, n, _, _ in abi_asserts.raw_sites(gpsp)}
+    said = set(re.findall(r'\b\w+\b', t[e:z])) & copy_names
+    want = {n for _, n, _, _ in unc}
+    if said != want:
+        print('  FAIL the "main()\'s" text names %s; the sites in no T14 flavour (abi_asserts unbuilt) are %s'
+              % (sorted(said), ', '.join('%s %s' % (c, n) for c, n, _, _ in unc)))
+        rc = 1
+    else:
+        print('  ok   the "main()\'s" text names the %d copy sites in no T14 flavour: %s'
+              % (len(unc), ', '.join('%s %s' % (c, n) for c, n, _, _ in unc)))
     return rc
 
 
 def main(a):
     if len(a) >= 3 and a[0] == 'index':
-        return index(a[1], a[2:])
+        src = None
+        if '--src' in a:
+            k = a.index('--src')
+            if k + 1 >= len(a):
+                print(__doc__)
+                return 2
+            src, a = a[k + 1], a[:k] + a[k + 2:]
+        return index(a[1], a[2:], src)
     if len(a) == 3 and a[0] == 'grep':
         rx = re.compile(a[1])
         for f, i, ln in tu(a[2]):

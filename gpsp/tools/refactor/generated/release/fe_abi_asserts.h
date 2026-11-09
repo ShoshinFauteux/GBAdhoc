@@ -252,9 +252,10 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (43): every copy NOT asserted: its name is not declared by the check TU's
- * headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or its type is
- * frontend-only.
+/* UNCHECKED (43): every copy of this flavour's -E that is NOT asserted: its name is not declared
+ * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
+ * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
+ * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
  *   main_psp.c:114           __lib_ent_top                        not declared by the check TU's headers
  *   main_psp.c:114           __lib_ent_bottom                     not declared by the check TU's headers
  *   main_psp.c:114           __lib_stub_top                       not declared by the check TU's headers

@@ -24,8 +24,15 @@ Inputs (all read, none written except -o):
     resolved from the test's own literals with `ast`: a string, a `+` of strings, a loop or
     comprehension variable over a tuple/list literal (or a module-level name bound to one), a
     module-level dict literal subscripted.  The table lists each region's readers.
-  * tools/refactor/generated/<flavour>/fe_abi_asserts.h: T14's counts per flavour.
-  * the `/* @lab */` tags; fe/fe_priv.h's FE_HANDOFF.
+  * tools/refactor/generated/<flavour>/fe_abi_asserts.h: T14's counts per flavour, and with
+    `abi_asserts.unbuilt` (a raw scan of the TU, every #if arm) the copy sites no flavour has.
+  * the `/* @lab */` tags; fe/fe_priv.h's FE_HANDOFF; the include guards of fe_priv.h and
+    play_defaults.h (not counted as moved macros).
+
+Every table cell is written with each `|` escaped as `\\|`: GFM splits a table row at every
+unescaped `|`, inside a code span too (GFM spec, tables extension, example 200), and drops the
+cells past the header's count.  The rendered text is checked (gfm_table_errors) before it is
+written or compared: a row whose GFM cell count is not its header's is refused.
 
 Checks (exit 1, nothing written): the cutlist's `source:` sha256 is the inverse's (a stale cutlist
 is refused); every FRAG row's anchor is the first line of its fragment file, in the shell's
@@ -34,12 +41,15 @@ LAB_FFP( site carries its `/* @lab */` tag and every tag is on such a site; LAB_
 in fe_priv.h's FE_HANDOFF; a module with no PLAN12 row; an EXPORTED name that is not a row of its
 module; a module with no FRAG row that LATER does not name, or a LATER module that has one; a host
 test whose region NAME this tool cannot resolve from literals (never guessed, never skipped), or
-that names a region no marker defines; an `#if` group that does not balance in the inverse.
+that names a region no marker defines; an `#if` group that does not balance in the inverse; a raw
+scan T14 refuses (abi_asserts.unbuilt); a table row with another GFM cell count than its header.
 
 Usage:
   fe_readme.py [--gpsp DIR] [-o FILE]   write DIR/psp/fe/README.md (default DIR = this tree's gpsp/)
   fe_readme.py [--gpsp DIR] --check     exit 1 if the committed README is not what this generates
   fe_readme.py --plan PLAN.md           exit 1 if PLAN12 / EXPORTED / NEVER_TU / LATER differ from the plan
+  fe_readme.py --gfm FILE...            exit 1 if a table row of FILE has another GFM cell count than
+                                        its header (any Markdown file; prints the rows)
   fe_readme.py --selftest               mutants on a scratch copy (tests/fe_readme_test.py)
 Exit: 0 ok, 1 refused / stale / differs, 2 usage.
 """
@@ -55,6 +65,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import split as S  # noqa: E402  (read_cutlist, read_split, inverse_text, INC_RE, Refused, csrc)
 import modules  # noqa: E402
+import abi_asserts as A  # noqa: E402  (unbuilt: the copy sites no T14 flavour compiles)
 
 # PLAN.md §1.2's module table: '#' and the Responsibility cell, VERBATIM (`--plan` compares them
 # with the plan's cells byte for byte).  Rows 0 and 1 of the plan are the two headers (fe_priv.h,
@@ -113,7 +124,20 @@ PREFIX_MEANING = {
     'def': 'the `#define` line(s) a test greps, by name',
     'decl': 'one declaration / object definition a test greps, by name',
 }
-RANGE_MEANING = 'a statement range one test slices (its old start/end anchors are checked inside it)'
+NUM_WORD = {1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five'}
+
+
+def range_meaning(nreaders):
+    """the meaning of an unlisted prefix, with how many host tests slice each of its regions
+    (from the data: [readers of each region of the prefix])"""
+    ks = sorted(set(nreaders))
+    if ks == [0]:
+        who = 'no host test slices'
+    elif len(ks) == 1:
+        who = '%s test%s slice%s' % (NUM_WORD.get(ks[0], str(ks[0])), '' if ks[0] == 1 else 's', 's' if ks[0] == 1 else '')
+    else:
+        who = '%d to %d tests slice' % (ks[0], ks[-1])
+    return 'a statement range %s (its old start/end anchors are checked inside it)' % who
 
 MARK = re.compile(r'/\* @extract:begin ([A-Za-z0-9_.:-]+) \*/')
 LAB_TAG = '/* @lab */'
@@ -179,6 +203,64 @@ def ctx_text(frames, where):
         else:
             out.append('`%s` after `%s` (%s)' % (arms[-1], '`, `'.join(arms[:-1]), at))
     return ' > '.join(out)
+
+
+# ----------------------------------------------------------------- GFM tables
+GFM_DELIM = re.compile(r'^\|(?:\s*:?-+:?\s*\|)+\s*$')
+
+
+def cell(s):
+    """one table cell as written: every `|` escaped as `\\|`.  GFM splits a row at every unescaped
+    `|`, inside a code span too; an escaped one renders as `|` (GFM spec, tables extension, ex. 200)."""
+    return str(s).replace('|', '\\|')
+
+
+def trow(*cells):
+    return '| %s |' % ' | '.join(cell(c) for c in cells)
+
+
+def gfm_cells(line):
+    """the cells of a GFM table row, split the way cmark-gfm splits them: at every `|` that a
+    backslash does not escape (a backslash escapes the next character, whatever it is); one leading
+    and one trailing `|` are the row's edges, not delimiters"""
+    s = line.strip()
+    if s.startswith('|'):
+        s = s[1:]
+    cells, cur, i = [], [], 0
+    while i < len(s):
+        if s[i] == '\\' and i + 1 < len(s):
+            cur.append(s[i:i + 2])
+            i += 2
+            continue
+        if s[i] == '|':
+            cells.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(s[i])
+        i += 1
+    if ''.join(cur).strip():
+        cells.append(''.join(cur))
+    return cells
+
+
+def gfm_table_errors(text):
+    """[(line, header cells, row cells, row)] for every row of every GFM table in text (a `|` line
+    followed by a delimiter row, then the `|` lines after it) whose cell count is not the header's:
+    GFM drops a row's cells past the header's count and pads a short row"""
+    lines, bad, i = text.split('\n'), [], 0
+    while i < len(lines):
+        if lines[i].startswith('|') and i + 1 < len(lines) and GFM_DELIM.match(lines[i + 1]):
+            n = len(gfm_cells(lines[i]))
+            j = i + 1
+            while j < len(lines) and lines[j].startswith('|'):
+                m = len(gfm_cells(lines[j]))
+                if m != n:
+                    bad.append((j + 1, n, m, lines[j]))
+                j += 1
+            i = j
+        else:
+            i += 1
+    return bad
 
 
 # ----------------------------------------------------------------- the tree
@@ -266,7 +348,7 @@ def load(gpsp):
         rloc[r['key']] = (fl, ln)
         rctx[r['key']] = ctx[i - 1]
     return {'gpsp': gpsp, 'shell': shell, 'frags': frags, 'frows': frows, 'rows': rows, 'floc': floc,
-            'rloc': rloc, 'rctx': rctx, 'where': where, 'inv_sha': inv_sha, 'inv_lines': len(lines),
+            'rloc': rloc, 'rctx': rctx, 'where': where, 'ctx': ctx, 'inv_sha': inv_sha, 'inv_lines': len(lines),
             'inc_lines': inc_lines, 'cut_sha': hashlib.sha256(cut_text.encode('utf-8')).hexdigest()}
 
 
@@ -582,14 +664,31 @@ def noop_stubs(d):
     return out
 
 
+def include_guard(text):
+    """the include guard macro of a header: `#ifndef X` and `#define X` (nothing after it) as its
+    first two directives and `#endif` as its last; None otherwise.  Comments are blanked first."""
+    dirs = [ln.strip() for ln in S.csrc.blank_comments_strings(text).split('\n') if ln.lstrip().startswith('#')]
+    if len(dirs) < 3:
+        return None
+    a = re.match(r'#\s*ifndef\s+(\w+)$', dirs[0])
+    b = re.match(r'#\s*define\s+(\w+)$', dirs[1])
+    if a and b and a.group(1) == b.group(1) and re.match(r'#\s*endif\b', dirs[-1]):
+        return a.group(1)
+    return None
+
+
 def defines(d):
-    c = collections.Counter()
+    """({'shell'|'fragments'|header: #define lines}, {header: its include guard or None}); a header's
+    count leaves out its include guard's #define, which no step moved"""
+    c, guards = collections.Counter(), {}
     for fl, t in file_texts(d):
         c['shell' if fl == 'main_psp.c' else 'fragments'] += sum(1 for ln in t.split('\n') if DEFINE.match(ln))
     for h in ('fe_priv.h', 'play_defaults.h'):
         p = os.path.join(d['gpsp'], 'psp', 'fe', h)
-        c[h] = sum(1 for ln in open(p, encoding='utf-8').read().split('\n') if DEFINE.match(ln))
-    return c
+        t = open(p, encoding='utf-8').read()
+        guards[h] = include_guard(t)
+        c[h] = sum(1 for ln in t.split('\n') if DEFINE.match(ln)) - (1 if guards[h] else 0)
+    return c, guards
 
 
 def t14_counts(gpsp):
@@ -610,10 +709,17 @@ def cite(loc):
     return '%s:%d' % loc
 
 
-def row_name(r):
-    """a row's name, `name#N` only for the 2nd.. definition (one per #if arm)"""
+def dup_names(rows):
+    """{(kind, name)} the cutlist defines more than once (keys name#1, name#2, ...)"""
+    c = collections.Counter((r['kind'], r['name']) for r in rows)
+    return {k for k, v in c.items() if v > 1}
+
+
+def row_name(r, dups):
+    """a row's name: bare when the cutlist defines the name once; `name#N` (its N-th definition in
+    TU order, the cutlist key) for every definition of a name it defines more than once"""
     name, n = r['key'].split(':', 1)[1].rsplit('#', 1)
-    return name if n == '1' else '%s#%s' % (name, n)
+    return '%s#%s' % (name, n) if (r['kind'], name) in dups else name
 
 
 def module_checks(d):
@@ -667,7 +773,25 @@ def render(d):
     if bad:
         raise Stale('@lab: ' + '; '.join(bad))
     t14 = t14_counts(d['gpsp'])
-    dc = defines(d)
+    heads = [os.path.join(d['gpsp'], 'tools', 'refactor', 'generated', fl, 'fe_abi_asserts.h') for fl in T14_FLAVOURS]
+    try:
+        unb, ust = A.unbuilt(d['gpsp'], heads)
+    except (A.Unbuilt, ValueError) as e:
+        raise Stale('T14 unbuilt (abi_asserts.py unbuilt): %s' % e)
+    at_inv = {loc: i for i, loc in enumerate(where)}
+    unb_ctx = []
+    for c, n, k, _ in unb:
+        f, ln = c.rsplit(':', 1)
+        i = at_inv.get((f, int(ln)))
+        if i is None or not d['ctx'][i]:
+            raise Stale('T14 unbuilt site %s %s: %s' % (c, n, 'not a line of the TU' if i is None else 'in no #if group'))
+        unb_ctx.append((c, n, k, ctx_text(d['ctx'][i], where)))
+    dc, guards = defines(d)
+    dups = dup_names(rows)
+    frag_order = [f['frag'] for f in frows]
+
+    def tu_key(r):
+        return (frag_order.index(r['frag']), rloc[r['key']][1])
     nfr = sum(1 for f in frows if f['module'] != 'shell')
     il = d['inc_lines']
     fp_inc = [i for i, ln in enumerate(d['shell'].split('\n'), 1) if ln.startswith('#include "fe/fe_priv.h"')]
@@ -705,29 +829,54 @@ def render(d):
       'hand-edited. `split.py split` and `split.py gen` read the single file, so on this tree they take the '
       'inverse: regenerate with `split.py inverse --split gpsp -o F`, then `split.py split --src F --cutlist '
       'gpsp/tools/refactor/cutlist.txt --out DIR` (the cutlist: `split.py gen --split gpsp --carry '
-      'gpsp/tools/refactor/cutlist.txt -o C`). Replay a patch of the inverse with `split.py replay --split gpsp '
-      '--cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2`. DIR and DIR2 are new directories; copy '
+      'gpsp/tools/refactor/cutlist.txt -o C`). Replay a change with `split.py replay --split gpsp '
+      '--cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2`, where P is a git diff of `psp/main_psp.c` '
+      'as one file (the inverse\'s text): replay applies the file whose `+++ b/` path ends in `main_psp.c` and '
+      'ignores any other file in P. DIR and DIR2 are new directories; copy '
       'their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree. A fragment\'s first line is its FRAG anchor. '
       'A name sits in a fragment by position, which is not always its owner\'s fragment (see "Rows outside '
       'their owner\'s fragments").')
     noops = noop_stubs(d)
+
+    def gtxt(h):
+        return ', not counting its include guard `%s`' % guards[h] if guards[h] else ''
+
+    def andlist(xs):
+        xs = list(xs)
+        return xs[0] if len(xs) == 1 else ', '.join(xs[:-1]) + ' and ' + xs[-1]
     w('- **Macros.** `fe/fe_priv.h` (included once, `main_psp.c:%s`, after the last project header) holds the '
-      'macros P5 moved: %d `#define` lines, and `fe/play_defaults.h` the `PLAY_*` ship constants and link defaults '
-      '(%d). They are not every macro of the TU: %d `#define` lines stay in the shell and %d in the fragments, at '
-      'their definition points: the macro-globals (an object in another arm), the macros a host test reads '
-      'through an @extract marker, local helpers, and %d release no-op stubs that sit in the `#else` arm beside '
-      'the telemetry function they replace (%s). A macro missing from fe_priv.h is not necessarily one of the '
-      'first two kinds: grep the name.'
-      % (','.join(map(str, fp_inc)) or '?', dc['fe_priv.h'], dc['play_defaults.h'], dc['shell'], dc['fragments'],
+      'macros P5 moved (%d `#define` lines%s), and `fe/play_defaults.h` the `PLAY_*` ship constants and link '
+      'defaults (%d%s). They are not every macro of the TU: %d `#define` lines stay in the shell and %d in the '
+      'fragments, at their definition points: the macro-globals (an object in another arm), the macros a host '
+      'test reads through an @extract marker, local helpers, and %d release no-op stubs that sit in the `#else` '
+      'arm beside the telemetry function they replace (%s). A macro missing from fe_priv.h is not necessarily '
+      'one of the first two kinds: grep the name.'
+      % (','.join(map(str, fp_inc)) or '?', dc['fe_priv.h'], gtxt('fe_priv.h'), dc['play_defaults.h'],
+         gtxt('play_defaults.h'), dc['shell'], dc['fragments'],
          len(noops), ', '.join('`%s` %s:%d' % x for x in noops) or 'none'))
     w('- **Core-ABI hand copies.** The TU redeclares core functions and globals instead of including the core '
-      'headers. T14 (`abi_asserts.py`) asserts every copy whose name the check TU\'s headers declare (`#include '
+      'headers. T14 (`abi_asserts.py`) asserts a copy when the check TU\'s headers declare its name (`#include '
       '"common.h"`, the core\'s header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never '
-      'linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites each copy as `fe/X.inc.c:N`: the '
-      'asserted ones, then the UNCHECKED list, which is the full list of the copies T14 cannot compare (a name '
-      'the check TU\'s headers do not declare, or a frontend-only type) -- %s. The index in `fe/fe_priv.h` is '
-      'PLAN-P-beta5 §5.2\'s set (every name T14 asserts, plus six it cannot), not every copy.'
-      % '; '.join('%s %d asserted + %d constants, %d unchecked' % x for x in t14))
+      'linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy in that flavour\'s `-E` as '
+      '`fe/X.inc.c:N`: the asserted ones, then the UNCHECKED list, the copies in that `-E` that T14 cannot compare '
+      '(a name the check TU\'s headers do not declare, or a frontend-only type) -- %s. A copy in an `#if` arm that '
+      'none of %s compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` lists those sites from '
+      'a raw scan of the TU with every `#if` arm kept. Today that is %d of its %d copy sites (the headers cite the '
+      'other %d, and %d copies that a macro call expands, which the raw text does not show): "Core-ABI copies in '
+      'no T14 flavour" below. The index in `fe/fe_priv.h` is PLAN-P-beta5 §5.2\'s set (every name T14 asserts, '
+      'plus six it cannot), not every copy.'
+      % ('; '.join('%s %d asserted + %d constants, %d unchecked' % x for x in t14), andlist(T14_FLAVOURS),
+         len(unb), ust['raw'], ust['cited'], len(ust['macro'])))
+    dl = []
+    for kn in sorted(dups, key=lambda k: min(tu_key(r) for r in rows if (r['kind'], r['name']) == k)):
+        rs = sorted([r for r in rows if (r['kind'], r['name']) == kn], key=tu_key)
+        inner = [rctx[r['key']][-1] if rctx[r['key']] else None for r in rs]
+        one_if = None not in inner and len({x[0] for x in inner}) == 1 and len({x[1][-1] for x in inner}) == len(inner)
+        dl.append('`%s` (%s, %s%s)' % (kn[1], kn[0], ', '.join('`%s`' % cite(rloc[r['key']]) for r in rs),
+                                       ': one per arm of the `#if` group at %s' % cite(where[inner[0][0] - 1]) if one_if else ''))
+    w('- **Row names.** A cutlist row is one F (function definition) or G (global definition) site. Below, a name '
+      'the cutlist defines once is written bare; a name it defines more than once is written `name#N` for each '
+      'definition, N counting them in TU order (the cutlist\'s key): %s.' % ('; '.join(dl) or 'none'))
     w('- **`/* @lab */`** is a grep tag, nothing else: it sits in front of each of the %d `LAB_HOOK(...)` / '
       '`LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), '
       'so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab\'s reach into the TU. `LAB_HANDOFF` is reached only '
@@ -735,6 +884,21 @@ def render(d):
     w('- **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the '
       'line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the '
       'source text; whether a build compiles a line depends on that build\'s defines.')
+    w('')
+    w('### Core-ABI copies in no T14 flavour')
+    w('')
+    w('The copy sites (`extern` declarations at file or block scope, file-scope prototypes of a function the TU '
+      'does not define) that none of `tools/refactor/generated/{%s}/fe_abi_asserts.h` cites, so nothing checks '
+      'them: `abi_asserts.py unbuilt` (the same extraction as T14\'s `-E` view, run on the raw TU with every `#if` '
+      'arm kept). Each sits in an `#if` arm that none of those flavours compiles.' % ','.join(T14_FLAVOURS))
+    w('')
+    if unb_ctx:
+        w(trow('copy', 'at', 'kind', '`#if` context'))
+        w('|---|---|---|---|')
+        for c, n, k, cx in unb_ctx:
+            w(trow('`%s`' % n, '`%s`' % c, k, cx))
+    else:
+        w('None: every copy site is in some T14 flavour\'s `-E`.')
     w('')
     w('### @extract markers')
     w('')
@@ -745,24 +909,24 @@ def render(d):
       'NAME is resolved from the test\'s literals, and the generator refuses a read it cannot resolve.'
       % (len(regs), len(rd), ', '.join('`%s`' % h for h in helpers) or 'none'))
     w('')
-    w('| prefix | meaning | regions | in | read by |')
+    w(trow('prefix', 'meaning', 'regions', 'in', 'read by'))
     w('|---|---|---|---|---|')
     for p, rs in prefixes.items():
         fls = sorted({fl for _, fl, _ in rs}, key=lambda x: (x != 'main_psp.c', x))
         rdrs = set()
         for n, _, _ in rs:
             rdrs |= use.get(n, set())
-        w('| `%s:` | %s | %d | %s | %s |' % (p, PREFIX_MEANING.get(p, RANGE_MEANING), len(rs),
-                                           ', '.join('`%s`' % x for x in fls),
-                                           ', '.join('`%s`' % os.path.basename(x) for x in sorted(rdrs)) or '(none found)'))
+        w(trow('`%s:`' % p, PREFIX_MEANING.get(p) or range_meaning([len(use.get(n, ())) for n, _, _ in rs]), len(rs),
+               ', '.join('`%s`' % x for x in fls),
+               ', '.join('`%s`' % os.path.basename(x) for x in sorted(rdrs)) or '(none found)'))
     w('')
     w('Every region, in TU order, and the host tests that read it:')
     w('')
-    w('| region | begins at | read by |')
+    w(trow('region', 'begins at', 'read by'))
     w('|---|---|---|')
     for n, fl, ln in regs:
-        w('| `%s` | `%s:%d` | %s |' % (n, fl, ln, ', '.join('`%s`' % os.path.basename(x) for x in sorted(use.get(n, ())))
-                                     or '(none)'))
+        w(trow('`%s`' % n, '`%s:%d`' % (fl, ln),
+               ', '.join('`%s`' % os.path.basename(x) for x in sorted(use.get(n, ()))) or '(none)'))
     noread = [os.path.basename(r) for r in rd if not nreads[r]]
     if noread:
         w('')
@@ -777,8 +941,8 @@ def render(d):
       'another module\'s fragment; "in no `#if`" those of them that sit in no `#if` group of the TU, so every build '
       'of main_psp.c compiles them.')
     w('')
-    w('| §1.2 | module | responsibility (PLAN.md §1.2) | exported (§1.3) | never a TU (§1.1) | fragments | owns F / G '
-      '| elsewhere | in no `#if` F / G |')
+    w(trow('§1.2', 'module', 'responsibility (PLAN.md §1.2)', 'exported (§1.3)', 'never a TU (§1.1)', 'fragments',
+           'owns F / G', 'elsewhere', 'in no `#if` F / G'))
     w('|---|---|---|---|---|---|---|---|---|')
     for m, (num, resp) in PLAN12.items():
         fr = [f['frag'] for f in frows if f['module'] == m]
@@ -788,43 +952,63 @@ def render(d):
         ne = sum(1 for r in guests if r['module'] == m)
         uf = sum(1 for r in mine if r['kind'] == 'F' and not rctx[r['key']])
         ug = sum(1 for r in mine if r['kind'] == 'G' and not rctx[r['key']])
-        w('| %s | %s | %s | %s | %s | %s | %d / %d | %d | %d / %d |' % (
-            num, m, resp, ', '.join('`%s`' % x for x in EXPORTED.get(m, [])) or '-',
-            'yes' if m in NEVER_TU else '-', ', '.join('`%s`' % x for x in fr) or '-', nf, ng, ne, uf, ug))
+        w(trow(num, m, resp, ', '.join('`%s`' % x for x in EXPORTED.get(m, [])) or '-',
+               'yes' if m in NEVER_TU else '-', ', '.join('`%s`' % x for x in fr) or '-', '%d / %d' % (nf, ng), ne,
+               '%d / %d' % (uf, ug)))
     nofrag = [m for m in PLAN12 if m in LATER]
+    have, none = [], []
+    for m in nofrag:
+        mine = sorted([r for r in rows if r['module'] == m], key=tu_key)
+        if not mine:
+            none.append(m)
+            continue
+        kinds = [(k, sum(1 for r in mine if r['kind'] == k)) for k in ('F', 'G')]
+        byfile = collections.OrderedDict()
+        for r in mine:
+            byfile.setdefault(rloc[r['key']][0], []).append(r)
+        # a fragment is not main_psp.c, so a row there is outside main() (which is in shell.b)
+        outside = all(rloc[r['key']][0] != 'main_psp.c' for r in mine)
+        have.append('%s owns %s, which sit%s in %s%s (see "Rows outside their owner\'s fragments")' % (
+            m, andlist(['%d %s row%s' % (n, k, '' if n == 1 else 's') for k, n in kinds if n]),
+            's' if len(mine) == 1 else '',
+            andlist(['`%s` (line%s %s: %s)' % (
+                fl, '' if len(rs) == 1 else 's', ', '.join(map(str, sorted({rloc[r['key']][1] for r in rs}))),
+                ', '.join('`%s`' % row_name(r, dups) for r in rs)) for fl, rs in byfile.items()]),
+            ', outside `main()`' if outside else ''))
+    tail = '; '.join(have) if have else 'none of them owns one'
+    if have and none:
+        tail += '; %s own%s none' % (andlist(none), 's' if len(none) == 1 else '')
     w('')
-    w('%s have no fragment yet (no FRAG row): PLAN.md §2 creates them later (%s); the code they will hold is in '
-      '`main()` today.' % (', '.join(nofrag), ', '.join('%s %s' % (m, LATER[m]) for m in nofrag)))
+    w('%s have no fragment yet (no FRAG row): PLAN.md §2 creates them later (%s). Of the cutlist\'s rows, %s.'
+      % (', '.join(nofrag), ', '.join('%s %s' % (m, LATER[m]) for m in nofrag), tail))
     w('')
     w('### %s functions and their `#if` context' % ' and '.join(ROLES))
     w('')
     w('Every F row of these modules, at its first line (TU order). A row in no `#if` group is compiled by every '
       'build of main_psp.c, a player build included.')
     for m in ROLES:
-        fs = [r for r in rows if r['module'] == m and r['kind'] == 'F']
-        fs.sort(key=lambda r: [x['frag'] for x in frows].index(r['frag']) * 10 ** 6 + rloc[r['key']][1])
+        fs = sorted([r for r in rows if r['module'] == m and r['kind'] == 'F'], key=tu_key)
         nonif = [r for r in fs if not rctx[r['key']]]
         w('')
         w('**%s**: %d F rows, %d in no `#if`.' % (m, len(fs), len(nonif)))
         w('')
-        w('| function | at | `#if` context |')
+        w(trow('function', 'at', '`#if` context'))
         w('|---|---|---|')
         for r in fs:
-            w('| `%s` | `%s` | %s |' % (row_name(r), cite(rloc[r['key']]),
-                                        ctx_text(rctx[r['key']], where) or 'none: every build'))
+            w(trow('`%s`' % row_name(r, dups), '`%s`' % cite(rloc[r['key']]),
+                   ctx_text(rctx[r['key']], where) or 'none: every build'))
     w('')
     w('## Fragments, in TU order')
     w('')
-    w('| # | fragment | file | lines | module | F / G rows | rows of other modules |')
+    w(trow('#', 'fragment', 'file', 'lines', 'module', 'F / G rows', 'rows of other modules'))
     w('|---|---|---|---|---|---|---|')
     for k, f in enumerate(frows, 1):
         fl, a, b = floc[f['frag']]
         here = [r for r in rows if r['frag'] == f['frag']]
         g = collections.Counter(r['module'] for r in here if r['module'] != f['module'])
-        w('| %d | %s | `%s` | %d-%d | %s | %d / %d | %s |' % (
-            k, f['frag'], fl, a, b, f['module'],
-            sum(1 for r in here if r['kind'] == 'F'), sum(1 for r in here if r['kind'] == 'G'),
-            ', '.join('%s %d' % (mm, g[mm]) for mm in modules.MODULE_ORDER if g[mm]) or '-'))
+        w(trow(k, f['frag'], '`%s`' % fl, '%d-%d' % (a, b), f['module'],
+               '%d / %d' % (sum(1 for r in here if r['kind'] == 'F'), sum(1 for r in here if r['kind'] == 'G')),
+               ', '.join('%s %d' % (mm, g[mm]) for mm in modules.MODULE_ORDER if g[mm]) or '-'))
     w('')
     w('## Rows outside their owner\'s fragments')
     w('')
@@ -839,22 +1023,28 @@ def render(d):
         w('**%s** (module %s):' % (f['frag'], f['module']))
         w('')
         for r in gs:
-            w('- `%s` %s `%s` -> %s' % (cite(rloc[r['key']]), r['kind'], r['key'].split(':', 1)[1], r['module']))
+            w('- `%s` %s `%s` -> %s' % (cite(rloc[r['key']]), r['kind'], row_name(r, dups), r['module']))
     w('')
     w('## Functions per fragment')
     w('')
     w('Every F row (function definition), at its first line, in TU order; `(owner)` follows a function owned by '
-      'another module. A name defined twice (one per `#if` arm) is listed as `name#N`.')
+      'another module. Names as in "Row names" above (`name#N` only for a name defined more than once).')
     w('')
     for f in frows:
         fs = [r for r in rows if r['frag'] == f['frag'] and r['kind'] == 'F']
         if not fs:
             continue
         w('- **%s** (`%s`): %s' % (f['frag'], floc[f['frag']][0], ', '.join(
-            '%s:%d%s' % (row_name(r), rloc[r['key']][1], '' if r['module'] == f['module'] else ' (%s)' % r['module'])
+            '%s:%d%s' % (row_name(r, dups), rloc[r['key']][1], '' if r['module'] == f['module'] else ' (%s)' % r['module'])
             for r in fs)))
     w('')
-    return '\n'.join(L)
+    text = '\n'.join(L)
+    bad = gfm_table_errors(text)
+    if bad:
+        raise Stale('%d table row(s) would render with another GFM cell count than their header (an unescaped `|` '
+                    'in a cell?): %s' % (len(bad), '; '.join('line %d: %d cells, header %d' % (b[0], b[2], b[1])
+                                                            for b in bad[:6])))
+    return text
 
 
 # ----------------------------------------------------------------- --plan
@@ -925,8 +1115,23 @@ def main(argv=None):
     ap.add_argument('-o', default=None, help='default GPSP/psp/fe/README.md')
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--plan', default=None, help='PLAN.md: check the transcribed tables against it, write nothing')
+    ap.add_argument('--gfm', nargs='+', default=None, metavar='FILE',
+                    help='check the GFM cell count of every table row of FILE (any Markdown file), write nothing')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args(argv)
+    if a.gfm:
+        rc = 0
+        for p in a.gfm:
+            t = open(p, encoding='utf-8', newline='').read().replace('\r\n', '\n')
+            bad = gfm_table_errors(t)
+            ls = t.split('\n')
+            ntab = sum(1 for i in range(len(ls) - 1) if ls[i].startswith('|') and GFM_DELIM.match(ls[i + 1])
+                       and (i == 0 or not ls[i - 1].startswith('|')))
+            print('fe_readme --gfm %s: %d tables, %d rows whose GFM cell count is not their header\'s' % (p, ntab, len(bad)))
+            for ln, n, m, row in bad:
+                print('  line %d: header %d cells, row %d: %s' % (ln, n, m, row[:120]))
+            rc |= 1 if bad else 0
+        return rc
     if a.selftest:
         sys.path.insert(0, os.path.join(HERE, 'tests'))
         import importlib

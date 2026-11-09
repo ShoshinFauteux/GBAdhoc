@@ -37,9 +37,9 @@
  * tentative-definition and .bss order, so they stay where they are.
  *
  * The index below is PLAN-P-beta5 §5.2's set, NOT every hand copy: the names T14 asserts
- * (in any flavour) plus six it cannot assert.  The full list is T14's own (see the end of
- * this comment).  By name, in TU order, with the file that holds each group (grep the name
- * for its line):
+ * (in any flavour) plus six it cannot assert.  T14 lists the copies itself, per flavour and
+ * in no flavour (see the end of this comment).  By name, in TU order, with the file that
+ * holds each group (grep the name for its line):
  *    at file scope
  *      fe/input.a.inc.c  core perf counters: flush_rom_total, flush_ram_full,
  *        flush_ram_smc, flush_ram_dma, gamepak_page_loads, smc_flush_us, smc_flush_bytes,
@@ -76,19 +76,26 @@
  *    T14 (tools/refactor/abi_asserts.py) asserts a copy only when its check TU's headers
  *    declare the name.  That check TU (tools/refactor/generated/<flavour>/abi_check.c,
  *    compile-only, never linked) includes only common.h (the core's header chain) and
- *    psp/sleep_q.h.  generated/<flavour>/fe_abi_asserts.h is the per-flavour list of EVERY
- *    copy, cited as fe/X.inc.c:N (main_psp.c:N in the shell) of the tree it was generated
- *    on: the asserted ones, then the UNCHECKED list, which is the full list of the copies T14
- *    does not assert.  Most UNCHECKED names are not in this index: the rfu_set_* and
- *    adhoc_set_disc_await setters (fe/link.c.inc.c), sched_fast, irq_io_fast, msr_fast,
- *    timer_lazy, gpsp_wallclock and gpsp_rtc_peek (the shell), gbadhoc_net_touched,
- *    badjump_recoveries and smc_fallback_stats (fe/inproc.b.inc.c), gpsp_rtc_wall
- *    (fe/power.a.inc.c), gbab_gamepak_page_loads (fe/link.e.inc.c), and others.  Nothing
- *    checks those copies, so they carry the most risk.  The six of this index that are
- *    UNCHECKED: dynarec_heap_tables_release, heap_trace_mark, heap_trace_report,
- *    gamepak_buffers and badjump_contained, which no header declares, and gbcore_prepare,
- *    which gbcore/gbcore.h declares but the check TU does not include.  main()'s
- *    gamepak_reopens is in no T14 flavour (none defines GPSP_STANDBY_NOTES).
+ *    psp/sleep_q.h.  generated/<flavour>/fe_abi_asserts.h lists every copy in that
+ *    flavour's -E (release, lab, harness), cited as fe/X.inc.c:N (main_psp.c:N in the
+ *    shell) of the tree it was generated on: the asserted ones, then the UNCHECKED list,
+ *    the copies of that -E that T14 does not assert.  Most UNCHECKED names are not in this
+ *    index: the rfu_set_* and adhoc_set_disc_await setters (fe/link.c.inc.c), sched_fast,
+ *    irq_io_fast, msr_fast, timer_lazy, gpsp_wallclock and gpsp_rtc_peek (the shell),
+ *    gbadhoc_net_touched, badjump_recoveries and smc_fallback_stats (fe/inproc.b.inc.c),
+ *    gpsp_rtc_wall (fe/power.a.inc.c), gbab_gamepak_page_loads (fe/link.e.inc.c), and
+ *    others.  Nothing checks those copies, so they carry the most risk.
+ *    The six of this index that are UNCHECKED: dynarec_heap_tables_release, heap_trace_mark,
+ *    heap_trace_report, gamepak_buffers and badjump_contained, which no header
+ *    declares, and gbcore_prepare, which gbcore/gbcore.h declares but the check TU does not
+ *    include.
+ *    main()'s gamepak_reopens (GPSP_STANDBY_NOTES) is one of six copy sites in #if arms
+ *    that none of release, lab and harness compiles, so no generated header lists them and
+ *    nothing checks them; the others are gbab_reg and fe_gbadual_running_inst
+ *    (fe/harness.f.inc.c, DRPROF_HW), rom_hash_census (fe/harness.f.inc.c,
+ *    ROM_HASH_CENSUS), jit_pub_inline and xlat_scan_fast (fe/inproc.a.inc.c,
+ *    JIT_COST_KEYS).  `abi_asserts.py unbuilt --src gpsp` lists them from a raw scan of the
+ *    TU (every #if arm), with their lines; psp/fe/README.md prints that list.
  */
 #ifndef FE_PRIV_H
 #define FE_PRIV_H

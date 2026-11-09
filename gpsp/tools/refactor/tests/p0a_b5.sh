@@ -244,17 +244,59 @@ if want t14; then
   # headers just generated) plus the six its sentence names, each UNCHECKED; mutants drop an asserted
   # name from the index and a name from the six
   FP="$TREE/psp/fe/fe_priv.h"
+  HS="$AS/release/fe_abi_asserts.h $AS/lab/fe_abi_asserts.h $AS/harness/fe_abi_asserts.h"
   if [ -f "$FP" ] && grep -q "The index below is PLAN-P-beta5" "$FP"; then
-    HS="$AS/release/fe_abi_asserts.h $AS/lab/fe_abi_asserts.h $AS/harness/fe_abi_asserts.h"
-    expect_rc 0 "fe_priv.h's index = the asserted names + the six it names (N4)" $TU index "$FP" $HS
-    sed -n '1,3p' "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    expect_rc 0 "fe_priv.h's index = the asserted names + the six it names (N4) + the sites in no flavour (B6)" $TU index "$FP" $HS --src "$TREE"
+    sed -n '1,4p' "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
     sed 's/ flush_rom_total, flush_ram_full,/ flush_ram_full,/' "$FP" > "$AS/idx_drop.h"
     cmp -s "$FP" "$AS/idx_drop.h" && bad "M-T14i index mutant not applied" || \
-      expect_rc 1 "M-T14i flush_rom_total dropped from the index: caught" $TU index "$AS/idx_drop.h" $HS
+      expect_rc 1 "M-T14i flush_rom_total dropped from the index: caught" $TU index "$AS/idx_drop.h" $HS --src "$TREE"
     sed 's/declares, and gbcore_prepare,/declares, and gbcore,/' "$FP" > "$AS/idx_six.h"
     cmp -s "$FP" "$AS/idx_six.h" && bad "M-T14j six-sentence mutant not applied" || \
-      expect_rc 1 "M-T14j gbcore_prepare dropped from the six sentence: caught" $TU index "$AS/idx_six.h" $HS
-  else echo "        (no core-ABI index sentence in this tree's fe_priv.h: N4 rows not applicable)"; fi
+      expect_rc 1 "M-T14j gbcore_prepare dropped from the six sentence: caught" $TU index "$AS/idx_six.h" $HS --src "$TREE"
+    # P-review r3 (B6): the "main()'s" text names every site in no T14 flavour (abi_asserts unbuilt)
+    sed 's/ rom_hash_census (fe\/harness/ (fe\/harness/' "$FP" > "$AS/idx_unb.h"
+    cmp -s "$FP" "$AS/idx_unb.h" && bad "M-T14k unbuilt-sentence mutant not applied" || \
+      expect_rc 1 "M-T14k rom_hash_census dropped from the sites-in-no-flavour text: caught" $TU index "$AS/idx_unb.h" $HS --src "$TREE"
+  else echo "        (no core-ABI index sentence in this tree's fe_priv.h: N4/B6 rows not applicable)"; fi
+  # P-review r3 (B6): abi_asserts.py unbuilt, the copy sites none of the headers just generated cites (a raw
+  # scan of the TU, every #if arm).  Mutants on a copy of psp/ (no docker): a new extern in an arm no flavour
+  # defines is listed; the same extern in no #if is refused (every flavour compiles it: stale headers); a
+  # header citing a site the raw scan does not find is refused; NAME(...); at file scope is not a site.
+  if grep -q '^#include "fe/[A-Za-z0-9_.]*\.inc\.c"' "$TREE/psp/main_psp.c"; then
+    expect_rc 0 "abi_asserts unbuilt: the copy sites in no T14 flavour, from the raw TU" $PY "$R/abi_asserts.py" unbuilt --src "$TREE" --gen "$AS"
+    sed -n '1,12p' "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    n0=$(grep -cE '^  (main_psp\.c|fe/)' "$OUT/last.log")
+    UT="$AS/unb"; ufrag=fe/paths.inc.c
+    unb_tree() {  # unb_tree <name> <text appended to fe/paths.inc.c> -> a gpsp dir: psp/main_psp.c + psp/fe/
+      rm -rf "$UT/$1"; mkdir -p "$UT/$1/psp"; cp "$M" "$UT/$1/psp/"; cp -a "$TREE/psp/fe" "$UT/$1/psp/fe"
+      printf '%b' "$2" >> "$UT/$1/psp/$ufrag"
+    }
+    unb_tree arm '#ifdef T14_NO_FLAVOUR_DEFINES_THIS\nextern unsigned t14_unbuilt_probe;\n#endif\n'
+    $PY "$R/abi_asserts.py" unbuilt --src "$UT/arm" --gen "$AS" > "$OUT/last.log" 2>&1; rc=$?
+    n1=$(grep -cE '^  (main_psp\.c|fe/)' "$OUT/last.log")
+    [ $rc = 0 ] && [ "$n1" = $((n0 + 1)) ] && grep -qE "^  $ufrag:[0-9]+ +t14_unbuilt_probe +extern +#ifdef T14_NO_FLAVOUR_DEFINES_THIS$" "$OUT/last.log" \
+      && ok "M-T14u1 an extern in an arm no flavour defines: listed ($n0 -> $n1 sites)" \
+      || { bad "M-T14u1 (rc $rc, $n0 -> $n1 sites)"; tail -4 "$OUT/last.log" | sed 's/^/        /'; }
+    unb_tree every 'extern unsigned t14_unbuilt_probe;\n'
+    expect_rc 1 "M-T14u2 the same extern in no #if (every flavour compiles it, no header cites it): refused" \
+      $PY "$R/abi_asserts.py" unbuilt --src "$UT/every" --gen "$AS"
+    grep -q 'in no #if group are cited by no generated header' "$OUT/last.log" || bad "M-T14u2 refused for another reason"
+    unb_tree macro 'T14_MACRO_CALL(t14_probe_arg);\n'
+    $PY "$R/abi_asserts.py" unbuilt --src "$UT/macro" --gen "$AS" > "$OUT/last.log" 2>&1; rc=$?
+    [ $rc = 0 ] && [ "$(grep -cE '^  (main_psp\.c|fe/)' "$OUT/last.log")" = "$n0" ] \
+      && ok "M-T14u3 NAME(...); at file scope in no #if: a macro call, not a site (rc 0, $n0 sites)" \
+      || { bad "M-T14u3 macro-call statement (rc $rc)"; tail -3 "$OUT/last.log" | sed 's/^/        /'; }
+    mkdir -p "$UT/hdr/release" "$UT/hdr/lab" "$UT/hdr/harness"
+    for fl in lab harness; do cp "$AS/$fl/fe_abi_asserts.h" "$UT/hdr/$fl/"; done
+    sed -E 's#^(/\* UNCHECKED .*)$#\1\n *   fe/paths.inc.c:1         t14_no_such_copy                     (mutant)#' \
+      "$AS/release/fe_abi_asserts.h" > "$UT/hdr/release/fe_abi_asserts.h"
+    cmp -s "$AS/release/fe_abi_asserts.h" "$UT/hdr/release/fe_abi_asserts.h" && bad "M-T14u4 header mutant not applied"
+    expect_rc 1 "M-T14u4 a header citing a site the raw scan does not find: refused" \
+      $PY "$R/abi_asserts.py" unbuilt --src "$TREE" --gen "$UT/hdr"
+    grep -q 'not in the raw scan of the TU' "$OUT/last.log" || bad "M-T14u4 refused for another reason"
+    rm -rf "$UT"
+  else echo "        (single-file tree: abi_asserts unbuilt rows not applicable)"; fi
 fi
 
 # ---- T6 strong_syms.spec: the comments cite the P0c cut base's lines (P0a T6); strict on the

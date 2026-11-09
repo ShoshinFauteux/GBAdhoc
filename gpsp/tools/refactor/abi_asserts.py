@@ -22,8 +22,10 @@ How:
     line (-fsyntax-only, docker).  A discovery pass drops the names those headers do not
     declare (whether or not some other header does: gbcore_prepare is in gbcore/gbcore.h,
     which the check TU does not include) and frontend types the core TU cannot see; they are
-    listed in the header as UNCHECKED, with the reason.  That list is the FULL list of the
-    copies T14 does not assert (P-review r2, N4).
+    listed in the header as UNCHECKED, with the reason.  So a flavour's header lists every
+    copy of THAT flavour's -E, asserted or UNCHECKED (P-review r2, N4).  A copy in an #if arm
+    the flavour does not compile is in neither list; `unbuilt` (below) lists the copy sites
+    that no generated flavour has (P-review r3, B6).
  4. Constants: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h; MER_INPUT_US, MER_RETIRE_US,
     MER_MISS_LIMIT and VRAM_DIRTY_PAGES against tools/test_ff_pipeline.c's copies.  All six
     are required: one that is not found is a FAILURE (exit 1), never a silent drop.
@@ -39,12 +41,25 @@ hold the copy: `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (and for a single
 shell too.  --frag FILE fe/X.inc.c bind-mounts a MUTATED copy of one fragment over the tree's,
 for -E and for the constants alike.
 
+THE COPY SITES NO T14 FLAVOUR COMPILES (P-review r3, B6).  `unbuilt` reads main_psp.c's TU
+raw (aec_cparse.load_raw: the shell with each `#include "fe/X.inc.c"` expanded, comments and
+directives dropped, EVERY #if arm kept, nothing expanded) through the same extract() as the
+-E view, and prints the copy sites that no generated/<flavour>/fe_abi_asserts.h cites (as an
+asserted copy or an UNCHECKED row), each with its #if stack.  A file-scope statement whose
+name is its first token (`PSP_MODULE_INFO(...);`) is a macro call, not a declaration (C99 has
+no implicit int), so it is not a site.  It REFUSES (exit 1) when the scan cannot be trusted:
+a site a header cites that the raw scan does not find (other than a copy the preprocessor
+expands from a macro call at that line, like PSP_MODULE_INFO's __lib_* externs), or an
+uncited site in no #if group (every flavour compiles it: the headers are stale).  No docker.
+
 Usage:
   abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--frag F fe/X.inc.c]...
         [--core-h H TREEPATH] [--test-c F]
         -> DIR/fe_abi_asserts.h, DIR/abi_check.c, DIR/report.txt; exit 1 if it does not compile
   abi_asserts.py all --run RUN --src GPSP --out DIR      (release, lab, harness)
-Exit: 0 generated and compiles, 1 an assertion or compile failure (or a constant missing), 2 usage.
+  abi_asserts.py unbuilt --src GPSP [--gen DIR]          (DIR default: this tree's generated/)
+Exit: 0 generated and compiles (unbuilt: listed), 1 an assertion or compile failure (or a constant
+missing; unbuilt: refused), 2 usage.
 """
 import argparse
 import os
@@ -414,9 +429,10 @@ def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=No
     L.append('#endif')
     L.append('_Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");')
     L.append('')
-    L.append('/* UNCHECKED (%d): every copy NOT asserted: its name is not declared by the check TU\'s' % len(unchecked))
-    L.append(' * headers (abi_check.c includes only common.h\'s chain and psp/sleep_q.h), or its type is')
-    L.append(' * frontend-only.')
+    L.append('/* UNCHECKED (%d): every copy of this flavour\'s -E that is NOT asserted: its name is not declared' % len(unchecked))
+    L.append(' * by the check TU\'s headers (abi_check.c includes only common.h\'s chain and psp/sleep_q.h), or')
+    L.append(' * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list')
+    L.append(' * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).')
     for name, line, why in unchecked:
         L.append(' *   %-24s %-36s %s' % (cite(line), name, why))
     L.append(' */')
@@ -483,7 +499,9 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     desc = ('psp/main_psp.c%s%s via psp-gcc -E' % (
         ' and the %d fragments (fe/X.inc.c) it includes' % nfe if nfe else '', (' (%s)' % ', '.join(muts)) if muts else ''))
     kat = known_label(known_path)
-    # discovery: drop items whose name the core does not declare or whose type does not compile
+    # discovery: move to UNCHECKED the items whose typedef or assert does not compile in the check
+    # TU: a name its headers (common.h's chain, psp/sleep_q.h) do not declare, or a frontend-only
+    # type.  A failed static assertion is a real mismatch and is never moved.
     for rnd in range(6):
         with open(hp, 'w', newline='\n') as f:
             f.write(render(flavour, items, unchecked, macros_fe, macros_test, desc, known, kat))
@@ -560,6 +578,107 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     return 0 if rc == 0 and not pin_fail and not missing else 1
 
 
+# ------------------------------------------------------------- the sites no flavour compiles
+HDR_CITE = r'((?:main_psp\.c|fe/[A-Za-z0-9_.]+):\d+)'
+MACRO_CALL = re.compile(r'^\s*([A-Z_][A-Z0-9_]*)\s*\(')
+
+
+class Unbuilt(Exception):
+    pass
+
+
+def raw_sites(src, main_c=None):
+    """[(cite, name, kind, ifs)] of every copy site of main_psp.c's TU in ANY #if arm, in TU order:
+    the raw view (aec_cparse.load_raw, follow=True) through extract().  ifs = the #if stack of the
+    site's name token (load_raw's form: '#if X', '#if X | #else', outermost first)."""
+    toks = C.load_raw(main_c or os.path.join(src, 'psp', 'main_psp.c'), follow=True)
+    out = []
+    for name, line, d, kind in extract(toks):
+        if kind == 'proto' and d and d[0].text == name:
+            continue                         # NAME(...); at file scope: a macro call, not a declaration
+        nt = next(t for t in d if t.text == name and t.line == line)
+        out.append((cite(line), name, kind, nt.ifs))
+    return out
+
+
+def header_sites(path):
+    """{(cite, name)} that one generated fe_abi_asserts.h names: each asserted copy (its
+    `/* CITE (kind) */` line before typedef abi_fe_t_NAME) and each UNCHECKED row."""
+    if not os.path.exists(path):
+        raise Unbuilt('no %s (regenerate T14: abi_asserts.py all)' % path)
+    hl = open(path, encoding='utf-8').read().split('\n')
+    out = set()
+    for k, ln in enumerate(hl):
+        m = re.match(r'^/\* %s \((?:extern|block|proto)\)' % HDR_CITE, ln)
+        if m and k + 1 < len(hl):
+            mm = re.search(r'\babi_fe_t_(\w+?)(?:__\d+)?\b', hl[k + 1])
+            if not mm:
+                raise Unbuilt('%s:%d: a cite with no typedef after it' % (path, k + 1))
+            out.add((m.group(1), mm.group(1)))
+            continue
+        m = re.match(r'^ \*   %s\s+(\w+)\s' % HDR_CITE, ln)
+        if m:
+            out.add((m.group(1), m.group(2)))
+    if not out:
+        raise Unbuilt('%s names no copy' % path)
+    return out
+
+
+def ifs_text(ifs):
+    """load_raw's #if stack as text: '#ifdef A > #else after #if B'"""
+    out = []
+    for fr in ifs:
+        arms = fr.split(' | ')
+        out.append(arms[0] if len(arms) == 1 else '%s after %s' % (arms[-1], ', '.join(arms[:-1])))
+    return ' > '.join(out)
+
+
+def unbuilt(src, headers, main_c=None):
+    """(uncited sites [(cite, name, kind, ifs)], {'raw': n, 'cited': n, 'macro': [(cite, name)]}).
+    Raises Unbuilt when the raw scan cannot be trusted (module docstring)."""
+    sites = raw_sites(src, main_c)
+    cited = set()
+    for h in headers:
+        cited |= header_sites(h)
+    raw = {(c, n) for c, n, _, _ in sites}
+    tu = {'%s:%d' % (lab, i): ln for lab, i, ln in tu_lines(main_c or os.path.join(src, 'psp', 'main_psp.c'),
+                                                           os.path.join(src, 'psp'))}
+    macro, lost = [], []
+    for c, n in sorted(cited - raw):
+        m = MACRO_CALL.match(tu.get(c, ''))
+        (macro if m and m.group(1) != n else lost).append((c, n))
+    if lost:
+        raise Unbuilt('%d site(s) a generated header cites are not in the raw scan of the TU (%s): the scan '
+                      'cannot be trusted, or the headers are of another tree (regenerate: abi_asserts.py all)'
+                      % (len(lost), ', '.join('%s %s' % x for x in lost[:8])))
+    unc = [s for s in sites if (s[0], s[1]) not in cited]
+    every = [s for s in unc if not s[3]]
+    if every:
+        raise Unbuilt('%d copy site(s) in no #if group are cited by no generated header (%s): every flavour '
+                      'compiles them, so the headers are stale (regenerate: abi_asserts.py all)'
+                      % (len(every), ', '.join('%s %s' % (c, n) for c, n, _, _ in every[:8])))
+    return unc, {'raw': len(sites), 'cited': len(raw & cited), 'macro': macro}
+
+
+def cmd_unbuilt(src, gen_dir):
+    headers = [os.path.join(gen_dir, fl, 'fe_abi_asserts.h') for fl in FLAVOURS]
+    try:
+        unc, st = unbuilt(src, headers)
+    except (Unbuilt, ValueError) as e:
+        print('abi_asserts unbuilt: REFUSED: %s' % e, file=sys.stderr)
+        return 1
+    def shown(h):
+        r = os.path.relpath(h, src).replace('\\', '/')
+        return h if r.startswith('..') else r
+    print('T14 unbuilt: %d copy sites in the raw TU (every #if arm); %d cited by %s (asserted or UNCHECKED); '
+          '%d cited copies come from a macro call at their line (%s); %d sites in no T14 flavour:'
+          % (st['raw'], st['cited'], ', '.join(shown(h) for h in headers),
+             len(st['macro']), ', '.join('%s %s' % x for x in st['macro']) or 'none', len(unc)))
+    for c, n, k, ifs in unc:
+        print('  %-24s %-28s %-6s %s' % (c, n, k, ifs_text(ifs)))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd')
@@ -583,7 +702,13 @@ def main():
     a.add_argument('--src', required=True)
     a.add_argument('--out', required=True)
     a.add_argument('--write-pin', action='store_true')
+    u = sub.add_parser('unbuilt')
+    u.add_argument('--src', required=True)
+    u.add_argument('--gen', default=os.path.join(HERE, 'generated'),
+                   help='DIR holding <flavour>/fe_abi_asserts.h (default: this tree\'s generated/)')
     o = ap.parse_args()
+    if o.cmd == 'unbuilt':
+        return cmd_unbuilt(o.src, o.gen)
     if o.cmd == 'gen':
         fl = o.flavour or os.path.basename(os.path.normpath(o.flavour_dir))
         return gen(o.flavour_dir, o.src, o.out, fl, o.main_c, o.core_h, o.test_c, o.known,
