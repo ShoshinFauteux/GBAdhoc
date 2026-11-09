@@ -332,6 +332,8 @@ static int link_end(int st)
    {
       /* section 19: the game could not be reloaded after the session */
       fe_evt("link_end fatal reason=reload");
+      g_link_fatal_code = 4;
+      g_link_fatal_why = "link_end_reload";
       g_running = 0;
       return 0;
    }

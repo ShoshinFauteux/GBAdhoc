@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 feeef8324d863b6c; split.py inverse of the shell sha256 f443831992503f9c (18610 lines) -->
+     inputs: cutlist.txt sha256 1f19f8d9d34dbaf2; split.py inverse of the shell sha256 40c9e519f938ee2f (18626 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4769, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4776, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -136,7 +136,7 @@ Every region, in TU order, and the host tests that read it:
 | 7 | merend | ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video (until the owner decides) | - | yes | `merend.a`, `merend.b`, `merend.c`, `merend.d` | 25 / 95 | 13 | 22 / 75 |
 | 8 | pacing | Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6) | `g_ff_uncapped`, `g_ff_mult` | yes | `pacing.a`, `pacing.b`, `pacing.c`, `pacing.d` | 31 / 89 | 10 | 30 / 87 |
 | 9 | rewind | Rewind tick, pool offer/check/lost/back (pool_lost runs on cb_thread), HUD, ini | - | - | `rewind` | 24 / 15 | 0 | 0 / 0 |
-| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 66 / 111 | 3 | 55 / 96 |
+| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 66 / 113 | 3 | 55 / 98 |
 | 11 | mgift | Mystery Gift glue | - | - | `mgift` | 19 / 6 | 1 | 8 / 1 |
 | 12 | boost | Emu boost warden | - | - | `boost` | 7 / 11 | 0 | 7 / 11 |
 | 13 | misc | Wall clocks (one noinline `psp_datetime_seconds`), screenshot, backup_save, state slots, cheats lock | - | - | `misc.a`, `misc.b`, `misc.c` | 27 / 7 | 4 | 22 / 7 |
@@ -269,9 +269,9 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 29 | harness.d | `fe/harness.d.inc.c` | 1-107 | harness | 2 / 0 | - |
 | 30 | link.c | `fe/link.c.inc.c` | 1-612 | link | 14 / 13 | merend 3, harness 1 |
 | 31 | inproc.b | `fe/inproc.b.inc.c` | 1-74 | inproc | 1 / 2 | power 1 |
-| 32 | link.d | `fe/link.d.inc.c` | 1-1426 | link | 29 / 84 | power 3, mgift 1, boot 5, harness 2 |
+| 32 | link.d | `fe/link.d.inc.c` | 1-1433 | link | 29 / 86 | power 3, mgift 1, boot 5, harness 2 |
 | 33 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
-| 34 | link.e | `fe/link.e.inc.c` | 1-853 | link | 12 / 14 | - |
+| 34 | link.e | `fe/link.e.inc.c` | 1-855 | link | 12 / 14 | - |
 | 35 | mgift | `fe/mgift.inc.c` | 1-510 | mgift | 19 / 6 | input 1 |
 | 36 | harness.e | `fe/harness.e.inc.c` | 1-156 | harness | 2 / 0 | - |
 | 37 | misc.c | `fe/misc.c.inc.c` | 1-51 | misc | 3 / 2 | - |
@@ -280,7 +280,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 40 | pacing.c | `fe/pacing.c.inc.c` | 1-508 | pacing | 19 / 6 | - |
 | 41 | power.e | `fe/power.e.inc.c` | 1-234 | power | 5 / 1 | - |
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
-| 43 | shell.b | `main_psp.c` | 206-4769 | shell | 1 / 0 | - |
+| 43 | shell.b | `main_psp.c` | 206-4776 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
 
@@ -533,9 +533,9 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **harness.d** (`fe/harness.d.inc.c`): sess_cost_evt:1, adhoc_ctl_evt:93
 - **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:323, gpsp_adhoc_step:337, net_teardown_io:343, net_teardown:386, link_version_text:400, net_frame:409, gpsp_rfu_now_us:524, gpsp_rfu_flight_dump_hook:536
 - **inproc.b** (`fe/inproc.b.inc.c`): inproc_refusal:46
-- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:283, rfu_tr_state_name:320, rfu_trace_drain:329, silent_frame:658, gblink_seed_wallclock:800, gblink_find_in:810, psp_gb_bulk_enable:913, psp_gb_bulk_send:926, psp_gb_bulk_recv:930, psp_gb_find_rom:935, link_backdrop_take:948, gba_reload_draw:965, gba_reload_progress:989, gba_reload_note:998, heap_exact:1038, sessmem_cycle_test:1050, gblink_close_held:1093, gblink_begin:1102, link_amount:1155, link_fail_text:1176, link_draw_facts:1226, gblink_draw_status:1326, plat_gblink_wait:1401
+- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:283, rfu_tr_state_name:320, rfu_trace_drain:329, silent_frame:658, gblink_seed_wallclock:800, gblink_find_in:810, psp_gb_bulk_enable:918, psp_gb_bulk_send:931, psp_gb_bulk_recv:935, psp_gb_find_rom:940, link_backdrop_take:953, gba_reload_draw:970, gba_reload_progress:994, gba_reload_note:1003, heap_exact:1043, sessmem_cycle_test:1055, gblink_close_held:1098, gblink_begin:1107, link_amount:1162, link_fail_text:1183, link_draw_facts:1233, gblink_draw_status:1333, plat_gblink_wait:1408
 - **audio.b** (`fe/audio.b.inc.c`): audio_nominal_step:1, gblink_audio_session:8
-- **link.e** (`fe/link.e.inc.c`): gblink_audio_frame:13, gblink_win_reset:74, gblink_win_work:92, gblink_win_note:111, gblink_cpu_scale:172, link_host_heard:215, link_setup_watch:234, link_end:285, gblink_service:383, gblink_script_disconnect:631, link_bringup_view:644, ui_net_action:673
+- **link.e** (`fe/link.e.inc.c`): gblink_audio_frame:13, gblink_win_reset:74, gblink_win_work:92, gblink_win_note:111, gblink_cpu_scale:172, link_host_heard:215, link_setup_watch:234, link_end:285, gblink_service:385, gblink_script_disconnect:633, link_bringup_view:646, ui_net_action:675
 - **mgift** (`fe/mgift.inc.c`): mgift_ui_active:51, mgift_ui_line1:52, mgift_ui_line2:53, rom_loading_progress:61, rom_loading_stage:66, mgift_read_game_code:71, mgift_chip:92, mgift_stop_io:98, mgift_stop:125, mgift_game_ok:138, mgift_start_io:146, mgift_start:263, link_read_identity:275, link_locks_states:320, link_session_any:327, turbo_frame:358, cheats_link_poll:400, link_ui_view:413, mgift_frame:437
 - **harness.e** (`fe/harness.e.inc.c`): run_testpat:20, run_nettest:67
 - **misc.c** (`fe/misc.c.inc.c`): psp_datetime_seconds:12, psp_local_wallclock:26, psp_utc_wallclock:41

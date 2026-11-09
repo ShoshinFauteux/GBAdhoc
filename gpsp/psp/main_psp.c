@@ -4487,6 +4487,13 @@ session_top:
       FE_LP_SET(FELP_LOOP);
    }
    /* @lab */ LAB_FFP(lab_ffpace_finish();)
+   /* A link session that could not put the game back (F5): its code and
+    * reason, which gblink_begin / link_end cannot reach (main's locals). */
+   if (g_link_fatal_why && !exit_reason)
+   {
+      exit_code = g_link_fatal_code;
+      exit_reason = g_link_fatal_why;
+   }
 
    if (g_perf_rig)
    {

@@ -910,6 +910,11 @@ static unsigned g_gblink_after;               /* harness: frames to play on */
 static unsigned g_gblink_after_left;
 static int g_gblink_after_code;
 static const char *g_gblink_after_why;
+/* A LINK THAT CANNOT PUT THE GAME BACK ENDS THE PROCESS (F5): set with
+ * g_running = 0 by gblink_begin and link_end (section 19's reload failed),
+ * read by main() as the loop ends.  They exited code 0 with no reason. */
+static int g_link_fatal_code;
+static const char *g_link_fatal_why;
 static int psp_gb_bulk_enable(int on)
 {
    /* online: no bulk lane -- the ordered channel carries transfers, and the
@@ -1138,6 +1143,8 @@ static int gblink_begin(int is_host)
    {
       /* section 19: the game could not be put back -- nothing to return to */
       fe_evt("gblink_begin fatal reason=reload");
+      g_link_fatal_code = 4;
+      g_link_fatal_why = "gblink_reload";
       g_running = 0;
    }
    fe_evt("gblink_begin role=%s delay=%u rc=%d", is_host ? "host" : "guest",
