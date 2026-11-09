@@ -1596,6 +1596,290 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   translation_ptr = emit_load_pc_k(translation_ptr, ireg, (new_pc),           \
                                    stored_pc, (iok))
 
+#ifdef PCARG_SIDE
+/* PCARG_SIDE (docs/PCARG-SIDE.md): a single load or store
+ * calls its stub WITHOUT the `addiu a1/a2, reg_pc, imm` above -- one word
+ * less at every such site, about 8 % of the hot translated bytes.  Only the
+ * stubs' slow paths ever read that argument (open bus, BIOS protection, the
+ * live timer counters, I/O writes, smc_write), and they recover it from the
+ * call's return address through a SIDE TABLE kept outside the translation
+ * caches, so no translation grows (the old in-cache trailer cost Hot Wheels
+ * RAM flushes 229 -> 276).
+ *
+ *   site (new form)   load:  jal stub ; X        X = the access's last
+ *                                                address word, swapped in
+ *                     store: jal stub ; mov a1   (a1 = the value, as before)
+ *   side table        per cache (ROM, RAM), sorted by return address:
+ *                     key = the site's return address (its jal + 8),
+ *                     imm = the immediate the addiu would have used, so
+ *                     the argument is exactly reg_pc + imm (k included)
+ *   recovery          mips_stub.S pcarg_dec: a direct-mapped front cache
+ *                     (pcarg_fc) and, on a miss, pcarg_lookup's binary
+ *                     search; a return address not in the table is an old
+ *                     form site whose register still holds the argument
+ *
+ * Entries are appended when a block is COMMITTED (code is written only at a
+ * cache's translation_ptr, so they stay sorted), and dropped when a block
+ * starts below the last one's end (the pointer moved back: a flush, or a
+ * translation that was abandoned), which also empties the front cache.  A
+ * site falls back to the old form when its table is full, when the word
+ * before the call may not move into the delay slot, or when the block
+ * already holds PCARG_MAX_PEND new-form sites: deterministic, and the
+ * stubs handle both forms. */
+#ifndef PCARG_ROM_CAP
+#define PCARG_ROM_CAP   12288      /* sites, ROM cache (6 bytes each) */
+#endif
+#ifndef PCARG_RAM_CAP
+#define PCARG_RAM_CAP   8192       /* sites, RAM cache */
+#endif
+#define PCARG_MAX_PEND  256        /* new-form sites in one block */
+#define PCARG_FC_N      512        /* front cache entries (8 bytes each) */
+#define PCARG_OLD       0x80000000u
+/* All of it in ONE object of exactly 128 KiB (16 I-cache ways): the .bss
+ * linked after it moves by a multiple of 8 KiB, so it keeps its sets
+ * (docs/LAYOUT-PINNING.md, "Keeping the pads").  mips_stub.S pcarg_dec
+ * reads fc at offset 0 (index (ra >> 2) & (PCARG_FC_N - 1)) and spills to
+ * spill at offset 4096. */
+#define PCARG_STATE_BYTES (128 * 1024)
+typedef struct {
+  u32 fc[PCARG_FC_N * 2];          /* front cache: return address, imm */
+  u32 spill[10];                   /* pcarg_dec's registers around C */
+  u32 n[2];                        /* entries, [0] ROM, [1] RAM */
+  u8 *hw[2];                       /* end of the last committed block */
+  u32 cur, npend;                  /* region being emitted, its sites */
+  u32 sites_new, sites_old, full, truncs, c_lookups, c_found, max[2], bad;
+  struct { u32 key; s32 imm; } pend[PCARG_MAX_PEND];
+  u32 rom_key[PCARG_ROM_CAP];
+  u32 ram_key[PCARG_RAM_CAP];
+  s16 rom_imm[PCARG_ROM_CAP];
+  s16 ram_imm[PCARG_RAM_CAP];
+} pcarg_state_t;
+typedef char pcarg_state_fits[(sizeof(pcarg_state_t) <= PCARG_STATE_BYTES &&
+                               PCARG_FC_N * 8 == 4096) ? 1 : -1];
+union { pcarg_state_t s; u8 bytes[PCARG_STATE_BYTES]; } pcarg_st;
+#define pcarg_fc         (pcarg_st.s.fc)
+#define pcarg_n          (pcarg_st.s.n)
+#define pcarg_hw         (pcarg_st.s.hw)
+#define pcarg_cur        (pcarg_st.s.cur)
+#define pcarg_npend      (pcarg_st.s.npend)
+#define pcarg_pend       (pcarg_st.s.pend)
+#define pcarg_sites_new  (pcarg_st.s.sites_new)
+#define pcarg_sites_old  (pcarg_st.s.sites_old)
+#define pcarg_full       (pcarg_st.s.full)
+#define pcarg_truncs     (pcarg_st.s.truncs)
+#define pcarg_c_lookups  (pcarg_st.s.c_lookups)
+#define pcarg_c_found    (pcarg_st.s.c_found)
+#define pcarg_max        (pcarg_st.s.max)
+#define pcarg_bad        (pcarg_st.s.bad)
+#define pcarg_rom_key    (pcarg_st.s.rom_key)
+#define pcarg_ram_key    (pcarg_st.s.ram_key)
+#define pcarg_rom_imm    (pcarg_st.s.rom_imm)
+#define pcarg_ram_imm    (pcarg_st.s.ram_imm)
+void pcarg_dec(void);              /* mips_stub.S */
+
+static inline u32 *pcarg_keys(u32 r) { return r ? pcarg_ram_key : pcarg_rom_key; }
+static inline s16 *pcarg_imms(u32 r) { return r ? pcarg_ram_imm : pcarg_rom_imm; }
+static inline u32 pcarg_cap(u32 r)   { return r ? PCARG_RAM_CAP : PCARG_ROM_CAP; }
+
+/* every table and the front cache empty (init_emitter: the caches restart) */
+static void pcarg_reset(void)
+{
+  pcarg_n[0] = pcarg_n[1] = 0;
+  pcarg_hw[0] = pcarg_hw[1] = NULL;
+  pcarg_npend = 0;
+  memset(pcarg_fc, 0, sizeof(pcarg_fc));
+}
+
+/* first index whose key is > ra (keys ascending) */
+static u32 pcarg_upper(const u32 *key, u32 n, u32 ra)
+{
+  u32 lo = 0, hi = n;
+  while (lo < hi) {
+    u32 mid = (lo + hi) >> 1;
+    if (key[mid] <= ra)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  return lo;
+}
+
+/* translate_block_*: a block starts at tp in region r (0 ROM, 1 RAM) */
+static __attribute__((noinline)) void pcarg_begin(u8 *tp, u32 r)
+{
+  pcarg_cur = r;
+  pcarg_npend = 0;
+  if (tp < pcarg_hw[r]) {
+    /* the cache pointer moved back: whatever lies at or after tp is gone */
+    pcarg_n[r] = pcarg_upper(pcarg_keys(r), pcarg_n[r], (u32)tp);
+    memset(pcarg_fc, 0, sizeof(pcarg_fc));
+    pcarg_truncs++;
+  }
+  pcarg_hw[r] = tp;
+}
+
+/* translate_block_*: the block is committed up to tp */
+static __attribute__((noinline)) void pcarg_commit(u8 *tp)
+{
+  u32 r = pcarg_cur, n = pcarg_n[r], i;
+  u32 *key = pcarg_keys(r);
+  s16 *imm = pcarg_imms(r);
+  for (i = 0; i < pcarg_npend; i++) {
+#ifdef DRPROF_TWIN
+    if (n && key[n - 1] >= pcarg_pend[i].key)
+      pcarg_bad++;                 /* never: the table must stay sorted */
+#endif
+    key[n] = pcarg_pend[i].key;
+    imm[n] = pcarg_pend[i].imm;
+    n++;
+  }
+  pcarg_n[r] = n;
+  if (n > pcarg_max[r])
+    pcarg_max[r] = n;
+  pcarg_npend = 0;
+  pcarg_hw[r] = tp;
+}
+
+/* mips_stub.S pcarg_dec, on a front-cache miss: the immediate of the site
+ * returning to ra, sign-extended, or PCARG_OLD (the site passed it in its
+ * register).  Fills the front cache. */
+u32 pcarg_lookup(u32 ra)
+{
+  u32 val = PCARG_OLD, r;
+  pcarg_c_lookups++;
+  for (r = 0; r < 2; r++) {
+    u8 *base = r ? ram_translation_cache : rom_translation_cache;
+    u32 size = r ? ram_translation_cache_size : rom_translation_cache_size;
+    if (ra > (u32)base && ra <= (u32)base + size) {
+      u32 i = pcarg_upper(pcarg_keys(r), pcarg_n[r], ra);
+      if (i && pcarg_keys(r)[i - 1] == ra) {
+        val = (u32)(s32)pcarg_imms(r)[i - 1];
+        pcarg_c_found++;
+#ifdef DRPROF_TWIN
+        if ((address32((u8 *)ra, -8) >> 26) != mips_opcode_jal)
+          pcarg_bad++;             /* never: an entry is always a call */
+#endif
+      }
+      break;
+    }
+  }
+  {
+    u32 h = (ra >> 2) & (PCARG_FC_N - 1);
+    pcarg_fc[2 * h] = ra;
+    pcarg_fc[2 * h + 1] = val;
+  }
+  return val;
+}
+
+/* may this site drop its argument?  (room in the block and in the table) */
+#define pcarg_room()                                                          \
+  (pcarg_npend < PCARG_MAX_PEND &&                                            \
+   pcarg_n[pcarg_cur] + pcarg_npend < pcarg_cap(pcarg_cur))
+
+/* a branch or jump: it has a delay slot, and may not sit in one */
+static inline int pcarg_is_cti(u32 w)
+{
+  u32 op = w >> 26;
+  if (op == 0)
+    return (w & 0x3F) == 8 || (w & 0x3F) == 9;              /* jr, jalr */
+  return op == 1 || (op >= 2 && op <= 7) || (op >= 0x10 && op <= 0x13) ||
+         (op >= 0x14 && op <= 0x17);
+}
+
+/* The last word (X) was emitted by this access (at or after lo) and may move
+ * into the call's delay slot: not a branch, and not in one. */
+#define pcarg_can_swap(lo)                                                    \
+  ((translation_ptr - 4) >= (lo) &&                                           \
+   !pcarg_is_cti(address32(translation_ptr, -4)) &&                           \
+   !pcarg_is_cti(address32(translation_ptr, -8)))
+
+/* the immediate the old form's addiu would carry (emit_load_pc_k) */
+#define pcarg_imm(new_pc, iok)                                                \
+  ((s16)((((iok) & 0x1FFFF) != 0x10000) ? ((iok) & 0xFFFF) :                  \
+         (((new_pc) - stored_pc) & 0xFFFF)))
+
+#ifdef PCARG_SIDE_PAD
+/* twin oracle only: a nop where the argument was, so every block keeps the
+ * base's size (same flushes, same guest timing: hashes must be identical) */
+#define pcarg_pad_site() mips_emit_nop()
+#else
+#define pcarg_pad_site() do { } while (0)
+#endif
+
+#define pcarg_note(new_pc, iok)                                               \
+  pcarg_pend[pcarg_npend].key = (u32)translation_ptr;                         \
+  pcarg_pend[pcarg_npend].imm = pcarg_imm(new_pc, iok);                       \
+  pcarg_npend++;                                                              \
+  pcarg_sites_new++;                                                          \
+  pcarg_pad_site()
+
+/* The site emitters are out of line (called at every load/store site, like
+ * emit_load_pc_k): the translator's own code does not grow. */
+
+/* single load: jal stub ; X  (or the old jal stub ; addiu a1) */
+static __attribute__((noinline)) u8 *pcarg_load_site(u8 *translation_ptr,
+  u32 fn, u32 new_pc, u32 stored_pc, u32 iok, u8 *lo)
+{
+  if (pcarg_room() && pcarg_can_swap(lo)) {
+    generate_function_call_swap_delay(fn);
+    pcarg_note(new_pc, iok);
+  } else {
+    if (!pcarg_room())
+      pcarg_full++;
+    pcarg_sites_old++;
+    mips_emit_jal(mips_absolute_offset(fn));
+    translation_ptr = emit_load_pc_k(translation_ptr, reg_a1, new_pc,
+                                     stored_pc, iok);
+  }
+  return translation_ptr;
+}
+
+/* ARM single store: [addiu a2 ;] mov a1 ; jal stub -> jal stub ; mov a1.
+ * The value word (always one: generate_load_reg_pc) takes the delay slot as
+ * before; only the argument before it is dropped. */
+static __attribute__((noinline)) u8 *pcarg_arm_store_site(u8 *translation_ptr,
+  u32 fn, u32 rd, u32 pc, u32 stored_pc, u32 iok)
+{
+  int nf = pcarg_room() && !pcarg_is_cti(address32(translation_ptr, -4));
+  if (!nf) {
+    if (!pcarg_room())
+      pcarg_full++;
+    pcarg_sites_old++;
+    translation_ptr = emit_load_pc_k(translation_ptr, reg_a2, pc + 4,
+                                     stored_pc, iok);
+  }
+  generate_load_reg_pc(reg_a1, rd, 12);
+  generate_function_call_swap_delay(fn);
+  if (nf) {
+    pcarg_note(pc + 4, iok);
+  }
+  return translation_ptr;
+}
+
+/* Thumb single store: [addiu a2 ;] jal stub ; mov a1 */
+static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
+  u8 *translation_ptr, u32 fn, u32 rd, u32 pc, u32 stored_pc, u32 iok)
+{
+  int nf = pcarg_room() && !pcarg_is_cti(address32(translation_ptr, -4));
+  if (!nf) {
+    if (!pcarg_room())
+      pcarg_full++;
+    pcarg_sites_old++;
+    translation_ptr = emit_load_pc_k(translation_ptr, reg_a2, pc + 2,
+                                     stored_pc, iok);
+  }
+  mips_emit_jal(mips_absolute_offset(fn));
+  generate_load_reg(reg_a1, rd);
+  if (nf) {
+    pcarg_note(pc + 2, iok);
+  }
+  return translation_ptr;
+}
+#define pcarg_mark_lo() u8 *pcarg_lo = translation_ptr; (void)pcarg_lo
+#else
+#define pcarg_mark_lo() do { } while (0)
+#endif
+
 /* ARM: the fallback sync only outside a conditional run (a skipped body
  * would lose the subtraction) and not for SP/PC based addressing. */
 #define arm_iok_site(pc_arg)                                                  \
@@ -1604,6 +1888,27 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
     ((last_condition & 0x0F) == 0x0E) &&                                      \
     (((opcode >> 16) & 0x0F) != REG_PC) && (((opcode >> 16) & 0x0F) != 13))
 
+#ifdef PCARG_SIDE
+#define arm_access_memory_load(mem_type)                                      \
+{                                                                             \
+  u32 iok_imm = arm_iok_site(pc);                                             \
+  iok_take(iok_imm);                                                          \
+  cycle_count += 2;                                                           \
+  translation_ptr = pcarg_load_site(translation_ptr,                          \
+    (u32)execute_load_##mem_type, pc, stored_pc, iok_imm, pcarg_lo);          \
+  generate_store_reg(reg_rv, rd);                                             \
+  check_store_reg_pc_no_flags(rd)                                             \
+}
+
+#define arm_access_memory_store(mem_type)                                     \
+{                                                                             \
+  u32 iok_imm = arm_iok_site(pc + 4);                                         \
+  iok_take(iok_imm);                                                          \
+  cycle_count++;                                                              \
+  translation_ptr = pcarg_arm_store_site(translation_ptr,                     \
+    (u32)execute_store_##mem_type, rd, pc, stored_pc, iok_imm);               \
+}
+#else
 #define arm_access_memory_load(mem_type)                                      \
 {                                                                             \
   u32 iok_imm = arm_iok_site(pc);                                             \
@@ -1624,6 +1929,7 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   generate_load_reg_pc(reg_a1, rd, 12);                                       \
   generate_function_call_swap_delay(execute_store_##mem_type)                 \
 }
+#endif
 
 #define arm_access_memory_reg_pre_up()                                        \
   mips_emit_addu(reg_a0, arm_to_mips_reg[rn], arm_to_mips_reg[rm])            \
@@ -1695,6 +2001,7 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
 #define arm_access_memory(access_type, direction, adjust_op, mem_type,        \
  offset_type)                                                                 \
 {                                                                             \
+  pcarg_mark_lo();                                                            \
   arm_data_trans_##offset_type(adjust_op, direction);                         \
   arm_access_memory_##access_type(mem_type);                                  \
 }                                                                             \
@@ -2004,6 +2311,27 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   iok_site(cycle_count, def_seq_cycles[pc >> 24][0],                          \
     (s32)((pc_arg) - stored_pc), stored_pc, (may_sync))
 
+#ifdef PCARG_SIDE
+#define thumb_access_memory_load(mem_type, reg_rd, may_sync)                  \
+{                                                                             \
+  u32 iok_imm = thumb_iok_site(pc, may_sync);                                 \
+  iok_take(iok_imm);                                                          \
+  cycle_count += 2;                                                           \
+  translation_ptr = pcarg_load_site(translation_ptr,                          \
+    (u32)execute_load_##mem_type, pc, stored_pc, iok_imm, pcarg_lo);          \
+  generate_store_reg(reg_rv, reg_rd);                                         \
+}                                                                             \
+
+#define thumb_access_memory_store(mem_type, reg_rd, may_sync)                 \
+{                                                                             \
+  u32 iok_imm = thumb_iok_site(pc + 2, may_sync);                             \
+  iok_take(iok_imm);                                                          \
+  cycle_count++;                                                              \
+  translation_ptr = pcarg_thumb_store_site(translation_ptr,                   \
+    (u32)execute_store_##mem_type, reg_rd, pc, stored_pc, iok_imm);           \
+}                                                                             \
+
+#else
 #define thumb_access_memory_load(mem_type, reg_rd, may_sync)                  \
 {                                                                             \
   u32 iok_imm = thumb_iok_site(pc, may_sync);                                 \
@@ -2023,6 +2351,8 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   mips_emit_jal(mips_absolute_offset(execute_store_##mem_type));              \
   generate_load_reg(reg_a1, reg_rd);                                          \
 }                                                                             \
+
+#endif
 
 #define thumb_access_memory_generate_address_pc_relative(offset, reg_rb,      \
  reg_ro)                                                                      \
@@ -2048,6 +2378,7 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
  address_type, offset, mem_type)                                              \
 {                                                                             \
   thumb_decode_##op_type();                                                   \
+  pcarg_mark_lo();                                                            \
   thumb_access_memory_generate_address_##address_type(offset, reg_rb,         \
    reg_ro);                                                                   \
   thumb_access_memory_##access_type(mem_type, reg_rd,                         \
@@ -2629,6 +2960,7 @@ static void emit_iok_store_ld(u8 **tr_ptr, bool aligned)
   *tr_ptr = translation_ptr;
 }
 
+
 // Pointer table to stubs, indexed by type and region
 extern u32 tmemld[11][16];
 extern u32 tmemst[ 4][16];
@@ -2707,6 +3039,63 @@ static void emit_mem_access_loadop(
   #define genccall(fn) mips_emit_jal(((u32)fn) >> 2);
 #endif
 
+#ifdef PCARG_SIDE
+/* PCARG_SIDE: t0 = k, t1 = the plain PC of the load/store site that returns
+ * to ra (exactly emit_iok_decode(arg, t0, t1, t2)), its argument recovered
+ * from the side table when the site dropped it (mips_stub.S pcarg_dec).
+ * ra must still be the site's; the guest registers must be saved (t0-t7
+ * are clobbered, and a front-cache miss calls C).  a0-a2 survive. */
+static void emit_pcarg_dec(u8 **tr_ptr, unsigned arg)
+{
+  u8 *translation_ptr = *tr_ptr;
+  mips_emit_addu(mips_reg_t1, mips_reg_ra, reg_zero);
+  mips_emit_addu(mips_reg_t0, arg, reg_zero);
+  genccall(&pcarg_dec);
+  mips_emit_nop();
+  *tr_ptr = translation_ptr;
+}
+
+/* A slow path rewritten for PCARG_SIDE keeps the size of the code it
+ * replaces (osz bytes from start): every stub after it stays where it was,
+ * so the hot stubs keep their I-cache sets.  What is left is skipped by one
+ * branch (or is at most two nops). */
+static void pcarg_pad_to(u8 **tr_ptr, u8 *start, u32 osz)
+{
+  u8 *translation_ptr = *tr_ptr;
+  s32 gap = (s32)osz - (s32)(translation_ptr - start);
+  if (gap < 0) {
+    pcarg_bad++;                   /* never: a rewrite must not grow */
+    gap = 0;
+  }
+  if (gap >= 12) {
+    u8 *end = start + osz;
+    mips_emit_b(beq, reg_zero, reg_zero, (gap >> 2) - 1);
+    while (translation_ptr < end) {
+      mips_emit_nop();
+    }
+  } else {
+    while (gap > 0) {
+      mips_emit_nop();
+      gap -= 4;
+    }
+  }
+  *tr_ptr = translation_ptr;
+}
+
+/* emit_iok_decode(src, t0, t1, t2) replaced by emit_pcarg_dec, same size */
+static void emit_pcarg_dec_in_place(u8 **tr_ptr, unsigned src)
+{
+  u8 *start = *tr_ptr, *p = start;
+  u32 osz;
+  emit_iok_decode(&p, src, mips_reg_t0, mips_reg_t1, mips_reg_t2);
+  osz = (u32)(p - start);
+  p = start;
+  emit_pcarg_dec(&p, src);
+  pcarg_pad_to(&p, start, osz);
+  *tr_ptr = p;
+}
+#endif
+
 #define SMC_WRITE_OFF    (10*16*4)   /* 10 handlers (16 insts) */
 #define IOEPILOGUE_OFF   (SMC_WRITE_OFF + 4*2)   /* Trampolines are two insts */
 #define EWRAM_SPM_OFF    (IOEPILOGUE_OFF + 4*2)
@@ -2766,6 +3155,21 @@ static void emit_pmemld_stub(
    * region check (read_memory*, which brings a timer up to date the same
    * way): the access's cycle (emit_iok_store_ld) is stored first. */
   if (region == 4) {
+#ifdef PCARG_SIDE
+    /* (twin only) the site's argument from the side table: pcarg_dec
+     * needs the guest registers saved */
+    if (!aligned) {
+      mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+      emit_save_regs(true);
+      emit_pcarg_dec(&translation_ptr, reg_a1);
+      mips_emit_subu(mips_reg_t2, reg_cycles, mips_reg_t0);
+      mips_emit_sw(mips_reg_t2, reg_base, REG_IO_CYCLES * 4);
+      mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
+      mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+      emit_restore_regs(true);
+    } else
+#endif
     emit_iok_store_ld(&translation_ptr, aligned);
   }
 #endif
@@ -2793,8 +3197,16 @@ static void emit_pmemld_stub(
 
     // Check whether the read is allowed. Only within BIOS! (Ignore aligned, bad a1)
     if (!aligned) {
+#ifdef PCARG_SIDE
+      /* a1 may not hold the site's PC (PCARG_SIDE): the openload stub's C
+       * path recovers it and applies the same protection (read_memory*).
+       * Same two words, so no later stub moves. */
+      mips_emit_nop();
+      mips_emit_b(beq, reg_zero, reg_zero, branch_offset(openld_core_ptrs[memop_number]));
+#else
       mips_emit_srl(reg_temp, reg_a1, 14);
       mips_emit_b(bne, reg_zero, reg_temp, branch_offset(openld_core_ptrs[memop_number]));
+#endif
     }
   }
   
@@ -2876,17 +3288,55 @@ static void emit_pmemld_stub(
       mips_emit_xori(reg_temp, reg_temp, 0x100);
       mips_emit_b_filler(bne, reg_temp, reg_zero, tm_skip);
       mips_emit_nop();
+#if defined(PCARG_SIDE) && !defined(LAB_LOCKSTEP)
+      /* The cycle is stored after the register save: pcarg_dec (k from the
+       * side table) needs the guest registers saved.  The old path's size
+       * is kept (pcarg_pad_to), so no later stub moves. */
+      u8 *tm_frag = translation_ptr;
+      u32 tm_osz = 0;
+      if (!aligned) {
+        emit_iok_store_ld(&translation_ptr, aligned);
+        mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+        mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+        emit_save_regs(true);
+        genccall(&timer_io_read_sync);
+        mips_emit_nop();
+        mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
+        mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
+        emit_restore_regs(true);
+        tm_osz = (u32)(translation_ptr - tm_frag);
+        translation_ptr = tm_frag;
+      }
+      if (!aligned) {
+        mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+        mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+        emit_save_regs(true);
+        emit_pcarg_dec(&translation_ptr, reg_a1);
+        mips_emit_subu(mips_reg_t2, reg_cycles, mips_reg_t0);
+        mips_emit_sw(mips_reg_t2, reg_base, REG_IO_CYCLES * 4);
+      } else {
+        emit_iok_store_ld(&translation_ptr, aligned);
+        mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
+        mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
+        emit_save_regs(true);
+      }
+#else
 #ifndef LAB_LOCKSTEP
       emit_iok_store_ld(&translation_ptr, aligned);
 #endif
       mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR1);
       mips_emit_sw(reg_a0, reg_base, ReOff_SaveR3);
       emit_save_regs(true);
+#endif
       genccall(&timer_io_read_sync);
       mips_emit_nop();
       mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
       mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
       emit_restore_regs(true);
+#if defined(PCARG_SIDE) && !defined(LAB_LOCKSTEP)
+      if (!aligned)
+        pcarg_pad_to(&translation_ptr, tm_frag, tm_osz);
+#endif
       generate_branch_patch_conditional(tm_skip, translation_ptr);
     }
     // Generate upper bits of the addr and do addr mirroring
@@ -3587,8 +4037,13 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
      * (iok_encode); the guest registers are saved, so t0-t2 are free. */
     if (strop < 3) {
       u8 *b_alert;
+#ifdef PCARG_SIDE
+      /* ra is still the site's (saved to SaveR3 above, reloaded below) */
+      emit_pcarg_dec_in_place(&translation_ptr, reg_a2);
+#else
       emit_iok_decode(&translation_ptr, reg_a2, mips_reg_t0, mips_reg_t1,
                       mips_reg_t2);
+#endif
       mips_emit_subu(mips_reg_t2, reg_cycles, mips_reg_t0);
       mips_emit_sw(mips_reg_t2, reg_base, REG_IO_CYCLES * 4);
       mips_emit_sw(mips_reg_t0, reg_base, ReOff_SaveR2);   // k, for an alert
@@ -3655,8 +4110,12 @@ static void emit_openload_stub(unsigned opt, bool signext, unsigned size, u8 **t
     /* a1 is the encoded site argument (iok_encode): the open-bus value and
      * the BIOS protection read reg[REG_PC] (gba_memory.c), so the plain PC
      * is decoded first (t0-t2 are free: the guest registers are saved). */
+#ifdef PCARG_SIDE
+    emit_pcarg_dec_in_place(&translation_ptr, reg_a1);
+#else
     emit_iok_decode(&translation_ptr, reg_a1, mips_reg_t0, mips_reg_t1,
                     mips_reg_t2);
+#endif
   }
   genccall(hndreadtbl[size + (signext ? 3 : 0)]);
   if (opt < 5) {
@@ -3750,6 +4209,9 @@ void init_emitter(bool must_swap) {
   (void)must_swap;
   // Initialize memory to a debuggable state
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
+#ifdef PCARG_SIDE
+  pcarg_reset();         /* both caches start over: no site is known */
+#endif
 
   // Generates the trampoline and helper stubs that we need
   u8 *translation_ptr = (u8*)&rom_translation_cache[0];

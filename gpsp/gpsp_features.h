@@ -148,6 +148,11 @@
 #define XS_NOTE_FAST 1
 #endif
 
+/* ---- translated code size -------------------------------------------------- */
+#if !defined(GPSP_NO_PCARG_SIDE) && !defined(PCARG_SIDE)
+#define PCARG_SIDE 1
+#endif
+
 /* ---- translation reuse across full flushes --------------------------------- */
 #if !defined(GPSP_NO_XLAT_PURE) && !defined(XLAT_PURE)
 #define XLAT_PURE 1

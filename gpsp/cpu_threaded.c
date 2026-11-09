@@ -6569,6 +6569,14 @@ static int immp_try(u32 word)
 #ifdef DRPROF_TWIN
 static void immp_report(void)
 {
+#ifdef PCARG_SIDE
+  fprintf(stderr, "PCARG sites new=%u old=%u full=%u truncs=%u lookups=%u found=%u "
+          "max_rom=%u max_ram=%u bad=%u\n",
+          (unsigned)pcarg_sites_new, (unsigned)pcarg_sites_old,
+          (unsigned)pcarg_full, (unsigned)pcarg_truncs,
+          (unsigned)pcarg_c_lookups, (unsigned)pcarg_c_found,
+          (unsigned)pcarg_max[0], (unsigned)pcarg_max[1], (unsigned)pcarg_bad);
+#endif
   fprintf(stderr, "SMC_IMM_PATCH patches=%u learned=%u sites=%u selftest_fail=%u refused=%u/%u/%u/%u/%u\n",
           (unsigned)immp_patches, (unsigned)immp_learned, (unsigned)immp_sites,
           (unsigned)immp_selftest_fail,
@@ -8219,6 +8227,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
    * translation_ptr); it is recorded as one span at commit. */
   u8 *jit_emit_start = translation_ptr;
 #endif
+#ifdef PCARG_SIDE
+  pcarg_begin(translation_ptr, ram_region ? 1 : 0);
+#endif
   DRPROF_NOTE(translation_ptr, DRC_PROLOGUE);
   generate_block_prologue();
 
@@ -8531,6 +8542,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
+#ifdef PCARG_SIDE
+  pcarg_commit(translation_ptr);   /* this block's sites join the side table */
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
   DRPROF_BLK_EMITTED(jit_emit_start, translation_ptr,
@@ -8641,6 +8655,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   /* Everything this block emits lies in [jit_emit_start, the committed
    * translation_ptr); it is recorded as one span at commit. */
   u8 *jit_emit_start = translation_ptr;
+#endif
+#ifdef PCARG_SIDE
+  pcarg_begin(translation_ptr, ram_region ? 1 : 0);
 #endif
   DRPROF_NOTE(translation_ptr, DRC_PROLOGUE);
   generate_block_prologue();
@@ -8897,6 +8914,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     ram_translation_ptr = translation_ptr;
   else
     rom_translation_ptr = translation_ptr;
+#ifdef PCARG_SIDE
+  pcarg_commit(translation_ptr);   /* this block's sites join the side table */
+#endif
 #ifdef JIT_CODE_DISCIPLINE
   JIT_CODE_EMITTED(jit_emit_start, translation_ptr);
   DRPROF_BLK_EMITTED(jit_emit_start, translation_ptr,

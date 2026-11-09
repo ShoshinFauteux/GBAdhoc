@@ -536,8 +536,121 @@ lookup_pc_noflags:
 # decoded here into the plain PC and the k cycles reg_cycles is ahead of the
 # store, which are charged now (the block is left with the rest of its
 # pending count dropped, as before).
+#ifdef PCARG_SIDE
+# (own section: mips_stub.o(.text) heads the hot order, layout/hot.ord, and
+# must keep its size)
+  .pushsection .text.pcarg_dec,"ax",@progbits
+# pcarg_dec (PCARG_SIDE, mips_emit.h): the PC argument of the single load or
+# store site that returns to $9, decoded as emit_iok_decode decodes it.
+#   in:  $9 = the site's return address (its jal + 8)
+#        $8 = what the site left in its argument register (a1 / a2)
+#        $19 = the block's PC base
+#   out: $8 = k (the cycles reg_cycles runs ahead), $9 = the plain PC
+# A site that dropped its argument is in the side table: argument = $19 +
+# its immediate.  One that did not (PCARG_OLD) passed it in $8.  The front
+# cache pcarg_fc is direct mapped by return address; a miss asks C
+# (pcarg_lookup), which fills it.  Clobbers $10-$12 (and $28 on a miss); every
+# other register survives.  The caller has saved the guest registers.
+# (pcarg_st: mips_emit.h; fc at offset 0, spill at 4096)
+defsymbl(pcarg_dec)
+  srl $10, $9, 2
+  andi $10, $10, 511              # PCARG_FC_N - 1
+  sll $10, $10, 3
+  lui $11, %hi(pcarg_st)          # pcarg_st.s.fc (offset 0)
+  addiu $11, $11, %lo(pcarg_st)
+  addu $10, $10, $11
+  lw $11, 0($10)                  # key
+  bne $11, $9, 8f                 # miss
+  lw $12, 4($10)                  # (delay) the immediate, or PCARG_OLD
+7:
+  lui $11, 0x8000                 # PCARG_OLD
+  beq $12, $11, 1f                # old form: the register holds it
+  move $11, $8                    # (delay)
+  addu $11, $19, $12              # dropped: block PC base + immediate
+1:
+  subu $10, $11, $19              # d = arg - block start PC
+  sltiu $8, $10, 5120             # IOK_PLAIN
+  bne $8, $0, 9f                  # 0 <= d < 5120: plain PC
+  andi $8, $10, 0xFFFF            # (delay)
+  xori $8, $8, 0x8000             # c, or c + 5120
+  srl $10, $8, 15
+  beq $10, $0, 2f                 # d < 0: c < 32768
+  addiu $10, $8, -6144            # (delay) c - 6144
+  addiu $8, $8, -5120             # c
+  addiu $10, $8, -6144
+2:
+  bltz $10, 4f                    # c < 6144: tier 0
+  srl $8, $10, 15                 # (delay)
+  bne $8, $0, 3f                  # c >= 38912: tier 2
+  srl $8, $10, 9                  # (delay) tier 1: k - 7
+  addiu $8, $8, 7
+  b 5f
+  andi $10, $10, 511              # (delay) h
+3:
+  andi $10, $10, 0x7FFF           # c - 38912
+  srl $8, $10, 7
+  addiu $8, $8, 71
+  b 5f
+  andi $10, $10, 127              # (delay) h
+4:
+  addiu $10, $10, 6144            # c
+  srl $8, $10, 10
+  addiu $8, $8, 1
+  andi $10, $10, 1023             # h
+5:
+  sll $10, $10, 1                 # pc_delta
+  jr $ra
+  addu $9, $19, $10               # (delay) the plain PC
+9:
+  move $9, $11                    # plain: the argument is the PC
+  jr $ra
+  move $8, $0                     # (delay) k = 0
+8:
+  lui $10, %hi(pcarg_st + 4096)   # pcarg_st.s.spill
+  addiu $10, $10, %lo(pcarg_st + 4096)
+  sw $1, 0($10)
+  sw $2, 4($10)
+  sw $3, 8($10)
+  sw $4, 12($10)
+  sw $5, 16($10)
+  sw $6, 20($10)
+  sw $7, 24($10)
+  sw $8, 28($10)
+  sw $9, 32($10)
+  sw $ra, 36($10)
+  move $4, $9                     # arg0 = the return address
+  cfncall pcarg_lookup, 15
+  move $12, $2                    # the immediate, or PCARG_OLD
+  lui $10, %hi(pcarg_st + 4096)   # pcarg_st.s.spill
+  addiu $10, $10, %lo(pcarg_st + 4096)
+  lw $1, 0($10)
+  lw $2, 4($10)
+  lw $3, 8($10)
+  lw $4, 12($10)
+  lw $5, 16($10)
+  lw $6, 20($10)
+  lw $7, 24($10)
+  lw $8, 28($10)
+  lw $9, 32($10)
+  b 7b
+  lw $ra, 36($10)                 # (delay)
+  .popsection
+#endif
+
 defsymbl(smc_write)
   save_registers                  # $8/$9 are free after this
+#ifdef PCARG_SIDE
+  move $8, $6                     # the site's a2 (or nothing: side table)
+  move $9, $ra                    # the store site's return address
+  jal pcarg_dec                   # $8 = k, $9 = the plain PC ($1, $2 kept)
+  nop
+  move $6, $9
+  b 9f
+  subu reg_cycles, reg_cycles, $8 # (delay) charge k (0 for a plain PC)
+  .rept 22                        # smc_write keeps its size (hot order)
+  nop
+  .endr
+#else
   subu $8, $6, $19                # d = arg - block start PC
   sltiu $9, $8, 5120              # IOK_PLAIN
   bne $9, $0, 9f                  # 0 <= d < 5120: plain PC
@@ -571,6 +684,7 @@ defsymbl(smc_write)
   sll $8, $8, 1                   # pc_delta
   addu $6, $19, $8                # the plain PC
   subu reg_cycles, reg_cycles, $9 # charge k
+#endif
 9:
   sw $6, REG_PC($16)              # save PC
   sw $4, REG_SAVE($16)            # masked region offset
@@ -1043,6 +1157,9 @@ fnptrs:
 #ifdef PIC
   .long smc_pipe_store                 # 13  (smc_write, cpu.cc)
   .long smc_pipe_step                  # 14  (smc_write, cpu.cc)
+#ifdef PCARG_SIDE
+  .long pcarg_lookup                   # 15  (pcarg_dec, mips_emit.h)
+#endif
 #endif
 
 #ifdef REWIND
