@@ -220,14 +220,14 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), ab
 typedef u32 abi_fe_t_dma_smc_flushes;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&dma_smc_flushes), abi_fe_t_dma_smc_flushes *),
                "fe/harness.f.inc.c:551 dma_smc_flushes: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:961 (block) */
+/* fe/harness.f.inc.c:973 (block) */
 typedef u32 abi_fe_t_gamepak_reopens__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens__2 *),
-               "fe/harness.f.inc.c:961 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:961 (block) */
+               "fe/harness.f.inc.c:973 gamepak_reopens: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:973 (block) */
 typedef u32 abi_fe_t_gamepak_short_reads__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
-               "fe/harness.f.inc.c:961 gamepak_short_reads: the frontend copy differs from the core declaration");
+               "fe/harness.f.inc.c:973 gamepak_short_reads: the frontend copy differs from the core declaration");
 /* fe/rewind.inc.c:325 (block) */
 typedef u8 * abi_fe_t_gamepak_spare_pool3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3 *),
