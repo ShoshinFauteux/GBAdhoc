@@ -86,16 +86,18 @@ X2 = [
     ('B2', '"rom_path_too_long"', 'EVT ES AUD VID HO EXIT'),
     ('B3', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
     ('B4', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
-    ('B5', '"rom_path_too_long"', 'EVT ES AUD HO EXIT'),
-    ('B6', '"rom_missing"', 'EVT ES AUD HO EXIT'),
-    ('B7', '"no_rom"', 'EVT ES AUD HO EXIT'),
+    # HW-2 F8 (08401f3c): B5-B7 stop the display too (PE_NO_VIDTERM retired)
+    ('B5', '"rom_path_too_long"', 'EVT ES AUD VID HO EXIT'),
+    ('B6', '"rom_missing"', 'EVT ES AUD VID HO EXIT'),
+    ('B7', '"no_rom"', 'EVT ES AUD VID HO EXIT'),
     ('B8', 'call:relaunch_eboot', 'EVT ES AUD VID RL EXIT'),
     ('B9', '"no_rom"', 'EVT ES AUD VID HO EXIT'),
     ('B10', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
     ('C1', '"mem_budget"', 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
     ('C2', '"load_failed"', 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
-    ('C3', '"bad_script"', 'IO HOST RW AUD VID EVT ES HO EXIT'),
-    ('C4', '"net_failed"', 'IO HOST RW AUD VID EVT ES HO EXIT'),
+    # HW-2 F9 (055f8a8c): the ME and its renderer stop first, as in session_end
+    ('C3', '"bad_script"', 'ME IO HOST RW AUD VID EVT ES HO EXIT'),
+    ('C4', '"net_failed"', 'ME IO HOST RW AUD VID EVT ES HO EXIT'),
 ]
 
 
