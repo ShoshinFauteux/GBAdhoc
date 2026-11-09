@@ -1,39 +1,12 @@
 /* main_psp.c — native PSP frontend for the gpsp libretro core.
  *
- * Hosts the statically-linked core via frontend-common/fe_host:
- *  - GU video layer in video_psp.c: RGB565→PSP-5650 staging conversion
- *    (the hw color-order fix), scaling 1x/fit/stretch + nearest/bilinear
- *    (Triangle cycles presets at runtime; persisted in config.ini)
- *  - audio via sceAudioOutputBlocking on its own thread, fed by an SPSC
- *    ring (core mixes at 65536 Hz; resampled to the PSP's 44100 Hz output)
- *  - sceCtrl input mapped per FRONTEND-AUDIT §4 (Triangle/Square are
- *    frontend keys: preset cycle + fast-forward; turbo A/B dropped)
- *  - UI v1 (ui_psp.c, plan §8): ROM browser (no harness ini => browser),
- *    in-game menu on Select+Start hold (Resume/Save state/Load state/
- *    Wireless/Settings/Exit), wireless panel with Host + Join(scan/code),
- *    OSD toasts + session/FF chips (osd_psp.c)
- *  - fast-forward as a product feature (plan §4.4): Square hold (or
- *    toggle), 3x / Unlimited / Unlimited Smooth from config, core frameskip
- *    engaged while active, OSD chip, forced 1x during wireless sessions
- *  - scePowerSetClockFrequency(333,333,166) at init (plan §9 / ADR-0004)
- *  - EVT log at <appdir>/log/frontend.log (fflush per line)
- *  - exit callback flushes SRAM — never lose a save
- *  - .gpsp-harness.ini (harness channel, ADR-0036; presence also implies
- *    "skip the ROM browser, boot the first ROM"): autoexit_frames /
- *    dump_at / dump_every; marker file log/dump_frame triggers an
- *    on-demand BMP framebuffer dump; gedump_at = N dumps the GE
- *    DRAWBUFFER (post-GU-blit, PSP-native 5650 decode) at frame N — the
- *    color-order regression check; testpat = 1 renders known color bars
- *    through the blit path instead of booting the core
- *    (run_gu_color_test.sh); script = <file> runs a scripted input
- *    script; ff = 1 forces uncapped fast-forward (harness mode);
- *    ui_demo = 1 opens the in-game menu at frame 300 and self-drives it
- *    (run_ui_smoke.sh)
- *  - wireless (harness keys host/join/nick/group/net_probe as in Phase
- *    4; nettest = 1 transport echo).  The UI wireless panel calls the
- *    same net_bringup/net_teardown.  FF interlocked off while a session
- *    is active; scePowerTick during sessions; .sav backed up to .bak
- *    before every session start (plan §4.5).
+ * This file is the shell of one translation unit: the module info, the
+ * includes, the layout pads and main().  The rest of the frontend is in the
+ * psp/fe/<module>.<n>.inc.c fragments it includes below, once each, in
+ * source order; psp/fe/README.md maps each fragment to its module and gives
+ * the conventions.  Edit the fragment that holds the code (this file for
+ * main()); a patch made against the old single-file main_psp.c goes in
+ * with tools/refactor/split.py replay, never by hand.
  */
 #include <pspkernel.h>
 #include <systemctrl.h>   /* ADR-0071: sctrlKernelLoadExecVSHMs2 (profile restart) */

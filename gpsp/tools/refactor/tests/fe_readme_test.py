@@ -270,9 +270,14 @@ def r3_rows(gpsp, root):
 
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
     got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
+    # the shell's site by its text: a comment-only edit of the shell moves its line (P-tidy: the
+    # file header 37 -> 10 lines took it from main_psp.c:2828 to :2801); the fragments' cites hold
+    reopens = [i for i, ln in enumerate(open(os.path.join(gpsp, 'psp', 'main_psp.c'), encoding='utf-8'), 1)
+               if re.match(r'\s*extern u32 gamepak_reopens;', ln)]
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
             ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
-            ('rom_hash_census', 'fe/harness.f.inc.c:613'), ('gamepak_reopens', 'main_psp.c:2828')]
+            ('rom_hash_census', 'fe/harness.f.inc.c:613'),
+            ('gamepak_reopens', 'main_psp.c:%d' % reopens[0] if len(reopens) == 1 else 'main_psp.c:?')]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 

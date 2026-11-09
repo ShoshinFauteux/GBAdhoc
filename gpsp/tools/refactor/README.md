@@ -88,6 +88,17 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   flavour.json commit, else the tools' own tree, which the report now names as such. A source that
   is not the ELF's is REFUSED (exit 2). `tests/p0a_test_src_tree.py RUN TREE` (in `p0a_b5.sh`
   step `loop`) proves each option is read, with the pre-fix calls as mutants.
+- **main_psp.c's file header** (37 stale lines: "turbo A/B dropped" and more) is a 10-line pointer to
+  `psp/fe/README.md`; line 1, the shell.a FRAG anchor, is kept. Comment-only: G0/G1 and the
+  binaries against b7d0cafd in the commit. The shell's lines after it move by -27, so the cutlist's
+  `source:` line, `psp/fe/README.md` and the shell cites of `generated/*/fe_abi_asserts.h` are
+  regenerated (nothing else in them changes).
+- **`split.py gen --carry` keeps the carried cuts.** gen places cuts by line-number rules
+  (`modules.SHELL_RANGES` is 01067e74's L:1-160): after the -27 shift it moved the paths fragment's
+  first line up into the shell's include list, so the documented regen no longer gave back the tree.
+  A gap that holds a carried FRAG anchor is now cut there; the committed cutlist regenerates byte for
+  byte on b7d0cafd and on this tree. `tests/source-split_test_carry_shift.py [GPSP]` (shell shrunk,
+  grown; the pre-fix rule as a mutant).
 
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 
