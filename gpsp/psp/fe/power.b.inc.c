@@ -240,6 +240,7 @@ static int g_pwr_hold;
 static const char *g_pwr_hold_why = "";
 static unsigned g_pwr_hold_t0;
 static void sleep_sim_window_enter(const char *why);   /* harness, below */
+static void sleep_sim_lock_zero(const char *who);      /* harness, below */
 void pwr_hold(const char *why)
 {
    if (g_pwr_hold++ == 0)
@@ -260,6 +261,7 @@ void pwr_release(void)
                     1000u;
       FE_EVT_ONLY(ms);
       scePowerUnlock(0);
+      sleep_sim_lock_zero(g_pwr_hold_why);
       fe_evt("pwr_hold why=%s ms=%u", g_pwr_hold_why, ms);
    }
 }

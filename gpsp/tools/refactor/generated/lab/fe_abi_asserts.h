@@ -319,7 +319,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/display.c.inc.c:22    me_log_line160_pal                   not declared by the check TU's headers
  *   fe/display.c.inc.c:23    me_log_line160_oam                   not declared by the check TU's headers
  *   fe/power.d.inc.c:209     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
- *   fe/power.d.inc.c:289     scePowerIsRequest                    not declared by the check TU's headers
+ *   fe/power.d.inc.c:290     scePowerIsRequest                    not declared by the check TU's headers
  *   fe/merend.d.inc.c:682    gamepak_buffers                      not declared by the check TU's headers
  *   fe/link.c.inc.c:485      rfu_set_rx_cap                       not declared by the check TU's headers
  *   fe/link.c.inc.c:490      rfu_set_frame_pace                   not declared by the check TU's headers

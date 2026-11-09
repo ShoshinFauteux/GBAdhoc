@@ -60,6 +60,15 @@ static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
  * poll off, the 4.5.0 behaviour: the run reports request_stuck. */
 static int g_ss_request, g_ss_nopoll;
 static volatile int g_ss_req_up;
+/* THE KERNEL'S LOCK COUNT, for a request.  The kernel's power thread waits
+ * for the LAST scePowerUnlock: the gameplay lock and a pwr_hold window are
+ * one count there, and the thread outranks every thread of ours, so the
+ * suspend starts at the unlock that leaves the count at zero -- even when
+ * the next lock is a statement later (the quit's play_lock_drop before its
+ * pwr_hold("teardown"), PLAN F2).  The unlocking thread latches that moment
+ * here (sleep_sim_lock_zero, with who unlocked); the simulator fires on the
+ * latch, so it sees a zero a 2 ms poll would miss. */
+static const char *volatile g_ss_lock_zero;
 #ifdef REWIND
 static void sleep_sim_trash_pool(void);
 #endif
@@ -97,15 +106,22 @@ static int sleep_sim_thread(SceSize args, void *argp)
    }
    if (g_ss_request)
    {
+      int stuck;
       g_ss_req_up = 1;
-      while (g_pwr_play_lock && waited < 10000000u)
+      while (!g_ss_lock_zero &&
+             (g_pwr_play_lock || (!g_ss_nohold && g_pwr_hold > 0)) &&
+             waited < 10000000u)
       {
          sceKernelDelayThread(2000);
          waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
       }
-      fe_evt("sleep_sim request lock=%d waited_ms=%u%s", g_pwr_play_lock,
-             waited / 1000u, g_pwr_play_lock ? " request_stuck" : "");
-      if (g_pwr_play_lock)
+      stuck = !g_ss_lock_zero &&
+              (g_pwr_play_lock || (!g_ss_nohold && g_pwr_hold > 0));
+      fe_evt("sleep_sim request lock=%d hold=%d zero=%s waited_ms=%u%s",
+             g_pwr_play_lock, g_pwr_hold,
+             g_ss_lock_zero ? g_ss_lock_zero : "-", waited / 1000u,
+             stuck ? " request_stuck" : "");
+      if (stuck)
       {
          g_ss_req_up = 0;
          for (;;)
@@ -116,7 +132,9 @@ static int sleep_sim_thread(SceSize args, void *argp)
           "deferred_ms=%u hold=%d nohold=%d", g_ss_ms, g_ss_rom, g_ss_browser,
           g_ss_window[0] ? g_ss_window : "-", waited / 1000u, g_pwr_hold,
           g_ss_nohold);
-   if (g_pwr_hold > 0 && !g_ss_nohold)
+   /* (A request let through at a zero that a new hold has since closed is
+    * no stuck hold: the kernel started the suspend at the zero.) */
+   if (g_pwr_hold > 0 && !g_ss_nohold && !g_ss_lock_zero)
       fe_evt("sleep_sim hold_stuck why=%s", g_pwr_hold_why);
    g_ss_asleep = 1;
    power_cb(0, PSP_POWER_CB_SUSPENDING, NULL);
@@ -168,8 +186,16 @@ static void sleep_sim_window_enter(const char *why)
    if (g_ss_window[0] && !g_ss_fired && !strcmp(why, g_ss_window))
       sleep_sim_fire();
 }
+/* Every scePowerUnlock of ours calls this after unlocking (pwr_release,
+ * play_lock_drop): the count of the comment at g_ss_lock_zero. */
+static void sleep_sim_lock_zero(const char *who)
+{
+   if (g_ss_req_up && !g_ss_lock_zero && !g_pwr_play_lock && g_pwr_hold <= 0)
+      g_ss_lock_zero = who;
+}
 #else
 static void sleep_sim_window_enter(const char *why) { (void)why; }
+static void sleep_sim_lock_zero(const char *who) { (void)who; }
 #endif
 
 

@@ -249,6 +249,7 @@ static void play_lock_drop(const char *who)
       return;
    g_pwr_play_lock = 0;
    rc = scePowerUnlock(0);
+   sleep_sim_lock_zero(who);
    standby_note("q play_unlock by=%s rc=%d", who, rc);
    FE_EVT_ONLY(rc);
    FE_EVT_ONLY(who);
