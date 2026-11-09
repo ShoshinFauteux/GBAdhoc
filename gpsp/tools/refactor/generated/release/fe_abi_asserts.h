@@ -260,7 +260,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   main_psp.c:114           __lib_ent_bottom                     not declared by the check TU's headers
  *   main_psp.c:114           __lib_stub_top                       not declared by the check TU's headers
  *   main_psp.c:114           __lib_stub_bottom                    not declared by the check TU's headers
- *   fe/power.a.inc.c:67      gpsp_rtc_wall                        not declared by the check TU's headers
+ *   fe/power.a.inc.c:78      gpsp_rtc_wall                        not declared by the check TU's headers
  *   fe/input.a.inc.c:63      dynarec_heap_tables_release          not declared by the check TU's headers
  *   fe/input.a.inc.c:64      heap_trace_mark                      not declared by the check TU's headers
  *   fe/input.a.inc.c:65      gbcore_prepare                       not declared by the check TU's headers
@@ -298,6 +298,6 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   main_psp.c:1998          irq_io_fast                          not declared by the check TU's headers
  *   main_psp.c:2006          msr_fast                             not declared by the check TU's headers
  *   main_psp.c:2347          gpsp_wallclock                       not declared by the check TU's headers
- *   main_psp.c:4715          gpsp_rtc_peek                        not declared by the check TU's headers
+ *   main_psp.c:4718          gpsp_rtc_peek                        not declared by the check TU's headers
  */
 #endif

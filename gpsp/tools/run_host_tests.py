@@ -608,6 +608,12 @@ def suites(env: Env, baseline: Path | None):
           # parks like the game loop (browser_park + ui_browser), mutants.
           "python3 tools/tests/test_sleep_browser.py")),
 
+        # HOME during a quit (PLAN HW-2 F1/F12, F3's flush): main()'s
+        # teardown, exit_cb and inproc_refusal, extracted and run with a HOME
+        # pressed at each window, plus mutants of each part of the fix.
+        ("exit_req", True, lambda: None,
+         "python3 tools/tests/test_exit_req.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

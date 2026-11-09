@@ -4665,7 +4665,10 @@ session_top:
          if (g_ss_browser && inproc_n == g_ss_game + 1)
             sleep_sim_fire();        /* fires in the browser, 300 ms on */
 #endif
-         g_running = 1;
+         /* A HOME after the refusal check above (the unload, the census,
+          * the clock) must still end the process: the list then returns at
+          * once and leaves through its own HOME exit (F1). */
+         g_running = !g_exit_req;
          g_relaunch = 0;
          exit_code = 0;
          exit_reason = NULL;
@@ -4746,7 +4749,11 @@ session_top:
     * process.  argp becomes the new argv[0], which is where every ms0 path is
     * derived from — passing NULL would silently fall back to the compiled-in
     * default directory and lose a variant install's saves. */
-   /* Returns only if it failed: fall through to the XMB rather than hang. */
+   /* Returns only if it failed: fall through to the XMB rather than hang.
+    * HOME (F1) is an exit, whatever the quit asked for: after the audio_hash
+    * guard above, which must still see the game-list value. */
+   if (g_exit_req)
+      g_relaunch = 0;
    if (g_relaunch)
       relaunch_eboot(g_relaunch == RELAUNCH_GAMELIST);
    FE_EXIT_GAME();

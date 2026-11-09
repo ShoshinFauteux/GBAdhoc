@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 3f65c64dab8779a6; split.py inverse of the shell sha256 4137aafe09b4aeef (18569 lines) -->
+     inputs: cutlist.txt sha256 e6b5c8766cb66250; split.py inverse of the shell sha256 b335d15e3f1d59d1 (18592 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4755, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4762, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -34,11 +34,11 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 
 ### @extract markers
 
-`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 13 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
+`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 14 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
 
 | prefix | meaning | regions | in | read by |
 |---|---|---|---|---|
-| `fn:` | one whole function: its definition line through its closing brace's line | 37 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/iothread.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py`, `test_volume.py` |
+| `fn:` | one whole function: its definition line through its closing brace's line | 37 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/iothread.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_exit_req.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py`, `test_volume.py` |
 | `vol:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_volume.py` |
 | `sb:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_sleep_browser.py` |
 | `qs:` | a statement range two tests slice (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
@@ -54,7 +54,7 @@ Every region, in TU order, and the host tests that read it:
 
 | region | begins at | read by |
 |---|---|---|
-| `fn:main` | `main_psp.c:206` | `test_menu_press.py`, `test_sleep_menu.py` |
+| `fn:main` | `main_psp.c:206` | `test_exit_req.py`, `test_menu_press.py`, `test_sleep_menu.py` |
 | `vol:boot_apply` | `main_psp.c:322` | `test_volume.py` |
 | `sb:list_call` | `main_psp.c:1792` | `test_sleep_browser.py` |
 | `qs:dispatch` | `main_psp.c:3179` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
@@ -62,7 +62,7 @@ Every region, in TU order, and the host tests that read it:
 | `lowlat:top` | `main_psp.c:3763` | `test_lowlat_policy.py` |
 | `lowlat:want` | `main_psp.c:4271` | `test_lowlat_policy.py` |
 | `lowlat:wait` | `main_psp.c:4354` | `test_lowlat_policy.py` |
-| `fn:cb_thread` | `fe/power.a.inc.c:96` | `test_power_callback.py` |
+| `fn:cb_thread` | `fe/power.a.inc.c:107` | `test_power_callback.py` |
 | `def:IO_JOIN_US` | `fe/iothread.inc.c:22` | `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:io_thread` | `fe/iothread.inc.c:58` | `test_psp_runtime.py` |
 | `decl:audio_ch` | `fe/audio.a.inc.c:81` | `test_audio_channel.py` |
@@ -131,7 +131,7 @@ Every region, in TU order, and the host tests that read it:
 | 2 | audio | Ring, `audio_thread`, `plat_audio_frames`, start/stop (SQ contract), resample step, status, link-audio trims | `in_rate`, `g_audio_step` | yes | `audio.a`, `audio.b` | 13 / 25 | 0 | 13 / 25 |
 | 3 | iothread | ADR-0025 writer thread, SRAM sync, stop-before-shutdown contract, SQ stop codes | - | yes | `iothread` | 6 / 5 | 0 | 6 / 5 |
 | 4 | input | Pad read, ctl maps, `plat_input_bitmask`, pad_swallow, turbo, chord state, input_fresh | - | - | `input.a`, `input.b` | 13 / 18 | 9 | 9 / 9 |
-| 5 | power | `exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, play lock, park handshake (`loop_park`, `browser_park`), sleep-quiesce ops (`sq_*` 3977-4095), `power_request_poll`, standby down/up, wake service and overlay | `g_running` | yes | `power.a`, `power.b`, `power.c`, `power.d`, `power.e` | 34 / 64 | 53 | 34 / 37 |
+| 5 | power | `exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, play lock, park handshake (`loop_park`, `browser_park`), sleep-quiesce ops (`sq_*` 3977-4095), `power_request_poll`, standby down/up, wake service and overlay | `g_running` | yes | `power.a`, `power.b`, `power.c`, `power.d`, `power.e` | 34 / 65 | 53 | 34 / 38 |
 | 6 | display | CPU clock, display apply, colour preview, wake snapshot | - | - | `display.a`, `display.b`, `display.c` | 10 / 9 | 0 | 10 / 5 |
 | 7 | merend | ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video (until the owner decides) | - | yes | `merend.a`, `merend.b`, `merend.c`, `merend.d` | 25 / 95 | 13 | 22 / 75 |
 | 8 | pacing | Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6) | `g_ff_uncapped`, `g_ff_mult` | yes | `pacing.a`, `pacing.b`, `pacing.c`, `pacing.d` | 31 / 89 | 10 | 30 / 87 |
@@ -241,7 +241,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 1 | shell.a | `main_psp.c` | 1-164 | shell | 1 / 2 | paths 2, link 1 |
 | 2 | paths | `fe/paths.inc.c` | 1-89 | paths | 1 / 10 | - |
 | 3 | harness.a | `fe/harness.a.inc.c` | 1-30 | harness | 1 / 4 | power 4 |
-| 4 | power.a | `fe/power.a.inc.c` | 1-127 | power | 4 / 19 | input 3, pacing 9, misc 2 |
+| 4 | power.a | `fe/power.a.inc.c` | 1-138 | power | 4 / 20 | input 3, pacing 9, misc 2 |
 | 5 | iothread | `fe/iothread.inc.c` | 1-173 | iothread | 6 / 5 | - |
 | 6 | audio.a | `fe/audio.a.inc.c` | 1-438 | audio | 11 / 25 | - |
 | 7 | input.a | `fe/input.a.inc.c` | 1-104 | input | 2 / 0 | - |
@@ -268,7 +268,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 28 | boost | `fe/boost.inc.c` | 1-164 | boost | 7 / 11 | - |
 | 29 | harness.d | `fe/harness.d.inc.c` | 1-107 | harness | 2 / 0 | - |
 | 30 | link.c | `fe/link.c.inc.c` | 1-612 | link | 14 / 13 | merend 3, harness 1 |
-| 31 | inproc.b | `fe/inproc.b.inc.c` | 1-69 | inproc | 1 / 2 | power 1 |
+| 31 | inproc.b | `fe/inproc.b.inc.c` | 1-74 | inproc | 1 / 2 | power 1 |
 | 32 | link.d | `fe/link.d.inc.c` | 1-1426 | link | 29 / 84 | power 3, mgift 1, boot 5, harness 2 |
 | 33 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
 | 34 | link.e | `fe/link.e.inc.c` | 1-842 | link | 12 / 14 | - |
@@ -280,7 +280,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 40 | pacing.c | `fe/pacing.c.inc.c` | 1-508 | pacing | 19 / 6 | - |
 | 41 | power.e | `fe/power.e.inc.c` | 1-234 | power | 5 / 1 | - |
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
-| 43 | shell.b | `main_psp.c` | 206-4755 | shell | 1 / 0 | - |
+| 43 | shell.b | `main_psp.c` | 206-4762 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
 
@@ -310,11 +310,11 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 - `fe/power.a.inc.c:14` G `g_drew` -> pacing
 - `fe/power.a.inc.c:21` G `g_ffw_drawn` -> pacing
 - `fe/power.a.inc.c:21` G `g_ffw_gated` -> pacing
-- `fe/power.a.inc.c:68` G `g_rtc_wall_on` -> misc
-- `fe/power.a.inc.c:69` G `g_rtc_wall_us` -> misc
-- `fe/power.a.inc.c:87` G `g_stick_state` -> input
-- `fe/power.a.inc.c:91` G `g_stick_min` -> input
-- `fe/power.a.inc.c:91` G `g_stick_max` -> input
+- `fe/power.a.inc.c:79` G `g_rtc_wall_on` -> misc
+- `fe/power.a.inc.c:80` G `g_rtc_wall_us` -> misc
+- `fe/power.a.inc.c:98` G `g_stick_state` -> input
+- `fe/power.a.inc.c:102` G `g_stick_min` -> input
+- `fe/power.a.inc.c:102` G `g_stick_max` -> input
 
 **inproc.a** (module inproc):
 
@@ -505,7 +505,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **shell.a** (`main_psp.c`): online_build_id:96 (link)
 - **paths** (`fe/paths.inc.c`): init_paths:56
 - **harness.a** (`fe/harness.a.inc.c`): gpsp_net_wait_beat:25
-- **power.a** (`fe/power.a.inc.c`): exit_cb:28, rtc_wall_publish:71, cb_thread:97, setup_exit_callback:120
+- **power.a** (`fe/power.a.inc.c`): exit_cb:37, rtc_wall_publish:82, cb_thread:108, setup_exit_callback:131
 - **iothread** (`fe/iothread.inc.c`): io_wake:42, io_yield:51, io_thread:59, io_thread_start:81, io_thread_stop:128, evt_shutdown:168
 - **audio.a** (`fe/audio.a.inc.c`): plat_audio_hash:107, plat_audio_sample_count:108, plat_audio_frames:110, audio_status_frame:163, audio_ring_note:185, psp_audio_volume_apply:216, audio_thread:222, audio_start:345, audio_ring_reset:380, audio_stop:395, audio_report_error:428
 - **input.a** (`fe/input.a.inc.c`): plat_core_counters:40, heap_budget:80

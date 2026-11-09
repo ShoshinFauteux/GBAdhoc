@@ -25,10 +25,21 @@ static unsigned g_ffw_drawn, g_ffw_gated;
 
 /* ------------------------------------------------------------------- exit */
 
+/* HOME WAS PRESSED, FOR GOOD (PLAN HW-2 F1).  g_running is the loop's "keep
+ * going", and the in-process return sets it to 1 again for the next game; a
+ * HOME that lands in the quit's teardown was lost there and the list then
+ * looped on it ("Please wait" for ever), or the refused tail relaunched the
+ * app instead of leaving.  This one is sticky: set only here, never cleared,
+ * read by inproc_refusal ("home"), the return's g_running and the exit's
+ * relaunch. */
+static volatile int g_exit_req;
+
 static int exit_cb(int arg1, int arg2, void *common)
 {
    (void)arg1; (void)arg2; (void)common;
-   /* Main loop notices, flushes SRAM, logs EVT exit, then exits the game. */
+   /* Main loop notices, flushes SRAM, logs EVT exit, then exits the game.
+    * cb_thread: set two flags, never block, never tear anything down. */
+   g_exit_req = 1;
    g_running = 0;
    return 0;
 }
