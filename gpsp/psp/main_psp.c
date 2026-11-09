@@ -1812,11 +1812,18 @@ session_top:
       }
       if (br != 0)
       {
-         fe_evt("exit code=2 reason=no_rom");
+         /* HOME in the list is the player leaving, not a missing ROM (F12):
+          * the Lab read it as `no_rom` code 2.  A ROM path too long (-1 with
+          * the app still running) stays no_rom, code 2. */
+         int home = !g_running;
+         if (home)
+            fe_evt("exit code=0 reason=home");
+         else
+            fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
          audio_stop();
          vid_term();
-         FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
+         FE_HANDOFF(home ? 0 : 2, home ? "home" : "no_rom");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
       }
