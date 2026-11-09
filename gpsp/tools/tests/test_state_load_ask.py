@@ -73,9 +73,11 @@ import re
 import subprocess
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 CFG = (ROOT / "psp/config_psp.c").read_text(encoding="utf-8")
 
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
@@ -666,7 +668,8 @@ int main(void)
 
 def dispatch_block(src):
     """main(): `if (ctl_fired & CTL_FIRE_SAVE) {...} else if (ctl_fired &
-    CTL_FIRE_LOAD) {...}`, as written."""
+    CTL_FIRE_LOAD) {...}`, as written (read through its @extract marker)."""
+    src = extract.extract(src, "qs:dispatch")
     i = src.find("         if (ctl_fired & CTL_FIRE_SAVE)\n")
     assert i >= 0, "the quick-save dispatch is gone"
     j = src.find("         else if (ctl_fired & CTL_FIRE_LOAD)\n", i)
@@ -725,7 +728,7 @@ def case_body(src, label):
 def menu_load(src):
     """12: what the question's X returns is loaded as the page's slot."""
     bad = []
-    load = case_body(src, "UI_ACT_LOADSTATE")
+    load = case_body(extract.extract(src, "sl:case_loadstate"), "UI_ACT_LOADSTATE")
     if not re.search(r"psp_state_path_for_slot\([^;]*\(unsigned\)ui_state_slot\(\)\)",
                      load, re.S) or 'psp_state_load(selected_state, "menu")' not in load:
         bad.append("UI_ACT_LOADSTATE does not load the page's slot")

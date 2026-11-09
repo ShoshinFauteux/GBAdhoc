@@ -20,6 +20,8 @@ import re
 import sys
 from pathlib import Path
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
 ADHOC = ROOT / "netdrv" / "transport_adhoc.c"
 MAIN = ROOT / "psp" / "main_psp.c"
@@ -74,6 +76,7 @@ def codes_served(cart):
 
 
 def gate_codes(main):
+    main = extract.extract(main, "fn:mgift_game_ok")
     m = re.search(r"static int mgift_game_ok\(void\)\n\{(.*?)\n\}", main, re.S)
     if not m:
         return None
@@ -81,6 +84,7 @@ def gate_codes(main):
 
 
 def gate_before_wifi(main):
+    main = extract.extract(main, "fn:mgift_start_io")
     m = re.search(r"static void mgift_start_io\(void\)\n\{(.*?)\n\}\n", main, re.S)
     if not m:
         return False
@@ -91,7 +95,9 @@ def gate_before_wifi(main):
 
 def main():
     fails = 0
-    adhoc, mainc, cart = ADHOC.read_text(), MAIN.read_text(errors="replace"), CART.read_text()
+    # main_psp.c is scanned WHOLE (every ring index write must be classified):
+    # extract.read_source() expands a split shell's fe/*.inc.c fragments in place
+    adhoc, mainc, cart = ADHOC.read_text(), extract.read_source(str(MAIN)), CART.read_text()
 
     n1, f1 = barrier_faults(adhoc, "transport_adhoc.c")
     n2, f2 = barrier_faults(mainc, "main_psp.c")
@@ -111,8 +117,14 @@ def main():
     # mutants: publishes reworded out of the known forms (critique-2)
     for a, b in (("ring_w += n;", "ring_w = ring_w + n;"),
                  ("A.tx_head = head + 1;", "A.tx_head = (head + 1) & 63;")):
-        src = mainc if a.startswith("ring") else adhoc
-        mut = src.replace(a, b, 1)
+        if a.startswith("ring"):
+            # the GB-link cushion's publish (gblink_audio_session), by its marker
+            src = mainc
+            site = extract.extract(mainc, "spsc:gblink_publish")
+            mut = src.replace(site, site.replace(a, b, 1), 1)
+        else:
+            src = adhoc
+            mut = src.replace(a, b, 1)
         if mut == src or not barrier_faults(mut, "m")[1]:
             print("FAIL spsc: the reworded-publish mutant %r was not caught" % b)
             fails += 1

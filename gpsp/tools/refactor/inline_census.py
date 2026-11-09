@@ -62,6 +62,12 @@ def clone_kind(name):
     return m.group(1) if m else None
 
 
+def own_file_test(srcfile):
+    """f (a DWARF file name of srcfile's CU) is the CU's own text: srcfile itself or a
+    *.inc.c fragment (they exist only as part of one TU, PLAN-P-beta5 §5)."""
+    return lambda f: f is not None and (f == srcfile or f.endswith('/' + srcfile) or f.endswith('.inc.c'))
+
+
 def census(elf_path, src_path, flavour, srcfile='main_psp.c'):
     e = Elf(elf_path)
     src = S.scan(src_path, (flavour,))
@@ -93,7 +99,11 @@ def census(elf_path, src_path, flavour, srcfile='main_psp.c'):
     # ---- DWARF inline instances in the file's CU
     info = D.Info(e)
     cu = info.cu_named(srcfile)
-    isrc = lambda f: f is not None and (f == srcfile or f.endswith('/' + srcfile))
+    # attributed by COMPILE UNIT (adversarial review 2026-11-07): a function of
+    # main_psp.o's own text is declared in main_psp.c OR in a *.inc.c fragment that
+    # main_psp.c #includes (P4); matching decl_file to main_psp.c alone dropped T13
+    # on a real split from 120 inlined / 7 dead to 1 / 126.  Headers stay excluded.
+    isrc = own_file_test(srcfile)
     inst = {}
     for x in cu.inlined():
         if not x['name']:

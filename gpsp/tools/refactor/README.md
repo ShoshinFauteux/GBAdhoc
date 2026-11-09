@@ -26,6 +26,7 @@ per flavour by `flavours.sh`. It is G1-identical and byte-identical (`builds/mai
 | (CI) | no raw exits outside fe_priv.h, no `pwr_hold` in hooks, no logic in `fe_evt()` args, ... | T11 `ci_greps.sh` | docs/abi-exit-ci.md |
 | (ABI) | `fe_abi_asserts.h` static asserts of shared prototypes/constants | T14 `abi_asserts.py` | docs/abi-exit-ci.md |
 | (split) | deterministic split of main_psp.c into fragments by `cutlist.txt`; inverse; replay | T4 `split.py`, T9 `globals.py`, T7 `../tests/extract.py` | docs/source-split.md |
+| (doc) | `psp/fe/README.md` (module map, owners, `#if` context of the harness/mgift rows, @extract readers per region, conventions of the split) generated from the cutlist, the split tree and the host tests; `--check` fails a stale one; `--plan PLAN.md` checks its transcribed PLAN tables | `fe_readme.py` | docs/source-split.md |
 | (build) | release + lab + harness with the right ROOT/psp make split; refuses a dirty baseline; fails on broken imports | T15 `flavours.sh` (+ `flavours_sidecar.sh` for `.su` and the map without changing the ELF) | docs/baseline.md (copy of mainpsp-tools-out/baseline/BASELINE.md) |
 
 Shared libraries: `elf32.py`, `ef_mips.py`, `ef_dwarf.py`, `ef_srcscan.py`, `sl_dwline.py`, `sl_ldmap.py`,
@@ -50,6 +51,8 @@ A candidate against the accepted tree (typical P-commit use):
 
 ```
 bash flavours.sh --commit REV --out OUT --lock .../build.lock --against ACCEPTED_RUN
+#   ACCEPTED_RUN must be REV's own commit, its first parent or a commit with REV's gpsp/ tree;
+#   an older ancestor (P7: the beta tip a merge brings in, or P0c) only with --ref-ancestor <its commit>
 python3 sect_cmp.py ACCEPTED/release OUT/release            # G1
 python3 func_diff.py A.elf B.elf --hot ../../psp/layout/hot_order.txt   # G2
 python3 loop_diff.py A.elf B.elf                            # G2L
@@ -58,9 +61,72 @@ python3 loop_lpsim/loop_lpsim.py setmap A.elf B.elf         # LP (static part)
 python3 stack_depth.py B.elf --su OUT/harness/su --resolve stack_resolve.txt   # ST
 python3 strong_syms.py checkrun --run OUT --golden strong_syms.golden.tsv     # SS
 python3 exit_matrix.py check --golden GOLD --cand CAND      # XS
-bash pp_diff.sh --ref TREE_A --new TREE_B                   # G0
+bash pp_diff.sh --ref TREE_A --new TREE_B --logs RUN        # G0 (--logs is required since P0a)
+bash pp_sweep.sh --ref TREE_A --new TREE_B --logs RUN       # G0 on the variant arms (-E only)
 bash ci_greps.sh --phase P                                  # CI rules
 ```
+
+All of these are also run by `flavours.sh --against`, which writes every verdict to
+`checks.txt` and GENERATES the gate line (`gate.txt`) from it. A P step's gate line is that
+file, never typed: `G0 ok rel/stb/lab/har G0var ok G1 ok rel/stb/lab/har G2 ... ST ok
+rel/stb/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
+a flavour it must cover, makes the line red (`flavours_gate.py`).
+
+### Fix pass after the adversarial review of P0a (2026-11-07)
+
+- **Hermetic builds.** `flavours.sh` runs `build.sh` under `env -i` (fixed PATH, HOME, the docker
+  client variables) with only DOCKER_IMAGE, GPSP_BUILD_*, RFU_SCHED and `FLAV_<NAME>_ENV`. All of
+  it is in `flavour.json` `buildEnv`. Caller variables that build.sh would have read are listed in
+  `callerEnvDropped`. With ME_LOWLAT=0 exported, the build is now the default build.
+- **The `--against` contract** (exit 2 before any check). Both sides must be hermetic and clean,
+  with all four flavours. The image, version, SDE, RFU_SCHED, buildEnv and extraEnv must be equal.
+  layoutLock must be release:ok and lab:ok. The reference must be this commit, its first parent,
+  or a commit with the same gpsp/ tree.
+- **New verdicts in `checks.txt`:** G0 (`pp_diff.sh` on both commits' exports, per flavour), G0var
+  (`pp_sweep.sh`), LL, CF (`check_flags.py` rc 0 and the same output on both trees), BF and DS
+  (`step_scope.sh`: the build files are byte-identical, and the diff stays inside
+  `psp/main_psp.c` and `psp/fe/`; `--scope-allow GLOB` widens that and is printed in the verdict).
+- **`pp_sweep`** (`pp_sweep.py`) generates its arms from build.sh's own switch list: every value
+  alone and every pair, on all four flavours. It derives each arm's compile lines by running
+  build.sh dry plus `make -n`, and the base lines must equal the run's logs. It sweeps every file
+  the step changes, plus every TU that includes a changed header or fragment. A skipped arm,
+  flavour or file exits 2; the only escape is `--allow-prune NAME`. A `--arms`/`--flavours`
+  subset exits 3 (not a gate).
+- **`--runs` discovery** (`runs.py`). `det_check.py --runs`, `sect_cmp.py --runs` and
+  `strong_syms.py checkrun` find the run's flavours themselves, so release-stable is included.
+- **`ci_greps`** reads a `*.inc.c` fragment as part of its includer, through a logical view that
+  is the unsplit text line for line. Hits name the fragment line. KNOWN R4 rows are keyed by
+  function, offending token and argument tokens. `--no-logical` is the old view, kept as a mutant.
+- **T13 / T1b attribute DWARF by compile unit.** An inline instance or line row belongs to
+  main_psp.o's own text if its file is main_psp.c or a `*.inc.c` fragment. loop_diff orders a
+  fragment against `main` by its `#include` line in the shell.
+- **A real P4 build.** `tests/p4_commit.sh` writes split.py's output as a commit object on the
+  run's commit; it is deterministic and on no branch. `tests/p0a_b5.sh` (step `p4`) builds that
+  commit with `flavours.sh --commit --against RUN` and requires the whole generated gate line,
+  then T13/T1b/T10/T16 on the P4 ELFs. This replaces the simulated `.su` approach as the P4 proof.
+
+### P0a (PLAN-P-beta5 §3): what changed for the beta.5 base
+
+- `flavours.sh` builds four flavours (`release`, `release-stable` = RFU_SCHED=0, `lab`, `harness`).
+  Pins: `DOCKER_IMAGE=pspdev/pspdev@sha256:...` (build.sh honours it too), `--build-version V`,
+  `--sde N`; all recorded in `flavour.json` with the image id and `psp-gcc --version`.
+  `--against REF` refuses (exit 2) a reference with another image id, version, SDE or RFU_SCHED,
+  then runs every tool by its real interface (absent = FAIL) and writes `checks.txt` and the
+  generated gate line `gate.txt`. `--check-only --out RUN --against REF` re-checks a build.
+  A P step: `flavours.sh --commit STEP --out OUT --lock L --against PARENT_RUN --build-version H --sde N`.
+- The loop window of T1b/T10/T16 is found by anchor (`loop_anchor.py`) in the source the ELF was
+  built from (its `flavour.json` commit), checked against main's `DW_AT_decl_line`; an explicit
+  range must be the anchored one. 01067e74: 16368-18089 (x4's 16368-18090, same code lines).
+- T8 `exit_matrix.py`: x2's sites by anchor (reason string + order), `FE_EXIT_GAME`/`FE_HANDOFF`
+  read as the calls they wrap, raw view through `#include "fe/X.inc.c"` with (file, line) keys.
+- T9 `globals.py`: owners from the cutlist (modules.py must agree), define sets derived from
+  psp/Makefile, macro-globals tagged, refuses a split shell and a cutlist of another source.
+- `pp_diff.sh --extra-defs`, `pp_sweep.sh`; T12 `.su` statics by object stem; T13 MGIFT and
+  release-stable/harness configs; T11 R3 roots `gba_reload_note`/`gba_reload_progress`;
+  `check_flags.py` scans `psp/fe`; the sidecar joins `\`-continued compile lines.
+- The repairs and their mutants on another tree: `tests/p0a_b5.sh --tree T --run RUN [--cutlist C]`
+  (also `B5_TREES=... run_all.sh`). `tests/fixtures/cutlist_fbe9da63.txt` is a P4-simulation
+  stand-in (cutlist_b5 carried, §2.1 applied), not the P0b cutlist.
 
 ## What is proven, and what is not
 
@@ -89,8 +155,11 @@ mutants now. The details are in each doc's "verify"/"adversarial" section.
 - **T11:** GCC-inferred noreturn/cold is invisible to R2 and is left to G3's input-section audit.
 - **T9/T4:** a global defined through a file-scope macro is invisible to csrc (none on 01067e74, by an ELF
   cross-check that is not yet a `globals.py` option).
-- **T10's** loop window is hard-coded to main_psp.c:16368-18090, and **T8's** site identity depends on x2's
-  19 early sites. Both must be re-anchored when P moves those lines.
+- (Closed by P0a, kept for the record.) **T10's** loop window was hard-coded to main_psp.c:16368-18090 and
+  **T8's** site identity depended on x2's 19 early sites by line. Both are anchored now: T10 finds the window
+  with `loop_anchor.py` (`layout_report.py` `LOOP_LINES = None`), checked against main's `DW_AT_decl_line`,
+  and T8 takes x2's sites by anchor (reason string + order), so neither needs a re-anchor when P moves lines
+  (see "P0a" above; P4 recorded the ranges they printed).
 - **T5's** placement threshold (16 KiB gap) was set from a 3,508 B baseline maximum, so it may need retuning.
   `regen.sh --check-only` now fails (PLACE) on an order that was regenerated but not yet relinked.
 - **T14** compiles only with the 7 reviewed normalisations in `abi_asserts.known`. `fe_abi_asserts.h` cannot

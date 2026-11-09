@@ -115,7 +115,8 @@ def run(trace=DEF_TRACE, src_path=None):
     import split as S
     work = tempfile.mkdtemp(prefix='extest-')
     try:
-        fr, ro = S.read_cutlist(os.path.join(GPSP, 'tools', 'refactor', 'cutlist.txt'))
+        # the 01067e74 cutlist (this test's source); tools/refactor/cutlist.txt follows the tree
+        fr, ro = S.read_cutlist(os.path.join(GPSP, 'tools', 'refactor', 'tests', 'fixtures', 'cutlist_01067e74.txt'))
         m = S.Model(src)
         lines = src.splitlines(keepends=True)
         # the cut between two fragments whose names sort in source order with

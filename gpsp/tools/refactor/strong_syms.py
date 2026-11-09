@@ -2,8 +2,8 @@
 """strong_syms.py -- T6 (PLAN §5, gate SS): the weak-override hooks and the exported ABI
 of psp/main_psp.c are still STRONG, GLOBAL and defined by main_psp.o in the linked ELF.
 
-Why: the core declares its frontend hooks as weak no-ops (rfu.c:96/113/351/403/440,
-main.c:935).  If an override in main_psp.c is renamed, made static, or #if'ed away, the
+Why: the core declares its frontend hooks as weak no-ops (cut base 3bc947d0: rfu.c:96/113/351/411/452,
+main.c:1068, 958 on fbe9da63; strong_syms.spec cites each).  If an override in main_psp.c is renamed, made static, or #if'ed away, the
 weak no-op links silently and the feature dies with no build error (x1 H6).  The same
 goes for globals other TUs use (x1 H5): a `static` added during the split breaks the
 link (good), but a renamed definition plus a stale extern elsewhere does not always.
@@ -26,7 +26,7 @@ ELF set; `check` holds a candidate to the golden.
 Usage:
   strong_syms.py check  --elf X.elf --map X.map --flavour F [--golden G.tsv] [--spec S]
   strong_syms.py golden --run RUNDIR --src GPSP_ROOT --out G.tsv     (3 flavours)
-  strong_syms.py checkrun --run RUNDIR --golden G.tsv                 (3 flavours)
+  strong_syms.py checkrun --run RUNDIR --golden G.tsv                 (every flavour in RUNDIR)
   strong_syms.py --selftest
 Exit: 0 green, 1 a violation, 2 usage.
 """
@@ -266,12 +266,30 @@ def cmd_golden(run, src, outp, spec):
 
 
 def cmd_checkrun(run, golden, spec):
+    """every flavour IN the run (discovered: release-stable is held to the rows of its
+    build.sh profile, release), not a fixed list (adversarial review 2026-11-07)."""
+    import runs
+    fls = runs.flavours_in(run)
+    if not fls:
+        print('SS: no <flavour>/gpsp_adhoc.elf under %s' % run)
+        return 2
+    have = set(l.split('\t')[0] for l in open(golden, encoding='utf-8') if l.strip() and not l.startswith('#'))
     tot = 0
-    for fl in FLAVOURS:
+    for fl in fls:
+        gf = runs.profile_of(run, fl)
+        if gf not in have:
+            print('[%s] FAIL: the golden has no rows for %s' % (fl, gf))
+            tot += 1
+            continue
+        if not os.path.isfile(os.path.join(run, fl, 'gpsp_adhoc.map')):
+            print('[%s] FAIL: no gpsp_adhoc.map' % fl)
+            tot += 1
+            continue
+        print('[%s] held to the %s rows' % (fl, gf))
         n, _ = cmd_check(os.path.join(run, fl, 'gpsp_adhoc.elf'), os.path.join(run, fl, 'gpsp_adhoc.map'),
-                         fl, golden, spec)
+                         gf, golden, spec)
         tot += n
-    print('SS: %s' % ('green in every flavour' if not tot else '%d FAIL' % tot))
+    print('SS: %s (%s)' % ('green in every flavour' if not tot else '%d FAIL' % tot, ', '.join(fls)))
     return 1 if tot else 0
 
 

@@ -8,9 +8,10 @@ still true of this build?
 
 DIR is a flavours.sh flavour dir (gpsp_adhoc.elf, and gpsp_adhoc.map when the
 sidecar ran).  --order defaults to psp/layout/hot_order.txt, --ord to
-psp/layout/hot.ord, both of THIS tree (gpsp/).  Check the build against the
-order it was linked with: an ELF of another commit says nothing about this
-tree's order.
+psp/layout/hot.ord of the commit the flavour dir was built from (its
+flavour.json sourceCommit, read with git from this repo), else of THIS tree
+(gpsp/, with a warning).  Check the build against the order it was linked
+with: an ELF of another commit says nothing about this tree's order.
 
 CHECKS, per hot_order.txt entry (docs/LAYOUT-PINNING.md "Keeping the pads"):
   match   the entry matches EXACTLY ONE input section.  With the map this is
@@ -373,6 +374,70 @@ def check(order_path, ord_path, build, sizes='fail', out=print, placement=True):
     return fail, res
 
 
+ORDER_REL = ('psp/layout/hot_order.txt', 'psp/layout/hot.ord')
+
+
+def _git_show(rev_path):
+    """`git show REV:PATH` from this tree's repo, bytes or None.  From WSL on a Windows
+    worktree plain git cannot read the .git file, so git.exe is tried too (flavours.sh's rule)."""
+    import subprocess
+    cmds = [['git', '-C', GPSP, 'show', rev_path]]
+    try:
+        w = subprocess.run(['wslpath', '-w', GPSP], capture_output=True, text=True).stdout.strip()
+        if w:
+            cmds.append(['git.exe', '-C', w, 'show', rev_path])
+    except OSError:
+        pass
+    for c in cmds:
+        try:
+            r = subprocess.run(c, capture_output=True)
+        except OSError:
+            continue
+        if r.returncode == 0:
+            return r.stdout.replace(b'\r\n', b'\n') if c[0] == 'git.exe' else r.stdout
+    return None
+
+
+def order_of_build(d, tmp):
+    """The (hot_order.txt, hot.ord) a flavours.sh flavour dir was LINKED with: taken from
+    its flavour.json sourceCommit.  An ELF checked against another commit's order (the
+    2026-11-07 T5 selftest failures on the 01067e74 baseline from a beta.5 tools tree:
+    4-5 controls FAILED, unmatched 5, renamed 4) says nothing about either.
+    -> (order, ord, note); (None, None, note) when the dir names no commit."""
+    try:
+        c = json.load(open(os.path.join(d, 'flavour.json'))).get('sourceCommit')
+    except (OSError, ValueError):
+        c = None
+    if not c:
+        return None, None, 'no flavour.json sourceCommit in %s' % d
+    out = []
+    for rel in ORDER_REL:
+        b = _git_show('%s:gpsp/%s' % (c, rel))
+        if b is None:
+            return None, None, 'cannot read %s:gpsp/%s from this repo' % (c[:10], rel)
+        p = os.path.join(tmp, os.path.basename(rel))
+        open(p, 'wb').write(b)
+        out.append(p)
+    return out[0], out[1], 'order and hot.ord of the build\'s own commit %s' % c[:10]
+
+
+def resolve_order(a, d):
+    """Fill a.order / a.ord when the caller gave neither: the build's own commit's files,
+    else THIS tree's (said so on stderr).  An explicit --order/--ord is never replaced."""
+    if a.order is not None or a.ord is not None or not d:
+        a.order = a.order or os.path.join(GPSP, ORDER_REL[0])
+        a.ord = a.ord or os.path.join(GPSP, ORDER_REL[1])
+        return
+    o, r, note = order_of_build(d, tempfile.mkdtemp(prefix='hotord_ord_'))
+    if o:
+        a.order, a.ord = o, r
+        print('hotord_check: %s' % note, file=sys.stderr)
+    else:
+        a.order, a.ord = os.path.join(GPSP, ORDER_REL[0]), os.path.join(GPSP, ORDER_REL[1])
+        print('hotord_check: WARNING %s: using THIS tree\'s order (%s); it must be the one '
+              'the ELF was linked with' % (note, GPSP), file=sys.stderr)
+
+
 def resolve_build(a):
     if a.build:
         elf = os.path.join(a.build, 'gpsp_adhoc.elf')
@@ -581,8 +646,9 @@ def main():
     ap.add_argument('--elf')
     ap.add_argument('--map')
     ap.add_argument('--no-map', action='store_true', help='ignore the dir\'s map (symtab mode)')
-    ap.add_argument('--order', default=os.path.join(GPSP, 'psp', 'layout', 'hot_order.txt'))
-    ap.add_argument('--ord', default=os.path.join(GPSP, 'psp', 'layout', 'hot.ord'))
+    ap.add_argument('--order', default=None,
+                    help='default: the flavour dir\'s own commit (flavour.json), else this tree\'s')
+    ap.add_argument('--ord', default=None, help='as --order')
     ap.add_argument('--no-ord', action='store_true', help='skip the hot.ord consistency check')
     ap.add_argument('--sizes', choices=('fail', 'warn', 'off'), default='fail')
     ap.add_argument('--no-placement', action='store_true',
@@ -590,6 +656,7 @@ def main():
     ap.add_argument('--json')
     ap.add_argument('--selftest', metavar='DIR')
     a = ap.parse_args()
+    resolve_order(a, a.selftest or a.build)
     ordp = None if a.no_ord else a.ord
     if a.selftest:
         return selftest(a.selftest, a.order, ordp)

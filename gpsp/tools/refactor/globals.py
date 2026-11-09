@@ -37,8 +37,144 @@ sys.path.insert(0, HERE)
 import csrc      # noqa: E402
 import modules   # noqa: E402
 
-REL = {'GPSP_PLAYABLE': 1, 'GPSP_NO_TELEMETRY': 1, 'REWIND': 1, 'GBA_LINK': 1, 'GBADHOC_ONLINE': 1, 'PSP': 1, 'ME_MIDFRAME_LOG': 1}
-RIG = {'GPSP_PLAYABLE': 1, 'GPSP_KEEP_TELEMETRY': 1, 'GPSP_PERF_RIG': 1, 'REWIND': 1, 'GBA_LINK': 1, 'GBADHOC_ONLINE': 1, 'PSP': 1, 'ME_MIDFRAME_LOG': 1}
+# The release and rig define sets.  The fixed part is what build.sh's profiles pass
+# (EXTRA_DEFS) plus fe_evt.h's derived GPSP_NO_TELEMETRY; the switch part (REWIND,
+# GBA_LINK, GBADHOC_ONLINE, GBADHOC_MGIFT, GPSP_CHEATS, ...) is DERIVED from the tree's
+# psp/Makefile (makefile_defines: its `X ?= default` + `ifeq ($(X),1)` + `CFLAGS +=
+# -D...`), so a switch a merge adds (round 10's MGIFT) is not silently missing (P0a,
+# review 2 #7).  A flavours.sh build dir can be given instead (--defs-from): its
+# build-manifest.json pspMakeFlags override the Makefile defaults.
+REL_FIXED = {'GPSP_PLAYABLE': 1, 'GPSP_NO_TELEMETRY': 1, 'PSP': 1, 'ME_MIDFRAME_LOG': 1}
+RIG_FIXED = {'GPSP_PLAYABLE': 1, 'GPSP_KEEP_TELEMETRY': 1, 'GPSP_PERF_RIG': 1, 'PSP': 1, 'ME_MIDFRAME_LOG': 1}
+# 01067e74's sets (the tools' own proof, before P0a); the self-test checks that the
+# Makefile-derived sets equal these on 01067e74 for every name its main_psp.c tests
+REL = dict(REL_FIXED, REWIND=1, GBA_LINK=1, GBADHOC_ONLINE=1)
+RIG = dict(RIG_FIXED, REWIND=1, GBA_LINK=1, GBADHOC_ONLINE=1)
+# the main_psp.c sha256 the fixed modules.py ranges were written for (the header of
+# tests/fixtures/cutlist_01067e74.txt; tools/refactor/cutlist.txt follows the tree since P1)
+SHA_01067E74 = '942c8b546d6b159bf80660081fde816e31082a99aa6e4442a8b45e8272fe5cd1'
+
+
+def makefile_defines(makefile, overrides=None):
+    """-> {NAME: value} of the `CFLAGS += -DNAME[=V]` a psp/Makefile adds with its
+    defaults (`X ?= v`), `overrides` ({VAR: value}, e.g. a manifest's pspMakeFlags)
+    taking precedence, through ifeq/ifneq/else/endif.  A condition it cannot evaluate
+    makes that branch inactive (reported in the second return value)."""
+    var = {}
+    over = dict(overrides or {})
+    out, unknown = {}, []
+    stack = []        # [(active_parent, taken, active)]
+    active = True
+
+    def val(x):
+        x = x.strip()
+        m = re.fullmatch(r'\$\((\w+)\)', x)
+        if m:
+            return over.get(m.group(1), var.get(m.group(1), ''))
+        return x
+
+    for ln in open(makefile, encoding='utf-8', errors='replace'):
+        t = ln.split('#', 1)[0].rstrip()
+        st = t.strip()
+        m = re.match(r'^(else\s+)?(ifeq|ifneq)\s*\(\s*([^,]*?)\s*,\s*(.*?)\s*\)\s*$', st)
+        if m:
+            ok = None
+            a, b = m.group(3), m.group(4)
+            if '$(' in a.replace('$(', '', 1) or '$(' in b or not re.fullmatch(r'\$\(\w+\)|[\w.-]*', a.strip()):
+                unknown.append(st)
+            else:
+                ok = (val(a) == val(b)) == (m.group(2) == 'ifeq')
+            if m.group(1):           # else ifeq: a chained branch of the current if
+                par, taken, _ = stack[-1]
+                now = par and not taken and bool(ok)
+                stack[-1] = (par, taken or now, now)
+            else:
+                stack.append((active, bool(ok) and active, bool(ok) and active))
+            active = stack[-1][2]
+            continue
+        m = re.match(r'^(ifdef|ifndef)\s+(\w+)$', st)
+        if m:
+            d = bool(over.get(m.group(2), var.get(m.group(2), '')))
+            ok = d if m.group(1) == 'ifdef' else not d
+            stack.append((active, ok and active, ok and active))
+            active = stack[-1][2]
+            continue
+        if st == 'else':
+            par, taken, _ = stack[-1]
+            stack[-1] = (par, True, par and not taken)
+            active = stack[-1][2]
+            continue
+        if st == 'endif':
+            stack.pop()
+            active = stack[-1][2] if stack else True
+            continue
+        if not active or ln[:1] == '\t':
+            continue
+        m = re.match(r'^(\w+)\s*\?=\s*(.*)$', st)
+        if m:
+            var.setdefault(m.group(1), m.group(2).strip())
+            continue
+        m = re.match(r'^(\w+)\s*:?=\s*(.*)$', st)
+        if m and m.group(1) != 'CFLAGS':
+            var[m.group(1)] = m.group(2).strip()
+            continue
+        m = re.match(r'^CFLAGS\s*\+?=\s*(.*)$', st)
+        if m:
+            for dm in re.finditer(r'-D(\w+)(?:=(\S+))?', m.group(1)):
+                v = dm.group(2)
+                if v is not None and '$(' in v:
+                    vm = re.fullmatch(r'\$\((\w+)\)', v)
+                    v = over.get(vm.group(1), var.get(vm.group(1), '')) if vm else v
+                try:
+                    out[dm.group(1)] = int(v, 0) if v is not None else 1
+                except ValueError:
+                    out[dm.group(1)] = 1
+    return out, unknown
+
+
+def define_sets(root, defs_from=None):
+    """-> (REL, RIG, how) for a gpsp tree: fixed + Makefile-derived."""
+    mk = os.path.join(root, 'psp', 'Makefile') if root else None
+    if not mk or not os.path.exists(mk):
+        return REL, RIG, 'fixed 01067e74 sets (no psp/Makefile under --root)'
+    ov = {}
+    how = 'psp/Makefile defaults'
+    if defs_from:
+        mf = os.path.join(defs_from, 'build-manifest.json')
+        j = json.load(open(mf))
+        for kv in j.get('pspMakeFlags', '').split():
+            if '=' in kv:
+                k, v = kv.split('=', 1)
+                ov[k] = v
+        how = 'psp/Makefile + %s pspMakeFlags' % mf
+    md, _ = makefile_defines(mk, ov)
+    rel = dict(REL_FIXED, **md)
+    rig = dict(RIG_FIXED, **md)
+    return rel, rig, how
+
+
+def src_sha(path):
+    import hashlib
+    return hashlib.sha256(open(path, 'rb').read()).hexdigest()
+
+
+def cutlist_sha(path):
+    for ln in open(path, encoding='utf-8'):
+        if not ln.startswith('#'):
+            break
+        m = re.search(r'sha256 ([0-9a-f]{64})', ln)
+        if m:
+            return m.group(1)
+    return None
+
+
+# the census never counts main_psp.c's own text (the file, its P4 fragments and the
+# P5 headers) as "another TU": by RULE, not by the one --src path, so a census of a
+# copy or of a split tree classifies exactly like the in-tree one (MF10's cause:
+# `--root` excluded only the exact --src path, so a copy saw the in-tree main_psp.c
+# as an extern user of every global it defines)
+SELF_TU = re.compile(r'^psp/(main_psp\.c|fe/.*)$')
+FRAG_INCLUDE = re.compile(r'^\s*#\s*include\s+"fe/[^"]+\.inc\.c"', re.M)
 SPAN_DEAD = ('LAB_HOOK', 'LAB_FFP', 'fe_evt', 'FE_LP_SET')
 # PLAN §1.3: exported ABI (x1 H5) and the weak overrides (x1 H6) -- never renamed by this tool
 EXPORTED = {'g_dir_base', 'g_running', 'g_ff_uncapped', 'g_ff_mult', 'in_rate', 'g_audio_step', 'g_net_up',
@@ -101,8 +237,12 @@ def main_phases(d):
     return session_top, loop0, d['lineof'](j)
 
 
-def census(src, root=None, cutlist=None):
+def census(src, root=None, cutlist=None, defs_from=None):
+    global REL, RIG
     raw = open(src, encoding='utf-8', newline='').read()
+    if FRAG_INCLUDE.search(raw):
+        raise SystemExit(2)    # main() prints why (refuse_split)
+    REL, RIG, defs_how = define_sets(root, defs_from)
     d = csrc.parse(raw, root)
     V, F, REFS, CALLS, LC = d['vars'], d['funcs'], d['refs'], d['calls'], d['line_cond']
     fby = collections.defaultdict(list)
@@ -123,7 +263,7 @@ def census(src, root=None, cutlist=None):
                 if not x.endswith(('.c', '.h', '.inc', '.S', '.s', '.cpp')):
                     continue
                 p = os.path.normpath(os.path.abspath(os.path.join(dp, x)))
-                if p == selfp:
+                if p == selfp or SELF_TU.match(os.path.relpath(p, root).replace('\\', '/')):
                     continue
                 try:
                     txt = open(p, encoding='utf-8', errors='replace').read()
@@ -161,6 +301,12 @@ def census(src, root=None, cutlist=None):
     CTX_REL = {'main'} | {k for k, v in ENTRY.items() if any(line_rel(f['body']) for f in fby.get(v[0], []))}
 
     SESSION_TOP, LOOP0, LOOP1 = main_phases(d)
+    vnames = {v['name'] for v in V if not v['extern']}
+    MACRO_TWINS = collections.defaultdict(list)
+    for k, ln in enumerate(raw.split('\n'), 1):
+        mm = re.match(r'^\s*#\s*define\s+(\w+)(?!\()\s', ln)
+        if mm and mm.group(1) in vnames and d['pp_depth'][k] > 0:
+            MACRO_TWINS[mm.group(1)].append((LC[k] or '').strip())
 
     def phase_of_line(ln):
         if ln < SESSION_TOP:
@@ -179,7 +325,7 @@ def census(src, root=None, cutlist=None):
                 phase_fn[x].add(phase_of_line(ln))
 
     # module of each function: the cutlist when given, else modules.py
-    fmod, ffrag, gfrag = {}, {}, {}
+    fmod, ffrag, gfrag, gmod = {}, {}, {}, {}
     if cutlist:
         sys.path.insert(0, HERE)
         import split as _split
@@ -190,6 +336,7 @@ def census(src, root=None, cutlist=None):
                 ffrag.setdefault(r['name'], r['frag'])
             else:
                 gfrag[r['key']] = r['frag']
+                gmod[r['key']] = r['module']
     else:
         for f in F:
             fmod.setdefault(f['name'], modules.function_module(f['name'], f['start'])[0])
@@ -252,6 +399,16 @@ def census(src, root=None, cutlist=None):
         if not v['extern']:
             occ[nm] += 1
             key = 'G:%s#%d' % (nm, occ[nm])
+        # the owner is the cutlist's G row (the reviewed source of truth); modules.py's
+        # opinion is kept and a disagreement is reported (and fails the census)
+        mod_owner = owner
+        if key in gmod:
+            owner, how = gmod[key], 'cutlist'
+        disagree = bool(key in gmod and mod_owner != gmod[key])
+        # a file-scope macro twin: `#define NAME ...` in another #if arm of a static
+        # object NAME (C15: g_start_*, g_reload_slow_ms, g_gblink_host_wait_peer,
+        # g_mgift_consumed, g_mg_on) -- the same item, tagged with the macro's arm
+        macro_in = sorted(set(MACRO_TWINS.get(nm, ())))
         # writers (all refs, release or not) whose module is not the owner
         allw = sorted({fn for (ln, fn, kind, span) in recs if kind in ('w', 'rw', 'a')})
         xmod = sorted('%s(%s)' % (fn, fmod.get(fn)) for fn in allw if owner and fmod.get(fn) not in (owner, None))
@@ -259,11 +416,14 @@ def census(src, root=None, cutlist=None):
                     'volatile': v['volatile'], 'const': v['const'], 'type': v['type'], 'size': v['size'],
                     'attrs': v['attrs'], 'section': v['section'], 'cond': v['cond'], 'rel': rel_decl, 'rig': rig_decl,
                     'group': grp, 'owner': owner, 'owner_how': how, 'fragment': gfrag.get(key),
+                    'modules_owner': mod_owner, 'owner_disagrees': disagree,
+                    'macro_in': ['macro-in:' + (c or 'always') for c in macro_in],
                     'life': life, 'threads': sorted(th), 'phases': sorted(ph),
                     'readers': sorted(readers), 'writers': sorted(writers), 'xmod_writers': xmod,
                     'ext_users': ext_real, 'nrefs': len(recs), 'nlive': len(live)})
     return out, {'session_top': SESSION_TOP, 'loop0': LOOP0, 'loop1': LOOP1, 'ctx_rel': sorted(CTX_REL),
-                 'funcs': len(F), 'd': d}
+                 'funcs': len(F), 'd': d, 'defs_how': defs_how, 'rel': REL, 'rig': RIG,
+                 'cutlist': cutlist}
 
 
 def report(rows, meta, basis=None):
@@ -290,7 +450,16 @@ def report(rows, meta, basis=None):
     if any(r['fragment'] for r in defs):
         print('  definitions sitting in another module\'s fragment (to move in epoch C, not in P4): %d' % len(mis))
     print('  UNASSIGNED (no owner module): %d%s' % (len(un), (': ' + ', '.join(r['name'] for r in un)) if un else ''))
-    rc = 1 if un else 0
+    print('  define sets: %s; release has%s GBADHOC_MGIFT' % (meta.get('defs_how', '?'),
+                                                             '' if meta.get('rel', {}).get('GBADHOC_MGIFT') else ' NO'))
+    mt = sorted({r['name'] for r in defs if r.get('macro_in')})
+    print('  macro-globals (an object in one arm, a #define in another): %d%s' % (len(mt), (': ' + ', '.join(mt)) if mt else ''))
+    dis = [r for r in defs if r.get('owner_disagrees')]
+    if meta.get('cutlist'):
+        print('  owners from the cutlist (%s); modules.py disagrees on %d%s' % (
+            os.path.basename(meta['cutlist']), len(dis),
+            (': ' + ', '.join('%s (cutlist %s, modules.py %s)' % (r['name'], r['owner'], r['modules_owner']) for r in dis)) if dis else ''))
+    rc = 1 if un or dis else 0
     if basis:
         b = json.load(open(basis))
         bk = {(x['name'], x['line'], x['extern']) for x in b}
@@ -393,6 +562,7 @@ def main(argv=None):
     c.add_argument('--json')
     c.add_argument('--tsv')
     c.add_argument('--basis')
+    c.add_argument('--defs-from', help='a flavours.sh flavour dir: its build-manifest.json pspMakeFlags set the switches')
     r = sub.add_parser('rename')
     r.add_argument('old')
     r.add_argument('new')
@@ -407,7 +577,22 @@ def main(argv=None):
         return importlib.import_module('source-split_test_globals').run()
     if a.cmd == 'census':
         cut = a.cutlist if a.cutlist and os.path.exists(a.cutlist) else None
-        rows, meta = census(a.src, a.root, cut)
+        if FRAG_INCLUDE.search(open(a.src, encoding='utf-8', errors='replace').read()):
+            print('globals census: REFUSED: %s includes fe/*.inc.c fragments (a split shell): the census '
+                  'would see only the shell.  Run it on `split.py inverse` output.' % a.src, file=sys.stderr)
+            return 2
+        sha = src_sha(a.src)
+        # the fixed modules.py ranges describe 01067e74 only; a cutlist only the source its header names
+        if cut and cutlist_sha(cut) not in (sha, None):
+            print('globals census: REFUSED: %s describes main_psp.c sha256 %s..., not this source (%s...): '
+                  'pass the cutlist generated for this tree (split.py gen)' % (cut, (cutlist_sha(cut) or '?')[:12], sha[:12]),
+                  file=sys.stderr)
+            return 2
+        if not cut and sha != SHA_01067E74:
+            print('globals census: REFUSED: no --cutlist, and modules.py\'s fixed ranges are 01067e74\'s '
+                  '(this source is sha256 %s...)' % sha[:12], file=sys.stderr)
+            return 2
+        rows, meta = census(a.src, a.root, cut, a.defs_from)
         rc = report(rows, meta, a.basis)
         if a.json:
             json.dump(rows, open(a.json, 'w'), indent=0)

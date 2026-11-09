@@ -23,6 +23,14 @@ ok()  { echo "  ok    $*"; }
 bad() { echo "  FAIL  $*"; FAILS=$((FAILS + 1)); }
 AA="python3 $HERE/abi_asserts.py"; ED="python3 $HERE/tests/abi-exit-ci_edit.py"
 R=$BASE/release
+# The single-file text the main_psp.c mutants edit: psp/main_psp.c itself, or on a split tree
+# (PLAN-P-beta5 P4) its split.py inverse, laid over the shell with --main-c (the same TU; the
+# fragment-level mutants with --frag are tests/p0a_b5.sh t14's).  P-review 2026-11-08.
+MSRC="$SRC/psp/main_psp.c"
+if grep -q '^#include "fe/[A-Za-z0-9_.]*\.inc\.c"' "$MSRC"; then
+  python3 "$HERE/split.py" inverse --split "$SRC" -o "$OUT/inverse_main_psp.c" > /dev/null || { echo "  FAIL  split.py inverse"; exit 1; }
+  MSRC="$OUT/inverse_main_psp.c"; echo "  (split tree: main_psp.c mutants edit its inverse, $MSRC)"
+fi
 for f in release lab harness; do
   $AA gen --flavour-dir "$BASE/$f" --src "$SRC" --out "$OUT/base/$f" > "$OUT/c1_$f.log" 2>&1 \
     && grep -q '^pin: [0-9]* pinned, 0 lost, 0 new' "$OUT/c1_$f.log" \
@@ -30,8 +38,11 @@ for f in release lab harness; do
 done
 printf '# empty: strict mode\n' > "$OUT/none.known"
 $AA gen --flavour-dir "$R" --src "$SRC" --out "$OUT/strict" --known "$OUT/none.known" > "$OUT/c2.log" 2>&1; rc=$?
-n=$(grep -c 'static assertion failed' "$OUT/c2.log")
-[ $rc = 1 ] && [ "$n" = 7 ] && ok "C2 strict: exactly 7 static assertion failures (the abi_asserts.known list)" \
+# P0a T14: every copy SITE is asserted, so a name with two copies (translation_gate_*)
+# fails twice; the known list is per name, so count the distinct names that fail (a cite is
+# main_psp.c:N, or fe/X.inc.c:N on a split tree)
+n=$(grep -oE 'static assertion failed: "(main_psp\.c|fe/[A-Za-z0-9_.]+):[0-9]* [A-Za-z_0-9]*' "$OUT/c2.log" | awk '{print $NF}' | sort -u | wc -l)
+[ $rc = 1 ] && [ "$n" = 7 ] && ok "C2 strict: exactly 7 names fail a static assertion (the abi_asserts.known list)" \
   || { bad "C2 strict rc=$rc n=$n"; grep 'assertion' "$OUT/c2.log"; }
 
 mutant() {  # mutant <label> <name in message> <gen extra args...>
@@ -42,7 +53,7 @@ mutant() {  # mutant <label> <name in message> <gen extra args...>
   else bad "$label (rc=$rc)"; grep -m5 'error\|T14' "$OUT/mut.log"; fi
 }
 M="$OUT/main_psp.c"
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.startswith('void core_phase_take(unsigned *lvl, unsigned *clk_ns, unsigned *frames,')]
 assert len(k) == 1; L[k[0]] = L[k[0]].replace('unsigned *frames', 'int *frames')"
 mutant "M1 frontend core_phase_take param type" "core_phase_take" --main-c "$M"
@@ -53,15 +64,15 @@ j = next(i for i in range(k[0], k[0] + 12) if L[i].rstrip().endswith(');'))
 import re; L[j] = re.sub(r',\s*unsigned \*\w+\);', ');', L[j]) if re.search(r',\s*unsigned \*\w+\);', L[j]) else L[j]
 assert L[j].rstrip().endswith(');')"
 grep -q 'core_phase_take' "$OUT/main.h" && mutant "M2 core header drops a parameter" "core_phase_take" --core-h "$OUT/main.h" main.h
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.strip() == 'extern u32 flush_ram_full;']; assert len(k) == 1
 L[k[0]] = 'extern u16 flush_ram_full;'"
 mutant "M3 extern var type" "flush_ram_full" --main-c "$M"
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.startswith('extern u32 cph_jit_total;')]; assert len(k) == 1
 L[k[0]] = L[k[0]].replace('extern u32', 'extern const u32')"
 mutant "M4 qualifier added" "cph_jit_total" --main-c "$M"
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.startswith('#define VRAM_DIRTY_SHIFT 10')]; assert len(k) == 1
 L[k[0]] = '#define VRAM_DIRTY_SHIFT 11'"
 mutant "M5 VRAM_DIRTY_SHIFT copy" "VRAM_DIRTY_SHIFT" --main-c "$M"
@@ -69,7 +80,7 @@ $ED "$SRC/tools/test_ff_pipeline.c" "$OUT/test_ff_pipeline.c" "
 k = [i for i, l in enumerate(L) if l.startswith('#define MER_RETIRE_US 9000u')]; assert len(k) == 1
 L[k[0]] = '#define MER_RETIRE_US 9001u'"
 mutant "M6 test copy of MER_RETIRE_US" "MER_RETIRE_US" --test-c "$OUT/test_ff_pipeline.c"
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.startswith('extern unsigned int   reg[];')]; assert len(k) == 1
 L[k[0]] = 'extern unsigned short reg[];'"
 mutant "M7 new drift on a KNOWN entry" "reg" --main-c "$M"
@@ -79,7 +90,7 @@ mutant "M7 new drift on a KNOWN entry" "reg" --main-c "$M"
 #       fe_count_t = unsigned short (a frontend-only typedef): the discovery pass used to
 #       move it to UNCHECKED and pass (rc 0); the pin must fail it
 #   M9  psp/sleep_q.h: SQ_NONE 1 -> 2                                      -> assert fails
-$ED "$SRC/psp/main_psp.c" "$M" "
+$ED "$MSRC" "$M" "
 k = [i for i, l in enumerate(L) if l.strip() == 'extern u32 flush_ram_full;']; assert len(k) == 1
 L[k[0]] = 'typedef unsigned short fe_count_t;'
 L.insert(k[0] + 1, 'extern fe_count_t flush_ram_full;')"

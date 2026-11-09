@@ -6,15 +6,22 @@ entrypoint and MIPS assembly on the host. No scheduling algorithm is duplicated.
 """
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 repo = Path(__file__).resolve().parent.parent
-source = (repo / 'psp/main_psp.c').read_text()
+sys.path.insert(0, str(repo / 'tools' / 'tests'))
+import extract  # noqa: E402
+
+source = extract.read_source(str(repo / 'psp/main_psp.c'))
+plain = extract.strip_markers(source)
 
 def function(name, next_marker, ret='void'):
-    start = source.index('static ' + ret + ' ' + name + '(')
-    end = source.index(next_marker, start)
-    return source[start:end]
+    # read through its @extract marker ff:NAME: from the definition up to next_marker
+    text = extract.extract(source, 'ff:' + name)
+    assert text.startswith('static ' + ret + ' ' + name + '('), name
+    assert text + next_marker in plain, name + ': the region does not end at ' + next_marker
+    return text
 
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)

@@ -13,15 +13,19 @@
 #             and the fe/ fragment dir from split.py), so a split is checked
 #             without copying the tree.  Mounted read-only.
 # --logs DIR  a flavours.sh run dir (DIR/<flavour>/logs/.build-eboot.log):
-#             the EXACT compile line of each flavour is taken from that log
-#             (default: builds/mainpsp-tools-out/baseline/run1).  Both trees are
+#             the EXACT compile line of each flavour is taken from that log.
+#             REQUIRED (P0a: the old default was 01067e74's run1, whose lines
+#             lack -DGBADHOC_MGIFT; a silent default compared the wrong arm).
+#             The log path and each flavour's -D set are printed.  Both trees are
 #             preprocessed with the SAME line, so G0 isolates the source change.
 #             For a tree whose Makefile/flags differ, point --logs at a build of
 #             that tree.
-# --flavours  default "release lab harness"
+# --flavours  default: every one of "release release-stable lab harness" in --logs
+# --extra-defs "-UX -DY=1 ..."  appended to every compile line AFTER its own -D/-U
+#             (so they override): one variant arm of the -E sweep (pp_sweep.sh)
 # --file F    default psp/main_psp.c (object = basename .o)
 # --keep DIR  keep the .i and normalised streams there
-# --image I   default pspdev/pspdev (the digest is printed)
+# --image I   default $DOCKER_IMAGE or pspdev/pspdev (the id is printed); pin by digest
 # --sde N     SOURCE_DATE_EPOCH for both sides (default 1793908328, 01067e74's
 #             commit time, as flavours.sh pins it).  Without a pin the Lab and
 #             harness streams differ in fe_evt("build stamp", __DATE__, __TIME__)
@@ -42,8 +46,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 case "${1:-}" in --selftest) shift; exec bash "$HERE/tests/source-split_test_pp_diff.sh" "$@" ;; esac
 
-REF= NEW= OVL= LOGS= FLAVOURS="release lab harness" FILE=psp/main_psp.c KEEP= IMAGE=pspdev/pspdev SDE=1793908328
-DEF_LOGS="$HERE/../../../../mainpsp-tools-out/baseline/run1"
+REF= NEW= OVL= LOGS= FLAVOURS= FILE=psp/main_psp.c KEEP= IMAGE=${DOCKER_IMAGE:-pspdev/pspdev} SDE=1793908328 XDEFS=
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=$2; shift 2 ;;
@@ -51,6 +54,7 @@ while [ $# -gt 0 ]; do
     --overlay) OVL=$2; shift 2 ;;
     --logs) LOGS=$2; shift 2 ;;
     --flavours) FLAVOURS=$2; shift 2 ;;
+    --extra-defs) XDEFS=$2; shift 2 ;;
     --file) FILE=$2; shift 2 ;;
     --keep) KEEP=$2; shift 2 ;;
     --image) IMAGE=$2; shift 2 ;;
@@ -62,7 +66,16 @@ done
 topath() { case "$1" in [A-Za-z]:[/\\]*) wslpath -a "$1" ;; *) (cd "$1" 2>/dev/null && pwd) || echo "$1" ;; esac; }
 [ -n "$REF" ] && [ -n "$NEW" ] || { echo "pp_diff: --ref and --new are required" >&2; exit 2; }
 REF=$(topath "$REF"); NEW=$(topath "$NEW"); [ -n "$OVL" ] && OVL=$(topath "$OVL")
-LOGS=$(topath "${LOGS:-$DEF_LOGS}")
+[ -n "$LOGS" ] || { echo "pp_diff: --logs RUN_DIR is required (a flavours.sh build of the tree's own compile lines)" >&2; exit 2; }
+LOGS=$(topath "$LOGS")
+[ -d "$LOGS" ] || { echo "pp_diff: --logs $LOGS: no such dir" >&2; exit 2; }
+if [ -z "$FLAVOURS" ]; then
+  for fl in release release-stable lab harness; do [ -f "$LOGS/$fl/logs/.build-eboot.log" ] && FLAVOURS="$FLAVOURS $fl"; done
+  FLAVOURS=${FLAVOURS# }
+  [ -n "$FLAVOURS" ] || { echo "pp_diff: no <flavour>/logs/.build-eboot.log under $LOGS" >&2; exit 2; }
+fi
+case "$XDEFS" in *[!A-Za-z0-9_=\ .+-]*) echo "pp_diff: --extra-defs: only -D/-U words" >&2; exit 2 ;; esac
+for w in $XDEFS; do case "$w" in -D?*|-U?*) ;; *) echo "pp_diff: --extra-defs: '$w' is not -DNAME[=V] or -UNAME" >&2; exit 2 ;; esac; done
 for d in "$REF" "$NEW"; do [ -f "$d/$FILE" ] || { echo "pp_diff: $d/$FILE missing" >&2; exit 2; }; done
 command -v docker >/dev/null || { echo "pp_diff: docker not found (run from WSL)" >&2; exit 2; }
 PY=python3; command -v python3 >/dev/null || PY=python
@@ -79,14 +92,23 @@ if [ -n "$OVL" ]; then
   [ -d "$OVL/$DIR" ] || { echo "pp_diff: overlay has no $DIR/" >&2; exit 2; }
 fi
 echo "pp_diff: G0 $FILE  ref=$REF  new=$NEW${OVL:+ + overlay $OVL}  image=$IMAGE ${IMGID:0:19} SOURCE_DATE_EPOCH=${SDE:-unpinned}"
-echo "         compile lines from $LOGS/<flavour>/logs/.build-eboot.log"
+echo "         compile lines from $LOGS/<flavour>/logs/.build-eboot.log${XDEFS:+  + extra defs: $XDEFS}"
 RC=0
 for fl in $FLAVOURS; do
   LOG="$LOGS/$fl/logs/.build-eboot.log"
   [ -f "$LOG" ] || { echo "  $fl: no compile log $LOG" >&2; RC=2; continue; }
   CMD=$(grep -m1 -- " -c -o $OBJ $BASE\$" "$LOG")
   [ -n "$CMD" ] || { echo "  $fl: no '-c -o $OBJ $BASE' line in $LOG" >&2; RC=2; continue; }
-  PP=$(printf '%s' "$CMD" | sed -e 's/ -MMD -MP / /' -e "s# -c -o $OBJ $BASE\$# -E -P -o /out/pp.i $BASE#")
+  DSET=$(printf '%s\n' "$CMD" | grep -oE ' -[DU][A-Za-z_][A-Za-z0-9_]*(=[^ ]*)?' | tr -d ' ' | tr '\n' ' ')
+  echo "  [$fl] -D set: $DSET"
+  # a tree whose psp/Makefile defaults MGIFT on must be compared with a compile line
+  # that has -DGBADHOC_MGIFT (round 10): a log from before it would gate the MGIFT=0 arm
+  for t in "$REF" "$NEW"; do
+    if grep -qE '^MGIFT \?= *1' "$t/psp/Makefile" 2>/dev/null && ! printf '%s' "$CMD" | grep -q -- ' -DGBADHOC_MGIFT'; then
+      echo "pp_diff: $fl: $LOG's main_psp.o line lacks -DGBADHOC_MGIFT but $t/psp/Makefile has MGIFT ?= 1: wrong logs" >&2; exit 2
+    fi
+  done
+  PP=$(printf '%s' "$CMD" | sed -e 's/ -MMD -MP / /' -e "s# -c -o $OBJ $BASE\$#${XDEFS:+ $XDEFS} -E -P -o /out/pp.i $BASE#")
   mkdir -p "$W/$fl"
   for side in ref new; do
     mkdir -p "$W/$fl/$side"
@@ -114,5 +136,5 @@ for fl in $FLAVOURS; do
   fi
 done
 if [ -n "$KEEP" ]; then KEEP=$(topath "$KEEP"); mkdir -p "$KEEP"; cp -r "$W"/. "$KEEP"/; echo "kept in $KEEP"; fi
-case $RC in 0) echo "G0 ok×$(echo $FLAVOURS | wc -w)" ;; 1) echo "G0 FAIL" ;; *) echo "G0 ERROR" ;; esac
+case $RC in 0) echo "G0 ok×$(echo $FLAVOURS | wc -w)${XDEFS:+ [$XDEFS]}" ;; 1) echo "G0 FAIL" ;; *) echo "G0 ERROR" ;; esac
 exit $RC

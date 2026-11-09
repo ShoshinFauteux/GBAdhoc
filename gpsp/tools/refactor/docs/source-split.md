@@ -14,7 +14,9 @@ All numbers are from 01067e74 (beta.4 base) unless marked. The scratch evidence 
 |---|---|
 | `pp_diff.sh` | T3, gate G0 |
 | `split.py` | T4: `cover`, `gen`, `split`, `inverse`, `replay`, `--selftest` |
-| `cutlist.txt` | T4's output, generated on 01067e74. Regenerate it; never hand-edit it |
+| `cutlist.txt` | T4's output for this tree's single-file `main_psp.c` (its header names the source sha256). Since PLAN-P-beta5 P1 it follows the P branch: every step that edits main_psp.c regenerates it (`gen --carry` the previous one) in the same commit. **After P4 `psp/main_psp.c` is the split shell, and the cutlist describes the split tree's INVERSE** (`split.py inverse --split gpsp -o F`: the shell with every `fe/X.inc.c` expanded in place; the header's sha256 is the inverse's). Regenerate it with `split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o gpsp/tools/refactor/cutlist.txt`; `gen --src` on the shell (the default `--src`) is refused before `-o` is opened. Never hand-edit it |
+| `fe_readme.py` | writes `psp/fe/README.md` (PLAN-P-beta5 §5.2: module descriptions, owners, the fragment → module map, the conventions of the split) from the cutlist's FRAG/F/G rows, the split tree and the PLAN §1.2 module table; `--check` exits 1 when the committed README is stale; `--selftest` (`tests/fe_readme_test.py`). P-review r2: the module descriptions are PLAN.md §1.2's Responsibility cells verbatim (`--plan PLAN.md` compares them, and the §1.3 exported names, §1.1 never-TU rows and §2 epochs it transcribes, cell for cell); every harness and mgift function is listed with its `#if` context read from the inverse (none = compiled by every build); the readers of each @extract region come from the host tests' `extract.extract` calls and the helpers that pass a name on (`marked_function`: `'fn:' + name`), resolved from literals with `ast`, and a read it cannot resolve is refused. P-review r3: every table cell escapes the pipe character (GFM splits a row at every unescaped one, code spans included) and the output is refused unless every table row has its header's GFM cell count (`--gfm FILE` checks any Markdown file); names are bare unless the cutlist defines them more than once (`name#N`); the copy sites in no T14 flavour come from `abi_asserts.py unbuilt` |
+| `tests/fixtures/cutlist_01067e74.txt` | the 01067e74 cutlist (was `cutlist.txt` until P1), used by the self-tests that run on the 01067e74 tree |
 | `modules.py` | PLAN §1.2/§1.3 as data: module ranges, the plan's name list, x1 groups, owner modules |
 | `csrc.py` | shared C-source model: census.py ported, with the `__attribute__` fix |
 | `globals.py` | T9: `census`, `rename`, `--selftest` |
@@ -47,13 +49,24 @@ How it works:
 ## T4 `split.py` + `cutlist.txt`
 
 ```
-python split.py cover [-v]                                   # crit_cover reproduced
-python split.py gen [--carry OLD] [--assign KEY=MODULE ...] -o cutlist.txt
-python split.py split --cutlist cutlist.txt --out DIR        # DIR/psp/main_psp.c (shell) + DIR/psp/fe/*.inc.c
-python split.py inverse --split DIR -o main_psp.c
+python split.py cover [--src F] [-v]                         # crit_cover reproduced
+python split.py gen [--src F | --split GPSP_DIR] [--carry OLD] [--assign KEY=MODULE ...] -o cutlist.txt
+python split.py split [--src F] --cutlist cutlist.txt --out DIR   # DIR/psp/main_psp.c (shell) + DIR/psp/fe/*.inc.c
+python split.py inverse --split DIR -o F
 python split.py replay --split DIR --cutlist cutlist.txt --patch P --out DIR2
-python split.py --selftest
+python split.py --selftest [--src F]
 ```
+
+`--src` defaults to this tree's `psp/main_psp.c`. Before P4 that is the single file; after P4 it is the shell, which `gen`, `split` and `cover` refuse. On the split tree, regenerate in two steps:
+
+```
+python split.py inverse --split gpsp -o F                    # the single file this tree's cutlist describes
+python split.py split --src F --cutlist gpsp/tools/refactor/cutlist.txt --out DIR
+python split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o C   # gen also takes --split itself
+python split.py replay --split gpsp --cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2
+```
+
+DIR and DIR2 are new directories (`split` refuses an `--out` that is its source's own tree); copy their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree.
 
 ### The cutlist
 
@@ -63,6 +76,7 @@ Cuts are found by anchor text, never by line number. A cut is legal only where a
 - `#if` depth is 0.
 - It is not inside an item, a comment or a directive continuation.
 - Glue such as comments, externs and `#define`s goes with the following item.
+- An own-line `/* @extract:end NAME */` (T7) goes with the PRECEDING item: it closes text above it, so `gen` never starts a unit (or a fragment) with one, and `split` refuses a FRAG anchor on one (PLAN-P-beta5 P1; self-test C6/M16). A begin marker is glue like a comment: a fragment can start with one.
 
 The generator also follows these rules:
 - **Head.** Module info, thread attributes and the pads (L:1-160) stay in the shell when the gap allows it.
@@ -70,6 +84,8 @@ The generator also follows these rules:
 - **Mixed `#if` blocks.** A top-level `#if` block that holds functions of two modules goes into the fragment of its majority module. The minority functions are reported as "pinned".
 
 `gen` without `--carry` uses the §1.2 line ranges and the plan's name list (`modules.py`). That is valid only on 01067e74's line numbers. On any other tree, `gen --carry` keeps every name's module and refuses new names. The review files new names with `--assign`.
+
+**The split tree (P-review 2026-11-08, B4).** The cutlist always describes the single-file `main_psp.c`. After P4 that file is `split.py inverse` of the shell and its fragments, and the cutlist's `source:` sha256 is the inverse's. `gen`, `split` and `cover` refuse a `--src` holding `#include "fe/X.inc.c"` lines, and `gen` refuses before it opens `-o` (until this fix, `gen` on the shell, which is the default `--src` on the P tree, wrote a 4-item, 1-FRAG cutlist over `-o` and only then refused). `gen --split GPSP_DIR` reads the inverse itself. `gen` writes `-o` through a temp file, renamed only after its own split check passes, so a refused gen never leaves a half cutlist. Self-test C7, M17 and M18. Only `gen` has `--split`: the refusal tells `split` and `cover` to write the inverse (`split.py inverse --split <gpsp dir> -o F`) and pass `--src F` (P-review r2: it used to name a `split --split` that does not exist). Self-test M19 runs every command a refusal names.
 
 ### What `split` refuses
 
@@ -120,7 +136,14 @@ Limits of the trace: compiled-pattern methods, `split`/`partition` pieces, and s
 
 **Does not prove:**
 - That every region a future test needs is marked. P1 enumerates them by grep at that time.
-- Anything about the C hand-mirrors `test_sram_exit_retry.c` and `test_ctl_map.c`. They read no text; they belong to the XS allow-list review.
+- Anything about the C hand-mirrors `test_sram_exit_retry.c` and `test_ctl_map.c`. They read no text; they belong to the XS allow-list review (abi-exit-ci.md, T8: "C hand mirrors").
+
+**P1 (PLAN-P-beta5 §4 P1, on the beta.5 base).** The 13 readers `--enumerate` finds read `psp/main_psp.c` through `read_source()` and take their regions through 65 marker pairs, each on its own lines around whole lines (no code line is edited by a marker):
+- `fn:NAME`: a function's definition through its closing brace's line; the tests' brace matcher (`test_psp_runtime.function`, via `marked_function`) still runs inside the region and returns the same text.
+- `def:`/`decl:`: the `#define` or declaration lines a test greps.
+- `ff:`, `lowlat:`, `menu:`, `qs:`, `sl:`, `sb:`, `vol:`, `spsc:`: the range a test slices (its old start/end anchors are still checked inside the region).
+
+Whole-file facts stay whole-file, over `read_source()`'s text: the ring-index classification of test_spsc_mg_wiring, the `sceAudioOutputBlocking` count and the apply's presence (test_volume), the single `loop_park()` (test_sleep_menu) and the single `"menu"` load (test_state_load_ask). `enumerate_readers` counts `read_source(` as a read, so a converted reader is still found, and it walks all of `gpsp/` recursively (paths relative to it), so a reader added in any subdirectory is found; `tools/refactor/` (the gate tools, which read main_psp.c by design) is left out unless `--gate` is given (12 on 01067e74, 13 on the P0c tree and on P1; 8 more with `--gate`). The cutlist P1 commits (`cutlist.txt`, carried from the P0b cutlist) keeps every row's module, fragment and occurrence; with the end-marker rule above every region stays inside one fragment (each `fe/*.inc.c` passes `extract.py --check` on its own), every fragment is the parent's text plus its own markers and `@lab` tags, and three FRAG rows re-anchor on the begin marker that now opens them (power.b `fn:power_cb`, pacing.d `lowlat:late_present`, shell.b `fn:main`). Every marker is checkable from the tree alone: main_psp.c minus its 130 own-line marker lines and its 18 `/* @lab */ ` tags is the parent byte for byte. The step's record, the planting script and the old-vs-new evidence are kept with the other P evidence outside the repository (`builds/mainpsp-p-out/p1/` in the owner's workspace, not tracked).
 
 ## T9 `globals.py`
 
@@ -204,7 +227,7 @@ Still open (documented, not fixed): a global defined through a macro (`PIN(g_x);
 
 ```
 python gpsp/tools/refactor/split.py cover
-python gpsp/tools/refactor/split.py gen --label "01067e74:gpsp/psp/main_psp.c" -o gpsp/tools/refactor/cutlist.txt
+python gpsp/tools/refactor/split.py gen --label "01067e74:gpsp/psp/main_psp.c" -o gpsp/tools/refactor/cutlist.txt   # now tests/fixtures/cutlist_01067e74.txt
 python gpsp/tools/refactor/split.py split --cutlist gpsp/tools/refactor/cutlist.txt --out <scratch>/split-base
 bash gpsp/tools/refactor/pp_diff.sh --ref gpsp --new gpsp --overlay <scratch>/split-base          # WSL
 python gpsp/tools/refactor/globals.py census --basis builds/mainpsp-map/out/scratch/vars_g.json

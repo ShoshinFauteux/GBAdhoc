@@ -20,44 +20,51 @@ import subprocess
 import sys
 import tempfile
 
+import extract
+
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+SOURCE = extract.read_source(str(ROOT / "psp/main_psp.c"))
 HARNESS = ROOT / "tools/test_lowlat_policy.c"
 
+# Each range is read through its @extract marker: it starts at a and ends right
+# before b (both still checked).
 RANGES = (
-    ("#ifndef PLAY_ME_LOWLAT", "static int mer_rewind_busy(void);"),
-    ("static int mer_retire_early_active(void)", "/* VISIBLE-END POST"),
-    ("static void me_rend_present(void)", "/* SAME-FRAME RETIREMENT."),
-    ("static void me_rend_retire_if_idle(void)", "/* Called from plat_video_frame"),
-    ("static int lat_swap(int early)", "static void lat_census(void)"),
-    ("/* LATE PRESENT (tier 0b).", "int main(int argc"),
+    ("lowlat:defaults", "#ifndef PLAY_ME_LOWLAT", "static int mer_rewind_busy(void);"),
+    ("lowlat:mer_retire_early_active", "static int mer_retire_early_active(void)", "/* VISIBLE-END POST"),
+    ("lowlat:me_rend_present", "static void me_rend_present(void)", "/* SAME-FRAME RETIREMENT."),
+    ("lowlat:me_rend_retire_if_idle", "static void me_rend_retire_if_idle(void)", "/* Called from plat_video_frame"),
+    ("lowlat:lat_swap", "static int lat_swap(int early)", "static void lat_census(void)"),
+    ("lowlat:late_present", "/* LATE PRESENT (tier 0b).", "int main(int argc"),
 )
 
 
-# Fragments of main()'s game loop, included into the model's loop body.
+# Fragments of main()'s game loop, included into the model's loop body: a to b,
+# taken from inside the marked region that holds both.
 FRAGMENTS = (
-    ("lowlat_top.inc", "\n      g_ll_iter_h = 0;\n",
+    ("lowlat_top.inc", "lowlat:top", "\n      g_ll_iter_h = 0;\n",
      "#ifdef REWIND\n      if (g_drew && (g_rw_on || g_rwh.denied))", False),
-    ("lowlat_want.inc",
+    ("lowlat_want.inc", "lowlat:want",
      "         if (!g_ff_mult && ring_w - ring_r > RING_HIGH_WATER &&",
      "         audio_ring_note();", False),
-    ("lowlat_wait.inc", "         lat_wait_begin(want);",
+    ("lowlat_wait.inc", "lowlat:wait", "         lat_wait_begin(want);",
      "         g_lw_swapped = 0;\n", True),
 )
 
 
 def production(source):
+    plain = extract.strip_markers(source)
     parts = []
-    for a, b in RANGES:
-        i = source.index(a)
-        j = source.index(b, i)
-        parts.append(source[i:j])
+    for region, a, b in RANGES:
+        text = extract.extract(source, region)
+        assert text.startswith(a) and text + b in plain, region
+        parts.append(text)
     files = {"lowlat.inc": "\n".join(parts)}
-    for name, a, b, incl in FRAGMENTS:
+    for name, region, a, b, incl in FRAGMENTS:
         assert source.count(a) == 1, name
-        i = source.index(a)
-        j = source.index(b, i) + (len(b) if incl else 0)
-        files[name] = source[i:j]
+        text = extract.extract(source, region)
+        i = text.index(a)
+        j = text.index(b, i) + (len(b) if incl else 0)
+        files[name] = text[i:j]
     return files
 
 

@@ -34,7 +34,10 @@ R=$BASE/release; L=$BASE/lab
 expect 0 "C0 selftest" $SS --selftest
 expect 0 "C1 golden green on release/lab/harness" $SS checkrun --run "$BASE" --golden "$G"
 $SS golden --run "$BASE" --src "$SRC" --out "$OUT/golden2.tsv" > /dev/null
-cmp -s "$G" "$OUT/golden2.tsv" && ok "C2 regenerated golden == committed" || bad "C2 golden differs"
+# the refs column lists the referencing files in directory-walk order, which depends on
+# the filesystem (a tar-extracted tree walks differently: seen 2026-11-07); compare it as a set
+normrefs() { tr -d '\r' < "$1" | awk -F'\t' -v OFS='\t' 'NF >= 6 { n = split($6, a, " "); for (i = 2; i <= n; i++) for (j = i; j > 1 && a[j-1] > a[j]; j--) { t = a[j]; a[j] = a[j-1]; a[j-1] = t }; s = a[1]; for (i = 2; i <= n; i++) s = s " " a[i]; $6 = s } { print }'; }
+cmp -s <(normrefs "$G") <(normrefs "$OUT/golden2.tsv") && ok "C2 regenerated golden == committed (refs as a set)" || bad "C2 golden differs"
 
 $MUT "$R/gpsp_adhoc.elf" "$OUT/m1.elf" bind gpsp_visible_done_hook 2 > /dev/null
 expect 1 "M1 hook binding WEAK" $SS check --elf "$OUT/m1.elf" --map "$R/gpsp_adhoc.map" --flavour release --golden "$G"

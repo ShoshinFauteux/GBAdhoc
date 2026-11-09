@@ -71,11 +71,15 @@ def docker_run(src_root, workdir, cmd, extra_mounts=None, image=IMAGE):
 
 
 def preprocess(src_root, flavour_dir, obj='main_psp.o', subdir='psp', log='.build-eboot.log',
-               override=None):
+               override=None, extra=None):
     """override: a host file bind-mounted (read-only) over /build/<subdir>/<source>,
-    so a MUTATED copy of one source is preprocessed without touching the tree."""
+    so a MUTATED copy of one source is preprocessed without touching the tree.
+    extra: [(host file, path relative to /build/<subdir>)], more read-only overlays (a
+    mutated fragment fe/X.inc.c of a split main_psp.c)."""
     argv = pp_argv(compile_argv(flavour_dir, obj, log))
-    mounts = [(override, '/build/%s/%s' % (subdir, argv[-1]), 'ro')] if override else None
+    mounts = [(override, '/build/%s/%s' % (subdir, argv[-1]), 'ro')] if override else []
+    mounts += [(h, '/build/%s/%s' % (subdir, rel), 'ro') for h, rel in (extra or [])]
+    mounts = mounts or None
     rc, out, err = docker_run(src_root, '/build/' + subdir, ' '.join(shlex.quote(a) for a in argv), mounts)
     if rc != 0:
         sys.stderr.write(err[-4000:])

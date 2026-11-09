@@ -41,21 +41,30 @@ import re
 import subprocess
 import tempfile
 
-from test_psp_runtime import function
+import extract
+from test_psp_runtime import marked_function
 
 ROOT = Path(__file__).resolve().parents[2]
-MAIN = (ROOT / "psp/main_psp.c").read_text(encoding="utf-8")
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
+
+# the @extract region of main_psp.c each #define is read from
+DEFINE_REGION = {"AUDIO_JOIN_US": "def:AUDIO_JOIN_US", "IO_JOIN_US": "def:IO_JOIN_US",
+                 "SQ_SAV_LAND_US": "def:sq_bounds", "SQ_NET_TERM_US": "def:sq_bounds",
+                 "PWR_QUIESCE_WAIT_US": "def:sq_bounds", "SLEEP_HOLD_NAPS": "def:SLEEP_HOLD_NAPS"}
 
 
 def define(src, name):
-    m = re.search(r"^#define " + name + r"\b(?:.*\\\n)*.*$", src, re.M)
+    m = re.search(r"^#define " + name + r"\b(?:.*\\\n)*.*$",
+                  extract.extract(src, DEFINE_REGION[name]), re.M)
     assert m, name + " not found"
     return m.group(0)
 
 
 def list_call(main_src):
-    """main()'s game-list call, from the boot mark to the answer's check."""
+    """main()'s game-list call, from the boot mark to the answer's check (read
+    through its @extract marker sb:list_call)."""
+    main_src = extract.extract(main_src, "sb:list_call")
     head = "         boot_timeline_emit();\n      }\n"
     i = main_src.find(head)
     assert i >= 0, "the game list's call in main() not found"
@@ -263,13 +272,13 @@ def build(main_src, ui_src):
                        ("AUDIO_JOIN_US", "IO_JOIN_US", "SQ_SAV_LAND_US", "SQ_NET_TERM_US",
                         "PWR_QUIESCE_WAIT_US"))
     hold = define(main_src, "SLEEP_HOLD_NAPS") + "\n" + \
-        function(main_src, "sleep_park_hold")
+        marked_function(main_src, "sleep_park_hold")
     return (STUB.replace("@BOUNDS@", bounds)
                 .replace("@SETTER@", setter(ui_src))
                 .replace("@PARKCALL@", park_call(ui_src))
                 .replace("@HOLD@", hold)
-                .replace("@CALLBACK@", function(main_src, "power_cb"))
-                .replace("@PARK@", function(main_src, "browser_park"))
+                .replace("@CALLBACK@", marked_function(main_src, "power_cb"))
+                .replace("@PARK@", marked_function(main_src, "browser_park"))
                 .replace("@LISTCALL@", list_call(main_src)))
 
 

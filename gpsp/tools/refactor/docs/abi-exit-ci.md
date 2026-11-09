@@ -165,6 +165,14 @@ Tests (`abi-exit-ci_test_exit.sh`, 17/17 pass):
 
 **Regenerating the golden.** §3.6 says HW-1/HW-2 change the pre-image first, so the golden is regenerated from their tip, not from 01067e74. `exit_matrix.py all` on that tip writes the new golden. `check --allow` takes `flavour<TAB>site<TAB>fix-commit` rows for reviewed differences.
 
+**C hand mirrors (part of every allow-list review; PLAN-P-beta5 P1).** These C tests copy an order or a constant of main_psp.c by hand. They read no text, so no `@extract` marker protects them, and XS cannot see them. A commit that changes what they mirror updates them in the same commit, and the allow-list review checks that it did:
+
+| Mirror | Mirrors in main_psp.c |
+|---|---|
+| `tools/tests/test_sram_exit_retry.c` `exit_like_the_psp()` (comment "What the PSP's exit does to the save, in order") | the teardown's save order: `io_thread_stop()` (the writer's last pass, then synchronous ownership and a sync), then `fe_host_shutdown()`'s flush / sync / close |
+| `tools/tests/test_ctl_map.c` `plat_mask()` and `rig_step()` (comments "composed exactly as main_psp.c's plat_input_bitmask()" and "One loop iteration as main_psp.c runs it") | `plat_input_bitmask()`'s game mask plus turbo, and the loop's pad sample / turbo step / per-frame input order |
+| `frontend-common/fe_gblink.c` `NO_PEER_STEPS` (30 × 60 setup steps) | `LINK_START_GRACE_US` (30 s; in `fe/fe_priv.h` since P5, used by `gblink_service`), the peer-dead grace `gblink_service` sets while the partner's HELLO is still missing: the same wait, in display steps there and in microseconds here |
+
 ---
 
 ## T11 `ci_greps.sh`
@@ -224,22 +232,26 @@ Tests (`abi-exit-ci_test_ci_greps.sh`, all pass):
 
 ```
 abi_asserts.py all --run RUNDIR --src GPSP --out DIR          # DIR/<fl>/fe_abi_asserts.h
-abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--core-h F TREEPATH] [--test-c F] [--known K]
+abi_asserts.py gen --flavour-dir RUN/<fl> --src GPSP --out DIR [--main-c F] [--frag F fe/X.inc.c]... [--core-h F TREEPATH] [--test-c F] [--known K]
+abi_asserts.py unbuilt --src GPSP [--gen DIR]                 # copy sites no DIR/<fl>/fe_abi_asserts.h cites (no docker)
 ```
 
 **How it builds the header.**
 1. It reads the frontend side from `psp-gcc -E` of main_psp.c, so each flavour gets its own set of copies. It takes every `extern` (file or block scope) and every file-scope prototype of a function main_psp.c does not define.
 2. For each one it emits `typedef <copy with NAME -> abi_fe_t_NAME>` and `_Static_assert(__builtin_types_compatible_p(__typeof__(&NAME), abi_fe_t_NAME *))`. Comparing **pointers** keeps const/volatile in the check.
-3. The check TU is `#include "common.h"` + the header, compiled with -fsyntax-only on the flavour's own logged `main.o` compile line (the core flags).
-4. A discovery pass moves names the core headers do not declare, and frontend types the core TU cannot see, into an UNCHECKED list in the header, with the reason.
+3. The check TU is `#include "common.h"` + `#include "psp/sleep_q.h"` + the header, compiled with -fsyntax-only on the flavour's own logged `main.o` compile line (the core flags).
+4. A discovery pass moves the names the check TU's headers do not declare (common.h's chain and psp/sleep_q.h only: `gbcore_prepare`, declared in `gbcore/gbcore.h`, is UNCHECKED because the check TU does not include that header), and frontend types the core TU cannot see, into an UNCHECKED list in the header, with the reason. So a flavour's header lists every copy in that flavour's `-E`: the asserted ones and the UNCHECKED ones. A copy in an `#if` arm the flavour does not compile is in neither list, and a copy in an arm that none of release, lab and harness compiles is in no generated header. `abi_asserts.py unbuilt --src GPSP` lists those sites (P-review r3, B6): it runs the same extraction on the raw TU (`aec_cparse.load_raw`, the shell with its fragments, every `#if` arm kept) and prints the copy sites no generated header cites. At the P-review r3 tree that is 6 of 124 sites: `gamepak_reopens` in `main()` (GPSP_STANDBY_NOTES), `gbab_reg` and `fe_gbadual_running_inst` (DRPROF_HW), `rom_hash_census` (ROM_HASH_CENSUS), `jit_pub_inline` and `xlat_scan_fast` (JIT_COST_KEYS). It refuses when a cited site is missing from the raw scan (other than the 4 `__lib_*` externs that `PSP_MODULE_INFO` expands) or an uncited site is in no `#if` group (the headers are stale). Most UNCHECKED copies (the `rfu_set_*` setters, `sched_fast`, `gpsp_wallclock`, ...) are not in fe_priv.h's index, which is PLAN-P-beta5 §5.2's set (the asserted names plus six). `tests/p0a_t14_tu.py index` checks that statement against the generated headers (P-review r2, N4), and that fe_priv.h names the sites `unbuilt` lists (r3).
 5. Constants are asserted too: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h, and MER_INPUT_US/MER_RETIRE_US/MER_MISS_LIMIT/VRAM_DIRTY_PAGES against `tools/test_ff_pipeline.c`.
 
-The headers are generated into `generated/<flavour>/` (01067e74) and the scratch dirs. **They are not wired into the emulator build.**
+The headers are generated into `generated/<flavour>/` and the scratch dirs. **They are not wired into the emulator build.** `generated/<flavour>/` holds the check TU (`abi_check.c` + `fe_abi_asserts.h`, from `abi_asserts.py all`) of the tree it was last regenerated on: compile-only (`-fsyntax-only`, core flags), never in any OBJS list, so no linked object changes. P1 first committed it on the single-file P1 tree; since the P-review commits it is the split tree's (after P4), so its cites are `fe/X.inc.c:N` and `main_psp.c:N` lines of the shell, which do not exist in the P1 tree. Regenerate rather than edit.
+
+**On the split tree (PLAN-P-beta5 P4; P-review 2026-11-08, B3).** `psp/main_psp.c` is then a shell that includes `psp/fe/X.inc.c`. The `-E` view already follows the includes, and every cite is the file and line that hold the copy: `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (a single-file tree keeps its old `main_psp.c:N` cites). The constants are read from the raw text in TU order (`tu_lines`: the shell with each `#include "fe/..."` expanded, `fe_priv.h` and `play_defaults.h` included), and **a constant that is not found fails the gen** (exit 1, `constants: CONSTANT MISSING`): before the fix, a split shell lost all six constant asserts at rc 0. `--frag FILE fe/X.inc.c` lays a mutated copy of one fragment over the tree (for `-E` and the constants). A KNOWN reason is printed with the label `abi_asserts.known reason, its line cites are main_psp.c at 01067e74`, because those cites are 01067e74 lines. `tests/p0a_b5.sh t14` holds the split-tree rows: every cite of the generated header must name its line (`tests/p0a_t14_tu.py cites`), the gpsp_rom_load_progress sites are found through the includes, a fragment copy and a constant mutated with `--frag` fail their asserts, a renamed constant fails the gen, and a tool that reads the constants from the raw shell only (the pre-review rule) is caught. `tests/abi-exit-ci_test_abi.sh` edits the split tree's `split.py inverse` (laid over the shell with `--main-c`) for its main_psp.c mutants.
 
 **What it proves.** Each asserted copy has the core's exact C type: arity, parameter order and types, pointer levels, qualifiers and return type. This covers the 21-parameter `core_phase_take`, `smc_prof_take`, `smc_blk_take`, the 2041-2053 and 4856-4864 externs, and the copied constants.
 
 **What it does not prove.**
 - It cannot check copies with no core header declaration: 43 in release and 53 in lab/harness. Examples are the `rfu_set_*` setters, which rfu.c defines with no header, the weak probes, `gamepak_buffers`, and `gpsp_rtc_peek`. They are listed in the header, and they would be checked if a core header gained the declaration.
+- It cannot check copies in `#if` arms that none of release, lab and harness compiles: no flavour's `-E` has them. `abi_asserts.py unbuilt` lists them (6 at P-review r3).
 - It does not compare against the *definitions* in .c files.
 - It does not check frontend-common or other TUs' copies.
 

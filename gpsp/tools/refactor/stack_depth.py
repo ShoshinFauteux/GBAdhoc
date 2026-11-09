@@ -313,6 +313,11 @@ def find_jump_tables(elf, funcs):
 SU_RE = re.compile(r'^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+):(?P<name>\S+)\s+(?P<n>\d+)\s+(?P<q>\S+)')
 
 
+def _stem(path):
+    """'main_psp.c' -> 'main_psp' (the ELF STT_FILE name of a CU, or a .su file name)."""
+    return os.path.splitext(os.path.basename(path or ''))[0]
+
+
 def load_su(su_dir, funcs):
     """match .su records to ELF functions; returns (matched, unmatched_records)"""
     by_global = {}
@@ -321,7 +326,7 @@ def load_su(su_dir, funcs):
         if f.bind != 0:
             by_global.setdefault(f.name, []).append(f)
         else:
-            by_local.setdefault((os.path.basename(f.file or ''), f.name), []).append(f)
+            by_local.setdefault((_stem(f.file), f.name), []).append(f)
     matched, unmatched = 0, []
     for root, _, files in os.walk(su_dir):
         for fn in files:
@@ -334,7 +339,10 @@ def load_su(su_dir, funcs):
                     continue
                 name, n, q = m.group('name'), int(m.group('n')), m.group('q')
                 src = os.path.basename(m.group('file'))
-                cands = by_local.get((src, name)) or by_global.get(name) or []
+                # a static is keyed by its OBJECT (the .su file's stem: main_psp.su ->
+                # main_psp.c's CU), not by the record's source file: after the P4 split a
+                # static of main_psp.o reports psp/fe/<frag>.inc.c here (P0a, review 2 #28)
+                cands = by_local.get((fn[:-3], name)) or by_global.get(name) or []
                 if len(cands) != 1:
                     unmatched.append((os.path.relpath(p, su_dir), name, n, len(cands)))
                     continue

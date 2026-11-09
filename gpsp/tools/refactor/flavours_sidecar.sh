@@ -53,23 +53,32 @@ one() {   # one <wd> <compile line>
   rm -f "$dst.nd" "$dst.real.nd"
 }
 
+
+# wd<TAB>line for every compile command, tracking make's directory changes.
+# make echoes a recipe line continued with `\` as several log lines (the three
+# layout_pad_mid.S pads: layout_pad_fe.o, layout_pad_gb.o, layout_pad_core.o,
+# psp/Makefile); they are joined first, as the shell joined them, or the replay
+# would drop the -D after the break and DIFF/COMPILE-FAIL.
+emit() {   # emit <log> <start wd>
+  tr -d '\r' < "$1" | awk '
+    { while ($0 ~ /\\$/ && (getline nxt) > 0) { sub(/\\$/, "", $0); sub(/^[ \t]+/, "", nxt); $0 = $0 " " nxt } print }' |
+  awk -v wd="$2" '
+    /^make(\[[0-9]+\])?: Entering directory / { s=$0; sub(/.*directory ./, "", s); sub(/.$/, "", s); stack[++n]=wd; wd=s; next }
+    /^make(\[[0-9]+\])?: Leaving directory /  { if (n>0) wd=stack[n--]; next }
+    /^(psp-gcc|psp-g\+\+) / && / -c / && / -o [^ ]+\.o( |$)/ { print wd "\t" $0 }'
+}
+if [ "${1:-}" = emit ]; then emit "$2" "$3"; exit 0; fi   # emit <log> <wd>: the compile list (tests)
 if [ "${1:-}" = one ]; then one "$2" "$3"; exit 0; fi
 [ "${1:-}" = all ] || { echo "usage: $0 all"; exit 2; }
 
 rm -rf "$SC"; mkdir -p "$SC/obj"
 : "${SOURCE_DATE_EPOCH:?flavours.sh must pass SOURCE_DATE_EPOCH (or FLAV_NO_SDE=1)}"
 [ "$SOURCE_DATE_EPOCH" = none ] && unset SOURCE_DATE_EPOCH
-
-# wd<TAB>line for every compile command, tracking make's directory changes.
-emit() {   # emit <log> <start wd>
-  tr -d '\r' < "$1" | awk -v wd="$2" '
-    /^make(\[[0-9]+\])?: Entering directory / { s=$0; sub(/.*directory ./, "", s); sub(/.$/, "", s); stack[++n]=wd; wd=s; next }
-    /^make(\[[0-9]+\])?: Leaving directory /  { if (n>0) wd=stack[n--]; next }
-    /^(psp-gcc|psp-g\+\+) / && / -c / && / -o [^ ]+\.o( |$)/ { print wd "\t" $0 }'
-}
 { emit /build/.build-core.log /build; emit /build/.build-eboot.log /build/psp; } > "$SC/compiles.tsv"
 NC=$(wc -l < "$SC/compiles.tsv")
 echo "sidecar: $NC compile lines"
+MIDPADS=$(awk -F'\t' '$2 ~ /layout_pad_mid\.S/ { if (match($2, / -o layout_pad_[a-z]+\.o /)) print substr($2, RSTART + 4, RLENGTH - 5) }' "$SC/compiles.tsv" | sort | tr '\n' ' ')
+echo "sidecar: layout_pad_mid.S objects in the compile list: ${MIDPADS:-none}"
 # xargs -P: each worker gets wd and line as two args
 awk -F'\t' '{ printf "%s%c%s%c", $1, 0, $2, 0 }' "$SC/compiles.tsv" |
   xargs -0 -n2 -P "${SIDECAR_JOBS:-6}" bash "$0" one > "$SC/objects.txt" 2>&1
@@ -108,8 +117,8 @@ psp-nm -S -n /build/psp/gpsp_adhoc.elf > /out/elf.nm 2>/dev/null
 
 # drop the replayed objects (big); keep .su, logs and the verdicts
 find "$SC/obj" -name '*.o' -delete; rm -f "$SC/relink.elf"
-printf 'objects_same_bytes=%s\nobjects_same_nodebug=%s\nobjects_diff=%s\nobjects_skip_generated=%s\nobjects_other=%s\nsu_files=%s\nrelink=%s\n' \
-  "$((SAME - SAMEND))" "$SAMEND" "$DIFF" "$SKIP" "$BAD" "$NSU" "$RELINK" > /out/sidecar.txt
+printf 'objects_same_bytes=%s\nobjects_same_nodebug=%s\nobjects_diff=%s\nobjects_skip_generated=%s\nobjects_other=%s\nsu_files=%s\nrelink=%s\nmid_pads=%s\n' \
+  "$((SAME - SAMEND))" "$SAMEND" "$DIFF" "$SKIP" "$BAD" "$NSU" "$RELINK" "${MIDPADS% }" > /out/sidecar.txt
 # the container runs as root: hand the outputs back, so the next run can clear them
 [ -n "${HOST_UID:-}" ] && chown -R "$HOST_UID:${HOST_GID:-$HOST_UID}" /out
 [ "$DIFF" -eq 0 ] && [ "$BAD" -eq 0 ] && [ "$RELINK" = SAME ] && [ "$SAME" -gt 0 ]

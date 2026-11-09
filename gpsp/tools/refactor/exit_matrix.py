@@ -50,7 +50,15 @@ import aec_cparse as C  # noqa: E402
 FLAVOURS = ('release', 'lab', 'harness')
 
 # ------------------------------------------------------------- site vocabulary
+# P3's names for the hijacked SDK calls (PLAN-P-beta5 §4 P3): FE_EXIT_GAME() is EXIT
+# (P13), FE_HANDOFF(c, w) is HO (P10).  The raw view reads them AS the call they wrap
+# (aec_cparse alias at lex time), so P3's sed leaves every table identical; -E already
+# shows the expansion.
+EXIT_ALIAS = {'FE_EXIT_GAME': 'sceKernelExitGame', 'FE_HANDOFF': 'handoff_run'}
+EXIT_NAMES = ('sceKernelExitGame', 'FE_EXIT_GAME')
+HANDOFF_NAMES = ('handoff_run', 'FE_HANDOFF')
 VOC = {
+    'FE_EXIT_GAME': 'EXIT', 'FE_HANDOFF': 'HO',
     'io_thread_stop': 'IO', 'fe_host_shutdown': 'HOST', 'PSP_REWIND_GAME_OVER': 'RW',
     'psp_rom_pool_over': 'RW', 'psp_rewind_pwr': 'RW', 'audio_stop': 'AUD',
     'vid_term': 'VID', 'fe_evt': 'EVT', 'evt_shutdown': 'ES', 'handoff_run': 'HO',
@@ -60,28 +68,43 @@ VOC = {
     'me_host_shutdown': 'ME', 'net_teardown': 'NET', 'online_psp_down': 'NET',
 }
 
-# x2-exit-paths.md §2.1-2.3 (01067e74): id, first line, last line, steps as x2 wrote them
+# x2-exit-paths.md §2.1-2.3: id, ANCHOR, steps as x2 wrote them.  No line numbers
+# (P0a: x2's 01067e74 ranges were A1 15088-15112 ... C4 16308-16328; every later tree
+# moved them).  The anchor is the site's distinctive statement: the reason string it
+# hands the Lab (`why`, a substring of the handoff_run/relaunch_eboot/lab_finish
+# argument), or `call:NAME` for a site whose reason is empty.  Sites are matched IN
+# ORDER: entry k takes the next main() site whose anchor matches, so a duplicated
+# reason (B3/B4/B10 "sidecar_path_too_long") is told apart by its ordinal, and a site
+# that moved, vanished or was replaced leaves its id unassigned (the x2 check fails).
 X2 = [
-    ('A1', 15088, 15112, 'AUD VID EVT ES HO EXIT'),
-    ('A2', 15114, 15125, 'AUD VID EVT ES HO EXIT'),
-    ('A3', 15130, 15144, 'AUD VID EVT ES HO EXIT'),
-    ('A4', 15147, 15160, 'AUD VID EVT ES HO EXIT'),
-    ('A5', 15163, 15178, 'AUD VID EVT ES HO EXIT'),
-    ('B1', 15291, 15301, 'EVT ES AUD VID HO EXIT'),
-    ('B2', 15302, 15311, 'EVT ES AUD VID HO EXIT'),
-    ('B3', 15317, 15327, 'EVT ES AUD VID HO EXIT'),
-    ('B4', 15330, 15340, 'EVT ES AUD VID HO EXIT'),
-    ('B5', 15361, 15369, 'EVT ES AUD HO EXIT'),
-    ('B6', 15370, 15380, 'EVT ES AUD HO EXIT'),
-    ('B7', 15383, 15391, 'EVT ES AUD HO EXIT'),
-    ('B8', 15406, 15419, 'EVT ES AUD VID RL EXIT'),
-    ('B9', 15420, 15429, 'EVT ES AUD VID HO EXIT'),
-    ('B10', 15466, 15476, 'EVT ES AUD VID HO EXIT'),
-    ('C1', 16009, 16035, 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
-    ('C2', 16214, 16240, 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
-    ('C3', 16288, 16305, 'IO HOST RW AUD VID EVT ES HO EXIT'),
-    ('C4', 16308, 16328, 'IO HOST RW AUD VID EVT ES HO EXIT'),
+    ('A1', '"prev_run_uncollected"', 'AUD VID EVT ES HO EXIT'),
+    ('A2', 'why:NULL', 'AUD VID EVT ES HO EXIT'),
+    ('A3', '"icinv_fail"', 'AUD VID EVT ES HO EXIT'),
+    ('A4', '"icprobe_fail"', 'AUD VID EVT ES HO EXIT'),
+    ('A5', '"nettest_fail"', 'AUD VID EVT ES HO EXIT'),
+    ('B1', '"bad_variant"', 'EVT ES AUD VID HO EXIT'),
+    ('B2', '"rom_path_too_long"', 'EVT ES AUD VID HO EXIT'),
+    ('B3', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
+    ('B4', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
+    ('B5', '"rom_path_too_long"', 'EVT ES AUD HO EXIT'),
+    ('B6', '"rom_missing"', 'EVT ES AUD HO EXIT'),
+    ('B7', '"no_rom"', 'EVT ES AUD HO EXIT'),
+    ('B8', 'call:relaunch_eboot', 'EVT ES AUD VID RL EXIT'),
+    ('B9', '"no_rom"', 'EVT ES AUD VID HO EXIT'),
+    ('B10', '"sidecar_path_too_long"', 'EVT ES AUD VID HO EXIT'),
+    ('C1', '"mem_budget"', 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
+    ('C2', '"load_failed"', 'LOADFIN NOTICE EVT ES AUD VID HO EXIT'),
+    ('C3', '"bad_script"', 'IO HOST RW AUD VID EVT ES HO EXIT'),
+    ('C4', '"net_failed"', 'IO HOST RW AUD VID EVT ES HO EXIT'),
 ]
+
+
+def x2_anchor_ok(row, anchor):
+    if anchor.startswith('call:'):
+        return any(c.name == anchor[5:] for c in row['calls'])
+    if anchor.startswith('why:'):
+        return row['why'] == anchor[4:]
+    return anchor in row['why']
 
 # ------------------------------------------------------------- D step table (PLAN §3.2)
 STEP_ORDER = ('D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 D10 D11 D12 D13 D13b D14 D15 D16 D16b D17 D18 '
@@ -122,6 +145,7 @@ PE_STEPS = {
     'psp_local_wallclock': 'P5', 'ctl_stick_name': 'P6', 'core_health_evt': 'P7',
     'evt_shutdown': 'P9', 'handoff_run': 'P10', 'lab_finish': 'P10', 'lab_active': 'P10',
     'LAB_HANDOFF': 'P10', 'relaunch_eboot': 'P12', 'sceKernelExitGame': 'P13',
+    'FE_HANDOFF': 'P10', 'FE_EXIT_GAME': 'P13',
 }
 PE_EVT = {'audio_hash': 'P3', 'rtc_clock': 'P5', 'stick_range': 'P6', 'exit': 'P8'}
 
@@ -212,7 +236,7 @@ def sites(view):
 
     def direct_exit(s):
         return isinstance(s, C.Simple) and any(
-            c.name == 'sceKernelExitGame' for c in C.calls_in(s.toks))
+            c.name in EXIT_NAMES for c in C.calls_in(s.toks))
     for blk, k in C.blocks_containing(main, direct_exit):
         if blk is main:
             continue                       # the final ExitGame: family D
@@ -225,7 +249,7 @@ def sites(view):
             continue
         body = C.parse_body(view.toks, lo, hi)
         cl = C.walk_calls(body)
-        if any(c.name == 'sceKernelExitGame' for c in cl):
+        if any(c.name in EXIT_NAMES for c in cl):
             res.append(_site_row(view, fn, body, cl))
     res.sort(key=lambda r: r['line'])
     _assign_ids(view, res)
@@ -242,12 +266,18 @@ def _assign_ids(view, res):
     if view.line_ids is not None:
         for r in mains:
             r['id'] = view.line_ids.get(r['line'], '-')
-    elif len(mains) == len(X2):
-        for r, x in zip(mains, X2):
-            r['id'] = x[0]
     else:
+        # by anchor, in order (X2): entry k takes the next site whose anchor matches
         for r in mains:
             r['id'] = '-'
+        j = 0
+        for sid, anchor, _ in X2:
+            k = j
+            while k < len(mains) and not x2_anchor_ok(mains[k], anchor):
+                k += 1
+            if k < len(mains):
+                mains[k]['id'] = sid
+                j = k + 1
     seen = set()
     for k, r in enumerate(mains):
         r['key'] = r['id'] if r['id'] != '-' and r['id'] not in seen else 'main#%02d' % k
@@ -262,11 +292,11 @@ def site_ids(st):
 
 
 def _site_row(view, fn, blk, calls):
-    term = [c for c in calls if c.name == 'sceKernelExitGame'][-1]
+    term = [c for c in calls if c.name in EXIT_NAMES][-1]
     a, _ = C.node_span(blk)
     code = why = ''
     for c in calls:
-        if c.name in ('handoff_run', 'relaunch_eboot', 'lab_finish'):
+        if c.name in HANDOFF_NAMES + ('relaunch_eboot', 'lab_finish'):
             parts = [p.strip().strip('()') for p in re.split(r',(?![^(]*\))', norm_cond(c.args))]
             code = parts[0] if parts else ''
             why = parts[1] if len(parts) > 1 else ''
@@ -633,6 +663,15 @@ def raw_vs_e(raw, ev, dm):
                 out.setdefault(('D', r['name'], r['line']), r)
         return out
     a, b = callset(raw), callset(ev)
+
+    def in_dm(name):
+        """a macro of this -E view: the name itself, or the FE_* macro the raw view's
+        alias read AS this name (P3: the hijack is FE_EXIT_GAME/FE_HANDOFF in -dM)."""
+        return name in dm or any(k in dm for k, v in EXIT_ALIAS.items() if v == name)
+
+    def dm_text(name):
+        k = name if name in dm else next((k for k, v in EXIT_ALIAS.items() if v == name and k in dm), name)
+        return dm.get(k)
     raw_by_line = {}
     for t in raw.toks:
         raw_by_line.setdefault(t.line, []).append(t)
@@ -649,16 +688,16 @@ def raw_vs_e(raw, ev, dm):
             ifs = tok.ifs if tok is not None else ()
             # the macro invocation this call sits in (an argument of fe_evt, LAB_FFP(...))
             outer = [t.text for t in _stmt_toks(stmt) + raw_by_line.get(line, [])
-                     if t.kind == 'id' and t.text in dm and t.text != name]
-            if name in dm:
+                     if t.kind == 'id' and in_dm(t.text) and t.text != name]
+            if in_dm(name):
                 why = 'macro'
-                detail = '%s -> %s' % (name, (dm[name] or '(empty)')[:60])
+                detail = '%s -> %s' % (name, (dm_text(name) or '(empty)')[:60])
             elif ifs and line not in ev.lines:
                 why = '#if'
                 detail = ifs[-1][:70]
             elif outer:
                 why = 'macro'
-                detail = 'argument of %s -> %s' % (outer[0], (dm[outer[0]] or '(empty)')[:50])
+                detail = 'argument of %s -> %s' % (outer[0], (dm_text(outer[0]) or '(empty)')[:50])
             elif ifs:
                 why = '#if'
                 detail = ifs[-1][:70]
@@ -669,7 +708,7 @@ def raw_vs_e(raw, ev, dm):
                 why, detail = '#if', ifs[-1][:70]
         else:
             side = 'E_only'
-            mac = [t.text for t in raw_by_line.get(line, []) if t.kind == 'id' and t.text in dm]
+            mac = [t.text for t in raw_by_line.get(line, []) if t.kind == 'id' and in_dm(t.text)]
             if mac:
                 why = 'macro'
                 detail = 'expanded from ' + ','.join(sorted(set(mac)))[:60]
@@ -752,11 +791,11 @@ def check_x2(st, label, raw_st=None):
     out, bad = [], 0
     by = {s['id']: s for s in st}
     rby = {s['id']: s for s in (raw_st or [])}
-    for sid, lo, hi, want in X2:
+    for sid, _anchor, want in X2:
         s = by.get(sid)
         if s is None:
             r = rby.get(sid)
-            term = [c for c in r['calls'] if c.name == 'sceKernelExitGame'][-1] if r else None
+            term = [c for c in r['calls'] if c.name in EXIT_NAMES][-1] if r else None
             if label != 'raw' and term is not None and term.tok is not None and term.tok.ifs:
                 out.append('  %-4s %-8s absent (compiled out: %s)' % (sid, label, term.tok.ifs[-1][:50]))
             else:
@@ -810,7 +849,7 @@ def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None):
     import aec_pspcc as P
     os.makedirs(outdir, exist_ok=True)
     rawpath = main_c or os.path.join(src, 'psp', 'main_psp.c')
-    raw = View('raw', C.load_raw(rawpath))
+    raw = View('raw', C.load_raw(rawpath, follow=True, alias=EXIT_ALIAS))
     report, fails = [], 0
     st_raw, rows_raw, _, _, _ = write_view(raw, os.path.join(outdir, 'raw'), 'raw')
     b, o = check_x2(st_raw, 'raw')
@@ -1055,7 +1094,7 @@ def main():
     if o.cmd == 'gen':
         import aec_pspcc as P
         dm = P.parse_dm(open(o.dm).read()) if o.dm else None
-        raw = View('raw', C.load_raw(o.raw)) if o.raw else None
+        raw = View('raw', C.load_raw(o.raw, follow=True, alias=EXIT_ALIAS)) if o.raw else None
         v = View(o.flavour, C.load_pp(o.pp))
         if raw is not None:
             v.line_ids = site_ids(sites(raw))

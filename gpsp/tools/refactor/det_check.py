@@ -2,7 +2,7 @@
 """det_check.py -- section-level identity of two builds (the core of G1).
 
     det_check.py A B            A, B = gpsp_adhoc.elf files or flavours.sh flavour dirs
-    det_check.py --runs R1 R2   every flavour present in both run dirs
+    det_check.py --runs R1 R2   every flavour in either run dir (discovered; one-sided = FAIL)
     det_check.py --selftest ELF mutants on a real ELF (no build needed)
 
 Compares EVERY SHF_ALLOC section by name, address, size, type, flags and bytes;
@@ -200,12 +200,14 @@ def main(argv):
         return selftest(argv[1])
     if len(argv) == 3 and argv[0] == '--runs':
         r1, r2 = argv[1], argv[2]
-        fl = [f for f in ('release', 'lab', 'harness')
-              if os.path.isfile(os.path.join(r1, f, 'gpsp_adhoc.elf')) and
-              os.path.isfile(os.path.join(r2, f, 'gpsp_adhoc.elf'))]
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import runs
+        fl, one = runs.pair(r1, r2)      # discovered: release-stable and any other flavour too
         if not fl:
             print('no flavour in both run dirs'); return 2
-        bad = sum(1 for f in fl if compare_dirs(os.path.join(r1, f), os.path.join(r2, f), f))
+        for f in one:
+            print('[%s] FAIL: gpsp_adhoc.elf in only one of the run dirs' % f)
+        bad = len(one) + sum(1 for f in fl if compare_dirs(os.path.join(r1, f), os.path.join(r2, f), f))
         print('determinism: %s' % ('IDENTICAL in %s' % ', '.join(fl) if not bad else '%d flavour(s) DIFFER' % bad))
         return 1 if bad else 0
     if len(argv) == 2:

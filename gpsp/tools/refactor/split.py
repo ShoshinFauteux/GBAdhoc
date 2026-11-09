@@ -5,7 +5,7 @@ of psp/main_psp.c into fragments, driven by a generated cutlist.txt.
   split.py cover   [--src main_psp.c]
         crit_cover.awk reproduced: functions in no / several §1.2 ranges, and
         after the plan's assignments (expect 5/69 -> 0/0 on 01067e74).
-  split.py gen     [--src main_psp.c] [--carry OLD_CUTLIST] -o cutlist.txt
+  split.py gen     [--src main_psp.c | --split GPSP_DIR] [--carry OLD_CUTLIST] -o cutlist.txt
         generate the cutlist: one row per function and per global (name ->
         module -> fragment -> anchor) plus one FRAG row per fragment (its
         first line as the anchor).  Without --carry, function modules come
@@ -14,13 +14,24 @@ of psp/main_psp.c into fragments, driven by a generated cutlist.txt.
         module OLD_CUTLIST gave it and new names are REFUSED (listed), never
         guessed from stale line numbers; the review files them with
         --assign KEY=MODULE (repeatable).
+        The cutlist always describes the SINGLE-FILE main_psp.c.  After the
+        split (PLAN-P-beta5 P4) psp/main_psp.c is the shell, so --src refuses a
+        source holding `#include "fe/X.inc.c"` (before -o is opened: gen on the
+        shell used to overwrite -o with a 1-FRAG cutlist and then fail);
+        --split GPSP_DIR reads the inverse of that split tree instead.  -o is
+        written only after the split check passes (temp file + rename).
+        Only gen has --split.  split and cover refuse the shell the same way;
+        on a split tree give them the inverse: `split.py inverse --split
+        GPSP_DIR -o F`, then `--src F` (the default --src is the tree's own
+        psp/main_psp.c, which is the shell after P4).
   split.py split   --src main_psp.c --cutlist cutlist.txt --out DIR
         cut at the anchors (never at line numbers) into DIR/psp/main_psp.c
         (the shell: shell fragments inline + one `#include "fe/X.inc.c"` per
         other fragment, in source order) and DIR/psp/fe/X.inc.c.  REFUSES
         (exit 1, nothing written) on: an item of the source unlisted, listed
         twice, or listed but absent; an anchor not found / out of order /
-        not on a cuttable line; a fragment whose #if/#endif do not balance;
+        not on a cuttable line, or on an own-line `@extract:end` marker
+        (gen keeps those with the unit above); a fragment whose #if/#endif do not balance;
         an item that does not lie in the fragment its row names; a `../`
         include inside a fragment; a result whose --inverse is not
         byte-identical to the source.
@@ -51,6 +62,12 @@ import csrc      # noqa: E402
 import modules   # noqa: E402
 
 INC_RE = re.compile(r'^#include "fe/([A-Za-z0-9_.]+)\.inc\.c"\n$')
+# An own-line `/* @extract:end NAME */` (tools/tests/extract.py; PLAN-P-beta5 P1) closes
+# a region whose text lies ABOVE it, so it stays with the unit above: gen never starts a
+# unit (or a fragment) with one, and split refuses a FRAG anchor on one.  Without the
+# rule the end marker after a fragment's last function opened the next fragment (its
+# region then crossed the cut, and the blank line after it moved across too).
+END_MARK_LINE = re.compile(r'^[ \t]*/\* @extract:end [A-Za-z0-9_.:-]+ \*/\s*$')
 
 
 class Refused(Exception):
@@ -125,6 +142,11 @@ class Model:
 
     def cuttable(self, L):
         return (1 <= L <= len(self.lines) and self.p['pp_depth'][L] == 0 and not self.uncuttable[L])
+
+    def unit_start_ok(self, L):
+        """gen may start a unit at L: cuttable, not blank, not an own-line end marker."""
+        ln = self.lines[L - 1] if 1 <= L <= len(self.lines) else ''
+        return self.cuttable(L) and ln.strip() != '' and not END_MARK_LINE.match(ln)
 
     def anchor_of(self, L):
         return (self.line_occ[L], self.lines[L - 1].rstrip('\n'))
@@ -220,7 +242,7 @@ def gen(m, carry=None, assign=None):
     head_cut = None
     if last_inc:
         for L in range(last_inc + 1, items[0]['start'] + 1):
-            if m.cuttable(L) and m.lines[L - 1].strip() != '':
+            if m.unit_start_ok(L):
                 head_cut = L
                 break
     if head_cut and head_cut > 1:
@@ -228,8 +250,7 @@ def gen(m, carry=None, assign=None):
         cutline[1] = head_cut
     cur = [items[0]]
     for a, b in zip(items, items[1:]):
-        cands = [L for L in range(a['end'] + 1, b['start'] + 1)
-                 if m.cuttable(L) and m.lines[L - 1].strip() != '']
+        cands = [L for L in range(a['end'] + 1, b['start'] + 1) if m.unit_start_ok(L)]
         # the shell's head range (L:1-160: module info, thread attributes, pads)
         # keeps its glue: prefer a cut past it when the gap allows one
         late = [L for L in cands if L > modules.SHELL_RANGES[0][1]]
@@ -364,6 +385,9 @@ def do_split(m, frags, rows):
         if L != 1 and not m.cuttable(L):
             why = ('inside an open #if (depth %d)' % m.p['pp_depth'][L]) if m.p['pp_depth'][L] else 'inside an item, comment or directive'
             errs.append('FRAG %s: cut at L:%d is %s' % (f['frag'], L, why))
+        elif END_MARK_LINE.match(m.lines[L - 1]):
+            errs.append('FRAG %s: anchor L:%d is an own-line @extract:end marker (it closes the region above and '
+                        'stays with the previous fragment; regenerate the cutlist with split.py gen)' % (f['frag'], L))
         cuts.append((L, f))
     if errs:
         raise Refused('; '.join(errs))
@@ -476,6 +500,41 @@ def read_src(p):
     return open(p, encoding='utf-8', newline='').read()
 
 
+def split_shell_includes(text):
+    """the line numbers of `#include "fe/X.inc.c"` lines (non-empty: a split shell)"""
+    return [i for i, ln in enumerate(text.splitlines(keepends=True), 1) if INC_RE.match(ln)]
+
+
+def refuse_split_shell(path, text, cmd):
+    """gen / split / cover read the SINGLE-FILE main_psp.c, which the cutlist describes.  On a
+    split shell they would see 4 items and 1 fragment (gen used to write that to -o, then fail)."""
+    inc = split_shell_includes(text)
+    if inc:
+        # only gen has --split; split and cover take the inverse as --src (P-review r2: the old message
+        # told split/cover to use a `--split` they do not have)
+        raise Refused('%s: %s is a split shell (%d `#include "fe/X.inc.c"` lines, the first at L:%d): the '
+                      'cutlist describes its INVERSE, the single file.  Use %s`split.py inverse --split <gpsp dir> '
+                      '-o F`, then `split.py %s --src F ...` with your other arguments'
+                      % (cmd, path, len(inc), inc[0],
+                         '`split.py gen --split <gpsp dir> ...` (gen reads the inverse itself), or '
+                         if cmd == 'gen' else '', cmd))
+
+
+def read_single(src=None, split_dir=None, cmd='gen'):
+    """-> (text, label) of the single-file main_psp.c: --src (refused if it is a split shell) or
+    the inverse of the split tree --split DIR (DIR holds psp/main_psp.c and psp/fe/)."""
+    if split_dir:
+        shell, fr = read_split(split_dir)
+        if not split_shell_includes(shell):
+            raise Refused('%s --split %s: its psp/main_psp.c includes no fe/X.inc.c (not a split tree; use --src)'
+                          % (cmd, split_dir))
+        return inverse_text(shell, fr), 'split.py inverse of %s/psp/main_psp.c + %d psp/fe/*.inc.c' % (
+            os.path.basename(os.path.normpath(split_dir)) or split_dir, len(split_shell_includes(shell)))
+    text = read_src(src)
+    refuse_split_shell(src, text, cmd)
+    return text, None
+
+
 # ----------------------------------------------------------------- replay
 def replay(split_dir, cutlist, patch, outdir):
     shell, fr = read_split(split_dir)
@@ -513,7 +572,7 @@ def default_src():
 
 
 def cmd_cover(a):
-    m = Model(read_src(a.src))
+    m = Model(read_single(a.src, None, 'cover')[0])
     none, multi = modules.cover(m.p['funcs'])
     print('cover (PLAN §1.2 ranges, crit_cover.awk; main excluded): %d functions, %d in no range, %d in 2-3 ranges'
           % (len(m.p['funcs']) - 1, len(none), len(multi)))
@@ -540,7 +599,10 @@ def cmd_cover(a):
 
 
 def cmd_gen(a):
-    m = Model(read_src(a.src))
+    # refuse a split shell BEFORE -o is opened (PLAN-P-beta5 P4 review: gen on the shell wrote a
+    # 4-item, 1-FRAG cutlist over -o and only then refused)
+    text, slabel = read_single(a.src, a.split, 'gen')
+    m = Model(text)
     carry = read_cutlist(a.carry) if a.carry else None
     assign = {}
     for x in a.assign or []:
@@ -553,24 +615,35 @@ def cmd_gen(a):
     sha = hashlib.sha256(m.text.encode('utf-8')).hexdigest()
     hdr = ['cutlist.txt -- GENERATED by gpsp/tools/refactor/split.py gen (T4, PLAN.md §5).  Regenerate, never hand-edit',
            'except to move a row in the cutlist review (then split.py split re-checks everything).',
-           'source: %s  sha256 %s  (%d lines)' % (a.label or os.path.basename(a.src), sha, len(m.lines)),
+           'source: %s  sha256 %s  (%d lines)' % (a.label or slabel or os.path.basename(a.src), sha, len(m.lines)),
            'modules: %s' % ('carried from ' + a.carry if a.carry else 'modules.py (PLAN §1.2 ranges + name list)'),
            '%d functions, %d globals, %d fragments (%d units), %d function(s) pinned into another module\'s fragment by #if'
-           % (rep['functions'], rep['globals'], rep['frags'], rep['units'], len(rep['pinned']))]
-    write_cutlist(a.o, frags, rows, hdr)
-    print('\n'.join(hdr[2:]))
+           % (rep['functions'], rep['globals'], rep['frags'], rep['units'], len(rep['pinned'])),
+           'The rows describe the SINGLE-FILE main_psp.c (anchors and occ count its lines).  After the unity split',
+           '(PLAN-P-beta5 P4) psp/main_psp.c is the shell and this cutlist describes the split tree\'s INVERSE',
+           '(split.py inverse: the shell with each fe/X.inc.c expanded in place; the sha256 above is the inverse\'s).',
+           'Regenerate with `split.py gen --split <gpsp dir> --carry <this file>`; gen and split refuse the shell itself.']
+    # -o only after the split check passes: a refused gen leaves the old cutlist in place
+    tmp = '%s.gen-%d.tmp' % (a.o, os.getpid())
+    try:
+        write_cutlist(tmp, frags, rows, hdr)
+        # the same cutlist must split this source
+        do_split(m, *read_cutlist(tmp))
+        os.replace(tmp, a.o)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    print('\n'.join(hdr[2:5]))
     print('fragments per module: ' + ', '.join('%s %d' % (k, v) for k, v in sorted(rep['per_module'].items())))
     for p in rep['pinned']:
         print('  pinned: %s L:%d owner %s sits in %s' % p)
-    # the same cutlist must split this source
-    do_split(m, *read_cutlist(a.o))
     print('wrote %s; split check OK' % a.o)
     return 0
 
 
 def cmd_split(a):
     guard_out(a.out, a.src)
-    m = Model(read_src(a.src))
+    m = Model(read_single(a.src, None, 'split')[0])
     frags, rows = read_cutlist(a.cutlist)
     out, shell_text, rep = do_split(m, frags, rows)
     write_split(a.out, out, shell_text)
@@ -606,6 +679,7 @@ def main(argv=None):
     c.add_argument('-v', '--verbose', action='store_true')
     g = sub.add_parser('gen')
     g.add_argument('--src', default=None)
+    g.add_argument('--split', default=None, help='a split gpsp/ dir (psp/main_psp.c + psp/fe/): gen on its inverse')
     g.add_argument('--carry')
     g.add_argument('--assign', action='append', help='KEY=MODULE for an item new since the carried cutlist '
                    '(KEY like F:name#1 or G:name#1; a bare name means F:name#1)')
