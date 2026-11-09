@@ -72,6 +72,16 @@ file, never typed: `G0 ok rel/stb/lab/har G0var ok G1 ok rel/stb/lab/har G2 ... 
 rel/stb/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
 a flavour it must cover, makes the line red (`flavours_gate.py`).
 
+### P-tidy: the Phase P final review's tool follow-ups (2026-11-09, on b7d0cafd)
+
+- **T14 constants on the split shell (F2).** `abi_asserts.py gen` reads the six constants from the
+  TU text with the fragments followed (`read_constants` -> `tu_lines`, since review round 1
+  c5b9afde), and a constant not found fails gen. The review's "release 55 vs 61, 0 constants
+  asserted, exit 0" is the P0a tool (d433e6f4, `macro_values(main_raw)`) run on the split tree; the
+  b7d0cafd tool regenerates the committed `generated/` byte for byte. New: `abi_asserts.py selftest`
+  proves it with no docker (this tree, the committed headers' constant blocks, the raw-shell read
+  as a mutant, synthetic split and single-file trees); `run_all.sh` runs it in `p0a_unit`.
+
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 
 - **Hermetic builds.** `flavours.sh` runs `build.sh` under `env -i` (fixed PATH, HOME, the docker
