@@ -128,7 +128,13 @@ static int sleep_sim_thread(SceSize args, void *argp)
       closed = 1;
    }
    if (g_ss_sav)
-      fe_evt("sleep_sim sav_handle_killed=%d", fe_host_sram_test_kill_handle());
+   {
+      /* Outside the EVT (T11 R4, with r6-B3): fe_evt's arguments are not
+       * evaluated where telemetry compiles out. */
+      int killed = fe_host_sram_test_kill_handle();
+      FE_EVT_ONLY(killed);
+      fe_evt("sleep_sim sav_handle_killed=%d", killed);
+   }
 #ifdef REWIND
    if (g_ss_trash_pool)
       sleep_sim_trash_pool();

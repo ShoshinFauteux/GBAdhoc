@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 61cd360cb3723e71; split.py inverse of the shell sha256 0cfb84683f2232a1 (18848 lines) -->
+     inputs: cutlist.txt sha256 464c9ff7409dd968; split.py inverse of the shell sha256 11d7d01a10c2fb9a (18854 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -15,7 +15,7 @@
 - **Fragments are generated.** Each `fe/*.inc.c` is a verbatim slice: no banner, no include guard, no `#include` of its own beyond the source's. It is regenerated or a change is replayed into it, never hand-edited. `split.py split` and `split.py gen` read the single file, so on this tree they take the inverse: regenerate with `split.py inverse --split gpsp -o F`, then `split.py split --src F --cutlist gpsp/tools/refactor/cutlist.txt --out DIR` (the cutlist: `split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o C`). Replay a change with `split.py replay --split gpsp --cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2`, where P is a git diff of `psp/main_psp.c` as one file (the inverse's text): replay applies the file whose `+++ b/` path ends in `main_psp.c` and ignores any other file in P. DIR and DIR2 are new directories; copy their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree. A fragment's first line is its FRAG anchor. A name sits in a fragment by position, which is not always its owner's fragment (see "Rows outside their owner's fragments").
 - **Macros.** `fe/fe_priv.h` (included once, `main_psp.c:134`, after the last project header) holds the macros P5 moved (46 `#define` lines, not counting its include guard `FE_PRIV_H`), and `fe/play_defaults.h` the `PLAY_*` ship constants and link defaults (41, not counting its include guard `PLAY_DEFAULTS_H`). They are not every macro of the TU: 2 `#define` lines stay in the shell and 120 in the fragments, at their definition points: the macro-globals (an object in another arm), the macros a host test reads through an @extract marker, local helpers, and 10 release no-op stubs that sit in the `#else` arm beside the telemetry function they replace (`exit_sim` fe/harness.a.inc.c:47, `stall_watch_start` fe/harness.f.inc.c:277, `stall_watch_stop` fe/harness.f.inc.c:278, `drprof_start` fe/harness.f.inc.c:513, `drprof_stop` fe/harness.f.inc.c:514, `drprof_window` fe/harness.f.inc.c:515, `DRPROF_PHASE` fe/harness.f.inc.c:516, `core_health_evt` fe/harness.f.inc.c:665, `ff_win_note` fe/harness.f.inc.c:1047, `UISCRIPT_DUMP` fe/harness.f.inc.c:1595). A macro missing from fe_priv.h is not necessarily one of the first two kinds: grep the name.
 - **Core-ABI hand copies.** The TU redeclares core functions and globals instead of including the core headers. T14 (`abi_asserts.py`) asserts a copy when the check TU's headers declare its name (`#include "common.h"`, the core's header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy in that flavour's `-E` as `fe/X.inc.c:N`: the asserted ones, then the UNCHECKED list, the copies in that `-E` that T14 cannot compare (a name the check TU's headers do not declare, or a frontend-only type) -- release 54 asserted + 6 constants, 43 unchecked; lab 65 asserted + 6 constants, 57 unchecked; harness 65 asserted + 6 constants, 57 unchecked. A copy in an `#if` arm that none of release, lab and harness compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` lists those sites from a raw scan of the TU with every `#if` arm kept. Today that is 6 of its 124 copy sites (the headers cite the other 118, and 4 copies that a macro call expands, which the raw text does not show): "Core-ABI copies in no T14 flavour" below. The index in `fe/fe_priv.h` is PLAN-P-beta5 §5.2's set (every name T14 asserts, plus six it cannot), not every copy.
-- **Row names.** A cutlist row is one F (function definition) or G (global definition) site. Below, a name the cutlist defines once is written bare; a name it defines more than once is written `name#N` for each definition, N counting them in TU order (the cutlist's key): `sleep_sim_window_enter` (F, `fe/harness.b.inc.c:166`, `fe/harness.b.inc.c:172`: one per arm of the `#if` group at fe/harness.b.inc.c:5); `vid_prof_frame` (F, `fe/harness.c.inc.c:176`, `fe/harness.c.inc.c:230`: one per arm of the `#if` group at fe/harness.c.inc.c:175).
+- **Row names.** A cutlist row is one F (function definition) or G (global definition) site. Below, a name the cutlist defines once is written bare; a name it defines more than once is written `name#N` for each definition, N counting them in TU order (the cutlist's key): `sleep_sim_window_enter` (F, `fe/harness.b.inc.c:172`, `fe/harness.b.inc.c:178`: one per arm of the `#if` group at fe/harness.b.inc.c:5); `vid_prof_frame` (F, `fe/harness.c.inc.c:176`, `fe/harness.c.inc.c:230`: one per arm of the `#if` group at fe/harness.c.inc.c:175).
 - **`/* @lab */`** is a grep tag, nothing else: it sits in front of each of the 18 `LAB_HOOK(...)` / `LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab's reach into the TU. `LAB_HANDOFF` is reached only through `FE_HANDOFF` (`fe/fe_priv.h:152`).
 - **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the source text; whether a build compiles a line depends on that build's defines.
 
@@ -162,10 +162,10 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | `gpsp_net_wait_beat` | `fe/harness.a.inc.c:25` | `#ifdef GPSP_PERF_RIG` (fe/harness.a.inc.c:19) |
 | `exit_sim` | `fe/harness.a.inc.c:38` | `#ifdef GPSP_PERF_RIG` (fe/harness.a.inc.c:19) |
 | `sleep_sim_thread` | `fe/harness.b.inc.c:71` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
-| `sleep_sim_start` | `fe/harness.b.inc.c:150` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
-| `sleep_sim_fire` | `fe/harness.b.inc.c:158` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
-| `sleep_sim_window_enter#1` | `fe/harness.b.inc.c:166` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
-| `sleep_sim_window_enter#2` | `fe/harness.b.inc.c:172` | `#else` after `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
+| `sleep_sim_start` | `fe/harness.b.inc.c:156` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
+| `sleep_sim_fire` | `fe/harness.b.inc.c:164` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
+| `sleep_sim_window_enter#1` | `fe/harness.b.inc.c:172` | `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
+| `sleep_sim_window_enter#2` | `fe/harness.b.inc.c:178` | `#else` after `#ifdef GPSP_PERF_RIG` (fe/harness.b.inc.c:5) |
 | `eboot_crc` | `fe/harness.c.inc.c:21` | `#if !defined(GPSP_PLAYABLE) \|\| defined(GPSP_KEEP_TELEMETRY)` (fe/harness.c.inc.c:20) |
 | `vram_probe_frame` | `fe/harness.c.inc.c:97` | none: every build |
 | `vid_prof_frame#1` | `fe/harness.c.inc.c:176` | `#if !defined(GPSP_PLAYABLE) \|\| defined(GPSP_KEEP_TELEMETRY)` (fe/harness.c.inc.c:175) |
@@ -254,7 +254,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 10 | merend.a | `fe/merend.a.inc.c` | 1-214 | merend | 5 / 16 | link 1 |
 | 11 | display.a | `fe/display.a.inc.c` | 1-292 | display | 6 / 34 | power 23, merend 2 |
 | 12 | power.b | `fe/power.b.inc.c` | 1-301 | power | 5 / 3 | - |
-| 13 | harness.b | `fe/harness.b.inc.c` | 1-176 | harness | 5 / 21 | power 21 |
+| 13 | harness.b | `fe/harness.b.inc.c` | 1-182 | harness | 5 / 21 | power 21 |
 | 14 | merend.b | `fe/merend.b.inc.c` | 1-257 | merend | 4 / 53 | - |
 | 15 | pacing.a | `fe/pacing.a.inc.c` | 1-219 | pacing | 3 / 83 | input 5, merend 7 |
 | 16 | merend.c | `fe/merend.c.inc.c` | 1-208 | merend | 7 / 14 | - |
@@ -518,7 +518,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **merend.a** (`fe/merend.a.inc.c`): me_video_teardown:73, me_video_alloc:101, me_video_activate:122, me_video_post:152, me_video_present:181
 - **display.a** (`fe/display.a.inc.c`): psp_clock_capture:194, psp_clock_mode:202, psp_clock_harness_drop:207, psp_clock_actual:216, psp_display_apply:230, psp_clock_apply:254
 - **power.b** (`fe/power.b.inc.c`): power_cb:2, pwr_hold:243, pwr_release:253, pwr_release_all:267, pwr_release_kernel:290
-- **harness.b** (`fe/harness.b.inc.c`): sleep_sim_thread:71, sleep_sim_start:150, sleep_sim_fire:158, sleep_sim_window_enter#1:166, sleep_sim_window_enter#2:172
+- **harness.b** (`fe/harness.b.inc.c`): sleep_sim_thread:71, sleep_sim_start:156, sleep_sim_fire:164, sleep_sim_window_enter#1:172, sleep_sim_window_enter#2:178
 - **merend.b** (`fe/merend.b.inc.c`): vm_lock:73, vm_unlock:90, vm_unlock_engine:99, mer_sameframe_active:253
 - **pacing.a** (`fe/pacing.a.inc.c`): mer_retire_early_active:189, mer_lowlat_active:197, us_to_vblank:208
 - **merend.c** (`fe/merend.c.inc.c`): mer_vispost_active:38, me_rend_teardown:63, me_rend_active:99, me_rend_vmem_held:100, me_rend_presenting:116, me_rend_present_src:137, me_rend_release_vmem:158
