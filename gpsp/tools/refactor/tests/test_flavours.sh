@@ -22,6 +22,11 @@
 #   C7/M13 F5 the winpath cache: with WSL's git unable to read the repo (only git.exe can, as
 #       on a Windows worktree) and wslpath failing after its first call, a --commit build
 #       passes and calls wslpath once; the same script without the priming fails (exit 2)
+#   (P7 2026-11-09)
+#   C8/M14 F4 on a real --no-ff merge (PLAN-P-beta5 P7: P-tip merged with the beta tip,
+#       proven against the beta tip): the merge's SECOND parent is accepted only when named
+#       and is recorded as "parent 2" (M14a unnamed, M14b naming the first parent: exit 2);
+#       its first parent still needs no name (C8')
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 # the caller's flavours.sh settings would point the fake repo's runs elsewhere
@@ -274,6 +279,31 @@ else
   grep -q "wslpath -w .* failed" "$T/last.log" && ok "M13 the failure names wslpath (it used to be a bare 'no such commit')" || bad "M13 message: $(tail -2 "$T/last.log")"
 fi
 rm -f "$R/gpsp/tools/refactor/flavours_noprime.sh"
+# C8 / M14 (F4 on a REAL merge, PLAN-P-beta5 P7: the P branch merges the beta tip and is
+# proven against it, the merge's SECOND parent).  side2 (off the base, another gpsp/ tree)
+# is merged into tree2 with --no-ff; the reference is built from side2.
+T2_C=$(cd "$R" && git rev-parse HEAD)
+(cd "$R" && git checkout -q -b side2 "$BASE_C" && echo side2 > gpsp/side2.txt && git add -A \
+  && git -c user.email=t@t -c user.name=t commit -q -m side2 && git checkout -q - \
+  && git -c user.email=t@t -c user.name=t merge -q --no-ff -m merge side2) || bad "C8 could not make the merge"
+SIDE2_C=$(cd "$R" && git rev-parse side2); MERGE_C=$(cd "$R" && git rev-parse HEAD)
+[ "$(cd "$R" && git rev-parse HEAD^1 HEAD^2 | tr '\n' ' ')" = "$T2_C $SIDE2_C " ] \
+  && ok "C8 the merge's parents are tree2 (1st) and side2 (2nd)" || bad "C8 merge parents"
+expect_rc 0 "C8 the merge's second parent (side2), pinned" bash "$F" --commit "$SIDE2_C" --out "$T/o19" --no-sidecars --sde 1700000000 --build-version pin7
+expect_rc 0 "C8 the merge, pinned" bash "$F" --commit "$MERGE_C" --out "$T/o20" --no-sidecars --sde 1700000000 --build-version pin7
+expect_rc 2 "M14a the merge against its second parent, not named" bash "$F" --check-only --out "$T/o20" --against "$T/o19"
+grep -q "nothing ties the step to its parent" "$T/last.log" && ok "M14a names the ancestry" || bad "M14a wrong refusal"
+expect_rc 6 "C8 the merge --against its second parent --ref-ancestor <it>: contract ok (exit 6 = absent tools)" \
+  bash "$F" --check-only --out "$T/o20" --against "$T/o19" --ref-ancestor "$SIDE2_C"
+grep -qF "contract ok (reference = named ancestor ${SIDE2_C:0:10}, parent 2 of ${MERGE_C:0:10} (--ref-ancestor)" "$T/last.log" \
+  && grep -qF -- "-- contract: reference = named ancestor ${SIDE2_C:0:10}, parent 2 of ${MERGE_C:0:10}" "$T/o20/checks.txt" \
+  && ok "C8 recorded as the merge's parent 2 (log and checks.txt)" || bad "C8 parent 2 not recorded: $(grep contract "$T/last.log")"
+expect_rc 2 "M14b --ref-ancestor naming the merge's FIRST parent while the reference is the second" \
+  bash "$F" --check-only --out "$T/o20" --against "$T/o19" --ref-ancestor "$T2_C"
+grep -q "is not the reference's commit" "$T/last.log" && ok "M14b names the mismatch" || bad "M14b wrong refusal"
+expect_rc 6 "C8' the merge against its first parent (tree2, o15), unnamed: contract ok" \
+  bash "$F" --check-only --out "$T/o20" --against "$T/o15"
+grep -qF "contract ok (reference = first parent ${T2_C:0:10}" "$T/last.log" && ok "C8' the first parent needs no name" || bad "C8' first parent"
 
 # C5 (optional, needs a real build pair): --check-only with the REAL tools on two
 # runs of one commit, e.g. FLAV_REAL_RUNS=$HOME/p0a/fbe/baseline (run1, run2)
