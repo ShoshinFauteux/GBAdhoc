@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 ad4700500a0ff9d6; split.py inverse of the shell sha256 4c00ab1ded276543 (18635 lines) -->
+     inputs: cutlist.txt sha256 1ca900bdae2a3bfc; split.py inverse of the shell sha256 f0c3391bb782cfa2 (18677 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -34,7 +34,7 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 
 ### @extract markers
 
-`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 15 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
+`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 65 regions; each lies inside one file. Readers: the 16 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
 
 | prefix | meaning | regions | in | read by |
 |---|---|---|---|---|
@@ -120,7 +120,7 @@ Every region, in TU order, and the host tests that read it:
 | `fn:wake_service` | `fe/power.e.inc.c:141` | `test_menu_press.py`, `test_sleep_menu.py` |
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
 
-Readers that read the TU text but no region: `test_net_codes.py`.
+Readers that read the TU text but no region: `test_backup_save.py`, `test_net_codes.py`.
 
 ## Modules
 
@@ -263,7 +263,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 21 | merend.d | `fe/merend.d.inc.c` | 1-797 | merend | 9 / 14 | misc 2, harness 12 |
 | 22 | misc.a | `fe/misc.a.inc.c` | 1-666 | misc | 21 / 9 | link 1, harness 7 |
 | 23 | harness.c | `fe/harness.c.inc.c` | 1-237 | harness | 4 / 17 | - |
-| 24 | misc.b | `fe/misc.b.inc.c` | 1-66 | misc | 3 / 0 | - |
+| 24 | misc.b | `fe/misc.b.inc.c` | 1-108 | misc | 3 / 0 | - |
 | 25 | link.a | `fe/link.a.inc.c` | 1-114 | link | 7 / 13 | - |
 | 26 | pacing.b | `fe/pacing.b.inc.c` | 1-175 | pacing | 2 / 9 | harness 8 |
 | 27 | link.b | `fe/link.b.inc.c` | 1-163 | link | 3 / 21 | harness 21 |
@@ -527,7 +527,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **merend.d** (`fe/merend.d.inc.c`): mer_work_heap_free:15, me_rend_suspend:28, me_rend_resume:77, me_rend_init:109, me_rend_fill_desc:257, me_rend_present:379, me_rend_retire_if_idle:413, me_rend_frame:450, plat_video_frame:689
 - **misc.a** (`fe/misc.a.inc.c`): find_first_rom:3, make_suffixed_path:29, folders_settle:51, console_from_rom_path:91, dump_frame_bmp:101, state_preview_src:140, shot_fd_write:185, shot_folder:191, shot_write_png:212, player_screenshot:247, state_thumb_write:337, state_shot_write:395, state_save_slot_io:438, state_save_slot:471, mer_note_sum:491, shash_fnv:514, shash_dump:524, shash_open:561, shash_frame:577, shash_close:605, vhash_frame:619
 - **harness.c** (`fe/harness.c.inc.c`): eboot_crc:21, vram_probe_frame:97, vid_prof_frame#1:176, vid_prof_frame#2:230
-- **misc.b** (`fe/misc.b.inc.c`): dump_ge_bmp:1, file_exists:12, backup_save:20
+- **misc.b** (`fe/misc.b.inc.c`): dump_ge_bmp:1, file_exists:12, backup_save:30
 - **link.a** (`fe/link.a.inc.c`): link_chip:33, net_now_us:62, gb_serial_yield:69, vprof_clock_us:76, evt_clock_us:85, net_error_evt:91, adhoc_stats_evt:100
 - **pacing.b** (`fe/pacing.b.inc.c`): frame_hist_note:129, frame_hist_evt:157
 - **link.b** (`fe/link.b.inc.c`): preempt_mark:84, preempt_frame_end:124, preempt_evt:138

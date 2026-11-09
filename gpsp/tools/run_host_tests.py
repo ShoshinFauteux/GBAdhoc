@@ -619,6 +619,11 @@ def suites(env: Env, baseline: Path | None):
         ("net_codes", True, lambda: None,
          "python3 tools/tests/test_net_codes.py"),
 
+        # The pre-session .sav backup (PLAN HW-2 r3-B2): write/read/close/
+        # rename faults never cost the old .bak; mutants of the old writer.
+        ("backup_save", True, lambda: None,
+         "python3 tools/tests/test_backup_save.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 
