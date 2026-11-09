@@ -781,6 +781,17 @@ static void ui_net_action(int is_host)
    if (g_link_kind == LK_CABLE && !g_gba_cable_ok)
    {
       g_link_kind = LK_NONE;
+#ifdef GBADHOC_ONLINE
+      /* The online bring-up above already joined the room on the server
+       * and associated with the AP (F4): take both down again, as a failed
+       * bring-up below would (net_teardown_io), or the PRX, the AP and the
+       * room stay up behind a game that is not linking. */
+      if (ol)
+      {
+         online_psp_down();
+         online_psp_clear();
+      }
+#endif
       osd_toast("Link Cable needs a restart of the game");
       return;
    }
