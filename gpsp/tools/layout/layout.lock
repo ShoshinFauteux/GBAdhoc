@@ -37,6 +37,11 @@
 # (the code between it and pace_frame grew: me_standby_down, the online
 # cancel) and pte_mutex_check_need_init (+24 B release, -16 B lab; the CORE
 # pad puts me_replay_lines and _ZL10pipe_latchv#1 back on their values).
+# HW-1 review r2 (claude/hw1-sleep-r2): power_cb shrank (a failed sleep sync
+# no longer stops the ME module), so TEXT/CORE give it back (release 872 ->
+# 856, 892 -> 876; lab 7792 -> 7784, 7628 -> 7636); main, pace_frame and the
+# rest hold.  Re-recorded: exit_cb (-16 B release, -8 B lab: the code before
+# it shrank) and pte_mutex_check_need_init (-16 B release, +8 B lab).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -45,11 +50,11 @@ size main                               33796
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0068
+at   exit_cb                            0x0058
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d74
+at   pte_mutex_check_need_init          0x1d64
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -101,11 +106,11 @@ size main                               48848
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0c00
+at   exit_cb                            0x0bf8
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x1324
+at   pte_mutex_check_need_init          0x132c
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
