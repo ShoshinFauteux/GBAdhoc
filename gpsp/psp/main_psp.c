@@ -2489,6 +2489,9 @@ session_top:
                g_pcfg.console == FE_CONSOLE_GBA ? NULL : g_gb_title,
                g_game_key, fe_host_gba_cable_ready());
    snprintf(g_shot_rom, sizeof(g_shot_rom), "%s", rom_path);   /* shot names */
+   if (g_cb_failed && boot_rc == 0)
+      osd_toast("HOME and sleep are unavailable (error %08X)",
+                (unsigned)g_cb_failed);
 #ifdef GPSP_CHEATS
    /* This game's cheat list and the player's choices (docs/CHEATS.md).  After
     * the boot: the list is static, the file is read with sceIo, so the core's

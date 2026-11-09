@@ -26,6 +26,10 @@
 
 static SceUID g_io_thid = -1, g_io_sema = -1;
 static volatile int g_io_run;
+/* What this writer serves, latched at io_thread_start (r1-B4): the sinks
+ * are handed over by those values, so the thread and its last pass must
+ * drain by the same ones, whatever g_pcfg says later. */
+static int g_io_log, g_io_sram;
 /* ADR-0062c: harness-settable, because IO_PRIO's relationship to the
  * EMULATION thread is no longer fixed.  `emu_prio` (ADR-0062b) moves main
  * from 0x20 to 0x2B so the WLAN stack at 0x2A outranks it -- but on the PSP a
@@ -63,16 +67,16 @@ static int io_thread(SceSize args, void *argp)
    {
       SceUInt tmo = IO_WAIT_US;
       sceKernelWaitSema(g_io_sema, 1, &tmo);
-      if (g_pcfg.log_thread)
+      if (g_io_log)
          fe_evt_service();
-      if (g_pcfg.sram_thread)
+      if (g_io_sram)
          fe_host_sram_service_io();
    }
    /* The other service can still belong to the main thread. A logging-only
     * worker must never become a second consumer of the SRAM block queue. */
-   if (g_pcfg.sram_thread)
+   if (g_io_sram)
       fe_host_sram_service_io();   /* last pass before we go away */
-   if (g_pcfg.log_thread)
+   if (g_io_log)
       fe_evt_service();
    return 0;
 }
@@ -80,7 +84,13 @@ static int io_thread(SceSize args, void *argp)
 
 static void io_thread_start(void)
 {
-   if (!g_pcfg.log_thread && !g_pcfg.sram_thread)
+   /* Started once: a second start would orphan the running writer and make
+    * two consumers of each sink (r1-B5; every caller stops first today). */
+   if (g_io_thid >= 0)
+      return;
+   g_io_log = g_pcfg.log_thread;
+   g_io_sram = g_pcfg.sram_thread;
+   if (!g_io_log && !g_io_sram)
    {
       fe_evt("log_thread mode=0 sram_thread=0");
       return;
@@ -107,12 +117,12 @@ static void io_thread_start(void)
       fe_evt("log_thread mode=0 sram_thread=0 reason=thread_failed");
       return;
    }
-   if (g_pcfg.log_thread)
+   if (g_io_log)
       fe_evt_set_async(io_wake);
-   if (g_pcfg.sram_thread)
+   if (g_io_sram)
       fe_host_set_io(&g_io_iface);
    fe_evt("log_thread mode=%d sram_thread=%d prio=0x%02x",
-          g_pcfg.log_thread, g_pcfg.sram_thread, g_io_prio);
+          g_io_log, g_io_sram, g_io_prio);
 }
 
 /* Stop the writer, then hand BOTH sinks back to the synchronous path and

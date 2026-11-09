@@ -128,11 +128,31 @@ static int cb_thread(SceSize args, void *argp)
 }
 /* @extract:end fn:cb_thread */
 
+/* r1-W8: the thread's id is known from its creation (g_cb_thid was only
+ * set by the thread itself, a race with power_request_poll's wakeup), and a
+ * failure is no longer silent: without this thread HOME and sleep do
+ * nothing, so it is logged and the game says so (g_cb_failed). */
+static int g_cb_failed;
 static void setup_exit_callback(void)
 {
+   int rc;
    int thid = sceKernelCreateThread("cb_thread", cb_thread, 0x11, 0xFA0,
                                     THREAD_ATTR_USER, NULL);
+   rc = thid;
    if (thid >= 0)
-      sceKernelStartThread(thid, 0, NULL);
+   {
+      g_cb_thid = thid;
+      rc = sceKernelStartThread(thid, 0, NULL);
+      if (rc < 0)
+      {
+         sceKernelDeleteThread(thid);
+         g_cb_thid = -1;
+      }
+   }
+   if (rc < 0)
+   {
+      g_cb_failed = rc;
+      fe_evt("cb_thread FAILED rc=%08x", (unsigned)rc);
+   }
 }
 

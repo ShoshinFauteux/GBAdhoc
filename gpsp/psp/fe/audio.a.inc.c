@@ -344,6 +344,10 @@ static int audio_thread(SceSize args, void *argp)
 /* @extract:begin fn:audio_start */
 static void audio_start(void)
 {
+   /* Started once (r1-B5): a second start would leak the running worker,
+    * which still owns its channel. */
+   if (audio_thid >= 0)
+      return;
    audio_output_error = 0;
    audio_running = 1;
    /* Nominal until the pace policy says otherwise (ADR-0027). */
