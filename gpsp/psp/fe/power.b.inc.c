@@ -280,3 +280,22 @@ static void pwr_release_all(void)
 }
 /* @extract:end fn:pwr_release_all */
 
+#ifdef GPSP_PERF_RIG
+/* THE KERNEL'S COUNTS ONLY, FROM ANOTHER THREAD (PLAN HW-2, §3.4).  The
+ * harness stall exit leaves from the stall thread while main is wedged, and
+ * pwr_release_all is main-only: g_pwr_hold is main's nesting count, and
+ * play_lock_drop / pwr_release log through standby_note and fe_evt.  This
+ * drops what the kernel holds for us -- the gameplay lock and the hold's one
+ * scePowerLock -- and touches no count main owns: the process ends next. */
+static void pwr_release_kernel(void)
+{
+   if (g_pwr_play_lock)
+   {
+      g_pwr_play_lock = 0;
+      scePowerUnlock(0);
+   }
+   if (g_pwr_hold > 0)
+      scePowerUnlock(0);
+}
+#endif
+

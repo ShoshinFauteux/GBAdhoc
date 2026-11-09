@@ -151,9 +151,19 @@ static void heartbeat_write(unsigned secs)
  *      fails E_OVERRUN and the bench ends through `gbadual_failed`, a
  *      session through `gblink_failed`;
  *   3. only with `stall_exit_hard = 1`, and only if the loop is still not
- *      turning 3 s later, leaves the process (sceKernelExitGame from this
- *      thread).  NOT YET RUN ON HARDWARE OR UNDER PSPLINK.
- * It cannot help when this thread itself no longer runs (a halted CPU). */
+ *      turning 3 s later and the watch was not stopped meanwhile, leaves the
+ *      process (sceKernelExitGame from this thread).  NOT YET RUN ON
+ *      HARDWARE OR UNDER PSPLINK (HW-2 asks for one rig arm).
+ * It cannot help when this thread itself no longer runs (a halted CPU).
+ *
+ * The exit (PLAN HW-2, §3.4): never pwr_release_all, which is main-only
+ * (g_pwr_hold's nesting count, standby_note's fopen); pwr_release_kernel
+ * drops the kernel's lock counts instead.  The ME: shut down if the
+ * in-process return retained it, exactly as pwr_release_all did here before
+ * -- the state every other exit reaches; ExitGame with a retained module has
+ * never run.  Whether me_host_shutdown is safe from this thread with main
+ * stuck is what the stall_exit_hard arm answers.  Then the raw ExitGame
+ * (ci_greps.known R1, phase HW2). */
 static int g_stall_exit_s, g_stall_exit_hard;
 static void stall_exit(unsigned iter)
 {
@@ -164,11 +174,17 @@ static void stall_exit(unsigned iter)
    fe_gbadual_abort();
 #endif
    sceKernelDelayThread(3000000); /* @lab */ LAB_HOOK(if (g_loop_iter == iter) lab_stalled(iter, g_loop_phase);)
-   if (g_loop_iter != iter || !g_stall_exit_hard)
+   /* g_stall_run (r5-L5): a stall that ended by quitting is in the teardown
+    * now (stall_watch_stop), and an exit from here would land in the middle
+    * of its SRAM flush. */
+   if (!g_stall_run || g_loop_iter != iter || !g_stall_exit_hard)
       return;
    if (g_hb_s > 0)
       heartbeat_write(200000u + (unsigned)g_stall_exit_s);
-   FE_EXIT_GAME();
+   pwr_release_kernel();
+   if (me_host_retained())
+      me_host_shutdown();
+   sceKernelExitGame();
 }
 #endif
 

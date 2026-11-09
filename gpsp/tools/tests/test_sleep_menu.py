@@ -193,6 +193,7 @@ static volatile int g_running = 1;
 static volatile int g_pwr_slept, g_pwr_rebuild, g_pwr_park_req, g_pwr_parked;
 static volatile int g_pwr_park_ack, g_pwr_sleep_pending;
 static void power_request_poll(void) { }
+#define LOOP_TOP() do { } while (0)   /* HW-2 r5-L4: the overlay beats */
 static int g_wake_menu, g_wake_have = 1, g_relaunch;
 static uint16_t g_wake_frame_buf[16];
 static uint16_t *g_wake_frame = g_wake_frame_buf;
@@ -525,8 +526,8 @@ MENU_CALL = """         if (g_pwr_rebuild || g_wake_menu)
             continue;
          }
 """
-YIELD_FN = ("static int wake_overlay_yield(void)\n{\n   power_request_poll();\n"
-            "   return g_pwr_park_req;\n}")
+# wake_overlay_yield's tail (HW-2 put the stall-watch beat, LOOP_TOP, first)
+YIELD_FN = "   LOOP_TOP();\n   power_request_poll();\n   return g_pwr_park_req;\n}"
 MUTANTS = (
     # (label, file, old, new, expected text in stderr)
     ("the menu branch skips the wake",
@@ -539,8 +540,8 @@ MUTANTS = (
      "         pwr_release();", "rebuilds == 1"),
     ("the overlay parks from inside itself",
      "main", YIELD_FN,
-     "static int wake_overlay_yield(void)\n{\n   (void)loop_park();\n"
-     "   loop_unpark(\"overlay\");\n   return 0;\n}",
+     "   LOOP_TOP();\n   (void)loop_park();\n   loop_unpark(\"overlay\");\n"
+     "   return 0;\n}",
      "no park inside the overlay"),
     ("the overlay never yields",
      "ui", "      if (g_wake_yield && g_wake_yield())\n         return UI_WAKE_YIELD;\n",
