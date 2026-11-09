@@ -3726,7 +3726,22 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
  *    always a speculative scan's garbage, and it is not translated unless it
  *    is taken, as BIOS_BOUND_FIX does for region 0.  A block at an alias
  *    links to that alias directly (its pc-relative branches).
- * Counters: ram_mirror_conflicts (flushes), ram_mirror_alias_xlat. */
+ * Counters: ram_mirror_conflicts (flushes), ram_mirror_alias_xlat.
+ *
+ * Street Racing Syndicate (the beta.3-beta.5 slowdown, 59.5 -> 36 fps): its
+ * engine calls ONE IWRAM routine both at 0x03000FEC and at its mirror
+ * 0x03040FEC, alternating, several times a frame (PPSSPP: 14,062 conflicts in
+ * 3,900 frames, every one a whole RAM flush; Big Mutha Truckers is the same
+ * engine).  So a conflict no longer flushes when the stable thunks are on
+ * (smc_partial_active): only the tag's translation in that mode is retired
+ * -- its thunk dispatches its own alias's pc, so callers linked to it go back
+ * through the lookup -- and the new alias gets a thunk of its own (offset 0:
+ * SMC_RAM_PREPARE_TRANSLATION puts it before the new body), so neither alias
+ * ever runs the other's code.  A tag whose translation is still being
+ * emitted (code_bytes 1), or a cache without stable thunks, flushes as
+ * before.  Retirement by SMC (smc_retire_*) dispatches the translation's own
+ * alias too (RAM_MIRROR_ENTRY_PC): a retired alias thunk used to dispatch
+ * the canonical pc. */
 #ifdef RAM_MIRROR_FIX
 #ifndef SMC_PARTIAL_SAFE
 #error RAM_MIRROR_FIX needs SMC_PARTIAL_SAFE (its dispatch islands)
@@ -3751,13 +3766,63 @@ static inline u32 ram_mirror_id(u32 pc)
 }
 #define RAM_MIRROR_INIT_TAG(te)                                               \
   do { (te)->alias_arm = 0; (te)->alias_thumb = 0; } while (0)
+/* The pc of canonical (or any alias of) `pc` at mirror `alias` (ram_mirror_id). */
+static inline u32 ram_mirror_alias_pc(u32 pc, u32 alias)
+{
+  if (!alias)
+    return ((GBA_PC(pc) >> 24) == 3) ? 0x03000000u + (pc & 0x7FFFu)
+                                     : 0x02000000u + (pc & 0x3FFFFu);
+  if (alias & 0x200)
+    return 0x02000000u | ((alias & 0x3Fu) << 18) | (pc & 0x3FFFFu);
+  return 0x03000000u | ((alias & 0x1FFu) << 15) | (pc & 0x7FFFu);
+}
+#define RAM_MIRROR_ENTRY_PC(start, te, type)                                  \
+  ram_mirror_alias_pc((start), (te)->alias_##type)
 #define RAM_MIRROR_CONFLICT(te, type, pc)                                     \
   ((te)->offset_##type && (te)->alias_##type != ram_mirror_id(pc))
-#define RAM_MIRROR_RESOLVE_CONFLICT()                                         \
-  do {                                                                        \
-    RAM_MIRROR_COUNT(ram_mirror_conflicts);                                   \
-    flush_translation_cache_ram();                                            \
-  } while (0)
+/* 1 = the RAM cache was flushed and the lookup fails (the caller retries);
+ * 0 = only this tag's translation in this mode was retired and the lookup
+ * goes on to translate at its own alias (see Street Racing Syndicate above). */
+#ifdef SMC_PARTIAL_STABLE_THUNK
+#define ram_mirror_resolve_builder(type, is_thumb)                            \
+static int ram_mirror_resolve_##type(ramtag_type *te, u32 pc)                 \
+{                                                                             \
+  RAM_MIRROR_COUNT(ram_mirror_conflicts);                                     \
+  if (smc_partial_active && te->code_bytes_##type != 1) {                     \
+    if (te->code_bytes_##type) {     /* live: its callers now dispatch */     \
+      smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, type),               \
+                                ram_mirror_alias_pc(pc, te->alias_##type),    \
+                                (is_thumb));                                  \
+      te->code_bytes_##type = 0;                                              \
+      flush_ram_partial++;                                                    \
+    }                                                                         \
+    te->offset_##type = 0;           /* this alias: a thunk of its own */     \
+    RAM_MIRROR_CLEAR_DISPATCH();                                              \
+    return 0;                                                                 \
+  }                                                                           \
+  flush_translation_cache_ram();                                              \
+  return 1;                                                                   \
+}
+#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
+/* smc_stable_thunk_dispatch forgets the retired pc only in a precise cache */
+#define RAM_MIRROR_CLEAR_DISPATCH() dispatch_cache_clear()
+#else
+#define RAM_MIRROR_CLEAR_DISPATCH() do { } while (0)
+#endif
+#else
+#define ram_mirror_resolve_builder(type, is_thumb)                            \
+static int ram_mirror_resolve_##type(ramtag_type *te, u32 pc)                 \
+{                                                                             \
+  (void)te; (void)pc;                                                         \
+  RAM_MIRROR_COUNT(ram_mirror_conflicts);                                     \
+  flush_translation_cache_ram();                                              \
+  return 1;                                                                   \
+}
+#endif
+#define RAM_MIRROR_RESOLVE_CONFLICT(te, type, pc)                             \
+  ram_mirror_resolve_##type((te), (pc))
+ram_mirror_resolve_builder(arm, 0)
+ram_mirror_resolve_builder(thumb, 1)
 #define RAM_MIRROR_NOTE_XLAT(te, type, pc)                                    \
   do {                                                                        \
     (te)->alias_##type = (u16)ram_mirror_id(pc);                              \
@@ -3782,7 +3847,8 @@ __attribute__((constructor)) static void ram_mirror_report_init(void)
 #else
 #define RAM_MIRROR_INIT_TAG(te) ((void)0)
 #define RAM_MIRROR_CONFLICT(te, type, pc) 0
-#define RAM_MIRROR_RESOLVE_CONFLICT() ((void)0)
+#define RAM_MIRROR_RESOLVE_CONFLICT(te, type, pc) 0
+#define RAM_MIRROR_ENTRY_PC(start, te, type) (start)
 #define RAM_MIRROR_NOTE_XLAT(te, type, pc) ((void)0)
 #define RAM_MIRROR_LAZY(target, from) 0
 #endif
@@ -3840,10 +3906,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
       }                                                                       \
                                                                               \
       SMC_REUSE_LKTRACE(pc | thumb, trentry, type);                           \
-      if (RAM_MIRROR_CONFLICT(trentry, type, pc)) {                           \
-        RAM_MIRROR_RESOLVE_CONFLICT();                                        \
+      if (RAM_MIRROR_CONFLICT(trentry, type, pc) &&                           \
+          RAM_MIRROR_RESOLVE_CONFLICT(trentry, type, pc))                     \
         return NULL;                                                          \
-      }                                                                       \
       if (SMC_RAM_NEEDS_TRANSLATION(trentry, type)) {                         \
         bool result;                                                          \
         u32 cph_t;                                                            \
@@ -9654,7 +9719,8 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
           start < high && te->blk_end_arm > low) {
 #ifdef SMC_PARTIAL_STABLE_THUNK
         SMC_EVT("  R arm %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_arm);
-        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm),
+                                  RAM_MIRROR_ENTRY_PC(start, te, arm), 0);
         te->code_bytes_arm = 0;
 #else
         u8 *entry = &ram_translation_cache[te->offset_arm];
@@ -9677,7 +9743,8 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
           start < high && te->blk_end_thumb > low) {
 #ifdef SMC_PARTIAL_STABLE_THUNK
         SMC_EVT("  R thumb %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_thumb);
-        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb),
+                                  RAM_MIRROR_ENTRY_PC(start, te, thumb), 1);
         te->code_bytes_thumb = 0;
 #else
         u8 *entry = &ram_translation_cache[te->offset_thumb];
@@ -10665,7 +10732,8 @@ static int smc_retire_span(u32 lo, u32 hi)
           te->blk_end_arm > lo) {
 #endif
         SMC_EVT("  R arm %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_arm);
-        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm), start, 0);
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, arm),
+                                  RAM_MIRROR_ENTRY_PC(start, te, arm), 0);
         te->code_bytes_arm = 0;
         flush_ram_partial++;
 #ifdef SMC_SINGLE_UNTAG
@@ -10676,7 +10744,8 @@ static int smc_retire_span(u32 lo, u32 hi)
       if (SMC_RAM_LIVE_OFFSET(te, thumb) && start < hi &&
           te->blk_end_thumb > lo) {
         SMC_EVT("  R thumb %08x..%08x\n", (unsigned)start, (unsigned)te->blk_end_thumb);
-        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb), start, 1);
+        smc_stable_thunk_dispatch(SMC_RAM_PUBLIC_ENTRY(te, thumb),
+                                  RAM_MIRROR_ENTRY_PC(start, te, thumb), 1);
         te->code_bytes_thumb = 0;
         flush_ram_partial++;
 #ifdef SMC_SINGLE_UNTAG

@@ -156,7 +156,7 @@
 #define SMC_REUSE 1
 #endif
 #if !defined(GPSP_NO_SMC_REUSE_SPARE_KB) && !defined(SMC_REUSE_SPARE_KB)
-#define SMC_REUSE_SPARE_KB 128
+#define SMC_REUSE_SPARE_KB 384
 #endif
 #if !defined(GPSP_NO_SMC_REUSE_MODE) && !defined(SMC_REUSE_MODE)
 #define SMC_REUSE_MODE 3
