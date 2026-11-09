@@ -1571,7 +1571,11 @@ int main(int argc, char *argv[])
       else
          fe_evt("exit code=5 reason=nettest_fail");
       evt_shutdown();
-      FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
+      /* A pass hands off 0, as it logs (F7: it handed off 5 either way). */
+      if (rc == 0)
+         FE_HANDOFF(0, NULL);
+      else
+         FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
       FE_EXIT_GAME();
       return 0;
    }
@@ -2444,7 +2448,9 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         FE_HANDOFF(1, "mem_budget");   /* ADR-0053 */
+         /* 8, as logged and as docs/MEMORY-BUDGET.md says (F7): the handoff
+          * said 1, which is load_failed's code. */
+         FE_HANDOFF(8, "mem_budget");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
       }
