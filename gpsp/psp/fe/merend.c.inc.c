@@ -157,7 +157,8 @@ static const uint16_t *me_rend_present_src(unsigned *pitch)
 /* The release itself, with no question asked of the engine: for a caller
  * that has already made sure the ME cannot touch the pool any more
  * (me_rend_release_vmem below), or that must give it back regardless
- * (me_standby_down's failed sync, which stops the module first). */
+ * (me_standby_down's failed sync, which leaves the module loaded so the
+ * kernel's suspend parks the ME through our sysevent slot). */
 static int me_rend_drop_vmem(void);
 /* @extract:begin fn:me_rend_release_vmem */
 static int me_rend_release_vmem(void)

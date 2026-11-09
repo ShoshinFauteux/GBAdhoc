@@ -66,14 +66,20 @@ static void *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
 static int g_mer_sh_on, g_mer_ready, g_mer_pending, g_mer_last_presented;
 static int unlock_calls;
 static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w, blank_calls;
-static void me_standby_step(const char *s) { (void)s; }
+#include <string.h>
+static const char *steps[16]; static int nsteps;
+static void me_standby_step(const char *s) { if (nsteps < 16) steps[nsteps++] = s; }
+static int stepped(const char *s)
+{ int i; for (i = 0; i < nsteps; i++) if (!strcmp(steps[i], s)) return 1; return 0; }
 static void wake_snapshot(void) {}
 static int me_rend_active(void) { return g_me_rend; }
-static int retained, shutdowns, stop_fails;
+static int retained, shutdowns, stop_fails, unload_fails, handed_back;
 /* stop_fails: module_stop refused -- me_host.c marks the engine dead and
  * keeps the module loaded */
 static void me_host_shutdown(void)
-{ shutdowns++; healthy=0; if (stop_fails) return; loaded=0; retained=0; }
+{ shutdowns++; healthy=0; if (stop_fails) return; retained=0;
+  handed_back=1; if (unload_fails) return; loaded=0; }
+static int me_host_handed_back(void) { return handed_back; }
 #define SLEEP_SIM_ME_SYNC_FAIL() 0
 static volatile int g_pwr_me_lost;
 static void vid_blank_all(void) { blank_calls++; }
@@ -158,26 +164,51 @@ int main(int argc, char **argv)
    loaded=healthy=1; retained=0; shutdowns=0;
    pwr_release_all();
    check(!shutdowns, "leaving does not touch a module in use");
-   /* PLAN r2-B-1 (shutdown-and-release): a sync that fails at the suspend
-    * stops the module and gives the pool back all the same -- never kept
-    * across the sleep -- and the wake is told the engine is gone. */
+   /* PLAN r2-B-1, review r2: a sync that fails at the suspend gives the
+    * pool back all the same -- never kept across the sleep -- and the wake
+    * is told the engine is gone.  The module is NOT stopped from the power
+    * callback: module_stop would hand the kernel's SceMeRpc handler its slot
+    * back, and the suspend would spin in it (docs/INPROC-RETURN.md s8). */
    g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=1; idle=1; sync_ok=0;
    g_pcfg.standby=1; g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
-   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=0; sync_calls=0;
    me_standby_down();
-   check(shutdowns==1 && !loaded && unlock_calls==1 && !g_mer_vmem &&
+   check(!shutdowns && loaded && unlock_calls==1 && !g_mer_vmem &&
          !g_mer_work && g_pwr_slept && g_pwr_me_lost && ring_r==7 &&
-         blank_calls==1,
-         "failed standby sync stops the module and releases the pool");
-   /* The stop itself refused (me_host.c: dead, still loaded): the pool
-    * still goes back, the module is not touched again. */
-   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=1; idle=1; sync_ok=0;
+         blank_calls==1 && sync_calls==1,
+         "failed standby sync releases the pool and leaves the module loaded");
+   /* The realistic trigger: an engine the watchdog already declared dead,
+    * module still loaded (me_host_sync answers -1 for any !me_host_up()). */
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=0; idle=0; sync_ok=0;
    g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
-   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=1; sync_calls=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; sync_calls=0;
    me_standby_down();
-   check(shutdowns==1 && loaded && unlock_calls==1 && !g_mer_vmem &&
-         g_pwr_slept && g_pwr_me_lost && sync_calls==1,
-         "failed standby sync and failed stop still release the pool");
+   check(!shutdowns && loaded && unlock_calls==1 && !g_mer_vmem &&
+         g_pwr_slept && g_pwr_me_lost,
+         "watchdog-dead ME at a sleep: pool released, module not stopped");
+   check(stepped("vmem_sync_failed") && stepped("vmem_released") &&
+         !stepped("module_unloaded") && !stepped("module_stop_failed"),
+         "failed sync logs the release and no module step");
+   /* The `standby >= 2` rung logs what me_host_shutdown actually did. */
+   {
+      static const struct { int stop, unload; const char *want; } rung[] = {
+         { 0, 0, "module_unloaded" },
+         { 1, 0, "module_stop_failed" },
+         { 0, 1, "module_unload_failed" },
+      };
+      int i;
+      for (i = 0; i < 3; i++)
+      {
+         char label[96];
+         g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=idle=sync_ok=1;
+         g_pcfg.standby=2; handed_back=0; nsteps=0;
+         stop_fails=rung[i].stop; unload_fails=rung[i].unload;
+         me_standby_down();
+         snprintf(label, sizeof(label), "standby>=2 rung logs %s", rung[i].want);
+         check(stepped(rung[i].want) && !g_mer_vmem, label);
+      }
+      g_pcfg.standby=1; unload_fails=0; handed_back=0;
+   }
    stop_fails=0;
    g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; g_pwr_slept=0; g_pwr_me_lost=0;
    shutdowns=0; ring_r=2; ring_w=7; blank_calls=0;

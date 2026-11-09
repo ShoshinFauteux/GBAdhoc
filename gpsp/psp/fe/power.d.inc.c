@@ -88,7 +88,12 @@ static void me_standby_down(void)
    if (g_pcfg.standby >= 2)
    {
       me_host_shutdown();
-      me_standby_step("module_unloaded");
+      /* What me_host_shutdown actually did: a refused module_stop leaves
+       * the module loaded with nothing handed back; a stop that worked and
+       * an unload that did not leaves it loaded, handed back. */
+      me_standby_step(!me_host_loaded()     ? "module_unloaded"
+                      : me_host_handed_back() ? "module_unload_failed"
+                                              : "module_stop_failed");
    }
    /* ALWAYS release the volatile partition -- this is not an optional rung.
     *
@@ -106,23 +111,37 @@ static void me_standby_down(void)
    int release_result = me_rend_release_vmem();
    if (release_result < 0)
    {
-      /* SHUTDOWN-AND-RELEASE (PLAN r2-B-1; owner 2026-11-08).  The engine
-       * did not confirm its cache flush.  This used to return here with the
-       * pool still locked across the suspend: the OS may hand it on while
-       * we sleep, and the next me_rend_init re-used the pointers ("volatile
-       * already locked") and wrote into it.  Instead: stop the module --
-       * module_stop holds the ME in reset, so no late job or dirty line can
-       * reach the pool; a stop that fails marks the engine dead, the
-       * watchdog's state (me_host_shutdown) -- and give the pool back
-       * either way.  The ME is gone for this session, and a game never goes
-       * on without it (the ME is always available by design): the wake
-       * ends the session to the game list through the quit's teardown,
-       * which writes the save (wake_service). */
+      /* RELEASE, AND LEAVE THE MODULE WHERE IT IS (PLAN r2-B-1; owner
+       * 2026-11-08; review r2).  The engine did not confirm its cache
+       * flush -- a timeout, or an engine the watchdog already declared dead
+       * (me_host_sync answers -1 for any !me_host_up()).  Keeping the pool
+       * locked across the suspend is not an answer: the OS may hand it on
+       * while we sleep, and a rebuild after the wake would write into it.
+       *
+       * NEVER STOP OR UNLOAD THE MODULE HERE.  module_stop puts the kernel's
+       * SceMeRpc handler back in its slot, and the suspend this callback is
+       * part of then reaches that handler, which asks Sony's ME firmware to
+       * save itself and spins, with no bound, for an answer that never comes
+       * (event 0x4005; docs/INPROC-RETURN.md, section 8) -- the console dies
+       * inside the suspend.  That is what the `standby >= 2` rung above was
+       * found to do.  With the module left loaded our sysevent slot stays,
+       * and the kernel's suspend parks the ME (holds it in reset) at event
+       * 0x402.  On the resume it reboots into an idle dispatcher that
+       * forgets the work area (me_render_boot) and takes the mailbox's
+       * current sequence as seen, so the job it never finished is not run
+       * again.  What this cannot do is halt the ME before the pool goes
+       * back: holding it in reset takes kernel mode, and the module exports
+       * nothing.  An engine that is still writing has until 0x402.
+       *
+       * The pool goes back regardless.  The ME is gone for this session,
+       * and a game never goes on without it (the ME is always available by
+       * design): the wake ends the session to the game list through the
+       * quit's teardown, which writes the save (wake_service).  The
+       * module is stopped there, on the way out of the process (a relaunch:
+       * inproc_refusal "standby"), where the kernel's reboot makes that
+       * safe. */
       me_standby_step("vmem_sync_failed");
       g_pwr_me_lost = 1;
-      me_host_shutdown();
-      me_standby_step(me_host_loaded() ? "module_stop_failed"
-                                       : "module_unloaded");
       release_result = me_rend_drop_vmem();
    }
    if (release_result > 0)

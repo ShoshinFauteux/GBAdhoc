@@ -357,7 +357,11 @@ new, neither default: `standby >= 2` in CONFIG.INI unloads the module in the
 power callback (the ladder's old rung; the kernel's handler then spins, which is
 what that rung was found to do), and a failed boot handshake on a mismatched
 module. The window between `me_host_shutdown` and the LoadExec of a relaunch is
-also still there, but under the teardown's `pwr_hold`.
+also still there, but under the teardown's `pwr_hold`. A sleep whose ME
+will not confirm its cache flush (`me_standby_down`, `vmem_sync_failed`)
+deliberately does not stop it: the pool goes back, the slot stays ours so the
+kernel's suspend parks the ME, and the wake ends the session through a
+relaunch, whose teardown stops the module on the way out.
 
 **Tests.** PPSSPP has no ME, so the harness key `me_fake` puts a thread on the
 mailbox in the module's place (`me_fake = 2` is a wedged one), and
