@@ -208,6 +208,11 @@ LAYOUT_PAD_MAIN_BYTES ?= 2284
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
 # tools/flags.lock pins it.
 LAYOUT_PAD_LATE_BYTES ?= 128
+# LAYOUT_PAD_XLAT_BYTES: the zeros in front of instance A's translate_block_arm, the
+# last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
+# site emitters shrank both translators, and this puts instance B's hot path, linked
+# right after, back on its sets.  tools/flags.lock pins it.
+LAYOUT_PAD_XLAT_BYTES ?= 5824
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -532,6 +537,8 @@ layout_pad_main.o: layout_pad_main.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MAIN_BYTES=$(LAYOUT_PAD_MAIN_BYTES)
 layout_pad_late.o: layout_pad_late.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_LATE_BYTES=$(LAYOUT_PAD_LATE_BYTES)
+layout_pad_warm.o: layout_pad_warm.S
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_XLAT_BYTES=$(LAYOUT_PAD_XLAT_BYTES)
 layout_pad.o: layout_pad.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_TEXT=$(or $(LAYOUT_PAD_TEXT),0) \
 	      -DLAYOUT_PAD_BSS=$(or $(LAYOUT_PAD_BSS),0)
