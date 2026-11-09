@@ -4505,11 +4505,15 @@ session_top:
     * Released before the browser (goto session_top) or by the exit itself. */
    /* The loop ended with a sleep's quiesce still in force (HOME or an exit
     * while held): put back what it stopped, so the teardown below finds the
-    * state it was written for.  The gameplay power lock is play's only. */
+    * state it was written for.  The gameplay power lock is play's only.
+    * The hold BEFORE the lock is dropped (PLAN F2): the kernel counts both
+    * as one, and a suspend request waiting on it runs at the unlock that
+    * leaves the count at zero -- dropped first, that was this point, with
+    * the teardown about to start and nothing parked. */
    ui_set_wake_yield(NULL);   /* no game loop: nothing to park */
    sleep_quiesce_up("loop_exit");
-   play_lock_drop("loop_exit");
    pwr_hold("teardown");
+   play_lock_drop("loop_exit");
    /* "Quit to game list": the menu goes, the frame it sat on stays with a
     * "Returning to game list..." chip, and the teardown below runs under it
     * (ui_return_hold; docs/INPROC-RETURN.md).  The wake overlay and the

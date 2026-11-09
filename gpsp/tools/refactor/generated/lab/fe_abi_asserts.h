@@ -356,6 +356,6 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   main_psp.c:2156          msr_fast                             not declared by the check TU's headers
  *   main_psp.c:2340          gpsp_wallclock                       not declared by the check TU's headers
  *   main_psp.c:2661          rom_cache_watermark                  not declared by the check TU's headers
- *   main_psp.c:4708          gpsp_rtc_peek                        not declared by the check TU's headers
+ *   main_psp.c:4712          gpsp_rtc_peek                        not declared by the check TU's headers
  */
 #endif
