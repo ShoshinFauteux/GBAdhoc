@@ -2997,8 +2997,11 @@ session_top:
        * fixed START+SELECT menu chord whatever it is bound to; with the
        * default L+R+SELECT this is the 3.0 test exactly.  Not while the
        * Controls page is capturing a binding: the player is pressing the
-       * chord to TEACH it, not to use it. */
-      if ((ctl_fired & CTL_FIRE_SHOT) && !ui_capturing())
+       * chord to TEACH it, not to use it.  Nor over the menu (r8/x3): the
+       * pending shot is taken only by the game's own dump site, so one
+       * fired with the menu up waited, kept, until after the menu closed,
+       * and through the in-process return into the next game. */
+      if ((ctl_fired & CTL_FIRE_SHOT) && !ui_capturing() && !ui_active())
          g_dump_chord_pending = 1;
 #ifdef GPSP_CATCH_SELFTEST
       /* Bisect arm "catch self-test" only: L+R+UP+TRIANGLE stores to address
@@ -4696,6 +4699,7 @@ session_top:
          prev_pad = 0;
          g_pad_swallow = 0;          /* nothing of the last game is held */
          chord_frames = 0;
+         g_dump_chord_pending = 0;   /* no screenshot of the next game */
          ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
          ui_set_turbo_locked(0);     /* ...and no session outlives it */
          inproc_menu_armed = 0;

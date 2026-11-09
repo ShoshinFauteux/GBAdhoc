@@ -122,7 +122,8 @@ static int g_relaunch, have_variant, inproc_n, exit_code, g_wake_have,
            g_ff_mult, g_ff_user, g_ff_gate, g_blit_suppress, g_drew,
            g_me_rend_cfg, me_rend_cfg_boot, g_me_video_cfg, g_me_video,
            sram_thread_boot, g_autoload_state, autoload_boot,
-           autoload_state_slot, g_autoload_from_shelf, g_turbo, g_ff_gate_st;
+           autoload_state_slot, g_autoload_from_shelf, g_turbo, g_ff_gate_st,
+           g_dump_chord_pending;
 static unsigned prev_pad, g_wake_w, g_wake_h;
 static const char *exit_reason;
 static void *g_wake_frame, *g_last_pix, *g_me_stage[2];

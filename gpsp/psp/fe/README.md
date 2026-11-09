@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 99b3e2c0cfa14d17; split.py inverse of the shell sha256 f89407ce0a70ab8b (18723 lines) -->
+     inputs: cutlist.txt sha256 6d7ba81e9c189e3f; split.py inverse of the shell sha256 b241185c79595564 (18727 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4779, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4783, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -57,11 +57,11 @@ Every region, in TU order, and the host tests that read it:
 | `fn:main` | `main_psp.c:206` | `test_exit_req.py`, `test_menu_press.py`, `test_sleep_menu.py` |
 | `vol:boot_apply` | `main_psp.c:322` | `test_volume.py` |
 | `sb:list_call` | `main_psp.c:1795` | `test_sleep_browser.py` |
-| `qs:dispatch` | `main_psp.c:3182` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
-| `sl:case_loadstate` | `main_psp.c:3473` | `test_state_load_ask.py` |
-| `lowlat:top` | `main_psp.c:3768` | `test_lowlat_policy.py` |
-| `lowlat:want` | `main_psp.c:4276` | `test_lowlat_policy.py` |
-| `lowlat:wait` | `main_psp.c:4359` | `test_lowlat_policy.py` |
+| `qs:dispatch` | `main_psp.c:3185` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
+| `sl:case_loadstate` | `main_psp.c:3476` | `test_state_load_ask.py` |
+| `lowlat:top` | `main_psp.c:3771` | `test_lowlat_policy.py` |
+| `lowlat:want` | `main_psp.c:4279` | `test_lowlat_policy.py` |
+| `lowlat:wait` | `main_psp.c:4362` | `test_lowlat_policy.py` |
 | `fn:cb_thread` | `fe/power.a.inc.c:107` | `test_power_callback.py` |
 | `def:IO_JOIN_US` | `fe/iothread.inc.c:22` | `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:io_thread` | `fe/iothread.inc.c:58` | `test_psp_runtime.py` |
@@ -283,7 +283,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 40 | pacing.c | `fe/pacing.c.inc.c` | 1-508 | pacing | 19 / 6 | - |
 | 41 | power.e | `fe/power.e.inc.c` | 1-234 | power | 5 / 1 | - |
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
-| 43 | shell.b | `main_psp.c` | 206-4779 | shell | 1 / 0 | - |
+| 43 | shell.b | `main_psp.c` | 206-4783 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
 
