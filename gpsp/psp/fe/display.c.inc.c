@@ -124,7 +124,10 @@ void psp_color_preview(void)
       /* A native snapshot: transform it here.  Blended pixels are
        * transformed after their blend, the rest exactly. */
       unsigned y, x;
-      for (y = 0; y < g_wake_h; y++)
+      /* Row g_wake_h and column g_wake_w are the snapshot's edge copies
+       * (wake_snapshot_from): both are transformed (PLAN r2-B-5), or a
+       * bilinear tap at the bottom edge would read native colour. */
+      for (y = 0; y <= g_wake_h && y < WAKE_ROWS; y++)
          for (x = 0; x <= g_wake_w && x < WAKE_TEX; x++)
             g_wake_frame[y * WAKE_TEX + x] =
                video_color_pixel(g_wake_frame[y * WAKE_TEX + x]);

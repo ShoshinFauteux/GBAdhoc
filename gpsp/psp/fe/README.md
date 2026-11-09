@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 2e2cf3ec7926ca85; split.py inverse of the shell sha256 fba7f50145121b26 (18670 lines) -->
+     inputs: cutlist.txt sha256 417192d0b478244f; split.py inverse of the shell sha256 9e1a51f0f5b27104 (18673 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -259,7 +259,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 16 | merend.c | `fe/merend.c.inc.c` | 1-221 | merend | 8 / 14 | - |
 | 17 | display.b | `fe/display.b.inc.c` | 1-68 | display | 2 / 1 | power 1 |
 | 18 | power.c | `fe/power.c.inc.c` | 1-14 | power | 1 / 0 | - |
-| 19 | display.c | `fe/display.c.inc.c` | 1-138 | display | 2 / 1 | merend 1 |
+| 19 | display.c | `fe/display.c.inc.c` | 1-141 | display | 2 / 1 | merend 1 |
 | 20 | power.d | `fe/power.d.inc.c` | 1-571 | power | 20 / 3 | - |
 | 21 | merend.d | `fe/merend.d.inc.c` | 1-797 | merend | 9 / 14 | misc 2, harness 12 |
 | 22 | misc.a | `fe/misc.a.inc.c` | 1-666 | misc | 21 / 9 | link 1, harness 7 |
