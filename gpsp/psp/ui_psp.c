@@ -7918,6 +7918,11 @@ void ui_notice(const char *title, const char *l1, const char *l2,
       if ((pad.Buttons & 0xF3F9u) &&
           sceKernelGetSystemTimeLow() - t0 > 500000u)   /* not a held key */
          break;
+      /* HOME (exit_cb clears g_running): the system is waiting for the
+       * app to leave, and this screen leads there anyway (F10).  The
+       * caller's exit runs at once instead of after up to 30 s. */
+      if (!g_running)
+         break;
    } while (sceKernelGetSystemTimeLow() - t0 < hold_ms * 1000u);
 }
 

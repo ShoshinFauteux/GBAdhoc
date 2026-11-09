@@ -368,4 +368,67 @@ for what, part, old, new in MUTANTS:
     parts[part] = parts[part].replace(old, new)
     run(parts, False)
     print("  mutant caught: " + what)
-print("PASS: test_exit_req (%d mutants)" % len(MUTANTS))
+
+# F10: ui_notice (ui_psp.c) ends on HOME, not after its 15/30 s.
+NOTICE_STUB = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+typedef struct { unsigned Buttons; } SceCtrlData;
+static struct { int active; } g_loading;
+volatile int g_running = 1;
+static unsigned now_us, frames, home_frame;
+static unsigned sceKernelGetSystemTimeLow(void) { return now_us; }
+static void sceDisplayWaitVblankStart(void)
+{ now_us += 16683; if (++frames == home_frame) g_running = 0; }
+static int sceCtrlPeekBufferPositive(SceCtrlData *p, int n) { (void)n; p->Buttons = 0; return 1; }
+static void vid_overlay_begin(int x) { (void)x; }
+static void vid_overlay_end(void) {}
+static void vid_swap(void) {}
+static void page(const char *a, const char *b) { (void)a; (void)b; }
+static void vid_text_center(int y, const char *s, int c) { (void)y; (void)s; (void)c; }
+#define C_WARN 0
+#define C_ITEM 0
+#define C_DIM 0
+@NOTICE@
+int main(void)
+{
+   home_frame = 30;
+   ui_notice("T", "a", NULL, NULL, 30000);
+   assert(frames == 30);                 /* HOME ends it the frame it lands */
+   g_running = 1; frames = 0; now_us = 0; home_frame = 0;
+   ui_notice("T", "a", NULL, NULL, 1000);
+   assert(frames >= 59 && frames <= 61);  /* control: the hold without HOME */
+   puts("ui_notice: HOME ends the notice; the hold otherwise");
+   return 0;
+}
+'''
+
+
+def notice(ui):
+    m = re.search(r"^void ui_notice\(.*?^\}\n", ui, re.S | re.M)
+    assert m, "ui_notice not found"
+    return m.group(0)
+
+
+def run_notice(text, expect_pass):
+    with tempfile.TemporaryDirectory(prefix="gbadhoc-notice-") as folder:
+        cfile = Path(folder) / "n.c"
+        binary = Path(folder) / "n"
+        cfile.write_text(NOTICE_STUB.replace("@NOTICE@", text))
+        subprocess.run(["cc", "-std=gnu99", "-Wall", "-Werror", str(cfile),
+                        "-o", str(binary)], check=True)
+        result = subprocess.run([str(binary)], capture_output=True, text=True)
+        if (result.returncode == 0) != expect_pass:
+            raise AssertionError("expect_pass=%s\n%s%s" % (
+                expect_pass, result.stdout, result.stderr))
+        return result
+
+
+nt = notice(UI)
+print(run_notice(nt, True).stdout.strip())
+old_n = "      if (!g_running)\n         break;\n"
+assert nt.count(old_n) == 1, "F10 site gone"
+run_notice(nt.replace(old_n, ""), False)
+print("  mutant caught: ui_notice ignores HOME")
+print("PASS: test_exit_req (%d mutants)" % (len(MUTANTS) + 1))
