@@ -28,6 +28,14 @@
 # lookups' and smc_retire_span's growth is given back in the hot order (the
 # bscan rows) and the BSCAN pad takes it, so both sections hold as recorded
 # for 9c1b279f (37 entries, 0 differ; nothing re-recorded).
+# "As displayed" screenshots (claude/shots-displayed): the screenshot code in
+# main_psp.o (+632 B release, +668 B lab after -Os), the capture and settings
+# code before layout_pad_fe (fe_png_stream.o is linked there for that) and
+# fe_png.o's split are given back by the text, FE and GB pads (lab also CORE),
+# so every per-frame anchor holds.  Re-recorded, as each re-pin does: exit_cb
+# (first after the text pad, -0x278 / -0x29c), the lab's pte_mutex_check_
+# need_init (first after the CORE pad, -28), and netpacket_iface 8 B under
+# (.rodata moves in 64 B steps here: the nearer of -8 / +56).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -36,7 +44,7 @@ size main                               33764
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0264
+at   exit_cb                            0x1fec
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
@@ -58,7 +66,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x1720
 at   _ZL10pipe_latchv#1                 0x01e0
-at   netpacket_iface                    0x1ea8
+at   netpacket_iface                    0x1ea0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -92,11 +100,11 @@ size main                               48648
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x10a0
+at   exit_cb                            0x0e04
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x1334
+at   pte_mutex_check_need_init          0x1318
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -114,7 +122,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x19a0
 at   _ZL10pipe_latchv#1                 0x0460
-at   netpacket_iface                    0x0148
+at   netpacket_iface                    0x0140
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0

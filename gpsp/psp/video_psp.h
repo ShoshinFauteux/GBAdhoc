@@ -388,6 +388,19 @@ int  vid_flip_latched(void);
  * the REAL GE 5650 layout. Returns 0 on success. */
 int vid_dump_ge(const char *path);
 
+/* "As displayed" screenshots (video_psp.c, the section of that name): the
+ * 480x272 game picture as the GE drew it -- scaled, smoothed, effects,
+ * colour, ambient bars -- without anything drawn over it (OSD, rewind HUD,
+ * menus).  vid_cap_frame: that picture, uncached VRAM in the GE's 5650
+ * layout, with its size and pitch, or NULL when the newest picture has an
+ * overlay on it; vid_cap_arm then has the next game picture taken before
+ * its overlay is drawn (1 = armed; 0 = no VRAM for it, or not a triple-
+ * buffered build); vid_cap_reset forgets an armed or held picture.  Main
+ * thread only, like every GE call. */
+const uint16_t *vid_cap_frame(unsigned *w, unsigned *h, size_t *pitch_bytes);
+int  vid_cap_arm(void);
+void vid_cap_reset(void);
+
 /* ---- ambient bars (docs/DISPLAY-FEATURES.md, look in ambient_look.h) -----
  *
  * What fills the screen outside the picture, drawn by vid_draw_frame /

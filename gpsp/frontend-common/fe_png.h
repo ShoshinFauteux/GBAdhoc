@@ -54,6 +54,20 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
                   int layout, void *work, size_t work_bytes,
                   fe_png_write_fn write, void *ctx, fe_png_info *info);
 
+/* fe_png_stream: the same PNG with NO work memory at all -- a 24-bit RGB
+ * file streamed row by row, each source row read once, top to bottom, and
+ * every buffer on the stack (about 24 KiB at the widest).  For pictures
+ * larger than the heap can lend, read in place (the PSP's displayed frame
+ * in VRAM, for "As displayed" screenshots).  w <= FE_PNG_STREAM_MAX_W.
+ * Matches are looked for one pixel, one byte and one row back only, so
+ * it compresses a scaled console picture well and noise not at all.
+ * 0 on success; -1 on a bad argument, -2 if write() failed.  info->colors
+ * is 0 (not counted). */
+#define FE_PNG_STREAM_MAX_W 480
+int fe_png_stream(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
+                  int layout, fe_png_write_fn write, void *ctx,
+                  fe_png_info *info);
+
 #ifdef __cplusplus
 }
 #endif

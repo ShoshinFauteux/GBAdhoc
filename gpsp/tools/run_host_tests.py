@@ -294,6 +294,25 @@ def suites(env: Env, baseline: Path | None):
          "frontend-common/fe_util.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_png4 /tmp/t_png4 && "
          "python3 tools/tests/check_png.py /tmp/t_png4 && "
+         # ...and the zero-heap streamer of the "As displayed" screenshots
+         # (fe_png_stream): both sizes, row order, CRCs and Adler-32 by an
+         # independent decoder; then the same frames with every allocation
+         # inside the streamer counted (must be none).
+         "rm -rf /tmp/t_pngs && mkdir -p /tmp/t_pngs && "
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined -Ifrontend-common "
+         "-o /tmp/t_fe_pngs tools/tests/test_fe_png_stream.c "
+         "frontend-common/fe_png_stream.c "
+         "frontend-common/fe_png.c frontend-common/fe_util.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_pngs /tmp/t_pngs && "
+         "python3 tools/tests/check_png.py /tmp/t_pngs && "
+         "rm -rf /tmp/t_pngsh && mkdir -p /tmp/t_pngsh && "
+         "gcc -std=gnu99 -O2 -Wall -Wextra -Werror -DFE_PNG_STREAM_HEAPCHECK "
+         "-Ifrontend-common -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc "
+         "-o /tmp/t_fe_pngsh tools/tests/test_fe_png_stream.c "
+         "frontend-common/fe_png_stream.c "
+         "frontend-common/fe_png.c frontend-common/fe_util.c && "
+         "/tmp/t_fe_pngsh /tmp/t_pngsh && "
          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
          "-fsanitize=address,undefined "
          "-o /tmp/t_shot_name tools/tests/test_shot_name.c && "
@@ -569,6 +588,11 @@ def suites(env: Env, baseline: Path | None):
          ("gcc -std=gnu99 -w -DGPSP_PLAYABLE -ffunction-sections -fdata-sections "
           "-I%s -Ifrontend-common -Ipsp tools/test_video_buffers.c "
           "-Wl,--gc-sections -o /tmp/t_vb && /tmp/t_vb && "
+          # "As displayed" screenshots: the source picture and the grab
+          # before an overlay, on a real mapping of the uncached eDRAM alias.
+          "gcc -std=gnu99 -w -DGPSP_PLAYABLE -ffunction-sections -fdata-sections "
+          "-I%s -Ifrontend-common -Ipsp tools/test_video_capture.c "
+          "-Wl,--gc-sections -o /tmp/t_vcap && /tmp/t_vcap && "
           "gcc -std=gnu99 -w -DGPSP_PLAYABLE -ffunction-sections -fdata-sections "
           "-I%s -Ifrontend-common -Ipsp tools/test_video_geometry.c "
           "-Wl,--gc-sections -o /tmp/t_vgeo && /tmp/t_vgeo && "
@@ -590,7 +614,7 @@ def suites(env: Env, baseline: Path | None):
           "tools/test_display_profiles.c psp/config_psp.c psp/ctl_map.c "
           "frontend-common/fe_util.c -Wl,--wrap=fopen -o /tmp/t_dprof && "
           "/tmp/t_dprof")
-         % (sdk, sdk, sdk)),
+         % (sdk, sdk, sdk, sdk)),
 
         ("sleep_power", True, lambda: None, (
           "python3 tools/tests/test_psp_runtime.py && "

@@ -229,6 +229,11 @@ static int       g_blit_mode = VID_BLIT_VRAM;
  * the heartbeat cadence — the whole reason all three modes ship is that the
  * choice between them can only be made from hardware numbers. */
 static unsigned g_blit_frames;
+/* g_blit_frames when an overlay last began (vid_overlay_begin): while the two
+ * differ, the newest game picture has nothing drawn over it.  "As displayed"
+ * screenshots read that (vid_cap_frame, at the end of this file). */
+static unsigned g_ovl_blit;
+static void cap_overlay_grab(void);
 static unsigned g_stage_us_tot, g_stage_us_max;
 static unsigned g_gu_us_tot,    g_gu_us_max;
 /* ADR-0038: the sceGuSync alone, carved out of `gu`.  See video_psp.h. */
@@ -382,6 +387,8 @@ void vid_blit_prof(unsigned *frames,
    if (gu_max)    *gu_max    = g_gu_us_max;
    if (wait_us)   *wait_us   = g_wait_us_tot;
    if (wait_max)  *wait_max  = g_wait_us_max;
+   /* Keep vid_cap_frame's question's answer across the reset. */
+   g_ovl_blit = g_blit_frames == g_ovl_blit ? 0u : ~0u;
    g_blit_frames = g_stage_us_tot = g_stage_us_max = 0;
    g_gu_us_tot   = g_gu_us_max   = 0;
    g_wait_us_tot = g_wait_us_max = 0;
@@ -1145,6 +1152,11 @@ void vid_draw_prestaged(const uint16_t *staged, unsigned w, unsigned h)
 
 void vid_overlay_begin(int clear)
 {
+   /* A screenshot waiting for a clean picture takes this one before the
+    * OSD or the rewind HUD is drawn on it (vid_cap_arm). */
+   if (!clear)
+      cap_overlay_grab();
+   g_ovl_blit = g_blit_frames;
    sceGuStart(GU_DIRECT, gu_next_list());
    VID_GU_TARGET();
    if (clear)
@@ -2687,4 +2699,124 @@ void vid_shot_draw(int x, int y, int w, int h)
    sceGuTexFlush();
    image_rows(x, y, w, h, t, SHOT_TEX_W, SHOT_TEX_H, w, 0, h, 255,
               GU_NEAREST);
+}
+
+/* ===========================================================================
+ * "AS DISPLAYED" SCREENSHOTS (Settings > Screenshot picture)
+ *
+ * The picture the player sees -- scale, smoothing, screen effect, colour,
+ * ambient bars, GB/GBC palette -- is the GE's own 480x272 output in a
+ * display buffer, so that is what is saved, read in place: no copy of the
+ * frame in RAM and no heap (fe_png_stream reads it row by row).  What is
+ * NOT saved is anything drawn over the game: the OSD chips and toasts, the
+ * rewind HUD, a menu.  The newest game picture qualifies while no overlay
+ * has begun since it was drawn (g_ovl_blit), and it is then:
+ *
+ *   - the current draw buffer, when it is drawn and not yet swapped (the
+ *     loop draws the game at the top of an iteration and the OSD just
+ *     before the swap, so this is the usual case at the screenshot's site);
+ *   - else the buffer last submitted to the display (g_flip_addr), which
+ *     the triple buffering keeps out of the GE's reach while it is shown.
+ *
+ * Neither (an overlay was drawn on the newest picture: an FPS chip, a
+ * toast, the session chip, the rewind HUD, or a menu frame is the newest):
+ * the caller arms a grab and asks again a frame later.  The next
+ * vid_overlay_begin(0) on a fresh game picture copies the picture into a
+ * VRAM buffer of its own first (cap_overlay_grab), and a frame without any
+ * overlay is read in place as above.  The menu's own frames never qualify:
+ * they begin with vid_overlay_begin(1).
+ *
+ * COHERENCY.  Only the GE writes these buffers (the Media Engine writes its
+ * stage in RAM; the GE scales that into VRAM), and every read here is
+ * through the uncached alias after vid_gu_flush(), so no D-cache line can
+ * be stale and no list is still drawing.
+ *
+ * VRAM, not RAM: the held copy is 480 x 272 x 2 = 261,120 B after the save
+ * states page's preview, 8 KiB aligned -- 1,712,128 .. 1,973,248 of
+ * 2,097,152 with triple buffering.  vram_at() refuses it on a smaller
+ * eDRAM, and the caller then saves the game picture instead.
+ * ======================================================================== */
+#define CAP_W      VID_SCR_W
+#define CAP_H      VID_SCR_H
+#define CAP_BYTES  (CAP_W * CAP_H * 2)
+
+enum { VCAP_IDLE = 0, VCAP_ARMED = 1, VCAP_HELD = 2 };
+static int       g_vcap;          /* VCAP_*                                 */
+static uint16_t *g_cap_buf;       /* uncached VRAM, NULL = none yet        */
+
+#ifdef VID_TRIPLE
+/* The newest game picture, uncached, if nothing is drawn over it. */
+AMB_SMALL static const uint16_t *cap_clean(void)
+{
+   uintptr_t edram = (uintptr_t)sceGeEdramGetAddr();
+   if (g_blit_frames == g_ovl_blit)
+      return NULL;                 /* an overlay began after it */
+   if (g_fb_filled)
+      return (const uint16_t *)(0x40000000u |
+                                (edram + g_fb_off[g_fb_cur]));
+   if (g_flip_addr)
+      return (const uint16_t *)(0x40000000u | g_flip_addr);
+   return NULL;
+}
+#endif
+
+AMB_SMALL static void cap_overlay_grab(void)
+{
+#ifdef VID_TRIPLE
+   const uint16_t *src;
+   int y;
+   if (g_vcap != VCAP_ARMED || !g_fb_filled || !g_cap_buf)
+      return;
+   src = cap_clean();
+   if (!src)
+      return;
+   vid_gu_flush();                 /* the picture is finished */
+   for (y = 0; y < CAP_H; y++)
+      memcpy(g_cap_buf + y * CAP_W, src + y * FB_STRIDE, CAP_W * 2);
+   g_vcap = VCAP_HELD;
+#endif
+}
+
+AMB_SMALL int vid_cap_arm(void)
+{
+#ifdef VID_TRIPLE
+   if (!g_cap_buf)
+      g_cap_buf = vram_at((shot_vram_off() + (uintptr_t)SHOT_BYTES +
+                           0x1FFFu) & ~(uintptr_t)0x1FFFu, CAP_BYTES);
+   if (g_vcap == VCAP_IDLE && g_cap_buf)
+      g_vcap = VCAP_ARMED;
+   return g_vcap != VCAP_IDLE;
+#else
+   return 0;
+#endif
+}
+
+void vid_cap_reset(void)
+{
+   g_vcap = VCAP_IDLE;
+}
+
+AMB_SMALL const uint16_t *vid_cap_frame(unsigned *w, unsigned *h,
+                                        size_t *pitch_bytes)
+{
+#ifdef VID_TRIPLE
+   const uint16_t *pix = NULL;
+   vid_gu_flush();
+   if (g_vcap == VCAP_HELD)
+   {
+      pix = g_cap_buf;
+      *pitch_bytes = CAP_W * 2;
+   }
+   else if ((pix = cap_clean()) != NULL)
+      *pitch_bytes = FB_STRIDE * 2;
+   if (pix)
+   {
+      *w = CAP_W;
+      *h = CAP_H;
+   }
+   return pix;
+#else
+   (void)w; (void)h; (void)pitch_bytes;
+   return NULL;
+#endif
 }

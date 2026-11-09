@@ -67,6 +67,13 @@ static int      g_dump_chord_pending;
 static int      g_yield_us;
 static int      g_yield_every = 60;
 
+/* An "As displayed" screenshot that waits for a clean picture asks the loop
+ * to serve the chord again next time (player_screenshot). */
+static void shot_ask_again(void)
+{
+   g_dump_chord_pending = 1;
+}
+
 #define PE_BINS 7
 static SceUID   g_emu_thid = -1;
 static int      g_pe_on;            /* harness key `preempt_prof`           */

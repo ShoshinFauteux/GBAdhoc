@@ -159,6 +159,7 @@ extern "C" {
 
 enum { PCFG_SHOT_PNG = 0, PCFG_SHOT_BMP = 1 };
 enum { PCFG_SHOT_PICTURE = 0, PCFG_SHOT_APP = 1 };
+enum { PCFG_SHOT_DISPLAYED = 0, PCFG_SHOT_GAME = 1 };
 
 typedef struct
 {
@@ -251,10 +252,16 @@ typedef struct
     * shot_folder: PCFG_SHOT_PICTURE (default) = <device>:/PICTURE/GBAdhoc/,
     * where the XMB's Photo column lists them; PCFG_SHOT_APP = Screenshots/
     * beside the EBOOT (4.6.0-beta.4, issue #31; log/ until beta.3).
+    * shot_source: PCFG_SHOT_DISPLAYED (default, 5.0) = the 480x272 screen
+    * as drawn, without the OSD or a menu (video_psp.c "AS DISPLAYED");
+    * PCFG_SHOT_GAME = the game's own picture at its own size (240x160 or
+    * 160x144), what every screenshot was before 5.0.
     * CONFIG.INI `screenshot_format = png | bmp`,
-    *            `screenshot_folder = picture | app`. */
+    *            `screenshot_folder = picture | app`,
+    *            `screenshot_source = displayed | game`. */
    int  shot_format;
    int  shot_folder;
+   int  shot_source;
 #ifdef REWIND
    /* Settings > Gameplay > Rewind (docs/REWIND.md).  rewind: 1 = record
     * (GBA games, outside link sessions); 0 = no snapshots, no memory, and

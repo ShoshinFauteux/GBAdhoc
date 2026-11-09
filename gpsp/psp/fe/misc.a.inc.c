@@ -170,17 +170,48 @@ static int state_preview_src(const uint16_t **pix, size_t *pitch,
  *           from, so a PSP Go running from internal storage writes ef0: -- or
  *           Screenshots/ beside the EBOOT (since 4.6.0-beta.4, issue #31;
  *           4.x up to beta.3 put the "app" choice in log/).
- *   format  Settings > Screenshot format: PNG (default; fe_png.c, indexed for
- *           <= 256 colours: a few KB) or BMP (24-bit, 115 KB).
- *   memory  PNG needs ~200 KiB of work memory and the heap is empty once a
- *           ROM is in (memory heap-exhausted-by-design), so it borrows the
- *           netdrv arena (netdrv_arena_borrow) for the encode: reserved at
- *           boot for wireless and idle whenever no session is up, so no
- *           heap of its own.  Arena lent to a session, or never reserved:
- *           the shot is a BMP (toast "Screenshot saved (as BMP)").
+ *   what    Settings > Screenshot picture (5.0):
+ *           "As displayed" (default): the 480x272 screen as the player sees
+ *           it -- scale, smoothing, screen effect, colour, ambient bars, GB
+ *           palette -- read from the GE's display buffer in VRAM, without
+ *           the OSD, the rewind HUD or a menu (video_psp.c "AS DISPLAYED").
+ *           When the newest picture has an overlay on it, the shot waits for
+ *           the next one (vid_cap_arm; shot_ask_again raises the chord
+ *           again, so the loop asks next time), at most SHOT_WAIT_LOOPS
+ *           loops, after which it saves the game picture instead
+ *           (EVT screenshot ... src=game).
+ *           "Game only": the game's own frame, 240x160 or 160x144, in its
+ *           colour mode (state_preview_src), as before 5.0.
+ *   format  Settings > Screenshot format: PNG (default) or BMP (24-bit:
+ *           115 KB for the game picture, about 390 KB for the screen).
+ *   memory  NONE for "As displayed": fe_png_stream and shot_write_bmp_rows
+ *           read VRAM row by row with stack buffers only (~24 KiB of the
+ *           main thread's 256 KiB).  "Game only" PNG needs ~200 KiB of work
+ *           memory and the heap is empty once a ROM is in (memory
+ *           heap-exhausted-by-design), so it borrows the netdrv arena
+ *           (netdrv_arena_borrow) for the encode: reserved at boot for
+ *           wireless and idle whenever no session is up, so no heap of its
+ *           own.  Arena lent to a session, or never reserved: that shot is
+ *           a BMP (toast "Screenshot saved (as BMP)").
  *   cost    one-off, on the emulation thread, with the power switch held
  *           off for the write (EVT screenshot ... us=). */
 static char     g_shot_rom[PSP_FILE_PATH_CAP];   /* the running game's path */
+/* The screenshot's code runs once per shot: size-optimised, because every
+ * byte of it sits between layout_pad_cold and the per-frame code the text
+ * pad holds in place (docs/LAYOUT-PINNING.md, "Keeping the pads"). */
+#define SHOT_SMALL __attribute__((optimize("Os")))
+/* Loops an "As displayed" shot has waited for a picture with nothing drawn
+ * over it (0 = none waiting).  Two seconds of loops without one (a menu or
+ * an overlay that stays up) and the game picture is saved instead. */
+static unsigned g_shot_wait;
+#define SHOT_WAIT_LOOPS 120u
+/* fe_host_frame_count() when the waiting shot was asked for: a count below
+ * it means the game it waited in has been left (a quit to the game list in
+ * the same process starts the count again), so nothing it held is used. */
+static unsigned g_shot_from;
+/* Raises the screenshot chord (g_dump_chord_pending) again, so the main
+ * loop calls player_screenshot next time. */
+static void shot_ask_again(void);
 
 static int shot_fd_write(void *ctx, const void *d, size_t n)
 {
@@ -188,7 +219,7 @@ static int shot_fd_write(void *ctx, const void *d, size_t n)
 }
 
 /* The folder for the setting, created as needed.  0 = it exists. */
-static int shot_folder(char *dir, size_t cap)
+SHOT_SMALL static int shot_folder(char *dir, size_t cap)
 {
    SceIoStat st;
    if (g_pcfg.shot_folder == PCFG_SHOT_APP)
@@ -209,9 +240,10 @@ static int shot_folder(char *dir, size_t cap)
    return sceIoGetstat(dir, &st) >= 0 ? 0 : -1;
 }
 
-static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
-                          unsigned h, size_t pitch, fe_png_info *info,
-                          uint8_t *work, size_t work_bytes)
+SHOT_SMALL static int shot_write_png(const char *path, const uint16_t *pix,
+                                     unsigned w, unsigned h, size_t pitch,
+                                     fe_png_info *info, uint8_t *work,
+                                     size_t work_bytes)
 {
    SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    int rc, crc;
@@ -234,6 +266,85 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
    return 0;
 }
 
+/* The screen as a PNG: fe_png_stream reads the rows in place, no heap. */
+SHOT_SMALL static int shot_stream_png(const char *path, const uint16_t *pix, unsigned w,
+                           unsigned h, size_t pitch, fe_png_info *info)
+{
+   SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   int rc, crc;
+   if (fd < 0)
+      return -1;
+   rc = fe_png_stream(pix, w, h, pitch, FE_PNG_PSP5650, shot_fd_write, &fd,
+                      info);
+   crc = sceIoClose(fd);
+   if (rc != 0 || crc < 0)
+   {
+      sceIoRemove(path);
+      return -1;
+   }
+   return 0;
+}
+
+static void shot_le32(uint8_t *p, uint32_t v)
+{
+   p[0] = (uint8_t)v;         p[1] = (uint8_t)(v >> 8);
+   p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+/* A 24-bit BMP of a PSP 5650 picture, written from the stack: rows are read
+ * in place, bottom up, four at a time (fe_bmp_write_psp565 takes a row from
+ * the heap and a stdio buffer, and the heap is empty in a game).  w <= 480
+ * and a multiple of 4 (no row padding): the screen.  0 = written. */
+SHOT_SMALL static int shot_write_bmp_rows(const char *path, const uint16_t *pix,
+                               unsigned w, unsigned h, size_t pitch)
+{
+   uint8_t buf[4 * 480 * 3];
+   uint8_t hdr[54];
+   uint32_t img = (uint32_t)w * 3u * h;
+   unsigned y, n = 0, x;
+   SceUID fd;
+   int bad = 0;
+
+   if (w > 480 || (w & 3u))
+      return -1;
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (fd < 0)
+      return -1;
+   memset(hdr, 0, sizeof(hdr));
+   hdr[0] = 'B'; hdr[1] = 'M';
+   shot_le32(hdr + 2, 54u + img);
+   hdr[10] = 54; hdr[14] = 40;
+   shot_le32(hdr + 18, w);
+   shot_le32(hdr + 22, h);
+   hdr[26] = 1; hdr[28] = 24;
+   shot_le32(hdr + 34, img);
+   bad |= sceIoWrite(fd, hdr, sizeof(hdr)) != (int)sizeof(hdr);
+   for (y = 0; y < h && !bad; y++)
+   {
+      const uint16_t *r = (const uint16_t *)(const void *)
+         ((const uint8_t *)pix + (size_t)(h - 1u - y) * pitch);
+      uint8_t *d = buf + n * w * 3u;
+      for (x = 0; x < w; x++, d += 3)
+      {
+         unsigned c = r[x], cr = c & 31u, cg = (c >> 5) & 63u, cb = c >> 11;
+         d[0] = (uint8_t)((cb << 3) | (cb >> 2));
+         d[1] = (uint8_t)((cg << 2) | (cg >> 4));
+         d[2] = (uint8_t)((cr << 3) | (cr >> 2));
+      }
+      if (++n == 4u || y + 1u == h)
+      {
+         bad |= sceIoWrite(fd, buf, n * w * 3u) != (int)(n * w * 3u);
+         n = 0;
+      }
+   }
+   if (sceIoClose(fd) < 0 || bad)
+   {
+      sceIoRemove(path);
+      return -1;
+   }
+   return 0;
+}
+
 #if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
 /* critique-3 SF6: netdrv_arena_borrow/_return and netdrv_create share one
  * busy flag with no lock, so the screenshot's borrow is only safe on the
@@ -244,31 +355,50 @@ static int shot_write_png(const char *path, const uint16_t *pix, unsigned w,
 static SceUID g_np_start_tid = -1;
 #endif
 
-static void player_screenshot(void)
+SHOT_SMALL static void player_screenshot(void)
 {
-   const uint16_t *pix;
-   size_t pitch;
-   unsigned w, h, seq, t0, us;
+   const uint16_t *pix = NULL;
+   size_t pitch = 0;
+   unsigned w = 0, h = 0, seq, t0, us;
    char dir[sizeof(p_log_dir) + 16], title[SHOT_TITLE_MAX + 1];
    char name[SHOT_TITLE_MAX + 48];
    char path[PSP_FILE_PATH_CAP];
    fe_png_info info;
    time_t now;
    struct tm tmv;
-   int png, rc = -1;
+   int png, rc = -1, screen = 0;
    SceIoStat st;
    size_t work_bytes = 0;
    uint8_t *work = NULL;
 
    memset(&info, 0, sizeof(info));
-   if (state_preview_src(&pix, &pitch, &w, &h) != 0)
+   if (g_pcfg.shot_source == PCFG_SHOT_DISPLAYED)
+   {
+      if (g_shot_wait && fe_host_frame_count() < g_shot_from)
+         g_shot_wait = 0;          /* asked for in a game since left */
+      if (!g_shot_wait)
+      {
+         vid_cap_reset();          /* nothing held from an earlier shot */
+         g_shot_from = fe_host_frame_count();
+      }
+      pix = vid_cap_frame(&w, &h, &pitch);
+      if (!pix && g_shot_wait < SHOT_WAIT_LOOPS && vid_cap_arm())
+      {
+         g_shot_wait++;
+         shot_ask_again();          /* the next picture, next loop */
+         return;
+      }
+      screen = pix != NULL;        /* else the game picture (EVT src=game) */
+      g_shot_wait = 0;
+   }
+   if (!screen && state_preview_src(&pix, &pitch, &w, &h) != 0)
    {
       osd_toast("Screenshot failed: no picture yet");
       return;
    }
    pwr_hold("screenshot");
    t0 = sceKernelGetSystemTimeLow();
-   if (g_pcfg.shot_format == PCFG_SHOT_PNG)
+   if (g_pcfg.shot_format == PCFG_SHOT_PNG && !screen)
    {
       /* Lent only while no driver lives in it; handed back below, before
        * this thread can reach anything that starts a session. */
@@ -283,7 +413,7 @@ static void player_screenshot(void)
       }
 #endif
    }
-   png = work != NULL;
+   png = screen ? g_pcfg.shot_format == PCFG_SHOT_PNG : work != NULL;
    now = psp_local_wallclock();     /* local time, held as if UTC */
    memset(&tmv, 0, sizeof(tmv));
    gmtime_r(&now, &tmv);
@@ -307,7 +437,10 @@ static void player_screenshot(void)
       }
    if (path[0])
    {
-      if (png)
+      if (screen)
+         rc = png ? shot_stream_png(path, pix, w, h, pitch, &info)
+                  : shot_write_bmp_rows(path, pix, w, h, pitch);
+      else if (png)
          rc = shot_write_png(path, pix, w, h, pitch, &info, work,
                              work_bytes);
       else
@@ -321,9 +454,10 @@ static void player_screenshot(void)
    us = sceKernelGetSystemTimeLow() - t0;
    pwr_release();
    FE_EVT_ONLY(us);
-   fe_evt("screenshot file=%s fmt=%s rc=%d %ux%u colors=%u depth=%u "
+   fe_evt("screenshot file=%s fmt=%s src=%s rc=%d %ux%u colors=%u depth=%u "
           "bytes=%u us=%u", path[0] ? path : "(none)", png ? "png" : "bmp",
-          rc, w, h, info.colors, info.bit_depth, (unsigned)info.bytes, us);
+          screen ? "screen" : "game", rc, w, h, info.colors, info.bit_depth,
+          (unsigned)info.bytes, us);
    if (rc == 0)
       osd_toast(png || g_pcfg.shot_format == PCFG_SHOT_BMP
                    ? "Screenshot saved" : "Screenshot saved (as BMP)");

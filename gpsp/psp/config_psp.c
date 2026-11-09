@@ -185,6 +185,10 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       if (fe_ini_get(cfg_path, "screenshot_folder", sv, sizeof(sv)) &&
           !strcasecmp(sv, "app"))
          g_pcfg.shot_folder = PCFG_SHOT_APP;
+      g_pcfg.shot_source = PCFG_SHOT_DISPLAYED;
+      if (fe_ini_get(cfg_path, "screenshot_source", sv, sizeof(sv)) &&
+          !strcasecmp(sv, "game"))
+         g_pcfg.shot_source = PCFG_SHOT_GAME;
    }
 #ifdef REWIND
    g_pcfg.rewind      = (int)fe_ini_get_int(cfg_path, "rewind", PCFG_REWIND_DEFAULT) ? 1 : 0;
@@ -572,6 +576,8 @@ void pcfg_save(void)
               g_pcfg.shot_format == PCFG_SHOT_BMP ? "bmp" : "png");
    fe_ini_set(cfg_path, "screenshot_folder",
               g_pcfg.shot_folder == PCFG_SHOT_APP ? "app" : "picture");
+   fe_ini_set(cfg_path, "screenshot_source",
+              g_pcfg.shot_source == PCFG_SHOT_GAME ? "game" : "displayed");
 #ifdef REWIND
    fe_ini_set_int(cfg_path, "rewind", g_pcfg.rewind);
    fe_ini_set_int(cfg_path, "rewind_mb", g_pcfg.rewind_mb);

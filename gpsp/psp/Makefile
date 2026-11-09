@@ -24,6 +24,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        sidecar_dirs.o \
        config_psp.o \
        ctl_map.o \
+       ../frontend-common/fe_png_stream.o \
        $(MGNET_OBJS) \
        $(MGIFT_OBJS) \
        stb_impl.o layout_pad_fe.o \
@@ -160,7 +161,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 1632
+LAYOUT_PAD_BYTES ?= 1000
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -176,7 +177,7 @@ endif
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 576
+LAYOUT_PAD_RO_BYTES ?= 208
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -185,13 +186,13 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # them.  claude/opt-1000 round 7 sets them so main's frame loop and the
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 2724
+LAYOUT_PAD_FE_BYTES ?= 176
 LAYOUT_PAD_CORE_BYTES ?= 932
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
 # it (fe_rewind's per-frame capture, the link glue, B's cold text).
-LAYOUT_PAD_GB_BYTES ?= 996
+LAYOUT_PAD_GB_BYTES ?= 868
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 # beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link

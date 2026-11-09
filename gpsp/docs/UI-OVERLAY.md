@@ -1471,3 +1471,48 @@ without; 8 mutants, each failing.
 Needs eyes on hardware: the lit hint's contrast in both themes, the bar
 beside the Shelf's art and under the Marquee's hero, and that a long name's
 slide reads well at 30 px/s.
+
+## 16. Screenshots "As displayed" (`claude/shots-displayed`, 5.0 / beta.5)
+
+Settings > SCREENSHOTS gains a first row, *Screenshot picture*: **As
+displayed** (the default) or **Game only** (`config.ini`
+`screenshot_source = displayed | game`, `PCFG_SHOT_DISPLAYED` /
+`PCFG_SHOT_GAME`). *Game only* is every earlier release's screenshot: the
+game's own frame at its own size (240x160 or 160x144), in its colour mode.
+
+*As displayed* is the 480x272 screen the player sees -- scale, smoothing,
+screen effect, colour, ambient bars, GB/GBC palette -- and nothing drawn on
+top of it: no menu, OSD chip, toast or rewind HUD.
+
+- **Source.** The GE's own output in a display buffer, read in place through
+  the uncached VRAM alias after `vid_gu_flush` (only the GE writes those
+  buffers; the Media Engine writes its stage in RAM). `video_psp.c`, section
+  "AS DISPLAYED", decides which buffer holds the newest game picture with
+  nothing over it: the draw buffer when the picture is drawn and not yet
+  swapped (the usual case at the screenshot's site, since the loop draws the
+  OSD just before the swap), else the buffer last shown. An overlay begun
+  after the picture (`vid_overlay_begin`) disqualifies it.
+- **Waiting for a clean picture.** When the newest picture has an overlay on
+  it (an FPS or session chip in the same-frame present, the rewind HUD, a
+  menu frame), the shot arms a grab and waits: the next
+  `vid_overlay_begin(0)` on a fresh game picture first copies it into a VRAM
+  buffer of its own (261,120 B after the save-state preview, 1,712,128 ..
+  1,973,248 of the eDRAM), and the next loop saves that copy. A frame with no
+  overlay at all is read in place as above. At most 120 loops; then the game
+  picture is saved instead (`EVT screenshot ... src=game`). A chord pressed with
+  the menu open is served when the menu closes, from the first game picture
+  after it.
+- **No heap.** `fe_png_stream` (frontend-common/fe_png_stream.c) writes the
+  PNG row by row from VRAM: dynamic-Huffman blocks with matches one byte, one
+  pixel and one row back, about 24 KiB of the main thread's stack, nothing
+  else. The BMP choice is streamed from VRAM the same way
+  (`shot_write_bmp_rows`, four rows of stack at a time). Neither borrows the
+  netdrv arena, so *As displayed* is a PNG during a wireless session too.
+- **Sizes** (PPSSPP captures, builds/shots-out): PNG 12-165 KB across the
+  display modes; BMP 391,734 B.
+
+Host: `tools/tests/test_fe_png_stream.c` (+ `check_png.py`: both sizes, row
+order, every CRC and the Adler-32 by an independent decoder; a no-heap build
+that counts allocations) and `tools/test_video_capture.c` (the real
+`video_psp.c` on a mapped eDRAM alias: in place, after the swap, the grab
+before an OSD, menus never, the blit counter's reset, no room).
