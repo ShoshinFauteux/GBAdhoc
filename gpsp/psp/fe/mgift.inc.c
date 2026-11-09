@@ -264,6 +264,13 @@ static void mgift_start_io(void)
    }
 
    g_mg_on = 1;
+   /* This attempt's adapter facts only (r4-L6): the S/C flags were only
+    * ever set, so a second start in the same game -- or one after a Union
+    * Room visit -- showed S1 C1 before the game had done anything. */
+   g_rfu_seen_bcrd = 0;
+   g_rfu_seen_conn = 0;
+   g_rfu_last_cmd = 0xFFF;
+   g_rfu_last_state = 0;
    snprintf(g_mg_l1, sizeof(g_mg_l1), "Waiting for a gift");
    snprintf(g_mg_l2, sizeof(g_mg_l2), "%s  game %s", mgnet_local_ip(),
             g_mg_game[0] ? g_mg_game : "?");
