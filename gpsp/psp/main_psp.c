@@ -1245,8 +1245,13 @@ int main(int argc, char *argv[])
                                        PLAY_INPUT_FRESH) != 0;
       g_ctrl_cycle = (int)fe_ini_get_int(HARNESS_INI, "ctrl_cycle", 0);
       if (g_ctrl_cycle >= 5555 && g_ctrl_cycle <= 20000)
-         fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle,
-                sceCtrlSetSamplingCycle(g_ctrl_cycle));
+      {
+         /* Called outside the EVT (r6-B3): fe_evt's arguments are not
+          * evaluated where telemetry compiles out, so the call went too. */
+         int cc_rc = sceCtrlSetSamplingCycle(g_ctrl_cycle);
+         FE_EVT_ONLY(cc_rc);
+         fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle, cc_rc);
+      }
       else
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
