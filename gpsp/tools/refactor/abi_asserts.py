@@ -18,9 +18,12 @@ How:
     Comparing POINTERS keeps qualifiers (const/volatile) in the comparison; a bare
     __builtin_types_compatible_p ignores top-level qualifiers.
  3. The check TU is `#include "common.h"` (the core's header chain: main.h, gba_memory.h,
-    cpu.h, ...) compiled with the flavour's exact CORE compile line (-fsyntax-only, docker).
-    A discovery pass drops names the core headers do not declare and frontend types the
-    core TU cannot see; they are listed in the header as UNCHECKED, with the reason.
+    cpu.h, ...) and `#include "psp/sleep_q.h"`, compiled with the flavour's exact CORE compile
+    line (-fsyntax-only, docker).  A discovery pass drops the names those headers do not
+    declare (whether or not some other header does: gbcore_prepare is in gbcore/gbcore.h,
+    which the check TU does not include) and frontend types the core TU cannot see; they are
+    listed in the header as UNCHECKED, with the reason.  That list is the FULL list of the
+    copies T14 does not assert (P-review r2, N4).
  4. Constants: VRAM_DIRTY_SHIFT/PAGES against gba_memory.h; MER_INPUT_US, MER_RETIRE_US,
     MER_MISS_LIMIT and VRAM_DIRTY_PAGES against tools/test_ff_pipeline.c's copies.  All six
     are required: one that is not found is a FAILURE (exit 1), never a silent drop.
@@ -411,7 +414,9 @@ def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=No
     L.append('#endif')
     L.append('_Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");')
     L.append('')
-    L.append('/* UNCHECKED (%d): no core declaration to compare with, or a frontend-only type.' % len(unchecked))
+    L.append('/* UNCHECKED (%d): every copy NOT asserted: its name is not declared by the check TU\'s' % len(unchecked))
+    L.append(' * headers (abi_check.c includes only common.h\'s chain and psp/sleep_q.h), or its type is')
+    L.append(' * frontend-only.')
     for name, line, why in unchecked:
         L.append(' *   %-24s %-36s %s' % (cite(line), name, why))
     L.append(' */')
@@ -498,7 +503,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
                 mm = re.search(r'__typeof__\(&(\w+)\)', hl[ln - 2])
             if mm:
                 nm = mm.group(1)
-                why = ('no core declaration' if ('undeclared' in msg and "'%s'" % nm in msg)
+                why = ('not declared by the check TU\'s headers' if ('undeclared' in msg and "'%s'" % nm in msg)
                        else 'frontend type not visible in the core TU: ' + msg[:70])
                 drop.setdefault(nm, why)
         if not drop:

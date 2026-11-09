@@ -15,7 +15,7 @@ All numbers are from 01067e74 (beta.4 base) unless marked. The scratch evidence 
 | `pp_diff.sh` | T3, gate G0 |
 | `split.py` | T4: `cover`, `gen`, `split`, `inverse`, `replay`, `--selftest` |
 | `cutlist.txt` | T4's output for this tree's single-file `main_psp.c` (its header names the source sha256). Since PLAN-P-beta5 P1 it follows the P branch: every step that edits main_psp.c regenerates it (`gen --carry` the previous one) in the same commit. **After P4 `psp/main_psp.c` is the split shell, and the cutlist describes the split tree's INVERSE** (`split.py inverse --split gpsp -o F`: the shell with every `fe/X.inc.c` expanded in place; the header's sha256 is the inverse's). Regenerate it with `split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o gpsp/tools/refactor/cutlist.txt`; `gen --src` on the shell (the default `--src`) is refused before `-o` is opened. Never hand-edit it |
-| `fe_readme.py` | writes `psp/fe/README.md` (PLAN-P-beta5 §5.2: module descriptions, owners, the fragment → module map, the conventions of the split) from the cutlist's FRAG/F/G rows, the split tree and the PLAN §1.2 module table; `--check` exits 1 when the committed README is stale; `--selftest` (`tests/fe_readme_test.py`) |
+| `fe_readme.py` | writes `psp/fe/README.md` (PLAN-P-beta5 §5.2: module descriptions, owners, the fragment → module map, the conventions of the split) from the cutlist's FRAG/F/G rows, the split tree and the PLAN §1.2 module table; `--check` exits 1 when the committed README is stale; `--selftest` (`tests/fe_readme_test.py`). P-review r2: the module descriptions are PLAN.md §1.2's Responsibility cells verbatim (`--plan PLAN.md` compares them, and the §1.3 exported names, §1.1 never-TU rows and §2 epochs it transcribes, cell for cell); every harness and mgift function is listed with its `#if` context read from the inverse (none = compiled by every build); the readers of each @extract region come from the host tests' `extract.extract` calls and the helpers that pass a name on (`marked_function`: `'fn:' + name`), resolved from literals with `ast`, and a read it cannot resolve is refused |
 | `tests/fixtures/cutlist_01067e74.txt` | the 01067e74 cutlist (was `cutlist.txt` until P1), used by the self-tests that run on the 01067e74 tree |
 | `modules.py` | PLAN §1.2/§1.3 as data: module ranges, the plan's name list, x1 groups, owner modules |
 | `csrc.py` | shared C-source model: census.py ported, with the `__attribute__` fix |
@@ -49,13 +49,24 @@ How it works:
 ## T4 `split.py` + `cutlist.txt`
 
 ```
-python split.py cover [-v]                                   # crit_cover reproduced
+python split.py cover [--src F] [-v]                         # crit_cover reproduced
 python split.py gen [--src F | --split GPSP_DIR] [--carry OLD] [--assign KEY=MODULE ...] -o cutlist.txt
-python split.py split --cutlist cutlist.txt --out DIR        # DIR/psp/main_psp.c (shell) + DIR/psp/fe/*.inc.c
-python split.py inverse --split DIR -o main_psp.c
+python split.py split [--src F] --cutlist cutlist.txt --out DIR   # DIR/psp/main_psp.c (shell) + DIR/psp/fe/*.inc.c
+python split.py inverse --split DIR -o F
 python split.py replay --split DIR --cutlist cutlist.txt --patch P --out DIR2
-python split.py --selftest
+python split.py --selftest [--src F]
 ```
+
+`--src` defaults to this tree's `psp/main_psp.c`. Before P4 that is the single file; after P4 it is the shell, which `gen`, `split` and `cover` refuse. On the split tree, regenerate in two steps:
+
+```
+python split.py inverse --split gpsp -o F                    # the single file this tree's cutlist describes
+python split.py split --src F --cutlist gpsp/tools/refactor/cutlist.txt --out DIR
+python split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o C   # gen also takes --split itself
+python split.py replay --split gpsp --cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2
+```
+
+DIR and DIR2 are new directories (`split` refuses an `--out` that is its source's own tree); copy their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree.
 
 ### The cutlist
 
@@ -74,7 +85,7 @@ The generator also follows these rules:
 
 `gen` without `--carry` uses the §1.2 line ranges and the plan's name list (`modules.py`). That is valid only on 01067e74's line numbers. On any other tree, `gen --carry` keeps every name's module and refuses new names. The review files new names with `--assign`.
 
-**The split tree (P-review 2026-11-08, B4).** The cutlist always describes the single-file `main_psp.c`. After P4 that file is `split.py inverse` of the shell and its fragments, and the cutlist's `source:` sha256 is the inverse's. `gen`, `split` and `cover` refuse a `--src` holding `#include "fe/X.inc.c"` lines, and `gen` refuses before it opens `-o` (until this fix, `gen` on the shell, which is the default `--src` on the P tree, wrote a 4-item, 1-FRAG cutlist over `-o` and only then refused). `gen --split GPSP_DIR` reads the inverse itself. `gen` writes `-o` through a temp file, renamed only after its own split check passes, so a refused gen never leaves a half cutlist. Self-test C7, M17 and M18.
+**The split tree (P-review 2026-11-08, B4).** The cutlist always describes the single-file `main_psp.c`. After P4 that file is `split.py inverse` of the shell and its fragments, and the cutlist's `source:` sha256 is the inverse's. `gen`, `split` and `cover` refuse a `--src` holding `#include "fe/X.inc.c"` lines, and `gen` refuses before it opens `-o` (until this fix, `gen` on the shell, which is the default `--src` on the P tree, wrote a 4-item, 1-FRAG cutlist over `-o` and only then refused). `gen --split GPSP_DIR` reads the inverse itself. `gen` writes `-o` through a temp file, renamed only after its own split check passes, so a refused gen never leaves a half cutlist. Self-test C7, M17 and M18. Only `gen` has `--split`: the refusal tells `split` and `cover` to write the inverse (`split.py inverse --split <gpsp dir> -o F`) and pass `--src F` (P-review r2: it used to name a `split --split` that does not exist). Self-test M19 runs every command a refusal names.
 
 ### What `split` refuses
 

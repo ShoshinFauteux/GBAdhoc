@@ -11,6 +11,12 @@
       `/* FILE:N */` must name a line of that file holding NAME (a #define of it for constants).
       Exit 1 on any wrong cite or none checked.  A header that cites fragment lines as
       main_psp.c:N (the pre-review tool) fails on a split tree.
+  p0a_t14_tu.py index FE_PRIV_H HEADER...
+      fe_priv.h's core-ABI index says what it is (P-review r2, N4): "PLAN-P-beta5 §5.2's set ...
+      the names T14 asserts (in any flavour) plus six it cannot".  Checked against the generated
+      headers (one per flavour): every name any HEADER asserts is in the index; the index's names
+      that no HEADER asserts are exactly the six its "The six of this index that are UNCHECKED"
+      sentence names, and each of them is in an UNCHECKED list.  Exit 1 otherwise.
 """
 import os
 import re
@@ -84,7 +90,60 @@ def cites(header, gpsp):
     return 0 if n_ok and not bad else 1
 
 
+IDX_BEGIN = "The index below is PLAN-P-beta5 §5.2's set"
+IDX_END = 'T14 (tools/refactor/abi_asserts.py) asserts'
+SIX = 'The six of this index that are'
+
+
+def header_names(header):
+    """(asserted names, UNCHECKED names) of one generated fe_abi_asserts.h"""
+    h = open(header, encoding='utf-8').read()
+    asserted = set(re.findall(r'__typeof__\(&(\w+)\)', h))
+    i = h.find('/* UNCHECKED')
+    if i < 0:
+        raise SystemExit('%s: no UNCHECKED list' % header)
+    return asserted, set(re.findall(r'^ \*\s+\S+:\d+\s+(\w+)\s', h[i:], re.M))
+
+
+def index(fe_priv, headers):
+    t = open(fe_priv, encoding='utf-8').read()
+    a, b = t.find(IDX_BEGIN), t.find(IDX_END)
+    s = t.find(SIX, b)
+    e = t.find("main()'s", s)
+    if a < 0 or b < a or s < 0 or e < s:
+        print('index: %s has no "%s" ... "%s" ... "%s" comment' % (fe_priv, IDX_BEGIN, IDX_END, SIX))
+        return 1
+    asserted, unchecked = set(), set()
+    for hd in headers:
+        x, u = header_names(hd)
+        asserted |= x
+        unchecked |= u
+    known = asserted | unchecked
+    idx = set(re.findall(r'\b\w+\b', t[a:b])) & known
+    six = set(re.findall(r'\b\w+\b', t[s:e])) & known
+    rc = 0
+    miss = sorted(asserted - idx)
+    print('index %s: %d names (%d asserted in some flavour, %d not); %d headers assert %d names, list %d UNCHECKED'
+          % (fe_priv, len(idx), len(idx & asserted), len(idx - asserted), len(headers), len(asserted), len(unchecked)))
+    if miss:
+        print('  FAIL asserted but not in the index: %s' % ', '.join(miss))
+        rc = 1
+    if idx - asserted != six:
+        print('  FAIL the index names that no flavour asserts %s != the "six" sentence %s'
+              % (sorted(idx - asserted), sorted(six)))
+        rc = 1
+    if len(six) != 6 or not six <= unchecked:
+        print('  FAIL the "six" sentence names %d names, %s not in an UNCHECKED list' % (len(six), sorted(six - unchecked)))
+        rc = 1
+    if not rc:
+        print('  ok   every asserted name is in the index; the six it cannot assert: %s' % ', '.join(sorted(six)))
+        print('  ok   UNCHECKED names the index does not list: %d' % len(unchecked - idx))
+    return rc
+
+
 def main(a):
+    if len(a) >= 3 and a[0] == 'index':
+        return index(a[1], a[2:])
     if len(a) == 3 and a[0] == 'grep':
         rx = re.compile(a[1])
         for f, i, ln in tu(a[2]):

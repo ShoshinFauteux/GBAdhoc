@@ -26,7 +26,7 @@ per flavour by `flavours.sh`. It is G1-identical and byte-identical (`builds/mai
 | (CI) | no raw exits outside fe_priv.h, no `pwr_hold` in hooks, no logic in `fe_evt()` args, ... | T11 `ci_greps.sh` | docs/abi-exit-ci.md |
 | (ABI) | `fe_abi_asserts.h` static asserts of shared prototypes/constants | T14 `abi_asserts.py` | docs/abi-exit-ci.md |
 | (split) | deterministic split of main_psp.c into fragments by `cutlist.txt`; inverse; replay | T4 `split.py`, T9 `globals.py`, T7 `../tests/extract.py` | docs/source-split.md |
-| (doc) | `psp/fe/README.md` (module map, owners, conventions of the split) generated from the cutlist and the split tree; `--check` fails a stale one | `fe_readme.py` | docs/source-split.md |
+| (doc) | `psp/fe/README.md` (module map, owners, `#if` context of the harness/mgift rows, @extract readers per region, conventions of the split) generated from the cutlist, the split tree and the host tests; `--check` fails a stale one; `--plan PLAN.md` checks its transcribed PLAN tables | `fe_readme.py` | docs/source-split.md |
 | (build) | release + lab + harness with the right ROOT/psp make split; refuses a dirty baseline; fails on broken imports | T15 `flavours.sh` (+ `flavours_sidecar.sh` for `.su` and the map without changing the ELF) | docs/baseline.md (copy of mainpsp-tools-out/baseline/BASELINE.md) |
 
 Shared libraries: `elf32.py`, `ef_mips.py`, `ef_dwarf.py`, `ef_srcscan.py`, `sl_dwline.py`, `sl_ldmap.py`,
@@ -155,8 +155,11 @@ mutants now. The details are in each doc's "verify"/"adversarial" section.
 - **T11:** GCC-inferred noreturn/cold is invisible to R2 and is left to G3's input-section audit.
 - **T9/T4:** a global defined through a file-scope macro is invisible to csrc (none on 01067e74, by an ELF
   cross-check that is not yet a `globals.py` option).
-- **T10's** loop window is hard-coded to main_psp.c:16368-18090, and **T8's** site identity depends on x2's
-  19 early sites. Both must be re-anchored when P moves those lines.
+- (Closed by P0a, kept for the record.) **T10's** loop window was hard-coded to main_psp.c:16368-18090 and
+  **T8's** site identity depended on x2's 19 early sites by line. Both are anchored now: T10 finds the window
+  with `loop_anchor.py` (`layout_report.py` `LOOP_LINES = None`), checked against main's `DW_AT_decl_line`,
+  and T8 takes x2's sites by anchor (reason string + order), so neither needs a re-anchor when P moves lines
+  (see "P0a" above; P4 recorded the ranges they printed).
 - **T5's** placement threshold (16 KiB gap) was set from a 3,508 B baseline maximum, so it may need retuning.
   `regen.sh --check-only` now fails (PLACE) on an order that was regenerated but not yet relinked.
 - **T14** compiles only with the 7 reviewed normalisations in `abi_asserts.known`. `fe_abi_asserts.h` cannot

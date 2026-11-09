@@ -31,6 +31,7 @@ Controls (must pass) and mutants (must be REFUSED by split.py):
   (P-review 2026-11-08) C7 gen --split DIR (the inverse of a split tree) gives the single file's rows;
   M17 gen / split / cover --src on the split shell -> refused, and gen leaves -o untouched;
   M18 a gen whose split check refuses leaves -o untouched (temp file + rename)
+  (P-review r2) M19 every command a refused gen / split / cover names in its message parses and runs
 """
 import difflib
 import io
@@ -179,6 +180,45 @@ def run(src, committed=None):
             ok('M18 gen whose split check refuses: -o untouched, no temp file left')
         else:
             bad('M18 rc %d, -o kept %s, temp left %s' % (rc, kept, left))
+        # M19 (P-review r2, N3): the refusal names only commands that work.  Every `split.py ...` the
+        # message of a refused gen / split / cover names is run as written (<gpsp dir> = the split
+        # tree, F = a file, `...` = the refused call's other arguments): each must parse and succeed,
+        # and split / cover must not be told to use a --split they do not have
+        for cmd in (['gen', '--src', sh9, '--carry', cpath, '-o', os.path.join(work, 'm19.txt')],
+                    ['split', '--src', sh9, '--cutlist', cpath, '--out', os.path.join(work, 'm19s')],
+                    ['cover', '--src', sh9]):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = split.main(cmd)
+            msg = err.getvalue()
+            spans = re.findall(r'`(split\.py [^`]*)`', msg)
+            fpath = os.path.join(work, 'm19.inverse.c')
+            others = cmd[3:]
+            want = (['split.py gen --split <gpsp dir> ...'] if cmd[0] == 'gen' else []) + \
+                ['split.py inverse --split <gpsp dir> -o F', 'split.py %s --src F ...' % cmd[0]]
+            res = []
+            for sp in spans:
+                argv = sp.replace('<gpsp dir>', '<gpsp-dir>').split()[1:]
+                argv = [s9 if x == '<gpsp-dir>' else fpath if x == 'F' else x for x in argv]
+                if argv[-1] == '...':
+                    argv = argv[:-1] + others
+                if cmd[0] == 'split' and '--out' in argv:
+                    shutil.rmtree(argv[argv.index('--out') + 1], ignore_errors=True)
+                e2 = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(e2):
+                        r2 = split.main(argv)
+                except SystemExit as x:
+                    r2 = 'argparse exit %s' % x.code
+                except Exception as x:          # noqa: BLE001  (a crash is a failure of the message)
+                    r2 = '%s: %s' % (type(x).__name__, x)
+                good = (r2 in (0, 1) and 'REFUSED' not in e2.getvalue()) if argv[0] == 'cover' else r2 == 0
+                res.append((sp, r2, good, e2.getvalue().strip()[:120]))
+            if rc == 1 and spans == want and all(g for _, _, g, _ in res):
+                ok('M19 %s on the shell: the message names %s, each runs (rc %s)'
+                   % (cmd[0], ' then '.join('`%s`' % s for s in spans), ', '.join(str(r) for _, r, _, _ in res)))
+            else:
+                bad('M19 %s: rc %d, spans %s (want %s), runs %s' % (cmd[0], rc, spans, want, res))
         # C6 (PLAN-P-beta5 P1): own-line @extract markers around the last function of a
         # fragment (as P1 plants them): the end marker stays in that fragment, so the
         # carried cutlist is unchanged; M16 a FRAG anchor put on that end marker is refused

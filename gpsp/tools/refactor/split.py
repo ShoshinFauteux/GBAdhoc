@@ -20,6 +20,10 @@ of psp/main_psp.c into fragments, driven by a generated cutlist.txt.
         shell used to overwrite -o with a 1-FRAG cutlist and then fail);
         --split GPSP_DIR reads the inverse of that split tree instead.  -o is
         written only after the split check passes (temp file + rename).
+        Only gen has --split.  split and cover refuse the shell the same way;
+        on a split tree give them the inverse: `split.py inverse --split
+        GPSP_DIR -o F`, then `--src F` (the default --src is the tree's own
+        psp/main_psp.c, which is the shell after P4).
   split.py split   --src main_psp.c --cutlist cutlist.txt --out DIR
         cut at the anchors (never at line numbers) into DIR/psp/main_psp.c
         (the shell: shell fragments inline + one `#include "fe/X.inc.c"` per
@@ -506,10 +510,14 @@ def refuse_split_shell(path, text, cmd):
     split shell they would see 4 items and 1 fragment (gen used to write that to -o, then fail)."""
     inc = split_shell_includes(text)
     if inc:
+        # only gen has --split; split and cover take the inverse as --src (P-review r2: the old message
+        # told split/cover to use a `--split` they do not have)
         raise Refused('%s: %s is a split shell (%d `#include "fe/X.inc.c"` lines, the first at L:%d): the '
-                      'cutlist describes its INVERSE, the single file.  Use `split.py %s --split <gpsp dir>` '
-                      '%sor `split.py inverse --split <gpsp dir> -o F` and --src F'
-                      % (cmd, path, len(inc), inc[0], cmd, '' if cmd == 'gen' else '(gen only) '))
+                      'cutlist describes its INVERSE, the single file.  Use %s`split.py inverse --split <gpsp dir> '
+                      '-o F`, then `split.py %s --src F ...` with your other arguments'
+                      % (cmd, path, len(inc), inc[0],
+                         '`split.py gen --split <gpsp dir> ...` (gen reads the inverse itself), or '
+                         if cmd == 'gen' else '', cmd))
 
 
 def read_single(src=None, split_dir=None, cmd='gen'):

@@ -8,25 +8,43 @@ Inputs (all read, none written except -o):
     (item -> owner module -> the fragment it sits in).
   * the split tree: psp/main_psp.c (the shell) and psp/fe/*.inc.c.  The rows' anchors are resolved
     in split.py's inverse of the shell, then mapped back to the file and line that hold them, so
-    every cite is `fe/X.inc.c:N` (or `main_psp.c:N` for the shell).
-  * MODULES below: PLAN.md §1.2's module table (rows #0-#20, responsibility column) with the
-    PLAN-P-beta5 §2 deltas, transcribed.
+    every cite is `fe/X.inc.c:N` (or `main_psp.c:N` for the shell).  The `#if` context of every row
+    is read from the same inverse (comments and strings blanked, `\\`-continued directives joined).
+  * PLAN12 below: PLAN.md §1.2's module table, the Responsibility cell of the shell row and of the
+    19 module rows, VERBATIM (no word added or dropped; its line numbers are 01067e74's, its §
+    are PLAN.md's).  EXPORTED (PLAN.md §1.3's exported ABI, by module), NEVER_TU (§1.1's "never real
+    TUs", = the "(F, forever)" rows of §1.2) and LATER (the PLAN §2 items that create the modules
+    with no fragment yet) are transcribed beside it.  `--plan PLAN.md` checks all four against the
+    plan, cell for cell (exit 1 on any difference); EXPORTED is also checked against the cutlist
+    (every name is a row its module owns).
   * the @extract markers in the shell and fragments, and the host tests that read them
-    (tools/tests/extract.py --enumerate), for the marker table; the `/* @lab */` tags.
+    (tools/tests/extract.py --enumerate).  A test reads a region by calling `extract.extract(src,
+    NAME)`, or a helper that passes its argument on (test_psp_runtime.marked_function reads
+    'fn:' + name, run_ff_tests.function 'ff:' + name; helpers are found, not listed here).  NAME is
+    resolved from the test's own literals with `ast`: a string, a `+` of strings, a loop or
+    comprehension variable over a tuple/list literal (or a module-level name bound to one), a
+    module-level dict literal subscripted.  The table lists each region's readers.
+  * tools/refactor/generated/<flavour>/fe_abi_asserts.h: T14's counts per flavour.
+  * the `/* @lab */` tags; fe/fe_priv.h's FE_HANDOFF.
 
 Checks (exit 1, nothing written): the cutlist's `source:` sha256 is the inverse's (a stale cutlist
 is refused); every FRAG row's anchor is the first line of its fragment file, in the shell's
 include order; every F/G row's anchor sits in the fragment its row names; every LAB_HOOK( /
 LAB_FFP( site carries its `/* @lab */` tag and every tag is on such a site; LAB_HANDOFF appears only
-in fe_priv.h's FE_HANDOFF.
+in fe_priv.h's FE_HANDOFF; a module with no PLAN12 row; an EXPORTED name that is not a row of its
+module; a module with no FRAG row that LATER does not name, or a LATER module that has one; a host
+test whose region NAME this tool cannot resolve from literals (never guessed, never skipped), or
+that names a region no marker defines; an `#if` group that does not balance in the inverse.
 
 Usage:
   fe_readme.py [--gpsp DIR] [-o FILE]   write DIR/psp/fe/README.md (default DIR = this tree's gpsp/)
   fe_readme.py [--gpsp DIR] --check     exit 1 if the committed README is not what this generates
+  fe_readme.py --plan PLAN.md           exit 1 if PLAN12 / EXPORTED / NEVER_TU / LATER differ from the plan
   fe_readme.py --selftest               mutants on a scratch copy (tests/fe_readme_test.py)
-Exit: 0 ok, 1 refused / stale, 2 usage.
+Exit: 0 ok, 1 refused / stale / differs, 2 usage.
 """
 import argparse
+import ast
 import collections
 import hashlib
 import os
@@ -35,52 +53,58 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import split as S  # noqa: E402  (read_cutlist, read_split, inverse_text, INC_RE, Refused)
+import split as S  # noqa: E402  (read_cutlist, read_split, inverse_text, INC_RE, Refused, csrc)
 import modules  # noqa: E402
 
-# PLAN.md §1.2 module table (responsibility column, abridged only by dropping L: cites) and §1.1's
-# "never real TUs, by rule"; PLAN-P-beta5 §2 adds no row.  '#' is the PLAN row number.
-MODULES = collections.OrderedDict([
-    ('shell', ('-', 'psp/main_psp.c itself: module info and thread attributes, `layout_pad_cold` and '
-               '`layout_pad_ro`, the `#include` list (fe_priv.h, then the fragments) and `main()`, '
-               'which holds boot, session, the frame loop and the teardown until phases C/D1')),
-    ('paths', ('20', 'ms0 paths and boot identity: `init_paths`, the `p_*` path buffers; '
-               '`g_dir_base` (exported)')),
-    ('audio', ('2', 'ring, `audio_thread`, `plat_audio_frames`, start/stop (the SQ contract), resample '
-               'step, status, link-audio trims; `in_rate`, `g_audio_step` (exported). Never a real TU')),
-    ('iothread', ('3', 'the ADR-0025 writer thread, SRAM sync, the stop-before-shutdown contract, the SQ '
-                  'stop codes. Never a real TU')),
-    ('input', ('4', 'pad read, ctl maps, `plat_input_bitmask`, pad_swallow, turbo, chord state, '
-               'input_fresh')),
-    ('power', ('5', '`exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, the '
-               'play lock, the park handshake (`loop_park`, `browser_park`), the sleep-quiesce ops '
-               '(`sq_*`), `power_request_poll`, standby down/up, wake service and overlay; `g_running` '
-               '(exported). Never a real TU')),
+# PLAN.md §1.2's module table: '#' and the Responsibility cell, VERBATIM (`--plan` compares them
+# with the plan's cells byte for byte).  Rows 0 and 1 of the plan are the two headers (fe_priv.h,
+# play_defaults.h), not cutlist modules, so they are not here.
+PLAN12 = collections.OrderedDict([
+    ('shell', ('–', 'includes, pads, `main()` (§4)')),
+    ('paths', ('20', 'ms0 paths and boot identity: `init_paths`, the `p_*` path buffers')),
+    ('audio', ('2', 'Ring, `audio_thread`, `plat_audio_frames`, start/stop (SQ contract), resample step, status, '
+                    'link-audio trims')),
+    ('iothread', ('3', 'ADR-0025 writer thread, SRAM sync, stop-before-shutdown contract, SQ stop codes')),
+    ('input', ('4', 'Pad read, ctl maps, `plat_input_bitmask`, pad_swallow, turbo, chord state, input_fresh')),
+    ('power', ('5', '`exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, play lock, '
+                    'park handshake (`loop_park`, `browser_park`), sleep-quiesce ops (`sq_*` 3977-4095), '
+                    '`power_request_poll`, standby down/up, wake service and overlay')),
     ('display', ('6', 'CPU clock, display apply, colour preview, wake snapshot')),
-    ('merend', ('7', 'ME renderer state, lifecycle, presenter, retire, `fill_desc`, the vmem pool, legacy '
-                'me_video. Never a real TU')),
-    ('pacing', ('8', 'latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, the vblank target, '
-                '`us_to_vblank`, frame-hist, the present-plus-overlays helper; `g_ff_uncapped`, '
-                '`g_ff_mult` (exported). Never a real TU')),
-    ('rewind', ('9', 'rewind tick, pool offer/check/lost/back (pool_lost runs on cb_thread), HUD, ini')),
-    ('link', ('10', 'net bring-up/teardown, cable, the GB link session, link UI actions, silent wireless, '
-              'RFU hooks and trace (strong overrides of weak stubs); `g_net_up`, `g_net_is_host` '
-              '(exported)')),
-    ('mgift', ('11', 'Mystery Gift glue (`GBADHOC_MGIFT` builds)')),
-    ('boost', ('12', 'the emu boost warden')),
-    ('misc', ('13', 'wall clocks, screenshot, backup_save, state slots, the cheats lock')),
+    ('merend', ('7', 'ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video '
+                     '(until the owner decides)')),
+    ('pacing', ('8', 'Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, '
+                     'frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6)')),
+    ('rewind', ('9', 'Rewind tick, pool offer/check/lost/back (pool_lost runs on cb_thread), HUD, ini')),
+    ('link', ('10', 'Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, '
+                    'silent wireless, RFU hooks and trace (strong overrides of weak stubs)')),
+    ('mgift', ('11', 'Mystery Gift glue')),
+    ('boost', ('12', 'Emu boost warden')),
+    ('misc', ('13', 'Wall clocks (one noinline `psp_datetime_seconds`), screenshot, backup_save, state slots, '
+                    'cheats lock')),
     ('inproc', ('14', '`inproc_refusal`, `relaunch_eboot`, heap census helpers')),
-    ('teardown', ('15', 'the exit sequencer (`session_end`, `process_end`, ...; phase C). No fragment yet: '
-                  'the copies are in `main()`')),
-    ('boot', ('16', '`boot_run` (phase C). No fragment yet: the boot order is in `main()`; boot already owns '
-              'the boot-forever knobs written once at boot')),
-    ('session', ('17', '`session_select` ... `session_pre_loop` (phase C). No fragment yet: in `main()`')),
-    ('loop', ('18', 'the frame loop (phase D1). No fragment yet: the `while (g_running)` loop in `main()`')),
-    ('harness', ('19', 'stall watch, DRPROF_HW, core_health, rig identity, uiscript, the sleep simulator, '
-                 'testpat, nettest, vram_probe, vid_prof, preempt, ff_win, eboot_crc, '
-                 '`gpsp_net_wait_beat` (exported, rig builds); compiled out of a player build except '
-                 'the release-live probes')),
+    ('teardown', ('15', '`session_end(td)`, `inproc_try_return()`, `process_end(pe)`, `exit_early(x)` (§3)')),
+    ('boot', ('16', '`boot_run(boot_ctx*)`, noinline cold; owns `cfg_doc` in its frame (§0.2-1); the boot order '
+                    'of §4.4')),
+    ('session', ('17', '`session_select`, `session_configure`, `session_load`, `session_net_up`, '
+                       '`session_pre_loop`')),
+    ('loop', ('18', 'Until D1: the loop body included textually into `main`. From D1: '
+                    '`frame_iter(loop_t*, session_ctx*)` noinline + `frame_iter_rare()` noinline cold')),
+    ('harness', ('19', 'Stall watch, DRPROF_HW, core_health, rig identity, uiscript, sleep simulator, testpat, '
+                       'nettest, vram_probe, vid_prof, preempt, ff_win, eboot_crc, `gpsp_net_wait_beat`')),
 ])
+# PLAN.md §1.3 "Exported ABI keeps names and linkage" (the weak overrides are named there only as a
+# group, so they are not listed), by owner module.  Each name must be a cutlist row of that module.
+EXPORTED = collections.OrderedDict([
+    ('paths', ['g_dir_base']), ('power', ['g_running']), ('pacing', ['g_ff_uncapped', 'g_ff_mult']),
+    ('audio', ['in_rate', 'g_audio_step']), ('link', ['g_net_up', 'g_net_is_host']),
+    ('harness', ['gpsp_net_wait_beat']),
+])
+# PLAN.md §1.1 "Never real TUs, by rule" = the "(F, forever)" rows of §1.2's File (kind) column
+NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
+# the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1)
+LATER = collections.OrderedDict([('teardown', 'HW-3 C1'), ('boot', 'HW-3 C2'), ('session', 'HW-3 C3'),
+                                 ('loop', 'HW-4 D1')])
+ROLES = ('harness', 'mgift')      # the modules whose F rows are listed with their #if context
 
 # What each @extract name prefix means (tools/refactor/docs/source-split.md, P1).  A prefix not
 # listed here is reported as "a range" with its readers, and the generator does not fail on it.
@@ -96,16 +120,68 @@ LAB_TAG = '/* @lab */'
 LAB_SITE = re.compile(r'\bLAB_(?:HOOK|FFP)\(')
 DEFINE = re.compile(r'^\s*#\s*define\b')
 SRC_SHA = re.compile(r'^# source: .*\bsha256 ([0-9a-f]{64})\b')
+PP_DIR = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b')
+T14_HEAD = re.compile(r'checked: (\d+) declarations, (\d+) constants; unchecked: (\d+)')
+T14_FLAVOURS = ('release', 'lab', 'harness')
 
 
 class Stale(Exception):
     pass
 
 
-def _rel(gpsp, p):
-    return os.path.relpath(p, os.path.join(gpsp, 'psp')).replace('\\', '/')
+# ----------------------------------------------------------------- #if context
+def pp_context(text):
+    """[frames] per line of text (index 0 = line 1): the #if groups open at that line, outermost
+    first, each (line of its #if, (arm directive, ...)) -- the arms seen so far; the last one is the
+    arm the line is in.  Comments and strings are blanked first (csrc), so a directive inside a
+    comment does not count; a `\\`-continued directive is joined; a directive line carries the
+    context it sits in (before it takes effect)."""
+    clean = S.csrc.blank_comments_strings(text).split('\n')
+    stack, out, k, n = [], [], 0, len(clean)
+
+    def snap():
+        return tuple((o, tuple(a)) for o, a in stack)
+    while k < n:
+        m = PP_DIR.match(clean[k])
+        if not m:
+            out.append(snap())
+            k += 1
+            continue
+        first, full = k, clean[k]
+        while full.rstrip().endswith('\\') and k + 1 < n:
+            k += 1
+            full = full.rstrip()[:-1] + ' ' + clean[k].strip()
+        out += [snap()] * (k - first + 1)
+        kw = m.group(1)
+        rest = ' '.join(full[m.end():].split())
+        d = '#%s%s' % (kw, ' ' + rest if rest else '')
+        if kw in ('if', 'ifdef', 'ifndef'):
+            stack.append((first + 1, [d]))
+        elif not stack:
+            raise Stale('line %d: %s with no open #if' % (first + 1, d))
+        elif kw == 'endif':
+            stack.pop()
+        else:
+            stack[-1][1].append(d)
+        k += 1
+    if stack:
+        raise Stale('%d #if group(s) still open at the end (the first at line %d)' % (len(stack), stack[0][0]))
+    return out
 
 
+def ctx_text(frames, where):
+    """'`#ifdef X` (fe/a.inc.c:N)' per open group, outermost first, joined by ' > '"""
+    out = []
+    for opn, arms in frames:
+        at = '%s:%d' % where[opn - 1]
+        if len(arms) == 1:
+            out.append('`%s` (%s)' % (arms[0], at))
+        else:
+            out.append('`%s` after `%s` (%s)' % (arms[-1], '`, `'.join(arms[:-1]), at))
+    return ' > '.join(out)
+
+
+# ----------------------------------------------------------------- the tree
 def load(gpsp):
     psp = os.path.join(gpsp, 'psp')
     shell_p = os.path.join(psp, 'main_psp.c')
@@ -138,6 +214,10 @@ def load(gpsp):
     lines = inv.splitlines()
     if len(where) != len(lines):
         raise Stale('internal: %d mapped lines for %d inverse lines' % (len(where), len(lines)))
+    try:
+        ctx = pp_context(inv)
+    except Stale as e:
+        raise Stale('#if groups of the inverse: %s' % e)
     idx = collections.defaultdict(list)
     for i, ln in enumerate(lines, 1):
         idx[ln].append(i)
@@ -146,7 +226,7 @@ def load(gpsp):
         hits = idx.get(anchor, [])
         if occ > len(hits):
             raise Stale('%s: anchor not found in the inverse (occ %d): %r' % (what, occ, anchor))
-        return where[hits[occ - 1] - 1]
+        return hits[occ - 1]
 
     # FRAG rows: each non-shell fragment's anchor is line 1 of its file; the files are the shell's
     # includes in FRAG order; shell fragments sit in main_psp.c
@@ -156,7 +236,7 @@ def load(gpsp):
         raise Stale('the shell includes %s, the FRAG rows list %s' % (inc_order, want))
     floc = {}
     for f in frows:
-        fl, ln = resolve(f['occ'], f['anchor'], 'FRAG ' + f['frag'])
+        fl, ln = where[resolve(f['occ'], f['anchor'], 'FRAG ' + f['frag']) - 1]
         if f['module'] != 'shell' and (fl, ln) != ('fe/%s.inc.c' % f['frag'], 1):
             raise Stale('FRAG %s: anchor resolves to %s:%d, not line 1 of fe/%s.inc.c' % (f['frag'], fl, ln, f['frag']))
         if f['module'] == 'shell' and fl != 'main_psp.c':
@@ -176,16 +256,18 @@ def load(gpsp):
     for f in frows:
         if f['module'] != 'shell':
             floc[f['frag']] = ('fe/%s.inc.c' % f['frag'], 1, frags[f['frag']].count('\n'))
-    rloc = {}
+    rloc, rctx = {}, {}
     for r in rows:
-        fl, ln = resolve(r['occ'], r['anchor'], r['key'])
+        i = resolve(r['occ'], r['anchor'], r['key'])
+        fl, ln = where[i - 1]
         fr = floc[r['frag']]
         if fl != fr[0] or not (fr[1] <= ln <= fr[2]):
             raise Stale('%s: sits at %s:%d, the cutlist says fragment %s (%s:%d-%d)' % (r['key'], fl, ln, r['frag'], *fr))
         rloc[r['key']] = (fl, ln)
+        rctx[r['key']] = ctx[i - 1]
     return {'gpsp': gpsp, 'shell': shell, 'frags': frags, 'frows': frows, 'rows': rows, 'floc': floc,
-            'rloc': rloc, 'inv_sha': inv_sha, 'inv_lines': len(lines), 'inc_lines': inc_lines,
-            'cut_sha': hashlib.sha256(cut_text.encode('utf-8')).hexdigest()}
+            'rloc': rloc, 'rctx': rctx, 'where': where, 'inv_sha': inv_sha, 'inv_lines': len(lines),
+            'inc_lines': inc_lines, 'cut_sha': hashlib.sha256(cut_text.encode('utf-8')).hexdigest()}
 
 
 def file_texts(d):
@@ -206,20 +288,252 @@ def markers(d):
     return regs
 
 
-def readers_of(gpsp, prefixes):
-    """{region name or 'prefix:' : [reader]} from the host tests' string literals."""
-    sys.path.insert(0, os.path.join(gpsp, 'tools', 'tests'))
-    import extract  # noqa: E402
-    lit = re.compile(r'["\']((?:%s):[A-Za-z0-9_.:-]*)["\']' % '|'.join(map(re.escape, sorted(prefixes))))
-    use = collections.defaultdict(set)
-    rd = extract.enumerate_readers(gpsp)
-    for r in rd:
-        t = open(os.path.join(gpsp, r), encoding='utf-8', errors='replace').read()
-        for m in lit.finditer(t):
-            use[m.group(1)].add(r)
-    return use, rd
+# ----------------------------------------------------------------- who reads which region
+class Unresolved(Exception):
+    pass
 
 
+def _parents(tree):
+    par = {}
+    for node in ast.walk(tree):
+        for ch in ast.iter_child_nodes(node):
+            par[ch] = node
+    return par
+
+
+def _module_bind(tree, name):
+    """the value nodes of module-level `name = ...` statements"""
+    out = []
+    for st in tree.body:
+        if isinstance(st, ast.Assign):
+            out += [st.value for t in st.targets if isinstance(t, ast.Name) and t.id == name]
+        elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name) and st.target.id == name and st.value:
+            out.append(st.value)
+    return out
+
+
+def _seq(node, tree):
+    """the element nodes of a tuple/list literal, or of the one module-level name bound to one"""
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return node.elts
+    if isinstance(node, ast.Name):
+        vals = _module_bind(tree, node.id)
+        if len(vals) == 1 and isinstance(vals[0], (ast.Tuple, ast.List)):
+            return vals[0].elts
+    raise Unresolved(ast.unparse(node))
+
+
+def _target_path(target, name):
+    """the index path of `name` inside a for/comprehension target, or None"""
+    if isinstance(target, ast.Name):
+        return [] if target.id == name else None
+    if isinstance(target, (ast.Tuple, ast.List)):
+        for i, t in enumerate(target.elts):
+            p = _target_path(t, name)
+            if p is not None:
+                return [i] + p
+    return None
+
+
+def _strs(node, tree, par):
+    """every string the expression can take, from the file's own literals; Unresolved otherwise"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [a + b for a in _strs(node.left, tree, par) for b in _strs(node.right, tree, par)]
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        vals = _module_bind(tree, node.value.id)
+        if len(vals) == 1 and isinstance(vals[0], ast.Dict):
+            return [s for v in vals[0].values for s in _strs(v, tree, par)]
+        raise Unresolved(ast.unparse(node))
+    if isinstance(node, ast.Name):
+        cur = node
+        while cur in par:
+            up = par[cur]
+            gens = []
+            if isinstance(up, (ast.For, ast.AsyncFor)) and cur is not up.iter and cur is not up.target:
+                gens = [(up.target, up.iter)]
+            elif isinstance(up, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)) \
+                    and not isinstance(cur, ast.comprehension):
+                gens = [(g.target, g.iter) for g in up.generators]
+            for tgt, it in gens:
+                path = _target_path(tgt, node.id)
+                if path is not None:
+                    out = []
+                    for el in _seq(it, tree):
+                        for i in path:
+                            el = _seq(el, tree)[i]
+                        out += _strs(el, tree, par)
+                    return out
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                args = up.args
+                if node.id in [a.arg for a in args.posonlyargs + args.args + args.kwonlyargs]:
+                    raise Unresolved('%s (a parameter of %s)' % (node.id, getattr(up, 'name', 'lambda')))
+            cur = up
+        vals = _module_bind(tree, node.id)
+        if len(vals) == 1:
+            return _strs(vals[0], tree, par)
+        raise Unresolved(node.id)
+    raise Unresolved(ast.unparse(node))
+
+
+def _params(fn):
+    return [a.arg for a in fn.args.posonlyargs + fn.args.args]
+
+
+def _arg(call, idx, pname):
+    if idx < len(call.args) and not any(isinstance(a, ast.Starred) for a in call.args[:idx + 1]):
+        return call.args[idx]
+    for kw in call.keywords:
+        if kw.arg == pname:
+            return kw.value
+    return None
+
+
+def region_reads(gpsp, readers):
+    """({reader: {region: [line, ...]}}, {reader: n reads}) for the host tests that read main_psp.c.
+
+    The primitive is `X.extract(src, NAME)` with X bound by `import extract` (or `extract(src, NAME)`
+    from `from extract import extract`).  A function whose own read passes one of its parameters on
+    (NAME = param, 'pre' + param or param + 'post') is a HELPER: its call sites read pre+arg+post, in
+    the file that defines it and in every file that imports it by name (`from M import f`, `M.f`).
+    Helpers of helpers are found by iterating to a fixpoint.  Raises Stale on a read whose NAME this
+    cannot resolve from literals."""
+    trees = {}
+    tests_dir = os.path.join(gpsp, 'tools', 'tests')
+
+    def tree_of(rel):
+        if rel not in trees:
+            p = os.path.join(gpsp, rel)
+            t = ast.parse(open(p, encoding='utf-8').read(), rel)
+            trees[rel] = (t, _parents(t))
+        return trees[rel]
+
+    def module_file(rel, mod):
+        for base in (os.path.dirname(os.path.join(gpsp, rel)), tests_dir):
+            p = os.path.join(base, mod + '.py')
+            if os.path.exists(p):
+                return os.path.relpath(p, gpsp).replace('\\', '/')
+        return None
+
+    def names_of(rel):
+        """{local name: ('extract-module',) | ('extract-fn',) | ('import', file, name) | ('module', file)}"""
+        t, _ = tree_of(rel)
+        out = {}
+        for st in ast.walk(t):
+            if isinstance(st, ast.Import):
+                for a in st.names:
+                    if a.name == 'extract':
+                        out[a.asname or a.name] = ('extract-module',)
+                    elif module_file(rel, a.name):
+                        out[a.asname or a.name] = ('module', module_file(rel, a.name))
+            elif isinstance(st, ast.ImportFrom) and st.module and not st.level:
+                mf = module_file(rel, st.module)
+                for a in st.names:
+                    if st.module == 'extract' and a.name == 'extract':
+                        out[a.asname or a.name] = ('extract-fn',)
+                    elif mf:
+                        out[a.asname or a.name] = ('import', mf, a.name)
+        return out
+
+    helpers = {}            # (file, function) -> (param index, param name, prefix, suffix)
+
+    def callee(rel, call, nm):
+        """(kind, spec) of a call: ('read', None) for extract.extract, ('helper', spec), or None"""
+        f = call.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            b = nm.get(f.value.id)
+            if b and b[0] == 'extract-module' and f.attr == 'extract':
+                return ('read', (1, 'name', '', ''))
+            if b and b[0] == 'module' and (b[1], f.attr) in helpers:
+                return ('helper', helpers[(b[1], f.attr)])
+        elif isinstance(f, ast.Name):
+            b = nm.get(f.id)
+            if b and b[0] == 'extract-fn':
+                return ('read', (1, 'name', '', ''))
+            if b and b[0] == 'import' and (b[1], b[2]) in helpers:
+                return ('helper', helpers[(b[1], b[2])])
+            if b is None and (rel, f.id) in helpers:
+                return ('helper', helpers[(rel, f.id)])
+        return None
+
+    def enclosing_fn(node, par):
+        while node in par:
+            node = par[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+        return None
+
+    def param_form(arg, fn):
+        """(index, name, prefix, suffix) when arg is fn's parameter, 'pre' + it or it + 'post'"""
+        if fn is None:
+            return None
+        ps = _params(fn)
+        if isinstance(arg, ast.Name) and arg.id in ps:
+            return (ps.index(arg.id), arg.id, '', '')
+        if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
+            l, r = arg.left, arg.right
+            if isinstance(l, ast.Constant) and isinstance(l.value, str) and isinstance(r, ast.Name) and r.id in ps:
+                return (ps.index(r.id), r.id, l.value, '')
+            if isinstance(r, ast.Constant) and isinstance(r.value, str) and isinstance(l, ast.Name) and l.id in ps:
+                return (ps.index(l.id), l.id, '', r.value)
+        return None
+
+    files = list(readers)
+    # the files a reader imports from (helpers may live there), transitively within tools/
+    k = 0
+    while k < len(files):
+        for b in names_of(files[k]).values():
+            if b[0] in ('import', 'module') and b[1] not in files:
+                files.append(b[1])
+        k += 1
+    for _ in range(8):                       # helpers of helpers: fixpoint
+        changed = False
+        for rel in files:
+            t, par = tree_of(rel)
+            nm = names_of(rel)
+            for call in [n for n in ast.walk(t) if isinstance(n, ast.Call)]:
+                c = callee(rel, call, nm)
+                if not c:
+                    continue
+                idx, pn, pre, suf = c[1]
+                arg = _arg(call, idx, pn)
+                fn = enclosing_fn(call, par)
+                pf = param_form(arg, fn) if arg is not None else None
+                if pf and par.get(fn) is t and (rel, fn.name) not in helpers:
+                    helpers[(rel, fn.name)] = (pf[0], pf[1], pre + pf[2], pf[3] + suf)
+                    changed = True
+        if not changed:
+            break
+    reads, nreads = {}, {}
+    for rel in readers:
+        t, par = tree_of(rel)
+        nm = names_of(rel)
+        got = collections.defaultdict(list)
+        for call in [n for n in ast.walk(t) if isinstance(n, ast.Call)]:
+            c = callee(rel, call, nm)
+            if not c:
+                continue
+            idx, pn, pre, suf = c[1]
+            arg = _arg(call, idx, pn)
+            fn = enclosing_fn(call, par)
+            if arg is None:
+                raise Stale('%s:%d: a region read with no NAME argument' % (rel, call.lineno))
+            if fn is not None and (rel, fn.name) in helpers and param_form(arg, fn):
+                continue                     # a helper's own read: counted at its call sites
+            try:
+                for s in _strs(arg, t, par):
+                    got[pre + s + suf].append(call.lineno)
+            except Unresolved as e:
+                raise Stale('%s:%d: reads an @extract region whose name is not a literal this tool can resolve '
+                            '(%s); write it as a literal, a loop over a literal tuple or a dict literal, '
+                            'or teach fe_readme.region_reads the form' % (rel, call.lineno, e))
+        reads[rel] = dict(got)
+        nreads[rel] = sum(len(v) for v in got.values())
+    return reads, nreads, sorted('%s.%s' % (os.path.basename(f)[:-3], n) for f, n in helpers)
+
+
+# ----------------------------------------------------------------- the rest of the inputs
 def lab_sites(d):
     tags, sites, bad = 0, [], []
     for fl, t in file_texts(d):
@@ -278,26 +592,81 @@ def defines(d):
     return c
 
 
+def t14_counts(gpsp):
+    """[(flavour, asserted declarations, constants, unchecked)] from the committed generated headers"""
+    out = []
+    for fl in T14_FLAVOURS:
+        p = os.path.join(gpsp, 'tools', 'refactor', 'generated', fl, 'fe_abi_asserts.h')
+        if not os.path.exists(p):
+            raise Stale('no %s (regenerate T14: abi_asserts.py all)' % p)
+        m = T14_HEAD.search(open(p, encoding='utf-8').read())
+        if not m:
+            raise Stale('%s: no "checked: N declarations, M constants; unchecked: K" line' % p)
+        out.append((fl,) + tuple(int(x) for x in m.groups()))
+    return out
+
+
 def cite(loc):
     return '%s:%d' % loc
 
 
+def row_name(r):
+    """a row's name, `name#N` only for the 2nd.. definition (one per #if arm)"""
+    name, n = r['key'].split(':', 1)[1].rsplit('#', 1)
+    return name if n == '1' else '%s#%s' % (name, n)
+
+
+def module_checks(d):
+    rows = {r['key']: r for r in d['rows']}
+    frag_mods = {f['module'] for f in d['frows']}
+    bad = []
+    for m, names in EXPORTED.items():
+        for n in names:
+            keys = [k for k in rows if k.split(':', 1)[1].rsplit('#', 1)[0] == n]
+            if not keys:
+                bad.append('EXPORTED %s (%s): no cutlist row' % (n, m))
+            elif any(rows[k]['module'] != m for k in keys):
+                bad.append('EXPORTED %s: owned by %s in the cutlist, not %s' % (
+                    n, ', '.join(sorted({rows[k]['module'] for k in keys})), m))
+    for m in PLAN12:
+        if m not in frag_mods and m not in LATER:
+            bad.append('module %s has no FRAG row and LATER does not name it' % m)
+        if m in frag_mods and m in LATER:
+            bad.append('module %s has a FRAG row, but LATER says PLAN %s creates it' % (m, LATER[m]))
+    if bad:
+        raise Stale('; '.join(bad))
+
+
+# ----------------------------------------------------------------- the README
 def render(d):
-    frows, rows, floc, rloc = d['frows'], d['rows'], d['floc'], d['rloc']
+    frows, rows, floc, rloc, rctx, where = d['frows'], d['rows'], d['floc'], d['rloc'], d['rctx'], d['where']
     fmod = {f['frag']: f['module'] for f in frows}
     unknown = sorted({f['module'] for f in frows} | {r['module'] for r in rows})
-    unknown = [m for m in unknown if m not in MODULES]
+    unknown = [m for m in unknown if m not in PLAN12]
     if unknown:
         raise Stale('modules with no MODULES row (add it from PLAN §1.2): %s' % ', '.join(unknown))
+    module_checks(d)
     guests = [r for r in rows if r['module'] != fmod[r['frag']]]
     regs = markers(d)
+    regnames = {n for n, _, _ in regs}
     prefixes = collections.OrderedDict()
     for n, fl, ln in regs:
         prefixes.setdefault(n.split(':', 1)[0], []).append((n, fl, ln))
-    use, rd = readers_of(d['gpsp'], prefixes)
+    sys.path.insert(0, os.path.join(d['gpsp'], 'tools', 'tests'))
+    import extract  # noqa: E402
+    rd = extract.enumerate_readers(d['gpsp'])
+    reads, nreads, helpers = region_reads(d['gpsp'], rd)
+    use = collections.defaultdict(set)
+    for r, got in reads.items():
+        for n in got:
+            if n not in regnames:
+                raise Stale('%s reads @extract region %s (line %s), which no marker defines'
+                            % (r, n, ', '.join(map(str, got[n]))))
+            use[n].add(r)
     sites, ho, bad = lab_sites(d)
     if bad:
         raise Stale('@lab: ' + '; '.join(bad))
+    t14 = t14_counts(d['gpsp'])
     dc = defines(d)
     nfr = sum(1 for f in frows if f['module'] != 'shell')
     il = d['inc_lines']
@@ -305,7 +674,8 @@ def render(d):
     L = []
     w = L.append
     w('<!-- GENERATED by gpsp/tools/refactor/fe_readme.py; do not edit.  Regenerate after any change to')
-    w('     tools/refactor/cutlist.txt, psp/main_psp.c or psp/fe/: python3 tools/refactor/fe_readme.py')
+    w('     tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or')
+    w('     tools/refactor/generated/: python3 tools/refactor/fe_readme.py')
     w('     (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).')
     w('     inputs: cutlist.txt sha256 %s; split.py inverse of the shell sha256 %s (%d lines) -->'
       % (d['cut_sha'][:16], d['inv_sha'][:16], d['inv_lines']))
@@ -331,10 +701,15 @@ def render(d):
       'single file of this tree, which is what `tools/refactor/cutlist.txt` describes (its `source:` line names '
       'the inverse\'s sha256).')
     w('- **Fragments are generated.** Each `fe/*.inc.c` is a verbatim slice: no banner, no include guard, no '
-      '`#include` of its own beyond the source\'s. It is regenerated (`split.py split` with the cutlist) or a change '
-      'is replayed into it (`split.py replay --split DIR --cutlist tools/refactor/cutlist.txt --patch P`, a patch '
-      'of the inverse), never hand-edited. A fragment\'s first line is its FRAG anchor. A name sits in a fragment '
-      'by position, which is not always its owner\'s fragment (see "Rows outside their owner\'s fragments").')
+      '`#include` of its own beyond the source\'s. It is regenerated or a change is replayed into it, never '
+      'hand-edited. `split.py split` and `split.py gen` read the single file, so on this tree they take the '
+      'inverse: regenerate with `split.py inverse --split gpsp -o F`, then `split.py split --src F --cutlist '
+      'gpsp/tools/refactor/cutlist.txt --out DIR` (the cutlist: `split.py gen --split gpsp --carry '
+      'gpsp/tools/refactor/cutlist.txt -o C`). Replay a patch of the inverse with `split.py replay --split gpsp '
+      '--cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2`. DIR and DIR2 are new directories; copy '
+      'their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree. A fragment\'s first line is its FRAG anchor. '
+      'A name sits in a fragment by position, which is not always its owner\'s fragment (see "Rows outside '
+      'their owner\'s fragments").')
     noops = noop_stubs(d)
     w('- **Macros.** `fe/fe_priv.h` (included once, `main_psp.c:%s`, after the last project header) holds the '
       'macros P5 moved: %d `#define` lines, and `fe/play_defaults.h` the `PLAY_*` ship constants and link defaults '
@@ -346,45 +721,97 @@ def render(d):
       % (','.join(map(str, fp_inc)) or '?', dc['fe_priv.h'], dc['play_defaults.h'], dc['shell'], dc['fragments'],
          len(noops), ', '.join('`%s` %s:%d' % x for x in noops) or 'none'))
     w('- **Core-ABI hand copies.** The TU redeclares core functions and globals instead of including the core '
-      'headers (index in `fe/fe_priv.h`). T14 asserts them in a compile-only check TU that is never linked: '
-      '`tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy as `fe/X.inc.c:N` and lists the '
-      'unchecked ones.')
+      'headers. T14 (`abi_asserts.py`) asserts every copy whose name the check TU\'s headers declare (`#include '
+      '"common.h"`, the core\'s header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never '
+      'linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites each copy as `fe/X.inc.c:N`: the '
+      'asserted ones, then the UNCHECKED list, which is the full list of the copies T14 cannot compare (a name '
+      'the check TU\'s headers do not declare, or a frontend-only type) -- %s. The index in `fe/fe_priv.h` is '
+      'PLAN-P-beta5 §5.2\'s set (every name T14 asserts, plus six it cannot), not every copy.'
+      % '; '.join('%s %d asserted + %d constants, %d unchecked' % x for x in t14))
     w('- **`/* @lab */`** is a grep tag, nothing else: it sits in front of each of the %d `LAB_HOOK(...)` / '
       '`LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), '
       'so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab\'s reach into the TU. `LAB_HANDOFF` is reached only '
       'through `FE_HANDOFF` (`fe/fe_priv.h:%s`).' % (len(sites), ','.join(map(str, ho))))
+    w('- **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the '
+      'line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the '
+      'source text; whether a build compiles a line depends on that build\'s defines.')
     w('')
     w('### @extract markers')
     w('')
     w('`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads '
       '(`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). '
-      '%d regions; each lies inside one file. Readers: the %d host tests `extract.py --enumerate` finds.'
-      % (len(regs), len(rd)))
+      '%d regions; each lies inside one file. Readers: the %d host tests `extract.py --enumerate` finds. A test '
+      'reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (%s); '
+      'NAME is resolved from the test\'s literals, and the generator refuses a read it cannot resolve.'
+      % (len(regs), len(rd), ', '.join('`%s`' % h for h in helpers) or 'none'))
     w('')
     w('| prefix | meaning | regions | in | read by |')
     w('|---|---|---|---|---|')
     for p, rs in prefixes.items():
         fls = sorted({fl for _, fl, _ in rs}, key=lambda x: (x != 'main_psp.c', x))
-        rdrs = set(use.get(p + ':', set()))
+        rdrs = set()
         for n, _, _ in rs:
             rdrs |= use.get(n, set())
         w('| `%s:` | %s | %d | %s | %s |' % (p, PREFIX_MEANING.get(p, RANGE_MEANING), len(rs),
                                            ', '.join('`%s`' % x for x in fls),
                                            ', '.join('`%s`' % os.path.basename(x) for x in sorted(rdrs)) or '(none found)'))
     w('')
+    w('Every region, in TU order, and the host tests that read it:')
+    w('')
+    w('| region | begins at | read by |')
+    w('|---|---|---|')
+    for n, fl, ln in regs:
+        w('| `%s` | `%s:%d` | %s |' % (n, fl, ln, ', '.join('`%s`' % os.path.basename(x) for x in sorted(use.get(n, ())))
+                                     or '(none)'))
+    noread = [os.path.basename(r) for r in rd if not nreads[r]]
+    if noread:
+        w('')
+        w('Readers that read the TU text but no region: %s.' % ', '.join('`%s`' % x for x in noread))
+    w('')
     w('## Modules')
     w('')
-    w('PLAN.md §1.2 (responsibilities) and the cutlist (owners). "owns" counts the F (function) and G (global) '
-      'rows whose owner column is the module; "elsewhere" those of them that sit in another module\'s fragment.')
+    w('"responsibility" is PLAN.md §1.2\'s cell, verbatim (its line numbers are 01067e74\'s, its § PLAN.md\'s). '
+      '"exported" is PLAN.md §1.3\'s exported ABI (the weak overrides are a group there, not names). "never a TU" '
+      'marks PLAN.md §1.1\'s "never real TUs, by rule". The rest comes from the cutlist and the tree: "owns" counts '
+      'the F (function) and G (global) rows whose owner column is the module; "elsewhere" those of them that sit in '
+      'another module\'s fragment; "in no `#if`" those of them that sit in no `#if` group of the TU, so every build '
+      'of main_psp.c compiles them.')
     w('')
-    w('| §1.2 | module | responsibility | fragments | owns F / G | elsewhere |')
-    w('|---|---|---|---|---|---|')
-    for m, (num, resp) in MODULES.items():
+    w('| §1.2 | module | responsibility (PLAN.md §1.2) | exported (§1.3) | never a TU (§1.1) | fragments | owns F / G '
+      '| elsewhere | in no `#if` F / G |')
+    w('|---|---|---|---|---|---|---|---|---|')
+    for m, (num, resp) in PLAN12.items():
         fr = [f['frag'] for f in frows if f['module'] == m]
-        nf = sum(1 for r in rows if r['module'] == m and r['kind'] == 'F')
-        ng = sum(1 for r in rows if r['module'] == m and r['kind'] == 'G')
+        mine = [r for r in rows if r['module'] == m]
+        nf = sum(1 for r in mine if r['kind'] == 'F')
+        ng = sum(1 for r in mine if r['kind'] == 'G')
         ne = sum(1 for r in guests if r['module'] == m)
-        w('| %s | %s | %s | %s | %d / %d | %d |' % (num, m, resp, ', '.join('`%s`' % x for x in fr) or '-', nf, ng, ne))
+        uf = sum(1 for r in mine if r['kind'] == 'F' and not rctx[r['key']])
+        ug = sum(1 for r in mine if r['kind'] == 'G' and not rctx[r['key']])
+        w('| %s | %s | %s | %s | %s | %s | %d / %d | %d | %d / %d |' % (
+            num, m, resp, ', '.join('`%s`' % x for x in EXPORTED.get(m, [])) or '-',
+            'yes' if m in NEVER_TU else '-', ', '.join('`%s`' % x for x in fr) or '-', nf, ng, ne, uf, ug))
+    nofrag = [m for m in PLAN12 if m in LATER]
+    w('')
+    w('%s have no fragment yet (no FRAG row): PLAN.md §2 creates them later (%s); the code they will hold is in '
+      '`main()` today.' % (', '.join(nofrag), ', '.join('%s %s' % (m, LATER[m]) for m in nofrag)))
+    w('')
+    w('### %s functions and their `#if` context' % ' and '.join(ROLES))
+    w('')
+    w('Every F row of these modules, at its first line (TU order). A row in no `#if` group is compiled by every '
+      'build of main_psp.c, a player build included.')
+    for m in ROLES:
+        fs = [r for r in rows if r['module'] == m and r['kind'] == 'F']
+        fs.sort(key=lambda r: [x['frag'] for x in frows].index(r['frag']) * 10 ** 6 + rloc[r['key']][1])
+        nonif = [r for r in fs if not rctx[r['key']]]
+        w('')
+        w('**%s**: %d F rows, %d in no `#if`.' % (m, len(fs), len(nonif)))
+        w('')
+        w('| function | at | `#if` context |')
+        w('|---|---|---|')
+        for r in fs:
+            w('| `%s` | `%s` | %s |' % (row_name(r), cite(rloc[r['key']]),
+                                        ctx_text(rctx[r['key']], where) or 'none: every build'))
     w('')
     w('## Fragments, in TU order')
     w('')
@@ -395,7 +822,7 @@ def render(d):
         here = [r for r in rows if r['frag'] == f['frag']]
         g = collections.Counter(r['module'] for r in here if r['module'] != f['module'])
         w('| %d | %s | `%s` | %d-%d | %s | %d / %d | %s |' % (
-            k, f['frag'], fl if fl == 'main_psp.c' else fl, a, b, f['module'],
+            k, f['frag'], fl, a, b, f['module'],
             sum(1 for r in here if r['kind'] == 'F'), sum(1 for r in here if r['kind'] == 'G'),
             ', '.join('%s %d' % (mm, g[mm]) for mm in modules.MODULE_ORDER if g[mm]) or '-'))
     w('')
@@ -423,14 +850,73 @@ def render(d):
         fs = [r for r in rows if r['frag'] == f['frag'] and r['kind'] == 'F']
         if not fs:
             continue
-        def nm(r):
-            name, n = r['key'].split(':', 1)[1].rsplit('#', 1)
-            return name if n == '1' else '%s#%s' % (name, n)
         w('- **%s** (`%s`): %s' % (f['frag'], floc[f['frag']][0], ', '.join(
-            '%s:%d%s' % (nm(r), rloc[r['key']][1], '' if r['module'] == f['module'] else ' (%s)' % r['module'])
+            '%s:%d%s' % (row_name(r), rloc[r['key']][1], '' if r['module'] == f['module'] else ' (%s)' % r['module'])
             for r in fs)))
     w('')
     return '\n'.join(L)
+
+
+# ----------------------------------------------------------------- --plan
+def plan_check(path):
+    """[difference] between PLAN12 / EXPORTED / NEVER_TU / LATER and PLAN.md"""
+    t = open(path, encoding='utf-8').read()
+    try:
+        s12 = t.index('### 1.2 Module list')
+        s13 = t.index('### 1.3', s12)
+        s14 = t.index('### 1.4', s13)
+        s11 = t.index('### 1.1', 0, s12)
+        s2 = t.index('## 2. Staged milestones')
+        s3 = t.index('## 3.', s2)
+    except ValueError as e:
+        return ['%s: a section heading is missing (%s)' % (path, e)]
+    cells = {}
+    for ln in t[s12:s13].split('\n'):
+        if ln.startswith('| ') and not ln.startswith('| #') and not ln.startswith('|---'):
+            c = [x.strip() for x in ln.split('|')[1:-1]]
+            cells[c[0]] = c
+    diffs = []
+    for m, (num, resp) in PLAN12.items():
+        c = cells.get(num)
+        if c is None:
+            diffs.append('%s: PLAN §1.2 has no row %s' % (m, num))
+        elif c[2] != resp:
+            diffs.append('%s (row %s): PLAN12 %r != PLAN %r' % (m, num, resp, c[2]))
+    known = {n for n, _ in PLAN12.values()} | {'0', '1'}
+    for num in cells:
+        if num not in known:
+            diffs.append('PLAN §1.2 row %s is not in PLAN12' % num)
+    forever = {m for m, (num, _) in PLAN12.items() if num in cells and 'forever' in cells[num][1]}
+    if forever != set(NEVER_TU):
+        diffs.append('NEVER_TU %s != the "(F, forever)" rows of §1.2 %s' % (sorted(NEVER_TU), sorted(forever)))
+    rule = re.search(r'\*\*Never real TUs, by rule\.\*\*([^\n]*)', t[s11:s12])
+    if not rule:
+        diffs.append('§1.1 has no "Never real TUs, by rule." sentence')
+    b13 = re.search(r'\*\*Exported ABI keeps names and linkage\.\*\*([^\n]*)', t[s13:s14])
+    if not b13:
+        diffs.append('§1.3 has no "Exported ABI keeps names and linkage." bullet')
+    else:
+        # the bullet's next sentence names two non-exported symbols that P2 may make static
+        named = set(re.findall(r'`(\w+)`', b13.group(1).split('Two non-static')[0]))
+        ours = {n for v in EXPORTED.values() for n in v}
+        if named != ours:
+            diffs.append('EXPORTED %s != the names of §1.3\'s exported-ABI bullet %s' % (sorted(ours), sorted(named)))
+    sec2 = t[s2:s3]
+    for m, item in LATER.items():
+        hw, it = item.split()
+        h = sec2.find('### %s:' % hw)
+        if h < 0:
+            diffs.append('LATER %s: no "### %s:" in PLAN §2' % (m, hw))
+            continue
+        e = sec2.find('\n### ', h + 1)
+        body = sec2[h:e if e > 0 else len(sec2)]
+        pat = {'teardown': r'\*\*C1\. [^\n]*session_end', 'boot': r'\*\*C2\. `boot_run',
+               'session': r'\*\*C3\. Session phases', 'loop': r'frame_iter\('}[m]
+        if it[0] == 'C' and not re.search(pat, body):
+            diffs.append('LATER %s: %s %s does not name it in PLAN §2' % (m, hw, it))
+        if it == 'D1' and not (re.search(r'epoch D1', body) and re.search(pat, body)):
+            diffs.append('LATER %s: %s is not epoch D1 with frame_iter in PLAN §2' % (m, hw))
+    return diffs
 
 
 def main(argv=None):
@@ -438,12 +924,21 @@ def main(argv=None):
     ap.add_argument('--gpsp', default=os.path.normpath(os.path.join(HERE, '..', '..')))
     ap.add_argument('-o', default=None, help='default GPSP/psp/fe/README.md')
     ap.add_argument('--check', action='store_true')
+    ap.add_argument('--plan', default=None, help='PLAN.md: check the transcribed tables against it, write nothing')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args(argv)
     if a.selftest:
         sys.path.insert(0, os.path.join(HERE, 'tests'))
         import importlib
         return importlib.import_module('fe_readme_test').run(a.gpsp)
+    if a.plan:
+        diffs = plan_check(a.plan)
+        for x in diffs:
+            print('fe_readme: PLAN DIFFERS: %s' % x, file=sys.stderr)
+        if not diffs:
+            print('fe_readme: PLAN12 (%d rows), EXPORTED (%d names), NEVER_TU (%d), LATER (%d) == %s'
+                  % (len(PLAN12), sum(len(v) for v in EXPORTED.values()), len(NEVER_TU), len(LATER), a.plan))
+        return 1 if diffs else 0
     out = a.o or os.path.join(a.gpsp, 'psp', 'fe', 'README.md')
     try:
         text = render(load(a.gpsp))

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """fe_readme_test.py -- self-test of fe_readme.py (psp/fe/README.md, PLAN-P-beta5 §5.2), on scratch
-copies of what it reads (the split tree, the cutlist, the host tests that read main_psp.c), never the
-tree itself.  Also run by `fe_readme.py --selftest [--gpsp DIR]`.
+copies of what it reads (the split tree, the cutlist, the host tests that read main_psp.c, the T14
+headers), never the tree itself.  Also run by `fe_readme.py --selftest [--gpsp DIR]`.
 
     python3 fe_readme_test.py [GPSP_DIR]
 
   C1 the committed psp/fe/README.md is what the generator gives on a copy (--check rc 0)
   C2 the README follows the cutlist: a row's owner moved to another module changes it (--check rc 1)
   C3 a CRLF cutlist (a git archive of a core.autocrlf=true checkout) gives the same README (--check rc 0)
+  C4 region readers through helpers: fn:power_cb is read by test_power_callback.py
+     (test_psp_runtime.marked_function), fn:audio_thread by test_audio_channel.py (a loop over a tuple),
+     ff:me_rend_present by run_ff_tests.py (its own helper, 'ff:' + name)
+  C5 --plan on a synthetic PLAN.md made from the transcribed tables: rc 0
+  C6 the #if context of the harness rows the 2026-11-08 review named (run_testpat, psp_state_load: none)
+     and of a GBADHOC_MGIFT one (mgift_start)
   M1 a hand edit of the README                         -> --check STALE (rc 1)
   M2 a G row filed in another fragment than it sits in -> refused
   M3 the cutlist's source sha256 is not the inverse's  -> refused (a stale cutlist)
@@ -15,6 +21,13 @@ tree itself.  Also run by `fe_readme.py --selftest [--gpsp DIR]`.
   M5 two fragment includes of the shell swapped        -> refused (FRAG order)
   M6 a module the PLAN §1.2 table does not know        -> refused
   M7 a single-file main_psp.c (no fragments)           -> refused (not a split tree)
+  M8 a host test reading a region by a computed name   -> refused (never skipped)
+  M9 a host test reading a region no marker defines    -> refused
+  M10 a wrapper around marked_function (a helper of a helper) -> its region lists the test
+  M11 pp_context: a directive in a comment, a continued #if, #elif/#else arms, nesting; unbalanced -> refused
+  M12 --plan: a responsibility cell with words added (the review's mgift parenthetical) -> rc 1
+  M13 --plan: an exported name missing from §1.3 / a forever row not in NEVER_TU     -> rc 1
+  M14 an exported global (g_running) owned by another module in the cutlist          -> refused
 """
 import contextlib
 import io
@@ -47,6 +60,7 @@ def scratch(gpsp, root):
     rels = ['psp/main_psp.c', 'tools/refactor/cutlist.txt', 'tools/tests/extract.py']
     rels += ['psp/fe/' + f for f in sorted(os.listdir(os.path.join(gpsp, 'psp', 'fe')))
              if os.path.isfile(os.path.join(gpsp, 'psp', 'fe', f))]
+    rels += ['tools/refactor/generated/%s/fe_abi_asserts.h' % fl for fl in fe_readme.T14_FLAVOURS]
     rels += extract.enumerate_readers(gpsp)
     d = tempfile.mkdtemp(prefix='fe_readme_test-', dir=root)
     for r in rels:
@@ -88,6 +102,93 @@ def refused(label, d, want):
         bad('%s: rc %d, %s' % (label, rc, msg.strip()[:200]))
 
 
+def gen_text(d):
+    rc, msg = run_gen(d, '-o', os.path.join(d, 'out.md'))
+    if rc:
+        return None, msg
+    return open(os.path.join(d, 'out.md'), encoding='utf-8').read(), msg
+
+
+def region_row(text, name):
+    m = re.search(r'^\| `%s` \| `[^`]+` \| (.*) \|$' % re.escape(name), text, re.M)
+    return m.group(1) if m else None
+
+
+def fn_row(text, name):
+    m = re.search(r'^\| `%s` \| `[^`]+` \| (.*) \|$' % re.escape(name), text, re.M)
+    return m.group(1) if m else None
+
+
+def synthetic_plan():
+    """a PLAN.md with exactly the sections and cells plan_check reads, built from the transcription"""
+    num_kind = {m: ('`fe/%s.inc.c` (F, forever)' if m in fe_readme.NEVER_TU else '`fe/%s.inc.c` (F)') % m
+                for m in fe_readme.PLAN12}
+    L = ['# PLAN', '', '## 1. Target architecture', '', '### 1.1 Physical shape', '',
+         '**Never real TUs, by rule.** Power, audio, pacing, the ME presenter, the frame loop, and io_thread.', '',
+         '### 1.2 Module list', '', '| # | File (kind) | Responsibility | From (L:) | Owns | Public surface | lines |',
+         '|---|---|---|---|---|---|---|',
+         '| 0 | `fe/fe_priv.h` (header) | macros | scattered | none | private | – |',
+         '| 1 | `fe/play_defaults.h` | `PLAY_*` | 200 | none | private | – |']
+    for m, (num, resp) in fe_readme.PLAN12.items():
+        L.append('| %s | %s | %s | 1-2 | x | private | 1 |' % (num, num_kind[m], resp))
+    L += ['', '### 1.3 Ownership', '',
+          '- **Exported ABI keeps names and linkage.** That covers %s, the weak overrides. Two non-static symbols '
+          'have no outside user: `g_rfu_activated` and `sess_cost_evt`.'
+          % ', '.join('`%s` (1)' % n for v in fe_readme.EXPORTED.values() for n in v), '',
+          '### 1.4 Public headers', '', '## 2. Staged milestones', '',
+          '### HW-3: epoch C, the cold restructure', '',
+          '**C1. Behaviour-exact exit unification** (§3). `session_end(td)`, `process_end(pe)`.',
+          '**C2. `boot_run(boot_ctx*)`**, `noinline` and cold.', '**C3. Session phases and `for(;;)`** (§4).', '',
+          '### HW-4: epoch D1, the loop leaves main', '', '1. **`frame_iter(loop_t *L, session_ctx *S)`, noinline**', '',
+          '## 3. Exit-path unification design', '']
+    return '\n'.join(L) + '\n'
+
+
+def plan_rc(path):
+    err, out = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = fe_readme.main(['--plan', path])
+    return rc, out.getvalue() + err.getvalue()
+
+
+def pp_unit():
+    """M11: pp_context on a synthetic text"""
+    t = ('int a;\n'                                  # 1
+         '/* #if COMMENTED */\n'                     # 2
+         '#if defined(A) || \\\n'                    # 3
+         '    defined(B)\n'                          # 4
+         'int b;\n'                                  # 5
+         '#ifdef C\n'                                # 6
+         'int c;\n'                                  # 7
+         '#endif\n'                                  # 8
+         '#elif D\n'                                 # 9
+         'int d;\n'                                  # 10
+         '#else /* no */\n'                          # 11
+         'int e;\n'                                  # 12
+         '#endif\n'                                  # 13
+         'int f; /* #endif */\n')                    # 14
+    c = fe_readme.pp_context(t)
+    want = {1: (), 2: (), 5: ((3, ('#if defined(A) || defined(B)',)),),
+            7: ((3, ('#if defined(A) || defined(B)',)), (6, ('#ifdef C',))),
+            10: ((3, ('#if defined(A) || defined(B)', '#elif D')),),
+            12: ((3, ('#if defined(A) || defined(B)', '#elif D', '#else')),), 14: ()}
+    got = {k: c[k - 1] for k in want}
+    if got == want:
+        ok('M11 pp_context: comment directives ignored, continuation joined, #elif/#else arms and nesting')
+    else:
+        bad('M11 pp_context: %r != %r' % (got, want))
+    try:
+        fe_readme.pp_context('#if A\nint x;\n')
+        bad('M11 an unbalanced #if was not refused')
+    except fe_readme.Stale as e:
+        ok('M11 an unbalanced #if: refused (%s)' % e)
+    try:
+        fe_readme.pp_context('int x;\n#endif\n')
+        bad('M11 an #endif with no #if was not refused')
+    except fe_readme.Stale as e:
+        ok('M11 an #endif with no #if: refused (%s)' % e)
+
+
 def run(gpsp):
     gpsp = os.path.abspath(gpsp)
     print('fe_readme self-test on %s' % gpsp)
@@ -106,16 +207,30 @@ def run(gpsp):
                                  '--check rc %d' % rc)
 
         d = scratch(gpsp, root)
+        text, msg = gen_text(d)
+        if text is None:
+            bad('C4/C6 generation failed: %s' % msg.strip()[:200])
+        else:
+            for reg, rdr in (('fn:power_cb', 'test_power_callback.py'), ('fn:audio_thread', 'test_audio_channel.py'),
+                             ('ff:me_rend_present', 'run_ff_tests.py'), ('fn:sleep_park_hold', 'test_sleep_quiesce.py')):
+                row = region_row(text, reg)
+                (ok if row and '`%s`' % rdr in row else bad)('C4 %s read by %s: %s' % (reg, rdr, row))
+            for fn, want in (('run_testpat', 'none: every build'), ('psp_state_load', 'none: every build'),
+                             ('mgift_start', '`#ifdef GBADHOC_MGIFT`'), ('cheats_link_poll', '`#ifdef GPSP_CHEATS`')):
+                row = fn_row(text, fn)
+                (ok if row and row.startswith(want) else bad)('C6 %s #if context: %s' % (fn, row))
+
+        d = scratch(gpsp, root)
         edit(os.path.join(d, 'psp/fe/README.md'), lambda t: t.replace(' -> power\n', ' -> input\n', 1))
         rc, msg = run_gen(d, '--check')
         (ok if rc == 1 and 'STALE' in msg else bad)('M1 a hand-edited README: --check rc %d' % rc)
 
         d = scratch(gpsp, root)
         cp = os.path.join(d, 'tools/refactor/cutlist.txt')
-        edit(cp, lambda t: re.sub(r'^(G\tg_running#1\t)power\t', r'\1input\t', t, count=1, flags=re.M))
+        edit(cp, lambda t: re.sub(r'^(G\tg_loop_iter#1\t)power\t', r'\1input\t', t, count=1, flags=re.M))
         rc, msg = run_gen(d, '--check')
         (ok if rc == 1 and 'STALE' in msg else bad)(
-            'C2 g_running#1 owner power -> input in the cutlist: the README changes (--check rc %d)' % rc)
+            'C2 g_loop_iter#1 owner power -> input in the cutlist: the README changes (--check rc %d)' % rc)
 
         d = scratch(gpsp, root)
         edit(os.path.join(d, 'tools/refactor/cutlist.txt'),
@@ -143,12 +258,52 @@ def run(gpsp):
 
         d = scratch(gpsp, root)
         edit(os.path.join(d, 'tools/refactor/cutlist.txt'),
-             lambda t: re.sub(r'^(G\tg_running#1\t)power\t', r'\1bogus\t', t, count=1, flags=re.M))
+             lambda t: re.sub(r'^(G\tg_loop_iter#1\t)power\t', r'\1bogus\t', t, count=1, flags=re.M))
         refused('M6 a module the §1.2 table does not know (bogus)', d, 'no MODULES row')
 
         d = scratch(gpsp, root)
         edit(os.path.join(d, 'psp/main_psp.c'), lambda t: re.sub(r'(?m)^#include "fe/\S+\.inc\.c"\n', '', t))
         refused('M7 a shell with no fragment includes', d, 'not a split tree')
+
+        d = scratch(gpsp, root)
+        edit(os.path.join(d, 'tools/tests/test_volume.py'),
+             lambda t: t + '\n_m8 = extract.extract(src, "".join(["fn:", "main"]))\n')
+        refused('M8 test_volume.py reads a region by a computed name', d, r'test_volume\.py:\d+: reads an @extract region whose name')
+
+        d = scratch(gpsp, root)
+        edit(os.path.join(d, 'tools/tests/test_volume.py'), lambda t: t + '\n_m9 = extract.extract(src, "fn:no_such_fn")\n')
+        refused('M9 test_volume.py reads fn:no_such_fn', d, 'fn:no_such_fn .*which no marker defines')
+
+        d = scratch(gpsp, root)
+        before = region_row(gen_text(d)[0] or '', 'fn:loop_park') or ''
+        edit(os.path.join(d, 'tools/tests/test_audio_channel.py'),
+             lambda t: t + '\n\ndef _m10(s, n):\n    return marked_function(s, n)\n\n\n_m10(SOURCE, "loop_park")\n')
+        text, msg = gen_text(d)
+        row = region_row(text or '', 'fn:loop_park')
+        (ok if row and '`test_audio_channel.py`' in row and '`test_audio_channel.py`' not in before else bad)(
+            'M10 a wrapper of marked_function: fn:loop_park %r -> %r' % (before, row))
+
+        pp_unit()
+
+        pp = os.path.join(root, 'PLAN.md')
+        open(pp, 'w', encoding='utf-8').write(synthetic_plan())
+        rc, msg = plan_rc(pp)
+        (ok if rc == 0 else bad)('C5 --plan on the synthetic PLAN.md: rc %d %s' % (rc, msg.strip()[:160]))
+        open(pp, 'w', encoding='utf-8').write(synthetic_plan().replace('| Mystery Gift glue |',
+                                                                       '| Mystery Gift glue (`GBADHOC_MGIFT` builds) |'))
+        rc, msg = plan_rc(pp)
+        (ok if rc == 1 and 'mgift (row 11)' in msg else bad)('M12 --plan, the mgift cell differs: rc %d %s' % (rc, msg.strip()[:160]))
+        open(pp, 'w', encoding='utf-8').write(synthetic_plan().replace('`g_ff_mult` (1), ', ''))
+        rc, msg = plan_rc(pp)
+        (ok if rc == 1 and 'EXPORTED' in msg else bad)('M13a --plan, g_ff_mult not in §1.3: rc %d %s' % (rc, msg.strip()[:160]))
+        open(pp, 'w', encoding='utf-8').write(synthetic_plan().replace('`fe/boost.inc.c` (F)', '`fe/boost.inc.c` (F, forever)'))
+        rc, msg = plan_rc(pp)
+        (ok if rc == 1 and 'NEVER_TU' in msg else bad)('M13b --plan, boost made a forever row: rc %d %s' % (rc, msg.strip()[:160]))
+
+        d = scratch(gpsp, root)
+        edit(os.path.join(d, 'tools/refactor/cutlist.txt'),
+             lambda t: re.sub(r'^(G\tg_running#1\t)power\t', r'\1input\t', t, count=1, flags=re.M))
+        refused('M14 g_running (exported, power) owned by input in the cutlist', d, 'EXPORTED g_running: owned by input')
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print('fe_readme self-test: %s' % ('PASS' if not FAILS else '%d FAILED' % len(FAILS)))

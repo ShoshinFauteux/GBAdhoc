@@ -240,6 +240,21 @@ if want t14; then
     [ "$hs" != "$sites" ] && ok "tool mutant (dedupe by tokens, the old rule): asserts '$hs' only, not '$sites': caught" \
       || bad "tool mutant (old dedupe) still asserts every copy"
   fi
+  # P-review r2 (N4): fe_priv.h's core-ABI index is what it says it is: every name T14 asserts (in the
+  # headers just generated) plus the six its sentence names, each UNCHECKED; mutants drop an asserted
+  # name from the index and a name from the six
+  FP="$TREE/psp/fe/fe_priv.h"
+  if [ -f "$FP" ] && grep -q "The index below is PLAN-P-beta5" "$FP"; then
+    HS="$AS/release/fe_abi_asserts.h $AS/lab/fe_abi_asserts.h $AS/harness/fe_abi_asserts.h"
+    expect_rc 0 "fe_priv.h's index = the asserted names + the six it names (N4)" $TU index "$FP" $HS
+    sed -n '1,3p' "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
+    sed 's/ flush_rom_total, flush_ram_full,/ flush_ram_full,/' "$FP" > "$AS/idx_drop.h"
+    cmp -s "$FP" "$AS/idx_drop.h" && bad "M-T14i index mutant not applied" || \
+      expect_rc 1 "M-T14i flush_rom_total dropped from the index: caught" $TU index "$AS/idx_drop.h" $HS
+    sed 's/declares, and gbcore_prepare,/declares, and gbcore,/' "$FP" > "$AS/idx_six.h"
+    cmp -s "$FP" "$AS/idx_six.h" && bad "M-T14j six-sentence mutant not applied" || \
+      expect_rc 1 "M-T14j gbcore_prepare dropped from the six sentence: caught" $TU index "$AS/idx_six.h" $HS
+  else echo "        (no core-ABI index sentence in this tree's fe_priv.h: N4 rows not applicable)"; fi
 fi
 
 # ---- T6 strong_syms.spec: the comments cite the P0c cut base's lines (P0a T6); strict on the

@@ -296,63 +296,65 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (57): no core declaration to compare with, or a frontend-only type.
- *   main_psp.c:114           __lib_ent_top                        no core declaration
- *   main_psp.c:114           __lib_ent_bottom                     no core declaration
- *   main_psp.c:114           __lib_stub_top                       no core declaration
- *   main_psp.c:114           __lib_stub_bottom                    no core declaration
- *   fe/power.a.inc.c:67      gpsp_rtc_wall                        no core declaration
- *   fe/input.a.inc.c:63      dynarec_heap_tables_release          no core declaration
- *   fe/input.a.inc.c:64      heap_trace_mark                      no core declaration
- *   fe/input.a.inc.c:65      gbcore_prepare                       no core declaration
- *   fe/input.a.inc.c:66      heap_trace_report                    no core declaration
- *   fe/inproc.a.inc.c:159    __executable_start                   no core declaration
- *   fe/inproc.a.inc.c:159    _end                                 no core declaration
- *   fe/inproc.a.inc.c:215    platform_cache_paranoid              no core declaration
- *   fe/inproc.a.inc.c:216    jit_coherency_scan                   no core declaration
- *   fe/inproc.a.inc.c:222    jit_code_mode                        no core declaration
- *   fe/display.a.inc.c:226   gba_cc_lut                           no core declaration
+/* UNCHECKED (57): every copy NOT asserted: its name is not declared by the check TU's
+ * headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or its type is
+ * frontend-only.
+ *   main_psp.c:114           __lib_ent_top                        not declared by the check TU's headers
+ *   main_psp.c:114           __lib_ent_bottom                     not declared by the check TU's headers
+ *   main_psp.c:114           __lib_stub_top                       not declared by the check TU's headers
+ *   main_psp.c:114           __lib_stub_bottom                    not declared by the check TU's headers
+ *   fe/power.a.inc.c:67      gpsp_rtc_wall                        not declared by the check TU's headers
+ *   fe/input.a.inc.c:63      dynarec_heap_tables_release          not declared by the check TU's headers
+ *   fe/input.a.inc.c:64      heap_trace_mark                      not declared by the check TU's headers
+ *   fe/input.a.inc.c:65      gbcore_prepare                       not declared by the check TU's headers
+ *   fe/input.a.inc.c:66      heap_trace_report                    not declared by the check TU's headers
+ *   fe/inproc.a.inc.c:159    __executable_start                   not declared by the check TU's headers
+ *   fe/inproc.a.inc.c:159    _end                                 not declared by the check TU's headers
+ *   fe/inproc.a.inc.c:215    platform_cache_paranoid              not declared by the check TU's headers
+ *   fe/inproc.a.inc.c:216    jit_coherency_scan                   not declared by the check TU's headers
+ *   fe/inproc.a.inc.c:222    jit_code_mode                        not declared by the check TU's headers
+ *   fe/display.a.inc.c:226   gba_cc_lut                           not declared by the check TU's headers
  *   fe/harness.b.inc.c:45    gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
- *   fe/display.c.inc.c:22    me_log_line160_pal                   no core declaration
- *   fe/display.c.inc.c:23    me_log_line160_oam                   no core declaration
+ *   fe/display.c.inc.c:22    me_log_line160_pal                   not declared by the check TU's headers
+ *   fe/display.c.inc.c:23    me_log_line160_oam                   not declared by the check TU's headers
  *   fe/power.d.inc.c:209     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
- *   fe/power.d.inc.c:289     scePowerIsRequest                    no core declaration
- *   fe/merend.d.inc.c:682    gamepak_buffers                      no core declaration
- *   fe/link.c.inc.c:485      rfu_set_rx_cap                       no core declaration
- *   fe/link.c.inc.c:490      rfu_set_frame_pace                   no core declaration
- *   fe/link.c.inc.c:491      rfu_set_pace_max_hold                no core declaration
- *   fe/link.c.inc.c:492      rfu_set_cushion                      no core declaration
- *   fe/link.c.inc.c:493      rfu_set_shed_keep                    no core declaration
- *   fe/link.c.inc.c:494      rfu_set_hold                         no core declaration
- *   fe/link.c.inc.c:495      rfu_set_supersede                    no core declaration
- *   fe/link.c.inc.c:496      rfu_set_fault_corrupt                no core declaration
- *   fe/link.c.inc.c:497      rfu_set_fault_span                   no core declaration
- *   fe/link.c.inc.c:498      rfu_set_fault_mode                   no core declaration
- *   fe/link.c.inc.c:499      adhoc_set_disc_await                 no core declaration
- *   fe/link.c.inc.c:503      rfu_set_timeout_scale                no core declaration
- *   fe/link.c.inc.c:506      rfu_set_poll_min_cycles              no core declaration
- *   fe/link.c.inc.c:510      rfu_set_idle_poll_cycles             no core declaration
- *   fe/link.c.inc.c:514      rfu_set_disc_defer                   no core declaration
- *   fe/link.c.inc.c:521      rfu_set_disc_grace                   no core declaration
- *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  no core declaration
- *   fe/inproc.b.inc.c:40     badjump_recoveries                   no core declaration
- *   fe/inproc.b.inc.c:42     smc_fallback_stats                   no core declaration
- *   fe/link.d.inc.c:1049     heap_trace_mark0                     no core declaration
- *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              no core declaration
- *   fe/harness.f.inc.c:545   badjump_contained                    no core declaration
- *   fe/harness.f.inc.c:546   xlat_depth_max                       no core declaration
- *   fe/harness.f.inc.c:547   xlat_sp_min                          no core declaration
- *   fe/harness.f.inc.c:548   xlat_depth_probe_reset               no core declaration
- *   fe/harness.f.inc.c:556   jit_code_stats                       no core declaration
- *   main_psp.c:1990          sched_fast                           no core declaration
- *   main_psp.c:1991          irq_io_fast                          no core declaration
- *   main_psp.c:1999          msr_fast                             no core declaration
- *   main_psp.c:2112          sched_fast                           no core declaration
- *   main_psp.c:2129          timer_lazy                           no core declaration
- *   main_psp.c:2145          irq_io_fast                          no core declaration
- *   main_psp.c:2156          msr_fast                             no core declaration
- *   main_psp.c:2340          gpsp_wallclock                       no core declaration
- *   main_psp.c:2661          rom_cache_watermark                  no core declaration
- *   main_psp.c:4708          gpsp_rtc_peek                        no core declaration
+ *   fe/power.d.inc.c:289     scePowerIsRequest                    not declared by the check TU's headers
+ *   fe/merend.d.inc.c:682    gamepak_buffers                      not declared by the check TU's headers
+ *   fe/link.c.inc.c:485      rfu_set_rx_cap                       not declared by the check TU's headers
+ *   fe/link.c.inc.c:490      rfu_set_frame_pace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:491      rfu_set_pace_max_hold                not declared by the check TU's headers
+ *   fe/link.c.inc.c:492      rfu_set_cushion                      not declared by the check TU's headers
+ *   fe/link.c.inc.c:493      rfu_set_shed_keep                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:494      rfu_set_hold                         not declared by the check TU's headers
+ *   fe/link.c.inc.c:495      rfu_set_supersede                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:496      rfu_set_fault_corrupt                not declared by the check TU's headers
+ *   fe/link.c.inc.c:497      rfu_set_fault_span                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:498      rfu_set_fault_mode                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:499      adhoc_set_disc_await                 not declared by the check TU's headers
+ *   fe/link.c.inc.c:503      rfu_set_timeout_scale                not declared by the check TU's headers
+ *   fe/link.c.inc.c:506      rfu_set_poll_min_cycles              not declared by the check TU's headers
+ *   fe/link.c.inc.c:510      rfu_set_idle_poll_cycles             not declared by the check TU's headers
+ *   fe/link.c.inc.c:514      rfu_set_disc_defer                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:521      rfu_set_disc_grace                   not declared by the check TU's headers
+ *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
+ *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
+ *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
+ *   fe/link.d.inc.c:1049     heap_trace_mark0                     not declared by the check TU's headers
+ *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
+ *   fe/harness.f.inc.c:545   badjump_contained                    not declared by the check TU's headers
+ *   fe/harness.f.inc.c:546   xlat_depth_max                       not declared by the check TU's headers
+ *   fe/harness.f.inc.c:547   xlat_sp_min                          not declared by the check TU's headers
+ *   fe/harness.f.inc.c:548   xlat_depth_probe_reset               not declared by the check TU's headers
+ *   fe/harness.f.inc.c:556   jit_code_stats                       not declared by the check TU's headers
+ *   main_psp.c:1990          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:1991          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:1999          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2112          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:2129          timer_lazy                           not declared by the check TU's headers
+ *   main_psp.c:2145          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:2156          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2340          gpsp_wallclock                       not declared by the check TU's headers
+ *   main_psp.c:2661          rom_cache_watermark                  not declared by the check TU's headers
+ *   main_psp.c:4708          gpsp_rtc_peek                        not declared by the check TU's headers
  */
 #endif
