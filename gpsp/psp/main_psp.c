@@ -2716,6 +2716,11 @@ session_top:
 #endif
       if (fe_autopilot_load(script_path) != 0)
       {
+         /* The ME and its renderer stop before the core is freed, in the
+          * loop teardown's order (F9: they were left running). */
+         me_rend_teardown("exit");
+         me_video_teardown("exit", 1);
+         me_host_shutdown();
          io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
          fe_host_shutdown();
 #ifdef REWIND
@@ -2739,6 +2744,9 @@ session_top:
       me_rend_suspend();               /* clean heap for np_start (run 407) */
       if (net_bringup(net_host, group, nick, net_probe) != 0)
       {
+         me_rend_teardown("exit");          /* F9, as bad_script above */
+         me_video_teardown("exit", 1);
+         me_host_shutdown();
          io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
          fe_host_shutdown();
 #ifdef REWIND
