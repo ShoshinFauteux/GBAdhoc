@@ -4605,12 +4605,12 @@ session_top:
 #endif /* GBADHOC_MGIFT */
    emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
+   ui_return_tick();
    /* A Settings/Controls/Online page still open at a HOME, START+SELECT or
     * wake-quit kept its changes unsaved (F3).  Written here, synchronously,
     * on the same side of the writer's stop as ui_close's write always was
     * (PLAN §3.2 D16b), and before the SRAM flush that can be slow. */
    ui_settings_flush();
-   ui_return_tick();
    /* The log's own loss, written SYNCHRONOUSLY now the writer is stopped, and
     * the liveness facts into RESULT.TXT, which is written with sceIo after the
     * log closes -- neither can be starved (RIG-DOUBLE-BATTLE §2.8 I6). */
