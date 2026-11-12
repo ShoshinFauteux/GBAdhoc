@@ -14,7 +14,7 @@ import re
 import sys
 
 FE = ["loop", "core", "hash", "crc", "net", "sess", "vwait", "-"]
-PH = ["jit", "upd", "disp", "flush", "cmisc", "5", "xlat", "memc", "sound",
+PH = ["jit", "upd", "disp", "flush", "cmisc", "pcarg", "xlat", "memc", "sound",
       "dma", "serial", "video", "irq", "retro", "14", "outside"]
 
 

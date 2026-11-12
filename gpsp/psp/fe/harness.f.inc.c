@@ -475,7 +475,7 @@ static void drprof_start(void)
       fe_evt("drprof off reason=thread_failed");
       return;
    }
-   fe_evt("drprof on us=%d prio=0x0F phases=jit,upd,disp,flush,cmisc,-,xlat,"
+   fe_evt("drprof on us=%d prio=0x0F phases=jit,upd,disp,flush,cmisc,pcarg,xlat,"
           "memc,sound,dma,serial,video,irq,retro,-,outside", g_drs_us);
 }
 

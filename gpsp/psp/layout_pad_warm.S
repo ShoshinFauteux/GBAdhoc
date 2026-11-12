@@ -17,3 +17,17 @@
 	.balign 4
 layout_pad_warm_lookup:
 	.space 32
+
+/* .text.translate_block_arm (PCARG_SIDE, claude/pcarg-side; docs/PCARG-SIDE.md):
+ * the per-site emitters went out of line, so A's translators shrank
+ * (release: translate_block_thumb -2,304 B, translate_block_arm -28,096 B
+ * 32 B-rounded) and B's hot path, linked right after A's translate_block_arm,
+ * moved -30,400 B.  LAYOUT_PAD_XLAT_BYTES (psp/Makefile 5,824; the lab build's
+ * translator is 64 B smaller again: tools/layout/lab-pads.env 5,888) in front
+ * of A's translate_block_arm makes that -24,576 (three ways): B's hot path and
+ * everything after it keep their sets.  B's own shrink is held the same way
+ * from psp/gbalink_b_stubs.c, after B's copy. */
+	.section .text.translate_block_arm,"ax",@progbits
+	.balign 4
+layout_pad_warm_xlat:
+	.space LAYOUT_PAD_XLAT_BYTES

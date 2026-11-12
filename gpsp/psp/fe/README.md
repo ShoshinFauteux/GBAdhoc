@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 4826d27e6b87db99; split.py inverse of the shell sha256 c62b3fd766a3d2c0 (18535 lines) -->
+     inputs: cutlist.txt sha256 3f4176db3ccd1931; split.py inverse of the shell sha256 47f0dcea9d986ced (18535 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 

@@ -92,3 +92,11 @@ cheat_error cheat_parse(unsigned index, const char *code)
 __asm__(".pushsection .text.block_lookup_translate_thumb,\"ax\",@progbits\n"
         "  .fill 32 / 4, 4, 0\n"
         ".popsection\n");
+/* PCARG_SIDE (docs/PCARG-SIDE.md): B's translators shrank as A's did
+ * (-30,432 B, both 32 B-rounded), so everything linked after B's hot path
+ * moved; these 5,856 B after B's translate_block_arm make it -24,576 (three
+ * ways) and the late section, main and the frontend keep their sets.  (A's
+ * copy is held in front of it by psp/layout_pad_warm.S.) */
+__asm__(".pushsection .text.translate_block_arm,\"ax\",@progbits\n"
+        "  .fill 5856 / 4, 4, 0\n"
+        ".popsection\n");

@@ -674,6 +674,16 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_STM_CHAIN),1)
 	CFLAGS += -DSMC_STM_CHAIN=1
 	endif
+	# PCARG_SIDE=1: (cache-aware codegen).  A single load or store calls
+	# its stub without the PC argument word; the stubs' slow paths recover it
+	# from a side table outside the translation caches (mips_emit.h).
+	# PCARG_SIDE_PAD=1 (twin oracle only) keeps every block the base's size.
+	ifeq ($(PCARG_SIDE),1)
+	CFLAGS += -DPCARG_SIDE=1
+	endif
+	ifeq ($(PCARG_SIDE_PAD),1)
+	CFLAGS += -DPCARG_SIDE_PAD=1
+	endif
 	ifeq ($(SMC_STM_CHAIN_MUTANT),1)
 	CFLAGS += -DSMC_STM_CHAIN_MUTANT=1
 	endif
