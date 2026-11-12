@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """layout_report.py -- T10, gate G3 (builds/mainpsp-map/out/PLAN.md §0.1, §5).
 
-    layout_report.py CAND [--ref REF] [--plan FILE] [--objects RE] [--json OUT]
+    layout_report.py CAND [--src TREE] [--ref REF [--ref-src TREE]] [--plan FILE] [--objects RE] [--json OUT]
     layout_report.py --selftest DIR [--ref REF]      seeded mutants, no build
 
 CAND / REF: a flavours.sh flavour dir (gpsp_adhoc.elf, gpsp_adhoc.map,
 build-manifest.json), or an ELF with --map / --ref-map.  Release is compared
 with release and Lab with Lab only: their pads differ.
+--src / --ref-src: the gpsp/ trees CAND / REF were built from.  --src gives CAND's
+pads, lock, hot order AND main's loop window (5.); --ref-src REF's loop window.
+Without them the window is read from the ELF's flavour.json commit (git), else
+from this tool's own tree, and the report names the source it read (P-tidy F3:
+--src used to feed the pads and the lock only, never the window).  Either way
+the source must hold main at the ELF's DW_AT_decl_line, else REFUSED (exit 2).
 
 THE REPORT (one candidate; with --ref, every figure also as a delta):
   1. pads in use: LAYOUT_PAD_BYTES (manifest, else layout_pad_cold's size) and
@@ -34,7 +40,8 @@ THE REPORT (one candidate; with --ref, every figure also as a delta):
      tools/layout/pad_check.py is run on the two ELFs (hot core / warm tail
      moves, hot-core set changes, JIT mod 8 KiB, d(_etext), d(_end)).
 
-Exit: 0 ok, 1 the input-section audit failed (or --expect-pins not met), 2 usage.
+Exit: 0 ok, 1 the input-section audit failed (or --expect-pins not met), 2 usage, or a
+source that is not the ELF's (REFUSED).
 """
 import argparse
 import collections
@@ -176,14 +183,16 @@ def bss_symbols(b, obj='main_psp.o', n=20):
     return out
 
 
-def loop_sets(b, lines=LOOP_LINES):
-    """main's loop body by source line (x4's method): cache lines touched, sets used."""
+def loop_sets(b, lines=LOOP_LINES, tree=None):
+    """main's loop body by source line (x4's method): cache lines touched, sets used.
+    tree: the gpsp/ tree b was built from (--src / --ref-src); None = the ELF's flavour.json
+    commit, else this tool's tree (loop_anchor.source_for, which names the one it read)."""
     if '.debug_line' not in b.e.by_name or 'main' not in b.sym:
         return None
     import sl_dwline
     m = b.sym['main']
     import loop_anchor
-    r = loop_anchor.for_elf(b.e.path)
+    r = loop_anchor.for_elf(b.e.path, tree=tree)
     if lines is not None:     # an explicit window must be this ELF's anchored one
         loop_anchor.check_explicit(r, lines[0], lines[1], 'layout_report')
     lines = (r['lo'], r['hi'])
@@ -508,7 +517,9 @@ def run_pad_check(ref, cand, order):
 # --------------------------------------------------------------------------- report
 
 def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, out=print, pad_check=True,
-           src=GPSP, lock_path=None, pads=True, lock=True):
+           src=GPSP, lock_path=None, pads=True, lock=True, loop_tree=None, ref_tree=None):
+    """loop_tree / ref_tree: the gpsp/ trees CAND / REF were built from, for main's loop window
+    (main() is in the shell psp/main_psp.c); None = the ELF's flavour.json commit (loop_sets)."""
     plan = plan or list(DEFAULT_PLAN)
     res = collections.OrderedDict()
     res['cand'] = cand.elf_path
@@ -586,14 +597,14 @@ def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, 
         span = 'all %d sets' % SETS if x['size'] >= WAY else 'sets %d..%d' % (x['set'], x['last_set'])
         out('  %#010x %7d  mod8192 %#06x %-12s %s%s' % (x['addr'], x['size'], x['mod8192'], span, x['name'],
                                                       '' if x['unique'] else ' (name not unique)'))
-    lp = loop_sets(cand, LOOP_LINES)
+    lp = loop_sets(cand, LOOP_LINES, loop_tree)
     res['loop'] = lp
     if lp:
         out('\n-- main loop by line (main_psp.c %d-%d inside main): %d cache lines over %d sets, max %d per set,'
             ' window main+%d..+%d' % (lp['src_lines'][0], lp['src_lines'][1], lp['lines'], lp['sets'],
                                      lp['max_per_set'], lp['window'][0], lp['window'][1]))
         if ref:
-            lr = loop_sets(ref)
+            lr = loop_sets(ref, tree=ref_tree)
             if lr:
                 gone = sorted(set(lr['set_counts']) - set(lp['set_counts']))
                 new = sorted(set(lp['set_counts']) - set(lr['set_counts']))
@@ -757,10 +768,13 @@ def main():
     ap.add_argument('--ref-map')
     ap.add_argument('--plan', help='file of planned special input sections (globs), one per line')
     ap.add_argument('--objects', default=r'(^|/)main_psp\.o$', help='regex of objects to audit')
-    ap.add_argument('--order', default=os.path.join(GPSP, 'psp', 'layout', 'hot_order.txt'))
+    ap.add_argument('--order', help='hot_order.txt for pad_check (default SRC/psp/layout/hot_order.txt)')
     ap.add_argument('--no-pad-check', action='store_true')
-    ap.add_argument('--src', default=GPSP, help='the source tree CAND was built from (psp/Makefile, '
-                    'tools/layout/lab-pads.env, layout.lock, layout_lock.py); default this tool\'s tree')
+    ap.add_argument('--src', help='the gpsp/ tree CAND was built from: psp/Makefile, tools/layout/lab-pads.env, '
+                    'layout.lock, layout_lock.py, hot_order.txt and main\'s loop window (psp/main_psp.c).  '
+                    'Default: this tool\'s tree for those files, and the ELF\'s flavour.json commit for the window')
+    ap.add_argument('--ref-src', help='the gpsp/ tree REF was built from, for REF\'s loop window (default: '
+                    'REF\'s flavour.json commit)')
     ap.add_argument('--lock', help='layout.lock to check against (default SRC/tools/layout/layout.lock)')
     ap.add_argument('--no-lock-check', action='store_true')
     ap.add_argument('--loop-lines', help='LO-HI: held to the anchored window (default: by anchor)')
@@ -774,10 +788,19 @@ def main():
     global LOOP_LINES
     if a.loop_lines:
         LOOP_LINES = tuple(int(x) for x in a.loop_lines.split('-'))
+    if a.ref_src and not a.ref:
+        ap.error('--ref-src needs --ref')
     cand = Build(a.cand, a.map)
     ref = Build(a.ref, a.ref_map) if a.ref else None
-    rc, res = report(cand, ref, read_plan(a.plan), a.objects, a.order, pad_check=not a.no_pad_check,
-                     src=os.path.abspath(a.src), lock_path=a.lock, lock=not a.no_lock_check)
+    src = os.path.abspath(a.src) if a.src else GPSP
+    try:
+        rc, res = report(cand, ref, read_plan(a.plan), a.objects,
+                         a.order or os.path.join(src, 'psp', 'layout', 'hot_order.txt'), pad_check=not a.no_pad_check,
+                         src=src, lock_path=a.lock, lock=not a.no_lock_check,
+                         loop_tree=src if a.src else None, ref_tree=os.path.abspath(a.ref_src) if a.ref_src else None)
+    except LookupError as ex:      # loop_anchor: the source given is not the one the ELF was built from
+        print('layout_report: REFUSED: %s' % ex)
+        return 2
     if a.json:
         json.dump(res, open(a.json, 'w'), indent=1, default=str)
     return rc

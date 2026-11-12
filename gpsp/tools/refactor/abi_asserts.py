@@ -37,9 +37,10 @@ is a shell that includes psp/fe/X.inc.c.  The -E view already follows the includ
 linemarkers name each fragment, aec_cparse.load_pp), and every cite is the file and line that
 hold the copy: `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (and for a single-file tree, so
 01067e74 output is unchanged).  The raw view the constants are read from follows the shell's
-`#include "fe/..."` lines the same way (tu_lines), so the six constant asserts hold on a split
-shell too.  --frag FILE fe/X.inc.c bind-mounts a MUTATED copy of one fragment over the tree's,
-for -E and for the constants alike.
+`#include "fe/..."` lines the same way (read_constants -> tu_lines), so the six constant asserts
+hold on a split shell too, and a constant not found fails gen (`selftest` proves both without
+docker, with the raw-shell read of the pre-review tool as its mutant).  --frag FILE fe/X.inc.c
+bind-mounts a MUTATED copy of one fragment over the tree's, for -E and for the constants alike.
 
 THE COPY SITES NO T14 FLAVOUR COMPILES (P-review r3, B6).  `unbuilt` reads main_psp.c's TU
 raw (aec_cparse.load_raw: the shell with each `#include "fe/X.inc.c"` expanded, comments and
@@ -58,8 +59,10 @@ Usage:
         -> DIR/fe_abi_asserts.h, DIR/abi_check.c, DIR/report.txt; exit 1 if it does not compile
   abi_asserts.py all --run RUN --src GPSP --out DIR      (release, lab, harness)
   abi_asserts.py unbuilt --src GPSP [--gen DIR]          (DIR default: this tree's generated/)
-Exit: 0 generated and compiles (unbuilt: listed), 1 an assertion or compile failure (or a constant
-missing; unbuilt: refused), 2 usage.
+  abi_asserts.py selftest [--src GPSP] [--gen DIR]       (no docker: the six constants read through
+        the fragments, the committed headers' constant blocks, the raw-shell mutant; P-tidy F2)
+Exit: 0 generated and compiles (unbuilt: listed; selftest: PASS), 1 an assertion or compile failure
+(or a constant missing; unbuilt: refused; selftest: FAILED), 2 usage.
 """
 import argparse
 import os
@@ -380,6 +383,44 @@ def prefixed(expr, names, pre):
     return re.sub(r'\b(%s)\b' % '|'.join(map(re.escape, names)), lambda m: pre + m.group(1), expr)
 
 
+def read_constants(src, main_c=None, over=None, test_c=None):
+    """The six constants of 4. (module docstring), as gen asserts them.
+    -> (macros_fe {name: (value, cite)}, macros_test {name: (value, cite, fe value, fe cite)},
+        missing [why], nfe: the fragments the TU text followed).
+    main_psp.c's side is read from the TU's own text in TU order (tu_lines: the shell, or the
+    single file, with every `#include "fe/..."` followed), so on a split shell the #defines that
+    sit in a fragment are found and cited there.  A constant that is not found is in `missing`
+    and gen FAILS on it (P-review 2026-11-08: a raw read of the split shell alone saw no fragment,
+    lost all six asserts and still exited 0).  No docker: `abi_asserts.py selftest` runs it."""
+    main_raw = main_c or os.path.join(src, 'psp', 'main_psp.c')
+    tu = tu_lines(main_raw, os.path.join(src, 'psp'), over)
+    nfe = len({lab for lab, _, _ in tu if lab.endswith('.inc.c')})
+    mfe = macro_values(tu, set(CORE_MACROS) | set(TEST_MACROS))
+    macros_fe = {k: mfe[k] for k in CORE_MACROS if k in mfe}
+    tvals = macro_values(file_lines(test_c or os.path.join(src, TEST_FILE), TEST_FILE), set(TEST_MACROS))
+    macros_test = {k: (tvals[k][0], tvals[k][1], mfe[k][0], mfe[k][1]) for k in TEST_MACROS
+                   if k in tvals and k in mfe}
+    missing = (['%s (not #defined in main_psp.c\'s TU text)' % k for k in CORE_MACROS + TEST_MACROS if k not in mfe]
+               + ['%s (not #defined in %s)' % (k, TEST_FILE) for k in TEST_MACROS if k not in tvals])
+    return macros_fe, macros_test, missing, nfe
+
+
+def constants_line(macros_fe, macros_test, missing):
+    """gen's report line: 'constants: all 6 found (NAME CITE, ...)' in the TU, or CONSTANT MISSING."""
+    if missing:
+        return 'constants: CONSTANT MISSING: ' + '; '.join(missing)
+    at = {k: v[1] for k, v in macros_fe.items()}
+    at.update({k: v[3] for k, v in macros_test.items() if k not in at})
+    return 'constants: all %d found (%s)' % (len(CORE_MACROS) + len(TEST_MACROS), ', '.join(
+        '%s %s' % (k, at[k]) for k in CORE_MACROS + [t for t in TEST_MACROS if t not in CORE_MACROS]))
+
+
+def gen_verdict(rc, pin_fail, missing):
+    """gen's exit status: 0 only when the check TU compiles, no pinned name is lost and all six
+    constants were found (a missing constant is a failure, never a silent drop)."""
+    return 0 if rc == 0 and not pin_fail and not missing else 1
+
+
 # ------------------------------------------------------------- generation
 def render(flavour, items, unchecked, macros_fe, macros_test, src_desc, known=None, known_at=''):
     known = known or {}
@@ -478,18 +519,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     toks = C.load_pp(ip)
     items = extract(toks)
     unchecked = []
-    main_raw = main_c or os.path.join(src, 'psp', 'main_psp.c')
-    tu = tu_lines(main_raw, os.path.join(src, 'psp'), over)
-    nfe = len({lab for lab, _, _ in tu if lab.endswith('.inc.c')})
-    mfe = macro_values(tu, set(CORE_MACROS) | set(TEST_MACROS))
-    macros_fe = {k: mfe[k] for k in CORE_MACROS if k in mfe}
-    tvals = macro_values(file_lines(test_c or os.path.join(src, TEST_FILE), TEST_FILE), set(TEST_MACROS))
-    macros_test = {k: (tvals[k][0], tvals[k][1], mfe[k][0], mfe[k][1]) for k in TEST_MACROS
-                   if k in tvals and k in mfe}
-    # a constant that is not found is a failure, never a silent drop (P-review 2026-11-08: on the
-    # split shell the raw read saw no fragment, lost all six asserts and still exited 0)
-    missing = (['%s (not #defined in main_psp.c\'s TU text)' % k for k in CORE_MACROS + TEST_MACROS if k not in mfe]
-               + ['%s (not #defined in %s)' % (k, TEST_FILE) for k in TEST_MACROS if k not in tvals])
+    macros_fe, macros_test, missing, nfe = read_constants(src, main_c, over, test_c)
     with open(os.path.join(outdir, 'abi_check.c'), 'w', newline='\n') as f:
         f.write('/* T14 check TU: the core header chain, then the generated asserts. */\n'
                 '#include "common.h"\n#include "psp/sleep_q.h"\n#include "fe_abi_asserts.h"\n')
@@ -545,9 +575,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
                '%s (%s)' % (n, ', '.join(cite(x[1]) for x in items if x[0] == n)) for n in multi)
                or 'none'),
            'compile (psp-gcc -fsyntax-only, core flags): %s' % ('ok' if rc == 0 else 'FAILED'),
-           'constants: %s' % ('all %d found (%s)' % (len(CORE_MACROS) + len(TEST_MACROS), ', '.join(
-               '%s %s' % (k, mfe[k][1]) for k in CORE_MACROS + [t for t in TEST_MACROS if t not in CORE_MACROS]))
-               if not missing else 'CONSTANT MISSING: ' + '; '.join(missing)),
+           constants_line(macros_fe, macros_test, missing),
            'known mismatches normalised (abi_asserts.known): %s' % (
                ', '.join(n for n in known if n in set(i[0] for i in items)) or 'none')]
     unused = [n for n in known if n not in set(i[0] for i in items)]
@@ -575,7 +603,7 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     with open(os.path.join(outdir, 'report.txt'), 'w', newline='\n') as f:
         f.write('\n'.join(rep) + '\n' + se)
     print('\n'.join(rep))
-    return 0 if rc == 0 and not pin_fail and not missing else 1
+    return gen_verdict(rc, pin_fail, missing)
 
 
 # ------------------------------------------------------------- the sites no flavour compiles
@@ -679,6 +707,152 @@ def cmd_unbuilt(src, gen_dir):
     return 0
 
 
+# ------------------------------------------------------------- selftest (no docker)
+CONST_LINE = re.compile(r'^(?:#define ABI_(?:FE|TEST|FET)_\w+ |_Static_assert\(ABI_)')
+SPLIT_INC = re.compile(r'^\s*#\s*include\s+"fe/[A-Za-z0-9_.]+\.inc\.c"')
+
+
+def _cite_holds(src, cite, name, main_c=None):
+    """the cited file:line (main_psp.c:N = the shell, fe/X:N = psp/fe/X, TEST_FILE:N) #defines name."""
+    f, n = cite.rsplit(':', 1)
+    p = (main_c or os.path.join(src, 'psp', 'main_psp.c')) if f == 'main_psp.c' else \
+        os.path.join(src, TEST_FILE) if f == TEST_FILE else os.path.join(src, 'psp', f)
+    if not os.path.exists(p):
+        return False
+    ls = open(p, encoding='utf-8', errors='replace').read().split('\n')
+    return 0 < int(n) <= len(ls) and re.match(r'\s*#\s*define\s+%s\b' % re.escape(name), ls[int(n) - 1]) is not None
+
+
+def selftest(src, gen_dir):
+    """read_constants and gen's verdict on it, with no docker (P-tidy F2):
+      C1 this tree: all six found, each cite names a line that #defines it; on a split shell
+         the TU text followed its fragments
+      C2 each committed generated/<flavour>/fe_abi_asserts.h: its constant block is exactly what
+         read_constants gives on this tree (values and cites), its header says 6 constants, and
+         it has declarations + 6 + 1 (sleep_q) _Static_asserts
+      M1 the pre-review rule (the shell's own text, no include followed): on a split shell all six
+         are missing and gen fails (1); on a single file nothing changes
+      C3, M2-M4 a synthetic split tree: found through a fragment and an fe/ header (fe/X:N cites);
+         a #define deleted -> named in missing, gen fails; a --frag copy is read instead of the
+         tree's fragment; an include of a missing fragment is refused
+      C4 a synthetic single file: main_psp.c:N cites and 0 fragments (01067e74's case)"""
+    import shutil
+    import tempfile
+    bad = [0]
+
+    def t(cond, msg):
+        print('  %s  %s' % ('ok  ' if cond else 'FAIL', msg))
+        bad[0] += 0 if cond else 1
+    names = CORE_MACROS + [k for k in TEST_MACROS if k not in CORE_MACROS]
+    main_raw = os.path.join(src, 'psp', 'main_psp.c')
+    if not os.path.exists(main_raw):
+        print('abi_asserts selftest: no %s (pass --src GPSP)' % main_raw)
+        return 2
+    split = any(SPLIT_INC.match(l) for l in open(main_raw, encoding='utf-8', errors='replace'))
+    mf, mt, miss, nfe = read_constants(src)
+    cites = [(k, v[1]) for k, v in mf.items()] + [(k, c) for k, (_, c0, _, c) in mt.items()] + \
+        [(k, c0) for k, (_, c0, _, _) in mt.items()]
+    t(not miss and len(mf) + len(mt) == 6 and gen_verdict(0, 0, miss) == 0,
+      'C1 this tree (%s shell, %d fragments followed): %d constants found (%s)%s'
+      % ('a split' if split else 'a single-file', nfe, len(mf) + len(mt),
+         ', '.join('%s %s' % (k, (mf.get(k) or mt[k][2:])[1] if k in mf or k in mt else '-') for k in names),
+         '; MISSING ' + '; '.join(miss) if miss else ''))
+    cl = constants_line(mf, mt, miss)
+    t(cl.startswith('constants: all 6 found (') and all(
+        ('%s %s' % (k, c)) in cl for k, c in [(k, v[1]) for k, v in mf.items()] + [(k, v[3]) for k, v in mt.items()]),
+      'C1 gen\'s report line: %s' % cl)
+    held = [c for k, c in cites if not _cite_holds(src, c, k)]
+    t(cites and not held and (nfe > 0) == split,
+      'C1 every constant cite names a line that #defines it (%d cites%s)'
+      % (len(cites), '; NOT: ' + ', '.join(held) if held else ''))
+    def header_ok(txt, fl):
+        want = [l for l in render(fl, [], [], mf, mt, '').split('\n') if CONST_LINE.match(l)]
+        got = [l for l in txt.split('\n') if CONST_LINE.match(l)]
+        m = re.search(r'checked: (\d+) declarations, (\d+) constants', txt)
+        n_sa = txt.count('_Static_assert(')
+        ok = bool(want) and got == want and bool(m) and int(m.group(2)) == 6 and n_sa == int(m.group(1)) + 6 + 1
+        return ok, ('%d constant lines%s, header "%s", %d _Static_asserts' % (
+            len(got), ' = this tree\'s' if got == want else ' (DIFFER from the %d wanted)' % len(want),
+            m.group(0) if m else 'no "checked:" line', n_sa))
+    rel = None
+    for fl in FLAVOURS:
+        h = os.path.join(gen_dir, fl, 'fe_abi_asserts.h')
+        if not os.path.exists(h):
+            t(False, 'C2 [%s] no %s' % (fl, h))
+            continue
+        txt = open(h, encoding='utf-8').read()
+        rel = rel or txt
+        ok, msg = header_ok(txt, fl)
+        t(ok, 'C2 [%s] committed header: %s' % (fl, msg))
+    if rel:
+        # M5: the header the pre-review tool wrote on the split shell ("0 constants", 55 asserts in release)
+        old = '\n'.join(l for l in rel.split('\n') if not CONST_LINE.match(l))
+        old = re.sub(r'(checked: \d+ declarations, )\d+( constants)', r'\g<1>0\2', old)
+        ok, msg = header_ok(old, FLAVOURS[0])
+        t(not ok, 'M5 a header without the constant block (the reviewed 55-vs-61 case) fails C2: %s' % msg)
+    # M1: the pre-review rule, the shell's own text only
+    g = globals()
+    real = g['tu_lines']
+    g['tu_lines'] = lambda main_raw, psp_dir, over=None, *a, **k: file_lines(main_raw, 'main_psp.c')
+    try:
+        _, _, miss1, nfe1 = read_constants(src)
+    finally:
+        g['tu_lines'] = real
+    if split:
+        t(len(miss1) == 6 and nfe1 == 0 and gen_verdict(0, 0, miss1) == 1
+          and constants_line({}, {}, miss1).startswith('constants: CONSTANT MISSING: '),
+          'M1 the raw shell alone (the pre-review read): %d of 6 constants missing, gen exits %d (a FAIL, '
+          'not "0 constants asserted" and exit 0)' % (len(miss1), gen_verdict(0, 0, miss1)))
+    else:
+        t(miss1 == miss, 'M1 the raw read on a single file: same constants (%d missing)' % len(miss1))
+    # synthetic trees
+    d = tempfile.mkdtemp(prefix='abi_selftest.')
+    try:
+        def w(rel, text):
+            p = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, 'w', newline='\n') as f:
+                f.write(text)
+            return p
+        frag = ('/* a fragment */\n#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)\n'
+                '#define MER_RETIRE_US     9000\n#define MER_INPUT_US      50000\n#define MER_MISS_LIMIT    120\n')
+        w('psp/main_psp.c', '/* shell */\n#include "fe/fe_priv.h"\n#include "fe/a.inc.c"\nint main(void) { return 0; }\n')
+        w('psp/fe/fe_priv.h', '#ifndef FE_PRIV_H\n#define FE_PRIV_H\n#define VRAM_DIRTY_SHIFT 10\n#endif\n')
+        fa = w('psp/fe/a.inc.c', frag)
+        w(TEST_FILE, '#define VRAM_DIRTY_PAGES 96\n#define MER_INPUT_US 50000\n#define MER_RETIRE_US 9000\n'
+                     '#define MER_MISS_LIMIT 120\n')
+        mf3, mt3, miss3, nfe3 = read_constants(d)
+        t(not miss3 and nfe3 == 1 and mf3.get('VRAM_DIRTY_SHIFT', ('', ''))[1] == 'fe/fe_priv.h:3'
+          and mf3.get('VRAM_DIRTY_PAGES', ('', ''))[1] == 'fe/a.inc.c:2' and mt3.get('MER_MISS_LIMIT', ('',) * 4)[3] == 'fe/a.inc.c:5',
+          'C3 synthetic split shell: found through fe/fe_priv.h and fe/a.inc.c (%s)'
+          % ', '.join('%s %s' % (k, v[1]) for k, v in sorted(mf3.items())))
+        w('psp/fe/a.inc.c', frag.replace('#define MER_MISS_LIMIT    120\n', ''))
+        _, _, miss4, _ = read_constants(d)
+        t(len(miss4) == 1 and miss4[0].startswith('MER_MISS_LIMIT ') and gen_verdict(0, 0, miss4) == 1,
+          'M2 MER_MISS_LIMIT deleted from the fragment: missing %s, gen exits %d' % (miss4, gen_verdict(0, 0, miss4)))
+        mut = w('mut/a.inc.c', frag.replace('MER_INPUT_US      50000', 'MER_INPUT_US      40000'))
+        _, mt5, miss5, _ = read_constants(d, over={'fe/a.inc.c': mut})
+        t(not miss5 and mt5.get('MER_INPUT_US', ('',) * 4)[2] == '40000',
+          'M3 --frag fe/a.inc.c (a mutated copy) is read instead of the tree\'s: MER_INPUT_US %s'
+          % mt5.get('MER_INPUT_US', ('',) * 4)[2])
+        w('psp/main_psp.c', '/* shell */\n#include "fe/fe_priv.h"\n#include "fe/a.inc.c"\n#include "fe/gone.inc.c"\n')
+        try:
+            read_constants(d)
+            t(False, 'M4 an include of a missing fragment must be refused')
+        except SystemExit as ex:
+            t('fe/gone.inc.c' in str(ex), 'M4 an include of a missing fragment is refused: %s' % ex)
+        os.remove(fa)
+        w('psp/main_psp.c', '/* single file */\n' + open(os.path.join(d, 'psp/fe/fe_priv.h')).read() + frag)
+        mf6, mt6, miss6, nfe6 = read_constants(d)
+        t(not miss6 and nfe6 == 0 and mf6['VRAM_DIRTY_SHIFT'][1] == 'main_psp.c:4',
+          'C4 synthetic single file: %d found, 0 fragments, VRAM_DIRTY_SHIFT %s'
+          % (len(mf6) + len(mt6), mf6.get('VRAM_DIRTY_SHIFT', ('', '-'))[1]))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print('abi_asserts selftest: %s' % ('PASS' if not bad[0] else '%d FAILED' % bad[0]))
+    return 1 if bad[0] else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd')
@@ -706,7 +880,14 @@ def main():
     u.add_argument('--src', required=True)
     u.add_argument('--gen', default=os.path.join(HERE, 'generated'),
                    help='DIR holding <flavour>/fe_abi_asserts.h (default: this tree\'s generated/)')
+    s = sub.add_parser('selftest', help='the constant read and gen\'s verdict on it, no docker')
+    s.add_argument('--src', default=os.path.normpath(os.path.join(HERE, '..', '..')),
+                   help='the gpsp tree (default: this tool\'s)')
+    s.add_argument('--gen', default=os.path.join(HERE, 'generated'),
+                   help='DIR holding <flavour>/fe_abi_asserts.h (default: this tree\'s generated/)')
     o = ap.parse_args()
+    if o.cmd == 'selftest':
+        return selftest(o.src, o.gen)
     if o.cmd == 'unbuilt':
         return cmd_unbuilt(o.src, o.gen)
     if o.cmd == 'gen':

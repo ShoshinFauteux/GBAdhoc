@@ -248,13 +248,26 @@ def gen(m, carry=None, assign=None):
     if head_cut and head_cut > 1:
         units.append([])
         cutline[1] = head_cut
+    # --carry: the carried cutlist's FRAG anchors, as lines of this source.  A gap that holds one
+    # is cut THERE: the cut the tree already has.  The rules below place a cut by line number
+    # (SHELL_RANGES is 01067e74's L:1-160), so without this a change that only moves lines (the
+    # shell's header shortened by 27 lines, P-tidy) moved the paths fragment's first line from
+    # its `#define BASE_DIR_DEFAULT` up to the shell's `#include "mgift_cart.h"`, and the
+    # documented regen (gen --carry, then split) no longer gave back the tree it was run on.
+    carried_cuts = set()
+    if carry is not None:
+        for f in carry[0]:
+            L = m.resolve(f['occ'], f['anchor'])
+            if L:
+                carried_cuts.add(L)
     cur = [items[0]]
     for a, b in zip(items, items[1:]):
         cands = [L for L in range(a['end'] + 1, b['start'] + 1) if m.unit_start_ok(L)]
         # the shell's head range (L:1-160: module info, thread attributes, pads)
         # keeps its glue: prefer a cut past it when the gap allows one
         late = [L for L in cands if L > modules.SHELL_RANGES[0][1]]
-        cand = (late or cands or [None])[0]
+        kept = [L for L in cands if L in carried_cuts]
+        cand = (kept or late or cands or [None])[0]
         if cand is None:
             cur.append(b)
         else:

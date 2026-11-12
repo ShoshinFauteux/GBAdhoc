@@ -66,9 +66,10 @@ step lpsim     "T16 loop_lpsim (static part)"                  "LP" \
 # RUN2 / TWIN / P4_RUN as tests/p0a_b5.sh documents them (applied to the first tree).  With a
 # cutlist the b5 rows include a REAL P4 build (split.py + the cutlist as a commit, flavours.sh
 # --commit --against RUN, the whole generated gate line; ~15 min, under LOCK).
-step p0a_unit  "P0a loop_anchor, flavours_gate, exit_matrix raw" "G2L XS G1" bash -c '
+step p0a_unit  "P0a loop_anchor, flavours_gate, T8 raw, T14 consts" "G2L XS G1" bash -c '
   set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
-  '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"'
+  '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"
+  '"$PY"' "'"$R"'/abi_asserts.py" selftest'
 k=0
 for spec in ${B5_TREES:-}; do
   IFS=: read -r bt br bc <<< "$spec"; k=$((k + 1))

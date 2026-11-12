@@ -8,23 +8,31 @@ main_psp.c's loop: it is neither placed nor in psp_frame_path.txt.  This tool
 adds it, WITHOUT changing the existing layout tooling (lp_map.py is imported
 read-only; the plugin is a copy with one extra group, loop_lpsim_plugin.c).
 
+THE SOURCE of the loop window (P-tidy F3).  --tree DIR names the gpsp/ tree
+an ELF was built from (setmap: --tree for ELF_A, --tree-b for ELF_B; layouts:
+--tree NAME=DIR per --elf); --main-c names its main_psp.c.  Without them the
+window is read from the ELF's flavour.json commit, else from this tool's own
+tree (loop_anchor.py, which prints the source it read).  A source that does not
+hold main at the ELF's DW_AT_decl_line is REFUSED (exit 2).
+
 Subcommands
-  window ELF [--src auto|LO:HI] [--main-c SRC] [--json]
+  window ELF [--src auto|LO:HI] [--main-c SRC | --tree DIR] [--json]
         main's loop window from DWARF .debug_line: by LINE (rows of main_psp.c
         lines in --src inside `main`, by default the window found by anchor,
         loop_anchor.py; x4's 220 lines / 115 sets) and by ADDRESS
         (every byte of main between the first and last such row, i.e. inlined
         helper code included).  Prints main's start mod 8192 and the set map.
-  loopfile ELF --out F [--model window|bylines] [--rates R] [--shift N]
+  loopfile ELF --out F [--main-c SRC | --tree DIR] [--model window|bylines] [--rates R] [--shift N]
         the loop's per-frame PSP line fetches for the simulation (see RATES).
   shift-nm NM --by N --out OUT [--at main]
         a never-linked candidate: every text symbol at or after `main` moved by
         N bytes (the PLAN's "seeded 160 B shift before main").
-  setmap ELF_A ELF_B [--shift-b N] [--nm-a NM --nm-b NM --weights W]
+  setmap ELF_A ELF_B [--tree DIR_A] [--tree-b DIR_B] [--shift-b N] [--weights W]
         static (no simulation): how many loop lines change I-cache set, the set
         histogram, and the loop lines sharing a set with the weighted hot path.
   layouts --lp DIR --set NAME --fixture FX --twin VARIANT --prof runs/prof/rc45f
-          --elf name=ELF[+SHIFT][@JITHEX][#window|bylines] ... [--frame-path F] [--model ...]
+          --elf name=ELF[+SHIFT][@JITHEX][#window|bylines] ... [--tree name=DIR ...]
+          [--frame-path F] [--model ...]
         two layouts files for one twin run: FX.lay (old format, for
         lpsim_plugin.c) and FX.loop.lay (the same rows with loop=FILE, plus
         a `<name>-noloop` row per ELF without it).
@@ -32,7 +40,7 @@ Subcommands
         reproduction check (old plugin vs new plugin's -noloop rows: J/S/F must
         be identical) and the loop miss delta of every candidate against the
         accepted ELF, per frame, with the 215.3 ns/miss cost.
-  --selftest ELF   (no docker): window figures, shift, setmap and report
+  --selftest ELF [TREE]   (no docker): window figures, shift, setmap and report
         parsing, with mutants.
 
 RATES (the TODO): PLAN wants the loop fetched at rates from a MEASURED trace
@@ -78,13 +86,15 @@ def main_sym(e, name='main'):
     return fs[0]['value'], fs[0]['size']
 
 
-def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None):
+def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None, tree=None):
+    """tree / main_c: the gpsp/ tree (or main_psp.c) the ELF was built from; None = the ELF's
+    flavour.json commit, else this tool's tree (loop_anchor.source_for names the one it read)."""
     e = Elf(elf_path)
     mlo, msz = main_sym(e, fn)
     mhi = mlo + msz
     rws = dwline.rows(e, 'main_psp.c')
-    if src is None or main_c:
-        r = loop_anchor.for_elf(elf_path, main_c)
+    if src is None or main_c or tree:
+        r = loop_anchor.for_elf(elf_path, main_c, tree=tree)
         if src is not None:
             loop_anchor.check_explicit(r, src[0], src[1], 'loop_lpsim')
         src = (r['lo'], r['hi'])
@@ -259,6 +269,15 @@ def setmap(wa, wb, shift_b=0, hot_a=None, hot_b=None):
 # ------------------------------------------------------------------ layouts
 def cmd_layouts(a):
     import lp_map
+    trees = {}
+    for spec in a.tree or []:
+        n, sep, d = spec.partition('=')
+        if not sep or not d:
+            raise SystemExit('layouts --tree %s: want NAME=DIR (the gpsp/ tree --elf NAME was built from)' % spec)
+        trees[n] = d
+    unknown = sorted(set(trees) - {s.split('=', 1)[0] for s in a.elf})
+    if unknown:
+        raise SystemExit('layouts --tree names no --elf: %s' % ', '.join(unknown))
     lp = os.path.expanduser(a.lp)
     out = os.path.join(lp, 'loop', 'sim', a.set)
     os.makedirs(out, exist_ok=True)
@@ -297,7 +316,7 @@ def cmd_layouts(a):
             with open(fp, 'w') as fh:
                 for x in lp_map.frame_lines(psyms, lp_map.read_frame_path(a.frame_path)):
                     fh.write('%x\n' % x)
-        w = window(path)
+        w = window(path, tree=trees.get(name))
         lf = os.path.join(out, '%s.%s.loop' % (a.fixture, name))
         fetch = loop_fetches(w, model, rates, shift)
         with open(lf, 'w') as fh:
@@ -393,7 +412,7 @@ def report(old_path, new_path, accepted, out=sys.stdout, status=None):
 
 
 # ------------------------------------------------------------------ selftest
-def selftest(elf_path):
+def selftest(elf_path, tree=None):
     import tempfile
     fails = 0
 
@@ -402,7 +421,7 @@ def selftest(elf_path):
         print('  %-5s %s' % ('ok' if c else 'FAIL', label))
         fails += 0 if c else 1
 
-    w = window(elf_path)
+    w = window(elf_path, tree=tree)
     print_window(w)
     flav = None
     fj = os.path.join(os.path.dirname(elf_path), 'flavour.json')
@@ -488,18 +507,25 @@ def selftest(elf_path):
     return 1 if fails else 0
 
 
+TREE_HELP = 'the gpsp/ tree the ELF was built from (its psp/main_psp.c holds main); default: the ELF\'s ' \
+            'flavour.json commit, else this tool\'s tree'
+
+
 def main(argv):
-    if len(argv) == 2 and argv[0] == '--selftest':
-        return selftest(argv[1])
+    if len(argv) in (2, 3) and argv[0] == '--selftest':
+        return selftest(argv[1], argv[2] if len(argv) == 3 else None)
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('window')
     p.add_argument('elf')
     p.add_argument('--src', default='auto')
     p.add_argument('--main-c')
+    p.add_argument('--tree', help=TREE_HELP)
     p.add_argument('--json')
     p = sub.add_parser('loopfile')
     p.add_argument('elf')
+    p.add_argument('--main-c')
+    p.add_argument('--tree', help=TREE_HELP)
     p.add_argument('--out', required=True)
     p.add_argument('--model', default='window', choices=('window', 'bylines'))
     p.add_argument('--rates')
@@ -512,6 +538,8 @@ def main(argv):
     p = sub.add_parser('setmap')
     p.add_argument('elf_a')
     p.add_argument('elf_b')
+    p.add_argument('--tree', help='ELF_A: ' + TREE_HELP)
+    p.add_argument('--tree-b', help='ELF_B: ' + TREE_HELP)
     p.add_argument('--shift-b', type=int, default=0)
     p.add_argument('--weights', default=os.path.join(os.path.dirname(os.path.dirname(HERE)), 'layout', 'profile_weights.txt'))
     p = sub.add_parser('layouts')
@@ -521,6 +549,8 @@ def main(argv):
     p.add_argument('--twin', required=True)
     p.add_argument('--prof', required=True)
     p.add_argument('--elf', action='append', required=True)
+    p.add_argument('--tree', action='append', metavar='NAME=DIR',
+                   help='the gpsp/ tree --elf NAME was built from (repeatable); default: its flavour.json commit')
     p.add_argument('--frame-path')
     p.add_argument('--model', default='window', choices=('window', 'bylines'))
     p.add_argument('--rates')
@@ -529,13 +559,21 @@ def main(argv):
     p.add_argument('sim_new')
     p.add_argument('--accepted', default='acc')
     a = ap.parse_args(argv)
+    try:
+        return run(a)
+    except LookupError as ex:    # loop_anchor: the source given is not the one the ELF was built from
+        print('loop_lpsim: REFUSED: %s' % ex)
+        return 2
+
+
+def run(a):
     if a.cmd == 'window':
         if a.src == 'auto':
-            w = window(a.elf, None, main_c=a.main_c)
+            w = window(a.elf, None, main_c=a.main_c, tree=a.tree)
         else:
             lo, hi = (int(x) for x in a.src.split(':'))
             # an explicit range is held to the anchored window of the ELF's source
-            r = loop_anchor.for_elf(a.elf, a.main_c)
+            r = loop_anchor.for_elf(a.elf, a.main_c, tree=a.tree)
             loop_anchor.check_explicit(r, lo, hi, 'loop_lpsim')
             w = window(a.elf, (lo, hi))
         print_window(w)
@@ -543,7 +581,7 @@ def main(argv):
             json.dump({k: v for k, v in w.items() if k not in ('bylines', 'window_lines')},
                       open(a.json, 'w'), indent=1)
     elif a.cmd == 'loopfile':
-        w = window(a.elf)
+        w = window(a.elf, main_c=a.main_c, tree=a.tree)
         f = loop_fetches(w, a.model, read_rates(a.rates) if a.rates else None, a.shift)
         with open(a.out, 'w') as fh:
             fh.write('# model=%s rates=%s\n' % (a.model, a.rates or 'PLACEHOLDER'))
@@ -553,7 +591,7 @@ def main(argv):
         pivot, n = shift_nm(a.nm, a.out, a.by, a.at)
         print('%s: %d text symbols at/after 0x%08x moved by %d' % (a.out, n, pivot, a.by))
     elif a.cmd == 'setmap':
-        wa, wb = window(a.elf_a), window(a.elf_b)
+        wa, wb = window(a.elf_a, tree=a.tree), window(a.elf_b, tree=a.tree_b)
         ha = hb = None
         nma = os.path.join(os.path.dirname(a.elf_a), 'elf.nm')
         nmb = os.path.join(os.path.dirname(a.elf_b), 'elf.nm')

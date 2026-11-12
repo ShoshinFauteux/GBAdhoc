@@ -72,6 +72,38 @@ file, never typed: `G0 ok rel/stb/lab/har G0var ok G1 ok rel/stb/lab/har G2 ... 
 rel/stb/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
 a flavour it must cover, makes the line red (`flavours_gate.py`).
 
+### P-tidy: the Phase P final review's tool follow-ups (2026-11-09, on b7d0cafd)
+
+- **T14 constants on the split shell (F2).** `abi_asserts.py gen` reads the six constants from the
+  TU text with the fragments followed (`read_constants` -> `tu_lines`, since review round 1
+  c5b9afde), and a constant not found fails gen. The review's "release 55 vs 61, 0 constants
+  asserted, exit 0" is the P0a tool (d433e6f4, `macro_values(main_raw)`) run on the split tree; the
+  b7d0cafd tool regenerates the committed `generated/` byte for byte. New: `abi_asserts.py selftest`
+  proves it with no docker (this tree, the committed headers' constant blocks, the raw-shell read
+  as a mutant, synthetic split and single-file trees); `run_all.sh` runs it in `p0a_unit`.
+- **The loop window's source is the tree given (F3).** `layout_report.py --src` now feeds main's
+  loop window too (it fed only the pads, the lock and, now, the hot order), `--ref-src` REF's;
+  `loop_lpsim.py window|loopfile --tree DIR`, `setmap --tree A --tree-b B`, `layouts --tree
+  NAME=DIR`; `loop_anchor.for_elf(tree=)`. Without them the window still comes from the ELF's
+  flavour.json commit, else the tools' own tree, which the report now names as such. A source that
+  is not the ELF's is REFUSED (exit 2). `tests/p0a_test_src_tree.py RUN TREE` (in `p0a_b5.sh`
+  step `loop`) proves each option is read, with the pre-fix calls as mutants.
+- **main_psp.c's file header** (37 stale lines: "turbo A/B dropped" and more) is a 10-line pointer to
+  `psp/fe/README.md`; line 1, the shell.a FRAG anchor, is kept. Comment-only: G0/G1 and the
+  binaries against b7d0cafd in the commit. The shell's lines after it move by -27, so the cutlist's
+  `source:` line, `psp/fe/README.md` and the shell cites of `generated/*/fe_abi_asserts.h` are
+  regenerated (nothing else in them changes).
+- **`split.py gen --carry` keeps the carried cuts.** gen places cuts by line-number rules
+  (`modules.SHELL_RANGES` is 01067e74's L:1-160): after the -27 shift it moved the paths fragment's
+  first line up into the shell's include list, so the documented regen no longer gave back the tree.
+  A gap that holds a carried FRAG anchor is now cut there; the committed cutlist regenerates byte for
+  byte on b7d0cafd and on this tree. `tests/source-split_test_carry_shift.py [GPSP]` (shell shrunk,
+  grown; the pre-fix rule as a mutant).
+- **`psp/layout/hot_order.txt`'s size column** is the b7d0cafd release ELF's (19 rows; T5 on release:
+  0 size / 0 rounding rows, was 19 / 14). Data only: hot.ord (names) is byte-identical and
+  `hot_budget.py` reads the HOT core's rows, none of which changed. That commit's gate has HO and BF
+  red by design (the staleness report and psp/layout/ differ from b7d0cafd's); the bytes are equal.
+
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 
 - **Hermetic builds.** `flavours.sh` runs `build.sh` under `env -i` (fixed PATH, HOME, the docker
