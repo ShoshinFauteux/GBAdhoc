@@ -551,8 +551,20 @@ lookup_pc_noflags:
 # A site that dropped its argument is in the side table: argument = $19 +
 # its immediate.  One that did not (PCARG_OLD) passed it in $8.  The front
 # cache pcarg_fc is direct mapped by return address; a miss asks C
-# (pcarg_lookup), which fills it.  Clobbers $10-$12 (and $28 on a miss); every
-# other register survives.  The caller has saved the guest registers.
+# (pcarg_lookup), which fills it.
+# GUEST REGISTERS LOST.  The caller MUST have run save_registers (or
+# emit_save_regs) first: the registers below hold live guest values in
+# translated code, and nothing here puts them back.
+#   every call:  $8 = r2, $9 = r3 (the in/out pair), $10-$12 = r4-r6
+#   on a miss:   also $13-$15 = r7-r9 and $24, $25 = r11, r12 (the C call
+#                spills only $1-$9 and $ra around pcarg_lookup; o32 lets a C
+#                function clobber $10-$15, $24 and $25, and a PIC build
+#                loads $25 itself), and $28 = r13 (cfncall reloads the
+#                host gp)
+# Kept: $1-$7 ($3 = r0, $7 = r1, and the stub's own $4-$6), $16-$23
+# ($18 = r10), $30 = r14, $ra.  A new caller that runs before the register
+# save would corrupt r2-r9, r11-r13 silently, and only on a front-cache miss
+# for most of them.
 # (pcarg_st: mips_emit.h; fc at offset 0, spill at 4096)
 defsymbl(pcarg_dec)
   srl $10, $9, 2

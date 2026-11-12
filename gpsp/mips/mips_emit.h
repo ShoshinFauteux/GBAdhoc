@@ -1648,6 +1648,7 @@ typedef struct {
   u8 *hw[2];                       /* end of the last committed block */
   u32 cur, npend;                  /* region being emitted, its sites */
   u32 sites_new, sites_old, full, truncs, c_lookups, c_found, max[2], bad;
+  u32 nfar;                        /* sites kept old form by pcarg_near */
   struct { u32 key; s32 imm; } pend[PCARG_MAX_PEND];
   u32 rom_key[PCARG_ROM_CAP];
   u32 ram_key[PCARG_RAM_CAP];
@@ -1671,6 +1672,7 @@ union { pcarg_state_t s; u8 bytes[PCARG_STATE_BYTES]; } pcarg_st;
 #define pcarg_c_found    (pcarg_st.s.c_found)
 #define pcarg_max        (pcarg_st.s.max)
 #define pcarg_bad        (pcarg_st.s.bad)
+#define pcarg_far        (pcarg_st.s.nfar)
 #define pcarg_rom_key    (pcarg_st.s.rom_key)
 #define pcarg_ram_key    (pcarg_st.s.ram_key)
 #define pcarg_rom_imm    (pcarg_st.s.rom_imm)
@@ -1807,6 +1809,37 @@ static inline int pcarg_is_cti(u32 w)
   ((s16)((((iok) & 0x1FFFF) != 0x10000) ? ((iok) & 0xFFFF) :                  \
          (((new_pc) - stored_pc) & 0xFFFF)))
 
+/* The side table holds an s16, so a PLAIN site (no k: iok == 0x10000) may
+ * drop its argument only when new_pc - stored_pc fits one.  Outside that
+ * range the old form's generate_load_pc emits the absolute PC (lui/ori), which
+ * no immediate can stand for: the site keeps the old form, exactly the code
+ * a PCARG_SIDE=0 build emits.  Never taken today (stored_pc is the block's
+ * start and a block is at most 1024 instructions, so 0 <= delta <= 4100), and
+ * the stubs' decoders read a plain PC only in [0, IOK_PLAIN) anyway; this
+ * keeps a future larger block or a moved stored_pc from recovering a
+ * truncated PC silently.  One compare per site at translation time.
+ * PCARG_NEAR_MIN / PCARG_NEAR_MAX narrow the range for the twin test
+ * (tools/drprof/pcarg_check.py): a forced site still emits the base's addiu,
+ * so with PCARG_SIDE_PAD the guest must run exactly as the base. */
+#ifndef PCARG_NEAR_MIN
+#define PCARG_NEAR_MIN  (-32768)
+#endif
+#ifndef PCARG_NEAR_MAX
+#define PCARG_NEAR_MAX  32767
+#endif
+#define pcarg_near(new_pc, iok)                                               \
+  ((((iok) & 0x1FFFF) != 0x10000) ||                                          \
+   ((s32)((new_pc) - stored_pc) >= PCARG_NEAR_MIN &&                          \
+    (s32)((new_pc) - stored_pc) <= PCARG_NEAR_MAX))
+
+/* why a site stays old form: out of the s16 range, or no room */
+#define pcarg_count_old(new_pc, iok)                                          \
+  if (!pcarg_near(new_pc, iok))                                               \
+    pcarg_far++;                                                              \
+  else if (!pcarg_room())                                                     \
+    pcarg_full++;                                                             \
+  pcarg_sites_old++
+
 #ifdef PCARG_SIDE_PAD
 /* twin oracle only: a nop where the argument was, so every block keeps the
  * base's size (same flushes, same guest timing: hashes must be identical) */
@@ -1829,13 +1862,11 @@ static inline int pcarg_is_cti(u32 w)
 static __attribute__((noinline)) u8 *pcarg_load_site(u8 *translation_ptr,
   u32 fn, u32 new_pc, u32 stored_pc, u32 iok, u8 *lo)
 {
-  if (pcarg_room() && pcarg_can_swap(lo)) {
+  if (pcarg_near(new_pc, iok) && pcarg_room() && pcarg_can_swap(lo)) {
     generate_function_call_swap_delay(fn);
     pcarg_note(new_pc, iok);
   } else {
-    if (!pcarg_room())
-      pcarg_full++;
-    pcarg_sites_old++;
+    pcarg_count_old(new_pc, iok);
     mips_emit_jal(mips_absolute_offset(fn));
     translation_ptr = emit_load_pc_k(translation_ptr, reg_a1, new_pc,
                                      stored_pc, iok);
@@ -1849,11 +1880,10 @@ static __attribute__((noinline)) u8 *pcarg_load_site(u8 *translation_ptr,
 static __attribute__((noinline)) u8 *pcarg_arm_store_site(u8 *translation_ptr,
   u32 fn, u32 rd, u32 pc, u32 stored_pc, u32 iok)
 {
-  int nf = pcarg_room() && !pcarg_is_cti(address32(translation_ptr, -4));
+  int nf = pcarg_near(pc + 4, iok) && pcarg_room() &&
+           !pcarg_is_cti(address32(translation_ptr, -4));
   if (!nf) {
-    if (!pcarg_room())
-      pcarg_full++;
-    pcarg_sites_old++;
+    pcarg_count_old(pc + 4, iok);
     translation_ptr = emit_load_pc_k(translation_ptr, reg_a2, pc + 4,
                                      stored_pc, iok);
   }
@@ -1869,11 +1899,10 @@ static __attribute__((noinline)) u8 *pcarg_arm_store_site(u8 *translation_ptr,
 static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
   u8 *translation_ptr, u32 fn, u32 rd, u32 pc, u32 stored_pc, u32 iok)
 {
-  int nf = pcarg_room() && !pcarg_is_cti(address32(translation_ptr, -4));
+  int nf = pcarg_near(pc + 2, iok) && pcarg_room() &&
+           !pcarg_is_cti(address32(translation_ptr, -4));
   if (!nf) {
-    if (!pcarg_room())
-      pcarg_full++;
-    pcarg_sites_old++;
+    pcarg_count_old(pc + 2, iok);
     translation_ptr = emit_load_pc_k(translation_ptr, reg_a2, pc + 2,
                                      stored_pc, iok);
   }

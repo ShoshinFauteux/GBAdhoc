@@ -6571,11 +6571,12 @@ static void immp_report(void)
 {
 #ifdef PCARG_SIDE
   fprintf(stderr, "PCARG sites new=%u old=%u full=%u truncs=%u lookups=%u found=%u "
-          "max_rom=%u max_ram=%u bad=%u\n",
+          "max_rom=%u max_ram=%u bad=%u far=%u\n",
           (unsigned)pcarg_sites_new, (unsigned)pcarg_sites_old,
           (unsigned)pcarg_full, (unsigned)pcarg_truncs,
           (unsigned)pcarg_c_lookups, (unsigned)pcarg_c_found,
-          (unsigned)pcarg_max[0], (unsigned)pcarg_max[1], (unsigned)pcarg_bad);
+          (unsigned)pcarg_max[0], (unsigned)pcarg_max[1], (unsigned)pcarg_bad,
+          (unsigned)pcarg_far);
 #endif
   fprintf(stderr, "SMC_IMM_PATCH patches=%u learned=%u sites=%u selftest_fail=%u refused=%u/%u/%u/%u/%u\n",
           (unsigned)immp_patches, (unsigned)immp_learned, (unsigned)immp_sites,
