@@ -184,18 +184,18 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_vol_drop), abi_f
 typedef void abi_fe_t_gamepak_vol_back ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_vol_back), abi_fe_t_gamepak_vol_back *),
                "fe/merend.d.inc.c:687 gamepak_vol_back: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:507 (extern) */
+/* fe/misc.a.inc.c:641 (extern) */
 typedef unsigned char abi_fe_t_iwram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&iwram), abi_fe_t_iwram *),
-               "fe/misc.a.inc.c:507 iwram: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:508 (extern) */
+               "fe/misc.a.inc.c:641 iwram: the frontend copy differs from the core declaration");
+/* fe/misc.a.inc.c:642 (extern) */
 typedef unsigned char abi_fe_t_ewram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&ewram), abi_fe_t_ewram *),
-               "fe/misc.a.inc.c:508 ewram: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:509 (extern) */
+               "fe/misc.a.inc.c:642 ewram: the frontend copy differs from the core declaration");
+/* fe/misc.a.inc.c:643 (extern) */
 typedef unsigned short abi_fe_t_palette_ram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_palette_ram *),
-               "fe/misc.a.inc.c:509 palette_ram: the frontend copy differs from the core declaration");
+               "fe/misc.a.inc.c:643 palette_ram: the frontend copy differs from the core declaration");
 /* fe/link.d.inc.c:987 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress *),
