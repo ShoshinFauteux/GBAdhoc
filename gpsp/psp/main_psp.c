@@ -1667,21 +1667,13 @@ session_top:
       if (!vrom[0])
       {
          fe_evt("exit code=2 reason=bad_variant");
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(2, "bad_variant");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "bad_variant", 0);   /* ADR-0053 */
          return 0;
       }
       if (psp_rom_path_join(rom_path, sizeof(rom_path), g_dir_base, vrom) != 0)
       {
          fe_evt("exit code=2 reason=rom_path_too_long rom=%s", vrom);
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(2, "rom_path_too_long");
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "rom_path_too_long", 0);
          return 0;
       }
       snprintf(savedir, sizeof(savedir), "%s/saves", g_dir_base);
@@ -1693,11 +1685,7 @@ session_top:
                              sizeof(save_path)) != 0)
       {
          fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", vrom);
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(2, "sidecar_path_too_long");
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "sidecar_path_too_long", 0);
          return 0;
       }
       snprintf(state_path, sizeof(state_path), "%s/saves/%s", g_dir_base,
@@ -1706,11 +1694,7 @@ session_top:
                              sizeof(state_path)) != 0)
       {
          fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", vrom);
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(2, "sidecar_path_too_long");
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "sidecar_path_too_long", 0);
          return 0;
       }
       fe_evt("variant rom=%s silent=%d group=%s", vrom, g_silent_mode,
@@ -1737,11 +1721,7 @@ session_top:
          if (psp_rom_path_join(rom_path, sizeof(rom_path), ROM_DIR, kr) != 0)
          {
             fe_evt("exit code=2 reason=rom_path_too_long rom=%s", kr);
-            evt_shutdown();
-            audio_stop();
-            vid_term();      /* F8: as every other early exit */
-            FE_HANDOFF(2, "rom_path_too_long");
-            FE_EXIT_GAME();
+            exit_early_end(XE_EVT_FIRST, 2, "rom_path_too_long", 0);
             return 0;
          }
          if (!file_exists(rom_path))
@@ -1749,11 +1729,7 @@ session_top:
             /* Loud, not a fallback to some other game: silently running the
              * wrong cart would invalidate every number the run produces. */
             fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
-            evt_shutdown();
-            audio_stop();
-            vid_term();      /* F8 */
-            FE_HANDOFF(2, "rom_missing");
-            FE_EXIT_GAME();
+            exit_early_end(XE_EVT_FIRST, 2, "rom_missing", 0);
             return 0;
          }
          fe_evt("rom selected=%s (harness key)", kr);
@@ -1761,11 +1737,7 @@ session_top:
       else if (find_first_rom(rom_path, sizeof(rom_path)) != 0)
       {
          fe_evt("exit code=2 reason=no_rom");
-         evt_shutdown();
-         audio_stop();
-         vid_term();      /* F8 */
-         FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "no_rom", 0);   /* ADR-0053 */
          return 0;
       }
    }
@@ -1792,11 +1764,7 @@ session_top:
           * Nothing is emulating yet -- no SRAM to flush, no core thread to
           * stop.  Close the log and boot again. */
          fe_evt("exit code=0 reason=ui_relaunch");
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         relaunch_eboot(0);
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST | XE_RELAUNCH, 0, NULL, 0);
          return 0;
       }
       if (br != 0)
@@ -1809,11 +1777,7 @@ session_top:
             fe_evt("exit code=0 reason=home");
          else
             fe_evt("exit code=2 reason=no_rom");
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(home ? 0 : 2, home ? "home" : "no_rom");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, home ? 0 : 2, home ? "home" : "no_rom", 0);   /* ADR-0053 */
          return 0;
       }
       g_pcfg.console = (int)selected_console;
@@ -1855,11 +1819,7 @@ session_top:
                              state_path, sizeof(state_path)) != 0)
       {
          fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", rom_path);
-         evt_shutdown();
-         audio_stop();
-         vid_term();
-         FE_HANDOFF(2, "sidecar_path_too_long");
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 2, "sidecar_path_too_long", 0);
          return 0;
       }
    }
@@ -2422,13 +2382,9 @@ session_top:
          boot_stop_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
                           l2, l3, 15000);
          fe_evt("exit code=8 reason=mem_budget");
-         evt_shutdown();
-         audio_stop();
-         vid_term();
          /* 8, as logged and as docs/MEMORY-BUDGET.md says (F7): the handoff
           * said 1, which is load_failed's code. */
-         FE_HANDOFF(8, "mem_budget");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(XE_EVT_FIRST, 8, "mem_budget", 0);   /* ADR-0053 */
          return 0;
       }
    }
@@ -2632,11 +2588,7 @@ session_top:
                           "No memory is left to load this game's save.",
                           "The save has not been changed.", NULL, 30000);
       fe_evt("exit code=1 reason=load_failed battery=%d", refusal);
-      evt_shutdown();
-      audio_stop();
-      vid_term();
-      FE_HANDOFF(1, "load_failed");   /* ADR-0053 */
-      FE_EXIT_GAME();
+      exit_early_end(XE_EVT_FIRST, 1, "load_failed", 0);   /* ADR-0053 */
       return 0;
    }
 
@@ -2692,20 +2644,9 @@ session_top:
       {
          /* The ME and its renderer stop before the core is freed, in the
           * loop teardown's order (F9: they were left running). */
-         me_rend_teardown("exit");
-         me_video_teardown("exit", 1);
-         me_host_shutdown();
-         io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
-         fe_host_shutdown();
-#ifdef REWIND
-         PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
-#endif
-         audio_stop();
-         vid_term();
+         exit_early_begin(XE_ME | XE_CORE);
          fe_evt("exit code=2 reason=bad_script");
-         evt_shutdown();
-         FE_HANDOFF(2, "bad_script");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(0, 2, "bad_script", 0);   /* ADR-0053 */
          return 0;
       }
    }
@@ -2718,20 +2659,9 @@ session_top:
       me_rend_suspend();               /* clean heap for np_start (run 407) */
       if (net_bringup(net_host, group, nick, net_probe) != 0)
       {
-         me_rend_teardown("exit");          /* F9, as bad_script above */
-         me_video_teardown("exit", 1);
-         me_host_shutdown();
-         io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
-         fe_host_shutdown();
-#ifdef REWIND
-         PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
-#endif
-         audio_stop();
-         vid_term();
+         exit_early_begin(XE_ME | XE_CORE);          /* F9, as bad_script above */
          fe_evt("exit code=4 reason=net_failed");
-         evt_shutdown();
-         FE_HANDOFF(4, "net_failed");   /* ADR-0053 */
-         FE_EXIT_GAME();
+         exit_early_end(0, 4, "net_failed", 0);   /* ADR-0053 */
          return 0;
       }
       me_rend_resume();                /* re-alloc from the post-np_start heap */
