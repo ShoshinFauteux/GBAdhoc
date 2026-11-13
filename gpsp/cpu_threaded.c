@@ -3152,7 +3152,18 @@ static void smc_stable_thunk_link(u8 *entry, u8 *body)
 #if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
 static void dispatch_cache_forget(u32 pc, u32 thumb);
 #endif
-static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+/* DC_NOINLINE: DISPATCH_ASSOC moves the cache fill and forget out of line;
+ * the functions that used to hold them inline (this one, the two address
+ * lookups) are then small enough for gcc to inline into their callers,
+ * which grows those and moves the pinned warm tail.  Keep them calls, as
+ * they were (psp/layout_pad_warm.S and psp/gbalink_b_stubs.c hold the
+ * 32 B steps they shrank by). */
+#define DC_NOINLINE __attribute__((noinline))
+#else
+#define DC_NOINLINE
+#endif
+static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 {
   u8 *translation_ptr = entry;
 #if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
@@ -4675,7 +4686,7 @@ static void __attribute__((noinline)) dc_put_assoc(u32 *tbl, u32 k, u32 p)
 #define DC_FILL_OK(pc) 0
 #endif
 
-u8 function_cc *block_lookup_address_arm(u32 pc)
+DC_NOINLINE u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
   DRPH_SCOPE(DRPH_DISP);
@@ -4708,7 +4719,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   BADJUMP_EXHAUSTED_X(pc, arm);
 }
 
-u8 function_cc *block_lookup_address_thumb(u32 pc)
+DC_NOINLINE u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
   DRPH_SCOPE(DRPH_DISP);

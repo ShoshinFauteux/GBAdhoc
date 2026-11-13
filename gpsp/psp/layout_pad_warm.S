@@ -35,3 +35,23 @@ layout_pad_warm_lookup:
 	.balign 4
 layout_pad_warm_xlat:
 	.space LAYOUT_PAD_XLAT_BYTES
+
+/* DISPATCH_ASSOC (claude/ibranch; cpu_threaded.c dc_put_assoc): the dispatch
+ * cache's fill and forget went out of line, so three pinned warm-tail
+ * functions shrank by whole 32 B steps (release; 32 B-rounded):
+ * block_lookup_address_arm 416 -> 288, block_lookup_address_thumb 384 -> 288,
+ * smc_stable_thunk_dispatch 320 -> 256.  These zeros, in front of the
+ * function that follows each in the hot order, put everything after them
+ * back on its sets.  B's copies are held from psp/gbalink_b_stubs.c. */
+	.section .text.update_serial,"ax",@progbits
+	.balign 4
+layout_pad_warm_dc_arm:
+	.space 128
+	.section .text.spin_check,"ax",@progbits
+	.balign 4
+layout_pad_warm_dc_thumb:
+	.space 96
+	.section .text.iok_site,"ax",@progbits
+	.balign 4
+layout_pad_warm_dc_thunk:
+	.space 64

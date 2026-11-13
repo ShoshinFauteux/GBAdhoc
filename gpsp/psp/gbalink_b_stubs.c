@@ -100,3 +100,15 @@ __asm__(".pushsection .text.block_lookup_translate_thumb,\"ax\",@progbits\n"
 __asm__(".pushsection .text.translate_block_arm,\"ax\",@progbits\n"
         "  .fill 5504 / 4, 4, 0\n"
         ".popsection\n");
+/* DISPATCH_ASSOC (claude/ibranch): B's block_lookup_address_arm/_thumb and
+ * smc_stable_thunk_dispatch shrank 128 / 96 / 64 B (32 B-rounded) as A's did
+ * (psp/layout_pad_warm.S); these zeros after B's copies hold what follows. */
+__asm__(".pushsection .text.block_lookup_address_arm,\"ax\",@progbits\n"
+        "  .fill 128 / 4, 4, 0\n"
+        ".popsection\n");
+__asm__(".pushsection .text.block_lookup_address_thumb,\"ax\",@progbits\n"
+        "  .fill 96 / 4, 4, 0\n"
+        ".popsection\n");
+__asm__(".pushsection .text.smc_stable_thunk_dispatch,\"ax\",@progbits\n"
+        "  .fill 64 / 4, 4, 0\n"
+        ".popsection\n");

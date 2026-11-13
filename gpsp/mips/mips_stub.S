@@ -429,7 +429,8 @@ return_to_main:
 // publish would do nothing -- jit_code_publish()'s own test, jit_dirty_n |
 // jit_owner_pending == 0 -- and otherwise the C lookup runs, as before.  A
 // hit then returns exactly what the lookup would have returned, as a stub
-// hit does.  Needs JIT_CODE_DISCIPLINE (gpsp_profile.h).  $1/$2/$5 are free.
+// hit does.  Needs JIT_CODE_DISCIPLINE (gpsp_profile.h).  $1/$2/$5 are free
+// (lookup_pc_noflags keeps the T bit in $6).
 #ifdef DISPATCH_LOOKUP_PC
 .macro dc_publish_idle miss
   lui $1, %hi(jit_dirty_n)
