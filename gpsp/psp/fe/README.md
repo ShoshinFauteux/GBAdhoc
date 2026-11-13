@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 01d394c640b3e92e; split.py inverse of the shell sha256 2305d0fea59f435d (18870 lines) -->
+     inputs: cutlist.txt sha256 848a0be1e49becf9; split.py inverse of the shell sha256 8c9854276c1ea751 (18898 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4768, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 43 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-164) and `shell.b` (lines 206-4774, `main()`), and includes the other 41 as `psp/fe/<name>.inc.c` at lines 165-205, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -44,7 +44,7 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 | `qs:` | a statement range two tests slice (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
 | `sl:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_state_load_ask.py` |
 | `lowlat:` | a statement range one test slices (its old start/end anchors are checked inside it) | 9 | `main_psp.c`, `fe/merend.d.inc.c`, `fe/pacing.a.inc.c`, `fe/pacing.c.inc.c`, `fe/pacing.d.inc.c` | `test_lowlat_policy.py` |
-| `def:` | the `#define` line(s) a test greps, by name | 7 | `fe/audio.a.inc.c`, `fe/display.a.inc.c`, `fe/iothread.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c` | `test_audio_channel.py`, `test_power_callback.py`, `test_sleep_browser.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py` |
+| `def:` | the `#define` line(s) a test greps, by name | 7 | `fe/audio.a.inc.c`, `fe/display.a.inc.c`, `fe/iothread.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c` | `test_audio_channel.py`, `test_power_callback.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py` |
 | `decl:` | one declaration / object definition a test greps, by name | 3 | `fe/audio.a.inc.c`, `fe/power.d.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_sleep_quiesce.py` |
 | `menu:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `fe/input.b.inc.c` | `test_menu_press.py` |
 | `ff:` | a statement range one test slices (its old start/end anchors are checked inside it) | 3 | `fe/merend.d.inc.c`, `fe/pacing.a.inc.c` | `run_ff_tests.py` |
@@ -73,7 +73,7 @@ Every region, in TU order, and the host tests that read it:
 | `menu:pad_swallow` | `fe/input.b.inc.c:118` | `test_menu_press.py` |
 | `def:g_wake_hold` | `fe/display.a.inc.c:104` | `test_sleep_menu.py` |
 | `def:sq_bounds` | `fe/display.a.inc.c:155` | `test_power_callback.py`, `test_sleep_browser.py` |
-| `fn:power_cb` | `fe/power.b.inc.c:1` | `test_power_callback.py`, `test_sleep_browser.py` |
+| `fn:power_cb` | `fe/power.b.inc.c:1` | `test_power_callback.py`, `test_sleep_browser.py`, `test_sleep_holds.py` |
 | `fn:pwr_release_all` | `fe/power.b.inc.c:268` | `test_psp_runtime.py` |
 | `fn:boot_stop_notice` | `fe/power.b.inc.c:292` | `test_sleep_holds.py` |
 | `fn:sleep_sim_me_quiet` | `fe/harness.b.inc.c:214` | `test_sleep_holds.py` |
@@ -83,8 +83,8 @@ Every region, in TU order, and the host tests that read it:
 | `fn:me_rend_release_vmem` | `fe/merend.c.inc.c:163` | `test_psp_runtime.py`, `test_sleep_holds.py` |
 | `fn:me_rend_drop_vmem` | `fe/merend.c.inc.c:182` | `test_psp_runtime.py`, `test_sleep_holds.py` |
 | `fn:me_standby_down` | `fe/power.d.inc.c:73` | `test_psp_runtime.py`, `test_sleep_holds.py` |
-| `fn:play_lock_take` | `fe/power.d.inc.c:265` | `test_sleep_quiesce.py` |
-| `fn:play_lock_drop` | `fe/power.d.inc.c:290` | `test_sleep_quiesce.py` |
+| `fn:play_lock_take` | `fe/power.d.inc.c:265` | `test_sleep_holds.py`, `test_sleep_quiesce.py` |
+| `fn:play_lock_drop` | `fe/power.d.inc.c:290` | `test_sleep_holds.py`, `test_sleep_quiesce.py` |
 | `def:PWR_REQ_MAX_FIRES` | `fe/power.d.inc.c:333` | `test_power_callback.py` |
 | `fn:power_request_poll` | `fe/power.d.inc.c:337` | `test_power_callback.py` |
 | `fn:sq_audio_stop` | `fe/power.d.inc.c:354` | `test_sleep_quiesce.py` |
@@ -121,9 +121,9 @@ Every region, in TU order, and the host tests that read it:
 | `fn:loop_unpark` | `fe/power.e.inc.c:56` | `test_sleep_menu.py`, `test_sleep_quiesce.py` |
 | `fn:browser_park` | `fe/power.e.inc.c:82` | `test_sleep_browser.py` |
 | `fn:wake_overlay_yield` | `fe/power.e.inc.c:113` | `test_power_callback.py`, `test_sleep_menu.py` |
-| `def:wake_answers` | `fe/power.e.inc.c:136` | `test_sleep_menu.py` |
-| `fn:wake_me_lost_notice` | `fe/power.e.inc.c:154` | `test_sleep_holds.py` |
-| `fn:wake_service` | `fe/power.e.inc.c:175` | `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
+| `def:wake_answers` | `fe/power.e.inc.c:136` | `test_sleep_holds.py`, `test_sleep_menu.py` |
+| `fn:wake_me_lost_notice` | `fe/power.e.inc.c:155` | `test_sleep_holds.py` |
+| `fn:wake_service` | `fe/power.e.inc.c:182` | `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
 
 ## Modules
@@ -137,7 +137,7 @@ Every region, in TU order, and the host tests that read it:
 | 2 | audio | Ring, `audio_thread`, `plat_audio_frames`, start/stop (SQ contract), resample step, status, link-audio trims | `in_rate`, `g_audio_step` | yes | `audio.a`, `audio.b` | 13 / 25 | 0 | 13 / 25 |
 | 3 | iothread | ADR-0025 writer thread, SRAM sync, stop-before-shutdown contract, SQ stop codes | - | yes | `iothread` | 6 / 5 | 0 | 6 / 5 |
 | 4 | input | Pad read, ctl maps, `plat_input_bitmask`, pad_swallow, turbo, chord state, input_fresh | - | - | `input.a`, `input.b` | 13 / 18 | 9 | 9 / 9 |
-| 5 | power | `exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, play lock, park handshake (`loop_park`, `browser_park`), sleep-quiesce ops (`sq_*` 3977-4095), `power_request_poll`, standby down/up, wake service and overlay | `g_running` | yes | `power.a`, `power.b`, `power.c`, `power.d`, `power.e` | 36 / 67 | 55 | 36 / 38 |
+| 5 | power | `exit_cb`, `cb_thread`, `power_cb`, `pwr_hold`/`pwr_release`/`pwr_release_all`, play lock, park handshake (`loop_park`, `browser_park`), sleep-quiesce ops (`sq_*` 3977-4095), `power_request_poll`, standby down/up, wake service and overlay | `g_running` | yes | `power.a`, `power.b`, `power.c`, `power.d`, `power.e` | 36 / 68 | 55 | 36 / 39 |
 | 6 | display | CPU clock, display apply, colour preview, wake snapshot | - | - | `display.a`, `display.b`, `display.c` | 10 / 9 | 0 | 10 / 5 |
 | 7 | merend | ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video (until the owner decides) | - | yes | `merend.a`, `merend.b`, `merend.c`, `merend.d` | 26 / 95 | 13 | 23 / 75 |
 | 8 | pacing | Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6) | `g_ff_uncapped`, `g_ff_mult` | yes | `pacing.a`, `pacing.b`, `pacing.c`, `pacing.d` | 31 / 89 | 10 | 30 / 87 |
@@ -287,9 +287,9 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 38 | harness.f | `fe/harness.f.inc.c` | 1-1594 | harness | 38 / 50 | - |
 | 39 | rewind | `fe/rewind.inc.c` | 1-1220 | rewind | 25 / 15 | pacing 1 |
 | 40 | pacing.c | `fe/pacing.c.inc.c` | 1-508 | pacing | 19 / 6 | - |
-| 41 | power.e | `fe/power.e.inc.c` | 1-293 | power | 6 / 1 | - |
+| 41 | power.e | `fe/power.e.inc.c` | 1-315 | power | 6 / 2 | - |
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
-| 43 | shell.b | `main_psp.c` | 206-4768 | shell | 1 / 0 | - |
+| 43 | shell.b | `main_psp.c` | 206-4774 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
 
@@ -553,6 +553,6 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **harness.f** (`fe/harness.f.inc.c`): stall_refer:38, stall_record:45, heartbeat_write:110, stall_exit:158, stall_thread:175, stall_watch_start:225, stall_watch_stop:248, drprof_sampler:293, drprof_threads:358, drprof_window:399, drprof_start:456, drprof_stop:482, smc_gates_reload_evt:511, core_health_evt:562, me_rend_quiesce:681, psp_state_load_io:696, psp_game_reset:713, psp_state_load:743, rig_preserve_log:786, rig_model_name:822, rig_boot_identity:835, rig_rom_identity:867, rig_cfg_line:891, rig_cfg_audit_report:904, rig_fail_probe:914, rig_watch_evt:947, rig_romload_evt:970, ff_win_note:998, boot_mark:1056, boot_timeline_emit:1069, uiscript_tokens:1147, uiscript_fail:1191, uiscript_load:1208, uiscript_cond:1302, uiscript_jump:1322, uiscript_pad:1335, uiscript_dump_now:1521, uiscript_linking_draw:1536
 - **rewind** (`fe/rewind.inc.c`): psp_rw_pix_begin:97, psp_rw_pix_end:111, psp_rw_show:122, psp_rewind_present:147, psp_rewind_show_end:160, psp_rewind_product:180, psp_rewind_read_ini:209, psp_rewind_pool_tenant:317, psp_rom_pool_offer:323, psp_rom_pool_over:348, psp_rewind_pool_offer:359, psp_rewind_pool_lost:389, psp_rewind_reset_said:418, psp_rewind_pool_back:431, psp_rewind_pool_restart:476, sleep_sim_trash_pool:523, psp_rewind_pool_check:550, psp_rewind_hud_step:617, psp_rewind_hud:710, psp_rwc_fits:875, psp_rwc_choose:896, psp_rewind_tick_run:949, psp_rewind_pwr:1165, psp_rewind_land:1178, psp_rewind_tick:1206 (pacing)
 - **pacing.c** (`fe/pacing.c.inc.c`): mer_rewind_busy:3, lat_swap:16, ffh_too_soon:74, ffh_hold:80, ffh_cap3:97, ll_need_us:126, ll_blit_note:137, ll_win_reset:147, ll_sample:155, ll_eligible:180, ll_to_b:186, ll_own_ready:199, ll_own_posted:205, ll_present:212, ll_want_slot:227, lat_wait_begin:234, lat_wait_step:272, lat_wait_end:417, lat_census:454
-- **power.e** (`fe/power.e.inc.c`): loop_park:12, loop_unpark:57, browser_park:83, wake_overlay_yield:114, wake_me_lost_notice:155, wake_service:176
+- **power.e** (`fe/power.e.inc.c`): loop_park:12, loop_unpark:57, browser_park:83, wake_overlay_yield:114, wake_me_lost_notice:156, wake_service:183
 - **pacing.d** (`fe/pacing.d.inc.c`): dfr_clock_low:32, dfr_defer:39, dfr_present:53, lf_hold_begin:80, lf_hold_vblank:97, lf_want_slot:121
 - **shell.b** (`main_psp.c`): main:207

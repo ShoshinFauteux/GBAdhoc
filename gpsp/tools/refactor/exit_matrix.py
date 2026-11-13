@@ -514,7 +514,11 @@ class Interp(object):
                     'g_ss_browser': 0, 'inproc_n': 0, 'g_ss_game': 0, 'g_cable_reserve': 0,
                     'dynarec_heap_tables_release': 1, 'g_inproc_me_unload': 0,
                     'have_variant': 0, 'NULL': 0, 'RELAUNCH_GAMELIST': 2,
-                    'RELAUNCH_PROFILE': 1}
+                    'RELAUNCH_PROFILE': 1,
+                    # HW-1 H1 r5: the ME-lost wake's hold, handed to the teardown's right after
+                    # pwr_hold("teardown"); none of these quits is that wake (test_sleep_holds.py
+                    # runs the hand-over against the lock count)
+                    'g_wake_lost_hold': 0}
         self.refusal = [r1, r2]
         self.retained = 1 if (rel == 2 and not r1) else 0
         self.call = {'me_host_retain': 1, 'me_host_loaded': 1,
