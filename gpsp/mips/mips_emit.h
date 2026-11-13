@@ -3484,6 +3484,28 @@ static u32 vram_x_slot_word;
 u8 vram_exec_active;   /* extern in gba_memory.h */
 #endif
 
+#if ME_MIDFRAME_LOG
+/* ME_MIDFRAME_LOG write maps (cpu.h OAM_WMAP/PAL_WMAP), on the dynarec's
+ * palette and OAM stores.  The stubs keep their size and place: where one
+ * returned (`jr ra`, the flag store in its delay slot) it now jumps (`j`,
+ * same delay slot) to a shared tail that ORs the written 32-byte row into the
+ * map and returns.  The tails are emitted after SMC_STM_CHAIN's tails, inside
+ * the 8 KiB that pad keeps, so no stub moves and ROM translations start where
+ * they did.  The jumps are patched once the tails exist (emit_me_wmap_tails). */
+static u32 *me_wmap_jsite[2][4];          /* [0] palette, [1] OAM; per size */
+static unsigned me_wmap_njsite[2];
+#define generate_me_wmap_jump_swap_delay(kind)                                \
+{                                                                             \
+  u32 delay_instruction = address32(translation_ptr, -4);                     \
+  translation_ptr -= 4;                                                       \
+  if (me_wmap_njsite[kind] < 4)                                               \
+    me_wmap_jsite[kind][me_wmap_njsite[kind]++] = (u32 *)translation_ptr;     \
+  mips_emit_j(0);                                /* patched */                \
+  address32(translation_ptr, 0) = delay_instruction;                          \
+  translation_ptr += 4;                                                       \
+}
+#endif
+
 // Generates the stub to store memory for a given region and size
 // Handles "special" cases like weirdly mapped memory
 static void emit_pmemst_stub(
@@ -3769,7 +3791,11 @@ static void emit_pmemst_stub(
   if (region == 7) {
     // Write any nonzero data
     mips_emit_sw(reg_base, reg_base, ReOff_OamUpd);
+#if ME_MIDFRAME_LOG
+    generate_me_wmap_jump_swap_delay(1);    /* -> the OAM write-map tail */
+#else
     generate_function_return_swap_delay();
+#endif
   }
   else {
     mips_emit_jr(mips_reg_ra);
@@ -3881,11 +3907,54 @@ static void emit_palette_hdl(
   // does for OAM_UPDATED): the Media Engine's mid-frame log checks it once
   // per scanline (video.h, cpu.h PAL_UPDATED).
   mips_emit_sw(reg_base, reg_base, PAL_UPDATED * 4);
-#endif
+  generate_me_wmap_jump_swap_delay(0);    /* -> the palette write-map tail */
+#else
   generate_function_return_swap_delay();
+#endif
 
   *tr_ptr = translation_ptr;
 }
+
+#if ME_MIDFRAME_LOG
+/* The two write-map tails (see generate_me_wmap_jump_swap_delay), then the
+ * stubs' jumps patched to them.  Palette: reg_rv = reg_base + the masked
+ * offset (the stub stored through it); OAM: a0 = the masked offset.  sllv
+ * shifts by the low five bits of its amount, so offset >> 5 is the row.
+ * Clobbers reg_temp and a1 (dead after either stub's store). */
+static void ME_WMAP_COLD emit_me_wmap_tails(u8 **tr_ptr)  /* once, at init */
+{
+  u8 *translation_ptr = *tr_ptr;
+  unsigned k, i;
+  for (k = 0; k < 2; k++)
+  {
+    u32 jop = (mips_opcode_j << 26) | ((((u32)translation_ptr) >> 2) & 0x3FFFFFF);
+    u32 slot = (k == 0 ? PAL_WMAP : OAM_WMAP) * 4;
+    for (i = 0; i < me_wmap_njsite[k]; i++)
+      *me_wmap_jsite[k][i] = jop;
+    /* the words, as the emit macros would write them (MIPS32 encodings) */
+#define MW_R(rs, rt, rd, sa, fn) \
+    ((u32)(rs) << 21 | (u32)(rt) << 16 | (u32)(rd) << 11 | (u32)(sa) << 6 | (fn))
+#define MW_I(op, rs, rt, imm) \
+    ((u32)(op) << 26 | (u32)(rs) << 21 | (u32)(rt) << 16 | ((imm) & 0xFFFF))
+    {
+      u32 *w = (u32 *)translation_ptr;
+      w[0] = k == 0 ? MW_R(reg_rv, reg_base, reg_temp, 0, 0x23)  /* subu */
+                    : MW_R(reg_a0, reg_zero, reg_temp, 0, 0x21); /* addu */
+      w[1] = MW_R(0, reg_temp, reg_temp, 5, 0x02);               /* srl  */
+      w[2] = MW_I(0x09, reg_zero, reg_a1, 1);                    /* addiu */
+      w[3] = MW_R(reg_temp, reg_a1, reg_a1, 0, 0x04);            /* sllv */
+      w[4] = MW_I(0x23, reg_base, reg_temp, slot);               /* lw   */
+      w[5] = MW_R(reg_temp, reg_a1, reg_temp, 0, 0x25);          /* or   */
+      w[6] = MW_R(mips_reg_ra, 0, 0, 0, 0x08);                   /* jr ra */
+      w[7] = MW_I(0x2b, reg_base, reg_temp, slot);               /* sw (delay) */
+      translation_ptr += 8 * 4;
+    }
+#undef MW_R
+#undef MW_I
+  }
+  *tr_ptr = translation_ptr;
+}
+#endif
 
 // This emits stubs for regions where writes have no side-effects
 static void emit_ignorestore_stub(unsigned size, u8 **tr_ptr) {
@@ -4285,6 +4354,9 @@ void init_emitter(bool must_swap) {
   rw_map_emit = gba_rewind_marks_wanted && rw_map_off_ok();
   gba_rewind_map_ok = rw_map_emit;
 #endif
+#if ME_MIDFRAME_LOG
+  me_wmap_njsite[0] = me_wmap_njsite[1] = 0;
+#endif
 
   // Generate first the patch handlers
   // We have 6+4 patchers, one per mem type (6 or 4)
@@ -4465,11 +4537,16 @@ void init_emitter(bool must_swap) {
       mips_emit_jr(mips_reg_ra);
       mips_emit_nop();
     }
+#if ME_MIDFRAME_LOG
+    emit_me_wmap_tails(&translation_ptr);  /* inside the 8 KiB, not after */
+#endif
     /* braces: mips_emit_nop() is two statements */
     while ((u32)(translation_ptr - t0) < 8192) {
       mips_emit_nop();
     }
   }
+#elif ME_MIDFRAME_LOG
+  emit_me_wmap_tails(&translation_ptr);
 #endif
   // Generate JAL tables
   u32 *tmemptr = &tmemld[0][0];
