@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 6e7ec74eeedd1e31; split.py inverse of the shell sha256 50dac99c36e4d398 (18856 lines) -->
+     inputs: cutlist.txt sha256 7d1d24dc6e359426; split.py inverse of the shell sha256 1c5dd96290d50250 (18860 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -34,11 +34,11 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 
 ### @extract markers
 
-`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 70 regions; each lies inside one file. Readers: the 14 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
+`/* @extract:begin NAME */ ... /* @extract:end NAME */` delimits text a host test reads (`tools/tests/extract.py`; `read_source()` expands the fragments in place, so a test reads the TU). 71 regions; each lies inside one file. Readers: the 14 host tests `extract.py --enumerate` finds. A test reads a region with `extract.extract(src, NAME)` or through a helper that passes its argument on (`run_ff_tests.function`, `test_psp_runtime.marked_function`); NAME is resolved from the test's literals, and the generator refuses a read it cannot resolve.
 
 | prefix | meaning | regions | in | read by |
 |---|---|---|---|---|
-| `fn:` | one whole function: its definition line through its closing brace's line | 42 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/harness.b.inc.c`, `fe/iothread.inc.c`, `fe/link.e.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py`, `test_volume.py` |
+| `fn:` | one whole function: its definition line through its closing brace's line | 43 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/harness.b.inc.c`, `fe/iothread.inc.c`, `fe/link.c.inc.c`, `fe/link.e.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py`, `test_volume.py` |
 | `vol:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_volume.py` |
 | `sb:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_sleep_browser.py` |
 | `qs:` | a statement range two tests slice (its old start/end anchors are checked inside it) | 1 | `main_psp.c` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
@@ -108,8 +108,9 @@ Every region, in TU order, and the host tests that read it:
 | `lowlat:me_rend_present` | `fe/merend.d.inc.c:380` | `test_lowlat_policy.py` |
 | `lowlat:me_rend_retire_if_idle` | `fe/merend.d.inc.c:414` | `test_lowlat_policy.py` |
 | `ff:me_rend_frame` | `fe/merend.d.inc.c:451` | `run_ff_tests.py` |
+| `fn:net_bringup_rend_off` | `fe/link.c.inc.c:341` | (none) |
 | `spsc:gblink_publish` | `fe/audio.b.inc.c:25` | `test_spsc_mg_wiring.py` |
-| `fn:online_bringup_cancel` | `fe/link.e.inc.c:688` | `test_sleep_holds.py` |
+| `fn:online_bringup_cancel` | `fe/link.e.inc.c:683` | `test_sleep_holds.py` |
 | `fn:mgift_game_ok` | `fe/mgift.inc.c:137` | `test_spsc_mg_wiring.py` |
 | `fn:mgift_start_io` | `fe/mgift.inc.c:145` | `test_spsc_mg_wiring.py` |
 | `fn:psp_rewind_pool_lost` | `fe/rewind.inc.c:388` | `test_sleep_quiesce.py` |
@@ -141,7 +142,7 @@ Every region, in TU order, and the host tests that read it:
 | 7 | merend | ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video (until the owner decides) | - | yes | `merend.a`, `merend.b`, `merend.c`, `merend.d` | 26 / 95 | 13 | 23 / 75 |
 | 8 | pacing | Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6) | `g_ff_uncapped`, `g_ff_mult` | yes | `pacing.a`, `pacing.b`, `pacing.c`, `pacing.d` | 31 / 89 | 10 | 30 / 87 |
 | 9 | rewind | Rewind tick, pool offer/check/lost/back (pool_lost runs on cb_thread), HUD, ini | - | - | `rewind` | 24 / 15 | 0 | 0 / 0 |
-| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 67 / 114 | 3 | 55 / 96 |
+| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 68 / 114 | 3 | 56 / 96 |
 | 11 | mgift | Mystery Gift glue | - | - | `mgift` | 19 / 6 | 1 | 8 / 1 |
 | 12 | boost | Emu boost warden | - | - | `boost` | 7 / 11 | 0 | 7 / 11 |
 | 13 | misc | Wall clocks (one noinline `psp_datetime_seconds`), screenshot, backup_save, state slots, cheats lock | - | - | `misc.a`, `misc.b`, `misc.c` | 27 / 7 | 4 | 22 / 7 |
@@ -152,7 +153,7 @@ Every region, in TU order, and the host tests that read it:
 | 18 | loop | Until D1: the loop body included textually into `main`. From D1: `frame_iter(loop_t*, session_ctx*)` noinline + `frame_iter_rare()` noinline cold | - | yes | - | 0 / 0 | 0 | 0 / 0 |
 | 19 | harness | Stall watch, DRPROF_HW, core_health, rig identity, uiscript, sleep simulator, testpat, nettest, vram_probe, vid_prof, preempt, ff_win, eboot_crc, `gpsp_net_wait_beat` | `gpsp_net_wait_beat` | - | `harness.a`, `harness.b`, `harness.c`, `harness.d`, `harness.e`, `harness.f` | 55 / 122 | 55 | 9 / 54 |
 
-teardown, boot, session, loop have no fragment yet (no FRAG row): PLAN.md §2 creates them later (teardown HW-3 C1, boot HW-3 C2, session HW-3 C3, loop HW-4 D1). Of the cutlist's rows, boot owns 5 G rows, which sit in `fe/link.d.inc.c` (lines 902, 903, 904: `g_start_keepalive`, `g_start_grace`, `g_start_heard`, `g_reload_slow_ms`, `g_gblink_host_wait_peer`), outside `main()` (see "Rows outside their owner's fragments"); teardown, session and loop own none.
+teardown, boot, session, loop have no fragment yet (no FRAG row): PLAN.md §2 creates them later (teardown HW-3 C1, boot HW-3 C2, session HW-3 C3, loop HW-4 D1). Of the cutlist's rows, boot owns 5 G rows, which sit in `fe/link.d.inc.c` (lines 893, 894, 895: `g_start_keepalive`, `g_start_grace`, `g_start_heard`, `g_reload_slow_ms`, `g_gblink_host_wait_peer`), outside `main()` (see "Rows outside their owner's fragments"); teardown, session and loop own none.
 
 ### harness and mgift functions and their `#if` context
 
@@ -275,11 +276,11 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 27 | link.b | `fe/link.b.inc.c` | 1-163 | link | 3 / 21 | harness 21 |
 | 28 | boost | `fe/boost.inc.c` | 1-164 | boost | 7 / 11 | - |
 | 29 | harness.d | `fe/harness.d.inc.c` | 1-107 | harness | 2 / 0 | - |
-| 30 | link.c | `fe/link.c.inc.c` | 1-612 | link | 14 / 13 | merend 3, harness 1 |
+| 30 | link.c | `fe/link.c.inc.c` | 1-634 | link | 15 / 13 | merend 3, harness 1 |
 | 31 | inproc.b | `fe/inproc.b.inc.c` | 1-69 | inproc | 1 / 2 | power 1 |
-| 32 | link.d | `fe/link.d.inc.c` | 1-1431 | link | 29 / 84 | power 3, mgift 1, boot 5, harness 2 |
+| 32 | link.d | `fe/link.d.inc.c` | 1-1422 | link | 29 / 84 | power 3, mgift 1, boot 5, harness 2 |
 | 33 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
-| 34 | link.e | `fe/link.e.inc.c` | 1-905 | link | 13 / 17 | - |
+| 34 | link.e | `fe/link.e.inc.c` | 1-896 | link | 13 / 17 | - |
 | 35 | mgift | `fe/mgift.inc.c` | 1-511 | mgift | 19 / 6 | input 1 |
 | 36 | harness.e | `fe/harness.e.inc.c` | 1-156 | harness | 2 / 0 | - |
 | 37 | misc.c | `fe/misc.c.inc.c` | 1-51 | misc | 3 / 2 | - |
@@ -480,7 +481,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 - `fe/link.c.inc.c:124` G `g_fxs_gba` -> merend
 - `fe/link.c.inc.c:124` G `g_fxs_gb` -> merend
 - `fe/link.c.inc.c:147` G `g_fxs_arm` -> merend
-- `fe/link.c.inc.c:397` G `g_telemetry_period` -> harness
+- `fe/link.c.inc.c:419` G `g_telemetry_period` -> harness
 
 **inproc.b** (module inproc):
 
@@ -492,13 +493,13 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 - `fe/link.d.inc.c:156` G `g_exit_assist` -> power
 - `fe/link.d.inc.c:157` G `g_exit_assist_n` -> power
 - `fe/link.d.inc.c:653` G `g_mg_on` -> mgift
-- `fe/link.d.inc.c:801` G `g_gedump_loops` -> harness
-- `fe/link.d.inc.c:801` G `g_gedump_left` -> harness
-- `fe/link.d.inc.c:902` G `g_start_keepalive` -> boot
-- `fe/link.d.inc.c:902` G `g_start_grace` -> boot
-- `fe/link.d.inc.c:902` G `g_start_heard` -> boot
-- `fe/link.d.inc.c:903` G `g_reload_slow_ms` -> boot
-- `fe/link.d.inc.c:904` G `g_gblink_host_wait_peer` -> boot
+- `fe/link.d.inc.c:792` G `g_gedump_loops` -> harness
+- `fe/link.d.inc.c:792` G `g_gedump_left` -> harness
+- `fe/link.d.inc.c:893` G `g_start_keepalive` -> boot
+- `fe/link.d.inc.c:893` G `g_start_grace` -> boot
+- `fe/link.d.inc.c:893` G `g_start_heard` -> boot
+- `fe/link.d.inc.c:894` G `g_reload_slow_ms` -> boot
+- `fe/link.d.inc.c:895` G `g_gblink_host_wait_peer` -> boot
 
 **mgift** (module mgift):
 
@@ -541,11 +542,11 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **link.b** (`fe/link.b.inc.c`): preempt_mark:84, preempt_frame_end:124, preempt_evt:138
 - **boost** (`fe/boost.inc.c`): emu_boost_drop:59, boost_warden:67, emu_boost_open:87, emu_boost_close:99, emu_boost_start:107, emu_boost_stop:137, boost_evt:154
 - **harness.d** (`fe/harness.d.inc.c`): sess_cost_evt:1, adhoc_ctl_evt:93
-- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:323, gpsp_adhoc_step:337, net_teardown_io:343, net_teardown:386, link_version_text:400, net_frame:409, gpsp_rfu_now_us:524, gpsp_rfu_flight_dump_hook:536
+- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:323, net_bringup_rend_off:342, gpsp_adhoc_step:359, net_teardown_io:365, net_teardown:408, link_version_text:422, net_frame:431, gpsp_rfu_now_us:546, gpsp_rfu_flight_dump_hook:558
 - **inproc.b** (`fe/inproc.b.inc.c`): inproc_refusal:46
-- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:283, rfu_tr_state_name:320, rfu_trace_drain:329, silent_frame:658, gblink_seed_wallclock:805, gblink_find_in:815, psp_gb_bulk_enable:918, psp_gb_bulk_send:931, psp_gb_bulk_recv:935, psp_gb_find_rom:940, link_backdrop_take:953, gba_reload_draw:970, gba_reload_progress:994, gba_reload_note:1003, heap_exact:1043, sessmem_cycle_test:1055, gblink_close_held:1098, gblink_begin:1107, link_amount:1160, link_fail_text:1181, link_draw_facts:1231, gblink_draw_status:1331, plat_gblink_wait:1406
+- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:283, rfu_tr_state_name:320, rfu_trace_drain:329, silent_frame:658, gblink_seed_wallclock:796, gblink_find_in:806, psp_gb_bulk_enable:909, psp_gb_bulk_send:922, psp_gb_bulk_recv:926, psp_gb_find_rom:931, link_backdrop_take:944, gba_reload_draw:961, gba_reload_progress:985, gba_reload_note:994, heap_exact:1034, sessmem_cycle_test:1046, gblink_close_held:1089, gblink_begin:1098, link_amount:1151, link_fail_text:1172, link_draw_facts:1222, gblink_draw_status:1322, plat_gblink_wait:1397
 - **audio.b** (`fe/audio.b.inc.c`): audio_nominal_step:1, gblink_audio_session:8
-- **link.e** (`fe/link.e.inc.c`): gblink_audio_frame:13, gblink_win_reset:74, gblink_win_work:92, gblink_win_note:111, gblink_cpu_scale:172, link_host_heard:215, link_setup_watch:234, link_end:285, gblink_service:383, gblink_script_disconnect:634, link_bringup_view:648, online_bringup_cancel:689, ui_net_action:717
+- **link.e** (`fe/link.e.inc.c`): gblink_audio_frame:13, gblink_win_reset:74, gblink_win_work:92, gblink_win_note:111, gblink_cpu_scale:172, link_host_heard:215, link_setup_watch:234, link_end:285, gblink_service:383, gblink_script_disconnect:629, link_bringup_view:643, online_bringup_cancel:684, ui_net_action:712
 - **mgift** (`fe/mgift.inc.c`): mgift_ui_active:51, mgift_ui_line1:52, mgift_ui_line2:53, rom_loading_progress:61, rom_loading_stage:66, mgift_read_game_code:71, mgift_chip:92, mgift_stop_io:98, mgift_stop:125, mgift_game_ok:138, mgift_start_io:146, mgift_start:264, link_read_identity:276, link_locks_states:321, link_session_any:328, turbo_frame:359, cheats_link_poll:401, link_ui_view:414, mgift_frame:438
 - **harness.e** (`fe/harness.e.inc.c`): run_testpat:20, run_nettest:67
 - **misc.c** (`fe/misc.c.inc.c`): psp_datetime_seconds:12, psp_local_wallclock:26, psp_utc_wallclock:41

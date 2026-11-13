@@ -10,11 +10,14 @@ cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
    deferred to that drop and landed before me_rend_resume.  Every
    me_rend_suspend() call site of the TU is classified here:
      - wrapped: pwr_hold("net") on the line before it and pwr_release() on
-       the line after its me_rend_resume() (the two ad hoc bring-ups of the
-       link code, the menu's, and the online one).  Each wrapped run is
+       the line after its me_rend_resume(): net_bringup_rend_off, the one
+       copy the silent bring-up, the GB link auto-start and the menu's ad
+       hoc bring-up call, and the online bring-up.  Each wrapped run is
        compiled as it stands and executed with a net_bringup that takes and
        drops its own hold: the count must never reach zero before the
-       renderer is back, and must be zero after.
+       renderer is back, and must be zero after.  The three callers must
+       go through net_bringup_rend_off: a bare net_bringup() anywhere but
+       there and the boot's is a fault.
      - covered by a hold its caller takes, each named below with the text
        that proves it.
    A new call site fails until it is one or the other.
@@ -53,7 +56,20 @@ ROOT = Path(__file__).resolve().parents[2]
 MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
 
 CALL = re.compile(r"^[ \t]*me_rend_suspend\(\);", re.M)
-WRAPPED_SITES = 4       # silent_frame, gblink_service, ui_net_action x2
+WRAPPED_SITES = 2       # net_bringup_rend_off, ui_net_action's online bring-up
+# the bring-ups made while a game runs: each calls net_bringup_rend_off
+REND_OFF_CALLS = (
+    "rc = net_bringup_rend_off(as_host, g_silent_group, g_silent_nick);",
+    "rc = net_bringup_rend_off(g_gblink_role == 1, g_silent_group, g_pcfg.nick);",
+    "rc = net_bringup_rend_off(is_host, group, g_pcfg.nick);",
+)
+# every other net_bringup( in the TU: its definition, the helper's call, the
+# boot's (under the boot hold, a covered site below)
+NET_BRINGUP_OTHER = (
+    "static int net_bringup(int is_host, const char *group, const char *nick,",
+    "rc = net_bringup(is_host, group, nick, 0);",
+    "if (net_bringup(net_host, group, nick, net_probe) != 0)",
+)
 # me_rend_suspend() sites that are not wrapped themselves: (a line of text
 # that identifies the site, searched between the previous site and this one
 # or just after it; why it is under a hold; the check of that claim)
@@ -142,7 +158,7 @@ typedef struct { unsigned Buttons; } SceCtrlData;
 #define CABLE_PROTOCOL "c"
 #define RL_MODE_CABLE 1
 static struct { const char *nick; } g_pcfg;
-static const char *g_silent_group = "g", *g_silent_nick = "n", *group = "g";
+static const char *g_silent_group = "g", *g_silent_nick = "n", *group = "g", *nick = "n";
 static int g_gblink_role = 1, g_gba_cable, as_host, is_host, rc;
 static unsigned g_ol_cancel_down; static int g_ol_cancelled;
 static void *g_ol_cancel_lv; static struct { int x; } lv;
@@ -345,6 +361,15 @@ def check_all(src):
     fails += faults
     if len(wrapped) != WRAPPED_SITES:
         fails.append("%d wrapped me_rend_suspend() runs, expected %d" % (len(wrapped), WRAPPED_SITES))
+    for call in REND_OFF_CALLS:
+        if src.count(call) != 1:
+            fails.append("a bring-up made in play does not go through "
+                         "net_bringup_rend_off: " + call)
+    bare = [ln.strip() for ln in src.splitlines()
+            if re.search(r"\bnet_bringup\(", ln) and not ln.lstrip().startswith(("*", "/*"))]
+    if sorted(bare) != sorted(NET_BRINGUP_OTHER):
+        fails.append("net_bringup() is called outside net_bringup_rend_off and "
+                     "the boot: %s" % sorted(set(bare) - set(NET_BRINGUP_OTHER)))
     if sorted(covered) != sorted(c[0] for c in COVERED):
         fails.append("covered sites are %s" % sorted(covered))
     fails += covered_claims(src)
@@ -391,20 +416,25 @@ def check_all(src):
 
 
 MUTANTS = (
-    ("silent_frame: no outer hold",
-     '      pwr_hold("net");\n      me_rend_suspend();\n      rc = net_bringup(as_host,',
-     '      me_rend_suspend();\n      rc = net_bringup(as_host,'),
-    ("gblink_service: released before the renderer is back",
-     '      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);\n'
-     '      me_rend_resume();\n      pwr_release();',
-     '      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);\n'
-     '      pwr_release();\n      me_rend_resume();'),
+    ("net_bringup_rend_off: no outer hold",
+     '   pwr_hold("net");\n   me_rend_suspend();\n   rc = net_bringup(is_host, group, nick, 0);',
+     '   me_rend_suspend();\n   rc = net_bringup(is_host, group, nick, 0);'),
+    ("net_bringup_rend_off: released before the renderer is back",
+     '   rc = net_bringup(is_host, group, nick, 0);\n   me_rend_resume();\n   pwr_release();',
+     '   rc = net_bringup(is_host, group, nick, 0);\n   pwr_release();\n   me_rend_resume();'),
+    ("net_bringup_rend_off: the hold taken after the suspend",
+     '   pwr_hold("net");\n   me_rend_suspend();\n   rc = net_bringup(is_host, group, nick, 0);',
+     '   me_rend_suspend();\n   pwr_hold("net");\n   rc = net_bringup(is_host, group, nick, 0);'),
+    ("silent_frame: the bring-up as it was",
+     "      rc = net_bringup_rend_off(as_host, g_silent_group, g_silent_nick);",
+     "      me_rend_suspend();\n      rc = net_bringup(as_host, g_silent_group, g_silent_nick, 0);\n"
+     "      me_rend_resume();"),
+    ("gblink_service: a bare net_bringup",
+     "      rc = net_bringup_rend_off(g_gblink_role == 1, g_silent_group, g_pcfg.nick);",
+     "      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);"),
     ("ui_net_action: the ad hoc bring-up as it was",
-     '   pwr_hold("net");\n   me_rend_suspend();                  /* clean heap for np_start (run 407) */',
-     '   me_rend_suspend();                  /* clean heap for np_start (run 407) */'),
-    ("ui_net_action: the hold taken after the suspend",
-     '   pwr_hold("net");\n   me_rend_suspend();                  /* clean heap for np_start (run 407) */',
-     '   me_rend_suspend();                  /* clean heap for np_start (run 407) */\n   pwr_hold("net");'),
+     "   rc = net_bringup_rend_off(is_host, group, g_pcfg.nick);",
+     "   me_rend_suspend();\n   rc = net_bringup(is_host, group, g_pcfg.nick, 0);\n   me_rend_resume();"),
     ("a new unwrapped bring-up",
      "static void mgift_start(void)\n{",
      "static void mgift_again(void)\n{\n   me_rend_suspend();\n   me_rend_resume();\n}\n"

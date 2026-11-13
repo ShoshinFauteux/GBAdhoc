@@ -433,12 +433,7 @@ static int gblink_service(int have_script, int *code, const char **why)
       g_gblink_auto_started = 1;
       /* a GBA cable room's protocol (docs/GBA-LINK-UI.md), as the menu's */
       fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
-      /* held to the renderer's return, as silent_frame's */
-      pwr_hold("net");
-      me_rend_suspend();
-      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);
-      me_rend_resume();
-      pwr_release();
+      rc = net_bringup_rend_off(g_gblink_role == 1, g_silent_group, g_pcfg.nick);
       if (rc == 0 && g_gblink_role == 1 && g_gblink_host_wait_peer)
       {
          /* the block above starts the session once the joiner is in */
@@ -860,13 +855,9 @@ static void ui_net_action(int is_host)
    ui_linking_draw(&lv);
    vid_swap();
 
-   /* One hold from the renderer's suspend to its return, as the online
-    * bring-up above: net_bringup's own would end before me_rend_resume. */
-   pwr_hold("net");
-   me_rend_suspend();                  /* clean heap for np_start (run 407) */
-   rc = net_bringup(is_host, group, g_pcfg.nick, 0);
-   me_rend_resume();                   /* re-alloc from the post-session heap */
-   pwr_release();
+   /* The renderer off for np_start's heap and back from the post-session
+    * heap, under one hold as the online bring-up above. */
+   rc = net_bringup_rend_off(is_host, group, g_pcfg.nick);
    if (rc == 0)
    {
       g_link_menu = 1;
