@@ -35,7 +35,11 @@
 # so every per-frame anchor holds.  Re-recorded, as each re-pin does: exit_cb
 # (first after the text pad, -0x278 / -0x29c), the lab's pte_mutex_check_
 # need_init (first after the CORE pad, -28), and netpacket_iface 8 B under
-# (.rodata moves in 64 B steps here: the nearer of -8 / +56).
+# (.rodata moves in 64 B steps here: the nearer of -8 / +56).  The release RO
+# pad is 236 so that its end sits 32 B above that step: the merged string
+# table before it is 4 B shorter for a commit whose short hash ends like one
+# of its entries, and at 208 (4 B above) such a build failed this entry
+# (tools/layout/ro_margin.py; docs/LAYOUT-PINNING.md, "Keeping the pads").
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)

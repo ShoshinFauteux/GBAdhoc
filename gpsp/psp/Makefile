@@ -176,8 +176,12 @@ endif
 # LAYOUT_PAD_RO_BYTES=N: the same in .rodata, before instance A's.  Whoever
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
-# (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 208
+# (docs/LAYOUT-PINNING.md, "Keeping the pads").  The pad follows the linker's
+# merged string table, and what comes after it is 64 B aligned: keep the pad's
+# end well inside a 64 B step (tools/layout/ro_margin.py), because the table is
+# a few bytes shorter for a commit whose version string ends like one of its
+# entries ("59" for ...f0ce959).
+LAYOUT_PAD_RO_BYTES ?= 236
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
