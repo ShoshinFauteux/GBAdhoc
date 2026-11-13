@@ -27,6 +27,10 @@ typedef char sched_serial_mode_init_is_auto[
 /* Both live in the register block on MIPS (sched_hot.h, mips_stub.S):
  * update_gba reads them on every pass. */
 extern u32 serial_irq_cycles;
+/* Layout hold (main.c says why): serial_mode's .data word and
+ * serial_irq_cycles's .bss word.  Never read. */
+__attribute__((used)) static int sched_hot_hold_data = 1;
+__attribute__((used)) static u32 sched_hot_hold_bss;
 #else
 int serial_mode = SERIAL_MODE_AUTO;
 #endif

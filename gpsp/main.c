@@ -26,6 +26,31 @@ timer_type timer[4];
 u32 cpu_ticks = 0;
 u32 execute_cycles = 0;
 s32 video_count = 0;
+#else
+/* Layout hold (docs/LAYOUT-PINNING.md): the bytes the variables that moved
+ * into the register block took in this object's .bss and .data, so every
+ * object linked after main.o keeps its D-cache sets (the pinned layout's
+ * .bss: gbalink_hot, the hash tables, B's region).  Never read. */
+#define SCHED_HOLD_BSS_MAIN (112 + 4 * 3 /* timer, video_count, execute_cycles, cpu_ticks */ \
+                             + 4 * 3     /* core_phase_lvl, cph_ugba, cph_stmr */           \
+                             + SCHED_HOLD_FAST + SCHED_HOLD_HOP)
+#ifdef SCHED_FAST
+#define SCHED_HOLD_FAST 4                /* sched_fast */
+#else
+#define SCHED_HOLD_FAST 0
+#endif
+#ifdef HALT_HOP
+#define SCHED_HOLD_HOP 4                 /* hop_active */
+#else
+#define SCHED_HOLD_HOP 0
+#endif
+__attribute__((used)) static u8 sched_hot_hold_bss[SCHED_HOLD_BSS_MAIN];
+#if defined(HALT_HOP) || (defined(TIMER_LAZY) && TIMER_LAZY_DEFAULT)
+/* timer_lazy's nonzero default kept it in .data */
+__attribute__((used)) static u32 sched_hot_hold_data = 1;
+#elif defined(TIMER_LAZY)
+__attribute__((used)) static u32 sched_hot_hold_bss2;
+#endif
 #endif
 
 u32 frame_counter = 0;
