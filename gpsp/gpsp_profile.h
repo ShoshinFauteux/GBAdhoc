@@ -153,6 +153,20 @@
 #error "DISPATCH_PRECISE refines DISPATCH_CACHE's invalidation: it needs DISPATCH_CACHE."
 #endif
 
+#if defined(DISPATCH_ASSOC) && !defined(DISPATCH_CACHE)
+#error "DISPATCH_ASSOC reshapes DISPATCH_CACHE's tables: it needs DISPATCH_CACHE."
+#endif
+#if defined(DISPATCH_ASSOC) && defined(DISPATCH_CACHE_BITS) && (DISPATCH_CACHE_BITS < 2)
+#error "DISPATCH_ASSOC needs DISPATCH_CACHE_BITS >= 2 (it is entries per ISA; sets are half that)."
+#endif
+/* DISPATCH_LOOKUP_PC probes the cache in lookup_pc only when the publish the
+ * C lookup would make is empty (jit_dirty_n | jit_owner_pending).  JIT_CODE_AB's
+ * legacy modes sync outside that bookkeeping, so the two do not mix. */
+#if defined(DISPATCH_LOOKUP_PC) && \
+    (!defined(DISPATCH_CACHE) || !defined(JIT_CODE_DISCIPLINE) || defined(JIT_CODE_AB))
+#error "DISPATCH_LOOKUP_PC needs DISPATCH_CACHE and JIT_CODE_DISCIPLINE, and not JIT_CODE_AB."
+#endif
+
 #if defined(ENTRY_GATES) && !defined(SMC_GATE_BITMAP)
 #error "ENTRY_GATES is tested inside the gate bitmap's scan check: it needs SMC_GATE_BITMAP."
 #endif

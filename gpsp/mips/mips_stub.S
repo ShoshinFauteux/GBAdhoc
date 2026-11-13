@@ -385,6 +385,24 @@ return_to_main:
   #define DC_KEY_ARM   srl $5, $4, 2
   #define DC_KEY_THUMB srl $5, $4, 1
 #endif
+#ifdef DISPATCH_ASSOC
+// DISPATCH_ASSOC (cpu_threaded.c): 2-way sets {key0, entry0, key1, entry1},
+// 16 bytes, both ways in the line the first load brings in.  Leaves the
+// entry in $6 on a hit, as the direct-mapped probe does.
+.macro dc_probe table, miss
+  andi $6, $5, ((1 << (DISPATCH_CACHE_BITS - 1)) - 1)
+  sll $6, $6, 4
+  lui $1, %hi(\table)
+  addu $1, $1, $6
+  lw $2, %lo(\table)($1)         # way 0 key
+  beq $2, $5, .Ldc_hit\@
+  lw $6, %lo(\table)+4($1)       # (delay) way 0 entry
+  lw $2, %lo(\table)+8($1)       # way 1 key
+  bne $2, $5, \miss
+  lw $6, %lo(\table)+12($1)      # (delay) way 1 entry
+.Ldc_hit\@:
+.endm
+#else
 .macro dc_probe table, miss
   andi $6, $5, ((1 << DISPATCH_CACHE_BITS) - 1)
   sll $6, $6, 3
@@ -393,6 +411,30 @@ return_to_main:
   lw $2, %lo(\table)($1)         # key
   bne $2, $5, \miss
   lw $6, %lo(\table)+4($1)       # (delay) entry
+.endm
+#endif
+#endif
+
+// DISPATCH_LOOKUP_PC (claude/ibranch, 2026-11-13): lookup_pc (an I/O write
+// with side effects, an IRQ or other PC change from update_gba, halt wake)
+// probes the dispatch cache too, before paying for the C lookup -- ~110 C
+// lookups a frame on Doom II, 98-99 % of them for a cached pc in the twin.
+// lookup_pc is also where code written by the handler before it (an SMC or
+// DMA retirement's thunks, a flush) becomes visible: the C lookup's publish
+// (docs/JIT-CODE-DISCIPLINE.md section 4).  So the probe runs only when that
+// publish would do nothing -- jit_code_publish()'s own test, jit_dirty_n |
+// jit_owner_pending == 0 -- and otherwise the C lookup runs, as before.  A
+// hit then returns exactly what the lookup would have returned, as a stub
+// hit does.  Needs JIT_CODE_DISCIPLINE (gpsp_profile.h).  $1/$2/$5 are free.
+#ifdef DISPATCH_LOOKUP_PC
+.macro dc_publish_idle miss
+  lui $1, %hi(jit_dirty_n)
+  lw $2, %lo(jit_dirty_n)($1)
+  lui $1, %hi(jit_owner_pending)
+  lw $5, %lo(jit_owner_pending)($1)
+  or $2, $2, $5
+  bne $2, $0, \miss
+  nop
 .endm
 #endif
 
@@ -505,11 +547,29 @@ lookup_pc_noflags:
   beq $1, $0, 1f                  # if T bit is zero use arm handler
   lw $4, REG_PC($16)              # load PC as arg 0
 
+#ifdef DISPATCH_LOOKUP_PC
+  dc_publish_idle 71f             # a publish is owed: the C lookup does it
+  DC_KEY_THUMB
+  dc_probe dispatch_cache_thumb, 71f
+  restore_registers
+  jr $6
+  nop
+71:
+#endif
   cfncall block_lookup_address_thumb, 2  # get Thumb address
   restore_registers
   jr $2                                  # jump to result
   nop
 1:
+#ifdef DISPATCH_LOOKUP_PC
+  dc_publish_idle 72f             # a publish is owed: the C lookup does it
+  DC_KEY_ARM
+  dc_probe dispatch_cache_arm, 72f
+  restore_registers
+  jr $6
+  nop
+72:
+#endif
   cfncall block_lookup_address_arm, 1  # get ARM address
   restore_registers
   jr $2                                # jump to result

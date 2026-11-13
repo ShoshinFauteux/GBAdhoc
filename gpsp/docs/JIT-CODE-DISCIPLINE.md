@@ -187,7 +187,7 @@ both `jal` into the STUB zone) and nothing else.
 | `execute_arm_translate_internal` (frame start) | `block_lookup_address_{arm,thumb}` |
 | `mips_indirect_branch_*` (C lookup) | same |
 | `mips_indirect_branch_*` (`DISPATCH_CACHE` hit) | the entry is inserted after the C lookup's publish; a later patch of the code it points at (an SMC thunk relink) is published by the lookup that made it; retirement and every flush clear the table |
-| `lookup_pc` (IRQ, PC change, after SMC and DMA flushes, halt wake) | lookup |
+| `lookup_pc` (IRQ, PC change, after SMC and DMA flushes, halt wake) | lookup; with `DISPATCH_LOOKUP_PC` a dispatch-cache hit is taken only when `jit_dirty_n | jit_owner_pending` is 0, i.e. when the lookup's publish would be empty |
 | `execute_store_cpsr` with a PC change | lookup |
 | `badjump_recover` | publish, then return |
 | return into the calling block (`mips_update_gba`, cheats, SWI, PSR, memory stubs) | the calling block is unchanged by these handlers; every handler that flushes reports a PC change and goes through `lookup_pc` instead (`update_gba` DMA path, `smc_write`, `write_io_epilogue`) |
