@@ -920,6 +920,8 @@ def hold_check(view):
     for fn, (lo, hi) in sorted(view.funcs.items()):
         if fn == 'main' or fn in ('pwr_hold', 'pwr_release', 'pwr_release_all'):
             continue
+        if fn in EPOCHC_HELPERS:
+            continue        # walked as part of main(), where every call is its body
         if not any(t.kind == 'id' and t.text in ('pwr_hold', 'pwr_release')
                    for t in view.toks[lo:hi]):
             continue
