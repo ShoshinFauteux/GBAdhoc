@@ -186,7 +186,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 2724
-LAYOUT_PAD_CORE_BYTES ?= 932
+LAYOUT_PAD_CORE_BYTES ?= 164
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -202,7 +202,7 @@ CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # says why): they place main's frame loop without moving instance B's hot text.
 # beta.5 base: main's code before the loop grew 212 B, so this pad puts the
 # loop window back on round 7's sets.  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 2284
+LAYOUT_PAD_MAIN_BYTES ?= 2028
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
