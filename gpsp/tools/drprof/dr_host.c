@@ -43,6 +43,14 @@ extern void me_vram_map_consumed(void);
 static void *g_mecap[2];
 static unsigned g_mecap_i;
 static int g_mecap_on;
+/* DR_MLOG=<file> (with DR_MECAP=1, a core built -DME_LOG_DIGEST=1): one line
+ * per frame with the mid-frame log's digest (video_me_log.h), and the
+ * recorder's work counters on stderr at exit -- two recorders that print the
+ * same lines emitted the same log, entry for entry. */
+extern unsigned int me_log_digest __attribute__((weak));
+extern unsigned int me_log_digest_n __attribute__((weak));
+extern unsigned int me_log_stats[] __attribute__((weak));
+static FILE *g_mlog;
 static void mecap_init(void)
 {
    unsigned i;
@@ -59,6 +67,9 @@ static void mecap_init(void)
    me_capture_buf = g_mecap[0];
    me_capture_mode = 1;
    g_mecap_on = 1;
+   e = getenv("DR_MLOG");
+   if (e && *e && &me_log_digest)
+      g_mlog = fopen(e, "w");
 }
 static void mecap_frame(void)
 {
@@ -347,6 +358,9 @@ int main(int argc, char **argv)
          mark(2 /* DRM_SCENE */, m);
       }
       fe_host_run_frame();
+      if (g_mlog)
+         fprintf(g_mlog, "f=%u d=%08x n=%u\n", fe_host_frame_count(),
+                 me_log_digest, me_log_digest_n);
       if (jit_code_audit_now)
          jit_code_audit_now();
       if (started)
@@ -425,6 +439,17 @@ int main(int argc, char **argv)
    if (started)
       mark(4 /* DRM_STOP */, "stop");
    if (hf) fclose(hf);
+   if (g_mecap_on && me_log_stats)
+   {
+      /* video.h me_log_stats_t, in order (the first ten fields are the
+       * original ones; later builds append) */
+      const unsigned int *s = me_log_stats;
+      fprintf(stderr, "MLOG_STATS frames=%u tracked=%u pal_checks=%u "
+              "oam_checks=%u map_scans=%u page_diffs=%u page_copies=%u "
+              "base_copies=%u entries=%u overflows=%u\n",
+              s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9]);
+   }
+   if (g_mlog) fclose(g_mlog);
    if (jit_stats_report)
       jit_stats_report(stderr);
    if (smc_fallback_stats)

@@ -81,6 +81,11 @@ static u32 ml_redo_line(const me_log_entry *e, u32 n, u32 k, u32 line)
 
 u8 *me_vram_shadow = NULL;
 me_log_stats_t me_log_stats;      /* work counters (telemetry, the model) */
+#if ME_LOG_DIGEST
+/* Twin oracle builds only (-DME_LOG_DIGEST=1): the last logged frame's
+ * digest and entry count, read by tools/drprof/dr_host.c. */
+extern "C" { u32 me_log_digest, me_log_digest_n; }
+#endif
 
 /* PER-LINE VRAM TRACKING ON EVERY FRAME (default).
  *
@@ -606,6 +611,21 @@ map_done:
   me_log_stats.entries += g_ml.n;
   me_capture_buf->log_n = g_ml.n;
   me_capture_buf->log_flags = g_ml.flags;
+#if ME_LOG_DIGEST
+  /* Twin oracle only (tools/drprof/dr_host.c, DR_MLOG): a digest of this
+   * frame's whole log -- count, flags and every entry in order -- so two
+   * recorders can be shown to emit the identical log frame by frame. */
+  {
+    const u32 *w = (const u32 *)g_ml.buf;
+    u32 h = 2166136261u, i;
+    h = (h ^ g_ml.n) * 16777619u;
+    h = (h ^ g_ml.flags) * 16777619u;
+    for (i = 0; i < g_ml.n * 3; i++)
+      h = (h ^ w[i]) * 16777619u;
+    me_log_digest = h;
+    me_log_digest_n = g_ml.n;
+  }
+#endif
 }
 
 #define MFL_FRAME_START() ml_frame_start()
