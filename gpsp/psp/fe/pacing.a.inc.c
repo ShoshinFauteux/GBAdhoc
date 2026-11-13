@@ -100,7 +100,11 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
  * flip each loop as it finished, 42 pictures a second on a 59.94 Hz LCD, so
  * every picture stayed up 1 or 2 vblanks in a near 50/50 mix; 4.1.0's slower
  * ~103 fps was 34 a second, mostly 2-vblank holds, a steadier rhythm.  Here
- * it is one picture per vblank, each ~2 frames on, at the same speed. */
+ * it is one picture per vblank, each ~2 frames on, at the same speed.
+ * 1.5x and 2x take the same road under their own ceiling (1.5x: 3 frames per
+ * 2 vblanks, ff_gate.h), and on pace draw by the ceiling instead of the gate:
+ * the last frame of each vblank's quota, so the picture advances 2, 1, 2, 1
+ * (1.5x) or 2, 2 (2x) game frames a vblank (ffh_cap_draw). */
 #ifndef PLAY_FF_FLIP_PACE
 #define PLAY_FF_FLIP_PACE 0
 #endif
@@ -110,11 +114,14 @@ static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer ho
 static unsigned g_ffh_holds __attribute__((section(".sbss")));
 static unsigned g_ffh_waits __attribute__((section(".sbss")));
 static unsigned g_ffh_vb __attribute__((section(".sbss")));
-static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop */
-static int      g_ffc_on __attribute__((section(".sbss")));    /* 3x ceiling anchored */
+static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop (any multiplier) */
+static int      g_ffc_on __attribute__((section(".sbss")));    /* multiplier ceiling anchored */
 static unsigned g_ffc_vc __attribute__((section(".sbss")));
 static unsigned g_ffc_f __attribute__((section(".sbss")));
 static unsigned g_ffc_waits __attribute__((section(".sbss")));
+static unsigned g_ffc_bvc __attribute__((section(".sbss")));   /* vcount after the ceiling's last block */
+static int      g_ffc_q __attribute__((section(".sbss")));     /* the ceiling chose the last draw */
+static unsigned g_ffm_acc __attribute__((section(".sbss")));   /* paced multiplier: tenths of a frame owed */
 static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 /* LATE PRESENT (tier 0b, `me_late_present`, default 1): see dfr_present(). */
 #ifndef PLAY_ME_LATE_PRESENT

@@ -31,7 +31,7 @@
  * When emulation runs slower than the draw rate, every frame is drawn.
  *
  * Header-only and platform-free so the host test exercises this exact code
- * (tools/test_ff_pipeline.c). */
+ * (tools/test_ff_pipeline.c), the multiplier ceiling at the end included. */
 #ifndef FF_GATE_H
 #define FF_GATE_H
 
@@ -83,6 +83,54 @@ static inline int ff_gate_frame(ff_gate_t *g, uint64_t now_us)
       g->due_us = end + g->period_us;   /* first draw, or a period behind */
    }
    return 1;
+}
+
+/* THE MULTIPLIER CEILING (FF FLIP PACING bit 2, main_psp.c g_ff_flip_pace).
+ *
+ * The multiplier presets (1.5x, 2x, 3x) run one emulated frame per loop under
+ * a ceiling of mult_x10 / 10 frames per vblank, counted from an anchor:
+ * `df` frames emulated and `dv` vblanks passed since it.  Ahead of the
+ * ceiling the loop blocks on the vblank; 1.5x therefore runs 2, 1, 2, 1 ...
+ * frames per vblank (3 per 2), 2x runs 2, and 3x runs 3, whatever the
+ * console could do beyond that.
+ *
+ * Tenths of a frame, so 1.5x is exact: no float, no drift.  For 3x every
+ * test below is the arithmetic ffh_cap3 had before the other two existed. */
+
+/* >= 0: this vblank interval's quota is used up; wait for the next vblank. */
+static inline int ff_cap_over(unsigned mult_x10, unsigned df, unsigned dv)
+{
+   return (int)(10u * df - mult_x10 * dv) - (int)mult_x10;
+}
+
+/* Behind by more than 8 vblanks' worth: re-anchor (forgive, never sprint). */
+static inline int ff_cap_lost(unsigned mult_x10, unsigned df, unsigned dv)
+{
+   return (int)(mult_x10 * dv - 10u * df) > (int)(mult_x10 * 8u);
+}
+
+/* At the START of a frame: has every vblank interval since the anchor had its
+ * quota?  Then the ceiling, not the console, sets the rate. */
+static inline int ff_cap_on_pace(unsigned mult_x10, unsigned df, unsigned dv)
+{
+   return (int)(10u * df - mult_x10 * dv) >= 0;
+}
+
+/* At the START of a frame: will this frame be the last one of its vblank
+ * interval (the ceiling blocks after it)?
+ *
+ * THE DRAW RULE BELOW 3x.  On pace, 1.5x and 2x draw exactly that frame: one
+ * picture per vblank, each the newest frame the interval emulated, so the
+ * picture advances 2, 1, 2, 1 ... game frames (1.5x) or 2, 2, ... (2x) with
+ * no exception.  The draw gate's wall-clock grid (16667 us) beats against the
+ * LCD (16683 us) and against the ceiling's bursts: it picks a different frame
+ * of a burst as the phase drifts, and with one frame in every other interval
+ * (1.5x) that reads as a picture held for two vblanks and then a jump of 3.
+ * Off pace (the console cannot run the multiplier) the gate decides, as it
+ * does for the unlimited presets: there is no burst to pick from. */
+static inline int ff_cap_last(unsigned mult_x10, unsigned df, unsigned dv)
+{
+   return ff_cap_over(mult_x10, df + 1u, dv) >= 0;
 }
 
 #endif /* FF_GATE_H */

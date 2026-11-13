@@ -32,8 +32,12 @@ static int fps_value(const char *value, int def)
 
 int main(void)
 {
+   /* Every config written before ff_speed_x10 existed: any non-zero
+    * ff_mult_x10 is 3x (15 and 20 were folded into 3x by 2.1.0 and stay
+    * there), 0 is Unlimited or Smooth by ff_smooth. */
    const int speeds[] = {15, 30, 0, 20, -1, 999};
-   const char *names[] = {"3x", "Unlimited", "Unlimited Smooth"};
+   const char *names[] = {"1.5x", "2x", "3x", "Unlimited", "Unlimited Smooth"};
+   const int mults[] = {15, 20, 30, 0, 0};
    unsigned i;
    int smooth, mode;
    FILE *f = fopen(path, "w");
@@ -65,17 +69,67 @@ int main(void)
          assert(g_pcfg.ff_smooth == (expected != PCFG_FF_UNLIMITED));
       }
 
+   /* The settings row's list, in its order (ui_psp.c SET_FFMULT steps
+    * (mode + dir) % PCFG_FF_COUNT): five presets, 3x the default. */
+   assert(PCFG_FF_COUNT == 5 && PCFG_FF_3X == 2);
    for (mode = 0; mode < PCFG_FF_COUNT; mode++)
    {
       pcfg_ff_set_mode(mode);
       assert(strcmp(pcfg_ff_name(), names[mode]) == 0);
+      assert(g_pcfg.ff_mult_x10 == mults[mode]);
       pcfg_save();
+      /* the legacy key keeps its meaning for older builds: 30 or 0 */
+      assert(fe_ini_get_int(path, "ff_mult_x10", -1) == (mults[mode] ? 30 : 0));
+      assert(fe_ini_get_int(path, "ff_speed_x10", -1) ==
+             (mults[mode] ? mults[mode] : 30));
       memset(&g_pcfg, 0, sizeof(g_pcfg));
       pcfg_load(path);
       assert(pcfg_ff_mode() == mode);
-      assert(fe_ini_get_int(path, "ff_mult_x10", -1) == g_pcfg.ff_mult_x10);
+      assert(g_pcfg.ff_mult_x10 == mults[mode]);
+      pcfg_save();   /* a second round trip changes nothing */
+      memset(&g_pcfg, 0, sizeof(g_pcfg));
+      pcfg_load(path);
+      assert(pcfg_ff_mode() == mode);
+   }
+   /* the cycle visits every preset once each way, wrapping at both ends */
+   {
+      int dir, seen;
+      for (dir = -1; dir <= 1; dir += 2)
+      {
+         pcfg_ff_set_mode(PCFG_FF_3X);
+         for (seen = 0, i = 0; i < PCFG_FF_COUNT; i++)
+         {
+            pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_COUNT + dir) % PCFG_FF_COUNT);
+            seen |= 1 << pcfg_ff_mode();
+         }
+         assert(seen == (1 << PCFG_FF_COUNT) - 1 && pcfg_ff_mode() == PCFG_FF_3X);
+      }
+   }
+   /* ff_speed_x10 only refines a multiplier: with ff_mult_x10 = 0 it is
+    * ignored, and an unknown value (or none) is 3x */
+   {
+      static const struct { int mult, smooth, speed, want; } k[] = {
+         { 30, 0, 15, PCFG_FF_1_5X }, { 30, 1, 20, PCFG_FF_2X },
+         { 30, 0, 30, PCFG_FF_3X },   { 30, 0, 25, PCFG_FF_3X },
+         { 30, 0, 0, PCFG_FF_3X },    { 30, 0, -5, PCFG_FF_3X },
+         { 15, 0, 15, PCFG_FF_1_5X }, { 20, 1, 20, PCFG_FF_2X },
+         { 0, 0, 15, PCFG_FF_UNLIMITED }, { 0, 1, 20, PCFG_FF_SMOOTH },
+      };
+      for (i = 0; i < sizeof(k) / sizeof(k[0]); i++)
+      {
+         f = fopen(path, "w");
+         assert(f);
+         fprintf(f, "ff_mult_x10 = %d\nff_smooth = %d\nff_speed_x10 = %d\n",
+                 k[i].mult, k[i].smooth, k[i].speed);
+         fclose(f);
+         memset(&g_pcfg, 0, sizeof(g_pcfg));
+         pcfg_load(path);
+         assert(pcfg_ff_mode() == k[i].want);
+      }
    }
    pcfg_ff_set_mode(99);
+   assert(pcfg_ff_mode() == PCFG_FF_3X);
+   pcfg_ff_set_mode(-1);
    assert(pcfg_ff_mode() == PCFG_FF_3X);
 
    /* 3.0's "A/B buttons" (btn_swap) has no row and no field any more.  A
@@ -115,6 +169,6 @@ int main(void)
       assert(fe_ini_get_int(path, "btn_swap", -1) == 0);
    }
    remove(path);
-   puts("PASS: defaults, six legacy presets, invalid values, all save/load round trips, btn_swap migration");
+   puts("PASS: defaults, six legacy presets, invalid values, five presets' save/load round trips and cycle, ff_speed_x10, btn_swap migration");
    return 0;
 }

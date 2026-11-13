@@ -191,8 +191,13 @@ typedef struct
     * settings UI relaunches the app when it changes — the same ADR-0071
     * restart flow the trading profile used. */
    int  me_mode;
-   /* Persist the legacy keys for compatibility: 30/1 = 3x (default),
-    * 0/0 = Unlimited, 0/1 = Unlimited Smooth. Use pcfg_ff_set_mode(). */
+   /* The multiplier in tenths: 15 / 20 / 30 = 1.5x / 2x / 3x (default),
+    * 0 = an unlimited preset (ff_smooth picks which).  Use pcfg_ff_set_mode().
+    * In config.ini the legacy key keeps its old meaning -- `ff_mult_x10` is
+    * 30 for every multiplier, 0 for unlimited, so an older build reads 1.5x
+    * and 2x as 3x -- and `ff_speed_x10` (15/20/30) says which multiplier.  A
+    * file without ff_speed_x10 is 3x, as it always was (2.1.0 folded the old
+    * capped profiles, ff_mult_x10 = 15/20, into 3x; they stay there). */
    int  ff_mult_x10;
    int  ff_hold;      /* 1 = hold (default), 0 = toggle */
    /* Sparse frameskip for NORMAL play: draw N frames, skip 1.  0 = off.
@@ -555,7 +560,10 @@ typedef struct
 
 extern psp_config g_pcfg;
 
-enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_COUNT };
+/* In the settings row's order.  Not persisted as numbers (config.ini holds
+ * ff_mult_x10 / ff_speed_x10 / ff_smooth), so the order is free. */
+enum { PCFG_FF_1_5X, PCFG_FF_2X, PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH,
+       PCFG_FF_COUNT };
 int pcfg_ff_mode(void);
 void pcfg_ff_set_mode(int mode);
 const char *pcfg_ff_name(void); /* shared by settings and OSD */
