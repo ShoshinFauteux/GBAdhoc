@@ -57,15 +57,15 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x14e8
-size main                               33796
+size main                               33832
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x1ec4
+at   exit_cb                            0x1e4c
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d74
+at   pte_mutex_check_need_init          0x1d70
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -113,15 +113,15 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x0aac
-size main                               48848
+size main                               48892
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0a40
+at   exit_cb                            0x09e0
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x132c
+at   pte_mutex_check_need_init          0x1318
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
