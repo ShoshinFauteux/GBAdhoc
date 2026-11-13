@@ -307,8 +307,12 @@ static void ml_update_relevance(u32 line)
 /* Diff the rows of `map` (bit k = words 8k..8k+7) of a 1 KiB array into the
  * log, lowest first; the shadow follows.  Returns non-zero if any differed;
  * *rows counts the rows compared (ME_LOG_ROWS builds). */
-static int ml_diff_rows(u32 line, u32 region, const u32 *cur, u32 *sh, u32 map,
-                        u32 *rows)
+/* Its own row in hot_order.txt's last section, between ml_line_body and
+ * ml_update_relevance: it takes the bytes the inlined whole compare left in
+ * ml_line_body, and LAYOUT_PAD_MLU_BYTES (psp/layout_pad_late.S) the rest. */
+static int __attribute__((noinline, noclone, optimize("Os")))
+ml_diff_rows(u32 line, u32 region, const u32 *cur, u32 *sh, u32 map,
+             u32 *rows)
 {
   int hit = 0;
   while (map)

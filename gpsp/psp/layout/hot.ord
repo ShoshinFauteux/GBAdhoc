@@ -309,9 +309,11 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_diff_pagemm)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_relevancePKtPm.isra.0)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_line_bodym)
+  *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_diff_rowsmmPKmPmmS1_)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL19ml_update_relevancem)
   *gbalink_core_b.o(.text._ZL12ml_diff_pagemm)
   *gbalink_core_b.o(.text._ZL12ml_relevancePKtPm.isra.0)
   *gbalink_core_b.o(.text._ZL12ml_line_bodym)
+  *gbalink_core_b.o(.text._ZL12ml_diff_rowsmmPKmPmmS1_)
   *gbalink_core_b.o(.text._ZL19ml_update_relevancem)
 }

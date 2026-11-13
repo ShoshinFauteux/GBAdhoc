@@ -1448,15 +1448,18 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
  *   1 DMA marks nothing          2 a decrementing DMA marks as if incrementing
  *   3 C palette stores unmarked  4 C OAM stores unmarked
  *   5 a span's last row dropped  6 a span that wraps the 1 KiB mirror unwrapped */
+/* The C store paths (the interpreter, cheats; the dynarec stores through its
+ * stubs) mark every row (~0): rare, and two instructions, where the row's bit
+ * would grow write_memory8/16/32 and move the C handlers after them. */
 #if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 3
 #define ME_WMAP_CPU_PAL(a) ((void)0)
 #else
-#define ME_WMAP_CPU_PAL(a) ME_WMAP_NOTE(PAL_WMAP, a)
+#define ME_WMAP_CPU_PAL(a) (reg[PAL_WMAP] = ~0u)
 #endif
 #if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 4
 #define ME_WMAP_CPU_OAM(a) ((void)0)
 #else
-#define ME_WMAP_CPU_OAM(a) ME_WMAP_NOTE(OAM_WMAP, a)
+#define ME_WMAP_CPU_OAM(a) (reg[OAM_WMAP] = ~0u)
 #endif
 
 /* The mid-frame log's palette write map (cpu.h PAL_WMAP) is marked by the
@@ -2894,46 +2897,39 @@ static void __attribute__((noinline))
 /* A DMA's writes into the palette (region 5) and OAM (region 7): mark the
  * rows in the mid-frame log's write maps (cpu.h PAL_WMAP / OAM_WMAP), once
  * per transfer, before it runs.  The elements' addresses are one contiguous
- * run [lo, end) (fixed: one element's bytes); its share of each region is
- * what lands there, whatever dma_transfer_region_span splits.  Called from
- * dma_dest_notes, so dma_transfer's own code is the size it was. */
-static void me_wmap_dma_note(unsigned dma_chan)
+ * run [lo, lo + span) (fixed: one element's bytes).  A run that stays in
+ * region 5 or 7 marks its rows; one that crosses a 16 MiB boundary (rare)
+ * marks every row of both maps.  dma_transfer calls this where it called
+ * vram_x_dma_note (so its code is the size it was), and this calls
+ * vram_x_dma_note last; out of line, in the cold tail (ME_WMAP_COLD). */
+static void ME_WMAP_COLD me_wmap_dma_note(unsigned dma_chan)
 {
   const dma_transfer_type *dmach = &dma[dma_chan];
   u32 n = dmach->length;
   u32 bytes = dmach->length_type == DMA_16BIT ? 2 : 4;
   u32 dst = 0x0FFFFFFF & dmach->dest_address & ~(bytes - 1);   /* as dma_transfer */
   int stride = dma_stride[dmach->dest_direction];
-  u32 lo = dst, end = dst + bytes, r;
+  u32 lo = dst, span = bytes;
 #if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 1
-  return;                                       /* MUTANT: DMA marks nothing */
+  goto done;                                    /* MUTANT: DMA marks nothing */
 #endif
   if (!n || dmach->source_direction == 3)       /* 3: nothing is copied */
-    return;
-#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 2
-  if (stride)                                   /* MUTANT: decrement as increment */
-#else
-  if (stride > 0)
+    goto done;
+  if (stride)
+    span = n * bytes;
+#if !(defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 2)
+  if (stride < 0)                               /* (below 0: crosses) */
+    lo = dst - (n - 1) * bytes;
 #endif
-    end = dst + n * bytes;
-  else if (stride < 0)                          /* below 0 wraps to open bus */
-    lo = (n - 1) * bytes > dst ? 0 : dst - (n - 1) * bytes;
-  for (r = 5; r <= 7; r += 2)
-  {
-    u32 a = MAX(lo, r << 24), b = MIN(end, (r + 1) << 24);
-    if (a < b)
-      reg[r == 7 ? OAM_WMAP : PAL_WMAP] |= me_wmap_rows(a, b - a);
-  }
-}
-
-/* Everything a DMA marks about its destination before it runs, out of line:
- * dma_transfer calls this where it used to call vram_x_dma_note. */
-static void __attribute__((noinline)) dma_dest_notes(unsigned dma_chan)
-{
-  me_wmap_dma_note(dma_chan);
+  if ((lo ^ (lo + span - 1)) >> 24)             /* crosses a region */
+    reg[PAL_WMAP] = reg[OAM_WMAP] = ~0u;
+  else if (((lo >> 24) | 2) == 7)               /* 5 or 7 */
+    reg[(lo >> 24) == 7 ? OAM_WMAP : PAL_WMAP] |= me_wmap_rows(lo, span);
+done:
 #ifdef VRAM_EXEC
-  vram_x_dma_note(dma_chan);    /* (cpu-levers vx) */
+  vram_x_dma_note(dma_chan);    /* (cpu-levers vx) once per transfer */
 #endif
+  return;
 }
 
 static cpu_alert_type dma_transfer_copy(
@@ -3010,7 +3006,7 @@ static u32 dma_transfer_region_span(u32 src_ptr, u32 dst_ptr,
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
-  dma_dest_notes(dma_chan);     /* write maps; (cpu-levers vx) VRAM pages */
+  me_wmap_dma_note(dma_chan);   /* write maps, then (cpu-levers vx) VRAM */
   DRPH_SCOPE(DRPH_DMA);
   dma_transfer_type *dmach = &dma[dma_chan];
   u32 src_ptr = 0x0FFFFFFF & dmach->source_address & (

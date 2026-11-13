@@ -147,10 +147,22 @@ compare made:
 
 | writer | marks |
 |---|---|
-| C `write_memory8/16/32` (interpreter, slow paths, cheats) | the store's row (`ME_WMAP_NOTE`) |
-| DMA, every timing and direction | the transfer's share of regions 5 and 7, once, before it runs (`me_wmap_dma_note`, from `dma_dest_notes`, out of the copy loops) |
-| MIPS palette and OAM store stubs | the row, 6 instructions (`emit_me_wmap_mark`); the bytes are taken back off the SMC_STM_CHAIN pad, so ROM translations start where they did |
+| MIPS palette and OAM store stubs | the row: where a stub returned (`jr ra`, flag store in the delay slot) it jumps to one of two 8-instruction tails that OR the row in and return (`emit_me_wmap_tails`); the stubs keep their size and place and the tails sit inside SMC_STM_CHAIN's 8 KiB, so ROM translations start where they did |
+| DMA, every timing and direction | the run's rows if it stays in region 5 or 7, every row if it crosses a 16 MiB boundary; once, before it runs (`me_wmap_dma_note`, called where `dma_transfer` called `vram_x_dma_note`, which it then calls) |
+| C `write_memory8/16/32` (interpreter, cheats) | `~0` (two instructions; rare) |
 | x86 stubs, state load / rewind restore, memory reset | `~0` (all rows) |
+
+**Layout (hardware A/B of the first cut, 5fdb1f64fb08: Hot Wheels -8.0 %
+work, but Top Gear Rally +2.0 %, Emerald battle +2.5 %, FireRed +2.2 %).**
+That cut grew `ml_line_body` 240 B, which moved `ml_update_relevance` (both
+per line, in every game), and put 476 B of DMA note in front of instance A's
+cold text, which the CORE pad then moved 384 B. This one keeps every per-frame
+function where the whole compare had it: the row diff is its own function
+(`ml_diff_rows`, -Os) in hot_order.txt's last rows between `ml_line_body` and
+`ml_update_relevance`, with LAYOUT_PAD_MLU_BYTES (psp/layout_pad_late.S) for
+the rest of the bytes the inlined compare took; the DMA note and the tails'
+emitter are in the cold tail (`ME_WMAP_COLD`, psp/cold_tail.ld: after all
+other text; instance B's copies stay in B's text, before the CORE pad).
 
 A flag with an empty map (OAM_UPDATED from a DISPCNT mode change) compares
 everything, as before; the ARM backends keep no map and always compare
@@ -159,8 +171,9 @@ mode 1, palette checks a frame / rows a check): Hot Wheels 159 / 1.0, Driver 2
 93 / 1.0, SSX 3 15 / 1.0 (was 32 rows a check). Doom II, Duke Nukem and
 Emerald do almost no palette or OAM checks (their `ml_line_body` time is the
 VRAM tracking: 82-89 map scans and 8-16 page copies a frame).
-Proof: tools/tests/test_me_wmap.c (every C store and DMA shape marks exactly
-the rows it changes; six mutants caught) and the twin's log digest
+Proof: tools/tests/test_me_wmap.c (every C store and DMA shape marks the
+rows it changes, a DMA exactly unless it crosses a region; six mutants caught)
+and the twin's log digest
 (tools/drprof/dr_host.c `DR_MLOG`, a core built `-DME_LOG_DIGEST=1`): twelve
 fixtures emit the identical log, frame by frame, before and after.
 VRAM would need a 96 KiB baseline, so the core keeps a VRAM shadow

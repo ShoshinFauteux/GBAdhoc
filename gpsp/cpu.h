@@ -134,9 +134,9 @@ typedef enum
    * bytes [32k, 32k + 32) of the 1 KiB array were written since the
    * capture's last look -- one 16-colour palette row, four OBJ entries.
    * Every store that raises PAL_UPDATED / OAM_UPDATED because it wrote the
-   * array also marks its rows here (C write_memory, dma_transfer, the MIPS
-   * store stubs); one that cannot say which (the x86 stubs, a state load,
-   * the memory reset) sets ~0 = "all of it".  Read and cleared only by the
+   * array also marks its rows here (dma_transfer, the MIPS store stubs);
+   * the others (C write_memory, the x86 stubs, a state load, the memory
+   * reset) set ~0 = "all of it".  Read and cleared only by the
    * capture, which compares just the marked rows. */
   OAM_WMAP          = 60,
   PAL_WMAP          = 61,

@@ -328,6 +328,12 @@ extern const u8 open_gba_bios_rom[1024*16];
  * repeat with the 1 KiB mirror, so any address of the region works. */
 #define ME_WMAP_BIT(a)         (1u << (((a) >> 5) & 31))
 #define ME_WMAP_NOTE(slot, a)  (reg[slot] |= ME_WMAP_BIT(a))
+/* Code that exists only for the write maps and is not on any per-frame path
+ * of a game that does not use them: its own section, which psp/cold_tail.ld
+ * links after all other text, so adding it moves no pinned function
+ * (docs/LAYOUT-PINNING.md).  Elsewhere it is ordinary .text. */
+#define ME_WMAP_COLD __attribute__((noinline, noclone, optimize("Os"),      \
+                                      section(".text.me_wmap_cold")))
 /* The rows of bytes [a, a + n) (wrapping at the 1 KiB mirror), as a map. */
 static inline u32 me_wmap_rows(u32 a, u32 n)
 {

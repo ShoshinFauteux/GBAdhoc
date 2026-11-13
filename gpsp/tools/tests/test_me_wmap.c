@@ -6,8 +6,10 @@
  * log.  This drives the PRODUCTION C store paths (write_memory8/16/32) and
  * dma_transfer (every direction, both widths, spans that wrap the 1 KiB
  * mirror and spans that cross into the next 16 MiB region) and checks, after
- * every operation, that the map equals EXACTLY the set of rows whose bytes
- * changed: a missing row is a lost log entry, an extra row is wasted work.
+ * every operation, that the map covers every row whose bytes changed (a
+ * missing row is a lost log entry) -- and for a DMA that stays in one region
+ * EXACTLY those rows (an extra row is wasted work); a C store marks all rows
+ * and a DMA that crosses a 16 MiB boundary may.
  * me_wmap_rows() is checked against a brute-force model as well.
  *
  * The MIPS store stubs are not reachable here; the qemu twin's log digest
@@ -160,8 +162,8 @@ static void test_cpu_stores(void)
       CHECK(reg[PAL_UPDATED], "C palette store left PAL_UPDATED down");
       CHECK(!(want & ~map), "C palette %u-byte store %#x: rows %#x changed, "
             "map %#x", size, addr, want, map);
-      CHECK(map == ME_WMAP_BIT(addr), "C palette %u-byte store %#x: map %#x, "
-            "row %#x", size, addr, map, ME_WMAP_BIT(addr));
+      CHECK(map == ~0u, "C palette %u-byte store %#x: map %#x, "
+            "want all rows", size, addr, map);
     }
     else
     {
@@ -173,7 +175,7 @@ static void test_cpu_stores(void)
         CHECK(!map && !want && !reg[OAM_UPDATED], "C OAM byte store %#x "
               "marked %#x", addr, map);
       else
-        CHECK(map == ME_WMAP_BIT(addr) && reg[OAM_UPDATED], "C OAM %u-byte "
+        CHECK(map == ~0u && reg[OAM_UPDATED], "C OAM %u-byte "
               "store %#x: map %#x, flag %u", size, addr, map, reg[OAM_UPDATED]);
     }
   }
@@ -211,8 +213,11 @@ static void one_dma(u32 dst, u32 length, u32 dst_dir, u32 type)
   memset(oam_ram, 0, sizeof(oam_ram));
   reg[PAL_WMAP] = reg[OAM_WMAP] = reg[PAL_UPDATED] = reg[OAM_UPDATED] = 0;
   /* the rows the elements land in, element by element */
+  int crosses = 0;
   for (i = 0, a = d; i < length; i++, a += (u32)(stride[dst_dir] * (int)bytes))
   {
+    if ((a >> 24) != (d >> 24) || ((a + bytes - 1) >> 24) != (d >> 24))
+      crosses = 1;
     if ((a >> 24) == 5) want_pal |= rows_model(a, bytes);
     if ((a >> 24) == 7) want_oam |= rows_model(a, bytes);
   }
@@ -232,11 +237,18 @@ static void one_dma(u32 dst, u32 length, u32 dst_dir, u32 type)
     CHECK(ch_pal == want_pal && ch_oam == want_oam, "model: DMA to %#x x%u "
           "dir %u %ub: changed pal %#x oam %#x, model %#x %#x", dst, length,
           dst_dir, bytes * 8, ch_pal, ch_oam, want_pal, want_oam);
-    /* ...and the maps must say exactly that */
-    CHECK(got_pal == ch_pal, "DMA to %#x x%u dir %u %ub: palette map %#x, "
-          "changed %#x", dst, length, dst_dir, bytes * 8, got_pal, ch_pal);
-    CHECK(got_oam == ch_oam, "DMA to %#x x%u dir %u %ub: OAM map %#x, "
-          "changed %#x", dst, length, dst_dir, bytes * 8, got_oam, ch_oam);
+    /* ...and the maps must cover it -- exactly, unless the run of elements
+     * crosses a 16 MiB boundary (then every row is allowed) */
+    CHECK(!(ch_pal & ~got_pal) && !(ch_oam & ~got_oam), "DMA to %#x x%u dir "
+          "%u %ub: maps %#x %#x miss changed %#x %#x", dst, length, dst_dir,
+          bytes * 8, got_pal, got_oam, ch_pal, ch_oam);
+    if (!crosses)
+    {
+      CHECK(got_pal == ch_pal, "DMA to %#x x%u dir %u %ub: palette map %#x, "
+            "changed %#x", dst, length, dst_dir, bytes * 8, got_pal, ch_pal);
+      CHECK(got_oam == ch_oam, "DMA to %#x x%u dir %u %ub: OAM map %#x, "
+            "changed %#x", dst, length, dst_dir, bytes * 8, got_oam, ch_oam);
+    }
   }
 }
 
