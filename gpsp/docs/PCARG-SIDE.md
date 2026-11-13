@@ -246,3 +246,12 @@ its forced arm mixes all three reasons for an old-form site (table full 2,846,92
 
 Layout: the three emitters grew 480 B per instance; `.text.pcarg_layout_pad` gives it back (3,936 -> 3,456),
 docs/LAYOUT-PINNING.md "Keeping the pads". PSP-1000 boot heap unchanged (release 11,228,572 B, lab 10,614,172 B).
+
+Gate of the merged line (Lab build **e787e61fcbe9**, `b5int3-d9e9ce0-lab`, base cf44b8a9e624): smoke PASS 6/6;
+full: **47/47 fixtures PASS** (Payback by the gate's lockstep: timing), stale PASS (0 in 37 GBA fixtures), test
+ROMs PASS (jsmolka 6 -> 6/13), corpus 32/35 identical plus Mario Tennis timing. The gate's verdict is
+NEEDS-REVIEW for the same two corpus ROMs as in section 7, at the same frames (Golden Sun: The Lost Age f283,
+Mario Golf f1155, reconverges), which its 16x-cache lockstep cannot reproduce. The lockstep at the plain twin's
+cache size (section 7's method, builds/b5int3-out/ls_small.py) classifies both **timing** on this build, with
+section 7's figures: the candidate dynarec equals the interpreter replaying its own I/O and IRQs for 19.98 M and
+40.00 M instructions.
