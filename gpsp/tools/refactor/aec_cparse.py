@@ -757,6 +757,58 @@ def inline_helpers(toks, names):
     return link(res)
 
 
+# Epoch C C2 (PLAN-EPOCHC-beta5 §3 C2) moves main()'s boot, unchanged, into a function of
+# its own: `boot_run`, called once as `if (boot_run(ARGS) >= 0) return 0;` and ending in
+# `return -1;` (its probes' `return 0;` are main()'s own, as before).  The tools read main()
+# as the code it runs: that statement is replaced by boot_run's body without the trailing
+# `return -1;`, every token a copy of the body's own (its own line and file: the text was
+# moved, not shared, so its sites keep lines of their own).  boot_run's own definition is
+# left in the token list.
+
+def splice_moved(toks, names):
+    """toks with each `if ( NAME ( .. ) >= 0 ) return 0 ;` of a name in `names` replaced by
+    NAME's body (see above).  Returns the input list itself when the TU defines none of
+    them; refuses a definition that does not end in `return -1;` or a call of another form."""
+    fns = functions(toks)
+    have = [x for x in names if x in fns]
+    if not have:
+        return toks
+    out, i, n, done = [], 0, len(toks), set()
+    inside = [fns[x] for x in have]
+    while i < n:
+        t = toks[i]
+        if (t.kind == 'id' and t.text in have and not any(lo <= i <= hi for lo, hi in inside)
+                and i + 1 < n and toks[i + 1].text == '('
+                and not (i > 0 and (toks[i - 1].text in ('int', 'void', '*')))):
+            # (the definition and any prototype are left alone: a type word before the name)
+            lo, hi = fns[t.text]
+            if i < 2 or toks[i - 1].text != '(' or toks[i - 2].text != 'if':
+                raise ValueError('splice: %s at line %s is not `if (%s(..) >= 0) return 0;`'
+                                 % (t.text, t.line, t.text))
+            c = _close(toks, i + 1)
+            tail = [x.text for x in toks[c + 1:c + 7]]
+            if tail != ['>=', '0', ')', 'return', '0', ';']:
+                raise ValueError('splice: %s at line %s is not `if (%s(..) >= 0) return 0;`'
+                                 % (t.text, t.line, t.text))
+            body = toks[lo + 1:hi]
+            if [x.text for x in body[-4:]] != ['return', '-', '1', ';']:
+                raise ValueError('splice: %s does not end in `return -1;`' % t.text)
+            out.pop()
+            out.pop()                                   # the `if (`
+            for b in body[:-4]:
+                cp = Tok(b.kind, b.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+                cp.oline = b.oline
+                out.append(cp)
+            done.add(t.text)
+            i = c + 7
+            continue
+        out.append(t)
+        i += 1
+    if not done:
+        return toks
+    return link(out)
+
+
 def node_span(node):
     """(first_line, last_line) of a node."""
     lines = []

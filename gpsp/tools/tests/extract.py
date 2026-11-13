@@ -307,9 +307,30 @@ def _helper_body(source, name):
     return source[m.end():end + 1]
 
 
+# Epoch C C2 (fe/boot.inc.c): main()'s boot is boot_run(), moved unchanged.  Its call
+# statement is replaced by its body without the final `return -1;` (the body keeps
+# main()'s indentation; its locals are declared at its top under main()'s names).
+EPOCHC_BOOT_CALL = re.compile(r'^( +)if \(boot_run\(argc, argv, &bc\) >= 0\)\n +return 0;\n', re.M)
+
+
+def _boot_body(source):
+    m = re.search(r'^static [^\n]*\bint boot_run\([^)]*\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: boot_run() not defined')
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    tail = '   return -1;\n'
+    if not body.endswith(tail):
+        raise ExtractError('epochc: boot_run() does not end in `return -1;`')
+    return body[:-len(tail)]
+
+
 def epochc_expand(main_text, source):
-    """main()'s text with session_end()/process_end() calls replaced by their bodies
-    (unchanged on a tree before Epoch C C1c)."""
+    """main()'s text with boot_run() and session_end()/process_end() calls replaced by
+    their bodies (unchanged on a tree before Epoch C C1c / C2)."""
+    if len(EPOCHC_BOOT_CALL.findall(main_text)) == 1:
+        body = _boot_body(source)
+        main_text = EPOCHC_BOOT_CALL.sub(lambda m: body, main_text)
     for call, name in EPOCHC_TEARDOWN_CALLS:
         if main_text.count(call) == 1:
             main_text = main_text.replace(call, _helper_body(source, name))

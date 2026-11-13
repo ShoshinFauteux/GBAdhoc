@@ -231,10 +231,16 @@ def collapse(seq):
 # so a site that calls them has the calls, order, texts and hold of the copy it replaced,
 # and the gate compares them with the golden unchanged.  They are never sites themselves.
 EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end')
+# Epoch C C2: main()'s boot moved unchanged into boot_run (fe/boot.inc.c).  Every view
+# reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
+# are main()'s sites, with the lines of the text they run.  Never sites themselves.
+EPOCHC_MOVED = ('boot_run',)
+EPOCHC_SKIP = EPOCHC_HELPERS + EPOCHC_MOVED
 
 
 class View(object):
     def __init__(self, name, toks):
+        toks = C.splice_moved(toks, EPOCHC_MOVED)
         toks = C.inline_helpers(toks, EPOCHC_HELPERS)
         self.name, self.toks = name, toks
         self.funcs = C.functions(toks)
@@ -288,13 +294,20 @@ def sites(view):
             calls += C.walk_calls(s)
         res.append(_site_row(view, 'main', blk, calls))
     for fn, (lo, hi) in view.funcs.items():
-        if fn == 'main' or fn in EPOCHC_HELPERS:
+        if fn == 'main' or fn in EPOCHC_SKIP:
             continue
         body = C.parse_body(view.toks, lo, hi)
         cl = C.walk_calls(body)
         if any(c.name in EXIT_NAMES for c in cl):
             res.append(_site_row(view, fn, body, cl))
     res.sort(key=lambda r: r['line'])
+    # main()'s sites in the order main() runs them: after Epoch C C2 the boot's probes
+    # carry fe/boot.inc.c's lines (splice_moved), which do not sort with the shell's.
+    # Their slots in the list stay where the line sort put main's rows.
+    slots = [k for k, r in enumerate(res) if r['func'] == 'main']
+    inorder = sorted((res[k] for k in slots), key=lambda r: r['pos'])
+    for k, r in zip(slots, inorder):
+        res[k] = r
     _assign_ids(view, res)
     return res
 
@@ -346,7 +359,7 @@ def _site_row(view, fn, blk, calls):
     seq = collapse([VOC[c.name] for c in calls if c.name in VOC])
     sid = '-' if fn == 'main' else 'E:' + fn      # main's ids: _assign_ids
     text = [x for x in (call_text(c.name, c.args) for c in calls) if x]
-    return dict(id=sid, func=fn, first=a, line=term.line, code=code, why=why,
+    return dict(id=sid, func=fn, first=a, line=term.line, pos=term.tok.idx, code=code, why=why,
                 seq=seq, calls=calls, order=order_of(seq), flags=flags_of(seq), text=text,
                 hold='?')
 
@@ -941,7 +954,7 @@ def hold_check(view):
     for fn, (lo, hi) in sorted(view.funcs.items()):
         if fn == 'main' or fn in ('pwr_hold', 'pwr_release', 'pwr_release_all'):
             continue
-        if fn in EPOCHC_HELPERS:
+        if fn in EPOCHC_SKIP:
             continue        # walked as part of main(), where every call is its body
         if not any(t.kind == 'id' and t.text in ('pwr_hold', 'pwr_release')
                    for t in view.toks[lo:hi]):
@@ -1612,6 +1625,37 @@ def selftest():
     sm = sites(View('raw', C.load_raw(ph)))
     expect(sm[0]['seq'] != st[0]['seq'] and sm[1]['seq'] == st[1]['seq'],
            'mutant: a helper arm loses vid_term: only the sites that take that arm change')
+    # Epoch C C2: the probe moved into boot_run reads as main()'s own site
+    msrc = SELF_SRC.replace(
+        '#ifdef RIG\n   if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); '
+        'sceKernelExitGame(); return 0; }\n#endif\n',
+        '   if (boot_run(argc, argv) >= 0)\n      return 0;\n').replace(
+        'int main(int argc, char *argv[])\n',
+        'static __attribute__((noinline)) int boot_run(int argc, char *argv[])\n{\n'
+        '   int y = 0;\n'
+        '#ifdef RIG\n'
+        '   if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); '
+        'sceKernelExitGame(); return 0; }\n'
+        '#endif\n   return -1;\n}\nint main(int argc, char *argv[])\n')
+    pm = os.path.join(d, 'mm.c')
+    open(pm, 'w').write(msrc)
+    smv = sites(View('raw', C.load_raw(pm)))
+    same = len(smv) == len(st) and all(
+        a['seq'] == b['seq'] and a['code'] == b['code'] and a['why'] == b['why'] and
+        a['text'] == b['text'] and [c.name for c in a['calls']] == [c.name for c in b['calls']]
+        for a, b in zip(smv, st))
+    expect(same and 'boot_run(' in msrc and smv[1]['func'] == 'main' and
+           smv[1]['calls'][0].tok.ifs == ('#ifdef RIG',),
+           'Epoch C C2: a probe moved into boot_run is main()\'s site (calls, text, code, #if)')
+    bad_call = msrc.replace('   if (boot_run(argc, argv) >= 0)\n      return 0;\n',
+                            '   (void)boot_run(argc, argv);\n')
+    open(pm, 'w').write(bad_call)
+    try:
+        View('raw', C.load_raw(pm))
+        refused = False
+    except ValueError:
+        refused = True
+    expect(refused, 'Epoch C C2: boot_run called in another form is refused, not read as a site')
     # an argument is one value: `f & XC` with f = `XA | XB` is 0 (not XA | (XB & XC))
     pp = os.path.join(d, 'mp.c')
     open(pp, 'w').write('enum { XA = 1, XB = 2, XC = 4 };\n'

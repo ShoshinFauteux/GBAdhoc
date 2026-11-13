@@ -168,8 +168,8 @@ expect 0 "M9 control: include first" "0 too early" $CG --src "$T" --rules R5; re
 r6mut() {  # r6mut <declaration prefix> [<extra line>]
   $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
 m = [i for i, l in enumerate(L) if l.startswith('int main(')]; assert len(m) == 1, m
-c = [i for i, l in enumerate(L) if l.strip() == 'setup_exit_callback();' and i > m[0]]; assert c, c
-L.insert(c[0] + 1, '   fe_mut_boot_run(argc);')
+assert L[m[0] + 1] == '{', L[m[0] + 1]
+L.insert(m[0] + 2, '   fe_mut_boot_run(argc);')   # main()'s first statement (Epoch C C2: the boot is boot_run's)
 L[m[0]:m[0]] = ['$1 void fe_mut_boot_run(int x) { (void)x; }'] + ([\"\"\"${2:-}\"\"\"] if \"\"\"${2:-}\"\"\" else [])"
 }
 r6mut 'static'
