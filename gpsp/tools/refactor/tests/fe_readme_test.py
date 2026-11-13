@@ -265,7 +265,7 @@ def r3_rows(gpsp, root):
     later = re.search(r'^teardown, boot, session, loop have no fragment yet.*$', text, re.M)
     later = later.group(0) if later else ''
     (ok if later and 'in `main()` today' not in later and 'boot owns 5 G rows, which sit in `fe/link.d.inc.c` '
-     '(lines 897, 898, 899: `g_start_keepalive`' in later and 'teardown, session and loop own none' in later else bad)(
+     '(lines 893, 894, 895: `g_start_keepalive`' in later and 'teardown, session and loop own none' in later else bad)(
         'C11 the no-fragment-yet sentence: %s' % later[:260])
 
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
@@ -273,8 +273,9 @@ def r3_rows(gpsp, root):
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
             ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
             # HW-1 (claude/hw1-sleep) moved the last two: harness.f 613 -> 625 (the cb_stack
-            # EVT in core_health_evt), the shell's 2828 -> 2842 (r7-L5's holds, the S-9 key)
-            ('rom_hash_census', 'fe/harness.f.inc.c:625'), ('gamepak_reopens', 'main_psp.c:2842')]
+            # EVT in core_health_evt), the shell's 2828 -> 2842 (r7-L5's holds, the S-9 key);
+            # the review r2 follow-ups, the shell's 2842 -> 2844 (H3's comment at the boot hold)
+            ('rom_hash_census', 'fe/harness.f.inc.c:625'), ('gamepak_reopens', 'main_psp.c:2844')]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 

@@ -64,6 +64,9 @@ VOC = {
     'vid_term': 'VID', 'fe_evt': 'EVT', 'evt_shutdown': 'ES', 'handoff_run': 'HO',
     'lab_finish': 'HO', 'LAB_HANDOFF': 'HO', 'pwr_release_all': 'PRA',
     'relaunch_eboot': 'RL', 'sceKernelExitGame': 'EXIT', 'ui_notice': 'NOTICE',
+    # HW-1 H3: C1 / C2 show their notice through boot_stop_notice (fe/power.b:
+    # ui_notice with the boot's hold dropped while it waits)
+    'boot_stop_notice': 'NOTICE',
     'ui_loading_finish': 'LOADFIN', 'me_rend_teardown': 'ME', 'me_video_teardown': 'ME',
     'me_host_shutdown': 'ME', 'net_teardown': 'NET', 'online_psp_down': 'NET',
 }
