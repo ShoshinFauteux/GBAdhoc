@@ -357,3 +357,46 @@ Unlimited 200 -> 205: fewer presents thrown away). The harness key
 `backend/lab/inikeys.py` EXTRA_SRC and a labd restart); the candidates set it
 with `FE_EXTRA=-DPLAY_FF_FLIP_PACE=7`. Not measured: real 222 MHz (above), and
 the CPU renderer (ME off).
+
+## 1.5x and 2x (2026-11-13, claude/ff-15x, issue #37)
+
+Two multiplier presets before 3x: the settings row cycles 1.5x, 2x, 3x
+(default), Unlimited, Unlimited Smooth (`PCFG_FF_*` in that order; the enum is
+not persisted).
+
+**Pacing.** They take 3x's beta.4 road (`ff_flip_pace` bit 2): one emulated
+frame per loop under a vblank ceiling, the Smooth gate period, the 1-vblank
+flip hold. The ceiling is `ff_mult_x10 / 10` frames per vblank, in tenths
+(`psp/ff_gate.h` `ff_cap_*`, `ffh_cap` in `fe/pacing.c.inc.c`; for 3x the
+arithmetic of the old `ffh_cap3`). 1.5x emulates 2, 1, 2, 1 frames per vblank
+(3 per 2), 2x 2.
+
+**Drawing.** On pace (anchored, every interval since had its quota, the
+ceiling blocked into this interval or the one before) 1.5x and 2x draw the
+frame the ceiling stops after (`ffh_cap_draw`, `ff_cap_last`): one picture per
+vblank, advancing exactly 2, 1, 2, 1 (2, 2) game frames. The wall-clock gate
+would pick a different frame of each burst as its 16667 us grid drifts against
+the 16683 us LCD, which at 1.5x reads as a held picture then a jump of 3. Off
+pace the gate decides (re-armed on the way out, so no boundary is counted as
+a resync). 3x still draws exactly the gate's frames.
+
+**Paced branch** (bit 2 off): `ff_mult_x10 / 10` frames a loop, tenths carried
+(`g_ffm_acc`): 1, 2, 1, 2 at 1.5x.
+
+**Unchanged:** audio (muted unless `ff_audio`), rewind, the core's frameskip
+(off under FF), the low-latency tiers (off under any FF), the wireless
+interlock.
+
+**config.ini.** `ff_mult_x10` keeps its old meaning (30 = a multiplier, 0 =
+unlimited), so an older build reads 1.5x/2x as 3x; `ff_speed_x10` (15/20/30)
+says which. Without it a multiplier is 3x: every existing file keeps its preset,
+including the 15/20 values 2.1.0 folded into 3x.
+
+**Tests.** `tools/test_ff_cadence.c` (via `run_ff_tests.py`, @extract
+`ff:ffh_cadence` and `ff:mult_frames`): the real ceiling, draw rule, hold and
+gate in a 59.94 Hz model; 1.5x at 2.5-10 ms frames, +-30 % jitter and 20 ms
+spikes is 89.91 fps with every vblank a new picture strictly alternating 2/1;
+2x 119.88 fps, all 2; a 14 ms console falls to the gate (<= 60 pictures, no
+gap of 4); 3x draws the gate's frames; a 3x -> 1.5x switch re-anchors. 12
+mutants (fragment, ff_gate.h, paced count, config_psp.c), all caught.
+Harness `ff_preset` takes `1.5x` / `2x`; EVT ff_win names the multiplier.

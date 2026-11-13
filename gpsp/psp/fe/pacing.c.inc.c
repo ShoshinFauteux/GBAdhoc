@@ -103,7 +103,7 @@ static unsigned ffh_cap_mult(void)
    return m ? m : 30u;   /* never 0 here: 0 would never stop waiting */
 }
 
-static void ffh_cap(void)
+static __attribute__((noinline)) void ffh_cap(void)
 {
    unsigned m = ffh_cap_mult();
    unsigned f = fe_host_frame_count(), vc = sceDisplayGetVcount();
@@ -134,7 +134,7 @@ static void ffh_cap(void)
  * (3x always, so 3x is unchanged) the draw gate decides; leaving the
  * ceiling's rule re-arms the gate, so its first frame is drawn at once
  * instead of waiting out a boundary the ceiling's frames used. */
-static int ffh_cap_draw(void)
+static __attribute__((noinline)) int ffh_cap_draw(void)
 {
    unsigned m = ffh_cap_mult(), vc = sceDisplayGetVcount();
    unsigned df = fe_host_frame_count() - g_ffc_f, dv = vc - g_ffc_vc;

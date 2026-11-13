@@ -33,7 +33,8 @@ def cadence_text():
     text = extract.extract(source, 'ff:ffh_cadence')
     assert text.startswith('static __attribute__((noinline)) int ffh_too_soon('), 'ff:ffh_cadence start'
     for fn in ('static int ffh_hold(void)', 'static unsigned ffh_cap_mult(void)',
-               'static void ffh_cap(void)', 'static int ffh_cap_draw(void)'):
+               'static __attribute__((noinline)) void ffh_cap(void)',
+               'static __attribute__((noinline)) int ffh_cap_draw(void)'):
         assert fn in text, 'ff:ffh_cadence lacks ' + fn
     return text
 

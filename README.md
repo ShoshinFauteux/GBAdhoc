@@ -331,6 +331,11 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
 
 ### <kbd>NEW</kbd> Fixes and smaller things
 
+- <kbd>NEW</kbd> **1.5x and 2x fast-forward** for when 3x is too fast
+  ([#37](https://github.com/ShoshinFauteux/GBAdhoc/issues/37)). Pick them in
+  *Settings > Gameplay > Fast-forward*; 3x stays the default. Both show a new picture on
+  every screen refresh, so the speed-up looks smooth. Sound is muted during fast-forward,
+  as with the other presets.
 - <kbd>NEW</kbd> ***Reset game*** in the in-game menu restarts the game as if you had
   switched it off and on. It asks first and writes your battery save before it resets. It
   works for GBA, GB and GBC games and is off during link play.
@@ -696,8 +701,10 @@ favourites, the state shelf) are unchanged and still apply.
 
 **Performance**
 - The renderer runs on the PSP's Media Engine, so both processors work on every frame.
-- Three fast-forward presets: **3x**, **Unlimited** (flat out, drawing fewer frames) and
-  **Unlimited Smooth** (flat out, up to 60 drawn). Hold or toggle.
+- Five fast-forward presets: <kbd>NEW</kbd> **1.5x** and <kbd>NEW</kbd> **2x** (a gentle
+  speed-up, with a new picture on every screen refresh), **3x** (the default),
+  **Unlimited** (flat out, drawing fewer frames) and **Unlimited Smooth** (flat out, up
+  to 60 drawn). Hold or toggle.
 - Dynarec optimisations and a pinned instruction-cache layout.
 - <kbd>NEW</kbd> Much faster self-modifying GBA code: exact retirement, translation reuse
   and in-place immediate patching.
@@ -794,7 +801,7 @@ confirm and ○ to go back.
 | | GB palette | Auto, Grey, DMG green, Pocket, GBC (auto) (the Game Boy Color's own colours for each original Game Boy game), and the 12 GBC button palettes (GBC Up ... GBC Right+B) |
 | Interface | Theme | dark or light |
 | | Menu style | Marquee or Shelf |
-| Gameplay | Fast-forward | 3x, Unlimited, Unlimited Smooth |
+| Gameplay | Fast-forward | <kbd>NEW</kbd> 1.5x, <kbd>NEW</kbd> 2x, 3x, Unlimited, Unlimited Smooth (3x is the default) |
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
 | | <kbd>NEW</kbd> Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
