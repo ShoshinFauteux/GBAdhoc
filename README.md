@@ -739,7 +739,8 @@ favourites, the state shelf) are unchanged and still apply.
   game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
   deleting each ask first: ✕ answers, any other button keeps what you have.
 - Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
-  you turn *Settings → Quick load asks first* off; <kbd>NEW</kbd> the save can ask before
+  you turn *Settings → Quick load asks first* off; <kbd>NEW</kbd> while it asks, ↑/↓ picks
+  any of your saved slots, with its picture and time; <kbd>NEW</kbd> the save can ask before
   overwriting with *Settings → Quick save asks first*).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
   periodically as you play, with a `.sav.bak` kept. Sleeping never touches the save.
@@ -767,7 +768,7 @@ favourites, the state shelf) are unchanged and still apply.
 | **△** | Rewind, while held (when *Rewind* is on; GBA) |
 | *(unbound)* | Cycle video preset |
 | **Select + L** | Quick save, slot 1 |
-| **Select + R** | Quick load, slot 1 (<kbd>NEW</kbd> asks first: ✕ loads, anything else keeps playing) |
+| **Select + R** | Quick load (<kbd>NEW</kbd> asks first, on slot 1: ↑/↓ picks another saved slot, ✕ loads, ○ keeps playing) |
 | **Select + △** | Pause screen |
 | **Select + Down** | Mystery Gift listener on/off |
 | **L + R + Select** | Screenshot |

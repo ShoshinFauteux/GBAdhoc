@@ -3242,8 +3242,8 @@ session_top:
              * with the SAVE STATES page's own question, opened over the
              * game.  The default quick load is a shoulder away from the
              * quick save, and a load replaces everything since the last
-             * save.  X loads (UI_ACT_LOADSTATE in the menu branch below,
-             * exactly the page's load); any other key is Resume.  Nothing
+             * save.  The d-pad picks another saved slot; X loads
+             * (UI_ACT_LOADSTATE below, the page's load); O is Resume.  Nothing
              * in slot 1: said at once, no menu -- one stat, after the
              * interrupted-save recovery the page's own scan would run.
              * Keyed on the action, so any binding of bind_quickload asks.

@@ -124,6 +124,8 @@ COMMON = r'''
 #define VID_GLYPH_O   "\x80"
 #define VID_GLYPH_X   "\x81"
 #define VID_GLYPH_SQ  "\x82"
+#define VID_GLYPH_UP  "\x87"
+#define VID_GLYPH_DOWN "\x88"
 enum { C_SEL = 1, C_ITEM, C_DIM, C_VALUE, C_ACCENT, C_CARD, C_ACCENT_DK,
        C_SHADOW, C_BG_TOP, C_HDR_BOT };
 static char drawn[64][96];

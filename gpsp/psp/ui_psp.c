@@ -5589,10 +5589,12 @@ int ui_state_load_done(int rc)
  * pressed, a shoulder away from the quick save -- the easiest wrong button
  * there is.  With Settings > "Quick load asks first" on (the default),
  * main_psp.c opens the menu and calls this: the SAVE STATES page, on `slot`,
- * with the load question already on its plate.  X loads exactly as X on
- * the page's own load question does (and the menu closes into the game);
- * any other key goes straight back into the game, Resume, having loaded nothing -- the visit
- * was only the question.  1 = asked; 0 = no menu open, or nothing saved in
+ * with the load question already on its plate.  The d-pad moves the
+ * question to the next saved slot (list, preview and time follow); X loads
+ * exactly as X on the page's own load question does (and the menu closes
+ * into the game); O goes straight back into the game, Resume, having loaded
+ * nothing -- the visit was only the question; every other key does
+ * nothing.  1 = asked; 0 = no menu open, or nothing saved in
  * the slot (the caller says so, and closes the menu). */
 int ui_state_load_ask(int slot)
 {
@@ -5730,6 +5732,33 @@ static ui_action screen_state_slots(unsigned edges)
     * other key keeps the slot, and no other key acts this frame. */
    if (g_slot_ask)
    {
+      /* THE QUICK LOAD BROWSES.  Its question is the whole visit, so the
+       * d-pad picks which state it is about: the next saved slot either way
+       * (the empty ones are skipped, so X always has a state to load), the
+       * list and the preview following.  X loads, O is Resume, and every
+       * other key does nothing -- a stray press no longer throws the
+       * question away.  An answer on the same frame as a direction (X while
+       * a held direction auto-repeats) is for the slot the screen shows:
+       * the question does not move under it.  The page's own load question
+       * keeps its rule. */
+      if (g_slot_ask_back && g_slot_ask == SLOT_ASK_LOAD)
+      {
+         int n = g_slot_ask_n, k = PSP_STATE_SLOT_COUNT;
+         if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
+            ;                    /* answered: the slot that was asked about */
+         else if (edges & (PSP_CTRL_UP | PSP_CTRL_LEFT))
+            do n = n > 1 ? n - 1 : PSP_STATE_SLOT_COUNT;
+            while (--k && !g_ov_slot[n - 1]);
+         else if (edges & (PSP_CTRL_DOWN | PSP_CTRL_RIGHT))
+            do n = n < PSP_STATE_SLOT_COUNT ? n + 1 : 1;
+            while (--k && !g_ov_slot[n - 1]);
+         if (n != g_slot_ask_n)
+         {
+            g_slot_ask_n = g_state_slot = n;
+            g_ov_dwell = 0;
+         }
+         edges &= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+      }
       if (edges & PSP_CTRL_CROSS)
       {
          int s = g_slot_ask_n, ask = g_slot_ask, back = g_slot_ask_back;
@@ -5873,12 +5902,20 @@ static ui_action screen_state_slots(unsigned edges)
       snprintf(cap, sizeof(cap), "Slot %d  -  %s", cur + 1,
                !g_ov_slot[cur] ? "empty"
                : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved");
-      vid_text(SS_PX, 228, cap, C_DIM);
+      /* The quick load's question browses, and its plate has no room
+       * left for the warning: it goes here (the row says slot and time). */
+      vid_text(SS_PX, 228, g_slot_ask_back && g_slot_ask == SLOT_ASK_LOAD
+                           ? "Unsaved progress is lost." : cap, C_DIM);
    }
    if (g_slot_ask)
    {
       char q[72];
-      if (g_slot_ask == SLOT_ASK_DELETE)
+      if (g_slot_ask == SLOT_ASK_LOAD && g_slot_ask_back)
+         /* The quick load's question, which browses (above). */
+         snprintf(q, sizeof(q), "Load Slot %d?      " VID_GLYPH_UP
+                  VID_GLYPH_DOWN " choose     " VID_GLYPH_X " load     "
+                  VID_GLYPH_O " back", g_slot_ask_n);
+      else if (g_slot_ask == SLOT_ASK_DELETE)
          snprintf(q, sizeof(q), "Delete Slot %d?      " VID_GLYPH_X
                   " delete     " VID_GLYPH_O " keep", g_slot_ask_n);
       else if (g_slot_ask == SLOT_ASK_LOAD)
