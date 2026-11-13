@@ -83,19 +83,28 @@
 # table before it is 4 B shorter for a commit whose short hash ends like one
 # of its entries, and at 208 (4 B above) such a build failed this entry
 # (tools/layout/ro_margin.py; docs/LAYOUT-PINNING.md, "Keeping the pads").
+# The 5.0.0 integration re-pin (HW-1, HW-2, the screenshots and the slot
+# browser merged on the beta line; the entries above are each branch's own):
+# main's blocks differ from every branch's, so MAIN puts main at the best
+# by-line shift against 957a5c4fbb1b (release 0x1420, 32.4 %; lab 0x0ae0,
+# 22.3 %); TEXT/FE/GB/CORE/RO hold pace_frame, fe_host_reset, hex_val,
+# me_replay_lines, pipe_latch#1 and netpacket_iface (lab 8 B under, .rodata's
+# 64 B steps).  Re-recorded: main (at, size), exit_cb, roster_valid,
+# pte_mutex_check_need_init and the lab's netpacket_iface; 37 entries, 0
+# differ in both sections.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x14e8
-size main                               33832
+at   main                               0x1420
+size main                               34264
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x1e4c
-at   roster_valid                       0x07c0
+at   exit_cb                            0x1760
+at   roster_valid                       0x0744
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d70
+at   pte_mutex_check_need_init          0x1d74
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -142,16 +151,16 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x0aac
-size main                               48892
+at   main                               0x0ae0
+size main                               49360
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x09e0
-at   roster_valid                       0x11ac
+at   exit_cb                            0x00d8
+at   roster_valid                       0x1130
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x1318
+at   pte_mutex_check_need_init          0x0828
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -169,7 +178,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x0ea0
 at   _ZL10pipe_latchv#1                 0x1960
-at   netpacket_iface                    0x0148
+at   netpacket_iface                    0x0140
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
