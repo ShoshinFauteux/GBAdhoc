@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "fe_png.h"
+#include "fe_png_priv.h"     /* what fe_png_stream.c shares */
 #include "fe_util.h"          /* fe_crc32: zlib-compatible, chainable */
 
 /* ---- sizes ---------------------------------------------------------------
@@ -37,18 +38,7 @@ size_t fe_png_work_bytes(unsigned w, unsigned h)
 }
 
 /* ---- output: PNG chunks, the IDAT stream, bits --------------------------- */
-typedef struct
-{
-   fe_png_write_fn write;
-   void    *ctx;
-   int      err;
-   size_t   total;
-   uint8_t *idat;            /* FE_PNG_IDAT bytes being gathered          */
-   size_t   idat_n;
-   uint32_t bitbuf;
-   unsigned bitcnt;
-   uint32_t adler_a, adler_b;
-} out_t;
+typedef fe_png_out out_t;
 
 static void put_be32(uint8_t *p, uint32_t v)
 {
@@ -65,7 +55,7 @@ static void out_raw(out_t *o, const void *d, size_t n)
    o->total += n;
 }
 
-static void chunk(out_t *o, const char *type, const uint8_t *data, size_t n)
+FE_PNG_SHARED void fe_png__chunk(out_t *o, const char *type, const uint8_t *data, size_t n)
 {
    uint8_t hd[8], crc[4];
    uint32_t c;
@@ -82,15 +72,15 @@ static void chunk(out_t *o, const char *type, const uint8_t *data, size_t n)
 static void idat_byte(out_t *o, uint8_t b)
 {
    o->idat[o->idat_n++] = b;
-   if (o->idat_n == FE_PNG_IDAT)
+   if (o->idat_n == o->idat_cap)
    {
-      chunk(o, "IDAT", o->idat, o->idat_n);
+      fe_png__chunk(o, "IDAT", o->idat, o->idat_n);
       o->idat_n = 0;
    }
 }
 
 /* n <= 16 bits, LSB first (DEFLATE's bit order). */
-static void bits(out_t *o, uint32_t v, unsigned n)
+FE_PNG_SHARED void fe_png__bits(out_t *o, uint32_t v, unsigned n)
 {
    o->bitbuf |= v << o->bitcnt;
    o->bitcnt += n;
@@ -254,10 +244,10 @@ static int dist_code(unsigned d)      /* 1..32768 -> 0..29 */
    return c;
 }
 
-#define TOK_MATCH 0x80000000u
+#define TOK_MATCH FE_PNG_TOK_MATCH
 
 /* One dynamic-Huffman block of tok[0..nt). */
-static void block(out_t *o, const uint32_t *tok, unsigned nt, int final)
+FE_PNG_SHARED void fe_png__block(out_t *o, const uint32_t *tok, unsigned nt, int final)
 {
    uint32_t lf[286], df[30], cf[19];
    uint8_t  ll[286], dl[30], cl[19], all[286 + 30];
@@ -359,20 +349,20 @@ static void block(out_t *o, const uint32_t *tok, unsigned nt, int final)
    huff_codes(dl, 30, dc);
    huff_codes(cl, 19, cc);
 
-   bits(o, final ? 1u : 0u, 1);
-   bits(o, 2u, 2);                           /* BTYPE 10: dynamic */
-   bits(o, nl - 257u, 5);
-   bits(o, nd - 1u, 5);
-   bits(o, nc - 4u, 4);
+   fe_png__bits(o, final ? 1u : 0u, 1);
+   fe_png__bits(o, 2u, 2);                           /* BTYPE 10: dynamic */
+   fe_png__bits(o, nl - 257u, 5);
+   fe_png__bits(o, nd - 1u, 5);
+   fe_png__bits(o, nc - 4u, 4);
    for (i = 0; i < nc; i++)
-      bits(o, cl[CLORD[i]], 3);
+      fe_png__bits(o, cl[CLORD[i]], 3);
    for (i = 0; i < nr; i++)
    {
       unsigned s = rle[i];
-      bits(o, cc[s], cl[s]);
-      if (s == 16) bits(o, rle_x[i], 2);
-      else if (s == 17) bits(o, rle_x[i], 3);
-      else if (s == 18) bits(o, rle_x[i], 7);
+      fe_png__bits(o, cc[s], cl[s]);
+      if (s == 16) fe_png__bits(o, rle_x[i], 2);
+      else if (s == 17) fe_png__bits(o, rle_x[i], 3);
+      else if (s == 18) fe_png__bits(o, rle_x[i], 7);
    }
    for (i = 0; i < nt; i++)
    {
@@ -381,15 +371,15 @@ static void block(out_t *o, const uint32_t *tok, unsigned nt, int final)
       {
          unsigned l = ((t >> 16) & 0xFFu) + 3u, d = t & 0xFFFFu;
          int c = len_code(l), e = dist_code(d);
-         bits(o, lc[257 + c], ll[257 + c]);
-         if (LEXT[c]) bits(o, l - LBASE[c], LEXT[c]);
-         bits(o, dc[e], dl[e]);
-         if (DEXT[e]) bits(o, d - DBASE[e], DEXT[e]);
+         fe_png__bits(o, lc[257 + c], ll[257 + c]);
+         if (LEXT[c]) fe_png__bits(o, l - LBASE[c], LEXT[c]);
+         fe_png__bits(o, dc[e], dl[e]);
+         if (DEXT[e]) fe_png__bits(o, d - DBASE[e], DEXT[e]);
       }
       else
-         bits(o, lc[t], ll[t]);
+         fe_png__bits(o, lc[t], ll[t]);
    }
-   bits(o, lc[256], ll[256]);
+   fe_png__bits(o, lc[256], ll[256]);
 }
 
 /* ---- LZ77 over the filtered image ---------------------------------------- */
@@ -468,21 +458,21 @@ static void deflate_all(out_t *o, const uint8_t *raw, size_t n,
       if (nt == NTOK)
       {
          closed = pos >= n;
-         block(o, tok, nt, closed);
+         fe_png__block(o, tok, nt, closed);
          nt = 0;
       }
    }
    if (closed)
       ;
    else if (nt || n == 0)
-      block(o, tok, nt, 1);
+      fe_png__block(o, tok, nt, 1);
    else
    {
       /* the last block was flushed full: close the stream with an empty
        * fixed block (BFINAL, BTYPE 01, EOB = 7 zero bits) */
-      bits(o, 1u, 1);
-      bits(o, 1u, 2);
-      bits(o, 0u, 7);
+      fe_png__bits(o, 1u, 1);
+      fe_png__bits(o, 1u, 2);
+      fe_png__bits(o, 0u, 7);
    }
 #undef INSERT
 }
@@ -561,6 +551,41 @@ static uint8_t paeth(int a, int b, int c)
    return (uint8_t)c;
 }
 
+/* Filter one RGB row (cur, the row above `up`, stride bytes) into
+ * d[0..stride]: d[0] is the filter, libpng's heuristic -- the one with the
+ * smallest sum of absolute (signed) residuals. */
+FE_PNG_SHARED void fe_png__filter_row(const uint8_t *cur, const uint8_t *up,
+                                      size_t stride, uint8_t *d)
+{
+   unsigned long sum[5] = { 0, 0, 0, 0, 0 };
+   unsigned best = 0, f;
+   size_t i;
+   for (i = 0; i < stride; i++)
+   {
+      int a = i >= 3 ? cur[i - 3] : 0, b = up[i], c = i >= 3 ? up[i - 3] : 0;
+      uint8_t v[5];
+      v[0] = cur[i];
+      v[1] = (uint8_t)(cur[i] - a);
+      v[2] = (uint8_t)(cur[i] - b);
+      v[3] = (uint8_t)(cur[i] - ((a + b) >> 1));
+      v[4] = (uint8_t)(cur[i] - paeth(a, b, c));
+      for (f = 0; f < 5; f++)
+         sum[f] += v[f] < 128 ? v[f] : 256u - v[f];
+   }
+   for (f = 1; f < 5; f++)
+      if (sum[f] < sum[best])
+         best = f;
+   d[0] = (uint8_t)best;
+   for (i = 0; i < stride; i++)
+   {
+      int a = i >= 3 ? cur[i - 3] : 0, b = up[i], c = i >= 3 ? up[i - 3] : 0;
+      uint8_t p = best == 0 ? 0 : best == 1 ? (uint8_t)a :
+                  best == 2 ? (uint8_t)b : best == 3 ? (uint8_t)((a + b) >> 1)
+                            : paeth(a, b, c);
+      d[1 + i] = (uint8_t)(cur[i] - p);
+   }
+}
+
 int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
                   int layout, void *work, size_t work_bytes,
                   fe_png_write_fn write, void *ctx, fe_png_info *info)
@@ -633,37 +658,9 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
       {
          const uint16_t *r = row_of(pix, pitch, y);
          uint8_t *d = raw + rawn, *sw;
-         unsigned long sum[5] = { 0, 0, 0, 0, 0 };
-         unsigned best = 0, f;
-         size_t i;
          for (x = 0; x < w; x++)
             to_rgb(r[x], layout, cur + x * 3u);
-         /* libpng's heuristic: the filter with the smallest sum of
-          * absolute (signed) residuals */
-         for (i = 0; i < stride; i++)
-         {
-            int a = i >= 3 ? cur[i - 3] : 0, b = up[i], c = i >= 3 ? up[i - 3] : 0;
-            uint8_t v[5];
-            v[0] = cur[i];
-            v[1] = (uint8_t)(cur[i] - a);
-            v[2] = (uint8_t)(cur[i] - b);
-            v[3] = (uint8_t)(cur[i] - ((a + b) >> 1));
-            v[4] = (uint8_t)(cur[i] - paeth(a, b, c));
-            for (f = 0; f < 5; f++)
-               sum[f] += v[f] < 128 ? v[f] : 256u - v[f];
-         }
-         for (f = 1; f < 5; f++)
-            if (sum[f] < sum[best])
-               best = f;
-         d[0] = (uint8_t)best;
-         for (i = 0; i < stride; i++)
-         {
-            int a = i >= 3 ? cur[i - 3] : 0, b = up[i], c = i >= 3 ? up[i - 3] : 0;
-            uint8_t p = best == 0 ? 0 : best == 1 ? (uint8_t)a :
-                        best == 2 ? (uint8_t)b : best == 3 ? (uint8_t)((a + b) >> 1)
-                                  : paeth(a, b, c);
-            d[1 + i] = (uint8_t)(cur[i] - p);
-         }
+         fe_png__filter_row(cur, up, stride, d);
          rawn += stride + 1u;
          sw = up;
          up = cur;
@@ -675,6 +672,7 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
    o.write = write;
    o.ctx = ctx;
    o.idat = idat;
+   o.idat_cap = FE_PNG_IDAT;
    o.adler_a = 1;
    o.adler_b = 0;
 
@@ -686,14 +684,14 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
    ihdr[10] = 0;
    ihdr[11] = 0;
    ihdr[12] = 0;
-   chunk(&o, "IHDR", ihdr, 13);
+   fe_png__chunk(&o, "IHDR", ihdr, 13);
    if (indexed)
    {
       uint8_t plte[256 * 3];
       unsigned i;
       for (i = 0; i < colors; i++)
          to_rgb(pal[i], layout, plte + i * 3u);
-      chunk(&o, "PLTE", plte, colors * 3u);
+      fe_png__chunk(&o, "PLTE", plte, colors * 3u);
    }
    /* zlib stream: header, DEFLATE, Adler-32 of the filtered data */
    idat_byte(&o, 0x78);
@@ -709,8 +707,8 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
          idat_byte(&o, ad[i]);
    }
    if (o.idat_n)
-      chunk(&o, "IDAT", o.idat, o.idat_n);
-   chunk(&o, "IEND", NULL, 0);
+      fe_png__chunk(&o, "IDAT", o.idat, o.idat_n);
+   fe_png__chunk(&o, "IEND", NULL, 0);
 
    if (info)
    {
@@ -721,3 +719,4 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
    }
    return o.err ? -2 : 0;
 }
+

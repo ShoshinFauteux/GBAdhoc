@@ -24,6 +24,7 @@ OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
        sidecar_dirs.o \
        config_psp.o \
        ctl_map.o \
+       ../frontend-common/fe_png_stream.o \
        $(MGNET_OBJS) \
        $(MGIFT_OBJS) \
        stb_impl.o layout_pad_fe.o \
@@ -175,7 +176,11 @@ endif
 # LAYOUT_PAD_RO_BYTES=N: the same in .rodata, before instance A's.  Whoever
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
-# (docs/LAYOUT-PINNING.md, "Keeping the pads").
+# (docs/LAYOUT-PINNING.md, "Keeping the pads").  The pad follows the linker's
+# merged string table, and what comes after it is 64 B aligned: keep the pad's
+# end well inside a 64 B step (tools/layout/ro_margin.py), because the table is
+# a few bytes shorter for a commit whose version string ends like one of its
+# entries ("59" for ...f0ce959).
 LAYOUT_PAD_RO_BYTES ?= 512
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
@@ -191,7 +196,7 @@ LAYOUT_PAD_CORE_BYTES ?= 888
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
 # it (fe_rewind's per-frame capture, the link glue, B's cold text).
-LAYOUT_PAD_GB_BYTES ?= 996
+LAYOUT_PAD_GB_BYTES ?= 868
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 # beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link

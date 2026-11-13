@@ -71,6 +71,18 @@
 # netpacket_iface; re-recorded: main (at, size), exit_cb, roster_valid
 # (transport_adhoc.c's switch wait grew the code before it) and
 # pte_mutex_check_need_init.
+# "As displayed" screenshots (claude/shots-displayed): the screenshot code in
+# main_psp.o (+632 B release, +668 B lab after -Os), the capture and settings
+# code before layout_pad_fe (fe_png_stream.o is linked there for that) and
+# fe_png.o's split are given back by the text, FE and GB pads (lab also CORE),
+# so every per-frame anchor holds.  Re-recorded, as each re-pin does: exit_cb
+# (first after the text pad, -0x278 / -0x29c), the lab's pte_mutex_check_
+# need_init (first after the CORE pad, -28), and netpacket_iface 8 B under
+# (.rodata moves in 64 B steps here: the nearer of -8 / +56).  The release RO
+# pad is 236 so that its end sits 32 B above that step: the merged string
+# table before it is 4 B shorter for a commit whose short hash ends like one
+# of its entries, and at 208 (4 B above) such a build failed this entry
+# (tools/layout/ro_margin.py; docs/LAYOUT-PINNING.md, "Keeping the pads").
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -101,7 +113,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x1720
 at   _ZL10pipe_latchv#1                 0x01e0
-at   netpacket_iface                    0x1ea8
+at   netpacket_iface                    0x1ea0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0

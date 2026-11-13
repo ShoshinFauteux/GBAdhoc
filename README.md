@@ -318,13 +318,19 @@ unchanged.
 Press **L + R + SELECT** (or your own shortcut) as before. What changed
 ([#13](https://github.com/ShoshinFauteux/GBAdhoc/issues/13)):
 
+- <kbd>NEW</kbd> **They show the screen as you see it.** A screenshot is the whole 480 x 272
+  screen, with your scale, smoothing, screen effect, colour, ambient bars and Game Boy palette,
+  but without the menu, the FPS counter or any message on top. To save only the game's own
+  picture at its own size (240 x 160 for GBA, 160 x 144 for GB and GBC), as earlier versions
+  did, set ***Settings → Screenshots → Screenshot picture*** to *Game only*.
 - **They go to `PICTURE/GBAdhoc` by default,** so you can open them from the XMB's Photo
   column. To keep them beside the app instead, set ***Settings → Screenshots → Screenshot
   folder*** to *GBAdhoc/Screenshots* (<kbd>NEW</kbd> its own `Screenshots` folder in the app
   folder; it was `log/` until 4.6.0-beta.3). On a Go running GBAdhoc from internal storage, they
   save to internal storage.
-- **They are PNGs by default,** usually a few KB each. ***Screenshot format*** switches
-  back to BMP, about 115 KB each.
+- **They are PNGs by default:** usually under 200 KB for the whole screen, a few KB for the
+  game picture alone. ***Screenshot format*** switches back to BMP: about 390 KB for the screen,
+  115 KB for the game picture.
 - **They are named after the game and the time,** such as
   `Pokemon - Emerald Version (USA)_2026-10-30_14-05-12.png`.
 - **A message tells you** the screenshot was saved, or that it failed.
@@ -803,7 +809,8 @@ confirm and ○ to go back.
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
-| Screenshots | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
+| Screenshots | <kbd>NEW</kbd> Screenshot picture | As displayed (default: the whole screen, without menus or messages) or Game only |
+| | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
 | | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc/Screenshots* |
 | Controls | Thumbstick | off, moves (a second d-pad) or custom |
 | | Button mapping | every button and shortcut; the menu button |

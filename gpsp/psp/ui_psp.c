@@ -647,6 +647,7 @@ static const demo_step rwl_demo_script[] = {
    { PSP_CTRL_UP,      2, 6 },   /* Thumbstick                            */
    { PSP_CTRL_UP,      2, 6 },   /* Screenshot folder                     */
    { PSP_CTRL_UP,      2, 6 },   /* Screenshot format                     */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot picture                    */
    { PSP_CTRL_UP,      2, 6 },   /* Rewind length                         */
    { DEMO_DUMP,        1, 0 },   /* ge_rwl_0: the value on the card       */
    { PSP_CTRL_RIGHT,   2, 6 },
@@ -675,6 +676,7 @@ static const demo_step clk_demo_script[] = {
    { PSP_CTRL_UP,      2, 6 },   /* Thumbstick                            */
    { PSP_CTRL_UP,      2, 6 },   /* Screenshot folder                     */
    { PSP_CTRL_UP,      2, 6 },   /* Screenshot format                     */
+   { PSP_CTRL_UP,      2, 6 },   /* Screenshot picture                    */
 #ifdef REWIND
    { PSP_CTRL_UP,      2, 6 },   /* Rewind length                         */
    { PSP_CTRL_UP,      2, 6 },   /* Rewind                                */
@@ -1875,7 +1877,7 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
 #ifdef REWIND
        SET_REWIND, SET_REWIND_MB,
 #endif
-       SET_HDR_SHOT, SET_SHOT_FMT, SET_SHOT_DIR,
+       SET_HDR_SHOT, SET_SHOT_SRC, SET_SHOT_FMT, SET_SHOT_DIR,
        SET_HDR_CTL, SET_STICK, SET_CONTROLS,
        SET_COUNT };
 
@@ -1958,8 +1960,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 #endif
    /* Screenshots (issue #13).  Above CONTROLS, so Thumbstick and Button
     * mapping stay the last two rows the harness walkers wrap up to (the
-    * rewind-length walker takes two more UPs for these rows). */
+    * rewind-length walker takes three more UPs for these rows). */
    { 1, "SCREENSHOTS" },
+   { 0, "Screenshot picture" },
    { 0, "Screenshot format" },
    { 0, "Screenshot folder" },
    /* Last, so every row above keeps its position (the harness ui_demo walks
@@ -2528,6 +2531,10 @@ static void settings_adjust(int id, int dir)
       fe_evt("rewind_setting on=%d mb=%d", g_pcfg.rewind, g_pcfg.rewind_mb);
       break;
 #endif
+   case SET_SHOT_SRC:
+      g_pcfg.shot_source = g_pcfg.shot_source == PCFG_SHOT_GAME
+                              ? PCFG_SHOT_DISPLAYED : PCFG_SHOT_GAME;
+      break;
    case SET_SHOT_FMT:
       g_pcfg.shot_format = g_pcfg.shot_format == PCFG_SHOT_PNG ? PCFG_SHOT_BMP
                                                                : PCFG_SHOT_PNG;
@@ -2881,6 +2888,11 @@ static ui_action screen_settings(unsigned edges)
          break;
       }
 #endif
+      case SET_SHOT_SRC:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.shot_source == PCFG_SHOT_GAME ? "Game only"
+                                                  : "As displayed");
+         break;
       case SET_SHOT_FMT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.shot_format == PCFG_SHOT_BMP ? "BMP" : "PNG");
@@ -2974,10 +2986,18 @@ static ui_action screen_settings(unsigned edges)
          snprintf(f, sizeof(f), "Heavy games and link play need 333 MHz.");
       footer(f);
    }
+   else if (g_cursor == SET_SHOT_SRC)
+      footer(g_pcfg.shot_source == PCFG_SHOT_GAME
+                ? "Game only: the game's own picture, at its own size."
+                : "As displayed: the whole screen as you see it, no menus.");
    else if (g_cursor == SET_SHOT_FMT)
       footer(g_pcfg.shot_format == PCFG_SHOT_BMP
-                ? "BMP: uncompressed, about 115 KB a picture."
-                : "PNG: compressed, usually a few KB a picture.");
+                ? (g_pcfg.shot_source == PCFG_SHOT_GAME
+                      ? "BMP: uncompressed, about 115 KB a picture."
+                      : "BMP: uncompressed, about 390 KB a picture.")
+                : (g_pcfg.shot_source == PCFG_SHOT_GAME
+                      ? "PNG: compressed, usually a few KB a picture."
+                      : "PNG: compressed, usually under 200 KB a picture."));
    else if (g_cursor == SET_SHOT_DIR)
       footer(g_pcfg.shot_folder == PCFG_SHOT_APP
                 ? "In the Screenshots folder beside GBAdhoc's EBOOT."
