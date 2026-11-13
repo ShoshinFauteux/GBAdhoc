@@ -21,6 +21,15 @@
  *    int  model_inproc_try_return(void);         1 = back to the list (goto session_top)
  *    void model_process_end(void);               P1-P13 (recorded, never exits)
  * and read the runtime state below (g_relaunch, exit_reason, ...).
+ *
+ * Besides the call order it checks (Epoch C C0a-5):
+ *   - the fe_evt FORMAT STRINGS of every loop-teardown scenario, in order, against the
+ *     ones `psp-gcc -E` shows (EXP_SCEN[].evt): the Lab's parsers read them.  The early
+ *     sites' texts are per site and are compared by `exit_matrix.py check` on the tree;
+ *   - the power-hold balance: pwr_hold / pwr_release must be back at 0 when a scenario
+ *     returns to the game list, and nothing may be held at a handoff or an exit;
+ *   - g_running as the in-process return leaves it (1; 0 when HOME came during the
+ *     return, HW-2 F1) and the HOME_* scenarios when the golden has them.
  * Exit status: 0 all equal, 1 any difference (each one printed).
  */
 #include <stdarg.h>
@@ -34,7 +43,8 @@ enum {
    ORDER_MASK = 3,
    TD_PRE_EVT = 1u << 2, TD_LOADFIN = 1u << 3, TD_NOTICE = 1u << 4, TD_IO = 1u << 5,
    TD_CORE = 1u << 6, TD_REWIND = 1u << 7, PE_NO_VIDTERM = 1u << 8, PE_RELAUNCH = 1u << 9,
-   PE_NO_HANDOFF = 1u << 10, PE_NO_EVT = 1u << 11
+   PE_NO_HANDOFF = 1u << 10, PE_NO_EVT = 1u << 11, TD_ME = 1u << 12,
+   PE_HO_BRANCHES = 1u << 13
 };
 
 #include EXPECT_H
@@ -55,6 +65,11 @@ static void rec(const char *s)
 #define RELAUNCH_PROFILE  1
 #define RELAUNCH_GAMELIST 2
 static int g_relaunch, exit_code, have_variant, inproc_n;
+static volatile int g_running, g_exit_req;      /* HW-2 F1: the sticky HOME latch */
+static int g_link_fatal_code;                   /* HW-2 F5 */
+static const char *g_link_fatal_why;
+static int g_hold, g_hold_bad;                  /* the pwr_hold ledger of this run */
+static char g_evt[16384];                       /* fe_evt format strings, \x1f after each */
 static const char *exit_reason;
 static int sc_refusal[2], sc_refusal_n, sc_census_ok, sc_force, sc_retained;
 static void *g_cable_reserve;
@@ -68,7 +83,7 @@ static heap_snap_t snap_pre;
 STUB1(ui_set_wake_yield, void *)
 STUB1(sleep_quiesce_up, const char *)
 STUB1(play_lock_drop, const char *)
-STUB1(pwr_hold, const char *)
+static void pwr_hold(const char *w) { (void)w; g_hold++; rec("pwr_hold"); }
 static void ui_set_backdrop(const void *p, int w, int h) { (void)p; (void)w; (void)h; rec("ui_set_backdrop"); }
 STUB0(ui_return_hold)
 STUB0(home_host_stop)
@@ -118,25 +133,29 @@ STUB0(sleep_sim_fire)
 STUB1(ctl_turbo_stop, void *)
 STUB1(ui_set_turbo_locked, int)
 STUB0(emu_boost_start)
-STUB0(pwr_release)
+static void pwr_release(void) { if (--g_hold < 0) { g_hold = 0; g_hold_bad++; } rec("pwr_release"); }
 STUB0(vid_term)
 STUB0(shash_close)
 static void gpsp_rtc_peek(long long *a, long long *b, int *c) { *a = *b = 0; *c = 0; rec("gpsp_rtc_peek"); }
 static void core_health_evt_fn(const char *a) { (void)a; rec("core_health_evt"); }
 STUB0(evt_shutdown)
-STUB0(pwr_release_all)
-static void handoff_run(int c, const char *w) { (void)c; (void)w; rec("handoff_run"); }
-static void lab_finish(int c, const char *w) { (void)c; (void)w; rec("handoff_run"); }
+static void pwr_release_all(void) { g_hold = 0; rec("pwr_release_all"); }
+static void handoff_run(int c, const char *w) { (void)c; (void)w; g_hold_bad += g_hold != 0; rec("handoff_run"); }
+static void lab_finish(int c, const char *w) { (void)c; (void)w; g_hold_bad += g_hold != 0; rec("handoff_run"); }
 static int lab_active(void) { return 0; }
 static void relaunch_eboot(int gl) { (void)gl; rec("relaunch_eboot"); }
-static void sceKernelExitGame_real(void) { rec("sceKernelExitGame"); }
+static void sceKernelExitGame_real(void) { g_hold_bad += g_hold != 0; rec("sceKernelExitGame"); }
 static void ui_notice(const char *a, const char *b, const char *c, const char *d, int ms)
 { (void)a; (void)b; (void)c; (void)d; (void)ms; rec("ui_notice"); }
 STUB1(ui_loading_finish, int)
 static void fe_evt_fn(const char *fmt, ...)
 {
    char w[64] = "fe_evt:";
-   size_t k = strlen(w);
+   size_t k = strlen(w), n = strlen(g_evt);
+   if (n + strlen(fmt) + 2 < sizeof(g_evt)) {      /* the whole format string, for the text check */
+      strcpy(g_evt + n, fmt);
+      strcat(g_evt + n, "\x1f");
+   }
    while (*fmt && ((*fmt >= 'a' && *fmt <= 'z') || (*fmt >= 'A' && *fmt <= 'Z') || *fmt == '_') && k < 60)
       w[k++] = *fmt++;
    w[k] = 0;
@@ -234,18 +253,42 @@ int main(void)
       sc_refusal_n = 0;
       sc_refusal[0] = !strcmp(s, "LIST_REFUSED");
       sc_refusal[1] = !strcmp(s, "LIST_REFUSED") || !strcmp(s, "LIST_RETAIN_THEN_REFUSE");
+      g_exit_req = !strncmp(s, "HOME_", 5);      /* HW-2 F1 (exit_matrix.py SCENARIOS_F1) */
+      if (g_exit_req) {
+         g_relaunch = !strcmp(s, "HOME_PROFILE") ? RELAUNCH_PROFILE : RELAUNCH_GAMELIST;
+         sc_refusal[0] = !strcmp(s, "HOME_BEFORE_TEARDOWN");
+         sc_refusal[1] = sc_refusal[0] || !strcmp(s, "HOME_BEFORE_REFUSAL2");
+      }
+      g_link_fatal_why = !strcmp(s, "LINK_FATAL") ? "gblink_reload" : NULL;   /* HW-2 F5 */
+      g_link_fatal_code = g_link_fatal_why ? 4 : 0;
+      g_running = 0;
+      g_hold = g_hold_bad = 0;
+      g_evt[0] = 0;
       sc_census_ok = strcmp(s, "LIST_CENSUS") && strcmp(s, "LIST_FORCE");
       sc_force = !strcmp(s, "LIST_FORCE");
       sc_retained = g_relaunch == RELAUNCH_GAMELIST && !sc_refusal[0];
       model_session_end();
-      if (model_inproc_try_return())
+      if (model_inproc_try_return()) {
+         rec(g_running ? "g_running=1" : "g_running=0");
          rec("goto:session_top");
-      else
+         g_hold_bad += g_hold != 0;     /* back in the list still holding the switch */
+      } else
          model_process_end();
       n++;
       if (strcmp(g_rec, EXP_SCEN[i].seq)) {
          fails++;
          printf("  FAIL scenario %s\n     want: %s\n     got:  %s\n", s, EXP_SCEN[i].seq, g_rec);
+      }
+#if defined(EXPECT_HAS_EVT) && !defined(MODEL_NO_EVT_TEXT)
+      else if (strcmp(g_evt, EXP_SCEN[i].evt)) {
+         fails++;
+         printf("  FAIL scenario %s: log text\n     want: %s\n     got:  %s\n", s, EXP_SCEN[i].evt, g_evt);
+      }
+#endif
+      else if (g_hold_bad) {
+         fails++;
+         printf("  FAIL scenario %s: power hold not balanced (%d held at the end, %d bad points)\n",
+                s, g_hold, g_hold_bad);
       }
    }
    printf("test_exit_model[%s]: %d/%d equal%s\n", EXPECT_FLAVOUR, n - fails, n, fails ? "  FAIL" : "");

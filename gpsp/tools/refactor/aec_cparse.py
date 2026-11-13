@@ -162,19 +162,22 @@ def load_pp(path, fname='main_psp.c'):
 FRAG_INC = re.compile(r'^#include "(fe/[A-Za-z0-9_.]+\.inc\.c)"\s*$')
 
 
-def raw_lines(path, follow=False):
+def raw_lines(path, follow=False, base=None, over=None):
     """[(file, line, text)] of a source file; with follow, every `#include "fe/X.inc.c"`
     line of main_psp.c is replaced by that fragment's lines (in place, in source order:
-    the view split.py inverse gives), each line keeping its own file and line number."""
+    the view split.py inverse gives), each line keeping its own file and line number.
+    base: the psp/ directory the fragments are read from (default: the directory of
+    `path`; a MUTATED COPY of the shell sits elsewhere and names the tree's psp/ here).
+    over: {'fe/X.inc.c': host file}, a mutated copy read in place of that fragment."""
     import os
     with open(path, encoding='utf-8', errors='replace') as f:
         lines = f.read().split('\n')
     out = []
-    base = os.path.dirname(os.path.abspath(path))
+    base = base or os.path.dirname(os.path.abspath(path))
     for i, ln in enumerate(lines, 1):
         m = FRAG_INC.match(ln) if follow else None
         if m:
-            fp = os.path.join(base, m.group(1))
+            fp = (over or {}).get(m.group(1)) or os.path.join(base, m.group(1))
             if not os.path.exists(fp):
                 raise ValueError('%s:%d: fragment %s missing' % (path, i, fp))
             with open(fp, encoding='utf-8', errors='replace') as f:
@@ -184,14 +187,14 @@ def raw_lines(path, follow=False):
     return out
 
 
-def load_raw(path, follow=False, alias=None):
+def load_raw(path, follow=False, alias=None, base=None, over=None):
     """Tokens of a raw C file: comments removed, directives removed, all #if branches
     kept.  tok.ifs = tuple of the enclosing #if/#ifdef/#ifndef/#elif/#else texts.
     follow: expand main_psp.c's `#include "fe/X.inc.c"` (raw_lines); fragment tokens
     carry tok.file and an FLine.  alias: {identifier: identifier} renames at lex time."""
     toks, stack = [], []
     in_cmt, cont = False, False
-    for fl, i, raw in raw_lines(path, follow):
+    for fl, i, raw in raw_lines(path, follow, base, over):
         s = raw
         if in_cmt:
             e = s.find('*/')
