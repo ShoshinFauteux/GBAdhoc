@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include "gpsp_config.h"
+#include "reg_slots.h"   /* reg[32..63]: the one registry */
 
 // System mode and user mode are represented as the same here
 
@@ -128,7 +129,7 @@ typedef enum
    * stubs), cleared only by the ME_MIDFRAME_LOG capture (video_me_log.h).
    * The palette's twin of OAM_UPDATED.  The last slot: the ARM backends use
    * REG_USERDEF + 0..14, MIPS and x86 nothing above REG_SAVE6. */
-  PAL_UPDATED       = 63,
+  PAL_UPDATED       = RSLOT_PAL_UPDATED,
 
   /* ME_MIDFRAME_LOG WRITE MAPS (video_me_log.h, "write maps"): bit k set =
    * bytes [32k, 32k + 32) of the 1 KiB array were written since the
@@ -138,13 +139,13 @@ typedef enum
    * the others (C write_memory, the x86 stubs, a state load, the memory
    * reset) set ~0 = "all of it".  Read and cleared only by the
    * capture, which compares just the marked rows. */
-  OAM_WMAP          = 60,
-  PAL_WMAP          = 61,
+  OAM_WMAP          = RSLOT_OAM_WMAP,
+  PAL_WMAP          = RSLOT_PAL_WMAP,
 
   /* SPIN_SKIP: a spin loop's descriptor, set by its back-edge just before
    * it calls mips_update_gba, consumed (zeroed) on update_gba's entry.
    * Never live across anything else; reg[40] is DRPROF_HW's phase word. */
-  REG_SPIN_DESC     = 41,
+  REG_SPIN_DESC     = RSLOT_SPIN_DESC,
 
   /* The CPU's remaining slice cycles at the current I/O access, so C code
    * reached from a load or store can tell WHEN in the slice it happens
@@ -153,7 +154,7 @@ typedef enum
    * generate_io_cycle_sync); the interpreter keeps its cycles_remaining in
    * this very slot.  Read by the live timer counters (gba_memory.c
    * timer_now) and the link cable's event stamps (gbalink_core.c). */
-  REG_IO_CYCLES     = 62,
+  REG_IO_CYCLES     = RSLOT_IO_CYCLES,
 
   REG_MAX           = 64
 } ext_reg_numbers;

@@ -132,7 +132,8 @@ void drprof_blk_mark(void);
  * nothing: they are phase 0.  In a GBA_LINK build instance B's copy of this
  * code writes gbab_reg[40] (the objcopy rename), so each machine has its own
  * phase word. */
-#define DRPH_IDX 40
+#include "reg_slots.h"
+#define DRPH_IDX RSLOT_DRPH
 enum
 {
   DRPH_JIT = 0,      /* translated code + inline stub fast paths + asm glue */

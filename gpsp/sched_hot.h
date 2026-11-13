@@ -28,26 +28,28 @@
 #ifndef SCHED_HOT_H
 #define SCHED_HOT_H
 
+#include "reg_slots.h"
+
 #if defined(MIPS_ARCH) && defined(HAVE_DYNAREC)
 #define SCHED_HOT_IN_REG 1
 #endif
 
-/* reg[] slots (u32 words).  40 = DRPROF_HW's phase word (drprof.h DRPH_IDX),
- * 41 = REG_SPIN_DESC, 62 = REG_IO_CYCLES, 63 = PAL_UPDATED (cpu.h). */
-#define SCHED_SLOT_VIDEO_COUNT     32   /* s32 video_count             */
-#define SCHED_SLOT_EXECUTE_CYCLES  33   /* u32 execute_cycles          */
-#define SCHED_SLOT_CPU_TICKS       34   /* u32 cpu_ticks               */
-#define SCHED_SLOT_CPH_UGBA        35   /* u32 cph_ugba                */
-#define SCHED_SLOT_HOP_ACTIVE      36   /* u32 sched_hop_active        */
-#define SCHED_SLOT_SCHED_FAST      37   /* u32 sched_fast              */
-#define SCHED_SLOT_SERIAL_MODE     38   /* int serial_mode             */
-#define SCHED_SLOT_SERIAL_IRQ      39   /* u32 serial_irq_cycles       */
-#define SCHED_SLOT_TIMER_LAZY      42   /* u32 timer_lazy (hop_mask)   */
-#define SCHED_SLOT_CORE_PHASE_LVL  43   /* u32 core_phase_lvl          */
-#define SCHED_SLOT_TIMER           44   /* timer_type timer[4], 16 B each: 44..59 */
-#define SCHED_SLOT_CPH_STMR        60   /* u32 cph_stmr                */
-                                        /* 61: free                    */
-#define SCHED_TIMER_BYTES          16   /* sizeof(timer_type)          */
+/* reg[] slots (u32 words), from the registry (reg_slots.h): every word of
+ * reg[32..63] is claimed there.  cph_stmr (the sound-timer call counter) is
+ * NOT in the block: its old slot 60 is the ME write maps' OAM_WMAP, so it
+ * stays a C variable in main.c. */
+#define SCHED_SLOT_VIDEO_COUNT     RSLOT_VIDEO_COUNT      /* s32 video_count       */
+#define SCHED_SLOT_EXECUTE_CYCLES  RSLOT_EXECUTE_CYCLES   /* u32 execute_cycles    */
+#define SCHED_SLOT_CPU_TICKS       RSLOT_CPU_TICKS        /* u32 cpu_ticks         */
+#define SCHED_SLOT_CPH_UGBA        RSLOT_CPH_UGBA         /* u32 cph_ugba          */
+#define SCHED_SLOT_HOP_ACTIVE      RSLOT_HOP_ACTIVE       /* u32 sched_hop_active  */
+#define SCHED_SLOT_SCHED_FAST      RSLOT_SCHED_FAST       /* u32 sched_fast        */
+#define SCHED_SLOT_SERIAL_MODE     RSLOT_SERIAL_MODE      /* int serial_mode       */
+#define SCHED_SLOT_SERIAL_IRQ      RSLOT_SERIAL_IRQ       /* u32 serial_irq_cycles */
+#define SCHED_SLOT_TIMER_LAZY      RSLOT_TIMER_LAZY       /* u32 timer_lazy        */
+#define SCHED_SLOT_CORE_PHASE_LVL  RSLOT_CORE_PHASE_LVL   /* u32 core_phase_lvl    */
+#define SCHED_SLOT_TIMER           RSLOT_TIMER            /* timer_type timer[4]   */
+#define SCHED_TIMER_BYTES          16   /* sizeof(timer_type): 4 timers = RSLOT_TIMER_WORDS */
 
 /* Initial values (also used by the C definitions on other architectures).
  * SCHED_SERIAL_MODE_INIT must equal serial.h's SERIAL_MODE_AUTO (checked in

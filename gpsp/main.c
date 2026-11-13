@@ -32,7 +32,7 @@ s32 video_count = 0;
  * object linked after main.o keeps its D-cache sets (the pinned layout's
  * .bss: gbalink_hot, the hash tables, B's region).  Never read. */
 #define SCHED_HOLD_BSS_MAIN (112 + 4 * 3 /* timer, video_count, execute_cycles, cpu_ticks */ \
-                             + 4 * 3     /* core_phase_lvl, cph_ugba, cph_stmr */           \
+                             + 4 * 2     /* core_phase_lvl, cph_ugba (not cph_stmr) */      \
                              + SCHED_HOLD_FAST + SCHED_HOLD_HOP)
 #ifdef SCHED_FAST
 #define SCHED_HOLD_FAST 4                /* sched_fast */
@@ -598,8 +598,10 @@ void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
 typedef char core_phase_off_is_0[CORE_PHASE_OFF == 0 ? 1 : -1];
 #ifndef SCHED_HOT_IN_REG
 u32 core_phase_lvl    = CORE_PHASE_OFF;
-u32 cph_ugba, cph_stmr;
+u32 cph_ugba;
 #endif
+/* Never in the register block: reg[60] is OAM_WMAP (reg_slots.h). */
+u32 cph_stmr;
 u32 core_phase_clk_ns = 0;
 
 u32 cph_vid, cph_amix, cph_dsnd, cph_jit;

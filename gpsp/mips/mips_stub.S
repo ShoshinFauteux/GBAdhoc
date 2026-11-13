@@ -18,6 +18,7 @@
 
 #include "../gpsp_config.h"
 #include "../sched_hot.h"
+#include "../reg_slots.h"
 
 // MSR_FAST (codegen-q3): mode switches by MSR / SPSR restore without the C
 // call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
@@ -251,7 +252,7 @@ symbol:
 #ifdef DRPROF_HW
 // DRPROF_HW: publish the phase (drprof.h) around every C call from here.
 // $1 is free at every call site (arguments are in $4-$7).
-.equ DRPH_OFF, (40 * 4)
+.equ DRPH_OFF, (RSLOT_DRPH * 4)
 .equ CFNCALL_BYTES, 20
 .macro cfncall target, targetid
   .if \targetid == 0
@@ -836,9 +837,9 @@ defsymbl(smc_write)
   lw $1, REG_CPSR($16)            # (delay)
 1:
   collapse_flags                  # the interpreter reads NZCV from CPSR
-  sw reg_cycles, (62 * 4)($16)    # reg[REG_IO_CYCLES]: its cycle budget
+  sw reg_cycles, (RSLOT_IO_CYCLES * 4)($16)    # reg[REG_IO_CYCLES]: its cycle budget
   cfncall smc_pipe_step, 14
-  lw reg_cycles, (62 * 4)($16)    # what is left after the window
+  lw reg_cycles, (RSLOT_IO_CYCLES * 4)($16)    # what is left after the window
   move $19, $2                    # alert ($19 is dead: we never return)
   extract_flags                   # NZCV (and $1 = CPSR) as it left them
   bne $19, $0, write_io_epilogue
@@ -1277,7 +1278,6 @@ defobj(\name)
 defobj(timer)
   .space 4 * SCHED_TIMER_BYTES
   .set sched_pos, sched_pos + 4 * SCHED_TIMER_BYTES
-  sched_slot cph_stmr,          SCHED_SLOT_CPH_STMR,       0
   sched_gap 64                    # the end of reg[]: 0x100 bytes
 #else
   .space 0x100

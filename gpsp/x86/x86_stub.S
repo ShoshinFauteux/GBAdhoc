@@ -17,6 +17,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
 #include "../gpsp_config.h"
+#include "../reg_slots.h"
 
 .align 4
 
@@ -98,9 +99,9 @@ _##symbol:
 .equ REG_SLEEP_CYCLES,  (24 * 4)
 .equ OAM_UPDATED,       (25 * 4)
 .equ REG_SAVE,          (26 * 4)
-.equ PAL_UPDATED,       (63 * 4)
-.equ OAM_WMAP,          (60 * 4)   # cpu.h: this stub keeps no row map -> ~0
-.equ PAL_WMAP,          (61 * 4)   # cpu.h: this stub keeps no row map -> ~0
+.equ PAL_UPDATED,       (RSLOT_PAL_UPDATED * 4)
+.equ OAM_WMAP,          (RSLOT_OAM_WMAP * 4)   # cpu.h: this stub keeps no row map -> ~0
+.equ PAL_WMAP,          (RSLOT_PAL_WMAP * 4)   # cpu.h: this stub keeps no row map -> ~0
 
 .equ load_u8_tbl,           -(9 * 16 * ADDR_SIZE_BYTES)
 .equ load_s8_tbl,           -(8 * 16 * ADDR_SIZE_BYTES)
