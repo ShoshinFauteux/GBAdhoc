@@ -51,6 +51,16 @@ __attribute__((used)) static u32 sched_hot_hold_data = 1;
 #elif defined(TIMER_LAZY)
 __attribute__((used)) static u32 sched_hot_hold_bss2;
 #endif
+/* ...and in .text: init_main and main_write_savestate came out 32 B (one
+ * function-alignment step) shorter each with the packed timers, which moved
+ * instance A's cold text after main.o (pipe_latch, me_replay_lines: the
+ * lock's CORE anchors) and B's before it.  64 B of zeros, never executed,
+ * give the bytes back inside main.o. */
+__asm__(".section .text.sched_hot_hold,\"ax\",@progbits\n"
+        ".balign 32\n"
+        "sched_hot_hold_text:\n"
+        ".fill 16, 4, 0\n"
+        ".previous\n");
 #endif
 
 u32 frame_counter = 0;
