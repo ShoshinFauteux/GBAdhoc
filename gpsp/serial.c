@@ -20,9 +20,19 @@
 #include "common.h"
 #include "main.h"   /* ADR-0051: core_phase probe */
 
-int serial_mode = SERIAL_MODE_AUTO;
+typedef char sched_serial_mode_init_is_auto[
+  SCHED_SERIAL_MODE_INIT == SERIAL_MODE_AUTO ? 1 : -1];
 
-#ifdef SERIAL_IDLE_FAST
+#ifdef SCHED_HOT_IN_REG
+/* Both live in the register block on MIPS (sched_hot.h, mips_stub.S):
+ * update_gba reads them on every pass. */
+extern u32 serial_irq_cycles;
+#else
+int serial_mode = SERIAL_MODE_AUTO;
+#endif
+
+#if defined(SCHED_HOT_IN_REG)
+#elif defined(SERIAL_IDLE_FAST)
 /* main.c's idle fast path reads it (contender #3, docs/DYNAREC-PROFILE.md) */
 u32 serial_irq_cycles = 0;
 #else
