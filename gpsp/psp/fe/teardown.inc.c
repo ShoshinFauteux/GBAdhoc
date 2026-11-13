@@ -24,7 +24,7 @@ enum
    XE_HO_PASS   = 1u << 4
 };
 
-static inline __attribute__((always_inline)) void exit_early_begin(unsigned f)
+static __attribute__((noinline, section(".text.fe_cold.exit_early_begin"))) void exit_early_begin(unsigned f)
 {
    if (f & XE_ME)
    {
@@ -49,7 +49,7 @@ static inline __attribute__((always_inline)) void exit_early_begin(unsigned f)
    }
 }
 
-static inline __attribute__((always_inline)) void exit_early_end(unsigned f,
+static __attribute__((noinline, section(".text.fe_cold.exit_early_end"))) void exit_early_end(unsigned f,
    int code, const char *why, int pass)
 {
    evt_shutdown();
@@ -80,7 +80,7 @@ static inline __attribute__((always_inline)) void exit_early_end(unsigned f,
  * menu's Exit, START+SELECT, a quit to the game list, a profile change, a
  * failed reset, the wake overlay's Quit, the harness and Lab ends -- runs this,
  * then main()'s in-process return (game list only), then process_end. */
-static inline __attribute__((always_inline)) void session_end(int have_variant)
+static __attribute__((noinline, section(".text.fe_cold.session_end"))) void session_end(int have_variant)
 {
    /* The quit / exit teardown runs outside the loop's park point (SRAM
     * flush, the ME and HOME modules, the radio, the core's unload, the
@@ -175,7 +175,7 @@ static inline __attribute__((always_inline)) void session_end(int have_variant)
 
 /* PROCESS END (P1-P13): audio, display, the last log lines, the handoff, the
  * relaunch a profile change or a refused return asks for, the XMB. */
-static inline __attribute__((always_inline)) void process_end(int exit_code,
+static __attribute__((noinline, section(".text.fe_cold.process_end"))) void process_end(int exit_code,
    const char *exit_reason)
 {
    audio_stop();
