@@ -35,6 +35,11 @@
 # had it, 2,816 B earlier: pte_mutex_check_need_init, me_replay_lines and
 # pipe_latch#1 re-recorded (pipe_latch#1 0x1960 as in that ELF;
 # me_replay_lines 160 B under its 0x0f40, the function grew), nothing else.
+# PCARG's site emitters log their jal for SMC_REUSE (docs/PCARG-SIDE.md
+# section 9): both sections hold as recorded, nothing re-recorded.  The
+# translators' +320 B (release) / +384 B (lab) comes out of
+# LAYOUT_PAD_XLAT_BYTES, B's +352 B out of its translator pad, and the
+# emitters' -128 B of cold text goes into .text.pcarg_layout_pad.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)

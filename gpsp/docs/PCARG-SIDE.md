@@ -130,9 +130,9 @@ translate_block_thumb -2,304 B, translate_block_arm -28,096 B; lab -28,160 B) an
 
 | pad | where | release / lab |
 |---|---|---:|
-| `LAYOUT_PAD_XLAT_BYTES` (new, psp/Makefile, lab-pads.env) | in front of A's translate_block_arm (psp/layout_pad_warm.S); B's hot path follows it | 5,824 / 5,888 |
-| B's translator pad | after B's translate_block_arm (psp/gbalink_b_stubs.c) | 5,856 |
-| `.text.pcarg_layout_pad` | the core's cold text, both instances (mips_emit.h, PSP only) | 3,936 (3,456 with section 8) |
+| `LAYOUT_PAD_XLAT_BYTES` (new, psp/Makefile, lab-pads.env) | in front of A's translate_block_arm (psp/layout_pad_warm.S); B's hot path follows it | 5,824 / 5,888 (5,504 / 5,504 with section 9) |
+| B's translator pad | after B's translate_block_arm (psp/gbalink_b_stubs.c) | 5,856 (5,504 with section 9) |
+| `.text.pcarg_layout_pad` | the core's cold text, both instances (mips_emit.h, PSP only) | 3,936 (3,456 with section 8, 3,584 with section 9) |
 
 The side table is one 128 KiB object per instance, so `.bss` after it moves by whole ways. Result against the
 cf44b8a9e624 lab ELF (and the e70d60aa release ELF): layout.lock [lab] and [release] 37/37 with the committed
@@ -255,3 +255,76 @@ Mario Golf f1155, reconverges), which its 16x-cache lockstep cannot reproduce. T
 cache size (section 7's method, builds/b5int3-out/ls_small.py) classifies both **timing** on this build, with
 section 7's figures: the candidate dynarec equals the interpreter replaying its own I/O and IRQs for 19.98 M and
 40.00 M instructions.
+
+## 9. SMC_REUSE call-site records (third review; claude/beta5-base b84fb5d8)
+
+**The defect.** SMC_REUSE records every `jal` a RAM block makes into the stub zone, so that a revived block
+gets its call sites back as the translator emitted them (cpu_threaded.c, "MEMORY-ACCESS CALL SITES": a site the
+stubs have re-pointed is not invisible to the guest). It collects them by redefining `mips_emit_jal` to log, and
+that redefinition comes after `mips/mips_emit.h` is included. Before PCARG_SIDE the single load and store sites
+were macros expanded inside `translate_block_*`, below the redefinition. `pcarg_load_site`,
+`pcarg_arm_store_site` and `pcarg_thumb_store_site` are functions in the header, above it: their four `jal`
+emits went unlogged, the records lacked every single load/store site, and a revival left those sites learnt.
+The reviewer measured it with `-DSMC_REUSE_DEBUG=1` (the only build that counts it): Hot Wheels, 1,500 frames,
+`sitebad` 1,343 of 49,458 records on the base and 23,284 of 36,645 on d9e9ce04.
+
+**The fix.** The three emitters are compiled with a logging `mips_emit_jal` of their own (`#pragma push_macro` /
+`pop_macro` around them, so the `jal` inside `generate_function_call_swap_delay` is covered too). It calls
+`smc_reuse_log_site_ool`, an out-of-line copy of the logger defined next to it in cpu_threaded.c. Nothing else
+in the header emits a `jal` from a function while a block is being translated.
+
+**The check.** `tools/drprof/pcarg_check.py` has three more arms, all TWIN=1 with `-DSMC_REUSE_DEBUG=1`
+(and `-DRAM_CACHE_KB=384`, like the others): `based` (the base commit), `padd` (the candidate with
+`PCARG_SIDE_PAD=1`) and `candd` (the candidate as shipped). It reads the twin's `smc_reuse:` line and fails
+unless `padd` has exactly the base's `sitebad`, `records` and `unlearnt` (same blocks, so the same records) and
+`candd` has no more `sitebad` than the base.
+
+Run on b84fb5d8 against e70d60aa: **PASS, 4 of 4**; the pad and forced arms are hash-identical to the base on
+every frame, `bad=0` everywhere.
+
+| fixture (frames) | base: sitebad / records / unlearnt | pad arm | as shipped |
+|---|---|---|---|
+| kf_payback (2,200) | 0 / 1,625,833 / 13,740,773 | 0 / 1,625,833 / 13,740,773 | 0 / 1,545,122 / 13,239,831 |
+| kf_ice_nine (3,900) | 0 / 3,795 / 475 | 0 / 3,795 / 475 | 0 / 3,725 / 460 |
+| kf_doom_ii (3,900) | 0 / 3,148 / 0 | 0 / 3,148 / 0 | 0 / 2,891 / 0 |
+| kf_hot_wheels_stunt_track_challenge (3,900) | 1,343 / 122,265 / 517,044 | 1,343 / 122,265 / 517,044 | 0 / 98,363 / 628,613 |
+
+The pad arm's reuse counters now equal the base's to the last unit (`hits` too), which is what "the same blocks"
+should give. Its translation counters moved with them (Hot Wheels `new` 384,711 in section 8 -> 488,366), so
+section 8's counter table describes the build before this fix. The base's own 1,343 on Hot Wheels is not
+PCARG's: it is in e70d60aa and is not investigated here.
+
+**BIOS loads through C.** With PCARG_SIDE the BIOS-region load stub can no longer test the caller's PC in `a1`,
+so every load of the BIOS made from inside the BIOS takes the open-load path: register save, `pcarg_dec`,
+`read_memory*`, restore (before, only a load made from outside the BIOS went there). The twin now counts them
+(`bios_c` on its `PCARG sites` line; gba_memory.c). Per frame, 18 fixtures: 11.8 Emerald overworld
+(ub_overworld), 8.1 FireRed, 5.7 Emerald battle, 5.1 hns_heavy, 3.5 Fire Emblem 8, 3.0 FIFA 07, 2.4 Advance
+Wars 2, 1.3 SSX 3, 0.34 Hot Wheels, under 0.1 on Max Payne, Duke, Doom II, Ice Nine, Driver 2, Mario Tennis,
+Mario Golf, OpenLara and Payback. A dozen C calls a frame is far below what hardware can resolve; the path is
+left as it is.
+
+**Layout.** `LAYOUT_PAD_XLAT_BYTES` 5,824 -> 5,504 (lab 5,888 -> 5,504), B's translator pad 5,856 -> 5,504,
+`.text.pcarg_layout_pad` 3,456 -> 3,584; layout.lock holds as recorded in both flavours, nothing re-recorded
+(docs/LAYOUT-PINNING.md "Keeping the pads"). PSP-1000 boot heap unchanged: release 11,228,572 B, lab
+10,614,172 B.
+
+**Gate** (Lab build **957a5c4fbb1b**, `b5int4-b84fb5d-lab`, base cf44b8a9e624): smoke PASS 6/6. Full: 46/47
+fixtures PASS (Payback and Street Racing Syndicate by the gate's lockstep: timing), stale PASS (0 in 37 GBA
+fixtures), test ROMs PASS (jsmolka 6 -> 6/13), corpus 32/35 identical plus Mario Tennis timing. The gate's
+verdict is NEEDS-REVIEW for three divergences its 16x-cache lockstep cannot reproduce: Duke Nukem Advance (new
+with this build: twin from frame 507, PPSSPP 11 frames from 1652, both reconverge) and the two corpus ROMs of
+sections 7 and 8 at the same frames (Golden Sun: The Lost Age f283, Mario Golf f1155).
+
+* **Lockstep at a smaller cache** (section 7's method, builds/b5int4-out/ls_small.py): Golden Sun TLA and
+  Mario Golf classify **timing** at 512 KiB with section 7's figures (19.98 M and 40.00 M instructions). Duke
+  does not reproduce at 512 KiB; at 384 KiB, the PSP's RAM cache, it does and classifies **timing**: the
+  candidate dynarec equals the interpreter replaying its own I/O and IRQs for 67.60 M instructions, and the
+  builds first differ at a timer read (TM0CNT_L 0xd07a / 0xd093).
+* **The pad oracle at the gate's own twin configuration** (builds/b5int4-out/pad_oracle.py: plain twin, the
+  gate's cache size, the candidate with `PCARG_SIDE_PAD=1`): hash-identical to the base on every frame of Duke
+  and Street Racing Syndicate (3,900), Payback (2,200) and the corpus runs of Golden Sun TLA, Mario Golf and
+  Mario Tennis (3,000 each). With complete call-site records and the base's block sizes there is no difference
+  left on any title the gate flags; what the gate sees is the smaller code moving RAM flushes.
+
+Which titles land on the flagged side changes with the code size: Ice Nine was flagged in section 7 and passes
+since section 8, Duke passed in section 8 and is flagged here.

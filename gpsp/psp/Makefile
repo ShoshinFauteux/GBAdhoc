@@ -211,7 +211,8 @@ LAYOUT_PAD_LATE_BYTES ?= 128
 # LAYOUT_PAD_XLAT_BYTES: the zeros in front of instance A's translate_block_arm, the
 # last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
 # site emitters shrank both translators, and this puts instance B's hot path, linked
-# right after, back on its sets.  tools/flags.lock pins it.
+# right after, back on its sets.  5824 -> 5504 with the emitters' SMC_REUSE logging
+# (docs/PCARG-SIDE.md section 9).  tools/flags.lock pins it.
 LAYOUT_PAD_XLAT_BYTES ?= 5504
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu

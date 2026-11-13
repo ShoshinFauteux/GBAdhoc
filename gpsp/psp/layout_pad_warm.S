@@ -26,7 +26,11 @@ layout_pad_warm_lookup:
  * translator is 64 B smaller again: tools/layout/lab-pads.env 5,888) in front
  * of A's translate_block_arm makes that -24,576 (three ways): B's hot path and
  * everything after it keep their sets.  B's own shrink is held the same way
- * from psp/gbalink_b_stubs.c, after B's copy. */
+ * from psp/gbalink_b_stubs.c, after B's copy.
+ * Since the site emitters log their jal for SMC_REUSE (docs/PCARG-SIDE.md
+ * section 9) the translators before B's hot path are 320 B larger in the
+ * release (translate_block_thumb +352, translate_block_arm -32) and 384 B in
+ * the lab build (+352, +32): the pad is 5,504 in both. */
 	.section .text.translate_block_arm,"ax",@progbits
 	.balign 4
 layout_pad_warm_xlat:
