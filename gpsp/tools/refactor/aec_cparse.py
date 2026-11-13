@@ -545,7 +545,9 @@ def _const_eval(toks, consts):
     out = []
     for k, t in enumerate(toks):
         x = t.text
-        if t.kind == 'num':
+        if t.kind == 'vp':
+            out.append(x)
+        elif t.kind == 'num':
             m = _INT.match(x)
             if not m:
                 return None
@@ -729,10 +731,14 @@ def inline_helpers(toks, names):
                     rep = []
                     for b in body:
                         if b.kind == 'id' and b.text in sub:
-                            rep += [_retok(a, t) for a in sub[b.text]]
+                            # the argument is ONE value, as in C: bracketed for the
+                            # constant folding (`f & X` with f = `A | B`), the brackets
+                            # dropped afterwards so the text is the call's own
+                            rep += [Tok('vp', '(', t.line)] + [_retok(a, t) for a in sub[b.text]] + \
+                                   [Tok('vp', ')', t.line)]
                         else:
                             rep.append(_retok(b, t))
-                    rep = _fold(rep, consts)
+                    rep = [x for x in _fold(rep, consts) if x.kind != 'vp']
                     if i > 0 and tl[i - 1].text in (')', 'else'):
                         rep = [Tok('op', '{', t.line, t.ifs, t.file if t.file != 'main_psp.c' else None)] + rep + \
                               [Tok('op', '}', t.line, t.ifs, t.file if t.file != 'main_psp.c' else None)]

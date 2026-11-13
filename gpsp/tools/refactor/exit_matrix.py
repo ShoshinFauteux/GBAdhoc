@@ -1584,6 +1584,15 @@ def selftest():
     sm = sites(View('raw', C.load_raw(ph)))
     expect(sm[0]['seq'] != st[0]['seq'] and sm[1]['seq'] == st[1]['seq'],
            'mutant: a helper arm loses vid_term: only the sites that take that arm change')
+    # an argument is one value: `f & XC` with f = `XA | XB` is 0 (not XA | (XB & XC))
+    pp = os.path.join(d, 'mp.c')
+    open(pp, 'w').write('enum { XA = 1, XB = 2, XC = 4 };\n'
+                        'static inline void h(unsigned f) { if (f & XC) { bad(); } else { good(); } }\n'
+                        'int main(void) { h(XA | XB); return 0; }\n')
+    tp = C.inline_helpers(C.load_raw(pp), ('h',))
+    lo, hi = C.functions(tp)['main']
+    names = [c.name for c in C.walk_calls(C.parse_body(tp, lo, hi))]
+    expect(names == ['good'], 'helper flags: an OR of flags is bracketed before it is tested (%s)' % names)
     print('selftest: %s' % ('ok' if not fails else '%d failures' % fails))
     return 1 if fails else 0
 
