@@ -5112,7 +5112,16 @@ static inline void xs_adapt_retired(void)
 #define XS_ON() 1
 #endif
 #ifdef XS_COST_PROBE
-u32 xs_calls, xs_slots, xs_halves;
+/* DIAGNOSTIC (twin): xs_blocks_current calls, tag slots walked, halfwords
+ * compared, covering blocks met, the union of their extents (halfwords), and
+ * how many calls answered "current"; smc_retire_span (rs_*): calls, slots of
+ * the validation walk, blocks retired, slots of the untag scan, coverage-bit
+ * stores, halfwords of the untag region, halfwords of the written range. */
+u32 xs_calls, xs_slots, xs_halves, xs_blocks, xs_union, xs_current;
+u32 rs_calls, rs_vslots, rs_retired, rs_uscan, rs_cov, rs_un, rs_clr;
+#define XS_PROBE(x) (x)
+#else
+#define XS_PROBE(x) ((void)0)
 #endif
 /* xs_min[word]: a lower bound (halfword index) on the start of every live
  * block covering either halfword of the word -- the scan window
@@ -5245,8 +5254,14 @@ static void xs_report(void)
           (unsigned)xs_on, (unsigned)xs_turned_off, (unsigned)xs_turned_on);
 #endif
 #ifdef XS_COST_PROBE
-  fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u\n", (unsigned)xs_calls,
-          (unsigned)xs_slots, (unsigned)xs_halves);
+  fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u blocks=%u union=%u "
+          "current=%u\n", (unsigned)xs_calls, (unsigned)xs_slots,
+          (unsigned)xs_halves, (unsigned)xs_blocks, (unsigned)xs_union,
+          (unsigned)xs_current);
+  fprintf(stderr, "RS_COST calls=%u vslots=%u retired=%u uscan=%u cov=%u "
+          "un=%u clr=%u\n", (unsigned)rs_calls, (unsigned)rs_vslots,
+          (unsigned)rs_retired, (unsigned)rs_uscan, (unsigned)rs_cov,
+          (unsigned)rs_un, (unsigned)rs_clr);
 #endif
 }
 #endif
@@ -5295,6 +5310,9 @@ static __attribute__((noinline)) void xs_clear_all(void)
 #define XS_NOTE_ARM()   do { } while (0)
 #define XS_NOTE_THUMB() do { } while (0)
 #define XS_CLEAR_HALF(region_is_iwram, h) do { } while (0)
+#endif
+#ifndef XS_PROBE
+#define XS_PROBE(x) ((void)0)
 #endif
 
 block_data_type block_data[MAX_BLOCK_SIZE];
@@ -10699,6 +10717,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base);
   last = (hi_off - 2) >> 1;            /* last halfword slot of the range */
   SMC_WORK_WALK(last - first + 1);
+  XS_PROBE((rs_calls++, rs_vslots += last - first + 1));
 
   /* Validate before changing anything: every live block in the window must
    * have a known extent. */
@@ -10769,6 +10788,7 @@ static int smc_retire_span(u32 lo, u32 hi)
                                   RAM_MIRROR_ENTRY_PC(start, te, arm), 0);
         te->code_bytes_arm = 0;
         flush_ram_partial++;
+        XS_PROBE(rs_retired++);
 #ifdef SMC_SINGLE_UNTAG
         if (start < ulo) ulo = start;
         if (te->blk_end_arm > uhi) uhi = te->blk_end_arm;
@@ -10781,6 +10801,7 @@ static int smc_retire_span(u32 lo, u32 hi)
                                   RAM_MIRROR_ENTRY_PC(start, te, thumb), 1);
         te->code_bytes_thumb = 0;
         flush_ram_partial++;
+        XS_PROBE(rs_retired++);
 #ifdef SMC_SINGLE_UNTAG
         if (start < ulo) ulo = start;
         if (te->blk_end_thumb > uhi) uhi = te->blk_end_thumb;
@@ -10826,6 +10847,7 @@ static int smc_retire_span(u32 lo, u32 hi)
       scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
       SMC_LOCAL_NARROW(scan0, rgn, ulo - base, uhi - base, tagp, base);
       SMC_WORK_WALK(u_hi - scan0 + n);
+      XS_PROBE((rs_uscan += u_hi - scan0, rs_un += n));
       for (i = scan0; i < u_hi; i++) {
         if (VALID_TAG(tagp[i])) {
           ramtag_type *te = get_ram_tag(tagp[i]);
@@ -10838,6 +10860,7 @@ static int smc_retire_span(u32 lo, u32 hi)
             e_off = (e[m] - base + 1) >> 1;          /* exclusive, halfwords */
             for (k = (i > u_lo ? i : u_lo); k < u_hi && k < e_off; k++)
               cov[(k - u_lo) >> 3] |= (u8)(1u << ((k - u_lo) & 7));
+            XS_PROBE(rs_cov += (k > (i > u_lo ? i : u_lo)) ? k - (i > u_lo ? i : u_lo) : 0);
           }
         }
       }
@@ -10860,6 +10883,7 @@ static int smc_retire_span(u32 lo, u32 hi)
     }
   }
 #endif
+  XS_PROBE(rs_clr += (hi_off - lo_off) >> 1);
   for (i = lo_off >> 1; i < (hi_off >> 1); i++) {
     XS_CLEAR_HALF(rgn == 0, i);   /* every covering block was just retired */
     if (tagp[i] == CODE_TAG_BLOCK16)
@@ -11147,6 +11171,9 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
   const u32 base = 0x03000000, bytes = 0x8000;
   u32 lo = word & ~3u, hi = lo + 4, lo_off, span, first, last, i, m;
   int found = 0;
+#ifdef XS_COST_PROBE
+  u32 xs_ulo = ~0u, xs_uhi = 0;
+#endif
 
   if ((lo >> 24) != 3 || !xs_ready || smc_partial_wrap_live)
     return 0;
@@ -11210,6 +11237,9 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
 #endif
 #ifdef XS_COST_PROBE
       xs_halves += h_end - i;
+      xs_blocks++;
+      if (i < xs_ulo) xs_ulo = i;
+      if (h_end > xs_uhi) xs_uhi = h_end;
 #endif
       for (h = i; h < h_end; ) {
         if (!(h & 7) && h + 8 <= h_end) {
@@ -11231,6 +11261,10 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
       found = 1;
     }
   }
+#ifdef XS_COST_PROBE
+  if (xs_uhi > xs_ulo) xs_union += xs_uhi - xs_ulo;
+  xs_current += found;
+#endif
   return found;
 }
 #endif
