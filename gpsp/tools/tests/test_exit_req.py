@@ -51,7 +51,7 @@ def refusal(source):
 
 
 def teardown(source):
-    main = extract.extract(source, "fn:main")
+    main = extract.epochc_expand(extract.extract(source, "fn:main"), source)
     a = main.index(TD_BEGIN)
     b = main.index(TD_END, a)
     body = main[a:b + len("   FE_EXIT_GAME();\n")]
@@ -70,6 +70,7 @@ def list_exit(source):
 def production(source):
     return {"EXIT_CB": function(source, "exit_cb"),
             "REFUSAL": refusal(source),
+            "HELPERS": extract.epochc_early_helpers(source),
             "TEARDOWN": teardown(source),
             "LISTEXIT": list_exit(source)}
 
@@ -215,6 +216,9 @@ static void relaunch_eboot(int gamelist) { hit("relaunch"); relaunched = gamelis
 @EXIT_CB@
 
 @REFUSAL@
+
+/* Epoch C: the early exits' sequence (fe/teardown.inc.c; empty before C1) */
+@HELPERS@
 
 static int teardown_tail(void)
 {

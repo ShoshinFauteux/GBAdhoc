@@ -291,6 +291,43 @@ def read_source(path):
     return FRAG_INC.sub(sub, text)
 
 
+# Epoch C C1c (fe/teardown.inc.c): main()'s shared teardown is two calls.  Their
+# parameters carry the names of main()'s locals and their bodies keep main()'s
+# indentation, so pasting each body over its call line gives main()'s text as a
+# test that reads the teardown expects it.
+EPOCHC_TEARDOWN_CALLS = (("   session_end(have_variant);\n", "session_end"),
+                         ("   process_end(exit_code, exit_reason);\n", "process_end"))
+
+
+def _helper_body(source, name):
+    m = re.search(r'^static [^\n]*\bvoid ' + name + r'\([^)]*\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: %s() not defined' % name)
+    end = source.index('\n}\n', m.end() - 1)
+    return source[m.end():end + 1]
+
+
+def epochc_expand(main_text, source):
+    """main()'s text with session_end()/process_end() calls replaced by their bodies
+    (unchanged on a tree before Epoch C C1c)."""
+    for call, name in EPOCHC_TEARDOWN_CALLS:
+        if main_text.count(call) == 1:
+            main_text = main_text.replace(call, _helper_body(source, name))
+    return main_text
+
+
+def epochc_early_helpers(source):
+    """The XE_ flags and exit_early_begin/_end (Epoch C C1a/C1b), '' before them."""
+    a = source.find('enum\n{\n   XE_EVT_FIRST')
+    if a < 0:
+        return ''
+    m = re.search(r'^static [^\n]*\bvoid exit_early_end\([^)]*\)\s*\{\n', source[a:], re.M)
+    if not m:
+        raise ExtractError('epochc: exit_early_end() not defined')
+    end = source.index('\n}\n', a + m.end() - 1)
+    return source[a:end + 3]
+
+
 def _read_sources(paths):
     """Each path through read_source; a fragment a shell already expanded is
     not added a second time."""

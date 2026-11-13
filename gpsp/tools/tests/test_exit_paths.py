@@ -531,8 +531,8 @@ for what, part, old, new in MUTANTS:
     cands = part if isinstance(part, tuple) else (part,)
     parts = dict(good)
     hit_ = [(p, o, w) for p in cands for o, w in zip(olds, news) if parts[p].count(o) == 1]
-    if not hit_ and cands == ("HELPERS",) and not parts["HELPERS"]:
-        print("  mutant skipped (no Epoch C helpers on this tree): " + what)
+    if cands == ("HELPERS",) and "exit_early_end(" not in parts["LOADFAIL"]:
+        print("  mutant skipped (the load-failed exit does not use the Epoch C helper here): " + what)
         continue
     assert hit_, "mutant site gone: %s" % what
     p, o, w = hit_[0]

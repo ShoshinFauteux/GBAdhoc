@@ -12,6 +12,7 @@ blit_prof_evt
 boot_ballast_take
 boot_mark
 boot_mem_census
+boot_stop_notice
 boot_timeline_emit
 cheats_link_poll
 console_from_rom_path
@@ -27,6 +28,7 @@ emu_boost_start
 emu_boost_stop
 evt_shutdown
 exit_assist_frame
+exit_sim
 ff_win_note
 ffh_cap3
 ffh_hold

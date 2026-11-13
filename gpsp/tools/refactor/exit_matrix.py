@@ -782,7 +782,14 @@ HOLD_KNOWN = {
     # 0 -> 1 and gives it back when it goes 1 -> 0; PSP_REWIND_GAME_OVER() (D19, C3/C4)
     # calls it with the rewind off, and every exit ends in pwr_release_all.
     'psp_rewind_pwr': 'a toggle on g_rw_pwr (hold on 0->1, release on 1->0), by design',
+    # fe/power.e.inc.c (HW-1 H1): the ME-lost wake takes "me_lost" and keeps it until the
+    # loop's teardown, which takes "teardown" and only then drops it (HOLD_HANDOVER).
+    'wake_service': 'the ME-lost wake hands its hold to the teardown (g_wake_lost_hold, HW-1 H1)',
 }
+# A hold handed from one function to another through a latch: an `if (LATCH)` whose arm
+# releases it is depth-neutral in the receiving function (the hold was never on its
+# ledger).  {latch: the function that takes it}.
+HOLD_HANDOVER = {'g_wake_lost_hold': 'wake_service'}
 
 
 class HoldWalk(object):
@@ -826,6 +833,10 @@ class HoldWalk(object):
                 d = self.stmt(s, d, brk)
             return d
         if isinstance(node, C.If):
+            if C.text_of(node.cond).strip() in HOLD_HANDOVER and node.els is None and \
+                    [c.name for c in C.walk_calls(node.then)] == ['pwr_release']:
+                self.handover = getattr(self, 'handover', 0) + 1
+                return d                    # the handed-over hold's release: not ours
             d = self.calls(C.calls_in(node.cond), d, node.line)
             a = self.stmt(node.then, d, brk)
             b = self.stmt(node.els, d, brk) if node.els is not None else d

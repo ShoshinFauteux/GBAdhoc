@@ -115,7 +115,12 @@ model release -DMUT_EVT_TEXT && ok "M14 control: release unaffected" || bad "M14
 # ---- source mutants (copies of the shell or of one fragment, mounted over the read-only tree)
 MC="$SRC/psp/main_psp.c"
 srcmut() {  # srcmut <name> <python edit> [<fragment fe/X.inc.c>]; leaves $OUT/<name>/xs/report.txt
+  # Without a fragment the edit is tried on the shell, then (Epoch C C1: the exit
+  # helpers and the shared teardown moved there) on fe/teardown.inc.c if the tree has it.
   local d="$OUT/$1" frag="${3:-}"; rm -rf "$d"; mkdir -p "$d"
+  if [ -z "$frag" ] && [ -f "$SRC/psp/fe/teardown.inc.c" ] && ! $ED "$MC" "$d/main_psp.c" "$2" 2>/dev/null; then
+    frag=fe/teardown.inc.c
+  fi
   if [ -n "$frag" ]; then
     $ED "$SRC/psp/$frag" "$d/frag.inc.c" "$2" || return 1
     $EM all --baseline "$BASE" --src "$SRC" --out "$d/xs" --over "$frag=$d/frag.inc.c" > "$d/all.log" 2>&1
@@ -127,11 +132,20 @@ srcmut() {  # srcmut <name> <python edit> [<fragment fe/X.inc.c>]; leaves $OUT/<
   $EM check --golden "$OUT/base" --cand "$d/xs" > "$d/check.log" 2>&1; echo $? > "$d/xs_rc"
 }
 # anchors shared by the edits: B1's handoff line, and the vid_term just above it
+# (Epoch C C1b: B1 is `exit_early_end(XE_EVT_FIRST, 2, "bad_variant", 0);` and its
+# vid_term is in the helper; no_vidterm() then pastes B1's sequence back without it)
 B1='import re
-h = [j for j, l in enumerate(L) if re.search(r"(FE_HANDOFF|handoff_run)\(2, \"bad_variant\"\)", l)]; assert len(h) == 1, h
-v = [j for j in range(h[0] - 6, h[0]) if L[j].strip() == "vid_term();"]; assert len(v) == 1, v
+h = [j for j, l in enumerate(L) if re.search(r"(FE_HANDOFF|handoff_run)\(2, \"bad_variant\"\)|exit_early_end\(XE_EVT_FIRST, 2, \"bad_variant\", 0\)", l)]; assert len(h) == 1, h
+helper = "exit_early_end(" in L[h[0]]
+v = [j for j in range(h[0] - 6, h[0]) if L[j].strip() == "vid_term();"]; assert helper or len(v) == 1, v
 e = [j for j in range(h[0] - 6, h[0]) if "fe_evt(\"exit code=2 reason=bad_variant\")" in L[j]]; assert len(e) == 1, e
 m = [j for j, l in enumerate(L) if l.startswith("int main(")]; assert len(m) == 1, m
+def no_vidterm():
+    if helper:
+        ind = L[h[0]][:len(L[h[0]]) - len(L[h[0]].lstrip())]
+        L[h[0]] = ind + "evt_shutdown(); audio_stop(); FE_HANDOFF(2, \"bad_variant\"); FE_EXIT_GAME();"
+    else:
+        L[v[0]] = ""
 '
 srcmut m7 "
 a = [j for j, l in enumerate(L) if l.strip() in ('play_lock_drop(\"loop_exit\");', 'pwr_hold(\"teardown\");')]
@@ -140,7 +154,7 @@ x = L.pop(a[1]); L.insert(a[0], x)"
 grep -q 'ORDER session_end:D[34] ' "$OUT/m7/xs/report.txt" && [ "$(cat $OUT/m7/xs_rc)" = 1 ] \
   && ok "M7 D3/D4 swap in source: order check + XS fail" || { bad "M7"; tail -12 "$OUT/m7/all.log"; }
 srcmut m8 "$B1
-L[v[0]] = ''"
+no_vidterm()"
 n8=$(grep -c 'XS FAIL .* exit_sites.tsv B1$' "$OUT/m8/check.log")
 [ "$n8" = 3 ] && ok "M8 B1 without vid_term: XS fails at B1 in 3 flavours" || { bad "M8 ($n8)"; cat "$OUT/m8/check.log" | head; }
 srcmut m9 "
@@ -160,13 +174,13 @@ L[m[0]:m[0]] = ['', '', '']"
 [ "$(cat $OUT/m11/rc)" = 0 ] && [ "$(cat $OUT/m11/xs_rc)" = 0 ] \
   && ok "M11 pure line shift: all ok + XS ok" || { bad "M11 (all rc $(cat $OUT/m11/rc), xs rc $(cat $OUT/m11/xs_rc))"; head -12 "$OUT/m11/check.log"; }
 srcmut m12 "$B1
-L[h[0]] = L[h[0]].replace('(2, \"bad_variant\")', '(3, \"bad_variant\")')"
+L[h[0]] = L[h[0]].replace('(2, \"bad_variant\")', '(3, \"bad_variant\")').replace(', 2, \"bad_variant\"', ', 3, \"bad_variant\"')"
 n12=$(grep -c 'XS FAIL .* exit_sites.tsv B1$' "$OUT/m12/check.log")
 [ "$n12" = 3 ] && ok "M12 B1 exit code changed: XS fails at B1 in 3 flavours" || { bad "M12 ($n12)"; head "$OUT/m12/check.log"; }
 srcmut m13g "$B1
 L[m[0]:m[0]] = [''] * 2000"
 srcmut m13 "$B1
-L[v[0]] = ''
+no_vidterm()
 L[m[0]:m[0]] = [''] * 2000"
 $EM check --golden "$OUT/m13g/xs" --cand "$OUT/m13/xs" > "$OUT/m13/check2.log" 2>&1
 n13=$(grep -c 'XS FAIL .* exit_sites.tsv B1$' "$OUT/m13/check2.log")

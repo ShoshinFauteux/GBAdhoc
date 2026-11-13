@@ -56,7 +56,10 @@ def production(source):
     parts = []
     for region, a, b in RANGES:
         text = extract.extract(source, region)
-        assert text.startswith(a) and text + b in plain, region
+        # (Epoch C C1: fe/teardown.inc.c's exit sequence now sits between the last
+        # region and main())
+        bs = (b, "/* ---- THE ONE EXIT SEQUENCE") if b == "int main(int argc" else (b,)
+        assert text.startswith(a) and any(text + x in plain for x in bs), region
         parts.append(text)
     files = {"lowlat.inc": "\n".join(parts)}
     for name, region, a, b, incl in FRAGMENTS:

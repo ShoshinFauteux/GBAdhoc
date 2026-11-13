@@ -47,7 +47,12 @@ expect() {  # expect <rc> <label> <grep that must match the output, or -> <cmd..
   ok "$label (exit $rc)$( [ "$pat" != - ] && echo ": $(grep -m1 -- "$pat" "$OUT/last.log" | sed 's/^ *//' | cut -c1-110)")"
 }
 PPARG=(); [ -n "$PP" ] && PPARG=(--pp "$PP")
-expect 0 "C1 base green" "T11: green" $CG --src "$SRC" "${PPARG[@]}"
+# HW-2 (55b8734e) made stall_exit's exit raw on purpose; ci_greps.known whitelists it in
+# phase HW2 only.  A tree with HW-2 merged is checked in that phase (Epoch C C0b).
+PH=base
+grep -q 'sceKernelExitGame();' "$SRC/psp/fe/harness.f.inc.c" 2>/dev/null && PH=HW2
+PHARG=(--phase "$PH")
+expect 0 "C1 base green (phase $PH)" "T11: green" $CG --src "$SRC" "${PHARG[@]}" "${PPARG[@]}"
 # the R4 KNOWN rows are whatever ci_greps.known still lists (HW-2 fixes both sites)
 nK=$(grep -c '^R4' "$HERE/ci_greps.known")
 grep -c '^  KNOWN' "$OUT/last.log" | grep -q "^$nK\$" && ok "C1 exactly $nK KNOWN (the R4 rows of ci_greps.known)" || bad "C1 KNOWN count (want $nK)"
@@ -82,7 +87,7 @@ reset_tree() {
 reset_tree
 # the file of the mutant tree that DEFINES a function (the shell or one of its fragments)
 deffile() { grep -l "^$1" "$T/psp/main_psp.c" "$T"/psp/fe/*.inc.c 2>/dev/null | head -1; }
-expect 0 "C1' copy of the tree is green" "T11: green" $CG --src "$T"
+expect 0 "C1' copy of the tree is green (phase $PH)" "T11: green" $CG --src "$T" "${PHARG[@]}"
 
 printf '#include "fe_evt.h"\nvoid fe_mut_quit(void) { sceKernelExitGame(); }\n' > "$T/psp/fe_mut_a.c"
 expect 1 "M1 raw exit in a new module" "FAIL  R1 psp/fe_mut_a.c" $CG --src "$T" --rules R1; reset_tree
