@@ -58,6 +58,7 @@ typedef unsigned SceUInt;
 #define fe_evt(...) ((void)0)
 static struct { int log_thread, sram_thread, standby; } g_pcfg;
 static int g_io_run, g_io_sema, log_calls, save_calls, free_calls;
+static int g_io_log, g_io_sram;   /* io_thread_start latches these (r1-B4) */
 static int loaded, healthy, idle, sync_ok, sync_calls;
 static unsigned clock_us;
 static void *g_mer_work, *g_mer_cap[2], *g_mer_stage[2], *g_mer_desc;
@@ -116,7 +117,7 @@ int main(int argc, char **argv)
    for(l=0;l<2;l++) for(s=0;s<2;s++)
    {
       char label[80];
-      g_pcfg.log_thread=l; g_pcfg.sram_thread=s;
+      g_pcfg.log_thread=l; g_pcfg.sram_thread=s; g_io_log=l; g_io_sram=s;
       g_io_run=1; log_calls=save_calls=0;
       io_thread(0,NULL);
       snprintf(label,sizeof(label),"writer ownership log=%d save=%d",l,s);

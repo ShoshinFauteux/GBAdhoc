@@ -612,6 +612,22 @@ def suites(env: Env, baseline: Path | None):
           # ME-quiet log (main_psp.c), mutants.
           "python3 tools/tests/test_sleep_holds.py")),
 
+        # HOME during a quit (PLAN HW-2 F1/F12, F3's flush): main()'s
+        # teardown, exit_cb and inproc_refusal, extracted and run with a HOME
+        # pressed at each window, plus mutants of each part of the fix.
+        ("exit_req", True, lambda: None,
+         "python3 tools/tests/test_exit_req.py"),
+
+        # The wireless bring-up's failure codes (PLAN HW-2 r3-B1): an online
+        # or netdrv failure is never -1 (ADHOC_ERR_WLAN_OFF), plus the toasts.
+        ("net_codes", True, lambda: None,
+         "python3 tools/tests/test_net_codes.py"),
+
+        # The pre-session .sav backup (PLAN HW-2 r3-B2): write/read/close/
+        # rename faults never cost the old .bak; mutants of the old writer.
+        ("backup_save", True, lambda: None,
+         "python3 tools/tests/test_backup_save.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

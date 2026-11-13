@@ -28,6 +28,19 @@
 #ifdef GBADHOC_MGIFT
 static char       g_mg_l1[64];         /* screen line 1: what is happening */
 static char       g_mg_l2[64];         /* screen line 2: detail */
+/* LINE 2 IS SHARED (r4-L1): a status message ("Open MYSTERY GIFT in the
+ * game", the IP and game, "no gift yet") owns it until this frame; only then
+ * do the b/c/cmd diagnostics take it, and only when they change.  The
+ * diagnostics used to be rewritten every frame, after the message, so the
+ * player never saw a message for more than one frame. */
+#define MG_L2_HOLD_FRAMES 180u
+static unsigned   g_mg_l2_hold;
+static int        g_mg_l2_diag;        /* line 2 holds the diagnostics */
+static void mg_l2_hold(void)
+{
+   g_mg_l2_hold = fe_host_frame_count() + MG_L2_HOLD_FRAMES;
+   g_mg_l2_diag = 0;
+}
 #endif /* GBADHOC_MGIFT */
 static char       g_mg_game[5];        /* running ROM header code at 0xAC */
 #ifdef GBADHOC_MGIFT
@@ -110,15 +123,17 @@ static void mgift_stop_io(int quiet)
     * settings, ready for next time -- which is the point: the player should
     * never have to create it.  mgnet_profile_ensure adopts it again rather than
     * making a second one. */
+   /* Logged before the state is cleared: it said linked=0 always (r4-L2). */
+   fe_evt("mg_stop linked=%d", g_mg_linked);
    g_mg_on     = 0;
    g_mg_linked = 0;
    g_session_info[0] = '\0';
    osd_chip_session(NULL);
    snprintf(g_mg_l1, sizeof(g_mg_l1), "Not listening");
    g_mg_l2[0] = '\0';
+   g_mg_l2_diag = 0;
    if (!quiet)
       osd_toast("Mystery Gift off");
-   fe_evt("mg_stop linked=%d", g_mg_linked);
 }
 
 /* pwr_hold: see power_cb -- this runs outside the loop's park point. */
@@ -250,9 +265,17 @@ static void mgift_start_io(void)
    }
 
    g_mg_on = 1;
+   /* This attempt's adapter facts only (r4-L6): the S/C flags were only
+    * ever set, so a second start in the same game -- or one after a Union
+    * Room visit -- showed S1 C1 before the game had done anything. */
+   g_rfu_seen_bcrd = 0;
+   g_rfu_seen_conn = 0;
+   g_rfu_last_cmd = 0xFFF;
+   g_rfu_last_state = 0;
    snprintf(g_mg_l1, sizeof(g_mg_l1), "Waiting for a gift");
    snprintf(g_mg_l2, sizeof(g_mg_l2), "%s  game %s", mgnet_local_ip(),
             g_mg_game[0] ? g_mg_game : "?");
+   mg_l2_hold();
    mgift_chip();
    osd_toast("Mystery Gift listening");
    fe_evt("mg_start ip=%s game=%s port=%d", mgnet_local_ip(), g_mg_game,
@@ -452,6 +475,7 @@ static void mgift_frame(void)
          {
             snprintf(g_mg_l1, sizeof(g_mg_l1), "Gift ready");
             snprintf(g_mg_l2, sizeof(g_mg_l2), "Open MYSTERY GIFT in the game");
+            mg_l2_hold();
             osd_toast("Gift uploaded from phone");
          }
       }
@@ -482,10 +506,26 @@ static void mgift_frame(void)
          snprintf(g_mg_l1, sizeof(g_mg_l1), "Game connected");
          osd_toast("Game connected to the cart");
       }
-      snprintf(g_mg_l2, sizeof(g_mg_l2), "%s b%u c%u cmd%02x st%u S%u C%u",
-               mgift_cart_status(), (unsigned)s.bcasts, (unsigned)s.connects,
-               g_rfu_last_cmd & 0xFF, g_rfu_last_state,
-               (unsigned)g_rfu_seen_bcrd, (unsigned)g_rfu_seen_conn);
+      {
+         static unsigned last[6];
+         static const char *last_st;
+         unsigned now[6];
+         const char *st = mgift_cart_status();
+         now[0] = (unsigned)s.bcasts;    now[1] = (unsigned)s.connects;
+         now[2] = g_rfu_last_cmd & 0xFF; now[3] = g_rfu_last_state;
+         now[4] = (unsigned)g_rfu_seen_bcrd;
+         now[5] = (unsigned)g_rfu_seen_conn;
+         if ((int)(fe_host_frame_count() - g_mg_l2_hold) >= 0 &&
+             (!g_mg_l2_diag || st != last_st ||
+              memcmp(now, last, sizeof(now)) != 0))
+         {
+            memcpy(last, now, sizeof(now));
+            last_st = st;
+            g_mg_l2_diag = 1;
+            snprintf(g_mg_l2, sizeof(g_mg_l2), "%s b%u c%u cmd%02x st%u S%u C%u",
+                     st, now[0], now[1], now[2], now[3], now[4], now[5]);
+         }
+      }
    }
 
    /* Say how long we have been waiting.  "Looking for the Station" that never
@@ -498,8 +538,11 @@ static void mgift_frame(void)
       {
          g_mg_secs = s;
          if (s >= 10u && (s % 5u) == 0u && !mgift_cart_has_card())
+         {
             snprintf(g_mg_l2, sizeof(g_mg_l2),
                      "%s  no gift yet (%us)", mgnet_local_ip(), s);
+            mg_l2_hold();
+         }
       }
    }
 

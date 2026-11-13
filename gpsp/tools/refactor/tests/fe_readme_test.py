@@ -275,10 +275,11 @@ def r3_rows(gpsp, root):
     reopens = [i for i, ln in enumerate(open(os.path.join(gpsp, 'psp', 'main_psp.c'), encoding='utf-8'), 1)
                if re.match(r'\s*extern u32 gamepak_reopens;', ln)]
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
-            ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
-            # HW-1 (claude/hw1-sleep) moved rom_hash_census: harness.f 613 -> 625 (the cb_stack
-            # EVT in core_health_evt); the shell's site is found by its text (above)
-            ('rom_hash_census', 'fe/harness.f.inc.c:625'),
+            # HW-2 (claude/hw2-exit) moved gbab_reg/fe_gbadual_running_inst: harness.f +16
+            # (stall_exit's comment and checks); rom_hash_census: HW-1 613 -> 625 (the cb_stack
+            # EVT in core_health_evt), HW-2 +16 -> 641; the shell's site is found by its text (above)
+            ('gbab_reg', 'fe/harness.f.inc.c:303'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:304'),
+            ('rom_hash_census', 'fe/harness.f.inc.c:641'),
             ('gamepak_reopens', 'main_psp.c:%d' % reopens[0] if len(reopens) == 1 else 'main_psp.c:?')]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))

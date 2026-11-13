@@ -173,6 +173,7 @@ def rule_r1(src, phase, known, pp_dir):
             if not os.path.exists(p):
                 continue
             t = C.load_pp(p)
+            fn_pp = _function_spans(t) if phase == 'HW2' else None
             n = w = 0
             for k in range(len(t) - 1):
                 if t[k].text in ('sceKernelExitGame', 'handoff_run') and t[k + 1].text == '(':
@@ -181,6 +182,14 @@ def rule_r1(src, phase, known, pp_dir):
                     n += 1
                     if _wrapped(t, k):
                         w += 1
+                    elif fn_pp is not None and any(
+                            x['rule'] == 'R1' and x['file'] == 'psp/main_psp.c' and x['phase'] == 'HW2'
+                            and x['key'] == '%s@%s' % (t[k].text, _fn_at(fn_pp, k) or '-')
+                            for x in known):
+                        # the same HW2 whitelist as the raw view (stall_exit, PLAN §3.4)
+                        w += 1
+                        info.append(('psp/main_psp.c[%s -E]' % fl, t[k].line,
+                                     '%s@%s (HW2 whitelist)' % (t[k].text, _fn_at(fn_pp, k))))
                     else:
                         hits.append(Hit('R1e', 'psp/main_psp.c[%s -E]' % fl, t[k].line, t[k].text,
                                         'call not wrapped by pwr_release_all()'))

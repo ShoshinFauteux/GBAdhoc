@@ -65,6 +65,12 @@
 # smaller in the release, 76 B in the lab.  release: TEXT 328 -> 452; lab:
 # TEXT 7268 -> 7344; every other pad, main, pace_frame and the rest hold.
 # Re-recorded: exit_cb (release 0x1e48 -> 0x1ec4, lab 0x09f4 -> 0x0a40).
+# HW-2 (claude/hw2-exit): main's code before the loop grew, so MAIN places the
+# loop again (release 2284 -> 2120, lab 176 -> 368: main 0x1368 / 0x0c90)
+# and TEXT/FE/CORE/RO hold pace_frame, fe_host_reset, pipe_latch and
+# netpacket_iface; re-recorded: main (at, size), exit_cb, roster_valid
+# (transport_adhoc.c's switch wait grew the code before it) and
+# pte_mutex_check_need_init.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)

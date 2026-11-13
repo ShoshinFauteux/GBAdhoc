@@ -113,6 +113,11 @@ static int browser_park(void)
 /* @extract:begin fn:wake_overlay_yield */
 static int wake_overlay_yield(void)
 {
+   /* The modal overlay is the loop waiting on the player, not a stall
+    * (r5-L4): beat as a bounded network wait does (gpsp_net_wait_beat), or
+    * a rig left on it is recorded as frozen -- and ended, with
+    * stall_exit_hard.  A no-op without the stall watch (LOOP_TOP). */
+   LOOP_TOP();
    power_request_poll();
    return g_pwr_park_req;
 }

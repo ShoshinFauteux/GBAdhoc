@@ -772,6 +772,8 @@ int main(int argc, char *argv[])
       }
    }
    g_home_sim = (int)fe_ini_get_int(HARNESS_INI, "home_sim", 0);
+   fe_ini_get(HARNESS_INI, "exit_sim_at", g_exit_sim_at,
+              sizeof(g_exit_sim_at));
    g_home_stall_frame =
       (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_frame", 0);
    g_home_stall_ms =
@@ -861,10 +863,13 @@ int main(int argc, char *argv[])
       fe_evt("sram_ff_nudge on=%d", nudge != 0);
    }
    /* Same, for session pacing.  ADR-0033 REMAPPED THE VALUES: 0 off,
-    * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher. */
+    * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher,
+    * 3 backpressure (ff_psp.h).  3 was clamped to 1 here and then
+    * persisted by pcfg_save (r6-B1). */
    g_pcfg.net_pace_match = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
                                                g_pcfg.net_pace_match);
-   if (g_pcfg.net_pace_match < 0 || g_pcfg.net_pace_match > 2)
+   if (g_pcfg.net_pace_match < PACE_MODE_OFF ||
+       g_pcfg.net_pace_match > PACE_MODE_BACKPRESSURE)
       g_pcfg.net_pace_match = PACE_MODE_FIXED;
    g_pcfg.net_session_fps_x100 =
       pcfg_fps_x100(HARNESS_INI, "net_session_fps",
@@ -1218,8 +1223,13 @@ int main(int argc, char *argv[])
                                        PLAY_INPUT_FRESH) != 0;
       g_ctrl_cycle = (int)fe_ini_get_int(HARNESS_INI, "ctrl_cycle", 0);
       if (g_ctrl_cycle >= 5555 && g_ctrl_cycle <= 20000)
-         fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle,
-                sceCtrlSetSamplingCycle(g_ctrl_cycle));
+      {
+         /* Called outside the EVT (r6-B3): fe_evt's arguments are not
+          * evaluated where telemetry compiles out, so the call went too. */
+         int cc_rc = sceCtrlSetSamplingCycle(g_ctrl_cycle);
+         FE_EVT_ONLY(cc_rc);
+         fe_evt("ctrl_cycle %d rc=%d", g_ctrl_cycle, cc_rc);
+      }
       else
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
@@ -1539,7 +1549,11 @@ int main(int argc, char *argv[])
       else
          fe_evt("exit code=5 reason=nettest_fail");
       evt_shutdown();
-      FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
+      /* A pass hands off 0, as it logs (F7: it handed off 5 either way). */
+      if (rc == 0)
+         FE_HANDOFF(0, NULL);
+      else
+         FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
       FE_EXIT_GAME();
       return 0;
    }
@@ -1742,6 +1756,7 @@ session_top:
             fe_evt("exit code=2 reason=rom_path_too_long rom=%s", kr);
             evt_shutdown();
             audio_stop();
+            vid_term();      /* F8: as every other early exit */
             FE_HANDOFF(2, "rom_path_too_long");
             FE_EXIT_GAME();
             return 0;
@@ -1753,6 +1768,7 @@ session_top:
             fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
             evt_shutdown();
             audio_stop();
+            vid_term();      /* F8 */
             FE_HANDOFF(2, "rom_missing");
             FE_EXIT_GAME();
             return 0;
@@ -1764,6 +1780,7 @@ session_top:
          fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
          audio_stop();
+         vid_term();      /* F8 */
          FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
@@ -1801,11 +1818,18 @@ session_top:
       }
       if (br != 0)
       {
-         fe_evt("exit code=2 reason=no_rom");
+         /* HOME in the list is the player leaving, not a missing ROM (F12):
+          * the Lab read it as `no_rom` code 2.  A ROM path too long (-1 with
+          * the app still running) stays no_rom, code 2. */
+         int home = !g_running;
+         if (home)
+            fe_evt("exit code=0 reason=home");
+         else
+            fe_evt("exit code=2 reason=no_rom");
          evt_shutdown();
          audio_stop();
          vid_term();
-         FE_HANDOFF(2, "no_rom");   /* ADR-0053 */
+         FE_HANDOFF(home ? 0 : 2, home ? "home" : "no_rom");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
       }
@@ -2418,7 +2442,9 @@ session_top:
          evt_shutdown();
          audio_stop();
          vid_term();
-         FE_HANDOFF(1, "mem_budget");   /* ADR-0053 */
+         /* 8, as logged and as docs/MEMORY-BUDGET.md says (F7): the handoff
+          * said 1, which is load_failed's code. */
+         FE_HANDOFF(8, "mem_budget");   /* ADR-0053 */
          FE_EXIT_GAME();
          return 0;
       }
@@ -2468,6 +2494,9 @@ session_top:
                g_pcfg.console == FE_CONSOLE_GBA ? NULL : g_gb_title,
                g_game_key, fe_host_gba_cable_ready());
    snprintf(g_shot_rom, sizeof(g_shot_rom), "%s", rom_path);   /* shot names */
+   if (g_cb_failed && boot_rc == 0)
+      osd_toast("HOME and sleep are unavailable (error %08X)",
+                (unsigned)g_cb_failed);
 #ifdef GPSP_CHEATS
    /* This game's cheat list and the player's choices (docs/CHEATS.md).  After
     * the boot: the list is static, the file is read with sceIo, so the core's
@@ -2678,6 +2707,11 @@ session_top:
 #endif
       if (fe_autopilot_load(script_path) != 0)
       {
+         /* The ME and its renderer stop before the core is freed, in the
+          * loop teardown's order (F9: they were left running). */
+         me_rend_teardown("exit");
+         me_video_teardown("exit", 1);
+         me_host_shutdown();
          io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
          fe_host_shutdown();
 #ifdef REWIND
@@ -2701,6 +2735,9 @@ session_top:
       me_rend_suspend();               /* clean heap for np_start (run 407) */
       if (net_bringup(net_host, group, nick, net_probe) != 0)
       {
+         me_rend_teardown("exit");          /* F9, as bad_script above */
+         me_video_teardown("exit", 1);
+         me_host_shutdown();
          io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
          fe_host_shutdown();
 #ifdef REWIND
@@ -2976,8 +3013,11 @@ session_top:
        * fixed START+SELECT menu chord whatever it is bound to; with the
        * default L+R+SELECT this is the 3.0 test exactly.  Not while the
        * Controls page is capturing a binding: the player is pressing the
-       * chord to TEACH it, not to use it. */
-      if ((ctl_fired & CTL_FIRE_SHOT) && !ui_capturing())
+       * chord to TEACH it, not to use it.  Nor over the menu (r8/x3): the
+       * pending shot is taken only by the game's own dump site, so one
+       * fired with the menu up waited, kept, until after the menu closed,
+       * and through the in-process return into the next game. */
+      if ((ctl_fired & CTL_FIRE_SHOT) && !ui_capturing() && !ui_active())
          g_dump_chord_pending = 1;
 #ifdef GPSP_CATCH_SELFTEST
       /* Bisect arm "catch self-test" only: L+R+UP+TRIANGLE stores to address
@@ -3513,7 +3553,7 @@ session_top:
             if (rc == -1)
             {
                osd_toast("Reset failed: back to the game list");
-               pcfg_save();
+               ui_settings_save();
                g_relaunch = RELAUNCH_GAMELIST;
                exit_reason = "reset_failed";
                g_running = 0;
@@ -3531,8 +3571,10 @@ session_top:
             /* Full clean shutdown (SRAM flushed, threads stopped), then
              * back to the ROM browser -- in this process when the unload is
              * proven (inproc_refusal), by the ADR-0071 relaunch otherwise.
-             * The hold screen after the loop says what is happening. */
-            pcfg_save();
+             * The hold screen after the loop says what is happening.
+             * One config.ini write: ui_close (the return) and the
+             * teardown's flush find nothing left unsaved (F3). */
+            ui_settings_save();
             g_relaunch = RELAUNCH_GAMELIST;
             exit_reason = "game_list";
             g_running = 0;
@@ -3542,7 +3584,7 @@ session_top:
              * the loop by the NORMAL exit path — SRAM flushed, io thread
              * stopped, log closed — and relaunch at the very end, where the
              * USB handoff already proves it is safe to replace the process. */
-            pcfg_save();
+            ui_settings_save();
             g_relaunch = RELAUNCH_PROFILE;
             exit_reason = "profile_change";
             g_running = 0;
@@ -4467,6 +4509,13 @@ session_top:
       FE_LP_SET(FELP_LOOP);
    }
    /* @lab */ LAB_FFP(lab_ffpace_finish();)
+   /* A link session that could not put the game back (F5): its code and
+    * reason, which gblink_begin / link_end cannot reach (main's locals). */
+   if (g_link_fatal_why && !exit_reason)
+   {
+      exit_code = g_link_fatal_code;
+      exit_reason = g_link_fatal_why;
+   }
 
    if (g_perf_rig)
    {
@@ -4518,6 +4567,7 @@ session_top:
       ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, (int)g_wake_w,
                       (int)g_wake_h);
       ui_return_hold();
+      exit_sim("return");        /* harness: HOME here (S-4 c) */
    }
    /* Clean exit (incl. HOME): stop the netdrv session + full adhoc
     * teardown first (BYE to peers while the radio is still up), then SRAM
@@ -4555,6 +4605,11 @@ session_top:
    emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
    ui_return_tick();
+   /* A Settings/Controls/Online page still open at a HOME, START+SELECT or
+    * wake-quit kept its changes unsaved (F3).  Written here, synchronously,
+    * on the same side of the writer's stop as ui_close's write always was
+    * (PLAN §3.2 D16b), and before the SRAM flush that can be slow. */
+   ui_settings_flush();
    /* The log's own loss, written SYNCHRONOUSLY now the writer is stopped, and
     * the liveness facts into RESULT.TXT, which is written with sceIo after the
     * log closes -- neither can be starved (RIG-DOUBLE-BATTLE §2.8 I6). */
@@ -4626,6 +4681,7 @@ session_top:
          audio_ring_reset();
          audio_start();
          heap_snap(&after);
+         exit_sim("unload");        /* harness: HOME here (S-4 d) */
 #ifndef GPSP_NO_TELEMETRY
          heap_census("post_unload");
 #endif
@@ -4657,7 +4713,10 @@ session_top:
          if (g_ss_browser && inproc_n == g_ss_game + 1)
             sleep_sim_fire();        /* fires in the browser, 300 ms on */
 #endif
-         g_running = 1;
+         /* A HOME after the refusal check above (the unload, the census,
+          * the clock) must still end the process: the list then returns at
+          * once and leaves through its own HOME exit (F1). */
+         g_running = !g_exit_req;
          g_relaunch = 0;
          exit_code = 0;
          exit_reason = NULL;
@@ -4668,6 +4727,7 @@ session_top:
          prev_pad = 0;
          g_pad_swallow = 0;          /* nothing of the last game is held */
          chord_frames = 0;
+         g_dump_chord_pending = 0;   /* no screenshot of the next game */
          ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
          ui_set_turbo_locked(0);     /* ...and no session outlives it */
          inproc_menu_armed = 0;
@@ -4738,7 +4798,11 @@ session_top:
     * process.  argp becomes the new argv[0], which is where every ms0 path is
     * derived from — passing NULL would silently fall back to the compiled-in
     * default directory and lose a variant install's saves. */
-   /* Returns only if it failed: fall through to the XMB rather than hang. */
+   /* Returns only if it failed: fall through to the XMB rather than hang.
+    * HOME (F1) is an exit, whatever the quit asked for: after the audio_hash
+    * guard above, which must still see the game-list value. */
+   if (g_exit_req)
+      g_relaunch = 0;
    if (g_relaunch)
       relaunch_eboot(g_relaunch == RELAUNCH_GAMELIST);
    FE_EXIT_GAME();

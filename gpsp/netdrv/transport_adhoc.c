@@ -672,11 +672,6 @@ static int init_to_handler(void)
    A.tx_thid = -1;
    A.tx_sema = -1;
 
-   /* 1. WLAN hardware switch (refuse early with a friendly error). */
-   A.stage = "wlan_switch";
-   if (sceWlanGetSwitchState() != 1)
-      return ADHOC_ERR_WLAN_OFF;
-
    /* 2-3. Net modules (fake in PPSSPP, mandatory on real fw — §11.11). */
    A.stage = "module_common";
    gbadhoc_net_touched = 1;   /* the in-process game-list return stands down */
@@ -696,6 +691,22 @@ static int init_to_handler(void)
       return init_fail(ADHOC_ERR_MODULES);
    }
    A.progress = ST_MOD_ADHOC;
+
+   /* 1 (moved here). WLAN switch, read only once the modules are loaded and
+    * waited for. A PSP Go read 0 about 0.4 s after its net modules loaded,
+    * with the switch on (2026-11-08), so a one-shot read before loading
+    * anything can refuse wireless that was there. Up to 5 s, then report
+    * off truthfully. */
+   A.stage = "wlan_switch";
+   {
+      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+      while (sceWlanGetSwitchState() != 1)
+      {
+         if ((unsigned)sceKernelGetSystemTimeLow() - t0 >= 5000000u)
+            return init_fail(ADHOC_ERR_WLAN_OFF);
+         sceKernelDelayThread(100000);
+      }
+   }
 
    /* 4. Stack init. */
    A.stage = "net_init";

@@ -45,6 +45,11 @@ extern u32 smc_fallback_stats[16] __attribute__((weak));
  * after the teardown, so what it reads is final. */
 static const char *inproc_refusal(int have_variant)
 {
+   /* HOME during the quit (F1): the player is leaving, not going back to
+    * the list.  Monotone like every predicate below (it only goes 0 -> 1),
+    * so the teardown's two calls can only disagree in the safe direction. */
+   if (g_exit_req)
+      return "home";
    if (!GPSP_INPROC_RETURN)
       return "build";
    if (!g_pcfg.quick_return)

@@ -60,7 +60,11 @@ enum
     * collided with ADHOC_ERR_WLAN_OFF and produced a "WLAN switch is OFF"
     * message on a console whose switch was on. */
    ADHOC_ERR_NP_START        = -14,
-   ADHOC_ERR_NO_GROUP        = -15   /* join: the group was never seen */
+   ADHOC_ERR_NO_GROUP        = -15,  /* join: the group was never seen */
+   /* Not a transport error either: the experimental online path
+    * (online_psp_up: the module, the Wi-Fi, the server) failed.  Its own
+    * code for the same reason as ADHOC_ERR_NP_START (PLAN HW-2 r3-B1). */
+   ADHOC_ERR_ONLINE          = -16
 };
 
 typedef struct adhoc_stats

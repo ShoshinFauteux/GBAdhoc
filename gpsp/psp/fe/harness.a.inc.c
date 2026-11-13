@@ -26,5 +26,24 @@ void gpsp_net_wait_beat(void)
 {
    LOOP_TOP();
 }
+
+/* THE SYSTEM'S HOME, SIMULATED (harness `exit_sim_at`, PLAN HW-2 S-4): PPSSPP
+ * has no HOME exit callback to press, so the named point of the quit's
+ * teardown calls exit_cb itself, as cb_thread would with HOME pressed there.
+ *   return  -- "Returning to game list", before the census (S-4 c)
+ *   unload  -- after the in-process unload's heap_snap (S-4 d: F1 part 4)
+ * Once per process.  A release has neither this nor its call sites. */
+static int exit_cb(int arg1, int arg2, void *common);
+static char g_exit_sim_at[12];
+static void exit_sim(const char *where)
+{
+   if (!g_exit_sim_at[0] || strcmp(g_exit_sim_at, where))
+      return;
+   g_exit_sim_at[0] = '\0';
+   fe_evt("exit_sim at=%s", where);
+   exit_cb(0, 0, NULL);
+}
+#else
+#define exit_sim(where) ((void)0)
 #endif
 

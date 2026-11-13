@@ -60,6 +60,15 @@ void ui_set_thumb_buffer(uint16_t *buf);
 void ui_backdrop_inject(const char *rel);
 void ui_open(void);
 void ui_close(void);
+/* THE SETTINGS FLUSH (PLAN HW-2 F3).  A Settings/Controls/Online page saves
+ * its changes when the player leaves it (or closes the menu); a quit that
+ * comes with such a page still open -- HOME, START+SELECT, a wake-quit --
+ * lost them.  ui_settings_flush writes config.ini only if a page left
+ * something unsaved (main's teardown, after io_thread_stop);
+ * ui_settings_save writes it now and marks it clean, so a later flush or
+ * ui_close does not write it a second time (main's explicit saves). */
+void ui_settings_flush(void);
+void ui_settings_save(void);
 int  ui_active(void);
 /* Menu = HOME (docs/CONTROL-REMAP.md section 10): a HOME press while the
  * in-game menu is open.  On the menu's top page it closes the menu, exactly

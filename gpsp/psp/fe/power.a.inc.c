@@ -25,10 +25,21 @@ static unsigned g_ffw_drawn, g_ffw_gated;
 
 /* ------------------------------------------------------------------- exit */
 
+/* HOME WAS PRESSED, FOR GOOD (PLAN HW-2 F1).  g_running is the loop's "keep
+ * going", and the in-process return sets it to 1 again for the next game; a
+ * HOME that lands in the quit's teardown was lost there and the list then
+ * looped on it ("Please wait" for ever), or the refused tail relaunched the
+ * app instead of leaving.  This one is sticky: set only here, never cleared,
+ * read by inproc_refusal ("home"), the return's g_running and the exit's
+ * relaunch. */
+static volatile int g_exit_req;
+
 static int exit_cb(int arg1, int arg2, void *common)
 {
    (void)arg1; (void)arg2; (void)common;
-   /* Main loop notices, flushes SRAM, logs EVT exit, then exits the game. */
+   /* Main loop notices, flushes SRAM, logs EVT exit, then exits the game.
+    * cb_thread: set two flags, never block, never tear anything down. */
+   g_exit_req = 1;
    g_running = 0;
    return 0;
 }
@@ -117,11 +128,31 @@ static int cb_thread(SceSize args, void *argp)
 }
 /* @extract:end fn:cb_thread */
 
+/* r1-W8: the thread's id is known from its creation (g_cb_thid was only
+ * set by the thread itself, a race with power_request_poll's wakeup), and a
+ * failure is no longer silent: without this thread HOME and sleep do
+ * nothing, so it is logged and the game says so (g_cb_failed). */
+static int g_cb_failed;
 static void setup_exit_callback(void)
 {
+   int rc;
    int thid = sceKernelCreateThread("cb_thread", cb_thread, 0x11, 0xFA0,
                                     THREAD_ATTR_USER, NULL);
+   rc = thid;
    if (thid >= 0)
-      sceKernelStartThread(thid, 0, NULL);
+   {
+      g_cb_thid = thid;
+      rc = sceKernelStartThread(thid, 0, NULL);
+      if (rc < 0)
+      {
+         sceKernelDeleteThread(thid);
+         g_cb_thid = -1;
+      }
+   }
+   if (rc < 0)
+   {
+      g_cb_failed = rc;
+      fe_evt("cb_thread FAILED rc=%08x", (unsigned)rc);
+   }
 }
 
