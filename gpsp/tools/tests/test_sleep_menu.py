@@ -194,6 +194,11 @@ static volatile int g_pwr_slept, g_pwr_rebuild, g_pwr_park_req, g_pwr_parked;
 static volatile int g_pwr_park_ack, g_pwr_sleep_pending;
 static void power_request_poll(void) { }
 static int g_wake_menu, g_wake_have = 1, g_relaunch;
+static volatile int g_pwr_me_lost;  /* me_standby_down's failed sync (r2-B-1) */
+static int me_lost_notices;         /* wake_me_lost_notice (H1) */
+static void wake_me_lost_notice(void) { me_lost_notices++; }
+static int me_host_loaded(void) { return 1; }
+static int me_host_up(void) { return 0; }
 static uint16_t g_wake_frame_buf[16];
 static uint16_t *g_wake_frame = g_wake_frame_buf;
 static unsigned g_wake_w = 240, g_wake_h = 160;
@@ -220,6 +225,9 @@ static int game_frames, core_frames;
  * pad_swallow_arm, g_wake_answered); the swallow itself is test_menu_press's. */
 static unsigned swallow_armed;
 static int g_wake_answered;
+/* the ME-lost wake's hold, handed to the teardown's (test_sleep_holds.py
+ * runs that hand-over against the lock count) */
+static int g_wake_lost_hold;
 static void pad_swallow_arm(unsigned held) { swallow_armed |= held; }
 /* The answer's pad, read once more after the overlay: as held at the
  * answer, and not an overlay frame (production calls the same peek). */
@@ -338,6 +346,7 @@ static void machine(void)
    g_pwr_slept = g_pwr_rebuild = g_pwr_park_req = g_pwr_parked = 0;
    g_pwr_park_ack = g_pwr_sleep_pending = 0;
    g_wake_menu = 0; g_wake_have = 1; g_relaunch = 0; g_sq.down = 0;
+   g_pwr_me_lost = 0;
    exit_reason = NULL; g_pad = 0; g_prev_pad = 0;
    menu_frames = menu_presses = rebuilds = blanks = 0;
    ov_frames = ov_swaps = ov_answer_frame = screen_swaps = 0;
@@ -463,9 +472,28 @@ int main(void)
    assert(strcmp(trace, "qdown hold qup ") == 0 && rebuilds == 0);
    assert(ov_answer_frame == 3 && !g_wake_menu && g_running);
 
+   /* 6. PLAN r2-B-1: the sleep's teardown had to shut the ME down (its sync
+    * failed).  The wake ends the session to the game list, as `Quit to game
+    * list` does: no overlay, no rebuild, never a game on one core. */
+   assert(me_lost_notices == 0);     /* no wake above said the ME was lost */
+   assert(g_wake_lost_hold == 0);    /* nor took its hold */
+   machine();
+   g_pwr_park_req = 1; g_pwr_sleep_pending = 1;
+   loop_top();
+   g_pwr_me_lost = 1;                         /* as me_standby_down left it */
+   in_overlay = 1;
+   assert(menu_iteration() == 0);
+   in_overlay = 0;
+   assert(ov_frames == 0 && rebuilds == 0);
+   assert(me_lost_notices == 1);     /* and the player is told why (H1) */
+   assert(!g_running && g_relaunch == RELAUNCH_GAMELIST);
+   assert(exit_reason && strcmp(exit_reason, "game_list") == 0);
+   assert(!g_pwr_slept && !g_pwr_rebuild && !g_wake_menu && !g_pwr_me_lost);
+   assert(g_wake_lost_hold == 1);    /* held on, for the teardown to take over */
+
    puts("sleep from the menu / pause screen / play: overlay, one rebuild, "
         "the pause screen parks at the loop top, menu swaps again, held X "
-        "swallowed by the menu, quit, no-op pass");
+        "swallowed by the menu, quit, no-op, ME lost ends the session pass");
    return 0;
 }
 '''
@@ -536,6 +564,9 @@ MUTANTS = (
     ("Continue does not rebuild",
      "main", "         me_standby_up();\n         pwr_release();",
      "         pwr_release();", "rebuilds == 1"),
+    ("a lost ME is woken onto the overlay (before r2-B-1)",
+     "main", "   if (g_wake_menu && g_pwr_me_lost)\n",
+     "   if (0)\n", "the overlay never answered"),
     ("the overlay parks from inside itself",
      "main", YIELD_FN,
      "static int wake_overlay_yield(void)\n{\n   (void)loop_park();\n"

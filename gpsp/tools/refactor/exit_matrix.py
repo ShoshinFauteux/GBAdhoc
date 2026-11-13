@@ -64,6 +64,9 @@ VOC = {
     'vid_term': 'VID', 'fe_evt': 'EVT', 'evt_shutdown': 'ES', 'handoff_run': 'HO',
     'lab_finish': 'HO', 'LAB_HANDOFF': 'HO', 'pwr_release_all': 'PRA',
     'relaunch_eboot': 'RL', 'sceKernelExitGame': 'EXIT', 'ui_notice': 'NOTICE',
+    # HW-1 H3: C1 / C2 show their notice through boot_stop_notice (fe/power.b:
+    # ui_notice with the boot's hold dropped while it waits)
+    'boot_stop_notice': 'NOTICE',
     'ui_loading_finish': 'LOADFIN', 'me_rend_teardown': 'ME', 'me_video_teardown': 'ME',
     'me_host_shutdown': 'ME', 'net_teardown': 'NET', 'online_psp_down': 'NET',
 }
@@ -107,7 +110,10 @@ def x2_anchor_ok(row, anchor):
     return anchor in row['why']
 
 # ------------------------------------------------------------- D step table (PLAN §3.2)
-STEP_ORDER = ('D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 D10 D11 D12 D13 D13b D14 D15 D16 D16b D17 D18 '
+# HW-1 F2 (claude/hw1-sleep): the teardown's pwr_hold("teardown") (D4) now comes BEFORE
+# play_lock_drop("loop_exit") (D3), PLAN HW-1 "after the swap the order is L:18097 ->
+# L:18098 -> L:18100 -> L:18099"; the step names keep PLAN §3.2's numbering.
+STEP_ORDER = ('D0 D1 D2 D4 D3 D5 D6 D7 D8 D9 D10 D11 D12 D13 D13b D14 D15 D16 D16b D17 D18 '
               'D19 D20 I1 I1b U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U12b U13 I3 I4 I5 '
               'P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13').split()
 STEP_RANK = {s: k for k, s in enumerate(STEP_ORDER)}
@@ -508,7 +514,11 @@ class Interp(object):
                     'g_ss_browser': 0, 'inproc_n': 0, 'g_ss_game': 0, 'g_cable_reserve': 0,
                     'dynarec_heap_tables_release': 1, 'g_inproc_me_unload': 0,
                     'have_variant': 0, 'NULL': 0, 'RELAUNCH_GAMELIST': 2,
-                    'RELAUNCH_PROFILE': 1}
+                    'RELAUNCH_PROFILE': 1,
+                    # HW-1 H1 r5: the ME-lost wake's hold, handed to the teardown's right after
+                    # pwr_hold("teardown"); none of these quits is that wake (test_sleep_holds.py
+                    # runs the hand-over against the lock count)
+                    'g_wake_lost_hold': 0}
         self.refusal = [r1, r2]
         self.retained = 1 if (rel == 2 and not r1) else 0
         self.call = {'me_host_retain': 1, 'me_host_loaded': 1,
@@ -990,8 +1000,8 @@ top:
    while (g_running) { step(); }
    ui_set_wake_yield(NULL);
    sleep_quiesce_up("loop_exit");
-   play_lock_drop("loop_exit");
    pwr_hold("teardown");
+   play_lock_drop("loop_exit");
    if (g_relaunch != RELAUNCH_GAMELIST || inproc_refusal(v) || !me_host_retain(5))
       me_host_shutdown();
    ui_return_tick();
@@ -1050,12 +1060,12 @@ def selftest():
            'relaunch_eboot' in sc['LIST_REFUSED']['seq'], 'LIST_REFUSED: shutdown at D10 and I5, relaunches')
     expect(sc['LIST_RETAIN_THEN_REFUSE']['seq'].count('me_host_shutdown') == 1,
            'retain then refuse: one shutdown (I5)')
-    # mutant: swap D3/D4 -> order violation
+    # mutant: D3/D4 back in the pre-F2 order (lock dropped before the hold) -> order violation
     p2 = os.path.join(d, 'm2.c')
-    open(p2, 'w').write(SELF_SRC.replace('   play_lock_drop("loop_exit");\n   pwr_hold("teardown");',
-                                         '   pwr_hold("teardown");\n   play_lock_drop("loop_exit");'))
+    open(p2, 'w').write(SELF_SRC.replace('   pwr_hold("teardown");\n   play_lock_drop("loop_exit");',
+                                         '   play_lock_drop("loop_exit");\n   pwr_hold("teardown");'))
     b, o = check_order(step_rows(View('raw', C.load_raw(p2)))[0])
-    expect(b == 1, 'mutant D3<->D4 swap caught by the PLAN 3.2 order check')
+    expect(b == 1, 'mutant D3<->D4 swap (pre-F2 order) caught by the PLAN 3.2 order check')
     # mutant: unknown runtime condition -> scenario error
     p3 = os.path.join(d, 'm3.c')
     open(p3, 'w').write(SELF_SRC.replace('if (g_relaunch)\n', 'if (g_new_flag)\n'))

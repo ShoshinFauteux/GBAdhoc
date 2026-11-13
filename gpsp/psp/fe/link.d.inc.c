@@ -686,13 +686,9 @@ static void silent_frame(void)
       }
       fe_evt("silent_activate role=%s group=%s",
              as_host ? "host" : "join", g_silent_group);
-      /* Keep the same heap guarantee as UI- and boot-driven bring-up.  The
-       * renderer may hold the largest contiguous block on the 32 MB models;
-       * np_start needs that block for its netdrv arena.  Resume on both
-       * success and failure so a failed automatic join still restores ME. */
-      me_rend_suspend();
-      rc = net_bringup(as_host, g_silent_group, g_silent_nick, 0);
-      me_rend_resume();
+      /* The same heap guarantee as the UI- and boot-driven bring-up, and
+       * one power hold to the renderer's return (net_bringup_rend_off). */
+      rc = net_bringup_rend_off(as_host, g_silent_group, g_silent_nick);
       if (rc == ADHOC_ERR_WLAN_OFF)
       {
          osd_chip_session("WLAN switch OFF");

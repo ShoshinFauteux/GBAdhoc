@@ -31,7 +31,8 @@
 #define OL_MAGIC_HOST 0x474F4C48u   /* 'GOLH' */
 #define OL_MAGIC_API  0x474F4C41u   /* 'GOLA' */
 /* Bump on ANY change to either table or to the semantics of a call. */
-#define OL_VERSION    4u   /* 3: room[16] (invite codes), api.slot; the host chip/toast. 4: both (beta.4 fix 1) */
+#define OL_VERSION    5u   /* 3: room[16] (invite codes), api.slot; the host chip/toast. 4: both (beta.4 fix 1).
+                              5: host.cancel (HW-1 r4-L3: the LINKING screen's O cancel) */
 #define OL_ERR_ABI    (-0x4F4C)
 
 typedef struct online_host
@@ -55,6 +56,11 @@ typedef struct online_host
     * text to spare (docs/LAYOUT-PINNING.md) */
    void  (*chip)(const char *text);
    void  (*toast)(const char *fmt, ...);
+   /* v5: nonzero = the player cancelled the bring-up (O on the LINKING
+    * screen; the EBOOT holds the power switch over it, so it must end on
+    * request).  up() polls it in its waits and gives up as on a failure,
+    * why = "cancelled".  NULL = no cancel (every other caller). */
+   int   (*cancel)(void);
 } online_host;
 
 /* What the session needs from the EBOOT's configuration (online_psp.c). */

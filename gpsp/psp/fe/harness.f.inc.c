@@ -562,6 +562,18 @@ extern u32 jit_code_stats[10] __attribute__((weak));
 static void core_health_evt(const char *at)
 {
    char xl[80] = "", dm[48] = "", jc[96] = "", fb[192] = "";
+   /* HW-1's measurement (PLAN HW-1 "cb_thread stack paint", critique R9):
+    * the high-water mark so far of cb_thread's 0xFA0 = 4,000 B stack, the
+    * thread power_cb and exit_cb run on.  setup_exit_callback creates it
+    * without PSP_THREAD_ATTR_NO_FILLSTACK, so the kernel has painted it and
+    * the bytes never written are counted from its end.  Compare with T12's
+    * static bound (stack_depth.py, libc frames included). */
+   if (g_cb_thid >= 0)
+   {
+      int cb_free = sceKernelGetThreadStackFreeSize(g_cb_thid);
+      fe_evt("cb_stack at=%s size=%u free=%d used=%d", at, 0xFA0u, cb_free,
+             0xFA0 - cb_free);
+   }
    if (&smc_fallback_stats)
    {
       unsigned i, n = (unsigned)snprintf(fb, sizeof(fb), " smcfb=");

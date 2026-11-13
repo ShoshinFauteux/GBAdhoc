@@ -11,13 +11,13 @@
 #       raw vs -E all '#if'/'macro', every scenario evaluable  -> RESULT ok
 #   C2  a second `all` from fresh -E output equals the first (XS gate: check passes)
 #   C3  test_exit_model.c + the reference model: every site and scenario equal, x3 flavours
-#   M1  model mutant: D3/D4 swapped                        -> model FAILS
+#   M1  model mutant: D3/D4 swapped (F2 undone)            -> model FAILS
 #   M2  model mutant: the two inproc_refusal calls merged   -> model FAILS
 #   M3  model mutant: audio_hash guard dropped              -> model FAILS (lab/harness)
 #   M4  model mutant: gpsp_rtc_peek put behind GPSP_PERF_RIG -> model FAILS (release)
 #   M5  model mutant: AV-first sites lose vid_term          -> model FAILS
 #   M6  model mutant: EVT-first sites run audio first       -> model FAILS
-#   M7  source mutant: play_lock_drop/pwr_hold swapped (18099/18100) -> order check and XS FAIL
+#   M7  source mutant: pwr_hold/play_lock_drop swapped back (F2 undone) -> order check and XS FAIL
 #   M8  source mutant: B1 loses vid_term                    -> XS FAILS at B1 (all flavours)
 #   M9  source mutant: gpsp_rtc_peek guarded by g_perf_rig  -> release-live check FAILS
 #   M10 -E mutant: a call deleted from harness -E output    -> raw vs -E UNEXPLAINED
@@ -79,9 +79,9 @@ srcmut() {  # srcmut <name> <python edit> ; leaves $OUT/<name>/report.txt
   $EM check --golden "$OUT/base" --cand "$d/xs" > "$d/check.log" 2>&1; echo $? > "$d/xs_rc"
 }
 srcmut m7 "
-i = L.index('   play_lock_drop(\"loop_exit\");'); assert L[i+1] == '   pwr_hold(\"teardown\");'
+i = L.index('   pwr_hold(\"teardown\");'); assert L[i+1] == '   play_lock_drop(\"loop_exit\");'
 L[i], L[i+1] = L[i+1], L[i]"
-grep -q 'ORDER session_end:D3 play_lock_drop' "$OUT/m7/xs/report.txt" && [ "$(cat $OUT/m7/xs_rc)" = 1 ] \
+grep -q 'ORDER session_end:D4 pwr_hold' "$OUT/m7/xs/report.txt" && [ "$(cat $OUT/m7/xs_rc)" = 1 ] \
   && ok "M7 D3/D4 swap in source: order check + XS fail" || { bad "M7"; tail -12 "$OUT/m7/all.log"; }
 srcmut m8 "
 k = [j for j in range(15290, 15301) if L[j].strip() == 'vid_term();']; assert len(k) == 1; L[k[0]] = ''"

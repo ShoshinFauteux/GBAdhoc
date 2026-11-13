@@ -161,11 +161,19 @@
 #define SLEEP_SIM_REQUEST() (g_ss_request)
 #define POWER_IS_REQUEST() \
    (!g_ss_nopoll && (g_ss_req_up || scePowerIsRequest() == 1))
+/* `sleep_sim_me_sync_fail = 1` (PLAN S-9 mutant): the ME's cache-flush sync
+ * fails while the simulated suspend is under way (me_rend_release_vmem). */
+#define SLEEP_SIM_ME_SYNC_FAIL() (g_ss_me_sync_fail && g_ss_asleep)
+/* After a failed sync's pool release: is the engine quiet?  (PLAN S-9's
+ * measurement; sleep_sim_me_quiet, fe/harness.b.inc.c.) */
+#define SLEEP_SIM_ME_QUIET() sleep_sim_me_quiet()
 #else
 #define SLEEP_SIM_NOPARK() 0
 #define SLEEP_SIM_REQUEST() 0
 #define POWER_IS_REQUEST() (scePowerIsRequest() == 1)
 #define SLEEP_SIM_ASLEEP() 0
+#define SLEEP_SIM_ME_SYNC_FAIL() 0
+#define SLEEP_SIM_ME_QUIET() ((void)0)
 #endif
 
 /* The ME renderer's hold on the volatile pool: through vm_lock / vm_unlock

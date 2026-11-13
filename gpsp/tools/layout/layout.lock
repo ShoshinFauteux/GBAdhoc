@@ -40,19 +40,44 @@
 # translators' +320 B (release) / +384 B (lab) comes out of
 # LAYOUT_PAD_XLAT_BYTES, B's +352 B out of its translator pad, and the
 # emitters' -128 B of cold text goes into .text.pcarg_layout_pad.
+# HW-1 (claude/hw1-sleep, the sleep-path fixes on b7d0cafd): GCC re-ordered
+# main's blocks (r7-L5's holds, F2), so no pad can hold the frame loop; the
+# MAIN pad moves main to the shift that puts the most loop-line bytes on the
+# base's sets (release 0x140c -> 0x14e8, 32.5 %; lab 0x0bd0 -> 0x0aac, 41.3 %),
+# TEXT/FE/CORE (+ lab RO) put pace_frame, fe_host_reset, A's cold text and
+# tables back.  Re-recorded in both sections: `at main`, `size main`, exit_cb
+# (the code between it and pace_frame grew: me_standby_down, the online
+# cancel) and pte_mutex_check_need_init (+24 B release, -16 B lab; the CORE
+# pad puts me_replay_lines and _ZL10pipe_latchv#1 back on their values).
+# HW-1 review r2 (claude/hw1-sleep-r2): power_cb grew 16 B release, 8 B lab (a
+# failed sleep sync no longer stops the ME module; the standby>=2 rung's three
+# labels), so TEXT/CORE take it back (release 872 -> 856, 892 -> 876; lab
+# 7792 -> 7784, 7628 -> 7636); main, pace_frame and the rest hold.
+# Re-recorded: exit_cb (-16 B release, -8 B lab: it sits between the TEXT pad
+# and power_cb) and pte_mutex_check_need_init (-16 B release, +8 B lab).
+# HW-1 review r2 follow-ups (H6, H3, H4, H2, H1's wake notice): +528 B release,
+# +516 B lab between exit_cb and pace_frame, and new strings.  release: TEXT
+# 856 -> 328, CORE 876 -> 892, RO 576 -> 512; lab: TEXT 7784 -> 7268, FE
+# 2528 -> 2408, RO 128 -> 8064 (wrapped); main, pace_frame and the rest hold.
+# Re-recorded: exit_cb (release 0x0058 -> 0x1e48, lab 0x0bf8 -> 0x09f4) and the
+# release's pte_mutex_check_need_init (+16 B).
+# HW-1 H1, the ME-lost notice with no power hold: wake_me_lost_notice is 124 B
+# smaller in the release, 76 B in the lab.  release: TEXT 328 -> 452; lab:
+# TEXT 7268 -> 7344; every other pad, main, pace_frame and the rest hold.
+# Re-recorded: exit_cb (release 0x1e48 -> 0x1ec4, lab 0x09f4 -> 0x0a40).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x140c
-size main                               33764
+at   main                               0x14e8
+size main                               33832
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0264
+at   exit_cb                            0x1e4c
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d5c
+at   pte_mutex_check_need_init          0x1d70
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -99,16 +124,16 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x0bd0
-size main                               48648
+at   main                               0x0aac
+size main                               48892
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x10a0
+at   exit_cb                            0x09e0
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x0834
+at   pte_mutex_check_need_init          0x1318
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240

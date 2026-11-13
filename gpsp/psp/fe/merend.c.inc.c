@@ -154,6 +154,12 @@ static const uint16_t *me_rend_present_src(unsigned *pitch)
  * re-locking would rebuild onto a partition we no longer held -- which is a
  * plausible way to reset the machine, and the machine did reset.  The full
  * history is at the call site in me_standby_down(). */
+/* The release itself, with no question asked of the engine: for a caller
+ * that has already made sure the ME cannot touch the pool any more
+ * (me_rend_release_vmem below), or that must give it back regardless
+ * (me_standby_down's failed sync, which leaves the module loaded so the
+ * kernel's suspend parks the ME through our sysevent slot). */
+static int me_rend_drop_vmem(void);
 /* @extract:begin fn:me_rend_release_vmem */
 static int me_rend_release_vmem(void)
 {
@@ -161,13 +167,21 @@ static int me_rend_release_vmem(void)
     * in-flight job or drop dirty work-cache lines. Do not return that memory
     * to the OS until the engine has relinquished it. Normally standby >= 2
     * has already unloaded the module, so no extra command is needed; nor does
-    * one kept across the in-process return (me_host_retain did this). */
+    * one kept across the in-process return (me_host_retain did this).
+    * (SLEEP_SIM_ME_SYNC_FAIL: the harness's sync that fails while asleep.) */
    if (g_mer_vmem && me_host_loaded() && !me_host_retained() &&
-       me_host_sync(50000u) != 0)
+       (SLEEP_SIM_ME_SYNC_FAIL() || me_host_sync(50000u) != 0))
    {
       fe_evt("me_rend release_deferred reason=me_sync");
       return -1;
    }
+   return me_rend_drop_vmem();
+}
+/* @extract:end fn:me_rend_release_vmem */
+
+/* @extract:begin fn:me_rend_drop_vmem */
+static int me_rend_drop_vmem(void)
+{
 #ifdef REWIND
    /* The other tenant first: after this the rewind holds no pointer into
     * the pool (its history is gone; it starts again after the wake). */
@@ -204,5 +218,5 @@ static int me_rend_release_vmem(void)
    g_mer_ready = g_mer_pending = g_mer_last_presented = -1;
    return 1;
 }
-/* @extract:end fn:me_rend_release_vmem */
+/* @extract:end fn:me_rend_drop_vmem */
 

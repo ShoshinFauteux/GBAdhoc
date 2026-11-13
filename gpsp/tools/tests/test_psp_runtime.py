@@ -66,11 +66,25 @@ static void *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
 static int g_mer_sh_on, g_mer_ready, g_mer_pending, g_mer_last_presented;
 static int unlock_calls;
 static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w, blank_calls;
-static void me_standby_step(const char *s) { (void)s; }
+#include <string.h>
+static const char *steps[16]; static int nsteps;
+static void me_standby_step(const char *s) { if (nsteps < 16) steps[nsteps++] = s; }
+static int stepped(const char *s)
+{ int i; for (i = 0; i < nsteps; i++) if (!strcmp(steps[i], s)) return 1; return 0; }
 static void wake_snapshot(void) {}
 static int me_rend_active(void) { return g_me_rend; }
-static int retained, shutdowns;
-static void me_host_shutdown(void) { loaded=healthy=0; retained=0; shutdowns++; }
+static int retained, shutdowns, stop_fails, unload_fails, handed_back;
+/* stop_fails: module_stop refused -- me_host.c marks the engine dead and
+ * keeps the module loaded */
+static void me_host_shutdown(void)
+{ shutdowns++; healthy=0; if (stop_fails) return; retained=0;
+  handed_back=1; if (unload_fails) return; loaded=0; }
+static int me_host_handed_back(void) { return handed_back; }
+#define SLEEP_SIM_ME_SYNC_FAIL() 0
+/* the harness's quiet log: counted, with the unlock count it was taken at */
+static int quiet_calls, quiet_unlocks;
+#define SLEEP_SIM_ME_QUIET() (quiet_calls++, quiet_unlocks = unlock_calls)
+static volatile int g_pwr_me_lost;
 static void vid_blank_all(void) { blank_calls++; }
 #define MER_VM_UNLOCK() (unlock_calls++)
 static int sceKernelWaitSema(int id, int n, unsigned *timeout)
@@ -153,15 +167,93 @@ int main(int argc, char **argv)
    loaded=healthy=1; retained=0; shutdowns=0;
    pwr_release_all();
    check(!shutdowns, "leaving does not touch a module in use");
-   g_mer_vmem=1; loaded=1; healthy=idle=sync_ok=0;
+   /* PLAN r2-B-1, review r2: a sync that fails at the suspend gives the
+    * pool back all the same -- never kept across the sleep -- and the wake
+    * is told the engine is gone.  The module is NOT stopped from the power
+    * callback: module_stop would hand the kernel's SceMeRpc handler its slot
+    * back, and the suspend would spin in it (docs/INPROC-RETURN.md s8). */
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=1; idle=1; sync_ok=0;
    g_pcfg.standby=1; g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; stop_fails=0; sync_calls=0;
    me_standby_down();
-   check(!g_pwr_slept && g_mer_vmem && ring_r==2 && !blank_calls,
-         "deferred standby release preserves unslept retained-pool state");
+   check(!shutdowns && loaded && unlock_calls==1 && !g_mer_vmem &&
+         !g_mer_work && g_pwr_slept && g_pwr_me_lost && ring_r==7 &&
+         blank_calls==1 && sync_calls==1,
+         "failed standby sync releases the pool and leaves the module loaded");
+   check(quiet_calls==1 && quiet_unlocks==1,
+         "failed standby sync: the quiet log is taken once, after the release");
+   /* The realistic trigger: an engine the watchdog already declared dead,
+    * module still loaded (me_host_sync answers -1 for any !me_host_up()). */
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=0; idle=0; sync_ok=0;
+   g_pwr_slept=0; ring_r=2; ring_w=7; blank_calls=0;
+   shutdowns=0; unlock_calls=0; g_pwr_me_lost=0; sync_calls=0;
+   me_standby_down();
+   check(!shutdowns && loaded && unlock_calls==1 && !g_mer_vmem &&
+         g_pwr_slept && g_pwr_me_lost,
+         "watchdog-dead ME at a sleep: pool released, module not stopped");
+   check(stepped("vmem_sync_failed") && stepped("vmem_released") &&
+         !stepped("module_unloaded") && !stepped("module_stop_failed"),
+         "failed sync logs the release and no module step");
+   /* The `standby >= 2` rung logs what me_host_shutdown actually did. */
+   {
+      static const struct { int stop, unload; const char *want; } rung[] = {
+         { 0, 0, "module_unloaded" },
+         { 1, 0, "module_stop_failed" },
+         { 0, 1, "module_unload_failed" },
+      };
+      int i;
+      for (i = 0; i < 3; i++)
+      {
+         char label[96];
+         g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; healthy=idle=sync_ok=1;
+         g_pcfg.standby=2; handed_back=0; nsteps=0;
+         stop_fails=rung[i].stop; unload_fails=rung[i].unload;
+         me_standby_down();
+         snprintf(label, sizeof(label), "standby>=2 rung logs %s", rung[i].want);
+         check(stepped(rung[i].want) && !g_mer_vmem, label);
+      }
+      g_pcfg.standby=1; unload_fails=0; handed_back=0;
+   }
+   stop_fails=0;
+   g_mer_vmem=1; g_mer_work=(void*)1; loaded=1; g_pwr_slept=0; g_pwr_me_lost=0;
+   shutdowns=0; ring_r=2; ring_w=7; blank_calls=0;
    healthy=idle=sync_ok=1;
+   quiet_calls=0;
    me_standby_down();
-   check(g_pwr_slept && !g_mer_vmem && ring_r==7 && blank_calls==1,
+   check(g_pwr_slept && !g_mer_vmem && ring_r==7 && blank_calls==1 &&
+         !shutdowns && !g_pwr_me_lost,
          "successful standby release marks sleep and clears presentation");
+   check(!quiet_calls, "a confirmed sync takes no quiet log");
+   /* THE CONSOLE WITH NO MEDIA ENGINE (Adrenaline on a PS Vita).  The
+    * renderer never came up, so it never took the pool (g_mer_vmem = 0);
+    * me_host.c leaves the module not loaded -- or, when the unwind of an
+    * engine that never booted could not stop it, loaded and dead (the
+    * driver cases above).  Neither is a lost engine: no sync is asked, no
+    * pool is dropped, the flag stays 0 and the wake shows the overlay. */
+   {
+      static const struct { int loaded; const char *what; } none[] = {
+         { 0, "no ME (module not loaded)" },
+         { 1, "no ME (never booted, stop failed: loaded and dead)" },
+      };
+      int i, sleep_n;
+      for (i = 0; i < 2; i++)
+         for (sleep_n = 0; sleep_n < 2; sleep_n++)   /* 1: after an in-process return */
+         {
+            char label[120];
+            g_mer_vmem=0; g_mer_work=NULL; g_me_rend=0; retained=0;
+            loaded=none[i].loaded; healthy=0; idle=0; sync_ok=0;
+            g_pcfg.standby=1; g_pwr_slept=0; g_pwr_me_lost=0; g_pwr_had_host=7;
+            shutdowns=0; unlock_calls=0; sync_calls=0; quiet_calls=0; nsteps=0;
+            ring_r=2; ring_w=7; blank_calls=0;
+            me_standby_down();
+            snprintf(label, sizeof(label), "%s, sleep %d: not lost, plain sleep",
+                     none[i].what, sleep_n + 1);
+            check(!g_pwr_me_lost && g_pwr_slept && !g_pwr_had_host &&
+                  !sync_calls && !unlock_calls && !shutdowns && !quiet_calls &&
+                  !stepped("vmem_sync_failed") && stepped("done") &&
+                  ring_r==7 && blank_calls==1, label);
+         }
+   }
    return 0;
 }
 '''
@@ -213,9 +305,10 @@ static void tracked_free(void *p)
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 void sceKernelDcacheWritebackInvalidateRange(const void *p,unsigned n) {(void)p;(void)n;}
 void sceKernelDcacheWritebackRange(const void *p,unsigned n) {(void)p;(void)n;}
-SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;load_calls++;return 7;}
+static int load_fail, start_fail;
+SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;load_calls++;return load_fail?(SceUID)0x80020001:7;}
 int sceKernelStartModule(SceUID id,unsigned n,void *a,int *s,void *o)
-{ (void)id;(void)n;(void)a;(void)o;if(s)*s=0;return 7; }
+{ (void)id;(void)n;(void)a;(void)o;if(s)*s=0;return start_fail?(int)0x80020002:7; }
 int sceKernelStopModule(SceUID id,unsigned n,void *a,int *s,void *o)
 { (void)id;(void)n;(void)a;(void)o;stop_calls++;if(s)*s=stop_fail?-1:0;return stop_fail?-1:0; }
 int sceKernelUnloadModule(SceUID id) { (void)id; return 0; }
@@ -287,10 +380,48 @@ static void retain_cases(void)
    check(me_host_retain(50000u)==0,"a dead engine cannot be retained");
    g_me_dead=0;answer_sync=0;
 }
+/* THE CONSOLE WITH NO MEDIA ENGINE (Adrenaline on a PS Vita): the module does
+ * not load, does not start, or its engine never answers the boot handshake.
+ * In each case nothing is left that a sleep could take for a lost engine:
+ * not loaded, not up, not retained, never "dead" -- unless the unwind's own
+ * module_stop fails, which leaves it loaded and dead, and still not up. */
+static void no_me_cases(void)
+{
+   int stops;
+   g_me_modid=-1;g_mb=NULL;g_me_dead=0;g_me_retained=0;g_me_handed_back=0;
+   handshake=0;complete_job=0;beats=0;stop_fail=0;
+   load_fail=1;
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_was_dead() && !me_host_retained() && !me_host_handed_back(),
+         "no ME: a module that does not load leaves nothing loaded, up or dead");
+   check(me_host_sync(50000u)<0 && !me_host_idle() && me_host_retain(50000u)==0,
+         "no ME: nothing to sync, nothing idle, nothing to retain");
+   load_fail=0;start_fail=1;
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_was_dead(),
+         "no ME: a module that does not start is unloaded, not up, not dead");
+   start_fail=0;stops=stop_calls;
+   check(me_host_init(".")<0 && stop_calls==stops+1 && !me_host_loaded() &&
+         !me_host_up() && !me_host_was_dead() && !me_host_handed_back(),
+         "no ME: an engine that never boots is stopped and unloaded, never handed back");
+   /* the second game after an in-process return: the same again */
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_retained(),
+         "no ME: the next game finds the same nothing");
+   stop_fail=1;
+   check(me_host_init(".")<0 && me_host_loaded() && !me_host_up() &&
+         me_host_was_dead() && !me_host_retained(),
+         "no ME: a never-booted engine whose stop fails stays loaded, dead and not up");
+   stop_fail=0;g_me_dead=0;
+   me_host_shutdown();
+   check(!me_host_loaded(),"no ME: the retried stop unloads it");
+   g_me_handed_back=0;stop_calls=0;load_calls=0;   /* the cases below count from 0 */
+}
 int main(int argc, char **argv)
 {
    int i;
    (void)argv;baseline=argc>1;
+   no_me_cases();
    g_mb=&g_mbox_storage;g_me_modid=7;g_me_dead=0;
    g_mb->cmd_seq=g_mb->done_seq=0;
    check(me_host_bench(64,1)<0,"benchmark times out when job never acknowledges");
@@ -401,7 +532,8 @@ def main():
     source = extract.read_source(str(ROOT / "psp/main_psp.c"))
     selected = "\n\n".join(marked_function(source, name) for name in
                            ("io_thread", "mer_work_heap_free", "me_rend_suspend",
-                            "me_rend_release_vmem", "me_standby_down",
+                            "me_rend_drop_vmem", "me_rend_release_vmem",
+                            "me_standby_down",
                             "pwr_release_all"))
     usb = (ROOT / "psp/usb_handoff.c").read_text(encoding="utf-8")
     usb_selected = "\n\n".join(function(usb, name) for name in ("h_usb_down", "handoff_run"))

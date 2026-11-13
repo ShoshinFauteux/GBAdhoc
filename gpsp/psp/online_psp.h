@@ -36,6 +36,11 @@ int  online_psp_enabled(void);
 /* < 0 failed (online_psp_why); 0 up; 1 up, and this joiner was told slot 0:
  * "Join with code" into a desktop host's room, the first PSP in hosts. */
 int  online_psp_up(int is_host, const char *build, unsigned timeout_ms);
+/* The player's cancel for the next online_psp_up (the LINKING screen's O,
+ * HW-1 r4-L3): polled in the Wi-Fi association and in the module's server
+ * lookup and room waits; nonzero gives up with why "cancelled".  NULL
+ * clears it (every other bring-up has none). */
+void online_psp_cancel_hook(int (*cancel)(void));
 int  online_psp_is_up(void);
 const char *online_psp_room(void);     /* the 4 letters, once up */
 int  online_psp_room_mode(void);       /* RL_MODE_* the server reported */
@@ -51,6 +56,7 @@ const char *online_psp_why(void);
 #define online_psp_clear() ((void)0)
 #define online_psp_enabled() 0
 #define online_psp_up(h, b, t) (-1)
+#define online_psp_cancel_hook(c) ((void)0)
 #define online_psp_is_up() 0
 #define online_psp_room() ""
 #define online_psp_room_mode() 0

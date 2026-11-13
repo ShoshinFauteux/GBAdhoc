@@ -160,7 +160,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 1632
+LAYOUT_PAD_BYTES ?= 296
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -176,7 +176,7 @@ endif
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 576
+LAYOUT_PAD_RO_BYTES ?= 512
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -185,8 +185,8 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # them.  claude/opt-1000 round 7 sets them so main's frame loop and the
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 2724
-LAYOUT_PAD_CORE_BYTES ?= 932
+LAYOUT_PAD_FE_BYTES ?= 2632
+LAYOUT_PAD_CORE_BYTES ?= 888
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -201,8 +201,11 @@ CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
 # says why): they place main's frame loop without moving instance B's hot text.
 # beta.5 base: main's code before the loop grew 212 B, so this pad puts the
-# loop window back on round 7's sets.  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 2284
+# loop window back on round 7's sets.  HW-1 (claude/hw1-sleep): GCC re-ordered
+# main's blocks around the sleep fixes, so no pad holds the loop; 2504 puts
+# main at mod 0x14e8, the shift that puts the most loop-line bytes on the
+# base's sets (32.5 %; 2.4 % at 0x140c).  tools/flags.lock pins it.
+LAYOUT_PAD_MAIN_BYTES ?= 2504
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.

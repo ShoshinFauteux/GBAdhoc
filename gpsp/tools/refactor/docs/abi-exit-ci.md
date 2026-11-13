@@ -151,14 +151,14 @@ Tests (`abi-exit-ci_test_exit.sh`, 17/17 pass):
 - C2: a regenerated matrix passes the XS check against the first.
 - C3: the model in 3 flavours.
 - Model mutants, each caught in the flavours where it can be seen:
-  - M1: D3/D4 swapped.
+  - M1: D3/D4 swapped (HW-1 F2 undone: the lock dropped before the hold).
   - M2: the two `inproc_refusal` calls merged (§0.2-2; caught by LIST_RETAIN_THEN_REFUSE).
   - M3: the audio_hash guard dropped. Caught in lab and harness; release is invisible by construction, because fe_evt is `((void)0)`, and the control asserts that.
   - M4: `gpsp_rtc_peek` put behind PERF_RIG.
   - M5: AV-first sites lose `vid_term`.
   - M6: EVT-first sites put audio first.
 - Source mutants, each a copy of main_psp.c:
-  - M7: 18099/18100 swapped. The order check reports "D3 after D4" and XS fails.
+  - M7: the teardown's pwr_hold/play_lock_drop swapped back to the pre-F2 order (01067e74 L:18099/18100). Since HW-1 F2 the order is D4 (pwr_hold) then D3 (play_lock_drop); the check reports "D4 after D3" and XS fails.
   - M8: B1 loses `vid_term`. XS fails at B1 in all 3 flavours.
   - M9: `gpsp_rtc_peek` behind `if (g_perf_rig)`. Reported RIG-GUARDED.
 - M10: see item 2 above.

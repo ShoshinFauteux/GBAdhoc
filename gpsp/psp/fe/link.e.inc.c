@@ -433,9 +433,7 @@ static int gblink_service(int have_script, int *code, const char **why)
       g_gblink_auto_started = 1;
       /* a GBA cable room's protocol (docs/GBA-LINK-UI.md), as the menu's */
       fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
-      me_rend_suspend();
-      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);
-      me_rend_resume();
+      rc = net_bringup_rend_off(g_gblink_role == 1, g_silent_group, g_pcfg.nick);
       if (rc == 0 && g_gblink_role == 1 && g_gblink_host_wait_peer)
       {
          /* the block above starts the session once the joiner is in */
@@ -640,7 +638,8 @@ static void gblink_script_disconnect(void)
 }
 
 /* The LINKING screen while the radio comes up (it blocks: nothing to
- * cancel yet).  g_link_kind is this session's. */
+ * cancel yet; the online bring-up sets its own footer, O cancel, and polls
+ * online_bringup_cancel).  g_link_kind is this session's. */
 static void link_bringup_view(int is_host, const char *room,
                               ui_linking_view *lv, char *l1, size_t c1,
                               char *l2, size_t c2)
@@ -667,6 +666,46 @@ static void link_bringup_view(int is_host, const char *room,
       snprintf(l2, c2, "Finding the room (up to 15 s)...");
    }
 }
+
+#ifdef GBADHOC_ONLINE
+/* THE ONLINE BRING-UP'S CANCEL (PLAN r4-L3; owner 2026-11-08).  The Wi-Fi
+ * association, the server lookup and the room can take ~50 s together, and
+ * the power switch waits for them (pwr_hold("net") below), so O on the
+ * LINKING screen ends them: polled by their waits through
+ * online_psp_cancel_hook.  A new press only -- an O already down when the
+ * screen came up is not one -- and it stays given once seen.  The screen
+ * says so at once ("Cancelling...", the footer's O gone): what the press
+ * ends still has to unwind (the room, the association, the net modules),
+ * and until then nothing else on the screen would have changed. */
+static unsigned g_ol_cancel_down;
+static int g_ol_cancelled;
+static ui_linking_view *g_ol_cancel_lv;   /* the LINKING screen that is up */
+/* @extract:begin fn:online_bringup_cancel */
+static int online_bringup_cancel(void)
+{
+   SceCtrlData pd;
+   unsigned o;
+   if (g_ol_cancelled)
+      return 1;
+   sceCtrlPeekBufferPositive(&pd, 1);
+   o = pd.Buttons & PSP_CTRL_CIRCLE;
+   if (o && !g_ol_cancel_down)
+   {
+      g_ol_cancelled = 1;
+      fe_evt("online_cancel");
+      if (g_ol_cancel_lv)
+      {
+         g_ol_cancel_lv->l2 = "Cancelling...";
+         g_ol_cancel_lv->footer = "";
+         ui_linking_draw(g_ol_cancel_lv);
+         vid_swap();
+      }
+   }
+   g_ol_cancel_down = o;
+   return g_ol_cancelled;
+}
+/* @extract:end fn:online_bringup_cancel */
+#endif
 
 /* UI-driven wireless action (host=1 / host=0 join).  docs/GBA-LINK-UI.md:
  * the room's name is built from the mode (host) or read for it (join). */
@@ -715,12 +754,27 @@ static void ui_net_action(int is_host)
                         !gba || ui_host_cable() ? RL_MODE_CABLE : RL_MODE_ADAPTER);
          snprintf(room, sizeof(room), "Online");
          link_bringup_view(is_host, room, &lv, l1, sizeof(l1), l2, sizeof(l2));
+         lv.footer = NULL;             /* "O cancel": online_bringup_cancel */
          link_backdrop_take();
          ui_linking_draw(&lv);
          vid_swap();
+         /* The switch waits for the bring-up, as for net_bringup's (r4-L3):
+          * a sleep inside it would land outside every park point. */
+         pwr_hold("net");
          me_rend_suspend();
+         {
+            SceCtrlData pd;
+            sceCtrlPeekBufferPositive(&pd, 1);
+            g_ol_cancel_down = pd.Buttons & PSP_CTRL_CIRCLE;
+            g_ol_cancelled = 0;
+         }
+         g_ol_cancel_lv = &lv;
+         online_psp_cancel_hook(online_bringup_cancel);
          rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);
+         online_psp_cancel_hook(NULL);
+         g_ol_cancel_lv = NULL;
          me_rend_resume();
+         pwr_release();
          if (rc < 0)
          {
             osd_toast(s_online_fmt, online_psp_why());
@@ -801,9 +855,9 @@ static void ui_net_action(int is_host)
    ui_linking_draw(&lv);
    vid_swap();
 
-   me_rend_suspend();                  /* clean heap for np_start (run 407) */
-   rc = net_bringup(is_host, group, g_pcfg.nick, 0);
-   me_rend_resume();                   /* re-alloc from the post-session heap */
+   /* The renderer off for np_start's heap and back from the post-session
+    * heap, under one hold as the online bring-up above. */
+   rc = net_bringup_rend_off(is_host, group, g_pcfg.nick);
    if (rc == 0)
    {
       g_link_menu = 1;

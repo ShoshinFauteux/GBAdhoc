@@ -99,6 +99,7 @@ static void standby_note(const char *fmt, ...)
    strncat(notes, line, sizeof(notes) - strlen(notes) - 2);
    strcat(notes, "\n");
 }
+static void sleep_sim_lock_zero(const char *who) { (void)who; }   /* harness only */
 static int scePowerLock(int u) { (void)u; locks++; SQ_TRACE("lock"); return 0; }
 static int scePowerUnlock(int u)
 {

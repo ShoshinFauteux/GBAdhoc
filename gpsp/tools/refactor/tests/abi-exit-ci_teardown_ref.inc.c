@@ -63,12 +63,12 @@ static void model_session_end(void)
    /* D0 (g_perf_rig gate EVTs) is a runtime rig block: off in every scenario */
    ui_set_wake_yield(NULL);                 /* D1 */
    sleep_quiesce_up("loop_exit");           /* D2 */
-#ifdef MUT_SWAP_D3_D4                        /* F2's swap without regenerating the golden */
-   pwr_hold("teardown");
+#ifdef MUT_SWAP_D3_D4                        /* F2 undone: the lock dropped before the hold */
    play_lock_drop("loop_exit");
+   pwr_hold("teardown");
 #else
+   pwr_hold("teardown");                    /* D4 (HW-1 F2: the hold first) */
    play_lock_drop("loop_exit");             /* D3 */
-   pwr_hold("teardown");                    /* D4 */
 #endif
    if (g_relaunch == RELAUNCH_GAMELIST) {   /* D5 TD_GAMELIST */
       ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, g_wake_w, g_wake_h);

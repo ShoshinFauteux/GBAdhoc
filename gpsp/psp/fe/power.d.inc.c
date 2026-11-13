@@ -64,6 +64,12 @@ static void me_standby_step(const char *what)
    standby_note("step %s", what);
 }
 
+/* 1 once a sleep's teardown gave the volatile pool back without the ME's
+ * word that its cache was flushed (me_standby_down's failed sync; the module
+ * stays loaded and the kernel's suspend parks the engine): the renderer is
+ * not rebuilt in this session, and the wake ends it (wake_service).  Set on
+ * the callback's thread, read on the main thread. */
+static volatile int g_pwr_me_lost;
 /* @extract:begin fn:me_standby_down */
 static void me_standby_down(void)
 {
@@ -83,7 +89,12 @@ static void me_standby_down(void)
    if (g_pcfg.standby >= 2)
    {
       me_host_shutdown();
-      me_standby_step("module_unloaded");
+      /* What me_host_shutdown actually did: a refused module_stop leaves
+       * the module loaded with nothing handed back; a stop that worked and
+       * an unload that did not leaves it loaded, handed back. */
+      me_standby_step(!me_host_loaded()     ? "module_unloaded"
+                      : me_host_handed_back() ? "module_unload_failed"
+                                              : "module_stop_failed");
    }
    /* ALWAYS release the volatile partition -- this is not an optional rung.
     *
@@ -101,8 +112,43 @@ static void me_standby_down(void)
    int release_result = me_rend_release_vmem();
    if (release_result < 0)
    {
-      me_standby_step("vmem_retained");
-      return;
+      /* RELEASE, AND LEAVE THE MODULE WHERE IT IS (PLAN r2-B-1; owner
+       * 2026-11-08; review r2).  The engine did not confirm its cache
+       * flush -- a timeout, or an engine the watchdog already declared dead
+       * (me_host_sync answers -1 for any !me_host_up()).  Keeping the pool
+       * locked across the suspend is not an answer: the OS may hand it on
+       * while we sleep, and a rebuild after the wake would write into it.
+       *
+       * NEVER STOP OR UNLOAD THE MODULE HERE.  module_stop puts the kernel's
+       * SceMeRpc handler back in its slot, and the suspend this callback is
+       * part of then reaches that handler, which asks Sony's ME firmware to
+       * save itself and spins, with no bound, for an answer that never comes
+       * (event 0x4005; docs/INPROC-RETURN.md, section 8) -- the console dies
+       * inside the suspend.  That is what the `standby >= 2` rung above was
+       * found to do.  With the module left loaded our sysevent slot stays,
+       * and the kernel's suspend parks the ME (holds it in reset) at event
+       * 0x402.  On the resume it reboots into an idle dispatcher that
+       * forgets the work area (me_render_boot) and takes the mailbox's
+       * current sequence as seen, so the job it never finished is not run
+       * again.  What this cannot do is halt the ME before the pool goes
+       * back: holding it in reset takes kernel mode, and the module exports
+       * nothing.  An engine that is still writing has until 0x402.
+       *
+       * The pool goes back regardless.  The ME is gone for this session,
+       * and a game never goes on without it (the ME is always available by
+       * design): the wake ends the session to the game list through the
+       * quit's teardown, which writes the save (wake_service).  The
+       * module is stopped there, on the way out of the process (a relaunch:
+       * inproc_refusal "standby"), where the kernel's reboot makes that
+       * safe. */
+      /* (Only an engine that had come up gets here: the renderer takes
+       * the pool, g_mer_vmem, from a live engine alone, so a console with
+       * no ME -- module absent, or one that never answered its boot -- goes
+       * through the plain release below and wakes onto the overlay.) */
+      me_standby_step("vmem_sync_failed");
+      g_pwr_me_lost = 1;
+      release_result = me_rend_drop_vmem();
+      SLEEP_SIM_ME_QUIET();   /* harness: the engine, 1 ms and 10 ms on */
    }
    if (release_result > 0)
       me_standby_step("vmem_released");
@@ -249,6 +295,7 @@ static void play_lock_drop(const char *who)
       return;
    g_pwr_play_lock = 0;
    rc = scePowerUnlock(0);
+   sleep_sim_lock_zero(who);
    standby_note("q play_unlock by=%s rc=%d", who, rc);
    FE_EVT_ONLY(rc);
    FE_EVT_ONLY(who);

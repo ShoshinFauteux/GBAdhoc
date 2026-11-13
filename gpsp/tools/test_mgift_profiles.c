@@ -58,7 +58,9 @@ int sceNetApctlInit(int a,int b) { (void)a;(void)b;apctl_ready=1;return 0; }
 int sceNetApctlTerm(void) { apctl_ready=0;return 0; }
 int sceNetApctlConnect(int slot) { assert(apctl_ready);if(!profiles[slot].exists)return (int)0x80410A0B;connected_slot=slot;return 0; }
 int sceNetApctlDisconnect(void) { connected_slot=0;return 0; }
-int sceNetApctlGetState(int *s) { *s=connected_slot?PSP_NET_APCTL_STATE_GOT_IP:PSP_NET_APCTL_STATE_DISCONNECTED;return 0; }
+static int never_ip, cancel_polls;   /* HW-1 r4-L3: an AP that never answers */
+int sceNetApctlGetState(int *s) { *s=connected_slot&&!never_ip?PSP_NET_APCTL_STATE_GOT_IP:PSP_NET_APCTL_STATE_DISCONNECTED;return 0; }
+static int cancel_on_third(void) { return ++cancel_polls >= 3; }
 int sceNetApctlGetInfo(int code,union SceNetApctlInfo *info) { (void)code;strcpy(info->ip,"192.168.1.20");return 0; }
 unsigned sceKernelGetSystemTimeLow(void) { return 100; }
 int sceKernelDelayThread(SceUInt delay) { (void)delay;return 0; }
@@ -210,6 +212,18 @@ int main(void)
       assert(mgnet_wifi_up(1, 0) == MGNET_ERR_CONNECT);
       assert(mgnet_last_sce() == 0x80410A0Bu && !strcmp(mgnet_stage(), "apctl_connect"));
       assert(!common_loaded && !apctl_ready);
+      /* HW-1 r4-L3: the cancel hook (online play's LINKING screen) ends the
+       * association wait as a failure with everything unwound; a connection
+       * that is up at the first look never asks it. */
+      reset(); add(1, "Home", "Home", 0); cancel_polls = 0;
+      mgnet_set_cancel(cancel_on_third);
+      assert(mgnet_wifi_up(1, 0) == MGNET_OK && cancel_polls == 0);
+      mgnet_wifi_down();
+      reset(); add(1, "Home", "Home", 0); never_ip = 1; cancel_polls = 0;
+      assert(mgnet_wifi_up(1, 0) == MGNET_ERR_CANCELLED && cancel_polls == 3);
+      assert(!strcmp(mgnet_stage(), "cancelled") && !common_loaded && !apctl_ready);
+      never_ip = 0;
+      mgnet_set_cancel(NULL);
    }
 
    assert(!mgift_shortcut_update(PSP_CTRL_SELECT, 1, &consumed));

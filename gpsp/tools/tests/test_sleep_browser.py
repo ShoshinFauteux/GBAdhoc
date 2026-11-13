@@ -198,6 +198,18 @@ static int browser_loop(void)
 #define ui_browser(a, b, c, d, e) \
    ((void)(a), (void)(b), (void)(c), (void)(d), (void)(e), browser_loop())
 
+/* PLAN r7-L5: the boot's power hold is taken as the list returns (its park
+ * hook already cleared), so nothing between the list and the boot runs with
+ * neither a park point nor the hold. */
+static volatile int boot_holds, holds_in_list;
+static void pwr_hold(const char *why)
+{
+   assert(!strcmp(why, "boot"));
+   boot_holds++;
+   if (g_browser_park)
+      holds_in_list++;
+}
+
 @HOLD@
 
 @CALLBACK@
@@ -257,11 +269,14 @@ int main(void)
    assert(g_pwr_rebuild == 0 && g_pwr_slept == 0);
    assert(swallowed == 1);
 
+   assert(boot_holds == 0);         /* the list itself is never held */
    g_running = 0;
    pthread_join(th, NULL);
    assert(g_browser_park == NULL);
+   assert(boot_holds == 1 && holds_in_list == 0);
    puts("sleep from the game list: parked, sound joined, partition released, "
-        "nothing drawn asleep, no wake overlay, sound back, hook cleared: pass");
+        "nothing drawn asleep, no wake overlay, sound back, hook cleared, "
+        "the boot's hold taken as the list returns: pass");
    return 0;
 }
 '''
@@ -333,3 +348,7 @@ mutant(MAIN, "      (void)sq_audio_start(NULL);\n", "      (void)0;\n",
 # have a stale hook in ui_psp.c).
 mutant(MAIN, "      ui_set_browser_park(NULL);\n", "",
        "hook not cleared", "g_browser_park == NULL")
+# PLAN r7-L5: the boot's hold not taken as the list returns (the old place,
+# hundreds of lines on, after the sidecars, the ROM header and config.ini).
+mutant(MAIN, '      pwr_hold("boot");   /* the list\'s park is over: see above (r7-L5) */\n',
+       "", "no hold after the list (before r7-L5)", "boot_holds == 1")

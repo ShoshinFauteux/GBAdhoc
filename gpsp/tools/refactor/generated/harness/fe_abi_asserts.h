@@ -152,38 +152,38 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&reg), abi_fe_t_reg *),
 typedef u32 abi_fe_t_skip_next_frame;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&skip_next_frame), abi_fe_t_skip_next_frame *),
                "fe/merend.c.inc.c:37 skip_next_frame: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:679 (extern) */
+/* fe/merend.d.inc.c:681 (extern) */
 typedef u32 abi_fe_t_gamepak_size;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_size), abi_fe_t_gamepak_size *),
-               "fe/merend.d.inc.c:679 gamepak_size: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:680 (extern) */
+               "fe/merend.d.inc.c:681 gamepak_size: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:682 (extern) */
 typedef u32 abi_fe_t_gamepak_buffer_count;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_buffer_count), abi_fe_t_gamepak_buffer_count *),
-               "fe/merend.d.inc.c:680 gamepak_buffer_count: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:681 (extern) */
+               "fe/merend.d.inc.c:682 gamepak_buffer_count: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:683 (extern) */
 typedef u32 abi_fe_t_gamepak_buffer_pages;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_buffer_pages), abi_fe_t_gamepak_buffer_pages *),
-               "fe/merend.d.inc.c:681 gamepak_buffer_pages: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:683 (extern) */
+               "fe/merend.d.inc.c:683 gamepak_buffer_pages: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:685 (extern) */
 typedef u32 abi_fe_t_gamepak_resident_got;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_resident_got), abi_fe_t_gamepak_resident_got *),
-               "fe/merend.d.inc.c:683 gamepak_resident_got: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:684 (extern) */
+               "fe/merend.d.inc.c:685 gamepak_resident_got: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:686 (extern) */
 typedef u32 abi_fe_t_gamepak_static_blocks;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_static_blocks), abi_fe_t_gamepak_static_blocks *),
-               "fe/merend.d.inc.c:684 gamepak_static_blocks: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:685 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:315 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
+               "fe/merend.d.inc.c:686 gamepak_static_blocks: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:687 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:315 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
 typedef bool abi_fe_t_gamepak_must_swap ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_must_swap), abi_fe_t_gamepak_must_swap *),
-               "fe/merend.d.inc.c:685 gamepak_must_swap: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:686 (proto) */
+               "fe/merend.d.inc.c:687 gamepak_must_swap: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:688 (proto) */
 typedef void abi_fe_t_gamepak_vol_drop ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_vol_drop), abi_fe_t_gamepak_vol_drop *),
-               "fe/merend.d.inc.c:686 gamepak_vol_drop: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:687 (proto) */
+               "fe/merend.d.inc.c:688 gamepak_vol_drop: the frontend copy differs from the core declaration");
+/* fe/merend.d.inc.c:689 (proto) */
 typedef void abi_fe_t_gamepak_vol_back ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_vol_back), abi_fe_t_gamepak_vol_back *),
-               "fe/merend.d.inc.c:687 gamepak_vol_back: the frontend copy differs from the core declaration");
+               "fe/merend.d.inc.c:689 gamepak_vol_back: the frontend copy differs from the core declaration");
 /* fe/misc.a.inc.c:507 (extern) */
 typedef unsigned char abi_fe_t_iwram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&iwram), abi_fe_t_iwram *),
@@ -196,10 +196,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ewram), abi_fe_t_ewram *
 typedef unsigned short abi_fe_t_palette_ram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_palette_ram *),
                "fe/misc.a.inc.c:509 palette_ram: the frontend copy differs from the core declaration");
-/* fe/link.d.inc.c:987 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+/* fe/link.d.inc.c:983 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress *),
-               "fe/link.d.inc.c:987 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+               "fe/link.d.inc.c:983 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
 /* fe/harness.f.inc.c:513 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets *),
@@ -220,14 +220,14 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), ab
 typedef u32 abi_fe_t_dma_smc_flushes;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&dma_smc_flushes), abi_fe_t_dma_smc_flushes *),
                "fe/harness.f.inc.c:551 dma_smc_flushes: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:961 (block) */
+/* fe/harness.f.inc.c:973 (block) */
 typedef u32 abi_fe_t_gamepak_reopens__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens__2 *),
-               "fe/harness.f.inc.c:961 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:961 (block) */
+               "fe/harness.f.inc.c:973 gamepak_reopens: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:973 (block) */
 typedef u32 abi_fe_t_gamepak_short_reads__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
-               "fe/harness.f.inc.c:961 gamepak_short_reads: the frontend copy differs from the core declaration");
+               "fe/harness.f.inc.c:973 gamepak_short_reads: the frontend copy differs from the core declaration");
 /* fe/rewind.inc.c:325 (block) */
 typedef u8 * abi_fe_t_gamepak_spare_pool3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3 *),
@@ -248,26 +248,26 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3_byte
 typedef u8 * abi_fe_t_gamepak_spare_pool3__3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3__3 *),
                "fe/rewind.inc.c:440 gamepak_spare_pool3: the frontend copy differs from the core declaration");
-/* main_psp.c:1237 (block) */
+/* main_psp.c:1240 (block) */
 typedef int abi_fe_t_me_log_vram_always;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&me_log_vram_always), abi_fe_t_me_log_vram_always *),
-               "main_psp.c:1237 me_log_vram_always: the frontend copy differs from the core declaration");
-/* main_psp.c:1623 (block) */
+               "main_psp.c:1240 me_log_vram_always: the frontend copy differs from the core declaration");
+/* main_psp.c:1626 (block) */
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
-               "main_psp.c:1623 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* main_psp.c:2415 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+               "main_psp.c:1626 gpsp_heap_census: the frontend copy differs from the core declaration");
+/* main_psp.c:2431 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress__2 ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress__2 *),
-               "main_psp.c:2415 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
-/* main_psp.c:4457 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
+               "main_psp.c:2431 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+/* main_psp.c:4473 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets__2 *),
-               "main_psp.c:4457 translation_gate_targets: the frontend copy differs from the core declaration");
-/* main_psp.c:4458 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
+               "main_psp.c:4473 translation_gate_targets: the frontend copy differs from the core declaration");
+/* main_psp.c:4474 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
 typedef u32 abi_fe_t_translation_gate_target_pc__2 [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_target_pc), abi_fe_t_translation_gate_target_pc__2 *),
-               "main_psp.c:4458 translation_gate_target_pc: the frontend copy differs from the core declaration");
+               "main_psp.c:4474 translation_gate_target_pc: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:26 */
@@ -315,47 +315,47 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/inproc.a.inc.c:216    jit_coherency_scan                   not declared by the check TU's headers
  *   fe/inproc.a.inc.c:222    jit_code_mode                        not declared by the check TU's headers
  *   fe/display.a.inc.c:226   gba_cc_lut                           not declared by the check TU's headers
- *   fe/harness.b.inc.c:45    gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
+ *   fe/harness.b.inc.c:49    gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
  *   fe/display.c.inc.c:22    me_log_line160_pal                   not declared by the check TU's headers
  *   fe/display.c.inc.c:23    me_log_line160_oam                   not declared by the check TU's headers
- *   fe/power.d.inc.c:209     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
- *   fe/power.d.inc.c:289     scePowerIsRequest                    not declared by the check TU's headers
- *   fe/merend.d.inc.c:682    gamepak_buffers                      not declared by the check TU's headers
- *   fe/link.c.inc.c:485      rfu_set_rx_cap                       not declared by the check TU's headers
- *   fe/link.c.inc.c:490      rfu_set_frame_pace                   not declared by the check TU's headers
- *   fe/link.c.inc.c:491      rfu_set_pace_max_hold                not declared by the check TU's headers
- *   fe/link.c.inc.c:492      rfu_set_cushion                      not declared by the check TU's headers
- *   fe/link.c.inc.c:493      rfu_set_shed_keep                    not declared by the check TU's headers
- *   fe/link.c.inc.c:494      rfu_set_hold                         not declared by the check TU's headers
- *   fe/link.c.inc.c:495      rfu_set_supersede                    not declared by the check TU's headers
- *   fe/link.c.inc.c:496      rfu_set_fault_corrupt                not declared by the check TU's headers
- *   fe/link.c.inc.c:497      rfu_set_fault_span                   not declared by the check TU's headers
- *   fe/link.c.inc.c:498      rfu_set_fault_mode                   not declared by the check TU's headers
- *   fe/link.c.inc.c:499      adhoc_set_disc_await                 not declared by the check TU's headers
- *   fe/link.c.inc.c:503      rfu_set_timeout_scale                not declared by the check TU's headers
- *   fe/link.c.inc.c:506      rfu_set_poll_min_cycles              not declared by the check TU's headers
- *   fe/link.c.inc.c:510      rfu_set_idle_poll_cycles             not declared by the check TU's headers
- *   fe/link.c.inc.c:514      rfu_set_disc_defer                   not declared by the check TU's headers
- *   fe/link.c.inc.c:521      rfu_set_disc_grace                   not declared by the check TU's headers
+ *   fe/power.d.inc.c:255     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
+ *   fe/power.d.inc.c:336     scePowerIsRequest                    not declared by the check TU's headers
+ *   fe/merend.d.inc.c:684    gamepak_buffers                      not declared by the check TU's headers
+ *   fe/link.c.inc.c:507      rfu_set_rx_cap                       not declared by the check TU's headers
+ *   fe/link.c.inc.c:512      rfu_set_frame_pace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:513      rfu_set_pace_max_hold                not declared by the check TU's headers
+ *   fe/link.c.inc.c:514      rfu_set_cushion                      not declared by the check TU's headers
+ *   fe/link.c.inc.c:515      rfu_set_shed_keep                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:516      rfu_set_hold                         not declared by the check TU's headers
+ *   fe/link.c.inc.c:517      rfu_set_supersede                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:518      rfu_set_fault_corrupt                not declared by the check TU's headers
+ *   fe/link.c.inc.c:519      rfu_set_fault_span                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:520      rfu_set_fault_mode                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:521      adhoc_set_disc_await                 not declared by the check TU's headers
+ *   fe/link.c.inc.c:525      rfu_set_timeout_scale                not declared by the check TU's headers
+ *   fe/link.c.inc.c:528      rfu_set_poll_min_cycles              not declared by the check TU's headers
+ *   fe/link.c.inc.c:532      rfu_set_idle_poll_cycles             not declared by the check TU's headers
+ *   fe/link.c.inc.c:536      rfu_set_disc_defer                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:543      rfu_set_disc_grace                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
- *   fe/link.d.inc.c:1049     heap_trace_mark0                     not declared by the check TU's headers
+ *   fe/link.d.inc.c:1045     heap_trace_mark0                     not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
  *   fe/harness.f.inc.c:545   badjump_contained                    not declared by the check TU's headers
  *   fe/harness.f.inc.c:546   xlat_depth_max                       not declared by the check TU's headers
  *   fe/harness.f.inc.c:547   xlat_sp_min                          not declared by the check TU's headers
  *   fe/harness.f.inc.c:548   xlat_depth_probe_reset               not declared by the check TU's headers
  *   fe/harness.f.inc.c:556   jit_code_stats                       not declared by the check TU's headers
- *   main_psp.c:1963          sched_fast                           not declared by the check TU's headers
- *   main_psp.c:1964          irq_io_fast                          not declared by the check TU's headers
- *   main_psp.c:1972          msr_fast                             not declared by the check TU's headers
- *   main_psp.c:2085          sched_fast                           not declared by the check TU's headers
- *   main_psp.c:2102          timer_lazy                           not declared by the check TU's headers
- *   main_psp.c:2118          irq_io_fast                          not declared by the check TU's headers
- *   main_psp.c:2129          msr_fast                             not declared by the check TU's headers
- *   main_psp.c:2313          gpsp_wallclock                       not declared by the check TU's headers
- *   main_psp.c:2634          rom_cache_watermark                  not declared by the check TU's headers
- *   main_psp.c:4681          gpsp_rtc_peek                        not declared by the check TU's headers
+ *   main_psp.c:1979          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:1980          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:1988          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2101          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:2118          timer_lazy                           not declared by the check TU's headers
+ *   main_psp.c:2134          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:2145          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2329          gpsp_wallclock                       not declared by the check TU's headers
+ *   main_psp.c:2650          rom_cache_watermark                  not declared by the check TU's headers
+ *   main_psp.c:4707          gpsp_rtc_peek                        not declared by the check TU's headers
  */
 #endif

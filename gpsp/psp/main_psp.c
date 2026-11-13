@@ -621,6 +621,9 @@ int main(int argc, char *argv[])
    g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
    g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
    g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
+   g_ss_me_sync_fail = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_me_sync_fail", 0);
+   if (g_ss_me_sync_fail)
+      fe_evt("sleep_sim mutant me_sync_fail=%d", g_ss_me_sync_fail);
    me_host_fake((int)fe_ini_get_int(HARNESS_INI, "me_fake", 0));
    g_inproc_me_unload = (int)fe_ini_get_int(HARNESS_INI, "inproc_me_unload", 0);
    g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
@@ -1645,13 +1648,24 @@ session_top:
          fe_evt("launch_missing rom=%s", g_launch_rom);
       g_launch_rom[0] = '\0';
    }
+   /* THE BOOT'S POWER HOLD (pwr_hold, see power_cb) starts with the game's
+    * selection: right after the game list returns, or at the top of the
+    * launches that have no list (PLAN r7-L5).  Between the two there is no
+    * park point -- the list's ended with it, the loop's is far off -- while
+    * the sidecars are settled (a save can be mid-move), the ROM's header
+    * and the link mode are read and config.ini is read again.  The switch
+    * now waits for the loop, as it did from here on already; every exit
+    * below releases it through FE_HANDOFF / FE_EXIT_GAME / relaunch_eboot,
+    * and a boot that stops on a notice lets it go while the notice waits
+    * (boot_stop_notice). */
    if (launch_now)
-      ;   /* rom_path is set; the sidecars below are the game list's */
+      pwr_hold("boot");   /* rom_path is set; the sidecars below are the game list's */
    else if (have_variant)
    {
       char vrom[PSP_ROM_REL_PATH_CAP] = "", savedir[160];
       char stem[PSP_ROM_REL_PATH_CAP];
       const char *slash;
+      pwr_hold("boot");
       fe_ini_get(VARIANT_INI, "rom", vrom, sizeof(vrom));
       if (!vrom[0])
       {
@@ -1717,6 +1731,7 @@ session_top:
        * The key lets an arm switch games by staging the ini alone, which
        * matters because ROMs are far too big to stage. */
       char kr[PSP_ROM_REL_PATH_CAP] = "";
+      pwr_hold("boot");
       fe_ini_get(HARNESS_INI, "rom", kr, sizeof(kr));
       if (inproc_rom_n)
          snprintf(kr, sizeof(kr), "%s", inproc_roms[inproc_n % inproc_rom_n]);
@@ -1769,6 +1784,7 @@ session_top:
       br = ui_browser(ROM_DIR, rom_path, sizeof(rom_path),
                           &browser_state_slot, &selected_console);
       ui_set_browser_park(NULL);
+      pwr_hold("boot");   /* the list's park is over: see above (r7-L5) */
       if (br > 0)
 /* @extract:end sb:list_call */
       {
@@ -2340,9 +2356,9 @@ session_top:
    /* The boot runs outside the loop's park point for up to seconds: the ROM
     * load (a resident 32 MiB cart), the battery, the ME module and renderer
     * (me_rend_init), the wireless bring-up of a harness role.  The power
-    * switch waits for the loop (pwr_hold, see power_cb); every failure exit
-    * below releases it through handoff_run / sceKernelExitGame. */
-   pwr_hold("boot");
+    * switch waits for the loop under pwr_hold("boot"), taken with the game's
+    * selection (at session_top, r7-L5); every failure exit below releases
+    * it through FE_HANDOFF / FE_EXIT_GAME. */
 #ifndef GPSP_NO_TELEMETRY
    heap_census("post_select");
 #endif
@@ -2396,8 +2412,8 @@ session_top:
          fe_evt("mem_budget FAIL need=%u largest=%u", (unsigned)MEM_GBA_CORE_MIN,
                 have);
          ui_loading_finish(0);
-         ui_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
-                   l2, l3, 15000);
+         boot_stop_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
+                          l2, l3, 15000);
          fe_evt("exit code=8 reason=mem_budget");
          evt_shutdown();
          audio_stop();
@@ -2594,15 +2610,15 @@ session_top:
        * game cannot overwrite it.  Say so: a bare return to the XMB left
        * the player with a game that would not start and no reason. */
       if (refusal == 1)
-         ui_notice("SAVE FILE COULD NOT BE READ",
-                   "The Memory Stick could not read its .sav file.",
-                   "The file has not been changed. Back it up,",
-                   "then rename it to start without the save.",
-                   30000);
+         boot_stop_notice("SAVE FILE COULD NOT BE READ",
+                          "The Memory Stick could not read its .sav file.",
+                          "The file has not been changed. Back it up,",
+                          "then rename it to start without the save.",
+                          30000);
       else if (refusal == 2)
-         ui_notice("NOT ENOUGH MEMORY",
-                   "No memory is left to load this game's save.",
-                   "The save has not been changed.", NULL, 30000);
+         boot_stop_notice("NOT ENOUGH MEMORY",
+                          "No memory is left to load this game's save.",
+                          "The save has not been changed.", NULL, 30000);
       fe_evt("exit code=1 reason=load_failed battery=%d", refusal);
       evt_shutdown();
       audio_stop();
@@ -4478,11 +4494,21 @@ session_top:
     * Released before the browser (goto session_top) or by the exit itself. */
    /* The loop ended with a sleep's quiesce still in force (HOME or an exit
     * while held): put back what it stopped, so the teardown below finds the
-    * state it was written for.  The gameplay power lock is play's only. */
+    * state it was written for.  The gameplay power lock is play's only.
+    * The hold BEFORE the lock is dropped (PLAN F2): the kernel counts both
+    * as one, and a suspend request waiting on it runs at the unlock that
+    * leaves the count at zero -- dropped first, that was this point, with
+    * the teardown about to start and nothing parked.  The ME-lost wake's
+    * hold (wake_service) is handed over the same way: dropped only now. */
    ui_set_wake_yield(NULL);   /* no game loop: nothing to park */
    sleep_quiesce_up("loop_exit");
-   play_lock_drop("loop_exit");
    pwr_hold("teardown");
+   if (g_wake_lost_hold)
+   {
+      g_wake_lost_hold = 0;
+      pwr_release();
+   }
+   play_lock_drop("loop_exit");
    /* "Quit to game list": the menu goes, the frame it sat on stays with a
     * "Returning to game list..." chip, and the teardown below runs under it
     * (ui_return_hold; docs/INPROC-RETURN.md).  The wake overlay and the

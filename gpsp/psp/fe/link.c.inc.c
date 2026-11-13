@@ -330,6 +330,28 @@ static int net_bringup(int is_host, const char *group, const char *nick,
    return rc;
 }
 
+/* THE BRING-UP MADE WHILE A GAME RUNS (the silent one, the harness's GB link
+ * auto-start, the menu's): the renderer out of the way first -- heap-backed,
+ * it may hold the largest contiguous block on the 32 MB models, and np_start
+ * needs that block for its netdrv arena (run 407) -- and back after, on
+ * success and on failure, so a failed join still restores the ME.  ONE hold
+ * over all three steps: net_bringup's own ends before the renderer is back
+ * on, and power_cb's unparked branch counts on every path that turns it on
+ * being under one.  One copy for the three callers, not inlined. */
+/* @extract:begin fn:net_bringup_rend_off */
+static __attribute__((noinline)) int net_bringup_rend_off(int is_host,
+      const char *group, const char *nick)
+{
+   int rc;
+   pwr_hold("net");
+   me_rend_suspend();
+   rc = net_bringup(is_host, group, nick, 0);
+   me_rend_resume();
+   pwr_release();
+   return rc;
+}
+/* @extract:end fn:net_bringup_rend_off */
+
 /* Disconnect-crash diagnosis: transport_adhoc.c calls this before each blocking
  * WLAN teardown step.  fe_evt flushes every line, so a mid-run Disconnect that
  * wedges (the force-quit black screen) leaves the offending step as the LAST

@@ -345,8 +345,9 @@ static int me_boot(volatile me_mbox *mb)
  * ME from its vector, which still holds our stub with the mailbox pointer the
  * host set at boot -- so the second core simply reboots into our dispatcher.
  * The mailbox lives in memory the kernel preserves, so the host's view of it is
- * still valid; a re-run of the last command is harmless because the host tracks
- * completion by sequence number.
+ * still valid.  The last command is not run again: the dispatcher starts by
+ * taking the mailbox's current sequence as seen and done (me_dispatch), so a
+ * job the suspend cut short is dropped, and the host posts the next one.
  *
  * THE SLOT IS HELD FOR AS LONG AS THE PROCESS LIVES.  The handler asks Sony's ME
  * firmware to save itself and then spins, with no bound, until that firmware

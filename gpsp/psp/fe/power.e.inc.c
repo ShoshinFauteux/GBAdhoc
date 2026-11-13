@@ -138,6 +138,47 @@ static int wake_overlay_yield(void)
 #define WAKE_YIELD 2
 /* @extract:end def:wake_answers */
 static int g_wake_answered;   /* Continue taken: the pad is the answer's */
+/* The ME-lost wake's power hold (wake_service), taken before its notice and
+ * handed over to the teardown's: main() drops it right after taking
+ * pwr_hold("teardown"). */
+static int g_wake_lost_hold;
+/* THE WAKE THAT ENDS THE SESSION SAYS WHY (owner 2026-11-12).  A Media Engine
+ * that stopped answering is not something a PSP should ever show, so when a
+ * sleep found it so the wake goes to the game list (wake_service) -- and
+ * without a word that reads as a crash.  Up for 3 s or until a button.
+ *
+ * The notice takes no hold of its own: wake_service holds the switch over
+ * it and on to the teardown's hold (see there).  A sleep that lands in here
+ * all the same (the kernel's own, past any lock) restarts the 3 s and the
+ * 0.5 s key guard from its wake: the player saw none of it, and the key that
+ * woke the console is not an answer. */
+/* @extract:begin fn:wake_me_lost_notice */
+static __attribute__((noinline)) void wake_me_lost_notice(void)
+{
+   unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+   int resumes = g_pwr_resume;
+   SceCtrlData pd;
+   do
+   {
+      vid_overlay_begin(1);
+      vid_text_center(110, "The Media Engine stopped during sleep.", 0xFFFF);
+      vid_text_center(140, "Saving and returning to the game list.", 0x65BF);
+      vid_overlay_end();
+      vid_swap();
+      sceDisplayWaitVblankStart();
+      if (g_pwr_resume != resumes)
+      {
+         resumes = g_pwr_resume;    /* a sleep landed: 3 s from its wake */
+         t0 = (unsigned)sceKernelGetSystemTimeLow();
+      }
+      memset(&pd, 0, sizeof(pd));
+      sceCtrlPeekBufferPositive(&pd, 1);
+      if ((pd.Buttons & 0xF3F9u) &&
+          (unsigned)sceKernelGetSystemTimeLow() - t0 > 500000u)
+         break;                     /* a press, not a key held at the wake */
+   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);
+}
+/* @extract:end fn:wake_me_lost_notice */
 /* @extract:begin fn:wake_service */
 static int wake_service(void)
 {
@@ -152,6 +193,46 @@ static int wake_service(void)
       g_wake_menu = 1;
       fe_evt("standby wake overlay_first slept=%d rend=%d vmem=%d",
              g_pwr_slept, me_rend_active(), me_rend_vmem_held());
+   }
+   /* THE ME DID NOT SURVIVE THE SLEEP (me_standby_down's failed sync, PLAN
+    * r2-B-1).  No overlay and no rebuild: the session ends here, as `Quit to
+    * game list` ends it, through the teardown (the save written) to the
+    * list.  Continuing would be a game on one core, which this build never
+    * runs (owner 2026-11-08; confirmed 2026-11-12 for an engine the watchdog
+    * had already given up on).  Only an engine that had been up can be
+    * lost: a console with no Media Engine at all (Adrenaline on a PS Vita)
+    * never sets the flag and wakes onto the overlay below.
+    *
+    * UNDER A HOLD, FROM HERE INTO THE TEARDOWN'S.  This wake has already
+    * undone the loop's quiesce (loop_unpark: the writer, the threads and
+    * the sound are back) and the notice cannot park, so power_cb drops the
+    * gameplay lock for it: with no hold of ours a switch slid now suspended
+    * the game un-quiesced, the save not yet written.  Held, the suspend
+    * waits; main() drops this hold only once pwr_hold("teardown") is up,
+    * so the kernel's count never reaches zero between this wake and the
+    * teardown's save, and the deferred suspend lands in the game list,
+    * which parks. */
+   if (g_wake_menu && g_pwr_me_lost)
+   {
+      if (!g_wake_lost_hold)
+      {
+         pwr_hold("me_lost");
+         g_wake_lost_hold = 1;
+      }
+      g_wake_menu = 0;
+      g_pwr_me_lost = 0;
+      home_host_disarm();
+      fe_evt("ME_LOST *** the Media Engine did not survive the sleep: "
+             "session ends *** loaded=%d up=%d", me_host_loaded(),
+             me_host_up());
+      fe_evt("wake_menu choice=game_list reason=me_lost slept=%d",
+             g_pwr_slept);
+      wake_me_lost_notice();
+      g_pwr_slept = 0;
+      g_pwr_rebuild = 0;
+      g_relaunch = RELAUNCH_GAMELIST;
+      g_running = 0;
+      return WAKE_QUIT;
    }
    /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
     * emulated while it is up (the frame is a still and any link is long
