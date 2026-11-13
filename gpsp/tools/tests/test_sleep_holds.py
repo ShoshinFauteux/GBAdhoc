@@ -31,7 +31,7 @@ cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
    the screen came up is not a press; later polls answer 1 and draw nothing.
 
 4. THE HARNESS'S ME-QUIET LOG (sleep_sim_me_quiet): me_host_idle() sampled
-   1 ms and 10 ms after the call, one EVT line.
+   1 ms and 10 ms after the call, one EVT line and the same in standby.log.
 
 5. NO MEDIA ENGINE IS NOT A LOST ONE (Adrenaline on a PS Vita).  A sleep on
    a console whose engine never came up -- the module not loaded, or loaded
@@ -275,6 +275,9 @@ static int me_host_idle(void) { if (idle_calls < 4) idle_at[idle_calls] = now_us
 static int me_host_up(void) { return 1; }
 static void fe_evt(const char *fmt, ...)
 { va_list ap; va_start(ap, fmt); vsnprintf(line, sizeof(line), fmt, ap); va_end(ap); evts++; }
+static char note[160]; static int notes;
+static void standby_note(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); vsnprintf(note, sizeof(note), fmt, ap); va_end(ap); notes++; }
 @FUNCTION@
 int main(void)
 {
@@ -283,6 +286,8 @@ int main(void)
    { printf("FAIL: me_host_idle sampled %d times at %u, %u us\n", idle_calls, idle_at[0], idle_at[1]); return 1; }
    if (evts != 1 || strcmp(line, "standby me_quiet idle_1ms=0 idle_10ms=1 up=1 sim=1"))
    { printf("FAIL: the log line is %d x \"%s\"\n", evts, line); return 1; }
+   if (notes != 1 || strcmp(note, "me_quiet idle_1ms=0 idle_10ms=1 up=1 sim=1"))
+   { printf("FAIL: the standby.log line is %d x \"%s\"\n", notes, note); return 1; }
    puts("ok");
    return 0;
 }
@@ -472,6 +477,9 @@ MUTANTS = (
     ("quiet: sampled at once",
      "   sceKernelDelayThread(1000);\n   idle_1ms = me_host_idle();",
      "   idle_1ms = me_host_idle();\n   sceKernelDelayThread(1000);"),
+    ("quiet: the event log only (its writer is stopped by then)",
+     '   standby_note("me_quiet idle_1ms=%d idle_10ms=%d up=%d sim=%d",\n'
+     "                idle_1ms, idle_10ms, up, sim);\n", ""),
     ("quiet: not taken on the failed sync",
      "      SLEEP_SIM_ME_QUIET();   /* harness: the engine, 1 ms and 10 ms on */\n", ""),
 )

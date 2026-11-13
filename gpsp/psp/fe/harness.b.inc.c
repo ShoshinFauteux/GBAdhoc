@@ -208,7 +208,9 @@ static void sleep_sim_lock_zero(const char *who)
  * (me_standby_down).  This is the measurement of that window: whether the
  * engine has a job in flight 1 ms and 10 ms after the release, on the
  * callback's thread, logged for the run to read.  `sim` = the failure was
- * the simulator's (sleep_sim_me_sync_fail), not the engine's. */
+ * the simulator's (sleep_sim_me_sync_fail), not the engine's.  Both logs,
+ * as me_standby_step: the event log's writer is stopped for the sleep by
+ * then, and standby.log is the one that is written through. */
 /* @extract:begin fn:sleep_sim_me_quiet */
 static void sleep_sim_me_quiet(void)
 {
@@ -220,6 +222,8 @@ static void sleep_sim_me_quiet(void)
    up = me_host_up();
    fe_evt("standby me_quiet idle_1ms=%d idle_10ms=%d up=%d sim=%d",
           idle_1ms, idle_10ms, up, sim);
+   standby_note("me_quiet idle_1ms=%d idle_10ms=%d up=%d sim=%d",
+                idle_1ms, idle_10ms, up, sim);
 }
 /* @extract:end fn:sleep_sim_me_quiet */
 #else

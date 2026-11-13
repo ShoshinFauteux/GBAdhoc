@@ -44,10 +44,10 @@
 # Re-recorded: exit_cb (-16 B release, -8 B lab: it sits between the TEXT pad
 # and power_cb) and pte_mutex_check_need_init (-16 B release, +8 B lab).
 # HW-1 review r2 follow-ups (H6, H3, H4, H2, H1's wake notice): +528 B release,
-# +456 B lab between exit_cb and pace_frame, and new strings.  release: TEXT
-# 856 -> 328, CORE 876 -> 892, RO 576 -> 512; lab: TEXT 7784 -> 7328, FE
+# +516 B lab between exit_cb and pace_frame, and new strings.  release: TEXT
+# 856 -> 328, CORE 876 -> 892, RO 576 -> 512; lab: TEXT 7784 -> 7268, FE
 # 2528 -> 2408, RO 128 -> 8064 (wrapped); main, pace_frame and the rest hold.
-# Re-recorded: exit_cb (release 0x0058 -> 0x1e48, lab 0x0bf8 -> 0x0a30) and the
+# Re-recorded: exit_cb (release 0x0058 -> 0x1e48, lab 0x0bf8 -> 0x09f4) and the
 # release's pte_mutex_check_need_init (+16 B).
 
 [release]
@@ -113,7 +113,7 @@ size main                               48848
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x0a30
+at   exit_cb                            0x09f4
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
