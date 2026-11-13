@@ -185,7 +185,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # them.  claude/opt-1000 round 7 sets them so main's frame loop and the
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 2480
+LAYOUT_PAD_FE_BYTES ?= 2472
 LAYOUT_PAD_CORE_BYTES ?= 952
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
