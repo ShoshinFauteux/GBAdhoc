@@ -4450,95 +4450,7 @@ session_top:
       fe_evt("smc_gates n=%u pcs=%s", translation_gate_targets, gates);
       fe_evt("perf_done samples=%u expected=%u",rig_stats.total_n,rig_to-rig_from);
    }
-   /* The quit / exit teardown runs outside the loop's park point (SRAM
-    * flush, the ME and HOME modules, the radio, the core's unload, the
-    * in-process return's census): the switch waits (pwr_hold, see power_cb).
-    * Released before the browser (goto session_top) or by the exit itself. */
-   /* The loop ended with a sleep's quiesce still in force (HOME or an exit
-    * while held): put back what it stopped, so the teardown below finds the
-    * state it was written for.  The gameplay power lock is play's only.
-    * The hold BEFORE the lock is dropped (PLAN F2): the kernel counts both
-    * as one, and a suspend request waiting on it runs at the unlock that
-    * leaves the count at zero -- dropped first, that was this point, with
-    * the teardown about to start and nothing parked.  The ME-lost wake's
-    * hold (wake_service) is handed over the same way: dropped only now. */
-   ui_set_wake_yield(NULL);   /* no game loop: nothing to park */
-   sleep_quiesce_up("loop_exit");
-   pwr_hold("teardown");
-   if (g_wake_lost_hold)
-   {
-      g_wake_lost_hold = 0;
-      pwr_release();
-   }
-   play_lock_drop("loop_exit");
-   /* "Quit to game list": the menu goes, the frame it sat on stays with a
-    * "Returning to game list..." chip, and the teardown below runs under it
-    * (ui_return_hold; docs/INPROC-RETURN.md).  The wake overlay and the
-    * harness quit come here with the snapshot taken but no menu backdrop. */
-   if (g_relaunch == RELAUNCH_GAMELIST)
-   {
-      ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, (int)g_wake_w,
-                      (int)g_wake_h);
-      ui_return_hold();
-      exit_sim("return");        /* harness: HOME here (S-4 c) */
-   }
-   /* Clean exit (incl. HOME): stop the netdrv session + full adhoc
-    * teardown first (BYE to peers while the radio is still up), then SRAM
-    * is flushed inside fe_host_shutdown (dirty-check). */
-   stall_watch_stop();   /* a clean exit is not a stall */
-   /* Menu = HOME: HOME goes back to the system FIRST, before anything below
-    * can block -- the handoff screen, a slow SRAM flush, a relaunch. */
-   home_host_stop();
-   drprof_stop(fe_host_frame_count());
-   /* ADR-0080: stop the ME, then free our staging buffers (ADR-0080e: no
-    * second core buffer to free; gba_screen_pixels was never reassigned). */
-   me_rend_teardown("exit");
-   me_video_teardown("exit", 1);
-   /* THE IN-PROCESS RETURN KEEPS THE MODULE (docs/INPROC-RETURN.md, section
-    * 8).  Stopping it would put the kernel's SceMeRpc handler back in charge
-    * of an ME that has no firmware to answer it, and the next sleep would
-    * hang in the kernel's suspend.  With the module kept the slot stays ours,
-    * and a sleep from the list is the sleep every game has.  The core can
-    * only be freed below because retaining waits out the ME's last job.
-    * A quit that will not stay in this process stops it as ever, and so
-    * does a return that goes wrong further down ("inproc_refused"). */
-   if (g_relaunch != RELAUNCH_GAMELIST || inproc_refusal(have_variant) ||
-       INPROC_ME_UNLOAD_MUTANT() || !me_host_retain(50000u))
-      me_host_shutdown();
-   if (!me_host_loaded() || me_host_retained())
-   {
-      free(g_me_stage[0]);   g_me_stage[0] = NULL;
-      free(g_me_stage[1]);   g_me_stage[1] = NULL;
-   }
-   ui_return_tick();   /* the hold's ring keeps moving (no-op otherwise) */
-   net_teardown();
-#ifdef GBADHOC_MGIFT
-   mgift_stop(1);      /* drops the AP association and unloads the net modules */
-#endif /* GBADHOC_MGIFT */
-   emu_boost_stop();   /* ADR-0065: before anything else changes priority */
-   io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
-   ui_return_tick();
-   /* A Settings/Controls/Online page still open at a HOME, START+SELECT or
-    * wake-quit kept its changes unsaved (F3).  Written here, synchronously,
-    * on the same side of the writer's stop as ui_close's write always was
-    * (PLAN §3.2 D16b), and before the SRAM flush that can be slow. */
-   ui_settings_flush();
-   /* The log's own loss, written SYNCHRONOUSLY now the writer is stopped, and
-    * the liveness facts into RESULT.TXT, which is written with sceIo after the
-    * log closes -- neither can be starved (RIG-DOUBLE-BATTLE §2.8 I6). */
-   {
-      char extra[128];
-      snprintf(extra, sizeof(extra), "frames=%u\nevt_drop=%u\nt_ms=%u\n",
-               fe_host_frame_count(), fe_evt_drops(),
-               (unsigned)(net_now_us() / 1000ull));
-      handoff_set_extra(extra);
-      fe_evt("evt_drop total=%u", fe_evt_drops());
-   }
-   fe_host_shutdown();
-#ifdef REWIND
-   PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
-#endif
-   ui_return_tick();
+   session_end(have_variant);
    if (g_relaunch == RELAUNCH_GAMELIST)
    {
       const char *why = inproc_refusal(have_variant);
@@ -4666,59 +4578,7 @@ session_top:
       g_relaunch = RELAUNCH_GAMELIST;
       me_host_shutdown();       /* kept for a return that is not happening */
    }
-   audio_stop();
-   vid_term();
-   if (g_relaunch != RELAUNCH_GAMELIST)
-      fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
-             plat_audio_sample_count());
-#ifdef GPSP_PERF_RIG
-   shash_close();
-#endif
-   {
-      /* What the cartridge clock shows, what 3.5.0's frame clock would show
-       * (boot time + emulated frames), and the console's clock. */
-      extern void gpsp_rtc_peek(long long *, long long *, int *);
-      long long shown = 0, frames_t = 0;
-      int wall = 0;
-      gpsp_rtc_peek(&shown, &frames_t, &wall);
-      fe_evt("rtc_clock mode=%s shown=%lld frames_clock=%lld console=%lld "
-             "frames_ahead_s=%lld shown_ahead_s=%lld",
-             wall ? "wall" : "frames", shown, frames_t,
-             (long long)psp_local_wallclock(),
-             frames_t - (long long)psp_local_wallclock(),
-             shown - (long long)psp_local_wallclock());
-      FE_EVT_ONLY(shown); FE_EVT_ONLY(frames_t); FE_EVT_ONLY(wall);
-   }
-#ifdef GPSP_PERF_RIG
-   fe_evt("stick_range lx=%u..%u ly=%u..%u mode=%s", g_stick_min[0],
-          g_stick_max[0], g_stick_min[1], g_stick_max[1],
-          ctl_stick_name(g_pcfg.stick));
-#endif
-   core_health_evt("exit");   /* final counters: heartbeats can be starved */
-   if (exit_reason)
-      fe_evt("exit code=%d reason=%s", exit_code, exit_reason);
-   else
-      fe_evt("exit code=%d", exit_code);
-   evt_shutdown();
-   /* ADR-0053: last thing before the XMB.  Every ms0 writer is stopped and the
-    * log is closed, so it is safe to hand the stick to the PC here and nowhere
-    * earlier.  Does not return if the PC asks for another run. */
-   FE_HANDOFF(exit_code, exit_reason);
-   /* ADR-0071: relaunch ourselves so the new trading profile is latched at
-    * startup like any other boot.  Same call the USB handoff uses and for the
-    * same reason: on CFW an EBOOT.PBP is launched the way the FIRMWARE
-    * launches it, and plain sceKernelLoadExec returns instead of replacing the
-    * process.  argp becomes the new argv[0], which is where every ms0 path is
-    * derived from — passing NULL would silently fall back to the compiled-in
-    * default directory and lose a variant install's saves. */
-   /* Returns only if it failed: fall through to the XMB rather than hang.
-    * HOME (F1) is an exit, whatever the quit asked for: after the audio_hash
-    * guard above, which must still see the game-list value. */
-   if (g_exit_req)
-      g_relaunch = 0;
-   if (g_relaunch)
-      relaunch_eboot(g_relaunch == RELAUNCH_GAMELIST);
-   FE_EXIT_GAME();
+   process_end(exit_code, exit_reason);
    return 0;
 }
 /* @extract:end fn:main */
