@@ -220,8 +220,16 @@ def collapse(seq):
 
 
 # ------------------------------------------------------------- parse a view
+# Epoch C's exit helpers (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3 C1).  Every view reads
+# a call statement of one of them AS ITS BODY, its flags folded (aec_cparse.inline_helpers),
+# so a site that calls them has the calls, order, texts and hold of the copy it replaced,
+# and the gate compares them with the golden unchanged.  They are never sites themselves.
+EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end')
+
+
 class View(object):
     def __init__(self, name, toks):
+        toks = C.inline_helpers(toks, EPOCHC_HELPERS)
         self.name, self.toks = name, toks
         self.funcs = C.functions(toks)
         lo, hi = self.funcs['main']
@@ -274,7 +282,7 @@ def sites(view):
             calls += C.walk_calls(s)
         res.append(_site_row(view, 'main', blk, calls))
     for fn, (lo, hi) in view.funcs.items():
-        if fn == 'main':
+        if fn == 'main' or fn in EPOCHC_HELPERS:
             continue
         body = C.parse_body(view.toks, lo, hi)
         cl = C.walk_calls(body)
@@ -1545,6 +1553,37 @@ def selftest():
            'F5 source: LINK_FATAL exists, and its exit line carries the reason (XMB: none)')
     expect(flags_of('ME IO HOST RW AUD VID EVT ES HO EXIT'.split())[:4] == ['TD_IO', 'TD_CORE', 'TD_REWIND', 'TD_ME'],
            'HW-2 F9: a site that stops the ME first carries TD_ME')
+    # Epoch C helpers: the same two sites through exit_early_begin/_end read as the copies
+    hsrc = SELF_SRC.replace(
+        'static void helper(void) { foo(); }\n',
+        'static void helper(void) { foo(); }\n'
+        'enum { XE_EVT_FIRST = 1u << 0, XE_ME = 1u << 1 };\n'
+        'static inline __attribute__((always_inline)) void exit_early_begin(unsigned f)\n'
+        '{\n   if (f & XE_ME) { me_rend_teardown("exit"); }\n'
+        '   if (!(f & XE_EVT_FIRST)) { audio_stop(); vid_term(); }\n}\n'
+        'static inline __attribute__((always_inline)) void exit_early_end(unsigned f, int code, const char *why)\n'
+        '{\n   evt_shutdown();\n   if (f & XE_EVT_FIRST) { audio_stop(); vid_term(); } else { }\n'
+        '   handoff_run(code, why);\n   sceKernelExitGame();\n}\n').replace(
+        '      fe_evt("exit code=2");\n      evt_shutdown();\n      audio_stop();\n      vid_term();\n'
+        '      handoff_run(2, "bad");\n      sceKernelExitGame();\n',
+        '      fe_evt("exit code=2");\n      exit_early_end(XE_EVT_FIRST, 2, "bad");\n').replace(
+        'if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); sceKernelExitGame(); return 0; }',
+        'if (probe) { exit_early_begin(0); fe_evt("exit"); exit_early_end(0, 0, NULL); return 0; }')
+    ph = os.path.join(d, 'mh.c')
+    open(ph, 'w').write(hsrc)
+    sh = sites(View('raw', C.load_raw(ph)))
+    same = len(sh) == len(st) and all(
+        a['seq'] == b['seq'] and a['code'] == b['code'] and a['why'] == b['why'] and
+        a['text'] == b['text'] and [c.name for c in a['calls']] == [c.name for c in b['calls']]
+        for a, b in zip(sh, st))
+    expect(same and sh[1]['calls'][0].tok.ifs == ('#ifdef RIG',),
+           'Epoch C helpers inlined: the sites equal the pasted copies (calls, text, code, #if)')
+    hm = hsrc.replace('if (f & XE_EVT_FIRST) { audio_stop(); vid_term(); } else { }',
+                      'if (f & XE_EVT_FIRST) { audio_stop(); } else { }')
+    open(ph, 'w').write(hm)
+    sm = sites(View('raw', C.load_raw(ph)))
+    expect(sm[0]['seq'] != st[0]['seq'] and sm[1]['seq'] == st[1]['seq'],
+           'mutant: a helper arm loses vid_term: only the sites that take that arm change')
     print('selftest: %s' % ('ok' if not fails else '%d failures' % fails))
     return 1 if fails else 0
 

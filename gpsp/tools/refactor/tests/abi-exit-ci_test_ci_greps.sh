@@ -27,6 +27,8 @@
 #   M10b R6 the same with noinline but no section                           -> FAIL
 #   M10c R6 the same with noinline + section (control)                      -> ok
 #   M10d R6 a second caller outside main (control: not main-only)           -> ok
+#   M10e R6 always_inline (Epoch C stage s, pasted by the compiler; control) -> ok
+#   M10f R6 always_inline together with noinline                            -> FAIL
 # The tree may be split (psp/main_psp.c + psp/fe/*.inc.c) and P3 may have landed (no
 # hijack #define; FE_EXIT_GAME/FE_HANDOFF in fe/fe_priv.h): every edit finds its file
 # and its line by anchor.
@@ -173,6 +175,10 @@ r6mut 'static __attribute__((noinline, section(\".text.fe_cold.fe_mut_boot_run\"
 expect 0 "M10c control: noinline + section" "0 new without" $CG --src "$T" --rules R6; reset_tree
 r6mut 'static' 'void fe_mut_other(void) { fe_mut_boot_run(1); }'
 expect 0 "M10d control: a second caller outside main (not main-only)" "0 new without" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static inline __attribute__((always_inline))'
+expect 0 "M10e control: always_inline (Epoch C stage s)" "0 new without" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static __attribute__((always_inline, noinline))'
+expect 1 "M10f always_inline together with noinline" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
 
 echo "abi-exit-ci T11 tests: $([ $FAILS = 0 ] && echo PASS || echo "$FAILS FAIL")"
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

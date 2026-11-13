@@ -327,15 +327,19 @@ def r6_main_only(src):
         if 'static' not in decl:
             continue
         out.append((name, t[lo].line, 'noinline' in decl or '__noinline__' in decl,
-                    'section' in decl or '__section__' in decl))
+                    'section' in decl or '__section__' in decl,
+                    'always_inline' in decl or '__always_inline__' in decl))
     return out
 
 
 def rule_r6(src, pinned):
+    """always_inline is the other answer (Epoch C stage s, PLAN-EPOCHC-beta5 §3 C1): the
+    body is pasted into main() by the compiler, as the copy it replaced was, and no
+    function of its own is placed anywhere."""
     hits = []
     rows = r6_main_only(src) or []
-    for name, line, ni, sec in rows:
-        if name in pinned or (ni and sec):
+    for name, line, ni, sec, ai in rows:
+        if name in pinned or (ni and sec) or (ai and not ni):
             continue
         miss = ' and '.join(x for x, have in (('noinline', ni), ('section()', sec)) if not have)
         hits.append(Hit('R6', 'psp/main_psp.c', line, name,
@@ -357,7 +361,7 @@ def write_r6(src, path):
         if view != src:
             import shutil
             shutil.rmtree(view, ignore_errors=True)
-    names = sorted(n for n, _, ni, sec in rows if not (ni and sec))
+    names = sorted(n for n, _, ni, sec, ai in rows if not (ni and sec) and not (ai and not ni))
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write('# T11 R6 pinned list: static functions of main_psp.c\'s unit that only main() calls\n'
                 '# and that have no noinline + section() pair.  They exist on the tree this list was\n'
