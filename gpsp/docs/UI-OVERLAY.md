@@ -1231,7 +1231,9 @@ new slot) and the row's time follow. The plate reads "Load Slot n? ▲▼ choose
 ✕ load ○ back"; "Unsaved progress is lost." moves to the caption under the
 preview, where the slot's time was (the row still shows it). Every key that
 is not X, O or a direction does nothing: a stray press no longer throws the
-question away. A load that fails leaves the page up with "Slot n could not
+question away. X or O on the same frame as a direction (X pressed while a
+held direction auto-repeats) answers for the slot the screen shows: the
+question does not move under an answer. A load that fails leaves the page up with "Slot n could not
 be loaded", and from there the page's own rules hold. The page's own load
 question (SQUARE on a slot, 14.2) does not browse. No buffers: the existing
 thumbnails, stamps and dwell preview; a few instructions and one format

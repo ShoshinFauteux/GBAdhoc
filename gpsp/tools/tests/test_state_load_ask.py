@@ -43,6 +43,8 @@ scan, the dwell read, the delete, screen_to / screen_menu.
      previous one, wrapping and skipping empty slots, with the list
      highlight following; X loads the chosen slot, O is Resume.  Every
      pattern of saved slots (one slot, some, all) is walked both ways.
+     X or O on the same frame as a direction (X as a held direction
+     auto-repeats) answers for the slot the screen shows.
   7c. The pictures follow: each row's thumbnail is drawn, and the full
      preview is read once the question rests on a slot (OV_SHOT_DWELL
      frames), again for each slot browsed to; with one slot, the d-pad
@@ -460,6 +462,35 @@ int main(void)
    for (f = 0; f < 18; f++)
       CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE);
    CHECK(asks_for(N));
+   /* an answer and a direction on one frame: the answer is for the slot the
+    * screen shows, and the question does not move under it */
+   {
+      static const unsigned dirs[4] = { PSP_CTRL_DOWN, PSP_CTRL_RIGHT,
+                                        PSP_CTRL_UP, PSP_CTRL_LEFT };
+      for (k = 0; k < 4; k++)
+      {
+         menu_open();
+         CHECK(ui_state_load_ask(1) == 1);
+         CHECK(frame(0) == UI_ACT_NONE && asks_for(1));
+         CHECK(frame(dirs[k] | PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 1);
+         menu_open();
+         CHECK(ui_state_load_ask(1) == 1);
+         CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_DOWN) && asks_for(2));
+         CHECK(frame(dirs[k] | PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 2);
+         menu_open();
+         CHECK(ui_state_load_ask(1) == 1);
+         CHECK(frame(0) == UI_ACT_NONE && tap(PSP_CTRL_DOWN) && asks_for(2));
+         CHECK(frame(dirs[k] | PSP_CTRL_CIRCLE) == UI_ACT_RESUME && g_state_slot == 2);
+      }
+      /* X as a held direction's auto-repeat fires: the slot on the screen */
+      menu_open();
+      CHECK(ui_state_load_ask(1) == 1);
+      CHECK(frame(0) == UI_ACT_NONE);
+      CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE && asks_for(2));
+      for (f = 0; f < 17; f++)
+         CHECK(frame(PSP_CTRL_DOWN) == UI_ACT_NONE && asks_for(2));
+      CHECK(frame(PSP_CTRL_DOWN | PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot == 2);
+   }
    /* the page's own question does not browse (section 3 holds) */
    page();
    CHECK(press(PSP_CTRL_SQUARE) == UI_ACT_NONE && plate[0]);
@@ -1051,6 +1082,10 @@ PAGE_MUTANTS = (
      in_fn(PAGE, r"edges & \(PSP_CTRL_UP \| PSP_CTRL_LEFT\)",
            "edges & (PSP_CTRL_DOWN | PSP_CTRL_LEFT)"),
      "asks_for("),
+    ("X on the frame of a direction loads the slot moved to, not the one shown",
+     in_fn(PAGE, r"if \(edges & \(PSP_CTRL_CROSS \| PSP_CTRL_CIRCLE\)\)\s*;[^\n]*\s*else if",
+           "if"),
+     "PSP_CTRL_CROSS) == UI_ACT_LOADSTATE && g_state_slot =="),
     ("LEFT and RIGHT do not browse",
      in_fn(PAGE, r"edges & \(PSP_CTRL_DOWN \| PSP_CTRL_RIGHT\)", "edges & PSP_CTRL_DOWN"),
      "asks_for("),

@@ -5705,11 +5705,16 @@ static ui_action screen_state_slots(unsigned edges)
        * (the empty ones are skipped, so X always has a state to load), the
        * list and the preview following.  X loads, O is Resume, and every
        * other key does nothing -- a stray press no longer throws the
-       * question away.  The page's own load question keeps its rule. */
+       * question away.  An answer on the same frame as a direction (X while
+       * a held direction auto-repeats) is for the slot the screen shows:
+       * the question does not move under it.  The page's own load question
+       * keeps its rule. */
       if (g_slot_ask_back && g_slot_ask == SLOT_ASK_LOAD)
       {
          int n = g_slot_ask_n, k = PSP_STATE_SLOT_COUNT;
-         if (edges & (PSP_CTRL_UP | PSP_CTRL_LEFT))
+         if (edges & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
+            ;                    /* answered: the slot that was asked about */
+         else if (edges & (PSP_CTRL_UP | PSP_CTRL_LEFT))
             do n = n > 1 ? n - 1 : PSP_STATE_SLOT_COUNT;
             while (--k && !g_ov_slot[n - 1]);
          else if (edges & (PSP_CTRL_DOWN | PSP_CTRL_RIGHT))
