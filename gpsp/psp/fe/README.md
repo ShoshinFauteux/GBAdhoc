@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 1a2324fac1f08a8c; split.py inverse of the shell sha256 10534972f263628c (18852 lines) -->
+     inputs: cutlist.txt sha256 6e7ec74eeedd1e31; split.py inverse of the shell sha256 50dac99c36e4d398 (18856 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -80,28 +80,28 @@ Every region, in TU order, and the host tests that read it:
 | `lowlat:defaults` | `fe/pacing.a.inc.c:76` | `test_lowlat_policy.py` |
 | `ff:mer_retire_early_active` | `fe/pacing.a.inc.c:187` | `run_ff_tests.py` |
 | `lowlat:mer_retire_early_active` | `fe/pacing.a.inc.c:188` | `test_lowlat_policy.py` |
-| `fn:me_rend_release_vmem` | `fe/merend.c.inc.c:163` | `test_psp_runtime.py` |
-| `fn:me_rend_drop_vmem` | `fe/merend.c.inc.c:182` | `test_psp_runtime.py` |
+| `fn:me_rend_release_vmem` | `fe/merend.c.inc.c:163` | `test_psp_runtime.py`, `test_sleep_holds.py` |
+| `fn:me_rend_drop_vmem` | `fe/merend.c.inc.c:182` | `test_psp_runtime.py`, `test_sleep_holds.py` |
 | `fn:me_standby_down` | `fe/power.d.inc.c:73` | `test_psp_runtime.py`, `test_sleep_holds.py` |
-| `fn:play_lock_take` | `fe/power.d.inc.c:261` | `test_sleep_quiesce.py` |
-| `fn:play_lock_drop` | `fe/power.d.inc.c:286` | `test_sleep_quiesce.py` |
-| `def:PWR_REQ_MAX_FIRES` | `fe/power.d.inc.c:329` | `test_power_callback.py` |
-| `fn:power_request_poll` | `fe/power.d.inc.c:333` | `test_power_callback.py` |
-| `fn:sq_audio_stop` | `fe/power.d.inc.c:350` | `test_sleep_quiesce.py` |
-| `fn:sq_audio_start` | `fe/power.d.inc.c:368` | `test_sleep_quiesce.py` |
-| `fn:sq_writer_stop` | `fe/power.d.inc.c:380` | `test_sleep_quiesce.py` |
-| `fn:sq_writer_start` | `fe/power.d.inc.c:397` | `test_sleep_quiesce.py` |
-| `fn:sq_files_close` | `fe/power.d.inc.c:408` | `test_sleep_quiesce.py` |
-| `fn:sq_files_reopen` | `fe/power.d.inc.c:435` | `test_sleep_quiesce.py` |
-| `fn:sq_home_stop` | `fe/power.d.inc.c:448` | `test_sleep_quiesce.py` |
-| `fn:sq_home_rearm` | `fe/power.d.inc.c:459` | `test_sleep_quiesce.py` |
-| `fn:sq_net_term` | `fe/power.d.inc.c:470` | `test_sleep_quiesce.py` |
-| `fn:sq_note` | `fe/power.d.inc.c:481` | `test_sleep_quiesce.py` |
-| `decl:g_sq_ops` | `fe/power.d.inc.c:490` | `test_sleep_quiesce.py` |
-| `fn:sleep_quiesce_down` | `fe/power.d.inc.c:503` | `test_sleep_quiesce.py` |
-| `fn:sleep_quiesce_up` | `fe/power.d.inc.c:518` | `test_sleep_quiesce.py` |
-| `def:SLEEP_HOLD_NAPS` | `fe/power.d.inc.c:536` | `test_sleep_browser.py`, `test_sleep_quiesce.py` |
-| `fn:sleep_park_hold` | `fe/power.d.inc.c:542` | `test_sleep_browser.py`, `test_sleep_quiesce.py` |
+| `fn:play_lock_take` | `fe/power.d.inc.c:265` | `test_sleep_quiesce.py` |
+| `fn:play_lock_drop` | `fe/power.d.inc.c:290` | `test_sleep_quiesce.py` |
+| `def:PWR_REQ_MAX_FIRES` | `fe/power.d.inc.c:333` | `test_power_callback.py` |
+| `fn:power_request_poll` | `fe/power.d.inc.c:337` | `test_power_callback.py` |
+| `fn:sq_audio_stop` | `fe/power.d.inc.c:354` | `test_sleep_quiesce.py` |
+| `fn:sq_audio_start` | `fe/power.d.inc.c:372` | `test_sleep_quiesce.py` |
+| `fn:sq_writer_stop` | `fe/power.d.inc.c:384` | `test_sleep_quiesce.py` |
+| `fn:sq_writer_start` | `fe/power.d.inc.c:401` | `test_sleep_quiesce.py` |
+| `fn:sq_files_close` | `fe/power.d.inc.c:412` | `test_sleep_quiesce.py` |
+| `fn:sq_files_reopen` | `fe/power.d.inc.c:439` | `test_sleep_quiesce.py` |
+| `fn:sq_home_stop` | `fe/power.d.inc.c:452` | `test_sleep_quiesce.py` |
+| `fn:sq_home_rearm` | `fe/power.d.inc.c:463` | `test_sleep_quiesce.py` |
+| `fn:sq_net_term` | `fe/power.d.inc.c:474` | `test_sleep_quiesce.py` |
+| `fn:sq_note` | `fe/power.d.inc.c:485` | `test_sleep_quiesce.py` |
+| `decl:g_sq_ops` | `fe/power.d.inc.c:494` | `test_sleep_quiesce.py` |
+| `fn:sleep_quiesce_down` | `fe/power.d.inc.c:507` | `test_sleep_quiesce.py` |
+| `fn:sleep_quiesce_up` | `fe/power.d.inc.c:522` | `test_sleep_quiesce.py` |
+| `def:SLEEP_HOLD_NAPS` | `fe/power.d.inc.c:540` | `test_sleep_browser.py`, `test_sleep_quiesce.py` |
+| `fn:sleep_park_hold` | `fe/power.d.inc.c:546` | `test_sleep_browser.py`, `test_sleep_quiesce.py` |
 | `fn:mer_work_heap_free` | `fe/merend.d.inc.c:16` | `test_psp_runtime.py` |
 | `fn:me_rend_suspend` | `fe/merend.d.inc.c:29` | `test_psp_runtime.py` |
 | `ff:me_rend_present` | `fe/merend.d.inc.c:379` | `run_ff_tests.py` |
@@ -265,7 +265,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 17 | display.b | `fe/display.b.inc.c` | 1-68 | display | 2 / 1 | power 1 |
 | 18 | power.c | `fe/power.c.inc.c` | 1-14 | power | 1 / 0 | - |
 | 19 | display.c | `fe/display.c.inc.c` | 1-141 | display | 2 / 1 | merend 1 |
-| 20 | power.d | `fe/power.d.inc.c` | 1-592 | power | 20 / 3 | - |
+| 20 | power.d | `fe/power.d.inc.c` | 1-596 | power | 20 / 3 | - |
 | 21 | merend.d | `fe/merend.d.inc.c` | 1-799 | merend | 9 / 14 | misc 2, harness 12 |
 | 22 | misc.a | `fe/misc.a.inc.c` | 1-666 | misc | 21 / 9 | link 1, harness 7 |
 | 23 | harness.c | `fe/harness.c.inc.c` | 1-237 | harness | 4 / 17 | - |
@@ -531,7 +531,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **display.b** (`fe/display.b.inc.c`): wake_snapshot:23, wake_snapshot_from:40
 - **power.c** (`fe/power.c.inc.c`): menu_open:7
 - **display.c** (`fe/display.c.inc.c`): me_rend_redraw:27, psp_color_preview:90
-- **power.d** (`fe/power.d.inc.c`): standby_note:16, me_standby_step:61, me_standby_down:74, me_standby_up:187, play_lock_take:262, play_lock_drop:287, power_request_poll:334, sq_audio_stop:351, sq_audio_start:369, sq_writer_stop:381, sq_writer_start:398, sq_files_close:409, sq_files_reopen:436, sq_home_stop:449, sq_home_rearm:460, sq_net_term:471, sq_note:482, sleep_quiesce_down:504, sleep_quiesce_up:519, sleep_park_hold:543
+- **power.d** (`fe/power.d.inc.c`): standby_note:16, me_standby_step:61, me_standby_down:74, me_standby_up:191, play_lock_take:266, play_lock_drop:291, power_request_poll:338, sq_audio_stop:355, sq_audio_start:373, sq_writer_stop:385, sq_writer_start:402, sq_files_close:413, sq_files_reopen:440, sq_home_stop:453, sq_home_rearm:464, sq_net_term:475, sq_note:486, sleep_quiesce_down:508, sleep_quiesce_up:523, sleep_park_hold:547
 - **merend.d** (`fe/merend.d.inc.c`): mer_work_heap_free:17, me_rend_suspend:30, me_rend_resume:79, me_rend_init:111, me_rend_fill_desc:259, me_rend_present:381, me_rend_retire_if_idle:415, me_rend_frame:452, plat_video_frame:691
 - **misc.a** (`fe/misc.a.inc.c`): find_first_rom:3, make_suffixed_path:29, folders_settle:51, console_from_rom_path:91, dump_frame_bmp:101, state_preview_src:140, shot_fd_write:185, shot_folder:191, shot_write_png:212, player_screenshot:247, state_thumb_write:337, state_shot_write:395, state_save_slot_io:438, state_save_slot:471, mer_note_sum:491, shash_fnv:514, shash_dump:524, shash_open:561, shash_frame:577, shash_close:605, vhash_frame:619
 - **harness.c** (`fe/harness.c.inc.c`): eboot_crc:21, vram_probe_frame:97, vid_prof_frame#1:176, vid_prof_frame#2:230

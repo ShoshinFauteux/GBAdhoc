@@ -39,7 +39,13 @@ static int g_me_retained, g_me_handed_back;
  * does, which is what the return's census has to cope with.
  *
  * mode 1 is the healthy engine.  mode 2 is a wedged one: the first job sent to
- * it never completes, for the path where retaining fails. */
+ * it never completes, for the path where retaining fails.
+ *
+ * THE CONSOLE WITH NO MEDIA ENGINE (Adrenaline on a PS Vita), on any target:
+ * mode -1 is a module that does not load (me_host_init fails as for a
+ * missing PRX, nothing loaded), mode -2 an engine that loads and never
+ * answers its boot handshake (unwound by me_host_shutdown, as the real one).
+ * Either way the game runs on the CPU renderer for the whole session. */
 static int g_me_fake;
 static SceUID g_me_fake_th = -1;
 static volatile int g_me_fake_stop;
@@ -49,6 +55,10 @@ static int me_fake_thread(SceSize args, void *argp)
    volatile me_mbox *mb = (volatile me_mbox *)ME_UNCACHED(&g_mbox_storage);
    unsigned seen;
    (void)args; (void)argp;
+   while (g_me_fake == -2 && !g_me_fake_stop)   /* never boots */
+      sceKernelDelayThread(10000);
+   if (g_me_fake_stop)
+      return 0;
    mb->version = ME_MBOX_VERSION;
    mb->magic   = ME_MBOX_MAGIC;
    seen = mb->cmd_seq;
@@ -211,6 +221,12 @@ int me_host_init(const char *base_dir)
                                            sizeof(g_mbox_storage));
 
 #ifdef GPSP_PERF_RIG
+   if (g_me_fake == -1)
+   {
+      fe_evt("me_init state=unavailable reason=load rc=0x%08X path=%s",
+             0x80020001u, "(me_fake -1: no module)");
+      return -1;
+   }
    if (g_me_fake)
    {
       mod = me_fake_start();

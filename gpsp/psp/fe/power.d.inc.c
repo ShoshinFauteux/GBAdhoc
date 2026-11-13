@@ -141,6 +141,10 @@ static void me_standby_down(void)
        * module is stopped there, on the way out of the process (a relaunch:
        * inproc_refusal "standby"), where the kernel's reboot makes that
        * safe. */
+      /* (Only an engine that had come up gets here: the renderer takes
+       * the pool, g_mer_vmem, from a live engine alone, so a console with
+       * no ME -- module absent, or one that never answered its boot -- goes
+       * through the plain release below and wakes onto the overlay.) */
       me_standby_step("vmem_sync_failed");
       g_pwr_me_lost = 1;
       release_result = me_rend_drop_vmem();

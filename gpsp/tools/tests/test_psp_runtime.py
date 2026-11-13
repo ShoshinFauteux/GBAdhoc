@@ -224,6 +224,36 @@ int main(int argc, char **argv)
          !shutdowns && !g_pwr_me_lost,
          "successful standby release marks sleep and clears presentation");
    check(!quiet_calls, "a confirmed sync takes no quiet log");
+   /* THE CONSOLE WITH NO MEDIA ENGINE (Adrenaline on a PS Vita).  The
+    * renderer never came up, so it never took the pool (g_mer_vmem = 0);
+    * me_host.c leaves the module not loaded -- or, when the unwind of an
+    * engine that never booted could not stop it, loaded and dead (the
+    * driver cases above).  Neither is a lost engine: no sync is asked, no
+    * pool is dropped, the flag stays 0 and the wake shows the overlay. */
+   {
+      static const struct { int loaded; const char *what; } none[] = {
+         { 0, "no ME (module not loaded)" },
+         { 1, "no ME (never booted, stop failed: loaded and dead)" },
+      };
+      int i, sleep_n;
+      for (i = 0; i < 2; i++)
+         for (sleep_n = 0; sleep_n < 2; sleep_n++)   /* 1: after an in-process return */
+         {
+            char label[120];
+            g_mer_vmem=0; g_mer_work=NULL; g_me_rend=0; retained=0;
+            loaded=none[i].loaded; healthy=0; idle=0; sync_ok=0;
+            g_pcfg.standby=1; g_pwr_slept=0; g_pwr_me_lost=0; g_pwr_had_host=7;
+            shutdowns=0; unlock_calls=0; sync_calls=0; quiet_calls=0; nsteps=0;
+            ring_r=2; ring_w=7; blank_calls=0;
+            me_standby_down();
+            snprintf(label, sizeof(label), "%s, sleep %d: not lost, plain sleep",
+                     none[i].what, sleep_n + 1);
+            check(!g_pwr_me_lost && g_pwr_slept && !g_pwr_had_host &&
+                  !sync_calls && !unlock_calls && !shutdowns && !quiet_calls &&
+                  !stepped("vmem_sync_failed") && stepped("done") &&
+                  ring_r==7 && blank_calls==1, label);
+         }
+   }
    return 0;
 }
 '''
@@ -275,9 +305,10 @@ static void tracked_free(void *p)
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 void sceKernelDcacheWritebackInvalidateRange(const void *p,unsigned n) {(void)p;(void)n;}
 void sceKernelDcacheWritebackRange(const void *p,unsigned n) {(void)p;(void)n;}
-SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;load_calls++;return 7;}
+static int load_fail, start_fail;
+SceUID kuKernelLoadModule(const char *p,int f,void *o) {(void)p;(void)f;(void)o;load_calls++;return load_fail?(SceUID)0x80020001:7;}
 int sceKernelStartModule(SceUID id,unsigned n,void *a,int *s,void *o)
-{ (void)id;(void)n;(void)a;(void)o;if(s)*s=0;return 7; }
+{ (void)id;(void)n;(void)a;(void)o;if(s)*s=0;return start_fail?(int)0x80020002:7; }
 int sceKernelStopModule(SceUID id,unsigned n,void *a,int *s,void *o)
 { (void)id;(void)n;(void)a;(void)o;stop_calls++;if(s)*s=stop_fail?-1:0;return stop_fail?-1:0; }
 int sceKernelUnloadModule(SceUID id) { (void)id; return 0; }
@@ -349,10 +380,48 @@ static void retain_cases(void)
    check(me_host_retain(50000u)==0,"a dead engine cannot be retained");
    g_me_dead=0;answer_sync=0;
 }
+/* THE CONSOLE WITH NO MEDIA ENGINE (Adrenaline on a PS Vita): the module does
+ * not load, does not start, or its engine never answers the boot handshake.
+ * In each case nothing is left that a sleep could take for a lost engine:
+ * not loaded, not up, not retained, never "dead" -- unless the unwind's own
+ * module_stop fails, which leaves it loaded and dead, and still not up. */
+static void no_me_cases(void)
+{
+   int stops;
+   g_me_modid=-1;g_mb=NULL;g_me_dead=0;g_me_retained=0;g_me_handed_back=0;
+   handshake=0;complete_job=0;beats=0;stop_fail=0;
+   load_fail=1;
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_was_dead() && !me_host_retained() && !me_host_handed_back(),
+         "no ME: a module that does not load leaves nothing loaded, up or dead");
+   check(me_host_sync(50000u)<0 && !me_host_idle() && me_host_retain(50000u)==0,
+         "no ME: nothing to sync, nothing idle, nothing to retain");
+   load_fail=0;start_fail=1;
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_was_dead(),
+         "no ME: a module that does not start is unloaded, not up, not dead");
+   start_fail=0;stops=stop_calls;
+   check(me_host_init(".")<0 && stop_calls==stops+1 && !me_host_loaded() &&
+         !me_host_up() && !me_host_was_dead() && !me_host_handed_back(),
+         "no ME: an engine that never boots is stopped and unloaded, never handed back");
+   /* the second game after an in-process return: the same again */
+   check(me_host_init(".")<0 && !me_host_loaded() && !me_host_up() &&
+         !me_host_retained(),
+         "no ME: the next game finds the same nothing");
+   stop_fail=1;
+   check(me_host_init(".")<0 && me_host_loaded() && !me_host_up() &&
+         me_host_was_dead() && !me_host_retained(),
+         "no ME: a never-booted engine whose stop fails stays loaded, dead and not up");
+   stop_fail=0;g_me_dead=0;
+   me_host_shutdown();
+   check(!me_host_loaded(),"no ME: the retried stop unloads it");
+   g_me_handed_back=0;stop_calls=0;load_calls=0;   /* the cases below count from 0 */
+}
 int main(int argc, char **argv)
 {
    int i;
    (void)argv;baseline=argc>1;
+   no_me_cases();
    g_mb=&g_mbox_storage;g_me_modid=7;g_me_dead=0;
    g_mb->cmd_seq=g_mb->done_seq=0;
    check(me_host_bench(64,1)<0,"benchmark times out when job never acknowledges");

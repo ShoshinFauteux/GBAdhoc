@@ -30,6 +30,14 @@ cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
 4. THE HARNESS'S ME-QUIET LOG (sleep_sim_me_quiet): me_host_idle() sampled
    1 ms and 10 ms after the call, one EVT line.
 
+5. NO MEDIA ENGINE IS NOT A LOST ONE (Adrenaline on a PS Vita).  A sleep on
+   a console whose engine never came up -- the module not loaded, or loaded
+   and dead because the unwind of a failed boot could not stop it -- runs
+   me_standby_down as it stands: no sync asked, no pool dropped,
+   g_pwr_me_lost left 0, so wake_service shows the Continue overlay
+   (test_sleep_menu.py runs that side).  An engine that WAS up and fails
+   its sync still sets it.
+
 Then mutants of the production text, each of which must fail.
 """
 from pathlib import Path
@@ -265,6 +273,58 @@ int main(void)
 '''
 
 
+NOME_HARNESS = r'''
+#include <stdio.h>
+#include <string.h>
+#define fe_evt(...) ((void)0)
+#define SLEEP_SIM_ME_SYNC_FAIL() 0
+#define SLEEP_SIM_ME_QUIET() ((void)0)
+#define MER_VM_UNLOCK() (unlocks++)
+static struct { int standby; } g_pcfg = { 1 };
+static int g_mer_vmem, g_me_rend, loaded, up, retained, unlocks, syncs, sync_ok;
+static void *g_mer_desc, *g_mer_cap[2], *g_mer_stage[2], *g_mer_work;
+static void *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
+static int g_mer_sh_on, g_mer_ready, g_mer_pending, g_mer_last_presented;
+static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w;
+static volatile int g_pwr_me_lost;
+static void me_standby_step(const char *s) { (void)s; }
+static void wake_snapshot(void) {}
+static void vid_blank_all(void) {}
+static int me_rend_active(void) { return g_me_rend; }
+static void me_rend_teardown(const char *w) { (void)w; g_me_rend = 0; }
+static int me_host_up(void) { return up; }
+static int me_host_loaded(void) { return loaded; }
+static int me_host_retained(void) { return retained; }
+static int me_host_handed_back(void) { return 0; }
+static void me_host_shutdown(void) { loaded = 0; }
+static int me_host_sync(unsigned t) { (void)t; syncs++; return up && sync_ok ? 0 : -1; }
+@FUNCTIONS@
+static int sleep_as(int vmem, int ld, int u, int ok)
+{
+   g_mer_vmem = vmem; loaded = ld; up = u; sync_ok = ok; retained = 0;
+   g_pwr_me_lost = 0; g_pwr_slept = 0; unlocks = syncs = 0;
+   me_standby_down();
+   return g_pwr_me_lost;
+}
+#define CHECK(c, what) do { if (!(c)) { puts("FAIL: " what); return 1; } } while (0)
+int main(void)
+{
+   CHECK(!sleep_as(0, 0, 0, 0) && g_pwr_slept && !syncs && !unlocks,
+         "no ME (module not loaded): the sleep is taken for a lost engine");
+   CHECK(!sleep_as(0, 1, 0, 0) && g_pwr_slept && !syncs && !unlocks,
+         "no ME (never booted, loaded and dead): the sleep is taken for a lost engine");
+   CHECK(!sleep_as(1, 1, 1, 1) && syncs == 1 && unlocks == 1,
+         "a healthy engine's sleep is not a plain confirmed release");
+   CHECK(sleep_as(1, 1, 1, 0) == 1 && unlocks == 1,
+         "an engine that was up and fails its sync is not marked lost");
+   CHECK(sleep_as(1, 1, 0, 0) == 1 && unlocks == 1,
+         "an engine the watchdog gave up on is not marked lost");
+   puts("ok");
+   return 0;
+}
+'''
+
+
 def run_c(source):
     """-> (returncode, output)."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -315,6 +375,15 @@ def check_all(src):
     rc, out = run_c(QUIET_HARNESS.replace("@FUNCTION@", marked_function(src, "sleep_sim_me_quiet")))
     if rc:
         fails.append("sleep_sim_me_quiet: " + out.strip())
+    # 5. no Media Engine is not a lost one
+    fns = "\n".join((
+        "static int me_rend_drop_vmem(void);",
+        marked_function(src, "me_rend_release_vmem"),
+        marked_function(src, "me_rend_drop_vmem"),
+        marked_function(src, "me_standby_down")))
+    rc, out = run_c(NOME_HARNESS.replace("@FUNCTIONS@", fns))
+    if rc:
+        fails.append("no ME: " + out.strip())
     down = marked_function(src, "me_standby_down")
     if not re.search(r"release_result = me_rend_drop_vmem\(\);\s*SLEEP_SIM_ME_QUIET\(\);", down):
         fails.append("me_standby_down does not take the quiet log right after the drop")
@@ -362,6 +431,11 @@ MUTANTS = (
      '         g_ol_cancel_lv->footer = "";\n', ""),
     ("cancel: the screen is never registered",
      "         g_ol_cancel_lv = &lv;\n", ""),
+    ("no ME: the release asks any loaded module, pool or not",
+     "   if (g_mer_vmem && me_host_loaded() && !me_host_retained() &&",
+     "   if (me_host_loaded() && !me_host_retained() &&"),
+    ("no ME: every sleep is a lost engine",
+     "   if (release_result < 0)\n   {", "   if (release_result <= 0)\n   {"),
     ("quiet: one sample only",
      "   sceKernelDelayThread(9000);\n   idle_10ms = me_host_idle();",
      "   idle_10ms = idle_1ms;"),
@@ -380,7 +454,8 @@ def main():
     if fails:
         return 1
     print("renderer holds: %d wrapped runs executed, %d covered sites; boot notice; "
-          "online cancel; ME-quiet log: PASS" % (WRAPPED_SITES, len(COVERED)))
+          "online cancel; ME-quiet log; no ME is not a lost ME: PASS"
+          % (WRAPPED_SITES, len(COVERED)))
     for label, old, new in MUTANTS:
         if MAIN.count(old) != 1:
             print("FAIL: mutant %r no longer applies (%d matches)" % (label, MAIN.count(old)))

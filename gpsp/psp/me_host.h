@@ -54,7 +54,9 @@ int  me_host_retained(void);
 int  me_host_handed_back(void);
 #ifdef GPSP_PERF_RIG
 /* Harness `me_fake`: a user thread answers the mailbox in place of the module
- * (PPSSPP has no Media Engine; see me_host.c). */
+ * (PPSSPP has no Media Engine; see me_host.c).  1 healthy, 2 wedged; -1 no
+ * module at all, -2 a module whose engine never boots (the console with no
+ * Media Engine, on any target). */
 void me_host_fake(int mode);
 #endif
 
