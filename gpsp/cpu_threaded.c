@@ -3604,7 +3604,11 @@ static void smc_reuse_dump_maybe(void);
 #endif
 /* Memory-stub call sites, logged as the emitter writes them, so a record
  * need not scan its body for them (smc_reuse_commit).  Every `jal` the
- * translator emits goes through mips_emit_jal; the log keeps the addresses in
+ * translator emits goes through mips_emit_jal, redefined below to log; an
+ * emitter compiled before this point (a function in mips/mips_emit.h, like
+ * PCARG_SIDE's pcarg_*_site) must take the logging form itself, as those do.
+ * tools/drprof/pcarg_check.py's SMC_REUSE_DEBUG arms hold this (sitebad).
+ * The log keeps the addresses in
  * order and drops any the emitter has since rewound over.  It is reset when a
  * RAM block starts; a block with more sites than fit falls back to the scan. */
 #define SMC_REUSE_MAXSITES 1024
@@ -3624,6 +3628,13 @@ static inline void smc_reuse_log_site(u8 *at)
     smc_reuse_sitelog[n++] = at;
   smc_reuse_nlog = n;
 }
+#ifdef PCARG_SIDE
+/* the copy mips/mips_emit.h's out-of-line site emitters call */
+static __attribute__((noinline)) void smc_reuse_log_site_ool(u8 *at)
+{
+  smc_reuse_log_site(at);
+}
+#endif
 /* Run-time-mutable data words inside a body (SPIN_SKIP's descriptor), logged
  * as the emitter writes them: a record keeps their emitted values with the
  * call sites, and a revival restores both. */
@@ -6570,13 +6581,14 @@ static int immp_try(u32 word)
 static void immp_report(void)
 {
 #ifdef PCARG_SIDE
+  extern u32 pcarg_bios_c_reads;   /* gba_memory.c */
   fprintf(stderr, "PCARG sites new=%u old=%u full=%u truncs=%u lookups=%u found=%u "
-          "max_rom=%u max_ram=%u bad=%u far=%u\n",
+          "max_rom=%u max_ram=%u bad=%u far=%u bios_c=%u\n",
           (unsigned)pcarg_sites_new, (unsigned)pcarg_sites_old,
           (unsigned)pcarg_full, (unsigned)pcarg_truncs,
           (unsigned)pcarg_c_lookups, (unsigned)pcarg_c_found,
           (unsigned)pcarg_max[0], (unsigned)pcarg_max[1], (unsigned)pcarg_bad,
-          (unsigned)pcarg_far);
+          (unsigned)pcarg_far, (unsigned)pcarg_bios_c_reads);
 #endif
   fprintf(stderr, "SMC_IMM_PATCH patches=%u learned=%u sites=%u selftest_fail=%u refused=%u/%u/%u/%u/%u\n",
           (unsigned)immp_patches, (unsigned)immp_learned, (unsigned)immp_sites,

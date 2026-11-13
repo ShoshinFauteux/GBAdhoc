@@ -212,7 +212,7 @@ LAYOUT_PAD_LATE_BYTES ?= 128
 # last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
 # site emitters shrank both translators, and this puts instance B's hot path, linked
 # right after, back on its sets.  tools/flags.lock pins it.
-LAYOUT_PAD_XLAT_BYTES ?= 5824
+LAYOUT_PAD_XLAT_BYTES ?= 5504
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half

@@ -1055,6 +1055,17 @@ u32 function_cc read_eeprom(void)
 }
 
 
+/* (twin only) BIOS reads that reach C from inside the BIOS.  With PCARG_SIDE
+ * every such load from translated code comes here (the stub cannot check the
+ * caller's PC in a1 any more); without it none does.  Printed on the twin's
+ * `PCARG sites` line as bios_c. */
+#ifdef DRPROF_TWIN
+u32 pcarg_bios_c_reads;
+#define PCARG_BIOS_C_READ() pcarg_bios_c_reads++
+#else
+#define PCARG_BIOS_C_READ() do { } while (0)
+#endif
+
 #define read_memory(type)                                                     \
   switch(address >> 24)                                                       \
   {                                                                           \
@@ -1063,8 +1074,10 @@ u32 function_cc read_eeprom(void)
       if (address < 0x4000) {                                                 \
         if(reg[REG_PC] >= 0x4000)                                             \
           value = (u##type)(reg[REG_BUS_VALUE] >> ((address & 0x03) << 3));   \
-        else                                                                  \
+        else {                                                                \
+          PCARG_BIOS_C_READ();                                                \
           value = readaddress##type(bios_rom, address & 0x3FFF);              \
+        }                                                                     \
       } else {                                                                \
         read_open##type();                                                    \
       }                                                                       \

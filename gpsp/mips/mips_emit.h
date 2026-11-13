@@ -1680,11 +1680,11 @@ union { pcarg_state_t s; u8 bytes[PCARG_STATE_BYTES]; } pcarg_st;
 void pcarg_dec(void);              /* mips_stub.S */
 #ifdef PSP
 /* Layout (docs/PCARG-SIDE.md, docs/LAYOUT-PINNING.md "Keeping the pads"): the
- * side table's code grows this object's cold text by 4,736 B mod 8 KiB in
+ * side table's code grows this object's cold text by 4,608 B mod 8 KiB in
  * each core instance; these zeros make it a whole 8 KiB, so the cold text,
  * tables and pads linked after it keep their sets.  Never executed. */
 __asm__(".pushsection .text.pcarg_layout_pad,\"ax\",@progbits\n"
-        "  .fill 3456 / 4, 4, 0\n"
+        "  .fill 3584 / 4, 4, 0\n"
         ".popsection\n");
 #endif
 
@@ -1856,7 +1856,24 @@ static inline int pcarg_is_cti(u32 w)
   pcarg_pad_site()
 
 /* The site emitters are out of line (called at every load/store site, like
- * emit_load_pc_k): the translator's own code does not grow. */
+ * emit_load_pc_k): the translator's own code does not grow.
+ *
+ * SMC_REUSE logs every `jal` a RAM block emits (smc_reuse_log_site,
+ * cpu_threaded.c) by redefining mips_emit_jal, but only after this header:
+ * a function compiled here would emit its jal unlogged, the block's record
+ * would lack the site, and a revival would leave it learnt.  So the emitters
+ * below are compiled with the logging jal as well (it also reaches the jal
+ * inside generate_function_call_swap_delay), through an out-of-line copy of
+ * the logger (one call per jal: the emitters stay small). */
+#ifdef SMC_REUSE
+static void smc_reuse_log_site_ool(u8 *at);      /* cpu_threaded.c */
+#pragma push_macro("mips_emit_jal")
+#undef mips_emit_jal
+#define mips_emit_jal(offset) do {                                            \
+  smc_reuse_log_site_ool(translation_ptr);                                    \
+  mips_emit_jump(jal, offset);                                                \
+} while (0)
+#endif
 
 /* single load: jal stub ; X  (or the old jal stub ; addiu a1) */
 static __attribute__((noinline)) u8 *pcarg_load_site(u8 *translation_ptr,
@@ -1913,6 +1930,9 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
   }
   return translation_ptr;
 }
+#ifdef SMC_REUSE
+#pragma pop_macro("mips_emit_jal")
+#endif
 #define pcarg_mark_lo() u8 *pcarg_lo = translation_ptr; (void)pcarg_lo
 #else
 #define pcarg_mark_lo() do { } while (0)

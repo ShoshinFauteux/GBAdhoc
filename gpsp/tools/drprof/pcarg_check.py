@@ -19,6 +19,13 @@ Arms, all with -DRAM_CACHE_KB=384 (the PSP's RAM cache), built and run by the La
   padc   pad's defines, TWIN=1 (the same emitted code plus DRPROF_TWIN's bookkeeping): bad == 0, far == 0, new > 0
   farc   far's defines, TWIN=1: bad == 0, far > 0
 
+SMC_REUSE's call-site log (cpu_threaded.c smc_reuse_log_site) must see every jal the site emitters write: a site
+missing from a block's record stays learnt when the block is revived.  Only an SMC_REUSE_DEBUG build counts that
+(sitebad: records whose log disagrees with a scan of the body), so three more arms, all TWIN=1 + SMC_REUSE_DEBUG=1:
+  based  the base commit: the reference `smc_reuse:` counters
+  padd   pad's defines: the same blocks as base, so sitebad, records and unlearnt must EQUAL based's
+  candd  COMMIT as shipped (no pad): sitebad no higher than based's, records > 0
+
 Exit 0 only when every case passes.  Writes pcarg_check.json to --out (default: the current directory)."""
 import argparse
 import concurrent.futures as cf
@@ -36,7 +43,7 @@ def log(s):
     print(s, flush=True)
 
 
-def build_counted(gt, commit, flags, extra):
+def build_counted(gt, commit, flags):
     """gate_twin.build's recipe with TWIN=1 (DRPROF_TWIN bookkeeping); reuses an existing binary."""
     defs, _ = gt.core_defs(commit, flags)
     v = gt.variant_name(commit, defs, False) + "-t1"
@@ -71,6 +78,14 @@ def build_counted(gt, commit, flags, extra):
 def counters(text):
     """the last `PCARG sites ...` line of a TWIN=1 run -> {name: int}"""
     lines = [ln for ln in text.splitlines() if ln.startswith("PCARG sites")]
+    if not lines:
+        return None
+    return {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", lines[-1])}
+
+
+def reuse_counters(text):
+    """the `smc_reuse: paused=.. sitebad=.. ...` line of a TWIN=1 run -> {name: int}"""
+    lines = [ln for ln in text.splitlines() if ln.startswith("smc_reuse: paused=")]
     if not lines:
         return None
     return {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", lines[-1])}
@@ -113,14 +128,18 @@ def main():
             sys.exit(2)
         return r["variant"]
 
-    def counted(defs):
+    def counted(defs, commit=None, flags=None):
         extra["defs"] = defs
-        return build_counted(gt, a.cand, cm["coreFlags"], "")
+        return build_counted(gt, commit or a.cand, flags or cm["coreFlags"])
+
+    dbg = "-DSMC_REUSE_DEBUG=1"
 
     v = {"base": plain("base", bm["sourceCommit"], bm["coreFlags"], ""),
          "pad": plain("pad", a.cand, cm["coreFlags"], pad),
          "far": plain("far", a.cand, cm["coreFlags"], far),
-         "padc": counted(pad), "farc": counted(far)}
+         "padc": counted(pad), "farc": counted(far),
+         "based": counted(dbg, bm["sourceCommit"], bm["coreFlags"]),
+         "padd": counted(pad + " " + dbg), "candd": counted(dbg)}
     log("twins: %s" % v)
 
     fxs, _ = gp.bench().load()
@@ -155,6 +174,25 @@ def main():
                 res["fail"].append("padc: far=%s without the test knob" % c.get("far"))
             if k == "farc" and c.get("far", 0) == 0:
                 res["fail"].append("farc: the knob forced no site")
+        ru = {}
+        for k in ("based", "padd", "candd"):
+            r = gt.run(v[k], fx, "pcargcheck/%s-%s" % (name, k), frames, hash_=False)
+            c = reuse_counters(gt.read_text(r["dir"] + "/run.out"))
+            if c is None or r["rc"]:
+                res["fail"].append("%s: no smc_reuse counter line (rc %s)" % (k, r["rc"]))
+                continue
+            ru[k] = c
+            res[k] = {n: c.get(n) for n in ("sitebad", "records", "unlearnt", "hits")}
+        if len(ru) == 3:
+            b, p, c = ru["based"], ru["padd"], ru["candd"]
+            for n in ("sitebad", "records", "unlearnt"):
+                if p.get(n) != b.get(n):
+                    res["fail"].append("padd: %s=%s, base has %s (same blocks: must be equal)" % (n, p.get(n), b.get(n)))
+            if c.get("sitebad", 1) > b.get("sitebad", 0):
+                res["fail"].append("candd: sitebad=%s of %s records, base has %s of %s" % (
+                    c.get("sitebad"), c.get("records"), b.get("sitebad"), b.get("records")))
+            if b.get("records", 0) and not c.get("records", 0):
+                res["fail"].append("candd: no record at all (base has %s)" % b.get("records"))
         return name, res
 
     out = {"cand": a.cand, "base": bm["sourceCommit"], "far_max": a.far_max, "twins": v, "cases": {}}
@@ -164,11 +202,11 @@ def main():
         for name, res in ex.map(one, jobs):
             out["cases"][name] = res
             bad += 1 if res["fail"] else 0
-            log("%-38s %s pad=%s far=%s | padc %s | farc %s" % (
+            log("%-38s %s pad=%s far=%s | padc %s | farc %s | based %s | padd %s | candd %s" % (
                 name, "FAIL" if res["fail"] else "PASS",
                 "identical" if res["pad"]["identical"] else "DIFF f%s" % res["pad"]["first_diff"],
                 "identical" if res["far"]["identical"] else "DIFF f%s" % res["far"]["first_diff"],
-                res.get("padc"), res.get("farc")))
+                res.get("padc"), res.get("farc"), res.get("based"), res.get("padd"), res.get("candd")))
             for f in res["fail"]:
                 log("    " + f)
             json.dump(out, open(os.path.join(a.out, "pcarg_check.json"), "w"), indent=1)
