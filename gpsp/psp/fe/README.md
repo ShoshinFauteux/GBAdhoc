@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 ec5b8d01f209fa4f; split.py inverse of the shell sha256 e3a4d76edd9b2369 (18864 lines) -->
+     inputs: cutlist.txt sha256 01d394c640b3e92e; split.py inverse of the shell sha256 2305d0fea59f435d (18870 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -122,8 +122,8 @@ Every region, in TU order, and the host tests that read it:
 | `fn:browser_park` | `fe/power.e.inc.c:82` | `test_sleep_browser.py` |
 | `fn:wake_overlay_yield` | `fe/power.e.inc.c:113` | `test_power_callback.py`, `test_sleep_menu.py` |
 | `def:wake_answers` | `fe/power.e.inc.c:136` | `test_sleep_menu.py` |
-| `fn:wake_me_lost_notice` | `fe/power.e.inc.c:146` | (none) |
-| `fn:wake_service` | `fe/power.e.inc.c:169` | `test_menu_press.py`, `test_sleep_menu.py` |
+| `fn:wake_me_lost_notice` | `fe/power.e.inc.c:154` | `test_sleep_holds.py` |
+| `fn:wake_service` | `fe/power.e.inc.c:175` | `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
 
 ## Modules
@@ -287,7 +287,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 38 | harness.f | `fe/harness.f.inc.c` | 1-1594 | harness | 38 / 50 | - |
 | 39 | rewind | `fe/rewind.inc.c` | 1-1220 | rewind | 25 / 15 | pacing 1 |
 | 40 | pacing.c | `fe/pacing.c.inc.c` | 1-508 | pacing | 19 / 6 | - |
-| 41 | power.e | `fe/power.e.inc.c` | 1-287 | power | 6 / 1 | - |
+| 41 | power.e | `fe/power.e.inc.c` | 1-293 | power | 6 / 1 | - |
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
 | 43 | shell.b | `main_psp.c` | 206-4768 | shell | 1 / 0 | - |
 
@@ -553,6 +553,6 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **harness.f** (`fe/harness.f.inc.c`): stall_refer:38, stall_record:45, heartbeat_write:110, stall_exit:158, stall_thread:175, stall_watch_start:225, stall_watch_stop:248, drprof_sampler:293, drprof_threads:358, drprof_window:399, drprof_start:456, drprof_stop:482, smc_gates_reload_evt:511, core_health_evt:562, me_rend_quiesce:681, psp_state_load_io:696, psp_game_reset:713, psp_state_load:743, rig_preserve_log:786, rig_model_name:822, rig_boot_identity:835, rig_rom_identity:867, rig_cfg_line:891, rig_cfg_audit_report:904, rig_fail_probe:914, rig_watch_evt:947, rig_romload_evt:970, ff_win_note:998, boot_mark:1056, boot_timeline_emit:1069, uiscript_tokens:1147, uiscript_fail:1191, uiscript_load:1208, uiscript_cond:1302, uiscript_jump:1322, uiscript_pad:1335, uiscript_dump_now:1521, uiscript_linking_draw:1536
 - **rewind** (`fe/rewind.inc.c`): psp_rw_pix_begin:97, psp_rw_pix_end:111, psp_rw_show:122, psp_rewind_present:147, psp_rewind_show_end:160, psp_rewind_product:180, psp_rewind_read_ini:209, psp_rewind_pool_tenant:317, psp_rom_pool_offer:323, psp_rom_pool_over:348, psp_rewind_pool_offer:359, psp_rewind_pool_lost:389, psp_rewind_reset_said:418, psp_rewind_pool_back:431, psp_rewind_pool_restart:476, sleep_sim_trash_pool:523, psp_rewind_pool_check:550, psp_rewind_hud_step:617, psp_rewind_hud:710, psp_rwc_fits:875, psp_rwc_choose:896, psp_rewind_tick_run:949, psp_rewind_pwr:1165, psp_rewind_land:1178, psp_rewind_tick:1206 (pacing)
 - **pacing.c** (`fe/pacing.c.inc.c`): mer_rewind_busy:3, lat_swap:16, ffh_too_soon:74, ffh_hold:80, ffh_cap3:97, ll_need_us:126, ll_blit_note:137, ll_win_reset:147, ll_sample:155, ll_eligible:180, ll_to_b:186, ll_own_ready:199, ll_own_posted:205, ll_present:212, ll_want_slot:227, lat_wait_begin:234, lat_wait_step:272, lat_wait_end:417, lat_census:454
-- **power.e** (`fe/power.e.inc.c`): loop_park:12, loop_unpark:57, browser_park:83, wake_overlay_yield:114, wake_me_lost_notice:147, wake_service:170
+- **power.e** (`fe/power.e.inc.c`): loop_park:12, loop_unpark:57, browser_park:83, wake_overlay_yield:114, wake_me_lost_notice:155, wake_service:176
 - **pacing.d** (`fe/pacing.d.inc.c`): dfr_clock_low:32, dfr_defer:39, dfr_present:53, lf_hold_begin:80, lf_hold_vblank:97, lf_want_slot:121
 - **shell.b** (`main_psp.c`): main:207

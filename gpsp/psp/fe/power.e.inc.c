@@ -141,14 +141,21 @@ static int g_wake_answered;   /* Continue taken: the pad is the answer's */
 /* THE WAKE THAT ENDS THE SESSION SAYS WHY (owner 2026-11-12).  A Media Engine
  * that stopped answering is not something a PSP should ever show, so when a
  * sleep found it so the wake goes to the game list (wake_service) -- and
- * without a word that reads as a crash.  Up for 3 s or until a button, under
- * a hold: this loop has no park point. */
+ * without a word that reads as a crash.  Up for 3 s or until a button.
+ *
+ * NO HOLD, though this loop has no park point: it needs none.  The renderer
+ * is off and the volatile pool already gone (me_standby_down), so a switch
+ * slid here sleeps at once, catches nothing and wakes back into this loop,
+ * as on a boot's notice (boot_stop_notice).  Under a hold that suspend
+ * waited for the release -- the one moment it must not have: power_cb had
+ * by then dropped the gameplay lock (nothing parked), so the release took
+ * the kernel's count to zero with the loop's exit and the teardown's save
+ * next, before the teardown's own hold (PLAN F2, at the loop's end). */
 /* @extract:begin fn:wake_me_lost_notice */
 static __attribute__((noinline)) void wake_me_lost_notice(void)
 {
    unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
    SceCtrlData pd;
-   pwr_hold("wake");
    do
    {
       vid_overlay_begin(1);
@@ -163,7 +170,6 @@ static __attribute__((noinline)) void wake_me_lost_notice(void)
           (unsigned)sceKernelGetSystemTimeLow() - t0 > 500000u)
          break;                     /* a press, not a key held at the wake */
    } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);
-   pwr_release();
 }
 /* @extract:end fn:wake_me_lost_notice */
 /* @extract:begin fn:wake_service */

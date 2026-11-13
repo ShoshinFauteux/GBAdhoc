@@ -41,6 +41,16 @@ cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
    (test_sleep_menu.py runs that side).  An engine that WAS up and fails
    its sync still sets it.
 
+6. THE WAKE THAT ENDS THE SESSION SHOWS ITS NOTICE WITH NO HOLD
+   (wake_me_lost_notice).  The notice loop cannot park, and power_cb drops
+   the gameplay lock for a loop that does not; a hold taken for the notice
+   was then the only lock left, and its release let the suspend start on the
+   way to the teardown's save, before the teardown's hold.  With no hold the
+   suspend lands inside the notice (renderer off, pool gone).  The function
+   is compiled as it stands and run: it never touches the hold, it is up
+   3 s with no button and at least 0.5 s with one; and wake_service takes
+   or drops no hold between the notice and the loop's exit.
+
 Then mutants of the production text, each of which must fail.
 """
 from pathlib import Path
@@ -211,6 +221,50 @@ int main(void)
    { puts("FAIL: the notice is not the one asked for"); return 1; }
    if (notice_hold != 0) { puts("FAIL: the hold was up while the notice waited"); return 1; }
    if (hold != 1 || strcmp(last_why, "boot")) { puts("FAIL: the exit runs without the boot hold"); return 1; }
+   puts("ok");
+   return 0;
+}
+'''
+
+LOST_HARNESS = r'''
+#include <stdio.h>
+#include <string.h>
+typedef struct { unsigned Buttons; } SceCtrlData;
+static unsigned now_us = 4000000000u;      /* the low word wraps in the run */
+static unsigned pad_from_us = 0xFFFFFFFFu, start_us, frames, swaps, texts;
+static int holds, releases, in_overlay, order_bad;
+static void pwr_hold(const char *why) { (void)why; holds++; }
+static void pwr_release(void) { releases++; }
+static int scePowerLock(int t) { (void)t; holds++; return 0; }
+static int scePowerUnlock(int t) { (void)t; releases++; return 0; }
+static unsigned sceKernelGetSystemTimeLow(void) { return now_us; }
+static void sceDisplayWaitVblankStart(void) { now_us += 16667u; frames++; }
+static void sceCtrlPeekBufferPositive(SceCtrlData *p, int n)
+{ (void)n; p->Buttons = (now_us - start_us >= pad_from_us) ? 0x4000u : 0; }
+static void vid_overlay_begin(int dim) { (void)dim; if (in_overlay) order_bad = 1; in_overlay = 1; }
+static void vid_text_center(int y, const char *t, unsigned c)
+{ (void)y; (void)c; if (!in_overlay || !t || !*t) order_bad = 1; texts++; }
+static void vid_overlay_end(void) { if (!in_overlay) order_bad = 1; in_overlay = 0; }
+static void vid_swap(void) { if (in_overlay) order_bad = 1; swaps++; }
+@FUNCTION@
+static unsigned run(unsigned pad_from)
+{
+   pad_from_us = pad_from; start_us = now_us; frames = swaps = texts = 0;
+   wake_me_lost_notice();
+   return now_us - start_us;
+}
+int main(void)
+{
+   unsigned us = run(0xFFFFFFFFu);                  /* nobody presses */
+   if (holds || releases) { puts("FAIL: the notice takes or drops a power hold"); return 1; }
+   if (us < 3000000u || us > 3100000u) { printf("FAIL: untouched, the notice is up %u us", us); return 1; }
+   if (order_bad || swaps != frames || texts != 2 * frames)
+   { puts("FAIL: the notice is not drawn and presented every frame"); return 1; }
+   us = run(0);                                     /* a key down from the wake on */
+   if (us < 500000u || us > 600000u) { printf("FAIL: with a key down the notice is up %u us", us); return 1; }
+   us = run(1500000u);                              /* a press at 1.5 s */
+   if (us < 1500000u || us > 1600000u) { printf("FAIL: a press at 1.5 s ends it at %u us", us); return 1; }
+   if (holds || releases) { puts("FAIL: the notice takes or drops a power hold"); return 1; }
    puts("ok");
    return 0;
 }
@@ -417,6 +471,17 @@ def check_all(src):
     down = marked_function(src, "me_standby_down")
     if not re.search(r"release_result = me_rend_drop_vmem\(\);\s*SLEEP_SIM_ME_QUIET\(\);", down):
         fails.append("me_standby_down does not take the quiet log right after the drop")
+    # 6. the wake that ends the session: its notice, with no hold
+    rc, out = run_c(LOST_HARNESS.replace("@FUNCTION@", extract.extract(src, "fn:wake_me_lost_notice")))
+    if rc:
+        fails.append("wake_me_lost_notice: " + out.strip())
+    wake = extract.extract(src, "fn:wake_service")
+    lost = re.search(r"\n   if \(g_wake_menu && g_pwr_me_lost\)\n   \{\n(.*?)\n   \}\n", wake, re.S)
+    if not lost or not re.search(r"wake_me_lost_notice\(\);.*g_running = 0;\s*return WAKE_QUIT;",
+                                 lost.group(1), re.S):
+        fails.append("wake_service does not end the session after the ME-lost notice")
+    elif re.search(r"\bpwr_(hold|release)\w*\(|\bscePower(Lock|Unlock)\(", lost.group(1)):
+        fails.append("wake_service takes or drops a power hold on the ME-lost wake")
     return fails
 
 
@@ -480,6 +545,23 @@ MUTANTS = (
     ("quiet: the event log only (its writer is stopped by then)",
      '   standby_note("me_quiet idle_1ms=%d idle_10ms=%d up=%d sim=%d",\n'
      "                idle_1ms, idle_10ms, up, sim);\n", ""),
+    ("lost notice: under a hold released at its end",
+     "   SceCtrlData pd;\n   do\n   {\n      vid_overlay_begin(1);\n"
+     '      vid_text_center(110, "The Media Engine stopped during sleep.", 0xFFFF);',
+     '   SceCtrlData pd;\n   pwr_hold("wake");\n   do\n   {\n      vid_overlay_begin(1);\n'
+     '      vid_text_center(110, "The Media Engine stopped during sleep.", 0xFFFF);'),
+    ("lost notice: the hold dropped after it",
+     "   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);\n}\n"
+     "/* @extract:end fn:wake_me_lost_notice */",
+     "   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);\n   pwr_release();\n}\n"
+     "/* @extract:end fn:wake_me_lost_notice */"),
+    ("lost wake: a hold around the notice, in wake_service",
+     "      wake_me_lost_notice();\n      g_pwr_slept = 0;",
+     '      pwr_hold("wake");\n      wake_me_lost_notice();\n      pwr_release();\n      g_pwr_slept = 0;'),
+    ("lost notice: gone at the first frame",
+     "   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);\n}\n"
+     "/* @extract:end fn:wake_me_lost_notice */",
+     "   } while (0);\n}\n/* @extract:end fn:wake_me_lost_notice */"),
     ("quiet: not taken on the failed sync",
      "      SLEEP_SIM_ME_QUIET();   /* harness: the engine, 1 ms and 10 ms on */\n", ""),
 )
@@ -492,7 +574,7 @@ def main():
     if fails:
         return 1
     print("renderer holds: %d wrapped runs executed, %d covered sites; boot notice; "
-          "online cancel; ME-quiet log; no ME is not a lost ME: PASS"
+          "online cancel; ME-quiet log; no ME is not a lost ME; ME-lost notice: PASS"
           % (WRAPPED_SITES, len(COVERED)))
     for label, old, new in MUTANTS:
         if MAIN.count(old) != 1:
