@@ -78,10 +78,11 @@ def norm_file(cur):
 
 
 class Tok(object):
-    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair', 'file')
+    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair', 'file', 'oline')
 
     def __init__(self, kind, text, line, ifs=(), file=None):
         self.kind, self.text, self.ifs = kind, text, ifs
+        self.oline = None       # inline_helpers: the helper line this token was copied from
         self.file = file or 'main_psp.c'
         self.line = line if file is None or file == 'main_psp.c' or isinstance(line, FLine) \
             else FLine(line, file)
@@ -162,19 +163,22 @@ def load_pp(path, fname='main_psp.c'):
 FRAG_INC = re.compile(r'^#include "(fe/[A-Za-z0-9_.]+\.inc\.c)"\s*$')
 
 
-def raw_lines(path, follow=False):
+def raw_lines(path, follow=False, base=None, over=None):
     """[(file, line, text)] of a source file; with follow, every `#include "fe/X.inc.c"`
     line of main_psp.c is replaced by that fragment's lines (in place, in source order:
-    the view split.py inverse gives), each line keeping its own file and line number."""
+    the view split.py inverse gives), each line keeping its own file and line number.
+    base: the psp/ directory the fragments are read from (default: the directory of
+    `path`; a MUTATED COPY of the shell sits elsewhere and names the tree's psp/ here).
+    over: {'fe/X.inc.c': host file}, a mutated copy read in place of that fragment."""
     import os
     with open(path, encoding='utf-8', errors='replace') as f:
         lines = f.read().split('\n')
     out = []
-    base = os.path.dirname(os.path.abspath(path))
+    base = base or os.path.dirname(os.path.abspath(path))
     for i, ln in enumerate(lines, 1):
         m = FRAG_INC.match(ln) if follow else None
         if m:
-            fp = os.path.join(base, m.group(1))
+            fp = (over or {}).get(m.group(1)) or os.path.join(base, m.group(1))
             if not os.path.exists(fp):
                 raise ValueError('%s:%d: fragment %s missing' % (path, i, fp))
             with open(fp, encoding='utf-8', errors='replace') as f:
@@ -184,14 +188,14 @@ def raw_lines(path, follow=False):
     return out
 
 
-def load_raw(path, follow=False, alias=None):
+def load_raw(path, follow=False, alias=None, base=None, over=None):
     """Tokens of a raw C file: comments removed, directives removed, all #if branches
     kept.  tok.ifs = tuple of the enclosing #if/#ifdef/#ifndef/#elif/#else texts.
     follow: expand main_psp.c's `#include "fe/X.inc.c"` (raw_lines); fragment tokens
     carry tok.file and an FLine.  alias: {identifier: identifier} renames at lex time."""
     toks, stack = [], []
     in_cmt, cont = False, False
-    for fl, i, raw in raw_lines(path, follow):
+    for fl, i, raw in raw_lines(path, follow, base, over):
         s = raw
         if in_cmt:
             e = s.find('*/')
@@ -519,6 +523,238 @@ def blocks_containing(root, pred):
             stack += [x for x in (n.then, n.els) if x is not None]
         elif isinstance(n, Loop):
             stack.append(n.body)
+
+
+# ---------------------------------------------------------------- helper inlining
+# Epoch C (PLAN-EPOCHC-beta5 §3 C1) moves the pasted exit sequences into helpers
+# (fe/teardown.inc.c) that take the site's ORDER and flags as compile-time constants.
+# The tools read every site as the code it runs: each call statement of a named helper
+# is replaced by the helper's body, with the parameters replaced by the call's argument
+# tokens, every token carrying the CALL's line and file (so a site keeps one terminal
+# line of its own, as before), and every `if (COND) { .. } [else { .. }]` whose COND is
+# a constant (integer literals, the TU's enum constants, operators) after substitution
+# reduced to the arm it takes (its braces dropped: the arm's statements join the
+# caller's block, where the pasted copy had them).  A COND that reads anything else
+# stays as it is.  Helpers are expanded inside each other (depth <= 8) and nowhere
+# else: a helper's own definition is left in the token list.
+
+_INT = re.compile(r'^(0[xX][0-9a-fA-F]+|\d+)[uUlL]*$')
+
+
+def _const_eval(toks, consts):
+    """The value of a constant integer expression, or None."""
+    out = []
+    for k, t in enumerate(toks):
+        x = t.text
+        if t.kind == 'vp':
+            out.append(x)
+        elif t.kind == 'num':
+            m = _INT.match(x)
+            if not m:
+                return None
+            out.append(str(int(m.group(1), 0)))
+        elif t.kind == 'id':
+            if x not in consts:
+                return None
+            out.append(str(consts[x]))
+        elif x == '&&':
+            out.append(' and ')
+        elif x == '||':
+            out.append(' or ')
+        elif x == '!':
+            out.append(' not ')
+        elif x in ('(', ')', '&', '|', '^', '~', '<<', '>>', '+', '-', '*', '==', '!=',
+                   '<', '>', '<=', '>='):
+            out.append(x)
+        else:
+            return None
+    try:
+        v = eval(''.join(out), {'__builtins__': {}}, {})   # digits and operators only
+    except Exception:
+        return None
+    return int(v) if isinstance(v, (bool, int)) else None
+
+
+def enum_constants(toks):
+    """{NAME: value} for the enumerators of the TU whose values are constant."""
+    consts, i, n = {}, 0, len(toks)
+    while i < n:
+        if toks[i].text == 'enum':
+            j = i + 1
+            if j < n and toks[j].kind == 'id':
+                j += 1
+            if j < n and toks[j].text == '{':
+                e = match_close(toks, j)
+                k, nxt = j + 1, 0
+                while k < e:
+                    if toks[k].kind != 'id':
+                        break
+                    name = toks[k].text
+                    k += 1
+                    if k < e and toks[k].text == '=':
+                        m, d = k + 1, 0
+                        while m < e and not (d == 0 and toks[m].text == ','):
+                            d += toks[m].text in ('(', '[')
+                            d -= toks[m].text in (')', ']')
+                            m += 1
+                        v = _const_eval(toks[k + 1:m], consts)
+                        k = m
+                    else:
+                        v = nxt
+                    if v is None:
+                        break
+                    consts[name] = v
+                    nxt = v + 1
+                    if k < e and toks[k].text == ',':
+                        k += 1
+                i = e
+        i += 1
+    return consts
+
+
+def _params(toks, lo):
+    """Parameter names of the definition whose body opens at toks[lo]."""
+    k = lo - 1
+    while toks[k].text == ')':
+        o = _match_open(toks, k)
+        if o > 0 and toks[o - 1].text == '__attribute__':
+            k = o - 2
+            continue
+        break
+    o = _match_open(toks, k)
+    names, cur, d = [], [], 0
+    for t in toks[o + 1:k] + [Tok('op', ',', 0)]:
+        if t.text == ',' and d == 0:
+            ids = [x.text for x in cur if x.kind == 'id' and x.text not in KEYWORDS]
+            if ids:
+                names.append(ids[-1])
+            cur = []
+            continue
+        d += t.text in ('(', '[')
+        d -= t.text in (')', ']')
+        cur.append(t)
+    return names
+
+
+def _split_args(toks):
+    args, cur, d = [], [], 0
+    for t in toks:
+        if t.text == ',' and d == 0:
+            args.append(cur)
+            cur = []
+            continue
+        d += t.text in ('(', '[', '{')
+        d -= t.text in (')', ']', '}')
+        cur.append(t)
+    if cur or args:
+        args.append(cur)
+    return args
+
+
+def _retok(t, at):
+    """A copy of t placed at the call token `at` (its line, file and #if stack)."""
+    ifs = tuple(at.ifs) + tuple(x for x in t.ifs if x not in at.ifs)
+    n = Tok(t.kind, t.text, at.line, ifs, at.file if at.file != 'main_psp.c' else None)
+    n.oline = t.oline or (t.file, int(t.line))
+    return n
+
+
+def _fold(tl, consts):
+    """Reduce every constant `if` of a token list (helper bodies: braced arms only)."""
+    out, i, n = [], 0, len(tl)
+    while i < n:
+        t = tl[i]
+        if t.text == 'if' and i + 1 < n and tl[i + 1].text == '(':
+            c = _close(tl, i + 1)
+            v = _const_eval(tl[i + 2:c], consts)
+            if v is not None and c + 1 < n and tl[c + 1].text == '{':
+                te = _close(tl, c + 1)
+                then, els, j = tl[c + 2:te], [], te + 1
+                if j < n and tl[j].text == 'else':
+                    if j + 1 >= n or tl[j + 1].text != '{':
+                        raise ValueError('inline: constant `if` at line %s: its else arm '
+                                         'must be a braced block' % t.line)
+                    ee = _close(tl, j + 1)
+                    els, j = tl[j + 2:ee], ee + 1
+                out += _fold(then if v else els, consts)
+                i = j
+                continue
+        out.append(t)
+        i += 1
+    return out
+
+
+def _close(tl, i):
+    o = tl[i].text
+    c = {'(': ')', '[': ']', '{': '}'}[o]
+    d = 0
+    for j in range(i, len(tl)):
+        if tl[j].text == o:
+            d += 1
+        elif tl[j].text == c:
+            d -= 1
+            if d == 0:
+                return j
+    raise ValueError('inline: unbalanced %s at line %s' % (o, tl[i].line))
+
+
+def inline_helpers(toks, names):
+    """toks with every call statement `NAME(args);` of a helper in `names` expanded (see
+    above).  Returns the input list itself when the TU defines none of them."""
+    fns = functions(toks)
+    have = [x for x in names if x in fns]
+    if not have:
+        return toks
+    consts = enum_constants(toks)
+    defs = {}
+    for name in have:
+        lo, hi = fns[name]
+        defs[name] = (_params(toks, lo), toks[lo + 1:hi], lo, hi)
+    inside = [(lo, hi) for (_, _, lo, hi) in defs.values()]
+
+    def expand(tl, depth, skip=()):
+        out, i, n, changed = [], 0, len(tl), False
+        while i < n:
+            t = tl[i]
+            if (t.kind == 'id' and t.text in defs and i + 1 < n and tl[i + 1].text == '('
+                    and not any(lo <= getattr(t, 'idx', -1) <= hi for lo, hi in skip)
+                    and (i == 0 or tl[i - 1].text in (';', '{', '}', ')', 'else', ':'))):
+                c = _close(tl, i + 1)
+                if c + 1 < n and tl[c + 1].text == ';':
+                    if depth > 8:
+                        raise ValueError('inline: helpers nest deeper than 8 at line %s' % t.line)
+                    params, body, _, _ = defs[t.text]
+                    args = _split_args(tl[i + 2:c])
+                    if args == [[]]:
+                        args = []
+                    if len(args) != len(params):
+                        raise ValueError('inline: %s at line %s takes %d arguments, given %d'
+                                         % (t.text, t.line, len(params), len(args)))
+                    sub = dict(zip(params, args))
+                    rep = []
+                    for b in body:
+                        if b.kind == 'id' and b.text in sub:
+                            # the argument is ONE value, as in C: bracketed for the
+                            # constant folding (`f & X` with f = `A | B`), the brackets
+                            # dropped afterwards so the text is the call's own
+                            rep += [Tok('vp', '(', t.line)] + [_retok(a, t) for a in sub[b.text]] + \
+                                   [Tok('vp', ')', t.line)]
+                        else:
+                            rep.append(_retok(b, t))
+                    rep = [x for x in _fold(rep, consts) if x.kind != 'vp']
+                    if i > 0 and tl[i - 1].text in (')', 'else'):
+                        rep = [Tok('op', '{', t.line, t.ifs, t.file if t.file != 'main_psp.c' else None)] + rep + \
+                              [Tok('op', '}', t.line, t.ifs, t.file if t.file != 'main_psp.c' else None)]
+                    out += expand(rep, depth + 1)[0]
+                    i = c + 2
+                    changed = True
+                    continue
+            out.append(t)
+            i += 1
+        return out, changed
+
+    res, _ = expand(list(toks), 0, inside)
+    return link(res)
 
 
 def node_span(node):

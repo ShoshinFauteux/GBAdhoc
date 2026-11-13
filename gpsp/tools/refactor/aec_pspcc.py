@@ -88,11 +88,14 @@ def preprocess(src_root, flavour_dir, obj='main_psp.o', subdir='psp', log='.buil
 
 
 def macros(src_root, flavour_dir, obj='main_psp.o', subdir='psp', log='.build-eboot.log',
-           override=None):
-    """{name: replacement} of every macro defined at the end of `obj`'s TU (-dM -E)."""
+           override=None, extra=None):
+    """{name: replacement} of every macro defined at the end of `obj`'s TU (-dM -E).
+    override / extra: as preprocess()."""
     argv = pp_argv(compile_argv(flavour_dir, obj, log))
     argv.insert(len(argv) - 2, '-dM')
-    mounts = [(override, '/build/%s/%s' % (subdir, argv[-1]), 'ro')] if override else None
+    mounts = [(override, '/build/%s/%s' % (subdir, argv[-1]), 'ro')] if override else []
+    mounts += [(h, '/build/%s/%s' % (subdir, rel), 'ro') for h, rel in (extra or [])]
+    mounts = mounts or None
     rc, out, err = docker_run(src_root, '/build/' + subdir, ' '.join(shlex.quote(a) for a in argv), mounts)
     if rc != 0:
         sys.stderr.write(err[-4000:])

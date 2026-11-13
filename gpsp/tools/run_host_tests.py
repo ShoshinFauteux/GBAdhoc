@@ -652,6 +652,13 @@ def suites(env: Env, baseline: Path | None):
         ("backup_save", True, lambda: None,
          "python3 tools/tests/test_backup_save.py"),
 
+        # The six player exits no fixture reaches (the menu's Exit,
+        # START+SELECT, an unreadable save, HOME, a profile change, a failed
+        # reset): each trigger and main()'s teardown, extracted from
+        # main_psp.c and run with recording stubs, plus mutants.
+        ("exit_paths", True, lambda: None,
+         "python3 tools/tests/test_exit_paths.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

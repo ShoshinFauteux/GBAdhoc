@@ -22,6 +22,16 @@
 #   M7b R3  hook -> function in another fragment -> pwr_hold                -> FAIL
 #   M7c R3  hook -> macro whose body calls pwr_hold                         -> FAIL
 #   M8b R4  a macro forwarding to fe_evt (its arguments escape R4)          -> FAIL
+# Epoch C (PLAN-EPOCHC-beta5 §4.2, the C0a-6 probe):
+#   M10  R6 a new static function only main() calls, no attributes          -> FAIL
+#   M10b R6 the same with noinline but no section                           -> FAIL
+#   M10c R6 the same with noinline + section (control)                      -> ok
+#   M10d R6 a second caller outside main (control: not main-only)           -> ok
+#   M10e R6 always_inline (Epoch C stage s, pasted by the compiler; control) -> ok
+#   M10f R6 always_inline together with noinline                            -> FAIL
+# The tree may be split (psp/main_psp.c + psp/fe/*.inc.c) and P3 may have landed (no
+# hijack #define; FE_EXIT_GAME/FE_HANDOFF in fe/fe_priv.h): every edit finds its file
+# and its line by anchor.
 set -u
 OUT=${1:?scratch out dir}; PP=${2:-}
 HERE=$(cd "$(dirname "$0")/.." && pwd); SRC=$(cd "$HERE/../.." && pwd)
@@ -38,15 +48,25 @@ expect() {  # expect <rc> <label> <grep that must match the output, or -> <cmd..
 }
 PPARG=(); [ -n "$PP" ] && PPARG=(--pp "$PP")
 expect 0 "C1 base green" "T11: green" $CG --src "$SRC" "${PPARG[@]}"
-grep -c '^  KNOWN' "$OUT/last.log" | grep -q '^2$' && ok "C1 exactly 2 KNOWN (r6 B3 + the kill_handle site)" || bad "C1 KNOWN count"
+# the R4 KNOWN rows are whatever ci_greps.known still lists (HW-2 fixes both sites)
+nK=$(grep -c '^R4' "$HERE/ci_greps.known")
+grep -c '^  KNOWN' "$OUT/last.log" | grep -q "^$nK\$" && ok "C1 exactly $nK KNOWN (the R4 rows of ci_greps.known)" || bad "C1 KNOWN count (want $nK)"
 [ -n "$PP" ] && grep 'R1e' "$OUT/last.log" | sed 's/^/        /'
+P3=0; grep -q '^#define FE_EXIT_GAME()' "$SRC/psp/fe/fe_priv.h" 2>/dev/null && P3=1
 $CG --src "$SRC" --phase P --rules R1 > "$OUT/p.log" 2>&1; rcP=$?
 nP=$(grep 'FAIL  R1 ' "$OUT/p.log" | grep -vc '@#define'); nPm=$(grep 'FAIL  R1 psp/main_psp.c' "$OUT/p.log" | grep -vc '@#define')
 nPd=$(grep 'FAIL  R1 ' "$OUT/p.log" | grep -c '@#define')
-[ $rcP = 1 ] && [ "$nPd" = 2 ] && ok "C2 phase P on base: $nP raw calls to convert in P3 ($nPm in main_psp.c) + the $nPd hijack #defines that move to fe_priv.h" || bad "C2 ($nP calls, $nPd defines)"
-$CG --src "$SRC" --phase HW2 --rules R1 > "$OUT/h.log" 2>&1
+$CG --src "$SRC" --phase HW2 --rules R1 > "$OUT/h.log" 2>&1; rcH=$?
 nH=$(grep 'FAIL  R1 ' "$OUT/h.log" | grep -vc '@#define')
-[ "$nH" = $((nP - 1)) ] && ok "C3 phase HW2: $nH (stall_exit whitelisted)" || bad "C3 ($nH vs $nP)"
+if [ $P3 = 1 ]; then
+  # P3 has landed: the P contract holds as it stands (the only raw exit, if any, is stall_exit's)
+  [ "$nPd" = 0 ] && [ "$nP" -le 1 ] && [ $rcH = 0 ] && [ "$nH" = 0 ] \
+    && ok "C2/C3 P3 has landed: phase P leaves $nP raw call (stall_exit, if HW-2 made it raw), phase HW2 is green" \
+    || bad "C2/C3 after P3 ($nP calls, $nPd defines; HW2 rc $rcH, $nH)"
+else
+  [ $rcP = 1 ] && [ "$nPd" = 2 ] && ok "C2 phase P on base: $nP raw calls to convert in P3 ($nPm in main_psp.c) + the $nPd hijack #defines that move to fe_priv.h" || bad "C2 ($nP calls, $nPd defines)"
+  [ "$nH" = $((nP - 1)) ] && ok "C3 phase HW2: $nH (stall_exit whitelisted)" || bad "C3 ($nH vs $nP)"
+fi
 
 # ---- the mutant tree
 T="$OUT/tree"; rm -rf "$T"; mkdir -p "$T"
@@ -54,17 +74,25 @@ for d in psp frontend-common netdrv; do
   (cd "$SRC" && git ls-files -z "$d" | grep -z -E '\.(c|h|inc)$' | xargs -0 cp --parents -t "$T") 2>/dev/null \
    || (cd "$SRC" && find "$d" -name '*.[ch]' -exec cp --parents -t "$T" {} +)
 done
-reset_tree() { for f in psp/main_psp.c; do cp "$SRC/$f" "$T/$f"; done; rm -f "$T/psp/fe_mut_"*.c; }
+reset_tree() {
+  cp "$SRC/psp/main_psp.c" "$T/psp/main_psp.c"
+  [ -d "$SRC/psp/fe" ] && cp "$SRC"/psp/fe/*.inc.c "$T/psp/fe/"
+  rm -f "$T/psp/fe_mut_"*.c
+}
 reset_tree
+# the file of the mutant tree that DEFINES a function (the shell or one of its fragments)
+deffile() { grep -l "^$1" "$T/psp/main_psp.c" "$T"/psp/fe/*.inc.c 2>/dev/null | head -1; }
 expect 0 "C1' copy of the tree is green" "T11: green" $CG --src "$T"
 
 printf '#include "fe_evt.h"\nvoid fe_mut_quit(void) { sceKernelExitGame(); }\n' > "$T/psp/fe_mut_a.c"
 expect 1 "M1 raw exit in a new module" "FAIL  R1 psp/fe_mut_a.c" $CG --src "$T" --rules R1; reset_tree
 
 $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
-k = [i for i, l in enumerate(L) if l.startswith('#define handoff_run(code, why)')][0]
-L.insert(k, 'static void fe_mut_early(void) { handoff_run(0, 0); }')"
-expect 1 "M2 handoff_run before the hijack" "FAIL  R1 psp/main_psp.c" $CG --src "$T" --rules R1; reset_tree
+k = [i for i, l in enumerate(L) if l.startswith('#define handoff_run(code, why)')]
+k = k or [i for i, l in enumerate(L) if l.startswith('int main(')]      # after P3: any raw call
+assert len(k) == 1, k
+L.insert(k[0], 'static void fe_mut_early(void) { handoff_run(0, 0); }')"
+expect 1 "M2 raw handoff_run in main_psp.c (before the hijack; after P3: anywhere)" "FAIL  R1 psp/main_psp.c" $CG --src "$T" --rules R1; reset_tree
 
 if [ -n "$PP" ]; then
   mkdir -p "$OUT/pp_m3"; cp "$PP"/main_psp.*.i "$OUT/pp_m3/"
@@ -90,11 +118,11 @@ assert k; L[k[2]] = L[k[2]].replace('(pwr_release_all(), sceKernelExitGame())', 
   expect 1 "M3c unwrapped exit in an included fragment (release -E)" "FAIL  R1e psp/main_psp.c\[release -E\]" $CG --src "$SRC" --rules R1 --pp "$OUT/pp_m3c"
 fi
 printf 'static void fe_mut_far(void) { pwr_hold("far"); }\n' > "$T/psp/fe_mut_r.inc.c"
-$ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+HF=$(deffile "void gpsp_visible_done_hook(void)"); $ED "$HF" "$HF" "
 k = [i for i, l in enumerate(L) if l.startswith('void gpsp_visible_done_hook(void)')][0]
 assert L[k+1].strip() == '{'; L[k+1] = '{ fe_mut_far();'"
 expect 1 "M7b pwr_hold across fragments" "gpsp_visible_done_hook -> fe_mut_far -> pwr_hold" $CG --src "$T" --rules R3; rm -f "$T/psp/fe_mut_r.inc.c"; reset_tree
-$ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+HF=$(deffile "void gpsp_visible_done_hook(void)"); $ED "$HF" "$HF" "
 k = [i for i, l in enumerate(L) if l.startswith('void gpsp_visible_done_hook(void)')][0]
 assert L[k+1].strip() == '{'; L[k+1] = '{ FE_MUT_HOLD();'
 L.insert(k, '#define FE_MUT_HOLD() pwr_hold(\"m\")')"
@@ -109,11 +137,11 @@ expect 0 "M4 control: cold WITH section" "0 without section" $CG --src "$T" --ru
 printf '__attribute__((noreturn)) void fe_mut_die(void);\n' > "$T/psp/fe_mut_c.c"
 expect 1 "M5 noreturn without section" "FAIL  R2 psp/fe_mut_c.c" $CG --src "$T" --rules R2; reset_tree
 
-$ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+HF=$(deffile "void gpsp_visible_done_hook(void)"); $ED "$HF" "$HF" "
 k = [i for i, l in enumerate(L) if l.startswith('void gpsp_visible_done_hook(void)')][0]
 assert L[k+1].strip() == '{'; L[k+1] = '{ pwr_hold(\"mut\");'"
 expect 1 "M6 pwr_hold in a hook" "pwr_hold reachable: gpsp_visible_done_hook -> pwr_hold" $CG --src "$T" --rules R3; reset_tree
-$ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+HF=$(deffile "void gpsp_rfu_trace_hook("); $ED "$HF" "$HF" "
 k = [i for i, l in enumerate(L) if l.startswith('void gpsp_rfu_trace_hook(')][0]
 b = next(i for i in range(k, k + 5) if L[i].strip() == '{'); L[b] = '{ fe_mut_mid();'
 L.insert(k, 'static void fe_mut_leaf(void) { pwr_hold(\"deep\"); }')
@@ -130,6 +158,27 @@ printf '#ifndef GPSP_NO_TELEMETRY\nstatic int t;\n#endif\n#include "fe_evt.h"\n'
 expect 1 "M9 GPSP_NO_TELEMETRY tested before fe_evt.h" "FAIL  R5 psp/fe_mut_f.c" $CG --src "$T" --rules R5
 printf '#include "fe_evt.h"\n#ifndef GPSP_NO_TELEMETRY\nstatic int t;\n#endif\n' > "$T/psp/fe_mut_f.c"
 expect 0 "M9 control: include first" "0 too early" $CG --src "$T" --rules R5; reset_tree
+
+# ---- R6 (Epoch C): a new function that only main() calls
+r6mut() {  # r6mut <declaration prefix> [<extra line>]
+  $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+m = [i for i, l in enumerate(L) if l.startswith('int main(')]; assert len(m) == 1, m
+c = [i for i, l in enumerate(L) if l.strip() == 'setup_exit_callback();' and i > m[0]]; assert c, c
+L.insert(c[0] + 1, '   fe_mut_boot_run(argc);')
+L[m[0]:m[0]] = ['$1 void fe_mut_boot_run(int x) { (void)x; }'] + ([\"\"\"${2:-}\"\"\"] if \"\"\"${2:-}\"\"\" else [])"
+}
+r6mut 'static'
+expect 1 "M10 a new main-only static, no attributes" "it has no noinline and section() .fe_mut_boot_run." $CG --src "$T" --rules R6; reset_tree
+r6mut 'static __attribute__((noinline))'
+expect 1 "M10b the same with noinline only" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static __attribute__((noinline, section(\".text.fe_cold.fe_mut_boot_run\")))'
+expect 0 "M10c control: noinline + section" "0 new without" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static' 'void fe_mut_other(void) { fe_mut_boot_run(1); }'
+expect 0 "M10d control: a second caller outside main (not main-only)" "0 new without" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static inline __attribute__((always_inline))'
+expect 0 "M10e control: always_inline (Epoch C stage s)" "0 new without" $CG --src "$T" --rules R6; reset_tree
+r6mut 'static __attribute__((always_inline, noinline))'
+expect 1 "M10f always_inline together with noinline" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
 
 echo "abi-exit-ci T11 tests: $([ $FAILS = 0 ] && echo PASS || echo "$FAILS FAIL")"
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)
