@@ -28,6 +28,13 @@
 # lookups' and smc_retire_span's growth is given back in the hot order (the
 # bscan rows) and the BSCAN pad takes it, so both sections hold as recorded
 # for 9c1b279f (37 entries, 0 differ; nothing re-recorded).
+# smc-cost (claude/smc-cost): five pinned functions shrank; the hot order
+# gives the bytes back right after each (moved-out helpers and smc_fill_*
+# zeros), two helpers join the bscan rows (BSCAN release 664, lab 888).  One
+# value re-recorded in each section: tail gbab_block_lookup_translate_thumb
+# 32 -> 40.  B's thumb lookup is 1720 B now (was 1792) and gbalink_b_stubs.c
+# still appends its 32 B of zeros; the next 32 B boundary is 8 B further,
+# where B's smc_fill_lkt starts.  Everything after it is where a34f8eaf had it.
 # 5.0.0 integration (PCARG_SIDE + its review hardening merged): [release]
 # holds as recorded (PCARG's three pads; the hardening's +480 B per instance
 # comes out of .text.pcarg_layout_pad).  [lab]: instance A's cold core text is
@@ -62,7 +69,7 @@ at   gbab_update_gba                    0x0b60
 at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
-tail gbab_block_lookup_translate_thumb  32
+tail gbab_block_lookup_translate_thumb  40
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
@@ -118,7 +125,7 @@ at   gbab_update_gba                    0x01a0
 at   gbab_block_lookup_translate_arm    0x1fa0
 at   gbab_block_lookup_address_arm      0x11a0
 at   gbab_block_lookup_translate_thumb  0x08c0
-tail gbab_block_lookup_translate_thumb  32
+tail gbab_block_lookup_translate_thumb  40
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
