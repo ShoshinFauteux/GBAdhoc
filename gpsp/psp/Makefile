@@ -160,7 +160,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 84
+LAYOUT_PAD_BYTES ?= 8
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -186,7 +186,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 2404
-LAYOUT_PAD_CORE_BYTES ?= 944
+LAYOUT_PAD_CORE_BYTES ?= 956
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
