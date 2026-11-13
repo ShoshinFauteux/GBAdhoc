@@ -50,7 +50,8 @@ TD_END = "   FE_EXIT_GAME();\n   return 0;\n}"
 
 
 def function(source, name):
-    match = re.search(r"^(?:static )?(?:int|void|const char \*)\s*" + name + r"\([^;]*?\)\s*\{",
+    match = re.search(r"^(?:static )?(?:inline )?(?:__attribute__\(\([^\n]*?\)\)\s*)?"
+                      r"(?:int|void|const char \*)\s*" + name + r"\([^;]*?\)\s*\{",
                       source, re.M)
     assert match, "production function not found: " + name
     tokens = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|[{}]', re.S)
@@ -72,11 +73,31 @@ def between(text, begin, end, what, keep_end=True):
     return text[a:b + (len(end) if keep_end else 0)]
 
 
+# Epoch C C1 (fe/teardown.inc.c): the early exits call exit_early_begin/_end.  On such a
+# tree the helpers' text (the XE_ enum through exit_early_end) is compiled with the rest,
+# and the load-failed slice ends at its exit_early_end call instead of FE_EXIT_GAME().
+HELPERS_BEGIN = "enum\n{\n   XE_EVT_FIRST"
+LOADFAIL_ENDS = ("      FE_EXIT_GAME();\n", "\"load_failed\", 0);")
+
+
+def helpers(source):
+    if source.count(HELPERS_BEGIN) == 0:
+        return ""
+    a = source.index(HELPERS_BEGIN)
+    end = function(source[a:], "exit_early_end")
+    return source[a:a + source[a:].index(end) + len(end)]
+
+
 def production(source):
     main = extract.extract(source, "fn:main")
     td = between(main, TD_BEGIN, TD_END, "teardown", keep_end=False) + "   FE_EXIT_GAME();\n"
     assert td.count("goto session_top;") == 1, "the return's goto"
+    lf_begin = "      int refusal = fe_host_battery_refusal();\n"
+    lf_end = [e for e in LOADFAIL_ENDS if e in main[main.index(lf_begin):]]
+    assert lf_end, "load failed: no end anchor"
+    lf_end = min(lf_end, key=lambda e: main.index(e, main.index(lf_begin)))
     return {
+        "HELPERS": helpers(source),
         "EXIT_CB": function(source, "exit_cb"),
         "REFUSAL": function(source, "inproc_refusal"),
         "TEARDOWN": td.replace("goto session_top;", "return 1;"),
@@ -87,8 +108,7 @@ def production(source):
         "CHORD": between(main, "      {\n         static unsigned abort_held;\n",
                          "            abort_held = 0;\n      }\n", "abort chord"),
         # the boot's load-failed block
-        "LOADFAIL": between(main, "      int refusal = fe_host_battery_refusal();\n",
-                            "      FE_EXIT_GAME();\n", "load failed"),
+        "LOADFAIL": between(main, lf_begin, lf_end, "load failed"),
     }
 
 
@@ -116,6 +136,7 @@ static char handoff_why[32], notice_title[64];
 
 volatile int g_running = 1;
 static volatile int g_exit_req;      /* HW-2 F1 (unused before it) */
+static int g_wake_lost_hold;         /* HW-1 H1: the ME-lost wake's hold, handed to the teardown */
 static void hit(const char *name) { strcat(trace, name); strcat(trace, " "); }
 
 /* inproc_refusal's inputs */
@@ -235,6 +256,14 @@ static void ui_notice(const char *t, const char *a, const char *b, const char *c
    snprintf(notice_title, sizeof(notice_title), "%s", t);
    notice_ms = ms;
 }
+/* HW-1: the boot's stop notice drops the boot hold while it waits */
+static void boot_stop_notice(const char *t, const char *a, const char *b, const char *c, int ms)
+{
+   ui_notice(t, a, b, c, ms);
+}
+
+/* Epoch C: the one exit sequence of the early exits (empty before C1) */
+@HELPERS@
 
 @EXIT_CB@
 
@@ -454,11 +483,16 @@ MUTANTS = (
     ("X-2 the chord's reason is lost", "CHORD",
      "               exit_reason = \"user_abort\";\n", ""),
     ("X-3 the load-failed exit flushes the save it could not read", "LOADFAIL",
-     "      evt_shutdown();\n", "      fe_host_shutdown();\n      evt_shutdown();\n"),
+     ("      evt_shutdown();\n", "      exit_early_end("),
+     ("      fe_host_shutdown();\n      evt_shutdown();\n", "      fe_host_shutdown();\n      exit_early_end(")),
     ("X-3 the unreadable-save notice is gone", "LOADFAIL",
      "      if (refusal == 1)\n", "      if (refusal == 99)\n"),
     ("X-3 the load-failed exit hands off as a pass", "LOADFAIL",
-     "FE_HANDOFF(1, \"load_failed\")", "FE_HANDOFF(0, \"load_failed\")"),
+     ("FE_HANDOFF(1, \"load_failed\")", "exit_early_end(XE_EVT_FIRST, 1, \"load_failed\""),
+     ("FE_HANDOFF(0, \"load_failed\")", "exit_early_end(XE_EVT_FIRST, 0, \"load_failed\"")),
+    ("X-3 the load-failed exit goes without closing the display (Epoch C helper)", "HELPERS",
+     ("   if (f & XE_EVT_FIRST)\n   {\n      audio_stop();\n      vid_term();\n   }\n",),
+     ("   if (f & XE_EVT_FIRST)\n   {\n      audio_stop();\n   }\n",)),
     ("X-4 the exit callback does not end the loop", "EXIT_CB",
      "   g_running = 0;\n", ""),
     ("X-5 the profile change relaunches into the game list", "MENU",
@@ -478,10 +512,20 @@ MUTANTS = (
     ("the teardown relaunches before the handoff", "TEARDOWN",
      "   FE_HANDOFF(exit_code, exit_reason);", "   ;"),
 )
+n = 0
 for what, part, old, new in MUTANTS:
+    # old/new may list the forms of a site before and after Epoch C C1: the form this
+    # tree has is mutated; a helper-only mutant is skipped on a tree without helpers
+    olds = old if isinstance(old, tuple) else (old,)
+    news = new if isinstance(new, tuple) else (new,)
     parts = dict(good)
-    assert parts[part].count(old) == 1, "mutant site gone: %s (%d)" % (what, parts[part].count(old))
-    parts[part] = parts[part].replace(old, new)
+    hit_ = [(o, w) for o, w in zip(olds, news) if parts[part].count(o) == 1]
+    if not hit_ and part == "HELPERS" and not parts[part]:
+        print("  mutant skipped (no Epoch C helpers on this tree): " + what)
+        continue
+    assert hit_, "mutant site gone: %s" % what
+    parts[part] = parts[part].replace(hit_[0][0], hit_[0][1])
     run(parts, False)
+    n += 1
     print("  mutant caught: " + what)
-print("PASS: test_exit_paths (%d mutants)" % len(MUTANTS))
+print("PASS: test_exit_paths (%d mutants)" % n)
