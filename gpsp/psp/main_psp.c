@@ -176,6 +176,7 @@ __asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
 #include "fe/pacing.c.inc.c"
 #include "fe/power.e.inc.c"
 #include "fe/pacing.d.inc.c"
+#include "fe/teardown.inc.c"
 /* @extract:begin fn:main */
 int main(int argc, char *argv[])
 {
@@ -1478,12 +1479,9 @@ int main(int argc, char *argv[])
    {
       fe_evt("freeze_rig_recover prev_log=uncollected -- the previous run "
              "never reached its handoff; handing off without running");
-      audio_stop();
-      vid_term();
+      exit_early_begin(0);
       fe_evt("exit code=7 reason=prev_run_uncollected");
-      evt_shutdown();
-      FE_HANDOFF(7, "prev_run_uncollected");
-      FE_EXIT_GAME();
+      exit_early_end(0, 7, "prev_run_uncollected", 0);
       return 0;
    }
 #endif
@@ -1492,12 +1490,9 @@ int main(int argc, char *argv[])
    if (fe_ini_get_int(HARNESS_INI, "testpat", 0))
    {
       run_testpat();
-      audio_stop();
-      vid_term();
+      exit_early_begin(0);
       fe_evt("exit code=0");
-      evt_shutdown();
-      FE_HANDOFF(0, NULL);   /* ADR-0053 */
-      FE_EXIT_GAME();
+      exit_early_end(0, 0, NULL, 0);
       return 0;
    }
 
@@ -1508,15 +1503,12 @@ int main(int argc, char *argv[])
    if (fe_ini_get_int(HARNESS_INI, "icache_inval_probe", 0))
    {
       int rc = icinv_probe_run();
-      audio_stop();
-      vid_term();
+      exit_early_begin(0);
       if (rc == 0)
          fe_evt("exit code=0 reason=icache_inval_probe");
       else
          fe_evt("exit code=5 reason=icinv_fail");
-      evt_shutdown();
-      FE_HANDOFF(rc ? 5 : 0, rc ? "icinv_fail" : "icache_inval_probe");
-      FE_EXIT_GAME();
+      exit_early_end(0, rc ? 5 : 0, rc ? "icinv_fail" : "icache_inval_probe", 0);
       return 0;
    }
    /* icache_probe = 1: the I-cache geometry, measured (psp/icprobe.c,
@@ -1524,15 +1516,12 @@ int main(int argc, char *argv[])
    if (fe_ini_get_int(HARNESS_INI, "icache_probe", 0))
    {
       int rc = icprobe_run();
-      audio_stop();
-      vid_term();
+      exit_early_begin(0);
       if (rc == 0)
          fe_evt("exit code=0 reason=icache_probe");
       else
          fe_evt("exit code=5 reason=icprobe_fail");
-      evt_shutdown();
-      FE_HANDOFF(rc ? 5 : 0, rc ? "icprobe_fail" : "icache_probe");
-      FE_EXIT_GAME();
+      exit_early_end(0, rc ? 5 : 0, rc ? "icprobe_fail" : "icache_probe", 0);
       return 0;
    }
 #endif
@@ -1542,19 +1531,13 @@ int main(int argc, char *argv[])
    {
       long secs = fe_ini_get_int(HARNESS_INI, "nettest_secs", 90);
       int rc = run_nettest(net_host, group, secs);
-      audio_stop();
-      vid_term();
+      exit_early_begin(0);
       if (rc == 0)
          fe_evt("exit code=0");
       else
          fe_evt("exit code=5 reason=nettest_fail");
-      evt_shutdown();
       /* A pass hands off 0, as it logs (F7: it handed off 5 either way). */
-      if (rc == 0)
-         FE_HANDOFF(0, NULL);
-      else
-         FE_HANDOFF(5, "nettest_fail");   /* ADR-0053 */
-      FE_EXIT_GAME();
+      exit_early_end(XE_HO_PASS, 5, "nettest_fail", rc == 0);
       return 0;
    }
 
