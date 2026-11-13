@@ -1293,6 +1293,15 @@ which the quick load would have read anyway.
     `.gb.st0` and `.gbc.st0` names giving the browsed slot's file; a held
     direction neither answering nor moving. 12 more page mutants and one
     of `ui_state_load_done` (40 in all), each of which fails.
+  * X or O on the frame of a direction, for each direction, on slot 1 and
+    on a browsed slot, and X on the frame a held direction's auto-repeat
+    fires: the slot the screen shows; one more page mutant.
+  * Through the real menu: `tools/ui_model/setup_quickload.sh` with
+    `quickload_route.txt` (a `ui_script`, run by `run_ppsspp.sh` on a lab
+    EBOOT) presses SELECT+R in the running game with states in slots 1 and
+    3, reads "Load Slot 1?" off the screen, browses to slot 3 past the
+    empty slot 2, presses SQUARE (nothing), then DOWN and X on one frame,
+    and the log shows slot 3's file loaded and the menu closed.
 * **Build**: beta 2's release recipe (`RFU_SCHED=1 tools/build.sh
   release`), audits passing, no warnings in GBAdhoc-owned code, hot core
   5,756 B of 6,144 and unmoved. Before the pads are re-tuned the image is

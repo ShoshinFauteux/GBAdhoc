@@ -1,0 +1,20 @@
+# quickload_route.txt: the quick load's browser through the real menu (setup_quickload.sh):
+# slots 1 and 3 hold a state, 2 is empty.  SELECT+R asks for slot 1; DOWN skips to slot 3; SQUARE
+# does nothing; DOWN and X on one frame load slot 3, the slot the screen shows (EVT state_load
+# file=...st2).  A step that does not happen is EVT route_fail, exit 8.
++400 route boot
++1 press SELECT+R
++1 see "Load Slot 1?" 20 no_question
++1 route asked
++12 dump ql_slot1
++2 press DOWN
++1 see "Load Slot 3?" 20 no_browse
++1 route browsed
++12 dump ql_slot3
++2 press SQUARE
++6 see "Load Slot 3?" 10 stray_key_answered
++2 press DOWN+CROSS
++1 wait menu_closed 20 no_close
++1 route loaded
++90 dump ql_after
++30 exit 0
