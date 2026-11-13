@@ -185,7 +185,8 @@ static void mgift_start_io(void)
    g_mg_l2[0] = '\0';
 
    /* Automatic selects the exact open hotspot after the network stack is up.
-    * The saved profile label is independent of the phone's SSID. */
+    * The saved profile label is independent of the phone's SSID.
+    * (The renderer goes and comes back under mgift_start's pwr_hold.) */
    me_rend_suspend();
    rc = mgnet_wifi_up(ui_mgift_conf(), 0);
    me_rend_resume();

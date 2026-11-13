@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""The power-hold windows around the renderer, a boot's notice, the online
+cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
+
+1. THE RENDERER COMES BACK ON UNDER A HOLD.  power_cb's unparked branch gives
+   the volatile partition back when the renderer is off, and rests on "every
+   main-thread path that can turn the renderer ON runs under pwr_hold".  The
+   ad hoc bring-ups suspended the renderer, let net_bringup take and drop its
+   own hold, and only then resumed it: a switch slid during the bring-up was
+   deferred to that drop and landed before me_rend_resume.  Every
+   me_rend_suspend() call site of the TU is classified here:
+     - wrapped: pwr_hold("net") on the line before it and pwr_release() on
+       the line after its me_rend_resume() (the two ad hoc bring-ups of the
+       link code, the menu's, and the online one).  Each wrapped run is
+       compiled as it stands and executed with a net_bringup that takes and
+       drops its own hold: the count must never reach zero before the
+       renderer is back, and must be zero after.
+     - covered by a hold its caller takes, each named below with the text
+       that proves it.
+   A new call site fails until it is one or the other.
+
+2. A BOOT THAT STOPS ON A NOTICE (boot_stop_notice): the hold is not up
+   while ui_notice waits on the player, it is up again for the exit, and
+   main() shows no notice any other way after the boot's hold is taken.
+
+3. THE ONLINE CANCEL (online_bringup_cancel): a new O press redraws the
+   LINKING screen once with "Cancelling..." and no footer; an O held when
+   the screen came up is not a press; later polls answer 1 and draw nothing.
+
+4. THE HARNESS'S ME-QUIET LOG (sleep_sim_me_quiet): me_host_idle() sampled
+   1 ms and 10 ms after the call, one EVT line.
+
+Then mutants of the production text, each of which must fail.
+"""
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+import extract
+from test_psp_runtime import function, marked_function
+
+ROOT = Path(__file__).resolve().parents[2]
+MAIN = extract.read_source(str(ROOT / "psp/main_psp.c"))
+
+CALL = re.compile(r"^[ \t]*me_rend_suspend\(\);", re.M)
+WRAPPED_SITES = 4       # silent_frame, gblink_service, ui_net_action x2
+# me_rend_suspend() sites that are not wrapped themselves: (a line of text
+# that identifies the site, searched between the previous site and this one
+# or just after it; why it is under a hold; the check of that claim)
+COVERED = (
+    ("boot bring-up",
+     "Bring the wireless session up around the booted core.",
+     "main(): between the boot's pwr_hold and its release before the loop"),
+    ("teardown",
+     "The renderer's buffers: kept when they are the volatile",
+     "main(): after pwr_hold(\"teardown\")"),
+    ("gba_reload_note",
+     "static void gba_reload_note(int phase, const char *what)",
+     "fe_host's session reload callback; its callers hold \"session\""),
+    ("mgift_start_io",
+     "(The renderer goes and comes back under mgift_start's pwr_hold.)",
+     "mgift_start: pwr_hold(\"mgift\") around its only call"),
+)
+
+
+def code_line_before(text, pos):
+    """The line before the one `pos` starts, stripped."""
+    start = text.rfind("\n", 0, pos)
+    prev = text.rfind("\n", 0, start)
+    return text[prev + 1:start].strip()
+
+
+def classify(src):
+    """-> (wrapped runs, covered labels, faults)."""
+    wrapped, covered, faults = [], [], []
+    for m in CALL.finditer(src):
+        line_no = src.count("\n", 0, m.start()) + 1
+        if code_line_before(src, m.start() + 1) == 'pwr_hold("net");':
+            hold = src.rfind('pwr_hold("net");', 0, m.start())
+            hold = src.rfind("\n", 0, hold) + 1
+            res = src.find("me_rend_resume();", m.end())
+            if res < 0:
+                faults.append("line %d: wrapped suspend with no resume" % line_no)
+                continue
+            eol = src.find("\n", res)
+            nxt = src[eol + 1:src.find("\n", eol + 1)].strip()
+            if nxt != "pwr_release();":
+                faults.append("line %d: me_rend_resume() is not followed by "
+                              "pwr_release() (%r)" % (line_no, nxt))
+                continue
+            wrapped.append(src[hold:src.find("\n", eol + 1) + 1])
+            continue
+        window = src[max(0, m.start() - 1600):m.end() + 400]
+        hit = [c for c in COVERED if c[1] in window]
+        if len(hit) != 1:
+            faults.append("line %d: me_rend_suspend() neither wrapped in "
+                          "pwr_hold(\"net\") .. pwr_release() nor a known "
+                          "covered site" % line_no)
+            continue
+        covered.append(hit[0][0])
+    return wrapped, covered, faults
+
+
+def covered_claims(src):
+    """The text behind each COVERED reason."""
+    faults = []
+    main = marked_function(src, "main")
+    boot_hold = main.rfind('pwr_hold("boot");')
+    boot_rel = main.find("pwr_release();            /* the boot's hold")
+    site = main.find("Bring the wireless session up around the booted core.")
+    if not (0 <= boot_hold < site < boot_rel):
+        faults.append("boot bring-up is not between the boot hold and its release")
+    td = main.find('pwr_hold("teardown");')
+    site = main.find("The renderer's buffers: kept when they are the volatile")
+    if not (0 <= td < site):
+        faults.append("the teardown's suspend is not after pwr_hold(\"teardown\")")
+    start = function(src, "mgift_start")
+    body = re.sub(r"\s+", " ", start[start.index("{"):])
+    if body != '{ pwr_hold("mgift"); mgift_start_io(); pwr_release(); }':
+        faults.append("mgift_start does not hold around mgift_start_io: " + body)
+    if len(re.findall(r"\bmgift_start_io\(\);", src)) != 1:
+        faults.append("mgift_start_io() has a caller besides mgift_start")
+    return faults
+
+
+RUN_HARNESS = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+typedef struct { unsigned Buttons; } SceCtrlData;
+#define PSP_CTRL_CIRCLE 0x2000
+#define CABLE_PROTOCOL "c"
+#define RL_MODE_CABLE 1
+static struct { const char *nick; } g_pcfg;
+static const char *g_silent_group = "g", *g_silent_nick = "n", *group = "g";
+static int g_gblink_role = 1, g_gba_cable, as_host, is_host, rc;
+static unsigned g_ol_cancel_down; static int g_ol_cancelled;
+static void *g_ol_cancel_lv; static struct { int x; } lv;
+static int hold, min_hold_before_resume = 99, rend_on = 1, resumed_under, order_bad;
+static void pwr_hold(const char *why) { (void)why; hold++; }
+static void pwr_release(void) { hold--; }
+static void me_rend_suspend(void) { if (hold <= 0) order_bad = 1; rend_on = 0; }
+static void me_rend_resume(void) { resumed_under = hold; rend_on = 1; }
+static void note(void) { if (!rend_on && hold < min_hold_before_resume) min_hold_before_resume = hold; }
+/* the bring-up's own hold, as production's net_bringup: taken and dropped
+ * inside, with the renderer still off when it returns */
+static int net_bringup(int h, const char *g, const char *n, int p)
+{ (void)h; (void)g; (void)n; (void)p; pwr_hold("net"); note(); pwr_release(); note(); return 0; }
+static int online_bringup_cancel(void) { return 0; }
+static void online_psp_cancel_hook(int (*c)(void)) { (void)c; }
+static const char *online_build_id(void) { return "b"; }
+static int online_psp_up(int h, const char *b, unsigned t)
+{ (void)h; (void)b; (void)t; note(); return 0; }
+static void sceCtrlPeekBufferPositive(SceCtrlData *p, int n) { (void)n; p->Buttons = 0; }
+static void fe_np_set_gb_protocol(const char *p) { (void)p; }
+int main(void)
+{
+   g_pcfg.nick = "n";
+   @RUN@
+   if (order_bad) { puts("FAIL: the renderer was suspended outside the hold"); return 1; }
+   if (min_hold_before_resume < 1) { puts("FAIL: the hold count reached 0 with the renderer off"); return 1; }
+   if (resumed_under < 1) { puts("FAIL: the renderer came back on with no hold up"); return 1; }
+   if (hold != 0 || !rend_on) { puts("FAIL: the run left a hold up or the renderer off"); return 1; }
+   puts("ok");
+   return 0;
+}
+'''
+
+NOTICE_HARNESS = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+static int hold = 1, notice_hold = -1, notices; static const char *last_why = "";
+static unsigned seen_ms; static const char *seen[4];
+static void pwr_hold(const char *why) { hold++; last_why = why; }
+static void pwr_release(void) { if (hold > 0) hold--; }
+static void ui_notice(const char *t, const char *a, const char *b, const char *c, unsigned ms)
+{ notices++; notice_hold = hold; seen[0] = t; seen[1] = a; seen[2] = b; seen[3] = c; seen_ms = ms; }
+@FUNCTION@
+int main(void)
+{
+   boot_stop_notice("T", "one", "two", NULL, 30000);
+   if (notices != 1 || strcmp(seen[0], "T") || strcmp(seen[1], "one") ||
+       strcmp(seen[2], "two") || seen[3] || seen_ms != 30000)
+   { puts("FAIL: the notice is not the one asked for"); return 1; }
+   if (notice_hold != 0) { puts("FAIL: the hold was up while the notice waited"); return 1; }
+   if (hold != 1 || strcmp(last_why, "boot")) { puts("FAIL: the exit runs without the boot hold"); return 1; }
+   puts("ok");
+   return 0;
+}
+'''
+
+CANCEL_HARNESS = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+typedef struct { unsigned Buttons; } SceCtrlData;
+#define PSP_CTRL_CIRCLE 0x2000
+typedef struct { const char *room, *l1, *l2, *l3, *footer; int busy, frac; } ui_linking_view;
+static unsigned pad; static int draws, swaps, evts, order_bad;
+static char drawn_l2[40], drawn_footer[40], drawn_l1[40];
+static void sceCtrlPeekBufferPositive(SceCtrlData *p, int n) { (void)n; p->Buttons = pad | 0x40; }
+#define fe_evt(...) (evts++)
+static void ui_linking_draw(const ui_linking_view *v)
+{ draws++; snprintf(drawn_l1, 40, "%s", v->l1); snprintf(drawn_l2, 40, "%s", v->l2);
+  snprintf(drawn_footer, 40, "%s", v->footer ? v->footer : "(default)"); }
+static void vid_swap(void) { if (swaps != draws - 1) order_bad = 1; swaps++; }
+static unsigned g_ol_cancel_down; static int g_ol_cancelled;
+static ui_linking_view *g_ol_cancel_lv;
+@FUNCTION@
+#define CHECK(c, what) do { if (!(c)) { puts("FAIL: " what); return 1; } } while (0)
+int main(void)
+{
+   ui_linking_view lv; char l2[40] = "Finding the room (up to 15 s)...";
+   memset(&lv, 0, sizeof(lv)); lv.l1 = "Joining Online"; lv.l2 = l2; lv.busy = 1;
+   /* O was down when the screen came up (ui_net_action's seed): not a press */
+   g_ol_cancel_lv = &lv; g_ol_cancel_down = PSP_CTRL_CIRCLE; g_ol_cancelled = 0; pad = PSP_CTRL_CIRCLE;
+   CHECK(online_bringup_cancel() == 0 && !draws && !evts, "an O held from before is taken for a press");
+   pad = 0;
+   CHECK(online_bringup_cancel() == 0 && !draws, "no press, and something was drawn or cancelled");
+   pad = PSP_CTRL_CIRCLE;
+   CHECK(online_bringup_cancel() == 1 && g_ol_cancelled == 1 && evts == 1, "a new O press does not cancel");
+   CHECK(draws == 1 && swaps == 1 && !order_bad, "the press does not draw and present the screen once");
+   CHECK(!strcmp(drawn_l2, "Cancelling...") && !strcmp(drawn_footer, "") &&
+         !strcmp(drawn_l1, "Joining Online"), "the screen drawn at the press does not say Cancelling... with no footer");
+   CHECK(lv.busy == 1, "the ring stopped");
+   pad = 0;
+   CHECK(online_bringup_cancel() == 1 && draws == 1 && evts == 1, "a later poll draws again or forgets the cancel");
+   pad = PSP_CTRL_CIRCLE;
+   CHECK(online_bringup_cancel() == 1 && draws == 1 && swaps == 1, "a second press draws again");
+   /* no screen registered: the cancel still works, nothing is drawn */
+   g_ol_cancel_lv = NULL; g_ol_cancel_down = 0; g_ol_cancelled = 0; pad = PSP_CTRL_CIRCLE;
+   CHECK(online_bringup_cancel() == 1 && draws == 1, "a cancel with no screen draws or fails");
+   puts("ok");
+   return 0;
+}
+'''
+
+QUIET_HARNESS = r'''
+#include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+static unsigned now_us; static int g_ss_me_sync_fail = 1, idle_calls, evts;
+static unsigned idle_at[4]; static char line[160];
+static int sceKernelDelayThread(unsigned us) { now_us += us; return 0; }
+/* busy for the first 5 ms, idle after */
+static int me_host_idle(void) { if (idle_calls < 4) idle_at[idle_calls] = now_us; idle_calls++; return now_us >= 5000; }
+static int me_host_up(void) { return 1; }
+static void fe_evt(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); vsnprintf(line, sizeof(line), fmt, ap); va_end(ap); evts++; }
+@FUNCTION@
+int main(void)
+{
+   sleep_sim_me_quiet();
+   if (idle_calls != 2 || idle_at[0] != 1000 || idle_at[1] != 10000)
+   { printf("FAIL: me_host_idle sampled %d times at %u, %u us\n", idle_calls, idle_at[0], idle_at[1]); return 1; }
+   if (evts != 1 || strcmp(line, "standby me_quiet idle_1ms=0 idle_10ms=1 up=1 sim=1"))
+   { printf("FAIL: the log line is %d x \"%s\"\n", evts, line); return 1; }
+   puts("ok");
+   return 0;
+}
+'''
+
+
+def run_c(source):
+    """-> (returncode, output)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        c, exe = Path(tmp) / "t.c", Path(tmp) / "t"
+        c.write_text(source, encoding="utf-8")
+        cc = subprocess.run(["gcc", "-std=gnu99", "-w", "-O1", str(c), "-o", str(exe)],
+                            capture_output=True, text=True)
+        if cc.returncode:
+            return 100, cc.stdout + cc.stderr
+        r = subprocess.run([str(exe)], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+
+def check_all(src):
+    """-> list of failures (empty = pass) for the TU text `src`."""
+    fails = []
+    wrapped, covered, faults = classify(src)
+    fails += faults
+    if len(wrapped) != WRAPPED_SITES:
+        fails.append("%d wrapped me_rend_suspend() runs, expected %d" % (len(wrapped), WRAPPED_SITES))
+    if sorted(covered) != sorted(c[0] for c in COVERED):
+        fails.append("covered sites are %s" % sorted(covered))
+    fails += covered_claims(src)
+    for i, run in enumerate(wrapped):
+        rc, out = run_c(RUN_HARNESS.replace("@RUN@", run))
+        if rc:
+            fails.append("wrapped run %d: %s" % (i + 1, out.strip()))
+    # 2. the boot's notice
+    rc, out = run_c(NOTICE_HARNESS.replace("@FUNCTION@", extract.extract(src, "fn:boot_stop_notice")))
+    if rc:
+        fails.append("boot_stop_notice: " + out.strip())
+    main = marked_function(src, "main")
+    first_hold = main.find('pwr_hold("boot");')
+    if first_hold < 0 or "ui_notice(" in main[first_hold:]:
+        fails.append("main() calls ui_notice directly after the boot's hold is taken")
+    if len(re.findall(r"\bboot_stop_notice\(", main)) != 3:
+        fails.append("main() does not show its three boot notices through boot_stop_notice")
+    # 3. the online cancel
+    rc, out = run_c(CANCEL_HARNESS.replace("@FUNCTION@", marked_function(src, "online_bringup_cancel")))
+    if rc:
+        fails.append("online_bringup_cancel: " + out.strip())
+    wiring = re.search(r"g_ol_cancel_lv = &lv;\s*online_psp_cancel_hook\(online_bringup_cancel\);"
+                       r"\s*rc = online_psp_up\([^;]*\);\s*online_psp_cancel_hook\(NULL\);"
+                       r"\s*g_ol_cancel_lv = NULL;", src)
+    if not wiring:
+        fails.append("ui_net_action does not give the cancel its LINKING screen for the bring-up only")
+    # 4. the harness's ME-quiet log
+    rc, out = run_c(QUIET_HARNESS.replace("@FUNCTION@", marked_function(src, "sleep_sim_me_quiet")))
+    if rc:
+        fails.append("sleep_sim_me_quiet: " + out.strip())
+    down = marked_function(src, "me_standby_down")
+    if not re.search(r"release_result = me_rend_drop_vmem\(\);\s*SLEEP_SIM_ME_QUIET\(\);", down):
+        fails.append("me_standby_down does not take the quiet log right after the drop")
+    return fails
+
+
+MUTANTS = (
+    ("silent_frame: no outer hold",
+     '      pwr_hold("net");\n      me_rend_suspend();\n      rc = net_bringup(as_host,',
+     '      me_rend_suspend();\n      rc = net_bringup(as_host,'),
+    ("gblink_service: released before the renderer is back",
+     '      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);\n'
+     '      me_rend_resume();\n      pwr_release();',
+     '      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);\n'
+     '      pwr_release();\n      me_rend_resume();'),
+    ("ui_net_action: the ad hoc bring-up as it was",
+     '   pwr_hold("net");\n   me_rend_suspend();                  /* clean heap for np_start (run 407) */',
+     '   me_rend_suspend();                  /* clean heap for np_start (run 407) */'),
+    ("ui_net_action: the hold taken after the suspend",
+     '   pwr_hold("net");\n   me_rend_suspend();                  /* clean heap for np_start (run 407) */',
+     '   me_rend_suspend();                  /* clean heap for np_start (run 407) */\n   pwr_hold("net");'),
+    ("a new unwrapped bring-up",
+     "static void mgift_start(void)\n{",
+     "static void mgift_again(void)\n{\n   me_rend_suspend();\n   me_rend_resume();\n}\n"
+     "static void mgift_start(void)\n{"),
+    ("mgift_start without its hold",
+     '   pwr_hold("mgift");\n   mgift_start_io();', '   mgift_start_io();'),
+    ("boot_stop_notice keeps the hold",
+     "   pwr_release();\n   ui_notice(title, l1, l2, l3, hold_ms);",
+     "   ui_notice(title, l1, l2, l3, hold_ms);"),
+    ("boot_stop_notice does not take the hold back",
+     '   ui_notice(title, l1, l2, l3, hold_ms);\n   pwr_hold("boot");',
+     "   ui_notice(title, l1, l2, l3, hold_ms);"),
+    ("main: a notice shown under the hold",
+     '         boot_stop_notice("SAVE FILE COULD NOT BE READ",',
+     '         ui_notice("SAVE FILE COULD NOT BE READ",'),
+    ("cancel: nothing drawn",
+     "         ui_linking_draw(g_ol_cancel_lv);\n         vid_swap();", ""),
+    ("cancel: drawn but not presented",
+     "         ui_linking_draw(g_ol_cancel_lv);\n         vid_swap();",
+     "         ui_linking_draw(g_ol_cancel_lv);"),
+    ("cancel: the old line stays",
+     '         g_ol_cancel_lv->l2 = "Cancelling...";\n', ""),
+    ("cancel: the footer still offers O",
+     '         g_ol_cancel_lv->footer = "";\n', ""),
+    ("cancel: the screen is never registered",
+     "         g_ol_cancel_lv = &lv;\n", ""),
+    ("quiet: one sample only",
+     "   sceKernelDelayThread(9000);\n   idle_10ms = me_host_idle();",
+     "   idle_10ms = idle_1ms;"),
+    ("quiet: sampled at once",
+     "   sceKernelDelayThread(1000);\n   idle_1ms = me_host_idle();",
+     "   idle_1ms = me_host_idle();\n   sceKernelDelayThread(1000);"),
+    ("quiet: not taken on the failed sync",
+     "      SLEEP_SIM_ME_QUIET();   /* harness: the engine, 1 ms and 10 ms on */\n", ""),
+)
+
+
+def main():
+    fails = check_all(MAIN)
+    for f in fails:
+        print("FAIL: " + f)
+    if fails:
+        return 1
+    print("renderer holds: %d wrapped runs executed, %d covered sites; boot notice; "
+          "online cancel; ME-quiet log: PASS" % (WRAPPED_SITES, len(COVERED)))
+    for label, old, new in MUTANTS:
+        if MAIN.count(old) != 1:
+            print("FAIL: mutant %r no longer applies (%d matches)" % (label, MAIN.count(old)))
+            return 1
+        got = check_all(MAIN.replace(old, new))
+        if not got:
+            print("FAIL: mutant survived: " + label)
+            return 1
+        print("mutant (%s): failed as it must: %s" % (label, got[0][:90]))
+    print("sleep holds: %d mutants fail" % len(MUTANTS))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

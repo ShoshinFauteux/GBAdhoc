@@ -202,6 +202,26 @@ static void sleep_sim_lock_zero(const char *who)
    if (g_ss_req_up && !g_ss_lock_zero && !g_pwr_play_lock && g_pwr_hold <= 0)
       g_ss_lock_zero = who;
 }
+/* IS THE ENGINE QUIET ONCE THE POOL HAS GONE BACK?  (PLAN S-9.)  A failed
+ * sleep sync releases the volatile pool with the module still loaded, and
+ * nothing in user mode can halt the ME before the kernel's suspend does
+ * (me_standby_down).  This is the measurement of that window: whether the
+ * engine has a job in flight 1 ms and 10 ms after the release, on the
+ * callback's thread, logged for the run to read.  `sim` = the failure was
+ * the simulator's (sleep_sim_me_sync_fail), not the engine's. */
+/* @extract:begin fn:sleep_sim_me_quiet */
+static void sleep_sim_me_quiet(void)
+{
+   int idle_1ms, idle_10ms, up, sim = g_ss_me_sync_fail;
+   sceKernelDelayThread(1000);
+   idle_1ms = me_host_idle();
+   sceKernelDelayThread(9000);
+   idle_10ms = me_host_idle();
+   up = me_host_up();
+   fe_evt("standby me_quiet idle_1ms=%d idle_10ms=%d up=%d sim=%d",
+          idle_1ms, idle_10ms, up, sim);
+}
+/* @extract:end fn:sleep_sim_me_quiet */
 #else
 static void sleep_sim_window_enter(const char *why) { (void)why; }
 static void sleep_sim_lock_zero(const char *who) { (void)who; }

@@ -433,9 +433,12 @@ static int gblink_service(int have_script, int *code, const char **why)
       g_gblink_auto_started = 1;
       /* a GBA cable room's protocol (docs/GBA-LINK-UI.md), as the menu's */
       fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
+      /* held to the renderer's return, as silent_frame's */
+      pwr_hold("net");
       me_rend_suspend();
       rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);
       me_rend_resume();
+      pwr_release();
       if (rc == 0 && g_gblink_role == 1 && g_gblink_host_wait_peer)
       {
          /* the block above starts the session once the joiner is in */
@@ -675,9 +678,14 @@ static void link_bringup_view(int is_host, const char *room,
  * the power switch waits for them (pwr_hold("net") below), so O on the
  * LINKING screen ends them: polled by their waits through
  * online_psp_cancel_hook.  A new press only -- an O already down when the
- * screen came up is not one -- and it stays given once seen. */
+ * screen came up is not one -- and it stays given once seen.  The screen
+ * says so at once ("Cancelling...", the footer's O gone): what the press
+ * ends still has to unwind (the room, the association, the net modules),
+ * and until then nothing else on the screen would have changed. */
 static unsigned g_ol_cancel_down;
 static int g_ol_cancelled;
+static ui_linking_view *g_ol_cancel_lv;   /* the LINKING screen that is up */
+/* @extract:begin fn:online_bringup_cancel */
 static int online_bringup_cancel(void)
 {
    SceCtrlData pd;
@@ -690,10 +698,18 @@ static int online_bringup_cancel(void)
    {
       g_ol_cancelled = 1;
       fe_evt("online_cancel");
+      if (g_ol_cancel_lv)
+      {
+         g_ol_cancel_lv->l2 = "Cancelling...";
+         g_ol_cancel_lv->footer = "";
+         ui_linking_draw(g_ol_cancel_lv);
+         vid_swap();
+      }
    }
    g_ol_cancel_down = o;
    return g_ol_cancelled;
 }
+/* @extract:end fn:online_bringup_cancel */
 #endif
 
 /* UI-driven wireless action (host=1 / host=0 join).  docs/GBA-LINK-UI.md:
@@ -757,9 +773,11 @@ static void ui_net_action(int is_host)
             g_ol_cancel_down = pd.Buttons & PSP_CTRL_CIRCLE;
             g_ol_cancelled = 0;
          }
+         g_ol_cancel_lv = &lv;
          online_psp_cancel_hook(online_bringup_cancel);
          rc = online_psp_up(is_host, online_build_id(), is_host ? 20000u : 15000u);
          online_psp_cancel_hook(NULL);
+         g_ol_cancel_lv = NULL;
          me_rend_resume();
          pwr_release();
          if (rc < 0)
@@ -842,9 +860,13 @@ static void ui_net_action(int is_host)
    ui_linking_draw(&lv);
    vid_swap();
 
+   /* One hold from the renderer's suspend to its return, as the online
+    * bring-up above: net_bringup's own would end before me_rend_resume. */
+   pwr_hold("net");
    me_rend_suspend();                  /* clean heap for np_start (run 407) */
    rc = net_bringup(is_host, group, g_pcfg.nick, 0);
    me_rend_resume();                   /* re-alloc from the post-session heap */
+   pwr_release();
    if (rc == 0)
    {
       g_link_menu = 1;

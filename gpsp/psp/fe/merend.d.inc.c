@@ -8,8 +8,10 @@
  * its cache first, and a sync that does not come back means the block stays.
  * A module that is not loaded has no cache to drain: the core is in reset.
  *
- * (The volatile pool needs none of this.  It is only ever handed back on the
- * way into a sleep, with the ME idle and about to be reset, and whatever is
+ * (The volatile pool is not freed this way.  It goes back on the way into a
+ * sleep, after the same sync has confirmed the flush -- or, when that sync
+ * fails, regardless, with the session ending at the wake: me_standby_down --
+ * and the ME is held in reset by the suspend that follows.  Whatever is
  * carved from it next is ours again.) */
 /* @extract:begin fn:mer_work_heap_free */
 static int mer_work_heap_free(void)

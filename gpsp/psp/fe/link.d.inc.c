@@ -689,10 +689,15 @@ static void silent_frame(void)
       /* Keep the same heap guarantee as UI- and boot-driven bring-up.  The
        * renderer may hold the largest contiguous block on the 32 MB models;
        * np_start needs that block for its netdrv arena.  Resume on both
-       * success and failure so a failed automatic join still restores ME. */
+       * success and failure so a failed automatic join still restores ME.
+       * One hold over all three: net_bringup's own ends before the renderer
+       * is back on, and power_cb's unparked branch counts on every path
+       * that turns it on being under one. */
+      pwr_hold("net");
       me_rend_suspend();
       rc = net_bringup(as_host, g_silent_group, g_silent_nick, 0);
       me_rend_resume();
+      pwr_release();
       if (rc == ADHOC_ERR_WLAN_OFF)
       {
          osd_chip_session("WLAN switch OFF");

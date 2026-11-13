@@ -606,7 +606,11 @@ def suites(env: Env, baseline: Path | None):
           "python3 tools/tests/test_sleep_menu.py && "
           # A sleep from the game list (after a game was left): the list
           # parks like the game loop (browser_park + ui_browser), mutants.
-          "python3 tools/tests/test_sleep_browser.py")),
+          "python3 tools/tests/test_sleep_browser.py && "
+          # The holds around the renderer's suspend/resume in the bring-ups,
+          # a boot's notice, the online cancel's screen and the harness's
+          # ME-quiet log (main_psp.c), mutants.
+          "python3 tools/tests/test_sleep_holds.py")),
 
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),

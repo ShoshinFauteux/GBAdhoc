@@ -282,3 +282,20 @@ static void pwr_release_all(void)
 }
 /* @extract:end fn:pwr_release_all */
 
+/* A BOOT THAT STOPS ON A NOTICE (a save that could not be read, no memory
+ * for the game).  The notice waits on the player, for up to `hold_ms`, and
+ * the boot's hold would make a POWER switch slid at that screen wait as
+ * long.  It is dropped for the notice and taken again for the exit that
+ * follows.  A sleep there catches nothing: no game is loaded, the renderer
+ * is off, and power_cb's unparked branch is the one the game list had before
+ * it parked.  Not inlined: main()'s code stays as it was. */
+/* @extract:begin fn:boot_stop_notice */
+static __attribute__((noinline)) void boot_stop_notice(const char *title,
+      const char *l1, const char *l2, const char *l3, unsigned hold_ms)
+{
+   pwr_release();
+   ui_notice(title, l1, l2, l3, hold_ms);
+   pwr_hold("boot");
+}
+/* @extract:end fn:boot_stop_notice */
+

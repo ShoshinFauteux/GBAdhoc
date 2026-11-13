@@ -64,10 +64,11 @@ static void me_standby_step(const char *what)
    standby_note("step %s", what);
 }
 
-/* 1 once a sleep's teardown had to shut the ME down because it would not
- * confirm its cache flush (me_standby_down): the engine is gone for this
- * session, and the wake ends the session (wake_service).  Set on the
- * callback's thread, read on the main thread. */
+/* 1 once a sleep's teardown gave the volatile pool back without the ME's
+ * word that its cache was flushed (me_standby_down's failed sync; the module
+ * stays loaded and the kernel's suspend parks the engine): the renderer is
+ * not rebuilt in this session, and the wake ends it (wake_service).  Set on
+ * the callback's thread, read on the main thread. */
 static volatile int g_pwr_me_lost;
 /* @extract:begin fn:me_standby_down */
 static void me_standby_down(void)
@@ -143,6 +144,7 @@ static void me_standby_down(void)
       me_standby_step("vmem_sync_failed");
       g_pwr_me_lost = 1;
       release_result = me_rend_drop_vmem();
+      SLEEP_SIM_ME_QUIET();   /* harness: the engine, 1 ms and 10 ms on */
    }
    if (release_result > 0)
       me_standby_step("vmem_released");

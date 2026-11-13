@@ -1682,7 +1682,9 @@ session_top:
     * the sidecars are settled (a save can be mid-move), the ROM's header
     * and the link mode are read and config.ini is read again.  The switch
     * now waits for the loop, as it did from here on already; every exit
-    * below releases it through FE_HANDOFF / FE_EXIT_GAME / relaunch_eboot. */
+    * below releases it through FE_HANDOFF / FE_EXIT_GAME / relaunch_eboot,
+    * and a boot that stops on a notice lets it go while the notice waits
+    * (boot_stop_notice). */
    if (launch_now)
       pwr_hold("boot");   /* rom_path is set; the sidecars below are the game list's */
    else if (have_variant)
@@ -2437,8 +2439,8 @@ session_top:
          fe_evt("mem_budget FAIL need=%u largest=%u", (unsigned)MEM_GBA_CORE_MIN,
                 have);
          ui_loading_finish(0);
-         ui_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
-                   l2, l3, 15000);
+         boot_stop_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
+                          l2, l3, 15000);
          fe_evt("exit code=8 reason=mem_budget");
          evt_shutdown();
          audio_stop();
@@ -2635,15 +2637,15 @@ session_top:
        * game cannot overwrite it.  Say so: a bare return to the XMB left
        * the player with a game that would not start and no reason. */
       if (refusal == 1)
-         ui_notice("SAVE FILE COULD NOT BE READ",
-                   "The Memory Stick could not read its .sav file.",
-                   "The file has not been changed. Back it up,",
-                   "then rename it to start without the save.",
-                   30000);
+         boot_stop_notice("SAVE FILE COULD NOT BE READ",
+                          "The Memory Stick could not read its .sav file.",
+                          "The file has not been changed. Back it up,",
+                          "then rename it to start without the save.",
+                          30000);
       else if (refusal == 2)
-         ui_notice("NOT ENOUGH MEMORY",
-                   "No memory is left to load this game's save.",
-                   "The save has not been changed.", NULL, 30000);
+         boot_stop_notice("NOT ENOUGH MEMORY",
+                          "No memory is left to load this game's save.",
+                          "The save has not been changed.", NULL, 30000);
       fe_evt("exit code=1 reason=load_failed battery=%d", refusal);
       evt_shutdown();
       audio_stop();
