@@ -99,6 +99,8 @@ _##symbol:
 .equ OAM_UPDATED,       (25 * 4)
 .equ REG_SAVE,          (26 * 4)
 .equ PAL_UPDATED,       (63 * 4)
+.equ OAM_WMAP,          (60 * 4)   # cpu.h: this stub keeps no row map -> ~0
+.equ PAL_WMAP,          (61 * 4)   # cpu.h: this stub keeps no row map -> ~0
 
 .equ load_u8_tbl,           -(9 * 16 * ADDR_SIZE_BYTES)
 .equ load_s8_tbl,           -(8 * 16 * ADDR_SIZE_BYTES)
@@ -418,6 +420,7 @@ ext_##fname##_vram##wsize:                                                   ;\
 ext_##fname##_oam##wsize:                                                    ;\
   and $(0x3FE & addrm), %eax                                 /* Addr wrap */ ;\
   movl $1, OAM_UPDATED(REG_BASE)                       /* flag OAM update */ ;\
+  movl $-1, OAM_WMAP(REG_BASE)              /* every row (cpu.h OAM_WMAP) */ ;\
   dup8fn()                                   /* Double byte for 8b access */ ;\
   mov regfn16(d), OAM_RAM_OFF(REG_BASE, FULLREG(ax))      /* Actual write */ ;\
   ret                                                                        ;\
@@ -446,6 +449,7 @@ ext_store_palette16:
   and $0x3FF, %eax            # wrap around address
 ext_store_palette16b:         # entry point for 8bit write
   movl $1, PAL_UPDATED(REG_BASE) # flag the write (cpu.h PAL_UPDATED)
+  movl $-1, PAL_WMAP(REG_BASE)   # every row (cpu.h PAL_WMAP)
   mov %dx, PALETTE_RAM_OFF(REG_BASE, FULLREG(ax)) # write out palette value
   mov %edx, %ecx              # cx = dx
   shl $11, %ecx               # cx <<= 11 (red component is in high bits)

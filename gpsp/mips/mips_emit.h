@@ -3483,6 +3483,27 @@ u8 vram_exec_active;   /* extern in gba_memory.h */
 
 // Generates the stub to store memory for a given region and size
 // Handles "special" cases like weirdly mapped memory
+#if ME_MIDFRAME_LOG
+/* ME_MIDFRAME_LOG write maps (cpu.h OAM_WMAP/PAL_WMAP): reg[slot] |= the bit
+ * of the 32-byte row a store to the address in a0 writes (bits 5-9 of the
+ * address: sllv shifts by the low five bits of its amount).  Clobbers
+ * reg_temp and `scratch` (a0 itself is allowed).  The bytes these add to
+ * the stub area are taken back off the SMC_STM_CHAIN pad (init_emitter), so
+ * ROM translations start exactly where they did. */
+static u32 me_wmap_stub_bytes;
+#define emit_me_wmap_mark(slot, scratch)                                      \
+{                                                                             \
+  u8 *wm_t0 = translation_ptr;                                                \
+  mips_emit_srl(reg_temp, reg_a0, 5);                                         \
+  mips_emit_addiu(scratch, reg_zero, 1);                                      \
+  mips_emit_sllv(scratch, scratch, reg_temp);                                 \
+  mips_emit_lw(reg_temp, reg_base, (slot) * 4);                               \
+  mips_emit_or(reg_temp, reg_temp, scratch);                                  \
+  mips_emit_sw(reg_temp, reg_base, (slot) * 4);                               \
+  me_wmap_stub_bytes += (u32)(translation_ptr - wm_t0);                      \
+}
+#endif
+
 static void emit_pmemst_stub(
   unsigned memop_number, const t_stub_meminfo *meminfo,
   unsigned size, bool aligned, u8 **tr_ptr)
@@ -3764,6 +3785,11 @@ static void emit_pmemst_stub(
   // Post processing store:
   // Signal that OAM was updated
   if (region == 7) {
+#if ME_MIDFRAME_LOG
+    // The written 32-byte row, in the mid-frame log's write map (cpu.h
+    // OAM_WMAP); a0 is the masked offset, a1 is free after the store.
+    emit_me_wmap_mark(OAM_WMAP, reg_a1);
+#endif
     // Write any nonzero data
     mips_emit_sw(reg_base, reg_base, ReOff_OamUpd);
     generate_function_return_swap_delay();
@@ -3862,6 +3888,13 @@ static void emit_palette_hdl(
   } else if (realsize == 1) {
     mips_emit_sh(reg_a1, reg_rv, 0x100);
   }
+
+#if ME_MIDFRAME_LOG
+  // Mark the written 32-byte row in the Media Engine mid-frame log's write
+  // map (cpu.h PAL_WMAP): a0 still holds the address; palette_convert below
+  // clobbers a0 and reg_temp anyway.
+  emit_me_wmap_mark(PAL_WMAP, reg_a0);
+#endif
 
   // Convert and store in mirror memory
   palette_convert();
@@ -4282,6 +4315,9 @@ void init_emitter(bool must_swap) {
   rw_map_emit = gba_rewind_marks_wanted && rw_map_off_ok();
   gba_rewind_map_ok = rw_map_emit;
 #endif
+#if ME_MIDFRAME_LOG
+  me_wmap_stub_bytes = 0;
+#endif
 
   // Generate first the patch handlers
   // We have 6+4 patchers, one per mem type (6 or 4)
@@ -4462,8 +4498,14 @@ void init_emitter(bool must_swap) {
       mips_emit_jr(mips_reg_ra);
       mips_emit_nop();
     }
-    /* braces: mips_emit_nop() is two statements */
+    /* braces: mips_emit_nop() is two statements.  Less what the write-map
+     * marks (emit_me_wmap_mark) added to the stubs, so the area's end -- the
+     * first ROM translation -- does not move. */
+#if ME_MIDFRAME_LOG
+    while ((u32)(translation_ptr - t0) < 8192 - me_wmap_stub_bytes) {
+#else
     while ((u32)(translation_ptr - t0) < 8192) {
+#endif
       mips_emit_nop();
     }
   }

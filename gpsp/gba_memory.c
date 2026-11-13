@@ -1443,6 +1443,25 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
   return allow | alhigh;
 }
 
+/* ME_WMAP_MUTANT (tools/tests/run_me_wmap_tests.sh only): deliberately
+ * broken markers, to show the host test catches each kind of miss.
+ *   1 DMA marks nothing          2 a decrementing DMA marks as if incrementing
+ *   3 C palette stores unmarked  4 C OAM stores unmarked
+ *   5 a span's last row dropped  6 a span that wraps the 1 KiB mirror unwrapped */
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 3
+#define ME_WMAP_CPU_PAL(a) ((void)0)
+#else
+#define ME_WMAP_CPU_PAL(a) ME_WMAP_NOTE(PAL_WMAP, a)
+#endif
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 4
+#define ME_WMAP_CPU_OAM(a) ((void)0)
+#else
+#define ME_WMAP_CPU_OAM(a) ME_WMAP_NOTE(OAM_WMAP, a)
+#endif
+
+/* The mid-frame log's palette write map (cpu.h PAL_WMAP) is marked by the
+ * CALLERS: write_memory per store, dma_transfer once per span -- not here,
+ * so the DMA copy loops stay as they were.  PAL_UPDATED is raised here. */
 #define write_palette8(address, value)                                        \
 {                                                                             \
   u32 aladdr = address & ~1U;                                                 \
@@ -2147,6 +2166,7 @@ void function_cc write_gpio(u32 address, u32 value) {
                                                                               \
     case 0x05:                                                                \
       /* palette RAM */                                                       \
+      ME_WMAP_CPU_PAL(address);                                               \
       write_palette##type(address & 0x3FF, value);                            \
       break;                                                                  \
                                                                               \
@@ -2163,6 +2183,7 @@ void function_cc write_gpio(u32 address, u32 value) {
       /* OAM RAM */                                                           \
       if (type != 8) {                                                        \
         reg[OAM_UPDATED] = 1;                                                 \
+        ME_WMAP_CPU_OAM(address);                                             \
         address##type(oam_ram, address & 0x3FF) = eswap##type(value);         \
       }                                                                       \
       break;                                                                  \
@@ -2870,6 +2891,51 @@ static void __attribute__((noinline))
 }
 #endif
 
+/* A DMA's writes into the palette (region 5) and OAM (region 7): mark the
+ * rows in the mid-frame log's write maps (cpu.h PAL_WMAP / OAM_WMAP), once
+ * per transfer, before it runs.  The elements' addresses are one contiguous
+ * run [lo, end) (fixed: one element's bytes); its share of each region is
+ * what lands there, whatever dma_transfer_region_span splits.  Called from
+ * dma_dest_notes, so dma_transfer's own code is the size it was. */
+static void me_wmap_dma_note(unsigned dma_chan)
+{
+  const dma_transfer_type *dmach = &dma[dma_chan];
+  u32 n = dmach->length;
+  u32 bytes = dmach->length_type == DMA_16BIT ? 2 : 4;
+  u32 dst = 0x0FFFFFFF & dmach->dest_address & ~(bytes - 1);   /* as dma_transfer */
+  int stride = dma_stride[dmach->dest_direction];
+  u32 lo = dst, end = dst + bytes, r;
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 1
+  return;                                       /* MUTANT: DMA marks nothing */
+#endif
+  if (!n || dmach->source_direction == 3)       /* 3: nothing is copied */
+    return;
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 2
+  if (stride)                                   /* MUTANT: decrement as increment */
+#else
+  if (stride > 0)
+#endif
+    end = dst + n * bytes;
+  else if (stride < 0)                          /* below 0 wraps to open bus */
+    lo = (n - 1) * bytes > dst ? 0 : dst - (n - 1) * bytes;
+  for (r = 5; r <= 7; r += 2)
+  {
+    u32 a = MAX(lo, r << 24), b = MIN(end, (r + 1) << 24);
+    if (a < b)
+      reg[r == 7 ? OAM_WMAP : PAL_WMAP] |= me_wmap_rows(a, b - a);
+  }
+}
+
+/* Everything a DMA marks about its destination before it runs, out of line:
+ * dma_transfer calls this where it used to call vram_x_dma_note. */
+static void __attribute__((noinline)) dma_dest_notes(unsigned dma_chan)
+{
+  me_wmap_dma_note(dma_chan);
+#ifdef VRAM_EXEC
+  vram_x_dma_note(dma_chan);    /* (cpu-levers vx) */
+#endif
+}
+
 static cpu_alert_type dma_transfer_copy(
   dma_transfer_type *dmach, u32 src_ptr, u32 dest_ptr, u32 length)
 {
@@ -2944,9 +3010,7 @@ static u32 dma_transfer_region_span(u32 src_ptr, u32 dst_ptr,
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
-#ifdef VRAM_EXEC
-  vram_x_dma_note(dma_chan);    /* (cpu-levers vx) once per transfer */
-#endif
+  dma_dest_notes(dma_chan);     /* write maps; (cpu-levers vx) VRAM pages */
   DRPH_SCOPE(DRPH_DMA);
   dma_transfer_type *dmach = &dma[dma_chan];
   u32 src_ptr = 0x0FFFFFFF & dmach->source_address & (
@@ -3646,6 +3710,9 @@ void init_memory(void)
   /* Written without the store paths: every page differs from any copy an
    * observer kept (the ME's eDRAM mirror, ME_MIDFRAME_LOG's shadow). */
   memset(vram_clean, 0, sizeof(vram_clean));
+  /* ...and all of OAM and the palette differ from ME_MIDFRAME_LOG's
+   * (cpu.h OAM_WMAP / PAL_WMAP). */
+  reg[OAM_WMAP] = reg[PAL_WMAP] = ~0u;
   RW_MARK_ALL();
 
   write_ioreg(REG_DISPCNT, 0x80);

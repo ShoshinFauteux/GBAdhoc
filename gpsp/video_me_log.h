@@ -277,48 +277,77 @@ static void ml_update_relevance(u32 line)
   g_ml.seen[0] |= g_ml.rel[0]; g_ml.seen[1] |= g_ml.rel[1]; g_ml.seen[2] |= g_ml.rel[2];
 }
 
-static void ml_check_palette(u32 line)
+/* WRITE MAPS (cpu.h OAM_WMAP/PAL_WMAP).  A check used to compare all 256
+ * words of the array with its shadow whenever the flag was up: 2 KiB of cold
+ * data, ~7 us a line on the PSP, and a game with an HBlank DMA palette
+ * gradient raises the flag on every line (Hot Wheels: ~2 ms a frame).  The
+ * store paths now also say WHICH 32-byte rows they wrote, and only those rows
+ * are compared -- in the same ascending order, so the log is entry for entry
+ * the one the whole compare made.  Sound because every store that changes
+ * the array marks its rows (or ~0) as well as raising the flag; a flag with
+ * an empty map (OAM_UPDATED from a DISPCNT mode change) compares everything,
+ * as before.  A map is cleared only here, with its flag: rows marked while
+ * the flag was taken elsewhere (line 0 copies the whole array) stay marked
+ * and are compared once more for nothing.  The ARM backends' store stubs
+ * keep no map, so there the maps are ignored. */
+#if defined(ARM_ARCH) || defined(ARM64_ARCH)
+#define ML_WMAP_KEPT 0
+#else
+#define ML_WMAP_KEPT 1
+#endif
+
+#if ME_LOG_ROWS
+#define ML_ROWS(field) (&me_log_stats.field)
+#define ML_ROW_COUNT() ((*rows)++)
+#else
+#define ML_ROWS(field) ((u32 *)0)
+#define ML_ROW_COUNT() ((void)rows)
+#endif
+
+/* Diff the rows of `map` (bit k = words 8k..8k+7) of a 1 KiB array into the
+ * log, lowest first; the shadow follows.  Returns non-zero if any differed;
+ * *rows counts the rows compared (ME_LOG_ROWS builds). */
+static int ml_diff_rows(u32 line, u32 region, const u32 *cur, u32 *sh, u32 map,
+                        u32 *rows)
 {
-  me_log_stats.pal_checks++;
-  const u32 *cur = (const u32 *)palette_ram_converted;
-  u32 *sh = (u32 *)g_ml.pal;
-  u32 w;
-  for (w = 0; w < 256; w++)
-    if (sh[w] != cur[w])
-    {
-      u16 *s16 = (u16 *)&sh[w];
-      const u16 *c16 = (const u16 *)&cur[w];
-      int h;
-      for (h = 0; h < 2; h++)
-        if (s16[h] != c16[h])
-        {
-          ml_push(line, ME_LOG_PAL, w * 2 + h, s16[h], c16[h]);
-          s16[h] = c16[h];
-        }
-      g_ml.pal_hit = 1;
-    }
+  int hit = 0;
+  while (map)
+  {
+    u32 r = __builtin_ctz(map), w;
+    map &= map - 1;
+    ML_ROW_COUNT();
+    for (w = r * 8; w < r * 8 + 8; w++)
+      if (sh[w] != cur[w])
+      {
+        u16 *s16 = (u16 *)&sh[w];
+        const u16 *c16 = (const u16 *)&cur[w];
+        int h;
+        for (h = 0; h < 2; h++)
+          if (s16[h] != c16[h])
+          {
+            ml_push(line, region, w * 2 + h, s16[h], c16[h]);
+            s16[h] = c16[h];
+          }
+        hit = 1;
+      }
+  }
+  return hit;
 }
 
-static void ml_check_oam(u32 line)
+static void ml_check_palette(u32 line, u32 map)
+{
+  me_log_stats.pal_checks++;
+  if (ml_diff_rows(line, ME_LOG_PAL, (const u32 *)palette_ram_converted,
+                   (u32 *)g_ml.pal, map, ML_ROWS(pal_rows)))
+    g_ml.pal_hit = 1;
+}
+
+static void ml_check_oam(u32 line, u32 map)
 {
   me_log_stats.oam_checks++;
-  const u32 *cur = (const u32 *)oam_ram;
-  u32 *sh = (u32 *)g_ml.oam;
-  u32 w;
   ml_push(line, ME_LOG_OAMREP, 0, 0, 0);    /* the CPU renderer re-sorts here */
-  for (w = 0; w < 256; w++)
-    if (sh[w] != cur[w])
-    {
-      u16 *s16 = (u16 *)&sh[w];
-      const u16 *c16 = (const u16 *)&cur[w];
-      int h;
-      for (h = 0; h < 2; h++)
-        if (s16[h] != c16[h])
-        {
-          ml_push(line, ME_LOG_OAM, w * 2 + h, s16[h], c16[h]);
-          s16[h] = c16[h];
-        }
-    }
+  ml_diff_rows(line, ME_LOG_OAM, (const u32 *)oam_ram, (u32 *)g_ml.oam, map,
+               ML_ROWS(oam_rows));
   g_ml.oam_logged = 1;
 }
 
@@ -446,7 +475,11 @@ static void ml_line_body(u32 line)
     return;
   if (reg[OAM_UPDATED])
   {
-    ml_check_oam(line);
+    u32 map = reg[OAM_WMAP];        /* the rows written (write maps, above) */
+    reg[OAM_WMAP] = 0;
+    if (!map || !ML_WMAP_KEPT)
+      map = ~0u;                    /* flagged with no row: all of it */
+    ml_check_oam(line, map);
     /* Mode 1 never renders, so nothing else consumes the flag: clear it so
      * the next line only sees new writes.  Mode 2's renderer clears it
      * itself after this; line 160 leaves it for the next frame's line 0. */
@@ -455,8 +488,12 @@ static void ml_line_body(u32 line)
   }
   if (reg[PAL_UPDATED])             /* set by every palette store path */
   {
+    u32 map = reg[PAL_WMAP];        /* ...with the rows it wrote */
     reg[PAL_UPDATED] = 0;
-    ml_check_palette(line);
+    reg[PAL_WMAP] = 0;
+    if (!map || !ML_WMAP_KEPT)
+      map = ~0u;
+    ml_check_palette(line, map);
   }
   if (ML_TRACKING())
   {

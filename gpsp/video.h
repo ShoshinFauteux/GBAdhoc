@@ -137,6 +137,12 @@ void video_color_set(u32 mode, const u16 *lut, u16 *work);
 #ifndef ME_MIDFRAME_LOG
 #define ME_MIDFRAME_LOG 1
 #endif
+#ifndef ME_LOG_DIGEST
+#define ME_LOG_DIGEST 0             /* the twin's log oracle (video_me_log.h) */
+#endif
+#ifndef ME_LOG_ROWS
+#define ME_LOG_ROWS ME_LOG_DIGEST   /* me_log_stats_t pal_rows/oam_rows      */
+#endif
 #define ME_LOG_HOLD 60              /* frames tracking stays on after a hit  */
 
 typedef struct
@@ -191,6 +197,13 @@ typedef struct
 {
   u32 frames, tracked_frames, pal_checks, oam_checks, map_scans;
   u32 page_diffs, page_copies, base_copies, entries, overflows;
+#if ME_LOG_ROWS
+  /* 32-byte rows the palette / OAM checks compared (write maps, cpu.h
+   * PAL_WMAP/OAM_WMAP): 32 a check is a whole-array compare.  Twin builds
+   * only (-DME_LOG_DIGEST=1): on the PSP the struct, and so .bss, keeps its
+   * size. */
+  u32 pal_rows, oam_rows;
+#endif
 } me_log_stats_t;
 extern me_log_stats_t me_log_stats;
 /* Frontend: give capture `cap` an entry buffer (NULL/0 = logging off for it). */

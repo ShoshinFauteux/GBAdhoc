@@ -322,6 +322,32 @@ extern u32 gbc_sound_wave_update;
 extern dma_transfer_type dma[DMA_CHAN_CNT];
 
 extern const u8 open_gba_bios_rom[1024*16];
+
+/* ME_MIDFRAME_LOG write maps (cpu.h OAM_WMAP/PAL_WMAP): mark the 32-byte row
+ * of the palette or OAM that a store to GBA address `a` writes.  The rows
+ * repeat with the 1 KiB mirror, so any address of the region works. */
+#define ME_WMAP_BIT(a)         (1u << (((a) >> 5) & 31))
+#define ME_WMAP_NOTE(slot, a)  (reg[slot] |= ME_WMAP_BIT(a))
+/* The rows of bytes [a, a + n) (wrapping at the 1 KiB mirror), as a map. */
+static inline u32 me_wmap_rows(u32 a, u32 n)
+{
+  u32 first, last, from, to;
+  if (!n)
+    return 0;
+  if (n >= 0x400)
+    return ~0u;
+  first = (a & 0x3FF) >> 5;
+  last  = ((a + n - 1) & 0x3FF) >> 5;
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 5
+  last  = last ? last - 1 : 0;              /* MUTANT: the last row dropped */
+#endif
+  from  = ~0u << first;
+  to    = last == 31 ? ~0u : (2u << last) - 1;
+#if defined(ME_WMAP_MUTANT) && ME_WMAP_MUTANT == 6
+  return from & to;                         /* MUTANT: no mirror wrap */
+#endif
+  return (a & 0x3FF) + n > 0x400 ? (from | to) : (from & to);
+}
 extern u16 palette_ram[512];
 extern u16 oam_ram[512];
 extern u16 palette_ram_converted[512];

@@ -448,6 +448,8 @@ int main(int argc, char **argv)
               "oam_checks=%u map_scans=%u page_diffs=%u page_copies=%u "
               "base_copies=%u entries=%u overflows=%u\n",
               s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9]);
+      if (getenv("DR_MLOG_ROWS"))       /* write-map cores (ME_LOG_ROWS) */
+         fprintf(stderr, "MLOG_ROWS pal_rows=%u oam_rows=%u\n", s[10], s[11]);
    }
    if (g_mlog) fclose(g_mlog);
    if (jit_stats_report)

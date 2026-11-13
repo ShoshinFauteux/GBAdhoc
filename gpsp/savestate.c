@@ -416,7 +416,9 @@ bool gba_load_state(const void* src)
 
   instruction_count = 0;
   reg[OAM_UPDATED] = 1;
+  reg[OAM_WMAP] = ~0u;    /* OAM restored without the store paths: all of it */
   reg[PAL_UPDATED] = 1;   /* palette restored without the store paths */
+  reg[PAL_WMAP] = ~0u;
 #ifdef REWIND
   lp_mark(4);
 #endif

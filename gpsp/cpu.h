@@ -130,6 +130,17 @@ typedef enum
    * REG_USERDEF + 0..14, MIPS and x86 nothing above REG_SAVE6. */
   PAL_UPDATED       = 63,
 
+  /* ME_MIDFRAME_LOG WRITE MAPS (video_me_log.h, "write maps"): bit k set =
+   * bytes [32k, 32k + 32) of the 1 KiB array were written since the
+   * capture's last look -- one 16-colour palette row, four OBJ entries.
+   * Every store that raises PAL_UPDATED / OAM_UPDATED because it wrote the
+   * array also marks its rows here (C write_memory, dma_transfer, the MIPS
+   * store stubs); one that cannot say which (the x86 stubs, a state load,
+   * the memory reset) sets ~0 = "all of it".  Read and cleared only by the
+   * capture, which compares just the marked rows. */
+  OAM_WMAP          = 60,
+  PAL_WMAP          = 61,
+
   /* SPIN_SKIP: a spin loop's descriptor, set by its back-edge just before
    * it calls mips_update_gba, consumed (zeroed) on update_gba's entry.
    * Never live across anything else; reg[40] is DRPROF_HW's phase word. */
