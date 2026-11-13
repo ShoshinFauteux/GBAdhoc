@@ -49,6 +49,10 @@
 # 2528 -> 2408, RO 128 -> 8064 (wrapped); main, pace_frame and the rest hold.
 # Re-recorded: exit_cb (release 0x0058 -> 0x1e48, lab 0x0bf8 -> 0x09f4) and the
 # release's pte_mutex_check_need_init (+16 B).
+# HW-1 H1, the ME-lost notice with no power hold: wake_me_lost_notice is 124 B
+# smaller in the release, 76 B in the lab.  release: TEXT 328 -> 452; lab:
+# TEXT 7268 -> 7344; every other pad, main, pace_frame and the rest hold.
+# Re-recorded: exit_cb (release 0x1e48 -> 0x1ec4, lab 0x09f4 -> 0x0a40).
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -57,7 +61,7 @@ size main                               33796
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x1e48
+at   exit_cb                            0x1ec4
 at   roster_valid                       0x07c0
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
@@ -113,7 +117,7 @@ size main                               48848
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x09f4
+at   exit_cb                            0x0a40
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
