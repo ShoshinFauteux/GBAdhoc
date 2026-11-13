@@ -195,6 +195,10 @@ static volatile int g_pwr_park_ack, g_pwr_sleep_pending;
 static void power_request_poll(void) { }
 static int g_wake_menu, g_wake_have = 1, g_relaunch;
 static volatile int g_pwr_me_lost;  /* me_standby_down's failed sync (r2-B-1) */
+static int me_lost_notices;         /* wake_me_lost_notice (H1) */
+static void wake_me_lost_notice(void) { me_lost_notices++; }
+static int me_host_loaded(void) { return 1; }
+static int me_host_up(void) { return 0; }
 static uint16_t g_wake_frame_buf[16];
 static uint16_t *g_wake_frame = g_wake_frame_buf;
 static unsigned g_wake_w = 240, g_wake_h = 160;
@@ -468,6 +472,7 @@ int main(void)
    /* 6. PLAN r2-B-1: the sleep's teardown had to shut the ME down (its sync
     * failed).  The wake ends the session to the game list, as `Quit to game
     * list` does: no overlay, no rebuild, never a game on one core. */
+   assert(me_lost_notices == 0);     /* no wake above said the ME was lost */
    machine();
    g_pwr_park_req = 1; g_pwr_sleep_pending = 1;
    loop_top();
@@ -476,6 +481,7 @@ int main(void)
    assert(menu_iteration() == 0);
    in_overlay = 0;
    assert(ov_frames == 0 && rebuilds == 0);
+   assert(me_lost_notices == 1);     /* and the player is told why (H1) */
    assert(!g_running && g_relaunch == RELAUNCH_GAMELIST);
    assert(exit_reason && strcmp(exit_reason, "game_list") == 0);
    assert(!g_pwr_slept && !g_pwr_rebuild && !g_wake_menu && !g_pwr_me_lost);
