@@ -224,7 +224,7 @@ def collapse(seq):
 # a call statement of one of them AS ITS BODY, its flags folded (aec_cparse.inline_helpers),
 # so a site that calls them has the calls, order, texts and hold of the copy it replaced,
 # and the gate compares them with the golden unchanged.  They are never sites themselves.
-EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end')
+EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end')
 
 
 class View(object):

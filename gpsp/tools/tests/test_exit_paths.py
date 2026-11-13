@@ -80,17 +80,26 @@ HELPERS_BEGIN = "enum\n{\n   XE_EVT_FIRST"
 LOADFAIL_ENDS = ("      FE_EXIT_GAME();\n", "\"load_failed\", 0);")
 
 
+# Epoch C C1c: main's shared teardown is session_end(have_variant), the in-process
+# return, then process_end(exit_code, exit_reason); both helpers join HELPERS.
+TD_C1C = ("   session_end(have_variant);\n", "   process_end(exit_code, exit_reason);\n")
+
+
 def helpers(source):
     if source.count(HELPERS_BEGIN) == 0:
         return ""
     a = source.index(HELPERS_BEGIN)
-    end = function(source[a:], "exit_early_end")
+    last = "process_end" if "void process_end(" in source[a:] else "exit_early_end"
+    end = function(source[a:], last)
     return source[a:a + source[a:].index(end) + len(end)]
 
 
 def production(source):
     main = extract.extract(source, "fn:main")
-    td = between(main, TD_BEGIN, TD_END, "teardown", keep_end=False) + "   FE_EXIT_GAME();\n"
+    if TD_C1C[0] in main:
+        td = between(main, TD_C1C[0], TD_C1C[1], "teardown")
+    else:
+        td = between(main, TD_BEGIN, TD_END, "teardown", keep_end=False) + "   FE_EXIT_GAME();\n"
     assert td.count("goto session_top;") == 1, "the return's goto"
     lf_begin = "      int refusal = fe_host_battery_refusal();\n"
     lf_end = [e for e in LOADFAIL_ENDS if e in main[main.index(lf_begin):]]
@@ -262,12 +271,12 @@ static void boot_stop_notice(const char *t, const char *a, const char *b, const 
    ui_notice(t, a, b, c, ms);
 }
 
-/* Epoch C: the one exit sequence of the early exits (empty before C1) */
-@HELPERS@
-
 @EXIT_CB@
 
 @REFUSAL@
+
+/* Epoch C: the one exit sequence (fe/teardown.inc.c; empty before C1) */
+@HELPERS@
 
 static int teardown_tail(void)
 {
@@ -505,26 +514,29 @@ MUTANTS = (
     ("X-6 a failed reset exits to the XMB", "MENU",
      "               g_relaunch = RELAUNCH_GAMELIST;\n               exit_reason = \"reset_failed\";\n",
      "               exit_reason = \"reset_failed\";\n"),
-    ("the teardown no longer flushes the save", "TEARDOWN",
-     "   fe_host_shutdown();\n", ""),
-    ("the teardown flushes the save before the writer has stopped", "TEARDOWN",
-     "   io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */\n", ""),
-    ("the teardown relaunches before the handoff", "TEARDOWN",
+    ("the teardown no longer flushes the save", ("TEARDOWN", "HELPERS"),
+     "\n   fe_host_shutdown();\n", "\n"),
+    ("the teardown flushes the save before the writer has stopped", ("TEARDOWN", "HELPERS"),
+     "\n   io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */\n", "\n"),
+    ("the teardown relaunches before the handoff", ("TEARDOWN", "HELPERS"),
      "   FE_HANDOFF(exit_code, exit_reason);", "   ;"),
 )
 n = 0
 for what, part, old, new in MUTANTS:
     # old/new may list the forms of a site before and after Epoch C C1: the form this
     # tree has is mutated; a helper-only mutant is skipped on a tree without helpers
+    # (C1c: the teardown's text may sit in main's slice or in the helpers: either part)
     olds = old if isinstance(old, tuple) else (old,)
     news = new if isinstance(new, tuple) else (new,)
+    cands = part if isinstance(part, tuple) else (part,)
     parts = dict(good)
-    hit_ = [(o, w) for o, w in zip(olds, news) if parts[part].count(o) == 1]
-    if not hit_ and part == "HELPERS" and not parts[part]:
+    hit_ = [(p, o, w) for p in cands for o, w in zip(olds, news) if parts[p].count(o) == 1]
+    if not hit_ and cands == ("HELPERS",) and not parts["HELPERS"]:
         print("  mutant skipped (no Epoch C helpers on this tree): " + what)
         continue
     assert hit_, "mutant site gone: %s" % what
-    parts[part] = parts[part].replace(hit_[0][0], hit_[0][1])
+    p, o, w = hit_[0]
+    parts[p] = parts[p].replace(o, w)
     run(parts, False)
     n += 1
     print("  mutant caught: " + what)
