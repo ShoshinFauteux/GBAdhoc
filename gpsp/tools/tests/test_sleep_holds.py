@@ -41,15 +41,30 @@ cancel's screen and the harness's ME-quiet log (main_psp.c, as text and run).
    (test_sleep_menu.py runs that side).  An engine that WAS up and fails
    its sync still sets it.
 
-6. THE WAKE THAT ENDS THE SESSION SHOWS ITS NOTICE WITH NO HOLD
-   (wake_me_lost_notice).  The notice loop cannot park, and power_cb drops
-   the gameplay lock for a loop that does not; a hold taken for the notice
-   was then the only lock left, and its release let the suspend start on the
-   way to the teardown's save, before the teardown's hold.  With no hold the
-   suspend lands inside the notice (renderer off, pool gone).  The function
-   is compiled as it stands and run: it never touches the hold, it is up
-   3 s with no button and at least 0.5 s with one; and wake_service takes
-   or drops no hold between the notice and the loop's exit.
+6. THE WAKE THAT ENDS THE SESSION (the ME lost in a sleep) HOLDS THE SWITCH
+   INTO THE TEARDOWN.  That wake has already undone the loop's quiesce
+   (loop_unpark: writer, threads, sound back), its notice cannot park, and
+   power_cb drops the gameplay lock for a loop that does not: a suspend let
+   through there sleeps the game un-quiesced with the save not written.
+   wake_service, the notice and main()'s loop exit (sleep_quiesce_up ..
+   play_lock_drop("loop_exit")) are compiled as they stand, with the real
+   pwr_hold / pwr_release / play_lock_take / play_lock_drop, over a model
+   of the kernel's ONE lock count, and run from the wake's loop top
+   (gameplay lock taken) through the teardown (the save, then the hold's
+   release before the game list):
+     - the count never reaches zero from the wake to pwr_hold("teardown");
+     - a switch slid during the notice (power_cb's unparked half: the
+       gameplay lock dropped) is deferred to the first zero, which comes
+       only after the teardown's save;
+     - every lock is back to zero at the end, the wake's hold included;
+     - a console with no Media Engine (g_pwr_me_lost 0) wakes onto the
+       Continue overlay and takes no ME-lost hold.
+   The premises read from the text: power_cb drops the gameplay lock for a
+   loop that has not parked, and main() takes no lock down between the loop
+   exit and fe_host_shutdown (the save).  The notice itself is run too: it
+   takes no hold of its own, is up 3 s with no button and at least 0.5 s
+   with one, and a sleep that lands in it all the same restarts both from
+   its wake (a 10 s sleep, and one that wraps the clock's low word).
 
 Then mutants of the production text, each of which must fail.
 """
@@ -232,15 +247,23 @@ LOST_HARNESS = r'''
 typedef struct { unsigned Buttons; } SceCtrlData;
 static unsigned now_us = 4000000000u;      /* the low word wraps in the run */
 static unsigned pad_from_us = 0xFFFFFFFFu, start_us, frames, swaps, texts;
-static int holds, releases, in_overlay, order_bad;
+static unsigned sleep_frame, sleep_us, wake_us;
+static int holds, releases, in_overlay, order_bad, woke, key_at_wake;
+static volatile int g_pwr_resume = 7;
 static void pwr_hold(const char *why) { (void)why; holds++; }
 static void pwr_release(void) { releases++; }
 static int scePowerLock(int t) { (void)t; holds++; return 0; }
 static int scePowerUnlock(int t) { (void)t; releases++; return 0; }
 static unsigned sceKernelGetSystemTimeLow(void) { return now_us; }
-static void sceDisplayWaitVblankStart(void) { now_us += 16667u; frames++; }
+/* a sleep that lands in the notice: the clock runs on through it, and
+ * power_cb's RESUME_COMPLETE counts it */
+static void sceDisplayWaitVblankStart(void)
+{
+   now_us += 16667u; frames++;
+   if (frames == sleep_frame) { now_us += sleep_us; g_pwr_resume++; wake_us = now_us; woke = 1; }
+}
 static void sceCtrlPeekBufferPositive(SceCtrlData *p, int n)
-{ (void)n; p->Buttons = (now_us - start_us >= pad_from_us) ? 0x4000u : 0; }
+{ (void)n; p->Buttons = (now_us - start_us >= pad_from_us || (woke && key_at_wake)) ? 0x4000u : 0; }
 static void vid_overlay_begin(int dim) { (void)dim; if (in_overlay) order_bad = 1; in_overlay = 1; }
 static void vid_text_center(int y, const char *t, unsigned c)
 { (void)y; (void)c; if (!in_overlay || !t || !*t) order_bad = 1; texts++; }
@@ -250,8 +273,18 @@ static void vid_swap(void) { if (in_overlay) order_bad = 1; swaps++; }
 static unsigned run(unsigned pad_from)
 {
    pad_from_us = pad_from; start_us = now_us; frames = swaps = texts = 0;
+   sleep_frame = 0; woke = key_at_wake = 0;
    wake_me_lost_notice();
    return now_us - start_us;
+}
+/* -> us the notice stayed up after a sleep that landed 1 s into it */
+static unsigned run_slept(unsigned slept_us, int key)
+{
+   pad_from_us = 0xFFFFFFFFu; start_us = now_us; frames = swaps = texts = 0;
+   sleep_frame = 60; sleep_us = slept_us; woke = 0; key_at_wake = key;
+   wake_me_lost_notice();
+   if (!woke) return 0;
+   return now_us - wake_us;
 }
 int main(void)
 {
@@ -264,11 +297,150 @@ int main(void)
    if (us < 500000u || us > 600000u) { printf("FAIL: with a key down the notice is up %u us", us); return 1; }
    us = run(1500000u);                              /* a press at 1.5 s */
    if (us < 1500000u || us > 1600000u) { printf("FAIL: a press at 1.5 s ends it at %u us", us); return 1; }
+   us = run_slept(10000000u, 0);                    /* a 10 s sleep 1 s in */
+   if (us < 3000000u || us > 3100000u)
+   { printf("FAIL: after a 10 s sleep in it, the notice is up %u us from the wake", us); return 1; }
+   us = run_slept(4000000000u, 0);                  /* a sleep that wraps the low word */
+   if (us < 3000000u || us > 3100000u)
+   { printf("FAIL: after a long sleep in it, the notice is up %u us from the wake", us); return 1; }
+   us = run_slept(10000000u, 1);                    /* the key that woke it, still down */
+   if (us < 500000u || us > 600000u)
+   { printf("FAIL: a key down from a sleep's wake ends the notice %u us after it", us); return 1; }
    if (holds || releases) { puts("FAIL: the notice takes or drops a power hold"); return 1; }
    puts("ok");
    return 0;
 }
 '''
+
+# 6. wake_service + the notice + main()'s loop exit, over the kernel's lock
+# count (pwr_hold windows and the gameplay lock are ONE count there).
+WAKE_HARNESS = r'''
+#include <stdio.h>
+#include <string.h>
+typedef struct { unsigned Buttons; } SceCtrlData;
+#define fe_evt(...) ((void)0)
+#define FE_EVT_ONLY(x) ((void)(x))
+#define standby_note(...) ((void)0)
+#define SLEEP_SIM_REQUEST() 0
+#define UI_WAKE_YIELD 2
+#define RELAUNCH_GAMELIST 3
+@ANSWERS@
+static struct { int standby; const char *last_rom; } g_pcfg = { 1, "r.gba" };
+static int g_turbo, g_wake_have, g_wake_w, g_wake_h, g_pad, ring_r, ring_w;
+static void *g_wake_frame;
+static int g_pwr_park_req, g_pwr_sleep_pending, g_pwr_play_lock, g_pwr_rebuild, g_pwr_slept;
+static volatile int g_pwr_me_lost, g_pwr_resume;
+static int g_wake_menu, g_running, g_relaunch, g_wake_answered, g_wake_lost_hold;
+static int g_pwr_hold; static const char *g_pwr_hold_why = ""; static unsigned g_pwr_hold_t0;
+/* the model */
+static unsigned now_us, frames, switch_at;
+static int kcount, switch_slid, suspended, save_written, teardown_seen, zero_early, lost_window;
+static int landed_saved, overlay_shown, overlay_answer, standby_ups, quiesce_ups, max_k;
+static int scePowerLock(int t)
+{ (void)t; if (++kcount > max_k) max_k = kcount; return 0; }
+static int scePowerUnlock(int t)
+{
+   (void)t;
+   if (--kcount == 0)
+   {
+      if (!teardown_seen) zero_early++;          /* a waiting suspend runs here */
+      if (switch_slid && !suspended) { suspended = 1; landed_saved = save_written; }
+   }
+   return 0;
+}
+static void sleep_sim_window_enter(const char *why)
+{ if (!strcmp(why, "teardown")) teardown_seen = 1; if (!strcmp(why, "me_lost")) lost_window++; }
+static void sleep_sim_lock_zero(const char *who) { (void)who; }
+static unsigned sceKernelGetSystemTimeLow(void) { return now_us; }
+static void vid_overlay_begin(int d) { (void)d; }
+static void vid_text_center(int y, const char *t, unsigned c) { (void)y; (void)t; (void)c; }
+static void vid_overlay_end(void) {}
+static void vid_swap(void) {}
+@PLAY_LOCK@
+static void sceDisplayWaitVblankStart(void)
+{
+   now_us += 16667u;
+   if (++frames == switch_at)
+   {  /* POWER slid on the notice: power_cb, its unparked half */
+      switch_slid = 1; g_pwr_sleep_pending = 1;
+      if (!g_pwr_play_lock) puts("note: the gameplay lock was not held at the switch");
+      play_lock_drop("cb");
+   }
+}
+static void sceCtrlPeekBufferPositive(SceCtrlData *p, int n) { (void)n; p->Buttons = 0; }
+static void home_host_disarm(void) {}
+static void ctl_turbo_stop(int *t) { (void)t; }
+static int me_rend_active(void) { return 0; }
+static int me_rend_vmem_held(void) { return 0; }
+static int me_host_loaded(void) { return 1; }
+static int me_host_up(void) { return 0; }
+static int ui_wake_menu(void *f, int w, int h, const char *rom)
+{ (void)f; (void)w; (void)h; (void)rom; overlay_shown++; return overlay_answer; }
+static void pad_swallow_arm(unsigned b) { (void)b; }
+static void me_standby_up(void) { standby_ups++; }
+static void ui_set_wake_yield(void *f) { (void)f; }
+static void sleep_quiesce_up(const char *why) { (void)why; quiesce_ups++; }
+@HOLDS@
+@FUNCTIONS@
+static void loop_exit(void)
+{
+@EXIT@
+}
+#define CHECK(c, what) do { if (!(c)) { puts("FAIL: " what); return 1; } } while (0)
+static void reset(int lost, unsigned sw)
+{
+   now_us = 123456u; frames = 0; switch_at = sw;
+   kcount = switch_slid = suspended = save_written = teardown_seen = zero_early = 0;
+   lost_window = landed_saved = overlay_shown = standby_ups = quiesce_ups = max_k = 0;
+   g_pwr_hold = 0; g_pwr_play_lock = 0; g_pwr_sleep_pending = 0; g_pwr_park_req = 0;
+   g_pwr_slept = 1; g_pwr_rebuild = 1; g_pwr_me_lost = lost; g_wake_menu = 0;
+   g_running = 1; g_relaunch = 0; g_wake_lost_hold = 0;
+   play_lock_take();                 /* the wake's loop top: loop_unpark, the lock */
+}
+static int lost_wake(unsigned sw)
+{
+   reset(1, sw);
+   CHECK(kcount == 1, "the model: the wake's loop top does not hold the gameplay lock");
+   CHECK(wake_service() == WAKE_QUIT && !g_running && g_relaunch == RELAUNCH_GAMELIST,
+         "the ME-lost wake does not end the session to the game list");
+   CHECK(!overlay_shown && !standby_ups, "the ME-lost wake shows the overlay or rebuilds");
+   CHECK(!g_pwr_slept && !g_pwr_rebuild && !g_pwr_me_lost, "the ME-lost wake leaves its flags up");
+   CHECK(!sw || switch_slid, "the model: the switch was not slid during the notice");
+   CHECK(!zero_early, "the lock count reached zero between the ME-lost wake and the loop's exit");
+   loop_exit();
+   CHECK(teardown_seen, "the loop's exit takes no teardown hold");
+   CHECK(!zero_early, "the lock count reached zero between the ME-lost wake and pwr_hold(\"teardown\")");
+   CHECK(quiesce_ups == 1, "the loop's exit does not put the quiesce back");
+   CHECK(!suspended, "the switch's suspend ran before the teardown's save");
+   CHECK(g_pwr_hold == 1 && kcount == 1,
+         "the teardown runs under more or less than its own hold (the wake's not handed over)");
+   save_written = 1;                 /* fe_host_shutdown */
+   pwr_release();                    /* "the browser waits on the player: no hold" */
+   CHECK(kcount == 0 && g_pwr_hold == 0 && !g_wake_lost_hold, "a lock is left up after the teardown");
+   CHECK(!sw || (suspended && landed_saved), "the deferred suspend did not land after the save");
+   return 0;
+}
+int main(void)
+{
+   if (lost_wake(30)) return 1;      /* POWER slid half a second into the notice */
+   if (lost_wake(0)) return 1;       /* nobody touches it */
+   CHECK(lost_window == 1, "the ME-lost wake's hold is not pwr_hold(\"me_lost\")");
+   /* a console with no Media Engine (Adrenaline): never marked lost */
+   reset(0, 0); overlay_answer = 0;
+   CHECK(wake_service() == 0 && overlay_shown == 1 && g_running,
+         "a console with no ME does not wake onto the Continue overlay");
+   CHECK(!lost_window && !g_wake_lost_hold && g_pwr_hold == 0 && kcount == 1,
+         "a console with no ME takes the ME-lost hold");
+   CHECK(standby_ups == 1, "Continue on a console with no ME does not rebuild");
+   puts("ok");
+   return 0;
+}
+'''
+
+# the loop's exit in main(): from the yield hook's removal to the gameplay
+# lock's drop, the teardown's hold and the ME-lost wake's hand-over between
+EXIT_FROM = "   ui_set_wake_yield(NULL);   /* no game loop: nothing to park */\n"
+EXIT_TO = '   play_lock_drop("loop_exit");\n'
 
 CANCEL_HARNESS = r'''
 #include <assert.h>
@@ -471,17 +643,36 @@ def check_all(src):
     down = marked_function(src, "me_standby_down")
     if not re.search(r"release_result = me_rend_drop_vmem\(\);\s*SLEEP_SIM_ME_QUIET\(\);", down):
         fails.append("me_standby_down does not take the quiet log right after the drop")
-    # 6. the wake that ends the session: its notice, with no hold
-    rc, out = run_c(LOST_HARNESS.replace("@FUNCTION@", extract.extract(src, "fn:wake_me_lost_notice")))
+    # 6. the wake that ends the session: held from the wake into the teardown
+    notice = extract.extract(src, "fn:wake_me_lost_notice")
+    rc, out = run_c(LOST_HARNESS.replace("@FUNCTION@", notice))
     if rc:
         fails.append("wake_me_lost_notice: " + out.strip())
-    wake = extract.extract(src, "fn:wake_service")
-    lost = re.search(r"\n   if \(g_wake_menu && g_pwr_me_lost\)\n   \{\n(.*?)\n   \}\n", wake, re.S)
-    if not lost or not re.search(r"wake_me_lost_notice\(\);.*g_running = 0;\s*return WAKE_QUIT;",
-                                 lost.group(1), re.S):
-        fails.append("wake_service does not end the session after the ME-lost notice")
-    elif re.search(r"\bpwr_(hold|release)\w*\(|\bscePower(Lock|Unlock)\(", lost.group(1)):
-        fails.append("wake_service takes or drops a power hold on the ME-lost wake")
+    i, j = main.find(EXIT_FROM), main.find(EXIT_TO)
+    if i < 0 or j < i or main.count(EXIT_FROM) != 1 or main.count(EXIT_TO) != 1:
+        fails.append("main()'s loop exit (ui_set_wake_yield(NULL) .. play_lock_drop(\"loop_exit\")) not found")
+    else:
+        exit_text = main[i:j + len(EXIT_TO)]
+        rc, out = run_c(WAKE_HARNESS
+                        .replace("@ANSWERS@", extract.extract(src, "def:wake_answers"))
+                        .replace("@PLAY_LOCK@", "\n".join((marked_function(src, "play_lock_take"),
+                                                           marked_function(src, "play_lock_drop"))))
+                        .replace("@HOLDS@", "\n".join((function(src, "pwr_hold"),
+                                                       function(src, "pwr_release"))))
+                        .replace("@FUNCTIONS@", "\n".join((notice, extract.extract(src, "fn:wake_service"))))
+                        .replace("@EXIT@", exit_text))
+        if rc:
+            fails.append("the ME-lost wake: " + out.strip())
+        # the premises: nothing between the loop's exit and the save takes a
+        # lock down, and power_cb drops the gameplay lock for a loop that has
+        # not parked (the model's switch)
+        save = main.find("   fe_host_shutdown();\n", j)
+        if save < 0 or re.search(r"\b(pwr_release|pwr_release_all|play_lock_drop|scePowerUnlock)\(",
+                                 main[j + len(EXIT_TO):save]):
+            fails.append("main() takes a lock down between the loop's exit and fe_host_shutdown")
+    if not re.search(r"if \(!g_pwr_parked && !g_pwr_park_ack\)\s*play_lock_drop\(\"cb\"\);",
+                     extract.extract(src, "fn:power_cb")):
+        fails.append("power_cb no longer drops the gameplay lock for an unparked loop (the model's premise)")
     return fails
 
 
@@ -555,9 +746,42 @@ MUTANTS = (
      "/* @extract:end fn:wake_me_lost_notice */",
      "   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);\n   pwr_release();\n}\n"
      "/* @extract:end fn:wake_me_lost_notice */"),
-    ("lost wake: a hold around the notice, in wake_service",
+    ("lost wake: no hold (the r1 notice: the suspend lands un-quiesced)",
+     '      if (!g_wake_lost_hold)\n      {\n         pwr_hold("me_lost");\n'
+     "         g_wake_lost_hold = 1;\n      }\n", ""),
+    ("lost wake: the hold dropped after the notice, before the teardown's",
      "      wake_me_lost_notice();\n      g_pwr_slept = 0;",
-     '      pwr_hold("wake");\n      wake_me_lost_notice();\n      pwr_release();\n      g_pwr_slept = 0;'),
+     "      wake_me_lost_notice();\n      g_wake_lost_hold = 0;\n      pwr_release();\n"
+     "      g_pwr_slept = 0;"),
+    ("lost wake: the hold taken after the notice",
+     '      if (!g_wake_lost_hold)\n      {\n         pwr_hold("me_lost");\n'
+     "         g_wake_lost_hold = 1;\n      }\n      g_wake_menu = 0;\n"
+     "      g_pwr_me_lost = 0;\n      home_host_disarm();\n"
+     '      fe_evt("ME_LOST *** the Media Engine did not survive the sleep: "\n'
+     '             "session ends *** loaded=%d up=%d", me_host_loaded(),\n'
+     "             me_host_up());\n"
+     '      fe_evt("wake_menu choice=game_list reason=me_lost slept=%d",\n'
+     "             g_pwr_slept);\n      wake_me_lost_notice();\n",
+     "      g_wake_menu = 0;\n      g_pwr_me_lost = 0;\n      home_host_disarm();\n"
+     "      wake_me_lost_notice();\n"
+     '      if (!g_wake_lost_hold)\n      {\n         pwr_hold("me_lost");\n'
+     "         g_wake_lost_hold = 1;\n      }\n"),
+    ("lost wake: a second hold over a first (the guard gone)",
+     '      if (!g_wake_lost_hold)\n      {\n         pwr_hold("me_lost");\n'
+     "         g_wake_lost_hold = 1;\n      }\n",
+     '      pwr_hold("me_lost");\n      pwr_hold("me_lost");\n      g_wake_lost_hold = 1;\n'),
+    ("loop exit: the wake's hold dropped before the teardown's is taken",
+     '   pwr_hold("teardown");\n   if (g_wake_lost_hold)\n   {\n      g_wake_lost_hold = 0;\n'
+     "      pwr_release();\n   }\n",
+     '   if (g_wake_lost_hold)\n   {\n      g_wake_lost_hold = 0;\n      pwr_release();\n   }\n'
+     '   pwr_hold("teardown");\n'),
+    ("loop exit: the wake's hold never dropped",
+     "   if (g_wake_lost_hold)\n   {\n      g_wake_lost_hold = 0;\n      pwr_release();\n   }\n", ""),
+    ("no ME: a dead engine is taken for a lost one",
+     "   if (g_wake_menu && g_pwr_me_lost)\n",
+     "   if (g_wake_menu && (g_pwr_me_lost || !me_host_up()))\n"),
+    ("lost notice: a sleep in it does not restart the 3 s",
+     "      if (g_pwr_resume != resumes)\n      {\n", "      if (0)\n      {\n"),
     ("lost notice: gone at the first frame",
      "   } while ((unsigned)sceKernelGetSystemTimeLow() - t0 < 3000000u);\n}\n"
      "/* @extract:end fn:wake_me_lost_notice */",
@@ -574,7 +798,7 @@ def main():
     if fails:
         return 1
     print("renderer holds: %d wrapped runs executed, %d covered sites; boot notice; "
-          "online cancel; ME-quiet log; no ME is not a lost ME; ME-lost notice: PASS"
+          "online cancel; ME-quiet log; no ME is not a lost ME; ME-lost wake held into the teardown: PASS"
           % (WRAPPED_SITES, len(COVERED)))
     for label, old, new in MUTANTS:
         if MAIN.count(old) != 1:

@@ -225,6 +225,9 @@ static int game_frames, core_frames;
  * pad_swallow_arm, g_wake_answered); the swallow itself is test_menu_press's. */
 static unsigned swallow_armed;
 static int g_wake_answered;
+/* the ME-lost wake's hold, handed to the teardown's (test_sleep_holds.py
+ * runs that hand-over against the lock count) */
+static int g_wake_lost_hold;
 static void pad_swallow_arm(unsigned held) { swallow_armed |= held; }
 /* The answer's pad, read once more after the overlay: as held at the
  * answer, and not an overlay frame (production calls the same peek). */
@@ -473,6 +476,7 @@ int main(void)
     * failed).  The wake ends the session to the game list, as `Quit to game
     * list` does: no overlay, no rebuild, never a game on one core. */
    assert(me_lost_notices == 0);     /* no wake above said the ME was lost */
+   assert(g_wake_lost_hold == 0);    /* nor took its hold */
    machine();
    g_pwr_park_req = 1; g_pwr_sleep_pending = 1;
    loop_top();
@@ -485,6 +489,7 @@ int main(void)
    assert(!g_running && g_relaunch == RELAUNCH_GAMELIST);
    assert(exit_reason && strcmp(exit_reason, "game_list") == 0);
    assert(!g_pwr_slept && !g_pwr_rebuild && !g_wake_menu && !g_pwr_me_lost);
+   assert(g_wake_lost_hold == 1);    /* held on, for the teardown to take over */
 
    puts("sleep from the menu / pause screen / play: overlay, one rebuild, "
         "the pause screen parks at the loop top, menu swaps again, held X "

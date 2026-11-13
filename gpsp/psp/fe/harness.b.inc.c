@@ -19,7 +19,7 @@
  * overlay (ui_wake_inject; it reads the real pad, which PPSSPP has none of).
  * `sleep_sim_window = NAME` fires it the moment pwr_hold(NAME) is entered
  * (boot, teardown, session, state_save, state_load, ss_read, net, mgift,
- * wake): the switch pressed inside that window.  Like the firmware it is
+ * wake, me_lost): the switch pressed inside that window.  Like the firmware it is
  * deferred while a power hold is up (scePowerLock; PPSSPP does not implement
  * it) -- `sleep_sim_nohold = 1` ignores the holds, i.e. the behaviour before
  * them, for the A/B.  `boot` opens with the game's selection (HW-1 r7-L5):

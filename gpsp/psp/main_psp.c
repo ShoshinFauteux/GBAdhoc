@@ -4525,10 +4525,16 @@ session_top:
     * The hold BEFORE the lock is dropped (PLAN F2): the kernel counts both
     * as one, and a suspend request waiting on it runs at the unlock that
     * leaves the count at zero -- dropped first, that was this point, with
-    * the teardown about to start and nothing parked. */
+    * the teardown about to start and nothing parked.  The ME-lost wake's
+    * hold (wake_service) is handed over the same way: dropped only now. */
    ui_set_wake_yield(NULL);   /* no game loop: nothing to park */
    sleep_quiesce_up("loop_exit");
    pwr_hold("teardown");
+   if (g_wake_lost_hold)
+   {
+      g_wake_lost_hold = 0;
+      pwr_release();
+   }
    play_lock_drop("loop_exit");
    /* "Quit to game list": the menu goes, the frame it sat on stays with a
     * "Returning to game list..." chip, and the teardown below runs under it
