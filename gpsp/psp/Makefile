@@ -176,7 +176,7 @@ endif
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
 # (docs/LAYOUT-PINNING.md, "Keeping the pads").
-LAYOUT_PAD_RO_BYTES ?= 576
+LAYOUT_PAD_RO_BYTES ?= 0
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -186,7 +186,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 2724
-LAYOUT_PAD_CORE_BYTES ?= 932
+LAYOUT_PAD_CORE_BYTES ?= 8
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -207,7 +207,7 @@ LAYOUT_PAD_MAIN_BYTES ?= 2284
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
 # tools/flags.lock pins it.
-LAYOUT_PAD_LATE_BYTES ?= 128
+LAYOUT_PAD_LATE_BYTES ?= 160
 # LAYOUT_PAD_XLAT_BYTES: the zeros in front of instance A's translate_block_arm, the
 # last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
 # site emitters shrank both translators, and this puts instance B's hot path, linked
