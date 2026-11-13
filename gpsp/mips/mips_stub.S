@@ -238,7 +238,9 @@ symbol:
 
 # PIC ABI mandates to jump to target via $t9
 
+// CFNCALL_BYTES: one cfncall's size (DC_STUB_FILL's accounting).
 #ifdef PIC
+.equ CFNCALL_BYTES, 12
 .macro cfncall target, targetid
   lw $t9, (FNPTRS_BASE + \targetid * 4)($16)
   jalr $t9
@@ -249,6 +251,7 @@ symbol:
 // DRPROF_HW: publish the phase (drprof.h) around every C call from here.
 // $1 is free at every call site (arguments are in $4-$7).
 .equ DRPH_OFF, (40 * 4)
+.equ CFNCALL_BYTES, 20
 .macro cfncall target, targetid
   .if \targetid == 0
   addiu $1, $0, 1                 # update_gba
@@ -269,6 +272,7 @@ symbol:
   sw $0, DRPH_OFF($16)            # back to translated code (or its glue)
 .endm
 #else
+.equ CFNCALL_BYTES, 8
 .macro cfncall target, targetid
   jal \target
   REG_L $28, GP_SAVE($16)
@@ -433,16 +437,17 @@ return_to_main:
   lui $1, %hi(jit_owner_pending)
   lw $5, %lo(jit_owner_pending)($1)
   or $2, $2, $5
-  bne $2, $0, \miss
-  nop
+  bne $2, $0, \miss               # the caller's next word is the delay slot
 .endm
 #endif
 
 defsymbl(mips_indirect_branch_arm)
   dispatch_cycle_check 2
 #ifdef DISPATCH_CACHE
+.Ldc_arm_probe:                   # _dual and lookup_pc enter here (DISPATCH_ASSOC)
   DC_KEY_ARM
   dc_probe dispatch_cache_arm, 8f
+.Ldc_arm_probe_end:
   jr $6
   nop
 8:
@@ -456,8 +461,10 @@ defsymbl(mips_indirect_branch_arm)
 defsymbl(mips_indirect_branch_thumb)
   dispatch_cycle_check 1
 #ifdef DISPATCH_CACHE
+.Ldc_thumb_probe:
   DC_KEY_THUMB
   dc_probe dispatch_cache_thumb, 8f
+.Ldc_thumb_probe_end:
   jr $6
   nop
 8:
@@ -469,6 +476,29 @@ defsymbl(mips_indirect_branch_thumb)
   nop
 
 defsymbl(mips_indirect_branch_dual)
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+  // DISPATCH_ASSOC: do what block_lookup_address_dual does -- CPSR.T = bit 0,
+  // pc & ~1 (Thumb) or pc & ~3 (ARM; (pc + 2) & ~3 without BX_ALIGN_FIX) --
+  // then dispatch through the ARM or Thumb stub's probe, past its cycle
+  // check (_dual has none: see dispatch_cycle_check).  A miss there calls
+  // block_lookup_address_arm/_thumb with that pc and that CPSR, which is
+  // exactly the C dual lookup's own tail.  This frees the hot stub text the
+  // 2-way probe and lookup_pc's probe take (DC_STUB_FILL below keeps the
+  // stub text its old size, so nothing linked after it moves).
+.Ldc_dual_start:
+  andi $2, $4, 1                  # T
+  lw $1, REG_CPSR($16)
+  xor $4, $4, $2                  # Thumb: pc & ~1
+  ins $1, $2, 5, 1                # CPSR.T = T
+  bne $2, $0, .Ldc_thumb_probe
+  sw $1, REG_CPSR($16)            # (delay)
+#ifndef BX_ALIGN_FIX
+  addiu $4, $4, 2                 # ARM: pc + 2 ...
+#endif
+  b .Ldc_arm_probe
+  ins $4, $0, 0, 2                # (delay) ... & ~3
+.Ldc_dual_end:
+#else
 #ifdef DISPATCH_CACHE
   // block_lookup_address_dual: bit 0 set -> Thumb at pc & ~1, CPSR.T = 1;
   // clear -> ARM at (pc + 2) & ~3 (BX_ALIGN_FIX: pc & ~3), CPSR.T = 0.
@@ -505,6 +535,7 @@ defsymbl(mips_indirect_branch_dual)
   restore_registers
   jr $2                           # $2 = value returned
   nop
+#endif
 
 
 # Called on I/O writes that have side-effects
@@ -543,37 +574,56 @@ cpu_sleep_loop:
 lookup_pc:
   extract_flags                   # $1 contains CPSR now
 lookup_pc_noflags:
+#ifdef DISPATCH_LOOKUP_PC
+  andi $6, $1, 0x20               # isolate mode bit ($1 is the probe's)
+  dc_publish_idle 73f             # a publish is owed: the C lookup makes it
+  lw $4, REG_PC($16)              # (delay) PC
+  # Nothing to publish: back to the translated-code register state and
+  # dispatch as an indirect branch would (past its cycle check).  A hit
+  # jumps to the block; a miss saves the registers just restored and calls
+  # the same C lookup as below.
+  restore_registers
+  bne $6, $0, .Ldc_thumb_probe
+  nop
+  b .Ldc_arm_probe
+  nop
+73:
+  beq $6, $0, 1f                  # if T bit is zero use arm handler
+  nop
+#else
   andi $1, $1, 0x20               # isolate mode bit
   beq $1, $0, 1f                  # if T bit is zero use arm handler
   lw $4, REG_PC($16)              # load PC as arg 0
-
-#ifdef DISPATCH_LOOKUP_PC
-  dc_publish_idle 71f             # a publish is owed: the C lookup does it
-  DC_KEY_THUMB
-  dc_probe dispatch_cache_thumb, 71f
-  restore_registers
-  jr $6
-  nop
-71:
 #endif
+
   cfncall block_lookup_address_thumb, 2  # get Thumb address
   restore_registers
   jr $2                                  # jump to result
   nop
 1:
-#ifdef DISPATCH_LOOKUP_PC
-  dc_publish_idle 72f             # a publish is owed: the C lookup does it
-  DC_KEY_ARM
-  dc_probe dispatch_cache_arm, 72f
-  restore_registers
-  jr $6
-  nop
-72:
-#endif
   cfncall block_lookup_address_arm, 1  # get ARM address
   restore_registers
   jr $2                                # jump to result
   nop
+.Llookup_pc_end:
+
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+# DC_STUB_FILL: mips_stub.o(.text) heads the pinned hot order
+# (psp/layout/hot.ord): everything linked after it keeps its sets only if this
+# section keeps its size.  The rewritten _dual frees more than the 2-way
+# probes and lookup_pc's probe take, so the difference is zeros here (never
+# executed: after a jr's delay slot).  OLD is what these four pieces were in
+# the build without DISPATCH_ASSOC / DISPATCH_LOOKUP_PC: _dual 27 probe words
+# + save(15) + cfncall + nop + restore(15) + jr/nop; lookup_pc_noflags 3
+# words + 2 x (cfncall + restore(15) + jr/nop); the ARM and Thumb probes 7
+# words each.
+.equ DC_OLD_BYTES, (4 * (27 + 15 + 1 + 15 + 2) + CFNCALL_BYTES) + (4 * 3 + 2 * (CFNCALL_BYTES + 4 * 17)) + 2 * 4 * 7
+.equ DC_NEW_BYTES, (.Ldc_dual_end - .Ldc_dual_start) + (.Llookup_pc_end - lookup_pc_noflags) + (.Ldc_arm_probe_end - .Ldc_arm_probe - 4) + (.Ldc_thumb_probe_end - .Ldc_thumb_probe - 4)
+.if DC_NEW_BYTES > DC_OLD_BYTES
+.error "DISPATCH_ASSOC: the stub text grew; the hot order would move (DC_STUB_FILL)"
+.endif
+  .space DC_OLD_BYTES - DC_NEW_BYTES
+#endif
 
 
 # ADR-0030: record WHERE the write landed before throwing the cache away.

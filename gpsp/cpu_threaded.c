@@ -4531,14 +4531,9 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
  * way 1 (no reordering on a hit: the asm hit path never writes).  Same
  * entries, same keys, same invalidation points: a hit still returns exactly
  * what the C lookup returned for that pc. */
-#define DC_WAYS   2
-#else
-#define DC_WAYS   1
+#define DC_SMASK  ((1u << (DISPATCH_CACHE_BITS - 1)) - 1)
+#define DC_SET(k) (((k) & DC_SMASK) * 4)        /* word index of way 0 */
 #endif
-#define DC_SBITS  (DISPATCH_CACHE_BITS - (DC_WAYS - 1))  /* log2 sets */
-#define DC_SMASK  ((1u << DC_SBITS) - 1)
-#define DC_STRIDE (2 * DC_WAYS)                          /* words per set */
-#define DC_SET(k) (((k) & DC_SMASK) * DC_STRIDE)
 #if defined(XLAT_FAST) && !defined(XLAT_NO_DCLEAR)
 /* XLAT_FAST DCLEAR: every RAM flush and every partial retirement empties
  * both tables -- 8 KiB of memset, 12+ times a frame on the SMC-heavy titles,
@@ -4546,11 +4541,10 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
  * remember those slots (each at most once: a slot is listed when it goes from
  * empty to full) and reset just them.  The tables end up exactly as the
  * memset leaves them (every word 0xFFFFFFFF).  The first clear after boot
- * is a full memset, since .bss zeros are not "empty".  DISPATCH_ASSOC lists
- * SETS: a set is listed when way 0 goes from empty to full (way 1 is only
- * ever filled from a full way 0, and a forget writes DC_TOMB, not empty, so
- * an empty way 0 means an empty set) and a clear empties the whole set. */
-static u16 dc_filled[2 << DISPATCH_CACHE_BITS];   /* (table << BITS) | set */
+ * is a full memset, since .bss zeros are not "empty".  (DISPATCH_ASSOC: a
+ * slot is still 8 bytes, way 0 of set s being slot 2s and way 1 slot 2s+1,
+ * so this list and this clear are unchanged.) */
+static u16 dc_filled[2 << DISPATCH_CACHE_BITS];   /* (table << BITS) | slot */
 static u32 dc_filled_n;
 static u32 dc_list_valid;
 void dispatch_cache_clear(void)
@@ -4565,9 +4559,9 @@ void dispatch_cache_clear(void)
       u32 e = dc_filled[n];
       u32 *tbl = (e >> DISPATCH_CACHE_BITS) ? dispatch_cache_thumb
                                             : dispatch_cache_arm;
-      u32 i = (e & DC_MASK) * DC_STRIDE, w;
-      for (w = 0; w < DC_STRIDE; w++)
-        tbl[i + w] = 0xFFFFFFFFu;
+      u32 i = (e & DC_MASK) * 2;
+      tbl[i] = 0xFFFFFFFFu;
+      tbl[i + 1] = 0xFFFFFFFFu;
     }
   }
   dc_filled_n = 0;
@@ -4575,8 +4569,7 @@ void dispatch_cache_clear(void)
 #define DC_NOTE_FILL(tbl, i_) do {                                            \
   if ((tbl)[i_] == 0xFFFFFFFFu && dc_list_valid)                              \
     dc_filled[dc_filled_n++] = (u16)((((tbl) == &dispatch_cache_thumb[0])       \
-                                      << DISPATCH_CACHE_BITS) |               \
-                                     ((i_) / DC_STRIDE));                     \
+                                      << DISPATCH_CACHE_BITS) | ((i_) / 2));  \
 } while (0)
 #else
 void dispatch_cache_clear(void)
@@ -4611,7 +4604,12 @@ static inline int dc_fill_ok(u32 pc)
   if (r == 2) return !(pc & 0x00FC0000u);
   return 1;
 }
+#ifdef DISPATCH_ASSOC
+/* out of line: smc_stable_thunk_dispatch sits in the pinned warm tail */
+static void __attribute__((noinline)) dispatch_cache_forget(u32 pc, u32 thumb)
+#else
 static void dispatch_cache_forget(u32 pc, u32 thumb)
+#endif
 {
   u32 r = (pc >> 24) & 0xF, k, i;
   u32 *tbl;
@@ -4620,40 +4618,51 @@ static void dispatch_cache_forget(u32 pc, u32 thumb)
   else return;                          /* only RAM blocks retire */
   if (thumb) { k = pc >> 1; tbl = dispatch_cache_thumb; }
   else       { k = pc >> 2; tbl = dispatch_cache_arm; }
-  i = DC_SET(k);
-  if (tbl[i] == k)
-    tbl[i] = DC_TOMB;
 #ifdef DISPATCH_ASSOC
+  i = DC_SET(k);
   if (tbl[i + 2] == k)
     tbl[i + 2] = DC_TOMB;
+#else
+  i = (k & DC_MASK) * 2;
 #endif
+  if (tbl[i] == k)
+    tbl[i] = DC_TOMB;
 }
 #else
 #define DC_FILL_OK(pc) 1
 #endif
 #ifdef DISPATCH_ASSOC
-/* A key already in the set keeps its way (a C lookup can meet a cached pc:
- * the frame-start lookup, cheats, a lookup_pc with a publish pending).
- * Otherwise the newcomer takes way 0 and a live way 0 moves to way 1; an
- * empty or forgotten way 0 is simply overwritten. */
+/* DISPATCH_ASSOC fill, out of line (the lookups that call it sit in the
+ * pinned warm tail; it runs only on a C lookup).  A key already in the set
+ * keeps its way (a C lookup can meet a cached pc: the frame-start lookup, a
+ * lookup_pc with a publish owed).  Otherwise the newcomer takes way 0 and a
+ * live way 0 moves to way 1; an empty or forgotten way 0 is overwritten.
+ * Each slot that goes from empty to full is listed for the clear. */
 #ifndef DC_TOMB
 #define DC_TOMB 0xFFFFFFFEu
 #endif
-#define DC_PUT(tbl, key, ptr) do {                                            \
-  u32 k_ = (key), i_ = DC_SET(k_);                                            \
-  u32 *s_ = &(tbl)[i_];                                                       \
-  if (s_[0] == k_) {                                                          \
-    s_[1] = (u32)(uintptr_t)(ptr);                                            \
-  } else if (s_[2] == k_) {                                                   \
-    s_[3] = (u32)(uintptr_t)(ptr);                                            \
-  } else {                                                                    \
-    DC_NOTE_FILL(tbl, i_);                                                    \
-    if (s_[0] != 0xFFFFFFFFu && s_[0] != DC_TOMB) {                           \
-      s_[2] = s_[0]; s_[3] = s_[1];                                           \
-    }                                                                         \
-    s_[0] = k_; s_[1] = (u32)(uintptr_t)(ptr);                                \
-  }                                                                           \
-} while (0)
+static void __attribute__((noinline)) dc_put_assoc(u32 *tbl, u32 k, u32 p)
+{
+  u32 i = DC_SET(k);
+  if (tbl[i] == k) {
+    tbl[i + 1] = p;
+    return;
+  }
+  if (tbl[i + 2] == k) {
+    tbl[i + 3] = p;
+    return;
+  }
+  if (tbl[i] != 0xFFFFFFFFu && tbl[i] != DC_TOMB) {
+    DC_NOTE_FILL(tbl, i + 2);
+    tbl[i + 2] = tbl[i];
+    tbl[i + 3] = tbl[i + 1];
+  } else {
+    DC_NOTE_FILL(tbl, i);
+  }
+  tbl[i] = k;
+  tbl[i + 1] = p;
+}
+#define DC_PUT(tbl, key, ptr) dc_put_assoc((tbl), (key), (u32)(uintptr_t)(ptr))
 #else
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
