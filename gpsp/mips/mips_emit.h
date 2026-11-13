@@ -1682,9 +1682,12 @@ void pcarg_dec(void);              /* mips_stub.S */
 /* Layout (docs/PCARG-SIDE.md, docs/LAYOUT-PINNING.md "Keeping the pads"): the
  * side table's code grows this object's cold text by 4,608 B mod 8 KiB in
  * each core instance; these zeros make it a whole 8 KiB, so the cold text,
- * tables and pads linked after it keep their sets.  Never executed. */
+ * tables and pads linked after it keep their sets.  Never executed.
+ * DISPATCH_ASSOC (claude/ibranch) adds dc_put_assoc and an out-of-line
+ * dispatch_cache_forget to the same cold text, 480 B 32 B-rounded per
+ * instance: 3584 -> 3104. */
 __asm__(".pushsection .text.pcarg_layout_pad,\"ax\",@progbits\n"
-        "  .fill 3584 / 4, 4, 0\n"
+        "  .fill 3104 / 4, 4, 0\n"
         ".popsection\n");
 #endif
 
