@@ -126,13 +126,13 @@ and Hot Wheels, 1 % on Ice Nine, Top Gear Rally unclear".
 The emitted stubs keep every offset (each rewritten slow path is padded to its old size) and `mips_stub.o(.text)`
 keeps its size. In the EBOOT, the out-of-line site emitters shrink both instances' translators (release:
 translate_block_thumb -2,304 B, translate_block_arm -28,096 B; lab -28,160 B) and the side table's code adds
-4,256 B (mod 8 KiB) of cold text per instance. Three pads give it back:
+4,256 B (mod 8 KiB) of cold text per instance (4,736 B with the range check of section 8). Three pads give it back:
 
 | pad | where | release / lab |
 |---|---|---:|
 | `LAYOUT_PAD_XLAT_BYTES` (new, psp/Makefile, lab-pads.env) | in front of A's translate_block_arm (psp/layout_pad_warm.S); B's hot path follows it | 5,824 / 5,888 |
 | B's translator pad | after B's translate_block_arm (psp/gbalink_b_stubs.c) | 5,856 |
-| `.text.pcarg_layout_pad` | the core's cold text, both instances (mips_emit.h, PSP only) | 3,936 |
+| `.text.pcarg_layout_pad` | the core's cold text, both instances (mips_emit.h, PSP only) | 3,936 (3,456 with section 8) |
 
 The side table is one 128 KiB object per instance, so `.bss` after it moves by whole ways. Result against the
 cf44b8a9e624 lab ELF (and the e70d60aa release ELF): layout.lock [lab] and [release] 37/37 with the committed
@@ -198,3 +198,51 @@ Lab build **ff63e05c6264** (`pcarg-bef8021-lab`, builds on cf44b8a9e624). The ha
 is layout-identical by the lock (section 5). 474f7899 (the hardware phase fix) changes DRPROF_HW builds only;
 the lab and release builds compile it out, so ff63e05c6264 stays the build under test. The A/B is not
 ROM-cache-identical, though: pin `rom_cap` or report the `EVT rom_cache` block counts (section 5) before crediting a speed difference to the codegen.
+
+## 8. Review hardening (second review; claude/beta5-base b2e97a19, re-pinned in d9e9ce04)
+
+The second review found no bug and asked for three things.
+
+* **The s16 range (F3).** The side table stores an s16. For a plain site (no `k`) the old form's
+  `generate_load_pc` emits the absolute PC (`lui/ori`) when `new_pc - stored_pc` is outside [-32768, 32767],
+  and no immediate can stand for that. `pcarg_near` (mips_emit.h) is the one compare, at translation time, in
+  `pcarg_load_site`, `pcarg_arm_store_site` and `pcarg_thumb_store_site`: such a site keeps the old form,
+  byte for byte what a `PCARG_SIDE=0` build emits. It is never taken today: `stored_pc` is the block's start
+  and a block is at most 1024 instructions, so the delta is 0 .. 4100. Note what the fallback does and does
+  not buy: the stubs' decoders read a plain PC only in [0, `IOK_PLAIN`), with or without PCARG_SIDE, so a
+  block that long needs the decoders changed too. The fallback only keeps PCARG_SIDE from adding a silent
+  truncation of its own. Counter: `far` on the twin's `PCARG sites` line.
+* **The registers `pcarg_dec` loses (F4).** Its header in mips_stub.S now lists them: `$8`, `$9` (guest r2, r3:
+  the in/out pair) and `$10`-`$12` (r4-r6) on every call; on a front-cache miss also `$13`-`$15` (r7-r9),
+  `$24`, `$25` (r11, r12) and `$28` (r13), because only `$1`-`$9` and `$ra` are spilled around the C call.
+  That is any build, not only a PIC one: o32 lets `pcarg_lookup` clobber them. Every caller runs after the
+  register save.
+* **Where `bad == 0` is checked (F7).** The release has no runtime check of the table (sorted keys, every
+  entry a call); `pcarg_bad` counts both under DRPROF_TWIN only, and the Lab gate's twins are plain (TWIN=0),
+  so the gate never prints it. The check lives in `tools/drprof/pcarg_check.py`: run it for every change to
+  mips/mips_emit.h, mips/mips_stub.S or cpu_threaded.c's translator, before the gate. It builds five twins of
+  the candidate with the Lab's gate_twin (`-DRAM_CACHE_KB=384`) and fails unless, on every fixture:
+  the pad arm (`PCARG_SIDE_PAD=1`) and the forced arm (`PCARG_SIDE_PAD=1 PCARG_NEAR_MAX=63`: every plain site
+  more than 63 bytes into its block takes the F3 fallback, and still emits the base's `addiu`) are
+  hash-identical to the base on every frame, and the same two arms built with TWIN=1 report `bad=0`, with
+  `far=0` in the pad arm and `far>0` in the forced arm.
+
+      python -I gpsp/tools/drprof/pcarg_check.py --lab-backend LAB/backend \
+        --base-manifest BASE/build-manifest.json --cand COMMIT --cand-manifest CAND/build-manifest.json
+
+Run on b2e97a19 against e70d60aa (cf44b8a9e624's source), state and framebuffer hash on every frame
+(d9e9ce04 changes only the PSP layout pad and the lab pads after it): **PASS, 4 of 4**.
+
+| fixture (frames) | pad arm | forced arm | pad: new / old / bad / far | forced: new / old / bad / far |
+|---|---|---|---|---|
+| kf_payback (2,200) | identical | identical | 25,591,330 / 3,091,306 / 0 / 0 | 24,112,817 / 4,569,819 / 0 / 1,722,895 |
+| kf_ice_nine (3,900) | identical | identical | 40,053 / 0 / 0 / 0 | 39,250 / 803 / 0 / 803 |
+| kf_doom_ii (3,900) | identical | identical | 64,776 / 0 / 0 / 0 | 62,136 / 2,640 / 0 / 2,640 |
+| kf_hot_wheels_stunt_track_challenge (3,900) | identical | identical | 384,711 / 0 / 0 / 0 | 377,678 / 7,033 / 0 / 7,033 |
+
+Payback's pad-arm counters equal section 3's (the hardening changes no emitted byte when the range holds), and
+its forced arm mixes all three reasons for an old-form site (table full 2,846,924, forced 1,722,895) with
+3,732 table truncations.
+
+Layout: the three emitters grew 480 B per instance; `.text.pcarg_layout_pad` gives it back (3,936 -> 3,456),
+docs/LAYOUT-PINNING.md "Keeping the pads". PSP-1000 boot heap unchanged (release 11,228,572 B, lab 10,614,172 B).
