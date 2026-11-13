@@ -171,4 +171,83 @@ for what, part, old, new in MUTANTS:
     parts[part] = parts[part].replace(old, new)
     run(parts, False)
     print("  mutant caught: " + what)
-print("PASS: test_net_codes (%d mutants)" % len(MUTANTS))
+
+
+# ---- F4: the cable-restart early return takes an online bring-up down ------
+# ui_net_action's `g_link_kind == LK_CABLE && !g_gba_cable_ok` block, extracted
+# unchanged.  An Online session (ol) has the module, the AP and the room up by
+# then: all three go, under the power hold every radio teardown outside the
+# loop's park point runs under.  An ad hoc one (ol == 0) touches nothing.
+def cable_restart(source):
+    m = re.search(r"^   if \(g_link_kind == LK_CABLE && !g_gba_cable_ok\)\n   \{\n.*?^   \}\n", source,
+                  re.S | re.M)
+    assert m, "ui_net_action's cable-restart return not found"
+    return m.group(0)
+
+
+F4_STUB = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#define GBADHOC_ONLINE 1
+enum { LK_NONE, LK_CABLE };
+static int g_link_kind, g_gba_cable_ok, hold;
+static char trace[96], toast[96];
+static void note(const char *s) { strcat(trace, s); strcat(trace, " "); }
+static void pwr_hold(const char *why) { assert(!strcmp(why, "net")); hold++; note("hold"); }
+static void pwr_release(void) { hold--; note("release"); }
+static void online_psp_down(void) { note(hold > 0 ? "down" : "DOWN-UNHELD"); }
+static void online_psp_clear(void) { note("clear"); }
+#define osd_toast(...) snprintf(toast, sizeof(toast), __VA_ARGS__)
+static void action(int ol)
+{
+@F4@
+   note("linking");
+}
+int main(void)
+{
+   g_link_kind = LK_CABLE; g_gba_cable_ok = 0; trace[0] = '\0';
+   action(1);
+   assert(!strcmp(trace, "hold down clear release ") && hold == 0);
+   assert(g_link_kind == LK_NONE && strstr(toast, "restart") != NULL);
+   g_link_kind = LK_CABLE; trace[0] = '\0';
+   action(0);
+   assert(!strcmp(trace, ""));
+   g_link_kind = LK_CABLE; g_gba_cable_ok = 1; trace[0] = '\0';
+   action(1);
+   assert(!strcmp(trace, "linking "));
+   puts("net codes: the cable-restart return takes the online path down, held");
+   return 0;
+}
+'''
+
+
+def run_f4(block, expect_pass):
+    with tempfile.TemporaryDirectory(prefix="gbadhoc-netcodes-") as folder:
+        cfile = Path(folder) / "f4.c"
+        binary = Path(folder) / "f4"
+        cfile.write_text(F4_STUB.replace("@F4@", block))
+        subprocess.run(["cc", "-std=gnu99", "-Wall", "-Werror", "-Wno-unused-function",
+                        str(cfile), "-o", str(binary)], check=True)
+        result = subprocess.run([str(binary)], capture_output=True, text=True)
+        if (result.returncode == 0) != expect_pass:
+            raise AssertionError("expect_pass=%s\n%s%s" % (
+                expect_pass, result.stdout, result.stderr))
+        return result
+
+
+f4 = cable_restart(SOURCE)
+print(run_f4(f4, True).stdout.strip())
+F4_MUTANTS = (
+    ("the cable-restart return leaves the online path up",
+     "         online_psp_down();\n         online_psp_clear();\n", ""),
+    ("the online path is taken down without the power hold",
+     "         pwr_hold(\"net\");\n", ""),
+    ("the hold is never released",
+     "         pwr_release();\n", ""),
+)
+for what, old, new in F4_MUTANTS:
+    assert f4.count(old) == 1, "mutant site gone: " + what
+    run_f4(f4.replace(old, new), False)
+    print("  mutant caught: " + what)
+print("PASS: test_net_codes (%d mutants)" % (len(MUTANTS) + len(F4_MUTANTS)))

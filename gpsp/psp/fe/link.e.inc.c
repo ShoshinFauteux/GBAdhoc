@@ -787,11 +787,15 @@ static void ui_net_action(int is_host)
       /* The online bring-up above already joined the room on the server
        * and associated with the AP (F4): take both down again, as a failed
        * bring-up below would (net_teardown_io), or the PRX, the AP and the
-       * room stay up behind a game that is not linking. */
+       * room stay up behind a game that is not linking.  Under the hold,
+       * as net_teardown's: the AP drop and the module unload run outside
+       * the loop's park point (see power_cb). */
       if (ol)
       {
+         pwr_hold("net");
          online_psp_down();
          online_psp_clear();
+         pwr_release();
       }
 #endif
       osd_toast("Link Cable needs a restart of the game");
