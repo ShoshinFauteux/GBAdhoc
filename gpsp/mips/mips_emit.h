@@ -1680,11 +1680,11 @@ union { pcarg_state_t s; u8 bytes[PCARG_STATE_BYTES]; } pcarg_st;
 void pcarg_dec(void);              /* mips_stub.S */
 #ifdef PSP
 /* Layout (docs/PCARG-SIDE.md, docs/LAYOUT-PINNING.md "Keeping the pads"): the
- * side table's code grows this object's cold text by 4,256 B mod 8 KiB in
+ * side table's code grows this object's cold text by 4,736 B mod 8 KiB in
  * each core instance; these zeros make it a whole 8 KiB, so the cold text,
  * tables and pads linked after it keep their sets.  Never executed. */
 __asm__(".pushsection .text.pcarg_layout_pad,\"ax\",@progbits\n"
-        "  .fill 3936 / 4, 4, 0\n"
+        "  .fill 3456 / 4, 4, 0\n"
         ".popsection\n");
 #endif
 

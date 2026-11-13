@@ -42,3 +42,15 @@ vid_gu_flush             1
 vid_gu_flush.part.0      1
 vid_flip_latched         2
 vid_swap                 1
+#
+# 5.0.0: instance A's cold core text that the twin does not place, so a layout
+# sweep sees the sets it takes (its shift from the beta.4 lab layout cost
+# 1-1.5 % of work on Hot Wheels, Top Gear Rally and Duke on hardware).  The
+# ME capture's mid-frame log (ml_line_body, once per visible line), the line
+# replay (me_replay_lines, the CPU-side copy of the ME renderer's entry) and
+# the interpreter's prefetch latch (pipe_latch, layout.lock's anchor for
+# LAYOUT_PAD_CORE_BYTES).  Counts are placeholders like the rows above; no
+# third column, so regen.sh does not treat them as head-hot functions.
+_ZL12ml_line_bodym     160
+me_replay_lines          1
+_ZL10pipe_latchv         1

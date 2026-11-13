@@ -28,6 +28,13 @@
 # lookups' and smc_retire_span's growth is given back in the hot order (the
 # bscan rows) and the BSCAN pad takes it, so both sections hold as recorded
 # for 9c1b279f (37 entries, 0 differ; nothing re-recorded).
+# 5.0.0 integration (PCARG_SIDE + its review hardening merged): [release]
+# holds as recorded (PCARG's three pads; the hardening's +480 B per instance
+# comes out of .text.pcarg_layout_pad).  [lab]: instance A's cold core text is
+# put back where the beta.4 lab layout (beta460b4-final2-lab 46af5e537f8d)
+# had it, 2,816 B earlier: pte_mutex_check_need_init, me_replay_lines and
+# pipe_latch#1 re-recorded (pipe_latch#1 0x1960 as in that ELF;
+# me_replay_lines 160 B under its 0x0f40, the function grew), nothing else.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -96,7 +103,7 @@ at   exit_cb                            0x10a0
 at   roster_valid                       0x11ac
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x1334
+at   pte_mutex_check_need_init          0x0834
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -112,8 +119,8 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x19a0
-at   _ZL10pipe_latchv#1                 0x0460
+at   me_replay_lines                    0x0ea0
+at   _ZL10pipe_latchv#1                 0x1960
 at   netpacket_iface                    0x0148
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
