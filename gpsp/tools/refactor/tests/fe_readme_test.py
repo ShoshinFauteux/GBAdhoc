@@ -270,9 +270,13 @@ def r3_rows(gpsp, root):
 
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
     got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
+    # the shell's copy by its text: main() above it moves with every shell edit
+    shell = open(os.path.join(d, 'psp', 'main_psp.c'), encoding='utf-8').read().split('\n')
+    gro = [i + 1 for i, ln in enumerate(shell) if ln.strip() == 'extern u32 gamepak_reopens;']
     want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
             ('gbab_reg', 'fe/harness.f.inc.c:287'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:288'),
-            ('rom_hash_census', 'fe/harness.f.inc.c:613'), ('gamepak_reopens', 'main_psp.c:2828')]
+            ('rom_hash_census', 'fe/harness.f.inc.c:613'),
+            ('gamepak_reopens', 'main_psp.c:%d' % (gro[0] if len(gro) == 1 else -1))]
     (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 
