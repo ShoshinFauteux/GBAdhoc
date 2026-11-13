@@ -91,7 +91,11 @@ def helpers(source):
     a = source.index(HELPERS_BEGIN)
     last = "process_end" if "void process_end(" in source[a:] else "exit_early_end"
     end = function(source[a:], last)
-    return source[a:a + source[a:].index(end) + len(end)]
+    text = source[a:a + source[a:].index(end) + len(end)]
+    # Epoch C C3-1: the in-process return's reset is session_reset (fe/session.inc.c)
+    if "void session_reset(" in source:
+        text += "\n" + function(source, "session_reset")
+    return text
 
 
 def production(source):

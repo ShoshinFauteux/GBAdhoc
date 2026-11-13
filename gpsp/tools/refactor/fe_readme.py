@@ -114,8 +114,8 @@ EXPORTED = collections.OrderedDict([
 NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
 # the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1).
 # teardown left the list with Epoch C C1a (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3),
-# boot with C2 (fe/boot.inc.c).
-LATER = collections.OrderedDict([('session', 'HW-3 C3'), ('loop', 'HW-4 D1')])
+# boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c).
+LATER = collections.OrderedDict([('loop', 'HW-4 D1')])
 ROLES = ('harness', 'mgift')      # the modules whose F rows are listed with their #if context
 
 # What each @extract name prefix means (tools/refactor/docs/source-split.md, P1).  A prefix not

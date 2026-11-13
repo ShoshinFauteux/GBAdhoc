@@ -178,6 +178,7 @@ __asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
 #include "fe/pacing.d.inc.c"
 #include "fe/teardown.inc.c"
 #include "fe/boot.inc.c"
+#include "fe/session.inc.c"
 /* @extract:begin fn:main */
 int main(int argc, char *argv[])
 {
@@ -3186,35 +3187,10 @@ session_top:
          /* A HOME after the refusal check above (the unload, the census,
           * the clock) must still end the process: the list then returns at
           * once and leaves through its own HOME exit (F1). */
-         g_running = !g_exit_req;
-         g_relaunch = 0;
-         exit_code = 0;
-         exit_reason = NULL;
-         ff_engaged = 0;
-         ff_toggled = 0;
-         ff_last_mode = -1;
-         ff_last_me = -1;
-         prev_pad = 0;
-         g_pad_swallow = 0;          /* nothing of the last game is held */
-         chord_frames = 0;
-         g_dump_chord_pending = 0;   /* no screenshot of the next game */
-         ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
-         ui_set_turbo_locked(0);     /* ...and no session outlives it */
-         inproc_menu_armed = 0;
-         g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
-         g_blit_suppress = 0;
-         g_drew = 0;
-         memset(&g_ff_gate_st, 0, sizeof(g_ff_gate_st));
-         g_wake_have = 0;
-         g_wake_menu = 0;
-         g_last_pix = NULL;
-         g_me_rend_cfg = me_rend_cfg_boot;
-         g_me_video_cfg = 0;
-         g_me_video = 0;
-         g_pcfg.sram_thread = sram_thread_boot;
-         g_autoload_state = autoload_boot;
-         autoload_state_slot = 1;
-         g_autoload_from_shelf = 0;
+         session_reset(&exit_code, &exit_reason, &ff_engaged, &ff_toggled, &ff_last_mode,
+                       &ff_last_me, &prev_pad, &chord_frames, &inproc_menu_armed,
+                       &autoload_state_slot, me_rend_cfg_boot, sram_thread_boot,
+                       autoload_boot);
          emu_boost_start();
          pwr_release();         /* the browser waits on the player: no hold */
          goto session_top;

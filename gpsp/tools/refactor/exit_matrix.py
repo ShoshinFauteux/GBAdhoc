@@ -230,7 +230,8 @@ def collapse(seq):
 # a call statement of one of them AS ITS BODY, its flags folded (aec_cparse.inline_helpers),
 # so a site that calls them has the calls, order, texts and hold of the copy it replaced,
 # and the gate compares them with the golden unchanged.  They are never sites themselves.
-EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end')
+EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end',
+                  'session_reset')
 # Epoch C C2: main()'s boot moved unchanged into boot_run (fe/boot.inc.c).  Every view
 # reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.

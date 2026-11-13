@@ -659,6 +659,12 @@ def suites(env: Env, baseline: Path | None):
         ("exit_paths", True, lambda: None,
          "python3 tools/tests/test_exit_paths.py"),
 
+        # The in-process return's reset (Epoch C C3-1, session_reset): the
+        # start tree's list in its order, called with each local's own
+        # address, plus mutants (a dropped/swapped statement or argument).
+        ("session_reset", True, lambda: None,
+         "python3 tools/tests/test_session_reset.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

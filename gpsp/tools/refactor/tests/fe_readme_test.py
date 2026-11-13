@@ -264,9 +264,9 @@ def r3_rows(gpsp, root):
 
     # (Epoch C C1a created fe/teardown.inc.c: teardown left the list; C2 fe/boot.inc.c: boot
     # left it, and its 5 G rows in fe/link.d.inc.c are rows outside their owner's fragments)
-    later = re.search(r'^(teardown, )?(boot, )?session, loop have no fragment yet.*$', text, re.M)
+    later = re.search(r'^(teardown, )?(boot, )?(session, )?loop ha(ve|s) no fragment yet.*$', text, re.M)
     later = later.group(0) if later else ''
-    if later.startswith('session'):
+    if later.startswith(('session', 'loop')):
         c11 = ('none of them owns one' in later and 'in `main()` today' not in later and
                '- `fe/link.d.inc.c:893` G `g_start_keepalive` -> boot' in text)
     else:

@@ -334,7 +334,30 @@ def epochc_expand(main_text, source):
     for call, name in EPOCHC_TEARDOWN_CALLS:
         if main_text.count(call) == 1:
             main_text = main_text.replace(call, _helper_body(source, name))
+    m = EPOCHC_RESET_CALL.search(main_text)
+    if m:
+        main_text = main_text[:m.start()] + _reset_body(source, m.group(1)) + main_text[m.end():]
     return main_text
+
+
+# Epoch C C3-1 (fe/session.inc.c): the in-process return's reset list is
+# session_reset(&local.., boot values..).  Pasted back with `*name` read as `name`
+# (each parameter carries the name of the main() local it is given) and main()'s
+# indentation at the call.
+EPOCHC_RESET_CALL = re.compile(r'^( +)session_reset\([^;]*\);\n', re.M)
+
+
+def _reset_body(source, indent):
+    m = re.search(r'^static [^\n]*\bvoid session_reset\(([^)]*)\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: session_reset() not defined')
+    ptr = re.findall(r'\*\s*(\w+)\s*(?:,|$)', m.group(1))
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    if ptr:
+        body = re.sub(r'\*(%s)\b' % '|'.join(ptr), r'\1', body)
+    return ''.join(indent + ln[3:] + '\n' if ln.startswith('   ') else ln + '\n'
+                   for ln in body.split('\n')[:-1])
 
 
 def epochc_early_helpers(source):
