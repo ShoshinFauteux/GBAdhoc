@@ -78,10 +78,11 @@ def norm_file(cur):
 
 
 class Tok(object):
-    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair', 'file')
+    __slots__ = ('kind', 'text', 'line', 'ifs', 'idx', 'pair', 'file', 'oline')
 
     def __init__(self, kind, text, line, ifs=(), file=None):
         self.kind, self.text, self.ifs = kind, text, ifs
+        self.oline = None       # inline_helpers: the helper line this token was copied from
         self.file = file or 'main_psp.c'
         self.line = line if file is None or file == 'main_psp.c' or isinstance(line, FLine) \
             else FLine(line, file)
@@ -653,7 +654,9 @@ def _split_args(toks):
 def _retok(t, at):
     """A copy of t placed at the call token `at` (its line, file and #if stack)."""
     ifs = tuple(at.ifs) + tuple(x for x in t.ifs if x not in at.ifs)
-    return Tok(t.kind, t.text, at.line, ifs, at.file if at.file != 'main_psp.c' else None)
+    n = Tok(t.kind, t.text, at.line, ifs, at.file if at.file != 'main_psp.c' else None)
+    n.oline = t.oline or (t.file, int(t.line))
+    return n
 
 
 def _fold(tl, consts):

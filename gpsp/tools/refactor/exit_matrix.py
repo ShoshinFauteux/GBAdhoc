@@ -950,17 +950,22 @@ def hold_check(view):
 # ------------------------------------------------------------- raw vs -E
 def raw_vs_e(raw, ev, dm):
     """Differences between the raw and the -E call lists of the exit code (sites + D)."""
+    # A call copied out of an Epoch C helper sits at its call's line; its helper line
+    # (Tok.oline) tells the copies apart, here and in raw_by_line.
+    def ol(tok):
+        return getattr(tok, 'oline', None) if tok is not None else None
+
     def callset(view):
         out = {}
         for s in sites(view):
             if s['func'] != 'main':
                 continue
             for c in s['calls']:
-                out.setdefault((s['key'], c.name, c.line), c)
+                out.setdefault((s['key'], c.name, c.line, ol(c.tok)), c)
         rows, _ = step_rows(view)
         for r in rows:
             if r['kind'] == 'call':
-                out.setdefault(('D', r['name'], r['line']), r)
+                out.setdefault(('D', r['name'], r['line'], ol(r['tok'])), r)
         return out
     a, b = callset(raw), callset(ev)
 
@@ -974,12 +979,12 @@ def raw_vs_e(raw, ev, dm):
         return dm.get(k)
     raw_by_line = {}
     for t in raw.toks:
-        raw_by_line.setdefault(t.line, []).append(t)
+        raw_by_line.setdefault((t.line, t.oline), []).append(t)
     res = []
-    for k in sorted(set(a) | set(b), key=lambda k: (k[2], k[1])):
+    for k in sorted(set(a) | set(b), key=lambda k: (k[2], k[1], str(k[3]))):
         if k in a and k in b:
             continue
-        sid, name, line = k
+        sid, name, line, oline = k
         if k in a:
             side = 'raw_only'
             c = a[k]
@@ -987,7 +992,7 @@ def raw_vs_e(raw, ev, dm):
             stmt = c['stmt'] if isinstance(c, dict) else c.stmt
             ifs = tok.ifs if tok is not None else ()
             # the macro invocation this call sits in (an argument of fe_evt, LAB_FFP(...))
-            outer = [t.text for t in _stmt_toks(stmt) + raw_by_line.get(line, [])
+            outer = [t.text for t in _stmt_toks(stmt) + raw_by_line.get((line, oline), [])
                      if t.kind == 'id' and in_dm(t.text) and t.text != name]
             if in_dm(name):
                 why = 'macro'
@@ -1008,7 +1013,7 @@ def raw_vs_e(raw, ev, dm):
                 why, detail = '#if', ifs[-1][:70]
         else:
             side = 'E_only'
-            mac = [t.text for t in raw_by_line.get(line, []) if t.kind == 'id' and in_dm(t.text)]
+            mac = [t.text for t in raw_by_line.get((line, oline), []) if t.kind == 'id' and in_dm(t.text)]
             if mac:
                 why = 'macro'
                 detail = 'expanded from ' + ','.join(sorted(set(mac)))[:60]
