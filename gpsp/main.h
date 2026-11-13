@@ -34,16 +34,24 @@
 #define TIMER_DS_CHANNEL_B            2
 #define TIMER_DS_CHANNEL_BOTH         3
 
+/* 16 bytes, so the four timers fill one cache line's worth of the register
+ * block (sched_hot.h).  The savestate keys and values are unchanged. */
 typedef struct
 {
   s32 count;
-  u32 reload;
-  u32 prescale;
+  u32 reload;                    /* 1..0x10000 */
   fixed8_24 frequency_step;
-  u32 direct_sound_channels;
-  u32 irq;
-  u32 status;
+  u8 prescale;                   /* 0, 6, 8, 10 */
+  u8 direct_sound_channels;      /* TIMER_DS_CHANNEL_* */
+  u8 irq;                        /* TIMER_NO_IRQ / TIMER_TRIGGER_IRQ */
+  u8 status;                     /* TIMER_INACTIVE / _PRESCALE / _CASCADE */
 } timer_type;
+
+#include "sched_hot.h"
+typedef char timer_type_is_16_bytes[sizeof(timer_type) == SCHED_TIMER_BYTES ? 1 : -1];
+
+extern timer_type timer[4];
+extern s32 video_count;
 
 typedef enum
 {

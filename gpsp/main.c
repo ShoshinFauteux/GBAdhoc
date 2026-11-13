@@ -20,12 +20,50 @@
 #include "common.h"
 #include <ctype.h>
 
+#ifndef SCHED_HOT_IN_REG
+/* On MIPS these live in the register block (sched_hot.h, mips_stub.S). */
 timer_type timer[4];
-
-u32 frame_counter = 0;
 u32 cpu_ticks = 0;
 u32 execute_cycles = 0;
 s32 video_count = 0;
+#else
+/* Layout hold (docs/LAYOUT-PINNING.md): the bytes the variables that moved
+ * into the register block took in this object's .bss and .data, so every
+ * object linked after main.o keeps its D-cache sets (the pinned layout's
+ * .bss: gbalink_hot, the hash tables, B's region).  Never read. */
+#define SCHED_HOLD_BSS_MAIN (112 + 4 * 3 /* timer, video_count, execute_cycles, cpu_ticks */ \
+                             + 4 * 3     /* core_phase_lvl, cph_ugba, cph_stmr */           \
+                             + SCHED_HOLD_FAST + SCHED_HOLD_HOP)
+#ifdef SCHED_FAST
+#define SCHED_HOLD_FAST 4                /* sched_fast */
+#else
+#define SCHED_HOLD_FAST 0
+#endif
+#ifdef HALT_HOP
+#define SCHED_HOLD_HOP 4                 /* hop_active */
+#else
+#define SCHED_HOLD_HOP 0
+#endif
+__attribute__((used)) static u8 sched_hot_hold_bss[SCHED_HOLD_BSS_MAIN];
+#if defined(HALT_HOP) || (defined(TIMER_LAZY) && TIMER_LAZY_DEFAULT)
+/* timer_lazy's nonzero default kept it in .data */
+__attribute__((used)) static u32 sched_hot_hold_data = 1;
+#elif defined(TIMER_LAZY)
+__attribute__((used)) static u32 sched_hot_hold_bss2;
+#endif
+/* ...and in .text: init_main and main_write_savestate came out 32 B (one
+ * function-alignment step) shorter each with the packed timers, which moved
+ * instance A's cold text after main.o (pipe_latch, me_replay_lines: the
+ * lock's CORE anchors) and B's before it.  64 B of zeros, never executed,
+ * give the bytes back inside main.o. */
+__asm__(".section .text.sched_hot_hold,\"ax\",@progbits\n"
+        ".balign 32\n"
+        "sched_hot_hold_text:\n"
+        ".fill 16, 4, 0\n"
+        ".previous\n");
+#endif
+
+u32 frame_counter = 0;
 
 u32 last_frame = 0;
 u32 flush_ram_count = 0;
@@ -556,7 +594,12 @@ void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
  * except core_phase_now(), which is one compare when the level is below the
  * probe's own and a clock read otherwise.
  * ------------------------------------------------------------------------- */
+/* mips_stub.S starts it at 0 (sched_hot.h) */
+typedef char core_phase_off_is_0[CORE_PHASE_OFF == 0 ? 1 : -1];
+#ifndef SCHED_HOT_IN_REG
 u32 core_phase_lvl    = CORE_PHASE_OFF;
+u32 cph_ugba, cph_stmr;
+#endif
 u32 core_phase_clk_ns = 0;
 
 u32 cph_vid, cph_amix, cph_dsnd, cph_jit;
@@ -564,7 +607,7 @@ u32 cph_jit_total;   /* monotonic; never reset by core_phase_take() */
 u32 cph_reads;
 u32 cph_bkr, cph_bkw;
 u32 cph_rfux, cph_rfut;   /* ADR-0051: rfu_transfer() calls / us this frame */
-u32 cph_ugba, cph_dman, cph_stmr;
+u32 cph_dman;
 
 static u32 cph_sum[CPH_NPHASE];    /* window totals, us */
 static u32 cph_pmax[CPH_NPHASE];   /* window maxima, us -- each on ITS frame */
@@ -813,10 +856,12 @@ void rand_seed(u32 data) {
  *     today, but no longer at the overflow itself.
  * Timers with their interrupt enabled, and timers a cascade timer counts,
  * keep their exact events. */
-#ifndef TIMER_LAZY_DEFAULT
-#define TIMER_LAZY_DEFAULT 0
-#endif
+/* TIMER_LAZY_DEFAULT: sched_hot.h */
+#ifndef SCHED_HOT_IN_REG
 u32 timer_lazy = TIMER_LAZY_DEFAULT;
+#else
+extern u32 timer_lazy;
+#endif
 #define TIMER_IS_LAZY(i)                                                      \
    (timer_lazy && !timer[i].irq &&                                            \
     !((i) != 3 && timer[(i) + 1].status == TIMER_CASCADE))
@@ -832,10 +877,12 @@ u32 timer_lazy = TIMER_LAZY_DEFAULT;
 #ifdef TIMER_LAZY
 #error "HALT_HOP shares the timer_lazy key with TIMER_LAZY"
 #endif
-#ifndef HALT_HOP_DEFAULT
-#define HALT_HOP_DEFAULT 6
-#endif
+/* HALT_HOP_DEFAULT: sched_hot.h */
+#ifndef SCHED_HOT_IN_REG
 u32 timer_lazy = HALT_HOP_DEFAULT;
+#else
+extern u32 timer_lazy;
+#endif
 #define hop_mask timer_lazy
 #endif
 
@@ -850,7 +897,13 @@ u32 timer_lazy = HALT_HOP_DEFAULT;
  * where they would be.  Nothing moves by a cycle, and no slice with a running
  * CPU changes, so update_gba's overshoot clamp is not involved. */
 static u32 hop_vcount;     /* the jump's last line, 0 = no jump running */
-static u32 hop_active;
+/* read on every update_gba pass: in the register block on MIPS (sched_hot.h) */
+#ifdef SCHED_HOT_IN_REG
+extern u32 sched_hop_active;
+#else
+static u32 sched_hop_active;
+#endif
+#define hop_active sched_hop_active
 static s32 hop_hb_at;      /* cycles left at the first H-blank edge, -1 = no IF */
 static u32 hop_vstart;     /* the jump's first line (its H-blank edge was ahead) */
 
@@ -1090,16 +1143,23 @@ void utrace_note(const char *what, u32 a, u32 b)
 extern u32 serial_irq_cycles;
 extern unsigned *const serial_poke_frcnt;
 extern unsigned *const serial_aw_frcnt;
+/* netplay_client_id is read only where it matters (SCHED_HOT): for DISABLED
+ * / GBP / AUTO, update_serial with no IRQ pending returns false whatever the
+ * client id, so those modes skip the load (and its cache line). */
 static inline int serial_idle_fast(unsigned cycles)
 {
-  if (serial_irq_cycles || netplay_client_id)
+  if (serial_irq_cycles)
     return 0;
   switch (serial_mode) {
   case SERIAL_MODE_SERIAL_POKE:
+    if (netplay_client_id)
+      return 0;
     *serial_poke_frcnt += cycles;
     return 1;
   case SERIAL_MODE_SERIAL_AW1:
   case SERIAL_MODE_SERIAL_AW2:
+    if (netplay_client_id)
+      return 0;
     *serial_aw_frcnt += cycles;
     return 1;
   case SERIAL_MODE_DISABLED:
@@ -1126,10 +1186,12 @@ static inline int serial_idle_fast(unsigned cycles)
  *    so with IE & IF == 0 the call can only return 0 and is skipped.
  *    flag_interrupt is `IF |= raised` plus a check_interrupt() whose result
  *    update_gba discards; the OR is done here. */
-#ifndef SCHED_FAST_DEFAULT
-#define SCHED_FAST_DEFAULT 0
-#endif
+/* SCHED_FAST_DEFAULT: sched_hot.h */
+#ifdef SCHED_HOT_IN_REG
+extern u32 sched_fast;
+#else
 u32 sched_fast = SCHED_FAST_DEFAULT;
+#endif
 #endif
 
 #ifdef SPIN_SKIP
@@ -1888,15 +1950,19 @@ bool main_read_savestate(const u8 *src)
   {
     char tname[2] = {'0' + i, 0};
     const u8 *p = bson_find_key(p2, tname);
+    /* The narrow fields (main.h) are read through a word; main_check_savestate
+     * has bounded each value to its field. */
+    u32 w;
 
     if (!(
       bson_read_int32(p, "count", (u32*)&timer[i].count) &&
       bson_read_int32(p, "reload", &timer[i].reload) &&
-      bson_read_int32(p, "prescale", &timer[i].prescale) &&
+      bson_read_int32(p, "prescale", &w) && ((timer[i].prescale = (u8)w), 1) &&
       bson_read_int32(p, "freq-step", &timer[i].frequency_step) &&
-      bson_read_int32(p, "dsc", &timer[i].direct_sound_channels) &&
-      bson_read_int32(p, "irq", &timer[i].irq) &&
-      bson_read_int32(p, "status", &timer[i].status)))
+      bson_read_int32(p, "dsc", &w) &&
+      ((timer[i].direct_sound_channels = (u8)w), 1) &&
+      bson_read_int32(p, "irq", &w) && ((timer[i].irq = (u8)w), 1) &&
+      bson_read_int32(p, "status", &w) && ((timer[i].status = (u8)w), 1)))
       return false;
   }
 

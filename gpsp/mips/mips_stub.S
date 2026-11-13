@@ -17,6 +17,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
 #include "../gpsp_config.h"
+#include "../sched_hot.h"
 
 // MSR_FAST (codegen-q3): mode switches by MSR / SPSR restore without the C
 // call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
@@ -1236,7 +1237,51 @@ defobj(memory_map_read)
 # memory_map_read is immediately before arm_reg on purpose (offset used
 # to access it, via lw op). We do not use write though.
 defobj(reg)
+#ifdef SCHED_HOT_IN_REG
+# SCHED_HOT (sched_hot.h): the scheduler's per-call state sits in reg[] slots
+# that no MIPS code uses, on the two register lines update_gba touches on
+# every call anyway.  Each variable is a label at its slot; the C code names
+# them as before.  The block is 64 words, as without it.  sched_pos counts
+# the bytes emitted since `reg` (an expression in `.` here makes gas loop).
+.set sched_pos, 0
+.macro sched_gap slot
+  .if (\slot * 4) < sched_pos
+  .error "SCHED_HOT: slots out of order"
+  .endif
+  .space (\slot * 4) - sched_pos
+  .set sched_pos, (\slot * 4)
+.endm
+.macro sched_slot name, slot, init
+  sched_gap \slot
+defobj(\name)
+  .long \init
+  .set sched_pos, sched_pos + 4
+.endm
+  sched_slot video_count,       SCHED_SLOT_VIDEO_COUNT,    0
+  sched_slot execute_cycles,    SCHED_SLOT_EXECUTE_CYCLES, 0
+  sched_slot cpu_ticks,         SCHED_SLOT_CPU_TICKS,      0
+  sched_slot cph_ugba,          SCHED_SLOT_CPH_UGBA,       0
+  sched_slot sched_hop_active,  SCHED_SLOT_HOP_ACTIVE,     0
+#ifdef SCHED_FAST
+  sched_slot sched_fast,        SCHED_SLOT_SCHED_FAST,     SCHED_FAST_DEFAULT
+#endif
+  sched_slot serial_mode,       SCHED_SLOT_SERIAL_MODE,    SCHED_SERIAL_MODE_INIT
+  sched_slot serial_irq_cycles, SCHED_SLOT_SERIAL_IRQ,     0
+#if defined(HALT_HOP)
+  sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     HALT_HOP_DEFAULT
+#elif defined(TIMER_LAZY)
+  sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     TIMER_LAZY_DEFAULT
+#endif
+  sched_slot core_phase_lvl,    SCHED_SLOT_CORE_PHASE_LVL, 0
+  sched_gap SCHED_SLOT_TIMER
+defobj(timer)
+  .space 4 * SCHED_TIMER_BYTES
+  .set sched_pos, sched_pos + 4 * SCHED_TIMER_BYTES
+  sched_slot cph_stmr,          SCHED_SLOT_CPH_STMR,       0
+  sched_gap 64                    # the end of reg[]: 0x100 bytes
+#else
   .space 0x100
+#endif
 
 # Placed here for easy access
 defobj(palette_ram)
