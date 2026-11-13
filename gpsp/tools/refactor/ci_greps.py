@@ -21,6 +21,15 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       name is not in the reviewed list ci_greps.fe_evt_calls (pure getters seen at base).
   R5  every .c that tests GPSP_NO_TELEMETRY includes fe_evt.h (directly or through a
       tree header) BEFORE the first test (fe_evt.h:44-46 derives it).
+  R6  (Epoch C, PLAN-EPOCHC-beta5 §4.2) every static function of main_psp.c's unit that
+      ONLY main() calls carries `noinline` AND an explicit `section(...)`, unless it is
+      one of the functions pinned in ci_greps.r6_pinned (the ones the start tree already
+      has: their placement is part of today's layout).  Why: GCC puts a function that is
+      called only at startup into `.text.startup.<name>` on its own and emits it BEFORE
+      main in main_psp.o (C0a-6 probe), and it inlines a static with one caller back into
+      main; either moves the frame loop with every later edit to that function.
+      --write-r6 writes the pinned list from the tree (do it once, on the tree Epoch C
+      starts from).
 Known exceptions live in ci_greps.known (rule, file, key, reason); they are reported as
 KNOWN and do not fail.  Exit: 0 green, 1 violations, 2 usage.
 """
@@ -281,6 +290,86 @@ def rule_r2(src):
     return hits, n
 
 
+# ------------------------------------------------------------- R6
+def r6_main_only(src):
+    """[(name, line, has_noinline, has_section)] of the static functions of main_psp.c's
+    unit whose only caller is main()."""
+    rel = 'psp/main_psp.c'
+    t = toks_of(src, rel)
+    if t is None:
+        return None
+    fns = C.functions(t)
+    if 'main' not in fns:
+        return []
+    callers = {}
+    for name, (lo, hi) in fns.items():
+        try:
+            cl = [c.name for c in C.walk_calls(C.parse_body(t, lo, hi))]
+        except Exception:
+            cl = [x.text for i, x in enumerate(t[lo:hi]) if x.kind == 'id' and t[lo + i + 1].text == '(']
+        for c in set(cl):
+            callers.setdefault(c, set()).add(name)
+    # a function whose name appears without a call (address taken: a thread entry, a
+    # callback) can run from anywhere
+    taken = set()
+    for k, x in enumerate(t):
+        if x.kind == 'id' and x.text in fns and k + 1 < len(t) and t[k + 1].text != '(' \
+                and not (k > 0 and t[k - 1].text in ('.', '->')):
+            taken.add(x.text)
+    out = []
+    for name, (lo, hi) in sorted(fns.items(), key=lambda kv: kv[1][0]):
+        if name == 'main' or callers.get(name) != {'main'} or name in taken:
+            continue
+        a = lo
+        while a > 0 and t[a - 1].text not in (';', '}'):
+            a -= 1
+        decl = [y.text for y in t[a:lo]]
+        if 'static' not in decl:
+            continue
+        out.append((name, t[lo].line, 'noinline' in decl or '__noinline__' in decl,
+                    'section' in decl or '__section__' in decl))
+    return out
+
+
+def rule_r6(src, pinned):
+    hits = []
+    rows = r6_main_only(src) or []
+    for name, line, ni, sec in rows:
+        if name in pinned or (ni and sec):
+            continue
+        miss = ' and '.join(x for x, have in (('noinline', ni), ('section()', sec)) if not have)
+        hits.append(Hit('R6', 'psp/main_psp.c', line, name,
+                        'only main() calls it and it has no %s' % miss))
+    return hits, len(rows)
+
+
+def load_r6(path):
+    if not path or not os.path.exists(path):
+        return set()
+    return {l.split()[0] for l in open(path, encoding='utf-8') if l.strip() and not l.startswith('#')}
+
+
+def write_r6(src, path):
+    view, _ = logical_view(src)
+    try:
+        rows = r6_main_only(view) or []
+    finally:
+        if view != src:
+            import shutil
+            shutil.rmtree(view, ignore_errors=True)
+    names = sorted(n for n, _, ni, sec in rows if not (ni and sec))
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('# T11 R6 pinned list: static functions of main_psp.c\'s unit that only main() calls\n'
+                '# and that have no noinline + section() pair.  They exist on the tree this list was\n'
+                '# written from, so where GCC puts them is part of that tree\'s layout.  A function\n'
+                '# NOT listed here must carry both attributes (ci_greps.py R6).  Regenerate with\n'
+                '# `ci_greps.py --src GPSP --write-r6` on the tree Epoch C starts from, never to\n'
+                '# silence a new function.\n')
+        for n in names:
+            f.write(n + '\n')
+    return len(names)
+
+
 # ------------------------------------------------------------- R3
 # Non-gpsp_* functions that ALSO run nested in fe_host_run_frame and are roots of
 # R3: the core's ROM-load progress hook and the session-memory reload note run inside
@@ -537,10 +626,10 @@ def logical_view(src):
 
 
 # ------------------------------------------------------------- driver
-def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True):
+def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_path=None):
     view, origin = logical_view(src) if logical else (src, {})
     try:
-        fails, out = _run(view, phase, known_path, allow_path, pp_dir, only, origin)
+        fails, out = _run(view, phase, known_path, allow_path, pp_dir, only, origin, r6_path)
     finally:
         if view != src:
             import shutil
@@ -556,11 +645,11 @@ def _where(origin, h):
     return '%s:%d%s' % (h.file, h.line, ' (%s:%d)' % o if o and o[0] != h.file else '')
 
 
-def _run(src, phase, known_path, allow_path, pp_dir, only, origin):
+def _run(src, phase, known_path, allow_path, pp_dir, only, origin, r6_path=None):
     known = load_known(known_path)
     allow = load_allow(allow_path)
     out, hits = [], []
-    rules = only or ['R1', 'R2', 'R3', 'R4', 'R5']
+    rules = only or ['R1', 'R2', 'R3', 'R4', 'R5', 'R6']
     if 'R1' in rules:
         h, info, extra = rule_r1(src, phase, known, pp_dir)
         hits += h
@@ -583,6 +672,12 @@ def _run(src, phase, known_path, allow_path, pp_dir, only, origin):
         h, n = rule_r5(src)
         hits += h
         out.append('R5 telemetry include order: %d files test GPSP_NO_TELEMETRY, %d too early' % (n, len(h)))
+    if 'R6' in rules:
+        pinned = load_r6(r6_path)
+        h, n = rule_r6(src, pinned)
+        hits += h
+        out.append('R6 main-only functions: %d (%d pinned in %s), %d new without noinline + section()'
+                   % (n, len(pinned), os.path.basename(r6_path or '-'), len(h)))
     fails = 0
     for h in hits:
         kn = [k for k in known if k['rule'] == h.rule and k['file'] == h.file and k['key'] == h.key
@@ -605,14 +700,20 @@ def main():
     ap.add_argument('--pp', help='dir with main_psp.<flavour>.i (exit_matrix/aec_pspcc output)')
     ap.add_argument('--rules', help='comma list, default all')
     ap.add_argument('--write-allow', action='store_true')
+    ap.add_argument('--r6', default=os.path.join(HERE, 'ci_greps.r6_pinned'))
+    ap.add_argument('--write-r6', action='store_true',
+                    help='write the R6 pinned list from this tree (the Epoch C start tree only)')
     ap.add_argument('--no-logical', action='store_true',
                     help='read *.inc.c fragments as files of their own (the pre-2026-11-07 view; a mutant)')
     o = ap.parse_args()
     if o.write_allow:
         print('wrote %d names to %s' % (write_allow(o.src, o.allow), o.allow))
         return 0
+    if o.write_r6:
+        print('wrote %d names to %s' % (write_r6(o.src, o.r6), o.r6))
+        return 0
     fails, out = run(o.src, o.phase, o.known, o.allow, o.pp, o.rules.split(',') if o.rules else None,
-                     logical=not o.no_logical)
+                     logical=not o.no_logical, r6_path=o.r6)
     print('\n'.join(out))
     return 1 if fails else 0
 
