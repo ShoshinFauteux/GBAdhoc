@@ -442,6 +442,11 @@ def suites(env: Env, baseline: Path | None):
           "-Wl,--allow-multiple-definition && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_dma_region_segments")),
 
+        # The ME mid-frame log's palette/OAM write maps: every C store and
+        # DMA marks exactly the rows it changes; six mutants must be caught.
+        ("me_wmap", True, lambda: None,
+         "bash tools/tests/run_me_wmap_tests.sh"),
+
         ("gpio_savestate_mirror", True, lambda: None,
          "gcc -std=gnu99 -O1 -g -w -ffunction-sections -fdata-sections "
          "-DINLINE=inline -Ilibretro/libretro-common/include "

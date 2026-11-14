@@ -17,6 +17,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
 #include "../gpsp_config.h"
+#include "../sched_hot.h"
+#include "../reg_slots.h"
 
 // MSR_FAST (codegen-q3): mode switches by MSR / SPSR restore without the C
 // call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
@@ -238,7 +240,9 @@ symbol:
 
 # PIC ABI mandates to jump to target via $t9
 
+// CFNCALL_BYTES: one cfncall's size (DC_STUB_FILL's accounting).
 #ifdef PIC
+.equ CFNCALL_BYTES, 12
 .macro cfncall target, targetid
   lw $t9, (FNPTRS_BASE + \targetid * 4)($16)
   jalr $t9
@@ -248,7 +252,8 @@ symbol:
 #ifdef DRPROF_HW
 // DRPROF_HW: publish the phase (drprof.h) around every C call from here.
 // $1 is free at every call site (arguments are in $4-$7).
-.equ DRPH_OFF, (40 * 4)
+.equ DRPH_OFF, (RSLOT_DRPH * 4)
+.equ CFNCALL_BYTES, 20
 .macro cfncall target, targetid
   .if \targetid == 0
   addiu $1, $0, 1                 # update_gba
@@ -269,6 +274,7 @@ symbol:
   sw $0, DRPH_OFF($16)            # back to translated code (or its glue)
 .endm
 #else
+.equ CFNCALL_BYTES, 8
 .macro cfncall target, targetid
   jal \target
   REG_L $28, GP_SAVE($16)
@@ -385,6 +391,24 @@ return_to_main:
   #define DC_KEY_ARM   srl $5, $4, 2
   #define DC_KEY_THUMB srl $5, $4, 1
 #endif
+#ifdef DISPATCH_ASSOC
+// DISPATCH_ASSOC (cpu_threaded.c): 2-way sets {key0, entry0, key1, entry1},
+// 16 bytes, both ways in the line the first load brings in.  Leaves the
+// entry in $6 on a hit, as the direct-mapped probe does.
+.macro dc_probe table, miss
+  andi $6, $5, ((1 << (DISPATCH_CACHE_BITS - 1)) - 1)
+  sll $6, $6, 4
+  lui $1, %hi(\table)
+  addu $1, $1, $6
+  lw $2, %lo(\table)($1)         # way 0 key
+  beq $2, $5, .Ldc_hit\@
+  lw $6, %lo(\table)+4($1)       # (delay) way 0 entry
+  lw $2, %lo(\table)+8($1)       # way 1 key
+  bne $2, $5, \miss
+  lw $6, %lo(\table)+12($1)      # (delay) way 1 entry
+.Ldc_hit\@:
+.endm
+#else
 .macro dc_probe table, miss
   andi $6, $5, ((1 << DISPATCH_CACHE_BITS) - 1)
   sll $6, $6, 3
@@ -395,12 +419,38 @@ return_to_main:
   lw $6, %lo(\table)+4($1)       # (delay) entry
 .endm
 #endif
+#endif
+
+// DISPATCH_LOOKUP_PC (claude/ibranch, 2026-11-13): lookup_pc (an I/O write
+// with side effects, an IRQ or other PC change from update_gba, halt wake)
+// probes the dispatch cache too, before paying for the C lookup -- ~110 C
+// lookups a frame on Doom II, 98-99 % of them for a cached pc in the twin.
+// lookup_pc is also where code written by the handler before it (an SMC or
+// DMA retirement's thunks, a flush) becomes visible: the C lookup's publish
+// (docs/JIT-CODE-DISCIPLINE.md section 4).  So the probe runs only when that
+// publish would do nothing -- jit_code_publish()'s own test, jit_dirty_n |
+// jit_owner_pending == 0 -- and otherwise the C lookup runs, as before.  A
+// hit then returns exactly what the lookup would have returned, as a stub
+// hit does.  Needs JIT_CODE_DISCIPLINE (gpsp_profile.h).  $1/$2/$5 are free
+// (lookup_pc_noflags keeps the T bit in $6).
+#ifdef DISPATCH_LOOKUP_PC
+.macro dc_publish_idle miss
+  lui $1, %hi(jit_dirty_n)
+  lw $2, %lo(jit_dirty_n)($1)
+  lui $1, %hi(jit_owner_pending)
+  lw $5, %lo(jit_owner_pending)($1)
+  or $2, $2, $5
+  bne $2, $0, \miss               # the caller's next word is the delay slot
+.endm
+#endif
 
 defsymbl(mips_indirect_branch_arm)
   dispatch_cycle_check 2
 #ifdef DISPATCH_CACHE
+.Ldc_arm_probe:                   # _dual and lookup_pc enter here (DISPATCH_ASSOC)
   DC_KEY_ARM
   dc_probe dispatch_cache_arm, 8f
+.Ldc_arm_probe_end:
   jr $6
   nop
 8:
@@ -414,8 +464,10 @@ defsymbl(mips_indirect_branch_arm)
 defsymbl(mips_indirect_branch_thumb)
   dispatch_cycle_check 1
 #ifdef DISPATCH_CACHE
+.Ldc_thumb_probe:
   DC_KEY_THUMB
   dc_probe dispatch_cache_thumb, 8f
+.Ldc_thumb_probe_end:
   jr $6
   nop
 8:
@@ -427,6 +479,29 @@ defsymbl(mips_indirect_branch_thumb)
   nop
 
 defsymbl(mips_indirect_branch_dual)
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+  // DISPATCH_ASSOC: do what block_lookup_address_dual does -- CPSR.T = bit 0,
+  // pc & ~1 (Thumb) or pc & ~3 (ARM; (pc + 2) & ~3 without BX_ALIGN_FIX) --
+  // then dispatch through the ARM or Thumb stub's probe, past its cycle
+  // check (_dual has none: see dispatch_cycle_check).  A miss there calls
+  // block_lookup_address_arm/_thumb with that pc and that CPSR, which is
+  // exactly the C dual lookup's own tail.  This frees the hot stub text the
+  // 2-way probe and lookup_pc's probe take (DC_STUB_FILL below keeps the
+  // stub text its old size, so nothing linked after it moves).
+.Ldc_dual_start:
+  andi $2, $4, 1                  # T
+  lw $1, REG_CPSR($16)
+  xor $4, $4, $2                  # Thumb: pc & ~1
+  ins $1, $2, 5, 1                # CPSR.T = T
+  bne $2, $0, .Ldc_thumb_probe
+  sw $1, REG_CPSR($16)            # (delay)
+#ifndef BX_ALIGN_FIX
+  addiu $4, $4, 2                 # ARM: pc + 2 ...
+#endif
+  b .Ldc_arm_probe
+  ins $4, $0, 0, 2                # (delay) ... & ~3
+.Ldc_dual_end:
+#else
 #ifdef DISPATCH_CACHE
   // block_lookup_address_dual: bit 0 set -> Thumb at pc & ~1, CPSR.T = 1;
   // clear -> ARM at (pc + 2) & ~3 (BX_ALIGN_FIX: pc & ~3), CPSR.T = 0.
@@ -463,6 +538,7 @@ defsymbl(mips_indirect_branch_dual)
   restore_registers
   jr $2                           # $2 = value returned
   nop
+#endif
 
 
 # Called on I/O writes that have side-effects
@@ -501,9 +577,27 @@ cpu_sleep_loop:
 lookup_pc:
   extract_flags                   # $1 contains CPSR now
 lookup_pc_noflags:
+#ifdef DISPATCH_LOOKUP_PC
+  andi $6, $1, 0x20               # isolate mode bit ($1 is the probe's)
+  dc_publish_idle 73f             # a publish is owed: the C lookup makes it
+  lw $4, REG_PC($16)              # (delay) PC
+  # Nothing to publish: back to the translated-code register state and
+  # dispatch as an indirect branch would (past its cycle check).  A hit
+  # jumps to the block; a miss saves the registers just restored and calls
+  # the same C lookup as below.
+  restore_registers
+  bne $6, $0, .Ldc_thumb_probe
+  nop
+  b .Ldc_arm_probe
+  nop
+73:
+  beq $6, $0, 1f                  # if T bit is zero use arm handler
+  nop
+#else
   andi $1, $1, 0x20               # isolate mode bit
   beq $1, $0, 1f                  # if T bit is zero use arm handler
   lw $4, REG_PC($16)              # load PC as arg 0
+#endif
 
   cfncall block_lookup_address_thumb, 2  # get Thumb address
   restore_registers
@@ -514,6 +608,25 @@ lookup_pc_noflags:
   restore_registers
   jr $2                                # jump to result
   nop
+.Llookup_pc_end:
+
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+# DC_STUB_FILL: mips_stub.o(.text) heads the pinned hot order
+# (psp/layout/hot.ord): everything linked after it keeps its sets only if this
+# section keeps its size.  The rewritten _dual frees more than the 2-way
+# probes and lookup_pc's probe take, so the difference is zeros here (never
+# executed: after a jr's delay slot).  OLD is what these four pieces were in
+# the build without DISPATCH_ASSOC / DISPATCH_LOOKUP_PC: _dual 27 probe words
+# + save(15) + cfncall + nop + restore(15) + jr/nop; lookup_pc_noflags 3
+# words + 2 x (cfncall + restore(15) + jr/nop); the ARM and Thumb probes 7
+# words each.
+.equ DC_OLD_BYTES, (4 * (27 + 15 + 1 + 15 + 2) + CFNCALL_BYTES) + (4 * 3 + 2 * (CFNCALL_BYTES + 4 * 17)) + 2 * 4 * 7
+.equ DC_NEW_BYTES, (.Ldc_dual_end - .Ldc_dual_start) + (.Llookup_pc_end - lookup_pc_noflags) + (.Ldc_arm_probe_end - .Ldc_arm_probe - 4) + (.Ldc_thumb_probe_end - .Ldc_thumb_probe - 4)
+.if DC_NEW_BYTES > DC_OLD_BYTES
+.error "DISPATCH_ASSOC: the stub text grew; the hot order would move (DC_STUB_FILL)"
+.endif
+  .space DC_OLD_BYTES - DC_NEW_BYTES
+#endif
 
 
 # ADR-0030: record WHERE the write landed before throwing the cache away.
@@ -724,9 +837,9 @@ defsymbl(smc_write)
   lw $1, REG_CPSR($16)            # (delay)
 1:
   collapse_flags                  # the interpreter reads NZCV from CPSR
-  sw reg_cycles, (62 * 4)($16)    # reg[REG_IO_CYCLES]: its cycle budget
+  sw reg_cycles, (RSLOT_IO_CYCLES * 4)($16)    # reg[REG_IO_CYCLES]: its cycle budget
   cfncall smc_pipe_step, 14
-  lw reg_cycles, (62 * 4)($16)    # what is left after the window
+  lw reg_cycles, (RSLOT_IO_CYCLES * 4)($16)    # what is left after the window
   move $19, $2                    # alert ($19 is dead: we never return)
   extract_flags                   # NZCV (and $1 = CPSR) as it left them
   bne $19, $0, write_io_epilogue
@@ -1125,7 +1238,50 @@ defobj(memory_map_read)
 # memory_map_read is immediately before arm_reg on purpose (offset used
 # to access it, via lw op). We do not use write though.
 defobj(reg)
+#ifdef SCHED_HOT_IN_REG
+# SCHED_HOT (sched_hot.h): the scheduler's per-call state sits in reg[] slots
+# that no MIPS code uses, on the two register lines update_gba touches on
+# every call anyway.  Each variable is a label at its slot; the C code names
+# them as before.  The block is 64 words, as without it.  sched_pos counts
+# the bytes emitted since `reg` (an expression in `.` here makes gas loop).
+.set sched_pos, 0
+.macro sched_gap slot
+  .if (\slot * 4) < sched_pos
+  .error "SCHED_HOT: slots out of order"
+  .endif
+  .space (\slot * 4) - sched_pos
+  .set sched_pos, (\slot * 4)
+.endm
+.macro sched_slot name, slot, init
+  sched_gap \slot
+defobj(\name)
+  .long \init
+  .set sched_pos, sched_pos + 4
+.endm
+  sched_slot video_count,       SCHED_SLOT_VIDEO_COUNT,    0
+  sched_slot execute_cycles,    SCHED_SLOT_EXECUTE_CYCLES, 0
+  sched_slot cpu_ticks,         SCHED_SLOT_CPU_TICKS,      0
+  sched_slot cph_ugba,          SCHED_SLOT_CPH_UGBA,       0
+  sched_slot sched_hop_active,  SCHED_SLOT_HOP_ACTIVE,     0
+#ifdef SCHED_FAST
+  sched_slot sched_fast,        SCHED_SLOT_SCHED_FAST,     SCHED_FAST_DEFAULT
+#endif
+  sched_slot serial_mode,       SCHED_SLOT_SERIAL_MODE,    SCHED_SERIAL_MODE_INIT
+  sched_slot serial_irq_cycles, SCHED_SLOT_SERIAL_IRQ,     0
+#if defined(HALT_HOP)
+  sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     HALT_HOP_DEFAULT
+#elif defined(TIMER_LAZY)
+  sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     TIMER_LAZY_DEFAULT
+#endif
+  sched_slot core_phase_lvl,    SCHED_SLOT_CORE_PHASE_LVL, 0
+  sched_gap SCHED_SLOT_TIMER
+defobj(timer)
+  .space 4 * SCHED_TIMER_BYTES
+  .set sched_pos, sched_pos + 4 * SCHED_TIMER_BYTES
+  sched_gap 64                    # the end of reg[]: 0x100 bytes
+#else
   .space 0x100
+#endif
 
 # Placed here for easy access
 defobj(palette_ram)

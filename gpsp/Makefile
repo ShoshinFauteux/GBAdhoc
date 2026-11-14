@@ -722,6 +722,19 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DISPATCH_PRECISE),1)
 	CFLAGS += -DDISPATCH_PRECISE=1
 	endif
+	# DISPATCH_ASSOC=1: (claude/ibranch).  With DISPATCH_CACHE, the
+	# same 4 KiB per ISA as 2-way sets: removes most of the table's conflict
+	# misses (each one a ~2 us C lookup).  Exact: same entries, same keys,
+	# same invalidation points.
+	ifeq ($(DISPATCH_ASSOC),1)
+	CFLAGS += -DDISPATCH_ASSOC=1
+	endif
+	# DISPATCH_LOOKUP_PC=1: (claude/ibranch).  lookup_pc probes the
+	# dispatch cache before the C lookup when no publish is owed
+	# (needs JIT_CODE_DISCIPLINE, not JIT_CODE_AB).
+	ifeq ($(DISPATCH_LOOKUP_PC),1)
+	CFLAGS += -DDISPATCH_LOOKUP_PC=1
+	endif
 	# SMC_SAME_SKIP=1: (cpu-levers).  A single-store SMC trap
 	# in IWRAM skips the retirement when every block it would retire is still
 	# exactly what it was translated from (per-halfword record of what each

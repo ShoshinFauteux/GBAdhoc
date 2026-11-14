@@ -104,7 +104,7 @@ at   exit_cb                            0x1404
 at   roster_valid                       0x0744
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1d74
+at   pte_mutex_check_need_init          0x1d54
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -120,9 +120,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x1720
-at   _ZL10pipe_latchv#1                 0x01e0
-at   netpacket_iface                    0x1eb0
+at   me_replay_lines                    0x1760
+at   _ZL10pipe_latchv#1                 0x0220
+at   netpacket_iface                    0x1f30
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -160,7 +160,7 @@ at   exit_cb                            0x1c7c
 at   roster_valid                       0x1130
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x0818
+at   pte_mutex_check_need_init          0x07f8
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -176,8 +176,8 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x0ea0
-at   _ZL10pipe_latchv#1                 0x1960
+at   me_replay_lines                    0x0ee0
+at   _ZL10pipe_latchv#1                 0x19a0
 at   netpacket_iface                    0x0150
 at   gbahot_start                       0x0000
 at   reg                                0x1b00

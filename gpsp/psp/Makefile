@@ -169,6 +169,10 @@ CFLAGS  += -ffunction-sections
 #   PSP_EXTRA="HOT_ORD=layout/hot_pair.ord" tools/build.sh ...
 HOT_ORD ?= layout/hot.ord
 LDFLAGS += -Wl,--section-ordering-file=$(HOT_ORD)
+# The cold tail (psp/cold_tail.ld): code that is on no game's per-frame path
+# unless it uses the feature (the ME write maps' DMA note and row diff), linked
+# after all other text so adding it moves no pinned function.
+LDFLAGS += -Wl,-T,cold_tail.ld
 endif
 ifneq ($(LAYOUT_PAD_BYTES),0)
 CFLAGS  += -DLAYOUT_PAD_BYTES=$(LAYOUT_PAD_BYTES)
@@ -181,7 +185,10 @@ endif
 # end well inside a 64 B step (tools/layout/ro_margin.py), because the table is
 # a few bytes shorter for a commit whose version string ends like one of its
 # entries ("59" for ...f0ce959).
-LAYOUT_PAD_RO_BYTES ?= 0
+# claude/beta5-rc (PROVISIONAL until the final re-pin): the ME write maps'
+# cold tail pushes .rodata 640 B (release RO 576 -> 0 on spd-combo), and the
+# integration had already spent this pad (512 -> 0), so it wraps: 0 - 576.
+LAYOUT_PAD_RO_BYTES ?= 7616
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -191,7 +198,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 7600
-LAYOUT_PAD_CORE_BYTES ?= 892
+LAYOUT_PAD_CORE_BYTES ?= 124
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -219,6 +226,11 @@ LAYOUT_PAD_MAIN_BYTES ?= 2304
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
 # tools/flags.lock pins it.
 LAYOUT_PAD_LATE_BYTES ?= 128
+# LAYOUT_PAD_MLU_BYTES: the zeros in front of instance A's ml_update_relevance
+# (psp/layout_pad_late.S): ml_line_body's row diff moved to the cold tail
+# (ME write maps), so this puts ml_update_relevance back where the whole
+# compare left it.  Both flavours.  tools/flags.lock pins it.
+LAYOUT_PAD_MLU_BYTES ?= 32
 # LAYOUT_PAD_XLAT_BYTES: the zeros in front of instance A's translate_block_arm, the
 # last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
 # site emitters shrank both translators, and this puts instance B's hot path, linked
@@ -548,7 +560,8 @@ layout_pad_core.o: layout_pad_mid.S
 layout_pad_main.o: layout_pad_main.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_MAIN_BYTES=$(LAYOUT_PAD_MAIN_BYTES)
 layout_pad_late.o: layout_pad_late.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_LATE_BYTES=$(LAYOUT_PAD_LATE_BYTES)
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_LATE_BYTES=$(LAYOUT_PAD_LATE_BYTES) \
+	      -DLAYOUT_PAD_MLU_BYTES=$(LAYOUT_PAD_MLU_BYTES)
 layout_pad_warm.o: layout_pad_warm.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_XLAT_BYTES=$(LAYOUT_PAD_XLAT_BYTES)
 layout_pad.o: layout_pad.S

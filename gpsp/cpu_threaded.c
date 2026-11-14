@@ -3152,7 +3152,18 @@ static void smc_stable_thunk_link(u8 *entry, u8 *body)
 #if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
 static void dispatch_cache_forget(u32 pc, u32 thumb);
 #endif
-static void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+/* DC_NOINLINE: DISPATCH_ASSOC moves the cache fill and forget out of line;
+ * the functions that used to hold them inline (this one, the two address
+ * lookups) are then small enough for gcc to inline into their callers,
+ * which grows those and moves the pinned warm tail.  Keep them calls, as
+ * they were (psp/layout_pad_warm.S and psp/gbalink_b_stubs.c hold the
+ * 32 B steps they shrank by). */
+#define DC_NOINLINE __attribute__((noinline))
+#else
+#define DC_NOINLINE
+#endif
+static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 {
   u8 *translation_ptr = entry;
 #if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
@@ -4519,6 +4530,21 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 #define DC_KEY_THUMB(pc) ((pc) >> 1)
 #endif
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
+#ifdef DISPATCH_ASSOC
+/* DISPATCH_ASSOC (claude/ibranch, 2026-11-13): the same 4 KiB per ISA, as
+ * 2-way sets -- {key0, entry0, key1, entry1}, 16 bytes, one quarter of a
+ * D-cache line -- instead of 512 direct-mapped slots.  The twin
+ * (builds/ibranch-out) found almost every C fall-through of the
+ * direct-mapped table to be a CONFLICT miss (Doom II 138 of 140 a frame,
+ * Duke 191 of 193): ~200-250 hot targets a frame alias in 512 slots, ROM and
+ * IWRAM code every 2 KiB.  Two ways remove 60-75 % of them; the probe reads
+ * the same line either way.  A fill goes to way 0 and moves a live way 0 to
+ * way 1 (no reordering on a hit: the asm hit path never writes).  Same
+ * entries, same keys, same invalidation points: a hit still returns exactly
+ * what the C lookup returned for that pc. */
+#define DC_SMASK  ((1u << (DISPATCH_CACHE_BITS - 1)) - 1)
+#define DC_SET(k) (((k) & DC_SMASK) * 4)        /* word index of way 0 */
+#endif
 #if defined(XLAT_FAST) && !defined(XLAT_NO_DCLEAR)
 /* XLAT_FAST DCLEAR: every RAM flush and every partial retirement empties
  * both tables -- 8 KiB of memset, 12+ times a frame on the SMC-heavy titles,
@@ -4526,7 +4552,9 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
  * remember those slots (each at most once: a slot is listed when it goes from
  * empty to full) and reset just them.  The tables end up exactly as the
  * memset leaves them (every word 0xFFFFFFFF).  The first clear after boot
- * is a full memset, since .bss zeros are not "empty". */
+ * is a full memset, since .bss zeros are not "empty".  (DISPATCH_ASSOC: a
+ * slot is still 8 bytes, way 0 of set s being slot 2s and way 1 slot 2s+1,
+ * so this list and this clear are unchanged.) */
 static u16 dc_filled[2 << DISPATCH_CACHE_BITS];   /* (table << BITS) | slot */
 static u32 dc_filled_n;
 static u32 dc_list_valid;
@@ -4587,7 +4615,12 @@ static inline int dc_fill_ok(u32 pc)
   if (r == 2) return !(pc & 0x00FC0000u);
   return 1;
 }
+#ifdef DISPATCH_ASSOC
+/* out of line: smc_stable_thunk_dispatch sits in the pinned warm tail */
+static void __attribute__((noinline)) dispatch_cache_forget(u32 pc, u32 thumb)
+#else
 static void dispatch_cache_forget(u32 pc, u32 thumb)
+#endif
 {
   u32 r = (pc >> 24) & 0xF, k, i;
   u32 *tbl;
@@ -4596,24 +4629,64 @@ static void dispatch_cache_forget(u32 pc, u32 thumb)
   else return;                          /* only RAM blocks retire */
   if (thumb) { k = pc >> 1; tbl = dispatch_cache_thumb; }
   else       { k = pc >> 2; tbl = dispatch_cache_arm; }
+#ifdef DISPATCH_ASSOC
+  i = DC_SET(k);
+  if (tbl[i + 2] == k)
+    tbl[i + 2] = DC_TOMB;
+#else
   i = (k & DC_MASK) * 2;
+#endif
   if (tbl[i] == k)
     tbl[i] = DC_TOMB;
 }
 #else
 #define DC_FILL_OK(pc) 1
 #endif
+#ifdef DISPATCH_ASSOC
+/* DISPATCH_ASSOC fill, out of line (the lookups that call it sit in the
+ * pinned warm tail; it runs only on a C lookup).  A key already in the set
+ * keeps its way (a C lookup can meet a cached pc: the frame-start lookup, a
+ * lookup_pc with a publish owed).  Otherwise the newcomer takes way 0 and a
+ * live way 0 moves to way 1; an empty or forgotten way 0 is overwritten.
+ * Each slot that goes from empty to full is listed for the clear. */
+#ifndef DC_TOMB
+#define DC_TOMB 0xFFFFFFFEu
+#endif
+static void __attribute__((noinline)) dc_put_assoc(u32 *tbl, u32 k, u32 p)
+{
+  u32 i = DC_SET(k);
+  if (tbl[i] == k) {
+    tbl[i + 1] = p;
+    return;
+  }
+  if (tbl[i + 2] == k) {
+    tbl[i + 3] = p;
+    return;
+  }
+  if (tbl[i] != 0xFFFFFFFFu && tbl[i] != DC_TOMB) {
+    DC_NOTE_FILL(tbl, i + 2);
+    tbl[i + 2] = tbl[i];
+    tbl[i + 3] = tbl[i + 1];
+  } else {
+    DC_NOTE_FILL(tbl, i);
+  }
+  tbl[i] = k;
+  tbl[i + 1] = p;
+}
+#define DC_PUT(tbl, key, ptr) dc_put_assoc((tbl), (key), (u32)(uintptr_t)(ptr))
+#else
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
   DC_NOTE_FILL(tbl, i_);                                                      \
   (tbl)[i_] = k_; (tbl)[i_ + 1] = (u32)(uintptr_t)(ptr);                      \
 } while (0)
+#endif
 #else
 #define DC_PUT(tbl, key, ptr) do { } while (0)
 #define DC_FILL_OK(pc) 0
 #endif
 
-u8 function_cc *block_lookup_address_arm(u32 pc)
+DC_NOINLINE u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   unsigned i;
   DRPH_SCOPE(DRPH_DISP);
@@ -4646,7 +4719,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   BADJUMP_EXHAUSTED_X(pc, arm);
 }
 
-u8 function_cc *block_lookup_address_thumb(u32 pc)
+DC_NOINLINE u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
   DRPH_SCOPE(DRPH_DISP);

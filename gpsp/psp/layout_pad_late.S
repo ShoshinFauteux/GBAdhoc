@@ -26,3 +26,19 @@
 layout_pad_late:
 	.space LAYOUT_PAD_LATE_BYTES
 	.size layout_pad_late, . - layout_pad_late
+
+/* The second pad: in front of instance A's ml_update_relevance, the row after
+ * ml_line_body, by the same rule (named like its section, linked before the
+ * core).  ml_line_body's palette/OAM compare moved to the cold tail with the
+ * ME write maps (video_me_log.h ml_diff_rows), and LAYOUT_PAD_MLU_BYTES of
+ * zeros keep ml_update_relevance where the inlined compare left it. */
+#ifndef LAYOUT_PAD_MLU_BYTES
+#define LAYOUT_PAD_MLU_BYTES 0
+#endif
+	.section .text._ZL19ml_update_relevancem,"ax",@progbits
+	.balign 4
+	.globl layout_pad_mlu
+	.type layout_pad_mlu, @function
+layout_pad_mlu:
+	.space LAYOUT_PAD_MLU_BYTES
+	.size layout_pad_mlu, . - layout_pad_mlu

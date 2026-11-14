@@ -188,6 +188,14 @@
 #if !defined(GPSP_NO_DISPATCH_PRECISE) && !defined(DISPATCH_PRECISE)
 #define DISPATCH_PRECISE 1
 #endif
+#if !defined(GPSP_NO_DISPATCH_ASSOC) && !defined(DISPATCH_ASSOC)
+#define DISPATCH_ASSOC 1
+#endif
+/* Off by itself under JIT_CODE_AB (harness A/B selector): see gpsp_profile.h. */
+#if !defined(GPSP_NO_DISPATCH_LOOKUP_PC) && !defined(DISPATCH_LOOKUP_PC) && \
+    !defined(JIT_CODE_AB)
+#define DISPATCH_LOOKUP_PC 1
+#endif
 #if !defined(GPSP_NO_XLAT_FAST) && !defined(XLAT_FAST)
 #define XLAT_FAST 1
 #endif

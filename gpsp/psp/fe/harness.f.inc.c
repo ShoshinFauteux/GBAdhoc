@@ -314,7 +314,7 @@ static int drprof_sampler(SceSize args, void *argp)
       SceKernelThreadRunStatus st;
       unsigned ph;
       sceKernelDelayThread((SceUInt)g_drs_us);
-      ph = reg[40] & 15u;
+      ph = reg[RSLOT_DRPH] & 15u;
       memset(&st, 0, sizeof(st));
       st.size = sizeof(st);
       g_drs_n++;
@@ -335,7 +335,7 @@ static int drprof_sampler(SceSize args, void *argp)
             if (inst == 0)
                g_lps_a[ph]++;
             else if (inst == 1)
-               g_lps_b[gbab_reg[40] & 15u]++;
+               g_lps_b[gbab_reg[RSLOT_DRPH] & 15u]++;
             else if (fe == FELP_CORE)
                g_lps_pair++;
             if (inst >= 0 && (fe == FELP_LOOP || fe >= FELP_L0))
@@ -508,7 +508,7 @@ static void drprof_stop(unsigned frame)
    g_drs_thid = -1;
    drprof_window(frame);
 }
-#define DRPROF_PHASE(p) (reg[40] = (p))
+#define DRPROF_PHASE(p) (reg[RSLOT_DRPH] = (p))
 #else
 #define drprof_start()       do { } while (0)
 #define drprof_stop(f)       do { (void)(f); } while (0)
