@@ -1041,8 +1041,8 @@ static void ff_win_note(void)
    core_us    = n ? (unsigned)((tot - u0) / n) : 0u;
    if (!g_ff_uncapped && !g_ff_mult)
       mode = "off";
-   else if (g_ff_mult)
-      mode = "3x";
+   else if (g_ff_mult || g_ffh_3x)
+      mode = pcfg_ff_name();   /* "1.5x", "2x", "3x" (paced or ceiling) */
    else if (!g_ff_user || g_pcfg.bench_mode)
       mode = "harness";
    else

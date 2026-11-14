@@ -71,6 +71,7 @@ static int lat_swap(int early)
  * `n` vblanks after the last one (n = 1: the last one has not latched yet).
  * g_lat_sub_vc is read just before the submit: a vblank inside that window
  * (microseconds) makes the last flip latch one later than assumed here. */
+/* @extract:begin ff:ffh_cadence */
 static __attribute__((noinline)) int ffh_too_soon(unsigned n)
 {
    return (int)(sceDisplayGetVcount() - (g_lat_sub_vc + n)) < 0;
@@ -90,26 +91,67 @@ static int ffh_hold(void)
    return 1;
 }
 
-/* FF FLIP PACING bit 2: the 3x ceiling for 3x run through the gate.  At most
- * 3 frames per vblank since the anchor (the current interval's 3 included);
- * ahead of that, block on the vblank, as the paced 3x loop does.  Behind by
- * more than 8 vblanks' worth: re-anchor (forgive, never sprint). */
-static void ffh_cap3(void)
+/* FF FLIP PACING bit 2: the multiplier ceiling (ff_gate.h) for 1.5x, 2x and
+ * 3x run through the gate.  At most ff_mult_x10 / 10 frames per vblank since
+ * the anchor (the current interval's included); ahead of that, block on the
+ * vblank, as the paced loop does.  Behind by more than 8 vblanks' worth:
+ * re-anchor (forgive, never sprint).  For 3x this is the arithmetic of the
+ * 3x-only ceiling it replaces. */
+static unsigned ffh_cap_mult(void)
 {
+   unsigned m = (unsigned)g_pcfg.ff_mult_x10;
+   return m ? m : 30u;   /* never 0 here: 0 would never stop waiting */
+}
+
+static __attribute__((noinline)) void ffh_cap(void)
+{
+   unsigned m = ffh_cap_mult();
    unsigned f = fe_host_frame_count(), vc = sceDisplayGetVcount();
-   if (!g_ffc_on || (int)(3u * (vc - g_ffc_vc) - (f - g_ffc_f)) > 3 * 8)
+   int blocked = 0;
+   if (!g_ffc_on || ff_cap_lost(m, f - g_ffc_f, vc - g_ffc_vc))
    {
       g_ffc_on = 1;
       g_ffc_vc = vc;
       g_ffc_f  = f;
+      g_ffc_bvc = vc - 2u;   /* not "just blocked": the gate draws first */
       return;
    }
-   while ((int)((f - g_ffc_f) - 3u * (sceDisplayGetVcount() - g_ffc_vc)) >= 3)
+   while (ff_cap_over(m, f - g_ffc_f, sceDisplayGetVcount() - g_ffc_vc) >= 0)
    {
       sceDisplayWaitVblankStart();
       g_ffc_waits++;
+      blocked = 1;
    }
+   if (blocked)
+      g_ffc_bvc = sceDisplayGetVcount();
 }
+
+/* The draw decision of a frame under the multiplier ceiling, at its start
+ * (ff_gate.h THE DRAW RULE BELOW 3x).  1.5x and 2x, on pace -- the anchor is
+ * set, every interval since it had its quota, and the ceiling blocked into
+ * this interval or the one before -- draw the frame the ceiling will stop
+ * after, so each vblank gets the newest frame of its interval.  Otherwise
+ * (3x always, so 3x is unchanged) the draw gate decides; leaving the
+ * ceiling's rule re-arms the gate, so its first frame is drawn at once
+ * instead of waiting out a boundary the ceiling's frames used. */
+static __attribute__((noinline)) int ffh_cap_draw(void)
+{
+   unsigned m = ffh_cap_mult(), vc = sceDisplayGetVcount();
+   unsigned df = fe_host_frame_count() - g_ffc_f, dv = vc - g_ffc_vc;
+   if (m < 30u && g_ffc_on && ff_cap_on_pace(m, df, dv) &&
+       vc - g_ffc_bvc <= 1u)
+   {
+      g_ffc_q = 1;
+      return ff_cap_last(m, df, dv);
+   }
+   if (g_ffc_q)
+   {
+      g_ffc_q = 0;
+      ff_gate_arm(&g_ff_gate_st, g_ff_gate_st.period_us);
+   }
+   return ff_gate_frame(&g_ff_gate_st, net_now_us());
+}
+/* @extract:end ff:ffh_cadence */
 
 /* The paced branch's vblank wait, in three calls: begin, one step per pass
  * of the wait loop (1 = poll again shortly instead of blocking on the

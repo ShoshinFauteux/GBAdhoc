@@ -28,8 +28,15 @@ static int pcfg_filter_clamp(int f)
    return f ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
 }
 
+/* Each preset's multiplier in tenths (0 = unlimited), by PCFG_FF_*. */
+static const unsigned char ff_mult_of[PCFG_FF_COUNT] = { 15, 20, 30, 0, 0 };
+
 int pcfg_ff_mode(void)
 {
+   if (g_pcfg.ff_mult_x10 == 15)
+      return PCFG_FF_1_5X;
+   if (g_pcfg.ff_mult_x10 == 20)
+      return PCFG_FF_2X;
    if (g_pcfg.ff_mult_x10 != 0)
       return PCFG_FF_3X;
    return g_pcfg.ff_smooth ? PCFG_FF_SMOOTH : PCFG_FF_UNLIMITED;
@@ -39,14 +46,14 @@ void pcfg_ff_set_mode(int mode)
 {
    if (mode < 0 || mode >= PCFG_FF_COUNT)
       mode = PCFG_FF_3X;
-   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : 0;
+   g_pcfg.ff_mult_x10 = ff_mult_of[mode];
    g_pcfg.ff_smooth = mode != PCFG_FF_UNLIMITED;
 }
 
 const char *pcfg_ff_name(void)
 {
    static const char *const names[PCFG_FF_COUNT] = {
-      "3x", "Unlimited", "Unlimited Smooth"
+      "1.5x", "2x", "3x", "Unlimited", "Unlimited Smooth"
    };
    return names[pcfg_ff_mode()];
 }
@@ -149,6 +156,13 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.filter      = (int)fe_ini_get_int(cfg_path, "filter",
                                             VID_FILTER_NEAREST);
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 30);
+   /* Any legacy multiplier is 3x; ff_speed_x10 (new with 1.5x/2x) refines
+    * it.  A missing or unknown ff_speed_x10 leaves 3x (config_psp.h). */
+   if (g_pcfg.ff_mult_x10 != 0)
+   {
+      int sp = (int)fe_ini_get_int(cfg_path, "ff_speed_x10", 30);
+      g_pcfg.ff_mult_x10 = sp == 15 || sp == 20 ? sp : 30;
+   }
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
    g_pcfg.frameskip_sparse = (int)fe_ini_get_int(cfg_path, "frameskip_sparse", 0);
    if (g_pcfg.frameskip_sparse < 0 || g_pcfg.frameskip_sparse > 15)
@@ -563,7 +577,10 @@ void pcfg_save(void)
     * so their file stays byte-identical to 3.0's. */
    fe_ini_set_int(cfg_path, "btn_swap", ctl_legacy_swap(&g_pcfg.controls));
    fe_ini_set_int(cfg_path, "filter", g_pdisp[FE_CONSOLE_GBA].filter);
-   fe_ini_set_int(cfg_path, "ff_mult_x10", g_pcfg.ff_mult_x10);
+   /* Legacy key: 30 for any multiplier, so an older build reads 3x. */
+   fe_ini_set_int(cfg_path, "ff_mult_x10", g_pcfg.ff_mult_x10 ? 30 : 0);
+   fe_ini_set_int(cfg_path, "ff_speed_x10",
+                  g_pcfg.ff_mult_x10 ? g_pcfg.ff_mult_x10 : 30);
    fe_ini_set_int(cfg_path, "ff_hold", g_pcfg.ff_hold);
    fe_ini_set_int(cfg_path, "frameskip_sparse", g_pcfg.frameskip_sparse);
    fe_ini_set_int(cfg_path, "ff_smooth", g_pcfg.ff_smooth);

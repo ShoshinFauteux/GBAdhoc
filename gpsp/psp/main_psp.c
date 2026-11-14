@@ -740,7 +740,7 @@ int main(int argc, char *argv[])
    simff      = fe_ini_get_int(HARNESS_INI, "simff", 0);   /* harness: hold a
                               virtual FF button for N frames from frame 300
                               (PPSSPP can't press Square; run_ui_smoke.sh) */
-   /* Harness `ff_preset = 3x | unlimited | smooth`: the user FF preset a
+   /* Harness `ff_preset = 1.5x | 2x | 3x | unlimited | smooth`: the preset a
     * `simff` hold engages, without staging a config.ini (docs/FF-PRESETS.md).
     * Echoed either way, so a misspelt value reads as bad= instead of
     * silently measuring the config's preset (harness-ini key trap). */
@@ -748,7 +748,9 @@ int main(int argc, char *argv[])
       char ffp[16];
       if (fe_ini_get(HARNESS_INI, "ff_preset", ffp, sizeof(ffp)))
       {
-         int m = !strcmp(ffp, "3x") ? PCFG_FF_3X :
+         int m = !strcmp(ffp, "1.5x") ? PCFG_FF_1_5X :
+                 !strcmp(ffp, "2x") ? PCFG_FF_2X :
+                 !strcmp(ffp, "3x") ? PCFG_FF_3X :
                  !strcmp(ffp, "unlimited") ? PCFG_FF_UNLIMITED :
                  !strcmp(ffp, "smooth") ? PCFG_FF_SMOOTH : -1;
          if (m >= 0)
@@ -3682,6 +3684,8 @@ session_top:
                fe_host_option_set_live("gpsp_frameskip", "disabled");
                ff_last_mode = pcfg_ff_mode();
                ff_last_me = g_me_rend;
+               g_ffc_on = 0;     /* a new multiplier re-anchors its ceiling */
+               g_ffm_acc = 0;
                osd_chip_ff(ff_chip_text());
                fe_evt("ff_user on mult_x10=%d", g_pcfg.ff_mult_x10);
             }
@@ -3736,7 +3740,9 @@ session_top:
                ff_gate_arm(&g_ff_gate_st, period);
             if (period)
             {
-               draw = ff_gate_frame(&g_ff_gate_st, net_now_us());
+               /* 1.5x / 2x on pace: the ceiling's last frame (ffh_cap_draw) */
+               draw = g_ffh_3x ? ffh_cap_draw() :
+                                 ff_gate_frame(&g_ff_gate_st, net_now_us());
                if (!draw)
                   FFW_GATED();
             }
@@ -3947,10 +3953,17 @@ session_top:
       }
       else if (g_ff_mult)
       {
-         int i;
-         for (i = 0; i < 3; i++)
+         /* ff_mult_x10 / 10 frames a loop, the last one shown: 3x runs 3,
+          * 2x 2, 1.5x 1, 2, 1, 2 ... (tenths owed carried in g_ffm_acc). */
+         int i, n;
+/* @extract:begin ff:mult_frames */
+         g_ffm_acc += (unsigned)g_pcfg.ff_mult_x10;
+         n = (int)(g_ffm_acc / 10u);
+         g_ffm_acc %= 10u;
+/* @extract:end ff:mult_frames */
+         for (i = 0; i < n; i++)
          {
-            g_blit_suppress = (i != 2);
+            g_blit_suppress = (i != n - 1);
             if (fe_host_autopilot_gate())
                fe_autopilot_frame();
             gblink_script_disconnect();
@@ -4482,7 +4495,7 @@ session_top:
       else
       {
          if (g_ffh_3x)
-            ffh_cap3();           /* FF FLIP PACING bit 2: the 3x ceiling */
+            ffh_cap();            /* FF FLIP PACING bit 2: the multiplier ceiling */
          if (g_drew)
          {
          /* UNCAPPED FF: swap only when a frame was actually blitted.

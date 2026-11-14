@@ -96,11 +96,11 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x1420
-size main                               34264
+size main                               34380
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x1760
+at   exit_cb                            0x1404
 at   roster_valid                       0x0744
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
@@ -122,7 +122,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x1720
 at   _ZL10pipe_latchv#1                 0x01e0
-at   netpacket_iface                    0x1ea0
+at   netpacket_iface                    0x1eb0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -152,15 +152,15 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x0ae0
-size main                               49360
+size main                               49428
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x00d8
+at   exit_cb                            0x1c7c
 at   roster_valid                       0x1130
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x0828
+at   pte_mutex_check_need_init          0x0818
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -178,7 +178,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x0ea0
 at   _ZL10pipe_latchv#1                 0x1960
-at   netpacket_iface                    0x0140
+at   netpacket_iface                    0x0150
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
