@@ -116,11 +116,15 @@ model release -DMUT_EVT_TEXT && ok "M14 control: release unaffected" || bad "M14
 # ---- source mutants (copies of the shell or of one fragment, mounted over the read-only tree)
 MC="$SRC/psp/main_psp.c"
 srcmut() {  # srcmut <name> <python edit> [<fragment fe/X.inc.c>]; leaves $OUT/<name>/xs/report.txt
-  # Without a fragment the edit is tried on the shell, then (Epoch C C1: the exit
-  # helpers and the shared teardown moved there) on fe/teardown.inc.c if the tree has it.
+  # Without a fragment the edit is tried on the shell, then (Epoch C C3-2c: the session's
+  # phases moved there) on fe/session.inc.c, then (Epoch C C1: the exit helpers and the
+  # shared teardown moved there) on fe/teardown.inc.c, where the tree has them.
   local d="$OUT/$1" frag="${3:-}"; rm -rf "$d"; mkdir -p "$d"
   if [ -z "$frag" ] && [ -f "$SRC/psp/fe/teardown.inc.c" ] && ! $ED "$MC" "$d/main_psp.c" "$2" 2>/dev/null; then
     frag=fe/teardown.inc.c
+    if [ -f "$SRC/psp/fe/session.inc.c" ] && $ED "$SRC/psp/fe/session.inc.c" "$d/frag.inc.c" "$2" 2>/dev/null; then
+      frag=fe/session.inc.c
+    fi
   fi
   if [ -n "$frag" ]; then
     $ED "$SRC/psp/$frag" "$d/frag.inc.c" "$2" || return 1
@@ -140,7 +144,8 @@ h = [j for j, l in enumerate(L) if re.search(r"(FE_HANDOFF|handoff_run)\(2, \"ba
 helper = "exit_early_end(" in L[h[0]]
 v = [j for j in range(h[0] - 6, h[0]) if L[j].strip() == "vid_term();"]; assert helper or len(v) == 1, v
 e = [j for j in range(h[0] - 6, h[0]) if "fe_evt(\"exit code=2 reason=bad_variant\")" in L[j]]; assert len(e) == 1, e
-m = [j for j, l in enumerate(L) if l.startswith("int main(")]; assert len(m) == 1, m
+# (the line-shift mutants insert above main(), or above session_select where B1 now is)
+m = [j for j, l in enumerate(L) if l.startswith("int main(") or " int session_select(" in l]; assert len(m) == 1, m
 def no_vidterm():
     if helper:
         ind = L[h[0]][:len(L[h[0]]) - len(L[h[0]].lstrip())]

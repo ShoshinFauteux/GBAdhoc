@@ -364,10 +364,7 @@ def epochc_unloop(main_text, source):
             if not re.match(r'^&\w+$', a):
                 raise ExtractError('epochc: %s is by address, given %s' % (p, a))
             x = a[1:]
-            body = re.sub(r'\(\*%s\)' % p, '\x00', body)
-            body = re.sub(r'\*%s\b' % p, '\x00', body)
-            body = re.sub(r'\b%s->' % p, '\x00.', body)
-            body = re.sub(r'(?<![\w.])%s\b' % p, '&\x00', body).replace('\x00', x)
+            body = _byaddr_text(body, p, x)   # code only, not strings or comments
         elif a != p:
             body = re.sub(r'(?<![\w.>])%s\b' % p, a, body)
     nxt = ''.join('      ' + ln + '\n' if ln.strip() else ln + '\n'
@@ -378,10 +375,114 @@ def epochc_unloop(main_text, source):
             main_text[t.end():])
 
 
+# Epoch C C3-2c (fe/session.inc.c): main()'s pass before the frame loop is session
+# phases, each main()'s text moved: `if (session_x(..) >= 0)\n return 0;` (a phase with
+# exits, ending in `return -1;`) or `session_x(..);` (void).  Pasted back over the call
+# with a by-address parameter's `(*P)`, `*P`, `P->` and bare `P` read as main()'s local
+# (the call passes `&P`), and `PSP_FILE_PATH_CAP` left as it is (the phase's
+# `sizeof(<path>)`: main()'s path buffers are PSP_FILE_PATH_CAP arrays).
+EPOCHC_PHASES = ('session_select', 'session_configure', 'session_load', 'session_net_up',
+                 'session_pre_loop')
+
+
+_CODE = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[^/"\']+|.', re.S)
+
+
+def _byaddr_text(text, p, x=None):
+    """text with the by-address parameter p read as main()'s local p: `(*p)` (not a
+    call's or sizeof's parentheses) and `*p` as `p`, `p->` as `p.`, a bare `p` as `&p`;
+    in code only (comments and string literals as they are)."""
+    out, code = [], []
+
+    def flush():
+        s = ''.join(code)
+        s = re.sub(r'(?<![\w)\]])\(\*%s\)' % p, '\x00', s)
+        s = re.sub(r'\*%s\b' % p, '\x00', s)
+        s = re.sub(r'(?<![\w.>])%s->' % p, '\x00.', s)
+        s = re.sub(r'(?<![\w.>\x00])%s\b' % p, '&\x00', s)
+        out.append(s.replace('\x00', x or p))
+        code.clear()
+    for m in _CODE.finditer(text):
+        s = m.group(0)
+        if s.startswith(('/*', '//', '"', "'")):
+            flush()
+            out.append(s)
+        else:
+            code.append(s)
+    flush()
+    return ''.join(out)
+
+
+def _split_top(text):
+    out, cur, d = [], '', 0
+    for ch in text:
+        if ch == ',' and d == 0:
+            out.append(cur)
+            cur = ''
+            continue
+        d += ch in '([{'
+        d -= ch in ')]}'
+        cur += ch
+    if cur.strip():
+        out.append(cur)
+    return [re.sub(r'\s+', ' ', x).strip() for x in out]
+
+
+def _phase_def(source, name):
+    m = re.search(r'^static [^\n]*\b(int|void) ' + name + r'\(', source, re.M)
+    if not m:
+        return None
+    i, d = m.end() - 1, 0
+    for j in range(i, len(source)):
+        d += source[j] == '('
+        d -= source[j] == ')'
+        if d == 0:
+            break
+    params = _split_top(source[i + 1:j])
+    if params == ['void']:
+        params = []
+    k = source.index('{\n', j)
+    end = source.index('\n}\n', k)
+    return m.group(1), params, source[k + 2:end + 1]
+
+
+def epochc_phases(main_text, source):
+    """main()'s text with the session phases' calls replaced by their bodies (unchanged
+    on a tree before Epoch C C3-2c)."""
+    for name in EPOCHC_PHASES:
+        d = _phase_def(source, name)
+        if not d:
+            continue
+        kind, params, body = d
+        if kind == 'int':
+            pat = re.compile(r'^   if \(' + name + r'\((.*?)\) >= 0\)\n      return 0;\n', re.M | re.S)
+            if not body.endswith('   return -1;\n'):
+                raise ExtractError('epochc: %s() does not end in `return -1;`' % name)
+            body = body[:-len('   return -1;\n')]
+        else:
+            pat = re.compile(r'^   ' + name + r'\((.*?)\);\n', re.M | re.S)
+        hits = pat.findall(main_text)
+        if len(hits) != 1:
+            raise ExtractError('epochc: main() calls %s() %d times' % (name, len(hits)))
+        args = _split_top(hits[0])
+        if len(args) != len(params):
+            raise ExtractError('epochc: %s() given %d arguments' % (name, len(args)))
+        for p, a in zip(params, args):
+            pn = re.search(r'(\w+)\W*$', re.sub(r'\[[^\]]*\]', '', p)).group(1)
+            if a == '&' + pn:
+                body = _byaddr_text(body, pn)
+            elif a != pn:
+                raise ExtractError('epochc: %s(): %s is given %s' % (name, pn, a))
+        m = pat.search(main_text)
+        main_text = main_text[:m.start()] + body + main_text[m.end():]
+    return main_text
+
+
 def epochc_expand(main_text, source):
     """main()'s text with boot_run() and session_end()/process_end() calls replaced by
     their bodies (unchanged on a tree before Epoch C C1c / C2)."""
     main_text = epochc_unloop(main_text, source)
+    main_text = epochc_phases(main_text, source)
     if len(EPOCHC_BOOT_CALL.findall(main_text)) == 1:
         body = _boot_body(source)
         main_text = EPOCHC_BOOT_CALL.sub(lambda m: body, main_text)

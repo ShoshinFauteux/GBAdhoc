@@ -759,16 +759,63 @@ def inline_helpers(toks, names):
 
 # Epoch C C2 (PLAN-EPOCHC-beta5 §3 C2) moves main()'s boot, unchanged, into a function of
 # its own: `boot_run`, called once as `if (boot_run(ARGS) >= 0) return 0;` and ending in
-# `return -1;` (its probes' `return 0;` are main()'s own, as before).  The tools read main()
-# as the code it runs: that statement is replaced by boot_run's body without the trailing
-# `return -1;`, every token a copy of the body's own (its own line and file: the text was
-# moved, not shared, so its sites keep lines of their own).  boot_run's own definition is
-# left in the token list.
+# `return -1;` (its probes' `return 0;` are main()'s own, as before).  Epoch C C3-2c moves
+# the session's phases the same way (session_select, session_load, session_net_up in that
+# form; session_configure and session_pre_loop, which have no exits, are void and called
+# as a statement `NAME(ARGS);`).  The tools read main() as the code it runs: the call is
+# replaced by the body (without the trailing `return -1;`), every token a copy of the
+# body's own (its own line and file: the text was moved, not shared, so its sites keep
+# lines of their own).  A parameter given `&X` is main()'s local by address: `*P` reads as
+# `X`, `P->f` as `X.f`, a bare `P` as `&X`.  Every other argument must be the parameter's
+# own name (the text moved with main()'s names).  The definitions are left in the list.
+
+def _byaddr(body, params, args, what):
+    """body's tokens with the by-address parameters read as main()'s locals (see above)."""
+    byaddr = {}
+    for p, a in zip(params, args):
+        if len(a) == 2 and a[0].text == '&' and a[1].kind == 'id':
+            byaddr[p] = a[1]
+        elif not (len(a) == 1 and a[0].text == p):
+            raise ValueError('splice: %s: parameter %s is given %s, not its own name or &local'
+                             % (what, p, ' '.join(x.text for x in a)))
+    out, k, n = [], 0, len(body)
+    while k < n:
+        b = body[k]
+        if b.kind == 'id' and b.text in byaddr and not (k and body[k - 1].text in ('.', '->')):
+            x = byaddr[b.text]
+            prev = body[k - 1] if k else None
+            unary = prev is not None and prev.text == '*' and (
+                k < 2 or body[k - 2].kind not in ('id', 'num') and body[k - 2].text not in (')', ']'))
+            if unary:
+                out[-1] = Tok(x.kind, x.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+                out[-1].oline = b.oline
+            elif k + 1 < n and body[k + 1].text == '->':
+                c = Tok(x.kind, x.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+                d = Tok('op', '.', body[k + 1].line, body[k + 1].ifs,
+                        body[k + 1].file if body[k + 1].file != 'main_psp.c' else None)
+                c.oline, d.oline = b.oline, body[k + 1].oline
+                out += [c, d]
+                k += 2
+                continue
+            else:
+                c = Tok('op', '&', b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+                d = Tok(x.kind, x.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+                c.oline = d.oline = b.oline
+                out += [c, d]
+            k += 1
+            continue
+        cp = Tok(b.kind, b.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
+        cp.oline = b.oline
+        out.append(cp)
+        k += 1
+    return out
+
 
 def splice_moved(toks, names):
-    """toks with each `if ( NAME ( .. ) >= 0 ) return 0 ;` of a name in `names` replaced by
-    NAME's body (see above).  Returns the input list itself when the TU defines none of
-    them; refuses a definition that does not end in `return -1;` or a call of another form."""
+    """toks with each `if ( NAME ( .. ) >= 0 ) return 0 ;` (NAME ends in `return -1;`) or
+    `NAME ( .. ) ;` (NAME is void) of a name in `names` replaced by NAME's body (see
+    above).  Returns the input list itself when the TU defines none of them; refuses a
+    call of another form."""
     fns = functions(toks)
     have = [x for x in names if x in fns]
     if not have:
@@ -782,32 +829,42 @@ def splice_moved(toks, names):
                 and not (i > 0 and (toks[i - 1].text in ('int', 'void', '*')))):
             # (the definition and any prototype are left alone: a type word before the name)
             lo, hi = fns[t.text]
-            if i < 2 or toks[i - 1].text != '(' or toks[i - 2].text != 'if':
-                raise ValueError('splice: %s at line %s is not `if (%s(..) >= 0) return 0;`'
-                                 % (t.text, t.line, t.text))
-            c = _close(toks, i + 1)
-            tail = [x.text for x in toks[c + 1:c + 7]]
-            if tail != ['>=', '0', ')', 'return', '0', ';']:
-                raise ValueError('splice: %s at line %s is not `if (%s(..) >= 0) return 0;`'
-                                 % (t.text, t.line, t.text))
             body = toks[lo + 1:hi]
-            if [x.text for x in body[-4:]] != ['return', '-', '1', ';']:
-                raise ValueError('splice: %s does not end in `return -1;`' % t.text)
-            out.pop()
-            out.pop()                                   # the `if (`
-            for b in body[:-4]:
-                cp = Tok(b.kind, b.text, b.line, b.ifs, b.file if b.file != 'main_psp.c' else None)
-                cp.oline = b.oline
-                out.append(cp)
+            c = _close(toks, i + 1)
+            args = _split_args(toks[i + 2:c])
+            if args == [[]]:
+                args = []
+            params = _params(toks, lo)
+            if params == ['void']:
+                params = []
+            if len(args) != len(params):
+                raise ValueError('splice: %s at line %s takes %d arguments, given %d'
+                                 % (t.text, t.line, len(params), len(args)))
+            is_int = [x.text for x in body[-4:]] == ['return', '-', '1', ';']
+            tail = [x.text for x in toks[c + 1:c + 7]]
+            if is_int:
+                if i < 2 or toks[i - 1].text != '(' or toks[i - 2].text != 'if' or \
+                        tail != ['>=', '0', ')', 'return', '0', ';']:
+                    raise ValueError('splice: %s at line %s is not `if (%s(..) >= 0) return 0;`'
+                                     % (t.text, t.line, t.text))
+                out.pop()
+                out.pop()                                   # the `if (`
+                out += _byaddr(body[:-4], params, args, t.text)
+                i = c + 7
+            else:
+                if any(x.text == 'return' for x in body) or tail[:1] != [';'] or \
+                        (i > 0 and toks[i - 1].text not in (';', '{', '}')):
+                    raise ValueError('splice: %s at line %s: a void phase without returns, called '
+                                     'as a statement `%s(..);`' % (t.text, t.line, t.text))
+                out += _byaddr(body, params, args, t.text)
+                i = c + 2
             done.add(t.text)
-            i = c + 7
             continue
         out.append(t)
         i += 1
     if not done:
         return toks
     return link(out)
-
 
 # Epoch C C3-2b (PLAN-EPOCHC-beta5 §3 C3) replaces main()'s re-entry by `goto session_top`
 # with a pass per game, and the in-process return's decision with a function:

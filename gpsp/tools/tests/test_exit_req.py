@@ -61,7 +61,8 @@ def teardown(source):
 
 def list_exit(source):
     """main's `if (br != 0)` block after ui_browser (B9)."""
-    main = extract.extract(source, "fn:main")
+    # Epoch C C3-2c: the selection is session_select(), read as main()'s text
+    main = extract.epochc_phases(extract.extract(source, "fn:main"), source)
     a = main.index(B9_BEGIN)
     b = main.index("\n      }\n", a)
     return main[a:b + len("\n      }\n")]

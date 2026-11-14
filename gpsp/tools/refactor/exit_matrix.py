@@ -235,7 +235,10 @@ EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_
 # Epoch C C2: main()'s boot moved unchanged into boot_run (fe/boot.inc.c).  Every view
 # reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.
-EPOCHC_MOVED = ('boot_run',)
+# Epoch C C3-2c: so are the session's phases (fe/session.inc.c), whose exits are
+# families B and C.
+EPOCHC_MOVED = ('boot_run', 'session_select', 'session_configure', 'session_load',
+                'session_net_up', 'session_pre_loop')
 # Epoch C C3-2b: main()'s pass per game (`for (;;)`) and its in-process return
 # (`if (!inproc_try_return(..)) break;`) read as the label session_top and the branch
 # that ended in `goto session_top` (aec_cparse.unloop_session).  Never a site itself.
