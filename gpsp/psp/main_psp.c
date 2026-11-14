@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
 {
    char rom_path[PSP_FILE_PATH_CAP];
    char save_path[PSP_FILE_PATH_CAP], state_path[PSP_FILE_PATH_CAP];
-   char script_name[64], script_path[192];
+   char script_name[64];
    char nick[24], group[16] = "";
    long autoexit, dump_at, dump_every, gedump_at, gedump_every, ff_ini, ui_demo, simff;
    long ui_ctl_demo = 0;        /* harness: Settings > Controls self-drive */
@@ -272,76 +272,11 @@ int main(int argc, char *argv[])
    if (session_load(&cfg, &snap_pre, rom_path, inproc_n) >= 0)
       return 0;
 
-   if (have_script)
-   {
-      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name); /* @lab */ LAB_HOOK(lab_task_file(script_path, sizeof(script_path), script_name);)
-#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
-      snprintf(g_script_path, sizeof(g_script_path), "%s", script_path);
-#endif
-      if (fe_autopilot_load(script_path) != 0)
-      {
-         /* The ME and its renderer stop before the core is freed, in the
-          * loop teardown's order (F9: they were left running). */
-         exit_early_begin(XE_ME | XE_CORE);
-         fe_evt("exit code=2 reason=bad_script");
-         exit_early_end(0, 2, "bad_script", 0);   /* ADR-0053 */
-         return 0;
-      }
-   }
+   if (session_net_up(have_script, script_name, net_host, net_join, net_probe, group,
+                      nick) >= 0)
+      return 0;
 
-   if (net_host || net_join)
-   {
-      /* Bring the wireless session up around the booted core.  Blocks in
-       * adhocctl group join (<= 30 s); the game starts running while the
-       * netdrv JOIN/WELCOME handshake completes via per-frame pumps. */
-      me_rend_suspend();               /* clean heap for np_start (run 407) */
-      if (net_bringup(net_host, group, nick, net_probe) != 0)
-      {
-         exit_early_begin(XE_ME | XE_CORE);          /* F9, as bad_script above */
-         fe_evt("exit code=4 reason=net_failed");
-         exit_early_end(0, 4, "net_failed", 0);   /* ADR-0053 */
-         return 0;
-      }
-      me_rend_resume();                /* re-alloc from the post-np_start heap */
-      /* GB/GBC: the link session -- after the harness's save state is in
-       * (gblink_service starts it then). */
-      if (g_pcfg.console != FE_CONSOLE_GBA && !g_autoload_state &&
-          !g_gblink_start_frames)
-      {
-         g_gblink_auto_started = 1;
-         gblink_begin(net_host);
-      }
-   }
-
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
-    defined(GPSP_STALL_RECORDER)
-   g_stall_s = (int)fe_ini_get_int(HARNESS_INI, "stall_watch_s", 0);
-#ifdef GPSP_PERF_RIG
-   g_stall_exit_s = (int)fe_ini_get_int(HARNESS_INI, "stall_exit_s", 0);
-   g_stall_exit_hard =
-      (int)fe_ini_get_int(HARNESS_INI, "stall_exit_hard", 0) != 0;
-   if (g_stall_exit_s > 0)
-      fe_evt("stall_exit on s=%d hard=%d", g_stall_exit_s, g_stall_exit_hard);
-#endif
-#ifdef GPSP_STALL_RECORDER
-   /* The release-layout stall recorder (a hard-freeze bisect arm): always on,
-    * 6 s, and nothing is written unless the main loop really stops. */
-   if (g_stall_s <= 0)
-      g_stall_s = 6;
-   sceIoMkdir(LOG_DIR, 0777);
-#endif
-#endif
-   /* A harness link run holds its game (as the pause menu would) from here
-    * until the session starts, so the state it links from is the loaded
-    * .st0 exactly, however long the radio takes. */
-   if (g_gblink_role && g_pcfg.console != FE_CONSOLE_GBA && !g_gblink_start_frames)
-      fe_host_gblink_hold(1);
-   stall_watch_start();
-   drprof_start();
-   rig_cfg_audit_report();   /* every harness key has been read by now */
-
-   pwr_release();            /* the boot's hold: the loop can park from here */
-   ui_set_wake_yield(wake_overlay_yield);   /* the pause screen parks too */
+   session_pre_loop();
    while (g_running)
    {
       unsigned frames;

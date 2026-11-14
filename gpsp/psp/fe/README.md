@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 141ed9033a6e1198; split.py inverse of the shell sha256 9738d35344cf5e9f (19577 lines) -->
+     inputs: cutlist.txt sha256 883546f7a2538059; split.py inverse of the shell sha256 d3a4e09471d45a08 (19600 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 46 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-137) and `shell.b` (lines 182-2107, `main()`), and includes the other 44 as `psp/fe/<name>.inc.c` at lines 138-181, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 46 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-137) and `shell.b` (lines 182-2042, `main()`), and includes the other 44 as `psp/fe/<name>.inc.c` at lines 138-181, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -30,7 +30,7 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 | `gbab_reg` | `fe/harness.f.inc.c:303` | extern | `#ifdef DRPROF_HW` (fe/harness.f.inc.c:294) > `#ifdef GBA_LINK` (fe/harness.f.inc.c:302) |
 | `fe_gbadual_running_inst` | `fe/harness.f.inc.c:304` | proto | `#ifdef DRPROF_HW` (fe/harness.f.inc.c:294) > `#ifdef GBA_LINK` (fe/harness.f.inc.c:302) |
 | `rom_hash_census` | `fe/harness.f.inc.c:641` | block | `#if !defined(GPSP_PLAYABLE) \|\| defined(GPSP_KEEP_TELEMETRY)` (fe/harness.f.inc.c:560) > `#ifdef ROM_HASH_CENSUS` (fe/harness.f.inc.c:634) |
-| `gamepak_reopens` | `main_psp.c:405` | block | `#if defined(GPSP_STANDBY_NOTES)` (main_psp.c:401) |
+| `gamepak_reopens` | `main_psp.c:340` | block | `#if defined(GPSP_STANDBY_NOTES)` (main_psp.c:336) |
 
 ### @extract markers
 
@@ -55,11 +55,11 @@ Every region, in TU order, and the host tests that read it:
 | region | begins at | read by |
 |---|---|---|
 | `fn:main` | `main_psp.c:182` | `test_exit_paths.py`, `test_exit_req.py`, `test_inproc_unload.py`, `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
-| `qs:dispatch` | `main_psp.c:752` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
-| `sl:case_loadstate` | `main_psp.c:1043` | `test_state_load_ask.py` |
-| `lowlat:top` | `main_psp.c:1338` | `test_lowlat_policy.py` |
-| `lowlat:want` | `main_psp.c:1846` | `test_lowlat_policy.py` |
-| `lowlat:wait` | `main_psp.c:1929` | `test_lowlat_policy.py` |
+| `qs:dispatch` | `main_psp.c:687` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
+| `sl:case_loadstate` | `main_psp.c:978` | `test_state_load_ask.py` |
+| `lowlat:top` | `main_psp.c:1273` | `test_lowlat_policy.py` |
+| `lowlat:want` | `main_psp.c:1781` | `test_lowlat_policy.py` |
+| `lowlat:wait` | `main_psp.c:1864` | `test_lowlat_policy.py` |
 | `fn:cb_thread` | `fe/power.a.inc.c:107` | `test_power_callback.py` |
 | `def:IO_JOIN_US` | `fe/iothread.inc.c:22` | `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:io_thread` | `fe/iothread.inc.c:62` | `test_psp_runtime.py` |
@@ -151,7 +151,7 @@ Readers that read the TU text but no region: `test_backup_save.py`, `test_net_co
 | 14 | inproc | `inproc_refusal`, `relaunch_eboot`, heap census helpers | - | - | `inproc.a`, `inproc.b` | 10 / 1 | 0 | 6 / 1 |
 | 15 | teardown | `session_end(td)`, `inproc_try_return()`, `process_end(pe)`, `exit_early(x)` (§3) | - | - | `teardown` | 6 / 0 | 0 | 6 / 0 |
 | 16 | boot | `boot_run(boot_ctx*)`, noinline cold; owns `cfg_doc` in its frame (§0.2-1); the boot order of §4.4 | - | - | `boot` | 1 / 5 | 5 | 1 / 0 |
-| 17 | session | `session_select`, `session_configure`, `session_load`, `session_net_up`, `session_pre_loop` | - | - | `session` | 4 / 0 | 0 | 4 / 0 |
+| 17 | session | `session_select`, `session_configure`, `session_load`, `session_net_up`, `session_pre_loop` | - | - | `session` | 6 / 0 | 0 | 6 / 0 |
 | 18 | loop | Until D1: the loop body included textually into `main`. From D1: `frame_iter(loop_t*, session_ctx*)` noinline + `frame_iter_rare()` noinline cold | - | yes | - | 0 / 0 | 0 | 0 / 0 |
 | 19 | harness | Stall watch, DRPROF_HW, core_health, rig identity, uiscript, sleep simulator, testpat, nettest, vram_probe, vid_prof, preempt, ff_win, eboot_crc, `gpsp_net_wait_beat` | `gpsp_net_wait_beat` | - | `harness.a`, `harness.b`, `harness.c`, `harness.d`, `harness.e`, `harness.f` | 56 / 123 | 55 | 9 / 54 |
 
@@ -295,8 +295,8 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
 | 43 | teardown | `fe/teardown.inc.c` | 1-356 | teardown | 6 / 0 | - |
 | 44 | boot | `fe/boot.inc.c` | 1-1525 | boot | 1 / 0 | - |
-| 45 | session | `fe/session.inc.c` | 1-1096 | session | 4 / 0 | - |
-| 46 | shell.b | `main_psp.c` | 182-2107 | shell | 1 / 0 | - |
+| 45 | session | `fe/session.inc.c` | 1-1184 | session | 6 / 0 | - |
+| 46 | shell.b | `main_psp.c` | 182-2042 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
 
@@ -564,5 +564,5 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **pacing.d** (`fe/pacing.d.inc.c`): dfr_clock_low:32, dfr_defer:39, dfr_present:53, lf_hold_begin:80, lf_hold_vblank:97, lf_want_slot:121
 - **teardown** (`fe/teardown.inc.c`): exit_early_begin:27, exit_early_end:52, session_end:83, inproc_unload:182, inproc_try_return:241, process_end:299
 - **boot** (`fe/boot.inc.c`): boot_run:54
-- **session** (`fe/session.inc.c`): session_reset:8, session_select:49, session_configure:304, session_load:777
+- **session** (`fe/session.inc.c`): session_reset:8, session_select:49, session_configure:304, session_load:777, session_net_up:1100, session_pre_loop:1151
 - **shell.b** (`main_psp.c`): main:183
