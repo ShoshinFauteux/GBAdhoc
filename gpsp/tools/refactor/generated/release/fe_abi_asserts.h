@@ -212,18 +212,18 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), ab
 typedef int abi_fe_t_me_log_vram_always;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&me_log_vram_always), abi_fe_t_me_log_vram_always *),
                "fe/boot.inc.c:1124 me_log_vram_always: the frontend copy differs from the core declaration");
-/* main_psp.c:806 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+/* fe/session.inc.c:854 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress__2 ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress__2 *),
-               "main_psp.c:806 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
-/* main_psp.c:2845 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
+               "fe/session.inc.c:854 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+/* main_psp.c:2073 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets *),
-               "main_psp.c:2845 translation_gate_targets: the frontend copy differs from the core declaration");
-/* main_psp.c:2846 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
+               "main_psp.c:2073 translation_gate_targets: the frontend copy differs from the core declaration");
+/* main_psp.c:2074 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
 typedef u32 abi_fe_t_translation_gate_target_pc [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_target_pc), abi_fe_t_translation_gate_target_pc *),
-               "main_psp.c:2846 translation_gate_target_pc: the frontend copy differs from the core declaration");
+               "main_psp.c:2074 translation_gate_target_pc: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:26 */
@@ -295,9 +295,9 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
  *   fe/teardown.inc.c:313    gpsp_rtc_peek                        not declared by the check TU's headers
- *   main_psp.c:356           sched_fast                           not declared by the check TU's headers
- *   main_psp.c:357           irq_io_fast                          not declared by the check TU's headers
- *   main_psp.c:365           msr_fast                             not declared by the check TU's headers
- *   main_psp.c:706           gpsp_wallclock                       not declared by the check TU's headers
+ *   fe/session.inc.c:394     sched_fast                           not declared by the check TU's headers
+ *   fe/session.inc.c:395     irq_io_fast                          not declared by the check TU's headers
+ *   fe/session.inc.c:403     msr_fast                             not declared by the check TU's headers
+ *   fe/session.inc.c:744     gpsp_wallclock                       not declared by the check TU's headers
  */
 #endif
