@@ -10,6 +10,113 @@ separately and are intended for upstream.
 
 ---
 
+## [5.0.0-beta.5] - 2026-11-14
+
+Pre-release, and the build we intend to become 5.0.0. Links only with the same beta: update
+both PSPs, for the Link Cable, the Wireless Adapter, Game Boy link, Share game data and
+online play alike. Copy all four files (`EBOOT.PBP`, `gbadhoc_me.prx`, `gbadhoc_home.prx`,
+`gbadhoc_online.prx`) together; the online module only works with its own EBOOT.
+
+### Faster
+
+- **Heavy GBA games run faster.** The dynarec looks up translated code through a small
+  two-way cache instead of a one-way table, the scheduler keeps its per-frame state where
+  the CPU already has it, self-modifying code costs less bookkeeping, and the Media Engine is
+  told exactly which rows of the palette and sprite table changed mid-frame. Measured on the
+  PSP-1000 and PSP-3000 alike, against 4.6.0 beta 4 (a real GBA runs at about 59.7 fps):
+
+  | Game | 4.6.0 beta 4 | 5.0.0 beta 5 |
+  |---|--:|--:|
+  | Hot Wheels: Stunt Track Challenge | 48.6 fps | 57 |
+  | Duke Nukem Advance | 56.5 | 59.5 |
+  | Ice Nine | 57.9 | 59.1 |
+
+  Doom II, Need for Speed: Underground and OpenLara need 5-7 % less work per frame, which
+  leaves more time to spare in each frame, and the Pokémon games 3-5 % less. Every game we
+  tested runs at least as fast as on 4.5.0.
+- **Games that wait a lot cost less.** While a GBA game is halted, waiting for its next
+  interrupt, GBAdhoc skips straight over the stretch of the frame where nothing can happen,
+  then puts every counter back exactly when the game wakes. The game sees no difference.
+- **Beta 4's extra cost per frame is won back.** The new screen filters made each frame
+  take about 1.5-3.5 % more CPU time, even with every filter off. The per-line code behind it
+  has been rearranged so it gets in the way of the rest of the frame far less, and every game
+  we tested now runs at least as fast as on 4.5.0.
+- **Street Racing Syndicate and Big Mutha Truckers** no longer slow down from the code cache
+  being rebuilt over and over (a beta 4 regression), and Top Gear Rally's code-cache resets
+  are rarer.
+
+### New
+
+- **Screenshots "As displayed".** A screenshot is now the whole 480 x 272 screen as you see
+  it: scale, smoothing, screen effect, colour, ambient bars and Game Boy palette, without
+  the menu, the FPS counter or messages. To keep the old picture (the game alone, 240 x 160
+  for GBA, 160 x 144 for GB and GBC), set *Settings > Screenshots > Screenshot picture* to
+  *Game only* (`screenshot_source = game`). A screenshot pressed while the menu is open is no
+  longer saved when the menu closes, or carried into the next game.
+- **Quick load picks any slot.** When the quick load (Select + R) asks first, the d-pad moves
+  the question to your other saved slots, with each one's picture and time. X loads the
+  slot shown, Circle goes back to the game. Empty slots are skipped.
+- **1.5x and 2x fast-forward** (#37, asked for by dragofintio), for games where 3x is too
+  fast. *Settings > Gameplay > Fast-forward* now cycles 1.5x, 2x, 3x, Unlimited and
+  Unlimited Smooth; 3x stays the default. 1.5x and 2x show a new picture on every screen
+  refresh, and sound is muted as with the other presets. Older versions read 1.5x and 2x
+  as 3x.
+- **Game Boy Color colours for original Game Boy games** (#34, asked for by nunobfreire). The
+  GB palette row gains *GBC (auto)*, the palette a Game Boy Color picks for that game when you
+  switch it on, and the 12 palettes you could choose with its button combinations (*GBC Up*
+  ... *GBC Right+B*). Games a Game Boy Color has no palette for get its default one. Only the
+  colours change: the game runs exactly the same.
+
+### Fixed
+
+- **Link Cable sessions stay in step.** Mario Tennis: Power Tour and Mario Golf: Advance Tour
+  could fall out of step within the first minute or so of a cable session. Each PSP runs both
+  games in a session, and the copy of your own game started with what the code translator had
+  learned in single player, while the copy of your friend's started fresh. Now both copies
+  start every session alike, whatever each PSP did before and whichever PSP models are linked.
+  All ten games we test over the cable stay in step, with either PSP hosting. Single player is
+  unchanged.
+- **Sleep is safer around loading, linking and quitting.** Sleeping while a game loads, while
+  Online connects, or during *Quit to game list* now waits for that step to finish and then
+  sleeps, instead of interrupting it.
+- **If the Media Engine stops during sleep,** GBAdhoc now says so on waking ("The Media
+  Engine stopped during sleep."), writes your save and returns to the game list. It used to
+  end the session without a word.
+- **Online connecting can be cancelled.** The LINKING screen shows Circle cancel while an
+  online room is being set up.
+- **HOME during *Quit to game list*** exits to the XMB. It could leave the PSP on "Please
+  wait" for good.
+- **Settings changes are kept** when you leave with a Settings, Controls or Online page still
+  open, by HOME, by holding Start + Select, or by quitting from the wake screen.
+- **Network errors say what went wrong.** A failed online or wireless start no longer reports
+  "WLAN switch is OFF" when the switch is on.
+- **PSP Go:** wireless and Mystery Gift no longer refuse to start because the WLAN switch read
+  "off" for a moment just after the network came up. GBAdhoc now waits up to 5 seconds for it.
+- **The save backup made before every wireless session** can no longer replace a good
+  `.sav.bak` with a short one when the Memory Stick is full or a write fails.
+- **Mystery Gift (Select + Down)** in a game that doesn't support it (anything but Pokémon
+  FireRed, LeafGreen and Emerald) says so at once, instead of trying to connect for up to 30
+  seconds. Its status messages now stay on screen long enough to read.
+- **Online play:** the room-code box reads "random" until you type a code (it showed AAAA,
+  which looked like the room you would get). GBAdhoc tries more ways to connect two PSPs
+  directly before it falls back to the relay, and a PSP on the same home network as the relay
+  it uses now finds it there. A refused online session (for example, "Link Cable needs a
+  restart of the game") now disconnects cleanly.
+
+### PSP-1000
+
+- **About 1.4 MB (1,440 KB) more free memory at boot than 4.5.0,** from smaller sound and
+  audio buffers, leaner Game Boy sound tables, unused buffers removed, and a smaller
+  second-game image for link play. That memory goes to keeping more of a large cartridge in
+  memory.
+
+**Known issues:** online play is still experimental; only Pokémon Emerald has been tested over
+the internet, and a relayed session on a high ping can run below 58 fps. Mario Golf: Advance
+Tour's adapter lobby can still stick when both players press at the same moment (leave and
+rejoin). Hot Wheels: Stunt Track Challenge, Top Gear Rally, LEGO Drome Racers and Payback
+still run below 58 fps. **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` for saves
+and states; move them back from `saves/` and `states/` by hand before going back.
+
 ## [4.6.0-beta.4.1] - 2026-11-07
 
 Online hotfix. Links with 4.6.0-beta.4 (the link version is unchanged), but update both PSPs.

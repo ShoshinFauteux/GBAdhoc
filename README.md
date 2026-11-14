@@ -1,15 +1,3 @@
-<!-- ============================================================================
-     DRAFT for GBAdhoc 4.5.0. NOT published. Written from claude/rc-4.5.0 @ cf91ebe.
-     Every number and claim is listed with its source in README-claims.md.
-
-     MEDIA: built by the scripts in tools/ (see README-claims.md section 6).
-     The hero clip, trailer copy and MonoMyth clips must be rebuilt from the final cuts.
-     MEDIA-NEEDED: search this file. The XMB Photo column shot needs a console and the owner.
-
-     VERSION: the release number is written ONCE, on the "Version" line in the
-     hero block just below (4.5.0).  Every other sentence says "this release",
-     apart from the before/after figures, which have to name 4.1.0 and 4.5.0.
-     ============================================================================ -->
 <p align="center">
   <picture>
     <source srcset="assets/gbadhoc-logo-3-dark@2x.png 2x, assets/gbadhoc-logo-3-dark.png 1x" media="(prefers-color-scheme: dark)">
@@ -21,7 +9,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 4.6.0 beta 4</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 5.0.0 beta 5</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -44,40 +32,62 @@
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
-> **This is the `beta` branch: GBAdhoc 4.6.0 beta 4.1** (beta 4 plus an online hotfix).
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4.1)
-> (the *latest release* link above is the stable 4.5.0). What the beta adds:
+> **This is the `beta` branch: GBAdhoc 5.0.0 beta 5,** the build we intend to become 5.0.0.
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.5)
+> (the *latest release* link above is the stable 4.5.0). **It links only with the same beta:**
+> update both PSPs. What beta 5 adds:
 >
-> - **Wireless Adapter play is scheduled frame by frame.** Each PSP sends its frame's
->   adapter traffic with a marker and the other waits only when that marker is really
->   missing. Lag no longer builds up, and the 57 fps cap on wireless sessions is gone.
->   A beta links only with the same beta.
-> - **Fire Emblem: The Morrow's Golden Country** boots, its ~46 fps stutter is gone, and
->   *new in beta 3*, the combat slowdown and freeze after a few rounds is fixed
->   (#10; fixes by Chandler Hardy, #26, #27 and #30).
-> - *New in beta 3:* **smoother fast-forward**: 3x, Smooth and Unlimited show their pictures
->   evenly instead of skipping or doubling some.
-> - *New in beta 4:* **screen filters in three rows** (Smoothing, Screen effect, Colour) that
->   line up with the game's own pixels at every scale, plus GBA LCD colour and black & white.
-> - *New in beta 4:* **saves and states in their own folders** (`saves/`, `states/`), moved
->   safely the first time you open each game; ROMs are never moved.
-> - *New in beta 4:* **the Save States page's buttons changed**: ✕ saves, □ loads, △ deletes
->   (on the game list's shelf ✕ loads, △ deletes). Loading a state now asks first (PR #32 by
->   Chandler Hardy), and a quick save can ask too.
-> - *New in beta 4:* MXPHunter's requests (#31): Volume, the build under *SETTINGS*, d-pad
->   arrows in the hints, state/cheat marks and a position bar on the game list, a
->   `Screenshots` folder, and a Video preset that can really be set to none.
-> - *New in beta 4:* **XMB launch mode** (#29): a game's own XMB entry can start it directly.
-> - *New in beta 4:* **online play (experimental, off by default)**: *Settings → Online play*,
->   then *Wireless → Online*; two PSPs link over the internet through relay.rayquaza.ca.
->   Only Pokémon Emerald has been tested so far. The step-by-step guide is in the
->   [release notes](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4).
-> - *New in beta 4:* **Ambient bars: Game is a live edge glow** that takes its colours from
->   the edges of the picture.
+> - **Heavy GBA games run faster than in beta 4,** on the PSP-1000 and PSP-3000 alike. Hot
+>   Wheels: Stunt Track Challenge rises from 48.6 to 57 fps, Duke Nukem Advance from 56.5 to
+>   59.5, and Ice Nine from 57.9 to 59.1. Doom II, Need for Speed: Underground and OpenLara
+>   need 5-7 % less work per frame, the Pokémon games 3-5 % less. Every game we tested runs
+>   at least as fast as on 4.5.0.
+> - **Screenshots "As displayed":** the whole screen as you see it, with your scale, filters,
+>   colours and ambient bars, without the menu or messages. *Game only* keeps the old picture.
+> - **Quick load picks any slot:** while Select + R asks first, the d-pad moves the question
+>   to your other saved slots, each with its picture and time.
+> - **1.5x and 2x fast-forward** (#37) for games where 3x is too fast.
+> - **Game Boy Color colours for original Game Boy games** (#34): *GBC (auto)* and the
+>   Game Boy Color's 12 button palettes in the GB palette row.
+> - **Link Cable sessions stay in step:** Mario Tennis: Power Tour and Mario Golf: Advance
+>   Tour no longer fall out of step a minute or so into a cable session. All ten games we
+>   test over the cable stay in step, whichever PSP hosts.
+> - **Sleep, exit and network fixes:** sleeping while a game loads, while Online connects or
+>   during *Quit to game list* waits for that step to finish; HOME during a quit exits to the
+>   XMB; open Settings pages are saved however you leave; network errors say what really
+>   went wrong; the PSP Go no longer misreads its WLAN switch.
+> - **Online play** tries harder to connect two PSPs directly, the room-code box reads
+>   "random" until you type a code, and connecting can be cancelled with ○.
+> - **About 1.4 MB more free memory on the PSP-1000** than 4.5.0, for keeping more of a large
+>   cartridge in memory.
+>
+> Also new since 4.5.0, from the earlier betas:
+>
+> - **Wireless Adapter play is scheduled frame by frame:** lag no longer builds up, and the
+>   57 fps cap on wireless sessions is gone.
+> - **Fire Emblem: The Morrow's Golden Country** boots and plays, without its stutter or its
+>   combat freeze (#10; fixes by Chandler Hardy, #26, #27 and #30).
+> - **Smoother fast-forward:** 3x, Smooth and Unlimited show their pictures evenly.
+> - **Screen filters in three rows** (Smoothing, Screen effect, Colour) that line up with the
+>   game's own pixels at every scale, plus GBA LCD colour and black & white, and **Ambient
+>   bars: Game**, a live edge glow.
+> - **Saves and states in their own folders** (`saves/`, `states/`), moved safely the first
+>   time you open each game; ROMs are never moved.
+> - **The Save States page's buttons changed:** ✕ saves, □ loads, △ deletes (on the game
+>   list's shelf ✕ loads, △ deletes). Loading a state asks first (PR #32 by Chandler Hardy),
+>   and a quick save can ask too.
+> - MXPHunter's requests (#31): Volume, the build under *SETTINGS*, d-pad arrows in the
+>   hints, state/cheat marks and a position bar on the game list, a `Screenshots` folder,
+>   and a Video preset that can really be set to none.
+> - **XMB launch mode** (#29): a game's own XMB entry can start it directly.
+> - **Online play (experimental, off by default):** *Settings → Online play*, then
+>   *Wireless → Online*; two PSPs link over the internet. Only Pokémon Emerald has been
+>   tested so far. The step-by-step guide is in the
+>   [beta 4 release notes](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4).
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
-> - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), **more ROM cache on the
->   PSP-1000**, and **mismatched builds are refused** before they link.
+> - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), and **mismatched builds
+>   are refused** before they link.
 >
 > Full notes and known issues: [CHANGELOG](gpsp/CHANGELOG.md). Everything below describes
 > 4.5.0 unless it says otherwise.
@@ -87,8 +97,8 @@ emulators such as VBA and tells you to use an accurate one like mGBA. This relea
 its accuracy check through general accuracy work, with no game-specific hacks.
 
 It is also much faster. Across 46 test scenes from 36 games, the average frame rate is
-**up 26.7%** on both the PSP-1000 and the PSP-3000, and Doom II now runs at about full speed on
-average. There is lower input latency, a faster Game Boy core, Wireless Adapter
+**up 26.7%** on both the PSP-1000 and the PSP-3000, and Doom II now averages about 59 fps.
+There is lower input latency, a faster Game Boy core, Wireless Adapter
 fixes, three new screen filters, and screenshots that save to the PSP's PICTURE folder.
 
 Race a friend in Mario Kart, fight them in Advance Wars, trade Pokémon across Game Boy
@@ -121,7 +131,6 @@ still put the PSP to sleep and pick the game up tomorrow exactly where it was.
 <b>New screen filters</b><br>
 <sub>LCD grid, dot grid and scanlines, per console, lined up with the game's own pixels.</sub>
 </td>
-<!-- MEDIA-NEEDED: a "Better screenshots" tile, once the XMB shot exists. With six tiles, go back to three cells per row. -->
 <td colspan="3" valign="top">
 <img src="gpsp/docs/img/link-gb-trade.gif" alt="A Pokémon Crystal trade: the Poké Ball travels down the cable on both screens" width="100%">
 <b>Faster Game Boy trades</b><br>
@@ -181,7 +190,7 @@ with the FPS counter on:
 | FIFA 07 | 21.8 | **59.5** |
 | Ice Nine | 24.6 | **58.5** |
 
-<sub>A full-speed GBA game reads about 59.7 here. These are 2400-frame runs of one saved
+<sub>A real GBA runs at about 59.7 fps. These are 2400-frame runs of one saved
 scene per game, shorter than the benchmark runs below, so the two sets differ a little,
 most of all Ice Nine on 4.1.0. A different level can run faster or slower.</sub>
 
@@ -254,7 +263,7 @@ Time from the emulator reading your buttons to that frame reaching the screen, o
   sample used to be about 16 ms old by the time GBAdhoc read it, and it is now under 1 ms
   old. That comes on top of the table above.
 - Light games wait up to about a millisecond a frame for that fresh sample. They spend a
-  little more of each frame waiting, and they still run at full speed.
+  little more of each frame waiting, and their frame rate is unchanged.
 - These figures come from the emulator's own timing logs, not from a camera, and they are
   for one player. Link sessions are not faster in this release, and this is not a
   link-latency improvement.
@@ -298,9 +307,9 @@ now holds 59.8.
 ### <kbd>NEW</kbd> Three new screen filters
 
 <p align="center">
-  <img src="gpsp/docs/img/filters.png" alt="Pokémon Emerald at 2x with the filter off, then LCD grid, dot grid and scanlines, captured in PPSSPP" width="720">
+  <img src="gpsp/docs/img/filters.png" alt="Pokémon Emerald at 2x with the filter off, then LCD grid, dot grid and scanlines" width="720">
   <br>
-  <sub>Pokémon Emerald at 2x, captured in PPSSPP.</sub>
+  <sub>Pokémon Emerald at 2x.</sub>
 </p>
 
 ***Settings → Video filter*** gains **LCD grid**, **dot grid** and **scanlines**. Each draws
@@ -308,12 +317,10 @@ fine dark lines between the game's pixels, and the lines follow those pixels at 
 crisp at 2x, soft and evenly spaced at Fit and Stretch. At 1x the filter is off (the row says
 so), because there is no room between pixels. GBA, GB and GBC each remember their own choice.
 Based on a community patch by **u/Far_Froyo_6317**. Nearest, bilinear and sharp bilinear are
-unchanged.
+unchanged. <kbd>NEW</kbd> Since 4.6.0 beta 4, the *Video filter* row is three rows per
+console, *Smoothing*, *Screen effect* and *Colour*; see the Settings table below.
 
 ### <kbd>NEW</kbd> Better screenshots
-
-<!-- MEDIA-NEEDED: screenshots.png, a photo of the XMB Photo column listing a GBAdhoc
-     screenshot. Add it here with align="right" and a <br clear="right"> after the list. -->
 
 Press **L + R + SELECT** (or your own shortcut) as before. What changed
 ([#13](https://github.com/ShoshinFauteux/GBAdhoc/issues/13)):
@@ -339,9 +346,14 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
 
 - <kbd>NEW</kbd> **1.5x and 2x fast-forward** for when 3x is too fast
   ([#37](https://github.com/ShoshinFauteux/GBAdhoc/issues/37)). Pick them in
-  *Settings > Gameplay > Fast-forward*; 3x stays the default. Both show a new picture on
+  ***Settings → Gameplay → Fast-forward***; 3x stays the default. Both show a new picture on
   every screen refresh, so the speed-up looks smooth. Sound is muted during fast-forward,
   as with the other presets.
+- <kbd>NEW</kbd> **Game Boy Color colours for original Game Boy games**
+  ([#34](https://github.com/ShoshinFauteux/GBAdhoc/issues/34)). Set the GB palette to
+  *GBC (auto)* and each Game Boy game gets the colours a Game Boy Color picks for it, or pick
+  one of the 12 palettes the Game Boy Color offered through its button combinations. Only the
+  colours change; the game runs exactly the same.
 - <kbd>NEW</kbd> ***Reset game*** in the in-game menu restarts the game as if you had
   switched it off and on. It asks first and writes your battery save before it resets. It
   works for GBA, GB and GBC games and is off during link play.
@@ -476,7 +488,7 @@ Action Replay codes for GBA. See the
 Rewind, per-game cheats, save and save-state sharing between two PSPs, turbo buttons, a
 much cheaper second game in GBA link sessions, *Fast link*, music fixes in Golden Sun: The
 Lost Age, Castlevania: Harmony of Dissonance and Iridion II, steadier saving, Driver 2
-Advance at full speed, Need for Speed Underground 2 without flicker, and the thumbstick as
+Advance running smoothly, Need for Speed Underground 2 without flicker, and the thumbstick as
 a second d-pad.
 
 ### 3.5.0
@@ -491,7 +503,7 @@ layout, and the fix for rare crashes on the PSP-2000, 3000 and Go.
 
 ### 3.0.0
 
-Game Boy and Game Boy Color on the TGB Dual core, at full speed with sound on every
+Game Boy and Game Boy Color on the TGB Dual core, smooth and with sound on every
 model, with the same browser, save states and shoulder chords as GBA. The console switch
 (△ cycles GBA → GB → GBC), per-console skins, favourites, five save-state slots with the
 state shelf, dynarec and Media Engine fixes, PSP-1000 ROM loading, link shedding and
@@ -689,7 +701,7 @@ favourites, the state shelf) are unchanged and still apply.
   make CFRU hacks (Pokémon Unbound, Heart & Soul) playable at about 59 fps.
 - <kbd>NEW</kbd> Pokémon MonoMyth compatibility, through live timer counters and the ARM7
   prefetch window, with no game-specific hacks.
-- Game Boy and Game Boy Color on TGB Dual, full speed with sound, with Super Game Boy
+- Game Boy and Game Boy Color on TGB Dual, at about 59.8 fps with sound, with Super Game Boy
   palettes, a GB palette setting and a cartridge real-time clock.
   GBC colour correction modelled on the real screen.
 - No BIOS needed: an open-source replacement is bundled. Drop a real `gba_bios.bin` in
@@ -701,7 +713,7 @@ favourites, the state shelf) are unchanged and still apply.
 - AGB-015 Wireless Adapter emulation over PSP ad-hoc: Union Room, Trade Center, link
   battles, Mystery Gift.
 - Mystery Gift from an Android phone (Mystery Gift Station).
-- Fast link, an option for games that run below full speed when linked.
+- Fast link, an option for games that run slowly when linked.
 - Share game data: send save files and save states between two PSPs.
 - Save auto-backup before every session; save states locked while linked.
 
@@ -812,8 +824,9 @@ confirm and ○ to go back.
 | | FF button (Square) | hold or toggle |
 | | FPS counter | on or off |
 | | <kbd>NEW</kbd> Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
-| | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question, or loads slot 1 at once |
+| | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question (<kbd>NEW</kbd> the d-pad picks another saved slot), or loads slot 1 at once |
 | | <kbd>NEW</kbd> Quick save asks first | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
+| | <kbd>NEW</kbd> Online play | off (default) or on: adds *Online* to the in-game *Wireless* menu (experimental) |
 | | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | Rewind | on or off, from the next game |
 | | Rewind length | Short, Medium or Long |
@@ -825,14 +838,14 @@ confirm and ○ to go back.
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
 
 <kbd>NEW</kbd> Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
-4.6.0-beta.4 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
+5.0.0-beta.5 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
 
 The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the
 running one. A few more keys live only in `config.ini`: `quick_return = 0` brings back
 the old relaunching Quit to game list, `gbc_color_correction = 0` the old GBC colours,
 `loading_art = 0` a plain loading screen, and `gblink_delay` (1–30 frames, default 4)
-the Game Boy link's input delay. The screenshot settings are `screenshot_format`
+the Game Boy link's input delay. The screenshot settings are `screenshot_source` (`displayed` or `game`), `screenshot_format`
 (`png` or `bmp`) and `screenshot_folder` (`picture` or `app`); the CPU clock is
 `cpu_clock` (`333`, `222`, or `0` for System), and the quick load's question is
 `quick_load_ask` (`1`, or `0` to load at once).
@@ -1016,7 +1029,7 @@ none (was 13-15 %). Golf's lobby can still stick when both players press at the 
 leave and rejoin.
 
 **Works, tested on hardware, on all three PSP models:** Wireless Adapter link battles and
-trades, sleep/wake with the Media Engine live, GB/GBC at full speed, and Quit to game
+trades, sleep/wake with the Media Engine live, GB/GBC games, and Quit to game
 list (520 returns on a PSP-1000 and a PSP-3000, about a second each, against three for a
 fresh boot). **On a PSP-3000 + PSP-1000 pair:** GBA Link Cable (Advance
 Wars 2, Mario Kart: Super Circuit) and the Game Boy link (24 of 24 trade, battle and
@@ -1042,17 +1055,20 @@ cartridge-transfer runs).
   Stick a little more.
 - <kbd>NEW</kbd> **The faster core is bigger.** A PSP-1000 has about 0.7 MB less free memory at
   boot than on 4.1.0, which also comes out of the part of a large cartridge kept in memory.
-- <kbd>NEW</kbd> **Some games still run below full speed:** see
+  <kbd>NEW</kbd> 5.0.0 beta 5 more than gives that back: a PSP-1000 has about 1.4 MB more
+  free memory at boot than on 4.5.0 (1,440 KB).
+- <kbd>NEW</kbd> **Some games still run below 58 fps:** see
   [Performance by game](#performance-by-game). Link sessions didn't get faster in this
   release, and Super Street Fighter II Turbo Revival links about 2 fps slower than on 4.1.0.
 - **Sleep waits for a reload to finish.** While a game boots, a link session starts or
   ends, or Quit to game list unloads, the POWER switch is held for that second or two,
   then the PSP sleeps. While joining a room that has just disappeared it can wait up to
-  about 15 seconds.
+  about 15 seconds. <kbd>NEW</kbd> Since 5.0.0 beta 5 the same goes for picking a game in the
+  list and for connecting to an online room; ○ cancels an online connection.
 - The wake prompt appears a beat after the screen lights: the LCD shows video memory the
   instant it powers on, and we blank it at suspend, so you get black then the prompt.
-- Wireless Adapter sessions are paced to 57 fps on both consoles in 4.5.0. The 4.6.0 beta
-  removes that cap: a session runs as fast as the slower PSP allows.
+- Wireless Adapter sessions are paced to 57 fps on both consoles in 4.5.0. Since 4.6.0
+  beta 2 that cap is gone: a session runs as fast as the slower PSP allows.
 - HOME as the menu button needs `gbadhoc_home.prx` beside the EBOOT; without it you get
   a message and START+SELECT keeps the job.
 - Hero art is not included in this repository; see
@@ -1063,11 +1079,12 @@ cartridge-transfer runs).
   screen shows a diagnostic page; a photo of it is the most useful thing a bug report can
   carry.
 
-### In testing: launch a game straight from the XMB (#29)
+### <kbd>NEW</kbd> Launch a game straight from the XMB (#29)
 
-Each game can have its own XMB entry, with its own icon and background, that opens straight
-into the game. The Windows maker and the launcher are built and in testing on a PSP Go; a
-maker that runs on the PSP itself comes next. How it works
+Since 4.6.0 beta 4, each game can have its own XMB entry, with its own icon and background,
+that opens straight into the game. Entries are made with the
+[GBAdhoc XMB](https://github.com/ShoshinFauteux/GBAdhoc-XMB) apps for Windows and the PSP,
+which ship separately. How it works
 ([`gpsp/docs/XMB-LAUNCH.md`](gpsp/docs/XMB-LAUNCH.md)):
 
 - **A small launcher per game, not a copy of the emulator.** The entry's EBOOT holds the
@@ -1082,24 +1099,26 @@ maker that runs on the PSP itself comes next. How it works
   *Quit to game list* opens the list.
 - **Two ways to make an entry, one format:** with **GBAdhoc XMB Entry Maker** on Windows
   (pick the game in GBAdhoc's `roms` folder with the PSP in USB mode; GBAdhoc's own box and
-  hero art are filled in, and you can choose your own), and next, on the PSP itself. Both use
-  the same EBOOT-building code, so they make identical entries.
+  hero art are filled in, and you can choose your own), or on the PSP itself. Both use the
+  same EBOOT-building code, so they make identical entries.
 
 ---
 
 ## The second processor
 
 The PSP has two CPUs. The second one, Sony's Media Engine, sits idle in almost every
-homebrew emulator; GBAdhoc gives it the entire GBA renderer.
+homebrew emulator; GBAdhoc gives it the entire GBA renderer, and that is a big part of why
+heavy games run as fast as they do.
 
-A GBA screen is 160 lines drawn top to bottom, and the instant line 160 is done the
-picture is final; nothing the game does for the rest of the frame can change it. But the
-console still has the whole vblank period before it has to show anything. So the drawing
-is handed over at line 160 and both processors work at once for the remainder. The Media
-Engine's first act is to take a private copy of what it needs, which releases the main
-CPU to start the next frame instead of waiting, and it copies only the video memory the
-game actually wrote, typically 8 KB of 96 KB, tracked by a per-page map. The emulator
-gets roughly 750 microseconds of every frame back.
+A GBA draws its screen one line at a time, and a game can change scrolling, colours and
+sprites between lines. So while the main CPU runs the game, it writes down, line by line,
+everything the picture needs: each line's display settings and any graphics the game
+changes on the way down the screen. The instant line 160 is done the picture is final;
+nothing the game does for the rest of the frame can change it. The frame is handed to the
+Media Engine there, and it draws all 160 lines from that record while the main CPU is
+already running the next frame. The Media Engine's first act is to take a private copy of
+what it needs, and it copies only the video memory the game actually wrote, typically 8 KB
+of 96 KB, tracked by a per-page map.
 
 ---
 
@@ -1110,7 +1129,7 @@ Docker supplies the toolchain, so the build is reproducible on any machine.
 ```bash
 # one profile name, one artifact, one manifest
 gpsp/tools/build.sh release      # what a player installs
-gpsp/tools/build.sh harness      # the hardware test rig
+gpsp/tools/build.sh harness      # an automated test build
 gpsp/tools/build.sh diagnostic   # release plus instruments
 # -> gpsp/psp/EBOOT.PBP
 ```
@@ -1167,7 +1186,7 @@ a PSP shell and a radio transport around it.**
   `.gb` and `.gbc` games; it was built to run two Game Boys joined by a cable, which is
   exactly what each PSP does in a Game Boy link. And **Brunni**, whose **MasterBoy**
   ported it to the PSP (with
-  earlier PSP work by LCK, ruka and RIN) and made it fast enough for full speed. GBAdhoc
+  earlier PSP work by LCK, ruka and RIN) and made it fast enough to run well. GBAdhoc
   vendors MasterBoy's core only, with its changes listed in
   `gbcore/tgbdual/LOCAL-PATCHES.md`. Its Super Game Boy support descends from **GEST**
   (TM) and **VisualBoyAdvance** (Forgotten). All GPL v2 or later.
