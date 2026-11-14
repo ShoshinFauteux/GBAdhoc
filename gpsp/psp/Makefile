@@ -161,7 +161,7 @@ ASFLAGS  = $(CFLAGS)
 # main_psp.o.  The value is part of the shipped layout; changing it changes
 # the binary (tools/build.sh reads this line, make_release.sh checks it).
 LAYOUT_PIN ?= 1
-LAYOUT_PAD_BYTES ?= 5508
+LAYOUT_PAD_BYTES ?= 1944
 ifeq ($(LAYOUT_PIN),1)
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
@@ -185,13 +185,11 @@ endif
 # end well inside a 64 B step (tools/layout/ro_margin.py), because the table is
 # a few bytes shorter for a commit whose version string ends like one of its
 # entries ("59" for ...f0ce959).
-# claude/beta5-rc (PROVISIONAL until the final re-pin): the ME write maps'
-# cold tail pushes .rodata 640 B (release RO 576 -> 0 on spd-combo), and the
-# integration had already spent this pad (512 -> 0), so it wraps: 0 - 576;
-# claude/link-desync's -576 more: 7040.  CORE (below) composes ME write maps
-# -768 and link-desync -924 on 892: wraps to 7392.  7040 + 28: the pad's end
-# 32 B inside its 64 B step both ways (tools/layout/ro_margin.py: was 4/60).
-LAYOUT_PAD_RO_BYTES ?= 7068
+# The beta.5 re-pin (claude/beta5-rc, docs/LAYOUT-PINNING.md): RO 28 puts
+# A's tables back (netpacket_iface +16, .rodata's 64 B steps) with the pad's
+# end 32 B inside its step both ways; CORE (below) gives up 768 B of A's cold
+# text placement so neither pad wraps (one 8 KiB page of boot heap back).
+LAYOUT_PAD_RO_BYTES ?= 28
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -201,7 +199,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 7600
-LAYOUT_PAD_CORE_BYTES ?= 7392
+LAYOUT_PAD_CORE_BYTES ?= 6008
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -224,7 +222,7 @@ CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # the screenshots and the slot browser merged): 2304 puts main at mod 0x1420,
 # the best by-line shift against 957a5c4fbb1b's loop (32.4 %; 1.9 % at
 # 0x14e8).  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 2304
+LAYOUT_PAD_MAIN_BYTES ?= 4532
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
@@ -240,7 +238,7 @@ LAYOUT_PAD_MLU_BYTES ?= 32
 # site emitters shrank both translators, and this puts instance B's hot path, linked
 # right after, back on its sets.  5824 -> 5504 with the emitters' SMC_REUSE logging
 # (docs/PCARG-SIDE.md section 9).  tools/flags.lock pins it.
-LAYOUT_PAD_XLAT_BYTES ?= 5504
+LAYOUT_PAD_XLAT_BYTES ?= 5632
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
