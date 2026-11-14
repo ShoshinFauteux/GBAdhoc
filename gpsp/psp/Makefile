@@ -189,8 +189,9 @@ endif
 # cold tail pushes .rodata 640 B (release RO 576 -> 0 on spd-combo), and the
 # integration had already spent this pad (512 -> 0), so it wraps: 0 - 576;
 # claude/link-desync's -576 more: 7040.  CORE (below) composes ME write maps
-# -768 and link-desync -924 on 892: wraps to 7392.
-LAYOUT_PAD_RO_BYTES ?= 7040
+# -768 and link-desync -924 on 892: wraps to 7392.  7040 + 28: the pad's end
+# 32 B inside its 64 B step both ways (tools/layout/ro_margin.py: was 4/60).
+LAYOUT_PAD_RO_BYTES ?= 7068
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
