@@ -227,6 +227,73 @@ static __attribute__((noinline, section(".text.fe_cold.inproc_unload"))) void in
    audio_start();
 }
 
+/* THE IN-PROCESS RETURN (I1-I5, docs/INPROC-RETURN.md), after session_end: only a
+ * quit to the game list (g_relaunch == RELAUNCH_GAMELIST) asks for it.  The second
+ * inproc_refusal (kept apart from session_end's first: PLAN §0.2-2), the unload,
+ * the census against the heap this game's boot started from (snap_pre); then
+ * either the return (its log line, the clock, the harness's browser sleep_sim;
+ * returns 1: main() resets the session and goes round for the next game) or the
+ * refusal (its log line, the relaunch into the list, the ME stopped; returns 0,
+ * as for every other end: main() goes on to process_end).  The tools read
+ * main()'s `if (!inproc_try_return(..)) break;` and the pass around it as the
+ * `goto session_top` they replaced (aec_cparse.unloop_session;
+ * tests/extract.epochc_unloop). */
+static __attribute__((noinline, section(".text.fe_cold.inproc_try_return"))) int inproc_try_return(
+   int have_variant, int *inproc_n, heap_snap_t snap_pre)
+{
+   if (g_relaunch == RELAUNCH_GAMELIST)
+   {
+      const char *why = inproc_refusal(have_variant);
+      heap_snap_t after;
+      fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
+             plat_audio_sample_count());
+      if (!why)
+      {
+         /* The rest of the unload: what the exit path leaves to the
+          * process ending. */
+         inproc_unload();
+         heap_snap(&after);
+         exit_sim("unload");        /* harness: HOME here (S-4 d) */
+#ifndef GPSP_NO_TELEMETRY
+         heap_census("post_unload");
+#endif
+         heap_trace_report("post_unload");
+         if (!heap_snap_same(&after, &snap_pre))
+         {
+            /* Harness `inproc_force = 1` (diagnosis only): log, carry on. */
+            if (!fe_ini_get_int(HARNESS_INI, "inproc_force", 0))
+               why = "census";
+            fe_evt("inproc_census_mismatch arena=%u/%u used=%u/%u "
+                   "chunks=%u/%u fordblks=%u/%u free=%u/%u largest=%u/%u "
+                   "kfree=%u/%u kmax=%u/%u", snap_pre.arena, after.arena,
+                   snap_pre.used, after.used, snap_pre.chunks, after.chunks,
+                   snap_pre.fordblks, after.fordblks, snap_pre.free,
+                   after.free, snap_pre.largest, after.largest,
+                   snap_pre.kfree, after.kfree, snap_pre.kmax, after.kmax);
+         }
+      }
+      if (!why)
+      {
+         /* A fresh boot's per-game state, then the browser again. */
+         fe_evt("inproc_return n=%d", *inproc_n);
+         (*inproc_n)++;
+         /* The list and the next game run at the setting's clock, whatever
+          * the teardown met (a wake in the list itself is answered by the
+          * next game's "power back": g_pwr_resume waits for it). */
+         psp_clock_apply("inproc_return");
+#ifdef GPSP_PERF_RIG
+         if (g_ss_browser && *inproc_n == g_ss_game + 1)
+            sleep_sim_fire();        /* fires in the browser, 300 ms on */
+#endif
+         return 1;
+      }
+      fe_evt("inproc_refused why=%s", why);
+      g_relaunch = RELAUNCH_GAMELIST;
+      me_host_shutdown();       /* kept for a return that is not happening */
+   }
+   return 0;
+}
+
 /* PROCESS END (P1-P13): audio, display, the last log lines, the handoff, the
  * relaunch a profile change or a refused return asks for, the XMB. */
 static __attribute__((noinline, section(".text.fe_cold.process_end"))) void process_end(int exit_code,

@@ -325,9 +325,63 @@ def _boot_body(source):
     return body[:-len(tail)]
 
 
+# Epoch C C3-2b (fe/teardown.inc.c): main()'s re-entry `goto session_top` is a pass
+# per game, `for (;;) { .. if (!inproc_try_return(..)) break; NEXT.. }`.  Read back
+# as the text it replaced: the pass's head is the label, and the decision is
+# inproc_try_return()'s body with NEXT (main()'s indentation + 6) and the goto in
+# place of its `return 1;`, its final `return 0;` dropped; a by-address parameter's
+# `(*P)`, `*P`, `P->` read as the local's name.
+EPOCHC_PASS_HEAD = re.compile(r'^   /\* ONE PASS PER GAME:.*?\*/\n   for \(;;\)\n   \{\n', re.M | re.S)
+EPOCHC_PASS_TAIL = re.compile(r'^   if \(!inproc_try_return\(([^;]*)\)\)\n      break;\n(.*?)'
+                              r'^   \}   /\* the next game \*/\n', re.M | re.S)
+
+
+def epochc_unloop(main_text, source):
+    """main()'s text with the pass per game read as `session_top:` .. `goto session_top;`
+    (unchanged on a tree before Epoch C C3-2b)."""
+    h, t = EPOCHC_PASS_HEAD.search(main_text), EPOCHC_PASS_TAIL.search(main_text)
+    if not h and not t:
+        return main_text
+    if not (h and t and h.end() <= t.start()):
+        raise ExtractError('epochc: the pass per game has no head or no tail')
+    m = re.search(r'^static [^\n]*\bint inproc_try_return\(([^)]*)\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: inproc_try_return() not defined')
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    code = re.sub(r'/\*.*?\*/', '', body, flags=re.S)
+    if not body.endswith('   return 0;\n') or body.count('         return 1;\n') != 1 or \
+            len(re.findall(r'\breturn\b', code)) != 2:
+        raise ExtractError('epochc: inproc_try_return() must return 1 once and 0 at its end')
+    body = body[:-len('   return 0;\n')]
+    params = [re.search(r'(\w+)\s*$', p).group(1) for p in m.group(1).split(',')]
+    byaddr = ['*' in p for p in m.group(1).split(',')]
+    args = [a.strip() for a in re.sub(r'\s+', ' ', t.group(1)).split(',')]
+    if len(args) != len(params):
+        raise ExtractError('epochc: inproc_try_return() given %d arguments' % len(args))
+    for p, ptr, a in zip(params, byaddr, args):
+        if ptr:
+            if not re.match(r'^&\w+$', a):
+                raise ExtractError('epochc: %s is by address, given %s' % (p, a))
+            x = a[1:]
+            body = re.sub(r'\(\*%s\)' % p, '\x00', body)
+            body = re.sub(r'\*%s\b' % p, '\x00', body)
+            body = re.sub(r'\b%s->' % p, '\x00.', body)
+            body = re.sub(r'(?<![\w.])%s\b' % p, '&\x00', body).replace('\x00', x)
+        elif a != p:
+            body = re.sub(r'(?<![\w.>])%s\b' % p, a, body)
+    nxt = ''.join('      ' + ln + '\n' if ln.strip() else ln + '\n'
+                  for ln in t.group(2).split('\n')[:-1])
+    k = body.index('         return 1;\n')
+    body = body[:k] + nxt + '         goto session_top;\n' + body[k + len('         return 1;\n'):]
+    return (main_text[:h.start()] + 'session_top:\n' + main_text[h.end():t.start()] + body +
+            main_text[t.end():])
+
+
 def epochc_expand(main_text, source):
     """main()'s text with boot_run() and session_end()/process_end() calls replaced by
     their bodies (unchanged on a tree before Epoch C C1c / C2)."""
+    main_text = epochc_unloop(main_text, source)
     if len(EPOCHC_BOOT_CALL.findall(main_text)) == 1:
         body = _boot_body(source)
         main_text = EPOCHC_BOOT_CALL.sub(lambda m: body, main_text)

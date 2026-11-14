@@ -35,7 +35,8 @@
 #   M13 shifted golden vs shifted tree with B1 losing vid_term -> XS FAILS at B1
 #   M16 source mutant: B1's log line reworded, calls unchanged -> XS FAILS at B1 (lab, harness)
 #   M17 source mutant: the teardown's evt_drop line reworded   -> XS FAILS, every scenario (lab, harness)
-#   M18 source mutant: the return's pwr_release deleted         -> hold check FAILS (goto holding)
+#   M18 source mutant: the return's pwr_release deleted         -> hold check FAILS (goto holding;
+#       after Epoch C C3-2b the last statement of main()'s pass, read as the goto's)
 #   M19 fragment mutant (--over): state_save_slot keeps its hold -> hold check FAILS
 #   M20 source mutant: a site moved under the boot hold... C4 exits after pwr_release -> XS FAILS at C4 (hold)
 set -u
@@ -203,7 +204,7 @@ n17=$(grep -c 'XS FAIL lab exit_scenarios.tsv' "$OUT/m17/check.log"); h17=$(grep
   && ok "M17 the teardown's evt_drop line reworded: XS fails in all $nsc scenarios, lab + harness" \
   || { bad "M17 (lab $n17, harness $h17 of $nsc)"; head -4 "$OUT/m17/check.log" | cut -c1-200; }
 srcmut m18 "
-g = [j for j, l in enumerate(L) if l.strip() == 'goto session_top;']; assert len(g) == 1, g
+g = [j for j, l in enumerate(L) if l.strip() in ('goto session_top;', '}   /* the next game */')]; assert len(g) == 1, g
 assert L[g[0] - 1].strip().startswith('pwr_release();'), L[g[0] - 1]
 L[g[0] - 1] = ''"
 grep -q "HOLD main:.* goto session_top holding \['teardown'\]" "$OUT/m18/xs/report.txt" && [ "$(cat $OUT/m18/rc)" = 1 ] \

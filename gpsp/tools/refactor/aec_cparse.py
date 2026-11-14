@@ -809,6 +809,152 @@ def splice_moved(toks, names):
     return link(out)
 
 
+# Epoch C C3-2b (PLAN-EPOCHC-beta5 §3 C3) replaces main()'s re-entry by `goto session_top`
+# with a pass per game, and the in-process return's decision with a function:
+#
+#     for (;;) { PASS..  if (!inproc_try_return(ARGS)) break;  NEXT..  }
+#     static .. int inproc_try_return(PARAMS) { BODY.. return 1; .. return 0; }
+#
+# The tools read main() as the code it runs, in the form the golden was taken from: the
+# `for (;;) {` is the label `session_top:`, and the `if (..) break;` statement is BODY
+# with the parameters replaced by the call's arguments, its one `return 1;` replaced by
+# NEXT followed by `goto session_top;`, and its final `return 0;` dropped (falling out
+# of BODY is falling out of the pass, to what follows the loop: the `break`).  Every
+# copied token keeps its own line and file (moved text, as splice_moved).  A parameter
+# given `&X` is a by-address local: `*P` reads as `X`, `P->f` as `X.f`, a bare `P` as `&X`.
+# Refused: another `return` in BODY, a `break` or `continue` of the pass anywhere else, a
+# second such loop or call.  The helper's own definition is left in the token list.
+
+def _cp(t, line=None, text=None):
+    c = Tok(t.kind, t.text if text is None else text, t.line if line is None else line, t.ifs,
+            t.file if t.file != 'main_psp.c' else None)
+    c.oline = t.oline
+    return c
+
+
+def _stmt_spans(tl, a, b):
+    """[(lo, hi)] token spans (inclusive) of the loop/switch bodies nested in tl[a:b]."""
+    spans, i = [], a
+    while i < b:
+        w = tl[i].text
+        if w in ('for', 'while', 'switch') and i + 1 < b and tl[i + 1].text == '(':
+            c = _close(tl, i + 1)
+            if c + 1 < b and tl[c + 1].text == '{':
+                spans.append((c + 1, _close(tl, c + 1)))
+            elif c + 1 < b and tl[c + 1].text != ';':
+                j = c + 1
+                while j < b and tl[j].text != ';':
+                    j += 1
+                spans.append((c + 1, j))
+        elif w == 'do' and i + 1 < b and tl[i + 1].text == '{':
+            spans.append((i + 1, _close(tl, i + 1)))
+        i += 1
+    return spans
+
+
+def unloop_session(toks, helper='inproc_try_return', label='session_top'):
+    """toks with main()'s pass read as `label:` .. `goto label;` (see above).  Returns the
+    input list itself when the TU has no such loop."""
+    fns = functions(toks)
+    if helper not in fns or 'main' not in fns:
+        return toks
+    mlo, mhi = fns['main']
+    fors, i = [], mlo + 1
+    while i < mhi:
+        t = toks[i]
+        if t.text == 'for' and [x.text for x in toks[i + 1:i + 6]] == ['(', ';', ';', ')', '{']:
+            fors.append(i)
+        if t.text in ('(', '[', '{'):
+            i = match_close(toks, i) + 1
+            continue
+        i += 1
+    if not fors:
+        return toks
+    if len(fors) != 1:
+        raise ValueError('unloop: main() has %d top-level for (;;) loops' % len(fors))
+    f = fors[0]
+    fo = f + 5
+    fc = match_close(toks, fo)
+    # the decision: `if ( ! helper ( .. ) ) break ;` at the pass's own level
+    hits, i = [], fo + 1
+    while i < fc:
+        t = toks[i]
+        if (t.text == 'if' and [x.text for x in toks[i + 1:i + 5]] == ['(', '!', helper, '(']):
+            c = match_close(toks, i + 4)
+            if [x.text for x in toks[c + 1:c + 4]] != [')', 'break', ';']:
+                raise ValueError('unloop: %s at line %s is not `if (!%s(..)) break;`'
+                                 % (helper, t.line, helper))
+            hits.append((i, i + 4, c, c + 4))
+        if t.text in ('(', '[', '{'):
+            i = match_close(toks, i) + 1
+            continue
+        i += 1
+    if len(hits) != 1:
+        raise ValueError('unloop: the pass has %d `if (!%s(..)) break;`' % (len(hits), helper))
+    s0, a0, a1, s1 = hits[0]
+    if any(toks[j].kind == 'id' and toks[j].text == helper for j in range(mlo, mhi)
+           if not a0 - 1 <= j <= a0):
+        raise ValueError('unloop: %s is used elsewhere in main()' % helper)
+    inner = _stmt_spans(toks, fo + 1, fc)
+    for j in range(fo + 1, fc):
+        if toks[j].text in ('break', 'continue') and j != s1 - 2 and \
+                not any(lo <= j <= hi for lo, hi in inner):
+            raise ValueError('unloop: a %s of the pass at line %s' % (toks[j].text, toks[j].line))
+    nxt = toks[s1:fc]
+    # the helper's body
+    hlo, hhi = fns[helper]
+    params = _params(toks, hlo)
+    args = _split_args(toks[a0 + 1:a1])
+    if len(args) != len(params):
+        raise ValueError('unloop: %s takes %d arguments, given %d' % (helper, len(params), len(args)))
+    body = toks[hlo + 1:hhi]
+    if [x.text for x in body[-3:]] != ['return', '0', ';']:
+        raise ValueError('unloop: %s does not end in `return 0;`' % helper)
+    body = body[:-3]
+    rets = [k for k, x in enumerate(body) if x.text == 'return']
+    if len(rets) != 1 or [x.text for x in body[rets[0]:rets[0] + 3]] != ['return', '1', ';']:
+        raise ValueError('unloop: %s must return 1 once and 0 at its end' % helper)
+    byaddr = {p: a[1] for p, a in zip(params, args)
+              if len(a) == 2 and a[0].text == '&' and a[1].kind == 'id'}
+    byval = {p: a for p, a in zip(params, args) if p not in byaddr}
+    out, k, n = [], 0, len(body)
+    while k < n:
+        b = body[k]
+        if k == rets[0]:
+            out += [_cp(x) for x in nxt]
+            out += [_cp(b, text='goto'), _cp(b, text=label), _cp(body[k + 2], text=';')]
+            out[-2].kind = 'id'
+            k += 3
+            continue
+        if b.kind == 'id' and b.text in byaddr:
+            x = byaddr[b.text]
+            prev = body[k - 1] if k else None
+            unary = prev is not None and prev.text == '*' and (
+                k < 2 or body[k - 2].kind not in ('id', 'num') and body[k - 2].text not in (')', ']'))
+            if unary:
+                out[-1] = _cp(x, line=b.line)
+                out[-1].oline = b.oline
+            elif k + 1 < n and body[k + 1].text == '->':
+                out += [_cp(x, line=b.line), _cp(body[k + 1], text='.')]
+                k += 2
+                continue
+            else:
+                out += [_cp(b, text='&'), _cp(x, line=b.line)]
+                out[-2].kind = 'op'
+            k += 1
+            continue
+        if b.kind == 'id' and b.text in byval:
+            out += [_cp(x, line=b.line) for x in byval[b.text]]
+            k += 1
+            continue
+        out.append(_cp(b))
+        k += 1
+    lab = [_cp(toks[f], text=label), _cp(toks[f + 2], text=':')]
+    lab[0].kind = 'id'
+    res = toks[:f] + lab + toks[fo + 1:s0] + out + toks[fc + 1:]
+    return link(res)
+
+
 def node_span(node):
     """(first_line, last_line) of a node."""
     lines = []

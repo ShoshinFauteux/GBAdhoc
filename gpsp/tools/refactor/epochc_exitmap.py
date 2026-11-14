@@ -220,7 +220,7 @@ def build_rows(root, outp):
                              'latch:' + latch if latch else '',
                              'saves:' + near(ls, i, SAVE_RE, 6, 0) if near(ls, i, SAVE_RE, 6, 0) else '',
                              ctx[i], ln.strip()[:90], '', ''))
-            for pat, tid in ((r'goto\s+session_top', 'T-inproc'),
+            for pat, tid in ((r'goto\s+session_top|if \(!inproc_try_return\(', 'T-inproc'),
                              (r'relaunch_eboot\(g_relaunch', 'T-relaunch(refused|profile)'),
                              (r'relaunch_eboot\(0\)', 'B8-relaunch')):
                 if re.search(pat, code):

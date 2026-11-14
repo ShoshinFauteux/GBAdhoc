@@ -68,7 +68,8 @@ def statements(text):
 def check(source):
     """-> list of problems (empty: the unit is the start tree's, called in its place)."""
     m = DEF.search(source)
-    main = extract.extract(source, 'fn:main')
+    # Epoch C C3-2b: the decision is inproc_try_return(); read main() with it in place
+    main = getattr(extract, 'epochc_unloop', lambda m, s: m)(extract.extract(source, 'fn:main'), source)
     if not m:
         a = main.find('         dynarec_release_translation_caches();\n')
         b = main.find('         audio_start();\n', a)

@@ -88,9 +88,10 @@ def resolve(text):
     if not m:
         raise LookupError('no `int main(` definition')
     mend = _close(clean, m.end())
-    st = re.compile(r'^session_top:', re.M).search(clean, m.end(), mend)
+    # Epoch C C3-2b: the pass per game `   for (;;)` stands where `session_top:` stood
+    st = re.compile(r'^(?:session_top:|   for \(;;\)\s*\n\s*\{)', re.M).search(clean, m.end(), mend)
     if not st:
-        raise LookupError('no `session_top:` label inside main')
+        raise LookupError('no `session_top:` label (or pass `for (;;)`) inside main')
     lw = re.compile(r'^   while \(g_running\)\s*\n\s*\{', re.M).search(clean, st.end(), mend)
     if not lw:
         raise LookupError('no `while (g_running)` after session_top: inside main')
@@ -240,6 +241,9 @@ def selftest():
         resolve(base.replace('session_top:', 'top:')); t(False, 'mutant: no session_top must raise')
     except LookupError:
         t(True, 'mutant: no session_top: label -> LookupError')
+    r3 = resolve(base.replace('session_top:\n', '   for (;;)\n   {\n').replace('   z();\n', '   }\n   z();\n'))
+    t((r3['session_top'], r3['lo'], r3['hi']) == (3, 6, 15),
+      'toy (Epoch C C3-2b): the pass `for (;;)` stands for session_top: (%d-%d)' % (r3['lo'], r3['hi']))
     r2 = resolve(base.replace('if (g_perf_rig)', 'if (other)'))
     t(r2['hi'] == r2['loop_close'] == 8, 'mutant: no perf_rig tail block -> window ends at the loop brace')
     try:

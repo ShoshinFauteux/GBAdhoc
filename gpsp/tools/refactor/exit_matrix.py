@@ -236,11 +236,16 @@ EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_
 # reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.
 EPOCHC_MOVED = ('boot_run',)
-EPOCHC_SKIP = EPOCHC_HELPERS + EPOCHC_MOVED
+# Epoch C C3-2b: main()'s pass per game (`for (;;)`) and its in-process return
+# (`if (!inproc_try_return(..)) break;`) read as the label session_top and the branch
+# that ended in `goto session_top` (aec_cparse.unloop_session).  Never a site itself.
+EPOCHC_LOOP = ('inproc_try_return',)
+EPOCHC_SKIP = EPOCHC_HELPERS + EPOCHC_MOVED + EPOCHC_LOOP
 
 
 class View(object):
     def __init__(self, name, toks):
+        toks = C.unloop_session(toks, EPOCHC_LOOP[0], 'session_top')
         toks = C.splice_moved(toks, EPOCHC_MOVED)
         toks = C.inline_helpers(toks, EPOCHC_HELPERS)
         self.name, self.toks = name, toks

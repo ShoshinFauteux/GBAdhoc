@@ -258,7 +258,12 @@ int main(int argc, char *argv[])
       inproc_rom_n = bc.inproc_rom_n;
    }
 
-session_top:
+   /* ONE PASS PER GAME: the selection, the boot of the game, the frame loop and
+    * session_end; then the in-process return goes round again for the next
+    * game (inproc_try_return), or the process ends (process_end, below).  The
+    * pass keeps main()'s indentation. */
+   for (;;)
+   {
    /* ROM selection: variant builds auto-boot their baked ROM with a
     * separate save namespace (<base>/saves/, docs/VARIANTS.md); the
     * harness ini boots the first ROM in roms/ directly (the
@@ -3097,65 +3102,18 @@ session_top:
       fe_evt("perf_done samples=%u expected=%u",rig_stats.total_n,rig_to-rig_from);
    }
    session_end(have_variant);
-   if (g_relaunch == RELAUNCH_GAMELIST)
-   {
-      const char *why = inproc_refusal(have_variant);
-      heap_snap_t after;
-      fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
-             plat_audio_sample_count());
-      if (!why)
-      {
-         /* The rest of the unload: what the exit path leaves to the
-          * process ending. */
-         inproc_unload();
-         heap_snap(&after);
-         exit_sim("unload");        /* harness: HOME here (S-4 d) */
-#ifndef GPSP_NO_TELEMETRY
-         heap_census("post_unload");
-#endif
-         heap_trace_report("post_unload");
-         if (!heap_snap_same(&after, &snap_pre))
-         {
-            /* Harness `inproc_force = 1` (diagnosis only): log, carry on. */
-            if (!fe_ini_get_int(HARNESS_INI, "inproc_force", 0))
-               why = "census";
-            fe_evt("inproc_census_mismatch arena=%u/%u used=%u/%u "
-                   "chunks=%u/%u fordblks=%u/%u free=%u/%u largest=%u/%u "
-                   "kfree=%u/%u kmax=%u/%u", snap_pre.arena, after.arena,
-                   snap_pre.used, after.used, snap_pre.chunks, after.chunks,
-                   snap_pre.fordblks, after.fordblks, snap_pre.free,
-                   after.free, snap_pre.largest, after.largest,
-                   snap_pre.kfree, after.kfree, snap_pre.kmax, after.kmax);
-         }
-      }
-      if (!why)
-      {
-         /* A fresh boot's per-game state, then the browser again. */
-         fe_evt("inproc_return n=%d", inproc_n);
-         inproc_n++;
-         /* The list and the next game run at the setting's clock, whatever
-          * the teardown met (a wake in the list itself is answered by the
-          * next game's "power back": g_pwr_resume waits for it). */
-         psp_clock_apply("inproc_return");
-#ifdef GPSP_PERF_RIG
-         if (g_ss_browser && inproc_n == g_ss_game + 1)
-            sleep_sim_fire();        /* fires in the browser, 300 ms on */
-#endif
-         /* A HOME after the refusal check above (the unload, the census,
-          * the clock) must still end the process: the list then returns at
-          * once and leaves through its own HOME exit (F1). */
-         session_reset(&exit_code, &exit_reason, &ff_engaged, &ff_toggled, &ff_last_mode,
-                       &ff_last_me, &prev_pad, &chord_frames, &inproc_menu_armed,
-                       &autoload_state_slot, me_rend_cfg_boot, sram_thread_boot,
-                       autoload_boot);
-         emu_boost_start();
-         pwr_release();         /* the browser waits on the player: no hold */
-         goto session_top;
-      }
-      fe_evt("inproc_refused why=%s", why);
-      g_relaunch = RELAUNCH_GAMELIST;
-      me_host_shutdown();       /* kept for a return that is not happening */
-   }
+   if (!inproc_try_return(have_variant, &inproc_n, snap_pre))
+      break;
+   /* A HOME after the refusal check above (the unload, the census,
+    * the clock) must still end the process: the list then returns at
+    * once and leaves through its own HOME exit (F1). */
+   session_reset(&exit_code, &exit_reason, &ff_engaged, &ff_toggled, &ff_last_mode,
+                 &ff_last_me, &prev_pad, &chord_frames, &inproc_menu_armed,
+                 &autoload_state_slot, me_rend_cfg_boot, sram_thread_boot,
+                 autoload_boot);
+   emu_boost_start();
+   pwr_release();         /* the browser waits on the player: no hold */
+   }   /* the next game */
    process_end(exit_code, exit_reason);
    return 0;
 }

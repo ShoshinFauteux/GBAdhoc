@@ -99,7 +99,8 @@ def helpers(source):
 
 
 def production(source):
-    main = extract.extract(source, "fn:main")
+    # Epoch C C3-2b: the pass per game reads as the goto it replaced
+    main = extract.epochc_unloop(extract.extract(source, "fn:main"), source)
     if TD_C1C[0] in main:
         td = between(main, TD_C1C[0], TD_C1C[1], "teardown")
     else:
