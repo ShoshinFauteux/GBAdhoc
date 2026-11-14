@@ -458,6 +458,8 @@ All OFF by default; `docs/DYNAREC-PROFILE.md` has the measurements.
 | `DRPROF_HW` | root make **and** `-DDRPROF_HW` frontend | phase word `reg[40]` + a 1 kHz sampler thread; `EVT drprof` windows | Bench only (`GBADHOC-DRPROF` rig, arms A-SAMP/H-SAMP). PPSSPP: hash-identical to base, +4% cost. Refused in a release. |
 | `DRPROF_TWIN` | `tools/drprof` only | translation-time class map + zone markers for the qemu plugin; emitted code unchanged (`dr_oracle.py base base-notwin` IDENTICAL) | Host twin only. Refused in a release. |
 | `DRPROF_NEGCTL` | `tools/drprof` only | +1 cycle per Thumb instruction: the oracle's negative control | Must FAIL the oracle; it does, on all 7 fixtures. |
+| `XS_COST_PROBE` | `tools/drprof` VDEFS | counters on the twin's exit line: `XS_COST` (xs_blocks_current calls, tag slots walked, halfwords compared, covering blocks, the union of their extents, calls answered current) and `RS_COST` (smc_retire_span calls, validation-walk slots, blocks retired, untag-scan slots, coverage-bit stores, untag halfwords, written halfwords) | Twin diagnostic (smc-cost 2026-11-13). Counting only. |
+| `SMC_COST_VERIFY` | `tools/drprof` VDEFS | runs the a34f8eaf `xs_blocks_current` (one slot, one block at a time) beside the union version on every trap, and the retired-tag table's linear search beside its bucket chains on every find; `SMC_COST_VERIFY xs_mismatch= rt_mismatch=` on exit | Twin diagnostic (smc-cost 2026-11-13). 0 mismatches on Hot Wheels, Doom II, Duke, Ice Nine, Payback (1200 f each). |
 | `platform=drprof-mipsel` | root make | the PSP's translator as a static Linux mipsel archive for qemu (`tools/drprof/Makefile`) | Host only. |
 
 `tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` for one-off variants of

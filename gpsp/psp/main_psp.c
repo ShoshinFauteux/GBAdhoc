@@ -4650,10 +4650,10 @@ session_top:
          /* The rest of the unload: what the exit path leaves to the
           * process ending. */
          dynarec_release_translation_caches();
-         /* XS_HEAP's SMC tables (70,656 B): the first game's retro_init
-          * takes them, after the boot snapshot, and a reload of the same
-          * game reuses them -- but the next game's retro_init must find a
-          * fresh boot's heap, not the last game's block, or the census
+         /* XS_HEAP's SMC tables (70,912 B: smc-cost added the 256 B of
+          * retired-tag buckets): the first game's retro_init takes them,
+          * after the boot snapshot, and a reload of the same game reuses
+          * them -- but the next game's retro_init must find a fresh boot's heap, not the last game's block, or the census
           * reads it as residue and refuses the return.  Given back here,
           * the next retro_init takes it again at the same place, zeroed
           * as on a fresh boot. */

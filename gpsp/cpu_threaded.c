@@ -2915,6 +2915,48 @@ void translate_icache_sync() {
 
 #define VALID_TAG(tagn) (tagn > LAST_TAG_NUM)
 
+/* ram_tag_next (smc-cost 2026-11-13): the first slot at or after i, up to
+ * `last` inclusive, holding a block-start tag; last + 1 when there is none.
+ * Exactly the slots `for (; i <= last; i++) if (VALID_TAG(tagp[i]))` stops
+ * at, in the same order: a slot is skipped only when both its bytes are 0 or
+ * 1, i.e. the tag is at most 0x0101 = LAST_TAG_NUM (plain arithmetic, no
+ * assumption about which values occur).  Four slots per test where they
+ * fit, then two (XS_WALK_PAIR's test).  The retire and untag walks of
+ * smc_retire_span and the coverage walk of xs_blocks_current are almost all
+ * interior marks (0x0101) and data (0): Hot Wheels walks ~300 slots a
+ * retirement, Doom ~70 a same-value trap (twin). */
+typedef u32 __attribute__((may_alias)) ram_tag_pair;
+static inline u32 ram_tag_next(const u16 *tagp, u32 i, u32 last)
+{
+  if ((i & 1) && i <= last) {
+    if (VALID_TAG(tagp[i]))
+      return i;
+    i++;
+  }
+  for (;;) {
+    if (i + 3 <= last) {
+      /* skip whole groups of four non-start slots (two aligned loads) */
+      const ram_tag_pair *q = (const ram_tag_pair *)&tagp[i];
+      const ram_tag_pair *qe = (const ram_tag_pair *)&tagp[last - 3];
+      while (q <= qe && !((q[0] | q[1]) & 0xFEFEFEFEu))
+        q += 2;
+      i = (u32)((const u16 *)q - tagp);
+    }
+    if (i + 1 > last)
+      break;
+    if (((const ram_tag_pair *)tagp)[i >> 1] & 0xFEFEFEFEu) {
+      if (VALID_TAG(tagp[i]))
+        return i;
+      if (VALID_TAG(tagp[i + 1]))
+        return i + 1;
+    }
+    i += 2;
+  }
+  if (i <= last && VALID_TAG(tagp[i]))
+    return i;
+  return last + 1;
+}
+
 /* (The direct-link/stable-thunk cross-check, and every other illegal SMC flag
  * combination, is now asserted together in gpsp_profile.h.) */
 
@@ -3077,9 +3119,100 @@ static u32 smc_block_pending_full;
  * its block-start tags here and restore them on the next real lookup, avoiding
  * consumption of a new tag number on every audio tick. */
 #define SMC_RETIRED_TAGS 512
-typedef struct { u32 addr; u16 tag; } smc_retired_tag_type;
+typedef struct { u32 addr; u16 tag; u16 next; } smc_retired_tag_type;
 static smc_retired_tag_type smc_retired_tags[SMC_RETIRED_TAGS];
 static u32 smc_retired_tag_count;
+/* The table's INDEX (smc-cost 2026-11-13): a chain per hash bucket, newest
+ * first, through the entries' `next` (entry number + 1; 0 ends a chain; the
+ * field sits in what was the struct's padding, so the table is the same
+ * 4 KiB).  It replaces two linear searches of the whole table: every
+ * remember (SMC_SINGLE_UNTAG lifts each dead block start of a retirement)
+ * and every lookup at an untagged RAM pc (the restore).  Hot Wheels kept
+ * ~130 entries live and spent 27 % of smc_retire_span's instructions in
+ * that search (twin).  The table itself is unchanged -- the same entries,
+ * appended in the same order, the same "full" at SMC_RETIRED_TAGS distinct
+ * addresses, emptied by the same `smc_retired_tag_count = 0` -- so every
+ * remember and restore answers exactly as before.
+ *
+ * The buckets are never cleared.  A head is believed only when it names a
+ * live entry (number <= count) that hashes to this bucket.  Such an entry
+ * was appended since the table was last emptied, and appending to a bucket
+ * always makes the new entry its head, so a head left over from before
+ * the empty can only pass the test if it IS the current head.  A chain
+ * therefore starts at the newest entry of its bucket and every `next` was
+ * read from a believed head when its entry was appended: the chain holds
+ * exactly the bucket's entries since the empty.  So the full flush, the
+ * one place the table is emptied, is untouched (it is pinned: docs/
+ * LAYOUT-PINNING.md), and so is .bss: the buckets live at the end of the
+ * XS_HEAP block when there is one (smc_rt_head(), below), else here. */
+#define SMC_RT_BUCKET_BITS 7
+#define SMC_RT_BUCKETS (1u << SMC_RT_BUCKET_BITS)
+static inline u32 smc_rt_bucket(u32 addr)
+{
+  return (addr * 2654435761u) >> (32 - SMC_RT_BUCKET_BITS);
+}
+#ifdef XS_HEAP
+static inline u16 *smc_rt_heads(void);  /* after xs_heap_blk (its .bss place) */
+/* The block's layout (dynarec_heap_tables_init carves it in this order):
+ * the SMC_SAME_SKIP tables, the SMC_RETIRE_LOCAL tables, these buckets. */
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE)
+#ifdef SMC_SAME_ADAPT
+#define XS_HEAP_XS_BYTES (0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2 + 2 * (0x10000 / 16))
+#else
+#define XS_HEAP_XS_BYTES (0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2)
+#endif
+#else
+#define XS_HEAP_XS_BYTES 0
+#endif
+#if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
+#define XS_HEAP_BACK_BYTES ((0x8000 >> SMC_LOCAL_SHIFT) * 2 + (0x40000 >> SMC_LOCAL_SHIFT) * 2)
+#else
+#define XS_HEAP_BACK_BYTES 0
+#endif
+#define XS_HEAP_RT_OFF (XS_HEAP_XS_BYTES + XS_HEAP_BACK_BYTES)
+#else
+static u16 smc_rt_head_tab[SMC_RT_BUCKETS];
+#define smc_rt_heads() smc_rt_head_tab
+#endif
+/* The believed head of bucket b (entry number + 1), or 0. */
+static inline u32 smc_rt_head(const u16 *heads, u32 b)
+{
+  u32 k = heads[b];
+  if (k && (k > smc_retired_tag_count ||
+            smc_rt_bucket(smc_retired_tags[k - 1].addr) != b))
+    k = 0;
+  return k;
+}
+#ifdef SMC_COST_VERIFY
+u32 scv_rt_calls, scv_rt_mismatch, scv_xs_calls, scv_xs_mismatch;
+#endif
+static smc_retired_tag_type *smc_rt_find(u32 addr)
+{
+  u32 k;
+#ifdef SMC_COST_VERIFY
+  /* the linear search the index replaced, beside it (twin diagnostic) */
+  smc_retired_tag_type *lin = NULL, *idx = NULL;
+  for (k = 0; k < smc_retired_tag_count; k++)
+    if (smc_retired_tags[k].addr == addr) {
+      lin = &smc_retired_tags[k];
+      break;
+    }
+  for (k = smc_rt_head(smc_rt_heads(), smc_rt_bucket(addr)); k;
+       k = smc_retired_tags[k - 1].next)
+    if (smc_retired_tags[k - 1].addr == addr) {
+      idx = &smc_retired_tags[k - 1];
+      break;
+    }
+  scv_rt_calls++;
+  if (idx != lin)
+    scv_rt_mismatch++;
+#endif
+  for (k = smc_rt_head(smc_rt_heads(), smc_rt_bucket(addr)); k;
+       k = smc_retired_tags[k - 1].next)
+    if (smc_retired_tags[k - 1].addr == addr)
+      return &smc_retired_tags[k - 1];
+  return NULL;
+}
 
 /* Set when any live RAM block's source wraps past the end of its region's
  * canonical window (a block entered through a mirror near the top, or one that
@@ -3090,35 +3223,44 @@ static u32 smc_retired_tag_count;
  * flush, which is also the only thing that kills every live block. */
 static u32 smc_partial_wrap_live;
 
-static void smc_restore_retired_tag(u32 pc, u16 *tagp, u32 thumb)
+/* noinline: the pinned lookups keep one call where the search was inlined */
+static __attribute__((noinline)) void smc_restore_retired_tag(u32 pc,
+                                                             u16 *tagp,
+                                                             u32 thumb)
 {
-  u32 i;
+  smc_retired_tag_type *e;
   u32 addr = ((pc >> 24) == 3) ? 0x03000000 + (pc & 0x7FFF)
                                : 0x02000000 + (pc & 0x3FFFF);
-  if (*tagp)
+  if (*tagp || !smc_retired_tag_count)
     return;
-  for (i = 0; i < smc_retired_tag_count; i++)
-    if (smc_retired_tags[i].addr == addr) {
-      *tagp = smc_retired_tags[i].tag;
-      if (!thumb && !tagp[1])
-        tagp[1] = CODE_TAG_BLOCK16;
-      return;
-    }
+  e = smc_rt_find(addr);
+  if (e) {
+    *tagp = e->tag;
+    if (!thumb && !tagp[1])
+      tagp[1] = CODE_TAG_BLOCK16;
+  }
 }
 
-static int smc_remember_retired_tag(u32 addr, u16 tag)
+static __attribute__((noinline)) int smc_remember_retired_tag(u32 addr,
+                                                             u16 tag)
 {
-  u32 i;
-  for (i = 0; i < smc_retired_tag_count; i++)
-    if (smc_retired_tags[i].addr == addr) {
-      smc_retired_tags[i].tag = tag;
-      return 1;
-    }
+  smc_retired_tag_type *e = smc_retired_tag_count ? smc_rt_find(addr) : NULL;
+  u16 *heads;
+  u32 b;
+  if (e) {
+    e->tag = tag;
+    return 1;
+  }
   if (smc_retired_tag_count == SMC_RETIRED_TAGS)
     return 0;
-  smc_retired_tags[smc_retired_tag_count].addr = addr;
-  smc_retired_tags[smc_retired_tag_count].tag = tag;
+  heads = smc_rt_heads();
+  b = smc_rt_bucket(addr);
+  e = &smc_retired_tags[smc_retired_tag_count];
+  e->addr = addr;
+  e->tag = tag;
+  e->next = (u16)smc_rt_head(heads, b);
   smc_retired_tag_count++;
+  heads[b] = (u16)smc_retired_tag_count;
   return 1;
 }
 
@@ -3235,9 +3377,11 @@ static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 #endif
 
 #define SMC_RESTORE_RETIRED_TAG_arm(pc, tagp) \
-  do { if (smc_partial_active) smc_restore_retired_tag((pc), (tagp), 0); } while (0)
+  do { if (smc_partial_active && !*(tagp) && smc_retired_tag_count) \
+         smc_restore_retired_tag((pc), (tagp), 0); } while (0)
 #define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) \
-  do { if (smc_partial_active) smc_restore_retired_tag((pc), (tagp), 1); } while (0)
+  do { if (smc_partial_active && !*(tagp) && smc_retired_tag_count) \
+         smc_restore_retired_tag((pc), (tagp), 1); } while (0)
 #else
 #define SMC_RESTORE_RETIRED_TAG_arm(pc, tagp) do { } while (0)
 #define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) do { } while (0)
@@ -5078,8 +5222,8 @@ static u16 *xs_val;
 static u8  *xs_ok, *xs_bad;
 #else
 static u16 xs_val[0x8000 / 2] __attribute__((aligned(16)));
-static u8  xs_ok[0x8000 / 16];
-static u8  xs_bad[0x8000 / 16];
+static u8  xs_ok[0x8000 / 16] __attribute__((aligned(4)));   /* word reads */
+static u8  xs_bad[0x8000 / 16] __attribute__((aligned(4)));
 #endif
 static u32 xs_ready;
 u32 smc_same_skips, smc_same_poison;
@@ -5185,7 +5329,16 @@ static inline void xs_adapt_retired(void)
 #define XS_ON() 1
 #endif
 #ifdef XS_COST_PROBE
-u32 xs_calls, xs_slots, xs_halves;
+/* DIAGNOSTIC (twin): xs_blocks_current calls, tag slots walked, halfwords
+ * compared, covering blocks met, the union of their extents (halfwords), and
+ * how many calls answered "current"; smc_retire_span (rs_*): calls, slots of
+ * the validation walk, blocks retired, slots of the untag scan, coverage-bit
+ * stores, halfwords of the untag region, halfwords of the written range. */
+u32 xs_calls, xs_slots, xs_halves, xs_blocks, xs_union, xs_current;
+u32 rs_calls, rs_vslots, rs_retired, rs_uscan, rs_cov, rs_un, rs_clr;
+#define XS_PROBE(x) (x)
+#else
+#define XS_PROBE(x) ((void)0)
 #endif
 /* xs_min[word]: a lower bound (halfword index) on the start of every live
  * block covering either halfword of the word -- the scan window
@@ -5308,6 +5461,24 @@ static inline void xs_clear_half(u32 h)          /* h: IWRAM halfword index */
 {
   xs_ok[h >> 3] &= (u8)~(1u << (h & 7));
 }
+/* xs_clear_half for every halfword of [h0, h1) (smc_retire_span's written
+ * range), a byte of bits at a time. */
+static inline void xs_clear_range(u32 h0, u32 h1)
+{
+  u32 k0, k1, k;
+  if (h1 <= h0)
+    return;
+  k0 = h0 >> 3;
+  k1 = (h1 - 1) >> 3;
+  if (k0 == k1) {
+    xs_ok[k0] &= (u8)~((0xFFu << (h0 & 7)) & (0xFFu >> (7 - ((h1 - 1) & 7))));
+    return;
+  }
+  xs_ok[k0] &= (u8)~(0xFFu << (h0 & 7));
+  for (k = k0 + 1; k < k1; k++)
+    xs_ok[k] = 0;
+  xs_ok[k1] &= (u8)~(0xFFu >> (7 - ((h1 - 1) & 7)));
+}
 #ifdef DRPROF_TWIN
 static void xs_report(void)
 {
@@ -5317,9 +5488,21 @@ static void xs_report(void)
   fprintf(stderr, "SMC_SAME_ADAPT on=%u off_events=%u on_events=%u\n",
           (unsigned)xs_on, (unsigned)xs_turned_off, (unsigned)xs_turned_on);
 #endif
+#ifdef SMC_COST_VERIFY
+  fprintf(stderr, "SMC_COST_VERIFY xs_calls=%u xs_mismatch=%u rt_calls=%u "
+          "rt_mismatch=%u\n", (unsigned)scv_xs_calls,
+          (unsigned)scv_xs_mismatch, (unsigned)scv_rt_calls,
+          (unsigned)scv_rt_mismatch);
+#endif
 #ifdef XS_COST_PROBE
-  fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u\n", (unsigned)xs_calls,
-          (unsigned)xs_slots, (unsigned)xs_halves);
+  fprintf(stderr, "XS_COST calls=%u slots=%u halves=%u blocks=%u union=%u "
+          "current=%u\n", (unsigned)xs_calls, (unsigned)xs_slots,
+          (unsigned)xs_halves, (unsigned)xs_blocks, (unsigned)xs_union,
+          (unsigned)xs_current);
+  fprintf(stderr, "RS_COST calls=%u vslots=%u retired=%u uscan=%u cov=%u "
+          "un=%u clr=%u\n", (unsigned)rs_calls, (unsigned)rs_vslots,
+          (unsigned)rs_retired, (unsigned)rs_uscan, (unsigned)rs_cov,
+          (unsigned)rs_un, (unsigned)rs_clr);
 #endif
 }
 #endif
@@ -5364,10 +5547,20 @@ static __attribute__((noinline)) void xs_clear_all(void)
 #endif
 #define XS_CLEAR_HALF(region_is_iwram, h) do {                                \
     if (region_is_iwram) xs_clear_half(h); } while (0)
+/* xs_ok byte k &= keep: clears the bits keep has clear (halfwords 8k..8k+7) */
+#define XS_CLEAR_MASK(region_is_iwram, k, keep) do {                          \
+    if (region_is_iwram) xs_ok[k] &= (u8)(keep); } while (0)
+#define XS_CLEAR_RANGE(region_is_iwram, h0, h1) do {                          \
+    if (region_is_iwram) xs_clear_range((h0), (h1)); } while (0)
 #else
 #define XS_NOTE_ARM()   do { } while (0)
 #define XS_NOTE_THUMB() do { } while (0)
 #define XS_CLEAR_HALF(region_is_iwram, h) do { } while (0)
+#define XS_CLEAR_MASK(region_is_iwram, k, keep) do { } while (0)
+#define XS_CLEAR_RANGE(region_is_iwram, h0, h1) do { } while (0)
+#endif
+#ifndef XS_PROBE
+#define XS_PROBE(x) ((void)0)
 #endif
 
 block_data_type block_data[MAX_BLOCK_SIZE];
@@ -10730,6 +10923,151 @@ void smc_work_window_dump(void)
 #else
 #define SMC_WORK_WALK(n) ((void)0)
 #endif
+#ifdef PSP
+/* LAYOUT (smc-cost 2026-11-13, docs/LAYOUT-PINNING.md "Keeping the pads"):
+ * the smc-cost changes shrink pinned warm-tail functions (their new loops
+ * and helpers live out of line in cold text).  psp/layout/hot_order.txt
+ * links each of these zero runs right after the function it stands for, so
+ * the rows after it keep their place mod 8 KiB.  A function's 32 B-rounded
+ * size at a34f8eaf less its size now (the link starts every .text input
+ * section on 32 B) is given back by the out-of-line helpers hot_order.txt
+ * puts behind it where they fit, and by these zeros for the rest:
+ * xs_blocks_current 1760 - 1568 = ram_mirror_alias_pc 128 + 64 zeros,
+ * block_lookup_translate_arm 1760 - 1664 = 96 zeros, block_lookup_
+ * translate_thumb 1792 - 1728 = 64 zeros, flush_translation_cache_ram_smc
+ * 6592 - 6240 = smc_remember_retired_tag 352, smc_retire_span 3296 - 3040
+ * = smc_restore_retired_tag 256 (psp-gcc, release and lab alike).  A change
+ * to one of these functions re-derives its row.  Never executed. */
+#ifndef SMC_FILL_XS_BYTES
+#define SMC_FILL_XS_BYTES 64
+#endif
+#ifndef SMC_FILL_LK_BYTES
+#define SMC_FILL_LK_BYTES 96
+#endif
+#ifndef SMC_FILL_LKT_BYTES
+#define SMC_FILL_LKT_BYTES 64
+#endif
+#define SMC_FILL_STR_(x) #x
+#define SMC_FILL_STR(x) SMC_FILL_STR_(x)
+#define SMC_FILL_SECTION(name, bytes)                                         \
+  __asm__(".pushsection .text." name ",\"ax\",@progbits\n"                     \
+          "  .balign 4\n"                                                      \
+          "  .type " name ", @function\n"                                      \
+          name ":\n"                                                           \
+          "  .fill (" SMC_FILL_STR(bytes) ") / 4, 4, 0\n"                     \
+          "  .size " name ", (" SMC_FILL_STR(bytes) ")\n"                     \
+          ".popsection\n")
+SMC_FILL_SECTION("smc_fill_xs", SMC_FILL_XS_BYTES);    /* xs_blocks_current */
+SMC_FILL_SECTION("smc_fill_lk", SMC_FILL_LK_BYTES);    /* block_lookup_translate_arm */
+SMC_FILL_SECTION("smc_fill_lkt", SMC_FILL_LKT_BYTES);  /* block_lookup_translate_thumb */
+#endif
+#ifdef SMC_SINGLE_UNTAG
+/* SMC_SINGLE_UNTAG: do for the retired blocks what a full flush does for
+ * every block -- take their code marks off guest memory -- but only where
+ * no block that is STILL LIVE covers the halfword.  Region U is the union
+ * of the retired blocks' extents (or just the written range when nothing
+ * was retired).  A halfword of U no live extent covers loses its interior
+ * mark (CODE_TAG_BLOCK16), and a block-start tag there whose entry has no
+ * live translation in either mode is lifted into smc_retired_tags, which
+ * the next lookup at that address restores (SMC_RESTORE_RETIRED_TAG; the
+ * mechanism the mixer range path already uses).  Without this, every later
+ * store into a retired block's remaining words traps again and retires
+ * nothing: Top Gear Rally's stack (167k traps / 1200 frames), Hot Wheels'
+ * per-frame code copy (50k traps vs 374 full flushes on 4.1.1).
+ * A live block keeps every one of its marks, so no write to live code can
+ * go unreported.  A full retired-tag table keeps the tag (never a flush). */
+/* smc_untag_span: that pass, out of line (smc-cost 2026-11-13): it runs
+ * only for the widened classes (Hot Wheels, Top Gear Rally), and keeping
+ * it out of the pinned smc_retire_span keeps that function's size.
+ * [ulo, uhi): the retired blocks' union (ulo >= uhi: nothing retired). */
+static __attribute__((noinline)) void smc_untag_span(u32 lo, u32 hi,
+    u32 ulo, u32 uhi, u16 *tagp, u32 base, u32 bytes, u32 span, u32 rgn)
+{
+  u32 i;
+  {
+    u32 u_lo, u_hi, n, k, scan0, a0, nb, b;
+    /* 1 bit per halfword from a0 = u_lo rounded down to 8, so cov byte b is
+     * the xs_ok byte of halfwords a0 + 8b .. +7 (+1 byte for the rounding;
+     * whether U is untagged at all is still decided by n, as before) */
+    u8 cov[(MAX_BLOCK_SIZE * 8) / 16 + 1];
+    if (ulo >= uhi) { ulo = lo; uhi = hi; }
+#ifdef SMC_STM_CHAIN
+    /* ...and the written range itself, which may hold chain marks past the
+     * retired extents (a block store's later words over data). */
+    else { if (lo < ulo) ulo = lo; if (hi > uhi) uhi = hi; }
+#endif
+    if (ulo < base) ulo = base;
+    if (uhi > base + bytes) uhi = base + bytes;
+    u_lo = (ulo - base) >> 1;
+    u_hi = (uhi - base + 1) >> 1;
+    n = u_hi - u_lo;
+    if (n <= (MAX_BLOCK_SIZE * 8) / 2) {
+      a0 = u_lo & ~7u;
+      nb = (u_hi - a0 + 7) >> 3;
+      memset(cov, 0, nb);
+      /* halfwords outside U count as covered: never touched */
+      cov[0] |= (u8)((1u << (u_lo - a0)) - 1);
+      if ((u_hi - a0) & 7)
+        cov[nb - 1] |= (u8)(0xFFu << ((u_hi - a0) & 7));
+      scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
+      SMC_LOCAL_NARROW(scan0, rgn, ulo - base, uhi - base, tagp, base);
+      SMC_WORK_WALK(u_hi - scan0 + n);
+      XS_PROBE((rs_uscan += u_hi - scan0, rs_un += n));
+      for (i = (scan0 < u_hi) ? ram_tag_next(tagp, scan0, u_hi - 1) : u_hi;
+           i < u_hi; i = ram_tag_next(tagp, i + 1, u_hi - 1)) {
+        {
+          ramtag_type *te = get_ram_tag(tagp[i]);
+          u32 e[2], m;
+          e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 0;
+          e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 0;
+          for (m = 0; m < 2; m++) {
+            u32 e_off;
+            if (!e[m]) continue;
+            e_off = (e[m] - base + 1) >> 1;          /* exclusive, halfwords */
+            for (k = (i > u_lo ? i : u_lo); k < u_hi && k < e_off; k++)
+              cov[(k - a0) >> 3] |= (u8)(1u << ((k - a0) & 7));
+            XS_PROBE(rs_cov += (k > (i > u_lo ? i : u_lo)) ? k - (i > u_lo ? i : u_lo) : 0);
+          }
+        }
+      }
+      /* Every halfword of U no live extent covers, in ascending order: its
+       * xs record bit goes (one AND per 8 halfwords), its interior mark goes,
+       * and a dead block start is lifted into smc_retired_tags. */
+      for (b = 0; b < nb; b++) {
+        u32 c = cov[b], h0 = a0 + (b << 3), j;
+        if (c == 0xFF)
+          continue;
+        XS_CLEAR_MASK(rgn == 0, h0 >> 3, c);   /* no live block covers these */
+        for (j = 0; j < 8; j += 2) {
+          u32 h = h0 + j;
+          if (c & (3u << j))
+            ;                          /* a covered half: one at a time */
+          else if (((ram_tag_pair *)tagp)[h >> 1] == 0)
+            continue;                  /* data: nothing to lift */
+          else if (((ram_tag_pair *)tagp)[h >> 1] == CODE_TAG_BLOCK32) {
+            ((ram_tag_pair *)tagp)[h >> 1] = 0;
+            continue;
+          }
+          for (; h < h0 + j + 2; h++) {
+            if (c & (1u << (h - h0)))
+              continue;
+            if (tagp[h] == CODE_TAG_BLOCK16)
+              tagp[h] = 0;
+#ifndef SMC_UNTAG_MARKS_ONLY   /* experiment: interior marks only */
+            else if (VALID_TAG(tagp[h])) {
+              ramtag_type *te = get_ram_tag(tagp[h]);
+              if (!SMC_RAM_LIVE_OFFSET(te, arm) && !SMC_RAM_LIVE_OFFSET(te, thumb) &&
+                  smc_remember_retired_tag(base + (h << 1), tagp[h]))
+                tagp[h] = 0;
+            }
+#endif
+          }
+        }
+      }
+    }
+  }
+}
+#endif
 static int smc_retire_span(u32 lo, u32 hi)
 {
   u16 *tagp;
@@ -10772,6 +11110,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   SMC_LOCAL_NARROW(first, rgn, lo_off, hi_off, tagp, base);
   last = (hi_off - 2) >> 1;            /* last halfword slot of the range */
   SMC_WORK_WALK(last - first + 1);
+  XS_PROBE((rs_calls++, rs_vslots += last - first + 1));
 
   /* Validate before changing anything: every live block in the window must
    * have a known extent. */
@@ -10782,15 +11121,9 @@ static int smc_retire_span(u32 lo, u32 hi)
    * more than SMC_RETIRE_LIST_N of them -> the retire pass walks as before. */
   u32 rl_ix[SMC_RETIRE_LIST_N], rl_n = 0, rl_k = 0;
 #endif
-  for (i = first; i <= last; i++) {
-#ifdef SMC_RETIRE_LIST
-    if (!(i & 1) && i < last &&
-        ((const u32 *)tagp)[i >> 1] == CODE_TAG_BLOCK32) {
-      i++;
-      continue;
-    }
-#endif
-    if (VALID_TAG(tagp[i])) {
+  for (i = ram_tag_next(tagp, first, last); i <= last;
+       i = ram_tag_next(tagp, i + 1, last)) {
+    {
       ramtag_type *te = get_ram_tag(tagp[i]);
       if ((SMC_RAM_LIVE_OFFSET(te, arm) && !te->blk_end_arm) ||
           (SMC_RAM_LIVE_OFFSET(te, thumb) && !te->blk_end_thumb))
@@ -10842,6 +11175,7 @@ static int smc_retire_span(u32 lo, u32 hi)
                                   RAM_MIRROR_ENTRY_PC(start, te, arm), 0);
         te->code_bytes_arm = 0;
         flush_ram_partial++;
+        XS_PROBE(rs_retired++);
 #ifdef SMC_SINGLE_UNTAG
         if (start < ulo) ulo = start;
         if (te->blk_end_arm > uhi) uhi = te->blk_end_arm;
@@ -10854,6 +11188,7 @@ static int smc_retire_span(u32 lo, u32 hi)
                                   RAM_MIRROR_ENTRY_PC(start, te, thumb), 1);
         te->code_bytes_thumb = 0;
         flush_ram_partial++;
+        XS_PROBE(rs_retired++);
 #ifdef SMC_SINGLE_UNTAG
         if (start < ulo) ulo = start;
         if (te->blk_end_thumb > uhi) uhi = te->blk_end_thumb;
@@ -10866,77 +11201,22 @@ static int smc_retire_span(u32 lo, u32 hi)
 #endif
 #ifdef SMC_SINGLE_UNTAG
   if (smc_untag_now)
-  /* SMC_SINGLE_UNTAG: do for the retired blocks what a full flush does for
-   * every block -- take their code marks off guest memory -- but only where
-   * no block that is STILL LIVE covers the halfword.  Region U is the union
-   * of the retired blocks' extents (or just the written range when nothing
-   * was retired).  A halfword of U no live extent covers loses its interior
-   * mark (CODE_TAG_BLOCK16), and a block-start tag there whose entry has no
-   * live translation in either mode is lifted into smc_retired_tags, which
-   * the next lookup at that address restores (SMC_RESTORE_RETIRED_TAG; the
-   * mechanism the mixer range path already uses).  Without this, every later
-   * store into a retired block's remaining words traps again and retires
-   * nothing: Top Gear Rally's stack (167k traps / 1200 frames), Hot Wheels'
-   * per-frame code copy (50k traps vs 374 full flushes on 4.1.1).
-   * A live block keeps every one of its marks, so no write to live code can
-   * go unreported.  A full retired-tag table keeps the tag (never a flush). */
-  {
-    u32 u_lo, u_hi, n, j, k, scan0;
-    u8 cov[(MAX_BLOCK_SIZE * 8) / 16];   /* 1 bit per halfword of U */
-    if (ulo >= uhi) { ulo = lo; uhi = hi; }
-#ifdef SMC_STM_CHAIN
-    /* ...and the written range itself, which may hold chain marks past the
-     * retired extents (a block store's later words over data). */
-    else { if (lo < ulo) ulo = lo; if (hi > uhi) uhi = hi; }
+    smc_untag_span(lo, hi, ulo, uhi, tagp, base, bytes, span, rgn);
 #endif
-    if (ulo < base) ulo = base;
-    if (uhi > base + bytes) uhi = base + bytes;
-    u_lo = (ulo - base) >> 1;
-    u_hi = (uhi - base + 1) >> 1;
-    n = u_hi - u_lo;
-    if (n <= sizeof(cov) * 8) {
-      memset(cov, 0, (n + 7) >> 3);
-      scan0 = ((ulo - base) > span) ? ((ulo - base) - span) >> 1 : 0;
-      SMC_LOCAL_NARROW(scan0, rgn, ulo - base, uhi - base, tagp, base);
-      SMC_WORK_WALK(u_hi - scan0 + n);
-      for (i = scan0; i < u_hi; i++) {
-        if (VALID_TAG(tagp[i])) {
-          ramtag_type *te = get_ram_tag(tagp[i]);
-          u32 e[2], m;
-          e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 0;
-          e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 0;
-          for (m = 0; m < 2; m++) {
-            u32 e_off;
-            if (!e[m]) continue;
-            e_off = (e[m] - base + 1) >> 1;          /* exclusive, halfwords */
-            for (k = (i > u_lo ? i : u_lo); k < u_hi && k < e_off; k++)
-              cov[(k - u_lo) >> 3] |= (u8)(1u << ((k - u_lo) & 7));
-          }
-        }
-      }
-      for (j = 0; j < n; j++) {
-        u32 h = u_lo + j;
-        if (cov[j >> 3] & (1u << (j & 7)))
-          continue;
-        XS_CLEAR_HALF(rgn == 0, h);   /* no live block covers h */
-        if (tagp[h] == CODE_TAG_BLOCK16)
-          tagp[h] = 0;
-#ifndef SMC_UNTAG_MARKS_ONLY   /* experiment: interior marks only */
-        else if (VALID_TAG(tagp[h])) {
-          ramtag_type *te = get_ram_tag(tagp[h]);
-          if (!SMC_RAM_LIVE_OFFSET(te, arm) && !SMC_RAM_LIVE_OFFSET(te, thumb) &&
-              smc_remember_retired_tag(base + (h << 1), tagp[h]))
-            tagp[h] = 0;
-        }
-#endif
-      }
+  XS_PROBE(rs_clr += (hi_off - lo_off) >> 1);
+  /* every covering block was just retired: the range's xs record bits and
+   * interior marks go (word-aligned: lo and hi are) */
+  XS_CLEAR_RANGE(rgn == 0, lo_off >> 1, hi_off >> 1);
+  for (i = lo_off >> 1; i < (hi_off >> 1); i += 2) {
+    u32 w = ((ram_tag_pair *)tagp)[i >> 1];
+    if (w == CODE_TAG_BLOCK32)
+      ((ram_tag_pair *)tagp)[i >> 1] = 0;
+    else if (w) {
+      if (tagp[i] == CODE_TAG_BLOCK16)
+        tagp[i] = 0;
+      if (tagp[i + 1] == CODE_TAG_BLOCK16)
+        tagp[i + 1] = 0;
     }
-  }
-#endif
-  for (i = lo_off >> 1; i < (hi_off >> 1); i++) {
-    XS_CLEAR_HALF(rgn == 0, i);   /* every covering block was just retired */
-    if (tagp[i] == CODE_TAG_BLOCK16)
-      tagp[i] = 0;
   }
   return 1;
 }
@@ -11094,6 +11374,9 @@ static int smc_retire_single_word(u32 word)
  * what every live reader read because a scan that finds a valid record with a
  * different value poisons it instead of overwriting it (xs_note_half). */
 static __attribute__((noinline)) int xs_blocks_current(u32 word);
+#ifdef SMC_COST_VERIFY
+static __attribute__((noinline)) int xs_blocks_current_ref(u32 word);
+#endif
 /* LAYOUT NEUTRALITY (cpu-levers 2026-10-27).  flush_translation_cache_ram_smc,
  * ramtag_note_extent and flush_translation_cache_ram are in the pinned hot
  * order (psp/layout/hot.ord).  The first cut of this lever grew them by up to
@@ -11163,6 +11446,13 @@ static void sdc_note(u32 word)
 #endif
 static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 {
+#ifdef SMC_COST_VERIFY
+  if (XS_ON()) {
+    scv_xs_calls++;
+    if (xs_blocks_current(word) != xs_blocks_current_ref(word))
+      scv_xs_mismatch++;
+  }
+#endif
   if (XS_ON() && xs_blocks_current(word)) {
     smc_same_skips++;
 #ifdef SMC_SAME_ADAPT
@@ -11198,7 +11488,18 @@ static inline u32 xs_tag_next(const u16 *tagp, u32 i, u32 last)
       return i;
     i++;
   }
-  while (i + 1 <= last) {
+  for (;;) {
+    /* smc-cost: whole groups of four non-start slots first (ram_tag_next) */
+    if (i + 3 <= last) {
+      /* skip whole groups of four non-start slots (two aligned loads) */
+      const ram_tag_pair *q = (const ram_tag_pair *)&tagp[i];
+      const ram_tag_pair *qe = (const ram_tag_pair *)&tagp[last - 3];
+      while (q <= qe && !((q[0] | q[1]) & 0xFEFEFEFEu))
+        q += 2;
+      i = (u32)((const u16 *)q - tagp);
+    }
+    if (i + 1 > last)
+      break;
     if (*(const xs_tagpair *)&tagp[i] & 0xFEFEFEFEu) {
       if (VALID_TAG(tagp[i]))
         return i;
@@ -11214,11 +11515,146 @@ static inline u32 xs_tag_next(const u16 *tagp, u32 i, u32 last)
   return last + 1;
 }
 #endif
+/* xs_range_current (smc-cost 2026-11-13): every IWRAM halfword h of
+ * [h0, h1) has a valid (xs_ok), unpoisoned (xs_bad) record equal to memory
+ * now -- the per-halfword test xs_blocks_current applied to each covering
+ * block, here over a whole range: the record bits a byte (8 halfwords) at a
+ * time, then the values a word (2 halfwords) at a time.  An AND of the same
+ * tests over the same halfwords, so the same answer in any order. */
+typedef u32 __attribute__((may_alias)) xs_word;
+static __attribute__((noinline)) int xs_range_current(u32 h0, u32 h1)
+{
+  const u16 *r = xs_val, *g = (const u16 *)(iwram + 0x8000);
+  /* bit j of byte k is halfword 8k + j, so on this little-endian core bit
+   * j of word w is halfword 32w + j (the bitmaps are word-aligned) */
+  const xs_word *ok = (const xs_word *)xs_ok, *bad = (const xs_word *)xs_bad;
+  u32 w0 = h0 >> 5, w1 = (h1 - 1) >> 5, w, h = h0, n;
+  for (w = w0; w <= w1; w++) {
+    u32 msk = ~0u;
+    if (w == w0)
+      msk &= ~0u << (h0 & 31);
+    if (w == w1)
+      msk &= ~0u >> (31 - ((h1 - 1) & 31));
+    if ((ok[w] & msk) != msk || (bad[w] & msk))
+      return 0;
+  }
+  if (h & 1) {
+    if (r[h] != g[h])
+      return 0;
+    h++;
+  }
+  {
+    const xs_word *rw = (const xs_word *)&r[h], *gw = (const xs_word *)&g[h];
+    n = (h1 - h) >> 1;                 /* whole words left */
+    h += n << 1;
+    for (; n >= 4; n -= 4, rw += 4, gw += 4)
+      if ((rw[0] ^ gw[0]) | (rw[1] ^ gw[1]) | (rw[2] ^ gw[2]) | (rw[3] ^ gw[3]))
+        return 0;
+    for (; n; n--, rw++, gw++)
+      if (*rw ^ *gw)
+        return 0;
+  }
+  if (h < h1 && r[h] != g[h])
+    return 0;
+  return 1;
+}
+#ifdef SMC_COST_VERIFY
+/* DIAGNOSTIC (twin only, smc-cost 2026-11-13): the a34f8eaf xs_blocks_current,
+ * one slot and one block at a time, run beside the union version on every
+ * call; any disagreement is counted (SMC_COST_VERIFY xs_mismatch=). */
+static __attribute__((noinline)) int xs_blocks_current_ref(u32 word)
+{
+  u16 *tagp = (u16 *)iwram;
+  const u32 base = 0x03000000, bytes = 0x8000;
+  u32 lo = word & ~3u, hi = lo + 4, lo_off, span, first, last, i, m;
+  int found = 0;
+
+  if ((lo >> 24) != 3 || !xs_ready || smc_partial_wrap_live)
+    return 0;
+  lo_off = lo - base;
+  if (lo_off + 4 > bytes)
+    return 0;
+#ifdef SMC_RETIRE_WINDOW
+  span = smc_max_extent[0] + 4;
+  if (!smc_window_armed || span > MAX_BLOCK_SIZE * 4)
+    span = MAX_BLOCK_SIZE * 4;
+#else
+  span = MAX_BLOCK_SIZE * 4;
+#endif
+  first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+  last = (lo_off + 2) >> 1;            /* last halfword slot of the word */
+  {
+    /* Neither half recorded: no live block covers the word. */
+    u32 h0 = lo_off >> 1;
+    if (!(xs_ok[h0 >> 3] & (3u << (h0 & 7))))
+      return 0;
+    /* Every live block covering the word scanned it, so starts at or after
+     * xs_min (see xs_note_half); retire_span's window is the outer bound. */
+    if (xs_min[lo_off >> 2] > first)
+      first = xs_min[lo_off >> 2];
+  }
+  for (i = first; i <= last; i++) {
+    ramtag_type *te;
+    u32 start, e[2];
+    if (!VALID_TAG(tagp[i]))
+      continue;
+    te = get_ram_tag(tagp[i]);
+    start = base + (i << 1);
+    e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 1;
+    e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 1;
+    for (m = 0; m < 2; m++) {
+      u32 h, h_end;
+      if (e[m] == 1)
+        continue;                      /* no live translation in this mode */
+      if (!e[m])
+        return 0;                      /* live without an extent: unknowable */
+      if (!(start < hi && e[m] > lo))
+        continue;                      /* does not cover the word */
+      if (e[m] > base + bytes)
+        return 0;
+#if defined(SMC_SAME_ADAPT) && !defined(SMC_SAME_ADAPT_MUTANT_NOREC)
+      if (!XS_REC_GET(tagp[i], m))
+        return 0;                      /* translated while not recording */
+#endif
+      h_end = (e[m] - base + 1) >> 1;
+#ifdef SMC_SAME_SKIP_MUTANT_NOCHECK
+      /* MUTANT (oracle self-test only): trust any covering block. */
+      h_end = i;
+#endif
+      for (h = i; h < h_end; ) {
+        if (!(h & 7) && h + 8 <= h_end) {
+          /* 8 halfwords at once: all recorded, none poisoned, all equal */
+          const u32 *r = (const u32 *)&xs_val[h];
+          const u32 *g = (const u32 *)(iwram + 0x8000 + (h << 1));
+          if (xs_ok[h >> 3] != 0xFF || xs_bad[h >> 3] ||
+              ((r[0] ^ g[0]) | (r[1] ^ g[1]) | (r[2] ^ g[2]) | (r[3] ^ g[3])))
+            return 0;
+          h += 8;
+        } else {
+          u8 bit = (u8)(1u << (h & 7));
+          if (!(xs_ok[h >> 3] & bit) || (xs_bad[h >> 3] & bit) ||
+              xs_val[h] != *(u16 *)(iwram + 0x8000 + (h << 1)))
+            return 0;
+          h++;
+        }
+      }
+      found = 1;
+    }
+  }
+  return found;
+}
+#endif
 static __attribute__((noinline)) int xs_blocks_current(u32 word)
 {
   u16 *tagp = (u16 *)iwram;
   const u32 base = 0x03000000, bytes = 0x8000;
   u32 lo = word & ~3u, hi = lo + 4, lo_off, span, first, last, i, m;
+  /* [ulo, uhi): the union of the covering blocks' extents, in halfwords.
+   * Each extent covers a halfword of the trapping word, so the union is one
+   * interval, and checking it once is checking every block (smc-cost: Duke's
+   * covering blocks overlap so much that the union is half the halfwords
+   * the per-block compare read; twin). */
+  u32 ulo = ~0u, uhi = 0;
   int found = 0;
 
   if ((lo >> 24) != 3 || !xs_ready || smc_partial_wrap_live)
@@ -11263,7 +11699,7 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
     e[0] = SMC_RAM_LIVE_OFFSET(te, arm) ? te->blk_end_arm : 1;
     e[1] = SMC_RAM_LIVE_OFFSET(te, thumb) ? te->blk_end_thumb : 1;
     for (m = 0; m < 2; m++) {
-      u32 h, h_end;
+      u32 h_end;
       if (e[m] == 1)
         continue;                      /* no live translation in this mode */
       if (!e[m])
@@ -11283,27 +11719,21 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
 #endif
 #ifdef XS_COST_PROBE
       xs_halves += h_end - i;
+      xs_blocks++;
 #endif
-      for (h = i; h < h_end; ) {
-        if (!(h & 7) && h + 8 <= h_end) {
-          /* 8 halfwords at once: all recorded, none poisoned, all equal */
-          const u32 *r = (const u32 *)&xs_val[h];
-          const u32 *g = (const u32 *)(iwram + 0x8000 + (h << 1));
-          if (xs_ok[h >> 3] != 0xFF || xs_bad[h >> 3] ||
-              ((r[0] ^ g[0]) | (r[1] ^ g[1]) | (r[2] ^ g[2]) | (r[3] ^ g[3])))
-            return 0;
-          h += 8;
-        } else {
-          u8 bit = (u8)(1u << (h & 7));
-          if (!(xs_ok[h >> 3] & bit) || (xs_bad[h >> 3] & bit) ||
-              xs_val[h] != *(u16 *)(iwram + 0x8000 + (h << 1)))
-            return 0;
-          h++;
-        }
+      if (h_end > i) {                 /* (empty only for the mutant) */
+        if (i < ulo) ulo = i;
+        if (h_end > uhi) uhi = h_end;
       }
       found = 1;
     }
   }
+  if (found && uhi > ulo && !xs_range_current(ulo, uhi))
+    found = 0;
+#ifdef XS_COST_PROBE
+  if (uhi > ulo) xs_union += uhi - ulo;
+  xs_current += found;
+#endif
   return found;
 }
 #endif
@@ -12218,6 +12648,10 @@ void gpsp_rewind_jit_used(u32 *rom, u32 *ram)
  * 70,672 B/cycle sessmem_cycles leak on the PSP-1000 (docs/GBA-LINK-MIRROR.md
  * 19). */
 static u8 *xs_heap_blk;
+static inline u16 *smc_rt_heads(void)
+{
+  return (u16 *)(xs_heap_blk + XS_HEAP_RT_OFF);
+}
 void dynarec_heap_tables_release(void)
 {
   free(xs_heap_blk);
@@ -12232,6 +12666,9 @@ void dynarec_heap_tables_release(void)
 #endif
 #if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
   smc_back_iw = smc_back_ew = NULL;
+#endif
+#ifdef SMC_PARTIAL_SAFE
+  smc_retired_tag_count = 0;   /* its buckets went with the block */
 #endif
 }
 /* 0, or -1 when malloc refused the block (nothing is changed then).  At
@@ -12252,6 +12689,9 @@ int dynarec_heap_tables_init(void)
 #endif
 #if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
   sz += (0x8000 >> SMC_LOCAL_SHIFT) * 2 + (0x40000 >> SMC_LOCAL_SHIFT) * 2;
+#endif
+#ifdef SMC_PARTIAL_SAFE
+  sz += SMC_RT_BUCKETS * sizeof(u16);
 #endif
   blk = malloc(sz ? sz : 64);
   if (!blk) {
@@ -12274,6 +12714,11 @@ int dynarec_heap_tables_init(void)
 #if defined(SMC_RETIRE_LOCAL) && defined(SMC_RETIRE_WINDOW)
     smc_back_iw = (u16 *)p; p += (0x8000 >> SMC_LOCAL_SHIFT) * 2;
     smc_back_ew = (u16 *)p; p += (0x40000 >> SMC_LOCAL_SHIFT) * 2;
+#endif
+#ifdef SMC_PARTIAL_SAFE
+    /* smc_rt_heads(): the retired-tag buckets, last (any content is safe:
+     * a head is checked against the table before it is believed) */
+    p += SMC_RT_BUCKETS * sizeof(u16);   /* at XS_HEAP_RT_OFF */
 #endif
     (void)p;
   }

@@ -208,7 +208,8 @@ LAYOUT_PAD_GB_BYTES ?= 868
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 # beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link
 # in front of them and the zeros give the bytes back (7576 -> 5272).
-LAYOUT_PAD_BSCAN_BYTES ?= 5272
+# smc-cost: xs_range_current + smc_untag_span join the bscan rows (2 x 2,304 B): 5272 -> 664.
+LAYOUT_PAD_BSCAN_BYTES ?= 664
 CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
 # says why): they place main's frame loop without moving instance B's hot text.

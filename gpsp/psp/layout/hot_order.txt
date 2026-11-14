@@ -22,12 +22,19 @@ update_scanline_render                            0.000001    6080
 @mips_stub.o(.text.msr_fast)
 block_lookup_address_arm                          0.038072     388
 update_serial                                     0.038938     368
-xs_blocks_current                                 0.166025    1732
+xs_blocks_current                                 0.166025    1564
+# smc-cost (2026-11-13): the bytes the change took out of a pinned row are given back right after it,
+# by functions the change moved out of line (each where its 32 B-rounded size fits) and, for the
+# rest, smc_fill_* zeros (cpu_threaded.c SMC_FILL_*): A's and B's cold text, the hot core and every
+# warm-tail row keep their place.  The two larger helpers are in the bscan section.
+ram_mirror_alias_pc                               0.000000     124
+smc_fill_xs                                       0.000000      64
 flag_interrupt                                    0.006280      76
 memset                                            0.018631     284 libc.a:libc_a-memset.o
 block_lookup_address_thumb                        0.019709     380
 spin_check                                        0.026178     524
-block_lookup_translate_arm                        0.052539    1744
+block_lookup_translate_arm                        0.052539    1656
+smc_fill_lk                                       0.000000      96
 rfu_update                                        0.033567    1000
 smc_pipe_store                                    0.009727     320
 write_io_register16                               0.082094    2760
@@ -36,10 +43,12 @@ smc_prof_note_store                               0.008008     288
 jit_code_wrote_.part.0                            0.007611     300
 smc_prof_exact                                    0.013770     576
 vram_x_dma_note                                   0.006099     332
-block_lookup_translate_thumb                      0.023820    1792
+block_lookup_translate_thumb                      0.023820    1720
+smc_fill_lkt                                      0.000000      64
 getenv                                            0.000705      40 libc.a:libc_a-getenv.o
 smc_trap_entry                                    0.009492     600
-flush_translation_cache_ram_smc                   0.093982    6572
+flush_translation_cache_ram_smc                   0.093982    6232
+smc_remember_retired_tag                          0.000000     336
 xlat_scan_arm_ram_fast.constprop.0                0.031467    2624
 memcpy                                            0.010117     880 libc.a:libc_a-memcpy.o
 jit_code_publish_                                 0.014377    1296
@@ -74,7 +83,8 @@ dispatch_cache_clear                              0.000491     192
 entry_gates_walk                                  0.001646     652
 audio_thread                                      0.000640     804
 vid_flip_latched                                  0.000280     112
-smc_retire_span                                   0.006831    3292
+smc_retire_span                                   0.006831    3016
+smc_restore_retired_tag                           0.000000     248
 fe_autopilot_take_mark                            0.000037      16
 input_poll                                        0.000018       8
 rewind_backup_data                                0.000564     268
@@ -172,6 +182,10 @@ core_phase_now                                    0.000641      52
 core_phase_frame_begin                            0.000247     108
 smc_chain_store_iw                                0.000334     180
 smc_local_narrow.isra.0                           0.000215     132
+# smc-cost (2026-11-13): xs_blocks_current's union compare and smc_retire_span's untag pass, moved
+# out of line (2,304 B per instance): BSCAN release 5272 -> 664, lab 5496 -> 888.
+xs_range_current                                  0.000000     472
+smc_untag_span                                    0.000000    1796
 # ---- late: linked after B's hot path, A's copy then B's (gen_layout.py write_ord).  Three small
 # hot-core functions give back update_gba's HALT_HOP growth (212 B; 208 out, so the warm tail lands on its sets);
 # halt_hop_* (claude/kirby-hop2) are the only per-halt code and run at most a few times a frame.
