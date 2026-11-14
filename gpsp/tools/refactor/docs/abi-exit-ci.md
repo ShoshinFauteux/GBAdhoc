@@ -312,3 +312,57 @@ Each of these was a way to get a false PASS (or, for T8 on a moved tree, a false
 | T6 | A mistyped `--golden` path silently dropped every derived-ABI entry and stayed green. | A missing golden is an error. | - |
 
 Note on PLAN §1.4: the table puts `fe_abi_asserts.h` under fe_priv.h, but the asserts need the core headers (`__typeof__(&NAME)`), which main_psp.c deliberately does not include (main_psp.c:1108-1112, 4851-4853). The header can only be compiled in a separate check TU with the core flags, as this tool does.
+
+## Epoch C step C0a (2026-11-12): T8 repaired for the split tree and extended; T11 R6
+
+Written on `claude/epochc-plan` (b7d0cafd plus tools). Plan: `builds/epochc-out/PLAN-EPOCHC-beta5.md`.
+
+**Why T8 was red on every post-P tree.**
+- `run_all.sh`'s default baseline is the 01067e74 run, whose compile line has no `-DGBADHOC_MGIFT`. The `-E` views then lose the teardown's `mgift_stop(1)`, and the model fails against a golden that is wrong (16/24, 19/27). `exit_matrix.py all` now refuses such a baseline (`STALE BASELINE`: a define that `psp/Makefile` turns on by default is missing from the logged compile line). Give it a `flavours.sh` run of the tree itself; `builds/mainpsp-p-out/baseline/run1` has the same defines as b7d0cafd. The reference model reads `GBADHOC_MGIFT` like the tree.
+- The source mutants edited the single file by line number and wrote the copy to a directory without `fe/`. They now find their line by anchor, the raw view reads the fragments from the tree (`aec_cparse.load_raw(base=)`), and `--over fe/X.inc.c=FILE` mutates a fragment (read by the raw view, bind-mounted for `-E`).
+- `p0a_test_exit_matrix.py` assumed the pre-P3 hijack. On a tree where P3 has landed it runs P3's sed backwards, and on a split tree C3 compares the `split.py inverse` single file with the shell read through its includes.
+
+**What XS compares now (C0a-5).**
+- **Text.** `exit_sites.tsv` and `exit_scenarios.tsv` have a `text` column: every call that passes a string literal, with its arguments (`fe_evt` format strings, handoff reasons, notices, the tags of `pwr_hold` and the teardown calls). `check` compares it. `exit_expect.h` carries each scenario's `fe_evt` format strings as C literals, and `test_exit_model.c` compares them with what the implementation passes.
+- **Power hold.** `exit_matrix.py all` walks every function's direct `pwr_hold` / `pwr_release` calls:
+  - branches that meet must agree;
+  - a `goto L` must arrive holding what `L` was first reached with;
+  - the frame loop is entered holding nothing and each pass is balanced;
+  - every other function gives back what it takes on every return. A function may drop its caller's hold and take it again (HW-1's `boot_stop_notice`); `HOLD_KNOWN` lists the one toggle (`psp_rewind_pwr`).
+  - Each site records the hold it exits with (`hold` column: `boot` for C1-C4 at b7d0cafd, for B1-C4 after HW-1), each scenario its ledger (`max=1 end=0`), and `check` compares both. The model fails a scenario that returns to the list, hands off or exits with a hold up.
+- **HW-2 atoms.** On a tree whose `main()` reads them: `g_exit_req` adds `HOME_BEFORE_TEARDOWN`, `HOME_BEFORE_REFUSAL2`, `HOME_IN_UNLOAD` and `HOME_PROFILE`; `g_link_fatal_why` adds `LINK_FATAL`. A scenario that returns in-process ends with `g_running=N`, the value the reset left.
+- **The reference model follows the tree.** `exit_expect.h` defines `EXPECT_D4_FIRST` (HW-1 F2), `EXPECT_SETTINGS_FLUSH` (HW-2 F3), `EXPECT_F1`, `EXPECT_F5`; the site flags gained `TD_ME` (HW-2 F9) and `PE_HO_BRANCHES` (HW-2 F7). One reference file is green at b7d0cafd, at claude/hw1-sleep-r2 7301ee2a and at claude/hw2-exit 0c6783aa (24/24, 27/27, 27/27; 24/24, 27/27, 27/27; 29/29, 32/32, 32/32).
+
+Tests (`abi-exit-ci_test_exit.sh`, 29 checks at b7d0cafd, 30 on an F1 tree; `--selftest` 30 cases):
+- S1: a baseline without `-DGBADHOC_MGIFT` is refused in 3 flavours.
+- M14: a log line reworded in the model (lab, harness). M15: the return keeps its hold.
+- M16: B1's log line reworded with the same calls: XS fails at B1 in lab and harness only.
+- M17: the teardown's `evt_drop` line reworded: XS fails in every scenario, lab and harness.
+- M18: the return's `pwr_release` deleted: the hold check fails (the goto and the LIST_OK ledger).
+- M19: a fragment mutant (`--over fe/misc.a.inc.c`): `state_save_slot` keeps its hold.
+- M20: the boot hold released before `net_bringup`: XS fails at C4 (hold `boot` -> none).
+- M21 (F1 trees): process_end without the `g_exit_req` guard.
+
+**T11 R6 (new).** Every static function of main_psp.c's unit that only `main()` calls carries `noinline` and an explicit `section(...)`, unless `ci_greps.r6_pinned` lists it (107 names at b7d0cafd: the ones that exist today). Reason: the C0a-6 probe (`epochc_probe.sh`; `builds/epochc-out/probe/`). Measured on release and lab at b7d0cafd, GCC 15.2.0:
+
+| A function only `main()` calls, declared | lands in | effect on `main` |
+|---|---|---|
+| `noinline`, no section | `.text.<name>`, after `layout_pad_cold` | none today; GCC decides |
+| `noinline, section(".text.startup.<x>")` | between `layout_pad_main` and `main` | moves `main` by its size |
+| `noinline, cold`, no section | `.text.unlikely.<name>`, in front of `layout_pad_main` | moves the pad and `main` |
+| `noinline, section(".text.fe_cold.<x>")` | main_psp.o's `.text.*` run, after `layout_pad_cold` | none |
+| `noinline, noreturn`, no section | `.text.<name>`, after `layout_pad_cold` | none today |
+| `static`, one caller, no `noinline` | inlined into `main` | grows `main` |
+
+So an Epoch C function is `static __attribute__((noinline, section(".text.fe_cold.<name>")))`, never `.text.startup.*`. Regenerate the pinned list once, on the tree Epoch C starts from (`ci_greps.py --src GPSP --write-r6`).
+The T11 self-test's mutants follow the split tree (the hooks live in fragments; P3's phase lists are empty): 26 checks.
+
+**`epochc_exitmap.py`** also lists the teardown's steps (`D-step`), the exits outside main_psp.c's unit (`oob`: `lab_harness.c`, `usb_handoff.c`) and why the game list returns non-zero (`browser-ret`), and `--diff OLD NEW` compares two maps by what a row is, never by line, including the teardown's order.
+
+## Epoch C step C1 (2026-11-13): the tools read the exit helpers as their bodies
+
+C1 moves the pasted exit sequences into `fe/teardown.inc.c`: `exit_early_begin(f)` and `exit_early_end(f, code, why, pass)` for families A-C, `session_end(have_variant)` and `process_end(exit_code, exit_reason)` for family D (the in-process return stays in `main()`, because of its `goto`).
+
+- **T8 / the exit map.** `aec_cparse.inline_helpers` replaces every call statement of those four helpers (`exit_matrix.EPOCHC_HELPERS`) by the helper's body before anything parses `main()`: parameters become the call's argument tokens, every token takes the call's line, file and `#if` stack, and every `if (COND) { .. } [else { .. }]` whose COND is constant (literals, the TU's enum constants, here the `XE_` flags) is reduced to the arm it takes, braces dropped. So a site, the teardown steps, the scenarios, the text and hold columns and the raw-vs-`-E` comparison see the code each site runs, and the golden of the start tree is compared unchanged. The helpers are never sites of their own. The helpers' constant `if`s must have braced arms and no `else if` (the inliner refuses otherwise). Because every inlined token carries the call's line, two same-name calls of one helper share a line in `raw_vs_e`'s (site, name, line) keys; a difference between them is still caught by the per-site call lists of XS.
+- **T11 R6.** An `always_inline` static (stage s) passes: the compiler pastes it into `main()` and places nothing. `always_inline` with `noinline` fails. Stage o's helpers carry `noinline` and `section(".text.fe_cold.<name>")`.
+- **exit_paths.** On a tree with the helpers, their text is compiled with the slices; the load-failed slice ends at its `exit_early_end` call; on a C1c tree the teardown slice is `main()`'s text from `session_end(have_variant);` to `process_end(exit_code, exit_reason);`. The mutants mutate whichever form the tree has; one more drops `vid_term` from the helper's EVT-first arm.

@@ -26,9 +26,17 @@ Checks run by `gen`/`all`:
     heap_trace_report("post_unload") (18219), the inproc_force ini read (18223) and the
     `g_relaunch != GAMELIST` audio_hash guard (18286);
   - raw vs -E differences are all '#if' or 'macro'.
+  - hold balance (Epoch C C0a-5b): main's pwr_hold/pwr_release ledger is the same on
+    every branch that meets again, every `goto L` arrives with the depth L was first
+    reached with, the frame loop is entered holding nothing and each pass is balanced,
+    and every other function that takes a hold gives it back on every return.
 `check --golden DIR --cand DIR [--allow FILE]` is the XS gate itself: per site and
 flavour, the ordered vocabulary of the candidate equals the golden, or the allow-list
-names that (flavour, site) with a fix commit.
+names that (flavour, site) with a fix commit.  Since Epoch C C0a-5 it also compares, per
+site and per scenario, the TEXT of every call that passes a string literal (the fe_evt
+format strings and their arguments, the handoff reasons, the notices: what the Lab's
+parsers and the player read) and the power-hold state (which holds a site exits with,
+the ledger of a scenario).
 
 Usage:
   exit_matrix.py all --baseline RUNDIR --src GPSP_ROOT --out OUTDIR      (3 flavours + raw)
@@ -190,6 +198,25 @@ def evt_word(args):
     return m.group(1) if m else '?'
 
 
+def call_text(name, args):
+    """`name(args)` for a call that passes a string literal, else None.  This is the text
+    the gate compares (C0a-5a): log lines, reasons and notices are strings."""
+    if '"' not in (args or ''):
+        return None
+    return '%s(%s)' % (name, re.sub(r'\s+', ' ', args).strip())
+
+
+TEXT_SEP = ' ;; '
+_LITS = re.compile(r'^\s*((?:"(?:\\.|[^"\\])*"\s*)+)')
+
+
+def evt_fmt(args):
+    """The format literal(s) of an fe_evt call as C source (adjacent literals kept as
+    written), or '"?"' when the first argument is not a literal."""
+    m = _LITS.match(args or '')
+    return m.group(1).strip() if m else '"?"'
+
+
 def collapse(seq):
     out = []
     for x in seq:
@@ -199,8 +226,31 @@ def collapse(seq):
 
 
 # ------------------------------------------------------------- parse a view
+# Epoch C's exit helpers (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3 C1).  Every view reads
+# a call statement of one of them AS ITS BODY, its flags folded (aec_cparse.inline_helpers),
+# so a site that calls them has the calls, order, texts and hold of the copy it replaced,
+# and the gate compares them with the golden unchanged.  They are never sites themselves.
+EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end',
+                  'session_reset', 'inproc_unload')
+# Epoch C C2: main()'s boot moved unchanged into boot_run (fe/boot.inc.c).  Every view
+# reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
+# are main()'s sites, with the lines of the text they run.  Never sites themselves.
+# Epoch C C3-2c: so are the session's phases (fe/session.inc.c), whose exits are
+# families B and C.
+EPOCHC_MOVED = ('boot_run', 'session_select', 'session_configure', 'session_load',
+                'session_net_up', 'session_pre_loop')
+# Epoch C C3-2b: main()'s pass per game (`for (;;)`) and its in-process return
+# (`if (!inproc_try_return(..)) break;`) read as the label session_top and the branch
+# that ended in `goto session_top` (aec_cparse.unloop_session).  Never a site itself.
+EPOCHC_LOOP = ('inproc_try_return',)
+EPOCHC_SKIP = EPOCHC_HELPERS + EPOCHC_MOVED + EPOCHC_LOOP
+
+
 class View(object):
     def __init__(self, name, toks):
+        toks = C.unloop_session(toks, EPOCHC_LOOP[0], 'session_top')
+        toks = C.splice_moved(toks, EPOCHC_MOVED)
+        toks = C.inline_helpers(toks, EPOCHC_HELPERS)
         self.name, self.toks = name, toks
         self.funcs = C.functions(toks)
         lo, hi = self.funcs['main']
@@ -253,13 +303,20 @@ def sites(view):
             calls += C.walk_calls(s)
         res.append(_site_row(view, 'main', blk, calls))
     for fn, (lo, hi) in view.funcs.items():
-        if fn == 'main':
+        if fn == 'main' or fn in EPOCHC_SKIP:
             continue
         body = C.parse_body(view.toks, lo, hi)
         cl = C.walk_calls(body)
         if any(c.name in EXIT_NAMES for c in cl):
             res.append(_site_row(view, fn, body, cl))
     res.sort(key=lambda r: r['line'])
+    # main()'s sites in the order main() runs them: after Epoch C C2 the boot's probes
+    # carry fe/boot.inc.c's lines (splice_moved), which do not sort with the shell's.
+    # Their slots in the list stay where the line sort put main's rows.
+    slots = [k for k, r in enumerate(res) if r['func'] == 'main']
+    inorder = sorted((res[k] for k in slots), key=lambda r: r['pos'])
+    for k, r in zip(slots, inorder):
+        res[k] = r
     _assign_ids(view, res)
     return res
 
@@ -310,8 +367,10 @@ def _site_row(view, fn, blk, calls):
             why = parts[1] if len(parts) > 1 else ''
     seq = collapse([VOC[c.name] for c in calls if c.name in VOC])
     sid = '-' if fn == 'main' else 'E:' + fn      # main's ids: _assign_ids
-    return dict(id=sid, func=fn, first=a, line=term.line, code=code, why=why,
-                seq=seq, calls=calls, order=order_of(seq), flags=flags_of(seq))
+    text = [x for x in (call_text(c.name, c.args) for c in calls) if x]
+    return dict(id=sid, func=fn, first=a, line=term.line, pos=term.tok.idx, code=code, why=why,
+                seq=seq, calls=calls, order=order_of(seq), flags=flags_of(seq), text=text,
+                hold='?')
 
 
 def order_of(seq):
@@ -341,12 +400,16 @@ def flags_of(seq):
         f.append('TD_CORE')
     if 'RW' in seq:
         f.append('TD_REWIND')
+    if 'ME' in seq:
+        f.append('TD_ME')                   # HW-2 F9: C3/C4 stop the ME first
     if 'VID' not in seq:
         f.append('PE_NO_VIDTERM')
     if 'RL' in seq:
         f.append('PE_RELAUNCH')
     if 'HO' not in seq:
         f.append('PE_NO_HANDOFF')
+    if seq.count('HO') > 1:
+        f.append('PE_HO_BRANCHES')          # HW-2 F7: A5 hands off 0 or 5 from two branches
     if 'EVT' not in [t for t in seq[1:]] and 'EVT' not in first:
         f.append('PE_NO_EVT')
     return f
@@ -493,16 +556,44 @@ def _next_name(rows, r):
 
 # ------------------------------------------------------------- the D interpreter
 SCENARIOS = [
-    # name, g_relaunch, refusal call #1, refusal call #2, census_ok, force, exit_reason
-    ('XMB', 0, 0, 0, 1, 0, 0),
-    ('XMB_REASON', 0, 0, 0, 1, 0, 1),
-    ('PROFILE', 1, 0, 0, 1, 0, 0),
-    ('LIST_OK', 2, 0, 0, 1, 0, 0),
-    ('LIST_REFUSED', 2, 1, 1, 1, 0, 0),
-    ('LIST_RETAIN_THEN_REFUSE', 2, 0, 1, 1, 0, 0),
-    ('LIST_CENSUS', 2, 0, 0, 0, 0, 0),
-    ('LIST_FORCE', 2, 0, 0, 0, 1, 0),
+    # name, g_relaunch, refusal call #1, refusal call #2, census_ok, force, exit_reason,
+    # g_exit_req (HW-2 F1: the sticky HOME latch)
+    ('XMB', 0, 0, 0, 1, 0, 0, 0),
+    ('XMB_REASON', 0, 0, 0, 1, 0, 1, 0),
+    ('PROFILE', 1, 0, 0, 1, 0, 0, 0),
+    ('LIST_OK', 2, 0, 0, 1, 0, 0, 0),
+    ('LIST_REFUSED', 2, 1, 1, 1, 0, 0, 0),
+    ('LIST_RETAIN_THEN_REFUSE', 2, 0, 1, 1, 0, 0, 0),
+    ('LIST_CENSUS', 2, 0, 0, 0, 0, 0, 0),
+    ('LIST_FORCE', 2, 0, 0, 0, 1, 0, 0),
 ]
+# HW-2 F1 (Epoch C C0a-5c): HOME during a quit.  These exist only on a tree whose main()
+# reads g_exit_req.  inproc_refusal() returns "home" once the latch is set, so "HOME
+# before call #N" is "call #N refuses" with the latch up; process_end then drops the
+# relaunch.  HOME inside U1-U13 lets the return finish and re-enters the list with
+# g_running 0 (the list exits as "home": site B9).
+# HW-2 F5: a link session that could not put the game back sets g_link_fatal_why with
+# g_running = 0; the loop's end turns it into the exit code and reason.  Exists only on
+# a tree whose main() reads g_link_fatal_why.  (9th field: that atom.)
+SCENARIOS_F5 = [
+    ('LINK_FATAL', 0, 0, 0, 1, 0, 0, 0, 1),
+]
+SCENARIOS_F1 = [
+    ('HOME_BEFORE_TEARDOWN', 2, 1, 1, 1, 0, 0, 1),     # refused at D10 and I1, no relaunch
+    ('HOME_BEFORE_REFUSAL2', 2, 0, 1, 1, 0, 0, 1),     # ME retained, refused at I1, no relaunch
+    ('HOME_IN_UNLOAD', 2, 0, 0, 1, 0, 0, 1),           # returns in-process with g_running 0
+    ('HOME_PROFILE', 1, 0, 0, 1, 0, 0, 1),             # a profile relaunch becomes an exit
+]
+
+
+def main_reads(view, name):
+    lo, hi = view.funcs['main']
+    return any(t.kind == 'id' and t.text == name for t in view.toks[lo:hi])
+
+
+def scenario_list(view):
+    return (SCENARIOS + (SCENARIOS_F5 if main_reads(view, 'g_link_fatal_why') else [])
+            + (SCENARIOS_F1 if main_reads(view, 'g_exit_req') else []))
 
 
 class Unmapped(Exception):
@@ -511,8 +602,12 @@ class Unmapped(Exception):
 
 class Interp(object):
     def __init__(self, scen):
-        (self.sname, rel, r1, r2, census, force, reason) = scen
+        (self.sname, rel, r1, r2, census, force, reason, xreq) = scen[:8]
+        fatal = scen[8] if len(scen) > 8 else 0
         self.var = {'g_relaunch': rel, 'exit_reason': reason, 'g_perf_rig': 0,
+                    'g_exit_req': xreq, 'g_running': 0,
+                    'g_link_fatal_why': fatal, 'g_link_fatal_code': 4 if fatal else 0,
+                    'exit_code': 0,
                     'g_ss_browser': 0, 'inproc_n': 0, 'g_ss_game': 0, 'g_cable_reserve': 0,
                     'dynarec_heap_tables_release': 1, 'g_inproc_me_unload': 0,
                     'have_variant': 0, 'NULL': 0, 'RELAUNCH_GAMELIST': 2,
@@ -597,6 +692,9 @@ class Interp(object):
             self.exec_(node.body)
         else:
             if node.kind == 'goto':
+                # what the next session starts with: g_running as the reset left it (1;
+                # HW-2 F1: 0 when HOME was pressed during the return)
+                self.events.append(('g_running=%d' % self.var['g_running'], ''))
                 self.terminal = 'goto:' + (node.label or '')
                 self.events.append((self.terminal, ''))
                 raise StopIteration
@@ -607,10 +705,21 @@ class Interp(object):
             txt = C.text_of(toks)
             for c in C.calls_in(toks):
                 self.events.append((c.name, c.args))
-            m = re.match(r'^(?:const\s+char\s*\*\s*)?(why|g_relaunch)\s*=\s*(.*?);?$', txt)
+            m = re.match(r'^(?:const\s+char\s*\*\s*)?(why|g_relaunch|g_running|exit_reason|exit_code)'
+                         r'\s*=\s*(.*?);?$', txt)
             if m:
                 rhs = m.group(2)
-                if m.group(1) == 'why':
+                if m.group(1) in ('exit_reason', 'exit_code'):
+                    # HW-2 F5: `exit_code = g_link_fatal_code; exit_reason = g_link_fatal_why;`
+                    # a string is a reason; a variable gives its scenario value; anything
+                    # else (0, NULL, ((void *)0)) clears it
+                    self.var[m.group(1)] = 1 if rhs.startswith('"') else \
+                        int(self.var.get(rhs, 0)) if re.match(r'^[A-Za-z_]\w*$', rhs) else 0
+                elif m.group(1) == 'g_running':
+                    # the in-process reset's `g_running = 1` (HW-2 F1: `= !g_exit_req`)
+                    self.var['g_running'] = int(bool(self.eval(toks[2:-1] if toks[-1].text == ';'
+                                                               else toks[2:])))
+                elif m.group(1) == 'why':
                     if rhs.startswith('inproc_refusal'):
                         # the call was recorded above; consume its scenario value
                         self.var['why'] = self.refusal.pop(0) if self.refusal else 1
@@ -629,7 +738,7 @@ def model_seq(events):
             continue
         if name == 'lab_finish':
             name = 'handoff_run'
-        if name.startswith('goto:'):
+        if name.startswith(('goto:', 'g_running=')):
             out.append(name)
             continue
         if name not in TRACK_D:
@@ -644,35 +753,262 @@ def model_seq(events):
     return out
 
 
+def scenario_hold(seq, terminal):
+    """The pwr_hold ledger of one scenario, from the loop's exit (depth 0, checked by the
+    hold walk) to its terminal.  -> ('max=N end=N', [problems])."""
+    d = mx = 0
+    bad = []
+    for k, n in enumerate(seq):
+        if n == 'pwr_hold':
+            d += 1
+            mx = max(mx, d)
+        elif n == 'pwr_release':
+            d -= 1
+            if d < 0:
+                bad.append('pwr_release with nothing held (call %d)' % k)
+                d = 0
+        elif n == 'pwr_release_all':
+            d = 0
+        elif n in ('handoff_run', 'sceKernelExitGame') and d:
+            bad.append('%s reached holding %d' % (n, d))
+    if terminal.startswith('goto') and d:
+        bad.append('returns to the list holding %d' % d)
+    return 'max=%d end=%d' % (mx, d), bad
+
+
 def scenarios(view):
     se, inp, pe, _ = d_region(view)
     res = []
-    for sc in SCENARIOS:
+    for sc in scenario_list(view):
         it = Interp(sc)
         err = ''
         try:
             it.run(list(se) + [inp] + list(pe))
         except Unmapped as e:
             err = str(e)
-        res.append(dict(name=sc[0], seq=model_seq(it.events), terminal=it.terminal or 'exit',
-                        err=err))
+        seq = model_seq(it.events)
+        hold, hbad = scenario_hold(seq, it.terminal or 'exit')
+        res.append(dict(name=sc[0], seq=seq, terminal=it.terminal or 'exit', err=err,
+                        text=[x for x in (call_text(n, a) for n, a in it.events) if x],
+                        evt=[evt_fmt(a) for n, a in it.events if n == 'fe_evt'],
+                        hold=hold, hold_bad=hbad))
     return res
+
+
+# ------------------------------------------------------------- hold balance (C0a-5b)
+HOLD_CLEAR = ('pwr_release_all', 'relaunch_eboot') + EXIT_NAMES + HANDOFF_NAMES
+# A function that is ALLOWED to return with a hold it did not take or give back, with
+# the reason.  Add a row only with the commit that makes it true.
+HOLD_KNOWN = {
+    # fe/rewind.inc.c: one hold, toggled by state.  It takes "rewind" when g_rw_pwr goes
+    # 0 -> 1 and gives it back when it goes 1 -> 0; PSP_REWIND_GAME_OVER() (D19, C3/C4)
+    # calls it with the rewind off, and every exit ends in pwr_release_all.
+    'psp_rewind_pwr': 'a toggle on g_rw_pwr (hold on 0->1, release on 1->0), by design',
+    # fe/power.e.inc.c (HW-1 H1): the ME-lost wake takes "me_lost" and keeps it until the
+    # loop's teardown, which takes "teardown" and only then drops it (HOLD_HANDOVER).
+    'wake_service': 'the ME-lost wake hands its hold to the teardown (g_wake_lost_hold, HW-1 H1)',
+}
+# A hold handed from one function to another through a latch: an `if (LATCH)` whose arm
+# releases it is depth-neutral in the receiving function (the hold was never on its
+# ledger).  {latch: the function that takes it}.
+HOLD_HANDOVER = {'g_wake_lost_hold': 'wake_service'}
+
+
+class HoldWalk(object):
+    """Structural ledger of the DIRECT pwr_hold / pwr_release calls of one function body.
+    Depth is a tuple of the hold names.  pwr_release_all (and the exit macros, the handoff
+    and relaunch_eboot, which run it first) clear it.  Branches that meet again must
+    agree; a branch that ends in goto / return / break / continue / an exit does not
+    meet.  Loop and switch bodies must be balanced per pass.
+    A function other than main may DROP its caller's hold and take it again (HW-1's
+    boot_stop_notice: the hold is not kept across a notice that waits on the player):
+    a pwr_release with nothing of its own held is noted as LENT, and the next pwr_hold
+    gives it back.  It must be back before the function returns; main() has no caller
+    and may not do this."""
+    LENT = '(caller\'s hold, dropped)'
+
+    def __init__(self, fn):
+        self.fn, self.bad = fn, []
+        self.lends = 0
+        self.labels, self.gotos, self.returns = {}, [], []
+        self.term = {}          # line of an EXIT statement -> the holds it exits with
+        self.at = {}            # id(node) -> depth on entry (for the frame loop)
+        self.pre = None         # depth before the last clear of this straight-line run
+
+    def stmt(self, node, d, brk):
+        """-> depth after the statement, or None when control does not fall through."""
+        if node is None:
+            return d
+        self.at[id(node)] = d
+        if isinstance(node, C.Block):
+            for s in node.stmts:
+                if d is None:
+                    if isinstance(s, C.Simple) and s.kind == 'label':
+                        d = self.labels.get(s.label)
+                        if d is None:
+                            g = [x for x in self.gotos if x[0] == s.label]
+                            d = g[0][2] if g else ()
+                    elif isinstance(s, C.Simple) and s.kind == 'case':
+                        d = brk[1] if brk else ()
+                    else:
+                        continue            # unreachable until the next label
+                d = self.stmt(s, d, brk)
+            return d
+        if isinstance(node, C.If):
+            if C.text_of(node.cond).strip() in HOLD_HANDOVER and node.els is None and \
+                    [c.name for c in C.walk_calls(node.then)] == ['pwr_release']:
+                self.handover = getattr(self, 'handover', 0) + 1
+                return d                    # the handed-over hold's release: not ours
+            d = self.calls(C.calls_in(node.cond), d, node.line)
+            a = self.stmt(node.then, d, brk)
+            b = self.stmt(node.els, d, brk) if node.els is not None else d
+            if a is None:
+                return b
+            if b is None:
+                return a
+            if a != b:
+                self.bad.append('%s:%s the branches of this `if` meet holding %s and %s' % (
+                    self.fn, node.line, list(a), list(b)))
+            return a if len(a) >= len(b) else b
+        if isinstance(node, C.Loop):
+            d = self.calls(C.calls_in(node.head), d, node.line)
+            mine = [node.word, d, []]
+            e = self.stmt(node.body, d, mine)
+            ends = [x for x in mine[2]] + ([(node.line, e)] if e is not None else [])
+            for ln, x in ends:
+                if x != d:
+                    self.bad.append('%s:%s a pass of this `%s` (entered holding %s) ends at '
+                                    'line %s holding %s' % (self.fn, node.line, node.word,
+                                                            list(d), ln, list(x)))
+            return d
+        k = node.kind
+        if k == 'label':
+            if node.label in self.labels and self.labels[node.label] != d:
+                self.bad.append('%s:%s label %s reached holding %s and %s' % (
+                    self.fn, node.line, node.label, list(self.labels[node.label]), list(d)))
+            self.labels.setdefault(node.label, d)
+            return d
+        if k == 'case':
+            return d
+        cl = C.calls_in(node.toks)
+        is_exit = any(c.name in EXIT_NAMES for c in cl)
+        d0 = d
+        d = self.calls(cl, d, node.line)
+        if is_exit:
+            self.term[node.line] = self.pre if self.pre is not None else d0
+            self.pre = None
+            return None
+        if d:
+            self.pre = None
+        if k == 'goto':
+            self.gotos.append((node.label, node.line, d))
+            return None
+        if k == 'return':
+            self.returns.append((node.line, d))
+            return None
+        if k in ('break', 'continue'):
+            if brk is not None:
+                brk[2].append((node.line, d))
+            return None
+        return d
+
+    def calls(self, cl, d, line):
+        for c in cl:
+            if c.name == 'pwr_hold':
+                m = re.match(r'\s*"([^"]*)"', c.args)
+                if d and d[-1] == self.LENT:
+                    d = d[:-1]              # the caller's hold, taken again
+                else:
+                    d = d + ((m.group(1) if m else '?'),)
+                self.pre = None
+            elif c.name == 'pwr_release':
+                if not d and self.fn != 'main':
+                    d = (self.LENT,)
+                    self.lends += 1
+                else:
+                    if not d or d[-1] == self.LENT:
+                        self.bad.append('%s:%s pwr_release with nothing held' % (self.fn, line))
+                    d = d[:-1]
+                self.pre = None
+            elif c.name in HOLD_CLEAR:
+                if self.pre is None:
+                    self.pre = d
+                d = ()
+        return d
+
+    def finish(self):
+        for lab, line, d in self.gotos:
+            want = self.labels.get(lab)
+            if want is not None and want != d:
+                self.bad.append('%s:%s goto %s holding %s, but %s is reached holding %s' % (
+                    self.fn, line, lab, list(d), lab, list(want)))
+
+
+def hold_check(view):
+    """-> (problems, {terminal line: 'boot,..' or '-'}, summary lines)."""
+    bad, out = [], []
+    w = HoldWalk('main')
+    end = w.stmt(view.main, (), None)
+    w.finish()
+    bad += w.bad
+    loop = view.main.stmts[find_loop_index(view.main)]
+    le = w.at.get(id(loop))
+    if le:
+        bad.append('main:%s the frame loop is entered holding %s (it could never park)' % (
+            loop.line, list(le)))
+    out.append('  main: session label(s) %s; frame loop entered holding %s; %d goto, %d exit '
+               'statements' % (', '.join('%s=%s' % (k, list(v)) for k, v in sorted(w.labels.items()))
+                               or '-', list(le or ()), len(w.gotos), len(w.term)))
+    nfn, lent = 0, []
+    for fn, (lo, hi) in sorted(view.funcs.items()):
+        if fn == 'main' or fn in ('pwr_hold', 'pwr_release', 'pwr_release_all'):
+            continue
+        if fn in EPOCHC_SKIP:
+            continue        # walked as part of main(), where every call is its body
+        if not any(t.kind == 'id' and t.text in ('pwr_hold', 'pwr_release')
+                   for t in view.toks[lo:hi]):
+            continue
+        nfn += 1
+        f = HoldWalk(fn)
+        e = f.stmt(C.parse_body(view.toks, lo, hi), (), None)
+        f.finish()
+        probs = list(f.bad)
+        for ln, d in f.returns + ([('end', e)] if e is not None else []):
+            if d:
+                probs.append('%s:%s returns holding %s' % (fn, ln, list(d)))
+        if f.lends and not probs:
+            lent.append(fn)
+        if fn in HOLD_KNOWN:
+            out.append('  KNOWN %s: %s (%d findings)' % (fn, HOLD_KNOWN[fn], len(probs)))
+        else:
+            bad += probs
+    out.append('  %d other functions take or release a hold; each gives back what it takes' % nfn
+               if not bad else '  %d other functions take or release a hold' % nfn)
+    if lent:
+        out.append('  %s: drop%s the caller\'s hold and take%s it again before returning' % (
+            ', '.join(lent), 's' if len(lent) == 1 else '', 's' if len(lent) == 1 else ''))
+    return bad, {ln: (','.join(d) or '-') for ln, d in w.term.items()}, out
 
 
 # ------------------------------------------------------------- raw vs -E
 def raw_vs_e(raw, ev, dm):
     """Differences between the raw and the -E call lists of the exit code (sites + D)."""
+    # A call copied out of an Epoch C helper sits at its call's line; its helper line
+    # (Tok.oline) tells the copies apart, here and in raw_by_line.
+    def ol(tok):
+        return getattr(tok, 'oline', None) if tok is not None else None
+
     def callset(view):
         out = {}
         for s in sites(view):
             if s['func'] != 'main':
                 continue
             for c in s['calls']:
-                out.setdefault((s['key'], c.name, c.line), c)
+                out.setdefault((s['key'], c.name, c.line, ol(c.tok)), c)
         rows, _ = step_rows(view)
         for r in rows:
             if r['kind'] == 'call':
-                out.setdefault(('D', r['name'], r['line']), r)
+                out.setdefault(('D', r['name'], r['line'], ol(r['tok'])), r)
         return out
     a, b = callset(raw), callset(ev)
 
@@ -686,12 +1022,12 @@ def raw_vs_e(raw, ev, dm):
         return dm.get(k)
     raw_by_line = {}
     for t in raw.toks:
-        raw_by_line.setdefault(t.line, []).append(t)
+        raw_by_line.setdefault((t.line, t.oline), []).append(t)
     res = []
-    for k in sorted(set(a) | set(b), key=lambda k: (k[2], k[1])):
+    for k in sorted(set(a) | set(b), key=lambda k: (k[2], k[1], str(k[3]))):
         if k in a and k in b:
             continue
-        sid, name, line = k
+        sid, name, line, oline = k
         if k in a:
             side = 'raw_only'
             c = a[k]
@@ -699,7 +1035,7 @@ def raw_vs_e(raw, ev, dm):
             stmt = c['stmt'] if isinstance(c, dict) else c.stmt
             ifs = tok.ifs if tok is not None else ()
             # the macro invocation this call sits in (an argument of fe_evt, LAB_FFP(...))
-            outer = [t.text for t in _stmt_toks(stmt) + raw_by_line.get(line, [])
+            outer = [t.text for t in _stmt_toks(stmt) + raw_by_line.get((line, oline), [])
                      if t.kind == 'id' and in_dm(t.text) and t.text != name]
             if in_dm(name):
                 why = 'macro'
@@ -720,7 +1056,7 @@ def raw_vs_e(raw, ev, dm):
                 why, detail = '#if', ifs[-1][:70]
         else:
             side = 'E_only'
-            mac = [t.text for t in raw_by_line.get(line, []) if t.kind == 'id' and in_dm(t.text)]
+            mac = [t.text for t in raw_by_line.get((line, oline), []) if t.kind == 'id' and in_dm(t.text)]
             if mac:
                 why = 'macro'
                 detail = 'expanded from ' + ','.join(sorted(set(mac)))[:60]
@@ -747,25 +1083,31 @@ def write_view(view, outdir, flavour, dm=None, raw=None):
     st = sites(view)
     rows, loop = step_rows(view)
     sc = scenarios(view)
-    with open(os.path.join(outdir, 'exit_sites.tsv'), 'w', newline='\n') as f:
-        f.write('flavour\tid\tfunc\tfirst\tline\tcode\twhy\torder\tflags\tseq\tcalls\tkey\tcallnames\n')
+    view.hold_bad, term_hold, view.hold_out = hold_check(view)
+    for s in st:
+        s['hold'] = term_hold.get(s['line'], '-') if s['func'] == 'main' else '-'
+    with open(os.path.join(outdir, 'exit_sites.tsv'), 'w', newline='\n', encoding='utf-8') as f:
+        f.write('flavour\tid\tfunc\tfirst\tline\tcode\twhy\torder\tflags\tseq\tcalls\tkey\tcallnames'
+                '\thold\ttext\n')
         for s in st:
             f.write('\t'.join([flavour, s['id'], s['func'], str(s['first']), str(s['line']),
                                s['code'], s['why'], s['order'], ','.join(s['flags']),
                                ' '.join(s['seq']),
                                ' '.join('%s@%d' % (c.name, c.line) for c in s['calls']),
-                               s['key'], ' '.join(c.name for c in s['calls'])]) + '\n')
+                               s['key'], ' '.join(c.name for c in s['calls']), s['hold'],
+                               TEXT_SEP.join(s['text']).replace('\t', ' ')]) + '\n')
     with open(os.path.join(outdir, 'exit_steps.tsv'), 'w', newline='\n') as f:
         f.write('flavour\tn\tphase\tstep\tmapped\tline\tkind\tname\targs\ttags\tconds\n')
         for k, r in enumerate(rows):
             f.write('\t'.join([flavour, str(k), r['phase'], r['step'], 'y' if r['mapped'] else '~',
                                str(r['line']), r['kind'], r['name'], r['args'][:70].replace('\t', ' '),
                                ','.join(r['tags']), ' && '.join(r['conds'])[:160]]) + '\n')
-    with open(os.path.join(outdir, 'exit_scenarios.tsv'), 'w', newline='\n') as f:
-        f.write('flavour\tscenario\tterminal\terror\tseq\n')
+    with open(os.path.join(outdir, 'exit_scenarios.tsv'), 'w', newline='\n', encoding='utf-8') as f:
+        f.write('flavour\tscenario\tterminal\terror\tseq\thold\ttext\n')
         for s in sc:
-            f.write('\t'.join([flavour, s['name'], s['terminal'], s['err'], ' '.join(s['seq'])]) + '\n')
-    write_expect_h(os.path.join(outdir, 'exit_expect.h'), flavour, st, sc)
+            f.write('\t'.join([flavour, s['name'], s['terminal'], s['err'], ' '.join(s['seq']),
+                               s['hold'], TEXT_SEP.join(s['text']).replace('\t', ' ')]) + '\n')
+    write_expect_h(os.path.join(outdir, 'exit_expect.h'), flavour, st, sc, rows)
     rv = None
     if raw is not None and dm is not None:
         rv = raw_vs_e(raw, view, dm)
@@ -777,7 +1119,7 @@ def write_view(view, outdir, flavour, dm=None, raw=None):
     return st, rows, sc, rv, loop
 
 
-def write_expect_h(path, flavour, st, sc):
+def write_expect_h(path, flavour, st, sc, feat=None):
     with open(path, 'w', newline='\n') as f:
         f.write('/* generated by exit_matrix.py from the %s flavour; do not edit */\n' % flavour)
         f.write('#define EXPECT_FLAVOUR "%s"\n' % flavour)
@@ -789,10 +1131,27 @@ def write_expect_h(path, flavour, st, sc):
             fl = ' | '.join([s['order']] + s['flags']) or '0'
             f.write('   { "%s", %s, "%s" },\n' % (s['id'], fl, ' '.join(s['seq'])))
         f.write('};\n')
-        f.write('static const struct exp_scen { const char *name; const char *seq; } '
-                'EXP_SCEN[] = {\n')
+        # what the tree has that the reference model follows (tests/abi-exit-ci_teardown_ref.inc.c)
+        se = [r for r in (feat or []) if r['phase'] == 'session_end' and r['kind'] == 'call']
+        names = [r['name'] for r in se]
+        if 'pwr_hold' in names and 'play_lock_drop' in names and \
+                names.index('pwr_hold') < names.index('play_lock_drop'):
+            f.write('#define EXPECT_D4_FIRST 1         /* HW-1 F2: the teardown takes the hold first */\n')
+        if 'ui_settings_flush' in names:
+            f.write('#define EXPECT_SETTINGS_FLUSH 1   /* HW-2 F3: D16b */\n')
+        if any(s['name'] == 'LINK_FATAL' for s in sc):
+            f.write('#define EXPECT_F5 1               /* HW-2 F5: g_link_fatal_why */\n')
+        if any(s['name'].startswith('HOME_') for s in sc):
+            f.write('#define EXPECT_F1 1               /* HW-2 F1: g_exit_req */\n')
+        f.write('/* evt: the fe_evt format strings of the scenario, in order, each followed '
+                'by \\x1f */\n')
+        f.write('#define EXPECT_HAS_EVT 1\n')
+        f.write('static const struct exp_scen { const char *name; const char *seq; '
+                'const char *evt; } EXP_SCEN[] = {\n')
         for s in sc:
-            f.write('   { "%s", "%s" },\n' % (s['name'], ' '.join(s['seq'])))
+            f.write('   { "%s", "%s",\n     %s },\n' % (
+                s['name'], ' '.join(s['seq']),
+                ' '.join('%s "\\x1f"' % e for e in s['evt']) or '""'))
         f.write('};\n')
 
 
@@ -857,30 +1216,79 @@ def release_live(rows):
     return res
 
 
-def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None):
+def default_on_defines(makefile):
+    """-D names psp/Makefile adds by default: `NAME ?= 1` followed by an
+    `ifeq ($(NAME),1)` block with `CFLAGS += -DX`.  Used to refuse a STALE baseline: the
+    -E views are made with the compile line of the baseline run's make log, and a log of
+    an older tree lacks the defines newer code is guarded by (the 01067e74 baseline has no
+    -DGBADHOC_MGIFT: the teardown's mgift_stop(1) then reads as compiled out, and every
+    model run fails against a golden that is wrong, not against the code)."""
+    on, cur, res = set(), None, set()
+    try:
+        lines = open(makefile, encoding='utf-8', errors='replace').read().split('\n')
+    except OSError:
+        return res
+    for ln in lines:
+        m = re.match(r'^([A-Z_0-9]+)\s*\?=\s*1\s*$', ln)
+        if m:
+            on.add(m.group(1))
+            continue
+        m = re.match(r'^ifeq \(\$\(([A-Z_0-9]+)\),\s*1\)', ln)
+        if m:
+            cur = m.group(1) if m.group(1) in on else None
+            continue
+        if ln.startswith(('endif', 'else')):
+            cur = None
+        elif cur:
+            res |= set(re.findall(r'^CFLAGS \+= .*?-D([A-Za-z_0-9]+)', ln))
+    return res
+
+
+def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None, over=None):
+    """over: {'fe/X.inc.c': host file}, mutated fragment copies (read by the raw view and
+    bind-mounted over the tree for -E), as main_c is a mutated copy of the shell."""
     import aec_pspcc as P
     os.makedirs(outdir, exist_ok=True)
+    over = over or {}
+    extra = [(h, rel) for rel, h in sorted(over.items())]
     rawpath = main_c or os.path.join(src, 'psp', 'main_psp.c')
-    raw = View('raw', C.load_raw(rawpath, follow=True, alias=EXIT_ALIAS))
+    raw = View('raw', C.load_raw(rawpath, follow=True, alias=EXIT_ALIAS,
+                                 base=os.path.join(src, 'psp'), over=over))
     report, fails = [], 0
+    want_d = default_on_defines(os.path.join(src, 'psp', 'Makefile'))
+    for fl in FLAVOURS:
+        try:
+            have = set(a[2:].split('=')[0] for a in P.compile_argv(os.path.join(baseline, fl))
+                       if a.startswith('-D'))
+        except (SystemExit, OSError):
+            continue                     # --pp-dir runs need no make log
+        miss = sorted(want_d - have)
+        if miss:
+            fails += 1
+            report.append('STALE BASELINE %s: its compile line lacks -D%s, which the psp/Makefile of this tree '
+                          'turns on by default; give --baseline a flavours.sh run '
+                          'of this tree (or of one with the same defines)' % (fl, ' -D'.join(miss)))
     st_raw, rows_raw, _, _, _ = write_view(raw, os.path.join(outdir, 'raw'), 'raw')
     b, o = check_x2(st_raw, 'raw')
     fails += b
     report += ['x2 reproduction (raw source, the view x2 read):'] + o
-    per = {}
+    per, views = {}, {}
     for fl in FLAVOURS:
         ppd = pp_dir or os.path.join(outdir, 'pp')
         os.makedirs(ppd, exist_ok=True)
         ip, dp = os.path.join(ppd, 'main_psp.%s.i' % fl), os.path.join(ppd, 'main_psp.%s.dM' % fl)
         if not os.path.exists(ip):
             with open(ip, 'w', newline='\n') as f:
-                f.write(P.preprocess(src, os.path.join(baseline, fl), override=main_c))
+                f.write(P.preprocess(src, os.path.join(baseline, fl), override=main_c,
+                                     extra=extra))
         if not os.path.exists(dp):
             with open(dp, 'w', newline='\n') as f:
-                f.write(P.macros(src, os.path.join(baseline, fl), override=main_c))
+                f.write(P.macros(src, os.path.join(baseline, fl), override=main_c,
+                                 extra=extra))
         dm = P.parse_dm(open(dp).read())
         v = View(fl, C.load_pp(ip))
         v.line_ids = site_ids(st_raw)
+        views[fl] = v
         per[fl] = write_view(v, os.path.join(outdir, fl), fl, dm, raw)
     for fl in FLAVOURS:
         st, rows, sc, rv, loop = per[fl]
@@ -899,6 +1307,9 @@ def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None):
             if s['err']:
                 fails += 1
                 report.append('  SCENARIO %s: %s' % (s['name'], s['err']))
+            for hb in s['hold_bad']:
+                fails += 1
+                report.append('  HOLD scenario %s: %s' % (s['name'], hb))
         report.append('  scenarios: ' + ', '.join('%s->%s(%d)' % (s['name'], s['terminal'], len(s['seq']))
                                                    for s in sc))
         cls = {}
@@ -910,6 +1321,14 @@ def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None):
         fails += len(un)
         for r in un:
             report.append('    UNEXPLAINED %s %s@%d (%s)' % (r['site'], r['name'], r['line'], r['side']))
+    report += ['', 'hold balance (pwr_hold / pwr_release, structural; raw source):'] + raw.hold_out
+    hb = list(raw.hold_bad)
+    for fl in FLAVOURS:
+        hb += ['[%s -E] %s' % (fl, x) for x in views[fl].hold_bad if x not in raw.hold_bad]
+    for x in hb:
+        fails += 1
+        report.append('  HOLD %s' % x)
+    report.append('  hold balance: %s' % ('ok' if not hb else '%d problems' % len(hb)))
     rows = per['release'][1]
     report += ['', 'release-live rows (release -E):']
     for k, line, step, rig in release_live(rows):
@@ -928,7 +1347,7 @@ def run_all(baseline, src, outdir, pp_dir=None, quiet=False, main_c=None):
 
 # ------------------------------------------------------------- XS gate
 def load_tsv(path):
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         hdr = f.readline().rstrip('\n').split('\t')
         return [dict(zip(hdr, l.rstrip('\n').split('\t'))) for l in f if l.strip()]
 
@@ -945,8 +1364,15 @@ def check_gate(golden, cand, allow=None):
     def site_val(r):
         # the ordered teardown vocabulary, the exit code/why handed to the Lab, and the
         # full ordered call-name list (no lines: those move in every phase-P edit)
-        return 'seq=%s | code=%s | why=%s | calls=%s' % (
-            r.get('seq', ''), r.get('code', ''), r.get('why', ''), r.get('callnames', '?'))
+        return 'seq=%s | code=%s | why=%s | calls=%s | hold=%s | text=%s' % (
+            r.get('seq', ''), r.get('code', ''), r.get('why', ''), r.get('callnames', '?'),
+            r.get('hold', '(no hold column: regenerate the golden)'),
+            r.get('text', '(no text column: regenerate the golden)'))
+
+    def scen_val(r):
+        return 'seq=%s | hold=%s | text=%s' % (
+            r['seq'], r.get('hold', '(no hold column: regenerate the golden)'),
+            r.get('text', '(no text column: regenerate the golden)'))
 
     def table(path, key, val):
         if not os.path.exists(path):
@@ -959,7 +1385,7 @@ def check_gate(golden, cand, allow=None):
         return {k: val(r) for k, r in zip(ks, rows)}
     for fl in FLAVOURS:
         for fname, key, val in (('exit_sites.tsv', 'key', site_val),
-                                ('exit_scenarios.tsv', 'scenario', lambda r: r['seq'])):
+                                ('exit_scenarios.tsv', 'scenario', scen_val)):
             gp, cp = os.path.join(golden, fl, fname), os.path.join(cand, fl, fname)
             if not os.path.exists(gp):
                 fails += 1
@@ -1075,6 +1501,179 @@ def selftest():
     expect(all('g_new_flag' in s['err'] for s in sc3 if not s['terminal'].startswith('goto')) and
            sum(bool(s['err']) for s in sc3) == 5,
            'an unmapped runtime atom fails every scenario that reaches it (5 of 8)')
+    # ---- Epoch C C0a-5a: the text of calls that pass a string literal
+    expect(st[0]['text'] == ['fe_evt("exit code=2")', 'handoff_run(2, "bad")'],
+           'site 1 text: %s' % TEXT_SEP.join(st[0]['text']))
+    expect(evt_fmt('"a=%d " "b=%u", x, y') == '"a=%d " "b=%u"' and evt_fmt('fmt, x') == '"?"',
+           'fe_evt format literals are taken as written (adjacent literals kept)')
+    # ---- C0a-5b: hold balance
+    hb, th, _ = hold_check(v)
+    expect(hb == [] and sorted(th.values()) == ['-', '-', 'teardown'] and
+           scenario_hold(sc['LIST_OK']['seq'], 'goto:top') == ('max=1 end=0', []),
+           'hold balance: clean source has no problem; LIST_OK ledger max=1 end=0 (%s)' % hb)
+    p4 = os.path.join(d, 'm4.c')
+    open(p4, 'w').write(SELF_SRC.replace('audio_start(); pwr_release(); goto top;',
+                                         'audio_start(); goto top;'))
+    v4 = View('raw', C.load_raw(p4))
+    hb, _, _ = hold_check(v4)
+    s4 = {s['name']: s for s in scenarios(v4)}
+    expect(any("goto top holding ['teardown']" in x for x in hb) and
+           s4['LIST_OK']['hold_bad'] == ['returns to the list holding 1'],
+           'mutant: the return without pwr_release: the goto and the LIST_OK ledger are caught')
+    p5 = os.path.join(d, 'm5.c')
+    open(p5, 'w').write(SELF_SRC.replace(
+        'static void helper(void) { foo(); }',
+        'static int helper(void) { pwr_hold("h"); if (foo()) return 1; pwr_release(); return 0; }'))
+    hb, _, _ = hold_check(View('raw', C.load_raw(p5)))
+    expect(len(hb) == 1 and "helper:" in hb[0] and "returns holding ['h']" in hb[0],
+           'mutant: a helper that returns early with its hold is caught (%s)' % hb)
+    p6 = os.path.join(d, 'm6.c')
+    open(p6, 'w').write(SELF_SRC.replace('   while (g_running) { step(); }',
+                                         '   pwr_hold("boot");\n   while (g_running) { step(); }'))
+    hb, _, _ = hold_check(View('raw', C.load_raw(p6)))
+    expect(any('frame loop is entered holding' in x for x in hb),
+           'mutant: a hold still up at the frame loop is caught')
+    p7 = os.path.join(d, 'm7.c')
+    open(p7, 'w').write(SELF_SRC.replace('   if (bad) {', '   pwr_hold("boot");\n   if (bad) {').replace(
+        '   while (g_running) { step(); }', '   pwr_release();\n   while (g_running) { step(); }'))
+    v7 = View('raw', C.load_raw(p7))
+    hb, th, _ = hold_check(v7)
+    expect(sorted(th.values()) == ['boot', 'boot', 'teardown'] and hb == [],
+           'sites under a per-session boot hold report it (%s), balanced' % sorted(th.values()))
+    p7b = os.path.join(d, 'm7b.c')
+    open(p7b, 'w').write(SELF_SRC.replace('top:\n', '   pwr_hold("boot");\ntop:\n').replace(
+        '   while (g_running) { step(); }', '   pwr_release();\n   while (g_running) { step(); }'))
+    hb, _, _ = hold_check(View('raw', C.load_raw(p7b)))
+    expect(any("goto top holding []" in x and "reached holding ['boot']" in x for x in hb),
+           'mutant: a hold taken once before the session label, released per session: the goto '
+           'arrives with a different depth: caught')
+    # ---- C0a-5c: HW-2 F1 atoms
+    expect(len(sc) == len(SCENARIOS) and sc['LIST_OK']['seq'][-2:] == ['g_running=0', 'goto:top'],
+           'a tree without g_exit_req has no HOME_* scenario; a return that never sets g_running '
+           'reports g_running=0')
+    f1 = SELF_SRC.replace('audio_start(); pwr_release(); goto top;',
+                          'audio_start(); g_running = !g_exit_req; pwr_release(); goto top;') \
+                 .replace('   if (g_relaunch)\n', '   if (g_exit_req)\n      g_relaunch = 0;\n   if (g_relaunch)\n')
+    p8 = os.path.join(d, 'm8.c')
+    open(p8, 'w').write(f1)
+    s8 = {s['name']: s for s in scenarios(View('raw', C.load_raw(p8)))}
+    expect(len(s8) == len(SCENARIOS) + len(SCENARIOS_F1) and not any(s['err'] for s in s8.values()),
+           'F1 source: the four HOME_* scenarios are added and evaluate')
+    expect('relaunch_eboot' not in s8['HOME_PROFILE']['seq'] and
+           'relaunch_eboot' not in s8['HOME_BEFORE_TEARDOWN']['seq'] and
+           'relaunch_eboot' not in s8['HOME_BEFORE_REFUSAL2']['seq'] and
+           'relaunch_eboot' in s8['PROFILE']['seq'] and 'relaunch_eboot' in s8['LIST_REFUSED']['seq'],
+           'F1: HOME turns every relaunch into an exit; without HOME they still relaunch')
+    expect(s8['HOME_IN_UNLOAD']['seq'][-2:] == ['g_running=0', 'goto:top'] and
+           s8['LIST_OK']['seq'][-2:] == ['g_running=1', 'goto:top'],
+           'F1: HOME inside the unload returns to the list with g_running 0 (LIST_OK: 1)')
+    p9 = os.path.join(d, 'm9.c')
+    open(p9, 'w').write(f1.replace('   if (g_exit_req)\n      g_relaunch = 0;\n', '   (void)g_exit_req;\n'))
+    s9 = {s['name']: s for s in scenarios(View('raw', C.load_raw(p9)))}
+    expect('relaunch_eboot' in s9['HOME_PROFILE']['seq'] and
+           s9['HOME_PROFILE']['seq'] != s8['HOME_PROFILE']['seq'],
+           'mutant: process_end without the g_exit_req guard relaunches after HOME: caught')
+    p11 = os.path.join(d, 'm11.c')
+    open(p11, 'w').write(SELF_SRC.replace(
+        'static void helper(void) { foo(); }',
+        'static void helper(void) { pwr_release(); ui_notice("t"); pwr_hold("boot"); }'))
+    hb, _, ho = hold_check(View('raw', C.load_raw(p11)))
+    expect(hb == [] and any('helper: drops the caller' in x for x in ho),
+           'a helper that drops its caller\'s hold for a notice and takes it again is balanced')
+    open(p11, 'w').write(SELF_SRC.replace(
+        'static void helper(void) { foo(); }',
+        'static void helper(void) { pwr_release(); ui_notice("t"); }'))
+    hb, _, _ = hold_check(View('raw', C.load_raw(p11)))
+    expect(len(hb) == 1 and 'helper:end returns holding' in hb[0],
+           'mutant: the same helper without the second pwr_hold is caught (%s)' % hb)
+    # ---- HW-2 F5: the link-fatal atom and its scenario
+    p10 = os.path.join(d, 'm10.c')
+    open(p10, 'w').write(SELF_SRC.replace(
+        '   ui_set_wake_yield(NULL);\n',
+        '   if (g_link_fatal_why && !exit_reason) { exit_code = g_link_fatal_code; '
+        'exit_reason = g_link_fatal_why; }\n   ui_set_wake_yield(NULL);\n').replace(
+        '   evt_shutdown();\n   handoff_run(exit_code, exit_reason);',
+        '   if (exit_reason) fe_evt("exit code=%d reason=%s", exit_code, exit_reason);\n'
+        '   else fe_evt("exit code=%d", exit_code);\n   evt_shutdown();\n'
+        '   handoff_run(exit_code, exit_reason);'))
+    s10 = {s['name']: s for s in scenarios(View('raw', C.load_raw(p10)))}
+    expect('LINK_FATAL' in s10 and not s10['LINK_FATAL']['err'] and
+           s10['LINK_FATAL']['evt'] == ['"exit code=%d reason=%s"'] and s10['XMB']['evt'] == ['"exit code=%d"']
+           and 'LINK_FATAL' not in sc,
+           'F5 source: LINK_FATAL exists, and its exit line carries the reason (XMB: none)')
+    expect(flags_of('ME IO HOST RW AUD VID EVT ES HO EXIT'.split())[:4] == ['TD_IO', 'TD_CORE', 'TD_REWIND', 'TD_ME'],
+           'HW-2 F9: a site that stops the ME first carries TD_ME')
+    # Epoch C helpers: the same two sites through exit_early_begin/_end read as the copies
+    hsrc = SELF_SRC.replace(
+        'static void helper(void) { foo(); }\n',
+        'static void helper(void) { foo(); }\n'
+        'enum { XE_EVT_FIRST = 1u << 0, XE_ME = 1u << 1 };\n'
+        'static inline __attribute__((always_inline)) void exit_early_begin(unsigned f)\n'
+        '{\n   if (f & XE_ME) { me_rend_teardown("exit"); }\n'
+        '   if (!(f & XE_EVT_FIRST)) { audio_stop(); vid_term(); }\n}\n'
+        'static inline __attribute__((always_inline)) void exit_early_end(unsigned f, int code, const char *why)\n'
+        '{\n   evt_shutdown();\n   if (f & XE_EVT_FIRST) { audio_stop(); vid_term(); } else { }\n'
+        '   handoff_run(code, why);\n   sceKernelExitGame();\n}\n').replace(
+        '      fe_evt("exit code=2");\n      evt_shutdown();\n      audio_stop();\n      vid_term();\n'
+        '      handoff_run(2, "bad");\n      sceKernelExitGame();\n',
+        '      fe_evt("exit code=2");\n      exit_early_end(XE_EVT_FIRST, 2, "bad");\n').replace(
+        'if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); sceKernelExitGame(); return 0; }',
+        'if (probe) { exit_early_begin(0); fe_evt("exit"); exit_early_end(0, 0, NULL); return 0; }')
+    ph = os.path.join(d, 'mh.c')
+    open(ph, 'w').write(hsrc)
+    sh = sites(View('raw', C.load_raw(ph)))
+    same = len(sh) == len(st) and all(
+        a['seq'] == b['seq'] and a['code'] == b['code'] and a['why'] == b['why'] and
+        a['text'] == b['text'] and [c.name for c in a['calls']] == [c.name for c in b['calls']]
+        for a, b in zip(sh, st))
+    expect(same and sh[1]['calls'][0].tok.ifs == ('#ifdef RIG',),
+           'Epoch C helpers inlined: the sites equal the pasted copies (calls, text, code, #if)')
+    hm = hsrc.replace('if (f & XE_EVT_FIRST) { audio_stop(); vid_term(); } else { }',
+                      'if (f & XE_EVT_FIRST) { audio_stop(); } else { }')
+    open(ph, 'w').write(hm)
+    sm = sites(View('raw', C.load_raw(ph)))
+    expect(sm[0]['seq'] != st[0]['seq'] and sm[1]['seq'] == st[1]['seq'],
+           'mutant: a helper arm loses vid_term: only the sites that take that arm change')
+    # Epoch C C2: the probe moved into boot_run reads as main()'s own site
+    msrc = SELF_SRC.replace(
+        '#ifdef RIG\n   if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); '
+        'sceKernelExitGame(); return 0; }\n#endif\n',
+        '   if (boot_run(argc, argv) >= 0)\n      return 0;\n').replace(
+        'int main(int argc, char *argv[])\n',
+        'static __attribute__((noinline)) int boot_run(int argc, char *argv[])\n{\n'
+        '   int y = 0;\n'
+        '#ifdef RIG\n'
+        '   if (probe) { audio_stop(); vid_term(); fe_evt("exit"); evt_shutdown(); handoff_run(0, NULL); '
+        'sceKernelExitGame(); return 0; }\n'
+        '#endif\n   return -1;\n}\nint main(int argc, char *argv[])\n')
+    pm = os.path.join(d, 'mm.c')
+    open(pm, 'w').write(msrc)
+    smv = sites(View('raw', C.load_raw(pm)))
+    same = len(smv) == len(st) and all(
+        a['seq'] == b['seq'] and a['code'] == b['code'] and a['why'] == b['why'] and
+        a['text'] == b['text'] and [c.name for c in a['calls']] == [c.name for c in b['calls']]
+        for a, b in zip(smv, st))
+    expect(same and 'boot_run(' in msrc and smv[1]['func'] == 'main' and
+           smv[1]['calls'][0].tok.ifs == ('#ifdef RIG',),
+           'Epoch C C2: a probe moved into boot_run is main()\'s site (calls, text, code, #if)')
+    bad_call = msrc.replace('   if (boot_run(argc, argv) >= 0)\n      return 0;\n',
+                            '   (void)boot_run(argc, argv);\n')
+    open(pm, 'w').write(bad_call)
+    try:
+        View('raw', C.load_raw(pm))
+        refused = False
+    except ValueError:
+        refused = True
+    expect(refused, 'Epoch C C2: boot_run called in another form is refused, not read as a site')
+    # an argument is one value: `f & XC` with f = `XA | XB` is 0 (not XA | (XB & XC))
+    pp = os.path.join(d, 'mp.c')
+    open(pp, 'w').write('enum { XA = 1, XB = 2, XC = 4 };\n'
+                        'static inline void h(unsigned f) { if (f & XC) { bad(); } else { good(); } }\n'
+                        'int main(void) { h(XA | XB); return 0; }\n')
+    tp = C.inline_helpers(C.load_raw(pp), ('h',))
+    lo, hi = C.functions(tp)['main']
+    names = [c.name for c in C.walk_calls(C.parse_body(tp, lo, hi))]
+    expect(names == ['good'], 'helper flags: an OR of flags is bracketed before it is tested (%s)' % names)
     print('selftest: %s' % ('ok' if not fails else '%d failures' % fails))
     return 1 if fails else 0
 
@@ -1090,6 +1689,8 @@ def main():
     a.add_argument('--out', required=True)
     a.add_argument('--pp-dir')
     a.add_argument('--main-c', help='a mutated copy of psp/main_psp.c, mounted over the tree')
+    a.add_argument('--over', action='append', default=[], metavar='fe/X.inc.c=FILE',
+                   help='a mutated copy of a fragment, read in its place (repeatable)')
     g = sub.add_parser('gen')
     g.add_argument('--flavour', required=True)
     g.add_argument('--pp', required=True)
@@ -1102,11 +1703,12 @@ def main():
     c.add_argument('--allow')
     o = ap.parse_args()
     if o.cmd == 'all':
-        return run_all(o.baseline, o.src, o.out, o.pp_dir, main_c=o.main_c)
+        return run_all(o.baseline, o.src, o.out, o.pp_dir, main_c=o.main_c,
+                       over=dict(x.split('=', 1) for x in o.over))
     if o.cmd == 'gen':
         import aec_pspcc as P
         dm = P.parse_dm(open(o.dm).read()) if o.dm else None
-        raw = View('raw', C.load_raw(o.raw, follow=True, alias=EXIT_ALIAS)) if o.raw else None
+        raw = View('raw', C.load_raw(o.raw, follow=True, alias=EXIT_ALIAS)) if o.raw else None  # noqa: E501
         v = View(o.flavour, C.load_pp(o.pp))
         if raw is not None:
             v.line_ids = site_ids(sites(raw))

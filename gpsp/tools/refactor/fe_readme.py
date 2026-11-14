@@ -112,9 +112,10 @@ EXPORTED = collections.OrderedDict([
 ])
 # PLAN.md §1.1 "Never real TUs, by rule" = the "(F, forever)" rows of §1.2's File (kind) column
 NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
-# the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1)
-LATER = collections.OrderedDict([('teardown', 'HW-3 C1'), ('boot', 'HW-3 C2'), ('session', 'HW-3 C3'),
-                                 ('loop', 'HW-4 D1')])
+# the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1).
+# teardown left the list with Epoch C C1a (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3),
+# boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c).
+LATER = collections.OrderedDict([('loop', 'HW-4 D1')])
 ROLES = ('harness', 'mgift')      # the modules whose F rows are listed with their #if context
 
 # What each @extract name prefix means (tools/refactor/docs/source-split.md, P1).  A prefix not

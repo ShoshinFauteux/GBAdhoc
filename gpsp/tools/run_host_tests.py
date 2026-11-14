@@ -657,6 +657,25 @@ def suites(env: Env, baseline: Path | None):
         ("backup_save", True, lambda: None,
          "python3 tools/tests/test_backup_save.py"),
 
+        # The six player exits no fixture reaches (the menu's Exit,
+        # START+SELECT, an unreadable save, HOME, a profile change, a failed
+        # reset): each trigger and main()'s teardown, extracted from
+        # main_psp.c and run with recording stubs, plus mutants.
+        ("exit_paths", True, lambda: None,
+         "python3 tools/tests/test_exit_paths.py"),
+
+        # The in-process return's reset (Epoch C C3-1, session_reset): the
+        # start tree's list in its order, called with each local's own
+        # address, plus mutants (a dropped/swapped statement or argument).
+        ("session_reset", True, lambda: None,
+         "python3 tools/tests/test_session_reset.py"),
+
+        # The in-process return's unload unit (Epoch C C3-2a, inproc_unload):
+        # the start tree's U1-U12 in their order, called once under the
+        # refusal's yes and right before the census's snapshot, plus mutants.
+        ("inproc_unload", True, lambda: None,
+         "python3 tools/tests/test_inproc_unload.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

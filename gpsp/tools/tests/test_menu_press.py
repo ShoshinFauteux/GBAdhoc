@@ -95,7 +95,8 @@ def main_body(src):
     """main(), read through its @extract marker fn:main."""
     body = extract.extract(src, "fn:main")
     assert body.startswith("int main(int argc, char *argv[])"), "fn:main"
-    return body
+    # Epoch C: the boot, the teardown and the in-process reset read as main()'s text
+    return extract.epochc_expand(body, src)
 
 
 def home_close(src):
@@ -524,7 +525,9 @@ for label, old, new, expect, wired in MUTANTS:
     print("mutant (%s): failed as it must" % label)
 
 # Wiring only: the next game's first read is not a model this loop has.
-bad_src = in_site('fe_evt("inproc_return', "goto session_top;")(
+# (Epoch C C3-1: the reset is session_reset() in fe/session.inc.c)
+bad_src = (in_site("void session_reset(", "\n}\n") if "void session_reset(" in MAIN else
+           in_site('fe_evt("inproc_return', "goto session_top;"))(
     r"\n *g_pad_swallow = 0;[^\n]*", "")(MAIN)
 assert bad_src != MAIN
 assert wiring(bad_src) == ["the in-process return keeps the last game's "

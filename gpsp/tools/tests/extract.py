@@ -291,6 +291,262 @@ def read_source(path):
     return FRAG_INC.sub(sub, text)
 
 
+# Epoch C C1c (fe/teardown.inc.c): main()'s shared teardown is two calls.  Their
+# parameters carry the names of main()'s locals and their bodies keep main()'s
+# indentation, so pasting each body over its call line gives main()'s text as a
+# test that reads the teardown expects it.
+EPOCHC_TEARDOWN_CALLS = (("   session_end(have_variant);\n", "session_end"),
+                         ("   process_end(exit_code, exit_reason);\n", "process_end"))
+
+
+def _helper_body(source, name):
+    m = re.search(r'^static [^\n]*\bvoid ' + name + r'\([^)]*\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: %s() not defined' % name)
+    end = source.index('\n}\n', m.end() - 1)
+    return source[m.end():end + 1]
+
+
+# Epoch C C2 (fe/boot.inc.c): main()'s boot is boot_run(), moved unchanged.  Its call
+# statement is replaced by its body without the final `return -1;` (the body keeps
+# main()'s indentation; its locals are declared at its top under main()'s names).
+EPOCHC_BOOT_CALL = re.compile(r'^( +)if \(boot_run\(argc, argv, &bc\) >= 0\)\n +return 0;\n', re.M)
+
+
+def _boot_body(source):
+    m = re.search(r'^static [^\n]*\bint boot_run\([^)]*\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: boot_run() not defined')
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    tail = '   return -1;\n'
+    if not body.endswith(tail):
+        raise ExtractError('epochc: boot_run() does not end in `return -1;`')
+    return body[:-len(tail)]
+
+
+# Epoch C C3-2b (fe/teardown.inc.c): main()'s re-entry `goto session_top` is a pass
+# per game, `for (;;) { .. if (!inproc_try_return(..)) break; NEXT.. }`.  Read back
+# as the text it replaced: the pass's head is the label, and the decision is
+# inproc_try_return()'s body with NEXT (main()'s indentation + 6) and the goto in
+# place of its `return 1;`, its final `return 0;` dropped; a by-address parameter's
+# `(*P)`, `*P`, `P->` read as the local's name.
+EPOCHC_PASS_HEAD = re.compile(r'^   /\* ONE PASS PER GAME:.*?\*/\n   for \(;;\)\n   \{\n', re.M | re.S)
+EPOCHC_PASS_TAIL = re.compile(r'^   if \(!inproc_try_return\(([^;]*)\)\)\n      break;\n(.*?)'
+                              r'^   \}   /\* the next game \*/\n', re.M | re.S)
+
+
+def epochc_unloop(main_text, source):
+    """main()'s text with the pass per game read as `session_top:` .. `goto session_top;`
+    (unchanged on a tree before Epoch C C3-2b)."""
+    h, t = EPOCHC_PASS_HEAD.search(main_text), EPOCHC_PASS_TAIL.search(main_text)
+    if not h and not t:
+        return main_text
+    if not (h and t and h.end() <= t.start()):
+        raise ExtractError('epochc: the pass per game has no head or no tail')
+    m = re.search(r'^static [^\n]*\bint inproc_try_return\(([^)]*)\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: inproc_try_return() not defined')
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    code = re.sub(r'/\*.*?\*/', '', body, flags=re.S)
+    if not body.endswith('   return 0;\n') or body.count('         return 1;\n') != 1 or \
+            len(re.findall(r'\breturn\b', code)) != 2:
+        raise ExtractError('epochc: inproc_try_return() must return 1 once and 0 at its end')
+    body = body[:-len('   return 0;\n')]
+    params = [re.search(r'(\w+)\s*$', p).group(1) for p in m.group(1).split(',')]
+    byaddr = ['*' in p for p in m.group(1).split(',')]
+    args = [a.strip() for a in re.sub(r'\s+', ' ', t.group(1)).split(',')]
+    if len(args) != len(params):
+        raise ExtractError('epochc: inproc_try_return() given %d arguments' % len(args))
+    for p, ptr, a in zip(params, byaddr, args):
+        if ptr:
+            if not re.match(r'^&\w+$', a):
+                raise ExtractError('epochc: %s is by address, given %s' % (p, a))
+            x = a[1:]
+            body = _byaddr_text(body, p, x)   # code only, not strings or comments
+        elif a != p:
+            body = re.sub(r'(?<![\w.>])%s\b' % p, a, body)
+    nxt = ''.join('      ' + ln + '\n' if ln.strip() else ln + '\n'
+                  for ln in t.group(2).split('\n')[:-1])
+    k = body.index('         return 1;\n')
+    body = body[:k] + nxt + '         goto session_top;\n' + body[k + len('         return 1;\n'):]
+    return (main_text[:h.start()] + 'session_top:\n' + main_text[h.end():t.start()] + body +
+            main_text[t.end():])
+
+
+# Epoch C C3-2c (fe/session.inc.c): main()'s pass before the frame loop is session
+# phases, each main()'s text moved: `if (session_x(..) >= 0)\n return 0;` (a phase with
+# exits, ending in `return -1;`) or `session_x(..);` (void).  Pasted back over the call
+# with a by-address parameter's `(*P)`, `*P`, `P->` and bare `P` read as main()'s local
+# (the call passes `&P`), and `PSP_FILE_PATH_CAP` left as it is (the phase's
+# `sizeof(<path>)`: main()'s path buffers are PSP_FILE_PATH_CAP arrays).
+EPOCHC_PHASES = ('session_select', 'session_configure', 'session_load', 'session_net_up',
+                 'session_pre_loop')
+
+
+_CODE = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[^/"\']+|.', re.S)
+
+
+def _byaddr_text(text, p, x=None):
+    """text with the by-address parameter p read as main()'s local p: `(*p)` (not a
+    call's or sizeof's parentheses) and `*p` as `p`, `p->` as `p.`, a bare `p` as `&p`;
+    in code only (comments and string literals as they are)."""
+    out, code = [], []
+
+    def flush():
+        s = ''.join(code)
+        s = re.sub(r'(?<![\w)\]])\(\*%s\)' % p, '\x00', s)
+        s = re.sub(r'\*%s\b' % p, '\x00', s)
+        s = re.sub(r'(?<![\w.>])%s->' % p, '\x00.', s)
+        s = re.sub(r'(?<![\w.>\x00])%s\b' % p, '&\x00', s)
+        out.append(s.replace('\x00', x or p))
+        code.clear()
+    for m in _CODE.finditer(text):
+        s = m.group(0)
+        if s.startswith(('/*', '//', '"', "'")):
+            flush()
+            out.append(s)
+        else:
+            code.append(s)
+    flush()
+    return ''.join(out)
+
+
+def _split_top(text):
+    out, cur, d = [], '', 0
+    for ch in text:
+        if ch == ',' and d == 0:
+            out.append(cur)
+            cur = ''
+            continue
+        d += ch in '([{'
+        d -= ch in ')]}'
+        cur += ch
+    if cur.strip():
+        out.append(cur)
+    return [re.sub(r'\s+', ' ', x).strip() for x in out]
+
+
+def _phase_def(source, name):
+    m = re.search(r'^static [^\n]*\b(int|void) ' + name + r'\(', source, re.M)
+    if not m:
+        return None
+    i, d = m.end() - 1, 0
+    for j in range(i, len(source)):
+        d += source[j] == '('
+        d -= source[j] == ')'
+        if d == 0:
+            break
+    params = _split_top(source[i + 1:j])
+    if params == ['void']:
+        params = []
+    k = source.index('{\n', j)
+    end = source.index('\n}\n', k)
+    return m.group(1), params, source[k + 2:end + 1]
+
+
+def epochc_phases(main_text, source):
+    """main()'s text with the session phases' calls replaced by their bodies (unchanged
+    on a tree before Epoch C C3-2c)."""
+    for name in EPOCHC_PHASES:
+        d = _phase_def(source, name)
+        if not d:
+            continue
+        kind, params, body = d
+        if kind == 'int':
+            pat = re.compile(r'^   if \(' + name + r'\((.*?)\) >= 0\)\n      return 0;\n', re.M | re.S)
+            if not body.endswith('   return -1;\n'):
+                raise ExtractError('epochc: %s() does not end in `return -1;`' % name)
+            body = body[:-len('   return -1;\n')]
+        else:
+            pat = re.compile(r'^   ' + name + r'\((.*?)\);\n', re.M | re.S)
+        hits = pat.findall(main_text)
+        if len(hits) != 1:
+            raise ExtractError('epochc: main() calls %s() %d times' % (name, len(hits)))
+        args = _split_top(hits[0])
+        if len(args) != len(params):
+            raise ExtractError('epochc: %s() given %d arguments' % (name, len(args)))
+        for p, a in zip(params, args):
+            pn = re.search(r'(\w+)\W*$', re.sub(r'\[[^\]]*\]', '', p)).group(1)
+            if a == '&' + pn:
+                body = _byaddr_text(body, pn)
+            elif a != pn:
+                raise ExtractError('epochc: %s(): %s is given %s' % (name, pn, a))
+        m = pat.search(main_text)
+        main_text = main_text[:m.start()] + body + main_text[m.end():]
+    return main_text
+
+
+def epochc_expand(main_text, source):
+    """main()'s text with boot_run() and session_end()/process_end() calls replaced by
+    their bodies (unchanged on a tree before Epoch C C1c / C2)."""
+    main_text = epochc_unloop(main_text, source)
+    main_text = epochc_phases(main_text, source)
+    if len(EPOCHC_BOOT_CALL.findall(main_text)) == 1:
+        body = _boot_body(source)
+        main_text = EPOCHC_BOOT_CALL.sub(lambda m: body, main_text)
+    for call, name in EPOCHC_TEARDOWN_CALLS:
+        if main_text.count(call) == 1:
+            main_text = main_text.replace(call, _helper_body(source, name))
+    m = EPOCHC_RESET_CALL.search(main_text)
+    if m:
+        main_text = main_text[:m.start()] + _reset_body(source, m.group(1)) + main_text[m.end():]
+    m = EPOCHC_UNLOAD_CALL.search(main_text)
+    if m:
+        main_text = main_text[:m.start()] + _void_body(source, 'inproc_unload', m.group(1)) + \
+            main_text[m.end():]
+    return main_text
+
+
+# Epoch C C3-2a (fe/teardown.inc.c): the in-process return's unload unit is
+# inproc_unload(), void(void).  Pasted back with main()'s indentation at the call
+# (preprocessor lines as they are).
+EPOCHC_UNLOAD_CALL = re.compile(r'^( +)inproc_unload\(\);\n', re.M)
+
+
+def _void_body(source, name, indent):
+    m = re.search(r'^static [^\n]*\bvoid ' + name + r'\(void\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: %s() not defined' % name)
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    return ''.join(indent + ln[3:] + '\n' if ln.startswith('   ') else ln + '\n'
+                   for ln in body.split('\n')[:-1])
+
+
+# Epoch C C3-1 (fe/session.inc.c): the in-process return's reset list is
+# session_reset(&local.., boot values..).  Pasted back with `*name` read as `name`
+# (each parameter carries the name of the main() local it is given) and main()'s
+# indentation at the call.
+EPOCHC_RESET_CALL = re.compile(r'^( +)session_reset\([^;]*\);\n', re.M)
+
+
+def _reset_body(source, indent):
+    m = re.search(r'^static [^\n]*\bvoid session_reset\(([^)]*)\)\s*\{\n', source, re.M)
+    if not m:
+        raise ExtractError('epochc: session_reset() not defined')
+    ptr = re.findall(r'\*\s*(\w+)\s*(?:,|$)', m.group(1))
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    if ptr:
+        body = re.sub(r'\*(%s)\b' % '|'.join(ptr), r'\1', body)
+    return ''.join(indent + ln[3:] + '\n' if ln.startswith('   ') else ln + '\n'
+                   for ln in body.split('\n')[:-1])
+
+
+def epochc_early_helpers(source):
+    """The XE_ flags and exit_early_begin/_end (Epoch C C1a/C1b), '' before them."""
+    a = source.find('enum\n{\n   XE_EVT_FIRST')
+    if a < 0:
+        return ''
+    m = re.search(r'^static [^\n]*\bvoid exit_early_end\([^)]*\)\s*\{\n', source[a:], re.M)
+    if not m:
+        raise ExtractError('epochc: exit_early_end() not defined')
+    end = source.index('\n}\n', a + m.end() - 1)
+    return source[a:end + 3]
+
+
 def _read_sources(paths):
     """Each path through read_source; a fragment a shell already expanded is
     not added a second time."""

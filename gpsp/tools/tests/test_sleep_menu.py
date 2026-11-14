@@ -63,7 +63,8 @@ def main_fn(main_src):
     """main(), read through its @extract marker fn:main."""
     body = extract.extract(main_src, "fn:main")
     assert body.startswith("int main(int argc, char *argv[])"), "fn:main"
-    return body
+    # Epoch C C3-2c: the session's phases (the hand-over to the loop) as main()'s text
+    return extract.epochc_phases(body, main_src)
 
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
                     r"'(?:\\.|[^'\\])*'|[{}]", re.S)

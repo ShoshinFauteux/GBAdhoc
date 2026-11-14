@@ -155,7 +155,7 @@ def classify(src):
 def covered_claims(src):
     """The text behind each COVERED reason."""
     faults = []
-    main = marked_function(src, "main")
+    main = extract.epochc_expand(marked_function(src, "main"), src)
     boot_hold = main.rfind('pwr_hold("boot");')
     boot_rel = main.find("pwr_release();            /* the boot's hold")
     site = main.find("Bring the wireless session up around the booted core.")
@@ -612,7 +612,7 @@ def check_all(src):
     rc, out = run_c(NOTICE_HARNESS.replace("@FUNCTION@", extract.extract(src, "fn:boot_stop_notice")))
     if rc:
         fails.append("boot_stop_notice: " + out.strip())
-    main = marked_function(src, "main")
+    main = extract.epochc_expand(marked_function(src, "main"), src)
     first_hold = main.find('pwr_hold("boot");')
     if first_hold < 0 or "ui_notice(" in main[first_hold:]:
         fails.append("main() calls ui_notice directly after the boot's hold is taken")

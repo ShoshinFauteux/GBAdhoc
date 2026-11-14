@@ -116,6 +116,9 @@ STUB = r'''
 #define fe_evt(...) ((void)0)
 #define SLEEP_SIM_ASLEEP() 0
 #define ROM_DIR "roms"
+/* Epoch C C3-2c: in session_select() the list call passes main()'s buffer size as
+ * PSP_FILE_PATH_CAP (the buffer is a pointer there); this test's buffer is 64 B */
+#define PSP_FILE_PATH_CAP 64
 static struct { int standby; } g_pcfg = { 1 };
 static volatile int g_running = 1;
 static volatile int g_pwr_slept, g_pwr_rebuild, g_pwr_park_req, g_pwr_parked;

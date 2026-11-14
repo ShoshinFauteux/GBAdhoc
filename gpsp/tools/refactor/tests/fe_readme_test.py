@@ -262,10 +262,19 @@ def r3_rows(gpsp, root):
         'C10 qs: %r, sl: %r; with a third reader of qs:dispatch: %r'
         % (qs and qs.group(1)[:40], sl and sl.group(1)[:40], qs2 and qs2.group(1)[:40]))
 
-    later = re.search(r'^teardown, boot, session, loop have no fragment yet.*$', text, re.M)
+    # (Epoch C C1a created fe/teardown.inc.c: teardown left the list; C2 fe/boot.inc.c: boot
+    # left it, and its 5 G rows in fe/link.d.inc.c are rows outside their owner's fragments)
+    later = re.search(r'^(teardown, )?(boot, )?(session, )?loop ha(ve|s) no fragment yet.*$', text, re.M)
     later = later.group(0) if later else ''
-    (ok if later and 'in `main()` today' not in later and 'boot owns 5 G rows, which sit in `fe/link.d.inc.c` '
-     '(lines 893, 894, 895: `g_start_keepalive`' in later and 'teardown, session and loop own none' in later else bad)(
+    if later.startswith(('session', 'loop')):
+        c11 = ('none of them owns one' in later and 'in `main()` today' not in later and
+               '- `fe/link.d.inc.c:893` G `g_start_keepalive` -> boot' in text)
+    else:
+        none_ = ('teardown, session and loop own none' if later.startswith('teardown') else
+                 'session and loop own none')
+        c11 = (later and 'in `main()` today' not in later and 'boot owns 5 G rows, which sit in '
+               '`fe/link.d.inc.c` (lines 893, 894, 895: `g_start_keepalive`' in later and none_ in later)
+    (ok if c11 else bad)(
         'C11 the no-fragment-yet sentence: %s' % later[:260])
 
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''

@@ -7,6 +7,7 @@
 #   R3 no pwr_hold reachable from a gpsp_* hook
 #   R4 no logic inside fe_evt(...) arguments
 #   R5 every .c includes fe_evt.h before it tests GPSP_NO_TELEMETRY
+#   R6 every static function only main() calls has noinline + section(), or is pinned (ci_greps.r6_pinned)
 # --pp DIR adds R1e: in main_psp.<flavour>.i (psp-gcc -E, see aec_pspcc.py) every exit and
 # handoff call is wrapped by pwr_release_all().  Known exceptions: ci_greps.known.
 # Exit 0 green, 1 violations.  Self-test: tests/abi-exit-ci_test_ci_greps.sh
