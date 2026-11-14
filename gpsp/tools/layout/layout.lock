@@ -127,9 +127,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x1980
-at   _ZL10pipe_latchv#1                 0x0440
-at   netpacket_iface                    0x1f70
+at   me_replay_lines                    0x19a0
+at   _ZL10pipe_latchv#1                 0x0460
+at   netpacket_iface                    0x1fb0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -159,7 +159,7 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x0ae0
-size main                               49428
+size main                               49444
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
