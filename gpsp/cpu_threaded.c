@@ -192,6 +192,27 @@ u8 *ram_translation_ptr = ram_translation_cache;
 #endif
 /* Note, see stub files for more cache definitions */
 
+/* Where the ROM zone counts as full (offset from rom_translation_cache).  A
+ * GBA link session sets rom_link_limit_off so both copies of a machine fill
+ * their ROM caches at the same translation (dynarec_link_session, below);
+ * 0 = single player, the whole cache.  The translator reads the precomputed
+ * rom_xlat_limit_off, so its code is no bigger than with the plain size;
+ * every change of the size or of the session limit refreshes it. */
+#ifdef GBA_LINK
+u32 rom_link_limit_off;
+u32 dynarec_link_on;               /* a link session is running */
+u32 rom_xlat_limit_off =
+  ROM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD;
+#define ROM_XLAT_LIMIT_OFF() rom_xlat_limit_off
+#define ROM_XLAT_LIMIT_REFRESH()                                              \
+  (rom_xlat_limit_off = rom_link_limit_off ? rom_link_limit_off :             \
+     rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD)
+#else
+#define ROM_XLAT_LIMIT_OFF()                                                  \
+  (rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD)
+#define ROM_XLAT_LIMIT_REFRESH() ((void)0)
+#endif
+
 u32 iwram_code_min = ~0U;
 u32 iwram_code_max =  0U;
 u32 ewram_code_min = ~0U;
@@ -8487,9 +8508,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
        - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type)];
   } else {
     translation_ptr = rom_translation_ptr;
-    translation_cache_limit =
-     rom_translation_cache + rom_translation_cache_size -
-     TRANSLATION_CACHE_LIMIT_THRESHOLD;
+    translation_cache_limit = rom_translation_cache + ROM_XLAT_LIMIT_OFF();
   }
 
 #ifdef SMC_REUSE
@@ -8917,8 +8936,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        - (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type)];
   } else {
     translation_ptr = rom_translation_ptr;
-    translation_cache_limit = &rom_translation_cache[
-       rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD];
+    translation_cache_limit = rom_translation_cache + ROM_XLAT_LIMIT_OFF();
   }
 
 #ifdef SMC_REUSE
@@ -10717,7 +10735,20 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
      * no widened store ever admitted).  Not resident = not admitted. */
     blk = memory_map_read[pc >> 15];
     if (!blk)
+    {
+#ifdef GBA_LINK
+      /* ...except in a link session: residency is not the same on the two
+       * copies of a machine (instance B maps only the pages it has faulted;
+       * a PSP-1000 pages what a 3000 holds), and admission moves check
+       * points, so the copies would take different paths at the same store.
+       * Decode from the ROM there, whatever is resident. */
+      if (!dynarec_link_on)
+        return 0;
+      blk = load_gamepak_page((pc >> 15) & 0x3FF);
+#else
       return 0;
+#endif
+    }
     op = readaddress16(blk, pc & 0x7FFF);
     top = op & 0xFE00;
     if ((top == 0x5000 || top == 0x5200 || top == 0x5400 ||
@@ -12955,6 +12986,7 @@ void dynarec_select_translation_caches(void)
                                ROM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
+  ROM_XLAT_LIMIT_REFRESH();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));   /* both tiers share it */
@@ -13013,6 +13045,7 @@ void dynarec_release_translation_caches(void)
   ram_translation_cache      = ram_translation_cache_static;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
+  ROM_XLAT_LIMIT_REFRESH();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));   /* offsets of the old tier's cache */
@@ -13123,6 +13156,127 @@ void flush_dynarec_caches(void)
 #endif
   flush_translation_cache_ram();
 }
+
+#ifdef GBA_LINK
+/* ---- a link session's canonical dynarec (docs/GBA-LINK-MIRROR.md 29) -------
+ *
+ * WHY.  Guest timing in this core depends on translation history: an event is
+ * delivered at the first cycle check after it is due, and the check points are
+ * block exits, gates and dispatches -- where blocks start and end, which gates
+ * exist, whether a store retires one block or flushes the cache.  So the two
+ * copies of one machine (instance A on its own console, instance B on the
+ * partner's) compute the same guest only while their dynarecs have the same
+ * history.  gbalink_core.c lk_cold_start already returned the SMC gates to the
+ * cartridge's set and flushed both caches; it did not return the dynarec's
+ * other ADAPTIVE state, which a state load keeps on purpose (it is evidence
+ * about the game, paid for over thousands of frames).  Instance B starts every
+ * session fresh (fe_gbadual.c b_fresh); instance A brought whatever its
+ * single-player play had learned:
+ *   - the selective-retirement switch (smc_partial_active) and its widened-
+ *     trap count -- once on, every SMC store takes the single-block path;
+ *   - DMA_SMC_ADAPT's flush/retire mode, probe phase and backoff;
+ *   - SMC_SAME_ADAPT's same-value skip switch and its re-probe backoff;
+ *   - SMC_REUSE's arming window.
+ * Mario Tennis and Mario Golf live on RAM code (both turn selective retirement
+ * on in their first seconds): their two copies retired different blocks from
+ * the session's first frame, ran the same instructions with different check
+ * points, and drifted apart by a few cycles until a link transfer made it
+ * permanent (frames 2400 and 4080 on hardware, the same in PPSSPP with both
+ * consoles configured alike).
+ *
+ * And the ROM cache must fill at the same translation on both copies: a full
+ * cache flushes, and the blocks translated after it start where the guest
+ * happens to be.  B is always the SMALL tier; A is LARGE on a 64 MiB console;
+ * and even two SMALL caches hold different amounts, because the stubs below
+ * the watermark differ (paged vs resident ROM reads).  So for the session the
+ * ROM zone's capacity is counted from the watermark and is the same constant
+ * everywhere: what the smallest cache any console has (SMALL) holds after the
+ * largest stub area we reserve for.  Single-player is untouched (0 = off). */
+#define LINK_ROM_STUB_RESERVE  (64u * 1024u)
+#define LINK_ROM_CAPACITY      ((u32)ROM_TRANSLATION_CACHE_SIZE - \
+                                LINK_ROM_STUB_RESERVE - \
+                                TRANSLATION_CACHE_LIMIT_THRESHOLD)
+
+void dynarec_link_session(u32 slot, u32 headless, int on)
+{
+  extern void fe_evt(const char *fmt, ...) __attribute__((weak));
+  u32 pa = 0, wide = 0, dmode = 0, dgap = 0, xon = 1, xrep = 0;
+#ifdef SMC_PARTIAL_SAFE
+  pa = smc_partial_active;
+#ifdef SMC_PARTIAL_SINGLE
+  wide = smc_wide_traps;
+#endif
+#endif
+#if defined(DMA_SMC_RETIRE) && defined(DMA_SMC_ADAPT)
+  dmode = dma_rt_mode;
+  dgap = drt_gap;
+#endif
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE) && defined(SMC_SAME_ADAPT)
+  xon = xs_on;
+  xrep = xs_reprobe;
+#endif
+  dynarec_link_on = on ? 1u : 0u;
+  if (!on) {
+    rom_link_limit_off = 0;        /* the next block may use the whole cache */
+    ROM_XLAT_LIMIT_REFRESH();
+    return;
+  }
+
+  /* Every adaptive controller back to its boot value (the value instance B
+   * has: its whole core data is restored from boot bytes before a session). */
+#ifdef SMC_PARTIAL_SAFE
+  smc_partial_active = 0;
+#ifdef SMC_PARTIAL_SINGLE
+  smc_wide_traps = 0;
+#endif
+#endif
+#ifdef SMC_RETIRE_WINDOW
+  smc_window_armed = 0;
+#endif
+#if defined(DMA_SMC_RETIRE) && defined(DMA_SMC_ADAPT)
+  dma_rt_mode = 0;
+  drt_f0 = drt_x0 = drt_ref = drt_since = drt_probing = 0;
+  drt_gap = DMA_ADAPT_GAP0;
+#ifdef DMA_ADAPT_V2
+  memset(drt_s, 0, sizeof(drt_s));
+#endif
+#endif
+#if defined(SMC_SAME_SKIP) && defined(SMC_PARTIAL_SINGLE) && defined(SMC_SAME_ADAPT)
+  xs_on = 1;
+  xs_win_noted = xs_win_skips = xs_off_retires = 0;
+  xs_reprobe = XS_REPROBE;
+  xs_probe_paid = 0;
+#endif
+#ifdef SMC_REUSE
+  smc_reuse_armed = smc_reuse_win_frame = smc_reuse_win_flushes = 0;
+  smc_reuse_last_full = smc_reuse_full_seen = 0;
+  smc_reuse_win_xlat = smc_reuse_win_hits = smc_reuse_win_n = 0;
+  smc_reuse_find_on = smc_reuse_rec_on = 1;
+  smc_reuse_epoch = 1;
+  smc_reuse_skip_key = 1;
+#endif
+
+  /* The session's ROM capacity, from this instance's own watermark. */
+  if (rom_cache_watermark <= LINK_ROM_STUB_RESERVE &&
+      rom_cache_watermark + LINK_ROM_CAPACITY + TRANSLATION_CACHE_LIMIT_THRESHOLD
+        <= rom_translation_cache_size)
+    rom_link_limit_off = rom_cache_watermark + LINK_ROM_CAPACITY;
+  else
+    rom_link_limit_off = 0;        /* cannot match the partner: say so */
+  ROM_XLAT_LIMIT_REFRESH();
+
+  flush_dynarec_caches();
+  /* was: bit 0 selective retirement on, bit 1 DMA retire mode, bit 2
+   * same-value skip OFF; then the widened traps, the DMA gap, the re-probe.
+   * rom_cap 0 = this instance's stubs exceed the reserve (cannot match). */
+  if (fe_evt)
+    fe_evt("gblink_jit_cold slot=%u b=%u was=%x/%u/%u/%u wm=%u rom_cap=%u",
+           (unsigned)slot, (unsigned)headless,
+           (unsigned)(pa | dmode << 1 | !xon << 2), (unsigned)wide,
+           (unsigned)dgap, (unsigned)xrep, (unsigned)rom_cache_watermark,
+           (unsigned)rom_link_limit_off);
+}
+#endif
 
 #ifdef JIT_CODE_DISCIPLINE
 /* ---- JIT_CODE_DISCIPLINE: the writer API and the publish point -----------

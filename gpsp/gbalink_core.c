@@ -844,7 +844,11 @@ cpu_alert_type gbalink_write_rcnt(u16 value)
  * different timing.  docs/GBA-LINK-FEASIBILITY.md's cold-start rule: at session
  * start every machine returns to the cartridge's configured gate set (the one
  * load_gamepak saw, before any was learned), forgets its candidates, and
- * flushes its translations. */
+ * flushes its translations.  The gates were not all: the dynarec's other
+ * adaptive switches (selective SMC retirement, the DMA retire/flush mode, the
+ * same-value skip) and the ROM cache's capacity move check points too, so
+ * dynarec_link_session returns those to what instance B has and gives every
+ * copy the same ROM capacity (cpu_threaded.c; docs/GBA-LINK-MIRROR.md 29). */
 static u32 lk_gate_cfg_n;
 static u32 lk_gate_cfg_pc[MAX_TRANSLATION_GATES];
 
@@ -854,7 +858,7 @@ void gbalink_gates_snapshot(void)
    memcpy(lk_gate_cfg_pc, translation_gate_target_pc, sizeof(lk_gate_cfg_pc));
 }
 
-static void lk_cold_start(void)
+static void lk_cold_start(unsigned slot, int headless)
 {
    translation_gate_targets = lk_gate_cfg_n;
    memcpy(translation_gate_target_pc, lk_gate_cfg_pc, sizeof(lk_gate_cfg_pc));
@@ -863,7 +867,9 @@ static void lk_cold_start(void)
 #endif
 #ifdef HAVE_DYNAREC
    if (dynarec_enable)
-      flush_dynarec_caches();
+      dynarec_link_session(slot, headless ? 1u : 0u, 1);
+#else
+   (void)slot; (void)headless;
 #endif
 }
 
@@ -879,7 +885,7 @@ static int lk_prev_serial_mode = -1;
 
 static void lk_begin(unsigned slot, int headless)
 {
-   lk_cold_start();
+   lk_cold_start(slot, headless);
    memset(&lk, 0, sizeof(lk));
    lk.active = 1;
    lk.slot = slot;
@@ -911,6 +917,9 @@ static void lk_end(void)
                                           : SERIAL_MODE_DISABLED;
    lk_prev_serial_mode = -1;
    sound_synth_off = 0;
+#ifdef HAVE_DYNAREC
+   dynarec_link_session(0, 0, 0);   /* single player: the whole ROM cache */
+#endif
 }
 
 /* The machine's clock: where it stopped.  At a postponed update_gba call

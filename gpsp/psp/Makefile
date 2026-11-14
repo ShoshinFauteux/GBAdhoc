@@ -187,8 +187,10 @@ endif
 # entries ("59" for ...f0ce959).
 # claude/beta5-rc (PROVISIONAL until the final re-pin): the ME write maps'
 # cold tail pushes .rodata 640 B (release RO 576 -> 0 on spd-combo), and the
-# integration had already spent this pad (512 -> 0), so it wraps: 0 - 576.
-LAYOUT_PAD_RO_BYTES ?= 7616
+# integration had already spent this pad (512 -> 0), so it wraps: 0 - 576;
+# claude/link-desync's -576 more: 7040.  CORE (below) composes ME write maps
+# -768 and link-desync -924 on 892: wraps to 7392.
+LAYOUT_PAD_RO_BYTES ?= 7040
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -198,7 +200,7 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
 LAYOUT_PAD_FE_BYTES ?= 7600
-LAYOUT_PAD_CORE_BYTES ?= 124
+LAYOUT_PAD_CORE_BYTES ?= 7392
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -226,7 +228,7 @@ LAYOUT_PAD_MAIN_BYTES ?= 2304
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
 # tools/flags.lock pins it.
-LAYOUT_PAD_LATE_BYTES ?= 128
+LAYOUT_PAD_LATE_BYTES ?= 160
 # LAYOUT_PAD_MLU_BYTES: the zeros in front of instance A's ml_update_relevance
 # (psp/layout_pad_late.S): ml_line_body's row diff moved to the cold tail
 # (ME write maps), so this puts ml_update_relevance back where the whole

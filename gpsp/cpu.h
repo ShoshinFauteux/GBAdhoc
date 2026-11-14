@@ -284,6 +284,12 @@ void flush_translation_cache_ram_dma(void);   /* dynarec stubs only */
 void dump_translation_cache(void);
 void init_dynarec_caches(void);
 void flush_dynarec_caches(void);
+#ifdef GBA_LINK
+/* A link session's start (on = 1: every adaptive dynarec state back to its
+ * boot value, the session's ROM capacity, both caches flushed) and end
+ * (on = 0).  cpu_threaded.c; called by gbalink_core.c lk_cold_start/lk_end. */
+void dynarec_link_session(u32 slot, u32 headless, int on);
+#endif
 void init_emitter(bool);
 void init_bios_hooks(void);
 
