@@ -248,26 +248,26 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3_byte
 typedef u8 * abi_fe_t_gamepak_spare_pool3__3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3__3 *),
                "fe/rewind.inc.c:440 gamepak_spare_pool3: the frontend copy differs from the core declaration");
-/* main_psp.c:1250 (block) */
+/* main_psp.c:1252 (block) */
 typedef int abi_fe_t_me_log_vram_always;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&me_log_vram_always), abi_fe_t_me_log_vram_always *),
-               "main_psp.c:1250 me_log_vram_always: the frontend copy differs from the core declaration");
-/* main_psp.c:1640 (block) */
+               "main_psp.c:1252 me_log_vram_always: the frontend copy differs from the core declaration");
+/* main_psp.c:1642 (block) */
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
-               "main_psp.c:1640 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* main_psp.c:2457 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+               "main_psp.c:1642 gpsp_heap_census: the frontend copy differs from the core declaration");
+/* main_psp.c:2459 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress__2 ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress__2 *),
-               "main_psp.c:2457 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
-/* main_psp.c:4522 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
+               "main_psp.c:2459 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+/* main_psp.c:4535 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets__2 *),
-               "main_psp.c:4522 translation_gate_targets: the frontend copy differs from the core declaration");
-/* main_psp.c:4523 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
+               "main_psp.c:4535 translation_gate_targets: the frontend copy differs from the core declaration");
+/* main_psp.c:4536 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
 typedef u32 abi_fe_t_translation_gate_target_pc__2 [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_target_pc), abi_fe_t_translation_gate_target_pc__2 *),
-               "main_psp.c:4523 translation_gate_target_pc: the frontend copy differs from the core declaration");
+               "main_psp.c:4536 translation_gate_target_pc: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:26 */
@@ -347,15 +347,15 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/harness.f.inc.c:563   xlat_sp_min                          not declared by the check TU's headers
  *   fe/harness.f.inc.c:564   xlat_depth_probe_reset               not declared by the check TU's headers
  *   fe/harness.f.inc.c:572   jit_code_stats                       not declared by the check TU's headers
- *   main_psp.c:2003          sched_fast                           not declared by the check TU's headers
- *   main_psp.c:2004          irq_io_fast                          not declared by the check TU's headers
- *   main_psp.c:2012          msr_fast                             not declared by the check TU's headers
- *   main_psp.c:2125          sched_fast                           not declared by the check TU's headers
- *   main_psp.c:2142          timer_lazy                           not declared by the check TU's headers
- *   main_psp.c:2158          irq_io_fast                          not declared by the check TU's headers
- *   main_psp.c:2169          msr_fast                             not declared by the check TU's headers
- *   main_psp.c:2353          gpsp_wallclock                       not declared by the check TU's headers
- *   main_psp.c:2679          rom_cache_watermark                  not declared by the check TU's headers
- *   main_psp.c:4767          gpsp_rtc_peek                        not declared by the check TU's headers
+ *   main_psp.c:2005          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:2006          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:2014          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2127          sched_fast                           not declared by the check TU's headers
+ *   main_psp.c:2144          timer_lazy                           not declared by the check TU's headers
+ *   main_psp.c:2160          irq_io_fast                          not declared by the check TU's headers
+ *   main_psp.c:2171          msr_fast                             not declared by the check TU's headers
+ *   main_psp.c:2355          gpsp_wallclock                       not declared by the check TU's headers
+ *   main_psp.c:2681          rom_cache_watermark                  not declared by the check TU's headers
+ *   main_psp.c:4780          gpsp_rtc_peek                        not declared by the check TU's headers
  */
 #endif

@@ -30,7 +30,14 @@ def compile_argv(flavour_dir, obj='main_psp.o', log='.build-eboot.log'):
             line = line.strip()
             if not line.startswith('psp-gcc') or ' -c ' not in ' ' + line + ' ':
                 continue
-            argv = shlex.split(line)
+            try:
+                argv = shlex.split(line)
+            except ValueError:
+                # a make recipe continued with `\` (psp/Makefile's layout_pad_*.o rules) logs
+                # its first line ending in a lone backslash; it is never the object asked for
+                if (' -o %s ' % obj) in line + ' ':
+                    raise
+                continue
             if '-o' in argv and argv[argv.index('-o') + 1] == obj:
                 return argv
     raise SystemExit('aec_pspcc: no compile line for %s in %s' % (obj, p))
