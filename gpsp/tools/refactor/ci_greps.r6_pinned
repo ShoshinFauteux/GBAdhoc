@@ -30,7 +30,11 @@ evt_shutdown
 exit_assist_frame
 exit_sim
 ff_win_note
-ffh_cap3
+# claude/ff-15x (merged on the beta line before Epoch C): ffh_cap3 renamed ffh_cap
+# (the multiplier ceiling, same place in pacing.c), and its new noinline neighbour
+# ffh_cap_draw; both are part of the beta.5 re-pin's layout.
+ffh_cap
+ffh_cap_draw
 ffh_hold
 find_first_rom
 folders_settle
