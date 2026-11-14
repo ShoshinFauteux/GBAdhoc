@@ -347,7 +347,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/harness.f.inc.c:563   xlat_sp_min                          not declared by the check TU's headers
  *   fe/harness.f.inc.c:564   xlat_depth_probe_reset               not declared by the check TU's headers
  *   fe/harness.f.inc.c:572   jit_code_stats                       not declared by the check TU's headers
- *   fe/teardown.inc.c:192    gpsp_rtc_peek                        not declared by the check TU's headers
+ *   fe/teardown.inc.c:246    gpsp_rtc_peek                        not declared by the check TU's headers
  *   main_psp.c:592           sched_fast                           not declared by the check TU's headers
  *   main_psp.c:593           irq_io_fast                          not declared by the check TU's headers
  *   main_psp.c:601           msr_fast                             not declared by the check TU's headers

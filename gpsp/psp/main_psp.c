@@ -3107,50 +3107,7 @@ session_top:
       {
          /* The rest of the unload: what the exit path leaves to the
           * process ending. */
-         dynarec_release_translation_caches();
-         /* XS_HEAP's SMC tables (70,656 B): the first game's retro_init
-          * takes them, after the boot snapshot, and a reload of the same
-          * game reuses them -- but the next game's retro_init must find a
-          * fresh boot's heap, not the last game's block, or the census
-          * reads it as residue and refuses the return.  Given back here,
-          * the next retro_init takes it again at the same place, zeroed
-          * as on a fresh boot. */
-         if (dynarec_heap_tables_release)
-            dynarec_heap_tables_release();
-#ifdef GBA_LINK
-         /* The GBA link's cable reserve (harness builds outside late mode;
-          * a player's build is late and never takes one) is per game: taken
-          * after the snapshot, given back with the game.  A session would
-          * have freed it, but a session also marks the radio used and so
-          * never gets here (inproc_refusal "wireless"). */
-         if (g_cable_reserve)
-         {
-            free(g_cable_reserve);
-            g_cable_reserve = NULL;
-         }
-         g_gba_cable = 0;
-#endif
-         /* The renderer's buffers: kept when they are the volatile
-          * partition's (the next game's me_rend_init reuses them, nothing
-          * of the heap's), freed when they fell back to the heap -- the
-          * exit path never had to. */
-         me_rend_suspend();
-         /* The next game's code is emitted into the same translation cache
-          * the last one ran from.  Every publish syncs its own range, but a
-          * relaunch also started the CPU caches from nothing, and the
-          * in-process return must not be the first path to bet otherwise
-          * (docs/RESIDENT-ICACHE-FIX.md: the resident-ROM crash was a stale
-          * I-cache line outside a publish range). */
-         sceKernelDcacheWritebackInvalidateAll();
-         sceKernelIcacheInvalidateAll();
-         home_host_forget();
-         fe_host_session_reset();
-         osd_reset();
-         ui_close();
-         vid_ambient_drop();
-         audio_stop();
-         audio_ring_reset();
-         audio_start();
+         inproc_unload();
          heap_snap(&after);
          exit_sim("unload");        /* harness: HOME here (S-4 d) */
 #ifndef GPSP_NO_TELEMETRY

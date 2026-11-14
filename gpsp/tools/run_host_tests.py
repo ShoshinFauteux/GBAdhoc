@@ -665,6 +665,12 @@ def suites(env: Env, baseline: Path | None):
         ("session_reset", True, lambda: None,
          "python3 tools/tests/test_session_reset.py"),
 
+        # The in-process return's unload unit (Epoch C C3-2a, inproc_unload):
+        # the start tree's U1-U12 in their order, called once under the
+        # refusal's yes and right before the census's snapshot, plus mutants.
+        ("inproc_unload", True, lambda: None,
+         "python3 tools/tests/test_inproc_unload.py"),
+
         ("perf_loop", False, lambda: None,
          "python3 tools/test_perf_loop.py"),
 

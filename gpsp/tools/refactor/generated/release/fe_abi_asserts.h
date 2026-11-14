@@ -294,7 +294,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
- *   fe/teardown.inc.c:192    gpsp_rtc_peek                        not declared by the check TU's headers
+ *   fe/teardown.inc.c:246    gpsp_rtc_peek                        not declared by the check TU's headers
  *   main_psp.c:592           sched_fast                           not declared by the check TU's headers
  *   main_psp.c:593           irq_io_fast                          not declared by the check TU's headers
  *   main_psp.c:601           msr_fast                             not declared by the check TU's headers
