@@ -4,7 +4,7 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 65 declarations, 6 constants; unchecked: 55 (listed at the end). */
+ * checked: 65 declarations, 6 constants; unchecked: 52 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
@@ -96,26 +96,26 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_cap_reason), abi
 typedef u32 abi_fe_t_gamepak_force_swap_stubs;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_force_swap_stubs), abi_fe_t_gamepak_force_swap_stubs *),
                "fe/inproc.a.inc.c:213 gamepak_force_swap_stubs: the frontend copy differs from the core declaration");
-/* fe/input.b.inc.c:20 (proto) */
+/* fe/input.b.inc.c:25 (proto) */
 typedef void abi_fe_t_smc_prof_take ( unsigned * hits , unsigned * pages , unsigned * iw , unsigned * ew , unsigned * oth , unsigned * ovf , unsigned * hot_addr , unsigned * hot_cnt , unsigned * top_addr , unsigned * top_cnt , unsigned nhot );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&smc_prof_take), abi_fe_t_smc_prof_take *),
-               "fe/input.b.inc.c:20 smc_prof_take: the frontend copy differs from the core declaration");
-/* fe/input.b.inc.c:35 (proto) */
+               "fe/input.b.inc.c:25 smc_prof_take: the frontend copy differs from the core declaration");
+/* fe/input.b.inc.c:40 (proto) */
 typedef void abi_fe_t_smc_blk_take ( unsigned * watch , unsigned * xlat , unsigned * ovf , unsigned * start , unsigned * end , unsigned * mode , unsigned * reason , unsigned * cnt , unsigned * wpc , unsigned * waddr , unsigned * wcnt , unsigned * wovf , unsigned * head , unsigned * ctx , unsigned * snap , unsigned * fus , unsigned * fbytes , unsigned * fwide , unsigned * same , unsigned * diff , unsigned * unkn );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&smc_blk_take), abi_fe_t_smc_blk_take *),
-               "fe/input.b.inc.c:35 smc_blk_take: the frontend copy differs from the core declaration");
-/* fe/input.b.inc.c:61 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:1595 unsigned int (*)(void) vs main.h:148 u32 (*)(void) */
+               "fe/input.b.inc.c:40 smc_blk_take: the frontend copy differs from the core declaration");
+/* fe/input.b.inc.c:67 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:1595 unsigned int (*)(void) vs main.h:148 u32 (*)(void) */
 typedef u32 ( * abi_fe_t_smc_prof_clock ) ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&smc_prof_clock), abi_fe_t_smc_prof_clock *),
-               "fe/input.b.inc.c:61 smc_prof_clock: the frontend copy differs from the core declaration");
-/* fe/input.b.inc.c:73 (proto) */
+               "fe/input.b.inc.c:67 smc_prof_clock: the frontend copy differs from the core declaration");
+/* fe/input.b.inc.c:79 (proto) */
 typedef void abi_fe_t_core_phase_take ( unsigned * lvl , unsigned * clk_ns , unsigned * frames , unsigned * reads , unsigned * mean , unsigned * max , unsigned * worst , unsigned nph , unsigned * bkr , unsigned * bkw , unsigned * wbkr , unsigned * wbkw , unsigned * ugba , unsigned * dman , unsigned * stmr , unsigned * negc , unsigned * nego , unsigned * rfux , unsigned * rfut , unsigned * wrfux , unsigned * wrfut );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&core_phase_take), abi_fe_t_core_phase_take *),
-               "fe/input.b.inc.c:73 core_phase_take: the frontend copy differs from the core declaration");
-/* fe/input.b.inc.c:81 (proto) */
+               "fe/input.b.inc.c:79 core_phase_take: the frontend copy differs from the core declaration");
+/* fe/input.b.inc.c:87 (proto) */
 typedef void abi_fe_t_core_phase_set_level ( unsigned lvl );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&core_phase_set_level), abi_fe_t_core_phase_set_level *),
-               "fe/input.b.inc.c:81 core_phase_set_level: the frontend copy differs from the core declaration");
+               "fe/input.b.inc.c:87 core_phase_set_level: the frontend copy differs from the core declaration");
 /* fe/merend.a.inc.c:69 (extern) */
 typedef u16 * abi_fe_t_gba_screen_pixels;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gba_screen_pixels), abi_fe_t_gba_screen_pixels *),
@@ -256,18 +256,18 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&me_log_vram_always), abi
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
                "fe/session.inc.c:61 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:854 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+/* fe/session.inc.c:856 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress__2 ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress__2 *),
-               "fe/session.inc.c:854 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
-/* main_psp.c:2037 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
+               "fe/session.inc.c:856 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+/* main_psp.c:2038 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets__2 *),
-               "main_psp.c:2037 translation_gate_targets: the frontend copy differs from the core declaration");
-/* main_psp.c:2038 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
+               "main_psp.c:2038 translation_gate_targets: the frontend copy differs from the core declaration");
+/* main_psp.c:2039 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
 typedef u32 abi_fe_t_translation_gate_target_pc__2 [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_target_pc), abi_fe_t_translation_gate_target_pc__2 *),
-               "main_psp.c:2038 translation_gate_target_pc: the frontend copy differs from the core declaration");
+               "main_psp.c:2039 translation_gate_target_pc: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:26 */
@@ -296,7 +296,7 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (55): every copy of this flavour's -E that is NOT asserted: its name is not declared
+/* UNCHECKED (52): every copy of this flavour's -E that is NOT asserted: its name is not declared
  * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
  * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
  * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
@@ -306,9 +306,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   main_psp.c:87            __lib_stub_bottom                    not declared by the check TU's headers
  *   fe/power.a.inc.c:78      gpsp_rtc_wall                        not declared by the check TU's headers
  *   fe/input.a.inc.c:63      dynarec_heap_tables_release          not declared by the check TU's headers
- *   fe/input.a.inc.c:64      heap_trace_mark                      not declared by the check TU's headers
- *   fe/input.a.inc.c:65      gbcore_prepare                       not declared by the check TU's headers
- *   fe/input.a.inc.c:66      heap_trace_report                    not declared by the check TU's headers
+ *   fe/input.a.inc.c:64      gbcore_prepare                       not declared by the check TU's headers
  *   fe/inproc.a.inc.c:159    __executable_start                   not declared by the check TU's headers
  *   fe/inproc.a.inc.c:159    _end                                 not declared by the check TU's headers
  *   fe/inproc.a.inc.c:215    platform_cache_paranoid              not declared by the check TU's headers
@@ -338,7 +336,6 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
- *   fe/link.d.inc.c:1044     heap_trace_mark0                     not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
  *   fe/harness.f.inc.c:561   badjump_contained                    not declared by the check TU's headers
  *   fe/harness.f.inc.c:562   xlat_depth_max                       not declared by the check TU's headers
@@ -353,7 +350,7 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/session.inc.c:533     timer_lazy                           not declared by the check TU's headers
  *   fe/session.inc.c:549     irq_io_fast                          not declared by the check TU's headers
  *   fe/session.inc.c:560     msr_fast                             not declared by the check TU's headers
- *   fe/session.inc.c:744     gpsp_wallclock                       not declared by the check TU's headers
- *   fe/session.inc.c:1072    rom_cache_watermark                  not declared by the check TU's headers
+ *   fe/session.inc.c:746     gpsp_wallclock                       not declared by the check TU's headers
+ *   fe/session.inc.c:1074    rom_cache_watermark                  not declared by the check TU's headers
  */
 #endif

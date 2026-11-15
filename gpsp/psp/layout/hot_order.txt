@@ -36,12 +36,18 @@ spin_check                                        0.026178     524
 block_lookup_translate_arm                        0.052539    1656
 smc_fill_lk                                       0.000000      96
 rfu_update                                        0.033567    1000
+# code-health B-4 (the tier-B re-pin): rfu_fill_update (rfu.c) gives back B-2's rfu_update shrink
+# (1024 -> 960 B 32 B-rounded), both flavours; the smc_fill_prof_* / smc_fill_blk_* rows (main.c) give
+# back the SMC profile's functions, which a release no longer links (they match nothing in the lab).
+rfu_fill_update                                   0.000000      64
 smc_pipe_store                                    0.009727     320
 write_io_register16                               0.082094    2760
 dma_transfer                                      0.088941    3088
 smc_prof_note_store                               0.008008     288
+smc_fill_prof_store                               0.000000     192
 jit_code_wrote_.part.0                            0.007611     300
 smc_prof_exact                                    0.013770     576
+smc_fill_prof_exact                               0.000000     576
 vram_x_dma_note                                   0.006099     332
 block_lookup_translate_thumb                      0.023820    1720
 smc_fill_lkt                                      0.000000      64
@@ -58,6 +64,7 @@ smc_reuse_find                                    0.006829     696
 write_io_register8                                0.001576     172
 trigger_dma                                       0.005252     592
 smc_blk_check_silent                              0.003792     476
+smc_fill_blk_silent                               0.000000     480
 core_phase_enter                                  0.000560      72
 emit_load_pc_k                                    0.001723     224
 dma_tf_loop32                                     0.108231   14188
@@ -69,6 +76,7 @@ xs_extent_note                                    0.004269     672
 xs_note_block                                     0.004578     732
 set_cpu_mode                                      0.002371     452
 smc_blk_note_writer                               0.001602     348
+smc_fill_blk_writer                               0.000000     352
 fe_host_frame_count                               0.000055      12
 smc_stable_thunk_dispatch                         0.001594     312
 iok_site                                          0.002197      72
@@ -92,6 +100,7 @@ fe_autopilot_status                               0.000023      12
 fe_host_input_inject                              0.000023      12
 retro_run                                         0.001920    1124
 smc_blk_note_block                                0.001972    1164
+smc_fill_blk_block                                0.000000    1152
 rumble_frame_reset                                0.000064      40
 lat_swap.isra.0                                   0.000790     632
 lat_wait_begin                                    0.000795     636
@@ -152,7 +161,10 @@ spin_arm_op                                       0.000045    3096
 fflush                                            0.000003     244 libc.a:libc_a-fflush.o
 entry_gates_harvest                               0.000004     316
 memory_term                                       0.000002     340
-reload_timing_info                                0.000002     336
+# code-health B-4: reload_timing_info (a WAITCNT write) left the order; memory_fill_term's zeros
+# (gba_memory.c: 224 B release, 256 B lab) take back rfu_frame_update's (B-2) and memory_term's (B-3)
+# growth, so __moddi3 .. translate_block_arm (render_gbc_sound, the translators) keep beta.5's sets.
+memory_fill_term                                  0.000000     224
 __moddi3                                          0.000006    1392 libgcc.a:_moddi3.o
 __divdi3                                          0.000006    1404 libgcc.a:_divdi3.o
 sram_sync_checked                                 0.000002     596

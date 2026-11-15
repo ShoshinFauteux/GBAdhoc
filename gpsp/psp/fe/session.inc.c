@@ -719,8 +719,10 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
 #endif
    cfg->core_counters = plat_core_counters;                   /* ADR-0028 */
    cfg->boot_status   = rom_loading_stage;
+#ifdef FE_SMC_PROFILE
    cfg->smc_addr      = plat_smc_addr;                        /* ADR-0030 */
    cfg->smc_block     = plat_smc_block;                       /* phase 5g */
+#endif
    cfg->core_phase    = plat_core_phase;                      /* phase 5h */
    smc_prof_clock    = plat_smc_clock;                       /* phase 5g */
    /* Order matters: the core clamps the level to 0 without a clock. */

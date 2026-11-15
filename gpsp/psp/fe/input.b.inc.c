@@ -16,7 +16,12 @@ static void jit_coh_frame(unsigned frames)
 
 /* ADR-0030: same boundary trick for the SMC write-ADDRESS profile.  The core
  * owns the buckets (main.c); this just forwards, and the take RESETS them, so
- * each `EVT smc_addr` describes exactly one heartbeat window. */
+ * each `EVT smc_addr` describes exactly one heartbeat window.  A release core
+ * has no profile (main.h SMC_PROFILE, code-health B-4): FE_SMC_PROFILE says the
+ * same from the frontend's defines, and without it fe_host's smc_addr and
+ * smc_block callbacks stay NULL (session.inc.c). */
+#if !defined(GPSP_PROFILE_RELEASE) || defined(GPSP_SMC_PROFILE)
+#define FE_SMC_PROFILE 1
 void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
                    unsigned *oth, unsigned *ovf,
                    unsigned *hot_addr, unsigned *hot_cnt,
@@ -54,6 +59,7 @@ static void plat_smc_block(unsigned *watch, unsigned *xlat, unsigned *ovf,
                 wpc, waddr, wcnt, wovf, head, ctx, snap,
                 fus, fbytes, fwide, same, diff, unkn);
 }
+#endif
 
 /* The core's flush timer wants a plain u32-microsecond clock (main.h).
  * Declared here rather than including the core's main.h, which pulls in the

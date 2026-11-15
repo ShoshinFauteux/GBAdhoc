@@ -13,7 +13,7 @@
 #    psp-gcc works (upstream links the .so with gcc on purpose).
 
 TARGET = gpsp_adhoc
-OBJS = main_psp.o usb_handoff.o icprobe.o heap_trace.o \
+OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
        ff_psp.o \
        me_host.o \
        home_host.o \
@@ -169,7 +169,7 @@ ASFLAGS  = $(CFLAGS)
 ifneq ($(filter-out 1,$(LAYOUT_PIN)),)
 $(error LAYOUT_PIN=$(LAYOUT_PIN): pinning is built in (code-health A-7); drop LAYOUT_PIN)
 endif
-LAYOUT_PAD_BYTES ?= 1944
+LAYOUT_PAD_BYTES ?= 5692
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the ordering file (default the single-player order).  The link
 # pair's candidate order is layout/hot_pair.ord (docs/GBA-LINK-MIRROR.md 25):
@@ -195,7 +195,7 @@ endif
 # A's tables back (netpacket_iface +16, .rodata's 64 B steps) with the pad's
 # end 32 B inside its step both ways; CORE (below) gives up 768 B of A's cold
 # text placement so neither pad wraps (one 8 KiB page of boot heap back).
-LAYOUT_PAD_RO_BYTES ?= 28
+LAYOUT_PAD_RO_BYTES ?= 1364
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
 # psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
@@ -204,8 +204,8 @@ CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
 # them.  claude/opt-1000 round 7 sets them so main's frame loop and the
 # per-frame frontend code sit where round 3 (the last layout measured neutral
 # on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 7600
-LAYOUT_PAD_CORE_BYTES ?= 6008
+LAYOUT_PAD_FE_BYTES ?= 7444
+LAYOUT_PAD_CORE_BYTES ?= 1472
 # LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
 # GB cores' partial links, so a change inside the vendored GB core (round 9:
 # the packed noise tables) does not move the frontend-common code linked after
@@ -226,7 +226,7 @@ CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # "Keeping the pads"): 4532 puts main at mod 0x1cd4 (lab 2656: mod 0x1580), the
 # best by-line shift of the merged loop against 957a5c4fbb1b's (12.7 % of
 # loop-line bytes on its sets; 5.0 % as merged).  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 4532
+LAYOUT_PAD_MAIN_BYTES ?= 4420
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
 # (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
@@ -265,8 +265,21 @@ endif
 # (from claude/inproc-return; docs/INPROC-RETURN.md, GBA-LINK-MIRROR.md 19).
 HEAP_TRACE ?= 0
 ifeq ($(HEAP_TRACE),1)
+# Only then is heap_trace.o linked (code-health B-4): without it psp/heap_trace.h
+# compiles the three calls to nothing, so no build links an object of stubs.
+OBJS    += heap_trace.o
 CFLAGS  += -DGPSP_HEAP_TRACE
 LDFLAGS += -Wl,--wrap=_malloc_r -Wl,--wrap=_free_r -Wl,--wrap=_realloc_r            -Wl,--wrap=_calloc_r -Wl,--wrap=_memalign_r -Wl,--wrap=malloc            -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=memalign
+endif
+
+# usb_handoff.o (ADR-0053: the rig's USB hand-to-PC loop) in rig builds only
+# (GPSP_PERF_RIG; code-health B-4).  A player build reads the harness ini from
+# a path no file can have, so the handoff could never be enabled there;
+# psp/usb_handoff.h gives it the disabled functions (nothing) inline.
+ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS)),)
+RIG_HANDOFF_OBJS = usb_handoff.o
+else
+RIG_HANDOFF_OBJS =
 endif
 
 CORE_LIB = ../gpsp_libretro_psp1.a

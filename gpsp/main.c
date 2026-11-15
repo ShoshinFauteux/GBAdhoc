@@ -112,11 +112,17 @@ u32 flush_ram_partial = 0;   /* single-block retirements (SMC_PARTIAL_SAFE) */
  * no collisions, no allocation: a flat u16[1152] (2.3 KiB of .bss).  The per
  * event cost is one bounds check and one u16 increment; the only loop runs
  * once per window, when the line is emitted.
+ *
+ * Not in a release (SMC_PROFILE, main.h; code-health B-4): there only the
+ * address smc_prof_note_store derives is kept, and smc_fill_* zeros take the
+ * removed functions' places in the pinned warm tail (below).
  * ------------------------------------------------------------------------- */
+#if SMC_PROFILE
 u16 smc_prof_page[SMC_PROF_PAGES];
 u32 smc_prof_hits_iw = 0;
 u32 smc_prof_hits_ew = 0;
 u32 smc_prof_hits_oth = 0;   /* region could not be attributed -- see below */
+#endif
 
 /* The two `lui` constants the MIPS store stubs load into reg_rv before adding
  * the masked region offset (mips_emit.h, emit_pmemst_stub).  Published BY the
@@ -137,6 +143,7 @@ u32 smc_prof_lui_ewram = 2;
  * heavy hitter survives every eviction and its count is accurate to within the
  * evicted minimum; churn among one-off addresses shows up as a large `ovf`.
  * Cost is <=8 compares on an event that already costs a full cache flush. */
+#if SMC_PROFILE
 #define SMC_PROF_SLOTS  8
 u32 smc_prof_slot_addr[SMC_PROF_SLOTS];
 u32 smc_prof_slot_cnt[SMC_PROF_SLOTS];
@@ -187,6 +194,13 @@ void smc_prof_note_ewram(u32 offset)
                 ((offset & 0x3FFFF) >> SMC_PROF_PAGE_SHIFT));
   smc_prof_exact(0x02000000 + (offset & 0x3FFFF));
 }
+#else
+/* gba_memory.c's DMA writers call these on the first tagged halfword; left
+ * out of line and empty so the DMA loops (pinned warm-tail rows) keep their
+ * code. */
+void smc_prof_note_iwram(u32 offset) { (void)offset; }
+void smc_prof_note_ewram(u32 offset) { (void)offset; }
+#endif
 
 /* Called from the dynarec's smc_write stub (mips/mips_stub.S) with the two
  * registers that are still live at the SMC branch:
@@ -206,25 +220,32 @@ void smc_prof_note_store(u32 base, u32 off)
      * CPU-store path reaches here; DMA writes go through write_io_epilogue and
      * are already counted separately as flush_ram_dma. */
     smc_last_write_addr = 0x03000000 + (off & 0x7FFF);
+#if SMC_PROFILE
     if (!smc_blk_watch)
-      return;                   /* the address is all a release needs */
+      return;                   /* the profile is off */
     smc_prof_note_iwram(off);
     smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
     smc_blk_check_silent(smc_last_write_addr);
+#endif
   }
   else if (lui == smc_prof_lui_ewram)
   {
     smc_last_write_addr = 0x02000000 + (off & 0x3FFFF);
+#if SMC_PROFILE
     if (!smc_blk_watch)
       return;
     smc_prof_note_ewram(off);
     smc_blk_note_writer(smc_last_write_addr, reg[REG_PC]);
     smc_blk_check_silent(smc_last_write_addr);
+#endif
   }
+#if SMC_PROFILE
   else
     smc_prof_hits_oth++;
+#endif
 }
 
+#if SMC_PROFILE
 /* Snapshot + reset.  One pass over 1152 halfwords once per heartbeat window
  * (600 frames): counts the distinct pages touched and keeps the `nhot` hottest
  * by insertion, so nothing is ever sorted per event.  Addresses come back as
@@ -289,6 +310,7 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
   smc_prof_hits_iw = smc_prof_hits_ew = smc_prof_hits_oth = 0;
   smc_prof_slot_ovf = 0;
 }
+#endif /* SMC_PROFILE */
 
 /* ---------------------------------------------------------------------------
  * Phase 5g diagnostic: WHICH translated block covers the hot SMC address.
@@ -313,18 +335,18 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
  * test it first).  A release starts at 0: the profile's only reader is
  * `EVT smc_addr` / `EVT smc_block`, and fe_evt compiles out of a release,
  * while the work cost every SMC trap a page bump, an 8-slot scan and a
- * memcmp (twin, opt round 6: Doom II -0.53 % host instructions).  The code
- * stays linked, so the pinned warm tail (psp/layout/hot.ord) does not move.
- * Explicitly .data, as the nonzero default is in every other build.
- * -DGPSP_NO_SMC_PROFILE gives any build the release behaviour (the twin);
- * -DGPSP_SMC_PROFILE keeps the profile in a release. */
-#if (defined(GPSP_PROFILE_RELEASE) && !defined(GPSP_SMC_PROFILE)) || \
-    defined(GPSP_NO_SMC_PROFILE)
+ * memcmp (twin, opt round 6: Doom II -0.53 % host instructions).  Since
+ * code-health B-4 the code is not linked there either (SMC_PROFILE, main.h);
+ * the smc_fill_* zeros below keep the pinned warm tail (psp/layout/hot.ord)
+ * where it was.  The variable stays (cpu_threaded.c's flush timer tests it;
+ * the harness's smc_watch key sets it).  Explicitly .data, as the nonzero
+ * default is in every other build. */
+#if !SMC_PROFILE
 u32 smc_blk_watch __attribute__((section(".data"))) = 0;
 #else
 u32 smc_blk_watch = SMC_BLK_WATCH_DEFAULT;
-#endif
 u32 smc_blk_xlat  = 0;   /* RAM blocks translated since the last take */
+#endif
 /* Same count, but NEVER reset by a take — the on-screen profiler needs a
  * monotonic source it can difference itself.  This is the re-translation
  * churn a RAM cache wipe forces, and it is the one cost `smc_flush_us` does
@@ -337,6 +359,7 @@ u32 smc_flush_us    = 0;
 u32 smc_flush_bytes = 0;
 u32 smc_flush_wide  = 0;
 
+#if SMC_PROFILE
 static u32 blk_start[SMC_BLK_SLOTS];
 static u32 blk_end[SMC_BLK_SLOTS];
 static u32 blk_mode[SMC_BLK_SLOTS];    /* 0 = ARM, 1 = Thumb */
@@ -432,13 +455,16 @@ static void smc_blk_snapshot(u32 start_pc)
   }
   blk_snap_pc = start_pc | 1;   /* nonzero even for a 0 start PC */
 }
+#endif /* SMC_PROFILE */
 
 /* Called once per RAM block translation, right after scan_block settled
  * block_end_pc.  `reason` is why the scan stopped (SMC_SCAN_*). */
 void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
 {
+#if SMC_PROFILE
   unsigned i;
   smc_blk_xlat++;
+#endif
   smc_blk_xlat_total++;
 #ifdef HAVE_DYNAREC
   /* Hand the block's source extent to the tag table while it is still this
@@ -446,6 +472,9 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
    * blocks and would otherwise overwrite it. */
   ramtag_note_extent(start_pc, end_pc, thumb);
 #endif
+#if !SMC_PROFILE
+  (void)start_pc; (void)end_pc; (void)thumb; (void)reason;
+#else
   /* Does the range scan_block just tagged overlap the watched page? */
   if (!smc_blk_watch ||
       start_pc >= smc_blk_watch + SMC_BLK_WATCH_SIZE || end_pc <= smc_blk_watch)
@@ -479,8 +508,10 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
     }
   }
   blk_ovf++;
+#endif /* SMC_PROFILE */
 }
 
+#if SMC_PROFILE
 /* Called from the SMC store profiler with the address written and the GBA PC
  * the dynarec stub saved (reg[REG_PC] = storing instruction + 4 ARM / + 2
  * Thumb, see mips_emit.h arm_access_memory_store).  Only the watched address
@@ -575,6 +606,47 @@ void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
   blk_ovf = wr_ovf = 0;
   smc_blk_xlat = 0;
 }
+#endif /* SMC_PROFILE */
+
+#if !SMC_PROFILE && defined(LAYOUT_PIN)
+/* THE PROFILE'S PLACE IN THE PINNED WARM TAIL (code-health B-4).  Five of the
+ * functions above are rows of psp/layout/hot_order.txt; without the profile
+ * three are gone (smc_prof_exact, smc_blk_check_silent, smc_blk_note_writer)
+ * and two are shorter (smc_prof_note_store, smc_blk_note_block).  Each row is
+ * followed by an smc_fill_* row whose zeros give the bytes back, so every
+ * other warm-tail function of instance A and of instance B (this object
+ * renamed) keeps its address.  The sizes are the distance from the row's
+ * start to the next row's in the 5.0.0-beta.5 release ELF (gap) minus the
+ * shorter function's 32 B-rounded size (psp-gcc, the release's flags):
+ *   smc_prof_note_store   gap 288,  now 84 B (96)  -> 192 B of zeros
+ *   smc_prof_exact        gap 576,  gone           -> 576
+ *   smc_blk_check_silent  gap 480,  gone           -> 480
+ *   smc_blk_note_writer   gap 352,  gone           -> 352
+ *   smc_blk_note_block    gap 1184, now 20 B (32)  -> 1152
+ * A change to either short function re-derives its row (layout_lock check
+ * and hotord_check catch it).  In a build with the profile the fill rows
+ * match nothing.  Never executed. */
+#define SMC_FILL_STORE_BYTES   192
+#define SMC_FILL_EXACT_BYTES   576
+#define SMC_FILL_SILENT_BYTES  480
+#define SMC_FILL_WRITER_BYTES  352
+#define SMC_FILL_BLOCK_BYTES   1152
+#define SMC_PFILL_STR_(x) #x
+#define SMC_PFILL_STR(x) SMC_PFILL_STR_(x)
+#define SMC_PFILL_SECTION(name, bytes)                                        \
+  __asm__(".pushsection .text." name ",\"ax\",@progbits\n"                     \
+          "  .balign 32\n"                                                     \
+          "  .type " name ", @function\n"                                      \
+          name ":\n"                                                           \
+          "  .fill (" SMC_PFILL_STR(bytes) ") / 4, 4, 0\n"                    \
+          "  .size " name ", (" SMC_PFILL_STR(bytes) ")\n"                    \
+          ".popsection\n")
+SMC_PFILL_SECTION("smc_fill_prof_store", SMC_FILL_STORE_BYTES);
+SMC_PFILL_SECTION("smc_fill_prof_exact", SMC_FILL_EXACT_BYTES);
+SMC_PFILL_SECTION("smc_fill_blk_silent", SMC_FILL_SILENT_BYTES);
+SMC_PFILL_SECTION("smc_fill_blk_writer", SMC_FILL_WRITER_BYTES);
+SMC_PFILL_SECTION("smc_fill_blk_block", SMC_FILL_BLOCK_BYTES);
+#endif
 
 /* ---------------------------------------------------------------------------
  * Phase 5h: the per-phase frame bracket (see main.h for the partition and the

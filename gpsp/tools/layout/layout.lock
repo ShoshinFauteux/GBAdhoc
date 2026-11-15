@@ -108,19 +108,32 @@
 # 64 B steps).  Re-recorded: main (at, size), exit_cb, roster_valid,
 # pte_mutex_check_need_init and the lab's netpacket_iface; 37 entries, 0
 # differ in both sections.
+# Code-health B-4 (claude/health, the one tier-B re-pin; docs/LAYOUT-PINNING.md):
+# the release no longer links usb_handoff.o, heap_trace.o or the SMC profile
+# (smc_fill_* zeros keep its warm-tail rows); B-2's rfu_update shrink is given
+# back (rfu_fill_update) and B-2/B-3's growth after it by memory_fill_term in
+# reload_timing_info's place, so the hot core, both warm tails and B's hot
+# path hold beta.5's addresses.  main is placed by the by-line scan against
+# the beta.5 kit ELFs (release 0x1c64, 38.9 %; lab 0x156c, 45.3 %).
+# Re-recorded: `at main`, `size main`, exit_cb, roster_valid,
+# pte_mutex_check_need_init, netpacket_iface (.rodata's 64 B steps; A's
+# tables shifted inside their step), and both rom_branch_hash entries
+# (.bss: B-2's queue fields, B-3's flags and, in the release, the profile's
+# 3.2 KB per instance are gone; nothing holds .bss there).  38 entries, 0
+# differ in both sections.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x1cd4
-size main                               23372
+at   main                               0x1c64
+size main                               23580
 at   pace_frame                         0x0a20
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x03cc
-at   roster_valid                       0x0744
+at   exit_cb                            0x12d0
+at   roster_valid                       0x0700
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
-at   pte_mutex_check_need_init          0x1730
+at   pte_mutex_check_need_init          0x1e98
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -141,7 +154,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x1420
 at   _ZL10pipe_latchv#1                 0x1ee0
-at   netpacket_iface                    0x1eb0
+at   netpacket_iface                    0x1e98
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -151,11 +164,11 @@ at   ewram                              0x0000
 # colouring and the hot-data guard depend on it; critique-8 MF3).  _end
 # alone misses a .bss change that grows before them and shrinks after.
 at   gbab_bregion_start                 0x0000
-at   gbab_rom_branch_hash               0x1168
+at   gbab_rom_branch_hash               0x04a8
 at   gbab_rom_translation_cache_static  0x1500
 at   gbab_ram_translation_cache_static  0x1500
 at   gbab_bregion_lend                  0x0000
-at   rom_branch_hash                    0x0c68
+at   rom_branch_hash                    0x1fe8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
@@ -173,16 +186,16 @@ pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x1580
-size main                               23568
+at   main                               0x156c
+size main                               23592
 at   pace_frame                         0x0b0c
 # the first symbol after each text pad, and what each pad is tuned for
 # (`pad` lines below name the anchor `solve` aims at)
-at   exit_cb                            0x12c4
-at   roster_valid                       0x1130
+at   exit_cb                            0x1394
+at   roster_valid                       0x1094
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
-at   pte_mutex_check_need_init          0x04dc
+at   pte_mutex_check_need_init          0x01d8
 # the pinned hot core and the two 32 B holes of round 7
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
@@ -203,7 +216,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x0ea0
 at   _ZL10pipe_latchv#1                 0x1960
-at   netpacket_iface                    0x0150
+at   netpacket_iface                    0x0158
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -213,11 +226,11 @@ at   ewram                              0x0000
 # colouring and the hot-data guard depend on it; critique-8 MF3).  _end
 # alone misses a .bss change that grows before them and shrinks after.
 at   gbab_bregion_start                 0x0000
-at   gbab_rom_branch_hash               0x0168
+at   gbab_rom_branch_hash               0x00a8
 at   gbab_rom_translation_cache_static  0x1500
 at   gbab_ram_translation_cache_static  0x1500
 at   gbab_bregion_lend                  0x0000
-at   rom_branch_hash                    0x1c68
+at   rom_branch_hash                    0x1be8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c

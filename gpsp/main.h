@@ -105,17 +105,35 @@ extern u32 flush_ram_dma;    /* ...by a DMA into translated RAM */
 #define SMC_PROF_EW_PAGES   (0x40000 >> SMC_PROF_PAGE_SHIFT)   /* 1024 */
 #define SMC_PROF_PAGES      (SMC_PROF_IW_PAGES + SMC_PROF_EW_PAGES)
 
-extern u16 smc_prof_page[SMC_PROF_PAGES];
-extern u32 smc_prof_hits_iw, smc_prof_hits_ew, smc_prof_hits_oth;
+/* SMC_PROFILE: is the ADR-0030 / phase 5g SMC profile compiled in?  A release
+ * starts it off (smc_blk_watch 0) and has no reader for it (fe_evt compiles
+ * out), so since code-health B-4 a release does not link it either: the
+ * counters, the exact-address slots, the block/writer probe and the two takes
+ * are gone, and smc_prof_note_store only records smc_last_write_addr, the one
+ * thing the guest path needs.  -DGPSP_SMC_PROFILE keeps it in a release;
+ * -DGPSP_NO_SMC_PROFILE takes it out of any build (the twin).  Anything that
+ * calls smc_prof_take / smc_blk_take must be built with the profile (the PSP
+ * frontend: everything but a GPSP_PROFILE_RELEASE build). */
+#if (defined(GPSP_PROFILE_RELEASE) && !defined(GPSP_SMC_PROFILE)) || \
+    defined(GPSP_NO_SMC_PROFILE)
+#define SMC_PROFILE 0
+#else
+#define SMC_PROFILE 1
+#endif
+
 extern u32 smc_prof_lui_iwram, smc_prof_lui_ewram;
 
-void smc_prof_note_iwram(u32 offset);
+void smc_prof_note_iwram(u32 offset);   /* an empty function without SMC_PROFILE */
 void smc_prof_note_ewram(u32 offset);
 void smc_prof_note_store(u32 base, u32 off);   /* dynarec store stubs only */
+#if SMC_PROFILE
+extern u16 smc_prof_page[SMC_PROF_PAGES];
+extern u32 smc_prof_hits_iw, smc_prof_hits_ew, smc_prof_hits_oth;
 void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
                    unsigned *oth, unsigned *ovf,
                    unsigned *hot_addr, unsigned *hot_cnt,
                    unsigned *top_addr, unsigned *top_cnt, unsigned nhot);
+#endif
 
 /* Phase 5g diagnostic: which translated BLOCK covers the hot SMC address, why
  * the scanner extended it that far, and which GBA PC keeps writing there.
@@ -141,7 +159,9 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
 extern u32 smc_blk_watch;
 extern u32 smc_last_write_addr;  /* GBA addr of the store that forced a flush */
 extern u32 flush_ram_partial;    /* single-block retirements (SMC_PARTIAL_SAFE) */
+#if SMC_PROFILE
 extern u32 smc_blk_xlat;
+#endif
 extern u32 smc_blk_xlat_total;   /* monotonic; never reset by a take */
 
 /* What a flush actually COSTS.  ADR-0029 priced it indirectly (worst frame
@@ -165,6 +185,7 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb);   /* SMC_PARTIAL_S
  * that never present the proven SoundMainRAM patch layout. */
 extern u32 smc_partial_active;
 #endif
+#if SMC_PROFILE
 void smc_blk_note_writer(u32 gba_addr, u32 pc);
 
 /* Did the store that just fired the SMC trap actually CHANGE the code?
@@ -185,6 +206,7 @@ void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
                   unsigned *head, unsigned *ctx, unsigned *snap,
                   unsigned *fus, unsigned *fbytes, unsigned *fwide,
                   unsigned *same, unsigned *diff, unsigned *unkn);
+#endif /* SMC_PROFILE */
 
 /* ---------------------------------------------------------------------------
  * Phase 5h diagnostic: BRACKET THE EMULATED FRAME BY PHASE.

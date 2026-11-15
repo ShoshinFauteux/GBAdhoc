@@ -1041,7 +1041,6 @@ static void heap_exact(const char *where, unsigned cyc)
           (unsigned)mi.fordblks, (unsigned)mi.keepcost, heap_largest(), total,
           (unsigned)gamepak_buffer_count);
 }
-void heap_trace_mark0(void);
 static int sessmem_cycle_test(void)
 {
    unsigned i;

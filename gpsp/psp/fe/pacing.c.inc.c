@@ -225,6 +225,16 @@ static int ll_eligible(void)
           g_ll_clean >= LL_CLEAN && g_ll_cool >= g_ll_recover;
 }
 
+/* LAYOUT (code-health B-4): a player build inlines this everywhere, as
+ * 5.0.0-beta.5 did.  B-3's frame-boundary code tipped GCC into splitting it
+ * (ll_to_b.part.0, 36 B), a function the pinned warm tail had no room for in
+ * the release: the 16 per-frame rows after it moved 36 B.  The rig builds
+ * always had the split and keep it (their layout has its row).  (A separate
+ * declaration, so the definition's text is the one the host test's mutants
+ * patch: tools/tests/test_lowlat_policy.py.) */
+#ifndef GPSP_PERF_RIG
+static inline __attribute__((always_inline)) void ll_to_b(void);
+#endif
 static void ll_to_b(void)
 {
    if (g_ll_mode_h)

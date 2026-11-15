@@ -61,9 +61,8 @@ void dynarec_release_translation_caches(void);   /* cpu_threaded.c */
 /* XS_HEAP builds only (a core flag the frontend cannot see): weak, NULL
  * without it.  cpu_threaded.c */
 void dynarec_heap_tables_release(void) __attribute__((weak));
-void heap_trace_mark(void);                       /* heap_trace.c */
 void gbcore_prepare(void);                        /* gbcore/gbcore.h */
-void heap_trace_report(const char *where);
+/* heap_trace_mark/_mark0/_report: psp/heap_trace.h (main_psp.c includes it) */
 
 /* Compiled into every build: the in-process return to the game list checks
  * the heap with these before it trusts the unload (heap_snap below). */

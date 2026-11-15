@@ -100,6 +100,7 @@ PSP_HEAP_SIZE_KB(-1024);
  * so per-game variant installs (docs/VARIANTS.md) work from any folder;
  * falls back to the canonical install dir. */
 #include "usb_handoff.h"                                  /* ADR-0053 */
+#include "heap_trace.h"
 #include "icprobe.h"
 #include <kubridge.h>        /* kuKernelGetModel: the rig's psp_model line */
 #include "perf_rig.h"

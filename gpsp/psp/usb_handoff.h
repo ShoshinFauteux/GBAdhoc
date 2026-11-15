@@ -12,6 +12,28 @@
 #ifndef USB_HANDOFF_H
 #define USB_HANDOFF_H
 
+#ifndef GPSP_PERF_RIG
+/* A player build (no GPSP_PERF_RIG) reads the harness ini from a path no file
+ * can have (fe/paths.inc.c, ADR-0067), so `handoff` is always 0 and the
+ * handoff can never be enabled.  Since code-health B-4 such a build does not
+ * link usb_handoff.o (psp/Makefile): these are what the real functions do
+ * while disabled -- nothing.  Only main_psp.c includes this header.
+ *
+ * NOT inline, on purpose: fe/teardown.inc.c's exits (FE_HANDOFF) are inlined
+ * into `main`, and removing the calls re-schedules the frame loop's code
+ * (loop_diff on the first cut: window 248 B shorter, 4 I-cache sets changed
+ * occupancy).  noipa keeps every call site exactly what
+ * a call to usb_handoff.o's function was, so the loop's code and placement do
+ * not change; folding them away is the frame-loop extraction's job (C-1). */
+static __attribute__((noipa, used)) void
+handoff_config(int enabled, int window_s, int max_runs, int total_s, int park_s)
+{ (void)enabled; (void)window_s; (void)max_runs; (void)total_s; (void)park_s; }
+static __attribute__((noipa, used)) void
+handoff_run(int exit_code, const char *exit_reason)
+{ (void)exit_code; (void)exit_reason; }
+static __attribute__((noipa, used)) void
+handoff_set_extra(const char *kv_lines) { (void)kv_lines; }
+#else
 /* Read the harness keys.  Call once at startup, before the run. */
 void handoff_config(int enabled, int window_s, int max_runs, int total_s,
                     int park_s);
@@ -27,5 +49,6 @@ void handoff_config(int enabled, int window_s, int max_runs, int total_s,
 void handoff_run(int exit_code, const char *exit_reason);
 /* Lines ("k=v\n...") appended to every RESULT.TXT this process writes. */
 void handoff_set_extra(const char *kv_lines);
+#endif /* GPSP_PERF_RIG */
 
 #endif

@@ -319,15 +319,29 @@ and `EVT heap_budget`; `jit_small = 1` in `.gpsp-harness.ini` forces the SMALL
 tier. `BIG_JIT=1` (the old compile-time LARGE tier) is refused by the root
 Makefile.
 
-**The SMC profile switch (ADR-0030; main.c).** `smc_blk_watch == 0` turns the
-store/DMA profile and the RAM flush timer off at run time; the code stays linked,
-so the pinned layout does not depend on it. A release starts it at 0, every other
-profile at `SMC_BLK_WATCH_DEFAULT`. `-DGPSP_SMC_PROFILE` keeps the profile on in
-a release; `-DGPSP_NO_SMC_PROFILE` gives any build the release behaviour (the
-twin's `fr` variants; for a lab build it goes in through
-`CORE_EXTRA="EXTRA_CFLAGS=-DGPSP_NO_SMC_PROFILE"`, a core define). Verify an arm
-from its ELF: `psp-objdump -s -j .data` at `smc_blk_watch` reads 0 with the
-profile off, `0x03007d00` with it on; the arms are otherwise layout-identical.
+**The SMC profile switch (ADR-0030; main.c, main.h `SMC_PROFILE`).** The
+store/DMA profile (page buckets, exact-address slots, the block/writer probe and
+their two takes) is compiled into every profile but the release, and runs while
+`smc_blk_watch != 0` (`SMC_BLK_WATCH_DEFAULT`; the harness key `smc_watch` aims
+it).  Since code-health B-4 a release does not link it at all:
+`smc_prof_note_store` only records `smc_last_write_addr` (the partial
+invalidation's input), `smc_prof_note_iwram/ewram` are empty, and `smc_fill_*`
+zeros (main.c, rows of psp/layout/hot_order.txt) keep the removed functions'
+places in the pinned warm tail.  `smc_blk_watch` itself stays (0) for
+cpu_threaded.c's flush timer.  `-DGPSP_SMC_PROFILE` keeps the profile in a
+release (a variant arm: the frontend's FE_SMC_PROFILE, psp/fe/input.b.inc.c,
+needs the same define in FE_EXTRA to log it); `-DGPSP_NO_SMC_PROFILE` takes it
+out of any core (the twin's `fr` variants).  On a PSP lab/harness build the
+frontend still calls `smc_prof_take`, so a core built with
+`-DGPSP_NO_SMC_PROFILE` there fails to link: that arm is for the twin.  Verify
+an arm from its ELF: `smc_prof_take` is present only with the profile.
+
+**Rig-only objects (code-health B-4).** `usb_handoff.o` (ADR-0053, the rig's
+USB hand-to-PC loop) links only into GPSP_PERF_RIG builds; a player build's
+harness ini can never enable it, and psp/usb_handoff.h gives it the disabled
+functions (empty, `noipa` so `main`'s frame loop keeps its code).
+`heap_trace.o` links only with `HEAP_TRACE=1`; otherwise psp/heap_trace.h
+compiles its three calls to nothing.
 
 ---
 

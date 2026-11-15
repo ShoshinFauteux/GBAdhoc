@@ -94,14 +94,12 @@ release	reg
 release	rom_translation_cache
 release	rom_translation_cache_size
 release	skip_next_frame
-release	smc_blk_take
 release	smc_blk_watch
 release	smc_blk_xlat_total
 release	smc_flush_bytes
 release	smc_flush_us
 release	smc_flush_wide
 release	smc_prof_clock
-release	smc_prof_take
 release	translation_gate_target_pc
 release	translation_gate_targets
 release	vram

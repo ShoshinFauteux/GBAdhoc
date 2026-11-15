@@ -12,7 +12,7 @@
  * of malloc(); the reentrant ones (_malloc_r, ...) also catch newlib's own
  * internal allocations (stdio buffers, dtoa's Bigints, the tm buffer...),
  * whose caller is then the libc function itself.  Everything runs under the
- * (recursive) malloc lock.  Without GPSP_HEAP_TRACE this file is empty. */
+ * (recursive) malloc lock.  Only HEAP_TRACE=1 compiles and links it. */
 #ifdef GPSP_HEAP_TRACE
 #include <malloc.h>
 #include <reent.h>
@@ -179,7 +179,7 @@ void heap_trace_report(const char *where)
    __malloc_unlock(_REENT);
 }
 #else
-void heap_trace_mark0(void) {}
-void heap_trace_mark(void) {}
-void heap_trace_report(const char *where) { (void)where; }
+/* Not linked without HEAP_TRACE=1 (psp/Makefile, code-health B-4); the
+ * callers' psp/heap_trace.h compiles the calls to nothing. */
+typedef int heap_trace_off_unit;   /* not an empty translation unit */
 #endif
