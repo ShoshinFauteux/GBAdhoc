@@ -70,9 +70,15 @@ def _sets(lines):
 class Loop:
     """Everything loop_diff needs from one ELF."""
 
-    def __init__(self, path, func='main', srcfile='main_psp.c', loop=None, includes=None):
+    def __init__(self, path, func='main', srcfile='main_psp.c', loop=None, includes=None, linefile=None):
         self.path = path
         self.elf = e = Elf(path)
+        if loop is None and func == 'main':
+            # by anchor; tier C C-1: a frame_loop ELF measures that function (loop_anchor)
+            r = loop_anchor.for_elf(path)
+            func, linefile = r['func'], r['linefile']
+            loop = (r['lo'], r['hi'])
+            includes = r.get('includes') if includes is None else includes
         syms = [s for s in e.funcs() if s['name'] == func]
         if len(syms) != 1:
             raise LookupError('%s: %d symbols named %s' % (path, len(syms), func))
@@ -99,7 +105,11 @@ class Loop:
         # "inlined helpers in main" fell from 9,640 B to 0 on a real P4 split).
         isrc = lambda f: f == srcfile or f.endswith('/' + srcfile)
         isown = lambda f: isrc(f) or f.endswith('.inc.c')
-        self.isrc, self.isown = isrc, isown
+        # inloop: the file the window's lines are in (main_psp.c; tier C C-1: frame_loop's
+        # file, which is fe/loop.inc.c once the function moves there whole)
+        lf = linefile or srcfile
+        inloop = lambda f: f == lf or f.endswith('/' + lf)
+        self.isrc, self.isown, self.inloop = isrc, isown, inloop
         incl = includes or {}
         frag_files = {f for _, _, f, _ in self.spans if f.endswith('.inc.c')}
         frag_files |= {x['decl_file'] for x in cu.inlined() if x['decl_file'] and x['decl_file'].endswith('.inc.c')}
@@ -119,7 +129,7 @@ class Loop:
         # ---- by line (x4v_loopsets.py)
         lines = set(); amin, amax = None, None
         for a, b, f, l in self.spans:
-            if not (isrc(f) and loop[0] <= l <= loop[1]):
+            if not (inloop(f) and loop[0] <= l <= loop[1]):
                 continue
             b = min(b, self.hi)
             for x in range(a, b, 4):
@@ -135,7 +145,7 @@ class Loop:
         inl = [x for x in cu.inlined()
                if x['container_name'] == func and any(self.lo <= a < self.hi for a, _ in x['ranges'])]
         self.inlined = inl
-        self.loop_inl = [x for x in inl if x['depth'] == 0 and x['call_file'] and isrc(x['call_file'])
+        self.loop_inl = [x for x in inl if x['depth'] == 0 and x['call_file'] and inloop(x['call_file'])
                          and x['call_line'] is not None and loop[0] <= x['call_line'] <= loop[1]]
         # ---- by-address window
         lo_c = [amin] if amin is not None else []
@@ -160,7 +170,7 @@ class Loop:
             if h is not None:
                 comp['inlined_loop_helpers'] += t - s
                 helper_bytes[h['name']] = helper_bytes.get(h['name'], 0) + t - s
-            elif isrc(f) and loop[0] <= l <= loop[1]:
+            elif inloop(f) and loop[0] <= l <= loop[1]:
                 comp['loop_lines'] += t - s
             elif isown(f):
                 comp['other_main_lines'] += t - s
@@ -195,7 +205,7 @@ class Loop:
             return 'loop-helper'
         for a, b, f, l in self.spans:
             if a <= addr < b:
-                if self.isrc(f) and self.loop[0] <= l <= self.loop[1]:
+                if self.inloop(f) and self.loop[0] <= l <= self.loop[1]:
                     return 'loop-line'
                 if self.isown(f):
                     return 'other-main-line'
@@ -384,7 +394,8 @@ def main(argv=None):
                 lo, hi = parse_range(o.loop_lines)
                 loop_anchor.check_explicit(r, lo, hi, 'loop_diff')
             print(loop_anchor.describe(r))
-            Ls.append(Loop(p, o.func, o.file, (r['lo'], r['hi']), r.get('includes')))
+            fn = r.get('func', o.func) if o.func == 'main' else o.func   # tier C C-1: frame_loop
+            Ls.append(Loop(p, fn, o.file, (r['lo'], r['hi']), r.get('includes'), r.get('linefile')))
     except (LookupError, ValueError, KeyError) as ex:
         print('loop_diff: %s' % ex); return 2
     out = dict(elfs=[print_one(L, o.v) for L in Ls])

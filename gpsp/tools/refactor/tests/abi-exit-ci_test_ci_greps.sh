@@ -29,6 +29,8 @@
 #   M10d R6 a second caller outside main (control: not main-only)           -> ok
 #   M10e R6 always_inline (Epoch C stage s, pasted by the compiler; control) -> ok
 #   M10f R6 always_inline together with noinline                            -> FAIL
+#   M10g R6 (tier C C-1) a new static only frame_loop calls, no attributes  -> FAIL
+#   M10h R6 (tier C C-1) frame_loop itself without noinline + section       -> FAIL
 # The tree may be split (psp/main_psp.c + psp/fe/*.inc.c) and P3 may have landed (no
 # hijack #define; FE_EXIT_GAME/FE_HANDOFF in fe/fe_priv.h): every edit finds its file
 # and its line by anchor.
@@ -184,6 +186,18 @@ r6mut 'static inline __attribute__((always_inline))'
 expect 0 "M10e control: always_inline (Epoch C stage s)" "0 new without" $CG --src "$T" --rules R6; reset_tree
 r6mut 'static __attribute__((always_inline, noinline))'
 expect 1 "M10f always_inline together with noinline" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
+# tier C C-1: frame_loop (only main calls it) carries the loop; a function only the loop calls
+# is still main-only (M10g), and frame_loop itself needs noinline + section (M10h)
+r6loop() {  # r6loop <frame_loop declaration prefix>
+  $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
+m = [i for i, l in enumerate(L) if l.startswith('int main(')]; assert len(m) == 1, m
+L.insert(m[0] + 2, '   frame_loop(argc);')
+L[m[0]:m[0]] = ['static void fe_mut_step(int x) { (void)x; }', '$1 void frame_loop(int x) { fe_mut_step(x); }']"
+}
+r6loop 'static __attribute__((noinline, noclone, section(\".text.startup.fe_frame_loop\")))'
+expect 1 "M10g a new static only frame_loop calls, no attributes" "it has no noinline and section() .fe_mut_step." $CG --src "$T" --rules R6; reset_tree
+r6loop 'static'
+expect 1 "M10h frame_loop without noinline + section" "it has no noinline and section() .frame_loop." $CG --src "$T" --rules R6; reset_tree
 
 # tier C, C6-1: R8 core_fe_pure (core_fe.h at the gpsp root; absent = no-op)
 if [ -f "$SRC/core_fe.h" ]; then cp "$SRC/core_fe.h" "$T/core_fe.h"; else rm -f "$T/core_fe.h"; fi

@@ -65,7 +65,8 @@ SETS = WAY // LINE                  # 128 sets per way (16 KiB 2-way I and D cac
 LOOP_LINES = None   # by anchor (loop_anchor.py), checked against main's DW_AT_decl_line
 WATCH_BSS = ('out.0', 'ring_r', 'ring_w', 'audio_ring')
 SPECIAL = re.compile(r'^\.text\.(unlikely|hot|startup|exit)(\.|$)')
-DEFAULT_PLAN = ['.text.startup.main']
+# tier C C-1 commit 4: the frame loop's own section (health-out/design/C-1.md decision 2)
+DEFAULT_PLAN = ['.text.startup.main', '.text.startup.fe_frame_loop']
 CORE_ARCHIVE = 'gpsp_libretro_psp1.a('
 
 
@@ -125,9 +126,10 @@ class Build:
 
 def key_addresses(b):
     r = collections.OrderedDict()
-    m = b.sym.get('main')
-    if m:
-        r['main'] = {'addr': m['value'], 'size': m['size'], 'mod8192': m['value'] % WAY,
+    for fn in ('main', 'frame_loop'):          # frame_loop: tier C C-1 commit 4
+        m = b.sym.get(fn)
+        if m:
+            r[fn] = {'addr': m['value'], 'size': m['size'], 'mod8192': m['value'] % WAY,
                      'set': setno(m['value'])}
     for n in ('layout_pad_cold', '_end', 'rom_translation_cache_static', 'gbab_rom_translation_cache_static',
               'gbahot_start', '_gp'):
@@ -190,9 +192,13 @@ def loop_sets(b, lines=LOOP_LINES, tree=None):
     if '.debug_line' not in b.e.by_name or 'main' not in b.sym:
         return None
     import sl_dwline
-    m = b.sym['main']
     import loop_anchor
     r = loop_anchor.for_elf(b.e.path, tree=tree)
+    # tier C C-1: a frame_loop ELF measures that function, in the file that defines it
+    fn, lf = r.get('func', 'main'), r.get('linefile', 'main_psp.c')
+    if fn not in b.sym:
+        return None
+    m = b.sym[fn]
     if lines is not None:     # an explicit window must be this ELF's anchored one
         loop_anchor.check_explicit(r, lines[0], lines[1], 'layout_report')
     lines = (r['lo'], r['hi'])
@@ -204,7 +210,7 @@ def loop_sets(b, lines=LOOP_LINES, tree=None):
     for i in range(len(rws) - 1):
         a, f, ln = rws[i]
         nx = rws[i + 1][0]
-        if a is None or nx is None or not f.endswith('main_psp.c') or not (lines[0] <= ln <= lines[1]):
+        if a is None or nx is None or not f.endswith(lf) or not (lines[0] <= ln <= lines[1]):
             continue
         if not (lo <= a < hi):
             continue
@@ -214,7 +220,7 @@ def loop_sets(b, lines=LOOP_LINES, tree=None):
     per = collections.Counter(c % SETS for c in cl)
     return {'lines': len(cl), 'sets': len(per), 'max_per_set': max(per.values()) if per else 0,
             'window': (amin - lo, amax - lo) if cl else None, 'set_counts': dict(sorted(per.items())),
-            'src_lines': lines}
+            'src_lines': lines, 'func': fn, 'linefile': lf}
 
 
 def audit_sections(b, objects_re, plan):
@@ -600,9 +606,9 @@ def report(cand, ref=None, plan=None, objects=r'(^|/)main_psp\.o$', order=None, 
     lp = loop_sets(cand, LOOP_LINES, loop_tree)
     res['loop'] = lp
     if lp:
-        out('\n-- main loop by line (main_psp.c %d-%d inside main): %d cache lines over %d sets, max %d per set,'
-            ' window main+%d..+%d' % (lp['src_lines'][0], lp['src_lines'][1], lp['lines'], lp['sets'],
-                                     lp['max_per_set'], lp['window'][0], lp['window'][1]))
+        out('\n-- main loop by line (%s %d-%d inside %s): %d cache lines over %d sets, max %d per set,'
+            ' window %s+%d..+%d' % (lp['linefile'], lp['src_lines'][0], lp['src_lines'][1], lp['func'], lp['lines'],
+                                   lp['sets'], lp['max_per_set'], lp['func'], lp['window'][0], lp['window'][1]))
         if ref:
             lr = loop_sets(ref, tree=ref_tree)
             if lr:

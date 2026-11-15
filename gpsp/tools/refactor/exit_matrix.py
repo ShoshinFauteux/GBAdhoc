@@ -237,8 +237,12 @@ EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.
 # Epoch C C3-2c: so are the session's phases (fe/session.inc.c), whose exits are
 # families B and C.
+# Tier C C-1 (health-out/design/C-1.md, commit 4): the frame loop leaves main() for the
+# void, return-free `frame_loop(&L, &S)` (its copy-in, `while (g_running)`, copy-out), so
+# it reads as main()'s text the same way: the loop's triggers and the shared teardown
+# after it keep their place in main().
 EPOCHC_MOVED = ('boot_run', 'session_select', 'session_configure', 'session_load',
-                'session_net_up', 'session_pre_loop')
+                'session_net_up', 'session_pre_loop', 'frame_loop')
 # Epoch C C3-2b: main()'s pass per game (`for (;;)`) and its in-process return
 # (`if (!inproc_try_return(..)) break;`) read as the label session_top and the branch
 # that ended in `goto session_top` (aec_cparse.unloop_session).  Never a site itself.
@@ -1665,6 +1669,32 @@ def selftest():
     except ValueError:
         refused = True
     expect(refused, 'Epoch C C2: boot_run called in another form is refused, not read as a site')
+    # tier C C-1: the loop moved into frame_loop(&L) reads as main()'s own loop: the
+    # sites, the teardown step table and the scenarios equal the in-main tree's
+    fsrc = SELF_SRC.replace('   while (g_running) { step(); }', '   frame_loop(&L);').replace(
+        'int main(int argc, char *argv[])\n',
+        'static __attribute__((noinline, noclone, section(".text.startup.fe_frame_loop")))\n'
+        'void frame_loop(loop_t *L)\n{\n   int n = L->n;\n   while (g_running) { step(); }\n   L->n = n;\n}\n'
+        'int main(int argc, char *argv[])\n')
+    pf = os.path.join(d, 'mf.c')
+    open(pf, 'w').write(fsrc)
+    vf = View('raw', C.load_raw(pf))
+    sf = sites(vf)
+    same = len(sf) == len(st) and all(
+        a['seq'] == b['seq'] and a['code'] == b['code'] and a['why'] == b['why'] and
+        [c.name for c in a['calls']] == [c.name for c in b['calls']] for a, b in zip(sf, st))
+    rf = [(r['step'], r['name']) for r in step_rows(vf)[0]]
+    r0 = [(r['step'], r['name']) for r in rows]
+    scf = {s['name']: s['seq'] for s in scenarios(vf)}
+    expect(same and rf == r0 and scf == {k: s['seq'] for k, s in sc.items()} and 'frame_loop(&L)' in fsrc,
+           'C-1: the loop in frame_loop(&L) reads as main()\'s: sites, steps and scenarios unchanged')
+    open(pf, 'w').write(fsrc.replace('   L->n = n;\n}', '   L->n = n;\n   return;\n}'))
+    try:
+        View('raw', C.load_raw(pf))
+        refused = False
+    except ValueError:
+        refused = True
+    expect(refused, 'C-1 mutant: a frame_loop with a `return` is refused, not read as main()\'s loop')
     # an argument is one value: `f & XC` with f = `XA | XB` is 0 (not XA | (XB & XC))
     pp = os.path.join(d, 'mp.c')
     open(pp, 'w').write('enum { XA = 1, XB = 2, XC = 4 };\n'

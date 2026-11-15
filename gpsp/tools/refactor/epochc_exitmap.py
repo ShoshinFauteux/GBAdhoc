@@ -50,6 +50,17 @@ HDR = ('kind', 'id', 'function', 'at', 'code', 'why', 'order|relaunch', 'flags',
        'if_context', 'text', 'hold', 'evt_text')
 
 
+# Tier C C-1 (health-out/design/C-1.md commit 4): the frame loop moves out of main() into
+# frame_loop(), which only main() calls.  T8 reads it as main()'s text (exit_matrix
+# EPOCHC_MOVED), so this inventory does too: its triggers, terminals and macro uses keep
+# the function `main`, and a diff across the move shows them as moved, not new/vanished.
+AS_MAIN = ('frame_loop',)
+
+
+def as_main(fn):
+    return 'main' if fn in AS_MAIN else fn
+
+
 def tu_files(psp):
     """The shell and its fragments in TU (include) order."""
     shell = os.path.join(psp, 'main_psp.c')
@@ -215,7 +226,7 @@ def build_rows(root, outp):
             if TRIG_RE.search(code) and 'volatile int g_running' not in code:
                 n += 1
                 latch = near(ls, i, LATCH_RE, 2, 2)
-                rows.append(('D-trigger', 'T%02d' % n, fn[i], loc, near(ls, i, CODE_RE),
+                rows.append(('D-trigger', 'T%02d' % n, as_main(fn[i]), loc, near(ls, i, CODE_RE),
                              near(ls, i, REASON_RE), near(ls, i, RELAUNCH_RE, 8, 2) or '0',
                              'latch:' + latch if latch else '',
                              'saves:' + near(ls, i, SAVE_RE, 6, 0) if near(ls, i, SAVE_RE, 6, 0) else '',
@@ -224,11 +235,11 @@ def build_rows(root, outp):
                              (r'relaunch_eboot\(g_relaunch', 'T-relaunch(refused|profile)'),
                              (r'relaunch_eboot\(0\)', 'B8-relaunch')):
                 if re.search(pat, code):
-                    rows.append(('terminal', tid, fn[i], loc, '', '', '', '', '', ctx[i],
+                    rows.append(('terminal', tid, as_main(fn[i]), loc, '', '', '', '', '', ctx[i],
                                  ln.strip()[:90], '', ''))
             for mac in ('FE_EXIT_GAME()', 'FE_HANDOFF('):
                 if mac in code and '#define' not in code:
-                    rows.append(('macro', mac.rstrip('(').rstrip('()'), fn[i], loc, '', '', '', '', '',
+                    rows.append(('macro', mac.rstrip('(').rstrip('()'), as_main(fn[i]), loc, '', '', '', '', '',
                                  ctx[i], '', '', ''))
     rows += oob_rows(psp)
     rows += browser_rows(psp)
@@ -387,6 +398,15 @@ def selftest():
           and '+ NEW      D-trigger   T07' in t and 'wake_service' in t
           and '~ CHANGED  A-C         B9' in t and 'why was:' in t and 'text new:      fe_evt("exit code=%d' in t
           and '2 -> 1 uses' in t)
+    # tier C C-1: a trigger inside frame_loop() is main()'s row (the same key across the move)
+    src = ('static __attribute__((noinline, noclone, section(".text.startup.fe_frame_loop")))\n'
+           'void frame_loop(loop_t *L)\n{\n   while (g_running)\n   {\n      g_running = 0;\n   }\n}\n'
+           'static void wake_service(void)\n{\n   g_running = 0;\n}\n').split('\n')
+    _, fns = annotate(src)
+    c1 = as_main(fns[5]) == 'main' and as_main(fns[11]) == 'wake_service'
+    print('  %s  C-1: frame_loop\'s g_running = 0 is a main() row, wake_service\'s stays its own'
+          % ('ok  ' if c1 else 'FAIL'))
+    ok = ok and c1
     print('epochc_exitmap selftest: %s' % ('ok' if ok else 'FAILED\n' + t))
     return 0 if ok else 1
 

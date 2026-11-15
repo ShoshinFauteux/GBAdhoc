@@ -75,6 +75,9 @@ NAMES = {
     'wake_overlay_yield': 'power', 'wake_service': 'power',
     # the shell
     'main': 'shell',
+    # tier C C-1 commit 4 (health-out/design/C-1.md): the frame loop as a function, module
+    # 18; a later byte-identical commit moves it whole into fe/loop.inc.c (an ordinary unit)
+    'frame_loop': 'loop',
 }
 for _n in _LINKMISC_TO_HARNESS:
     NAMES[_n] = 'harness'

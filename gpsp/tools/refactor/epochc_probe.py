@@ -164,6 +164,14 @@ def report(obj_txt, nm_txt, base_nm_txt=None):
             L.append('')
             L.append('main: 0x%08x in the probe build, 0x%08x in the reference build: moved %+d B.'
                      % (ma, b, ma - b))
+    # tier C C-1 commit 4: the frame loop is frame_loop (`.text.startup.fe_frame_loop`), so
+    # the address that matters for "does an edit move the loop" is frame_loop's, not main's
+    fa = nm.get('frame_loop')
+    if fa is not None:
+        L.append('')
+        b = parse_nm(base_nm_txt).get('frame_loop') if base_nm_txt is not None else None
+        L.append('frame_loop (the loop since C-1): 0x%08x in the probe build (mod 8192 = 0x%04x)%s.'
+                 % (fa, fa & 0x1fff, '' if b is None else '; reference 0x%08x: moved %+d B' % (b, fa - b)))
     startup = [n for _, n, _ in secs if n.startswith('.text.startup')]
     unl = [n for _, n, _ in secs if n.startswith(('.text.unlikely', '.text.hot', '.text.exit'))]
     L.append('')

@@ -317,6 +317,9 @@ def rule_r2(src):
 
 
 # ------------------------------------------------------------- R6
+R6_MAIN = frozenset(('main', 'frame_loop'))
+
+
 def r6_main_only(src):
     """[(name, line, has_noinline, has_section)] of the static functions of main_psp.c's
     unit whose only caller is main()."""
@@ -344,7 +347,10 @@ def r6_main_only(src):
             taken.add(x.text)
     out = []
     for name, (lo, hi) in sorted(fns.items(), key=lambda kv: kv[1][0]):
-        if name == 'main' or callers.get(name) != {'main'} or name in taken:
+        # tier C C-1 commit 4: the loop body is frame_loop's, which only main calls, so a
+        # function only the loop calls is as main-only as before (and frame_loop itself is)
+        cs = callers.get(name) or set()
+        if name == 'main' or not cs or not cs <= R6_MAIN or name in taken:
             continue
         a = lo
         while a > 0 and t[a - 1].text not in (';', '}'):

@@ -230,7 +230,14 @@ def main_phases(d):
     clean = d['clean']
     st = re.compile(r'^session_top:', re.M).search(raw, mf['s'])
     session_top = d['lineof'](st.start()) if st else mf['start']
-    lw = re.compile(r'^   while \(g_running\)\s*\n   \{', re.M).search(raw, st.end() if st else mf['s'])
+    lw = re.compile(r'^   while \(g_running\)\s*\n   \{', re.M).search(raw, st.end() if st else mf['s'], mf['e'])
+    fl = [f for f in d['funcs'] if f['name'] == 'frame_loop']
+    if fl:
+        # tier C C-1 commit 4: the loop is the function frame_loop (both shapes: refuse)
+        if lw:
+            raise SystemExit('globals census: frame_loop() is defined AND main() still holds '
+                             '`while (g_running)`: both loop shapes at once')
+        return session_top, fl[0]['start'], fl[0]['end']
     loop0 = d['lineof'](lw.start())
     j = clean.index('{', lw.start())
     dep = 0
@@ -309,6 +316,10 @@ def census(src, root=None, cutlist=None, defs_from=None):
     CTX_REL = {'main'} | {k for k, v in ENTRY.items() if any(line_rel(f['body']) for f in fby.get(v[0], []))}
 
     SESSION_TOP, LOOP0, LOOP1 = main_phases(d)
+    # tier C C-1 commit 4: the loop is frame_loop (its own function, defined before main):
+    # its lines are the loop phase wherever it sits, and its writes are main()'s loop writes
+    FL = [(f['start'], f['end']) for f in F if f['name'] == 'frame_loop']
+    LOOPFN = ('main', 'frame_loop')
     vnames = {v['name'] for v in V if not v['extern']}
     MACRO_TWINS = collections.defaultdict(list)
     for k, ln in enumerate(raw.split('\n'), 1):
@@ -317,6 +328,8 @@ def census(src, root=None, cutlist=None, defs_from=None):
             MACRO_TWINS[mm.group(1)].append((LC[k] or '').strip())
 
     def phase_of_line(ln):
+        if any(a <= ln <= b for a, b in FL):
+            return 'loop'
         if ln < SESSION_TOP:
             return 'boot'
         if ln < LOOP0:
@@ -374,7 +387,7 @@ def census(src, root=None, cutlist=None, defs_from=None):
         ph = set()
         for (ln, fn, kind, span) in live:
             if kind in ('w', 'rw', 'a'):
-                if fn == 'main':
+                if fn in LOOPFN:
                     ph.add(phase_of_line(ln))
                 else:
                     ph |= phase_fn.get(fn, set())

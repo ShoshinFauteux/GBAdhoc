@@ -70,10 +70,11 @@ step p0a_unit  "P0a loop_anchor, flavours_gate, T8 raw, T14 consts" "G2L XS G1" 
   set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
   '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"
   '"$PY"' "'"$R"'/abi_asserts.py" selftest'
-# tier C (health-out/design): C5-0's struct/G0R tools; no docker (a host gcc, if any,
-# syntax-checks the struct output)
-step tierc     "C5-0 gstruct, g0r (G0R), census --check"     "G0R" bash -c '
-  set -e; '"$PY"' "'"$T"'/source-split_test_gstruct.py"'
+# tier C (health-out/design): C5-0's struct/G0R tools; C-1 commit 1's frame_loop shape
+# (loop_anchor's function mode is in p0a_unit's --selftest).  No docker (a host gcc, if
+# any, syntax-checks the struct output)
+step tierc     "C5-0 gstruct/g0r/census --check; C1-1 frame_loop" "G0R G2L XS" bash -c '
+  set -e; '"$PY"' "'"$T"'/source-split_test_gstruct.py"; '"$PY"' "'"$T"'/c1_frame_loop_test.py"'
 k=0
 for spec in ${B5_TREES:-}; do
   IFS=: read -r bt br bc <<< "$spec"; k=$((k + 1))

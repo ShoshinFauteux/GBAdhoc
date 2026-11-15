@@ -90,22 +90,25 @@ def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None, tree=None):
     """tree / main_c: the gpsp/ tree (or main_psp.c) the ELF was built from; None = the ELF's
     flavour.json commit, else this tool's tree (loop_anchor.source_for names the one it read)."""
     e = Elf(elf_path)
-    mlo, msz = main_sym(e, fn)
-    mhi = mlo + msz
-    rws = dwline.rows(e, 'main_psp.c')
+    lf = 'main_psp.c'      # the file the window's lines are in
     if src is None or main_c or tree:
         r = loop_anchor.for_elf(elf_path, main_c, tree=tree)
         if src is not None:
             loop_anchor.check_explicit(r, src[0], src[1], 'loop_lpsim')
         src = (r['lo'], r['hi'])
+        if fn == 'main':     # tier C C-1: a frame_loop ELF measures that function
+            fn, lf = r.get('func', fn), r.get('linefile', lf)
         sys.stderr.write(loop_anchor.describe(r) + '\n')
+    mlo, msz = main_sym(e, fn)
+    mhi = mlo + msz
+    rws = dwline.rows(e, 'main_psp.c')
     lo, hi = src
     bylines = set()
     amin, amax = 1 << 40, 0
     for i in range(len(rws) - 1):
         a, f, ln = rws[i]
         nx = rws[i + 1][0]
-        if a is None or nx is None or not f.endswith('main_psp.c') or not lo <= ln <= hi:
+        if a is None or nx is None or not f.endswith(lf) or not lo <= ln <= hi:
             continue
         if not mlo <= a < mhi:
             continue
@@ -119,7 +122,7 @@ def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None, tree=None):
     acc = dwline.attribute([r for r in rws], amin, amax)
     inl = collections.Counter()
     for (f, ln), n in acc.items():
-        if f.endswith('main_psp.c') and lo <= ln <= hi:
+        if f.endswith(lf) and lo <= ln <= hi:
             inl['loop rows'] += n
         elif f.endswith('main_psp.c') or f.endswith('.inc.c'):
             # by compile unit: a P4 fragment is main_psp.o's own text (review 2026-11-07)
@@ -127,7 +130,7 @@ def window(elf_path, src=SRC_DEFAULT, fn='main', main_c=None, tree=None):
         else:
             inl['other files (%s)' % os.path.basename(f)] += n
     wlines = list(range(amin >> 6, (amax + LINE - 1) >> 6))
-    return dict(elf=elf_path, main=mlo, main_size=msz, main_mod=mlo % WAY,
+    return dict(elf=elf_path, func=fn, main=mlo, main_size=msz, main_mod=mlo % WAY,
                 lo=amin, hi=amax, off_lo=amin - mlo, off_hi=amax - mlo,
                 bylines=sorted(bylines), bylines_sets=len({l % NSETS for l in bylines}),
                 window_lines=wlines, window_sets=len({l % NSETS for l in wlines}),

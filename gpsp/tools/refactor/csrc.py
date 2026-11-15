@@ -521,18 +521,21 @@ def parse(raw, root=None, want_refs=True):
             if re.search(r'\b' + dn + r'\b', body):
                 calls[f['name']] |= fs
     mcalls = []
-    mfs = [f for f in funcs if f['name'] == 'main']
-    if mfs:
-        mf = mfs[0]
+    # main()'s calls by line (globals.py phases them); tier C C-1: frame_loop's body is
+    # main()'s frame loop moved out, so its calls are main()'s too (frame_loop itself,
+    # called from main, is not a callee of interest: it is the loop)
+    for mf in [f for f in funcs if f['name'] in ('main', 'frame_loop')]:
         for mm3 in re.finditer(r'\b([A-Za-z_]\w*)\s*\(', clean2[mf['s']:mf['e']]):
             nm2 = mm3.group(1)
             pos2 = mf['s'] + mm3.start()
+            if nm2 == 'frame_loop':
+                continue
             if nm2 in fnames or nm2 in macro_calls:
                 mcalls.append((lineof(pos2), nm2, span_at(pos2)))
-        for nm2, lst in fn_pos_ref.items():
-            for (l2, f2) in lst:
-                if f2 == 'main':
-                    mcalls.append((l2, nm2, 'value'))
+    for nm2, lst in fn_pos_ref.items():
+        for (l2, f2) in lst:
+            if f2 in ('main', 'frame_loop'):
+                mcalls.append((l2, nm2, 'value'))
     res.update({'refs': refs, 'calls': {k2: sorted(v) for k2, v in calls.items()}, 'macro_calls': {k2: sorted(v) for k2, v in macro_calls.items()},
                 'fnref': fn_pos_ref, 'mcalls': mcalls, 'shadow': shadow, 'spans': spans})
     return res
