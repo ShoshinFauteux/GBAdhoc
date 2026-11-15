@@ -9,8 +9,12 @@
   source (every site holds its key; every raw-grep key is in the table) and the key and site
   counts are PINNED below.  Adding or removing a harness key changes them: regenerate the table
   (harness_keys.py gen, needs a flavours.sh run) and re-pin here, in the same commit.
-* ci_greps.py R7 (check c) on a scratch tree: warn mode counts and never fails; fail mode
-  fails each raw read; fe_priv.h and comments are not counted.
+* harness_keys.py selftest also reads opt-in arms written in fe_priv.h's call form
+  (HARNESS_INT/HARNESS_STR, C2-1).
+* ci_greps.py R7 (check c) on a scratch tree: warn mode counts and never fails; fail mode (the
+  default since C2-1) fails each raw read unless a KNOWN row names its file and key; fe_priv.h
+  and comments are not counted.  On this tree R7 in fail mode is clean: the one raw read is the
+  frame loop's rewind_gedump, KNOWN until C2-5.
 """
 import os
 import shutil
@@ -65,13 +69,26 @@ try:
                 "long a = HARNESS_INT(\"ok\", 0);\n"
                 "long b = fe_ini_get_int(\n   HARNESS_INI, \"raw\", 0);\n"
                 "#define RW_KEY(f, k) g.f = fe_ini_get_int(HARNESS_INI, k, g.f)\n")
-    rc, out = run(CG, "--src", d, "--rules", "R7")
+    rc, out = run(CG, "--src", d, "--rules", "R7", "--r7", "warn")
     check(rc == 0 and "R7 raw harness reads (mode warn): 2 " in out, "R7 warn: 2 raw reads counted, exit 0")
-    rc, out = run(CG, "--src", d, "--rules", "R7", "--r7", "fail")
-    check(rc == 1 and "psp/fe/x.inc.c:3" in out and "psp/fe/x.inc.c:5" in out and "in_comment" not in out,
-          "R7 fail: the multi-line call and the macro definition fail; fe_priv.h and the comment do not")
+    rc, out = run(CG, "--src", d, "--rules", "R7")
+    check(rc == 1 and "(mode fail)" in out and "psp/fe/x.inc.c:3" in out and "psp/fe/x.inc.c:5" in out
+          and "in_comment" not in out,
+          "R7 fail (default): the multi-line call and the macro definition fail; fe_priv.h and the comment do not")
+    kn = os.path.join(d, "known")
+    with open(kn, "w") as f:
+        f.write("R7\tpsp/fe/x.inc.c\traw\tscratch exception\n")
+    rc, out = run(CG, "--src", d, "--rules", "R7", "--known", kn)
+    check(rc == 1 and "KNOWN R7 psp/fe/x.inc.c:3" in out and "FAIL  R7 psp/fe/x.inc.c:5" in out,
+          "R7 fail: a KNOWN row (file + key) excuses its read only")
 finally:
     shutil.rmtree(d, ignore_errors=True)
+
+rc, out = run(CG, "--src", ROOT, "--rules", "R7")
+check(rc == 0 and "KNOWN R7 psp/main_psp.c:" in out and "(rewind_gedump)" in out and "FAIL" not in out,
+      "R7 fail on this tree: every harness read uses HARNESS_INT/HARNESS_STR but the KNOWN rewind_gedump")
+if rc:
+    print(out)
 
 print("test_harness_keys: %s" % ("PASS" if not fails else "FAILED (%d)" % fails))
 sys.exit(1 if fails else 0)

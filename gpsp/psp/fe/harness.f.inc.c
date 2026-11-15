@@ -471,7 +471,7 @@ static void drprof_window(unsigned frame)
 
 static void drprof_start(void)
 {
-   g_drs_us = (int)fe_ini_get_int(HARNESS_INI, "drprof_us", 1000);
+   g_drs_us = (int)HARNESS_INT("drprof_us", 1000);
    if (g_drs_us <= 0)
    {
       fe_evt("drprof off reason=drprof_us");
@@ -856,16 +856,16 @@ static void rig_boot_identity(int have_harness)
    fe_evt("psp_model code=%d name=%s", m, rig_model_name(m));
    if (!have_harness)
       return;
-   fe_ini_get(HARNESS_INI, "run_id", rid, sizeof(rid));
-   fe_ini_get(HARNESS_INI, "arm", arm, sizeof(arm));
+   HARNESS_STR("run_id", rid, sizeof(rid));
+   HARNESS_STR("arm", arm, sizeof(arm));
    fe_evt("rig run_id=%s arm=%s", rid[0] ? rid : "none", arm[0] ? arm : "none");
-   g_log_input = (int)fe_ini_get_int(HARNESS_INI, "log_input", 1) ? 1 : 0;
+   g_log_input = (int)HARNESS_INT("log_input", 1) ? 1 : 0;
    /* Read NOW, not at failure time: the key audit runs before the main loop,
     * and a key first read after it would be reported as unknown. */
-   fe_ini_get(HARNESS_INI, "fail_probe", g_fail_probe, sizeof(g_fail_probe));
+   HARNESS_STR("fail_probe", g_fail_probe, sizeof(g_fail_probe));
    {
       char wl[128], *p, *save = NULL;
-      if (fe_ini_get(HARNESS_INI, "watch_ram", wl, sizeof(wl)))
+      if (HARNESS_STR("watch_ram", wl, sizeof(wl)))
          for (p = strtok_r(wl, ",", &save); p && g_watch_n < 4;
               p = strtok_r(NULL, ",", &save))
          {

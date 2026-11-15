@@ -35,11 +35,12 @@ CHECKS (gen and check; C-2.md §2.4):
       allowed is a nested read of the harness itself (it is a row of its own and folds alike);
   (b) a site compiled by several flavours has the same default text in each (ADR-0067's
       "player build = harness build without the key", as a check instead of a convention);
-  (c) is ci_greps.py R7 (no raw fe_ini_get*(HARNESS_INI|p_harness ...) outside fe_priv.h; warn mode
-      until C2-1 rewrites the call form).
+  (c) is ci_greps.py R7 (no raw fe_ini_get*(HARNESS_INI|p_harness ...) outside fe_priv.h; fail
+      mode since C2-1 rewrote the call form to fe_priv.h's HARNESS_INT/HARNESS_STR).
   `check` (no docker) also proves the committed table matches the tree: every row's site still
-  holds its key literal, and every key of the raw greps (the old Lab grep over psp/**, both
-  spellings of the call, multi-line calls, RW_KEY/RW_FLAG) is in the table.
+  holds its key literal, and every key of the raw greps (over psp/**: HARNESS_INT/HARNESS_STR,
+  the old Lab grep's raw call in both spellings, multi-line calls, RW_KEY/RW_FLAG) is in the
+  table.
 
 Usage:
   harness_keys.py gen --run RUN [--src GPSP] [--out TSV] [--pp-dir DIR]
@@ -74,6 +75,9 @@ GETTERS = {'fe_ini_get_int': (0, 1, 2), 'fe_ini_get': (0, 1, None),
            'get_int': (0, 2, 3), 'get_str': (0, 2, None),    # online_psp.c (h, c, key, ...)
            'task_ini_int': (None, 0, 1)}                     # lab_harness.c (key, def) on L_ini
 IMPLICIT_TU = {'task_ini_int': 'lab_harness.c'}
+# fe_priv.h's call form (C2-1), as the RAW source spells it (opt_in_rows only; the -E has the
+# getter it expands to): macro -> (the getter the table names, key index, default index or None)
+MACRO_GETTERS = {'HARNESS_INT': ('fe_ini_get_int', 0, 1), 'HARNESS_STR': ('fe_ini_get', 0, None)}
 # functions whose harness read takes the key from their caller (the caller's literal is the row)
 DYNAMIC_OK = {('online_psp.c', 'get_str'), ('online_psp.c', 'get_int'),
               ('lab_harness.c', 'task_ini_int'), ('lab_harness.c', 'lab_audit_keys')}
@@ -135,6 +139,8 @@ def side_effects(toks, names=('p_harness',)):
         if t.kind == 'id' and t.text not in C.KEYWORDS and k + 1 < len(toks) and toks[k + 1].text == '(':
             if (t.text in GETTERS and GETTERS[t.text][0] == 0 and k + 3 < len(toks)
                     and toks[k + 2].text in names and toks[k + 3].text == ','):
+                continue
+            if t.text in MACRO_GETTERS:       # raw source (opt_in_rows): fe_priv.h's call form
                 continue
             return 'call %s()' % t.text
     return None
@@ -435,12 +441,20 @@ def opt_in_rows(src, have):
             except ValueError:
                 continue
             for i, t in enumerate(toks):
-                if (t.kind != 'id' or t.text not in GETTERS or GETTERS[t.text][0] != 0 or i + 1 >= len(toks)
-                        or toks[i + 1].text != '(' or toks[i + 1].pair is None):
+                if (t.kind != 'id' or i + 1 >= len(toks) or toks[i + 1].text != '(' or toks[i + 1].pair is None):
                     continue
-                pi, ki, di = GETTERS[t.text]
-                args = split_args(toks, i + 1)
-                if len(args) <= ki or len(args[pi]) != 1 or args[pi][0].text != 'HARNESS_INI':
+                if t.text in MACRO_GETTERS:
+                    getter, ki, di = MACRO_GETTERS[t.text]
+                    args = split_args(toks, i + 1)
+                    if len(args) <= ki:
+                        continue
+                elif t.text in GETTERS and GETTERS[t.text][0] == 0:
+                    getter = t.text
+                    pi, ki, di = GETTERS[t.text]
+                    args = split_args(toks, i + 1)
+                    if len(args) <= ki or len(args[pi]) != 1 or args[pi][0].text != 'HARNESS_INI':
+                        continue
+                else:
                     continue
                 if len(args[ki]) != 1 or args[ki][0].kind != 'str' or args[ki][0].text[1:-1] in have:
                     continue
@@ -451,13 +465,14 @@ def opt_in_rows(src, have):
                     why = side_effects(args[di], ('HARNESS_INI',))
                     if why:
                         errs.append('(a) %s: %s() default `%s` has a side effect (%s)' % (site, t.text, default, why))
-                rows.append((key, t.text, default, site, _ifs_label(t.ifs)))
+                rows.append((key, getter, default, site, _ifs_label(t.ifs)))
     return rows, errs
 
 
 # ------------------------------------------------------------- check (no docker)
 _CMT = re.compile(r'/\*.*?\*/|//[^\n]*', re.S)
-RAW_CALL = re.compile(r'fe_ini_get(?:_int)?\s*\(\s*(?:HARNESS_INI|p_harness)\s*,\s*"([a-z0-9_]+)"')
+RAW_CALL = re.compile(r'(?:fe_ini_get(?:_int)?\s*\(\s*(?:HARNESS_INI|p_harness)\s*,'
+                      r'|\bHARNESS_(?:INT|STR)\s*\()\s*"([a-z0-9_]+)"')
 RAW_RW = re.compile(r'\bRW_(?:KEY|FLAG)\s*\(\s*\w+\s*,\s*"([a-z0-9_]+)"')
 
 
@@ -511,7 +526,8 @@ def check(o):
                      'table is stale' % (k, ', '.join(raw[k][:3])))
     extra = sorted(keys - set(raw))
     print('harness_keys check: %d sites, %d keys in %s' % (len(rows), len(keys), os.path.relpath(o.tsv, o.src)))
-    print('  raw greps (fe_ini_get*(HARNESS_INI, "k") + RW_KEY/RW_FLAG, psp/**): %d keys, all in the table: %s'
+    print('  raw greps (HARNESS_INT/HARNESS_STR("k") + fe_ini_get*(HARNESS_INI, "k") + RW_KEY/RW_FLAG, psp/**): '
+          '%d keys, all in the table: %s'
           % (len(raw), 'yes' if not missing else 'NO (%d missing)' % len(missing)))
     print('  table keys the raw greps do not see (helpers, aliases, online/lab readers): %d: %s'
           % (len(extra), ' '.join(extra)))
@@ -612,6 +628,28 @@ def selftest():
     r8, e8 = extract(_tu(on, 'online_psp.c'), 'online_psp.c', ('h',))
     ok(not e8 and sorted(x[0] for x in r8) == ['online_direct', 'online_prx_cycles'] and
        r8[0][3].startswith('psp/online_psp.c:'), 'online: h reads and the get_int helper (%s %s)' % (r8, e8))
+    # opt-in arms in fe_priv.h's call form (C2-1): HARNESS_INT/HARNESS_STR in the raw source
+    d = tempfile.mkdtemp(prefix='hk_optin_')
+    os.makedirs(os.path.join(d, 'psp', 'fe'))
+    with open(os.path.join(d, 'psp', 'fe', 'x.inc.c'), 'w', encoding='utf-8', newline='\n') as f:
+        f.write('#ifdef OPT_ARM\nvoid f(void) { char b[8];\n'
+                '  long a = HARNESS_INT("opt_int", 3);\n'
+                '  HARNESS_STR("opt_str", b, sizeof(b));\n'
+                '  long k = HARNESS_INT("known", 0);\n'
+                '  long n = HARNESS_INT("opt_nest", HARNESS_INT("known", 1));\n'
+                '  long m = HARNESS_INT("opt_bad", next_val()); }\n#endif\n')
+    try:
+        r9, e9 = opt_in_rows(d, {'known'})
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    ok(sorted(r9) == sorted([('opt_int', 'fe_ini_get_int', '3', 'psp/fe/x.inc.c:3', 'opt-in:OPT_ARM'),
+                             ('opt_str', 'fe_ini_get', '-', 'psp/fe/x.inc.c:4', 'opt-in:OPT_ARM'),
+                             ('opt_nest', 'fe_ini_get_int', 'HARNESS_INT ( "known" , 1 )',
+                              'psp/fe/x.inc.c:6', 'opt-in:OPT_ARM'),
+                             ('opt_bad', 'fe_ini_get_int', 'next_val ( )', 'psp/fe/x.inc.c:7', 'opt-in:OPT_ARM')])
+       and len(e9) == 1 and 'opt_bad' not in e9[0] and 'next_val' in e9[0],
+       'opt-in: HARNESS_INT/HARNESS_STR rows, a nested read allowed, a call refused (%s %s)' % (r9, e9))
     print('selftest: %s' % ('PASS' if not fails else 'FAILED (%d)' % len(fails)))
     return 1 if fails else 0
 

@@ -173,7 +173,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * (kept apart from g_pcfg so a run never writes it into config.ini).
     * Only ms of config reading ran at the entry clock before this. */
    {
-      long hc = fe_ini_get_int(HARNESS_INI, "cpu_clock", -1);
+      long hc = HARNESS_INT("cpu_clock", -1);
       g_clk_harness = hc < 0 ? -1 : pcfg_clock_snap(hc);
       /* @lab */ LAB_FFP({ int ffc = lab_ffpace_boot(HARNESS_INI, 0, &g_me_rend, &g_mer_last_presented); if (ffc > 0) g_clk_harness = pcfg_clock_snap(ffc); })
    }
@@ -246,7 +246,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    audio_start();
 /* @extract:end vol:boot_apply */
 
-   have_harness = file_exists(HARNESS_INI);
+   have_harness = HARNESS_PRESENT();
    have_variant = file_exists(VARIANT_INI);
    rig_boot_identity(have_harness);
 #ifdef GPSP_KEEP_TELEMETRY
@@ -276,16 +276,16 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
              HARNESS_INI);
    /* FOLDERS (at make_suffixed_path): the player's layout, and the empty
     * roms/GBA, roms/GB, roms/GBC, saves/ and states/ on first run. */
-   folders = (int)fe_ini_get_int(HARNESS_INI, "folders",
+   folders = (int)HARNESS_INT("folders",
       !have_variant && (!have_harness ||
-                        fe_ini_get_int(HARNESS_INI, "browser", 0) != 0));
+                        HARNESS_INT("browser", 0) != 0));
    if (folders)
       sc_first_run(SC_FS_PSP, g_dir_base, ROM_DIR);
-   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0); /* @lab */ LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
+   autoexit   = HARNESS_INT("autoexit_frames", 0); /* @lab */ LAB_HOOK(lab_set_eboot_crc(vp_build_crc);)
    {
       /* GB link session harness keys (see gblink_service). */
       char gr[8] = "";
-      if (fe_ini_get(HARNESS_INI, "gblink_role", gr, sizeof(gr)))
+      if (HARNESS_STR("gblink_role", gr, sizeof(gr)))
          g_gblink_role = !strcmp(gr, "host") ? 1 : !strcmp(gr, "join") ? 2 : 0;
       /* config.ini gblink_delay: the player's own tuning (frames of input
        * delay, 1-30); the harness key, when present, wins. */
@@ -293,34 +293,34 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
                      ? (unsigned)g_pcfg.gblink_delay_cfg : GBLINK_DELAY_DEFAULT;
       if (g_gblink_delay < 1 || g_gblink_delay > 30)
          g_gblink_delay = GBLINK_DELAY_DEFAULT;
-      g_gblink_delay = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_delay",
+      g_gblink_delay = (unsigned)HARNESS_INT("gblink_delay",
                                                 g_gblink_delay);
       if (g_gblink_delay > 60)
          g_gblink_delay = 60;
-      g_gblink_delay_auto = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_gblink_delay_auto = (unsigned)HARNESS_INT(
                                                      "gblink_delay_auto", 0);
       if (g_gblink_delay_auto > 30)
          g_gblink_delay_auto = 30;
       if (g_gblink_delay_auto)
          fe_evt("gblink_delay_auto cap=%u", g_gblink_delay_auto);
-      g_gblink_seed = (long long)fe_ini_get_int(HARNESS_INI,
+      g_gblink_seed = (long long)HARNESS_INT(
                                                 "gblink_rtc_seed", 0);
-      g_gblink_end_after = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_gblink_end_after = (unsigned)HARNESS_INT(
                                                     "gblink_end_after", 300);
-      fe_host_gblink_tune((unsigned)fe_ini_get_int(HARNESS_INI,
+      fe_host_gblink_tune((unsigned)HARNESS_INT(
                                                    "gblink_bulk", 0));
       /* 0: the partner's cartridge always crosses the radio, even when this
        * card holds a copy -- the transfer arm of a rig whose cards carry
        * every game for the other arms. */
-      g_gblink_library = fe_ini_get_int(HARNESS_INI, "gblink_library", 1) != 0;
+      g_gblink_library = HARNESS_INT("gblink_library", 1) != 0;
       /* psp_clock: pretend the console's clock read this at boot -- e.g.
        * the PSP-1000's 2011 clock (1298863731) in PPSSPP, which is how the
        * hw1 Gen 2 failure is reproduced and its fix checked. */
-      g_clock_fake = (long long)fe_ini_get_int(HARNESS_INI, "psp_clock", 0);
+      g_clock_fake = (long long)HARNESS_INT("psp_clock", 0);
       /* psp_clock_tz: that clock's zone, in seconds ahead of UTC (-18000 =
        * New York in winter), so the GB cartridge clock's UTC arithmetic can
        * be run at any offset in PPSSPP. */
-      g_clock_fake_tz = (long long)fe_ini_get_int(HARNESS_INI, "psp_clock_tz",
+      g_clock_fake_tz = (long long)HARNESS_INT("psp_clock_tz",
                                                   0);
       if (g_clock_fake)
          fe_evt("psp_clock fake=%lld tz=%lld (harness)", g_clock_fake,
@@ -329,65 +329,65 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * ordered channel carries transfers, 64+13..1472) and its rate
        * (datagrams a frame, 0 = adaptive): the hardware rig's arms. */
       {
-         long bb = fe_ini_get_int(HARNESS_INI, "gblink_bulk_bytes",
+         long bb = HARNESS_INT("gblink_bulk_bytes",
                                   (long)g_gblink_bulk_bytes);
          g_gblink_bulk_bytes = bb <= 0 ? 0u : bb < 77 ? 77u :
                                bb > 1472 ? 1472u : (unsigned)bb;
-         g_gblink_bulk_rate = (unsigned)fe_ini_get_int(HARNESS_INI,
+         g_gblink_bulk_rate = (unsigned)HARNESS_INT(
                                                        "gblink_bulk_rate", 0);
       }
       /* Scanline batching while the cable is quiet (host decides for
        * both): 1 = strict alternation (the control arm), default on. */
-      g_gblink_batch = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_batch",
+      g_gblink_batch = (unsigned)HARNESS_INT("gblink_batch",
                                                 GBLINK_BATCH_DEFAULT);
-      g_gblink_batch_armed = fe_ini_get_int(HARNESS_INI, "gblink_batch_armed",
+      g_gblink_batch_armed = HARNESS_INT("gblink_batch_armed",
                                             GBLINK_ARMED_DEFAULT) != 0;
       /* gblink_live = 0: power on from the battery images (the 3.0-era
        * link); gblink_after = frames the game plays on after a session. */
-      g_gblink_live = fe_ini_get_int(HARNESS_INI, "gblink_live", 1) != 0;
-      g_gblink_after = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_after", 0);
-      g_gblink_copies = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_gblink_live = HARNESS_INT("gblink_live", 1) != 0;
+      g_gblink_after = (unsigned)HARNESS_INT("gblink_after", 0);
+      g_gblink_copies = (unsigned)HARNESS_INT(
                                                  "gblink_input_copies", 0);
-      g_gblink_resume_boot = fe_ini_get_int(HARNESS_INI, "gblink_resume",
+      g_gblink_resume_boot = HARNESS_INT("gblink_resume",
                                             0) == 2;
-      g_gblink_pace0 = fe_ini_get_int(HARNESS_INI, "gblink_pace_slot0", 0) != 0;
-      g_gblink_start_frames = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_gblink_pace0 = HARNESS_INT("gblink_pace_slot0", 0) != 0;
+      g_gblink_start_frames = (unsigned)HARNESS_INT(
                                                       "gblink_start_frames", 0);
 #ifdef GPSP_PERF_RIG
-      g_start_keepalive = fe_ini_get_int(HARNESS_INI, "link_start_keepalive", 1) != 0;
-      g_start_grace = fe_ini_get_int(HARNESS_INI, "link_start_grace", 1) != 0;
-      g_start_heard = fe_ini_get_int(HARNESS_INI, "link_start_heard", 1) != 0;
-      g_reload_slow_ms = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_reload_slow_ms", 0);
-      g_gblink_host_wait_peer = fe_ini_get_int(HARNESS_INI, "gblink_host_wait_peer", 0) != 0;
+      g_start_keepalive = HARNESS_INT("link_start_keepalive", 1) != 0;
+      g_start_grace = HARNESS_INT("link_start_grace", 1) != 0;
+      g_start_heard = HARNESS_INT("link_start_heard", 1) != 0;
+      g_reload_slow_ms = (unsigned)HARNESS_INT("gblink_reload_slow_ms", 0);
+      g_gblink_host_wait_peer = HARNESS_INT("gblink_host_wait_peer", 0) != 0;
       fe_evt("link_start_arms keepalive=%d grace=%d heard=%d slow_ms=%u host_wait_peer=%d",
              g_start_keepalive, g_start_grace, g_start_heard, g_reload_slow_ms,
              g_gblink_host_wait_peer);
 #endif
-      g_gblink_keep_stamp = fe_ini_get_int(HARNESS_INI,
+      g_gblink_keep_stamp = HARNESS_INT(
                                            "gblink_rtc_keep_session", 0) != 0;
       /* Smoothness (gblink_service's block comment): config.ini is the
        * player's kill switch, the harness key wins for an A/B arm. */
       {
          long v;
          v = fe_ini_get_int(p_config, "gblink_absorb", 1);
-         g_gbl_absorb = fe_ini_get_int(HARNESS_INI, "gblink_absorb", v) != 0;
+         g_gbl_absorb = HARNESS_INT("gblink_absorb", v) != 0;
          v = fe_ini_get_int(p_config, "gblink_audio_cushion", 3072);
-         v = fe_ini_get_int(HARNESS_INI, "gblink_audio_cushion", v);
+         v = HARNESS_INT("gblink_audio_cushion", v);
          g_gbl_cushion = v < 0 ? 0u : v > 16384 ? 16384u : (unsigned)v;
          v = fe_ini_get_int(p_config, "gblink_audio_follow", 60);
-         v = fe_ini_get_int(HARNESS_INI, "gblink_audio_follow", v);
+         v = HARNESS_INT("gblink_audio_follow", v);
          g_gbl_follow = v < 0 ? 0u : v > 100 ? 100u : (unsigned)v;
          v = fe_ini_get_int(p_config, "gblink_nack", 1);
-         g_gbl_nack = fe_ini_get_int(HARNESS_INI, "gblink_nack", v) != 0;
+         g_gbl_nack = HARNESS_INT("gblink_nack", v) != 0;
          v = fe_ini_get_int(p_config, "gblink_audio_soft", 1);
          g_gbl_soft =
-            fe_ini_get_int(HARNESS_INI, "gblink_audio_soft", v) != 0;
+            HARNESS_INT("gblink_audio_soft", v) != 0;
          /* harness only: the sync-hash A/B (both consoles alike) */
-         v = fe_ini_get_int(HARNESS_INI, "gblink_hash_every", 0);
+         v = HARNESS_INT("gblink_hash_every", 0);
          g_gbl_hash_every = v < 0 ? 0u : (unsigned)v;
          g_gbl_hash_legacy =
-            fe_ini_get_int(HARNESS_INI, "gblink_hash_legacy", 0) != 0;
-         v = fe_ini_get_int(HARNESS_INI, "gblink_win_ms", 10000);
+            HARNESS_INT("gblink_hash_legacy", 0) != 0;
+         v = HARNESS_INT("gblink_win_ms", 10000);
          g_gbl_win_ms = v < 1000 ? 1000u : (unsigned)v;
          fe_evt("gblink_smooth absorb=%d audio_cushion=%u audio_follow=%u "
                 "audio_soft=%d nack=%d win_ms=%u hash_every=%u "
@@ -407,11 +407,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* ADR-0053: harness-ini only and default OFF.  Putting this in CONFIG.INI
     * would let a stale file toggle USB on a console someone is playing --
     * the same failure ADR-0036 renamed autopilot.ini to prevent. */
-   handoff_config(fe_ini_get_int(HARNESS_INI, "handoff", 0),
-                  fe_ini_get_int(HARNESS_INI, "handoff_window_s", 90),
-                  fe_ini_get_int(HARNESS_INI, "handoff_max_runs", 20),
-                  fe_ini_get_int(HARNESS_INI, "handoff_total_s", 900),
-                  fe_ini_get_int(HARNESS_INI, "handoff_park_s", 0));
+   handoff_config(HARNESS_INT("handoff", 0),
+                  HARNESS_INT("handoff_window_s", 90),
+                  HARNESS_INT("handoff_max_runs", 20),
+                  HARNESS_INT("handoff_total_s", 900),
+                  HARNESS_INT("handoff_park_s", 0));
    /* THE PSP GO'S INTERNAL STORAGE CANNOT BE HANDED OFF.  handoff_run exports
     * the volume with usbstorms.prx, the MEMORY STICK driver, so an app on ef0
     * finishes its run, writes RESULT.TXT to ef0 and then exports the M2 card
@@ -419,7 +419,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * the Go parks forever on the run's last frame (2026-09-29, GBADHOC-DRPROF
     * installed on G: = ef0; docs/ROM-RESIDENCY.md "Which Go volume").  Refuse
     * it at boot, visibly, and run once to the XMB instead. */
-   if (fe_ini_get_int(HARNESS_INI, "handoff", 0) &&
+   if (HARNESS_INT("handoff", 0) &&
        (strncmp(g_dir_base, "ef0", 3) == 0 || strncmp(g_dir_base, "EF0", 3) == 0))
    {
       handoff_config(0, 0, 0, 0, 0);
@@ -428,16 +428,16 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
              g_dir_base);
       osd_toast("Rig is on internal storage: USB loop OFF (use the Memory Stick)");
    }
-   dump_at    = fe_ini_get_int(HARNESS_INI, "dump_at", 0);
-   dump_every = fe_ini_get_int(HARNESS_INI, "dump_every", 0);
-   gedump_at  = fe_ini_get_int(HARNESS_INI, "gedump_at", 0);
+   dump_at    = HARNESS_INT("dump_at", 0);
+   dump_every = HARNESS_INT("dump_every", 0);
+   gedump_at  = HARNESS_INT("gedump_at", 0);
 #ifdef GPSP_PERF_RIG
-   g_gedump_loops = (unsigned)fe_ini_get_int(HARNESS_INI, "gedump_loops", 0);
+   g_gedump_loops = (unsigned)HARNESS_INT("gedump_loops", 0);
 #endif
    /* README shoot: the displayed screen (scaled game + OSD) every N frames,
     * log/ge_%06u.bmp, so a clip can be cut from what the PSP actually shows. */
-   gedump_every = fe_ini_get_int(HARNESS_INI, "gedump_every", 0);
-   ff_ini     = fe_ini_get_int(HARNESS_INI, "ff", 0);
+   gedump_every = HARNESS_INT("gedump_every", 0);
+   ff_ini     = HARNESS_INT("ff", 0);
 #ifdef REWIND
    psp_rewind_read_ini();
 #endif
@@ -447,7 +447,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * fe_host_boot (the core decides in retro_init); the `jit_cache` line
     * after boot echoes it as reason=forced, so a misspelt key shows up as
     * reason=heap_ok instead of passing silently. */
-   jit_cache_force_small = fe_ini_get_int(HARNESS_INI, "jit_small", 0) ? 1u : 0u;
+   jit_cache_force_small = HARNESS_INT("jit_small", 0) ? 1u : 0u;
    /* ADR-0033/0034 (coreopt): the video oracle and renderer path profile,
     * grafted onto the harness channel — the branch predates ADR-0036's
     * autopilot.ini -> .gpsp-harness.ini rename.  vhash=1 is shorthand for
@@ -457,59 +457,59 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Every vid_prof output is an fe_evt line, so a player build leaves the
     * key alone: a stray harness file on a player's card must not cost a
     * boot-time EBOOT read (and its 4 KiB borrow) ahead of the ROM load. */
-   vid_prof_win = fe_ini_get_int(HARNESS_INI, "vid_prof", 0);
+   vid_prof_win = HARNESS_INT("vid_prof", 0);
    if (vid_prof_win > 0)
    {
       video_prof_set_clock(vprof_clock_us);
       vp_build_crc = eboot_crc();
    }
 #endif
-   vhash_from = fe_ini_get_int(HARNESS_INI, "vhash_from", 0);
-   g_vhash_on = (int)fe_ini_get_int(HARNESS_INI, "vhash", 0);
-   g_vhash_legacy_rb = (int)fe_ini_get_int(HARNESS_INI, "vhash_legacy_rb", 0);
-   g_telemetry_period = (unsigned)fe_ini_get_int(HARNESS_INI,
+   vhash_from = HARNESS_INT("vhash_from", 0);
+   g_vhash_on = (int)HARNESS_INT("vhash", 0);
+   g_vhash_legacy_rb = (int)HARNESS_INT("vhash_legacy_rb", 0);
+   g_telemetry_period = (unsigned)HARNESS_INT(
                                                  "telemetry_period", 0);
 #ifdef GPSP_PERF_RIG
-   g_shash_on = (int)fe_ini_get_int(HARNESS_INI, "shash", 0);
+   g_shash_on = (int)HARNESS_INT("shash", 0);
    /* Filters v2 rig keys: force the three display rows for every console
     * (the state-identity and cost runs).  -1 = the player's own. */
-   g_h_smooth = (int)fe_ini_get_int(HARNESS_INI, "fx_smooth", -1);
-   g_h_effect = (int)fe_ini_get_int(HARNESS_INI, "fx_effect", -1);
-   g_h_color  = (int)fe_ini_get_int(HARNESS_INI, "fx_color", -1);
-   g_h_scale  = (int)fe_ini_get_int(HARNESS_INI, "fx_scale", -1);
+   g_h_smooth = (int)HARNESS_INT("fx_smooth", -1);
+   g_h_effect = (int)HARNESS_INT("fx_effect", -1);
+   g_h_color  = (int)HARNESS_INT("fx_color", -1);
+   g_h_scale  = (int)HARNESS_INT("fx_scale", -1);
    /* the sleep simulator (sleep_sim_thread) */
-   g_ss_at      = fe_ini_get_int(HARNESS_INI, "sleep_sim_at", 0);
-   g_ss_ms      = fe_ini_get_int(HARNESS_INI, "sleep_sim_ms", 1500);
-   g_ss_again_ms = fe_ini_get_int(HARNESS_INI, "sleep_sim_again_ms", 0);
-   ui_wake_inject_frame((int)fe_ini_get_int(HARNESS_INI,
+   g_ss_at      = HARNESS_INT("sleep_sim_at", 0);
+   g_ss_ms      = HARNESS_INT("sleep_sim_ms", 1500);
+   g_ss_again_ms = HARNESS_INT("sleep_sim_again_ms", 0);
+   ui_wake_inject_frame((int)HARNESS_INT(
                                             "sleep_sim_choice_frame", 30));
-   g_ss_rom     = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_rom", 0);
-   g_ss_sav     = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_sav", 0);
+   g_ss_rom     = (int)HARNESS_INT("sleep_sim_rom", 0);
+   g_ss_sav     = (int)HARNESS_INT("sleep_sim_sav", 0);
    fe_host_sram_test_exit_retry(
-      (int)fe_ini_get_int(HARNESS_INI, "sram_exit_retry", 1));
-   g_ss_game    = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_game", 0);
-   g_ss_browser = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_browser", 0);
-   g_ss_nohold  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nohold", 0);
-   g_ss_rw_tick = fe_ini_get_int(HARNESS_INI, "sleep_sim_rewind_tick", 0);
-   g_ss_nopark  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopark", 0);
-   g_ss_request = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_request", 0);
-   g_ss_nopoll  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopoll", 0);
-   g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
-   g_ss_me_sync_fail = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_me_sync_fail", 0);
+      (int)HARNESS_INT("sram_exit_retry", 1));
+   g_ss_game    = (int)HARNESS_INT("sleep_sim_game", 0);
+   g_ss_browser = (int)HARNESS_INT("sleep_sim_browser", 0);
+   g_ss_nohold  = (int)HARNESS_INT("sleep_sim_nohold", 0);
+   g_ss_rw_tick = HARNESS_INT("sleep_sim_rewind_tick", 0);
+   g_ss_nopark  = (int)HARNESS_INT("sleep_sim_nopark", 0);
+   g_ss_request = (int)HARNESS_INT("sleep_sim_request", 0);
+   g_ss_nopoll  = (int)HARNESS_INT("sleep_sim_nopoll", 0);
+   g_ss_trash_pool = (int)HARNESS_INT("sleep_sim_trash_pool", 0);
+   g_ss_me_sync_fail = (int)HARNESS_INT("sleep_sim_me_sync_fail", 0);
    if (g_ss_me_sync_fail)
       fe_evt("sleep_sim mutant me_sync_fail=%d", g_ss_me_sync_fail);
-   me_host_fake((int)fe_ini_get_int(HARNESS_INI, "me_fake", 0));
-   g_inproc_me_unload = (int)fe_ini_get_int(HARNESS_INI, "inproc_me_unload", 0);
-   g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
-   g_ss_no_land = !fe_ini_get_int(HARNESS_INI, "rewind_park_land", 1);
-   fe_ini_get(HARNESS_INI, "sleep_sim_window", g_ss_window,
+   me_host_fake((int)HARNESS_INT("me_fake", 0));
+   g_inproc_me_unload = (int)HARNESS_INT("inproc_me_unload", 0);
+   g_ss_no_restart = !HARNESS_INT("rewind_pool_restart", 1);
+   g_ss_no_land = !HARNESS_INT("rewind_park_land", 1);
+   HARNESS_STR("sleep_sim_window", g_ss_window,
               sizeof(g_ss_window));
-   ui_wake_inject((int)fe_ini_get_int(HARNESS_INI, "sleep_sim_choice", -1));
-   ui_batt_inject((int)fe_ini_get_int(HARNESS_INI, "ui_batt", -1));
-   ui_ctl_warn_inject((int)fe_ini_get_int(HARNESS_INI, "ui_ctl_warn", 0));
-   ui_turbo_lock_inject((int)fe_ini_get_int(HARNESS_INI, "ui_turbo_lock", 0));
+   ui_wake_inject((int)HARNESS_INT("sleep_sim_choice", -1));
+   ui_batt_inject((int)HARNESS_INT("ui_batt", -1));
+   ui_ctl_warn_inject((int)HARNESS_INT("ui_ctl_warn", 0));
+   ui_turbo_lock_inject((int)HARNESS_INT("ui_turbo_lock", 0));
 #ifdef GPSP_PERF_RIG
-   g_turbo_lock_sim = fe_ini_get_int(HARNESS_INI, "ui_turbo_lock", 0) != 0;
+   g_turbo_lock_sim = HARNESS_INT("ui_turbo_lock", 0) != 0;
 #endif
    if (g_ss_at || g_ss_browser || g_ss_window[0] || g_ss_rw_tick)
       sleep_sim_start();
@@ -518,100 +518,100 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
              "window=%s nohold=%d", g_ss_at, g_ss_ms, g_ss_rom, g_ss_game,
              g_ss_browser, g_ss_window[0] ? g_ss_window : "-", g_ss_nohold);
 #if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
-   g_sessmem_cycles = (unsigned)fe_ini_get_int(HARNESS_INI, "sessmem_cycles", 0);
-   g_gblink_repeat_left = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_repeat", 0);
-   g_sessmem_at = (unsigned)fe_ini_get_int(HARNESS_INI, "sessmem_at", 600);
+   g_sessmem_cycles = (unsigned)HARNESS_INT("sessmem_cycles", 0);
+   g_gblink_repeat_left = (unsigned)HARNESS_INT("gblink_repeat", 0);
+   g_sessmem_at = (unsigned)HARNESS_INT("sessmem_at", 600);
 #endif
-   g_shash_dump_from = fe_ini_get_int(HARNESS_INI, "shash_dump_from", 0);
-   g_shash_dump_to   = fe_ini_get_int(HARNESS_INI, "shash_dump_to", 0);
+   g_shash_dump_from = HARNESS_INT("shash_dump_from", 0);
+   g_shash_dump_to   = HARNESS_INT("shash_dump_to", 0);
    {
       char rid[48] = "", arm[16] = "";
-      fe_ini_get(HARNESS_INI, "run_id", rid, sizeof(rid));
-      fe_ini_get(HARNESS_INI, "arm", arm, sizeof(arm));
+      HARNESS_STR("run_id", rid, sizeof(rid));
+      HARNESS_STR("arm", arm, sizeof(arm));
       snprintf(g_shash_id, sizeof(g_shash_id),
                "run_id=%s arm=%s eboot_crc=%08x model=%d",
                rid[0] ? rid : "none", arm[0] ? arm : "none",
                (unsigned)vp_build_crc, kuKernelGetModel());
       snprintf(g_hb_id, sizeof(g_hb_id), "%s", g_shash_id);
    }
-   g_hb_s = (int)fe_ini_get_int(HARNESS_INI, "heartbeat_s", 0);
+   g_hb_s = (int)HARNESS_INT("heartbeat_s", 0);
    if (g_hb_s < 0 || g_hb_s > 60)
       g_hb_s = 0;
    fe_evt("shash on=%d heartbeat_s=%d", g_shash_on, g_hb_s);
    if (g_shash_on)
       shash_open();
 #endif
-   vhash_to   = fe_ini_get_int(HARNESS_INI, "vhash_to", 0);
-   if (fe_ini_get_int(HARNESS_INI, "vhash", 0) && !vhash_to)
+   vhash_to   = HARNESS_INT("vhash_to", 0);
+   if (HARNESS_INT("vhash", 0) && !vhash_to)
    {
       vhash_from = 1;
       vhash_to   = 0x7FFFFFFF;
    }
-   ui_demo    = fe_ini_get_int(HARNESS_INI, "ui_demo", 0);
+   ui_demo    = HARNESS_INT("ui_demo", 0);
    if (ui_demo)
       ui_demo_shots();   /* browser dumps the gallery + auto-picks (README) */
    /* docs/CONTROL-REMAP.md: the Controls page walked end to end, with GE
     * dumps.  Separate from ui_demo so run_ui_smoke.sh's ladder is untouched. */
-   ui_ctl_demo = fe_ini_get_int(HARNESS_INI, "ui_controls_demo", 0);
+   ui_ctl_demo = HARNESS_INT("ui_controls_demo", 0);
    /* docs/UI-OVERLAY.md: the wake overlay, opened as SELECT+TRIANGLE opens
     * it, photographed and dismissed -- a script cannot press the chord. */
-   wake_shot = fe_ini_get_int(HARNESS_INI, "wake_shot", 0);
-   player_shot_at = fe_ini_get_int(HARNESS_INI, "player_shot_at", 0);
-   player_shot_n = fe_ini_get_int(HARNESS_INI, "player_shot_n", 1);
+   wake_shot = HARNESS_INT("wake_shot", 0);
+   player_shot_at = HARNESS_INT("player_shot_at", 0);
+   player_shot_n = HARNESS_INT("player_shot_n", 1);
    if (ui_ctl_demo == 2)
    {
       ui_controls_browser_demo();   /* from the browser instead */
       ui_ctl_demo = 0;
    }
-   if (fe_ini_get_int(HARNESS_INI, "ui_browser_demo", 0))
+   if (HARNESS_INT("ui_browser_demo", 0))
       ui_browser_demo_shots();   /* browser states shoot, then exit */
    {
       char bscript[64];
 #ifdef GPSP_PERF_RIG
       char up_fake[96];
 #endif
-      if (fe_ini_get(HARNESS_INI, "ui_browser_script", bscript, sizeof(bscript)))
+      if (HARNESS_STR("ui_browser_script", bscript, sizeof(bscript)))
          ui_browser_script_load(bscript);   /* README shoot: scripted browser */
       /* Share game data (docs/SAVE-SHARE.md), for the two-PPSSPP rig:
        * `share_burst` file datagrams a frame (1 = slow enough to interrupt),
        * `share_build` a pretended build string (the mismatch screens with
        * one EBOOT), `share_fail_write_after` a Memory Stick that fills up
        * after N bytes of a fetched file. */
-      ui_share_burst((unsigned)fe_ini_get_int(HARNESS_INI, "share_burst", 0));
-      if (fe_ini_get(HARNESS_INI, "share_build", bscript, sizeof(bscript)) &&
+      ui_share_burst((unsigned)HARNESS_INT("share_burst", 0));
+      if (HARNESS_STR("share_build", bscript, sizeof(bscript)) &&
           bscript[0])
          share_build_override(bscript);
-      share_fail_write_after((unsigned)fe_ini_get_int(
-         HARNESS_INI, "share_fail_write_after", 0));
+      share_fail_write_after((unsigned)HARNESS_INT(
+         "share_fail_write_after", 0));
 #ifdef GPSP_PERF_RIG
-      if (fe_ini_get(HARNESS_INI, "ui_script", bscript, sizeof(bscript)) &&
+      if (HARNESS_STR("ui_script", bscript, sizeof(bscript)) &&
           bscript[0])
       {
          char up[256];
          snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript); /* @lab */ LAB_HOOK(lab_task_file(up, sizeof(up), bscript);)
          uiscript_load(up);               /* docs/GBA-LINK-UI.md */
       }
-      if (fe_ini_get(HARNESS_INI, "ui_scan_fake", up_fake, sizeof(up_fake)) &&
+      if (HARNESS_STR("ui_scan_fake", up_fake, sizeof(up_fake)) &&
           up_fake[0])
          ui_scan_fake_set(up_fake);
 #endif
    }
    /* Display-features shoot: GE-dump the first N loading-screen frames. */
-   ui_loading_dump_shots((int)fe_ini_get_int(HARNESS_INI, "loading_dump", 0));
+   ui_loading_dump_shots((int)HARNESS_INT("loading_dump", 0));
    /* Asset shoot / theme override: -1 (absent) leaves the build default. */
-   ui_set_theme_black((int)fe_ini_get_int(HARNESS_INI, "ui_theme_black", -1));
+   ui_set_theme_black((int)HARNESS_INT("ui_theme_black", -1));
    /* Menu-design check (docs/UI-OVERLAY.md): draw a fixed 480x272 picture
     * behind the in-game menu instead of the game, so a GE dump can be
     * compared pixel for pixel with the design model.  Read now, before the
     * core takes the heap; never set in an identity run. */
    {
       char bd[64];
-      if (fe_ini_get(HARNESS_INI, "ui_backdrop", bd, sizeof(bd)))
+      if (HARNESS_STR("ui_backdrop", bd, sizeof(bd)))
          ui_backdrop_inject(bd);
    }
    /* Price the Save states page's .shot read (docs/UI-OVERLAY.md 12). */
-   ui_shot_probe_arm((int)fe_ini_get_int(HARNESS_INI, "shot_probe", 0));
-   simff      = fe_ini_get_int(HARNESS_INI, "simff", 0);   /* harness: hold a
+   ui_shot_probe_arm((int)HARNESS_INT("shot_probe", 0));
+   simff      = HARNESS_INT("simff", 0);   /* harness: hold a
                               virtual FF button for N frames from frame 300
                               (PPSSPP can't press Square; run_ui_smoke.sh) */
    /* Harness `ff_preset = 1.5x | 2x | 3x | unlimited | smooth`: the preset a
@@ -620,7 +620,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * silently measuring the config's preset (harness-ini key trap). */
    {
       char ffp[16];
-      if (fe_ini_get(HARNESS_INI, "ff_preset", ffp, sizeof(ffp)))
+      if (HARNESS_STR("ff_preset", ffp, sizeof(ffp)))
       {
          int m = !strcmp(ffp, "1.5x") ? PCFG_FF_1_5X :
                  !strcmp(ffp, "2x") ? PCFG_FF_2X :
@@ -634,26 +634,26 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       }
    }
    fe_evt("ff mode=%s", ff_ini ? "uncapped" : "normal");
-   if (fe_ini_get(HARNESS_INI, "script", script_name, sizeof(script_name)))
+   if (HARNESS_STR("script", script_name, sizeof(script_name)))
       have_script = 1;
 #ifdef GPSP_PERF_RIG
    {
       /* Raw PSP pad replay.  NOT `have_script`: the point is to drive the
        * player's path, chords included, which a script run switches off. */
       char pad_name[64], pad_path[192];
-      if (fe_ini_get(HARNESS_INI, "pad_script", pad_name, sizeof(pad_name)))
+      if (HARNESS_STR("pad_script", pad_name, sizeof(pad_name)))
       {
          snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name); /* @lab */ LAB_HOOK(lab_task_file(pad_path, sizeof(pad_path), pad_name);)
          pad_script_load(pad_path);
       }
    }
-   g_home_sim = (int)fe_ini_get_int(HARNESS_INI, "home_sim", 0);
-   fe_ini_get(HARNESS_INI, "exit_sim_at", g_exit_sim_at,
+   g_home_sim = (int)HARNESS_INT("home_sim", 0);
+   HARNESS_STR("exit_sim_at", g_exit_sim_at,
               sizeof(g_exit_sim_at));
    g_home_stall_frame =
-      (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_frame", 0);
+      (unsigned)HARNESS_INT("home_stall_frame", 0);
    g_home_stall_ms =
-      (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_ms", 8000);
+      (unsigned)HARNESS_INT("home_stall_ms", 8000);
    if (g_home_sim || g_home_stall_frame)
       fe_evt("home_harness sim=%d stall_frame=%u stall_ms=%u", g_home_sim,
              g_home_stall_frame, g_home_stall_ms);
@@ -661,15 +661,15 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Perf-rig key: load the slot-0 savestate shortly after boot, so a run
     * can start INSIDE a scene (mid-battle benchmarks) instead of scripting
     * its way there through a title screen. */
-   g_autoload_state = (int)fe_ini_get_int(HARNESS_INI, "load_state", 0);
+   g_autoload_state = (int)HARNESS_INT("load_state", 0);
 #ifdef GPSP_PERF_RIG
-   g_perf_rig = have_harness && fe_ini_get_int(HARNESS_INI, "perf_rig", 0);
+   g_perf_rig = have_harness && HARNESS_INT("perf_rig", 0);
 #endif
    if (g_perf_rig)
    {
-      unsigned from=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_from",300);
-      unsigned to=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_to",3900);
-      unsigned timeout=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_timeout_s",180);
+      unsigned from=(unsigned)HARNESS_INT("perf_from",300);
+      unsigned to=(unsigned)HARNESS_INT("perf_to",3900);
+      unsigned timeout=(unsigned)HARNESS_INT("perf_timeout_s",180);
       char job[64]={0}, fixture[32]={0};
       /* The ceiling used to be 36000 frames -- ten minutes of EMULATED time,
        * which is only about three wall-clock minutes under 3x fast-forward.  A
@@ -683,10 +683,10 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       if(to<=from || to>600000) { from=300; to=3900; }
       if(!timeout || timeout>3600) timeout=180;
       rig_config(from,to,timeout,net_now_us());
-      fe_ini_get(HARNESS_INI,"perf_job",job,sizeof(job));
-      fe_ini_get(HARNESS_INI,"perf_fixture",fixture,sizeof(fixture));
+      HARNESS_STR("perf_job",job,sizeof(job));
+      HARNESS_STR("perf_fixture",fixture,sizeof(fixture));
       fe_evt("perf_job id=%s fixture=%s from=%u to=%u timeout=%u",job,fixture,from,to,timeout);
-      g_audio_oracle = fe_ini_get_int(HARNESS_INI,"audio_oracle",0) ? 1 : 0;
+      g_audio_oracle = HARNESS_INT("audio_oracle",0) ? 1 : 0;
    }
    /* Point the SMC block/writer probe at a 256-byte page of interest.  The
     * default (0x03007D00) is nowhere near Unbound's storm, which `EVT
@@ -695,7 +695,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * `blk=` and `wr=` fields: which translated blocks cover the page, and
     * which PCs are doing the writing. */
    {
-      unsigned w = (unsigned)fe_ini_get_int(HARNESS_INI, "smc_watch", 0);
+      unsigned w = (unsigned)HARNESS_INT("smc_watch", 0);
       if (w)
       {
          smc_blk_watch = w;
@@ -704,9 +704,9 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    }
 
    /* Wireless keys (harness channel; the UI panel drives the same calls). */
-   net_host  = fe_ini_get_int(HARNESS_INI, "host", 0) != 0;
-   net_join  = fe_ini_get_int(HARNESS_INI, "join", 0) != 0;
-   net_probe = (int)fe_ini_get_int(HARNESS_INI, "net_probe", 0);
+   net_host  = HARNESS_INT("host", 0) != 0;
+   net_join  = HARNESS_INT("join", 0) != 0;
+   net_probe = (int)HARNESS_INT("net_probe", 0);
    /* ADR-0062e: `core_phase` HAS BEEN IN EVERY HARNESS INI IN THIS PROJECT
     * FOR THREE SESSIONS AND HAS NEVER BEEN READ.  It was only ever a
     * config.ini key (config_psp.c), so `core_phase = 2` in a .gpsp-harness.ini
@@ -715,26 +715,26 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * this was caught (FULLSPEED-FINDINGS §18).  It is not free: the profiler
     * takes ~344 timer reads per frame ON THE EMULATION THREAD, and at full
     * speed the join's whole margin is about a millisecond. */
-   g_pcfg.core_phase = (int)fe_ini_get_int(HARNESS_INI, "core_phase",
+   g_pcfg.core_phase = (int)HARNESS_INT("core_phase",
                                            g_pcfg.core_phase);
    /* The Lab turns the FPS chip on so the owner can read a console at a
     * glance; it draws after the frame is presented, so vhash never sees it. */
-   g_pcfg.show_fps = (int)fe_ini_get_int(HARNESS_INI, "show_fps",
+   g_pcfg.show_fps = (int)HARNESS_INT("show_fps",
                                          g_pcfg.show_fps) ? 1 : 0;
    /* ADR-0019: let the harness pin the session frameskip policy without
     * touching the user's config.ini (0 off / 1 adaptive / 2 auto). */
-   g_pcfg.net_frameskip = (int)fe_ini_get_int(HARNESS_INI, "net_frameskip",
+   g_pcfg.net_frameskip = (int)HARNESS_INT("net_frameskip",
                                               g_pcfg.net_frameskip);
    /* ADR-0024: same, for the EVT writer thread (0 inline / 1 threaded). */
-   g_pcfg.log_thread = (int)fe_ini_get_int(HARNESS_INI, "log_thread",
+   g_pcfg.log_thread = (int)HARNESS_INT("log_thread",
                                            g_pcfg.log_thread);
    /* ADR-0025: same, for the .sav block writer. */
-   g_pcfg.sram_thread = (int)fe_ini_get_int(HARNESS_INI, "sram_thread",
+   g_pcfg.sram_thread = (int)HARNESS_INT("sram_thread",
                                             g_pcfg.sram_thread);
    /* FF durability nudge A/B: 0 keeps detection and its EVT but never
     * yields, i.e. the pre-fix behaviour on the same binary. */
    {
-      long nudge = fe_ini_get_int(HARNESS_INI, "sram_ff_nudge", 1);
+      long nudge = HARNESS_INT("sram_ff_nudge", 1);
       fe_host_sram_ff_nudge_enable(nudge != 0);
       fe_evt("sram_ff_nudge on=%d", nudge != 0);
    }
@@ -742,7 +742,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher,
     * 3 backpressure (ff_psp.h).  3 was clamped to 1 here and then
     * persisted by pcfg_save (r6-B1). */
-   g_pcfg.net_pace_match = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
+   g_pcfg.net_pace_match = (int)HARNESS_INT("net_pace_match",
                                                g_pcfg.net_pace_match);
    if (g_pcfg.net_pace_match < PACE_MODE_OFF ||
        g_pcfg.net_pace_match > PACE_MODE_BACKPRESSURE)
@@ -751,7 +751,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       pcfg_fps_x100(HARNESS_INI, "net_session_fps",
                     g_pcfg.net_session_fps_x100);
    g_pcfg.net_session_fps_snap =
-      (int)fe_ini_get_int(HARNESS_INI, "net_session_fps_snap",
+      (int)HARNESS_INT("net_session_fps_snap",
                           g_pcfg.net_session_fps_snap);
    if (g_pcfg.net_session_fps_snap < 0 || g_pcfg.net_session_fps_snap > 1)
       g_pcfg.net_session_fps_snap = 1;
@@ -786,7 +786,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * GBA's 59.73.  The compatibility profile and net_session_fps_force keep
     * their meaning.  Same test as rfu_sched_config's, which runs later. */
    if (!g_pcfg.net_session_fps_force && g_pcfg.profile != PCFG_PROFILE_COMPAT &&
-       fe_ini_get_int(HARNESS_INI, "rfu_sched", RFU_SCHED_D_DEFAULT) > 0)
+       HARNESS_INT("rfu_sched", RFU_SCHED_D_DEFAULT) > 0)
       g_pcfg.net_session_fps_x100 = PACE_NOMINAL_X100;
 #endif
    g_pcfg.net_session_fps_snap = 0;
@@ -799,14 +799,14 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    g_pcfg.gu_defer             = 1;
 #endif
    /* ADR-0034: same A/B channel for the blit staging placement. */
-   g_pcfg.blit_mode = (int)fe_ini_get_int(HARNESS_INI, "blit_mode",
+   g_pcfg.blit_mode = (int)HARNESS_INT("blit_mode",
                                           g_pcfg.blit_mode);
    if (g_pcfg.blit_mode < 0 || g_pcfg.blit_mode >= VID_BLIT_MODES)
       g_pcfg.blit_mode = VID_BLIT_CACHED;
    /* ADR-0040: and for the deferred GE sync, so the colour test can run the
     * deferred path.  The rig cannot price it but it CAN prove that a list
     * still in flight never reaches the swap or the readback. */
-   g_pcfg.gu_defer = (int)fe_ini_get_int(HARNESS_INI, "gu_defer",
+   g_pcfg.gu_defer = (int)HARNESS_INT("gu_defer",
                                          g_pcfg.gu_defer);
    g_pcfg.gu_defer = g_pcfg.gu_defer ? 1 : 0;
    /* ADR-0075: frame-boundary delivery admission.  The successor to the
@@ -815,7 +815,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * the WAITEVENT spin that made every capped arm self-blinding cannot
     * occur.  1 = match the game's drain rate (the arm to run first). */
    {
-      int fp = (int)fe_ini_get_int(HARNESS_INI, "rfu_frame_pace",
+      int fp = (int)HARNESS_INT("rfu_frame_pace",
                                    PLAY_RFU_FRAME_PACE);
       if (fp < 0)  fp = 0;
       if (fp > 16) fp = 16;
@@ -828,7 +828,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       {
          /* config.ini is the base (the player owns this dial), harness
           * overrides -- the me_dirty / me_sameframe pattern. */
-         int mh = (int)fe_ini_get_int(HARNESS_INI, "rfu_pace_max_hold",
+         int mh = (int)HARNESS_INT("rfu_pace_max_hold",
                                       g_pcfg.rfu_pace_max_hold);
          if (mh < 0)  mh = 0;
          if (mh > 28) mh = 28;      /* 32 is the timeout; never sit on it */
@@ -843,7 +843,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * until Communications failed").  0 = off = the historical queues, for the
     * A/B; the arm is named in every rfu_shed census line. */
    {
-      int sk = (int)fe_ini_get_int(HARNESS_INI, "rfu_shed_keep",
+      int sk = (int)HARNESS_INT("rfu_shed_keep",
                                    PLAY_RFU_SHED_KEEP);
       if (sk < 0)  sk = 0;
       if (sk > 16) sk = 16;
@@ -854,7 +854,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * receive queue waits in an overflow ring, and the client's pace backstop
     * stops discarding; 0 = the historical discards, for the A/B. */
    {
-      int hd = (int)fe_ini_get_int(HARNESS_INI, "rfu_hold", PLAY_RFU_HOLD);
+      int hd = (int)HARNESS_INT("rfu_hold", PLAY_RFU_HOLD);
       rfu_set_hold(hd ? 1u : 0u);
       fe_evt("rfu_hold n=%d", hd ? 1 : 0);
    }
@@ -862,14 +862,14 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * every build (the core's default); 0 = the historical queues, for the
     * A/B. */
    {
-      int sv = (int)fe_ini_get_int(HARNESS_INI, "rfu_supersede", 1);
+      int sv = (int)HARNESS_INT("rfu_supersede", 1);
       rfu_set_supersede(sv ? 1u : 0u);
       fe_evt("rfu_supersede on=%d", sv ? 1 : 0);
 #ifdef RFU_SCHED
       /* Scheduled ticks (rfu_sched.h): D = 2 in an RFU_SCHED build; a harness
        * may pick another D, or 0 for this run's A/B arm.  Last, because ticks
        * retire the rules above. */
-      rfu_sched_config((unsigned)fe_ini_get_int(HARNESS_INI, "rfu_sched",
+      rfu_sched_config((unsigned)HARNESS_INT("rfu_sched",
                                                 RFU_SCHED_D_DEFAULT));
       fe_evt("rfu_sched d=%u", rfu_sched_d);
 #endif
@@ -878,17 +878,17 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * receives, to prove the rig's cross-console desync detector fires.  0 in
     * every real run; the value is echoed so a stray one cannot hide. */
    {
-      int fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_corrupt", 0);
+      int fc = (int)HARNESS_INT("rfu_fault_corrupt", 0);
       if (fc < 0)
          fc = 0;
       rfu_set_fault_corrupt((unsigned)fc);
       fe_evt("rfu_fault_corrupt n=%d", fc);
-      fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_span", 1);
+      fc = (int)HARNESS_INT("rfu_fault_span", 1);
       if (fc < 1)
          fc = 1;
       rfu_set_fault_span((unsigned)fc);
       fe_evt("rfu_fault_span n=%d", fc);
-      fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_mode", 0);
+      fc = (int)HARNESS_INT("rfu_fault_mode", 0);
       rfu_set_fault_mode(fc > 0 ? (unsigned)fc : 0);
       fe_evt("rfu_fault_mode n=%d (1 = SETMONDATA value byte)", fc > 0 ? fc : 0);
    }
@@ -896,13 +896,13 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * state before term/unload.  Run the breadcrumb-only build FIRST to confirm
     * the wedge step, then set disc_await=1 to A/B the fix. */
    {
-      int da = (int)fe_ini_get_int(HARNESS_INI, "disc_await", 0);
+      int da = (int)HARNESS_INT("disc_await", 0);
       adhoc_set_disc_await(da);
       fe_evt("disc_await on=%d", da);
    }
    /* Audio latency target (AUDIO_RING_TARGET): harness override for A/B. */
    {
-      int rt = (int)fe_ini_get_int(HARNESS_INI, "audio_ring_target",
+      int rt = (int)HARNESS_INT("audio_ring_target",
                                    AUDIO_RING_TARGET);
       if (rt >= 1024 && rt < RING_FRAMES)
          g_ring_high_water = (unsigned)rt;
@@ -911,7 +911,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Media Engine mode: pcfg (the settings toggle, applied via relaunch) with
     * a harness override so the rig can A/B it per-arm. */
    {
-      int mm = (int)fe_ini_get_int(HARNESS_INI, "me_mode", g_pcfg.me_mode);
+      int mm = (int)HARNESS_INT("me_mode", g_pcfg.me_mode);
       g_me_rend_cfg = mm ? 1 : 0;
       fe_evt("me_mode on=%d src=%s", g_me_rend_cfg,
              mm == g_pcfg.me_mode ? "config" : "harness");
@@ -929,8 +929,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * CLIFF-FINDINGS §14.3 records that host- and client-side timeouts were
     * never separated, and they have the same 1/fps shape. */
    {
-      int ts  = (int)fe_ini_get_int(HARNESS_INI, "rfu_timeout_scale", 100);
-      int rs  = (int)fe_ini_get_int(HARNESS_INI, "rfu_rtx_scale",     100);
+      int ts  = (int)HARNESS_INT("rfu_timeout_scale", 100);
+      int rs  = (int)HARNESS_INT("rfu_rtx_scale",     100);
       int aut = (g_pcfg.net_session_fps_x100 > 0)
                    ? (g_pcfg.net_session_fps_x100 * 100) / 2997 : 100;
       if (aut < 100) aut = 100;
@@ -952,12 +952,12 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * 17.6 ms/frame at 29.97 fps to 2.3 ms at 59.73, and the mean cost of one
     * sceNetAdhocPdpSend rises 60 us -> 1040 us across exactly that range. */
    {
-      int np_ = (int)fe_ini_get_int(HARNESS_INI, "adhoc_net_prio", 0);
-      int rf  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_first_max_us", 0);
+      int np_ = (int)HARNESS_INT("adhoc_net_prio", 0);
+      int rf  = (int)HARNESS_INT("nd_rto_first_max_us", 0);
       /* config.ini is the base, harness overrides -- and the base is no
        * longer 0/build-time: see g_pcfg.nd_rto_min_us for why 200 ms is
        * wrong at an 11 ms srtt. */
-      int rm  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_min_us",
+      int rm  = (int)HARNESS_INT("nd_rto_min_us",
                                     g_pcfg.nd_rto_min_us);
       if (rf < 0) rf = 0;
       if (rm < 0) rm = 0;
@@ -978,7 +978,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          int ride_max = floor_us - ND_PUMP_PERIOD_US;
          int ar = (int)fe_ini_get_int(p_config, "nd_ack_ride_us",
                                       PLAY_ND_ACK_RIDE_US);
-         int hr = (int)fe_ini_get_int(HARNESS_INI, "nd_ack_ride_us", -1);
+         int hr = (int)HARNESS_INT("nd_ack_ride_us", -1);
          if (ride_max < 0) ride_max = 0;
          if (ar < 0) ar = 0;
          if (ar > ride_max) ar = ride_max;
@@ -1018,8 +1018,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     *
     * 0 = leave main at its default 0x20. */
    {
-      int ep = (int)fe_ini_get_int(HARNESS_INI, "emu_prio", PLAY_EMU_PRIO);
-      int ip = (int)fe_ini_get_int(HARNESS_INI, "io_prio",  PLAY_IO_PRIO);
+      int ep = (int)HARNESS_INT("emu_prio", PLAY_EMU_PRIO);
+      int ip = (int)HARNESS_INT("io_prio",  PLAY_IO_PRIO);
       /* ADR-0064/0065 both need the emulation thread's UID, and both are
        * no-ops unless their key is set.  Taken here because this is the one
        * place that already knows it is running ON that thread. */
@@ -1046,41 +1046,41 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * rejected them: the 98 KiB host copy costs more than waiting for the
        * ME, and it also bypasses the later dirty-page transfer path.  Keep
        * the measured winner as the default; a harness may still set 1. */
-      g_mer_shadow = (int)fe_ini_get_int(HARNESS_INI, "me_shadow", 0);
-      g_mer_vmem_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_vmem", 1) != 0;
+      g_mer_shadow = (int)HARNESS_INT("me_shadow", 0);
+      g_mer_vmem_cfg = (int)HARNESS_INT("me_vmem", 1) != 0;
       if (!g_mer_vmem_cfg)
          fe_evt("me_vmem 0 (engine buffers from the heap)");
-      g_mer_dirty_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_dirty",
+      g_mer_dirty_cfg = (int)HARNESS_INT("me_dirty",
                                              g_pcfg.me_dirty);
       /* Same-frame is retained as a harness-only A/B.  Hardware showed that
        * issuing the GE list immediately before swap costs heavy games about
        * 1.5 ms per frame.  The loop-top pipeline overlaps that work with the
        * CPU, keeps exact output, and also holds full speed in light games. */
-      g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe", 0);
+      g_mer_sameframe = (int)HARNESS_INT("me_sameframe", 0);
       /* LOW LATENCY (docs/LOW-LATENCY.md): one switch per mechanism. */
-      g_flip_early = (int)fe_ini_get_int(HARNESS_INI, "flip_early",
+      g_flip_early = (int)HARNESS_INT("flip_early",
                                          g_flip_early) != 0;
-      g_mer_early_retire = (int)fe_ini_get_int(HARNESS_INI, "me_early_retire",
+      g_mer_early_retire = (int)HARNESS_INT("me_early_retire",
                                                g_mer_early_retire) != 0;
-      g_dfr_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_late_present",
+      g_dfr_cfg = (int)HARNESS_INT("me_late_present",
                                       g_dfr_cfg) != 0;
-      g_ff_flip_pace = (int)fe_ini_get_int(HARNESS_INI, "ff_flip_pace",
+      g_ff_flip_pace = (int)HARNESS_INT("ff_flip_pace",
                                            g_ff_flip_pace) & 7;
       /* 0 off, 1 tier 1 (entries on the natural nudge), 2 = 1 + entries
        * on an early nudge (TIER 1 POLICY at g_flip_early) */
-      g_ll_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_lowlat", PLAY_ME_LOWLAT);
+      g_ll_cfg = (int)HARNESS_INT("me_lowlat", PLAY_ME_LOWLAT);
       if (g_ll_cfg < 0 || g_ll_cfg > 2)
          g_ll_cfg = 1;
-      g_ll_recover = (unsigned)fe_ini_get_int(HARNESS_INI, "me_lowlat_recover",
+      g_ll_recover = (unsigned)HARNESS_INT("me_lowlat_recover",
                                               (int)g_ll_recover);
-      g_ll_margin_us = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_ll_margin_us = (unsigned)HARNESS_INT(
                                                 "me_lowlat_margin_us",
                                                 (int)g_ll_margin_us);
       if (g_ll_cfg)
          g_mer_sameframe = 0;      /* two retire/present owners: never both */
-      g_in_fresh = (int)fe_ini_get_int(HARNESS_INI, "input_fresh",
+      g_in_fresh = (int)HARNESS_INT("input_fresh",
                                        PLAY_INPUT_FRESH) != 0;
-      g_ctrl_cycle = (int)fe_ini_get_int(HARNESS_INI, "ctrl_cycle", 0);
+      g_ctrl_cycle = (int)HARNESS_INT("ctrl_cycle", 0);
       if (g_ctrl_cycle >= 5555 && g_ctrl_cycle <= 20000)
       {
          /* Called outside the EVT (r6-B3): fe_evt's arguments are not
@@ -1098,29 +1098,29 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
              g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
              g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace, g_dfr_cfg);
       /* 0 restores the end-of-retro_run post for a one-binary A/B. */
-      g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
+      g_mer_vispost = (int)HARNESS_INT("me_vispost", 1) != 0;
       if (!g_mer_vispost)
          fe_evt("me_vispost 0 (render posted at frame end)");
-      g_mer_capmode = fe_ini_get_int(HARNESS_INI, "me_capmode", 1) == 2
+      g_mer_capmode = HARNESS_INT("me_capmode", 1) == 2
                       ? 2u : 1u;
 #if ME_MIDFRAME_LOG
-      g_mer_midlog = (int)fe_ini_get_int(HARNESS_INI, "me_midlog", 1) != 0;
+      g_mer_midlog = (int)HARNESS_INT("me_midlog", 1) != 0;
       {
          extern int me_log_vram_always;
          me_log_vram_always =
-            (int)fe_ini_get_int(HARNESS_INI, "me_vram_always", 1) != 0;
+            (int)HARNESS_INT("me_vram_always", 1) != 0;
          fe_evt("me_vram_always on=%d", me_log_vram_always);
       }
       if (!g_mer_midlog)
          fe_evt("me_midlog 0 (mid-frame log off)");
 #endif
-      g_vp_period = (int)fe_ini_get_int(HARNESS_INI, "vram_probe", 0);
+      g_vp_period = (int)HARNESS_INT("vram_probe", 0);
       if (g_vp_period)
          fe_evt("vram_probe period=%d", g_vp_period);
 
       /* ADR-0066: frames between dump-marker polls.  ADR-0069 default = 0. */
       {
-         int dm = (int)fe_ini_get_int(HARNESS_INI, "dump_marker_poll",
+         int dm = (int)HARNESS_INT("dump_marker_poll",
                                       PLAY_DUMP_MARKER);
          if (dm < 0) dm = 0;
          g_dump_marker_every = dm;
@@ -1131,8 +1131,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * the dump-marker stat used to hand the WLAN threads by accident can be
        * handed to them on purpose, at a size we picked.  Both default off. */
       {
-         int yu = (int)fe_ini_get_int(HARNESS_INI, "sched_yield_us", 0);
-         int yf = (int)fe_ini_get_int(HARNESS_INI, "sched_yield_frames", 60);
+         int yu = (int)HARNESS_INT("sched_yield_us", 0);
+         int yf = (int)HARNESS_INT("sched_yield_frames", 60);
          if (yu < 0) yu = 0;
          if (yf < 1) yf = 1;
          g_yield_us    = yu;
@@ -1141,7 +1141,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
             fe_evt("sched_yield us=%d every=%d", g_yield_us, g_yield_every);
       }
       /* ADR-0064: the preemption census.  Off unless asked for. */
-      g_pe_on = (int)fe_ini_get_int(HARNESS_INI, "preempt_prof", 0) ? 1 : 0;
+      g_pe_on = (int)HARNESS_INT("preempt_prof", 0) ? 1 : 0;
       if (g_pe_on)
          fe_evt("preempt_prof on thid=0x%08X", (unsigned)g_emu_thid);
       /* ADR-0066 measurement: PRICE the negative ms0: lookup that used to run
@@ -1166,9 +1166,9 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * thread's STANDING priority ends up being, so the window degrades to
        * exactly today's behaviour when it is closed. */
       {
-         int bu = (int)fe_ini_get_int(HARNESS_INI, "emu_prio_boost_us",
+         int bu = (int)HARNESS_INT("emu_prio_boost_us",
                                       PLAY_BOOST_US);
-         int bp = (int)fe_ini_get_int(HARNESS_INI, "emu_prio_boost", 0x29);
+         int bp = (int)HARNESS_INT("emu_prio_boost", 0x29);
          g_boost_base = ep ? ep : 0x20;
          if (bp < 0x08) bp = 0x08;
          if (bp > 0x77) bp = 0x77;
@@ -1201,7 +1201,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * better than the latency the comment was worried about, at 1/70th of the
     * calls.  0 = poll every time = the historical behaviour. */
    {
-      int pm = (int)fe_ini_get_int(HARNESS_INI, "rfu_poll_min_cycles",
+      int pm = (int)HARNESS_INT("rfu_poll_min_cycles",
                                    PLAY_POLL_MIN_CYCLES);
       if (pm < 0) pm = 0;
       rfu_set_poll_min_cycles((unsigned)pm);
@@ -1223,7 +1223,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * inert until a run asks for it.  34952 (1/8 frame) matches the client
     * knob's cadence and is the arm to try first. */
    {
-      int dd = (int)fe_ini_get_int(HARNESS_INI, "rfu_disc_defer", 0);
+      int dd = (int)HARNESS_INT("rfu_disc_defer", 0);
       rfu_set_disc_defer(dd ? 1u : 0u);
       if (dd)
          fe_evt("rfu_disc_defer on");
@@ -1232,13 +1232,13 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * Was hardcoded 0, which silently left the PLAYABLE build without the
        * exit fix despite PLAY_EXIT_ASSIST=1 (the message-17 exit crash). */
       g_exit_assist =
-         (int)fe_ini_get_int(HARNESS_INI, "rfu_exit_assist", PLAY_EXIT_ASSIST) ? 1 : 0;
+         (int)HARNESS_INT("rfu_exit_assist", PLAY_EXIT_ASSIST) ? 1 : 0;
       fe_evt("rfu_exit_assist on=%d", g_exit_assist);
       /* ADR-0078: net_pace_match was a config.ini-only key, so ARM B's
        * harness ini silently ran mode 1 (run 315's lesson — the arm's own
        * log said `mode=1 policy=fixed` while the ini said 3).  Same
        * harness-overridable pattern as net_session_fps. */
-      int pmode = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
+      int pmode = (int)HARNESS_INT("net_pace_match",
                                       g_pcfg.net_pace_match);
       if (pmode >= 0 && pmode <= 3 && pmode != g_pcfg.net_pace_match)
       {
@@ -1247,13 +1247,13 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          g_pcfg.net_pace_match = pmode;
       }
       /* ADR-0076: the exit-race grace window, in emulated frames. */
-      int dg = (int)fe_ini_get_int(HARNESS_INI, "rfu_disc_grace",
+      int dg = (int)HARNESS_INT("rfu_disc_grace",
                                    PLAY_RFU_DISC_GRACE);
       if (dg < 0)   dg = 0;
       if (dg > 600) dg = 600;
       rfu_set_disc_grace((unsigned)dg);
       fe_evt("rfu_disc_grace frames=%d", dg);
-      int ip = (int)fe_ini_get_int(HARNESS_INI, "rfu_idle_poll_cycles",
+      int ip = (int)HARNESS_INT("rfu_idle_poll_cycles",
                                    PLAY_IDLE_POLL);
       if (ip < 0) ip = 0;
       rfu_set_idle_poll_cycles((unsigned)ip);
@@ -1268,18 +1268,18 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * not sleeping, so it lands in the same per-frame WORK time the
     * capability estimate reads and the whole loop is exercised end to end.
     * Harness only; never set in config.ini. */
-   ff_pace_set_slow_us((int)fe_ini_get_int(HARNESS_INI, "pace_slow_us", 0));
+   ff_pace_set_slow_us((int)HARNESS_INT("pace_slow_us", 0));
 #ifdef GPSP_PERF_RIG
-   g_gbl_cpu_x100 = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_cpu_x100", 0);
+   g_gbl_cpu_x100 = (unsigned)HARNESS_INT("gblink_cpu_x100", 0);
    if (g_gbl_cpu_x100)
       fe_evt("gblink_cpu_x100=%u (harness: PPSSPP slow-CPU emulation)",
              g_gbl_cpu_x100);
 #endif
    if (ff_pace_slow_us())
       fe_evt("pace_slow_us=%d", ff_pace_slow_us());
-   if (!fe_ini_get(HARNESS_INI, "nick", nick, sizeof(nick)))
+   if (!HARNESS_STR("nick", nick, sizeof(nick)))
       snprintf(nick, sizeof(nick), "%s", g_pcfg.nick);
-   if (!fe_ini_get(HARNESS_INI, "group", group, sizeof(group)))
+   if (!HARNESS_STR("group", group, sizeof(group)))
       snprintf(group, sizeof(group), "%s", g_pcfg.group);
 
    /* Radio emulation for the PPSSPP rig (harness only — the desktop UDP
@@ -1291,9 +1291,9 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    g_online_boot = online_psp_configure(HARNESS_INI, p_config);   /* EXPERIMENTAL */
 #endif
    {
-      int nl = (int)fe_ini_get_int(HARNESS_INI, "net_latency_ms", 0);
-      int nj = (int)fe_ini_get_int(HARNESS_INI, "net_jitter_ms", 0);
-      int np_ = (int)fe_ini_get_int(HARNESS_INI, "net_loss_pct", 0);
+      int nl = (int)HARNESS_INT("net_latency_ms", 0);
+      int nj = (int)HARNESS_INT("net_jitter_ms", 0);
+      int np_ = (int)HARNESS_INT("net_loss_pct", 0);
       if (nl || nj || np_)
       {
          adhoc_transport_set_fault(nl, nj, np_,
@@ -1302,8 +1302,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       }
    }
    {
-      int bo = (int)fe_ini_get_int(HARNESS_INI, "net_blackout_ms", 0);
-      int be = (int)fe_ini_get_int(HARNESS_INI, "net_blackout_every_ms", 20000);
+      int bo = (int)HARNESS_INT("net_blackout_ms", 0);
+      int be = (int)HARNESS_INT("net_blackout_every_ms", 20000);
       if (bo > 0)
       {
          adhoc_transport_set_blackout(bo, be);
@@ -1316,7 +1316,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * the child's emulated adapter in RFU_STATE_CLIENT, which is the state
     * the field logs imply and which rfu.c has no other way out of. */
    {
-      int dd = (int)fe_ini_get_int(HARNESS_INI, "rfu_drop_disconnect", 0);
+      int dd = (int)HARNESS_INT("rfu_drop_disconnect", 0);
       if (dd)
          fe_np_debug_drop_rfu_disconnect(dd);
    }
@@ -1333,7 +1333,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * evidence before anything can overwrite them (freezerig.py: exit=7
     * reason=prev_run_uncollected is a FROZE verdict). */
    if (have_harness && g_rig_prev_uncollected &&
-       fe_ini_get_int(HARNESS_INI, "freeze_rig_recover", 0))
+       HARNESS_INT("freeze_rig_recover", 0))
    {
       fe_evt("freeze_rig_recover prev_log=uncollected -- the previous run "
              "never reached its handoff; handing off without running");
@@ -1345,7 +1345,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
 #endif
 
    /* testpat = 1: GU color-order test pattern — no core, no ROM. */
-   if (fe_ini_get_int(HARNESS_INI, "testpat", 0))
+   if (HARNESS_INT("testpat", 0))
    {
       run_testpat();
       exit_early_begin(0);
@@ -1358,7 +1358,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* icache_inval_probe = 1: does sceKernelIcacheInvalidateRange invalidate
     * at and above 16 KiB?  (psp/icprobe.c, docs/JIT-COHERENCY.md) -- no core,
     * no ROM. */
-   if (fe_ini_get_int(HARNESS_INI, "icache_inval_probe", 0))
+   if (HARNESS_INT("icache_inval_probe", 0))
    {
       int rc = icinv_probe_run();
       exit_early_begin(0);
@@ -1371,7 +1371,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    }
    /* icache_probe = 1: the I-cache geometry, measured (psp/icprobe.c,
     * docs/CACHE-MAP.md) -- no core, no ROM. */
-   if (fe_ini_get_int(HARNESS_INI, "icache_probe", 0))
+   if (HARNESS_INT("icache_probe", 0))
    {
       int rc = icprobe_run();
       exit_early_begin(0);
@@ -1385,9 +1385,9 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
 #endif
 
    /* nettest = 1: Gate-4E transport echo — no core, no ROM. */
-   if (fe_ini_get_int(HARNESS_INI, "nettest", 0))
+   if (HARNESS_INT("nettest", 0))
    {
-      long secs = fe_ini_get_int(HARNESS_INI, "nettest_secs", 90);
+      long secs = HARNESS_INT("nettest_secs", 90);
       int rc = run_nettest(net_host, group, secs);
       exit_early_begin(0);
       if (rc == 0)
@@ -1421,26 +1421,26 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * `inproc_cycles` times; game k is `inproc_roms` entry k (a|b|...|f,
     * relative to roms/, cycling), each booted as `rom =` would boot it.
     * docs/INPROC-RETURN.md has the census this exists for. */
-   inproc_cycles = fe_ini_get_int(HARNESS_INI, "inproc_cycles", 0);
+   inproc_cycles = HARNESS_INT("inproc_cycles", 0);
    /* Harness `state_save_at = N`: save slot 1 at frame N of every game (the
     * in-process return's census covers a state save; fixtures for GB). */
-   state_save_at = fe_ini_get_int(HARNESS_INI, "state_save_at", 0);
+   state_save_at = HARNESS_INT("state_save_at", 0);
    /* `inproc_via_menu = 1`: each quit is the menu's own Quit to game list,
     * driven by the UI demo engine, instead of a direct one. */
-   inproc_via_menu = (int)fe_ini_get_int(HARNESS_INI, "inproc_via_menu", 0);
-   ui_return_dumps((int)fe_ini_get_int(HARNESS_INI, "ret_dumps", 0));
+   inproc_via_menu = (int)HARNESS_INT("inproc_via_menu", 0);
+   ui_return_dumps((int)HARNESS_INT("ret_dumps", 0));
    /* The fallbacks, without a radio or a fault: `ret_fade_in = 1` draws the
     * relaunched browser's fade from black; `inproc_fake_net = 1` marks this
     * process as having loaded a network module (inproc_refusal). */
-   if (fe_ini_get_int(HARNESS_INI, "ret_fade_in", 0))
+   if (HARNESS_INT("ret_fade_in", 0))
       ui_return_fade_in();
-   if (fe_ini_get_int(HARNESS_INI, "inproc_fake_net", 0))
+   if (HARNESS_INT("inproc_fake_net", 0))
       gbadhoc_net_touched = 1;
-   inproc_frames = fe_ini_get_int(HARNESS_INI, "inproc_frames", 240);
+   inproc_frames = HARNESS_INT("inproc_frames", 240);
    {
       char list[6 * 64 + 6];
       memset(inproc_roms, 0, sizeof(inproc_roms));
-      if (fe_ini_get(HARNESS_INI, "inproc_roms", list, sizeof(list)))
+      if (HARNESS_STR("inproc_roms", list, sizeof(list)))
       {
          char *p = list;
          while (*p && inproc_rom_n < 6)

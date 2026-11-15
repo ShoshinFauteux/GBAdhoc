@@ -706,7 +706,8 @@ def suites(env: Env, baseline: Path | None):
         # The harness-ini key table the Lab validates staged keys against
         # (tools/refactor/generated/harness_keys.tsv, tier C C2-0): it still
         # matches the source, its key count is pinned, a default with a side
-        # effect is refused; ci_greps R7 (raw harness reads, warn mode).
+        # effect is refused; ci_greps R7 (raw harness reads; fail mode since
+        # C2-1, the frame loop's rewind_gedump KNOWN).
         ("harness_keys", False, lambda: None,
          "python3 tools/tests/test_harness_keys.py"),
 

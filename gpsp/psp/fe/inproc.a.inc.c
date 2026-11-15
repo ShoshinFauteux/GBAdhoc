@@ -93,7 +93,7 @@ static unsigned g_boot_ballast_kb, g_boot_ballast_got;
 static void * volatile g_boot_ballast;
 static void boot_ballast_take(void)
 {
-   g_boot_ballast_kb = (unsigned)fe_ini_get_int(HARNESS_INI,
+   g_boot_ballast_kb = (unsigned)HARNESS_INT(
                                                 "boot_ballast_kb", 0);
    if (g_boot_ballast_kb)
    {
@@ -251,8 +251,8 @@ static void rom_cache_select(const char *rom_path)
       why = "fits_default";   /* the default cap already holds the cart */
 #ifdef GPSP_PERF_RIG
    {
-      int hcap = (int)fe_ini_get_int(HARNESS_INI, "rom_cap", 0);
-      unsigned ballast = (unsigned)fe_ini_get_int(HARNESS_INI,
+      int hcap = (int)HARNESS_INT("rom_cap", 0);
+      unsigned ballast = (unsigned)HARNESS_INT(
                                                   "rom_ballast_kb", 0);
       if (hcap >= 1 && hcap <= 32)
       {
@@ -261,11 +261,11 @@ static void rom_cache_select(const char *rom_path)
          gamepak_resident_wanted = 0;   /* forced: no probe */
       }
       gamepak_force_swap_stubs =
-         fe_ini_get_int(HARNESS_INI, "swap_stubs", 0) ? 1u : 0u;
+         HARNESS_INT("swap_stubs", 0) ? 1u : 0u;
       platform_cache_paranoid =
-         fe_ini_get_int(HARNESS_INI, "cache_paranoid", 0) ? 1u : 0u;
+         HARNESS_INT("cache_paranoid", 0) ? 1u : 0u;
       g_jit_coh_every =
-         (unsigned)fe_ini_get_int(HARNESS_INI, "jit_coherency_scan", 0);
+         (unsigned)HARNESS_INT("jit_coherency_scan", 0);
       unsigned ballast_got = 0;
       if (ballast)
       {
@@ -289,7 +289,7 @@ static void rom_cache_select(const char *rom_path)
       /* Before fe_host_boot: the mode must hold from the first translation. */
       if (&jit_code_mode)
       {
-         int m = (int)fe_ini_get_int(HARNESS_INI, "jit_code_mode", -1);
+         int m = (int)HARNESS_INT("jit_code_mode", -1);
          if (m >= 0 && m <= 3)
             jit_code_mode = (u32)m;
          fe_evt("jit_code mode=%u key=%d", (unsigned)jit_code_mode, m);
@@ -303,8 +303,8 @@ static void rom_cache_select(const char *rom_path)
       {
          extern u32 jit_pub_inline __attribute__((weak));
          extern u32 xlat_scan_fast __attribute__((weak));
-         int pi = (int)fe_ini_get_int(HARNESS_INI, "jit_pub_inline", -1);
-         int sf = (int)fe_ini_get_int(HARNESS_INI, "xlat_scan_fast", -1);
+         int pi = (int)HARNESS_INT("jit_pub_inline", -1);
+         int sf = (int)HARNESS_INT("xlat_scan_fast", -1);
          if (&jit_pub_inline && (pi == 0 || pi == 1))
             jit_pub_inline = (u32)pi;
          if (&xlat_scan_fast && (sf == 0 || sf == 1))

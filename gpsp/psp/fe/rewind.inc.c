@@ -208,8 +208,8 @@ static void psp_rewind_product(int mb)
 
 static void psp_rewind_read_ini(void)
 {
-   int want = (int)fe_ini_get_int(HARNESS_INI, "rewind", -1);
-   int product = (int)fe_ini_get_int(HARNESS_INI, "rewind_product", want < 0);
+   int want = (int)HARNESS_INT("rewind", -1);
+   int product = (int)HARNESS_INT("rewind_product", want < 0);
 
    /* No harness key: the player's setting, with everything on.  With one:
     * the stage-2 behaviour (every optimisation off) unless rewind_product
@@ -228,20 +228,20 @@ static void psp_rewind_read_ini(void)
    }
    g_rw_want = want < 0 ? g_pcfg.rewind : want != 0;
 #define RW_KEY(field, key) \
-   g_rw_opts.field = (uint32_t)fe_ini_get_int(HARNESS_INI, key, (long)g_rw_opts.field)
+   g_rw_opts.field = (uint32_t)HARNESS_INT(key, (long)g_rw_opts.field)
 #define RW_FLAG(field, key) \
-   g_rw_opts.field = fe_ini_get_int(HARNESS_INI, key, g_rw_opts.field) != 0
+   g_rw_opts.field = HARNESS_INT(key, g_rw_opts.field) != 0
    RW_KEY(ring_mib, "rewind_mib");
    RW_KEY(interval, "rewind_interval");
    RW_KEY(burst, "rewind_burst");
    RW_KEY(tick_budget_us, "rewind_tick_budget_us");
    RW_FLAG(full_flush_restore, "rewind_full_flush");
    RW_KEY(rlog_bytes, "rewind_rlog_bytes");
-   g_rw_opts.sav_mutant = (int)fe_ini_get_int(HARNESS_INI, "rewind_sav_mutant", 0);
+   g_rw_opts.sav_mutant = (int)HARNESS_INT("rewind_sav_mutant", 0);
    RW_FLAG(ff_rewindable, "rewind_ff");
    RW_KEY(save_quiet, "rewind_save_quiet");
    RW_FLAG(inplace, "rewind_inplace");
-   g_rw_opts.dirty = (int)fe_ini_get_int(HARNESS_INI, "rewind_dirty",
+   g_rw_opts.dirty = (int)HARNESS_INT("rewind_dirty",
                                          g_rw_opts.dirty) & 3;
    RW_FLAG(verify, "rewind_verify");
    RW_FLAG(gather_prof, "rewind_gprof");
@@ -249,7 +249,7 @@ static void psp_rewind_read_ini(void)
    RW_FLAG(clock_frames, "rewind_clock");
    RW_KEY(slack_margin_us, "rewind_slack_us");
    RW_KEY(max_span, "rewind_max_span");
-   g_rw_vmem = fe_ini_get_int(HARNESS_INI, "rewind_vmem", g_rw_vmem) != 0;
+   g_rw_vmem = HARNESS_INT("rewind_vmem", g_rw_vmem) != 0;
    /* The even cadence (psp_rewind_tick).  rewind_cadence = 0: the first
     * version's ramp, a step every tick.  rewind_period / rewind_stride:
     * force "stride frames back every period ticks" instead of choosing.
@@ -257,35 +257,35 @@ static void psp_rewind_read_ini(void)
     * rewind_sound = 2 the frames gone over are heard backwards (only ever
     * at one picture a frame a tick), 1 silence, 0 silence and our own sound
     * synthesis is left out of the frames a held rewind re-runs. */
-   g_rwc.on = fe_ini_get_int(HARNESS_INI, "rewind_cadence", product) != 0;
-   g_rwc.force_p = (int)fe_ini_get_int(HARNESS_INI, "rewind_period", 0);
-   g_rwc.force_s = (int)fe_ini_get_int(HARNESS_INI, "rewind_stride", 0);
-   g_rwc.speed_max = (int)fe_ini_get_int(HARNESS_INI, "rewind_speed_max", 4);
+   g_rwc.on = HARNESS_INT("rewind_cadence", product) != 0;
+   g_rwc.force_p = (int)HARNESS_INT("rewind_period", 0);
+   g_rwc.force_s = (int)HARNESS_INT("rewind_stride", 0);
+   g_rwc.speed_max = (int)HARNESS_INT("rewind_speed_max", 4);
    /* rewind_ring = 1 gauge (default), 2 gauge + time left, 3 two rings,
     * 0 the first version (psp_rewind_hud).
     * rewind_head_skip = 0: frames re-run without a picture are still
     * captured for the renderer, as before. */
-   g_rw_ring = (int)fe_ini_get_int(HARNESS_INI, "rewind_ring", 2);
+   g_rw_ring = (int)HARNESS_INT("rewind_ring", 2);
    /* rewind_target_s: seconds of history to aim for (0 = snapshots always
     * rewind_interval apart, as before); rewind_gap_max: the most frames
     * between two snapshots it may stretch to. */
-   g_rw_opts.target_s = (uint32_t)fe_ini_get_int(HARNESS_INI,
+   g_rw_opts.target_s = (uint32_t)HARNESS_INT(
                            "rewind_target_s", (long)g_rw_opts.target_s);
-   g_rw_opts.gap_max = (uint32_t)fe_ini_get_int(HARNESS_INI,
+   g_rw_opts.gap_max = (uint32_t)HARNESS_INT(
                            "rewind_gap_max", (long)g_rw_opts.gap_max);
    fe_host_rewind_set_head_skip(
-      fe_ini_get_int(HARNESS_INI, "rewind_head_skip", 1) != 0);
-   g_rw_opts.sound_mode = 2 - (int)fe_ini_get_int(HARNESS_INI, "rewind_sound",
+      HARNESS_INT("rewind_head_skip", 1) != 0);
+   g_rw_opts.sound_mode = 2 - (int)HARNESS_INT("rewind_sound",
                                                   RW_SOUND_DEFAULT);
    if (g_rw_opts.sound_mode < 0 || g_rw_opts.sound_mode > 2)
       g_rw_opts.sound_mode = 0;
-   g_rw_opts.pace_us = (uint32_t)fe_ini_get_int(HARNESS_INI, "rewind_pace_ms",
+   g_rw_opts.pace_us = (uint32_t)HARNESS_INT("rewind_pace_ms",
                           (long)(g_rw_opts.pace_us / 1000u)) * 1000u;
 #undef RW_KEY
 #undef RW_FLAG
    /* The pictures.  rewind_pix = 0: keep none, the screen holds while
     * rewinding (stage 2). */
-   g_rw_opts.no_capture = fe_ini_get_int(HARNESS_INI, "rewind_pix", 1) == 0;
+   g_rw_opts.no_capture = HARNESS_INT("rewind_pix", 1) == 0;
    g_rw_opts.pix_pitch = MER_STAGE_PITCH;
    g_rw_opts.pix_rows  = 161;
    g_rw_opts.pix_begin = psp_rw_pix_begin;
@@ -294,22 +294,22 @@ static void psp_rewind_read_ini(void)
 #ifdef GPSP_PERF_RIG
    /* A test instrument of harness/lab builds (tools/rewind_*.sh build
     * them); a release has no rewind_hash, nor its audio tee (fe_host.c). */
-   if (fe_ini_get_int(HARNESS_INI, "rewind_hash", 0))
+   if (HARNESS_INT("rewind_hash", 0))
    {
       snprintf(g_rw_hash_path, sizeof(g_rw_hash_path), "%s/log/rewind_hash.txt",
                g_dir_base);
       g_rw_opts.hash_path = g_rw_hash_path;
       /* rewind_dump_frame = N: log/state_N_<k>.bin each time frame N runs */
       g_rw_opts.dump_frame =
-         (uint32_t)fe_ini_get_int(HARNESS_INI, "rewind_dump_frame", 0);
+         (uint32_t)HARNESS_INT("rewind_dump_frame", 0);
       snprintf(g_rw_dump_dir, sizeof(g_rw_dump_dir), "%s/log", g_dir_base);
       g_rw_opts.dump_dir = g_rw_dump_dir;
    }
 #endif
-   g_rw_opts.redo_inputs = fe_ini_get_int(HARNESS_INI, "rewind_redo", 0) != 0;
-   g_rw_opts.fuzz_from = (uint32_t)fe_ini_get_int(HARNESS_INI,
+   g_rw_opts.redo_inputs = HARNESS_INT("rewind_redo", 0) != 0;
+   g_rw_opts.fuzz_from = (uint32_t)HARNESS_INT(
                                                   "rewind_fuzz_from", 0);
-   g_rw_opts.fuzz_seed = (uint32_t)fe_ini_get_int(HARNESS_INI,
+   g_rw_opts.fuzz_seed = (uint32_t)HARNESS_INT(
                                                   "rewind_fuzz_seed", 1);
 }
 
@@ -329,7 +329,7 @@ static void psp_rom_pool_offer(void)
    gamepak_spare_pool3 = NULL;
    gamepak_spare_pool3_bytes = 0;
    g_rom_vm_lend = g_rom_vm_asleep = 0;
-   if (!fe_ini_get_int(HARNESS_INI, "rom_vmem", 0) || g_rw_want ||
+   if (!HARNESS_INT("rom_vmem", 0) || g_rw_want ||
        g_pcfg.console != FE_CONSOLE_GBA)
       return;
    if (vm_lock(&base, &size) != 0 || !base || size <= PSP_VM_ENGINE_BYTES)

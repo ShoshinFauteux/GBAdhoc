@@ -102,6 +102,31 @@
 
 #include "play_defaults.h"   /* the PLAY_* ship constants and link defaults */
 
+/* HARNESS READS (tier C, C2-1; not from P5's hoist).  The one call form of a harness-ini read:
+ * no other frontend code names HARNESS_INI in a getter (ci_greps.py R7; the one whitelisted
+ * raw read is the frame loop's rewind_gedump, ci_greps.known).  Every key, its default and
+ * the flavours that compile it are in tools/refactor/generated/harness_keys.tsv, which the
+ * Lab validates staged keys against.
+ * HARNESS_FOLD 0 (every build today): exactly the old call, so the token stream is unchanged.
+ * HARNESS_FOLD 1 (C2-3, player builds only): each read is its default, as ADR-0067's
+ * never-opened harness path already makes it at run time; HARNESS_STR leaves `out` alone,
+ * as fe_ini_get on a never-opened path does.  A rig build never folds. */
+#ifndef HARNESS_FOLD
+#define HARNESS_FOLD 0
+#endif
+#if HARNESS_FOLD && defined(GPSP_PERF_RIG)
+#error "HARNESS_FOLD folds the harness reads of a rig build (GPSP_PERF_RIG)"
+#endif
+#if !HARNESS_FOLD
+#define HARNESS_INT(key, def)      fe_ini_get_int(HARNESS_INI, key, def)
+#define HARNESS_STR(key, out, n)   fe_ini_get(HARNESS_INI, key, out, n)
+#define HARNESS_PRESENT()          file_exists(HARNESS_INI)
+#else
+#define HARNESS_INT(key, def)      ((void)sizeof(key), (long)(def))
+#define HARNESS_STR(key, out, n)   ((void)sizeof(key), (void)(out), (void)(n), 0)
+#define HARNESS_PRESENT()          0
+#endif
+
 /* STALL WATCH breadcrumbs: the two stores into g_loop_iter / g_loop_phase
  * (fe/harness.a.inc.c), compiled out of a player build (see the comment there). */
 #if defined(GPSP_KEEP_TELEMETRY) || \

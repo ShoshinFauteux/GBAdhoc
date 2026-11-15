@@ -32,9 +32,10 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       starts from).
   R7  (tier C, C2-0; health-out/design/C-2.md §2.4 check c) no raw harness read: no
       `fe_ini_get(` / `fe_ini_get_int(` whose first argument is HARNESS_INI or p_harness outside
-      psp/fe/fe_priv.h (macro definitions such as rewind.inc.c's RW_KEY count; comments do
-      not).  --r7 warn (the default until C2-1 rewrites the call form to HARNESS_INT/HARNESS_STR)
-      prints the count per file and never fails; --r7 fail lists every site as a violation.
+      psp/fe/fe_priv.h (macro definitions count; comments do not).  C2-1 rewrote every read to
+      fe_priv.h's HARNESS_INT/HARNESS_STR.  --r7 fail (the default since C2-1) lists every
+      site as a violation; a KNOWN row's key is the harness key the read names (the frame
+      loop's rewind_gedump until C2-5).  --r7 warn prints the count per file and never fails.
       R7 reads the files as they are (no logical view): its sites are where the edit goes.
 Known exceptions live in ci_greps.known (rule, file, key, reason); they are reported as
 KNOWN and do not fail.  Exit: 0 green, 1 violations, 2 usage.
@@ -646,6 +647,7 @@ def logical_view(src):
 
 # ------------------------------------------------------------- R7
 R7_RAW = re.compile(r'\bfe_ini_get(?:_int)?\s*\(\s*(?:HARNESS_INI|p_harness)\b')
+R7_KEY = re.compile(r'\s*,\s*"([A-Za-z0-9_]+)"')     # the key a raw read names (its KNOWN key)
 R7_HOME = 'psp/fe/fe_priv.h'
 _R7_CMT = re.compile(r'/\*.*?\*/|//[^\n]*', re.S)
 
@@ -659,13 +661,16 @@ def rule_r7(src):
         text = open(os.path.join(src, rel), encoding='utf-8', errors='replace').read()
         text = _R7_CMT.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text)
         for m in R7_RAW.finditer(text):
-            hits.append(Hit('R7', rel, text.count('\n', 0, m.start()) + 1, m.group(0).split('(')[0].strip(),
-                            'raw harness read (use HARNESS_INT/HARNESS_STR from fe_priv.h)'))
+            k = R7_KEY.match(text, m.end())
+            hits.append(Hit('R7', rel, text.count('\n', 0, m.start()) + 1, k.group(1) if k else '?',
+                            'raw harness read %s (use HARNESS_INT/HARNESS_STR from fe_priv.h)'
+                            % m.group(0).split('(')[0].strip()))
     return hits
 
 
-def r7_report(src, mode):
-    """-> (violations, lines).  warn: a count per file, 0 violations."""
+def r7_report(src, mode, known=(), phase='base'):
+    """-> (violations, lines).  warn: a count per file, 0 violations.  fail: a hit with a KNOWN
+    row (rule R7, its file, the harness key it reads) is reported and does not fail."""
     hits = rule_r7(src)
     out = ['R7 raw harness reads (mode %s): %d outside %s in %d files'
            % (mode, len(hits), R7_HOME, len({h.file for h in hits}))]
@@ -675,12 +680,20 @@ def r7_report(src, mode):
             per[h.file] = per.get(h.file, 0) + 1
         out += ['  WARN  R7 %-28s %d' % (f, n) for f, n in sorted(per.items())]
         return 0, out
-    out += ['  FAIL  R7 %s:%d %s [%s]' % (h.file, h.line, h.msg, h.key) for h in hits]
-    return len(hits), out
+    fails = 0
+    for h in hits:
+        kn = [k for k in known if k['rule'] == 'R7' and k['file'] == h.file and k['key'] == h.key
+              and (not k['phase'] or k['phase'] == phase)]
+        if kn:
+            out.append('  KNOWN R7 %s:%d %s -- %s (%s)' % (h.file, h.line, h.msg, kn[0]['reason'], h.key))
+        else:
+            fails += 1
+            out.append('  FAIL  R7 %s:%d %s [%s]' % (h.file, h.line, h.msg, h.key))
+    return fails, out
 
 
 # ------------------------------------------------------------- driver
-def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_path=None, r7='warn'):
+def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_path=None, r7='fail'):
     view, origin = logical_view(src) if logical else (src, {})
     try:
         fails, out = _run(view, phase, known_path, allow_path, pp_dir,
@@ -690,7 +703,7 @@ def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_
             import shutil
             shutil.rmtree(view, ignore_errors=True)
     if not only or 'R7' in only:
-        f7, o7 = r7_report(src, r7)
+        f7, o7 = r7_report(src, r7, load_known(known_path), phase)
         fails += f7
         out.pop()                             # keep 'T11: ...' last
         out += o7
@@ -760,8 +773,9 @@ def main():
     ap.add_argument('--allow', default=os.path.join(HERE, 'ci_greps.fe_evt_calls'))
     ap.add_argument('--pp', help='dir with main_psp.<flavour>.i (exit_matrix/aec_pspcc output)')
     ap.add_argument('--rules', help='comma list, default all')
-    ap.add_argument('--r7', default='warn', choices=('warn', 'fail'),
-                    help='R7 raw harness reads: warn (count only, never fails; until C2-1) or fail')
+    ap.add_argument('--r7', default='fail', choices=('warn', 'fail'),
+                    help='R7 raw harness reads: fail (the default since C2-1; KNOWN rows excepted) '
+                         'or warn (count only, never fails)')
     ap.add_argument('--write-allow', action='store_true')
     ap.add_argument('--r6', default=os.path.join(HERE, 'ci_greps.r6_pinned'))
     ap.add_argument('--write-r6', action='store_true',

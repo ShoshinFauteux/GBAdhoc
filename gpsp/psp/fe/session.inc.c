@@ -138,7 +138,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_select"))) int se
       fe_evt("variant rom=%s silent=%d group=%s", vrom, g_silent_mode,
              g_silent_group);
    }
-   else if (have_harness && !fe_ini_get_int(HARNESS_INI, "browser", 0))
+   else if (have_harness && !HARNESS_INT("browser", 0))
    {
       /* `browser = 1` overrides the ADR-0067 suppression: the gallery runs
        * even with the harness channel present (asset capture / emulator
@@ -151,7 +151,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_select"))) int se
        * matters because ROMs are far too big to stage. */
       char kr[PSP_ROM_REL_PATH_CAP] = "";
       pwr_hold("boot");
-      fe_ini_get(HARNESS_INI, "rom", kr, sizeof(kr));
+      HARNESS_STR("rom", kr, sizeof(kr));
       if (inproc_rom_n)
          snprintf(kr, sizeof(kr), "%s", inproc_roms[inproc_n % inproc_rom_n]);
       if (kr[0])
@@ -231,7 +231,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_select"))) int se
     * file type selects the matching GB hardware model. Browser launches use
     * the model explicitly chosen by the player. */
    if (launch_now || have_variant || (have_harness &&
-       !fe_ini_get_int(HARNESS_INI, "browser", 0)))
+       !HARNESS_INT("browser", 0)))
       g_pcfg.console = (int)console_from_rom_path(rom_path);
    /* PER-CONSOLE DISPLAY PROFILE (docs/DISPLAY-FEATURES.md): the running
     * ROM's console decides scale, filter, ambient bars and DMG palette.
@@ -384,7 +384,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
     * autopilot until the link runs, as gblink_role does (docs/
     * GBA-LINK-UI.md); a release build reads no harness key. */
    cfg->gblink_script_waits = g_gblink_role != 0 ||
-      fe_ini_get_int(HARNESS_INI, "link_script_waits", 0) != 0;
+      HARNESS_INT("link_script_waits", 0) != 0;
    /* LINK SPEED defaults (PLAY_* above), every build: config.ini is the
     * kill switch; the harness block below overrides for an A/B arm.  The
     * two core switches are weak: a build without SCHED_FAST / IRQ_IO_FAST
@@ -430,41 +430,41 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
       char v[200];
       /* gb_headless = 1: the single machine without picture or synthesis
        * (what a link session's partner machine costs on its own). */
-      cfg->gb_bench_headless = (int)fe_ini_get_int(HARNESS_INI, "gb_headless", 0);
-      if (fe_ini_get(HARNESS_INI, "gb_dual_rom", v, sizeof(v)) && v[0])
+      cfg->gb_bench_headless = (int)HARNESS_INT("gb_headless", 0);
+      if (HARNESS_STR("gb_dual_rom", v, sizeof(v)) && v[0])
       {
          snprintf(dual_rom, sizeof(dual_rom), "%s%s%s",
                   strchr(v, ':') ? "" : p_rom_dir, strchr(v, ':') ? "" : "/",
                   v);
          cfg->gb_dual_rom = dual_rom;
          cfg->gb_dual_mirror =
-            (int)fe_ini_get_int(HARNESS_INI, "gb_dual_mirror", 0);
+            (int)HARNESS_INT("gb_dual_mirror", 0);
          cfg->gb_dual_batch =
-            (unsigned)fe_ini_get_int(HARNESS_INI, "gb_dual_batch", 1);
+            (unsigned)HARNESS_INT("gb_dual_batch", 1);
          /* The one-console trade (docs/GB-CORE-PERF.md): gb_dual_inputs =
           * linkplay's input track for both machines, gb_dual_sav = slot 1's
           * battery image, gb_dual_rtc = the session clock seed. */
          cfg->gb_dual_armed =
-            fe_ini_get_int(HARNESS_INI, "gb_dual_armed", 0) != 0;
+            HARNESS_INT("gb_dual_armed", 0) != 0;
          cfg->gb_dual_quiet =
-            (unsigned)fe_ini_get_int(HARNESS_INI, "gb_dual_quiet", 0);
-         if (fe_ini_get(HARNESS_INI, "gb_dual_rtc", v, sizeof(v)) && v[0])
+            (unsigned)HARNESS_INT("gb_dual_quiet", 0);
+         if (HARNESS_STR("gb_dual_rtc", v, sizeof(v)) && v[0])
             cfg->gb_dual_rtc = strtoll(v, NULL, 10);
-         if (fe_ini_get(HARNESS_INI, "gb_dual_inputs", v, sizeof(v)) && v[0])
+         if (HARNESS_STR("gb_dual_inputs", v, sizeof(v)) && v[0])
          {
             snprintf(dual_inputs, sizeof(dual_inputs), "%s%s%s",
                      strchr(v, ':') ? "" : p_rom_dir,
                      strchr(v, ':') ? "" : "/", v);
             cfg->gb_dual_inputs = dual_inputs;
          }
-         if (fe_ini_get(HARNESS_INI, "gb_dual_sav", v, sizeof(v)) && v[0])
+         if (HARNESS_STR("gb_dual_sav", v, sizeof(v)) && v[0])
          {
             snprintf(dual_sav, sizeof(dual_sav), "%s%s%s",
                      strchr(v, ':') ? "" : p_rom_dir,
                      strchr(v, ':') ? "" : "/", v);
             cfg->gb_dual_sav = dual_sav;
          }
-         if (fe_ini_get(HARNESS_INI, "gb_dual_state", v, sizeof(v)) && v[0])
+         if (HARNESS_STR("gb_dual_state", v, sizeof(v)) && v[0])
          {
             snprintf(dual_state, sizeof(dual_state), "%s%s%s",
                      strchr(v, ':') ? "" : p_rom_dir,
@@ -483,38 +483,38 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
     * log/gbadual_hash.txt. */
    {
       static char gd_script[200], gd_hash[200], gd_ap[200];
-      cfg->gba_dual = (int)fe_ini_get_int(HARNESS_INI, "gba_dual", 0);
+      cfg->gba_dual = (int)HARNESS_INT("gba_dual", 0);
       cfg->gba_dual_mirror =
-         (int)fe_ini_get_int(HARNESS_INI, "gba_dual_mirror", 0);
+         (int)HARNESS_INT("gba_dual_mirror", 0);
       cfg->gba_dual_lookahead =
-         (unsigned)fe_ini_get_int(HARNESS_INI, "gba_dual_lookahead", 0);
+         (unsigned)HARNESS_INT("gba_dual_lookahead", 0);
       cfg->gba_dual_own_rom =
-         (int)fe_ini_get_int(HARNESS_INI, "gba_dual_own_rom", 0);
+         (int)HARNESS_INT("gba_dual_own_rom", 0);
       /* GBA-LINK-MIRROR.md 16: the headless partner mixes no sound
        * (config.ini kill switch; the harness key wins for an A/B arm) */
       {
          long v = fe_ini_get_int(p_config, "gba_link_headless_audio",
                                  PLAY_GBA_LINK_HEADLESS_AUDIO);
-         v = fe_ini_get_int(HARNESS_INI, "gba_link_headless_audio", v);
+         v = HARNESS_INT("gba_link_headless_audio", v);
          /* 2 (section 23): as 1, and the partner's ring is not read out */
          cfg->gba_dual_partner_audio = v == 2 ? -1 : (v ? 0 : 1);
          v = fe_ini_get_int(p_config, "gba_link_sram_crc", 0);
          cfg->gba_dual_sram_crc =
-            fe_ini_get_int(HARNESS_INI, "gba_link_sram_crc", v) != 0;
+            HARNESS_INT("gba_link_sram_crc", v) != 0;
          /* 17.5: instance B's translation cache offset mod 8 KiB (-1 = the
           * build's JIT_PIN_OFFSET, the same sets as instance A) */
          v = fe_ini_get_int(p_config, "gba_link_jit_pin_b", -1);
-         v = fe_ini_get_int(HARNESS_INI, "gba_link_jit_pin_b", v);
+         v = HARNESS_INT("gba_link_jit_pin_b", v);
          cfg->gba_dual_b_jit_pin_p1 = v >= 0 ? (unsigned)(v & 8191) + 1u : 0u;
          /* 21: the cable fast path in both cores (pure speed, same
           * machines; 0 = the path every build up to 3.5.0 used) */
          v = fe_ini_get_int(p_config, "gba_link_fast", PLAY_GBA_LINK_FAST);
-         v = fe_ini_get_int(HARNESS_INI, "gba_link_fast", v);
+         v = HARNESS_INT("gba_link_fast", v);
          /* 24: scheduler fast paths (SCHED_FAST builds only; default 0).
           * Weak: a build without the switch has no such variable. */
          {
             extern uint32_t sched_fast __attribute__((weak));
-            long sf = fe_ini_get_int(HARNESS_INI, "sched_fast",
+            long sf = HARNESS_INT("sched_fast",
                                      &sched_fast ? (long)sched_fast : 0);
             if (&sched_fast)
                sched_fast = sf ? 1u : 0u;
@@ -531,7 +531,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
           * bits (fe_gblink.h). */
          {
             extern uint32_t timer_lazy __attribute__((weak));
-            long tl = fe_ini_get_int(HARNESS_INI, "timer_lazy",
+            long tl = HARNESS_INT("timer_lazy",
                                      &timer_lazy ? (long)timer_lazy : 0);
             if (&timer_lazy)
                timer_lazy = (uint32_t)tl;
@@ -547,7 +547,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
           * builds only; default 0).  Read by the emitter at game load. */
          {
             extern uint32_t irq_io_fast __attribute__((weak));
-            long qf = fe_ini_get_int(HARNESS_INI, "irq_io_fast",
+            long qf = HARNESS_INT("irq_io_fast",
                                      &irq_io_fast ? (long)irq_io_fast : 0);
             if (&irq_io_fast)
                irq_io_fast = qf ? 1u : 0u;
@@ -558,7 +558,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
           * asm (mips_stub.S msr_fast_store); read on every switch. */
          {
             extern uint32_t msr_fast __attribute__((weak));
-            long mf = fe_ini_get_int(HARNESS_INI, "msr_fast",
+            long mf = HARNESS_INT("msr_fast",
                                      &msr_fast ? (long)msr_fast : 0);
             if (&msr_fast)
                msr_fast = mf ? 1u : 0u;
@@ -572,26 +572,26 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
          /* 22: the pair's wall-clock bound per step, ms (0 = 15000,
           * negative = none) */
          cfg->gba_dual_step_max_ms =
-            (int)fe_ini_get_int(HARNESS_INI, "gba_link_step_max_ms", 0);
+            (int)HARNESS_INT("gba_link_step_max_ms", 0);
          /* 21: the one-console bench starts its pair at power-on (harness
           * only; without it the pair waits for a state load) */
          cfg->gba_dual_cold =
-            fe_ini_get_int(HARNESS_INI, "gba_dual_cold", 0) != 0;
+            HARNESS_INT("gba_dual_cold", 0) != 0;
          /* 18: lend instance B's static block to the ROM cache while no
           * session runs (kill switch gba_link_lend = 0) */
          v = fe_ini_get_int(p_config, "gba_link_lend", 1);
-         v = fe_ini_get_int(HARNESS_INI, "gba_link_lend", v);
+         v = HARNESS_INT("gba_link_lend", v);
          cfg->gba_link_nolend = v ? 0 : 1;
       }
-      if (fe_ini_get(HARNESS_INI, "gba_dual_script", gd_script,
+      if (HARNESS_STR("gba_dual_script", gd_script,
                      sizeof(gd_script)) && gd_script[0])
          cfg->gba_dual_script = gd_script;
       /* gba_dual_autopilot = file: the partner's autopilot script (RAM
        * predicates on the partner's machine); wins over gba_dual_script. */
-      if (fe_ini_get(HARNESS_INI, "gba_dual_autopilot", gd_ap,
+      if (HARNESS_STR("gba_dual_autopilot", gd_ap,
                      sizeof(gd_ap)) && gd_ap[0])
          cfg->gba_dual_autopilot = gd_ap;
-      if (fe_ini_get_int(HARNESS_INI, "gba_dual_hash", 0))
+      if (HARNESS_INT("gba_dual_hash", 0))
       {
          snprintf(gd_hash, sizeof(gd_hash), "%s/gbadual_hash.txt", LOG_DIR);
          cfg->gba_dual_hash = gd_hash;
@@ -607,13 +607,13 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
        * build does at every GBA game load -- a cable room CAN be hosted, no
        * session is running.  For tests of everything that must keep
        * working in that state (the rewind did not: fe_host_rewind_blocked). */
-      if (fe_ini_get_int(HARNESS_INI, "link_avail", 0) && !g_gba_cable &&
+      if (HARNESS_INT("link_avail", 0) && !g_gba_cable &&
           g_pcfg.console == FE_CONSOLE_GBA)
       {
          cfg->gba_dual = 1;
          cfg->gba_dual_session = 1;
       }
-      cfg->gblink_hash_every = (unsigned)fe_ini_get_int(HARNESS_INI,
+      cfg->gblink_hash_every = (unsigned)HARNESS_INT(
                                                        "gblink_hash_every", 0);
       if (g_gba_cable)
          fe_evt("gba_cable role=%s hash_every=%u", g_gblink_role == 1 ?
@@ -643,11 +643,11 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
 #ifdef GBA_LINK
    {
 #ifdef GPSP_PERF_RIG
-      int menu = (int)fe_ini_get_int(HARNESS_INI, "gba_link_menu", 0);
-      g_link_exit_after = (unsigned)fe_ini_get_int(HARNESS_INI,
+      int menu = (int)HARNESS_INT("gba_link_menu", 0);
+      g_link_exit_after = (unsigned)HARNESS_INT(
                                                    "link_exit_after", 0);
       fe_host_gba_cable_rom_sampled(
-         !fe_ini_get_int(HARNESS_INI, "gba_link_rom_full", 0));
+         !HARNESS_INT("gba_link_rom_full", 0));
 #else
       int menu = 1;
 #endif
@@ -661,10 +661,10 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
        * player's build always; a harness run with gba_dual_late = 1 (the
        * rigs' role sessions keep B loaded at boot unless they ask). */
 #ifdef GPSP_PERF_RIG
-      g_gba_late = (int)fe_ini_get_int(HARNESS_INI, "gba_dual_late", 0) != 0;
-      cfg->gba_session_reserve_kb = (unsigned)fe_ini_get_int(HARNESS_INI,
+      g_gba_late = (int)HARNESS_INT("gba_dual_late", 0) != 0;
+      cfg->gba_session_reserve_kb = (unsigned)HARNESS_INT(
          "cable_reserve_kb", (long)CABLE_RESERVE_KB);
-      cfg->gba_sessmem_fail = (int)fe_ini_get_int(HARNESS_INI,
+      cfg->gba_sessmem_fail = (int)HARNESS_INT(
                                                  "sessmem_fail", 0);
       if (cfg->gba_sessmem_fail)
          fe_evt("sessmem_fail mode=%d", cfg->gba_sessmem_fail);
@@ -695,10 +695,10 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
              * the literal read of every harness key they emit */
             switch (k)
             {
-            case 0: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_a_small", v); break;
-            case 1: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_a_large", v); break;
-            case 2: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_b_small", v); break;
-            default: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_b_large", v); break;
+            case 0: v = HARNESS_INT("gba_link_pin_a_small", v); break;
+            case 1: v = HARNESS_INT("gba_link_pin_a_large", v); break;
+            case 2: v = HARNESS_INT("gba_link_pin_b_small", v); break;
+            default: v = HARNESS_INT("gba_link_pin_b_large", v); break;
             }
 #endif
             p1 = v >= 0 ? (unsigned)(v & 8191) + 1u : 0u;
@@ -751,7 +751,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
        * (`rtc_wall = 1`): every rig compares runs made at different hours,
        * and a game that tints the screen by time of day would differ. */
       g_rtc_wall_on = have_harness
-         ? (int)fe_ini_get_int(HARNESS_INI, "rtc_wall", 0) != 0
+         ? (int)HARNESS_INT("rtc_wall", 0) != 0
          : g_pcfg.rtc_realtime != 0;
       rtc_wall_publish(1);
       fe_evt("rtc_wall on=%d src=%s", g_rtc_wall_on,
@@ -809,7 +809,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_load"))) int sess
        * a reserve that would leave the core below its minimum (a hang, see
        * MEM_GBA_CORE_MIN) is handed back, and the session then fails to
        * start with an EVT instead. */
-      long kb = fe_ini_get_int(HARNESS_INI, "cable_reserve_kb",
+      long kb = HARNESS_INT("cable_reserve_kb",
                                (long)CABLE_RESERVE_KB);
       unsigned left = 0;
       if (kb > 0 && kb <= 16384)
@@ -946,10 +946,10 @@ static __attribute__((noinline, section(".text.fe_cold.session_load"))) int sess
           * RENDERER off but the module still loads, so the first attempt to
           * isolate "did we ever load a kernel module" was void -- the log said
           * `me_init state=up` with me_mode=0.  This key is the real switch. */
-         int meb = (int)fe_ini_get_int(HARNESS_INI, "me_boot",
+         int meb = (int)HARNESS_INT("me_boot",
                                        g_pcfg.me_boot);
-         int mbn = (int)fe_ini_get_int(HARNESS_INI, "me_bench", 0);
-         int mev = (int)fe_ini_get_int(HARNESS_INI, "me_video", PLAY_ME_VIDEO);
+         int mbn = (int)HARNESS_INT("me_bench", 0);
+         int mev = (int)HARNESS_INT("me_video", PLAY_ME_VIDEO);
          if (g_pcfg.console != FE_CONSOLE_GBA)
             meb = mbn = mev = 0;
          if (g_me_rend_cfg)
@@ -1155,11 +1155,11 @@ static __attribute__((noinline, section(".text.fe_cold.session_pre_loop"))) void
 {
 #if defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
-   g_stall_s = (int)fe_ini_get_int(HARNESS_INI, "stall_watch_s", 0);
+   g_stall_s = (int)HARNESS_INT("stall_watch_s", 0);
 #ifdef GPSP_PERF_RIG
-   g_stall_exit_s = (int)fe_ini_get_int(HARNESS_INI, "stall_exit_s", 0);
+   g_stall_exit_s = (int)HARNESS_INT("stall_exit_s", 0);
    g_stall_exit_hard =
-      (int)fe_ini_get_int(HARNESS_INI, "stall_exit_hard", 0) != 0;
+      (int)HARNESS_INT("stall_exit_hard", 0) != 0;
    if (g_stall_exit_s > 0)
       fe_evt("stall_exit on s=%d hard=%d", g_stall_exit_s, g_stall_exit_hard);
 #endif

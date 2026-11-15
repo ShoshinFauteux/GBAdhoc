@@ -262,7 +262,7 @@ static __attribute__((noinline, section(".text.fe_cold.inproc_try_return"))) int
          if (!heap_snap_same(&after, &snap_pre))
          {
             /* Harness `inproc_force = 1` (diagnosis only): log, carry on. */
-            if (!fe_ini_get_int(HARNESS_INI, "inproc_force", 0))
+            if (!HARNESS_INT("inproc_force", 0))
                why = "census";
             fe_evt("inproc_census_mismatch arena=%u/%u used=%u/%u "
                    "chunks=%u/%u fordblks=%u/%u free=%u/%u largest=%u/%u "

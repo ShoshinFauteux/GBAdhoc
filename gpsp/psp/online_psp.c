@@ -26,15 +26,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The Lab validates harness keys by grepping this exact call form
- * (backend/lab/inikeys.py).  online_psp_configure() reads each of them from
- * the harness ini first, then config.ini:
- *   fe_ini_get(HARNESS_INI, "online_relay")
- *   fe_ini_get(HARNESS_INI, "online_room")
- *   fe_ini_get_int(HARNESS_INI, "online_direct")
- *   fe_ini_get_int(HARNESS_INI, "online_wifi")
- *   fe_ini_get_int(HARNESS_INI, "online_drop_direct_ms")
- *   fe_ini_get_int(HARNESS_INI, "online_prx_cycles")
+/* online_psp_configure() reads each of these keys from the harness ini
+ * first, then config.ini (get_str/get_int on `h`, below):
+ *   online_relay, online_room             (strings)
+ *   online_direct, online_wifi            (integers)
+ *   online_drop_direct_ms, online_prx_cycles
+ * The Lab validates harness keys against the generated table
+ * tools/refactor/generated/harness_keys.tsv (harness_keys.py finds these
+ * reads through `h`), not by grepping this comment, which used to hold
+ * the old call form for that grep.
  */
 
 #ifdef GPSP_PERF_RIG

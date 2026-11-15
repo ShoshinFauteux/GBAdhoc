@@ -1118,7 +1118,7 @@ static int gblink_begin(int is_host)
       /* Fast link: the Wireless menu's setting, as it stands now.  It only
        * decides when this console hosts; a guest runs the host's.  Harness
        * gblink_input_batch = 2 forces it on, 0 or 1 off. */
-      long fb = fe_ini_get_int(HARNESS_INI, "gblink_input_batch", -1);
+      long fb = HARNESS_INT("gblink_input_batch", -1);
       int fl = fb < 0 ? g_pcfg.fast_link : fb == 2;
       fe_host_set_fast_link(fl);
       fe_evt("fast_link_setting own=%d from=%s role=%s", fl,
