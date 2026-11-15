@@ -23,11 +23,8 @@
 // MSR_FAST (codegen-q3): mode switches by MSR / SPSR restore without the C
 // call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
 // is that set_cpu_mode), absolute addressing, and no IRQ_INTEGRITY_CHECK
-// (whose exit hook lives in the C body).
-#if defined(MSR_FAST) && !defined(PIC) && !defined(IRQ_INTEGRITY_CHECK)
-#ifndef FIQ_BANK_FIX
-#error "MSR_FAST needs FIQ_BANK_FIX"
-#endif
+// (whose exit hook lives in the C body).  Built in: part of FIQ_BANK_FIX.
+#if defined(FIQ_BANK_FIX) && !defined(PIC) && !defined(IRQ_INTEGRITY_CHECK)
 #define MSR_FAST_ON 1
 #endif
 
@@ -362,7 +359,6 @@ return_to_main:
 # and which only the PC-changed path alters.  $1/$2/$5/$6 are dead at entry.
 # Not applied to _dual: there the T bit is only settled inside the lookup, and
 # an IRQ taken before it would save the wrong CPSR/LR pair.
-#ifdef DISPATCH_CYCLE_CHECK
 .macro dispatch_cycle_check align_bits
   bgez reg_cycles, 9f             # budget left: straight to the lookup
   nop
@@ -372,10 +368,6 @@ return_to_main:
   lw $4, REG_PC($16)              # $4 was clobbered by the event call
 9:
 .endm
-#else
-.macro dispatch_cycle_check align_bits
-.endm
-#endif
 
 // DISPATCH_CACHE (prototype, cpu_threaded.c): probe {pc -> entry} before
 // paying for save_registers + the C lookup.  $1/$2/$5/$6 are dead here (see
@@ -384,14 +376,8 @@ return_to_main:
 #ifndef DISPATCH_CACHE_BITS
 #define DISPATCH_CACHE_BITS 9     /* must match cpu.h */
 #endif
-#ifdef GBA_PC_MASK
   #define DC_KEY_ARM   ext $5, $4, 2, 26
   #define DC_KEY_THUMB ext $5, $4, 1, 27
-#else
-  #define DC_KEY_ARM   srl $5, $4, 2
-  #define DC_KEY_THUMB srl $5, $4, 1
-#endif
-#ifdef DISPATCH_ASSOC
 // DISPATCH_ASSOC (cpu_threaded.c): 2-way sets {key0, entry0, key1, entry1},
 // 16 bytes, both ways in the line the first load brings in.  Leaves the
 // entry in $6 on a hit, as the direct-mapped probe does.
@@ -408,17 +394,6 @@ return_to_main:
   lw $6, %lo(\table)+12($1)      # (delay) way 1 entry
 .Ldc_hit\@:
 .endm
-#else
-.macro dc_probe table, miss
-  andi $6, $5, ((1 << DISPATCH_CACHE_BITS) - 1)
-  sll $6, $6, 3
-  lui $1, %hi(\table)
-  addu $1, $1, $6
-  lw $2, %lo(\table)($1)         # key
-  bne $2, $5, \miss
-  lw $6, %lo(\table)+4($1)       # (delay) entry
-.endm
-#endif
 #endif
 
 // DISPATCH_LOOKUP_PC (claude/ibranch, 2026-11-13): lookup_pc (an I/O write
@@ -433,7 +408,7 @@ return_to_main:
 // hit then returns exactly what the lookup would have returned, as a stub
 // hit does.  Needs JIT_CODE_DISCIPLINE (gpsp_profile.h).  $1/$2/$5 are free
 // (lookup_pc_noflags keeps the T bit in $6).
-#ifdef DISPATCH_LOOKUP_PC
+#if defined(DISPATCH_CACHE) && !defined(JIT_CODE_AB)
 .macro dc_publish_idle miss
   lui $1, %hi(jit_dirty_n)
   lw $2, %lo(jit_dirty_n)($1)
@@ -479,7 +454,7 @@ defsymbl(mips_indirect_branch_thumb)
   nop
 
 defsymbl(mips_indirect_branch_dual)
-#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+#if defined(DISPATCH_CACHE)
   // DISPATCH_ASSOC: do what block_lookup_address_dual does -- CPSR.T = bit 0,
   // pc & ~1 (Thumb) or pc & ~3 (ARM; (pc + 2) & ~3 without BX_ALIGN_FIX) --
   // then dispatch through the ARM or Thumb stub's probe, past its cycle
@@ -495,9 +470,6 @@ defsymbl(mips_indirect_branch_dual)
   ins $1, $2, 5, 1                # CPSR.T = T
   bne $2, $0, .Ldc_thumb_probe
   sw $1, REG_CPSR($16)            # (delay)
-#ifndef BX_ALIGN_FIX
-  addiu $4, $4, 2                 # ARM: pc + 2 ...
-#endif
   b .Ldc_arm_probe
   ins $4, $0, 0, 2                # (delay) ... & ~3
 .Ldc_dual_end:
@@ -508,16 +480,8 @@ defsymbl(mips_indirect_branch_dual)
   // Same keys, same CPSR write.
   andi $1, $4, 1
   bne $1, $0, 7f
-#ifdef BX_ALIGN_FIX
   addiu $5, $4, 0                 # (delay) ARM: pc (bit 1 dropped by the key)
-#else
-  addiu $5, $4, 2                 # (delay) ARM: pc + 2
-#endif
-#ifdef GBA_PC_MASK
   ext $5, $5, 2, 26
-#else
-  srl $5, $5, 2
-#endif
   dc_probe dispatch_cache_arm, 8f
   lw $1, REG_CPSR($16)
   ins $1, $0, 5, 1                # T = 0
@@ -577,7 +541,7 @@ cpu_sleep_loop:
 lookup_pc:
   extract_flags                   # $1 contains CPSR now
 lookup_pc_noflags:
-#ifdef DISPATCH_LOOKUP_PC
+#if defined(DISPATCH_CACHE) && !defined(JIT_CODE_AB)
   andi $6, $1, 0x20               # isolate mode bit ($1 is the probe's)
   dc_publish_idle 73f             # a publish is owed: the C lookup makes it
   lw $4, REG_PC($16)              # (delay) PC
@@ -610,7 +574,7 @@ lookup_pc_noflags:
   nop
 .Llookup_pc_end:
 
-#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+#if defined(DISPATCH_CACHE)
 # DC_STUB_FILL: mips_stub.o(.text) heads the pinned hot order
 # (psp/layout/hot.ord): everything linked after it keeps its sets only if this
 # section keeps its size.  The rewritten _dual frees more than the 2-way
@@ -1196,7 +1160,6 @@ defsymbl(ewram)
 defsymbl(io_registers)
   .space 0x400
 
-#if defined(HOT_DATA_GUARD)
 # HOT_DATA_GUARD (cpu-levers 2026-10-27): this block (memory_map_read, reg,
 # palette/OAM, spsr, reg_mode, the patcher tables) is the hottest data the
 # core has, and plain .data let every text/rodata change slide its D-cache
@@ -1207,14 +1170,13 @@ defsymbl(io_registers)
 #   .data.gbahot.b   the block itself
 #   .data.gbahot.c   (HOT_DATA_REF - HOT_DATA_OFFSET) mod 8 KiB of zeros, so
 #                    everything linked after the block keeps its sets
-#                    whatever HOT_DATA_OFFSET is (the offset sweep moves the
-#                    block and nothing else).
+#                    whatever HOT_DATA_OFFSET is (the 2026-10 offset sweep
+#                    moved the block and nothing else; 0x1b00 won and is
+#                    built in, code-health A-6).
 # HOT_DATA_REF is lab-cpl2xvf's placement, so the default build is
 # set-identical to it.  GBA_LINK's instance B discards .a and .c
 # (psp/gbalink_core_b.ld): its copy of the block stays where it was.
-#ifndef HOT_DATA_OFFSET
 #define HOT_DATA_OFFSET 0x1b00
-#endif
 #define HOT_DATA_REF 0x1b00
 .if (HOT_DATA_OFFSET & 63) || (HOT_DATA_OFFSET >= 8192)
 .error "HOT_DATA_OFFSET must be a multiple of 64 below 8192"
@@ -1227,10 +1189,6 @@ defsymbl(io_registers)
   .space HOT_DATA_OFFSET
   .section .data.gbahot.b,"aw"
   .balign 64
-#else
-.data
-.align 6
-#endif
 
 defobj(memory_map_read)
   .space 0x8000
@@ -1339,10 +1297,8 @@ fnptrs:
 defobj(gba_rewind_clean)
   .space 360
 #endif
-#if defined(HOT_DATA_GUARD)
   .section .data.gbahot.c,"aw"
   .space ((HOT_DATA_REF - HOT_DATA_OFFSET) & 8191)
-#endif
 
 #if !defined(MMAP_JIT_CACHE)
 

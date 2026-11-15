@@ -220,7 +220,6 @@ u32 ewram_code_max =  0U;
 
 #define INITIAL_ROM_WATERMARK   16   // To avoid NULL aliasing
 u32 rom_cache_watermark = INITIAL_ROM_WATERMARK;
-#ifdef IRQ_IO_FAST
 /* IRQ_IO_FAST=1 (build) + irq_io_fast (run time, read when the emitter
  * builds its stubs: set it before the game loads; harness `irq_io_fast = 1`).
  * mips/mips_emit.h, the region-4 store stub.  Default 0: the stub is byte
@@ -229,12 +228,11 @@ u32 rom_cache_watermark = INITIAL_ROM_WATERMARK;
 #define IRQ_IO_FAST_DEFAULT 0
 #endif
 u32 irq_io_fast = IRQ_IO_FAST_DEFAULT;
-#endif
-#ifdef MSR_FAST
-/* MSR_FAST=1 (build) + msr_fast (run time: config.ini / harness key
- * msr_fast): CPSR writes that switch mode, and SPSR restores, bank the
- * registers in mips/mips_stub.S (msr_fast_store) instead of the C call.
- * Read on every switch; 0 = the C path every build before it ran. */
+/* MSR_FAST (built in, part of FIQ_BANK_FIX) + msr_fast (run time: config.ini
+ * / harness key msr_fast): CPSR writes that switch mode, and SPSR restores,
+ * bank the registers in mips/mips_stub.S (msr_fast_store) instead of the C
+ * call.  Read on every switch; 0 = the C path every build before it ran. */
+#ifdef FIQ_BANK_FIX
 #ifndef MSR_FAST_DEFAULT
 #define MSR_FAST_DEFAULT 1
 #endif
@@ -3312,10 +3310,10 @@ static void smc_stable_thunk_link(u8 *entry, u8 *body)
 #endif
 }
 
-#if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
+#if defined(DISPATCH_CACHE)
 static void dispatch_cache_forget(u32 pc, u32 thumb);
 #endif
-#if defined(DISPATCH_CACHE) && defined(DISPATCH_ASSOC)
+#if defined(DISPATCH_CACHE)
 /* DC_NOINLINE: DISPATCH_ASSOC moves the cache fill and forget out of line;
  * the functions that used to hold them inline (this one, the two address
  * lookups) are then small enough for gcc to inline into their callers,
@@ -3329,7 +3327,7 @@ static void dispatch_cache_forget(u32 pc, u32 thumb);
 static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 {
   u8 *translation_ptr = entry;
-#if defined(DISPATCH_CACHE) && defined(DISPATCH_PRECISE)
+#if defined(DISPATCH_CACHE)
   /* This thunk now jumps back into the dispatcher: a cached {pc -> thunk}
    * would loop.  Every retirement and every aborted translation comes
    * through here, so this is the one place the cache must forget. */
@@ -3431,11 +3429,7 @@ static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
  * index: memory_map_read[] is 8K entries for pc>>15 (28 bits exactly) and
  * def_seq_cycles[] is 16 entries for pc>>24.  Masking restores the hardware
  * behaviour and the array bounds in one go. */
-#ifdef GBA_PC_MASK
 #define GBA_PC(x) ((x) & 0x0FFFFFFFu)
-#else
-#define GBA_PC(x) (x)
-#endif
 
 #define block_lookup_address_pc_arm()                                         \
   u32 thumb = 0;                                                              \
@@ -3743,9 +3737,6 @@ vram_lookup_builder(thumb)
   (((GBA_PC(target) >> 24) == 6) ?                                            \
     vram_lookup_translate_##type((target), (thumb)) :                         \
     block_lookup_translate_##type(target))
-#ifndef BADJUMP_SAFE
-#error "VRAM_EXEC needs BADJUMP_SAFE (its dispatcher path is BADJUMP_GUARD's)"
-#endif
 #else
 #define VRAM_LOOKUP_CASE(type)
 #define XLAT_LINK_LOOKUP(type, thumb, target) block_lookup_translate_##type(target)
@@ -3990,12 +3981,7 @@ static int ram_mirror_resolve_##type(ramtag_type *te, u32 pc)                 \
   flush_translation_cache_ram();                                              \
   return 1;                                                                   \
 }
-#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
-/* smc_stable_thunk_dispatch forgets the retired pc only in a precise cache */
-#define RAM_MIRROR_CLEAR_DISPATCH() dispatch_cache_clear()
-#else
 #define RAM_MIRROR_CLEAR_DISPATCH() do { } while (0)
-#endif
 #else
 #define ram_mirror_resolve_builder(type, is_thumb)                            \
 static int ram_mirror_resolve_##type(ramtag_type *te, u32 pc)                 \
@@ -4227,15 +4213,11 @@ u8 function_cc *block_lookup_address_dual(u32 pc)
     reg[REG_CPSR] |= 0x20;
     return block_lookup_address_thumb(pc);
   } else {
-#ifdef BX_ALIGN_FIX
     /* ARM7TDMI: a BX into ARM state with address bit 1 set fetches from
      * the word BELOW (the bus ignores A1).  Camelot's IRQ veneer ("bx pc" at
      * a halfword-aligned address, Golden Sun 2 / Mario Golf / Mario Tennis)
      * lands on the "mrs r3, cpsr" at pc+2; rounding up skipped it. */
     pc &= ~0x03;
-#else
-    pc = (pc + 2) & ~0x03;
-#endif
     reg[REG_CPSR] &= ~0x20;
     return block_lookup_address_arm(pc);
   }
@@ -4553,7 +4535,6 @@ void badjump_report(u32 pc)
  *
  * This cannot regress anything -- the path it replaces crashes 100% of the
  * time, so there is no working behaviour to lose. */
-#ifdef BADJUMP_SAFE
 u32 badjump_recoveries = 0;
 /* Pointing the CPU at the reset vector is NOT a reset: mode, IRQ enables,
  * timers and sound DMA all carry on, so the BIOS boots in the wrong mode with
@@ -4667,12 +4648,6 @@ vram_or_badjump_builder(thumb, 1)
 #define BADJUMP_GUARD_X(ret, pc, type) BADJUMP_GUARD(ret, pc)
 #define BADJUMP_EXHAUSTED_X(pc, type)  BADJUMP_EXHAUSTED(pc)
 #endif
-#else
-#define BADJUMP_GUARD(ret, pc) do { } while (0)
-#define BADJUMP_GUARD_X(ret, pc, type) do { } while (0)
-#define BADJUMP_EXHAUSTED(pc)  return NULL
-#define BADJUMP_EXHAUSTED_X(pc, type)  BADJUMP_EXHAUSTED(pc)
-#endif
 
 #ifdef DISPATCH_CACHE
 /* DISPATCH_CACHE (prototype, docs/DYNAREC-PROFILE.md): a direct-mapped
@@ -4687,15 +4662,9 @@ vram_or_badjump_builder(thumb, 1)
  * identical by construction, which dr_oracle.py verifies. */
 u32 dispatch_cache_arm[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
-#ifdef GBA_PC_MASK
 #define DC_KEY_ARM(pc)   ((((pc) & 0x0FFFFFFFu) >> 2))
 #define DC_KEY_THUMB(pc) ((((pc) & 0x0FFFFFFFu) >> 1))
-#else
-#define DC_KEY_ARM(pc)   ((pc) >> 2)
-#define DC_KEY_THUMB(pc) ((pc) >> 1)
-#endif
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
-#ifdef DISPATCH_ASSOC
 /* DISPATCH_ASSOC (claude/ibranch, 2026-11-13): the same 4 KiB per ISA, as
  * 2-way sets -- {key0, entry0, key1, entry1}, 16 bytes, one quarter of a
  * D-cache line -- instead of 512 direct-mapped slots.  The twin
@@ -4709,7 +4678,6 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
  * what the C lookup returned for that pc. */
 #define DC_SMASK  ((1u << (DISPATCH_CACHE_BITS - 1)) - 1)
 #define DC_SET(k) (((k) & DC_SMASK) * 4)        /* word index of way 0 */
-#endif
 #if defined(XLAT_FAST) && !defined(XLAT_NO_DCLEAR)
 /* XLAT_FAST DCLEAR: every RAM flush and every partial retirement empties
  * both tables -- 8 KiB of memset, 12+ times a frame on the SMC-heavy titles,
@@ -4755,7 +4723,6 @@ void dispatch_cache_clear(void)
 }
 #define DC_NOTE_FILL(tbl, i_) do { } while (0)
 #endif
-#ifdef DISPATCH_PRECISE
 /* DISPATCH_PRECISE (cpu-levers, 2026-10-26): SMC retirement forgets only the
  * retired blocks' own entries instead of emptying the whole cache (Doom II
  * retires ~200 blocks a frame; each wipe cost the next indirect branches a
@@ -4780,12 +4747,8 @@ static inline int dc_fill_ok(u32 pc)
   if (r == 2) return !(pc & 0x00FC0000u);
   return 1;
 }
-#ifdef DISPATCH_ASSOC
 /* out of line: smc_stable_thunk_dispatch sits in the pinned warm tail */
 static void __attribute__((noinline)) dispatch_cache_forget(u32 pc, u32 thumb)
-#else
-static void dispatch_cache_forget(u32 pc, u32 thumb)
-#endif
 {
   u32 r = (pc >> 24) & 0xF, k, i;
   u32 *tbl;
@@ -4794,20 +4757,12 @@ static void dispatch_cache_forget(u32 pc, u32 thumb)
   else return;                          /* only RAM blocks retire */
   if (thumb) { k = pc >> 1; tbl = dispatch_cache_thumb; }
   else       { k = pc >> 2; tbl = dispatch_cache_arm; }
-#ifdef DISPATCH_ASSOC
   i = DC_SET(k);
   if (tbl[i + 2] == k)
     tbl[i + 2] = DC_TOMB;
-#else
-  i = (k & DC_MASK) * 2;
-#endif
   if (tbl[i] == k)
     tbl[i] = DC_TOMB;
 }
-#else
-#define DC_FILL_OK(pc) 1
-#endif
-#ifdef DISPATCH_ASSOC
 /* DISPATCH_ASSOC fill, out of line (the lookups that call it sit in the
  * pinned warm tail; it runs only on a C lookup).  A key already in the set
  * keeps its way (a C lookup can meet a cached pc: the frame-start lookup, a
@@ -4839,13 +4794,6 @@ static void __attribute__((noinline)) dc_put_assoc(u32 *tbl, u32 k, u32 p)
   tbl[i + 1] = p;
 }
 #define DC_PUT(tbl, key, ptr) dc_put_assoc((tbl), (key), (u32)(uintptr_t)(ptr))
-#else
-#define DC_PUT(tbl, key, ptr) do {                                            \
-  u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
-  DC_NOTE_FILL(tbl, i_);                                                      \
-  (tbl)[i_] = k_; (tbl)[i_ + 1] = (u32)(uintptr_t)(ptr);                      \
-} while (0)
-#endif
 #else
 #define DC_PUT(tbl, key, ptr) do { } while (0)
 #define DC_FILL_OK(pc) 0
@@ -8559,9 +8507,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     {
       block_data[(branch_target - block_start_pc) /
        arm_instruction_width].update_cycles = 1;
-#ifdef COND_ENTRY_FIX
-      /* A conditional entry point needs its own condition check.  The
-       * translator emits one header per run of same-condition instructions,
+      /* COND_ENTRY_FIX: a conditional entry point needs its own condition
+       * check.  The translator emits one header per run of same-condition
+       * instructions,
        * so a branch landing mid-run executed the rest of the run
        * unconditionally (Mario Golf's stack-resident loop: bne back into
        * ANDEQ words with Z clear; corpus-classify 2026-10-28).  0x40, like
@@ -8571,7 +8519,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
           arm_instruction_width].condition & 0x0F) != 0x0E)
         block_data[(branch_target - block_start_pc) /
          arm_instruction_width].condition |= 0x40;
-#endif
     }
   }
 
@@ -9631,13 +9578,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 {
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, first, last, i, target_slot, domain_end;
-
-#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
-  /* A retired block's stable thunk jumps straight back into
-   * mips_indirect_branch_*: a surviving {pc -> thunk} entry would loop.
-   * (DISPATCH_PRECISE: smc_stable_thunk_dispatch forgets that entry.) */
-  dispatch_cache_clear();
-#endif
 
   if (smc_partial_wrap_live ||
       high <= low || (low >> 24) != ((high - 1) >> 24)) {
@@ -10823,9 +10763,6 @@ static int smc_retire_span(u32 lo, u32 hi)
   u16 *tagp;
   u32 base, bytes, lo_off, hi_off, span, first, last, i;
   u32 rgn;
-#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
-  int dc_cleared = 0;
-#endif
 #ifdef SMC_SINGLE_UNTAG
   u32 ulo = hi, uhi = lo;      /* union of the retired blocks' extents */
 #endif
@@ -10899,18 +10836,6 @@ static int smc_retire_span(u32 lo, u32 hi)
     if (VALID_TAG(tagp[i])) {
       ramtag_type *te = get_ram_tag(tagp[i]);
       u32 start = base + (i << 1);
-#if defined(DISPATCH_CACHE) && !defined(DISPATCH_PRECISE)
-      /* Empty the dispatch cache before the FIRST retirement only: a cached
-       * pc may map to a retired thunk (which itself dispatches: a loop).
-       * Nothing retired, nothing to empty (smc-coverage: the unconditional
-       * 8 KiB memset was a third of Hot Wheels' retire cost). */
-      if (!dc_cleared &&
-          ((SMC_RAM_LIVE_OFFSET(te, arm) && start < hi && te->blk_end_arm > lo) ||
-           (SMC_RAM_LIVE_OFFSET(te, thumb) && start < hi && te->blk_end_thumb > lo))) {
-        dispatch_cache_clear();
-        dc_cleared = 1;
-      }
-#endif
 #ifndef SMC_COVERAGE_MUTANT_SKIP_LAST
       if (SMC_RAM_LIVE_OFFSET(te, arm) && start < hi &&
           te->blk_end_arm > lo) {

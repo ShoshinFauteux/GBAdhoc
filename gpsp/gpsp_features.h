@@ -185,17 +185,6 @@
 #if !defined(GPSP_NO_DISPATCH_CACHE) && !defined(DISPATCH_CACHE)
 #define DISPATCH_CACHE 1
 #endif
-#if !defined(GPSP_NO_DISPATCH_PRECISE) && !defined(DISPATCH_PRECISE)
-#define DISPATCH_PRECISE 1
-#endif
-#if !defined(GPSP_NO_DISPATCH_ASSOC) && !defined(DISPATCH_ASSOC)
-#define DISPATCH_ASSOC 1
-#endif
-/* Off by itself under JIT_CODE_AB (harness A/B selector): see gpsp_profile.h. */
-#if !defined(GPSP_NO_DISPATCH_LOOKUP_PC) && !defined(DISPATCH_LOOKUP_PC) && \
-    !defined(JIT_CODE_AB)
-#define DISPATCH_LOOKUP_PC 1
-#endif
 #if !defined(GPSP_NO_XLAT_FAST) && !defined(XLAT_FAST)
 #define XLAT_FAST 1
 #endif
@@ -213,14 +202,8 @@
 #if !defined(GPSP_NO_SCHED_FAST) && !defined(SCHED_FAST)
 #define SCHED_FAST 1
 #endif
-#if !defined(GPSP_NO_IRQ_IO_FAST) && !defined(IRQ_IO_FAST)
-#define IRQ_IO_FAST 1
-#endif
 #if !defined(GPSP_NO_SERIAL_IDLE_FAST) && !defined(SERIAL_IDLE_FAST)
 #define SERIAL_IDLE_FAST 1
-#endif
-#if !defined(GPSP_NO_MSR_FAST) && !defined(MSR_FAST)
-#define MSR_FAST 1
 #endif
 /* HALT_HOP: a halted CPU jumps over the H-blank edges nothing can see; the
  * run-time mask timer_lazy defaults to HALT_HOP_DEFAULT (6 = HALT_HOP +
@@ -230,26 +213,8 @@
 #endif
 
 /* ---- guest correctness ----------------------------------------------------- */
-#if !defined(GPSP_NO_GBA_PC_MASK) && !defined(GBA_PC_MASK)
-#define GBA_PC_MASK 1
-#endif
-#if !defined(GPSP_NO_BADJUMP_SAFE) && !defined(BADJUMP_SAFE)
-#define BADJUMP_SAFE 1
-#endif
-#if !defined(GPSP_NO_DISPATCH_CYCLE_CHECK) && !defined(DISPATCH_CYCLE_CHECK)
-#define DISPATCH_CYCLE_CHECK 1
-#endif
 #if !defined(GPSP_NO_FIQ_BANK_FIX) && !defined(FIQ_BANK_FIX)
 #define FIQ_BANK_FIX 1
-#endif
-#if !defined(GPSP_NO_BX_ALIGN_FIX) && !defined(BX_ALIGN_FIX)
-#define BX_ALIGN_FIX 1
-#endif
-#if !defined(GPSP_NO_BACKUP_BUS_FIX) && !defined(BACKUP_BUS_FIX)
-#define BACKUP_BUS_FIX 1
-#endif
-#if !defined(GPSP_NO_COND_ENTRY_FIX) && !defined(COND_ENTRY_FIX)
-#define COND_ENTRY_FIX 1
 #endif
 #if !defined(GPSP_NO_NV_COND_FIX) && !defined(NV_COND_FIX)
 #define NV_COND_FIX 1
@@ -268,14 +233,6 @@
 #endif
 #if !defined(GPSP_NO_VRAM_EXEC) && !defined(VRAM_EXEC)
 #define VRAM_EXEC 1
-#endif
-
-/* ---- data placement -------------------------------------------------------- */
-#if !defined(GPSP_NO_HOT_DATA_GUARD) && !defined(HOT_DATA_GUARD)
-#define HOT_DATA_GUARD 1
-#endif
-#if !defined(GPSP_NO_HOT_DATA_OFFSET) && !defined(HOT_DATA_OFFSET)
-#define HOT_DATA_OFFSET 0x1b00
 #endif
 
 #endif /* !GPSP_FEATURES_EXPLICIT */

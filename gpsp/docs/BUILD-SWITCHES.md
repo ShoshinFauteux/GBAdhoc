@@ -95,6 +95,16 @@ order is the header's. "Exact" means the same guest state as without it (speed
 only); the root Makefile's comment above each `ifeq` and the cited doc have the
 measurements. Values other than 1 are given.
 
+Rows marked *(built in)* are no longer switches (code-health batch A-6): their
+code is unconditional in `cpu_threaded.c`, `mips/` and `jit_code.h`, the header
+line, the root Makefile's `ifeq` and the `NAME=0` / `-DGPSP_NO_NAME` arm are gone,
+and `coreFlags` no longer lists them. They are kept here for what they do. The
+dispatch refinements (`DISPATCH_PRECISE`, `DISPATCH_ASSOC`, `DISPATCH_LOOKUP_PC`)
+are part of `DISPATCH_CACHE` now: switching that oracle arm off removes them too.
+Likewise `MSR_FAST` is part of `FIQ_BANK_FIX`, and `DMA_SMC_ADAPT` /
+`DMA_ADAPT_V2` are part of `DMA_SMC_RETIRE`, so a twin variant that omits the
+parent still builds without them, as it did before.
+
 | switch | what it does |
 |---|---|
 | **SMC translation gates** | |
@@ -147,27 +157,27 @@ measurements. Values other than 1 are given.
 | `DMA_ADAPT_V2` | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
 | **Dispatch and translator speed** | (docs/DYNAREC-PROFILE.md) |
 | `DISPATCH_CACHE` | `mips_indirect_branch_*` probe a {guest pc -> host entry} table in asm before `save_registers` and the C block lookup; filled by the C lookup, emptied by every flush entry point. The cycle check still runs first. Oracle IDENTICAL on 7 fixtures; twin -4..-23 % core instructions. |
-| `DISPATCH_PRECISE` | SMC retirement forgets only the retired block's entry instead of emptying both tables; only canonical RAM pcs are cached (a mirrored pc shares the tag, not the key). Twin: Doom -4.6 %, Duke -4.7 %, state hashes identical. |
-| `DISPATCH_ASSOC` | the dispatch cache's 4 KiB per ISA as 256 2-way sets instead of 512 direct-mapped slots; `mips_indirect_branch_dual` enters the ARM/Thumb probe; `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size so the pinned hot order does not move. Same entries, keys and invalidation points. Twin: C fall-throughs per frame Doom II 140 -> 55, Duke 193 -> 50, Ice Nine 83 -> 47. |
-| `DISPATCH_LOOKUP_PC` | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off by itself under `JIT_CODE_AB` (gpsp_profile.h). |
+| `DISPATCH_PRECISE` *(built in)* | SMC retirement forgets only the retired block's entry instead of emptying both tables; only canonical RAM pcs are cached (a mirrored pc shares the tag, not the key). Twin: Doom -4.6 %, Duke -4.7 %, state hashes identical. |
+| `DISPATCH_ASSOC` *(built in)* | the dispatch cache's 4 KiB per ISA as 256 2-way sets instead of 512 direct-mapped slots; `mips_indirect_branch_dual` enters the ARM/Thumb probe; `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size so the pinned hot order does not move. Same entries, keys and invalidation points. Twin: C fall-throughs per frame Doom II 140 -> 55, Duke 193 -> 50, Ice Nine 83 -> 47. |
+| `DISPATCH_LOOKUP_PC` *(built in)* | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off by itself under `JIT_CODE_AB` (gpsp_profile.h). |
 | `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
 | `JIT_COST` | the cost of producing translated code (docs/JIT-COST.md). Exact. |
 | `JIT_CODE_DISCIPLINE` | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
 | `SPIN_SKIP` | the translator proves a backward branch closes a side-effect-free loop (loads without writeback, ALU ops, compares; every read register never written in the loop or written earlier in the same iteration); the taken back-edge asks `update_gba` whether to end the slice when every load address is RAM, palette, VRAM, OAM, ROM or a few event-only I/O registers. Anything else vetoes the loop. Not keyed on any address or ROM. Moves timing by less than one loop iteration per event; judged by the Lab gate's replayed lockstep. Oracle `SPIN_SKIP_VERIFY`; mutants `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP`. |
 | **Scheduler, interrupt and serial fast paths** | |
 | `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
-| `IRQ_IO_FAST` | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
+| `IRQ_IO_FAST` *(built in)* | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
 | `SERIAL_IDLE_FAST` | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
-| `MSR_FAST` | CPSR writes that switch mode and SPSR restores bank the registers in `mips_stub.S` instead of calling C (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path. Exact. Run-time kill switch `msr_fast`. Needs `FIQ_BANK_FIX`. |
+| `MSR_FAST` *(built in)* | CPSR writes that switch mode and SPSR restores bank the registers in `mips_stub.S` instead of calling C (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path. Exact. Run-time kill switch `msr_fast`. Needs `FIQ_BANK_FIX`. |
 | `HALT_HOP` | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN) starts at `HALT_HOP_DEFAULT` 6. Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL. |
 | **Guest correctness** | |
-| `GBA_PC_MASK` | mask the emulated pc to 28 bits before the region lookup, as the GBA does. Not sufficient alone: a masked garbage target can land in a region the translator handles. |
-| `BADJUMP_SAFE` | an unmappable guest pc soft-resets the GBA instead of `jr`-ing to it. The path it replaces crashes every time. |
-| `DISPATCH_CYCLE_CHECK` | `mips_indirect_branch_arm`/`_thumb` call `mips_update_gba` when the cycle budget is spent, as direct branches do; without it a loop closed only by indirect branches or gate exits never completes a frame. `_dual` (BX) is not checked. |
+| `GBA_PC_MASK` *(built in)* | mask the emulated pc to 28 bits before the region lookup, as the GBA does. Not sufficient alone: a masked garbage target can land in a region the translator handles. |
+| `BADJUMP_SAFE` *(built in)* | an unmappable guest pc soft-resets the GBA instead of `jr`-ing to it. The path it replaces crashes every time. |
+| `DISPATCH_CYCLE_CHECK` *(built in)* | `mips_indirect_branch_arm`/`_thumb` call `mips_update_gba` when the cycle budget is spent, as direct branches do; without it a loop closed only by indirect branches or gate exits never completes a frame. `_dual` (BX) is not checked. |
 | `FIQ_BANK_FIX` | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
-| `BX_ALIGN_FIX` | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
-| `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
-| `COND_ENTRY_FIX` | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
+| `BX_ALIGN_FIX` *(built in)* | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
+| `BACKUP_BUS_FIX` *(built in)* | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
+| `COND_ENTRY_FIX` *(built in)* | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
 | `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI (gpSP crashed in the translator on one, issue #10). Blocks without NV words are byte-identical. |
 | `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (issue #10). |
 | `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by `BADJUMP_SAFE`. |
@@ -175,8 +185,8 @@ measurements. Values other than 1 are given.
 | `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
 | `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
 | **Data placement** | |
-| `HOT_DATA_GUARD` | the stub's hot data block (memory map, `reg`, palette/OAM, spsr, patcher tables) at a fixed D-cache set offset (`mips_stub.S`, `hot_data_guard.ld`). |
-| `HOT_DATA_OFFSET` | **0x1b00**: where `HOT_DATA_GUARD` places the block in its 8 KiB way. |
+| `HOT_DATA_GUARD` *(built in)* | the stub's hot data block (memory map, `reg`, palette/OAM, spsr, patcher tables) at a fixed D-cache set offset (`mips_stub.S`, `hot_data_guard.ld`). |
+| `HOT_DATA_OFFSET` *(built in)* | **0x1b00**: where `HOT_DATA_GUARD` places the block in its 8 KiB way. |
 
 **Open (known, not done):** an SMC coverage probe for the unchecked words of block
 stores (P4 in the 2026-09-24 dynarec audit); a cycle check in

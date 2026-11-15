@@ -410,50 +410,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(FIQ_BANK_FIX),1)
 	CFLAGS += -DFIQ_BANK_FIX=1
 	endif
-	# MSR_FAST=1 (needs FIQ_BANK_FIX=1): CPSR writes that switch mode and SPSR
-	# restores bank the registers in mips/mips_stub.S instead of calling C
-	# (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path.
-	# Exact.  Run-time kill switch `msr_fast` (config.ini / harness key).
-	ifeq ($(MSR_FAST),1)
-	CFLAGS += -DMSR_FAST=1
-	endif
 	# MSR_FAST_DEFAULT=0: compiled in, msr_fast off (a layout-identical A/B arm).
 	ifneq ($(MSR_FAST_DEFAULT),)
 	CFLAGS += -DMSR_FAST_DEFAULT=$(MSR_FAST_DEFAULT)
 	endif
-	# BX_ALIGN_FIX=1: a BX into ARM state with address bit 1 set goes to the
-	# word below, as on the ARM7TDMI (cpu_threaded.c block_lookup_address_dual,
-	# mips_stub.S).  gpSP rounded UP and skipped the first ARM instruction of
-	# Camelot's "bx pc" IRQ veneer (corpus-classify 2026-10-27).  Same code size.
-	ifeq ($(BX_ALIGN_FIX),1)
-	CFLAGS += -DBX_ALIGN_FIX=1
-	endif
-	# BACKUP_BUS_FIX=1: a 16/32-bit dynarec load from SRAM/flash (0x0E) returns
-	# the byte in every lane, as the 8-bit bus does and the interpreter already
-	# did (mips_emit.h region 14).  gpSP returned the bare byte (FFTA f692
-	# LDR from 0x0ec54d2c: 0xff vs 0xffffffff; corpus-classify).  Stub-only.
-	ifeq ($(BACKUP_BUS_FIX),1)
-	CFLAGS += -DBACKUP_BUS_FIX=1
-	endif
-	# COND_ENTRY_FIX=1: a branch into the middle of a run of same-condition ARM
-	# instructions gets its own condition check (cpu_threaded.c translate_block_arm).
-	# gpSP emitted one header per run, so the landing point and everything after it
-	# ran unconditionally (Mario Golf f1c2 NEEDS-REVIEW; corpus-classify).
-	ifeq ($(COND_ENTRY_FIX),1)
-	CFLAGS += -DCOND_ENTRY_FIX=1
-	endif
 	ifeq ($(VRAM_EXEC),1)
 	CFLAGS += -DVRAM_EXEC=1
-	endif
-	# HOT_DATA_GUARD=1: the stub's hot data block (memory_map_read, reg,
-	# palette/OAM, spsr, reg_mode, patcher tables) at a FIXED D-cache set
-	# offset, HOT_DATA_OFFSET (default 0x1b00 = lab-cpl2xvf's placement;
-	# mips/mips_stub.S).
-	ifeq ($(HOT_DATA_GUARD),1)
-	CFLAGS += -DHOT_DATA_GUARD=1
-	endif
-	ifneq ($(HOT_DATA_OFFSET),)
-	CFLAGS += -DHOT_DATA_OFFSET=$(HOT_DATA_OFFSET)
 	endif
 	ifneq ($(GATE_RATIO),)
 	CFLAGS += -DSMC_GATE_RATIO=$(GATE_RATIO)
@@ -564,40 +526,12 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_WRITER_PROBE),1)
 	CFLAGS += -DSMC_WRITER_PROBE=1
 	endif
-	# GBA_PC_MASK=1: mask the emulated pc to 28 bits before the region lookup.
-	# The GBA ignores address bits 28-31, so a branch to 0x58581818 executes
-	# ROM at 0x08581818 on hardware; gpSP instead falls through to its ~0
-	# sentinel, which nothing checks, and the PSP jumps to 0xFFFFFFFF.
-	# memory_map_read[] (8K x 32KB) and def_seq_cycles[16] are both sized for
-	# 28 bits already, so an unmasked pc also indexes them out of bounds.
-	# SHIPPED.  Note it is not sufficient on its own: a masked garbage target
-	# lands in a region the translator DOES handle, so the containment at the
-	# patch site (see cpu_threaded.c, BLOCK_LOOKUP_UNMAPPABLE) is what stops a
-	# garbage exit reaching generated code.
-	ifeq ($(GBA_PC_MASK),1)
-	CFLAGS += -DGBA_PC_MASK=1
-	endif
-	# BADJUMP_SAFE=1: never `jr` to an unmappable guest pc.  block_lookup
-	# returns ~0 (bad region) or NULL (translate failed); nothing checks
-	# either, so mips_indirect_branch_* jumps to it and the PSP dies hard.
-	# With this, that becomes a GBA soft-reset: the console survives.
-	# Cannot regress -- the path it replaces crashes 100% of the time.
-	ifeq ($(BADJUMP_SAFE),1)
-	CFLAGS += -DBADJUMP_SAFE=1
-	endif
 	# SMC_GATE_CHARGE=1: a block that ends at a translation gate charges the
 	# cycles of its tail before the (uncharged, unchecked) indirect exit, so a
 	# gate no longer lets the code in front of it run for free.  Timing change
 	# for gated (SMC) code only; ungated blocks emit identical code.
 	ifeq ($(SMC_GATE_CHARGE),1)
 	CFLAGS += -DSMC_GATE_CHARGE=1
-	endif
-	# DISPATCH_CYCLE_CHECK=1: mips_indirect_branch_arm/_thumb run update_gba
-	# when the cycle budget is spent, so a guest loop closed only by indirect
-	# branches (bx/mov pc/ldr pc/pop {pc}) can no longer spin forever without
-	# ever completing a frame.  Two instructions per indirect branch.
-	ifeq ($(DISPATCH_CYCLE_CHECK),1)
-	CFLAGS += -DDISPATCH_CYCLE_CHECK=1
 	endif
 	# DMA_SMC_FLUSH=1: an HBlank/VBlank DMA that lands on translated code
 	# (CPU_ALERT_SMC from dma_transfer) flushes the RAM translation cache and
@@ -714,26 +648,6 @@ else ifeq ($(platform), psp1)
 	# Speed only: guest timing is unchanged (tools/drprof/dr_oracle.py).
 	ifeq ($(DISPATCH_CACHE),1)
 	CFLAGS += -DDISPATCH_CACHE=1
-	endif
-	# DISPATCH_PRECISE=1: (cpu-levers).  With DISPATCH_CACHE,
-	# SMC retirement forgets only the retired blocks' entries instead of
-	# emptying the cache; only canonical RAM pcs are cached (mirror-safe).
-	# Exact: twin state hashes identical to the build without it.
-	ifeq ($(DISPATCH_PRECISE),1)
-	CFLAGS += -DDISPATCH_PRECISE=1
-	endif
-	# DISPATCH_ASSOC=1: (claude/ibranch).  With DISPATCH_CACHE, the
-	# same 4 KiB per ISA as 2-way sets: removes most of the table's conflict
-	# misses (each one a ~2 us C lookup).  Exact: same entries, same keys,
-	# same invalidation points.
-	ifeq ($(DISPATCH_ASSOC),1)
-	CFLAGS += -DDISPATCH_ASSOC=1
-	endif
-	# DISPATCH_LOOKUP_PC=1: (claude/ibranch).  lookup_pc probes the
-	# dispatch cache before the C lookup when no publish is owed
-	# (needs JIT_CODE_DISCIPLINE, not JIT_CODE_AB).
-	ifeq ($(DISPATCH_LOOKUP_PC),1)
-	CFLAGS += -DDISPATCH_LOOKUP_PC=1
 	endif
 	# SMC_SAME_SKIP=1: (cpu-levers).  A single-store SMC trap
 	# in IWRAM skips the retirement when every block it would retire is still
@@ -884,12 +798,6 @@ else ifeq ($(platform), psp1)
 	# docs/GBA-LINK-MIRROR.md 24).  Pure speed, exact by construction.
 	ifeq ($(SCHED_FAST),1)
 	CFLAGS += -DSCHED_FAST=1
-	endif
-	# IRQ_IO_FAST=1: 16-bit stores to IE / IF / IME inline in the I/O store
-	# stub, compiled in but OFF until `irq_io_fast` is set before the game
-	# loads (harness key irq_io_fast; docs/GBA-LINK-MIRROR.md 25).  Exact.
-	ifeq ($(IRQ_IO_FAST),1)
-	CFLAGS += -DIRQ_IO_FAST=1
 	endif
 	# TIMER_LAZY=1: PROTOTYPE, changes guest-visible timing (overflows of
 	# timers with no interrupt and no cascade are not scheduler events).

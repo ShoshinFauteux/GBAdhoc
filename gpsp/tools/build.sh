@@ -288,12 +288,12 @@ if [ -n "${CORE_EXTRA:-}${FE_EXTRA:-}" ]; then
 fi
 
 # HOT_DATA_GUARD reaches the PSP link too: its placement is a link script
-# (psp/hot_data_guard.ld), which the core flag alone cannot add.  The link must
-# follow an arm that switches it off.
+# (psp/hot_data_guard.ld), which the core alone cannot add.  The core half is
+# built in (code-health A-6), so there is no arm without it any more.
 case " $CORE_FLAGS " in
-  *" HOT_DATA_GUARD=0 "*) PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=0" ;;
-  *)                      PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1" ;;
+  *" HOT_DATA_GUARD=0 "*) echo "FAIL: HOT_DATA_GUARD is built into the core: there is no HOT_DATA_GUARD=0 arm"; exit 1 ;;
 esac
+PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1"
 
 # LAB PADS (tools/layout/lab-pads.env): a lab build has lab-only code in
 # main() and around pace_frame, so it needs its own layout pads to put the

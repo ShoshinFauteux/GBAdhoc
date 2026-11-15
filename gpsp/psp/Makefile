@@ -324,9 +324,9 @@ OBJS += lab_harness.o labab/budget.o labab/ab_io.o lab_ffpace.o
 CFLAGS += -DLAB_HARNESS
 endif
 GBA_LINK ?= 1
-# HOT_DATA_GUARD (default 1, gpsp_features.h; tools/build.sh follows the ROOT
-# make's value): the guard's 8 KiB placement comes from this INSERT script, not
-# from section alignment (psp/hot_data_guard.ld says why).
+# HOT_DATA_GUARD (default 1; the core half is built in since code-health A-6 and
+# tools/build.sh always passes 1): the guard's 8 KiB placement comes from this
+# INSERT script, not from section alignment (psp/hot_data_guard.ld says why).
 HOT_DATA_GUARD ?= 1
 ifeq ($(HOT_DATA_GUARD),1)
 LDFLAGS += -Wl,-T,hot_data_guard.ld

@@ -3284,9 +3284,8 @@ static void emit_pmemld_stub(
   } else if (region == 14) {
     // Read from flash, is a bit special, fn call
     emit_mem_call_ds(&read_backup, 0xFFFF);
-#ifdef BACKUP_BUS_FIX
-    /* SRAM/flash sit on an 8-bit bus: a 16/32-bit read returns the byte in
-     * every lane (ARM7 + GBA bus; gba_memory.c read_backup16/32 and the
+    /* BACKUP_BUS_FIX: SRAM/flash sit on an 8-bit bus: a 16/32-bit read
+     * returns the byte in every lane (ARM7 + GBA bus; gba_memory.c read_backup16/32 and the
      * interpreter do this).  Only LDRSH from an odd address is a byte load. */
     if (!size) {
       if (signext) {   /* braces: the emit macros are two statements */
@@ -3307,15 +3306,6 @@ static void emit_pmemld_stub(
         rotate_right(reg_rv, reg_rv, reg_temp, 8);     // LDRH, odd address
       }
     }
-#else
-    if (!size && signext) {
-      extend_byte_signed(reg_rv, reg_rv);
-    } else if (size == 1 && alignment) {
-      extend_byte_signed(reg_rv, reg_rv);
-    } else if (size == 2) {
-      rotate_right(reg_rv, reg_rv, reg_temp, 8 * alignment);
-    }
-#endif
     generate_function_return_swap_delay();
     *tr_ptr = translation_ptr;
     return;
@@ -4055,7 +4045,6 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
     mips_emit_b(bne, reg_zero, reg_temp, st_phndlr_branch(strop));
 
     mips_emit_sw(mips_reg_ra, reg_base, ReOff_SaveR3); // Store the return addr
-#ifdef IRQ_IO_FAST
     /* IRQ_IO_FAST=1 + irq_io_fast (docs/GBA-LINK-MIRROR.md 25): 16-bit
      * stores to IE, IF and IME handled here, without the register save, the
      * C call and the register restore (~75 instructions each; an interrupt
@@ -4140,7 +4129,6 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
       generate_branch_patch_conditional(b_slow3[0], translation_ptr);
       generate_branch_patch_conditional(b_slow3[1], translation_ptr);
     }
-#endif
     emit_save_regs(strop == 3);
     /* The cycle the write happens at (reg[REG_IO_CYCLES]): a timer started
      * here counts from this cycle (gba_memory.c trigger_timer), and the

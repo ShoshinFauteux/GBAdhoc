@@ -149,22 +149,17 @@
 #error "SMC_SAME_SKIP refines SMC_PARTIAL_SINGLE's retirement: it needs SMC_PARTIAL_SINGLE and SMC_PARTIAL_STABLE_THUNK."
 #endif
 
-#if defined(DISPATCH_PRECISE) && !defined(DISPATCH_CACHE)
-#error "DISPATCH_PRECISE refines DISPATCH_CACHE's invalidation: it needs DISPATCH_CACHE."
-#endif
-
-#if defined(DISPATCH_ASSOC) && !defined(DISPATCH_CACHE)
-#error "DISPATCH_ASSOC reshapes DISPATCH_CACHE's tables: it needs DISPATCH_CACHE."
-#endif
-#if defined(DISPATCH_ASSOC) && defined(DISPATCH_CACHE_BITS) && (DISPATCH_CACHE_BITS < 2)
-#error "DISPATCH_ASSOC needs DISPATCH_CACHE_BITS >= 2 (it is entries per ISA; sets are half that)."
+/* DISPATCH_PRECISE, DISPATCH_ASSOC and DISPATCH_LOOKUP_PC are built in: they
+ * are part of DISPATCH_CACHE (code-health A-6), so DISPATCH_CACHE off takes
+ * them with it.  The 2-way sets still need a table of at least two entries. */
+#if defined(DISPATCH_CACHE) && defined(DISPATCH_CACHE_BITS) && (DISPATCH_CACHE_BITS < 2)
+#error "DISPATCH_CACHE's 2-way sets (DISPATCH_ASSOC) need DISPATCH_CACHE_BITS >= 2 (it is entries per ISA; sets are half that)."
 #endif
 /* DISPATCH_LOOKUP_PC probes the cache in lookup_pc only when the publish the
  * C lookup would make is empty (jit_dirty_n | jit_owner_pending).  JIT_CODE_AB's
- * legacy modes sync outside that bookkeeping, so the two do not mix. */
-#if defined(DISPATCH_LOOKUP_PC) && \
-    (!defined(DISPATCH_CACHE) || !defined(JIT_CODE_DISCIPLINE) || defined(JIT_CODE_AB))
-#error "DISPATCH_LOOKUP_PC needs DISPATCH_CACHE and JIT_CODE_DISCIPLINE, and not JIT_CODE_AB."
+ * legacy modes sync outside that bookkeeping, so it is off under JIT_CODE_AB. */
+#if defined(DISPATCH_CACHE) && !defined(JIT_CODE_AB) && !defined(JIT_CODE_DISCIPLINE)
+#error "DISPATCH_CACHE's lookup_pc probe (DISPATCH_LOOKUP_PC) needs JIT_CODE_DISCIPLINE."
 #endif
 
 #if defined(ENTRY_GATES) && !defined(SMC_GATE_BITMAP)
