@@ -5587,7 +5587,7 @@ static __attribute__((noinline)) void xs_clear_all(void)
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
-#if defined(SMC_PARTIAL_SINGLE) && !defined(DR2NFSU_MUTANT_WORDTAG)
+#ifdef SMC_PARTIAL_SINGLE
 /* TAG EACH HALFWORD OF AN ARM INSTRUCTION ON ITS OWN (dr2-nfsu, 2026-10-21).
  *
  * The stock macro marks the word only when BOTH halfword tags are zero.  That
@@ -8033,7 +8033,7 @@ static void smc_reuse_retag(u32 start, u32 end, u32 thumb, u32 reason)
       u32 w = address32(tagp, i);
       if (w == 0)
         address32(tagp, i) = CODE_TAG_BLOCK32;
-#if defined(SMC_PARTIAL_SINGLE) && !defined(DR2NFSU_MUTANT_WORDTAG)
+#ifdef SMC_PARTIAL_SINGLE
       else if (!(w & 0xFFFF) || !(w >> 16)) {   /* smc_write_arm_yes */
         if (address16(tagp, i) == 0)
           address16(tagp, i) = CODE_TAG_BLOCK16;

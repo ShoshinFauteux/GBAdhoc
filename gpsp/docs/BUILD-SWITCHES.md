@@ -410,6 +410,11 @@ of bug. They are never in a build that is handed to anyone.
 | `VX_DMA_NOTE_MUTANT` | VRAM_EXEC's DMA note | `tools/drprof/synth/vram_dma.s` |
 | `JIT_CODE_AUDIT_NEGCTL` | drops one code-write record | `JIT_CODE_AUDIT` (60,672 on H&S heavy) |
 | `ME_WMAP_MUTANT` | the ME write maps' markers | tools/tests/run_me_wmap_tests.sh |
+| `SMC_RETIRE_LOCAL_MUTANT` | `smc_back_note` forgets the last chunk of every block | `SMC_RETIRE_LOCAL_CHECK` (tools/drprof/dr_corpus.py `m_rl_last`) |
+| `ENTRY_GATES_RANGE_MUTANT` | the entry-gate harvest range drops the upper half of the code range | `ENTRY_GATES_RANGE_CHECK` (tools/drprof/dr_corpus.py `m_eg_last`) |
+| `SMC_IMM_PATCH_MUTANT_ONESITE` | `SMC_IMM_PATCH` rewrites only the first site of a learned word | `EXEC_STALE_CHECK` (1169 hits on Doom, 162 on Ice Nine; inert on Duke, whose words have one site each) |
+| `SMC_IMM_PATCH_MUTANT_ALU` | the first site's ALU immediate written with bit 0 flipped, its opcode load right (invisible to `EXEC_STALE_CHECK`) | `IMMP_VERIFY` (rides on `EXEC_STALE_CHECK`; 56639 / 49637 / 70314 hits on Doom / Duke / Ice Nine) |
+| `SMC_REUSE_IMMP_MUTANT` | drops the `SMC_REUSE` x `SMC_IMM_PATCH` interlock (R1 no record, R2 no revival) | twin oracle self-test; its only proof (no recorded run), so kept |
 | `REWIND_MUTANT=n` | a store path that forgets the rewind's written-page map | tools/rewind_test.py |
 
 ### The ROM-residency A/B apparatus (2026-09-26)
@@ -477,6 +482,7 @@ compiling this list (comment blocks attributed to the wrong `ifeq`, and an
 | `SMC_REUSE_WHOLE_I` | Code-health A-3. A hardware A/B arm: the whole I-cache invalidated on a virtual (`SMC_REUSE`) flush as well. |
 | `SMC_UNTAG_MARKS_ONLY` | Code-health A-3. `SMC_SINGLE_UNTAG` lifting only interior marks, not retired blocks' own tags. |
 | `TGB_FAST_TILE` | Code-health A-3. GB tile rows decoded by a 1 KiB table: exact, but no gain on hardware (gbp-c2 vs gbp-b2, 13/13 "same", mean ~+0.7 % worse; docs/GB-CORE-PERF.md). |
+| `DR2NFSU_MUTANT_WORDTAG` | Code-health A-4. Reverted the dr2-nfsu per-halfword tag fix (the "TAG EACH HALFWORD" comment in `cpu_threaded.c`) to validate the checker; no tool or Lab script set it, and its corpus arm `m_nfsu_word_t` is gone. The question is answered by the real bug: `EXEC_STALE_CHECK` found the unfixed hole on NFSU (2 hits at 030066dc, 0 on the fixed build, commit 9314946b), and `SMC_IMM_PATCH_MUTANT_ONESITE` still proves that checker on the same class (stale code executed). |
 
 Files removed with no switch of their own: `netdrv/transport_inet.{c,h}` and its
 psp/Makefile rule (code-health A-1): a sceNetInet netdrv backend that no `OBJS`
