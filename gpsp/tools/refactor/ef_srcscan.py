@@ -19,6 +19,10 @@ import json, re, sys
 
 # Configurations (tools/build.sh FE_DEFS + psp/Makefile flags + fe_features.h
 # + fe_evt.h derivation).  Values are ints; absent = undefined.
+# VID_TRIPLE and PLAY_FF_FLIP_PACE are no longer defines (code-health A-7 removed
+# both switches and every #if on them), so on a current tree they test nothing.
+# They stay below for older trees (p0a_test_srcscan.py scans 01067e74), whose
+# census they still decide.
 BASE = dict(PSP=1, USE_PSP_RGB565_FORMAT=None)
 RELEASE = dict(GPSP_PLAYABLE=1, GPSP_PROFILE_RELEASE=1, GPSP_NO_TELEMETRY=1,
                REWIND=1, GBA_LINK=1, GBADHOC_ONLINE=1, RFU_SCHED=1,

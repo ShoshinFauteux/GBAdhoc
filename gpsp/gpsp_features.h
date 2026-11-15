@@ -17,7 +17,8 @@
  * the 7 the twin oracles turn off on purpose (DISPATCH_CACHE, XLAT_FAST,
  * RAM_MIRROR_FIX, NV_COND_FIX, SMC_STM_FIXED, XLAT_LAST_TRY_LAZY,
  * BIOS_BOUND_FIX) and the 13 whose off-arm the desktop and host builds still
- * compile (code-health B-1 bakes those).
+ * compile (code-health B-1 bakes those).  Two of the 13, SMC_GATES and
+ * SMC_PARTIAL_SAFE, can no longer be switched off in a PSP core (see below).
  *
  * SWITCHING A FEATURE OFF.  -U cannot do it: gcc applies -D and -U before any
  * -include, so a define here would beat them.  These all leave this file alone:
@@ -46,12 +47,16 @@
 
 #ifndef GPSP_FEATURES_EXPLICIT
 
-/* ---- SMC translation gates ------------------------------------------------- */
+/* ---- REQUIRED, not switches: SMC translation gates, selective retirement ---
+ * Everything that refines these two was built in by code-health A-6, so a PSP
+ * core (and a twin variant) cannot be built without them: gpsp_profile.h stops
+ * the compile, GPSP_NO_SMC_GATES / GPSP_NO_SMC_PARTIAL_SAFE only reach that
+ * error, and the root Makefile refuses SMC_GATES=0 / SMC_PARTIAL_SAFE=0.  They
+ * are still defined here because manifests (coreFlags), make_release.sh's
+ * feature list and the twin's explicit lists name them. */
 #if !defined(GPSP_NO_SMC_GATES) && !defined(SMC_GATES)
 #define SMC_GATES 1
 #endif
-
-/* ---- selective SMC retirement ---------------------------------------------- */
 #if !defined(GPSP_NO_SMC_PARTIAL_SAFE) && !defined(SMC_PARTIAL_SAFE)
 #define SMC_PARTIAL_SAFE 1
 #endif

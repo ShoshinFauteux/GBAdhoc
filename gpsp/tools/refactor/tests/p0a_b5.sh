@@ -534,7 +534,7 @@ if want flav; then
     }
     doct dirty release 's/"workingTreeClean": true/"workingTreeClean": false/'
     doct lock release 's/"layoutLock": "[^"]*"/"layoutLock": "release:differs"/'
-    doct xenv lab 's/"extraEnv": ""/"extraEnv": "ME_LOWLAT=0 LAYOUT_PIN=0"/'
+    doct xenv lab 's/"extraEnv": ""/"extraEnv": "ME_LOWLAT=0 INPUT_FRESH=0"/'
     doct benv harness 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
     doct anc release-stable 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/'
     for k in dirty lock xenv benv anc; do

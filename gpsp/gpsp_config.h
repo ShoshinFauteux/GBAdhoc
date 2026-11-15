@@ -47,7 +47,14 @@
  * accounting uses, and dormant code plus records may never occupy more than
  * that spare.  So the real cache can never fill before the virtual one, and
  * every cache-full flush happens at exactly the block it would without
- * SMC_REUSE.  The accounting size is the one above, on every tier. */
+ * SMC_REUSE.  The accounting size is the one above, on every tier.
+ *
+ * SMC_REUSE is built in (code-health A-6), but only into the core of a PSP
+ * build and its twin, as before: those are the compile units that force-include
+ * gpsp_features.h (root Makefile, platform=psp1 and drprof-mipsel), so
+ * GPSP_FEATURES_H is what marks them.  The frontend and Media Engine units of a
+ * PSP build, and every desktop and host build, keep the cache sizes above. */
+#ifdef GPSP_FEATURES_H
   #define SMC_REUSE_SPARE_KB 384   /* built in (code-health A-6) */
   #define SMC_REUSE_SPARE (1024 * SMC_REUSE_SPARE_KB)
   /* (spelled out: a macro naming RAM_TRANSLATION_CACHE_SIZE would expand to
@@ -73,6 +80,7 @@
     #undef RAM_TRANSLATION_CACHE_SIZE_LARGE
     #define RAM_TRANSLATION_CACHE_SIZE_LARGE RAM_TRANSLATION_CACHE_SIZE
   #endif
+#endif /* GPSP_FEATURES_H */
 
 /* LAYOUT_PIN (the PSP root make always defines it since code-health A-7; the
  * twin only in variants that ask; docs/LAYOUT-PINNING.md): where the translation caches sit

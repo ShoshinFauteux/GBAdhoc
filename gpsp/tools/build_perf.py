@@ -41,12 +41,15 @@ def main():
     (audit/'source-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     (audit/'patch.diff').write_bytes(subprocess.check_output(['git','diff','HEAD','--binary'],cwd=repo))
     options = ' '.join(args.core_option)
+    # The core's feature set is gpsp_features.h, which the root Makefile
+    # force-includes; the make line names none (SMC_GATES_SIMPLE, SMC_GATES_RANKED,
+    # GBA_PC_MASK and BADJUMP_SAFE are built in since code-health A-6).
     (audit/'build.sh').write_text(f'''#!/bin/sh
 set -eu
 cd /build
 make -C psp clean
 make platform=psp1 clean
-make platform=psp1 GIT_VERSION={args.version} SMC_GATES=1 SMC_GATES_SIMPLE=1 SMC_GATES_RANKED=1 GBA_PC_MASK=1 BADJUMP_SAFE=1 {options} -j4
+make platform=psp1 GIT_VERSION={args.version} {options} -j4
 make -C psp EXTRA_DEFS='-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG' PSP_EBOOT_TITLE='GBAdhoc Perf'
 sha256sum psp/EBOOT.PBP psp/me/gbadhoc_me.prx
 ''',newline='\n')

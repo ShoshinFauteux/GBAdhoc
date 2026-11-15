@@ -204,7 +204,7 @@ grep -q "workingTreeClean false" "$T/last.log" && ok "M11a names workingTreeClea
 doct lock lab 's/"layoutLock": "lab:ok"/"layoutLock": "lab:differs"/'
 expect_rc 2 "M11b reference whose lab lock is not ok" bash "$F" --check-only --out "$T/o10" --against "$T/d_lock"
 grep -q "layoutLock is 'lab:differs'" "$T/last.log" && ok "M11b names the lock" || bad "M11b wrong refusal"
-doct xenv harness 's/"extraEnv": ""/"extraEnv": "LAYOUT_PIN=0"/'
+doct xenv harness 's/"extraEnv": ""/"extraEnv": "INPUT_FRESH=0"/'
 expect_rc 2 "M11c reference with another extraEnv" bash "$F" --check-only --out "$T/o10" --against "$T/d_xenv"
 grep -q "extraEnv differs" "$T/last.log" && ok "M11c names extraEnv" || bad "M11c wrong refusal"
 doct benv release 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
@@ -219,7 +219,7 @@ grep -q "nothing ties the step to its parent" "$T/last.log" && ok "M11f names th
 rm -rf "$T/d_miss"; cp -r "$T/o9" "$T/d_miss"; rm -rf "$T/d_miss/harness"
 expect_rc 2 "M11g a reference without the harness flavour" bash "$F" --check-only --out "$T/o10" --against "$T/d_miss"
 expect_rc 2 "M11h --against with --flavours release only" bash "$F" --check-only --out "$T/o10" --against "$T/o9" --flavours release
-expect_rc 2 "M11i FLAV_LAB_ENV on this build only (extraEnv differs)" env FLAV_LAB_ENV="LAYOUT_PIN=0" bash "$F" --src "$R/gpsp" --out "$T/o13" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
+expect_rc 2 "M11i FLAV_LAB_ENV on this build only (extraEnv differs)" env FLAV_LAB_ENV="INPUT_FRESH=0" bash "$F" --src "$R/gpsp" --out "$T/o13" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
 echo dirty >> "$R/gpsp/marker.txt"
 expect_rc 2 "M11j a dirty --src (no --baseline) gated --against" bash "$F" --src "$R/gpsp" --out "$T/o14" --no-sidecars --sde 1700000000 --build-version pin7 --against "$T/o9"
 (cd "$R" && git checkout -q -- gpsp/marker.txt)

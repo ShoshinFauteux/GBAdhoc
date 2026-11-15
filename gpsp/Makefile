@@ -1062,6 +1062,30 @@ ifneq (,$(filter $(platform),psp1 drprof-mipsel))
 GPSP_FEATURE_NAMES := $(shell sed -n 's/^\#define \([A-Z0-9_]*\) .*/\1/p' $(CORE_DIR)/gpsp_features.h)
 CFLAGS += -include $(CORE_DIR)/gpsp_features.h
 CFLAGS += $(foreach f,$(GPSP_FEATURE_NAMES),$(if $(filter 0,$($(f))),-DGPSP_NO_$(f)))
+# The 51 switches code-health A-6 built in (docs/BUILD-SWITCHES.md "(built in)"
+# rows) have no off arm: NAME=0 used to build without NAME, and would now build
+# with it without a word, so it stops here instead.  NAME=1 (an old recipe that
+# asked for what is now always there) is accepted; so is a value feature's own
+# value.  SMC_GATES and SMC_PARTIAL_SAFE are still gpsp_features.h lines, but the
+# built-in code needs them (gpsp_profile.h), so they cannot be switched off either.
+GPSP_BUILT_IN := SMC_GATES_SIMPLE SMC_GATES_RANKED SMC_GATE_BITMAP SMC_GATE_CHARGE \
+  SMC_GATE_SELFPATCH ENTRY_GATES ENTRY_GATES_RANGE ENTRY_GATES_FAST \
+  SMC_PARTIAL_STABLE_THUNK SMC_PARTIAL_DIRECT_LINKS SMC_RETIRE_WINDOW \
+  SMC_RETIRE_LOCAL SMC_RETIRE_LIST SMC_PARTIAL_SINGLE SMC_SINGLE_THUMB \
+  SMC_SINGLE_HALF SMC_SINGLE_ANYPC SMC_SINGLE_EWRAM SMC_SINGLE_UNTAG \
+  SMC_STM_RANGE SMC_STM_CHAIN SMC_STM_WIDE SMC_STM_AHEAD SMC_SAME_SKIP \
+  SMC_SAME_ADAPT SMC_IMM_PATCH XS_WALK_PAIR XS_NOTE_FAST PCARG_SIDE XLAT_PURE \
+  SMC_REUSE DMA_SMC_ADAPT DMA_ADAPT_V2 DISPATCH_PRECISE DISPATCH_ASSOC \
+  DISPATCH_LOOKUP_PC JIT_COST JIT_CODE_DISCIPLINE IRQ_IO_FAST MSR_FAST \
+  GBA_PC_MASK BADJUMP_SAFE DISPATCH_CYCLE_CHECK BX_ALIGN_FIX BACKUP_BUS_FIX \
+  COND_ENTRY_FIX HOT_DATA_GUARD
+GPSP_BUILT_IN_VALUES := SMC_SAME_REPROBE=1024 SMC_REUSE_SPARE_KB=384 SMC_REUSE_MODE=3 \
+  HOT_DATA_OFFSET=0x1b00
+GPSP_REQUIRED := SMC_GATES SMC_PARTIAL_SAFE
+$(foreach f,$(GPSP_BUILT_IN),$(if $(filter-out 1,$($(f))),$(error $(f)=$($(f)): $(f) is built in since code-health A-6 (docs/BUILD-SWITCHES.md) and has no other arm; drop $(f))))
+gpsp_built_in_value = $(if $(filter-out $(2),$($(1))),$(error $(1)=$($(1)): $(1) is built in as $(2) since code-health A-6 (docs/BUILD-SWITCHES.md); drop $(1)))
+$(foreach p,$(GPSP_BUILT_IN_VALUES),$(call gpsp_built_in_value,$(word 1,$(subst =, ,$(p))),$(word 2,$(subst =, ,$(p)))))
+$(foreach f,$(GPSP_REQUIRED),$(if $(filter-out 1,$($(f))),$(error $(f)=$($(f)): $(f) is required by the built-in SMC code (gpsp_profile.h); it cannot be switched off)))
 endif
 
 # Escape hatch for one-off builds (profiling probes, oracle perturbations):

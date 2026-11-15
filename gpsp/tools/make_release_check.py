@@ -22,8 +22,9 @@ if m.get("mePrxSha256") != sha(sys.argv[3]):
 features = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8", errors="replace")
 want = {"%s=%s" % (n, v) for n, v in re.findall(r"^#define (\w+) (\S+)$", features, re.M)}
 # 20 since code-health A-6 baked 51 (7 oracle what-ifs + 13 the desktop compiles);
-# fewer means the header was not parsed.
-if len(want) < 7:
+# fewer means the header was not parsed, or a later batch baked some more and
+# must lower this bound in the same commit (code-health B-1 does).
+if len(want) < 20:
     raise SystemExit("gpsp_features.h lists only %d features" % len(want))
 want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
 have = set(m.get("coreFlags", "").split())

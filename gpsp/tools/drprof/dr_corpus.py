@@ -359,6 +359,96 @@ if os.environ.get("DRCORPUS_SF") == "1":
     MUTANTS = {}
 
 
+# ---- code-health A-6: arms that no longer compare anything ----------------
+# 51 former switches are built into the core (docs/BUILD-SWITCHES.md, rows
+# marked "(built in)"), so they are on in EVERY arm whatever its VDEFS say, and
+# a built-in value feature (SMC_REUSE_SPARE_KB=256 above) builds its built-in
+# value.  The tables above stay as the record of what each campaign compared,
+# but their notes describe the build as it was then.  This pass says what an
+# arm builds now, from the doc: an arm whose only difference from its table's
+# base (or from an earlier arm) is built-in names builds the same thing (its
+# column can only repeat that one, and says nothing about the switch it is
+# named after), so it is RETIRED: left out of the default ORDER, still
+# buildable by name, its note marked.  Any other arm that names built-in
+# features beyond its base gets them listed in its note, and so does a value
+# the build no longer takes.  REF_PATCHES arms (a patched tree) and the
+# mutants are left alone.
+def _built_in():
+    """{NAME: value or None} from docs/BUILD-SWITCHES.md's "(built in)" rows."""
+    path = os.path.join(TREE, "docs", "BUILD-SWITCHES.md")
+    out = {}
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return out
+    for row in text.splitlines():
+        cells = row.split("|")
+        if len(cells) < 3 or "*(built in)*" not in cells[1]:
+            continue
+        val = re.match(r"\s*\*\*([^*]+)\*\*", cells[2])
+        for n in re.findall(r"`([A-Z][A-Z0-9_]+)`", cells[1]):
+            out[n] = val.group(1) if val else None
+    return out
+
+
+BUILT_IN = _built_in()
+# Required, and in tools/drprof/Makefile's explicit base list: on in every arm.
+REQUIRED = ("SMC_GATES", "SMC_PARTIAL_SAFE")
+
+
+def _live(defs):
+    """The tokens of a VDEFS string that still change the build."""
+    keep = []
+    for t in defs.split():
+        m = re.match(r"-[DU]([A-Z0-9_]+)", t)
+        if not (m and (m.group(1) in BUILT_IN or (t.startswith("-D") and m.group(1) in REQUIRED))):
+            keep.append(t)
+    return frozenset(keep)
+
+
+def _built_in_named(defs):
+    """{NAME: value asked} for the built-in features a VDEFS string names."""
+    out = {}
+    for t in defs.split():
+        n, _, val = t[2:].partition("=")
+        if t.startswith("-D") and n in BUILT_IN:
+            out[n] = val
+    return out
+
+
+def _relabel():
+    if "base" not in VARIANTS:
+        return []
+    base_named = _built_in_named(VARIANTS["base"][0])
+    seen = {}        # live token set -> the first arm (base first) that builds it
+    retired = []
+    for v, (defs, kind, note) in list(VARIANTS.items()):
+        named = _built_in_named(defs)
+        extra = sorted(n for n in named if n not in base_named)
+        odd = ["%s=%s builds %s" % (n, val, BUILT_IN[n]) for n, val in sorted(named.items())
+               if BUILT_IN[n] is not None and val and val != BUILT_IN[n]]
+        live = _live(defs)
+        same = seen.get(live) if v not in REF_PATCHES else None
+        if same is not None:
+            retired.append(v)
+            note = "RETIRED: builds the same as %s since code-health A-6 (built in: %s); was: %s" % (
+                same, " ".join(extra) or "-", note)
+        elif v == "base" and named:
+            note += " [names %d features built in since code-health A-6]" % len(named)
+        elif extra:
+            note += " [built in since code-health A-6, so in base too: %s]" % " ".join(extra)
+        if odd:
+            note += " [%s]" % "; ".join(odd)
+        if v not in REF_PATCHES:
+            seen.setdefault(live, v)
+        VARIANTS[v] = (defs, kind, note)
+    return retired
+
+
+RETIRED = _relabel()
+ORDER = [v for v in ORDER if v not in RETIRED]
+
+
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 

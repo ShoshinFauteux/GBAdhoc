@@ -1298,7 +1298,7 @@ All from `claude/gbalink-sessmem`, unpinned (`LAYOUT_PIN=0`):
 
 - be2ca8b differs from ce5b7d1 only in `tools/gbamirror/multigame/run_fixture_ppsspp.sh`.
 - Commits after be2ca8b are docs only.
-- A release build must be made with `LAYOUT_PIN=0 GBA_LINK=1`: `tools/build.sh` still defaults `LAYOUT_PIN` to 1, which section 17.7 measured as slower for two cores.
+- At the time, a release build had to be made with `LAYOUT_PIN=0 GBA_LINK=1`: `tools/build.sh` still defaulted `LAYOUT_PIN` to 1, which section 17.7 measured as slower for two cores. (Superseded: pinning is built in since code-health A-7, and both makes and `tools/build.sh` refuse `LAYOUT_PIN=0`; see docs/LAYOUT-PINNING.md.)
 
 ### 19.9 The 70,672 B per-session leak (branch `claude/linkleak`, 2026-10-30)
 

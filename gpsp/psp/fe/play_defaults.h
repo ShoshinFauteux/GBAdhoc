@@ -50,7 +50,15 @@
  * hand and the link-robustness evidence is far stronger than the frame cost.
  * Set to 0 for the extra ~1.7 fps on the host. */
 #define PLAY_IDLE_POLL       34952
-#define PLAY_DUMP_MARKER     0          /* ADR-0066: OFF for a player */
+/* ADR-0066: OFF for a player.  ADR-0069: 0, not the historic 60, in the rig
+ * builds too.  The marker file's ONLY job was "let a human ask for a
+ * screenshot mid-run", and L+R+SELECT now does that for free off a pad we
+ * already read every frame -- so the 12.4 ms stat is no longer buying a
+ * feature, it is only buying the involuntary yield it always came with.
+ * `sched_yield_us` reconstructs that yield deliberately and at a size we
+ * choose.  Set `dump_marker_poll = 60` to get the old mechanism back.  (This
+ * text sat on the bare-make flavour's arm until code-health A-5 removed it.) */
+#define PLAY_DUMP_MARKER     0
 /* ADR-0075: VALIDATED on hardware (fs-pace pace arm — Gate A closed, send
  * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
  * players: this is the input-eating fix. */
