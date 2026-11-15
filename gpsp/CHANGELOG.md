@@ -113,7 +113,7 @@ online play alike. Copy all four files (`EBOOT.PBP`, `gbadhoc_me.prx`, `gbadhoc_
 **Known issues:** online play is still experimental; only Pokémon Emerald has been tested over
 the internet, and a relayed session on a high ping can run below 58 fps. Mario Golf: Advance
 Tour's adapter lobby can still stick when both players press at the same moment (leave and
-rejoin). Hot Wheels: Stunt Track Challenge, Top Gear Rally, LEGO Drome Racers and Payback
+rejoin). Hot Wheels: Stunt Track Challenge, Top Gear Rally and Payback
 still run below 58 fps. **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` for saves
 and states; move them back from `saves/` and `states/` by hand before going back.
 
