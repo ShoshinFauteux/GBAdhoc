@@ -128,24 +128,9 @@
  * one rule quietly shadows the other, and the result is attributed to the flag
  * that was not in fact active.  See cpu_threaded.c for each rule. */
 
-/* Built in since code-health A-6, and inert or wrong without the switch they
- * refine: the gate rules (simple, ranked, bitmap, entry gates) need SMC_GATES,
- * the selective-retirement refinements (stable thunk, direct links, the
- * single-store and block-store classes) need SMC_PARTIAL_SAFE.  Core objects
- * only: GPSP_FEATURES_H is the force-included feature header, which the
- * frontend (psp/main_psp.c) never sees. */
-#ifdef GPSP_FEATURES_H
-#ifndef SMC_GATES
-#error "SMC_GATES is required: its built-in rules (SMC_GATES_SIMPLE/_RANKED, SMC_GATE_BITMAP) do nothing without it."
-#endif
-#ifndef SMC_PARTIAL_SAFE
-#error "SMC_PARTIAL_SAFE is required: its built-in refinements (SMC_PARTIAL_STABLE_THUNK, SMC_PARTIAL_SINGLE, ...) do nothing without it."
-#endif
-#endif
-
-#if defined(SPIN_SKIP) && !defined(MIPS_ARCH)
-#error "SPIN_SKIP is implemented in the MIPS dynarec only (mips/mips_emit.h generate_branch_spin)."
-#endif
+/* SMC_GATES and SMC_PARTIAL_SAFE, which the A-6 rules refine, are built in
+ * since code-health B-1 (no #if tests them), and SPIN_SKIP is compiled
+ * wherever MIPS_ARCH is, so the checks that stood here are gone. */
 
 /* DISPATCH_PRECISE, DISPATCH_ASSOC and DISPATCH_LOOKUP_PC are built in: they
  * are part of DISPATCH_CACHE (code-health A-6), so DISPATCH_CACHE off takes

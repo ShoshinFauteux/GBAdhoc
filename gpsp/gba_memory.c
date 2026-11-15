@@ -642,7 +642,7 @@ void (*gpsp_heap_census)(const char *where);
 /* 128-aligned (was 64) so the MIPS stub's `lui` for the map also reaches
  * vram_clean[VRAM_DIRTY_ANY]: a 128-byte block never straddles the 0x8000
  * boundary where the stub's sign-extended low half would change the lui. */
-#ifdef VRAM_EXEC
+#ifdef HAVE_DYNAREC
 /* VRAM_EXEC: vram_xclean is the second half of this array (gba_memory.h), so
  * every C/DMA mark reaches both maps from one base and the store stub's lui
  * is always shared; 256-aligned for the same lui argument as below.  The
@@ -1651,7 +1651,7 @@ void function_cc write_backup(u32 address, u32 value)
   VRAM_X_MARK(addr);                                                          \
   vram_dirty_marks++                                                          \
 
-#ifdef VRAM_EXEC
+#ifdef HAVE_DYNAREC
 /* DMA marks every word it writes into the ME's map but not into vram_xclean:
  * that map only has to be right at the next VRAM-code lookup, which cannot
  * happen inside a DMA, so a DMA into VRAM marks the pages it will write
@@ -2464,16 +2464,12 @@ const dma_region_type dma_region_map[17] =
 #define dma_vars_iwram(type)
 #define dma_vars_ewram(type)
 #define dma_vars_io(type)
-#ifdef VRAM_EXEC
 /* A DMA INTO VRAM marks vram_xclean once, before its loop, for every page it
  * will write -- and only once the game has armed VRAM_EXEC (vram_mark_dma).
  * Nothing reads that map during a DMA.  Other destinations get no code. */
 /* (cpu-levers vx) Marked once per transfer, out of line, by dma_transfer
  * (vram_x_dma_note): no per-combination code in the pinned copy loops. */
 #define dma_vars_vram(type)
-#else
-#define dma_vars_vram(type)
-#endif
 #define dma_vars_palette_ram(type)
 #define dma_vars_bus(type)
 #define dma_vars_ext(type)
@@ -2541,7 +2537,7 @@ const dma_region_type dma_region_map[17] =
   read_value = read_memory##tfsize(type##_ptr)                                \
 
 /* DMA_SMC_RETIRE (cpu_threaded.c): lowest/highest tagged word a DMA wrote */
-#if defined(DMA_SMC_RETIRE) && defined(HAVE_DYNAREC)
+#ifdef HAVE_DYNAREC
 extern u32 dma_smc_lo[2], dma_smc_hi[2];
 #define DMA_SMC_NOTE(r, a) {                                                   \
   u32 a_ = (a);                                                               \
@@ -2847,7 +2843,7 @@ dma_tf_loop_builder(32);
 
 static const int dma_stride[4] = {1, -1, 0, 1};
 
-#ifdef VRAM_EXEC
+#ifdef HAVE_DYNAREC
 /* A DMA into VRAM while VRAM_EXEC is armed: clear vram_xclean for every
  * 1 KiB page the transfer writes (see vram_mark_dma).  [lo, hi] is the span of
  * GBA addresses written (dma_region_span keeps one transfer inside one region);
@@ -2921,7 +2917,7 @@ static void ME_WMAP_COLD me_wmap_dma_note(unsigned dma_chan)
   else if (((lo >> 24) | 2) == 7)               /* 5 or 7 */
     reg[(lo >> 24) == 7 ? OAM_WMAP : PAL_WMAP] |= me_wmap_rows(lo, span);
 done:
-#ifdef VRAM_EXEC
+#ifdef HAVE_DYNAREC
   vram_x_dma_note(dma_chan);    /* (cpu-levers vx) once per transfer */
 #endif
   return;
@@ -3655,7 +3651,7 @@ void gba_reset_power_on(void)
 {
   translation_gate_targets = cart_gate_n;
   memcpy(translation_gate_target_pc, cart_gate_pc, sizeof(cart_gate_pc));
-#ifdef SMC_GATES
+#ifdef HAVE_DYNAREC
   smc_gates_reset();
 #endif
   reset_gba();
@@ -4498,7 +4494,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
 
    load_game_config_over(game_code);
    gba_cart_gates_snapshot();
-#ifdef SMC_GATES
+#ifdef HAVE_DYNAREC
    /* Reset ages and rebuild derived gate state after the cartridge table has
     * populated its fixed gates. */
    smc_gates_reset();

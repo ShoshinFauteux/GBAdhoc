@@ -35,13 +35,15 @@ would always read as off there; core features reach it as weak symbols) and the
 core never tests a frontend one.
 
 Other platforms never see the headers. `platform=unix`, the SDL desktop build and
-the host tests compile these switches off, so **the `#else` paths are not dead
-code** and stay until the desktop build bakes them too.
+the host tests compile the 7 remaining switches off. Since code-health B-1 that
+is all they compile off: the 13 features those builds used to compile off are
+*(built in)*, their dynarec-only code wherever `HAVE_DYNAREC` is and `SPIN_SKIP`
+wherever `MIPS_ARCH` is, so the desktop and the host tests run the arms that ship.
 
 | to do this | write this |
 |---|---|
-| one feature off, an A/B arm | `CORE_EXTRA="XLAT_FAST=0" tools/build.sh harness` (root make `XLAT_FAST=0`, which is `-DGPSP_NO_XLAT_FAST`). Only the 20 switches still in `gpsp_features.h`; a *(built in)* feature has no off arm. A release refuses `CORE_EXTRA`. |
-| a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
+| one feature off, an A/B arm | `CORE_EXTRA="XLAT_FAST=0" tools/build.sh harness` (root make `XLAT_FAST=0`, which is `-DGPSP_NO_XLAT_FAST`). Only the 7 switches still in `gpsp_features.h` (the 13 built-in names there are refused); a *(built in)* feature has no off arm. A release refuses `CORE_EXTRA`. |
+| a different value | none left: every value feature is *(built in)* and the root make refuses another value (`SMC_SINGLE_HOT=64`, `SMC_SAME_REPROBE=1024`, ...) |
 | the link, the rewind off | `GBA_LINK=0`, `REWIND=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only). Layout pinning and the GB lazy timer have no off arm since code-health A-7 (both makes refuse `LAYOUT_PIN`/`TGB_LAZY_TIMER` other than 1) |
 | a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_PLAY_INPUT_FRESH` drops the playable default (what `INPUT_FRESH=0` passes) |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works; the *(built in)* features are on whatever `VDEFS` says. It stays the default because GBAdhoc-Lab builds its gate, profiler and lockstep twins with it |
@@ -101,14 +103,22 @@ line, the root Makefile's `ifeq` and the `NAME=0` / `-DGPSP_NO_NAME` arm are gon
 and `coreFlags` no longer lists them. They are kept here for what they do. The
 dispatch refinements (`DISPATCH_PRECISE`, `DISPATCH_ASSOC`, `DISPATCH_LOOKUP_PC`)
 are part of `DISPATCH_CACHE` now: switching that oracle arm off removes them too.
-Likewise `MSR_FAST` is part of `FIQ_BANK_FIX`, and `DMA_SMC_ADAPT` /
-`DMA_ADAPT_V2` are part of `DMA_SMC_RETIRE`, so a twin variant that omits the
-parent still builds without them, as it did before.
+
+Rows marked *(built in, B-1)* were built in by code-health batch B-1: no source
+tests them, in any build (the dynarec-only ones are compiled wherever
+`HAVE_DYNAREC` is, `SPIN_SKIP` wherever `MIPS_ARCH` is). Unlike A-6's, their
+`gpsp_features.h` lines stay, as names only, so a manifest's `coreFlags`, the
+Lab registry's fixture `requires` (`VRAM_EXEC=1`, `TIMER_RELOAD_FIX=1`,
+`FIQ_BANK_FIX=1`), `make_release_check.py` and `flags.lock` still list them;
+the root make refuses `NAME=0` (and `SMC_SINGLE_HOT` other than 64) and
+`-DGPSP_NO_NAME` stops the compile. `MSR_FAST` (part of `FIQ_BANK_FIX`) and
+`DMA_SMC_ADAPT` / `DMA_ADAPT_V2` (part of `DMA_SMC_RETIRE`) are therefore in
+every twin variant too, whatever its `VDEFS`.
 
 | switch | what it does |
 |---|---|
 | **SMC translation gates** | |
-| `SMC_GATES` | put a translation gate at a self-modified address so later blocks split there. Deliberately independent of `SMC_PARTIAL*`: gates bought Unbound its speed and also broke its audio, so the two must be testable apart. |
+| `SMC_GATES` *(built in, B-1)* | put a translation gate at a self-modified address so later blocks split there. Deliberately independent of `SMC_PARTIAL*`: gates bought Unbound its speed and also broke its audio, so the two must be testable apart. |
 | `SMC_GATES_SIMPLE` *(built in)* | the 2.0.1 add-only gate rule. Once placed, a gate never moves, so an already-translated block can never disagree with the table. 2.0.2's evicting rule is what crashed Heart & Soul (see **The rejected evicting rule** below). |
 | `SMC_GATES_RANKED` *(built in)* | promote after 64 observed writes when at least half changed the word (see **What `SMC_GATES_RANKED` requires** below). Counts are lifetime within one ROM. |
 | `SMC_GATE_BITMAP` *(built in)* | same gate table and boundaries, tested through a bitmap instead of comparing every live gate per compiled instruction. |
@@ -118,7 +128,7 @@ parent still builds without them, as it did before.
 | `ENTRY_GATES_RANGE` *(built in)* | the exhaustion-time gate harvest walks only the tag range the following full flush clears. Needs `ENTRY_GATES`. |
 | `ENTRY_GATES_FAST` *(built in)* | the entry-gate harvest tests four tag slots per load. Exact. |
 | **Selective SMC retirement** | |
-| `SMC_PARTIAL_SAFE` | after a reported SMC trap, selectively retires ranges for a bounded ARM STMIA/LR shape (M4A-motivated, not ROM-specific); other writes use the full flush. See the M4A range-gate caveat below. |
+| `SMC_PARTIAL_SAFE` *(built in, B-1)* | after a reported SMC trap, selectively retires ranges for a bounded ARM STMIA/LR shape (M4A-motivated, not ROM-specific); other writes use the full flush. See the M4A range-gate caveat below. |
 | `SMC_PARTIAL_STABLE_THUNK` *(built in)* | a permanent per-block RAM entry thunk, so retiring a block redirects the thunk rather than orphaning inbound links. |
 | `SMC_PARTIAL_DIRECT_LINKS` *(built in)* | keep RAM->RAM links direct; route only persistent ROM->RAM links through an island. Requires the stable thunk. |
 | `SMC_RETIRE_WINDOW` *(built in)* | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. Oracle IDENTICAL on 7 fixtures; twin -6..-12 % on SMC games. |
@@ -129,7 +139,7 @@ parent still builds without them, as it did before.
 | `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` *(built in)* | the same from Thumb STR/STRH/STRB and from ARM STRH single stores. |
 | `SMC_SINGLE_ANYPC`, `SMC_SINGLE_EWRAM` *(built in)* | the same for writers outside IWRAM (ROM, EWRAM, BIOS) and for EWRAM targets. |
 | `SMC_SINGLE_UNTAG` *(built in)* | also lift dead block-start tags in the written range. |
-| `SMC_SINGLE_HOT` | **64**: the widened single-store classes engage only after this many of their traps (or once selective retirement is already active). |
+| `SMC_SINGLE_HOT` *(built in, B-1)* | **64**: the widened single-store classes engage only after this many of their traps (or once selective retirement is already active). |
 | `SMC_STM_RANGE` *(built in)* | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
 | `SMC_STM_CHAIN` *(built in)* | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
 | `SMC_STM_WIDE` *(built in)* | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
@@ -140,7 +150,7 @@ parent still builds without them, as it did before.
 | `SMC_SAME_ADAPT` *(built in)* | record halfwords for `SMC_SAME_SKIP` only while it pays: recorded in bulk per translated block (`xs_note_block`); after each 65536 recorded halfwords with fewer than 256 skips, recording and checking stop; a re-probe follows single-word retirements. Exact like `SMC_SAME_SKIP` (it only skips less). Hot Wheels +0.00 % (`SMC_SAME_SKIP` alone +13.5 %). Mutant `SMC_SAME_ADAPT_MUTANT_NOREC` is caught by `tools/drprof/synth/xs_norec.s`. |
 | `SMC_SAME_REPROBE` *(built in)* | **1024**: `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. |
 | `SMC_IMM_PATCH` *(built in)* | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
-| `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
+| `XS_HEAP` *(built in, B-1)* | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
 | `XS_WALK_PAIR` *(built in)* | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
 | `XS_NOTE_FAST` *(built in)* | `xs_note_block` records eight halfwords at a time. Exact. |
 | **Translated code size** | |
@@ -151,8 +161,8 @@ parent still builds without them, as it did before.
 | `SMC_REUSE_SPARE_KB` *(built in)* | **384**: the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. |
 | `SMC_REUSE_MODE` *(built in)* | **3**: 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
 | **DMA onto translated code** | |
-| `DMA_SMC_FLUSH` | an HBlank/VBlank DMA onto code tagged as translated full-flushes the RAM translation cache and re-dispatches, as the CPU-triggered DMA path always did; upstream `update_gba` discarded the alert, leaving stale translations live. |
-| `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
+| `DMA_SMC_FLUSH` *(built in, B-1)* | an HBlank/VBlank DMA onto code tagged as translated full-flushes the RAM translation cache and re-dispatches, as the CPU-triggered DMA path always did; upstream `update_gba` discarded the alert, leaving stale translations live. |
+| `DMA_SMC_RETIRE` *(built in, B-1)* | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
 | `DMA_SMC_ADAPT` *(built in)* | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
 | `DMA_ADAPT_V2` *(built in)* | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
 | **Dispatch and translator speed** | (docs/DYNAREC-PROFILE.md) |
@@ -163,18 +173,18 @@ parent still builds without them, as it did before.
 | `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
 | `JIT_COST` *(built in)* | the cost of producing translated code (docs/JIT-COST.md). Exact. |
 | `JIT_CODE_DISCIPLINE` *(built in)* | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
-| `SPIN_SKIP` | the translator proves a backward branch closes a side-effect-free loop (loads without writeback, ALU ops, compares; every read register never written in the loop or written earlier in the same iteration); the taken back-edge asks `update_gba` whether to end the slice when every load address is RAM, palette, VRAM, OAM, ROM or a few event-only I/O registers. Anything else vetoes the loop. Not keyed on any address or ROM. Moves timing by less than one loop iteration per event; judged by the Lab gate's replayed lockstep. Oracle `SPIN_SKIP_VERIFY`; mutants `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP`. |
+| `SPIN_SKIP` *(built in, B-1)* | the translator proves a backward branch closes a side-effect-free loop (loads without writeback, ALU ops, compares; every read register never written in the loop or written earlier in the same iteration); the taken back-edge asks `update_gba` whether to end the slice when every load address is RAM, palette, VRAM, OAM, ROM or a few event-only I/O registers. Anything else vetoes the loop. Not keyed on any address or ROM. Moves timing by less than one loop iteration per event; judged by the Lab gate's replayed lockstep. Oracle `SPIN_SKIP_VERIFY`; mutants `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP`. |
 | **Scheduler, interrupt and serial fast paths** | |
-| `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
+| `SCHED_FAST` *(built in, B-1)* | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
 | `IRQ_IO_FAST` *(built in)* | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
-| `SERIAL_IDLE_FAST` | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
+| `SERIAL_IDLE_FAST` *(built in, B-1)* | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
 | `MSR_FAST` *(built in)* | CPSR writes that switch mode and SPSR restores bank the registers in `mips_stub.S` instead of calling C (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path. Exact. Run-time kill switch `msr_fast`. Needs `FIQ_BANK_FIX`. |
-| `HALT_HOP` | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN) starts at `HALT_HOP_DEFAULT` 6. Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL. |
+| `HALT_HOP` *(built in, B-1)* | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN) starts at `HALT_HOP_DEFAULT` 6. Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL. |
 | **Guest correctness** | |
 | `GBA_PC_MASK` *(built in)* | mask the emulated pc to 28 bits before the region lookup, as the GBA does. Not sufficient alone: a masked garbage target can land in a region the translator handles. |
 | `BADJUMP_SAFE` *(built in)* | an unmappable guest pc soft-resets the GBA instead of `jr`-ing to it. The path it replaces crashes every time. |
 | `DISPATCH_CYCLE_CHECK` *(built in)* | `mips_indirect_branch_arm`/`_thumb` call `mips_update_gba` when the cycle budget is spent, as direct branches do; without it a loop closed only by indirect branches or gate exits never completes a frame. `_dual` (BX) is not checked. |
-| `FIQ_BANK_FIX` | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
+| `FIQ_BANK_FIX` *(built in, B-1)* | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
 | `BX_ALIGN_FIX` *(built in)* | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
 | `BACKUP_BUS_FIX` *(built in)* | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
 | `COND_ENTRY_FIX` *(built in)* | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
@@ -182,8 +192,8 @@ parent still builds without them, as it did before.
 | `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (issue #10). |
 | `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by `BADJUMP_SAFE`. |
 | `RAM_MIRROR_FIX` | a RAM pc reached through a mirror alias shares the canonical tag, but each translation records the alias it was made at; a lookup at another alias flushes the RAM cache and retranslates, and a block exit to another alias is linked lazily. Code that really runs at an alias sees the alias's pc, as on the GBA (The Morrow's Golden Country, Pokemon MonoMyth: fixture mono_trainer_crash). Twin counters: `RAM_MIRROR conflicts= alias_xlat=`. |
-| `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
-| `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
+| `TIMER_RELOAD_FIX` *(built in, B-1)* | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
+| `VRAM_EXEC` *(built in, B-1)* | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
 | **Data placement** | |
 | `HOT_DATA_GUARD` *(built in)* | the stub's hot data block (memory map, `reg`, palette/OAM, spsr, patcher tables) at a fixed D-cache set offset (`mips_stub.S`, `hot_data_guard.ld`). |
 | `HOT_DATA_OFFSET` *(built in)* | **0x1b00**: where `HOT_DATA_GUARD` places the block in its 8 KiB way. |

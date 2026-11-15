@@ -35,12 +35,9 @@ __attribute__((used)) static u32 sched_hot_hold_bss;
 int serial_mode = SERIAL_MODE_AUTO;
 #endif
 
-#if defined(SCHED_HOT_IN_REG)
-#elif defined(SERIAL_IDLE_FAST)
-/* main.c's idle fast path reads it (contender #3, docs/DYNAREC-PROFILE.md) */
+#ifndef SCHED_HOT_IN_REG
+/* main.c's idle fast path reads it (SERIAL_IDLE_FAST, docs/DYNAREC-PROFILE.md) */
 u32 serial_irq_cycles = 0;
-#else
-static u32 serial_irq_cycles = 0;
 #endif
 
 /* Savestate accessors for the serial-IRQ scheduler. The pending-cycles

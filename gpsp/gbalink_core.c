@@ -862,7 +862,7 @@ static void lk_cold_start(unsigned slot, int headless)
 {
    translation_gate_targets = lk_gate_cfg_n;
    memcpy(translation_gate_target_pc, lk_gate_cfg_pc, sizeof(lk_gate_cfg_pc));
-#ifdef SMC_GATES
+#ifdef HAVE_DYNAREC
    smc_gates_reset();
 #endif
 #ifdef HAVE_DYNAREC

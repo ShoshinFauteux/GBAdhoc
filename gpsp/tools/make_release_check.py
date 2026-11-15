@@ -21,9 +21,10 @@ if m.get("mePrxSha256") != sha(sys.argv[3]):
 # or an instrument that slipped in, still says profile=release and hashes fine.
 features = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8", errors="replace")
 want = {"%s=%s" % (n, v) for n, v in re.findall(r"^#define (\w+) (\S+)$", features, re.M)}
-# 20 since code-health A-6 baked 51 (7 oracle what-ifs + 13 the desktop compiles);
-# fewer means the header was not parsed, or a later batch baked some more and
-# must lower this bound in the same commit (code-health B-1 does).
+# 20 since code-health A-6 baked 51 (7 oracle what-ifs + 13 names B-1 built in but
+# kept as header lines, for coreFlags and the Lab's fixture `requires`); fewer
+# means the header was not parsed, or a later batch dropped lines and must lower
+# this bound in the same commit.
 if len(want) < 20:
     raise SystemExit("gpsp_features.h lists only %d features" % len(want))
 want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}

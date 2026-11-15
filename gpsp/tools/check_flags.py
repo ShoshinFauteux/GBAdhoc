@@ -184,9 +184,36 @@ def check_removed(say, words):
                 say("removed", "%s is removed but %s sets it" % (n, rel))
 
 
+def name_only() -> set[str]:
+    """The built-in names code-health B-1 left in gpsp_features.h: defined under a
+    bare `#ifndef NAME` (a switch's guard also tests GPSP_NO_NAME).  No source may
+    test them; they exist for coreFlags and the Lab registry's `requires`."""
+    return set(re.findall(r"^#ifndef (\w+)\n#define \1 \S+$", read(CORE_HDR), re.M))
+
+
+def built_in_rows() -> set[str]:
+    """Names of the docs/BUILD-SWITCHES.md rows marked *(built in...)*."""
+    names: set[str] = set()
+    for row in read(SWITCHES).splitlines():
+        if row.startswith("| `") and "*(built in" in row.split("|")[1]:
+            names |= set(re.findall(r"`([A-Z][A-Z0-9_]+)`", row.split("|")[1]))
+    return names
+
+
 def check_dead(say, words):
+    only = name_only()
+    if len(only) != 13:
+        say("dead", "%s has %d built-in names (bare #ifndef), expected B-1's 13" % (CORE_HDR, len(only)))
+    refused = re.search(r"^GPSP_BUILT_IN_B1 :=((?:.*\\\n)*.*)$", read("Makefile"), re.M)
+    refused = set(WORD.findall(refused.group(1))) if refused else set()
+    refused |= set(re.findall(r"^GPSP_BUILT_IN_VALUES_B1 := (\w+)=", read("Makefile"), re.M))
+    for n in sorted(only):
+        if n in words:
+            say("dead", "%s is a built-in name (B-1) but %s tests it" % (n, ", ".join(sorted(words[n]))))
+        if n not in refused:
+            say("dead", "%s is a built-in name (B-1) but the root Makefile does not refuse %s=0" % (n, n))
     for n in header_defs(CORE_HDR):
-        if n not in words:
+        if n not in words and n not in only:
             say("dead", "%s is baked but no core or frontend source tests it" % n)
     for n in header_defs(FE_HDR):
         if n not in words and not n.startswith("ND_"):
@@ -195,7 +222,7 @@ def check_dead(say, words):
     for rel in ("Makefile", "psp/Makefile"):
         pairs = re.findall(r"ifeq \(\$\((\w+)\),1\)\n\s*\w*FLAGS\s*\+=\s*-D(\w+)", read(rel))
         for var, n in sorted(set(pairs)):
-            if n not in words:
+            if n not in words and n not in only:
                 say("dead", "%s: %s=1 passes -D%s and no source tests it" % (rel, var, n))
 
 
@@ -223,7 +250,9 @@ def check_docs(say):
 
 
 def check_oracles(say, words):
-    known = set(words) | set(header_defs(CORE_HDR)) | set(header_defs(FE_HDR))
+    # A *(built in)* name in a twin table is harmless (it changes nothing) and
+    # documented, whether or not a source still mentions it.
+    known = set(words) | set(header_defs(CORE_HDR)) | set(header_defs(FE_HDR)) | built_in_rows()
     all_src = sources(CORE_DIRS + FE_DIRS)
     for rel in ("tools/drprof/Makefile", "tools/drprof/dr_corpus.py", "tools/drprof/dr_build.sh"):
         for n in sorted(set(re.findall(r"-[DU]([A-Z][A-Z0-9_]{2,})", read(rel)))):

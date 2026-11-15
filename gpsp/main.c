@@ -34,23 +34,11 @@ s32 video_count = 0;
 #define SCHED_HOLD_BSS_MAIN (112 + 4 * 3 /* timer, video_count, execute_cycles, cpu_ticks */ \
                              + 4 * 2     /* core_phase_lvl, cph_ugba (not cph_stmr) */      \
                              + SCHED_HOLD_FAST + SCHED_HOLD_HOP)
-#ifdef SCHED_FAST
 #define SCHED_HOLD_FAST 4                /* sched_fast */
-#else
-#define SCHED_HOLD_FAST 0
-#endif
-#ifdef HALT_HOP
 #define SCHED_HOLD_HOP 4                 /* hop_active */
-#else
-#define SCHED_HOLD_HOP 0
-#endif
 __attribute__((used)) static u8 sched_hot_hold_bss[SCHED_HOLD_BSS_MAIN];
-#if defined(HALT_HOP) || (defined(TIMER_LAZY) && TIMER_LAZY_DEFAULT)
-/* timer_lazy's nonzero default kept it in .data */
+/* timer_lazy's nonzero default (HALT_HOP_DEFAULT) kept it in .data */
 __attribute__((used)) static u32 sched_hot_hold_data = 1;
-#elif defined(TIMER_LAZY)
-__attribute__((used)) static u32 sched_hot_hold_bss2;
-#endif
 /* ...and in .text: init_main and main_write_savestate came out 32 B (one
  * function-alignment step) shorter each with the packed timers, which moved
  * instance A's cold text after main.o (pipe_latch, me_replay_lines: the
@@ -452,7 +440,7 @@ void smc_blk_note_block(u32 start_pc, u32 end_pc, u32 thumb, u32 reason)
   unsigned i;
   smc_blk_xlat++;
   smc_blk_xlat_total++;
-#ifdef SMC_PARTIAL_SAFE
+#ifdef HAVE_DYNAREC
   /* Hand the block's source extent to the tag table while it is still this
    * block's — external-exit resolution below can recursively translate other
    * blocks and would otherwise overwrite it. */
@@ -871,7 +859,6 @@ extern u32 timer_lazy;
 #define TIMER_IS_LAZY(i) 0
 #endif
 
-#ifdef HALT_HOP
 /* HALT_HOP's run-time switch: the harness key / session core mask
  * `timer_lazy` (main_psp.c, fe_gbadual.c copies it to machine B), as a bit
  * mask: bit 1 = HALT_HOP, bit 2 = HOP_DRAWN.  HALT_HOP_DEFAULT is the value a
@@ -886,9 +873,7 @@ u32 timer_lazy = HALT_HOP_DEFAULT;
 extern u32 timer_lazy;
 #endif
 #define hop_mask timer_lazy
-#endif
 
-#ifdef HALT_HOP
 /* HALT_HOP=1 (build) + timer_lazy bit 1 (run time).  While the CPU is halted
  * nothing can read DISPSTAT or VCOUNT, so the scheduler need not stop at the
  * H-blank edges of a line where those edges do nothing else (no H-blank IRQ
@@ -986,7 +971,6 @@ static __attribute__((noinline)) void halt_hop_wake(void)
    write_ioreg(REG_DISPSTAT, dispstat);
    write_ioreg(REG_VCOUNT, vcount);
 }
-#endif
 
 
 static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
@@ -1047,7 +1031,6 @@ static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
       } while (timer_lazy && timer[i].count <= 0 &&
                timer[i].status == TIMER_PRESCALE);
 #endif
-#ifdef TIMER_RELOAD_FIX
       /* A timer that just overflowed reads its RELOAD value, not 0x0000
        * (dr2-nfsu, 2026-10-21).  The register is refreshed above with the
        * count BEFORE the reload, i.e. -(0) = 0x0000 at the exact overflow
@@ -1061,7 +1044,6 @@ static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
       write_ioreg(REG_TMXD(i), timer[i].status == TIMER_CASCADE ?
                   (u32)(-timer[i].count) :
                   (u32)(-(timer[i].count >> timer[i].prescale)));
-#endif
    }
    return ret;
 }
@@ -1131,7 +1113,6 @@ void utrace_note(const char *what, u32 a, u32 b)
   if (utf) fprintf(utf, "  %s %08x %08x t=%u\n", what, (unsigned)a, (unsigned)b, (unsigned)cpu_ticks);
 }
 #endif
-#ifdef SERIAL_IDLE_FAST
 /* SERIAL_IDLE_FAST (contender #3, OFF by default; docs/DYNAREC-PROFILE.md):
  * update_serial() runs on every update_gba pass (3-7% of a solo frame).  With
  * no transfer pending and no link client role it is provably a no-op except
@@ -1172,9 +1153,7 @@ static inline int serial_idle_fast(unsigned cycles)
     return 0;
   }
 }
-#endif
 
-#ifdef SCHED_FAST
 /* SCHED_FAST=1 (build) + sched_fast (run time; harness `sched_fast = 1`):
  * scheduler fast paths, OFF by default (docs/GBA-LINK-MIRROR.md 24).  Pure
  * speed: the machine is identical with it on or off.
@@ -1194,9 +1173,8 @@ extern u32 sched_fast;
 #else
 u32 sched_fast = SCHED_FAST_DEFAULT;
 #endif
-#endif
 
-#ifdef SPIN_SKIP
+#ifdef MIPS_ARCH
 int spin_check(u32 *desc);
 extern u32 spin_skips, spin_vetoes, spin_loops;
 #endif
@@ -1315,13 +1293,11 @@ static void skip_verify_event(void)
     skip_verify_bad(what);
 }
 #endif
-#if defined(DRPROF_TWIN) && defined(SPIN_SKIP)
+#if defined(DRPROF_TWIN) && defined(MIPS_ARCH)
 static void spin_report(void)
 {
-#ifdef SPIN_SKIP
   fprintf(stderr, "SPIN_SKIP loops=%u skips=%u vetoes=%u\n",
           (unsigned)spin_loops, (unsigned)spin_skips, (unsigned)spin_vetoes);
-#endif
 #ifdef SKIP_VERIFY
   {
     u32 kd, k;
@@ -1344,7 +1320,7 @@ static void spin_report(void)
 u32 function_cc update_gba(int remaining_cycles)
 {
   DRPH_SCOPE(DRPH_UPD);
-#ifdef SPIN_SKIP
+#ifdef MIPS_ARCH
   /* A spin loop's back-edge (mips_emit.h generate_branch_spin) asks whether
    * it may end this slice.  Only with cycles left: a due event is processed
    * normally.  Vetoed loops return here with their cycles untouched. */
@@ -1356,7 +1332,6 @@ u32 function_cc update_gba(int remaining_cycles)
     u32 sdw = reg[REG_SPIN_DESC];
     reg[REG_SPIN_DESC] = 0;
     {
-#ifdef SPIN_SKIP
       u32 *sd = (u32 *)sdw;
       if (remaining_cycles >= 0)
       {
@@ -1374,7 +1349,6 @@ u32 function_cc update_gba(int remaining_cycles)
         remaining_cycles = 0;
 #endif
       }
-#endif
     }
   }
 #ifdef SKIP_VERIFY
@@ -1468,9 +1442,7 @@ u32 function_cc update_gba(int remaining_cycles)
     }
     else
 #endif
-#ifdef SERIAL_IDLE_FAST
     if (!serial_idle_fast(completed_cycles))
-#endif
     if (update_serial(completed_cycles))
       irq_raised |= IRQ_SERIAL;
 
@@ -1480,7 +1452,6 @@ u32 function_cc update_gba(int remaining_cycles)
     // Ran out of cycles, move to the next video area
     if(video_count <= 0)
     {
-#ifdef HALT_HOP
       if (hop_active)
       {
         hop_active = 0;
@@ -1488,7 +1459,6 @@ u32 function_cc update_gba(int remaining_cycles)
           write_ioreg(REG_IF, read_ioreg(REG_IF) | IRQ_HBLANK);
         halt_hop_lines(hop_vstart, hop_vcount);
       }
-#endif
       u32 vcount = read_ioreg(REG_VCOUNT);
       u32 dispstat = read_ioreg(REG_DISPSTAT);
 
@@ -1524,7 +1494,7 @@ u32 function_cc update_gba(int remaining_cycles)
               if(dma[i].start_type == DMA_START_HBLANK)
                 dma_alert |= dma_transfer(i, &dma_cycles);
             }
-#if defined(HAVE_DYNAREC) && defined(DMA_SMC_FLUSH)
+#ifdef HAVE_DYNAREC
             /* A DMA that lands on translated code raises CPU_ALERT_SMC, as
              * the CPU-triggered path in write_io_epilogue already honours.
              * Here it used to be dropped, leaving the old translation live.
@@ -1590,7 +1560,7 @@ u32 function_cc update_gba(int remaining_cycles)
               if(dma[i].start_type == DMA_START_VBLANK)
                 dma_alert |= dma_transfer(i, &dma_cycles);
             }
-#if defined(HAVE_DYNAREC) && defined(DMA_SMC_FLUSH)
+#ifdef HAVE_DYNAREC
             /* Same as the HBlank case above. */
             if ((dma_alert & CPU_ALERT_SMC) && dynarec_enable)
             {
@@ -1689,7 +1659,6 @@ u32 function_cc update_gba(int remaining_cycles)
       write_ioreg(REG_DISPSTAT, dispstat);
     }
 
-#ifdef SCHED_FAST
     if (sched_fast)
     {
       if (irq_raised)
@@ -1699,7 +1668,6 @@ u32 function_cc update_gba(int remaining_cycles)
         changed_pc = 0x40000000;
     }
     else
-#endif
     {
     // Flag any V/H blank interrupts, DMA IRQs, Vcount, etc.
     if (irq_raised)
@@ -1710,7 +1678,6 @@ u32 function_cc update_gba(int remaining_cycles)
       changed_pc = 0x40000000;
     }
 
-#ifdef HALT_HOP
     if (reg[CPU_HALT_STATE] != CPU_HALT)
     {
       if (hop_active)      /* woken in this pass: before the next stop is set */
@@ -1718,7 +1685,6 @@ u32 function_cc update_gba(int remaining_cycles)
     }
     else if ((hop_mask & 2) && !hop_active && !frame_complete)
       halt_hop_begin();
-#endif
     // Figure out when we need to stop CPU execution. The next event is
     // a video event or a timer event, whatever happens first.
     execute_cycles = MAX(video_count, 0);

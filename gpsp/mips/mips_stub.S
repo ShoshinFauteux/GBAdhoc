@@ -24,7 +24,7 @@
 // call, see msr_fast_store below.  Needs FIQ_BANK_FIX's banking (the asm swap
 // is that set_cpu_mode), absolute addressing, and no IRQ_INTEGRITY_CHECK
 // (whose exit hook lives in the C body).  Built in: part of FIQ_BANK_FIX.
-#if defined(FIQ_BANK_FIX) && !defined(PIC) && !defined(IRQ_INTEGRITY_CHECK)
+#if !defined(PIC) && !defined(IRQ_INTEGRITY_CHECK)
 #define MSR_FAST_ON 1
 #endif
 
@@ -1179,16 +1179,10 @@ defobj(\name)
   sched_slot cpu_ticks,         SCHED_SLOT_CPU_TICKS,      0
   sched_slot cph_ugba,          SCHED_SLOT_CPH_UGBA,       0
   sched_slot sched_hop_active,  SCHED_SLOT_HOP_ACTIVE,     0
-#ifdef SCHED_FAST
   sched_slot sched_fast,        SCHED_SLOT_SCHED_FAST,     SCHED_FAST_DEFAULT
-#endif
   sched_slot serial_mode,       SCHED_SLOT_SERIAL_MODE,    SCHED_SERIAL_MODE_INIT
   sched_slot serial_irq_cycles, SCHED_SLOT_SERIAL_IRQ,     0
-#if defined(HALT_HOP)
   sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     HALT_HOP_DEFAULT
-#elif defined(TIMER_LAZY)
-  sched_slot timer_lazy,        SCHED_SLOT_TIMER_LAZY,     TIMER_LAZY_DEFAULT
-#endif
   sched_slot core_phase_lvl,    SCHED_SLOT_CORE_PHASE_LVL, 0
   sched_gap SCHED_SLOT_TIMER
 defobj(timer)

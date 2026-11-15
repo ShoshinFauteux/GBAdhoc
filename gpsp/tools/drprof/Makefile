@@ -42,9 +42,10 @@ RELEASE_DEFS := -DUSE_PSP_RGB565_FORMAT
 CORE_MAKE_VARS := REWIND=1
 else ifeq ($(FEATURES),explicit)
 # The configuration the oracle tables are written on top of (dr_corpus.py).
-# The built-in features need no name here (they are in the source); SMC_GATES
-# and SMC_PARTIAL_SAFE do, and are required (gpsp_profile.h refuses a core
-# without them), so no variant can turn them off.
+# The built-in features need no name here (they are in the source).  SMC_GATES,
+# SMC_PARTIAL_SAFE and DMA_SMC_FLUSH are built in too since code-health B-1;
+# their names stay because they change nothing and the list is what the oracle
+# tables were written against.
 RELEASE_DEFS := -DGPSP_FEATURES_EXPLICIT \
   -DSMC_GATES -DSMC_PARTIAL_SAFE -DDMA_SMC_FLUSH=1 \
   -DUSE_PSP_RGB565_FORMAT

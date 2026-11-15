@@ -375,7 +375,7 @@ extern u8 vram[1024 * 96];
  * only ever touch the first VRAM_DIRTY_PAGES bytes. */
 #define VRAM_DIRTY_ANY       VRAM_DIRTY_PAGES
 #define VRAM_DIRTY_MAP_BYTES (VRAM_DIRTY_PAGES + 32)
-#ifdef VRAM_EXEC
+#ifdef HAVE_DYNAREC
 /* VRAM_EXEC (cpu_threaded.c): a second written-map, same pages, same inverted
  * sense, that only the dynarec resets (when it translates code in a page), so
  * it can tell whether translated VRAM code may have been overwritten.  The

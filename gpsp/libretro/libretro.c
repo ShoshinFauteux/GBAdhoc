@@ -144,7 +144,7 @@ u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
 u32 translation_gate_targets = 0;
 
 static u16 *gba_screen_pixels_prev = NULL;
-#ifdef XS_HEAP
+#ifdef HAVE_DYNAREC
 /* retro_init could not take the dynarec's heap tables: retro_load_game
  * refuses (instance B's session start then fails instead of aborting). */
 static bool xs_heap_failed;
@@ -767,7 +767,7 @@ void retro_init(void)
   #endif
 #endif
 
-#ifdef XS_HEAP
+#ifdef HAVE_DYNAREC
    {  /* before the 1 MiB ROM loop takes the heap (cpu_threaded.c) */
       extern int dynarec_heap_tables_init(void);
       xs_heap_failed = dynarec_heap_tables_init() != 0;
@@ -1788,7 +1788,7 @@ bool retro_load_game(const struct retro_game_info* info)
     * to decide whether the core can usefully run. */
    if (!gba_screen_pixels)
       return false;
-#ifdef XS_HEAP
+#ifdef HAVE_DYNAREC
    if (xs_heap_failed)
       return false;
 #endif

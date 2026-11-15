@@ -86,13 +86,11 @@ static union {
   } aw;
 } serstate;
 
-#ifdef SERIAL_IDLE_FAST
 /* The only state serialpoke_update / serialaw_update touch while this console
  * has no link client role (netplay_client_id == 0): main.c's idle fast path
  * does exactly that add itself and skips the call chain. */
 unsigned *const serial_poke_frcnt = &serstate.poke.frcnt;
 unsigned *const serial_aw_frcnt   = &serstate.aw.frcnt;
-#endif
 
 // Serial-Poke: emulates (via fakes) the pokemon serial protocol.
 //

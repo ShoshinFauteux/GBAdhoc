@@ -256,7 +256,7 @@ extern u32 translation_gate_targets;
 extern u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
 void smc_gates_reset(void);   /* SMC_GATES builds: forget gate hit stamps */
 void smc_gates_refresh_values(void); /* Savestate: rebase ranked observations */
-#ifdef DMA_SMC_FLUSH
+#ifdef HAVE_DYNAREC
 /* HBlank/VBlank DMAs that landed on translated code and forced a full RAM
  * flush from update_gba (main.c).  Monotonic; frontends declare it weak. */
 extern u32 dma_smc_flushes;

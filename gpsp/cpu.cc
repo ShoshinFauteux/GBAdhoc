@@ -1481,7 +1481,6 @@ const u32 cpu_modes[16] =
 
 u32 instruction_count = 0;
 
-#ifdef FIQ_BANK_FIX
 /* FIQ has its own r8-r14; every other mode shares the user r8-r12 and has
  * only its own r13/r14.  The shared r8-r12 are parked in the USER/SYSTEM
  * slot (reg_mode[0][0..4]) while FIQ runs, FIQ's own r8-r14 live in
@@ -1545,39 +1544,6 @@ void set_cpu_mode(cpu_mode_type new_mode)
 {
   set_cpu_mode_body(new_mode);
 }
-#else
-void set_cpu_mode(cpu_mode_type new_mode)
-{
-  cpu_mode_type cpu_mode = reg[CPU_MODE];
-
-  if(cpu_mode == new_mode)
-     return;
-
-  if(new_mode == MODE_FIQ)
-  {
-     for (u32 i = 8; i < 15; i++)
-        REG_MODE(cpu_mode)[i - 8] = reg[i];
-  }
-  else
-  {
-     REG_MODE(cpu_mode)[5] = reg[REG_SP];
-     REG_MODE(cpu_mode)[6] = reg[REG_LR];
-  }
-
-  if(cpu_mode == MODE_FIQ)
-  {
-     for (u32 i = 8; i < 15; i++)
-        reg[i] = REG_MODE(new_mode)[i - 8];
-  }
-  else
-  {
-     reg[REG_SP] = REG_MODE(new_mode)[5];
-     reg[REG_LR] = REG_MODE(new_mode)[6];
-  }
-
-  reg[CPU_MODE] = new_mode;
-}
-#endif
 
 #define cpu_has_interrupt()                                                   \
   cpu_irq_delivery_enabled(read_ioreg(REG_IE), read_ioreg(REG_IF),            \
@@ -1588,7 +1554,6 @@ cpu_alert_type check_interrupt() {
   return (cpu_has_interrupt()) ? CPU_ALERT_IRQ : CPU_ALERT_NONE;
 }
 
-#ifdef FIQ_BANK_FIX
 /* (cpu-levers) An IRQ taken while in FIQ: the bank swap, out of line and
  * reached by a sibling (tail) call, so check_and_raise_interrupts stays a
  * frameless leaf.  Inlining set_cpu_mode_body's FIQ branch there cost this
@@ -1601,7 +1566,6 @@ static u32 __attribute__((noinline)) irq_enter_from_fiq(void)
     reg[CPU_HALT_STATE] = CPU_ACTIVE;
   return 1;
 }
-#endif
 
 // Checks for pending IRQs and raises them. This changes the CPU mode
 // which means that it must be called with a valid CPU state.
@@ -1630,13 +1594,9 @@ u32 check_and_raise_interrupts()
     reg[REG_CPSR] = 0xD2;
     reg[REG_PC] = 0x00000018;
 
-#ifdef FIQ_BANK_FIX
     if (__builtin_expect(reg[CPU_MODE] == MODE_FIQ, 0))
       return irq_enter_from_fiq();
     set_cpu_mode_body(MODE_IRQ);   /* not FIQ: SP/LR only, inline, a leaf */
-#else
-    set_cpu_mode(MODE_IRQ);
-#endif
 
     // STOP retains the existing IRQ-delivery-gated wake behavior.
     if (reg[CPU_HALT_STATE] == CPU_STOP)

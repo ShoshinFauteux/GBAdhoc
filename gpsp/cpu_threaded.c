@@ -47,12 +47,7 @@ u32 smc_window_violations;
  * Payback (twin): smc_retire_span walked ~7k instructions per trap through a
  * window sized by a 0x22c-byte unrolled loop elsewhere in IWRAM. */
 #define SMC_LOCAL_SHIFT 6
-#ifdef XS_HEAP
 static u16 *smc_back_iw, *smc_back_ew;      /* dynarec_heap_tables_init */
-#else
-static u16 smc_back_iw[0x8000 >> SMC_LOCAL_SHIFT];
-static u16 smc_back_ew[0x40000 >> SMC_LOCAL_SHIFT];
-#endif
 static u32 smc_back_lo[2] = { ~0u, ~0u }, smc_back_hi[2];   /* dirty chunks */
 static inline u16 *smc_back_tab(u32 rgn)
 {
@@ -221,12 +216,10 @@ u32 irq_io_fast = IRQ_IO_FAST_DEFAULT;
  * / harness key msr_fast): CPSR writes that switch mode, and SPSR restores,
  * bank the registers in mips/mips_stub.S (msr_fast_store) instead of the C
  * call.  Read on every switch; 0 = the C path every build before it ran. */
-#ifdef FIQ_BANK_FIX
 #ifndef MSR_FAST_DEFAULT
 #define MSR_FAST_DEFAULT 1
 #endif
 u32 msr_fast = MSR_FAST_DEFAULT;
-#endif
 
 u8 *bios_swi_entrypoint = NULL;
 
@@ -2896,14 +2889,10 @@ static inline u32 ram_tag_next(const u16 *tagp, u32 i, u32 last)
 /* (The direct-link/stable-thunk cross-check, and every other illegal SMC flag
  * combination, is now asserted together in gpsp_profile.h.) */
 
-#ifdef SMC_PARTIAL_SAFE
 #define SMC_NOTE_CODE_BYTES(te, blkptr, type)                                 \
   do { if (smc_partial_active)                                                \
     (te)->code_bytes_##type = (u32)(ram_translation_ptr - (blkptr));          \
   } while (0)
-#else
-#define SMC_NOTE_CODE_BYTES(te, blkptr, type)  do { } while (0)
-#endif
 
 #define allocate_tag_arm(location) {   \
   location[0] = ram_block_tag;         \
@@ -2922,7 +2911,6 @@ typedef struct
 {
   u32 offset_arm;     // Cache offset to the ARM-mode public entry
   u32 offset_thumb;   // Cache offset to the Thumb-mode public entry
-#ifdef SMC_PARTIAL_SAFE
   /* The same guest address can have both ARM and Thumb translations. Keep
    * their source extents separate so translating one mode cannot hide an
    * overlapping block in the other mode from an SMC retirement. */
@@ -2942,7 +2930,6 @@ typedef struct
    * EVERY tag allocation and written at every translation. */
   u32 stale_end_arm;
   u32 stale_end_thumb;
-#endif
 #endif
 #ifdef RAM_MIRROR_FIX
   /* The mirror alias each mode's translation was made at (ram_mirror_id:
@@ -3000,11 +2987,7 @@ static void stale_check_entry(ramtag_type *te, u32 pc, u32 thumb)
                    " partial_active=%u\n",
                 (unsigned)frame_counter, (unsigned)pc, (unsigned)end,
                 thumb ? "thumb" : "arm", (unsigned)smc_last_write_addr,
-#ifdef SMC_PARTIAL_SAFE
                 (unsigned)smc_partial_active
-#else
-                0u
-#endif
                 );
         fclose(f);
       }
@@ -3021,7 +3004,6 @@ static void stale_check_entry(ramtag_type *te, u32 pc, u32 thumb)
 #define STALE_CHECK_ENTRY(te, pc, thumb) do { } while (0)
 #endif
 
-#ifdef SMC_PARTIAL_SAFE
 #define SMC_INIT_TAG_METADATA(te) do {                                        \
   if (smc_partial_active) {                                                   \
     (te)->blk_end_arm = 0;                                                    \
@@ -3030,9 +3012,6 @@ static void stale_check_entry(ramtag_type *te, u32 pc, u32 thumb)
     (te)->code_bytes_thumb = 0;                                               \
   }                                                                           \
 } while (0)
-#else
-#define SMC_INIT_TAG_METADATA(te) do { } while (0)
-#endif
 
 static u32 ram_block_tag = INITIAL_TOP_TAG;
 
@@ -3042,7 +3021,6 @@ inline static ramtag_type* get_ram_tag(u16 tagval) {
   return &tbl[tgidx >> 1];  /* Since LSB is always 1 and thus unused */
 }
 
-#ifdef SMC_PARTIAL_SAFE
 u32 smc_partial_active;
 #ifdef SMC_BLOCK_EXACT
 /* A block-store word hit code that could not be retired exactly; the next
@@ -3087,17 +3065,12 @@ static inline u32 smc_rt_bucket(u32 addr)
 {
   return (addr * 2654435761u) >> (32 - SMC_RT_BUCKET_BITS);
 }
-#ifdef XS_HEAP
 static inline u16 *smc_rt_heads(void);  /* after xs_heap_blk (its .bss place) */
 /* The block's layout (dynarec_heap_tables_init carves it in this order):
  * the SMC_SAME_SKIP tables, the SMC_RETIRE_LOCAL tables, these buckets. */
 #define XS_HEAP_XS_BYTES (0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2 + 2 * (0x10000 / 16))
 #define XS_HEAP_BACK_BYTES ((0x8000 >> SMC_LOCAL_SHIFT) * 2 + (0x40000 >> SMC_LOCAL_SHIFT) * 2)
 #define XS_HEAP_RT_OFF (XS_HEAP_XS_BYTES + XS_HEAP_BACK_BYTES)
-#else
-static u16 smc_rt_head_tab[SMC_RT_BUCKETS];
-#define smc_rt_heads() smc_rt_head_tab
-#endif
 /* The believed head of bucket b (entry number + 1), or 0. */
 static inline u32 smc_rt_head(const u16 *heads, u32 b)
 {
@@ -3280,17 +3253,6 @@ static DC_NOINLINE void smc_stable_thunk_dispatch(u8 *entry, u32 pc, u32 thumb)
 #define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) \
   do { if (smc_partial_active && !*(tagp) && smc_retired_tag_count) \
          smc_restore_retired_tag((pc), (tagp), 1); } while (0)
-#else
-#define SMC_RESTORE_RETIRED_TAG_arm(pc, tagp) do { } while (0)
-#define SMC_RESTORE_RETIRED_TAG_thumb(pc, tagp) do { } while (0)
-#define SMC_RAM_NEEDS_TRANSLATION(te, type) (!(te)->offset_##type)
-#define SMC_RAM_PREPARE_TRANSLATION(te, type, body)                           \
-  ((te)->offset_##type = (u32)((body) - ram_translation_cache))
-#define SMC_RAM_COMMIT_TRANSLATION(te, type, body) do { } while (0)
-#define SMC_RAM_ABORT_TRANSLATION(te, type, pc, is_thumb) do { } while (0)
-#define SMC_RAM_PUBLIC_ENTRY(te, type)                                        \
-  (&ram_translation_cache[(te)->offset_##type])
-#endif
 
 // This function will return a pointer to a translated block of code. If it
 // doesn't exist it will translate it, if it does it will pass it back.
@@ -3354,9 +3316,7 @@ static inline int gba_pc_translatable(u32 pc)
     return GBA_PC(pc) < 0x4000;
 #endif
   return region == 0x0 || region == 0x2 || region == 0x3 ||
-#ifdef VRAM_EXEC
          region == 0x6 ||
-#endif
          (region >= 0x8 && region <= 0xD);
 }
 
@@ -3392,9 +3352,7 @@ void badjump_report(u32 pc);
  * psp-gcc prologues), and every savestate reload empties the ROM cache, so
  * the first frames after a load are the worst case.  The frontend reads and
  * resets these in its core_health line. */
-#ifdef DMA_SMC_FLUSH
 u32 dma_smc_flushes;   /* incremented by update_gba (main.c) */
-#endif
 
 #ifdef XLAT_DEPTH_PROBE
 u32 xlat_depth_max;
@@ -3416,7 +3374,6 @@ void xlat_depth_probe_reset(void)
 #define XLAT_PROBE_LEAVE() do { } while (0)
 #endif
 
-#ifdef VRAM_EXEC
 /* VRAM_EXEC: code executing from VRAM (Blue Roses' engine -- Big Mutha
  * Truckers, Street Racing Syndicate -- copies routines to OBJ VRAM and jumps
  * there; jsmolka nes.gba too).  Without it the lookup has no case for region
@@ -3529,12 +3486,7 @@ static void __attribute__((noinline)) vram_exec_activate(void)
   if ((GBA_PC(start) >> 24) == 6) vram_code_note((start), (end));            \
 } while (0)
 #define DC_PUT_OK(pc) 1   /* VRAM blocks never reach the put: see above */
-#else
-#define VRAM_CODE_NOTE(start, end) do { } while (0)
-#define DC_PUT_OK(pc) 1
-#endif
 
-#ifdef VRAM_EXEC
 /* the region-6 case of block_lookup_translate_builder (see VRAM_EXEC above),
  * out of line (compat-cost): inline it grew block_lookup_translate_arm/thumb
  * and changed what the compiler inlines on the hot dispatch path (PSP harness
@@ -3608,10 +3560,6 @@ vram_lookup_builder(thumb)
   (((GBA_PC(target) >> 24) == 6) ?                                            \
     vram_lookup_translate_##type((target), (thumb)) :                         \
     block_lookup_translate_##type(target))
-#else
-#define VRAM_LOOKUP_CASE(type)
-#define XLAT_LINK_LOOKUP(type, thumb, target) block_lookup_translate_##type(target)
-#endif
 
 /* SMC_REUSE (make SMC_REUSE=1, off by default; docs/BUILD-SWITCHES.md).
  * The implementation and its contract are above translate_block_arm. */
@@ -3693,16 +3641,12 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
   smc_reuse_log_site(translation_ptr);                                        \
   mips_emit_jump(jal, offset);                                                \
 } while (0)
-#ifdef SMC_PARTIAL_SAFE
 /* code_bytes is "live" (nonzero) and "a trampoline fits" (>= 8); a revived
  * body sits below ram_translation_ptr, so the distance cannot be used. */
 #define SMC_REUSE_CODE_BYTES(te, type) do {                                   \
   if (smc_rr && smc_partial_active)                                           \
     (te)->code_bytes_##type = smc_reuse_size(smc_rr);                         \
 } while (0)
-#else
-#define SMC_REUSE_CODE_BYTES(te, type) do { } while (0)
-#endif
 
 /* BIOS_BOUND_FIX (issue #10, Fire Emblem: The Morrow's Golden Country).  Region
  * 0 holds code only in the BIOS, 0x00000000-0x00003FFF; above it the bus reads
@@ -3781,9 +3725,6 @@ static inline void smc_reuse_log_mutable(u8 *at, u32 nwords)
  * alias too (RAM_MIRROR_ENTRY_PC): a retired alias thunk used to dispatch
  * the canonical pc. */
 #ifdef RAM_MIRROR_FIX
-#ifndef SMC_PARTIAL_SAFE
-#error RAM_MIRROR_FIX needs SMC_PARTIAL_SAFE (its dispatch islands)
-#endif
 #ifdef DRPROF_TWIN   /* counters: the twin only (no new PSP .bss) */
 static u32 ram_mirror_conflicts;      /* alias conflicts: RAM cache flushes */
 static u32 ram_mirror_alias_xlat;     /* translations made at a non-canonical alias */
@@ -3884,9 +3825,6 @@ __attribute__((constructor)) static void ram_mirror_report_init(void)
  * it translates this block alone, and the guard is reached only by a pc that
  * cannot be translated at all.  The first three tries are unchanged. */
 #ifdef XLAT_LAST_TRY_LAZY
-#ifndef SMC_PARTIAL_SAFE
-#error XLAT_LAST_TRY_LAZY needs SMC_PARTIAL_SAFE (its dispatch islands)
-#endif
 u32 xlat_lazy_links CORE_SBSS;     /* small data: docs/LAYOUT-PINNING.md */
 #define XLAT_LAZY_LINKS_NOW    xlat_lazy_links
 #define XLAT_LAZY_LINKS_SET(v) (xlat_lazy_links = (v))
@@ -4043,7 +3981,6 @@ block_lookup_translate_builder(thumb);
 #define STALE_ALL_ENTRIES_COND(ram_region, target)                              (smc_partial_active && SMC_RAM_LINK_NEEDS_DISPATCH(ram_region, target))
 #endif
 
-#ifdef SMC_PARTIAL_SAFE
 static int smc_partial_target_is_gated(u32 addr)
 {
   u32 i;
@@ -4052,7 +3989,6 @@ static int smc_partial_target_is_gated(u32 addr)
       return 1;
   return 0;
 }
-#endif
 
 u8 function_cc *block_lookup_address_dual(u32 pc)
 {
@@ -4138,12 +4074,10 @@ void stale_scan(u32 where)
       stale_rec *r = &stale_recs[i];
       if (!r->live || r->start != pc || r->thumb != (where & 1)) continue;
       if (*stale_tagp(r->start) != r->tag) { r->live = 0; continue; }
-#ifdef SMC_PARTIAL_SAFE
       if (smc_partial_active) {
         ramtag_type *te = get_ram_tag(r->tag);
         if (!(r->thumb ? te->code_bytes_thumb : te->code_bytes_arm)) { r->live = 0; continue; }
       }
-#endif
       n = (r->end - r->start + 3) >> 2;
       for (k = 0; k < n; k++) {
         u32 a = r->start + 4 * k;
@@ -4191,12 +4125,10 @@ void stale_scan(u32 where)
       }
       continue;
     }
-#ifdef SMC_PARTIAL_SAFE
     if (smc_partial_active) {
       ramtag_type *te = get_ram_tag(tag);
       if (!(r->thumb ? te->code_bytes_thumb : te->code_bytes_arm)) { r->live = 0; continue; }
     }
-#endif
     n = (r->end - r->start + 3) >> 2;
     for (k = 0; k < n; k++) {
       u32 a = r->start + 4 * k;
@@ -4462,7 +4394,6 @@ static u8 *badjump_recover(u32 pc)
 #define BADJUMP_GUARD(ret, pc)                                            \
   do { if ((ret) == BLOCK_LOOKUP_UNMAPPABLE) return badjump_recover(pc); } while (0)
 #define BADJUMP_EXHAUSTED(pc)  return badjump_recover(pc)
-#ifdef VRAM_EXEC
 /* The dispatcher's region-6 lookups (see VRAM_LOOKUP_CASE): the sentinel
  * test BADJUMP_GUARD always made is the only thing on the common path.  The
  * same retries and publish as block_lookup_address_*, minus the dispatch
@@ -4493,10 +4424,6 @@ vram_or_badjump_builder(thumb, 1)
  * goes straight to badjump_recover there), so the two cold tail calls merge
  * as they do without VRAM_EXEC and block_lookup_address_* keep their size. */
 #define BADJUMP_EXHAUSTED_X(pc, type)  return vram_or_badjump_##type(pc)
-#else
-#define BADJUMP_GUARD_X(ret, pc, type) BADJUMP_GUARD(ret, pc)
-#define BADJUMP_EXHAUSTED_X(pc, type)  BADJUMP_EXHAUSTED(pc)
-#endif
 
 #ifdef DISPATCH_CACHE
 /* DISPATCH_CACHE (prototype, docs/DYNAREC-PROFILE.md): a direct-mapped
@@ -5023,17 +4950,11 @@ DC_NOINLINE u8 function_cc *block_lookup_address_thumb(u32 pc)
  * changes, every trap still happens (same smc_write path and re-dispatch),
  * and the comparison is against what the translations read, over their whole
  * extents.  IWRAM only; EWRAM traps retire as before. */
-#ifdef XS_HEAP
 /* XS_HEAP (cpu-levers cpl2w): the tables live in one heap block taken
  * before the ROM cache (dynarec_heap_tables_init), so .bss -- and every hot
  * array after these in it -- keeps the release build's layout. */
 static u16 *xs_val;
 static u8  *xs_ok, *xs_bad;
-#else
-static u16 xs_val[0x8000 / 2] __attribute__((aligned(16)));
-static u8  xs_ok[0x8000 / 16] __attribute__((aligned(4)));   /* word reads */
-static u8  xs_bad[0x8000 / 16] __attribute__((aligned(4)));
-#endif
 static u32 xs_ready;
 u32 smc_same_skips, smc_same_poison;
 /* SMC_SAME_ADAPT (cpu-levers, 2026-10-26): record only while it pays.
@@ -5079,11 +5000,7 @@ u32 smc_same_skips, smc_same_poison;
 #define XS_REPROBE    ((u32)(1024))
 static u32 xs_on = 1, xs_win_noted, xs_win_skips, xs_off_retires, xs_dirty;
 u32 xs_turned_off, xs_turned_on;
-#ifdef XS_HEAP
 static u8 (*xs_rec)[0x10000 / 16];
-#else
-static u8 xs_rec[2][0x10000 / 16];       /* [thumb][tag >> 1] bit */
-#endif
 /* Nothing reads the record before partial invalidation is active, and
  * activation is a full RAM flush, so recording starts there. */
 #define XS_ON() (xs_on && smc_partial_active)
@@ -5145,11 +5062,7 @@ u32 rs_calls, rs_vslots, rs_retired, rs_uscan, rs_cov, rs_un, rs_clr;
  * block covering either halfword of the word -- the scan window
  * xs_blocks_current walks.  Lowered by every scan of the word; reset only
  * when neither halfword has a valid record, i.e. no live block covers it. */
-#ifdef XS_HEAP
 static u16 *xs_min;
-#else
-static u16 xs_min[0x8000 / 4];
-#endif
 static inline void xs_note_half(u32 off, u32 start)
 {
   u32 h = (off & 0x7FFF) >> 1, w = h >> 1;
@@ -5444,7 +5357,6 @@ block_exit_type block_exits[MAX_EXITS];
 void smc_cover_note(u32 s, u32 e, u32 reason);
 #endif
 
-#if defined(SMC_GATES)
 /* One bit per RAM halfword. This is a compiled view of the existing gate
  * table: it changes the cost of asking "is this PC gated?", never which PCs
  * are gates or where translated blocks end. */
@@ -5659,19 +5571,6 @@ static void xlat_gate_maps(u32 region, const u8 **smc, const u8 **ent,
     goto block_end;                                                        \
   }                                                                        \
   ENTRY_GATE_SCAN(tag_gate_op)                                             \
-} while (0)
-#endif
-#else
-#define SMC_GATE_MAP_ADD(pc)       do { } while (0)
-#define SMC_GATE_MAP_REBUILD()     do { } while (0)
-#define SMC_SCAN_GATE_END(tag_gate_op) do {                                \
-  for (i = 0; i < translation_gate_targets; i++) {                          \
-    if (block_end_pc == translation_gate_target_pc[i]) {                   \
-      tag_gate_op;                                                         \
-      scan_exit_reason = SMC_SCAN_GATE;                                    \
-      goto block_end;                                                      \
-    }                                                                      \
-  }                                                                        \
 } while (0)
 #endif
 
@@ -5960,7 +5859,7 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
  * of a 256 x 16 table -- built at first use BY RUNNING THE SAME MACRO over
  * every combination of those bits, so it cannot disagree with it; twin
  * builds also check it against the macro on random opcodes at build time. */
-#if defined(XLAT_SCANFN_ARM) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP)
+#if defined(XLAT_SCANFN_ARM) && !defined(XLAT_NO_GATEMAP)
 #define JIT_SCAN_FAST 1
 #ifdef GPSP_PROFILE_RELEASE
 /* A release has no harness to flip it (the key is read only with the
@@ -6523,7 +6422,7 @@ __attribute__((constructor)) static void immp_report_init(void)
   atexit(immp_report);
 }
 #endif
-#ifdef SPIN_SKIP
+#ifdef MIPS_ARCH
 /* SPIN_SKIP (cpu-levers lever 4, 2026-10-26): fast-forward a provably
  * side-effect-free polling loop to the next scheduled event.
  *
@@ -7100,7 +6999,7 @@ int spin_check(u32 *desc)
   }
   return 1;
 }
-#endif /* SPIN_SKIP */
+#endif /* MIPS_ARCH (SPIN_SKIP) */
 
 
 /* SMC_REUSE -- do not re-translate RAM code that has not changed.
@@ -7330,11 +7229,7 @@ static void smc_reuse_drop(void)
 /* 1 = every record in the index was made in the environment we are in. */
 static int smc_reuse_env_ok(void)
 {
-#ifdef SMC_PARTIAL_SAFE
   u32 pa = smc_partial_active;
-#else
-  u32 pa = 0;
-#endif
   if (smc_reuse_env.gen == smc_reuse_gen &&
       smc_reuse_env.idle == idle_loop_target_pc &&
       smc_reuse_env.cheat == cheat_master_hook &&
@@ -8331,7 +8226,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
      entry_gate_branch_source;
     external_block_exit_position++;
   }
-#ifdef SMC_PARTIAL_SAFE
   /* ROM survives a RAM-cache flush, so a direct ROM->RAM jump could later
    * enter an overwritten cache slot. Route only those persistent links
    * through a local island. RAM->RAM links stay direct on the normal path;
@@ -8353,7 +8247,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
       external_block_exits[i].branch_source = NULL;
     }
   }
-#endif
 
   /* AN UNTRANSLATABLE EXIT MUST NOT BE PATCHED IN AS A DIRECT JUMP.
    *
@@ -8674,7 +8567,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
      entry_gate_branch_source;
     external_block_exit_position++;
   }
-#ifdef SMC_PARTIAL_SAFE
   for(i = 0; i < external_block_exit_position; i++)
   {
     branch_target = external_block_exits[i].branch_target;
@@ -8692,7 +8584,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       external_block_exits[i].branch_source = NULL;
     }
   }
-#endif
 
   /* AN UNTRANSLATABLE EXIT MUST NOT BE PATCHED IN AS A DIRECT JUMP.
    *
@@ -8850,12 +8741,10 @@ void flush_translation_cache_ram(void)
    * which a release has, so a release skips both syscalls. */
   u32 flush_t0 = (smc_blk_watch && smc_prof_clock) ? smc_prof_clock() : 0;
 
-#ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;
   smc_partial_wrap_live = 0;
 #ifdef SMC_BLOCK_EXACT
   smc_block_pending_full = 0;
-#endif
 #endif
   smc_max_extent[0] = smc_max_extent[1] = 0;
 #if !defined(SMC_LOCAL_COLD)
@@ -9043,7 +8932,6 @@ u32 smc_fallback_stats[16];   /* [10] stale checks, [11] stale MISMATCHES,
  *         the write_io_epilogue path is exactly and only the DMA case.  A
  *         DMA knows its whole destination range up front, so this is the
  *         source a range-invalidate could actually address. */
-#ifdef SMC_PARTIAL_SAFE
 /* Selective SMC invalidation used by the current hardware experiment.
  * Tags identify block starts, while per-mode end addresses record exact
  * source ranges. */
@@ -9098,13 +8986,11 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
   u32 off, base, size, len, canon_end;
-#if defined(DMA_SMC_RETIRE)
   if (end_pc > start_pc && ((start_pc >> 24) == 2 || (start_pc >> 24) == 3)) {
     extern u32 smc_work_halves;
     smc_work_halves += (end_pc - start_pc) >> 1;
     { extern u32 smc_work_blocks; smc_work_blocks++; }
   }
-#endif
 
 #ifdef STALE_CHECK
   stale_note_extent(start_pc, end_pc, thumb);
@@ -9342,9 +9228,7 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
   }
 }
 
-#endif
 
-#ifdef SMC_GATES
 /* Split future blocks at the self-modified address, so each rebuild is a small
  * block instead of the whole routine.  Hoisted OUT of the partial-invalidation
  * path so the two can be tested independently: gates alone change block
@@ -9682,13 +9566,7 @@ static void smc_add_gate(u32 gba_addr)
   }
   /* Table full: leave every existing gate exactly where it is. */
 }
-#else
-/* No gate machinery (every non-PSP build): savestate.c still calls this.
- * (Ported from claude/gba-link-bench: the host core did not link.) */
-void smc_gates_refresh_values(void) {}
-#endif
 
-#ifdef SMC_PARTIAL_SAFE
 /* Describe the complete write that led to the SMC trap. ARM STM emits
  * unchecked stores for every word except the highest address.
  * A non-writeback STM is still safe to retire selectively once we decode the
@@ -9802,25 +9680,22 @@ static int smc_untag_now;
  * flush + gate).  Reason: the corpus oracle (2026-10-20) showed that without
  * it nearly every game ACTIVATES selective retirement on its boot-time code
  * copies (a handful of ROM/Thumb writers), changing timing library-wide for
- * no gain; the titles that benefit trap thousands of times. */
+ * no gain; the titles that benefit trap thousands of times.  Built in as 64
+ * since code-health B-1 (gpsp_features.h keeps SMC_SINGLE_HOT=64 as a name for
+ * coreFlags; the root make refuses another value). */
+#define SMC_SINGLE_HOT_K 64
 static u32 smc_wide_traps;
 static int smc_wide_gate(void)
 {
-#ifdef SMC_SINGLE_HOT
   /* Counted even when selective mode is already on (M4A mixer games): the
    * corpus showed Pokemon titles otherwise switch their few boot-time
    * widened traps to the new path for no gain. */
-  if (smc_wide_traps >= SMC_SINGLE_HOT)
+  if (smc_wide_traps >= SMC_SINGLE_HOT_K)
     return 1;
   smc_wide_traps++;
   return 0;
-#else
-  return 1;
-#endif
 }
-#ifdef SMC_SINGLE_HOT
 void smc_coverage_state_loaded(void) { smc_wide_traps = 0; }
-#endif
 #define SMC_DR2_CLASS(pc, a) ((((pc) >> 24) == 0x03) && (((a) >> 24) == 0x03))
 static int smc_writer_safe_range(u32 *low, u32 *high)
 {
@@ -10030,15 +9905,11 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
 #if !defined(SMC_RETIRE_LIST_N)
 #define SMC_RETIRE_LIST_N 64
 #endif
-#if defined(DMA_SMC_RETIRE)
 /* Deterministic work counters (DMA_SMC_ADAPT's cost model): tag slots walked
  * by selective retirement, and guest halfwords scanned by RAM translations. */
 u32 smc_work_walk, smc_work_halves;
 u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
 #define SMC_WORK_WALK(n) (smc_work_walk += (u32)(n))
-#else
-#define SMC_WORK_WALK(n) ((void)0)
-#endif
 #ifdef PSP
 /* LAYOUT (smc-cost 2026-11-13, docs/LAYOUT-PINNING.md "Keeping the pads"):
  * the smc-cost changes shrink pinned warm-tail functions (their new loops
@@ -10710,7 +10581,6 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word)
 }
 
 
-#ifdef SMC_GATES
 /* The ordinary gate is harvested from smc_last_write_addr, which is the
  * highest word written by an ARM STM.  SoundMainRAM's checked store writes
  * two words, so placing the boundary there still lets a translated block
@@ -10752,9 +10622,7 @@ static int smc_partial_install_range_gate(u32 low, u32 high)
 
   return changed;
 }
-#endif
 
-#endif
 
 /* THE OPTIMISATION THAT LOOKS OBVIOUS HERE AND IS WRONG.
  *
@@ -10971,11 +10839,7 @@ static void scp_note(int admitted)
       return;
     fprintf(f, "SMC traps classified: %u (frame %u) dma_flushes=%u\n",
             (unsigned)scp_traps, (unsigned)frame_counter,
-#ifdef DMA_SMC_FLUSH
             (unsigned)dma_smc_flushes
-#else
-            0u
-#endif
             );
     for (i = 0; i < SCP_N; i++)
       fprintf(f, "  %-26s %u\n", scp_name[i], (unsigned)scp_count[i]);
@@ -11037,7 +10901,6 @@ void flush_translation_cache_ram_smc(void)
     }
   }
 #endif
-#ifdef SMC_PARTIAL_SAFE
   u32 partial_low = 0, partial_high = 0;
   int range_safe;
   smc_single_store = 0;
@@ -11052,14 +10915,9 @@ void flush_translation_cache_ram_smc(void)
              0));
   int range_gate_changed = 0;
   int activating = range_safe && !smc_partial_active;
-#endif
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
   flush_ram_smc++;
-#ifdef SMC_PARTIAL_SAFE
   SCP_NOTE(range_safe);
-#else
-  SCP_NOTE(0);
-#endif
   SMC_HISTO_NOTE(smc_last_write_addr, reg[REG_PC]);
 #ifdef UPDATE_TRACE_LO
   { void utrace_note(const char *, u32, u32);
@@ -11091,16 +10949,11 @@ void flush_translation_cache_ram_smc(void)
     DRPROF_ZONE_LEAVE(DRZ_FLUSH);
     return;
   }
-#ifdef SMC_GATES
-#ifdef SMC_PARTIAL_SAFE
   if (range_safe)
     range_gate_changed = smc_partial_install_range_gate(partial_low,
                                                         partial_high);
   else
-#endif
     smc_add_gate(smc_last_write_addr);
-#endif
-#ifdef SMC_PARTIAL_SAFE
   {
     if (activating) {
       /* ROM translations survive a RAM flush and may contain direct links
@@ -11132,9 +10985,6 @@ void flush_translation_cache_ram_smc(void)
       flush_translation_cache_ram();
     }
   }
-#else
-  flush_translation_cache_ram();
-#endif
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
 
@@ -11293,7 +11143,6 @@ void smc_trap_entry(void)
   flush_translation_cache_ram_smc();
 }
 
-#ifdef DMA_SMC_RETIRE
 /* DMA_SMC_RETIRE (cpu-levers 2026-10-27, twin prototype): dma_write_iwram /
  * dma_write_ewram record the lowest and highest TAGGED word every transfer
  * since the last consumption wrote (gba_memory.c; only on a tag hit, so an
@@ -11477,12 +11326,10 @@ static int dma_smc_retire(void)
   dma_smc_hi[0] = dma_smc_hi[1] = 0;
   return ok;
 }
-#endif
 
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;
-#ifdef DMA_SMC_RETIRE
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
   if (dma_smc_retire()) {
     dma_smc_retired++;
@@ -11490,7 +11337,6 @@ void flush_translation_cache_ram_dma(void)
     return;
   }
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
-#endif
   flush_translation_cache_ram();
 }
 
@@ -11507,9 +11353,7 @@ void flush_translation_cache_rom(void)
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
-#ifdef VRAM_EXEC
   vram_code_forget();
-#endif
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
@@ -11531,7 +11375,6 @@ void gpsp_rewind_jit_used(u32 *rom, u32 *ram)
 }
 #endif
 
-#ifdef XS_HEAP
 /* One zeroed block for the SMC_SAME_SKIP / SMC_RETIRE_LOCAL tables, taken
  * once, before init_gamepak_buffer's 1 MiB loop (libretro.c retro_init);
  * init_dynarec_caches calls it too, as a no-op after the first.
@@ -11561,9 +11404,7 @@ void dynarec_heap_tables_release(void)
   xs_min = NULL;
   xs_rec = NULL;
   smc_back_iw = smc_back_ew = NULL;
-#ifdef SMC_PARTIAL_SAFE
   smc_retired_tag_count = 0;   /* its buckets went with the block */
-#endif
 }
 /* 0, or -1 when malloc refused the block (nothing is changed then).  At
  * retro_init that is reported, not fatal: retro_load_game refuses the game,
@@ -11578,9 +11419,7 @@ int dynarec_heap_tables_init(void)
   sz += 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2;
   sz += 2 * (0x10000 / 16);
   sz += (0x8000 >> SMC_LOCAL_SHIFT) * 2 + (0x40000 >> SMC_LOCAL_SHIFT) * 2;
-#ifdef SMC_PARTIAL_SAFE
   sz += SMC_RT_BUCKETS * sizeof(u16);
-#endif
   blk = malloc(sz ? sz : 64);
   if (!blk) {
     fprintf(stderr, "dynarec_heap_tables_init: %u bytes refused\n", (unsigned)sz);
@@ -11597,37 +11436,28 @@ int dynarec_heap_tables_init(void)
     xs_rec = (u8 (*)[0x10000 / 16])p; p += 2 * (0x10000 / 16);
     smc_back_iw = (u16 *)p; p += (0x8000 >> SMC_LOCAL_SHIFT) * 2;
     smc_back_ew = (u16 *)p; p += (0x40000 >> SMC_LOCAL_SHIFT) * 2;
-#ifdef SMC_PARTIAL_SAFE
     /* smc_rt_heads(): the retired-tag buckets, last (any content is safe:
      * a head is checked against the table before it is believed) */
     p += SMC_RT_BUCKETS * sizeof(u16);   /* at XS_HEAP_RT_OFF */
-#endif
     (void)p;
   }
   return 0;
 }
-#endif
 void init_dynarec_caches(void)
 {
-#ifdef XS_HEAP
   /* retro_load_game refuses a game whose retro_init could not take the
    * block, so this is the no-op second call; were it ever the first, the
    * SMC tables would be NULL, and stopping here is what it always did. */
   if (dynarec_heap_tables_init() != 0)
     abort();
-#endif
   /* Initialize caches so that we can start initalizing the emitter. */
   jit_code_owner_changed(JOWN_INIT);
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, ROM_BRANCH_HASH_N * sizeof(u32));
-#ifdef VRAM_EXEC
   vram_code_forget();
-#endif
 
   ram_translation_ptr = last_ram_translation_ptr = &ram_translation_cache[0];
-#ifdef SMC_PARTIAL_SAFE
   smc_partial_active = 0;
-#endif
   smc_wide_traps = 0;
   smc_window_armed = 0;
 #ifdef DISPATCH_CACHE
@@ -12040,14 +11870,10 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
 {
   extern void fe_evt(const char *fmt, ...) __attribute__((weak));
   u32 pa = 0, wide = 0, dmode = 0, dgap = 0, xon = 1, xrep = 0;
-#ifdef SMC_PARTIAL_SAFE
   pa = smc_partial_active;
   wide = smc_wide_traps;
-#endif
-#if defined(DMA_SMC_RETIRE)
   dmode = dma_rt_mode;
   dgap = drt_gap;
-#endif
   xon = xs_on;
   xrep = xs_reprobe;
   dynarec_link_on = on ? 1u : 0u;
@@ -12059,17 +11885,13 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
 
   /* Every adaptive controller back to its boot value (the value instance B
    * has: its whole core data is restored from boot bytes before a session). */
-#ifdef SMC_PARTIAL_SAFE
   smc_partial_active = 0;
   smc_wide_traps = 0;
-#endif
   smc_window_armed = 0;
-#if defined(DMA_SMC_RETIRE)
   dma_rt_mode = 0;
   drt_f0 = drt_x0 = drt_ref = drt_since = drt_probing = 0;
   drt_gap = DMA_ADAPT_GAP0;
   memset(drt_s, 0, sizeof(drt_s));
-#endif
   xs_on = 1;
   xs_win_noted = xs_win_skips = xs_off_retires = 0;
   xs_reprobe = XS_REPROBE;
@@ -12636,18 +12458,14 @@ void jit_stats_report(FILE *f)
     fprintf(f, "stmchain marks=%u same=%u\n", (unsigned)smc_chain_marks,
             (unsigned)smc_chain_same);
   }
-#if defined(DMA_SMC_RETIRE)
   { extern u32 smc_work_walk, smc_work_halves;
     fprintf(f, "smcwork walk=%u halves=%u\n", (unsigned)smc_work_walk,
             (unsigned)smc_work_halves); }
   fprintf(f, "dmaadapt mode=%u switches=%u probes=%u\n",
           (unsigned)dma_rt_mode, (unsigned)dma_rt_switches,
           (unsigned)dma_rt_probes);
-#endif
   fprintf(f, "stmahead bytes=%u\n", (unsigned)smc_stm_ahead_bytes);
-#ifdef DMA_SMC_RETIRE
   fprintf(f, "dmaretire retired=%u\n", (unsigned)dma_smc_retired);
-#endif
 #ifdef SMC_FALLBACK_STATS
   {
     unsigned k;
@@ -12678,12 +12496,10 @@ void jit_stats_report(FILE *f)
           (unsigned)jit_audit_phand);
 #endif
   fprintf(f, "\n");
-#ifdef VRAM_EXEC
   fprintf(f, "vramx armed=%u activations=%u blocks=%u drops=%u slots=%u\n",
           (unsigned)vram_exec_active, (unsigned)vram_exec_activations,
           (unsigned)vram_exec_blocks, (unsigned)vram_exec_drops,
           (unsigned)vram_x_slot_n);
-#endif
 }
 #endif
 

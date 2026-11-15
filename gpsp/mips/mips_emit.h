@@ -242,7 +242,6 @@ u32 arm_to_mips_reg[] =
   *((u32 *)(dest)) = (mips_opcode_j << 26) |                                  \
    ((mips_absolute_offset(offset)) & 0x3FFFFFF)                               \
 
-#ifdef SPIN_SKIP
 /* SPIN_SKIP (cpu_threaded.c, spin_analyze): the taken back-edge of a spin
  * loop.  Unless its descriptor is vetoed, it names the descriptor in
  * reg[REG_SPIN_DESC] and calls the scheduler with the real cycle count;
@@ -318,10 +317,6 @@ u32 arm_to_mips_reg[] =
 #define spin_try(new_pc)                                                      \
   ((spin_n = spin_analyze((new_pc), pc, spin_thumb, pc_address_block,         \
                           block_start_pc, spin_words)) != 0)
-#else
-#define spin_try(new_pc) 0
-#define generate_branch_spin(writeback_location, new_pc)
-#endif
 
 /* A branch SPIN_SKIP proves is a spin loop keeps its run-time veto even when
  * the game table names it too: the table's unconditional skip is only for
@@ -363,7 +358,6 @@ u32 arm_to_mips_reg[] =
   mips_emit_j(mips_absolute_offset(mips_indirect_branch_##type));             \
   mips_emit_nop()                                                             \
 
-#ifdef SMC_PARTIAL_SAFE
 /* Reserve a private 16-byte retirement trampoline immediately before every
  * RAM block entry.  The stable-thunk experiment makes this the public entry
  * and points it at the current body; selective retirement can then redirect
@@ -379,11 +373,6 @@ u32 arm_to_mips_reg[] =
     mips_emit_nop();                                                          \
     mips_emit_nop();                                                          \
   }
-#else
-#define block_prologue_size       16
-#define ram_block_prologue_size   block_prologue_size
-#define generate_smc_retire_space() do { } while (0)
-#endif
 
 #define generate_block_prologue()                                             \
   update_trampoline = translation_ptr;                                        \
@@ -734,15 +723,11 @@ u32 arm_to_mips_reg[] =
   u8 *update_trampoline;                                                      \
   u8 *spaccess_trampoline;                                                    \
 
-#ifdef SPIN_SKIP
 #define generate_block_extra_vars_spin(thumb)                                 \
   const u32 spin_thumb = (thumb);                                             \
   u32 spin_words[SPIN_DESC_WORDS];                                            \
   u32 spin_n = 0;                                                             \
 
-#else
-#define generate_block_extra_vars_spin(thumb)
-#endif
 
 #define generate_block_extra_vars_arm()                                       \
   generate_block_extra_vars();                                                \
@@ -3362,7 +3347,6 @@ static bool rw_map_emit;
   }
 #endif
 
-#ifdef VRAM_EXEC
 /* VRAM_EXEC self-activation (cpu_threaded.c vram_exec_activate).  The
  * region-6 store stubs are emitted DORMANT: their jr delay slot holds
  * upstream's nop, so a game that never runs code from VRAM pays nothing per
@@ -3375,7 +3359,6 @@ static u32 *vram_x_slots[VRAM_X_SLOTS_MAX];
 static u32 vram_x_slot_n;
 static u32 vram_x_slot_word;
 u8 vram_exec_active;   /* extern in gba_memory.h */
-#endif
 
 #if ME_MIDFRAME_LOG
 /* ME_MIDFRAME_LOG write maps (cpu.h OAM_WMAP/PAL_WMAP), on the dynarec's
@@ -3408,9 +3391,7 @@ static void emit_pmemst_stub(
   u8 *translation_ptr = *tr_ptr;
   unsigned region = meminfo->region;
   u32 base_addr = meminfo->baseptr;
-#ifdef VRAM_EXEC
   int vx_delay_slot = 0;   /* VRAM_EXEC mark rides in the jr delay slot */
-#endif
 
   // Palette, VRAM and OAM cannot be really byte accessed (use a 16 bit store)
   bool doubleaccess = (size == 0 && meminfo->bus16);
@@ -3505,7 +3486,6 @@ static void emit_pmemst_stub(
 #endif
     mips_emit_addu(reg_a0, reg_a0, reg_temp);
     mips_emit_sb(reg_zero, reg_a0, dbase);               /* clean[page] = 0 */
-#ifdef VRAM_EXEC
     /* ...and the dynarec's own written-map for translated VRAM code
      * (cpu_threaded.c VRAM_EXEC).  reg_temp still holds the page index;
      * only in VRAM_EXEC builds.  reg_a0 = hi(dbase) + page: when the two maps
@@ -3525,7 +3505,6 @@ static void emit_pmemst_stub(
         mips_emit_sb(reg_zero, reg_a0, xbase);
       }
     }
-#endif
 #ifdef REWIND
     /* ...and the rewind's own map: reg_temp still holds the page index.
      * Two more instructions per VRAM store. */
@@ -3690,7 +3669,6 @@ static void emit_pmemst_stub(
   }
   else {
     mips_emit_jr(mips_reg_ra);
-#ifdef VRAM_EXEC
     if (vx_delay_slot && vram_x_slot_n < VRAM_X_SLOTS_MAX) {
       /* xclean[page] = 0, emitted dormant: assemble the sb to learn its
        * encoding, then put the nop back over it (see vram_x_slots). */
@@ -3703,7 +3681,6 @@ static void emit_pmemst_stub(
     } else if (vx_delay_slot) {
       mips_emit_sb(reg_zero, reg_a0, (u32)vram_xclean); /* always armed */
     } else
-#endif
     {
       mips_emit_nop();
     }
@@ -4222,11 +4199,9 @@ void init_emitter(bool must_swap) {
 
   // Generates the trampoline and helper stubs that we need
   u8 *translation_ptr = (u8*)&rom_translation_cache[0];
-#ifdef VRAM_EXEC
   /* the region-6 store stubs below are rebuilt dormant */
   vram_x_slot_n = 0;
   vram_exec_active = 0;
-#endif
 #ifdef REWIND
   rw_map_emit = gba_rewind_marks_wanted && rw_map_off_ok();
   gba_rewind_map_ok = rw_map_emit;

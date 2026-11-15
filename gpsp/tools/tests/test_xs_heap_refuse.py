@@ -4,14 +4,17 @@
 retro_init / retro_load_game; critique-4 should-fix 4).
 
 cpu_threaded.c's two functions, as written, are compiled against a malloc
-that fails on demand (with the shipped XS_HEAP switches), and checked:
+that fails on demand (as shipped: since code-health B-1 they always carve the
+SMC_PARTIAL_SAFE retired-tag buckets too, so SMC_RT_BUCKET_BITS is read from
+cpu_threaded.c), and checked:
 
   1. malloc refused: init returns -1, leaves every table pointer NULL and
      holds no block (no leak), and a later init that is allowed succeeds.
   2. success: one block of the size the tables need, every table pointer
      inside it, zeroed; a second init is a no-op (no second malloc).
-  3. release frees that block and NULLs every pointer; init/release cycles
-     balance (malloc count == free count), the instance-B session pattern.
+  3. release frees that block, NULLs every pointer and forgets the retired
+     tags whose buckets lived in it; init/release cycles balance (malloc
+     count == free count), the instance-B session pattern.
 
 libretro.c, as text:
   4. retro_init records the result both ways (xs_heap_failed = ... != 0),
@@ -46,6 +49,9 @@ typedef unsigned int u32;
 #define SMC_RETIRE_LOCAL
 #define SMC_RETIRE_WINDOW
 #define SMC_LOCAL_SHIFT 6
+#define SMC_RT_BUCKET_BITS @RTBITS@
+#define SMC_RT_BUCKETS (1u << SMC_RT_BUCKET_BITS)
+static u32 smc_retired_tag_count;
 
 static int fail_next, n_malloc, n_free;
 static void *live;
@@ -107,7 +113,8 @@ int main(void)
    assert(n_malloc == 1 && live);
    assert(live_sz == 0x8000 + 2 * (0x8000 / 16) + 0x8000 / 2 +
                      2 * (0x10000 / 16) +
-                     (0x8000 >> 6) * 2 + (0x40000 >> 6) * 2);
+                     (0x8000 >> 6) * 2 + (0x40000 >> 6) * 2 +
+                     SMC_RT_BUCKETS * sizeof(u16));
    assert(inside(xs_val) && inside(xs_ok) && inside(xs_bad) &&
           inside(xs_min) && inside(xs_rec) && inside(smc_back_iw) &&
           inside(smc_back_ew));
@@ -116,8 +123,10 @@ int main(void)
    assert(dynarec_heap_tables_init() == 0);
    assert(n_malloc == 1);
    /* 3 */
+   smc_retired_tag_count = 5;
    dynarec_heap_tables_release();
    assert(all_null() && n_free == 1 && !live);
+   assert(smc_retired_tag_count == 0);
    for (cycle = 0; cycle < 8; cycle++)
    {
       fail_next = (cycle % 3) == 1;
@@ -157,7 +166,10 @@ def build_and_run(cpu_src, libretro_src):
                                  body.find("malloc(")) if j >= 0])
     if not refuse or refuse.start() > first_use:
         return "retro_load_game does not refuse on xs_heap_failed first"
-    src = HARNESS.replace("@FUNCS@", funcs)
+    bits = re.search(r"^#define SMC_RT_BUCKET_BITS (\d+)$", cpu_src, re.M)
+    if not bits:
+        return "SMC_RT_BUCKET_BITS not found in cpu_threaded.c"
+    src = HARNESS.replace("@FUNCS@", funcs).replace("@RTBITS@", bits.group(1))
     with tempfile.TemporaryDirectory() as d:
         c = Path(d) / "t.c"
         exe = Path(d) / "t"
@@ -191,6 +203,12 @@ def main():
          LIBRETRO),
         ("release forgets a pointer",
          CPU.replace("  smc_back_iw = smc_back_ew = NULL;\n", "  smc_back_iw = NULL;\n", 1),
+         LIBRETRO),
+        ("release keeps the retired tags whose buckets it freed",
+         CPU.replace("  smc_retired_tag_count = 0;   /* its buckets went with the block */\n", "", 1),
+         LIBRETRO),
+        ("init carves no retired-tag buckets",
+         CPU.replace("  sz += SMC_RT_BUCKETS * sizeof(u16);\n", "", 1),
          LIBRETRO),
         ("release leaks the block",
          CPU.replace("  free(xs_heap_blk);\n  xs_heap_blk = NULL;",
