@@ -1,0 +1,6 @@
+# T14 ratchet (tier C, C6-1; health-out/design/C-6.md): flavour, max core copies (asserted + UNCHECKED),
+# max UNCHECKED, of generated/<flavour>/fe_abi_asserts.h.  Both may only fall: flavours_gate.py ratchet
+# fails a header above either.  PLATFORM rows (abi_asserts.platform) are not counted.  C6-7 sets both to 0.
+release	86	34
+lab	110	45
+harness	110	45

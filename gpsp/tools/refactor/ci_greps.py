@@ -37,6 +37,16 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       site as a violation; a KNOWN row's key is the harness key the read names (the frame
       loop's rewind_gedump until C2-5).  --r7 warn prints the count per file and never fails.
       R7 reads the files as they are (no logical view): its sites are where the edit goes.
+  R8  core_fe_pure (tier C, C6-1; health-out/design/C-6.md §2, §5): gpsp/core_fe.h, the one
+      core-to-frontend header, stays define-free and attribute-free.  Its only conditionals are
+      the include guard (#ifndef X / #define X / #endif) and `__cplusplus` (#ifdef / #if defined /
+      #endif); other #define lines (constants) are allowed.  No `section`, `weak`,
+      `__attribute__`, `static` or `inline` token, and no definition: no `=` and no function body
+      at file scope (an `extern "C" {` block and `typedef struct/union/enum { ... }` bodies are
+      not definitions).  A declaration that carried section(".sbss") would make frontend code
+      address the variable through $gp; a `weak` one would turn the core's own definition weak;
+      an #if on a core-only define is the core-vs-frontend-defines trap.  It no-ops (0 hits)
+      while core_fe.h is absent.  --rules R8 runs it alone; the hits name the file's own lines.
 Known exceptions live in ci_greps.known (rule, file, key, reason); they are reported as
 KNOWN and do not fail.  Exit: 0 green, 1 violations, 2 usage.
 """
@@ -692,12 +702,97 @@ def r7_report(src, mode, known=(), phase='base'):
     return fails, out
 
 
+# ------------------------------------------------------------- R8 core_fe_pure
+R8_FILE = 'core_fe.h'
+R8_BANNED = ('section', 'weak', '__attribute__', '__attribute', 'static', 'inline', '__inline__')
+_R8_DIR = re.compile(r'^\s*#\s*(\w+)\s*(.*?)\s*$')
+
+
+def r8_text_hits(text, rel=R8_FILE):
+    """R8 hits of one core_fe.h text (comments and string literals blanked first)."""
+    def blank(m):
+        return re.sub(r'[^\n]', ' ', m.group(0))
+    code = re.sub(r'/\*.*?\*/|//[^\n]*', blank, text, flags=re.S)
+    code = re.sub(r'"(?:\\.|[^"\\\n])*"', lambda m: m.group(0) if m.group(0) == '"C"' else
+                  '"' + ' ' * (len(m.group(0)) - 2) + '"', code)     # keeps extern "C"
+    hits, stack, guard = [], [], None
+    lines = code.split('\n')
+    body = []                                # (line, text) of non-directive code
+    for i, ln in enumerate(lines, 1):
+        m = _R8_DIR.match(ln)
+        if not m:
+            body.append((i, ln))
+            continue
+        d, arg = m.group(1), m.group(2)
+        if d in ('if', 'ifdef', 'ifndef', 'elif', 'else'):
+            if d == 'ifndef' and guard is None and not stack:
+                guard = arg
+                stack.append('guard')
+            elif d == 'ifdef' and arg == '__cplusplus' or d == 'if' and re.fullmatch(r'defined\s*\(?\s*__cplusplus\s*\)?', arg):
+                stack.append('cplusplus')
+            else:
+                stack.append('bad')
+                hits.append(Hit('R8', rel, i, '#%s %s' % (d, arg),
+                                'conditional #%s %s: core_fe.h allows only its include guard and __cplusplus' % (d, arg)))
+        elif d == 'endif':
+            if stack:
+                stack.pop()
+        elif d in ('define', 'undef', 'include', 'pragma', 'error', 'warning', 'line'):
+            if d in ('include', 'pragma'):
+                hits.append(Hit('R8', rel, i, '#' + d, '#%s in core_fe.h: it includes nothing and sets nothing' % d))
+        else:
+            hits.append(Hit('R8', rel, i, '#' + d, 'unknown directive #%s' % d))
+    if guard is None:
+        hits.append(Hit('R8', rel, 1, 'guard', 'no include guard (#ifndef X / #define X ... #endif)'))
+    # tokens
+    depth, kinds, prev = 0, [], ''
+    for i, ln in body:
+        for m in re.finditer(r'[A-Za-z_]\w*|"[^"]*"|\S', ln):
+            w = m.group(0)
+            if w in R8_BANNED:
+                hits.append(Hit('R8', rel, i, w, '`%s` in core_fe.h (declarations carry no attribute, '
+                                'no storage class but extern, and no inline body)' % w))
+            elif w == '{':
+                k = 'externC' if prev == '"C"' else ('type' if re.search(r'\b(struct|union|enum)\b[\w\s]*$', _r8_ctx)
+                                                     else 'body')
+                if k == 'body':
+                    hits.append(Hit('R8', rel, i, '{', 'a definition (a body) in core_fe.h'))
+                kinds.append(k)
+            elif w == '}':
+                if kinds:
+                    kinds.pop()
+            elif w == '=' and all(k == 'externC' for k in kinds):
+                hits.append(Hit('R8', rel, i, '=', 'an initialiser (a definition) in core_fe.h'))
+            prev = w
+            _r8_set_ctx(w)
+    return hits
+
+
+_r8_ctx = ''
+
+
+def _r8_set_ctx(w):
+    """the last few tokens, to tell `struct X {` / `enum {` from a function body."""
+    global _r8_ctx
+    if w in (';', '{', '}'):
+        _r8_ctx = ''
+    else:
+        _r8_ctx = (_r8_ctx + ' ' + w)[-80:]
+
+
+def rule_r8(src):
+    p = os.path.join(src, R8_FILE)
+    if not os.path.exists(p):
+        return [], False
+    return r8_text_hits(open(p, encoding='utf-8', errors='replace').read()), True
+
+
 # ------------------------------------------------------------- driver
 def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_path=None, r7='fail'):
     view, origin = logical_view(src) if logical else (src, {})
     try:
         fails, out = _run(view, phase, known_path, allow_path, pp_dir,
-                          [r for r in only if r != 'R7'] if only else None, origin, r6_path)
+                          [r for r in only if r not in ('R7', 'R8')] if only else None, origin, r6_path)
     finally:
         if view != src:
             import shutil
@@ -707,6 +802,14 @@ def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_
         fails += f7
         out.pop()                             # keep 'T11: ...' last
         out += o7
+        out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
+    if not only or 'R8' in only:
+        h8, present = rule_r8(src)
+        fails += len(h8)
+        out.pop()
+        out.append('R8 core_fe_pure: %s, %d violations' % ('core_fe.h present' if present else
+                                                          'no core_fe.h (no-op)', len(h8)))
+        out += ['  FAIL  R8 %s:%d %s [%s]' % (h.file, h.line, h.msg, h.key) for h in h8]
         out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
     if origin:
         out.insert(0, 'logical files: %d *.inc.c fragment(s) read as part of their includer' %

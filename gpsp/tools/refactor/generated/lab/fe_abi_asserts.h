@@ -4,7 +4,7 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 65 declarations, 6 constants; unchecked: 52 (listed at the end). */
+ * checked: 65 declarations, 6 constants; unchecked: 45; platform: 7 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
@@ -296,19 +296,13 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (52): every copy of this flavour's -E that is NOT asserted: its name is not declared
+/* UNCHECKED (45): every copy of this flavour's -E that is NOT asserted: its name is not declared
  * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
  * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
  * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
- *   main_psp.c:87            __lib_ent_top                        not declared by the check TU's headers
- *   main_psp.c:87            __lib_ent_bottom                     not declared by the check TU's headers
- *   main_psp.c:87            __lib_stub_top                       not declared by the check TU's headers
- *   main_psp.c:87            __lib_stub_bottom                    not declared by the check TU's headers
  *   fe/power.a.inc.c:78      gpsp_rtc_wall                        not declared by the check TU's headers
  *   fe/input.a.inc.c:63      dynarec_heap_tables_release          not declared by the check TU's headers
  *   fe/input.a.inc.c:64      gbcore_prepare                       not declared by the check TU's headers
- *   fe/inproc.a.inc.c:159    __executable_start                   not declared by the check TU's headers
- *   fe/inproc.a.inc.c:159    _end                                 not declared by the check TU's headers
  *   fe/inproc.a.inc.c:215    platform_cache_paranoid              not declared by the check TU's headers
  *   fe/inproc.a.inc.c:216    jit_coherency_scan                   not declared by the check TU's headers
  *   fe/inproc.a.inc.c:222    jit_code_mode                        not declared by the check TU's headers
@@ -317,7 +311,6 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/display.c.inc.c:22    me_log_line160_pal                   not declared by the check TU's headers
  *   fe/display.c.inc.c:23    me_log_line160_oam                   not declared by the check TU's headers
  *   fe/power.d.inc.c:255     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
- *   fe/power.d.inc.c:336     scePowerIsRequest                    not declared by the check TU's headers
  *   fe/merend.d.inc.c:684    gamepak_buffers                      not declared by the check TU's headers
  *   fe/link.c.inc.c:516      rfu_set_frame_pace                   not declared by the check TU's headers
  *   fe/link.c.inc.c:517      rfu_set_pace_max_hold                not declared by the check TU's headers
@@ -352,5 +345,16 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/session.inc.c:560     msr_fast                             not declared by the check TU's headers
  *   fe/session.inc.c:746     gpsp_wallclock                       not declared by the check TU's headers
  *   fe/session.inc.c:1074    rom_cache_watermark                  not declared by the check TU's headers
+ */
+
+/* PLATFORM (7): copies of names that are not core ABI (abi_asserts.platform gives each reason):
+ * linker symbols, the PSP_MODULE_INFO expansion, an SDK function its header lacks.  Not asserted.
+ *   main_psp.c:87            __lib_ent_top                        PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:87            __lib_ent_bottom                     PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:87            __lib_stub_top                       PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:87            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   fe/inproc.a.inc.c:159    __executable_start                   linker symbol (the ELF's first byte; lab/harness heap and image census)
+ *   fe/inproc.a.inc.c:159    _end                                 linker symbol (the end of .bss; lab/harness heap and image census)
+ *   fe/power.d.inc.c:336     scePowerIsRequest                    SDK function in libpsppower that psppower.h does not declare
  */
 #endif

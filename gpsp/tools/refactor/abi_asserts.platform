@@ -1,0 +1,11 @@
+# T14 platform names (tier C, C6-1; builds/health-out/design/C-6.md section 1): name <TAB> reason.
+# A copy of one of these names in main_psp.c's TU is not a core-ABI hand copy: abi_asserts.py lists
+# it in the generated header's PLATFORM block, not as UNCHECKED, and abi_asserts.ratchet does not
+# count it.  A name belongs here only if no core or frontend header of this tree can declare it.
+__lib_ent_top	PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+__lib_ent_bottom	PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+__lib_stub_top	PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+__lib_stub_bottom	PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+scePowerIsRequest	SDK function in libpsppower that psppower.h does not declare
+__executable_start	linker symbol (the ELF's first byte; lab/harness heap and image census)
+_end	linker symbol (the end of .bss; lab/harness heap and image census)

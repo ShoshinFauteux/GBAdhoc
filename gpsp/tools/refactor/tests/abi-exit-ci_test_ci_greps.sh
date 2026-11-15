@@ -55,7 +55,7 @@ PHARG=(--phase "$PH")
 expect 0 "C1 base green (phase $PH)" "T11: green" $CG --src "$SRC" "${PHARG[@]}" "${PPARG[@]}"
 # the R4 KNOWN rows are whatever ci_greps.known still lists (HW-2 fixes both sites)
 nK=$(grep -c '^R4' "$HERE/ci_greps.known")
-grep -c '^  KNOWN' "$OUT/last.log" | grep -q "^$nK\$" && ok "C1 exactly $nK KNOWN (the R4 rows of ci_greps.known)" || bad "C1 KNOWN count (want $nK)"
+grep -c '^  KNOWN R4' "$OUT/last.log" | grep -q "^$nK\$" && ok "C1 exactly $nK KNOWN (the R4 rows of ci_greps.known)" || bad "C1 KNOWN count (want $nK)"
 [ -n "$PP" ] && grep 'R1e' "$OUT/last.log" | sed 's/^/        /'
 P3=0; grep -q '^#define FE_EXIT_GAME()' "$SRC/psp/fe/fe_priv.h" 2>/dev/null && P3=1
 $CG --src "$SRC" --phase P --rules R1 > "$OUT/p.log" 2>&1; rcP=$?
@@ -184,6 +184,17 @@ r6mut 'static inline __attribute__((always_inline))'
 expect 0 "M10e control: always_inline (Epoch C stage s)" "0 new without" $CG --src "$T" --rules R6; reset_tree
 r6mut 'static __attribute__((always_inline, noinline))'
 expect 1 "M10f always_inline together with noinline" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
+
+# tier C, C6-1: R8 core_fe_pure (core_fe.h at the gpsp root; absent = no-op)
+if [ -f "$SRC/core_fe.h" ]; then cp "$SRC/core_fe.h" "$T/core_fe.h"; else rm -f "$T/core_fe.h"; fi
+expect 0 "C1'' R8 on the tree's core_fe.h ($( [ -f "$SRC/core_fe.h" ] && echo present || echo absent))" "R8 core_fe_pure: .*0 violations" $CG --src "$T" --rules R8
+printf '#ifndef CORE_FE_H\n#define CORE_FE_H\n#ifdef HAVE_DYNAREC\nextern u32 msr_fast;\n#endif\n#endif\n' > "$T/core_fe.h"
+expect 1 "M11 R8 core_fe.h tests a core-only define (#ifdef HAVE_DYNAREC)" "FAIL  R8 core_fe.h:3" $CG --src "$T" --rules R8
+rm -f "$T/core_fe.h"
+expect 0 "M11 control: no core_fe.h is a no-op" "no core_fe.h (no-op)" $CG --src "$T" --rules R8
+python3 "$HERE/tests/abi-exit-ci_test_core_fe_pure.py" > "$OUT/r8.log" 2>&1 \
+  && ok "R8 text mutants (tests/abi-exit-ci_test_core_fe_pure.py): $(tail -1 "$OUT/r8.log")" \
+  || { bad "R8 text mutants"; tail -8 "$OUT/r8.log"; }
 
 echo "abi-exit-ci T11 tests: $([ $FAILS = 0 ] && echo PASS || echo "$FAILS FAIL")"
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

@@ -7,6 +7,12 @@
                                          gate of REQUIRED must be there with all
                                          its flavours (--any: no required set)
     flavours_gate.py jsoneq A.json B.json  equal JSON reports (path keys ignored)
+    flavours_gate.py ratchet [GEN_DIR [RATCHET]]  T14's ratchet (tier C, C6-1): per flavour, the
+                                         core copies (asserted + UNCHECKED) and the UNCHECKED
+                                         copies that generated/<flavour>/fe_abi_asserts.h states
+                                         may not exceed abi_asserts.ratchet's maxima (they may
+                                         only fall; PLATFORM rows are not counted).  Defaults:
+                                         this tool's generated/ and abi_asserts.ratchet
     flavours_gate.py --selftest
 
 The gate line is never typed (PLAN-P-beta5 §4 common): one token per gate, e.g.
@@ -87,6 +93,58 @@ def jsoneq(pa, pb):
     return 1
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+RATCHET = os.path.join(HERE, 'abi_asserts.ratchet')
+T14_COUNTS = re.compile(r'checked: (\d+) declarations, \d+ constants; unchecked: (\d+)(?:; platform: (\d+))?')
+
+
+def load_ratchet(path):
+    """{flavour: (max core copies, max unchecked)} of abi_asserts.ratchet."""
+    out = {}
+    for line in open(path, encoding='utf-8'):
+        if line.startswith('#') or not line.strip():
+            continue
+        p = line.split()
+        out[p[0]] = (int(p[1]), int(p[2]))
+    return out
+
+
+def ratchet_check(headers, maxima):
+    """headers {flavour: header text}; maxima {flavour: (copies, unchecked)} -> (ok, lines).
+    A flavour of the ratchet with no header, or a header without the counts line, fails."""
+    ok, out = True, []
+    for fl in sorted(maxima):
+        mc, mu = maxima[fl]
+        txt = headers.get(fl)
+        m = T14_COUNTS.search(txt or '')
+        if not m:
+            ok = False
+            out.append('  FAIL  %s: %s' % (fl, 'no header' if txt is None else 'no "checked: ... unchecked:" line'))
+            continue
+        a, u, pl = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        c = a + u
+        bad = c > mc or u > mu
+        ok = ok and not bad
+        out.append('  %s  %s: core copies %d (max %d), unchecked %d (max %d), platform %d%s' % (
+            'FAIL' if bad else 'ok  ', fl, c, mc, u, mu, pl,
+            '' if bad or (c, u) == (mc, mu) else '; below the ratchet: lower abi_asserts.ratchet to %d %d' % (c, u)))
+    return ok, out
+
+
+def ratchet(gen_dir, path):
+    maxima = load_ratchet(path)
+    hs = {}
+    for fl in maxima:
+        h = os.path.join(gen_dir, fl, 'fe_abi_asserts.h')
+        if os.path.exists(h):
+            hs[fl] = open(h, encoding='utf-8').read()
+    ok, out = ratchet_check(hs, maxima)
+    print('T14 ratchet (%s):' % os.path.basename(path))
+    print('\n'.join(out))
+    print('T14 ratchet: %s' % ('ok' if ok else 'FAIL'))
+    return 0 if ok else 1
+
+
 def selftest():
     bad = 0
 
@@ -115,6 +173,20 @@ def selftest():
     t(not ok and 'G1 MISSING har' in line, 'a gate covering 3 of 4 flavours is a FAIL -> %r' % line)
     line, ok = gate_line(good, REQUIRED)
     t(not ok, 'the old six-gate set is not a full gate -> %r' % line[:80])
+    hdr = ' * checked: %d declarations, 6 constants; unchecked: %d; platform: %d (listed at the end). */'
+    ok, out = ratchet_check({'release': hdr % (52, 34, 5)}, {'release': (86, 34)})
+    t(ok, 'ratchet: at the maxima -> %s' % out[0].strip())
+    ok, out = ratchet_check({'release': hdr % (53, 34, 5)}, {'release': (86, 34)})
+    t(not ok, 'ratchet: one more core copy fails -> %s' % out[0].strip())
+    ok, out = ratchet_check({'release': hdr % (86, 0, 5)}, {'release': (86, 34)})
+    t(ok and 'lower' in out[0], 'ratchet: copies moved from UNCHECKED to asserted pass, with a hint -> %s' % out[0].strip())
+    ok, out = ratchet_check({'release': hdr % (52, 35, 4)}, {'release': (87, 34)})
+    t(not ok, 'ratchet: a platform name turned UNCHECKED fails -> %s' % out[0].strip())
+    ok, out = ratchet_check({}, {'release': (86, 34)})
+    t(not ok, 'ratchet: a missing header fails -> %s' % out[0].strip())
+    ok, out = ratchet_check({'release': ' * checked: 52 declarations, 6 constants; unchecked: 39 (listed at the end). */'},
+                            {'release': (91, 39)})
+    t(ok, 'ratchet: a pre-C6-1 header (no platform count) is read -> %s' % out[0].strip())
     print('flavours_gate selftest: %s' % ('PASS' if not bad else '%d FAILED' % bad))
     return 1 if bad else 0
 
@@ -122,6 +194,9 @@ def selftest():
 def main(argv):
     if argv[:1] == ['--selftest']:
         return selftest()
+    if argv[:1] == ['ratchet'] and len(argv) <= 3:
+        return ratchet(argv[1] if len(argv) > 1 else os.path.join(HERE, 'generated'),
+                       argv[2] if len(argv) > 2 else RATCHET)
     if len(argv) == 3 and argv[0] == 'jsoneq':
         return jsoneq(argv[1], argv[2])
     req = REQUIRED

@@ -146,7 +146,7 @@ LAB_SITE = re.compile(r'\bLAB_(?:HOOK|FFP)\(')
 DEFINE = re.compile(r'^\s*#\s*define\b')
 SRC_SHA = re.compile(r'^# source: .*\bsha256 ([0-9a-f]{64})\b')
 PP_DIR = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b')
-T14_HEAD = re.compile(r'checked: (\d+) declarations, (\d+) constants; unchecked: (\d+)')
+T14_HEAD = re.compile(r'checked: (\d+) declarations, (\d+) constants; unchecked: (\d+)(?:; platform: (\d+))?')
 T14_FLAVOURS = ('release', 'lab', 'harness')
 
 
@@ -693,7 +693,7 @@ def defines(d):
 
 
 def t14_counts(gpsp):
-    """[(flavour, asserted declarations, constants, unchecked)] from the committed generated headers"""
+    """[(flavour, asserted declarations, constants, unchecked, platform)] from the committed generated headers"""
     out = []
     for fl in T14_FLAVOURS:
         p = os.path.join(gpsp, 'tools', 'refactor', 'generated', fl, 'fe_abi_asserts.h')
@@ -702,7 +702,7 @@ def t14_counts(gpsp):
         m = T14_HEAD.search(open(p, encoding='utf-8').read())
         if not m:
             raise Stale('%s: no "checked: N declarations, M constants; unchecked: K" line' % p)
-        out.append((fl,) + tuple(int(x) for x in m.groups()))
+        out.append((fl,) + tuple(int(x or 0) for x in m.groups()))
     return out
 
 
@@ -860,13 +860,16 @@ def render(d):
       '"common.h"`, the core\'s header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never '
       'linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy in that flavour\'s `-E` as '
       '`fe/X.inc.c:N`: the asserted ones, then the UNCHECKED list, the copies in that `-E` that T14 cannot compare '
-      '(a name the check TU\'s headers do not declare, or a frontend-only type) -- %s. A copy in an `#if` arm that '
+      '(a name the check TU\'s headers do not declare, or a frontend-only type), then the PLATFORM list, copies of '
+      'names that are not core ABI (`abi_asserts.platform`: linker symbols, the `PSP_MODULE_INFO` expansion, an SDK '
+      'function its header lacks) -- %s. `abi_asserts.ratchet` holds each flavour\'s maximum of core copies and of '
+      'UNCHECKED copies; `flavours_gate.py ratchet` fails a header above either. A copy in an `#if` arm that '
       'none of %s compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` lists those sites from '
       'a raw scan of the TU with every `#if` arm kept. Today that is %d of its %d copy sites (the headers cite the '
       'other %d, and %d copies that a macro call expands, which the raw text does not show): "Core-ABI copies in '
       'no T14 flavour" below. The index in `fe/fe_priv.h` is PLAN-P-beta5 §5.2\'s set (every name T14 asserts, '
       'plus six it cannot), not every copy.'
-      % ('; '.join('%s %d asserted + %d constants, %d unchecked' % x for x in t14), andlist(T14_FLAVOURS),
+      % ('; '.join('%s %d asserted + %d constants, %d unchecked, %d platform' % x for x in t14), andlist(T14_FLAVOURS),
          len(unb), ust['raw'], ust['cited'], len(ust['macro'])))
     dl = []
     for kn in sorted(dups, key=lambda k: min(tu_key(r) for r in rows if (r['kind'], r['name']) == k)):
