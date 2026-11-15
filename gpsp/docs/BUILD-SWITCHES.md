@@ -1,11 +1,24 @@
 # BUILD SWITCHES — the inventory
 
-Every dynarec and diagnostic switch in the tree, with a verdict.
+What a PSP build is made of, in four parts:
+
+1. **[Ships](#ships)**: every switch that is on in the release, as one table per
+   header (`gpsp_features.h` for the core, `psp/fe_features.h` for the
+   frontend), plus the make features that choose what is linked.
+2. **[Measurement tools](#measurement-tools)**: diagnostics, oracles, mutants and
+   profile defines that are kept because a profile, a tool, a test or the Lab
+   uses them. None of them is in a release; `gpsp_profile.h` refuses the ones
+   that must never be.
+3. **[Removed](#removed)**: deleted switches, which `tools/check_flags.py` keeps
+   out of the tree.
+4. **[The rule for adding one](#the-rule-for-adding-one)**.
 
 **Why this exists.** A flag with no verdict is worse than no flag: it looks like
-an option.
+an option. A few unreferenced experiments and diagnostics are still in the
+source and are scheduled for deletion (code-health tier A); they are deliberately
+not described here, so nothing below should be read as "there is a flag for that".
 
-## How the shipped set is built (since 4.6.0)
+## How the shipped set is built
 
 **`tools/release.sh X.Y.Z` makes a release** (docs/RELEASE.md), and
 **`tools/build.sh release`, with no environment, is the release build.** The core
@@ -13,35 +26,17 @@ switches that ship are lines in `gpsp_features.h`, which the root Makefile
 force-includes (`-include`) into every core object of `platform=psp1` and
 `platform=drprof-mipsel`, assembler included. The frontend's constants are lines
 in `psp/fe_features.h`, force-included by `psp/Makefile`: the `ND_*` transport
-profile always, `VID_TRIPLE` and `PLAY_INPUT_FRESH` when the build is
-`GPSP_PLAYABLE`. No recipe lists any of them, and `tools/flags.lock` pins all of
-them (see **The drift check** below).
-`GBA_LINK`, `REWIND`, `CHEATS` and `LAYOUT_PIN` change what is compiled and
-linked, so they stay make variables, default 1 for `psp1` in both makefiles.
-`ONLINE` (psp/Makefile only, default 1) is the same kind: experimental online
-play (docs/ONLINE-TUNNEL.md), compiled in and off until Settings > Online play
-is turned on; `ONLINE=0` compiles it out.
-
-`MGIFT` (psp/Makefile and tools/build.sh, default 1) is Mystery Gift, the
-Wonder Card receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c).
-`MGIFT=0` compiles out its objects, the Wireless > Mystery Gift row and
-screen, the Controls binding row, the chord and the per-frame poll; the
-infrastructure Wi-Fi bring-up (mgift_net.o) stays while online play is in,
-and the `bind_mystery_gift` config key is still read and written.  MGIFT=1
-is the same program as before the switch (psp-nm identical, round 10).
-MGIFT=0 is a variant arm (the lock is reported, not enforced): on the round-10 release layout (unpinned) it is .text -13,088 B, .bss -8,192 B, .data +4,864 B (the .data pin's slack moves), image -16,384 B, so +16,384 B (2 x 8 KiB) of PSP-1000 boot heap; the lab layout gains 24,576 B. About 19.7 KiB of symbols go (20,157 B) (scratch mgsum in builds/opt-review/scratch/r10). A shipped MGIFT=0 build would need its own re-pin: `main` shrinks 684 B.
-`LAYOUT_PAD_BYTES` and `LAYOUT_PAD_RO_BYTES` (docs/LAYOUT-PINNING.md, "Keeping the pads") are the defaults in `psp/Makefile`, `HOT_DATA_GUARD`'s link
-script follows the core, `PSP_PIXFMT` stays a variable because it reaches the ME
-sub-make, and the `TGB_*` switches stay scoped to the GB core's objects. This
-produced the 4.5.0 EBOOT byte for byte.
+profile always, `VID_TRIPLE`, `PLAY_INPUT_FRESH` and `PLAY_FF_FLIP_PACE` when the
+build is `GPSP_PLAYABLE`. No recipe lists any of them, and `tools/flags.lock` pins
+all of them (see **The drift check** below).
 
 The two sides do not share defines. The frontend never tests a core feature (it
 would always read as off there; core features reach it as weak symbols) and the
 core never tests a frontend one.
 
-Other platforms never see the header. `platform=unix`, the SDL desktop build and
+Other platforms never see the headers. `platform=unix`, the SDL desktop build and
 the host tests compile these switches off, so **the `#else` paths are not dead
-code** and stay.
+code** and stay until the desktop build bakes them too.
 
 | to do this | write this |
 |---|---|
@@ -51,6 +46,7 @@ code** and stay.
 | a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_VID_TRIPLE` drops a playable default |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
+| one-off variants of a non-release profile | `tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` / `PSP_EXTRA=...`; it refuses them with `release` |
 
 **`-UNAME` does not switch a baked feature off**: gcc applies `-D`/`-U` before any
 `-include`, so the header would define it again. That is what `GPSP_NO_NAME` is
@@ -65,10 +61,9 @@ resolved (`make print-features`, `-dM` on the exact make line), not a copy of a
 recipe. GBAdhoc-Lab's `gate_twin.py` rebuilds the twin from it and its scheduler
 matches fixture `requires` against it, so an empty list would degrade both
 silently; `tools/build.sh` fails instead. `tools/make_release.sh` refuses any
-build whose list is not exactly the header's.
-
-`frontendDefines` is resolved the same way (`make -C psp print-features`): the
-profile's defines plus what `psp/fe_features.h` gave that make line.
+build whose list is not exactly the header's. `frontendDefines` is resolved the
+same way (`make -C psp print-features`): the profile's defines plus what
+`psp/fe_features.h` gave that make line.
 
 **The drift check.** `tools/check_flags.py` needs no build and takes a second;
 `--compile` adds what the compilers resolve (docker), `--build DIR` a release
@@ -77,7 +72,7 @@ all three. It fails when:
 
 | area | what drifted |
 |---|---|
-| `lock` | a feature list, make default or profile recipe differs from `tools/flags.lock` |
+| `lock` | a feature list, make default (the layout pads included) or profile recipe differs from `tools/flags.lock` |
 | `recipes` | a profile, makefile or wrapper restates a baked feature, or a force-include is gone |
 | `removed` | a switch in **Removed** below is back in an `#if`, a `-D` or a make conditional |
 | `dead` | something is baked or passed and no source tests it |
@@ -88,141 +83,128 @@ all three. It fails when:
 Changing a shipped flag is deliberate: edit the header, run
 `tools/check_flags.py --update`, and commit the lock with it.
 
-The rest of this file records what each switch does. Where a section below says
-"OFF by default" or "root make (`NAME=1`)" about a switch in `gpsp_features.h`,
-that was its state when it was measured; the header is the state now.
-
 ---
 
-## How this list came to be
+## Ships
 
-Two defects found while compiling this list and fixed in the same commit:
+### Core: `gpsp_features.h`
 
-* Four comment blocks (`BADJUMP_REPORT`, `GBA_PC_MASK`, `SMC_GATES_CODED`,
-  `SMC_GATES_SNAP`) had drifted away from their own `ifeq` guards and were
-  stacked above `SMC_GATES_SNAPF`'s, so reading the Makefile top to bottom
-  attributed each explanation to the wrong flag. `SMC_SCAN_SPCLAMP`'s comment
-  sat above `SMC_WRITE_HISTO`'s guard the same way.
-* `SMC_GATES_RANKED`'s comment described an `SMC_GATE_PROMOTE_HITS` threshold
-  (default 256) **that the code does not have**. Frequency thresholds were tried
-  and failed twice; the shipped rule is sample count *plus* a changed-word ratio
-  *plus* a staleness bound. Anyone tuning "256" would have been tuning nothing.
-
----
-
-## Shipped in every profile
-
-Part of `gpsp_features.h`, so release, harness and diagnostic alike. Changing
-one changes emulation. Not the whole list: the header is.
+Every row is on in every PSP profile (release, lab, harness, diagnostic, soak) and
+in the twin's `FEATURES=baked`. Changing one changes emulation or speed. The
+order is the header's. "Exact" means the same guest state as without it (speed
+only); the root Makefile's comment above each `ifeq` and the cited doc have the
+measurements. Values other than 1 are given.
 
 | switch | what it does |
 |---|---|
+| **SMC translation gates** | |
 | `SMC_GATES` | put a translation gate at a self-modified address so later blocks split there. Deliberately independent of `SMC_PARTIAL*`: gates bought Unbound its speed and also broke its audio, so the two must be testable apart. |
-| `SMC_GATES_SIMPLE` | the 2.0.1 add-only gate rule. Once placed, a gate never moves, so an already-translated block can never disagree with the table. 2.0.2's evicting rule is what crashed Heart & Soul. |
-| `SMC_GATES_RANKED` | promote after 64 observed writes when at least half changed the word. Counts are lifetime within one ROM: there is no active staleness window, so sound-mode changes do not reset the evidence. See below. |
+| `SMC_GATES_SIMPLE` | the 2.0.1 add-only gate rule. Once placed, a gate never moves, so an already-translated block can never disagree with the table. 2.0.2's evicting rule is what crashed Heart & Soul (see **The rejected evicting rule** below). |
+| `SMC_GATES_RANKED` | promote after 64 observed writes when at least half changed the word (see **What `SMC_GATES_RANKED` requires** below). Counts are lifetime within one ROM. |
 | `SMC_GATE_BITMAP` | same gate table and boundaries, tested through a bitmap instead of comparing every live gate per compiled instruction. |
-| `ENTRY_GATES` | when the RAM translation cache is exhausted, every RAM block start becomes a gate and the gated block jumps straight to its continuation, so a routine entered at many points is translated once instead of once per entry (Driver 2: 887 cache-full flushes -> 1 at 384 KiB, per-frame state bit-identical on the twin, 24-35 -> 59.7 fps on a PSP-3000's small tier). Armed only by an exhaustion flush; reset with the SMC gates (ROM load, link cold start). Requires `SMC_GATE_BITMAP`. |
-| `SMC_PARTIAL_SAFE` | after a reported SMC trap, selectively retires ranges for a bounded ARM STMIA/LR shape; this M4A-motivated heuristic is not ROM-specific. Other reported writes use the full flush. Block-store emitters check only the final word, so an earlier code write can escape detection if that final word is untagged. |
-| `SMC_PARTIAL_STABLE_THUNK` | a permanent per-block RAM entry thunk, so retiring a block redirects the thunk rather than orphaning inbound links. |
-| `SMC_PARTIAL_DIRECT_LINKS` | keep RAM→RAM links direct; route only persistent ROM→RAM links through an island. Requires the stable thunk. |
-| `GBA_PC_MASK` | mask the emulated pc to 28 bits before the region lookup, as the GBA does. **Not sufficient alone** — a masked garbage target lands in a region the translator *does* handle. |
-| `BADJUMP_SAFE` | an unmappable guest pc soft-resets the GBA instead of `jr`-ing to it. Cannot regress: the path it replaces crashes 100% of the time. |
-| `ROM_BUFFER_SIZE=15` | the PSP default ROM page-cache cap (root Makefile; `ROM_BUFFER_SIZE=N` on the root make overrides it). Since 2026-09-26 it is only the *default* of the runtime `gamepak_buffer_cap`: CONFIG.INI `rom_resident = 1` (default since 3.0.0) raises the cap to the cart's size when every block can be taken while the 1 MiB post-load reserve is held (spare-pool blocks lent by the LARGE JIT tier first); otherwise the extra blocks go back and the cart pages (64 MiB consoles only; a 1000's loop always stops at ~13). The 2026-09-16 PSP-3000 Unbound failure that motivated the cap is **hardware-only**: the exact failing binary is bit-identical resident vs paged in PPSSPP. See `docs/ROM-RESIDENCY.md` before changing the default. |
-| `SMC_GATE_CHARGE` | (3.0) a block that ends at a translation gate subtracts its pending cycles before the gate's indirect exit. Upstream's gate exit charges nothing, so code in front of a gate ran for free; the H&S mixer's low endpoint gate made the mixer loop partly free, which moved timer/sound-DMA timing (the PPSSPP full/control audio split). Only `SMC_SCAN_GATE` blocks change, so games that never earn a gate emit identical code. Revert for an A/B with `SMC_GATE_CHARGE=0`/unset. No hardware verdict yet. |
-| `DISPATCH_CYCLE_CHECK` | (3.0) `mips_indirect_branch_arm`/`_thumb` call `mips_update_gba` when the cycle budget is spent, as direct branches already do. Without it a guest loop closed only by indirect branches or gate exits never completes a frame and the main thread spins forever (no crash, no badjump.txt, log stops). Two instructions per indirect branch; changes IRQ/timer delivery points, so audio/video hashes move for every game. `_dual` (BX) is deliberately not checked. No hardware verdict yet. |
-| `DMA_SMC_FLUSH` | (3.0) an HBlank/VBlank DMA whose destination is tagged as translated code now full-flushes the RAM translation cache and re-dispatches (`changed_pc`), as the CPU-triggered DMA path in `write_io_epilogue` always did; upstream `update_gba` discarded the alert, leaving stale translations live. One OR and one test per DMA. Perf risk: a game that DMAs every frame into a tagged region gets a full flush per frame — watch `dma_flush=` in the soak `core_health` line (`dma_smc_flushes`). No hardware verdict yet. |
-
-**Open after 3.0 (known, not done):** an SMC coverage probe for the unchecked
-words of block stores (P4 in the 2026-09-24 dynarec audit); a cycle check in
-`mips_indirect_branch_dual` (BX-closed loops can still spin without a frame —
-it needs the T-bit settled before an IRQ can be taken); and the I/O alerts that
-non-final STM words drop (`mips_emit.h`, `strop == 3` in the I/O store stub).
-
-**Current M4A range-gate caveat:** `smc_partial_install_range_gate()` inserts
-its computed endpoints directly. It bypasses `SMC_GATE_EARNED` and the normal
-gate filter, and those endpoints persist across soundtrack changes until a new
-ROM loads. Selective retirement now requires both normalized endpoints to be
-present; if gate-table capacity leaves either one missing, the operation falls
-back to a full RAM-cache flush. This closes a readiness-check gap, but there is
-no hardware evidence that the old half-installed case caused a freeze, or that
-a Heart & Soul soundtrack switch installs an invalid endpoint.
-
-### The rest of the shipped set
-
-One line each; the root Makefile's comment above each `ifeq` has the detail.
-"Exact" means the same guest state as without it (speed only).
-
-| switch | what it does |
-|---|---|
+| `SMC_GATE_CHARGE` | a block that ends at a translation gate subtracts its pending cycles before the gate's indirect exit; upstream's gate exit charged nothing, so code in front of a gate ran for free (the Heart & Soul mixer's audio split). Only gated blocks change. |
 | `SMC_GATE_SELFPATCH` | the ranked rule also promotes a store patching the code just ahead of itself, even re-storing the same bytes, and gates the lowest word written (Mario Golf's table gate). Needs `SMC_GATES_RANKED`. |
+| `ENTRY_GATES` | when the RAM translation cache is exhausted, every RAM block start becomes a gate and the gated block jumps straight to its continuation, so a routine entered at many points is translated once (Driver 2: 887 cache-full flushes -> 1 at 384 KiB, 24-35 -> 59.7 fps on a PSP-3000's small tier). Armed only by an exhaustion flush. Requires `SMC_GATE_BITMAP`. |
 | `ENTRY_GATES_RANGE` | the exhaustion-time gate harvest walks only the tag range the following full flush clears. Needs `ENTRY_GATES`. |
 | `ENTRY_GATES_FAST` | the entry-gate harvest tests four tag slots per load. Exact. |
+| **Selective SMC retirement** | |
+| `SMC_PARTIAL_SAFE` | after a reported SMC trap, selectively retires ranges for a bounded ARM STMIA/LR shape (M4A-motivated, not ROM-specific); other writes use the full flush. See the M4A range-gate caveat below. |
+| `SMC_PARTIAL_STABLE_THUNK` | a permanent per-block RAM entry thunk, so retiring a block redirects the thunk rather than orphaning inbound links. |
+| `SMC_PARTIAL_DIRECT_LINKS` | keep RAM->RAM links direct; route only persistent ROM->RAM links through an island. Requires the stable thunk. |
+| `SMC_RETIRE_WINDOW` | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. Oracle IDENTICAL on 7 fixtures; twin -6..-12 % on SMC games. |
 | `SMC_RETIRE_LOCAL` | retire walks start at a per-64-byte bound on where a covering block can start. Same retirements, shorter walks. Needs `SMC_RETIRE_WINDOW`. |
 | `SMC_RETIRE_LIST` | `smc_retire_span`'s validation walk lists the block-start tags and the retire pass visits only those. Same retirements. |
-| `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` | selective retirement from Thumb STR/STRH/STRB and from ARM STRH single stores. |
+| **Single-store and block-store SMC coverage** | |
+| `SMC_PARTIAL_SINGLE` | with `SMC_PARTIAL_SAFE`, also admit single-word ARM stores from IWRAM code into IWRAM to selective retirement (`smc_writer_safe_range`). |
+| `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` | the same from Thumb STR/STRH/STRB and from ARM STRH single stores. |
 | `SMC_SINGLE_ANYPC`, `SMC_SINGLE_EWRAM` | the same for writers outside IWRAM (ROM, EWRAM, BIOS) and for EWRAM targets. |
 | `SMC_SINGLE_UNTAG` | also lift dead block-start tags in the written range. |
+| `SMC_SINGLE_HOT` | **64**: the widened single-store classes engage only after this many of their traps (or once selective retirement is already active). |
 | `SMC_STM_RANGE` | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
 | `SMC_STM_CHAIN` | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
 | `SMC_STM_WIDE` | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
 | `SMC_STM_AHEAD` | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
-| `SMC_STM_FIXED` | the same span retirement for a fixed-base `STMIA Rn,{..}` (no writeback), with no forward widening: ipatix's ImprovedSoundMixer pastes its IWRAM resampling loop this way (The Morrow's Golden Country, ~4 full RAM flushes a frame without it). Changes block boundaries, so timing (MonoMyth, Unbound diverge); not exact. Needs `SMC_STM_RANGE`. |
-| `SMC_SAME_REPROBE` | `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. Ships at 1024. |
-| `PCARG_SIDE` | a single load or store calls its stub without the PC-argument word (`addiu a1/a2, reg_pc, imm`, about 8 % of hot translated bytes); the stubs' slow paths recover it from a side table outside the translation caches (`mips_emit.h`, `mips_stub.S pcarg_dec`; docs/PCARG-SIDE.md). Same stub offsets. Exact per access; smaller RAM code can move a full flush (timing). `PCARG_SIDE_PAD=1` (twin oracle only) pads every site back to the base's size. |
+| `SMC_STM_FIXED` | the same span retirement for a fixed-base `STMIA Rn,{..}` (no writeback), with no forward widening: ipatix's ImprovedSoundMixer pastes its IWRAM resampling loop this way (The Morrow's Golden Country, ~4 full RAM flushes a frame without it). Changes block boundaries, so timing; not exact. Needs `SMC_STM_RANGE`. |
+| **Unchanged-code filters and in-place patching** | |
+| `SMC_SAME_SKIP` | for every IWRAM halfword a RAM scan reads, record the value it read; a single-store SMC trap in IWRAM then skips `smc_retire_span` when every block it would retire matches its records over its whole source extent (retiring it would only retranslate identical code). The trap and re-dispatch are unchanged. Not the shelved `SMC_SKIP_SAME` (see Removed). Twin: Doom core -15.9 %, Duke -11.4 %; `EXEC_STALE_CHECK` 0 hits; its mutant `SMC_SAME_SKIP_MUTANT_NOCHECK` is caught (111k stale executions on Doom in 600 frames). Changes timing; judged by the Lab gate's replayed lockstep. |
+| `SMC_SAME_ADAPT` | record halfwords for `SMC_SAME_SKIP` only while it pays: recorded in bulk per translated block (`xs_note_block`); after each 65536 recorded halfwords with fewer than 256 skips, recording and checking stop; a re-probe follows single-word retirements. Exact like `SMC_SAME_SKIP` (it only skips less). Hot Wheels +0.00 % (`SMC_SAME_SKIP` alone +13.5 %). Mutant `SMC_SAME_ADAPT_MUTANT_NOREC` is caught by `tools/drprof/synth/xs_norec.s`. |
+| `SMC_SAME_REPROBE` | **1024**: `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. |
 | `SMC_IMM_PATCH` | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
 | `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
 | `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
-| `SMC_REUSE_SPARE_KB` | the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. Ships at 128 (256 until opt round 6: the SMALL-tier twin on Doom II, Duke, AW2, Emerald, Smash and Unbound ran identically at 128; Hot Wheels kept 32 fewer flushes, +0.04 % host instructions). |
-| `SMC_REUSE_MODE` | 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
+| **Translated code size** | |
+| `PCARG_SIDE` | a single load or store calls its stub without the PC-argument word (about 8 % of hot translated bytes); the stubs' slow paths recover it from a side table outside the translation caches (docs/PCARG-SIDE.md). Exact per access; smaller RAM code can move a full flush (timing). `PCARG_SIDE_PAD=1` (twin oracle only) pads every site back to the base's size. |
+| **Translation reuse across full flushes** | |
+| `XLAT_PURE` | `scan_block` clears every instruction's update-cycles slot, so a block's translation depends only on its own guest bytes (the precondition of reuse). Changes timing where a stale slot used to be 1. |
+| `SMC_REUSE` | a full RAM flush keeps the native code; a RAM block whose guest bytes are unchanged is revived instead of translated again. Speed only; needs `XLAT_PURE`. |
+| `SMC_REUSE_SPARE_KB` | **384**: the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. |
+| `SMC_REUSE_MODE` | **3**: 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
+| **DMA onto translated code** | |
+| `DMA_SMC_FLUSH` | an HBlank/VBlank DMA onto code tagged as translated full-flushes the RAM translation cache and re-dispatches, as the CPU-triggered DMA path always did; upstream `update_gba` discarded the alert, leaving stale translations live. |
 | `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
 | `DMA_SMC_ADAPT` | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
 | `DMA_ADAPT_V2` | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
+| **Dispatch and translator speed** | (docs/DYNAREC-PROFILE.md) |
+| `DISPATCH_CACHE` | `mips_indirect_branch_*` probe a {guest pc -> host entry} table in asm before `save_registers` and the C block lookup; filled by the C lookup, emptied by every flush entry point. The cycle check still runs first. Oracle IDENTICAL on 7 fixtures; twin -4..-23 % core instructions. |
+| `DISPATCH_PRECISE` | SMC retirement forgets only the retired block's entry instead of emptying both tables; only canonical RAM pcs are cached (a mirrored pc shares the tag, not the key). Twin: Doom -4.6 %, Duke -4.7 %, state hashes identical. |
+| `DISPATCH_ASSOC` | the dispatch cache's 4 KiB per ISA as 256 2-way sets instead of 512 direct-mapped slots; `mips_indirect_branch_dual` enters the ARM/Thumb probe; `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size so the pinned hot order does not move. Same entries, keys and invalidation points. Twin: C fall-throughs per frame Doom II 140 -> 55, Duke 193 -> 50, Ice Nine 83 -> 47. |
+| `DISPATCH_LOOKUP_PC` | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off by itself under `JIT_CODE_AB` (gpsp_profile.h). |
 | `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
 | `JIT_COST` | the cost of producing translated code (docs/JIT-COST.md). Exact. |
+| `JIT_CODE_DISCIPLINE` | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
+| `SPIN_SKIP` | the translator proves a backward branch closes a side-effect-free loop (loads without writeback, ALU ops, compares; every read register never written in the loop or written earlier in the same iteration); the taken back-edge asks `update_gba` whether to end the slice when every load address is RAM, palette, VRAM, OAM, ROM or a few event-only I/O registers. Anything else vetoes the loop. Not keyed on any address or ROM. Moves timing by less than one loop iteration per event; judged by the Lab gate's replayed lockstep. Oracle `SPIN_SKIP_VERIFY`; mutants `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP`. |
+| **Scheduler, interrupt and serial fast paths** | |
 | `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |
 | `IRQ_IO_FAST` | IE/IF/IME stores inline in the I/O store stub, compiled in; the run-time `irq_io_fast` turns them on. Exact. |
 | `SERIAL_IDLE_FAST` | skips `update_serial`'s call chain with no transfer pending and no link client role. Exact. |
-| `HALT_HOP` | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN: drawn lines too, rendered afterwards with their own VCOUNT/DISPSTAT) starts at `HALT_HOP_DEFAULT` 6. The GBA link session hashes each machine at its own frame boundary (`fe_gblink.c` `pair_sync_hash`). Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL (KAM -4.9 % instructions/frame). |
+| `MSR_FAST` | CPSR writes that switch mode and SPSR restores bank the registers in `mips_stub.S` instead of calling C (OpenLara, IRQ dispatchers); the pending-IRQ case keeps the C path. Exact. Run-time kill switch `msr_fast`. Needs `FIQ_BANK_FIX`. |
+| `HALT_HOP` | while the CPU is halted, one scheduler jump over the H-blank edges nothing can see (`main.c` `halt_hop_begin`); the run-time mask `timer_lazy` (bit 1 HALT_HOP, bit 2 HOP_DRAWN) starts at `HALT_HOP_DEFAULT` 6. Exact: corpus 35/35, pair-twin hashes equal to beta.4 on Kirby AM / NiDL. |
+| **Guest correctness** | |
+| `GBA_PC_MASK` | mask the emulated pc to 28 bits before the region lookup, as the GBA does. Not sufficient alone: a masked garbage target can land in a region the translator handles. |
+| `BADJUMP_SAFE` | an unmappable guest pc soft-resets the GBA instead of `jr`-ing to it. The path it replaces crashes every time. |
+| `DISPATCH_CYCLE_CHECK` | `mips_indirect_branch_arm`/`_thumb` call `mips_update_gba` when the cycle budget is spent, as direct branches do; without it a loop closed only by indirect branches or gate exits never completes a frame. `_dual` (BX) is not checked. |
 | `FIQ_BANK_FIX` | bank FIQ's r8-r12 correctly in `set_cpu_mode` (OpenLara). |
 | `BX_ALIGN_FIX` | a BX into ARM state with bit 1 set goes to the word below, as on the ARM7TDMI. |
 | `BACKUP_BUS_FIX` | a 16/32-bit dynarec load from SRAM/flash returns the byte in every lane, as the 8-bit bus does. |
 | `COND_ENTRY_FIX` | a branch into the middle of a run of same-condition ARM instructions gets its own condition check. |
-| `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI: no code, 1S, not an exit. gpSP crashed in the translator on one (issue #10). Blocks without NV words are byte-identical. |
-| `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (an eager-link chain filled the ROM cache, issue #10). |
-| `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by BADJUMP_SAFE. |
-| `RAM_MIRROR_FIX` | a RAM pc reached through a mirror alias (IWRAM repeats every 32 KiB in region 3, EWRAM every 256 KiB in region 2) shares the canonical tag, but each mode's translation records the alias it was made at, and a lookup at another alias flushes the RAM cache and retranslates; a block exit to an alias other than the block's own is linked lazily through the dispatcher. Before, one tag served every alias but held the translation of whichever alias came first, so canonical callers could run code carrying an alias's pc (issue #10: The Morrow's Golden Country's mixer ended up at 0x03xxEE30 aliases and the game slowed to ~2 s a frame). Code that really runs at an alias sees the alias's pc, as on the GBA: Pokemon MonoMyth's battle code runs at 0x02F0xxxx and bl's 1 MiB up into IWRAM; the 4.6.0-beta.3 version translated the canonical pc and froze that battle (fixture mono_trainer_crash). Twin counters: `RAM_MIRROR conflicts= alias_xlat=`. |
+| `NV_COND_FIX` | an ARM word with condition 0xF (NV) is never executed, as on the ARM7TDMI (gpSP crashed in the translator on one, issue #10). Blocks without NV words are byte-identical. |
+| `BIOS_BOUND_FIX` | a region-0 pc above the 16 KiB BIOS is unmappable: exits to it go through the dispatcher instead of translating ROM pages as BIOS code (issue #10). |
+| `XLAT_LAST_TRY_LAZY` | the last of a lookup's four translation tries links every exit through the dispatcher, so a legal pc whose eager links filled a cache is not reset by `BADJUMP_SAFE`. |
+| `RAM_MIRROR_FIX` | a RAM pc reached through a mirror alias shares the canonical tag, but each translation records the alias it was made at; a lookup at another alias flushes the RAM cache and retranslates, and a block exit to another alias is linked lazily. Code that really runs at an alias sees the alias's pc, as on the GBA (The Morrow's Golden Country, Pokemon MonoMyth: fixture mono_trainer_crash). Twin counters: `RAM_MIRROR conflicts= alias_xlat=`. |
 | `TIMER_RELOAD_FIX` | a timer that has just overflowed reads its reload value, not 0 (Need for Speed Underground). Guest-visible. |
 | `VRAM_EXEC` | translate and run code the game copied into VRAM (Big Mutha Truckers, Street Racing Syndicate, jsmolka nes.gba). |
-| `HOT_DATA_OFFSET` | where `HOT_DATA_GUARD` places the stub hot block in its 8 KiB way. Ships at 0x1b00. |
+| **Data placement** | |
+| `HOT_DATA_GUARD` | the stub's hot data block (memory map, `reg`, palette/OAM, spsr, patcher tables) at a fixed D-cache set offset (`mips_stub.S`, `hot_data_guard.ld`). |
+| `HOT_DATA_OFFSET` | **0x1b00**: where `HOT_DATA_GUARD` places the block in its 8 KiB way. |
 
-Frontend, `psp/fe_features.h` (its comments keep the field logs behind each value):
+**Open (known, not done):** an SMC coverage probe for the unchecked words of block
+stores (P4 in the 2026-09-24 dynarec audit); a cycle check in
+`mips_indirect_branch_dual` (BX-closed loops can still spin without a frame: it
+needs the T-bit settled before an IRQ can be taken); and the I/O alerts that
+non-final STM words drop (`mips_emit.h`, `strop == 3` in the I/O store stub).
 
-| define | ships at | what it does |
-|---|---|---|
-| `ND_MAX_PAYLOAD` | 144 | largest reliable payload; netdrv refuses anything bigger, loudly |
-| `ND_WINDOW` | 256 | ARQ window, and the per-peer reorder buffer |
-| `ND_TXQ_CAP` | 384 | per-peer reliable backlog |
-| `ND_RTO_MIN_US` | 200000 | retransmit floor |
-| `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
-| `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
-| `PLAY_FF_FLIP_PACE` | 7 | fast-forward presentation pacing (`docs/FF-PRESETS.md`): bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. Presentation only. `-DGPSP_NO_PLAY_FF_FLIP_PACE` = 0 |
+**M4A range-gate caveat:** `smc_partial_install_range_gate()` inserts its
+computed endpoints directly. It bypasses `SMC_GATE_EARNED` and the normal gate
+filter, and those endpoints persist across soundtrack changes until a new ROM
+loads. Selective retirement requires both normalized endpoints to be present; if
+gate-table capacity leaves either one missing, it falls back to a full RAM-cache
+flush. There is no hardware evidence that the old half-installed case caused a
+freeze, or that a Heart & Soul soundtrack switch installs an invalid endpoint.
 
-### What `SMC_GATES_RANKED` actually requires
+#### What `SMC_GATES_RANKED` requires
 
-All three, in `cpu_threaded.c`'s `smc_gate_earned`:
+Two conditions, in `cpu_threaded.c`'s `smc_gate_earned`:
 
 ```
 SMC_GATE_MIN_SAMPLE    64 writes of evidence
 chg * 2 >= hits        at least half of them CHANGED the word
 ```
 
-Two conditions, not three.  A staleness rule (`SMC_CAND_STALE_FRAMES`,
-"the evidence is from one continuous episode") was proposed and
-**withdrawn**; it is not present in `cpu_threaded.c` and is not a
-requirement of `SMC_GATES_RANKED`.
-
-Measured on the Heart & Soul rival battle, over one 8000-flush window:
+A staleness rule (`SMC_CAND_STALE_FRAMES`) was proposed and **withdrawn**; it is
+not in the code. An earlier comment described an `SMC_GATE_PROMOTE_HITS`
+threshold (default 256) that the code never had. Measured on the Heart & Soul
+rival battle, over one 8000-flush window:
 
 | address | same | changed | what it is |
 |---|---:|---:|---|
@@ -234,257 +216,232 @@ failed twice: an absolute threshold is outgrown by any cold address, and a ratio
 to the hottest candidate degenerates because a promoted gate stops counting and
 the maximum freezes. Both crashed.
 
----
+#### The rejected evicting rule
 
-## Rejected, with the measurement
+2.0.2's evicting gate rule (no flag: the `#else` branch when `SMC_GATES_SIMPLE`
+is off) reassigns a gate's address while blocks compiled against the old layout
+are live, and gpSP's tag map holds one slot per halfword, so it cannot represent
+the resulting overlap. This is the Heart & Soul crash. It stays in the source
+for the desktop build until that bakes `SMC_GATES_SIMPLE` too.
 
-Kept in the tree because the measurement is the point; refused in a release
-build where that applies. Those deleted since are under "Removed".
+#### Tunables and core defaults outside the header
 
-| switch | verdict |
+| name | what it is |
 |---|---|
-| 2.0.2's evicting gate rule (no flag; the `#else` branch when `SMC_GATES_SIMPLE` is off) | Eviction reassigns a gate's address while blocks compiled against the old layout are live, and gpSP's tag map holds one slot per halfword — it cannot represent the resulting overlap. This is the Heart & Soul crash. |
+| `ROM_BUFFER_SIZE` | **15** (root Makefile; `ROM_BUFFER_SIZE=N` overrides): the default of the run-time ROM page-cache cap `gamepak_buffer_cap`. CONFIG.INI `rom_resident = 1` (default since 3.0.0) raises the cap to the cart's size when every block fits while the 1 MiB post-load reserve is held (64 MiB consoles only; a 1000 stops at ~13). See docs/ROM-RESIDENCY.md before changing it. |
+| `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | root make overrides of `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. Tuning knobs, unset in every profile. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart). |
+| `ROM_BRANCH_HASH_BITS_SMALL`, `ROM_BRANCH_HASH_BITS_LARGE` | the ROM block hash (`rom_branch_hash`, gpsp_config.h): 14 bits (64 KiB) on every PSP build, 16 only without `SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model). `#ifndef` overrides for the twin's sizing studies; a shipped build never sets them. |
+| `DISPATCH_CACHE_BITS` | 9 (cpu.h): 512 entries per ISA. |
+| `ME_AFFINE_LINES`, `ME_MIDFRAME_LOG` | video.h, default 1: the Media Engine capture records the affine reference counters per line, and logs palette/OAM/VRAM written during the visible lines for the engine to apply line by line (docs/ME-MIDFRAME.md). |
+| `OVERCLOCK_60FPS` | upstream's 60 fps overclock build. Untouched by this project; in no profile. |
+
+### Frontend: `psp/fe_features.h`
+
+Its comments keep the field logs behind each value.
+
+| define | ships at | what it does |
+|---|---|---|
+| `ND_MAX_PAYLOAD` | 144 | largest reliable payload; netdrv refuses anything bigger, loudly |
+| `ND_WINDOW` | 256 | ARQ window, and the per-peer reorder buffer |
+| `ND_TXQ_CAP` | 384 | per-peer reliable backlog |
+| `ND_RTO_MIN_US` | 200000 | retransmit floor |
+| `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
+| `VID_TRIPLE` | 1 | three framebuffers instead of two. Fixes tearing; its fast-forward black-bar artifact is resolved for all three presets by `g_fb_filled` plus `vid_swap()`'s display-ownership read-back (docs/FF-ARTIFACT-FIX.md). |
+| `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
+| `PLAY_FF_FLIP_PACE` | 7 | fast-forward presentation pacing (docs/FF-PRESETS.md): bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. Presentation only. `-DGPSP_NO_PLAY_FF_FLIP_PACE` = 0 |
+
+### Make features: what is compiled and linked
+
+These change what is linked, so they stay make variables; `tools/flags.lock` pins
+their defaults.
+
+| variable | default | what it does |
+|---|---|---|
+| `GBA_LINK`, `REWIND`, `CHEATS`, `LAYOUT_PIN` | 1 (both makes) | the GBA link pair, rewind, the per-game cheats menu (docs/CHEATS.md) and the pinned layout. `tools/build.sh` passes one value to both makes. `LAYOUT_PIN=0` is the pre-pinning link, byte for byte. |
+| `ONLINE` | 1 (psp/Makefile) | experimental online play (docs/ONLINE-TUNNEL.md), compiled in and off until Settings > Online play is turned on; `ONLINE=0` compiles it out. |
+| `MGIFT` | 1 (psp/Makefile, tools/build.sh) | Mystery Gift, the Wonder Card receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c). `MGIFT=0` compiles out its objects, the Wireless > Mystery Gift row and screen, the Controls binding row, the chord and the per-frame poll; the infrastructure Wi-Fi bring-up (mgift_net.o) stays while online play is in. MGIFT=0 is a variant arm (the lock is reported, not enforced) and would need its own re-pin to ship (`main` shrinks 684 B). |
+| `RFU_SCHED` | 0 (psp/Makefile, tools/build.sh); `tools/release.sh` sets 1 for a `-beta`/`-nightly` version, and build.sh passes one value to both makes | scheduled ticks for the emulated Wireless Adapter (docs/RFU-COUPLING.md): each console publishes its frame's adapter traffic with a tick, the partner's game gets it D = 2 frames later. Replaces frame pace, shedding, the overflow hold and supersede while it runs, and changes the wire format: netdrv refuses a session between a ticks build and one without (`ND_FEAT_RFU_SCHED`). Harness key `rfu_sched` = D, 0 = off. The beta kits are built with it; whether 5.0.0 ships it is an owner decision. |
+| `ME_CATCH` | 1 in the release and harness64 profiles | links `psp/me/catcher.c` and `catcher_vec.S` into the Media Engine PRX: an exception handler that draws EPC / BadVAddr / Cause / GPRs / nearby memory / the ME mailbox into all three framebuffers on any unhandled CPU exception. The EBOOT does not change and every existing PRX symbol keeps its address (the two entry points are wrapped). Only effective when the ME boots. |
+| `TGB_LAZY_TIMER` | 1 (psp/Makefile) | scoped to the GB core's objects. |
+| `PSP_LARGE_MEMORY` | 1 (psp/Makefile); 0 in harness, lab, soak | the 64 MiB memory layout flag in the EBOOT. |
+| `PSP_PIXFMT` | psp5650 (both makes) | a variable because it reaches the ME sub-make. |
+| `HOT_DATA_GUARD` | 1 (psp/Makefile) | the link script that follows the core's `HOT_DATA_GUARD`. |
+
+**The layout pads** (`LAYOUT_PAD_*` in psp/Makefile, every value pinned by
+`tools/flags.lock`; docs/LAYOUT-PINNING.md "Keeping the pads" says what each
+holds): `LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_RO_BYTES` (`.rodata`),
+`LAYOUT_PAD_FE_BYTES` (after stb_impl.o), `LAYOUT_PAD_GB_BYTES` (after both GB
+cores), `LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
+`LAYOUT_PAD_MAIN_BYTES` (in front of `main`), `LAYOUT_PAD_LATE_BYTES` and
+`LAYOUT_PAD_MLU_BYTES` (the ME capture's helpers), `LAYOUT_PAD_XLAT_BYTES` (in
+front of A's `translate_block_arm`), and instance B's `LAYOUT_PAD_BSCAN_BYTES`
+(B's `update_scanline` held at the renderer's size) and `LAYOUT_PAD_BXLAT_BYTES`
+(after B's `translate_block_arm`), which psp/gbalink_b_stubs.c refuses to compile
+without. A lab build takes the committed lab set, `tools/layout/lab-pads.env`
+(`LAB_PADS=0` for the release pads); a sweep overrides it through
+`LAYOUT_PAD_BYTES=` and `PSP_EXTRA=`, which build.sh refuses for the release
+profile. `tools/layout/layout.lock` records where the pads put the symbols that
+carry the layout; build.sh fails a release, or a lab build with the committed
+set, that differs (`LAYOUT_LOCK=0` lets a lab build through during a re-pin,
+never a release). The manifest records the result as `layoutLock`, and
+tools/make_release.sh packages only `release:ok`. `HOT_ORD` (default
+`layout/hot.ord`) names the ordering file.
+
+**Build plumbing, not experiments:** `HAVE_DYNAREC`, `CROSS_COMPILE`,
+`FORCE_32BIT_ARCH`, `SMALL_TRANSLATION_CACHE`, `RUNTIME_JIT_CACHE`,
+`FRONTEND_SUPPORTS_RGB565`, `GPSP_PROFILE`, `platform=drprof-mipsel` (the PSP's
+translator as a static Linux mipsel archive for qemu, `tools/drprof/Makefile`).
+`RUNTIME_JIT_CACHE` (always on for `platform=psp1`) sizes the translation caches
+at startup, so one EBOOT serves every model: the SMALL tier (2 MB ROM / 384 KB
+RAM code, static) is what a PSP-1000 always gets; `retro_init` tries one `malloc`
+of the LARGE tier (10 MB / 384 KB) plus 20 MB of headroom and keeps the static
+arrays if it does not fit. Harness builds log `EVT jit_cache tier=... reason=...`
+and `EVT heap_budget`; `jit_small = 1` in `.gpsp-harness.ini` forces the SMALL
+tier. `BIG_JIT=1` (the old compile-time LARGE tier) is refused by the root
+Makefile.
+
+**The SMC profile switch (ADR-0030; main.c).** `smc_blk_watch == 0` turns the
+store/DMA profile and the RAM flush timer off at run time; the code stays linked,
+so the pinned layout does not depend on it. A release starts it at 0, every other
+profile at `SMC_BLK_WATCH_DEFAULT`. `-DGPSP_SMC_PROFILE` keeps the profile on in
+a release; `-DGPSP_NO_SMC_PROFILE` gives any build the release behaviour (the
+twin's `fr` variants; for a lab build it goes in through
+`CORE_EXTRA="EXTRA_CFLAGS=-DGPSP_NO_SMC_PROFILE"`, a core define). Verify an arm
+from its ELF: `psp-objdump -s -j .data` at `smc_blk_watch` reads 0 with the
+profile off, `0x03007d00` with it on; the arms are otherwise layout-identical.
 
 ---
 
-## Built but with no recorded hardware verdict
+## Measurement tools
 
-**These are the ones to be careful with.** Each compiles, each changes
-behaviour, and none has a result written down. Listed so that "there is a flag
-for that" is never mistaken for "that was tried".
+None of these is in a release. Each is kept because a profile, a tool, a test or
+the Lab names it; the "used by" column says which. `gpsp_profile.h` refuses the
+ones marked "refused in a release".
 
-| switch | what it would do | status |
+### Profile defines (frontend)
+
+| define | meaning |
+|---|---|
+| `GPSP_PLAYABLE` | build a binary for someone to play (ADR-0067); every `tools/build.sh` profile sets it. Among other things it points the harness ini at a filename that cannot exist, so a leftover `.gpsp-harness.ini` on a player's card is inert. |
+| `GPSP_KEEP_TELEMETRY` | keep the EVT logger. Without it `fe_evt()` compiles to `((void)0)` and does **not** evaluate its arguments (ADR-0067b). |
+| `GPSP_PERF_RIG` | the performance harness: autopilot plus perf windows. Requires `GPSP_KEEP_TELEMETRY`. |
+| `LAB_HARNESS` | the lab profile's Lab-driven harness (psp/lab_harness.c). |
+| `GPSP_ROMLOAD_DIAGNOSTICS` | ROM-load instrumentation. Refused in a release. |
+| `GPSP_STANDBY_NOTES` | standby/resume tracing (the Lab names it). |
+| `GPSP_STALL_RECORDER` | hard-freeze bisect arm: the harness stall watch (a 0x10-priority thread that wakes once a second) in a playable build, always on at 6 s. Writes `log/stall.txt` (main-thread state, loop phase, ME mailbox) only when the main loop has not iterated for 6 s. Adds two stores per loop iteration. |
+| `GPSP_CATCH_SELFTEST` | L+R+UP+TRIANGLE stores to address 0, so the `ME_CATCH` screen can be seen working once. Refused in a release. |
+| `GPSP_HEAP_TRACE` | `HEAP_TRACE=1` on psp/Makefile: the heap census (psp/heap_trace.c). |
+| `GPSP_MEM_BUDGET` | the memory-budget instrumentation (docs/MEMORY-BUDGET.md). |
+| `JIT_COST_KEYS` | the harness ini keys for `JIT_COST`'s pieces. In no profile: Lab candidate builds add `FE_EXTRA=-DJIT_COST_KEYS`, so compare a Lab EBOOT only with one built the same way. |
+| `FX_SWEEP` | with `GPSP_PERF_RIG`: the harness steps through the display effects and times the ME renderer per step (`fx_sweep_step`). |
+| `ROM_HASH_CENSUS` | see below; needs the core half too. |
+
+`ME_CATCH_NOREG=1`, `ME_PAD_RODATA=N` and `ME_PAD_BSS=N` (psp/me) are the
+hard-freeze bisect's layout arms for the ME PRX, all appended after every
+existing object: the first swaps the catcher's registration for the
+already-imported release call (same size, nothing registered), the second moves
+all of the ME's `.bss` by N (3856 reproduces the catch data addresses; 12528 with
+`ME_CATCH=1` puts them at stock + 16 KB), the third moves only `_end`.
+
+### Core diagnostics
+
+| switch | what it measures | used by |
 |---|---|---|
-| `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | Override `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. | Tuning knobs, not experiments. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart), not picked for roundness. |
-| `OVERCLOCK_60FPS` | Upstream's 60 fps overclock build. | Untouched by this project. |
-| `RFU_SCHED` (tools/build.sh `RFU_SCHED=1`, both makes; off by default) | Scheduled ticks for the emulated Wireless Adapter ([RFU-COUPLING.md](RFU-COUPLING.md)): each console publishes its frame's adapter traffic with a tick, the partner's game gets it D = 2 frames later, and a console waits only for a tick that is really missing. Replaces frame pace, shedding, the overflow hold and supersede while it runs. Changes the wire format: netdrv refuses a session between a ticks build and one without (`ND_FEAT_RFU_SCHED`). Harness key `rfu_sched` = D, 0 = off. | Lab builds on `claude/rfu-reference` (RFU_TL), PSP-1000 + 3000, 2026-11-02: Tennis 56/56 fps (off 57/54), resent 2.6-5 % (off 43-60 %), dropped 0; Golf 46-48 both sides (off 49/42 with 13-15 % dropped). This switch (`claude/rfu-ticks` 2e5c288, lab build d5973f7fc046, 2026-11-03): 11/11 pass, both console orders: Tennis 56/56, Golf 45-47 both sides (lobby 5/5), long Golf 17 min 48.7/48.6, Emerald trade 56.7, battle 56.3, host-loss error screen at D = 2 and D = 0. Desktop: a ticks build and one without refuse each other, both orders. |
-| `ME_AFFINE_LINES` (video.h, default 1 on `claude/me-midframe`) | The Media Engine capture records the affine reference counters per line and the engine installs them, so a BG2X/Y/BG3X/Y reload in HBlank (mode-7 floors and roads) reaches it. | Desktop model: Mario Golf's aim view 1558 wrong frames -> 23; clean frames bit-identical. Hardware pending. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
-| `ME_MIDFRAME_LOG` (video.h, default 1 on `claude/me-midframe`; harness key `me_midlog`) | Undo/redo log of palette/OAM/VRAM written during the visible lines, applied by the engine line by line. Adds one store to the MIPS palette stub (`PAL_UPDATED`) and one to the VRAM stub (`vram_clean[96]`). | Desktop model: all synthetic cases and H&S heavy's 5 remaining frames exact; recorder ~0.5 us/frame on the desktop. PSP cost not measured. [ME-MIDFRAME.md](ME-MIDFRAME.md) |
+| `BADJUMP_REPORT` | `ms0:/badjump.txt`: registers, gate table, previous block entry; re-enables `badjump_recover`'s file append | `diagnostic`, `soak` profiles; refused in a release |
+| `SMC_WRITE_HISTO` | `ms0:/smchisto.txt` every 4000 flushes: write addresses and storing pcs bucketed, plus unmappable block exits contained | root make; refused in a release |
+| `XLAT_DEPTH_PROBE` | the deepest nested block translation and the lowest frame address at translation entry (`xlat_depth_max`, `xlat_sp_min`), printed by the `core_health` EVT line as `xlat_depth` / `stack_used`. Each nesting level costs ~380-430 B of the 256 KB main-thread stack. | `soak`, `diagnostic`; refused in a release |
+| `IRQ_INTEGRITY_CHECK` | snapshots r0-r14, CPSR and the return address at every IRQ entry and compares them at the matching return; a mismatch appends to `ms0:/irqchk.txt` and dumps guest RAM for the first two. `IRQ_INTEGRITY_SUMMARY` adds a heartbeat line every 16384 returns (PPSSPP only). | `soak`, `diagnostic`; refused in a release |
+| `STALE_CHECK` | snapshots the guest words of every translated IWRAM block and reports a block still live after its source changed without an SMC event (`ms0:/stale.txt`). `STALE_DISPATCH_ONLY` restricts the per-dispatch work to the block entered; `STALE_CHECK_ALL_ENTRIES` routes every RAM-bound exit through the dispatcher so every entry is seen (changes timing); `STALE_ABORT` makes a stale entry abort (the twin/corpus oracle's "assert" kind). Far too slow for hardware. | PPSSPP; refused in a release |
+| `EXEC_STALE_CHECK` | every executed RAM instruction re-reads its guest opcode and compares it with the one it was translated from; counts to stderr (`EXEC_STALE_ABORT=1` aborts on the first). The 0-hit counts behind the `SMC_SAME_*` verdicts. | twin |
+| `ROM_HASH_CENSUS` | walks `rom_branch_hash` at every 10th heartbeat and every other `core_health` EVT and logs `EVT rom_hash` (chain depths, buckets used, walk cost). Both halves or it does not link: `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS" FE_EXTRA=-DROM_HASH_CENSUS`. Cold code: the arm's layout differs from the lab's. | in no profile |
+| `SMC_CLASS_PROBE` | classifies every SMC trap by writer shape to `ms0:/smcclass.txt` | root make |
+| `SMC_WRITER_PROBE` | dumps the distinct ARM block-store shapes `smc_writer_safe_range()` is asked about to `log/writer.txt` | root make |
+| `SMC_FALLBACK_STATS` | counts why SMC traps fall back to a full RAM flush (`EVT core_health smcfb=`) | root make, tools/drprof |
+| `SMC_RETIRE_WINDOW_CHECK`, `SMC_RETIRE_LOCAL_CHECK`, `ENTRY_GATES_RANGE_CHECK` | also walk what the bound skips and count (twin: abort on) a live block it would miss | root make, twin |
+| `XLAT_SPLIT_DIAG` | the translator's scan/emit time split | root make |
+| `TRACE_INSTRUCTIONS`, `TRACE_REGISTERS`, `TRACE_EVENTS`, `PC_RING` | interpreter/dynarec traces (`PC_RING`: the last 256k instructions, dumped when `$PC_RING_PC` is entered with r1 negative) | root make, twin |
+| `RTC_PIN=<epoch>` | fixed RTC, so boot is deterministic across runs | gate-layout apparatus below |
+| `STATE_HASH_TRACE` | `ms0:/statehash.txt`: per-frame ticks, PC, IWRAM and EWRAM hashes; `STATE_DUMP_LO/HI` add raw dumps | gate-layout apparatus |
+| `UPDATE_TRACE_LO/HI` | `ms0:/utrace.txt`: every `update_gba` entry and every SMC event in the frame window; `UTRACE_DUMP_T/T0` dump RAM at exact tick values | gate-layout apparatus |
+| `STALE_STACKNOTE` | log IWRAM translations above 0x03007000 (H&S runs ARM routines copied onto the stack) | gate-layout apparatus |
+| `DRPROF_HW` | phase word `reg[40]` + a 1 kHz sampler thread; `EVT drprof` windows. Root make **and** `-DDRPROF_HW` frontend. PPSSPP: hash-identical to base, +4 % cost. | `GBADHOC-DRPROF` rig; refused in a release |
+| `DRPROF_TWIN` | translation-time class map + zone markers for the qemu plugin; emitted code unchanged | twin only; refused in a release |
+| `XS_COST_PROBE` | `XS_COST` / `RS_COST` counters on the twin's exit line (xs_blocks_current and smc_retire_span work) | twin VDEFS |
+| `SMC_COST_VERIFY` | runs the reference `xs_blocks_current` and the retired-tag table's linear search beside the fast ones; `SMC_COST_VERIFY xs_mismatch= rt_mismatch=` on exit (0 on Hot Wheels, Doom II, Duke, Ice Nine, Payback) | twin VDEFS |
+| `SMC_REUSE_DEBUG` | the twin's self-check of `SMC_REUSE`'s contract (tools/drprof/pcarg_check.py) | twin; refused in a console build |
+| `JIT_CODE_CHECK` | zone asserts on every record and every lookup return | twin/desktop; refused in a release |
+| `JIT_CODE_AUDIT` | shadows both code zones; flags any code word changed without a record (0 on 7 fixtures + soak) | twin only |
+| `JIT_SYNC_STATS` | counts of the original cache-sync path | twin only; refused in a release |
+| `JITCOH_PSP_CACHE` | runs the PSP cache-sync code against hooked kernel calls (docs/JIT-COHERENCY.md) | tools/jitcoh |
+| `SPIN_SKIP_VERIFY` | never skips; checks at the next event that registers and RAM/VRAM/OAM/palette/IO are unchanged | twin oracle |
+| `SMC_BLOCK_EXACT` | the corpus oracle's exact-block class | tools/drprof/dr_corpus.py |
+| `GPSP_TEST_GAMEPAK_BUDGET` | builds the ROM page cache's PSP branch for a host test | tools/tests/test_gamepak_residency_budget.c |
+| `LINKBENCH`, `LINKBENCH_AWFIX` | the link bench's FIFO counters (docs/GBA-LINK-FEASIBILITY.md) | tools/linkbench |
+| `RFU_FLIGHT` | the RFU flight recorder, live where its dump can be read (lab) | lab build |
+| `RAM_CACHE_KB` | the RAM code cache size for the twin's sizing studies | twin only |
+| `XLAT_NO_EXITPF`, `JIT_COST_NO_SCANWIN` | ablations kept for their mutant patches | tools/drprof/mutants |
+| `FE_INI_DOC_LEGACY`, `SC_HOST_TEST` | host-test hooks | tools/tests |
+| `XLAT_THUMB_NO_UNSWITCH` | host compiler only: an empty asm keeps psp-gcc from unswitching `translate_block_thumb`'s loop on `ram_region` (two copies, 1545 stack stores -> one copy, 256). `tools/build.sh` runs `tools/xlat_spill_guard.sh` when it is on. Its cost needs a hardware A/B. | root make |
+| `JIT_CODE_AB` | the original sync model compiled in beside the discipline; harness key `jit_code_mode` selects it. Oracle and PPSSPP IDENTICAL in every mode. | root make, harness; refused in a release |
+| `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | link `psp/layout_pad.S` first so every object moves by N bytes (hardware layout sweeps) | `PSP_EXTRA=`; refused with `release` |
 
-## Diagnostics
+`DRPROF_NEGCTL` (+1 cycle per Thumb instruction) is the twin oracle's negative
+control: it must FAIL the oracle, and it does on all 7 fixtures.
 
-| switch | writes | profile |
+### Oracle mutants
+
+Each breaks one rule on purpose, to prove an oracle or a test catches that class
+of bug. They are never in a build that is handed to anyone.
+
+| mutant | breaks | caught by |
 |---|---|---|
-| `BADJUMP_REPORT` | `ms0:/badjump.txt` — registers, gate table, previous block entry, and re-enables `badjump_recover`'s file append | `diagnostic` |
-| `SMC_WRITE_HISTO` | `ms0:/smchisto.txt` every 4000 flushes — write addresses and storing pcs bucketed, plus the count of unmappable block exits contained | `diagnostic` |
-
-Both write to the memory stick from inside the dynarec dispatch path, on the
-emulation thread. Both are refused in a release by `gpsp_profile.h`.
-
-`ROM_HASH_CENSUS` (in no profile; `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS"
-FE_EXTRA=-DROM_HASH_CENSUS`, both halves or it does not link) walks
-`rom_branch_hash` at every 10th heartbeat and at every other `core_health`
-EVT (exit, load, reset) and logs `EVT rom_hash at= entries=
-buckets=used/16384 max_chain= hit_hops_x100= rom_used= chains=c1/c2/c3/c4+
-walk_us=`: the chain depth of the 14-bit table after a long LARGE-tier
-session on a 3000/Go, the number of buckets whose chain is 1, 2, 3 and 4+
-long, and what the walk itself cost (a full LARGE cache is ~44 K dependent
-loads, estimated 8-13 ms: a dropped frame every 6,000 frames, so discount
-the arm's audio/link behaviour at those frames).  The lookup is untouched;
-the walk is cold code, so the arm's layout differs from the lab's.
-
-`XLAT_DEPTH_PROBE` (profiles `soak`, `diagnostic`; refused in a release) writes
-nothing itself: it records the deepest nested block translation and the lowest
-frame address at translation entry (`xlat_depth_max`, `xlat_sp_min`,
-`xlat_depth_probe_reset()`), which the frontend's `core_health` EVT line prints
-as `xlat_depth` / `stack_used` every 600 frames and after every state load.
-Each nesting level costs ~380-430 B of the 256 KB main-thread stack.
-
-`IRQ_INTEGRITY_CHECK` (profiles `soak`, `diagnostic`; refused in a release)
-snapshots r0-r14, CPSR and the return address at every IRQ entry
-(`check_and_raise_interrupts`, and the re-raise paths in
-`execute_spsr_restore_body` / `execute_store_cpsr_body`) and compares them at
-the matching IRQ return. The BIOS IRQ stub saves r0-r3/r12/lr and the game's
-handler preserves r4-r11 by ABI, so any difference is the emulator losing
-guest state inside an interrupt. On a mismatch it appends to
-`ms0:/irqchk.txt` and dumps guest RAM to `ms0:/irqlost-N-{iwram,ewram,regs}.bin`
-for the first two. One struct copy per IRQ. `IRQ_INTEGRITY_SUMMARY` adds a
-heartbeat line every 16384 returns (PPSSPP only).
-
-`STALE_CHECK` (PPSSPP only; refused in a release) snapshots the guest words of
-every translated IWRAM block and reports a block that is still live (start tag
-unchanged, body not retired) after its source changed without an SMC event,
-to `ms0:/stale.txt`. `STALE_DISPATCH_ONLY` restricts the per-dispatch work to
-the block being entered (and reports `EXECUTING STALE (dispatch)`). Far too
-slow for hardware.
+| `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP` | drops `SPIN_SKIP`'s register rule / allows stores / drops the in-skip check | twin oracle (`tools/drprof/synth/spin_inskip.s`) |
+| `SMC_SAME_SKIP_MUTANT_NOCHECK` | trusts any covering block | `EXEC_STALE_CHECK` (111k stale executions on Doom, 600 f) |
+| `SMC_SAME_ADAPT_MUTANT_NOREC` | skips without a recorded translation | `tools/drprof/synth/xs_norec.s` |
+| `XS_WALK_PAIR_MUTANT` | the paired tag walk | `tools/drprof/synth/xs_pair.s` |
+| `SMC_STM_RANGE_MUTANT_LASTWORD`, `SMC_STM_CHAIN_MUTANT`, `SMC_STM_CHAIN_MUTANT_NOPENDING`, `SMC_STM_CHAIN_MUTANT_NOFILTER`, `SMC_STM_AHEAD_MUTANT` | the block-store coverage rules | `tools/drprof/synth/stm_*.s` (root make sets them) |
+| `SMC_COVERAGE_MUTANT_SKIP_LAST`, `SMC_COVERAGE_MUTANT_BLOCK_IGNORE` | the SMC coverage checks | root make (smc-coverage) |
+| `VX_DMA_NOTE_MUTANT` | VRAM_EXEC's DMA note | `tools/drprof/synth/vram_dma.s` |
+| `JIT_CODE_AUDIT_NEGCTL` | drops one code-write record | `JIT_CODE_AUDIT` (60,672 on H&S heavy) |
+| `ME_WMAP_MUTANT` | the ME write maps' markers | tools/tests/run_me_wmap_tests.sh |
+| `REWIND_MUTANT=n` | a store path that forgets the rewind's written-page map | tools/rewind_test.py |
 
 ### The ROM-residency A/B apparatus (2026-09-26)
 
-Harness keys in `.gpsp-harness.ini`, read by `tools/build.sh harness64`
-EBOOTs (`harness` pins the 32 MiB layout and cannot hold a 32 MiB cart). All
-six were checked bit-identical to the default over 9,270 post-load frames of
-`unbound_double_high` in PPSSPP (registers, IWRAM, EWRAM, I/O, palette, OAM,
-VRAM, audio), so each arm differs from the control only in the hardware
-variable it names. Protocol: `docs/ROM-RESIDENCY.md`.
+Harness keys in `.gpsp-harness.ini`, read by `tools/build.sh harness64` EBOOTs
+(`harness` pins the 32 MiB layout and cannot hold a 32 MiB cart). All six were
+checked bit-identical to the default over 9,270 post-load frames of
+`unbound_double_high` in PPSSPP, so each arm differs from the control only in the
+hardware variable it names. Protocol: docs/ROM-RESIDENCY.md.
 
 | key | effect |
 |---|---|
 | `rom_cap = N` | ROM page-cache cap in 1 MiB blocks (1..32), no probe. `32` holds a 32 MiB cart whole on a 64 MiB console |
 | `swap_stubs = 1` | a resident cart still gets the paged-ROM load stubs (NULL-page check), so its JIT code and layout match a paged run exactly |
 | `cache_paranoid = 1` | every JIT cache sync becomes a full D-cache writeback-invalidate plus full I-cache invalidate |
-| `rom_ballast_kb = N` | hold N KiB of heap before the ROM cache, so the blocks land higher (17408 puts 15 paged blocks at 0x0A20xxxx-0x0B10xxxx) |
-| `jit_coherency_scan = N` | every N frames, count RAM-translation-cache words whose cached view differs from memory (code the D-cache holds but instruction fetch cannot see): `EVT jit_coh` |
-| `shash = 1` | one line per frame to `log/shash.txt` (not the lossy event ring): audio hash, r0-r15/CPSR, IWRAM, EWRAM, I/O, palette, OAM, VRAM hashes. `shash_dump_from/_to` add raw dumps. Needs `vhash = 1` |
+| `rom_ballast_kb = N` | hold N KiB of heap before the ROM cache, so the blocks land higher |
+| `jit_coherency_scan = N` | every N frames, count RAM-translation-cache words whose cached view differs from memory: `EVT jit_coh` |
+| `shash = 1` | one line per frame to `log/shash.txt`: audio hash, r0-r15/CPSR, IWRAM, EWRAM, I/O, palette, OAM, VRAM hashes. `shash_dump_from/_to` add raw dumps. Needs `vhash = 1` |
 
 ### The 2026-09-24 gate-layout A/B apparatus
 
-Pass through `CODE_DEFINES='-D...'` on the root make. Each changes emulation or
-timing on purpose and is refused in a release. `GATE_NOCHECK`,
-`GATE_ONLY_FULLFLUSH`, `GATE_HIGH_ONLY`, `NO_GATE_TAG_FIX` and `NO_BL_FIX`, the
-arms that answered this question, were deleted in 4.6.0 (see "Removed").
-
-| switch | effect |
-|---|---|
-| `RTC_PIN=<epoch>` | fixed RTC, so boot is deterministic across runs (the wall clock otherwise leaks into IWRAM) |
-| `STATE_HASH_TRACE` | `ms0:/statehash.txt`: per-frame ticks, PC, IWRAM and EWRAM hashes; `STATE_DUMP_LO/HI` add raw dumps |
-| `UPDATE_TRACE_LO/HI` | `ms0:/utrace.txt`: every `update_gba` entry (ticks, overshoot, PC, registers, IWRAM hash) and every SMC event in the frame window; `UTRACE_DUMP_T/T0` dump RAM at exact tick values |
-| `STALE_STACKNOTE` | log IWRAM translations above 0x03007000 (H&S runs ARM routines copied onto the stack) |
-
-With gate exits skipping the cycle check, no partial retirement and `RTC_PIN`, the
-one-gate and two-gate layouts are timing-identical (same ticks, overshoot and PC at every
-`update_gba`). Before the gate-word tagging fix they diverged at H&S frame 23100
-in exactly one mixed sample (stale `adds sb, r6, sb, asr #23` at 0x03001688);
-after it they are bit-identical over 1001 frames (audio `84b2bbff`).
-
-## Frontend defines
-
-| define | meaning |
-|---|---|
-| `GPSP_PLAYABLE` | build a binary for someone to play (ADR-0067). Among other things it points the harness ini at a filename that cannot exist, so a leftover `.gpsp-harness.ini` on a player's card is inert. |
-| `VID_TRIPLE` | three framebuffers instead of two. Fixes tearing; brought a fast-forward black-bar artifact, since resolved for all three presets by `g_fb_filled` plus `vid_swap()`'s display-ownership read-back (`docs/FF-ARTIFACT-FIX.md`). |
-| `GPSP_KEEP_TELEMETRY` | keep the EVT logger. Without it `fe_evt()` compiles to `((void)0)` and does **not** evaluate its arguments (ADR-0067b). |
-| `GPSP_PERF_RIG` | the performance harness: autopilot plus perf windows. Requires `GPSP_KEEP_TELEMETRY`. |
-| `GPSP_ROMLOAD_DIAGNOSTICS` | ROM-load instrumentation. Refused in a release. |
-| `GPSP_STANDBY_NOTES` | standby/resume tracing. |
-| `GPSP_STALL_RECORDER` | hard-freeze bisect arm: the harness stall watch (a 0x10-priority thread that wakes once a second) in a playable build, always on at 6 s. Writes `log/stall.txt` (main-thread state, loop phase, ME mailbox) only when the main loop has not iterated for 6 s. Adds two stores per loop iteration. |
-| `GPSP_CATCH_SELFTEST` | L+R+UP+TRIANGLE stores to address 0, so the `ME_CATCH` screen can be seen working once. Refused in a release. |
-| `JIT_COST_KEYS` | the harness ini keys for `JIT_COST`'s pieces. In no profile: Lab candidate builds add `FE_EXTRA=-DJIT_COST_KEYS`, so compare a Lab EBOOT only with one built the same way. |
-
-`ME_CATCH=1` on `psp/Makefile` (passed down to `psp/me`) links `psp/me/catcher.c`
-and `catcher_vec.S` into the Media Engine PRX. The PRX's `module_start` then
-registers a kernel default exception handler that, on any unhandled CPU
-exception in any thread, draws EPC / BadVAddr / Cause / GPRs / nearby memory /
-the ME mailbox into all three VRAM framebuffers and holds the picture. The
-EBOOT does not change at all, and every existing PRX symbol keeps its address:
-the two entry points are wrapped rather than edited. Without the flag the PRX
-is byte-identical to the committed one (fca9dee3). Only effective when the ME
-boots (`me_boot = 1`).
-
-Layout A/B switches for the same PRX (hard-freeze bisect, 2026-09-26; all
-appended after every existing object, so nothing earlier moves):
-`ME_CATCH_NOREG=1` swaps the registration for the already-imported release
-call (same code size, catch layout, nothing registered); `ME_PAD_RODATA=N`
-appends N bytes to `.rodata`, which moves all of the ME's `.bss` by N (3856
-reproduces the catch data addresses; 12528 with `ME_CATCH=1` puts them at
-stock + 16 KB); `ME_PAD_BSS=N` appends N bytes after the last ME variable, so
-only `_end` moves.
-
-## Build plumbing, not experiments
-
-`HAVE_DYNAREC`, `CROSS_COMPILE`, `FORCE_32BIT_ARCH`,
-`SMALL_TRANSLATION_CACHE`, `RUNTIME_JIT_CACHE`, `PSP_PIXFMT`,
-`FRONTEND_SUPPORTS_RGB565`, `GPSP_PROFILE`.
-
-`RUNTIME_JIT_CACHE` (always on for `platform=psp1`) sizes the translation
-caches at startup instead of at compile time, so one EBOOT serves every model.
-The SMALL tier (2 MB ROM / 384 KB RAM code, `SMALL_TRANSLATION_CACHE`) is
-static and is what a PSP-1000 always gets.  In `retro_init`, before the ROM
-page cache takes the heap, `dynarec_select_translation_caches()` tries one
-`malloc` of the LARGE tier (10 MB / 384 KB) plus 20 MB of headroom (the
-15-block ROM cache, the 1 MB post-load reserve, 4 MB frontend slack); if that
-fits -- only possible with the 64 MiB layout -- it allocates the LARGE tier
-from the heap, otherwise it keeps the static arrays and touches nothing.
-Harness builds log the result as `EVT jit_cache tier=... reason=...` and the
-post-load malloc budget as `EVT heap_budget`; `jit_small = 1` in
-`.gpsp-harness.ini` forces the SMALL tier for an A/B on one console.
-
-The ROM block hash (`rom_branch_hash`, gpsp_config.h) is one static table on
-both tiers: `ROM_BRANCH_HASH_BITS_SMALL` (default 14, 16 K buckets, 64 KiB)
-on every PSP build, so the lookup shifts by a constant.
-`ROM_BRANCH_HASH_BITS_LARGE` (default 16) sizes it only on builds without
-`SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model).  Both
-are `#ifndef` overrides for the twin's sizing studies (claude/opt-1000
-rounds 6 and 7: 16 vs 14 bits, guest hash identical, host instructions
--0.004..-0.014 % on both tiers' models); a shipped build never sets them.
-
-**The SMC profile switch (ADR-0030; main.c).**  `smc_blk_watch == 0` turns
-the store/DMA profile and the RAM flush timer off at run time; the code stays
-linked, so the pinned layout does not depend on it.  A release starts it at
-0, every other profile at `SMC_BLK_WATCH_DEFAULT`:
-- `-DGPSP_SMC_PROFILE`: keep the profile ON in a release.
-- `-DGPSP_NO_SMC_PROFILE`: give any build the release behaviour (the twin's
-  `fr` variants; the lab A/B arm "profile off").  For a lab build it goes in
-  through `CORE_EXTRA="EXTRA_CFLAGS=-DGPSP_NO_SMC_PROFILE"`: a core define
-  (core-vs-frontend-defines), and `CORE_EXTRA` is not checked for spelling.
-  Verify an arm from its ELF, not from its name: `psp-objdump -s -j .data`
-  at `smc_blk_watch` (psp-nm) reads 0 with the profile off, `0x03007d00`
-  with it on.  The two arms are otherwise layout-identical (same code linked;
-  only the word's initial value differs).
-
-**The layout pads (psp/Makefile, pinned by tools/flags.lock).**
-`LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_FE_BYTES` (after stb_impl.o),
-`LAYOUT_PAD_GB_BYTES` (after both GB cores),
-`LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
-`LAYOUT_PAD_BSCAN_BYTES` (B's `update_scanline` held at the renderer's size)
-and `LAYOUT_PAD_RO_BYTES` (`.rodata`).  docs/LAYOUT-PINNING.md "Keeping the
-pads" says what each holds.  A lab build takes the committed lab set,
-`tools/layout/lab-pads.env` (`LAB_PADS=0` for the release pads); a sweep
-overrides it through `LAYOUT_PAD_BYTES=` and `PSP_EXTRA=`, which build.sh
-refuses for the release profile.  `tools/layout/layout.lock` records where
-the pads put the symbols that carry the layout; build.sh fails a release,
-or a lab build with the committed set, that differs (`LAYOUT_LOCK=0` lets a
-lab build through during a re-pin, never a release).  Any other arm is
-checked and reported only.  The manifest records the result as
-`layoutLock`, and tools/make_release.sh packages only `release:ok`.
-
-`BIG_JIT=1` (the old compile-time LARGE tier for every model) is refused by
-the root Makefile: a PSP-1000 cannot afford it and the runtime tier replaces it.
-
-### Dynarec profiling and the two speed prototypes (2026-09-29)
-
-All OFF by default; `docs/DYNAREC-PROFILE.md` has the measurements.
-
-| switch | where | what it does | status |
-|---|---|---|---|
-| `DISPATCH_CACHE` | root make (`DISPATCH_CACHE=1`) | `mips_indirect_branch_*` probe a 512-entry-per-ISA {guest pc -> host entry} table in asm before `save_registers` + the C block lookup; filled by the C lookup, emptied by every flush entry point (full RAM, ROM, partial retire). The cycle check still runs first. | Prototype. `tools/drprof/dr_oracle.py` IDENTICAL on 7 fixtures; PPSSPP IDENTICAL; twin -4..-23% core instructions. Hardware A/B staged (`GBADHOC-DRPROF` rig, arms A-PROTO/H-PROTO). |
-| `DISPATCH_PRECISE` | root make (`DISPATCH_PRECISE=1`, needs `DISPATCH_CACHE`) | SMC retirement (`smc_stable_thunk_dispatch`, the one place a RAM block's thunk is sent back to the dispatcher) forgets only that block's {pc -> thunk} entry instead of emptying both tables; only canonical RAM pcs (IWRAM 03000000-03007FFF, EWRAM 02000000-0203FFFF) are cached, because a mirrored pc shares the block's tag but not its key. Full RAM/ROM flushes still empty everything. | cpu-levers 2026-10-26. Off by default. Twin (c3lat4 flags, frames 300-1200): Doom core -4.6%, Duke -4.7% (dispatch instructions halved); per-frame state hashes IDENTICAL to the build without it. |
-| `DISPATCH_ASSOC` | root make (`DISPATCH_ASSOC=1`, needs `DISPATCH_CACHE`) | the dispatch cache's 4 KiB per ISA as 256 2-way sets {key0, entry0, key1, entry1} instead of 512 direct-mapped slots; the asm probe reads way 1 only when way 0 misses (same 16 bytes, same D-cache line). A C fill (`dc_put_assoc`, out of line) takes way 0 and moves a live way 0 to way 1; a key already in the set keeps its way; forget (out of line) tombs either way; slots stay 8 bytes, so the XLAT_FAST clear list and clear are unchanged. `mips_indirect_branch_dual` now does what `block_lookup_address_dual` does (CPSR.T = bit 0, pc & ~1 / & ~3) and jumps into the ARM or Thumb stub's probe past its cycle check, whose miss path calls the same C lookup the C dual would; the freed words pay for the 2-way probes and `DISPATCH_LOOKUP_PC`, and `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size (an `.error` if it ever grows), so the pinned hot order does not move. Same entries, keys and invalidation points as `DISPATCH_CACHE`. | claude/ibranch 2026-11-13, on by default. Twin pricing (builds/ibranch-out, ibrsim plugin, 600 frames): the direct-mapped table's C fall-throughs are almost all conflicts (Doom II 138 of 140 a frame, Duke 191/193, Ice Nine 81/83); 2-way leaves 55 / 50 / 47. |
-| `DISPATCH_LOOKUP_PC` | root make (`DISPATCH_LOOKUP_PC=1`, needs `DISPATCH_CACHE` + `JIT_CODE_DISCIPLINE`, refused with `JIT_CODE_AB`) | `lookup_pc` (I/O write epilogue, update_gba PC change, halt wake) probes the dispatch cache before the C lookup, but only when no publish is owed (`jit_dirty_n \| jit_owner_pending == 0`, `jit_code_publish()`'s own test); otherwise the C lookup publishes as before. With nothing owed it restores the guest registers and enters the ARM/Thumb stub's probe exactly as an indirect branch would (a miss there saves them again and makes the same C lookup). | claude/ibranch 2026-11-13, on by default. Twin: Doom II 114 lookup_pc C lookups a frame, Duke 84, Ice Nine 52; 98-99 % hit the (2-way) cache. |
-| `XLAT_THUMB_NO_UNSWITCH` | root make (`XLAT_THUMB_NO_UNSWITCH=1`) | Host compiler only: emitted code and guest behaviour are unchanged. psp-gcc 15.2 `-O3` unswitches `translate_block_thumb`'s per-instruction loop on `ram_region` (`-fopt-info-loop`), which compiles the Thumb decoder twice (37.7k MIPS instructions). The doubled function keeps `translation_ptr` in a stack slot: 1545 stack stores and 2973 stack loads. An empty `asm("" : "+r"(ram_region))` at the top of the loop makes the condition non-invariant. The result is one copy of 18.1k instructions with 256 stack stores, and `translate_block_arm` is untouched (82.8k, 88 stores, never unswitched). `tools/build.sh` runs `tools/xlat_spill_guard.sh` when the switch is on; the build fails above 700 stack stores. Found because SPIN_SKIP happened to tip GCC out of unswitching (cpl3's -96 KiB image). | cpu-levers 2026-10-26. Off by default. The twin cannot measure it: the twin's GCC 12 never unswitched (18.2k instructions, 125 stores either way). Twin state hashes are identical with it on (Doom, Duke, H&S heavy, Golf, 300 f). Its cost has to be measured on hardware (lab A/B). |
-| `SPIN_SKIP` | root make (`SPIN_SKIP=1`, MIPS only) | The translator proves that a backward branch closes a side-effect-free loop (`spin_analyze`): loads without writeback, ALU ops and compares only. Every register or flag read in the loop is either never written in it or written earlier in the same iteration, and load-address registers are never written. So iterations repeat exactly until memory changes, and only an event (IRQ, DMA) can change it. The taken back-edge then asks `update_gba` (descriptor in `reg[REG_SPIN_DESC]`) whether to end the slice. The answer is yes when every load address is RAM, palette, VRAM, OAM or ROM (not cartridge GPIO), or DISPSTAT/VCOUNT/IE/IF/IME/DMA CNT_H. Anything else (timer counters, KEYINPUT, serial, backup) vetoes the loop for the life of its translation, and it runs cycle by cycle as before. Not keyed on any address or ROM. `SPIN_SKIP_VERIFY` (twin oracle) never skips; it checks at the next event that registers and RAM/VRAM/OAM/palette/IO are unchanged. Mutants `SPIN_SKIP_MUTANT_REGS` and `SPIN_SKIP_MUTANT_STORE` drop the register rule and allow stores, respectively. | cpu-levers 2026-10-26. Off by default. Twin numbers and oracle results are in the cpu_threaded.c comment and the commit. Moves timing by less than one loop iteration per event, so it is judged by the Lab gate's replayed lockstep. |
-| `SMC_SAME_SKIP` | root make (`SMC_SAME_SKIP=1`, needs `SMC_PARTIAL_SINGLE` + `SMC_PARTIAL_STABLE_THUNK`) | for every IWRAM halfword a RAM scan reads, record the value it read (a later scan that finds a different value poisons the halfword until the next full RAM flush; the record is cleared only where no live block covers the halfword). A single-store SMC trap in IWRAM then skips `smc_retire_span` when every block it would retire matches its records over its WHOLE source extent -- retiring it would only retranslate identical code. The trap and re-dispatch are unchanged; no emitted code changes. Exact whatever wrote memory (an unreported STM word, DMA, BIOS CpuSet changes a halfword -> no match -> retire). Not the shelved 2026-09-12 `SMC_SKIP_SAME` (stub-level, pre-store compare, skipped the trap): see the comment in cpu_threaded.c. +52 KiB .bss. | cpu-levers 2026-10-26. Off by default. Twin vs DISPATCH_PRECISE (frames 300-1200): Doom core -15.9%, Duke -11.4% (xlat -56%/-46%); EXEC_STALE_CHECK 0 hits on Doom, Duke, H&S heavy, Unbound rival, Mario Golf/Tennis; mutant SMC_SAME_SKIP_MUTANT_NOCHECK (trust any covering block) caught: 111k stale executions on Doom in 600 frames. Changes timing (not bit-identical); judged by the Lab gate's replayed lockstep. |
-| `SMC_SAME_ADAPT` | root make (`SMC_SAME_ADAPT=1`, needs `SMC_SAME_SKIP`) | record IWRAM halfwords for SMC_SAME_SKIP only while it pays: the record is taken in bulk per translated block (`xs_note_block` from `ramtag_note_extent`, nothing in the scan loop); after each 65536 recorded halfwords with fewer than 256 skips recording and checking stop; after 256 single-word IWRAM retirements while off it re-probes. Each tag remembers whether its translation was recorded (`xs_rec`) and a skip needs every covering block recorded. Full-flush clears of `xs_ok/xs_bad` are skipped when nothing was recorded since the last one. | cpu-levers, OFF by default. Exact like SMC_SAME_SKIP (it only skips less). Twin vs cpl1 flags, core work/frame: Hot Wheels +0.00 % (SMC_SAME_SKIP alone +13.5 %: 9.45M halfwords recorded for 0 traps), Mario Tennis +0.7 % (alone +12.0 %), Doom -16.3 %, Duke -11.7 % (hashes = SMC_SAME_SKIP). EXEC_STALE_CHECK 0 on 7 fixtures (default and 2048-halfword window) and on 35 corpus ROMs x 3000 f; mutant `SMC_SAME_ADAPT_MUTANT_NOREC` caught by `tools/drprof/synth/xs_norec.s` (twin, 20 f: mutant EXEC_STALE hits=1, real 0). Release with the switch off: ELF 241ee67a / EBOOT 52fb7c71 (unchanged). |
-| `SMC_RETIRE_WINDOW` | root make | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. | Prototype. Oracle IDENTICAL on 7 fixtures; twin -6..-12% on SMC games, 0 elsewhere. Relies on every live block having a recorded extent (see the doc). Hardware A/B staged with `DISPATCH_CACHE`. |
-| `DRPROF_HW` | root make **and** `-DDRPROF_HW` frontend | phase word `reg[40]` + a 1 kHz sampler thread; `EVT drprof` windows | Bench only (`GBADHOC-DRPROF` rig, arms A-SAMP/H-SAMP). PPSSPP: hash-identical to base, +4% cost. Refused in a release. |
-| `DRPROF_TWIN` | `tools/drprof` only | translation-time class map + zone markers for the qemu plugin; emitted code unchanged (`dr_oracle.py base base-notwin` IDENTICAL) | Host twin only. Refused in a release. |
-| `DRPROF_NEGCTL` | `tools/drprof` only | +1 cycle per Thumb instruction: the oracle's negative control | Must FAIL the oracle; it does, on all 7 fixtures. |
-| `XS_COST_PROBE` | `tools/drprof` VDEFS | counters on the twin's exit line: `XS_COST` (xs_blocks_current calls, tag slots walked, halfwords compared, covering blocks, the union of their extents, calls answered current) and `RS_COST` (smc_retire_span calls, validation-walk slots, blocks retired, untag-scan slots, coverage-bit stores, untag halfwords, written halfwords) | Twin diagnostic (smc-cost 2026-11-13). Counting only. |
-| `SMC_COST_VERIFY` | `tools/drprof` VDEFS | runs the a34f8eaf `xs_blocks_current` (one slot, one block at a time) beside the union version on every trap, and the retired-tag table's linear search beside its bucket chains on every find; `SMC_COST_VERIFY xs_mismatch= rt_mismatch=` on exit | Twin diagnostic (smc-cost 2026-11-13). 0 mismatches on Hot Wheels, Doom II, Duke, Ice Nine, Payback (1200 f each). |
-| `platform=drprof-mipsel` | root make | the PSP's translator as a static Linux mipsel archive for qemu (`tools/drprof/Makefile`) | Host only. |
-
-`tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` for one-off variants of
-a non-release profile; it refuses them with `release`.
-
-### The JIT code discipline (2026-10-01)
-
-All OFF by default; `docs/JIT-CODE-DISCIPLINE.md` has the design and the
-measurements.
-
-| switch | where | what it does | status |
-|---|---|---|---|
-| `JIT_CODE_DISCIPLINE` | root make | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change; replaces 8b48b48's whole-I on every ROM publish | Oracle IDENTICAL on 7 fixtures + a 32-reload soak; PPSSPP IDENTICAL (AW2, H&S resident); audit 0 unrecorded writes; twin cache checker 0 stale executions under every model; twin −0.0..+0.3% instructions. Off: release EBOOT byte-identical. Hardware plan staged, not run. |
-| `JIT_CODE_CHECK` | root make | zone asserts on every record and every lookup return (stderr) | Twin/desktop. 0 violations. Refused in a release; needs the discipline. |
-| `JIT_CODE_AUDIT` | `tools/drprof` only | shadows both zones; flags any code word changed without a record | 0 on 7 fixtures + soak; its negative control `JIT_CODE_AUDIT_NEGCTL` (one record dropped) FAILS: 60,672 on H&S heavy. |
-| `JIT_CODE_AB` | root make, harness | the original sync model compiled in beside the discipline; harness key `jit_code_mode` 0 legacy / 1 + 8b48b48 / 2 discipline / 3 no ownership invalidate: one binary per hardware A/B | Oracle and PPSSPP IDENTICAL in every mode. Refused in a release. |
-| `JIT_SYNC_STATS` | `tools/drprof` only | counts of the original sync path | Twin only. Refused in a release. |
-| `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | `psp/Makefile` (via `tools/build.sh` `PSP_EXTRA=`) | link `psp/layout_pad.S` first so every object moves by N bytes | Hardware layout sweeps. `PSP_EXTRA` refused with `release`. |
+`RTC_PIN`, `STATE_HASH_TRACE`, `UPDATE_TRACE_LO/HI` and `STALE_STACKNOTE` above,
+passed through `CODE_DEFINES='-D...'` on the root make; each is refused in a
+release. With gate exits skipping the cycle check, no partial retirement and
+`RTC_PIN`, the one-gate and two-gate layouts are timing-identical. Before the
+gate-word tagging fix they diverged at H&S frame 23100 in exactly one mixed
+sample (stale `adds sb, r6, sb, asr #23` at 0x03001688); after it they are
+bit-identical over 1001 frames (audio `84b2bbff`). The arms that answered this
+question are under Removed.
 
 ---
 
 ## Removed
 
 Deleted in 4.6.0: rejected, superseded or spent, and in no oracle, mutant or Lab
-script. The code is in the 4.5.0 tag.
+script. The code is in the 4.5.0 tag. The two defects found while first
+compiling this list (comment blocks attributed to the wrong `ifeq`, and an
+`SMC_GATE_PROMOTE_HITS` threshold the code never had) were fixed then.
 
 | switch | what it was |
 |---|---|
@@ -505,16 +462,22 @@ script. The code is in the 4.5.0 tag.
 | `STATIC_ALU_PC` | root make (`STATIC_ALU_PC=1`, MIPS only; needs `DISPATCH_CYCLE_CHECK`) `add pc, pc, #imm` / `sub pc, pc, #imm` with S clear (any condition) jumps to a constant (instruction + 8 +/- imm). Translated as the direct branch a `b`/`bcc` to that address gets, instead of an indirect jump through `mips_indirect_branch_arm` (dispatch-cache probe or lookup on every taken pass). It is always linked as an external exit to the block that starts at the target, which is the block the dispatcher found, so the scan, block extents and cycle-update points do not change. Cycle charging matches (conditional: neither path charges the pending count; unconditional: both do, then both run update_gba with the target when the budget is spent). Not converted: S set, an unaligned target, a target in another region, more than 8 in one block. `STATIC_ALU_PC_MUTANT` (oracle test) biases the target by one word. cpu-levers 2026-10-26. Off by default. Guest state is bit-identical while the RAM translation cache is not under pressure (twin, Duke with an 8 MiB RAM cache: 600 f identical). At the shipped 512/384 KiB the different code size moves full-flush timing, which moves gated block layouts (Duke diverges intermittently from f54, reconverges), the same class as any codegen change. Twin: Doom -0.36 %, Duke -1.04 % core work (disp -7.8k / -21.6k host instructions per frame). The mutant is caught on Doom and Duke. |
 | `NO_GAME_SPEED_HINTS`, `NO_GAME_IDLE_HINT`, `NO_GAME_GATE_HINTS` | Ignore the game table's idle-loop and gate seeds. `gba_memory.c` keeps what the twin study found them worth. The table stays. |
 
+Files removed with no switch of their own: `netdrv/transport_inet.{c,h}` and its
+psp/Makefile rule (code-health A-1): a sceNetInet netdrv backend that no `OBJS`
+list ever linked; Mystery Gift owns its socket in `psp/mgift_net.c`.
+
 ---
 
 ## The rule for adding one
 
 A switch that ships goes in `gpsp_features.h` (`psp/fe_features.h` for the frontend),
-and only there, with `tools/flags.lock` updated in the same commit. A switch needs
-three things or it becomes another entry in the "no recorded verdict" table:
+and only there, with `tools/flags.lock` updated in the same commit and a row in
+**Ships** above. A measurement tool needs three things or it is an experiment
+waiting to be deleted:
 
-1. A comment **immediately above its own `ifeq`**, saying what it does and what
-   it would prove.
-2. An entry here once it has been measured, with the number.
+1. A comment **immediately above its own `ifeq`** (or its `#if`), saying what it
+   does and what it would prove.
+2. A row under **Measurement tools** naming the profile, tool, test or Lab job
+   that uses it, and the measured number once there is one.
 3. A `gpsp_profile.h` check if it must never reach a release, or if it silently
    shadows another switch.

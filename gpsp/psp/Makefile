@@ -215,13 +215,11 @@ CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
 # LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
 # says why): they place main's frame loop without moving instance B's hot text.
 # beta.5 base: main's code before the loop grew 212 B, so this pad puts the
-# loop window back on round 7's sets.  HW-1 (claude/hw1-sleep): GCC re-ordered
-# main's blocks around the sleep fixes, so no pad holds the loop; 2504 puts
-# main at mod 0x14e8, the shift that puts the most loop-line bytes on the
-# base's sets (32.5 %; 2.4 % at 0x140c).  The 5.0.0 integration (HW-1, HW-2,
-# the screenshots and the slot browser merged): 2304 puts main at mod 0x1420,
-# the best by-line shift against 957a5c4fbb1b's loop (32.4 %; 1.9 % at
-# 0x14e8).  tools/flags.lock pins it.
+# loop window back on round 7's sets.  The beta.5 re-pin (claude/beta5-rc,
+# after Epoch C moved main()'s boot and session code out; docs/LAYOUT-PINNING.md
+# "Keeping the pads"): 4532 puts main at mod 0x1cd4 (lab 2656: mod 0x1580), the
+# best by-line shift of the merged loop against 957a5c4fbb1b's (12.7 % of
+# loop-line bytes on its sets; 5.0 % as merged).  tools/flags.lock pins it.
 LAYOUT_PAD_MAIN_BYTES ?= 4532
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
@@ -239,6 +237,13 @@ LAYOUT_PAD_MLU_BYTES ?= 32
 # right after, back on its sets.  5824 -> 5504 with the emitters' SMC_REUSE logging
 # (docs/PCARG-SIDE.md section 9).  tools/flags.lock pins it.
 LAYOUT_PAD_XLAT_BYTES ?= 5632
+# LAYOUT_PAD_BXLAT_BYTES: the same zeros after instance B's translate_block_arm
+# (psp/gbalink_b_stubs.c says why): B's translators shrank as A's did, and this
+# keeps the late section, main and the frontend, linked after B's hot path, on
+# their sets.  Both flavours.  tools/flags.lock pins it; tools/layout/layout.lock
+# holds the hole it makes (`tail gbab_translate_block_arm`).
+LAYOUT_PAD_BXLAT_BYTES ?= 5504
+gbalink_b_stubs.o: CFLAGS += -DLAYOUT_PAD_BXLAT_BYTES=$(LAYOUT_PAD_BXLAT_BYTES)
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -464,13 +469,6 @@ netdrv_core.o: ../netdrv/netdrv.c ../netdrv/netdrv.h ../netdrv/netdrv_wire.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 transport_adhoc.o: ../netdrv/transport_adhoc.c ../netdrv/transport_adhoc.h ../netdrv/netdrv.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-# Mystery Gift's netdrv backend (2.0.5).  Same out-of-tree rule and the same
-# reason as transport_adhoc above: a MIPS .o left in ../netdrv would be swept
-# into the desktop core archive by sdl/Makefile's find (ADR-0005).
-
-transport_inet.o: ../netdrv/transport_inet.c ../netdrv/transport_inet.h ../netdrv/netdrv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # GB flags per object (variables defined beside OBJS above).  Changing them

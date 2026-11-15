@@ -3,8 +3,8 @@
  * separate from the trading link).
  *
  * This file's header used to say the socket lived in
- * netdrv/transport_inet.c.  It does not, and never does at run time: that file
- * is absent from psp/Makefile's OBJS and is never linked.  The socket is
+ * netdrv/transport_inet.c.  It never did at run time: that file was never in
+ * psp/Makefile's OBJS and is deleted (code-health A-1).  The socket is
  * created and bound here, and no netdrv session is involved in Mystery Gift.
  */
 

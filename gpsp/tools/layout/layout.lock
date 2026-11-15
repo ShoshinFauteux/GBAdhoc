@@ -131,6 +131,9 @@ at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
 tail gbab_block_lookup_translate_thumb  40
+# the late section's first row, after B's hot path and the zeros behind B's
+# translate_block_arm (LAYOUT_PAD_BXLAT_BYTES, both flavours; code-health A-1)
+at   memcmp                             0x14c0
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
@@ -156,8 +159,11 @@ at   rom_branch_hash                    0x0c68
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
+# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own.
+# BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
+# --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
+pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
 pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
 pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
@@ -187,6 +193,9 @@ at   gbab_block_lookup_translate_arm    0x1fa0
 at   gbab_block_lookup_address_arm      0x11a0
 at   gbab_block_lookup_translate_thumb  0x08c0
 tail gbab_block_lookup_translate_thumb  40
+# the late section's first row, after B's hot path and the zeros behind B's
+# translate_block_arm (LAYOUT_PAD_BXLAT_BYTES, both flavours; code-health A-1)
+at   memcmp                             0x0c60
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
@@ -212,8 +221,11 @@ at   rom_branch_hash                    0x1c68
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own
+# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own.
+# BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
+# --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
+pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
 pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
 pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
 pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame

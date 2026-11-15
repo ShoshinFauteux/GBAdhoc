@@ -18,7 +18,7 @@ travel over a **transport**, a six-hook vtable (`nd_transport`, `netdrv.h`). Thr
 |---|---|---|
 | `transport_adhoc.c` | sceNetAdhoc PDP, IBSS, MAC-addressed | every PSP-to-PSP session (shipped) |
 | `transport_udp.c` | desktop UDP, peers seeded on the command line | SDL twin, host tests |
-| `transport_inet.c` | sceNetInet UDP over **infrastructure Wi-Fi** (apctl) | Mystery Gift Station (shipped) |
+| `transport_inet.c` | sceNetInet UDP over **infrastructure Wi-Fi** (apctl) | nothing: it was never linked, and Mystery Gift owns its own socket (`psp/mgift_net.c`); deleted in code-health batch A-1 (git history has it) |
 
 The third one matters most here. The PSP already associates with an access point, gets an IP over DHCP and
 runs netdrv over a UDP socket (`psp/mgift_net.c` brings apctl up). An online session needs a fourth

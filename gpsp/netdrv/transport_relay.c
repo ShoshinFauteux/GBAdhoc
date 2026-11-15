@@ -1152,7 +1152,7 @@ void relay_transport_iface(relay_transport *t, nd_transport *out)
    out->broadcast = tp_broadcast;
    out->recv = relay_recv;
    out->local_addr = tp_local;
-   out->pending = NULL;        /* no cheap peek on sceNetInet (transport_inet.c) */
+   out->pending = NULL;        /* no cheap peek on sceNetInet */
 }
 
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out)

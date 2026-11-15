@@ -56,7 +56,10 @@ void update_scanline(void) { }
  * -ffunction-sections puts the stub in this section.  LAYOUT_PAD_BSCAN_BYTES
  * (psp/Makefile, pinned) is the zeros' size. */
 #ifndef LAYOUT_PAD_BSCAN_BYTES
-#define LAYOUT_PAD_BSCAN_BYTES 7704
+#error "LAYOUT_PAD_BSCAN_BYTES comes from psp/Makefile (tools/flags.lock pins it)"
+#endif
+#ifndef LAYOUT_PAD_BXLAT_BYTES
+#error "LAYOUT_PAD_BXLAT_BYTES comes from psp/Makefile (tools/flags.lock pins it)"
 #endif
 #define BSCAN_STR2(x) #x
 #define BSCAN_STR(x) BSCAN_STR2(x)
@@ -94,11 +97,12 @@ __asm__(".pushsection .text.block_lookup_translate_thumb,\"ax\",@progbits\n"
         ".popsection\n");
 /* PCARG_SIDE (docs/PCARG-SIDE.md): B's translators shrank as A's did
  * (-30,080 B, both 32 B-rounded), so everything linked after B's hot path
- * moved; these 5,504 B after B's translate_block_arm make it -24,576 (three
- * ways) and the late section, main and the frontend keep their sets.  (A's
- * copy is held in front of it by psp/layout_pad_warm.S.) */
+ * moved; these zeros (LAYOUT_PAD_BXLAT_BYTES, psp/Makefile, pinned: 5,504 B)
+ * after B's translate_block_arm make it -24,576 (three ways) and the late
+ * section, main and the frontend keep their sets.  (A's copy is held in
+ * front of it by psp/layout_pad_warm.S.) */
 __asm__(".pushsection .text.translate_block_arm,\"ax\",@progbits\n"
-        "  .fill 5504 / 4, 4, 0\n"
+        "  .fill " BSCAN_STR(LAYOUT_PAD_BXLAT_BYTES) " / 4, 4, 0\n"
         ".popsection\n");
 /* DISPATCH_ASSOC (claude/ibranch): B's block_lookup_address_arm/_thumb and
  * smc_stable_thunk_dispatch shrank 128 / 96 / 64 B (32 B-rounded) as A's did
