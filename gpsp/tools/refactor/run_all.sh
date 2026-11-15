@@ -70,6 +70,10 @@ step p0a_unit  "P0a loop_anchor, flavours_gate, T8 raw, T14 consts" "G2L XS G1" 
   set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
   '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"
   '"$PY"' "'"$R"'/abi_asserts.py" selftest'
+# tier C (health-out/design): C5-0's struct/G0R tools; no docker (a host gcc, if any,
+# syntax-checks the struct output)
+step tierc     "C5-0 gstruct, g0r (G0R), census --check"     "G0R" bash -c '
+  set -e; '"$PY"' "'"$T"'/source-split_test_gstruct.py"'
 k=0
 for spec in ${B5_TREES:-}; do
   IFS=: read -r bt br bc <<< "$spec"; k=$((k + 1))

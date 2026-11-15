@@ -31,6 +31,14 @@
 #             harness streams differ in fe_evt("build stamp", __DATE__, __TIME__)
 #             (main_psp.c:13926) between ANY two runs; the self-test proves it.
 #             --sde '' leaves it unpinned.
+# --rename-map MAP  gate G0R (C5-0, health-out/design/C-5.md §3): the verdict is
+#             g0r.py's instead of byte equality: NEW's `VAR.FIELD` read back as the
+#             map's OLD names, the struct blocks and the old definitions dropped, then
+#             the token lists must be equal.  MAP is gstruct.py's format.
+# --tel       with --rename-map, a telemetry batch: TEL(stmt) is unwrapped in every
+#             flavour; the release flavours (release, release-stable) may differ
+#             ONLY by deleted stores to telemetry members (g0r.py --mode deletions;
+#             deleted stores that call a function are listed for review).
 #
 # Normalisation: per line, runs of blanks -> one space, trimmed, empty lines
 # dropped (the line view, used for the diff); the verdict is taken on the
@@ -46,9 +54,11 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 case "${1:-}" in --selftest) shift; exec bash "$HERE/tests/source-split_test_pp_diff.sh" "$@" ;; esac
 
-REF= NEW= OVL= LOGS= FLAVOURS= FILE=psp/main_psp.c KEEP= IMAGE=${DOCKER_IMAGE:-pspdev/pspdev} SDE=1793908328 XDEFS=
+REF= NEW= OVL= LOGS= FLAVOURS= FILE=psp/main_psp.c KEEP= IMAGE=${DOCKER_IMAGE:-pspdev/pspdev} SDE=1793908328 XDEFS= RMAP= TEL=
 while [ $# -gt 0 ]; do
   case "$1" in
+    --rename-map) RMAP=$2; shift 2 ;;
+    --tel) TEL=1; shift ;;
     --ref) REF=$2; shift 2 ;;
     --new) NEW=$2; shift 2 ;;
     --overlay) OVL=$2; shift 2 ;;
@@ -66,6 +76,11 @@ done
 topath() { case "$1" in [A-Za-z]:[/\\]*) wslpath -a "$1" ;; *) (cd "$1" 2>/dev/null && pwd) || echo "$1" ;; esac; }
 [ -n "$REF" ] && [ -n "$NEW" ] || { echo "pp_diff: --ref and --new are required" >&2; exit 2; }
 REF=$(topath "$REF"); NEW=$(topath "$NEW"); [ -n "$OVL" ] && OVL=$(topath "$OVL")
+if [ -n "$RMAP" ]; then
+  case "$RMAP" in [A-Za-z]:[/\\]*) RMAP=$(wslpath -a "$RMAP") ;; esac
+  [ -f "$RMAP" ] || { echo "pp_diff: --rename-map $RMAP: no such file" >&2; exit 2; }
+fi
+[ -z "$TEL" ] || [ -n "$RMAP" ] || { echo "pp_diff: --tel needs --rename-map" >&2; exit 2; }
 [ -n "$LOGS" ] || { echo "pp_diff: --logs RUN_DIR is required (a flavours.sh build of the tree's own compile lines)" >&2; exit 2; }
 LOGS=$(topath "$LOGS")
 [ -d "$LOGS" ] || { echo "pp_diff: --logs $LOGS: no such dir" >&2; exit 2; }
@@ -127,6 +142,16 @@ for fl in $FLAVOURS; do
     [ -s "$W/$fl/$side.tok" ] || { echo "  $fl: $side preprocessed to an EMPTY stream (not called identical)" >&2; RC=2; continue 2; }
   done
   NL=$(wc -l < "$W/$fl/ref.lines"); NT=$(wc -c < "$W/$fl/ref.tok")
+  if [ -n "$RMAP" ]; then
+    MODE=equal; case "$fl" in release*) [ -n "$TEL" ] && MODE=deletions ;; esac
+    if "$PY" -I "$HERE/g0r.py" --map "$RMAP" ${TEL:+--tel} --mode $MODE "$W/$fl/ref/pp.i" "$W/$fl/new/pp.i" > "$W/$fl/g0r.txt" 2>&1; then
+      echo "  $fl: IDENTICAL  (G0R $MODE: a pure rename; $NL lines)"; tail -3 "$W/$fl/g0r.txt"
+    else
+      grc=$?; [ $grc -eq 1 ] && { [ $RC -eq 2 ] || RC=1; } || RC=2
+      echo "  $fl: DIFFERENT  (G0R $MODE: not a pure rename)"; sed -n '1,30p' "$W/$fl/g0r.txt"
+    fi
+    continue
+  fi
   if cmp -s "$W/$fl/ref.tok" "$W/$fl/new.tok"; then
     echo "  $fl: IDENTICAL  ($NL lines, $NT token bytes; sha256 $(sha256sum < "$W/$fl/ref.tok" | cut -c1-16))"
   else
@@ -136,5 +161,6 @@ for fl in $FLAVOURS; do
   fi
 done
 if [ -n "$KEEP" ]; then KEEP=$(topath "$KEEP"); mkdir -p "$KEEP"; cp -r "$W"/. "$KEEP"/; echo "kept in $KEEP"; fi
-case $RC in 0) echo "G0 ok×$(echo $FLAVOURS | wc -w)${XDEFS:+ [$XDEFS]}" ;; 1) echo "G0 FAIL" ;; *) echo "G0 ERROR" ;; esac
+G=G0${RMAP:+R}
+case $RC in 0) echo "$G ok×$(echo $FLAVOURS | wc -w)${XDEFS:+ [$XDEFS]}" ;; 1) echo "$G FAIL" ;; *) echo "$G ERROR" ;; esac
 exit $RC

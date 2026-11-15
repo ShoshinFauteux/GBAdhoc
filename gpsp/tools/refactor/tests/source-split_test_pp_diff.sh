@@ -17,6 +17,8 @@
 #   M5  a quoted include resolving to another file     caught
 #   M6  a doubled blank inside a string literal        caught (literals are kept byte for byte)
 #   M7  a blank -> TAB inside a string literal         caught
+#   R1  base vs base with --rename-map (G0R, C5-0)     identical x3
+#   R2  M1's token with --rename-map                   caught x3
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 G=${1:-$(cd "$HERE/../.." && pwd)}
@@ -94,6 +96,13 @@ mk; f="$T/ovl/psp/main_psp.c"
 sed -i 's/"This build cannot start a game here\."/"This build cannot\tstart a game here."/' "$f"
 if cmp -s "$G/psp/main_psp.c" "$f"; then bad "M7 setup: the anchor string was not found"; else
 expect "M7 a blank turned into a TAB inside a string literal" 1 "$(PP --overlay "$T/ovl" --flavours release)" D; fi
+
+# G0R plumbing (C5-0): --rename-map hands each flavour's two streams to g0r.py.  On the
+# unchanged tree a map is a no-op rename (R1); a real token change still fails (R2).
+printf 'struct pp_t fe_pp_t st\ng_pp_never_defined pp_t.x\n' > "$T/r.map"
+expect "R1 base vs base through G0R (--rename-map)" 0 "$(PP --rename-map "$T/r.map")" III
+mk; printf '\nstatic int pp_mutant_all;\n' >> "$T/ovl/psp/main_psp.c"
+expect "R2 a release-live token through G0R" 1 "$(PP --overlay "$T/ovl" --rename-map "$T/r.map")" DDD
 
 echo "pp_diff self-test: $FAILS failure(s)"
 [ "$FAILS" -eq 0 ]

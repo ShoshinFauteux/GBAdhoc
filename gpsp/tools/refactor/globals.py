@@ -18,6 +18,14 @@ class, owner module, fragment and cross-module writers; plus a safe rename.
         or a weak-override hook; NEW already names something; OLD is not a
         file-scope global of the file; OLD is also a local/parameter somewhere
         (shadowed: a token rename would rename the local too).
+  globals.py census ... --module X --check
+        (C5-0) exit 1 when a file-scope definition owned by module X is not one of
+        X's struct objects (`struct fe_X`, `fe_X_cfg`, `fe_X_tel`; C-5.md §2.1) and
+        not standalone by rule (const, macro-global, non-static) or by
+        globals.standalone (C-5.md §2.2).  The offenders are listed.
+  globals.py struct MAP --src INVERSE -o OUT [--tel] [--root GPSP]
+        (C5-0) move the globals a reviewed rename map names into module structs:
+        gstruct.py (map format, what it writes and what it refuses).
   globals.py --selftest      tests/source-split_test_globals.py
 
 Basis: scratch/census.py (parse, now csrc.py with the attribute fix),
@@ -482,6 +490,33 @@ def report(rows, meta, basis=None):
     return rc
 
 
+# ------------------------------------------------------------------ C5-0 module check
+STANDALONE = os.path.join(HERE, 'globals.standalone')
+
+
+def load_standalone(path=STANDALONE):
+    if not os.path.exists(path):
+        return set()
+    return {ln.split()[0] for ln in open(path, encoding='utf-8') if ln.strip() and not ln.startswith('#')}
+
+
+def module_check(rows, module, standalone=None):
+    """-> (ok, [offender names]): every definition owned by MODULE is one of its struct
+    objects (`struct fe_MODULE[_cfg|_tel]`), standalone by rule (const, macro-global,
+    non-static) or listed in globals.standalone."""
+    allow = load_standalone() if standalone is None else standalone
+    tre = re.compile(r'^struct fe_%s(?:_cfg|_tel)?$' % re.escape(module))
+    off = []
+    for r in rows:
+        if r.get('extern') or r.get('owner') != module:
+            continue
+        if tre.match(r.get('type') or '') or r['name'] in allow or r.get('const') \
+                or r.get('macro_in') or r.get('static') is False:
+            continue
+        off.append(r['name'])
+    return not off, off
+
+
 # ------------------------------------------------------------------ rename
 class Refused(Exception):
     pass
@@ -552,6 +587,10 @@ def rename(text, old, new, root=None):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['struct']:
+        import gstruct
+        return gstruct.main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--selftest', action='store_true')
     sub = ap.add_subparsers(dest='cmd')
@@ -563,6 +602,8 @@ def main(argv=None):
     c.add_argument('--tsv')
     c.add_argument('--basis')
     c.add_argument('--defs-from', help='a flavours.sh flavour dir: its build-manifest.json pspMakeFlags set the switches')
+    c.add_argument('--module', help='with --check: the module whose objects must all be struct members (C5-0)')
+    c.add_argument('--check', action='store_true')
     r = sub.add_parser('rename')
     r.add_argument('old')
     r.add_argument('new')
@@ -592,8 +633,16 @@ def main(argv=None):
             print('globals census: REFUSED: no --cutlist, and modules.py\'s fixed ranges are 01067e74\'s '
                   '(this source is sha256 %s...)' % sha[:12], file=sys.stderr)
             return 2
+        if a.check and not a.module:
+            print('globals census: --check needs --module X', file=sys.stderr)
+            return 2
         rows, meta = census(a.src, a.root, cut, a.defs_from)
         rc = report(rows, meta, a.basis)
+        if a.check:
+            okm, off = module_check(rows, a.module)
+            print('  module %s: %s' % (a.module, 'every object is a struct member or standalone (check ok)' if okm else
+                                       '%d objects outside its structs: %s' % (len(off), ', '.join(off))))
+            rc = rc or (0 if okm else 1)
         if a.json:
             json.dump(rows, open(a.json, 'w'), indent=0)
         if a.tsv:

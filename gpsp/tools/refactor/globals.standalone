@@ -1,0 +1,17 @@
+# C-5.md §2.2: file-scope objects of main_psp.c's unit that stay standalone (never a
+# module-struct member).  `globals.py census --module X --check` accepts these, plus,
+# by rule, every const object, every macro-global and every non-static definition.
+# One name per line, then the reason.
+g_ff_uncapped      external linkage: ff_psp.c
+g_ff_mult          external linkage: ff_psp.c
+g_net_up           external linkage: ff_psp.c
+g_net_is_host      external linkage: ff_psp.c
+in_rate            external linkage: ff_psp.c
+g_audio_step       external linkage: ff_psp.c
+g_rfu_activated    external linkage: online_psp.c, ui_psp.c, usb_handoff.c
+g_dir_base         external linkage: online_psp.c, ui_psp.c, usb_handoff.c
+g_running          external linkage: ui_psp.c, ui_share.inc
+g_exit_req         exit latch tracked by T8 (epochc_exitmap.py matches `g_exit_req = 1`)
+g_mgift_consumed   macro-global in the release
+g_gba_late         macro-global in the release
+g_mg_on            macro-global in the release
