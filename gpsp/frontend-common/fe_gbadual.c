@@ -85,6 +85,9 @@ extern uint32_t jit_big_i_calls GBAD_WEAK, gbab_jit_big_i_calls GBAD_WEAK;
 extern uint32_t jit_big_i_max GBAD_WEAK, gbab_jit_big_i_max GBAD_WEAK;
 extern uint32_t jit_big_d_calls GBAD_WEAK, gbab_jit_big_d_calls GBAD_WEAK;
 extern uint32_t gbab_reg[] GBAD_WEAK;
+/* A ROM page neither file read could supply (gba_memory.c load_gamepak_page,
+ * mapped as zeros): B borrows A's pages or reads its own file. */
+extern uint32_t gamepak_read_failed GBAD_WEAK, gbab_gamepak_read_failed GBAD_WEAK;
 #define GBAD_U(sym) (&(sym) ? (unsigned)(sym) : 0u)
 
 /* The partner's autopilot: fe_autopilot.o renamed (psp/Makefile), linked
@@ -588,6 +591,22 @@ int fe_gbadual_frame(uint16_t local_keys)
       lg(msg);
       gbadual_stop("player_fault");
       return 0;          /* the frame did complete */
+   }
+   /* A ROM PAGE THAT COULD NOT BE READ ends the session, as a fault does:
+    * the partner may have run on zero pages (its own, or the player's it
+    * borrows), and the retry (fe_host_rom_read_retry) reads only the
+    * player's pages again.  The player's own flag stays up for the frontend,
+    * which pauses on it. */
+   if (GBAD_U(gbab_gamepak_read_failed) || GBAD_U(gamepak_read_failed))
+   {
+      char msg[96];
+      int partner = GBAD_U(gbab_gamepak_read_failed) != 0;  /* read before
+                                         the stop hands B's memory back */
+      snprintf(msg, sizeof(msg), "gbadual_rom_read_failed slot=%d f=%u/%u",
+               partner, (unsigned)p->frames[0], (unsigned)p->frames[1]);
+      lg(msg);
+      gbadual_stop("rom_read");
+      return partner ? -1 : 0;
    }
    D.frames_local++;
    return 0;

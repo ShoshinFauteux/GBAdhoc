@@ -755,7 +755,13 @@ RFILE *gamepak_file_large = NULL;
 static char gamepak_path[1024];
 static int64_t gamepak_file_bytes;
 u32 gamepak_reopens = 0;
-u32 gamepak_short_reads = 0;   /* pages mapped with 0xFF where data was due */
+u32 gamepak_short_reads = 0;   /* pages that could not be read from the file */
+/* A ROM page read failed even after a reopen (load_gamepak_page).  Sticky
+ * until gamepak_read_retry(): the frontend reads it between frames, pauses
+ * and says so.  gamepak_bad_entry marks the cache entries holding such a
+ * page (bit per gamepak_blk_queue entry), so the retry unmaps exactly them. */
+u32 gamepak_read_failed = 0;
+static u8 gamepak_bad_entry[1024 / 8];
 
 // Writes to these respective locations should trigger an update
 // so the related subsystem may react to it.
@@ -3252,10 +3258,22 @@ u8 *load_gamepak_page(u32 physical_index)
      * So a read that returns less than the file holds at that offset
      * reopens the ROM by path and tries once more.  It covers sleep and any
      * other way the handle can die, without the core knowing about power
-     * events.  If the reopen still fails, this loader currently fills the
-     * unread tail with 0xFF and maps it as a page.  That page will not fault
-     * again until eviction, so execution may consume bad bytes; propagating a
-     * storage failure to a safe CPU/frontend stop remains a separate task. */
+     * events.
+     *
+     * IF THE REOPEN FAILS TOO (the card is out, the file is gone), the page
+     * still has to be mapped: the access that faulted is in the middle of
+     * an instruction or a translation.  It is mapped as ZEROS, not as the
+     * 0xFF fill it used to get.  0x00000000 is ANDEQ r0,r0,r0 in ARM and
+     * 0x0000 is LSLS r0,r0,#0 in Thumb: no branch, no store, no mode change,
+     * so the rest of the frame slides forward instead of jumping (Thumb
+     * 0xFFFF is the second half of a BL, a jump to LR+4 KiB).  The failure
+     * is sticky (gamepak_read_failed): the frontend pauses at the frame
+     * boundary and says why, and on retry gamepak_read_retry() unmaps every
+     * page that failed and flushes the ROM translations made from them.
+     * While the flag is up no further reopen is tried, so a frame that
+     * slides into more pages pays one failing read each, not a reopen each.
+     * Normal play never takes this branch: the guest sees exactly what it
+     * saw before. */
     int64_t off  = (int64_t)file_index * (32 * 1024);
     int64_t want = gamepak_file_bytes - off;
     int64_t got  = -1;
@@ -3264,7 +3282,8 @@ u8 *load_gamepak_page(u32 physical_index)
     if (gamepak_file_large &&
         filestream_seek(gamepak_file_large, off, SEEK_SET) == 0)
       got = filestream_read(gamepak_file_large, swap_location, 32 * 1024);
-    if (got < want && gamepak_path[0])
+    gamepak_bad_entry[entry >> 3] &= (u8)~(1u << (entry & 7));
+    if (got < want && gamepak_path[0] && !gamepak_read_failed)
     {
       if (gamepak_file_large)
         filestream_close(gamepak_file_large);
@@ -3278,12 +3297,15 @@ u8 *load_gamepak_page(u32 physical_index)
     }
     if (got < 0)
       got = 0;
-    /* Diagnostic: a page that will be mapped with bytes that are NOT the
-     * cartridge's (0xFF fill where the file should have had data).  If this
-     * ever moves during a run, executed ROM code may be garbage. */
     if (got < want)
+    {
+      /* The file could not supply this page (above): zeros, flagged. */
       gamepak_short_reads++;
-    if (got < 32 * 1024)
+      gamepak_read_failed = 1;
+      gamepak_bad_entry[entry >> 3] |= (u8)(1u << (entry & 7));
+      memset(swap_location, 0, 32 * 1024);
+    }
+    else if (got < 32 * 1024)   /* the file's last, partial page */
       memset(swap_location + got, 0xFF, (size_t)(32 * 1024 - got));
   }
 
@@ -3295,6 +3317,39 @@ u8 *load_gamepak_page(u32 physical_index)
     update_gpio_romregs();
 
   return swap_location;
+}
+
+/* THE RETRY after a failed page read (load_gamepak_page), between frames
+ * only.  Every cache entry that holds a page the file could not supply is
+ * unmapped and freed, so the next access faults and reads the file again
+ * (reopening it: the flag is down), and the ROM translations are flushed,
+ * because code translated from a zero page would otherwise run on.  The
+ * dynarec has no per-page index of its ROM blocks, so the flush is the whole
+ * ROM cache, as a state load does; a retry is rare. */
+void gamepak_read_retry(void)
+{
+  u32 entry;
+  for (entry = 0; entry < 1024; entry++)
+  {
+    s16 phyrom;
+    if (!(gamepak_bad_entry[entry >> 3] & (1u << (entry & 7))))
+      continue;
+    phyrom = gamepak_blk_queue[entry].phy_rom;
+    if (phyrom >= 0)
+    {
+      map_rom_entry(read, phyrom, NULL, gamepak_size >> 15);
+#ifdef GBA_LINK
+      if (gamepak_evict_hook)
+        gamepak_evict_hook((u32)phyrom);
+#endif
+      gamepak_blk_queue[entry].phy_rom = -1;
+    }
+  }
+  memset(gamepak_bad_entry, 0, sizeof(gamepak_bad_entry));
+  gamepak_read_failed = 0;
+#ifdef HAVE_DYNAREC
+  flush_translation_cache_rom();
+#endif
 }
 
 void init_gamepak_buffer(void)
@@ -3751,6 +3806,8 @@ void memory_unload_gamepak(void)
   gamepak_file_bytes = 0;
   gamepak_mirror_1m = false;
   gamepak_path[0] = '\0';
+  gamepak_read_failed = 0;
+  memset(gamepak_bad_entry, 0, sizeof(gamepak_bad_entry));
   map_null(read, 0x8000000, 0xD000000);
 }
 

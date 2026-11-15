@@ -431,6 +431,18 @@ def suites(env: Env, baseline: Path | None):
          "tools/tests/test_gamepak_residency_budget.c -Wl,--gc-sections && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_gamepak_residency_budget"),
 
+        # A ROM file that goes away mid-run (code-health B-3): a page the
+        # file cannot supply is zeros, not 0xFF, the sticky flag goes up
+        # after one reopen, and gamepak_read_retry unmaps only the failed
+        # pages and flushes the ROM translations (HAVE_DYNAREC, as on PSP).
+        ("gamepak_read_fail", True, lambda: None,
+         "gcc -std=gnu99 -O1 -g -w -fsanitize=address,undefined "
+         "-ffunction-sections -fdata-sections -DINLINE=inline -DHAVE_DYNAREC "
+         "-Ilibretro/libretro-common/include -Ifrontend-common "
+         "-o /tmp/t_gamepak_read_fail "
+         "tools/tests/test_gamepak_read_fail.c -Wl,--gc-sections && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_gamepak_read_fail"),
+
         # Exercise the production DMA span planner across paired region
         # transitions, including decrementing and staggered boundaries.
         ("dma_region_segments", True, lambda: None,

@@ -203,6 +203,7 @@ int main(int argc, char *argv[])
    int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
    unsigned prev_pad = 0;
    int chord_frames = 0;
+   int rom_fail_paused = 0;   /* the menu opened for a ROM read failure */
    fe_host_config cfg;
    /* The in-process return to the game list (inproc_refusal): how many
     * times this process has done it, the per-game values a fresh boot
@@ -778,6 +779,23 @@ int main(int argc, char *argv[])
       /* ---- in-game menu (Select+Start held ~1/4 s, plan §8) ---------- */
       if (!ui_active())
       {
+         /* A ROM PAGE COULD NOT BE READ (the card is out, the file gone):
+          * the core mapped it as zeros and raised a sticky flag
+          * (gba_memory.c load_gamepak_page).  The game pauses here, at the
+          * frame boundary, in the menu, with the reason; when the menu
+          * closes those pages are read again before the next frame.  A
+          * failure again pauses again; Quit to game list is the way out. */
+         if (!fe_host_rom_read_failed())
+            rom_fail_paused = 0;
+         else if (!rom_fail_paused)
+         {
+            rom_fail_paused = 1;
+            menu_open();
+            osd_toast("Cannot read the game from the Memory Stick.");
+            osd_toast("Check it, then Resume to try again.");
+         }
+         else
+            fe_host_rom_read_retry();
          if (home_mode)
          {
             /* Menu = HOME: a START+SELECT tap is the GAME's (the hold above

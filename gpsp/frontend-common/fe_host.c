@@ -4470,6 +4470,35 @@ unsigned fe_host_guest_faults(void)
    return guest_faults;
 }
 
+/* ROM READ FAILURE (gba_memory.c load_gamepak_page, code-health B-3).  The
+ * core maps a page it could not read as zeros and raises a sticky flag; the
+ * platform pauses on it and asks for the retry between frames. */
+extern uint32_t gamepak_read_failed;                /* gba_memory.c */
+extern uint32_t gamepak_short_reads, gamepak_reopens;
+void gamepak_read_retry(void);
+static uint32_t rom_read_failed_seen;
+
+int fe_host_rom_read_failed(void)
+{
+   if (!gamepak_read_failed)
+      return 0;
+   if (!rom_read_failed_seen)
+   {
+      rom_read_failed_seen = 1;
+      fe_evt("rom_read_failed frame=%u short_reads=%u reopens=%u",
+             frame_count, (unsigned)gamepak_short_reads,
+             (unsigned)gamepak_reopens);
+   }
+   return 1;
+}
+
+void fe_host_rom_read_retry(void)
+{
+   rom_read_failed_seen = 0;
+   fe_evt("rom_read_retry frame=%u", frame_count);
+   gamepak_read_retry();
+}
+
 /* The frameskip the platform asks of the GBA core (fast-forward's CPU
  * Unlimited mode sets gpsp_frameskip=fixed_interval) applies to the GB core
  * too: skipped frames are emulated and heard but not drawn, and reach the

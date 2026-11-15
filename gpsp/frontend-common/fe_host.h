@@ -334,6 +334,13 @@ void fe_host_skip_override(int skip);
 /* Emulation faults the core recovered from by resetting the game (a guest
  * jump to an address that is not code).  Monotonic; the UI toasts on change. */
 unsigned fe_host_guest_faults(void);
+/* A ROM page could not be read from the card, even after a reopen, and is
+ * mapped as zeros (gba_memory.c load_gamepak_page).  Sticky until the retry.
+ * Between frames: the platform pauses and says so while this is 1, then
+ * calls fe_host_rom_read_retry() before the next frame to read those pages
+ * again (a failure again raises it again).  Always 0 in GB mode. */
+int fe_host_rom_read_failed(void);
+void fe_host_rom_read_retry(void);
 
 /* Report the platform audio buffer's state to the core, once per frame
  * (ADR-0018). Only meaningful with gpsp_frameskip=auto/auto_threshold, which

@@ -295,10 +295,16 @@ extern u32 gamepak_page_loads;
 #ifdef GBA_LINK
 extern u32 backup_writes;     /* gba_memory.c */
 #endif
-/* Page reads that needed a reopen, and pages mapped with 0xFF fill where the
- * file should have supplied data.  Both should stay 0; frontends may log them. */
+/* Page reads that needed a reopen, and pages the file could not supply.
+ * Both should stay 0; frontends may log them. */
 extern u32 gamepak_reopens;
 extern u32 gamepak_short_reads;
+/* Sticky: a ROM page could not be read even after a reopen, and is mapped as
+ * zeros (load_gamepak_page).  A frontend checks it between frames, pauses,
+ * and calls gamepak_read_retry() (between frames only) to read those pages
+ * again. */
+extern u32 gamepak_read_failed;
+void gamepak_read_retry(void);
 extern bool gamepak_mini_materialized;
 extern bool gamepak_header_nonstandard;
 extern char gamepak_code[5];
