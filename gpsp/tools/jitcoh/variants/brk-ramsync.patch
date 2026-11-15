@@ -1,12 +1,18 @@
 VALIDATION ONLY: the RAM half of translate_icache_sync publishes nothing
 (new RAM-cache code is never written back or invalidated).  The checker must
 flag it; restoring the sync must silence it.
+Since code-health A-6 (JIT_CODE_DISCIPLINE built in) the legacy sync exists
+only as JIT_CODE_AB's verbatim copy, jit_legacy_icache_sync, so this patches
+that copy and bites only in a JIT_CODE_AB build running a legacy jit_code_mode.
+The results in docs/JIT-COHERENCY.md were taken on the non-discipline twin.
 --- a/cpu_threaded.c
 +++ b/cpu_threaded.c
-@@ -379,7 +379,7 @@
+@@ -549,9 +549,9 @@
+         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
          last_rom_translation_ptr = rom_translation_ptr;
      }
      if (last_ram_translation_ptr < ram_translation_ptr) {
+         jit_code_stats.publishes++;
 -        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
 +        /* JITCOH VALIDATION: sync removed */
          last_ram_translation_ptr = ram_translation_ptr;

@@ -40,11 +40,11 @@ code** and stay until the desktop build bakes them too.
 
 | to do this | write this |
 |---|---|
-| one feature off, an A/B arm | `CORE_EXTRA="XLAT_PURE=0" tools/build.sh harness` (root make `XLAT_PURE=0`, which is `-DGPSP_NO_XLAT_PURE`). A release refuses `CORE_EXTRA`. |
+| one feature off, an A/B arm | `CORE_EXTRA="XLAT_FAST=0" tools/build.sh harness` (root make `XLAT_FAST=0`, which is `-DGPSP_NO_XLAT_FAST`). Only the 20 switches still in `gpsp_features.h`; a *(built in)* feature has no off arm. A release refuses `CORE_EXTRA`. |
 | a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
 | the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only) |
 | a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_VID_TRIPLE` drops a playable default |
-| a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works |
+| a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works; the *(built in)* features are on whatever `VDEFS` says. It stays the default because GBAdhoc-Lab builds its gate, profiler and lockstep twins with it |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
 | one-off variants of a non-release profile | `tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` / `PSP_EXTRA=...`; it refuses them with `release` |
 
@@ -141,12 +141,12 @@ parent still builds without them, as it did before.
 | `SMC_SAME_REPROBE` *(built in)* | **1024**: `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. |
 | `SMC_IMM_PATCH` *(built in)* | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
-| `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
-| `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
+| `XS_WALK_PAIR` *(built in)* | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
+| `XS_NOTE_FAST` *(built in)* | `xs_note_block` records eight halfwords at a time. Exact. |
 | **Translated code size** | |
-| `PCARG_SIDE` | a single load or store calls its stub without the PC-argument word (about 8 % of hot translated bytes); the stubs' slow paths recover it from a side table outside the translation caches (docs/PCARG-SIDE.md). Exact per access; smaller RAM code can move a full flush (timing). `PCARG_SIDE_PAD=1` (twin oracle only) pads every site back to the base's size. |
+| `PCARG_SIDE` *(built in)* | a single load or store calls its stub without the PC-argument word (about 8 % of hot translated bytes); the stubs' slow paths recover it from a side table outside the translation caches (docs/PCARG-SIDE.md). Exact per access; smaller RAM code can move a full flush (timing). `PCARG_SIDE_PAD=1` (twin oracle only) pads every site back to the base's size. |
 | **Translation reuse across full flushes** | |
-| `XLAT_PURE` | `scan_block` clears every instruction's update-cycles slot, so a block's translation depends only on its own guest bytes (the precondition of reuse). Changes timing where a stale slot used to be 1. |
+| `XLAT_PURE` *(built in)* | `scan_block` clears every instruction's update-cycles slot, so a block's translation depends only on its own guest bytes (the precondition of reuse). Changes timing where a stale slot used to be 1. |
 | `SMC_REUSE` *(built in)* | a full RAM flush keeps the native code; a RAM block whose guest bytes are unchanged is revived instead of translated again. Speed only; needs `XLAT_PURE`. |
 | `SMC_REUSE_SPARE_KB` *(built in)* | **384**: the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. |
 | `SMC_REUSE_MODE` *(built in)* | **3**: 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
@@ -161,8 +161,8 @@ parent still builds without them, as it did before.
 | `DISPATCH_ASSOC` *(built in)* | the dispatch cache's 4 KiB per ISA as 256 2-way sets instead of 512 direct-mapped slots; `mips_indirect_branch_dual` enters the ARM/Thumb probe; `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size so the pinned hot order does not move. Same entries, keys and invalidation points. Twin: C fall-throughs per frame Doom II 140 -> 55, Duke 193 -> 50, Ice Nine 83 -> 47. |
 | `DISPATCH_LOOKUP_PC` *(built in)* | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off by itself under `JIT_CODE_AB` (gpsp_profile.h). |
 | `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
-| `JIT_COST` | the cost of producing translated code (docs/JIT-COST.md). Exact. |
-| `JIT_CODE_DISCIPLINE` | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
+| `JIT_COST` *(built in)* | the cost of producing translated code (docs/JIT-COST.md). Exact. |
+| `JIT_CODE_DISCIPLINE` *(built in)* | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
 | `SPIN_SKIP` | the translator proves a backward branch closes a side-effect-free loop (loads without writeback, ALU ops, compares; every read register never written in the loop or written earlier in the same iteration); the taken back-edge asks `update_gba` whether to end the slice when every load address is RAM, palette, VRAM, OAM, ROM or a few event-only I/O registers. Anything else vetoes the loop. Not keyed on any address or ROM. Moves timing by less than one loop iteration per event; judged by the Lab gate's replayed lockstep. Oracle `SPIN_SKIP_VERIFY`; mutants `SPIN_SKIP_MUTANT_REGS`, `SPIN_SKIP_MUTANT_STORE`, `SPIN_SKIP_MUTANT_INSKIP`. |
 | **Scheduler, interrupt and serial fast paths** | |
 | `SCHED_FAST` | scheduler fast paths in `update_gba`, compiled in; the run-time `sched_fast` turns them on. Exact. |

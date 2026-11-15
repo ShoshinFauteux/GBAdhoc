@@ -42,12 +42,10 @@
  * region again, so even a stale fetch of the old `jal` re-enters the patch
  * handler and computes the right result.  The audit build recognises it.
  *
- * OFF (the default): every macro below expands to the original code, and
- * translate_icache_sync / platform_cache_sync keep their old behaviour. */
+ * Built in since code-health A-6: there is no build without the discipline
+ * (JIT_CODE_AB, a harness A/B selector, can still run the legacy sync). */
 #ifndef JIT_CODE_H
 #define JIT_CODE_H
-
-#ifdef JIT_CODE_DISCIPLINE
 
 #if !defined(MIPS_ARCH)
 #error "JIT_CODE_DISCIPLINE is implemented for the MIPS dynarec only"
@@ -120,15 +118,11 @@ typedef struct
   u32 owner[JOWN_COUNT];
   u32 big_i;            /* whole-I forced by a span >= 16 KiB (kept last:
                            the frontend reads the first ten words) */
-#ifdef JIT_COST
   u32 kcalls;           /* kernel cache calls (ranged + whole) by publishes  */
   u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
-#endif
 } jit_code_stats_type;
-#ifdef JIT_COST
 /* run time: 1 = user-mode line ops (default), 0 = the kernel calls */
 extern u32 jit_pub_inline;
-#endif
 extern jit_code_stats_type jit_code_stats;
 
 /* JIT_CODE_CHECK (implied by JIT_CODE_AUDIT): zone asserts on every record
@@ -152,15 +146,5 @@ extern u32 jit_audit_phand;
 #else
 #define JIT_CODE_META(lo, hi) do { } while (0)
 #endif
-
-#else /* !JIT_CODE_DISCIPLINE: the original code, unchanged */
-
-#define JIT_CODE_WROTE(lo, hi)     do { } while (0)
-#define JIT_CODE_EMITTED(lo, hi)   do { } while (0)
-#define JIT_CODE_CHECK_ENTRY(p)    do { } while (0)
-#define JIT_CODE_META(lo, hi)      do { } while (0)
-#define JIT_PATCH_BRANCH(src, dst) generate_branch_patch_unconditional(src, dst)
-
-#endif /* JIT_CODE_DISCIPLINE */
 
 #endif /* JIT_CODE_H */

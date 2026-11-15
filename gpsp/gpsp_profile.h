@@ -131,18 +131,15 @@
 /* Built in since code-health A-6, and inert or wrong without the switch they
  * refine: the gate rules (simple, ranked, bitmap, entry gates) need SMC_GATES,
  * the selective-retirement refinements (stable thunk, direct links, the
- * single-store and block-store classes) need SMC_PARTIAL_SAFE, and SMC_REUSE
- * needs XLAT_PURE.  Core objects only: GPSP_FEATURES_H is the force-included
- * feature header, which the frontend (psp/main_psp.c) never sees. */
+ * single-store and block-store classes) need SMC_PARTIAL_SAFE.  Core objects
+ * only: GPSP_FEATURES_H is the force-included feature header, which the
+ * frontend (psp/main_psp.c) never sees. */
 #ifdef GPSP_FEATURES_H
 #ifndef SMC_GATES
 #error "SMC_GATES is required: its built-in rules (SMC_GATES_SIMPLE/_RANKED, SMC_GATE_BITMAP) do nothing without it."
 #endif
 #ifndef SMC_PARTIAL_SAFE
 #error "SMC_PARTIAL_SAFE is required: its built-in refinements (SMC_PARTIAL_STABLE_THUNK, SMC_PARTIAL_SINGLE, ...) do nothing without it."
-#endif
-#ifndef XLAT_PURE
-#error "SMC_REUSE (built in) revives old translations: it needs XLAT_PURE, or a block's code depends on translation history."
 #endif
 #endif
 
@@ -152,15 +149,11 @@
 
 /* DISPATCH_PRECISE, DISPATCH_ASSOC and DISPATCH_LOOKUP_PC are built in: they
  * are part of DISPATCH_CACHE (code-health A-6), so DISPATCH_CACHE off takes
- * them with it.  The 2-way sets still need a table of at least two entries. */
+ * them with it, and DISPATCH_LOOKUP_PC is also off under JIT_CODE_AB (whose
+ * legacy modes sync outside the publish bookkeeping its probe relies on).  The
+ * 2-way sets still need a table of at least two entries. */
 #if defined(DISPATCH_CACHE) && defined(DISPATCH_CACHE_BITS) && (DISPATCH_CACHE_BITS < 2)
 #error "DISPATCH_CACHE's 2-way sets (DISPATCH_ASSOC) need DISPATCH_CACHE_BITS >= 2 (it is entries per ISA; sets are half that)."
-#endif
-/* DISPATCH_LOOKUP_PC probes the cache in lookup_pc only when the publish the
- * C lookup would make is empty (jit_dirty_n | jit_owner_pending).  JIT_CODE_AB's
- * legacy modes sync outside that bookkeeping, so it is off under JIT_CODE_AB. */
-#if defined(DISPATCH_CACHE) && !defined(JIT_CODE_AB) && !defined(JIT_CODE_DISCIPLINE)
-#error "DISPATCH_CACHE's lookup_pc probe (DISPATCH_LOOKUP_PC) needs JIT_CODE_DISCIPLINE."
 #endif
 
 #if defined(SMC_REUSE_DEBUG) && !defined(DRPROF_TWIN)
@@ -169,12 +162,5 @@
 /* SMC_REUSE's contract point 1 (cpu_threaded.c): the translator is a pure
  * function of the block's guest bytes and the environment it checks.  These
  * switches break that or add links a revival does not replay. */
-
-/* JIT_CODE_CHECK / JIT_CODE_AUDIT check the discipline; without it they
- * compile to nothing and the "zero violations" would be vacuous. */
-#if (defined(JIT_CODE_CHECK) || defined(JIT_CODE_AUDIT) || \
-     defined(JIT_CODE_AB)) && !defined(JIT_CODE_DISCIPLINE)
-#error "JIT_CODE_CHECK/_AUDIT/_AB without JIT_CODE_DISCIPLINE: they need it."
-#endif
 
 #endif /* GPSP_PROFILE_H */

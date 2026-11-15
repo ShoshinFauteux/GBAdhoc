@@ -1564,7 +1564,6 @@ static __attribute__((noinline)) u8 *emit_load_pc_k(u8 *translation_ptr,
   translation_ptr = emit_load_pc_k(translation_ptr, ireg, (new_pc),           \
                                    stored_pc, (iok))
 
-#ifdef PCARG_SIDE
 /* PCARG_SIDE (docs/PCARG-SIDE.md): a single load or store
  * calls its stub WITHOUT the `addiu a1/a2, reg_pc, imm` above -- one word
  * less at every such site, about 8 % of the hot translated bytes.  Only the
@@ -1901,9 +1900,6 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
 }
 #pragma pop_macro("mips_emit_jal")
 #define pcarg_mark_lo() u8 *pcarg_lo = translation_ptr; (void)pcarg_lo
-#else
-#define pcarg_mark_lo() do { } while (0)
-#endif
 
 /* ARM: the fallback sync only outside a conditional run (a skipped body
  * would lose the subtraction) and not for SP/PC based addressing. */
@@ -1913,7 +1909,6 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
     ((last_condition & 0x0F) == 0x0E) &&                                      \
     (((opcode >> 16) & 0x0F) != REG_PC) && (((opcode >> 16) & 0x0F) != 13))
 
-#ifdef PCARG_SIDE
 #define arm_access_memory_load(mem_type)                                      \
 {                                                                             \
   u32 iok_imm = arm_iok_site(pc);                                             \
@@ -1933,28 +1928,6 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
   translation_ptr = pcarg_arm_store_site(translation_ptr,                     \
     (u32)execute_store_##mem_type, rd, pc, stored_pc, iok_imm);               \
 }
-#else
-#define arm_access_memory_load(mem_type)                                      \
-{                                                                             \
-  u32 iok_imm = arm_iok_site(pc);                                             \
-  iok_take(iok_imm);                                                          \
-  cycle_count += 2;                                                           \
-  mips_emit_jal(mips_absolute_offset(execute_load_##mem_type));               \
-  generate_load_pc_k(reg_a1, (pc), iok_imm);                                  \
-  generate_store_reg(reg_rv, rd);                                             \
-  check_store_reg_pc_no_flags(rd)                                             \
-}
-
-#define arm_access_memory_store(mem_type)                                     \
-{                                                                             \
-  u32 iok_imm = arm_iok_site(pc + 4);                                         \
-  iok_take(iok_imm);                                                          \
-  cycle_count++;                                                              \
-  generate_load_pc_k(reg_a2, (pc + 4), iok_imm);                              \
-  generate_load_reg_pc(reg_a1, rd, 12);                                       \
-  generate_function_call_swap_delay(execute_store_##mem_type)                 \
-}
-#endif
 
 #define arm_access_memory_reg_pre_up()                                        \
   mips_emit_addu(reg_a0, arm_to_mips_reg[rn], arm_to_mips_reg[rm])            \
@@ -2336,7 +2309,6 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
   iok_site(cycle_count, def_seq_cycles[pc >> 24][0],                          \
     (s32)((pc_arg) - stored_pc), stored_pc, (may_sync))
 
-#ifdef PCARG_SIDE
 #define thumb_access_memory_load(mem_type, reg_rd, may_sync)                  \
 {                                                                             \
   u32 iok_imm = thumb_iok_site(pc, may_sync);                                 \
@@ -2356,28 +2328,6 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
     (u32)execute_store_##mem_type, reg_rd, pc, stored_pc, iok_imm);           \
 }                                                                             \
 
-#else
-#define thumb_access_memory_load(mem_type, reg_rd, may_sync)                  \
-{                                                                             \
-  u32 iok_imm = thumb_iok_site(pc, may_sync);                                 \
-  iok_take(iok_imm);                                                          \
-  cycle_count += 2;                                                           \
-  mips_emit_jal(mips_absolute_offset(execute_load_##mem_type));               \
-  generate_load_pc_k(reg_a1, (pc), iok_imm);                                  \
-  generate_store_reg(reg_rv, reg_rd);                                         \
-}                                                                             \
-
-#define thumb_access_memory_store(mem_type, reg_rd, may_sync)                 \
-{                                                                             \
-  u32 iok_imm = thumb_iok_site(pc + 2, may_sync);                             \
-  iok_take(iok_imm);                                                          \
-  cycle_count++;                                                              \
-  generate_load_pc_k(reg_a2, (pc + 2), iok_imm);                              \
-  mips_emit_jal(mips_absolute_offset(execute_store_##mem_type));              \
-  generate_load_reg(reg_a1, reg_rd);                                          \
-}                                                                             \
-
-#endif
 
 #define thumb_access_memory_generate_address_pc_relative(offset, reg_rb,      \
  reg_ro)                                                                      \
@@ -3062,7 +3012,6 @@ static void emit_mem_access_loadop(
   #define genccall(fn) mips_emit_jal(((u32)fn) >> 2);
 #endif
 
-#ifdef PCARG_SIDE
 /* PCARG_SIDE: t0 = k, t1 = the plain PC of the load/store site that returns
  * to ra (exactly emit_iok_decode(arg, t0, t1, t2)), its argument recovered
  * from the side table when the site dropped it (mips_stub.S pcarg_dec).
@@ -3117,7 +3066,6 @@ static void emit_pcarg_dec_in_place(u8 **tr_ptr, unsigned src)
   pcarg_pad_to(&p, start, osz);
   *tr_ptr = p;
 }
-#endif
 
 #define SMC_WRITE_OFF    (10*16*4)   /* 10 handlers (16 insts) */
 #define IOEPILOGUE_OFF   (SMC_WRITE_OFF + 4*2)   /* Trampolines are two insts */
@@ -3178,7 +3126,6 @@ static void emit_pmemld_stub(
    * region check (read_memory*, which brings a timer up to date the same
    * way): the access's cycle (emit_iok_store_ld) is stored first. */
   if (region == 4) {
-#ifdef PCARG_SIDE
     /* (twin only) the site's argument from the side table: pcarg_dec
      * needs the guest registers saved */
     if (!aligned) {
@@ -3192,7 +3139,6 @@ static void emit_pmemld_stub(
       mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
       emit_restore_regs(true);
     } else
-#endif
     emit_iok_store_ld(&translation_ptr, aligned);
   }
 #endif
@@ -3220,16 +3166,11 @@ static void emit_pmemld_stub(
 
     // Check whether the read is allowed. Only within BIOS! (Ignore aligned, bad a1)
     if (!aligned) {
-#ifdef PCARG_SIDE
       /* a1 may not hold the site's PC (PCARG_SIDE): the openload stub's C
        * path recovers it and applies the same protection (read_memory*).
        * Same two words, so no later stub moves. */
       mips_emit_nop();
       mips_emit_b(beq, reg_zero, reg_zero, branch_offset(openld_core_ptrs[memop_number]));
-#else
-      mips_emit_srl(reg_temp, reg_a1, 14);
-      mips_emit_b(bne, reg_zero, reg_temp, branch_offset(openld_core_ptrs[memop_number]));
-#endif
     }
   }
   
@@ -3301,7 +3242,7 @@ static void emit_pmemld_stub(
       mips_emit_xori(reg_temp, reg_temp, 0x100);
       mips_emit_b_filler(bne, reg_temp, reg_zero, tm_skip);
       mips_emit_nop();
-#if defined(PCARG_SIDE) && !defined(LAB_LOCKSTEP)
+#if !defined(LAB_LOCKSTEP)
       /* The cycle is stored after the register save: pcarg_dec (k from the
        * side table) needs the guest registers saved.  The old path's size
        * is kept (pcarg_pad_to), so no later stub moves. */
@@ -3346,7 +3287,7 @@ static void emit_pmemld_stub(
       mips_emit_lw(reg_a0, reg_base, ReOff_SaveR3);
       mips_emit_lw(mips_reg_ra, reg_base, ReOff_SaveR1);
       emit_restore_regs(true);
-#if defined(PCARG_SIDE) && !defined(LAB_LOCKSTEP)
+#if !defined(LAB_LOCKSTEP)
       if (!aligned)
         pcarg_pad_to(&translation_ptr, tm_frag, tm_osz);
 #endif
@@ -4115,13 +4056,8 @@ static void emit_saveaccess_stub(u8 **tr_ptr) {
      * (iok_encode); the guest registers are saved, so t0-t2 are free. */
     if (strop < 3) {
       u8 *b_alert;
-#ifdef PCARG_SIDE
       /* ra is still the site's (saved to SaveR3 above, reloaded below) */
       emit_pcarg_dec_in_place(&translation_ptr, reg_a2);
-#else
-      emit_iok_decode(&translation_ptr, reg_a2, mips_reg_t0, mips_reg_t1,
-                      mips_reg_t2);
-#endif
       mips_emit_subu(mips_reg_t2, reg_cycles, mips_reg_t0);
       mips_emit_sw(mips_reg_t2, reg_base, REG_IO_CYCLES * 4);
       mips_emit_sw(mips_reg_t0, reg_base, ReOff_SaveR2);   // k, for an alert
@@ -4188,12 +4124,7 @@ static void emit_openload_stub(unsigned opt, bool signext, unsigned size, u8 **t
     /* a1 is the encoded site argument (iok_encode): the open-bus value and
      * the BIOS protection read reg[REG_PC] (gba_memory.c), so the plain PC
      * is decoded first (t0-t2 are free: the guest registers are saved). */
-#ifdef PCARG_SIDE
     emit_pcarg_dec_in_place(&translation_ptr, reg_a1);
-#else
-    emit_iok_decode(&translation_ptr, reg_a1, mips_reg_t0, mips_reg_t1,
-                    mips_reg_t2);
-#endif
   }
   genccall(hndreadtbl[size + (signext ? 3 : 0)]);
   if (opt < 5) {
@@ -4287,9 +4218,7 @@ void init_emitter(bool must_swap) {
   (void)must_swap;
   // Initialize memory to a debuggable state
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
-#ifdef PCARG_SIDE
   pcarg_reset();         /* both caches start over: no site is known */
-#endif
 
   // Generates the trampoline and helper stubs that we need
   u8 *translation_ptr = (u8*)&rom_translation_cache[0];

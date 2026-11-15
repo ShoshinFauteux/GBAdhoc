@@ -13,7 +13,13 @@
 # and NOTHING ELSE.  gpsp_features.h is force-included but stands aside
 # (-DGPSP_FEATURES_EXPLICIT), so a switch a variant does not name is off and
 # -UDISPATCH_CACHE works.  The oracles' tables and GBAdhoc-Lab's gate (VDEFS =
-# a manifest's whole coreFlags) depend on that.
+# a manifest's whole coreFlags), its twin profiler (analysis/twin.py) and its
+# lockstep tool (compat/tools/lockstep.py, through dr_build.sh) all build with
+# this default, so it stays.  Since code-health A-6 the 51 built-in features
+# are on in both modes, whatever a variant names: an older table that left one
+# out (dr_corpus.py's 2.x/4.0 sets) now builds it in.  The base list below
+# keeps only what is still a switch; the nine built-in names it carried were
+# dropped, which changes no build.
 # FEATURES=baked: exactly what a PSP core is, gpsp_features.h plus REWIND, with
 # VDEFS on top (-DGPSP_NO_<NAME> to drop one).  GBA_LINK stays `make pair`'s.
 #
@@ -34,12 +40,10 @@ ifeq ($(FEATURES),baked)
 RELEASE_DEFS := -DUSE_PSP_RGB565_FORMAT
 CORE_MAKE_VARS := REWIND=1
 else ifeq ($(FEATURES),explicit)
-# The configuration the oracle tables are written on top of (dr_corpus.py).
+# The configuration the oracle tables are written on top of (dr_corpus.py),
+# plus the built-in features.
 RELEASE_DEFS := -DGPSP_FEATURES_EXPLICIT \
-  -DSMC_GATES -DSMC_GATES_SIMPLE -DSMC_GATES_RANKED=1 \
-  -DSMC_GATE_BITMAP=1 -DSMC_PARTIAL_SAFE -DSMC_PARTIAL_STABLE_THUNK \
-  -DSMC_PARTIAL_DIRECT_LINKS -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 \
-  -DSMC_GATE_CHARGE=1 -DDISPATCH_CYCLE_CHECK=1 -DDMA_SMC_FLUSH=1 \
+  -DSMC_GATES -DSMC_PARTIAL_SAFE -DDMA_SMC_FLUSH=1 \
   -DUSE_PSP_RGB565_FORMAT
 CORE_MAKE_VARS :=
 else

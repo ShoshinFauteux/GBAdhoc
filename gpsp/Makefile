@@ -323,17 +323,6 @@ else ifeq ($(platform), psp1)
 	ifneq ($(XLAT_NO),)
 	CFLAGS += $(foreach p,$(subst :, ,$(XLAT_NO)),-DXLAT_NO_$(p)=1)
 	endif
-	# JIT_COST=1: cost of producing translated code (cpu_threaded.c JIT_COST;
-	# claude/jit-cost, docs/JIT-COST.md).  Exact: same emitted code, same tags,
-	# same guest state.  Pieces: PUBINL (publish with user-mode cache line ops
-	# instead of two kernel calls; runtime jit_pub_inline), SCANWIN (RAM ARM
-	# scan: gate bitmaps tested only in 64-byte windows that hold a gate),
-	# SCANCOND (RAM ARM scan: flag-write bit from a table built from the
-	# original switch).  The scan pieces need XLAT_FAST's SCANFN and GATEMAP
-	# and are chosen at run time too (xlat_scan_fast), so one binary A/Bs them.
-	ifeq ($(JIT_COST),1)
-	CFLAGS += -DJIT_COST=1
-	endif
 	# JIT_COST_NO=PIECE[:PIECE...]: compile single JIT_COST pieces out.
 	ifneq ($(JIT_COST_NO),)
 	CFLAGS += $(foreach p,$(subst :, ,$(JIT_COST_NO)),-DJIT_COST_NO_$(p)=1)
@@ -486,19 +475,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XS_HEAP),1)
 	CFLAGS += -DXS_HEAP=1
 	endif
-	# XS_WALK_PAIR=1: (cpu-levers cpl2w).  xs_blocks_current
-	# tests two tag slots per aligned load (a pair with every byte 0 or 1
-	# holds no block start).  Same blocks, same order.
-	ifeq ($(XS_WALK_PAIR),1)
-	CFLAGS += -DXS_WALK_PAIR=1
-	endif
-	# PCARG_SIDE=1: (cache-aware codegen).  A single load or store calls
-	# its stub without the PC argument word; the stubs' slow paths recover it
-	# from a side table outside the translation caches (mips_emit.h).
-	# PCARG_SIDE_PAD=1 (twin oracle only) keeps every block the base's size.
-	ifeq ($(PCARG_SIDE),1)
-	CFLAGS += -DPCARG_SIDE=1
-	endif
 	ifeq ($(PCARG_SIDE_PAD),1)
 	CFLAGS += -DPCARG_SIDE_PAD=1
 	endif
@@ -531,19 +507,6 @@ else ifeq ($(platform), psp1)
 	# timing (by < 1 loop iteration per event): judged by the replayed lockstep.
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
-	endif
-	# XLAT_PURE=1: (multi-version reuse step 1).  scan_block
-	# clears every instruction's update_cycles slot at the top of its loop, so a
-	# block's translation depends only on its own guest bytes (a precondition of
-	# reusing translations).  Changes timing where a stale slot used to be 1.
-	ifeq ($(XLAT_PURE),1)
-	CFLAGS += -DXLAT_PURE=1
-	endif
-	# XS_NOTE_FAST=1: (xlat-cost).  xs_note_block records eight
-	# halfwords at a time where that is exactly what the per-halfword path
-	# does.  Exact (hash-identical).  Needs SMC_SAME_SKIP.
-	ifeq ($(XS_NOTE_FAST),1)
-	CFLAGS += -DXS_NOTE_FAST=1
 	endif
 	# DMA_SMC_RETIRE=1: (cpu-levers, twin prototype).  A DMA that
 	# lands on translated code retires exactly the tagged words it wrote while
@@ -600,15 +563,6 @@ else ifeq ($(platform), psp1)
 	endif
 	ifeq ($(TIMER_LAZY),1)
 	CFLAGS += -DTIMER_LAZY=1
-	endif
-	# JIT_CODE_DISCIPLINE=1: (docs/JIT-CODE-DISCIPLINE.md).
-	# Code memory in three zones, every code write recorded through one API,
-	# one publish point (D writeback + I invalidate of exactly what was
-	# written), and a whole I-cache invalidate on every ownership change
-	# (cache flush, emitter rebuild, tier lend).  Replaces 8b48b48's whole
-	# invalidate on every ROM publish.  Emulation is unchanged.
-	ifeq ($(JIT_CODE_DISCIPLINE),1)
-	CFLAGS += -DJIT_CODE_DISCIPLINE=1
 	endif
 	# JIT_CODE_CHECK=1: DIAGNOSTIC.  With JIT_CODE_DISCIPLINE, assert the zones
 	# on every recorded write and on every pointer a lookup returns (prints to
