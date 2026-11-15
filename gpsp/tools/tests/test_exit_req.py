@@ -88,6 +88,7 @@ STUB = r'''
 #define RELAUNCH_PROFILE  1
 #define RELAUNCH_GAMELIST 2
 #define HARNESS_INI "harness.ini"
+#define HARNESS_INT(key, def) fe_ini_get_int(HARNESS_INI, key, def) /* psp/fe/fe_priv.h, unfolded arm */
 
 static char trace[8192];
 static const char *home_at;          /* the stub that "presses HOME" */

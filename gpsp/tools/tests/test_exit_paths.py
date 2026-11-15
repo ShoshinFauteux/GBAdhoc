@@ -140,6 +140,7 @@ STUB = r'''
 #define RELAUNCH_PROFILE  1
 #define RELAUNCH_GAMELIST 2
 #define HARNESS_INI "harness.ini"
+#define HARNESS_INT(key, def) fe_ini_get_int(HARNESS_INI, key, def) /* psp/fe/fe_priv.h, unfolded arm */
 #define PSP_CTRL_SELECT 0x0001
 #define PSP_CTRL_START  0x0008
 #define FE_CONSOLE_GBA 0
