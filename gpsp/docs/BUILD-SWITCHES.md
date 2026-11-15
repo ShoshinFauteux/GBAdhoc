@@ -109,37 +109,37 @@ parent still builds without them, as it did before.
 |---|---|
 | **SMC translation gates** | |
 | `SMC_GATES` | put a translation gate at a self-modified address so later blocks split there. Deliberately independent of `SMC_PARTIAL*`: gates bought Unbound its speed and also broke its audio, so the two must be testable apart. |
-| `SMC_GATES_SIMPLE` | the 2.0.1 add-only gate rule. Once placed, a gate never moves, so an already-translated block can never disagree with the table. 2.0.2's evicting rule is what crashed Heart & Soul (see **The rejected evicting rule** below). |
-| `SMC_GATES_RANKED` | promote after 64 observed writes when at least half changed the word (see **What `SMC_GATES_RANKED` requires** below). Counts are lifetime within one ROM. |
-| `SMC_GATE_BITMAP` | same gate table and boundaries, tested through a bitmap instead of comparing every live gate per compiled instruction. |
-| `SMC_GATE_CHARGE` | a block that ends at a translation gate subtracts its pending cycles before the gate's indirect exit; upstream's gate exit charged nothing, so code in front of a gate ran for free (the Heart & Soul mixer's audio split). Only gated blocks change. |
-| `SMC_GATE_SELFPATCH` | the ranked rule also promotes a store patching the code just ahead of itself, even re-storing the same bytes, and gates the lowest word written (Mario Golf's table gate). Needs `SMC_GATES_RANKED`. |
-| `ENTRY_GATES` | when the RAM translation cache is exhausted, every RAM block start becomes a gate and the gated block jumps straight to its continuation, so a routine entered at many points is translated once (Driver 2: 887 cache-full flushes -> 1 at 384 KiB, 24-35 -> 59.7 fps on a PSP-3000's small tier). Armed only by an exhaustion flush. Requires `SMC_GATE_BITMAP`. |
-| `ENTRY_GATES_RANGE` | the exhaustion-time gate harvest walks only the tag range the following full flush clears. Needs `ENTRY_GATES`. |
-| `ENTRY_GATES_FAST` | the entry-gate harvest tests four tag slots per load. Exact. |
+| `SMC_GATES_SIMPLE` *(built in)* | the 2.0.1 add-only gate rule. Once placed, a gate never moves, so an already-translated block can never disagree with the table. 2.0.2's evicting rule is what crashed Heart & Soul (see **The rejected evicting rule** below). |
+| `SMC_GATES_RANKED` *(built in)* | promote after 64 observed writes when at least half changed the word (see **What `SMC_GATES_RANKED` requires** below). Counts are lifetime within one ROM. |
+| `SMC_GATE_BITMAP` *(built in)* | same gate table and boundaries, tested through a bitmap instead of comparing every live gate per compiled instruction. |
+| `SMC_GATE_CHARGE` *(built in)* | a block that ends at a translation gate subtracts its pending cycles before the gate's indirect exit; upstream's gate exit charged nothing, so code in front of a gate ran for free (the Heart & Soul mixer's audio split). Only gated blocks change. |
+| `SMC_GATE_SELFPATCH` *(built in)* | the ranked rule also promotes a store patching the code just ahead of itself, even re-storing the same bytes, and gates the lowest word written (Mario Golf's table gate). Needs `SMC_GATES_RANKED`. |
+| `ENTRY_GATES` *(built in)* | when the RAM translation cache is exhausted, every RAM block start becomes a gate and the gated block jumps straight to its continuation, so a routine entered at many points is translated once (Driver 2: 887 cache-full flushes -> 1 at 384 KiB, 24-35 -> 59.7 fps on a PSP-3000's small tier). Armed only by an exhaustion flush. Requires `SMC_GATE_BITMAP`. |
+| `ENTRY_GATES_RANGE` *(built in)* | the exhaustion-time gate harvest walks only the tag range the following full flush clears. Needs `ENTRY_GATES`. |
+| `ENTRY_GATES_FAST` *(built in)* | the entry-gate harvest tests four tag slots per load. Exact. |
 | **Selective SMC retirement** | |
 | `SMC_PARTIAL_SAFE` | after a reported SMC trap, selectively retires ranges for a bounded ARM STMIA/LR shape (M4A-motivated, not ROM-specific); other writes use the full flush. See the M4A range-gate caveat below. |
-| `SMC_PARTIAL_STABLE_THUNK` | a permanent per-block RAM entry thunk, so retiring a block redirects the thunk rather than orphaning inbound links. |
-| `SMC_PARTIAL_DIRECT_LINKS` | keep RAM->RAM links direct; route only persistent ROM->RAM links through an island. Requires the stable thunk. |
-| `SMC_RETIRE_WINDOW` | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. Oracle IDENTICAL on 7 fixtures; twin -6..-12 % on SMC games. |
-| `SMC_RETIRE_LOCAL` | retire walks start at a per-64-byte bound on where a covering block can start. Same retirements, shorter walks. Needs `SMC_RETIRE_WINDOW`. |
-| `SMC_RETIRE_LIST` | `smc_retire_span`'s validation walk lists the block-start tags and the retire pass visits only those. Same retirements. |
+| `SMC_PARTIAL_STABLE_THUNK` *(built in)* | a permanent per-block RAM entry thunk, so retiring a block redirects the thunk rather than orphaning inbound links. |
+| `SMC_PARTIAL_DIRECT_LINKS` *(built in)* | keep RAM->RAM links direct; route only persistent ROM->RAM links through an island. Requires the stable thunk. |
+| `SMC_RETIRE_WINDOW` *(built in)* | bound `flush_translation_cache_ram_range`'s tag walk by the longest live block extent since the last full RAM flush instead of `MAX_BLOCK_SIZE*4`. Oracle IDENTICAL on 7 fixtures; twin -6..-12 % on SMC games. |
+| `SMC_RETIRE_LOCAL` *(built in)* | retire walks start at a per-64-byte bound on where a covering block can start. Same retirements, shorter walks. Needs `SMC_RETIRE_WINDOW`. |
+| `SMC_RETIRE_LIST` *(built in)* | `smc_retire_span`'s validation walk lists the block-start tags and the retire pass visits only those. Same retirements. |
 | **Single-store and block-store SMC coverage** | |
-| `SMC_PARTIAL_SINGLE` | with `SMC_PARTIAL_SAFE`, also admit single-word ARM stores from IWRAM code into IWRAM to selective retirement (`smc_writer_safe_range`). |
-| `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` | the same from Thumb STR/STRH/STRB and from ARM STRH single stores. |
-| `SMC_SINGLE_ANYPC`, `SMC_SINGLE_EWRAM` | the same for writers outside IWRAM (ROM, EWRAM, BIOS) and for EWRAM targets. |
-| `SMC_SINGLE_UNTAG` | also lift dead block-start tags in the written range. |
+| `SMC_PARTIAL_SINGLE` *(built in)* | with `SMC_PARTIAL_SAFE`, also admit single-word ARM stores from IWRAM code into IWRAM to selective retirement (`smc_writer_safe_range`). |
+| `SMC_SINGLE_THUMB`, `SMC_SINGLE_HALF` *(built in)* | the same from Thumb STR/STRH/STRB and from ARM STRH single stores. |
+| `SMC_SINGLE_ANYPC`, `SMC_SINGLE_EWRAM` *(built in)* | the same for writers outside IWRAM (ROM, EWRAM, BIOS) and for EWRAM targets. |
+| `SMC_SINGLE_UNTAG` *(built in)* | also lift dead block-start tags in the written range. |
 | `SMC_SINGLE_HOT` | **64**: the widened single-store classes engage only after this many of their traps (or once selective retirement is already active). |
-| `SMC_STM_RANGE` | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
-| `SMC_STM_CHAIN` | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
-| `SMC_STM_WIDE` | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
-| `SMC_STM_AHEAD` | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
+| `SMC_STM_RANGE` *(built in)* | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
+| `SMC_STM_CHAIN` *(built in)* | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
+| `SMC_STM_WIDE` *(built in)* | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
+| `SMC_STM_AHEAD` *(built in)* | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
 | `SMC_STM_FIXED` | the same span retirement for a fixed-base `STMIA Rn,{..}` (no writeback), with no forward widening: ipatix's ImprovedSoundMixer pastes its IWRAM resampling loop this way (The Morrow's Golden Country, ~4 full RAM flushes a frame without it). Changes block boundaries, so timing; not exact. Needs `SMC_STM_RANGE`. |
 | **Unchanged-code filters and in-place patching** | |
-| `SMC_SAME_SKIP` | for every IWRAM halfword a RAM scan reads, record the value it read; a single-store SMC trap in IWRAM then skips `smc_retire_span` when every block it would retire matches its records over its whole source extent (retiring it would only retranslate identical code). The trap and re-dispatch are unchanged. Not the shelved `SMC_SKIP_SAME` (see Removed). Twin: Doom core -15.9 %, Duke -11.4 %; `EXEC_STALE_CHECK` 0 hits; its mutant `SMC_SAME_SKIP_MUTANT_NOCHECK` is caught (111k stale executions on Doom in 600 frames). Changes timing; judged by the Lab gate's replayed lockstep. |
-| `SMC_SAME_ADAPT` | record halfwords for `SMC_SAME_SKIP` only while it pays: recorded in bulk per translated block (`xs_note_block`); after each 65536 recorded halfwords with fewer than 256 skips, recording and checking stop; a re-probe follows single-word retirements. Exact like `SMC_SAME_SKIP` (it only skips less). Hot Wheels +0.00 % (`SMC_SAME_SKIP` alone +13.5 %). Mutant `SMC_SAME_ADAPT_MUTANT_NOREC` is caught by `tools/drprof/synth/xs_norec.s`. |
-| `SMC_SAME_REPROBE` | **1024**: `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. |
-| `SMC_IMM_PATCH` | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
+| `SMC_SAME_SKIP` *(built in)* | for every IWRAM halfword a RAM scan reads, record the value it read; a single-store SMC trap in IWRAM then skips `smc_retire_span` when every block it would retire matches its records over its whole source extent (retiring it would only retranslate identical code). The trap and re-dispatch are unchanged. Not the shelved `SMC_SKIP_SAME` (see Removed). Twin: Doom core -15.9 %, Duke -11.4 %; `EXEC_STALE_CHECK` 0 hits; its mutant `SMC_SAME_SKIP_MUTANT_NOCHECK` is caught (111k stale executions on Doom in 600 frames). Changes timing; judged by the Lab gate's replayed lockstep. |
+| `SMC_SAME_ADAPT` *(built in)* | record halfwords for `SMC_SAME_SKIP` only while it pays: recorded in bulk per translated block (`xs_note_block`); after each 65536 recorded halfwords with fewer than 256 skips, recording and checking stop; a re-probe follows single-word retirements. Exact like `SMC_SAME_SKIP` (it only skips less). Hot Wheels +0.00 % (`SMC_SAME_SKIP` alone +13.5 %). Mutant `SMC_SAME_ADAPT_MUTANT_NOREC` is caught by `tools/drprof/synth/xs_norec.s`. |
+| `SMC_SAME_REPROBE` *(built in)* | **1024**: `SMC_SAME_ADAPT`'s first re-probe threshold, in single-word retirements while off. |
+| `SMC_IMM_PATCH` *(built in)* | an IWRAM ARM immediate the game keeps rewriting is emitted in a fixed lui/ori form and patched in place instead of retiring the block (Doom II, Duke, Ice Nine). Needs `JIT_CODE_DISCIPLINE`. |
 | `XS_HEAP` | the `SMC_SAME_SKIP` and `SMC_RETIRE_LOCAL` tables (up to 69 KiB) come from one heap block, so the hot arrays after them in `.bss` keep their D-cache sets. |
 | `XS_WALK_PAIR` | `xs_blocks_current` tests two tag slots per aligned load. Same blocks, same order. |
 | `XS_NOTE_FAST` | `xs_note_block` records eight halfwords at a time. Exact. |
@@ -147,14 +147,14 @@ parent still builds without them, as it did before.
 | `PCARG_SIDE` | a single load or store calls its stub without the PC-argument word (about 8 % of hot translated bytes); the stubs' slow paths recover it from a side table outside the translation caches (docs/PCARG-SIDE.md). Exact per access; smaller RAM code can move a full flush (timing). `PCARG_SIDE_PAD=1` (twin oracle only) pads every site back to the base's size. |
 | **Translation reuse across full flushes** | |
 | `XLAT_PURE` | `scan_block` clears every instruction's update-cycles slot, so a block's translation depends only on its own guest bytes (the precondition of reuse). Changes timing where a stale slot used to be 1. |
-| `SMC_REUSE` | a full RAM flush keeps the native code; a RAM block whose guest bytes are unchanged is revived instead of translated again. Speed only; needs `XLAT_PURE`. |
-| `SMC_REUSE_SPARE_KB` | **384**: the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. |
-| `SMC_REUSE_MODE` | **3**: 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
+| `SMC_REUSE` *(built in)* | a full RAM flush keeps the native code; a RAM block whose guest bytes are unchanged is revived instead of translated again. Speed only; needs `XLAT_PURE`. |
+| `SMC_REUSE_SPARE_KB` *(built in)* | **384**: the RAM code cache's spare, in KiB, that `SMC_REUSE` keeps. |
+| `SMC_REUSE_MODE` *(built in)* | **3**: 0 off, 1 record only, 2 on, 3 on without cost rules (ships), as one initialised word so hardware arms share a layout. |
 | **DMA onto translated code** | |
 | `DMA_SMC_FLUSH` | an HBlank/VBlank DMA onto code tagged as translated full-flushes the RAM translation cache and re-dispatches, as the CPU-triggered DMA path always did; upstream `update_gba` discarded the alert, leaving stale translations live. |
 | `DMA_SMC_RETIRE` | a DMA onto translated code retires exactly the tagged words it wrote instead of a full flush (Top Gear Rally's overlays). Needs `SMC_STM_RANGE`. |
-| `DMA_SMC_ADAPT` | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
-| `DMA_ADAPT_V2` | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
+| `DMA_SMC_ADAPT` *(built in)* | `DMA_SMC_RETIRE` only while it measures cheaper than the flush (probe and back off). |
+| `DMA_ADAPT_V2` *(built in)* | `DMA_SMC_ADAPT`'s cost model re-priced from the twin; ties go to the full flush. |
 | **Dispatch and translator speed** | (docs/DYNAREC-PROFILE.md) |
 | `DISPATCH_CACHE` | `mips_indirect_branch_*` probe a {guest pc -> host entry} table in asm before `save_registers` and the C block lookup; filled by the C lookup, emptied by every flush entry point. The cycle check still runs first. Oracle IDENTICAL on 7 fixtures; twin -4..-23 % core instructions. |
 | `DISPATCH_PRECISE` *(built in)* | SMC retirement forgets only the retired block's entry instead of emptying both tables; only canonical RAM pcs are cached (a mirrored pc shares the tag, not the key). Twin: Doom -4.6 %, Duke -4.7 %, state hashes identical. |

@@ -42,102 +42,21 @@
 #if !defined(GPSP_NO_SMC_GATES) && !defined(SMC_GATES)
 #define SMC_GATES 1
 #endif
-#if !defined(GPSP_NO_SMC_GATES_SIMPLE) && !defined(SMC_GATES_SIMPLE)
-#define SMC_GATES_SIMPLE 1
-#endif
-#if !defined(GPSP_NO_SMC_GATES_RANKED) && !defined(SMC_GATES_RANKED)
-#define SMC_GATES_RANKED 1
-#endif
-#if !defined(GPSP_NO_SMC_GATE_BITMAP) && !defined(SMC_GATE_BITMAP)
-#define SMC_GATE_BITMAP 1
-#endif
-#if !defined(GPSP_NO_SMC_GATE_CHARGE) && !defined(SMC_GATE_CHARGE)
-#define SMC_GATE_CHARGE 1
-#endif
-#if !defined(GPSP_NO_SMC_GATE_SELFPATCH) && !defined(SMC_GATE_SELFPATCH)
-#define SMC_GATE_SELFPATCH 1
-#endif
-#if !defined(GPSP_NO_ENTRY_GATES) && !defined(ENTRY_GATES)
-#define ENTRY_GATES 1
-#endif
-#if !defined(GPSP_NO_ENTRY_GATES_RANGE) && !defined(ENTRY_GATES_RANGE)
-#define ENTRY_GATES_RANGE 1
-#endif
-#if !defined(GPSP_NO_ENTRY_GATES_FAST) && !defined(ENTRY_GATES_FAST)
-#define ENTRY_GATES_FAST 1
-#endif
 
 /* ---- selective SMC retirement ---------------------------------------------- */
 #if !defined(GPSP_NO_SMC_PARTIAL_SAFE) && !defined(SMC_PARTIAL_SAFE)
 #define SMC_PARTIAL_SAFE 1
 #endif
-#if !defined(GPSP_NO_SMC_PARTIAL_STABLE_THUNK) && !defined(SMC_PARTIAL_STABLE_THUNK)
-#define SMC_PARTIAL_STABLE_THUNK 1
-#endif
-#if !defined(GPSP_NO_SMC_PARTIAL_DIRECT_LINKS) && !defined(SMC_PARTIAL_DIRECT_LINKS)
-#define SMC_PARTIAL_DIRECT_LINKS 1
-#endif
-#if !defined(GPSP_NO_SMC_RETIRE_WINDOW) && !defined(SMC_RETIRE_WINDOW)
-#define SMC_RETIRE_WINDOW 1
-#endif
-#if !defined(GPSP_NO_SMC_RETIRE_LOCAL) && !defined(SMC_RETIRE_LOCAL)
-#define SMC_RETIRE_LOCAL 1
-#endif
-#if !defined(GPSP_NO_SMC_RETIRE_LIST) && !defined(SMC_RETIRE_LIST)
-#define SMC_RETIRE_LIST 1
-#endif
 
 /* ---- single-store and block-store SMC coverage ----------------------------- */
-#if !defined(GPSP_NO_SMC_PARTIAL_SINGLE) && !defined(SMC_PARTIAL_SINGLE)
-#define SMC_PARTIAL_SINGLE 1
-#endif
-#if !defined(GPSP_NO_SMC_SINGLE_THUMB) && !defined(SMC_SINGLE_THUMB)
-#define SMC_SINGLE_THUMB 1
-#endif
-#if !defined(GPSP_NO_SMC_SINGLE_HALF) && !defined(SMC_SINGLE_HALF)
-#define SMC_SINGLE_HALF 1
-#endif
-#if !defined(GPSP_NO_SMC_SINGLE_ANYPC) && !defined(SMC_SINGLE_ANYPC)
-#define SMC_SINGLE_ANYPC 1
-#endif
-#if !defined(GPSP_NO_SMC_SINGLE_EWRAM) && !defined(SMC_SINGLE_EWRAM)
-#define SMC_SINGLE_EWRAM 1
-#endif
-#if !defined(GPSP_NO_SMC_SINGLE_UNTAG) && !defined(SMC_SINGLE_UNTAG)
-#define SMC_SINGLE_UNTAG 1
-#endif
 #if !defined(GPSP_NO_SMC_SINGLE_HOT) && !defined(SMC_SINGLE_HOT)
 #define SMC_SINGLE_HOT 64
-#endif
-#if !defined(GPSP_NO_SMC_STM_RANGE) && !defined(SMC_STM_RANGE)
-#define SMC_STM_RANGE 1
-#endif
-#if !defined(GPSP_NO_SMC_STM_CHAIN) && !defined(SMC_STM_CHAIN)
-#define SMC_STM_CHAIN 1
-#endif
-#if !defined(GPSP_NO_SMC_STM_WIDE) && !defined(SMC_STM_WIDE)
-#define SMC_STM_WIDE 1
-#endif
-#if !defined(GPSP_NO_SMC_STM_AHEAD) && !defined(SMC_STM_AHEAD)
-#define SMC_STM_AHEAD 1
 #endif
 #if !defined(GPSP_NO_SMC_STM_FIXED) && !defined(SMC_STM_FIXED)
 #define SMC_STM_FIXED 1
 #endif
 
 /* ---- unchanged-code filters and in-place patching -------------------------- */
-#if !defined(GPSP_NO_SMC_SAME_SKIP) && !defined(SMC_SAME_SKIP)
-#define SMC_SAME_SKIP 1
-#endif
-#if !defined(GPSP_NO_SMC_SAME_ADAPT) && !defined(SMC_SAME_ADAPT)
-#define SMC_SAME_ADAPT 1
-#endif
-#if !defined(GPSP_NO_SMC_SAME_REPROBE) && !defined(SMC_SAME_REPROBE)
-#define SMC_SAME_REPROBE 1024
-#endif
-#if !defined(GPSP_NO_SMC_IMM_PATCH) && !defined(SMC_IMM_PATCH)
-#define SMC_IMM_PATCH 1
-#endif
 #if !defined(GPSP_NO_XS_HEAP) && !defined(XS_HEAP)
 #define XS_HEAP 1
 #endif
@@ -157,15 +76,6 @@
 #if !defined(GPSP_NO_XLAT_PURE) && !defined(XLAT_PURE)
 #define XLAT_PURE 1
 #endif
-#if !defined(GPSP_NO_SMC_REUSE) && !defined(SMC_REUSE)
-#define SMC_REUSE 1
-#endif
-#if !defined(GPSP_NO_SMC_REUSE_SPARE_KB) && !defined(SMC_REUSE_SPARE_KB)
-#define SMC_REUSE_SPARE_KB 384
-#endif
-#if !defined(GPSP_NO_SMC_REUSE_MODE) && !defined(SMC_REUSE_MODE)
-#define SMC_REUSE_MODE 3
-#endif
 
 /* ---- DMA onto translated code ---------------------------------------------- */
 #if !defined(GPSP_NO_DMA_SMC_FLUSH) && !defined(DMA_SMC_FLUSH)
@@ -173,12 +83,6 @@
 #endif
 #if !defined(GPSP_NO_DMA_SMC_RETIRE) && !defined(DMA_SMC_RETIRE)
 #define DMA_SMC_RETIRE 1
-#endif
-#if !defined(GPSP_NO_DMA_SMC_ADAPT) && !defined(DMA_SMC_ADAPT)
-#define DMA_SMC_ADAPT 1
-#endif
-#if !defined(GPSP_NO_DMA_ADAPT_V2) && !defined(DMA_ADAPT_V2)
-#define DMA_ADAPT_V2 1
 #endif
 
 /* ---- dispatch and translator speed ----------------------------------------- */

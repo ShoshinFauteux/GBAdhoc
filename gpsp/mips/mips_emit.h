@@ -371,7 +371,6 @@ u32 arm_to_mips_reg[] =
 #define block_prologue_size       16
 #define ram_block_prologue_size   (block_prologue_size +                     \
                                    (smc_partial_active ? 16 : 0))
-#ifdef SMC_PARTIAL_STABLE_THUNK
 #define generate_smc_retire_space()                                           \
   if (ram_region && smc_partial_active) {                                     \
     u8 *smc_thunk_body = translation_ptr + 16;                               \
@@ -380,15 +379,6 @@ u32 arm_to_mips_reg[] =
     mips_emit_nop();                                                          \
     mips_emit_nop();                                                          \
   }
-#else
-#define generate_smc_retire_space()                                           \
-  if (ram_region && smc_partial_active) {                                     \
-    mips_emit_nop();                                                          \
-    mips_emit_nop();                                                          \
-    mips_emit_nop();                                                          \
-    mips_emit_nop();                                                          \
-  }
-#endif
 #else
 #define block_prologue_size       16
 #define ram_block_prologue_size   block_prologue_size
@@ -1324,7 +1314,6 @@ u32 execute_spsr_restore_body(u32 address)
  * in place instead of retiring the block.  Every other instruction, and
  * every instruction of a game that never rewrites immediates, is emitted
  * exactly as before. */
-#ifdef SMC_IMM_PATCH
 #define IMMP_OR(name, cl, normal)                                             \
   if (immp_want(pc, rd, rn)) {                                                \
     immp_note(translation_ptr, pc, opcode, (cl));                             \
@@ -1335,9 +1324,6 @@ u32 execute_spsr_restore_body(u32 address)
   } else {                                                                    \
     normal;                                                                   \
   }
-#else
-#define IMMP_OR(name, cl, normal) normal
-#endif
 
 #define arm_generate_op_imm(name, load_op)                                    \
   arm_decode_data_proc_imm(opcode);                                           \
@@ -1850,7 +1836,6 @@ static inline int pcarg_is_cti(u32 w)
  * below are compiled with the logging jal as well (it also reaches the jal
  * inside generate_function_call_swap_delay), through an out-of-line copy of
  * the logger (one call per jal: the emitters stay small). */
-#ifdef SMC_REUSE
 static void smc_reuse_log_site_ool(u8 *at);      /* cpu_threaded.c */
 #pragma push_macro("mips_emit_jal")
 #undef mips_emit_jal
@@ -1858,7 +1843,6 @@ static void smc_reuse_log_site_ool(u8 *at);      /* cpu_threaded.c */
   smc_reuse_log_site_ool(translation_ptr);                                    \
   mips_emit_jump(jal, offset);                                                \
 } while (0)
-#endif
 
 /* single load: jal stub ; X  (or the old jal stub ; addiu a1) */
 static __attribute__((noinline)) u8 *pcarg_load_site(u8 *translation_ptr,
@@ -1915,9 +1899,7 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
   }
   return translation_ptr;
 }
-#ifdef SMC_REUSE
 #pragma pop_macro("mips_emit_jal")
-#endif
 #define pcarg_mark_lo() u8 *pcarg_lo = translation_ptr; (void)pcarg_lo
 #else
 #define pcarg_mark_lo() do { } while (0)
@@ -2672,7 +2654,7 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
  * per-instruction checks below and rewritten with the immediate, so they
  * keep comparing what the site NOW encodes with guest memory: a live copy
  * of the word that a patch missed still fails them. */
-#if defined(SMC_IMM_PATCH) && (defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP))
+#if defined(EXEC_STALE_CHECK) || defined(LAB_LOCKSTEP)
   #define IMMP_ESC_OP(mode, normal)                                           \
     if ((mode) && immp_want_op(ram_region, pc, opcode)) {                     \
       immp_note_op(translation_ptr, pc);                                      \
@@ -3012,7 +2994,6 @@ void smc_write();
 #ifdef SMC_BLOCK_EXACT
 void smc_block_word_hit(u32 base_plus_off, u32 off);   /* cpu_threaded.c */
 #endif
-#ifdef SMC_STM_CHAIN
 void smc_chain_store_iw(u32 off, u32 val);             /* cpu_threaded.c */
 void smc_chain_store_ew(u32 off, u32 val);
 extern u32 smc_chain_pending;
@@ -3020,7 +3001,6 @@ extern u32 smc_chain_pending;
  * after every other stub; see emit_stm_chain_tails. */
 static u32 *stm_chain_jsite[4];
 static u32  stm_chain_base[4];
-#endif
 cpu_alert_type write_io_register8 (u32 address, u32 value);
 cpu_alert_type write_io_register16(u32 address, u32 value);
 cpu_alert_type write_io_register32(u32 address, u32 value);
@@ -3708,7 +3688,6 @@ static void emit_pmemst_stub(
     mips_emit_b(bne, reg_zero, reg_temp, branch_offset(&rom_translation_cache[SMC_WRITE_OFF]));
   }
 
-#ifdef SMC_STM_CHAIN
   /* SMC_STM_CHAIN (cpu-levers): the block-store word stub keeps its size --
    * `j tail ; (tag address, delay) ; nop` replaces `sw ; jr ra ; nop` -- and
    * the tag test and the store live in a tail emitted after every other stub
@@ -3728,7 +3707,6 @@ static void emit_pmemst_stub(
     *tr_ptr = translation_ptr;
     return;
   }
-#endif
   if (meminfo->check_smc && !aligned) {
     /* PIPELINE PREFETCH WINDOW (monomyth-compat): the store moves out of
      * the SMC branch's delay slot into the jr's, and the delay slot hands
@@ -4444,7 +4422,6 @@ void init_emitter(bool must_swap) {
     handler(3, &stinfo[i], 2, true,  &translation_ptr);  // st aligned 32
   }
 
-#ifdef SMC_STM_CHAIN
   {
     /* The tails, then a pad so the stub area grows by exactly 8 KiB (one
      * I-cache way): ROM translations keep their cache sets. */
@@ -4515,9 +4492,6 @@ void init_emitter(bool must_swap) {
       mips_emit_nop();
     }
   }
-#elif ME_MIDFRAME_LOG
-  emit_me_wmap_tails(&translation_ptr);
-#endif
   // Generate JAL tables
   u32 *tmemptr = &tmemld[0][0];
   for (i = 0; i < 15*16; i++)

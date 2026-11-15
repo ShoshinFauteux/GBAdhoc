@@ -21,7 +21,9 @@ if m.get("mePrxSha256") != sha(sys.argv[3]):
 # or an instrument that slipped in, still says profile=release and hashes fine.
 features = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8", errors="replace")
 want = {"%s=%s" % (n, v) for n, v in re.findall(r"^#define (\w+) (\S+)$", features, re.M)}
-if len(want) < 50:
+# 20 since code-health A-6 baked 51 (7 oracle what-ifs + 13 the desktop compiles);
+# fewer means the header was not parsed.
+if len(want) < 7:
     raise SystemExit("gpsp_features.h lists only %d features" % len(want))
 want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
 have = set(m.get("coreFlags", "").split())

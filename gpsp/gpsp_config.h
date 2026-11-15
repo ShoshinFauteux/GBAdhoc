@@ -48,10 +48,7 @@
  * that spare.  So the real cache can never fill before the virtual one, and
  * every cache-full flush happens at exactly the block it would without
  * SMC_REUSE.  The accounting size is the one above, on every tier. */
-#ifdef SMC_REUSE
-  #ifndef SMC_REUSE_SPARE_KB
-    #define SMC_REUSE_SPARE_KB 128
-  #endif
+  #define SMC_REUSE_SPARE_KB 384   /* built in (code-health A-6) */
   #define SMC_REUSE_SPARE (1024 * SMC_REUSE_SPARE_KB)
   /* (spelled out: a macro naming RAM_TRANSLATION_CACHE_SIZE would expand to
    * the redefinition below) */
@@ -76,7 +73,6 @@
     #undef RAM_TRANSLATION_CACHE_SIZE_LARGE
     #define RAM_TRANSLATION_CACHE_SIZE_LARGE RAM_TRANSLATION_CACHE_SIZE
   #endif
-#endif
 
 /* LAYOUT_PIN (PSP, OPT-IN: defined only by `make LAYOUT_PIN=1`, off by
  * default; docs/LAYOUT-PINNING.md): where the translation caches sit

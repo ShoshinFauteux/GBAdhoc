@@ -128,25 +128,26 @@
  * one rule quietly shadows the other, and the result is attributed to the flag
  * that was not in fact active.  See cpu_threaded.c for each rule. */
 
-/* A gate sub-rule without SMC_GATES compiles to nothing at all, so the
- * experiment it was meant to run never happened. */
+/* Built in since code-health A-6, and inert or wrong without the switch they
+ * refine: the gate rules (simple, ranked, bitmap, entry gates) need SMC_GATES,
+ * the selective-retirement refinements (stable thunk, direct links, the
+ * single-store and block-store classes) need SMC_PARTIAL_SAFE, and SMC_REUSE
+ * needs XLAT_PURE.  Core objects only: GPSP_FEATURES_H is the force-included
+ * feature header, which the frontend (psp/main_psp.c) never sees. */
+#ifdef GPSP_FEATURES_H
 #ifndef SMC_GATES
-#if defined(SMC_GATES_SIMPLE) || defined(SMC_GATES_RANKED) || defined(SMC_GATE_BITMAP)
-#error "An SMC_GATE* sub-rule is set without SMC_GATES: it does nothing."
+#error "SMC_GATES is required: its built-in rules (SMC_GATES_SIMPLE/_RANKED, SMC_GATE_BITMAP) do nothing without it."
 #endif
+#ifndef SMC_PARTIAL_SAFE
+#error "SMC_PARTIAL_SAFE is required: its built-in refinements (SMC_PARTIAL_STABLE_THUNK, SMC_PARTIAL_SINGLE, ...) do nothing without it."
 #endif
-
-#if defined(SMC_SAME_ADAPT) && !defined(SMC_SAME_SKIP)
-#error "SMC_SAME_ADAPT refines SMC_SAME_SKIP; set both."
+#ifndef XLAT_PURE
+#error "SMC_REUSE (built in) revives old translations: it needs XLAT_PURE, or a block's code depends on translation history."
+#endif
 #endif
 
 #if defined(SPIN_SKIP) && !defined(MIPS_ARCH)
 #error "SPIN_SKIP is implemented in the MIPS dynarec only (mips/mips_emit.h generate_branch_spin)."
-#endif
-
-#if defined(SMC_SAME_SKIP) && \
-    !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
-#error "SMC_SAME_SKIP refines SMC_PARTIAL_SINGLE's retirement: it needs SMC_PARTIAL_SINGLE and SMC_PARTIAL_STABLE_THUNK."
 #endif
 
 /* DISPATCH_PRECISE, DISPATCH_ASSOC and DISPATCH_LOOKUP_PC are built in: they
@@ -162,13 +163,6 @@
 #error "DISPATCH_CACHE's lookup_pc probe (DISPATCH_LOOKUP_PC) needs JIT_CODE_DISCIPLINE."
 #endif
 
-#if defined(ENTRY_GATES) && !defined(SMC_GATE_BITMAP)
-#error "ENTRY_GATES is tested inside the gate bitmap's scan check: it needs SMC_GATE_BITMAP."
-#endif
-
-#if defined(SMC_REUSE) && !defined(XLAT_PURE)
-#error "SMC_REUSE revives old translations: it needs XLAT_PURE, or a block's code depends on translation history."
-#endif
 #if defined(SMC_REUSE_DEBUG) && !defined(DRPROF_TWIN)
 #error "SMC_REUSE_DEBUG is the twin's self-check (stdio, getenv): never in a console build."
 #endif
@@ -176,35 +170,11 @@
  * function of the block's guest bytes and the environment it checks.  These
  * switches break that or add links a revival does not replay. */
 
-/* Selective retirement redirects live blocks through a trampoline; a direct
- * link into one without the stable thunk points at a body that has moved. */
-#if defined(SMC_PARTIAL_DIRECT_LINKS) && !defined(SMC_PARTIAL_STABLE_THUNK)
-#error "SMC_PARTIAL_DIRECT_LINKS requires SMC_PARTIAL_STABLE_THUNK."
-#endif
-
-/* The SMC_PARTIAL_SAFE sub-flags are inert without it, same trap as above. */
-#ifndef SMC_PARTIAL_SAFE
-#if defined(SMC_PARTIAL_STABLE_THUNK) || defined(SMC_PARTIAL_DIRECT_LINKS)
-#error "An SMC_PARTIAL_SAFE sub-flag is set without SMC_PARTIAL_SAFE."
-#endif
-#endif
-
 /* JIT_CODE_CHECK / JIT_CODE_AUDIT check the discipline; without it they
  * compile to nothing and the "zero violations" would be vacuous. */
 #if (defined(JIT_CODE_CHECK) || defined(JIT_CODE_AUDIT) || \
      defined(JIT_CODE_AB)) && !defined(JIT_CODE_DISCIPLINE)
 #error "JIT_CODE_CHECK/_AUDIT/_AB without JIT_CODE_DISCIPLINE: they need it."
-#endif
-
-/* smc-coverage (2026-10-20): the single-store class switches widen
- * SMC_PARTIAL_SINGLE and do nothing without it; SMC_BLOCK_EXACT's handler
- * retires through smc_retire_span, which only exists with it. */
-#if (defined(SMC_SINGLE_THUMB) || defined(SMC_SINGLE_HALF) || \
-     defined(SMC_SINGLE_ANYPC) || defined(SMC_SINGLE_EWRAM) || \
-     defined(SMC_BLOCK_EXACT) || defined(SMC_SINGLE_UNTAG) || \
-     defined(SMC_BLOCK_SAME)) && \
-    !(defined(SMC_PARTIAL_SINGLE) && defined(SMC_PARTIAL_STABLE_THUNK))
-#error "SMC_SINGLE_* / SMC_BLOCK_EXACT need SMC_PARTIAL_SINGLE + SMC_PARTIAL_STABLE_THUNK."
 #endif
 
 #endif /* GPSP_PROFILE_H */
