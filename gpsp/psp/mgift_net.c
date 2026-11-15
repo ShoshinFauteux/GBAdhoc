@@ -126,6 +126,12 @@ int mgnet_pick(int sel, int dir)
    return Cslot[i < 0 ? Cn - 1 : i < Cn ? i : 0];
 }
 
+int mgnet_pick_saved(int sel, int dir)
+{
+   int s = mgnet_pick(sel, dir);
+   return s ? s : mgnet_pick(0, dir ? dir : 1);
+}
+
 void mgnet_config_label(int sel, char *out, unsigned out_sz)
 {
    netData d;

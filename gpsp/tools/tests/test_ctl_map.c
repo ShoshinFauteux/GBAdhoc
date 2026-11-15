@@ -1992,8 +1992,60 @@ static void test_rewind_length(void)
 }
 #endif
 
+/* MF1 (builds/opt-review/FINAL.md): the Mystery Gift binding exists only in
+ * a GBADHOC_MGIFT build.  With MGIFT=1 (every shipped profile) SELECT+DOWN
+ * is its default, a steal takes it and the save writes the NONE; with
+ * MGIFT=0 the action is unavailable like the catch self-test outside a
+ * bisect build: unbound, never a conflict, never read or written. */
+static void test_mgift_flavour(void)
+{
+   ctl_map m;
+   int stolen;
+   const char *f;
+#ifndef GBADHOC_MGIFT
+   ctl_map d;
+#endif
+
+   ctl_defaults(&m);
+   CHECK(ctl_assign(&m, CTL_SC_FF, SEL | DOWN, &stolen) == CTL_OK);
+   write_file("");
+   CHECK(ctl_save_ini(&m, ini) == 0);
+   f = read_file();
+#ifdef GBADHOC_MGIFT
+   CHECK(ctl_available(CTL_SC_MGIFT));
+   CHECK(ctl_default(CTL_SC_MGIFT) == (SEL | DOWN));
+   CHECK(stolen == CTL_SC_MGIFT && m.bind[CTL_SC_MGIFT] == 0);
+   CHECK(strstr(f, "bind_mystery_gift = NONE") != NULL);
+#else
+   CHECK(!ctl_available(CTL_SC_MGIFT));
+   CHECK(ctl_default(CTL_SC_MGIFT) == 0);
+   ctl_defaults(&d);
+   CHECK(d.bind[CTL_SC_MGIFT] == 0 && ctl_find(&d, SEL | DOWN, -1) == -1);
+   CHECK(stolen == -1 && m.bind[CTL_SC_FF] == (SEL | DOWN));
+   CHECK(strstr(f, "bind_mystery_gift") == NULL);
+   CHECK(ctl_assign(&m, CTL_SC_MGIFT, SEL | UP, &stolen) == CTL_E_ACTION);
+   CHECK(m.bind[CTL_SC_MGIFT] == 0);
+   /* a config written by an MGIFT=1 build: its key is ignored and kept */
+   write_file("bind_mystery_gift = SELECT+UP\nbind_ff = SELECT+UP\n");
+   CHECK(ctl_load_ini(&d, ini) == 0);
+   CHECK(d.bind[CTL_SC_MGIFT] == 0 && d.bind[CTL_SC_FF] == (SEL | UP));
+   CHECK(ctl_repair(&d, NULL, NULL) == 0);
+   CHECK(ctl_save_ini(&d, ini) == 0);
+   CHECK(strstr(read_file(), "bind_mystery_gift = SELECT+UP") != NULL);
+#endif
+}
+
 int main(void)
 {
+#ifndef GBADHOC_MGIFT
+   /* The MGIFT=0 build (run_host_tests.py "ctl_map", fourth flavour): the
+    * rest of the file restates the shipped MGIFT=1 table. */
+   test_mgift_flavour();
+   test_table();
+   test_conflicts();
+   printf("test_ctl_map: OK (%d checks, MGIFT=0 table)\n", checks);
+   return 0;
+#endif
 #ifdef REWIND
    /* The third build: the REWIND table with the turbo rows, the rewind
     * length setting, and nothing else (see test_turbo_rewind). */
@@ -2016,6 +2068,7 @@ int main(void)
    test_turbo();
    test_turbo_rewind();
    test_video_none();
+   test_mgift_flavour();
    test_defaults_are_30();
    printf("test_ctl_map: OK (%d checks%s)\n", checks,
 #ifdef GPSP_CATCH_SELFTEST

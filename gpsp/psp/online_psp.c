@@ -81,6 +81,7 @@ static char s_missing[] = "online module missing";
 static char s_nomem[] = "online module: no memory";
 static char s_version[] = "online module: wrong version";
 static char s_wifi_fmt[] = "Wi-Fi: %s 0x%08X m%uK";
+static char s_nowifi[] = "Wi-Fi: no saved connection";
 static char s_relay_key[] = "online_relay";
 static char s_relay_default[] = ONLINE_RELAY_DEFAULT;
 
@@ -238,7 +239,7 @@ void online_psp_set(const char *relay, const char *room, int wifi, int mode)
             relay && relay[0] ? relay : g_cfg_relay[0] ? g_cfg_relay
                                                       : s_relay_default);
    set_room(room);
-   O.cfg.wifi = wifi;                       /* 0 = Automatic (mgnet_wifi_up) */
+   O.cfg.wifi = wifi;                       /* 0 = none saved: up refuses */
    O.cfg.mode = mode;
    O.cfg.direct = 1;
    O.cfg.drop_direct_ms = 0;
@@ -283,6 +284,17 @@ int online_psp_up(int is_host, const char *build, unsigned timeout_ms)
    O.why[0] = 0;
    if (online_psp_is_up())
       return 0;
+   /* A saved connection only: wifi <= 0 would be mgnet_wifi_up's Automatic,
+    * which writes the open "GBAdhoc Mystery Gift" profile into the console's
+    * network settings (the Online picker never offers it, mgnet_pick_saved;
+    * 0 there means none is saved). */
+   if (O.cfg.wifi <= 0)
+   {
+      snprintf(O.why, sizeof(O.why), "%s", s_nowifi);
+      fe_evt("online_error stage=wifi at=no_saved_connection wifi=%d",
+             O.cfg.wifi);
+      return -1;
+   }
    rc = mgnet_wifi_up(O.cfg.wifi, 30000000u);
    if (rc == MGNET_ERR_CANCELLED)
    {

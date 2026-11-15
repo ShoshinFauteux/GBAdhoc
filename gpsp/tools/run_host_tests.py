@@ -783,23 +783,31 @@ def suites(env: Env, baseline: Path | None):
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_sidecar_dirs")),
 
         ("ctl_map", True, lambda: None, (
-          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+          # -DGBADHOC_MGIFT: the shipped table (psp/Makefile MGIFT=1).
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror -DGBADHOC_MGIFT "
           "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_ctl_map tools/tests/test_ctl_map.c psp/ctl_map.c "
           "psp/config_psp.c frontend-common/fe_util.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_ctl_map && "
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror -DGPSP_PLAYABLE "
-          "-DGPSP_CATCH_SELFTEST -Ifrontend-common -Ipsp "
+          "-DGPSP_CATCH_SELFTEST -DGBADHOC_MGIFT -Ifrontend-common -Ipsp "
           "-o /tmp/t_ctl_map_rel tools/tests/test_ctl_map.c psp/ctl_map.c "
           "psp/config_psp.c frontend-common/fe_util.c && /tmp/t_ctl_map_rel && "
           # The REWIND flavour of the table (rewind the last shortcut, the
           # turbo rows after it): test_turbo_rewind only -- the rest of the
           # file restates 3.0's defaults, which REWIND changes.
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror -DREWIND "
-          "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
+          "-DGBADHOC_MGIFT -fsanitize=address,undefined -Ifrontend-common -Ipsp "
           "-o /tmp/t_ctl_map_rw tools/tests/test_ctl_map.c psp/ctl_map.c "
           "psp/config_psp.c frontend-common/fe_util.c && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_ctl_map_rw && "
+          # MGIFT=0 (MF1): the Mystery Gift binding is unavailable -- no
+          # SELECT+DOWN default, no steal, no bind_mystery_gift written.
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+          "-fsanitize=address,undefined -Ifrontend-common -Ipsp "
+          "-o /tmp/t_ctl_map_nomg tools/tests/test_ctl_map.c psp/ctl_map.c "
+          "psp/config_psp.c frontend-common/fe_util.c && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_ctl_map_nomg && "
           # The button that answers an in-game UI (the menu's Resume, a
           # state load, the pause screen / wake overlay) is not the game's
           # until released: main_psp.c's pad swallow and its wiring, mutants.

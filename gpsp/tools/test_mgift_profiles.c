@@ -293,6 +293,20 @@ int main(void)
       assert(!apctl_ready && !connected_slot);  /* unwound */
    }
    switch_off_polls = 0;
-   puts("PASS: Automatic profile reuse/create/failure cleanup, gapped slot list, Select+Down debounce/consumption, and the WLAN switch wait");
+   /* The Online picker (mgnet_pick_saved): never Automatic while a
+    * connection is saved, both directions and an older config's 0; 0 only
+    * when none is.  Mystery Gift's mgnet_pick still offers Automatic. */
+   reset(); add(2, "A", "A", 2); add(5, "B", "B", 2);
+   assert(mgnet_pick_saved(0, 0) == 2 && mgnet_pick_saved(5, 0) == 5);
+   assert(mgnet_pick_saved(9, 0) == 2);              /* gone: first saved */
+   assert(mgnet_pick_saved(2, 1) == 5 && mgnet_pick_saved(5, 1) == 2);
+   assert(mgnet_pick_saved(2, -1) == 5 && mgnet_pick_saved(5, -1) == 2);
+   assert(mgnet_pick_saved(0, 1) == 2 && mgnet_pick_saved(0, -1) == 5);
+   assert(mgnet_pick(5, 1) == 0 && mgnet_pick(2, -1) == 0);
+   assert(created == 0);                       /* no profile was written */
+   reset();
+   assert(mgnet_pick_saved(1, 0) == 0 && mgnet_pick_saved(0, 1) == 0 &&
+          mgnet_pick_saved(0, -1) == 0 && created == 0);
+   puts("PASS: Automatic profile reuse/create/failure cleanup, gapped slot list, Select+Down debounce/consumption, the WLAN switch wait, and the Online picker without Automatic");
    return 0;
 }

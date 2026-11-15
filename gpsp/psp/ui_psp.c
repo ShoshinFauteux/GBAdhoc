@@ -1201,11 +1201,12 @@ static void screen_to(int scr)
    g_slot_note[0] = '\0';
    /* THE NETWORK PICKER (mgnet_pick): the saved connections are read once
     * per visit to either screen; a saved Online choice that no longer exists
-    * falls back to the first saved one, else Automatic (not marked dirty:
-    * nothing the player chose).  The Mystery Gift choice starts at Automatic
-    * and only ever holds a slot listed during this run. */
+    * falls back to the first saved one, else 0 = none saved (not marked
+    * dirty: nothing the player chose; Online never offers Automatic, see
+    * mgnet_pick_saved).  The Mystery Gift choice starts at Automatic and
+    * only ever holds a slot listed during this run. */
    if (scr == SCR_ONLINE || scr == SCR_MGIFT)
-      g_pcfg.online_wifi = mgnet_pick(g_pcfg.online_wifi, 0);
+      g_pcfg.online_wifi = mgnet_pick_saved(g_pcfg.online_wifi, 0);
    if (scr == SCR_SETTINGS)
    {
       g_profile_at_open = g_pcfg.me_mode;
@@ -4254,6 +4255,7 @@ static char s_ol_fmt[] = "%.*s[%c]%s";
  * 8 B in .data moved A's .data (smc_back_lo ..) 64 B onto cpu_ticks's D-cache set
  * (beta.5 integration, I+D model); the pads take .rodata growth. */
 static const char s_ol_random[] = "random";
+static const char s_ol_nonet[] = "none saved";
 static char s_ol_edit[] = VID_GLYPH_UP VID_GLYPH_DOWN " change   " VID_GLYPH_LEFT
                           VID_GLYPH_RIGHT " move   " VID_GLYPH_X " done";
 
@@ -4265,7 +4267,7 @@ int ui_online_take(int *is_host, char code[16], int *cable, int *wifi)
       return 0;
    *is_host = r == 1;
    *cable = g_ol_cable;
-   *wifi = g_pcfg.online_wifi;       /* 0 = Automatic; screen_to checked it */
+   *wifi = g_pcfg.online_wifi;       /* 0 = none saved; screen_to checked it */
    online_room_request(r == 1, g_ol_typed, g_ol_code, code);
    return 1;
 }
@@ -4314,8 +4316,8 @@ static ui_action screen_online(unsigned edges)
       }
       if (g_cursor == OL_NET && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
       {
-         g_pcfg.online_wifi = mgnet_pick(g_pcfg.online_wifi,
-                                         (edges & PSP_CTRL_LEFT) ? -1 : 1);
+         g_pcfg.online_wifi = mgnet_pick_saved(g_pcfg.online_wifi,
+                                               (edges & PSP_CTRL_LEFT) ? -1 : 1);
          g_settings_dirty = 1;
       }
       if (g_cursor == OL_MODE && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
@@ -4369,7 +4371,7 @@ static ui_action screen_online(unsigned edges)
       switch (i)
       {
       case OL_NET:
-         wl_row_at(y, sel, 1, s_ol_net, net);
+         wl_row_at(y, sel, 1, s_ol_net, g_pcfg.online_wifi ? net : s_ol_nonet);
          break;
       case OL_MODE:
          wl_row_at(y, sel, ask, s_ol_mode,

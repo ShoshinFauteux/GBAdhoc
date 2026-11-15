@@ -224,7 +224,7 @@ enum
 
 const ctl_action_info *ctl_info(int a);
 /* 0 for an action this build does not have (the catch self-test outside a
- * GPSP_CATCH_SELFTEST build).  Such an action is held unbound, is never read
+ * GPSP_CATCH_SELFTEST build, Mystery Gift outside a GBADHOC_MGIFT one).  Such an action is held unbound, is never read
  * from or written to CONFIG.INI, and never conflicts with anything. */
 int  ctl_available(int a);
 /* The factory default for `a` (A on Circle, B on Cross).  There is no other

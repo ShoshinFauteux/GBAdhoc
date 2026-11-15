@@ -112,6 +112,12 @@ int ctl_available(int a)
    if (a == CTL_SC_CATCH)
       return 0;
 #endif
+#ifndef GBADHOC_MGIFT
+   /* MGIFT=0 (psp/Makefile): no Mystery Gift, so no hidden binding that
+    * steals SELECT+DOWN or writes bind_mystery_gift = NONE (MF1). */
+   if (a == CTL_SC_MGIFT)
+      return 0;
+#endif
    return 1;
 }
 

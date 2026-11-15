@@ -248,8 +248,10 @@ typedef struct
    /* EXPERIMENTAL online play (docs/ONLINE-TUNNEL.md): Settings > Online
     * play, CONFIG.INI `online_play` (0 = off, the default), and the saved
     * Wi-Fi connection it uses, `online_wifi`: a 1-based XMB slot number
-    * (slots can have gaps), or 0 = Automatic (the open "Mystery Gift"
-    * hotspot profile, see mgnet_wifi_up). */
+    * (slots can have gaps).  0 is no connection: online play never uses
+    * Mystery Gift's Automatic hotspot profile (mgnet_pick_saved, which turns
+    * a 0 from an older config into the first saved slot; online_psp_up
+    * refuses 0). */
    int  online_play;
    int  online_wifi;
    /* Screenshots (GitHub issue #13; Settings > SCREENSHOTS).

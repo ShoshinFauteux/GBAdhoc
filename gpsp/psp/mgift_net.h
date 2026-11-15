@@ -119,6 +119,11 @@ void mgnet_profile_release(void);
  * mgnet_config_label: the connection's name, "connection N" if it has none,
  * or "Automatic (Mystery Gift)" for 0. */
 int  mgnet_pick(int sel, int dir);
+/* The Online picker: mgnet_pick without Automatic, so 0 only when nothing is
+ * saved (a 0 from an older config becomes the first saved slot).  Automatic
+ * writes the open "GBAdhoc Mystery Gift" profile into the console's network
+ * settings, which online play has no use for; online_psp_up refuses 0. */
+int  mgnet_pick_saved(int sel, int dir);
 void mgnet_config_label(int sel, char *out, unsigned out_sz);
 
 #endif /* MGIFT_NET_H */
