@@ -145,7 +145,7 @@ B is a relocatable loaded at session start into the ROM pool and released at the
 ### Shared ROM (owner, 2026-10-01): one buffer for same-game sessions
 
 - **Resident case.** B's read map points at A's blocks.
-- **Paged case.** B's page faults call A's loader, which owns the one LRU pool; A's eviction calls an unmap hook that clears the page in B's map too.
+- **Paged case.** B's page faults call A's loader, which owns the one FIFO pool; A's eviction calls an unmap hook that clears the page in B's map too.
 - **Translations survive eviction in both.** They are keyed by PC, and a reloaded page has the same bytes.
 - **The GPIO catch.** `update_gpio_romregs` writes the RTC/rumble registers into ROM page 0 (0xC4-0xC9 of the page the read map points at). B therefore gets a **private copy of page 0** (32 KiB), mapped in all three wait-state windows, so each core sees only its own clock port.
   - Page 0's code bytes are identical.

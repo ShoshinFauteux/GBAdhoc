@@ -119,7 +119,7 @@ Rejected or parked:
 Harness key `rom_vmem = 1`, Rewind off: the 3 MiB above the ME's megabyte joins the cache as its last blocks (Lab build 467 pages). A release cannot turn it on: it reads no harness ini.
 
 - The pages never count as resident (`gamepak_must_swap`), so the paged load stubs stay.
-- Into a sleep: `gamepak_vol_drop` unmaps them and the LRU skips them; after the wake they fault back from the card.
+- Into a sleep: `gamepak_vol_drop` unmaps them and the FIFO eviction skips them; after the wake they fault back from the card.
 - A pool that does not come back stays out of the cache.
 - A sleep that tore nothing down re-reads them (`g_rw_pool_suspect`).
 

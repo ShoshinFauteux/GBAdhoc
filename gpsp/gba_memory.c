@@ -701,7 +701,7 @@ const unsigned gamepak_buffer_blocksize = 1024*1024;
 #define GAMEPAK_RELOAD_FLOOR (256u * 1024u)
 
 /* 32 KiB pages the ROM cache holds.  The cache was always managed in pages
- * (the LRU below and every fault are per 32 KiB page); only the allocation was
+ * (the FIFO below and every fault are per 32 KiB page); only the allocation was
  * per MiB, and on a console that runs out of heap everything short of a whole
  * MiB was wasted.  So a block holds gamepak_block_pages[i] pages: 32, or fewer
  * for a TAIL: the end of a lent pool that is not a whole MiB (GBA_LINK instance
@@ -728,14 +728,16 @@ static u8 *gamepak_entry_ptr(u32 entry)
   return gamepak_buffers[i] + entry * (32 * 1024);
 }
 
-// LRU queue with the loaded blocks and what they map to
+// FIFO queue of the loaded pages and what they map to.  Eviction takes the
+// head and appends it to the tail; no access ever touches the queue, so this
+// is first-in first-out (round robin), not least-recently-used.
 struct {
-  u16 next_lru;             /* Index in the struct to the next LRU entry */
+  u16 next_fifo;            /* Index in the struct to the next FIFO entry */
   s16 phy_rom;              /* ROM page number (-1 means not mapped) */
 } gamepak_blk_queue[1024];
 
-u16 gamepak_lru_head;
-u16 gamepak_lru_tail;
+u16 gamepak_fifo_head;
+u16 gamepak_fifo_tail;
 
 // Stick page bit: prevents page eviction for a frame. This is used to prevent
 // unmapping code pages while being used (ie. in the interpreter).
@@ -3101,17 +3103,17 @@ static u32 evict_gamepak_page(void)
   u32 ret;
   s16 phyrom;
   do {
-    // Return the index to the last used entry
-    u32 newhead = gamepak_blk_queue[gamepak_lru_head].next_lru;
-    phyrom = gamepak_blk_queue[gamepak_lru_head].phy_rom;
-    ret = gamepak_lru_head;
+    // Take the oldest-loaded entry (the head; FIFO, not LRU)
+    u32 newhead = gamepak_blk_queue[gamepak_fifo_head].next_fifo;
+    phyrom = gamepak_blk_queue[gamepak_fifo_head].phy_rom;
+    ret = gamepak_fifo_head;
 
     // Second elem becomes head now
-    gamepak_lru_head = newhead;
+    gamepak_fifo_head = newhead;
 
     // The evicted element goes at the end of the queue
-    gamepak_blk_queue[gamepak_lru_tail].next_lru = ret;
-    gamepak_lru_tail = ret;
+    gamepak_blk_queue[gamepak_fifo_tail].next_fifo = ret;
+    gamepak_fifo_tail = ret;
     // If this page is marked as sticky, we keep going through the list
     // (and past the volatile pool's pages while the OS has them).
   } while ((phyrom >= 0 && gamepak_sb_test(phyrom)) ||
@@ -3319,11 +3321,11 @@ void init_gamepak_buffer(void)
     gamepak_block_heap = 0;
     for (i = 0; i < 1024; i++)
     {
-      gamepak_blk_queue[i].next_lru = (u16)(i + 1);
+      gamepak_blk_queue[i].next_fifo = (u16)(i + 1);
       gamepak_blk_queue[i].phy_rom = -1;
     }
-    gamepak_lru_head = 0;
-    gamepak_lru_tail = 0;
+    gamepak_fifo_head = 0;
+    gamepak_fifo_tail = 0;
     return;
   }
 #endif
@@ -3575,12 +3577,12 @@ void init_gamepak_buffer(void)
   // Initialize the memory map structure
   for (i = 0; i < 1024; i++)
   {
-    gamepak_blk_queue[i].next_lru = (u16)(i + 1);
+    gamepak_blk_queue[i].next_fifo = (u16)(i + 1);
     gamepak_blk_queue[i].phy_rom = -1;
   }
 
-  gamepak_lru_head = 0;
-  gamepak_lru_tail = gamepak_buffer_pages - 1;
+  gamepak_fifo_head = 0;
+  gamepak_fifo_tail = gamepak_buffer_pages - 1;
 }
 
 /* Unmap the volatile pool's pages: it is going back to the OS, or came back

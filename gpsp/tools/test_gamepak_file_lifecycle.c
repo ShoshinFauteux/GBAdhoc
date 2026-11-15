@@ -106,11 +106,11 @@ int main(void)
   assert(gamepak_buffers[0]);
   for (i = 0; i < 1024; i++)
   {
-    gamepak_blk_queue[i].next_lru = (u16)(i + 1);
+    gamepak_blk_queue[i].next_fifo = (u16)(i + 1);
     gamepak_blk_queue[i].phy_rom = -1;
   }
-  gamepak_lru_head = 0;
-  gamepak_lru_tail = 31;
+  gamepak_fifo_head = 0;
+  gamepak_fifo_tail = 31;
 
   assert(load_gamepak_raw("A.gba") == 0);
   assert(open_attempts == 1 && close_count == 0);

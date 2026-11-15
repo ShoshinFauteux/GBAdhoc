@@ -120,7 +120,7 @@ int main(void)
   /* 13 whole blocks and the 700 KiB as a 21-page tail (HDR off the top) */
   assert(gamepak_buffer_count == 14 && gamepak_buffer_pages == 13 * 32 + 21);
   assert(gamepak_block_bytes(12) == MIB && gamepak_block_bytes(13) == 21 * 32768);
-  assert(gamepak_lru_tail == 13 * 32 + 21 - 1);
+  assert(gamepak_fifo_tail == 13 * 32 + 21 - 1);
   assert(strcmp(gamepak_cap_reason, "default") == 0);
   left_paged = budget_left;
   ok_paged = mallocs_ok;
@@ -220,7 +220,7 @@ int main(void)
     assert(gamepak_buffer_count == 4 + 5 + 1 + 1);
     assert(gamepak_buffer_pages == 9 * 32 + 8 + 9);
     assert(gamepak_buffers[9] == pool2 + 4 * MIB);
-    assert(gamepak_lru_tail == 9 * 32 + 8 + 9 - 1);
+    assert(gamepak_fifo_tail == 9 * 32 + 8 + 9 - 1);
     assert(gamepak_block_bytes(8) == MIB && gamepak_block_bytes(9) == 8 * 32768);
     assert(gamepak_block_bytes(10) == 9 * 32768);
     /* a page's place: across the whole blocks and both tails */
@@ -283,7 +283,7 @@ int main(void)
     gamepak_spare_pool2_bytes = 4 * MIB;
     init_gamepak_buffer();
     assert(gamepak_buffer_count == 10 && gamepak_buffer_pages == 9 * 32 + 9);
-    assert(gamepak_lru_tail == 9 * 32 + 9 - 1);
+    assert(gamepak_fifo_tail == 9 * 32 + 9 - 1);
     check_released_all(heap);
     gamepak_spare_pool2 = NULL;
     gamepak_spare_pool2_bytes = 0;
@@ -300,7 +300,7 @@ int main(void)
     init_gamepak_buffer();
     assert(gamepak_buffer_count == 6 && gamepak_buffer_pages == 6 * 32);
     assert(gamepak_entry_ptr(3 * 32) == pool3);
-    assert(gamepak_lru_tail == 6 * 32 - 1);
+    assert(gamepak_fifo_tail == 6 * 32 - 1);
     gamepak_size = 4 * MIB;                 /* it fits only with the pool */
     assert(gamepak_must_swap());
     gamepak_size = 3 * MIB;
@@ -309,7 +309,7 @@ int main(void)
     /* map every entry, as a running game has */
     for (i = 0; i < gamepak_buffer_pages; i++)
       gamepak_blk_queue[i].phy_rom = (s16)i;
-    gamepak_lru_head = 0;
+    gamepak_fifo_head = 0;
     gamepak_vol_drop();
     assert(gamepak_blk_queue[3 * 32].phy_rom == -1);
     assert(gamepak_blk_queue[3 * 32 - 1].phy_rom == (s16)(3 * 32 - 1));
