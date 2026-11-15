@@ -7,23 +7,4 @@
 #   ret=bool  the return type `int` -> bool
 # Everything else about the declaration (arity, order, pointer levels, qualifiers, other
 # types) is still asserted exactly; a NEW mismatch or a change here fails the header.
-smc_prof_clock	uint	main_psp.c:1595 unsigned int (*)(void) vs main.h:148 u32 (*)(void)
-vram_dirty_marks	uint	main_psp.c:2049 unsigned int vs gba_memory.h:453 u32
-reg	uint	main_psp.c:2053 unsigned int[] vs gba_memory.h:461 u32[64]
-gpsp_rom_load_progress	uint	main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32)
-translation_gate_targets	uint	main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32
-translation_gate_target_pc	uint	main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES]
-gamepak_must_swap	ret=bool	main_psp.c:4862 int (void) vs gba_memory.h:315 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch
-rfu_set_frame_pace	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_pace_max_hold	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_shed_keep	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_hold	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_supersede	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_fault_corrupt	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_fault_span	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_fault_mode	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_timeout_scale	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_poll_min_cycles	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_idle_poll_cycles	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_disc_defer	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
-rfu_set_disc_grace	uint	C6-2: fe/link.c.inc.c declares it with `unsigned` parameters vs core_fe.h / rfu.c u32 (until C6-5 deletes the copy)
+gamepak_must_swap	ret=bool	main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch

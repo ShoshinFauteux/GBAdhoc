@@ -83,6 +83,9 @@ static const char *online_build_id(void)
 #include "video_prof.h"   /* ADR-0034 renderer path profile (core-side) */
 #include "video.h"        /* me_capture_frame + capture-mode globals (the
                            * u16/u32/s32 it needs come from psptypes.h) */
+#include "core_fe.h"      /* the core's exports to a frontend (tier C, C-6): no
+                           * fragment copies a core declaration by hand */
+#include "gbcore/gbcore.h"   /* gbcore_prepare */
 
 PSP_MODULE_INFO("gpsp-adhoc", 0, 0, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -2035,8 +2038,6 @@ int main(int argc, char *argv[])
 
    if (g_perf_rig)
    {
-      extern unsigned int translation_gate_targets;
-      extern unsigned int translation_gate_target_pc[];
       char gates[16 * 10];
       unsigned gn, gi;
       int gp = 0;
@@ -2047,7 +2048,7 @@ int main(int argc, char *argv[])
          gn = 16;
       for (gi = 0; gi < gn; gi++)
          gp += snprintf(gates + gp, sizeof(gates) - gp, "%s%08x",
-                        gi ? "," : "", translation_gate_target_pc[gi]);
+                        gi ? "," : "", (unsigned)translation_gate_target_pc[gi]);
       if (!gp)
          snprintf(gates, sizeof(gates), "-");
       fe_evt("smc_gates n=%u pcs=%s", translation_gate_targets, gates);

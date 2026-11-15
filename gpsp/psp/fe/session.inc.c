@@ -853,7 +853,6 @@ static __attribute__((noinline, section(".text.fe_cold.session_load"))) int sess
    rom_cache_select(rom_path);
 
    /* Boot observer only: page faults and normal emulation never draw UI. */
-   extern void (*gpsp_rom_load_progress)(unsigned, unsigned);
    gpsp_rom_load_progress = rom_loading_progress;
 #ifdef REWIND
    /* Before the cartridge: the core fills the heap with it on a PSP-1000. */

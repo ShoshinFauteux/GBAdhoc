@@ -34,7 +34,6 @@ static me_log_entry *g_mer_log[2];
 /* The render being posted right now is a vcount-160 post (the only kind the
  * mid-frame log is valid for). */
 static int g_mer_in_vis;
-extern u32 skip_next_frame;     /* core: this frame is frameskipped (no capture) */
 static int mer_vispost_active(void)
 {
    /* The draw gate's drawn frames post here too, exactly as at 1x: the gate

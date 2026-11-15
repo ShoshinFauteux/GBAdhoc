@@ -66,7 +66,6 @@ static unsigned g_me_vf, g_me_vdrops, g_me_census;
 static unsigned g_me_vmiss;
 #define ME_VMISS_LIMIT 8
 static unsigned g_me_pw, g_me_ph;            /* frame dims for present (ADR-0082) */
-extern u16 *gba_screen_pixels;               /* core global (video.h)        */
 
 /* `permanent` = 1 kills the offload for the rest of the boot (a dead/too-slow
  * ME); 0 just deactivates and RE-ARMS for the next session (ADR-0080c). */

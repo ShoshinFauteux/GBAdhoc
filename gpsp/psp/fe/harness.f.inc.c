@@ -69,7 +69,7 @@ static void stall_record(unsigned iter)
                 "audio=%d/st%d/wt%d io=%d/st%d/wt%d\n",
                 (unsigned)sceKernelGetSystemTimeLow(), iter, g_loop_phase,
                 (unsigned)fe_host_frame_count(), g_me_rend, cs, ds, is, b0, b1,
-                ring_w - ring_r, reg[15], reg[14],
+                ring_w - ring_r, (unsigned)reg[15], (unsigned)reg[14],
                 rm1, m1.status, (unsigned)m1.currentPriority, m1.waitType,
                 (unsigned)m1.waitId,
                 (rm0 >= 0 && rm1 >= 0)
@@ -531,8 +531,6 @@ static void drprof_stop(unsigned frame)
  * showed the end state. */
 static void smc_gates_reload_evt(void)
 {
-   extern unsigned int translation_gate_targets;
-   extern unsigned int translation_gate_target_pc[];
    char gates[16 * 10];
    unsigned gn = translation_gate_targets, gi;
    int gp = 0;
@@ -540,7 +538,7 @@ static void smc_gates_reload_evt(void)
       gn = 16;
    for (gi = 0; gi < gn; gi++)
       gp += snprintf(gates + gp, sizeof(gates) - gp, "%s%08x",
-                     gi ? "," : "", translation_gate_target_pc[gi]);
+                     gi ? "," : "", (unsigned)translation_gate_target_pc[gi]);
    if (!gp)
       snprintf(gates, sizeof(gates), "-");
    fe_evt("smc_gates_reload f=%u n=%u pcs=%s", fe_host_frame_count(),

@@ -21,21 +21,13 @@
  *   gamepak_page_loads 32 KiB reads from the memory stick, mid-emulation,
  *                      when the ROM does not fit in RAM.  ADR-0026 priced
  *                      that stick at 34 ms for 4 KiB. */
-extern u32 flush_rom_total;
-extern u32 flush_ram_full;
-extern u32 flush_ram_smc;
-extern u32 flush_ram_dma;
-extern u32 gamepak_page_loads;
 /* What the flushes COST (main.h): time inside flush_translation_cache_ram(),
  * the tag-memset volume, and how often it took the whole-region else-branch
  * (32 KiB IWRAM / 256 KiB EWRAM).  smc_prof_clock is already installed below,
- * so these have been accumulating all along — they were just never shown. */
-extern u32 smc_flush_us;
-extern u32 smc_flush_bytes;
-extern u32 smc_flush_wide;
-extern u32 smc_blk_xlat_total;   /* RAM blocks re-translated (monotonic) */
-extern u32 cph_jit_total;        /* dynarec compilation us (monotonic) */
-extern u32 smc_blk_watch;        /* 256-byte page the block/writer probe eyes */
+ * so these have been accumulating all along — they were just never shown.
+ * smc_blk_xlat_total counts RAM blocks re-translated, cph_jit_total the
+ * dynarec's compilation us (both monotonic); smc_blk_watch is the 256-byte
+ * page the block/writer probe eyes.  All of them: core_fe.h. */
 
 static void plat_core_counters(unsigned *rom_flush, unsigned *ram_full,
                                unsigned *ram_smc, unsigned *ram_dma,
@@ -51,17 +43,15 @@ static void plat_core_counters(unsigned *rom_flush, unsigned *ram_full,
 /* Translation-cache tier (cpu_threaded.c, dynarec_select_translation_caches).
  * The core decides in retro_init, before the ROM page cache eats the heap;
  * the frontend's only inputs are the harness override and the log line. */
-extern u32 jit_cache_tier;            /* 0 undecided, 1 small, 2 large */
-extern u32 jit_cache_force_small;
-extern const char *jit_cache_reason;
+/* jit_cache_tier: 0 undecided, 1 small, 2 large (core_fe.h).  The cache's
+ * pointer and sizes are typed per port, so cpu.h, not core_fe.h, declares
+ * them: these three copies stay (T14 asserts them). */
 extern u32 rom_translation_cache_size;
 extern u32 ram_translation_cache_size;
 extern unsigned char *rom_translation_cache;
-void dynarec_release_translation_caches(void);   /* cpu_threaded.c */
 /* XS_HEAP builds only (a core flag the frontend cannot see): weak, NULL
- * without it.  cpu_threaded.c */
-void dynarec_heap_tables_release(void) __attribute__((weak));
-void gbcore_prepare(void);                        /* gbcore/gbcore.h */
+ * without it.  cpu_threaded.c; declared in core_fe.h. */
+#pragma weak dynarec_heap_tables_release
 /* heap_trace_mark/_mark0/_report: psp/heap_trace.h (main_psp.c includes it) */
 
 /* Compiled into every build: the in-process return to the game list checks

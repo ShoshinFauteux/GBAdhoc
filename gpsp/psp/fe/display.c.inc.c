@@ -19,8 +19,6 @@
  * Without the engine (the CPU renderer, PPSSPP), or when the check fails: a
  * snapshot taken in native colour is transformed on this CPU (exact for a
  * frame without blending); otherwise the new colour shows on resume. */
-extern const u16 *me_log_line160_pal(void);
-extern const u16 *me_log_line160_oam(void);
 static const unsigned char g_all_clean[VRAM_DIRTY_PAGES + 64]
    __attribute__((aligned(64))) = { [0 ... VRAM_DIRTY_PAGES - 1] = 1 };
 

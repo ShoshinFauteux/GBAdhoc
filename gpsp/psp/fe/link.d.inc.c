@@ -979,9 +979,8 @@ static void gba_reload_draw(const char *what)
  * on a silent partner after 8 s (netdrv), the relay after 20 s.  Once per
  * MiB read, and at each stage: a PING to the partner (a joiner not yet
  * admitted: its JOIN), nothing else (fe_np_keepalive). */
-extern void (*gpsp_rom_load_progress)(unsigned, unsigned);
-static void (*g_reload_prev_progress)(unsigned, unsigned);
-static void gba_reload_progress(unsigned loaded, unsigned total)
+static void (*g_reload_prev_progress)(u32, u32);
+static void gba_reload_progress(u32 loaded, u32 total)
 {
    (void)loaded; (void)total;
    if (g_reload_slow_ms)

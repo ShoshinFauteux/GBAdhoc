@@ -322,8 +322,6 @@ static int psp_rewind_pool_tenant(void)
 /* Before the game loads, with the rewind's decision made. */
 static void psp_rom_pool_offer(void)
 {
-   extern u8 *gamepak_spare_pool3;
-   extern u32 gamepak_spare_pool3_bytes;
    void *base = NULL;
    int size = 0;
    gamepak_spare_pool3 = NULL;
@@ -347,8 +345,6 @@ static void psp_rom_pool_offer(void)
 /* The game is gone, and its ROM cache with it. */
 static void psp_rom_pool_over(void)
 {
-   extern u8 *gamepak_spare_pool3;
-   extern u32 gamepak_spare_pool3_bytes;
    gamepak_spare_pool3 = NULL;
    gamepak_spare_pool3_bytes = 0;
    g_rom_vm_lend = g_rom_vm_asleep = 0;
@@ -437,7 +433,6 @@ static void psp_rewind_pool_back(void)
       /* The same pool again, or those pages stay out of the cache. */
       int size = 0;
       void *b = NULL;
-      extern u8 *gamepak_spare_pool3;
       g_rom_vm_asleep = 0;
       if (vm_lock(&b, &size) == 0 && b &&
           (u8 *)b + PSP_VM_ENGINE_BYTES == gamepak_spare_pool3)

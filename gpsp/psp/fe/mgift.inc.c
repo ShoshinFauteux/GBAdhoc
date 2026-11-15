@@ -71,7 +71,7 @@ const char *mgift_ui_line2(void)  { return g_mg_l2; }
  * nothing ever defines it -- a stale declaration that would not link -- and the
  * alternative is exporting a new core global for four bytes the frontend can
  * read for itself.  Called once, at boot. */
-static void rom_loading_progress(unsigned loaded, unsigned total)
+static void rom_loading_progress(u32 loaded, u32 total)
 {
    ui_loading_update(total ? "Reading ROM" : "Checking cartridge", loaded, total);
 }

@@ -18,19 +18,15 @@
  *
  * Failure discipline (same as me_video): misses counted, never fatal —
  * teardown returns to main-CPU rendering mid-run, seamlessly. */
-extern unsigned char  vram[];
 /* VRAM dirty map (gba_memory.c) -- set by the C store macros and the DMA
  * path, NOT by translated code.  The probe below reports how much that
  * misses, which is what decides whether the dynarec store stub has to be
  * instrumented at all. */
 #define VRAM_DIRTY_SHIFT 10
 #define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
-extern unsigned char vram_clean[];  /* 1=clean, 0=dirty; gba_memory.h */
-extern unsigned int  vram_dirty_marks;
-extern unsigned short io_registers[];
-extern unsigned short oam_ram[];
-extern unsigned short palette_ram_converted[];
-extern unsigned int   reg[];
+/* vram, vram_clean (1 = clean, 0 = dirty), vram_dirty_marks, io_registers,
+ * oam_ram, palette_ram_converted and reg: core_fe.h.  The two #defines above
+ * repeat core_fe.h's token for token (T14 asserts them). */
 
 /* MUST equal video_psp.c's STAGE_STRIDE (256 px = 512-byte rows): the GE
  * texture reads rows at that spacing.  The first engine run shipped 512 px
@@ -223,7 +219,6 @@ int psp_clock_actual(void)
  * renderer's two 1 KiB palette copies are this frontend array, so the core's
  * own .bss is unchanged (docs/LAYOUT-PINNING.md). */
 static u16 g_vc_work[1024] __attribute__((aligned(64)));
-extern const u16 gba_cc_lut[];
 #ifdef GPSP_PERF_RIG
 static int g_h_smooth = -1, g_h_effect = -1, g_h_color = -1, g_h_scale = -1;
 #endif

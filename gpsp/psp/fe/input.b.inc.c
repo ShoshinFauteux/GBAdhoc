@@ -22,10 +22,6 @@ static void jit_coh_frame(unsigned frames)
  * smc_block callbacks stay NULL (session.inc.c). */
 #if !defined(GPSP_PROFILE_RELEASE) || defined(GPSP_SMC_PROFILE)
 #define FE_SMC_PROFILE 1
-void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
-                   unsigned *oth, unsigned *ovf,
-                   unsigned *hot_addr, unsigned *hot_cnt,
-                   unsigned *top_addr, unsigned *top_cnt, unsigned nhot);
 
 static void plat_smc_addr(unsigned *hits, unsigned *pages, unsigned *iw,
                           unsigned *ew, unsigned *oth, unsigned *ovf,
@@ -37,14 +33,6 @@ static void plat_smc_addr(unsigned *hits, unsigned *pages, unsigned *iw,
 }
 
 /* Phase 5g: same boundary trick for the SMC BLOCK profile (main.c). */
-void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
-                  unsigned *start, unsigned *end, unsigned *mode,
-                  unsigned *reason, unsigned *cnt,
-                  unsigned *wpc, unsigned *waddr, unsigned *wcnt,
-                  unsigned *wovf,
-                  unsigned *head, unsigned *ctx, unsigned *snap,
-                  unsigned *fus, unsigned *fbytes, unsigned *fwide,
-                  unsigned *same, unsigned *diff, unsigned *unkn);
 
 static void plat_smc_block(unsigned *watch, unsigned *xlat, unsigned *ovf,
                            unsigned *start, unsigned *end, unsigned *mode,
@@ -61,14 +49,11 @@ static void plat_smc_block(unsigned *watch, unsigned *xlat, unsigned *ovf,
 }
 #endif
 
-/* The core's flush timer wants a plain u32-microsecond clock (main.h).
- * Declared here rather than including the core's main.h, which pulls in the
- * whole emulator header set -- same pattern as smc_prof_take above. */
-extern unsigned int (*smc_prof_clock)(void);
-
-static unsigned int plat_smc_clock(void)
+/* The core's flush timer wants a plain u32-microsecond clock (main.h;
+ * smc_prof_clock is declared in core_fe.h). */
+static u32 plat_smc_clock(void)
 {
-   return (unsigned int)sceKernelGetSystemTimeLow();
+   return (u32)sceKernelGetSystemTimeLow();
 }
 
 /* Phase 5h: same boundary trick again for the per-PHASE frame bracket.  The
@@ -76,16 +61,6 @@ static unsigned int plat_smc_clock(void)
  * take, which RESETS them, so each `EVT core_phase` describes exactly one
  * heartbeat window.  `core_phase_set_level` is called after the clock is
  * installed -- the core refuses any nonzero level without one. */
-void core_phase_take(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
-                     unsigned *reads, unsigned *mean, unsigned *max,
-                     unsigned *worst, unsigned nph,
-                     unsigned *bkr, unsigned *bkw, unsigned *wbkr,
-                     unsigned *wbkw, unsigned *ugba, unsigned *dman,
-                     unsigned *stmr, unsigned *negc, unsigned *nego,
-                     unsigned *rfux, unsigned *rfut,
-                     unsigned *wrfux, unsigned *wrfut);
-void core_phase_set_level(unsigned lvl);
-
 static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
                             unsigned *reads, unsigned *mean, unsigned *max,
                             unsigned *worst, unsigned nph,

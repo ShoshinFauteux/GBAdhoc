@@ -675,18 +675,9 @@ static int g_autoload_state;   /* harness `load_state = 1`: boot into .st0 */
  * autoload in the main loop. */
 static int g_autoload_from_shelf;
 
-/* ROM-cache stats from gba_memory.c (declared here rather than pulling the
- * core's header chain into the frontend TU; gamepak_page_loads is already
- * declared with the perf stats above). */
-extern u32 gamepak_size;
-extern u32 gamepak_buffer_count;
-extern u32 gamepak_buffer_pages;
-extern u8 *gamepak_buffers[32];
-extern u32 gamepak_resident_got;
-extern u32 gamepak_static_blocks;
+/* The ROM-cache stats are gba_memory.c's (core_fe.h).  gamepak_must_swap
+ * returns bool there; this int copy goes in C6-4 (health-out/design/C-6.md). */
 int gamepak_must_swap(void);
-void gamepak_vol_drop(void);
-void gamepak_vol_back(void);
 
 static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
                              size_t pitch)

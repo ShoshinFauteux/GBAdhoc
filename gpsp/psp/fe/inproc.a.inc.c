@@ -207,19 +207,12 @@ static void boot_mem_census(void)
  *   jit_code_mode = M    JIT_CODE_AB cores only (docs/JIT-CODE-DISCIPLINE.md):
  *                        0 legacy syncs, 1 + 8b48b48, 2 discipline (default),
  *                        3 discipline without the ownership invalidate */
-extern u32 gamepak_buffer_cap;
-extern u32 gamepak_resident_wanted;
-extern const char *gamepak_cap_reason;
-extern u32 gamepak_force_swap_stubs;
-#ifdef PSP
-extern u32 platform_cache_paranoid;
-extern u32 jit_coherency_scan(u32 *first);
-#endif
 #ifdef GPSP_PERF_RIG
 static unsigned g_jit_coh_every;
 #endif
-/* JIT_CODE_AB / JIT_CODE_DISCIPLINE cores (weak: every core links). */
-extern u32 jit_code_mode __attribute__((weak));
+/* JIT_CODE_AB / JIT_CODE_DISCIPLINE cores (weak: every core links).
+ * Declared in core_fe.h. */
+#pragma weak jit_code_mode
 /* The cart's size in whole 1 MiB blocks (what gamepak_must_swap measures
  * against), or 32 if it cannot be read -- the largest a cart can be. */
 static unsigned rom_cart_blocks(const char *path)
@@ -301,8 +294,8 @@ static void rom_cache_select(const char *rom_path)
        *   xlat_scan_fast = 0|1   RAM ARM scan: original | SCANWIN+SCANCOND
        * Absent keys keep the core's default (1). */
       {
-         extern u32 jit_pub_inline __attribute__((weak));
-         extern u32 xlat_scan_fast __attribute__((weak));
+#pragma weak jit_pub_inline
+#pragma weak xlat_scan_fast
          int pi = (int)HARNESS_INT("jit_pub_inline", -1);
          int sf = (int)HARNESS_INT("xlat_scan_fast", -1);
          if (&jit_pub_inline && (pi == 0 || pi == 1))

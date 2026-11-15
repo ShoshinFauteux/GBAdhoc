@@ -1106,7 +1106,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
 #if ME_MIDFRAME_LOG
       g_mer_midlog = (int)HARNESS_INT("me_midlog", 1) != 0;
       {
-         extern int me_log_vram_always;
          me_log_vram_always =
             (int)HARNESS_INT("me_vram_always", 1) != 0;
          fe_evt("me_vram_always on=%d", me_log_vram_always);

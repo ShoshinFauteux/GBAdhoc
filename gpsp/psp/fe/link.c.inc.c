@@ -513,37 +513,29 @@ static void net_frame(void)
  * emulated frame, gated consistently in RECV_DATA and rfu_data_avail() so the
  * WAITEVENT re-poll spin that sank the rfu_rx_cap arms cannot occur.  1 equals
  * both the game's drain rate and the real radio's cadence.  0 = off. */
-extern void rfu_set_frame_pace(unsigned n);
-extern void rfu_set_pace_max_hold(unsigned n);
-extern void rfu_set_shed_keep(unsigned n);   /* link shedding, 0 = off */
-extern void rfu_set_hold(unsigned on);        /* hold, never discard */
-extern void rfu_set_supersede(unsigned on);   /* adapter one-buffer rule */
-extern void rfu_set_fault_corrupt(unsigned n); /* desync-detector validation */
-extern void rfu_set_fault_span(unsigned n);
-extern void rfu_set_fault_mode(unsigned m);
+/* rfu_set_frame_pace, _pace_max_hold, _shed_keep (link shedding, 0 = off),
+ * _hold (hold, never discard), _supersede (the adapter one-buffer rule) and
+ * the desync-detector faults _fault_corrupt/_span/_mode: rfu.c, declared in
+ * core_fe.h like the setters below. */
 extern void adhoc_set_disc_await(int on);    /* candidate mid-run-Disconnect fix */
 /* ADR-0059.  Percent, 100 = stock.  Stretches the emulated adapter's two
  * cycle-counted deadlines to compensate for a radio ~10x slower than the one
  * the game was written for.  See the long comment in rfu.c. */
-extern void rfu_set_timeout_scale(unsigned to_x100, unsigned rtx_x100);
 /* ADR-0062d.  Minimum emulated cycles between netpacket_poll_receive() calls
  * while the adapter waits.  0 = every call, the historical behaviour. */
-extern void rfu_set_poll_min_cycles(unsigned n);
 /* ADR-0068.  The mirror knob: minimum emulated cycles between polls while the
  * adapter is NOT waiting — the host's cadence, which is otherwise once per
  * frame.  0 = never = the historical behaviour.  See rfu.c. */
-extern void rfu_set_idle_poll_cycles(unsigned n);
 /* ADR-0074.  1 = hold a peer disconnect until the client's queued host packets
  * have been handed to the game, so the Union Room's exit negotiation is not
  * deleted in transit.  0 = the historical immediate teardown. */
-extern void rfu_set_disc_defer(unsigned n);
 /* ADR-0076.  Hold the adapter in CLIENT state for N frames after the peer's
  * disconnect so the game can finish its clock-master change and issue its OWN
  * disconnect -- the clean, error-free exit.  The lobby error is a race the
  * slow client loses (link_rfu_2.c:2492 fires unconditionally when our IDLE
  * answer wins); this gives the game the window the real exit sequence needs.
- * 0 = off = historical.  60 (~1 s) is the arm to try first. */
-extern void rfu_set_disc_grace(unsigned frames);
+ * 0 = off = historical.  60 (~1 s) is the arm to try first.
+ * (Each setter above: rfu.c, declared in core_fe.h.) */
 
 /* ADR-0045: the core reads this once per emulated frame, never per command. */
 unsigned gpsp_rfu_now_us(void)
