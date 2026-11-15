@@ -12,7 +12,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#define VID_TRIPLE
 #include "../psp/video_psp.c"
 
 void sceKernelDcacheWritebackRange(const void *p, unsigned int size)

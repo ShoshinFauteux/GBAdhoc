@@ -4,7 +4,6 @@
  * See docs/FF-ARTIFACT-FIX.md for the command and hardware follow-up. */
 #include <assert.h>
 #include <stdio.h>
-#define VID_TRIPLE
 #include "../psp/video_psp.c"
 
 static unsigned lcd, pending;

@@ -273,16 +273,17 @@ else ifeq ($(platform), psp1)
 	# psp/Makefile (same default); =0 is the arm without it.
 	GBA_LINK ?= 1
 	REWIND ?= 1
-	# LAYOUT_PIN (default 1; docs/LAYOUT-PINNING.md): every function in its own
-	# section, so psp/Makefile's link can put the hot path first in .text in a
-	# fixed order (psp/layout/hot.ord), and -DLAYOUT_PIN pins the translation
-	# cache's I-cache sets (gpsp_config.h JIT_PIN_*).  Code is unchanged; only
-	# addresses move.  LAYOUT_PIN=0 is the pre-pinning layout, byte for byte.
-	# Pass the SAME value to psp/Makefile (tools/build.sh does).
-	LAYOUT_PIN ?= 1
-	ifeq ($(LAYOUT_PIN),1)
-	CFLAGS += -ffunction-sections -DLAYOUT_PIN=1
+	# Layout pinning (docs/LAYOUT-PINNING.md), built in since code-health A-7:
+	# every function in its own section, so psp/Makefile's link can put the hot
+	# path first in .text in a fixed order (psp/layout/hot.ord), and -DLAYOUT_PIN
+	# pins the translation cache's I-cache sets (gpsp_config.h JIT_PIN_*).  The
+	# source keeps its `#if defined(LAYOUT_PIN)` arms because the twin builds
+	# without it unless a variant asks (tools/drprof/dr_corpus.py allpin, beta).
+	# The make kill switch LAYOUT_PIN=0 is gone; any value but 1 stops here.
+	ifneq ($(filter-out 1,$(LAYOUT_PIN)),)
+    $(error LAYOUT_PIN=$(LAYOUT_PIN): pinning is built in (code-health A-7); drop LAYOUT_PIN)
 	endif
+	CFLAGS += -ffunction-sections -DLAYOUT_PIN=1
 	# SMC_PARTIAL_SAFE=1: experimental selective invalidation with exact,
 	# per-ISA block extents and indirect cross-block branches into RAM. ARM
 	# block stores are eligible only when they do not write back their base;

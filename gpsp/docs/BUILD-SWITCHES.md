@@ -26,8 +26,8 @@ switches that ship are lines in `gpsp_features.h`, which the root Makefile
 force-includes (`-include`) into every core object of `platform=psp1` and
 `platform=drprof-mipsel`, assembler included. The frontend's constants are lines
 in `psp/fe_features.h`, force-included by `psp/Makefile`: the `ND_*` transport
-profile always, `VID_TRIPLE`, `PLAY_INPUT_FRESH` and `PLAY_FF_FLIP_PACE` when the
-build is `GPSP_PLAYABLE`. No recipe lists any of them, and `tools/flags.lock` pins
+profile and `PLAY_INPUT_FRESH` (every psp/Makefile build is `GPSP_PLAYABLE`).
+No recipe lists any of them, and `tools/flags.lock` pins
 all of them (see **The drift check** below).
 
 The two sides do not share defines. The frontend never tests a core feature (it
@@ -42,8 +42,8 @@ code** and stay until the desktop build bakes them too.
 |---|---|
 | one feature off, an A/B arm | `CORE_EXTRA="XLAT_FAST=0" tools/build.sh harness` (root make `XLAT_FAST=0`, which is `-DGPSP_NO_XLAT_FAST`). Only the 20 switches still in `gpsp_features.h`; a *(built in)* feature has no off arm. A release refuses `CORE_EXTRA`. |
 | a different value | `CORE_EXTRA="SMC_SINGLE_HOT=32"` |
-| the link, the rewind, pinning off | `GBA_LINK=0`, `REWIND=0`, `LAYOUT_PIN=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only) |
-| a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_VID_TRIPLE` drops a playable default |
+| the link, the rewind off | `GBA_LINK=0`, `REWIND=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only). Layout pinning and the GB lazy timer have no off arm since code-health A-7 (both makes refuse `LAYOUT_PIN`/`TGB_LAZY_TIMER` other than 1) |
+| a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_PLAY_INPUT_FRESH` drops the playable default (what `INPUT_FRESH=0` passes) |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works; the *(built in)* features are on whatever `VDEFS` says. It stays the default because GBAdhoc-Lab builds its gate, profiler and lockstep twins with it |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
 | one-off variants of a non-release profile | `tools/build.sh` takes `CORE_EXTRA=...` / `FE_EXTRA=...` / `PSP_EXTRA=...`; it refuses them with `release` |
@@ -256,9 +256,7 @@ Its comments keep the field logs behind each value.
 | `ND_TXQ_CAP` | 384 | per-peer reliable backlog |
 | `ND_RTO_MIN_US` | 200000 | retransmit floor |
 | `ND_RTO_MAX_US` | 2500000 | retransmit ceiling; must not sit below what the estimator computes |
-| `VID_TRIPLE` | 1 | three framebuffers instead of two. Fixes tearing; its fast-forward black-bar artifact is resolved for all three presets by `g_fb_filled` plus `vid_swap()`'s display-ownership read-back (docs/FF-ARTIFACT-FIX.md). |
-| `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off) |
-| `PLAY_FF_FLIP_PACE` | 7 | fast-forward presentation pacing (docs/FF-PRESETS.md): bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. Presentation only. `-DGPSP_NO_PLAY_FF_FLIP_PACE` = 0 |
+| `PLAY_INPUT_FRESH` | 1 | the low-latency pad re-peek on by default (`INPUT_FRESH=0` on `tools/build.sh` turns it off; that arm is kept for an owner call, code-health A-7) |
 
 ### Make features: what is compiled and linked
 
@@ -267,12 +265,13 @@ their defaults.
 
 | variable | default | what it does |
 |---|---|---|
-| `GBA_LINK`, `REWIND`, `CHEATS`, `LAYOUT_PIN` | 1 (both makes) | the GBA link pair, rewind, the per-game cheats menu (docs/CHEATS.md) and the pinned layout. `tools/build.sh` passes one value to both makes. `LAYOUT_PIN=0` is the pre-pinning link, byte for byte. |
+| `GBA_LINK`, `REWIND`, `CHEATS` | 1 (both makes) | the GBA link pair, rewind and the per-game cheats menu (docs/CHEATS.md). `tools/build.sh` passes one value to both makes. |
+| `LAYOUT_PIN` | *(built in, code-health A-7)* | the pinned layout (docs/LAYOUT-PINNING.md): `-ffunction-sections -DLAYOUT_PIN=1` in the root make, the hot.ord link, cold tail and layout pads in psp/Makefile, always. Both makes refuse any other value, so the pre-pinning layout (`LAYOUT_PIN=0`) cannot be built; `tools/build.sh` keeps the variable (only 1) for the manifest's `layoutPin`. The source keeps `#if defined(LAYOUT_PIN)` because the twin is unpinned unless a variant asks (dr_corpus `allpin`, `beta`). |
 | `ONLINE` | 1 (psp/Makefile) | experimental online play (docs/ONLINE-TUNNEL.md), compiled in and off until Settings > Online play is turned on; `ONLINE=0` compiles it out. |
 | `MGIFT` | 1 (psp/Makefile, tools/build.sh) | Mystery Gift, the Wonder Card receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c). `MGIFT=0` compiles out its objects, the Wireless > Mystery Gift row and screen, the Controls binding row, the chord and the per-frame poll; the infrastructure Wi-Fi bring-up (mgift_net.o) stays while online play is in. MGIFT=0 is a variant arm (the lock is reported, not enforced) and would need its own re-pin to ship (`main` shrinks 684 B). |
 | `RFU_SCHED` | 0 (psp/Makefile, tools/build.sh); `tools/release.sh` sets 1 for a `-beta`/`-nightly` version, and build.sh passes one value to both makes | scheduled ticks for the emulated Wireless Adapter (docs/RFU-COUPLING.md): each console publishes its frame's adapter traffic with a tick, the partner's game gets it D = 2 frames later. Replaces frame pace, shedding, the overflow hold and supersede while it runs, and changes the wire format: netdrv refuses a session between a ticks build and one without (`ND_FEAT_RFU_SCHED`). Harness key `rfu_sched` = D, 0 = off. The beta kits are built with it; whether 5.0.0 ships it is an owner decision. |
 | `ME_CATCH` | 1 in the release and harness64 profiles | links `psp/me/catcher.c` and `catcher_vec.S` into the Media Engine PRX: an exception handler that draws EPC / BadVAddr / Cause / GPRs / nearby memory / the ME mailbox into all three framebuffers on any unhandled CPU exception. The EBOOT does not change and every existing PRX symbol keeps its address (the two entry points are wrapped). Only effective when the ME boots. |
-| `TGB_LAZY_TIMER` | 1 (psp/Makefile) | scoped to the GB core's objects. |
+| `TGB_LAZY_TIMER` | *(built in, code-health A-7)* | psp/Makefile always adds `-DTGB_LAZY_TIMER` to the GB core's objects and refuses any value but 1. `gbcore/tgbdual/cpu.c` keeps the eager timer walk as its `#else` because the host tools build that as the reference (tools/gbref `GBREF_DEFS`, tools/gblink, the twin's GB library, gbcore/Makefile smoke). |
 | `PSP_LARGE_MEMORY` | 1 (psp/Makefile); 0 in harness, lab, soak | the 64 MiB memory layout flag in the EBOOT. |
 | `PSP_PIXFMT` | psp5650 (both makes) | a variable because it reaches the ME sub-make. |
 | `HOT_DATA_GUARD` | 1 (psp/Makefile) | the link script that follows the core's `HOT_DATA_GUARD`. |
@@ -493,6 +492,8 @@ compiling this list (comment blocks attributed to the wrong `ifeq`, and an
 | `SMC_UNTAG_MARKS_ONLY` | Code-health A-3. `SMC_SINGLE_UNTAG` lifting only interior marks, not retired blocks' own tags. |
 | `TGB_FAST_TILE` | Code-health A-3. GB tile rows decoded by a 1 KiB table: exact, but no gain on hardware (gbp-c2 vs gbp-b2, 13/13 "same", mean ~+0.7 % worse; docs/GB-CORE-PERF.md). |
 | `DR2NFSU_MUTANT_WORDTAG` | Code-health A-4. Reverted the dr2-nfsu per-halfword tag fix (the "TAG EACH HALFWORD" comment in `cpu_threaded.c`) to validate the checker; no tool or Lab script set it, and its corpus arm `m_nfsu_word_t` is gone. The question is answered by the real bug: `EXEC_STALE_CHECK` found the unfixed hole on NFSU (2 hits at 030066dc, 0 on the fixed build, commit 9314946b), and `SMC_IMM_PATCH_MUTANT_ONESITE` still proves that checker on the same class (stale code executed). |
+| `VID_TRIPLE`, `GPSP_NO_VID_TRIPLE` | Code-health A-7. Triple buffering is unconditional in psp/video_psp.c (three framebuffers; the fast-forward black-bar artifact is resolved by `g_fb_filled` plus `vid_swap()`'s display-ownership read-back, docs/FF-ARTIFACT-FIX.md). The 2.0.3 double-buffered `sceGuSwapBuffers` arm, which no profile built, is gone. |
+| `PLAY_FF_FLIP_PACE`, `GPSP_NO_PLAY_FF_FLIP_PACE` | Code-health A-7. Fast-forward presentation pacing (docs/FF-PRESETS.md) is `g_ff_flip_pace`'s initial 7 in psp/fe/pacing.a.inc.c: bit 0 no early flip over an unlatched one under 3x, bit 1 the Smooth/Unlimited hold, bit 2 3x through the draw gate under a 3-frames-per-vblank ceiling. The harness key `ff_flip_pace` still sets it. |
 
 Files removed with no switch of their own: `netdrv/transport_inet.{c,h}` and its
 psp/Makefile rule (code-health A-1): a sceNetInet netdrv backend that no `OBJS`

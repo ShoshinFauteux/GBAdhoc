@@ -26,7 +26,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <sys/mman.h>
-#define VID_TRIPLE
 #include "../psp/video_psp.c"
 
 #define EDRAM_SIZE 0x200000u

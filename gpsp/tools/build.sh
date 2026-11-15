@@ -60,12 +60,12 @@ DOCKER_IMAGE="${DOCKER_IMAGE:-pspdev/pspdev}"   # override (e.g. pspdev/pspdev@s
 # defines reach psp/Makefile.  Keep them together so a profile is one thing.
 #
 # THE CORE FEATURE SET is not a recipe: gpsp_features.h, force-included by the
-# root Makefile, is what every profile compiles, and GBA_LINK, REWIND and
-# LAYOUT_PIN default on in both makefiles.  A diagnostic build is the same
+# root Makefile, is what every profile compiles, GBA_LINK and REWIND default
+# on in both makefiles, and layout pinning is built in.  A diagnostic build is the same
 # emulator as the release or it answers a different question.  Each profile
 # here adds only what makes it that profile, and `tools/build.sh release` with
 # no environment IS the release.  Off arms: CORE_EXTRA="NAME=0" (not a release),
-# GBA_LINK=0, REWIND=0, LAYOUT_PIN=0, INPUT_FRESH=0.
+# GBA_LINK=0, REWIND=0, INPUT_FRESH=0.
 #
 # SCHED_FAST / IRQ_IO_FAST compile the paths in; the run-time switches
 # sched_fast and irq_io_fast turn them on (psp/main_psp.c, config.ini keys of
@@ -417,14 +417,15 @@ fi
 # gates passed: the whole-library corpus oracle (25/25 identical, dr_corpus
 # `allpin`) and the PSP-3000 bench (AW2 5.56 -> 4.39 ms/frame, H&S 8.77 ->
 # 8.43, and a 2600-byte pad no longer moves the pinned build).  Every profile
-# gets it, so rigs measure the layout that ships.  LAYOUT_PIN=0 is the kill
-# switch: the pre-pinning layout, byte for byte.  BOTH makes must get the
-# same value.  LAYOUT_PAD_BYTES is part of the shipped layout: psp/Makefile
+# gets it, so rigs measure the layout that ships.  Built in since code-health
+# A-7: both makes refuse any LAYOUT_PIN but 1, and so does this script (the
+# variable stays for the manifest's layoutPin, which tools/layout/layout_lock.py
+# and make_release_check.py read).  LAYOUT_PAD_BYTES is part of the shipped layout: psp/Makefile
 # holds the value, LAYOUT_PAD_BYTES=N here is the bench's pad arm.
 LAYOUT_PIN="${LAYOUT_PIN:-1}"
 LAYOUT_PAD_DEFAULT=$(sed -n 's/^LAYOUT_PAD_BYTES ?= //p' "$ROOT/psp/Makefile" | tr -d '\r')
 LAYOUT_PAD_BYTES="${LAYOUT_PAD_BYTES:-$LAYOUT_PAD_DEFAULT}"
-case "$LAYOUT_PIN" in 0|1) ;; *) die "LAYOUT_PIN must be 0 or 1" ;; esac
+case "$LAYOUT_PIN" in 1) ;; *) die "LAYOUT_PIN=$LAYOUT_PIN: pinning is built in (code-health A-7); the pre-pinning layout was removed" ;; esac
 note "layout  : LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES"
 # CHEATS: the per-game cheats menu (docs/CHEATS.md), default on in every
 # profile.  CHEATS=0 is the kill switch, and it must reach BOTH makes (the

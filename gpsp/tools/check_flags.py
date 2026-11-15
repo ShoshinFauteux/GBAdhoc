@@ -44,7 +44,7 @@ SWITCHES = "docs/BUILD-SWITCHES.md"
 CORE_DIRS = (".", "mips", "arm", "x86", "libretro", "gbalink")   # non-recursive, see sources()
 # psp/fe: main_psp.c's P4 fragments and the P5 headers (fe_priv.h, play_defaults.h)
 # are main_psp.o's own text (PLAN-P-beta5 P0a; without it the split tree reports
-# PLAY_INPUT_FRESH / PLAY_FF_FLIP_PACE dead and make_release.sh dies)
+# PLAY_INPUT_FRESH dead and make_release.sh dies)
 FE_DIRS = ("psp", "psp/fe", "psp/labab", "frontend-common", "netdrv", "gbcore", "gbcore/tgbdual")
 C_EXT = {".c", ".h", ".cc", ".cpp", ".S", ".s"}
 # Read by both sides by design: they change what is linked, so each make gets them.

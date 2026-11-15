@@ -105,11 +105,11 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
  * 2 vblanks, ff_gate.h), and on pace draw by the ceiling instead of the gate:
  * the last frame of each vblank's quota, so the picture advances 2, 1, 2, 1
  * (1.5x) or 2, 2 (2x) game frames a vblank (ffh_cap_draw). */
-#ifndef PLAY_FF_FLIP_PACE
-#define PLAY_FF_FLIP_PACE 0
-#endif
+/* 7 = all three bits (docs/FF-PRESETS.md); presentation only, emulation is
+ * untouched.  Built in since code-health A-7 (was PLAY_FF_FLIP_PACE); the
+ * harness key `ff_flip_pace` still sets it (fe/boot.inc.c). */
 /* Small data, so the layout pin's .data/.bss sets do not move (LAYOUT-PINNING.md). */
-static int      g_ff_flip_pace __attribute__((section(".sdata"))) = PLAY_FF_FLIP_PACE;
+static int      g_ff_flip_pace __attribute__((section(".sdata"))) = 7;
 static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer holds an unflipped picture */
 static unsigned g_ffh_holds __attribute__((section(".sbss")));
 static unsigned g_ffh_waits __attribute__((section(".sbss")));

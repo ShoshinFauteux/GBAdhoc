@@ -85,28 +85,17 @@
 #define ND_RTO_MAX_US 2500000
 #endif
 
-/* ---- defaults of a playable build (every profile but the bare e2e harness) ---
+/* ---- defaults of a playable build (every psp/Makefile build is one) ---------
  *
- * VID_TRIPLE: triple buffering (psp/video_psp.c).
  * PLAY_INPUT_FRESH: the low-latency pad re-peek on by default
  * (docs/LOW-LATENCY.md); a playable build cannot read the harness ini.
- * INPUT_FRESH=0 on tools/build.sh is -DGPSP_NO_PLAY_INPUT_FRESH.
+ * INPUT_FRESH=0 on tools/build.sh is -DGPSP_NO_PLAY_INPUT_FRESH (kept for an
+ * owner call, code-health A-7).  Triple buffering (VID_TRIPLE) and the
+ * fast-forward flip pacing (PLAY_FF_FLIP_PACE, now g_ff_flip_pace's initial 7
+ * in fe/pacing.a.inc.c) are built in since A-7.
  */
-#ifdef GPSP_PLAYABLE
-#if !defined(GPSP_NO_VID_TRIPLE) && !defined(VID_TRIPLE)
-#define VID_TRIPLE 1
-#endif
 #if !defined(GPSP_NO_PLAY_INPUT_FRESH) && !defined(PLAY_INPUT_FRESH)
 #define PLAY_INPUT_FRESH 1
 #endif
-/* PLAY_FF_FLIP_PACE: fast-forward presentation pacing (docs/FF-PRESETS.md,
- * main_psp.c g_ff_flip_pace).  7 = all three bits: no early flip over an
- * unlatched one under 3x, the Smooth/Unlimited hold, and 3x presented
- * through the draw gate under a 3-frames-per-vblank ceiling.  Presentation
- * only; emulation is untouched.  GPSP_NO_PLAY_FF_FLIP_PACE = 0 (off). */
-#if !defined(GPSP_NO_PLAY_FF_FLIP_PACE) && !defined(PLAY_FF_FLIP_PACE)
-#define PLAY_FF_FLIP_PACE 7
-#endif
-#endif /* GPSP_PLAYABLE */
 
 #endif /* FE_FEATURES_H */

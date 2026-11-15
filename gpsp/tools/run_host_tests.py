@@ -543,7 +543,8 @@ def suites(env: Env, baseline: Path | None):
         # --gc-sections has nothing to discard, so every GU call video_psp.c
         # makes stays undefined and the link fails.  The command documented in
         # docs/FF-ARTIFACT-FIX.md omitted them, which is why this suite was
-        # only ever run by hand.  VID_TRIPLE is defined by the test itself.
+        # only ever run by hand.  (Triple buffering is unconditional since
+        # code-health A-7; the tests no longer define VID_TRIPLE.)
         # The link-latency ratchet and its fix: the production rfu.c queues
         # driven by a scripted host and game, proving a stall is permanent
         # latency without shedding and bounded with it, and that shedding

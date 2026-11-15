@@ -2,8 +2,8 @@
  * (PLAN-P-beta5 §4 P5), moved verbatim with their own comments, in their old order.
  *
  * PRIVATE TO main_psp.o: included by fe/fe_priv.h only.  The defaults a host test
- * reads as text stay in main_psp.c: PLAY_ME_LOWLAT, PLAY_FF_FLIP_PACE and
- * PLAY_ME_LATE_PRESENT (tools/tests/test_lowlat_policy.py, region lowlat:defaults).
+ * reads as text stay in main_psp.c: PLAY_ME_LOWLAT and PLAY_ME_LATE_PRESENT
+ * (tools/tests/test_lowlat_policy.py, region lowlat:defaults).
  * So does PLAY_INPUT_FRESH's default: only #define lines move, so its
  * #ifndef PLAY_INPUT_FRESH guard would stay there, testing the macro after this
  * header had defined it.  main_psp.c (fe/paths.inc.c) keeps a pointer comment

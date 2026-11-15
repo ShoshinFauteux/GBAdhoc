@@ -15,7 +15,7 @@
  * switches to a private stack and calls catch_main() -- still IN EXCEPTION
  * CONTEXT, kernel mode, interrupts off.  catch_main draws straight into the
  * three VRAM framebuffers the frontend uses (video_psp.c: 512-pixel stride,
- * 5650, VID_TRIPLE offsets 0 / 0x44000 / 0x88000), then spins forever.  No
+ * 5650, triple-buffer offsets 0 / 0x44000 / 0x88000), then spins forever.  No
  * syscall, no import beyond the registration itself: nothing here can depend
  * on a kernel state the exception has left broken, and no NID can fail to
  * resolve and take the Media Engine down with it.

@@ -35,11 +35,7 @@ __attribute__((used)) static const char *const gpsp_pixfmt_agreed =
 
 #define FB_STRIDE 512
 #define FB_BYTES  (FB_STRIDE * VID_SCR_H * 2)
-#ifdef VID_TRIPLE
 #define VID_NBUF  3u        /* display buffers; depth and staging sit above */
-#else
-#define VID_NBUF  2u
-#endif
 
 /* TWO display lists (ADR-0040).  One was enough while every list was synced
  * before the next one started; `gu_defer` lets a finished list keep running
@@ -75,7 +71,6 @@ typedef struct
  * GE readback dump the buffer that was just drawn, pre-swap. */
 static unsigned g_draw_off;
 
-#ifdef VID_TRIPLE
 /* TRIPLE BUFFERING -- fixes tearing along the top of the screen.
  *
  * sceGuSwapBuffers() latches with PSP_DISPLAY_SETBUF_NEXTFRAME, so the flip
@@ -128,15 +123,10 @@ static unsigned g_fb_cur;          /* index currently being DRAWN into */
  * drawing chips ON TOP of whatever is already there; it cannot make an undrawn
  * buffer presentable, so it deliberately does not set this.
  *
- * Scoped to VID_TRIPLE: in the double-buffered fallback an unconditional swap
- * is the shipped 2.0.3 behaviour and showed a complete frame, so it is left
- * exactly as it was. */
+ * (Triple buffering is unconditional since code-health A-7; the 2.0.3
+ * double-buffered fallback, sceGuSwapBuffers with no filled check, is gone.) */
 static int g_fb_filled;
 #define VID_FB_FILLED()  do { g_fb_filled = 1; } while (0)
-#else
-#define VID_GU_TARGET()  do { } while (0)
-#define VID_FB_FILLED()  do { } while (0)
-#endif
 
 static int g_scale  = VID_SCALE_1X;
 static int g_filter = VID_FILTER_NEAREST;
@@ -1837,16 +1827,13 @@ int vid_flip_latched(void)
 
 int vid_swap(void)
 {
-#ifdef VID_TRIPLE
    void *display;
    uintptr_t edram = (uintptr_t)sceGeEdramGetAddr();
    int width, format;
    unsigned next;
-#endif
    /* ADR-0040: swapping while the GE is still drawing shows a half-rendered
     * frame.  Unconditional, so the invariant does not depend on gu_defer. */
    vid_gu_flush();
-#ifdef VID_TRIPLE
    /* NOTHING DREW THIS FRAME: hold what is on screen.  Do not present and do
     * not advance the ring -- rotating here is what put an unwritten buffer on
     * the display during fast-forward (see g_fb_filled).  Holding the current
@@ -1891,12 +1878,6 @@ int vid_swap(void)
    g_draw_off  = g_fb_off[g_fb_cur];
    g_fb_filled = 0;                      /* the new target is empty again */
    return 1;
-#else
-   g_flip_addr = 0;            /* sceGuSwapBuffers does not say where */
-   sceGuSwapBuffers();
-   g_draw_off ^= FB_BYTES;
-   return 1;
-#endif
 }
 
 int vid_dump_ge(const char *path)
@@ -2744,7 +2725,6 @@ enum { VCAP_IDLE = 0, VCAP_ARMED = 1, VCAP_HELD = 2 };
 static int       g_vcap;          /* VCAP_*                                 */
 static uint16_t *g_cap_buf;       /* uncached VRAM, NULL = none yet        */
 
-#ifdef VID_TRIPLE
 /* The newest game picture, uncached, if nothing is drawn over it. */
 AMB_SMALL static const uint16_t *cap_clean(void)
 {
@@ -2758,11 +2738,9 @@ AMB_SMALL static const uint16_t *cap_clean(void)
       return (const uint16_t *)(0x40000000u | g_flip_addr);
    return NULL;
 }
-#endif
 
 AMB_SMALL static void cap_overlay_grab(void)
 {
-#ifdef VID_TRIPLE
    const uint16_t *src;
    int y;
    if (g_vcap != VCAP_ARMED || !g_fb_filled || !g_cap_buf)
@@ -2774,21 +2752,16 @@ AMB_SMALL static void cap_overlay_grab(void)
    for (y = 0; y < CAP_H; y++)
       memcpy(g_cap_buf + y * CAP_W, src + y * FB_STRIDE, CAP_W * 2);
    g_vcap = VCAP_HELD;
-#endif
 }
 
 AMB_SMALL int vid_cap_arm(void)
 {
-#ifdef VID_TRIPLE
    if (!g_cap_buf)
       g_cap_buf = vram_at((shot_vram_off() + (uintptr_t)SHOT_BYTES +
                            0x1FFFu) & ~(uintptr_t)0x1FFFu, CAP_BYTES);
    if (g_vcap == VCAP_IDLE && g_cap_buf)
       g_vcap = VCAP_ARMED;
    return g_vcap != VCAP_IDLE;
-#else
-   return 0;
-#endif
 }
 
 void vid_cap_reset(void)
@@ -2799,7 +2772,6 @@ void vid_cap_reset(void)
 AMB_SMALL const uint16_t *vid_cap_frame(unsigned *w, unsigned *h,
                                         size_t *pitch_bytes)
 {
-#ifdef VID_TRIPLE
    const uint16_t *pix = NULL;
    vid_gu_flush();
    if (g_vcap == VCAP_HELD)
@@ -2815,8 +2787,4 @@ AMB_SMALL const uint16_t *vid_cap_frame(unsigned *w, unsigned *h,
       *h = CAP_H;
    }
    return pix;
-#else
-   (void)w; (void)h; (void)pitch_bytes;
-   return NULL;
-#endif
 }

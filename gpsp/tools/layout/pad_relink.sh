@@ -2,7 +2,8 @@
 # pad_relink.sh OUTDIR PIN TEXT BSS [FNPAD]  -- relink the release ELF with the
 #   stability-probe padding (docs/LAYOUT-PINNING.md), from the core archive
 #   already in the tree (build it first with tools/build.sh release and the
-#   same LAYOUT_PIN).  Only the frontend link changes:
+#   same LAYOUT_PIN; PIN must be 1, pinning is built in since code-health
+#   A-7).  Only the frontend link changes:
 #     TEXT/BSS  psp/layout_pad.S (LAYOUT_PAD_TEXT/BSS): every later object's
 #               .text and .bss move by that many bytes (0 0 = not linked)
 #     FNPAD     LAYOUT_PAD_BYTES: a never-called cold function in main_psp.o
@@ -16,8 +17,8 @@ PADV=""
 [ "$TEXT$BSS" != "00" ] && PADV="LAYOUT_PAD_TEXT=$TEXT LAYOUT_PAD_BSS=$BSS"
 # PROFILE=release (default) or harness64: must match the core archive in the tree
 case "${PROFILE:-release}" in
-  release)   DEFS='-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_PROFILE_RELEASE=1 -DPLAY_INPUT_FRESH=1'; MK='ME_CATCH=1' ;;
-  harness64) DEFS='-DGPSP_PLAYABLE -DVID_TRIPLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG -DGPSP_PROFILE_HARNESS=1 -DPLAY_INPUT_FRESH=1'
+  release)   DEFS='-DGPSP_PLAYABLE -DGPSP_PROFILE_RELEASE=1 -DPLAY_INPUT_FRESH=1'; MK='ME_CATCH=1' ;;
+  harness64) DEFS='-DGPSP_PLAYABLE -DGPSP_KEEP_TELEMETRY -DGPSP_PERF_RIG -DGPSP_PROFILE_HARNESS=1 -DPLAY_INPUT_FRESH=1'
              MK='PSP_LARGE_MEMORY=1 ME_CATCH=1' ;;
   *) echo "PROFILE must be release or harness64"; exit 2 ;;
 esac

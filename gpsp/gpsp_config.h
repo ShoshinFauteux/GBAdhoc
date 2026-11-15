@@ -74,8 +74,8 @@
     #define RAM_TRANSLATION_CACHE_SIZE_LARGE RAM_TRANSLATION_CACHE_SIZE
   #endif
 
-/* LAYOUT_PIN (PSP, OPT-IN: defined only by `make LAYOUT_PIN=1`, off by
- * default; docs/LAYOUT-PINNING.md): where the translation caches sit
+/* LAYOUT_PIN (the PSP root make always defines it since code-health A-7; the
+ * twin only in variants that ask; docs/LAYOUT-PINNING.md): where the translation caches sit
  * in the Allegrex instruction cache.  It is 16 KiB, 2-way, with 64 B lines
  * (measured; docs/CACHE-MAP.md), so a line's set is address bits 6..12 and
  * only (address mod 8 KiB) decides what it competes with.  The emitter writes

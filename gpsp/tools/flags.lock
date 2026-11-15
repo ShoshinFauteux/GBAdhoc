@@ -33,12 +33,9 @@ frontend ND_RTO_MAX_US=2500000
 frontend ND_RTO_MIN_US=200000
 frontend ND_TXQ_CAP=384
 frontend ND_WINDOW=256
-frontend PLAY_FF_FLIP_PACE=7
 frontend PLAY_INPUT_FRESH=1
-frontend VID_TRIPLE=1
 make:Makefile CHEATS=1
 make:Makefile GBA_LINK=1
-make:Makefile LAYOUT_PIN=1
 make:Makefile PSP_PIXFMT=psp5650
 make:Makefile REWIND=1
 make:psp/Makefile CHEATS=1
@@ -55,11 +52,9 @@ make:psp/Makefile LAYOUT_PAD_MAIN_BYTES=4532
 make:psp/Makefile LAYOUT_PAD_MLU_BYTES=32
 make:psp/Makefile LAYOUT_PAD_RO_BYTES=28
 make:psp/Makefile LAYOUT_PAD_XLAT_BYTES=5632
-make:psp/Makefile LAYOUT_PIN=1
 make:psp/Makefile PSP_LARGE_MEMORY=1
 make:psp/Makefile PSP_PIXFMT=psp5650
 make:psp/Makefile REWIND=1
-make:psp/Makefile TGB_LAZY_TIMER=1
 profile:diagnostic CORE_FLAGS=GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1
 profile:diagnostic FE_DEFS=-DGPSP_PLAYABLE -DGPSP_PROFILE_DIAGNOSTIC=1
 profile:diagnostic TITLE=GBAdhoc DIAG

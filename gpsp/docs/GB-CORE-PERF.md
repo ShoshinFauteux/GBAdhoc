@@ -92,7 +92,8 @@ already gone by combo3.)
 ## 5. Prototypes (both ON by default since 4.5.0)
 
 Shipped defaults (claude/rc-4.5.0): `TGB_LAZY_TIMER ?= 1` in psp/Makefile
-(kill switch `TGB_LAZY_TIMER=0`) and `GBLINK_ARMED_DEFAULT 1` in
+(kill switch `TGB_LAZY_TIMER=0`, removed in code-health A-7: psp/Makefile now
+always passes it; cpu.c keeps the eager arm for the host reference tools) and `GBLINK_ARMED_DEFAULT 1` in
 psp/main_psp.c (harness `gblink_batch_armed = 0` = control).  Every profile
 gets them with no harness key.  The bench key `gb_dual_armed` keeps
 default 0.  TGB_FAST_TILE was removed (code-health A-3); TGB_OPCOUNT is
