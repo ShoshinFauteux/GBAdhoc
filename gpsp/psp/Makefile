@@ -74,12 +74,6 @@ TGB_LAZY_TIMER ?= 1
 ifeq ($(TGB_LAZY_TIMER),1)
 TGB_CFLAGS += -DTGB_LAZY_TIMER
 endif
-# TGB_FAST_TILE=1 (docs/GB-CORE-PERF.md): tile rows decoded by a 1 KiB table
-# instead of bit by bit.  Exact (pixel hashes); OFF: no gain on hardware
-# (gbp-c2 vs gbp-b2, 13/13 "same", mean ~+0.7 % worse).
-ifeq ($(TGB_FAST_TILE),1)
-TGB_CFLAGS += -DTGB_FAST_TILE
-endif
 # The core is one relocatable object whose only global symbols are the
 # gbcore_* API (rule below).  TGB Dual exports ~780 names -- vram, ram, oam,
 # halt, speed, info, stack -- and the first link failed on `vram`, which the

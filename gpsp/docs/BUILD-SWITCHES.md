@@ -379,12 +379,16 @@ all of the ME's `.bss` by N (3856 reproduces the catch data addresses; 12528 wit
 | `LINKBENCH`, `LINKBENCH_AWFIX` | the link bench's FIFO counters (docs/GBA-LINK-FEASIBILITY.md) | tools/linkbench |
 | `RFU_FLIGHT` | the RFU flight recorder, live where its dump can be read (lab) | lab build |
 | `RAM_CACHE_KB` | the RAM code cache size for the twin's sizing studies | twin only |
-| `XLAT_NO_EXITPF`, `JIT_COST_NO_SCANWIN` | ablations kept for their mutant patches | tools/drprof/mutants |
+| `XLAT_NO_LIMITS`, `XLAT_NO_GATEMAP`, `XLAT_NO_EXITPF`, `XLAT_NO_RAMEND`, `XLAT_NO_DCLEAR`, `XLAT_NO_SCANFN` | switch one `XLAT_FAST` piece off (root make `XLAT_NO=PIECE[:PIECE...]`) | GBAdhoc-Lab `analysis sweep --xlat-pieces` (backend/analysis/sweep.py, twin.py); `XLAT_NO_EXITPF`'s line is mutant-patch context (tools/drprof/mutants) |
+| `JIT_COST_NO_SCANWIN` | ablation of `JIT_COST`'s windowed gate scan | tools/drprof/mutants (patch context) |
+| `SMC_BLOCK_SAME` | (with `SMC_BLOCK_EXACT`) a block-store word that hits code but leaves it unchanged is skipped | root make; tools/drprof/dr_corpus.py class `CLS_H` |
+| `TIMER_LAZY` | prototype, guest-visible: timers with no IRQ and no cascade stop stopping the CPU (docs/GBA-LINK-MIRROR.md section 26); run-time key `timer_lazy` | root make; tools/drprof/dr_corpus.py what-if `tlazy` |
+| `GBALINK_LEAN_OUTLINE` | the four lean cable hooks (serial.h) out of line | `GBALINK_LEAN_OUTLINE=1 tools/build.sh`; tools/layout/layout_lock.py exempts it |
 | `FE_INI_DOC_LEGACY`, `SC_HOST_TEST` | host-test hooks | tools/tests |
 | `FE_PNG_LOW_DEPTH` | 1/2/4-bit indexed screenshots (off in every console build) | tools/run_host_tests.py builds both depths |
 | `SMC_EVTRACE` | one line per SMC event (writer, word, retirements, fallback reason) to `$SMC_EVT_FILE` between frames `$SMC_EVT_LO..HI` | twin VDEFS; tools/drprof/dr_profile.sh forwards the variables |
 | `XLAT_THUMB_NO_UNSWITCH` | host compiler only: an empty asm keeps psp-gcc from unswitching `translate_block_thumb`'s loop on `ram_region` (two copies, 1545 stack stores -> one copy, 256). `tools/build.sh` runs `tools/xlat_spill_guard.sh` when it is on. Its cost needs a hardware A/B. | root make |
-| `JIT_CODE_AB` | the original sync model compiled in beside the discipline; harness key `jit_code_mode` selects it. Oracle and PPSSPP IDENTICAL in every mode. | root make, harness; refused in a release |
+| `JIT_CODE_AB` | the original sync model compiled in beside the discipline; harness key `jit_code_mode` selects it. Oracle and PPSSPP IDENTICAL in every mode. | root make, harness; tools/drprof/jc_build_hw.sh, jc_variants.sh; refused in a release |
 | `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | link `psp/layout_pad.S` first so every object moves by N bytes (hardware layout sweeps) | `PSP_EXTRA=`; refused with `release` |
 
 `DRPROF_NEGCTL` (+1 cycle per Thumb instruction) is the twin oracle's negative
@@ -468,6 +472,11 @@ compiling this list (comment blocks attributed to the wrong `ifeq`, and an
 | `SMC_WORK_STATS`, `SMC_WORK_WINDOWS` | Code-health A-2. Twin dumps of the SMC work counters, used once to fit `DMA_ADAPT_V2`'s prices. The counters stay under `DMA_SMC_ADAPT`. |
 | `CORE_PHASE_FORCE`, `LAYOUT_PROBE_PAD` | Code-health A-2. A pinned `core_phase` for one measurement build; a twin cache-address shift (layout-dependence probe). |
 | `PERF_TEST`, `RFU_DEBUG`, `SERIALPROTO_DEBUG`, `REGISTER_USAGE_ANALYZE`, `MEMORY_STATS_ANALYZE` | Code-health A-2. Upstream gpSP's libretro perf counters, debug printfs and interpreter counters, never built here. The debug-print, memory-stats and register-usage call sites stay as no-op macros. |
+| `JIT_COST_NO_PUBINL`, `JIT_COST_NO_SCANCOND` | Code-health A-3. `JIT_COST` ablations: the kernel cache calls instead of user-mode line ops at publish (the run-time key `jit_pub_inline = 0` still selects them), and the arm_set_condition switch instead of the flag-set table in the fast scan. The table's own mutant (`jc_scancond_bit7.patch`) stays. |
+| `DMA_ADAPT_TIE_FLUSH` | Code-health A-3. `DMA_ADAPT_V2` with ties going to the flush: Mario Golf left retire on a 7 % flush probe and never came back (-3.6 % vs -5.0 %), TGR gained nothing (the finding is in the comment above `da2_cost`). |
+| `SMC_REUSE_WHOLE_I` | Code-health A-3. A hardware A/B arm: the whole I-cache invalidated on a virtual (`SMC_REUSE`) flush as well. |
+| `SMC_UNTAG_MARKS_ONLY` | Code-health A-3. `SMC_SINGLE_UNTAG` lifting only interior marks, not retired blocks' own tags. |
+| `TGB_FAST_TILE` | Code-health A-3. GB tile rows decoded by a 1 KiB table: exact, but no gain on hardware (gbp-c2 vs gbp-b2, 13/13 "same", mean ~+0.7 % worse; docs/GB-CORE-PERF.md). |
 
 Files removed with no switch of their own: `netdrv/transport_inet.{c,h}` and its
 psp/Makefile rule (code-health A-1): a sceNetInet netdrv backend that no `OBJS`

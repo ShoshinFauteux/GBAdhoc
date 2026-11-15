@@ -95,7 +95,8 @@ Shipped defaults (claude/rc-4.5.0): `TGB_LAZY_TIMER ?= 1` in psp/Makefile
 (kill switch `TGB_LAZY_TIMER=0`) and `GBLINK_ARMED_DEFAULT 1` in
 psp/main_psp.c (harness `gblink_batch_armed = 0` = control).  Every profile
 gets them with no harness key.  The bench key `gb_dual_armed` keeps
-default 0.  TGB_FAST_TILE stays off; TGB_OPCOUNT is tools only.
+default 0.  TGB_FAST_TILE was removed (code-health A-3); TGB_OPCOUNT is
+tools only.
 
 **Armed batching** -- `gbdual_config_t.batch_armed`; session bit
 `FE_GBLINK_MASK_ARMED_BATCH` (0x4, NEGOTIABLE: the host decides, both
@@ -222,6 +223,9 @@ x86 profile, Gen 2 trade with lazy v2:
 | lcd_bg_render_color | 5.7 % |
 
 ### TGB_FAST_TILE (commit 7b9d20c, off by default)
+
+Removed in code-health A-3 (no hardware gain, below); the code is in
+36cb6f50, the 5.0.0-beta.5 candidate.
 
 dattrans2n decodes a tile row with a 256-entry spread table instead of eight
 bit-by-bit dtwk() steps. It is a pure function of its inputs.

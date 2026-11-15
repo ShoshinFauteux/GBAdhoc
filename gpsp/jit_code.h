@@ -125,7 +125,7 @@ typedef struct
   u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
 #endif
 } jit_code_stats_type;
-#if defined(JIT_COST) && !defined(JIT_COST_NO_PUBINL)
+#ifdef JIT_COST
 /* run time: 1 = user-mode line ops (default), 0 = the kernel calls */
 extern u32 jit_pub_inline;
 #endif

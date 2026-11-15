@@ -6267,8 +6267,7 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
  * every combination of those bits, so it cannot disagree with it; twin
  * builds also check it against the macro on random opcodes at build time. */
 #if defined(JIT_COST) && defined(XLAT_SCANFN_ARM) && \
-    defined(SMC_GATE_BITMAP) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP) && \
-    (!defined(JIT_COST_NO_SCANWIN) || !defined(JIT_COST_NO_SCANCOND))
+    defined(SMC_GATE_BITMAP) && defined(SMC_GATES) && !defined(XLAT_NO_GATEMAP)
 #define JIT_SCAN_FAST 1
 #ifdef GPSP_PROFILE_RELEASE
 /* A release has no harness to flip it (the key is read only with the
@@ -6280,7 +6279,6 @@ static __attribute__((noinline)) void xlat_scan_arm_ram(xlat_scan_state *st)
 u32 xlat_scan_fast = 1;
 #endif
 
-#ifndef JIT_COST_NO_SCANCOND
 static u16 xlat_arm_flagset[256];
 static u32 xlat_arm_flagset_ready;
 /* arm_set_condition's 0x20, for any (28-bit) opcode, from the macro itself */
@@ -6331,7 +6329,6 @@ __attribute__((constructor)) static void xlat_arm_flagset_twin_init(void)
   xlat_arm_flagset_build();
 }
 #endif
-#endif
 
 static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st)
 {
@@ -6349,7 +6346,6 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 #endif
   s32 i;
 
-#ifndef JIT_COST_NO_SCANCOND
   if (!xlat_arm_flagset_ready)
     xlat_arm_flagset_build();
 #undef SCAN_SET_CONDITION
@@ -6357,7 +6353,6 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
   block_data[block_data_position].condition = (c) |                           \
     (((xlat_arm_flagset[(opcode >> 20) & 0xFF] >> ((opcode >> 4) & 0xF)) & 1) \
      << 5)
-#endif
 #ifndef JIT_COST_NO_SCANWIN
 #undef SCAN_VARS
 #undef SCAN_GATE_END
@@ -9267,14 +9262,8 @@ void flush_translation_cache_ram(void)
 #endif
 #ifdef JIT_CODE_DISCIPLINE
   /* The RAM zone's addresses are about to hold a new generation of code. */
-  /* SMC_REUSE_WHOLE_I (hardware A/B only): invalidate the whole I-cache on a
-   * virtual flush as well, exactly as often as without SMC_REUSE. */
-#ifdef SMC_REUSE_WHOLE_I
-  jit_code_owner_changed(JOWN_RAM_FLUSH);
-#else
   if (!smc_reuse_keep)
     jit_code_owner_changed(JOWN_RAM_FLUSH);
-#endif
 #endif
 #ifdef DRPROF_TWIN
   if (!smc_reuse_keep)
@@ -10816,14 +10805,12 @@ static __attribute__((noinline)) void smc_untag_span(u32 lo, u32 hi,
               continue;
             if (tagp[h] == CODE_TAG_BLOCK16)
               tagp[h] = 0;
-#ifndef SMC_UNTAG_MARKS_ONLY   /* experiment: interior marks only */
             else if (VALID_TAG(tagp[h])) {
               ramtag_type *te = get_ram_tag(tagp[h]);
               if (!SMC_RAM_LIVE_OFFSET(te, arm) && !SMC_RAM_LIVE_OFFSET(te, thumb) &&
                   smc_remember_retired_tag(base + (h << 1), tagp[h]))
                 tagp[h] = 0;
             }
-#endif
           }
         }
       }
@@ -12144,8 +12131,8 @@ extern void fe_evt(const char *fmt, ...) __attribute__((weak));
  * kept), so the incumbent wins ties.  That bias is deliberate: the first
  * window after a switch pays the switch itself (a retire probe starts on
  * code a flush just discarded), which the model cannot separate.  Measured:
- * with ties going to the flush instead (DMA_ADAPT_TIE_FLUSH, kept as a
- * sub-switch) Mario Golf left retire at f=1517 on a 7 % flush probe and
+ * with ties going to the flush instead (DMA_ADAPT_TIE_FLUSH, a sub-switch
+ * removed in health A-3) Mario Golf left retire at f=1517 on a 7 % flush probe and
  * never came back (-3.6 % vs -5.0 %); TGR gains nothing from it, because
  * with these prices its f=5766 flush probe is 18 % cheaper and reverts.
  * Mistake 1 then costs only the gap until that probe (DMA_ADAPT_GAP0
@@ -12209,14 +12196,7 @@ static void dma_adapt_tick(void)
   cost = (w - drt_x0) / frames;
 #endif
   if (drt_probing) {
-#if defined(DMA_ADAPT_V2) && defined(DMA_ADAPT_TIE_FLUSH)
-    /* the probe ran in dma_rt_mode; drt_ref is the other mode's window */
-    u32 rc = dma_rt_mode ? cost : drt_ref, fc = dma_rt_mode ? drt_ref : cost;
-    int want_retire = (unsigned long long)rc * 8 < (unsigned long long)fc * 7;
-    int keep = (u32)want_retire == dma_rt_mode;
-#else
     int keep = cost * 8 < drt_ref * 7;
-#endif
     dma_rt_probes++;
     if (keep) {
       dma_rt_switches++;
@@ -12980,7 +12960,7 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
  * TWIN.  qemu is coherent; a -DJITCOH_PSP_CACHE twin routes each line op to
  * the kernel-call stand-ins (one line each), so the coherency checker sees
  * exactly the lines this loop touches. */
-#if defined(JIT_COST) && !defined(JIT_COST_NO_PUBINL)
+#ifdef JIT_COST
 #define JIT_PUB_INLINE 1
 u32 jit_pub_inline = 1;
 #if defined(PSP)
