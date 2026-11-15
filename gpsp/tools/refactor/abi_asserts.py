@@ -31,7 +31,8 @@ How:
     core ABI.  It is listed in the header's PLATFORM block with that file's reason, not as
     UNCHECKED, so UNCHECKED holds only copies of core (or other tree) names.  The block's rows
     have the UNCHECKED rows' form, so `unbuilt` counts them as cited.  --with H adds
-    `#include "H"` to the check TU after common.h (a header the core chain does not reach).
+    `#include "H"` to the check TU after common.h (a header the core chain does not reach;
+    default DEFAULT_WITH, libretro-common's streams/file_stream.h for RFILE).
     The per-flavour maxima of the core copies (asserted + UNCHECKED) and of UNCHECKED live in
     abi_asserts.ratchet; flavours_gate.py ratchet checks the committed headers against them
     (they may only fall).
@@ -300,6 +301,9 @@ def load_known(path=KNOWN):
 
 
 PLATFORM = os.path.join(HERE, 'abi_asserts.platform')
+# The headers the check TU includes after common.h when --with is not given (C6-2): core_fe.h names
+# gamepak_file_large as `struct RFILE *`, and the frontend copies say RFILE, libretro-common's typedef.
+DEFAULT_WITH = ['streams/file_stream.h']
 
 
 def load_platform(path=PLATFORM):
@@ -948,12 +952,12 @@ def main():
     if o.cmd == 'gen':
         fl = o.flavour or os.path.basename(os.path.normpath(o.flavour_dir))
         return gen(o.flavour_dir, o.src, o.out, fl, o.main_c, o.core_h, o.test_c, o.known,
-                   'WRITE' if o.write_pin else o.pin, [tuple(x) for x in (o.frag or [])], o.with_h, o.platform)
+                   'WRITE' if o.write_pin else o.pin, [tuple(x) for x in (o.frag or [])], o.with_h or DEFAULT_WITH, o.platform)
     if o.cmd == 'all':
         rc = 0
         for fl in FLAVOURS:
             rc |= gen(os.path.join(o.run, fl), o.src, os.path.join(o.out, fl), fl,
-                      pin_path='WRITE' if o.write_pin else PIN, with_h=o.with_h)
+                      pin_path='WRITE' if o.write_pin else PIN, with_h=o.with_h or DEFAULT_WITH)
         return rc
     ap.print_help()
     return 2

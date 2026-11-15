@@ -367,9 +367,9 @@ extern u16 io_registers[512];
 extern u8 vram[1024 * 96];
 
 /* VRAM dirty map, see gba_memory.c.  One byte per 1 KiB page.  C stores,
- * DMA, translated stores, and bulk state restoration must all mark it. */
-#define VRAM_DIRTY_SHIFT 10
-#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+ * DMA, translated stores, and bulk state restoration must all mark it.
+ * VRAM_DIRTY_SHIFT (10) and VRAM_DIRTY_PAGES are in core_fe.h, which the
+ * frontend shares. */
 /* INVERTED: 1 = clean, 0 = dirty. Inverted so the DYNAREC can mark a page
  * with `sb $zero` -- it has no register holding a known-nonzero byte at the
  * point of the store, and manufacturing one would cost an extra instruction
