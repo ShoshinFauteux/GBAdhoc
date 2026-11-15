@@ -703,6 +703,13 @@ def suites(env: Env, baseline: Path | None):
         ("hot_budget", False, lambda: None,
          "python3 tools/tests/test_hot_budget.py"),
 
+        # The harness-ini key table the Lab validates staged keys against
+        # (tools/refactor/generated/harness_keys.tsv, tier C C2-0): it still
+        # matches the source, its key count is pinned, a default with a side
+        # effect is refused; ci_greps R7 (raw harness reads, warn mode).
+        ("harness_keys", False, lambda: None,
+         "python3 tools/tests/test_harness_keys.py"),
+
         # The residency rig's summarizer refuses runs it cannot vouch for:
         # wrong arm, foreign EBOOT, un-echoed or unknown keys, applied values
         # that differ from the staged ones, and a diverged or missing oracle.
