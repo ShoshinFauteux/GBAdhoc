@@ -1200,16 +1200,9 @@ u32 sched_fast = SCHED_FAST_DEFAULT;
 int spin_check(u32 *desc);
 extern u32 spin_skips, spin_vetoes, spin_loops;
 #endif
-#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
-/* Twin builds only: the game table's idle branch (mips_emit.h
- * generate_branch_no_cycle_update) names itself with IDLE_MARK in
- * reg[REG_SPIN_DESC] -- never a descriptor address -- so it can be counted
- * (IDLE_STATS) or checked like a spin claim (IDLE_VERIFY). */
-static u32 idle_fires;
-#endif
-#if defined(SPIN_SKIP_VERIFY) || defined(IDLE_VERIFY)
+#ifdef SPIN_SKIP_VERIFY
 #define SKIP_VERIFY 1
-/* SPIN_SKIP_VERIFY / IDLE_VERIFY (twin oracles): never skip.  Where a skip
+/* SPIN_SKIP_VERIFY (twin oracle): never skip.  Where a skip
  * would be taken -- a spin descriptor that passes spin_check, or the game
  * table's idle branch -- snapshot the machine.  Until the event the skip
  * would have jumped to, every pass through the same claim site must find the
@@ -1221,7 +1214,9 @@ static u32 idle_fires;
  * well; the table's branch may sit in a loop of several blocks (calls
  * included), so at the event its registers are compared only if the guest is
  * back at the claim site.  Any difference is a violation (printed, and
- * counted per claim site). */
+ * counted per claim site).  The idle-table kind (1) was IDLE_VERIFY's; that
+ * oracle is gone, and the kind plumbing stays so SPIN_SKIP_VERIFY reports
+ * exactly what it always did. */
 static u32 sv_active, sv_kind, sv_claims[2], sv_bad[2];
 static u32 sv_reg[17];
 static u8 sv_iw[0x8000], sv_ew[0x40000], sv_vr[sizeof(vram)];
@@ -1320,17 +1315,12 @@ static void skip_verify_event(void)
     skip_verify_bad(what);
 }
 #endif
-#if defined(DRPROF_TWIN) && \
-    (defined(SPIN_SKIP) || defined(IDLE_STATS) || defined(IDLE_VERIFY))
+#if defined(DRPROF_TWIN) && defined(SPIN_SKIP)
 static void spin_report(void)
 {
 #ifdef SPIN_SKIP
   fprintf(stderr, "SPIN_SKIP loops=%u skips=%u vetoes=%u\n",
           (unsigned)spin_loops, (unsigned)spin_skips, (unsigned)spin_vetoes);
-#endif
-#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
-  fprintf(stderr, "IDLE_TABLE pc=%08x fires=%u\n",
-          (unsigned)idle_loop_target_pc, (unsigned)idle_fires);
 #endif
 #ifdef SKIP_VERIFY
   {
@@ -1354,7 +1344,7 @@ static void spin_report(void)
 u32 function_cc update_gba(int remaining_cycles)
 {
   DRPH_SCOPE(DRPH_UPD);
-#if defined(SPIN_SKIP) || defined(IDLE_STATS) || defined(IDLE_VERIFY)
+#ifdef SPIN_SKIP
   /* A spin loop's back-edge (mips_emit.h generate_branch_spin) asks whether
    * it may end this slice.  Only with cycles left: a due event is processed
    * normally.  Vetoed loops return here with their cycles untouched. */
@@ -1365,20 +1355,6 @@ u32 function_cc update_gba(int remaining_cycles)
   {
     u32 sdw = reg[REG_SPIN_DESC];
     reg[REG_SPIN_DESC] = 0;
-#if defined(IDLE_STATS) || defined(IDLE_VERIFY)
-    if (sdw == IDLE_MARK)
-    {
-      idle_fires++;
-#ifdef IDLE_VERIFY
-      if (remaining_cycles >= 0)
-      {
-        skip_verify_pass(1);
-        return remaining_cycles;
-      }
-#endif
-    }
-    else
-#endif
     {
 #ifdef SPIN_SKIP
       u32 *sd = (u32 *)sdw;
@@ -1659,9 +1635,6 @@ u32 function_cc update_gba(int remaining_cycles)
           // We completed a frame, tell the dynarec to exit to the main thread
           frame_complete = 0x80000000;
           frame_counter++;
-#if defined(SMC_WORK_WINDOWS) && defined(DRPROF_TWIN)
-          { void smc_work_window_dump(void); smc_work_window_dump(); }
-#endif
 #ifdef STATE_HASH_TRACE
           {
             /* DIAGNOSTIC: per-frame hash of guest-visible state. */

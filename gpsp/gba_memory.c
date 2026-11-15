@@ -2325,8 +2325,9 @@ typedef struct
  *    Soul, Odyssey) have no branch at that address, so it never fires.
  *    Where it is a real wait (Emerald, Golf, Kirby, Golden Sun 2, FFTA)
  *    SPIN_SKIP now proves the same loop.  Advance Wars 1/2's is the
- *    soft-reset key test inside the main loop, not a wait: IDLE_VERIFY finds
- *    work done between 41% of its skips and the next event -- the table
+ *    soft-reset key test inside the main loop, not a wait: the IDLE_VERIFY
+ *    twin oracle (removed in health A-2) found work done between 41% of its
+ *    skips and the next event -- the table
  *    there trades game time for speed.
  *  - translation_gate_target_N seeds SMC gates.  The run-time rule
  *    (SMC_GATES) does NOT learn Mario Golf's two (~16% of its core
@@ -2537,12 +2538,6 @@ const dma_region_type dma_region_map[17] =
 #define dma_read_ext(type, tfsize)                                            \
   read_value = read_memory##tfsize(type##_ptr)                                \
 
-#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN) && defined(HAVE_DYNAREC)
-extern u32 census_dma_src, census_dma_dst;
-#define CENSUS_DMA_NOTE(d) if (!(alerts & CPU_ALERT_SMC)) { census_dma_src = src_ptr; census_dma_dst = (d); }
-#else
-#define CENSUS_DMA_NOTE(d)
-#endif
 /* DMA_SMC_RETIRE (cpu_threaded.c): lowest/highest tagged word a DMA wrote */
 #if defined(DMA_SMC_RETIRE) && defined(HAVE_DYNAREC)
 extern u32 dma_smc_lo[2], dma_smc_hi[2];
@@ -2566,7 +2561,6 @@ extern u32 dma_smc_lo[2], dma_smc_hi[2];
      * the CPU-store events (and swamp them: one code DMA is ~1900 writes). */\
     if (!(alerts & CPU_ALERT_SMC))                                            \
       smc_prof_note_iwram(type##_ptr);                                        \
-    CENSUS_DMA_NOTE(type##_ptr);                                              \
     DMA_SMC_NOTE(0, 0x03000000 + (type##_ptr & 0x7FFC));                      \
     alerts |= CPU_ALERT_SMC;                                                  \
   }                                                                           \
@@ -2596,7 +2590,6 @@ extern u32 dma_smc_lo[2], dma_smc_hi[2];
   if (address##tfsize(ewram, (type##_ptr & 0x3FFFF) + 0x40000)) {             \
     if (!(alerts & CPU_ALERT_SMC))     /* ADR-0030, once per transfer */      \
       smc_prof_note_ewram(type##_ptr);                                        \
-    CENSUS_DMA_NOTE(type##_ptr);                                              \
     DMA_SMC_NOTE(1, 0x02000000 + (type##_ptr & 0x3FFFC));                     \
     alerts |= CPU_ALERT_SMC;                                                  \
   }                                                                           \

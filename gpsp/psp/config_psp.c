@@ -293,16 +293,6 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    /* Phase 5h: default 2 — the field run has to come back with the video
     * split, and level 1 is one config edit away for the probe-cost A/B. */
    g_pcfg.core_phase = (int)fe_ini_get_int(cfg_path, "core_phase", 2);
-#ifdef CORE_PHASE_FORCE
-   /* Pin the probe level for a measurement build.  Editing core_phase in
-    * config.ini does not stick -- pcfg_save() rewrites the file from g_pcfg
-    * on exit -- so a hand edit is lost every run, which is why the OSD j%/f%
-    * fields have always read 0.  Applied HERE, at the config read, not later
-    * in main: subsystems branch on core_phase during init, and forcing it
-    * after they have already decided leaves them inconsistent (a late
-    * override built fine and then would not boot). */
-   g_pcfg.core_phase = CORE_PHASE_FORCE;
-#endif
    if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3)
       g_pcfg.core_phase = 2;
    /* ADR-0034 (amended): default **2 = VRAM**.  The hardware A/B is in and it

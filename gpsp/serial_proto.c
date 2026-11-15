@@ -25,13 +25,9 @@
 #include <assert.h>
 #include "common.h"
 
-// Debug print logic:
-//#define SERIALPROTO_DEBUG 1
-#ifdef SERIALPROTO_DEBUG
-  #define SRPT_DEBUG_LOG(...) printf(__VA_ARGS__)
-#else
-  #define SRPT_DEBUG_LOG(...)
-#endif
+// Debug print notes: upstream gpSP printed these under SERIALPROTO_DEBUG
+// (removed in health A-2); the calls stay as notes and compile to nothing.
+#define SRPT_DEBUG_LOG(...)
 
 #define MAX_QPACK             128    // 1 packet per frame (~2 second buffer, maybe too big)
 #define MAX_FPACK             512    // ~2 words per frame (can accumulate up to 256 words per frame)

@@ -623,27 +623,6 @@ const struct retro_netpacket_callback netpacket_iface = {
   GPSP_NETPACKET_VERSION,   /* core version char* */
 };
 
-
-#ifdef PERF_TEST
-
-extern struct retro_perf_callback perf_cb;
-
-#define RETRO_PERFORMANCE_INIT(X) \
-   static struct retro_perf_counter X = {#X}; \
-   do { \
-      if (!(X).registered) \
-         perf_cb.perf_register(&(X)); \
-   } while(0)
-
-#define RETRO_PERFORMANCE_START(X) perf_cb.perf_start(&(X))
-#define RETRO_PERFORMANCE_STOP(X) perf_cb.perf_stop(&(X))
-#else
-#define RETRO_PERFORMANCE_INIT(X)
-#define RETRO_PERFORMANCE_START(X)
-#define RETRO_PERFORMANCE_STOP(X)
-
-#endif
-
 void retro_get_system_info(struct retro_system_info* info)
 {
    info->library_name = GPSP_NAME;

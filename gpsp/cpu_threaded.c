@@ -6020,51 +6020,11 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
  * With this switch the flag is cleared at the top of the loop, for every
  * scanned instruction, so a block's code depends only on its own guest bytes
  * (a precondition of reusing a translation).  It CHANGES emulation timing
- * wherever the stale flag used to be 1.
- *
- * XLAT_PURE_PROBE (twin diagnostic, -D only, meaningless with XLAT_PURE):
- * logs each translation whose last slot carries such a stale 1 ("XPP" lines,
- * first XPP_LOG_MAX) and counts them, so a PURE-vs-base divergence can be
- * tied to the first impure translation that precedes it. */
+ * wherever the stale flag used to be 1. */
 #ifdef XLAT_PURE
 #define SCAN_CLEAR_SLOT() (block_data[block_data_position].update_cycles = 0)
 #else
 #define SCAN_CLEAR_SLOT() do { } while (0)
-#endif
-
-#if defined(XLAT_PURE_PROBE) && !defined(XLAT_PURE)
-#ifndef XPP_LOG_MAX
-#define XPP_LOG_MAX 4000
-#endif
-u32 xpp_count, xpp_logged;
-/* Before the branch-target pass: the slot the scan left uncleared, if it is
- * inside the block (an exit-point exit), and its flag. */
-#define XPP_SNAP(width)                                                       \
-  u32 xpp_idx = block_data_position;                                          \
-  u32 xpp_in = (block_start_pc + xpp_idx * (width)) < block_end_pc &&         \
-               xpp_idx < MAX_BLOCK_SIZE;                                      \
-  u32 xpp_stale = xpp_in ? block_data[xpp_idx].update_cycles : 0
-/* After it: impure when no branch of THIS block targets that slot. */
-#define XPP_CHECK(width, thumb)                                               \
-  if (xpp_stale) {                                                            \
-    u32 xpp_k, xpp_legit = 0;                                                 \
-    for (xpp_k = 0; xpp_k < block_exit_position; xpp_k++)                     \
-      if (block_exits[xpp_k].branch_target ==                                 \
-          block_start_pc + xpp_idx * (width)) xpp_legit = 1;                  \
-    if (!xpp_legit) {                                                         \
-      xpp_count++;                                                            \
-      if (xpp_logged < XPP_LOG_MAX) {                                         \
-        xpp_logged++;                                                         \
-        fprintf(stderr, "XPP f=%u pc=%08x end=%08x t=%u n=%u\n",              \
-                (unsigned)frame_counter, (unsigned)block_start_pc,            \
-                (unsigned)block_end_pc, (unsigned)(thumb),                    \
-                (unsigned)xpp_count);                                         \
-      }                                                                       \
-    }                                                                         \
-  }
-#else
-#define XPP_SNAP(width)
-#define XPP_CHECK(width, thumb)
 #endif
 
 #define scan_block(type, smc_write_op)                                        \
@@ -8595,7 +8555,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
     VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
-  XPP_SNAP(arm_instruction_width);
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -8620,7 +8579,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
 #endif
     }
   }
-  XPP_CHECK(arm_instruction_width, 0);
 
 #ifdef XLAT_SPLIT_DIAG
   u32 xsd_t1 = 0;
@@ -8978,7 +8936,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     VRAM_CODE_NOTE(block_start_pc, block_end_pc);
   }
 
-  XPP_SNAP(thumb_instruction_width);
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -8990,7 +8947,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        thumb_instruction_width].update_cycles = 1;
     }
   }
-  XPP_CHECK(thumb_instruction_width, 1);
 
   thumb_dead_flag_eliminate();
 
@@ -9604,209 +9560,15 @@ static void stale_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 }
 #endif
 
-
-#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
-/* XLAT_CENSUS (twin diagnosis only, 2026-10-27): what would a translation
- * reuse mechanism save?  Every RAM block translation is classified by the
- * FNV hash of the guest bytes it was translated from:
- *   same_last  the previous translation at this (pc, mode) had the same bytes
- *              (what a one-record-per-pc reuse such as SMC_REUSE can revive)
- *   seen_any   this (pc, mode, bytes) was translated at any time before
- *              (what a multi-version reuse / an overlay cache could revive)
- * and attributed to the cause of the last RAM invalidation before it
- * (0 boot/cache-full/other, 1 DMA alert, 2 CPU store trap).  DMA alerts are
- * counted by source region with the distinct (source, destination) keys. */
-#include <stdio.h>
-#include <stdlib.h>
-u32 census_cause, census_dma_src, census_dma_dst;
-static u32 *cen_last;               /* [mode][iwram 16K + ewram 128K halfwords] */
-static unsigned long long *cen_seen;  /* open addressing, 0 = empty */
-#define CEN_SEEN_BITS 21
-static u32 cen_x[3], cen_same[3], cen_any[3], cen_hw[3];
-static u32 cen_dma[17], cen_keys, cen_seen_full;
-static u32 cen_dkey[4096];
-static u32 cen_frames0 = ~0u;
-static void census_report(void)
-{
-  int c;
-  fprintf(stderr, "XC frames=%u keys=%u dma_rom=%u dma_ew=%u dma_iw=%u dma_oth=%u seen_full=%u\n",
-          (unsigned)(frame_counter - cen_frames0), (unsigned)cen_keys,
-          (unsigned)(cen_dma[8] + cen_dma[9] + cen_dma[10] + cen_dma[11] + cen_dma[12] + cen_dma[13]),
-          (unsigned)cen_dma[2], (unsigned)cen_dma[3], (unsigned)cen_dma[16],
-          (unsigned)cen_seen_full);
-  for (c = 0; c < 3; c++)
-    fprintf(stderr, "XC cause=%d xlat=%u halves=%u same_last=%u seen_any=%u\n", c,
-            (unsigned)cen_x[c], (unsigned)cen_hw[c], (unsigned)cen_same[c],
-            (unsigned)cen_any[c]);
-}
-static void census_init(void)
-{
-  cen_last = calloc(2 * (0x4000 + 0x20000), 4);
-  cen_seen = calloc(1u << CEN_SEEN_BITS, 8);
-  cen_frames0 = frame_counter;
-  atexit(census_report);
-}
-void census_dma_alert(void)
-{
-  u32 k, h;
-  if (!cen_last) census_init();
-  cen_dma[MIN(census_dma_src >> 24, 16)]++;
-  k = census_dma_src ^ (census_dma_dst * 0x9E3779B1u);
-  h = (k * 2654435761u) >> 20;
-  while (cen_dkey[h & 4095] && cen_dkey[h & 4095] != k) h++;
-  if (!cen_dkey[h & 4095] && cen_keys < 4000) { cen_dkey[h & 4095] = k; cen_keys++; }
-  census_cause = 1;
-}
-
-#ifdef XLAT_REUSE_SIM
-/* XLAT_REUSE_SIM (twin sizing only, 2026-10-27): what would a MULTI-VERSION
- * SMC_REUSE revive under the real cache lifetime?
- *
- * Model (SMC_REUSE's design, generalised): every RAM translation leaves its
- * body plus a record (40 B header + 16 B exits + the guest bytes) in a
- * virtual 384 KiB RAM cache; flushes and retirements are "virtual" (bodies
- * stay dormant); a translation whose (pc, mode, guest-byte hash) has a live
- * record is a REVIVE and costs no cache bytes.  When the virtual cache
- * overflows, it resets for real and every record dies.  The index keeps
- * RS_WAYS versions per (pc, mode) set, LRU.  Two flavours:
- *   A  capacity only (the ceiling of a well-built reuse);
- *   B  A + every record dropped when the gate count or smc_partial_active
- *      changes (bb8b7b2's environment rule).
- * Host bytes per block: the RAM translation pointer's advance between
- * consecutive RAM translations (running average when that is not usable).
- * Counted from frame 300 of the run (the profiles' window). */
-#define RS_SETS 16384
-#define RS_WAYS 4
-#ifndef RS_CAP
-#define RS_CAP  RAM_TRANSLATION_CACHE_SIZE   /* the real cache's size */
-#endif
-typedef struct { u32 key, hash, gen, lru; } rs_ent;
-static rs_ent *rs_tab[2];
-static u32 rs_v[2], rs_gen[2] = { 1, 1 }, rs_clock, rs_live[2], rs_live_bytes[2];
-static u32 rs_peak[2], rs_peak_bytes[2], rs_resets[2], rs_env_drops, rs_ngates, rs_pa;
-static u32 rs_blocks, rs_halves, rs_rev_b[2], rs_rev_h[2];
-static u8 *rs_last_ptr;
-static unsigned long long rs_bytes_sum, rs_halves_sum;
-static void rs_report(void)
-{
-  int f;
-  fprintf(stderr, "RS blocks=%u halves=%u env_drops=%u bytes_per_half=%.2f\n",
-          (unsigned)rs_blocks, (unsigned)rs_halves, (unsigned)rs_env_drops,
-          rs_halves_sum ? (double)rs_bytes_sum / rs_halves_sum : 0.0);
-  for (f = 0; f < 2; f++)
-    fprintf(stderr, "RS flavour=%c revive_blocks=%u revive_halves=%u resets=%u peak_records=%u peak_record_bytes=%u\n",
-            'A' + f, (unsigned)rs_rev_b[f], (unsigned)rs_rev_h[f], (unsigned)rs_resets[f],
-            (unsigned)rs_peak[f], (unsigned)rs_peak_bytes[f]);
-}
-static void rs_reset(int f)
-{
-  rs_gen[f]++;
-  rs_v[f] = 0;
-  rs_live[f] = rs_live_bytes[f] = 0;
-}
-static void rs_xlat(u32 pc, u32 thumb, u32 hsh, u32 halves, int counted)
-{
-  u32 key = pc | (thumb & 1), bytes, set, w, f;
-  if (!rs_tab[0]) {
-    rs_tab[0] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
-    rs_tab[1] = calloc(RS_SETS * RS_WAYS, sizeof(rs_ent));
-    atexit(rs_report);
-  }
-  /* host bytes of this block */
-  if (rs_last_ptr && ram_translation_ptr > rs_last_ptr &&
-      ram_translation_ptr - rs_last_ptr < 16384) {
-    rs_bytes_sum += ram_translation_ptr - rs_last_ptr;
-    rs_halves_sum += halves;
-  }
-  rs_last_ptr = ram_translation_ptr;
-  bytes = rs_halves_sum ? (u32)(halves * rs_bytes_sum / rs_halves_sum) : halves * 8;
-  /* flavour B's environment */
-  if (translation_gate_targets != rs_ngates || smc_partial_active != rs_pa) {
-    rs_ngates = translation_gate_targets;
-    rs_pa = smc_partial_active;
-    rs_env_drops++;
-    rs_reset(1);
-  }
-  if (counted) { rs_blocks++; rs_halves += halves; }
-  set = ((key * 2654435761u) >> 18) & (RS_SETS - 1);
-  rs_clock++;
-  for (f = 0; f < 2; f++) {
-    rs_ent *e = rs_tab[f] + set * RS_WAYS, *victim = e;
-    int hit = 0;
-    for (w = 0; w < RS_WAYS; w++) {
-      if (e[w].gen == rs_gen[f] && e[w].key == key && e[w].hash == hsh) {
-        e[w].lru = rs_clock; hit = 1; break;
-      }
-      if (e[w].gen != rs_gen[f] || e[w].lru < victim->lru)
-        if (victim->gen == rs_gen[f]) victim = &e[w];
-    }
-    if (hit) {
-      if (counted) { rs_rev_b[f]++; rs_rev_h[f] += halves; }
-      continue;
-    }
-    {
-      u32 rec = 56 + halves * 2 + 4;
-      if (rs_v[f] + bytes + rec > RS_CAP) {
-        rs_reset(f);
-        if (counted) rs_resets[f]++;
-        victim = e;
-      }
-      rs_v[f] += bytes + rec;
-      if (victim->gen != rs_gen[f]) rs_live[f]++;
-      rs_live_bytes[f] += rec;
-      victim->key = key; victim->hash = hsh; victim->gen = rs_gen[f]; victim->lru = rs_clock;
-      if (rs_live[f] > rs_peak[f]) rs_peak[f] = rs_live[f];
-      if (rs_live_bytes[f] > rs_peak_bytes[f]) rs_peak_bytes[f] = rs_live_bytes[f];
-    }
-  }
-}
-#endif
-static void census_xlat(u32 start_pc, u32 end_pc, u32 thumb)
-{
-  const u8 *mem; u32 off, lim, i, idx, hsh = 2166136261u, c = census_cause;
-  unsigned long long key; u32 slot;
-  if (!cen_last) census_init();
-  if ((start_pc >> 24) == 3) {
-    off = start_pc & 0x7FFF; lim = 0x8000; mem = iwram + 0x8000; idx = off >> 1;
-  } else if ((start_pc >> 24) == 2) {
-    off = start_pc & 0x3FFFF; lim = 0x40000; mem = ewram; idx = 0x4000 + (off >> 1);
-  } else
-    return;
-  if (end_pc <= start_pc) return;
-  if (off + (end_pc - start_pc) < lim) lim = off + (end_pc - start_pc);
-  for (i = off; i < lim; i++) hsh = (hsh ^ mem[i]) * 16777619u;
-  hsh ^= (lim - off) * 0x85EBCA6Bu;
-  if (!hsh) hsh = 1;
-#ifdef XLAT_REUSE_SIM
-  rs_xlat(start_pc, thumb, hsh, (lim - off) >> 1,
-          frame_counter - cen_frames0 >= 300);
-#endif
-  cen_x[c]++;
-  cen_hw[c] += (lim - off) >> 1;
-  idx += thumb ? (0x4000 + 0x20000) : 0;
-  if (cen_last[idx] == hsh) cen_same[c]++;
-  cen_last[idx] = hsh;
-  key = ((unsigned long long)(start_pc | (thumb & 1)) << 32) | hsh;
-  slot = (u32)((key * 0x9E3779B97F4A7C15ull) >> (64 - CEN_SEEN_BITS));
-  for (i = 0; i < 64; i++, slot = (slot + 1) & ((1u << CEN_SEEN_BITS) - 1)) {
-    if (cen_seen[slot] == key) { cen_any[c]++; return; }
-    if (!cen_seen[slot]) { cen_seen[slot] = key; return; }
-  }
-  cen_seen_full++;
-}
-#endif
 void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 {
   u16 *tagp;
   u32 off, base, size, len, canon_end;
-#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
-  census_xlat(start_pc, end_pc, thumb);
-#endif
-#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
+#ifdef DMA_SMC_ADAPT
   if (end_pc > start_pc && ((start_pc >> 24) == 2 || (start_pc >> 24) == 3)) {
     extern u32 smc_work_halves;
     smc_work_halves += (end_pc - start_pc) >> 1;
-#if defined(DMA_ADAPT_V2) || defined(SMC_WORK_WINDOWS)
+#ifdef DMA_ADAPT_V2
     { extern u32 smc_work_blocks; smc_work_blocks++; }
 #endif
   }
@@ -9814,17 +9576,6 @@ void ramtag_note_extent(u32 start_pc, u32 end_pc, u32 thumb)
 
 #ifdef STALE_CHECK
   stale_note_extent(start_pc, end_pc, thumb);
-#endif
-#ifdef SMC_EVTRACE_XLAT
-  /* DIAGNOSTIC (slow-titles): one line per RAM translation with a hash of
-   * its guest source -- how often identical code is translated again. */
-  if ((start_pc >> 24) == 3 && end_pc > start_pc && end_pc - start_pc <= 0x1000) {
-    u32 a, h = 2166136261u;
-    for (a = start_pc; a < end_pc; a += 2)
-      h = (h ^ *(u16 *)(iwram + 0x8000 + (a & 0x7FFE))) * 16777619u;
-    SMC_EVT("X %08x %08x %u %08x\n", (unsigned)start_pc, (unsigned)end_pc,
-            (unsigned)thumb, (unsigned)h);
-  }
 #endif
   if (!smc_partial_active)
     return;
@@ -10924,31 +10675,12 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
 #if defined(SMC_RETIRE_LIST) && !defined(SMC_RETIRE_LIST_N)
 #define SMC_RETIRE_LIST_N 64
 #endif
-#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
-/* Deterministic work counters (DMA_SMC_ADAPT's cost model; SMC_WORK_STATS
- * prints them on the twin): tag slots walked by selective retirement, and
- * guest halfwords scanned by RAM translations. */
+#ifdef DMA_SMC_ADAPT
+/* Deterministic work counters (DMA_SMC_ADAPT's cost model): tag slots walked
+ * by selective retirement, and guest halfwords scanned by RAM translations. */
 u32 smc_work_walk, smc_work_halves;
-#if defined(DMA_ADAPT_V2) || defined(SMC_WORK_WINDOWS)
+#ifdef DMA_ADAPT_V2
 u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
-#endif
-#if defined(SMC_WORK_WINDOWS) && defined(DRPROF_TWIN)
-/* DIAGNOSTIC (twin only, tgr-regression 2026-10-28): cumulative SMC work
- * counters once per emulated frame (host frame index = drprof's F index),
- * to stderr, so the cost model's prices can be fitted against the twin's
- * per-frame zone instruction counts. */
-void smc_work_window_dump(void)
-{
-  static u32 n;
-  n++;
-  fprintf(stderr, "WW %u %u %u %u %u %u %u %u %u %u %u %u\n", (unsigned)n,
-          (unsigned)frame_counter, (unsigned)smc_work_halves,
-          (unsigned)smc_work_walk, (unsigned)flush_ram_total,
-          (unsigned)flush_ram_partial, (unsigned)flush_ram_smc,
-          (unsigned)flush_ram_dma, (unsigned)jit_code_stats.publishes,
-          (unsigned)jit_code_stats.spans, (unsigned)jit_code_stats.lines,
-          (unsigned)smc_work_blocks);
-}
 #endif
 #define SMC_WORK_WALK(n) (smc_work_walk += (u32)(n))
 #else
@@ -11417,64 +11149,6 @@ static __attribute__((noinline)) int xs_blocks_current_ref(u32 word);
  * no extra instructions on the twin.  So every piece of the lever that sits
  * in a pinned function is ONE call to an out-of-line helper, and those
  * functions stay within their cpl1 link slack. */
-#ifdef SMC_DIFF_CENSUS
-/* DIAGNOSTIC (xlat-cost 2026-10-28, twin only): for every IWRAM trap that
- * RETIRES (no same-value skip), what changed between the word the
- * translations read (xs_val) and memory now.  Classes: ARM data-processing
- * immediate field only (bits 11:0), ARM load/store immediate offset only,
- * ARM branch offset only, ARM condition only, other ARM, Thumb halfword
- * (imm8 / imm5 / other), unrecorded. */
-static u32 sdc_n[16];
-static u32 sdc_words[0x2000];
-static void sdc_report(void)
-{
-  static const char *nm[16] = { "unrec", "same", "arm_dp_imm", "arm_ldst_off",
-    "arm_b_off", "arm_cond", "arm_other", "thumb_imm8", "thumb_imm5",
-    "thumb_other", "arm_dp_imm_S", "arm_ldst_other", "", "", "", "" };
-  u32 k, d = 0;
-  for (k = 0; k < 0x2000; k++) d += sdc_words[k] != 0;
-  fprintf(stderr, "SMC_DIFF");
-  for (k = 0; k < 12; k++) fprintf(stderr, " %s=%u", nm[k], (unsigned)sdc_n[k]);
-  fprintf(stderr, " distinct_words=%u\n", (unsigned)d);
-}
-static void sdc_note(u32 word)
-{
-  static int init;
-  u32 h, ow, nw, x;
-  if (!init) { init = 1; atexit(sdc_report); }
-  if ((word >> 24) != 3) return;
-  h = (word & 0x7FFC) >> 1;
-  if (sdc_words[h >> 1] < 0xFFFFFFFF) sdc_words[h >> 1]++;
-  if ((xs_ok[h >> 3] & (3u << (h & 7))) != (3u << (h & 7))) { sdc_n[0]++; return; }
-  ow = xs_val[h] | ((u32)xs_val[h + 1] << 16);
-  nw = *(u32 *)(iwram + 0x8000 + (h << 1));
-  x = ow ^ nw;
-  if (!x) { sdc_n[1]++; return; }
-  if (reg[REG_CPSR] & 0x20) {
-    /* Thumb: classify the changed halfword(s) by the low one that changed */
-    u32 hw = (x & 0xFFFF) ? (nw & 0xFFFF) : (nw >> 16);
-    u32 hx = (x & 0xFFFF) ? (x & 0xFFFF) : (x >> 16);
-    if (!(hx & ~0xFFu) && ((hw >> 13) == 1 || (hw >> 12) == 9 || (hw >> 12) == 13))
-      sdc_n[7]++;
-    else if (!(hx & ~0x07C0u)) sdc_n[8]++;
-    else sdc_n[9]++;
-    return;
-  }
-  if (!(x & 0x0FFFFFFF)) { sdc_n[5]++; return; }
-  switch ((nw >> 25) & 7) {
-    case 1:
-      if (!(x & ~0xFFFu)) { sdc_n[(nw & (1u << 20)) ? 10 : 2]++; return; }
-      break;
-    case 2:
-      if (!(x & ~0xFFFu)) { sdc_n[3]++; return; }
-      sdc_n[11]++; return;
-    case 5:
-      if (!(x & ~0xFFFFFFu)) { sdc_n[4]++; return; }
-      break;
-  }
-  sdc_n[6]++;
-}
-#endif
 static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 {
 #ifdef SMC_COST_VERIFY
@@ -11491,9 +11165,6 @@ static __attribute__((noinline)) u32 xs_trap_skip(u32 word)
 #endif
     return 0;
   }
-#ifdef SMC_DIFF_CENSUS
-  sdc_note(word);
-#endif
 #ifdef SMC_SAME_ADAPT
   /* A retirement follows (or, if that fails, a full flush: either way the
    * event a skip would have saved). */
@@ -12311,9 +11982,6 @@ u32 smc_stm_ahead_bytes;
 #endif
 void smc_trap_entry(void)
 {
-#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
-  { extern u32 census_cause; census_cause = 2; }
-#endif
 #ifdef SMC_STM_CHAIN
   smc_chain_pending = 0;           /* the chain (if any) ends in this trap */
 #endif
@@ -12470,7 +12138,7 @@ extern void fe_evt(const char *fmt, ...) __attribute__((weak));
  * full flushes*P_FULL + retired blocks*P_RETIRED, in twin instructions.
  * Prices: least squares over 546 paired 64-frame windows (flush-only vs
  * always-retire vs adaptive twins of TGR, Mario Golf, FIFA 07, Mario Tennis,
- * Hot Wheels; SMC_WORK_WINDOWS), R^2 0.974 against the twin's core
+ * Hot Wheels; per-frame twin work dumps), R^2 0.974 against the twin's core
  * instruction counts; per-title totals within ~15 %.  The decision rule is
  * unchanged (a probe must be 1/8 cheaper than the window before it to be
  * kept), so the incumbent wins ties.  That bias is deliberate: the first
@@ -12608,9 +12276,6 @@ static int dma_smc_retire(void)
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;
-#if defined(XLAT_CENSUS) && defined(DRPROF_TWIN)
-  { void census_dma_alert(void); census_dma_alert(); }
-#endif
 #ifdef DMA_SMC_RETIRE
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
   if (dma_smc_retire()) {
@@ -13823,7 +13488,7 @@ void jit_stats_report(FILE *f)
             (unsigned)smc_chain_same);
   }
 #endif
-#if defined(DMA_SMC_ADAPT) || defined(SMC_WORK_STATS)
+#ifdef DMA_SMC_ADAPT
   { extern u32 smc_work_walk, smc_work_halves;
     fprintf(f, "smcwork walk=%u halves=%u\n", (unsigned)smc_work_walk,
             (unsigned)smc_work_halves); }

@@ -19,12 +19,9 @@
 
 #include "common.h"
 
-// Debug print logic:
-#ifdef RFU_DEBUG
-  #define RFU_DEBUG_LOG(...) printf(__VA_ARGS__)
-#else
-  #define RFU_DEBUG_LOG(...)
-#endif
+// Debug print notes: upstream gpSP printed these under RFU_DEBUG (removed in
+// health A-2); the calls stay as notes and compile to nothing.
+#define RFU_DEBUG_LOG(...)
 
 // Config knobs, update with care.
 /* Depth of the per-direction packet queues between netpacket delivery and
