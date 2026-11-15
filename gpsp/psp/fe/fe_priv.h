@@ -104,7 +104,7 @@
 
 /* STALL WATCH breadcrumbs: the two stores into g_loop_iter / g_loop_phase
  * (fe/harness.a.inc.c), compiled out of a player build (see the comment there). */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+#if defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
 #define LOOP_TOP()      do { g_loop_iter++; g_loop_phase = 1; } while (0)
 #define LOOP_PHASE(p)   do { g_loop_phase = (p); } while (0)
@@ -115,7 +115,7 @@
 
 /* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
  * builds only; a player build compiles the counter out). */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 #define FFW_DRAWN() (g_ffw_drawn++)
 #define FFW_GATED() (g_ffw_gated++)
 #else
@@ -209,7 +209,7 @@
 /* The rig's identity, audit and watch lines are functions of fe/harness.f.inc.c in
  * a telemetry build; a player build calls these no-ops instead.  (g_log_input,
  * the #define beside them there, is a macro-global: it stays.) */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 /* (this arm: no macro; fe/harness.f.inc.c defines the functions) */
 #else
 #define rig_preserve_log()          do { } while (0)
@@ -223,7 +223,7 @@
 
 /* The boot timeline (docs/UI-OVERLAY.md §12.2.1): g_boot_mark[], g_boot_t0,
  * boot_mark() and boot_timeline_emit() of fe/harness.f.inc.c in a telemetry build. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 #define BOOT_MARKS 12
 #define BOOT_T0_SET() (g_boot_t0 = sceKernelGetSystemTimeWide())
 #else

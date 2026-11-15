@@ -1516,7 +1516,7 @@ int main(int argc, char *argv[])
       if (vid_prof_win > 0)
          vid_prof_frame((unsigned)vid_prof_win);
       vram_probe_frame();        /* no-op unless `vram_probe` is set */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
       {
          /* core_health on fe_host's 600-frame heartbeat cadence.  A
           * threshold, not `% 600`: 3x fast-forward advances 3 frames a loop. */

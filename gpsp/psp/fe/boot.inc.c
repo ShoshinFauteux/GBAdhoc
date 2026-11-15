@@ -116,7 +116,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Started from a game's XMB entry (XMB LAUNCH, at relaunch_eboot). */
    if (argc > 2 && argv[1] && argv[2] && strcmp(argv[1], LAUNCH_ARGV1) == 0)
       snprintf(g_launch_rom, sizeof(g_launch_rom), "%s", argv[2]);
-#if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
+#ifndef GPSP_PERF_RIG
    /* ADR-0067's harness path cannot exist in this build, and every one of
     * main()'s ~130 harness keys used to pay a Memory Stick negative lookup
     * to learn that, on a black screen, on every launch (boot timeline,
@@ -124,7 +124,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * they just no longer touch the stick.  file_exists() below still asks. */
    fe_ini_never(HARNESS_INI);
 #endif
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
    sceIoMkdir(LOG_DIR, 0777);
    rig_preserve_log();               /* before fe_evt_init truncates it */
    fe_evt_init(LOG_PATH, 0);
@@ -249,7 +249,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    have_harness = file_exists(HARNESS_INI);
    have_variant = file_exists(VARIANT_INI);
    rig_boot_identity(have_harness);
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
    /* The binary's identity on EVERY harness run, not only vid_prof ones: the
     * rig refuses to pair two consoles' logs unless their CRCs agree. */
    if (have_harness && !vp_build_crc)
@@ -453,7 +453,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * autopilot.ini -> .gpsp-harness.ini rename.  vhash=1 is shorthand for
     * "hash every frame"; vid_prof only produces a line if the core was
     * built with -DVIDEO_PROF=1. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
    /* Every vid_prof output is an fe_evt line, so a player build leaves the
     * key alone: a stray harness file on a player's card must not cost a
     * boot-time EBOOT read (and its 4 KiB borrow) ahead of the ROM load. */
@@ -1339,7 +1339,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    }
 
 #if defined(GPSP_PERF_RIG) && \
-    (!defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY))
+    defined(GPSP_KEEP_TELEMETRY)
    /* FREEZE RIG RECOVERY BOOT (harness `freeze_rig_recover = 1`; from
     * claude/freeze-rig 2d5b84d).  The PC collects and removes
     * log/frontend.log after every run that reaches the handoff, so finding

@@ -758,11 +758,7 @@ void ui_demo_shots(void) { g_ui_shots = 1; }
 /* Page background: black is the HARNESS identity, the slate gradient the
  * playable's.  Runtime-overridable (ui_theme_black=0) so the asset shoot can
  * photograph the playable look from the harness-channel build. */
-#ifdef GPSP_PLAYABLE
 static int g_theme_black = 0;
-#else
-static int g_theme_black = 1;
-#endif
 void ui_set_theme_black(int b) { if (b >= 0) g_theme_black = b ? 1 : 0; }
 
 void ui_demo_start(void)
@@ -9194,8 +9190,8 @@ static void ret_dump_frame(void)
  *     <frame> seq <last_frame> <name>  -> log/<name>_<frame>.bmp, every frame
  *     <frame> exit
  * Harness only (reached through the ini a release build cannot read). */
-#if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
-#define BSCRIPT_MAX 1      /* no ini, no script: keep the 6.9 KiB off the image */
+#ifndef GPSP_PERF_RIG
+#define BSCRIPT_MAX 1     /* no ini, no script: keep the 6.9 KiB off the image */
 #else
 #define BSCRIPT_MAX 192
 #endif

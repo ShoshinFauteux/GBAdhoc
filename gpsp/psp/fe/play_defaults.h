@@ -6,8 +6,8 @@
  * PLAY_ME_LATE_PRESENT (tools/tests/test_lowlat_policy.py, region lowlat:defaults).
  * So does PLAY_INPUT_FRESH's default: only #define lines move, so its
  * #ifndef PLAY_INPUT_FRESH guard would stay there, testing the macro after this
- * header had defined it.  Each #ifdef GPSP_PLAYABLE arm below is re-wrapped from
- * main_psp.c, where the #ifdef / #else / #endif lines stay with a pointer comment.
+ * header had defined it.  main_psp.c (fe/paths.inc.c) keeps a pointer comment
+ * where the definitions sat.
  */
 #ifndef PLAY_DEFAULTS_H
 #define PLAY_DEFAULTS_H
@@ -29,11 +29,12 @@
  *  * `PCFG_SESSION_FPS_DEF` is NOT touched.  The 29.97 default stands for the
  *    generic build; this build overrides its own copy of the setting.
  *
- * The four PLAY_* values are the FULLSPEED §28.2 ship stack.  In the harness
- * build every one of them is 0, which is that build's existing default, so
- * this block is provably behaviour-neutral there. */
-#ifdef GPSP_PLAYABLE
-#define PLAY_EMU_PRIO        0x2B
+ * The four PLAY_* values are the FULLSPEED §28.2 ship stack.  Every
+ * tools/build.sh profile is GPSP_PLAYABLE (harness, lab and soak add
+ * GPSP_PERF_RIG, which reads the harness ini again), and psp/Makefile refuses
+ * a build without it, so these are the only values: the bare-`make` flavour
+ * that set all of them to 0 is gone (code-health A-5). */
+#define PLAY_EMU_PRIO       0x2B
 #define PLAY_IO_PRIO         0x2C
 #define PLAY_POLL_MIN_CYCLES 34952
 #define PLAY_BOOST_US        0
@@ -94,28 +95,6 @@
  * tested. */
 #define PLAY_ME_BOOT         1
 #define PLAY_ME_VIDEO        1
-#else
-#define PLAY_EMU_PRIO        0
-#define PLAY_IO_PRIO         0
-#define PLAY_POLL_MIN_CYCLES 0
-#define PLAY_BOOST_US        0
-#define PLAY_IDLE_POLL       0          /* ADR-0068 off by default (harness) */
-/* ADR-0069: 0, not the historic 60.  The marker file's ONLY job was "let a
- * human ask for a screenshot mid-run", and L+R+SELECT now does that for free
- * off a pad we already read every frame — so the 12.4 ms stat is no longer
- * buying a feature, it is only buying the involuntary yield it always came
- * with.  `sched_yield_us` reconstructs that yield deliberately and at a size
- * we choose.  Set `dump_marker_poll = 60` to get the old mechanism back. */
-#define PLAY_DUMP_MARKER     0
-#define PLAY_RFU_FRAME_PACE  0          /* ADR-0075 off by default (harness) */
-#define PLAY_RFU_CUSHION     0          /* fixed-depth cushion PoC off (harness) */
-#define PLAY_RFU_SHED_KEEP   0          /* link shedding off (legacy harness) */
-#define PLAY_RFU_HOLD        0          /* historical discards (legacy harness) */
-#define PLAY_RFU_DISC_GRACE  0          /* ADR-0076 off by default (harness) */
-#define PLAY_EXIT_ASSIST     0          /* ADR-0079 off by default (harness) */
-#define PLAY_ME_BOOT         0          /* ME keys off by default (harness)  */
-#define PLAY_ME_VIDEO        0
-#endif
 
 /* The GBA link-cable session reserve taken at boot, in KiB (main_psp.c:
  * g_cable_reserve, and its comment says why and how it was sized).  Harness

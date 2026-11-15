@@ -345,7 +345,7 @@ SHOT_SMALL static int shot_write_bmp_rows(const char *path, const uint16_t *pix,
    return 0;
 }
 
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 /* critique-3 SF6: netdrv_arena_borrow/_return and netdrv_create share one
  * busy flag with no lock, so the screenshot's borrow is only safe on the
  * thread that starts sessions (net_start_np -> fe_np_start -> netdrv_create).
@@ -404,7 +404,7 @@ SHOT_SMALL static void player_screenshot(void)
        * this thread can reach anything that starts a session. */
       work_bytes = fe_png_work_bytes(w, h);
       work = (uint8_t *)netdrv_arena_borrow(work_bytes);
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
       {
          SceUID tid = sceKernelGetThreadId();
          if (g_np_start_tid >= 0 && tid != g_np_start_tid)

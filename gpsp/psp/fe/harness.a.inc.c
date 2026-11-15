@@ -9,7 +9,7 @@ volatile unsigned g_catch_selftest_addr = 0u;
  * loop was last in; two plain stores per region, compiled out of a player
  * build.  1 top, 2 core (retro_run, incl. the video/audio callbacks), 3 after
  * the core, 4 pacing/swap, 5 menu, 7 me_rend_frame (inside 2). */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+#if defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
 static volatile unsigned g_loop_iter;
 static volatile int      g_loop_phase;

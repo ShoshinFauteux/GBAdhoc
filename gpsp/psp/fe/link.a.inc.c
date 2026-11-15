@@ -71,7 +71,7 @@ static void gb_serial_yield(void)
    sceKernelDelayThread(1000);
 }
 
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 /* Same clock, video_prof's prototype (ADR-0034 renderer profile). */
 static unsigned vprof_clock_us(void)
 {
@@ -81,7 +81,7 @@ static unsigned vprof_clock_us(void)
 
 /* Same clock, fe_evt's prototype (ADR-0021 log-I/O accounting).  The ADR-0067
  * playable build never installs it, because there is no log to account for. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static unsigned long long evt_clock_us(void)
 {
    return (unsigned long long)sceKernelGetSystemTimeWide();

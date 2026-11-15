@@ -47,7 +47,9 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
 
 # CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_REUSE=0, cache
 # sizes -- anything touching the dynarec); EXTRA_DEFS reaches psp/Makefile
-# (GPSP_PLAYABLE, titles).  Threaded through BECAUSE the alternative bit twice:
+# (GPSP_PLAYABLE, which psp/Makefile requires since code-health A-5, so a bare
+# run of this script stops at the eboot step; tools/build.sh <profile> is the
+# recipe).  Threaded through BECAUSE the alternative bit twice:
 # `make` does not track CFLAGS, so a core built by hand with flags and then a
 # bare `make platform=psp1` here RE-COMPILES the objects whose .d files went
 # stale and silently drops the defines.  On 2026-09-08 that produced an

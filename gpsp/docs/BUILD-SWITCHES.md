@@ -322,7 +322,7 @@ ones marked "refused in a release".
 
 | define | meaning |
 |---|---|
-| `GPSP_PLAYABLE` | build a binary for someone to play (ADR-0067); every `tools/build.sh` profile sets it. Among other things it points the harness ini at a filename that cannot exist, so a leftover `.gpsp-harness.ini` on a player's card is inert. |
+| `GPSP_PLAYABLE` | build a binary for someone to play (ADR-0067); every `tools/build.sh` profile sets it, and `psp/Makefile` refuses a build (any goal but `clean`) whose `EXTRA_DEFS` lacks it: the bare-`make` flavour without it, whose arms only that never-shipped build compiled, was removed in code-health A-5. The host tests still compile `config_psp.c`, `fe_util.c`, `fe_evt.h` and `fe_autopilot.c` both with and without it, so those keep both arms. Among other things it points the harness ini at a filename that cannot exist, so a leftover `.gpsp-harness.ini` on a player's card is inert. |
 | `GPSP_KEEP_TELEMETRY` | keep the EVT logger. Without it `fe_evt()` compiles to `((void)0)` and does **not** evaluate its arguments (ADR-0067b). |
 | `GPSP_PERF_RIG` | the performance harness: autopilot plus perf windows. Requires `GPSP_KEEP_TELEMETRY`. |
 | `LAB_HARNESS` | the lab profile's Lab-driven harness (psp/lab_harness.c). |

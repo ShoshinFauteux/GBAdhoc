@@ -1,4 +1,4 @@
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+#if defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
 /* ---- STALL WATCH (harness `stall_watch_s`; 0 = off, the default) ---------
  *
@@ -557,7 +557,7 @@ static void smc_gates_reload_evt(void)
  * AFTER an `at=load` line prices the post-reload retranslation.  sp is
  * sampled one frame above the deepest translate_block, so stack_used reads
  * ~400 B LOW (DYNAREC). */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 extern u32 gamepak_reopens, gamepak_short_reads, badjump_contained;
 extern u32 xlat_depth_max __attribute__((weak));
 extern u32 xlat_sp_min __attribute__((weak));
@@ -781,7 +781,7 @@ static int psp_state_load(const char *path, const char *why)
  *   rig_fail_probe     the game state at the moment a script gave up
  *   rig_romload_evt    ROM page-ins from the stick per window (the PSP-1000)
  * Telemetry builds only; a release build compiles none of it. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static int g_log_input = 1;          /* harness `log_input`, 0 = no input lines */
 static char g_fail_probe[256];       /* harness `fail_probe`, read at boot */
 /* harness `watch_ram` (up to 4 x addr:size): every CHANGE of a watched value
@@ -1009,7 +1009,7 @@ static void rig_romload_evt(unsigned frames)
  * `gated` counts frames the draw gate decided not to draw, `resync` the draws
  * that found the gate a whole period behind (boundaries given up rather than
  * repaid as a burst: the gap between drawn fps and 30/60).  Telemetry only. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 #define FF_WIN_US 10000000u
 static void ff_win_note(void)
 {
@@ -1064,7 +1064,7 @@ static void ff_win_note(void)
  * without a bound document, plus document loads) had run and how many found
  * no file, at each milestone up to the browser; doc_hits = the lookups
  * answered from CONFIG.INI's in-memory copy instead.  One EVT line in telemetry builds; nothing in a release. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static struct { const char *tag; unsigned us, ini, miss; } g_boot_mark[BOOT_MARKS];
 static int g_boot_marks;
 static uint64_t g_boot_t0;

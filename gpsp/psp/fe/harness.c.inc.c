@@ -3,7 +3,7 @@
  * worst scanline-render frame — the phase maxima must never be summed
  * (ADR-0032), so `vid_worst` is what a max is allowed to be read against.
  * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
 static unsigned vp_core_mean;
 #endif
@@ -17,7 +17,7 @@ static unsigned vp_build_crc __attribute__((unused));   /* CRC32 of the running 
  * every `vid_prof` line and is emitted once at boot.  ~1.6 MiB of CRC, only
  * when profiling is enabled.  Telemetry builds only: its only outputs are
  * fe_evt lines and the rig's run identity. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static unsigned eboot_crc(void)
 {
    char path[160];
@@ -172,7 +172,7 @@ static void vram_probe_frame(void)
    }
 }
 
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static void vid_prof_frame(unsigned win)
 {
    unsigned cur[VP_COUNT];

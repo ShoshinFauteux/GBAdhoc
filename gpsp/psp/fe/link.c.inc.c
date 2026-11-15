@@ -60,7 +60,7 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       online_psp_iface(&tp);
    else
       adhoc_transport_iface(&tp);
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
    g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
 #endif
    memset(&npc, 0, sizeof(npc));

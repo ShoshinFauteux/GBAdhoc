@@ -148,11 +148,6 @@ void skip_policy_session_begin(void)
 const char *ff_chip_text(void)
 {
    static char buf[24];
-#ifndef GPSP_PLAYABLE
-   /* Harness builds only; a release build cannot reach bench mode. */
-   if (g_pcfg.bench_mode)
-      return ">> BENCH";
-#endif
    /* Plain ">>": the old "\xAF" fast-forward glyph is outside the Inter UI
     * atlas (bytes 32..132, psp/font_ui.h) and drew as '?'. */
    snprintf(buf, sizeof(buf), ">> %s", pcfg_ff_name());

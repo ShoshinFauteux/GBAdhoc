@@ -17,7 +17,7 @@ static int g_drew;            /* a GU frame was drawn since the last swap */
  * stage presented for the first time, or a CPU frame the core really drew.
  * Re-presents of an unchanged picture are not counted.  Telemetry builds
  * only; a player build compiles the counter out. */
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
 static unsigned g_ffw_drawn, g_ffw_gated;
 #else
 /* FFW_DRAWN(), FFW_GATED(): this arm's definitions are in fe/fe_priv.h */

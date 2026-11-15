@@ -36,13 +36,8 @@ static int g_perf_rig;
  * Caught by `psp-nm -u frontend-common/fe_evt.o` still listing `fopen` /
  * `fwrite` / `fflush` / `vsnprintf` — a BEHAVIOURAL check, which is the only
  * kind that would have caught it. */
-#ifdef GPSP_PLAYABLE
-/* PLAY_EMU_PRIO .. PLAY_ME_VIDEO (14 macros): this arm's definitions
- * are in fe/play_defaults.h. */
-#else
-/* PLAY_EMU_PRIO .. PLAY_ME_VIDEO (14 macros): this arm's definitions
- * are in fe/play_defaults.h. */
-#endif
+/* PLAY_EMU_PRIO .. PLAY_ME_VIDEO (14 macros): their definitions are in
+ * fe/play_defaults.h. */
 
 /* LOW LATENCY test builds (docs/LOW-LATENCY.md): the default of the
  * `input_fresh` pad re-peek, set by `INPUT_FRESH=1 tools/build.sh ...`
@@ -67,7 +62,6 @@ static void init_paths(int argc, char *argv[])
    snprintf(p_rom_dir, sizeof(p_rom_dir), "%s/roms", g_dir_base);
    snprintf(p_log_dir, sizeof(p_log_dir), "%s/log", g_dir_base);
    snprintf(p_log_path, sizeof(p_log_path), "%s/log/frontend.log", g_dir_base);
-#ifdef GPSP_PLAYABLE
    /* ADR-0067: a name no file can have, so every fe_ini_get*(HARNESS_INI,...)
     * in this binary returns its default and `have_harness` is 0.  Deliberately
     * not a compile-time removal of the call sites: one code path, two
@@ -75,9 +69,6 @@ static void init_paths(int argc, char *argv[])
 #ifndef GPSP_PERF_RIG
    snprintf(p_harness, sizeof(p_harness), "%s/.playable-no-harness/x",
             g_dir_base);
-#else
-   snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
-#endif
 #else
    snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
 #endif

@@ -441,7 +441,7 @@ static int sq_files_reopen(void *c, char *d, size_t n)
 {
    int evt = 1;
    (void)c;
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
    evt = fe_evt_reopen_append(LOG_PATH);
 #endif
    snprintf(d, n, "evt=%d sav=lazy rom=lazy", evt);

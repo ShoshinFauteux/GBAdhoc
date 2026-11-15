@@ -88,7 +88,7 @@ extern uint32_t gbab_reg[] GBAD_WEAK;
 #define GBAD_U(sym) (&(sym) ? (unsigned)(sym) : 0u)
 
 /* The partner's autopilot: fe_autopilot.o renamed (psp/Makefile), linked
- * into rig builds only (harness/lab, or no GPSP_PLAYABLE).  Weak: a player
+ * into rig builds only (GPSP_PERF_RIG: harness/lab/soak).  Weak: a player
  * build has no partner autopilot, and gba_dual_autopilot is then refused
  * (EVT gbadual_autopilot ... ok=0) instead of failing to link. */
 int  gbab_fe_autopilot_load(const char *path) GBAD_WEAK;

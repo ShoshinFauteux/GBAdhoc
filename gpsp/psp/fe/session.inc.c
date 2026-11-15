@@ -754,7 +754,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
       rtc_wall_publish(1);
       fe_evt("rtc_wall on=%d src=%s", g_rtc_wall_on,
              have_harness ? "harness" : "config");
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#ifdef GPSP_KEEP_TELEMETRY
       {
          ScePspDateTime dt;
          time_t libc_now = time(NULL);
@@ -1151,7 +1151,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_net_up"))) int se
 static __attribute__((noinline, section(".text.fe_cold.session_pre_loop"))) void session_pre_loop(
    void)
 {
-#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+#if defined(GPSP_KEEP_TELEMETRY) || \
     defined(GPSP_STALL_RECORDER)
    g_stall_s = (int)fe_ini_get_int(HARNESS_INI, "stall_watch_s", 0);
 #ifdef GPSP_PERF_RIG

@@ -124,10 +124,18 @@ else
 PIXFMT_DEF =
 endif
 
-# EXTRA_DEFS: build-variant defines from the command line, e.g. the ADR-0067
-# playable build (`make EXTRA_DEFS=-DGPSP_PLAYABLE PSP_EBOOT_TITLE="..."`).
-# Empty for every normal build, so it cannot change the harness binary.
+# EXTRA_DEFS: the profile's frontend defines, from tools/build.sh (FE_DEFS).
+# Every profile has -DGPSP_PLAYABLE (ADR-0067).  A bare `make` used to build a
+# seventh flavour no recipe made: every PLAY_* default 0 (the RFU input-eating
+# fix off), the harness ini read without GPSP_PERF_RIG, and an EBOOT that
+# looks like any other.  Its arms are gone (code-health A-5), so it is refused
+# here rather than half-built.  clean needs no flavour.
 EXTRA_DEFS ?=
+ifeq ($(findstring -DGPSP_PLAYABLE,$(EXTRA_DEFS)),)
+ifneq ($(filter-out clean clean-%,$(or $(MAKECMDGOALS),all)),)
+$(error EXTRA_DEFS has no -DGPSP_PLAYABLE: build with tools/build.sh <profile>; the bare-make flavour was removed (code-health A-5))
+endif
+endif
 # -g: line tables for tools/cachemap (docs/CACHE-MAP.md).  Debug info never
 # changes code, and the EBOOT is packed from the STRIPPED elf: the release
 # EBOOT is byte-identical with and without it (checked 2026-09-30).
@@ -328,9 +336,9 @@ OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
         ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o
 CFLAGS += -DGBA_LINK
 # The partner's autopilot (bench only; fe_gbadual.c weak-references it) in rig
-# builds only: GPSP_PERF_RIG, or the bare harness flavour (no GPSP_PLAYABLE).
-# A player build saves its 8.2 KB of text and 6.3 KB of data/bss.
-ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS))$(if $(findstring -DGPSP_PLAYABLE,$(EXTRA_DEFS)),,bare),)
+# builds only (GPSP_PERF_RIG).  A player build saves its 8.2 KB of text and
+# 6.3 KB of data/bss.
+ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS)),)
 OBJS += fe_autopilot_b.o
 else ifeq ($(LAYOUT_PIN),1)
 # ...and its 2,636 B in the pinned warm tail stay, as zeros
@@ -438,8 +446,9 @@ PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
 
 # `make harness` — the branded harness build.  The [HARNESS] title + dark
-# icon are the XMB half of the differentiation (the in-app half is the black
-# page background, ui_psp.c).  These lived only in hand-typed build commands
+# icon are the XMB half of the differentiation (the in-app half, the black
+# page background, is the harness ini's ui_theme_black = 1 now; ui_psp.c).
+# Needs EXTRA_DEFS with -DGPSP_PLAYABLE like every build (see EXTRA_DEFS).  These lived only in hand-typed build commands
 # for months and silently dropped out twice; now the target owns them.
 # AFTER the include, or it becomes the default goal and recurses forever —
 # the same trap as me/Makefile's video.o rule.  Third strike.
