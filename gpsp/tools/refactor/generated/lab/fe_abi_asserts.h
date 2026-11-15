@@ -200,34 +200,34 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_p
 typedef void ( * abi_fe_t_gpsp_rom_load_progress ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress *),
                "fe/link.d.inc.c:982 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:529 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
+/* fe/harness.f.inc.c:534 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets *),
-               "fe/harness.f.inc.c:529 translation_gate_targets: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:530 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
+               "fe/harness.f.inc.c:534 translation_gate_targets: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:535 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10721/18073 unsigned int[] vs cpu.h:248 u32[MAX_TRANSLATION_GATES] */
 typedef u32 abi_fe_t_translation_gate_target_pc [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_target_pc), abi_fe_t_translation_gate_target_pc *),
-               "fe/harness.f.inc.c:530 translation_gate_target_pc: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:561 (extern) */
+               "fe/harness.f.inc.c:535 translation_gate_target_pc: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:566 (extern) */
 typedef u32 abi_fe_t_gamepak_reopens;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens *),
-               "fe/harness.f.inc.c:561 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:561 (extern) */
+               "fe/harness.f.inc.c:566 gamepak_reopens: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:566 (extern) */
 typedef u32 abi_fe_t_gamepak_short_reads;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads *),
-               "fe/harness.f.inc.c:561 gamepak_short_reads: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:567 (extern) */
+               "fe/harness.f.inc.c:566 gamepak_short_reads: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:572 (extern) */
 typedef u32 abi_fe_t_dma_smc_flushes;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&dma_smc_flushes), abi_fe_t_dma_smc_flushes *),
-               "fe/harness.f.inc.c:567 dma_smc_flushes: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:989 (block) */
+               "fe/harness.f.inc.c:572 dma_smc_flushes: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:901 (block) */
 typedef u32 abi_fe_t_gamepak_reopens__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens__2 *),
-               "fe/harness.f.inc.c:989 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:989 (block) */
+               "fe/harness.f.inc.c:901 gamepak_reopens: the frontend copy differs from the core declaration");
+/* fe/harness.f.inc.c:901 (block) */
 typedef u32 abi_fe_t_gamepak_short_reads__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
-               "fe/harness.f.inc.c:989 gamepak_short_reads: the frontend copy differs from the core declaration");
+               "fe/harness.f.inc.c:901 gamepak_short_reads: the frontend copy differs from the core declaration");
 /* fe/rewind.inc.c:325 (block) */
 typedef u8 * abi_fe_t_gamepak_spare_pool3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3 *),
@@ -337,11 +337,11 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
- *   fe/harness.f.inc.c:561   badjump_contained                    not declared by the check TU's headers
- *   fe/harness.f.inc.c:562   xlat_depth_max                       not declared by the check TU's headers
- *   fe/harness.f.inc.c:563   xlat_sp_min                          not declared by the check TU's headers
- *   fe/harness.f.inc.c:564   xlat_depth_probe_reset               not declared by the check TU's headers
- *   fe/harness.f.inc.c:572   jit_code_stats                       not declared by the check TU's headers
+ *   fe/harness.f.inc.c:566   badjump_contained                    not declared by the check TU's headers
+ *   fe/harness.f.inc.c:567   xlat_depth_max                       not declared by the check TU's headers
+ *   fe/harness.f.inc.c:568   xlat_sp_min                          not declared by the check TU's headers
+ *   fe/harness.f.inc.c:569   xlat_depth_probe_reset               not declared by the check TU's headers
+ *   fe/harness.f.inc.c:577   jit_code_stats                       not declared by the check TU's headers
  *   fe/teardown.inc.c:314    gpsp_rtc_peek                        not declared by the check TU's headers
  *   fe/session.inc.c:394     sched_fast                           not declared by the check TU's headers
  *   fe/session.inc.c:395     irq_io_fast                          not declared by the check TU's headers

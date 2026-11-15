@@ -27,8 +27,9 @@
  *    SLEEP_HOLD_NAPS, the low-latency defaults, ...);
  *  - release no-op stubs like the rig_* ones below that P5's inventory did not list: they
  *    stay in the #else arm beside the telemetry function they replace (stall_watch_start/
- *    _stop, drprof_start/_stop/_window, DRPROF_PHASE, core_health_evt, ff_win_note,
- *    UISCRIPT_DUMP: fe/harness.f.inc.c);
+ *    _stop, drprof_start/_stop/_window, DRPROF_PHASE, ff_win_note, UISCRIPT_DUMP:
+ *    fe/harness.f.inc.c, which repeats them in the #else of its rig/telemetry wrap;
+ *    core_health_evt's is here since C2-2);
  *  - local helpers and constants defined beside their users.
  * So a macro that is not here is not necessarily a macro-global or one a test reads.
  *
@@ -125,6 +126,15 @@
 #define HARNESS_INT(key, def)      ((void)sizeof(key), (long)(def))
 #define HARNESS_STR(key, out, n)   ((void)sizeof(key), (void)(out), (void)(n), 0)
 #define HARNESS_PRESENT()          0
+#endif
+
+/* core_health_evt (tier C, C2-2): the soak line, defined in fe/harness.f.inc.c in a telemetry
+ * build.  The state-load and reset functions of fe/misc.c.inc.c call it ABOVE that definition,
+ * so a telemetry build declares it here; a player build gets the no-op. */
+#ifdef GPSP_KEEP_TELEMETRY
+static void core_health_evt(const char *at);
+#else
+#define core_health_evt(at) do { } while (0)
 #endif
 
 /* STALL WATCH breadcrumbs: the two stores into g_loop_iter / g_loop_phase

@@ -5,13 +5,13 @@
 key	getter	default	site	flavours
 adhoc_net_prio	fe_ini_get_int	0	psp/fe/boot.inc.c:955	release,lab,harness
 arm	fe_ini_get	-	psp/fe/boot.inc.c:530	lab,harness
-arm	fe_ini_get	-	psp/fe/harness.f.inc.c:860	lab,harness
+arm	fe_ini_get	-	psp/fe/harness.f.inc.c:772	lab,harness
 audio_oracle	fe_ini_get_int	0	psp/fe/boot.inc.c:689	release,lab,harness
 audio_ring_target	fe_ini_get_int	4096	psp/fe/boot.inc.c:905	release,lab,harness
 autoexit_frames	fe_ini_get_int	0	psp/fe/boot.inc.c:284	release,lab,harness
 blit_mode	fe_ini_get_int	g_pcfg . blit_mode	psp/fe/boot.inc.c:802	release,lab,harness
 boot_ballast_kb	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:96	lab,harness
-browser	fe_ini_get_int	0	psp/fe/boot.inc.c:281	release,lab,harness
+browser	fe_ini_get_int	0	psp/fe/boot.inc.c:279	release,lab,harness
 browser	fe_ini_get_int	0	psp/fe/session.inc.c:141	release,lab,harness
 browser	fe_ini_get_int	0	psp/fe/session.inc.c:234	release,lab,harness
 cable_reserve_kb	fe_ini_get_int	( long ) 2560u	psp/fe/session.inc.c:665	lab,harness
@@ -21,7 +21,7 @@ core_phase	fe_ini_get_int	g_pcfg . core_phase	psp/fe/boot.inc.c:718	release,lab,
 cpu_clock	fe_ini_get_int	- 1	psp/fe/boot.inc.c:176	release,lab,harness
 ctrl_cycle	fe_ini_get_int	0	psp/fe/boot.inc.c:1083	release,lab,harness
 disc_await	fe_ini_get_int	0	psp/fe/boot.inc.c:899	release,lab,harness
-drprof_us	fe_ini_get_int	1000	psp/fe/harness.f.inc.c:474	opt-in:DRPROF_HW
+drprof_us	fe_ini_get_int	1000	psp/fe/harness.f.inc.c:479	opt-in:DRPROF_HW
 dump_at	fe_ini_get_int	0	psp/fe/boot.inc.c:431	release,lab,harness
 dump_every	fe_ini_get_int	0	psp/fe/boot.inc.c:432	release,lab,harness
 dump_marker_poll	fe_ini_get_int	0	psp/fe/boot.inc.c:1123	release,lab,harness
@@ -29,7 +29,7 @@ emu_prio	fe_ini_get_int	0x2B	psp/fe/boot.inc.c:1021	release,lab,harness
 emu_prio_boost	fe_ini_get_int	0x29	psp/fe/boot.inc.c:1171	release,lab,harness
 emu_prio_boost_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1169	release,lab,harness
 exit_sim_at	fe_ini_get	-	psp/fe/boot.inc.c:651	lab,harness
-fail_probe	fe_ini_get	-	psp/fe/harness.f.inc.c:865	lab,harness
+fail_probe	fe_ini_get	-	psp/fe/harness.f.inc.c:777	lab,harness
 ff	fe_ini_get_int	0	psp/fe/boot.inc.c:440	release,lab,harness
 ff_flip_pace	fe_ini_get_int	g_ff_flip_pace	psp/fe/boot.inc.c:1067	release,lab,harness
 ff_preset	fe_ini_get	-	psp/fe/boot.inc.c:623	release,lab,harness
@@ -180,7 +180,7 @@ link_start_heard	fe_ini_get_int	1	psp/fe/boot.inc.c:359	lab,harness
 link_start_keepalive	fe_ini_get_int	1	psp/fe/boot.inc.c:357	lab,harness
 load_state	fe_ini_get_int	0	psp/fe/boot.inc.c:664	release,lab,harness
 loading_dump	fe_ini_get_int	0	psp/fe/boot.inc.c:600	release,lab,harness
-log_input	fe_ini_get_int	1	psp/fe/harness.f.inc.c:862	lab,harness
+log_input	fe_ini_get_int	1	psp/fe/harness.f.inc.c:774	lab,harness
 log_thread	fe_ini_get_int	g_pcfg . log_thread	psp/fe/boot.inc.c:729	release,lab,harness
 me_bench	fe_ini_get_int	0	psp/fe/session.inc.c:951	release,lab,harness
 me_boot	fe_ini_get_int	g_pcfg . me_boot	psp/fe/session.inc.c:949	release,lab,harness
@@ -304,7 +304,7 @@ rom_cap	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:254	lab,harness
 rom_vmem	fe_ini_get_int	0	psp/fe/rewind.inc.c:332	release,lab,harness
 rtc_wall	fe_ini_get_int	0	psp/fe/session.inc.c:754	release,lab,harness
 run_id	fe_ini_get	-	psp/fe/boot.inc.c:529	lab,harness
-run_id	fe_ini_get	-	psp/fe/harness.f.inc.c:859	lab,harness
+run_id	fe_ini_get	-	psp/fe/harness.f.inc.c:771	lab,harness
 sched_fast	fe_ini_get_int	& sched_fast ? ( long ) sched_fast : 0	psp/fe/session.inc.c:517	lab,harness
 sched_yield_frames	fe_ini_get_int	60	psp/fe/boot.inc.c:1135	release,lab,harness
 sched_yield_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1134	release,lab,harness
@@ -371,5 +371,5 @@ vhash_to	fe_ini_get_int	0	psp/fe/boot.inc.c:544	release,lab,harness
 vid_prof	fe_ini_get_int	0	psp/fe/boot.inc.c:460	lab,harness
 vram_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1117	release,lab,harness
 wake_shot	fe_ini_get_int	0	psp/fe/boot.inc.c:558	release,lab,harness
-watch_ram	fe_ini_get	-	psp/fe/harness.f.inc.c:868	lab,harness
+watch_ram	fe_ini_get	-	psp/fe/harness.f.inc.c:780	lab,harness
 xlat_scan_fast	fe_ini_get_int	- 1	psp/fe/inproc.a.inc.c:307	opt-in:JIT_COST_KEYS
