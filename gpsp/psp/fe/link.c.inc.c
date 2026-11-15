@@ -507,16 +507,14 @@ static void net_frame(void)
  * in variant.ini pins the role instead.  WLAN off => persistent overlay
  * warning, no retry storm. */
 
-/* rfu.c, ADR-0042.  The core has no header; the frontend/core interface here
- * is a set of loose externs, so this follows the existing convention. */
-extern void rfu_set_rx_cap(unsigned n);
-/* ADR-0075.  At most N non-empty host-packet deliveries to the game per
+/* rfu.c.  The core has no header; the frontend/core interface here is a set
+ * of loose externs, so this follows the existing convention.
+ * ADR-0075.  At most N non-empty host-packet deliveries to the game per
  * emulated frame, gated consistently in RECV_DATA and rfu_data_avail() so the
  * WAITEVENT re-poll spin that sank the rfu_rx_cap arms cannot occur.  1 equals
  * both the game's drain rate and the real radio's cadence.  0 = off. */
 extern void rfu_set_frame_pace(unsigned n);
 extern void rfu_set_pace_max_hold(unsigned n);
-extern void rfu_set_cushion(unsigned n);     /* fixed-depth jitter buffer PoC */
 extern void rfu_set_shed_keep(unsigned n);   /* link shedding, 0 = off */
 extern void rfu_set_hold(unsigned on);        /* hold, never discard */
 extern void rfu_set_supersede(unsigned on);   /* adapter one-buffer rule */

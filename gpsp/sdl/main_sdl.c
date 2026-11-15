@@ -369,7 +369,6 @@ extern void rfu_set_hold(unsigned on);
 extern void rfu_set_disc_grace(unsigned frames);
 extern void rfu_set_idle_poll_cycles(unsigned cycles);
 #include "../rfu_sched_api.h"
-extern void rfu_set_cushion(unsigned n);   /* fixed-depth jitter buffer PoC */
 
 /* ME renderer capture validation (--me-capture-test): run the production
  * capture path in mode 2 (capture AND render) so an ME_CAP_VALIDATE build of
@@ -438,9 +437,6 @@ static void rfu_trace_drain(void)
       }
       case 7:
          fe_evt("rfu_rxburst frame_max=%u prev=%u net=%s", a, b, net);
-         break;
-      case 8:
-         fe_evt("rfu_rxhold frame_max=%u delivered=%u", a, b);
          break;
       case 9:
          fe_evt("rfu_qhi side=%s depth=%u", a ? "host_rx" : "client_rx", b);
@@ -597,7 +593,6 @@ int main(int argc, char **argv)
    unsigned rfu_sched_arg = 0;   /* --rfu-sched D */
 #endif
    int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
-   int rfu_cush = -1;   /* -1 = leave default; >=0 = rfu_set_cushion(n)    */
    int exit_code = 0;
    const char *exit_reason = NULL;
    char save_buf[512];
@@ -812,8 +807,6 @@ int main(int argc, char **argv)
       }
       else if (!strcmp(argv[i], "--rfu-pace") && i + 1 < argc)
          rfu_pace = (int)strtol(argv[++i], NULL, 0);
-      else if (!strcmp(argv[i], "--rfu-cushion") && i + 1 < argc)
-         rfu_cush = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--me-capture-test"))
       {
          if (me_capture_frame_bytes > sizeof(g_mecap_test_buf))
@@ -973,11 +966,6 @@ int main(int argc, char **argv)
    {
       rfu_set_frame_pace((unsigned)rfu_pace);
       fe_evt("rfu_frame_pace n=%d", rfu_pace);
-   }
-   if (rfu_cush >= 0)
-   {
-      rfu_set_cushion((unsigned)rfu_cush);
-      fe_evt("rfu_cushion n=%d", rfu_cush);
    }
 
    if (script && fe_autopilot_load(script) != 0)

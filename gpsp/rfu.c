@@ -171,7 +171,7 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
 #define RFU_TR_CMD        5
 #define RFU_TR_LOGIN      6
 #define RFU_TR_RXBURST    7
-#define RFU_TR_RXHOLD     8
+/* 8 was RFU_TR_RXHOLD, the rfu_rx_cap hold count (code-health B-2); not reused. */
 #define RFU_TR_QHI        9   /* deepest the RFU rx queue has been (ADR-0044) */
 #define RFU_TR_ANSWER    10   /* ADR-0055: client answer latency */
 #define RFU_TR_ANSSTAT   11   /* ADR-0058: periodic answer-latency census */
@@ -638,24 +638,9 @@ void rfu_set_disc_grace(u32 frames) { rfu_disc_grace = frames; }
 
 static u32 rfu_client_queued(void);   /* defined after rfu_client */
 
-/* Per-frame delivery cap for a CLIENT adapter, and the number of non-empty
- * reads already handed to the game this frame.  See ADR-0042.
- *
- * Field measurement (2026-08-03, two sessions, healthy transport): the joining
- * console is served up to SIX RFU_CMD_RECV_DATA in one emulated frame, where
- * the PPSSPP rig peaks at two or three and never reproduces the crash.  The
- * game drains its own 32-slot recvQueue once per frame and `full` is a LATCH
- * straight to RFU_STATUS_FATAL_ERROR -- the unrecoverable "turn the power off"
- * screen, which is exactly what the field sees and the rig does not.
- *
- * Holding a packet back costs it one frame of latency and nothing else: our
- * queue is RFU_PKT_QUEUE deep, which ADR-0011 widened 4 -> 16 precisely so
- * bunched arrivals would stop being dropped.  We report "no data this poll",
- * which is a reading the game already handles on every idle frame.
- *
- * 0 = unlimited = the historical behaviour, and remains the default.  Nothing
- * changes for anyone who does not set it. */
-static u32 rfu_rx_cap;
+/* Non-empty reads already handed to the game this frame (a CLIENT adapter).
+ * ADR-0042's per-frame cap on this count (`rfu_rx_cap`) was falsified and
+ * removed (code-health B-2); the frame-pace gate below spends this budget. */
 static u32 rfu_rx_delivered;
 
 /* ADR-0075: FRAME-BOUNDARY DELIVERY ADMISSION -- the fix the clumping data
@@ -713,9 +698,9 @@ static u32 rfu_frame_pace;
  * the link died, while the host logged rfu_noresp climbing 1..10, retx_age to
  * 803 ms, then peer_disconnected.
  *
- * The identical hazard is spelled out on rfu_cushion ("MUST stay well under
- * RFU_DEF_TIMEOUT (32) so the deliberate hold never itself trips the
- * timeout"), where a fixed depth makes it true by construction.  The pace gate
+ * The identical hazard was spelled out on the (removed) rfu_cushion ("MUST stay
+ * well under RFU_DEF_TIMEOUT (32) so the deliberate hold never itself trips the
+ * timeout"), where a fixed depth made it true by construction.  The pace gate
  * holds a QUEUE, so the bound has to be stated.
  *
  * There is no way to consume faster -- the ask rate is the game's business --
@@ -826,23 +811,8 @@ void rfu_set_frame_pace(u32 n)
   rfu_frame_pace = n;
 }
 
-/* CUSHION (fixed-depth jitter buffer, proof-of-concept).  Hold each host
- * packet for `rfu_cushion` emulated frames after it arrives before the game
- * may consume it.  In steady state this keeps ~rfu_cushion frames of host data
- * buffered ahead, so a network stall must outlast the whole reserve before the
- * client underruns and its WAITEVENT starves toward RESP_TIMEO -- the stall
- * half that frame_pace (the clump half) does not address.  MUST stay well under
- * RFU_DEF_TIMEOUT (32) so the deliberate hold never itself trips the timeout.
- * Gated IDENTICALLY in RECV_DATA and rfu_data_avail (the ADR-0075 discipline).
- * 0 = off = historical behaviour. */
-static u32 rfu_cushion;
-void rfu_set_cushion(u32 n)
-{
-  rfu_cushion = n;
-}
-/* Withheld polls this frame, and the highest such count seen (RFU_TR_RXHOLD).
- * Same reporting discipline as RFU_TR_RXBURST: a new high-water only. */
-static u32 rfu_rx_held_this_frame, rfu_rx_held_hi;
+/* (The fixed-depth cushion PoC, `rfu_cushion`, never validated on hardware and
+ * always 0, was removed in code-health B-2.) */
 /* ADR-0055: how long a host packet WAITED in our queue before the game
  * consumed it -- the client's answer latency.  The rfu_rx_cap experiment
  * showed the RFU protocol punishes a late reply far harder than it punishes
@@ -1063,11 +1033,6 @@ void rfu_set_timeout_scale(u32 to_x100, u32 rtx_x100)
   rfu_rtx_scale_x100 = rtx_x100;
 }
 
-void rfu_set_rx_cap(u32 n)
-{
-  rfu_rx_cap = n;
-}
-
 static struct {
   u32 buf[23];
   u8 blen;
@@ -1128,7 +1093,6 @@ static struct {
     u8  st;          // carries a sender stamp (map valid)
     u32 map;         // mapped arrival frame (see rfu_map_t)
     u32 t_us;        // ADR-0055: when this packet ENTERED the queue.
-    u32 arr_frame;   // CUSHION: emulated frame this packet arrived (for aging).
     u8 hdata[128];   // Data received from the host (accumulated).
   } pkts[RFU_PKT_QUEUE];
 } rfu_client;
@@ -1260,8 +1224,8 @@ typedef struct {
   u16 len;
   u16 devid;         /* the link the packet belongs to, checked at refill */
   u16 peer;
-  u32 t_us, arr_frame;
-  u8  st;            /* stamped: `map` is valid */
+  u32 t_us;
+  u8  st;           /* stamped: `map` is valid */
   u32 map;
   u8  data[128];
 } rfu_held_t;
@@ -1314,7 +1278,6 @@ static int rfu_hold_put(u32 side, u32 cl, const u8 *p, u32 len,
     e->peer = rfu_host.clients[cl].client_id;
   }
   e->t_us = rfu_frame_us;
-  e->arr_frame = rfu_frame_no;
   e->st = (u8)st;
   e->map = map;
   memcpy(e->data, p, len);
@@ -1347,7 +1310,6 @@ static void rfu_hold_refill(void)
           memcpy(rfu_client.pkts[k].hdata, e->data, e->len);
           rfu_client.pkts[k].hblen = e->len;
           rfu_client.pkts[k].t_us = e->t_us;
-          rfu_client.pkts[k].arr_frame = e->arr_frame;
           rfu_client.pkts[k].st = e->st;
           rfu_client.pkts[k].map = e->map;
           continue;
@@ -2268,30 +2230,6 @@ static s32 rfu_process_command_inner(void) {
         return cnt;
       }
 
-      /* Delivery pacing (ADR-0042).  Once this frame's quota of real packets
-       * is spent, answer "nothing yet" and leave the packet queued -- do NOT
-       * fall through to the memmove below, or holding back would discard. */
-      if (rfu_rx_cap != 0 && dlen != 0 && rfu_rx_delivered >= rfu_rx_cap) {
-        /* Counted here, reported at most once per frame from
-         * rfu_frame_update().  Tracing every hold is not an option: the game
-         * re-polls a withheld packet for the rest of the frame, so a cap of 1
-         * produced 610k events in one session and the logging alone broke the
-         * run it was supposed to measure. */
-        rfu_rx_held_this_frame++;
-        rfu_buf[cnt++] = 0;
-        return cnt;
-      }
-
-      /* CUSHION: hold the oldest packet until it has aged rfu_cushion frames,
-       * so the game runs on a buffered-ahead reserve.  Mirrored EXACTLY in
-       * rfu_data_avail() -- an unaged packet must be invisible in BOTH or the
-       * WAITEVENT re-poll spin returns (ADR-0075). */
-      if (dlen != 0 && rfu_cushion &&
-          (u32)(rfu_frame_no - rfu_client.pkts[0].arr_frame) < rfu_cushion) {
-        rfu_buf[cnt++] = 0;
-        return cnt;
-      }
-
       RFU_DEBUG_LOG("Client reads data from host buffer (%d bytes)\n", dlen);
       rfu_buf[cnt++] = dlen;   // Header contains byte count.
       for (j = 0; j < (dlen + 3) / 4; j++)
@@ -2409,11 +2347,6 @@ static bool rfu_data_avail() {
         rfu_pace_held = 1;
         return false;
       }
-      /* CUSHION mirror (see RECV_DATA): a not-yet-aged packet is invisible so
-       * the wait stays a wait rather than answering RESP_DATA inconsistently. */
-      if (rfu_cushion &&
-          (u32)(rfu_frame_no - rfu_client.pkts[0].arr_frame) < rfu_cushion)
-        return false;
       return true;
     }
   }
@@ -2865,13 +2798,8 @@ void rfu_frame_update() {
   rfu_frame_no++;          /* ADR-0043 flight-recorder timebase */
   rfu_frame_us = gpsp_rfu_now_us();   /* ADR-0045: ONE clock read per frame */
 
-  /* ADR-0042: report the withheld-poll high-water, then refill the quota. */
-  if (rfu_rx_held_this_frame > rfu_rx_held_hi) {
-    gpsp_rfu_trace_hook(RFU_TR_RXHOLD, rfu_rx_held_this_frame, rfu_rx_delivered);
-    rfu_rx_held_hi = rfu_rx_held_this_frame;
-  }
-  rfu_rx_held_this_frame = 0;
-  rfu_rx_delivered       = 0;
+  /* Refill the per-frame delivery budget (rfu_frame_pace). */
+  rfu_rx_delivered = 0;
 
   /* ADR-0055: report a new answer-latency high-water, with the running mean
    * alongside it so a single outlier cannot be mistaken for a trend. */
@@ -3275,7 +3203,6 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
               rfu_client.pkts[i].st = (u8)st;
               rfu_client.pkts[i].map = map;
               rfu_client.pkts[i].t_us  = rfu_frame_us;   /* ADR-0055 */
-              rfu_client.pkts[i].arr_frame = rfu_frame_no; /* CUSHION aging */
               RFU_DEBUG_LOG("Recv host packet (%d bytes) Q[#%d]\n", blen, i);
               rfu_q_note(0, i + 1);
               return;

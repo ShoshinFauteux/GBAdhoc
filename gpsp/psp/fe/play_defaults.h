@@ -63,12 +63,6 @@
  * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
  * players: this is the input-eating fix. */
 #define PLAY_RFU_FRAME_PACE  1
-/* Fixed-depth cushion (jitter buffer) PoC: hold each host packet N frames so a
- * stall must drain the whole reserve before the client underruns.  OFF by
- * default — UNVALIDATED on hardware; the desktop cannot exercise it (injected
- * jitter starves rather than backlogs).  Set rfu_cushion=N in the harness ini
- * to A/B it.  Keep N well under RFU_DEF_TIMEOUT (32). */
-#define PLAY_RFU_CUSHION     0
 /* Link shedding: keep at most 2 frames of standing depth in each RFU receive
  * queue by removing content-free packets (rfu.c).  ON for players: this bounds
  * the round-trip latency that otherwise ratchets up for a whole session. */

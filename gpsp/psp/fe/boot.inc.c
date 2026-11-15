@@ -809,16 +809,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    g_pcfg.gu_defer = (int)fe_ini_get_int(HARNESS_INI, "gu_defer",
                                          g_pcfg.gu_defer);
    g_pcfg.gu_defer = g_pcfg.gu_defer ? 1 : 0;
-   /* ADR-0042: per-frame RFU delivery cap, harness-overridable so the trade
-    * test can run both the capped and uncapped path. */
-   g_pcfg.rfu_rx_cap = (int)fe_ini_get_int(HARNESS_INI, "rfu_rx_cap",
-                                           g_pcfg.rfu_rx_cap);
-   if (g_pcfg.rfu_rx_cap < 0)  g_pcfg.rfu_rx_cap = 0;
-   if (g_pcfg.rfu_rx_cap > 16) g_pcfg.rfu_rx_cap = 16;
-   rfu_set_rx_cap((unsigned)g_pcfg.rfu_rx_cap);
-   fe_evt("rfu_rx_cap n=%d", g_pcfg.rfu_rx_cap);
    /* ADR-0075: frame-boundary delivery admission.  The successor to the
-    * falsified rfu_rx_cap: same "at most N real deliveries per frame" idea,
+    * falsified rfu_rx_cap (removed, code-health B-2): same "at most N real deliveries per frame" idea,
     * but the eligibility gate is applied identically in rfu_data_avail(), so
     * the WAITEVENT spin that made every capped arm self-blinding cannot
     * occur.  1 = match the game's drain rate (the arm to run first). */
@@ -899,15 +891,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_mode", 0);
       rfu_set_fault_mode(fc > 0 ? (unsigned)fc : 0);
       fe_evt("rfu_fault_mode n=%d (1 = SETMONDATA value byte)", fc > 0 ? fc : 0);
-   }
-   /* Fixed-depth cushion (jitter buffer) PoC — see PLAY_RFU_CUSHION. */
-   {
-      int cu = (int)fe_ini_get_int(HARNESS_INI, "rfu_cushion",
-                                   PLAY_RFU_CUSHION);
-      if (cu < 0)  cu = 0;
-      if (cu > 24) cu = 24;
-      rfu_set_cushion((unsigned)cu);
-      fe_evt("rfu_cushion n=%d", cu);
    }
    /* Candidate mid-run-Disconnect fix (default OFF): await the DISCONNECTED
     * state before term/unload.  Run the breadcrumb-only build FIRST to confirm

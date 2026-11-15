@@ -4,7 +4,7 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 65 declarations, 6 constants; unchecked: 57 (listed at the end). */
+ * checked: 65 declarations, 6 constants; unchecked: 55 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
@@ -196,10 +196,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ewram), abi_fe_t_ewram *
 typedef unsigned short abi_fe_t_palette_ram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_palette_ram *),
                "fe/misc.a.inc.c:643 palette_ram: the frontend copy differs from the core declaration");
-/* fe/link.d.inc.c:988 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
+/* fe/link.d.inc.c:982 (extern) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c, every copy, by anchor: the block-scope one before `gpsp_rom_load_progress = rom_loading_progress;` in main, and (7ffe4236 on) the file-scope one before `static void (*g_reload_prev_progress)` (gba_reload_note's): void (*)(unsigned, unsigned) vs gba_memory.h `extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);` (u32, u32) */
 typedef void ( * abi_fe_t_gpsp_rom_load_progress ) ( u32 , u32 );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rom_load_progress), abi_fe_t_gpsp_rom_load_progress *),
-               "fe/link.d.inc.c:988 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
+               "fe/link.d.inc.c:982 gpsp_rom_load_progress: the frontend copy differs from the core declaration");
 /* fe/harness.f.inc.c:529 (block) KNOWN, normalised uint (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:10720/18072 unsigned int vs cpu.h:247 u32 */
 typedef u32 abi_fe_t_translation_gate_targets;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&translation_gate_targets), abi_fe_t_translation_gate_targets *),
@@ -248,10 +248,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3_byte
 typedef u8 * abi_fe_t_gamepak_spare_pool3__3;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_spare_pool3), abi_fe_t_gamepak_spare_pool3__3 *),
                "fe/rewind.inc.c:440 gamepak_spare_pool3: the frontend copy differs from the core declaration");
-/* fe/boot.inc.c:1126 (block) */
+/* fe/boot.inc.c:1109 (block) */
 typedef int abi_fe_t_me_log_vram_always;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&me_log_vram_always), abi_fe_t_me_log_vram_always *),
-               "fe/boot.inc.c:1126 me_log_vram_always: the frontend copy differs from the core declaration");
+               "fe/boot.inc.c:1109 me_log_vram_always: the frontend copy differs from the core declaration");
 /* fe/session.inc.c:61 (block) */
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
@@ -296,7 +296,7 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (57): every copy of this flavour's -E that is NOT asserted: its name is not declared
+/* UNCHECKED (55): every copy of this flavour's -E that is NOT asserted: its name is not declared
  * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
  * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
  * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
@@ -321,26 +321,24 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   fe/power.d.inc.c:255     gamepak_file_large                   frontend type not visible in the core TU: unknown type name 'RFILE'; did you mean 'FILE'?
  *   fe/power.d.inc.c:336     scePowerIsRequest                    not declared by the check TU's headers
  *   fe/merend.d.inc.c:684    gamepak_buffers                      not declared by the check TU's headers
- *   fe/link.c.inc.c:512      rfu_set_rx_cap                       not declared by the check TU's headers
- *   fe/link.c.inc.c:517      rfu_set_frame_pace                   not declared by the check TU's headers
- *   fe/link.c.inc.c:518      rfu_set_pace_max_hold                not declared by the check TU's headers
- *   fe/link.c.inc.c:519      rfu_set_cushion                      not declared by the check TU's headers
- *   fe/link.c.inc.c:520      rfu_set_shed_keep                    not declared by the check TU's headers
- *   fe/link.c.inc.c:521      rfu_set_hold                         not declared by the check TU's headers
- *   fe/link.c.inc.c:522      rfu_set_supersede                    not declared by the check TU's headers
- *   fe/link.c.inc.c:523      rfu_set_fault_corrupt                not declared by the check TU's headers
- *   fe/link.c.inc.c:524      rfu_set_fault_span                   not declared by the check TU's headers
- *   fe/link.c.inc.c:525      rfu_set_fault_mode                   not declared by the check TU's headers
- *   fe/link.c.inc.c:526      adhoc_set_disc_await                 not declared by the check TU's headers
- *   fe/link.c.inc.c:530      rfu_set_timeout_scale                not declared by the check TU's headers
- *   fe/link.c.inc.c:533      rfu_set_poll_min_cycles              not declared by the check TU's headers
- *   fe/link.c.inc.c:537      rfu_set_idle_poll_cycles             not declared by the check TU's headers
- *   fe/link.c.inc.c:541      rfu_set_disc_defer                   not declared by the check TU's headers
- *   fe/link.c.inc.c:548      rfu_set_disc_grace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:516      rfu_set_frame_pace                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:517      rfu_set_pace_max_hold                not declared by the check TU's headers
+ *   fe/link.c.inc.c:518      rfu_set_shed_keep                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:519      rfu_set_hold                         not declared by the check TU's headers
+ *   fe/link.c.inc.c:520      rfu_set_supersede                    not declared by the check TU's headers
+ *   fe/link.c.inc.c:521      rfu_set_fault_corrupt                not declared by the check TU's headers
+ *   fe/link.c.inc.c:522      rfu_set_fault_span                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:523      rfu_set_fault_mode                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:524      adhoc_set_disc_await                 not declared by the check TU's headers
+ *   fe/link.c.inc.c:528      rfu_set_timeout_scale                not declared by the check TU's headers
+ *   fe/link.c.inc.c:531      rfu_set_poll_min_cycles              not declared by the check TU's headers
+ *   fe/link.c.inc.c:535      rfu_set_idle_poll_cycles             not declared by the check TU's headers
+ *   fe/link.c.inc.c:539      rfu_set_disc_defer                   not declared by the check TU's headers
+ *   fe/link.c.inc.c:546      rfu_set_disc_grace                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
  *   fe/inproc.b.inc.c:40     badjump_recoveries                   not declared by the check TU's headers
  *   fe/inproc.b.inc.c:42     smc_fallback_stats                   not declared by the check TU's headers
- *   fe/link.d.inc.c:1050     heap_trace_mark0                     not declared by the check TU's headers
+ *   fe/link.d.inc.c:1044     heap_trace_mark0                     not declared by the check TU's headers
  *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
  *   fe/harness.f.inc.c:561   badjump_contained                    not declared by the check TU's headers
  *   fe/harness.f.inc.c:562   xlat_depth_max                       not declared by the check TU's headers

@@ -373,13 +373,7 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_rxburst frame_max=%u prev=%u net=%s",
                 a, b, g_net_up ? "up" : "down");
          break;
-      case 8:
-         /* The per-frame delivery cap held a packet back for one frame
-          * (ADR-0042).  Seeing these is the cap working; seeing none while
-          * rfu_rx_cap is set means it never bound and the run tells us
-          * nothing about the hypothesis. */
-         fe_evt("rfu_rxhold frame_max=%u delivered=%u", a, b);
-         break;
+      /* 8 was rfu_rxhold, the removed rfu_rx_cap's hold count (B-2). */
       case 9:
          /* New deepest occupancy of an RFU receive queue (ADR-0044).  If this
           * approaches RFU_PKT_QUEUE the next burst will be dropped, and a

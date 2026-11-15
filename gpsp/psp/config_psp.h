@@ -402,13 +402,10 @@ typedef struct
     * vblank wait has already absorbed most of it.  Worth the most during a
     * clamped session, where the loop idles ~9 ms; A/B it there, not solo. */
    int  gu_defer;
-   /* ADR-0042 `rfu_rx_cap`: most RFU packets a JOINING console's emulated
-    * adapter will hand the game in one frame.  0 = unlimited = historical
-    * behaviour and the DEFAULT.  The field crash correlates with bunched
-    * delivery (6/frame vs the rig's 2-3) and the game's receive queue
-    * latching full is an unrecoverable error, so 2-3 is the interesting
-    * setting.  Held packets wait one frame in our own queue; they are never
-    * dropped.  No effect on a hosting console. */
+   /* `rfu_rx_cap`: RETIRED (code-health B-2).  ADR-0042's per-frame RFU
+    * delivery cap was falsified and its code removed; the key is still read
+    * and written back unchanged so an existing config.ini round-trips, and
+    * nothing acts on it. */
    int  rfu_rx_cap;
    /* ADR-0075b `rfu_pace_max_hold`: how many frames of host data the paced
     * client may hold before the OLDEST is discarded.  This is the latency

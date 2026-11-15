@@ -118,8 +118,8 @@ for arg in "$@"; do
        echo "       --pace-match=N  pin net_pace_match: 0 off, 1 fixed-rate" >&2
        echo "                       (ADR-0033 default), 2 the ADR-0027/0028" >&2
        echo "                       adaptive matcher.  NOTE 1 CHANGED MEANING." >&2
-       echo "       --rfu-rx-cap=N     ADR-0042 per-frame RFU delivery cap on the" >&2
-       echo "                          JOINING side (0 = off = default path)." >&2
+       echo "       --rfu-rx-cap=N     RETIRED (code-health B-2): accepted and" >&2
+       echo "                          ignored; the ADR-0042 cap is gone." >&2
        echo "       --net-frameskip=N  pin net_frameskip: 0 off, 1 adaptive," >&2
        echo "                       2 auto.  With --session-fps this is the" >&2
        echo "                       ADR-0037 regression case." >&2
@@ -252,10 +252,10 @@ EOF
   [ -n "$PACE_MATCH" ] && echo "net_pace_match = $PACE_MATCH" >> "$GAME/.gpsp-harness.ini"
   [ -n "$SESSION_FPS" ] && echo "net_session_fps = $SESSION_FPS" >> "$GAME/.gpsp-harness.ini"
   [ -n "$NET_FRAMESKIP" ] && echo "net_frameskip = $NET_FRAMESKIP" >> "$GAME/.gpsp-harness.ini"
-  # ADR-0042 is a CLIENT-side knob: rfu.c only consults it in RFU_STATE_CLIENT.
-  # Setting it host-side would be inert and would make the log misleading.
+  # --rfu-rx-cap: the ADR-0042 cap was removed (code-health B-2); nothing reads
+  # rfu_rx_cap from the harness ini any more, so the flag is ignored.
   if [ -n "$RFU_RX_CAP" ] && [ "$2" = "join" ]; then
-    echo "rfu_rx_cap = $RFU_RX_CAP" >> "$GAME/.gpsp-harness.ini"
+    echo "note: --rfu-rx-cap=$RFU_RX_CAP ignored (retired in code-health B-2)" >&2
   fi
   # Free-form per-role ini lines for an A/B arm without a new flag each time,
   # e.g. JOIN_EXTRA_INI=$'net_loss_pct = 2\n' or HOST_EXTRA_INI='link_gov = 0'.
