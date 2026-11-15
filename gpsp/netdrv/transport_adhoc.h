@@ -222,6 +222,12 @@ int  adhoc_transport_tx_thread_active(void);
 void adhoc_transport_set_net_prio(int prio);
 int  adhoc_transport_net_prio(void);
 
+/* Candidate mid-run-Disconnect fix: 1 = await the peer's disconnect. */
+void adhoc_set_disc_await(int on);
+/* Set when the ad hoc stack was touched this process: the in-process
+ * game-list return stands down (psp/fe/inproc.b.inc.c). */
+extern volatile int gbadhoc_net_touched;
+
 #ifdef __cplusplus
 }
 #endif

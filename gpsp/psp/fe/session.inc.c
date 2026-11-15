@@ -391,8 +391,8 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
     * has no such variable.  irq_io_fast is read when the emitter builds its
     * stubs, so it is set here, before any game loads. */
    {
-      extern uint32_t sched_fast __attribute__((weak));
-      extern uint32_t irq_io_fast __attribute__((weak));
+#pragma weak sched_fast
+#pragma weak irq_io_fast
       if (&sched_fast)
          sched_fast = fe_ini_get_int(p_config, "sched_fast",
                                      PLAY_SCHED_FAST) ? 1u : 0u;
@@ -400,7 +400,7 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
          irq_io_fast = fe_ini_get_int(p_config, "irq_io_fast",
                                       PLAY_IRQ_IO_FAST) ? 1u : 0u;
       {
-         extern uint32_t msr_fast __attribute__((weak));
+#pragma weak msr_fast
          if (&msr_fast)
             /* default: on unless the core was built MSR_FAST_DEFAULT=0 */
             msr_fast = fe_ini_get_int(p_config, "msr_fast",
@@ -743,7 +743,6 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
     * gba_memory.c.  Must be set before the cart loads, which is when the
     * RTC takes its base. */
    {
-      extern time_t (*gpsp_wallclock)(void);
       gpsp_wallclock = psp_local_wallclock;
       /* THE CARTRIDGE CLOCK IS THE CONSOLE'S (rtc_clock.h): published here
        * so the very first read has it, then kept current by the main loop.

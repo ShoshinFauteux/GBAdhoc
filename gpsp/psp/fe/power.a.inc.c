@@ -74,8 +74,8 @@ static int power_cb(int unknown, int pwrflags, void *common);
 /* The GBA cartridge clock's wall time (gba_memory.c gpsp_rtc_wall,
  * rtc_clock.h): the console's local clock, refreshed at most five times a
  * second from the main loop.  A reading that fails (0) leaves the last one
- * in place; the core's guard holds the clock meanwhile. */
-extern volatile long long gpsp_rtc_wall;
+ * in place; the core's guard holds the clock meanwhile.  Declared in
+ * core_fe.h. */
 static int g_rtc_wall_on;
 static unsigned g_rtc_wall_us;
 static time_t psp_local_wallclock(void);

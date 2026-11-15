@@ -310,8 +310,8 @@ static __attribute__((noinline, section(".text.fe_cold.process_end"))) void proc
 #endif
    {
       /* What the cartridge clock shows, what 3.5.0's frame clock would show
-       * (boot time + emulated frames), and the console's clock. */
-      extern void gpsp_rtc_peek(long long *, long long *, int *);
+       * (boot time + emulated frames), and the console's clock.
+       * gpsp_rtc_peek: core_fe.h. */
       long long shown = 0, frames_t = 0;
       int wall = 0;
       gpsp_rtc_peek(&shown, &frames_t, &wall);

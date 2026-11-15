@@ -60,8 +60,7 @@ static void gblink_audio_frame(void)
  *                     session whose ROM does not fit, i.e. the PSP-1000);
  *                     0/0 in a GB session */
 #ifdef GBA_LINK
-extern uint32_t gbab_gamepak_page_loads;
-#define GW_PAGES_B() ((unsigned)gbab_gamepak_page_loads)
+#define GW_PAGES_B() ((unsigned)gbab_gamepak_page_loads)   /* fe_gbadual.h */
 #else
 #define GW_PAGES_B() 0u
 #endif

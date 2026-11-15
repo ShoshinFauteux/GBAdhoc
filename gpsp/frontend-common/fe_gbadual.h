@@ -113,6 +113,11 @@ const struct fe_gblink_machines *fe_gbadual_machines(void);
 /* retropad bitmask -> GBA KEYINPUT order */
 uint16_t fe_gbadual_keys_from_retro(uint32_t pad);
 
+/* Instance B's gamepak_page_loads (the objcopy gbab_ rename of
+ * gba_memory.o, psp/Makefile): 32 KiB ROM page faults served.
+ * fe_gbadual.c asserts its type equals instance A's. */
+extern uint32_t gbab_gamepak_page_loads;
+
 #ifdef __cplusplus
 }
 #endif

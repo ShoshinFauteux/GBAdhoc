@@ -4,14 +4,10 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 32 declarations, 6 constants; unchecked: 4; platform: 7 (listed at the end). */
+ * checked: 23 declarations, 6 constants; unchecked: 1; platform: 7 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
-/* fe/power.a.inc.c:78 (extern) */
-typedef volatile long long abi_fe_t_gpsp_rtc_wall;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rtc_wall), abi_fe_t_gpsp_rtc_wall *),
-               "fe/power.a.inc.c:78 gpsp_rtc_wall: the frontend copy differs from the core declaration");
 /* fe/input.a.inc.c:49 (extern) */
 typedef u32 abi_fe_t_rom_translation_cache_size;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_translation_cache_size), abi_fe_t_rom_translation_cache_size *),
@@ -28,10 +24,6 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_translation_cache), 
 typedef RFILE * abi_fe_t_gamepak_file_large;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_file_large), abi_fe_t_gamepak_file_large *),
                "fe/harness.b.inc.c:49 gamepak_file_large: the frontend copy differs from the core declaration");
-/* fe/power.d.inc.c:255 (extern) */
-typedef RFILE * abi_fe_t_gamepak_file_large__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_file_large), abi_fe_t_gamepak_file_large__2 *),
-               "fe/power.d.inc.c:255 gamepak_file_large: the frontend copy differs from the core declaration");
 /* fe/merend.d.inc.c:680 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
 typedef bool abi_fe_t_gamepak_must_swap ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_must_swap), abi_fe_t_gamepak_must_swap *),
@@ -48,14 +40,6 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ewram), abi_fe_t_ewram *
 typedef unsigned short abi_fe_t_palette_ram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_palette_ram *),
                "fe/misc.a.inc.c:643 palette_ram: the frontend copy differs from the core declaration");
-/* fe/inproc.b.inc.c:40 (extern) */
-typedef u32 abi_fe_t_badjump_recoveries;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&badjump_recoveries), abi_fe_t_badjump_recoveries *),
-               "fe/inproc.b.inc.c:40 badjump_recoveries: the frontend copy differs from the core declaration");
-/* fe/inproc.b.inc.c:42 (extern) */
-typedef u32 abi_fe_t_smc_fallback_stats [ 16 ];
-_Static_assert(__builtin_types_compatible_p(__typeof__(&smc_fallback_stats), abi_fe_t_smc_fallback_stats *),
-               "fe/inproc.b.inc.c:42 smc_fallback_stats: the frontend copy differs from the core declaration");
 /* fe/harness.f.inc.c:564 (extern) */
 typedef u32 abi_fe_t_gamepak_reopens;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens *),
@@ -92,50 +76,30 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe
 typedef u32 abi_fe_t_gamepak_short_reads__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
                "fe/harness.f.inc.c:899 gamepak_short_reads: the frontend copy differs from the core declaration");
-/* fe/teardown.inc.c:314 (block) */
-typedef void abi_fe_t_gpsp_rtc_peek ( long long * , long long * , int * );
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_rtc_peek), abi_fe_t_gpsp_rtc_peek *),
-               "fe/teardown.inc.c:314 gpsp_rtc_peek: the frontend copy differs from the core declaration");
 /* fe/session.inc.c:61 (block) */
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
                "fe/session.inc.c:61 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:394 (block) */
+/* fe/session.inc.c:516 (block) */
 typedef uint32_t abi_fe_t_sched_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sched_fast), abi_fe_t_sched_fast *),
-               "fe/session.inc.c:394 sched_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:395 (block) */
-typedef uint32_t abi_fe_t_irq_io_fast;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast *),
-               "fe/session.inc.c:395 irq_io_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:403 (block) */
-typedef uint32_t abi_fe_t_msr_fast;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast *),
-               "fe/session.inc.c:403 msr_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:516 (block) */
-typedef uint32_t abi_fe_t_sched_fast__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&sched_fast), abi_fe_t_sched_fast__2 *),
                "fe/session.inc.c:516 sched_fast: the frontend copy differs from the core declaration");
 /* fe/session.inc.c:533 (block) */
 typedef uint32_t abi_fe_t_timer_lazy;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&timer_lazy), abi_fe_t_timer_lazy *),
                "fe/session.inc.c:533 timer_lazy: the frontend copy differs from the core declaration");
 /* fe/session.inc.c:549 (block) */
-typedef uint32_t abi_fe_t_irq_io_fast__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast__2 *),
+typedef uint32_t abi_fe_t_irq_io_fast;
+_Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast *),
                "fe/session.inc.c:549 irq_io_fast: the frontend copy differs from the core declaration");
 /* fe/session.inc.c:560 (block) */
-typedef uint32_t abi_fe_t_msr_fast__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast__2 *),
+typedef uint32_t abi_fe_t_msr_fast;
+_Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast *),
                "fe/session.inc.c:560 msr_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:746 (block) */
-typedef time_t ( * abi_fe_t_gpsp_wallclock ) ( void );
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_wallclock), abi_fe_t_gpsp_wallclock *),
-               "fe/session.inc.c:746 gpsp_wallclock: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:1073 (block) */
+/* fe/session.inc.c:1072 (block) */
 typedef u32 abi_fe_t_rom_cache_watermark;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_cache_watermark), abi_fe_t_rom_cache_watermark *),
-               "fe/session.inc.c:1073 rom_cache_watermark: the frontend copy differs from the core declaration");
+               "fe/session.inc.c:1072 rom_cache_watermark: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:25 */
@@ -164,13 +128,10 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (4): every copy of this flavour's -E that is NOT asserted: its name is not declared
+/* UNCHECKED (1): every copy of this flavour's -E that is NOT asserted: its name is not declared
  * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
  * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
  * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
- *   fe/link.c.inc.c:520      adhoc_set_disc_await                 not declared by the check TU's headers
- *   fe/inproc.b.inc.c:39     gbadhoc_net_touched                  not declared by the check TU's headers
- *   fe/link.e.inc.c:63       gbab_gamepak_page_loads              not declared by the check TU's headers
  *   fe/harness.f.inc.c:575   jit_code_stats                       not declared by the check TU's headers
  */
 
@@ -182,6 +143,6 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
  *   main_psp.c:90            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
  *   fe/inproc.a.inc.c:159    __executable_start                   linker symbol (the ELF's first byte; lab/harness heap and image census)
  *   fe/inproc.a.inc.c:159    _end                                 linker symbol (the end of .bss; lab/harness heap and image census)
- *   fe/power.d.inc.c:336     scePowerIsRequest                    SDK function in libpsppower that psppower.h does not declare
+ *   fe/power.d.inc.c:335     scePowerIsRequest                    SDK function in libpsppower that psppower.h does not declare
  */
 #endif

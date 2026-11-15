@@ -43,7 +43,10 @@ extern const gbalink_rom_share *gbab_gamepak_share_in;
 extern void (*gamepak_evict_hook)(uint32_t);
 void gamepak_share_export(gbalink_rom_share *);
 void gbab_gamepak_share_unmap(uint32_t);
-extern uint32_t gamepak_page_loads, gbab_gamepak_page_loads;
+extern uint32_t gamepak_page_loads;   /* B's copy: fe_gbadual.h */
+_Static_assert(__builtin_types_compatible_p(__typeof__(gbab_gamepak_page_loads),
+                                            __typeof__(gamepak_page_loads)),
+               "instance B's gamepak_page_loads differs from instance A's");
 #if defined(PSP)
 extern uint32_t gbab_jit_cache_force_small;
 /* Instance B's static state: the section markers. */

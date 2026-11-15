@@ -517,7 +517,7 @@ static void net_frame(void)
  * _hold (hold, never discard), _supersede (the adapter one-buffer rule) and
  * the desync-detector faults _fault_corrupt/_span/_mode: rfu.c, declared in
  * core_fe.h like the setters below. */
-extern void adhoc_set_disc_await(int on);    /* candidate mid-run-Disconnect fix */
+/* adhoc_set_disc_await (candidate mid-run-Disconnect fix): transport_adhoc.h */
 /* ADR-0059.  Percent, 100 = stock.  Stretches the emulated adapter's two
  * cycle-counted deadlines to compensate for a radio ~10x slower than the one
  * the game was written for.  See the long comment in rfu.c. */

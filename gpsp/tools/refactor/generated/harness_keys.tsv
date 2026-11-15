@@ -15,7 +15,7 @@ browser	fe_ini_get_int	0	psp/fe/boot.inc.c:279	release,lab,harness
 browser	fe_ini_get_int	0	psp/fe/session.inc.c:141	release,lab,harness
 browser	fe_ini_get_int	0	psp/fe/session.inc.c:234	release,lab,harness
 cable_reserve_kb	fe_ini_get_int	( long ) 2560u	psp/fe/session.inc.c:665	lab,harness
-cable_reserve_kb	fe_ini_get_int	( long ) 2560u	psp/fe/session.inc.c:812	release,lab,harness
+cable_reserve_kb	fe_ini_get_int	( long ) 2560u	psp/fe/session.inc.c:811	release,lab,harness
 cache_paranoid	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:259	lab,harness
 core_phase	fe_ini_get_int	g_pcfg . core_phase	psp/fe/boot.inc.c:718	release,lab,harness
 cpu_clock	fe_ini_get_int	- 1	psp/fe/boot.inc.c:176	release,lab,harness
@@ -182,8 +182,8 @@ load_state	fe_ini_get_int	0	psp/fe/boot.inc.c:664	release,lab,harness
 loading_dump	fe_ini_get_int	0	psp/fe/boot.inc.c:600	release,lab,harness
 log_input	fe_ini_get_int	1	psp/fe/harness.f.inc.c:772	lab,harness
 log_thread	fe_ini_get_int	g_pcfg . log_thread	psp/fe/boot.inc.c:729	release,lab,harness
-me_bench	fe_ini_get_int	0	psp/fe/session.inc.c:950	release,lab,harness
-me_boot	fe_ini_get_int	g_pcfg . me_boot	psp/fe/session.inc.c:948	release,lab,harness
+me_bench	fe_ini_get_int	0	psp/fe/session.inc.c:949	release,lab,harness
+me_boot	fe_ini_get_int	g_pcfg . me_boot	psp/fe/session.inc.c:947	release,lab,harness
 me_capmode	fe_ini_get_int	1	psp/fe/boot.inc.c:1104	release,lab,harness
 me_dirty	fe_ini_get_int	g_pcfg . me_dirty	psp/fe/boot.inc.c:1053	release,lab,harness
 me_early_retire	fe_ini_get_int	g_mer_early_retire	psp/fe/boot.inc.c:1063	release,lab,harness
@@ -196,7 +196,7 @@ me_midlog	fe_ini_get_int	1	psp/fe/boot.inc.c:1107	release,lab,harness
 me_mode	fe_ini_get_int	g_pcfg . me_mode	psp/fe/boot.inc.c:914	release,lab,harness
 me_sameframe	fe_ini_get_int	0	psp/fe/boot.inc.c:1059	release,lab,harness
 me_shadow	fe_ini_get_int	0	psp/fe/boot.inc.c:1049	release,lab,harness
-me_video	fe_ini_get_int	1	psp/fe/session.inc.c:951	release,lab,harness
+me_video	fe_ini_get_int	1	psp/fe/session.inc.c:950	release,lab,harness
 me_vispost	fe_ini_get_int	1	psp/fe/boot.inc.c:1101	release,lab,harness
 me_vmem	fe_ini_get_int	1	psp/fe/boot.inc.c:1050	release,lab,harness
 me_vram_always	fe_ini_get_int	1	psp/fe/boot.inc.c:1110	release,lab,harness
@@ -302,7 +302,7 @@ rom	fe_ini_get	-	psp/lab_harness.c:1042	lab
 rom_ballast_kb	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:248	lab,harness
 rom_cap	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:247	lab,harness
 rom_vmem	fe_ini_get_int	0	psp/fe/rewind.inc.c:330	release,lab,harness
-rtc_wall	fe_ini_get_int	0	psp/fe/session.inc.c:754	release,lab,harness
+rtc_wall	fe_ini_get_int	0	psp/fe/session.inc.c:753	release,lab,harness
 run_id	fe_ini_get	-	psp/fe/boot.inc.c:529	lab,harness
 run_id	fe_ini_get	-	psp/fe/harness.f.inc.c:769	lab,harness
 sched_fast	fe_ini_get_int	& sched_fast ? ( long ) sched_fast : 0	psp/fe/session.inc.c:517	lab,harness
@@ -343,9 +343,9 @@ smc_watch	fe_ini_get_int	0	psp/fe/boot.inc.c:698	release,lab,harness
 sram_exit_retry	fe_ini_get_int	1	psp/fe/boot.inc.c:489	lab,harness
 sram_ff_nudge	fe_ini_get_int	1	psp/fe/boot.inc.c:737	release,lab,harness
 sram_thread	fe_ini_get_int	g_pcfg . sram_thread	psp/fe/boot.inc.c:732	release,lab,harness
-stall_exit_hard	fe_ini_get_int	0	psp/fe/session.inc.c:1161	lab,harness
-stall_exit_s	fe_ini_get_int	0	psp/fe/session.inc.c:1159	lab,harness
-stall_watch_s	fe_ini_get_int	0	psp/fe/session.inc.c:1157	lab,harness
+stall_exit_hard	fe_ini_get_int	0	psp/fe/session.inc.c:1160	lab,harness
+stall_exit_s	fe_ini_get_int	0	psp/fe/session.inc.c:1158	lab,harness
+stall_watch_s	fe_ini_get_int	0	psp/fe/session.inc.c:1156	lab,harness
 state_save_at	fe_ini_get_int	0	psp/fe/boot.inc.c:1426	release,lab,harness
 swap_stubs	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:257	lab,harness
 telemetry_period	fe_ini_get_int	0	psp/fe/boot.inc.c:470	release,lab,harness

@@ -251,8 +251,7 @@ static void me_standby_up(void)
  * runs while the main thread sleeps in sceKernelDelayThread and no other
  * thread of the game is inside a driver.  It keeps no file open across play.
  * The steps below reproduce that. */
-#include <streams/file_stream.h>
-extern RFILE *gamepak_file_large;                 /* gba_memory.c */
+#include <streams/file_stream.h>   /* RFILE; gamepak_file_large: core_fe.h */
 static void net_teardown_io(void);                /* defined below */
 static sleep_q g_sq;
 /* The gameplay scePowerLock (TYL's scheme).  Taken at the

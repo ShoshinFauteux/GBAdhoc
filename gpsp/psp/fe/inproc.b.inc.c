@@ -36,10 +36,12 @@ static int g_inproc_me_unload;
 #else
 /* INPROC_ME_UNLOAD_MUTANT(): this arm's definition is in fe/fe_priv.h */
 #endif
-extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
-extern u32 badjump_recoveries __attribute__((weak));
-/* SMC_FALLBACK_STATS (diagnostic): why SMC traps took a full RAM flush. */
-extern u32 smc_fallback_stats[16] __attribute__((weak));
+/* gbadhoc_net_touched: netdrv/transport_adhoc.h.  badjump_recoveries and
+ * smc_fallback_stats (SMC_FALLBACK_STATS, diagnostic: why SMC traps took a
+ * full RAM flush): core_fe.h, weak here because the frontend tests their
+ * address. */
+#pragma weak badjump_recoveries
+#pragma weak smc_fallback_stats
 
 /* Why this quit may not return in-process, or NULL when it may.  Checked
  * after the teardown, so what it reads is final. */

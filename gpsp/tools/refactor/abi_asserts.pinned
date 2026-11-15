@@ -1,7 +1,6 @@
 # T14 pinned asserted copies: flavour <TAB> name.  Written by abi_asserts.py
 # --write-pin after review; a pinned name that is no longer asserted fails gen.
 lab	badjump_contained
-lab	badjump_recoveries
 lab	dma_smc_flushes
 lab	ewram
 lab	gamepak_file_large
@@ -9,9 +8,6 @@ lab	gamepak_must_swap
 lab	gamepak_reopens
 lab	gamepak_short_reads
 lab	gpsp_heap_census
-lab	gpsp_rtc_peek
-lab	gpsp_rtc_wall
-lab	gpsp_wallclock
 lab	irq_io_fast
 lab	iwram
 lab	msr_fast
@@ -21,26 +17,15 @@ lab	rom_cache_watermark
 lab	rom_translation_cache
 lab	rom_translation_cache_size
 lab	sched_fast
-lab	smc_fallback_stats
 lab	timer_lazy
 lab	xlat_depth_max
 lab	xlat_depth_probe_reset
 lab	xlat_sp_min
-release	badjump_recoveries
-release	gamepak_file_large
 release	gamepak_must_swap
-release	gpsp_rtc_peek
-release	gpsp_rtc_wall
-release	gpsp_wallclock
-release	irq_io_fast
-release	msr_fast
 release	ram_translation_cache_size
 release	rom_translation_cache
 release	rom_translation_cache_size
-release	sched_fast
-release	smc_fallback_stats
 harness	badjump_contained
-harness	badjump_recoveries
 harness	dma_smc_flushes
 harness	ewram
 harness	gamepak_file_large
@@ -48,9 +33,6 @@ harness	gamepak_must_swap
 harness	gamepak_reopens
 harness	gamepak_short_reads
 harness	gpsp_heap_census
-harness	gpsp_rtc_peek
-harness	gpsp_rtc_wall
-harness	gpsp_wallclock
 harness	irq_io_fast
 harness	iwram
 harness	msr_fast
@@ -60,7 +42,6 @@ harness	rom_cache_watermark
 harness	rom_translation_cache
 harness	rom_translation_cache_size
 harness	sched_fast
-harness	smc_fallback_stats
 harness	timer_lazy
 harness	xlat_depth_max
 harness	xlat_depth_probe_reset
