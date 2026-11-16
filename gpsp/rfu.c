@@ -305,13 +305,12 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
  *          b = host packets that arrived this window. */
 #define RFU_TR_POLLMIX   35
 #define RFU_TR_CATCHGQ   36
-/* rfu_supersede: a = packets the one-buffer rule removed this window (both
- * roles), b = 1 when the rule is on. */
-#define RFU_TR_SUPERSEDE 37
+/* 37 was RFU_TR_SUPERSEDE, the adapter one-buffer rule (removed with the
+ * other pre-ticks delivery rules, code-health C-4). */
 
-/* rfu_qrun: the longest run of consecutive frames a receive queue stood above
- * RFU_SUPERSEDE_KEEP this window (a = client queue, b = host queues), measured
- * whether or not the rule is on -- the evidence behind RFU_SUPERSEDE_ARM. */
+/* rfu_qrun: the longest run of consecutive frames a receive queue stood
+ * deeper than RFU_QRUN_KEEP this window (a = client queue, b = host queues).
+ * The Lab reads it as rfu_qrun. */
 #define RFU_TR_QRUN 39
 
 /* The guest-supplied word count on a SEND_DATA/SEND_DATAW command, censused
@@ -1038,25 +1037,6 @@ static struct {
   u8 blen;
 } rfu_tx_buf;
 
-/* THE ADAPTER HOLDS ONE PACKET PER DIRECTION -- the timeline it lives on.
- *
- * Every data packet carries the SENDER's emulated frame number (the stamp, see
- * rfu_net_send_data).  The receiver maps it onto its own frames with the
- * smallest offset seen recently: `map = stamp + min(arrival_frame - stamp)`,
- * i.e. the frame the packet would have reached this adapter had the transport
- * never delayed it.  A real adapter delivers in microseconds, so that mapped
- * frame IS when real hardware would have handed it over; anything later is
- * transport delay, which is ours to absorb and never the game's to pay for.
- * See rfu_supersede() for what is decided on that timeline. */
-#define RFU_MAP_WIN 64
-typedef struct {
-  u32 last_s24;      /* last 24-bit stamp seen */
-  u32 h32;           /* the sender's frame, unwrapped */
-  s32 d[RFU_MAP_WIN];/* arrival_frame - h32, last RFU_MAP_WIN arrivals */
-  u32 n, head;
-  s32 off;           /* min of d[]: the undelayed offset */
-} rfu_map_t;
-
 static struct {
   u16 devid;         // Device ID assigned to the host
   u8 tx_ttl;         // Internal counter for broadcast transmission
@@ -1066,14 +1046,9 @@ static struct {
     u16 client_id;   // libretro client ID
     u16 devid;       // Host-assigned device ID
     u16 clttl;       // Client TTL (to check for disconnects)
-    rfu_map_t map;   // this client's frame timeline, mapped onto ours
-    u32 sup_run;     // rfu_supersede arming: frames over the allowance
-    u32 sup_armed;
-    u32 q_run;       // frames running over the allowance (census, uncapped)
+    u32 q_run;       // frames deeper than RFU_QRUN_KEEP (rfu_qrun census)
     struct {
       u32 datalen;   // Byte count of data waiting to be polled.
-      u8  st;        // carries a sender stamp (map valid)
-      u32 map;       // mapped arrival frame (see rfu_map_t)
       u8  data[16];  // Data received from client.
     } pkts[RFU_PKT_QUEUE];
   } clients[4];      // Connected clients IDs (zero means empty slot).
@@ -1083,15 +1058,10 @@ static struct {
   u16 devid;         // Device ID assigned to the client (by the host?)
   u16 clnum;         // Client number (0 to 3)
   u16 host_id;       // Client ID for the host device.
-  rfu_map_t map;     // the host's frame timeline, mapped onto ours
-  u32 sup_run;       // rfu_supersede arming: frames over the allowance
-  u32 sup_armed;
-  u32 q_run;         // frames running over the allowance (census, uncapped)
+  u32 q_run;         // frames deeper than RFU_QRUN_KEEP (rfu_qrun census)
   // Store host recevied packets (up to 8!)
   struct {
     u16 hblen;       // Bytes received from the host.
-    u8  st;          // carries a sender stamp (map valid)
-    u32 map;         // mapped arrival frame (see rfu_map_t)
     u32 t_us;        // ADR-0055: when this packet ENTERED the queue.
     u8 hdata[128];   // Data received from the host (accumulated).
   } pkts[RFU_PKT_QUEUE];
@@ -1225,8 +1195,6 @@ typedef struct {
   u16 devid;         /* the link the packet belongs to, checked at refill */
   u16 peer;
   u32 t_us;
-  u8  st;           /* stamped: `map` is valid */
-  u32 map;
   u8  data[128];
 } rfu_held_t;
 static rfu_held_t *rfu_hold_ring;
@@ -1249,8 +1217,7 @@ static u32 rfu_hold_count(u32 side, u32 cl)
 }
 
 /* 1 = held, 0 = could not (the caller then does the historical discard). */
-static int rfu_hold_put(u32 side, u32 cl, const u8 *p, u32 len,
-                        u32 st, u32 map)
+static int rfu_hold_put(u32 side, u32 cl, const u8 *p, u32 len)
 {
   rfu_held_t *e;
   if (!rfu_hold_on || len > sizeof(rfu_hold_ring[0].data))
@@ -1278,8 +1245,6 @@ static int rfu_hold_put(u32 side, u32 cl, const u8 *p, u32 len,
     e->peer = rfu_host.clients[cl].client_id;
   }
   e->t_us = rfu_frame_us;
-  e->st = (u8)st;
-  e->map = map;
   memcpy(e->data, p, len);
   rfu_hold_in++;
   if (rfu_hold_n > rfu_hold_hi)
@@ -1310,8 +1275,6 @@ static void rfu_hold_refill(void)
           memcpy(rfu_client.pkts[k].hdata, e->data, e->len);
           rfu_client.pkts[k].hblen = e->len;
           rfu_client.pkts[k].t_us = e->t_us;
-          rfu_client.pkts[k].st = e->st;
-          rfu_client.pkts[k].map = e->map;
           continue;
         }
       } else {
@@ -1326,8 +1289,6 @@ static void rfu_hold_refill(void)
         if (k < RFU_PKT_QUEUE) {
           memcpy(rfu_host.clients[e->cl].pkts[k].data, e->data, e->len);
           rfu_host.clients[e->cl].pkts[k].datalen = e->len;
-          rfu_host.clients[e->cl].pkts[k].st = e->st;
-          rfu_host.clients[e->cl].pkts[k].map = e->map;
           continue;
         }
       }
@@ -1396,296 +1357,21 @@ static u32 rfu_shed_host(void)
   return n;
 }
 
-/* SUPERSEDE -- WHAT THE REAL ADAPTER DOES WITH DATA THE GBA DID NOT READ.
- *
- * The AGB-015 keeps ONE receive buffer per direction.  A packet the GBA has
- * not pulled with ReceiveData (0x26) when the next one lands is overwritten
- * (afska's adapter docs: "The send/receive buffer size is 1 packet, so
- * calling SendData multiple times ... (before the other side calls
- * ReceiveData) will result in data loss"; 0x26 "clears the data buffer").  So
- * on hardware a console that reads late gets the NEWEST data and never a
- * backlog: a link's latency is one exchange whatever either GBA does.
- *
- * Our queues hold every packet instead, because a transport with real
- * latency delivers in clumps (ADR-0011/0044) and dropping a clump loses data
- * a real adapter WOULD have delivered (the game read on time; only our radio
- * was late).  Holding is right for that and wrong for the other case: data
- * the game did not read in time on ITS OWN account -- it was not listening
- * (Golf loading a hole), or its sender produced frames faster than it can
- * consume them (a PSP that cannot hold the session rate runs fewer emulated
- * frames per second than its peer).  There the queue grows by the difference
- * forever: the game is never asked for more than one packet a frame
- * (frame_pace), the catch-up is shut whenever the game's own queue is
- * non-empty (rfu_pace_catchup -- which it always is while one packet a frame
- * flows), and shedding only removes content-free frames, which Golf and Tennis
- * never send (rfu_empty 0/N).  Measured: Golf's join at 778 arrivals per 600
- * of its frames, a catch-up refused by the game-queue model on 445 of them,
- * queue 203 and 2.2 s answers.
- *
- * So we replay the hardware rule on the hardware timeline.  Each packet's
- * mapped arrival (rfu_map_t) is the frame it would have reached this adapter
- * with no transport delay.  The game "touches" its receive path in a frame
- * when it issues RECV_DATA or asks (WAIT) whether data is there; a touch is
- * where real hardware hands over the newest mapped packet.  Packet P is
- * SUPERSEDED when the next packet's mapped arrival is at or before the first
- * touch at or after P's own: on hardware the newer one had already replaced P
- * by the time the game looked.  A packet that only reached us late keeps its
- * place -- the game looked during its mapped frame, so hardware would have
- * delivered it -- which is what keeps a transport stall lossless and leaves
- * draining it to the lossless forces (shedding, catch-up).
- *
- * Never below RFU_SUPERSEDE_KEEP queued: that much is jitter buffer, and a
- * link whose lossless forces keep up never reaches the rule at all.  Never the
- * newest packet (nothing has replaced it), never an unstamped one (an older
- * peer or the Mystery Gift cart: no timeline, historical behaviour).
- *
- * And only against a STANDING backlog.  The touch model is per frame; a game
- * that reads from its reception callback (Gen3's librfu) may answer a packet a
- * frame or two later and still never lose one on hardware, where no transport
- * jitter ever clumps its traffic.  Our transport does: Emerald's Union Room
- * trade and battle under 5% loss / 30 ms jitter queue up to 17 packets and
- * stand above the allowance for up to 49 frames running, then drain by
- * themselves (standing backlog <= 2 in every window).
- * Superseding inside those transients lost packets Gen3 requires: the
- * impaired trade e2e failed 5/6 ("trade never started"), and still 3/6 with
- * same-sender-frame packets exempt, against 3/3 with the rule off and 3/3 on
- * the pre-change build.  The backlog the rule exists for
- * never drains (Golf, Tennis: tens of packets standing), so the rule ARMS only
- * after the queue has stayed above the allowance for RFU_SUPERSEDE_ARM frames
- * running, and disarms once the queue empties (the receiver caught up by
- * itself).  What piled up while it was arming is a standing lag no hardware
- * adapter could hold -- its buffer is one packet -- and the rule cannot see
- * it any more (the colliding packets were delivered while arming), so a
- * backlog that has stood above the allowance for RFU_SUPERSEDE_ARM frames is
- * cut back to the allowance, oldest first, and the rule keeps it there. */
-#define RFU_SUPERSEDE_KEEP RFU_PACE_LOW
-/* RFU_SUPERSEDE_ARM is read off the rfu_qrun census (RFU-AUDIT.md, "Arming
- * threshold"), the longest run of frames each receive queue stood above the
- * allowance with the rule OFF.  Pokemon Emerald Union Room trade and battle,
- * clean and under 5% loss / 30 ms jitter (17 runs, 34 queues): at most 49
- * frames.  Every Golf/Tennis episode that hurt the game (answers past 150 ms;
- * 11 episodes): at least 291 frames.  100 sits inside that gap (geometric
- * middle ~119), 2x above the worst Pokemon run, 2.9x below the mildest harm. */
-#define RFU_SUPERSEDE_ARM  100
+/* The rfu_qrun census (RFU_TR_QRUN): per receive queue, the longest run of
+ * consecutive frames it stood deeper than RFU_QRUN_KEEP this window.  Taken
+ * at the frame boundary in rfu_frame_update; it only measures.  (Its
+ * threshold was the removed supersede rule's allowance, code-health C-4.) */
+#define RFU_QRUN_KEEP 2
+static u32 rfu_qrun_max[2];          /* client, host */
 
-/* One frame of the arming gate for a queue of `depth`; returns armed. */
-static u32 rfu_qrun_max[2];          /* rfu_qrun census: client, host */
-
-static u32 rfu_sup_gate(u32 depth, u32 *run, u32 *armed, u32 *qrun, u32 side)
+static void rfu_qrun_note(u32 depth, u32 *qrun, u32 side)
 {
-  if (depth > RFU_SUPERSEDE_KEEP) {
+  if (depth > RFU_QRUN_KEEP) {
     if (++*qrun > rfu_qrun_max[side])
       rfu_qrun_max[side] = *qrun;
-    if (*run < RFU_SUPERSEDE_ARM)
-      (*run)++;
-    if (*run >= RFU_SUPERSEDE_ARM)
-      *armed = 1;
   } else {
-    *run = 0;
     *qrun = 0;
-    if (depth == 0)
-      *armed = 0;
   }
-  return *armed;
-}
-static u32 rfu_supersede_on = 1;
-static u32 rfu_sup_n_client, rfu_sup_n_host;     /* superseded, per window */
-
-void rfu_set_supersede(u32 on)  { rfu_supersede_on  = on ? 1 : 0; }
-
-/* Receive-path touches, one bit per emulated frame over the last
- * RFU_TOUCH_FRAMES; [0] = our client role, [1] = our host role. */
-#define RFU_TOUCH_FRAMES 128
-static u32 rfu_touch_bits[2][RFU_TOUCH_FRAMES / 32];
-static u32 rfu_touch_now[2];
-
-/* Record a stamped arrival on map `m` and return its mapped frame.  The
- * stamp is the sender's 24-bit frame counter; consecutive stamps are
- * unwrapped into h32, and a jump of more than a minute (a new sender, a
- * reset) starts the timeline over. */
-static u32 rfu_map_arrival(rfu_map_t *m, u32 s24)
-{
-  u32 i;
-  if (m->n == 0) {
-    m->h32 = s24;
-  } else {
-    s32 delta = (s32)((s24 - m->last_s24) << 8) >> 8;
-    if (delta > 3600 || delta < -3600) {
-      m->n = 0;
-      m->head = 0;
-      m->h32 = s24;
-    } else {
-      m->h32 += (u32)delta;
-    }
-  }
-  m->last_s24 = s24 & 0xFFFFFF;
-  m->d[m->head] = (s32)(rfu_frame_no - m->h32);
-  m->head = (m->head + 1) % RFU_MAP_WIN;
-  if (m->n < RFU_MAP_WIN)
-    m->n++;
-  m->off = m->d[0];
-  for (i = 1; i < m->n; i++)
-    if (m->d[i] < m->off)
-      m->off = m->d[i];
-  return m->h32 + (u32)m->off;
-}
-
-/* End of frame rfu_frame_no: remember whether each role touched its receive
- * path in it. */
-static void rfu_touch_commit(void)
-{
-  u32 s, f = rfu_frame_no % RFU_TOUCH_FRAMES;
-  for (s = 0; s < 2; s++) {
-    if (rfu_touch_now[s])
-      rfu_touch_bits[s][f >> 5] |= 1u << (f & 31);
-    else
-      rfu_touch_bits[s][f >> 5] &= ~(1u << (f & 31));
-    rfu_touch_now[s] = 0;
-  }
-}
-
-/* First frame in [from, rfu_frame_no] in which role `side` touched its
- * receive path.  0 = none yet, or `from` older than the record (then we
- * cannot know, and keep). */
-static int rfu_first_touch(u32 side, u32 from, u32 *o)
-{
-  u32 f;
-  if ((s32)(rfu_frame_no - from) < 0 ||
-      rfu_frame_no - from >= RFU_TOUCH_FRAMES)
-    return 0;
-  for (f = from; (s32)(rfu_frame_no - f) >= 0; f++) {
-    u32 b = f % RFU_TOUCH_FRAMES;
-    if (rfu_touch_bits[side][b >> 5] & (1u << (b & 31))) {
-      *o = f;
-      return 1;
-    }
-  }
-  return 0;
-}
-
-/* `st` per packet: 0 = unstamped, else RFU_ST_FLAG | the low 7 bits of the
- * sender's frame stamp. */
-#define RFU_ST_FLAG 0x80u
-#define RFU_ST(s24) (RFU_ST_FLAG | ((s24) & 0x7Fu))
-
-/* Is packet (st0, map0) superseded by its successor (st1, map1)?
- *
- * Never by a packet from the SAME sender frame.  A sender that transmits
- * several times in one of its frames (Gen3's link layer does, several
- * SEND_DATA per frame during the Union Room handshake) is talking to a
- * receiver that reads each one as it lands -- librfu's MSC callback fires
- * per reception -- and every one of them is required: superseding them
- * under transport jitter desynced the Emerald trade (impaired e2e, 2/3
- * "trade never started" until this exemption).  What the one-buffer rule
- * models is data from DIFFERENT sender frames piling up behind a receiver
- * that could not take it: a sender running faster than us, or a game that
- * was not looking. */
-static int rfu_superseded(u32 side, u32 st0, u32 map0, u32 st1, u32 map1)
-{
-  u32 o;
-  if (!st0 || !st1 || st0 == st1 || !rfu_first_touch(side, map0, &o))
-    return 0;
-  return (s32)(map1 - o) <= 0;
-}
-
-static u32 rfu_supersede_client(void)
-{
-  u32 depth, i, w, k, n = 0;
-  u8 kill[RFU_PKT_QUEUE];
-  u32 total = rfu_client_queued();
-  if (!rfu_sup_gate(total, &rfu_client.sup_run, &rfu_client.sup_armed,
-                    &rfu_client.q_run, 0) ||
-      !rfu_supersede_on)
-    return 0;
-  if (rfu_client.sup_run >= RFU_SUPERSEDE_ARM) {   /* the standing lag */
-    for (depth = 0; depth < RFU_PKT_QUEUE && rfu_client.pkts[depth].hblen; depth++)
-      ;
-    for (i = 0; total > RFU_SUPERSEDE_KEEP && i + 1 < depth &&
-                rfu_client.pkts[i].st; i++, total--)
-      n++;
-    if (n) {
-      memmove(&rfu_client.pkts[0], &rfu_client.pkts[n],
-              (RFU_PKT_QUEUE - n) * sizeof(rfu_client.pkts[0]));
-      for (i = RFU_PKT_QUEUE - n; i < RFU_PKT_QUEUE; i++)
-        rfu_client.pkts[i].hblen = 0;
-    }
-  }
-  for (depth = 0; depth < RFU_PKT_QUEUE && rfu_client.pkts[depth].hblen; depth++)
-    ;
-  if (depth <= RFU_SUPERSEDE_KEEP)
-    return n;
-  for (i = 0; i + 1 < depth; i++)
-    kill[i] = (u8)rfu_superseded(0, rfu_client.pkts[i].st, rfu_client.pkts[i].map,
-                                 rfu_client.pkts[i + 1].st,
-                                 rfu_client.pkts[i + 1].map);
-  kill[depth - 1] = 0;
-  for (i = 0, w = 0, k = 0; i < depth; i++) {
-    if (kill[i] && depth - k > RFU_SUPERSEDE_KEEP) {
-      k++;
-      continue;
-    }
-    if (w != i)
-      rfu_client.pkts[w] = rfu_client.pkts[i];
-    w++;
-  }
-  for (i = w; i < depth; i++)
-    rfu_client.pkts[i].hblen = 0;
-  return n + k;
-}
-
-static u32 rfu_supersede_host(void)
-{
-  u32 c, n = 0;
-  for (c = 0; c < 4; c++) {
-    u32 depth, total, i, w, cn = 0;
-    u8 kill[RFU_PKT_QUEUE];
-    if (!rfu_host.clients[c].devid)
-      continue;
-    for (depth = 0; depth < RFU_PKT_QUEUE &&
-                    rfu_host.clients[c].pkts[depth].datalen; depth++)
-      ;
-    total = depth + (rfu_hold_n ? rfu_hold_count(1, c) : 0);
-    if (!rfu_sup_gate(total, &rfu_host.clients[c].sup_run,
-                      &rfu_host.clients[c].sup_armed,
-                      &rfu_host.clients[c].q_run, 1) ||
-        !rfu_supersede_on)
-      continue;
-    if (rfu_host.clients[c].sup_run >= RFU_SUPERSEDE_ARM) {  /* standing lag */
-      u32 t = 0;
-      for (i = 0; total > RFU_SUPERSEDE_KEEP && i + 1 < depth &&
-                  rfu_host.clients[c].pkts[i].st; i++, total--)
-        t++;
-      if (t) {
-        memmove(&rfu_host.clients[c].pkts[0], &rfu_host.clients[c].pkts[t],
-                (RFU_PKT_QUEUE - t) * sizeof(rfu_host.clients[c].pkts[0]));
-        for (i = RFU_PKT_QUEUE - t; i < RFU_PKT_QUEUE; i++)
-          rfu_host.clients[c].pkts[i].datalen = 0;
-        depth -= t;
-        n += t;
-      }
-    }
-    if (depth <= RFU_SUPERSEDE_KEEP)
-      continue;
-    for (i = 0; i + 1 < depth; i++)
-      kill[i] = (u8)rfu_superseded(1, rfu_host.clients[c].pkts[i].st,
-                                   rfu_host.clients[c].pkts[i].map,
-                                   rfu_host.clients[c].pkts[i + 1].st,
-                                   rfu_host.clients[c].pkts[i + 1].map);
-    kill[depth - 1] = 0;
-    for (i = 0, w = 0; i < depth; i++) {
-      if (kill[i] && depth - cn > RFU_SUPERSEDE_KEEP) {
-        cn++;
-        continue;
-      }
-      if (w != i)
-        rfu_host.clients[c].pkts[w] = rfu_host.clients[c].pkts[i];
-      w++;
-    }
-    for (i = w; i < depth; i++)
-      rfu_host.clients[c].pkts[i].datalen = 0;
-    n += cn;
-  }
-  return n;
 }
 
 // The table is indexed by client_id
@@ -1778,7 +1464,8 @@ static void rfu_net_send_data(int client_id, u32 ptype, u32 h, const u32 *pload,
   for (i = 0; i < plen; i++)
     pkt.data8[i] = pload[i / 4] >> (8 * (i & 3));
   memset(&pkt.data8[plen], 0, 92 - plen);
-  /* THE SENDER'S FRAME STAMP (see rfu_map_t).  Wire-compatible both ways:
+  /* THE SENDER'S FRAME STAMP, which scheduled ticks deliver by
+   * (rfu_sched_take, rfu_sched.h).  Wire-compatible both ways:
    * a host packet's header word only ever used bits 0-6 (the length, read
    * as `& 0x7f` everywhere), so bit 7 flags a stamp in bits 8-31; a client
    * packet's header word is full (devid | slot | length), but its payload is
@@ -2175,8 +1862,6 @@ static s32 rfu_process_command_inner(void) {
 
   case RFU_CMD_RECV_DATA:
     rfu_rx_this_frame++;
-    if (rfu_state == RFU_STATE_HOST || rfu_state == RFU_STATE_CLIENT)
-      rfu_touch_now[rfu_state == RFU_STATE_HOST] = 1;   /* rfu_supersede */
     if (rfu_state == RFU_STATE_HOST) {
       // Receive data from clients
       u32 cnt = 0, bufbytes = 0;
@@ -2329,7 +2014,6 @@ static u32 rfu_client_queued(void)
 static bool rfu_data_avail() {
   if (rfu_state == RFU_STATE_CLIENT) {
     rfu_listen_this_frame = 1;
-    rfu_touch_now[0] = 1;     /* asking IS looking (rfu_supersede) */
     if (rfu_client.pkts[0].hblen != 0) {
       /* ADR-0075: an over-budget packet must be invisible HERE too, or
        * WAITEVENT answers RESP_DATA for a packet RECV_DATA then refuses --
@@ -2345,7 +2029,6 @@ static bool rfu_data_avail() {
   else if (rfu_state == RFU_STATE_HOST) {
     // Returns true if any data from any client is available.
     u32 i;
-    rfu_touch_now[1] = 1;     /* rfu_supersede */
     for (i = 0; i < 4; i++)
       if (rfu_host.clients[i].devid && rfu_host.clients[i].pkts[0].datalen)
         return true;
@@ -2569,17 +2252,26 @@ void rfu_frame_update() {
   }
   /* Link shedding first (content-free only), so the pace trim below -- which
    * discards real data -- only ever sees what shedding could not remove. */
-  rfu_touch_commit();
   if (rfu_state == RFU_STATE_CLIENT)
     rfu_shed_n_client += rfu_shed_client();
   else if (rfu_state == RFU_STATE_HOST)
     rfu_shed_n_host += rfu_shed_host();
-  /* Then the hardware's one-buffer rule (rfu_supersede): only data the game
-   * would never have seen, and only above the jitter allowance. */
-  if (rfu_state == RFU_STATE_CLIENT)
-    rfu_sup_n_client += rfu_supersede_client();
-  else if (rfu_state == RFU_STATE_HOST)
-    rfu_sup_n_host += rfu_supersede_host();
+  /* The rfu_qrun census, after shedding (where the supersede rule measured it). */
+  if (rfu_state == RFU_STATE_CLIENT) {
+    rfu_qrun_note(rfu_client_queued(), &rfu_client.q_run, 0);
+  } else if (rfu_state == RFU_STATE_HOST) {
+    u32 c;
+    for (c = 0; c < 4; c++) {
+      u32 depth;
+      if (!rfu_host.clients[c].devid)
+        continue;
+      for (depth = 0; depth < RFU_PKT_QUEUE &&
+                      rfu_host.clients[c].pkts[depth].datalen; depth++)
+        ;
+      rfu_qrun_note(depth + (rfu_hold_n ? rfu_hold_count(1, c) : 0),
+                    &rfu_host.clients[c].q_run, 1);
+    }
+  }
   /* Shedding may have made room: bring held packets forward, in order. */
   if (rfu_hold_n)
     rfu_hold_refill();
@@ -2726,12 +2418,6 @@ void rfu_frame_update() {
     gpsp_rfu_trace_hook(RFU_TR_SHED,
                         MIN(rfu_shed_n_client + rfu_shed_n_host, 0xFFFu),
                         MIN(rfu_shed_keep, 0xFFFu));
-    /* Emitted every window, zeros included (ADR-0058); the on/off state is
-     * in the frontend's rfu_supersede config line. */
-    gpsp_rfu_trace_hook(RFU_TR_SUPERSEDE,
-                        MIN(rfu_sup_n_client + rfu_sup_n_host, 0xFFFu),
-                        rfu_supersede_on);
-    rfu_sup_n_client = rfu_sup_n_host = 0;
     gpsp_rfu_trace_hook(RFU_TR_QRUN, MIN(rfu_qrun_max[0], 0xFFFu),
                         MIN(rfu_qrun_max[1], 0xFFFu));
     rfu_qrun_max[0] = rfu_qrun_max[1] = 0;
@@ -3117,9 +2803,6 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         u32 blen = hdata & 0x7f;
         if (len >= blen + 12) {
           u32 i;
-          /* The host's frame stamp, if it sent one (see rfu_net_send_data). */
-          u32 st = (hdata & 0x80) ? RFU_ST(hdata >> 8) : 0;
-          u32 map = st ? rfu_map_arrival(&rfu_client.map, hdata >> 8) : 0;
           /* ADR-0060: a KEEPALIVE, not an acknowledgement of this packet.
            * The host only needs to know we still exist (clttl, 4 s); it does
            * not need a reply per packet, and NET_RFU_CLIENT_SEND already
@@ -3186,21 +2869,19 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
           // With the hold on, anything already held for this queue goes
           // first, so a new packet queues BEHIND it (order is the point).
           if (rfu_hold_n && rfu_hold_count(0, 0) &&
-              rfu_hold_put(0, 0, payl, blen, st, map))
+              rfu_hold_put(0, 0, payl, blen))
             return;
           for (i = 0; i < RFU_PKT_QUEUE; i++) {
             if (!rfu_client.pkts[i].hblen) {
               memcpy(&rfu_client.pkts[i].hdata, payl, blen);
               rfu_client.pkts[i].hblen = blen;
-              rfu_client.pkts[i].st = (u8)st;
-              rfu_client.pkts[i].map = map;
               rfu_client.pkts[i].t_us  = rfu_frame_us;   /* ADR-0055 */
               RFU_DEBUG_LOG("Recv host packet (%d bytes) Q[#%d]\n", blen, i);
               rfu_q_note(0, i + 1);
               return;
             }
           }
-          if (rfu_hold_put(0, 0, payl, blen, st, map))
+          if (rfu_hold_put(0, 0, payl, blen))
             return;
           RFU_DEBUG_LOG("Client dropped a host packet\n");
           gpsp_rfu_trace_hook(RFU_TR_QDROP, 0, rfu_client.clnum);
@@ -3231,32 +2912,23 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
         // Validate the slot with device ID
         if (rfu_host.clients[clid].client_id == client_id &&
             rfu_host.clients[clid].devid == cdevid) {
-          /* The client's frame stamp, if it sent one (rfu_net_send_data). */
-          u32 st = (len >= 12 + 92 && payl[88] == RFU_STAMP_TAG)
-                   ? RFU_ST(payl[91]) : 0;
-          u32 map = st ? rfu_map_arrival(&rfu_host.clients[clid].map,
-                                         ((u32)payl[89] << 16) |
-                                         ((u32)payl[90] << 8) | payl[91])
-                       : 0;
           rfu_host.clients[clid].clttl = 0;   // Account for packet reception
           rfu_cen_rx_total++;
           if (rfu_llf_is_empty(payl, blen, false))
             rfu_cen_rx_empty++;
           if (rfu_hold_n && rfu_hold_count(1, clid) &&
-              rfu_hold_put(1, clid, payl, blen, st, map))
+              rfu_hold_put(1, clid, payl, blen))
             return;
           for (i = 0; i < RFU_PKT_QUEUE; i++) {
             if (!rfu_host.clients[clid].pkts[i].datalen) {
               memcpy(rfu_host.clients[clid].pkts[i].data, payl, blen);
               rfu_host.clients[clid].pkts[i].datalen = blen;
-              rfu_host.clients[clid].pkts[i].st = (u8)st;
-              rfu_host.clients[clid].pkts[i].map = map;
               RFU_DEBUG_LOG("Recv client packet (%d bytes) Q[#%d]\n", blen, i);
               rfu_q_note(1, i + 1);
               return;
             }
           }
-          if (rfu_hold_put(1, clid, payl, blen, st, map))
+          if (rfu_hold_put(1, clid, payl, blen))
             return;
           RFU_DEBUG_LOG("Host dropped a client packet\n");
           gpsp_rfu_trace_hook(RFU_TR_QDROP, 1, clid);

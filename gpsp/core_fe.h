@@ -150,7 +150,6 @@ void rfu_set_pace_max_hold(u32 n);
 void rfu_set_frame_pace(u32 n);
 void rfu_set_shed_keep(u32 n);
 void rfu_set_hold(u32 on);
-void rfu_set_supersede(u32 on);
 
 /* ---- video.cc / video_me_log.h (the frame the frontend presents) -------- */
 extern u16 *gba_screen_pixels;

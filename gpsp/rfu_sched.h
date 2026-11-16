@@ -88,7 +88,6 @@ void rfu_sched_config(unsigned d)
   rfu_set_pace_max_hold(0);
   rfu_set_shed_keep(0);
   rfu_set_hold(0);
-  rfu_set_supersede(0);
 }
 
 /* The D this console is using now. */
