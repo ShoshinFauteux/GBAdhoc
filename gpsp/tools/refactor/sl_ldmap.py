@@ -10,8 +10,9 @@ writes next to every flavour's ELF).  Shared by sect_cmp.py (T2), hotord_check.p
     m.patterns    {pattern text: [Input, ...]}   the script line each input matched
 
 `pattern` is the linker-script line that placed the input section, as ld prints
-it (` *(EXCLUDE_FILE(*gbalink_core_b.o) .text.update_gba)`, stripped).  With
---section-ordering-file those are hot.ord's own lines, so a hot.ord entry's
+it (` *(EXCLUDE_FILE(*gbalink_core_b.o) .text.update_gba)`, stripped).  The
+hot order's rows are hot.ord's own lines (INCLUDEd by psp/gbadhoc.ld since
+code-health C3-1, an --section-ordering-file before), so a hot.ord entry's
 matches can be counted directly.  `file` is the object as ld names it:
 `main_psp.o`, `../gpsp_libretro_psp1.a(mips_stub.o)`, `/tmp/ccXXXXXX.ltrans0...`
 (LTO temporaries: random names, never key on them).

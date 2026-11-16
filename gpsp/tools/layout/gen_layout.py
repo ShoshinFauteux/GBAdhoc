@@ -17,8 +17,9 @@
       choose the order from the weights and THIS build's function sizes:
         hot_order.txt  one function per line with weight and size (committed:
                        the reviewable record of the choice)
-        hot.ord        the --section-ordering-file psp/Makefile links with
-                       (committed: generated from hot_order.txt, never edited)
+        hot.ord        the input-section rows psp/gbadhoc.ld INCLUDEs first in
+                       .text (committed: generated from hot_order.txt, never
+                       edited)
       tools/layout/regen.sh does the whole thing from a source tree.
 
   gen_layout.py ord --order psp/layout/hot_order.txt --out-ld psp/layout/hot.ord
@@ -300,13 +301,15 @@ def write_ord(order_path, out):
         if l:
             dest.append(l[3] if len(l) > 3 else l[0])
     with open(out, 'w', newline='\n') as fh:
+        # The rows only: psp/gbadhoc.ld INCLUDEs this file inside its .text
+        # (code-health C3-1; until then it was a whole `.text : { }` for
+        # -Wl,--section-ordering-file, and it links to the same bytes).
         fh.write('/* hot.ord -- GENERATED from hot_order.txt by '
                  'tools/layout/gen_layout.py.\n'
-                 ' * psp/Makefile links with -Wl,--section-ordering-file when '
-                 'LAYOUT_PIN=1\n'
-                 ' * (docs/LAYOUT-PINNING.md).  A name that no longer exists '
-                 'matches nothing\n * and costs nothing. */\n')
-        fh.write('.text : {\n')
+                 ' * psp/gbadhoc.ld INCLUDEs these rows first in .text '
+                 '(docs/LAYOUT-PINNING.md).\n'
+                 ' * A name that no longer exists matches nothing and costs '
+                 'nothing. */\n')
         seen = set()
         funcs = []
         bsecs = []
@@ -367,7 +370,6 @@ def write_ord(order_path, out):
         # member), then B's, per group
         for group in (late, last):
             emit_group(group)
-        fh.write('}\n')
     print('wrote %s (%d entries, %d late, %d last, %d bscan)'
           % (out, len(names), len(late), len(last), len(bscan)))
 

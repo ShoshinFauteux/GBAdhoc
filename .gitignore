@@ -9,6 +9,8 @@ GBA_BIOS.bin
 *.elf
 *.a
 gpsp/sdl/gpsp_sdl
+# psp/Makefile writes the link script from psp/gbadhoc.ld.in on every make
+gpsp/psp/gbadhoc.ld
 # Run artifacts
 logs/
 *.log

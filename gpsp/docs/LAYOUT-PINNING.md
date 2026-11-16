@@ -126,11 +126,35 @@ placed by archive member (`*:libc_a-memset.o`; newlib links as `libg.a`).
 | what | how |
 |---|---|
 | per-function sections | `-ffunction-sections` (root Makefile `LAYOUT_PIN=1` for the core, psp/Makefile for the frontend; the partial-linked GB core is excluded) |
-| order | `psp-ld --section-ordering-file=psp/layout/hot.ord` (binutils 2.44 supports it) |
+| order | the rows of `psp/layout/hot.ord`, INCLUDEd first in `.text` by the link script `psp/gbadhoc.ld` (below; until code-health C3-1, `psp-ld --section-ordering-file=psp/layout/hot.ord`, same bytes) |
 | static SMALL tier | `.balign 8192` + `.space JIT_PIN_OFFSET` in mips_stub.S |
 | LARGE tier | `memalign(8192, size + JIT_PIN_OFFSET)`, base = block + JIT_PIN_OFFSET (cpu_threaded.c) |
 | `JIT_PIN_OFFSET` | 0x1500 (gpsp_config.h), the centre of the best simulated plateau, 0x1200-0x1700 (section 3) |
 | ordering file | generated, never hand-edited: `tools/layout/regen.sh` (from a `LAYOUT_PIN=1` build) rewrites `hot_order.txt` and `hot.ord` |
+
+#### The link script (code-health C3-1)
+
+The EBOOT links with one full script, `psp/gbadhoc.ld`, which psp/Makefile
+writes on every make from `psp/gbadhoc.ld.in`:
+
+- Outside its `GBADHOC BEGIN`/`END` blocks the template is psp-gcc's default
+  script, verbatim. The make rule deletes the blocks, compares the rest with
+  `psp-ld --verbose` (the script psp-gcc links with; checked to be the same
+  text) and stops with the diff on any difference. A toolchain bump is noticed
+  at the first link instead of linking with a stale default.
+- Its one block today is `INCLUDE $(HOT_ORD)` right after `_ftext = .;`, so
+  the hot order's rows come first in `.text`, as the ordering file put them.
+  `gen_layout.py ord` writes `hot.ord` as rows only (no `.text : { }`).
+- `psp/cold_tail.ld` and `psp/hot_data_guard.ld` stay INSERT scripts, given
+  with `-T` *before* `gbadhoc.ld`. ld matches an input section to the first
+  statement that names it, and an INSERT script's statements come first. So
+  `.text.me_wmap_cold` and `.data.gbahot.*` go to their own output sections
+  ahead of the default's `.text.*` and `.data.*` wildcards. Moved into the
+  script after `.text` and `.data`, the wildcards would take them first:
+  checked, the guard block and the cold tail move (G1 FAIL).
+- Proof of the switch: EBOOT sha256 equal on all six build.sh profiles, and
+  stripped ELFs equal for the `HOT_ORD=layout/hot_pair.ord` and
+  `HOT_DATA_GUARD=0` arms. Only the unstripped symbol table's order differs.
 
 ## 2. Today's swing is the JIT base: hardware evidence
 

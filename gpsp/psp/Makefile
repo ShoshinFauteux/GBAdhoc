@@ -171,14 +171,16 @@ $(error LAYOUT_PIN=$(LAYOUT_PIN): pinning is built in (code-health A-7); drop LA
 endif
 LAYOUT_PAD_BYTES ?= 5692
 CFLAGS  += -ffunction-sections
-# HOT_ORD: the ordering file (default the single-player order).  The link
+# HOT_ORD: the hot order's rows (default the single-player order), which
+# gbadhoc.ld INCLUDEs first in .text (the gbadhoc.ld rule below; code-health
+# C3-1: they were an --section-ordering-file until then, same bytes).  The link
 # pair's candidate order is layout/hot_pair.ord (docs/GBA-LINK-MIRROR.md 25):
 #   PSP_EXTRA="HOT_ORD=layout/hot_pair.ord" tools/build.sh ...
 HOT_ORD ?= layout/hot.ord
-LDFLAGS += -Wl,--section-ordering-file=$(HOT_ORD)
 # The cold tail (psp/cold_tail.ld): code that is on no game's per-frame path
 # unless it uses the feature (the ME write maps' DMA note and row diff), linked
-# after all other text so adding it moves no pinned function.
+# after all other text so adding it moves no pinned function.  An INSERT
+# script, given before gbadhoc.ld (psp/gbadhoc.ld.in says why).
 LDFLAGS += -Wl,-T,cold_tail.ld
 ifneq ($(LAYOUT_PAD_BYTES),0)
 CFLAGS  += -DLAYOUT_PAD_BYTES=$(LAYOUT_PAD_BYTES)
@@ -348,6 +350,10 @@ HOT_DATA_GUARD ?= 1
 ifeq ($(HOT_DATA_GUARD),1)
 LDFLAGS += -Wl,-T,hot_data_guard.ld
 endif
+# THE LINK SCRIPT (code-health C3-1): psp-gcc's default script plus the hot
+# order, written by the gbadhoc.ld rule below.  Last of the -T scripts: the two
+# INSERT scripts above must come before it (psp/gbadhoc.ld.in says why).
+LDFLAGS += -Wl,-T,gbadhoc.ld
 ifeq ($(GBA_LINK),1)
 OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
         ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o
@@ -476,9 +482,27 @@ harness:
 .PHONY: harness
 
 $(TARGET).elf: $(CORE_LIB)
-# NOT a prerequisite: layout/hot.ord.  build.mak links `$^`, so ld would read
-# the ordering file as an input linker script.  tools/build.sh always relinks
-# (clean build); by hand, `rm gpsp_adhoc.elf` after regenerating it.
+# gbadhoc.ld is ORDER-ONLY (after the |): build.mak links `$^`, which would
+# hand ld the script a second time as an input file.  So a new script, or a
+# regenerated layout/hot.ord, does not relink by itself: tools/build.sh always
+# relinks (clean build); by hand, `rm gpsp_adhoc.elf`.
+$(TARGET).elf: | gbadhoc.ld
+# gbadhoc.ld: psp/gbadhoc.ld.in with the hot order filled in, rewritten on
+# every make.  First the template is checked: without its GBADHOC BEGIN/END
+# blocks it must be THIS toolchain's default script, byte for byte
+# (`psp-ld --verbose` prints the script psp-gcc links with; the same text,
+# checked 2026-11-15).  A toolchain bump that changes the default stops here
+# with the diff, instead of linking with a stale copy of it.
+gbadhoc.ld: gbadhoc.ld.in FORCE
+	@psp-ld --verbose | awk '/^=========/ { n++; next } n == 1' > $@.default
+	@tr -d '\r' < $< | sed '/GBADHOC BEGIN/,/GBADHOC END/d' | cmp -s - $@.default || { \
+	  echo "psp/gbadhoc.ld.in is not this toolchain's default link script plus GBADHOC blocks:"; \
+	  tr -d '\r' < $< | sed '/GBADHOC BEGIN/,/GBADHOC END/d' | diff - $@.default | head -30; \
+	  rm -f $@.default; exit 1; }
+	@tr -d '\r' < $< | sed 's|@HOT_ORD@|$(HOT_ORD)|' > $@
+	@rm -f $@.default
+.PHONY: FORCE
+FORCE:
 
 # netdrv objects are compiled INTO psp/ (not in-tree next to their sources):
 # a MIPS .o left in ../netdrv would be swept into the desktop core archive
@@ -598,7 +622,7 @@ DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 # not in OBJS (only their linked product is), so they are ours as well.
 clean: clean-deps clean-me clean-home clean-online clean-gbcore
 clean-deps:
-	-@rm -f $(DEPS)
+	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
 	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o

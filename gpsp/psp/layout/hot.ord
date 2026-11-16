@@ -1,8 +1,6 @@
 /* hot.ord -- GENERATED from hot_order.txt by tools/layout/gen_layout.py.
- * psp/Makefile links with -Wl,--section-ordering-file when LAYOUT_PIN=1
- * (docs/LAYOUT-PINNING.md).  A name that no longer exists matches nothing
- * and costs nothing. */
-.text : {
+ * psp/gbadhoc.ld INCLUDEs these rows first in .text (docs/LAYOUT-PINNING.md).
+ * A name that no longer exists matches nothing and costs nothing. */
   *gpsp_libretro_psp1.a:mips_stub.o(.text)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.sound_timer)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.sound_read_samples)
@@ -344,4 +342,3 @@
   *gbalink_core_b.o(.text._ZL12ml_line_bodym)
   *gbalink_core_b.o(.text._ZL12ml_diff_rowsmmPKmPmmS1_)
   *gbalink_core_b.o(.text._ZL19ml_update_relevancem)
-}
