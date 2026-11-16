@@ -3,13 +3,13 @@
 # (flavours.sh).  Do not edit; the GBAdhoc Lab reads this file (backend/lab/inikeys.py).
 # check: tools/refactor/harness_keys.py check (host suite harness_keys).
 key	getter	default	site	flavours
-adhoc_net_prio	fe_ini_get_int	0	psp/fe/boot.inc.c:955	release,lab,harness
+adhoc_net_prio	fe_ini_get_int	0	psp/fe/boot.inc.c:951	release,lab,harness
 arm	fe_ini_get	-	psp/fe/boot.inc.c:530	lab,harness
 arm	fe_ini_get	-	psp/fe/harness.f.inc.c:770	lab,harness
 audio_oracle	fe_ini_get_int	0	psp/fe/boot.inc.c:689	release,lab,harness
-audio_ring_target	fe_ini_get_int	4096	psp/fe/boot.inc.c:905	release,lab,harness
+audio_ring_target	fe_ini_get_int	4096	psp/fe/boot.inc.c:901	release,lab,harness
 autoexit_frames	fe_ini_get_int	0	psp/fe/boot.inc.c:284	release,lab,harness
-blit_mode	fe_ini_get_int	g_pcfg . blit_mode	psp/fe/boot.inc.c:802	release,lab,harness
+blit_mode	fe_ini_get_int	g_pcfg . blit_mode	psp/fe/boot.inc.c:800	release,lab,harness
 boot_ballast_kb	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:96	lab,harness
 browser	fe_ini_get_int	0	psp/fe/boot.inc.c:279	release,lab,harness
 browser	fe_ini_get_int	0	psp/fe/session.inc.c:141	release,lab,harness
@@ -19,23 +19,23 @@ cable_reserve_kb	fe_ini_get_int	( long ) 2560u	psp/fe/session.inc.c:811	release,
 cache_paranoid	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:259	lab,harness
 core_phase	fe_ini_get_int	g_pcfg . core_phase	psp/fe/boot.inc.c:718	release,lab,harness
 cpu_clock	fe_ini_get_int	- 1	psp/fe/boot.inc.c:176	release,lab,harness
-ctrl_cycle	fe_ini_get_int	0	psp/fe/boot.inc.c:1083	release,lab,harness
-disc_await	fe_ini_get_int	0	psp/fe/boot.inc.c:899	release,lab,harness
+ctrl_cycle	fe_ini_get_int	0	psp/fe/boot.inc.c:1079	release,lab,harness
+disc_await	fe_ini_get_int	0	psp/fe/boot.inc.c:895	release,lab,harness
 drprof_us	fe_ini_get_int	1000	psp/fe/harness.f.inc.c:479	opt-in:DRPROF_HW
 dump_at	fe_ini_get_int	0	psp/fe/boot.inc.c:431	release,lab,harness
 dump_every	fe_ini_get_int	0	psp/fe/boot.inc.c:432	release,lab,harness
-dump_marker_poll	fe_ini_get_int	0	psp/fe/boot.inc.c:1122	release,lab,harness
-emu_prio	fe_ini_get_int	0x2B	psp/fe/boot.inc.c:1021	release,lab,harness
-emu_prio_boost	fe_ini_get_int	0x29	psp/fe/boot.inc.c:1170	release,lab,harness
-emu_prio_boost_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1168	release,lab,harness
+dump_marker_poll	fe_ini_get_int	0	psp/fe/boot.inc.c:1118	release,lab,harness
+emu_prio	fe_ini_get_int	0x2B	psp/fe/boot.inc.c:1017	release,lab,harness
+emu_prio_boost	fe_ini_get_int	0x29	psp/fe/boot.inc.c:1166	release,lab,harness
+emu_prio_boost_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1164	release,lab,harness
 exit_sim_at	fe_ini_get	-	psp/fe/boot.inc.c:651	lab,harness
 fail_probe	fe_ini_get	-	psp/fe/harness.f.inc.c:775	lab,harness
 ff	fe_ini_get_int	0	psp/fe/boot.inc.c:440	release,lab,harness
-ff_flip_pace	fe_ini_get_int	g_ff_flip_pace	psp/fe/boot.inc.c:1067	release,lab,harness
+ff_flip_pace	fe_ini_get_int	g_ff_flip_pace	psp/fe/boot.inc.c:1063	release,lab,harness
 ff_preset	fe_ini_get	-	psp/fe/boot.inc.c:623	release,lab,harness
-flip_early	fe_ini_get_int	g_flip_early	psp/fe/boot.inc.c:1061	release,lab,harness
+flip_early	fe_ini_get_int	g_flip_early	psp/fe/boot.inc.c:1057	release,lab,harness
 folders	fe_ini_get_int	! have_variant && ( ! have_harness || fe_ini_get_int ( p_harness , "browser" , 0 ) != 0 )	psp/fe/boot.inc.c:279	release,lab,harness
-freeze_rig_recover	fe_ini_get_int	0	psp/fe/boot.inc.c:1335	lab,harness
+freeze_rig_recover	fe_ini_get_int	0	psp/fe/boot.inc.c:1331	lab,harness
 fx_color	fe_ini_get_int	- 1	psp/fe/boot.inc.c:478	lab,harness
 fx_effect	fe_ini_get_int	- 1	psp/fe/boot.inc.c:477	lab,harness
 fx_scale	fe_ini_get_int	- 1	psp/fe/boot.inc.c:479	lab,harness
@@ -81,7 +81,7 @@ gblink_batch_armed	fe_ini_get_int	1	psp/fe/boot.inc.c:343	release,lab,harness
 gblink_bulk	fe_ini_get_int	0	psp/fe/boot.inc.c:310	release,lab,harness
 gblink_bulk_bytes	fe_ini_get_int	( long ) g_gblink_bulk_bytes	psp/fe/boot.inc.c:332	release,lab,harness
 gblink_bulk_rate	fe_ini_get_int	0	psp/fe/boot.inc.c:336	release,lab,harness
-gblink_cpu_x100	fe_ini_get_int	0	psp/fe/boot.inc.c:1272	lab,harness
+gblink_cpu_x100	fe_ini_get_int	0	psp/fe/boot.inc.c:1268	lab,harness
 gblink_delay	fe_ini_get_int	g_gblink_delay	psp/fe/boot.inc.c:296	release,lab,harness
 gblink_delay_auto	fe_ini_get_int	0	psp/fe/boot.inc.c:300	release,lab,harness
 gblink_end_after	fe_ini_get_int	300	psp/fe/boot.inc.c:308	release,lab,harness
@@ -106,9 +106,9 @@ gblink_win_ms	fe_ini_get_int	10000	psp/fe/boot.inc.c:390	release,lab,harness
 gedump_at	fe_ini_get_int	0	psp/fe/boot.inc.c:433	release,lab,harness
 gedump_every	fe_ini_get_int	0	psp/fe/boot.inc.c:439	release,lab,harness
 gedump_loops	fe_ini_get_int	0	psp/fe/boot.inc.c:435	lab,harness
-group	fe_ini_get	-	psp/fe/boot.inc.c:1281	release,lab,harness
-group	fe_ini_get[src]	-	psp/fe/boot.inc.c:1412	release,lab,harness
-gu_defer	fe_ini_get_int	g_pcfg . gu_defer	psp/fe/boot.inc.c:809	release,lab,harness
+group	fe_ini_get	-	psp/fe/boot.inc.c:1277	release,lab,harness
+group	fe_ini_get[src]	-	psp/fe/boot.inc.c:1408	release,lab,harness
+gu_defer	fe_ini_get_int	g_pcfg . gu_defer	psp/fe/boot.inc.c:807	release,lab,harness
 handoff	fe_ini_get_int	0	psp/fe/boot.inc.c:410	release,lab,harness
 handoff	fe_ini_get_int	0	psp/fe/boot.inc.c:422	release,lab,harness
 handoff_max_runs	fe_ini_get_int	20	psp/fe/boot.inc.c:412	release,lab,harness
@@ -120,17 +120,17 @@ home_sim	fe_ini_get_int	0	psp/fe/boot.inc.c:650	lab,harness
 home_stall_frame	fe_ini_get_int	0	psp/fe/boot.inc.c:654	lab,harness
 home_stall_ms	fe_ini_get_int	8000	psp/fe/boot.inc.c:656	lab,harness
 host	fe_ini_get_int	0	psp/fe/boot.inc.c:707	release,lab,harness
-icache_inval_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1360	lab,harness
-icache_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1373	lab,harness
-inproc_cycles	fe_ini_get_int	0	psp/fe/boot.inc.c:1423	release,lab,harness
-inproc_fake_net	fe_ini_get_int	0	psp/fe/boot.inc.c:1436	release,lab,harness
+icache_inval_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1356	lab,harness
+icache_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1369	lab,harness
+inproc_cycles	fe_ini_get_int	0	psp/fe/boot.inc.c:1419	release,lab,harness
+inproc_fake_net	fe_ini_get_int	0	psp/fe/boot.inc.c:1432	release,lab,harness
 inproc_force	fe_ini_get_int	0	psp/fe/teardown.inc.c:265	release,lab,harness
-inproc_frames	fe_ini_get_int	240	psp/fe/boot.inc.c:1438	release,lab,harness
+inproc_frames	fe_ini_get_int	240	psp/fe/boot.inc.c:1434	release,lab,harness
 inproc_me_unload	fe_ini_get_int	0	psp/fe/boot.inc.c:502	lab,harness
-inproc_roms	fe_ini_get	-	psp/fe/boot.inc.c:1442	release,lab,harness
-inproc_via_menu	fe_ini_get_int	0	psp/fe/boot.inc.c:1429	release,lab,harness
-input_fresh	fe_ini_get_int	1	psp/fe/boot.inc.c:1081	release,lab,harness
-io_prio	fe_ini_get_int	0x2C	psp/fe/boot.inc.c:1022	release,lab,harness
+inproc_roms	fe_ini_get	-	psp/fe/boot.inc.c:1438	release,lab,harness
+inproc_via_menu	fe_ini_get_int	0	psp/fe/boot.inc.c:1425	release,lab,harness
+input_fresh	fe_ini_get_int	1	psp/fe/boot.inc.c:1077	release,lab,harness
+io_prio	fe_ini_get_int	0x2C	psp/fe/boot.inc.c:1018	release,lab,harness
 irq_io_fast	fe_ini_get_int	& irq_io_fast ? ( long ) irq_io_fast : 0	psp/fe/session.inc.c:550	lab,harness
 jit_code_mode	fe_ini_get_int	- 1	psp/fe/inproc.a.inc.c:285	lab,harness
 jit_coherency_scan	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:261	lab,harness
@@ -184,47 +184,47 @@ log_input	fe_ini_get_int	1	psp/fe/harness.f.inc.c:772	lab,harness
 log_thread	fe_ini_get_int	g_pcfg . log_thread	psp/fe/boot.inc.c:729	release,lab,harness
 me_bench	fe_ini_get_int	0	psp/fe/session.inc.c:949	release,lab,harness
 me_boot	fe_ini_get_int	g_pcfg . me_boot	psp/fe/session.inc.c:947	release,lab,harness
-me_capmode	fe_ini_get_int	1	psp/fe/boot.inc.c:1104	release,lab,harness
-me_dirty	fe_ini_get_int	g_pcfg . me_dirty	psp/fe/boot.inc.c:1053	release,lab,harness
-me_early_retire	fe_ini_get_int	g_mer_early_retire	psp/fe/boot.inc.c:1063	release,lab,harness
+me_capmode	fe_ini_get_int	1	psp/fe/boot.inc.c:1100	release,lab,harness
+me_dirty	fe_ini_get_int	g_pcfg . me_dirty	psp/fe/boot.inc.c:1049	release,lab,harness
+me_early_retire	fe_ini_get_int	g_mer_early_retire	psp/fe/boot.inc.c:1059	release,lab,harness
 me_fake	fe_ini_get_int	0	psp/fe/boot.inc.c:501	lab,harness
-me_late_present	fe_ini_get_int	g_dfr_cfg	psp/fe/boot.inc.c:1065	release,lab,harness
-me_lowlat	fe_ini_get_int	2	psp/fe/boot.inc.c:1071	release,lab,harness
-me_lowlat_margin_us	fe_ini_get_int	( int ) g_ll_margin_us	psp/fe/boot.inc.c:1076	release,lab,harness
-me_lowlat_recover	fe_ini_get_int	( int ) g_ll_recover	psp/fe/boot.inc.c:1074	release,lab,harness
-me_midlog	fe_ini_get_int	1	psp/fe/boot.inc.c:1107	release,lab,harness
-me_mode	fe_ini_get_int	g_pcfg . me_mode	psp/fe/boot.inc.c:914	release,lab,harness
-me_sameframe	fe_ini_get_int	0	psp/fe/boot.inc.c:1059	release,lab,harness
-me_shadow	fe_ini_get_int	0	psp/fe/boot.inc.c:1049	release,lab,harness
+me_late_present	fe_ini_get_int	g_dfr_cfg	psp/fe/boot.inc.c:1061	release,lab,harness
+me_lowlat	fe_ini_get_int	2	psp/fe/boot.inc.c:1067	release,lab,harness
+me_lowlat_margin_us	fe_ini_get_int	( int ) g_ll_margin_us	psp/fe/boot.inc.c:1072	release,lab,harness
+me_lowlat_recover	fe_ini_get_int	( int ) g_ll_recover	psp/fe/boot.inc.c:1070	release,lab,harness
+me_midlog	fe_ini_get_int	1	psp/fe/boot.inc.c:1103	release,lab,harness
+me_mode	fe_ini_get_int	g_pcfg . me_mode	psp/fe/boot.inc.c:910	release,lab,harness
+me_sameframe	fe_ini_get_int	0	psp/fe/boot.inc.c:1055	release,lab,harness
+me_shadow	fe_ini_get_int	0	psp/fe/boot.inc.c:1045	release,lab,harness
 me_video	fe_ini_get_int	1	psp/fe/session.inc.c:950	release,lab,harness
-me_vispost	fe_ini_get_int	1	psp/fe/boot.inc.c:1101	release,lab,harness
-me_vmem	fe_ini_get_int	1	psp/fe/boot.inc.c:1050	release,lab,harness
-me_vram_always	fe_ini_get_int	1	psp/fe/boot.inc.c:1110	release,lab,harness
+me_vispost	fe_ini_get_int	1	psp/fe/boot.inc.c:1097	release,lab,harness
+me_vmem	fe_ini_get_int	1	psp/fe/boot.inc.c:1046	release,lab,harness
+me_vram_always	fe_ini_get_int	1	psp/fe/boot.inc.c:1106	release,lab,harness
 msr_fast	fe_ini_get_int	& msr_fast ? ( long ) msr_fast : 0	psp/fe/session.inc.c:561	lab,harness
-nd_ack_ride_us	fe_ini_get_int	- 1	psp/fe/boot.inc.c:981	release,lab,harness
-nd_rto_first_max_us	fe_ini_get_int	0	psp/fe/boot.inc.c:956	release,lab,harness
-nd_rto_min_us	fe_ini_get_int	g_pcfg . nd_rto_min_us	psp/fe/boot.inc.c:960	release,lab,harness
-net_blackout_every_ms	fe_ini_get_int	20000	psp/fe/boot.inc.c:1305	release,lab,harness
-net_blackout_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1304	release,lab,harness
+nd_ack_ride_us	fe_ini_get_int	- 1	psp/fe/boot.inc.c:977	release,lab,harness
+nd_rto_first_max_us	fe_ini_get_int	0	psp/fe/boot.inc.c:952	release,lab,harness
+nd_rto_min_us	fe_ini_get_int	g_pcfg . nd_rto_min_us	psp/fe/boot.inc.c:956	release,lab,harness
+net_blackout_every_ms	fe_ini_get_int	20000	psp/fe/boot.inc.c:1301	release,lab,harness
+net_blackout_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1300	release,lab,harness
 net_frameskip	fe_ini_get_int	g_pcfg . net_frameskip	psp/fe/boot.inc.c:726	release,lab,harness
-net_jitter_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1294	release,lab,harness
-net_latency_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1293	release,lab,harness
-net_loss_pct	fe_ini_get_int	0	psp/fe/boot.inc.c:1295	release,lab,harness
+net_jitter_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1290	release,lab,harness
+net_latency_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:1289	release,lab,harness
+net_loss_pct	fe_ini_get_int	0	psp/fe/boot.inc.c:1291	release,lab,harness
 net_pace_match	fe_ini_get_int	g_pcfg . net_pace_match	psp/fe/boot.inc.c:745	release,lab,harness
-net_pace_match	fe_ini_get_int	g_pcfg . net_pace_match	psp/fe/boot.inc.c:1240	release,lab,harness
+net_pace_match	fe_ini_get_int	g_pcfg . net_pace_match	psp/fe/boot.inc.c:1236	release,lab,harness
 net_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:709	release,lab,harness
 net_session_fps	pcfg_fps_x100	g_pcfg . net_session_fps_x100	psp/fe/boot.inc.c:751	release,lab,harness
 net_session_fps_snap	fe_ini_get_int	g_pcfg . net_session_fps_snap	psp/fe/boot.inc.c:754	release,lab,harness
-nettest	fe_ini_get_int	0	psp/fe/boot.inc.c:1387	release,lab,harness
-nettest_secs	fe_ini_get_int	90	psp/fe/boot.inc.c:1389	release,lab,harness
-nick	fe_ini_get	-	psp/fe/boot.inc.c:1279	release,lab,harness
+nettest	fe_ini_get_int	0	psp/fe/boot.inc.c:1383	release,lab,harness
+nettest_secs	fe_ini_get_int	90	psp/fe/boot.inc.c:1385	release,lab,harness
+nick	fe_ini_get	-	psp/fe/boot.inc.c:1275	release,lab,harness
 online_direct	get_int	1	psp/online_psp.c:222	lab,harness
 online_drop_direct_ms	get_int	0	psp/online_psp.c:224	lab,harness
 online_prx_cycles	fe_ini_get_int	0	psp/online_psp.c:209	lab,harness
 online_relay	fe_ini_get	-	psp/online_psp.c:212	lab,harness
 online_room	get_str	-	psp/online_psp.c:220	lab,harness
 online_wifi	get_int	1	psp/online_psp.c:223	lab,harness
-pace_slow_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1270	release,lab,harness
+pace_slow_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1266	release,lab,harness
 pad_script	fe_ini_get	-	psp/fe/boot.inc.c:644	lab,harness
 perf_fixture	fe_ini_get	-	psp/fe/boot.inc.c:687	release,lab,harness
 perf_from	fe_ini_get_int	300	psp/fe/boot.inc.c:670	release,lab,harness
@@ -234,11 +234,11 @@ perf_timeout_s	fe_ini_get_int	180	psp/fe/boot.inc.c:672	release,lab,harness
 perf_to	fe_ini_get_int	3900	psp/fe/boot.inc.c:671	release,lab,harness
 player_shot_at	fe_ini_get_int	0	psp/fe/boot.inc.c:559	release,lab,harness
 player_shot_n	fe_ini_get_int	1	psp/fe/boot.inc.c:560	release,lab,harness
-preempt_prof	fe_ini_get_int	0	psp/fe/boot.inc.c:1143	release,lab,harness
+preempt_prof	fe_ini_get_int	0	psp/fe/boot.inc.c:1139	release,lab,harness
 psp_clock	fe_ini_get_int	0	psp/fe/boot.inc.c:319	release,lab,harness
 psp_clock_tz	fe_ini_get_int	0	psp/fe/boot.inc.c:323	release,lab,harness
-ret_dumps	fe_ini_get_int	0	psp/fe/boot.inc.c:1430	release,lab,harness
-ret_fade_in	fe_ini_get_int	0	psp/fe/boot.inc.c:1434	release,lab,harness
+ret_dumps	fe_ini_get_int	0	psp/fe/boot.inc.c:1426	release,lab,harness
+ret_fade_in	fe_ini_get_int	0	psp/fe/boot.inc.c:1430	release,lab,harness
 rewind	fe_ini_get_int	- 1	psp/fe/rewind.inc.c:211	release,lab,harness
 rewind_burst	fe_ini_get_int	( long ) g_rw_opts . burst	psp/fe/rewind.inc.c:236	release,lab,harness
 rewind_cadence	fe_ini_get_int	product	psp/fe/rewind.inc.c:260	release,lab,harness
@@ -251,7 +251,7 @@ rewind_full_flush	fe_ini_get_int	g_rw_opts . full_flush_restore	psp/fe/rewind.in
 rewind_fuzz_from	fe_ini_get_int	0	psp/fe/rewind.inc.c:310	release,lab,harness
 rewind_fuzz_seed	fe_ini_get_int	1	psp/fe/rewind.inc.c:312	release,lab,harness
 rewind_gap_max	fe_ini_get_int	( long ) g_rw_opts . gap_max	psp/fe/rewind.inc.c:274	release,lab,harness
-rewind_gedump	fe_ini_get_int	0	psp/main_psp.c:1613	release,lab,harness
+rewind_gedump	fe_ini_get_int	0	psp/main_psp.c:1609	release,lab,harness
 rewind_gprof	fe_ini_get_int	g_rw_opts . gather_prof	psp/fe/rewind.inc.c:247	release,lab,harness
 rewind_hash	fe_ini_get_int	0	psp/fe/rewind.inc.c:297	lab,harness
 rewind_head_skip	fe_ini_get_int	1	psp/fe/rewind.inc.c:277	release,lab,harness
@@ -278,25 +278,25 @@ rewind_target_s	fe_ini_get_int	( long ) g_rw_opts . target_s	psp/fe/rewind.inc.c
 rewind_tick_budget_us	fe_ini_get_int	( long ) g_rw_opts . tick_budget_us	psp/fe/rewind.inc.c:237	release,lab,harness
 rewind_verify	fe_ini_get_int	g_rw_opts . verify	psp/fe/rewind.inc.c:246	release,lab,harness
 rewind_vmem	fe_ini_get_int	g_rw_vmem	psp/fe/rewind.inc.c:252	release,lab,harness
-rfu_disc_defer	fe_ini_get_int	0	psp/fe/boot.inc.c:1225	release,lab,harness
-rfu_disc_grace	fe_ini_get_int	120	psp/fe/boot.inc.c:1249	release,lab,harness
-rfu_drop_disconnect	fe_ini_get_int	0	psp/fe/boot.inc.c:1318	release,lab,harness
-rfu_exit_assist	fe_ini_get_int	1	psp/fe/boot.inc.c:1234	release,lab,harness
-rfu_fault_corrupt	fe_ini_get_int	0	psp/fe/boot.inc.c:881	release,lab,harness
-rfu_fault_mode	fe_ini_get_int	0	psp/fe/boot.inc.c:891	release,lab,harness
-rfu_fault_span	fe_ini_get_int	1	psp/fe/boot.inc.c:886	release,lab,harness
-rfu_frame_pace	fe_ini_get_int	1	psp/fe/boot.inc.c:818	release,lab,harness
-rfu_hold	fe_ini_get_int	1	psp/fe/boot.inc.c:857	release,lab,harness
-rfu_idle_poll_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1255	release,lab,harness
-rfu_pace_max_hold	fe_ini_get_int	g_pcfg . rfu_pace_max_hold	psp/fe/boot.inc.c:831	release,lab,harness
-rfu_poll_min_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1203	release,lab,harness
-rfu_rtx_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:933	release,lab,harness
-rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:789	release,lab,harness
-rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:872	release,lab,harness
-rfu_shed_keep	fe_ini_get_int	2	psp/fe/boot.inc.c:846	release,lab,harness
-rfu_supersede	fe_ini_get_int	1	psp/fe/boot.inc.c:865	release,lab,harness
-rfu_timeout_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:932	release,lab,harness
-role	fe_ini_get[src]	-	psp/fe/boot.inc.c:1408	release,lab,harness
+rfu_disc_defer	fe_ini_get_int	0	psp/fe/boot.inc.c:1221	release,lab,harness
+rfu_disc_grace	fe_ini_get_int	120	psp/fe/boot.inc.c:1245	release,lab,harness
+rfu_drop_disconnect	fe_ini_get_int	0	psp/fe/boot.inc.c:1314	release,lab,harness
+rfu_exit_assist	fe_ini_get_int	1	psp/fe/boot.inc.c:1230	release,lab,harness
+rfu_fault_corrupt	fe_ini_get_int	0	psp/fe/boot.inc.c:877	release,lab,harness
+rfu_fault_mode	fe_ini_get_int	0	psp/fe/boot.inc.c:887	release,lab,harness
+rfu_fault_span	fe_ini_get_int	1	psp/fe/boot.inc.c:882	release,lab,harness
+rfu_frame_pace	fe_ini_get_int	1	psp/fe/boot.inc.c:816	release,lab,harness
+rfu_hold	fe_ini_get_int	1	psp/fe/boot.inc.c:855	release,lab,harness
+rfu_idle_poll_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1251	release,lab,harness
+rfu_pace_max_hold	fe_ini_get_int	g_pcfg . rfu_pace_max_hold	psp/fe/boot.inc.c:829	release,lab,harness
+rfu_poll_min_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1199	release,lab,harness
+rfu_rtx_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:929	release,lab,harness
+rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:788	release,lab,harness
+rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:869	release,lab,harness
+rfu_shed_keep	fe_ini_get_int	2	psp/fe/boot.inc.c:844	release,lab,harness
+rfu_supersede	fe_ini_get_int	1	psp/fe/boot.inc.c:863	release,lab,harness
+rfu_timeout_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:928	release,lab,harness
+role	fe_ini_get[src]	-	psp/fe/boot.inc.c:1404	release,lab,harness
 rom	fe_ini_get	-	psp/fe/session.inc.c:154	release,lab,harness
 rom	fe_ini_get	-	psp/lab_harness.c:1042	lab
 rom_ballast_kb	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:248	lab,harness
@@ -306,8 +306,8 @@ rtc_wall	fe_ini_get_int	0	psp/fe/session.inc.c:753	release,lab,harness
 run_id	fe_ini_get	-	psp/fe/boot.inc.c:529	lab,harness
 run_id	fe_ini_get	-	psp/fe/harness.f.inc.c:769	lab,harness
 sched_fast	fe_ini_get_int	& sched_fast ? ( long ) sched_fast : 0	psp/fe/session.inc.c:517	lab,harness
-sched_yield_frames	fe_ini_get_int	60	psp/fe/boot.inc.c:1134	release,lab,harness
-sched_yield_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1133	release,lab,harness
+sched_yield_frames	fe_ini_get_int	60	psp/fe/boot.inc.c:1130	release,lab,harness
+sched_yield_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1129	release,lab,harness
 script	fe_ini_get	-	psp/fe/boot.inc.c:637	release,lab,harness
 sessmem_at	fe_ini_get_int	600	psp/fe/boot.inc.c:523	lab,harness
 sessmem_cycles	fe_ini_get_int	0	psp/fe/boot.inc.c:521	lab,harness
@@ -320,7 +320,7 @@ shash_dump_from	fe_ini_get_int	0	psp/fe/boot.inc.c:525	lab,harness
 shash_dump_to	fe_ini_get_int	0	psp/fe/boot.inc.c:526	lab,harness
 shot_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:613	release,lab,harness
 show_fps	fe_ini_get_int	g_pcfg . show_fps	psp/fe/boot.inc.c:722	release,lab,harness
-silent	fe_ini_get_int[src]	0	psp/fe/boot.inc.c:1405	release,lab,harness
+silent	fe_ini_get_int[src]	0	psp/fe/boot.inc.c:1401	release,lab,harness
 simff	fe_ini_get_int	0	psp/fe/boot.inc.c:614	release,lab,harness
 sleep_sim_again_ms	fe_ini_get_int	0	psp/fe/boot.inc.c:483	lab,harness
 sleep_sim_at	fe_ini_get_int	0	psp/fe/boot.inc.c:481	lab,harness
@@ -346,10 +346,10 @@ sram_thread	fe_ini_get_int	g_pcfg . sram_thread	psp/fe/boot.inc.c:732	release,la
 stall_exit_hard	fe_ini_get_int	0	psp/fe/session.inc.c:1160	lab,harness
 stall_exit_s	fe_ini_get_int	0	psp/fe/session.inc.c:1158	lab,harness
 stall_watch_s	fe_ini_get_int	0	psp/fe/session.inc.c:1156	lab,harness
-state_save_at	fe_ini_get_int	0	psp/fe/boot.inc.c:1426	release,lab,harness
+state_save_at	fe_ini_get_int	0	psp/fe/boot.inc.c:1422	release,lab,harness
 swap_stubs	fe_ini_get_int	0	psp/fe/inproc.a.inc.c:257	lab,harness
 telemetry_period	fe_ini_get_int	0	psp/fe/boot.inc.c:470	release,lab,harness
-testpat	fe_ini_get_int	0	psp/fe/boot.inc.c:1347	release,lab,harness
+testpat	fe_ini_get_int	0	psp/fe/boot.inc.c:1343	release,lab,harness
 timer_lazy	fe_ini_get_int	& timer_lazy ? ( long ) timer_lazy : 0	psp/fe/session.inc.c:534	lab,harness
 ui_backdrop	fe_ini_get	-	psp/fe/boot.inc.c:609	release,lab,harness
 ui_batt	fe_ini_get_int	- 1	psp/fe/boot.inc.c:508	lab,harness
@@ -369,7 +369,7 @@ vhash_from	fe_ini_get_int	0	psp/fe/boot.inc.c:467	release,lab,harness
 vhash_legacy_rb	fe_ini_get_int	0	psp/fe/boot.inc.c:469	release,lab,harness
 vhash_to	fe_ini_get_int	0	psp/fe/boot.inc.c:544	release,lab,harness
 vid_prof	fe_ini_get_int	0	psp/fe/boot.inc.c:460	lab,harness
-vram_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1116	release,lab,harness
+vram_probe	fe_ini_get_int	0	psp/fe/boot.inc.c:1112	release,lab,harness
 wake_shot	fe_ini_get_int	0	psp/fe/boot.inc.c:558	release,lab,harness
 watch_ram	fe_ini_get	-	psp/fe/harness.f.inc.c:778	lab,harness
 xlat_scan_fast	fe_ini_get_int	- 1	psp/fe/inproc.a.inc.c:300	opt-in:JIT_COST_KEYS
