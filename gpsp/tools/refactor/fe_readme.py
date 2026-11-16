@@ -114,8 +114,9 @@ EXPORTED = collections.OrderedDict([
 NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
 # the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1).
 # teardown left the list with Epoch C C1a (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3),
-# boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c).
-LATER = collections.OrderedDict([('loop', 'HW-4 D1')])
+# boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c), loop with tier C C-1
+# (fe/loop.inc.c: frame_loop, loop_t, loop_reset; health-out/design/C-1.md).
+LATER = collections.OrderedDict()
 ROLES = ('harness', 'mgift')      # the modules whose F rows are listed with their #if context
 
 # What each @extract name prefix means (tools/refactor/docs/source-split.md, P1).  A prefix not
@@ -982,9 +983,10 @@ def render(d):
     tail = '; '.join(have) if have else 'none of them owns one'
     if have and none:
         tail += '; %s own%s none' % (andlist(none), 's' if len(none) == 1 else '')
-    w('')
-    w('%s have no fragment yet (no FRAG row): PLAN.md §2 creates them later (%s). Of the cutlist\'s rows, %s.'
-      % (', '.join(nofrag), ', '.join('%s %s' % (m, LATER[m]) for m in nofrag), tail))
+    if nofrag:      # none since tier C C-1 (loop: fe/loop.inc.c)
+        w('')
+        w('%s have no fragment yet (no FRAG row): PLAN.md §2 creates them later (%s). Of the cutlist\'s rows, %s.'
+          % (', '.join(nofrag), ', '.join('%s %s' % (m, LATER[m]) for m in nofrag), tail))
     w('')
     w('### %s functions and their `#if` context' % ' and '.join(ROLES))
     w('')

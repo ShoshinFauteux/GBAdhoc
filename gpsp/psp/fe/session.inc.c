@@ -1,7 +1,7 @@
 /* ---- THE SESSION (Epoch C C3, builds/epochc-out/PLAN-EPOCHC-beta5.md) -----------
  * The phases of one game before and after the frame loop.  What every game
  * starts from (Epoch C C3-1's session_reset) is loop_reset since tier C C-1
- * commit 5, beside the loop's state it sets (loop_t, main_psp.c). */
+ * commit 5, beside the loop's state it sets (loop_t, fe/loop.inc.c). */
 
 /* SESSION SELECT: which game, and where its save and states live -- the variant's
  * baked ROM, the harness's, the XMB launcher's, or the game list's (which parks);

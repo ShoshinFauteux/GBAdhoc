@@ -266,7 +266,11 @@ def r3_rows(gpsp, root):
     # left it, and its 5 G rows in fe/link.d.inc.c are rows outside their owner's fragments)
     later = re.search(r'^(teardown, )?(boot, )?(session, )?loop ha(ve|s) no fragment yet.*$', text, re.M)
     later = later.group(0) if later else ''
-    if later.startswith(('session', 'loop')):
+    if not later and '`fe/loop.inc.c`' in text:
+        # tier C C-1: loop has its fragment, so no module is left without one
+        c11 = 'no fragment yet' not in text
+        later = '(no module without a fragment: loop is fe/loop.inc.c)'
+    elif later.startswith(('session', 'loop')):
         c11 = ('none of them owns one' in later and 'in `main()` today' not in later and
                '- `fe/link.d.inc.c:893` G `g_start_keepalive` -> boot' in text)
     else:
