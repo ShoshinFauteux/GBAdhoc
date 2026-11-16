@@ -928,6 +928,14 @@ int main(int argc, char **argv)
 
    rfu_sched_config(rfu_sched_arg);
    fe_evt("rfu_sched d=%u", rfu_sched_d);
+   /* ADR-0076: the exit-race grace window every PSP build runs
+    * (psp/fe/play_defaults.h PLAY_RFU_DISC_GRACE).  Without it the joiner
+    * races the game's own post-trade CONNECTION_ERROR. */
+   {
+      extern void rfu_set_disc_grace(unsigned frames);   /* rfu.c (core_fe.h needs PSP types) */
+      rfu_set_disc_grace(120);
+   }
+   fe_evt("rfu_disc_grace frames=%d", 120);
 
    if (script && fe_autopilot_load(script) != 0)
    {
