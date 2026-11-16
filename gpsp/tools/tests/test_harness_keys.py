@@ -28,9 +28,11 @@ CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # pinned at C2-0 (3790851f's source): 344 keys on 370 read sites (release 203, lab 341, harness 319
 # keys; 3 keys only in opt-in arms: drprof_us, jit_pub_inline, xlat_scan_fast).  C4-2 (code-health
 # C-4): 339 keys on 365 sites, the five pre-ticks adapter rule keys gone (rfu_frame_pace, rfu_hold,
-# rfu_pace_max_hold, rfu_shed_keep, rfu_supersede; release 198, lab 336, harness 314).
-EXPECT_KEYS = 339
-EXPECT_SITES = 365
+# rfu_pace_max_hold, rfu_shed_keep, rfu_supersede; release 198, lab 336, harness 314).  C0-2: 341 keys on
+# 368 sites, the Lab's rom_unplug hook (lab_harness.c: lab_rom_unplug_at, lab_rom_replug_after, and a
+# second read of rom; lab 338).
+EXPECT_KEYS = 341
+EXPECT_SITES = 368
 
 fails = 0
 
