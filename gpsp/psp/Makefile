@@ -13,7 +13,19 @@
 #    psp-gcc works (upstream links the .so with gcc on purpose).
 
 TARGET = gpsp_adhoc
-OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
+# THE LAYOUT GROUPS (code-health C3-2; docs/LAYOUT-PINNING.md "Object groups").
+# OBJS is these groups joined, in this order (below, after the conditional
+# objects), and groups.ld links each group's text file by file, exactly where
+# the default script's generic statement put it.  The groups name the points
+# between files that the layout holds:
+#   HEAD       the pad objects linked before main_psp.o (below)
+#   FE_HEAD    main_psp.o .. stb_impl.o: the shell, menus, browser, decoders
+#   FE_COMMON  netdrv and frontend-common: fe_host's per-frame code, the glue
+#   GB         both linked TGB Dual cores
+#   FE_TAIL    the rest of the frontend, instance B, the autopilot
+# A new object goes into one of them (the *_OBJS += lines below), never into
+# OBJS directly: groups.ld fails the link for an object in no group.
+FE_HEAD_OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
        ff_psp.o \
        me_host.o \
        home_host.o \
@@ -27,8 +39,8 @@ OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
        ../frontend-common/fe_png_stream.o \
        $(MGNET_OBJS) \
        $(MGIFT_OBJS) \
-       stb_impl.o layout_pad_fe.o \
-       netdrv_core.o \
+       stb_impl.o layout_pad_fe.o
+FE_COMMON_OBJS = netdrv_core.o \
        transport_adhoc.o \
        ../frontend-common/fe_host.o \
        ../frontend-common/fe_evt.o \
@@ -40,12 +52,13 @@ OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
        ../frontend-common/fe_autopilot.o \
        ../frontend-common/netpacket_host.o \
        ../netdrv/gb_link.o \
-       ../frontend-common/fe_gblink.o \
-       ../gbcore/gbcore_dual.o \
+       ../frontend-common/fe_gblink.o
+GB_OBJS = ../gbcore/gbcore_dual.o \
        ../gbcore/tgbdual/tgb_shared.o \
        ../gbcore/gbcore_tgbdual_linked.o \
        ../gbcore/gbcore_tgbdual_linked_b.o \
        layout_pad_gb.o
+FE_TAIL_OBJS =
 
 # Vendored TGB Dual (GB/GBC; gbcore/tgbdual/, from MasterBoy).  Its flags are
 # scoped to its own objects and assigned after the build.mak include, beside
@@ -259,7 +272,7 @@ gbalink_b_stubs.o: CFLAGS += -DLAYOUT_PAD_BXLAT_BYTES=$(LAYOUT_PAD_BXLAT_BYTES)
 CHEATS ?= 1
 ifeq ($(CHEATS),1)
 CFLAGS += -DGPSP_CHEATS=1
-OBJS   += ../frontend-common/fe_cheats.o
+FE_TAIL_OBJS += ../frontend-common/fe_cheats.o
 endif
 
 # HEAP_TRACE=1 (diagnostic harness builds only, PSP_EXTRA): every allocation
@@ -269,7 +282,7 @@ HEAP_TRACE ?= 0
 ifeq ($(HEAP_TRACE),1)
 # Only then is heap_trace.o linked (code-health B-4): without it psp/heap_trace.h
 # compiles the three calls to nothing, so no build links an object of stubs.
-OBJS    += heap_trace.o
+FE_TAIL_OBJS += heap_trace.o
 CFLAGS  += -DGPSP_HEAP_TRACE
 LDFLAGS += -Wl,--wrap=_malloc_r -Wl,--wrap=_free_r -Wl,--wrap=_realloc_r            -Wl,--wrap=_calloc_r -Wl,--wrap=_memalign_r -Wl,--wrap=malloc            -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=memalign
 endif
@@ -298,7 +311,7 @@ CORE_LIB = ../gpsp_libretro_psp1.a
 # tools/build.sh passes both).
 REWIND ?= 1
 ifeq ($(REWIND),1)
-OBJS += ../frontend-common/fe_rewind.o ../frontend-common/fe_rewind_pack.o
+FE_TAIL_OBJS += ../frontend-common/fe_rewind.o ../frontend-common/fe_rewind_pack.o
 CFLAGS += -DREWIND
 endif
 # RFU_SCHED=1: scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
@@ -313,7 +326,7 @@ ONLINE ?= 1
 ifeq ($(ONLINE),1)
 # the session code is gbadhoc_online.prx (online/), loaded on demand: only
 # the loader and the configuration are in the EBOOT (online_psp.c)
-OBJS += online_psp.o
+FE_TAIL_OBJS += online_psp.o
 ONLINE_PRX = online/gbadhoc_online.prx
 CFLAGS += -DGBADHOC_ONLINE
 endif
@@ -339,7 +352,7 @@ endif
 # is not compiled and main_psp.c's LAB_HOOK()s expand to nothing.
 LAB_HARNESS ?= 0
 ifeq ($(LAB_HARNESS),1)
-OBJS += lab_harness.o labab/budget.o labab/ab_io.o lab_ffpace.o
+FE_TAIL_OBJS += lab_harness.o labab/budget.o labab/ab_io.o lab_ffpace.o
 CFLAGS += -DLAB_HARNESS
 endif
 GBA_LINK ?= 1
@@ -355,18 +368,18 @@ endif
 # INSERT scripts above must come before it (psp/gbadhoc.ld.in says why).
 LDFLAGS += -Wl,-T,gbadhoc.ld
 ifeq ($(GBA_LINK),1)
-OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
+FE_TAIL_OBJS += ../frontend-common/fe_gbadual.o ../gbalink/gbalink_bus.o \
         ../gbalink/gbalink_pair.o ../gbalink/gbalink_script.o gbalink_core_b.o
 CFLAGS += -DGBA_LINK
 # The partner's autopilot (bench only; fe_gbadual.c weak-references it) in rig
 # builds only (GPSP_PERF_RIG).  A player build saves its 8.2 KB of text and
 # 6.3 KB of data/bss.
 ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS)),)
-OBJS += fe_autopilot_b.o
+FE_TAIL_OBJS += fe_autopilot_b.o
 else
 # ...and its 2,636 B in the pinned warm tail stay, as zeros
 # (psp/layout_pad_apb.S says why).
-OBJS += layout_pad_apb.o
+FE_TAIL_OBJS += layout_pad_apb.o
 endif
 endif
 # NOTE: deliberately NO -lpspnet / -lpsputility here.  build.mak's default
@@ -451,17 +464,24 @@ PSP_LARGE_MEMORY ?= 1
 # other object's code and bss move by N.  Unset (every normal build): the
 # object is not linked at all.  tools/build.sh passes it via PSP_EXTRA,
 # which it refuses for the release profile.
-ifneq ($(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),)
-OBJS := layout_pad.o $(OBJS)
-endif
+# HEAD: in front of main (psp/layout_pad_main.S), in front of instance A's
+# ml_diff_page (psp/layout_pad_late.S) and the pinned warm tail's 32 B holes
+# (psp/layout_pad_warm.S): their sections are placed by name, so their place on
+# the command line moves nothing; then the sweep's layout_pad.o.
+HEAD_OBJS = layout_pad_main.o layout_pad_late.o layout_pad_warm.o \
+            $(if $(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),layout_pad.o)
 # Last of the objects: instance A's core archive follows (layout_pad_mid.S).
-OBJS += layout_pad_core.o
-# The pinned warm tail's 32 B holes (psp/layout_pad_warm.S says why).
-OBJS := layout_pad_warm.o $(OBJS)
-# In front of instance A's ml_diff_page (psp/layout_pad_late.S): before the core.
-OBJS := layout_pad_late.o $(OBJS)
-# In front of main (psp/layout_pad_main.S): linked before main_psp.o.
-OBJS := layout_pad_main.o $(OBJS)
+FE_TAIL_OBJS += layout_pad_core.o
+OBJS = $(HEAD_OBJS) $(FE_HEAD_OBJS) $(FE_COMMON_OBJS) $(GB_OBJS) $(FE_TAIL_OBJS)
+# groups.ld (gbadhoc.ld INCLUDEs it): the generic .text statement split by
+# group.  HEAD also takes psp-gcc's start files, which the default order puts
+# before every object (its *startfile spec: crt0 crti crtbegin).
+LAYOUT_STARTFILES = */crt0.o */crti.o */crtbegin.o
+LAYOUT_GROUPS = "head:$(strip $(LAYOUT_STARTFILES) $(HEAD_OBJS))" \
+                "fe_head:$(strip $(FE_HEAD_OBJS))" \
+                "fe_common:$(strip $(FE_COMMON_OBJS))" \
+                "gb:$(strip $(GB_OBJS))" \
+                "fe_tail:$(strip $(FE_TAIL_OBJS))"
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
@@ -486,7 +506,9 @@ $(TARGET).elf: $(CORE_LIB)
 # hand ld the script a second time as an input file.  So a new script, or a
 # regenerated layout/hot.ord, does not relink by itself: tools/build.sh always
 # relinks (clean build); by hand, `rm gpsp_adhoc.elf`.
-$(TARGET).elf: | gbadhoc.ld
+$(TARGET).elf: | gbadhoc.ld groups.ld
+groups.ld: FORCE
+	@sh ../tools/layout/groups_ld.sh $(LAYOUT_GROUPS) > $@
 # gbadhoc.ld: psp/gbadhoc.ld.in with the hot order filled in, rewritten on
 # every make.  First the template is checked: without its GBADHOC BEGIN/END
 # blocks it must be THIS toolchain's default script, byte for byte
@@ -622,7 +644,7 @@ DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 # not in OBJS (only their linked product is), so they are ours as well.
 clean: clean-deps clean-me clean-home clean-online clean-gbcore
 clean-deps:
-	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default
+	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default groups.ld
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
 	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o

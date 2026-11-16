@@ -156,6 +156,38 @@ writes on every make from `psp/gbadhoc.ld.in`:
   stripped ELFs equal for the `HOT_ORD=layout/hot_pair.ord` and
   `HOT_DATA_GUARD=0` arms. Only the unstripped symbol table's order differs.
 
+#### Object groups (code-health C3-2)
+
+psp/Makefile's `OBJS` is five groups joined, in link order: `HEAD_OBJS` (the
+pad objects before main_psp.o), `FE_HEAD_OBJS` (main_psp.o .. stb_impl.o),
+`FE_COMMON_OBJS` (netdrv, frontend-common), `GB_OBJS` (both TGB Dual cores)
+and `FE_TAIL_OBJS` (the rest, instance B, the autopilot). A new object goes
+into one of them, never into `OBJS`.
+
+`tools/layout/groups_ld.sh` writes `psp/groups.ld` from them on every make, and
+`gbadhoc.ld` INCLUDEs it just before the default's generic
+`*(.text .stub .text.* .gnu.linkonce.t.*)`, which stays as the catch-all for
+the core archive, the libraries and crtend:
+
+- One statement per file, in command-line order. The generic statement placed
+  the same sections file by file in the same order, so the bytes are the same
+  (EBOOT-identical on six profiles; stripped ELFs equal for the hot_pair,
+  `HOT_DATA_GUARD=0` and `LAYOUT_PAD_TEXT` sweep arms). The first group also
+  takes psp-gcc's start files (`*/crt0.o */crti.o */crtbegin.o`), which the
+  default order puts before every object.
+- Each file is written `:FILE`, ld's "FILE, not an archive member", which is
+  exact. A plain `*me_host.o` also matches home_host.o, any plain pattern also
+  matches archive members by member name, and a plain name without a wildcard
+  makes ld open the file again where the script names it.
+- After the groups, `:[!/]*.o` (every relative-path object outside an archive)
+  is matched between two marks, and an ASSERT fails the link if anything landed
+  there: an object in no group. tools/tests/test_layout_groups.py links host
+  objects through the same generator to check all of this.
+
+The groups are where code-health C3-3's pins go: before FE_HEAD (today's
+`layout_pad_cold`), FE_COMMON (`layout_pad_fe`), FE_TAIL (`layout_pad_gb`) and
+the catch-all (`layout_pad_core`).
+
 ## 2. Today's swing is the JIT base: hardware evidence
 
 The Go isolation bench (`candidate-out/drl-go-iso3`, AW2, ABBA) and the 3000

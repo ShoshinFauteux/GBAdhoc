@@ -703,6 +703,12 @@ def suites(env: Env, baseline: Path | None):
         ("hot_budget", False, lambda: None,
          "python3 tools/tests/test_hot_budget.py"),
 
+        # The layout groups (tier C C3-2, tools/layout/groups_ld.sh): grouped
+        # text is byte-identical to the default statement's, an object in no
+        # group fails the link, `:FILE` is exact, OBJS is only the groups.
+        ("layout_groups", True, lambda: None,
+         "python3 tools/tests/test_layout_groups.py"),
+
         # The harness-ini key table the Lab validates staged keys against
         # (tools/refactor/generated/harness_keys.tsv, tier C C2-0): it still
         # matches the source, its key count is pinned, a default with a side
