@@ -2781,6 +2781,31 @@ static void log_bios_evt(void)
    size_t n;
    char sha[41];
 
+#ifndef GPSP_NO_TELEMETRY
+   /* gpsp_bios=builtin (the Lab's lab_bios=builtin, a host tool's --option):
+    * the core never opens gba_bios.bin (libretro.c retro_load_game), so a
+    * hash of the file beside the build would name a BIOS this run does not
+    * use.  Report the bundled image the core copies instead.  Weak: a test
+    * host that links fe_host.c without the core has no image. */
+   {
+      extern const uint8_t open_gba_bios_rom[] __attribute__((weak));
+      size_t i;
+      for (i = 0; i < sizeof(options) / sizeof(options[0]); i++)
+         if (!strcmp(options[i].key, "gpsp_bios") &&
+             !strcmp(options[i].value, "builtin"))
+         {
+            if (open_gba_bios_rom)
+            {
+               fe_sha1_hex(open_gba_bios_rom, 16384, sha);
+               fe_evt("bios=builtin sha1=%s", sha);
+            }
+            else
+               fe_evt("bios=builtin sha1=none");
+            return;
+         }
+   }
+#endif
+
    snprintf(path, sizeof(path), "%s/gba_bios.bin",
             host.system_dir ? host.system_dir : ".");
    f = fopen(path, "rb");

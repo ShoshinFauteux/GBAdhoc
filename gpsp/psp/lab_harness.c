@@ -43,6 +43,7 @@
 #include "labab/ab_io.h"     /* autoboot agent's BUDGET.TXT contract, verbatim from GBAdhoc-Lab autoboot/src (d31d586) */
 #include "fe_util.h"
 #include "fe_evt.h"
+#include "fe_host.h"          /* fe_host_option_set: lab_bios */
 
 /* ------------------------------------------------------------- counters */
 extern uint32_t flush_rom_total, gamepak_reopens, gamepak_short_reads, badjump_contained;
@@ -736,6 +737,19 @@ void lab_audit_keys(void)
       return;
    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
       fe_ini_get(L_ini, keys[i], tmp, sizeof(tmp));
+   /* lab_bios=builtin: this task runs on the core's bundled open BIOS (open_gba_bios_rom, what a player without
+    * gba_bios.bin gets), although the rig stages gba_bios.bin beside every build.  Applied here because this is
+    * the first point after fe_evt_init and before the game boots (fe_host_boot reads the option table then).
+    * EVT bios= (fe_host.c log_bios_evt) then reports bios=builtin, and the Lab fails a task whose EVT bios= is
+    * not what its TASK.INI asked for.  Any other value is refused loudly (harness-ini-key-trap): the run stays
+    * on the default BIOS and the Lab's check fails it. */
+   if (fe_ini_get(L_ini, "lab_bios", tmp, sizeof(tmp)) && tmp[0])
+   {
+      if (!strcmp(tmp, "builtin") && fe_host_option_set("gpsp_bios", "builtin") == 0)
+         fe_evt("cfg_bios lab_bios=builtin gpsp_bios=builtin");
+      else
+         fe_evt("cfg_bios lab_bios=%s refused=1 (want builtin)", tmp);
+   }
 }
 
 int lab_active(void)

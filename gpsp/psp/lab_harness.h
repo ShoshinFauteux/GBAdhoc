@@ -28,7 +28,8 @@ int  lab_boot(const char *dir_base, char *harness, size_t harness_sz,
               char *log_path, size_t log_path_sz);
 int  lab_active(void);
 /* Right after fe_ini_audit(HARNESS_INI): read the lab_* keys again so the
- * key audit does not report them as unknown. */
+ * key audit does not report them as unknown, and apply lab_bios=builtin
+ * (the core option gpsp_bios, before the game boots). */
 void lab_audit_keys(void);
 void lab_set_eboot_crc(unsigned crc);
 /* After the save/state sidecar paths are computed: point them at
