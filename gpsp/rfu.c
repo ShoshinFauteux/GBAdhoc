@@ -2974,10 +2974,14 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
     if (ptype == NET_RFU_HOST_SEND &&
         rfu_sched_take(buf, len, client_id, (hdata & 0x80) != 0, hdata >> 8))
       return;
+    /* The client's stamp (rfu_net_send_data) is payload bytes 88..91, so it
+     * is read only from a packet long enough to carry it. */
     if (ptype == NET_RFU_CLIENT_SEND &&
         rfu_sched_take(buf, len, client_id,
                        len >= 12 + 92 && payl[88] == RFU_STAMP_TAG,
-                       ((u32)payl[89] << 16) | ((u32)payl[90] << 8) | payl[91]))
+                       len >= 12 + 92 ? ((u32)payl[89] << 16) |
+                                        ((u32)payl[90] << 8) | payl[91]
+                                      : 0))
       return;
     switch (ptype) {
     case NET_RFU_BROADCAST:
