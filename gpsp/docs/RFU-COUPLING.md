@@ -1,7 +1,8 @@
 # Coupling the two consoles over the emulated Wireless Adapter
 
-Design, 2026-11-02. Nothing here is built yet. Branch `claude/rfu-reference`; evidence in
-`builds/rfuref-out` and `builds/rfutrace-out/hw1`.
+Design, 2026-11-02; built since (see Status). Since code-health C-4 scheduled ticks are the adapter's only
+protocol, in every build. Branch `claude/rfu-reference`; evidence in `builds/rfuref-out` and
+`builds/rfutrace-out/hw1`.
 
 ## The problem
 
@@ -57,8 +58,9 @@ allow.
 is coupling, not a fixed cap, so it should fit the no-locked-rates rule, but the owner has the last word. Today's
 forced 57 fps (`PCFG_PROFILE_FPS_X100`, ADR-0073) gets reviewed once ticks work; it may have no job left.
 
-**What goes away.** Backlog cannot form, because each console reads what one tick gave it. `frame_pace`, shed, hold,
-supersede and `rfu_gq_depth` can all be retired after hardware proof. So can most Pokémon-derived thresholds.
+**What goes away.** Backlog cannot form, because each console reads what one tick gave it. `frame_pace` (with its max
+hold and catch-up), shed, hold and supersede were retired in code-health C-4 (see Status). `rfu_gq_depth` stays as a
+census (GQPEAK), not a rule.
 
 **Better testing.** Delivery no longer depends on wire timing, so a session with the same inputs should replay
 identically under any jitter. Hash comparison then becomes possible for adapter fixtures, as for the cable, which
@@ -95,7 +97,8 @@ So delay was never the Tennis problem. Today's 100 ms round trip is not what mak
   and the screen stay alive. Reuse that code.
 - **Pause, sleep, in-game menu.** Stopping one console stops the other, as on the cable. Decision for the owner:
   Union Room players may mind this more than a battle does.
-- **Three to five players.** Wait on every partner. Tested last.
+- **Three to five players.** Not supported: multiplayer is two consoles (owner decision, tier C). A third
+  console in an adapter room is not scheduled and, since C-4, has no delivery rules either; no test covers it.
 - **Wire format.** New packets and a new meaning for old ones: both consoles need the same version. The planned
   build-mismatch refusal must land with this.
 
@@ -129,9 +132,27 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
 5. **Retire the old rules** one at a time, with a hardware run after each. Review the 57 fps force.
 6. **Beta build**: a natural first nightly once Tennis and Golf hold up in real sessions.
 
+## Status (code-health C-4, 2026-11-16)
+
+Ticks are the only adapter protocol (owner decision A-0: stable 5.0.0 ships them).
+
+- **No switch.** `RFU_SCHED` is not a make variable or `#ifdef` any more, and `tools/release.sh` has no version-string
+  branch: a stable tag builds the protocol the betas shipped. `tools/build.sh` accepts `RFU_SCHED=1` as a no-op.
+- **One dial.** `rfu_sched = D` (harness key; desktop `--rfu-sched D`), default 2 on the PSP and the desktop.
+  `D = 0` is a diagnostic arm: raw queues, no rules, and netdrv refuses a ticks partner (`ND_FEAT_RFU_SCHED`).
+  libretro and 3ds have no tick gate and run D = 0.
+- **The older rules are gone**: frame pace with its max hold and catch-up, link shedding, hold-never-discard and
+  supersede, with their harness keys (`rfu_frame_pace`, `rfu_pace_max_hold`, `rfu_shed_keep`, `rfu_hold`,
+  `rfu_supersede`), the CONFIG.INI key `rfu_pace_max_hold` (a player's file keeps the line, unread), the desktop flags
+  `--rfu-play` / `--rfu-pace`, and trace events 19, 22, 23, 30, 33, 34, 36, 37. The censuses the Lab reads stay
+  (rfu_backlog, rfu_hbacklog, rfu_qrun, rfu_gqpeak, rfu_empty, rfu_answin).
+- **4.5.0 cannot link** over the adapter with this build: it sends no ticks, so netdrv refuses the pair.
+- **The 57 fps force.** Every speed-profile net session is lifted to 59.73 (ADR-0073's reason is gone); the
+  compatibility profile and `net_session_fps_force` keep their meaning.
+
 ## Status (2026-11-03)
 
-Built and on hardware as the build switch `RFU_SCHED=1` (tools/build.sh, off by default; docs/BUILD-SWITCHES.md).
+Built and on hardware as the build switch `RFU_SCHED=1` (tools/build.sh, off by default then; docs/BUILD-SWITCHES.md).
 
 - **Hardware, PSP-1000 + PSP-3000, D = 2.** Lab build d5973f7fc046 (`claude/rfu-ticks` 2e5c288), Lab notes `rfut460`:
   11 of 11 passed across both console orders. Slice fps (the Lab's own measure, host/join): Tennis 56.2/56.1 and

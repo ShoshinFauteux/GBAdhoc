@@ -1,5 +1,10 @@
 # RIG-DOUBLE-BATTLE: the two-PSP FireRed double-battle rig (design, for review)
 
+> **History.** The delivery rules this rig measured (link shedding `rfu_shed_keep`, the
+> overflow hold `rfu_hold`, frame pace and its max hold) were retired by scheduled ticks and
+> deleted in code-health C-4, with their harness keys and trace events (docs/RFU-COUPLING.md,
+> Status). The record below is kept as history; its arms cannot be staged on a C-4 build.
+
 **Status (2026-09-26):** APPROVED with four amendments (§9), and BUILT through
 §7 step 6 on PPSSPP.
 - §10 records what the bring-up (G1) changed from the design below. Read it
