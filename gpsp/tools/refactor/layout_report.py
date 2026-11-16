@@ -105,6 +105,11 @@ class Build:
         return self.count[name] == 1
 
     def text_pad(self):
+        # code-health C3-3: the TEXT pad is `pin fe_head`; its gap plus the 8
+        # bytes of layout_pad_cold's kept `jr $ra; nop` is the old value
+        at, frm = self.sym.get('__pin_at_fe_head'), self.sym.get('__pin_from_fe_head')
+        if at and frm:
+            return at['value'] - frm['value'] + 8, 'pin fe_head gap + 8'
         if 'layoutPadBytes' in self.manifest:
             return int(self.manifest['layoutPadBytes']), 'manifest'
         s = self.sym.get('layout_pad_cold')

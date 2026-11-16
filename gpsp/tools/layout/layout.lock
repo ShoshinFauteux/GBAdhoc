@@ -121,14 +121,24 @@
 # (.bss: B-2's queue fields, B-3's flags and, in the release, the profile's
 # 3.2 KB per instance are gone; nothing holds .bss there).  38 entries, 0
 # differ in both sections.
+# Code-health C3-3 (claude/health; docs/LAYOUT-PINNING.md "Pins"): the MAIN,
+# TEXT, FE, GB and CORE pads are linker pins.  `pin NAME ADDR` is the absolute
+# address the region after the pin starts at; psp/pins.ld feeds it to the link
+# (the gap (ADDR - .) & 0x1FFF, tools/layout/groups_ld.sh), so a size change before it needs no
+# re-pin.  Recorded from the 3790851f-identical ELFs of all six profiles
+# (runs/c31-40311176): each pad's end, so every EBOOT stayed identical.  A
+# region that grows past its pin would wrap and spend a PSP-1000 heap page:
+# a strict build (the release always) fails the link instead, and only
+# `layout_lock.py regen --spend-page/--free-page/--move` changes a pin.  The
+# four rig profiles get sections of their own (pins only): they used the
+# release pad numbers, which put their regions at other offsets.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x1c64
 size main                               23580
 at   pace_frame                         0x0a20
-# the first symbol after each text pad, and what each pad is tuned for
-# (`pad` lines below name the anchor `solve` aims at)
+# the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
 at   fe_host_reset                      0x0b00
@@ -178,19 +188,20 @@ at   _end                               0x198c
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
 pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
 pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
-pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
-pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
-pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
-pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x08931c64   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x089392d0   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0897c700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x089ed9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a33e98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x156c
 size main                               23592
 at   pace_frame                         0x0b0c
-# the first symbol after each text pad, and what each pad is tuned for
-# (`pad` lines below name the anchor `solve` aims at)
+# the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094
 at   fe_host_reset                      0x1308
@@ -240,8 +251,46 @@ at   _end                               0x198c
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
 pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
 pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
-pad  LAYOUT_PAD_MAIN_BYTES  layout_pad_main      main
-pad  LAYOUT_PAD_BYTES       layout_pad_cold      pace_frame
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        fe_host_reset
-pad  LAYOUT_PAD_GB_BYTES    layout_pad_gb        hex_val
-pad  LAYOUT_PAD_CORE_BYTES  layout_pad_core      _ZL10pipe_latchv#1
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x0893356c   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x0893b394   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0898f094   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a041a0   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a561d8   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+
+[harness]
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+
+[harness64]
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+
+[diagnostic]
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x08931ce4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x08939350   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0897c7a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x089eda90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a36278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+
+[soak]
+# pins (code-health C3-3): where each region starts, absolute; the link puts
+# it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
+pin  main                               0x089332e4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  fe_head                            0x0893a84c   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
+pin  fe_common                          0x0898e510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a03644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4dc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)

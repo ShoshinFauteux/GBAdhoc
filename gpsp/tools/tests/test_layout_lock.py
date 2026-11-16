@@ -105,10 +105,19 @@ def main():
     check(named and named <= mkpads, "every `pad` in layout.lock is a psp/Makefile pad: %s" % sorted(named))
     envpads = set(re.findall(r"^(LAYOUT_PAD_\w+)=\d+$", open(PADS).read(), re.M))
     check(envpads and envpads <= mkpads, "lab-pads.env names only psp/Makefile pads: %s" % sorted(envpads))
-    check({"LAYOUT_PAD_BYTES", "LAYOUT_PAD_RO_BYTES"} <= envpads, "lab-pads.env sets the text and RO pads")
+    check("LAYOUT_PAD_RO_BYTES" in envpads, "lab-pads.env sets the RO pad")
+    gone = {"LAYOUT_PAD_BYTES", "LAYOUT_PAD_MAIN_BYTES", "LAYOUT_PAD_FE_BYTES",
+            "LAYOUT_PAD_GB_BYTES", "LAYOUT_PAD_CORE_BYTES"}
+    check(not (gone & (envpads | mkpads | named)),
+          "the pads that are pins since C3-3 are in no Makefile default, lab-pads.env or `pad` line")
     kinds = set(re.findall(r"^(\w+)\s", "\n".join(l for l in lock.splitlines()
                                               if l and not l.startswith(("#", "["))), re.M))
-    check(kinds <= {"at", "size", "gap", "tail", "pad"}, "layout.lock uses known entry kinds: %s" % sorted(kinds))
+    check(kinds <= {"at", "size", "gap", "tail", "pad", "pin"}, "layout.lock uses known entry kinds: %s" % sorted(kinds))
+    for fl in ("release", "lab", "harness", "harness64", "diagnostic", "soak"):
+        sec = re.search(r"^\[%s\]$(.*?)(?=^\[|\Z)" % fl, lock, re.M | re.S)
+        pins = re.findall(r"^pin\s+(\w+)\s+0x[0-9a-f]{8}\b", sec.group(1) if sec else "", re.M)
+        check(pins == ["main", "fe_head", "fe_common", "fe_tail", "core"],
+              "[%s] has the five pins in link order: %s" % (fl, pins))
 
     with tempfile.TemporaryDirectory() as d:
         nm = os.path.join(d, "a.nm")
@@ -186,13 +195,74 @@ def main():
         rc, out = run("check", "release", m, "--lock", jl, "-q")
         check(rc == 1 and "rom_translation_cache_static" in out and "_end" not in out,
               "mutant: .bss +16 before the JIT, -16 after -> the cache base fails, _end does not")
+    pin_tests()
     policy_tests()
     print("%d failure(s)" % fails)
     return 1 if fails else 0
 
 
+PIN_LOCK = """[release]
+at   exit_cb                  0x12d0
+pin  main      0x08931c64
+pin  fe_head   0x089392d0
+pin  core      0x08a33e98
+"""
+PIN_NM = [
+    (0x08930b20, None, "A", "__pin_from_main"),
+    (0x08931c64, None, "A", "__pin_at_main"),
+    (0x08937c98, None, "A", "__pin_from_fe_head"),
+    (0x089392d0, None, "A", "__pin_at_fe_head"),
+    (0x089392d0, 0x20, "t", "exit_cb"),
+    (0x08a338d8, None, "A", "__pin_from_core"),
+    (0x08a33e98, None, "A", "__pin_at_core"),
+]
+
+
+def pin_tests():
+    """The pins (code-health C3-3) and the overrun policy (critique C-3
+    point 1): check holds the absolute address, names a wrap as a spent page;
+    write never moves a pin; regen refuses without an explicit choice."""
+    with tempfile.TemporaryDirectory() as d:
+        nm, lk = os.path.join(d, "p.nm"), os.path.join(d, "p.lock")
+        write_nm(nm, PIN_NM)
+        open(lk, "w").write(PIN_LOCK)
+        rc, out = run("check", "release", nm, "--lock", lk)
+        check(rc == 0 and "0 differ" in out and "gap 5688 B" in out,
+              "pins: check passes where the link put them, and shows the gap")
+        rc, out = run("pins", "release", nm, "--lock", lk)
+        check(out.strip() == "release main=4420 fe_head=5688 core=1472",
+              "pins: the manifest line is the flavour and each gap")
+        wrapped = [(a + (8192 if a >= 0x08937c98 else 0), s, t, n) for a, s, t, n in PIN_NM]
+        write_nm(nm, wrapped)
+        rc, out = run("check", "release", nm, "--lock", lk, "-q")
+        check(rc == 1 and "MOVED    pin   fe_head" in out and "heap page(s) spent" in out
+              and "--spend-page" in out, "pins: a wrap fails the check and says a page was spent")
+        rc, out = run("pins", "release", nm, "--lock", lk)
+        check("fe_head=MOVED" in out, "pins: a moved pin is MOVED in the manifest line")
+        rc, out = run("write", "release", nm, "--lock", lk)
+        check("0x089392d0" in open(lk).read(), "pins: write never re-records a pin")
+        rc, out = run("regen", "release", "--lock", lk)
+        check(rc == 2 and "never decides" in out and open(lk).read().count("0x089392d0") == 1,
+              "pins: regen with no choice refuses and changes nothing")
+        rc, out = run("regen", "release", "--lock", lk, "--spend-page", "fe_head")
+        txt = open(lk).read()
+        check(rc == 0 and "0x0893b2d0" in txt and "0x08a35e98" in txt and "0x08931c64" in txt
+              and "page spent" in out,
+              "pins: --spend-page moves that pin and every later one +8 KiB, says so")
+        rc, out = run("check", "release", nm, "--lock", lk, "-q")
+        check(rc == 0, "pins: after --spend-page the wrapped build checks clean")
+        rc, out = run("regen", "release", "--lock", lk, "--free-page", "fe_head")
+        check(rc == 0 and "0x089392d0" in open(lk).read() and "page freed" in out,
+              "pins: --free-page gives the page back")
+        rc, out = run("regen", "release", "--lock", lk, "--move", "core=0x08a34000")
+        check(rc == 0 and "0x08a34000" in open(lk).read() and "ABBA" in out,
+              "pins: --move sets one pin and asks for a hardware ABBA")
+        rc, out = run("regen", "release", "--lock", lk, "--spend-page", "nope")
+        check(rc == 2, "pins: regen of an unknown pin refuses")
+
+
 REL = ["RFU_SCHED=1", "GBA_LINK=1", "REWIND=1", "ONLINE=1", "CHEATS=1",
-       "LAYOUT_PIN=1", "INPUT_FRESH=", "MGIFT=", "ME_LOWLAT=", "LAYOUT_PAD_ENV=",
+       "LAYOUT_PIN=1", "INPUT_FRESH=", "MGIFT=", "ME_LOWLAT=",
        "PSP_EXTRA=", "CORE_EXTRA=", "FE_EXTRA=", "GBALINK_LEAN_OUTLINE="]
 
 
@@ -211,7 +281,7 @@ def policy_tests():
         check(out.split(" ")[0] == want, "strict: ME_LOWLAT=%r -> %s" % (v, want))
     for over in ("RFU_SCHED=0", "RFU_SCHED=", "GBA_LINK=0", "REWIND=0", "ONLINE=0",
                  "CHEATS=0", "LAYOUT_PIN=0", "INPUT_FRESH=0", "MGIFT=0",
-                 "LAYOUT_PAD_ENV=x.env", "PSP_EXTRA=FOO=1", "CORE_EXTRA=X=0",
+                 "PSP_EXTRA=FOO=1", "CORE_EXTRA=X=0",
                  "FE_EXTRA=-DX", "GBALINK_LEAN_OUTLINE=1"):
         rc, out = strict_of(over)
         check(out.startswith("0 ") and over.split("=")[0] in out,

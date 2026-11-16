@@ -39,7 +39,7 @@ FE_HEAD_OBJS = main_psp.o $(RIG_HANDOFF_OBJS) icprobe.o \
        ../frontend-common/fe_png_stream.o \
        $(MGNET_OBJS) \
        $(MGIFT_OBJS) \
-       stb_impl.o layout_pad_fe.o
+       stb_impl.o
 FE_COMMON_OBJS = netdrv_core.o \
        transport_adhoc.o \
        ../frontend-common/fe_host.o \
@@ -56,8 +56,7 @@ FE_COMMON_OBJS = netdrv_core.o \
 GB_OBJS = ../gbcore/gbcore_dual.o \
        ../gbcore/tgbdual/tgb_shared.o \
        ../gbcore/gbcore_tgbdual_linked.o \
-       ../gbcore/gbcore_tgbdual_linked_b.o \
-       layout_pad_gb.o
+       ../gbcore/gbcore_tgbdual_linked_b.o
 FE_TAIL_OBJS =
 
 # Vendored TGB Dual (GB/GBC; gbcore/tgbdual/, from MasterBoy).  Its flags are
@@ -174,15 +173,26 @@ ASFLAGS  = $(CFLAGS)
 # pins the core archive the same way.  The make kill switch LAYOUT_PIN=0 (the
 # pre-pinning link) is gone: any value but 1 stops here.
 #
-# LAYOUT_PAD_BYTES=N: an N-byte cold function that nothing calls (main_psp.c,
-# layout_pad_cold).  As a probe it is the stand-in for "an unrelated change":
-# pinned builds must not move a hot byte, unpinned ones shift everything after
-# main_psp.o.  The value is part of the shipped layout; changing it changes
-# the binary (tools/build.sh reads this line, make_release.sh checks it).
+# THE PINS (code-health C3-3; docs/LAYOUT-PINNING.md "Pins"): main, the
+# frontend head (main_psp.o ..), frontend-common, the frontend tail and
+# instance A's cold core each start at an address tools/layout/layout.lock
+# gives per flavour, `pin NAME ADDR`.  pins.ld (rule below) hands them to the
+# link; the MAIN, TEXT, FE, GB and CORE pads they replace were numbers that a
+# person re-tuned after every size change before them.
+#   LAYOUT_FLAVOUR      the lock section (tools/build.sh: the profile; lab
+#                       with LAB_PADS=0 takes the release's)
+#   LAYOUT_PIN_STRICT   1: a pin the code before it grew past fails the link
+#                       (tools/build.sh: always for a release, else the lock's
+#                       strictness); 0: it wraps (+8 KiB) and the lock check
+#                       reports it
 ifneq ($(filter-out 1,$(LAYOUT_PIN)),)
 $(error LAYOUT_PIN=$(LAYOUT_PIN): pinning is built in (code-health A-7); drop LAYOUT_PIN)
 endif
-LAYOUT_PAD_BYTES ?= 5692
+ifneq ($(LAYOUT_PAD_BYTES)$(LAYOUT_PAD_MAIN_BYTES)$(LAYOUT_PAD_FE_BYTES)$(LAYOUT_PAD_GB_BYTES)$(LAYOUT_PAD_CORE_BYTES),)
+$(error LAYOUT_PAD_BYTES, _MAIN_, _FE_, _GB_ and _CORE_BYTES are pins since code-health C3-3 (tools/layout/layout.lock `pin`); drop them)
+endif
+LAYOUT_FLAVOUR ?= release
+LAYOUT_PIN_STRICT ?= 1
 CFLAGS  += -ffunction-sections
 # HOT_ORD: the hot order's rows (default the single-player order), which
 # gbadhoc.ld INCLUDEs first in .text (the gbadhoc.ld rule below; code-health
@@ -195,9 +205,6 @@ HOT_ORD ?= layout/hot.ord
 # after all other text so adding it moves no pinned function.  An INSERT
 # script, given before gbadhoc.ld (psp/gbadhoc.ld.in says why).
 LDFLAGS += -Wl,-T,cold_tail.ld
-ifneq ($(LAYOUT_PAD_BYTES),0)
-CFLAGS  += -DLAYOUT_PAD_BYTES=$(LAYOUT_PAD_BYTES)
-endif
 # LAYOUT_PAD_RO_BYTES=N: the same in .rodata, before instance A's.  Whoever
 # changes frontend code or strings re-tunes both pads so that instance A's
 # cold text and tables stay where 4.5.0 had them mod 8 KiB
@@ -208,24 +215,10 @@ endif
 # entries ("59" for ...f0ce959).
 # The beta.5 re-pin (claude/beta5-rc, docs/LAYOUT-PINNING.md): RO 28 puts
 # A's tables back (netpacket_iface +16, .rodata's 64 B steps) with the pad's
-# end 32 B inside its step both ways; CORE (below) gives up 768 B of A's cold
-# text placement so neither pad wraps (one 8 KiB page of boot heap back).
+# end 32 B inside its step both ways; CORE (now `pin core`) gives up 768 B of
+# A's cold text placement so neither wraps (one 8 KiB page of boot heap back).
 LAYOUT_PAD_RO_BYTES ?= 1364
 CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
-# LAYOUT_PAD_FE_BYTES / LAYOUT_PAD_CORE_BYTES: the two cold pads of
-# psp/layout_pad_mid.S (that file says where each sits).  With LAYOUT_PAD_BYTES
-# they hold main_psp.o's code after main, frontend-common, and instance A's cold
-# text each in its own sets.  Part of the shipped layout; tools/flags.lock pins
-# them.  claude/opt-1000 round 7 sets them so main's frame loop and the
-# per-frame frontend code sit where round 3 (the last layout measured neutral
-# on hardware) had them, mod 8 KiB.
-LAYOUT_PAD_FE_BYTES ?= 7444
-LAYOUT_PAD_CORE_BYTES ?= 1472
-# LAYOUT_PAD_GB_BYTES: the third cold pad of psp/layout_pad_mid.S, after both
-# GB cores' partial links, so a change inside the vendored GB core (round 9:
-# the packed noise tables) does not move the frontend-common code linked after
-# it (fe_rewind's per-frame capture, the link glue, B's cold text).
-LAYOUT_PAD_GB_BYTES ?= 868
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 # beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link
@@ -233,18 +226,9 @@ LAYOUT_PAD_GB_BYTES ?= 868
 # smc-cost: xs_range_current + smc_untag_span join the bscan rows (2 x 2,304 B): 5272 -> 664.
 LAYOUT_PAD_BSCAN_BYTES ?= 664
 CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
-# LAYOUT_PAD_MAIN_BYTES: the zeros directly in front of main() (psp/layout_pad_main.S
-# says why): they place main's frame loop without moving instance B's hot text.
-# beta.5 base: main's code before the loop grew 212 B, so this pad puts the
-# loop window back on round 7's sets.  The beta.5 re-pin (claude/beta5-rc,
-# after Epoch C moved main()'s boot and session code out; docs/LAYOUT-PINNING.md
-# "Keeping the pads"): 4532 puts main at mod 0x1cd4 (lab 2656: mod 0x1580), the
-# best by-line shift of the merged loop against 957a5c4fbb1b's (12.7 % of
-# loop-line bytes on its sets; 5.0 % as merged).  tools/flags.lock pins it.
-LAYOUT_PAD_MAIN_BYTES ?= 4420
 # LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
 # of the ME capture's mid-frame-log helpers in hot_order.txt's last section
-# (psp/layout_pad_late.S says why).  The MAIN pad after it takes the bytes back.
+# (psp/layout_pad_late.S says why).  `pin main` after it takes the bytes back.
 # tools/flags.lock pins it.
 LAYOUT_PAD_LATE_BYTES ?= 160
 # LAYOUT_PAD_MLU_BYTES: the zeros in front of instance A's ml_update_relevance
@@ -464,18 +448,18 @@ PSP_LARGE_MEMORY ?= 1
 # other object's code and bss move by N.  Unset (every normal build): the
 # object is not linked at all.  tools/build.sh passes it via PSP_EXTRA,
 # which it refuses for the release profile.
-# HEAD: in front of main (psp/layout_pad_main.S), in front of instance A's
-# ml_diff_page (psp/layout_pad_late.S) and the pinned warm tail's 32 B holes
-# (psp/layout_pad_warm.S): their sections are placed by name, so their place on
-# the command line moves nothing; then the sweep's layout_pad.o.
-HEAD_OBJS = layout_pad_main.o layout_pad_late.o layout_pad_warm.o \
+# HEAD: in front of instance A's ml_diff_page (psp/layout_pad_late.S) and the
+# pinned warm tail's 32 B holes (psp/layout_pad_warm.S): their sections are
+# placed by name, so their place on the command line moves nothing; then the
+# sweep's layout_pad.o.
+HEAD_OBJS = layout_pad_late.o layout_pad_warm.o \
             $(if $(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),layout_pad.o)
-# Last of the objects: instance A's core archive follows (layout_pad_mid.S).
-FE_TAIL_OBJS += layout_pad_core.o
 OBJS = $(HEAD_OBJS) $(FE_HEAD_OBJS) $(FE_COMMON_OBJS) $(GB_OBJS) $(FE_TAIL_OBJS)
 # groups.ld (gbadhoc.ld INCLUDEs it): the generic .text statement split by
-# group.  HEAD also takes psp-gcc's start files, which the default order puts
-# before every object (its *startfile spec: crt0 crti crtbegin).
+# group, with a pin in front of FE_HEAD, FE_COMMON, FE_TAIL and the core
+# archive (`core`).  HEAD also takes psp-gcc's start files, which the default
+# order puts before every object (its *startfile spec: crt0 crti crtbegin).
+LAYOUT_GROUP_PINS = fe_head fe_common fe_tail core
 LAYOUT_STARTFILES = */crt0.o */crti.o */crtbegin.o
 LAYOUT_GROUPS = "head:$(strip $(LAYOUT_STARTFILES) $(HEAD_OBJS))" \
                 "fe_head:$(strip $(FE_HEAD_OBJS))" \
@@ -506,9 +490,14 @@ $(TARGET).elf: $(CORE_LIB)
 # hand ld the script a second time as an input file.  So a new script, or a
 # regenerated layout/hot.ord, does not relink by itself: tools/build.sh always
 # relinks (clean build); by hand, `rm gpsp_adhoc.elf`.
-$(TARGET).elf: | gbadhoc.ld groups.ld
+$(TARGET).elf: | gbadhoc.ld groups.ld pins.ld
 groups.ld: FORCE
-	@sh ../tools/layout/groups_ld.sh $(LAYOUT_GROUPS) > $@
+	@sh ../tools/layout/groups_ld.sh --pins "$(LAYOUT_GROUP_PINS)" $(LAYOUT_GROUPS) > $@
+# pins.ld: the pins' addresses for LAYOUT_FLAVOUR (tools/layout/pins.awk says
+# how they are used); a flavour without its five pins stops here.
+pins.ld: FORCE
+	@awk -v flavour='$(LAYOUT_FLAVOUR)' -v strict='$(LAYOUT_PIN_STRICT)' \
+	  -f ../tools/layout/pins.awk ../tools/layout/layout.lock > $@ || { rm -f $@; exit 1; }
 # gbadhoc.ld: psp/gbadhoc.ld.in with the hot order filled in, rewritten on
 # every make.  First the template is checked: without its GBADHOC BEGIN/END
 # blocks it must be THIS toolchain's default script, byte for byte
@@ -611,18 +600,6 @@ fe_autopilot_b.o: ../frontend-common/fe_autopilot.o
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
 
-layout_pad_fe.o: layout_pad_mid.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_FE_BYTES) \
-	      -DLAYOUT_PAD_MID_NAME=layout_pad_fe
-layout_pad_gb.o: layout_pad_mid.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_GB_BYTES) \
-	      -DLAYOUT_PAD_MID_NAME=layout_pad_gb
-layout_pad_core.o: layout_pad_mid.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_MID_BYTES=$(LAYOUT_PAD_CORE_BYTES) \
-	      -DLAYOUT_PAD_MID_NAME=layout_pad_core
-
-layout_pad_main.o: layout_pad_main.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_MAIN_BYTES=$(LAYOUT_PAD_MAIN_BYTES)
 layout_pad_late.o: layout_pad_late.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_LATE_BYTES=$(LAYOUT_PAD_LATE_BYTES) \
 	      -DLAYOUT_PAD_MLU_BYTES=$(LAYOUT_PAD_MLU_BYTES)
@@ -644,7 +621,7 @@ DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 # not in OBJS (only their linked product is), so they are ours as well.
 clean: clean-deps clean-me clean-home clean-online clean-gbcore
 clean-deps:
-	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default groups.ld
+	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default groups.ld pins.ld
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
 	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o

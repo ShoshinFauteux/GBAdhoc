@@ -110,29 +110,12 @@ PSP_HEAP_SIZE_KB(-1024);
 #include "sidecar_dirs.h"   /* saves/ and states/ (4.6.0-beta.4) */
 #include "fe/fe_priv.h"      /* this file's macros + PLAY_* defaults (P5) */
 
-/* LAYOUT_PAD_BYTES (psp/Makefile; docs/LAYOUT-PINNING.md): the layout
- * STABILITY PROBE, off unless a build asks for it.  An N-byte function that
- * nothing calls and that is never executed -- the stand-in for "an unrelated
- * change elsewhere in the code".  It sits in main_psp.o, the first object
- * linked, so without LAYOUT_PIN it moves every function after it (and, through
- * the heap, the translation cache); with LAYOUT_PIN the pinned hot path must
- * not move by a byte.  The hardware bench's "pad" arm is built with it. */
-#define LAYOUT_PAD_STR2(x) #x   /* both pads use it: text 0 with .rodata > 0 must build */
+/* LAYOUT_PAD_RO_BYTES (psp/Makefile; docs/LAYOUT-PINNING.md): zeros in
+ * .rodata, whose frontend part is linked before instance A's: A's tables stay
+ * in their cache sets when the frontend's strings change size.  (Its text twin,
+ * layout_pad_cold, is the link's `pin fe_head` since code-health C3-3.) */
+#define LAYOUT_PAD_STR2(x) #x
 #define LAYOUT_PAD_STR(x) LAYOUT_PAD_STR2(x)
-#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
-__asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
-        ".globl layout_pad_cold\n"
-        ".type layout_pad_cold, @function\n"
-        "layout_pad_cold:\n"
-        "  jr $ra\n"
-        "  nop\n"
-        "  .fill (" LAYOUT_PAD_STR(LAYOUT_PAD_BYTES) " - 8) / 4, 4, 0\n"
-        ".size layout_pad_cold, . - layout_pad_cold\n"
-        ".popsection\n");
-#endif
-/* LAYOUT_PAD_RO_BYTES: the same for .rodata, whose frontend part is linked
- * before instance A's: A's tables stay in their cache sets when the frontend's
- * strings change size (docs/LAYOUT-PINNING.md). */
 #if defined(LAYOUT_PAD_RO_BYTES) && LAYOUT_PAD_RO_BYTES > 0
 __asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
         "  .fill " LAYOUT_PAD_STR(LAYOUT_PAD_RO_BYTES) ", 1, 0\n"

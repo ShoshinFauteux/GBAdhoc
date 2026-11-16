@@ -54,10 +54,14 @@ if ticks:
 if psp != need:
     raise SystemExit("pspMakeFlags are not the release set: missing %s, extra %s"
                      % (sorted(need - psp), sorted(psp - need)))
-pad = re.search(r"^LAYOUT_PAD_BYTES \?= (\d+)", pathlib.Path(sys.argv[5]).read_text(encoding="utf-8", errors="replace"), re.M)
-if pad is None or m.get("layoutPin") != 1 or m.get("layoutPadBytes") != int(pad.group(1)):
-    raise SystemExit("layout is not the release layout: LAYOUT_PIN=%s LAYOUT_PAD_BYTES=%s"
-                     % (m.get("layoutPin"), m.get("layoutPadBytes")))
+# The pins (code-health C3-3): the release links with layout.lock [release]'s
+# pins, every one where the lock puts it (layoutPins has a gap for each, never
+# MOVED/MISSING; the layoutLock check below holds the addresses).
+pins = str(m.get("layoutPins", "")).split()
+if (m.get("layoutPin") != 1 or not pins or pins[0] != "release" or len(pins) < 2
+        or any(not p.split("=", 1)[-1].isdigit() for p in pins[1:])):
+    raise SystemExit("layout is not the release layout: LAYOUT_PIN=%s layoutPins=%r"
+                     % (m.get("layoutPin"), m.get("layoutPins")))
 # THE LOCKED LAYOUT (critique-8 MF2).  tools/build.sh enforces layout.lock only
 # for the default switch set (RFU_SCHED=1 among them); a release built any other
 # way records "release:differs" and would ship an unchecked layout.  A stable

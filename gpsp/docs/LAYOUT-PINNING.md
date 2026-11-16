@@ -184,9 +184,59 @@ the core archive, the libraries and crtend:
   there: an object in no group. tools/tests/test_layout_groups.py links host
   objects through the same generator to check all of this.
 
-The groups are where code-health C3-3's pins go: before FE_HEAD (today's
+The groups are where code-health C3-3's pins go: before FE_HEAD (until then
 `layout_pad_cold`), FE_COMMON (`layout_pad_fe`), FE_TAIL (`layout_pad_gb`) and
 the catch-all (`layout_pad_core`).
+
+#### Pins (code-health C3-3)
+
+The MAIN, TEXT, FE, GB and CORE pads are gone. Each was a number of zero bytes
+that a person re-tuned after any size change before it. In their place,
+`tools/layout/layout.lock` has, per flavour, five `pin NAME ADDR` lines:
+`main`, `fe_head`, `fe_common`, `fe_tail` and `core`. ADDR is the absolute
+address the region after the pin starts at.
+
+- **How the link uses them.** psp/Makefile writes `psp/pins.ld` from the
+  lock's `[LAYOUT_FLAVOUR]` section with `tools/layout/pins.awk` (POSIX awk; the
+  pspdev image has no python). `gbadhoc.ld` INCLUDEs it and places pin `main`
+  before `.text.startup`; `groups_ld.sh --pins` places the other four in
+  front of their groups and the catch-all. Each pin is
+  `. = ABSOLUTE(ABSOLUTE(.) + ((__pin_NAME - ABSOLUTE(.)) & 0x1FFF))`.
+  The outer `ABSOLUTE` is required. ld 2.44 types `. + X`, with X absolute,
+  as section-relative with X's absolute value, so the obvious
+  `. += (P - ABSOLUTE(.)) & 0x1FFF` lands at P + ADDR(.text). On a small
+  test link it put 0x08805a40 at 0x11009a80.
+- **Recorded, not tuned.** Each ADDR is the end of the pad it replaces,
+  read from the ELFs of all six profiles at 3790851f-identical 40311176. The
+  gap fills the same bytes with the same zeros, so every EBOOT stays identical.
+  `layout_pad_cold`'s `jr $ra; nop` stays as `LONG(0x03E00008) LONG(0)` before
+  the `fe_head` gap until C3-7. The four rig profiles (harness, harness64,
+  diagnostic, soak) get lock sections of their own, pins only. They used the
+  release pad numbers, which put their regions at other offsets.
+- **Symbols.** The link defines `__pin_from_NAME` (where the gap starts),
+  `__pin_at_NAME` (where it lands) and, for one release, the old pad names at
+  the gap's start (`layout_pad_cold`, `layout_pad_fe`, `layout_pad_gb`,
+  `layout_pad_core`, `layout_pad_main`; size 0). `layout_lock.py check`
+  compares `__pin_at_NAME` with the lock exactly. `layout_lock.py pins` gives
+  the manifest's `layoutPins`, the flavour and each gap: release
+  `main=4420 fe_head=5688 fe_common=7444 fe_tail=868 core=1472`.
+- **The overrun policy (critique C-3 point 1).** A pin always reaches its
+  offset. If the code before it grows past ADDR, the gap wraps and the region
+  lands 8 KiB higher: one PSP-1000 heap page spent, silently. So an ASSERT
+  before each pin fails the link when `__pin_strict` is set. tools/build.sh
+  sets it for every release, and for any other profile when its arm is strict
+  (`layout_lock.py strict`). A variant arm wraps, and the lock check reports
+  the pin as MOVED with what that means. `layout_lock.py write` never changes a
+  pin. Only `layout_lock.py regen FLAVOUR` does, and only with an explicit
+  choice. `--spend-page PIN` moves that pin and every later one +8 KiB, and
+  the commit says "page spent" with the heap census. `--free-page PIN` is the
+  reverse. `--move PIN=0xADDR` sets a new offset, an I-cache placement change,
+  and the commit carries a hardware ABBA.
+- **What a change now costs.** A size change before a pin is absorbed by its
+  gap, with no re-pin. Only `pin main` still places a measured thing, the
+  frame loop inside `main` (C-1 commit 4 and C3-7 remove that). The pads
+  inside the hot block (BSCAN, BXLAT, LATE, MLU, XLAT, the warm and apb holds)
+  and RO stay until C3-4/C3-5; `layout_lock.py solve` stays for them.
 
 ## 2. Today's swing is the JIT base: hardware evidence
 

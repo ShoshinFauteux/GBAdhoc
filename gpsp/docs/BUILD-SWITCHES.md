@@ -44,7 +44,7 @@ wherever `MIPS_ARCH` is, so the desktop and the host tests run the arms that shi
 |---|---|
 | one feature off, an A/B arm | `CORE_EXTRA="XLAT_FAST=0" tools/build.sh harness` (root make `XLAT_FAST=0`, which is `-DGPSP_NO_XLAT_FAST`). Only the 7 switches still in `gpsp_features.h` (the 13 built-in names there are refused); a *(built in)* feature has no off arm. A release refuses `CORE_EXTRA`. |
 | a different value | none left: every value feature is *(built in)* and the root make refuses another value (`SMC_SINGLE_HOT=64`, `SMC_SAME_REPROBE=1024`, ...) |
-| the link, the rewind off | `GBA_LINK=0`, `REWIND=0` (both makes get the value); `INPUT_FRESH=0`; `LAYOUT_PAD_BYTES=N`; `ONLINE=0`, `MGIFT=0` (frontend only). Layout pinning and the GB lazy timer have no off arm since code-health A-7 (both makes refuse `LAYOUT_PIN`/`TGB_LAZY_TIMER` other than 1) |
+| the link, the rewind off | `GBA_LINK=0`, `REWIND=0` (both makes get the value); `INPUT_FRESH=0`; `ONLINE=0`, `MGIFT=0` (frontend only). Layout pinning and the GB lazy timer have no off arm since code-health A-7 (both makes refuse `LAYOUT_PIN`/`TGB_LAZY_TIMER` other than 1) |
 | a frontend value | `FE_EXTRA="-DND_WINDOW=128"`: a `-D` wins over `psp/fe_features.h`; `-DGPSP_NO_PLAY_INPUT_FRESH` drops the playable default (what `INPUT_FRESH=0` passes) |
 | a twin variant | `VDEFS` is the complete list: `tools/drprof/Makefile` defaults to `FEATURES=explicit` (`-DGPSP_FEATURES_EXPLICIT`, the header defines nothing), so a switch a variant omits is off and `-UDISPATCH_CACHE` works; the *(built in)* features are on whatever `VDEFS` says. It stays the default because GBAdhoc-Lab builds its gate, profiler and lockstep twins with it |
 | a twin of what ships | `FEATURES=baked tools/drprof/dr_build.sh ship`; add `-DGPSP_NO_NAME` to drop one |
@@ -288,18 +288,19 @@ their defaults.
 
 **The layout pads** (`LAYOUT_PAD_*` in psp/Makefile, every value pinned by
 `tools/flags.lock`; docs/LAYOUT-PINNING.md "Keeping the pads" says what each
-holds): `LAYOUT_PAD_BYTES` (after `main`), `LAYOUT_PAD_RO_BYTES` (`.rodata`),
-`LAYOUT_PAD_FE_BYTES` (after stb_impl.o), `LAYOUT_PAD_GB_BYTES` (after both GB
-cores), `LAYOUT_PAD_CORE_BYTES` (before instance A's core archive),
-`LAYOUT_PAD_MAIN_BYTES` (in front of `main`), `LAYOUT_PAD_LATE_BYTES` and
+holds): `LAYOUT_PAD_RO_BYTES` (`.rodata`), `LAYOUT_PAD_LATE_BYTES` and
 `LAYOUT_PAD_MLU_BYTES` (the ME capture's helpers), `LAYOUT_PAD_XLAT_BYTES` (in
 front of A's `translate_block_arm`), and instance B's `LAYOUT_PAD_BSCAN_BYTES`
 (B's `update_scanline` held at the renderer's size) and `LAYOUT_PAD_BXLAT_BYTES`
 (after B's `translate_block_arm`), which psp/gbalink_b_stubs.c refuses to compile
-without. A lab build takes the committed lab set, `tools/layout/lab-pads.env`
-(`LAB_PADS=0` for the release pads); a sweep overrides it through
-`LAYOUT_PAD_BYTES=` and `PSP_EXTRA=`, which build.sh refuses for the release
-profile. `tools/layout/layout.lock` records where the pads put the symbols that
+without. The text pads after `main`, stb_impl.o, the GB cores and before
+instance A's core archive, and the one in front of `main`, are linker pins since
+code-health C3-3: `pin` lines per profile in `tools/layout/layout.lock`, chosen
+with `LAYOUT_FLAVOUR` (docs/LAYOUT-PINNING.md "Pins"); build.sh and psp/Makefile
+refuse the old `LAYOUT_PAD_BYTES`, `_MAIN_`, `_FE_`, `_GB_` and `_CORE_BYTES`.
+A lab build takes the committed lab set, `tools/layout/lab-pads.env`
+(`LAB_PADS=0` for the release pads and pins); a sweep overrides it through
+`PSP_EXTRA=`, which build.sh refuses for the release profile. `tools/layout/layout.lock` records where the pads put the symbols that
 carry the layout; build.sh fails a release, or a lab build with the committed
 set, that differs (`LAYOUT_LOCK=0` lets a lab build through during a re-pin,
 never a release). The manifest records the result as `layoutLock`, and

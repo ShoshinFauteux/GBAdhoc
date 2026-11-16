@@ -13,7 +13,11 @@ statement as the catch-all):
 * `:FILE` is exact: `me_host.o`'s group does not take `home_host.o` (a plain
   `*me_host.o` would), and an archive member named like a grouped object
   (`a.o` inside libq.a) stays in the catch-all;
-* psp/Makefile builds OBJS only from the groups (no `OBJS +=` / `OBJS :=`).
+* psp/Makefile builds OBJS only from the groups (no `OBJS +=` / `OBJS :=`);
+* the pins (C3-3): through tools/layout/pins.awk and `groups_ld.sh --pins`, a
+  group starts at its pin's address; a pin the code before it outgrew fails a
+  strict link naming the pin and wraps 8 KiB in a non-strict one; a lock
+  section without its five pins stops pins.awk.
 """
 import os
 import re
@@ -92,6 +96,70 @@ def link(tmp, groups, out):
     return 0, r.stdout, text, syms
 
 
+PINS_AWK = os.path.join(ROOT, "tools", "layout", "pins.awk")
+PIN_SCRIPT = """INCLUDE pins.ld
+SECTIONS
+{
+  . = 0x08804040;
+  .text :
+  {
+    INCLUDE groups.ld
+    *(.text .stub .text.* .gnu.linkonce.t.*)
+  }
+  /DISCARD/ : { *(.note.GNU-stack) *(.comment) *(.eh_frame) *(.note.gnu.property) }
+}
+"""
+PIN_GROUPS = ["head:head.o", "fe_head:a.o b.o", "fe_common:c.o",
+              "fe_tail:home_host.o me_host.o"]
+
+
+def pin_link(tmp, fe_common, core, strict):
+    """pins.ld from a lock through tools/layout/pins.awk, groups.ld with pins
+    in front of fe_common and the catch-all -> (rc, output, {symbol: addr})."""
+    with open(os.path.join(tmp, "p.lock"), "w") as f:
+        f.write("[t]\npin main 0x08804040\npin fe_head 0x08804040\n"
+                "pin fe_common 0x%08x\npin fe_tail 0x08804040\npin core 0x%08x\n"
+                % (fe_common, core))
+    r = sh(["awk", "-v", "flavour=t", "-v", "strict=%d" % strict, "-f", PINS_AWK, "p.lock"], tmp)
+    if r.returncode != 0:
+        return r.returncode, r.stdout, {}
+    open(os.path.join(tmp, "pins.ld"), "w").write(r.stdout)
+    g = sh(["sh", GEN, "--pins", "fe_common core"] + PIN_GROUPS, tmp)
+    open(os.path.join(tmp, "groups.ld"), "w").write(g.stdout)
+    open(os.path.join(tmp, "p.ld"), "w").write(PIN_SCRIPT)
+    r = sh(["ld", "-T", "p.ld", "-e", "h1", "-o", "p.elf"] + OBJS + ["libq.a"], tmp)
+    syms = {}
+    if r.returncode == 0:
+        for ln in sh(["nm", "p.elf"], tmp).stdout.splitlines():
+            p = ln.split()
+            if len(p) == 3:
+                syms[p[2]] = int(p[0], 16)
+    return r.returncode, r.stdout, syms
+
+
+def pin_tests(tmp):
+    """The pins (code-health C3-3): a group starts at its pin's address; a
+    pin the code before it outgrew fails a strict link with the pin's name,
+    and in a non-strict link wraps a whole 8 KiB up; a lock without the five
+    pins stops pins.awk."""
+    rc, out, syms = pin_link(tmp, 0x08805a40, 0x08806010, 1)
+    check(rc == 0 and syms.get("c1") == 0x08805a40 and syms.get("__pin_at_fe_common") == 0x08805a40,
+          "pin fe_common: c.o starts at the pinned address (%s)" % out.strip()[:160])
+    check(syms.get("q1") == 0x08806010 and syms.get("layout_pad_core") is not None,
+          "pin core: the catch-all starts at its pin; the old pad name marks the gap")
+    rc, out, syms = pin_link(tmp, 0x08804048, 0x08806010, 1)
+    check(rc != 0 and "layout pin fe_common" in out,
+          "strict: a pin the code before it grew past fails the link, naming the pin")
+    rc, out, syms = pin_link(tmp, 0x08804048, 0x08808010, 0)
+    check(rc == 0 and syms.get("c1") == 0x08804048 + 8192,
+          "not strict: the same pin wraps one 8 KiB page up")
+    with open(os.path.join(tmp, "p.lock"), "w") as f:
+        f.write("[t]\npin main 0x08804040\n")
+    r = sh(["awk", "-v", "flavour=t", "-v", "strict=1", "-f", PINS_AWK, "p.lock"], tmp)
+    check(r.returncode != 0 and "no `pin fe_head`" in r.stdout,
+          "pins.awk: a flavour missing a pin stops the make")
+
+
 def main():
     for tool in ("gcc", "ld", "ar", "objcopy", "nm", "sh"):
         if not shutil.which(tool):
@@ -138,6 +206,8 @@ def main():
                                          "g3:me_host.o"], "s.elf")
         check(rc != 0 and "layout groups:" in out,
               "`:me_host.o` does not take home_host.o (home_host.o in no group fails)")
+
+        pin_tests(tmp)
 
         open(os.path.join(tmp, "lib", "crt0.o"), "w").close()
         g = sh(["sh", GEN, "x:*/crt0.o b.o"], tmp).stdout

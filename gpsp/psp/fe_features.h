@@ -7,7 +7,7 @@
  * core features reach the frontend as weak symbols, never as defines.
  *
  * What is NOT here: anything that changes what is compiled or linked (REWIND,
- * GBA_LINK, CHEATS, LAB_HARNESS, LAYOUT_PIN, LAYOUT_PAD_BYTES, HOT_DATA_GUARD),
+ * GBA_LINK, CHEATS, LAB_HARNESS, LAYOUT_PIN, LAYOUT_FLAVOUR, HOT_DATA_GUARD),
  * anything that must reach a sub-make (PSP_PIXFMT), the GB core's scoped TGB_*
  * switches, and what makes a profile that profile (GPSP_PLAYABLE, GPSP_PERF_RIG,
  * GPSP_KEEP_TELEMETRY, GPSP_PROFILE_*: tools/build.sh).

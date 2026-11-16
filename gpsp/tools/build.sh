@@ -299,19 +299,26 @@ PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1"
 # main() and around pace_frame, so it needs its own layout pads to put the
 # frame loop where a lab build of round 3 had it.  Committed, so "the lab arm"
 # is a build command and not a string copied from a round log.  LAB_PADS=0
-# builds a lab EBOOT with the release pads; an explicit LAYOUT_PAD_BYTES= or
+# builds a lab EBOOT with the release pads and the release's pins; an explicit
 # PSP_EXTRA= (below, later on the make line) still wins for a sweep.
-LAYOUT_PAD_ENV="${LAYOUT_PAD_BYTES:-}"
+# LAYOUT_FLAVOUR: the tools/layout/layout.lock section whose `pin` lines place
+# main and the frontend (code-health C3-3; psp/Makefile, docs/LAYOUT-PINNING.md
+# "Pins"): the profile's own, so each of the six profiles keeps its layout.
+case " ${LAYOUT_PAD_BYTES:+x} ${LAYOUT_PAD_MAIN_BYTES:+x} ${LAYOUT_PAD_FE_BYTES:+x} ${LAYOUT_PAD_GB_BYTES:+x} ${LAYOUT_PAD_CORE_BYTES:+x} " in
+  *x*) echo "FAIL: LAYOUT_PAD_BYTES/_MAIN_/_FE_/_GB_/_CORE_BYTES are linker pins since code-health C3-3 (tools/layout/layout.lock); the stability probe is a code change, not a pad"; exit 1 ;;
+esac
+LAYOUT_FLAVOUR="$KIND"
 LAB_PADS_USED=0
 if [ "$KIND" = lab ] && [ "${LAB_PADS:-1}" = 1 ]; then
   [ -f "$ROOT/tools/layout/lab-pads.env" ] || { echo "FAIL: tools/layout/lab-pads.env missing"; exit 1; }
   while IFS='=' read -r k v; do
     case "$k" in
-      LAYOUT_PAD_BYTES) [ -n "$LAYOUT_PAD_ENV" ] || LAYOUT_PAD_BYTES="$v" ;;
       LAYOUT_PAD_*)     PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS $k=$v" ;;
     esac
   done < <(tr -d '\r' < "$ROOT/tools/layout/lab-pads.env" | grep -E '^LAYOUT_PAD_[A-Z_]+=[0-9]+$')
   LAB_PADS_USED=1
+elif [ "$KIND" = lab ]; then
+  LAYOUT_FLAVOUR=release
 fi
 
 # PSP_EXTRA: extra psp/Makefile variables for a one-off variant, e.g. the
@@ -420,13 +427,30 @@ fi
 # gets it, so rigs measure the layout that ships.  Built in since code-health
 # A-7: both makes refuse any LAYOUT_PIN but 1, and so does this script (the
 # variable stays for the manifest's layoutPin, which tools/layout/layout_lock.py
-# and make_release_check.py read).  LAYOUT_PAD_BYTES is part of the shipped layout: psp/Makefile
-# holds the value, LAYOUT_PAD_BYTES=N here is the bench's pad arm.
+# and make_release_check.py read).
 LAYOUT_PIN="${LAYOUT_PIN:-1}"
-LAYOUT_PAD_DEFAULT=$(sed -n 's/^LAYOUT_PAD_BYTES ?= //p' "$ROOT/psp/Makefile" | tr -d '\r')
-LAYOUT_PAD_BYTES="${LAYOUT_PAD_BYTES:-$LAYOUT_PAD_DEFAULT}"
 case "$LAYOUT_PIN" in 1) ;; *) die "LAYOUT_PIN=$LAYOUT_PIN: pinning is built in (code-health A-7); the pre-pinning layout was removed" ;; esac
-note "layout  : LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES"
+# STRICTNESS (layout_lock.py `strict`, tested by tools/tests/test_layout_lock.py;
+# critique-9 SF3): which arms must hold the lock.  Computed before the link
+# since code-health C3-3, because it also decides LAYOUT_PIN_STRICT: in a
+# strict arm a pin the code before it grew past fails the link (a wrap would
+# spend a PSP-1000 heap page); in a variant arm it wraps and the lock check
+# reports it.  A release is pin-strict in every arm (critique C-3 point 1).
+# ME_LOWLAT=2 is the source default and stays strict; 0 and 1 are variants.
+LL_PY="$ROOT/tools/layout/layout_lock.py"; LL_LOCK="$ROOT/tools/layout/layout.lock"
+if command -v cygpath >/dev/null; then LL_PY=$(cygpath -w "$LL_PY"); LL_LOCK=$(cygpath -w "$LL_LOCK"); fi
+PYL=python3; command -v python3 >/dev/null 2>&1 || PYL=python
+LL_STRICT_OUT=$("$PYL" "$LL_PY" strict \
+  "PSP_EXTRA=${PSP_EXTRA:-}" "CORE_EXTRA=${CORE_EXTRA:-}" "FE_EXTRA=${FE_EXTRA:-}" \
+  "ME_LOWLAT=${ME_LOWLAT:-}" "RFU_SCHED=$RFU_SCHED" "GBA_LINK=$GBA_LINK" \
+  "REWIND=$REWIND" "ONLINE=$ONLINE" "CHEATS=${CHEATS:-1}" "INPUT_FRESH=${INPUT_FRESH:-}" \
+  "MGIFT=${MGIFT:-}" "LAYOUT_PIN=$LAYOUT_PIN" \
+  "GBALINK_LEAN_OUTLINE=${GBALINK_LEAN_OUTLINE:-}") ||
+  die "layout_lock.py strict failed: $LL_STRICT_OUT"
+LL_STRICT=${LL_STRICT_OUT%% *}
+LAYOUT_PIN_STRICT=$LL_STRICT
+[ "$KIND" = release ] && LAYOUT_PIN_STRICT=1
+note "layout  : LAYOUT_PIN=$LAYOUT_PIN pins [$LAYOUT_FLAVOUR] strict=$LAYOUT_PIN_STRICT"
 # CHEATS: the per-game cheats menu (docs/CHEATS.md), default on in every
 # profile.  CHEATS=0 is the kill switch, and it must reach BOTH makes (the
 # core half is cheats.c, the frontend half fe_cheats.c + the menu).
@@ -447,7 +471,7 @@ for t in $CORE_FLAGS; do
   case "$FEATURE_NAMES" in *" ${t%%=*} "*) ;; *) CORE_FLAGS_OTHER="$CORE_FLAGS_OTHER $t" ;; esac
 done
 CORE_FLAGS_RESOLVED=$(echo $CORE_FLAGS_OTHER $RESOLVED)
-run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_PAD_BYTES=$LAYOUT_PAD_BYTES CHEATS=$CHEATS"
+run eboot /build/psp  "make EXTRA_DEFS='$FE_DEFS' PSP_EBOOT_TITLE='$TITLE' $PSP_MAKE_FLAGS LAYOUT_PIN=$LAYOUT_PIN LAYOUT_FLAVOUR=$LAYOUT_FLAVOUR LAYOUT_PIN_STRICT=$LAYOUT_PIN_STRICT CHEATS=$CHEATS"
 # frontendDefines is resolved the same way: the profile's defines plus what
 # psp/fe_features.h gave this make line.
 run fefeatures /build/psp "make -s EXTRA_DEFS='$FE_DEFS' $PSP_MAKE_FLAGS print-features"
@@ -496,6 +520,7 @@ fi
 # The manifest's layoutLock: none | FLAVOUR:ok | FLAVOUR:differs |
 # FLAVOUR:unchecked.  tools/make_release.sh ships only release:ok.
 LAYOUT_LOCK_RESULT=none
+LAYOUT_PINS_RESULT="$LAYOUT_FLAVOUR unchecked"
 if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
   docker run --rm -v "$ROOT":/build -w /build "$DOCKER_IMAGE" sh -c     "psp-nm -S -n psp/gpsp_adhoc.elf" > "$ROOT/.build-elf.nm" 2>/dev/null || true
   PYB=python3; command -v python3 >/dev/null 2>&1 || PYB=python
@@ -511,32 +536,27 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
     "$PYB" "$HB_PY" "$HB_ORD" "$HB_NM" || true
   fi
 
-  # LAYOUT LOCK (tools/layout/layout.lock, critique-7 SF1).  The pads, the two
-  # 32 B holes in the warm tail and `main`'s frame loop depend on link order
-  # and on the size of everything linked before them; a change that moves
-  # them builds clean and costs frames on hardware.  A release, and a lab
-  # build with the committed lab pads, must match the lock exactly.  Any other
-  # arm (a sweep, CORE_EXTRA, a switch off) is checked and reported only.
-  LL_PY="$ROOT/tools/layout/layout_lock.py"; LL_LOCK="$ROOT/tools/layout/layout.lock"
-  if command -v cygpath >/dev/null; then LL_PY=$(cygpath -w "$LL_PY"); LL_LOCK=$(cygpath -w "$LL_LOCK"); fi
-  LL_FLAVOUR=""; LL_STRICT=0
+  # LAYOUT LOCK (tools/layout/layout.lock, critique-7 SF1).  The pins, the
+  # pads left in the hot block, the two 32 B holes in the warm tail and
+  # `main`'s frame loop depend on link order and on the size of everything
+  # linked before them; a change that moves them builds clean and costs frames
+  # on hardware.  A release, and a lab build with the committed lab pads, must
+  # match the lock exactly.  Any other arm (a sweep, CORE_EXTRA, a switch off)
+  # is checked and reported only.  LL_STRICT was computed before the link.
+  LL_FLAVOUR=""
   case "$KIND" in
     release) LL_FLAVOUR=release ;;
     lab)     [ "$LAB_PADS_USED" = 1 ] && LL_FLAVOUR=lab ;;
   esac
+  # layoutPins: the flavour and the gap each pin filled (the bytes the region
+  # before it can still grow without spending a heap page), every profile
+  LAYOUT_PINS_RESULT=$("$PYB" "$LL_PY" pins "$LAYOUT_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" 2>/dev/null) ||
+    LAYOUT_PINS_RESULT="$LAYOUT_FLAVOUR unchecked"
+  note "pins    : $LAYOUT_PINS_RESULT"
   if [ -n "$LL_FLAVOUR" ]; then
     # Which arms are strict, and what the check's rc means, is
     # layout_lock.py's `strict` / `verdict`, tested by
-    # tools/tests/test_layout_lock.py (critique-9 SF3).  ME_LOWLAT=2 is the
-    # source default and stays strict; 0 and 1 are variants.
-    LL_STRICT_OUT=$("$PYB" "$LL_PY" strict "LAYOUT_PAD_ENV=$LAYOUT_PAD_ENV" \
-      "PSP_EXTRA=${PSP_EXTRA:-}" "CORE_EXTRA=${CORE_EXTRA:-}" "FE_EXTRA=${FE_EXTRA:-}" \
-      "ME_LOWLAT=${ME_LOWLAT:-}" "RFU_SCHED=$RFU_SCHED" "GBA_LINK=$GBA_LINK" \
-      "REWIND=$REWIND" "ONLINE=$ONLINE" "CHEATS=$CHEATS" "INPUT_FRESH=${INPUT_FRESH:-}" \
-      "MGIFT=${MGIFT:-}" "LAYOUT_PIN=$LAYOUT_PIN" \
-      "GBALINK_LEAN_OUTLINE=${GBALINK_LEAN_OUTLINE:-}") ||
-      die "layout_lock.py strict failed: $LL_STRICT_OUT"
-    LL_STRICT=${LL_STRICT_OUT%% *}
+    # tools/tests/test_layout_lock.py (critique-9 SF3).
     [ "$LL_STRICT" = 1 ] || note "layout  : variant arm, the lock is not enforced (${LL_STRICT_OUT#0 })"
     LL_RC=0
     "$PYB" "$LL_PY" check "$LL_FLAVOUR" "$HB_NM" --lock "$LL_LOCK" -q || LL_RC=$?
@@ -545,7 +565,7 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
     LAYOUT_LOCK_RESULT=${LL_V%% *}
     case "${LL_V#* }:$LL_RC" in
       ok:*)   note "layout  : layout.lock [$LL_FLAVOUR] OK" ;;
-      die:1)  die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: re-pin with layout_lock.py solve, then re-record with write)" ;;
+      die:1)  die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: a pin that moved is a regen decision, layout_lock.py regen; a hot-block pad is re-tuned with solve; re-record checked values with write)" ;;
       die:*)  die "layout.lock [$LL_FLAVOUR] could not be checked (rc $LL_RC: no psp-nm output in .build-elf.nm?)" ;;
       note:1) note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)" ;;
       *)      note "layout  : layout.lock [$LL_FLAVOUR] NOT CHECKED (rc $LL_RC: no psp-nm output?)" ;;
@@ -725,7 +745,7 @@ MANIFEST="$ROOT/psp/build-manifest.json"
   echo "  \"pspMakeFlags\": \"$PSP_MAKE_FLAGS\","
   echo "  \"cleanRebuild\": $([ "$CLEAN" -eq 1 ] && echo true || echo false),"
   echo "  \"layoutPin\": $LAYOUT_PIN,"
-  echo "  \"layoutPadBytes\": $LAYOUT_PAD_BYTES,"
+  echo "  \"layoutPins\": \"$LAYOUT_PINS_RESULT\","
   echo "  \"layoutLock\": \"$LAYOUT_LOCK_RESULT\","
   echo "  \"eboot\": { \"md5\": \"$PBP_MD5\", \"sha256\": \"$PBP_SHA\" },"
   echo "  \"elfMd5\": \"$ELF_MD5\","

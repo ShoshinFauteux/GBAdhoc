@@ -12,6 +12,7 @@ gpsp/sdl/gpsp_sdl
 # psp/Makefile writes the link script from psp/gbadhoc.ld.in on every make
 gpsp/psp/gbadhoc.ld
 gpsp/psp/groups.ld
+gpsp/psp/pins.ld
 # Run artifacts
 logs/
 *.log

@@ -48,7 +48,7 @@ CORE_DIRS = (".", "mips", "arm", "x86", "libretro", "gbalink")   # non-recursive
 FE_DIRS = ("psp", "psp/fe", "psp/labab", "frontend-common", "netdrv", "gbcore", "gbcore/tgbdual")
 C_EXT = {".c", ".h", ".cc", ".cpp", ".S", ".s"}
 # Read by both sides by design: they change what is linked, so each make gets them.
-BOTH_SIDES = {"GBA_LINK", "REWIND", "LAYOUT_PIN", "LAYOUT_PAD_BYTES"}
+BOTH_SIDES = {"GBA_LINK", "REWIND", "LAYOUT_PIN"}
 PP = re.compile(r"^\s*#\s*(?:if|ifdef|ifndef|elif)\b(.*)$", re.M)
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -105,7 +105,7 @@ def current() -> list[str]:
     """Everything the lock pins, as sorted `section key=value` lines."""
     lines = ["core %s=%s" % kv for kv in header_defs(CORE_HDR).items()]
     lines += ["frontend %s=%s" % kv for kv in header_defs(FE_HDR).items()]
-    pins = ("GBA_LINK", "REWIND", "LAYOUT_PIN", "LAYOUT_PAD_BYTES", "LAYOUT_PAD_RO_BYTES", "LAYOUT_PAD_FE_BYTES", "LAYOUT_PAD_GB_BYTES", "LAYOUT_PAD_CORE_BYTES", "LAYOUT_PAD_BSCAN_BYTES", "LAYOUT_PAD_MAIN_BYTES", "LAYOUT_PAD_LATE_BYTES", "LAYOUT_PAD_MLU_BYTES", "LAYOUT_PAD_XLAT_BYTES", "LAYOUT_PAD_BXLAT_BYTES", "CHEATS", "HOT_DATA_GUARD",
+    pins = ("GBA_LINK", "REWIND", "LAYOUT_PIN", "LAYOUT_PAD_RO_BYTES", "LAYOUT_PAD_BSCAN_BYTES", "LAYOUT_PAD_LATE_BYTES", "LAYOUT_PAD_MLU_BYTES", "LAYOUT_PAD_XLAT_BYTES", "LAYOUT_PAD_BXLAT_BYTES", "CHEATS", "HOT_DATA_GUARD",
             "PSP_PIXFMT", "TGB_LAZY_TIMER", "PSP_LARGE_MEMORY")
     for rel in ("Makefile", "psp/Makefile"):
         d = make_defaults(rel)
@@ -317,9 +317,11 @@ def check_build(say, out: Path):
         say("build", "frontendDefines: %s %s" % (t, "missing" if t in want_fe else "extra"))
     if m.get("title") != prof["TITLE"]:
         say("build", "title %r" % m.get("title"))
-    pad = make_defaults("psp/Makefile").get("LAYOUT_PAD_BYTES")
-    if str(m.get("layoutPadBytes")) != pad or m.get("layoutPin") != 1:
-        say("build", "layout pin=%s pad=%s, want 1 and %s" % (m.get("layoutPin"), m.get("layoutPadBytes"), pad))
+    # the pins (code-health C3-3): layout.lock [release]'s, each with its gap
+    pins = str(m.get("layoutPins", "")).split()
+    if (m.get("layoutPin") != 1 or not pins or pins[0] != "release"
+            or any(not p.split("=", 1)[-1].isdigit() for p in pins[1:])):
+        say("build", "layout pin=%s pins=%r, want 1 and release's pins" % (m.get("layoutPin"), m.get("layoutPins")))
 
 
 def main() -> int:
