@@ -404,30 +404,6 @@ typedef struct
     * vblank wait has already absorbed most of it.  Worth the most during a
     * clamped session, where the loop idles ~9 ms; A/B it there, not solo. */
    int  gu_defer;
-   /* `rfu_rx_cap`: RETIRED (code-health B-2).  ADR-0042's per-frame RFU
-    * delivery cap was falsified and its code removed; the key is still read
-    * and written back unchanged so an existing config.ini round-trips, and
-    * nothing acts on it. */
-   int  rfu_rx_cap;
-   /* ADR-0075b `rfu_pace_max_hold`: how many frames of host data the paced
-    * client may hold before the OLDEST is discarded.  This is the latency
-    * dial, and it is a config.ini key rather than a harness one because the
-    * measurement that set it can only be made by a person playing.
-    *
-    * Why it matters more than it looks: with the pace gate delivering one
-    * packet per frame and the game asking about once per frame, arrival and
-    * delivery are equal -- so ANY depth the queue reaches is a fixed point and
-    * it never drains on its own.  The cap is the only thing that drains it,
-    * which means the cap IS the standing latency.  Measured on hardware at 12:
-    * q_hi parked at 12 for the whole session (~210 ms behind) with only 39
-    * discards, and the player reported constant lag that no longer grew.
-    *
-    * Shedding it costs a one-time handful of discards; once the queue sits at
-    * the cap, arrival == delivery holds it there with no further loss.  Lower
-    * is more responsive, higher absorbs more network stall (the worst observed
-    * inter-packet gap is 32 ms, ~2 frames).  Must stay well under the game's
-    * 32-FRAME link timeout; 0 = unbounded = the build that died at 39. */
-   int  rfu_pace_max_hold;
    /* Let config.ini's `net_session_fps` win over the trading profile's forced
     * rate in a PLAYABLE build.  0 = profile decides (57.00 speed / 29.97
     * compat), 1 = the ini value is used verbatim.

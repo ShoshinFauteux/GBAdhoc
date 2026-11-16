@@ -807,69 +807,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    g_pcfg.gu_defer = (int)HARNESS_INT("gu_defer",
                                          g_pcfg.gu_defer);
    g_pcfg.gu_defer = g_pcfg.gu_defer ? 1 : 0;
-   /* ADR-0075: frame-boundary delivery admission.  The successor to the
-    * falsified rfu_rx_cap (removed, code-health B-2): same "at most N real deliveries per frame" idea,
-    * but the eligibility gate is applied identically in rfu_data_avail(), so
-    * the WAITEVENT spin that made every capped arm self-blinding cannot
-    * occur.  1 = match the game's drain rate (the arm to run first). */
-   {
-      int fp = (int)HARNESS_INT("rfu_frame_pace",
-                                   PLAY_RFU_FRAME_PACE);
-      if (fp < 0)  fp = 0;
-      if (fp > 16) fp = 16;
-      rfu_set_frame_pace((unsigned)fp);
-      fe_evt("rfu_frame_pace n=%d", fp);
-      /* The bound on the hold.  frame_pace without it took the client's
-       * undelivered queue past the game's 32-frame link timeout on hardware
-       * (q_hi 1, 9, 13, 39 -> adapter reset).  Must stay well under 32; 0
-       * restores the unbounded hold, for an A/B against that failure. */
-      {
-         /* config.ini is the base (the player owns this dial), harness
-          * overrides -- the me_dirty / me_sameframe pattern. */
-         int mh = (int)HARNESS_INT("rfu_pace_max_hold",
-                                      g_pcfg.rfu_pace_max_hold);
-         if (mh < 0)  mh = 0;
-         if (mh > 28) mh = 28;      /* 32 is the timeout; never sit on it */
-         rfu_set_pace_max_hold((unsigned)mh);
-         fe_evt("rfu_pace_max_hold n=%d", mh);
-      }
-   }
-   /* LINK SHEDDING (rfu.c rfu_shed_client): a receive queue deeper than N
-    * gives up content-free packets at the frame boundary.  The restoring force
-    * the emulated link never had -- without it, every stall and every radio
-    * retransmit is permanent round-trip latency (the field's "lag that grows
-    * until Communications failed").  0 = off = the historical queues, for the
-    * A/B; the arm is named in every rfu_shed census line. */
-   {
-      int sk = (int)HARNESS_INT("rfu_shed_keep",
-                                   PLAY_RFU_SHED_KEEP);
-      if (sk < 0)  sk = 0;
-      if (sk > 16) sk = 16;
-      rfu_set_shed_keep((unsigned)sk);
-      fe_evt("rfu_shed_keep n=%d", sk);
-   }
-   /* HOLD, NEVER DISCARD (rfu.c rfu_hold): 1 = a packet that does not fit its
-    * receive queue waits in an overflow ring, and the client's pace backstop
-    * stops discarding; 0 = the historical discards, for the A/B. */
-   {
-      int hd = (int)HARNESS_INT("rfu_hold", PLAY_RFU_HOLD);
-      rfu_set_hold(hd ? 1u : 0u);
-      fe_evt("rfu_hold n=%d", hd ? 1 : 0);
-   }
-   /* THE ADAPTER'S ONE BUFFER (rfu.c rfu_supersede).  ON by default in
-    * every build (the core's default); 0 = the historical queues, for the
-    * A/B. */
-   {
-      int sv = (int)HARNESS_INT("rfu_supersede", 1);
-      rfu_set_supersede(sv ? 1u : 0u);
-      fe_evt("rfu_supersede on=%d", sv ? 1 : 0);
-      /* Scheduled ticks (rfu_sched.h): D = 2 by default; a harness
-       * may pick another D, or 0 for this run's A/B arm.  Last, because ticks
-       * retire the rules above. */
-      rfu_sched_config((unsigned)HARNESS_INT("rfu_sched",
-                                                RFU_SCHED_D_DEFAULT));
-      fe_evt("rfu_sched d=%u", rfu_sched_d);
-   }
+   /* Scheduled ticks (rfu_sched.h, docs/RFU-COUPLING.md), the adapter's one
+    * protocol since C-4: D = 2 by default; a harness may pick another D, or 0
+    * for a diagnostic run with raw queues (it refuses a ticks partner). */
+   rfu_sched_config((unsigned)HARNESS_INT("rfu_sched", RFU_SCHED_D_DEFAULT));
+   fe_evt("rfu_sched d=%u", rfu_sched_d);
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in
     * every real run; the value is echoed so a stray one cannot hide. */

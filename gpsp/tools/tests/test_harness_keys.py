@@ -26,9 +26,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 HK = os.path.join(ROOT, "tools", "refactor", "harness_keys.py")
 CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # pinned at C2-0 (3790851f's source): 344 keys on 370 read sites (release 203, lab 341, harness 319
-# keys; 3 keys only in opt-in arms: drprof_us, jit_pub_inline, xlat_scan_fast)
-EXPECT_KEYS = 344
-EXPECT_SITES = 370
+# keys; 3 keys only in opt-in arms: drprof_us, jit_pub_inline, xlat_scan_fast).  C4-2 (code-health
+# C-4): 339 keys on 365 sites, the five pre-ticks adapter rule keys gone (rfu_frame_pace, rfu_hold,
+# rfu_pace_max_hold, rfu_shed_keep, rfu_supersede; release 198, lab 336, harness 314).
+EXPECT_KEYS = 339
+EXPECT_SITES = 365
 
 fails = 0
 

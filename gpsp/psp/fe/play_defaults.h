@@ -59,21 +59,6 @@
  * choose.  Set `dump_marker_poll = 60` to get the old mechanism back.  (This
  * text sat on the bare-make flavour's arm until code-health A-5 removed it.) */
 #define PLAY_DUMP_MARKER     0
-/* ADR-0075: VALIDATED on hardware (fs-pace pace arm — Gate A closed, send
- * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
- * players: this is the input-eating fix. */
-#define PLAY_RFU_FRAME_PACE  1
-/* Link shedding: keep at most 2 frames of standing depth in each RFU receive
- * queue by removing content-free packets (rfu.c).  ON for players: this bounds
- * the round-trip latency that otherwise ratchets up for a whole session. */
-#define PLAY_RFU_SHED_KEEP   2
-/* Hold, never discard: a packet that does not fit its RFU receive queue waits
- * in an overflow ring instead of being thrown away (rfu.c rfu_hold).
- * ON for players since 3.0.0: PPSSPP radio fades, 5/5 survived with it and
- * 5/5 died without; on hardware (clean air, hold-ch11) it cost nothing, 4/4 on
- * the floor.  The noisy-air hardware arm was not run (owner's call, 2026-09-27;
- * docs/RIG-DOUBLE-BATTLE.md section 14).  The harness still sets it per arm. */
-#define PLAY_RFU_HOLD        1
 /* ADR-0076: NOT superseded after all.  Live-hardware 2026-08-10 (fs stage-live)
  * proved exit_assist alone leaves the JOIN at rfu_discq mode=4 (grace expired)
  * with the queue wiped and 1 discans (press-A) still.  disc_grace=60 drained

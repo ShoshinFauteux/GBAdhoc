@@ -915,7 +915,11 @@ def suites(env: Env, baseline: Path | None):
           "/tmp/ini-n-$c.dump && "
           "/tmp/t_ini_doc_legacy dump /tmp/ini-l-$c.ini /tmp/ini-l-$c.dump && "
           "cmp /tmp/ini-n-$c.dump /tmp/ini-l-$c.dump && "
-          "cmp /tmp/ini-n-$c.ini /tmp/ini-l-$c.ini || exit 1; "
+          "cmp /tmp/ini-n-$c.ini /tmp/ini-l-$c.ini && "
+          # keys no build reads any more (C-4: rfu_pace_max_hold; B-2:
+          # rfu_rx_cap) stay in a player's file, untouched
+          "grep -q '^rfu_pace_max_hold = 24' /tmp/ini-n-$c.ini && "
+          "grep -q '^rfu_rx_cap = 0' /tmp/ini-n-$c.ini || exit 1; "
           "echo \"PASS $c config: same fields loaded, same bytes saved\"; "
           "done")),
     ]

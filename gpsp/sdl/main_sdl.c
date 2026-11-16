@@ -360,14 +360,6 @@ unsigned gpsp_rfu_now_us(void)
 static volatile unsigned g_rfu_tr_buf[RFU_TRACE_RING];
 static volatile unsigned g_rfu_tr_head, g_rfu_tr_tail, g_rfu_tr_lost;
 
-/* ADR-0075 smoothing valve — set the client's per-frame delivery admission so
- * a jittered link can be A/B'd on the desktop (--rfu-pace N; N=0 = off). */
-extern void rfu_set_frame_pace(unsigned n);
-extern void rfu_set_pace_max_hold(unsigned n);
-extern void rfu_set_shed_keep(unsigned n);
-extern void rfu_set_hold(unsigned on);
-extern void rfu_set_disc_grace(unsigned frames);
-extern void rfu_set_idle_poll_cycles(unsigned cycles);
 #include "../rfu_sched_api.h"
 
 /* ME renderer capture validation (--me-capture-test): run the production
@@ -471,14 +463,8 @@ static void rfu_trace_drain(void)
       case 18:
          fe_evt("rfu_discq queued=%u mode=%u net=%s", a, b, net);
          break;
-      case 19:
-         fe_evt("rfu_pace n=%u/%u q_hi=%u net=%s", a, 600u, b, net);
-         break;
       case 20:  /* ADR-0072 fix: game recvQueue depth peak (a) + over-gate frames (b) */
          fe_evt("rfu_gqpeak peak=%u over_gate=%u/%u net=%s", a, b, 600u, net);
-         break;
-      case 37:  /* rfu_supersede: packets the one-buffer rule replaced */
-         fe_evt("rfu_supersede n=%u on=%u net=%s", a, b, net);
          break;
       default:
          /* case 5 (RFU_TR_CMD) is per-command and would flood; ignored, the
@@ -588,9 +574,9 @@ int main(int argc, char **argv)
    long autoexit = 0, dump_at = 0, dump_every = 0;
    int scale = 2, no_pacing = 0, force_sram_write = 0, force_ff = 0;
    int rtc_wall = 0;
-   int rfu_play = 0;    /* --rfu-play: the player build's adapter settings */
-   unsigned rfu_sched_arg = 0;   /* --rfu-sched D */
-   int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
+   /* --rfu-sched D: the adapter's scheduled ticks (rfu_sched.h), D = 2 as on
+    * the PSP; 0 = a diagnostic run with raw queues (refuses a ticks peer). */
+   unsigned rfu_sched_arg = RFU_SCHED_D_DEFAULT;
    int exit_code = 0;
    const char *exit_reason = NULL;
    char save_buf[512];
@@ -803,8 +789,6 @@ int main(int argc, char **argv)
             return 2;
          }
       }
-      else if (!strcmp(argv[i], "--rfu-pace") && i + 1 < argc)
-         rfu_pace = (int)strtol(argv[++i], NULL, 0);
       else if (!strcmp(argv[i], "--me-capture-test"))
       {
          if (me_capture_frame_bytes > sizeof(g_mecap_test_buf))
@@ -842,8 +826,6 @@ int main(int argc, char **argv)
                fprintf(stderr, "unknown core option: %s\n", kv);
          }
       }
-      else if (!strcmp(argv[i], "--rfu-play"))
-         rfu_play = 1;
       else if (!strcmp(argv[i], "--rfu-sched") && i + 1 < argc)
          rfu_sched_arg = (unsigned)strtoul(argv[++i], NULL, 0);
       else if (argv[i][0] != '-' && !rom_path)
@@ -944,23 +926,8 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   if (rfu_play)   /* psp/main_psp.c PLAY_RFU_*, PLAY_IDLE_POLL, config_psp.c */
-   {
-      rfu_set_frame_pace(1);
-      rfu_set_pace_max_hold(24);
-      rfu_set_shed_keep(2);
-      rfu_set_hold(1);
-      rfu_set_disc_grace(120);
-      rfu_set_idle_poll_cycles(34952);
-      fe_evt("rfu_play pace=1 hold=24 shed=2 hold_on=1 grace=120 idle=34952");
-   }
-   rfu_sched_config(rfu_sched_arg);   /* after the rules: ticks retire them */
+   rfu_sched_config(rfu_sched_arg);
    fe_evt("rfu_sched d=%u", rfu_sched_d);
-   if (rfu_pace >= 0)
-   {
-      rfu_set_frame_pace((unsigned)rfu_pace);
-      fe_evt("rfu_frame_pace n=%d", rfu_pace);
-   }
 
    if (script && fe_autopilot_load(script) != 0)
    {

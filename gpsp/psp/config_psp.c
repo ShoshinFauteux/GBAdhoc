@@ -309,9 +309,6 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
     * deferred path draws the right pixels; it cannot tell us what the
     * overlap is worth, so the user decides with a config edit. */
    g_pcfg.gu_defer = (int)fe_ini_get_int(cfg_path, "gu_defer", 0);
-   g_pcfg.rfu_rx_cap = (int)fe_ini_get_int(cfg_path, "rfu_rx_cap", 0);
-   g_pcfg.rfu_pace_max_hold =
-      (int)fe_ini_get_int(cfg_path, "rfu_pace_max_hold", 24);
    g_pcfg.net_session_fps_force =
       (int)fe_ini_get_int(cfg_path, "net_session_fps_force", 0) ? 1 : 0;
    g_pcfg.nd_rto_min_us =
@@ -358,7 +355,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
           "group=%s net_frameskip=%d net_skip_threshold=%s net_tx_thread=%d "
           "log_thread=%d sram_thread=%d net_pace_match=%d "
           "net_session_fps=%d.%02d snap=%d core_phase=%d blit_mode=%d "
-          "gu_defer=%d rfu_rx_cap=%d",
+          "gu_defer=%d",
           vid_scale_name(g_pcfg.scale),
           vid_filter_name(g_pcfg.filter), g_pcfg.ff_mult_x10, g_pcfg.ff_hold,
           g_pcfg.group, g_pcfg.net_frameskip, g_pcfg.net_skip_threshold_str,
@@ -366,7 +363,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
           g_pcfg.net_pace_match,
           g_pcfg.net_session_fps_x100 / 100, g_pcfg.net_session_fps_x100 % 100,
           g_pcfg.net_session_fps_snap, g_pcfg.core_phase, g_pcfg.blit_mode,
-          g_pcfg.gu_defer, g_pcfg.rfu_rx_cap);
+          g_pcfg.gu_defer);
 }
 
 /* ADR-0035.  The load path already clamps every enum, so a bad value in the
@@ -412,8 +409,6 @@ static int pcfg_validate(const char *when)
    PCFG_CHK(core_phase,           0, 3, 2);
    PCFG_CHK(blit_mode,            0, VID_BLIT_MODES - 1, VID_BLIT_CACHED);
    PCFG_CHK(gu_defer,             0, 1, 0);
-   PCFG_CHK(rfu_rx_cap,           0, 16, 0);   /* RFU_PKT_QUEUE deep */
-   PCFG_CHK(rfu_pace_max_hold,    0, 28, 24);  /* 32 = the game's timeout */
    PCFG_CHK(net_session_fps_force, 0, 1, 0);
    PCFG_CHK(nd_rto_min_us,        0, 2000000, 50000);
    PCFG_CHK(standby,              0, 3, 1);   /* ON: see me_standby_down */
@@ -653,8 +648,6 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "core_phase", g_pcfg.core_phase);
    fe_ini_set_int(cfg_path, "blit_mode", g_pcfg.blit_mode);
    fe_ini_set_int(cfg_path, "gu_defer", g_pcfg.gu_defer);
-   fe_ini_set_int(cfg_path, "rfu_rx_cap", g_pcfg.rfu_rx_cap);
-   fe_ini_set_int(cfg_path, "rfu_pace_max_hold", g_pcfg.rfu_pace_max_hold);
    fe_ini_set_int(cfg_path, "net_session_fps_force",
                   g_pcfg.net_session_fps_force);
    fe_ini_set_int(cfg_path, "nd_rto_min_us", g_pcfg.nd_rto_min_us);

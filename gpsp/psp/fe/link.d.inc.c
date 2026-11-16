@@ -374,6 +374,9 @@ static void rfu_trace_drain(void)
                 a, b, g_net_up ? "up" : "down");
          break;
       /* 8 was rfu_rxhold, the removed rfu_rx_cap's hold count (B-2). */
+      /* 19 rfu_pace, 22 rfu_pacedrop, 23 rfu_pacecatch, 30 rfu_shed, 33 rfu_hold,
+       * 34 rfu_holdfail, 36 rfu_catchgq, 37 rfu_supersede: the delivery rules
+       * scheduled ticks replaced, removed in code-health C-4. */
       case 9:
          /* New deepest occupancy of an RFU receive queue (ADR-0044).  If this
           * approaches RFU_PKT_QUEUE the next burst will be dropped, and a
@@ -486,40 +489,11 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_discq queued=%u mode=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
-      case 19:
-         /* ADR-0075: the pace census.  `n` = frames in a 600-frame window on
-          * which frame-paced delivery deferred an eligible packet; `q_hi` =
-          * the deepest OUR client queue got on those frames.  Emitted every
-          * window while rfu_frame_pace is on, including n=0, so a gate that
-          * never bound cannot be mistaken for a dead instrument.  Read next
-          * to rfu_arrival: n should track the clumped fraction, and q_hi
-          * bounds the extra latency (q_hi extra frames on the last packet of
-          * the worst clump). */
-         fe_evt("rfu_pace n=%u/%u q_hi=%u net=%s", a, 600u, b,
-                g_net_up ? "up" : "down");
-         break;
       case 20:
          /* ADR-0072 fix: the GAME's recvQueue-depth PEAK on its own event so
           * the 12-bit ring keeps it (peak>4 = Gate B input-eat, 32 = FATAL).
           * over_gate = frames past the gate this window. */
          fe_evt("rfu_gqpeak peak=%u over_gate=%u/%u net=%s", a, b, 600u,
-                g_net_up ? "up" : "down");
-         break;
-      case 23:
-         fe_evt("rfu_pacecatch n=%u q=%u net=%s", a, b,
-                g_net_up ? "up" : "down");
-         break;
-      case 22:
-         /* The bound on the pace hold (rfu.c rfu_pace_max_hold).  `n` =
-          * packets discarded this window because the client's undelivered
-          * queue was older than the bound; `hi` = the worst single frame.
-          *
-          * Read WITH rfu_pace: q_hi parked at the cap plus n>0 means the bound
-          * is doing its job -- the alternative was the hold crossing the
-          * game's 32-frame link timeout and the adapter being reset.  n
-          * climbing every window means the host is outrunning this game's ask
-          * rate persistently, which is a different problem from a clump. */
-         fe_evt("rfu_pacedrop n=%u hi=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
       case 21:
@@ -580,16 +554,6 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_fault corrupted=%u off=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
-      case 33:
-         /* Hold, never discard: the most packets waiting in the overflow ring
-          * at once this window, and how many entered it. */
-         fe_evt("rfu_hold hi=%u n=%u net=%s", a, b, g_net_up ? "up" : "down");
-         break;
-      case 34:
-         /* The hold could not take a packet, so it was DISCARDED after all;
-          * stale = entries purged because their link had gone. */
-         fe_evt("rfu_holdfail n=%u stale=%u net=%s", a, b, g_net_up ? "up" : "down");
-         break;
       case 32:
          /* The original bytes of the packet about to be corrupted. */
          if (b == 0xFFFu)
@@ -601,27 +565,10 @@ static void rfu_trace_drain(void)
          fe_evt("rfu_pollmix none=%u multi=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
-      case 36:
-         fe_evt("rfu_catchgq n=%u arr=%u net=%s", a, b,
-                g_net_up ? "up" : "down");
-         break;
-      case 37:
-         /* The adapter's one-buffer rule: packets a real adapter would have
-          * overwritten before the game looked, removed this window. */
-         fe_evt("rfu_supersede n=%u on=%u net=%s", a, b,
-                g_net_up ? "up" : "down");
-         break;
       case 39:
          /* Longest run of frames a receive queue stood above the supersede
           * allowance this window (client queue, host queues). */
          fe_evt("rfu_qrun client=%u host=%u net=%s", a, b,
-                g_net_up ? "up" : "down");
-         break;
-      case 30:
-         /* Link shedding: content-free packets removed from the queue this
-          * adapter reads, this window; keep = the rfu_shed_keep in force
-          * (0 = the A/B's off arm). */
-         fe_evt("rfu_shed n=%u keep=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;
       default:

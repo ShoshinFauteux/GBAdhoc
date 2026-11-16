@@ -508,15 +508,9 @@ static void net_frame(void)
  * warning, no retry storm. */
 
 /* rfu.c.  The core has no header; the frontend/core interface here is a set
- * of loose externs, so this follows the existing convention.
- * ADR-0075.  At most N non-empty host-packet deliveries to the game per
- * emulated frame, gated consistently in RECV_DATA and rfu_data_avail() so the
- * WAITEVENT re-poll spin that sank the rfu_rx_cap arms cannot occur.  1 equals
- * both the game's drain rate and the real radio's cadence.  0 = off. */
-/* rfu_set_frame_pace, _pace_max_hold, _shed_keep (link shedding, 0 = off),
- * _hold (hold, never discard), _supersede (the adapter one-buffer rule) and
- * the desync-detector faults _fault_corrupt/_span/_mode: rfu.c, declared in
- * core_fe.h like the setters below. */
+ * of loose externs, so this follows the existing convention. */
+/* rfu_set_fault_corrupt/_span/_mode (the desync-detector faults): rfu.c,
+ * declared in core_fe.h like the setters below. */
 /* adhoc_set_disc_await (candidate mid-run-Disconnect fix): transport_adhoc.h */
 /* ADR-0059.  Percent, 100 = stock.  Stretches the emulated adapter's two
  * cycle-counted deadlines to compensate for a radio ~10x slower than the one
