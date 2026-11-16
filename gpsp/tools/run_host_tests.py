@@ -557,10 +557,11 @@ def suites(env: Env, baseline: Path | None):
         # docs/FF-ARTIFACT-FIX.md omitted them, which is why this suite was
         # only ever run by hand.  (Triple buffering is unconditional since
         # code-health A-7; the tests no longer define VID_TRIPLE.)
-        # The link-latency ratchet and its fix: the production rfu.c queues
-        # driven by a scripted host and game, proving a stall is permanent
-        # latency without shedding and bounded with it, and that shedding
-        # never drops or reorders a packet with content.
+        # The census of the link backlog (rfu_backlog) over the production
+        # rfu.c queues, driven by a scripted host and game: a stall stands in
+        # the queue and the census reports it, plus the content-free
+        # classifier (rfu_empty), host-queue order and the fault injection.
+        # (Shedding, which it once proved, went with the rules in C-4.)
         ("rfu_link_backlog", True, lambda: None,
          ("gcc -std=gnu99 -O1 -g -Wall -Wextra "
           "-Wno-old-style-declaration -Wno-missing-field-initializers "
@@ -569,6 +570,28 @@ def suites(env: Env, baseline: Path | None):
           "-Ifrontend-common -o /tmp/t_rfu_link_backlog "
           "tools/tests/test_rfu_link_backlog.c -Wl,--gc-sections && "
           "ASAN_OPTIONS=detect_leaks=0 /tmp/t_rfu_link_backlog")),
+
+        # Scheduled ticks, the adapter's one protocol (C-4): two production
+        # rfu.c instances, the second's globals renamed rsb_* (objcopy), over
+        # an in-memory wire.  Then the two mutants -- D = 0 on one console,
+        # the frame mark stripped -- must make it fail.
+        ("rfu_sched", True, lambda: None,
+         ("RS='gcc -std=gnu99 -O1 -g -Wall -Wextra "
+          "-Wno-old-style-declaration -Wno-missing-field-initializers "
+          "-fsanitize=address,undefined -ffunction-sections -fdata-sections "
+          "-DINLINE=inline -Ilibretro/libretro-common/include "
+          "-Ifrontend-common' && "
+          "$RS -DRFU_SCHED_INSTANCE -c -o /tmp/t_rs_a.o "
+          "tools/tests/test_rfu_sched.c && "
+          "nm -g --defined-only /tmp/t_rs_a.o | "
+          "awk 'NF == 3 { print $3 \" rsb_\" $3 }' > /tmp/t_rs_b.syms && "
+          "objcopy --redefine-syms=/tmp/t_rs_b.syms /tmp/t_rs_a.o /tmp/t_rs_b.o && "
+          "$RS -o /tmp/t_rfu_sched tools/tests/test_rfu_sched.c "
+          "/tmp/t_rs_a.o /tmp/t_rs_b.o -Wl,--gc-sections && "
+          "export ASAN_OPTIONS=detect_leaks=0 && /tmp/t_rfu_sched && "
+          "! /tmp/t_rfu_sched d0 > /dev/null && "
+          "! /tmp/t_rfu_sched nomark > /dev/null && "
+          "echo 'rfu sched: mutants d0 and nomark fail, as they must'")),
 
         # The rig's honesty invariants (docs/RIG-DOUBLE-BATTLE.md §2): the
         # autopilot's it=/crc=/val=/logbytes output, the in-band evt_gap

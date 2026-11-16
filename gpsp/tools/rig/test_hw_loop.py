@@ -200,7 +200,7 @@ def main():
             open(os.path.join(d, "EBOOT.PBP"), "wb").write(b"EBOOT-" + a.encode())
             for role in ("host", "join"):
                 open(os.path.join(d, role + "-.gpsp-harness.ini"), "w").write(
-                    "%s = 1\nrfu_shed_keep = %d\n" % (role, 0 if a == "A" else 2))
+                    "%s = 1\nnet_latency_ms = %d\n" % (role, 0 if a == "A" else 50))
             arms[a] = d
         logs = os.path.join(td, "logs")
         stop = threading.Event()

@@ -387,11 +387,6 @@ def invariants(h, j, H, J, args):
             for k, v in ini_pairs(ini).items():
                 if seen.get(k) != v:
                     bad.append("I4 %s: staged %s=%s, log shows %s" % (role, k, v, seen.get(k)))
-            for key in ("rfu_shed_keep", "rfu_hold"):
-                want = ini_pairs(ini).get(key)
-                got = lg.first(key)
-                if want is not None and (not got or got.get("n") != want):
-                    bad.append("I4 %s: %s staged %s applied %s" % (role, key, want, got))
     for lg, role, fx in ((h, "host", args.host_fixture), (j, "join", args.join_fixture)):
         al = lg.first("ap_loaded")
         if not al:

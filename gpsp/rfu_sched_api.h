@@ -9,8 +9,8 @@
 #define RFU_SCHED_D_DEFAULT 2u
 
 extern unsigned rfu_sched_d, rfu_sched_held_peak;
-/* Sets D; d >= 1 also retires the older delivery rules.  Call it after the
- * rules are configured and before any adapter session starts. */
+/* Sets D (one store: the older delivery rules are gone, C-4).  Call it
+ * before any adapter session starts. */
 void rfu_sched_config(unsigned d);
 /* Once a loop: is this console's menu open?  The partner waits while it is. */
 void rfu_sched_pause(int on);

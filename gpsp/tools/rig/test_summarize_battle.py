@@ -53,11 +53,11 @@ def make(role, turns=30, f2m=lambda t: 60, fp_break=None, drop=None, rid="7-1",
     L = ["EVT boot_ok", "EVT psp_model code=%d name=%s" % ((2, "PSP-3000") if role == "host" else (0, "PSP-1000")),
          "EVT rig run_id=%s arm=B" % rid, "EVT build eboot_crc=deadbeef size=10",
          "EVT rom_id code=%s rev=01 size=16777216 hdr_crc=0" % ("BPRE" if role == "host" else "BPGE"),
-         "EVT rfu_shed_keep n=2", "EVT cfg src=harness key=rfu_shed_keep raw=2"]
+         "EVT rfu_sched d=2", "EVT cfg src=harness key=rfu_sched raw=2"]
     if dup_key:
         L.append("EVT cfg_duplicate src=harness key=net_latency_ms raw=50 ignored=1 (first line wins)")
     if unknown_key:
-        L.append("EVT cfg_unknown src=harness key=rfu_shed_kep raw=2")
+        L.append("EVT cfg_unknown src=harness key=rfu_schd raw=2")
     if fault:
         L.append("EVT rfu_fault_corrupt n=%d" % (1500 if role == "join" else 0))
     if fault == "fired" and role == "join":

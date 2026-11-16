@@ -7,9 +7,9 @@ owner handshake).  docs/RIG-DOUBLE-BATTLE.md §4-§5.
         --variant growl|swift|frfr --backup <wireless-stick-backup dir>
         --out <builds/wireless-rig>
 
-Produces <out>/<variant>/stage-A, stage-B (identical except `arm` intent and
-rfu_shed_keep), the H0 controls stage-L (V1: arm A plus net_latency_ms 50 on
-both sides) and stage-S (V2: arm A with the JOIN slowed by --slow-us per
+Produces <out>/<variant>/stage-A (the build as it ships), stage-Q (A at a
+57.00 session rate), the H0 controls stage-L (V1: arm A plus net_latency_ms 50
+on both sides) and stage-S (V2: arm A with the JOIN slowed by --slow-us per
 frame), <out>/<variant>/golden, and MANIFEST.txt with every md5 and
 the EBOOT CRC32 the scorer checks (I3).  CONFIG.INI per role is the OWNER'S
 own (from the backup), so the rig runs the owner's settings -- profile, ME
@@ -52,24 +52,22 @@ def crc32(p):
     return "%08x" % (zlib.crc32(open(p, "rb").read()) & 0xFFFFFFFF)
 
 
-# arm -> (rfu_shed_keep, {role: extra ini lines}).  L and S are H0's
-# controls (docs/RIG-DOUBLE-BATTLE.md §4): each must MOVE F2M, or the rig
-# cannot see what it is looking for.
+# arm -> {role: extra ini lines}.  L and S are H0's controls
+# (docs/RIG-DOUBLE-BATTLE.md §4): each must MOVE F2M, or the rig cannot see
+# what it is looking for.  The B (link shedding) and H (hold, never discard)
+# arms went with those adapter rules in C-4: scheduled ticks deliver now.
 #
-# Q is B at a 57.00 session rate: the owner's CONFIG.INI forces 59.73
+# Q is A at a 57.00 session rate: the owner's CONFIG.INI forces 59.73
 # (`net_session_fps_force = 1`, psp/main_psp.c: then `net_session_fps` from
 # config.ini is the rate), and ADR-0073 measured 57.00 far kinder to a
 # client that cannot hold 59.73.  CONFIG-only: one value, both consoles.
 CFG_OVERRIDE = {"Q": {"net_session_fps": "57.00"}}
 
 
-# H is B plus rfu_hold (hold, never discard).  B stages rfu_hold = 0 so that,
-# on the same EBOOT, the ONLY difference between B and H is the hold.
 def arms(slow_us):
-    return {"A": (0, {}), "B": (2, {}), "Q": (2, {}),
-            "H": (2, {"host": ["rfu_hold = 1"], "join": ["rfu_hold = 1"]}),
-            "L": (0, {"host": ["net_latency_ms = 50"], "join": ["net_latency_ms = 50"]}),
-            "S": (0, {"join": ["pace_slow_us = %d" % slow_us]})}
+    return {"A": {}, "Q": {},
+            "L": {"host": ["net_latency_ms = 50"], "join": ["net_latency_ms = 50"]},
+            "S": {"join": ["pace_slow_us = %d" % slow_us]}}
 
 
 def override_cfg(src, dst, keys):
@@ -87,7 +85,7 @@ def override_cfg(src, dst, keys):
     open(dst, "wb").write(b"\n".join(lines))
 
 
-def harness_ini(role, rom, script, keep, extra=()):
+def harness_ini(role, rom, script, extra=()):
     """An extra line REPLACES the base line for its key: the build reads the
     FIRST occurrence, and a duplicate is reported and voids the run (I4)."""
     keys = {l.split("=")[0].strip() for l in extra}
@@ -98,8 +96,6 @@ def harness_ini(role, rom, script, keep, extra=()):
         "nick = %s" % role,
         "group = GPSP77",
         "rom = %s.gba" % rom,
-        "rfu_shed_keep = %d" % keep,
-        "rfu_hold = 0",
         "log_input = 0",
         "fail_probe = %s" % FAIL_PROBE,
         "watch_ram = 0x02036E6C:4,0x02036E90:4",
@@ -143,7 +139,7 @@ def main():
             sys.exit("golden %s failed:\n%s%s" % (role, r.stdout, r.stderr))
 
     man = ["# prepare_rig.py variant=%s" % a.variant]
-    for arm, (keep, extra) in sorted(arms(a.slow_us).items()):
+    for arm, extra in sorted(arms(a.slow_us).items()):
         st = os.path.join(root, "stage-" + arm)
         os.makedirs(st)
         for f in ("EBOOT.PBP", "gbadhoc_me.prx"):
@@ -155,7 +151,7 @@ def main():
                 body = body.replace("\nrepeat 30\n", "\nrepeat %d\n" % turns)
             open(os.path.join(st, script), "w", encoding="utf-8", newline="\n").write(body)
             open(os.path.join(st, "%s-.gpsp-harness.ini" % role), "w",
-                 newline="\n").write(harness_ini(role, stem, script, keep,
+                 newline="\n").write(harness_ini(role, stem, script,
                                                   extra.get(role, ())))
             cfg = os.path.join(a.backup, drive, "GBADHOC", "CONFIG.INI")
             if os.path.isfile(cfg):

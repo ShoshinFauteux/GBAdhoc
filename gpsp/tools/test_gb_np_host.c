@@ -16,6 +16,7 @@ struct netdrv
    int peers;
    int local_id;
    uint32_t ride;      /* cfg.ack_ride_us as the session has it */
+   uint16_t features;  /* cfg.link_features (NP_RFU_FEATURES) */
 };
 
 static struct netdrv fake_nd;
@@ -32,7 +33,7 @@ static uint64_t fake_now(void) { return 1000000; }
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 void fe_log(const char *fmt, ...) { (void)fmt; }
 /* rfu.c's adapter D, read by NP_RFU_FEATURES (always compiled since C-4);
- * 0 = no ticks, which is all a GB-only session needs. */
+ * 0 = no ticks.  The end of main checks what each value advertises. */
 unsigned rfu_sched_d;
 
 static void gba_start(uint16_t id, retro_netpacket_send_t send,
@@ -58,6 +59,7 @@ netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,
    fake_cb = *cb;
    snprintf(negotiated, sizeof(negotiated), "%s", cfg->protocol);
    fake_nd.ride = cfg->ack_ride_us;
+   fake_nd.features = cfg->link_features;
    return &fake_nd;
 }
 void netdrv_destroy(netdrv *nd) { (void)nd; }
@@ -221,6 +223,22 @@ int main(void)
    CHECK(fake_nd.ride == 0);
    fe_np_stop();
 
-   puts("gb netpacket host: protocol routing/readiness and ack riding passed");
+   /* NP_RFU_FEATURES: a GBA session advertises scheduled ticks exactly when
+    * the adapter runs them (rfu_sched_d >= 1), so netdrv's admission refuses
+    * a partner that differs; a GB session never advertises them. */
+   rfu_sched_d = 2;
+   CHECK(fe_np_start(&cfg) == 0);
+   CHECK(fake_nd.features == ND_FEAT_RFU_SCHED);
+   fe_np_stop();
+   CHECK(fe_np_start_gb(&cfg) == 0);
+   CHECK(fake_nd.features == 0);
+   fe_np_stop();
+   rfu_sched_d = 0;
+   CHECK(fe_np_start(&cfg) == 0);
+   CHECK(fake_nd.features == 0);
+   fe_np_stop();
+
+   puts("gb netpacket host: protocol routing/readiness, ack riding and the "
+        "adapter feature bit passed");
    return 0;
 }

@@ -38,7 +38,9 @@ for arg in "$@"; do
   esac
 done
 case "$RADIO" in 40) LAT=20; JIT=10 ;; 80) LAT=40; JIT=15 ;; *) LAT=0; JIT=0 ;; esac
-case "$ARM" in A) KEEP=0; HOLD=0 ;; B) KEEP=2; HOLD=1 ;; *) echo "arm must be A or B" >&2; exit 2 ;; esac
+# The arm is a label for the run and its scorer (ABBA order).  Its settings, B's
+# shedding and hold, went with the adapter rules in C-4: ticks deliver now.
+case "$ARM" in A|B) ;; *) echo "arm must be A or B" >&2; exit 2 ;; esac
 RUN_ID="${RUN_ID:-$ARM-$(date +%s)}"
 ART="$SCRIPT_DIR/artifacts/battle-$ARM${RADIO:+-r$RADIO}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$ART"
@@ -71,8 +73,6 @@ $2 = 1
 nick = $2
 run_id = $RUN_ID
 arm = $ARM
-rfu_shed_keep = $KEEP
-rfu_hold = $HOLD
 log_input = 0
 fail_probe = $FAIL_PROBE
 watch_ram = 0x02036E6C:4,0x02036E90:4

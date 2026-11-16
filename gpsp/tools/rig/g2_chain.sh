@@ -32,16 +32,12 @@ for step in "$@"; do
 rfu_fault_corrupt = 4" ;;  # the 4th SETMONDATA value (turn 1 has four PP updates)
     faultspan) run faultspan B "" "rfu_fault_corrupt = 1500
 rfu_fault_span = 48" ;;  # generic flips, mostly display-only data
-    # HOLD validation (rfu_hold, 57c691b): bursts from ARQ loss recovery and
-    # head-of-line jitter on BOTH receive paths, the H0b run 3 shape.
+    # Bursts from ARQ loss recovery and head-of-line jitter on BOTH receive
+    # paths, the H0b run 3 shape.  (The B0 arms, B with rfu_hold = 0, went
+    # with the hold rule in C-4.)
     burstA)  run burstA A "net_loss_pct = 8
 net_jitter_ms = 120" "net_loss_pct = 8
 net_jitter_ms = 120" ;;
-    burstB0) run burstB0 B "net_loss_pct = 8
-net_jitter_ms = 120
-rfu_hold = 0" "net_loss_pct = 8
-net_jitter_ms = 120
-rfu_hold = 0" ;;
     burstB)  run burstB B "net_loss_pct = 8
 net_jitter_ms = 120" "net_loss_pct = 8
 net_jitter_ms = 120" ;;
@@ -51,11 +47,6 @@ net_jitter_ms = 120" ;;
     burst2A)  run burst2A A "net_loss_pct = 3
 net_jitter_ms = 40" "net_loss_pct = 3
 net_jitter_ms = 40" ;;
-    burst2B0) run burst2B0 B "net_loss_pct = 3
-net_jitter_ms = 40
-rfu_hold = 0" "net_loss_pct = 3
-net_jitter_ms = 40
-rfu_hold = 0" ;;
     burst2B)  run burst2B B "net_loss_pct = 3
 net_jitter_ms = 40" "net_loss_pct = 3
 net_jitter_ms = 40" ;;
@@ -67,9 +58,6 @@ net_jitter_ms = 40" ;;
     # Radio FADE (ff4fe7f): 1.5 s of total receive loss every 20 s on both
     # consoles -- the hardware's 1-2 s ARQ stall, then a burst release.
     fadeA)   run fadeA A "net_blackout_ms = 1500" "net_blackout_ms = 1500" ;;
-    fadeB0)  run fadeB0 B "net_blackout_ms = 1500
-rfu_hold = 0" "net_blackout_ms = 1500
-rfu_hold = 0" ;;
     fadeB)   run fadeB B "net_blackout_ms = 1500" "net_blackout_ms = 1500" ;;
     io42)    run io42 B "io_prio = 42" "io_prio = 42" ;;
     swiftA)  TURNS=12 run swiftA A "" "" ~/wireless-rig/golden/swift/host-firered.sav ~/wireless-rig/golden/swift/join-leafgreen.sav ;;
