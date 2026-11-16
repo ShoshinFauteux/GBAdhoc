@@ -9,4 +9,4 @@ R1	psp/main_psp.c	sceKernelExitGame@stall_exit	HW-2 harness batch: raw exit from
 # (R4: both fe_evt-argument calls T11 knew of -- r6-B3's sceCtrlSetSamplingCycle and
 # sleep_sim's fe_host_sram_test_kill_handle -- were moved out of the EVT in HW-2.)
 # R7 (tier C, C2-1): the frame loop's one harness read stays raw until C2-5 moves it to boot (C-2.md C2-1).
-R7	psp/main_psp.c	rewind_gedump	the only harness read inside the frame loop (static-once); C2-5 moves it to boot and drops this row
+R7	psp/fe/loop.inc.c	rewind_gedump	the only harness read inside the frame loop (static-once); C2-5 moves it to boot and drops this row

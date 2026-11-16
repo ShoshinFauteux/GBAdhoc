@@ -87,7 +87,7 @@ finally:
     shutil.rmtree(d, ignore_errors=True)
 
 rc, out = run(CG, "--src", ROOT, "--rules", "R7")
-check(rc == 0 and "KNOWN R7 psp/main_psp.c:" in out and "(rewind_gedump)" in out and "FAIL" not in out,
+check(rc == 0 and "KNOWN R7 psp/fe/loop.inc.c:" in out and "(rewind_gedump)" in out and "FAIL" not in out,
       "R7 fail on this tree: every harness read uses HARNESS_INT/HARNESS_STR but the KNOWN rewind_gedump")
 if rc:
     print(out)

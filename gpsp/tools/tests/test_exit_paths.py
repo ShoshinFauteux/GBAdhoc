@@ -93,10 +93,10 @@ def helpers(source):
     end = function(source[a:], last)
     text = source[a:a + source[a:].index(end) + len(end)]
     # Epoch C C3-1: the in-process return's reset is session_reset (fe/session.inc.c);
-    # tier C C-1 commit 5: loop_reset, beside loop_t (main_psp.c)
-    for reset in ("session_reset", "loop_reset"):
-        if "void %s(" % reset in source:
-            text += "\n" + function(source, reset)
+    # tier C C-1 commit 5's loop_reset is read into main()'s text instead
+    # (extract.epochc_frame_loop), so the model needs no definition of it
+    if "void session_reset(" in source:
+        text += "\n" + function(source, "session_reset")
     return text
 
 

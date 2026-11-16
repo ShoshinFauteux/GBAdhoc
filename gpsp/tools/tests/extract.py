@@ -369,8 +369,14 @@ def epochc_frame_loop(main_text, source):
     loop = body[a + 1:b + len('\n   }\n')]
     main_text = EPOCHC_LOOP_CALL.sub(lambda _: loop, main_text, count=1)
     # C-1 commit 5: main() keeps the loop's state in `loop_t L` and reads the boot's
-    # values from `boot_ctx bc`; read as the locals of the same names it had before
-    return re.sub(r'(?<![\w.>])(?:L|bc)\.(?=[A-Za-z_])', '', main_text)
+    # values from `boot_ctx bc`; read as the locals of the same names it had before,
+    # and loop_reset(&L, &bc, &slot) (whose types a test's model does not have) as its
+    # statements over those locals, as main() ran them before Epoch C C3-1
+    main_text = re.sub(r'(?<![\w.>])(?:L|bc)\.(?=[A-Za-z_])', '', main_text)
+    m = re.search(r'^( +)loop_reset\(&L, &bc, &autoload_state_slot\);\n', main_text, re.M)
+    if m:
+        main_text = main_text[:m.start()] + _reset_body(source, m.group(1)) + main_text[m.end():]
+    return main_text
 
 
 def epochc_unloop(main_text, source):
