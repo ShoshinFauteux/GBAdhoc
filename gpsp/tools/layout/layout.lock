@@ -143,7 +143,7 @@
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x1c64
 size main                               23580
-at   pace_frame                         0x0a20
+at   pace_frame                         0x097c
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
@@ -166,8 +166,8 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x1420
-at   _ZL10pipe_latchv#1                 0x1ee0
+at   me_replay_lines                    0x0880
+at   _ZL10pipe_latchv#1                 0x1340
 at   netpacket_iface                    0x1e98
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
@@ -178,11 +178,11 @@ at   ewram                              0x0000
 # colouring and the hot-data guard depend on it; critique-8 MF3).  _end
 # alone misses a .bss change that grows before them and shrinks after.
 at   gbab_bregion_start                 0x0000
-at   gbab_rom_branch_hash               0x04a8
+at   gbab_rom_branch_hash               0x15a8
 at   gbab_rom_translation_cache_static  0x1500
 at   gbab_ram_translation_cache_static  0x1500
 at   gbab_bregion_lend                  0x0000
-at   rom_branch_hash                    0x1fe8
+at   rom_branch_hash                    0x10e8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
@@ -237,7 +237,7 @@ pin  ro                                 0x08ad505c   # .rodata after the start f
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   main                               0x156c
 size main                               23592
-at   pace_frame                         0x0b0c
+at   pace_frame                         0x089c
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094
@@ -260,8 +260,8 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x0ea0
-at   _ZL10pipe_latchv#1                 0x1960
+at   me_replay_lines                    0x0300
+at   _ZL10pipe_latchv#1                 0x0dc0
 at   netpacket_iface                    0x0158
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
@@ -272,11 +272,11 @@ at   ewram                              0x0000
 # colouring and the hot-data guard depend on it; critique-8 MF3).  _end
 # alone misses a .bss change that grows before them and shrinks after.
 at   gbab_bregion_start                 0x0000
-at   gbab_rom_branch_hash               0x00a8
+at   gbab_rom_branch_hash               0x11a8
 at   gbab_rom_translation_cache_static  0x1500
 at   gbab_ram_translation_cache_static  0x1500
 at   gbab_bregion_lend                  0x0000
-at   rom_branch_hash                    0x1be8
+at   rom_branch_hash                    0x0ce8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
