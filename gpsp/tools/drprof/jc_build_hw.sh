@@ -6,8 +6,9 @@
 #
 #   jcoff     harness64, switch OFF (this tree's control; same as the candidate)
 #   jcd       harness64 + JIT_CODE_DISCIPLINE=1 (the product)
-#   jab-pN    harness64 + JIT_CODE_DISCIPLINE=1 JIT_CODE_AB=1, .text padded N
-#             bytes (psp/layout_pad.S): one binary per layout, jit_code_mode
+#   jab-pN    harness64 + JIT_CODE_DISCIPLINE=1 JIT_CODE_AB=1, the code after
+#             main moved N bytes (LAYOUT_PAD_TEXT: the linker pins move, tools/
+#             layout/pins.awk sweep): one binary per layout, jit_code_mode
 #             (0 legacy, 1 +8b48b48, 2 discipline, 3 no-owner) picked per arm
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

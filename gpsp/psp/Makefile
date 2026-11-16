@@ -444,16 +444,21 @@ PSP_EBOOT_PIC1  = assets/gbadhoc_pic1.png
 PSP_LARGE_MEMORY ?= 1
 
 # LAYOUT_PAD_TEXT / LAYOUT_PAD_BSS = N bytes: hardware layout sweeps only
-# (docs/JIT-CODE-DISCIPLINE.md).  layout_pad.o is linked first, so every
-# other object's code and bss move by N.  Unset (every normal build): the
-# object is not linked at all.  tools/build.sh passes it via PSP_EXTRA,
-# which it refuses for the release profile.
+# (docs/JIT-CODE-DISCIPLINE.md): the same binary at several layouts.  Unset in
+# every normal build.  tools/build.sh passes them via PSP_EXTRA, which it
+# refuses for the release profile.
+#   LAYOUT_PAD_TEXT  moves the pins fe_head, fe_common, fe_tail and core N
+#                    bytes up (pins.ld, tools/layout/pins.awk sweep=N), so all
+#                    code after main moves N mod 8 KiB; main and the hot rows
+#                    stay.  Until code-health C3-3 it was zeros in front of
+#                    that code, which the fe_head pin absorbs.
+#   LAYOUT_PAD_BSS   links layout_pad.o first: every object's .bss moves N.
 # HEAD: in front of instance A's ml_diff_page (psp/layout_pad_late.S) and the
 # pinned warm tail's 32 B holes (psp/layout_pad_warm.S): their sections are
 # placed by name, so their place on the command line moves nothing; then the
 # sweep's layout_pad.o.
 HEAD_OBJS = layout_pad_late.o layout_pad_warm.o \
-            $(if $(LAYOUT_PAD_TEXT)$(LAYOUT_PAD_BSS),layout_pad.o)
+            $(if $(LAYOUT_PAD_BSS),layout_pad.o)
 OBJS = $(HEAD_OBJS) $(FE_HEAD_OBJS) $(FE_COMMON_OBJS) $(GB_OBJS) $(FE_TAIL_OBJS)
 # groups.ld (gbadhoc.ld INCLUDEs it): the generic .text statement split by
 # group, with a pin in front of FE_HEAD, FE_COMMON, FE_TAIL and the core
@@ -496,7 +501,7 @@ groups.ld: FORCE
 # pins.ld: the pins' addresses for LAYOUT_FLAVOUR (tools/layout/pins.awk says
 # how they are used); a flavour without its five pins stops here.
 pins.ld: FORCE
-	@awk -v flavour='$(LAYOUT_FLAVOUR)' -v strict='$(LAYOUT_PIN_STRICT)' \
+	@awk -v flavour='$(LAYOUT_FLAVOUR)' -v strict='$(LAYOUT_PIN_STRICT)' -v sweep='$(LAYOUT_PAD_TEXT)' \
 	  -f ../tools/layout/pins.awk ../tools/layout/layout.lock > $@ || { rm -f $@; exit 1; }
 # gbadhoc.ld: psp/gbadhoc.ld.in with the hot order filled in, rewritten on
 # every make.  First the template is checked: without its GBADHOC BEGIN/END
@@ -606,8 +611,7 @@ layout_pad_late.o: layout_pad_late.S
 layout_pad_warm.o: layout_pad_warm.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_XLAT_BYTES=$(LAYOUT_PAD_XLAT_BYTES)
 layout_pad.o: layout_pad.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_TEXT=$(or $(LAYOUT_PAD_TEXT),0) \
-	      -DLAYOUT_PAD_BSS=$(or $(LAYOUT_PAD_BSS),0)
+	$(CC) -c -o $@ $< -DLAYOUT_PAD_BSS=$(or $(LAYOUT_PAD_BSS),0)
 
 # ADR-0035: feed the -MMD dependency files back in, so touching any header
 # rebuilds every object that includes it.  Must come AFTER build.mak (which

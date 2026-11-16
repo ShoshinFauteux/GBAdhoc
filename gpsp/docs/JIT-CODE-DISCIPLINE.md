@@ -205,7 +205,7 @@ both `jal` into the STUB zone) and nothing else.
 | `-DJIT_CODE_AUDIT_NEGCTL` (twin) | drops ONE record (the SMC thunk link): the audit must fail | twin only |
 | `JIT_CODE_AB=1` | harness only: the original model compiled in beside the discipline; harness key `jit_code_mode` = 0 legacy (pre-8b48b48), 1 legacy + 8b48b48, 2 discipline, 3 discipline without the ownership invalidate. One binary for every arm of a hardware A/B | not release; needs the discipline |
 | `-DJIT_SYNC_STATS` (twin) | counts of the original sync path | twin only |
-| psp `LAYOUT_PAD_TEXT=N` / `LAYOUT_PAD_BSS=N` (`tools/build.sh` `PSP_EXTRA=`) | links `psp/layout_pad.S` first: every object's code / bss moves by N | not release |
+| psp `LAYOUT_PAD_TEXT=N` / `LAYOUT_PAD_BSS=N` (`tools/build.sh` `PSP_EXTRA=`) | TEXT: the frontend and cold-core linker pins move N (tools/layout/pins.awk `sweep`), so all code after main moves N mod 8 KiB (main and the hot rows stay); BSS: links `psp/layout_pad.S` first, every object's bss moves by N | not release |
 
 `gpsp_profile.h` refuses each illegal combination. The harness logs
 `EVT jit_code mode=M` at boot and, every 600 frames in `core_health`,

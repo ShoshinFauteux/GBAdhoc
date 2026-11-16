@@ -298,9 +298,13 @@ re-roll it.
 ## 4. Stability: unrelated code no longer moves the hot path
 
 `tools/layout/pad_check.py` compares each pad variant to its unpadded build
-(`builds/layout-pin-out/all/pads`).  The pads are `psp/layout_pad.S`'s
+(`builds/layout-pin-out/all/pads`).  The pads were `psp/layout_pad.S`'s
 `LAYOUT_PAD_TEXT`/`LAYOUT_PAD_BSS`, linked first, plus `LAYOUT_PAD_BYTES`, a
-never-called 768 B function in main_psp.o.
+never-called 768 B function in main_psp.o.  (Since code-health C3-3 the
+frontend pads are linker pins, which would absorb zeros linked in front of
+them: `LAYOUT_PAD_TEXT` now moves the pins fe_head, fe_common, fe_tail and
+core instead, tools/layout/pins.awk `sweep`, so the same code moves the same
+N mod 8 KiB; `LAYOUT_PAD_BYTES` is refused.)
 
 The hot core is 36 functions (19 asm) and 269 cache lines; the warm tail is
 75 functions.

@@ -4,8 +4,10 @@
 #   already in the tree (build it first with tools/build.sh release and the
 #   same LAYOUT_PIN; PIN must be 1, pinning is built in since code-health
 #   A-7).  Only the frontend link changes:
-#     TEXT/BSS  psp/layout_pad.S (LAYOUT_PAD_TEXT/BSS): every later object's
-#               .text and .bss move by that many bytes (0 0 = not linked)
+#     TEXT/BSS  LAYOUT_PAD_TEXT/BSS: TEXT moves the pins fe_head, fe_common,
+#               fe_tail and core (tools/layout/pins.awk sweep), so all code
+#               after main moves that many bytes mod 8 KiB; BSS links
+#               psp/layout_pad.S first, every object's .bss moves (0 0 = off)
 #   (FNPAD, the never-called LAYOUT_PAD_BYTES function in main_psp.o, is gone:
 #   code-health C3-3 made that pad `pin fe_head`; the profile's pins apply)
 #   OUTDIR gets gpsp_adhoc.elf and elf.nm (psp-nm -n -S).  Git Bash + docker.
