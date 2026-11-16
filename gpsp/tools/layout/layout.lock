@@ -158,12 +158,12 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x04e8
-size frame_loop                         23304
-at   pace_frame                         0x0b78
+size frame_loop                         22308
+at   pace_frame                         0x1dec
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
-at   fe_host_reset                      0x0ac4
+at   fe_host_reset                      0x0a48
 at   hex_val                            0x1a14
 at   pte_mutex_check_need_init          0x1e98
 # the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
@@ -182,9 +182,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x08e0
-at   _ZL10pipe_latchv#1                 0x13a0
-at   netpacket_iface                    0x1e98
+at   me_replay_lines                    0x08a0
+at   _ZL10pipe_latchv#1                 0x1360
+at   netpacket_iface                    0x1e90
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -244,20 +244,20 @@ pin  row_mlu                            0x08930880   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x089324e8   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x089392d0   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0897c700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x089ed9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a33e98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08ad505c   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0897a700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x089eb9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a31e98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ad305c   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x1cd4
-size frame_loop                         23784
-at   pace_frame                         0x0c48
+size frame_loop                         23888
+at   pace_frame                         0x15bc
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094
-at   fe_host_reset                      0x12f8
+at   fe_host_reset                      0x1268
 at   hex_val                            0x01cc
 at   pte_mutex_check_need_init          0x01d8
 # the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
@@ -276,9 +276,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x0360
-at   _ZL10pipe_latchv#1                 0x0e20
-at   netpacket_iface                    0x0158
+at   me_replay_lines                    0x0320
+at   _ZL10pipe_latchv#1                 0x0de0
+at   netpacket_iface                    0x0150
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -338,10 +338,10 @@ pin  row_mlu                            0x08932880   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x08933cd4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893b394   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0898f094   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a041a0   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a561d8   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08b04e24   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0898d094   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a021a0   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a541d8   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08b02e24   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -386,10 +386,10 @@ pin  row_mlu                            0x08931f80   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x08933364   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0898c590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a016c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4b138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08af8eb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness64]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -434,10 +434,10 @@ pin  row_mlu                            0x08931f80   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x08933364   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0898c590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a016c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4b138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08af8eb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [diagnostic]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -482,10 +482,10 @@ pin  row_mlu                            0x08930900   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x08931ce4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x08939350   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0897c7a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x089eda90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a36278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08ada054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0897a7a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x089eba90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a34278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ad8054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [soak]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -530,7 +530,7 @@ pin  row_mlu                            0x08931f00   # A ml_update_relevance (wa
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  frame_loop                         0x089332e4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a84c   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
-pin  fe_common                          0x0898e510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a03644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a4dc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08afcf34   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_common                          0x0898c510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
+pin  fe_tail                            0x08a01644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4bc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afaf34   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
