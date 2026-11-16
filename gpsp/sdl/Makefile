@@ -5,6 +5,13 @@
 # libgpsp_core.a (ADR-0006). The core build is cleaned first so stale
 # objects from a psp1 build (same .o names, different arch) can never leak in.
 #
+# This is a TEST TOOL (desktop e2e: trades, exit room, saves), not a product.
+# The core runs the INTERPRETER (HAVE_DYNAREC=0): the dynarec is MIPS-only
+# (jit_code.h), and porting the x86 one back is not worth its upkeep.  The GB
+# stack links the way the dynarec twin's does (tools/drprof/Makefile): one TGB
+# Dual instance with only its gbcore_* names global, plus the inert dual-link
+# stubs (dr_gbstub.c), so a GB link session reports "unavailable" here.
+#
 #   make          -> gpsp_sdl (builds core archive if missing)
 #   make core     -> force-rebuild the core archive
 #   make clean    -> remove frontend objects only
@@ -37,7 +44,19 @@ COMMON_SRC := $(CORE_DIR)/frontend-common/fe_host.c \
               $(CORE_DIR)/frontend-common/netpacket_host.c
 OBJS := obj/main_sdl.o obj/fe_host.o obj/fe_evt.o obj/fe_util.o \
         obj/fe_autopilot.o obj/netpacket_host.o \
-        obj/netdrv.o obj/transport_udp.o
+        obj/netdrv.o obj/transport_udp.o \
+        obj/fe_gblink.o obj/gb_link.o obj/dr_gbstub.o obj/gb_core.o
+
+# The GB core (gbcore/Makefile's flags, plus the PSP's TGB_LAZY_TIMER).  Its
+# objects go under obj/gb, never next to the sources, where the PSP build
+# keeps MIPS objects of the same names.
+GB_DIR    := $(CORE_DIR)/gbcore
+GB_SRC    := $(GB_DIR)/gbcore_tgbdual.c \
+             $(addprefix $(GB_DIR)/tgbdual/,apu.c cpu.c gb.c lcd.c mbc.c rom.c \
+               sgb.c tgb_shared.c)
+GB_CFLAGS := -O2 -g -std=gnu11 -fgnu89-inline -fno-strict-aliasing \
+             -Wno-unused-parameter -DTGB_LAZY_TIMER -I$(GB_DIR) \
+             -I$(CORE_DIR)/frontend-common
 
 # REWIND=1: the rewind prototype (docs/REWIND.md).  Off by default; without
 # it not one line of the rewind code is compiled.
@@ -74,9 +93,26 @@ obj/transport_udp.o: $(CORE_DIR)/netdrv/transport_udp.c
 	@mkdir -p obj
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+obj/gb_link.o: $(CORE_DIR)/netdrv/gb_link.c
+	@mkdir -p obj
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+obj/dr_gbstub.o: $(CORE_DIR)/tools/drprof/dr_gbstub.c
+	@mkdir -p obj
+	$(CC) $(CFLAGS) -I$(GB_DIR) -c -o $@ $<
+
+# One relocatable whose only globals are the gbcore_* API: TGB Dual's own
+# globals (vram, oam, ...) would collide with the GBA core's (psp/Makefile).
+obj/gb_core.o: $(GB_SRC)
+	@rm -rf obj/gb && mkdir -p obj/gb
+	for s in $(GB_SRC); do \
+	  $(CC) $(GB_CFLAGS) -c -o obj/gb/$$(basename $$s .c).o $$s || exit 1; done
+	ld -r -o $@ obj/gb/*.o
+	objcopy -w --keep-global-symbol='gbcore_*' $@
+
 $(CORE_LIB):
 	$(MAKE) -C $(CORE_DIR) platform=unix clean
-	$(MAKE) -C $(CORE_DIR) platform=unix REWIND=$(REWIND) REWIND_MUTANT=$(REWIND_MUTANT) -j$(shell nproc)
+	$(MAKE) -C $(CORE_DIR) platform=unix HAVE_DYNAREC=0 REWIND=$(REWIND) REWIND_MUTANT=$(REWIND_MUTANT) -j$(shell nproc)
 	cd $(CORE_DIR) && ar rcs sdl/$(CORE_LIB) \
 	  $$(find . -name '*.o' \
 	       -not -path './sdl/*' -not -path './psp/*' \
