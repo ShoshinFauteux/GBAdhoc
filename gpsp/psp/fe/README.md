@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 a699c4ba5263ca9d; split.py inverse of the shell sha256 60474084e7c4b36a (19504 lines) -->
+     inputs: cutlist.txt sha256 787f2e96dd351c1c; split.py inverse of the shell sha256 f30c37ee9965ccd5 (19499 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -28,7 +28,7 @@ The copy sites (`extern` declarations at file or block scope, file-scope prototy
 | `gbab_reg` | `fe/harness.f.inc.c:308` | extern | `#if defined(GPSP_KEEP_TELEMETRY) \|\| defined(GPSP_PERF_RIG) \|\| defined(GPSP_STALL_RECORDER) \|\| defined(DRPROF_HW)` (fe/harness.f.inc.c:1) > `#ifdef DRPROF_HW` (fe/harness.f.inc.c:299) > `#ifdef GBA_LINK` (fe/harness.f.inc.c:307) |
 | `fe_gbadual_running_inst` | `fe/harness.f.inc.c:309` | proto | `#if defined(GPSP_KEEP_TELEMETRY) \|\| defined(GPSP_PERF_RIG) \|\| defined(GPSP_STALL_RECORDER) \|\| defined(DRPROF_HW)` (fe/harness.f.inc.c:1) > `#ifdef DRPROF_HW` (fe/harness.f.inc.c:299) > `#ifdef GBA_LINK` (fe/harness.f.inc.c:307) |
 | `rom_hash_census` | `fe/harness.f.inc.c:644` | block | `#if defined(GPSP_KEEP_TELEMETRY) \|\| defined(GPSP_PERF_RIG) \|\| defined(GPSP_STALL_RECORDER) \|\| defined(DRPROF_HW)` (fe/harness.f.inc.c:1) > `#ifdef GPSP_KEEP_TELEMETRY` (fe/harness.f.inc.c:563) > `#ifdef ROM_HASH_CENSUS` (fe/harness.f.inc.c:637) |
-| `gamepak_reopens` | `fe/loop.inc.c:137` | block | `#if defined(GPSP_STANDBY_NOTES)` (fe/loop.inc.c:133) |
+| `gamepak_reopens` | `fe/loop.inc.c:136` | block | `#if defined(GPSP_STANDBY_NOTES)` (fe/loop.inc.c:132) |
 
 ### @extract markers
 
@@ -119,12 +119,12 @@ Every region, in TU order, and the host tests that read it:
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
 | `vol:boot_apply` | `fe/boot.inc.c:169` | `test_volume.py` |
 | `sb:list_call` | `fe/session.inc.c:151` | `test_sleep_browser.py` |
-| `qs:dispatch` | `fe/loop.inc.c:482` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
-| `sl:case_loadstate` | `fe/loop.inc.c:790` | `test_state_load_ask.py` |
-| `lowlat:top` | `fe/loop.inc.c:1089` | `test_lowlat_policy.py` |
-| `ff:mult_frames` | `fe/loop.inc.c:1255` | `run_ff_tests.py` |
-| `lowlat:want` | `fe/loop.inc.c:1602` | `test_lowlat_policy.py` |
-| `lowlat:wait` | `fe/loop.inc.c:1685` | `test_lowlat_policy.py` |
+| `qs:dispatch` | `fe/loop.inc.c:481` | `test_quick_save_ask.py`, `test_state_load_ask.py` |
+| `sl:case_loadstate` | `fe/loop.inc.c:786` | `test_state_load_ask.py` |
+| `lowlat:top` | `fe/loop.inc.c:1085` | `test_lowlat_policy.py` |
+| `ff:mult_frames` | `fe/loop.inc.c:1251` | `run_ff_tests.py` |
+| `lowlat:want` | `fe/loop.inc.c:1598` | `test_lowlat_policy.py` |
+| `lowlat:wait` | `fe/loop.inc.c:1681` | `test_lowlat_policy.py` |
 
 Readers that read the TU text but no region: `test_backup_save.py`, `test_net_codes.py`, `test_session_reset.py`.
 
@@ -290,7 +290,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 43 | teardown | `fe/teardown.inc.c` | 1-357 | teardown | 6 / 0 | - |
 | 44 | boot | `fe/boot.inc.c` | 1-1447 | boot | 1 / 0 | - |
 | 45 | session | `fe/session.inc.c` | 1-1145 | session | 5 / 0 | - |
-| 46 | loop | `fe/loop.inc.c` | 1-1876 | loop | 2 / 0 | - |
+| 46 | loop | `fe/loop.inc.c` | 1-1871 | loop | 2 / 0 | - |
 | 47 | shell.b | `main_psp.c` | 158-247 | shell | 1 / 0 | - |
 
 ## Rows outside their owner's fragments
@@ -560,5 +560,5 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **teardown** (`fe/teardown.inc.c`): exit_early_begin:27, exit_early_end:52, session_end:83, inproc_unload:182, inproc_try_return:242, process_end:300
 - **boot** (`fe/boot.inc.c`): boot_run:54
 - **session** (`fe/session.inc.c`): session_select:10, session_configure:265, session_load:739, session_net_up:1061, session_pre_loop:1112
-- **loop** (`fe/loop.inc.c`): frame_loop:45, loop_reset:1844
+- **loop** (`fe/loop.inc.c`): frame_loop:45, loop_reset:1839
 - **shell.b** (`main_psp.c`): main:160

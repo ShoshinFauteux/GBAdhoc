@@ -300,11 +300,14 @@ extern u32 backup_writes;     /* gba_memory.c */
 extern u32 gamepak_reopens;
 extern u32 gamepak_short_reads;
 /* Sticky: a ROM page could not be read even after a reopen, and is mapped as
- * zeros (load_gamepak_page).  A frontend checks it between frames, pauses,
- * and calls gamepak_read_retry() (between frames only) to read those pages
- * again. */
+ * zeros (load_gamepak_page); nonzero until the retry (1 not yet reported,
+ * 2 reported).  A frontend calls gamepak_read_poll() at every frame
+ * boundary: PAUSE once per failure (pause and say so), then, at the next
+ * boundary, RETRIED (the failed pages were dropped to be read again). */
 extern u32 gamepak_read_failed;
 void gamepak_read_retry(void);
+enum { GAMEPAK_READ_OK = 0, GAMEPAK_READ_PAUSE = 1, GAMEPAK_READ_RETRIED = 2 };
+int gamepak_read_poll(void);
 extern bool gamepak_mini_materialized;
 extern bool gamepak_header_nonstandard;
 extern char gamepak_code[5];

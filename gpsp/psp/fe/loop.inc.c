@@ -4,10 +4,11 @@
  * unchanged; the locals of main() it uses are copied in here and the ones it
  * writes copied back to *L when it ends (no loop local has its address taken,
  * C-1.md 2.3), so each name means what it meant in main().
- *   - loop_t: what the loop writes.  The first ten are main()'s per-game state
- *     (loop_reset sets nine of them again; rom_fail_paused is not reset per
- *     game, as before C-1); the six one-shot harness keys are sticky: the loop
- *     consumes each once per process, never again after an in-process return.
+ *   - loop_t: what the loop writes.  The first nine are main()'s per-game
+ *     state, which loop_reset sets again; the six one-shot harness keys are
+ *     sticky: the loop consumes each once per process, never again after an
+ *     in-process return.  (rom_fail_paused, a sticky latch, went in C-0: the
+ *     core's gamepak_read_failed says whether a failure was reported.)
  *   - session_ctx: what it only reads, for one game: the boot's values (bc),
  *     this game's state file, the in-process count and the autoload slot.
  *     `const` copies, so a write to one of them is a compile error.
@@ -29,7 +30,6 @@ typedef struct loop_t
    unsigned prev_pad;
    int chord_frames;
    int inproc_menu_armed;
-   int rom_fail_paused;   /* sticky: not reset per game (as before C-1) */
    /* sticky: one-shot harness keys, consumed once per process */
    long dump_at, gedump_at, player_shot_n, ui_ctl_demo, ui_demo, wake_shot;
 } loop_t;
@@ -69,7 +69,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
    unsigned prev_pad = L->prev_pad;
    int chord_frames = L->chord_frames;
    int inproc_menu_armed = L->inproc_menu_armed;
-   int rom_fail_paused = L->rom_fail_paused;
    long dump_at = L->dump_at, gedump_at = L->gedump_at;
    long player_shot_n = L->player_shot_n, ui_ctl_demo = L->ui_ctl_demo;
    long ui_demo = L->ui_demo, wake_shot = L->wake_shot;
@@ -578,18 +577,15 @@ void frame_loop(loop_t *L, const session_ctx *S)
           * (gba_memory.c load_gamepak_page).  The game pauses here, at the
           * frame boundary, in the menu, with the reason; when the menu
           * closes those pages are read again before the next frame.  A
-          * failure again pauses again; Quit to game list is the way out. */
-         if (!fe_host_rom_read_failed())
-            rom_fail_paused = 0;
-         else if (!rom_fail_paused)
+          * failure again pauses again; Quit to game list is the way out.
+          * The core's flag says whether this failure was reported
+          * (fe_host_rom_read_poll; code-health C-0). */
+         if (fe_host_rom_read_poll() == FE_ROM_READ_PAUSE)
          {
-            rom_fail_paused = 1;
             menu_open();
             osd_toast("Cannot read the game from the Memory Stick.");
             osd_toast("Check it, then Resume to try again.");
          }
-         else
-            fe_host_rom_read_retry();
          if (home_mode)
          {
             /* Menu = HOME: a START+SELECT tap is the GAME's (the hold above
@@ -1824,7 +1820,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
    L->prev_pad = prev_pad;
    L->chord_frames = chord_frames;
    L->inproc_menu_armed = inproc_menu_armed;
-   L->rom_fail_paused = rom_fail_paused;
    L->dump_at = dump_at;
    L->gedump_at = gedump_at;
    L->player_shot_n = player_shot_n;

@@ -175,9 +175,9 @@ def main():
             ('a boot value read from the loop', 'g_pcfg.sram_thread = bc->sram_thread_boot;',
              'g_pcfg.sram_thread = L->sram_thread_boot;'),
             ('a sticky field reset', '   L->inproc_menu_armed = 0;\n',
-             '   L->inproc_menu_armed = 0;\n   L->rom_fail_paused = 0;\n'),
-            ('a loop_t field with no decision', '   int rom_fail_paused;',
-             '   int rom_fail_paused;\n   int new_field;\n   int rom_fail_paused2;'),
+             '   L->inproc_menu_armed = 0;\n   L->dump_at = 0;\n'),
+            ('a loop_t field with no decision', '   int inproc_menu_armed;',
+             '   int inproc_menu_armed;\n   int new_field;'),
         ]
         for what, a, b in muts:
             if source.count(a) < 1:

@@ -597,7 +597,7 @@ int fe_gbadual_frame(uint16_t local_keys)
    }
    /* A ROM PAGE THAT COULD NOT BE READ ends the session, as a fault does:
     * the partner may have run on zero pages (its own, or the player's it
-    * borrows), and the retry (fe_host_rom_read_retry) reads only the
+    * borrows), and the retry (fe_host_rom_read_poll) reads only the
     * player's pages again.  The player's own flag stays up for the frontend,
     * which pauses on it. */
    if (GBAD_U(gbab_gamepak_read_failed) || GBAD_U(gamepak_read_failed))

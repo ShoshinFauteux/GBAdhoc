@@ -757,8 +757,9 @@ static int64_t gamepak_file_bytes;
 u32 gamepak_reopens = 0;
 u32 gamepak_short_reads = 0;   /* pages that could not be read from the file */
 /* A ROM page read failed even after a reopen (load_gamepak_page).  Sticky
- * until gamepak_read_retry(): the frontend reads it between frames, pauses
- * and says so.  gamepak_bad_entry marks the cache entries holding such a
+ * until gamepak_read_retry(): the frontend polls it between frames
+ * (gamepak_read_poll: 1 not yet reported, 2 reported), pauses and says so.
+ * gamepak_bad_entry marks the cache entries holding such a
  * page (bit per gamepak_blk_queue entry), so the retry unmaps exactly them. */
 u32 gamepak_read_failed = 0;
 static u8 gamepak_bad_entry[1024 / 8];
@@ -3350,6 +3351,30 @@ void gamepak_read_retry(void)
 #ifdef HAVE_DYNAREC
   flush_translation_cache_rom();
 #endif
+}
+
+/* THE FRONTEND'S ONE CALL for a failed page read, at every frame boundary
+ * (code-health C-0).  gamepak_read_failed is the only record of the failure:
+ * 0 all pages good, 1 a page failed and nobody was told (load_gamepak_page),
+ * 2 told: the frontend is paused on it.  So the first boundary after a
+ * failure pauses (PAUSE), the next one -- the menu closed -- drops the failed
+ * pages for a re-read (RETRIED), and a failure after that pauses again.  A
+ * failure while paused (a guest frame the menu ran) writes 1 again: one more
+ * pause, then the retry.  A ROM load or unload writes 0, so nothing of the
+ * last game's failure reaches the next.  Every other reader tests nonzero. */
+int gamepak_read_poll(void)
+{
+  if (gamepak_read_failed == 1)
+  {
+    gamepak_read_failed = 2;
+    return GAMEPAK_READ_PAUSE;
+  }
+  if (gamepak_read_failed)
+  {
+    gamepak_read_retry();
+    return GAMEPAK_READ_RETRIED;
+  }
+  return GAMEPAK_READ_OK;
 }
 
 void init_gamepak_buffer(void)

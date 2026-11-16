@@ -333,12 +333,17 @@ void fe_host_skip_override(int skip);
  * jump to an address that is not code).  Monotonic; the UI toasts on change. */
 unsigned fe_host_guest_faults(void);
 /* A ROM page could not be read from the card, even after a reopen, and is
- * mapped as zeros (gba_memory.c load_gamepak_page).  Sticky until the retry.
- * Between frames: the platform pauses and says so while this is 1, then
- * calls fe_host_rom_read_retry() before the next frame to read those pages
- * again (a failure again raises it again).  Always 0 in GB mode. */
-int fe_host_rom_read_failed(void);
-void fe_host_rom_read_retry(void);
+ * mapped as zeros (gba_memory.c load_gamepak_page).  The platform calls this
+ * at every frame boundary (code-health C-0; gba_memory.c gamepak_read_poll):
+ *   FE_ROM_READ_PAUSE    a page failed since the last call: pause and say so
+ *                        (EVT rom_read_failed);
+ *   FE_ROM_READ_RETRIED  the next call after the pause: the failed pages were
+ *                        dropped to be read again (EVT rom_read_retry); a
+ *                        failure again gives PAUSE again;
+ *   FE_ROM_READ_OK       nothing failed.  Always OK in GB mode.
+ * The values are the core's GAMEPAK_READ_* (gba_memory.h). */
+enum { FE_ROM_READ_OK = 0, FE_ROM_READ_PAUSE = 1, FE_ROM_READ_RETRIED = 2 };
+int fe_host_rom_read_poll(void);
 
 /* Report the platform audio buffer's state to the core, once per frame
  * (ADR-0018). Only meaningful with gpsp_frameskip=auto/auto_threshold, which
