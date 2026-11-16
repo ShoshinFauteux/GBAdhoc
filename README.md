@@ -32,6 +32,24 @@
   <sub><b>Pokémon MonoMyth and Doom II on a real PSP-3000.</b> Click for the full trailer.</sub>
 </p>
 
+> [!IMPORTANT]
+> **Updating from 4.5.0 or older? Your saves and save states have moved to their own folders.**
+>
+> GBAdhoc 5.0.0 keeps battery saves in **`saves/`** and save states in **`states/`**, no longer
+> next to your ROMs. Each file goes in the same sub-folder its ROM has under `roms/`:
+>
+> | Your ROM | Its battery save | Its save states (with their `.thumb` and `.shot`) |
+> |---|---|---|
+> | `roms/Pokemon Emerald.gba` | `saves/Pokemon Emerald.sav` | `states/Pokemon Emerald.st0` … `.st4` |
+> | `roms/GBA/hacks/Game.gba` | `saves/GBA/hacks/Game.sav` | `states/GBA/hacks/Game.st0` … |
+> | `roms/GBC/Pokemon Crystal.gbc` | `saves/GBC/Pokemon Crystal.gbc.sav` | `states/GBC/Pokemon Crystal.gbc.st0` … |
+> | `roms/GB/Tetris.gb` | `saves/GB/Tetris.gb.sav` | `states/GB/Tetris.gb.st0` … |
+>
+> **For now, GBAdhoc moves them for you** the first time you open each game, and never moves
+> or deletes a ROM. **The next release will stop doing this:** please move your files into
+> these folders yourself. Until a save is in the right folder, its game starts as if it had
+> none; nothing is deleted, so moving the file brings it back.
+
 > **This is the `beta` branch: GBAdhoc 5.0.0 beta 5,** the build we intend to become 5.0.0.
 > [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.5)
 > (the *latest release* link above is the stable 4.5.0). **It links only with the same beta:**
