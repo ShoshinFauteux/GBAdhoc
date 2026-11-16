@@ -906,7 +906,12 @@ void swi_HuffUnComp(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_RLUnCompWram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  /* Nintendo's BIOS reads this header with LDMIA: the word at (source & ~3),
+   * not rotated, and the stream still starts at source + 4.  A plain LDR of an
+   * unaligned source rotates the word into a bogus length (Mortal Kombat:
+   * Deadly Alliance, halfword-aligned sources: ~5.5 MB unpacked over EWRAM).
+   * The shipped .bin carries this as ldmia r0!,{r2} at 0x0f18 (bios/README.md). */
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1018,7 +1023,8 @@ void swi_RLUnCompVram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff8bitUnFilterWram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  /* LDMIA header read like Nintendo's BIOS: see swi_RLUnCompWram (.bin 0x10c4) */
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1054,7 +1060,8 @@ void swi_Diff8bitUnFilterWram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff8bitUnFilterVram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  /* LDMIA header read like Nintendo's BIOS: see swi_RLUnCompWram (.bin 0x1124) */
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1100,7 +1107,8 @@ void swi_Diff8bitUnFilterVram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff16bitUnFilter(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  /* LDMIA header read like Nintendo's BIOS: see swi_RLUnCompWram (.bin 0x11b0) */
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
