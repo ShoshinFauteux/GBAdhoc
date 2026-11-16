@@ -144,12 +144,6 @@ void rfu_set_timeout_scale(u32 to_x100, u32 rtx_x100);
 void rfu_set_fault_corrupt(u32 n);
 void rfu_set_fault_span(u32 n);
 void rfu_set_fault_mode(u32 m);
-/* DELETED BY C-4 (one RFU protocol, C4-3b): the five rule setters below go
- * together with their definitions in rfu.c and their callers. */
-void rfu_set_pace_max_hold(u32 n);
-void rfu_set_frame_pace(u32 n);
-void rfu_set_shed_keep(u32 n);
-void rfu_set_hold(u32 on);
 
 /* ---- video.cc / video_me_log.h (the frame the frontend presents) -------- */
 extern u16 *gba_screen_pixels;

@@ -72,22 +72,17 @@ static struct {
   u32 data[24];
 } rfu_sched_pend CORE_SBSS;
 
-/* Turn ticks on (d >= 1) or off (0).  Ticks replace the older delivery rules:
- * frame pace with its hold bound, shedding, the overflow hold and supersede.
- * Each console reads one tick of its partner's data a frame, so the backlog
- * those rules trim cannot form.  Hardware 2026-11-02 (build e9c45f3cfd76, Lab
- * notes "rfunew"): Tennis, Golf and the Emerald trade gave the same fps,
- * resends, drops and queue depth with all five off as with them on.  Called
- * after the frontend has set the rules, so it has the last word. */
+/* Turn ticks on (d >= 1) or off (0).  Ticks are the adapter's one protocol
+ * (code-health C-4): each console reads one tick of its partner's data a
+ * frame, so the backlog the older delivery rules trimmed cannot form, and
+ * those rules are gone.  Hardware 2026-11-02 (build e9c45f3cfd76, Lab notes
+ * "rfunew"): Tennis, Golf and the Emerald trade gave the same fps, resends,
+ * drops and queue depth with all five off as with them on.  D = 0 is a
+ * frontend with no tick gate (libretro, 3ds) or a harness diagnostic arm:
+ * raw queues, and netdrv refuses a ticks partner. */
 void rfu_sched_config(unsigned d)
 {
   rfu_sched_d = d;
-  if (!d)
-    return;
-  rfu_set_frame_pace(0);
-  rfu_set_pace_max_hold(0);
-  rfu_set_shed_keep(0);
-  rfu_set_hold(0);
 }
 
 /* The D this console is using now. */
