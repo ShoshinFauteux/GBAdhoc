@@ -420,7 +420,7 @@ all of the ME's `.bss` by N (3856 reproduces the catch data addresses; 12528 wit
 | `SMC_EVTRACE` | one line per SMC event (writer, word, retirements, fallback reason) to `$SMC_EVT_FILE` between frames `$SMC_EVT_LO..HI` | twin VDEFS; tools/drprof/dr_profile.sh forwards the variables |
 | `XLAT_THUMB_NO_UNSWITCH` | host compiler only: an empty asm keeps psp-gcc from unswitching `translate_block_thumb`'s loop on `ram_region` (two copies, 1545 stack stores -> one copy, 256). `tools/build.sh` runs `tools/xlat_spill_guard.sh` when it is on. Its cost needs a hardware A/B. | root make |
 | `JIT_CODE_AB` | the original sync model compiled in beside the discipline; harness key `jit_code_mode` selects it. Oracle and PPSSPP IDENTICAL in every mode. | root make, harness; tools/drprof/jc_build_hw.sh, jc_variants.sh; refused in a release |
-| `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | hardware layout sweeps: TEXT moves the pins fe_head, fe_common, fe_tail and core N bytes (tools/layout/pins.awk `sweep`), so all code after main moves N mod 8 KiB; BSS links `psp/layout_pad.S` first so every object's bss moves N | `PSP_EXTRA=`; refused with `release` |
+| `LAYOUT_PAD_TEXT` / `LAYOUT_PAD_BSS` | hardware layout sweeps: TEXT moves the pins fe_head, fe_common, fe_tail, core and ro N bytes (tools/layout/pins.awk `sweep`), so all code after main and A's .rodata tables move N mod 8 KiB; BSS links `psp/layout_pad.S` first so every object's bss moves N | `PSP_EXTRA=`; refused with `release` |
 
 `DRPROF_NEGCTL` (+1 cycle per Thumb instruction) is the twin oracle's negative
 control: it must FAIL the oracle, and it does on all 7 fixtures.

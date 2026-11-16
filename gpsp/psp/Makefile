@@ -421,11 +421,12 @@ PSP_LARGE_MEMORY ?= 1
 # (docs/JIT-CODE-DISCIPLINE.md): the same binary at several layouts.  Unset in
 # every normal build.  tools/build.sh passes them via PSP_EXTRA, which it
 # refuses for the release profile.
-#   LAYOUT_PAD_TEXT  moves the pins fe_head, fe_common, fe_tail and core N
-#                    bytes up (pins.ld, tools/layout/pins.awk sweep=N), so all
-#                    code after main moves N mod 8 KiB; main and the hot rows
-#                    stay.  Until code-health C3-3 it was zeros in front of
-#                    that code, which the fe_head pin absorbs.
+#   LAYOUT_PAD_TEXT  moves the pins fe_head, fe_common, fe_tail, core and ro
+#                    N bytes up (pins.ld, tools/layout/pins.awk sweep=N), so
+#                    all code after main and A's .rodata tables move N mod
+#                    8 KiB; main and the hot rows stay.  Until code-health
+#                    C3-3 it was zeros in front of that code, which the
+#                    fe_head pin absorbs.
 #   LAYOUT_PAD_BSS   links layout_pad.o first: every object's .bss moves N.
 # HEAD: the sweep's layout_pad.o, if any (until code-health C3-5 also the hot
 # block's hold objects, layout_pad_late.o and layout_pad_warm.o).

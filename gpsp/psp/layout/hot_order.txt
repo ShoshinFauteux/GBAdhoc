@@ -187,9 +187,9 @@ translate_block_thumb                             0.049984   99816
 @pin xlat a layout_pad_warm_xlat
 translate_block_arm                               0.090269  376860
 @pin xlat b
-# ---- bscan: linked inside B's hot path, just before B's update_scanline (its LAYOUT_PAD_BSCAN_BYTES
-# zeros), A's copy then B's (gen_layout.py write_ord).  The beta.5 JIT fix (claude/jit-thrash-fix bf7a68bd)
-# grows block_lookup_translate_arm (+256 B 32 B-rounded), block_lookup_translate_thumb (+256),
+# ---- bscan: linked inside B's hot path, just before B's update_scanline stub (at `pin row_bscan_b`;
+# until code-health C3-5 LAYOUT_PAD_BSCAN_BYTES zeros), A's copy then B's (gen_layout.py write_ord).
+# The beta.5 JIT fix (claude/jit-thrash-fix bf7a68bd) grows block_lookup_translate_arm (+256 B 32 B-rounded), block_lookup_translate_thumb (+256),
 # flush_translation_cache_ram_smc (+256) and smc_retire_span (+480) and shrinks smc_stable_thunk_dispatch
 # (-96): +1,152 B per instance.  These seven give it back right after each growth (write_io_register32,
 # 160, before the thumb lookup; xs_trap_skip, iok_encode and core_phase_now, 512, around

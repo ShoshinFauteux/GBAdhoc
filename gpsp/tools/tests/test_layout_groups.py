@@ -165,8 +165,9 @@ def pin_tests(tmp):
           and sw.get("c1") == 0x08805a40 + 1024 and sw.get("q1") == 0x08806010 + 1024,
           "sweep=1024: fe_common and core move 1024 B (the sweep is not absorbed by the pins)")
     pl = open(os.path.join(tmp, "pins.ld")).read()
-    check("__pin_main = 0x08804040;" in pl and "__pin_fe_common = 0x08805a40 + 1024;" in pl,
-          "sweep: main's pin stays, the frontend and core pins move")
+    check("__pin_main = 0x08804040;" in pl and "__pin_fe_common = 0x08805a40 + 1024;" in pl
+          and "__pin_ro = 0x08804040 + 1024;" in pl,
+          "sweep: main's pin stays, the frontend, core and .rodata pins move")
     rc, out, sw = pin_link(tmp, 0x08805a40, 0x08806010, 0, sweep="9216")
     check(rc == 0 and (sw.get("c1", 0) - 0x08805a40) % 8192 == 1024,
           "sweep=9216: the same sets as 1024 (mod 8 KiB)")
