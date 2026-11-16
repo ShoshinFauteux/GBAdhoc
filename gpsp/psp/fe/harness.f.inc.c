@@ -1458,8 +1458,11 @@ static void uiscript_dump_now(void)
  * through the same composition a session uses (link_draw_facts,
  * link_bringup_view), for the GE comparison with the design's frames
  * (docs/GBA-LINK-UI.md).  Presets: share check gb_receive fail_rom
- * fail_version fail_host_left adapter_join adapter_host cable_join. */
-static void uiscript_linking_draw(void)
+ * fail_version fail_host_left adapter_join adapter_host cable_join.
+ * noinline: rig-only drawing, always out of line until code-health C2-4'
+ * shrank the unit and GCC began inlining it into frame_loop (see
+ * link_draw_facts). */
+static __attribute__((noinline)) void uiscript_linking_draw(void)
 {
    fe_gblink_progress pr;
    const char *p = g_uis_linking;

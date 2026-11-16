@@ -22,10 +22,6 @@ drprof_start
 drprof_stop
 dump_frame_bmp
 eboot_crc
-emu_boost_close
-emu_boost_open
-emu_boost_start
-emu_boost_stop
 evt_shutdown
 exit_assist_frame
 exit_sim
@@ -75,8 +71,6 @@ pad_script_mask
 pad_swallow
 play_lock_take
 player_screenshot
-preempt_frame_end
-preempt_mark
 psp_clock_capture
 psp_game_reset
 psp_rewind_present
@@ -115,5 +109,4 @@ uiscript_load
 uiscript_pad
 vhash_frame
 vid_prof_frame
-vram_probe_frame
 wake_service

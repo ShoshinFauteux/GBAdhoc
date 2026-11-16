@@ -1,5 +1,5 @@
-/* VISIBLE-END POST (`me_vispost`, harness only, default 1): hand the ME its
- * render at vcount 160 even when presentation stays at the loop top.
+/* VISIBLE-END POST: hand the ME its render at vcount 160 even when
+ * presentation stays at the loop top.
  *
  * The ME reads vram/oam/palette when the render is POSTED, but the capture
  * holds the LCD registers of lines 0-159 only.  Posted at the end of
@@ -17,8 +17,9 @@
  * was posted a full frame before, as before, so step 1 of me_rend_frame
  * waits no longer than it did.  3x fast-forward keeps the end-of-frame post
  * it was validated with (docs/FF-ARTIFACT-FIX.md); the two unlimited presets'
- * DRAWN frames post here, like any 1x frame (docs/FF-PRESETS.md). */
-static int g_mer_vispost = 1;
+ * DRAWN frames post here, like any 1x frame (docs/FF-PRESETS.md).  (The
+ * `me_vispost = 0` arm that restored the end-of-frame post, the 3.1 ghost,
+ * was deleted in code-health C2-4'.) */
 /* MID-FRAME LOG (`me_midlog`, harness only, default 1 when the build has
  * ME_MIDFRAME_LOG; video.h, docs/ME-MIDFRAME.md).  The entry buffers and the
  * core's VRAM shadow are carved from the volatile partition after everything
@@ -40,15 +41,10 @@ static int mer_vispost_active(void)
     * decides at frame START whether a frame is drawn, so a drawn frame is an
     * ordinary capture and gets the line-160 post and the mid-frame log.  3x
     * keeps its end-of-frame post (g_ff_mult). */
-   return g_mer_vispost && (g_ff_gate || (!g_ff_mult && !g_ff_uncapped)) &&
+   return (g_ff_gate || (!g_ff_mult && !g_ff_uncapped)) &&
           !skip_next_frame;
 }
 static int g_mer_posted;        /* posted from the vcount-160 hook this frame */
-static unsigned g_mer_sf_hit, g_mer_sf_miss;
-/* Diagnostic for the same-frame gate.  `wouldhit` counts frames given up on
- * while the ME was ALREADY IDLE -- it read 529/533 and 502/600 before the
- * post-loop check below existed, and must stay at 0 now. */
-static unsigned g_mer_sf_noloop, g_mer_sf_wouldhit;
 static unsigned g_mer_wb_pages, g_mer_wb_n;
 /* Frame start at file scope. frame_t0 in the main loop is a LOCAL and is only
  * taken while a session is up; this probe wants every frame. */
@@ -205,11 +201,6 @@ static int me_rend_drop_vmem(void)
     * between renders, and nothing can be posted until me_rend_init has
     * carved a new one. */
    g_mer_work = NULL;
-   /* The input shadows live in the same partition.  Leaving g_mer_sh_on set
-    * would let a heap-fallback rebuild after wake memcpy 98 KB a frame into
-    * memory we no longer hold. */
-   g_mer_sh_vram = g_mer_sh_oam = g_mer_sh_pal = NULL;
-   g_mer_sh_on  = 0;
 #if ME_MIDFRAME_LOG
    g_mer_log[0] = g_mer_log[1] = NULL;
    me_vram_shadow = NULL;

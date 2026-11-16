@@ -214,12 +214,8 @@ void adhoc_transport_set_tx_thread(int mode);
 /* The mode actually running (0 if the thread is not up). */
 int  adhoc_transport_tx_thread_active(void);
 
-/* ADR-0062: priority handed to sceNetInit for the WLAN stack's own threads.
- * Historically 0x2A, which is BELOW the emulation thread's 0x20, so the
- * driver only runs in the idle time the emulator donates at the vblank wait
- * -- 17.6 ms/frame at 29.97 fps but only 2.3 ms at 59.73.  0 keeps 0x2A.
- * Must be called BEFORE adhoc_transport_init(). */
-void adhoc_transport_set_net_prio(int prio);
+/* ADR-0062: the priority sceNetInit gives the WLAN stack's own threads
+ * (0x2A, BELOW the emulation thread's default 0x20). */
 int  adhoc_transport_net_prio(void);
 
 /* Candidate mid-run-Disconnect fix: 1 = await the peer's disconnect. */

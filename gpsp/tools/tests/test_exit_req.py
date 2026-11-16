@@ -157,8 +157,6 @@ static int me_host_loaded(void) { return 1; }
 static int me_host_retained(void) { return retain_ok; }
 static void net_teardown(void) { hit("net_teardown"); }
 static void mgift_stop(int x) { (void)x; }
-static void emu_boost_stop(void) { hit("boost_stop"); }
-static void emu_boost_start(void) { hit("boost_start"); }
 static void io_thread_stop(void) { hit("io_stop"); }
 static void ui_settings_flush(void) { hit("settings_flush"); }
 static void exit_sim(const char *w) { (void)w; }   /* harness HOME hook */

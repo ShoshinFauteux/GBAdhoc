@@ -63,8 +63,9 @@ poller has, and possibly +1V if the hardware pad sample is stale.)
 | `input_fresh` | 0 | probe: if the pad sample predates this vblank by more than 2 ms, re-peek in 50 us steps, at most 1.5 ms | up to ~0.9 ms at frame start (PPSSPP: 0.88 ms) |
 | `ctrl_cycle` | 0 | probe: `sceCtrlSetSamplingCycle(N)` timer sampling (5555..20000) | PPSSPP age 2.7 ms at 5555 |
 
-`me_sameframe` is unchanged (`me_lowlat` forces it off). Its measured ~1.5
-ms/frame cost had one cause: it blits after the vblank and `vid_swap()`'s
+`me_sameframe`, the earlier same-frame design, was deleted with its harness
+key in code-health C2-4' (2026-11-16; `me_lowlat` used to force it off). Its
+measured ~1.5 ms/frame cost had one cause: it blits after the vblank and `vid_swap()`'s
 `vid_gu_flush()` then waits out the whole GE blit on the CPU. Even so, it still
 latched one vblank later than it could (post-vblank NEXTFRAME). Tier 1 blits
 before the vblank, in time the wait was spending idle.

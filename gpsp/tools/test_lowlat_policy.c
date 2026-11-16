@@ -174,8 +174,8 @@ static void mer_note_sum(void) { }
 /* ---- what the extracted code refers to -------------------------------- */
 static int g_drew, g_wake_hold, g_ff_gate, g_ff_mult, g_ff_uncapped;
 static int g_mer_ready = -1, g_mer_pending = -1, g_mer_last_presented = -1;
-static int g_mer_miss, g_mer_sameframe;
-static unsigned g_fps_drawn, g_mer_sf_hit;
+static int g_mer_miss;
+static unsigned g_fps_drawn;
 static unsigned g_vc_target;
 #define FFW_DRAWN()     do { } while (0)
 #define UISCRIPT_DUMP() do { } while (0)
@@ -184,11 +184,9 @@ static int osd_n;
 static void osd_draw(void) { osd_n++; ge_add(osd_us); }
 static int mer_rewind_busy(void) { return 0; }
 static int link_session_any(void) { return 0; }
-static int mer_sameframe_active(void) { return 0; }
 
 static int g_net_up, g_mer_rend_seen;
 static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
-static unsigned g_mer_sf_miss, g_mer_sf_wouldhit;
 static void fe_np_pump(void) { }
 #define FE_LP_SET(x) do { } while (0)
 

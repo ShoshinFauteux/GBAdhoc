@@ -96,8 +96,6 @@ typedef struct gbdual_config {
    * agree on every MBC3 clock read (Gold/Silver/Crystal).  A link session
    * uses the host's clock at session start for both. */
   int64_t rtc_seed;
-  /* gbcore_set_sync_hash_legacy for both machines (harness A/B only). */
-  int sync_hash_legacy;
   /* Optional: every byte over the cable -- the clocking slot, the byte it
    * sent, the byte it got, the peer's SC at that moment (bit 7 clear = the
    * peer was not waiting, so the clocking side read 0xFF), and the scanline

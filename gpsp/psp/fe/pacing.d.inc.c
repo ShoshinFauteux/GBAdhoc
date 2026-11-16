@@ -42,8 +42,7 @@ static int dfr_defer(void)
    if (!g_dfr_cfg || !dfr_clock_low() || !g_me_rend || g_mer_pending < 0 ||
        g_mer_ready == -1 || g_mer_ready != g_mer_last_presented ||
        g_ff_mult || g_ff_uncapped || g_ff_gate ||
-       !mer_retire_early_active() || mer_sameframe_active() ||
-       mer_rewind_busy())
+       !mer_retire_early_active() || mer_rewind_busy())
       return 0;
    g_dfr = 1;
    g_dfr_n++;
@@ -81,7 +80,7 @@ static void lf_hold_begin(void)
 {
    g_lf_hold = 0;
    if (!g_dfr_cfg || !g_dfr_slow || !g_flip_early || g_ff_mult || g_ff_uncapped || g_ff_gate ||
-       g_ll_iter_h || mer_sameframe_active() || !ffh_too_soon(1))
+       g_ll_iter_h || !ffh_too_soon(1))
    {
       g_lf_behind = 0;
       return;

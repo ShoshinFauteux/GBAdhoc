@@ -301,12 +301,6 @@ __attribute__((weak)) void gpsp_rfu_link_down_hook(unsigned reason,
 /* Arrivals per census.  256 is a few seconds of live trade traffic and keeps
  * the ratio meaningful without flooding the 64-entry trace ring. */
 #define RFU_ARRIVAL_CENSUS_N 256
-/* ADR-0074: upper bound on the deferral, in emulated frames.  The game drains
- * one packet per frame, so 64 covers a queue at its RFU_PKT_QUEUE ceiling with
- * room to spare; past that something is wrong and the old behaviour is the
- * safer failure. */
-#define RFU_DISC_DRAIN_MAX_FRAMES 64
-
 /* Frames per RFU_TR_RXGATE window.  600 = ~10 s at 59.73, matching the other
  * periodic censuses so the lines interleave readably in a log. */
 #define RFU_RXGATE_FRAMES 600
@@ -550,33 +544,11 @@ static u32 rfu_gq_depth, rfu_gq_peak;
 /* ADR-0072: inter-arrival clumping census; see RFU_TR_ARRIVAL. */
 static u32 rfu_arr_last_frame, rfu_arr_clumped, rfu_arr_total;
 
-/* ADR-0074: A CONTROL MESSAGE MUST NOT OVERTAKE THE DATA IT FOLLOWS.
- *
- * Leaving the Union Room is a NEGOTIATED teardown: one player picks the exit,
- * both games exchange dialogue ("exiting will end the session" / "please
- * wait"), both walk out, both get their card punched.  All of that travels as
- * ordinary link data, so on the client it sits in rfu_client.pkts[] waiting to
- * be handed to the game one packet per frame.
- *
- * The disconnect, however, was applied the instant it arrived -- and its
- * handler does `memset(&rfu_client, 0, ...)`, which is the same struct that
- * holds that queue.  So the messages that would have let the client exit
- * gracefully were deleted before the game ever saw them, and the game was
- * handed "all four slots disconnected" instead: the recoverable
- * "press A to return to lobby" screen, on a perfectly healthy link.
- *
- * The damage scales with queue depth, which is exactly the quantity the rate
- * mismatch inflates (ADR-0072/0073) -- an empty queue loses nothing, a backed
- * up one loses the whole handshake.  That is why it is the CLIENT that shows
- * this and effectively never the host.
- *
- * So: arm the disconnect, keep serving the queue, and go idle once the game
- * has actually caught up.  Bounded, so a queue that never drains cannot wedge
- * the link -- on expiry we do exactly what the old code did immediately.
- * 0 = the historical behaviour. */
-static u32 rfu_disc_defer, rfu_disc_pending, rfu_disc_wait;
-
-void rfu_set_disc_defer(u32 n) { rfu_disc_defer = n; }
+/* A peer disconnect held back (ADR-0076's grace window, below): armed, and
+ * the frames left before it is applied.  (ADR-0074's queue-drain deferral,
+ * the `rfu_disc_defer` key, found its premise dead -- queued=1 -- and left
+ * the tree in code-health C2-4'.) */
+static u32 rfu_disc_pending, rfu_disc_wait;
 
 /* ADR-0076: THE EXIT IS A RACE, AND THE CLIENT LOSES IT BY BEING SLOW.
  *
@@ -1814,22 +1786,15 @@ void rfu_frame_update() {
     rfu_tx_clamp_n = 0;
   }
 
-  /* ADR-0074: apply a deferred peer disconnect once the game has caught up.
-   * Checked at frame end, after this frame's RECV_DATA polls have had their
-   * chance to drain the queue. */
+  /* Apply a held peer disconnect at frame end.
+   * ADR-0076: the grace window runs its FULL length -- the game may still be
+   * mid clock-change with an empty queue.  The clean exit cancels the
+   * pending from RFU_CMD_DISCONNECT instead.
+   * mode=4 in the trace = grace EXPIRED, historical teardown applied. */
   if (rfu_disc_pending) {
-    /* ADR-0076: a grace-armed deferral waits its FULL window -- the game may
-     * still be mid clock-change with an empty queue, which is exactly the
-     * moment ADR-0074's queue-empty condition would have torn down.  The
-     * clean exit cancels the pending from RFU_CMD_DISCONNECT instead.
-     * mode=4 in the trace = grace EXPIRED, historical teardown applied. */
-    int expire = rfu_disc_grace_armed
-        ? (rfu_disc_wait == 0)
-        : (!rfu_client_queued() || rfu_disc_wait == 0);
-    if (expire) {
+    if (rfu_disc_wait == 0) {
       u32 clnum = rfu_client.clnum;
-      gpsp_rfu_trace_hook(RFU_TR_DISCQ, rfu_client_queued(),
-                          rfu_disc_grace_armed ? 4 : 2);
+      gpsp_rfu_trace_hook(RFU_TR_DISCQ, rfu_client_queued(), 4);
       memset(&rfu_client, 0, sizeof(rfu_client));
       RFU_SET_STATE(RFU_STATE_IDLE, RFU_TRC_DISC_PEER);
       gpsp_rfu_link_down_hook(RFU_DOWN_PEER, clnum);
@@ -2019,14 +1984,13 @@ void rfu_frame_update() {
 }
 
 /* The CLIENT's host has ended the link: a DISCONNECT notice from it, or the
- * radio session underneath reporting it gone.  Honours the grace/defer
- * windows exactly as the notice always did. */
+ * radio session underneath reporting it gone.  Honours the grace window
+ * exactly as the notice always did. */
 static void rfu_client_lose_host(void) {
-  /* ADR-0074: measure the damage whether or not we are fixing it --
-   * `queued` IS the number of exit-negotiation packets the historical
-   * path threw away. */
+  /* ADR-0074's census: `queued` is the number of packets still waiting for
+   * the game when the host left (mode=0 in the trace). */
   u32 queued = rfu_client_queued();
-  gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, rfu_disc_defer);
+  gpsp_rfu_trace_hook(RFU_TR_DISCQ, queued, 0);
   /* ADR-0076: grace window.  Stay CLIENT so the game can finish its
    * clock-master change and take the clean exit itself; see the block
    * comment at rfu_disc_grace.  mode=3 in the trace = grace armed. */
@@ -2037,11 +2001,6 @@ static void rfu_client_lose_host(void) {
     rfu_disc_grace_armed = 1;
     rfu_disc_wait        = rfu_disc_grace;
     return;
-  }
-  if (rfu_disc_defer && queued) {
-    rfu_disc_pending = 1;
-    rfu_disc_wait    = RFU_DISC_DRAIN_MAX_FRAMES;
-    return;             /* keep the queue; drain it first */
   }
   // Go back to idle state!
   {

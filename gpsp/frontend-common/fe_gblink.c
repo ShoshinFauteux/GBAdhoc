@@ -94,7 +94,6 @@ _Static_assert(HELLO_LEN == FE_GBLINK_HELLO_LEN, "fe_gblink.h HELLO size");
 #define BK_RATE_MAX 16u
 #define BK_EPOCH    16u            /* steps between rate decisions */
 #define BK_MIN_CHUNK 64u
-#define BK_INPUT    0x10           /* bulk-lane kind: redundant inputs */
 /* bulk-lane kind: an acknowledgement (the M_BULK_ACK body).  hw2 sent them
  * on the ordered channel, where one lost netdrv packet holds every later
  * one until its retransmission (>= 50 ms): the sender's timer fired first,
@@ -118,7 +117,6 @@ _Static_assert(HELLO_LEN == FE_GBLINK_HELLO_LEN, "fe_gblink.h HELLO size");
 #define BK_RESEND   0x13
 #define NACK_RETRY_US 40000u           /* re-ask if still waiting after this */
 #define RESEND_MAX  16u
-#define INPUT_COPIES_MAX 16u
 #define RTC_TRAILER 48u
 #define RTC_SPAN    (512 * 86400)
 #define RTC_EPOCH_MIN 852076800
@@ -844,21 +842,6 @@ void fe_gblink_receive_bulk(fe_gblink *s, const void *buf, size_t len)
    int k;
    if (!s)
       return;
-   if (len >= 10 && !memcmp(b, FE_GBLINK_BULK_MAGIC, 4) && b[4] == BK_INPUT)
-   {
-      uint32_t first = get32(b + 5), c = b[9], j;
-      if (!s->have_config || c > INPUT_COPIES_MAX || len != 10 + 2 * c ||
-          (s->state != FE_GBLINK_SETUP && s->state != FE_GBLINK_RUNNING &&
-           s->state != FE_GBLINK_ENDING))
-      {
-         s->st.bulk_bad++;
-         return;
-      }
-      for (j = 0; j < c; j++)
-         if (take_input(s, first + j, (uint16_t)get16(b + 10 + 2 * j), 1) < 0)
-            break;                    /* a gap: the ordered copy fills it */
-      return;
-   }
    if (len >= 9 && !memcmp(b, FE_GBLINK_BULK_MAGIC, 4) &&
        (b[4] == BK_NACK || b[4] == BK_RESEND))
    {
@@ -1513,13 +1496,12 @@ static void start_pair(fe_gblink *s)
    }
    cfg.audio_rate = s->l.audio_rate ? s->l.audio_rate : 32768;
    cfg.link = 1;
-   cfg.pace_slot = s->l.pace_slot0 ? 0 : s->local_slot;
+   cfg.pace_slot = s->local_slot;
    cfg.rtc_seed = s->seed;
    cfg.frame_hook = frame_hook;
    cfg.frame_hook_userdata = s;
    cfg.batch_lines = s->batch;
    cfg.batch_armed = (s->l.core_mask & FE_GBLINK_MASK_ARMED_BATCH) != 0;
-   cfg.sync_hash_legacy = s->l.hash_legacy;
    s->dual = gbdual_create(&cfg);
    if (!s->dual)
    {
@@ -1797,24 +1779,6 @@ static void send_input(fe_gblink *s, uint32_t frame, uint16_t buttons)
    put32(m + 1, frame);
    put16(m + 5, buttons);
    sendm(s, m, sizeof(m));
-   /* The redundant copy: this frame and the ones before it, unreliable. */
-   if (s->bk_chunk && s->p.bulk_send && s->p.input_copies)
-   {
-      uint8_t d[4 + 1 + 4 + 1 + 2 * INPUT_COPIES_MAX];
-      unsigned n = s->p.input_copies > INPUT_COPIES_MAX ? INPUT_COPIES_MAX
-                                                        : s->p.input_copies;
-      uint32_t first, i;
-      if (n > frame + 1)
-         n = frame + 1;
-      first = frame + 1 - n;
-      memcpy(d, FE_GBLINK_BULK_MAGIC, 4);
-      d[4] = BK_INPUT;
-      put32(d + 5, first);
-      d[9] = (uint8_t)n;
-      for (i = 0; i < n; i++)
-         put16(d + 10 + 2 * i, s->q[s->local_slot][(first + i) % RING]);
-      s->p.bulk_send(s->p.user, d, 10 + 2 * n);
-   }
 }
 
 /* The partner's buttons for frame f, from whichever copy arrives first.
@@ -1911,8 +1875,7 @@ static uint32_t cart_crc(fe_gblink *s, int slot)
    }
    if (api->save_ram_read(c, s->crc_buf, s->crc_cap) != 0)
       return 0;
-   return s->l.hash_legacy ? fe_crc32(0, s->crc_buf, n)
-                           : ram_hash(s->crc_buf, n);
+   return ram_hash(s->crc_buf, n);
 }
 
 static void compare_hash(fe_gblink *s, uint32_t frame)

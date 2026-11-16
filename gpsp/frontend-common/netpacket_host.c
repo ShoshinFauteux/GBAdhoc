@@ -121,25 +121,6 @@ void fe_np_prof_frame(uint32_t work_us)
 
 /* ------------------------------------------------ core -> driver (send) -- */
 
-/* Debug fault (see netpacket_host.h).  Counts down; 0 = disarmed. */
-static int np_drop_rfu_disc;
-
-void fe_np_debug_drop_rfu_disconnect(int n)
-{
-   np_drop_rfu_disc = n;
-   fe_evt("rfu_fault drop_disconnect=%d", n);
-}
-
-/* The RFU wire format is big-endian: word 0 is the "RFU1" magic and word 1
- * the message type (rfu.c rfu_net_send_cmd).  NET_RFU_DISCONNECT is 0x04. */
-static int np_is_rfu_disconnect(const void *buf, size_t len)
-{
-   const unsigned char *b = (const unsigned char *)buf;
-   return len >= 12 &&
-          b[0] == 0x52 && b[1] == 0x46 && b[2] == 0x55 && b[3] == 0x31 &&
-          b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0x04;
-}
-
 static void np_send_fn(int flags, const void *buf, size_t len,
                        uint16_t client_id)
 {
@@ -147,13 +128,6 @@ static void np_send_fn(int flags, const void *buf, size_t len,
     * (rfu.c CONNECT_ACK / CLIENT_ACK paths) — netdrv_send is safe there. */
    if (!np.core_started || !np.nd)
       return;
-   if (np_drop_rfu_disc > 0 && np_is_rfu_disconnect(buf, len))
-   {
-      np_drop_rfu_disc--;
-      fe_evt("rfu_fault swallowed=disconnect to=%u left=%d",
-             client_id, np_drop_rfu_disc);
-      return;
-   }
    np.core_tx++;
    if (netdrv_send(np.nd, flags, buf, len, client_id) != 0)
       np.core_tx_fail++;

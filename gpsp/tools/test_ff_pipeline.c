@@ -18,14 +18,12 @@
 psp_config g_pcfg;
 static int g_me_rend, g_ff_gate, g_ff_uncapped, g_ff_mult;
 static int g_mer_pending, g_mer_ready, g_mer_cur, g_mer_last_presented, g_drew;
-static int g_mer_sh_on, g_mer_dirty_cfg, g_mer_full_copy, g_mer_sameframe;
+static int g_mer_dirty_cfg, g_mer_full_copy;
 static unsigned g_mer_frames, g_mer_miss, g_mer_drops, g_fps_drawn;
 static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_post_us, g_mer_rend_seen;
-static unsigned g_mer_census, g_mer_sh_us, g_mer_sh_max, g_mer_watch_us;
+static unsigned g_mer_census, g_mer_watch_us;
 static unsigned g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
 static unsigned g_vis_n, g_vis_us, g_vis_max, g_mer_wb_pages, g_mer_wb_n;
-static unsigned g_mer_sf_hit, g_mer_sf_miss, g_mer_sf_noloop;
-static unsigned g_mer_sf_wouldhit;
 /* low-latency bookkeeping (docs/LOW-LATENCY.md); only recorded, never asserted here */
 static unsigned g_lat_poll_vc, g_mer_stage_pvc[2], g_lat_seq, g_mer_stage_seq[2];
 static unsigned g_bb_pvc, g_lat_over;
@@ -73,25 +71,6 @@ static void vid_draw_prestaged(const int *pix, unsigned w, unsigned h)
    assert(pix == g_mer_stage[g_mer_ready]);
    assert(w == 240 && h == 160);
    blits++;
-}
-
-/* SAME-FRAME RETIREMENT IS NOT EXERCISED BY THIS TEST, and this stub is what
- * says so out loud.
- *
- * run_ff_tests.py builds ff_pipeline.inc by slicing main_psp.c from
- * me_rend_present() up to the "Called from plat_video_frame" comment marker, so
- * me_rend_retire_if_idle() -- which sits between them -- is compiled in here
- * whether or not it is tested.  Returning 0 makes it inert, which is exactly
- * its state in every shipping profile: `me_sameframe` is a harness-only ini
- * key, and ADR-0067 points the harness ini at a path that cannot exist in a
- * playable build, so g_mer_sameframe is always 0 there.
- *
- * Every existing assertion below was written against that inert state and is
- * unchanged.  A future test that wants to cover retirement should return 1 here
- * and assert on g_mer_sf_hit / g_mer_ready itself. */
-static int mer_sameframe_active(void)
-{
-   return 0;
 }
 
 /* main_psp.c's loop-phase breadcrumb (a store to g_loop_phase in instrumented
@@ -316,24 +295,23 @@ int main(void)
    assert(posts == 1 && g_mer_drops == 1 && !teardown);
    assert(now - start >= MER_RETIRE_US && now - start < MER_RETIRE_US + 1000);
 
-   /* Same-frame retirement is INERT unless a harness enables it.  This pins the
-    * shipping state: with mer_sameframe_active() false, retirement must not
-    * promote a stage, touch the counters, or present anything.  It is not
-    * coverage of retirement working -- see the stub above for why that needs a
-    * different test. */
+   /* Early retirement is INERT with the low-latency retire off (this test's
+    * g_mer_early_retire = g_ll_cfg = 0).  This pins that state: retirement
+    * must not promote a stage, touch the counters, or present anything.  It
+    * is not coverage of retirement working (test_lowlat_policy.c is). */
    reset();
    g_me_rend = 1;
    g_mer_pending = 0;
    {
-      unsigned hits = g_mer_sf_hit, drawn = g_fps_drawn;
+      unsigned drawn = g_fps_drawn;
       me_rend_retire_if_idle();
       assert(g_mer_pending == 0 && g_mer_ready == -1);
-      assert(g_mer_sf_hit == hits && g_fps_drawn == drawn);
+      assert(g_fps_drawn == drawn);
    }
 
    puts("PASS: draw gate 30/60 on a fixed grid, slow/stall/re-arm; gated "
         "frames never wait or drop; drawn frames always post; no duplicate "
         "blits; 3x and 1x policies unchanged; bounded fallback; retirement "
-        "inert while same-frame is off");
+        "inert while the low-latency retire is off");
    return 0;
 }

@@ -71,8 +71,6 @@ void sess_cost_evt(int force)
           ff_pace_engaged());
 
    frame_hist_evt(f);                                       /* ADR-0063 */
-   preempt_evt();                                           /* ADR-0064 */
-   boost_evt();                                             /* ADR-0065 */
 
    prev = p;
    prev_a = a;

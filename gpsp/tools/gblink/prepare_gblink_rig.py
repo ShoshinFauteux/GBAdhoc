@@ -40,8 +40,11 @@ prefixed files going to one card only):
      `disconnect`), both games play on from where they stand.  Scored by the
      trade, both scripts reaching `played_on` still in the Trade Center, the
      saves AND the final frame:hash equal to the session-stack reference.
-  U  V without the redundant input datagrams (gblink_input_copies = 0): the
-     stutter A/B -- stalls and their longest run, V against U.
+     (hw2's U, V without the redundant input datagrams, and hw3's P/K,
+     stepping on slot 0's frame boundary, went with their harness keys
+     gblink_input_copies / gblink_pace_slot0 in code-health C2-4': both
+     measured worse.  Round 2's arm 1, the beta's sync hash, went with
+     gblink_hash_legacy.)
   R  V on REAL clocks (no seed; the HOST's clock reads 2011, as when the
      PSP-1000 hosts), then each game boots from its battery save and must
      walk (no "The clock's time may be wrong" -- the owner's report).
@@ -82,9 +85,7 @@ A and D themselves are the after.  Every arm must still PASS (same saves).
 Round 2, the bisect on hardware (perf2; GB-LINK.md 14.8): the main binary
 is built -O3 again, --os-build is the -Os variant, and every change is
 switched by harness keys so the arms share one binary and one telemetry:
-  1  Gen 1, the beta's sync hash every 60 frames (gblink_hash_legacy 1,
-     gblink_hash_every 60), policies off  -> the plumbing and telemetry alone
-  2  Gen 1, the word hash every 240, policies off          -> + the hash change
+  2  Gen 1, the word hash every 240, policies off          -> the plumbing
   3  Gen 1, all defaults (absorb, nack, cushion, follow)    -> + the policies
   4  Gen 1, all defaults on the -Os binary                  -> -Os again
   5  Gen 2 (batching), all defaults                         -> against Z
@@ -124,7 +125,7 @@ BATCH_PLAYER = 154         # main_psp.c GBLINK_BATCH_DEFAULT (hw5 default on)
 # unknown harness key makes a run invalid, score_session.py I4).
 SMOOTH_KEYS = ('gblink_absorb', 'gblink_audio_cushion', 'gblink_audio_follow',
                'gblink_nack', 'gblink_win_ms', 'gblink_cpu_x100',
-               'gblink_hash_legacy', 'gblink_hash_every')
+               'gblink_hash_every')
 BATCH_STRICT = 1
 
 # arm: (host game, join game, host script, join script, extra ini, library)
@@ -141,11 +142,7 @@ ARMS = {
     # LIVE link: both games running (the gen2-*.st states, standing at the
     # receptionist), trade, the host disconnects, both play on.
     'V': ('crystal', 'crystal', 'gen2_live_host.ap', 'gen2_live_guest.ap',
-          {'live_state': 1, 'gblink_after': 1500, 'gblink_input_copies': 8},
-          1),
-    # V without the redundant input datagrams: the stutter A/B on the radio.
-    'U': ('crystal', 'crystal', 'gen2_live_host.ap', 'gen2_live_guest.ap',
-          {'live_state': 1, 'gblink_after': 1500, 'gblink_input_copies': 0}, 1),
+          {'live_state': 1, 'gblink_after': 1500}, 1),
     # LIVE link on REAL clocks (no seed; the join's clock set to 2011, as
     # the PSP-1000's reads), then each game boots from its battery save and
     # must reach the overworld without asking for the time.
@@ -170,14 +167,6 @@ ARMS = {
     # the rig's own cost on the frame loop.
     'T': ('crystal', 'crystal', 'gen2_host.ap', 'gen2_guest.ap',
           {'telemetry_period': 1000000, 'stall_watch_s': 0}, 1),
-    # P: B stepping on slot 0's frame boundary on BOTH consoles
-    # (gblink_pace_slot0): the join stops needing the host's input a frame
-    # before the host needs the join's.
-    'P': ('crystal', 'crystal', 'gen2_host.ap', 'gen2_guest.ap',
-          {'gblink_pace_slot0': 1}, 1),
-    # K: the proposed player defaults together -- P plus scanline batching.
-    'K': ('crystal', 'crystal', 'gen2_host.ap', 'gen2_guest.ap',
-          {'gblink_pace_slot0': 1, 'gblink_batch': 154}, 1),
     'X': ('crystal', 'red', 'play.ap', 'play.ap', {}, 0),
     'W': ('crystal', 'red', 'play.ap', 'play.ap', {'gblink_bulk_bytes': 1472}, 0),
     'Y': ('synth', 'red', 'play.ap', 'play.ap', {}, 0),
@@ -200,10 +189,6 @@ ARMS = {
     'M': ('crystal', 'crystal', 'gen2_host.ap', 'gen2_guest.ap',
           {'gblink_batch': 154, 'net_latency_ms': 30, 'net_jitter_ms': 15}, 1),
     # Round 2 (perf2): the bisect, one binary and harness keys (docstring).
-    '1': ('red', 'red', 'gen1_host.ap', 'gen1_guest.ap',
-          {'gblink_hash_legacy': 1, 'gblink_hash_every': 60,
-           'gblink_absorb': 0, 'gblink_audio_cushion': 0,
-           'gblink_audio_follow': 0, 'gblink_nack': 0}, 1),
     '2': ('red', 'red', 'gen1_host.ap', 'gen1_guest.ap',
           {'gblink_absorb': 0, 'gblink_audio_cushion': 0,
            'gblink_audio_follow': 0, 'gblink_nack': 0}, 1),
@@ -246,8 +231,6 @@ def ini(role, game, extra, library, arm):
         'load_state = %d' % (1 if extra.get('live_state') else 0),
         'gblink_after = %d' % extra.get('gblink_after', 0),
         'gblink_resume = %d' % extra.get('gblink_resume', 0),
-        'gblink_input_copies = %d' % extra.get('gblink_input_copies', 0),
-        'gblink_pace_slot0 = %d' % extra.get('gblink_pace_slot0', 0),
         'telemetry_period = %d' % extra.get('telemetry_period', 0),
         'gblink_live = %d' % extra.get('gblink_live', 1),
         'gblink_end_after = 120',

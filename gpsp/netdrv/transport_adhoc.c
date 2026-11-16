@@ -184,9 +184,6 @@ static struct
    /* TX offload (ADR-0021): main thread produces (tx_head), TX thread
     * consumes (tx_tail). */
    int      tx_want;              /* 0 off, 1 prompt, 2 deferred (pre-init) */
-   /* ADR-0062: priority handed to sceNetInit for the WLAN stack's OWN
-    * threads.  See adhoc_transport_set_net_prio(). */
-   int      net_prio;
    SceUID   tx_thid;
    SceUID   tx_sema;
    volatile int tx_run;
@@ -204,7 +201,7 @@ static struct
    uint32_t    last_sce;
    const char *stage;
 } A = { .stage = "down", .pdp_id = -1, .rx_thid = -1, .handler_id = -1,
-        .tx_want = 1, .net_prio = ADHOC_NET_PRIO, .tx_thid = -1,
+        .tx_want = 1, .tx_thid = -1,
         .tx_sema = -1 };
 
 /* ---- adhocctl handler (runs on the library's AdhocThread) ---------------- */
@@ -710,8 +707,8 @@ static int init_to_handler(void)
 
    /* 4. Stack init. */
    A.stage = "net_init";
-   rc = sceNetInit(ADHOC_NET_POOL, A.net_prio, ADHOC_NET_STACK,
-                   A.net_prio, ADHOC_NET_STACK);
+   rc = sceNetInit(ADHOC_NET_POOL, ADHOC_NET_PRIO, ADHOC_NET_STACK,
+                   ADHOC_NET_PRIO, ADHOC_NET_STACK);
    if (rc < 0)
    {
       A.last_sce = (uint32_t)rc;
@@ -1243,47 +1240,13 @@ void adhoc_transport_set_tx_thread(int mode)
       A.tx_want = (mode < 0 || mode > 2) ? 1 : mode;
 }
 
-/* ADR-0062: WHO GETS THE CPU THE EMULATOR IS NOT USING.
- *
- * sceNetInit's two priority arguments set the WLAN stack's own threads.
- * They have always been ADHOC_NET_PRIO = 0x2A, a value copied from a crib
- * sheet and never measured, and 0x2A is NUMERICALLY ABOVE the emulation
- * thread's 0x20 -- i.e. LOWER priority.  The driver that physically puts a
- * frame on the air therefore only runs while the emulation thread is blocked
- * in sceDisplayWaitVblankStart().
- *
- * Measured (FULLSPEED-FINDINGS §7): the emulated core costs 13.6-15.8 ms per
- * frame at EVERY session rate, so the idle time it donates is
- * 1/fps - 14.5 ms: 17.6 ms at 29.97 fps, 6.6 at 45.00, 3.6 at 53.00, and
- * 2.3 ms at 59.73.  Over the same range the mean wall-clock cost of one
- * sceNetAdhocPdpSend rises 60 us -> 1040 us and srtt rises 70 ms -> 680 ms.
- * The syscall did not get more expensive; the driver stopped being scheduled.
- *
- * Numerically BELOW 0x20 puts the stack above the emulator and it stops
- * waiting for a timeslice -- at the cost of preempting emulation, which
- * shows up directly in `EVT fps emu=` and `EVT sess_cost frame=`.  That is a
- * frame-rate-for-latency trade, which is the same trade net_session_fps has
- * been making all along, only made at the layer where the cost actually is.
- *
- * 0 = leave the historical 0x2A.  Must be called BEFORE
- * adhoc_transport_init(); ignored once up. */
-void adhoc_transport_set_net_prio(int prio)
-{
-   if (A.progress != ST_DOWN)
-      return;
-   if (prio <= 0)
-      A.net_prio = ADHOC_NET_PRIO;
-   else if (prio < 0x08)
-      A.net_prio = 0x08;          /* sceKernel/PPSSPP validate 0x08-0x77 */
-   else if (prio > 0x77)
-      A.net_prio = 0x77;
-   else
-      A.net_prio = prio;
-}
-
+/* ADR-0062: the WLAN stack's own threads run at ADHOC_NET_PRIO (0x2A), below
+ * the emulation thread's default 0x20.  Raising them (the old
+ * adhoc_net_prio key) broke group creation; ADR-0062b lowers the emulator
+ * instead (emu_prio).  The emu_prio EVT reports this value. */
 int adhoc_transport_net_prio(void)
 {
-   return A.net_prio;
+   return ADHOC_NET_PRIO;
 }
 
 int adhoc_transport_tx_thread_active(void)

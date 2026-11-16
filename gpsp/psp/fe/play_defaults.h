@@ -29,7 +29,8 @@
  *  * `PCFG_SESSION_FPS_DEF` is NOT touched.  The 29.97 default stands for the
  *    generic build; this build overrides its own copy of the setting.
  *
- * The four PLAY_* values are the FULLSPEED §28.2 ship stack.  Every
+ * These PLAY_* values are the FULLSPEED §28.2 ship stack (its fourth, the
+ * protected-window boost at 0, left with its key in code-health C2-4').  Every
  * tools/build.sh profile is GPSP_PLAYABLE (harness, lab and soak add
  * GPSP_PERF_RIG, which reads the harness ini again), and psp/Makefile refuses
  * a build without it, so these are the only values: the bare-`make` flavour
@@ -37,7 +38,6 @@
 #define PLAY_EMU_PRIO       0x2B
 #define PLAY_IO_PRIO         0x2C
 #define PLAY_POLL_MIN_CYCLES 34952
-#define PLAY_BOOST_US        0
 /* ADR-0068 ON for a player.  Measured over 15 alternating runs at 59.73 with
  * COMPLETE SEPARATION on both consoles (p = 0.0002): host srtt 2.02 -> 0.91
  * emulated frames, join 1.45 -> 0.70.  Mechanism verified every run -- host
@@ -50,15 +50,6 @@
  * hand and the link-robustness evidence is far stronger than the frame cost.
  * Set to 0 for the extra ~1.7 fps on the host. */
 #define PLAY_IDLE_POLL       34952
-/* ADR-0066: OFF for a player.  ADR-0069: 0, not the historic 60, in the rig
- * builds too.  The marker file's ONLY job was "let a human ask for a
- * screenshot mid-run", and L+R+SELECT now does that for free off a pad we
- * already read every frame -- so the 12.4 ms stat is no longer buying a
- * feature, it is only buying the involuntary yield it always came with.
- * `sched_yield_us` reconstructs that yield deliberately and at a size we
- * choose.  Set `dump_marker_poll = 60` to get the old mechanism back.  (This
- * text sat on the bare-make flavour's arm until code-health A-5 removed it.) */
-#define PLAY_DUMP_MARKER     0
 /* ADR-0076: NOT superseded after all.  Live-hardware 2026-08-10 (fs stage-live)
  * proved exit_assist alone leaves the JOIN at rfu_discq mode=4 (grace expired)
  * with the queue wiped and 1 discans (press-A) still.  disc_grace=60 drained

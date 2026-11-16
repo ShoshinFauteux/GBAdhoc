@@ -530,8 +530,7 @@ NOME_HARNESS = r'''
 static struct { int standby; } g_pcfg = { 1 };
 static int g_mer_vmem, g_me_rend, loaded, up, retained, unlocks, syncs, sync_ok;
 static void *g_mer_desc, *g_mer_cap[2], *g_mer_stage[2], *g_mer_work;
-static void *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
-static int g_mer_sh_on, g_mer_ready, g_mer_pending, g_mer_last_presented;
+static int g_mer_ready, g_mer_pending, g_mer_last_presented;
 static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w;
 static volatile int g_pwr_me_lost;
 static void me_standby_step(const char *s) { (void)s; }

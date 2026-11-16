@@ -231,21 +231,12 @@ void gpsp_visible_done_hook(void)
       return;
    }
 #endif
-   /* SAME-FRAME: this is the earliest instant the ME can be given work. The
-    * capture is complete and the CPU still has all of VBlank to emulate, so
-    * the render overlaps real work instead of trailing it. */
-   if (mer_sameframe_active() && g_me_rend && !g_mer_posted)
-   {
-      g_mer_posted = 1;
-      g_mer_in_vis = 1;
-      me_rend_frame(1);
-      g_mer_in_vis = 0;
-   }
-   /* VISIBLE-END POST: same producer, same function, same once-per-frame
-    * guard -- only the moment moves, so the graphics memory the ME snapshots
-    * is the memory this frame was drawn with.  See g_mer_vispost. */
-   else if (mer_vispost_active() && g_me_rend && !g_mer_posted &&
-            !g_blit_suppress)
+   /* VISIBLE-END POST: the same producer and once-per-frame guard as the
+    * end-of-frame post -- only the moment moves, so the graphics memory the
+    * ME snapshots is the memory this frame was drawn with.  See
+    * mer_vispost_active. */
+   if (mer_vispost_active() && g_me_rend && !g_mer_posted &&
+       !g_blit_suppress)
    {
       g_mer_posted = 1;
       g_mer_in_vis = 1;
@@ -797,8 +788,8 @@ static unsigned g_gblink_bulk_rate;           /* 0 = adaptive */
 /* Scanline batching ON by default (154 = up to a whole frame while the cable
  * is quiet): proven byte-exact off-hardware (GB-LINK.md section 8), hw3 arm K
  * -1.7..-2.6 ms of core time in busy windows, and the owner found hw4's D
- * noticeably smoother.  hw5 runs the player defaults (this, copies 0, pace
- * slot 0 off); harness `gblink_batch = 1` is the strict control. */
+ * noticeably smoother.  hw5 ran the player defaults; harness
+ * `gblink_batch = 1` is the strict control. */
 #define GBLINK_BATCH_DEFAULT 154u
 static unsigned g_gblink_batch = GBLINK_BATCH_DEFAULT; /* gbdual batch_lines */
 /* ...also while the partner's port is armed (gbdual_config_t.batch_armed,
@@ -811,14 +802,7 @@ static unsigned g_gblink_batch = GBLINK_BATCH_DEFAULT; /* gbdual batch_lines */
 #endif
 static int g_gblink_batch_armed = GBLINK_ARMED_DEFAULT;
 static int g_gblink_live = 1;                 /* link from the running game */
-/* Redundant input frames, OFF: hw2's paired A/B (V vs U, same states and
- * scripts) measured the extra datagram at +0.7-1.4 ms of emulation-thread
- * time per frame on the PSP-1000 and +1.4-1.8 ms on the 3000, and the join's
- * stalls DOUBLED with it (34.3 vs 16.0 per 1000 frames) -- the radio lost
- * only 1-2 %, so the copies rescued almost nothing.  Harness key kept. */
-static unsigned g_gblink_copies = 0;
 static int g_gblink_resume_boot;              /* harness gblink_resume = 2 */
-static int g_gblink_pace0;                    /* harness gblink_pace_slot0 */
 /* harness gblink_start_frames: the game RUNS this many frames before the
  * session starts (no hold) -- the connecting screen then has a game to dim,
  * as in a player's session.  0 = hold from boot (the rig's default). */
@@ -1164,8 +1148,12 @@ static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
 /* THE LINKING SCREEN, the same on both consoles and for every mode: what is
  * happening, the step and its amount, the loading screen's bar.  Redrawn
  * every loop while a session sets up (the busy ring turns, so a slow step
- * never looks like a hang), and while a failure waits for O. */
-static void link_draw_facts(const fe_gblink_progress *ppr)
+ * never looks like a hang), and while a failure waits for O.  noinline: ~3 KiB
+ * of drawing that only a link set-up runs.  Its caller is inlined into
+ * frame_loop, and once the unit shrank (code-health C2-4') GCC began
+ * inlining this too, growing the frame loop by 2.2 KiB; it was always out of
+ * line before. */
+static __attribute__((noinline)) void link_draw_facts(const fe_gblink_progress *ppr)
 {
    fe_gblink_progress pr = *ppr;
    ui_linking_view v;
@@ -1322,7 +1310,6 @@ static int g_gbl_absorb = 1;
 static int g_gbl_soft = 1;                    /* soft underruns (fade) */
 static int g_gbl_nack = 1;                    /* resend requests (BK_NACK) */
 static unsigned g_gbl_hash_every;             /* harness: 0 = 240 */
-static int g_gbl_hash_legacy;                 /* harness: the beta's hash */
 static unsigned g_gbl_cushion = 3072;
 static unsigned g_gbl_follow = 60;            /* tenths of a percent */
 static unsigned g_gbl_win_ms = 10000;         /* EVT gblink_win period */

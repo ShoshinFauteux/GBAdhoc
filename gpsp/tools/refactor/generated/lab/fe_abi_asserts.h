@@ -24,10 +24,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_translation_cache), 
 typedef RFILE * abi_fe_t_gamepak_file_large;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_file_large), abi_fe_t_gamepak_file_large *),
                "fe/harness.b.inc.c:49 gamepak_file_large: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:680 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
+/* fe/merend.d.inc.c:632 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
 typedef bool abi_fe_t_gamepak_must_swap ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_must_swap), abi_fe_t_gamepak_must_swap *),
-               "fe/merend.d.inc.c:680 gamepak_must_swap: the frontend copy differs from the core declaration");
+               "fe/merend.d.inc.c:632 gamepak_must_swap: the frontend copy differs from the core declaration");
 /* fe/misc.a.inc.c:641 (extern) */
 typedef unsigned char abi_fe_t_iwram [ ];
 _Static_assert(__builtin_types_compatible_p(__typeof__(&iwram), abi_fe_t_iwram *),
@@ -80,26 +80,26 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), ab
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
                "fe/session.inc.c:22 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:477 (block) */
+/* fe/session.inc.c:474 (block) */
 typedef uint32_t abi_fe_t_sched_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sched_fast), abi_fe_t_sched_fast *),
-               "fe/session.inc.c:477 sched_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:494 (block) */
+               "fe/session.inc.c:474 sched_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:491 (block) */
 typedef uint32_t abi_fe_t_timer_lazy;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&timer_lazy), abi_fe_t_timer_lazy *),
-               "fe/session.inc.c:494 timer_lazy: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:510 (block) */
+               "fe/session.inc.c:491 timer_lazy: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:507 (block) */
 typedef uint32_t abi_fe_t_irq_io_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast *),
-               "fe/session.inc.c:510 irq_io_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:521 (block) */
+               "fe/session.inc.c:507 irq_io_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:518 (block) */
 typedef uint32_t abi_fe_t_msr_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast *),
-               "fe/session.inc.c:521 msr_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:1033 (block) */
+               "fe/session.inc.c:518 msr_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:1030 (block) */
 typedef u32 abi_fe_t_rom_cache_watermark;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_cache_watermark), abi_fe_t_rom_cache_watermark *),
-               "fe/session.inc.c:1033 rom_cache_watermark: the frontend copy differs from the core declaration");
+               "fe/session.inc.c:1030 rom_cache_watermark: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:25 */

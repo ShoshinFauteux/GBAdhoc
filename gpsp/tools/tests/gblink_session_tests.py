@@ -168,34 +168,6 @@ def main() -> int:
         print("gblink session: live link from save states == one-process "
               "pair from the same states (%d sync hashes)" % len(both))
 
-        # Redundant inputs: an ordered channel that delivers 5 % of its
-        # messages 6 frames late stalls the game; with each input repeated in
-        # the next 8 unreliable datagrams (which lose 5 % too) it almost never
-        # does, and the machines run identically (sync hashes compared frame
-        # by frame: the end frame itself follows wall time).
-        res = {}
-        for copies in (0, 8):
-            rc, out = run(sim, t, "red%d" % copies, "rom_h=%s/dmg.gb" % t,
-                          "rom_g=%s/dmg.gb" % t, "lat=1", "bulk=1037",
-                          "bulk_loss=5", "arq_loss=5", "arq_rto=6",
-                          "input_copies=%d" % copies,
-                          "hashlog=%s/red%d.hashes" % (t, copies), *common)
-            check(rc == 0 and out.count("gblink_done") == 2,
-                  "redundancy run (copies %d) failed" % copies, out)
-            res[copies] = (
-                [int(x) for x in re.findall(r" stalls=(\d+) streak_max", out)
-                 [-2:]],
-                dict(l.split() for l in open(t / ("red%d.hashes" % copies))))
-        both = [k for k in res[0][1] if k in res[8][1]]
-        check(min(res[0][0]) > 0 and 20 * max(res[8][0]) <= min(res[0][0]) and
-              len(both) >= 10 and all(res[0][1][k] == res[8][1][k]
-                                      for k in both),
-              "redundant inputs: stalls %s without, %s with" %
-              (res[0][0], res[8][0]), out)
-        print("gblink session: lossy ordered channel -- stalls %s without "
-              "redundant inputs, %s with; %d sync hashes identical" %
-              (res[0][0], res[8][0], len(both)))
-
         # Stall absorption (fe_gblink_platform.wait): a console whose partner
         # input is late waits for what arrives in the rest of its display
         # frame instead of giving the frame up.  Only WHEN a step returns may

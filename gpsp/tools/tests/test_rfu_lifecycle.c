@@ -63,7 +63,6 @@ static void fresh(void)
 {
   rfu_reset();
   rfu_disc_grace = 0;
-  rfu_disc_defer = 0;
   memset(&rfu_client, 0, sizeof(rfu_client));
   sends = 0;
 }

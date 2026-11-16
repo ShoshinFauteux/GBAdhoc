@@ -142,34 +142,6 @@ static int g_vhash_legacy_rb;
 static void mer_note_sum(void);          /* defined below vhash_frame */
 static unsigned g_mer_frames, g_mer_drops, g_mer_miss;
 static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_census;
-/* ---- INPUT SHADOWS (kills the per-frame input spin) ---------------------
- * The ME's phase 1 memcpy's vram+oam+palette out of MAIN RAM into its own
- * eDRAM, and the main CPU SPINS for all of it -- measured 1415-1456 us EVERY
- * frame on both consoles (EVT me_rend wait_mean_us, drops=0, so this is
- * handshake latency and not the renderer being late).  It waits because the
- * moment emulation resumes it starts writing those same arrays underneath
- * the ME.
- *
- * Give the ME its own stable copy instead.  The main CPU snapshots the three
- * arrays into volatile-memory shadows, points the descriptor at those, and
- * resumes immediately -- there is nothing left for the ME to race against.
- * A cached main-RAM memcpy of 98 KB costs far less than 1.45 ms of spinning
- * on an UNCACHED read at ~67 MB/s, which is what we are paying today.
- *
- * Safe with a single (not double) shadow because me_rend_fill_desc() is only
- * ever reached after step 1 has confirmed me_host_idle() -- the ME has
- * finished the whole previous render, so it long ago finished reading its
- * inputs.  Refilling cannot overtake a reader that does not exist.
- *
- * Volatile-backed only.  The heap fallback does NOT get shadows: a 96 KB
- * malloc already fails on the host after np_start (observed run 418,
- * `vram_probe off reason=alloc`), and quietly running the fast path on one
- * console and the slow path on the other is exactly the split that makes a
- * two-console measurement meaningless.  Off = today's behaviour exactly. */
-static unsigned char *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
-static int      g_mer_shadow;         /* wanted (harness key `me_shadow`)  */
-static int      g_mer_sh_on;          /* actually allocated + in use       */
-static unsigned g_mer_sh_us, g_mer_sh_max;
 /* ME RENDER DURATION -- the number the whole low-latency question turns on.
  * The "~10 ms render" quoted in comments here was never measured. Uncapped
  * smooth FF reaching 120+ fps implies <=8.3 ms, and that is a LOWER bound on
@@ -227,31 +199,4 @@ static int g_mer_dirty_cfg = 1;
  * handshakes -- so a failure that follows `me_mode` can be split into "the
  * second core" versus "what the second core does to this CPU's timing". */
 static unsigned g_mer_capmode = 1;
-/* SAME-FRAME PRESENTATION (`me_sameframe`, default 0).
- *
- * Today the capture is handed to the ME at the END of retro_run and the
- * result is shown at the top of the NEXT frame -- one frame, 16.7 ms, of
- * pure display latency. But the capture is COMPLETE at vcount 160
- * (ioregs[0..159] are all written by then); we simply sit on it for another
- * 68 scanlines of VBlank.
- *
- * Post it the moment it exists and the render lands in idle the CPU already
- * had. Measured: capture ready 7.0 ms, ME render 3.2 ms, GE blit 1.5 ms =
- * 11.7 ms of a 16.74 ms frame -- and the dirty-page copy widened that margin
- * further by collapsing the ME's input phase from 1.45 ms to 0.15 ms.
- *
- * If the ME misses the deadline we present the PREVIOUS frame, which is
- * exactly today's behaviour for that frame only: never a stutter, never a
- * dropped emulated frame. The failure mode degrades to the shipping design
- * rather than to something worse. */
-static int      g_mer_sameframe;      /* configured */
-
-/* Same-frame retirement stays off throughout FF. Each profile has ONE
- * producer (3x: end of frame; the gated presets: the vcount-160 post, as at
- * 1x) and loop-top presentation; a second producer would corrupt
- * stage/capture ownership. */
-static int mer_sameframe_active(void)
-{
-   return g_mer_sameframe && !g_ff_mult && !g_ff_uncapped;
-}
 

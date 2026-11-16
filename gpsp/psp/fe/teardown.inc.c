@@ -147,7 +147,6 @@ static __attribute__((noinline, section(".text.fe_cold.session_end"))) void sess
 #ifdef GBADHOC_MGIFT
    mgift_stop(1);      /* drops the AP association and unloads the net modules */
 #endif /* GBADHOC_MGIFT */
-   emu_boost_stop();   /* ADR-0065: before anything else changes priority */
    io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
    ui_return_tick();
    /* A Settings/Controls/Online page still open at a HOME, START+SELECT or

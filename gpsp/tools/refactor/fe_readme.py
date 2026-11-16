@@ -117,6 +117,12 @@ NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
 # boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c), loop with tier C C-1
 # (fe/loop.inc.c: frame_loop, loop_t, loop_reset; health-out/design/C-1.md).
 LATER = collections.OrderedDict()
+# PLAN §1.2 modules that left the tree after the plan: no FRAG row and no cutlist row, kept in PLAN12
+# (and so in `--plan`) because the plan still lists them, left out of the README's module table.
+GONE = collections.OrderedDict([
+    ('boost', "code-health C2-4': the ADR-0065 protected window (`emu_prio_boost_us`) was a rejected "
+              "experiment and was deleted with its harness keys"),
+])
 ROLES = ('harness', 'mgift')      # the modules whose F rows are listed with their #if context
 
 # What each @extract name prefix means (tools/refactor/docs/source-split.md, P1).  A prefix not
@@ -737,6 +743,10 @@ def module_checks(d):
                 bad.append('EXPORTED %s: owned by %s in the cutlist, not %s' % (
                     n, ', '.join(sorted({rows[k]['module'] for k in keys})), m))
     for m in PLAN12:
+        if m in GONE:
+            if m in frag_mods or any(r['module'] == m for r in d['rows']):
+                bad.append('module %s is GONE (%s) but the cutlist still has its rows' % (m, GONE[m]))
+            continue
         if m not in frag_mods and m not in LATER:
             bad.append('module %s has no FRAG row and LATER does not name it' % m)
         if m in frag_mods and m in LATER:
@@ -950,6 +960,8 @@ def render(d):
            'owns F / G', 'elsewhere', 'in no `#if` F / G'))
     w('|---|---|---|---|---|---|---|---|---|')
     for m, (num, resp) in PLAN12.items():
+        if m in GONE:
+            continue
         fr = [f['frag'] for f in frows if f['module'] == m]
         mine = [r for r in rows if r['module'] == m]
         nf = sum(1 for r in mine if r['kind'] == 'F')

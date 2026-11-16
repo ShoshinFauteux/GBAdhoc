@@ -256,7 +256,6 @@ gbdual_t *gbdual_create(const gbdual_config_t *config)
                                                 : emulated_clock0)
                                          : m->wallclock);
     d->api[s]->set_palette(m->palette);
-    d->api[s]->set_sync_hash_legacy(config->sync_hash_legacy);
     if (m->rom_owned)
     {
       owned_taken[s] = 1;          /* the adapter frees it on failure too */

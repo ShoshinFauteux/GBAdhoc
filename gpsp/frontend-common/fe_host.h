@@ -166,13 +166,9 @@ typedef struct fe_host_config
     * loads yours) and each game continues from its own state afterwards --
     * no restart either side.  0 = power on from the battery images. */
    int gblink_live;
-   /* Frames of this player's input repeated in each unreliable input
-    * datagram (fe_gblink_platform.input_copies; 0 = off). */
-   unsigned gblink_input_copies;
    /* Harness: after a session, boot the game from its battery save (as a
     * power cycle would) instead of continuing -- the clock check. */
    int gblink_resume_boot;
-   int gblink_pace_slot0;      /* fe_gblink_local.pace_slot0 */
    /* Frames between the periodic telemetry lines (heartbeat, fps,
     * core_prof, gblink_stats); 0 = HEARTBEAT_INTERVAL (600). */
    unsigned heartbeat_frames;
@@ -200,10 +196,8 @@ typedef struct fe_host_config
     * frames; 0 = off).  The round trip comes from fe_np_rtt(). */
    unsigned gblink_delay_auto;
    /* Harness A/B: slot-0 frames between sync hashes (0 = 240, GB and GBA
-    * sessions alike), and the 3.1 beta's byte-wise GB hash
-    * (fe_gblink_local.hash_legacy). */
+    * sessions alike). */
    unsigned gblink_hash_every;
-   int gblink_hash_legacy;
 
    /* Optional (ADR-0028/0029): read the core's monotonic perf counters — ROM
     * translation-cache flushes, RAM flushes, 32 KiB ROM page faults. Lets

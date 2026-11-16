@@ -65,7 +65,9 @@ CB2_OVERWORLD=0x08085e5d
 
 LEAVER=both
 RADIO=""
-DROPDISC=0
+# (--drop-disc, the phase5j causation test that swallowed the host's RFU
+# DISCONNECT notices, left with its harness key rfu_drop_disconnect: the bug
+# it proved was fixed by ADR-0041.  docs/DECISIONS.md keeps the result.)
 for arg in "$@"; do
   case "$arg" in
     --leaver=both) LEAVER=both ;;
@@ -73,18 +75,8 @@ for arg in "$@"; do
     --radio=40)    RADIO=40 ;;
     --radio=80)    RADIO=80 ;;
     --radio=160)   RADIO=160 ;;
-    # CAUSATION TEST, not a normal run.  Swallows the HOST's outgoing RFU
-    # DISCONNECT notices, so the joiner's emulated adapter is never told the
-    # link ended and stays pinned in RFU_STATE_CLIENT.  That is the state the
-    # field logs imply (host `rfu_link_down reason=4` = its own 240-frame TTL
-    # expiring, joiner no breadcrumb at all).  EXPECTED RESULT IS A FAILURE:
-    # the joiner should then answer SC_START (0x19, issued every ~2.3 s by
-    # the Union Room's parent/child switch) with an ERROR, which gen-3 turns
-    # into the UNRECOVERABLE error screen.  Run it to confirm the mechanism,
-    # not to gate a build.
-    --drop-disc)   DROPDISC=1 ;;
     --slow-join=*) SLOW_JOIN_US="${arg#--slow-join=}" ;;
-    *) echo "usage: $0 [--leaver=both|join] [--radio=40|80|160] [--drop-disc]" >&2
+    *) echo "usage: $0 [--leaver=both|join] [--radio=40|80|160]" >&2
        echo "                [--slow-join=US]  burn US us/frame on the JOIN side." >&2
        echo "                ADR-0047: pushing a frame past one vblank (16743 us)" >&2
        echo "                is what made the field client miss its clamp." >&2
@@ -102,7 +94,6 @@ esac
 TAG="exitroom"
 [ "$LEAVER" = join ] && TAG="exitroomjoin"
 [ -n "$RADIO" ] && TAG="${TAG}r${RADIO}"
-[ "$DROPDISC" = 1 ] && TAG="${TAG}-dropdisc"
 ART="$SCRIPT_DIR/artifacts/$TAG-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$ART"
 
@@ -130,7 +121,7 @@ note "mode: leaver=$LEAVER  host script=$HOST_SCRIPT"
   || fail "setup_ppsspp.sh sandbox creation failed"
 
 SLOW_JOIN_US=${SLOW_JOIN_US:-0}
-setup_inst() { # $1=inst# $2=role $3=save $4=script $5=nick $6=rfu_drop_disconnect $7=slow_us
+setup_inst() { # $1=inst# $2=role $3=save $4=script $5=nick $6=slow_us
   local GAME="$SANDBOX_ROOT/inst$1/ppsspp/PSP/GAME/gpsp-adhoc"
   mkdir -p "$GAME/roms" "$GAME/log"
   cp "$EBOOT" "$GAME/EBOOT.PBP"
@@ -144,14 +135,11 @@ $2 = 1
 nick = $5
 net_latency_ms = $LAT_MS
 net_jitter_ms = $JIT_MS
-rfu_drop_disconnect = ${6:-0}
-pace_slow_us = ${7:-0}
+pace_slow_us = ${6:-0}
 EOF
 }
-# Only the HOST arms the fault: it is the parent's DISCONNECT that the child
-# never hears about, which is what pins the child's adapter (see --drop-disc).
-setup_inst 1 host "$FIX/emerald_parkedB.sav" "$HOST_SCRIPT" host "$DROPDISC"
-setup_inst 2 join "$FIX/emerald_parkedA.sav" "$JOIN_SCRIPT" join 0 "$SLOW_JOIN_US"
+setup_inst 1 host "$FIX/emerald_parkedB.sav" "$HOST_SCRIPT" host
+setup_inst 2 join "$FIX/emerald_parkedA.sav" "$JOIN_SCRIPT" join "$SLOW_JOIN_US"
 
 G1="$SANDBOX_ROOT/inst1/ppsspp/PSP/GAME/gpsp-adhoc"
 G2="$SANDBOX_ROOT/inst2/ppsspp/PSP/GAME/gpsp-adhoc"

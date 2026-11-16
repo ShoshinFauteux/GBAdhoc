@@ -234,11 +234,6 @@ void gbcore_set_headless(gbcore_t *core, int headless);
  * synthesise sound.  Two machines that agree on it are running the same
  * game from the same point.  Valid between frames. */
 uint64_t gbcore_sync_hash(gbcore_t *core);
-/* 1 = the hash before claude/gblink-perf (64-bit FNV-1a by byte, ~5x the
- * cost on a PSP); 0 = the word hash (default).  Both consoles of a session
- * must agree: harness A/B only (gblink_hash_legacy).  Set after
- * gbcore_power_on, which resets it. */
-void gbcore_set_sync_hash_legacy(int legacy);
 
 /* The far end of the in-memory cable: a peer's internal clock shifted
  * `master_byte` into this machine.  If this machine is waiting on the
@@ -314,7 +309,6 @@ typedef struct gbcore_api {
                             fe_console_t console, unsigned audio_rate,
                             const gbcore_callbacks_t *callbacks);
   void (*serial_deliver)(gbcore_t *core, uint8_t master_byte);
-  void (*set_sync_hash_legacy)(int legacy);
 } gbcore_api_t;
 
 /* Instance A: the gbcore_* functions above. */

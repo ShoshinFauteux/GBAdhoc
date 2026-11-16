@@ -136,7 +136,6 @@ extern volatile s64 gpsp_rtc_wall;
 void gpsp_rtc_peek(long long *shown, long long *frames_time, int *wall);
 
 /* ---- rfu.c (the AGB-015 wireless adapter) ------------------------------- */
-void rfu_set_disc_defer(u32 n);
 void rfu_set_disc_grace(u32 frames);
 void rfu_set_poll_min_cycles(u32 n);
 void rfu_set_idle_poll_cycles(u32 n);

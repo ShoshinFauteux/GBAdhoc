@@ -197,7 +197,7 @@ static int mer_retire_early_active(void)
 {
    if (g_ff_mult || g_ff_uncapped)
       return 0;
-   return g_mer_sameframe || g_mer_early_retire || g_ll_cfg;
+   return g_mer_early_retire || g_ll_cfg;
 }
 
 /* @extract:end ff:mer_retire_early_active */

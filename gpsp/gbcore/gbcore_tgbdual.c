@@ -1335,28 +1335,11 @@ static uint32_t sync_word(const uint8_t *p)
 #endif
 }
 
-static int sync_legacy;               /* gbcore_set_sync_hash_legacy */
-
-void gbcore_set_sync_hash_legacy(int legacy)
-{
-  sync_legacy = legacy ? 1 : 0;
-}
-
 static uint64_t sync_bytes(uint64_t h, const void *data, size_t size)
 {
   const uint8_t *p = (const uint8_t *)data;
   uint32_t a = (uint32_t)h, b = (uint32_t)(h >> 32);
   size_t i = 0;
-  if (sync_legacy)
-  {
-    /* the 3.1 beta's hash: 64-bit FNV-1a by byte */
-    for (; i < size; i++)
-    {
-      h ^= p[i];
-      h *= 0x100000001b3ull;
-    }
-    return h;
-  }
   for (; i + 8 <= size; i += 8)
   {
     uint32_t w0 = sync_word(p + i), w1 = sync_word(p + i + 4);
@@ -1534,5 +1517,4 @@ const gbcore_api_t gbcore_api = {
   gbcore_serial_control,
   gbcore_create_owned,
   gbcore_serial_deliver,
-  gbcore_set_sync_hash_legacy,
 };

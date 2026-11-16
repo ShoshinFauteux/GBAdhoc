@@ -3425,7 +3425,6 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
       p.bulk_send = gbl_bulk_send;
       p.bulk_max = host.gb_bulk_max;
       p.bulk_rate = host.gb_bulk_rate;
-      p.input_copies = host.gblink_input_copies;
    }
    l.is_host = is_host;
    l.rom_path = host.rom_path;
@@ -3460,8 +3459,8 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    gbl_ride_set = 0;
    gbl_last = FE_GBLINK_IDLE;
    gbl_primed = 0;
-   fe_evt("gblink_lane bulk_max=%u rate=%u input_copies=%u",
-          (unsigned)p.bulk_max, p.bulk_rate, p.input_copies);
+   fe_evt("gblink_lane bulk_max=%u rate=%u",
+          (unsigned)p.bulk_max, p.bulk_rate);
    if (!gbl)
    {
       fe_evt("gblink_start FAILED reason=create");
@@ -3566,10 +3565,9 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
       p.bulk_send = gbl_bulk_send;
       p.bulk_max = host.gb_bulk_max;
       p.bulk_rate = host.gb_bulk_rate;
-      p.input_copies = host.gblink_input_copies;
    }
-   fe_evt("gblink_lane bulk_max=%u rate=%u input_copies=%u",
-          (unsigned)p.bulk_max, p.bulk_rate, p.input_copies);
+   fe_evt("gblink_lane bulk_max=%u rate=%u",
+          (unsigned)p.bulk_max, p.bulk_rate);
    l.is_host = is_host;
    l.rom_path = host.rom_path;
    l.console = host.console;
@@ -3588,11 +3586,9 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
     * an early desync report only stops a session sooner.  What protects the
     * saves is the FINAL hash, taken at the agreed end frame regardless. */
    l.hash_interval = host.gblink_hash_every ? host.gblink_hash_every : 240;
-   l.hash_legacy = host.gblink_hash_legacy;
    l.batch_lines = host.gblink_batch;
    if (host.gblink_batch_armed)
       l.core_mask |= FE_GBLINK_MASK_ARMED_BATCH;
-   l.pace_slot0 = host.gblink_pace_slot0;
    l.state = gbl_prelink_state;
    l.state_size = gbl_prelink_state_n;
    /* The single machine goes: instance A is needed for slot 0. */

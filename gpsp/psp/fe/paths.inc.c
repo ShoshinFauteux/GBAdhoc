@@ -1,7 +1,7 @@
 #define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
 char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
 static char p_rom_dir[144], p_log_dir[144], p_log_path[160];
-static char p_harness[160], p_config[160], p_variant[160], p_marker[160];
+static char p_harness[160], p_config[160], p_variant[160];
 static char p_legacy_ap[160];
 static int g_perf_rig;
 
@@ -27,7 +27,6 @@ static int g_perf_rig;
 #define LOG_PATH    p_log_path
 #define CONFIG_INI  p_config
 #define VARIANT_INI p_variant
-#define DUMP_MARKER p_marker
 
 /* NOTE: `GPSP_NO_TELEMETRY` is derived from `GPSP_PLAYABLE` in fe_evt.c, NOT
  * here.  It was here first, and it did nothing: `fe_evt.c` is a separate
@@ -74,7 +73,6 @@ static void init_paths(int argc, char *argv[])
 #endif
    snprintf(p_legacy_ap, sizeof(p_legacy_ap), "%s/autopilot.ini", g_dir_base);
    snprintf(p_config, sizeof(p_config), "%s/config.ini", g_dir_base);
-   snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base);
-   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base); /* @lab */ LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
+   snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base); /* @lab */ LAB_HOOK(lab_boot(g_dir_base, p_harness, sizeof(p_harness), p_rom_dir, sizeof(p_rom_dir), p_log_dir, sizeof(p_log_dir), p_log_path, sizeof(p_log_path));)
 }
 

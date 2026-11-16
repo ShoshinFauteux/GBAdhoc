@@ -136,7 +136,6 @@ PSP_HEAP_SIZE_KB(-1024);
 #include "fe/link.a.inc.c"
 #include "fe/pacing.b.inc.c"
 #include "fe/link.b.inc.c"
-#include "fe/boost.inc.c"
 #include "fe/harness.d.inc.c"
 #include "fe/link.c.inc.c"
 #include "fe/inproc.b.inc.c"
@@ -238,7 +237,6 @@ int main(int argc, char *argv[])
     * the clock) must still end the process: the list then returns at
     * once and leaves through its own HOME exit (F1). */
    loop_reset(&L, &bc, &autoload_state_slot);
-   emu_boost_start();
    pwr_release();         /* the browser waits on the player: no hold */
    }   /* the next game */
    process_end(L.exit_code, L.exit_reason);

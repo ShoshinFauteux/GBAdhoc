@@ -118,10 +118,8 @@ static int me_rend_init(void)
    {
       void *vbase = NULL;
       int vsize = 0;
-      /* 98 KB of shadows on top of the renderer's own 206 KB; the partition
-       * is 4 MB on every model (measured 4194304 on both consoles). */
-      const int shbytes = 1024 * 96 + 512 * 2 + 512 * 2;
-      /* The ME's work area is part of what MUST fit: without it the engine
+      /* The partition is 4 MB on every model (measured 4194304 on both
+       * consoles).  The ME's work area is part of what MUST fit: without it the engine
        * refuses every render. */
       const int need    = 2 * MER_CAP_BYTES + 2 * (MER_STAGE_PITCH*161*2) + 128
                           + (int)ME_WORK_BYTES;
@@ -140,14 +138,6 @@ static int me_rend_init(void)
              * area holds a byte of anything this CPU writes. */
             g_mer_work     = (void *)p;             p += ME_WORK_BYTES;
             g_mer_vmem = 1;
-            if (g_mer_shadow && vsize >= need + shbytes + 64)
-            {
-               p = (p + 63u) & ~63u;
-               g_mer_sh_vram = (unsigned char *)p;  p += 1024 * 96;
-               g_mer_sh_oam  = (unsigned char *)p;  p += 512 * 2;
-               g_mer_sh_pal  = (unsigned char *)p;  p += 512 * 2;
-               g_mer_sh_on   = 1;
-            }
 #if ME_MIDFRAME_LOG
             p = (p + 63u) & ~63u;
             if (g_mer_midlog &&
@@ -158,8 +148,8 @@ static int me_rend_init(void)
                me_vram_shadow = (u8 *)p;            p += 1024 * 96;
             }
 #endif
-            fe_evt("me_rend vmem base=%08x size=%d shadow=%d",
-                   (unsigned)vbase, vsize, g_mer_sh_on);
+            fe_evt("me_rend vmem base=%08x size=%d",
+                   (unsigned)vbase, vsize);
 #ifdef REWIND
             g_vm_eng_top = p;
             psp_rewind_pool_check();
@@ -283,25 +273,7 @@ static void me_rend_fill_desc(int out)
       g_mer_stage[out] = g_mer_stage_own[out];
    g_mer_priv[out] = g_rw_slot != NULL && fe_host_rewind_replaying();
 #endif
-   if (g_mer_sh_on)
-   {
-      /* Snapshot the live arrays so the ME has something stable to read and
-       * emulation can resume without waiting for it.  Cached->cached in main
-       * RAM; the writeback that follows is the whole coherency contract. */
-      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
-      unsigned d;
-      memcpy(g_mer_sh_vram, vram, 1024 * 96);
-      memcpy(g_mer_sh_oam, oam_ram, 512 * 2);
-      memcpy(g_mer_sh_pal, palette_ram_converted, 512 * 2);
-      sceKernelDcacheWritebackRange(g_mer_sh_vram, 1024 * 96);
-      sceKernelDcacheWritebackRange(g_mer_sh_oam, 512 * 2);
-      sceKernelDcacheWritebackRange(g_mer_sh_pal, 512 * 2);
-      d = (unsigned)sceKernelGetSystemTimeLow() - t0;
-      g_mer_sh_us += d;
-      if (d > g_mer_sh_max)
-         g_mer_sh_max = d;
-   }
-   else if (g_mer_full_copy || !g_mer_dirty_cfg)
+   if (g_mer_full_copy || !g_mer_dirty_cfg)
    {
       /* Mirror not trustworthy: copy everything and tell the ME to do the
        * same by passing no map. */
@@ -344,15 +316,12 @@ static void me_rend_fill_desc(int out)
 #endif
    sceKernelDcacheWritebackRange(g_mer_cap[g_mer_cur],
                                  sizeof(me_capture_frame));
-   g_mer_desc->vram      = g_mer_sh_on ? (unsigned)g_mer_sh_vram
-                                       : (unsigned)vram;
-   g_mer_desc->oam       = g_mer_sh_on ? (unsigned)g_mer_sh_oam
-                                       : (unsigned)oam_ram;
-   g_mer_desc->palette   = g_mer_sh_on ? (unsigned)g_mer_sh_pal
-                                       : (unsigned)palette_ram_converted;
+   g_mer_desc->vram      = (unsigned)vram;
+   g_mer_desc->oam       = (unsigned)oam_ram;
+   g_mer_desc->palette   = (unsigned)palette_ram_converted;
    /* 0 = no map = copy all of VRAM. See g_mer_full_copy. */
    g_mer_desc->vram_clean =
-      (g_mer_sh_on || g_mer_full_copy || !g_mer_dirty_cfg)
+      (g_mer_full_copy || !g_mer_dirty_cfg)
       ? 0u : (unsigned)vram_clean;
    g_mer_desc->capture   = (unsigned)g_mer_cap[g_mer_cur];
    g_mer_desc->out       = (unsigned)g_mer_stage[out];
@@ -416,10 +385,9 @@ static __attribute__((noinline)) void me_rend_retire_if_idle(void)
 {
    if (!g_me_rend || g_mer_pending < 0)
       return;
-   /* me_sameframe keeps exactly its old reach; the low-latency retire
-    * stays out of a rewind (which repoints the stages itself). */
-   if (!mer_sameframe_active() &&
-       (!mer_retire_early_active() || mer_rewind_busy()))
+   /* The low-latency retire stays out of a rewind (which repoints the
+    * stages itself). */
+   if (!mer_retire_early_active() || mer_rewind_busy())
       return;
    if (!me_host_idle())
       return;
@@ -440,8 +408,6 @@ static __attribute__((noinline)) void me_rend_retire_if_idle(void)
    g_mer_pending = -1;
    g_mer_miss    = 0;
    g_fps_drawn++;
-   if (mer_sameframe_active())
-      g_mer_sf_hit++;
 }
 
 /* @extract:end ff:me_rend_present */
@@ -555,15 +521,10 @@ static void me_rend_frame(int emulated)
       me_rend_fill_desc(out);
       if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) == 0)
       {
-         /* 3. Hand the capture buffer over and resume.
-          *
-          * With shadows the ME is reading copies nothing will touch, so there
-          * is NOTHING to wait for -- the ~1.45 ms spin below is skipped
-          * entirely and the capture flip is immediately safe (the captures
-          * were already double-buffered).  Without them we must still wait
-          * for the ME to finish reading the live arrays before emulation is
-          * allowed to write them again. */
-         if (!g_mer_sh_on)
+         /* 3. Hand the capture buffer over and resume: wait for the ME to
+          * finish reading the live arrays before emulation is allowed to
+          * write them again.  (The 98 KiB input shadows that skipped this
+          * wait lost on hardware and were deleted in code-health C2-4'.) */
          {
             t0 = (unsigned)sceKernelGetSystemTimeLow();
             while (!me_host_input_done() &&
@@ -622,16 +583,13 @@ present:
    if (++g_mer_census >= 600)
    {
       fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u "
-             "shadow=%d sh_mean_us=%u sh_max_us=%u "
-             "dirty=%d wb_pages=%u sf=%d sf_hit=%u sf_miss=%u "
+             "dirty=%d wb_pages=%u "
              "rend_n=%u rend_mean_us=%u rend_max_us=%u "
              "vis_n=%u vis_mean_us=%u vis_max_us=%u",
              g_mer_frames, g_mer_drops, g_mer_wait_us / g_mer_census,
-             g_mer_wait_max, g_mer_sh_on,
-             g_mer_sh_us / g_mer_census, g_mer_sh_max,
+             g_mer_wait_max,
              g_mer_dirty_cfg,
              g_mer_wb_n ? g_mer_wb_pages / g_mer_wb_n : 0u,
-             g_mer_sameframe, g_mer_sf_hit, g_mer_sf_miss,
              g_mer_rend_n, g_mer_rend_n ? g_mer_rend_us / g_mer_rend_n : 0,
              g_mer_rend_max,
              g_vis_n, g_vis_n ? g_vis_us / g_vis_n : 0, g_vis_max);
@@ -648,15 +606,9 @@ present:
 #endif
       g_mer_census = 0;
       g_mer_wait_us = g_mer_wait_max = 0;
-      g_mer_sh_us = g_mer_sh_max = 0;
       g_mer_rend_n = g_mer_rend_us = g_mer_rend_max = 0;
       g_vis_n = g_vis_us = g_vis_max = 0;
       g_mer_wb_pages = g_mer_wb_n = 0;
-      if (g_mer_sameframe)
-         fe_evt("me_sf_gate noloop=%u wouldhit=%u miss=%u",
-                g_mer_sf_noloop, g_mer_sf_wouldhit, g_mer_sf_miss);
-      g_mer_sf_hit = g_mer_sf_miss = 0;
-      g_mer_sf_noloop = g_mer_sf_wouldhit = 0;
    }
    LOOP_PHASE(2);   /* back in the core's frame (always called from it) */
 }

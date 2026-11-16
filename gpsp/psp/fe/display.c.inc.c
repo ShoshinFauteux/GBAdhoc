@@ -33,22 +33,16 @@ static int me_rend_redraw(unsigned mode, uint16_t *out, unsigned *sum)
    cap = g_mer_cap[g_mer_stage_cap[st]];
    if (!cap || g_mer_stage_cap[st] != (unsigned)(g_mer_cur ^ 1))
       return -1;                       /* a later post took the capture */
-   if (g_mer_sh_on)
-   {
-      pal = (const u16 *)g_mer_sh_pal;  oam = (const u16 *)g_mer_sh_oam;
-      vr  = g_mer_sh_vram;
-      all_clean = 0;                   /* the shadow IS the frame's VRAM */
-   }
 #if ME_MIDFRAME_LOG
-   else if (cap->log_n)
+   if (cap->log_n)
    {
       pal = me_log_line160_pal();
       oam = me_log_line160_oam();
       vr  = vram;
       all_clean = 1;                   /* keep the engine's own mirror */
    }
-#endif
    else
+#endif
    {
       pal = palette_ram_converted;     /* an end-of-frame post: now */
       oam = (const u16 *)oam_ram;

@@ -65,8 +65,7 @@ static int loaded, healthy, idle, sync_ok, sync_calls;
 static unsigned clock_us;
 static void *g_mer_work, *g_mer_cap[2], *g_mer_stage[2], *g_mer_desc;
 static int g_mer_vmem, g_me_rend, g_mer_heap_pending_drain;
-static void *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
-static int g_mer_sh_on, g_mer_ready, g_mer_pending, g_mer_last_presented;
+static int g_mer_ready, g_mer_pending, g_mer_last_presented;
 static int unlock_calls;
 static int g_pwr_had_host, g_pwr_slept, ring_r, ring_w, blank_calls;
 #include <string.h>

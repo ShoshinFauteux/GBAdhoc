@@ -259,8 +259,10 @@ What changes on the internet:
   The 200 ms floor stays.
 - **Window.** 256 in flight at ~120 payloads/s covers RTTs of over 2 s. No change.
 - **Loss.** Home internet loses 0-1 %, a busy 2.4 GHz room 1-3 %. The GB session's redundant input copies
-  (`gblink_input_copies`, unreliable, beside the ordered copy) remove most loss stalls. They should be on
-  online.
+  (`gblink_input_copies`, unreliable, beside the ordered copy) removed most loss stalls in the simulator, but
+  on the PSP radio (hw2) they cost +0.7-1.8 ms of emulation time a frame and doubled the join's stalls, and
+  code-health C2-4' (2026-11-16) deleted them with their key. If online loss wants them back, they return
+  from git as a measured change, not as a default.
 - **Reordering.** The relay forwards in arrival order. The internet rarely reorders a single flow, and
   netdrv's receive window absorbs it.
 
@@ -869,7 +871,7 @@ layout.lock anchor; PSP-1000 boot heap unchanged.
 2. **PSP transport.** `netdrv/transport_relay.c`, transcribed from `transport_inet.c`: one socket, DNS
    lookup of the relay host (sceNetResolver), CREATE/JOIN handshake, slot-MAC mapping, KEEP in the lobby.
    The apctl bring-up reuses `mgift_net.c`'s ladder with the user's saved profile (sceUtilityNetconf).
-3. **Online switches.** Force `gblink_input_copies` on, cartridge transfer off, and `gblink_delay_auto` on
+3. **Online switches.** Cartridge transfer off and `gblink_delay_auto` on
    (cap 12) whenever the transport is the relay. Feed `rfu_sched` D from the measured RTT the same way,
    after the hardware sweep for it.
 4. **Lab: an internet-shaped case.** Run the real relay on the LAN with `net_latency_ms`/`net_jitter_ms`

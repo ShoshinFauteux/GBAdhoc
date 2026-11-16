@@ -31,10 +31,10 @@ enum
    FELP_L_RUN = FELP_L0 + 6,    /* fe_host_run_frame outside the session step*/
    FELP_L_POST = FELP_L0 + 7,   /* after the core: health, dumps, rig events */
    FELP_L_SHASH = FELP_L0 + 8,  /* harness shash.txt line (+ jit_coh_frame)  */
-   FELP_L_ACCT = FELP_L0 + 9,   /* boost close, work accounting, pace_frame  */
+   FELP_L_ACCT = FELP_L0 + 9,   /* work accounting, pace_frame               */
    FELP_L_OSD = FELP_L0 + 10,   /* pre-wait osd_draw, vcount, win work       */
-   FELP_L_RETIRE = FELP_L0 + 11,/* after the wait: ME retire / same-frame    */
-   FELP_L_PRES = FELP_L0 + 12,  /* the present + osd_draw before the swap    */
+   FELP_L_RETIRE = FELP_L0 + 11,/* after the wait: the ME's last-look retire */
+   FELP_L_PRES = FELP_L0 + 12,  /* (unset: the same-frame present, deleted)  */
    FELP_L_SWAP = FELP_L0 + 13,  /* vid_swap                                  */
    FELP_L_RIGN = FELP_L0 + 14,  /* rig_note (perf rig per-frame bookkeeping) */
    FELP_LN = 16,

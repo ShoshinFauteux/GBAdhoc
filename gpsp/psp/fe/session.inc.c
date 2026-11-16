@@ -320,16 +320,13 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
    cfg->gblink_batch  = g_gblink_batch;
    cfg->gblink_batch_armed = g_gblink_batch_armed;
    cfg->gblink_live   = g_gblink_live;
-   cfg->gblink_input_copies = g_gblink_copies;
    cfg->gblink_resume_boot = g_gblink_resume_boot;
-   cfg->gblink_pace_slot0 = g_gblink_pace0;
    cfg->heartbeat_frames = g_telemetry_period;
    cfg->gblink_rtc_keep_session_stamp = g_gblink_keep_stamp;
    cfg->gblink_wait   = plat_gblink_wait;    /* stall absorption */
    cfg->gblink_nack   = g_gbl_nack;          /* resend requests */
    cfg->gblink_delay_auto = g_gblink_delay_auto; /* 0 = off */
    cfg->gblink_hash_every  = g_gbl_hash_every;   /* harness A/B */
-   cfg->gblink_hash_legacy = g_gbl_hash_legacy;
    if (g_gblink_bulk_bytes)
    {
       cfg->gb_bulk_enable = psp_gb_bulk_enable;

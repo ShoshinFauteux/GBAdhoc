@@ -170,13 +170,6 @@ typedef struct fe_gblink_platform
     * bulk_rate_max, default 16). */
    unsigned bulk_rate;
    unsigned bulk_rate_max;
-   /* Inputs, also as one unreliable bulk-lane datagram a frame carrying
-    * this player's last `input_copies` frames of buttons (0 = off, at most
-    * 16), beside the ordered channel's copy.  One lost datagram is then
-    * covered by the next frame's instead of stalling the game until the
-    * ordered channel resends it (hw1: 11-40 stalls a run on the PSP-1000,
-    * up to 7 frames long, at ~3 % loss). */
-   unsigned input_copies;
    /* Stall absorption (optional; docs/GB-LINK.md section 14).  When a step
     * is held up by the partner's buttons, the session calls wait() until
     * they are here or wait() returns 0: it must deliver what the network
@@ -215,15 +208,6 @@ typedef struct fe_gblink_local
     * from the battery image. */
    const void *state;
    size_t state_size;
-   /* Step on slot 0's frame boundary on BOTH consoles (the guest's own
-    * machine then finishes its frame one scanline into the next step).
-    * Stepping on the local machine instead, the guest's pair needs the
-    * host's buttons for frame f+1 one scanline before its own frame f ends
-    * -- a frame earlier, relative to its own timeline, than the host needs
-    * the guest's: the guest had one frame less slack (hw2: the join
-    * stalled 134-885 times a run, the host 0-26).  Local only: it changes
-    * no machine state, only when step() returns. */
-   int pace_slot0;
    int64_t wallclock_now;       /* seconds since 1970, this console */
    unsigned audio_rate;
    /* Host only (the guest takes the host's): input delay in frames,
@@ -279,9 +263,6 @@ typedef struct fe_gblink_local
    /* NULL = the GB/GBC pair; else the machines above (console must match
     * machines->console). */
    const fe_gblink_machines *machines;
-   /* Harness A/B only, both consoles alike: the 3.1 beta's byte-wise sync
-    * hash and cartridge-RAM CRC (gbcore_set_sync_hash_legacy). */
-   int hash_legacy;
    /* A vtable pair only, both consoles alike: identify the own cartridge by
     * its size and 64 evenly spread 4 KiB slices instead of the whole file
     * (fe_gblink.c SAMPLE_N; docs/GBA-LINK-UI.md).  0 = the streamed SHA-1. */

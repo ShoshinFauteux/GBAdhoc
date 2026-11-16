@@ -189,26 +189,6 @@ void fe_np_prof_get(fe_np_prof *out);
  * Costs the caller two clock reads per frame. */
 void fe_np_prof_frame(uint32_t work_us);
 
-/* ---- debug fault: swallow the core's RFU DISCONNECT notices -------------
- * A causation test, not a feature.  Same class as adhoc_transport_set_fault
- * (ADR-0017): the harness could not previously produce the adapter state the
- * field reports, so it could not tell a hypothesis from a fact.
- *
- * Gen-3's Union Room child NEVER disconnects itself — it posts a
- * LEAVE_GROUP_NOTICE and the PARENT calls rfu_REQ_disconnect for it
- * (pokeemerald src/link_rfu_2.c:1644-1670).  That parent-side DISCONNECT is
- * the ONLY thing that returns the child's emulated adapter to
- * RFU_STATE_IDLE, and rfu.c has no other route back (HOST_STOP refuses to
- * clear a populated host, HOST_START only clears slots when already IDLE,
- * and ID_RESET_REQ 0x10 / ID_STOP_MODE_REQ 0x3d are no-op ACKs).  Dropping
- * the notice therefore pins the peer's adapter in RFU_STATE_CLIENT — which
- * is exactly the state the field logs imply (host `rfu_link_down reason=4`
- * TTL expiry, client no breadcrumb at all).
- *
- * `n` = how many outgoing NET_RFU_DISCONNECT packets to swallow (0 = off).
- * Off by default and only ever armed from autopilot.ini. */
-void fe_np_debug_drop_rfu_disconnect(int n);
-
 /* Core hook: a radio peer left the session (any role).  Defined by the core
  * (libretro.c); netpacket_host.c carries a weak no-op. */
 void gpsp_netpacket_peer_lost(uint16_t client_id);

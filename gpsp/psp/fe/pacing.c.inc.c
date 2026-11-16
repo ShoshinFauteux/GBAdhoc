@@ -452,8 +452,7 @@ static __attribute__((noinline)) int lat_wait_step(void)
    }
    /* Tier 0a: the frame is complete once the GE is idle; flip it now and
     * it latches on the vblank this loop is waiting for. */
-   if (!g_lw_swapped && g_lw_ll == LL_OFF && g_flip_early &&
-       !mer_sameframe_active())
+   if (!g_lw_swapped && g_lw_ll == LL_OFF && g_flip_early)
    {
       if (vid_gu_busy())
          poll = 1;

@@ -37,7 +37,6 @@
  *                         what arrives during the rest of the frame
  *           [nack=1]      resend requests on the bulk lane (needs bulk=)
  *           [auto=N]      auto input delay on the host, capped at N frames
- *           [hash_legacy=1] the 3.1 beta's byte-wise sync hash
  *           [arq_loss=PCT] [arq_rto=FRAMES]  that share of ordered-channel
  *                         messages arrives arq_rto frames late (a resend),
  *                         holding everything behind it
@@ -482,7 +481,6 @@ int main(int argc, char **argv)
       p.bulk_max = (size_t)atoi(arg(argc, argv, "bulk", "0"));
       p.bulk_send = p.bulk_max ? p_bulk : NULL;
       p.bulk_rate = (unsigned)atoi(arg(argc, argv, "bulk_rate", "0"));
-      p.input_copies = (unsigned)atoi(arg(argc, argv, "input_copies", "0"));
       p.wait = atoi(arg(argc, argv, "absorb", "0")) ? p_wait : NULL;
       p.nack = atoi(arg(argc, argv, "nack", "0"));
       l.delay_auto = (unsigned)atoi(arg(argc, argv, "auto", "0"));
@@ -502,8 +500,6 @@ int main(int argc, char **argv)
       l.input_delay = (unsigned)atoi(arg(argc, argv, "delay", "4"));
       l.hash_interval = 60;
       l.batch_lines = (unsigned)atoi(arg(argc, argv, "batch", "0"));
-      l.pace_slot0 = atoi(arg(argc, argv, "pace0", "0"));
-      l.hash_legacy = atoi(arg(argc, argv, "hash_legacy", "0"));
       /* armed=1: the host asks for gbdual batch_armed (negotiated; the
        * guest's own armed_g is ignored, as on the consoles) */
       if (atoi(arg(argc, argv, i ? "armed_g" : "armed", "0")))

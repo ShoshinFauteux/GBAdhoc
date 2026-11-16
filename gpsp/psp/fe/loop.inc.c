@@ -145,12 +145,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
       }
 #endif
 
-      /* ADR-0064: closes the PREVIOUS frame's `wait` region and opens this
-       * frame's `pre`.  ADR-0065: open the protected window here, before any
-       * of the frame's work — see emu_boost_open(). */
-      preempt_mark(3);
-      emu_boost_open();
-
       rtc_wall_publish(0);
       /* LOW LATENCY: did the previous iteration's flip latch on the vblank
        * after its submit?  (Checked before anything can submit again.) */
@@ -1086,17 +1080,12 @@ void frame_loop(loop_t *L, const session_ctx *S)
       /* LOW LATENCY tier 0b: a render that finished during the previous
        * iteration is shown NOW, not after the next post retires it. */
       g_ll_iter_h = 0;
-      if (!mer_sameframe_active())
-         me_rend_retire_if_idle();
-      /* SAME-FRAME shows the frame at the END of its own frame, not at the
-       * top of the next one -- so the top-of-loop present is skipped and the
-       * GE draw happens in the vblank wait below, once the ME reports done. */
+      me_rend_retire_if_idle();
 #ifdef REWIND
       if (psp_rewind_present())
          ;                    /* a rewind is on screen: its frame, not the ME's */
       else
 #endif
-      if (!mer_sameframe_active())
       {
          /* Tier 1: this iteration's own render is presented in its wait.
           * Steady in tier 1 nothing is waiting here (the last render was
@@ -1210,7 +1199,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
       }
 
       /* ---- run the core ---------------------------------------------- */
-      preempt_mark(0);           /* ADR-0064: close `pre`, open `core` */
       LOOP_PHASE(2);
 #ifdef GPSP_CHEATS
       /* Again, immediately before the frame(s): whatever brought a session
@@ -1316,12 +1304,10 @@ void frame_loop(loop_t *L, const session_ctx *S)
          }
       }
       LOOP_PHASE(3);
-      preempt_mark(1);           /* ADR-0064: close `core`, open `post` */
       frames = fe_host_frame_count();
 
       if (vid_prof_win > 0)
          vid_prof_frame((unsigned)vid_prof_win);
-      vram_probe_frame();        /* no-op unless `vram_probe` is set */
 #ifdef GPSP_KEEP_TELEMETRY
       {
          /* core_health on fe_host's 600-frame heartbeat cadence.  A
@@ -1429,56 +1415,11 @@ void frame_loop(loop_t *L, const session_ctx *S)
             dump_ge_bmp();
       }
 #endif
-      /* ADR-0066 (SPIKE-FINDINGS §4/§8): a SYNCHRONOUS NEGATIVE
-       * `sceIoGetstat()` on ms0:, on the emulation thread, INSIDE the region
-       * `work_us` times, looking for a developer-convenience marker file that
-       * no automated run ever creates (`tools/hw_loop.py` does not know the
-       * path).  PRIOWINDOW §6 measured it on this device: **12.4 ms**, i.e.
-       * 74 % of a 59.73 fps frame budget, once a second, in every run of four
-       * sessions.
-       *
-       * BUT IT IS NOT FREE TO REMOVE, AND THAT IS THE POINT OF THE KNOB.
-       * While the stat blocks, the emulation thread is NOT RUNNING — so this
-       * was also an involuntary 12.4 ms/s of guaranteed CPU for the WLAN
-       * driver and our own RX/TX threads.  Deleting it deletes that yield.
-       * PRIOWINDOW §15 ran the 29.97 regression gate on a build that removed
-       * it unconditionally and got **7/14 against 7/7 historical**
-       * (Fisher p = 0.04).  That is not proof it was the cause — §16 is the
-       * A/B that tests it — but it is more than enough to say a change like
-       * this must not be a silent default.
-       *
-       * ADR-0069 SUPERSEDES THE DEFAULT, NOT THE REASONING.  The stat bought
-       * two things and they are now separated:
-       *
-       *  * the FEATURE ("a human wants a screenshot right now") is served by
-       *    L+R+SELECT above, off a pad we already read every frame, for free
-       *    and with no filesystem involved.  `dump_marker_poll` therefore
-       *    defaults to 0 and the stat is gone from the frame region;
-       *  * the YIELD is now `sched_yield_us`, an explicit sceKernelDelayThread
-       *    of a duration WE choose, rather than however long the Memory Stick
-       *    felt like blocking for that second.  Default 0.
-       *
-       * §16's A/B on the old binary came back 4/6 with the same failure
-       * signatures (Fisher p = 0.64), so the removal is no longer meaningfully
-       * implicated in the 29.97 gate — but if it turns out the WLAN threads
-       * genuinely miss the stall, `sched_yield_us = 12400` reconstructs it at
-       * the measured size and that is the arm to run.
-       *
-       * `dump_marker_poll = 60` still restores the old mechanism exactly. */
-      if (g_dump_marker_every &&
-          (frames % (unsigned)g_dump_marker_every) == 0 &&
-          file_exists(DUMP_MARKER))
-      {
-         dump_frame_bmp();
-         sceIoRemove(DUMP_MARKER);
-      }
-      /* ADR-0069: the yield, made deliberate.  Same cadence the stat had (once
-       * per `g_yield_every` frames) so an A/B against the historic build is a
-       * like-for-like comparison of a 12.4 ms stall that reads the Memory
-       * Stick against one that does not. */
-      if (g_yield_us && g_yield_every &&
-          (frames % (unsigned)g_yield_every) == 0)
-         sceKernelDelayThread((SceUInt)g_yield_us);
+      /* (ADR-0066/0069: the once-a-second screenshot marker-file stat, a
+       * 12.4 ms blocking sceIoGetstat, and the deliberate yield that could
+       * stand in for it, left the tree in code-health C2-4'.  L+R+SELECT is
+       * the screenshot; the §16 A/B found the stall's removal not implicated
+       * in the 29.97 gate.) */
 #if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
       fx_sweep_step(frames);
 #endif
@@ -1533,10 +1474,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
 #endif
 
       FE_LP_SET(FELP_L_ACCT);
-      emu_boost_close();         /* ADR-0065: end the protected window */
       LOOP_PHASE(4);
-      preempt_mark(2);           /* ADR-0064: close `post`, open `wait` */
-      preempt_frame_end();
 
       if (frame_t0)
       {
@@ -1729,51 +1667,17 @@ void frame_loop(loop_t *L, const session_ctx *S)
          g_flip_early = ffh_fe;
          FE_LP_SET(FELP_L_RETIRE);
 
-         /* Counted here, after the wait: still pending at the swap means the
-          * ME did not make its own frame, so the previous one goes out and
-          * this render lands next frame -- the shipping behaviour. */
          /* ONE LAST LOOK BEFORE GIVING UP.
           *
           * The loop above checks the ME and then BLOCKS in
           * sceDisplayWaitVblankStart().  The ME routinely finishes DURING
           * that block, and the loop then exits on its vcount condition
           * without ever re-checking -- so a frame that was rendered and
-          * ready got thrown away and the previous one went out instead.
-          * Measured before this existed: of 533 and 600 "misses" in two
-          * windows, 529 and 502 had the ME already idle (99%% and 84%%).
-          * Same-frame was not losing a race, it was not looking at the
-          * finish line.  Hit rate 10.9%% -> 85.7%% on this one check; the
-          * blit sits at the same vblank phase the in-loop present used, so
-          * nothing about timing changes. */
+          * ready would be thrown away.  (Measured on the old same-frame
+          * design, deleted in code-health C2-4': of 533 and 600 "misses" in
+          * two windows, 529 and 502 had the ME already idle.)  A render
+          * still pending here lands next frame -- the shipping behaviour. */
          me_rend_retire_if_idle();
-         if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0)
-         {
-            g_mer_sf_miss++;
-            if (me_host_idle())
-               g_mer_sf_wouldhit++;   /* must stay 0 */
-         }
-
-         /* THE PRESENT.  Unconditional, once, immediately before the swap.
-          * Whatever is current goes into the back buffer -- a fresh render
-          * if one retired this frame, otherwise the one already showing.
-          * Re-drawing an unchanged frame costs a GE blit we would rather
-          * not spend, and buys the guarantee that the back buffer is never
-          * two frames stale.  That is a trade worth making every time. */
-         FE_LP_SET(FELP_L_PRES);
-#ifdef REWIND
-         if (mer_sameframe_active() && !g_rw_showing)
-#else
-         if (mer_sameframe_active())
-#endif
-         {
-            me_rend_present();
-#ifdef REWIND
-            if (g_drew && (g_rw_on || g_rwh.denied))
-               psp_rewind_hud();
-#endif
-            if (g_drew)
-               osd_draw();
-         }
 
          FE_LP_SET(FELP_L_SWAP);
          if (!g_lw_swapped)
@@ -1788,11 +1692,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
             ffh_cap();            /* FF FLIP PACING bit 2: the multiplier ceiling */
          if (g_drew)
          {
-         /* UNCAPPED FF: swap only when a frame was actually blitted.
-          *
-          * No same-frame handling here.  mer_sameframe_active() is false
-          * whenever fast-forward is engaged, so the loop-top present ran
-          * as it always did and this branch is untouched shipping code. */
+         /* UNCAPPED FF: swap only when a frame was actually blitted. */
          if (ffh_hold())
             g_ffh_held = 1;       /* FF FLIP PACING: a later loop flips it */
          else

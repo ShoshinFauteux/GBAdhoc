@@ -346,11 +346,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        * link); gblink_after = frames the game plays on after a session. */
       g_gblink_live = HARNESS_INT("gblink_live", 1) != 0;
       g_gblink_after = (unsigned)HARNESS_INT("gblink_after", 0);
-      g_gblink_copies = (unsigned)HARNESS_INT(
-                                                 "gblink_input_copies", 0);
       g_gblink_resume_boot = HARNESS_INT("gblink_resume",
                                             0) == 2;
-      g_gblink_pace0 = HARNESS_INT("gblink_pace_slot0", 0) != 0;
       g_gblink_start_frames = (unsigned)HARNESS_INT(
                                                       "gblink_start_frames", 0);
 #ifdef GPSP_PERF_RIG
@@ -385,16 +382,13 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          /* harness only: the sync-hash A/B (both consoles alike) */
          v = HARNESS_INT("gblink_hash_every", 0);
          g_gbl_hash_every = v < 0 ? 0u : (unsigned)v;
-         g_gbl_hash_legacy =
-            HARNESS_INT("gblink_hash_legacy", 0) != 0;
          v = HARNESS_INT("gblink_win_ms", 10000);
          g_gbl_win_ms = v < 1000 ? 1000u : (unsigned)v;
          fe_evt("gblink_smooth absorb=%d audio_cushion=%u audio_follow=%u "
-                "audio_soft=%d nack=%d win_ms=%u hash_every=%u "
-                "hash_legacy=%d",
+                "audio_soft=%d nack=%d win_ms=%u hash_every=%u",
                 g_gbl_absorb, g_gbl_cushion, g_gbl_follow, g_gbl_soft,
                 g_gbl_nack,
-                g_gbl_win_ms, g_gbl_hash_every, g_gbl_hash_legacy);
+                g_gbl_win_ms, g_gbl_hash_every);
       }
       fe_evt("gblink_harness role=%s delay=%u seed=%lld end_after=%u "
              "library=%d bulk_bytes=%u bulk_rate=%u batch=%u armed=%d",
@@ -881,16 +875,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       rfu_set_timeout_scale((unsigned)ts, (unsigned)rs);
       fe_evt("rfu_timeout_scale to=%d rtx=%d auto=%d", ts, rs, aut);
    }
-   /* ADR-0062: WHO GETS THE CPU THE EMULATOR IS NOT USING, and how fast a
-    * lost slot is recovered.  Both harness-only, both default to today's
-    * behaviour, both must be set BEFORE net bring-up (which happens after
-    * this function).  See FULLSPEED-FINDINGS §7 for the measurement that
-    * motivates the first one: the emulated core costs ~14.5 ms per frame at
-    * every session rate, so the idle time the WLAN driver lives in falls from
-    * 17.6 ms/frame at 29.97 fps to 2.3 ms at 59.73, and the mean cost of one
-    * sceNetAdhocPdpSend rises 60 us -> 1040 us across exactly that range. */
+   /* ADR-0062: how fast a lost slot is recovered.  Harness-only, default
+    * today's behaviour, set BEFORE net bring-up (which happens after this
+    * function).  (Its companion, raising the WLAN stack's priority, broke
+    * group creation and left the tree: emu_prio below won.) */
    {
-      int np_ = (int)HARNESS_INT("adhoc_net_prio", 0);
       int rf  = (int)HARNESS_INT("nd_rto_first_max_us", 0);
       /* config.ini is the base, harness overrides -- and the base is no
        * longer 0/build-time: see g_pcfg.nd_rto_min_us for why 200 ms is
@@ -899,7 +888,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
                                     g_pcfg.nd_rto_min_us);
       if (rf < 0) rf = 0;
       if (rm < 0) rm = 0;
-      adhoc_transport_set_net_prio(np_);
       fe_np_set_arq_timers((uint32_t)rf, (uint32_t)rm);
       /* 28: ack riding (0 = off): a bare ACK waits this long for a ride */
       {
@@ -929,14 +917,14 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          fe_evt("net_tuning ack_ride_cfg product_us=%d fixed_us=%d max_us=%d",
                 ar, hr, ride_max);
       }
-      if (np_ || rf || rm)
-         fe_evt("net_tuning adhoc_net_prio=0x%02X rto_first_max_us=%d "
-                "rto_min_us=%d", adhoc_transport_net_prio(), rf, rm);
+      if (rf || rm)
+         fe_evt("net_tuning rto_first_max_us=%d rto_min_us=%d", rf, rm);
    }
    /* ADR-0062b: THE SAME LEVER FROM THE OTHER END — lower the EMULATION
     * thread instead of raising the WLAN stack.
     *
-    * `adhoc_net_prio = 0x1D` was tried first and it BREAKS THE HOST: with the
+    * Raising the stack to 0x1D (ADR-0062's `adhoc_net_prio`, since deleted)
+    * was tried first and it BREAKS THE HOST: with the
     * stack above the emulation thread, `sceNetAdhocctlConnect` never reaches
     * CONNECTED and bring-up dies at `stage=ctl_connect_wait rc=-9
     * sce=0x80410002` after the full 30 s wait (measured, run 086; the JOIN
@@ -958,9 +946,9 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    {
       int ep = (int)HARNESS_INT("emu_prio", PLAY_EMU_PRIO);
       int ip = (int)HARNESS_INT("io_prio",  PLAY_IO_PRIO);
-      /* ADR-0064/0065 both need the emulation thread's UID, and both are
-       * no-ops unless their key is set.  Taken here because this is the one
-       * place that already knows it is running ON that thread. */
+      /* The emulation thread's UID (the stall watchdog reads it too).
+       * Taken here because this is the one place that already knows it is
+       * running ON that thread. */
       g_emu_thid = sceKernelGetThreadId();
       if (ep)
       {
@@ -978,23 +966,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          if (ip > 0x77) ip = 0x77;
          g_io_prio = ip;
       }
-      /* VRAM dirty-page probe: frames between samples, 0 = off (default).
-       * See vram_probe_frame().  30 gives ~2 instrumented frames/second. */
-      /* ME input shadows: retained only as a diagnostic A/B.  Hardware
-       * rejected them: the 98 KiB host copy costs more than waiting for the
-       * ME, and it also bypasses the later dirty-page transfer path.  Keep
-       * the measured winner as the default; a harness may still set 1. */
-      g_mer_shadow = (int)HARNESS_INT("me_shadow", 0);
       g_mer_vmem_cfg = (int)HARNESS_INT("me_vmem", 1) != 0;
       if (!g_mer_vmem_cfg)
          fe_evt("me_vmem 0 (engine buffers from the heap)");
       g_mer_dirty_cfg = (int)HARNESS_INT("me_dirty",
                                              g_pcfg.me_dirty);
-      /* Same-frame is retained as a harness-only A/B.  Hardware showed that
-       * issuing the GE list immediately before swap costs heavy games about
-       * 1.5 ms per frame.  The loop-top pipeline overlaps that work with the
-       * CPU, keeps exact output, and also holds full speed in light games. */
-      g_mer_sameframe = (int)HARNESS_INT("me_sameframe", 0);
       /* LOW LATENCY (docs/LOW-LATENCY.md): one switch per mechanism. */
       g_flip_early = (int)HARNESS_INT("flip_early",
                                          g_flip_early) != 0;
@@ -1014,8 +990,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       g_ll_margin_us = (unsigned)HARNESS_INT(
                                                 "me_lowlat_margin_us",
                                                 (int)g_ll_margin_us);
-      if (g_ll_cfg)
-         g_mer_sameframe = 0;      /* two retire/present owners: never both */
       g_in_fresh = (int)HARNESS_INT("input_fresh",
                                        PLAY_INPUT_FRESH) != 0;
       g_ctrl_cycle = (int)HARNESS_INT("ctrl_cycle", 0);
@@ -1031,14 +1005,10 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          g_ctrl_cycle = 0;
       fe_evt("input input_fresh=%d ctrl_cycle=%d", g_in_fresh, g_ctrl_cycle);
       fe_evt("latency flip_early=%d me_early_retire=%d me_lowlat=%d "
-             "recover=%u margin_us=%u me_sameframe=%d ff_flip_pace=%d "
+             "recover=%u margin_us=%u ff_flip_pace=%d "
              "late_present=%d",
              g_flip_early, g_mer_early_retire, g_ll_cfg, g_ll_recover,
-             g_ll_margin_us, g_mer_sameframe, g_ff_flip_pace, g_dfr_cfg);
-      /* 0 restores the end-of-retro_run post for a one-binary A/B. */
-      g_mer_vispost = (int)HARNESS_INT("me_vispost", 1) != 0;
-      if (!g_mer_vispost)
-         fe_evt("me_vispost 0 (render posted at frame end)");
+             g_ll_margin_us, g_ff_flip_pace, g_dfr_cfg);
       g_mer_capmode = HARNESS_INT("me_capmode", 1) == 2
                       ? 2u : 1u;
 #if ME_MIDFRAME_LOG
@@ -1051,70 +1021,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       if (!g_mer_midlog)
          fe_evt("me_midlog 0 (mid-frame log off)");
 #endif
-      g_vp_period = (int)HARNESS_INT("vram_probe", 0);
-      if (g_vp_period)
-         fe_evt("vram_probe period=%d", g_vp_period);
-
-      /* ADR-0066: frames between dump-marker polls.  ADR-0069 default = 0. */
-      {
-         int dm = (int)HARNESS_INT("dump_marker_poll",
-                                      PLAY_DUMP_MARKER);
-         if (dm < 0) dm = 0;
-         g_dump_marker_every = dm;
-         fe_evt("dump_marker_poll n=%d", g_dump_marker_every);
-      }
-      /* ADR-0069: the deliberate yield.  `sched_yield_us` microseconds of
-       * sceKernelDelayThread once per `sched_yield_frames` frames, so the CPU
-       * the dump-marker stat used to hand the WLAN threads by accident can be
-       * handed to them on purpose, at a size we picked.  Both default off. */
-      {
-         int yu = (int)HARNESS_INT("sched_yield_us", 0);
-         int yf = (int)HARNESS_INT("sched_yield_frames", 60);
-         if (yu < 0) yu = 0;
-         if (yf < 1) yf = 1;
-         g_yield_us    = yu;
-         g_yield_every = yf;
-         if (yu)
-            fe_evt("sched_yield us=%d every=%d", g_yield_us, g_yield_every);
-      }
-      /* ADR-0064: the preemption census.  Off unless asked for. */
-      g_pe_on = (int)HARNESS_INT("preempt_prof", 0) ? 1 : 0;
-      if (g_pe_on)
-         fe_evt("preempt_prof on thid=0x%08X", (unsigned)g_emu_thid);
-      /* ADR-0066 measurement: PRICE the negative ms0: lookup that used to run
-       * once a second inside the timed frame region.  SPIKE-FINDINGS §10.6
-       * recorded "I did not price sceIoGetstat on this device" as an
-       * unestablished claim; four samples at boot cost nothing and settle it.
-       * A negative lookup is a full directory resolution, so this is an
-       * upper-bound-ish figure for an idle stick — during a session the log
-       * writer is also queued on the same device. */
-      {
-         int k;
-         for (k = 0; k < 4; k++)
-         {
-            uint64_t t0 = net_now_us();
-            int hit = file_exists(DUMP_MARKER);
-   FE_EVT_ONLY(t0); FE_EVT_ONLY(hit);
-            fe_evt("msstat n=%d us=%u hit=%d",
-                   k, (unsigned)(net_now_us() - t0), hit);
-         }
-      }
-      /* ADR-0065: the protected window.  `base` is whatever the emulation
-       * thread's STANDING priority ends up being, so the window degrades to
-       * exactly today's behaviour when it is closed. */
-      {
-         int bu = (int)HARNESS_INT("emu_prio_boost_us",
-                                      PLAY_BOOST_US);
-         int bp = (int)HARNESS_INT("emu_prio_boost", 0x29);
-         g_boost_base = ep ? ep : 0x20;
-         if (bp < 0x08) bp = 0x08;
-         if (bp > 0x77) bp = 0x77;
-         g_boost_prio = bp;
-         if (bu < 0)     bu = 0;
-         if (bu > 15000) bu = 15000;   /* must never span a whole frame */
-         g_boost_us = bu;
-         emu_boost_start();
-      }
    }
    /* ADR-0062d: STOP THE CLIENT SPINNING ON THE RADIO.
     *
@@ -1160,10 +1066,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * inert until a run asks for it.  34952 (1/8 frame) matches the client
     * knob's cadence and is the arm to try first. */
    {
-      int dd = (int)HARNESS_INT("rfu_disc_defer", 0);
-      rfu_set_disc_defer(dd ? 1u : 0u);
-      if (dd)
-         fe_evt("rfu_disc_defer on");
       /* ADR-0079: the exit-echo state assist.  Default PLAY_EXIT_ASSIST — 1 in
        * the playable build (nonexistent HARNESS_INI -> default), 0 for harness.
        * Was hardcoded 0, which silently left the PLAYABLE build without the
@@ -1246,16 +1148,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
          adhoc_transport_set_blackout(bo, be);
          fe_evt("net_blackout ms=%d every_ms=%d", bo, be);
       }
-   }
-
-   /* Causation test for the exit-Union-Room fatal screen (phase5j).  See
-    * netpacket_host.h: swallowing the parent's RFU DISCONNECT notice pins
-    * the child's emulated adapter in RFU_STATE_CLIENT, which is the state
-    * the field logs imply and which rfu.c has no other way out of. */
-   {
-      int dd = (int)HARNESS_INT("rfu_drop_disconnect", 0);
-      if (dd)
-         fe_np_debug_drop_rfu_disconnect(dd);
    }
 
 #if defined(GPSP_PERF_RIG) && \
