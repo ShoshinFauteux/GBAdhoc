@@ -7,7 +7,6 @@ build.sh LAYOUT_PIN=1
 build.sh MGIFT=1
 build.sh ONLINE=1
 build.sh REWIND=1
-build.sh RFU_SCHED=0
 core BIOS_BOUND_FIX=1
 core DISPATCH_CACHE=1
 core DMA_SMC_FLUSH=1

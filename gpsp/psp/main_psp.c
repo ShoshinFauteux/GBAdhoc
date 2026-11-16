@@ -26,7 +26,7 @@
 #include <string.h>
 
 #include "fe_host.h"
-#include "../rfu_sched_api.h"   /* RFU_SCHED builds only */
+#include "../rfu_sched_api.h"
 #include "fe_linkprof.h"
 #include "fe_evt.h"
 #include <psprtc.h>
@@ -577,10 +577,8 @@ int main(int argc, char *argv[])
 
       FE_LP_SET(FELP_L_NETF);
       net_frame();
-#ifdef RFU_SCHED
       if (rfu_sched_d)
          rfu_sched_pause(ui_active());   /* the partner waits while our menu is open */
-#endif
       FE_LP_SET(FELP_L_GBLS);
       if (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable || g_gba_cable_ok)
       {
@@ -1457,12 +1455,10 @@ int main(int argc, char *argv[])
          }
          g_blit_suppress = 0;
       }
-#ifdef RFU_SCHED
       else if (!fe_host_rfu_gate())
       {
          /* scheduled ticks: the partner's tick is still missing; no frame */
       }
-#endif
       else
       {
          FE_LP_SET(FELP_L_AP);

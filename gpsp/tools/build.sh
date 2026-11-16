@@ -249,17 +249,20 @@ MGIFT="${MGIFT:-1}"
 case "$MGIFT" in 0|1) ;; *) echo "FAIL: MGIFT must be 0 or 1"; exit 2 ;; esac
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS MGIFT=$MGIFT"
 
-# RFU_SCHED (default 0): scheduled ticks for the emulated Wireless Adapter
-# (rfu_sched.h, docs/RFU-COUPLING.md).  Both makes need it: the core sends and
-# delivers by tick, the frontend waits for a missing one.  A console built with
-# it refuses an adapter session with one built without (ND_FEAT_RFU_SCHED).
-RFU_SCHED="${RFU_SCHED:-0}"
-case "$RFU_SCHED" in 0|1) ;; *) echo "FAIL: RFU_SCHED must be 0 or 1"; exit 2 ;; esac
-if [ "$RFU_SCHED" = 1 ]; then
-  CORE_FLAGS="$CORE_FLAGS RFU_SCHED=1"
-  PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS RFU_SCHED=1"
-  [ -n "${GPSP_EBOOT_TITLE:-}" ] || [ "$KIND" = release ] || TITLE="$TITLE TICKS"
-fi
+# Scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
+# docs/RFU-COUPLING.md) are in every build since C-4: there is no switch.
+# RFU_SCHED=1 is accepted and does nothing, so the kit recipes
+# (builds/b5rc-out, build_and_hash.sh) still reproduce; any other value is
+# refused rather than silently building ticks anyway.  RFU_SCHED=1 still adds
+# the " TICKS" title suffix on non-release kinds, exactly as before, so every
+# recipe's EBOOT stays what it was (the kit lab recipe passes RFU_SCHED only in
+# CORE_EXTRA/PSP_EXTRA and is titled without it).  Dropping the suffix later is
+# a PARAM.SFO-only change.
+case "${RFU_SCHED-}" in
+  "") ;;
+  1) [ -n "${GPSP_EBOOT_TITLE:-}" ] || [ "$KIND" = release ] || TITLE="$TITLE TICKS" ;;
+  *) echo "FAIL: RFU_SCHED=${RFU_SCHED}: adapter ticks are unconditional (C-4); unset it"; exit 2 ;;
+esac
 
 # INPUT_FRESH (default 1): the low-latency pad re-peek (`input_fresh`,
 # docs/LOW-LATENCY.md) on by default in the frontend, in every profile
@@ -434,7 +437,7 @@ if command -v cygpath >/dev/null; then LL_PY=$(cygpath -w "$LL_PY"); LL_LOCK=$(c
 PYL=python3; command -v python3 >/dev/null 2>&1 || PYL=python
 LL_STRICT_OUT=$("$PYL" "$LL_PY" strict \
   "PSP_EXTRA=${PSP_EXTRA:-}" "CORE_EXTRA=${CORE_EXTRA:-}" "FE_EXTRA=${FE_EXTRA:-}" \
-  "ME_LOWLAT=${ME_LOWLAT:-}" "RFU_SCHED=$RFU_SCHED" "GBA_LINK=$GBA_LINK" \
+  "ME_LOWLAT=${ME_LOWLAT:-}" "GBA_LINK=$GBA_LINK" \
   "REWIND=$REWIND" "ONLINE=$ONLINE" "CHEATS=${CHEATS:-1}" "INPUT_FRESH=${INPUT_FRESH:-}" \
   "MGIFT=${MGIFT:-}" "LAYOUT_PIN=$LAYOUT_PIN" \
   "GBALINK_LEAN_OUTLINE=${GBALINK_LEAN_OUTLINE:-}") ||

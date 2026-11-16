@@ -778,7 +778,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * see the field's note.  Both consoles must carry the same value. */
    if (!g_pcfg.net_session_fps_force)
       g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
-#ifdef RFU_SCHED
    /* Scheduled ticks (rfu_sched.h) remove ADR-0073's reason for 57.00: a host
     * can no longer outrun its client and fill Emerald's receive queue, because
     * neither console starts a frame without the other's tick for it.  The pair
@@ -788,7 +787,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    if (!g_pcfg.net_session_fps_force && g_pcfg.profile != PCFG_PROFILE_COMPAT &&
        HARNESS_INT("rfu_sched", RFU_SCHED_D_DEFAULT) > 0)
       g_pcfg.net_session_fps_x100 = PACE_NOMINAL_X100;
-#endif
    g_pcfg.net_session_fps_snap = 0;
    if (!g_perf_rig) g_pcfg.core_phase = 0;
    if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3) g_pcfg.core_phase = 0;
@@ -865,14 +863,12 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       int sv = (int)HARNESS_INT("rfu_supersede", 1);
       rfu_set_supersede(sv ? 1u : 0u);
       fe_evt("rfu_supersede on=%d", sv ? 1 : 0);
-#ifdef RFU_SCHED
-      /* Scheduled ticks (rfu_sched.h): D = 2 in an RFU_SCHED build; a harness
+      /* Scheduled ticks (rfu_sched.h): D = 2 by default; a harness
        * may pick another D, or 0 for this run's A/B arm.  Last, because ticks
        * retire the rules above. */
       rfu_sched_config((unsigned)HARNESS_INT("rfu_sched",
                                                 RFU_SCHED_D_DEFAULT));
       fe_evt("rfu_sched d=%u", rfu_sched_d);
-#endif
    }
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in

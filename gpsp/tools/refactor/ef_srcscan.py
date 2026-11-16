@@ -38,13 +38,13 @@ LAB = dict(GPSP_PLAYABLE=1, GPSP_KEEP_TELEMETRY=1, GPSP_PERF_RIG=1,
 # MGIFT ?= 1 -> -DGBADHOC_MGIFT), so every built flavour defines it; without it the
 # 13 #ifdef GBADHOC_MGIFT blocks of main_psp.c read as compiled out.  A tree whose
 # Makefile has no MGIFT switch (01067e74) tests no GBADHOC_MGIFT either, so its
-# census is unchanged.  release-stable is the stable line (RFU_SCHED=0); harness is
-# the lab set without LAB_HARNESS (tools/build.sh harness).
+# census is unchanged.  Harness is the lab set without LAB_HARNESS (tools/build.sh
+# harness).  RFU_SCHED stays defined for trees from before code-health C-4 (which
+# made adapter ticks unconditional and removed the release-stable flavour).
 RELEASE['GBADHOC_MGIFT'] = 1
 LAB['GBADHOC_MGIFT'] = 1
-RELEASE_STABLE = {k: v for k, v in RELEASE.items() if k != 'RFU_SCHED'}
 HARNESS = {k: v for k, v in LAB.items() if k != 'LAB_HARNESS'}
-CONFIGS = {'release': RELEASE, 'release-stable': RELEASE_STABLE, 'lab': LAB, 'harness': HARNESS}
+CONFIGS = {'release': RELEASE, 'lab': LAB, 'harness': HARNESS}
 
 KEYWORDS = {"if", "while", "for", "switch", "return", "sizeof", "defined",
             "__attribute__", "__asm__", "asm", "typeof", "__typeof__"}

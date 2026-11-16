@@ -28,14 +28,10 @@ if [ -n "${GPSP_BUILD_VERSION:-}" ] && [ "${RELEASE_ALLOW_VERSION_PIN:-0}" != 1 
 fi
 [ -z "$(git status --porcelain -- . 2>/dev/null)" ] || die "the tree is not clean: git status"
 
-# THE VERSION SAYS WHICH ADAPTER PROTOCOL.  A beta or nightly (X.Y.Z-beta.N,
-# X.Y.Z-nightly...) ships scheduled ticks (RFU_SCHED=1, docs/RFU-COUPLING.md;
-# owner 2026-11-03: beta players link with beta builds only).  A plain X.Y.Z
-# is a stable release and builds without them, so it still links with 4.5.0.
-case "$VERSION" in
-  *-beta*|*-nightly*) export RFU_SCHED=1; echo "release: $VERSION is a beta: RFU_SCHED=1 (adapter ticks)" ;;
-  *) export RFU_SCHED=0 ;;
-esac
+# EVERY RELEASE SHIPS SCHEDULED ADAPTER TICKS (docs/RFU-COUPLING.md).  Since
+# C-4 they are compiled in unconditionally: no version branch, no switch.  A
+# stray RFU_SCHED in the environment is still refused above, so no release can
+# look as if it had chosen a protocol.
 
 OUT=dist/release-build
 "$PY" tools/check_flags.py --compile || die "flags drifted"

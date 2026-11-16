@@ -10,10 +10,9 @@
 #   flavours.sh --selftest                              no PSP build; see below
 #
 # Options:
-#   --flavours "release release-stable lab harness"   subset / order (default all four)
-#                       release-stable = build.sh release with RFU_SCHED=0 (a plain
-#                       X.Y.Z release, tools/release.sh); the layout lock is
-#                       reported, not enforced there, so G1 is its only byte gate
+#   --flavours "release lab harness"   subset / order (default all three).  The
+#                       fourth flavour, release-stable (RFU_SCHED=0), went with the
+#                       switch in code-health C-4: adapter ticks are in every build
 #   --against REFDIR    run the T-checks of each flavour against REFDIR/<flavour>
 #                       (refuses, exit 2, when the two sides name a different
 #                       docker image, build version or SOURCE_DATE_EPOCH)
@@ -33,9 +32,9 @@
 #   --lock FILE         re-exec under `flock FILE` (one PSP build at a time)
 #
 # Environment:
-#   RFU_SCHED           default 1: the beta line's adapter ticks, which is what
-#                       tools/release.sh sets for X.Y.Z-beta.N and what the Lab
-#                       built for beta.4.  RFU_SCHED=0 for a stable-line tree.
+#   RFU_SCHED           always 1 (any caller value is ignored): a tree from before
+#                       code-health C-4 needs it to build adapter ticks, a later
+#                       tree's build.sh accepts it as a no-op.
 #   FLAV_<NAME>_ENV     extra build.sh environment for one flavour, e.g.
 #                       FLAV_LAB_ENV="LAYOUT_PAD_BYTES=5904 PSP_EXTRA=LAYOUT_PAD_RO_BYTES=2864"
 #                       (a baseline uses none: the commit's own pads).
@@ -97,14 +96,13 @@
 #   HO  hotord_check.py --build NEW --sizes warn, and its JSON (placement +
 #       staleness) equal to REF's
 #   SS  strong_syms.py check --elf --map --flavour --golden strong_syms.golden.tsv
-#       (release-stable is held to the release rows)
 #   ST  stack_depth.py NEW.elf --su NEW/su --resolve stack_resolve.txt, and its
 #       TOTAL/unmatched lines equal to REF's
 #   CI  ci_greps.sh --src <the built export> --phase P: run at build time on the
 #       exact source built (the export is kept until then) -> ci_greps.txt
 #   G0  pp_diff.sh on psp/main_psp.c, REF's and NEW's sources (git archive of both
 #       sourceCommits), REF's compile lines, per flavour
-#   G0var pp_sweep.sh: every build.sh switch alone and in pairs, on all four
+#   G0var pp_sweep.sh: every build.sh switch alone and in pairs, on all three
 #       flavours, over every file the step changes (a pruned arm is a FAIL)
 #   LL  layoutLock release:ok / lab:ok on both sides (also a refusal, below)
 #   CF  tools/check_flags.py (this tool tree's copy) rc 0 on both exports, same output
@@ -128,7 +126,7 @@
 # have read are listed in "callerEnvDropped".
 #
 # --against REFUSES (exit 2), before any check, unless on both sides and in every
-# one of the four flavours: hermetic is yes; dockerId, buildVersion,
+# one of the three flavours: hermetic is yes; dockerId, buildVersion,
 # sourceDateEpoch, rfuSched, buildEnv (less GPSP_BUILD_COMMIT/TREE) and extraEnv
 # are equal; workingTreeClean is true; layoutLock is release:ok on release and
 # lab:ok on lab; and the reference is this build's commit, its first parent, a
@@ -234,11 +232,7 @@ EOF
   chmod +x "$dir/docker"
 }
 
-profile_of() { case "$1" in release|lab|harness) echo "$1" ;; release-stable) echo release ;; *) return 1 ;; esac; }
-# the RFU_SCHED a flavour builds with: release-stable is the stable line (0)
-rfu_of() { case "$1" in release-stable) echo 0 ;; *) echo "${RFU_SCHED:-1}" ;; esac; }
-# the strong_syms golden rows a flavour is held to
-ss_flavour_of() { case "$1" in release-stable) echo release ;; *) echo "$1" ;; esac; }
+profile_of() { case "$1" in release|lab|harness) echo "$1" ;; *) return 1 ;; esac; }
 DOCKER_IMAGE="${DOCKER_IMAGE:-pspdev/pspdev}"; export DOCKER_IMAGE
 
 selftest() { exec bash "$HERE/tests/test_flavours.sh"; }
@@ -247,11 +241,11 @@ selftest() { exec bash "$HERE/tests/test_flavours.sh"; }
 json_get() { sed -nE "s/.*\"$2\": *\"([^\"]*)\".*/\1/p" "$1" 2>/dev/null | head -1; }
 
 # ----------------------------------------------------------------- args ----
-COMMIT=""; SRC=""; OUT=""; BASELINE=0; FLAVOURS="release release-stable lab harness"
+COMMIT=""; SRC=""; OUT=""; BASELINE=0; FLAVOURS="release lab harness"
 AGAINST=""; SIDECARS=1; SDE_ON=1; KEEP_SRC=0; LOCK=""; WORK="${FLAV_WORK:-}"
 BVER=""; SDE_PIN=""; PHASE=base; CHECK_ONLY=0; REPO_ARG="${FLAV_REPO:-}"; REF_ANCESTOR=""
 SCOPE_ALLOW=(); PRUNE_ALLOW=()
-ALL_FLAVOURS="release release-stable lab harness"
+ALL_FLAVOURS="release lab harness"
 ORIG_ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -298,7 +292,7 @@ fi
 if [ -n "$AGAINST" ]; then
   # a gate that covers one flavour is no gate (adversarial review 2026-11-07)
   [ "$(echo $FLAVOURS | tr ' ' '\n' | sort | tr '\n' ' ')" = "$(echo $ALL_FLAVOURS | tr ' ' '\n' | sort | tr '\n' ' ')" ] ||
-    die 2 "--against needs all four flavours ($ALL_FLAVOURS), not '$FLAVOURS'"
+    die 2 "--against needs all three flavours ($ALL_FLAVOURS), not '$FLAVOURS'"
 fi
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 [ -z "$AGAINST" ] || AGAINST=$(cd "$AGAINST" && pwd) || die 2 "--against: no such dir"
@@ -351,7 +345,7 @@ fi
 [ -n "$PARENT" ] || PARENT=none
 [ -z "$SDE_PIN" ] || SDE="$SDE_PIN"
 [ "$SDE_ON" = 1 ] || SDE=none
-export RFU_SCHED="${RFU_SCHED:-1}"
+export RFU_SCHED=1   # see the header: a no-op for a C-4 tree
 # the version string build.sh bakes in (libretro.c's "gpSP v1.1.0-<V>"): pinned,
 # or what build.sh would take itself (the 7-char commit hash)
 BUILD_VERSION="${BVER:-${REV:0:7}}"
@@ -360,7 +354,7 @@ IMG_DIGEST=$(docker image inspect --format '{{index .RepoDigests 0}}' "$DOCKER_I
 IMG_ID=$(docker image inspect --format '{{.Id}}' "$DOCKER_IMAGE" 2>/dev/null | tr -d '\r')
 [ -n "$IMG_ID" ] || die 1 "docker image $DOCKER_IMAGE not found locally (flavours.sh never pulls)"
 PSPGCC=$(docker run --rm "$DOCKER_IMAGE" psp-gcc --version 2>/dev/null | head -1 | tr -d '\r"')
-note "source $REV (tree $TREE) clean=$CLEAN  SOURCE_DATE_EPOCH=$SDE  RFU_SCHED=$RFU_SCHED (release-stable: 0)"
+note "source $REV (tree $TREE) clean=$CLEAN  SOURCE_DATE_EPOCH=$SDE  RFU_SCHED=$RFU_SCHED"
 note "build version $BUILD_VERSION$([ -n "$BVER" ] && echo ' (pinned)')  image $DOCKER_IMAGE  id ${IMG_ID:0:19}  $PSPGCC"
 note "flavours: $FLAVOURS  ->  $OUT"
 
@@ -400,7 +394,7 @@ else
 fi
 
 for FL in $FLAVOURS; do
-  FD="$OUT/$FL"; PROF=$(profile_of "$FL"); FRFU=$(rfu_of "$FL")
+  FD="$OUT/$FL"; PROF=$(profile_of "$FL"); FRFU=$RFU_SCHED
   # a flavour dir is always rebuilt from empty; stale files would mix runs
   rm -rf "$FD" 2>/dev/null; [ ! -e "$FD" ] || die 1 "cannot clear $FD (root-owned files from an older run? remove them as root)"
   mkdir -p "$FD/logs"
@@ -527,9 +521,9 @@ if [ -n "$AGAINST" ]; then
   # comparison of the source: refuse it (exit 2) before any check runs.
   # THE CONTRACT (adversarial review 2026-11-07): also the build environment, a
   # clean tree, the layout lock, the flavour set and the ancestry (see the header).
-  [ "${#RESULTS[@]}" = 4 ] || die 2 "--against: this build has flavours '${RESULTS[*]}', all four are required ($ALL_FLAVOURS)"
+  [ "${#RESULTS[@]}" = 3 ] || die 2 "--against: this build has flavours '${RESULTS[*]}', all three are required ($ALL_FLAVOURS)"
   for FL in $ALL_FLAVOURS; do
-    [ -f "$AGAINST/$FL/flavour.json" ] || die 2 "--against: no $AGAINST/$FL/flavour.json (the reference lacks $FL; all four are required)"
+    [ -f "$AGAINST/$FL/flavour.json" ] || die 2 "--against: no $AGAINST/$FL/flavour.json (the reference lacks $FL; all three are required)"
   done
   LOCK_AT=()
   lock_at() {     # yes / no: the commit carries gpsp/tools/layout/layout.lock
@@ -596,7 +590,7 @@ if [ -n "$AGAINST" ]; then
     else ANCESTRY="reference = named ancestor ${REF_COMMIT:0:10}, $(G "$REPO" rev-list --count "$REF_COMMIT..$NEW_COMMIT") commit(s) before ${NEW_COMMIT:0:10} (--ref-ancestor)"; fi
   else die 2 "--against: the reference ${REF_COMMIT:0:10} is not this build's commit, its first parent (${NEW_PARENT:0:10}) or a commit with its gpsp/ tree: nothing ties the step to its parent (an ancestor is accepted only when named: --ref-ancestor REV)"
   fi
-  note "--against contract ok ($ANCESTRY; env, lock, clean tree, four flavours)"
+  note "--against contract ok ($ANCESTRY; env, lock, clean tree, three flavours)"
   : > "$OUT/checks.txt"
   echo "-- contract: $ANCESTRY; buildEnv '$(benv_cmp "$OUT/release/flavour.json")'" >> "$OUT/checks.txt"
   chk() {   # chk <flavour|-> <gate> <label> <cmd...>
@@ -649,7 +643,7 @@ if [ -n "$AGAINST" ]; then
     if need strong_syms.py; then
       if [ -f "$N/gpsp_adhoc.map" ]; then
         chk "$FL" SS "$FL strong_syms check" "$PY" "$HERE/strong_syms.py" check --elf "$N/gpsp_adhoc.elf" --map "$N/gpsp_adhoc.map" \
-          --flavour "$(ss_flavour_of "$FL")" --golden "$HERE/strong_syms.golden.tsv"
+          --flavour "$FL" --golden "$HERE/strong_syms.golden.tsv"
       else failchk "$FL" SS "no gpsp_adhoc.map (built with --no-sidecars)"; fi
     else failchk "$FL" SS "strong_syms.py absent"; fi
     if need stack_depth.py; then

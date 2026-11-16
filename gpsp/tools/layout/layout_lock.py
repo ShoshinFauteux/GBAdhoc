@@ -23,8 +23,8 @@ it is tested: which arms must match the lock, and what a check's exit code
 means for the build and for the manifest's layoutLock (make_release.sh ships
 only `release:ok`).
 
-FLAVOUR is a [section] of the lock: `release` (tools/build.sh release,
-RFU_SCHED=1), `lab` (tools/build.sh lab), or a rig profile's (pins only).
+FLAVOUR is a [section] of the lock: `release` (tools/build.sh release),
+`lab` (tools/build.sh lab), or a rig profile's (pins only).
 
 Lock lines (one per line, `#` comments):
     at   SYM[#N] 0xMOD     the symbol's address mod 8192
@@ -372,7 +372,7 @@ def cmd_regen(path, lines, lock, flavour, spend, free, move):
 # The switches a strict arm must have at their release values.  ME_LOWLAT=2 is
 # the source default (main_psp.c PLAY_ME_LOWLAT), so unset/empty/2 is the
 # same program; INPUT_FRESH and MGIFT default to 1 (unset = the default).
-STRICT_ON = ("RFU_SCHED", "GBA_LINK", "REWIND", "ONLINE", "CHEATS", "LAYOUT_PIN")
+STRICT_ON = ("GBA_LINK", "REWIND", "ONLINE", "CHEATS", "LAYOUT_PIN")
 STRICT_DEFAULT_ON = ("INPUT_FRESH", "MGIFT")
 STRICT_EMPTY = ("PSP_EXTRA", "CORE_EXTRA", "FE_EXTRA")
 

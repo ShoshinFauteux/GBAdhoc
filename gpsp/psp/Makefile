@@ -274,9 +274,6 @@ ifeq ($(REWIND),1)
 FE_TAIL_OBJS += ../frontend-common/fe_rewind.o ../frontend-common/fe_rewind_pack.o
 CFLAGS += -DREWIND
 endif
-# RFU_SCHED=1: scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
-# docs/RFU-COUPLING.md).  Off by default.  The core must be built with the
-# same value (root make; tools/build.sh passes both).
 # ONLINE (default 1; ONLINE=0 compiles out every line of it): EXPERIMENTAL
 # online play (docs/ONLINE-TUNNEL.md), the link over the GBR1 relay /
 # hole-punched direct path on infrastructure Wi-Fi.  Compiled in, OFF for the
@@ -303,10 +300,6 @@ MGIFT_OBJS = mgift_cart.o mgift_payload.o
 CFLAGS += -DGBADHOC_MGIFT
 endif
 MGNET_OBJS = $(if $(filter 1,$(MGIFT) $(ONLINE)),mgift_net.o)
-RFU_SCHED ?= 0
-ifeq ($(RFU_SCHED),1)
-CFLAGS += -DRFU_SCHED
-endif
 # LAB_HARNESS=1: the GBAdhoc Lab task runner (psp/lab_harness.c; GBAdhoc-Lab
 # docs/PROTOCOL.md).  Frontend only.  Off by default; without it lab_harness.c
 # is not compiled and main_psp.c's LAB_HOOK()s expand to nothing.

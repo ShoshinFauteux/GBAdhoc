@@ -589,9 +589,7 @@ int main(int argc, char **argv)
    int scale = 2, no_pacing = 0, force_sram_write = 0, force_ff = 0;
    int rtc_wall = 0;
    int rfu_play = 0;    /* --rfu-play: the player build's adapter settings */
-#ifdef RFU_SCHED
    unsigned rfu_sched_arg = 0;   /* --rfu-sched D */
-#endif
    int rfu_pace = -1;   /* -1 = leave default; >=0 = rfu_set_frame_pace(n) */
    int exit_code = 0;
    const char *exit_reason = NULL;
@@ -846,10 +844,8 @@ int main(int argc, char **argv)
       }
       else if (!strcmp(argv[i], "--rfu-play"))
          rfu_play = 1;
-#ifdef RFU_SCHED
       else if (!strcmp(argv[i], "--rfu-sched") && i + 1 < argc)
          rfu_sched_arg = (unsigned)strtoul(argv[++i], NULL, 0);
-#endif
       else if (argv[i][0] != '-' && !rom_path)
          rom_path = argv[i];
       else
@@ -958,10 +954,8 @@ int main(int argc, char **argv)
       rfu_set_idle_poll_cycles(34952);
       fe_evt("rfu_play pace=1 hold=24 shed=2 hold_on=1 grace=120 idle=34952");
    }
-#ifdef RFU_SCHED
    rfu_sched_config(rfu_sched_arg);   /* after the rules: ticks retire them */
    fe_evt("rfu_sched d=%u", rfu_sched_d);
-#endif
    if (rfu_pace >= 0)
    {
       rfu_set_frame_pace((unsigned)rfu_pace);
@@ -1062,10 +1056,8 @@ int main(int argc, char **argv)
              * here as it does on the PSP. */
             uint64_t w0 = net_now_us();
             fe_np_pump();  /* deliver inbound packets between retro_run calls */
-#ifdef RFU_SCHED
             if (!fe_host_rfu_gate())
                goto rfu_no_frame;   /* the partner's tick is still missing */
-#endif
             fe_autopilot_frame();
             if (rtc_wall)
             {
@@ -1212,9 +1204,7 @@ int main(int argc, char **argv)
 #else
             fe_host_run_frame();
 #endif
-#ifdef RFU_SCHED
 rfu_no_frame:
-#endif
             fe_np_prof_frame((uint32_t)(net_now_us() - w0));
          }
          rfu_trace_drain();

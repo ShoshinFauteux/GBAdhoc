@@ -264,7 +264,7 @@ def pin_tests():
               "pins: --spend-page moves every pin at a higher address, whatever its lock line")
 
 
-REL = ["RFU_SCHED=1", "GBA_LINK=1", "REWIND=1", "ONLINE=1", "CHEATS=1",
+REL = ["GBA_LINK=1", "REWIND=1", "ONLINE=1", "CHEATS=1",
        "LAYOUT_PIN=1", "INPUT_FRESH=", "MGIFT=", "ME_LOWLAT=",
        "PSP_EXTRA=", "CORE_EXTRA=", "FE_EXTRA=", "GBALINK_LEAN_OUTLINE="]
 
@@ -282,7 +282,7 @@ def policy_tests():
     for v, want in (("", "1"), ("2", "1"), ("0", "0"), ("1", "0")):
         rc, out = strict_of("ME_LOWLAT=" + v)
         check(out.split(" ")[0] == want, "strict: ME_LOWLAT=%r -> %s" % (v, want))
-    for over in ("RFU_SCHED=0", "RFU_SCHED=", "GBA_LINK=0", "REWIND=0", "ONLINE=0",
+    for over in ("GBA_LINK=0", "REWIND=0", "ONLINE=0",
                  "CHEATS=0", "LAYOUT_PIN=0", "INPUT_FRESH=0", "MGIFT=0",
                  "PSP_EXTRA=FOO=1", "CORE_EXTRA=X=0",
                  "FE_EXTRA=-DX", "GBALINK_LEAN_OUTLINE=1"):

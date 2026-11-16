@@ -1,6 +1,6 @@
 /* rfu_sched.h -- scheduled ticks: couple two consoles over the emulated
- * adapter (docs/RFU-COUPLING.md).  Included once by rfu.c in -DRFU_SCHED builds
- * (tools/build.sh RFU_SCHED=1, off by default), off unless rfu_sched_d is set.
+ * adapter (docs/RFU-COUPLING.md).  Included once by rfu.c in every build
+ * (always compiled in since C-4), off unless rfu_sched_d is set.
  * The frontend side is rfu_sched_api.h; netdrv refuses a partner whose build
  * differs (ND_FEAT_RFU_SCHED), since the two wire formats cannot mix.
  *

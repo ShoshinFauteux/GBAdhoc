@@ -439,13 +439,12 @@ def discover_pads(b, src, flavour, lock_path=None):
 
 def lock_check(b, src, flavour, lock_path=None):
     """tools/layout/layout_lock.py check on this build (PLAN-P-beta5 §3 P0a T10).  The
-    lock section is the flavour's (release-stable is checked against [release]); a
-    release / lab build with RFU_SCHED=1 is enforced, release-stable is reported only
+    lock section is the flavour's; a release / lab build is enforced
     (PLAN-P-beta5 §0-4, review-2 byte-identity), harness has no section.
     -> dict(section, enforced, rc, out)"""
     lock_path = lock_path or os.path.join(src, 'tools', 'layout', 'layout.lock')
     ll = os.path.join(src, 'tools', 'layout', 'layout_lock.py')
-    sec = {'release': 'release', 'release-stable': 'release', 'lab': 'lab'}.get(flavour)
+    sec = {'release': 'release', 'lab': 'lab'}.get(flavour)
     res = {'section': sec, 'enforced': False, 'rc': None, 'out': '', 'lock': lock_path}
     if sec is None:
         res['out'] = 'no layout.lock section for flavour %s: not checked' % flavour

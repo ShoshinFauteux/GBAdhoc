@@ -15,7 +15,7 @@
 #   M5 an unknown flavour is a usage error (exit 2)
 #   M10 hermetic: a caller variable (ME_LOWLAT=0) never reaches build.sh, and is recorded
 #   M11 the --against contract: clean tree, lock, extraEnv, buildEnv, hermetic, ancestry,
-#       all four flavours: each clause refused with exit 2
+#       all three flavours: each clause refused with exit 2
 #   (P-review 2026-11-08)
 #   C6/M12 F4 --ref-ancestor: an ancestor reference passes the contract only when named, and
 #       only if the name is the reference's commit and an ancestor (M12a-d refused, exit 2)
@@ -88,8 +88,8 @@ fi
 V="${GPSP_BUILD_VERSION:-${GPSP_BUILD_COMMIT:0:7}}"
 { printf 'ELF '; tr '|' '\n' < "$FAKE_STAMP"; printf '\n'; cat marker.txt; printf 'gpSP v1.1.0-%s rfu=%s lowlat=%s\n' "$V" "${RFU_SCHED:-0}" "${ME_LOWLAT:-unset}"; } > psp/gpsp_adhoc.elf
 cp psp/gpsp_adhoc.elf psp/EBOOT.PBP
-if [ "$1" = release ] && [ "${RFU_SCHED:-0}" = 1 ]; then echo "[build] layout  : layout.lock [release] OK"; LL=release:ok
-elif [ "$1" = release ]; then echo "[build] layout  : variant arm, the lock is not enforced (RFU_SCHED=0)"; echo "[build] layout  : layout.lock [release] differs (variant arm: reported, not enforced)"; LL=release:variant
+case "${RFU_SCHED-}" in ""|1) ;; *) echo "FAIL: RFU_SCHED=$RFU_SCHED: adapter ticks are unconditional (C-4)"; exit 2 ;; esac
+if [ "$1" = release ]; then echo "[build] layout  : layout.lock [release] OK"; LL=release:ok
 elif [ "$1" = lab ] && [ "${LAYOUT_PIN:-1}" = 1 ]; then echo "[build] layout  : layout.lock [lab] OK"; LL=lab:ok
 else LL=none; fi
 echo "{\"profile\":\"$1\",\"dirty\":\"${GPSP_BUILD_DIRTY:-unset}\", \"layoutLock\": \"$LL\"}" > psp/build-manifest.json
@@ -133,14 +133,14 @@ expect_rc 1 "M4 failing build.sh" env FAKE_FAIL=1 bash "$F" --src "$R/gpsp" --ou
 # M5
 expect_rc 2 "M5 unknown flavour" bash "$F" --src "$R/gpsp" --out "$T/o7" --flavours "release bogus"
 
-# ---- P0a (PLAN-P-beta5 §3): pins, release-stable, --against contract ----
-# C3 release-stable = build.sh release with RFU_SCHED=0; its layout line is recorded
-expect_rc 0 "C3 release-stable builds" bash "$F" --src "$R/gpsp" --out "$T/o8" --no-sidecars --flavours "release release-stable"
-grep -q 'rfu=0' "$T/o8/release-stable/gpsp_adhoc.elf" && grep -q 'rfu=1' "$T/o8/release/gpsp_adhoc.elf" \
-  && ok "C3 release-stable built with RFU_SCHED=0, release with 1" || bad "C3 RFU_SCHED per flavour wrong"
-grep -q '"buildShProfile": "release"' "$T/o8/release-stable/flavour.json" && ok "C3 release-stable uses build.sh release" || bad "C3 profile"
-grep -q '"layout": "variant arm, the lock is not enforced (RFU_SCHED=0)' "$T/o8/release-stable/flavour.json" \
-  && ok "C3 manifest records 'layout: variant arm, the lock is not enforced (RFU_SCHED=0)'" || bad "C3 layout line not recorded"
+# ---- P0a (PLAN-P-beta5 §3): pins, --against contract ----
+# C3 release builds with RFU_SCHED=1 (a no-op for a C-4 tree, ticks for an older one);
+# release-stable (RFU_SCHED=0) went with the switch in code-health C-4
+expect_rc 0 "C3 release builds" bash "$F" --src "$R/gpsp" --out "$T/o8" --no-sidecars --flavours "release"
+grep -q 'rfu=1' "$T/o8/release/gpsp_adhoc.elf" && grep -q '"rfuSched": "1"' "$T/o8/release/flavour.json" \
+  && ok "C3 release built with RFU_SCHED=1, recorded" || bad "C3 RFU_SCHED wrong"
+expect_rc 0 "C3 a caller's RFU_SCHED=0 is not passed on" env RFU_SCHED=0 bash "$F" --src "$R/gpsp" --out "$T/o8b" --no-sidecars --flavours "release"
+expect_rc 2 "C3 release-stable is no flavour since C-4" bash "$F" --src "$R/gpsp" --out "$T/o8c" --no-sidecars --flavours "release release-stable"
 grep -q '"dockerId": "sha256:fakeid"' "$T/o8/release/flavour.json" && grep -q '"pspGcc": "psp-gcc (GCC) 15.2.0"' "$T/o8/release/flavour.json" \
   && ok "C3 image id and psp-gcc version recorded" || bad "C3 compiler identity not recorded"
 # M6 --sde pins SOURCE_DATE_EPOCH (stamp follows it), --build-version pins the version string
@@ -210,10 +210,10 @@ grep -q "extraEnv differs" "$T/last.log" && ok "M11c names extraEnv" || bad "M11
 doct benv release 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
 expect_rc 2 "M11d reference with another buildEnv (ME_LOWLAT=0 passed)" bash "$F" --check-only --out "$T/o10" --against "$T/d_benv"
 grep -q "buildEnv differs" "$T/last.log" && ok "M11d names buildEnv" || bad "M11d wrong refusal"
-doct herm release-stable 's/"hermetic": "yes"/"hermetic": "no"/'
+doct herm harness 's/"hermetic": "yes"/"hermetic": "no"/'
 expect_rc 2 "M11e a non-hermetic reference" bash "$F" --check-only --out "$T/o10" --against "$T/d_herm"
 rm -rf "$T/d_anc"; cp -r "$T/o9" "$T/d_anc"
-for f in release release-stable lab harness; do sed -i 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/; s/"gpspTree": "[0-9a-f]*"/"gpspTree": "1111111111111111111111111111111111111111"/' "$T/d_anc/$f/flavour.json"; done
+for f in release lab harness; do sed -i 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/; s/"gpspTree": "[0-9a-f]*"/"gpspTree": "1111111111111111111111111111111111111111"/' "$T/d_anc/$f/flavour.json"; done
 expect_rc 2 "M11f a reference that is neither the commit, its parent nor its gpsp/ tree" bash "$F" --check-only --out "$T/o10" --against "$T/d_anc"
 grep -q "nothing ties the step to its parent" "$T/last.log" && ok "M11f names the ancestry" || bad "M11f wrong refusal"
 rm -rf "$T/d_miss"; cp -r "$T/o9" "$T/d_miss"; rm -rf "$T/d_miss/harness"
@@ -242,7 +242,7 @@ expect_rc 2 "M12b --ref-ancestor naming another commit than the reference's" bas
 grep -q "is not the reference's commit" "$T/last.log" && ok "M12b names the mismatch" || bad "M12b wrong refusal"
 SIDE_C=$(cd "$R" && git -c user.email=t@t -c user.name=t commit-tree "$BASE_C^{tree}" -p "$BASE_C" -m side)
 rm -rf "$T/d_side"; cp -r "$T/o9" "$T/d_side"
-for f in release release-stable lab harness; do sed -i "s/\"sourceCommit\": \"[0-9a-f]*\"/\"sourceCommit\": \"$SIDE_C\"/" "$T/d_side/$f/flavour.json"; done
+for f in release lab harness; do sed -i "s/\"sourceCommit\": \"[0-9a-f]*\"/\"sourceCommit\": \"$SIDE_C\"/" "$T/d_side/$f/flavour.json"; done
 expect_rc 2 "M12c --ref-ancestor naming a side commit that is not an ancestor" bash "$F" --check-only --out "$T/o15" --against "$T/d_side" --ref-ancestor "$SIDE_C"
 grep -q "is not an ancestor of this build" "$T/last.log" && ok "M12c names it" || bad "M12c wrong refusal"
 expect_rc 2 "M12d --ref-ancestor without --against" bash "$F" --src "$R/gpsp" --out "$T/o16" --no-sidecars --ref-ancestor "$BASE_C"

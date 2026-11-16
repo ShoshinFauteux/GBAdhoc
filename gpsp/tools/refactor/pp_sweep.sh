@@ -6,7 +6,7 @@
 #               [--allow-prune NAME]... [--arms "A B"] [--flavours "..."] [--list]
 #
 # Arms are GENERATED from the tree's tools/build.sh (every switch alone and every pair,
-# on release, release-stable, lab and harness), their compile lines DERIVED by running
+# on release, lab and harness), their compile lines DERIVED by running
 # build.sh dry + `make -n` (and checked against RUN_DIR's logs), over every file the
 # step changes.  Exit 0 identical, 1 different, 2 a skipped arm/flavour/file or an
 # error (escape: --allow-prune NAME), 3 identical on a chosen subset (not a gate).

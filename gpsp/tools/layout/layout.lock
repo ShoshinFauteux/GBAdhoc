@@ -5,9 +5,9 @@
 # `layout_lock.py write FLAVOUR NM` after a re-pin that was checked, never to
 # make a build pass.
 #
-# [release]: tools/build.sh release with RFU_SCHED=1, recorded from the round-7
+# [release]: tools/build.sh release (adapter ticks, as every build since C-4), recorded from the round-7
 #            release ELF 2f3e3aae (9e41b91e).
-# [lab]:     tools/build.sh lab with RFU_SCHED=1, recorded from the round-7 lab
+# [lab]:     tools/build.sh lab, recorded from the round-7 lab
 #            arm C ELF 0f31d0a6 (9e41b91e) (then with the lab's own pad
 #            numbers; since code-health C3-3 its pins below carry them).
 # The B-region, hash-table and JIT-base lines were added in round 9 and

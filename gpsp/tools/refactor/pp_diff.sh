@@ -20,7 +20,7 @@
 #             preprocessed with the SAME line, so G0 isolates the source change.
 #             For a tree whose Makefile/flags differ, point --logs at a build of
 #             that tree.
-# --flavours  default: every one of "release release-stable lab harness" in --logs
+# --flavours  default: every one of "release lab harness" in --logs
 # --extra-defs "-UX -DY=1 ..."  appended to every compile line AFTER its own -D/-U
 #             (so they override): one variant arm of the -E sweep (pp_sweep.sh)
 # --file F    default psp/main_psp.c (object = basename .o)
@@ -85,7 +85,7 @@ fi
 LOGS=$(topath "$LOGS")
 [ -d "$LOGS" ] || { echo "pp_diff: --logs $LOGS: no such dir" >&2; exit 2; }
 if [ -z "$FLAVOURS" ]; then
-  for fl in release release-stable lab harness; do [ -f "$LOGS/$fl/logs/.build-eboot.log" ] && FLAVOURS="$FLAVOURS $fl"; done
+  for fl in release lab harness; do [ -f "$LOGS/$fl/logs/.build-eboot.log" ] && FLAVOURS="$FLAVOURS $fl"; done
   FLAVOURS=${FLAVOURS# }
   [ -n "$FLAVOURS" ] || { echo "pp_diff: no <flavour>/logs/.build-eboot.log under $LOGS" >&2; exit 2; }
 fi

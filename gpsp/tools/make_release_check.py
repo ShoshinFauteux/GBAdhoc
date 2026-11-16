@@ -29,11 +29,8 @@ if len(want) < 20:
     raise SystemExit("gpsp_features.h lists only %d features" % len(want))
 want |= {"GPSP_PROFILE=release", "GBA_LINK=1", "REWIND=1"}
 have = set(m.get("coreFlags", "").split())
-# RFU_SCHED=1 (scheduled adapter ticks, a beta switch) is allowed when both makes
-# had it; it changes the adapter's wire format, so the notes must say so.
-ticks = "RFU_SCHED=1" in have and "RFU_SCHED=1" in m.get("pspMakeFlags", "").split()
-if ticks:
-    want.add("RFU_SCHED=1")
+# RFU_SCHED is no switch since C-4 (adapter ticks are unconditional): a coreFlags
+# or pspMakeFlags that still names it fails as "extra" below.
 if have != want:
     raise SystemExit("coreFlags are not the release feature set: missing %s, extra %s"
                      % (sorted(want - have), sorted(have - want)))
@@ -49,8 +46,6 @@ need = {"ME_CATCH=1", "PSP_EBOOT_ICON1=assets/gbadhoc_icon1.pmf", "GBA_LINK=1", 
 need.add("ONLINE=1")
 # MGIFT=1 is baked too (tools/build.sh default, flags.lock): Mystery Gift ships.
 need.add("MGIFT=1")
-if ticks:
-    need.add("RFU_SCHED=1")
 if psp != need:
     raise SystemExit("pspMakeFlags are not the release set: missing %s, extra %s"
                      % (sorted(need - psp), sorted(psp - need)))
@@ -63,10 +58,9 @@ if (m.get("layoutPin") != 1 or not pins or pins[0] != "release" or len(pins) < 2
     raise SystemExit("layout is not the release layout: LAYOUT_PIN=%s layoutPins=%r"
                      % (m.get("layoutPin"), m.get("layoutPins")))
 # THE LOCKED LAYOUT (critique-8 MF2).  tools/build.sh enforces layout.lock only
-# for the default switch set (RFU_SCHED=1 among them); a release built any other
-# way records "release:differs" and would ship an unchecked layout.  A stable
-# RFU_SCHED=0 release re-pins and records its own lock first
-# (docs/LAYOUT-PINNING.md, "Keeping the pads").
+# for the default switch set; a release built any other way records
+# "release:differs" and would ship an unchecked layout (docs/LAYOUT-PINNING.md,
+# "Keeping the pads").
 if m.get("layoutLock") != "release:ok":
     raise SystemExit("layout.lock [release] did not pass: layoutLock=%r (docs/LAYOUT-PINNING.md)"
                      % m.get("layoutLock"))

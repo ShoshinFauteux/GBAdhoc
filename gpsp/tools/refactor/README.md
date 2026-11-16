@@ -71,8 +71,8 @@ bash ci_greps.sh --phase P                                  # CI rules
 
 All of these are also run by `flavours.sh --against`, which writes every verdict to
 `checks.txt` and GENERATES the gate line (`gate.txt`) from it. A P step's gate line is that
-file, never typed: `G0 ok rel/stb/lab/har G0var ok G1 ok rel/stb/lab/har G2 ... ST ok
-rel/stb/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
+file, never typed: `G0 ok rel/lab/har G0var ok G1 ok rel/lab/har G2 ... ST ok
+rel/lab/har LL ok rel/lab CF ok BF ok DS ok CI ok`. A gate that is missing, or that lacks
 a flavour it must cover, makes the line red (`flavours_gate.py`).
 
 ### P-tidy: the Phase P final review's tool follow-ups (2026-11-09, on b7d0cafd)
@@ -114,7 +114,7 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   it is in `flavour.json` `buildEnv`. Caller variables that build.sh would have read are listed in
   `callerEnvDropped`. With ME_LOWLAT=0 exported, the build is now the default build.
 - **The `--against` contract** (exit 2 before any check). Both sides must be hermetic and clean,
-  with all four flavours. The image, version, SDE, RFU_SCHED, buildEnv and extraEnv must be equal.
+  with all three flavours. The image, version, SDE, RFU_SCHED, buildEnv and extraEnv must be equal.
   layoutLock must be release:ok and lab:ok. The reference must be this commit, its first parent,
   or a commit with the same gpsp/ tree.
 - **New verdicts in `checks.txt`:** G0 (`pp_diff.sh` on both commits' exports, per flavour), G0var
@@ -122,13 +122,14 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   (`step_scope.sh`: the build files are byte-identical, and the diff stays inside
   `psp/main_psp.c` and `psp/fe/`; `--scope-allow GLOB` widens that and is printed in the verdict).
 - **`pp_sweep`** (`pp_sweep.py`) generates its arms from build.sh's own switch list: every value
-  alone and every pair, on all four flavours. It derives each arm's compile lines by running
+  alone and every pair, on all three flavours. It derives each arm's compile lines by running
   build.sh dry plus `make -n`, and the base lines must equal the run's logs. It sweeps every file
   the step changes, plus every TU that includes a changed header or fragment. A skipped arm,
   flavour or file exits 2; the only escape is `--allow-prune NAME`. A `--arms`/`--flavours`
   subset exits 3 (not a gate).
 - **`--runs` discovery** (`runs.py`). `det_check.py --runs`, `sect_cmp.py --runs` and
-  `strong_syms.py checkrun` find the run's flavours themselves, so release-stable is included.
+  `strong_syms.py checkrun` find the run's flavours themselves, so no flavour can be skipped
+  (older runs with a release-stable flavour are still read).
 - **`ci_greps`** reads a `*.inc.c` fragment as part of its includer, through a logical view that
   is the unsplit text line for line. Hits name the fragment line. KNOWN R4 rows are keyed by
   function, offending token and argument tokens. `--no-logical` is the old view, kept as a mutant.
@@ -142,7 +143,8 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
 
 ### P0a (PLAN-P-beta5 §3): what changed for the beta.5 base
 
-- `flavours.sh` builds four flavours (`release`, `release-stable` = RFU_SCHED=0, `lab`, `harness`).
+- `flavours.sh` builds three flavours (`release`, `lab`, `harness`). A fourth, `release-stable`
+  (RFU_SCHED=0), was removed with the switch in code-health C-4: adapter ticks are in every build.
   Pins: `DOCKER_IMAGE=pspdev/pspdev@sha256:...` (build.sh honours it too), `--build-version V`,
   `--sde N`; all recorded in `flavour.json` with the image id and `psp-gcc --version`.
   `--against REF` refuses (exit 2) a reference with another image id, version, SDE or RFU_SCHED,

@@ -5,8 +5,9 @@
 #
 #   p0a_b5.sh --tree GPSP_DIR --run RUN_DIR [--cutlist CUTLIST] [--out DIR] [--only a,b]
 #     GPSP_DIR  a CLEAN source tree of the commit RUN_DIR was built from (git archive)
-#     RUN_DIR   flavours.sh --baseline output of that commit (release, release-stable,
-#               lab, harness), built with the P0a flavours.sh
+#     RUN_DIR   flavours.sh --baseline output of that commit (release, lab, harness;
+#               release-stable went with RFU_SCHED in code-health C-4), built with the
+#               P0a flavours.sh
 #     CUTLIST   the cutlist describing GPSP_DIR's main_psp.c (P4 simulation; T9 owners)
 #     RUN2      (env) a second run of the same commit, for the --against case
 #     TWIN      (env) a run of a DIFFERENT commit with the same gpsp/ tree, built with
@@ -84,7 +85,7 @@ if want t10; then
   echo "== T10 layout_report pads + layout.lock"
   npad=$(grep -oE '^LAYOUT_PAD_[A-Z0-9_]*BYTES *\?=' "$TREE/psp/Makefile" | sed 's/ *?=//' | sort -u | wc -l)
   HAVE_LOCK=0; [ -f "$TREE/tools/layout/layout.lock" ] && HAVE_LOCK=1
-  for fl in release release-stable lab harness; do
+  for fl in release lab harness; do
     [ -f "$RUN/$fl/gpsp_adhoc.elf" ] || continue
     expect_rc 0 "[$fl] layout_report: pads discovered and measured, lock as the flavour requires" \
       $PY "$R/layout_report.py" "$RUN/$fl" --src "$TREE" --no-pad-check --json "$OUT/t10_$fl.json"
@@ -97,8 +98,6 @@ if want t10; then
       case $fl in
         release|lab) grep -q "^  layout lock: ok" "$OUT/t10_$fl.log" && ok "[$fl] layout_lock check $fl: ok (enforced)" \
                        || bad "[$fl] layout_lock check did not report ok" ;;
-        release-stable) grep -q "check release (reported only)" "$OUT/t10_$fl.log" && ok "[$fl] layout_lock check release: reported, not enforced" \
-                       || bad "[$fl] release-stable lock not reported as variant" ;;
         harness) grep -q "no layout.lock section for flavour harness" "$OUT/t10_$fl.log" && ok "[$fl] no lock section: not checked" \
                        || bad "[$fl] harness lock handling" ;;
       esac
@@ -145,10 +144,6 @@ if want t10; then
     [ $rc = 1 ] && grep -q "LAYOUT LOCK FAIL (\[release\]" "$OUT/last.log" \
       && ok "M-T10d [release] at main moved in a lock copy: the layout_lock check fails the report" \
       || bad "M-T10d lock mutant not caught (rc $rc)"
-    if [ -f "$RUN/release-stable/gpsp_adhoc.elf" ]; then
-      expect_rc 0 "C-T10d the same lock on release-stable is reported, not enforced" \
-        $PY "$R/layout_report.py" "$RUN/release-stable" --src "$PT" --no-pad-check
-    fi
   else echo "        (no tools/layout/layout.lock in this tree: lock not checked, M-T10d not applicable)"; fi
 fi
 
@@ -444,7 +439,7 @@ if want pp; then
   if grep -q '^#define g_mg_on 0' "$M"; then
     mkdir -p "$OUT/ppovl/psp"; sed 's/^#define g_mg_on 0\b/#define g_mg_on (0)/' "$M" > "$OUT/ppovl/psp/main_psp.c"
     cmp -s "$M" "$OUT/ppovl/psp/main_psp.c" && bad "MGIFT=0-arm mutant was not applied"
-    expect_rc 0 "MGIFT=0-arm mutant: the 4 built flavours stay G0-identical (they never see it)" bash "$R/pp_diff.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl"
+    expect_rc 0 "MGIFT=0-arm mutant: the 3 built flavours stay G0-identical (they never see it)" bash "$R/pp_diff.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl"
     sweep_mut 1 "MGIFT=0-arm mutant: the sweep catches it" "$OUT/ppovl"
     expect_rc 1 "  ... and the chosen arm alone (--arms MGIFT=0) too" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --overlay "$OUT/ppovl" --arms MGIFT=0
     expect_rc 3 "a chosen subset that is identical is PARTIAL (exit 3), never a gate pass" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$RUN" --arms CHEATS=0
@@ -452,8 +447,9 @@ if want pp; then
   # adversarial review 2026-11-07 (scratchpad adv/mk_ppmut.sh, run_prune.sh, other_tu.sh)
   if grep -q '^#define g_mgift_consumed 0u$' "$M"; then
     mkdir -p "$OUT/ppMA/psp"
-    awk '{ if ($0=="#define g_mgift_consumed 0u") { print "#ifdef RFU_SCHED"; print $0; print "#else"; print "#define g_mgift_consumed 1u"; print "#endif" } else print }' "$M" > "$OUT/ppMA/psp/main_psp.c"
-    sweep_mut 1 "MA: a change only under MGIFT=0 x RFU_SCHED=0 (g_mgift_consumed): a pair arm catches it" "$OUT/ppMA"
+    # was MGIFT=0 x RFU_SCHED=0; RFU_SCHED is no switch since code-health C-4
+    awk '{ if ($0=="#define g_mgift_consumed 0u") print "#define g_mgift_consumed 1u"; else print }' "$M" > "$OUT/ppMA/psp/main_psp.c"
+    sweep_mut 1 "MA: a change only under MGIFT=0 (g_mgift_consumed): the MGIFT=0 arm catches it" "$OUT/ppMA"
   fi
   if grep -q '^#define g_mg_on 0   /\* MGIFT=0: never listening \*/$' "$M"; then
     mkdir -p "$OUT/ppMB/psp"
@@ -470,12 +466,12 @@ if want pp; then
     fi
   fi
   L3="$OUT/logs3"; rm -rf "$L3"
-  for f in release lab harness; do mkdir -p "$L3/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$L3/$f/logs/"; cp "$RUN/$f/flavour.json" "$L3/$f/"; done
-  expect_rc 2 "logs without release-stable: a skipped flavour is exit 2" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3"
-  expect_rc 0 "  --allow-prune release-stable lets the sweep pass on the other three" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3" --allow-prune release-stable
+  for f in release lab; do mkdir -p "$L3/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$L3/$f/logs/"; cp "$RUN/$f/flavour.json" "$L3/$f/"; done
+  expect_rc 2 "logs without harness: a skipped flavour is exit 2" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3"
+  expect_rc 0 "  --allow-prune harness lets the sweep pass on the other two" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$L3" --allow-prune harness
   grep -E "^pp_sweep: pruned" "$OUT/last.log" | sed 's/^/        /'
   # a leaky log (the run built with ME_LOWLAT=0 in the shell): the derived line is not the logged one
-  LL="$OUT/logsll"; rm -rf "$LL"; cp -r "$RUN" "$LL" 2>/dev/null || { mkdir -p "$LL"; for f in release release-stable lab harness; do mkdir -p "$LL/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$LL/$f/logs/"; cp "$RUN/$f/flavour.json" "$LL/$f/"; done; }
+  LL="$OUT/logsll"; rm -rf "$LL"; cp -r "$RUN" "$LL" 2>/dev/null || { mkdir -p "$LL"; for f in release lab harness; do mkdir -p "$LL/$f/logs"; cp "$RUN/$f/logs/.build-eboot.log" "$LL/$f/logs/"; cp "$RUN/$f/flavour.json" "$LL/$f/"; done; }
   sed -i -E '/ -c -o main_psp\.o main_psp\.c$/ s/ -include fe_features\.h/ -DPLAY_ME_LOWLAT=0 -include fe_features.h/' "$LL/release/logs/.build-eboot.log"
   expect_rc 2 "leaky log (-DPLAY_ME_LOWLAT=0 on release's line): the derivation check refuses it" bash "$R/pp_sweep.sh" --ref "$TREE" --new "$TREE" --logs "$LL"
   grep -E "derived .* line is not the logged one" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
@@ -522,21 +518,21 @@ if want flav; then
   fi
   # a reference with a doctored image is refused before any check
   DR="$OUT/doctored"; rm -rf "$DR"; mkdir -p "$DR"
-  for fl in release release-stable lab harness; do mkdir -p "$DR/$fl"; cp "$RUN/$fl/flavour.json" "$DR/$fl/"; sed -i 's/"dockerId": "sha256:[0-9a-f]*"/"dockerId": "sha256:doctored"/' "$DR/$fl/flavour.json"; done
+  for fl in release lab harness; do mkdir -p "$DR/$fl"; cp "$RUN/$fl/flavour.json" "$DR/$fl/"; sed -i 's/"dockerId": "sha256:[0-9a-f]*"/"dockerId": "sha256:doctored"/' "$DR/$fl/flavour.json"; done
   expect_rc 2 "--against a manifest with a doctored dockerId exits 2" bash "$R/flavours.sh" --check-only --out "$RUN" --against "$DR"
   grep -qE "dockerId differs|not a hermetic build" "$OUT/last.log" && ok "  refused for: $(grep -oE '(dockerId differs|not a hermetic build)' "$OUT/last.log" | head -1)" || bad "doctored refusal reason"
   # adversarial doctor.sh: each field of the contract on its own (needs a hermetic run)
   if grep -q '"hermetic": "yes"' "$RUN/release/flavour.json"; then
     doct() {  # doct <name> <flavour> <sed>: RUN's records with one field doctored (no ELF needed: refused first)
       local d="$OUT/doct_$1" f; rm -rf "$d"
-      for f in release release-stable lab harness; do mkdir -p "$d/$f"; cp "$RUN/$f/flavour.json" "$d/$f/"; done
+      for f in release lab harness; do mkdir -p "$d/$f"; cp "$RUN/$f/flavour.json" "$d/$f/"; done
       cp "$RUN/flavours.json" "$RUN/ci_greps.txt" "$d/" 2>/dev/null; sed -i "$3" "$d/$2/flavour.json"
     }
     doct dirty release 's/"workingTreeClean": true/"workingTreeClean": false/'
     doct lock release 's/"layoutLock": "[^"]*"/"layoutLock": "release:differs"/'
     doct xenv lab 's/"extraEnv": ""/"extraEnv": "ME_LOWLAT=0 INPUT_FRESH=0"/'
     doct benv harness 's/"buildEnv": "/"buildEnv": "ME_LOWLAT=0 /'
-    doct anc release-stable 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/'
+    doct anc lab 's/"sourceCommit": "[0-9a-f]*"/"sourceCommit": "0000000000000000000000000000000000000000"/'
     for k in dirty lock xenv benv anc; do
       expect_rc 2 "contract: a reference with a doctored field ($k) is refused" bash "$R/flavours.sh" --check-only --out "$RUN" --against "$OUT/doct_$k"
       grep -m1 "FAIL:" "$OUT/last.log" | sed 's/^/        /' | cut -c1-200
@@ -544,26 +540,27 @@ if want flav; then
   else echo "        (RUN is not hermetic: the field-by-field contract cases need a hermetic run)"; fi
 fi
 
-# ---- --runs discover the run's flavours (release-stable was skipped by det_check/sect_cmp/SS)
+# ---- --runs discover the run's flavours (a hard-coded list once skipped release-stable)
 if want runs; then
   echo "== --runs flavour discovery (det_check, sect_cmp, strong_syms checkrun)"
   RS1="$OUT/runs1"; RS2="$OUT/runs2"; rm -rf "$RS1" "$RS2"
-  for f in release release-stable lab harness; do
+  for f in release lab harness; do
     [ -f "$RUN/$f/gpsp_adhoc.elf" ] || continue
     for d in "$RS1" "$RS2"; do mkdir -p "$d/$f"; cp "$RUN/$f/gpsp_adhoc.elf" "$RUN/$f/flavour.json" "$d/$f/"; cp "$RUN/$f/gpsp_adhoc.map" "$d/$f/" 2>/dev/null; done
   done
   expect_rc 0 "det_check --runs on two copies: identical in every discovered flavour" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
   tail -1 "$OUT/last.log" | sed 's/^/        /'
-  if [ -d "$RS2/release-stable" ]; then
-    $PY "$HERE/p0a_flip_text.py" "$RS2/release-stable/gpsp_adhoc.elf" > /dev/null
-    expect_rc 1 "runs_stb mutant: one .text byte flipped in release-stable: det_check --runs FAILS" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
-    expect_rc 1 "runs_stb mutant: sect_cmp --runs FAILS" $PY "$R/sect_cmp.py" --runs "$RS1" "$RS2"
+  # the flipped flavour was release-stable until code-health C-4 removed it
+  if [ -d "$RS2/harness" ]; then
+    $PY "$HERE/p0a_flip_text.py" "$RS2/harness/gpsp_adhoc.elf" > /dev/null
+    expect_rc 1 "runs_har mutant: one .text byte flipped in harness: det_check --runs FAILS" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
+    expect_rc 1 "runs_har mutant: sect_cmp --runs FAILS" $PY "$R/sect_cmp.py" --runs "$RS1" "$RS2"
     rm -rf "$RS2/lab"
     expect_rc 1 "a flavour in one run only (lab) is a FAIL, not a skip" $PY "$R/det_check.py" --runs "$RS1" "$RS2"
-    expect_rc 0 "strong_syms checkrun: every discovered flavour (release-stable held to the release rows)" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
+    expect_rc 0 "strong_syms checkrun: every discovered flavour" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
     grep -E "^SS:|held to" "$OUT/last.log" | sed 's/^/        /'
-    rm -f "$RS1/release-stable/gpsp_adhoc.map"
-    expect_rc 1 "strong_syms checkrun: release-stable without its map FAILS (it used to be skipped)" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
+    rm -f "$RS1/harness/gpsp_adhoc.map"
+    expect_rc 1 "strong_syms checkrun: harness without its map FAILS (not skipped)" $PY "$R/strong_syms.py" checkrun --run "$RS1" --golden "$R/strong_syms.golden.tsv"
   fi
 fi
 

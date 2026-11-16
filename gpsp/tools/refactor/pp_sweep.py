@@ -6,8 +6,8 @@
                 [--max-order 2] [--sde N] [--image I] [--jobs N]
 
 WHAT IS SWEPT (adversarial review 2026-11-07: the old sweep toggled one hand-listed
-switch at a time on the release line only, so a change under MGIFT=0 x RFU_SCHED=0
-or REWIND=0 x MGIFT=0 passed; the lab and harness lines were never swept; a rewrite
+switch at a time on the release line only, so a change under MGIFT=0 x REWIND=0
+passed; the lab and harness lines were never swept; a rewrite
 of `MGIFT="${MGIFT:-1}"` silently pruned its arm).
 
   * The SWITCHES are read from each tree's own tools/build.sh: every environment
@@ -18,7 +18,7 @@ of `MGIFT="${MGIFT:-1}"` silently pruned its arm).
     the same switch set.
   * The ARMS: the flavour's own configuration (`base`, i.e. G0), every switch value
     alone, and every pair of values of two different switches (--max-order 3 adds
-    triples), on EVERY flavour: release, release-stable, lab, harness.
+    triples), on EVERY flavour: release, lab, harness.
   * The COMPILE LINES are not typed: for each (flavour, arm) the tree's build.sh is
     run dry (under `env -i`, with a fake `docker` that records the psp make command
     and stops there), and `make -n -B` with that command in the real psp/Makefile
@@ -34,7 +34,7 @@ of `MGIFT="${MGIFT:-1}"` silently pruned its arm).
 EXIT 0 every arm identical; 1 a difference; 2 a skipped (pruned) arm, flavour or
 file, or a tool error; 3 identical but partial (--arms / --flavours chose a subset:
 not a gate).  The only escape for a skip is --allow-prune NAME, where NAME is an arm
-(e.g. MGIFT=0+RFU_SCHED=0), a flavour, or a file path relative to gpsp/; every
+(e.g. MGIFT=0+REWIND=0), a flavour, or a file path relative to gpsp/; every
 allowed prune is printed in the summary line.
 """
 import argparse
@@ -52,14 +52,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from pp_norm import norm  # noqa: E402
 
-FOUR = ('release', 'release-stable', 'lab', 'harness')
-PROFILE = {'release': 'release', 'release-stable': 'release', 'lab': 'lab', 'harness': 'harness'}
+FLAVOURS = ('release', 'lab', 'harness')
+PROFILE = {'release': 'release', 'lab': 'lab', 'harness': 'harness'}
 # build.sh inputs that are not switches: identity, pins, pads, extras and budgets.
 # They are never swept; flavours.sh records them (buildEnv).
 FREEFORM = {'GPSP_BUILD_COMMIT', 'GPSP_BUILD_TREE', 'GPSP_BUILD_DIRTY', 'GPSP_BUILD_VERSION',
             'DOCKER_IMAGE', 'GPSP_EBOOT_TITLE', 'CORE_EXTRA', 'FE_EXTRA', 'PSP_EXTRA',
             'LAYOUT_PAD_BYTES', 'LAYOUT_LOCK', 'BUDGET_HPI_1000', 'BUDGET_HPI_GO',
-            'BUDGET_BOOT_MIN', 'IMAGE_BYTES'}
+            'BUDGET_BOOT_MIN', 'IMAGE_BYTES',
+            # no switch since code-health C-4: build.sh takes RFU_SCHED=1 as a no-op
+            'RFU_SCHED'}
 SKIP_EXT = ('.o', '.d', '.a', '.elf', '.PBP', '.prx', '.map', '.su', '.pyc', '.log', '.nm')
 IGNORED = re.compile(r'(^|/)(docs/|README|.*\.md$)|^tools/(?!build\.sh$|layout/)')
 RECIPE = re.compile(r'^(tools/build\.sh|psp/Makefile|Makefile|tools/layout/.*)$')
@@ -303,8 +305,8 @@ def run(o, ref, new, ovl, work, skip, pruned, allowed):
     print('pp_sweep: %d switches from tools/build.sh: %s' % (len(switches_), ' '.join(
         '%s{%s}%s' % (n, ','.join(v), '' if d == '' else '=%s' % d) for n, (d, v) in sorted(switches_.items()))))
     logs = os.path.abspath(o.logs)
-    flavours = o.flavours.split() if o.flavours else list(FOUR)
-    partial = bool(o.flavours and set(flavours) != set(FOUR)) or bool(o.arms)
+    flavours = o.flavours.split() if o.flavours else list(FLAVOURS)
+    partial = bool(o.flavours and set(flavours) != set(FLAVOURS)) or bool(o.arms)
     present = []
     for fl in flavours:
         if fl not in PROFILE:
@@ -326,7 +328,7 @@ def run(o, ref, new, ovl, work, skip, pruned, allowed):
                 if k in switches_ or k in ('LAYOUT_PAD_BYTES', 'PSP_EXTRA', 'CORE_EXTRA', 'FE_EXTRA'):
                     env[k] = v
         else:
-            env['RFU_SCHED'] = j.get('rfuSched', '0' if fl == 'release-stable' else '1')
+            env['RFU_SCHED'] = j.get('rfuSched', '1')
             for w in (j.get('extraEnv') or '').split():
                 k, _, v = w.partition('=')
                 env[k] = v
@@ -536,7 +538,7 @@ def run(o, ref, new, ovl, work, skip, pruned, allowed):
     if diffs:
         by = {}
         for fl, name, f in diffs:
-            by.setdefault(name, []).append('%s:%s' % ({'release': 'rel', 'release-stable': 'stb', 'lab': 'lab', 'harness': 'har'}[fl], os.path.basename(f)))
+            by.setdefault(name, []).append('%s:%s' % ({'release': 'rel', 'lab': 'lab', 'harness': 'har'}[fl], os.path.basename(f)))
         print('pp_sweep: DIFFERENT in %d arm(s): %s' % (len(by), '; '.join('%s [%s]' % (k, ','.join(v)) for k, v in sorted(by.items())[:40])))
     print('pp_sweep: pruned %s; allowed prunes %s' % (' '.join(pruned) or 'none', ' '.join(allowed) or 'none'))
     if errors or pruned:

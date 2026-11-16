@@ -16,7 +16,7 @@
     flavours_gate.py --selftest
 
 The gate line is never typed (PLAN-P-beta5 §4 common): one token per gate, e.g.
-    G1 ok rel/stb/lab/har G2 ok rel/stb/lab/har HO ok ... CI ok
+    G1 ok rel/lab/har G2 ok rel/lab/har HO ok ... CI ok
 and on a failure  G1 FAIL lab (det_check) ...   Exit 0 when every verdict is
 PASS, 1 when any is FAIL or when checks.txt holds no verdict at all, 2 usage.
 """
@@ -25,13 +25,14 @@ import os
 import re
 import sys
 
-ABBR = {'release': 'rel', 'release-stable': 'stb', 'lab': 'lab', 'harness': 'har', '-': ''}
-FOUR = ('release', 'release-stable', 'lab', 'harness')
+ABBR = {'release': 'rel', 'lab': 'lab', 'harness': 'har', '-': ''}
+# release-stable (RFU_SCHED=0) went with the switch in code-health C-4
+FLAVOURS = ('release', 'lab', 'harness')
 # every gate a P step needs, and the flavours each must cover (adversarial review
 # 2026-11-07: G0/G0var/LL/CF and the build-file diff were typed by hand, and a gate
 # with one flavour was accepted).  A missing gate or flavour is a FAIL.
-REQUIRED = {'G0': FOUR, 'G0var': ('-',), 'G1': FOUR, 'G2': FOUR, 'HO': FOUR, 'SS': FOUR,
-            'ST': FOUR, 'LL': ('release', 'lab'), 'CF': ('-',), 'BF': ('-',), 'DS': ('-',),
+REQUIRED = {'G0': FLAVOURS, 'G0var': ('-',), 'G1': FLAVOURS, 'G2': FLAVOURS, 'HO': FLAVOURS, 'SS': FLAVOURS,
+            'ST': FLAVOURS, 'LL': ('release', 'lab'), 'CF': ('-',), 'BF': ('-',), 'DS': ('-',),
             'CI': ('-',)}
 ORDER = ['G0', 'G0var', 'G1', 'G2', 'HO', 'SS', 'ST', 'LL', 'CF', 'BF', 'DS', 'CI']
 VERDICT = re.compile(r'^== (\S+) (\S+) (PASS|FAIL)(?: \((.*)\))?\s*$')
@@ -152,25 +153,25 @@ def selftest():
         nonlocal bad
         print('  %s  %s' % ('ok  ' if cond else 'FAIL', msg))
         bad += 0 if cond else 1
-    good = ['== release G1 PASS (release det_check)', '== release-stable G1 PASS (x)',
+    good = ['== release G1 PASS (release det_check)',
             '== lab G1 PASS (x)', '== harness G1 PASS (x)', '== release SS PASS (x)', '== - CI PASS (ci)']
     line, ok = gate_line(good)
-    t(ok and line == 'G1 ok rel/stb/lab/har SS ok rel CI ok', 'all pass -> %r' % line)
+    t(ok and line == 'G1 ok rel/lab/har SS ok rel CI ok', 'all pass -> %r' % line)
     line, ok = gate_line(good + ['== lab ST FAIL (lab stack_depth)'])
     t(not ok and 'ST FAIL lab(lab stack_depth)' in line, 'one FAIL turns the gate red -> %r' % line)
     line, ok = gate_line(['-- noise', 'PASS'])
     t(not ok, 'no verdict lines is not a pass -> %r' % line)
     line, ok = gate_line(good[:1] + ['== - CI FAIL (ci_greps rc absent)'])
     t(not ok and 'CI FAIL' in line, 'an absent tool (failchk) is a FAIL -> %r' % line)
-    full = ['== %s %s PASS (x)' % (f, g) for g in ('G0', 'G1', 'G2', 'HO', 'SS', 'ST') for f in FOUR]
+    full = ['== %s %s PASS (x)' % (f, g) for g in ('G0', 'G1', 'G2', 'HO', 'SS', 'ST') for f in FLAVOURS]
     full += ['== release LL PASS (x)', '== lab LL PASS (x)'] + ['== - %s PASS (x)' % g for g in ('G0var', 'CF', 'BF', 'DS', 'CI')]
     line, ok = gate_line(full, REQUIRED)
-    t(ok and line.startswith('G0 ok rel/stb/lab/har G0var ok G1 ok') and 'LL ok rel/lab' in line and line.endswith('DS ok CI ok'),
+    t(ok and line.startswith('G0 ok rel/lab/har G0var ok G1 ok') and 'LL ok rel/lab' in line and line.endswith('DS ok CI ok'),
       'the whole required set -> %r' % line)
     line, ok = gate_line([x for x in full if 'G0var' not in x], REQUIRED)
     t(not ok and 'G0var MISSING' in line, 'a required gate missing (G0var) is a FAIL -> %r' % line)
     line, ok = gate_line([x for x in full if not x.startswith('== harness G1')], REQUIRED)
-    t(not ok and 'G1 MISSING har' in line, 'a gate covering 3 of 4 flavours is a FAIL -> %r' % line)
+    t(not ok and 'G1 MISSING har' in line, 'a gate covering 2 of 3 flavours is a FAIL -> %r' % line)
     line, ok = gate_line(good, REQUIRED)
     t(not ok, 'the old six-gate set is not a full gate -> %r' % line[:80])
     hdr = ' * checked: %d declarations, 6 constants; unchecked: %d; platform: %d (listed at the end). */'

@@ -31,6 +31,9 @@ static uint64_t fake_now(void) { return 1000000; }
 
 void fe_evt(const char *fmt, ...) { (void)fmt; }
 void fe_log(const char *fmt, ...) { (void)fmt; }
+/* rfu.c's adapter D, read by NP_RFU_FEATURES (always compiled since C-4);
+ * 0 = no ticks, which is all a GB-only session needs. */
+unsigned rfu_sched_d;
 
 static void gba_start(uint16_t id, retro_netpacket_send_t send,
                       retro_netpacket_poll_receive_t poll)

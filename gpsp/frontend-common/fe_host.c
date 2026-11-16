@@ -6999,7 +6999,6 @@ int fe_host_reset(void)
    return 0;
 }
 
-#ifdef RFU_SCHED
 #include "../rfu_sched_api.h"
 /* SCHEDULED TICKS (rfu_sched.h, docs/RFU-COUPLING.md).  A frame may start only
  * once the partner's tick for it has arrived.  Wait here up to about a frame,
@@ -7063,7 +7062,6 @@ int fe_host_rfu_gate(void)
    skips++;
    return 0;
 }
-#endif
 
 void fe_host_run_frame(void)
 {
