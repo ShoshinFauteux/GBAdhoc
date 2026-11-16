@@ -1,0 +1,14 @@
+diff --git a/gpsp/main.h b/gpsp/main.h
+index 8aa8134c..d5fd4338 100644
+--- a/gpsp/main.h
++++ b/gpsp/main.h
+@@ -114,8 +114,7 @@ extern u32 flush_ram_dma;    /* ...by a DMA into translated RAM */
+  * -DGPSP_NO_SMC_PROFILE takes it out of any build (the twin).  Anything that
+  * calls smc_prof_take / smc_blk_take must be built with the profile (the PSP
+  * frontend: everything but a GPSP_PROFILE_RELEASE build). */
+-#if (defined(GPSP_PROFILE_RELEASE) && !defined(GPSP_SMC_PROFILE)) || \
+-    defined(GPSP_NO_SMC_PROFILE)
++#if defined(GPSP_NO_SMC_PROFILE) /* rehearsal b4_hot: the SMC profile in every build, as before B-4 */
+ #define SMC_PROFILE 0
+ #else
+ #define SMC_PROFILE 1

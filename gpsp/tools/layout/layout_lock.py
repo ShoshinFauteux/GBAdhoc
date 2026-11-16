@@ -12,6 +12,7 @@ build's `psp-nm -S -n` listing with the lock and fails on any difference.
     layout_lock.py check FLAVOUR NM [--lock FILE]
     layout_lock.py write FLAVOUR NM [--lock FILE]     re-record the values (not pins)
     layout_lock.py pins  FLAVOUR NM                    the manifest's layoutPins line
+    layout_lock.py stats FLAVOUR NM [--ref NM]          each pin's gap, slack used vs REF
     layout_lock.py regen FLAVOUR (--spend-page PIN | --free-page PIN | --move PIN=0xADDR)
     layout_lock.py strict KEY=VALUE...                 1 if the lock is enforced
     layout_lock.py verdict KIND FLAVOUR RC STRICT [LAYOUT_LOCK]
@@ -258,6 +259,56 @@ def cmd_pins(lock, flavour, by):
     return 0
 
 
+def cmd_stats(lock, flavour, by, text_addrs, ref):
+    """The success measure's numbers (code-health C3-6): for every pin, the gap
+    it filled (the slack left before it) and, with a reference build, how much
+    of the slack a change used; then every other lock entry that differs.  A
+    pin that MOVED is a regen decision; a differing `at`/`size` is a checked
+    value a change moved (re-record with `write` once it is accepted)."""
+    rby = None
+    if ref:
+        rby, _ = load_nm(ref)
+    used = 0
+    print("layout.lock [%s] pins: gap now%s" % (flavour, ", reference, slack used" if rby else ""))
+    for i, kind, args, raw in lock[flavour]:
+        if kind != "pin":
+            continue
+        try:
+            at, gap = pin_landed(by, args[0])
+        except KeyError:
+            print("  %-22s MISSING" % args[0])
+            continue
+        moved = at != int(args[1], 16)
+        line = "  %-22s %6s" % (args[0], "MOVED" if moved else gap)
+        if rby is not None:
+            try:
+                _, rgap = pin_landed(rby, args[0])
+                line += " %6s %+7d" % (rgap, rgap - gap)
+                used += rgap - gap
+            except KeyError:
+                line += "      -"
+        print(line)
+    if rby is not None:
+        print("  slack used in all: %+d B" % used)
+    n = 0
+    for i, kind, args, raw in lock[flavour]:
+        vi = value_arg(kind)
+        if vi is None or kind == "pin":
+            continue
+        try:
+            got = measure(by, text_addrs, kind, args)
+        except KeyError:
+            print("  MISSING  %-5s %s" % (kind, " ".join(args[:vi])))
+            n += 1
+            continue
+        same = (int(args[vi], 16) == int(got, 16)) if kind == "at" else (int(args[vi]) == int(got))
+        if not same:
+            print("  differs  %-5s %-34s lock %s, build %s" % (kind, " ".join(args[:vi]), args[vi], got))
+            n += 1
+    print("  %d checked value(s) differ" % n)
+    return 0
+
+
 def cmd_regen(path, lines, lock, flavour, spend, free, move):
     """Change pins, and only by an explicit choice (critique C-3 point 1: a
     regen never decides silently).  --spend-page NAME: NAME and every pin
@@ -387,7 +438,8 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("strict", "verdict"):
         return policy_main(sys.argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=["check", "write", "pins", "regen"])
+    ap.add_argument("cmd", choices=["check", "write", "pins", "regen", "stats"])
+    ap.add_argument("--ref", help="stats: the reference build's psp-nm -S -n")
     ap.add_argument("flavour")
     ap.add_argument("nm", nargs="?")
     ap.add_argument("--lock", default=DEFAULT_LOCK)
@@ -413,6 +465,8 @@ def main():
         return cmd_check(lock, a.flavour, by, text_addrs, a.quiet)
     if a.cmd == "write":
         return cmd_write(a.lock, lines, lock, a.flavour, by, text_addrs)
+    if a.cmd == "stats":
+        return cmd_stats(lock, a.flavour, by, text_addrs, a.ref)
     return cmd_pins(lock, a.flavour, by)
 
 

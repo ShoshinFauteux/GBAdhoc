@@ -303,6 +303,56 @@ reach; `ap_steps_mem` is the first thing in fe_autopilot.o's `.bss`, with the
 object's statics after it, so a smaller array moves them and changes
 fe_autopilot_frame's code. They stay, with their reasons in the source.
 
+#### Rehearsal and what a change now has to do (code-health C3-6)
+
+`tools/layout/repin_rehearsal.sh prepare BASE OUT NAME=REV|NAME=@PATCH...`
+makes one commit object per case on top of BASE (no branch, no checkout): a
+past merge's source change reversed, file by file where every hunk still
+applies, or a patch applied forward. `report LOCKREV RUNS BASETAG TAG...`
+reads the builds of those commits (tools/build.sh through the proof builder)
+and prints, per flavour, whether the link passed, the slack each pin used
+(`layout_lock.py stats --ref`) and every pin that moved or checked value that
+differs. Run on the C3-5 tip (f522a394), release and lab:
+
+| case | what it is | release | lab |
+|---|---|---|---|
+| B-4 3790851f, reversed | 7 of 14 files replay | does not compile (session.inc.c, teardown.inc.c need hunks that no longer apply) | same |
+| HW-1 r2 4f1a691a, reversed | 5 of 10 files replay | links, EBOOT identical to the base, lock OK | the partial replay leaves a `-Wunused-function` (build.sh fails it); fe_common used -156 B, `at pace_frame` -156 |
+| screenshots a5189b3f, reversed | 7 of 12 files replay | does not compile (misc.a.inc.c needs the new capture API) | same |
+| `rehearsal/b4_hot.patch` | the SMC profile back in the release core (B-4's hot-row change) | no row pin overruns (the profile's hot functions come back into the gaps their fills left); `pin core` and `pin ro` overrun (the rest of the profile: B's copy of its cold functions links in FE_TAIL, before the core pin, and its tables grow .rodata): the link stops and names them | lab already has the profile: identical layout, 0 slack used |
+| `rehearsal/hw1r2_fe_head.patch` | +528 B in main_psp.o (HW-1 r2's growth between exit_cb and pace_frame) | fe_common's gap takes 536 B; `at pace_frame` +536: the lock stops the build | same (+536) |
+| `rehearsal/shots_fe.patch` | +2 KiB in video_psp.o, +1 KiB in fe_png.o, ~600 B of strings | fe_common takes the 2 KiB, `pin ro` the strings; fe_png's 1 KiB overruns `pin fe_tail` (868 B): the link stops | wraps (non-strict), reported |
+| the same + `layout_lock.py regen release --spend-page fe_tail` | one command, no number chosen | 1 build: `release:ok`, 0 checked values differ (fe_tail, core, ro +8 KiB) | - |
+
+What a binary-changing commit now has to do, by where its bytes land:
+
+1. **Inside a region's slack** (any size change before a pin, within the gap
+   `layoutPins` shows): nothing. No lock edit, one build. This covers the
+   frontend groups, the cold core, `.rodata` (strings included) and every hot
+   row that grows or shrinks within its row pin's gap.
+2. **Past a pin's slack**: the strict link stops and names the pin. The commit
+   runs one `layout_lock.py regen` command and says which it chose:
+   `--spend-page PIN` (a PSP-1000 heap page, with the boot-heap census) or
+   `--move PIN=0xADDR` (a new placement, with a hardware ABBA). No pad number
+   is chosen by hand.
+3. **Moving an unpinned per-frame anchor** that the lock still checks:
+   `pace_frame` (ff_psp.o, behind main_psp.o in FE_HEAD), `fe_host_reset`
+   (inside FE_COMMON), `size main`, `me_replay_lines`/`pipe_latch` (inside A's
+   cold core), `netpacket_iface` (A's tables) and the `.data`/`.bss` anchors.
+   No pin holds those; the lock stops the build. Code before them grew, so
+   their I-cache or D-cache sets changed: the commit either accepts the move
+   (`layout_lock.py write`, which never touches a pin, plus the hardware ABBA
+   the move needs) or changes the code. This is C3-7's scope (per-frame
+   frontend rows into the hot block), deferred by the owner, and C-1 commit
+   4's (`pin frame_loop`).
+4. **A new object**: it goes into a layout group in psp/Makefile, or the link
+   fails on the ungrouped check.
+
+There are no hand re-pins left: no pad numbers, no `solve` loop. Case 2 is a
+recorded decision of one command; case 3 is a measurement decision about a
+real placement change, which the old pads also forced (they hid it by tuning
+the pad until the anchor came back, which moved the region start instead).
+
 ## 2. Today's swing is the JIT base: hardware evidence
 
 The Go isolation bench (`candidate-out/drl-go-iso3`, AW2, ABBA) and the 3000

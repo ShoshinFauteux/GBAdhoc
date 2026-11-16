@@ -1,0 +1,32 @@
+diff --git a/gpsp/frontend-common/fe_png.c b/gpsp/frontend-common/fe_png.c
+index 68a1d662..d9fdeebb 100644
+--- a/gpsp/frontend-common/fe_png.c
++++ b/gpsp/frontend-common/fe_png.c
+@@ -720,3 +720,11 @@ int fe_png_encode(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
+    return o.err ? -2 : 0;
+ }
+ 
++
++/* repin rehearsal (tools/layout/rehearsal/shots_fe.patch): 1 KiB of code
++ * in frontend-common and ~600 B of new strings. */
++__attribute__((used, noinline)) const char *rehearsal_shots_png(void)
++{
++   __asm__ volatile(".fill 256, 4, 0");
++   return "rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string rehearsal string ";
++}
+diff --git a/gpsp/psp/video_psp.c b/gpsp/psp/video_psp.c
+index d55a3d3a..42c9f8a0 100644
+--- a/gpsp/psp/video_psp.c
++++ b/gpsp/psp/video_psp.c
+@@ -2788,3 +2788,11 @@ AMB_SMALL const uint16_t *vid_cap_frame(unsigned *w, unsigned *h,
+    }
+    return pix;
+ }
++
++/* repin rehearsal (tools/layout/rehearsal/shots_fe.patch): the screenshots
++ * merge grew the frontend head (video_psp.o), frontend-common (fe_png.o) and
++ * the strings; 2 KiB of code here. */
++__attribute__((used, noinline)) void rehearsal_shots_video(void)
++{
++   __asm__ volatile(".fill 512, 4, 0");
++}

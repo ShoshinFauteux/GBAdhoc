@@ -1,0 +1,15 @@
+diff --git a/gpsp/psp/fe/power.b.inc.c b/gpsp/psp/fe/power.b.inc.c
+index 1660a10f..77fa9edb 100644
+--- a/gpsp/psp/fe/power.b.inc.c
++++ b/gpsp/psp/fe/power.b.inc.c
+@@ -317,3 +317,10 @@ static void pwr_release_kernel(void)
+ }
+ #endif
+ 
++
++/* repin rehearsal (tools/layout/rehearsal/hw1r2_fe_head.patch): HW-1 r2 grew
++ * main_psp.o by ~528 B between exit_cb and pace_frame; this is 528 B of it. */
++__attribute__((used, noinline)) void rehearsal_fe_head_528(void)
++{
++   __asm__ volatile(".fill 132, 4, 0");
++}

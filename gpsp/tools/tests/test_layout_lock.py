@@ -221,6 +221,13 @@ def pin_tests():
         rc, out = run("pins", "release", nm, "--lock", lk)
         check(out.strip() == "release main=4420 fe_head=5688 core=1472",
               "pins: the manifest line is the flavour and each gap")
+        # stats (code-health C3-6): the slack a change used against a reference
+        grown = os.path.join(d, "g.nm")
+        write_nm(grown, [(a + (40 if n == "__pin_from_fe_head" else 0), s, t, n) for a, s, t, n in PIN_NM])
+        rc, out = run("stats", "release", grown, "--lock", lk, "--ref", nm)
+        check(rc == 0 and re.search(r"fe_head\s+5648\s+5688\s+\+40", out) is not None
+              and "slack used in all: +40 B" in out and "0 checked value(s) differ" in out,
+              "stats: a region 40 B longer used 40 B of its pin's slack, nothing else moved")
         wrapped = [(a + (8192 if a >= 0x08937c98 else 0), s, t, n) for a, s, t, n in PIN_NM]
         write_nm(nm, wrapped)
         rc, out = run("check", "release", nm, "--lock", lk, "-q")
