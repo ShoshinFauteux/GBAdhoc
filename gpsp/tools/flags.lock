@@ -45,7 +45,6 @@ make:psp/Makefile LAYOUT_PAD_BSCAN_BYTES=664
 make:psp/Makefile LAYOUT_PAD_BXLAT_BYTES=5504
 make:psp/Makefile LAYOUT_PAD_LATE_BYTES=160
 make:psp/Makefile LAYOUT_PAD_MLU_BYTES=32
-make:psp/Makefile LAYOUT_PAD_RO_BYTES=1364
 make:psp/Makefile LAYOUT_PAD_XLAT_BYTES=5632
 make:psp/Makefile PSP_LARGE_MEMORY=1
 make:psp/Makefile PSP_PIXFMT=psp5650

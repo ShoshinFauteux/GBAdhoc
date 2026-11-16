@@ -16,7 +16,8 @@ the source must hold main at the ELF's DW_AT_decl_line, else REFUSED (exit 2).
 
 THE REPORT (one candidate; with --ref, every figure also as a delta):
   1. pads in use: LAYOUT_PAD_BYTES (manifest, else layout_pad_cold's size) and
-     LAYOUT_PAD_RO_BYTES (the map's .rodata.layout_pad_ro, else the manifest)
+     LAYOUT_PAD_RO_BYTES (since code-health C3-4 the `pin ro` gap; before, the
+     map's .rodata.layout_pad_ro, else the manifest)
   2. main's start, mod 8192 and its I-cache set (64 B lines, 128 sets per 8 KiB way);
      main's size; layout_pad_cold; _end; rom_translation_cache_static & 8191 (A and B)
   3. .data.pin: size and headroom (bytes the text+rodata before it may still grow
@@ -118,6 +119,10 @@ class Build:
         return s['size'] - 4, 'layout_pad_cold size - 4 (estimate)'
 
     def ro_pad(self):
+        # code-health C3-4: the RO pad is `pin ro`; its gap is the old value
+        at, frm = self.sym.get('__pin_at_ro'), self.sym.get('__pin_from_ro')
+        if at and frm:
+            return at['value'] - frm['value'], 'pin ro gap'
         if self.map is not None:
             ins = [i for i in self.map.inputs if i.name == '.rodata.layout_pad_ro']
             return (ins[0].size if ins else 0), 'map'

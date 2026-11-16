@@ -288,7 +288,7 @@ their defaults.
 
 **The layout pads** (`LAYOUT_PAD_*` in psp/Makefile, every value pinned by
 `tools/flags.lock`; docs/LAYOUT-PINNING.md "Keeping the pads" says what each
-holds): `LAYOUT_PAD_RO_BYTES` (`.rodata`), `LAYOUT_PAD_LATE_BYTES` and
+holds): `LAYOUT_PAD_LATE_BYTES` and
 `LAYOUT_PAD_MLU_BYTES` (the ME capture's helpers), `LAYOUT_PAD_XLAT_BYTES` (in
 front of A's `translate_block_arm`), and instance B's `LAYOUT_PAD_BSCAN_BYTES`
 (B's `update_scanline` held at the renderer's size) and `LAYOUT_PAD_BXLAT_BYTES`
@@ -297,7 +297,9 @@ without. The text pads after `main`, stb_impl.o, the GB cores and before
 instance A's core archive, and the one in front of `main`, are linker pins since
 code-health C3-3: `pin` lines per profile in `tools/layout/layout.lock`, chosen
 with `LAYOUT_FLAVOUR` (docs/LAYOUT-PINNING.md "Pins"); build.sh and psp/Makefile
-refuse the old `LAYOUT_PAD_BYTES`, `_MAIN_`, `_FE_`, `_GB_` and `_CORE_BYTES`.
+refuse the old `LAYOUT_PAD_BYTES`, `_MAIN_`, `_FE_`, `_GB_` and `_CORE_BYTES`;
+the `.rodata` pad is `pin ro` since C3-4 and psp/Makefile refuses
+`LAYOUT_PAD_RO_BYTES`.
 A lab build takes the committed lab set, `tools/layout/lab-pads.env`
 (`LAB_PADS=0` for the release pads and pins); a sweep overrides it through
 `PSP_EXTRA=`, which build.sh refuses for the release profile. `tools/layout/layout.lock` records where the pads put the symbols that

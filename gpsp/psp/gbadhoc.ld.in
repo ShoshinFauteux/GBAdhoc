@@ -19,6 +19,11 @@
  *          with the pins fe_head, fe_common, fe_tail and core (C3-3).
  *   top    INCLUDE pins.ld: the pins' addresses (tools/layout/layout.lock).
  *   .text  pin main, just before .text.startup (main).
+ *   .rodata  INCLUDE ro.ld (C3-4): the start files' .rodata (the merged
+ *          string table), then pin ro, at the start of the default statement.
+ *          The default writes .rodata on one line, so this one is an inline
+ *          insert, /* GBADHOC INLINE ... GBADHOC INLINE END * /, which the
+ *          check deletes as it deletes the blocks.
  *
  * NOT here: psp/cold_tail.ld and psp/hot_data_guard.ld stay INSERT scripts,
  * passed with -T BEFORE this one.  An INSERT script's statements are matched
@@ -188,7 +193,7 @@ SECTIONS
   .rodata.sceResident      : { *(.rodata.sceResident) }
   .rodata.sceNid           : { *(.rodata.sceNid) }
   .rodata.sceVstub         : { *(.rodata.sceVstub) *(SORT(.rodata.sceVstub.*)) }
-  .rodata         : { *(.rodata .rodata.* .gnu.linkonce.r.*) }
+  .rodata         : { /* GBADHOC INLINE pin ro: psp/ro.ld (code-health C3-4) */ INCLUDE ro.ld /* GBADHOC INLINE END */ *(.rodata .rodata.* .gnu.linkonce.r.*) }
   .rodata1        : { *(.rodata1) }
   .sdata2         :
   {

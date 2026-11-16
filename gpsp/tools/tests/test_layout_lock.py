@@ -105,19 +105,19 @@ def main():
     check(named and named <= mkpads, "every `pad` in layout.lock is a psp/Makefile pad: %s" % sorted(named))
     envpads = set(re.findall(r"^(LAYOUT_PAD_\w+)=\d+$", open(PADS).read(), re.M))
     check(envpads and envpads <= mkpads, "lab-pads.env names only psp/Makefile pads: %s" % sorted(envpads))
-    check("LAYOUT_PAD_RO_BYTES" in envpads, "lab-pads.env sets the RO pad")
+    check("LAYOUT_PAD_BSCAN_BYTES" in envpads, "lab-pads.env sets the BSCAN pad")
     gone = {"LAYOUT_PAD_BYTES", "LAYOUT_PAD_MAIN_BYTES", "LAYOUT_PAD_FE_BYTES",
-            "LAYOUT_PAD_GB_BYTES", "LAYOUT_PAD_CORE_BYTES"}
+            "LAYOUT_PAD_GB_BYTES", "LAYOUT_PAD_CORE_BYTES", "LAYOUT_PAD_RO_BYTES"}
     check(not (gone & (envpads | mkpads | named)),
-          "the pads that are pins since C3-3 are in no Makefile default, lab-pads.env or `pad` line")
+          "the pads that are pins since C3-3/C3-4 are in no Makefile default, lab-pads.env or `pad` line")
     kinds = set(re.findall(r"^(\w+)\s", "\n".join(l for l in lock.splitlines()
                                               if l and not l.startswith(("#", "["))), re.M))
     check(kinds <= {"at", "size", "gap", "tail", "pad", "pin"}, "layout.lock uses known entry kinds: %s" % sorted(kinds))
     for fl in ("release", "lab", "harness", "harness64", "diagnostic", "soak"):
         sec = re.search(r"^\[%s\]$(.*?)(?=^\[|\Z)" % fl, lock, re.M | re.S)
         pins = re.findall(r"^pin\s+(\w+)\s+0x[0-9a-f]{8}\b", sec.group(1) if sec else "", re.M)
-        check(pins == ["main", "fe_head", "fe_common", "fe_tail", "core"],
-              "[%s] has the five pins in link order: %s" % (fl, pins))
+        check(pins == ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"],
+              "[%s] has the six pins in link order (ro: C3-4): %s" % (fl, pins))
 
     with tempfile.TemporaryDirectory() as d:
         nm = os.path.join(d, "a.nm")

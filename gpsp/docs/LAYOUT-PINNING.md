@@ -236,7 +236,32 @@ address the region after the pin starts at.
   gap, with no re-pin. Only `pin main` still places a measured thing, the
   frame loop inside `main` (C-1 commit 4 and C3-7 remove that). The pads
   inside the hot block (BSCAN, BXLAT, LATE, MLU, XLAT, the warm and apb holds)
-  and RO stay until C3-4/C3-5; `layout_lock.py solve` stays for them.
+  stay until C3-5; `layout_lock.py solve` stays for them.
+
+#### The `.rodata` pin (code-health C3-4)
+
+The RO pad (`LAYOUT_PAD_RO_BYTES`, zeros in main_psp.c) is `pin ro`. The link
+map shows where it sat: psp-gcc's start file crt0.o has the first
+`.rodata.str1.4`, so every object's merged strings land there, first in
+`.rodata`, and the pad came right after them, in front of main_psp.o's tables.
+`psp/ro.ld` (`groups_ld.sh --rodata`, INCLUDEd at the start of the default's
+one-line `.rodata` statement as a `GBADHOC INLINE` insert) links the head
+group's `.rodata` and then the pin; the default statement places the rest as
+before. ADDR is the pad's end in each profile's map at 772c0d43. Because the
+merged strings are before the pin, a few bytes more or less of strings move
+nothing: the 4 B version-string trap that tools/layout/ro_margin.py guarded
+(a commit hash ending like a table entry) is gone, and so is that tool. Checked:
+a 40-byte longer core version string moves A's tables +64 B with the pad
+(the release lock fails on `netpacket_iface`) and +0 with the pin.
+
+**What C3-4 did not turn into pins.** C-3.md planned `.data`/`.bss` pins for
+`sched_hot_hold_bss`/`_data` (main.c, serial.c) and `ap_steps_mem`
+(fe_autopilot.c). They are intra-object holds, like `DC_STUB_FILL`: the main.c
+and serial.c holds sit inside each core object's `.data`/`.bss`, and instance
+B's copies inside gbalink_core_b.o's partial link, where no final-link pin can
+reach; `ap_steps_mem` is the first thing in fe_autopilot.o's `.bss`, with the
+object's statics after it, so a smaller array moves them and changes
+fe_autopilot_frame's code. They stay, with their reasons in the source.
 
 ## 2. Today's swing is the JIT base: hardware evidence
 

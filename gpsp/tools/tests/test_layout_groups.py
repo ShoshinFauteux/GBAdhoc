@@ -119,6 +119,7 @@ def pin_link(tmp, fe_common, core, strict, sweep=None):
     with open(os.path.join(tmp, "p.lock"), "w") as f:
         f.write("[t]\npin main 0x08804040\npin fe_head 0x08804040\n"
                 "pin fe_common 0x%08x\npin fe_tail 0x08804040\npin core 0x%08x\n"
+                "pin ro 0x08804040\n"
                 % (fe_common, core))
     awk = ["awk", "-v", "flavour=t", "-v", "strict=%d" % strict]
     if sweep is not None:
@@ -227,6 +228,13 @@ def main():
 
         pin_tests(tmp)
 
+        # --rodata (C3-4): the head group's tables, then pin ro, no ungrouped check
+        g = sh(["sh", GEN, "--rodata", "--pins", "ro", "head:*/crt0.o head.o", "ro:"], tmp).stdout
+        check(":*/crt0.o(.rodata .rodata.* .gnu.linkonce.r.*)" in g
+              and ":head.o(.rodata .rodata.* .gnu.linkonce.r.*)" in g
+              and g.index(":head.o(") < g.index("__pin_ro - ABSOLUTE(.)")
+              and "layout_pad_ro = ABSOLUTE(.);" in g and "__layout_ungrouped" not in g,
+              "--rodata: the head group's .rodata, then pin ro (old name layout_pad_ro), no ungrouped check")
         open(os.path.join(tmp, "lib", "crt0.o"), "w").close()
         g = sh(["sh", GEN, "x:*/crt0.o b.o"], tmp).stdout
         check(":*/crt0.o(" in g and ":b.o(" in g and "lib/crt0.o" not in g,

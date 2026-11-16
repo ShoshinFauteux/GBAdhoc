@@ -205,20 +205,16 @@ HOT_ORD ?= layout/hot.ord
 # after all other text so adding it moves no pinned function.  An INSERT
 # script, given before gbadhoc.ld (psp/gbadhoc.ld.in says why).
 LDFLAGS += -Wl,-T,cold_tail.ld
-# LAYOUT_PAD_RO_BYTES=N: the same in .rodata, before instance A's.  Whoever
-# changes frontend code or strings re-tunes both pads so that instance A's
-# cold text and tables stay where 4.5.0 had them mod 8 KiB
-# (docs/LAYOUT-PINNING.md, "Keeping the pads").  The pad follows the linker's
-# merged string table, and what comes after it is 64 B aligned: keep the pad's
-# end well inside a 64 B step (tools/layout/ro_margin.py), because the table is
-# a few bytes shorter for a commit whose version string ends like one of its
-# entries ("59" for ...f0ce959).
-# The beta.5 re-pin (claude/beta5-rc, docs/LAYOUT-PINNING.md): RO 28 puts
-# A's tables back (netpacket_iface +16, .rodata's 64 B steps) with the pad's
-# end 32 B inside its step both ways; CORE (now `pin core`) gives up 768 B of
-# A's cold text placement so neither wraps (one 8 KiB page of boot heap back).
-LAYOUT_PAD_RO_BYTES ?= 1364
-CFLAGS  += -DLAYOUT_PAD_RO_BYTES=$(LAYOUT_PAD_RO_BYTES)
+# `pin ro` (code-health C3-4; it was LAYOUT_PAD_RO_BYTES, zeros in main_psp.c):
+# .rodata after the start files, whose merged string table holds every
+# object's strings, starts at the lock's address, so instance A's tables keep
+# their cache sets when the frontend's strings change size.  ro.ld (rule
+# below) places it.  The 4 B trap of the pad (the merged table is a few bytes
+# shorter for a commit whose version string ends like one of its entries, and
+# the pad moved with it) is gone: the table is before the pin, which absorbs it.
+ifneq ($(LAYOUT_PAD_RO_BYTES),)
+$(error LAYOUT_PAD_RO_BYTES is `pin ro` since code-health C3-4 (tools/layout/layout.lock); drop it)
+endif
 # LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
 # the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
 # beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link
@@ -466,7 +462,8 @@ OBJS = $(HEAD_OBJS) $(FE_HEAD_OBJS) $(FE_COMMON_OBJS) $(GB_OBJS) $(FE_TAIL_OBJS)
 # order puts before every object (its *startfile spec: crt0 crti crtbegin).
 LAYOUT_GROUP_PINS = fe_head fe_common fe_tail core
 LAYOUT_STARTFILES = */crt0.o */crti.o */crtbegin.o
-LAYOUT_GROUPS = "head:$(strip $(LAYOUT_STARTFILES) $(HEAD_OBJS))" \
+LAYOUT_HEAD_GROUP = "head:$(strip $(LAYOUT_STARTFILES) $(HEAD_OBJS))"
+LAYOUT_GROUPS = $(LAYOUT_HEAD_GROUP) \
                 "fe_head:$(strip $(FE_HEAD_OBJS))" \
                 "fe_common:$(strip $(FE_COMMON_OBJS))" \
                 "gb:$(strip $(GB_OBJS))" \
@@ -495,9 +492,12 @@ $(TARGET).elf: $(CORE_LIB)
 # hand ld the script a second time as an input file.  So a new script, or a
 # regenerated layout/hot.ord, does not relink by itself: tools/build.sh always
 # relinks (clean build); by hand, `rm gpsp_adhoc.elf`.
-$(TARGET).elf: | gbadhoc.ld groups.ld pins.ld
+$(TARGET).elf: | gbadhoc.ld groups.ld ro.ld pins.ld
 groups.ld: FORCE
 	@sh ../tools/layout/groups_ld.sh --pins "$(LAYOUT_GROUP_PINS)" $(LAYOUT_GROUPS) > $@
+# ro.ld: the head group's .rodata, then `pin ro` (code-health C3-4)
+ro.ld: FORCE
+	@sh ../tools/layout/groups_ld.sh --rodata --pins ro $(LAYOUT_HEAD_GROUP) "ro:" > $@
 # pins.ld: the pins' addresses for LAYOUT_FLAVOUR (tools/layout/pins.awk says
 # how they are used); a flavour without its five pins stops here.
 pins.ld: FORCE
@@ -505,15 +505,17 @@ pins.ld: FORCE
 	  -f ../tools/layout/pins.awk ../tools/layout/layout.lock > $@ || { rm -f $@; exit 1; }
 # gbadhoc.ld: psp/gbadhoc.ld.in with the hot order filled in, rewritten on
 # every make.  First the template is checked: without its GBADHOC BEGIN/END
-# blocks it must be THIS toolchain's default script, byte for byte
+# blocks (and the one-line /* GBADHOC INLINE ... GBADHOC INLINE END */ insert
+# in .rodata's statement, code-health C3-4) it must be THIS toolchain's
+# default script, byte for byte
 # (`psp-ld --verbose` prints the script psp-gcc links with; the same text,
 # checked 2026-11-15).  A toolchain bump that changes the default stops here
 # with the diff, instead of linking with a stale copy of it.
 gbadhoc.ld: gbadhoc.ld.in FORCE
 	@psp-ld --verbose | awk '/^=========/ { n++; next } n == 1' > $@.default
-	@tr -d '\r' < $< | sed '/GBADHOC BEGIN/,/GBADHOC END/d' | cmp -s - $@.default || { \
+	@tr -d '\r' < $< | sed -e '/GBADHOC BEGIN/,/GBADHOC END/d' -e 's|/\* GBADHOC INLINE .* GBADHOC INLINE END \*/ ||' | cmp -s - $@.default || { \
 	  echo "psp/gbadhoc.ld.in is not this toolchain's default link script plus GBADHOC blocks:"; \
-	  tr -d '\r' < $< | sed '/GBADHOC BEGIN/,/GBADHOC END/d' | diff - $@.default | head -30; \
+	  tr -d '\r' < $< | sed -e '/GBADHOC BEGIN/,/GBADHOC END/d' -e 's|/\* GBADHOC INLINE .* GBADHOC INLINE END \*/ ||' | diff - $@.default | head -30; \
 	  rm -f $@.default; exit 1; }
 	@tr -d '\r' < $< | sed 's|@HOT_ORD@|$(HOT_ORD)|' > $@
 	@rm -f $@.default
@@ -625,7 +627,7 @@ DEPS := $(OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d)
 # not in OBJS (only their linked product is), so they are ours as well.
 clean: clean-deps clean-me clean-home clean-online clean-gbcore
 clean-deps:
-	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default groups.ld pins.ld
+	-@rm -f $(DEPS) gbadhoc.ld gbadhoc.ld.default groups.ld ro.ld pins.ld
 clean-gbcore:
 	-@rm -f $(GB_CORE_OBJS) ../gbcore/gbcore_tgbdual_linked_b.o
 	-@rm -rf gbalink_core_b.o gbalink_core_b.o.dir gbalink_b_stubs.o fe_autopilot_b.o ../frontend-common/fe_gbadual.o ../gbalink/*.o

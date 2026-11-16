@@ -1,10 +1,19 @@
 #!/bin/sh
-# groups_ld.sh [--pins "NAME..."] GROUP... -- the object groups' part of the
-# EBOOT's .text, as linker-script statements on stdout (code-health C3-2/C3-3;
-# docs/LAYOUT-PINNING.md "Object groups", "Pins").  psp/Makefile writes
-# psp/groups.ld with it on every make, and psp/gbadhoc.ld INCLUDEs that just
-# before the default script's generic `*(.text .stub .text.* .gnu.linkonce.t.*)`,
+# groups_ld.sh [--rodata] [--pins "NAME..."] GROUP... -- the object groups'
+# part of the EBOOT's .text, as linker-script statements on stdout (code-health
+# C3-2/C3-3; docs/LAYOUT-PINNING.md "Object groups", "Pins").  psp/Makefile
+# writes psp/groups.ld with it on every make, and psp/gbadhoc.ld INCLUDEs that
+# just before the default script's generic `*(.text .stub .text.* .gnu.linkonce.t.*)`,
 # which stays as the catch-all.
+#
+#   --rodata  the same for .rodata (code-health C3-4: psp/ro.ld, INCLUDEd at
+#             the start of the default's `.rodata` statement, which stays the
+#             catch-all): `.rodata .rodata.* .gnu.linkonce.r.*` per file, and
+#             no ungrouped check (the catch-all is where every other object's
+#             tables belong).  psp/Makefile gives it the head group and an
+#             empty group `ro` with --pins ro: `pin ro` comes right after the
+#             start files, whose merged string table (every object's
+#             .rodata.str*, merged into crt0.o's) is linked first.
 #
 #   GROUP   NAME:FILE...  one argument per group, in link order; the files in
 #           command-line order (psp/Makefile's OBJS is the groups joined).  A
@@ -54,6 +63,12 @@
 # tools/tests/test_layout_groups.py on the host.
 set -euf
 IN='.text .stub .text.* .gnu.linkonce.t.*'
+CHECK=1
+if [ "${1:-}" = --rodata ]; then
+  IN='.rodata .rodata.* .gnu.linkonce.r.*'
+  CHECK=0
+  shift
+fi
 PINS=''
 if [ "${1:-}" = --pins ]; then
   PINS=" $2 "
@@ -66,7 +81,7 @@ pinned() {
 }
 
 pin() {   # pin NAME OLD_SYMBOL
-  echo "    /* pin $1 (docs/LAYOUT-PINNING.md \"Pins\"); until code-health C3-3 the pad $2 */"
+  echo "    /* pin $1 (docs/LAYOUT-PINNING.md \"Pins\"); until code-health C-3 the pad $2 */"
   # the pad's old name, at its old start, for nm-reading tools (one release)
   echo "    $2 = ABSOLUTE(.);"
   if [ "$1" = fe_head ]; then
@@ -85,6 +100,7 @@ old_name() {
     fe_common) echo layout_pad_fe ;;
     fe_tail) echo layout_pad_gb ;;
     core) echo layout_pad_core ;;
+    ro) echo layout_pad_ro ;;
     *) echo "layout_pin_$1" ;;
   esac
 }
@@ -102,10 +118,12 @@ for g in "$@"; do
     echo "    :$f($IN)"
   done
 done
-echo '    /* an object outside every group: its text would land here */'
-echo '    __layout_ungrouped = .;'
-echo "    :[!/]*.o($IN)"
-echo '    ASSERT(. == __layout_ungrouped, "layout groups: an object in the link is in no psp/Makefile layout group (LAYOUT_GROUPS); add it to one");'
+if [ "$CHECK" = 1 ]; then
+  echo '    /* an object outside every group: its text would land here */'
+  echo '    __layout_ungrouped = .;'
+  echo "    :[!/]*.o($IN)"
+  echo '    ASSERT(. == __layout_ungrouped, "layout groups: an object in the link is in no psp/Makefile layout group (LAYOUT_GROUPS); add it to one");'
+fi
 if pinned core; then
   pin core "$(old_name core)"
 fi

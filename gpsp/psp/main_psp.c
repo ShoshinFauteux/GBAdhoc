@@ -110,18 +110,6 @@ PSP_HEAP_SIZE_KB(-1024);
 #include "sidecar_dirs.h"   /* saves/ and states/ (4.6.0-beta.4) */
 #include "fe/fe_priv.h"      /* this file's macros + PLAY_* defaults (P5) */
 
-/* LAYOUT_PAD_RO_BYTES (psp/Makefile; docs/LAYOUT-PINNING.md): zeros in
- * .rodata, whose frontend part is linked before instance A's: A's tables stay
- * in their cache sets when the frontend's strings change size.  (Its text twin,
- * layout_pad_cold, is the link's `pin fe_head` since code-health C3-3.) */
-#define LAYOUT_PAD_STR2(x) #x
-#define LAYOUT_PAD_STR(x) LAYOUT_PAD_STR2(x)
-#if defined(LAYOUT_PAD_RO_BYTES) && LAYOUT_PAD_RO_BYTES > 0
-__asm__(".pushsection .rodata.layout_pad_ro,\"a\",@progbits\n"
-        "  .fill " LAYOUT_PAD_STR(LAYOUT_PAD_RO_BYTES) ", 1, 0\n"
-        ".popsection\n");
-#endif
-
 #include "fe/paths.inc.c"
 #include "fe/harness.a.inc.c"
 #include "fe/power.a.inc.c"

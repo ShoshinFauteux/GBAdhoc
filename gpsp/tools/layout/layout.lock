@@ -132,6 +132,11 @@
 # `layout_lock.py regen --spend-page/--free-page/--move` changes a pin.  The
 # four rig profiles get sections of their own (pins only): they used the
 # release pad numbers, which put their regions at other offsets.
+# Code-health C3-4: the RO pad is `pin ro`, .rodata after the start files
+# (crt0.o's .rodata.str1.4 holds every object's merged strings), recorded as
+# the pad's end from the 772c0d43 maps (e0039a74-identical).  The merged
+# table is before the pin, so a few bytes more or less of strings (the 4 B
+# version-string trap of tools/layout/ro_margin.py, now deleted) move nothing.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -182,7 +187,7 @@ at   rom_branch_hash                    0x1fe8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own.
+# pads, in link order (solve)
 # BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
 # --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
@@ -195,6 +200,7 @@ pin  fe_head                            0x089392d0   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0897c700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x089ed9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a33e98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ad505c   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
@@ -245,7 +251,7 @@ at   rom_branch_hash                    0x1be8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve); LAYOUT_PAD_RO_BYTES has no symbol of its own.
+# pads, in link order (solve)
 # BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
 # --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
 pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
@@ -258,6 +264,7 @@ pin  fe_head                            0x0893b394   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0898f094   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a041a0   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a561d8   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08b04e24   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness]
 # pins (code-health C3-3): where each region starts, absolute; the link puts
@@ -267,6 +274,7 @@ pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness64]
 # pins (code-health C3-3): where each region starts, absolute; the link puts
@@ -276,6 +284,7 @@ pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [diagnostic]
 # pins (code-health C3-3): where each region starts, absolute; the link puts
@@ -285,6 +294,7 @@ pin  fe_head                            0x08939350   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0897c7a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x089eda90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a36278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ada054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [soak]
 # pins (code-health C3-3): where each region starts, absolute; the link puts
@@ -294,3 +304,4 @@ pin  fe_head                            0x0893a84c   # main_psp.o .. stb_impl.o 
 pin  fe_common                          0x0898e510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a03644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
 pin  core                               0x08a4dc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afcf34   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
