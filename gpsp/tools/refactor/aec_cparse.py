@@ -775,7 +775,10 @@ def _byaddr(body, params, args, what):
     for p, a in zip(params, args):
         if len(a) == 2 and a[0].text == '&' and a[1].kind == 'id':
             byaddr[p] = a[1]
-        elif not (len(a) == 1 and a[0].text == p):
+        elif not (len(a) == 1 and a[0].text == p) and not (
+                # tier C C-1 commit 5: main() passes the boot's value `bc.p` where it
+                # passed its own copy `p` (read_struct_as_locals reads `bc.p` as `p`)
+                len(a) == 3 and a[0].text == 'bc' and a[1].text == '.' and a[2].text == p):
             raise ValueError('splice: %s: parameter %s is given %s, not its own name or &local'
                              % (what, p, ' '.join(x.text for x in a)))
     out, k, n = [], 0, len(body)

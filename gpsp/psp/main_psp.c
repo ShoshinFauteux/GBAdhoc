@@ -161,7 +161,7 @@ PSP_HEAP_SIZE_KB(-1024);
  * writes copied back to *L when it ends (no loop local has its address taken,
  * C-1.md 2.3), so each name means what it meant in main().
  *   - loop_t: what the loop writes.  The first ten are main()'s per-game state
- *     (session_reset sets nine of them again; rom_fail_paused is not reset per
+ *     (loop_reset sets nine of them again; rom_fail_paused is not reset per
  *     game, as before C-1); the six one-shot harness keys are sticky: the loop
  *     consumes each once per process, never again after an in-process return.
  *   - session_ctx: what it only reads, for one game: the boot's values (bc),
@@ -186,7 +186,7 @@ typedef struct loop_t
    int chord_frames;
    int inproc_menu_armed;
    int rom_fail_paused;   /* sticky: not reset per game (as before C-1) */
-   /* sticky one-shot harness keys */
+   /* sticky: one-shot harness keys, consumed once per process */
    long dump_at, gedump_at, player_shot_n, ui_ctl_demo, ui_demo, wake_shot;
 } loop_t;
 
@@ -1988,63 +1988,73 @@ void frame_loop(loop_t *L, const session_ctx *S)
    L->ui_demo = ui_demo;
    L->wake_shot = wake_shot;
 }
+
+/* loop_reset: what every game starts from, set again before the in-process
+ * return goes back to the game list (docs/INPROC-RETURN.md) -- the statements
+ * main() ran there, in their order (Epoch C C3-1's session_reset, which took
+ * main()'s locals by address; tier C C-1 commit 5: the loop's state and the
+ * boot's values).  Every loop_t field is set here or tagged `sticky` in loop_t
+ * (tools/tests/test_session_reset.py).  always_inline: main()'s one call.  The
+ * tools read the call as this body (exit_matrix.EPOCHC_HELPERS;
+ * tests/extract.epochc_expand). */
+static inline __attribute__((always_inline)) void loop_reset(loop_t *L, const boot_ctx *bc,
+   int *autoload_state_slot)
+{
+   g_running = !g_exit_req;
+   g_relaunch = 0;
+   L->exit_code = 0;
+   L->exit_reason = NULL;
+   L->ff_engaged = 0;
+   L->ff_toggled = 0;
+   L->ff_last_mode = -1;
+   L->ff_last_me = -1;
+   L->prev_pad = 0;
+   g_pad_swallow = 0;          /* nothing of the last game is held */
+   L->chord_frames = 0;
+   g_dump_chord_pending = 0;   /* no screenshot of the next game */
+   ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
+   ui_set_turbo_locked(0);     /* ...and no session outlives it */
+   L->inproc_menu_armed = 0;
+   g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
+   g_blit_suppress = 0;
+   g_drew = 0;
+   memset(&g_ff_gate_st, 0, sizeof(g_ff_gate_st));
+   g_wake_have = 0;
+   g_wake_menu = 0;
+   g_last_pix = NULL;
+   g_me_rend_cfg = bc->me_rend_cfg_boot;
+   g_me_video_cfg = 0;
+   g_me_video = 0;
+   g_pcfg.sram_thread = bc->sram_thread_boot;
+   g_autoload_state = bc->autoload_boot;
+   *autoload_state_slot = 1;
+   g_autoload_from_shelf = 0;
+}
 int main(int argc, char *argv[]) __attribute__((section(".text.fe_cold.main")));   /* C-1 */
 /* @extract:begin fn:main */
 int main(int argc, char *argv[])
 {
    char rom_path[PSP_FILE_PATH_CAP];
    char save_path[PSP_FILE_PATH_CAP], state_path[PSP_FILE_PATH_CAP];
-   char script_name[64];
-   char nick[24], group[16] = "";
-   int have_script = 0, have_harness, have_variant;
    int autoload_state_slot = 1;
-   int net_host = 0, net_join = 0, net_probe = 0;
-   int exit_code = 0;
-   const char *exit_reason = NULL;
-   int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
-   unsigned prev_pad = 0;
-   int chord_frames = 0;
-   int rom_fail_paused = 0;   /* the menu opened for a ROM read failure */
    fe_host_config cfg;
    /* The in-process return to the game list (inproc_refusal): how many
-    * times this process has done it, the per-game values a fresh boot
-    * starts every game from, and the heap as it was when this game's ROM
-    * was picked. */
+    * times this process has done it, and the heap as it was when this
+    * game's ROM was picked.  The per-game values a fresh boot starts every
+    * game from are the boot's (bc), loop_reset puts them back. */
    int inproc_n = 0;
-   int folders = 0;      /* FOLDERS (folders_settle): saves/ and states/ */
-   int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
-   int inproc_menu_armed = 0;
-   char inproc_roms[6][64];
-   int inproc_rom_n = 0;
    heap_snap_t snap_pre;
-   boot_ctx bc;   /* the boot's values: frame_loop reads its own through S.bc */
-   loop_t L;      /* the loop's state between games (frame_loop) */
+   boot_ctx bc;   /* the boot's values (boot_run); frame_loop reads its own through S.bc */
+   loop_t L = { .ff_last_mode = -1, .ff_last_me = -1 };   /* the loop's state (loop_t) */
 
-   {
-      if (boot_run(argc, argv, &bc) >= 0)
-         return 0;
-      memcpy(script_name, bc.script_name, sizeof(script_name));
-      memcpy(nick, bc.nick, sizeof(nick));
-      memcpy(group, bc.group, sizeof(group));
-      L.dump_at = bc.dump_at;
-      L.gedump_at = bc.gedump_at;
-      L.ui_demo = bc.ui_demo;
-      L.ui_ctl_demo = bc.ui_ctl_demo;
-      L.wake_shot = bc.wake_shot;
-      L.player_shot_n = bc.player_shot_n;
-      have_script = bc.have_script;
-      have_harness = bc.have_harness;
-      have_variant = bc.have_variant;
-      net_host = bc.net_host;
-      net_join = bc.net_join;
-      net_probe = bc.net_probe;
-      folders = bc.folders;
-      me_rend_cfg_boot = bc.me_rend_cfg_boot;
-      sram_thread_boot = bc.sram_thread_boot;
-      autoload_boot = bc.autoload_boot;
-      memcpy(inproc_roms, bc.inproc_roms, sizeof(inproc_roms));
-      inproc_rom_n = bc.inproc_rom_n;
-   }
+   if (boot_run(argc, argv, &bc) >= 0)
+      return 0;
+   L.dump_at = bc.dump_at;
+   L.gedump_at = bc.gedump_at;
+   L.ui_demo = bc.ui_demo;
+   L.ui_ctl_demo = bc.ui_ctl_demo;
+   L.wake_shot = bc.wake_shot;
+   L.player_shot_n = bc.player_shot_n;
 
    /* ONE PASS PER GAME: the selection, the boot of the game, the frame loop and
     * session_end; then the in-process return goes round again for the next
@@ -2053,48 +2063,29 @@ int main(int argc, char *argv[])
    for (;;)
    {
    if (session_select(rom_path, save_path, state_path, &autoload_state_slot, inproc_n,
-                      inproc_roms, inproc_rom_n, have_variant, have_harness, folders) >= 0)
+                      bc.inproc_roms, bc.inproc_rom_n, bc.have_variant, bc.have_harness,
+                      bc.folders) >= 0)
       return 0;
 
-   session_configure(&cfg, rom_path, save_path, have_harness, net_host, net_join);
+   session_configure(&cfg, rom_path, save_path, bc.have_harness, bc.net_host, bc.net_join);
 
    if (session_load(&cfg, &snap_pre, rom_path, inproc_n) >= 0)
       return 0;
 
-   if (session_net_up(have_script, script_name, net_host, net_join, net_probe, group,
-                      nick) >= 0)
+   if (session_net_up(bc.have_script, bc.script_name, bc.net_host, bc.net_join, bc.net_probe,
+                      bc.group, bc.nick) >= 0)
       return 0;
 
    session_pre_loop();
-   L.exit_code = exit_code;
-   L.exit_reason = exit_reason;
-   L.ff_engaged = ff_engaged;
-   L.ff_toggled = ff_toggled;
-   L.ff_last_mode = ff_last_mode;
-   L.ff_last_me = ff_last_me;
-   L.prev_pad = prev_pad;
-   L.chord_frames = chord_frames;
-   L.inproc_menu_armed = inproc_menu_armed;
-   L.rom_fail_paused = rom_fail_paused;
    const session_ctx S = { &bc, state_path, inproc_n, autoload_state_slot };
    frame_loop(&L, &S);
-   exit_code = L.exit_code;
-   exit_reason = L.exit_reason;
-   ff_engaged = L.ff_engaged;
-   ff_toggled = L.ff_toggled;
-   ff_last_mode = L.ff_last_mode;
-   ff_last_me = L.ff_last_me;
-   prev_pad = L.prev_pad;
-   chord_frames = L.chord_frames;
-   inproc_menu_armed = L.inproc_menu_armed;
-   rom_fail_paused = L.rom_fail_paused;
    /* @lab */ LAB_FFP(lab_ffpace_finish();)
    /* A link session that could not put the game back (F5): its code and
-    * reason, which gblink_begin / link_end cannot reach (main's locals). */
-   if (g_link_fatal_why && !exit_reason)
+    * reason, which gblink_begin / link_end cannot reach (the loop's state). */
+   if (g_link_fatal_why && !L.exit_reason)
    {
-      exit_code = g_link_fatal_code;
-      exit_reason = g_link_fatal_why;
+      L.exit_code = g_link_fatal_code;
+      L.exit_reason = g_link_fatal_why;
    }
 
    if (g_perf_rig)
@@ -2115,20 +2106,17 @@ int main(int argc, char *argv[])
       fe_evt("smc_gates n=%u pcs=%s", translation_gate_targets, gates);
       fe_evt("perf_done samples=%u expected=%u",rig_stats.total_n,rig_to-rig_from);
    }
-   session_end(have_variant);
-   if (!inproc_try_return(have_variant, &inproc_n, snap_pre))
+   session_end(bc.have_variant);
+   if (!inproc_try_return(bc.have_variant, &inproc_n, snap_pre))
       break;
    /* A HOME after the refusal check above (the unload, the census,
     * the clock) must still end the process: the list then returns at
     * once and leaves through its own HOME exit (F1). */
-   session_reset(&exit_code, &exit_reason, &ff_engaged, &ff_toggled, &ff_last_mode,
-                 &ff_last_me, &prev_pad, &chord_frames, &inproc_menu_armed,
-                 &autoload_state_slot, me_rend_cfg_boot, sram_thread_boot,
-                 autoload_boot);
+   loop_reset(&L, &bc, &autoload_state_slot);
    emu_boost_start();
    pwr_release();         /* the browser waits on the player: no hold */
    }   /* the next game */
-   process_end(exit_code, exit_reason);
+   process_end(L.exit_code, L.exit_reason);
    return 0;
 }
 /* @extract:end fn:main */

@@ -76,30 +76,30 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe
 typedef u32 abi_fe_t_gamepak_short_reads__2;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
                "fe/harness.f.inc.c:899 gamepak_short_reads: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:61 (block) */
+/* fe/session.inc.c:22 (block) */
 typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
-               "fe/session.inc.c:61 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:516 (block) */
+               "fe/session.inc.c:22 gpsp_heap_census: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:477 (block) */
 typedef uint32_t abi_fe_t_sched_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sched_fast), abi_fe_t_sched_fast *),
-               "fe/session.inc.c:516 sched_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:533 (block) */
+               "fe/session.inc.c:477 sched_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:494 (block) */
 typedef uint32_t abi_fe_t_timer_lazy;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&timer_lazy), abi_fe_t_timer_lazy *),
-               "fe/session.inc.c:533 timer_lazy: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:549 (block) */
+               "fe/session.inc.c:494 timer_lazy: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:510 (block) */
 typedef uint32_t abi_fe_t_irq_io_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast *),
-               "fe/session.inc.c:549 irq_io_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:560 (block) */
+               "fe/session.inc.c:510 irq_io_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:521 (block) */
 typedef uint32_t abi_fe_t_msr_fast;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast *),
-               "fe/session.inc.c:560 msr_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:1072 (block) */
+               "fe/session.inc.c:521 msr_fast: the frontend copy differs from the core declaration");
+/* fe/session.inc.c:1033 (block) */
 typedef u32 abi_fe_t_rom_cache_watermark;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_cache_watermark), abi_fe_t_rom_cache_watermark *),
-               "fe/session.inc.c:1072 rom_cache_watermark: the frontend copy differs from the core declaration");
+               "fe/session.inc.c:1033 rom_cache_watermark: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:25 */

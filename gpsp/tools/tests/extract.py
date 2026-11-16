@@ -340,7 +340,7 @@ EPOCHC_PASS_TAIL = re.compile(r'^   if \(!inproc_try_return\(([^;]*)\)\)\n      
 # main()'s `while (g_running) { .. }` moved unchanged, with copy-in/copy-out of main()'s
 # locals (it keeps their names).  main() calls it once per game:
 #     L.x = x; ..  const session_ctx S = { .. };  frame_loop(&L, &S);  x = L.x; ..
-# (the copies only while main() keeps its own locals).  Pasted back over that block,
+# (the copies only while main() kept its own locals, commit 4).  Pasted back over that block,
 # main() reads as it did before C-1.
 EPOCHC_LOOP_CALL = re.compile(r'(?:^   L\.\w+ = \w+;\n)*^   const session_ctx S = [^\n]*\n'
                               r'^   frame_loop\(&L, &S\);\n(?:^   \w+ = L\.\w+;\n)*', re.M)
@@ -367,7 +367,10 @@ def epochc_frame_loop(main_text, source):
     if a < 0 or b < a:
         raise ExtractError('c-1: frame_loop() has no `while (g_running)` loop')
     loop = body[a + 1:b + len('\n   }\n')]
-    return EPOCHC_LOOP_CALL.sub(lambda _: loop, main_text, count=1)
+    main_text = EPOCHC_LOOP_CALL.sub(lambda _: loop, main_text, count=1)
+    # C-1 commit 5: main() keeps the loop's state in `loop_t L` and reads the boot's
+    # values from `boot_ctx bc`; read as the locals of the same names it had before
+    return re.sub(r'(?<![\w.>])(?:L|bc)\.(?=[A-Za-z_])', '', main_text)
 
 
 def epochc_unloop(main_text, source):
@@ -554,17 +557,21 @@ def _void_body(source, name, indent):
 # Epoch C C3-1 (fe/session.inc.c): the in-process return's reset list is
 # session_reset(&local.., boot values..).  Pasted back with `*name` read as `name`
 # (each parameter carries the name of the main() local it is given) and main()'s
-# indentation at the call.
-EPOCHC_RESET_CALL = re.compile(r'^( +)session_reset\([^;]*\);\n', re.M)
+# indentation at the call.  Tier C C-1 commit 5: it is loop_reset(&L, &bc,
+# &autoload_state_slot) beside loop_t (main_psp.c); `L->f` and `bc->f` read as the
+# locals `f` main() had before C-1, as epochc_frame_loop reads main()'s `L.f`/`bc.f`.
+EPOCHC_RESET_CALL = re.compile(r'^( +)(?:session|loop)_reset\([^;]*\);\n', re.M)
 
 
 def _reset_body(source, indent):
-    m = re.search(r'^static [^\n]*\bvoid session_reset\(([^)]*)\)\s*\{\n', source, re.M)
+    m = re.search(r'^static [^\n]*\bvoid (?:session|loop)_reset\(([^)]*)\)\s*\{\n', source, re.M)
     if not m:
-        raise ExtractError('epochc: session_reset() not defined')
+        raise ExtractError('epochc: session_reset() / loop_reset() not defined')
     ptr = re.findall(r'\*\s*(\w+)\s*(?:,|$)', m.group(1))
     end = source.index('\n}\n', m.end() - 1)
     body = source[m.end():end + 1]
+    for p in ptr:
+        body = re.sub(r'\b%s->' % p, '', body)
     if ptr:
         body = re.sub(r'\*(%s)\b' % '|'.join(ptr), r'\1', body)
     return ''.join(indent + ln[3:] + '\n' if ln.startswith('   ') else ln + '\n'

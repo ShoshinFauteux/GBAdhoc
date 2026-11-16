@@ -92,9 +92,11 @@ def helpers(source):
     last = "process_end" if "void process_end(" in source[a:] else "exit_early_end"
     end = function(source[a:], last)
     text = source[a:a + source[a:].index(end) + len(end)]
-    # Epoch C C3-1: the in-process return's reset is session_reset (fe/session.inc.c)
-    if "void session_reset(" in source:
-        text += "\n" + function(source, "session_reset")
+    # Epoch C C3-1: the in-process return's reset is session_reset (fe/session.inc.c);
+    # tier C C-1 commit 5: loop_reset, beside loop_t (main_psp.c)
+    for reset in ("session_reset", "loop_reset"):
+        if "void %s(" % reset in source:
+            text += "\n" + function(source, reset)
     return text
 
 

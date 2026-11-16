@@ -230,8 +230,9 @@ def collapse(seq):
 # a call statement of one of them AS ITS BODY, its flags folded (aec_cparse.inline_helpers),
 # so a site that calls them has the calls, order, texts and hold of the copy it replaced,
 # and the gate compares them with the golden unchanged.  They are never sites themselves.
+# (tier C C-1 commit 5: session_reset is loop_reset(&L, &bc, &autoload_state_slot))
 EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_end',
-                  'session_reset', 'inproc_unload')
+                  'session_reset', 'loop_reset', 'inproc_unload')
 # Epoch C C2: main()'s boot moved unchanged into boot_run (fe/boot.inc.c).  Every view
 # reads its call as its body (aec_cparse.splice_moved), so the boot probes (family A)
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.
@@ -254,9 +255,9 @@ class View(object):
     def __init__(self, name, toks):
         toks = C.unloop_session(toks, EPOCHC_LOOP[0], 'session_top')
         toks = C.splice_moved(toks, EPOCHC_MOVED)
-        if 'frame_loop' in C.functions(toks):      # C-1: the loop's state reads as locals
-            toks = C.read_struct_as_locals(toks, 'L')
         toks = C.inline_helpers(toks, EPOCHC_HELPERS)
+        if 'frame_loop' in C.functions(toks):      # C-1: the loop's state reads as locals
+            toks = C.read_struct_as_locals(C.read_struct_as_locals(toks, 'L'), 'bc')
         self.name, self.toks = name, toks
         self.funcs = C.functions(toks)
         lo, hi = self.funcs['main']

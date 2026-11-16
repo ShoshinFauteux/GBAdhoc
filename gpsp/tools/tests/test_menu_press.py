@@ -525,8 +525,10 @@ for label, old, new, expect, wired in MUTANTS:
     print("mutant (%s): failed as it must" % label)
 
 # Wiring only: the next game's first read is not a model this loop has.
-# (Epoch C C3-1: the reset is session_reset() in fe/session.inc.c)
-bad_src = (in_site("void session_reset(", "\n}\n") if "void session_reset(" in MAIN else
+# (Epoch C C3-1: the reset is session_reset() in fe/session.inc.c; tier C C-1 commit 5:
+# loop_reset() beside loop_t)
+RESET = next((r for r in ("session_reset", "loop_reset") if "void %s(" % r in MAIN), None)
+bad_src = (in_site("void %s(" % RESET, "\n}\n") if RESET else
            in_site('fe_evt("inproc_return', "goto session_top;"))(
     r"\n *g_pad_swallow = 0;[^\n]*", "")(MAIN)
 assert bad_src != MAIN

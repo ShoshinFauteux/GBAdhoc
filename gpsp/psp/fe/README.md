@@ -2,11 +2,11 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 d1baa1dcc0413cee; split.py inverse of the shell sha256 bded7a6744096b7f (19555 lines) -->
+     inputs: cutlist.txt sha256 37a308bcf307cb8f; split.py inverse of the shell sha256 4e141d2f1a8c8721 (19504 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
-`psp/main_psp.c` is ONE translation unit split into 46 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-112) and `shell.b` (lines 157-2134, `main()`), and includes the other 44 as `psp/fe/<name>.inc.c` at lines 113-156, once each, in source order. This file is documentation only: it is in no build.
+`psp/main_psp.c` is ONE translation unit split into 46 fragments (PLAN-P-beta5 §5): the shell `psp/main_psp.c` keeps `shell.a` (lines 1-112) and `shell.b` (lines 157-2122, `main()`), and includes the other 44 as `psp/fe/<name>.inc.c` at lines 113-156, once each, in source order. This file is documentation only: it is in no build.
 
 ## Conventions
 
@@ -58,7 +58,7 @@ Every region, in TU order, and the host tests that read it:
 | `ff:mult_frames` | `main_psp.c:1411` | `run_ff_tests.py` |
 | `lowlat:want` | `main_psp.c:1758` | `test_lowlat_policy.py` |
 | `lowlat:wait` | `main_psp.c:1841` | `test_lowlat_policy.py` |
-| `fn:main` | `main_psp.c:1992` | `test_exit_paths.py`, `test_exit_req.py`, `test_inproc_unload.py`, `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
+| `fn:main` | `main_psp.c:2034` | `test_exit_paths.py`, `test_exit_req.py`, `test_inproc_unload.py`, `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
 | `fn:cb_thread` | `fe/power.a.inc.c:107` | `test_power_callback.py` |
 | `def:IO_JOIN_US` | `fe/iothread.inc.c:22` | `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:io_thread` | `fe/iothread.inc.c:62` | `test_psp_runtime.py` |
@@ -124,7 +124,7 @@ Every region, in TU order, and the host tests that read it:
 | `fn:wake_service` | `fe/power.e.inc.c:187` | `test_menu_press.py`, `test_sleep_holds.py`, `test_sleep_menu.py` |
 | `lowlat:late_present` | `fe/pacing.d.inc.c:1` | `test_lowlat_policy.py` |
 | `vol:boot_apply` | `fe/boot.inc.c:169` | `test_volume.py` |
-| `sb:list_call` | `fe/session.inc.c:190` | `test_sleep_browser.py` |
+| `sb:list_call` | `fe/session.inc.c:151` | `test_sleep_browser.py` |
 
 Readers that read the TU text but no region: `test_backup_save.py`, `test_net_codes.py`, `test_session_reset.py`.
 
@@ -151,11 +151,11 @@ Readers that read the TU text but no region: `test_backup_save.py`, `test_net_co
 | 14 | inproc | `inproc_refusal`, `relaunch_eboot`, heap census helpers | - | - | `inproc.a`, `inproc.b` | 10 / 1 | 0 | 6 / 1 |
 | 15 | teardown | `session_end(td)`, `inproc_try_return()`, `process_end(pe)`, `exit_early(x)` (§3) | - | - | `teardown` | 6 / 0 | 0 | 6 / 0 |
 | 16 | boot | `boot_run(boot_ctx*)`, noinline cold; owns `cfg_doc` in its frame (§0.2-1); the boot order of §4.4 | - | - | `boot` | 1 / 5 | 5 | 1 / 0 |
-| 17 | session | `session_select`, `session_configure`, `session_load`, `session_net_up`, `session_pre_loop` | - | - | `session` | 6 / 0 | 0 | 6 / 0 |
-| 18 | loop | Until D1: the loop body included textually into `main`. From D1: `frame_iter(loop_t*, session_ctx*)` noinline + `frame_iter_rare()` noinline cold | - | yes | - | 1 / 0 | 1 | 1 / 0 |
+| 17 | session | `session_select`, `session_configure`, `session_load`, `session_net_up`, `session_pre_loop` | - | - | `session` | 5 / 0 | 0 | 5 / 0 |
+| 18 | loop | Until D1: the loop body included textually into `main`. From D1: `frame_iter(loop_t*, session_ctx*)` noinline + `frame_iter_rare()` noinline cold | - | yes | - | 2 / 0 | 2 | 2 / 0 |
 | 19 | harness | Stall watch, DRPROF_HW, core_health, rig identity, uiscript, sleep simulator, testpat, nettest, vram_probe, vid_prof, preempt, ff_win, eboot_crc, `gpsp_net_wait_beat` | `gpsp_net_wait_beat` | - | `harness.a`, `harness.b`, `harness.c`, `harness.d`, `harness.e`, `harness.f` | 52 / 123 | 55 | 5 / 54 |
 
-loop have no fragment yet (no FRAG row): PLAN.md §2 creates them later (loop HW-4 D1). Of the cutlist's rows, loop owns 1 F row, which sits in `main_psp.c` (line 201: `frame_loop`) (see "Rows outside their owner's fragments").
+loop have no fragment yet (no FRAG row): PLAN.md §2 creates them later (loop HW-4 D1). Of the cutlist's rows, loop owns 2 F rows, which sit in `main_psp.c` (lines 201, 2000: `frame_loop`, `loop_reset`) (see "Rows outside their owner's fragments").
 
 ### harness and mgift functions and their `#if` context
 
@@ -291,12 +291,12 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 42 | pacing.d | `fe/pacing.d.inc.c` | 1-127 | pacing | 6 / 2 | - |
 | 43 | teardown | `fe/teardown.inc.c` | 1-357 | teardown | 6 / 0 | - |
 | 44 | boot | `fe/boot.inc.c` | 1-1447 | boot | 1 / 0 | - |
-| 45 | session | `fe/session.inc.c` | 1-1184 | session | 6 / 0 | - |
-| 46 | shell.b | `main_psp.c` | 157-2134 | shell | 2 / 0 | loop 1 |
+| 45 | session | `fe/session.inc.c` | 1-1145 | session | 5 / 0 | - |
+| 46 | shell.b | `main_psp.c` | 157-2122 | shell | 3 / 0 | loop 2 |
 
 ## Rows outside their owner's fragments
 
-158 cutlist rows sit in a fragment of another module: the split keeps TU order, so a definition stays where the source had it (PLAN §1.3: the owner is the module that writes it; a definition must precede its first use). Per fragment, in TU order: where the row's first line is, its kind, name and owner.
+159 cutlist rows sit in a fragment of another module: the split keeps TU order, so a definition stays where the source had it (PLAN §1.3: the owner is the module that writes it; a definition must precede its first use). Per fragment, in TU order: where the row's first line is, its kind, name and owner.
 
 **shell.a** (module shell):
 
@@ -515,6 +515,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 **shell.b** (module shell):
 
 - `main_psp.c:201` F `frame_loop` -> loop
+- `main_psp.c:2000` F `loop_reset` -> loop
 
 ## Functions per fragment
 
@@ -564,5 +565,5 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **pacing.d** (`fe/pacing.d.inc.c`): dfr_clock_low:32, dfr_defer:39, dfr_present:53, lf_hold_begin:80, lf_hold_vblank:97, lf_want_slot:121
 - **teardown** (`fe/teardown.inc.c`): exit_early_begin:27, exit_early_end:52, session_end:83, inproc_unload:182, inproc_try_return:242, process_end:300
 - **boot** (`fe/boot.inc.c`): boot_run:54
-- **session** (`fe/session.inc.c`): session_reset:8, session_select:49, session_configure:304, session_load:778, session_net_up:1100, session_pre_loop:1151
-- **shell.b** (`main_psp.c`): frame_loop:201 (loop), main:1993
+- **session** (`fe/session.inc.c`): session_select:10, session_configure:265, session_load:739, session_net_up:1061, session_pre_loop:1112
+- **shell.b** (`main_psp.c`): frame_loop:201 (loop), loop_reset:2000 (loop), main:2035
