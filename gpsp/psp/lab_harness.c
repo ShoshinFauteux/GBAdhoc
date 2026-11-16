@@ -38,8 +38,6 @@
 #include <psploadexec_kernel.h>
 #include <systemctrl.h>
 
-#include <streams/file_stream.h>
-
 #include "lab_harness.h"
 #include "video_psp.h"        /* vid_rect: the photoresistor blink */
 #include "labab/ab_io.h"     /* autoboot agent's BUDGET.TXT contract, verbatim from GBAdhoc-Lab autoboot/src (d31d586) */
@@ -48,7 +46,6 @@
 
 /* ------------------------------------------------------------- counters */
 extern uint32_t flush_rom_total, gamepak_reopens, gamepak_short_reads, badjump_contained;
-extern struct RFILE *gamepak_file_large;   /* gba_memory.c: the paged ROM's open handle (core_fe.h) */
 extern uint32_t dma_smc_flushes __attribute__((weak));
 extern uint32_t badjump_recoveries __attribute__((weak));
 extern uint32_t jit_code_stats[10] __attribute__((weak));
@@ -688,144 +685,11 @@ static void tlm_emit_win(unsigned frame, unsigned loop_iter, int loop_phase)
    memset(&T_win, 0, sizeof(T_win));
 }
 
-/* ------------------------------------------------------------ ROM unplug
- * The `rom_unplug` fixture (code-health C0-2): the ROM file becomes unreadable mid-game, as when the Memory Stick
- * is pulled, and comes back.  Two task keys, read once at boot (lab_audit_keys, so the key audit sees them):
- *   lab_rom_unplug_at = F      after frame F, close the core's paged-ROM handle and rename the file to
- *                              <rom>.unplugged: the next page miss reopens by path, fails, maps zeros and raises the
- *                              core's flag (gba_memory.c load_gamepak_page), and the frontend pauses in the menu
- *   lab_rom_replug_after = N   once N reopens have failed since the unplug, rename it back.  Counted in failed
- *                              reopens, not frames: emulated frames stop while the menu is paused.  One reopen
- *                              fails per Resume, so N failures pause N times and the Nth Resume reads the file.
- * EVT lab_rom_unplug / lab_rom_replug say what was done; the verdict reads them with rom_read_failed / ui_open /
- * ui_close / rom_read_retry.  A key the task lacks leaves the hook off: no events, and the fixture FAILs.
- * Every launch of a lab build reads them, a Lab task (the ROM in roms/ of the card's Lab dir) or a plain harness
- * run such as the PPSSPP suites runner (the app's roms/).  A task that ends while the file is away renames it back
- * in lab_finish; a crash or hang leaves sys/UNPLUG.TXT, and the next boot renames it back before anything else. */
-static char L_hini[192], L_romdir[160];        /* lab_boot's entry values: a launch that is no Lab task */
-static char L_rom_from[160 + 1 + 96], L_rom_to[160 + 1 + 96 + 10];   /* romdir/rom, + ".unplugged" */
-static int  L_unplug_at = -1, L_replug_after;  /* -1: not read yet */
-static int  L_unplug_st;                       /* 0 armed, 1 renamed away, 2 done */
-static uint32_t L_unplug_reopens;
-
-static void unplug_journal_path(char *p, size_t n)
-{
-   snprintf(p, n, "%s/sys/UNPLUG.TXT", L_root);
-}
-
-static void rom_unplug_keys(void)
-{
-   const char *ini = L_active ? L_ini : L_hini;
-   char rom[96];
-   L_unplug_at = (int)fe_ini_get_int(ini, "lab_rom_unplug_at", 0);
-   L_replug_after = (int)fe_ini_get_int(ini, "lab_rom_replug_after", 0);
-   if (L_unplug_at <= 0)
-   {
-      L_unplug_at = 0;
-      return;
-   }
-   if (!fe_ini_get(ini, "rom", rom, sizeof(rom)) || !rom[0] || strchr(rom, '/'))
-   {
-      fe_evt("lab_rom_unplug err=no_rom_key");
-      L_unplug_at = 0;
-      return;
-   }
-   if (L_active)
-      snprintf(L_rom_from, sizeof(L_rom_from), "%s/roms/%s", L_root, rom);
-   else
-      snprintf(L_rom_from, sizeof(L_rom_from), "%s/%s", L_romdir, rom);
-   snprintf(L_rom_to, sizeof(L_rom_to), "%s.unplugged", L_rom_from);
-   fe_evt("lab_rom_unplug armed at=%d replug_after=%d", L_unplug_at, L_replug_after);
-}
-
-static void rom_unplug_frame(unsigned frame)
-{
-   char jp[64], buf[sizeof(L_rom_from) + sizeof(L_rom_to) + 16];
-   int rc, n;
-   if (L_unplug_st == 0 && frame >= (unsigned)L_unplug_at)
-   {
-      int had = gamepak_file_large != NULL;
-      L_unplug_st = 2;
-      if (!had)
-      {  /* a whole cart in memory reads no file: nothing to take away */
-         fe_evt("lab_rom_unplug frame=%u err=no_handle", frame);
-         return;
-      }
-      if (L_active)
-      {  /* before the rename: a crash from here on is undone by the next boot (unplug_recover) */
-         unplug_journal_path(jp, sizeof(jp));
-         n = snprintf(buf, sizeof(buf), "v=1\nfrom=%s\nto=%s\n", L_rom_from, L_rom_to);
-         wr(jp, buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1, 0);
-      }
-      filestream_close(gamepak_file_large);
-      gamepak_file_large = NULL;
-      rc = sceIoRename(L_rom_from, L_rom_to);
-      L_unplug_reopens = gamepak_reopens;
-      if (rc >= 0)
-         L_unplug_st = 1;
-      else if (L_active)
-         sceIoRemove(jp);
-      fe_evt("lab_rom_unplug frame=%u rc=%d reopens=%u short_reads=%u", frame, rc, (unsigned)gamepak_reopens,
-             (unsigned)gamepak_short_reads);
-   }
-   else if (L_unplug_st == 1 && L_replug_after > 0 &&
-            gamepak_reopens - L_unplug_reopens >= (uint32_t)L_replug_after)
-   {
-      rc = sceIoRename(L_rom_to, L_rom_from);
-      L_unplug_st = 2;
-      if (L_active)
-      {
-         unplug_journal_path(jp, sizeof(jp));
-         sceIoRemove(jp);
-      }
-      fe_evt("lab_rom_replug frame=%u rc=%d reopens=%u since=%u short_reads=%u", frame, rc,
-             (unsigned)gamepak_reopens, (unsigned)(gamepak_reopens - L_unplug_reopens),
-             (unsigned)gamepak_short_reads);
-   }
-}
-
-/* lab_finish: the task ends with the file still away (a run that never reached the replug). */
-static void rom_unplug_restore(void)
-{
-   char jp[64];
-   if (L_unplug_st != 1)
-      return;
-   L_unplug_st = 2;
-   journal("rom_unplug: restore %s rc=%d", L_rom_from, sceIoRename(L_rom_to, L_rom_from));
-   unplug_journal_path(jp, sizeof(jp));
-   sceIoRemove(jp);
-}
-
-/* Boot: an earlier process died with a ROM renamed away.  Only a name under our own roms/ is touched; if the PC
- * copied the ROM again meanwhile, the leftover is deleted. */
-static void unplug_recover(void)
-{
-   char jp[64], buf[sizeof(L_rom_from) + sizeof(L_rom_to) + 16], from[sizeof(L_rom_from)], to[sizeof(L_rom_to)],
-        roms[48];
-   int rc;
-   unplug_journal_path(jp, sizeof(jp));
-   if (rd(jp, buf, sizeof(buf)) <= 0)
-      return;
-   snprintf(roms, sizeof(roms), "%s/roms/", L_root);
-   if (kv(buf, "from", from, sizeof(from)) && kv(buf, "to", to, sizeof(to)) &&
-       !strncmp(from, roms, strlen(roms)) && !strncmp(to, from, strlen(from)) && !strchr(from + strlen(roms), '/'))
-   {
-      if (exists(from))
-         rc = exists(to) ? sceIoRemove(to) : 0;
-      else
-         rc = sceIoRename(to, from);
-      journal("rom_unplug: recovered %s rc=%d", from, rc);
-   }
-   sceIoRemove(jp);
-}
-
 int lab_frame(unsigned frame, unsigned wall_us, unsigned work_us, unsigned loop_iter, int loop_phase)
 {
    static const unsigned edge[7] = { 16740, 20000, 25000, 33400, 50000, 75000, 100000 };
    unsigned i;
    uint64_t now;
-   if (L_unplug_at > 0 && L_unplug_st != 2)
-      rom_unplug_frame(frame);
    if (!L_active)
       return 0;
    L_last_frame = frame;
@@ -868,7 +732,6 @@ void lab_audit_keys(void)
                                        "lab_tlm_flush_s", "lab_window_after", "lab_window_s" };
    char tmp[256];
    unsigned i;
-   rom_unplug_keys();               /* every launch: a PPSSPP harness run is no Lab task */
    if (!L_active)
       return;
    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
@@ -1076,8 +939,6 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
    char p[192], rom[96], bid[16], why[64], cur[256];
    int n;
    const char *b = dir_base;
-   snprintf(L_hini, sizeof(L_hini), "%s", harness);     /* rom_unplug_keys, when this is no Lab launch */
-   snprintf(L_romdir, sizeof(L_romdir), "%s", rom_dir);
    /* sec. 6.1.1: only the launcher dir or a lab build dir makes this a lab launch */
    if (strncasecmp(b, "ms0:/", 5))
       return 0;
@@ -1118,7 +979,6 @@ int lab_boot(const char *dir_base, char *harness, size_t harness_sz, char *rom_d
          }
       }
    }
-   unplug_recover();                   /* a ROM an earlier process renamed away (rom_unplug) comes back first */
    labid_ensure();
    process_cmd();
    process_ack();
@@ -1399,7 +1259,6 @@ void lab_finish(int exit_code, const char *reason)
    if (!L_active)
       return;
    t_ms = (unsigned)((sceKernelGetSystemTimeWide() - L_t0_us) / 1000ull);
-   rom_unplug_restore();
    if (lab_instr_exit)
       lab_instr_exit();
    if (T_win.n)
