@@ -149,18 +149,16 @@ at   roster_valid                       0x0700
 at   fe_host_reset                      0x0b00
 at   hex_val                            0x1a14
 at   pte_mutex_check_need_init          0x1e98
-# the pinned hot core and the two 32 B holes of round 7
+# the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
 at   block_lookup_translate_thumb       0x1b80
-gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
 at   gbab_update_gba                    0x0b60
 at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
-tail gbab_block_lookup_translate_thumb  40
-# the late section's first row, after B's hot path and the zeros behind B's
-# translate_block_arm (LAYOUT_PAD_BXLAT_BYTES, both flavours; code-health A-1)
+# the late section's first row, after B's hot path (`pin row_xlat_b` since
+# code-health C3-5; until then LAYOUT_PAD_BXLAT_BYTES zeros, A-1)
 at   memcmp                             0x14c0
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
@@ -187,12 +185,44 @@ at   rom_branch_hash                    0x1fe8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve)
-# BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
-# --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
-pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
-pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
-pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x088084c0   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808d20   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08809020   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x08809920   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809d20   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b680   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880ba00   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880bb80   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c280   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x08810140   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x088177a0   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x08817900   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819be0   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819d38   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a680   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881f300   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x088273e0   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x088485e0   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a1a78   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a1c20   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a2480   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a2660   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a2f60   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a3360   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a4cc0   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a5040   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a58c0   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088a93c0   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b0a20   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b0b60   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b2e80   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088ba380   # B (was memory_fill_term)
+pin  row_xlat_b                         0x0892f4c0   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x0892ff40   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08930880   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x08931c64   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
@@ -213,18 +243,16 @@ at   roster_valid                       0x1094
 at   fe_host_reset                      0x1308
 at   hex_val                            0x01cc
 at   pte_mutex_check_need_init          0x01d8
-# the pinned hot core and the two 32 B holes of round 7
+# the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
 at   block_lookup_translate_thumb       0x1b80
-gap  layout_pad_warm_lookup block_lookup_translate_thumb 32
 at   gbab_update_gba                    0x01a0
 at   gbab_block_lookup_translate_arm    0x1fa0
 at   gbab_block_lookup_address_arm      0x11a0
 at   gbab_block_lookup_translate_thumb  0x08c0
-tail gbab_block_lookup_translate_thumb  40
-# the late section's first row, after B's hot path and the zeros behind B's
-# translate_block_arm (LAYOUT_PAD_BXLAT_BYTES, both flavours; code-health A-1)
+# the late section's first row, after B's hot path (`pin row_xlat_b` since
+# code-health C3-5; until then LAYOUT_PAD_BXLAT_BYTES zeros, A-1)
 at   memcmp                             0x0c60
 # the ME capture's per-line path (beta.5 integration: the filters cache fix)
 at   update_scanline                    0x0200
@@ -251,12 +279,44 @@ at   rom_branch_hash                    0x1be8
 at   rom_translation_cache_static       0x1500
 at   ram_translation_cache_static       0x1500
 at   _end                               0x198c
-# pads, in link order (solve)
-# BXLAT is a psp/Makefile default in both flavours: for [lab], pass solve
-# --makefile psp/Makefile beside --pads tools/layout/lab-pads.env
-pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline gbab_block_lookup_address_arm
-pad  LAYOUT_PAD_BXLAT_BYTES gbab_translate_block_arm memcmp
-pad  LAYOUT_PAD_LATE_BYTES  layout_pad_late      _ZL12ml_line_bodym
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x088084c0   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808d20   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08809020   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x08809920   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809d20   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b680   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880ba00   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880bb80   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c280   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x08810140   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x088177a0   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x08817900   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819b00   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819c58   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a5a0   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881fbe0   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x08828a00   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x08849c40   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a3198   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a3340   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a3ba0   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a3d80   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a4680   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a4a80   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a63e0   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a6760   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a6fe0   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088aaae0   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b2140   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b2280   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b45a0   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088bbb20   # B (was memory_fill_term)
+pin  row_xlat_b                         0x08930c60   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x08931f40   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08932880   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x0893356c   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
@@ -267,6 +327,44 @@ pin  core                               0x08a561d8   # instance A's cold core (w
 pin  ro                                 0x08b04e24   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness]
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x088084c0   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808d20   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08809020   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x08809920   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809d20   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b680   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880ba00   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880bb80   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c280   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x08810140   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x088177a0   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x08817900   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819b00   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819c58   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a5a0   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881fbe0   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x08828a00   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x08849c60   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a30f8   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a32a0   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a3b00   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a3ce0   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a45e0   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a49e0   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a6340   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a66c0   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a6f40   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088aaa40   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b20a0   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b21e0   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b4500   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088bba80   # B (was memory_fill_term)
+pin  row_xlat_b                         0x08930bc0   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x08931640   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08931f80   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
@@ -277,6 +375,44 @@ pin  core                               0x08a4d138   # instance A's cold core (w
 pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [harness64]
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x088084c0   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808d20   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08809020   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x08809920   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809d20   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b680   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880ba00   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880bb80   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c280   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x08810140   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x088177a0   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x08817900   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819b00   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819c58   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a5a0   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881fbe0   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x08828a00   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x08849c60   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a30f8   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a32a0   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a3b00   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a3ce0   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a45e0   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a49e0   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a6340   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a66c0   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a6f40   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088aaa40   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b20a0   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b21e0   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b4500   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088bba80   # B (was memory_fill_term)
+pin  row_xlat_b                         0x08930bc0   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x08931640   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08931f80   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
@@ -287,6 +423,44 @@ pin  core                               0x08a4d138   # instance A's cold core (w
 pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [diagnostic]
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x08808220   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808a80   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08808dc0   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x088097c0   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809bc0   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b520   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880b8a0   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880ba20   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c220   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x088100e0   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x08817740   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x088178a0   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819b80   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819cd8   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a620   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881f2a0   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x08827420   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x08848620   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a17d8   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a19c0   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a2220   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a2440   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a2e40   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a3240   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a4ba0   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a4f20   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a58a0   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088a93a0   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b0a00   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b0b40   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b2e60   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088ba400   # B (was memory_fill_term)
+pin  row_xlat_b                         0x0892f540   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x0892ffc0   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08930900   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x08931ce4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
@@ -297,6 +471,44 @@ pin  core                               0x08a36278   # instance A's cold core (w
 pin  ro                                 0x08ada054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [soak]
+# row pins (code-health C3-5): the hot block's holds, in address order; each
+# is where the row after it starts (recorded from 772c0d43's maps).  A row
+# that grows past its pin's gap fails a strict link; `regen` decides.
+pin  row_dc_arm                         0x08808220   # A update_serial (was layout_pad_warm_dc_arm, 128 B)
+pin  row_xs                             0x08808a80   # after ram_mirror_alias_pc (was smc_fill_xs, 64 B)
+pin  row_dc_thumb                       0x08808dc0   # A spin_check (was layout_pad_warm_dc_thumb, 96 B)
+pin  row_lk                             0x088097c0   # after block_lookup_translate_arm (was smc_fill_lk, 96 B)
+pin  row_rfu_update                     0x08809bc0   # after rfu_update (was rfu_fill_update, 64 B)
+pin  row_prof_store                     0x0880b520   # after smc_prof_note_store (was smc_fill_prof_store, release 192 B)
+pin  row_prof_exact                     0x0880b8a0   # after smc_prof_exact's place (was smc_fill_prof_exact, release 576 B)
+pin  row_lookup                         0x0880ba20   # A block_lookup_translate_thumb (was layout_pad_warm_lookup, 32 B)
+pin  row_lkt                            0x0880c220   # after block_lookup_translate_thumb (was smc_fill_lkt, 64 B)
+pin  row_blk_silent                     0x088100e0   # after smc_blk_check_silent's place (was smc_fill_blk_silent, release 480 B)
+pin  row_blk_writer                     0x08817740   # after smc_blk_note_writer's place (was smc_fill_blk_writer, release 352 B)
+pin  row_dc_thunk                       0x088178a0   # A iok_site (was layout_pad_warm_dc_thunk, 64 B)
+pin  row_apb_take_mark                  0x08819aa0   # after fe_autopilot_take_mark (was layout_pad_apb, player builds)
+pin  row_apb_status                     0x08819bf8   # after fe_autopilot_status (was layout_pad_apb, player builds)
+pin  row_blk_block                      0x0881a540   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
+pin  row_apb_frame                      0x0881fb80   # after fe_autopilot_frame (was layout_pad_apb, player builds)
+pin  row_memory_term                    0x088289c0   # after memory_term (was memory_fill_term, 224/256 B)
+pin  row_xlat                           0x08849c20   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_bscan_b                        0x088a2dd8   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
+pin  row_dc_arm_b                       0x088a2fc0   # B update_serial (was B's 128 B after block_lookup_address_arm)
+pin  row_xs_b                           0x088a3820   # B, after ram_mirror_alias_pc (was smc_fill_xs)
+pin  row_dc_thumb_b                     0x088a3a40   # B spin_check (was B's 96 B after block_lookup_address_thumb)
+pin  row_lk_b                           0x088a4440   # B, after block_lookup_translate_arm (was smc_fill_lk)
+pin  row_rfu_update_b                   0x088a4840   # B, after rfu_update (was rfu_fill_update)
+pin  row_prof_store_b                   0x088a61a0   # B (was smc_fill_prof_store)
+pin  row_prof_exact_b                   0x088a6520   # B (was smc_fill_prof_exact)
+pin  row_lkt_b                          0x088a6ea0   # B smc_trap_entry (was B's 32 B lookup hole + smc_fill_lkt)
+pin  row_blk_silent_b                   0x088aa9a0   # B (was smc_fill_blk_silent)
+pin  row_blk_writer_b                   0x088b2000   # B (was smc_fill_blk_writer)
+pin  row_dc_thunk_b                     0x088b2140   # B iok_site (was B's 64 B after smc_stable_thunk_dispatch)
+pin  row_blk_block_b                    0x088b4460   # B (was smc_fill_blk_block)
+pin  row_memory_term_b                  0x088bba00   # B (was memory_fill_term)
+pin  row_xlat_b                         0x08930b40   # the late section, after B's hot path (was LAYOUT_PAD_BXLAT_BYTES)
+pin  row_late                           0x089315c0   # A ml_diff_page (was LAYOUT_PAD_LATE_BYTES)
+pin  row_mlu                            0x08931f00   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
 pin  main                               0x089332e4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)

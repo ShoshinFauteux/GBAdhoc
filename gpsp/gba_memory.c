@@ -3826,34 +3826,6 @@ void memory_term(void)
   gamepak_buffer_pages = 0;
 }
 
-#if defined(LAYOUT_PIN) && defined(PSP)
-/* LAYOUT (code-health B-4, the tier-B re-pin).  memory_term and
- * reload_timing_info were rows of the pinned warm tail (psp/layout/
- * hot_order.txt), between spin_arm_op's run and render_gbc_sound /
- * translate_block_* (hot).  Since 5.0.0-beta.5 two rows before them grew:
- * rfu_frame_update (B-2's packet-queue change: +96 B 32 B-rounded in the
- * release, +64 in the harness/lab core, whose copy carries the traces) and
- * memory_term itself (B-3's read-failure reset: 352 -> 384).
- * reload_timing_info (a WAITCNT write, ~never per frame) left the order, and
- * these zeros, in its place, put everything from __moddi3 on back on its
- * beta.5 addresses: 352 B (its gap) + 352 - 384 - the rfu growth.  Both
- * instances (the GBA link's B is this object renamed).  Never executed. */
-#ifdef GPSP_PROFILE_RELEASE
-#define MEMORY_FILL_TERM_BYTES 224
-#else
-#define MEMORY_FILL_TERM_BYTES 256
-#endif
-#define MEMORY_FILL_STR_(x) #x
-#define MEMORY_FILL_STR(x) MEMORY_FILL_STR_(x)
-__asm__(".pushsection .text.memory_fill_term,\"ax\",@progbits\n"
-        "  .balign 32\n"
-        "  .type memory_fill_term, @function\n"
-        "memory_fill_term:\n"
-        "  .fill " MEMORY_FILL_STR(MEMORY_FILL_TERM_BYTES) " / 4, 4, 0\n"
-        "  .size memory_fill_term, " MEMORY_FILL_STR(MEMORY_FILL_TERM_BYTES) "\n"
-        ".popsection\n");
-#endif
-
 bool memory_check_savestate(const u8 *src)
 {
   static const char *vars32[] = {

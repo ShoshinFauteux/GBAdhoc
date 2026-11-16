@@ -286,24 +286,19 @@ their defaults.
 | `PSP_PIXFMT` | psp5650 (both makes) | a variable because it reaches the ME sub-make. |
 | `HOT_DATA_GUARD` | 1 (psp/Makefile) | the link script that follows the core's `HOT_DATA_GUARD`. |
 
-**The layout pads** (`LAYOUT_PAD_*` in psp/Makefile, every value pinned by
-`tools/flags.lock`; docs/LAYOUT-PINNING.md "Keeping the pads" says what each
-holds): `LAYOUT_PAD_LATE_BYTES` and
-`LAYOUT_PAD_MLU_BYTES` (the ME capture's helpers), `LAYOUT_PAD_XLAT_BYTES` (in
-front of A's `translate_block_arm`), and instance B's `LAYOUT_PAD_BSCAN_BYTES`
-(B's `update_scanline` held at the renderer's size) and `LAYOUT_PAD_BXLAT_BYTES`
-(after B's `translate_block_arm`), which psp/gbalink_b_stubs.c refuses to compile
-without. The text pads after `main`, stb_impl.o, the GB cores and before
-instance A's core archive, and the one in front of `main`, are linker pins since
-code-health C3-3: `pin` lines per profile in `tools/layout/layout.lock`, chosen
-with `LAYOUT_FLAVOUR` (docs/LAYOUT-PINNING.md "Pins"); build.sh and psp/Makefile
-refuse the old `LAYOUT_PAD_BYTES`, `_MAIN_`, `_FE_`, `_GB_` and `_CORE_BYTES`;
-the `.rodata` pad is `pin ro` since C3-4 and psp/Makefile refuses
-`LAYOUT_PAD_RO_BYTES`.
-A lab build takes the committed lab set, `tools/layout/lab-pads.env`
-(`LAB_PADS=0` for the release pads and pins); a sweep overrides it through
-`PSP_EXTRA=`, which build.sh refuses for the release profile. `tools/layout/layout.lock` records where the pads put the symbols that
-carry the layout; build.sh fails a release, or a lab build with the committed
+**The layout pins** (code-health C-3; docs/LAYOUT-PINNING.md "Pins", "Row
+pins"). There are no layout pads any more: every place the layout holds is a
+`pin` line per profile in `tools/layout/layout.lock`, chosen with
+`LAYOUT_FLAVOUR` (the profile; a lab build with `LAB_PADS=0` takes the
+release's). The regions after `main` and the one in front of it are pins since
+C3-3, `.rodata` since C3-4 (`pin ro`), and the hot order's holds since C3-5
+(`@pin` rows of psp/layout/hot_order.txt, `pin row_*` in the lock: the warm
+tail's holes, the SMC profile's places, the ME capture's helpers, A's and B's
+translator holds and B's `update_scanline`). psp/Makefile and build.sh refuse
+every old `LAYOUT_PAD_*_BYTES`. A sweep (`LAYOUT_PAD_TEXT`/`_BSS`, through
+`PSP_EXTRA=`, which build.sh refuses for the release profile) moves the
+frontend's pins. `tools/layout/layout.lock` also records where symbols that
+carry the layout land; build.sh fails a release, or a lab build with the committed
 set, that differs (`LAYOUT_LOCK=0` lets a lab build through during a re-pin,
 never a release). The manifest records the result as `layoutLock`, and
 tools/make_release.sh packages only `release:ok`. `HOT_ORD` (default

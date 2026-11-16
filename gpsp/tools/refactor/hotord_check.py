@@ -91,6 +91,8 @@ def read_order(path):
         if not p:
             continue
         n = p[0]
+        if n == '@pin':
+            continue             # a row pin (code-health C3-5): a gap, not a function
         if n.startswith('@'):
             rows.append((k, n, None, None, 'asmsec' if '(' in n else 'asm'))
             continue

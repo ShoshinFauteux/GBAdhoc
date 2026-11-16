@@ -3189,8 +3189,8 @@ static void dispatch_cache_forget(u32 pc, u32 thumb);
  * the functions that used to hold them inline (this one, the two address
  * lookups) are then small enough for gcc to inline into their callers,
  * which grows those and moves the pinned warm tail.  Keep them calls, as
- * they were (psp/layout_pad_warm.S and psp/gbalink_b_stubs.c hold the
- * 32 B steps they shrank by). */
+ * they were (the hot order's row pins, code-health C3-5, hold the 32 B
+ * steps they shrank by). */
 #define DC_NOINLINE __attribute__((noinline))
 #else
 #define DC_NOINLINE
@@ -9910,44 +9910,6 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
 u32 smc_work_walk, smc_work_halves;
 u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
 #define SMC_WORK_WALK(n) (smc_work_walk += (u32)(n))
-#ifdef PSP
-/* LAYOUT (smc-cost 2026-11-13, docs/LAYOUT-PINNING.md "Keeping the pads"):
- * the smc-cost changes shrink pinned warm-tail functions (their new loops
- * and helpers live out of line in cold text).  psp/layout/hot_order.txt
- * links each of these zero runs right after the function it stands for, so
- * the rows after it keep their place mod 8 KiB.  A function's 32 B-rounded
- * size at a34f8eaf less its size now (the link starts every .text input
- * section on 32 B) is given back by the out-of-line helpers hot_order.txt
- * puts behind it where they fit, and by these zeros for the rest:
- * xs_blocks_current 1760 - 1568 = ram_mirror_alias_pc 128 + 64 zeros,
- * block_lookup_translate_arm 1760 - 1664 = 96 zeros, block_lookup_
- * translate_thumb 1792 - 1728 = 64 zeros, flush_translation_cache_ram_smc
- * 6592 - 6240 = smc_remember_retired_tag 352, smc_retire_span 3296 - 3040
- * = smc_restore_retired_tag 256 (psp-gcc, release and lab alike).  A change
- * to one of these functions re-derives its row.  Never executed. */
-#ifndef SMC_FILL_XS_BYTES
-#define SMC_FILL_XS_BYTES 64
-#endif
-#ifndef SMC_FILL_LK_BYTES
-#define SMC_FILL_LK_BYTES 96
-#endif
-#ifndef SMC_FILL_LKT_BYTES
-#define SMC_FILL_LKT_BYTES 64
-#endif
-#define SMC_FILL_STR_(x) #x
-#define SMC_FILL_STR(x) SMC_FILL_STR_(x)
-#define SMC_FILL_SECTION(name, bytes)                                         \
-  __asm__(".pushsection .text." name ",\"ax\",@progbits\n"                     \
-          "  .balign 4\n"                                                      \
-          "  .type " name ", @function\n"                                      \
-          name ":\n"                                                           \
-          "  .fill (" SMC_FILL_STR(bytes) ") / 4, 4, 0\n"                     \
-          "  .size " name ", (" SMC_FILL_STR(bytes) ")\n"                     \
-          ".popsection\n")
-SMC_FILL_SECTION("smc_fill_xs", SMC_FILL_XS_BYTES);    /* xs_blocks_current */
-SMC_FILL_SECTION("smc_fill_lk", SMC_FILL_LK_BYTES);    /* block_lookup_translate_arm */
-SMC_FILL_SECTION("smc_fill_lkt", SMC_FILL_LKT_BYTES);  /* block_lookup_translate_thumb */
-#endif
 /* SMC_SINGLE_UNTAG: do for the retired blocks what a full flush does for
  * every block -- take their code marks off guest memory -- but only where
  * no block that is STILL LIVE covers the halfword.  Region U is the union

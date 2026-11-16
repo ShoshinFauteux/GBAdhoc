@@ -14,29 +14,77 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.update_scanline_render)
   *gpsp_libretro_psp1.a:mips_stub.o(.text.msr_fast)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.block_lookup_address_arm)
+  /* pin row_dc_arm */
+  layout_pad_warm_dc_arm = ABSOLUTE(.);
+  __pin_from_row_dc_arm = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_arm, "layout pin row_dc_arm: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_arm - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_arm = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.update_serial)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.xs_blocks_current)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.ram_mirror_alias_pc)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_xs)
+  /* pin row_xs */
+  smc_fill_xs = ABSOLUTE(.);
+  __pin_from_row_xs = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_xs, "layout pin row_xs: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_xs - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_xs = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.flag_interrupt)
   *:libc_a-memset.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.block_lookup_address_thumb)
+  /* pin row_dc_thumb */
+  layout_pad_warm_dc_thumb = ABSOLUTE(.);
+  __pin_from_row_dc_thumb = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_thumb, "layout pin row_dc_thumb: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_thumb - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_thumb = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.spin_check)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.block_lookup_translate_arm)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_lk)
+  /* pin row_lk */
+  smc_fill_lk = ABSOLUTE(.);
+  __pin_from_row_lk = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_lk, "layout pin row_lk: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_lk - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_lk = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.rfu_update)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.rfu_fill_update)
+  /* pin row_rfu_update */
+  rfu_fill_update = ABSOLUTE(.);
+  __pin_from_row_rfu_update = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_rfu_update, "layout pin row_rfu_update: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_rfu_update - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_rfu_update = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_pipe_store)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.write_io_register16)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.dma_transfer)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_prof_note_store)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_prof_store)
+  /* pin row_prof_store */
+  smc_fill_prof_store = ABSOLUTE(.);
+  __pin_from_row_prof_store = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_prof_store, "layout pin row_prof_store: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_prof_store - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_prof_store = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.jit_code_wrote_.part.0)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_prof_exact)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_prof_exact)
+  /* pin row_prof_exact */
+  smc_fill_prof_exact = ABSOLUTE(.);
+  __pin_from_row_prof_exact = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_prof_exact, "layout pin row_prof_exact: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_prof_exact - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_prof_exact = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.vram_x_dma_note)
+  /* pin row_lookup */
+  layout_pad_warm_lookup = ABSOLUTE(.);
+  __pin_from_row_lookup = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_lookup, "layout pin row_lookup: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_lookup - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_lookup = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.block_lookup_translate_thumb)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_lkt)
+  /* pin row_lkt */
+  smc_fill_lkt = ABSOLUTE(.);
+  __pin_from_row_lkt = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_lkt, "layout pin row_lkt: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_lkt - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_lkt = ABSOLUTE(.);
   *:libc_a-getenv.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_trap_entry)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.flush_translation_cache_ram_smc)
@@ -50,7 +98,12 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.write_io_register8)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.trigger_dma)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_blk_check_silent)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_blk_silent)
+  /* pin row_blk_silent */
+  smc_fill_blk_silent = ABSOLUTE(.);
+  __pin_from_row_blk_silent = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_silent, "layout pin row_blk_silent: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_silent - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_silent = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.core_phase_enter)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.emit_load_pc_k)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.dma_tf_loop32)
@@ -62,9 +115,20 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.xs_note_block)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.set_cpu_mode)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_blk_note_writer)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_blk_writer)
+  /* pin row_blk_writer */
+  smc_fill_blk_writer = ABSOLUTE(.);
+  __pin_from_row_blk_writer = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_writer, "layout pin row_blk_writer: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_writer - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_writer = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_host_frame_count)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_stable_thunk_dispatch)
+  /* pin row_dc_thunk */
+  layout_pad_warm_dc_thunk = ABSOLUTE(.);
+  __pin_from_row_dc_thunk = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_thunk, "layout pin row_dc_thunk: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_thunk - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_thunk = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.iok_site)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.execute_arm_translate)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.me_rend_retire_if_idle)
@@ -80,13 +144,30 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_retire_span)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_restore_retired_tag)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_autopilot_take_mark)
+  /* pin row_apb_take_mark */
+  layout_pad_apb_take_mark = ABSOLUTE(.);
+  __pin_from_row_apb_take_mark = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_apb_take_mark, "layout pin row_apb_take_mark: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_apb_take_mark - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_apb_take_mark = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.input_poll)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.rewind_backup_data)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_autopilot_status)
+  /* pin row_apb_status */
+  layout_pad_apb_status = ABSOLUTE(.);
+  __pin_from_row_apb_status = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_apb_status, "layout pin row_apb_status: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_apb_status - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_apb_status = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_host_input_inject)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.retro_run)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_blk_note_block)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.smc_fill_blk_block)
+  /* pin row_blk_block */
+  smc_fill_blk_block = ABSOLUTE(.);
+  __pin_from_row_blk_block = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_block, "layout pin row_blk_block: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_block - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_block = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.rumble_frame_reset)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.lat_swap.isra.0)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.lat_wait_begin)
@@ -120,6 +201,12 @@
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.sram_write_full_blocks)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.audio_sample_batch)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_autopilot_frame)
+  /* pin row_apb_frame */
+  layout_pad_apb_frame = ABSOLUTE(.);
+  __pin_from_row_apb_frame = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_apb_frame, "layout pin row_apb_frame: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_apb_frame - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_apb_frame = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.serialpoke_frame_update)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.fe_host_run_frame)
   *:libc_a-fwrite.o(.text .text.*)
@@ -147,7 +234,12 @@
   *:libc_a-fflush.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.entry_gates_harvest)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.memory_term)
-  *(EXCLUDE_FILE(*gbalink_core_b.o) .text.memory_fill_term)
+  /* pin row_memory_term */
+  memory_fill_term = ABSOLUTE(.);
+  __pin_from_row_memory_term = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_memory_term, "layout pin row_memory_term: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_memory_term - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_memory_term = ABSOLUTE(.);
   *:_moddi3.o(.text .text.*)
   *:_divdi3.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.sram_sync_checked)
@@ -156,6 +248,12 @@
   *:_udivdi3.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.render_gbc_sound)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.translate_block_thumb)
+  /* pin row_xlat */
+  layout_pad_warm_xlat = ABSOLUTE(.);
+  __pin_from_row_xlat = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_xlat, "layout pin row_xlat: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_xlat - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_xlat = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.translate_block_arm)
   *gbalink_core_b.o(.text)
   *gbalink_core_b.o(.text.msr_fast)
@@ -184,32 +282,71 @@
   *gbalink_core_b.o(.text.smc_local_narrow.isra.0)
   *gbalink_core_b.o(.text.xs_range_current)
   *gbalink_core_b.o(.text.smc_untag_span)
+  /* pin row_bscan_b */
+  __pin_from_row_bscan_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_bscan_b, "layout pin row_bscan_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_bscan_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_bscan_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.update_scanline)
   *gbalink_core_b.o(.text.me_capture_line)
   *gbalink_core_b.o(.text.update_scanline_render)
   *gbalink_core_b.o(.text.block_lookup_address_arm)
+  /* pin row_dc_arm_b */
+  __pin_from_row_dc_arm_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_arm_b, "layout pin row_dc_arm_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_arm_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_arm_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.update_serial)
   *gbalink_core_b.o(.text.xs_blocks_current)
   *gbalink_core_b.o(.text.ram_mirror_alias_pc)
-  *gbalink_core_b.o(.text.smc_fill_xs)
+  /* pin row_xs_b */
+  __pin_from_row_xs_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_xs_b, "layout pin row_xs_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_xs_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_xs_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.flag_interrupt)
   *gbalink_core_b.o(.text.block_lookup_address_thumb)
+  /* pin row_dc_thumb_b */
+  __pin_from_row_dc_thumb_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_thumb_b, "layout pin row_dc_thumb_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_thumb_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_thumb_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.spin_check)
   *gbalink_core_b.o(.text.block_lookup_translate_arm)
-  *gbalink_core_b.o(.text.smc_fill_lk)
+  /* pin row_lk_b */
+  __pin_from_row_lk_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_lk_b, "layout pin row_lk_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_lk_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_lk_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.rfu_update)
-  *gbalink_core_b.o(.text.rfu_fill_update)
+  /* pin row_rfu_update_b */
+  __pin_from_row_rfu_update_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_rfu_update_b, "layout pin row_rfu_update_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_rfu_update_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_rfu_update_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.smc_pipe_store)
   *gbalink_core_b.o(.text.write_io_register16)
   *gbalink_core_b.o(.text.dma_transfer)
   *gbalink_core_b.o(.text.smc_prof_note_store)
-  *gbalink_core_b.o(.text.smc_fill_prof_store)
+  /* pin row_prof_store_b */
+  __pin_from_row_prof_store_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_prof_store_b, "layout pin row_prof_store_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_prof_store_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_prof_store_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.jit_code_wrote_.part.0)
   *gbalink_core_b.o(.text.smc_prof_exact)
-  *gbalink_core_b.o(.text.smc_fill_prof_exact)
+  /* pin row_prof_exact_b */
+  __pin_from_row_prof_exact_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_prof_exact_b, "layout pin row_prof_exact_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_prof_exact_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_prof_exact_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.vram_x_dma_note)
   *gbalink_core_b.o(.text.block_lookup_translate_thumb)
-  *gbalink_core_b.o(.text.smc_fill_lkt)
+  /* pin row_lkt_b */
+  __pin_from_row_lkt_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_lkt_b, "layout pin row_lkt_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_lkt_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_lkt_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.smc_trap_entry)
   *gbalink_core_b.o(.text.flush_translation_cache_ram_smc)
   *gbalink_core_b.o(.text.smc_remember_retired_tag)
@@ -221,7 +358,11 @@
   *gbalink_core_b.o(.text.write_io_register8)
   *gbalink_core_b.o(.text.trigger_dma)
   *gbalink_core_b.o(.text.smc_blk_check_silent)
-  *gbalink_core_b.o(.text.smc_fill_blk_silent)
+  /* pin row_blk_silent_b */
+  __pin_from_row_blk_silent_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_silent_b, "layout pin row_blk_silent_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_silent_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_silent_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.core_phase_enter)
   *gbalink_core_b.o(.text.emit_load_pc_k)
   *gbalink_core_b.o(.text.dma_tf_loop32)
@@ -233,9 +374,18 @@
   *gbalink_core_b.o(.text.xs_note_block)
   *gbalink_core_b.o(.text.set_cpu_mode)
   *gbalink_core_b.o(.text.smc_blk_note_writer)
-  *gbalink_core_b.o(.text.smc_fill_blk_writer)
+  /* pin row_blk_writer_b */
+  __pin_from_row_blk_writer_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_writer_b, "layout pin row_blk_writer_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_writer_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_writer_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.fe_host_frame_count)
   *gbalink_core_b.o(.text.smc_stable_thunk_dispatch)
+  /* pin row_dc_thunk_b */
+  __pin_from_row_dc_thunk_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_dc_thunk_b, "layout pin row_dc_thunk_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_dc_thunk_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_dc_thunk_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.iok_site)
   *gbalink_core_b.o(.text.execute_arm_translate)
   *gbalink_core_b.o(.text.me_rend_retire_if_idle)
@@ -257,7 +407,11 @@
   *gbalink_core_b.o(.text.fe_host_input_inject)
   *gbalink_core_b.o(.text.retro_run)
   *gbalink_core_b.o(.text.smc_blk_note_block)
-  *gbalink_core_b.o(.text.smc_fill_blk_block)
+  /* pin row_blk_block_b */
+  __pin_from_row_blk_block_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_blk_block_b, "layout pin row_blk_block_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_blk_block_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_blk_block_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.rumble_frame_reset)
   *gbalink_core_b.o(.text.lat_swap.isra.0)
   *gbalink_core_b.o(.text.lat_wait_begin)
@@ -313,13 +467,22 @@
   *gbalink_core_b.o(.text.spin_arm_op)
   *gbalink_core_b.o(.text.entry_gates_harvest)
   *gbalink_core_b.o(.text.memory_term)
-  *gbalink_core_b.o(.text.memory_fill_term)
+  /* pin row_memory_term_b */
+  __pin_from_row_memory_term_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_memory_term_b, "layout pin row_memory_term_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_memory_term_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_memory_term_b = ABSOLUTE(.);
   *gbalink_core_b.o(.text.sram_sync_checked)
   *gbalink_core_b.o(.text.rtc_current_time)
   *gbalink_core_b.o(.text.flush_translation_cache_ram_dma)
   *gbalink_core_b.o(.text.render_gbc_sound)
   *gbalink_core_b.o(.text.translate_block_thumb)
   *gbalink_core_b.o(.text.translate_block_arm)
+  /* pin row_xlat_b */
+  __pin_from_row_xlat_b = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_xlat_b, "layout pin row_xlat_b: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_xlat_b - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_xlat_b = ABSOLUTE(.);
   *:libc_a-memcmp.o(.text .text.*)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text.block_lookup_address_dual)
   *:libc_a-strlen.o(.text .text.*)
@@ -332,10 +495,22 @@
   *gbalink_core_b.o(.text.halt_hop_wake)
   *gbalink_core_b.o(.text.halt_hop_lines)
   *gbalink_core_b.o(.text.process_cheats)
+  /* pin row_late */
+  layout_pad_late = ABSOLUTE(.);
+  __pin_from_row_late = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_late, "layout pin row_late: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_late - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_late = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_diff_pagemm)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_relevancePKtPm.isra.0)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_line_bodym)
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL12ml_diff_rowsmmPKmPmmS1_)
+  /* pin row_mlu */
+  layout_pad_mlu = ABSOLUTE(.);
+  __pin_from_row_mlu = ABSOLUTE(.);
+  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_row_mlu, "layout pin row_mlu: the rows before it grew past their slack; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Row pins)");
+  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_row_mlu - ABSOLUTE(.)) & 0x1FFF));
+  __pin_at_row_mlu = ABSOLUTE(.);
   *(EXCLUDE_FILE(*gbalink_core_b.o) .text._ZL19ml_update_relevancem)
   *gbalink_core_b.o(.text._ZL12ml_diff_pagemm)
   *gbalink_core_b.o(.text._ZL12ml_relevancePKtPm.isra.0)

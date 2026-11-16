@@ -265,6 +265,35 @@ def write_order(path, hot, warm, used, a, asm_bytes, lib=None):
 
 
 LATE_MARK = '# ---- late'
+PIN_ROW = '@pin'
+
+
+def pin_row(raw):
+    """`@pin NAME a|b|ab [OLDSYM]` -> (NAME, who, OLDSYM or None), else None."""
+    l = raw.split('#', 1)[0].split()
+    if not l or l[0] != PIN_ROW:
+        return None
+    if len(l) not in (3, 4) or not l[1].replace('_', '').isalnum() or l[2] not in ('a', 'b', 'ab'):
+        raise SystemExit('bad pin row (want `@pin NAME a|b|ab [OLDSYM]`): %s' % raw.strip())
+    return (l[1], l[2], l[3] if len(l) > 3 else None)
+
+
+def pin_lines(name, b, old):
+    """A row pin (code-health C3-5; docs/LAYOUT-PINNING.md "Row pins"): the next
+    row starts at __pin_row_NAME[_b] (psp/pins.ld from tools/layout/layout.lock),
+    written as tools/layout/groups_ld.sh writes the group pins."""
+    n = 'row_%s%s' % (name, '_b' if b else '')
+    out = ['  /* pin %s */' % n]
+    if old:
+        # the hold's old name at the gap's start, for nm-reading tools (one release)
+        out.append('  %s = ABSOLUTE(.);' % old)
+    out += ['  __pin_from_%s = ABSOLUTE(.);' % n,
+            '  ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_%s, "layout pin %s: the rows '
+            'before it grew past their slack; tools/layout/layout_lock.py regen decides '
+            '(docs/LAYOUT-PINNING.md, Row pins)");' % (n, n),
+            '  . = ABSOLUTE(ABSOLUTE(.) + ((__pin_%s - ABSOLUTE(.)) & 0x1FFF));' % n,
+            '  __pin_at_%s = ABSOLUTE(.);' % n]
+    return ''.join(x + '\n' for x in out)
 LAST_MARK = '# ---- last'
 BSCAN_MARK = '# ---- bscan'
 
@@ -277,17 +306,25 @@ def write_ord(order_path, out):
     # docs/LAYOUT-PINNING.md), and code that must not sit among the pinned
     # functions at all.  Rows after a `# ---- last` line (after the late
     # section's) link after B's late copies, A's copy then B's: the ME
-    # capture's ml_* helpers, placed there by psp/layout_pad_late.S so the
+    # capture's ml_* helpers, placed there by `pin row_late` so the
     # same pad bytes place them in the release and the lab build.  Rows after
     # a `# ---- bscan` line link INSIDE B's hot path, just before B's
-    # update_scanline (whose LAYOUT_PAD_BSCAN_BYTES zeros come first in its
+    # update_scanline (`pin row_bscan_b`, until C3-5 the zeros first in its
     # section), A's copy then B's: warm-tail functions taken out to give back
     # growth of A's and B's warm tails, so that nothing of A's or B's ordered
     # text moves and the BSCAN pad, not the late or main pad, takes the bytes
     # (the beta.5 JIT fix, docs/LAYOUT-PINNING.md).
+    # `@pin NAME a|b|ab [OLDSYM]` rows (code-health C3-5) are linker pins at
+    # that place in A's sequence (a), in B's (b) or both: the next row starts at
+    # the address tools/layout/layout.lock gives (pin row_NAME, row_NAME_b).
+    # They replaced the zero holds that kept the rows after them in place.
     names, late, last, bscan = [], [], [], []
     dest = names
     for raw in open(order_path):
+        pr = pin_row(raw)
+        if pr:
+            dest.append(pr)
+            continue
         if raw.startswith(LAST_MARK):
             dest = last
             continue
@@ -314,6 +351,12 @@ def write_ord(order_path, out):
         funcs = []
         bsecs = []
         for n in names:
+            if isinstance(n, tuple):            # a row pin
+                if 'a' in n[1]:
+                    fh.write(pin_lines(n[0], False, n[2]))
+                if 'b' in n[1]:
+                    funcs.append(n)
+                continue
             if n in seen:
                 continue
             seen.add(n)
@@ -339,6 +382,12 @@ def write_ord(order_path, out):
             # A's copy (or the library member) of each row, then B's
             lfuncs = []
             for n in group:
+                if isinstance(n, tuple):        # a row pin
+                    if 'a' in n[1]:
+                        fh.write(pin_lines(n[0], False, n[2]))
+                    if 'b' in n[1]:
+                        lfuncs.append(n)
+                    continue
                 if n in seen:
                     continue
                 seen.add(n)
@@ -350,9 +399,12 @@ def write_ord(order_path, out):
                     fh.write('  *(EXCLUDE_FILE(*%s) .text.%s)\n' % (B_OBJECT, n))
                     lfuncs.append(n)
             for n in lfuncs:
-                fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
+                if isinstance(n, tuple):
+                    fh.write(pin_lines(n[0], True, None))
+                else:
+                    fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
 
-        if bscan and 'update_scanline' not in funcs:
+        if bscan and 'update_scanline' not in [f for f in funcs if not isinstance(f, tuple)]:
             raise SystemExit('%s: bscan rows need update_scanline in the ordered '
                              'rows (they link in front of B\'s copy)' % order_path)
         # GBA_LINK instance B (the core archive partial-linked and renamed,
@@ -363,8 +415,11 @@ def write_ord(order_path, out):
         for sec in bsecs:
             fh.write('  *%s(%s)\n' % (B_OBJECT, sec))
         for n in funcs:
+            if isinstance(n, tuple):
+                fh.write(pin_lines(n[0], True, None))
+                continue
             if n == 'update_scanline':
-                emit_group(bscan)       # in front of B's BSCAN zeros
+                emit_group(bscan)       # in front of B's update_scanline (and its pin)
             fh.write('  *%s(.text.%s)\n' % (B_OBJECT, n))
         # the late rows, then the last rows: A's copy (or the library
         # member), then B's, per group

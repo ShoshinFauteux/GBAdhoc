@@ -295,12 +295,10 @@ case " $CORE_FLAGS " in
 esac
 PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS HOT_DATA_GUARD=1"
 
-# LAB PADS (tools/layout/lab-pads.env): a lab build has lab-only code in
-# main() and around pace_frame, so it needs its own layout pads to put the
-# frame loop where a lab build of round 3 had it.  Committed, so "the lab arm"
-# is a build command and not a string copied from a round log.  LAB_PADS=0
-# builds a lab EBOOT with the release pads and the release's pins; an explicit
-# PSP_EXTRA= (below, later on the make line) still wins for a sweep.
+# LAB PADS: a lab build has lab-only code in main() and around pace_frame, so
+# it has its own layout, tools/layout/layout.lock [lab] (pins only since
+# code-health C3-5; until then also tools/layout/lab-pads.env's pads).
+# LAB_PADS=0 builds a lab EBOOT with the release's pins.
 # LAYOUT_FLAVOUR: the tools/layout/layout.lock section whose `pin` lines place
 # main and the frontend (code-health C3-3; psp/Makefile, docs/LAYOUT-PINNING.md
 # "Pins"): the profile's own, so each of the six profiles keeps its layout.
@@ -310,12 +308,6 @@ esac
 LAYOUT_FLAVOUR="$KIND"
 LAB_PADS_USED=0
 if [ "$KIND" = lab ] && [ "${LAB_PADS:-1}" = 1 ]; then
-  [ -f "$ROOT/tools/layout/lab-pads.env" ] || { echo "FAIL: tools/layout/lab-pads.env missing"; exit 1; }
-  while IFS='=' read -r k v; do
-    case "$k" in
-      LAYOUT_PAD_*)     PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS $k=$v" ;;
-    esac
-  done < <(tr -d '\r' < "$ROOT/tools/layout/lab-pads.env" | grep -E '^LAYOUT_PAD_[A-Z_]+=[0-9]+$')
   LAB_PADS_USED=1
 elif [ "$KIND" = lab ]; then
   LAYOUT_FLAVOUR=release

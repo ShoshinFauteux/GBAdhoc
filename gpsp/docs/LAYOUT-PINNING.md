@@ -234,9 +234,8 @@ address the region after the pin starts at.
   and the commit carries a hardware ABBA.
 - **What a change now costs.** A size change before a pin is absorbed by its
   gap, with no re-pin. Only `pin main` still places a measured thing, the
-  frame loop inside `main` (C-1 commit 4 and C3-7 remove that). The pads
-  inside the hot block (BSCAN, BXLAT, LATE, MLU, XLAT, the warm and apb holds)
-  stay until C3-5; `layout_lock.py solve` stays for them.
+  frame loop inside `main` (C-1 commit 4 and C3-7 remove that). The holds
+  inside the hot block are row pins since C3-5 (below).
 
 #### The `.rodata` pin (code-health C3-4)
 
@@ -253,6 +252,47 @@ nothing: the 4 B version-string trap that tools/layout/ro_margin.py guarded
 (a commit hash ending like a table entry) is gone, and so is that tool. Checked:
 a 40-byte longer core version string moves A's tables +64 B with the pad
 (the release lock fails on `netpacket_iface`) and +0 with the pin.
+
+#### Row pins (code-health C3-5)
+
+The hot order's holds are gone: the zeros of `psp/layout_pad_warm.S` (A's
+32 B lookup hole, the three DISPATCH_ASSOC holes, the XLAT pad),
+`psp/layout_pad_late.S` (LATE, MLU), `psp/layout_pad_apb.S` (the partner
+autopilot's place in a player build), B's zeros in `psp/gbalink_b_stubs.c`
+(BSCAN, BXLAT and B's four holes) and the core's `smc_fill_*`,
+`rfu_fill_update` and `memory_fill_term`. Each is an `@pin NAME a|b|ab
+[OLDSYM]` row of `psp/layout/hot_order.txt` at the place of the zeros: in
+A's rows (`a`), in B's (`b`) or both. `gen_layout.py ord` writes it into
+hot.ord as a pin like the group pins, `__pin_row_NAME` (A) or
+`__pin_row_NAME_b` (B), with the hold's old symbol name at the gap's start
+for one release (A's only: B's zeros had none). The lock has a `pin row_*`
+line per row pin in every section, in address order before the region pins:
+the address the row after it started at, read from each profile's link map
+at 772c0d43 (EBOOT-identical to the parent), so every EBOOT stayed identical. Where a flavour had
+no zeros there (the SMC profile's rows in a non-release build, the apb rows in
+a rig build, which links the partner's real autopilot), the gap is 0: the
+pin then fails a strict link as soon as the code before it crosses the next
+32 B step, the overrun policy the owner chose for rig profiles too.
+
+- The gaps are the old holes byte for byte (release: `row_xlat=5632`,
+  `row_xlat_b=5504`, `row_bscan_b=664`, `row_lookup=32`, ...; the manifest's
+  `layoutPins` lists all 41 pins).
+- A row that grows within its gap moves nothing after it. One that outgrows
+  it fails the release link, naming the pin; `layout_lock.py regen` then
+  spends a page (every later pin by address +8 KiB) or moves the pin (a new
+  placement: hardware ABBA). `regen` orders "later" by address now, since the
+  row pins come first in the lock.
+- `layout_lock.py solve` and the `pad` lock lines are gone, and so is
+  `tools/layout/lab-pads.env`: the lab flavour is `[lab]`'s pins. The `gap`
+  (A's lookup hole) and `tail` (B's) lock lines are gone too: both holes are
+  the pins `row_lookup` and `row_lkt_b`, checked exactly.
+- `generate` (regen.sh) writes an order without `@pin` rows: a regenerated
+  order is a new layout, recorded with its own pins.
+- Non-default arms: the hot_pair order has no `@pin` rows, so without the
+  hold objects its arm links a different layout than before (stated in the
+  C3-5 commit; not measured).
+- The intra-object holds stay, as C-3.md says: DC_STUB_FILL, the pcarg pad,
+  `sched_hot_hold_text`.
 
 **What C3-4 did not turn into pins.** C-3.md planned `.data`/`.bss` pins for
 `sched_hot_hold_bss`/`_data` (main.c, serial.c) and `ap_steps_mem`

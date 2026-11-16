@@ -215,36 +215,16 @@ LDFLAGS += -Wl,-T,cold_tail.ld
 ifneq ($(LAYOUT_PAD_RO_BYTES),)
 $(error LAYOUT_PAD_RO_BYTES is `pin ro` since code-health C3-4 (tools/layout/layout.lock); drop it)
 endif
-# LAYOUT_PAD_BSCAN_BYTES: the zeros that keep instance B's update_scanline at
-# the renderer's size in the hot order (psp/gbalink_b_stubs.c says why).
-# beta.5 JIT fix: hot_order.txt's bscan rows (A's and B's copies, 2,304 B) link
-# in front of them and the zeros give the bytes back (7576 -> 5272).
-# smc-cost: xs_range_current + smc_untag_span join the bscan rows (2 x 2,304 B): 5272 -> 664.
-LAYOUT_PAD_BSCAN_BYTES ?= 664
-CFLAGS  += -DLAYOUT_PAD_BSCAN_BYTES=$(LAYOUT_PAD_BSCAN_BYTES)
-# LAYOUT_PAD_LATE_BYTES: the zeros in front of instance A's ml_diff_page, the first
-# of the ME capture's mid-frame-log helpers in hot_order.txt's last section
-# (psp/layout_pad_late.S says why).  `pin main` after it takes the bytes back.
-# tools/flags.lock pins it.
-LAYOUT_PAD_LATE_BYTES ?= 160
-# LAYOUT_PAD_MLU_BYTES: the zeros in front of instance A's ml_update_relevance
-# (psp/layout_pad_late.S): ml_line_body's row diff moved to the cold tail
-# (ME write maps), so this puts ml_update_relevance back where the whole
-# compare left it.  Both flavours.  tools/flags.lock pins it.
-LAYOUT_PAD_MLU_BYTES ?= 32
-# LAYOUT_PAD_XLAT_BYTES: the zeros in front of instance A's translate_block_arm, the
-# last row of the warm tail (psp/layout_pad_warm.S says why): PCARG_SIDE's out-of-line
-# site emitters shrank both translators, and this puts instance B's hot path, linked
-# right after, back on its sets.  5824 -> 5504 with the emitters' SMC_REUSE logging
-# (docs/PCARG-SIDE.md section 9).  tools/flags.lock pins it.
-LAYOUT_PAD_XLAT_BYTES ?= 5632
-# LAYOUT_PAD_BXLAT_BYTES: the same zeros after instance B's translate_block_arm
-# (psp/gbalink_b_stubs.c says why): B's translators shrank as A's did, and this
-# keeps the late section, main and the frontend, linked after B's hot path, on
-# their sets.  Both flavours.  tools/flags.lock pins it; tools/layout/layout.lock
-# holds the hole it makes (`tail gbab_translate_block_arm`).
-LAYOUT_PAD_BXLAT_BYTES ?= 5504
-gbalink_b_stubs.o: CFLAGS += -DLAYOUT_PAD_BXLAT_BYTES=$(LAYOUT_PAD_BXLAT_BYTES)
+# THE ROW PINS (code-health C3-5; docs/LAYOUT-PINNING.md "Row pins"): the
+# zeros that held rows of the hot order in place (LAYOUT_PAD_BSCAN, _LATE, _MLU,
+# _XLAT and _BXLAT_BYTES, psp/layout_pad_warm.S / _late.S / _apb.S, B's holds in
+# psp/gbalink_b_stubs.c and the core's smc_fill_*, rfu_fill_update and
+# memory_fill_term) are `@pin` rows of psp/layout/hot_order.txt, linked as pins
+# like the ones above, at the addresses of tools/layout/layout.lock's
+# `pin row_*` lines (pins.ld).
+ifneq ($(LAYOUT_PAD_BSCAN_BYTES)$(LAYOUT_PAD_LATE_BYTES)$(LAYOUT_PAD_MLU_BYTES)$(LAYOUT_PAD_XLAT_BYTES)$(LAYOUT_PAD_BXLAT_BYTES),)
+$(error LAYOUT_PAD_BSCAN_, _LATE_, _MLU_, _XLAT_ and _BXLAT_BYTES are row pins since code-health C3-5 (tools/layout/layout.lock `pin row_*`); drop them)
+endif
 
 # CHEATS (default 1; CHEATS=0 is the kill switch): the per-game cheats menu
 # (docs/CHEATS.md).  The ROOT make takes the same switch for the core half
@@ -356,11 +336,9 @@ CFLAGS += -DGBA_LINK
 # 6.3 KB of data/bss.
 ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS)),)
 FE_TAIL_OBJS += fe_autopilot_b.o
-else
-# ...and its 2,636 B in the pinned warm tail stay, as zeros
-# (psp/layout_pad_apb.S says why).
-FE_TAIL_OBJS += layout_pad_apb.o
 endif
+# (A player build's 2,636 B of it in the pinned warm tail are row pins since
+# code-health C3-5: `@pin apb_*` in psp/layout/hot_order.txt.)
 endif
 # NOTE: deliberately NO -lpspnet / -lpsputility here.  build.mak's default
 # tail links -lpspnet, and gcc's implicit spec closure links libpsputility
@@ -449,12 +427,9 @@ PSP_LARGE_MEMORY ?= 1
 #                    stay.  Until code-health C3-3 it was zeros in front of
 #                    that code, which the fe_head pin absorbs.
 #   LAYOUT_PAD_BSS   links layout_pad.o first: every object's .bss moves N.
-# HEAD: in front of instance A's ml_diff_page (psp/layout_pad_late.S) and the
-# pinned warm tail's 32 B holes (psp/layout_pad_warm.S): their sections are
-# placed by name, so their place on the command line moves nothing; then the
-# sweep's layout_pad.o.
-HEAD_OBJS = layout_pad_late.o layout_pad_warm.o \
-            $(if $(LAYOUT_PAD_BSS),layout_pad.o)
+# HEAD: the sweep's layout_pad.o, if any (until code-health C3-5 also the hot
+# block's hold objects, layout_pad_late.o and layout_pad_warm.o).
+HEAD_OBJS = $(if $(LAYOUT_PAD_BSS),layout_pad.o)
 OBJS = $(HEAD_OBJS) $(FE_HEAD_OBJS) $(FE_COMMON_OBJS) $(GB_OBJS) $(FE_TAIL_OBJS)
 # groups.ld (gbadhoc.ld INCLUDEs it): the generic .text statement split by
 # group, with a pin in front of FE_HEAD, FE_COMMON, FE_TAIL and the core
@@ -607,11 +582,6 @@ fe_autopilot_b.o: ../frontend-common/fe_autopilot.o
 $(CORE_LIB):
 	$(error build the core first: make platform=psp1 in the repo root (pspdev docker))
 
-layout_pad_late.o: layout_pad_late.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_LATE_BYTES=$(LAYOUT_PAD_LATE_BYTES) \
-	      -DLAYOUT_PAD_MLU_BYTES=$(LAYOUT_PAD_MLU_BYTES)
-layout_pad_warm.o: layout_pad_warm.S
-	$(CC) -c -o $@ $< -DLAYOUT_PAD_XLAT_BYTES=$(LAYOUT_PAD_XLAT_BYTES)
 layout_pad.o: layout_pad.S
 	$(CC) -c -o $@ $< -DLAYOUT_PAD_BSS=$(or $(LAYOUT_PAD_BSS),0)
 

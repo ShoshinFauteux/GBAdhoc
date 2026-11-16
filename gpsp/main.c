@@ -114,8 +114,9 @@ u32 flush_ram_partial = 0;   /* single-block retirements (SMC_PARTIAL_SAFE) */
  * once per window, when the line is emitted.
  *
  * Not in a release (SMC_PROFILE, main.h; code-health B-4): there only the
- * address smc_prof_note_store derives is kept, and smc_fill_* zeros take the
- * removed functions' places in the pinned warm tail (below).
+ * address smc_prof_note_store derives is kept, and row pins hold the removed
+ * functions' places in the pinned warm tail (psp/layout/hot_order.txt `@pin`
+ * rows, code-health C3-5; until then smc_fill_* zeros here).
  * ------------------------------------------------------------------------- */
 #if SMC_PROFILE
 u16 smc_prof_page[SMC_PROF_PAGES];
@@ -337,7 +338,7 @@ void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
  * while the work cost every SMC trap a page bump, an 8-slot scan and a
  * memcmp (twin, opt round 6: Doom II -0.53 % host instructions).  Since
  * code-health B-4 the code is not linked there either (SMC_PROFILE, main.h);
- * the smc_fill_* zeros below keep the pinned warm tail (psp/layout/hot.ord)
+ * the hot order's row pins keep the pinned warm tail (psp/layout/hot.ord)
  * where it was.  The variable stays (cpu_threaded.c's flush timer tests it;
  * the harness's smc_watch key sets it).  Explicitly .data, as the nonzero
  * default is in every other build. */
@@ -607,46 +608,6 @@ void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
   smc_blk_xlat = 0;
 }
 #endif /* SMC_PROFILE */
-
-#if !SMC_PROFILE && defined(LAYOUT_PIN)
-/* THE PROFILE'S PLACE IN THE PINNED WARM TAIL (code-health B-4).  Five of the
- * functions above are rows of psp/layout/hot_order.txt; without the profile
- * three are gone (smc_prof_exact, smc_blk_check_silent, smc_blk_note_writer)
- * and two are shorter (smc_prof_note_store, smc_blk_note_block).  Each row is
- * followed by an smc_fill_* row whose zeros give the bytes back, so every
- * other warm-tail function of instance A and of instance B (this object
- * renamed) keeps its address.  The sizes are the distance from the row's
- * start to the next row's in the 5.0.0-beta.5 release ELF (gap) minus the
- * shorter function's 32 B-rounded size (psp-gcc, the release's flags):
- *   smc_prof_note_store   gap 288,  now 84 B (96)  -> 192 B of zeros
- *   smc_prof_exact        gap 576,  gone           -> 576
- *   smc_blk_check_silent  gap 480,  gone           -> 480
- *   smc_blk_note_writer   gap 352,  gone           -> 352
- *   smc_blk_note_block    gap 1184, now 20 B (32)  -> 1152
- * A change to either short function re-derives its row (layout_lock check
- * and hotord_check catch it).  In a build with the profile the fill rows
- * match nothing.  Never executed. */
-#define SMC_FILL_STORE_BYTES   192
-#define SMC_FILL_EXACT_BYTES   576
-#define SMC_FILL_SILENT_BYTES  480
-#define SMC_FILL_WRITER_BYTES  352
-#define SMC_FILL_BLOCK_BYTES   1152
-#define SMC_PFILL_STR_(x) #x
-#define SMC_PFILL_STR(x) SMC_PFILL_STR_(x)
-#define SMC_PFILL_SECTION(name, bytes)                                        \
-  __asm__(".pushsection .text." name ",\"ax\",@progbits\n"                     \
-          "  .balign 32\n"                                                     \
-          "  .type " name ", @function\n"                                      \
-          name ":\n"                                                           \
-          "  .fill (" SMC_PFILL_STR(bytes) ") / 4, 4, 0\n"                    \
-          "  .size " name ", (" SMC_PFILL_STR(bytes) ")\n"                    \
-          ".popsection\n")
-SMC_PFILL_SECTION("smc_fill_prof_store", SMC_FILL_STORE_BYTES);
-SMC_PFILL_SECTION("smc_fill_prof_exact", SMC_FILL_EXACT_BYTES);
-SMC_PFILL_SECTION("smc_fill_blk_silent", SMC_FILL_SILENT_BYTES);
-SMC_PFILL_SECTION("smc_fill_blk_writer", SMC_FILL_WRITER_BYTES);
-SMC_PFILL_SECTION("smc_fill_blk_block", SMC_FILL_BLOCK_BYTES);
-#endif
 
 /* ---------------------------------------------------------------------------
  * Phase 5h: the per-phase frame bracket (see main.h for the partition and the

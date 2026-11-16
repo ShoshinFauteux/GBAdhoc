@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """layout_lock.py -- hold the pinned layout to tools/layout/layout.lock.
 
-The release layout rests on linker pins (code-health C3-3: `pin` lines, which
-psp/pins.ld feeds to the link), the pads still left in the hot block
-(psp/Makefile LAYOUT_PAD_*), two 32 B holes in the warm tail and the link order
-that puts each where it is (docs/LAYOUT-PINNING.md, "Pins", "Keeping the
-pads").  Nothing else catches it when a change moves one of them: hotord_check
+The release layout rests on linker pins (`pin` lines, which psp/pins.ld feeds
+to the link: the regions after main, code-health C3-3; .rodata, C3-4; the hot
+order's rows, C3-5) and the link order that puts each where it is
+(docs/LAYOUT-PINNING.md, "Pins", "Row pins").  Nothing else catches it when a change moves one of them: hotord_check
 checks the hot functions' order, not the holes, and a pad that silently stops
 working only shows up as a slower frame on hardware.  This tool compares a
 build's `psp-nm -S -n` listing with the lock and fails on any difference.
@@ -14,7 +13,6 @@ build's `psp-nm -S -n` listing with the lock and fails on any difference.
     layout_lock.py write FLAVOUR NM [--lock FILE]     re-record the values (not pins)
     layout_lock.py pins  FLAVOUR NM                    the manifest's layoutPins line
     layout_lock.py regen FLAVOUR (--spend-page PIN | --free-page PIN | --move PIN=0xADDR)
-    layout_lock.py solve FLAVOUR NM [--lock FILE] [--pads FILE|--makefile FILE]
     layout_lock.py strict KEY=VALUE...                 1 if the lock is enforced
     layout_lock.py verdict KIND FLAVOUR RC STRICT [LAYOUT_LOCK]
                                                        manifest result + action
@@ -25,7 +23,7 @@ means for the build and for the manifest's layoutLock (make_release.sh ships
 only `release:ok`).
 
 FLAVOUR is a [section] of the lock: `release` (tools/build.sh release,
-RFU_SCHED=1) or `lab` (tools/build.sh lab with tools/layout/lab-pads.env).
+RFU_SCHED=1), `lab` (tools/build.sh lab), or a rig profile's (pins only).
 
 Lock lines (one per line, `#` comments):
     at   SYM[#N] 0xMOD     the symbol's address mod 8192
@@ -33,8 +31,6 @@ Lock lines (one per line, `#` comments):
                            frame loop's window, so it must be re-checked)
     gap  SYM[#N] SYM2[#M] BYTES   address(SYM2) - address(SYM)
     tail SYM[#N] BYTES     next symbol's address - (address + size): a hole
-    pad  VAR PADSYM ANCHOR[#N]    the pad VAR, whose section holds PADSYM,
-                           places ANCHOR (used by `solve`)
     pin  NAME 0xADDR       an INPUT of the link: the region after pin NAME
                            starts at ADDR (absolute); checked against the
                            __pin_at_NAME symbol the link defines
@@ -57,14 +53,8 @@ says what is held and the build says where it is.  Run it only after a
 re-pin that was checked (loop_diff, moddiff, hotord_check) and say so in the
 commit.
 
-`solve` is a first-order pad solver: for each `pad` line in link order it
-computes how far its anchor is from the locked offset, after the shift the
-earlier pads' changes cause, and prints new values (rounded to 4 B, kept in
-0..8191).  Alignment of the next input section, `.rodata`'s 16-64 B steps and
-`.data.pin` are not modelled, so relink with the printed values and `check`.
-It refuses (exit 3, no values) while a `gap` or `tail` differs: a hole is not
-a pad, and a pad that compensates for a missing hole moves the hole's
-neighbours instead.
+(`solve`, the first-order pad solver, went with the last pads in code-health
+C3-5: every hold is a pin, and a pin is moved only by `regen`.)
 """
 import argparse
 import collections
@@ -160,7 +150,7 @@ def measure(by, text_addrs, kind, args):
 
 
 def value_arg(kind):
-    return {"at": 1, "size": 1, "gap": 2, "tail": 1, "pin": 1}.get(kind)
+    return {"at": 1, "size": 1, "gap": 2, "tail": 1, "pin": 1}.get(kind)  # (no `pad` since C3-5)
 
 
 def pin_landed(by, name):
@@ -275,8 +265,9 @@ def cmd_regen(path, lines, lock, flavour, spend, free, move):
     page).  --free-page NAME: -8 KiB from NAME on (a page given back).
     --move NAME=0xADDR: NAME alone at a new address, i.e. a new offset mod
     8 KiB: an I-cache placement change, a hardware event."""
-    pins = [(i, args[0], int(args[1], 16), raw)
-            for i, kind, args, raw in lock[flavour] if kind == "pin"]
+    # in address order: "every later pin" is every pin linked after it
+    pins = sorted([(i, args[0], int(args[1], 16), raw)
+                   for i, kind, args, raw in lock[flavour] if kind == "pin"], key=lambda x: x[2])
     if not pins:
         print("layout.lock [%s] has no pins" % flavour)
         return 2
@@ -325,82 +316,6 @@ def cmd_regen(path, lines, lock, flavour, spend, free, move):
     else:
         print("OFF changed: an I-cache placement change; the commit needs a hardware ABBA")
     return 0
-
-
-def read_pads(pads_file, makefile):
-    vals = {}
-    if pads_file:
-        for line in open(pads_file, encoding="utf-8"):
-            m = re.match(r"^\s*(LAYOUT_PAD_\w+)=(\d+)", line)
-            if m:
-                vals[m.group(1)] = int(m.group(2))
-    if makefile:
-        for line in open(makefile, encoding="latin-1"):
-            m = re.match(r"^(LAYOUT_PAD_\w+)\s*\?=\s*(\d+)", line)
-            if m and m.group(1) not in vals:
-                vals[m.group(1)] = int(m.group(2))
-    return vals
-
-
-def cmd_solve(lock, flavour, by, text_addrs, pads):
-    # A hole (`gap`/`tail`) is not a pad variable: a closed or resized hole
-    # moves everything after it, and a pad change that "fixes" the anchor
-    # would move the hole's neighbours instead (critique-8 SF2: on arm L the
-    # missing warm hole made solve suggest CORE +64, which would move A's
-    # thumb lookup again).  Fix the holes first; only then solve the pads.
-    holes = 0
-    for i, kind, args, raw in lock[flavour]:
-        if kind not in ("gap", "tail"):
-            continue
-        vi = value_arg(kind)
-        try:
-            got = measure(by, text_addrs, kind, args)
-        except KeyError as e:
-            print("  HOLE MISSING %-5s %-40s %s" % (kind, " ".join(args[:vi]), e))
-            holes += 1
-            continue
-        if int(got) != int(args[vi]):
-            print("  HOLE MOVED   %-5s %-40s lock %s, build %s" % (kind, " ".join(args[:vi]), args[vi], got))
-            holes += 1
-    if holes:
-        print("solve: %d hole(s) differ; restore them (psp/layout_pad_warm.S, "
-              "psp/gbalink_b_stubs.c) before solving the pads -- no pad values suggested" % holes)
-        return 3
-    want = {}
-    for i, kind, args, raw in lock[flavour]:
-        if kind == "at":
-            want[args[0]] = int(args[1], 16)
-    plist = []
-    for i, kind, args, raw in lock[flavour]:
-        if kind == "pad":
-            var, padsym, anchor = args[:3]
-            a, _, _ = sym(by, padsym)
-            plist.append((a, var, padsym, anchor))
-    plist.sort()
-    shift = 0
-    rc = 0
-    for a, var, padsym, anchor in plist:
-        if anchor not in want:
-            print("  %s: anchor %s has no `at` line" % (var, anchor))
-            rc = 1
-            continue
-        cur = sym(by, anchor)[0] % PAGE
-        d = (want[anchor] - (cur + shift)) % PAGE
-        if d > PAGE // 2:
-            d -= PAGE
-        d = int(round(d / 4.0)) * 4
-        old = pads.get(var)
-        if old is None:
-            print("  %s: current value unknown (--pads/--makefile)" % var)
-            rc = 1
-            continue
-        new = (old + d) % PAGE
-        shift += (new - old)
-        print("  %-24s %5d -> %5d  (%+d; anchor %s at 0x%04x, locked 0x%04x)"
-              % (var, old, new, new - old, anchor, cur, want[anchor]))
-    print("relink with these values, then `layout_lock.py check`: alignment of "
-          "the next section and .rodata's steps are not modelled")
-    return rc
 
 
 # The switches a strict arm must have at their release values.  ME_LOWLAT=2 is
@@ -472,12 +387,10 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("strict", "verdict"):
         return policy_main(sys.argv[1:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=["check", "write", "solve", "pins", "regen"])
+    ap.add_argument("cmd", choices=["check", "write", "pins", "regen"])
     ap.add_argument("flavour")
     ap.add_argument("nm", nargs="?")
     ap.add_argument("--lock", default=DEFAULT_LOCK)
-    ap.add_argument("--pads", help="KEY=VALUE file (tools/layout/lab-pads.env)")
-    ap.add_argument("--makefile", help="psp/Makefile, for the release pads")
     ap.add_argument("-q", "--quiet", action="store_true", help="check: print only differences")
     ap.add_argument("--spend-page", metavar="PIN", help="regen: PIN and later +8 KiB")
     ap.add_argument("--free-page", metavar="PIN", help="regen: PIN and later -8 KiB")
@@ -500,9 +413,7 @@ def main():
         return cmd_check(lock, a.flavour, by, text_addrs, a.quiet)
     if a.cmd == "write":
         return cmd_write(a.lock, lines, lock, a.flavour, by, text_addrs)
-    if a.cmd == "pins":
-        return cmd_pins(lock, a.flavour, by)
-    return cmd_solve(lock, a.flavour, by, text_addrs, read_pads(a.pads, a.makefile))
+    return cmd_pins(lock, a.flavour, by)
 
 
 if __name__ == "__main__":

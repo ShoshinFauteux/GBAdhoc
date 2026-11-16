@@ -44,28 +44,15 @@ u16 *gba_screen_pixels;                /* libretro.c mallocs B's own frame */
 extern const u16 gba_cc_lut[];         /* gba_cc_lut.h, verbatim */
 const u16 gba_cc_lut[1];
 
-void update_scanline(void) { }
 /* Layout: B's renderer was 7,712 B of text in the pinned hot order
  * (psp/layout/hot.ord: update_scanline sits between B's update_gba group and
- * its block lookups).  This stub is 8 B, so everything after it -- the rest
- * of B's hot text, then main (the first frontend function) and its frame
- * loop -- moved 7,712 B in claude/opt-1000 round 4, and solo Doom II lost
- * 1.2-1.7 % on hardware (hw-batch-3).  The section keeps the renderer's size
- * (zeros plus the 8 B stub, never executed; same trick as layout_pad_apb.S)
- * so they stay where round 3 and beta.4 had them mod 8 KiB.
- * -ffunction-sections puts the stub in this section.  LAYOUT_PAD_BSCAN_BYTES
- * (psp/Makefile, pinned) is the zeros' size. */
-#ifndef LAYOUT_PAD_BSCAN_BYTES
-#error "LAYOUT_PAD_BSCAN_BYTES comes from psp/Makefile (tools/flags.lock pins it)"
-#endif
-#ifndef LAYOUT_PAD_BXLAT_BYTES
-#error "LAYOUT_PAD_BXLAT_BYTES comes from psp/Makefile (tools/flags.lock pins it)"
-#endif
-#define BSCAN_STR2(x) #x
-#define BSCAN_STR(x) BSCAN_STR2(x)
-__asm__(".pushsection .text.update_scanline,\"ax\",@progbits\n"
-        "  .fill " BSCAN_STR(LAYOUT_PAD_BSCAN_BYTES) " / 4, 4, 0\n"
-        ".popsection\n");
+ * its block lookups).  This stub is 8 B; until code-health C3-5 zeros in
+ * front of it (LAYOUT_PAD_BSCAN_BYTES) kept the renderer's size, so B's hot
+ * text, main and its frame loop stayed where round 3 and beta.4 had them mod
+ * 8 KiB (round 4 lost 1.2-1.7 % on Doom II without them).  Now the hot
+ * order's `pin row_bscan_b` puts the stub where the zeros ended
+ * (tools/layout/layout.lock). */
+void update_scanline(void) { }
 void video_reload_counters(void) { }
 void me_capture_visible_end(void) { }
 void me_capture_visible_resume(void) { }
@@ -86,33 +73,9 @@ cheat_error cheat_parse(unsigned index, const char *code)
 }
 
 /* ---- layout ------------------------------------------------------------- */
-/* B's block_lookup_translate_thumb became one 32 B step smaller in
- * claude/opt-1000 round 7 (the constant hash shift).  The partial link
- * merges same-named sections in member order and this file is the last
- * member, so these zeros sit right after B's copy and keep B's hot text
- * after it where round 6 had it (A's copy is held by psp/layout_pad_warm.S,
- * in front of it). */
-__asm__(".pushsection .text.block_lookup_translate_thumb,\"ax\",@progbits\n"
-        "  .fill 32 / 4, 4, 0\n"
-        ".popsection\n");
-/* PCARG_SIDE (docs/PCARG-SIDE.md): B's translators shrank as A's did
- * (-30,080 B, both 32 B-rounded), so everything linked after B's hot path
- * moved; these zeros (LAYOUT_PAD_BXLAT_BYTES, psp/Makefile, pinned: 5,504 B)
- * after B's translate_block_arm make it -24,576 (three ways) and the late
- * section, main and the frontend keep their sets.  (A's copy is held in
- * front of it by psp/layout_pad_warm.S.) */
-__asm__(".pushsection .text.translate_block_arm,\"ax\",@progbits\n"
-        "  .fill " BSCAN_STR(LAYOUT_PAD_BXLAT_BYTES) " / 4, 4, 0\n"
-        ".popsection\n");
-/* DISPATCH_ASSOC (claude/ibranch): B's block_lookup_address_arm/_thumb and
- * smc_stable_thunk_dispatch shrank 128 / 96 / 64 B (32 B-rounded) as A's did
- * (psp/layout_pad_warm.S); these zeros after B's copies hold what follows. */
-__asm__(".pushsection .text.block_lookup_address_arm,\"ax\",@progbits\n"
-        "  .fill 128 / 4, 4, 0\n"
-        ".popsection\n");
-__asm__(".pushsection .text.block_lookup_address_thumb,\"ax\",@progbits\n"
-        "  .fill 96 / 4, 4, 0\n"
-        ".popsection\n");
-__asm__(".pushsection .text.smc_stable_thunk_dispatch,\"ax\",@progbits\n"
-        "  .fill 64 / 4, 4, 0\n"
-        ".popsection\n");
+/* B's holds (32 B after its block_lookup_translate_thumb, 128 / 96 / 64 B after
+ * block_lookup_address_arm / _thumb and smc_stable_thunk_dispatch, and
+ * LAYOUT_PAD_BXLAT_BYTES after translate_block_arm) were zeros here, at the
+ * ends of the merged sections: since code-health C3-5 they are row pins in
+ * the hot order (psp/layout/hot_order.txt `@pin ... b`, tools/layout/layout.lock
+ * row_*_b). */

@@ -309,7 +309,7 @@ static void ml_update_relevance(u32 line)
  * *rows counts the rows compared (ME_LOG_ROWS builds). */
 /* Its own row in hot_order.txt's last section, between ml_line_body and
  * ml_update_relevance: it takes the bytes the inlined whole compare left in
- * ml_line_body, and LAYOUT_PAD_MLU_BYTES (psp/layout_pad_late.S) the rest. */
+ * ml_line_body, and `pin row_mlu` (layout.lock, code-health C3-5) the rest. */
 static int __attribute__((noinline, noclone, optimize("Os")))
 ml_diff_rows(u32 line, u32 region, const u32 *cur, u32 *sh, u32 map,
              u32 *rows)

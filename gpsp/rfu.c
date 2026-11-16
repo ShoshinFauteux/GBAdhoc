@@ -3414,19 +3414,3 @@ bool rfu_update(unsigned cycles) {
 
   return false;
 }
-
-#if defined(LAYOUT_PIN) && defined(PSP)
-/* rfu_update is a row of the pinned warm tail (psp/layout/hot_order.txt).
- * Code-health B-2 took 40 B out of it (rfu_rx_cap / rfu_cushion: 1000 -> 960 B,
- * 1024 -> 960 32 B-rounded); these 64 B of zeros, the row after it, give the
- * bytes back so every warm-tail function after it keeps its I-cache sets
- * (code-health B-4, the re-pin).  A change to rfu_update re-derives it.
- * Both instances (the GBA link's B is this object renamed).  Never executed. */
-__asm__(".pushsection .text.rfu_fill_update,\"ax\",@progbits\n"
-        "  .balign 32\n"
-        "  .type rfu_fill_update, @function\n"
-        "rfu_fill_update:\n"
-        "  .fill 64 / 4, 4, 0\n"
-        "  .size rfu_fill_update, 64\n"
-        ".popsection\n");
-#endif

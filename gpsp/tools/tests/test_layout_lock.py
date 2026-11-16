@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """test_layout_lock.py -- tools/layout/layout_lock.py and the committed lock.
 
-* the committed tools/layout/layout.lock parses, has [release] and [lab], and
-  every pad it names is a psp/Makefile variable;
-* tools/layout/lab-pads.env names only psp/Makefile pads;
+* the committed tools/layout/layout.lock parses, has [release] and [lab], has
+  no `pad` line and no pad left in psp/Makefile (every pad is a pin since
+  code-health C3-5), and every section has the same pins: the hot order's row
+  pins (each named by a `@pin` row of psp/layout/hot_order.txt) and the six
+  region pins, in address order;
 * on a synthetic nm: write then check passes; a moved symbol, a closed hole,
-  a missing pad symbol and a resized `main` each fail (mutants);
-* `solve` gives back the shift a pad needs, after an earlier pad's change,
-  and refuses while a hole differs;
+  a missing symbol and a resized `main` each fail (mutants);
+* `solve` is gone (C3-5);
 * a .bss shuffle that keeps `_end` but moves the JIT base fails on the base;
 * build.sh's policy (`strict`, `verdict`; critique-9 SF3): which arms are
   enforced, ME_LOWLAT 0/1/2/unset, MGIFT, rc 0/1/2 and LAYOUT_LOCK=0, and
@@ -22,7 +23,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TOOL = os.path.join(ROOT, "tools", "layout", "layout_lock.py")
 LOCK = os.path.join(ROOT, "tools", "layout", "layout.lock")
-PADS = os.path.join(ROOT, "tools", "layout", "lab-pads.env")
+ORDER = os.path.join(ROOT, "psp", "layout", "hot_order.txt")
 MAKEFILE = os.path.join(ROOT, "psp", "Makefile")
 
 fails = 0
@@ -68,9 +69,6 @@ at   roster_valid             0
 at   reg#1                    0
 gap  layout_pad_warm_lookup block_lookup_translate_thumb 0
 tail gbab_block_lookup_translate_thumb 0
-pad  LAYOUT_PAD_BSCAN_BYTES gbab_update_scanline main
-pad  LAYOUT_PAD_BYTES       layout_pad_cold      exit_cb
-pad  LAYOUT_PAD_FE_BYTES    layout_pad_fe        roster_valid
 """
 
 
@@ -101,23 +99,32 @@ def main():
     mkpads = set(re.findall(r"^(LAYOUT_PAD_\w+)\s*\?=", mk, re.M))
     lock = open(LOCK, encoding="utf-8").read()
     check("[release]" in lock and "[lab]" in lock, "layout.lock has [release] and [lab]")
-    named = set(re.findall(r"^pad\s+(\w+)", lock, re.M))
-    check(named and named <= mkpads, "every `pad` in layout.lock is a psp/Makefile pad: %s" % sorted(named))
-    envpads = set(re.findall(r"^(LAYOUT_PAD_\w+)=\d+$", open(PADS).read(), re.M))
-    check(envpads and envpads <= mkpads, "lab-pads.env names only psp/Makefile pads: %s" % sorted(envpads))
-    check("LAYOUT_PAD_BSCAN_BYTES" in envpads, "lab-pads.env sets the BSCAN pad")
-    gone = {"LAYOUT_PAD_BYTES", "LAYOUT_PAD_MAIN_BYTES", "LAYOUT_PAD_FE_BYTES",
-            "LAYOUT_PAD_GB_BYTES", "LAYOUT_PAD_CORE_BYTES", "LAYOUT_PAD_RO_BYTES"}
-    check(not (gone & (envpads | mkpads | named)),
-          "the pads that are pins since C3-3/C3-4 are in no Makefile default, lab-pads.env or `pad` line")
+    check(not re.search(r"^pad\s", lock, re.M), "layout.lock has no `pad` line (C3-5)")
+    check(not mkpads - {"LAYOUT_PAD_TEXT", "LAYOUT_PAD_BSS"},
+          "psp/Makefile defaults no layout pad (only the sweep's TEXT/BSS): %s" % sorted(mkpads))
+    check(not os.path.exists(os.path.join(ROOT, "tools", "layout", "lab-pads.env")),
+          "tools/layout/lab-pads.env is gone (C3-5)")
     kinds = set(re.findall(r"^(\w+)\s", "\n".join(l for l in lock.splitlines()
                                               if l and not l.startswith(("#", "["))), re.M))
-    check(kinds <= {"at", "size", "gap", "tail", "pad", "pin"}, "layout.lock uses known entry kinds: %s" % sorted(kinds))
+    check(kinds <= {"at", "size", "gap", "tail", "pin"}, "layout.lock uses known entry kinds: %s" % sorted(kinds))
+    rows = []
+    for l in open(ORDER):
+        f = l.split("#", 1)[0].split()
+        if f and f[0] == "@pin":
+            if "a" in f[2]:
+                rows.append("row_" + f[1])
+            if "b" in f[2]:
+                rows.append("row_%s_b" % f[1])
+    check(len(rows) == len(set(rows)) and rows, "hot_order.txt's @pin rows name %d distinct pins" % len(rows))
     for fl in ("release", "lab", "harness", "harness64", "diagnostic", "soak"):
         sec = re.search(r"^\[%s\]$(.*?)(?=^\[|\Z)" % fl, lock, re.M | re.S)
-        pins = re.findall(r"^pin\s+(\w+)\s+0x[0-9a-f]{8}\b", sec.group(1) if sec else "", re.M)
-        check(pins == ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"],
-              "[%s] has the six pins in link order (ro: C3-4): %s" % (fl, pins))
+        pins = re.findall(r"^pin\s+(\w+)\s+(0x[0-9a-f]{8})\b", sec.group(1) if sec else "", re.M)
+        names = [n for n, a in pins]
+        check(sorted(names) == sorted(rows + ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"]),
+              "[%s] has a pin for every @pin row and the six region pins (%d)" % (fl, len(names)))
+        check([int(a, 16) for n, a in pins] == sorted(int(a, 16) for n, a in pins)
+              and names[-6:] == ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"],
+              "[%s] lists its pins in address order, the region pins last" % fl)
 
     with tempfile.TemporaryDirectory() as d:
         nm = os.path.join(d, "a.nm")
@@ -129,7 +136,7 @@ def main():
         txt = open(lk).read()
         check("at   main                     0x14e0" in txt, "write keeps the spacing and records main 0x14e0")
         check("# synthetic" in txt, "write keeps comments")
-        check(re.search(r"^gap .* 32$", txt, re.M) is not None, "the warm hole is 32 B")
+        check(re.search(r"^gap .* 32$", txt, re.M) is not None, "a gap: 32 B")
         check(re.search(r"^tail gbab_block_lookup_translate_thumb 32$", txt, re.M) is not None, "B's hole is 32 B")
         check(re.search(r"^at   reg#1 +0x1c00$", txt, re.M) is not None, "SYM#N picks the N-th copy")
         rc, out = run("check", "release", nm, "--lock", lk)
@@ -153,26 +160,8 @@ def main():
         rc, out = run("check", "release", m, "--lock", lk, "-q")
         check(rc == 1 and "size  main" in out, "mutant: main resized -> fails")
 
-        # solve: everything after B's stub moved +480, then roster_valid -64
-        sv = shifted(shifted(SYMS, 0x088a7a60, 480), 0x08981cd8 + 480, -64)
-        write_nm(m, sv)
-        pads = os.path.join(d, "p.env")
-        open(pads, "w").write("LAYOUT_PAD_BSCAN_BYTES=7704\nLAYOUT_PAD_BYTES=1600\nLAYOUT_PAD_FE_BYTES=3512\n")
-        rc, out = run("solve", "release", m, "--lock", lk, "--pads", pads)
-        check("7704 ->  7224" in out, "solve: BSCAN takes back the +480")
-        check("1600 ->  1600" in out, "solve: the text pad needs nothing once BSCAN moved")
-        check("3512 ->  3576" in out, "solve: FE takes the -64")
-
-        # solve refuses while a hole differs (critique-8 SF2): the same
-        # shifts, plus the warm hole closed -> exit 3, no pad values
-        write_nm(m, shifted(sv, 0x0880bb60, -32))
-        rc, out = run("solve", "release", m, "--lock", lk, "--pads", pads)
-        check(rc == 3 and "HOLE MOVED" in out and "->" not in out,
-              "solve: a closed warm hole -> refuses, suggests no pads")
-        write_nm(m, shifted(sv, 0x088ab1a0 + 480, -32))  # sv moved B +480
-        rc, out = run("solve", "release", m, "--lock", lk, "--pads", pads)
-        check(rc == 3 and "tail" in out and "->" not in out,
-              "solve: B's hole closed -> refuses, suggests no pads")
+        rc, out = run("solve", "release", m, "--lock", lk)
+        check(rc == 2, "solve is gone (code-health C3-5: every hold is a pin)")
 
         # the JIT base and the .bss behind it (critique-8 MF3): .bss grows 16 B
         # before the JIT cache and shrinks 16 B after it.  _end does not move,
@@ -259,6 +248,13 @@ def pin_tests():
               "pins: --move sets one pin and asks for a hardware ABBA")
         rc, out = run("regen", "release", "--lock", lk, "--spend-page", "nope")
         check(rc == 2, "pins: regen of an unknown pin refuses")
+        # a row pin listed first in the lock but linked after `main` in address
+        # terms is still "later": regen orders by address, not by lock line (C3-5)
+        open(lk, "w").write("[release]\npin row_x 0x08920000\npin row_y 0x08800100\n" + PIN_LOCK.split("\n", 1)[1])
+        rc, out = run("regen", "release", "--lock", lk, "--spend-page", "row_y")
+        txt = open(lk).read()
+        check(rc == 0 and "0x08802100" in txt and "0x08922000" in txt and "0x08933c64" in txt,
+              "pins: --spend-page moves every pin at a higher address, whatever its lock line")
 
 
 REL = ["RFU_SCHED=1", "GBA_LINK=1", "REWIND=1", "ONLINE=1", "CHEATS=1",
