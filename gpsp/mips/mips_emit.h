@@ -2003,9 +2003,21 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
 #define arm_block_memory_final_load(writeback_type)                           \
   arm_block_memory_load()                                                     \
 
+/* R15 is always the final register; STM stores it as the STM's address + 12
+ * (ARM7TDMI), as the x86/ARM back ends do: a2 holds pc + 4 here, so + 8.
+ * generate_load_reg alone stored arm_to_mips_reg[15] (reg_a0, the store
+ * address) instead.  One emit, not generate_load_reg_pc's inline
+ * generate_load_pc: the macro is expanded in 16 STM variants. */
 #define arm_block_memory_final_store(writeback_type)                          \
   generate_load_pc(reg_a2, (pc + 4));                                         \
-  generate_load_reg(reg_a1, i);                                               \
+  if(i == REG_PC)                                                             \
+  {                                                                           \
+    mips_emit_addiu(reg_a1, reg_a2, 8);                                       \
+  }                                                                           \
+  else                                                                        \
+  {                                                                           \
+    generate_load_reg(reg_a1, i);                                             \
+  }                                                                           \
   arm_block_memory_writeback_post_store(writeback_type);                      \
   generate_function_call_swap_delay(execute_store_u32);                       \
 
@@ -2035,7 +2047,7 @@ static __attribute__((noinline)) u8 *pcarg_thumb_store_site(
 #define arm_block_memory_sp_store()                                           \
 {                                                                             \
   u32 store_reg = i;                                                          \
-  check_load_reg_pc(arm_reg_a0, store_reg, 8);                                \
+  check_load_reg_pc(arm_reg_a0, store_reg, 12);   /* R15: STM address + 12 */ \
   mips_emit_sw(arm_to_mips_reg[store_reg], reg_a1, offset);                   \
 }                                                                             \
 

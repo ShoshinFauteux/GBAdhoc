@@ -1382,6 +1382,11 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address, u32 store_mask)
 #define arm_block_memory_final_load(writeback_type)                           \
   arm_block_memory_load()                                                     \
 
+/* KNOWN BUG, not fixed here (this back end is not built for the PSP): an STM
+ * with R15 in the list should store the STM's address + 12 (ARM7TDMI; the
+ * x86 and ARM back ends, cpu.cc and mips_emit.h do); this stores what
+ * generate_load_reg gives for R15.  The MIPS fix is the model: for
+ * i == REG_PC, a1 = a2 + 8 (a2 holds pc + 4). */
 #define arm_block_memory_final_store(writeback_type)                          \
   generate_load_pc(reg_a2, (pc + 4));                                         \
   generate_load_reg(reg_a1, i)                                                \

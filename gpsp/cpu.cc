@@ -1120,7 +1120,9 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
       if (mode == AccLoad) {
         load_aligned32(address, reg[i]);
       } else {
-        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 4 : reg[i]);
+        /* STM stores R15 as the STM's address + 12 (ARM7TDMI; reg[REG_PC]
+         * is the address + 4 here), the same as STR (arm_access_memory). */
+        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 8 : reg[i]);
       }
       address += 4;
     }
