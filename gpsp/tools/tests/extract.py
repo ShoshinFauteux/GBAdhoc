@@ -336,9 +336,44 @@ EPOCHC_PASS_TAIL = re.compile(r'^   if \(!inproc_try_return\(([^;]*)\)\)\n      
                               r'^   \}   /\* the next game \*/\n', re.M | re.S)
 
 
+# Tier C C-1 commit 4 (builds/health-out/design/C-1.md): the frame loop is frame_loop(),
+# main()'s `while (g_running) { .. }` moved unchanged, with copy-in/copy-out of main()'s
+# locals (it keeps their names).  main() calls it once per game:
+#     L.x = x; ..  const session_ctx S = { .. };  frame_loop(&L, &S);  x = L.x; ..
+# (the copies only while main() keeps its own locals).  Pasted back over that block,
+# main() reads as it did before C-1.
+EPOCHC_LOOP_CALL = re.compile(r'(?:^   L\.\w+ = \w+;\n)*^   const session_ctx S = [^\n]*\n'
+                              r'^   frame_loop\(&L, &S\);\n(?:^   \w+ = L\.\w+;\n)*', re.M)
+EPOCHC_LOOP_DEF = re.compile(r'^void frame_loop\(loop_t \*L, const session_ctx \*S\)\n\{\n', re.M)
+
+
+def epochc_frame_loop(main_text, source):
+    """main()'s text with the frame_loop() call block replaced by frame_loop()'s
+    `while (g_running) { .. }` (unchanged on a tree before C-1 commit 4)."""
+    calls = EPOCHC_LOOP_CALL.findall(main_text)
+    if not calls:
+        if 'frame_loop(' in main_text:
+            raise ExtractError('c-1: main() calls frame_loop() in a shape this reader does not know')
+        return main_text
+    if len(calls) != 1:
+        raise ExtractError('c-1: main() calls frame_loop() %d times' % len(calls))
+    m = EPOCHC_LOOP_DEF.search(source)
+    if not m:
+        raise ExtractError('c-1: frame_loop() not defined')
+    end = source.index('\n}\n', m.end() - 1)
+    body = source[m.end():end + 1]
+    a = body.find('\n   while (g_running)\n   {\n')
+    b = body.rfind('\n   }\n')
+    if a < 0 or b < a:
+        raise ExtractError('c-1: frame_loop() has no `while (g_running)` loop')
+    loop = body[a + 1:b + len('\n   }\n')]
+    return EPOCHC_LOOP_CALL.sub(lambda _: loop, main_text, count=1)
+
+
 def epochc_unloop(main_text, source):
     """main()'s text with the pass per game read as `session_top:` .. `goto session_top;`
-    (unchanged on a tree before Epoch C C3-2b)."""
+    (unchanged on a tree before Epoch C C3-2b), and the frame loop back in it (C-1)."""
+    main_text = epochc_frame_loop(main_text, source)
     h, t = EPOCHC_PASS_HEAD.search(main_text), EPOCHC_PASS_TAIL.search(main_text)
     if not h and not t:
         return main_text
@@ -448,7 +483,8 @@ def _phase_def(source, name):
 
 def epochc_phases(main_text, source):
     """main()'s text with the session phases' calls replaced by their bodies (unchanged
-    on a tree before Epoch C C3-2c)."""
+    on a tree before Epoch C C3-2c), and the frame loop back in it (C-1)."""
+    main_text = epochc_frame_loop(main_text, source)
     for name in EPOCHC_PHASES:
         d = _phase_def(source, name)
         if not d:

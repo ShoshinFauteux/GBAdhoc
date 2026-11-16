@@ -1,4 +1,4 @@
-static void dump_ge_bmp(void)
+static __attribute__((noinline)) void dump_ge_bmp(void)
 {
    char path[176];
    snprintf(path, sizeof(path), "%s/ge_%06u.bmp", LOG_DIR,

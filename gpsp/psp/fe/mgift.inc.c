@@ -137,7 +137,7 @@ static void mgift_stop_io(int quiet)
 }
 
 /* pwr_hold: see power_cb -- this runs outside the loop's park point. */
-static void mgift_stop(int quiet)
+static __attribute__((noinline)) void mgift_stop(int quiet)
 {
    pwr_hold("mgift");
    mgift_stop_io(quiet);
@@ -421,7 +421,7 @@ static void turbo_frame(unsigned pad, unsigned pad_new, int playing)
  * way a session can start or end: there are a dozen of those, and a missed
  * one would be a desync.  The player's choices are kept; they stop being
  * applied, and are applied again when the session is over. */
-static void cheats_link_poll(void)
+static __attribute__((noinline)) void cheats_link_poll(void)
 {
    int lock = link_session_any();
    if (lock == fe_cheats_locked())
@@ -458,7 +458,7 @@ static void link_ui_view(void)
 #ifdef GBADHOC_MGIFT
 /* Once per frontend frame: poll the phone's parcel and advance the local cart.
  * Keep this separate from net_frame(), which owns trading-session pacing. */
-static void mgift_frame(void)
+static __attribute__((noinline)) void mgift_frame(void)
 {
    if (!g_mg_on)
       return;

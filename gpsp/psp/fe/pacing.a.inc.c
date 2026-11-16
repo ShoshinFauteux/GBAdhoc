@@ -201,7 +201,7 @@ static int mer_retire_early_active(void)
 }
 
 /* @extract:end ff:mer_retire_early_active */
-static int mer_lowlat_active(void)
+static __attribute__((noinline)) int mer_lowlat_active(void)
 {
    return g_ll_cfg && g_me_rend && !g_ff_mult && !g_ff_uncapped &&
           !g_ff_gate && !mer_rewind_busy() && !link_session_any();

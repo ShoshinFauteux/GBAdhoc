@@ -283,7 +283,7 @@ static int ll_want_slot(unsigned level)
 }
 
 /* `want`: vblanks this wait spans (2 on an audio-ring nudge). */
-static void lat_wait_begin(unsigned want)
+static __attribute__((noinline)) void lat_wait_begin(unsigned want)
 {
    int active = mer_lowlat_active();
 
@@ -321,7 +321,7 @@ static void lat_wait_begin(unsigned want)
       g_ll_slot++;
 }
 
-static int lat_wait_step(void)
+static __attribute__((noinline)) int lat_wait_step(void)
 {
    unsigned now = (unsigned)sceKernelGetSystemTimeLow();
    int need = ll_need_us();

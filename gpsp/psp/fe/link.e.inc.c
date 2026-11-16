@@ -230,7 +230,14 @@ static int link_host_heard(void)
    return heard_at && g_link_setup_ticks + 1 - heard_at < 2u * 60u;
 }
 
+/* C-1 T13: inlined into gblink_service in every build, as GCC chose before
+ * frame_loop; a player build says so (see gblink_service), a rig build's GCC
+ * still does it on its own. */
+#ifdef GPSP_PERF_RIG
 static void link_setup_watch(void)
+#else
+static inline __attribute__((always_inline)) void link_setup_watch(void)
+#endif
 {
    unsigned pad_new = g_pad & ~g_link_prev_pad;
    int heard;
@@ -380,8 +387,15 @@ static int link_end(int st)
 }
 
 /* Once per loop iteration.  Returns 1 when a harness run should exit now,
- * with *code set. */
+ * with *code set.  C-1 T13: a player build inlines it into the frame loop, as
+ * GCC chose for main's loop before frame_loop; a rig build (GPSP_PERF_RIG: the
+ * repeat restart below) keeps it out of line, as GCC chose there. */
+#ifdef GPSP_PERF_RIG
 static int gblink_service(int have_script, int *code, const char **why)
+#else
+static inline __attribute__((always_inline)) int gblink_service(int have_script, int *code,
+   const char **why)
+#endif
 {
    static unsigned ticks, script_done_ticks;
    static int end_asked;
@@ -710,7 +724,7 @@ static int online_bringup_cancel(void)
 
 /* UI-driven wireless action (host=1 / host=0 join).  docs/GBA-LINK-UI.md:
  * the room's name is built from the mode (host) or read for it (join). */
-static void ui_net_action(int is_host)
+static __attribute__((noinline)) void ui_net_action(int is_host)
 {
    int rc, kind, num, gba = g_pcfg.console == FE_CONSOLE_GBA;
    char room[ROOM_LABEL_CAP], group[9], code[5];

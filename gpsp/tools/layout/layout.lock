@@ -138,12 +138,23 @@
 # the pad's end from the 772c0d43 maps (e0039a74-identical).  The merged
 # table is before the pin, so a few bytes more or less of strings (the 4 B
 # version-string trap of tools/layout/ro_margin.py, now deleted) move nothing.
+# Code-health C-1 commit 4 (the frame loop leaves main; the one placement
+# decision of tier C): the loop is frame_loop, the only .text.startup input,
+# and `pin main` is `pin frame_loop`.  Placed by the by-line scan against the
+# beta.5 kit ELFs (runs/baseline; builds/health-out/c14/loopscan_fl.py, loop
+# lines 233-1973): release 1.8 % as built at main's old 0x1c64, best 15.7 % at
+# 0x04e8; lab 1.9 % at 0x156c, best 9.2 % at 0x1cd4 (`regen --move`, both
+# below their fe_head pin: no page spent).  main itself is cold
+# (.text.fe_cold.main), last in main_psp.o's run: exit_cb holds, pace_frame
+# moves by main plus the run's inlining changes (release +860 B, lab +1196 B;
+# re-recorded with `write`).  Re-recorded: `at`/`size frame_loop` (were `main`),
+# `at pace_frame`; 77 entries, 0 differ in both sections.  Needs the HW ABBA.
 
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x1c64
-size main                               23580
-at   pace_frame                         0x097c
+at   frame_loop                         0x04e8
+size frame_loop                         23348
+at   pace_frame                         0x0cd8
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
@@ -226,7 +237,7 @@ pin  row_late                           0x0892ff40   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08930880   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x08931c64   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x089324e8   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x089392d0   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0897c700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x089ed9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
@@ -235,9 +246,9 @@ pin  ro                                 0x08ad505c   # .rodata after the start f
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
-at   main                               0x156c
-size main                               23592
-at   pace_frame                         0x089c
+at   frame_loop                         0x1cd4
+size frame_loop                         23828
+at   pace_frame                         0x0d48
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094
@@ -320,7 +331,7 @@ pin  row_late                           0x08931f40   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08932880   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x0893356c   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x08933cd4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893b394   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898f094   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a041a0   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
@@ -368,7 +379,7 @@ pin  row_late                           0x08931640   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08931f80   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x08933364   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
@@ -416,7 +427,7 @@ pin  row_late                           0x08931640   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08931f80   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x08933364   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x08933364   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898e590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
@@ -464,7 +475,7 @@ pin  row_late                           0x0892ffc0   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08930900   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x08931ce4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x08931ce4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x08939350   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0897c7a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x089eda90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
@@ -512,7 +523,7 @@ pin  row_late                           0x089315c0   # A ml_diff_page (was LAYOU
 pin  row_mlu                            0x08931f00   # A ml_update_relevance (was LAYOUT_PAD_MLU_BYTES)
 # pins (code-health C3-3): where each region starts, absolute; the link puts
 # it there (psp/pins.ld).  Changed only by `layout_lock.py regen`.
-pin  main                               0x089332e4   # main, the frame loop (was LAYOUT_PAD_MAIN_BYTES)
+pin  frame_loop                         0x089332e4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a84c   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898e510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
 pin  fe_tail                            0x08a03644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)

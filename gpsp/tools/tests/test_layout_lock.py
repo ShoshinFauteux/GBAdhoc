@@ -120,10 +120,10 @@ def main():
         sec = re.search(r"^\[%s\]$(.*?)(?=^\[|\Z)" % fl, lock, re.M | re.S)
         pins = re.findall(r"^pin\s+(\w+)\s+(0x[0-9a-f]{8})\b", sec.group(1) if sec else "", re.M)
         names = [n for n, a in pins]
-        check(sorted(names) == sorted(rows + ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"]),
+        check(sorted(names) == sorted(rows + ["frame_loop", "fe_head", "fe_common", "fe_tail", "core", "ro"]),
               "[%s] has a pin for every @pin row and the six region pins (%d)" % (fl, len(names)))
         check([int(a, 16) for n, a in pins] == sorted(int(a, 16) for n, a in pins)
-              and names[-6:] == ["main", "fe_head", "fe_common", "fe_tail", "core", "ro"],
+              and names[-6:] == ["frame_loop", "fe_head", "fe_common", "fe_tail", "core", "ro"],
               "[%s] lists its pins in address order, the region pins last" % fl)
 
     with tempfile.TemporaryDirectory() as d:

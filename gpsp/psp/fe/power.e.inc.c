@@ -185,7 +185,7 @@ static __attribute__((noinline)) void wake_me_lost_notice(void)
 }
 /* @extract:end fn:wake_me_lost_notice */
 /* @extract:begin fn:wake_service */
-static int wake_service(void)
+static __attribute__((noinline)) int wake_service(void)
 {
    g_wake_answered = 0;   /* (also drops one the menu branch left) */
    if (g_pwr_rebuild)

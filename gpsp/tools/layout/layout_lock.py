@@ -2,7 +2,7 @@
 """layout_lock.py -- hold the pinned layout to tools/layout/layout.lock.
 
 The release layout rests on linker pins (`pin` lines, which psp/pins.ld feeds
-to the link: the regions after main, code-health C3-3; .rodata, C3-4; the hot
+to the link: frame_loop and the regions after it, code-health C3-3 and C-1; .rodata, C3-4; the hot
 order's rows, C3-5) and the link order that puts each where it is
 (docs/LAYOUT-PINNING.md, "Pins", "Row pins").  Nothing else catches it when a change moves one of them: hotord_check
 checks the hot functions' order, not the holes, and a pad that silently stops
@@ -28,8 +28,8 @@ FLAVOUR is a [section] of the lock: `release` (tools/build.sh release),
 
 Lock lines (one per line, `#` comments):
     at   SYM[#N] 0xMOD     the symbol's address mod 8192
-    size SYM[#N] BYTES     the symbol's size (main: a size change moves the
-                           frame loop's window, so it must be re-checked)
+    size SYM[#N] BYTES     the symbol's size (frame_loop: a size change moves
+                           what follows it, so it must be re-checked)
     gap  SYM[#N] SYM2[#M] BYTES   address(SYM2) - address(SYM)
     tail SYM[#N] BYTES     next symbol's address - (address + size): a hole
     pin  NAME 0xADDR       an INPUT of the link: the region after pin NAME

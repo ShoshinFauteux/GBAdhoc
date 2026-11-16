@@ -88,7 +88,7 @@ static unsigned g_pe_fr_t, g_pe_fr_i;   /* this frame's work-region totals */
 
 /* Sample once and attribute the delta since the previous sample to `slot`.
  * slot 0..3 = pre/core/post/wait; slot < 0 = prime the counters only. */
-static void preempt_mark(int slot)
+static __attribute__((noinline)) void preempt_mark(int slot)
 {
    SceKernelThreadRunStatus st;
    uint64_t t0;

@@ -596,7 +596,7 @@ static int g_mg_on; /* listener up; also gates silent RFU bring-up */
 #define g_mg_on 0   /* MGIFT=0: never listening */
 #endif
 
-static void silent_frame(void)
+static __attribute__((noinline)) void silent_frame(void)
 {
    if (!g_silent_mode || g_silent_state == SILST_FAILED ||
        g_silent_state == SILST_UP)

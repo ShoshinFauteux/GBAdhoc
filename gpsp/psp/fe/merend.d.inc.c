@@ -378,7 +378,7 @@ static unsigned g_fps_drawn;
 /* Loop-top presentation for Media Engine mode (ADR-0082). */
 /* @extract:begin ff:me_rend_present */
 /* @extract:begin lowlat:me_rend_present */
-static void me_rend_present(void)
+static __attribute__((noinline)) void me_rend_present(void)
 {
    if (!g_me_rend || g_mer_ready < 0)
       return;
@@ -412,7 +412,7 @@ static void me_rend_present(void)
  * buffer.  And there is exactly one producer: a second one from the
  * visible-end hook would corrupt stage/capture ownership. */
 /* @extract:begin lowlat:me_rend_retire_if_idle */
-static void me_rend_retire_if_idle(void)
+static __attribute__((noinline)) void me_rend_retire_if_idle(void)
 {
    if (!g_me_rend || g_mer_pending < 0)
       return;

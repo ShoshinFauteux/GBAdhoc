@@ -433,7 +433,7 @@ static const char *link_version_text(void)
 
 /* Per-frame wireless service, called from the main loop (its own counter:
  * core frames freeze while the menu is open, the pump must not). */
-static void net_frame(void)
+static __attribute__((noinline)) void net_frame(void)
 {
    static unsigned ticks;
    if (!g_net_up)

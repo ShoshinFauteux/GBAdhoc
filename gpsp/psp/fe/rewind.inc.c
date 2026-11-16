@@ -702,7 +702,7 @@ static void psp_rewind_hud_step(int held, int rewinding, uint32_t stepped,
  *      that drains as in 1.
  *   0  the first version: the lit arc turns with the head, its length is
  *      the history left. */
-static void psp_rewind_hud(void)
+static __attribute__((noinline)) void psp_rewind_hud(void)
 {
    const float cx = 240.0f, cy = 130.0f, r = 92.0f;
    /* The owner's rule for the gauge: the dot always starts at the BOTTOM,

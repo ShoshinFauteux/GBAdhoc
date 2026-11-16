@@ -29,7 +29,9 @@ def marked_function(source, name):
 
 
 def function(source, name):
-    match = re.search(r"^(?:static )?(?:int|void) " + name + r"\([^;]*?\)\s*\{", source, re.M)
+    # `__attribute__((noinline))`: tier C C-1 T13 (frame_loop's out-of-line callees)
+    match = re.search(r"^(?:static )?(?:__attribute__\(\(noinline\)\) )?(?:int|void) " + name +
+                      r"\([^;]*?\)\s*\{", source, re.M)
     if not match:
         raise AssertionError("production function not found: " + name)
     # These selected functions have no brace literals; comments may have them.

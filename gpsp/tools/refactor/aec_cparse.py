@@ -866,6 +866,26 @@ def splice_moved(toks, names):
         return toks
     return link(out)
 
+# Tier C C-1 (health-out/design/C-1.md): the frame loop's state is main()'s `loop_t L`,
+# copied into frame_loop()'s locals of the same names and back (`int exit_code =
+# L->exit_code;` .. `L->exit_code = exit_code;`; after splice_moved `L.exit_code`).  The
+# tools read `L.f` / `L->f` as the local `f`, so a value main() and the loop pass through
+# the copies (exit_code, exit_reason) is followed as it was when they were main()'s
+# locals.  Returns the input list itself when no `L.`/`L->` occurs.
+def read_struct_as_locals(toks, var):
+    out, i, n, hit = [], 0, len(toks), False
+    while i < n:
+        t = toks[i]
+        if (t.kind == 'id' and t.text == var and i + 2 < n and toks[i + 1].text in ('.', '->')
+                and toks[i + 2].kind == 'id' and not (i and toks[i - 1].text in ('.', '->'))):
+            hit = True
+            i += 2
+            continue
+        out.append(t)
+        i += 1
+    return link(out) if hit else toks
+
+
 # Epoch C C3-2b (PLAN-EPOCHC-beta5 §3 C3) replaces main()'s re-entry by `goto session_top`
 # with a pass per game, and the in-process return's decision with a function:
 #

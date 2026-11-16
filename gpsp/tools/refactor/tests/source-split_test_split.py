@@ -311,7 +311,8 @@ def run(src, committed=None):
         it = next(x for x in m.items if x['key'] == 'F:power_cb#1')
         body = m.lines[it['start'] - 1:it['end']]
         rest = m.lines[:it['start'] - 1] + m.lines[it['end']:]
-        kk = next(i for i, x in enumerate(rest) if x.startswith('static void dump_ge_bmp(void)'))
+        kk = next(i for i, x in enumerate(rest) if x.startswith(('static void dump_ge_bmp(void)',
+                                                                 'static __attribute__((noinline)) void dump_ge_bmp(void)')))
         t15 = ''.join(rest[:kk] + body + ['\n'] + rest[kk:])
         refused('M15 power_cb moved into misc.b', lambda: split.do_split(split.Model(t15), frags, rows),
                 'not after the previous fragment|sits in')

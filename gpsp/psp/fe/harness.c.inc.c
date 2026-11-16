@@ -94,7 +94,7 @@ static int      g_vp_phase;               /* 0 idle, 1 shadow taken          */
 static unsigned g_vp_ctr, g_vp_n, g_vp_sum, g_vp_max, g_vp_cost;
 static unsigned g_vp_marked, g_vp_missed, g_vp_marks0;
 
-static void vram_probe_frame(void)
+static __attribute__((noinline)) void vram_probe_frame(void)
 {
    unsigned t0, i, dirty = 0;
 

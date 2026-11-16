@@ -31,8 +31,11 @@ HARNESS = ROOT / "tools/test_lowlat_policy.c"
 RANGES = (
     ("lowlat:defaults", "#ifndef PLAY_ME_LOWLAT", "static int mer_rewind_busy(void);"),
     ("lowlat:mer_retire_early_active", "static int mer_retire_early_active(void)", "/* VISIBLE-END POST"),
-    ("lowlat:me_rend_present", "static void me_rend_present(void)", "/* SAME-FRAME RETIREMENT."),
-    ("lowlat:me_rend_retire_if_idle", "static void me_rend_retire_if_idle(void)", "/* Called from plat_video_frame"),
+    # noinline: tier C C-1 T13 (frame_loop's out-of-line callees)
+    ("lowlat:me_rend_present", "static __attribute__((noinline)) void me_rend_present(void)",
+     "/* SAME-FRAME RETIREMENT."),
+    ("lowlat:me_rend_retire_if_idle", "static __attribute__((noinline)) void me_rend_retire_if_idle(void)",
+     "/* Called from plat_video_frame"),
     ("lowlat:lat_swap", "static int lat_swap(int early)", "static void lat_census(void)"),
     ("lowlat:late_present", "/* LATE PRESENT (tier 0b).", "int main(int argc"),
 )

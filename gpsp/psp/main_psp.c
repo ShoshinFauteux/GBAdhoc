@@ -154,105 +154,82 @@ PSP_HEAP_SIZE_KB(-1024);
 #include "fe/teardown.inc.c"
 #include "fe/boot.inc.c"
 #include "fe/session.inc.c"
-/* @extract:begin fn:main */
-int main(int argc, char *argv[])
+/* ---- THE FRAME LOOP (tier C, C-1: builds/health-out/design/C-1.md) ------------
+ * One call per game: main() calls it after session_pre_loop and goes on to
+ * session_end when g_running drops.  The loop below is main()'s text, moved
+ * unchanged; the locals of main() it uses are copied in here and the ones it
+ * writes copied back to *L when it ends (no loop local has its address taken,
+ * C-1.md 2.3), so each name means what it meant in main().
+ *   - loop_t: what the loop writes.  The first ten are main()'s per-game state
+ *     (session_reset sets nine of them again; rom_fail_paused is not reset per
+ *     game, as before C-1); the six one-shot harness keys are sticky: the loop
+ *     consumes each once per process, never again after an in-process return.
+ *   - session_ctx: what it only reads, for one game: the boot's values (bc),
+ *     this game's state file, the in-process count and the autoload slot.
+ *     `const` copies, so a write to one of them is a compile error.
+ * Layout: frame_loop is main_psp.o's only .text.startup input, placed by
+ * `pin frame_loop` (tools/layout/layout.lock; docs/LAYOUT-PINNING.md "Pins");
+ * main() is cold glue in .text.fe_cold.main.  noinline: called once, it would
+ * be inlined back into main(); noclone: an .isra/.constprop clone would rename
+ * the symbol the lock, the hot order and the tools look up.
+ * Inlining (C-1 T13): GCC's inline budget follows the caller's size, and
+ * frame_loop is smaller than main() was, so it would inline other callees
+ * than main()'s loop did.  Every function main()'s loop called out of line
+ * and no caller inlined is `noinline` (lat_wait_step, net_frame, wake_service
+ * ...: a hot-order row stays a function); gblink_service says what GCC chose. */
+typedef struct loop_t
 {
-   char rom_path[PSP_FILE_PATH_CAP];
-   char save_path[PSP_FILE_PATH_CAP], state_path[PSP_FILE_PATH_CAP];
-   char script_name[64];
-   char nick[24], group[16] = "";
-   long autoexit, dump_at, dump_every, gedump_at, gedump_every, ff_ini, ui_demo, simff;
-   long ui_ctl_demo = 0;        /* harness: Settings > Controls self-drive */
-   long wake_shot = 0;          /* harness: open the wake overlay at frame N */
-   /* harness `player_shot_at = N` (`player_shot_n = K`, default 1): take K
-    * player screenshots, one a frame, from frame N -- the Screenshot
-    * shortcut's own path, which a script cannot press (issue #13). */
-   long player_shot_at = 0, player_shot_n = 1;
-   long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
-   long vid_prof_win = 0;       /* ADR-0034(coreopt) renderer path profile */
-   int have_script = 0, have_harness, have_variant;
-   int autoload_state_slot = 1;
-   int net_host = 0, net_join = 0, net_probe = 0;
-   int exit_code = 0;
-   const char *exit_reason = NULL;
-   int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
-   unsigned prev_pad = 0;
-   int chord_frames = 0;
-   int rom_fail_paused = 0;   /* the menu opened for a ROM read failure */
-   fe_host_config cfg;
-   /* The in-process return to the game list (inproc_refusal): how many
-    * times this process has done it, the per-game values a fresh boot
-    * starts every game from, and the heap as it was when this game's ROM
-    * was picked. */
-   int inproc_n = 0;
-   int folders = 0;      /* FOLDERS (folders_settle): saves/ and states/ */
-   int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
-   long inproc_cycles = 0, inproc_frames = 0, state_save_at = 0;
-   int inproc_via_menu = 0, inproc_menu_armed = 0;
-   char inproc_roms[6][64];
-   int inproc_rom_n = 0;
-   heap_snap_t snap_pre;
+   int exit_code;
+   const char *exit_reason;
+   int ff_engaged, ff_toggled, ff_last_mode, ff_last_me;
+   unsigned prev_pad;
+   int chord_frames;
+   int inproc_menu_armed;
+   int rom_fail_paused;   /* sticky: not reset per game (as before C-1) */
+   /* sticky one-shot harness keys */
+   long dump_at, gedump_at, player_shot_n, ui_ctl_demo, ui_demo, wake_shot;
+} loop_t;
 
-   {
-      boot_ctx bc;
-      if (boot_run(argc, argv, &bc) >= 0)
-         return 0;
-      memcpy(script_name, bc.script_name, sizeof(script_name));
-      memcpy(nick, bc.nick, sizeof(nick));
-      memcpy(group, bc.group, sizeof(group));
-      autoexit = bc.autoexit;
-      dump_at = bc.dump_at;
-      dump_every = bc.dump_every;
-      gedump_at = bc.gedump_at;
-      gedump_every = bc.gedump_every;
-      ff_ini = bc.ff_ini;
-      ui_demo = bc.ui_demo;
-      simff = bc.simff;
-      ui_ctl_demo = bc.ui_ctl_demo;
-      wake_shot = bc.wake_shot;
-      player_shot_at = bc.player_shot_at;
-      player_shot_n = bc.player_shot_n;
-      vhash_from = bc.vhash_from;
-      vhash_to = bc.vhash_to;
-      vid_prof_win = bc.vid_prof_win;
-      have_script = bc.have_script;
-      have_harness = bc.have_harness;
-      have_variant = bc.have_variant;
-      net_host = bc.net_host;
-      net_join = bc.net_join;
-      net_probe = bc.net_probe;
-      folders = bc.folders;
-      me_rend_cfg_boot = bc.me_rend_cfg_boot;
-      sram_thread_boot = bc.sram_thread_boot;
-      autoload_boot = bc.autoload_boot;
-      inproc_cycles = bc.inproc_cycles;
-      inproc_frames = bc.inproc_frames;
-      state_save_at = bc.state_save_at;
-      inproc_via_menu = bc.inproc_via_menu;
-      memcpy(inproc_roms, bc.inproc_roms, sizeof(inproc_roms));
-      inproc_rom_n = bc.inproc_rom_n;
-   }
+typedef struct session_ctx
+{
+   const boot_ctx *bc;
+   const char *state_path;
+   int inproc_n;
+   int autoload_state_slot;
+} session_ctx;
 
-   /* ONE PASS PER GAME: the selection, the boot of the game, the frame loop and
-    * session_end; then the in-process return goes round again for the next
-    * game (inproc_try_return), or the process ends (process_end, below).  The
-    * pass keeps main()'s indentation. */
-   for (;;)
-   {
-   if (session_select(rom_path, save_path, state_path, &autoload_state_slot, inproc_n,
-                      inproc_roms, inproc_rom_n, have_variant, have_harness, folders) >= 0)
-      return 0;
+static __attribute__((noinline, noclone, section(".text.startup.fe_frame_loop")))
+void frame_loop(loop_t *L, const session_ctx *S)
+{
+   const long autoexit = S->bc->autoexit;
+   const long dump_every = S->bc->dump_every;
+   const long gedump_every = S->bc->gedump_every;
+   const long ff_ini = S->bc->ff_ini;
+   const long simff = S->bc->simff;
+   const long player_shot_at = S->bc->player_shot_at;
+   const long vhash_from = S->bc->vhash_from;
+   const long vhash_to = S->bc->vhash_to;
+   const long vid_prof_win = S->bc->vid_prof_win;
+   const int have_script = S->bc->have_script;
+   const long inproc_cycles = S->bc->inproc_cycles;
+   const long inproc_frames = S->bc->inproc_frames;
+   const long state_save_at = S->bc->state_save_at;
+   const int inproc_via_menu = S->bc->inproc_via_menu;
+   const char *const state_path = S->state_path;
+   const int inproc_n = S->inproc_n;
+   const int autoload_state_slot = S->autoload_state_slot;
+   int exit_code = L->exit_code;
+   const char *exit_reason = L->exit_reason;
+   int ff_engaged = L->ff_engaged, ff_toggled = L->ff_toggled;
+   int ff_last_mode = L->ff_last_mode, ff_last_me = L->ff_last_me;
+   unsigned prev_pad = L->prev_pad;
+   int chord_frames = L->chord_frames;
+   int inproc_menu_armed = L->inproc_menu_armed;
+   int rom_fail_paused = L->rom_fail_paused;
+   long dump_at = L->dump_at, gedump_at = L->gedump_at;
+   long player_shot_n = L->player_shot_n, ui_ctl_demo = L->ui_ctl_demo;
+   long ui_demo = L->ui_demo, wake_shot = L->wake_shot;
 
-   session_configure(&cfg, rom_path, save_path, have_harness, net_host, net_join);
-
-   if (session_load(&cfg, &snap_pre, rom_path, inproc_n) >= 0)
-      return 0;
-
-   if (session_net_up(have_script, script_name, net_host, net_join, net_probe, group,
-                      nick) >= 0)
-      return 0;
-
-   session_pre_loop();
    while (g_running)
    {
       unsigned frames;
@@ -1994,6 +1971,123 @@ int main(int argc, char *argv[])
       ff_win_note(); /* @lab */ LAB_FFP(lab_ffpace_loop(g_ff_user, g_ff_gate, g_ff_mult, g_ff_uncapped, g_me_rend);)
       FE_LP_SET(FELP_LOOP);
    }
+   L->exit_code = exit_code;
+   L->exit_reason = exit_reason;
+   L->ff_engaged = ff_engaged;
+   L->ff_toggled = ff_toggled;
+   L->ff_last_mode = ff_last_mode;
+   L->ff_last_me = ff_last_me;
+   L->prev_pad = prev_pad;
+   L->chord_frames = chord_frames;
+   L->inproc_menu_armed = inproc_menu_armed;
+   L->rom_fail_paused = rom_fail_paused;
+   L->dump_at = dump_at;
+   L->gedump_at = gedump_at;
+   L->player_shot_n = player_shot_n;
+   L->ui_ctl_demo = ui_ctl_demo;
+   L->ui_demo = ui_demo;
+   L->wake_shot = wake_shot;
+}
+int main(int argc, char *argv[]) __attribute__((section(".text.fe_cold.main")));   /* C-1 */
+/* @extract:begin fn:main */
+int main(int argc, char *argv[])
+{
+   char rom_path[PSP_FILE_PATH_CAP];
+   char save_path[PSP_FILE_PATH_CAP], state_path[PSP_FILE_PATH_CAP];
+   char script_name[64];
+   char nick[24], group[16] = "";
+   int have_script = 0, have_harness, have_variant;
+   int autoload_state_slot = 1;
+   int net_host = 0, net_join = 0, net_probe = 0;
+   int exit_code = 0;
+   const char *exit_reason = NULL;
+   int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
+   unsigned prev_pad = 0;
+   int chord_frames = 0;
+   int rom_fail_paused = 0;   /* the menu opened for a ROM read failure */
+   fe_host_config cfg;
+   /* The in-process return to the game list (inproc_refusal): how many
+    * times this process has done it, the per-game values a fresh boot
+    * starts every game from, and the heap as it was when this game's ROM
+    * was picked. */
+   int inproc_n = 0;
+   int folders = 0;      /* FOLDERS (folders_settle): saves/ and states/ */
+   int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
+   int inproc_menu_armed = 0;
+   char inproc_roms[6][64];
+   int inproc_rom_n = 0;
+   heap_snap_t snap_pre;
+   boot_ctx bc;   /* the boot's values: frame_loop reads its own through S.bc */
+   loop_t L;      /* the loop's state between games (frame_loop) */
+
+   {
+      if (boot_run(argc, argv, &bc) >= 0)
+         return 0;
+      memcpy(script_name, bc.script_name, sizeof(script_name));
+      memcpy(nick, bc.nick, sizeof(nick));
+      memcpy(group, bc.group, sizeof(group));
+      L.dump_at = bc.dump_at;
+      L.gedump_at = bc.gedump_at;
+      L.ui_demo = bc.ui_demo;
+      L.ui_ctl_demo = bc.ui_ctl_demo;
+      L.wake_shot = bc.wake_shot;
+      L.player_shot_n = bc.player_shot_n;
+      have_script = bc.have_script;
+      have_harness = bc.have_harness;
+      have_variant = bc.have_variant;
+      net_host = bc.net_host;
+      net_join = bc.net_join;
+      net_probe = bc.net_probe;
+      folders = bc.folders;
+      me_rend_cfg_boot = bc.me_rend_cfg_boot;
+      sram_thread_boot = bc.sram_thread_boot;
+      autoload_boot = bc.autoload_boot;
+      memcpy(inproc_roms, bc.inproc_roms, sizeof(inproc_roms));
+      inproc_rom_n = bc.inproc_rom_n;
+   }
+
+   /* ONE PASS PER GAME: the selection, the boot of the game, the frame loop and
+    * session_end; then the in-process return goes round again for the next
+    * game (inproc_try_return), or the process ends (process_end, below).  The
+    * pass keeps main()'s indentation. */
+   for (;;)
+   {
+   if (session_select(rom_path, save_path, state_path, &autoload_state_slot, inproc_n,
+                      inproc_roms, inproc_rom_n, have_variant, have_harness, folders) >= 0)
+      return 0;
+
+   session_configure(&cfg, rom_path, save_path, have_harness, net_host, net_join);
+
+   if (session_load(&cfg, &snap_pre, rom_path, inproc_n) >= 0)
+      return 0;
+
+   if (session_net_up(have_script, script_name, net_host, net_join, net_probe, group,
+                      nick) >= 0)
+      return 0;
+
+   session_pre_loop();
+   L.exit_code = exit_code;
+   L.exit_reason = exit_reason;
+   L.ff_engaged = ff_engaged;
+   L.ff_toggled = ff_toggled;
+   L.ff_last_mode = ff_last_mode;
+   L.ff_last_me = ff_last_me;
+   L.prev_pad = prev_pad;
+   L.chord_frames = chord_frames;
+   L.inproc_menu_armed = inproc_menu_armed;
+   L.rom_fail_paused = rom_fail_paused;
+   const session_ctx S = { &bc, state_path, inproc_n, autoload_state_slot };
+   frame_loop(&L, &S);
+   exit_code = L.exit_code;
+   exit_reason = L.exit_reason;
+   ff_engaged = L.ff_engaged;
+   ff_toggled = L.ff_toggled;
+   ff_last_mode = L.ff_last_mode;
+   ff_last_me = L.ff_last_me;
+   prev_pad = L.prev_pad;
+   chord_frames = L.chord_frames;
+   inproc_menu_armed = L.inproc_menu_armed;
+   rom_fail_paused = L.rom_fail_paused;
    /* @lab */ LAB_FFP(lab_ffpace_finish();)
    /* A link session that could not put the game back (F5): its code and
     * reason, which gblink_begin / link_end cannot reach (main's locals). */

@@ -117,7 +117,7 @@ def pin_link(tmp, fe_common, core, strict, sweep=None):
     """pins.ld from a lock through tools/layout/pins.awk, groups.ld with pins
     in front of fe_common and the catch-all -> (rc, output, {symbol: addr})."""
     with open(os.path.join(tmp, "p.lock"), "w") as f:
-        f.write("[t]\npin main 0x08804040\npin fe_head 0x08804040\n"
+        f.write("[t]\npin frame_loop 0x08804040\npin fe_head 0x08804040\n"
                 "pin fe_common 0x%08x\npin fe_tail 0x08804040\npin core 0x%08x\n"
                 "pin ro 0x08804040\n"
                 % (fe_common, core))
@@ -165,16 +165,16 @@ def pin_tests(tmp):
           and sw.get("c1") == 0x08805a40 + 1024 and sw.get("q1") == 0x08806010 + 1024,
           "sweep=1024: fe_common and core move 1024 B (the sweep is not absorbed by the pins)")
     pl = open(os.path.join(tmp, "pins.ld")).read()
-    check("__pin_main = 0x08804040;" in pl and "__pin_fe_common = 0x08805a40 + 1024;" in pl
+    check("__pin_frame_loop = 0x08804040;" in pl and "__pin_fe_common = 0x08805a40 + 1024;" in pl
           and "__pin_ro = 0x08804040 + 1024;" in pl,
-          "sweep: main's pin stays, the frontend, core and .rodata pins move")
+          "sweep: frame_loop's pin stays, the frontend, core and .rodata pins move")
     rc, out, sw = pin_link(tmp, 0x08805a40, 0x08806010, 0, sweep="9216")
     check(rc == 0 and (sw.get("c1", 0) - 0x08805a40) % 8192 == 1024,
           "sweep=9216: the same sets as 1024 (mod 8 KiB)")
     rc, out, sw = pin_link(tmp, 0x08805a40, 0x08806010, 0, sweep="x")
     check(rc != 0 and "sweep=x" in out, "pins.awk refuses a sweep that is not a number")
     with open(os.path.join(tmp, "p.lock"), "w") as f:
-        f.write("[t]\npin main 0x08804040\n")
+        f.write("[t]\npin frame_loop 0x08804040\n")
     r = sh(["awk", "-v", "flavour=t", "-v", "strict=1", "-f", PINS_AWK, "p.lock"], tmp)
     check(r.returncode != 0 and "no `pin fe_head`" in r.stdout,
           "pins.awk: a flavour missing a pin stops the make")

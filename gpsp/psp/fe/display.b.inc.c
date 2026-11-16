@@ -20,7 +20,7 @@ static void wake_snapshot_from(const uint16_t *src, unsigned pitch,
                                unsigned src_w, unsigned src_h);
 /* The colour mode the snapshot's frame was drawn in (filters v2). */
 static unsigned g_wake_color;
-static void wake_snapshot(void)
+static __attribute__((noinline)) void wake_snapshot(void)
 {
    const uint16_t *src = NULL;
    unsigned pitch = 240;

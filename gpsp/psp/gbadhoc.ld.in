@@ -18,7 +18,7 @@
  *          tools/layout/groups_ld.sh), just before the generic statement,
  *          with the pins fe_head, fe_common, fe_tail and core (C3-3).
  *   top    INCLUDE pins.ld: the pins' addresses (tools/layout/layout.lock).
- *   .text  pin main, just before .text.startup (main).
+ *   .text  pin frame_loop, just before .text.startup (frame_loop, C-1).
  *   .rodata  INCLUDE ro.ld (C3-4): the start files' .rodata (the merged
  *          string table), then pin ro, at the start of the default statement.
  *          The default writes .rodata on one line, so this one is an inline
@@ -146,15 +146,17 @@ SECTIONS
     /* GBADHOC END */
     *(.text.unlikely .text.*_unlikely .text.unlikely.*)
     *(.text.exit .text.exit.*)
-    /* GBADHOC BEGIN pin main (code-health C3-3; docs/LAYOUT-PINNING.md "Pins"):
-     * main, and the frame loop in it, start at the lock's address; until C3-3
-     * the pad psp/layout_pad_main.S held it.  tools/layout/groups_ld.sh writes
-     * the other pins the same way and says what the ASSERT is for. */
+    /* GBADHOC BEGIN pin frame_loop (code-health C3-3, C-1; docs/LAYOUT-PINNING.md
+     * "Pins"): the frame loop starts at the lock's address.  It is the only
+     * .text.startup input (main is cold, .text.fe_cold.main, since C-1; until
+     * then this was `pin main`, and until C3-3 the pad psp/layout_pad_main.S).
+     * tools/layout/groups_ld.sh writes the other pins the same way and says
+     * what the ASSERT is for. */
     layout_pad_main = ABSOLUTE(.);
-    __pin_from_main = ABSOLUTE(.);
-    ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_main, "layout pin main: the code before it grew past the pinned address, which would spend a PSP-1000 heap page; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Pins)");
-    . = ABSOLUTE(ABSOLUTE(.) + ((__pin_main - ABSOLUTE(.)) & 0x1FFF));
-    __pin_at_main = ABSOLUTE(.);
+    __pin_from_frame_loop = ABSOLUTE(.);
+    ASSERT(__pin_strict == 0 || ABSOLUTE(.) <= __pin_frame_loop, "layout pin frame_loop: the code before it grew past the pinned address, which would spend a PSP-1000 heap page; tools/layout/layout_lock.py regen decides (docs/LAYOUT-PINNING.md, Pins)");
+    . = ABSOLUTE(ABSOLUTE(.) + ((__pin_frame_loop - ABSOLUTE(.)) & 0x1FFF));
+    __pin_at_frame_loop = ABSOLUTE(.);
     /* GBADHOC END */
     *(.text.startup .text.startup.*)
     *(.text.hot .text.hot.*)

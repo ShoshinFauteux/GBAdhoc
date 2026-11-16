@@ -98,7 +98,7 @@ static fe_console_t console_from_rom_path(const char *path)
    return FE_CONSOLE_GBA;
 }
 
-static void dump_frame_bmp(void)
+static __attribute__((noinline)) void dump_frame_bmp(void)
 {
    size_t pitch;
    const uint16_t *pix = fe_host_last_frame(&pitch);

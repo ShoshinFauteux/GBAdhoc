@@ -254,6 +254,8 @@ class View(object):
     def __init__(self, name, toks):
         toks = C.unloop_session(toks, EPOCHC_LOOP[0], 'session_top')
         toks = C.splice_moved(toks, EPOCHC_MOVED)
+        if 'frame_loop' in C.functions(toks):      # C-1: the loop's state reads as locals
+            toks = C.read_struct_as_locals(toks, 'L')
         toks = C.inline_helpers(toks, EPOCHC_HELPERS)
         self.name, self.toks = name, toks
         self.funcs = C.functions(toks)

@@ -25,7 +25,9 @@ plain = extract.strip_markers(source)
 def function(name, next_marker, ret='void'):
     # read through its @extract marker ff:NAME: from the definition up to next_marker
     text = extract.extract(source, 'ff:' + name)
-    assert text.startswith('static ' + ret + ' ' + name + '('), name
+    # noinline: tier C C-1 T13 (frame_loop's out-of-line callees)
+    assert text.startswith(('static ' + ret + ' ' + name + '(',
+                            'static __attribute__((noinline)) ' + ret + ' ' + name + '(')), name
     assert text + next_marker in plain, name + ': the region does not end at ' + next_marker
     return text
 
@@ -94,7 +96,7 @@ def build_cadence(tmp, common, cadence, gate, mult, config, quiet=False):
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     (tmp / 'ff_pipeline.inc').write_text(
-        function('mer_retire_early_active', 'static int mer_lowlat_active', 'int') +
+        function('mer_retire_early_active', 'static __attribute__((noinline)) int mer_lowlat_active', 'int') +
         function('me_rend_present', '/* Called from plat_video_frame') +
         function('me_rend_frame', '/* FPS counter'))
     common = ['gcc', '-std=gnu99', '-O2', '-Wall', '-Wextra',
