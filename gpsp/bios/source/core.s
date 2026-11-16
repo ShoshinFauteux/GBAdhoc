@@ -143,13 +143,14 @@ swi_branch_table:
 	.word swi_Diff8bitUnFilterWram			@ 0x16_Diff8bitUnFilterWram
 	.word swi_Diff8bitUnFilterVram			@ 0x17_Diff8bitUnFilterVram
 	.word swi_Diff16bitUnFilter				@ 0x18_Diff16bitUnFilter
-	.word swi_Invalid						@ 0x19_SoundBiasChange
-	.word swi_Invalid						@ 0x1A_SoundDriverInit
-	.word swi_Invalid						@ 0x1B_SoundDriverMode
-	.word swi_Invalid						@ 0x1C_SoundDriverMain
-@	.word swi_SoundDriverMain				@ 0x1C_SoundDriverMain
-	.word swi_Invalid						@ 0x1D_SoundDriverVSync
-	.word swi_Invalid						@ 0x1E_SoundChannelClear
+	@ 0x19-0x1E, 0x28, 0x29: sound_driver.c (spliced into the shipped image
+	@ by bios/splice_sound_driver.sh; see bios/README.md)
+	.word sd_SoundBias						@ 0x19_SoundBiasChange
+	.word sd_SoundDriverInit				@ 0x1A_SoundDriverInit
+	.word sd_SoundDriverMode				@ 0x1B_SoundDriverMode
+	.word sd_SoundDriverMain				@ 0x1C_SoundDriverMain
+	.word sd_SoundDriverVSync				@ 0x1D_SoundDriverVSync
+	.word sd_SoundChannelClear				@ 0x1E_SoundChannelClear
 	.word swi_MidiKey2Freq				@ 0x1F_MidiKey2Freq
 	.word swi_Invalid						@ 0x20_MusicPlayerOpen
 	.word swi_Invalid						@ 0x21_MusicPlayerStart
@@ -159,8 +160,8 @@ swi_branch_table:
 	.word swi_Invalid						@ 0x25_MultiBoot
 	.word swi_Invalid						@ 0x26_HardReset
 	.word swi_CustomHalt					@ 0x27_CustomHalt
-	.word swi_Invalid						@ 0x28_SoundDriverVSyncOff
-	.word swi_Invalid						@ 0x29_SoundDriverVSyncOn
+	.word sd_VSyncOff						@ 0x28_SoundDriverVSyncOff
+	.word sd_VSyncOn						@ 0x29_SoundDriverVSyncOn
 	.word swi_SoundGetJumpList			@ 0x2A_SoundGetJumpList
 	
 @---------------------------------------------------------------------------------
