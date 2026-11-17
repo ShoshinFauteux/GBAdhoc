@@ -332,6 +332,7 @@ static void ui_settings_save(void) {}   /* HW-2 F3: main's explicit saves */
 static void osd_chip_session(const char *s) { (void)s; }
 static void osd_draw(void) {}
 static void link_chip(void) {}
+static void link_wait_hide(void) {}     /* the link-wait chip (link.d.inc.c) */
 
 @FUNCTIONS@
 
