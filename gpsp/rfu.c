@@ -2079,6 +2079,25 @@ void rfu_net_receive(const void* buf, size_t len, uint16_t client_id) {
     u32 hdata = upack32(&buf8[8]);
 
     if (ptype >= NET_RFU_SCHED_SYNC && ptype <= NET_RFU_SCHED_AGAIN) {
+      /* A linked client's ticks are its liveness.  The host drops a client
+       * after 240 frames without a CLIENT_SEND or CLIENT_ACK (clttl), and the
+       * client's ADR-0060 keepalive ACK fires only after 1 s of its OWN
+       * silence -- which ticks never allow: every frame's TICK goes out
+       * through rfu_net_send_cmd and refreshes rfu_cli_last_tx_us.  So with
+       * ticks on, a client whose GAME sends nothing for 4 s (it waits for
+       * the leader to answer "join?") was dropped while alive, ticking
+       * every frame: Emerald's wireless Trade Center with a leader slower
+       * than 4 s to accept ended both consoles at the link screen
+       * (rfu_link_down reason=4 on the host; Lab link-speed study,
+       * 2026-11-16: 4 of 6 runs over the internet, and every run in PPSSPP
+       * with a 10 s leader; with rfu_sched = 0 the same run passes).  A
+       * real adapter keeps a connected, quiet child linked: it is the radio
+       * link, not game data, that says the child is there. */
+      if (rfu_state == RFU_STATE_HOST)
+        for (i = 0; i < 4; i++)
+          if (rfu_host.clients[i].devid &&
+              rfu_host.clients[i].client_id == client_id)
+            rfu_host.clients[i].clttl = 0;
       rfu_sched_net(ptype, hdata, client_id);
       return;
     }
