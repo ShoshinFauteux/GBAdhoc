@@ -339,7 +339,11 @@ def check_deletions(a, b, telset):
             return e + 1
         raise ValueError('deleted a statement that is not a telemetry store: [%s]' % ' '.join(pc)[:120])
 
-    W = 24
+    # Re-meeting is greedy (the fewest deleted statements after which REF and NEW agree on
+    # the next token).  That is sound whatever the pairing of
+    # markers and statements: every REF statement the walk skips is checked by stmt(), and a
+    # statement left over by too early a meeting is found and checked at the next difference.
+    W = 1
     i = j = 0
     bad = None
     while i < n_a or j < n_b:
@@ -377,7 +381,7 @@ def check_deletions(a, b, telset):
                         if a[k:k + tail] == b[jj:jj + tail]:
                             done = True
                             break
-                    elif tail > 0 and a[k:k + tail] == b[jj:jj + tail] and (tail == W or n_a - k == n_b - jj):
+                    elif tail > 0 and a[k:k + tail] == b[jj:jj + tail]:
                         done = True
                         break
                 if not done:
