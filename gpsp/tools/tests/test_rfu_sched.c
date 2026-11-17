@@ -53,6 +53,7 @@ void rs_fresh(int host, uint16_t peer, u32 frame)
   rfu_sched_ni_at = -100000;
   rfu_sched_relock_n = 0;
   rfu_sched_held_peak = 0;
+  rfu_q_hi[0] = rfu_q_hi[1] = 0;
   rfu_frame_no = frame;
   if (host) {
     rfu_state = RFU_STATE_HOST;
@@ -121,10 +122,14 @@ int rs_may_run(void) { return rfu_sched_may_run(); }
 void rs_pause(int on) { rfu_sched_pause(on); }
 int rs_peer_paused(void) { return rfu_sched_peer_is_paused(); }
 void rs_give_up(void) { rfu_sched_give_up(); }
+unsigned rs_qhi(void) { return rfu_q_hi[0] > rfu_q_hi[1] ? rfu_q_hi[0] : rfu_q_hi[1]; }
+int rs_partner(void) { return rfu_sched_partner(); }
 
 #else
 /* ----------------------------------------------------------------- driver */
-#include "../../rfu_sched_api.h"     /* rfu_sched_d_for: no symbols used */
+#include "../../rfu_sched_api.h"     /* the inline rules: no symbols used */
+#define ND_HELD_SILENT_T 1          /* netdrv.h ND_HELD_SILENT */
+#define ND_HELD_GAP_T    2          /* netdrv.h ND_HELD_GAP */
 #define NET_RFU_HEADER      0x52465531u
 #define NET_RFU_HOST_SEND   0x05u
 #define NET_RFU_CLIENT_SEND 0x06u
@@ -153,6 +158,8 @@ void rs_give_up(void) { rfu_sched_give_up(); }
   void p##rs_pause(int on); \
   int p##rs_peer_paused(void); \
   void p##rs_give_up(void); \
+  unsigned p##rs_qhi(void); \
+  int p##rs_partner(void); \
   extern int p##rs_self;
 API()
 API(rsb_)
@@ -172,12 +179,14 @@ typedef struct {
   void (*pause)(int);
   int (*peer_paused)(void);
   void (*give_up)(void);
+  unsigned (*qhi)(void);
+  int (*partner)(void);
 } adapter;
 
 #define ADAPTER(p) { p##rs_fresh, p##rs_game_send, p##rs_game_recv, \
   p##rs_frame_end, p##rs_receive, p##rs_unlink, p##rs_frame, p##rs_off, \
   p##rs_cur_d, p##rs_on, p##rs_relocks, p##rs_config, p##rs_may_run, \
-  p##rs_pause, p##rs_peer_paused, p##rs_give_up }
+  p##rs_pause, p##rs_peer_paused, p##rs_give_up, p##rs_qhi, p##rs_partner }
 static const adapter ad[2] = { ADAPTER(), ADAPTER(rsb_) };
 enum { A = 0, B = 1 };          /* A hosts (peer 0); B is its client (peer 1) */
 
@@ -226,9 +235,13 @@ void rs_wire_send(int from, uint16_t dst, const void *buf, size_t len)
   }
 }
 
+static int wire_down;           /* 1 = an outage: nothing is delivered */
+
 static void pump(void)
 {
   int from;
+  if (wire_down)
+    return;
   for (from = 0; from < 2; from++)
     while (wq_head[from] != wq_tail[from]) {
       pkt *p = &wq[from][wq_head[from]++ % WQ];
@@ -259,6 +272,11 @@ static int32_t last_stamp[2];
 static int32_t win_lo[2] = { 1, 1 }, win_hi[2], win_max[2];
 static unsigned win_n[2];
 static unsigned cfg_d = 2;      /* the D start() configures */
+/* Since start(): data packets each game sent, and each game received (in
+ * any state); 1 = this game also sends while its ticks are off (a console
+ * that gave up keeps playing). */
+static unsigned sent_all[2], got_all[2];
+static int send_free[2];
 
 static void reset_counts(void)
 {
@@ -282,6 +300,7 @@ static int pass(int k)
   /* The game reads what was handed over for this frame. */
   while ((t = a->game_recv()) >= 0) {
     got[k]++;
+    got_all[k]++;
     if (a->on()) {
       int32_t d = a->cur_d();
       int32_t delay = (int32_t)(((uint32_t)(f - a->off()) - (uint32_t)t) & 0xFF);
@@ -302,10 +321,11 @@ static int pass(int k)
       last_stamp[k] = stamp;
     }
   }
-  if (a->on())
+  if (a->on() || send_free[k])
     for (i = 0; i < per_frame[k]; i++) {
       a->game_send((unsigned)(f & 0xFF), send_ni[k]);
       send_ni[k] = 0;
+      sent_all[k]++;
     }
   a->frame_end();
   return 1;
@@ -361,6 +381,10 @@ static void start(void)
   memset(n_log, 0, sizeof(n_log));
   memset(frozen, 0, sizeof(frozen));
   memset(send_ni, 0, sizeof(send_ni));
+  memset(send_free, 0, sizeof(send_free));
+  memset(sent_all, 0, sizeof(sent_all));
+  memset(got_all, 0, sizeof(got_all));
+  wire_down = 0;
   per_frame[A] = per_frame[B] = 1;
   reset_counts();
   ad[A].fresh(1, 1, 1000);
@@ -691,6 +715,120 @@ static void test_ni_window_d4(void)
          "cold NI %d (D=2) / %d (D=4) frames\n", cold[0], cold[1]);
 }
 
+/* 10. The gate's wait (rfu_gate_step): a partner whose ticks the network
+ *     holds (netdrv_link_held > 0) is never given up on, however long; a
+ *     paused one neither; one on a clear path is, after RFU_GATE_SILENT_US
+ *     of clear silence -- counted from when the path cleared. */
+static void test_gate_step(void)
+{
+  unsigned long long since = 0, t;
+  int gave = 0;
+  /* j7c1b2e's VPS: a gap held its tick 2.5 s; old rule gave up at 2 s */
+  for (t = 1000000; t < 1000000 + 7000000ull && !gave; t += 12000)
+    gave = rfu_gate_step(&since, t, 0, ND_HELD_GAP_T);
+  CHECK(!gave, "gave up on a partner the network was holding (at %llu us)", t);
+  for (t = 0; t < 7000000ull && !gave; t += 12000)
+    gave = rfu_gate_step(&since, 9000000ull + t, 1, 0);
+  CHECK(!gave, "gave up on a paused partner");
+  since = 0;
+  /* gap for 3 s, then the path clears: give up only 2 s after that */
+  for (t = 0; t <= 3000000ull; t += 12000)
+    CHECK(!rfu_gate_step(&since, 20000000ull + t, 0, ND_HELD_SILENT_T), "held");
+  for (t = 3012000ull; !gave && t < 9000000ull; t += 12000)
+    gave = rfu_gate_step(&since, 20000000ull + t, 0, 0);
+  CHECK(gave && t - 3012000ull >= RFU_GATE_SILENT_US &&
+        t - 3012000ull <= RFU_GATE_SILENT_US + 24000u,
+        "clear silence gave up after %llu us", t - 3012000ull);
+  /* no session / no such peer (-1): today's rule, 2 s */
+  since = 0;
+  gave = 0;
+  for (t = 0; !gave && t < 9000000ull; t += 12000)
+    gave = rfu_gate_step(&since, 30000000ull + t, 0, -1);
+  CHECK(gave && t <= RFU_GATE_SILENT_US + 24000u, "no-peer gave up after %llu", t);
+  printf("  gate: waits out a held network and a pause, gives up after 2 s of "
+         "clear silence\n");
+}
+
+/* An outage: nothing crosses the wire for `passes` frontend passes.  Each
+ * console runs until its gate stops it (at most D frames past the last tick
+ * it holds).  With give_up_k >= 0 that console gives up meanwhile (the old
+ * frontend's 2 s rule) and runs `free` frames with its game still playing. */
+static void outage(int passes, int give_up_k, int free)
+{
+  int i, k;
+  wire_down = 1;
+  for (i = 0; i < passes; i++)
+    for (k = 0; k < 2; k++)
+      pass(k);
+  if (give_up_k >= 0) {
+    CHECK(!ad[give_up_k].may_run(), "not stalled before the give-up");
+    ad[give_up_k].give_up();
+    send_free[give_up_k] = 1;
+    for (i = 0; i < free; i++)
+      pass(give_up_k);
+  }
+  wire_down = 0;
+}
+
+/* Settle: the games stop sending, everything in flight is handed over. */
+static void settle(void)
+{
+  per_frame[A] = per_frame[B] = 0;
+  run_k(A, 30);
+  run_k(B, 30);
+}
+
+/* 11. An outage at D = 4 (online), the gate waiting it out: when the backlog
+ *     lands in one piece, every packet still reaches the other game on
+ *     schedule, none is dropped, and the receive queues stay shallow -- the
+ *     lockstep bounds the backlog to D + 1 of the partner's frames. */
+static void test_outage_no_burst(void)
+{
+  int k;
+  cfg_d = 4;
+  CHECK(linked(), "no lock");
+  CHECK(run(700), "deadlock");
+  per_frame[A] = per_frame[B] = 2;          /* a busy link: 2 packets a frame */
+  CHECK(run(100), "deadlock");
+  outage(600, -1, 0);                       /* ~10 s of passes: the gate waits */
+  CHECK(run(300), "deadlock after the outage");
+  for (k = 0; k < 2; k++)
+    CHECK(bad[k] + shifted[k] + skipped[k] == 0,
+          "%s: %u off schedule, %u late, %u missing", k ? "B" : "A", bad[k], shifted[k],
+          skipped[k]);
+  settle();
+  for (k = 0; k < 2; k++) {
+    CHECK(got_all[k] == sent_all[!k], "%s got %u of %u", k ? "B" : "A", got_all[k],
+          sent_all[!k]);
+    CHECK(ad[k].qhi() <= 2 * 2, "%s receive queue reached %u", k ? "B" : "A",
+          ad[k].qhi());
+  }
+  printf("  outage at D=4, gate waits: %u/%u packets delivered, none lost, "
+         "queues peaked %u/%u\n", got_all[A] + got_all[B], sent_all[A] + sent_all[B],
+         ad[A].qhi(), ad[B].qhi());
+  cfg_d = 2;
+}
+
+/* 12. The mechanism test 11 avoids (Lab j7c1b2e): the same outage, but one
+ *     console gives up and runs free for ~5 s.  When the pair relocks, the
+ *     free frames' data is overdue, the other game gets it in one frame, and
+ *     its receive queue (RFU_PKT_QUEUE, 64) overflows: packets are lost. */
+static void test_give_up_lead_overflows(void)
+{
+  cfg_d = 4;
+  CHECK(linked(), "no lock");
+  CHECK(run(700), "deadlock");
+  outage(50, B, 300);
+  run_k(A, 300);
+  settle();
+  CHECK(ad[A].qhi() >= 64 && got_all[A] < sent_all[B],
+        "the lead did not overflow (queue %u, got %u of %u)", ad[A].qhi(), got_all[A],
+        sent_all[B]);
+  printf("  give-up during an outage (the old rule): host queue %u, %u of %u "
+         "packets lost\n", ad[A].qhi(), sent_all[B] - got_all[A], sent_all[B]);
+  cfg_d = 2;
+}
+
 int main(int argc, char **argv)
 {
   if (argc > 1)
@@ -706,6 +844,9 @@ int main(int argc, char **argv)
   test_link_lost();
   test_d_for_kind();
   test_ni_window_d4();
+  test_gate_step();
+  test_outage_no_burst();
+  test_give_up_lead_overflows();
   if (failures) {
     printf("rfu sched%s%s: %d check(s) FAILED\n", *mutant ? " mutant " : "", mutant,
            failures);

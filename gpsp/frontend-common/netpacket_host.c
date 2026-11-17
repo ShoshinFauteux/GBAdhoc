@@ -652,6 +652,13 @@ int fe_np_session_active(void)
    return np.active && np.core_started && netdrv_active(np.nd);
 }
 
+int fe_np_link_held(int id, uint32_t quiet_us)
+{
+   if (!np.active || !np.nd || id < 0)
+      return -1;
+   return netdrv_link_held(np.nd, (uint16_t)id, quiet_us);
+}
+
 int fe_np_failed(void)
 {
    return np.failed;

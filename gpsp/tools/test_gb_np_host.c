@@ -97,6 +97,8 @@ int netdrv_send_capacity(const netdrv *nd, uint16_t dst_id)
 { (void)nd; (void)dst_id; return 32; }
 int netdrv_unacked(const netdrv *nd, uint16_t dst_id)
 { (void)nd; (void)dst_id; return 0; }
+int netdrv_link_held(const netdrv *nd, uint16_t id, uint32_t quiet_us)
+{ (void)nd; (void)id; (void)quiet_us; return 0; }
 int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
 { (void)nd; (void)id; memset(mac, 0, 6); return 0; }
 int netdrv_active(const netdrv *nd) { return nd->active; }

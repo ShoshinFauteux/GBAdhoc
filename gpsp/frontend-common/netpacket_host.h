@@ -125,6 +125,10 @@ uint32_t fe_np_rx_frames(void);
 
 /* 1 while a session is established (start() called, not stopped). */
 int fe_np_session_active(void);
+/* netdrv_link_held for peer `id` (netdrv.h): -1 no session or no such peer,
+ * 0 the path to it is clear, else ND_HELD_* -- the network, not the peer,
+ * is holding its traffic. */
+int fe_np_link_held(int id, uint32_t quiet_us);
 
 /* 1 once the driver has reported ND_STOP_TX_FAILED — the RELIABLE contract
  * could not be honoured, so the link is unrecoverable (ADR-0016). The

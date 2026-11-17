@@ -1966,6 +1966,27 @@ int netdrv_unacked(const netdrv *nd, uint16_t dst_id)
           (int)nd->peers[dst_id].spill_count;
 }
 
+int netdrv_link_held(const netdrv *nd, uint16_t id, uint32_t quiet_us)
+{
+   const nd_peer *p;
+   int held = 0;
+   if (!nd || nd->state != ND_S_ACTIVE || id >= ND_MAX_CLIENTS ||
+       !nd->peers[id].active)
+      return -1;
+   p = &nd->peers[id];
+   if (nd->now - p->last_rx_us >= quiet_us)
+      held |= ND_HELD_SILENT;
+   if (p->reorder_n)
+      held |= ND_HELD_GAP;
+   if (p->txq_count)
+   {
+      const nd_txmeta *s = &p->txq[p->txq_head % ND_TXQ_CAP];
+      if (s->first_tx_us && nd->now - s->first_tx_us >= quiet_us)
+         held |= ND_HELD_UNACKED;
+   }
+   return held;
+}
+
 int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
 {
    if (!nd || nd->state != ND_S_ACTIVE || id >= ND_MAX_CLIENTS)

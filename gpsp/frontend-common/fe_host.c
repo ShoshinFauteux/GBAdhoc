@@ -6991,24 +6991,27 @@ int fe_host_reset(void)
  * once the partner's tick for it has arrived.  Wait here up to about a frame,
  * pumping the network; past that, hand the pass back so the menu, HOME and the
  * screen stay live, and try again on the next.  A partner that has said its
- * menu is open is waited for as long as that lasts, as on the cable; one that
- * is silent for 2 s is given up on, the link runs free and the game's own
- * timeout decides.  A lost link ends the wait at once (rfu_sched_may_run). */
+ * menu is open is waited for as long as that lasts, as on the cable, and so
+ * is one whose ticks the network is holding up (rfu_gate_step,
+ * rfu_sched_api.h); one whose path is clear and that still sends nothing for
+ * 2 s is given up on, the link runs free and the game's own timeout decides.
+ * A lost link ends the wait at once (rfu_sched_may_run). */
 #define RFU_GATE_WAIT_US   12000u
-#define RFU_GATE_SILENT_US 2000000u
 int fe_host_rfu_gate(void)
 {
-   static uint64_t since, waited, wait_max;
-   static unsigned waits, skips, passes;
+   static unsigned long long since;
+   static uint64_t waited, wait_max;
+   static unsigned waits, skips, passes, net_held;
    uint64_t t0, now;
-   int ok;
+   int ok, held;
 
    if (!rfu_sched_d || !host.time_us)
       return 1;
    if (++passes % 600 == 0)
-      fe_evt("rfu_sched on=%d waits=%u wait_ms=%u max_ms=%u skips=%u held_peak=%u",
+      fe_evt("rfu_sched on=%d waits=%u wait_ms=%u max_ms=%u skips=%u held_peak=%u "
+             "net_held=%u",
              rfu_sched_active(), waits, (unsigned)(waited / 1000),
-             (unsigned)(wait_max / 1000), skips, rfu_sched_held_peak);
+             (unsigned)(wait_max / 1000), skips, rfu_sched_held_peak, net_held);
    if (rfu_sched_may_run())
    {
       since = 0;
@@ -7037,9 +7040,10 @@ int fe_host_rfu_gate(void)
       since = 0;
       return 1;
    }
-   if (rfu_sched_peer_is_paused())
-      since = now;
-   else if (now - since > RFU_GATE_SILENT_US)
+   held = fe_np_link_held(rfu_sched_partner(), RFU_GATE_QUIET_US);
+   if (held > 0)
+      net_held++;
+   if (rfu_gate_step(&since, now, rfu_sched_peer_is_paused(), held))
    {
       rfu_sched_give_up();
       fe_evt("rfu_sched state=off reason=stall frame=%u", frame_count);

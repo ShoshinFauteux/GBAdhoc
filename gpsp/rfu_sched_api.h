@@ -42,5 +42,44 @@ int rfu_sched_may_run(void);
 /* The partner went quiet: run free for the rest of this link. */
 void rfu_sched_give_up(void);
 int rfu_sched_active(void);
+/* The partner's netplay id while locked, else -1. */
+int rfu_sched_partner(void);
+
+/* THE GATE'S WAIT (fe_host_rfu_gate), once per pass that found no tick.
+ *
+ * A partner that says its menu is open is waited for as long as that lasts.
+ * One whose ticks are held up by the NETWORK -- netdrv_link_held: nothing
+ * heard for RFU_GATE_QUIET_US (an idle peer PINGs every 250 ms), a receive
+ * gap waiting for a retransmission, or our own data unacknowledged that long
+ * -- is waited for too, as a cable session waits, until the tick lands or
+ * netdrv declares the partner dead (8 s; the lost link then ends the wait in
+ * rfu_sched_may_run).  Only a partner whose path is clear and that still
+ * sends no tick for RFU_GATE_SILENT_US is given up on.
+ *
+ * Why the network must not count as silence.  Running free while the
+ * partner is alive builds a lead: the free frames' data, and the partner's
+ * for the frames it missed, are overdue once the pair locks again, and a
+ * game drains its partner's data at about one packet a frame -- so the lead
+ * arrives as one burst that no receive queue can hold.  Lab j7c1b2e (3000 vs
+ * VPS, D = 4): one lost packet waited ~2.5 s for its retransmission (the RTO
+ * had backed off in an outage) behind a gap of 139 frames, the VPS gave up at
+ * 2 s three times, and both receive queues overflowed (rfu_qdrop 8 + 8); the
+ * trade's save never finished.
+ *
+ * since: when the wait for this tick began (0 = not started; the gate
+ * clears it after a frame runs).  held: fe_np_link_held for the partner.
+ * 1 = give up now. */
+#define RFU_GATE_SILENT_US 2000000u
+#define RFU_GATE_QUIET_US  1000000u
+static inline int rfu_gate_step(unsigned long long *since,
+                                unsigned long long now, int peer_paused,
+                                int held)
+{
+  if (!*since || peer_paused || held > 0) {
+    *since = now;
+    return 0;
+  }
+  return now - *since > RFU_GATE_SILENT_US;
+}
 
 #endif

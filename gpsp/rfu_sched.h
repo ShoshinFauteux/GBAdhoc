@@ -32,8 +32,14 @@
  *
  * A console that opens its menu says so (PAUSE), and its partner waits for as
  * long as that lasts, as a cable session does.  Silence with no PAUSE ends the
- * wait after the frontend's limit; ticks arriving later lock the pair again:
- * whichever side gave up asks, and the client sends a fresh SYNC.
+ * wait after the frontend's limit -- but only while the path to the partner
+ * is clear (rfu_gate_step): a tick held up by the network is waited for, as
+ * the cable waits, until it lands or netdrv declares the partner dead.  A
+ * console that ran free meanwhile builds a lead: its free frames' data is
+ * overdue once the pair relocks, and the partner's game drains about one
+ * packet a frame, so the lead arrives as one burst.  That is how an outage
+ * overflowed both receive queues on hardware (Lab j7c1b2e).  Ticks arriving after a give-up lock the pair again: whichever
+ * side gave up asks, and the client sends a fresh SYNC.
  *
  * Two players.  A third console's traffic passes through unscheduled. */
 #define NET_RFU_SCHED_SYNC  0x09    /* client -> host: my frame */
@@ -349,4 +355,11 @@ void rfu_sched_give_up(void)
 int rfu_sched_active(void)
 {
   return (int)rfu_sched_on;
+}
+
+/* The partner's netplay id while the ticks are locked, else -1: the peer
+ * whose path the frontend's gate asks netdrv about (fe_np_link_held). */
+int rfu_sched_partner(void)
+{
+  return rfu_sched_on ? (int)rfu_sched_cid : -1;
 }

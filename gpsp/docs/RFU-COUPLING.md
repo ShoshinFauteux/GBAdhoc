@@ -143,6 +143,14 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
   to UNI) lands 1 frame later, at D = 2 and D = 4 alike, because the parent's own NI sends hold it at D = 1. What D
   does change: an NI packet that starts an exchange after more than RFU_SCHED_NI_FRAMES of UNI on both sides can
   arrive up to D frames late (2 -> 4), like any UNI data.
+- **No give-up while the network holds the ticks** (`rfu_gate_step`, `netdrv_link_held`). Lab j7c1b2e (D = 4): one
+  lost packet waited ~2.5 s behind a backed-off RTO with 139 frames parked behind its gap; the VPS gave up at 2 s
+  three times, ran free, and on relock both receive queues overflowed (`rfu_qdrop` 8 + 8, the trade's save never
+  finished). A free run is a lead, and a game drains its partner's data at about one packet a frame, so a lead can
+  only arrive as a burst. The gate now waits while netdrv shows a gap, silence (1 s) or our data unacked for 1 s,
+  until the tick lands or netdrv's peer death (8 s) ends the link; the 2 s give-up is for a partner whose path is
+  clear. test_rfu_sched: an outage at D = 4 delivers every packet on schedule with queues at depth 2; the old rule
+  in the same outage loses 240 of 1307 packets with the host queue at 64.
 
 ## Status (code-health C-4, 2026-11-16)
 

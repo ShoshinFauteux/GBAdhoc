@@ -1191,6 +1191,72 @@ static void test_keepalive_death(void)
       netdrv_destroy(nd[i]);
 }
 
+/* netdrv_link_held: a clear path reads 0; a receive gap, a silent peer and
+ * our own unacknowledged data each read as the network holding traffic; a
+ * peer that is gone reads -1.  (rfu's tick gate waits on > 0 instead of
+ * giving up: rfu_sched_api.h rfu_gate_step.) */
+static void test_link_held(void)
+{
+   sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd[2], *alive[2];
+   uint8_t msg[32];
+   int h, i;
+
+   printf("[link held: network vs silent peer]\n");
+   sim_init(&s, 2, 0xBEEF);
+   for (i = 0; i < 2; i++)
+      nd[i] = mk_node(&s, &ep[i], i, &a[i], i ? "cli" : "host",
+                      0x3100u + (uint32_t)i, NULL);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   sim_run(&s, nd, 2, 3000);
+   CHECK(a[1].started && netdrv_peer_count(nd[0]) == 1, "setup");
+   h = netdrv_link_held(nd[0], a[1].local_id, 1000000);
+   CHECK(h == 0, "idle linked peer reads %d, want 0 (pings keep it heard)", h);
+   CHECK(netdrv_link_held(nd[0], 4, 1000000) == -1, "unknown peer not -1");
+   CHECK(netdrv_link_held(nd[1], 0, 1000000) == 0, "client side not clear");
+
+   /* a gap: the host's payload 0 is lost, payload 1 arrives */
+   s.loss_pct = 100;
+   msg_build(msg, 0, 0, 0, sizeof(msg));
+   netdrv_send(nd[0], ND_RELIABLE | ND_FLUSH_HINT, msg, sizeof(msg), a[1].local_id);
+   s.loss_pct = 0;
+   msg_build(msg, 1, 0, 0, sizeof(msg));
+   netdrv_send(nd[0], ND_RELIABLE | ND_FLUSH_HINT, msg, sizeof(msg), a[1].local_id);
+   sim_run(&s, nd, 2, 1);
+   h = netdrv_link_held(nd[1], 0, 1000000);
+   CHECK(h > 0 && (h & ND_HELD_GAP), "gap reads %d", h);
+   sim_run(&s, nd, 2, 1000);                    /* the retransmission lands */
+   h = netdrv_link_held(nd[1], 0, 1000000);
+   CHECK(h == 0 && a[1].delivered >= 2, "after the retransmit %d (delivered %u)", h,
+         a[1].delivered);
+
+   /* an outage: nothing crosses for 1.5 s; the host had data in flight */
+   s.node[0].down = s.node[1].down = 1;
+   msg_build(msg, 2, 0, 0, sizeof(msg));
+   netdrv_send(nd[0], ND_RELIABLE | ND_FLUSH_HINT, msg, sizeof(msg), a[1].local_id);
+   sim_run(&s, nd, 2, 1500);
+   h = netdrv_link_held(nd[0], a[1].local_id, 1000000);
+   CHECK(h > 0 && (h & ND_HELD_SILENT) && (h & ND_HELD_UNACKED), "outage, host %d", h);
+   h = netdrv_link_held(nd[1], 0, 1000000);
+   CHECK(h > 0 && (h & ND_HELD_SILENT), "outage, client %d", h);
+   s.node[0].down = s.node[1].down = 0;
+   sim_run(&s, nd, 2, 1500);
+   CHECK(netdrv_link_held(nd[0], a[1].local_id, 1000000) == 0 &&
+         netdrv_link_held(nd[1], 0, 1000000) == 0, "path did not clear after the outage");
+
+   /* the peer is gone for good: netdrv drops it, the gate is told -1 */
+   s.node[1].down = 1;
+   alive[0] = nd[0];
+   alive[1] = NULL;
+   sim_run(&s, alive, 2, 10000);
+   CHECK(netdrv_link_held(nd[0], a[1].local_id, 1000000) == -1, "dead peer not -1");
+   for (i = 0; i < 2; i++)
+      netdrv_destroy(nd[i]);
+}
+
 static void test_roster_churn(void)
 {
    sim s;
@@ -1814,6 +1880,7 @@ int main(void)
    test_unreliable_broadcast();
    test_reentrant_echo();
    test_keepalive_death();
+   test_link_held();
    test_roster_churn();
    test_fuzz();
    test_peer_fps_exchange();

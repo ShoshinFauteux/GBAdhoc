@@ -478,6 +478,23 @@ int netdrv_send_capacity(const netdrv *nd, uint16_t dst_id);
 /* Reliable payloads to dst_id not yet acknowledged (queued, in flight or
  * spilled); 0 when the peer is unknown. */
 int netdrv_unacked(const netdrv *nd, uint16_t dst_id);
+/* IS THE NETWORK HOLDING THIS PEER'S TRAFFIC?  For a caller that waits on a
+ * peer's data (rfu's tick gate, fe_host_rfu_gate) and must not mistake a
+ * slow or broken path for a peer that has stopped sending.  As of the last
+ * pump (the clock netdrv_pump was given):
+ *   -1  no session, or no such live peer;
+ *    0  the path is clear: the peer was heard within quiet_us, nothing of its
+ *       is parked behind a gap, and nothing of ours to it has waited quiet_us
+ *       for its ack -- what the peer has not sent, it has not sent;
+ *   else a mask of ND_HELD_SILENT (nothing heard for quiet_us: an idle peer
+ *       still PINGs every ND_KEEPALIVE_US), ND_HELD_GAP (frames received
+ *       beyond a missing one, waiting for its retransmission) and
+ *       ND_HELD_UNACKED (our oldest reliable payload has gone unacknowledged
+ *       for quiet_us). */
+#define ND_HELD_SILENT  1
+#define ND_HELD_GAP     2
+#define ND_HELD_UNACKED 4
+int netdrv_link_held(const netdrv *nd, uint16_t id, uint32_t quiet_us);
 /* The address a peer's frames come from (a client learns the host's from
  * WELCOME).  0 on success. */
 int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6]);
