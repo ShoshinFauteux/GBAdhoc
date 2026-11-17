@@ -108,24 +108,34 @@
  * raw read is the frame loop's rewind_gedump, ci_greps.known).  Every key, its default and
  * the flavours that compile it are in tools/refactor/generated/harness_keys.tsv, which the
  * Lab validates staged keys against.
- * HARNESS_FOLD 0 (every build today): exactly the old call, so the token stream is unchanged.
- * HARNESS_FOLD 1 (C2-3, player builds only): each read is its default, as ADR-0067's
- * never-opened harness path already makes it at run time; HARNESS_STR leaves `out` alone,
- * as fe_ini_get on a never-opened path does.  A rig build never folds. */
-#ifndef HARNESS_FOLD
-#define HARNESS_FOLD 0
+ * HARNESS_FOLD 0 (rig builds, GPSP_PERF_RIG): the getter call on the harness ini.
+ * HARNESS_FOLD 1 (player builds: release, diagnostic; C2-3): each read is its default, what
+ * ADR-0067's never-opened harness path made it at run time before; HARNESS_STR leaves `out`
+ * alone, as fe_ini_get on that path did.  (The never-opened path itself stays for the one
+ * raw read ci_greps.known whitelists, the frame loop's rewind_gedump, until C2-5 moves it.)
+ * Derived from GPSP_PERF_RIG, never set on its own: a player build that read the harness ini
+ * would be the stale-file hazard of ADR-0036 again. */
+#ifdef HARNESS_FOLD
+#error "HARNESS_FOLD is derived from GPSP_PERF_RIG here; do not set it on the command line"
 #endif
-#if HARNESS_FOLD && defined(GPSP_PERF_RIG)
-#error "HARNESS_FOLD folds the harness reads of a rig build (GPSP_PERF_RIG)"
+#ifdef GPSP_PERF_RIG
+#define HARNESS_FOLD 0
+#else
+#define HARNESS_FOLD 1
 #endif
 #if !HARNESS_FOLD
 #define HARNESS_INT(key, def)      fe_ini_get_int(HARNESS_INI, key, def)
 #define HARNESS_STR(key, out, n)   fe_ini_get(HARNESS_INI, key, out, n)
 #define HARNESS_PRESENT()          file_exists(HARNESS_INI)
+#define HARNESS_FPS_X100(key, def) pcfg_fps_x100(HARNESS_INI, key, def)
 #else
+/* HARNESS_STR is also a statement (a read into a buffer whose result is not tested): a call,
+ * unlike a bare 0, is not -Wunused-value's "statement with no effect". */
+static inline int harness_not_found(void) { return 0; }
 #define HARNESS_INT(key, def)      ((void)sizeof(key), (long)(def))
-#define HARNESS_STR(key, out, n)   ((void)sizeof(key), (void)(out), (void)(n), 0)
+#define HARNESS_STR(key, out, n)   ((void)sizeof(key), (void)(out), (void)(n), harness_not_found())
 #define HARNESS_PRESENT()          0
+#define HARNESS_FPS_X100(key, def) ((void)sizeof(key), (int)(def))
 #endif
 
 /* core_health_evt (tier C, C2-2): the soak line, defined in fe/harness.f.inc.c in a telemetry

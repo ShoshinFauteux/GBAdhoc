@@ -873,7 +873,7 @@ writer over a buffer, byte for byte:
   of exactly that path use it. So `pcfg_load`, `pcfg_save`, `ctl_load_ini`
   / `ctl_save_ini`, the display profiles and `pcfg_fps_x100` are unchanged
   call for call. HARNESS_INI is never bound: harness reads are exactly as
-  before.
+  before (a rig build's; a player build has none, `HARNESS_FOLD`).
 
 **Who uses it.** `main()` loads CONFIG.INI into a document once, before
 the splash. It takes the splash's theme and console from it, and hands it

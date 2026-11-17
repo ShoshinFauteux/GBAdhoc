@@ -742,8 +742,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
        g_pcfg.net_pace_match > PACE_MODE_BACKPRESSURE)
       g_pcfg.net_pace_match = PACE_MODE_FIXED;
    g_pcfg.net_session_fps_x100 =
-      pcfg_fps_x100(HARNESS_INI, "net_session_fps",
-                    g_pcfg.net_session_fps_x100);
+      HARNESS_FPS_X100("net_session_fps", g_pcfg.net_session_fps_x100);
    g_pcfg.net_session_fps_snap =
       (int)HARNESS_INT("net_session_fps_snap",
                           g_pcfg.net_session_fps_snap);
@@ -1231,6 +1230,30 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
 
    /* Silent-wireless keys (variant.ini wins; harness silent=1 lets the
     * harness exercise the policy on the generic build). */
+#if HARNESS_FOLD
+   /* A player build (C2-3): the harness spellings (silent, role, group) are
+    * their defaults -- off, no role, no group -- so only variant.ini can set
+    * these, as before, without the reads of the never-opened harness path. */
+   {
+      long sil = 0;
+      char role[8] = "";
+      int named = 0;
+      if (have_variant)
+      {
+         sil = fe_ini_get_int(VARIANT_INI, "silent_wireless", 0);
+         fe_ini_get(VARIANT_INI, "role", role, sizeof(role));
+         named = fe_ini_get(VARIANT_INI, "group", g_silent_group,
+                            sizeof(g_silent_group));
+      }
+      if (sil)
+         g_silent_mode = (strcmp(role, "host") == 0) ? SIL_HOST :
+                         (strcmp(role, "join") == 0) ? SIL_JOIN : SIL_AUTO;
+      if (!named)
+         snprintf(g_silent_group, sizeof(g_silent_group), "%s",
+                  group[0] ? group : g_pcfg.group);
+      snprintf(g_silent_nick, sizeof(g_silent_nick), "%s", nick);
+   }
+#else
    {
       const char *src = have_variant ? VARIANT_INI : HARNESS_INI;
       long sil = fe_ini_get_int(src, have_variant ? "silent_wireless"
@@ -1245,6 +1268,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
                   group[0] ? group : g_pcfg.group);
       snprintf(g_silent_nick, sizeof(g_silent_nick), "%s", nick);
    }
+#endif
 
    /* Harness: the in-process return driven without hands.  After
     * `inproc_frames` frames of each game the loop quits to the game list,
@@ -1301,7 +1325,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    gbcore_prepare();
 
    /* What the session reads from here on. */
+#if HARNESS_FOLD
+   bc->script_name[0] = '\0';   /* a player build: no script (the read is folded, C2-3) */
+#else
    memcpy(bc->script_name, script_name, sizeof(bc->script_name));
+#endif
    memcpy(bc->nick, nick, sizeof(bc->nick));
    memcpy(bc->group, group, sizeof(bc->group));
    bc->autoexit = autoexit;
