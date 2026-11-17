@@ -159,11 +159,11 @@
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x04e8
 size frame_loop                         22308
-at   pace_frame                         0x1dec
+at   pace_frame                         0x1e6c
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
-at   fe_host_reset                      0x0a48
+at   fe_host_reset                      0x0f98
 at   hex_val                            0x1a14
 at   pte_mutex_check_need_init          0x1e98
 # the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
@@ -182,9 +182,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x0940
-at   _ZL10pipe_latchv#1                 0x1400
-at   netpacket_iface                    0x1ec0
+at   me_replay_lines                    0x0960
+at   _ZL10pipe_latchv#1                 0x1420
+at   netpacket_iface                    0x1ed0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -253,11 +253,11 @@ pin  ro                                 0x08ad305c   # .rodata after the start f
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x1cd4
 size frame_loop                         23888
-at   pace_frame                         0x15bc
+at   pace_frame                         0x1674
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094
-at   fe_host_reset                      0x1268
+at   fe_host_reset                      0x17b8
 at   hex_val                            0x01cc
 at   pte_mutex_check_need_init          0x01d8
 # the pinned hot core (the two 32 B holes of round 7 are row pins since C3-5)
@@ -276,9 +276,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x03a0
-at   _ZL10pipe_latchv#1                 0x0e60
-at   netpacket_iface                    0x0180
+at   me_replay_lines                    0x03c0
+at   _ZL10pipe_latchv#1                 0x0e80
+at   netpacket_iface                    0x0190
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
