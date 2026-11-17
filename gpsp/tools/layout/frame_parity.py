@@ -16,7 +16,8 @@ a RATCHET against the recorded baseline, function by function:
         keep their offset difference mod 8 KiB (`d`, where it is held: below).
   diff  at the baseline: every difference between release and lab now must be one the baseline
         already had.  Each function's normalised instruction streams (address operands resolved
-        to symbols, branch offsets dropped) are aligned with difflib; each non-equal hunk is a
+        to symbols, branch offsets dropped) are aligned by hunks(), a patience diff in pure
+        Python (the hashes must not depend on the git installed); each non-equal hunk is a
         `chunk`, kept as a short hash.  The release/lab chunks now must be a sub-multiset of the
         recorded ones, and `d` must hold (below).  A change made alike in both builds leaves the chunks
         alone; a release-only (or lab-only) edit adds one.
@@ -312,48 +313,95 @@ def layout_pair(x, y):
     return op == 0x0F or op in M.IMM_USERS
 
 
-HUNK = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+SMALL = 2000000      # |a| * |b| under which an anchorless region is aligned with difflib
 
 
-def git_hunks(a, b):
-    """[(i1, i2, j1, j2)] of a histogram diff (git's xdiff: linear enough for translate_block_arm's
-    90k words, where difflib takes minutes).  None when git cannot run."""
-    import subprocess
-    import tempfile
-    d = tempfile.mkdtemp(prefix='frame_parity.')
-    pa, pb = os.path.join(d, 'a'), os.path.join(d, 'b')
-    try:
-        for p, x in ((pa, a), (pb, b)):
-            with open(p, 'w', newline='\n') as fh:
-                fh.write('\n'.join(x) + '\n')
-        try:
-            r = subprocess.run(['git', 'diff', '--no-index', '--no-color', '--histogram', '-U0',
-                                '--no-ext-diff', pa, pb], capture_output=True, text=True)
-        except OSError:
-            return None
-        if r.returncode not in (0, 1):
-            return None
-        out = []
-        for ln in r.stdout.splitlines():
-            m = HUNK.match(ln)
-            if not m:
-                continue
-            s1, n1 = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
-            s2, n2 = int(m.group(3)), int(m.group(4) if m.group(4) is not None else 1)
-            i1 = s1 if n1 == 0 else s1 - 1          # -U0: an empty side names the line before
-            j1 = s2 if n2 == 0 else s2 - 1
-            out.append((i1, i1 + n1, j1, j1 + n2))
-        return out
-    finally:
-        for p in (pa, pb):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        try:
-            os.rmdir(d)
-        except OSError:
-            pass
+def _lis(pairs):
+    """The longest subsequence of `pairs` (sorted by i) increasing in j; the first such in
+    pair order (deterministic)."""
+    import bisect
+    tails, tails_j, prev = [], [], [None] * len(pairs)
+    for k, (_, j) in enumerate(pairs):
+        x = bisect.bisect_left(tails_j, j)
+        if x > 0:
+            prev[k] = tails[x - 1]
+        if x == len(tails):
+            tails.append(k)
+            tails_j.append(j)
+        else:
+            tails[x] = k
+            tails_j[x] = j
+    out, k = [], tails[-1] if tails else None
+    while k is not None:
+        out.append(pairs[k])
+        k = prev[k]
+    return out[::-1]
+
+
+def hunks(a, b):
+    """[(i1, i2, j1, j2)] the non-equal regions of two word lists, by a patience diff written
+    here (anchors: words unique in both sides of a region, their longest increasing chain;
+    common prefix and suffix peeled; an anchorless region small enough goes to difflib with
+    autojunk off, a larger one is one region).  Pure Python and deterministic: the hunks, and
+    so the recorded hashes, do not depend on the git or diff installed (git 2.53 in WSL and
+    2.54 on Windows split translate_block_arm's 90k words differently)."""
+    out = []
+    stack = [(0, len(a), 0, len(b))]
+    while stack:
+        alo, ahi, blo, bhi = stack.pop()
+        while alo < ahi and blo < bhi and a[alo] == b[blo]:
+            alo += 1
+            blo += 1
+        while alo < ahi and blo < bhi and a[ahi - 1] == b[bhi - 1]:
+            ahi -= 1
+            bhi -= 1
+        if alo == ahi or blo == bhi:
+            if alo < ahi or blo < bhi:
+                out.append((alo, ahi, blo, bhi))
+            continue
+        ca, cb = {}, {}
+        for i in range(alo, ahi):
+            ca[a[i]] = ca.get(a[i], 0) + 1
+        posb = {}
+        for j in range(blo, bhi):
+            cb[b[j]] = cb.get(b[j], 0) + 1
+            posb[b[j]] = j
+        pairs = [(i, posb[a[i]]) for i in range(alo, ahi)
+                 if ca[a[i]] == 1 and cb.get(a[i]) == 1]
+        if not pairs and (ahi - alo) * (bhi - blo) > SMALL:
+            # no unique word: the rarest words that occur equally often on both sides, their
+            # k-th occurrences paired (histogram diff's idea), so a big region still splits
+            rare = sorted((n, w) for w, n in ca.items() if cb.get(w) == n)
+            if rare:
+                n0 = rare[0][0]
+                ws = {w for n, w in rare if n == n0}
+                occ_a, occ_b = {}, {}
+                for i in range(alo, ahi):
+                    if a[i] in ws:
+                        occ_a.setdefault(a[i], []).append(i)
+                for j in range(blo, bhi):
+                    if b[j] in ws:
+                        occ_b.setdefault(b[j], []).append(j)
+                pairs = sorted(p for w in ws for p in zip(occ_a[w], occ_b[w]))
+        if not pairs:
+            if (ahi - alo) * (bhi - blo) <= SMALL:
+                sm = difflib.SequenceMatcher(None, a[alo:ahi], b[blo:bhi], autojunk=False)
+                for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                    if tag != 'equal':
+                        out.append((alo + i1, alo + i2, blo + j1, blo + j2))
+            else:
+                out.append((alo, ahi, blo, bhi))
+            continue
+        chain = _lis(pairs)
+        segs, pi, pj = [], alo, blo
+        for i, j in chain:
+            segs.append((pi, i, pj, j))
+            pi, pj = i + 1, j + 1
+        segs.append((pi, ahi, pj, bhi))
+        stack.extend(reversed(segs))
+    out.sort()
+    # adjacent regions (an anchor between them was not equal context) stay separate hunks
+    return out
 
 
 def chunks(R, L, sr, sl):
@@ -363,10 +411,7 @@ def chunks(R, L, sr, sl):
     build is not seen in a function that already differed; a baseline-`same` function is held by
     func_diff's exact rule instead.)"""
     (a, wa), (b, wb) = norm_words(R, sr), norm_words(L, sl)
-    ops = git_hunks(a, b)
-    if ops is None:
-        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
-        ops = [(i1, i2, j1, j2) for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != 'equal']
+    ops = hunks(a, b)
     res = []
     nlay = 0
     for i1, i2, j1, j2 in ops:
@@ -569,10 +614,7 @@ def delta_hunks(A, B, sa, sb):
     (data-blind, layout-only hunks dropped).  Same-flavour neighbours share their register
     allocation, so a change made alike in both flavours gives the same texts."""
     (a, wa), (b, wb) = norm_words(A, sa), norm_words(B, sb)
-    ops = git_hunks(a, b)
-    if ops is None:
-        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
-        ops = [(i1, i2, j1, j2) for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != 'equal']
+    ops = hunks(a, b)
     out = []
     for i1, i2, j1, j2 in ops:
         if i2 - i1 == j2 - j1 and all(layout_pair(wa[i1 + k], wb[j1 + k]) for k in range(i2 - i1)):

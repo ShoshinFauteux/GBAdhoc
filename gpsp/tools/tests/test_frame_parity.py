@@ -9,7 +9,7 @@
   pass with a note; a held I-cache set that moves fails, a never-shared one outside the hot
   block is a note; same -> code difference fails; layout -> code difference fails; a member
   that drops out of one build fails; a new member must be the same code; rig-only is skipped;
-* multiset_sub, layout_pair, the name globs, git_hunks (when git runs).
+* multiset_sub, layout_pair, the name globs, hunks() (the pure-Python patience diff: small cases, a 4000-word mutant, determinism).
 """
 import os
 import sys
@@ -110,11 +110,29 @@ check(not F.layout_pair(0x0C000010, 0x0C000020), 'layout_pair: another call is c
 pats = [('lat_swap*', ''), ('frame_loop', '')]
 check(F.matches('lat_swap.isra.0', pats) is not None, 'matches: a GCC clone by its base name')
 check(F.matches('frame_loop_helper', pats) is None, 'matches: no prefix match without a glob')
-h = F.git_hunks(['a', 'b', 'c'], ['a', 'x', 'c'])
-if h is None:
-    print('skip git_hunks (git does not run here)')
-else:
-    check(h == [(1, 2, 1, 2)], 'git_hunks: one replaced line -> %r' % h)
+h = F.hunks(['a', 'b', 'c'], ['a', 'x', 'c'])
+check(h == [(1, 2, 1, 2)], 'hunks: one replaced word -> %r' % h)
+h = F.hunks(['p', 'n', 'q', 'n', 'r'], ['p', 'n', 'q', 'n', 'n', 'r'])
+check(len(h) == 1 and h[0][1] - h[0][0] == 0 and h[0][3] - h[0][2] == 1,
+      'hunks: one inserted word among repeats -> %r' % h)
+check(F.hunks(list('abc'), list('abc')) == [], 'hunks: equal lists have none')
+import random  # noqa: E402
+rnd = random.Random(7)
+xa = [rnd.choice('abcdefgh') + str(rnd.randrange(40)) for _ in range(4000)]
+xb = list(xa)
+for k in (100, 1700, 3999):
+    xb[k] = 'MUT'
+xb.insert(2500, 'INS')
+h = F.hunks(xa, xb)
+check(len(h) == 4 and h == F.hunks(xa, xb), 'hunks: 3 replaced and 1 inserted word in 4000 -> %d hunks, '
+      'the same on a second run' % len(h))
+# every hunk reproduces b from a
+rebuilt, last = [], 0
+for i1, i2, j1, j2 in h:
+    rebuilt += xa[last:i1] + xb[j1:j2]
+    last = i2
+rebuilt += xa[last:]
+check(rebuilt == xb, 'hunks: the regions patch a into b')
 
 print('test_frame_parity: %s' % ('PASS' if not fails else '%d FAILED' % fails))
 sys.exit(1 if fails else 0)
