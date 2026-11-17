@@ -34,6 +34,15 @@ link, Share game data and online play alike. Copy all four files (`EBOOT.PBP`,
   nothing. The cartridge has no save chip (the game uses passwords), and its copy check
   refuses to go on when it finds one; GBAdhoc now runs it with no save chip, as on a GBA.
   This setting applies to this game only.
+- **X-Men: Reign of Apocalypse** has sound with the bundled BIOS. Some games leave the
+  mixing of their music and sound effects to the GBA's BIOS, and the bundled BIOS did not
+  do it, so they ran silent unless you had copied your own `gba_bios.bin`. The bundled BIOS
+  now mixes their sound as a GBA's BIOS does. With your own `gba_bios.bin` nothing changes.
+- **Mortal Kombat: Deadly Alliance** no longer freezes for about 50 seconds on the Midway
+  logo with the bundled BIOS, and its title screen and menus are drawn correctly
+  afterwards. The bundled BIOS read the size of some packed game data the wrong way and
+  unpacked far too much, over the game's memory. It now reads it as a GBA's BIOS does. With
+  your own `gba_bios.bin` nothing changes.
 - **Activision Anthology** no longer asks you to "turn off the other Game Boy Advance" when
   you play alone. With no link cable connected, the link port now looks unplugged to the
   game, as on a GBA, instead of looking like another GBA had answered. Link play over the
