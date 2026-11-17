@@ -1671,11 +1671,24 @@ static const ini_t gbaover[] = {
    },
    {
       // Top Gun - Combat Zones (U).  No backup chip on the board (passwords).
-      // Titus's copy check writes "TiTus Interactive Studio" to SRAM and runs
-      // both flash ID routines at boot and again in the menu; it accepts a
-      // confirm press only when all three probes find nothing.  The ROM links
-      // the SRAM_V113, FLASH512_V131 and FLASH1M_V102 libraries for those
-      // probes, so string detection can't decide this; it picks SRAM.
+      // A copy check: at boot the game writes "TiTus Interactive Studio" to
+      // 0x0E000000 and reads it back, then runs a flash ID probe; on reaching
+      // the main menu it runs a second flash ID probe.  Each probe that finds
+      // NO chip adds 17 to 0x03003740, and the menu's confirm handler returns
+      // without acting unless the sum is 51: with any chip answering, the
+      // cursor moves but A/START do nothing (KarnFu, issue #9).  The ROM links
+      // SRAM_V113, FLASH512_V131 and FLASH1M_V102 only for these probes, so
+      // string detection picks a chip.  docs/SAVE-TYPE-OVERRIDES.md.
+      // Sources (same verdict, no save chip):
+      //  mGBA src/gba/overrides.c L186-187 @190a68d6 { "A2YE",
+      //   GBA_SAVEDATA_FORCE_NONE, ... } (github.com/mgba-emu/mgba);
+      //  VBA-M src/vba-over.ini L38-40 @48504fe5 [A2YE] saveType=5 (None);
+      //  NanoBoyAdvance src/platform/core/src/game_db.cc L23 @55b5cf0a
+      //   BackupType::None;
+      //  MAME src/devices/bus/gba/gba_slot.cpp L23 @a7230f9f: "multiple
+      //   NVRAM chips detected, but none present (protection against emu?)";
+      //  zork.net/~st/jottings/GBA_saves.html: the only ROM with three save
+      //   codes; any matching chip locks the main menu.
       "A2YE",                      /* gamepak_code         */
       FLAGS_NO_BACKUP,             /* flags                */
       0,                           /* idle_loop_target_pc  */
