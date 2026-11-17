@@ -1030,7 +1030,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
                draw = g_ffh_3x ? ffh_cap_draw() :
                                  ff_gate_frame(&g_ff_gate_st, net_now_us());
                if (!draw)
-                  FFW_GATED();
+                  TEL(g_ffw_gated++);
             }
             fe_host_skip_override(period ? !draw : -1);
          }

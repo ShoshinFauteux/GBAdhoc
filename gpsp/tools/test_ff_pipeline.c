@@ -79,9 +79,10 @@ static void vid_draw_prestaged(const int *pix, unsigned w, unsigned h)
 #ifndef LOOP_PHASE
 #define LOOP_PHASE(p) do { (void)(p); } while (0)
 #endif
-/* EVT ff_win's drawn counter: compiled out of a player build, as here. */
-#ifndef FFW_DRAWN
-#define FFW_DRAWN() ((void)0)
+/* Telemetry statements (fe_priv.h TEL(): EVT ff_win's drawn counter, the
+ * low-latency census): compiled out, as in a player build. */
+#ifndef TEL
+#define TEL(...) do { } while (0)
 #endif
 /* The Lab-only hooks (psp/lab_ffpace.h, psp/lab_harness.h) as a player build
  * compiles them: to nothing.  The sliced functions carry LAB_FFP(...) on the

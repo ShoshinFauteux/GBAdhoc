@@ -15,7 +15,8 @@ static int mer_rewind_busy(void)
 /* @extract:begin lowlat:lat_swap */
 static int lat_swap(int early)
 {
-   unsigned vc, now;
+   unsigned vc;
+   unsigned now;
    int r;
 
    UISCRIPT_DUMP(); /* @lab */ LAB_HOOK(lab_blink_draw();)

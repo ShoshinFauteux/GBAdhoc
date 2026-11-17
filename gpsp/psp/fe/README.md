@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 9de7165f70a625f9; split.py inverse of the shell sha256 d9f5bf730978c7dc (18712 lines) -->
+     inputs: cutlist.txt sha256 29d906a9db3092ca; split.py inverse of the shell sha256 5ee07b7457dc04b2 (18754 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -13,10 +13,10 @@
 - **"main_psp.c" means the TU.** In comments, docs and tool output, `main_psp.c` (and "this file") names the translation unit: the shell plus the fragments, in include order. "Above", "below", "earlier" and "later" follow that order, across fragment files: the end of `fe/power.a.inc.c` is directly above the start of `fe/iothread.inc.c`. `split.py inverse --split gpsp -o F` writes that order out as one file.
 - **Line cites.** A tool cites a line of the split tree as `fe/X.inc.c:N`, or `main_psp.c:N` for the shell (T14 `abi_asserts.py`, T8's raw view). A `main_psp.c:N` or `L:N`/`N:N` written before the split (comments, docs, records) is a line of the single file it was written against; `split.py inverse` reproduces the single file of this tree, which is what `tools/refactor/cutlist.txt` describes (its `source:` line names the inverse's sha256).
 - **Fragments are generated.** Each `fe/*.inc.c` is a verbatim slice: no banner, no include guard, no `#include` of its own beyond the source's. It is regenerated or a change is replayed into it, never hand-edited. `split.py split` and `split.py gen` read the single file, so on this tree they take the inverse: regenerate with `split.py inverse --split gpsp -o F`, then `split.py split --src F --cutlist gpsp/tools/refactor/cutlist.txt --out DIR` (the cutlist: `split.py gen --split gpsp --carry gpsp/tools/refactor/cutlist.txt -o C`). Replay a change with `split.py replay --split gpsp --cutlist gpsp/tools/refactor/cutlist.txt --patch P --out DIR2`, where P is a git diff of `psp/main_psp.c` as one file (the inverse's text): replay applies the file whose `+++ b/` path ends in `main_psp.c` and ignores any other file in P. DIR and DIR2 are new directories; copy their `psp/main_psp.c` and `psp/fe/*.inc.c` over the tree. A fragment's first line is its FRAG anchor. A name sits in a fragment by position, which is not always its owner's fragment (see "Rows outside their owner's fragments").
-- **Macros.** `fe/fe_priv.h` (included once, `main_psp.c:111`, after the last project header) holds the macros P5 moved (58 `#define` lines, not counting its include guard `FE_PRIV_H`), and `fe/play_defaults.h` the `PLAY_*` ship constants and link defaults (21, not counting its include guard `PLAY_DEFAULTS_H`). They are not every macro of the TU: 0 `#define` lines stay in the shell and 127 in the fragments, at their definition points: the macro-globals (an object in another arm), the macros a host test reads through an @extract marker, local helpers, and 17 release no-op stubs that sit in the `#else` arm beside the telemetry function they replace (`exit_sim` fe/harness.a.inc.c:47, `stall_watch_start` fe/harness.f.inc.c:282, `stall_watch_stop` fe/harness.f.inc.c:283, `drprof_start` fe/harness.f.inc.c:518, `drprof_stop` fe/harness.f.inc.c:519, `drprof_window` fe/harness.f.inc.c:520, `DRPROF_PHASE` fe/harness.f.inc.c:521, `ff_win_note` fe/harness.f.inc.c:969, `UISCRIPT_DUMP` fe/harness.f.inc.c:1520, `stall_watch_start` fe/harness.f.inc.c:1524, `stall_watch_stop` fe/harness.f.inc.c:1525, `drprof_start` fe/harness.f.inc.c:1526, `drprof_stop` fe/harness.f.inc.c:1527, `drprof_window` fe/harness.f.inc.c:1528, `DRPROF_PHASE` fe/harness.f.inc.c:1529, `ff_win_note` fe/harness.f.inc.c:1531, `UISCRIPT_DUMP` fe/harness.f.inc.c:1532). A macro missing from fe_priv.h is not necessarily one of the first two kinds: grep the name.
+- **Macros.** `fe/fe_priv.h` (included once, `main_psp.c:111`, after the last project header) holds the macros P5 moved (56 `#define` lines, not counting its include guard `FE_PRIV_H`), and `fe/play_defaults.h` the `PLAY_*` ship constants and link defaults (21, not counting its include guard `PLAY_DEFAULTS_H`). They are not every macro of the TU: 0 `#define` lines stay in the shell and 127 in the fragments, at their definition points: the macro-globals (an object in another arm), the macros a host test reads through an @extract marker, local helpers, and 17 release no-op stubs that sit in the `#else` arm beside the telemetry function they replace (`exit_sim` fe/harness.a.inc.c:47, `stall_watch_start` fe/harness.f.inc.c:282, `stall_watch_stop` fe/harness.f.inc.c:283, `drprof_start` fe/harness.f.inc.c:518, `drprof_stop` fe/harness.f.inc.c:519, `drprof_window` fe/harness.f.inc.c:520, `DRPROF_PHASE` fe/harness.f.inc.c:521, `ff_win_note` fe/harness.f.inc.c:969, `UISCRIPT_DUMP` fe/harness.f.inc.c:1520, `stall_watch_start` fe/harness.f.inc.c:1524, `stall_watch_stop` fe/harness.f.inc.c:1525, `drprof_start` fe/harness.f.inc.c:1526, `drprof_stop` fe/harness.f.inc.c:1527, `drprof_window` fe/harness.f.inc.c:1528, `DRPROF_PHASE` fe/harness.f.inc.c:1529, `ff_win_note` fe/harness.f.inc.c:1531, `UISCRIPT_DUMP` fe/harness.f.inc.c:1532). A macro missing from fe_priv.h is not necessarily one of the first two kinds: grep the name.
 - **Core-ABI hand copies.** The TU redeclares core functions and globals instead of including the core headers. T14 (`abi_asserts.py`) asserts a copy when the check TU's headers declare its name (`#include "common.h"`, the core's header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy in that flavour's `-E` as `fe/X.inc.c:N`: the asserted ones, then the UNCHECKED list, the copies in that `-E` that T14 cannot compare (a name the check TU's headers do not declare, or a frontend-only type), then the PLATFORM list, copies of names that are not core ABI (`abi_asserts.platform`: linker symbols, the `PSP_MODULE_INFO` expansion, an SDK function its header lacks) -- release 4 asserted + 6 constants, 0 unchecked, 5 platform; lab 23 asserted + 6 constants, 1 unchecked, 7 platform; harness 23 asserted + 6 constants, 1 unchecked, 7 platform. `abi_asserts.ratchet` holds each flavour's maximum of core copies and of UNCHECKED copies; `flavours_gate.py ratchet` fails a header above either. A copy in an `#if` arm that none of release, lab and harness compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` lists those sites from a raw scan of the TU with every `#if` arm kept. Today that is 4 of its 31 copy sites (the headers cite the other 27, and 4 copies that a macro call expands, which the raw text does not show): "Core-ABI copies in no T14 flavour" below. The index in `fe/fe_priv.h` is PLAN-P-beta5 §5.2's set (every name T14 asserts, plus six it cannot), not every copy.
 - **Row names.** A cutlist row is one F (function definition) or G (global definition) site. Below, a name the cutlist defines once is written bare; a name it defines more than once is written `name#N` for each definition, N counting them in TU order (the cutlist's key): `sleep_sim_window_enter` (F, `fe/harness.b.inc.c:199`, `fe/harness.b.inc.c:236`: one per arm of the `#if` group at fe/harness.b.inc.c:5); `sleep_sim_lock_zero` (F, `fe/harness.b.inc.c:206`, `fe/harness.b.inc.c:237`: one per arm of the `#if` group at fe/harness.b.inc.c:5); `vid_prof_frame` (F, `fe/harness.c.inc.c:54`, `fe/harness.c.inc.c:108`: one per arm of the `#if` group at fe/harness.c.inc.c:53).
-- **`/* @lab */`** is a grep tag, nothing else: it sits in front of each of the 18 `LAB_HOOK(...)` / `LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab's reach into the TU. `LAB_HANDOFF` is reached only through `FE_HANDOFF` (`fe/fe_priv.h:187`).
+- **`/* @lab */`** is a grep tag, nothing else: it sits in front of each of the 18 `LAB_HOOK(...)` / `LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab's reach into the TU. `LAB_HANDOFF` is reached only through `FE_HANDOFF` (`fe/fe_priv.h:191`).
 - **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the source text; whether a build compiles a line depends on that build's defines.
 
 ### Core-ABI copies in no T14 flavour
@@ -69,8 +69,8 @@ Every region, in TU order, and the host tests that read it:
 | `fn:boot_stop_notice` | `fe/power.b.inc.c:292` | `test_sleep_holds.py` |
 | `fn:sleep_sim_me_quiet` | `fe/harness.b.inc.c:220` | `test_sleep_holds.py` |
 | `lowlat:defaults` | `fe/pacing.a.inc.c:76` | `test_lowlat_policy.py` |
-| `ff:mer_retire_early_active` | `fe/pacing.a.inc.c:194` | `run_ff_tests.py` |
-| `lowlat:mer_retire_early_active` | `fe/pacing.a.inc.c:195` | `test_lowlat_policy.py` |
+| `ff:mer_retire_early_active` | `fe/pacing.a.inc.c:218` | `run_ff_tests.py` |
+| `lowlat:mer_retire_early_active` | `fe/pacing.a.inc.c:219` | `test_lowlat_policy.py` |
 | `fn:me_rend_release_vmem` | `fe/merend.c.inc.c:158` | `test_psp_runtime.py`, `test_sleep_holds.py` |
 | `fn:me_rend_drop_vmem` | `fe/merend.c.inc.c:177` | `test_psp_runtime.py`, `test_sleep_holds.py` |
 | `fn:me_standby_down` | `fe/power.d.inc.c:73` | `test_psp_runtime.py`, `test_sleep_holds.py` |
@@ -99,7 +99,7 @@ Every region, in TU order, and the host tests that read it:
 | `lowlat:me_rend_present` | `fe/merend.d.inc.c:349` | `test_lowlat_policy.py` |
 | `lowlat:me_rend_retire_if_idle` | `fe/merend.d.inc.c:383` | `test_lowlat_policy.py` |
 | `ff:me_rend_frame` | `fe/merend.d.inc.c:417` | `run_ff_tests.py` |
-| `fn:net_bringup_rend_off` | `fe/link.c.inc.c:346` | (none) |
+| `fn:net_bringup_rend_off` | `fe/link.c.inc.c:362` | (none) |
 | `spsc:gblink_publish` | `fe/audio.b.inc.c:25` | `test_spsc_mg_wiring.py` |
 | `fn:online_bringup_cancel` | `fe/link.e.inc.c:698` | `test_sleep_holds.py` |
 | `fn:mgift_game_ok` | `fe/mgift.inc.c:152` | `test_spsc_mg_wiring.py` |
@@ -108,7 +108,7 @@ Every region, in TU order, and the host tests that read it:
 | `decl:g_rw_pwr` | `fe/rewind.inc.c:1156` | `test_sleep_quiesce.py` |
 | `fn:psp_rewind_pwr` | `fe/rewind.inc.c:1159` | `test_sleep_quiesce.py` |
 | `lowlat:lat_swap` | `fe/pacing.c.inc.c:15` | `test_lowlat_policy.py` |
-| `ff:ffh_cadence` | `fe/pacing.c.inc.c:74` | `run_ff_tests.py` |
+| `ff:ffh_cadence` | `fe/pacing.c.inc.c:75` | `run_ff_tests.py` |
 | `fn:loop_park` | `fe/power.e.inc.c:11` | `test_sleep_menu.py` |
 | `fn:loop_unpark` | `fe/power.e.inc.c:56` | `test_sleep_menu.py`, `test_sleep_quiesce.py` |
 | `fn:browser_park` | `fe/power.e.inc.c:82` | `test_sleep_browser.py` |
@@ -144,7 +144,7 @@ Readers that read the TU text but no region: `test_backup_save.py`, `test_net_co
 | 7 | merend | ME renderer state, lifecycle, presenter, retire, `fill_desc`, vmem pool, legacy me_video (until the owner decides) | - | yes | `merend.a`, `merend.b`, `merend.c`, `merend.d` | 25 / 82 | 13 | 22 / 62 |
 | 8 | pacing | Latency tiers `lat_*`/`ll_*`/`dfr_*`/`lf_*`/`ffh_*`, vblank target, `us_to_vblank`, frame-hist, the present-plus-overlays helper (3 exact copies, r5 Q6) | `g_ff_uncapped`, `g_ff_mult` | yes | `pacing.a`, `pacing.b`, `pacing.c`, `pacing.d` | 33 / 92 | 10 | 32 / 90 |
 | 9 | rewind | Rewind tick, pool offer/check/lost/back (pool_lost runs on cb_thread), HUD, ini | - | - | `rewind` | 24 / 15 | 0 | 0 / 0 |
-| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 66 / 113 | 3 | 52 / 95 |
+| 10 | link | Net bring-up/teardown (both entry points kept), cable, GB link session, link UI actions, silent wireless, RFU hooks and trace (strong overrides of weak stubs) | `g_net_up`, `g_net_is_host` | - | `link.a`, `link.b`, `link.c`, `link.d`, `link.e` | 66 / 114 | 3 | 52 / 96 |
 | 11 | mgift | Mystery Gift glue | - | - | `mgift` | 20 / 8 | 1 | 8 / 1 |
 | 13 | misc | Wall clocks (one noinline `psp_datetime_seconds`), screenshot, backup_save, state slots, cheats lock | - | - | `misc.a`, `misc.b`, `misc.c` | 34 / 9 | 4 | 29 / 9 |
 | 14 | inproc | `inproc_refusal`, `relaunch_eboot`, heap census helpers | - | - | `inproc.a`, `inproc.b` | 10 / 1 | 0 | 6 / 1 |
@@ -257,7 +257,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 12 | power.b | `fe/power.b.inc.c` | 1-319 | power | 6 / 3 | - |
 | 13 | harness.b | `fe/harness.b.inc.c` | 1-241 | harness | 8 / 23 | power 23 |
 | 14 | merend.b | `fe/merend.b.inc.c` | 1-202 | merend | 3 / 45 | - |
-| 15 | pacing.a | `fe/pacing.a.inc.c` | 1-226 | pacing | 3 / 86 | input 5, merend 7 |
+| 15 | pacing.a | `fe/pacing.a.inc.c` | 1-250 | pacing | 3 / 86 | input 5, merend 7 |
 | 16 | merend.c | `fe/merend.c.inc.c` | 1-212 | merend | 8 / 9 | - |
 | 17 | display.b | `fe/display.b.inc.c` | 1-68 | display | 2 / 1 | power 1 |
 | 18 | power.c | `fe/power.c.inc.c` | 1-14 | power | 1 / 0 | - |
@@ -271,7 +271,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 26 | pacing.b | `fe/pacing.b.inc.c` | 1-175 | pacing | 2 / 9 | harness 8 |
 | 27 | link.b | `fe/link.b.inc.c` | 1-16 | link | 1 / 2 | harness 2 |
 | 28 | harness.d | `fe/harness.d.inc.c` | 1-105 | harness | 2 / 0 | - |
-| 29 | link.c | `fe/link.c.inc.c` | 1-623 | link | 15 / 13 | merend 3, harness 1 |
+| 29 | link.c | `fe/link.c.inc.c` | 1-639 | link | 15 / 14 | merend 3, harness 1 |
 | 30 | inproc.b | `fe/inproc.b.inc.c` | 1-76 | inproc | 1 / 2 | power 1 |
 | 31 | link.d | `fe/link.d.inc.c` | 1-1355 | link | 29 / 83 | power 3, mgift 1, boot 5, harness 2 |
 | 32 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
@@ -281,11 +281,11 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 36 | misc.c | `fe/misc.c.inc.c` | 1-142 | misc | 7 / 2 | - |
 | 37 | harness.f | `fe/harness.f.inc.c` | 1-1535 | harness | 34 / 50 | - |
 | 38 | rewind | `fe/rewind.inc.c` | 1-1215 | rewind | 25 / 15 | pacing 1 |
-| 39 | pacing.c | `fe/pacing.c.inc.c` | 1-559 | pacing | 21 / 6 | - |
+| 39 | pacing.c | `fe/pacing.c.inc.c` | 1-560 | pacing | 21 / 6 | - |
 | 40 | power.e | `fe/power.e.inc.c` | 1-320 | power | 6 / 2 | - |
 | 41 | pacing.d | `fe/pacing.d.inc.c` | 1-126 | pacing | 6 / 2 | - |
 | 42 | teardown | `fe/teardown.inc.c` | 1-356 | teardown | 6 / 0 | - |
-| 43 | boot | `fe/boot.inc.c` | 1-1339 | boot | 1 / 0 | - |
+| 43 | boot | `fe/boot.inc.c` | 1-1340 | boot | 1 / 0 | - |
 | 44 | session | `fe/session.inc.c` | 1-1142 | session | 5 / 0 | - |
 | 45 | loop | `fe/loop.inc.c` | 1-1771 | loop | 2 / 0 | - |
 | 46 | shell.b | `main_psp.c` | 157-245 | shell | 1 / 0 | - |
@@ -393,16 +393,16 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 
 - `fe/pacing.a.inc.c:80` G `g_flip_early` -> merend
 - `fe/pacing.a.inc.c:125` G `g_mer_early_retire` -> merend
-- `fe/pacing.a.inc.c:164` G `g_mer_stage_pvc` -> merend
-- `fe/pacing.a.inc.c:166` G `g_mer_stage_seq` -> merend
-- `fe/pacing.a.inc.c:169` G `g_mer_stage_mode` -> merend
-- `fe/pacing.a.inc.c:169` G `g_mer_stage_cap` -> merend
-- `fe/pacing.a.inc.c:169` G `g_mer_stage_sum` -> merend
-- `fe/pacing.a.inc.c:187` G `g_in_fresh` -> input
-- `fe/pacing.a.inc.c:187` G `g_ctrl_cycle` -> input
-- `fe/pacing.a.inc.c:188` G `g_in_fresh_n` -> input
-- `fe/pacing.a.inc.c:188` G `g_in_fresh_us` -> input
-- `fe/pacing.a.inc.c:188` G `g_in_fresh_got` -> input
+- `fe/pacing.a.inc.c:173` G `g_mer_stage_pvc` -> merend
+- `fe/pacing.a.inc.c:175` G `g_mer_stage_seq` -> merend
+- `fe/pacing.a.inc.c:178` G `g_mer_stage_mode` -> merend
+- `fe/pacing.a.inc.c:178` G `g_mer_stage_cap` -> merend
+- `fe/pacing.a.inc.c:178` G `g_mer_stage_sum` -> merend
+- `fe/pacing.a.inc.c:211` G `g_in_fresh` -> input
+- `fe/pacing.a.inc.c:211` G `g_ctrl_cycle` -> input
+- `fe/pacing.a.inc.c:212` G `g_in_fresh_n` -> input
+- `fe/pacing.a.inc.c:212` G `g_in_fresh_us` -> input
+- `fe/pacing.a.inc.c:212` G `g_in_fresh_got` -> input
 
 **display.b** (module display):
 
@@ -458,10 +458,10 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 
 **link.c** (module link):
 
-- `fe/link.c.inc.c:124` G `g_fxs_gba` -> merend
-- `fe/link.c.inc.c:124` G `g_fxs_gb` -> merend
-- `fe/link.c.inc.c:147` G `g_fxs_arm` -> merend
-- `fe/link.c.inc.c:424` G `g_telemetry_period` -> harness
+- `fe/link.c.inc.c:140` G `g_fxs_gba` -> merend
+- `fe/link.c.inc.c:140` G `g_fxs_gb` -> merend
+- `fe/link.c.inc.c:163` G `g_fxs_arm` -> merend
+- `fe/link.c.inc.c:440` G `g_telemetry_period` -> harness
 
 **inproc.b** (module inproc):
 
@@ -507,7 +507,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **power.b** (`fe/power.b.inc.c`): power_cb:2, pwr_hold:244, pwr_release:254, pwr_release_all:269, boot_stop_notice:293, pwr_release_kernel:308
 - **harness.b** (`fe/harness.b.inc.c`): sleep_sim_thread:89, sleep_sim_start:183, sleep_sim_fire:191, sleep_sim_window_enter#1:199, sleep_sim_lock_zero#1:206, sleep_sim_me_quiet:221, sleep_sim_window_enter#2:236, sleep_sim_lock_zero#2:237
 - **merend.b** (`fe/merend.b.inc.c`): vm_lock:73, vm_unlock:90, vm_unlock_engine:99
-- **pacing.a** (`fe/pacing.a.inc.c`): mer_retire_early_active:196, mer_lowlat_active:204, us_to_vblank:215
+- **pacing.a** (`fe/pacing.a.inc.c`): mer_retire_early_active:220, mer_lowlat_active:228, us_to_vblank:239
 - **merend.c** (`fe/merend.c.inc.c`): mer_vispost_active:38, me_rend_teardown:58, me_rend_active:94, me_rend_vmem_held:95, me_rend_presenting:111, me_rend_present_src:132, me_rend_release_vmem:159, me_rend_drop_vmem:178
 - **display.b** (`fe/display.b.inc.c`): wake_snapshot:23, wake_snapshot_from:40
 - **power.c** (`fe/power.c.inc.c`): menu_open:7
@@ -521,7 +521,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **pacing.b** (`fe/pacing.b.inc.c`): frame_hist_note:129, frame_hist_evt:157
 - **link.b** (`fe/link.b.inc.c`): shot_ask_again:8
 - **harness.d** (`fe/harness.d.inc.c`): sess_cost_evt:1, adhoc_ctl_evt:91
-- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:53, osd_session_chip_refresh:106, fx_sweep_step:149, blit_prof_evt:190, net_bringup_io:213, net_bringup:328, net_bringup_rend_off:347, gpsp_adhoc_step:364, net_teardown_io:370, net_teardown:413, link_version_text:427, net_frame:436, gpsp_rfu_now_us:535, gpsp_rfu_flight_dump_hook:547
+- **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:56, osd_session_chip_refresh:122, fx_sweep_step:165, blit_prof_evt:206, net_bringup_io:229, net_bringup:344, net_bringup_rend_off:363, gpsp_adhoc_step:380, net_teardown_io:386, net_teardown:429, link_version_text:443, net_frame:452, gpsp_rfu_now_us:551, gpsp_rfu_flight_dump_hook:563
 - **inproc.b** (`fe/inproc.b.inc.c`): inproc_refusal:48
 - **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:159, gpsp_visible_done_hook:212, gpsp_rfu_trace_hook:274, rfu_tr_state_name:311, rfu_trace_drain:320, silent_frame:590, gblink_seed_wallclock:728, gblink_find_in:738, psp_gb_bulk_enable:839, psp_gb_bulk_send:852, psp_gb_bulk_recv:856, psp_gb_find_rom:861, link_backdrop_take:874, gba_reload_draw:891, gba_reload_progress:914, gba_reload_note:923, heap_exact:963, sessmem_cycle_test:974, gblink_close_held:1017, gblink_begin:1026, link_amount:1081, link_fail_text:1102, link_draw_facts:1156, gblink_draw_status:1256, plat_gblink_wait:1330
 - **audio.b** (`fe/audio.b.inc.c`): audio_nominal_step:1, gblink_audio_session:8
@@ -531,7 +531,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **misc.c** (`fe/misc.c.inc.c`): psp_datetime_seconds:12, psp_local_wallclock:26, psp_utc_wallclock:41, me_rend_quiesce:69, psp_state_load_io:84, psp_game_reset:101, psp_state_load:131
 - **harness.f** (`fe/harness.f.inc.c`): stall_refer:43, stall_record:50, heartbeat_write:115, stall_exit:173, stall_thread:196, stall_watch_start:246, stall_watch_stop:269, drprof_sampler:314, drprof_threads:379, drprof_window:420, drprof_start:477, drprof_stop:503, smc_gates_reload_evt:532, core_health_evt:581, rig_preserve_log:712, rig_model_name:748, rig_boot_identity:761, rig_rom_identity:793, rig_cfg_line:817, rig_cfg_audit_report:830, rig_fail_probe:840, rig_watch_evt:873, rig_romload_evt:896, ff_win_note:924, boot_mark:982, boot_timeline_emit:995, uiscript_tokens:1073, uiscript_fail:1117, uiscript_load:1134, uiscript_cond:1228, uiscript_jump:1248, uiscript_pad:1261, uiscript_dump_now:1447, uiscript_linking_draw:1465
 - **rewind** (`fe/rewind.inc.c`): psp_rw_pix_begin:97, psp_rw_pix_end:111, psp_rw_show:122, psp_rewind_present:147, psp_rewind_show_end:160, psp_rewind_product:180, psp_rewind_read_ini:209, psp_rewind_pool_tenant:317, psp_rom_pool_offer:323, psp_rom_pool_over:346, psp_rewind_pool_offer:355, psp_rewind_pool_lost:385, psp_rewind_reset_said:414, psp_rewind_pool_back:427, psp_rewind_pool_restart:471, sleep_sim_trash_pool:518, psp_rewind_pool_check:545, psp_rewind_hud_step:612, psp_rewind_hud:705, psp_rwc_fits:870, psp_rwc_choose:891, psp_rewind_tick_run:944, psp_rewind_pwr:1160, psp_rewind_land:1173, psp_rewind_tick:1201 (pacing)
-- **pacing.c** (`fe/pacing.c.inc.c`): mer_rewind_busy:3, lat_swap:16, ffh_too_soon:75, ffh_hold:81, ffh_cap_mult:100, ffh_cap:106, ffh_cap_draw:137, ll_need_us:168, ll_blit_note:179, ll_win_reset:189, ll_sample:197, ll_eligible:222, ll_to_b:238, ll_own_ready:251, ll_own_posted:257, ll_present:264, ll_want_slot:279, lat_wait_begin:286, lat_wait_step:324, lat_wait_end:468, lat_census:505
+- **pacing.c** (`fe/pacing.c.inc.c`): mer_rewind_busy:3, lat_swap:16, ffh_too_soon:76, ffh_hold:82, ffh_cap_mult:101, ffh_cap:107, ffh_cap_draw:138, ll_need_us:169, ll_blit_note:180, ll_win_reset:190, ll_sample:198, ll_eligible:223, ll_to_b:239, ll_own_ready:252, ll_own_posted:258, ll_present:265, ll_want_slot:280, lat_wait_begin:287, lat_wait_step:325, lat_wait_end:469, lat_census:506
 - **power.e** (`fe/power.e.inc.c`): loop_park:12, loop_unpark:57, browser_park:83, wake_overlay_yield:114, wake_me_lost_notice:161, wake_service:188
 - **pacing.d** (`fe/pacing.d.inc.c`): dfr_clock_low:32, dfr_defer:39, dfr_present:52, lf_hold_begin:79, lf_hold_vblank:96, lf_want_slot:120
 - **teardown** (`fe/teardown.inc.c`): exit_early_begin:27, exit_early_end:52, session_end:83, inproc_unload:181, inproc_try_return:241, process_end:299

@@ -20,7 +20,7 @@ static int g_drew;            /* a GU frame was drawn since the last swap */
 #ifdef GPSP_KEEP_TELEMETRY
 static unsigned g_ffw_drawn, g_ffw_gated;
 #else
-/* FFW_DRAWN(), FFW_GATED(): this arm's definitions are in fe/fe_priv.h */
+/* (none: their stores are TEL(), fe/fe_priv.h) */
 #endif
 
 /* ------------------------------------------------------------------- exit */

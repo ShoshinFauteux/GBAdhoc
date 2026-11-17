@@ -177,7 +177,8 @@ static int g_mer_ready = -1, g_mer_pending = -1, g_mer_last_presented = -1;
 static int g_mer_miss;
 static unsigned g_fps_drawn;
 static unsigned g_vc_target;
-#define FFW_DRAWN()     do { } while (0)
+#define TEL(...)        do { __VA_ARGS__; } while (0)   /* fe_priv.h, telemetry arm */
+static unsigned g_ffw_drawn;
 #define UISCRIPT_DUMP() do { } while (0)
 #define LAB_HOOK(x)
 static int osd_n;

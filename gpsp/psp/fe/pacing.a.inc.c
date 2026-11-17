@@ -149,13 +149,22 @@ static unsigned g_ll_win_pos, g_ll_win_n, g_ll_win_miss, g_ll_clean;
 static unsigned g_ll_cool;       /* frames since the last exit */
 static unsigned g_ll_blit_ema = 2000;  /* us, blit + OSD on the GE (EMA)   */
 static unsigned g_ll_blit_dev = 250;   /* us, its mean absolute deviation  */
-static unsigned g_ll_hit, g_ll_miss_me, g_ll_miss_ge, g_ll_to_h, g_ll_to_b;
-static unsigned g_ll_would, g_ll_wouldnt;
-static unsigned g_ll_slot, g_ll_slot_fail, g_ll_eng, g_ll_lead_min = ~0u;
+static unsigned g_ll_hit;
+static unsigned g_ll_miss_me;
+static unsigned g_ll_miss_ge;
+static unsigned g_ll_to_h;
+static unsigned g_ll_to_b;
+static unsigned g_ll_would;
+static unsigned g_ll_wouldnt;
+static unsigned g_ll_slot;
+static unsigned g_ll_slot_fail;
+static unsigned g_ll_eng;
+static unsigned g_ll_lead_min = ~0u;
 static unsigned g_ll_pull;       /* nudges taken early for an entry (mode 2) */
 
 /* vblank clock: the last vblank start the wait loop woke on */
-static unsigned g_vb_us, g_vb_vc;
+static unsigned g_vb_us;
+static unsigned g_vb_vc;
 
 /* Pipeline telemetry: every number below is "vblank count at the moment the
  * NEXTFRAME flip latches" minus "vblank count at the input poll of the loop
@@ -169,11 +178,26 @@ static unsigned g_mer_stage_seq[2];   /* ...the one each stage was posted in */
 static unsigned g_mer_stage_mode[2], g_mer_stage_cap[2], g_mer_stage_sum[2];
 static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
 static int      g_bb_new;             /* back buffer holds an unshown frame */
-static unsigned g_lat_hist[8], g_lat_over, g_lat_early, g_lat_post, g_lat_hold;
-static unsigned g_lat_sub_vc, g_lat_check, g_lat_l1, g_lat_l0, g_lat_immed;
-static unsigned g_lat_lead_n, g_lat_lead_us, g_lat_lead_min = ~0u;
-static unsigned g_lat_hc_n, g_lat_hc_sum, g_lat_vbhc_sum, g_lat_vbhc_n;
-static unsigned g_lat_age_us, g_lat_age_n, g_lat_iter;
+static unsigned g_lat_hist[8];
+static unsigned g_lat_over;
+static unsigned g_lat_early;
+static unsigned g_lat_post;
+static unsigned g_lat_hold;
+static unsigned g_lat_sub_vc;
+static unsigned g_lat_check;
+static unsigned g_lat_l1;
+static unsigned g_lat_l0;
+static unsigned g_lat_immed;
+static unsigned g_lat_lead_n;
+static unsigned g_lat_lead_us;
+static unsigned g_lat_lead_min = ~0u;
+static unsigned g_lat_hc_n;
+static unsigned g_lat_hc_sum;
+static unsigned g_lat_vbhc_sum;
+static unsigned g_lat_vbhc_n;
+static unsigned g_lat_age_us;
+static unsigned g_lat_age_n;
+static unsigned g_lat_iter;
 static unsigned g_lat_vc0;            /* vcount at the last census: `vb=` */
 /* INPUT FRESHNESS (harness only, both default 0).  PPSSPP samples the pad
  * at vblank END (Core/HW/Display.cpp DisplayFireVblankEnd -> __CtrlVblank),

@@ -148,14 +148,18 @@ static void core_health_evt(const char *at);
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
 
-/* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
- * builds only; a player build compiles the counter out). */
+/* TEL(stmt): a statement that only feeds telemetry (an EVT line, the Lab), e.g.
+ * TEL(g_ffw_drawn++), the EVT ff_win counters (fe/power.a.inc.c).  A telemetry
+ * build runs it; a player build compiles it out WITHOUT evaluating it (ADR-0067b:
+ * fe_evt's arguments are not evaluated either), so a telemetry object may exist
+ * in telemetry builds only and the compiler then refuses any use outside TEL()
+ * and fe_evt().  Tier C C-5 (builds/health-out/design/C-5.md §2.1); the G0R gate
+ * (tools/refactor/g0r.py) checks that a player build loses only such statements.
+ * Variadic so a statement with a top-level comma needs no extra parentheses. */
 #ifdef GPSP_KEEP_TELEMETRY
-#define FFW_DRAWN() (g_ffw_drawn++)
-#define FFW_GATED() (g_ffw_gated++)
+#define TEL(...) do { __VA_ARGS__; } while (0)
 #else
-#define FFW_DRAWN() ((void)0)
-#define FFW_GATED() ((void)0)
+#define TEL(...) do { } while (0)
 #endif
 
 /* `volatile` orders the two indices, not the samples: a compiler barrier
