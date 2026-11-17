@@ -716,6 +716,14 @@ def suites(env: Env, baseline: Path | None):
         ("hot_budget", False, lambda: None,
          "python3 tools/tests/test_hot_budget.py"),
 
+        # The frame-parity gate (tools/layout/frame_parity.py, owner decision
+        # 2026-11-17; flavours.sh gate FP): the committed spec and 624af868
+        # baseline parse, and the ratchet's rules on synthetic rows (a
+        # release-only hunk, a lost shared I-cache set, a hot-block move, a
+        # callee leaving one build: each fails; alike changes pass).
+        ("frame_parity", False, lambda: None,
+         "python3 tools/tests/test_frame_parity.py"),
+
         # The layout groups (tier C C3-2, tools/layout/groups_ld.sh): grouped
         # text is byte-identical to the default statement's, an object in no
         # group fails the link, `:FILE` is exact, OBJS is only the groups.

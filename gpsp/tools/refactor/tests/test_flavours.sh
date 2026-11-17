@@ -311,7 +311,7 @@ if [ -n "${FLAV_REAL_RUNS:-}" ] && [ -d "$FLAV_REAL_RUNS/run2" ]; then
   expect_rc 0 "C5 real tools: --check-only run2 --against run1" bash "$HERE/flavours.sh" --check-only \
     --out "$FLAV_REAL_RUNS/run2" --against "$FLAV_REAL_RUNS/run1"
   G=$(cat "$FLAV_REAL_RUNS/run2/gate.txt" 2>/dev/null)
-  for g in G0 G0var G1 G2 HO SS ST LL CF BF DS CI; do
+  for g in G0 G0var G1 G2 HO SS ST LL CF BF DS CI FP; do
     case " $G " in *" $g ok"*) ;; *) bad "C5 gate $g missing or red: $G"; continue 2 ;; esac
   done
   ok "C5 every check present and green: $G"

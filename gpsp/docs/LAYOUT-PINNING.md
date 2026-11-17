@@ -354,6 +354,34 @@ recorded decision of one command; case 3 is a measurement decision about a
 real placement change, which the old pads also forced (they hid it by tuning
 the pad until the anchor came back, which moved the region start instead).
 
+#### Frame parity: release vs Lab build (owner decision 2026-11-17)
+
+The Lab runs only rig (lab) EBOOTs, so its speed and picture-hash results stand
+for the release only where the code that runs every frame is the same in both.
+`tools/layout/frame_parity.py` compares the two builds of one commit over the
+per-frame set (every hot-block function, `tools/layout/psp_frame_path.txt`,
+and `frame_parity.spec`'s roots with their direct callees: frame_loop,
+pace_frame, net_frame, lat_*, ll_*, mer_*, me_rend_frame/present ...).
+`flavours.sh --against` runs it as gate **FP**; `frame_parity.base` is the
+624af868 pair it ratchets against (re-recorded only with a reason).
+
+- **Code.** A function that was the same code in release and lab must stay so;
+  one that already differed (frame_loop, pace_frame, me_rend_frame and
+  plat_video_frame carry telemetry and rig code in the Lab build) may not gain
+  a release/lab difference. A release-only edit in frame_loop fails.
+- **I-cache set.** Held where the two builds shared a set at the baseline (the
+  core's hot path, 60 functions) and for every member inside the hot block.
+  The frontend's per-frame code outside the hot block (main_psp.o, ff_psp.o,
+  video/osd/ui/ctl) was never at the release's set in the Lab build: those
+  objects carry the Lab's extra cold code, so a cold edit made in one build
+  moves them. There the gate reports the offset and does not hold it; making
+  them comparable is C3-7's per-frame rows.
+- **Limit.** Hunks are compared as normalised instruction streams. A change
+  made alike in both builds to a function that already differed can still
+  re-hash its hunks through register allocation; then the commit shows that
+  the change is the same tokens in both flavours (pp_diff / g0r) and
+  re-records the baseline, saying so.
+
 ## 2. Today's swing is the JIT base: hardware evidence
 
 The Go isolation bench (`candidate-out/drl-go-iso3`, AW2, ABBA) and the 3000

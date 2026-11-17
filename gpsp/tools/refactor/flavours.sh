@@ -110,6 +110,10 @@
 #       byte-identical between the two exports
 #   DS  every file that differs between the exports is psp/main_psp.c or under
 #       psp/fe/ (--scope-allow GLOB adds a pattern; it is printed in the verdict)
+#   FP  frame parity (owner decision 2026-11-17): tools/layout/frame_parity.py check
+#       NEW release ELF vs NEW lab ELF against the commit's frame_parity.base: no
+#       per-frame function gains a release/lab code difference or (where they
+#       shared one, or in the hot block) an I-cache set difference
 # Every check's verdict is a line "== <flavour|-> <gate> PASS|FAIL" in
 # OUT/checks.txt, and OUT/gate.txt is the commit gate line GENERATED from it
 # (never typed); flavours_gate.py fails a gate that is missing or that lacks a
@@ -687,6 +691,19 @@ if [ -n "$AGAINST" ]; then
       chk - BF "layout.lock lab-pads.env psp/Makefile psp/layout tools/build.sh identical" bash "$HERE/step_scope.sh" bf --ref "$RS" --new "$NS"
       chk - DS "diff within psp/main_psp.c, psp/fe/${SCOPE_ALLOW[*]:+ + ${SCOPE_ALLOW[*]}}" bash "$HERE/step_scope.sh" ds --ref "$RS" --new "$NS" "${SCOPES[@]+"${SCOPES[@]}"}"
     else failchk - BF "step_scope.sh absent"; failchk - DS "step_scope.sh absent"; fi
+    # FP: frame parity (owner decision 2026-11-17): the code that runs every frame is the same
+    # in this build's release and lab flavours, up to the differences the recorded baseline
+    # already had (tools/layout/frame_parity.py; the spec and baseline are the commit's own,
+    # this tool tree's before a commit carried them)
+    FPT="$HERE/../layout/frame_parity.py"
+    FPS="$NS/tools/layout/frame_parity.spec"; [ -f "$FPS" ] || FPS="$HERE/../layout/frame_parity.spec"
+    FPB="$NS/tools/layout/frame_parity.base"; [ -f "$FPB" ] || FPB="$HERE/../layout/frame_parity.base"
+    if [ ! -f "$FPT" ]; then failchk - FP "frame_parity.py absent"
+    elif [ ! -f "$FPS" ] || [ ! -f "$FPB" ]; then failchk - FP "no frame_parity.spec/.base"
+    elif [ ! -f "$OUT/release/gpsp_adhoc.elf" ] || [ ! -f "$OUT/lab/gpsp_adhoc.elf" ]; then failchk - FP "no release or lab ELF"
+    else chk - FP "frame_parity release vs lab" "$PY" "$FPT" check "$OUT/release/gpsp_adhoc.elf" "$OUT/lab/gpsp_adhoc.elf" \
+        --spec "$FPS" --base "$FPB" -v
+    fi
   fi
   # CI: the build-time run on the exact source; --check-only re-runs it on the export of
   # the same commit with THESE tools (a record from older tools is not a verdict of these)

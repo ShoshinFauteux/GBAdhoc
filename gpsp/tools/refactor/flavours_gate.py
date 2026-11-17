@@ -33,8 +33,8 @@ FLAVOURS = ('release', 'lab', 'harness')
 # with one flavour was accepted).  A missing gate or flavour is a FAIL.
 REQUIRED = {'G0': FLAVOURS, 'G0var': ('-',), 'G1': FLAVOURS, 'G2': FLAVOURS, 'HO': FLAVOURS, 'SS': FLAVOURS,
             'ST': FLAVOURS, 'LL': ('release', 'lab'), 'CF': ('-',), 'BF': ('-',), 'DS': ('-',),
-            'CI': ('-',)}
-ORDER = ['G0', 'G0var', 'G1', 'G2', 'HO', 'SS', 'ST', 'LL', 'CF', 'BF', 'DS', 'CI']
+            'CI': ('-',), 'FP': ('-',)}
+ORDER = ['G0', 'G0var', 'G1', 'G2', 'HO', 'SS', 'ST', 'LL', 'CF', 'BF', 'DS', 'CI', 'FP']
 VERDICT = re.compile(r'^== (\S+) (\S+) (PASS|FAIL)(?: \((.*)\))?\s*$')
 
 
@@ -164,12 +164,16 @@ def selftest():
     line, ok = gate_line(good[:1] + ['== - CI FAIL (ci_greps rc absent)'])
     t(not ok and 'CI FAIL' in line, 'an absent tool (failchk) is a FAIL -> %r' % line)
     full = ['== %s %s PASS (x)' % (f, g) for g in ('G0', 'G1', 'G2', 'HO', 'SS', 'ST') for f in FLAVOURS]
-    full += ['== release LL PASS (x)', '== lab LL PASS (x)'] + ['== - %s PASS (x)' % g for g in ('G0var', 'CF', 'BF', 'DS', 'CI')]
+    full += ['== release LL PASS (x)', '== lab LL PASS (x)'] + ['== - %s PASS (x)' % g for g in ('G0var', 'CF', 'BF', 'DS', 'CI', 'FP')]
     line, ok = gate_line(full, REQUIRED)
-    t(ok and line.startswith('G0 ok rel/lab/har G0var ok G1 ok') and 'LL ok rel/lab' in line and line.endswith('DS ok CI ok'),
+    t(ok and line.startswith('G0 ok rel/lab/har G0var ok G1 ok') and 'LL ok rel/lab' in line and line.endswith('DS ok CI ok FP ok'),
       'the whole required set -> %r' % line)
     line, ok = gate_line([x for x in full if 'G0var' not in x], REQUIRED)
     t(not ok and 'G0var MISSING' in line, 'a required gate missing (G0var) is a FAIL -> %r' % line)
+    line, ok = gate_line([x for x in full if ' FP ' not in x], REQUIRED)
+    t(not ok and 'FP MISSING' in line, 'the frame-parity gate missing is a FAIL -> %r' % line)
+    line, ok = gate_line([x for x in full if ' FP ' not in x] + ['== - FP FAIL (frame_parity release vs lab)'], REQUIRED)
+    t(not ok and 'FP FAIL' in line, 'a frame-parity FAIL turns the gate red -> %r' % line)
     line, ok = gate_line([x for x in full if not x.startswith('== harness G1')], REQUIRED)
     t(not ok and 'G1 MISSING har' in line, 'a gate covering 2 of 3 flavours is a FAIL -> %r' % line)
     line, ok = gate_line(good, REQUIRED)
