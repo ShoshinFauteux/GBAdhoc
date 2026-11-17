@@ -7,4 +7,3 @@
 #   ret=bool  the return type `int` -> bool
 # Everything else about the declaration (arity, order, pointer levels, qualifiers, other
 # types) is still asserted exactly; a NEW mismatch or a change here fails the header.
-gamepak_must_swap	ret=bool	main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch
