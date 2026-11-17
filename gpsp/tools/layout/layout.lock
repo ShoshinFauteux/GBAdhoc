@@ -182,9 +182,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x08a0
-at   _ZL10pipe_latchv#1                 0x1360
-at   netpacket_iface                    0x1e90
+at   me_replay_lines                    0x0940
+at   _ZL10pipe_latchv#1                 0x1400
+at   netpacket_iface                    0x1ec0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
@@ -276,9 +276,9 @@ at   update_scanline                    0x0200
 at   me_capture_line                    0x0260
 at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
-at   me_replay_lines                    0x0320
-at   _ZL10pipe_latchv#1                 0x0de0
-at   netpacket_iface                    0x0150
+at   me_replay_lines                    0x03a0
+at   _ZL10pipe_latchv#1                 0x0e60
+at   netpacket_iface                    0x0180
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
