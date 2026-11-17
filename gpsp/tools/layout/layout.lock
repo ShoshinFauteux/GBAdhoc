@@ -158,8 +158,8 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x04e8
-size frame_loop                         21324
-at   pace_frame                         0x1edc
+size frame_loop                         22300
+at   pace_frame                         0x0248
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
@@ -184,7 +184,7 @@ at   _ZL12ml_line_bodym                 0x01c0
 # A cold text, tables, data, the guard block, bss
 at   me_replay_lines                    0x0960
 at   _ZL10pipe_latchv#1                 0x1420
-at   netpacket_iface                    0x1e38
+at   netpacket_iface                    0x1ed0
 at   gbahot_start                       0x0000
 at   reg                                0x1b00
 at   _gp                                0x11f0
