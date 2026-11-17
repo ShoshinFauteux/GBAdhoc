@@ -304,10 +304,7 @@ static volatile unsigned g_drs_hist[16], g_drs_n, g_drs_att, g_drs_wait;
 /* Link sessions (GBA-LINK-MIRROR.md 16): where the frontend is
  * (fe_linkprof.h FELP_*), and inside the machines which instance runs and
  * ITS phase word -- A's reg[40], B's gbab_reg[40]. */
-#ifdef GBA_LINK
-extern u32 gbab_reg[];
-int fe_gbadual_running_inst(void);
-#endif
+/* (gbab_reg and fe_gbadual_running_inst: frontend-common/fe_gbadual.h) */
 static volatile unsigned g_lps_fe[FELP_N], g_lps_a[16], g_lps_b[16],
                          g_lps_pair, g_lps_l[FELP_LN];
 
@@ -555,24 +552,21 @@ static void smc_gates_reload_evt(void)
  * Every 600 frames (fe_host's heartbeat cadence; a separate line so the
  * parsed `heartbeat` format stays fixed) and right after every state load.
  * All counters are monotonic since boot.  The xlat fields exist only when the
- * core was built with DYNAREC's XLAT_DEPTH_PROBE (weak symbols, so every
+ * core was built with DYNAREC's XLAT_DEPTH_PROBE (#pragma weak, so every
  * flavour links); they are per-window and reset after each line, so the line
  * AFTER an `at=load` line prices the post-reload retranslation.  sp is
  * sampled one frame above the deepest translate_block, so stack_used reads
  * ~400 B LOW (DYNAREC). */
 #ifdef GPSP_KEEP_TELEMETRY
-extern u32 gamepak_reopens, gamepak_short_reads, badjump_contained;
-extern u32 xlat_depth_max __attribute__((weak));
-extern u32 xlat_sp_min __attribute__((weak));
-void xlat_depth_probe_reset(void) __attribute__((weak));
-/* DMA_SMC_FLUSH (DYNAREC #7): HBlank/VBlank DMAs that hit translated code and
- * forced a full RAM flush.  Monotonic; ~1/frame on Unbound/H&S = a storm. */
-extern u32 dma_smc_flushes __attribute__((weak));
-/* JIT_CODE_DISCIPLINE (docs/JIT-CODE-DISCIPLINE.md): jit_code_stats_type is
- * ten u32s -- publishes, spans, lines, whole_i, early, then the ownership
- * changes by reason (ROM flush, RAM flush, rebuild, init, tier).  Weak, read
- * as words so the frontend needs none of the core's headers. */
-extern u32 jit_code_stats[10] __attribute__((weak));
+/* Every core name here is core_fe.h's.  XLAT_DEPTH_PROBE builds only (diagnostic,
+ * soak): the address of each is tested below. */
+#pragma weak xlat_depth_max
+#pragma weak xlat_sp_min
+#pragma weak xlat_depth_probe_reset
+/* dma_smc_flushes (DMA_SMC_FLUSH, DYNAREC #7): HBlank/VBlank DMAs that hit
+ * translated code and forced a full RAM flush; ~1/frame on Unbound/H&S = a
+ * storm.  jit_code_stats (JIT_CODE_DISCIPLINE, docs/JIT-CODE-DISCIPLINE.md):
+ * publishes, lines, whole-I, early, then the ownership changes by reason. */
 /* badjump_recoveries (BADJUMP_SAFE, declared above): unmappable guest pcs
  * caught and turned into a GBA reset.  A run whose script reloads the state
  * (reload_soak.txt) recovers from such a derail at the next load, so its last
@@ -600,17 +594,14 @@ static void core_health_evt(const char *at)
          n += (unsigned)snprintf(fb + n, sizeof(fb) - n, i ? "/%u" : "%u",
                                  (unsigned)smc_fallback_stats[i]);
    }
-   if (&dma_smc_flushes)
-      snprintf(dm, sizeof(dm), " dma_flush=%u", (unsigned)dma_smc_flushes);
-   if (&badjump_recoveries)
-      snprintf(dm + strlen(dm), sizeof(dm) - strlen(dm), " bjrec=%u",
-               (unsigned)badjump_recoveries);
-   if (&jit_code_stats)
-      snprintf(jc, sizeof(jc), " jitc=%u/%u/%u/%u own=%u/%u/%u",
-               (unsigned)jit_code_stats[0], (unsigned)jit_code_stats[2],
-               (unsigned)jit_code_stats[3], (unsigned)jit_code_stats[4],
-               (unsigned)jit_code_stats[5], (unsigned)jit_code_stats[6],
-               (unsigned)jit_code_stats[7]);
+   snprintf(dm, sizeof(dm), " dma_flush=%u", (unsigned)dma_smc_flushes);
+   snprintf(dm + strlen(dm), sizeof(dm) - strlen(dm), " bjrec=%u",
+            (unsigned)badjump_recoveries);
+   snprintf(jc, sizeof(jc), " jitc=%u/%u/%u/%u own=%u/%u/%u",
+            (unsigned)jit_code_stats.publishes, (unsigned)jit_code_stats.lines,
+            (unsigned)jit_code_stats.whole_i, (unsigned)jit_code_stats.early,
+            (unsigned)jit_code_stats.owner[0], (unsigned)jit_code_stats.owner[1],
+            (unsigned)jit_code_stats.owner[2]);
    if (&xlat_depth_max && &xlat_sp_min)
    {
       static unsigned stack_top;
@@ -641,7 +632,6 @@ static void core_health_evt(const char *at)
     * dependent loads, estimated 8-13 ms), so it runs on every 10th
     * heartbeat (counted across reloads) and at every other call, and times itself. */
    {
-      extern void rom_hash_census(u32 out[10]);
       static unsigned hb_calls;
       int is_hb = at[0] == 'h' && at[1] == 'b' && !at[2];
       if (!is_hb || (hb_calls++ % 10u) == 0)
@@ -896,7 +886,6 @@ static void rig_watch_evt(unsigned frames)
 static void rig_romload_evt(unsigned frames)
 {
    static unsigned last_pg, last_re, last_sh;
-   extern u32 gamepak_reopens, gamepak_short_reads;
    if (frames % 600u || !gamepak_must_swap())
       return;
    fe_evt("romload win=600 pg=%u reopen=%u short=%u",

@@ -49,9 +49,8 @@ static void plat_core_counters(unsigned *rom_flush, unsigned *ram_full,
 extern u32 rom_translation_cache_size;
 extern u32 ram_translation_cache_size;
 extern unsigned char *rom_translation_cache;
-/* XS_HEAP builds only (a core flag the frontend cannot see): weak, NULL
- * without it.  cpu_threaded.c; declared in core_fe.h. */
-#pragma weak dynarec_heap_tables_release
+/* dynarec_heap_tables_release (cpu_threaded.c, core_fe.h): every core has it
+ * since XS_HEAP was baked in (tier A). */
 /* heap_trace_mark/_mark0/_report: psp/heap_trace.h (main_psp.c includes it) */
 
 /* Compiled into every build: the in-process return to the game list checks

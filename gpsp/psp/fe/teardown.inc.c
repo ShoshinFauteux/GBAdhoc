@@ -189,8 +189,7 @@ static __attribute__((noinline, section(".text.fe_cold.inproc_unload"))) void in
     * reads it as residue and refuses the return.  Given back here,
     * the next retro_init takes it again at the same place, zeroed
     * as on a fresh boot. */
-   if (dynarec_heap_tables_release)
-      dynarec_heap_tables_release();
+   dynarec_heap_tables_release();
 #ifdef GBA_LINK
    /* The GBA link's cable reserve (harness builds outside late mode;
     * a player's build is late and never takes one) is per game: taken

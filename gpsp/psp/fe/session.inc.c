@@ -19,7 +19,6 @@ static __attribute__((noinline, section(".text.fe_cold.session_select"))) int se
     * without either gets the browser (plan §8, Gate 2). */
 #ifndef GPSP_NO_TELEMETRY
    {
-      extern void (*gpsp_heap_census)(const char *where);
       gpsp_heap_census = heap_census;
       heap_census("pre_select");
    }
@@ -344,26 +343,18 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
    cfg->gblink_script_waits = g_gblink_role != 0 ||
       HARNESS_INT("link_script_waits", 0) != 0;
    /* LINK SPEED defaults (PLAY_* above), every build: config.ini is the
-    * kill switch; the harness block below overrides for an A/B arm.  The
-    * two core switches are weak: a build without SCHED_FAST / IRQ_IO_FAST
-    * has no such variable.  irq_io_fast is read when the emitter builds its
-    * stubs, so it is set here, before any game loads. */
+    * kill switch; the harness block below overrides for an A/B arm.  Every
+    * core defines the three switches since tier A (core_fe.h).  irq_io_fast
+    * is read when the emitter builds its stubs, so it is set here, before
+    * any game loads. */
    {
-#pragma weak sched_fast
-#pragma weak irq_io_fast
-      if (&sched_fast)
-         sched_fast = fe_ini_get_int(p_config, "sched_fast",
-                                     PLAY_SCHED_FAST) ? 1u : 0u;
-      if (&irq_io_fast)
-         irq_io_fast = fe_ini_get_int(p_config, "irq_io_fast",
-                                      PLAY_IRQ_IO_FAST) ? 1u : 0u;
-      {
-#pragma weak msr_fast
-         if (&msr_fast)
-            /* default: on unless the core was built MSR_FAST_DEFAULT=0 */
-            msr_fast = fe_ini_get_int(p_config, "msr_fast",
-                                      PLAY_MSR_FAST && msr_fast) ? 1u : 0u;
-      }
+      sched_fast = fe_ini_get_int(p_config, "sched_fast",
+                                  PLAY_SCHED_FAST) ? 1u : 0u;
+      irq_io_fast = fe_ini_get_int(p_config, "irq_io_fast",
+                                   PLAY_IRQ_IO_FAST) ? 1u : 0u;
+      /* default: on unless the core was built MSR_FAST_DEFAULT=0 */
+      msr_fast = fe_ini_get_int(p_config, "msr_fast",
+                                PLAY_MSR_FAST && msr_fast) ? 1u : 0u;
 #ifdef GBA_LINK
       {
          long v = fe_ini_get_int(p_config, "gba_link_headless_audio",
@@ -468,16 +459,12 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
           * machines; 0 = the path every build up to 3.5.0 used) */
          v = fe_ini_get_int(p_config, "gba_link_fast", PLAY_GBA_LINK_FAST);
          v = HARNESS_INT("gba_link_fast", v);
-         /* 24: scheduler fast paths (SCHED_FAST builds only; default 0).
-          * Weak: a build without the switch has no such variable. */
+         /* 24: scheduler fast paths (every core defines the switch,
+          * core_fe.h; the line keeps its built= field, now always 1). */
          {
-            extern uint32_t sched_fast __attribute__((weak));
-            long sf = HARNESS_INT("sched_fast",
-                                     &sched_fast ? (long)sched_fast : 0);
-            if (&sched_fast)
-               sched_fast = sf ? 1u : 0u;
-            fe_evt("sched_fast built=%d on=%d", &sched_fast != NULL,
-                   &sched_fast ? (int)sched_fast : 0);
+            long sf = HARNESS_INT("sched_fast", (long)sched_fast);
+            sched_fast = sf ? 1u : 0u;
+            fe_evt("sched_fast built=1 on=%d", (int)sched_fast);
          }
          /* 26: TIMER_LAZY (prototype, guest-visible, a 0/1 switch) or HALT_HOP
           * (exact; a bit mask, bit 1 HALT_HOP, bit 2 HOP_DRAWN; the build's
@@ -488,40 +475,28 @@ static __attribute__((noinline, section(".text.fe_cold.session_configure"))) voi
           * not agree, and the mask's bits 1-2 are the negotiable batching
           * bits (fe_gblink.h). */
          {
-            extern uint32_t timer_lazy __attribute__((weak));
-            long tl = HARNESS_INT("timer_lazy",
-                                     &timer_lazy ? (long)timer_lazy : 0);
-            if (&timer_lazy)
-               timer_lazy = (uint32_t)tl;
-            cfg->gba_core_mask = (&timer_lazy && (timer_lazy & 1u))
+            long tl = HARNESS_INT("timer_lazy", (long)timer_lazy);
+            timer_lazy = (uint32_t)tl;
+            cfg->gba_core_mask = (timer_lazy & 1u)
                                    ? FE_GBLINK_MASK_TIMER_LAZY : 0u;
             /* 28/29: "Fast link" is NOT set here: it is the player's
              * setting, read when a session starts (gblink_begin). */
-            fe_evt("timer_lazy built=%d on=%d core_mask=%08x",
-                   &timer_lazy != NULL, &timer_lazy ? (int)timer_lazy : 0,
-                   cfg->gba_core_mask);
+            fe_evt("timer_lazy built=1 on=%d core_mask=%08x",
+                   (int)timer_lazy, cfg->gba_core_mask);
          }
          /* 25: IE/IF/IME stores inline in the I/O store stub (IRQ_IO_FAST
           * builds only; default 0).  Read by the emitter at game load. */
          {
-            extern uint32_t irq_io_fast __attribute__((weak));
-            long qf = HARNESS_INT("irq_io_fast",
-                                     &irq_io_fast ? (long)irq_io_fast : 0);
-            if (&irq_io_fast)
-               irq_io_fast = qf ? 1u : 0u;
-            fe_evt("irq_io_fast built=%d on=%d", &irq_io_fast != NULL,
-                   &irq_io_fast ? (int)irq_io_fast : 0);
+            long qf = HARNESS_INT("irq_io_fast", (long)irq_io_fast);
+            irq_io_fast = qf ? 1u : 0u;
+            fe_evt("irq_io_fast built=1 on=%d", (int)irq_io_fast);
          }
          /* MSR_FAST builds: mode switches by MSR / SPSR restore banked in
           * asm (mips_stub.S msr_fast_store); read on every switch. */
          {
-            extern uint32_t msr_fast __attribute__((weak));
-            long mf = HARNESS_INT("msr_fast",
-                                     &msr_fast ? (long)msr_fast : 0);
-            if (&msr_fast)
-               msr_fast = mf ? 1u : 0u;
-            fe_evt("msr_fast built=%d on=%d", &msr_fast != NULL,
-                   &msr_fast ? (int)msr_fast : 0);
+            long mf = HARNESS_INT("msr_fast", (long)msr_fast);
+            msr_fast = mf ? 1u : 0u;
+            fe_evt("msr_fast built=1 on=%d", (int)msr_fast);
          }
          /* 22: 2 = the checking mode (the full path decides, the fast
           * path's answers are compared with it and disagreements counted) */
@@ -1027,7 +1002,6 @@ static __attribute__((noinline, section(".text.fe_cold.session_load"))) int sess
       fe_evt("heap_budget free=%u top=%u", hb_total, hb_top);
       heap_census("post_load");
       {
-         extern u32 rom_cache_watermark;
          fe_evt("jit_cache tier=%s rom=%u ram=%u base=%p reason=%s forced=%u "
                 "mod8k=0x%04x stubs=%u",
                 jit_cache_tier == 2 ? "large" :

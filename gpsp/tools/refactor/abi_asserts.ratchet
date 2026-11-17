@@ -2,5 +2,5 @@
 # max UNCHECKED, of generated/<flavour>/fe_abi_asserts.h.  Both may only fall: flavours_gate.py ratchet
 # fails a header above either.  PLATFORM rows (abi_asserts.platform) are not counted.  C6-7 sets both to 0.
 release	4	0
-lab	24	1
-harness	24	1
+lab	4	0
+harness	4	0

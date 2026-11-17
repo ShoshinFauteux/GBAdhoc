@@ -133,7 +133,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
       {
          /* Diagnostic build: say when a ROM page read had to reopen the
           * file (gba_memory.c load_gamepak_page). */
-         extern u32 gamepak_reopens;
          static u32 reopens_seen;
          if (gamepak_reopens != reopens_seen)
          {

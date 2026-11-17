@@ -4,7 +4,7 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 23 declarations, 6 constants; unchecked: 1; platform: 7 (listed at the end). */
+ * checked: 4 declarations, 6 constants; unchecked: 0; platform: 7 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
@@ -20,86 +20,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ram_translation_cache_si
 typedef unsigned char * abi_fe_t_rom_translation_cache;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_translation_cache), abi_fe_t_rom_translation_cache *),
                "fe/input.a.inc.c:51 rom_translation_cache: the frontend copy differs from the core declaration");
-/* fe/harness.b.inc.c:49 (extern) */
-typedef RFILE * abi_fe_t_gamepak_file_large;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_file_large), abi_fe_t_gamepak_file_large *),
-               "fe/harness.b.inc.c:49 gamepak_file_large: the frontend copy differs from the core declaration");
 /* fe/merend.d.inc.c:632 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
 typedef bool abi_fe_t_gamepak_must_swap ( void );
 _Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_must_swap), abi_fe_t_gamepak_must_swap *),
                "fe/merend.d.inc.c:632 gamepak_must_swap: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:641 (extern) */
-typedef unsigned char abi_fe_t_iwram [ ];
-_Static_assert(__builtin_types_compatible_p(__typeof__(&iwram), abi_fe_t_iwram *),
-               "fe/misc.a.inc.c:641 iwram: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:642 (extern) */
-typedef unsigned char abi_fe_t_ewram [ ];
-_Static_assert(__builtin_types_compatible_p(__typeof__(&ewram), abi_fe_t_ewram *),
-               "fe/misc.a.inc.c:642 ewram: the frontend copy differs from the core declaration");
-/* fe/misc.a.inc.c:643 (extern) */
-typedef unsigned short abi_fe_t_palette_ram [ ];
-_Static_assert(__builtin_types_compatible_p(__typeof__(&palette_ram), abi_fe_t_palette_ram *),
-               "fe/misc.a.inc.c:643 palette_ram: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:564 (extern) */
-typedef u32 abi_fe_t_gamepak_reopens;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens *),
-               "fe/harness.f.inc.c:564 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:564 (extern) */
-typedef u32 abi_fe_t_gamepak_short_reads;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads *),
-               "fe/harness.f.inc.c:564 gamepak_short_reads: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:564 (extern) */
-typedef u32 abi_fe_t_badjump_contained;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&badjump_contained), abi_fe_t_badjump_contained *),
-               "fe/harness.f.inc.c:564 badjump_contained: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:565 (extern) */
-typedef u32 abi_fe_t_xlat_depth_max;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&xlat_depth_max), abi_fe_t_xlat_depth_max *),
-               "fe/harness.f.inc.c:565 xlat_depth_max: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:566 (extern) */
-typedef u32 abi_fe_t_xlat_sp_min;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&xlat_sp_min), abi_fe_t_xlat_sp_min *),
-               "fe/harness.f.inc.c:566 xlat_sp_min: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:567 (proto) */
-typedef void abi_fe_t_xlat_depth_probe_reset ( void );
-_Static_assert(__builtin_types_compatible_p(__typeof__(&xlat_depth_probe_reset), abi_fe_t_xlat_depth_probe_reset *),
-               "fe/harness.f.inc.c:567 xlat_depth_probe_reset: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:570 (extern) */
-typedef u32 abi_fe_t_dma_smc_flushes;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&dma_smc_flushes), abi_fe_t_dma_smc_flushes *),
-               "fe/harness.f.inc.c:570 dma_smc_flushes: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:899 (block) */
-typedef u32 abi_fe_t_gamepak_reopens__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_reopens), abi_fe_t_gamepak_reopens__2 *),
-               "fe/harness.f.inc.c:899 gamepak_reopens: the frontend copy differs from the core declaration");
-/* fe/harness.f.inc.c:899 (block) */
-typedef u32 abi_fe_t_gamepak_short_reads__2;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_short_reads), abi_fe_t_gamepak_short_reads__2 *),
-               "fe/harness.f.inc.c:899 gamepak_short_reads: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:22 (block) */
-typedef void ( * abi_fe_t_gpsp_heap_census ) ( const char * where );
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gpsp_heap_census), abi_fe_t_gpsp_heap_census *),
-               "fe/session.inc.c:22 gpsp_heap_census: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:474 (block) */
-typedef uint32_t abi_fe_t_sched_fast;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&sched_fast), abi_fe_t_sched_fast *),
-               "fe/session.inc.c:474 sched_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:491 (block) */
-typedef uint32_t abi_fe_t_timer_lazy;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&timer_lazy), abi_fe_t_timer_lazy *),
-               "fe/session.inc.c:491 timer_lazy: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:507 (block) */
-typedef uint32_t abi_fe_t_irq_io_fast;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&irq_io_fast), abi_fe_t_irq_io_fast *),
-               "fe/session.inc.c:507 irq_io_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:518 (block) */
-typedef uint32_t abi_fe_t_msr_fast;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&msr_fast), abi_fe_t_msr_fast *),
-               "fe/session.inc.c:518 msr_fast: the frontend copy differs from the core declaration");
-/* fe/session.inc.c:1030 (block) */
-typedef u32 abi_fe_t_rom_cache_watermark;
-_Static_assert(__builtin_types_compatible_p(__typeof__(&rom_cache_watermark), abi_fe_t_rom_cache_watermark *),
-               "fe/session.inc.c:1030 rom_cache_watermark: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:25 */
@@ -128,11 +52,10 @@ _Static_assert(ABI_FET_VRAM_DIRTY_PAGES == ABI_TEST_VRAM_DIRTY_PAGES, "tools/tes
 #endif
 _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not 0/1");
 
-/* UNCHECKED (1): every copy of this flavour's -E that is NOT asserted: its name is not declared
+/* UNCHECKED (0): every copy of this flavour's -E that is NOT asserted: its name is not declared
  * by the check TU's headers (abi_check.c includes only common.h's chain and psp/sleep_q.h), or
  * its type is frontend-only.  A copy in an #if arm this flavour does not compile is in neither list
  * (abi_asserts.py unbuilt lists the copy sites that no T14 flavour compiles).
- *   fe/harness.f.inc.c:575   jit_code_stats                       not declared by the check TU's headers
  */
 
 /* PLATFORM (7): copies of names that are not core ABI (abi_asserts.platform gives each reason):

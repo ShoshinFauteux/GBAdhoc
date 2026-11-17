@@ -113,7 +113,7 @@ static void hit(const char *name)
 /* inproc_refusal's inputs */
 static struct { int quick_return, sram_thread; int stick; } g_pcfg;
 static int gbadhoc_net_touched, g_pwr_suspend;
-extern unsigned badjump_recoveries __attribute__((weak));
+static unsigned badjump_recoveries;   /* every core defines it (C6-6) */
 static int me_host_was_dead(void) { return 0; }
 static int me_host_handed_back(void) { return 0; }
 #define INPROC_ME_UNLOAD_MUTANT() 0
@@ -181,7 +181,7 @@ static void fe_host_shutdown(void) { hit("fe_host_shutdown"); }
 static unsigned plat_audio_hash(void) { return 0; }
 static unsigned plat_audio_sample_count(void) { return 0; }
 static void dynarec_release_translation_caches(void) { hit("unload"); }
-static void (*dynarec_heap_tables_release)(void);
+static void dynarec_heap_tables_release(void) {}   /* every core has it (C6-6) */
 static void me_rend_suspend(void) { hit("me_rend_suspend"); }
 static void sceKernelDcacheWritebackInvalidateAll(void) {}
 static void sceKernelIcacheInvalidateAll(void) {}

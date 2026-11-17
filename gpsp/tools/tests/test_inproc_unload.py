@@ -26,10 +26,11 @@ import extract  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# the start tree's unit (C0b f9243b87, main() after `if (!why)`), comments dropped
+# the start tree's unit (C0b f9243b87, main() after `if (!why)`), comments dropped; one edit
+# since: every core has dynarec_heap_tables_release, so its address test went (code-health C6-6)
 EXPECTED = [
     'dynarec_release_translation_caches();',
-    'if (dynarec_heap_tables_release) dynarec_heap_tables_release();',
+    'dynarec_heap_tables_release();',
     '#ifdef GBA_LINK',
     'if (g_cable_reserve) { free(g_cable_reserve);', 'g_cable_reserve = NULL;', '}',
     'g_gba_cable = 0;',
