@@ -3829,6 +3829,17 @@ void init_cpu(void)
     reg[REG_PC] = 0x08000000;
     reg[REG_CPSR] = 0x0000001F;   // system mode
     reg[CPU_MODE] = MODE_SYSTEM;
+    /* Start on the scanline where the BIOS hands over to the cartridge, not
+     * on line 0: 0x7E, as mGBA's GBAVideoSkipBIOS (the real BIOS run in this
+     * core reaches 0x08000000 on line 127).  From line 0 the first VBlank came
+     * ~126 lines early.  Polarium Advance enables its VBlank IRQ and then
+     * copies its sound driver into IWRAM (CpuSet to 0x03007720...); the early
+     * VBlank ran the driver first, the call landed in zeroed IWRAM and the
+     * game derailed on its first frames (PSP-3000 hang at frame 1, 4.5.0
+     * reset loop; the PSP-1000 only recovered by falling into the BIOS
+     * reset vector and booting through the intro).  init_memory has just
+     * cleared the I/O block: reset_gba runs it before init_cpu. */
+    write_ioreg(REG_VCOUNT, 0x7E);
   } else {
     reg[REG_SP] = 0x03007F00;
     reg[REG_PC] = 0x00000000;
