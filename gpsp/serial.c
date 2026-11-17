@@ -81,13 +81,32 @@ static u32 get_serial_mode(u16 siocnt, u16 rcnt) {
   }
 }
 
-uint16_t serial_mul_siocnt() {
+/* Is a multiplayer cable on the port?  Only the multiplayer protocol modes
+ * (POKE / AW1 / AW2, the netplay cable) put one there; the link-cable session
+ * (SERIAL_MODE_CABLE) never reaches this file.  With none -- no device, the
+ * Game Boy Player, the Wireless Adapter, AUTO left as it is -- the port reads
+ * like a real GBA with nothing plugged in: SI and SD float high on their
+ * pull-ups, so the GBA is a child (SI=1, ID 0) on a "ready" line (SD=1), and a
+ * child cannot start a transfer.  It used to read as a cabled parent (SI=0)
+ * whose transfers completed with stale SIOMULTI1-3, which is "another GBA
+ * answered": Activision Anthology's multiboot probe (Nintendo's MultiBoot
+ * library) then asked the player to turn the other GBA off and on again
+ * (KarnFu, issue #9). */
+static int serial_multi_cable(void) {
+  return serial_mode == SERIAL_MODE_SERIAL_POKE ||
+         serial_mode == SERIAL_MODE_SERIAL_AW1 ||
+         serial_mode == SERIAL_MODE_SERIAL_AW2;
+}
+
+/* noinline: write_rcnt and write_siocnt call it; inlined twice, the select
+ * below grew serial.o by 64 B (beta line, edbada5b). */
+__attribute__((noinline)) uint16_t serial_mul_siocnt() {
   // Calculate parent/child, ID and some other fields.
   uint16_t ret = 0x8 |                          // All GBAs ready.
                  (netplay_client_id << 4) |     // Device ID
                  (netplay_client_id ? 0x4 : 0); // Parent/Child.
   // Bit 6 is zero (no error)
-  return ret;
+  return serial_multi_cable() ? ret : 0xC;      // no cable: SI, SD high, ID 0
 }
 
 #ifdef REWIND
@@ -229,7 +248,9 @@ cpu_alert_type write_siocnt(u16 value) {
     // Update SI/SD/ID/Error fields
     newval = (newval & 0xFF83) | serial_mul_siocnt();
 
-    if ((newval & 0x0080) && (!netplay_client_id) && !serial_irq_cycles) {
+    if (!serial_multi_cable())
+      newval &= ~0x0080;   // no cable: a child's start bit does nothing
+    else if ((newval & 0x0080) && (!netplay_client_id) && !serial_irq_cycles) {
       // Start a transaction, as a master device (no ongoing transactions).
       const uint16_t tim[] = {
         CLOCK_CYC_9600_16BIT, CLOCK_CYC_38400_16BIT,
