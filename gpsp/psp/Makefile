@@ -49,7 +49,7 @@ FE_COMMON_OBJS = netdrv_core.o \
        ../frontend-common/fe_favs.o \
        ../frontend-common/fe_share.o share_psp.o \
        ../frontend-common/fe_linkmode.o \
-       $(RIG_AUTOPILOT_OBJS) \
+       ../frontend-common/fe_autopilot.o \
        ../frontend-common/netpacket_host.o \
        ../netdrv/gb_link.o \
        ../frontend-common/fe_gblink.o
@@ -253,14 +253,8 @@ endif
 # psp/usb_handoff.h gives it the disabled functions (nothing) inline.
 ifneq ($(findstring -DGPSP_PERF_RIG,$(EXTRA_DEFS)),)
 RIG_HANDOFF_OBJS = usb_handoff.o
-# fe_autopilot.o, the script engine, likewise (code-health C2-5): a player
-# build can load no script, and frontend-common/fe_autopilot.h gives
-# main_psp.c the no-script answers inline (FE_AUTOPILOT_STUBS).  It keeps its
-# place in FE_COMMON, so a rig build links exactly as before.
-RIG_AUTOPILOT_OBJS = ../frontend-common/fe_autopilot.o
 else
 RIG_HANDOFF_OBJS =
-RIG_AUTOPILOT_OBJS =
 endif
 
 CORE_LIB = ../gpsp_libretro_psp1.a

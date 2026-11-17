@@ -1,11 +1,7 @@
 #define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
 char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
 static char p_rom_dir[144], p_log_dir[144], p_log_path[160];
-#if !HARNESS_FOLD
 static char p_harness[160], p_config[160], p_variant[160];
-#else
-static char p_config[160], p_variant[160];   /* a player build has no harness path (C2-5) */
-#endif
 static char p_legacy_ap[160];
 static int g_perf_rig;
 
@@ -21,13 +17,8 @@ static int g_perf_rig;
  * user-config name.  The leading dot and the `gpsp-` prefix now say
  * "internal" to a human packaging a kit, and nobody creates this by accident.
  *
- * `variant.ini` is deliberately NOT renamed — that one is user-chosen.
- *
- * Rig builds only (C2-5): a player build folds every read to its default
- * (fe_priv.h HARNESS_FOLD) and has no HARNESS_INI to name. */
-#if !HARNESS_FOLD
+ * `variant.ini` is deliberately NOT renamed — that one is user-chosen. */
 #define HARNESS_INI p_harness
-#endif
 /* Read-only: checked so a leftover can be REPORTED, never obeyed, never
  * deleted (it is the user's file, even when it is in the way). */
 #define LEGACY_AUTOPILOT_INI p_legacy_ap
@@ -70,13 +61,14 @@ static void init_paths(int argc, char *argv[])
    snprintf(p_rom_dir, sizeof(p_rom_dir), "%s/roms", g_dir_base);
    snprintf(p_log_dir, sizeof(p_log_dir), "%s/log", g_dir_base);
    snprintf(p_log_path, sizeof(p_log_path), "%s/log/frontend.log", g_dir_base);
-   /* ADR-0067 (amended by code-health C2-3/C2-5): a player build has no harness
-    * path.  Its reads are folded to their defaults at compile time
-    * (fe_priv.h HARNESS_FOLD), the value the never-opened path
-    * `.playable-no-harness/x` gave them at run time before; the source
-    * expression is still the one rig builds compile, and
-    * tools/refactor/harness_keys.py checks that the defaults agree. */
-#if !HARNESS_FOLD
+   /* ADR-0067: a name no file can have, so every fe_ini_get*(HARNESS_INI,...)
+    * in this binary returns its default and `have_harness` is 0.  Deliberately
+    * not a compile-time removal of the call sites: one code path, two
+    * behaviours, and no chance of the two builds drifting. */
+#ifndef GPSP_PERF_RIG
+   snprintf(p_harness, sizeof(p_harness), "%s/.playable-no-harness/x",
+            g_dir_base);
+#else
    snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
 #endif
    snprintf(p_legacy_ap, sizeof(p_legacy_ap), "%s/autopilot.ini", g_dir_base);

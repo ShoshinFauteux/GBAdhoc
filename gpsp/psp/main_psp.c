@@ -32,9 +32,6 @@
 #include <psprtc.h>
 #include <time.h>
 #include "fe_util.h"
-#ifndef GPSP_PERF_RIG
-#define FE_AUTOPILOT_STUBS   /* no autopilot in a player build (C2-5) */
-#endif
 #include "fe_autopilot.h"
 #include "fe_gblink.h"
 #ifdef GBA_LINK

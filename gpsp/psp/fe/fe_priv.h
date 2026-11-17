@@ -45,15 +45,18 @@
 #include "play_defaults.h"   /* the PLAY_* ship constants and link defaults */
 
 /* HARNESS READS (tier C, C2-1; not from P5's hoist).  The one call form of a harness-ini read:
- * no other frontend code names HARNESS_INI in a getter (ci_greps.py R7, no exception since
- * C2-5).  Every key, its default and
+ * no other frontend code names HARNESS_INI in a getter (ci_greps.py R7; the one whitelisted
+ * raw read is the frame loop's rewind_gedump, ci_greps.known).  Every key, its default and
  * the flavours that compile it are in tools/refactor/generated/harness_keys.tsv, which the
  * Lab validates staged keys against.
  * HARNESS_FOLD 0 (rig builds, GPSP_PERF_RIG): the getter call on the harness ini.
  * HARNESS_FOLD 1 (player builds: release, diagnostic; C2-3): each read is its default, what
  * ADR-0067's never-opened harness path made it at run time before; HARNESS_STR leaves `out`
- * alone, as fe_ini_get on that path did.  Since C2-5 the build has no harness path at all
- * (fe/paths.inc.c: no p_harness, no HARNESS_INI), so a raw read cannot compile in it.
+ * alone, as fe_ini_get on that path did.  The never-opened path itself stays (fe/paths.inc.c,
+ * decided at boot: a player build's HARNESS_INI names a file that cannot exist) for the one
+ * raw read ci_greps.known whitelists, the frame loop's rewind_gedump: per-frame code stays
+ * the code the Lab build runs (frame parity, owner decision 2026-11-17;
+ * tools/layout/frame_parity.py).
  * Derived from GPSP_PERF_RIG, never set on its own: a player build that read the harness ini
  * would be the stale-file hazard of ADR-0036 again. */
 #ifdef HARNESS_FOLD

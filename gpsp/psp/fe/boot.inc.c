@@ -116,6 +116,14 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Started from a game's XMB entry (XMB LAUNCH, at relaunch_eboot). */
    if (argc > 2 && argv[1] && argv[2] && strcmp(argv[1], LAUNCH_ARGV1) == 0)
       snprintf(g_launch_rom, sizeof(g_launch_rom), "%s", argv[2]);
+#ifndef GPSP_PERF_RIG
+   /* ADR-0067's harness path cannot exist in this build, and every one of
+    * main()'s ~130 harness keys used to pay a Memory Stick negative lookup
+    * to learn that, on a black screen, on every launch (boot timeline,
+    * docs/UI-OVERLAY.md).  The call sites still run -- one code path --
+    * they just no longer touch the stick.  file_exists() below still asks. */
+   fe_ini_never(HARNESS_INI);
+#endif
 #ifdef GPSP_KEEP_TELEMETRY
    sceIoMkdir(LOG_DIR, 0777);
    rig_preserve_log();               /* before fe_evt_init truncates it */

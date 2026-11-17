@@ -1242,10 +1242,8 @@ void frame_loop(loop_t *L, const session_ctx *S)
          for (i = 0; i < n; i++)
          {
             g_blit_suppress = (i != n - 1);
-#ifdef GPSP_PERF_RIG
-            if (fe_host_autopilot_gate())   /* the script engine: rig builds */
+            if (fe_host_autopilot_gate())
                fe_autopilot_frame();
-#endif
             gblink_script_disconnect();
             DRPROF_PHASE(13);        /* DRPH_RETRO until the CPU loop runs */
 #ifdef REWIND
@@ -1267,10 +1265,8 @@ void frame_loop(loop_t *L, const session_ctx *S)
       else
       {
          FE_LP_SET(FELP_L_AP);
-#ifdef GPSP_PERF_RIG
-         if (fe_host_autopilot_gate())   /* the script engine: rig builds */
+         if (fe_host_autopilot_gate())
             fe_autopilot_frame();
-#endif
          gblink_script_disconnect();
          FE_LP_SET(FELP_L_RUN);
          DRPROF_PHASE(13);           /* DRPH_RETRO until the CPU loop runs */
@@ -1404,15 +1400,14 @@ void frame_loop(loop_t *L, const session_ctx *S)
 #endif
       if (gedump_every && g_drew && (frames % (unsigned)gedump_every) == 0)
          dump_ge_bmp();
-#if defined(REWIND) && !HARNESS_FOLD
+#ifdef REWIND
       {
          /* harness `rewind_gedump = N`: the screen every N loops while the
           * ring is up (the frame count stands still during a rewind, so
-          * gedump_every cannot see one).  Rig builds: a player build's read
-          * is 0, so the block left its loop (C2-5). */
+          * gedump_every cannot see one). */
          static int every = -1, n;
          if (every < 0)
-            every = (int)HARNESS_INT("rewind_gedump", 0);
+            every = (int)fe_ini_get_int(HARNESS_INI, "rewind_gedump", 0);
          if (every > 0 && g_drew && g_rw_on && g_rwh.ui > 0.0f &&
              (n++ % every) == 0)
             dump_ge_bmp();

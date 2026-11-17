@@ -89,13 +89,10 @@ pixels and generated code use one layout and a blitter that assumes the other.
   catch it.
 * **The artifact is newer than every source**, so a failed container cannot be
   papered over by the previous build's output.
-* **Strings in the linked binary.** Release forbids `badjump.txt`,
-  `smchisto.txt` and `.gpsp-harness.ini`: a player build has no harness channel
-  at all (ADR-0067 as amended by code-health C2-3/C2-5: every harness read
-  folds to its default at compile time; until C2-5 the release instead
-  *required* `.playable-no-harness`, the impossible path its reads were pointed
-  at).  Diagnostic requires `badjump.txt` and `irqchk.txt` and forbids the
-  harness path too.  Harness requires `.gpsp-harness.ini`.
+* **Strings in the linked binary.** Release forbids `badjump.txt` and
+  `smchisto.txt`, and *requires* `.playable-no-harness` — the marker proving
+  ADR-0067's automation neutralisation is compiled in.  Diagnostic requires all
+  three.  Harness requires `.gpsp-harness.ini`.
 * **No warnings from GBAdhoc-owned code.** Toolchain and SDK paths are
   excluded; an accepted exception goes in `tools/warning-allow` with its reason.
 

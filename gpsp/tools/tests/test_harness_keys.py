@@ -13,8 +13,8 @@
   (HARNESS_INT/HARNESS_STR, C2-1).
 * ci_greps.py R7 (check c) on a scratch tree: warn mode counts and never fails; fail mode (the
   default since C2-1) fails each raw read unless a KNOWN row names its file and key; fe_priv.h
-  and comments are not counted.  On this tree R7 in fail mode is clean with no KNOWN row (C2-5
-  made the frame loop's rewind_gedump, the last raw read, a HARNESS_INT).
+  and comments are not counted.  On this tree R7 in fail mode is clean: the one raw read is the
+  frame loop's rewind_gedump, KNOWN (frame parity: raw in every build).
 """
 import os
 import shutil
@@ -89,8 +89,8 @@ finally:
     shutil.rmtree(d, ignore_errors=True)
 
 rc, out = run(CG, "--src", ROOT, "--rules", "R7")
-check(rc == 0 and "KNOWN R7" not in out and "FAIL" not in out,
-      "R7 fail on this tree: every harness read uses fe_priv.h's call form, no KNOWN row")
+check(rc == 0 and "KNOWN R7 psp/fe/loop.inc.c:" in out and "(rewind_gedump)" in out and "FAIL" not in out,
+      "R7 fail on this tree: every harness read uses HARNESS_INT/HARNESS_STR but the KNOWN rewind_gedump")
 if rc:
     print(out)
 

@@ -75,8 +75,6 @@ extern volatile unsigned g_audio_step;  /* audio: resample step, set by pacing *
 
 /* Clock and telemetry the engine calls back into. */
 uint64_t net_now_us(void);
-#ifdef GPSP_KEEP_TELEMETRY
-void     sess_cost_evt(int force);   /* main_psp.c fe/harness.d (telemetry builds) */
-#endif
+void     sess_cost_evt(int force);
 
 #endif /* FF_PSP_H */
