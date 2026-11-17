@@ -1670,6 +1670,20 @@ static const ini_t gbaover[] = {
       0,                           /* translation_gate_target_3 */
    },
    {
+      // Top Gun - Combat Zones (U).  No backup chip on the board (passwords).
+      // Titus's copy check writes "TiTus Interactive Studio" to SRAM and runs
+      // both flash ID routines at boot and again in the menu; it accepts a
+      // confirm press only when all three probes find nothing.  The ROM links
+      // the SRAM_V113, FLASH512_V131 and FLASH1M_V102 libraries for those
+      // probes, so string detection can't decide this; it picks SRAM.
+      "A2YE",                      /* gamepak_code         */
+      FLAGS_NO_BACKUP,             /* flags                */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
       // Tottoko Hamutaro Hamuhamu Sports (J/U)
       "B85A",                      /* gamepak_code         */
       FLAGS_SERIAL | FLAGS_RFU,    /* flags                */

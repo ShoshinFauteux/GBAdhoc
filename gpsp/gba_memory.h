@@ -505,6 +505,7 @@ extern u32 reg[64];
 #define BACKUP_FLASH      1
 #define BACKUP_EEPROM     2
 #define BACKUP_UNKN       3
+#define BACKUP_NONE       4   /* no chip (gba_over.h FLAGS_NO_BACKUP) */
 
 #define SRAM_SIZE_32KB    1
 #define SRAM_SIZE_64KB    2

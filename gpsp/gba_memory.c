@@ -813,7 +813,8 @@ u8 read_backup(u32 address)
   u8 value = 0;
   cph_bkr++;   /* phase 5h: counted, not timed -- see main.h */
 
-  if(backup_type == BACKUP_EEPROM)
+  /* No chip answers in the SRAM/flash region: the bus reads 0xFF. */
+  if(backup_type == BACKUP_EEPROM || backup_type == BACKUP_NONE)
     return 0xff;
 
   if(backup_type == BACKUP_UNKN)
@@ -898,6 +899,8 @@ u32 eeprom_counter = 0;
 void function_cc write_eeprom(u32 unused_address, u32 value)
 {
   DRPH_SCOPE(DRPH_MEMC);
+  if (backup_type == BACKUP_NONE)
+    return;   /* no chip: the write must not turn the cart into EEPROM */
   cph_bkw++;   /* phase 5h */
 #ifdef GBA_LINK
   backup_writes++;   /* gba_memory.h */
@@ -1515,7 +1518,7 @@ void function_cc write_backup(u32 address, u32 value)
   backup_writes++;   /* gba_memory.h */
 #endif
 
-  if(backup_type == BACKUP_EEPROM)
+  if(backup_type == BACKUP_EEPROM || backup_type == BACKUP_NONE)
     return;
   BACKUP_WR();
 
@@ -2315,6 +2318,7 @@ typedef struct
 #define FLAGS_RUMBLE         0x0200   // Enables GPIO3 rumble support.
 #define FLAGS_RTC            0x0400   // Enables RTC support by default.
 #define FLAGS_EEPROM         0x0800   // Forces EEPROM storage.
+#define FLAGS_NO_BACKUP      0x1000   // The board has no backup chip.
 
 #define FLAGS_SERIAL         0x8000   // Configure a serial mode by default.
 #define FLAGS_SERIAL_MASK    0x00FF
@@ -2375,6 +2379,9 @@ static void load_game_config_over(const char *gamecode)
 
      if (gbaover[i].flags & FLAGS_EEPROM)
        backup_type_reset = BACKUP_EEPROM;
+
+     if (gbaover[i].flags & FLAGS_NO_BACKUP)
+       backup_type_reset = BACKUP_NONE;
 
      if (serial_mode == SERIAL_MODE_AUTO && (gbaover[i].flags & FLAGS_SERIAL))
      {
@@ -3907,7 +3914,7 @@ bool memory_check_savestate(const u8 *src)
   /* Serialized protocol state is normally bounded by hardware writes.  A
    * damaged/imported state must not turn those values into array indexes or
    * invalid shift counts on the next cartridge access. */
-  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_UNKN ||
+  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_NONE ||
       !bson_read_int32(bakdoc, "flash-mode", &flash_mode_val) || flash_mode_val > FLASH_BANKSWITCH_MODE ||
       !bson_read_int32(bakdoc, "flash-cmd-pos", &flash_cmd_pos) || flash_cmd_pos > 2 ||
       !bson_read_int32(bakdoc, "flash-bank-num", &flash_bank) || flash_bank > 1 ||
