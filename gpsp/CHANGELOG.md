@@ -10,6 +10,49 @@ separately and are intended for upstream.
 
 ---
 
+## [5.0.0-beta.6] - 2026-11-16
+
+Pre-release: beta 5 plus the fixes below, and the build we intend to become 5.0.0. Links
+only with the same beta: update both PSPs, for the Link Cable, the Wireless Adapter, Game Boy
+link, Share game data and online play alike. Copy all four files (`EBOOT.PBP`,
+`gbadhoc_me.prx`, `gbadhoc_home.prx`, `gbadhoc_online.prx`) together.
+
+### Fixed
+
+- **Games start at the same point in the frame as on a GBA.** GBAdhoc starts a game straight
+  away, without the GBA's start-up logo, and began its first frame about half a frame
+  earlier than a GBA does when the logo hands over to the cartridge. Now it starts where a
+  GBA would. This fixes **Polarium Advance**, which hung at start-up on the PSP-3000 and
+  kept restarting with the bundled BIOS: its first screen refresh came before the game had
+  finished setting up its sound. The change is the same for every game, nothing in it is
+  specific to Polarium, and speed is unchanged.
+- **Rock 'N Roll Racing** shows its title screen and plays. It used to show stripes, then a
+  blank screen. When a game saved the position of the instruction it was running, GBAdhoc
+  saved it one instruction short of what a GBA saves; this game returns from every
+  subroutine through that saved position, and landed on the wrong instruction.
+- **Top Gun: Combat Zones** opens its menus again. The cursor moved but A and START did
+  nothing. The cartridge has no save chip (the game uses passwords), and its copy check
+  refuses to go on when it finds one; GBAdhoc now runs it with no save chip, as on a GBA.
+  This setting applies to this game only.
+- **Activision Anthology** no longer asks you to "turn off the other Game Boy Advance" when
+  you play alone. With no link cable connected, the link port now looks unplugged to the
+  game, as on a GBA, instead of looking like another GBA had answered. Link play over the
+  cable and the Wireless Adapter is unchanged.
+- **Wireless Adapter: a player joining a group is no longer dropped when the leader takes a
+  few seconds to accept.** While a joining game waited quietly for an answer, the leader's
+  PSP gave up on it after about four seconds, and both players ended up back at the link
+  screen (for example in the Pokémon Emerald Trade Center). A joined PSP now stays in the
+  group for as long as it is connected, as with a real adapter.
+
+**Linking with other versions** works as in beta 5: both PSPs need the same release. A PSP on
+another version is turned away before any session starts, for every kind of link, and this
+PSP says why: "The other PSP runs a different GBAdhoc version." (for 4.5.0, "an older GBAdhoc
+version."). A PSP on 4.5.0 that hosts sees nothing, and one that joins over the Wireless
+Adapter finds the room never answers. 5.0.0 will not link with 4.5.0 either, and keeps the
+frame-by-frame Wireless Adapter link the betas use.
+
+**Known issues:** as in beta 5.
+
 ## [5.0.0-beta.5] - 2026-11-14
 
 Pre-release, and the build we intend to become 5.0.0. Links only with the same beta: update
