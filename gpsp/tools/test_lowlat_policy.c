@@ -60,7 +60,12 @@ static unsigned g_ring_high_water = 4096;
 #define RING_HIGH_WATER g_ring_high_water
 static volatile unsigned ring_w, ring_r;
 static unsigned ring_frac, starved;
-static unsigned g_fh_nudge, g_ar_nudge;
+static unsigned g_fh_nudge;
+/* telemetry stores (code-health C5-2), as a telemetry build compiles them: the nudge
+ * count the cases read is audio_tel.nudge */
+#define TEL(stmt) do { stmt; } while (0)
+#define TEL_INPUT(x)
+static struct { unsigned nudge; } audio_tel;
 static int g_gbl_audio_on, g_gbl_follow;
 static uint64_t audio_next = AUDIO_CHUNK_US;
 static void audio_produce(void)
@@ -186,7 +191,8 @@ static int mer_rewind_busy(void) { return 0; }
 static int link_session_any(void) { return 0; }
 
 static int g_net_up, g_mer_rend_seen;
-static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+static unsigned g_mer_post_us;
+static struct { unsigned rend_n, rend_us, rend_max; } merend_tel;
 static void fe_np_pump(void) { }
 #define FE_LP_SET(x) do { } while (0)
 
@@ -235,7 +241,7 @@ static void reset_world(int ll)
 {
    t_now = 0; vb_count = 0; vb_next = 16683; ge_done = me_done = 0;
    ring_w = 3500; ring_r = 0; ring_frac = 0; starved = 0;
-   g_ar_nudge = g_fh_nudge = 0;
+   audio_tel.nudge = g_fh_nudge = 0;
    audio_next = AUDIO_CHUNK_US; g_ll_pull = 0;
    me_busy = 0;
    disp_frame = -1; pend_frame = -2; bb_frame = -1; bb_filled = 0;
@@ -342,7 +348,7 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
    r->vb = vb_count;
    r->entries = g_ll_to_h;
    r->exits = g_ll_to_b;
-   r->nudges = g_ar_nudge;
+   r->nudges = audio_tel.nudge;
    r->pulls = g_ll_pull;
    r->lfpulls = g_lf_pull;
    r->starved = starved;

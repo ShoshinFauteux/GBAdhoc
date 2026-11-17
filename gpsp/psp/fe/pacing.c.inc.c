@@ -525,8 +525,8 @@ static void lat_census(void)
           g_lat_age_n ? g_lat_age_us / g_lat_age_n : 0u,
           g_ll_cfg, g_ll_mode_h, g_ll_hit, g_ll_miss_me, g_ll_miss_ge,
           g_ll_would, g_ll_wouldnt, g_ll_to_h, g_ll_to_b, g_ll_blit_ema,
-          g_lat_age_n, g_in_fresh_n, g_in_fresh_got,
-          g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u,
+          g_lat_age_n, input_tel.fresh_n, input_tel.fresh_got,
+          input_tel.fresh_n ? input_tel.fresh_us / input_tel.fresh_n : 0u,
           g_ll_eng, g_ll_slot, g_ll_slot_fail, g_ll_win_miss, g_ll_win_n,
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
@@ -554,6 +554,6 @@ static void lat_census(void)
    g_ll_to_h = g_ll_to_b = 0;
    g_ll_eng = g_ll_slot = g_ll_slot_fail = g_ll_pull = 0;
    g_ll_lead_min = ~0u;
-   g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
+   TEL(input_tel.fresh_n = input_tel.fresh_us = input_tel.fresh_got = 0);
 }
 

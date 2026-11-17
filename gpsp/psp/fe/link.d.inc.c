@@ -154,7 +154,13 @@ static void rfu_link_down_drain(void)
  * fires at 61 as it does today).  Default PLAY_EXIT_ASSIST: on for players,
  * off in the harness; Emerald USA only by the pointer gate. */
 static int g_exit_assist;              /* harness key rfu_exit_assist */
-static unsigned g_exit_assist_n;       /* fired this session */
+#ifdef GPSP_KEEP_TELEMETRY
+/* The exit assist's count for its EVT line (code-health C5-2). */
+static struct fe_power_tel
+{
+   unsigned exit_assist_n;              /* fired this session */
+} power_tel;
+#endif
 
 static void exit_assist_frame(void)
 {
@@ -178,9 +184,9 @@ static void exit_assist_frame(void)
    ls[local] = 0x83;
    if (fe_host_mem_write(0x03000E10 + (unsigned)local, &ls[local], 1) == 0)
    {
-      g_exit_assist_n++;
+      TEL(power_tel.exit_assist_n++);
       fe_evt("rfu_exit_assist local=%d ka=%u n=%u net=%s",
-             local, ka, g_exit_assist_n, g_net_up ? "up" : "down");
+             local, ka, power_tel.exit_assist_n, g_net_up ? "up" : "down");
    }
 }
 

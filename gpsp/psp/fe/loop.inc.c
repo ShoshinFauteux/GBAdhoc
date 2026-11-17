@@ -161,16 +161,15 @@ void frame_loop(loop_t *L, const session_ctx *S)
           (int)(g_vb_us - pd.TimeStamp) > 2000)
       {
          unsigned t0 = (unsigned)sceKernelGetSystemTimeLow(), tn = t0;
-         g_in_fresh_n++;
+         TEL(input_tel.fresh_n++);
          while ((int)(g_vb_us - pd.TimeStamp) > 2000 && tn - t0 < 1500u)
          {
             sceKernelDelayThread(50);
             sceCtrlPeekBufferPositive(&pd, 1);
             tn = (unsigned)sceKernelGetSystemTimeLow();
          }
-         g_in_fresh_us += tn - t0;
-         if ((int)(g_vb_us - pd.TimeStamp) <= 2000)
-            g_in_fresh_got++;
+         TEL(input_tel.fresh_us += tn - t0);
+         TEL(if ((int)(g_vb_us - pd.TimeStamp) <= 2000) input_tel.fresh_got++);
       }
       g_lat_poll_vc = sceDisplayGetVcount();
       g_lat_seq++;
@@ -1543,13 +1542,13 @@ void frame_loop(loop_t *L, const session_ctx *S)
          {
             want++;               /* audio-ring nudge (plan §4.4), unchanged */
             g_fh_nudge++;         /* ADR-0063: previously unobservable */
-            g_ar_nudge++;
+            TEL(audio_tel.nudge++);
          }
          else if (want == 1u && !g_ff_mult && ll_want_slot(ring_w - ring_r))
          {
             want++;               /* the same nudge, a little early (me_lowlat 2) */
             g_fh_nudge++;
-            g_ar_nudge++;
+            TEL(audio_tel.nudge++);
             g_ll_pull++;
          }
          else if (want == 1u && !g_ff_mult && !g_ff_uncapped && !g_gbl_audio_on &&
@@ -1557,7 +1556,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
          {
             want++;               /* CATCH UP SOON: the same nudge, early */
             g_fh_nudge++;
-            g_ar_nudge++;
+            TEL(audio_tel.nudge++);
             g_lf_pull++;
          }
          audio_ring_note();
@@ -1642,13 +1641,13 @@ void frame_loop(loop_t *L, const session_ctx *S)
                unsigned d = (unsigned)sceKernelGetSystemTimeLow() -
                             g_mer_post_us;
                g_mer_rend_seen = 1;
-               g_mer_rend_n++;
-               g_mer_rend_us += d;
+               TEL_INPUT(d)
+               TEL(merend_tel.rend_n++);
+               TEL(merend_tel.rend_us += d);
 #if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
                g_fxs_rn++;  g_fxs_ru += d;
 #endif
-               if (d > g_mer_rend_max)
-                  g_mer_rend_max = d;
+               TEL(if (d > merend_tel.rend_max) merend_tel.rend_max = d);
             }
             /* LOW LATENCY: flip as soon as the frame is complete (tier 0a)
              * or present this iteration's own render (tier 1).  While one

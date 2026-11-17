@@ -84,7 +84,7 @@ gblink_end_after	fe_ini_get_int	300	psp/fe/boot.inc.c:300	release,lab,harness
 gblink_hash_every	fe_ini_get_int	0	psp/fe/boot.inc.c:375	release,lab,harness
 gblink_hash_every	fe_ini_get_int	0	psp/fe/session.inc.c:549	lab,harness
 gblink_host_wait_peer	fe_ini_get_int	0	psp/fe/boot.inc.c:350	lab,harness
-gblink_input_batch	fe_ini_get_int	- 1	psp/fe/link.d.inc.c:1051	release,lab,harness
+gblink_input_batch	fe_ini_get_int	- 1	psp/fe/link.d.inc.c:1057	release,lab,harness
 gblink_library	fe_ini_get_int	1	psp/fe/boot.inc.c:307	release,lab,harness
 gblink_live	fe_ini_get_int	1	psp/fe/boot.inc.c:339	release,lab,harness
 gblink_nack	fe_ini_get_int	v	psp/fe/boot.inc.c:370	release,lab,harness
@@ -240,7 +240,7 @@ rewind_full_flush	fe_ini_get_int	g_rw_opts . full_flush_restore	psp/fe/rewind.in
 rewind_fuzz_from	fe_ini_get_int	0	psp/fe/rewind.inc.c:310	release,lab,harness
 rewind_fuzz_seed	fe_ini_get_int	1	psp/fe/rewind.inc.c:312	release,lab,harness
 rewind_gap_max	fe_ini_get_int	( long ) g_rw_opts . gap_max	psp/fe/rewind.inc.c:274	release,lab,harness
-rewind_gedump	fe_ini_get_int	0	psp/fe/loop.inc.c:1416	lab,harness
+rewind_gedump	fe_ini_get_int	0	psp/fe/loop.inc.c:1415	lab,harness
 rewind_gprof	fe_ini_get_int	g_rw_opts . gather_prof	psp/fe/rewind.inc.c:247	release,lab,harness
 rewind_hash	fe_ini_get_int	0	psp/fe/rewind.inc.c:297	lab,harness
 rewind_head_skip	fe_ini_get_int	1	psp/fe/rewind.inc.c:277	release,lab,harness

@@ -140,8 +140,18 @@ static int g_vhash_on;                   /* harness oracle enabled */
  * a run with a golden captured before that commit. */
 static int g_vhash_legacy_rb;
 static void mer_note_sum(void);          /* defined below vhash_frame */
-static unsigned g_mer_frames, g_mer_drops, g_mer_miss;
-static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_census;
+static unsigned g_mer_miss;
+#ifdef GPSP_KEEP_TELEMETRY
+/* The ME renderer's telemetry (code-health C5-2): window counters for the me_rend EVT
+ * line, written through TEL(); a player build has none. */
+static struct fe_merend_tel
+{
+   unsigned frames, drops;                      /* frames seen, frames dropped */
+   unsigned wait_us, wait_max, census;          /* the input-copy wait; the 600-frame window */
+   unsigned rend_n, rend_us, rend_max;          /* ME render duration samples */
+   unsigned wb_pages, wb_n;                     /* dirty VRAM pages written back */
+} merend_tel;
+#endif
 /* ME RENDER DURATION -- the number the whole low-latency question turns on.
  * The "~10 ms render" quoted in comments here was never measured. Uncapped
  * smooth FF reaching 120+ fps implies <=8.3 ms, and that is a LOWER bound on
@@ -159,7 +169,7 @@ static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_census;
  * Sampled in the vblank wait, which is idle anyway. A render that outlasts
  * the wait yields no sample, so `n` being small is itself informative --
  * it means the render is longer than the frame's slack. */
-static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+static unsigned g_mer_post_us;
 #if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)
 static unsigned g_fxs_rn, g_fxs_ru;    /* the cost sweep's own ME sums */
 #endif

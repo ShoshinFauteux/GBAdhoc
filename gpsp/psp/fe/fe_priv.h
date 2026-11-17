@@ -99,6 +99,25 @@ static void core_health_evt(const char *at);
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
 
+/* TEL(stmt) (tier C, C-5): a store to a telemetry struct member (merend_tel, audio_tel,
+ * input_tel, power_tel).  The structs exist only in a GPSP_KEEP_TELEMETRY build; a player
+ * build does not evaluate `stmt` (ADR-0067b), so a reference outside TEL()/fe_evt() fails to
+ * compile there.  A statement whose right side calls a function keeps the call outside TEL()
+ * when anything else depends on its timing. */
+#ifdef GPSP_KEEP_TELEMETRY
+#define TEL(stmt) do { stmt; } while (0)
+#else
+#define TEL(stmt) do { } while (0)
+#endif
+/* TEL_INPUT(x), written WITHOUT a semicolon: a local that only TEL() statements read.  A
+ * player build marks it used (its value still computed: a clock read keeps its timing); a
+ * telemetry build gets no token at all, so its token stream is the old one (G0R). */
+#ifdef GPSP_KEEP_TELEMETRY
+#define TEL_INPUT(x)
+#else
+#define TEL_INPUT(x) (void)(x);
+#endif
+
 /* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
  * builds only; a player build compiles the counter out). */
 #ifdef GPSP_KEEP_TELEMETRY
