@@ -896,6 +896,13 @@ def render(d):
       '`LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), '
       'so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab\'s reach into the TU. `LAB_HANDOFF` is reached only '
       'through `FE_HANDOFF` (`fe/fe_priv.h:%s`).' % (len(sites), ','.join(map(str, ho))))
+    w('- **`TEL(...)`** (`fe/fe_priv.h`, tier C C-5) wraps a statement that only feeds telemetry: a telemetry '
+      'build runs it, a player build compiles it out unevaluated, like `fe_evt` (ADR-0067b). A module\'s '
+      'telemetry objects live in `static struct fe_<module>_tel <module>_tel` under `#ifdef '
+      'GPSP_KEEP_TELEMETRY` (pacing: `pacing_tel`), so any use outside `TEL()`, `fe_evt()` or such a block '
+      'fails to compile in a player build; multi-statement telemetry sits in `#ifdef GPSP_KEEP_TELEMETRY` '
+      'blocks. The rename maps are `tools/refactor/maps/*.map`; G0R (`pp_diff.sh --rename-map --tel`) proves '
+      'a player build loses only such statements.')
     w('- **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the '
       'line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the '
       'source text; whether a build compiles a line depends on that build\'s defines.')
