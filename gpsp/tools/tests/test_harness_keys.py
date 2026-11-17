@@ -30,9 +30,10 @@ CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # C-4): 339 keys on 365 sites, the five pre-ticks adapter rule keys gone (rfu_frame_pace, rfu_hold,
 # rfu_pace_max_hold, rfu_shed_keep, rfu_supersede; release 198, lab 336, harness 314).  C2-4'
 # (code-health C-2): 323 keys on 349 sites, the 16 rejected-experiment keys gone (release 182,
-# lab 320, harness 298).
-EXPECT_KEYS = 323
-EXPECT_SITES = 349
+# lab 320, harness 298).  health-bios: 324 keys on 351 sites, lab_bios (the Lab's bundled-BIOS switch,
+# lab_harness.c lab_audit_keys: two sites, lab only; lab 321).
+EXPECT_KEYS = 324
+EXPECT_SITES = 351
 
 fails = 0
 
