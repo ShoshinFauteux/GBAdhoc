@@ -6,6 +6,7 @@ the G0R checker (g0r.py) and `globals.py census --module X --check`.  No compile
 
   S1  struct st + tel + cfg on a toy source: definitions replaced by the blocks, every code
       use renamed, comments/strings untouched, volatile/arrays/section/initializers kept
+  S3  (tier C C5-3) a declaration's trailing comment over several lines moves with it
   S2  the output compiles (gcc -fsyntax-only, if gcc is on PATH) in both telemetry arms
   R1..R12 refusals: extern, defined twice, exported, non-static, const, macro-global,
       aligned, section mismatch, init in st / none in cfg, mixed #if, shared line,
@@ -226,6 +227,16 @@ def run():
           'S1 array dims kept; cfg initializers designated, a `;`/`=` inside a string handled')
     check(new.count('#ifdef GPSP_KEEP_TELEMETRY') == 1, 'S1 the tel block is under #ifdef GPSP_KEEP_TELEMETRY')
     check(any('pacing_tel' in r and '3 members' in r for r in rep), 'S1 report: %s' % rep)
+    # S3 (tier C C5-3): a trailing comment over three lines goes with its declaration
+    ml = ('static long long g_ck;      /* one\n                             * two\n'
+          '                             * three */\nstatic int g_ck2;\nint f(void) { return (int)g_ck + g_ck2; }\n')
+    try:
+        t3, _ = S.apply(ml, S.read_map('struct ck fe_ck st\ng_ck ck.a\ng_ck2 ck.b\n'))
+        check('   long long a;   /* one\n                   * two\n                   * three */' in t3
+              and t3.count('*/') == 1 and t3.count('/*') == 1,
+              'S3 a three-line trailing comment moves into the struct whole (nothing left behind)')
+    except S.Refused as e:
+        bad('S3 refused: %s' % e)
     d = tempfile.mkdtemp(prefix='gstruct.')
     try:
         gcc = shutil.which('gcc')
