@@ -81,6 +81,18 @@ static inline int harness_not_found(void) { return 0; }
 #define HARNESS_PRESENT()          0
 #define HARNESS_FPS_X100(key, def) ((void)sizeof(key), (int)(def))
 #endif
+/* HARNESS_KEEP_WRITTEN(obj): frame parity (owner decision 2026-11-17; tools/layout/frame_parity.py).
+ * `obj = HARNESS_INT(key, obj)` folds to `obj = obj` in a player build.  GCC drops that, sees an
+ * object nothing writes, and folds its initializer into the per-frame code that reads it, so the
+ * release's per-frame code stops being the code the Lab build runs (C2-3 did this to
+ * g_ll_recover and g_ll_margin_us: lat_wait_begin, lat_wait_step, frame_loop).  This puts one
+ * opaque store back (boot code, no instruction of its own beyond the store); a rig build's read
+ * is the store already, so there it is nothing. */
+#if HARNESS_FOLD
+#define HARNESS_KEEP_WRITTEN(obj)  __asm__("" : "+r"(obj))
+#else
+#define HARNESS_KEEP_WRITTEN(obj)  do { } while (0)
+#endif
 
 /* core_health_evt (tier C, C2-2): the soak line, defined in fe/harness.f.inc.c in a telemetry
  * build.  The state-load and reset functions of fe/misc.c.inc.c call it ABOVE that definition,

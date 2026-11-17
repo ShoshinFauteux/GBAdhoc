@@ -990,6 +990,8 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       g_ll_margin_us = (unsigned)HARNESS_INT(
                                                 "me_lowlat_margin_us",
                                                 (int)g_ll_margin_us);
+      HARNESS_KEEP_WRITTEN(g_ll_recover);     /* per-frame reads: frame parity */
+      HARNESS_KEEP_WRITTEN(g_ll_margin_us);
       g_in_fresh = (int)HARNESS_INT("input_fresh",
                                        PLAY_INPUT_FRESH) != 0;
       g_ctrl_cycle = (int)HARNESS_INT("ctrl_cycle", 0);
