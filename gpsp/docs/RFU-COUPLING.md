@@ -132,6 +132,18 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
 5. **Retire the old rules** one at a time, with a hardware run after each. Review the 57 fps force.
 6. **Beta build**: a natural first nightly once Tennis and Golf hold up in real sessions.
 
+## Status (beta.6 online tuning, 2026-11-17)
+
+- **D by session kind.** `rfu_sched_d_for` (rfu_sched_api.h): 2 ad hoc, 4 in an online room, set at each session's
+  start (`net_start_np`, EVT `rfu_sched d= kind=`). Both consoles know the kind and run the same build, so nothing
+  is negotiated and they cannot disagree. A harness `rfu_sched` (the Lab's `-dN` arms) is used for every session.
+  Hardware basis: Lab ONLINE-SUITE.md 10.3 (36.8 / 41.5 / 45.8 linked fps at D = 2 / 3 / 4).
+- **The NI window is unchanged at D = 4** (test_rfu_sched `test_ni_window_d4`): inside an NI exchange every NI
+  packet reaches the other game 1 frame later, and Golf's race (the child presses in the frame the parent moves on
+  to UNI) lands 1 frame later, at D = 2 and D = 4 alike, because the parent's own NI sends hold it at D = 1. What D
+  does change: an NI packet that starts an exchange after more than RFU_SCHED_NI_FRAMES of UNI on both sides can
+  arrive up to D frames late (2 -> 4), like any UNI data.
+
 ## Status (code-health C-4, 2026-11-16)
 
 Ticks are the only adapter protocol (owner decision A-0: stable 5.0.0 ships them).

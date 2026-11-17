@@ -802,9 +802,10 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
                                          g_pcfg.gu_defer);
    g_pcfg.gu_defer = g_pcfg.gu_defer ? 1 : 0;
    /* Scheduled ticks (rfu_sched.h, docs/RFU-COUPLING.md), the adapter's one
-    * protocol since C-4: D = 2 by default; a harness may pick another D, or 0
-    * for a diagnostic run with raw queues (it refuses a ticks partner). */
-   rfu_sched_config((unsigned)HARNESS_INT("rfu_sched", RFU_SCHED_D_DEFAULT));
+    * protocol since C-4: D by session kind (rfu_sched_d_for), set again at each
+    * session start (net_start_np); a harness D (0 = raw queues) is for every session. */
+   rfu_sched_config(rfu_sched_d_for(0, g_rfu_sched_ini =
+                                       HARNESS_INT("rfu_sched", -1)));
    fe_evt("rfu_sched d=%u", rfu_sched_d);
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in

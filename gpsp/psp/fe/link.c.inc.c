@@ -49,6 +49,9 @@ static int g_gba_cable_ok;
  * land in it; the ROM cache pages instead (pg= in EVT gblink_win).
  * Harness cable_reserve_kb overrides (0 = none, the old behaviour). */
 static void *g_cable_reserve;
+/* The harness's rfu_sched (boot.inc.c), -1 = not set: the adapter's D then
+ * follows the session's kind (rfu_sched_d_for). */
+static long g_rfu_sched_ini = -1;
 
 static int net_start_np(int is_host, const char *group, const char *nick,
                         int probe)
@@ -60,6 +63,14 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       online_psp_iface(&tp);
    else
       adhoc_transport_iface(&tp);
+   /* The adapter's tick delay for this session: both consoles know whether
+    * it is an online room, so both pick the same D with no exchange. */
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+   {
+      rfu_sched_config(rfu_sched_d_for(online_psp_enabled(), g_rfu_sched_ini));
+      fe_evt("rfu_sched d=%u kind=%s", rfu_sched_d,
+             online_psp_enabled() ? "online" : "adhoc");
+   }
 #ifdef GPSP_KEEP_TELEMETRY
    g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
 #endif

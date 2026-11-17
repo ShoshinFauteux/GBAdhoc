@@ -124,6 +124,7 @@ void rs_give_up(void) { rfu_sched_give_up(); }
 
 #else
 /* ----------------------------------------------------------------- driver */
+#include "../../rfu_sched_api.h"     /* rfu_sched_d_for: no symbols used */
 #define NET_RFU_HEADER      0x52465531u
 #define NET_RFU_HOST_SEND   0x05u
 #define NET_RFU_CLIENT_SEND 0x06u
@@ -245,12 +246,19 @@ static int per_frame[2] = { 1, 1 };
 static int send_ni[2];          /* 1 = the next packet is an NI frame */
 static int frozen[2];           /* 1 = this console runs no frames (a stall) */
 /* Per receiver: deliveries; `bad` = early (before stamp + off + the D in
- * force), later than D = 2, or out of stamp order; `shifted` = after the
- * stamp + off + D in force, which only a D that just dropped may cause;
- * `seen_d` = exactly at stamp + off + D, by D; `skipped` = a stamp missing
- * from the sequence (a loss, when the sender sends every frame). */
-static unsigned got[2], bad[2], shifted[2], seen_d[2][3], skipped[2];
+ * force), later than the configured D, or out of stamp order; `shifted` =
+ * after the stamp + off + D in force, which only a D that just dropped may
+ * cause; `seen_d` = exactly at stamp + off + D, by D; `skipped` = a stamp
+ * missing from the sequence (a loss, when the sender sends every frame).
+ * `win_*`: deliveries whose stamp (the SENDER's frame) lies in
+ * [win_lo, win_hi], and the largest delay among them, in the receiver's
+ * frames -- what the receiving game sees of a stretch of the sender's
+ * traffic (the NI window checks). */
+static unsigned got[2], bad[2], shifted[2], seen_d[2][8], skipped[2];
 static int32_t last_stamp[2];
+static int32_t win_lo[2] = { 1, 1 }, win_hi[2], win_max[2];
+static unsigned win_n[2];
+static unsigned cfg_d = 2;      /* the D start() configures */
 
 static void reset_counts(void)
 {
@@ -278,12 +286,17 @@ static int pass(int k)
       int32_t d = a->cur_d();
       int32_t delay = (int32_t)(((uint32_t)(f - a->off()) - (uint32_t)t) & 0xFF);
       int32_t stamp = f - a->off() - delay;
-      if (delay < d || delay > 2 || stamp < last_stamp[k])
+      if (delay < d || delay > (int32_t)cfg_d || stamp < last_stamp[k])
         bad[k]++;
       else if (delay > d)
         shifted[k]++;
       else
         seen_d[k][d]++;
+      if (stamp >= win_lo[k] && stamp <= win_hi[k]) {
+        win_n[k]++;
+        if (delay > win_max[k])
+          win_max[k] = delay;
+      }
       if (last_stamp[k] >= 0 && stamp > last_stamp[k] + 1)
         skipped[k]++;
       last_stamp[k] = stamp;
@@ -319,6 +332,27 @@ static int run(int frames)
   return 1;
 }
 
+/* Run both, each whenever its gate lets it, until console k has run `frames`
+ * more frames (run() asks the same count of both, which a console that is
+ * already ahead cannot meet).  0 = deadlock. */
+static int run_k(int k, int frames)
+{
+  int done = 0, idle = 0;
+  while (done < frames) {
+    int ran = pass(!k);
+    if (pass(k)) {
+      done++;
+      ran = 1;
+    }
+    pump();
+    if (!ran && ++idle > 50)
+      return 0;
+    if (ran)
+      idle = 0;
+  }
+  return 1;
+}
+
 /* Fresh adapters, D on both, linked: A at host frame 1000, B at 37. */
 static void start(void)
 {
@@ -331,8 +365,19 @@ static void start(void)
   reset_counts();
   ad[A].fresh(1, 1, 1000);
   ad[B].fresh(0, 0, 37);
-  ad[A].config(2);
-  ad[B].config(!strcmp(mutant, "d0") ? 0 : 2);
+  win_lo[A] = win_lo[B] = 1;
+  win_hi[A] = win_hi[B] = 0;
+  ad[A].config(cfg_d);
+  ad[B].config(!strcmp(mutant, "d0") ? 0 : cfg_d);
+}
+
+/* Watch what console k receives of its partner's frames [lo, hi]. */
+static void watch(int k, int32_t lo, int32_t hi)
+{
+  win_lo[k] = lo;
+  win_hi[k] = hi;
+  win_max[k] = 0;
+  win_n[k] = 0;
 }
 
 /* start(), then a few frames to lock, then fresh counts.  The lock itself is
@@ -555,6 +600,97 @@ static void test_link_lost(void)
   printf("  link lost: the ticks stop, the console runs free\n");
 }
 
+/* 8. The D a session runs follows its kind, which both consoles know: 2 ad
+ *    hoc, 4 online; a harness value (the Lab's D study arms, 0 included)
+ *    wins for every kind. */
+static void test_d_for_kind(void)
+{
+  CHECK(rfu_sched_d_for(0, -1) == 2, "ad hoc D %u", rfu_sched_d_for(0, -1));
+  CHECK(rfu_sched_d_for(1, -1) == 4, "online D %u", rfu_sched_d_for(1, -1));
+  CHECK(rfu_sched_d_for(1, 2) == 2 && rfu_sched_d_for(0, 4) == 4 &&
+        rfu_sched_d_for(1, 3) == 3, "harness D not used as given");
+  CHECK(rfu_sched_d_for(1, 0) == 0 && rfu_sched_d_for(0, 0) == 0,
+        "harness D = 0 (raw queues) not kept");
+  CHECK(RFU_SCHED_D_DEFAULT == 2 && RFU_SCHED_D_ONLINE == 4, "constants");
+  printf("  D by kind: ad hoc %u, online %u, a harness D wins\n",
+         rfu_sched_d_for(0, -1), rfu_sched_d_for(1, -1));
+}
+
+/* 9. D = 4 does not widen the NI window (Mario Golf's lobby race,
+ *    rfu_sched.h): measured at D = 2 and D = 4 alike.
+ *    a. An NI exchange (a lobby: both games in NI every frame): after its
+ *       first round trip, every NI packet reaches the other game 1 frame
+ *       after it was sent, on both consoles.
+ *    b. The race itself: the parent moves on to UNI and the child's press
+ *       (NI) was sent in that frame: the parent's game gets it 1 frame later
+ *       -- the parent's own NI sends keep it at D = 1 for RFU_SCHED_NI_FRAMES.
+ *    c. What D does change: the first NI packet after > RFU_SCHED_NI_FRAMES
+ *       of UNI on both sides arrives at most D frames later (the receiver may
+ *       already have run D frames ahead), then the exchange runs at 1. */
+static void test_ni_window_d4(void)
+{
+  static const unsigned ds[2] = { 2, 4 };
+  int32_t lobby_max[2][2], press[2], cold[2];
+  int i, r, k;
+  for (r = 0; r < 2; r++) {
+    int32_t a0, b0, pf;
+    cfg_d = ds[r];
+    CHECK(linked(), "no lock at D=%u", cfg_d);
+    CHECK(run(700), "deadlock before the lobby");
+    CHECK(ad[A].cur_d() == (int32_t)cfg_d && ad[B].cur_d() == (int32_t)cfg_d,
+          "settled D %d/%d, want %u", ad[A].cur_d(), ad[B].cur_d(), cfg_d);
+    /* a. the lobby: 200 frames of NI both ways; skip its first round trip */
+    a0 = ad[A].frame();
+    b0 = ad[B].frame();
+    watch(A, b0 + 10, b0 + 190);
+    watch(B, a0 + 10, a0 + 190);
+    for (i = 0; i < 200; i++) {
+      send_ni[A] = send_ni[B] = 1;
+      CHECK(run(1), "deadlock in the lobby (D=%u)", cfg_d);
+    }
+    for (k = 0; k < 2; k++) {
+      CHECK(win_n[k] > 150, "%s saw %u lobby packets", k ? "B" : "A", win_n[k]);
+      lobby_max[r][k] = win_max[k];
+    }
+    /* b. the parent (A) moves on to UNI; the child (B) presses in that frame.
+     *    Worst case: the parent has run as far ahead as its gate lets it
+     *    (the child stalls a moment first), as it does on a slow wire. */
+    frozen[B] = 1;
+    run(10);                   /* A runs until its gate stops it */
+    frozen[B] = 0;
+    pf = ad[B].frame();
+    watch(A, pf, pf);
+    send_ni[B] = 1;
+    CHECK(run_k(B, 11), "deadlock at the press");
+    CHECK(win_n[A] == 1, "parent got the press %u times", win_n[A]);
+    press[r] = win_max[A];
+    /* c. 300 frames of UNI on both sides, then a cold NI from the child */
+    CHECK(run(300), "deadlock in UNI");
+    CHECK(ad[A].cur_d() == (int32_t)cfg_d, "parent D %d after UNI", ad[A].cur_d());
+    frozen[B] = 1;
+    run(10);
+    frozen[B] = 0;
+    pf = ad[B].frame();
+    watch(A, pf, pf);
+    send_ni[B] = 1;
+    CHECK(run_k(B, 12), "deadlock at the cold NI");
+    CHECK(win_n[A] == 1, "parent got the cold NI %u times", win_n[A]);
+    cold[r] = win_max[A];
+    CHECK(bad[A] + bad[B] == 0, "off schedule %u/%u (D=%u)", bad[A], bad[B], cfg_d);
+  }
+  cfg_d = 2;
+  CHECK(lobby_max[0][0] == 1 && lobby_max[0][1] == 1 &&
+        lobby_max[1][0] == 1 && lobby_max[1][1] == 1,
+        "lobby NI delay D=2 %d/%d, D=4 %d/%d (want 1 everywhere)", lobby_max[0][0],
+        lobby_max[0][1], lobby_max[1][0], lobby_max[1][1]);
+  CHECK(press[0] == 1 && press[1] == 1, "press delay D=2 %d, D=4 %d", press[0],
+        press[1]);
+  CHECK(cold[0] <= 2 && cold[1] <= 4, "cold NI delay D=2 %d, D=4 %d", cold[0],
+        cold[1]);
+  printf("  NI window: lobby 1 frame, press 1 frame at D=2 and D=4; "
+         "cold NI %d (D=2) / %d (D=4) frames\n", cold[0], cold[1]);
+}
+
 int main(int argc, char **argv)
 {
   if (argc > 1)
@@ -568,6 +704,8 @@ int main(int argc, char **argv)
   test_pause();
   test_give_up_relock();
   test_link_lost();
+  test_d_for_kind();
+  test_ni_window_d4();
   if (failures) {
     printf("rfu sched%s%s: %d check(s) FAILED\n", *mutant ? " mutant " : "", mutant,
            failures);
