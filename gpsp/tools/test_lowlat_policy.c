@@ -61,10 +61,9 @@ static unsigned g_ring_high_water = 4096;
 static volatile unsigned ring_w, ring_r;
 static unsigned ring_frac, starved;
 static unsigned g_fh_nudge;
-/* telemetry stores (code-health C5-2), as a telemetry build compiles them: the nudge
+/* telemetry stores (code-health C5-2), as every build compiles them: the nudge
  * count the cases read is audio_tel.nudge */
-#define TEL(stmt) do { stmt; } while (0)
-#define TEL_INPUT(x)
+#define TEL(...) do { __VA_ARGS__; } while (0)
 static struct { unsigned nudge; } audio_tel;
 static int g_gbl_audio_on, g_gbl_follow;
 static uint64_t audio_next = AUDIO_CHUNK_US;

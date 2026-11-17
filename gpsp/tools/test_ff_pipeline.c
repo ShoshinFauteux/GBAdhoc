@@ -22,10 +22,9 @@ static int g_mer_dirty_cfg, g_mer_full_copy;
 static unsigned g_mer_miss, g_fps_drawn;
 static unsigned g_mer_post_us, g_mer_rend_seen;
 static unsigned g_mer_watch_us;
-/* the ME renderer's telemetry (code-health C5-2): TEL() as a telemetry build has it, so the
+/* the ME renderer's telemetry (code-health C5-2): TEL() as every build has it, so the
  * drop count the cases assert on is kept */
-#define TEL(stmt) do { stmt; } while (0)
-#define TEL_INPUT(x)
+#define TEL(...) do { __VA_ARGS__; } while (0)
 static struct
 {
    unsigned frames, drops, wait_us, wait_max, census, rend_n, rend_us, rend_max;

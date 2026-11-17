@@ -114,24 +114,16 @@ static void core_health_evt(const char *at);
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
 
-/* TEL(stmt) (tier C, C-5): a store to a telemetry struct member (merend_tel, audio_tel,
- * input_tel, power_tel).  The structs exist only in a GPSP_KEEP_TELEMETRY build; a player
- * build does not evaluate `stmt` (ADR-0067b), so a reference outside TEL()/fe_evt() fails to
- * compile there.  A statement whose right side calls a function keeps the call outside TEL()
- * when anything else depends on its timing. */
-#ifdef GPSP_KEEP_TELEMETRY
-#define TEL(stmt) do { stmt; } while (0)
-#else
-#define TEL(stmt) do { } while (0)
-#endif
-/* TEL_INPUT(x), written WITHOUT a semicolon: a local that only TEL() statements read.  A
- * player build marks it used (its value still computed: a clock read keeps its timing); a
- * telemetry build gets no token at all, so its token stream is the old one (G0R). */
-#ifdef GPSP_KEEP_TELEMETRY
-#define TEL_INPUT(x)
-#else
-#define TEL_INPUT(x) (void)(x);
-#endif
+/* TEL(stmt): a statement that only feeds telemetry (an EVT line, the Lab), e.g.
+ * TEL(merend_tel.drops++), a store to one of the telemetry structs (merend_tel, audio_tel,
+ * input_tel, power_tel).  It names the statement as telemetry; it runs in EVERY build.
+ * Owner decision 2026-11-17: the Lab can run only Lab builds, so the code that runs every
+ * frame stays the same in the player build and the Lab build, or the Lab's speed and
+ * picture-hash results stop proving the shipped build; the per-frame telemetry is not
+ * compiled out of a player build (what fe_evt reports still is: ADR-0067b).  Tier C C-5
+ * (builds/health-out/design/C-5.md §2.1); tools/layout/frame_parity.py checks the per-frame
+ * code.  Variadic so a statement with a top-level comma needs no extra parentheses. */
+#define TEL(...) do { __VA_ARGS__; } while (0)
 
 /* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
  * builds only; a player build compiles the counter out). */

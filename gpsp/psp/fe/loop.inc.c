@@ -1636,7 +1636,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
                unsigned d = (unsigned)sceKernelGetSystemTimeLow() -
                             g_mer_post_us;
                g_mer_rend_seen = 1;
-               TEL_INPUT(d)
                TEL(merend_tel.rend_n++);
                TEL(merend_tel.rend_us += d);
 #if defined(FX_SWEEP) && defined(GPSP_PERF_RIG)

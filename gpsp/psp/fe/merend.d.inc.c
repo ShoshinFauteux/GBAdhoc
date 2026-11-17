@@ -297,7 +297,6 @@ static void me_rend_fill_desc(int out)
       sceKernelDcacheWritebackRange(vram_clean, VRAM_DIRTY_PAGES);
       sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
       sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
-      TEL_INPUT(n)
       TEL(merend_tel.wb_pages += n);
       TEL(merend_tel.wb_n++);
    }
@@ -580,7 +579,6 @@ present:
          me_rend_teardown("watchdog");
    }
 
-#ifdef GPSP_KEEP_TELEMETRY
    if (++merend_tel.census >= 600)
    {
       fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u "
@@ -613,7 +611,6 @@ present:
       g_vis_n = g_vis_us = g_vis_max = 0;
       merend_tel.wb_pages = merend_tel.wb_n = 0;
    }
-#endif
    LOOP_PHASE(2);   /* back in the core's frame (always called from it) */
 }
 

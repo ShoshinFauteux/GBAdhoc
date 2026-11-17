@@ -185,14 +185,12 @@ static unsigned g_lat_vc0;            /* vcount at the last census: `vb=` */
  *   ctrl_cycle  = N  sceCtrlSetSamplingCycle(N) (5555..20000 us): timer
  *                    sampling instead of vblank sampling. */
 static int      g_in_fresh, g_ctrl_cycle;
-#ifdef GPSP_KEEP_TELEMETRY
 /* input_fresh's census (code-health C5-2): re-peeks, their wait, the ones that caught a
- * fresh sample.  Read only by lat_census's EVT line. */
+ * fresh sample.  Read only by lat_census's EVT line; written in every build (TEL). */
 static struct fe_input_tel
 {
    unsigned fresh_n, fresh_us, fresh_got;
 } input_tel;
-#endif
 
 /* @extract:end lowlat:defaults */
 static int mer_rewind_busy(void);     /* below, beside the rewind's state */

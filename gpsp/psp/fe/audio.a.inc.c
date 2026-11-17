@@ -180,21 +180,18 @@ static void audio_status_frame(void)
  * outside link sessions (frame_hist's `nudge` is session-only), which is how
  * a 0.75 s audio lag went unseen.  lvl/min/max in ring frames (in_rate
  * samples), starved = output frames the audio thread filled with silence. */
-#ifdef GPSP_KEEP_TELEMETRY
-/* The audio ring's telemetry (code-health C5-2).  The window's minimum keeps its own
- * object: it starts at ~0u, and a struct member with an initializer would move the
- * whole struct from .bss to .data. */
+/* The audio ring's telemetry (code-health C5-2), in every build (frame parity: TEL in
+ * fe/fe_priv.h).  The window's minimum keeps its own object: it starts at ~0u, and a
+ * struct member with an initializer would move the whole struct from .bss to .data. */
 static struct fe_audio_tel
 {
    unsigned n, max, nudge, starved0;
 } audio_tel;
 static unsigned g_ar_min = ~0u;
-#endif
 
-/* A telemetry build's window line; a player build's call is empty. */
+/* Per paced frame in every build; only a telemetry build prints the window line. */
 static void audio_ring_note(void)
 {
-#ifdef GPSP_KEEP_TELEMETRY
    unsigned level = ring_w - ring_r;
    if (level < g_ar_min)
       g_ar_min = level;
@@ -212,7 +209,6 @@ static void audio_ring_note(void)
       audio_tel.max = 0;
       audio_tel.nudge = 0;
    }
-#endif
 }
 
 _Static_assert(PCFG_AUDIO_HW_MAX == PSP_AUDIO_VOLUME_MAX,
