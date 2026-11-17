@@ -48,6 +48,22 @@ extern "C" {
 #endif
 #define ND_HDR_SIZE      24
 #define ND_MAX_FRAME     (ND_HDR_SIZE + ND_MAX_PAYLOAD)
+/* REDUNDANT DATA (nd_config.redund, ND_T_DATAR in netdrv_wire.h).  A first
+ * transmission may carry up to ND_RED_MAX earlier payloads that are still
+ * unacknowledged, so a single lost datagram is filled from the next one.
+ * Its body: u16 primary length, the primary payload, then per carried
+ * payload u16 seq, u16 length, the payload.  No datagram is ever larger than
+ * ND_WIRE_CAP: the desktop build's largest frame (24 + 560), which every
+ * transport already carries -- the online relay's RL_MAX_DGRAM is 600 =
+ * its 16 B header + 584 -- so the relay needs no change.  PSP (payload
+ * 144): body <= 442, datagram <= 466. */
+#define ND_RED_MAX       2
+#define ND_WIRE_CAP      584
+#define ND_RED_BODY_RAW  (2 + ND_MAX_PAYLOAD + ND_RED_MAX * (4 + ND_MAX_PAYLOAD))
+#define ND_RED_BODY_MAX  (ND_HDR_SIZE + ND_RED_BODY_RAW <= ND_WIRE_CAP ? \
+                          ND_RED_BODY_RAW : ND_WIRE_CAP - ND_HDR_SIZE)
+#define ND_MAX_DGRAM     (ND_HDR_SIZE + ND_RED_BODY_MAX > ND_MAX_FRAME ? \
+                          ND_HDR_SIZE + ND_RED_BODY_MAX : ND_MAX_FRAME)
 #define ND_MAX_CLIENTS   5     /* client_ids 0..4; host is 0 */
 /* ARQ capacity (Gate-3 sizing, ADR-0010): an active RFU link runs a steady
  * ~2 payloads/frame (~120/s) with bursts.  window*RTT throughput must beat
@@ -172,6 +188,7 @@ enum
  * both consoles must agree on, the rest are free for something a peer may
  * simply not have.  Never reuse a bit. */
 #define ND_FEAT_RFU_SCHED  (1u << 0)   /* rfu.c scheduled ticks */
+#define ND_FEAT_REDUND     (1u << 1)   /* sends ND_T_DATAR (nd_config.redund) */
 #define ND_FEAT_MUST_MATCH 0x00FFu
 
 /* ---------------------------------------------------- transport interface -- */
@@ -340,6 +357,11 @@ typedef struct nd_stats
    uint32_t prof_pumps;
    uint32_t prof_rx_us, prof_arq_us;
    uint32_t prof_rx_max_us, prof_arq_max_us;
+   /* Redundant DATA (nd_config.redund): earlier payloads we carried again;
+    * carried payloads we were missing (a gap filled without a
+    * retransmission -- a loss repaired) and ones we already had (not
+    * counted in rx_dup, which keeps meaning "the peer retransmitted"). */
+   uint32_t red_tx, red_fill, red_dup;
 } nd_stats;
 
 /* --------------------------------------------------------------- config -- */
@@ -375,6 +397,16 @@ typedef struct nd_config
     * frame per emulated frame, so every ack finds a ride and the bare ACKs
     * -- half of all packets on the air -- disappear. */
    uint32_t ack_ride_us;
+   /* REDUNDANT DATA (ND_RED_MAX above); 0 = off, the wire every build so
+    * far has sent.  N > 0: each reliable payload's FIRST transmission also
+    * carries up to N (<= ND_RED_MAX) payloads sent just before it that are
+    * still unacknowledged, within ND_RED_BODY_MAX.  On an ordered lane a lost
+    * datagram otherwise holds everything behind it until its retransmission
+    * timeout (~160 ms on the 3000's internet path); carried again, it is
+    * delivered with the next datagram, one frame later.  The retransmission
+    * stays as the fallback.  Every build understands DATAR; set it only where
+    * the peer runs this build (ND_FEAT_REDUND at admission). */
+   uint8_t  redund;
    /* OPTIONAL profiling clock (ADR-0021). When non-NULL netdrv_pump splits
     * its own cost into nd_stats.prof_rx_us / prof_arq_us. Costs 4 extra
     * clock reads per pump, so it is only sane once the pump is called ~once

@@ -73,7 +73,7 @@ size_t nd_wire_build(uint8_t *out, const nd_hdr *h, const void *payload)
    put16(out + 14, 0);
    put32(out + 16, h->src_nonce);
    put32(out + 20, h->dst_nonce);
-   if (h->len)
+   if (h->len && payload != out + ND_HDR_SIZE)   /* DATAR is built in place */
       memcpy(out + ND_HDR_SIZE, payload, h->len);
    crc = nd_crc16(0xFFFF, out, ND_HDR_SIZE + h->len);
    put16(out + 14, crc);
@@ -87,7 +87,7 @@ int nd_wire_parse(const uint8_t *buf, size_t sz, nd_hdr *h,
    uint16_t crc;
    int why = 0;
 
-   if (sz < ND_HDR_SIZE || sz > ND_MAX_FRAME)
+   if (sz < ND_HDR_SIZE || sz > ND_MAX_DGRAM)
       why = 1;
    else if (get32(buf) != ND_WIRE_MAGIC || buf[4] != ND_WIRE_VER)
       why = 2;
@@ -106,7 +106,8 @@ int nd_wire_parse(const uint8_t *buf, size_t sz, nd_hdr *h,
       h->crc   = get16(buf + 14);
       h->src_nonce = get32(buf + 16);
       h->dst_nonce = get32(buf + 20);
-      if (h->len > ND_MAX_PAYLOAD || sz != (size_t)(ND_HDR_SIZE + h->len))
+      if (h->len > (h->type == ND_T_DATAR ? ND_RED_BODY_MAX : ND_MAX_PAYLOAD) ||
+          sz != (size_t)(ND_HDR_SIZE + h->len))
          why = 4;    /* EXACT length or nothing */
       else
       {
@@ -300,8 +301,8 @@ struct netdrv
    nd_stats st;
 
    int      from_arena;              /* built in the host's reserved block */
-   uint8_t  scratch[ND_MAX_FRAME];   /* tx build buffer */
-   uint8_t  rxbuf[ND_MAX_FRAME + 64];/* rx buffer (+ slack to detect oversize) */
+   uint8_t  scratch[ND_MAX_DGRAM];   /* tx build buffer */
+   uint8_t  rxbuf[ND_MAX_DGRAM + 64];/* rx buffer (+ slack to detect oversize) */
 };
 
 /* ------------------------------------------------------------------ misc -- */
@@ -401,6 +402,71 @@ static uint16_t txq_idx(const nd_peer *p, uint16_t i)
 static nd_txmeta *txq_at(nd_peer *p, uint16_t i)
 {
    return &p->txq[txq_idx(p, i)];
+}
+
+/* A DATAR body (netdrv.h ND_RED_MAX): the number of carried payloads, or -1
+ * when the lengths do not add up exactly -- then nothing of it is used.  The
+ * CRC already passed, so this guards against a broken sender, not the air. */
+static int nd_red_check(const uint8_t *b, size_t len)
+{
+   size_t o, plen, elen;
+   int n = 0;
+   if (len < 2)
+      return -1;
+   plen = get16(b);
+   if (plen > ND_MAX_PAYLOAD || 2 + plen > len)
+      return -1;
+   for (o = 2 + plen; o < len; o += 4 + elen, n++)
+   {
+      if (len - o < 4)
+         return -1;
+      elen = get16(b + o + 2);
+      if (elen > ND_MAX_PAYLOAD || len - o - 4 < elen)
+         return -1;
+   }
+   return n;
+}
+
+/* The FIRST transmission of the i'th live slot.  With nd_config.redund on,
+ * it goes as DATAR carrying the slots just before it that were sent and are
+ * still unacknowledged (oldest first), as many as fit ND_RED_BODY_MAX; with
+ * none to carry, or the switch off, it is the plain DATA frame it always was.
+ * Retransmissions stay plain DATA (arq_pump_tx).  Built in nd->scratch, in
+ * place: a send from inside deliver() runs to completion before any other
+ * use of it. */
+static void nd_xmit_first(netdrv *nd, nd_peer *p, uint16_t i)
+{
+   uint16_t   ix = txq_idx(p, i), take = 0, k;
+   nd_txmeta *s  = &p->txq[ix];
+   size_t     body = 2u + s->len;
+   uint8_t   *o;
+   while (take < nd->cfg.redund && take < ND_RED_MAX && take < i)
+   {
+      nd_txmeta *e = txq_at(p, (uint16_t)(i - take - 1));
+      if (!e->next_tx_us || body + 4u + e->len > ND_RED_BODY_MAX)
+         break;
+      body += 4u + e->len;
+      take++;
+   }
+   if (!take)
+   {
+      nd_xmit_peer(nd, p, ND_T_DATA, s->seq, p->txpay[ix], s->len);
+      return;
+   }
+   o = nd->scratch + ND_HDR_SIZE;
+   put16(o, s->len);
+   memcpy(o + 2, p->txpay[ix], s->len);
+   o += 2 + s->len;
+   for (k = take; k >= 1; k--)
+   {
+      uint16_t ex = txq_idx(p, (uint16_t)(i - k));
+      put16(o, p->txq[ex].seq);
+      put16(o + 2, p->txq[ex].len);
+      memcpy(o + 4, p->txpay[ex], p->txq[ex].len);
+      o += 4 + p->txq[ex].len;
+   }
+   nd->st.red_tx += take;
+   nd_xmit_peer(nd, p, ND_T_DATAR, s->seq, nd->scratch + ND_HDR_SIZE, (uint16_t)body);
 }
 
 static uint32_t rto_floor(const netdrv *nd) { return tmo(nd->cfg.retx_us, ND_RTO_MIN_US); }
@@ -516,7 +582,7 @@ static void txq_push(netdrv *nd, nd_peer *p, const void *buf, uint16_t len)
    p->txq_count++;
    if (p->txq_count <= ND_WINDOW)
    {
-      nd_xmit_peer(nd, p, ND_T_DATA, s->seq, p->txpay[ix], s->len);
+      nd_xmit_first(nd, p, (uint16_t)(p->txq_count - 1));
       nd->st.tx_data++;
       s->first_tx_us = nd->now;
       /* HOW STALE IS THE STAMP WE JUST USED?
@@ -675,7 +741,7 @@ static void arq_on_ack(netdrv *nd, nd_peer *p, uint16_t ack)
          nd_txmeta *s  = &p->txq[ix];
          if (s->next_tx_us == 0)
          {
-            nd_xmit_peer(nd, p, ND_T_DATA, s->seq, p->txpay[ix], s->len);
+            nd_xmit_first(nd, p, ND_WINDOW - 1);
             nd->st.tx_data++;
             s->first_tx_us = nd->now;
             s->next_tx_us  = nd->now + rto_first(nd, p);
@@ -727,7 +793,7 @@ static void arq_pump_tx(netdrv *nd, nd_peer *p)
       nd_txmeta *s  = &p->txq[ix];
       if (s->next_tx_us == 0)
       {  /* never sent (was beyond window at enqueue time) */
-         nd_xmit_peer(nd, p, ND_T_DATA, s->seq, p->txpay[ix], s->len);
+         nd_xmit_first(nd, p, i);
          nd->st.tx_data++;
          s->first_tx_us = nd->now;
          s->next_tx_us  = nd->now + rto_first(nd, p);
@@ -1475,6 +1541,39 @@ static void handle_frame(netdrv *nd, const uint8_t mac[6],
       nd->st.rx_data++;
       arq_rx_data(nd, p, h->seq, pl, h->len);
       break;
+   case ND_T_DATAR:
+   {
+      /* The carried payloads first, oldest first, then the primary: a gap
+       * they fill is delivered in order now, not after a retransmission.
+       * One we already have is skipped quietly (red_dup), so it neither
+       * counts as the peer retransmitting (rx_dup) nor forces a bare ACK. */
+      size_t o, plen = get16(pl);
+      if (nd_red_check(pl, h->len) < 0)
+      {
+         nd->st.rx_drop_malformed++;
+         break;
+      }
+      arq_on_ack(nd, p, h->ack);
+      nd->st.rx_data++;
+      for (o = 2 + plen; o < h->len; o += 4u + get16(pl + o + 2))
+      {
+         uint16_t sq = get16(pl + o);
+         int16_t  d  = (int16_t)(sq - p->rx_expect);
+         const nd_rxslot *r = &p->reorder[sq % ND_WINDOW];
+         if (d < 0 || (d < ND_WINDOW && r->used && r->seq == sq) ||
+             !seq_lt(sq, h->seq))
+         {
+            nd->st.red_dup++;
+            continue;
+         }
+         nd->st.red_fill++;
+         arq_rx_data(nd, p, sq, pl + o + 4, get16(pl + o + 2));
+         if (!p->active)
+            return;
+      }
+      arq_rx_data(nd, p, h->seq, pl + 2, (uint16_t)plen);
+      break;
+   }
    case ND_T_ACK:
       nd->st.rx_ack++;                    /* ADR-0059 */
       arq_on_ack(nd, p, h->ack);

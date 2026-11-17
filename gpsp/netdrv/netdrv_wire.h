@@ -20,7 +20,8 @@
  * All multi-byte fields little-endian on the wire (both targets are LE;
  * serialization is still explicit byte-at-a-time — no struct punning).
  * A receiver drops any frame failing: size >= 24, magic, ver, known type,
- * len <= ND_MAX_PAYLOAD, datagram size == 24 + len (EXACT), CRC. This wall
+ * len <= ND_MAX_PAYLOAD (ND_RED_BODY_MAX for DATAR, whose inner lengths must
+ * then add up exactly: nd_red_check), datagram size == 24 + len (EXACT), CRC. This wall
  * is what keeps garbage away from the non-tolerant core (ADR-0003).
  */
 #ifndef NETDRV_WIRE_H
@@ -52,6 +53,9 @@ enum
    ND_T_OFFER    = 9,   /* host -> joiner; seq|ack<<16 is a fresh challenge */
    ND_T_CONFIRM  = 10,  /* joiner -> host; echo challenge before admission */
    ND_T_CAPS     = 11,  /* version/feature exchange at admission (below) */
+   ND_T_DATAR    = 12,  /* DATA (seq = the primary's) + earlier unacked
+                           payloads again (netdrv.h ND_RED_MAX); len may reach
+                           ND_RED_BODY_MAX */
    ND_T__COUNT
 };
 

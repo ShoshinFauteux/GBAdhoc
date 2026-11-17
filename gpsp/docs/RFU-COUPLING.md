@@ -151,6 +151,12 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
   until the tick lands or netdrv's peer death (8 s) ends the link; the 2 s give-up is for a partner whose path is
   clear. test_rfu_sched: an outage at D = 4 delivers every packet on schedule with queues at depth 2; the old rule
   in the same outage loses 240 of 1307 packets with the host queue at 64.
+- **Redundant DATA online** (netdrv `nd_config.redund`, `ND_T_DATAR`, `ND_FEAT_REDUND`). Each first transmission
+  carries up to 2 earlier unacknowledged payloads, so one or two lost datagrams cost one or two frames instead of an
+  RTO stall on the ordered lane (~9-18 s per trade at the 3000's 2.4-5.3 % loss, ONLINE-SUITE.md 10.3). Online
+  adapter rooms only; ad hoc and the cable never send it. RFU packets are 104 B, so a datagram grows by at most
+  2 + 2 x 108 = 218 B (346 B), never past 584 B (the relay's 600 B datagram holds it unchanged).
+  tools/tests/test_netdrv_redund.c: at 3 % random loss, 602 of 2500 payloads came late without it, 1 with it.
 
 ## Status (code-health C-4, 2026-11-16)
 

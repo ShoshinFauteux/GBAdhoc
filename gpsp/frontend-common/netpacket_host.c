@@ -25,6 +25,11 @@ static int np_stop_reason;           /* fe_np_stop_reason */
  * turned ticks off (rfu_sched = 0) says so too. */
 #include "../rfu_sched_api.h"
 #define NP_RFU_FEATURES (rfu_sched_d ? ND_FEAT_RFU_SCHED : 0u)
+/* Redundant DATA for the next adapter session (fe_np_set_redundancy; netdrv.h
+ * nd_config.redund), announced as ND_FEAT_REDUND: both consoles of an online
+ * room set it alike, and a pair that does not is refused at admission. */
+static unsigned np_redund;
+void fe_np_set_redundancy(unsigned n) { np_redund = n; }
 static int np_refused_new;           /* fe_np_take_refused */
 static int np_refused_kind;          /* fe_np_refused_kind */
 
@@ -407,7 +412,9 @@ static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
    nc.protocol = proto;             /* "gpSP v1.0" — matched in handshake */
    nc.nick = cfg->nick;
    nc.build = np_build();
-   nc.link_features = gb_mode ? 0 : NP_RFU_FEATURES;
+   nc.link_features = gb_mode ? 0 : NP_RFU_FEATURES |
+                                    (np_redund ? ND_FEAT_REDUND : 0u);
+   nc.redund = gb_mode ? 0 : (uint8_t)np_redund;
    nc.join_nonce = cfg->nonce ? cfg->nonce
                               : (uint32_t)(cfg->now_us() | 1);
    nc.prof_us    = cfg->now_us;     /* ADR-0021 pump rx/arq split */
@@ -586,7 +593,7 @@ void fe_np_pump(void)
              "srtt_us=%u rto_us=%u retx_pct=%u txq_hi=%u spill=%u "
              "rttvar_us=%u beyondwin=%u retx_age=%u/%u reorder_hi=%u "
              "tx_ack=%u rx_ack=%u tx_data=%u pumpgap=%u/%u stale=%u/%u "
-             "tx_bytes=%u rx_bytes=%u",
+             "tx_bytes=%u rx_bytes=%u red_tx=%u red_fill=%u red_dup=%u",
              st.tx_frames, st.rx_frames, st.acked, st.retx, st.rx_dup,
              st.rx_drop_crc, st.rx_drop_malformed, st.rx_drop_unknown_peer,
              st.tx_overflow, st.tx_drop_dead, np.core_tx, np.core_rx,
@@ -615,7 +622,11 @@ void fe_np_pump(void)
              st.stamp_stale_n ? st.stamp_stale_sum / st.stamp_stale_n : 0u,
              st.stamp_stale_max,
              /* wire bytes, every frame (the session's bandwidth) */
-             st.tx_bytes, st.rx_bytes);
+             st.tx_bytes, st.rx_bytes,
+             /* redundant DATA (nd_config.redund): payloads carried again,
+              * gaps they filled (losses repaired without a retransmit),
+              * copies we already had */
+             st.red_tx, st.red_fill, st.red_dup);
       np.last_stats_us = now;
    }
 }

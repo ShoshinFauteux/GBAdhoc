@@ -762,7 +762,18 @@ def suites(env: Env, baseline: Path | None):
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
           "-DND_MAX_PAYLOAD=144 -DND_TXQ_CAP=384 -DND_WINDOW=256 -Inetdrv "
           "tools/tests/test_netdrv_reorder.c -o /tmp/t_netdrv_reorder_psp && "
-          "/tmp/t_netdrv_reorder_psp")),
+          "/tmp/t_netdrv_reorder_psp && "
+          # redundant DATA (online adapter rooms): gap fill under loss and
+          # reorder, the size bound, at both sizes
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
+          "-Inetdrv tools/tests/test_netdrv_redund.c -o /tmp/t_netdrv_redund && "
+          "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "
+          "/tmp/t_netdrv_redund && "
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -fsanitize=address,undefined "
+          "-DND_MAX_PAYLOAD=144 -DND_TXQ_CAP=384 -DND_WINDOW=256 -Inetdrv "
+          "tools/tests/test_netdrv_redund.c -o /tmp/t_netdrv_redund_psp && "
+          "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "
+          "/tmp/t_netdrv_redund_psp")),
 
         # The dynarec SMC tables' block: a refused malloc fails the game
         # load instead of abort()ing (instance B's session start on a

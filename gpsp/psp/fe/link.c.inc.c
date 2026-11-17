@@ -71,6 +71,11 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       fe_evt("rfu_sched d=%u kind=%s", rfu_sched_d,
              online_psp_enabled() ? "online" : "adhoc");
    }
+   /* An online adapter room carries each frame's packets again in the next
+    * datagram (netdrv.h nd_config.redund): a lost datagram then costs one
+    * frame, not a retransmission timeout.  Ad hoc's radio retransmits
+    * below us; the cable's sessions (GB mode) never take it. */
+   fe_np_set_redundancy(online_psp_enabled() ? ND_RED_MAX : 0u);
 #ifdef GPSP_KEEP_TELEMETRY
    g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
 #endif

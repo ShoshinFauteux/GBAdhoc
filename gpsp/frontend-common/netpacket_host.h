@@ -125,6 +125,10 @@ uint32_t fe_np_rx_frames(void);
 
 /* 1 while a session is established (start() called, not stopped). */
 int fe_np_session_active(void);
+/* Redundant DATA (netdrv.h nd_config.redund) for the next adapter session
+ * started (never a GB/cable-mode one); 0 = off.  Both consoles must set the
+ * same: it is announced as ND_FEAT_REDUND at admission. */
+void fe_np_set_redundancy(unsigned n);
 /* netdrv_link_held for peer `id` (netdrv.h): -1 no session or no such peer,
  * 0 the path to it is clear, else ND_HELD_* -- the network, not the peer,
  * is holding its traffic. */

@@ -472,6 +472,9 @@ static int sk_recv(void *ctx, uint32_t *ip, uint16_t *port, void *buf, size_t ca
 static uint64_t core_rand(void *u) { (void)u; return ((uint64_t)rnd() << 40) ^ ((uint64_t)rnd() << 16) ^ rnd(); }
 
 static int g_verbose;
+/* argv "redund": every netdrv session sends redundant DATA (ND_T_DATAR), as an
+ * online adapter room does: the relay and the direct path must carry it as is. */
+static uint8_t g_redund;
 static void core_log(void *u, const char *l)
 {
    (void)u;
@@ -704,6 +707,7 @@ static int run_case(const case_t *c)
 
    memset(&nc, 0, sizeof(nc));
    nc.protocol = "gpSP v1.0";
+   nc.redund = g_redund;
    for (i = 0; i < 2; i++)
    {
       memset(&app[i], 0, sizeof(app[i]));
@@ -820,6 +824,21 @@ static int run_case(const case_t *c)
          printf("FAIL %s: %u server path lines, want <= %d\n", c->name,
                 g_path_lines, c->max_path_lines);
          ok = 0;
+      }
+      if (g_redund && nd[0] && nd[1])
+      {
+         nd_stats r0, r1;
+         netdrv_get_stats(nd[0], &r0);
+         netdrv_get_stats(nd[1], &r1);
+         if (r0.rx_drop_malformed + r1.rx_drop_malformed)   /* a LAN path acks each payload before the next: nothing to carry */
+         {
+            printf("FAIL %s: redund: carried %u/%u, malformed %u/%u\n", c->name,
+                   r0.red_tx, r1.red_tx, r0.rx_drop_malformed, r1.rx_drop_malformed);
+            ok = 0;
+         }
+         else if (g_verbose)
+            printf("     redund: carried %u/%u, already had %u/%u\n", r0.red_tx,
+                   r1.red_tx, r0.red_dup, r1.red_dup);
       }
       if (ok)
          printf("ok   %-44s nat=%u/%u path=%s/%s direct_rx=%u/%u relay_rx=%u/%u "
@@ -1006,6 +1025,7 @@ static int run_lobby(const lobby_t *c)
    g_core = relay_core_create(&cc);
    memset(&nc, 0, sizeof(nc));
    nc.protocol = "gpSP v1.0";
+   nc.redund = g_redund;
    for (i = 0; i < 2; i++)
    {
       sk[i].ctx = (void *)(intptr_t)i;
@@ -1244,6 +1264,7 @@ static int run_start(const start_t *c)
    }
    memset(&nc, 0, sizeof(nc));
    nc.protocol = "gpSP v1.0";
+   nc.redund = g_redund;
    for (i = 0; i < 2; i++)
    {
       memset(&app[i], 0, sizeof(app[i]));
@@ -1496,6 +1517,7 @@ int main(int argc, char **argv)
 #undef B4
    unsigned i, fails = 0, n = 0;
    g_verbose = argc > 1 && !strcmp(argv[1], "-v");
+   g_redund = argc > 1 && !strcmp(argv[argc - 1], "redund") ? ND_RED_MAX : 0;
    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++, n++)
       if (!run_case(&cases[i]))
          fails++;
