@@ -357,7 +357,7 @@ static __attribute__((noinline)) void me_rend_present(void)
    {
       TEL(g_ffw_drawn++);
       if (g_bb_new)
-         g_lat_over++;          /* an unshown frame overwritten (dropped) */
+         TEL(pacing_tel.lat_over++);     /* an unshown frame overwritten (dropped) */
       g_bb_new = 1;
       g_bb_pvc = g_mer_stage_pvc[g_mer_ready];
    }
@@ -733,7 +733,7 @@ static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
          g_fps_drawn++;      /* a new image, not a re-present of the old one */
          TEL(g_ffw_drawn++);
          if (g_bb_new)
-            g_lat_over++;
+            TEL(pacing_tel.lat_over++);
          g_bb_new = 1;
          g_bb_pvc = g_lat_poll_vc;
       }

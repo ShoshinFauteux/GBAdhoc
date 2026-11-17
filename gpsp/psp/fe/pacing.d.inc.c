@@ -45,7 +45,7 @@ static int dfr_defer(void)
        !mer_retire_early_active() || mer_rewind_busy())
       return 0;
    g_dfr = 1;
-   g_dfr_n++;
+   TEL(pacing_tel.dfr_n++);
    return 1;
 }
 
@@ -55,7 +55,7 @@ static void dfr_present(void)
       return;
    g_dfr = 0;
    if (g_mer_ready == g_mer_last_presented)
-      g_dfr_late++;             /* still rendering: the old picture again */
+      TEL(pacing_tel.dfr_late++);        /* still rendering: the old picture again */
    me_rend_present();
 #ifdef REWIND
    if (g_drew && (g_rw_on || g_rwh.denied))
@@ -89,7 +89,7 @@ static void lf_hold_begin(void)
    g_flip_early = 0;
    g_lw_slot    = 0;             /* no tier-1 entry in this wait either */
    g_lf_hold    = 1;
-   g_lf_n++;
+   TEL(pacing_tel.lf_n++);
 }
 
 /* After each vblank of the wait: the held flip has latched. */
@@ -101,7 +101,7 @@ static void lf_hold_vblank(int saved)
       g_flip_early = saved;
       if ((int)(g_vc_target - sceDisplayGetVcount()) > 0)
       {
-         g_lf_caught++;          /* a vblank left: flipped early in it */
+         TEL(pacing_tel.lf_caught++);     /* a vblank left: flipped early in it */
          g_lf_behind = 0;
       }
    }

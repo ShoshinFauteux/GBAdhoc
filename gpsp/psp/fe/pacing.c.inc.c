@@ -16,53 +16,61 @@ static int mer_rewind_busy(void)
 static int lat_swap(int early)
 {
    unsigned vc;
+#ifdef GPSP_KEEP_TELEMETRY
    unsigned now;
+#endif
    int r;
 
    UISCRIPT_DUMP(); /* @lab */ LAB_HOOK(lab_blink_draw();)
    if (g_wake_hold)
       return 0;
    vc  = sceDisplayGetVcount();
+#ifdef GPSP_KEEP_TELEMETRY
    now = (unsigned)sceKernelGetSystemTimeLow();
-   if (g_lat_check && (int)(vc - g_lat_sub_vc) >= 1)
+   if (pacing_tel.lat_check && (int)(vc - g_lat_sub_vc) >= 1)
    {
       /* (the loop-top check never sees a post-vblank swap's latch) */
       if (vid_flip_latched())
-         g_lat_l1++;
+         pacing_tel.lat_l1++;
       else
-         g_lat_l0++;
-      g_lat_check = 0;
+         pacing_tel.lat_l0++;
+      pacing_tel.lat_check = 0;
    }
+#endif
    r   = vid_swap();
    if (!r)
    {
-      g_lat_hold++;            /* nothing drawn: the screen holds */
+      TEL(pacing_tel.lat_hold++);       /* nothing drawn: the screen holds */
       return 0;
    }
    g_lat_sub_vc = vc;
-   g_lat_check  = 1;
+#ifdef GPSP_KEEP_TELEMETRY
+   pacing_tel.lat_check  = 1;
    if (vid_flip_latched())
-      g_lat_immed++;           /* nonzero would mean NEXTFRAME is not deferred */
+      pacing_tel.lat_immed++;           /* nonzero would mean NEXTFRAME is not deferred */
+#endif
    if (early)
    {
+#ifdef GPSP_KEEP_TELEMETRY
       int lead = us_to_vblank(now);
-      g_lat_early++;
+      pacing_tel.lat_early++;
       if (lead >= 0 && lead < (1 << 20))
       {
-         g_lat_lead_n++;
-         g_lat_lead_us += (unsigned)lead;
+         pacing_tel.lat_lead_n++;
+         pacing_tel.lat_lead_us += (unsigned)lead;
          if ((unsigned)lead < g_lat_lead_min)
             g_lat_lead_min = (unsigned)lead;
       }
-      g_lat_hc_n++;
-      g_lat_hc_sum += (unsigned)sceDisplayGetCurrentHcount();
+      pacing_tel.lat_hc_n++;
+      pacing_tel.lat_hc_sum += (unsigned)sceDisplayGetCurrentHcount();
+#endif
    }
    else
-      g_lat_post++;
+      TEL(pacing_tel.lat_post++);
    if (g_bb_new)
    {
-      unsigned d = vc + 1u - g_bb_pvc;   /* latch vblank - poll vblank */
-      g_lat_hist[d < 7u ? d : 7u]++;
+      TEL(unsigned d = vc + 1u - g_bb_pvc;   /* latch vblank - poll vblank */
+          pacing_tel.lat_hist[d < 7u ? d : 7u]++);
       g_bb_new = 0;
    }
    return r;
@@ -88,7 +96,7 @@ static int ffh_hold(void)
    if (!ffh_too_soon(n))
       return 0;
    if (!g_ffh_held)
-      g_ffh_holds++;
+      TEL(pacing_tel.ffh_holds++);
    return 1;
 }
 
@@ -120,7 +128,7 @@ static __attribute__((noinline)) void ffh_cap(void)
    while (ff_cap_over(m, f - g_ffc_f, sceDisplayGetVcount() - g_ffc_vc) >= 0)
    {
       sceDisplayWaitVblankStart();
-      g_ffc_waits++;
+      TEL(pacing_tel.ffc_waits++);
       blocked = 1;
    }
    if (blocked)
@@ -241,7 +249,7 @@ static void ll_to_b(void)
    if (g_ll_mode_h)
    {
       g_ll_mode_h = 0;
-      g_ll_to_b++;
+      TEL(pacing_tel.ll_to_b++);
       g_ll_cool = 0;
    }
 }
@@ -299,7 +307,7 @@ static __attribute__((noinline)) void lat_wait_begin(unsigned want)
    }
    if (g_ll_iter_h)
    {
-      g_ll_eng++;
+      TEL(pacing_tel.ll_eng++);
       if (active && ll_own_posted())
          g_lw_ll = LL_WAIT_ME;
       else
@@ -319,7 +327,7 @@ static __attribute__((noinline)) void lat_wait_begin(unsigned want)
    g_lw_slot = want >= 2u && !g_ll_iter_h && active && g_flip_early &&
                ll_own_posted() && ll_eligible();
    if (g_lw_slot)
-      g_ll_slot++;
+      TEL(pacing_tel.ll_slot++);
 }
 
 static __attribute__((noinline)) int lat_wait_step(void)
@@ -341,7 +349,7 @@ static __attribute__((noinline)) int lat_wait_step(void)
             ll_present(now);
          else
          {
-            g_ll_miss_me++;       /* rendered, but too late to blit */
+            TEL(pacing_tel.ll_miss_me++);  /* rendered, but too late to blit */
             ll_sample(1);
             g_lw_ll = LL_DONE;
             ll_to_b();
@@ -349,7 +357,7 @@ static __attribute__((noinline)) int lat_wait_step(void)
       }
       else if (us_to_vblank(now) < need)
       {
-         g_ll_miss_me++;          /* the render will not make it */
+         TEL(pacing_tel.ll_miss_me++);     /* the render will not make it */
          ll_sample(1);
          g_lw_ll = LL_DONE;
          ll_to_b();
@@ -378,7 +386,7 @@ static __attribute__((noinline)) int lat_wait_step(void)
       else if (ll_own_ready() || us_to_vblank(now) < need)
       {
          g_lw_slot = 0;
-         g_ll_slot_fail++;
+         TEL(pacing_tel.ll_slot_fail++);
       }
       else
          poll = 1;
@@ -391,7 +399,9 @@ static __attribute__((noinline)) int lat_wait_step(void)
       {
          unsigned vc = sceDisplayGetVcount();
          unsigned t  = (unsigned)sceKernelGetSystemTimeLow();
+#ifdef GPSP_KEEP_TELEMETRY
          int lead    = us_to_vblank(t);
+#endif
          ll_blit_note(t - g_lw_t);
          lat_swap(1);
          g_lw_swapped = 1;
@@ -402,26 +412,28 @@ static __attribute__((noinline)) int lat_wait_step(void)
              * latches one later, as a tier-0 one would */
             g_ll_blit_dev += g_ll_blit_ema / 4u;
             if (g_lw_entering)
-               g_ll_slot_fail++;
+               TEL(pacing_tel.ll_slot_fail++);
             else
             {
-               g_ll_miss_ge++;
+               TEL(pacing_tel.ll_miss_ge++);
                ll_sample(1);
                ll_to_b();
             }
          }
          else
          {
+#ifdef GPSP_KEEP_TELEMETRY
             if (lead >= 0 && (unsigned)lead < g_ll_lead_min)
                g_ll_lead_min = (unsigned)lead;
+#endif
             if (g_lw_entering)
             {
                g_ll_mode_h = 1;   /* from the next loop top */
-               g_ll_to_h++;
+               TEL(pacing_tel.ll_to_h++);
             }
             else
             {
-               g_ll_hit++;
+               TEL(pacing_tel.ll_hit++);
                ll_sample(0);
             }
          }
@@ -435,16 +447,16 @@ static __attribute__((noinline)) int lat_wait_step(void)
          int would = sceDisplayGetVcount() == g_lat_poll_vc &&
                      us_to_vblank(now) >= need;
          if (would)
-            g_ll_would++;
+            TEL(pacing_tel.ll_would++);
          else
-            g_ll_wouldnt++;
+            TEL(pacing_tel.ll_wouldnt++);
          ll_sample(!would);
          g_lw_measure = 0;
       }
       else if (sceDisplayGetVcount() != g_lat_poll_vc ||
                us_to_vblank(now) < need)
       {
-         g_ll_wouldnt++;          /* not rendered in time to blit */
+         TEL(pacing_tel.ll_wouldnt++);     /* not rendered in time to blit */
          ll_sample(1);
          g_lw_measure = 0;
       }
@@ -470,7 +482,7 @@ static void lat_wait_end(void)
 {
    if (g_lw_ll == LL_WAIT_ME)
    {
-      g_ll_miss_me++;             /* the vblank came first */
+      TEL(pacing_tel.ll_miss_me++);        /* the vblank came first */
       ll_sample(1);
       ll_to_b();
    }
@@ -483,30 +495,34 @@ static void lat_wait_end(void)
       ll_blit_note((unsigned)sceKernelGetSystemTimeLow() - g_lw_t);
       g_ll_blit_dev += g_ll_blit_ema / 4u;
       if (g_lw_entering)
-         g_ll_slot_fail++;
+         TEL(pacing_tel.ll_slot_fail++);
       else
       {
-         g_ll_miss_ge++;
+         TEL(pacing_tel.ll_miss_ge++);
          ll_sample(1);
          ll_to_b();
       }
    }
    if (g_lw_measure)
    {
-      g_ll_wouldnt++;
+      TEL(pacing_tel.ll_wouldnt++);
       ll_sample(1);
    }
    if (g_lw_slot)
-      g_ll_slot_fail++;           /* the wait ended before the slot was tried */
+      TEL(pacing_tel.ll_slot_fail++);      /* the wait ended before the slot was tried */
    g_lw_ll = LL_OFF;
    g_lw_measure = g_lw_slot = g_lw_entering = 0;
 }
 
 /* @extract:end lowlat:lat_swap */
+/* THE CENSUS of the pacing telemetry (EVT lat / ffh / late_present / late_flip):
+ * telemetry builds only.  A player build keeps none of these counters (C-5), so
+ * its census is the empty function below. */
+#ifdef GPSP_KEEP_TELEMETRY
 static void lat_census(void)
 {
    unsigned i;
-   if (++g_lat_iter < 600)
+   if (++pacing_tel.lat_iter < 600)
       return;
    fe_evt("lat iters=%u early=%u post=%u hold=%u over=%u "
           "hist=%u,%u,%u,%u,%u,%u,%u,%u latched_next=%u not=%u immed=%u "
@@ -515,46 +531,51 @@ static void lat_census(void)
           "to_h=%u to_b=%u blit_ema_us=%u age_n=%u fresh_n=%u fresh_got=%u "
           "fresh_us=%u eng=%u slot=%u slot_fail=%u win=%u/%u clean=%u "
           "need_us=%u blit_dev_us=%u lead1_min_us=%u vb=%u pull=%u",
-          g_lat_iter, g_lat_early, g_lat_post, g_lat_hold, g_lat_over,
-          g_lat_hist[0], g_lat_hist[1], g_lat_hist[2], g_lat_hist[3],
-          g_lat_hist[4], g_lat_hist[5], g_lat_hist[6], g_lat_hist[7],
-          g_lat_l1, g_lat_l0, g_lat_immed,
-          g_lat_lead_n ? g_lat_lead_us / g_lat_lead_n : 0u,
-          g_lat_lead_n ? g_lat_lead_min : 0u,
-          g_lat_hc_n ? g_lat_hc_sum / g_lat_hc_n : 0u,
-          g_lat_vbhc_n ? g_lat_vbhc_sum / g_lat_vbhc_n : 0u,
-          g_lat_age_n ? g_lat_age_us / g_lat_age_n : 0u,
-          g_ll_cfg, g_ll_mode_h, g_ll_hit, g_ll_miss_me, g_ll_miss_ge,
-          g_ll_would, g_ll_wouldnt, g_ll_to_h, g_ll_to_b, g_ll_blit_ema,
-          g_lat_age_n, g_in_fresh_n, g_in_fresh_got,
+          pacing_tel.lat_iter, pacing_tel.lat_early, pacing_tel.lat_post, pacing_tel.lat_hold, pacing_tel.lat_over,
+          pacing_tel.lat_hist[0], pacing_tel.lat_hist[1], pacing_tel.lat_hist[2], pacing_tel.lat_hist[3],
+          pacing_tel.lat_hist[4], pacing_tel.lat_hist[5], pacing_tel.lat_hist[6], pacing_tel.lat_hist[7],
+          pacing_tel.lat_l1, pacing_tel.lat_l0, pacing_tel.lat_immed,
+          pacing_tel.lat_lead_n ? pacing_tel.lat_lead_us / pacing_tel.lat_lead_n : 0u,
+          pacing_tel.lat_lead_n ? g_lat_lead_min : 0u,
+          pacing_tel.lat_hc_n ? pacing_tel.lat_hc_sum / pacing_tel.lat_hc_n : 0u,
+          pacing_tel.lat_vbhc_n ? pacing_tel.lat_vbhc_sum / pacing_tel.lat_vbhc_n : 0u,
+          pacing_tel.lat_age_n ? pacing_tel.lat_age_us / pacing_tel.lat_age_n : 0u,
+          g_ll_cfg, g_ll_mode_h, pacing_tel.ll_hit, pacing_tel.ll_miss_me, pacing_tel.ll_miss_ge,
+          pacing_tel.ll_would, pacing_tel.ll_wouldnt, pacing_tel.ll_to_h, pacing_tel.ll_to_b, g_ll_blit_ema,
+          pacing_tel.lat_age_n, g_in_fresh_n, g_in_fresh_got,
           g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u,
-          g_ll_eng, g_ll_slot, g_ll_slot_fail, g_ll_win_miss, g_ll_win_n,
+          pacing_tel.ll_eng, pacing_tel.ll_slot, pacing_tel.ll_slot_fail, g_ll_win_miss, g_ll_win_n,
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
-          sceDisplayGetVcount() - g_lat_vc0, g_ll_pull);
-   if (g_ff_flip_pace && (g_ffh_holds || g_ffh_waits || g_ffc_waits))
+          sceDisplayGetVcount() - pacing_tel.lat_vc0, pacing_tel.ll_pull);
+   if (g_ff_flip_pace && (pacing_tel.ffh_holds || pacing_tel.ffh_waits || pacing_tel.ffc_waits))
       fe_evt("ffh pace=%d holds=%u held_loops=%u waits=%u cap3_waits=%u 3x=%d",
-             g_ff_flip_pace, g_ffh_holds, g_ffh_vb, g_ffh_waits, g_ffc_waits,
+             g_ff_flip_pace, pacing_tel.ffh_holds, pacing_tel.ffh_vb, pacing_tel.ffh_waits, pacing_tel.ffc_waits,
              g_ffh_3x);
-   g_ffh_holds = g_ffh_vb = g_ffh_waits = g_ffc_waits = 0;
-   if (g_dfr_n)
-      fe_evt("late_present n=%u late=%u", g_dfr_n, g_dfr_late);
-   if (g_lf_n)
-      fe_evt("late_flip held=%u caught=%u pull=%u", g_lf_n, g_lf_caught, g_lf_pull);
-   g_dfr_n = g_dfr_late = g_lf_n = g_lf_caught = g_lf_pull = 0;
-   g_lat_vc0 = sceDisplayGetVcount();
+   pacing_tel.ffh_holds = pacing_tel.ffh_vb = pacing_tel.ffh_waits = pacing_tel.ffc_waits = 0;
+   if (pacing_tel.dfr_n)
+      fe_evt("late_present n=%u late=%u", pacing_tel.dfr_n, pacing_tel.dfr_late);
+   if (pacing_tel.lf_n)
+      fe_evt("late_flip held=%u caught=%u pull=%u", pacing_tel.lf_n, pacing_tel.lf_caught, pacing_tel.lf_pull);
+   pacing_tel.dfr_n = pacing_tel.dfr_late = pacing_tel.lf_n = pacing_tel.lf_caught = pacing_tel.lf_pull = 0;
+   pacing_tel.lat_vc0 = sceDisplayGetVcount();
    for (i = 0; i < 8; i++)
-      g_lat_hist[i] = 0;
-   g_lat_iter = g_lat_early = g_lat_post = g_lat_hold = g_lat_over = 0;
-   g_lat_l1 = g_lat_l0 = g_lat_immed = 0;
-   g_lat_lead_n = g_lat_lead_us = 0;
+      pacing_tel.lat_hist[i] = 0;
+   pacing_tel.lat_iter = pacing_tel.lat_early = pacing_tel.lat_post = pacing_tel.lat_hold = pacing_tel.lat_over = 0;
+   pacing_tel.lat_l1 = pacing_tel.lat_l0 = pacing_tel.lat_immed = 0;
+   pacing_tel.lat_lead_n = pacing_tel.lat_lead_us = 0;
    g_lat_lead_min = ~0u;
-   g_lat_hc_n = g_lat_hc_sum = g_lat_vbhc_n = g_lat_vbhc_sum = 0;
-   g_lat_age_n = g_lat_age_us = 0;
-   g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_would = g_ll_wouldnt = 0;
-   g_ll_to_h = g_ll_to_b = 0;
-   g_ll_eng = g_ll_slot = g_ll_slot_fail = g_ll_pull = 0;
+   pacing_tel.lat_hc_n = pacing_tel.lat_hc_sum = pacing_tel.lat_vbhc_n = pacing_tel.lat_vbhc_sum = 0;
+   pacing_tel.lat_age_n = pacing_tel.lat_age_us = 0;
+   pacing_tel.ll_hit = pacing_tel.ll_miss_me = pacing_tel.ll_miss_ge = pacing_tel.ll_would = pacing_tel.ll_wouldnt = 0;
+   pacing_tel.ll_to_h = pacing_tel.ll_to_b = 0;
+   pacing_tel.ll_eng = pacing_tel.ll_slot = pacing_tel.ll_slot_fail = pacing_tel.ll_pull = 0;
    g_ll_lead_min = ~0u;
    g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
 }
+#else
+static void lat_census(void)
+{
+}
+#endif
 
