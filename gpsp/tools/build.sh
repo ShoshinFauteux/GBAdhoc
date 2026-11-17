@@ -598,20 +598,18 @@ ELF_NATIVE="$ELF"
 command -v cygpath >/dev/null && ELF_NATIVE=$(cygpath -w "$ELF")
 
 # WHAT "FORBIDDEN" MEANS HERE.  Only strings whose presence implies a LIVE
-# write path.  It deliberately does NOT list fe_autopilot, CMD.TXT or
-# log/frontend.log: those are present in every playable build by design
-# (ADR-0067 keeps one code path and neutralises it by pointing the harness ini
-# at a filename that cannot exist), so forbidding them would fail a correct
-# build.  Which is why the EXPECT side below checks that neutralisation is
-# actually compiled in, rather than trusting that it is.
+# write path or control channel.  It does NOT list CMD.TXT or log/frontend.log:
+# their names may stay in a playable build's strings without a path that uses
+# them.  Since code-health C2-3/C2-5 a player build has no harness path at all
+# (every harness read folds to its default, psp/fe/fe_priv.h HARNESS_FOLD), so
+# the channel's filename must be absent; before, ADR-0067 pointed it at the
+# impossible `.playable-no-harness/x` and the release REQUIRED that string.
 FORBIDDEN=(); REQUIRE=()
 case "$KIND" in
   release)
     FORBIDDEN=("badjump.txt" "smchisto.txt" "irqchk.txt"
-               "home_stall_frame")   # Menu = HOME stall rig: GPSP_PERF_RIG only
-    # ADR-0067: proof the harness ini was pointed at an impossible path, so a
-    # leftover .gpsp-harness.ini on a player's card cannot drive their console.
-    REQUIRE=(".playable-no-harness")
+               "home_stall_frame"    # Menu = HOME stall rig: GPSP_PERF_RIG only
+               ".gpsp-harness.ini")  # ADR-0067/C2-5: no harness channel at all
     ;;
   harness|harness64)
     REQUIRE=(".gpsp-harness.ini")
@@ -621,13 +619,13 @@ case "$KIND" in
     ;;
   diagnostic)
     # The instruments are the point; assert they are really in.
-    REQUIRE=("badjump.txt" "badjump-%u-iwram.bin" ".playable-no-harness" "irqchk.txt")
-    FORBIDDEN=("smchisto.txt")
+    REQUIRE=("badjump.txt" "badjump-%u-iwram.bin" "irqchk.txt")
+    FORBIDDEN=("smchisto.txt" ".gpsp-harness.ini")
     ;;
   soak)
     # Soak is a live harness profile with the bad-jump reporter enabled.
     # It must retain the harness control channel, while keeping the noisy SMC
-    # histogram disabled and the release-only harness neutralizer absent.
+    # histogram disabled and the old player-build harness marker absent.
     REQUIRE=(".gpsp-harness.ini" "badjump.txt" "irqchk.txt")
     FORBIDDEN=("smchisto.txt" ".playable-no-harness")
     ;;

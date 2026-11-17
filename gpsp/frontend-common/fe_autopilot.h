@@ -83,6 +83,22 @@
 #ifndef FE_AUTOPILOT_H
 #define FE_AUTOPILOT_H
 
+#ifdef FE_AUTOPILOT_STUBS
+/* A PSP player build (psp/main_psp.c sets this without GPSP_PERF_RIG; code-health
+ * C2-5): fe_autopilot.o is not linked, because no script can load where there is
+ * no harness ini.  Each function is what the engine answers with no script loaded,
+ * so the callers fold away. */
+static inline int  fe_autopilot_load(const char *path) { (void)path; return -1; }
+static inline int  fe_autopilot_active(void)          { return 0; }
+static inline void fe_autopilot_frame(void)           { }
+static inline int  fe_autopilot_status(void)          { return 2; }
+static inline int  fe_autopilot_ff(void)              { return 0; }
+static inline int  fe_autopilot_dump_pending(void)    { return 0; }
+#ifdef REWIND
+static inline int  fe_autopilot_rewind(void)          { return 0; }
+#endif
+#else
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -139,5 +155,7 @@ const char *fe_autopilot_take_mark(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* FE_AUTOPILOT_STUBS */
 
 #endif /* FE_AUTOPILOT_H */

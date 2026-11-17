@@ -116,14 +116,6 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    /* Started from a game's XMB entry (XMB LAUNCH, at relaunch_eboot). */
    if (argc > 2 && argv[1] && argv[2] && strcmp(argv[1], LAUNCH_ARGV1) == 0)
       snprintf(g_launch_rom, sizeof(g_launch_rom), "%s", argv[2]);
-#ifndef GPSP_PERF_RIG
-   /* ADR-0067's harness path cannot exist in this build, and every one of
-    * main()'s ~130 harness keys used to pay a Memory Stick negative lookup
-    * to learn that, on a black screen, on every launch (boot timeline,
-    * docs/UI-OVERLAY.md).  The call sites still run -- one code path --
-    * they just no longer touch the stick.  file_exists() below still asks. */
-   fe_ini_never(HARNESS_INI);
-#endif
 #ifdef GPSP_KEEP_TELEMETRY
    sceIoMkdir(LOG_DIR, 0777);
    rig_preserve_log();               /* before fe_evt_init truncates it */
@@ -1127,7 +1119,12 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
     * reason the ARQ storm of docs/HANDOFF.md issue #2 escaped the harness.
     * Each side adds net_latency_ms to the one-way path -> RTT = 2x. */
 #ifdef GBADHOC_ONLINE
+#if !HARNESS_FOLD
    g_online_boot = online_psp_configure(HARNESS_INI, p_config);   /* EXPERIMENTAL */
+#else
+   /* a player build: config.ini only (online_psp.c reads no harness path) */
+   g_online_boot = online_psp_configure(NULL, p_config);
+#endif
 #endif
    {
       int nl = (int)HARNESS_INT("net_latency_ms", 0);

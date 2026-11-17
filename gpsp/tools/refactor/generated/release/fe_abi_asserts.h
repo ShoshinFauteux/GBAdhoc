@@ -60,10 +60,10 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
 
 /* PLATFORM (5): copies of names that are not core ABI (abi_asserts.platform gives each reason):
  * linker symbols, the PSP_MODULE_INFO expansion, an SDK function its header lacks.  Not asserted.
- *   main_psp.c:90            __lib_ent_top                        PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_ent_bottom                     PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_stub_top                       PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:93            __lib_ent_top                        PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:93            __lib_ent_bottom                     PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:93            __lib_stub_top                       PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:93            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
  *   fe/power.d.inc.c:335     scePowerIsRequest                    SDK function in libpsppower that psppower.h does not declare
  */
 #endif

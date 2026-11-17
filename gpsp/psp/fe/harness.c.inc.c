@@ -2,12 +2,14 @@
  * Emits the window MEAN of every bucket plus the breakdown of the single
  * worst scanline-render frame — the phase maxima must never be summed
  * (ADR-0032), so `vid_worst` is what a max is allowed to be read against.
- * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1. */
+ * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1.
+ *
+ * A telemetry build's unit (code-health C2-5): a player build has only the
+ * drain at the end. */
 #ifdef GPSP_KEEP_TELEMETRY
 static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
 static unsigned vp_core_mean;
-#endif
-/* (unused in a player build: every reader is telemetry or rig code) */
+/* (unused in some telemetry builds: every reader is telemetry or rig code) */
 static unsigned vp_build_crc __attribute__((unused));   /* CRC32 of the running EBOOT */
 
 /* ADR-0035: identify the BINARY in the profile line, not just the run.
@@ -17,7 +19,6 @@ static unsigned vp_build_crc __attribute__((unused));   /* CRC32 of the running 
  * every `vid_prof` line and is emitted once at boot.  ~1.6 MiB of CRC, only
  * when profiling is enabled.  Telemetry builds only: its only outputs are
  * fe_evt lines and the rig's run identity. */
-#ifdef GPSP_KEEP_TELEMETRY
 static unsigned eboot_crc(void)
 {
    char path[160];
@@ -48,9 +49,7 @@ static unsigned eboot_crc(void)
    fe_evt("build eboot_crc=%08x size=%u", crc, total);
    return crc;
 }
-#endif
 
-#ifdef GPSP_KEEP_TELEMETRY
 static void vid_prof_frame(unsigned win)
 {
    unsigned cur[VP_COUNT];

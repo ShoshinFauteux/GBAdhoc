@@ -154,17 +154,16 @@ def load_job(directory):
     # "GBAdhoc" instead of "GBAdhoc HARNESS".
     #
     # The discriminator is the ini path string the binary carries, which is the
-    # same thing tools/build.sh audits per profile.
+    # same thing tools/build.sh audits per profile: a rig build has
+    # `.gpsp-harness.ini`, a player build has no harness path at all (code-health
+    # C2-5; before, it carried the impossible `.playable-no-harness`).  Only a
+    # real PBP (magic \0PBP) is judged, so a test fixture need not be one.
     eboot = (directory/'EBOOT.PBP').read_bytes()
-    if b'.playable-no-harness' in eboot:
-        raise ValueError('EBOOT.PBP is a RELEASE build (carries '
-                         '.playable-no-harness): it cannot read the harness ini, '
+    if eboot[:4] == b'\0PBP' and b'.gpsp-harness.ini' not in eboot:
+        raise ValueError('EBOOT.PBP is a PLAYER build (release or diagnostic: no '
+                         '.gpsp-harness.ini): it cannot read the harness ini, '
                          'so it will boot to the ROM browser and never hand off. '
                          'Rebuild with tools/build.sh harness and re-stage.')
-    # Deliberately asymmetric: only a POSITIVE release marker is rejected.
-    # Requiring the harness marker too would demand every test fixture be a
-    # realistic PBP, and it is the weaker half of the check anyway -- a release
-    # build is what needs catching, and it identifies itself.
     for name, digest in job['files'].items():
         safe_name(name)
         if name not in required and not (name.startswith('roms/') and Path(name).suffix in ('.st0', '.sav')):

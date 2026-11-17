@@ -303,6 +303,8 @@ B's copies inside gbalink_core_b.o's partial link, where no final-link pin can
 reach; `ap_steps_mem` is the first thing in fe_autopilot.o's `.bss`, with the
 object's statics after it, so a smaller array moves them and changes
 fe_autopilot_frame's code. They stay, with their reasons in the source.
+(`ap_steps_mem` went in code-health C2-5: it existed only in a player build,
+which no longer links fe_autopilot.o; a rig build's `steps[]` never had it.)
 
 #### Rehearsal and what a change now has to do (code-health C3-6)
 

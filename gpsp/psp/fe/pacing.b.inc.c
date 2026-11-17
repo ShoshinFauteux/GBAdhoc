@@ -153,7 +153,9 @@ static void frame_hist_note(uint32_t work_us)
 /* `win` is this line's OWN frame count, so b[] always sums to it.  It is not
  * necessarily `sess_cost win=`: sess_cost only exists while a session is up,
  * so the first frame_hist of a run also carries every frame since boot.
- * `swin` is sess_cost's count, printed so the two can be lined up. */
+ * `swin` is sess_cost's count, printed so the two can be lined up.  Telemetry
+ * builds: sess_cost_evt is its only caller (code-health C2-5). */
+#ifdef GPSP_KEEP_TELEMETRY
 static void frame_hist_evt(unsigned swin)
 {
    FE_EVT_ONLY(swin);
@@ -172,4 +174,5 @@ static void frame_hist_evt(unsigned swin)
    g_fh_n = g_fh_ovb = g_fh_late = g_fh_forgive = g_fh_nudge = 0;
    g_fh_wmax = 0;
 }
+#endif
 

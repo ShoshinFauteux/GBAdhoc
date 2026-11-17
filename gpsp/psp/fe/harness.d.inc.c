@@ -1,3 +1,6 @@
+/* The session cost heartbeat and the ad hoc cell line (ADR-0021): EVT lines only, so a
+ * telemetry build's unit (code-health C2-5); a player build calls nothing. */
+#ifdef GPSP_KEEP_TELEMETRY
 void sess_cost_evt(int force)
 {
    static fe_np_prof  prev;
@@ -90,16 +93,15 @@ void sess_cost_evt(int force)
  * SAME bssid and channel (hw3 run 9 / hw4: both "up" in GBLNK7, rx=0). */
 static void adhoc_ctl_evt(const char *at)
 {
-#ifdef GPSP_NO_TELEMETRY
-   /* two adhocctl calls a heartbeat for a line nobody reads: not in release */
-   FE_EVT_ONLY(at);
-#else
    int ch = -1, peers = -1;
    uint8_t b[6] = { 0 };
    if (adhoc_transport_ctl_info(&ch, b, &peers) != 0)
       return;
    fe_evt("adhoc_ctl at=%s channel=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x "
           "ctl_peers=%d", at, ch, b[0], b[1], b[2], b[3], b[4], b[5], peers);
-#endif
 }
+#else
+#define sess_cost_evt(force) do { } while (0)
+#define adhoc_ctl_evt(at)    do { } while (0)
+#endif
 

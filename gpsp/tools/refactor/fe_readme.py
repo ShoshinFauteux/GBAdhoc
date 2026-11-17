@@ -883,7 +883,9 @@ def render(d):
       % ('; '.join('%s %d asserted + %d constants, %d unchecked, %d platform' % x for x in t14), andlist(T14_FLAVOURS),
          len(unb), ust['raw'], ust['cited'], len(ust['macro'])))
     dl = []
-    for kn in sorted(dups, key=lambda k: min(tu_key(r) for r in rows if (r['kind'], r['name']) == k)):
+    # ties (two names first defined on one line, e.g. the arms of one #if) by name: a set's
+    # order is the process's string hash, so without it --check could flake run to run
+    for kn in sorted(dups, key=lambda k: (min(tu_key(r) for r in rows if (r['kind'], r['name']) == k), k)):
         rs = sorted([r for r in rows if (r['kind'], r['name']) == kn], key=tu_key)
         inner = [rctx[r['key']][-1] if rctx[r['key']] else None for r in rs]
         one_if = None not in inner and len({x[0] for x in inner}) == 1 and len({x[1][-1] for x in inner}) == len(inner)
