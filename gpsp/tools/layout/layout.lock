@@ -158,8 +158,8 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x04e8
-size frame_loop                         21524
-at   pace_frame                         0x1e60
+size frame_loop                         22316
+at   pace_frame                         0x1e6c
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
 at   roster_valid                       0x0700
