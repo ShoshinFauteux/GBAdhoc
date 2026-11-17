@@ -12,9 +12,10 @@
  * dead ends the hold the same way (the lost link lets the gate run), and the
  * session's own disconnect flow takes over from there.
  *
- * One tracker per wait point, `since` = when the hold began (0 = not
- * holding).  Header-only: the rules are shared with the host test
- * (tools/tests/test_rfu_sched.c). */
+ * fe_host says whether a pass held (fe_host_link_held: either wait point);
+ * the platform keeps `since` = when the hold began (0 = not holding) and
+ * applies these two rules (psp/fe/link.d.inc.c link_wait_osd).  Header-only:
+ * the rules are shared with the host test (tools/tests/test_rfu_sched.c). */
 #ifndef FE_LINKWAIT_H
 #define FE_LINKWAIT_H
 

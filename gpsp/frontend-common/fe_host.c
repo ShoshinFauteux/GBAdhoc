@@ -13,7 +13,6 @@
 #include "../gbcore/gbcore_dual.h"
 #include "fe_gblink.h"
 #include "fe_linkprof.h"
-#include "fe_linkwait.h"
 #include "../netdrv/gb_link.h"
 #include "netpacket_host.h"
 #ifdef REWIND
@@ -130,9 +129,9 @@ static int gb_link_initialized;
 static int gb_link_completed;
 static const uint16_t *last_frame;
 static size_t last_pitch;
-/* When the link's current hold on the game began, 0 = none (fe_linkwait.h):
+/* 1 = this pass held the game for the partner's data (fe_host_link_held):
  * the adapter's tick gate, the cable's lockstep. */
-static unsigned long long lw_rfu, lw_cable;
+static unsigned char lw_rfu, lw_cable;
 static unsigned frames_rendered;
 static unsigned frames_skipped;   /* ADR-0019 accounting; see below */
 
@@ -4526,17 +4525,6 @@ static void gblink_stats_evt(void)
           s.inputs_ordered, s.nacks, s.resends, s.inputs_resent);
 }
 
-/* After a cable step: a STALL holds the game for the partner's buttons
- * (fe_linkwait.h); anything else ends the hold.  The clock is read only on
- * the stall that starts one. */
-static inline void cable_wait_note(void)
-{
-   if (gbl_last != FE_GBLINK_STALL)
-      lw_cable = 0;
-   else if (!lw_cable && host.time_us)
-      link_wait_note(&lw_cable, host.time_us(), 1);
-}
-
 static void gblink_frame(uint64_t core_t0)
 {
    uint32_t pad = (host.input_bitmask ? host.input_bitmask() : 0) |
@@ -4545,7 +4533,7 @@ static void gblink_frame(uint64_t core_t0)
    gbl_drain_bulk();
    gbl_waited_us = 0;
    gbl_last = fe_gblink_step(gbl, gb_buttons_from_retro(pad));
-   cable_wait_note();
+   lw_cable = gbl_last == FE_GBLINK_STALL;   /* held for the partner's buttons */
    if (gbl_last == FE_GBLINK_STALL && host.video_frame)
    {
       gbl_repeat = 1;
@@ -4596,7 +4584,7 @@ static void gba_cable_frame(uint64_t core_t0)
    gbl_waited_us = 0;
    FE_LP_SET(FELP_SESS);
    gbl_last = fe_gblink_step(gbl, fe_gbadual_keys_from_retro(pad));
-   cable_wait_note();
+   lw_cable = gbl_last == FE_GBLINK_STALL;   /* held for the partner's buttons */
    if (!gbl_ride_set && fe_gblink_state(gbl) == FE_GBLINK_RUNNING)
    {
       /* RUNNING: both consoles now send every frame or two, so an ack has
@@ -7014,8 +7002,8 @@ int fe_host_reset(void)
  * is one whose ticks the network is holding up (rfu_gate_step,
  * rfu_sched_api.h); one whose path is clear and that still sends nothing for
  * 2 s is given up on, the link runs free and the game's own timeout decides.
- * A lost link ends the wait at once (rfu_sched_may_run).  A hold that lasts
- * is said on screen (fe_linkwait.h, fe_host_link_wait). */
+ * A lost link ends the wait at once (rfu_sched_may_run).  A pass that runs
+ * no frame is a hold (fe_host_link_held: the platform's wait notice). */
 #define RFU_GATE_WAIT_US   12000u
 int fe_host_rfu_gate(void)
 {
@@ -7023,7 +7011,6 @@ int fe_host_rfu_gate(void)
    static uint64_t waited, wait_max;
    static unsigned waits, skips, passes, net_held;
    uint64_t t0, now;
-   unsigned long long hold = lw_rfu;
    int ok, held;
 
    lw_rfu = 0;              /* only a pass that runs no frame holds (below) */
@@ -7073,20 +7060,13 @@ int fe_host_rfu_gate(void)
       return 1;
    }
    skips++;
-   link_wait_note(&hold, t0, 1);
-   lw_rfu = hold;
+   lw_rfu = 1;
    return 0;
 }
 
-/* fe_linkwait.h: the adapter gate's hold and the cable lockstep's.  Not
- * holding (the normal frame): two loads, no clock read. */
-int fe_host_link_wait(void)
+int fe_host_link_held(void)
 {
-   unsigned long long now;
-   if (!(lw_rfu | lw_cable) || !host.time_us)
-      return 0;
-   now = host.time_us();
-   return link_wait_due(lw_rfu, now) || link_wait_due(lw_cable, now);
+   return lw_rfu | lw_cable;
 }
 
 void fe_host_run_frame(void)

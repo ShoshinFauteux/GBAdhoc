@@ -1283,7 +1283,11 @@ void frame_loop(loop_t *L, const session_ctx *S)
 #endif
       }
       FE_LP_SET(FELP_L_POST);
-      link_wait_osd();           /* held for the partner >= 1 s: say so */
+      {  /* held for the partner >= 1 s: say so (fe_linkwait.h) */
+         int lw = fe_host_link_held();
+         if (lw || g_lw_since)
+            link_wait_osd(lw);
+      }
       if (g_gblink_screen)
          gblink_draw_status();    /* link session: setting up or just ended */
 #ifdef GPSP_PERF_RIG

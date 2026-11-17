@@ -317,11 +317,10 @@ void fe_host_run_frame(void);
  * fe_host_run_frame.  1 = run the frame; 0 = the partner's tick is still
  * missing after a short wait, so skip both this pass and keep the loop live. */
 int fe_host_rfu_gate(void);
-/* 1 = a link session has held the game for the partner's data (the tick
- * gate above, or a cable session's lockstep stall) for LINK_WAIT_NOTICE_US
- * or more: the platform says so on screen until a frame runs again
- * (fe_linkwait.h).  Not holding: two loads, no clock read. */
-int fe_host_link_wait(void);
+/* 1 = the last pass held the game for a link partner's data: the tick gate
+ * above ran no frame, or a cable session's lockstep step stalled.  The
+ * platform times the hold and says so on screen (fe_linkwait.h). */
+int fe_host_link_held(void);
 /* Force the NEXT fe_host_run_frame's video to be drawn (0) or skipped (1),
  * overriding the frameskip option; -1 hands the decision back to it.  A
  * skipped frame is emulated in full but neither rendered nor captured -- the

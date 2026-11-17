@@ -1265,10 +1265,13 @@ static void gblink_draw_status(void)
  * tick gate, the cable's lockstep -- runs no frame, so the picture freezes.
  * After a second of that the bottom-left chip says why, and goes on the
  * first frame that runs; a partner declared dead ends the hold the same way
- * and the session's disconnect flow takes over.  Called once a loop, after
- * the core's turn: not holding, it is fe_host_link_wait's two loads. */
+ * and the session's disconnect flow takes over.  The loop asks once a pass,
+ * after the core's turn: not holding, that is fe_host_link_held's two loads
+ * and g_lw_since. */
+#include "fe_linkwait.h"
 #define LINK_WAIT_TEXT "Waiting for the other player..."
-static int g_lw_on;
+static unsigned long long g_lw_since;   /* this hold began; 0 = none */
+static int g_lw_on;                     /* the chip is up */
 
 /* The held picture again, so the chip has a frame to sit on.  The ME paths
  * re-present at the loop top already (me_rend_present / me_video_present);
@@ -1287,10 +1290,15 @@ static void link_wait_present(void)
    }
 }
 
-static void link_wait_osd(void)
+/* held = fe_host_link_held(); the loop calls this only while a hold is on or
+ * just ended, so none of it sits in the frame loop's own code. */
+static __attribute__((noinline)) void link_wait_osd(int held)
 {
+   unsigned long long now = net_now_us();
+   int on;
+   link_wait_note(&g_lw_since, now, held);
    /* (a link's status screen -- setting up, ending -- says it all itself) */
-   int on = fe_host_link_wait() && !g_gblink_screen;
+   on = link_wait_due(g_lw_since, now) && !g_gblink_screen;
    if (on != g_lw_on)
    {
       g_lw_on = on;

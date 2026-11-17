@@ -200,6 +200,10 @@ Built and on hardware as the build switch `RFU_SCHED=1` (tools/build.sh, off by 
   0.4-1.2 ms, because both run at the slower console's pace. Not pursued further.
 - **Frontend wait.** fe_host_rfu_gate waits up to 12 ms per pass, then gives the pass back without a frame so the
   menu and HOME stay live. Long Golf: 3-4 % of passes gave up a frame, about 5 % of wall time spent waiting.
+- **Wait notice.** A hold that lasts 1 s (the gate's, or a cable lockstep stall) puts "Waiting for the other
+  player..." in a bottom-left chip until the first frame runs (frontend-common/fe_linkwait.h, psp/fe/link.d.inc.c
+  link_wait_osd; EVT `link_wait show=0|1`). A partner declared dead clears it: the lost link lets the gate run and
+  the disconnect flow takes over. The CPU path re-presents the held picture while the chip is up.
 - **Mixed builds.** netdrv admission carries ND_FEAT_RFU_SCHED: a ticks build and one without refuse each other.
 - **Open.** The Golf lobby race (Risks 3) is narrower, not gone: desktop launch-gap sweeps with steady presses pass
   22/24 at D = 2 and 18/24 at D = 0; with uneven presses 47/48 and 48/48. Hardware with ticks 15 of 17 lobbies over
