@@ -111,7 +111,6 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
 /* Small data, so the layout pin's .data/.bss sets do not move (LAYOUT-PINNING.md). */
 static int      g_ff_flip_pace __attribute__((section(".sdata"))) = 7;
 static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer holds an unflipped picture */
-#ifdef GPSP_KEEP_TELEMETRY   /* C-5 telemetry: absent from the release */
 static struct fe_pacing_tel
 {
    unsigned ffh_holds;
@@ -155,7 +154,6 @@ static struct fe_pacing_tel
    unsigned lat_iter;
    unsigned lat_vc0;   /* vcount at the last census: `vb=` */
 } pacing_tel __attribute__((section(".sbss")));
-#endif
 static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop (any multiplier) */
 static int      g_ffc_on __attribute__((section(".sbss")));    /* multiplier ceiling anchored */
 static unsigned g_ffc_vc __attribute__((section(".sbss")));
@@ -185,9 +183,7 @@ static unsigned g_ll_win_pos, g_ll_win_n, g_ll_win_miss, g_ll_clean;
 static unsigned g_ll_cool;       /* frames since the last exit */
 static unsigned g_ll_blit_ema = 2000;  /* us, blit + OSD on the GE (EMA)   */
 static unsigned g_ll_blit_dev = 250;   /* us, its mean absolute deviation  */
-#ifdef GPSP_KEEP_TELEMETRY   /* telemetry; ~0u = none yet, so not a .bss member (C-5 telobj) */
 static unsigned g_ll_lead_min = ~0u;
-#endif
 
 /* vblank clock: the last vblank start the wait loop woke on */
 static unsigned g_vb_us;
@@ -205,9 +201,7 @@ static unsigned g_mer_stage_mode[2], g_mer_stage_cap[2], g_mer_stage_sum[2];
 static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
 static int      g_bb_new;             /* back buffer holds an unshown frame */
 static unsigned g_lat_sub_vc;
-#ifdef GPSP_KEEP_TELEMETRY   /* (as g_ll_lead_min) */
 static unsigned g_lat_lead_min = ~0u;
-#endif
 /* INPUT FRESHNESS (harness only, both default 0).  PPSSPP samples the pad
  * at vblank END (Core/HW/Display.cpp DisplayFireVblankEnd -> __CtrlVblank),
  * so a poll made the instant the vblank wait returns reads the sample taken

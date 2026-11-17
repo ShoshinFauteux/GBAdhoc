@@ -80,7 +80,7 @@ static void vid_draw_prestaged(const int *pix, unsigned w, unsigned h)
 #define LOOP_PHASE(p) do { (void)(p); } while (0)
 #endif
 /* Telemetry statements (fe_priv.h TEL(): EVT ff_win's drawn counter, the
- * low-latency census): compiled out, as in a player build. */
+ * low-latency census): this test observes none of them, so it drops them. */
 #ifndef TEL
 #define TEL(...) do { } while (0)
 #endif

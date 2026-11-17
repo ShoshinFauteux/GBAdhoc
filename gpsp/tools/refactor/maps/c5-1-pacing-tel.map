@@ -1,13 +1,16 @@
 # C5-1 rename map: the pacing telemetry (builds/health-out/design/C-5.md §2.3, §3 C5-1).
-# Applied with `globals.py struct THIS --tel`; checked with `pp_diff.sh --rename-map THIS --tel`
-# (G0R: lab and harness equal, the release only loses telemetry statements).
+# Applied with `globals.py struct THIS --tel`; checked with `pp_diff.sh --rename-map THIS --tel`.
+# Owner decision 2026-11-17: per-frame code stays the same in the player and the Lab builds, so
+# TEL() runs in every build and the struct is not under #ifdef: G0R is equal in release, lab and
+# harness (a pure rename; `--tel` only unwraps TEL()).  The telobj/telfn rows below were the
+# compile-out of the first C5-1 commit (f8a6883b); they match nothing now and are kept as record.
 #
 # The design's 35 write-only objects less g_dfr_clk_n (the census counted its `x++ & 63` in a
 # condition as a store; it paces dfr_clock_low's clock re-read: state), plus the 7 it asked
 # to confirm by hand: g_ffh_holds, g_ffh_waits, g_ffc_waits, g_dfr_n, g_lf_n (read only by
 # lat_census's EVT guards) and the two ~0u min trackers (telobj below), plus g_lat_check
-# (read only to guard the l1/l0 latch census).  One section for the block: the struct
-# exists in telemetry builds only, where it takes pacing's small-data rule.
+# (read only to guard the l1/l0 latch census).  One section for the block: pacing's small-data
+# rule (.sbss), in every build.
 struct pacing_tel fe_pacing_tel tel .sbss
 g_ffh_holds pacing_tel.ffh_holds
 g_ffh_waits pacing_tel.ffh_waits

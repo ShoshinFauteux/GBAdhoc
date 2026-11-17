@@ -148,7 +148,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
       rtc_wall_publish(0);
       /* LOW LATENCY: did the previous iteration's flip latch on the vblank
        * after its submit?  (Checked before anything can submit again.) */
-#ifdef GPSP_KEEP_TELEMETRY
       if (pacing_tel.lat_check &&
           (int)(sceDisplayGetVcount() - g_lat_sub_vc) >= 1)
       {
@@ -158,7 +157,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
             pacing_tel.lat_l0++;
          pacing_tel.lat_check = 0;
       }
-#endif
       sceCtrlPeekBufferPositive(&pd, 1);
       if (g_in_fresh && g_vb_us &&
           (int)(g_vb_us - pd.TimeStamp) > 2000)
@@ -177,7 +175,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
       }
       g_lat_poll_vc = sceDisplayGetVcount();
       g_lat_seq++;
-#ifdef GPSP_KEEP_TELEMETRY
       {
          unsigned age = (unsigned)sceKernelGetSystemTimeLow() - pd.TimeStamp;
          if (age < 100000u)
@@ -186,7 +183,6 @@ void frame_loop(loop_t *L, const session_ctx *S)
             pacing_tel.lat_age_us += age;
          }
       }
-#endif
       /* THE THUMBSTICK (ctl_map.h).  Its four direction bits are bits
        * pad.Buttons does not use; clear them, then add what the stick says
        * in the chosen mode.  OFF adds nothing: the word is 3.5.0's. */
@@ -1662,11 +1658,9 @@ void frame_loop(loop_t *L, const session_ctx *S)
             {
                sceDisplayWaitVblankStart();
                g_vb_us = (unsigned)sceKernelGetSystemTimeLow();
-#ifdef GPSP_KEEP_TELEMETRY
                pacing_tel.vb_vc = sceDisplayGetVcount();
                pacing_tel.lat_vbhc_n++;
                pacing_tel.lat_vbhc_sum += (unsigned)sceDisplayGetCurrentHcount();
-#endif
             }
          }
          lat_wait_end();

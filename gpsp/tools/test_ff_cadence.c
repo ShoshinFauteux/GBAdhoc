@@ -46,7 +46,7 @@ static int      g_ffh_held;
 static unsigned g_lat_sub_vc;
 static int      g_ffc_on;
 static unsigned g_ffc_vc, g_ffc_f, g_ffc_bvc;
-/* telemetry statements (fe_priv.h TEL): compiled out, as in a player build */
+/* telemetry statements (fe_priv.h TEL): this model counts none of them */
 #define TEL(...) do { } while (0)
 static int      g_ffc_q;
 static unsigned g_ffm_acc;

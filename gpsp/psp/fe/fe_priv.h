@@ -149,18 +149,16 @@ static void core_health_evt(const char *at);
 #endif
 
 /* TEL(stmt): a statement that only feeds telemetry (an EVT line, the Lab), e.g.
- * TEL(g_ffw_drawn++), the EVT ff_win counters (fe/power.a.inc.c).  A telemetry
- * build runs it; a player build compiles it out WITHOUT evaluating it (ADR-0067b:
- * fe_evt's arguments are not evaluated either), so a telemetry object may exist
- * in telemetry builds only and the compiler then refuses any use outside TEL()
- * and fe_evt().  Tier C C-5 (builds/health-out/design/C-5.md §2.1); the G0R gate
- * (tools/refactor/g0r.py) checks that a player build loses only such statements.
- * Variadic so a statement with a top-level comma needs no extra parentheses. */
-#ifdef GPSP_KEEP_TELEMETRY
+ * TEL(g_ffw_drawn++), the EVT ff_win counters (fe/power.a.inc.c), or
+ * TEL(pacing_tel.ll_hit++).  It names the statement as telemetry; it runs in EVERY
+ * build.  Owner decision 2026-11-17: the Lab can run only Lab builds, so the code
+ * that runs every frame stays the same in the player build and the Lab build, or
+ * the Lab's speed and picture-hash results stop proving the shipped build; the
+ * per-frame telemetry is not compiled out of a player build (what fe_evt reports,
+ * and the census's EVT lines, still are: ADR-0067b).  Tier C C-5
+ * (builds/health-out/design/C-5.md §2.1).  Variadic so a statement with a
+ * top-level comma needs no extra parentheses. */
 #define TEL(...) do { __VA_ARGS__; } while (0)
-#else
-#define TEL(...) do { } while (0)
-#endif
 
 /* `volatile` orders the two indices, not the samples: a compiler barrier
  * (no instruction) keeps the plain sample stores before the publish of

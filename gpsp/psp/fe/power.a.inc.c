@@ -15,13 +15,10 @@ static int g_drew;            /* a GU frame was drawn since the last swap */
 
 /* EVT ff_win (docs/FF-PRESETS.md): NEW images put in the back buffer -- an ME
  * stage presented for the first time, or a CPU frame the core really drew.
- * Re-presents of an unchanged picture are not counted.  Telemetry builds
- * only; a player build compiles the counter out. */
-#ifdef GPSP_KEEP_TELEMETRY
-static unsigned g_ffw_drawn, g_ffw_gated;
-#else
-/* (none: their stores are TEL(), fe/fe_priv.h) */
-#endif
+ * Re-presents of an unchanged picture are not counted.  Counted in every
+ * build (per-frame code is the same in the player and the Lab builds, owner
+ * 2026-11-17); only telemetry builds report them (ff_win_note). */
+static unsigned g_ffw_drawn, g_ffw_gated;   /* every build: their stores are per-frame TEL() */
 
 /* ------------------------------------------------------------------- exit */
 

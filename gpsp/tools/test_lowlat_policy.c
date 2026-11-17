@@ -177,8 +177,7 @@ static int g_mer_ready = -1, g_mer_pending = -1, g_mer_last_presented = -1;
 static int g_mer_miss;
 static unsigned g_fps_drawn;
 static unsigned g_vc_target;
-/* fe_priv.h's telemetry arm: the model reads the pacing census (pacing_tel) */
-#define GPSP_KEEP_TELEMETRY 1
+/* fe_priv.h's TEL (every build): the model reads the pacing census (pacing_tel) */
 #define TEL(...)        do { __VA_ARGS__; } while (0)
 static unsigned g_ffw_drawn;
 #define UISCRIPT_DUMP() do { } while (0)

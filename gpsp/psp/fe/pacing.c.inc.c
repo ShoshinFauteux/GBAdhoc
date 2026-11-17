@@ -16,16 +16,13 @@ static int mer_rewind_busy(void)
 static int lat_swap(int early)
 {
    unsigned vc;
-#ifdef GPSP_KEEP_TELEMETRY
    unsigned now;
-#endif
    int r;
 
    UISCRIPT_DUMP(); /* @lab */ LAB_HOOK(lab_blink_draw();)
    if (g_wake_hold)
       return 0;
    vc  = sceDisplayGetVcount();
-#ifdef GPSP_KEEP_TELEMETRY
    now = (unsigned)sceKernelGetSystemTimeLow();
    if (pacing_tel.lat_check && (int)(vc - g_lat_sub_vc) >= 1)
    {
@@ -36,7 +33,6 @@ static int lat_swap(int early)
          pacing_tel.lat_l0++;
       pacing_tel.lat_check = 0;
    }
-#endif
    r   = vid_swap();
    if (!r)
    {
@@ -44,14 +40,11 @@ static int lat_swap(int early)
       return 0;
    }
    g_lat_sub_vc = vc;
-#ifdef GPSP_KEEP_TELEMETRY
    pacing_tel.lat_check  = 1;
    if (vid_flip_latched())
       pacing_tel.lat_immed++;           /* nonzero would mean NEXTFRAME is not deferred */
-#endif
    if (early)
    {
-#ifdef GPSP_KEEP_TELEMETRY
       int lead = us_to_vblank(now);
       pacing_tel.lat_early++;
       if (lead >= 0 && lead < (1 << 20))
@@ -63,7 +56,6 @@ static int lat_swap(int early)
       }
       pacing_tel.lat_hc_n++;
       pacing_tel.lat_hc_sum += (unsigned)sceDisplayGetCurrentHcount();
-#endif
    }
    else
       TEL(pacing_tel.lat_post++);
@@ -399,9 +391,7 @@ static __attribute__((noinline)) int lat_wait_step(void)
       {
          unsigned vc = sceDisplayGetVcount();
          unsigned t  = (unsigned)sceKernelGetSystemTimeLow();
-#ifdef GPSP_KEEP_TELEMETRY
          int lead    = us_to_vblank(t);
-#endif
          ll_blit_note(t - g_lw_t);
          lat_swap(1);
          g_lw_swapped = 1;
@@ -422,10 +412,8 @@ static __attribute__((noinline)) int lat_wait_step(void)
          }
          else
          {
-#ifdef GPSP_KEEP_TELEMETRY
             if (lead >= 0 && (unsigned)lead < g_ll_lead_min)
                g_ll_lead_min = (unsigned)lead;
-#endif
             if (g_lw_entering)
             {
                g_ll_mode_h = 1;   /* from the next loop top */
@@ -516,9 +504,8 @@ static void lat_wait_end(void)
 
 /* @extract:end lowlat:lat_swap */
 /* THE CENSUS of the pacing telemetry (EVT lat / ffh / late_present / late_flip):
- * telemetry builds only.  A player build keeps none of these counters (C-5), so
- * its census is the empty function below. */
-#ifdef GPSP_KEEP_TELEMETRY
+ * every build (owner 2026-11-17: per-frame code is the same in the player
+ * and the Lab builds; fe_evt compiles to nothing in a player build). */
 static void lat_census(void)
 {
    unsigned i;
@@ -573,9 +560,4 @@ static void lat_census(void)
    g_ll_lead_min = ~0u;
    g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
 }
-#else
-static void lat_census(void)
-{
-}
-#endif
 
