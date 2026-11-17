@@ -2,11 +2,14 @@
 # The release/lab parity baseline of the per-frame set (see the tool's docstring).
 # Re-recorded only with a reason in the commit (the ratchet: check fails on any new
 # release/lab difference, and passes with a note when one disappears).
-# release: c2x-base-624af868/release (elf 035261bd7a09)
-# lab:     c2x-base-624af868/lab (elf 43c1a2c5cf57)
+# release: c2x-pwip1/release (elf b5f8d11607a4)
+# lab:     c2x-pwip1/lab (elf 196b88abe4cc)
 # 422 members: diff 42, lab-only 41, layout 160, rigonly 3, same 176
-# 624af868 (claude/health tip; the Lab's build 01c4b13a50d5 is this lab flavour), built by
-# builds/health-out/c2x/bah.sh (build_and_hash.sh pins).  Owner decision 2026-11-17: no NEW divergence.
+# Re-recorded at the parity tip (0c7a9121 = the 31e7816e binaries) from the 624af868 record:
+# frame_loop and me_rend_frame.part re-hashed their release/lab hunks through C5-2's struct rename
+# (register allocation), with the same tokens in both flavours (builds/health-out/c2x/
+# parity-pp-functions.log: every per-frame function of main_psp.c token-identical to 624af868 per
+# flavour); every other member held against 624af868 (parity-check-pwip1-vs-624af868.log).
 fn   _ZL10pipe_latchv@cpu.cc#1                        layout d=0x1000
 fn   _ZL10pipe_latchv@cpu.cc#2                        layout d=0x1a60
 fn   _ZL12ml_diff_pagemm                              layout d=0x0000 hot
@@ -34,7 +37,7 @@ fn   block_lookup_address_dual                        layout d=0x17a0 hot
 fn   block_lookup_address_thumb                       layout d=0x0000 hot
 fn   block_lookup_translate_arm                       layout d=0x0000 hot
 fn   block_lookup_translate_thumb                     layout d=0x0000 hot
-fn   cheats_link_poll                                 diff   d=0x1228 n=1 c=4fda4bcbc9a4
+fn   cheats_link_poll                                 diff   d=0x1498 n=1 c=4fda4bcbc9a4
 fn   check_and_raise_interrupts                       layout d=0x0000 hot
 fn   check_interrupt                                  layout d=0x0000 hot
 fn   core_health_evt                                  lab-only
@@ -44,11 +47,11 @@ fn   core_phase_frame_end                             layout d=0x0160 hot
 fn   core_phase_leave                                 layout d=0x1fa0 hot
 fn   core_phase_now                                   layout d=0x16c0 hot
 fn   core_prof_evt                                    diff   d=0x1400 hot n=2 c=1f34ceadcd80,241baa433d0c
-fn   ctl_info                                         same   d=0x1e98
-fn   ctl_pad_word                                     same   d=0x1e98
-fn   ctl_shortcuts                                    same   d=0x1e98
-fn   ctl_turbo_pad                                    same   d=0x1f2c
-fn   ctl_turbo_stop                                   same   d=0x1f2c
+fn   ctl_info                                         same   d=0x1918
+fn   ctl_pad_word                                     same   d=0x1918
+fn   ctl_shortcuts                                    same   d=0x1918
+fn   ctl_turbo_pad                                    same   d=0x19ac
+fn   ctl_turbo_stop                                   same   d=0x19ac
 fn   dispatch_cache_clear                             same   d=0x1f40 hot
 fn   dma_tf_loop16                                    layout d=0x0000 hot
 fn   dma_tf_loop32                                    layout d=0x0000 hot
@@ -120,16 +123,16 @@ fn   fe_np_set_peer_dead_us                           diff   d=0x0060 n=2 c=174b
 fn   fe_np_stop_reason                                same   d=0x0060
 fn   fe_np_take_refused                               same   d=0x0060
 fn   fe_np_txq_now                                    same   d=0x0074
-fn   ff_chip_text                                     layout d=0x1680
-fn   ff_pace_target_x100                              same   d=0x1a60
-fn   ffh_too_soon                                     same   d=0x1290
+fn   ff_chip_text                                     layout d=0x1100
+fn   ff_pace_target_x100                              same   d=0x14e0
+fn   ffh_too_soon                                     same   d=0x1688
 fn   fflush                                           same   d=0x1680 hot
 fn   flag_interrupt                                   layout d=0x0000 hot
 fn   flush_translation_cache_ram                      layout d=0x1160 hot
 fn   flush_translation_cache_ram_dma                  layout d=0x1680 hot
 fn   flush_translation_cache_ram_smc                  layout d=0x0000 hot
 fn   fps_evt                                          diff   d=0x117c hot n=2 c=3be94b3e393a,76f02f2bf587
-fn   frame_loop                                       diff   d=0x17ec n=436 c=004dc5bfb168,006abf54e0c4,01226cfbff96,022e33472b14,026cb64b4496,0276a3e55eec,0309a481cd5b,03811d0a14cb,04dc1518ec71,091a69088946,0983c33edb90,0a02a815795e,0a67e00a3c29,0b1fd3e2527a,0cd7c03cb301,0d72e13efad8,0e5f6952b357,0e7b059349d2,0ed2f1d88382,10a4de20b242,11404bc0e233,119248d480ef,1214f8b65957,128316f54036,129c057789fc,13778ad020f6,1389f9e1a480,14f486d6684d,153db4dcf551,16b7997da940,16c99f81e3c3,16cdb47eeab6,18ad264ee7bd,190628d42cd3,192462289658,196ccf00b109,19e0e972a9f5,1a3e42ea2269,1b551e697058,1b73226f379e,1d3ace29710c,1d46264e0028,1e006c187c43,1e5d1cb83ea3,1e8d1c968ef6,1f2e2bd7efeb,1f2f7436d642,1f58205a2b79,1fab22a118ac,20c924ca53cc,210d6d81a53a,219ea19ed378,231997913569,23de4c40d84f,24172bed9cfa,244ab1c7b75b,2549dd682a7f,26113455d281,2696209a03fd,296285f56c36,2bc49b555d08,2c396e646def,2cf251b21149,2d377cd6a974,2d874a8f9ba1,2d932692e9ea,2f7d4756a099,2f885c1668fd,306ab37f22c6,316ec36e4272,31d8f40e8d0a,327bcaa1d140,32e6fcec401e,330108a5f400,33af1a03ea4c,3538816ccc1e,358f806041e3,36d6ee7ea646,36f80534ced9,372913d25c18,38b4641a428e,38c199f3939b,3903c62792b1,394722f79cdb,3ac430201417,3b1ee221aee1,3b3b71d4874b,3b55703a5fd8,3c313ce5b2a0,3c7aeaab964a,3cca3ba83e5b,3d4589908b99,3f0eadca109b,3f4350435b08,4014a504b708,40cd57783244,40cda8ce633b,428a9c07690a,42a8e9d5316b,446491be16de,44ed55a0db1a,45bba7989456,45cd74690241,460acaa4f278,46709374808c,4690d2f79652,473164cfc754,4782b6304970,4a05a850f886,4a20d5d6c1de,4b8c2a429683,4b983cba3263,4bf52e7cfc9f,4c1deea856cb,4c39009b4d81,4cb1173632ae,4cba60675da0,4d41823612ea,4d7a92e25652,4d7a92e25652,4d9cfb53f225,4e62b37074e8,4e83af53d8f4,4e9f57c87fd4,4f76af5a2481,512a5b1e47a1,5161d1c45c42,516a44d58f63,53bb3531ca69,53d60f6a035e,54b2e0cb2599,55003ca2c18f,55675ebc0f6f,5585f70129a8,55ddbb7e792d,572f1d53d2ce,57bf63bf5dde,57d9845e2777,585f5a984787,5942886a9c1f,594e4b622ab5,595ce2ac3c72,597ad30c56b0,59c3deaee6d4,5a52cc95d809,5aef07a7e641,5aefddd959fe,5b637febf581,5d029f7a777c,5daec3d6c1b0,5fd3c56b1f5a,613db9dc3a5f,61f9a33e3b2c,63b015eae824,64e64021d430,657808f36e4c,65b0fc55142c,65ea8c2a9685,66034c79deca,660d1a881340,660d1a881340,66213e76e8dd,6815900e394a,684faeb3bb49,68815c880a2f,688212479057,68ba787b47c1,69499fbc7e38,69c9a6ada3b7,6a45970a321b,6ab45dd3cab9,6b0c4b35c492,6b287f85db3e,6b3a851e6bb1,6bcdeb18fd9a,6cc64b114f22,6d76f5468adc,6da9e8ef84a7,6defa54b100b,6e3dadc4b124,6e7bf096fd07,6f70e0552f6a,71b37a740ce4,71f5c6714ff6,7450bbc154d7,75d6c3b8f178,7622f56fd152,76291dd7b8f5,76b338d7979e,76f9a0dd9c19,7785910c164d,77fce91bfe1e,780ac7fb7ba5,795967d0171a,7a2cb1483f65,7ab08c54cd28,7ac368b9bb14,7ba8a2c9b18d,7c4d6a00546e,7c8bb04d953f,7d7b08427021,7dcdb3096be6,7e4ef325027e,7e62d76d3775,7e698b8ebc8d,7ed626649d76,81295b1e299e,81659a53d45c,830ff4263abd,835e0cad702e,83f365070ba3,843f0af57554,85288dd93010,856ff0aae6a9,8630636d3973,86c1da0f9443,8777ca0270f0,8888ee463bcd,89b1186ad681,8b989808088e,8ba6c0072207,8c2d3dc35e3e,8dc2cfc6519d,8e264f7a4fbb,8f92e393e8c3,8faf12c7117b,90d3d606bfe8,9257a3f9370b,92ba0b818d81,930a77c1ff21,93e75c2cfbac,940087ae9ce8,9469e05201c9,94c5fc8daed7,9537e260121a,9568679c57b4,969a0dc24e8b,96c40bf32317,975bd3ceafc2,97addc48c6aa,97becb297f3a,99991d46ab25,9a46f6e7869d,9b3284712030,9b782354f959,9cdd24a6371c,9cf8dcb360aa,9d16354d2401,9eaa9fd34db7,9f38344cc6a2,9fa5f3fe1989,9fafe7a5935c,a012a42a3521,a10ef10d1387,a2c9fb1841ca,a362d2eb523e,a37a021e0545,a3ac7a3fff89,a3fb5c762500,a40e2a665ffd,a4619a1147e1,a4f29a98fd1d,a586b4b9eb41,a5e1dcecc0c9,a682f611cf07,a6e56342af38,a6f0a942341d,a77aa2f33396,a92012026c21,a9d6eca6b131,aa88401ba170,ab3c8c23798a,abd923e65b65,ac0f8e34ba4e,ac677e4723a1,ad03f8ac74e1,ad8c1b1ac179,ae67e2847798,ae74664f351f,ae74b4bd5275,ae8b2d4b116f,aee5e4378669,aee69c2c7d94,afa210cf7c53,afc5d658b276,afd133697b4a,b0b5bf2af99c,b0b5bf2af99c,b0cd9a433093,b0e334813f90,b1a1d426e00d,b228b239b73c,b24ec71e95df,b2b5e9ebc546,b2b7d699fabb,b42f5ffce9b2,b4e558a02d4e,b57aad8ba6c7,b5b34e50e59d,b6db673a369e,b7b47e7ecfb3,b7e90d9e7ae7,b8ee27898857,b9240afe3aa7,b932a93e5a98,b95d37f7c155,ba54ec56f250,bb84c51051f4,bc19b9570a34,bc955d3c41f5,bca0b8b286c1,bd7baa4b2fa0,bd7baa4b2fa0,bd993a796f64,be71213e2387,bf3dc44fb586,bf6a03bb4c62,bfe39a01bf2d,c010347e93d8,c033cd7bbac9,c042b80718f1,c045ad8b7dbe,c0988ba48d75,c0bfa5094334,c190c6fdb18e,c20397cff06c,c36a656c8d4b,c3b0835295c8,c3c7e10abd07,c40614b803fa,c4acc398cc4c,c4f11d808ed7,c4f11d808ed7,c51872cdf64b,c51872cdf64b,c51e69a710ab,c5b0a49645f6,c5d29f3d7225,c6bcda30abbe,c752deb428c3,c7721f7b04ca,c79581d80a2d,c8039f2deec5,c86cfa342b99,c89753d39ff7,c9f6c0f806c9,c9fa3bc992ce,ca079c6772ba,ca144cca45fa,cab4d6257ddd,cac27e87fcf0,cb78a3ec8450,cd084f7df88f,cda7909a0ef5,ce64407ad701,cf2985866046,cf2c292b1e7c,cfdab5064e25,cfef1b7b17f7,d0186ce6d05b,d11018978061,d21c7e4a443a,d3266343e8df,d3319452c090,d3a52165ebed,d41d3accb881,d486b6b3352c,d58af68e95a1,d5e8864b6b97,d633343f06da,d6709e41de87,d6f8658440b2,d7eee1b9e4c4,d8b6752d86ed,d985ef75a2b3,d9a0dfc3e656,da5f7eb9ba18,db78edf94e4d,db8fb2c728ab,dbc874e36e33,ddcb4204ab0b,ddd5587aae1d,dee0cf2c5f0b,df43e5bf470f,df634483c008,df91deaf66e5,e0151ee85e01,e1b1add930d7,e1d9f48c4b5d,e27aed4754c0,e2c44e11c0e9,e3578432bb42,e482c4af0b40,e4d36139c0be,e55ba94fb856,e5bfc26e0e8c,e5bfea7e92c0,e65e972b4f03,e6a856514b8f,e74addec7925,e80c92989285,e8f60cdfde19,ea142cde32ba,eb4f2b71cf9f,ecd4d0b4781e,ed726b01ada5,ed91649ce272,eda944359b74,ee8d9d24800f,eea300026dd6,ef08a4ef413d,f022de58de3a,f06a9b39000e,f124e2ee282f,f1660a0187fb,f1cdc40262e5,f3025abfd722,f35aebc44bf2,f3bf143b097d,f501b3d9ff14,f515ea5a34a1,f58a49cf3048,f6ce40a620fb,f865728d2527,f954736dd225,f9e32c2deac1,f9ea5ccff475,fbf33a09d309,fc71fbedc176,fc9f3910e5dc,fca8a0956b65,fccc69fe0f23,fddea21a8b47,fe4f9766935b,feaf3e91c05c,ff0c8effc4fd
+fn   frame_loop                                       diff   d=0x17ec n=446 c=004dc5bfb168,006abf54e0c4,00dc1d6f848a,01061619d433,01226cfbff96,026cb64b4496,03811d0a14cb,04dc1518ec71,05837a988c7e,05e6504653eb,0639c4a26ef6,0639c4a26ef6,0983c33edb90,0a67e00a3c29,0af6ecf3c906,0b1fd3e2527a,0b7ca529b9b1,0bd79f3622e9,0d72e13efad8,0e5f6952b357,0e6ce26fa035,0e7b059349d2,0f9b6c26ed44,11404bc0e233,12287799c8ef,129c057789fc,12f823ed94ad,13778ad020f6,1389f9e1a480,14565c35c63d,145b747f14db,14b0077cd9f6,14dc0e1b9e97,14f486d6684d,153db4dcf551,15c59b7c5d42,16b7997da940,190628d42cd3,192462289658,196ccf00b109,197112f2fbfa,19e0e972a9f5,1a3e42ea2269,1afcddc0973e,1b51e85fa04c,1b551e697058,1be4c8a1b8f9,1bfb3a9eb340,1c1d7cd1aeb8,1c7ae501e2ae,1d3ace29710c,1d46264e0028,1dd02d4b690b,1e5d1cb83ea3,1f2e2bd7efeb,1f2f7436d642,1f58205a2b79,1fab22a118ac,1fc8f30c6998,1fe9638753d3,201c9821aaa8,20536ad7b7c0,21862ab4ceb5,219ea19ed378,21ae001fa316,234271d70600,23ad6c5a7ff7,23de4c40d84f,24172bed9cfa,2477a986fe17,2549dd682a7f,2882a2f0258f,293f02c22b5d,295fe1d25b7e,2a9ea3c9edc4,2b9d1fdad7a1,2bc49b555d08,2c396e646def,2cf251b21149,2d377cd6a974,2d874a8f9ba1,2d932692e9ea,2e5bee46e9f7,2e9425e91213,2ecb7ef25204,2f885c1668fd,307b65c8d9c2,30d70a7878b7,31d8f40e8d0a,321da6e0e583,3226a7d767f4,327bcaa1d140,32e6fcec401e,330108a5f400,33691f2ca8d6,33e5329a5d23,3538816ccc1e,35c1bcbd745d,3662568e5958,36b1411ca953,36d6ee7ea646,36f80534ced9,370b1e3809c2,372913d25c18,3755402dce53,38b4641a428e,38c199f3939b,3903c62792b1,394722f79cdb,3b1ee221aee1,3b3b71d4874b,3c313ce5b2a0,3d4589908b99,3de0df6f9310,3f4350435b08,4014a504b708,40cda8ce633b,4162d04867ab,41d647461832,428a9c07690a,42a8e9d5316b,446491be16de,44ed55a0db1a,45cd74690241,460acaa4f278,460d4052827b,4690d2f79652,470d5cb23945,479ce22a9a3a,483f10a5dd2a,49dba05c9f28,4a05a850f886,4a5832ee1628,4b32f591c5d7,4b8c2a429683,4b983cba3263,4cb1173632ae,4cba60675da0,4d41823612ea,4d86e692e5f6,4d9cfb53f225,4dfe7f3db4d9,4e83af53d8f4,4e9f57c87fd4,4f76af5a2481,5184f41cc7cc,5224c617b498,534c55847808,537c80b06f52,539617fec607,53bb3531ca69,53d60f6a035e,54b2e0cb2599,55003ca2c18f,55675ebc0f6f,5585f70129a8,55db66502146,55ddbb7e792d,572f1d53d2ce,573745683be7,57d9845e2777,585f5a984787,58c8d13caa2f,5942886a9c1f,595ce2ac3c72,597ad30c56b0,59c3deaee6d4,5ae21f083a16,5aef07a7e641,5aefddd959fe,5b01dea04870,5bed7dd7f353,5daec3d6c1b0,5fc06c356d24,5fd3c56b1f5a,61f9a33e3b2c,6239decc859e,62e150e55316,63b015eae824,6440eec6a979,64e64021d430,657808f36e4c,65b0fc55142c,660d1a881340,660d1a881340,6815900e394a,6815900e394a,6833bdcde830,68ba787b47c1,691ebddd7235,6a206d227648,6a45970a321b,6a7e034d0b9e,6b07d2c65fd2,6bcdeb18fd9a,6d76f5468adc,6da9e8ef84a7,6db2f297ed2d,6dfedcf7239d,6e3dadc4b124,6e7bf096fd07,7000a7d4f989,71374e4502b4,71b37a740ce4,71f5c6714ff6,7450bbc154d7,7516372aec62,75a9c5e3ebe7,7622f56fd152,767596051f3b,76b338d7979e,77fce91bfe1e,7843bf3d84e9,7939cdc50a4a,7939cdc50a4a,795967d0171a,79a4a9ebab95,7a173a7cf163,7a2cb1483f65,7ab08c54cd28,7ac368b9bb14,7ba8a2c9b18d,7c4d6a00546e,7cf8ae0cabea,7d0d2cf67adb,7d7b08427021,7dcdb3096be6,7de32d3610fe,7e4ef325027e,7e62d76d3775,7e698b8ebc8d,7fc910336321,8132043f18a8,81659a53d45c,830ff4263abd,83b9136974eb,83f365070ba3,83f7424c5d38,843f0af57554,85288dd93010,856ff0aae6a9,8630636d3973,86c1da0f9443,86d87760c69e,8777ca0270f0,886bf22105ba,8888ee463bcd,89b1186ad681,8c13a4eb0a79,8c2d3dc35e3e,8c44d3c6c97b,8dc2cfc6519d,8e264f7a4fbb,8faf12c7117b,90d3d606bfe8,9257a3f9370b,93d0c923e5f8,93e75c2cfbac,9437ff4fb43f,9469e05201c9,94c5fc8daed7,9537e260121a,9568679c57b4,965568804e66,96c40bf32317,975bd3ceafc2,99991d46ab25,99a5096d07ba,99eaf003d5e4,9a46f6e7869d,9a5bfc6321ed,9cf8dcb360aa,9d16354d2401,9e8f39e3aaa1,9f38344cc6a2,9fafe7a5935c,a012a42a3521,a13bc848607c,a30e7ff1d7c5,a362d2eb523e,a37a021e0545,a3fb5c762500,a40e2a665ffd,a426229369fc,a4619a1147e1,a586b4b9eb41,a5e1dcecc0c9,a682f611cf07,a6ef80a4d655,a7055aac1e8b,a77aa2f33396,a7d0d230dcfb,a7de7063b410,a7e6fd53fba3,a84e08d5e677,aa1a65f08999,aa8ad9d70c8f,ac0f8e34ba4e,ac2d2e9ac466,ac677e4723a1,ac6e7b73096a,ace0ec7ab422,ad03f8ac74e1,ae67e2847798,ae74664f351f,ae74b4bd5275,ae8b2d4b116f,aeb75a98dde8,aee5e4378669,afa210cf7c53,afc5d658b276,afd133697b4a,afff2534dcb1,b0e334813f90,b1a1d426e00d,b2325cf105c5,b24ec71e95df,b2b5e9ebc546,b4015a354140,b42f5ffce9b2,b57aad8ba6c7,b5b34e50e59d,b6db673a369e,b7b5ccec3b48,b7e90d9e7ae7,b9240afe3aa7,b932a93e5a98,b95d37f7c155,bb84c51051f4,bc19b9570a34,bc955d3c41f5,bca0b8b286c1,bd7baa4b2fa0,bd7baa4b2fa0,bd993a796f64,bdf1474fe0de,bea900e35297,bed89a89a210,bf6a03bb4c62,c010347e93d8,c033cd7bbac9,c042b80718f1,c045ad8b7dbe,c0bfa5094334,c190c6fdb18e,c1d41299855b,c36a656c8d4b,c3bcf66a6e6a,c3c7e10abd07,c40614b803fa,c4acc398cc4c,c4c8ac1b8359,c4f11d808ed7,c4f11d808ed7,c51872cdf64b,c51872cdf64b,c51e69a710ab,c5b0a49645f6,c5e87ce5bf4d,c6bc489bcd09,c6bcda30abbe,c89753d39ff7,c9f6c0f806c9,c9fa3bc992ce,ca079c6772ba,cab4d6257ddd,cac27e87fcf0,cb78a3ec8450,ccd1e7089de3,cd142ab52f08,cda7909a0ef5,ce7ecfd2d910,cf2985866046,cfef1b7b17f7,d19baf07290d,d1ddf502ac4a,d223bfc87b98,d3319452c090,d486b6b3352c,d510c650598d,d5cf0a22c10f,d62828b4033b,d633343f06da,d6f8658440b2,d7eee1b9e4c4,d8b6752d86ed,d985ef75a2b3,d9a0dfc3e656,da7112f0d250,db8fb2c728ab,dbc874e36e33,dc03fad1e104,ddb1652e189e,ddcb4204ab0b,ddd5587aae1d,df91deaf66e5,dffc836f964c,e0151ee85e01,e27aed4754c0,e2c44e11c0e9,e4d36139c0be,e5bfea7e92c0,e5c2b4ae4a8e,e6a856514b8f,e6cbf800eda3,e74addec7925,e7c4d78b0bf2,e89b3a71855f,e8f60cdfde19,ea142cde32ba,ecba4a379d7d,eccd0b890d9a,ecd4d0b4781e,ed726b01ada5,ed91649ce272,eda944359b74,ee8d9d24800f,ee95d9683310,f022de58de3a,f06a9b39000e,f1660a0187fb,f1cdc40262e5,f3025abfd722,f35aebc44bf2,f3b8513d13e0,f3bf143b097d,f406f63d5c1e,f515ea5a34a1,f64ac606d8cb,f65693e1fe1d,f694f7b8278a,f6ce40a620fb,f8657ce76e46,f93d0361323b,f954736dd225,fa84d3ae9766,fbd456b3d87d,fc71fbedc176,fc9f3910e5dc,fca8a0956b65,fccc69fe0f23,fcfd947352a2,fd5cee06ba0e,fddea21a8b47,feaf3e91c05c,ff0c8effc4fd
 fn   free                                             same   d=0x0160 hot
 fn   fwrite                                           same   d=0x1020 hot
 fn   gamepak_must_swap                                same   d=0x0de0
@@ -209,11 +212,11 @@ fn   halt_hop_wake@main.c#1                           layout d=0x17a0 hot
 fn   halt_hop_wake@main.c#2                           layout d=0x17a0 hot
 fn   heap_exact                                       lab-only
 fn   heartbeat_write                                  lab-only
-fn   home_host_fallbacks                              same   d=0x1f10
-fn   home_host_frame                                  same   d=0x1ef0
-fn   home_host_imp_rc                                 same   d=0x1f10
-fn   home_host_ok                                     diff   d=0x1ef0 n=4 c=243bb9d302d2,2b2e961825a5,4ec4cde6b0d0,b079d8691c43
-fn   home_host_take_press                             same   d=0x1f10
+fn   home_host_fallbacks                              same   d=0x1990
+fn   home_host_frame                                  same   d=0x1970
+fn   home_host_imp_rc                                 same   d=0x1990
+fn   home_host_ok                                     diff   d=0x1970 n=4 c=243bb9d302d2,2b2e961825a5,4ec4cde6b0d0,b079d8691c43
+fn   home_host_take_press                             same   d=0x1990
 fn   input_poll                                       same   d=0x1f20 hot
 fn   input_state                                      layout d=0x014c hot
 fn   iok_encode@cpu_threaded.c#1                      same   d=0x16c0 hot
@@ -244,13 +247,13 @@ fn   ll_sample                                        layout d=0x1f9c hot
 fn   malloc                                           same   d=0x0160 hot
 fn   me_capture_line                                  layout d=0x0000 hot
 fn   me_host_idle                                     same   d=0x1f9c hot
-fn   me_host_input_done                               same   d=0x1dd0
+fn   me_host_input_done                               same   d=0x1850
 fn   me_host_post_render                              same   d=0x1f9c hot
-fn   me_host_render_refused                           same   d=0x1dd0
+fn   me_host_render_refused                           same   d=0x1850
 fn   me_host_result                                   same   d=0x1f9c hot
-fn   me_host_up                                       same   d=0x1bcc
+fn   me_host_up                                       same   d=0x164c
 fn   me_host_watchdog_frame                           diff   d=0x1f9c hot n=2 c=0a4dd3fab30c,4c5bcef8f642
-fn   me_rend_frame.part                               diff   d=0x16b4 n=84 c=031fd072c56b,054525996beb,06e94ce7d212,07c1ab0ce475,0862433f5dcc,0862433f5dcc,0d2163e4ef4b,0d3dc2ef5726,0d5e0eb2ce8b,11f7acf178d9,1c4c9543345d,273128770c61,2863474252d9,2932bbcc7450,2cb29ad08a39,338dcf29dd77,3b6a33c3bf52,3e3a74bb9ce8,3f3d3ded90ca,3f3d3ded90ca,44f1e16f6fa2,46882ea850ab,47360ba1c554,4a92042279ac,4aab42b5ea28,4cf794845875,4f173c3a009c,50a93d24932a,513833532b61,5146bd9d7d80,52dd04ec7115,54f2afa7a253,576cce1b6011,582a948da64c,5876af64a71b,5af2462470f1,5f2de4cb7e16,5fee5743c383,654f81fa3fad,6681aa376443,6699370c9a34,7127530a9984,713ba9d62be3,75541229ef12,76e4072f3a5c,7708e1e45147,7ba7d36cf44b,7bf701cad60f,7dcb30bead4e,7ea412ca93db,823089112044,84aa146fb430,8c00654bbe2a,909d9d15000f,939f70faf6cc,93cf96dd7a33,95d6cff96d32,962574383cd5,9e19cb6d0b74,9ef639e73b3a,a0b85510c676,a4fd148fdbdd,ae02000d6d9b,c0e00791b520,c0e17cb2544c,c63c0547dbe3,c6c037259f6f,c74a0781d055,cd985269b49b,cf1bb480152d,d0fc37622860,d451709c4412,d451709c4412,d9f1a2ac79ab,dbbba276c036,dcc534684ed3,de2cf4891c0e,de2cf4891c0e,e779eb0ccf67,e8a634a4c5a0,e9fb7856fdde,f8b6ce55a139,f9cd0c46dda7,fd52bbcb3b2a
+fn   me_rend_frame.part                               diff   d=0x1aa8 n=95 c=00292b945e61,0046685a4416,04c0eb9826d7,05b8cc4b7ffa,09fbb59af2ff,0a28b6d5e77a,0c48a1dc6796,0d2163e4ef4b,0dcd707e0eaa,0f44aca96ed2,0fa722ce05ba,12a7adba1f4e,174b1da95dcc,18d736ba2c33,2314510734b3,2720c665a929,27b2451b94f1,2b771fda2588,2d7901739432,347489971f15,3544eb7ecfb0,35cfd5ac44bd,3a3bdb3139f9,3b94d2373c28,3bb3a33dfe54,3e3a74bb9ce8,3f3d3ded90ca,42bdb99f9210,44f1e16f6fa2,467d432833fe,479d8abe3e45,4c2b0afd2fe9,52dd04ec7115,52dd04ec7115,548e09db5194,5716564dd3ce,57edb3d2cf81,59c6a5fae486,59f341e73611,5c1f8521545b,5d74433c6c4b,5e19fc47ce1c,5e610557759f,5fe24cda242a,621d0f794207,6437eb03820f,6699370c9a34,691eb90a6f7c,6b0c58ce1afe,6c9a4e98e2f3,7b98f2c0ff81,7fafdedcd8b7,823089112044,84d4540d7c2e,8b52053d24fd,8bd28881c845,915ea14c9d65,91d1fca6cb32,93ca909e5eea,93fb34f47639,9568679c57b4,95d27c2eed30,9bcef9fc75e2,9c8821d2b711,9ef639e73b3a,a0b28c9ba9d8,a0b28c9ba9d8,a27102fdda79,a5bfe5a80bf4,a77920121ee9,a7adbe908d84,aa7d9682d34a,ada1262e2310,ae02000d6d9b,b4ef33572e46,b5744b6740f2,b71ce9e8780e,b8fbc7bafb92,bb13dc3c6f20,c4975061ddbb,c7aa00afd860,c8c29fdf4608,cad23eb66750,cb3f471b237a,cc48bb69fbee,cd3f311f2c9b,ce7fa4ad4858,d1f447d962f6,d628e16fd0cf,d83c769bdedf,df4cf1551126,e2f233ecd6f7,f3f660a2fcf5,f7d9798f123a,f8b3a77136cd
 fn   me_rend_present                                  diff   d=0x1fc0 hot n=3 c=9cbeba669b91,c99f45e9f1a6,e066e9a0e619
 fn   me_rend_quiesce.part                             lab-only
 fn   me_rend_retire_if_idle                           diff   d=0x0000 hot n=7 c=23f2fc4e4322,529879a2befd,62d00658b3ae,c5ca568039b3,e5ec67213dd7,f889b4e98b26,fe0ac73a2cc9
@@ -264,9 +267,9 @@ fn   memory_term                                      layout d=0x1680 hot
 fn   memset                                           same   d=0x0000 hot
 fn   mer_lowlat_active                                same   d=0x1f84 hot
 fn   mer_note_sum                                     lab-only
-fn   net_frame                                        diff   d=0x1b10 n=12 c=08efdcc72f56,1335a1197305,1ec086920e34,4e861eca9db5,5c2d079b0a74,5f7571797bd8,8320c6648465,b88e3665b3be,b9c0a4efcbe9,bf57c101fbd7,e4e3cab8b5c7,f1b2ec10f6b3
+fn   net_frame                                        diff   d=0x158c n=12 c=08efdcc72f56,1335a1197305,1ec086920e34,4e861eca9db5,5c2d079b0a74,5f7571797bd8,8320c6648465,b88e3665b3be,b9c0a4efcbe9,bf57c101fbd7,e4e3cab8b5c7,f1b2ec10f6b3
 fn   net_now_us                                       same   d=0x0abc
-fn   net_teardown_io.part                             diff   d=0x1e24 n=14 c=04e8d88fa904,0f403f54fb71,159d1da4c3be,1f7e3ef21769,308239598f48,4709e6fa740a,6b0182484933,6e70efc74316,7b1f1d090a43,7b1f1d090a43,c2b9a3447ac9,f3a3bd22fdb8,f5df45b0b826,f64ac606d8cb
+fn   net_teardown_io.part                             diff   d=0x185c n=14 c=04e8d88fa904,0f403f54fb71,159d1da4c3be,1f7e3ef21769,308239598f48,4709e6fa740a,6b0182484933,6e70efc74316,7b1f1d090a43,7b1f1d090a43,c2b9a3447ac9,f3a3bd22fdb8,f5df45b0b826,f64ac606d8cb
 data netpacket_iface                                  same   d=0x02c0
 fn   note_pc_limits_range.constprop@cpu_threaded.c#1  layout d=0x0160 hot
 fn   note_pc_limits_range.constprop@cpu_threaded.c#2  layout d=0x1020 hot
@@ -274,22 +277,22 @@ fn   note_pc_limits_range.constprop@cpu_threaded.c#3  layout d=0x1720 hot
 fn   note_pc_limits_range.constprop@cpu_threaded.c#4  layout d=0x1720 hot
 fn   online_psp_connected                             same   d=0x1058
 fn   online_psp_stats_evt                             same   d=0x1058
-fn   osd_chip_ff                                      layout d=0x04c8
-fn   osd_chip_fps                                     layout d=0x04c8
-fn   osd_chip_session                                 layout d=0x04c8
+fn   osd_chip_ff                                      layout d=0x1f48
+fn   osd_chip_fps                                     layout d=0x1f48
+fn   osd_chip_session                                 layout d=0x1f48
 fn   osd_draw                                         layout d=0x1fd0 hot
-fn   osd_toast                                        same   d=0x04c8
-fn   pace_burn                                        same   d=0x1708
-fn   pace_extra_vblanks                               layout d=0x1a60
-fn   pace_frame                                       diff   d=0x1808 n=77 c=01c48c8b2022,02a00bd30528,0b45f539297a,10d04c31ac76,14a888240a8a,1872d7504d8e,1fa9dce06a47,28f42731e54e,2a6e52a91d0f,2b73d771987a,2ba0216b8929,32731eac7532,32ed4939610a,3c7dca8f7c46,499ade20aa1b,4a7789a5a324,4b44e34b85a3,503f332bf4f0,535de2f04700,577dff97cf02,57faeddea72f,59d465d606ed,5b2b5cb748c8,5b63b05aaead,5c4353df89e5,5cc8c8554a78,5db7bb1d5672,60ec3b8dafc6,6c47f844c2b6,6cad0692ff15,721df04bab38,733a9ea74f4a,7ae3e991d5ea,8c205bcb2d44,8c5577e70cb9,8dc8cb28b82b,909b1636acdf,944cbc923808,9a714cad4474,9c9f185cff0a,a0cfad0ff5c8,a1d6cd512764,a3e9ea633862,a3e9ea633862,a54d8eb47be5,a646b3c24e34,ad79be110ca5,ada870e58de7,ae0a9bbf2d76,ae51f7b1c4dd,b4270475576b,b7de4c1482bd,b8dd74f181b1,bfeb26d204dc,cbe3d65d3c59,cf3d9b5fc492,cf3d9b5fc492,cf3d9b5fc492,d018eb2f732f,d1708808c10d,d32bfe70a3d0,d333d0b555e7,d3bc2a595251,d6bb11635adb,d842e2e09e11,e12fe398e987,e2c52799e878,e4d23b18288b,e8302563a140,ea4a4d74ecff,ec197e3f6699,f475d61614aa,f63f06dafad9,f6ed96a4c0f5,f7561612007a,fa25e5588489,ff3577e5a903
-fn   pace_window                                      same   d=0x1808
-fn   pcfg_ff_mode                                     same   d=0x1850
-fn   pcfg_ff_name                                     layout d=0x1850
+fn   osd_toast                                        same   d=0x1f48
+fn   pace_burn                                        same   d=0x1188
+fn   pace_extra_vblanks                               layout d=0x14e0
+fn   pace_frame                                       diff   d=0x1288 n=77 c=01c48c8b2022,02a00bd30528,0b45f539297a,10d04c31ac76,14a888240a8a,1872d7504d8e,1fa9dce06a47,28f42731e54e,2a6e52a91d0f,2b73d771987a,2ba0216b8929,32731eac7532,32ed4939610a,3c7dca8f7c46,499ade20aa1b,4a7789a5a324,4b44e34b85a3,503f332bf4f0,535de2f04700,577dff97cf02,57faeddea72f,59d465d606ed,5b2b5cb748c8,5b63b05aaead,5c4353df89e5,5cc8c8554a78,5db7bb1d5672,60ec3b8dafc6,6c47f844c2b6,6cad0692ff15,721df04bab38,733a9ea74f4a,7ae3e991d5ea,8c205bcb2d44,8c5577e70cb9,8dc8cb28b82b,909b1636acdf,944cbc923808,9a714cad4474,9c9f185cff0a,a0cfad0ff5c8,a1d6cd512764,a3e9ea633862,a3e9ea633862,a54d8eb47be5,a646b3c24e34,ad79be110ca5,ada870e58de7,ae0a9bbf2d76,ae51f7b1c4dd,b4270475576b,b7de4c1482bd,b8dd74f181b1,bfeb26d204dc,cbe3d65d3c59,cf3d9b5fc492,cf3d9b5fc492,cf3d9b5fc492,d018eb2f732f,d1708808c10d,d32bfe70a3d0,d333d0b555e7,d3bc2a595251,d6bb11635adb,d842e2e09e11,e12fe398e987,e2c52799e878,e4d23b18288b,e8302563a140,ea4a4d74ecff,ec197e3f6699,f475d61614aa,f63f06dafad9,f6ed96a4c0f5,f7561612007a,fa25e5588489,ff3577e5a903
+fn   pace_window                                      same   d=0x1288
+fn   pcfg_ff_mode                                     same   d=0x12d0
+fn   pcfg_ff_name                                     layout d=0x12d0
 fn   plat_audio_frames                                diff   d=0x1fd0 hot n=4 c=19e98800f54e,1d70a05778ea,62f72f24c2bf,fb45e84292c2
 fn   plat_video_frame                                 diff   d=0x1fd0 hot n=54 c=013581468cae,0637029e9709,0c81fad23789,0fb6c7118143,1c65ebafd734,26e9ba3aa4b0,28c6f8cb493f,2b6e8c48419d,2c9fc0222002,311c92d44664,311c92d44664,37e8dc7d7b32,3d7fddf459f0,4053cd69baf6,49f2ee9d597b,5354f3bca41b,552a2b5ad95a,61917034dfe8,63112ccdcb30,645173d3ff6e,6524b6f8d766,7258044bc741,75e3d7e1e03d,80c6011815fa,842394f13290,862f4a49387b,86f0549f7d2f,8f8cbaff03ef,9134419a8f50,9489a9b4f2c5,9592431f7f7c,9c35e54cfaa4,9c7336f8ed66,9dedab1238ee,9fda3792978d,a740e8b62944,ac88c772cb96,b058e829af4b,b21fcc66903f,b3aab6a4ac1a,b6e45ead4c75,b6e45ead4c75,b918b8640f9f,b9bec14d1cb5,ca0760ae3f24,cb4fa8b5cdc8,e4a38cbac42f,eabf2409b3d5,eb974f280e88,ecba7e5105e9,ee46b8dba316,f70953e98d10,fb9b56b8bdf0,fccc69fe0f23
 fn   process_cheats                                   same   d=0x17a0 hot
-fn   psp_rewind_tick_run                              diff   d=0x0950 n=76 c=0663adb8556e,096c6a7c7ed9,1b0748a2d6f0,1c24229ab297,1ea27ccc2d9f,2262c4c88853,2c201dbb01f0,331160ac31e1,33743af5f893,35df74535cc0,36993c497687,3b1e251e09ac,3e6c896fdb13,48647d0f48a2,4928d4d8c1f3,4afd88ba1406,4b5ec6c1d6c1,4c7d4554e099,4e77bab04a7c,5013fa81c09d,50b0c14ed2f2,58d94396ea01,5ff46e36b67c,60df29216456,6181e03ec2cf,684b2aadfe9f,6b3979934a89,6b705345ab28,6b705345ab28,7065d117c748,725bf7be3285,7baddaacf9f4,7bf17a429a0b,7f87f5b9ae18,806a75615d6b,88278bb42d8e,8f21db8f153a,9701dbb0399c,9abb40d299dd,9c6030d5e4a9,9c6030d5e4a9,9d44a061a8d7,9ff5f0e04ac0,a6464d96a1f7,ac723e3463a1,acd8c00f0002,ad6729d5d0cc,af5fef0d42e6,afef828c482d,b3b2559498d7,b71648121d55,b87620b4061d,ba77e3705166,bb83ea106b61,bb83ea106b61,c081d496b08d,c10e220f0f6d,c16118a4275b,c250beefeba8,c7ecce705e8f,c8ae0399f57f,c96353995f3d,ca078bddbd63,d39877754e27,db2a97405123,e6b95c70f5a1,e7313fcea818,e89f9431f842,e938c7e3085f,eee3235ae828,f2268161f758,f596b5eb55b2,faa85f7607cd,fc1999648d67,fef7404d99e8,ff6c4db1bdff
-fn   pwr_hold                                         diff   d=0x0274 n=5 c=400e3e36580d,73a62e9fbf36,7c468c5960f1,dba370bc4757,e9d6397d88b1
+fn   psp_rewind_tick_run                              diff   d=0x0cf8 n=76 c=0663adb8556e,096c6a7c7ed9,1b0748a2d6f0,1c24229ab297,1ea27ccc2d9f,2262c4c88853,2c201dbb01f0,331160ac31e1,33743af5f893,35df74535cc0,36993c497687,3b1e251e09ac,3e6c896fdb13,48647d0f48a2,4928d4d8c1f3,4afd88ba1406,4b5ec6c1d6c1,4c7d4554e099,4e77bab04a7c,5013fa81c09d,50b0c14ed2f2,58d94396ea01,5ff46e36b67c,60df29216456,6181e03ec2cf,684b2aadfe9f,6b3979934a89,6b705345ab28,6b705345ab28,7065d117c748,725bf7be3285,7baddaacf9f4,7bf17a429a0b,7f87f5b9ae18,806a75615d6b,88278bb42d8e,8f21db8f153a,9701dbb0399c,9abb40d299dd,9c6030d5e4a9,9c6030d5e4a9,9d44a061a8d7,9ff5f0e04ac0,a6464d96a1f7,ac723e3463a1,acd8c00f0002,ad6729d5d0cc,af5fef0d42e6,afef828c482d,b3b2559498d7,b71648121d55,b87620b4061d,ba77e3705166,bb83ea106b61,bb83ea106b61,c081d496b08d,c10e220f0f6d,c16118a4275b,c250beefeba8,c7ecce705e8f,c8ae0399f57f,c96353995f3d,ca078bddbd63,d39877754e27,db2a97405123,e6b95c70f5a1,e7313fcea818,e89f9431f842,e938c7e3085f,eee3235ae828,f2268161f758,f596b5eb55b2,faa85f7607cd,fc1999648d67,fef7404d99e8,ff6c4db1bdff
+fn   pwr_hold                                         diff   d=0x1cac n=5 c=400e3e36580d,73a62e9fbf36,7c468c5960f1,dba370bc4757,e9d6397d88b1
 fn   pwr_release.part                                 lab-only
 fn   ram_mirror_alias_pc@cpu_threaded.c#1             same   d=0x0000 hot
 fn   ram_mirror_alias_pc@cpu_threaded.c#2             same   d=0x1720 hot
@@ -322,11 +325,11 @@ fn   scePowerGetCpuClockFrequency                     same   d=0x1af0
 fn   scePowerTick                                     same   d=0x1ae0
 fn   serial_next_event                                layout d=0x0000 hot
 fn   serialpoke_frame_update                          same   d=0x08e0 hot
-fn   sess_cost_evt                                    diff   d=0x171c n=11 c=04628faf077b,11b86a80005e,2a054d3365e1,3d35ee78d8cd,46679754a5fc,86411df6dfb0,c660cd67f6c3,cc332cb8b8b1,d68bcddf9898,e15b7886536a,e9e923f097f2
+fn   sess_cost_evt                                    diff   d=0x1154 n=11 c=04628faf077b,11b86a80005e,2a054d3365e1,3d35ee78d8cd,46679754a5fc,86411df6dfb0,c660cd67f6c3,cc332cb8b8b1,d68bcddf9898,e15b7886536a,e9e923f097f2
 fn   set_cpu_mode                                     layout d=0x0000 hot
 fn   shash_frame                                      lab-only
-fn   silent_frame                                     diff   d=0x1dec n=24 c=028428b31860,0897be732af8,0dd98367b38c,19d0cdf399b9,22f8f9ff1f7b,23899e25bf4a,25164f760131,3e8a39b17773,4ec306c09b38,57fd501e84ed,58c155dcee78,7b1f1d090a43,8390c4a79b49,a4a72dacfcc9,a5bfe5a80bf4,b4674cd9cb77,bba1322a01d6,d2cf6d64dd88,dae64527d026,f34c21afc5be,f39240c810f2,f57ac223854a,f9b2c9bb503f,fb816888ad7a
-fn   skip_policy_frame                                diff   d=0x1680 n=12 c=0953adc6b7f3,46dce42eebb4,48637a08cee5,4f315c43604b,5c2887ea2370,72b80b16502b,8545ed55178d,b343208e8704,c4d405bec8c8,c4d405bec8c8,e363f0ac28c7,e363f0ac28c7
+fn   silent_frame                                     diff   d=0x1868 n=24 c=028428b31860,0897be732af8,0dd98367b38c,19d0cdf399b9,22f8f9ff1f7b,23899e25bf4a,25164f760131,3e8a39b17773,4ec306c09b38,57fd501e84ed,58c155dcee78,7b1f1d090a43,8390c4a79b49,a4a72dacfcc9,a5bfe5a80bf4,b4674cd9cb77,bba1322a01d6,d2cf6d64dd88,dae64527d026,f34c21afc5be,f39240c810f2,f57ac223854a,f9b2c9bb503f,fb816888ad7a
+fn   skip_policy_frame                                diff   d=0x1100 n=12 c=0953adc6b7f3,46dce42eebb4,48637a08cee5,4f315c43604b,5c2887ea2370,72b80b16502b,8545ed55178d,b343208e8704,c4d405bec8c8,c4d405bec8c8,e363f0ac28c7,e363f0ac28c7
 fn   smc_blk_check_silent                             lab-only
 fn   smc_blk_note_block                               diff   d=0x1f20 hot n=3 c=04441cf6b477,07d88e8935ea,2eb3dbdeb361
 fn   smc_blk_note_writer                              lab-only
@@ -380,9 +383,9 @@ fn   trigger_dma@gba_memory.c#2                       layout d=0x1720 hot
 fn   trigger_timer@gba_memory.c#1                     layout d=0x1400 hot
 fn   trigger_timer@gba_memory.c#2                     layout d=0x1800 hot
 fn   turbo_frame                                      lab-only
-fn   ui_active                                        same   d=0x0fb4
-fn   ui_capturing                                     same   d=0x1078
-fn   ui_demo_start                                    diff   d=0x0ed8 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
+fn   ui_active                                        same   d=0x0a34
+fn   ui_capturing                                     same   d=0x0af8
+fn   ui_demo_start                                    diff   d=0x0958 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
 fn   uiscript_linking_draw                            lab-only
 fn   uiscript_pad                                     lab-only
 fn   update_gba                                       layout d=0x0000 hot
@@ -390,21 +393,21 @@ fn   update_input                                     layout d=0x0160 hot
 fn   update_scanline                                  layout d=0x0000 hot
 fn   update_scanline_render                           layout d=0x0000 hot
 fn   update_serial                                    layout d=0x0000 hot
-fn   vid_blit_mode                                    same   d=0x00c4
-fn   vid_blit_mode_name                               layout d=0x00c4
-fn   vid_blit_prof                                    same   d=0x00c4
+fn   vid_blit_mode                                    same   d=0x1b44
+fn   vid_blit_mode_name                               layout d=0x1b44
+fn   vid_blit_prof                                    same   d=0x1b44
 fn   vid_draw_prestaged                               layout d=0x1fd0 hot
-fn   vid_dump_ge                                      same   d=0x0500
-fn   vid_filter                                       same   d=0x00c4
-fn   vid_filter_name                                  same   d=0x00c4
+fn   vid_dump_ge                                      same   d=0x1f80
+fn   vid_filter                                       same   d=0x1b44
+fn   vid_filter_name                                  same   d=0x1b44
 fn   vid_flip_latched                                 same   d=0x1f40 hot
 fn   vid_gu_busy                                      same   d=0x014c hot
 fn   vid_gu_flush                                     same   d=0x1fd0 hot
 fn   vid_gu_flush.part                                same   d=0x014c hot
 fn   vid_prof_frame                                   lab-only
-fn   vid_scale_mode                                   same   d=0x00c4
-fn   vid_scale_name                                   same   d=0x00c4
-fn   vid_smooth                                       same   d=0x00c4
+fn   vid_scale_mode                                   same   d=0x1b44
+fn   vid_scale_name                                   same   d=0x1b44
+fn   vid_smooth                                       same   d=0x1b44
 fn   vid_swap                                         diff   d=0x1fd0 hot n=31 c=0e25ddd8d3da,17f64f8f59c6,236164424133,3114ec789873,35cb2fe3020b,36600e60e15d,3a6aab04b6a3,3c8daf8157d7,51696c2e9aba,5683d04018c7,5683d04018c7,6aec8a0e9b38,6b3172bdc452,6d2457bba1f6,79f29541fa72,8327f7842e11,8bae4884793e,8e7bac799152,a0198bddd9ef,a8d9694b2e68,ac45eca0778d,ad31f722b1f3,ae1fec9d5d85,bca5316aecf8,bed7e8e241d5,c0f5aa47f7d0,c61d0816b90b,cf876934ac0c,dbe6d69bab72,e585b0ee5f00,ebae2a04cf37
 fn   video_prof_read_reset                            same   d=0x1a60
 fn   video_refresh                                    same   d=0x0160 hot
