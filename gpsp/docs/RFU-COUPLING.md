@@ -157,6 +157,14 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
   adapter rooms only; ad hoc and the cable never send it. RFU packets are 104 B, so a datagram grows by at most
   2 + 2 x 108 = 218 B (346 B), never past 584 B (the relay's 600 B datagram holds it unchanged).
   tools/tests/test_netdrv_redund.c: at 3 % random loss, 602 of 2500 payloads came late without it, 1 with it.
+- **Hardware, build 01c4b13a50d5 (a2073cf7), 2026-11-17.** PSP-3000 vs PPSSPP on the Lab VPS, Emerald Trade Center,
+  linked phase (frames / wall, in_trade_center..trade_done) on the 3000: direct 54.3 / 53.5 / 53.1, relay 54.6 /
+  53.1 / 54.0 (jf26b10 j5b8a98 j3c8ebc, j50a5e5 j6c33ec ja6c497): mean 53.8 against the study's 45.8 at D = 4
+  (ONLINE-SUITE.md 10.3). 6/6 PASS; window waits 8.5-12.5 s on the 3000 (study 19-27 s); the VPS filled 123-173
+  gaps per window from redundant copies (the 3000 -> VPS losses), the 3000 0-1; rfu_qdrop 0, no give-up. Local ad hoc
+  pairs (rfu_em_trade, rfu_mt, rfu_mg, both host orders, jed5e4c j1e5d88): 12/12 PASS at d=2 kind=adhoc, no qdrop.
+  Mario Golf's lobby at D = 4 (ad hoc pair, `rfu_sched = 4` on both, j282b92 jc644a5): 4/4 PASS, both orders. No
+  online Golf case exists.
 
 ## Status (code-health C-4, 2026-11-16)
 
