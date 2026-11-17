@@ -886,6 +886,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
           * HOSTING / LINKED, the Wireless row its mode): the chip would sit
           * on the footer's hints (docs/GBA-LINK-UI.md).  Toasts still show. */
          osd_chip_session(NULL);
+         link_wait_hide();
          osd_draw();
          if (g_link_kind != LK_NONE)
             link_chip();              /* hidden again while LINKING */
@@ -1282,6 +1283,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
 #endif
       }
       FE_LP_SET(FELP_L_POST);
+      link_wait_osd();           /* held for the partner >= 1 s: say so */
       if (g_gblink_screen)
          gblink_draw_status();    /* link session: setting up or just ended */
 #ifdef GPSP_PERF_RIG

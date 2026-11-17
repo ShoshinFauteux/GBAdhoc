@@ -128,6 +128,7 @@ int rs_partner(void) { return rfu_sched_partner(); }
 #else
 /* ----------------------------------------------------------------- driver */
 #include "../../rfu_sched_api.h"     /* the inline rules: no symbols used */
+#include "../../frontend-common/fe_linkwait.h"   /* the wait notice's rules */
 #define ND_HELD_SILENT_T 1          /* netdrv.h ND_HELD_SILENT */
 #define ND_HELD_GAP_T    2          /* netdrv.h ND_HELD_GAP */
 #define NET_RFU_HEADER      0x52465531u
@@ -829,6 +830,149 @@ static void test_give_up_lead_overflows(void)
   cfg_d = 2;
 }
 
+/* 13. "Waiting for the other player..." (fe_linkwait.h) on the gate's real
+ *     holds.  gate_pass is fe_host_rfu_gate's decision for console k at
+ *     `now`: run when the tick is in; else the wait rule (rfu_gate_step,
+ *     with netdrv's verdict `held`); a pass that runs no frame holds, one
+ *     that runs ends the hold.  The partner B freezes (its process stopped:
+ *     nothing it sends) and netdrv reads the path as held once nothing has
+ *     been heard for RFU_GATE_QUIET_US, as netdrv_link_held does.
+ *     a. a hitch shorter than the notice shows nothing;
+ *     b. a 3 s freeze: shown from 1 s (within a pass), the whole hold, no
+ *        give-up; hidden by the first frame after the partner is back;
+ *     c. a partner declared dead at 8 s (netdrv: the link is lost): the
+ *        notice goes on the very next pass and the console runs on its own
+ *        (rfu_sched_may_run), never by a give-up -- what follows is the
+ *        session's disconnect flow, untouched;
+ *     d. a partner whose menu is open (PAUSE) is waited for: said too. */
+#define PASS_US 16683ull
+static int lw_gave;
+static int gate_pass(int k, unsigned long long now, int held,
+                     unsigned long long *gs, unsigned long long *lw)
+{
+  int ran = 0;
+  if (ad[k].may_run()) {
+    *gs = 0;
+    ran = pass(k);
+  } else if (rfu_gate_step(gs, now, ad[k].peer_paused(), held)) {
+    ad[k].give_up();
+    lw_gave++;
+    *gs = 0;
+    ran = pass(k);
+  }
+  link_wait_note(lw, now, !ran);
+  return ran;
+}
+
+/* Run A (and B unless frozen) for `us` of passes from *t.  Returns the
+ * notice's first time on (relative to *t at entry; -1 = never) and leaves
+ * in *on_end whether it is on at the last pass. */
+static long long wait_run(unsigned long long *t, unsigned long long us,
+                          unsigned long long frozen_at, unsigned long long *gs,
+                          unsigned long long *lw, int *on_end)
+{
+  unsigned long long t0 = *t, gsb = 0, lwb = 0;
+  long long first = -1;
+  int on = 0;
+  for (; *t < t0 + us; *t += PASS_US) {
+    /* frozen_at 0: netdrv never reads the path as held */
+    int held = frozen[B] && frozen_at && *t >= frozen_at + RFU_GATE_QUIET_US
+               ? ND_HELD_SILENT_T : 0;
+    if (!frozen[B])
+      gate_pass(B, *t, 0, &gsb, &lwb);
+    gate_pass(A, *t, held, gs, lw);
+    pump();
+    on = link_wait_due(*lw, *t);
+    if (on && first < 0)
+      first = (long long)(*t - t0);
+  }
+  *on_end = on;
+  return first;
+}
+
+static void test_wait_notice(void)
+{
+  unsigned long long t = 50000000ull, gs = 0, lw = 0, fz;
+  long long first, shown_b;
+  int on;
+  CHECK(LINK_WAIT_NOTICE_US == 1000000u, "the notice is owed after 1 s (owner), "
+        "not %u us", LINK_WAIT_NOTICE_US);
+  CHECK(!link_wait_due(0, 99000000ull) &&
+        link_wait_due(1, LINK_WAIT_NOTICE_US + 1ull) &&
+        !link_wait_due(1, LINK_WAIT_NOTICE_US), "link_wait_due edges");
+  lw = 0;
+  link_wait_note(&lw, 0, 1);
+  CHECK(lw == 1, "a hold starting at time 0 not recorded");
+  lw = 0;
+  lw_gave = 0;
+  CHECK(linked(), "no lock");
+  CHECK(run(100), "deadlock");
+  /* a. a 0.5 s hitch */
+  CHECK(wait_run(&t, 200000, 0, &gs, &lw, &on) < 0 && !on, "notice on a clean link");
+  frozen[B] = 1;
+  fz = t;
+  first = wait_run(&t, 500000, fz, &gs, &lw, &on);
+  CHECK(first < 0, "a 0.5 s hitch showed the notice (at %lld us)", first);
+  CHECK(lw != 0, "the 0.5 s hitch was not a hold");
+  frozen[B] = 0;
+  first = wait_run(&t, 300000, 0, &gs, &lw, &on);
+  CHECK(first < 0 && !on && lw == 0, "after the hitch: notice %lld, hold %llu", first, lw);
+  /* b. a 3 s freeze */
+  frozen[B] = 1;
+  fz = t;
+  first = wait_run(&t, 3000000, fz, &gs, &lw, &on);
+  shown_b = first;
+  CHECK(first >= (long long)LINK_WAIT_NOTICE_US &&
+        first <= (long long)(LINK_WAIT_NOTICE_US + 4 * PASS_US),
+        "a 3 s freeze showed the notice at %lld us (want ~1 s)", first);
+  CHECK(on && !lw_gave, "3 s freeze: on at the end %d, give-ups %d", on, lw_gave);
+  frozen[B] = 0;
+  {
+    /* hidden by the first frame A runs once B is back, and shown until then */
+    unsigned long long gsb = 0, lwb = 0;
+    int i, ran = 0;
+    for (i = 0; i < 20 && !ran; i++, t += PASS_US) {
+      gate_pass(B, t, 0, &gsb, &lwb);
+      pump();
+      ran = gate_pass(A, t, 0, &gs, &lw);
+      CHECK(ran ? !link_wait_due(lw, t) : link_wait_due(lw, t),
+            "resume pass %d: ran %d, notice %d", i, ran, link_wait_due(lw, t));
+    }
+    CHECK(ran && i <= 3, "A ran again only after %d passes", i);
+  }
+  first = wait_run(&t, 200000, 0, &gs, &lw, &on);
+  CHECK(!on && lw == 0 && first < 0, "after the freeze: on %d, hold %llu", on, lw);
+  CHECK(!lw_gave, "gave up on a held partner");
+  /* d. the partner's menu: PAUSE, then no frames */
+  ad[B].pause(1);                       /* sent at once (rfu_sched_pause) */
+  frozen[B] = 1;
+  /* netdrv's verdict stays clear: PAUSE alone keeps the gate waiting */
+  first = wait_run(&t, 2500000, 0, &gs, &lw, &on);   /* past the 2 s rule too */
+  CHECK(first >= (long long)LINK_WAIT_NOTICE_US &&
+        first <= (long long)(LINK_WAIT_NOTICE_US + 4 * PASS_US) && on && !lw_gave,
+        "partner menu: notice %lld, on %d, give-ups %d", first, on, lw_gave);
+  frozen[B] = 0;
+  ad[B].pause(0);
+  first = wait_run(&t, 300000, 0, &gs, &lw, &on);
+  CHECK(!on && lw == 0, "after the partner's menu: on %d", on);
+  /* c. dead at 8 s */
+  frozen[B] = 1;
+  fz = t;
+  first = wait_run(&t, 8000000, fz, &gs, &lw, &on);
+  CHECK(on && !lw_gave, "before the death: on %d, give-ups %d", on, lw_gave);
+  ad[A].unlink();                       /* netdrv: peer dead -> link lost */
+  /* the gate's next pass (the frame itself is the unlinked game's, which
+   * this wire's games do not model: test 7 stops here too) */
+  on = ad[A].may_run();
+  link_wait_note(&lw, t, !on);
+  CHECK(on && lw == 0 && !link_wait_due(lw, t) && !lw_gave && !ad[A].on(),
+        "after the death: ran %d, hold %llu, give-ups %d, on %d", on, lw, lw_gave,
+        ad[A].on());
+  printf("  wait notice: none for a 0.5 s hitch; a 3 s hold shows it from %lld ms "
+         "of freeze to the first frame back; a partner menu shows it; a dead "
+         "partner clears it on the next pass, no give-up\n", shown_b / 1000);
+}
+
 int main(int argc, char **argv)
 {
   if (argc > 1)
@@ -847,6 +991,7 @@ int main(int argc, char **argv)
   test_gate_step();
   test_outage_no_burst();
   test_give_up_lead_overflows();
+  test_wait_notice();
   if (failures) {
     printf("rfu sched%s%s: %d check(s) FAILED\n", *mutant ? " mutant " : "", mutant,
            failures);

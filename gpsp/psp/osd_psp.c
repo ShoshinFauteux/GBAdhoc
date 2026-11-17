@@ -27,6 +27,7 @@ static char chip_ff_txt[24];   /* "<ff> Unlimited Smooth" + NUL */
  * truncated the profiler fields mid-string — the chip looked like it simply
  * had no x/r counters.  480px / 8px per glyph = 60 chars fit on screen. */
 static char chip_fps_txt[64];
+static const char *chip_wait_txt;   /* a constant, never copied */
 
 void osd_toast(const char *fmt, ...)
 {
@@ -55,6 +56,7 @@ void osd_reset(void)
    chip_session_txt[0] = '\0';
    chip_ff_txt[0] = '\0';
    chip_fps_txt[0] = '\0';
+   chip_wait_txt = NULL;
 }
 
 void osd_chip_session(const char *text)
@@ -81,10 +83,15 @@ void osd_chip_fps(const char *text)
       chip_fps_txt[0] = '\0';
 }
 
+void osd_chip_wait(const char *text)
+{
+   chip_wait_txt = text && text[0] ? text : NULL;
+}
+
 void osd_draw(void)
 {
    int any = toast_count || chip_session_txt[0] || chip_ff_txt[0] ||
-             chip_fps_txt[0];
+             chip_fps_txt[0] || chip_wait_txt;
    if (!any)
       return;
 
@@ -132,6 +139,16 @@ void osd_draw(void)
       int py = VID_SCR_H - FE_FONT_H - 8;
       vid_rect(px - 4, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
       vid_text(px + 2, py, chip_session_txt, COL_ACCENT);
+   }
+
+   if (chip_wait_txt)
+   {
+      /* Bottom-left, mirroring the session chip: the same panel, white
+       * text -- it is news, the session chip is a label. */
+      int tw = vid_text_w(chip_wait_txt);
+      int py = VID_SCR_H - FE_FONT_H - 8;
+      vid_rect(10, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
+      vid_text(16, py, chip_wait_txt, COL_TEXT);
    }
 
    vid_overlay_end();
