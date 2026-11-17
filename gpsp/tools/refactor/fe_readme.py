@@ -866,20 +866,16 @@ def render(d):
       % (','.join(map(str, fp_inc)) or '?', dc['fe_priv.h'], gtxt('fe_priv.h'), dc['play_defaults.h'],
          gtxt('play_defaults.h'), dc['shell'], dc['fragments'],
          len(noops), ', '.join('`%s` %s:%d' % x for x in noops) or 'none'))
-    w('- **Core-ABI hand copies.** The TU redeclares core functions and globals instead of including the core '
-      'headers. T14 (`abi_asserts.py`) asserts a copy when the check TU\'s headers declare its name (`#include '
-      '"common.h"`, the core\'s header chain, and `psp/sleep_q.h`), in a compile-only check TU that is never '
-      'linked. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` cites every copy in that flavour\'s `-E` as '
-      '`fe/X.inc.c:N`: the asserted ones, then the UNCHECKED list, the copies in that `-E` that T14 cannot compare '
-      '(a name the check TU\'s headers do not declare, or a frontend-only type), then the PLATFORM list, copies of '
-      'names that are not core ABI (`abi_asserts.platform`: linker symbols, the `PSP_MODULE_INFO` expansion, an SDK '
-      'function its header lacks) -- %s. `abi_asserts.ratchet` holds each flavour\'s maximum of core copies and of '
-      'UNCHECKED copies; `flavours_gate.py ratchet` fails a header above either. A copy in an `#if` arm that '
-      'none of %s compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` lists those sites from '
-      'a raw scan of the TU with every `#if` arm kept. Today that is %d of its %d copy sites (the headers cite the '
-      'other %d, and %d copies that a macro call expands, which the raw text does not show): "Core-ABI copies in '
-      'no T14 flavour" below. The index in `fe/fe_priv.h` is PLAN-P-beta5 §5.2\'s set (every name T14 asserts, '
-      'plus six it cannot), not every copy.'
+    w('- **Core-ABI copies.** The TU includes `gpsp/core_fe.h`, the core\'s exports to a frontend (tier C, C-6), '
+      'instead of copying core declarations; the few copies left (the translation-cache names whose type cpu.h '
+      'decides per port) are asserted by T14 (`abi_asserts.py`) against the core headers in a compile-only check TU, '
+      'and T14 fails a copy of any name core_fe.h declares. `tools/refactor/generated/<flavour>/fe_abi_asserts.h` '
+      'cites each copy of that flavour\'s `-E` as `fe/X.inc.c:N`, with the PLATFORM names (`abi_asserts.platform`: '
+      'linker symbols, the `PSP_MODULE_INFO` expansion, an SDK function its header lacks) -- %s. '
+      '`abi_asserts.ratchet` holds each flavour\'s maximum; `flavours_gate.py ratchet` fails a header above it. A '
+      'copy in an `#if` arm that none of %s compiles is in no generated header: `abi_asserts.py unbuilt --src gpsp` '
+      'lists those sites (%d of the TU\'s %d copy sites; the headers cite the other %d, and %d copies that a macro '
+      'call expands): "Core-ABI copies in no T14 flavour" below.'
       % ('; '.join('%s %d asserted + %d constants, %d unchecked, %d platform' % x for x in t14), andlist(T14_FLAVOURS),
          len(unb), ust['raw'], ust['cited'], len(ust['macro'])))
     dl = []
