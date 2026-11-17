@@ -17,6 +17,10 @@ THE MAP (one file per batch, reviewed in the commit that applies it):
     telfn NAME                       (g0r.py only) a function the telemetry batch compiles
                                      out of the release whole (lat_census): its body is
                                      not compared in the release
+    telobj NAME                      (g0r.py only) a telemetry object that stays a standalone
+                                     definition under #ifdef GPSP_KEEP_TELEMETRY (one a
+                                     .bss struct cannot hold: an initializer, ~0u min
+                                     trackers); its stores count as telemetry stores
 
 WHAT `struct` DOES on a single-file source (`split.py inverse` output; split it again
 after): each OLD's definition line(s) are deleted; the struct block is written where the
@@ -63,8 +67,8 @@ class Refused(Exception):
 
 def read_map(text):
     """-> dict(structs=OrderedDict(var -> dict(type, kind, section)),
-               fields=OrderedDict(old -> (var, field)), telfns=[names])."""
-    structs, fields, telfns = collections.OrderedDict(), collections.OrderedDict(), []
+               fields=OrderedDict(old -> (var, field)), telfns=[names], telobjs=[names])."""
+    structs, fields, telfns, telobjs = collections.OrderedDict(), collections.OrderedDict(), [], []
     for k, ln in enumerate(text.split('\n'), 1):
         s = ln.split('#', 1)[0].strip()
         if not s:
@@ -82,6 +86,10 @@ def read_map(text):
             if len(w) != 2:
                 raise Refused('map line %d: want `telfn NAME`' % k)
             telfns.append(w[1])
+        elif w[0] == 'telobj':
+            if len(w) != 2:
+                raise Refused('map line %d: want `telobj NAME`' % k)
+            telobjs.append(w[1])
         else:
             m = re.match(r'^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$', w[1]) if len(w) == 2 else None
             if not m or not re.match(r'^[A-Za-z_]\w*$', w[0]):
@@ -96,7 +104,7 @@ def read_map(text):
     for var in structs:
         if not any(v == var for v, _ in fields.values()):
             raise Refused('struct %s has no member' % var)
-    return dict(structs=structs, fields=fields, telfns=telfns)
+    return dict(structs=structs, fields=fields, telfns=telfns, telobjs=telobjs)
 
 
 def _top_eq(s):

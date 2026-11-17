@@ -19,6 +19,14 @@ the G0R checker (g0r.py) and `globals.py census --module X --check`.  No compile
   M3  the release deletes a non-store statement (a call)                        -> G0R FAIL
   M4  a renamed site that names another member                                  -> G0R FAIL
   M5  a telfn's body differs in the release                                     -> ok only with telfn
+  G4  (tier C C5-1) G0R deletions of whole telemetry statements in the release: a guarded
+      `if (C) { if (call()) tel++; else tel += 2; check = 0; }` block, TEL(if (call()) tel++),
+      a TEL'd local + its use, a block-local block, a telobj (min tracker) and its file-scope
+      definition; every call in deleted code listed                                -> ok
+  M6  a deleted condition whose statement stays                                  -> G0R FAIL
+  M7  a deleted block holding a non-telemetry store                              -> G0R FAIL
+  M8  a deleted declaration whose name is used after it                          -> G0R FAIL
+  M9  a function-scope local deleted while still read                            -> G0R FAIL
   K1  census --module toy --check: the struct objects and the allowlist pass; a stray
       object of the module fails
 """
@@ -87,6 +95,85 @@ g_ll_hit pacing_tel.ll_hit
 g_lat_hist pacing_tel.lat_hist
 g_lat_vc0 pacing_tel.lat_vc0
 '''
+
+
+# Tier C C5-1: the release of a telemetry batch, as token streams (REF = the parent's release
+# -E, NEW = the batch's: TEL(...) is `do { } while (0)` -> @TEL@, #ifdef GPSP_KEEP_TELEMETRY
+# blocks gone).  g_ll_hit / g_lat_hist are tel members (MAP), g_min a telobj.
+BLK_REF = r'''
+static unsigned g_min = ~0u;
+static int g_check, g_keep;
+static int step(int c, unsigned vc)
+{
+   unsigned now = clock_us();
+   if (g_check && (int)(vc - g_keep) >= 1)
+   {
+      if (flip_latched())
+         g_ll_hit++;
+      else
+         g_ll_hit += 2;
+      g_check = 0;
+   }
+   if (flip_latched())
+      g_ll_hit++;
+   if (c)
+   {
+      unsigned d = vc + 1u - g_keep;
+      g_lat_hist[d < 7u ? d : 7u]++;
+      g_keep = 0;
+   }
+   {
+      unsigned age = clock_us() - now;
+      if (age < 100u)
+      {
+         g_ll_hit++;
+         g_lat_hist[0] += age;
+      }
+   }
+   if ((unsigned)c < g_min)
+      g_min = (unsigned)c;
+   g_lat_hist[1] += hc();
+   return g_keep + (int)now;
+}
+'''
+BLK_NEW = r'''
+static int g_check, g_keep;
+static int step(int c, unsigned vc)
+{
+   unsigned now = clock_us();
+   if (g_check && (int)(vc - g_keep) >= 1)
+   {
+      if (flip_latched())
+         @TEL@;
+      else
+         @TEL@;
+      g_check = 0;
+   }
+   @TEL@;
+   if (c)
+   {
+      @TEL@;
+      g_keep = 0;
+   }
+   @TEL@;
+   @TEL@;
+   @TEL@;
+   return g_keep + (int)now;
+}
+'''.replace('@TEL@', 'do { } while (0)')
+BLK_MUTANTS = (
+    # the latch census's guard deleted, its body kept: an unconditional store to g_check
+    ('M6', '   if (g_check && (int)(vc - g_keep) >= 1)\n   {\n      if (flip_latched())\n         do { } while (0);\n'
+           '      else\n         do { } while (0);\n      g_check = 0;\n   }\n',
+     '   g_check = 0;\n', 'a deleted condition whose statement stays'),
+    # g_keep = 0 (state) deleted with the telemetry
+    ('M7', '   if (c)\n   {\n      do { } while (0);\n      g_keep = 0;\n   }\n', '   do { } while (0);\n',
+     'a deleted block holding a non-telemetry store'),
+    # the block-local's name still used after its deleted declaration
+    ('M8', '   return g_keep + (int)now;', '   return g_keep + (int)now + (int)age;', 'a deleted declaration still used'),
+    # a function-scope local deleted while it is still read
+    ('M9', '   unsigned now = clock_us();\n', '', 'a deleted local still read'),
+)
 
 
 def refused(label, src, mp, tel=False):
@@ -219,6 +306,17 @@ def run():
             mt = S.read_map(MAP + 'telfn vcount\n')
             okk2, _ = R.compare(tk(base_rel), tk(pp(m5, [])), mt, tel=True, mode='deletions')
             check(not okk and okk2, 'M5 a telfn body differing in the release: FAIL without `telfn`, ok with it')
+        # ---- tier C C5-1: whole telemetry statements in the release (token level, no compiler)
+        mb = S.read_map(MAP + 'telobj g_min\n')
+        ref = BLK_REF
+        okk, rep = R.compare(tk(ref), tk(BLK_NEW), mb, tel=True, mode='deletions')
+        check(okk and any('REVIEW' in x and 'flip' in x for x in rep) and any('REVIEW' in x and 'hc' in x for x in rep),
+              'G4 release: a latch census block, a TEL(if ...), a block-local and a TEL\'d local, a telobj '
+              'and its file-scope definition deleted; the calls listed (%s)' % rep[-1][:110])
+        for tag, old, new, what in BLK_MUTANTS:
+            assert BLK_NEW.count(old) == 1, tag
+            okk, rep = R.compare(tk(ref), tk(BLK_NEW.replace(old, new)), mb, tel=True, mode='deletions')
+            check(not okk, '%s %s fails the release checker (%s)' % (tag, what, rep[-1][:100]))
         # ---- census --check
         import globals as G
         okc, offenders = G.module_check([

@@ -16,12 +16,24 @@ for byte).  Then:
   4. with --tel, both: `do { S } while ( 0 )` whose S names a telemetry OLD reads as S
      (TEL(stmt) in a telemetry build); an empty `do { } while ( 0 )` is one marker token.
 Mode equal (lab, harness; every flavour of a non-telemetry batch): the two token lists
-must be identical.  Mode deletions (the release of a telemetry batch): every difference
-must be REF tokens replaced by the empty-TEL marker (or deleted), and every `;`-separated
-piece of those REF tokens must be a store to a telemetry OLD: `[++|--] OLD [index|.member]...
-(= | op= | ++ | --) ...`.  Deleted pieces whose right side calls a function are LISTED
-for the reviewer (sceDisplayGetVcount(), fe_host_mem_read(), net_now_us(): C-5.md §4),
-not failed.
+must be identical.  Mode deletions (the release of a telemetry batch): REF and NEW are
+walked in step; wherever they differ, NEW holds the empty-TEL marker (`@TEL@ ;`, which
+stands for one or more REF statements) or nothing (an `#ifdef GPSP_KEEP_TELEMETRY` block),
+and the REF tokens skipped there must parse as whole C statements built only of
+(tier C C5-1; C5-0's checker took single stores only):
+  - a store to a telemetry object: `[++|--] OLD [index|.member]... (= | op= | ++ | --) ...`
+    (OLD a tel member of the map, a `telobj`, or an object whose deleted declaration
+    was seen earlier in the walk);
+  - `if (C) S [else S]`, `{ S... }`, `;` whose conditions C store nothing (no `=`,
+    op=, `++`, `--`) and whose statements are of this list (the latch census
+    `if (vid_flip_latched()) l1++; else l0++;`);
+  - a declaration `TYPE NAME [= E]` (E storing nothing) whose NAME does not occur in NEW
+    after the deletion, to the end of the enclosing block (to the end of the file at file
+    scope), or that sits inside a deleted block: the object, local or standalone, went
+    with every use (`d`, `age`, `lead`, the ~0u min trackers);
+  - a store to such a deleted declaration's NAME.
+Calls in deleted code (stores' right sides, conditions, initializers) are LISTED for the
+reviewer (sceDisplayGetVcount(), fe_host_mem_read(), net_now_us(): C-5.md §4), not failed.
 
     g0r.py --map MAP [--tel] [--mode equal|deletions] REF.i NEW.i
     g0r.py --selftest
@@ -173,7 +185,9 @@ def tel_normalise(t, telset):
                     out.append(TELMARK)
                     i = j + 5
                     continue
-                if telset & set(inner) and (inner[-1] == ';'):
+                if telset & set(inner) and inner[-1] == ';' and len(inner) > 1 and inner[-2] == '}':
+                    inner = inner[:-1]          # TEL({ ... }) / TEL(if (c) { ... }): `} ;` -> `}`
+                if telset & set(inner) and inner[-1] in (';', '}'):
                     out.extend(tel_normalise(inner, telset))
                     i = j + 5
                     if i < n and t[i] == ';':
@@ -210,9 +224,185 @@ def prepare(t, m, side, tel, mode):
         t, dr = drop_units(t, lambda tt, a, b: fn_name(tt, a, b) in tf)
         notes += ['%s: telfn definition dropped: %s' % (side, x[:60]) for x in dr]
     if tel:
-        telset = {o for o, (v, _) in fields.items() if m['structs'][v]['kind'] == 'tel'}
-        t = tel_normalise(t, telset)
+        t = tel_normalise(t, tel_names(m))
     return t, notes
+
+
+def tel_names(m):
+    """the telemetry OLD names: tel struct members and `telobj` rows."""
+    return ({o for o, (v, _) in m['fields'].items() if m['structs'][v]['kind'] == 'tel'}
+            | set(m.get('telobjs', ())))
+
+
+def _no_store(expr):
+    return not any(x in ASSIGN for x in expr)
+
+
+def _top_semi(t, i):
+    """index of the `;` ending the simple statement at t[i] (bracket-aware), else None."""
+    n = len(t)
+    while i < n:
+        x = t[i]
+        if x in ('(', '['):
+            i = _match(t, i) + 1
+            continue
+        if x in ('{', '}'):
+            return None
+        if x == ';':
+            return i
+        i += 1
+    return None
+
+
+def _decl_name(piece):
+    """`TYPE... NAME [dims] [= E]` -> (NAME, E tokens) for a declaration, else None."""
+    eq = piece.index('=') if '=' in piece else len(piece)
+    head, init = piece[:eq], piece[eq + 1:]
+    while head and head[-1] == ']':            # array dims
+        k = len(head) - 1
+        while k >= 0 and head[k] != '[':
+            k -= 1
+        head = head[:k]
+    words = [x for x in head if x != '*']
+    if len(words) < 2 or not all(re.match(r'^[A-Za-z_]\w*$', x) for x in words):
+        return None
+    if words[0] in NOTCALL or words[0] in ('else', 'do', 'goto', 'case', 'default'):
+        return None
+    return words[-1], init
+
+
+def check_deletions(a, b, telset):
+    """Mode deletions: walk REF a and NEW b in step (the module docstring's rules)."""
+    calls = []
+    dead = set()                 # names whose declaration was deleted
+    n_a, n_b = len(a), len(b)
+    stats = dict(deleted=0, decls=0)
+
+    def scope_clear(name, j):
+        d = 0
+        for k in range(j, n_b):
+            x = b[k]
+            if x == '{':
+                d += 1
+            elif x == '}':
+                d -= 1
+                if d < 0:
+                    return True
+            elif x == name:
+                return False
+        return True
+
+    def stmt(i, j, depth):
+        """one deleted REF statement at a[i] -> its end index; ValueError if not allowed."""
+        x = a[i]
+        if x == ';':
+            return i + 1
+        if x == '{':
+            i += 1
+            while a[i] != '}':
+                i = stmt(i, j, depth + 1)
+            return i + 1
+        if x == 'if' and a[i + 1] == '(':
+            e = _match(a, i + 1)
+            cond = a[i + 2:e]
+            if not _no_store(cond):
+                raise ValueError('a deleted condition stores: if ( %s )' % ' '.join(cond)[:100])
+            cs = calls_in(cond)
+            if cs:
+                calls.append('REVIEW deleted condition calls %s: [if ( %s )]' % (', '.join(cs), ' '.join(cond)[:100]))
+            i = stmt(e + 1, j, depth)
+            if i < n_a and a[i] == 'else':
+                i = stmt(i + 1, j, depth)
+            return i
+        e = _top_semi(a, i)
+        if e is None:
+            raise ValueError('not a whole statement: [%s]' % ' '.join(a[i:i + 12]))
+        pc = a[i:e]
+        if tel_store(pc, telset | dead):
+            stats['deleted'] += 1
+            cs = calls_in(pc)
+            if cs:
+                calls.append('REVIEW deleted store calls %s: [%s]' % (', '.join(cs), ' '.join(pc)[:120]))
+            return e + 1
+        dn = _decl_name(pc)
+        if dn is not None:
+            name, init = dn
+            if not _no_store(init):
+                raise ValueError('a deleted initializer stores: [%s]' % ' '.join(pc)[:100])
+            if depth == 0 and not scope_clear(name, j):
+                raise ValueError('deleted declaration of %s, still used after it in the new stream' % name)
+            dead.add(name)
+            stats['decls'] += 1
+            cs = calls_in(init)
+            if cs:
+                calls.append('REVIEW deleted declaration calls %s: [%s]' % (', '.join(cs), ' '.join(pc)[:120]))
+            return e + 1
+        raise ValueError('deleted a statement that is not a telemetry store: [%s]' % ' '.join(pc)[:120])
+
+    W = 24
+    i = j = 0
+    bad = None
+    while i < n_a or j < n_b:
+        if i < n_a and j < n_b and a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        ctx = ' '.join(a[max(0, i - 10):i])[-90:]
+        # The deleted statements may start before the first differing token (their first
+        # tokens can equal what NEW has next): back up over the common tail, at most 64.
+        first_err, hit = None, None
+        for p in range(0, 65):
+            s, t = i - p, j - p
+            if p and (s < 0 or t < 0 or a[s] != b[t]):
+                break
+            jj = t
+            if jj < n_b and b[jj] == TELMARK:
+                jj += 1
+                if jj < n_b and b[jj] == ';':
+                    jj += 1
+            saved = (len(calls), set(dead), dict(stats))
+            try:
+                if s >= n_a:
+                    raise ValueError('NEW has tokens REF has not: [%s]' % ' '.join(b[t:t + 12]))
+                k, done = s, False
+                for _ in range(64):
+                    k = stmt(k, jj, 0)
+                    if k >= n_a and jj >= n_b:
+                        done = True
+                        break
+                    # met again: equal up to W tokens or NEW's next marker (the next deletion)
+                    tail = min(W, n_a - k, n_b - jj)
+                    if TELMARK in b[jj:jj + tail]:
+                        tail = b.index(TELMARK, jj) - jj
+                        if a[k:k + tail] == b[jj:jj + tail]:
+                            done = True
+                            break
+                    elif tail > 0 and a[k:k + tail] == b[jj:jj + tail] and (tail == W or n_a - k == n_b - jj):
+                        done = True
+                        break
+                if not done:
+                    raise ValueError('REF and NEW do not meet again after the deleted statements')
+                hit = (k, jj)
+                break
+            except (ValueError, IndexError) as ex:
+                del calls[saved[0]:]
+                dead.clear()
+                dead.update(saved[1])
+                stats.clear()
+                stats.update(saved[2])
+                if first_err is None:
+                    first_err = ex
+        if hit is None:
+            bad = '%s  (at ref token %d, after: ...%s)' % (first_err, i, ctx)
+            break
+        i, j = hit
+    rep = list(calls)
+    if bad:
+        rep.append('G0R FAIL: %s' % bad)
+        return False, rep
+    rep.append('G0R: only telemetry deleted (%d stores, %d declarations; %d with a call to review)'
+               % (stats['deleted'], stats['decls'], len(calls)))
+    return True, rep
 
 
 def tel_store(piece, telset):
@@ -261,7 +451,10 @@ def compare(ref, new, m, tel=False, mode='equal'):
     if a == b:
         rep.append('G0R: identical after the reverse rename (%d tokens)' % len(a))
         return True, rep
-    telset = {o for o, (v, _) in m['fields'].items() if m['structs'][v]['kind'] == 'tel'}
+    telset = tel_names(m)
+    if mode == 'deletions':
+        ok, drep = check_deletions(a, b, telset)
+        return ok, rep + drep
     ua, ub = units(a), units(b)
     # popular units (`}`, `break ;`) are junk for the unit-level match (a whole TU is
     # ~10^5 units): matches still extend through them; the hunks are diffed by token below
