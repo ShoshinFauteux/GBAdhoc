@@ -237,9 +237,9 @@ extern u8 *rom_translation_ptr;
 extern u8 *ram_translation_ptr;
 
 /* Overridable from the root make as GATE_SLOTS=N.  Every core object must see
- * the same value: it sizes translation_gate_target_pc[] AND bounds the
- * per-instruction scan in scan_block, so a mismatch would be a silent buffer
- * overrun rather than a link error. */
+ * the same value: it sizes translation_gate_target_pc[] and smc_gate_last_hit[]
+ * AND bounds the per-instruction scan in scan_block, so a mismatch would be a
+ * silent buffer overrun rather than a link error. */
 #ifndef MAX_TRANSLATION_GATES
 #define MAX_TRANSLATION_GATES 8
 #endif

@@ -7089,6 +7089,10 @@ static u32 smc_reuse_force_real;
  * whether recording and lookups pay. */
 #define SMC_REUSE_ARM_FRAMES   64
 static u32 smc_reuse_armed, smc_reuse_win_frame;
+/* Never read: left from the arming rule the spare invariant replaced.
+ * Deleting them shrinks the code and moves the pinned layout, so they go
+ * with the next re-pin. */
+static u32 smc_reuse_win_flushes, smc_reuse_last_full, smc_reuse_full_seen;
 #ifndef SMC_REUSE_REC_RATIO
 #define SMC_REUSE_REC_RATIO 8
 #endif
@@ -9221,6 +9225,10 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
  * address never changes, and when the table is full smc_add_gate leaves it
  * alone (why, under smc_add_gate's comment). */
 
+/* Never read: the rule that used it is gone.  Deleting it shrinks the code
+ * and moves the pinned layout, so it goes with the next re-pin. */
+static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
+
 static void smc_cand_forget(void);   /* defined with the candidate table below */
 
 /* Clear the gate learning: ranked candidates (addresses, write counts, the
@@ -9230,6 +9238,7 @@ static void smc_cand_forget(void);   /* defined with the candidate table below *
  * savestate load or a dynarec flush (why, above flush_dynarec_caches). */
 void smc_gates_reset(void)
 {
+  memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
   smc_cand_forget();
   SMC_GATE_MAP_REBUILD();
   /* Same rule as the SMC gates (gbalink_core.c lk_cold_start): entry gates
@@ -11726,7 +11735,8 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
   xs_win_noted = xs_win_skips = xs_off_retires = 0;
   xs_reprobe = XS_REPROBE;
   xs_probe_paid = 0;
-  smc_reuse_armed = smc_reuse_win_frame = 0;
+  smc_reuse_armed = smc_reuse_win_frame = smc_reuse_win_flushes = 0;
+  smc_reuse_last_full = smc_reuse_full_seen = 0;
   smc_reuse_win_xlat = smc_reuse_win_hits = smc_reuse_win_n = 0;
   smc_reuse_find_on = smc_reuse_rec_on = 1;
   smc_reuse_epoch = 1;
