@@ -81,8 +81,8 @@ VARIANTS = {
                "SMC_RETIRE_WINDOW with its invariant asserted (aborts on violation)"),
 }
 # ---- DRCORPUS_SHIP=1: the campaign set (claude/link-speed) -----------------
-# The reference is the configuration tools/build.sh ships today (CORE_COMMON:
-# the three switches above + JIT_CODE_DISCIPLINE + ENTRY_GATES), and every
+# The reference is what tools/build.sh shipped at rc-4.0.0 (its CORE_COMMON list, since removed: the
+# switches are built in now, gpsp_features.h): the three above + JIT_CODE_DISCIPLINE + ENTRY_GATES; every
 # new lever is a switch on top of it that must match it frame for frame.
 # Use a DRCORPUS_HOME of its own: "base" there means this reference.
 SHIP = ALL3 + " " + JCD + " -DENTRY_GATES=1"

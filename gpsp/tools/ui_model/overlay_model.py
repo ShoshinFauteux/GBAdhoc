@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""overlay_model.py -- Fable's Direction A as IMPLEMENTED, through the design
+"""overlay_model.py -- the design's Direction A as IMPLEMENTED, through the design
 model (docs/UI-OVERLAY.md).
 
 builds/menu-mockups/mockups.py (class Overlay) is the design: its numbers are

@@ -15,11 +15,11 @@
  *
  * The work is the same work, moved 68 scanlines earlier; the previous render
  * was posted a full frame before, as before, so step 1 of me_rend_frame
- * waits no longer than it did.  3x fast-forward keeps the end-of-frame post
- * it was validated with (docs/FF-ARTIFACT-FIX.md); the two unlimited presets'
- * DRAWN frames post here, like any 1x frame (docs/FF-PRESETS.md).  (The
- * `me_vispost = 0` arm that restored the end-of-frame post, the 3.1 ghost,
- * was deleted in code-health C2-4'.) */
+ * waits no longer than it did.  Fast-forward WITHOUT the draw gate (the 1.5x,
+ * 2x and 3x presets: g_ff_mult; an ungated uncapped run: bench mode, harness
+ * `ff`) keeps the end-of-frame post it was validated with (FF-ARTIFACT-FIX.md);
+ * the gated runs' DRAWN frames (Unlimited, Smooth, 3x under FF flip pacing bit
+ * 2) post here like any 1x frame (docs/FF-PRESETS.md; me_vispost=0 is gone). */
 /* MID-FRAME LOG (`me_midlog`, harness only, default 1 when the build has
  * ME_MIDFRAME_LOG; video.h, docs/ME-MIDFRAME.md).  The entry buffers and the
  * core's VRAM shadow are carved from the volatile partition after everything
@@ -39,8 +39,8 @@ static int mer_vispost_active(void)
 {
    /* The draw gate's drawn frames post here too, exactly as at 1x: the gate
     * decides at frame START whether a frame is drawn, so a drawn frame is an
-    * ordinary capture and gets the line-160 post and the mid-frame log.  3x
-    * keeps its end-of-frame post (g_ff_mult). */
+    * ordinary capture and gets the line-160 post and the mid-frame log.  An
+    * ungated multiplier (g_ff_mult) or uncapped run keeps the frame-end post. */
    return (g_ff_gate || (!g_ff_mult && !g_ff_uncapped)) &&
           !skip_next_frame;
 }
