@@ -148,14 +148,14 @@ void frame_loop(loop_t *L, const session_ctx *S)
       rtc_wall_publish(0);
       /* LOW LATENCY: did the previous iteration's flip latch on the vblank
        * after its submit?  (Checked before anything can submit again.) */
-      if (g_lat_check &&
+      if (pacing_tel.lat_check &&
           (int)(sceDisplayGetVcount() - g_lat_sub_vc) >= 1)
       {
          if (vid_flip_latched())
-            g_lat_l1++;
+            pacing_tel.lat_l1++;
          else
-            g_lat_l0++;
-         g_lat_check = 0;
+            pacing_tel.lat_l0++;
+         pacing_tel.lat_check = 0;
       }
       sceCtrlPeekBufferPositive(&pd, 1);
       if (g_in_fresh && g_vb_us &&
@@ -179,8 +179,8 @@ void frame_loop(loop_t *L, const session_ctx *S)
          unsigned age = (unsigned)sceKernelGetSystemTimeLow() - pd.TimeStamp;
          if (age < 100000u)
          {
-            g_lat_age_n++;
-            g_lat_age_us += age;
+            pacing_tel.lat_age_n++;
+            pacing_tel.lat_age_us += age;
          }
       }
       /* THE THUMBSTICK (ctl_map.h).  Its four direction bits are bits
@@ -1031,7 +1031,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
                draw = g_ffh_3x ? ffh_cap_draw() :
                                  ff_gate_frame(&g_ff_gate_st, net_now_us());
                if (!draw)
-                  FFW_GATED();
+                  TEL(g_ffw_gated++);
             }
             fe_host_skip_override(period ? !draw : -1);
          }
@@ -1109,7 +1109,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
       if (ffh_loop && !g_drew)
       {
          g_drew = 1;              /* nothing new: the held picture stands */
-         g_ffh_vb++;
+         TEL(pacing_tel.ffh_vb++);
       }
       g_mer_posted = 0;
 
@@ -1552,7 +1552,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
             want++;               /* the same nudge, a little early (me_lowlat 2) */
             g_fh_nudge++;
             g_ar_nudge++;
-            g_ll_pull++;
+            TEL(pacing_tel.ll_pull++);
          }
          else if (want == 1u && !g_ff_mult && !g_ff_uncapped && !g_gbl_audio_on &&
                   lf_want_slot(ring_w - ring_r))
@@ -1560,7 +1560,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
             want++;               /* CATCH UP SOON: the same nudge, early */
             g_fh_nudge++;
             g_ar_nudge++;
-            g_lf_pull++;
+            TEL(pacing_tel.lf_pull++);
          }
          audio_ring_note();
 /* @extract:end lowlat:want */
@@ -1620,7 +1620,7 @@ void frame_loop(loop_t *L, const session_ctx *S)
          if ((g_ff_flip_pace & 1) && g_ff_mult && g_flip_early && ffh_too_soon(1))
          {
             g_flip_early = 0;
-            g_ffh_waits++;
+            TEL(pacing_tel.ffh_waits++);
          }
 /* @extract:begin lowlat:wait */
          lat_wait_begin(want);
@@ -1664,9 +1664,9 @@ void frame_loop(loop_t *L, const session_ctx *S)
             {
                sceDisplayWaitVblankStart();
                g_vb_us = (unsigned)sceKernelGetSystemTimeLow();
-               g_vb_vc = sceDisplayGetVcount();
-               g_lat_vbhc_n++;
-               g_lat_vbhc_sum += (unsigned)sceDisplayGetCurrentHcount();
+               pacing_tel.vb_vc = sceDisplayGetVcount();
+               pacing_tel.lat_vbhc_n++;
+               pacing_tel.lat_vbhc_sum += (unsigned)sceDisplayGetCurrentHcount();
             }
          }
          lat_wait_end();

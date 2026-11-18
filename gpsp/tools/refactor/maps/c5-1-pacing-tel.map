@@ -1,0 +1,60 @@
+# C5-1 rename map: the pacing telemetry (builds/health-out/design/C-5.md §2.3, §3 C5-1).
+# Applied with `globals.py struct THIS --tel`; checked with `pp_diff.sh --rename-map THIS --tel`.
+# Owner decision 2026-11-17: per-frame code stays the same in the player and the Lab builds, so
+# TEL() runs in every build and the struct is not under #ifdef: G0R is equal in release, lab and
+# harness (a pure rename; `--tel` only unwraps TEL()).  The telobj/telfn rows below were the
+# compile-out of the first C5-1 commit (f8a6883b); they match nothing now and are kept as record.
+#
+# The design's 35 write-only objects less g_dfr_clk_n (the census counted its `x++ & 63` in a
+# condition as a store; it paces dfr_clock_low's clock re-read: state), plus the 7 it asked
+# to confirm by hand: g_ffh_holds, g_ffh_waits, g_ffc_waits, g_dfr_n, g_lf_n (read only by
+# lat_census's EVT guards) and the two ~0u min trackers (telobj below), plus g_lat_check
+# (read only to guard the l1/l0 latch census).  One section for the block: pacing's small-data
+# rule (.sbss), in every build.
+struct pacing_tel fe_pacing_tel tel .sbss
+g_ffh_holds pacing_tel.ffh_holds
+g_ffh_waits pacing_tel.ffh_waits
+g_ffh_vb pacing_tel.ffh_vb
+g_ffc_waits pacing_tel.ffc_waits
+g_dfr_n pacing_tel.dfr_n
+g_dfr_late pacing_tel.dfr_late
+g_lf_n pacing_tel.lf_n
+g_lf_caught pacing_tel.lf_caught
+g_lf_pull pacing_tel.lf_pull
+g_ll_hit pacing_tel.ll_hit
+g_ll_miss_me pacing_tel.ll_miss_me
+g_ll_miss_ge pacing_tel.ll_miss_ge
+g_ll_to_h pacing_tel.ll_to_h
+g_ll_to_b pacing_tel.ll_to_b
+g_ll_would pacing_tel.ll_would
+g_ll_wouldnt pacing_tel.ll_wouldnt
+g_ll_slot pacing_tel.ll_slot
+g_ll_slot_fail pacing_tel.ll_slot_fail
+g_ll_eng pacing_tel.ll_eng
+g_ll_pull pacing_tel.ll_pull
+g_vb_vc pacing_tel.vb_vc
+g_lat_hist pacing_tel.lat_hist
+g_lat_over pacing_tel.lat_over
+g_lat_early pacing_tel.lat_early
+g_lat_post pacing_tel.lat_post
+g_lat_hold pacing_tel.lat_hold
+g_lat_check pacing_tel.lat_check
+g_lat_l1 pacing_tel.lat_l1
+g_lat_l0 pacing_tel.lat_l0
+g_lat_immed pacing_tel.lat_immed
+g_lat_lead_n pacing_tel.lat_lead_n
+g_lat_lead_us pacing_tel.lat_lead_us
+g_lat_hc_n pacing_tel.lat_hc_n
+g_lat_hc_sum pacing_tel.lat_hc_sum
+g_lat_vbhc_sum pacing_tel.lat_vbhc_sum
+g_lat_vbhc_n pacing_tel.lat_vbhc_n
+g_lat_age_us pacing_tel.lat_age_us
+g_lat_age_n pacing_tel.lat_age_n
+g_lat_iter pacing_tel.lat_iter
+g_lat_vc0 pacing_tel.lat_vc0
+# min trackers start at ~0u (.data): a .bss struct member would start at 0 and report a
+# minimum of 0 for the first census window, so they stay standalone, telemetry builds only
+telobj g_lat_lead_min
+telobj g_ll_lead_min
+# a player build's census is an empty function (its body is not compared there)
+telfn lat_census

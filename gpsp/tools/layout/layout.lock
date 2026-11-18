@@ -158,7 +158,7 @@
 [release]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x04e8
-size frame_loop                         22308
+size frame_loop                         22316
 at   pace_frame                         0x1e6c
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x12d0
@@ -252,8 +252,8 @@ pin  ro                                 0x08ad305c   # .rodata after the start f
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
 at   frame_loop                         0x1cd4
-size frame_loop                         23888
-at   pace_frame                         0x1674
+size frame_loop                         23796
+at   pace_frame                         0x1504
 # the first symbols after the text pins (`pin` lines below), checked
 at   exit_cb                            0x1394
 at   roster_valid                       0x1094

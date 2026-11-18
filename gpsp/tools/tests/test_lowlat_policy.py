@@ -36,7 +36,7 @@ RANGES = (
      "/* SAME-FRAME RETIREMENT."),
     ("lowlat:me_rend_retire_if_idle", "static __attribute__((noinline)) void me_rend_retire_if_idle(void)",
      "/* Called from plat_video_frame"),
-    ("lowlat:lat_swap", "static int lat_swap(int early)", "static void lat_census(void)"),
+    ("lowlat:lat_swap", "static int lat_swap(int early)", "/* THE CENSUS of the pacing telemetry"),
     ("lowlat:late_present", "/* LATE PRESENT (tier 0b).", "int main(int argc"),
 )
 
@@ -120,7 +120,7 @@ MUTANTS = (
     # tier 0b without the late present: a render that misses its loop top
     # repeats the previous frame and is then skipped (FireRed at 222 MHz)
     ("no late present",
-     "   g_dfr = 1;\n   g_dfr_n++;\n   return 1;",
+     "   g_dfr = 1;\n   TEL(pacing_tel.dfr_n++);\n   return 1;",
      "   return 0;"),
     # tier 0a replacing a late (post-vblank) flip with the next early one
     ("no late flip hold",

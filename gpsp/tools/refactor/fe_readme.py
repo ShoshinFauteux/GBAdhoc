@@ -896,6 +896,13 @@ def render(d):
       '`LAB_FFP(...)` sites (Lab-build hooks from `lab_harness.h` / `lab_ffpace.h`; empty in every other build), '
       'so `grep -n "@lab" main_psp.c fe/*.inc.c` lists the Lab\'s reach into the TU. `LAB_HANDOFF` is reached only '
       'through `FE_HANDOFF` (`fe/fe_priv.h:%s`).' % (len(sites), ','.join(map(str, ho))))
+    w('- **`TEL(...)`** (`fe/fe_priv.h`, tier C C-5) names a statement that only feeds telemetry. It runs '
+      'in every build: per-frame code stays the same in the player and the Lab builds (owner, 2026-11-17), so '
+      'the Lab\'s speed and picture-hash results keep proving the shipped build; only what `fe_evt` reports is '
+      'compiled out of a player build (ADR-0067b). A module\'s telemetry objects live in '
+      '`static struct fe_<module>_tel <module>_tel` (pacing: `pacing_tel`). The rename maps are '
+      '`tools/refactor/maps/*.map`; G0R (`pp_diff.sh --rename-map --tel`) proves a batch is a pure rename in '
+      'every flavour.')
     w('- **`#if` context** (below) is the chain of `#if` groups a line sits in, outermost first, each with the '
       'line of its `#if` and the arm (`#else` after `#if X` is the arm where X is false). It is read from the '
       'source text; whether a build compiles a line depends on that build\'s defines.')

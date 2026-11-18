@@ -177,7 +177,9 @@ static int g_mer_ready = -1, g_mer_pending = -1, g_mer_last_presented = -1;
 static int g_mer_miss;
 static unsigned g_fps_drawn;
 static unsigned g_vc_target;
-#define FFW_DRAWN()     do { } while (0)
+/* fe_priv.h's TEL (every build): the model reads the pacing census (pacing_tel) */
+#define TEL(...)        do { __VA_ARGS__; } while (0)
+static unsigned g_ffw_drawn;
 #define UISCRIPT_DUMP() do { } while (0)
 #define LAB_HOOK(x)
 static int osd_n;
@@ -236,7 +238,7 @@ static void reset_world(int ll)
    t_now = 0; vb_count = 0; vb_next = 16683; ge_done = me_done = 0;
    ring_w = 3500; ring_r = 0; ring_frac = 0; starved = 0;
    g_ar_nudge = g_fh_nudge = 0;
-   audio_next = AUDIO_CHUNK_US; g_ll_pull = 0;
+   audio_next = AUDIO_CHUNK_US; pacing_tel.ll_pull = 0;
    me_busy = 0;
    disp_frame = -1; pend_frame = -2; bb_frame = -1; bb_filled = 0;
    disp_buf = pend_buf = 0; cur_buf = 1; g_flip_addr = 0;
@@ -245,17 +247,17 @@ static void reset_world(int ll)
    n_vb_rec = 0;
    g_drew = 0; g_mer_ready = g_mer_pending = g_mer_last_presented = -1;
    g_vc_target = 0;
-   memset(g_lat_hist, 0, sizeof(g_lat_hist));
-   g_lat_over = 0;
+   memset(pacing_tel.lat_hist, 0, sizeof(pacing_tel.lat_hist));
+   pacing_tel.lat_over = 0;
    g_bb_new = 0; g_lat_seq = 0; g_lat_poll_vc = 0;
    g_vb_us = 0;
    g_ll_cfg = ll; g_ll_mode_h = 0; g_ll_iter_h = 0;
    ll_win_reset();
    g_ll_cool = 0; g_ll_blit_ema = 2000; g_ll_blit_dev = 250;
-   g_ll_hit = g_ll_miss_me = g_ll_miss_ge = g_ll_to_h = g_ll_to_b = 0;
-   g_ll_eng = g_ll_slot = g_ll_slot_fail = 0;
+   pacing_tel.ll_hit = pacing_tel.ll_miss_me = pacing_tel.ll_miss_ge = pacing_tel.ll_to_h = pacing_tel.ll_to_b = 0;
+   pacing_tel.ll_eng = pacing_tel.ll_slot = pacing_tel.ll_slot_fail = 0;
    g_flip_early = 1; g_mer_early_retire = 1;
-   g_lf_n = g_lf_caught = g_lf_pull = 0; g_lf_behind = g_lf_hold = 0; g_dfr = 0;
+   pacing_tel.lf_n = pacing_tel.lf_caught = pacing_tel.lf_pull = 0; g_lf_behind = g_lf_hold = 0; g_dfr = 0;
    g_dfr_cfg = getenv("LOWLAT_NO_DFR") ? 0 : 1;   /* A/B: tier 0b without the late present */
 }
 
@@ -340,22 +342,22 @@ static void run(const scen *s, int ll, unsigned frames, result *r)
    }
    r->frames = frames;
    r->vb = vb_count;
-   r->entries = g_ll_to_h;
-   r->exits = g_ll_to_b;
+   r->entries = pacing_tel.ll_to_h;
+   r->exits = pacing_tel.ll_to_b;
    r->nudges = g_ar_nudge;
-   r->pulls = g_ll_pull;
-   r->lfpulls = g_lf_pull;
+   r->pulls = pacing_tel.ll_pull;
+   r->lfpulls = pacing_tel.lf_pull;
    r->starved = starved;
    if (getenv("LOWLAT_DEBUG"))
       printf("  %s ll=%d lf held=%u caught=%u pull=%u dfr=%u late=%u\n",
-             s->name, ll, g_lf_n, g_lf_caught, g_lf_pull, g_dfr_n, g_dfr_late);
-   memcpy(r->hist, g_lat_hist, sizeof(r->hist));
+             s->name, ll, pacing_tel.lf_n, pacing_tel.lf_caught, pacing_tel.lf_pull, pacing_tel.dfr_n, pacing_tel.dfr_late);
+   memcpy(r->hist, pacing_tel.lat_hist, sizeof(r->hist));
    {
       unsigned n = 0, sum = 0;
       for (i = 0; i < 8; i++)
       {
-         n += g_lat_hist[i];
-         sum += g_lat_hist[i] * i;
+         n += pacing_tel.lat_hist[i];
+         sum += pacing_tel.lat_hist[i] * i;
       }
       r->mean = n ? (double)sum / n : 0.0;
    }

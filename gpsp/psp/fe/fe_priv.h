@@ -148,15 +148,17 @@ static void core_health_evt(const char *at);
 #define LOOP_PHASE(p)   do { } while (0)
 #endif
 
-/* EVT ff_win counters: g_ffw_drawn / g_ffw_gated (fe/power.a.inc.c; telemetry
- * builds only; a player build compiles the counter out). */
-#ifdef GPSP_KEEP_TELEMETRY
-#define FFW_DRAWN() (g_ffw_drawn++)
-#define FFW_GATED() (g_ffw_gated++)
-#else
-#define FFW_DRAWN() ((void)0)
-#define FFW_GATED() ((void)0)
-#endif
+/* TEL(stmt): a statement that only feeds telemetry (an EVT line, the Lab), e.g.
+ * TEL(g_ffw_drawn++), the EVT ff_win counters (fe/power.a.inc.c), or
+ * TEL(pacing_tel.ll_hit++).  It names the statement as telemetry; it runs in EVERY
+ * build.  Owner decision 2026-11-17: the Lab can run only Lab builds, so the code
+ * that runs every frame stays the same in the player build and the Lab build, or
+ * the Lab's speed and picture-hash results stop proving the shipped build; the
+ * per-frame telemetry is not compiled out of a player build (what fe_evt reports,
+ * and the census's EVT lines, still are: ADR-0067b).  Tier C C-5
+ * (builds/health-out/design/C-5.md §2.1).  Variadic so a statement with a
+ * top-level comma needs no extra parentheses. */
+#define TEL(...) do { __VA_ARGS__; } while (0)
 
 /* `volatile` orders the two indices, not the samples: a compiler barrier
  * (no instruction) keeps the plain sample stores before the publish of

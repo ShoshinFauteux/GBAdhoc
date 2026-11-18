@@ -17,6 +17,10 @@ THE MAP (one file per batch, reviewed in the commit that applies it):
     telfn NAME                       (g0r.py only) a function the telemetry batch compiles
                                      out of the release whole (lat_census): its body is
                                      not compared in the release
+    telobj NAME                      (g0r.py only) a telemetry object that stays a standalone
+                                     definition under #ifdef GPSP_KEEP_TELEMETRY (one a
+                                     .bss struct cannot hold: an initializer, ~0u min
+                                     trackers); its stores count as telemetry stores
 
 WHAT `struct` DOES on a single-file source (`split.py inverse` output; split it again
 after): each OLD's definition line(s) are deleted; the struct block is written where the
@@ -63,8 +67,8 @@ class Refused(Exception):
 
 def read_map(text):
     """-> dict(structs=OrderedDict(var -> dict(type, kind, section)),
-               fields=OrderedDict(old -> (var, field)), telfns=[names])."""
-    structs, fields, telfns = collections.OrderedDict(), collections.OrderedDict(), []
+               fields=OrderedDict(old -> (var, field)), telfns=[names], telobjs=[names])."""
+    structs, fields, telfns, telobjs = collections.OrderedDict(), collections.OrderedDict(), [], []
     for k, ln in enumerate(text.split('\n'), 1):
         s = ln.split('#', 1)[0].strip()
         if not s:
@@ -82,6 +86,10 @@ def read_map(text):
             if len(w) != 2:
                 raise Refused('map line %d: want `telfn NAME`' % k)
             telfns.append(w[1])
+        elif w[0] == 'telobj':
+            if len(w) != 2:
+                raise Refused('map line %d: want `telobj NAME`' % k)
+            telobjs.append(w[1])
         else:
             m = re.match(r'^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$', w[1]) if len(w) == 2 else None
             if not m or not re.match(r'^[A-Za-z_]\w*$', w[0]):
@@ -96,7 +104,7 @@ def read_map(text):
     for var in structs:
         if not any(v == var for v, _ in fields.values()):
             raise Refused('struct %s has no member' % var)
-    return dict(structs=structs, fields=fields, telfns=telfns)
+    return dict(structs=structs, fields=fields, telfns=telfns, telobjs=telobjs)
 
 
 def _top_eq(s):
@@ -181,6 +189,18 @@ def apply(text, m, root=None, tel=False):
             raise Refused('%s occurs in a preprocessor directive: L:%s' % (old, ','.join(map(str, in_pp))))
     # every code token, minus the definitions themselves
     dspan = {old: (lstart[v['line'] - 1], lstart[v['end']]) for old, v in defs.items()}
+    # A trailing comment that goes on over the next lines belongs to the declaration: its
+    # lines go with it (tier C C5-3: g_clock_fake's three-line comment; without this the
+    # continuation lines stayed behind, an unopened comment that hid the rest of the file).
+    for old, (a, b) in list(dspan.items()):
+        seg = text[a:b]
+        o = seg.rfind('/*')
+        if o >= 0 and seg.find('*/', o) < 0:
+            c = text.find('*/', b)
+            if c < 0:
+                raise Refused('%s: its trailing comment is never closed' % old)
+            nl = text.find('\n', c)
+            dspan[old] = (a, len(text) if nl < 0 else nl + 1)
     edits = []          # (start, end, replacement)
     nuse = collections.Counter()
     for old, (var, fld) in fields.items():
@@ -219,7 +239,11 @@ def apply(text, m, root=None, tel=False):
         code2, n = re.subn(r'\b%s\b' % re.escape(old), fld, code)
         if n != 1:
             raise Refused('%s: its declarator is not found once in %r' % (old, code))
-        members[var].append((v['line'], '   %s;%s' % (code2, ('   ' + comment) if comment else '')))
+        head = '   %s;' % code2
+        if '\n' in comment:         # a multi-line trailing comment: re-aligned under its start
+            cl = comment.split('\n')
+            comment = cl[0] + ''.join('\n' + ' ' * (len(head) + 4) + x.strip() for x in cl[1:])
+        members[var].append((v['line'], '%s%s' % (head, ('   ' + comment) if comment else '')))
         if init is not None:
             inits[var].append('   .%s = %s,' % (fld, ' '.join(init.split())))
     first = {}

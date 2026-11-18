@@ -111,14 +111,53 @@ static int      g_flip_early       = 1;   /* `flip_early`      */
 /* Small data, so the layout pin's .data/.bss sets do not move (LAYOUT-PINNING.md). */
 static int      g_ff_flip_pace __attribute__((section(".sdata"))) = 7;
 static int      g_ffh_held __attribute__((section(".sbss")));  /* back buffer holds an unflipped picture */
-static unsigned g_ffh_holds __attribute__((section(".sbss")));
-static unsigned g_ffh_waits __attribute__((section(".sbss")));
-static unsigned g_ffh_vb __attribute__((section(".sbss")));
+static struct fe_pacing_tel
+{
+   unsigned ffh_holds;
+   unsigned ffh_waits;
+   unsigned ffh_vb;
+   unsigned ffc_waits;
+   unsigned dfr_n;   /* loop tops that deferred */
+   unsigned dfr_late;   /* ...whose render was still not there */
+   unsigned lf_n;   /* waits that held it */
+   unsigned lf_caught;   /* ...and caught up in a nudge's 2nd interval */
+   unsigned lf_pull;   /* nudges taken early to catch up */
+   unsigned ll_hit;
+   unsigned ll_miss_me;
+   unsigned ll_miss_ge;
+   unsigned ll_to_h;
+   unsigned ll_to_b;
+   unsigned ll_would;
+   unsigned ll_wouldnt;
+   unsigned ll_slot;
+   unsigned ll_slot_fail;
+   unsigned ll_eng;
+   unsigned ll_pull;   /* nudges taken early for an entry (mode 2) */
+   unsigned vb_vc;
+   unsigned lat_hist[8];
+   unsigned lat_over;
+   unsigned lat_early;
+   unsigned lat_post;
+   unsigned lat_hold;
+   unsigned lat_check;
+   unsigned lat_l1;
+   unsigned lat_l0;
+   unsigned lat_immed;
+   unsigned lat_lead_n;
+   unsigned lat_lead_us;
+   unsigned lat_hc_n;
+   unsigned lat_hc_sum;
+   unsigned lat_vbhc_sum;
+   unsigned lat_vbhc_n;
+   unsigned lat_age_us;
+   unsigned lat_age_n;
+   unsigned lat_iter;
+   unsigned lat_vc0;   /* vcount at the last census: `vb=` */
+} pacing_tel __attribute__((section(".sbss")));
 static int      g_ffh_3x __attribute__((section(".sbss")));    /* bit 2 in force this loop (any multiplier) */
 static int      g_ffc_on __attribute__((section(".sbss")));    /* multiplier ceiling anchored */
 static unsigned g_ffc_vc __attribute__((section(".sbss")));
 static unsigned g_ffc_f __attribute__((section(".sbss")));
-static unsigned g_ffc_waits __attribute__((section(".sbss")));
 static unsigned g_ffc_bvc __attribute__((section(".sbss")));   /* vcount after the ceiling's last block */
 static int      g_ffc_q __attribute__((section(".sbss")));     /* the ceiling chose the last draw */
 static unsigned g_ffm_acc __attribute__((section(".sbss")));   /* paced multiplier: tenths of a frame owed */
@@ -129,13 +168,8 @@ static int      g_mer_early_retire = 1;   /* `me_early_retire` */
 #endif
 static int      g_dfr_cfg __attribute__((section(".sdata"))) = PLAY_ME_LATE_PRESENT;
 static int      g_dfr __attribute__((section(".sbss")));      /* this loop's present waits for its render */
-static unsigned g_dfr_n __attribute__((section(".sbss")));    /* loop tops that deferred */
-static unsigned g_dfr_late __attribute__((section(".sbss")));  /* ...whose render was still not there */
 static int      g_lf_hold __attribute__((section(".sbss")));  /* this wait's early flip is held */
-static unsigned g_lf_n __attribute__((section(".sbss")));     /* waits that held it */
-static unsigned g_lf_caught __attribute__((section(".sbss"))); /* ...and caught up in a nudge's 2nd interval */
 static int      g_lf_behind __attribute__((section(".sbss")));  /* the picture runs a vblank late */
-static unsigned g_lf_pull __attribute__((section(".sbss")));    /* nudges taken early to catch up */
 static int      g_ll_cfg = PLAY_ME_LOWLAT; /* `me_lowlat`      */
 static unsigned g_ll_recover   = 60;      /* `me_lowlat_recover` (frames) */
 static unsigned g_ll_margin_us = 250;     /* `me_lowlat_margin_us` */
@@ -149,13 +183,10 @@ static unsigned g_ll_win_pos, g_ll_win_n, g_ll_win_miss, g_ll_clean;
 static unsigned g_ll_cool;       /* frames since the last exit */
 static unsigned g_ll_blit_ema = 2000;  /* us, blit + OSD on the GE (EMA)   */
 static unsigned g_ll_blit_dev = 250;   /* us, its mean absolute deviation  */
-static unsigned g_ll_hit, g_ll_miss_me, g_ll_miss_ge, g_ll_to_h, g_ll_to_b;
-static unsigned g_ll_would, g_ll_wouldnt;
-static unsigned g_ll_slot, g_ll_slot_fail, g_ll_eng, g_ll_lead_min = ~0u;
-static unsigned g_ll_pull;       /* nudges taken early for an entry (mode 2) */
+static unsigned g_ll_lead_min = ~0u;
 
 /* vblank clock: the last vblank start the wait loop woke on */
-static unsigned g_vb_us, g_vb_vc;
+static unsigned g_vb_us;
 
 /* Pipeline telemetry: every number below is "vblank count at the moment the
  * NEXTFRAME flip latches" minus "vblank count at the input poll of the loop
@@ -169,12 +200,8 @@ static unsigned g_mer_stage_seq[2];   /* ...the one each stage was posted in */
 static unsigned g_mer_stage_mode[2], g_mer_stage_cap[2], g_mer_stage_sum[2];
 static unsigned g_bb_pvc;             /* ...of the back buffer's frame     */
 static int      g_bb_new;             /* back buffer holds an unshown frame */
-static unsigned g_lat_hist[8], g_lat_over, g_lat_early, g_lat_post, g_lat_hold;
-static unsigned g_lat_sub_vc, g_lat_check, g_lat_l1, g_lat_l0, g_lat_immed;
-static unsigned g_lat_lead_n, g_lat_lead_us, g_lat_lead_min = ~0u;
-static unsigned g_lat_hc_n, g_lat_hc_sum, g_lat_vbhc_sum, g_lat_vbhc_n;
-static unsigned g_lat_age_us, g_lat_age_n, g_lat_iter;
-static unsigned g_lat_vc0;            /* vcount at the last census: `vb=` */
+static unsigned g_lat_sub_vc;
+static unsigned g_lat_lead_min = ~0u;
 /* INPUT FRESHNESS (harness only, both default 0).  PPSSPP samples the pad
  * at vblank END (Core/HW/Display.cpp DisplayFireVblankEnd -> __CtrlVblank),
  * so a poll made the instant the vblank wait returns reads the sample taken
