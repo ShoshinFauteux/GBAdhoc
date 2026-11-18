@@ -224,17 +224,6 @@ u32 arm_to_mips_reg[] =
   mips_emit_addiu(reg_cycles, reg_cycles, -cycle_count);                      \
   cycle_count = 0                                                             \
 
-/* The delay slot of a direct exit's `j`: a conditional branch's taken-path
- * refill (generate_branch_refill) rides there instead of a nop, so it costs
- * no bytes.  Exit patching rewrites the j word only. */
-#define generate_refill_delay()                                               \
-  if (refill_ds) {                                                            \
-    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)refill_ds);                 \
-    refill_ds = 0;                                                            \
-  } else {                                                                    \
-    mips_emit_nop();                                                          \
-  }                                                                           \
-
 #define generate_branch_patch_conditional(dest, offset)                       \
   *((u16 *)(dest)) = mips_relative_offset(dest, offset)                       \
 
@@ -301,7 +290,7 @@ u32 arm_to_mips_reg[] =
   mips_emit_nop();                                                            \
   generate_branch_patch_conditional(sp_jump, translation_ptr);                \
   mips_emit_j_filler(writeback_location);                                     \
-  generate_refill_delay();                                                    \
+  mips_emit_nop();                                                            \
   sp_desc = (u32)translation_ptr;                                             \
   SMC_REUSE_MUTABLE(translation_ptr, spin_n);                                 \
   for (sp_k = 0; sp_k < spin_n; sp_k++) {                                     \
@@ -332,7 +321,7 @@ u32 arm_to_mips_reg[] =
     mips_emit_lui(reg_cycles, 0);                                             \
     generate_function_call_swap_delay(mips_update_gba);                       \
     mips_emit_j_filler(writeback_location);                                   \
-    generate_refill_delay();                                                  \
+    mips_emit_nop();                                                          \
   }                                                                           \
   else                                                                        \
   {                                                                           \
@@ -341,7 +330,7 @@ u32 arm_to_mips_reg[] =
      mips_relative_offset(translation_ptr, update_trampoline));               \
     generate_swap_delay();                                                    \
     mips_emit_j_filler(writeback_location);                                   \
-    generate_refill_delay();                                                  \
+    mips_emit_nop();                                                          \
   }                                                                           \
 
 #define generate_branch_cycle_update(writeback_location, new_pc)              \
@@ -719,7 +708,6 @@ u32 arm_to_mips_reg[] =
 
 #define generate_block_extra_vars()                                           \
   u32 stored_pc = pc;                                                         \
-  u32 refill_ds = 0;                                                          \
   u8 *update_trampoline;                                                      \
   u8 *spaccess_trampoline;                                                    \
 
@@ -921,20 +909,22 @@ u32 execute_spsr_restore_body(u32 address)
   ((((u32)(target)) >> 24) < 0x08 ?                                           \
    2 * def_seq_cycles[((u32)(target)) >> 24][(arm)] : 0)
 
-/* Unconditional: the refill joins the pending count.  Conditional: the
- * condition header already flushed the count, and the refill is charged on
- * the taken path only, in the exit j's delay slot (generate_refill_delay):
- * zero bytes.  It lands after the exit's bltzal check, so an update_gba due
- * exactly at this branch sees it one exit later (no cycle is lost: s1 just
- * carries it into the next slice). */
+/* The refill is charged before the exit's budget check, like the branch's
+ * own cycles.  Unconditional: it joins the pending count, which the exit
+ * settles before its check.  Conditional: the condition header has already
+ * settled the count, so the taken path subtracts the refill here, one addiu
+ * before the exit.  It must not ride after the check (in the exit j's delay
+ * slot): when the check calls update_gba and that ends the frame, enters an
+ * interrupt or yields to the link stepper, the j and its delay slot never
+ * run, and the refill would be lost. */
 #define generate_branch_refill(arm, uncond)                                   \
 {                                                                             \
   u32 rf_cyc = branch_refill_cycles(                                          \
     block_exits[block_exit_position].branch_target, (arm));                   \
   if (uncond) {                                                               \
     cycle_count += rf_cyc;                                                    \
-  } else {                                                                    \
-    refill_ds = rf_cyc;                                                       \
+  } else if (rf_cyc) {                                                        \
+    mips_emit_addiu(reg_cycles, reg_cycles, -(s32)rf_cyc);                    \
   }                                                                           \
 }
 
