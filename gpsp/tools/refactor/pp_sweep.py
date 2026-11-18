@@ -61,7 +61,11 @@ FREEFORM = {'GPSP_BUILD_COMMIT', 'GPSP_BUILD_TREE', 'GPSP_BUILD_DIRTY', 'GPSP_BU
             'LAYOUT_PAD_BYTES', 'LAYOUT_LOCK', 'BUDGET_HPI_1000', 'BUDGET_HPI_GO',
             'BUDGET_BOOT_MIN', 'IMAGE_BYTES',
             # no switch since code-health C-4: build.sh takes RFU_SCHED=1 as a no-op
-            'RFU_SCHED'}
+            'RFU_SCHED',
+            # retired pads (code-health C3-3, linker pins since): build.sh reads them only to
+            # REFUSE the build when one is set, so no arm can ever compile with them
+            'LAYOUT_PAD_MAIN_BYTES', 'LAYOUT_PAD_FE_BYTES', 'LAYOUT_PAD_GB_BYTES',
+            'LAYOUT_PAD_CORE_BYTES'}
 SKIP_EXT = ('.o', '.d', '.a', '.elf', '.PBP', '.prx', '.map', '.su', '.pyc', '.log', '.nm')
 IGNORED = re.compile(r'(^|/)(docs/|README|.*\.md$)|^tools/(?!build\.sh$|layout/)')
 RECIPE = re.compile(r'^(tools/build\.sh|psp/Makefile|Makefile|tools/layout/.*)$')
