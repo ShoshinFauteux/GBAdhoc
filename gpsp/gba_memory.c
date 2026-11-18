@@ -4584,7 +4584,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    load_game_config_over(game_code);
    gba_cart_gates_snapshot();
 #ifdef HAVE_DYNAREC
-   /* Reset ages and rebuild derived gate state after the cartridge table has
+   /* Clear gate learning and rebuild the gate maps after the cartridge table has
     * populated its fixed gates. */
    smc_gates_reset();
 #endif

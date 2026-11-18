@@ -2925,7 +2925,7 @@ typedef struct
    * clears it then, so before activation (and after every state load) a
    * fresh tag inherits blk_end/hash from a previous user of the same tag
    * slot: comparing against that produced the 13,853 Mario Golf
-   * "mismatches" of 2026-10-20 (smc-coverage).  These fields are cleared at
+   * false "mismatches".  These fields are cleared at
    * EVERY tag allocation and written at every translation. */
   u32 stale_end_arm;
   u32 stale_end_thumb;
@@ -3035,7 +3035,7 @@ static u32 smc_block_pending_full;
 typedef struct { u32 addr; u16 tag; u16 next; } smc_retired_tag_type;
 static smc_retired_tag_type smc_retired_tags[SMC_RETIRED_TAGS];
 static u32 smc_retired_tag_count;
-/* The table's INDEX (smc-cost 2026-11-13): a chain per hash bucket, newest
+/* The table's INDEX: a chain per hash bucket, newest
  * first, through the entries' `next` (entry number + 1; 0 ends a chain; the
  * field sits in what was the struct's padding, so the table is the same
  * 4 KiB).  It replaces two linear searches of the whole table: every
@@ -3444,7 +3444,7 @@ static void vram_code_check(void)
     }
 }
 
-/* SELF-ACTIVATION (claude/self-activate).  The region-6 store stubs are
+/* SELF-ACTIVATION.  The region-6 store stubs are
  * built dormant (mips_emit.h vram_x_slots): until the game first jumps into
  * VRAM, a VRAM store costs exactly what it did in 4.1.1.  That first jump
  * always arrives here (every entry into VRAM is an indirect branch through
@@ -8084,7 +8084,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
        * instructions,
        * so a branch landing mid-run executed the rest of the run
        * unconditionally (Mario Golf's stack-resident loop: bne back into
-       * ANDEQ words with Z clear; corpus-classify 2026-10-28).  0x40, like
+       * ANDEQ words with Z clear).  0x40, like
        * the flag-setting 0x20, makes translate_arm_instruction close the run
        * here (its skip lands on the entry) and open a fresh header. */
       if((block_data[(branch_target - block_start_pc) /
@@ -9223,16 +9223,11 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 
 static void smc_cand_forget(void);   /* defined with the candidate table below */
 
-/* Clear ROM-specific gate learning after a new cartridge is loaded.
- *
- * Ranked candidates contain addresses, write counts, and the last value seen
- * at each address.  Reusing those observations across ROMs could let one
- * game's evidence promote a gate in another game.  This function is called
- * from gba_memory.c after the new cartridge's fixed gate table is populated.
- * It is intentionally NOT called by dynarec reset or cache-flush paths:
- * clearing candidates during a same-ROM reset or savestate load discarded
- * useful learning and caused a measured performance loss.  See the withdrawn
- * reset-boundary experiment below (around flush_dynarec_caches). */
+/* Clear the gate learning: ranked candidates (addresses, write counts, the
+ * last value seen) and entry gates.  Called where the guest starts over with
+ * the cartridge's fixed gate table: ROM load and gba_reset_power_on
+ * (gba_memory.c) and a link session's cold start (gbalink_core.c).  Not on a
+ * savestate load or a dynarec flush (why, above flush_dynarec_caches). */
 void smc_gates_reset(void)
 {
   smc_cand_forget();
@@ -9270,33 +9265,14 @@ void smc_gates_reset(void)
 #define SMC_GATE_RATIO 4            /* within 1/4 of the hottest */
 #endif
 #define SMC_GATE_MIN_SAMPLE 64     /* writes before judging an address */
-/* WITHDRAWN: A STALENESS RULE ON THE CANDIDATE ROWS.
- *
- * A gap over ~60 frames restarted a row's statistics, the reasoning being that
- * an address hot in one role (a boot copy destination, the previous
- * soundtrack's mixer body) should not promote on one write when the game later
- * uses it in another.
- *
- * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
- * The rule and the thing it gates are the same order of magnitude: earning a
- * gate needs SMC_GATE_MIN_SAMPLE writes AT ONE ADDRESS, and if that takes
- * longer than the window the row restarts forever and the gate is NEVER
- * earned -- which is the documented 457 KB/s re-translation, 37 fps regime.
- * I never measured writes-per-frame at a single address before choosing 60,
- * so the window may well have been inside the accumulation time.
- *
- * It was also the only change on this branch with no demonstrated defect
- * behind it -- unlike the cross-ROM leak, the role-change case was a
- * hypothesis.  And it is defence in depth rather than the guard: with the
- * containment fix, a wrongly promoted gate is no longer fatal, it is a
- * dispatcher lookup.  That is what makes this safe to drop.
- *
- * If it is ever wanted back, the window has to be derived from measured
- * writes-per-frame at the gate address, with a wide margin -- not chosen.
- *
- * An absolute floor on `chg` was tried first and was worse than useless: at
- * SMC_GATE_MIN_SAMPLE 64 a floor of 32 is exactly what `chg * 2 >= hits`
- * already requires. */
+/* NO STALENESS RULE ON THE CANDIDATE ROWS.  Earning a gate needs
+ * SMC_GATE_MIN_SAMPLE writes at ONE address; a restart window shorter than
+ * that accumulation time restarts the row forever and the gate is never
+ * earned (Heart & Soul: 457 KB/s re-translated, 37 fps -- a 60-frame window
+ * did that on hardware).  A wrongly promoted gate costs only a dispatcher
+ * lookup, so there is no window.  One that is ever wanted must come from
+ * measured writes-per-frame at the gate address.  (A floor on `chg` adds
+ * nothing: `chg * 2 >= hits` already requires it.) */
 #define SMC_GATE_CAND 32            /* candidates tracked before promotion */
 static u32 smc_cand_addr[SMC_GATE_CAND];
 static u32 smc_cand_hits[SMC_GATE_CAND];
@@ -9506,31 +9482,14 @@ static void smc_add_gate(u32 gba_addr)
  * flush: an earlier iteration can have written code without its final word
  * landing on a tag, and the later full flush is what makes that sequence safe.
  * Thumb block stores always write back, so they follow the same fallback. */
-/* WITHDRAWN: HARDENING OF THIS FINGERPRINT.
- *
- * The predicate below is narrow but not sound: an ARM STMIA lr,{r0,r1} whose
- * highest written word sits 0x3c bytes past the writer is a 32-bit opcode match
- * plus an offset, and nothing in it is specific to a sound engine.  I added
- * three requirements -- writer and target both in IWRAM, one latched writer pc,
- * and N repetitions before activating -- on the reasoning that all three are
- * structurally true of M4A's SoundMainRAM.
- *
- * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
- * This function is the gate on selective invalidation, so any extra condition
- * that turns out not to hold for the ROM in hand costs the FULL FLUSH on every
- * mixer write -- which is a large, load-dependent slowdown and exactly what was
- * reported.  I had not verified on hardware that Unbound's writer satisfies the
- * IWRAM assumption, and a regression hunt is the wrong moment to be carrying an
- * unverified extra condition on the hot path.
- *
- * The risk it was addressing remains real but theoretical: a false match hands
- * a game selective retirement on a store whose earlier words bypassed the SMC
- * check.  Re-introducing it needs the writer pc and its region CONFIRMED from a
- * diagnostic build on hardware first -- ms0:/smchisto.txt reports storing pcs.
- *
- * Anything uncertain keeps the established full flush, which is the whole
- * point: this function's job is to say yes to one known routine, not to
- * classify stores in general. */
+/* NO EXTRA CONDITIONS ON smc_writer_safe_range WITHOUT HARDWARE PROOF.  It
+ * gates selective invalidation, so a condition the ROM in hand fails costs the
+ * FULL FLUSH on every mixer write (writer and target in IWRAM, one latched
+ * writer pc and N repetitions were each withdrawn for slowing hardware).  A
+ * false yes hands a store whose earlier words bypassed the SMC check to
+ * selective retirement, so a newly admitted shape needs its writer pc and
+ * region measured first (SMC_WRITER_PROBE, ms0:/smchisto.txt).  Anything
+ * uncertain keeps the full flush. */
 #ifdef SMC_WRITER_PROBE
 /* DIAGNOSTIC ONLY, and in no build profile.  Record the distinct writer shapes
  * this function sees, so the fingerprint can be extended from measurement rather
@@ -9609,7 +9568,7 @@ static int smc_untag_now;
  * STR/STRB from IWRAM into IWRAM) is only admitted once selective retirement
  * is already active, or after K widened traps since the caches were last
  * initialised.  Before that the trap takes the 4.1.1 path unchanged (full
- * flush + gate).  Reason: the corpus oracle (2026-10-20) showed that without
+ * flush + gate).  Reason: the corpus oracle showed that without
  * it nearly every game ACTIVATES selective retirement on its boot-time code
  * copies (a handful of ROM/Thumb writers), changing timing library-wide for
  * no gain; the titles that benefit trap thousands of times.  Built in as 64
@@ -9856,7 +9815,7 @@ u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
  * per-frame code copy (50k traps vs 374 full flushes on 4.1.1).
  * A live block keeps every one of its marks, so no write to live code can
  * go unreported.  A full retired-tag table keeps the tag (never a flush). */
-/* smc_untag_span: that pass, out of line (smc-cost 2026-11-13): it runs
+/* smc_untag_span: that pass, out of line: it runs
  * only for the widened classes (Hot Wheels, Top Gear Rally), and keeping
  * it out of the pinned smc_retire_span keeps that function's size.
  * [ulo, uhi): the retired blocks' union (ulo >= uhi: nothing retired). */
@@ -10656,7 +10615,7 @@ static void smc_histo_note(u32 addr, u32 storepc)
 #endif
 
 #ifdef SMC_CLASS_PROBE
-/* DIAGNOSTIC ONLY, in no profile (bench campaign 2026-10-20).  Classify every
+/* DIAGNOSTIC ONLY, in no profile.  Classify every
  * SMC trap by the shape of the storing instruction, ARM and Thumb alike, so
  * the safe-range fingerprint can be widened from measurement.  The 4.1.1
  * fingerprint admits only M4A's mixer patch (ARM STMIA via LR, no writeback);
@@ -10671,9 +10630,9 @@ static const char *const scp_name[SCP_N] = {
   "arm_stm_nowriteback", "arm_other", "thumb_str", "thumb_strh", "thumb_strb",
   "thumb_stmia", "thumb_push", "thumb_other", "(admitted_partial_range)" };
 #define SCP_PCS 64
-/* Rewritten at every power-of-two trap count from 256 on (smc-coverage
- * 2026-10-20: the original single dump at 30000 traps never fired on the
- * low-trap fixtures), so the last file on disk is at most 2x stale. */
+/* Rewritten at every power-of-two trap count from 256 on (a single dump at
+ * 30000 traps never fires on low-trap games), so the last file on disk is at
+ * most 2x stale. */
 static u32 scp_count[SCP_N], scp_traps, scp_next_dump = 256;
 static u32 scp_pc[SCP_PCS], scp_pc_hits[SCP_PCS], scp_pc_cls[SCP_PCS];
 static u32 scp_pc_lo[SCP_PCS], scp_pc_hi[SCP_PCS], scp_pc_op[SCP_PCS];
@@ -11364,8 +11323,7 @@ void init_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
-  /* NO smc_gates_reset() HERE.  See flush_dynarec_caches below: a reset keeps
-   * the same ROM, and ROM load already resets the table. */
+  /* NO smc_gates_reset() HERE (why, above flush_dynarec_caches). */
 }
 
 #if defined(RUNTIME_JIT_CACHE)
@@ -11678,36 +11636,13 @@ void rom_hash_census(u32 out[10])
 }
 #endif
 
-/* WITHDRAWN: CLEARING THE GATE CANDIDATE TABLE HERE, AND IN
- * init_dynarec_caches.  This cost 2-16% of frame time on hardware.
- *
- * The proven defect was CROSS-ROM: a candidate saturated by one game promotes on
- * a single write from the next, because the stale remembered value counts as a
- * change.  That happens at ROM load, and gba_memory.c already calls
- * smc_gates_reset() there.  Extending it to savestate load, emulator reset,
- * cheat install and config change was my inference, and it is the expensive
- * kind of wrong.
- *
- * WHY IT COSTS SO MUCH.  Earning a gate needs SMC_GATE_MIN_SAMPLE observations
- * at ONE address, and smc_gate_earned runs once per SMC flush event -- not once
- * per store.  Measured on heart_soul_light, the hot mixer address 0300168c
- * produces about 12 events per 600 frames, so re-earning its gate from scratch
- * takes roughly 3200 frames.  Boot supplies those samples cheaply; a savestate
- * load at frame 30 threw them away and left the rest of the run in the no-gate
- * regime, which is the documented 457 KB/s re-translation behaviour.
- *
- * It shows up as MORE SMC EVENTS, not merely more CPU: hardware measured the
- * window count 33 -> 51, xlat 705 -> 831, and mean core time +21%.  The penalty
- * scales inversely with the mixer's write rate, which is why it was +16% on
- * heart_soul_light, +8% on unbound_double_high and +2% on unbound_rival_medium
- * -- the busier the mixer, the sooner the gate comes back.
- *
- * A savestate load does not change ROM, so the candidates remain evidence about
- * the right game.  What a state load DOES invalidate is smc_cand_val, the
- * remembered word at each address -- a real but much smaller hazard, and one
- * that cannot be closed by throwing away the hit counts that cost thousands of
- * frames to collect.  If it is ever worth closing, refresh the VALUES and keep
- * the counts. */
+/* THE GATE CANDIDATES SURVIVE THIS FLUSH (and init_dynarec_caches); only
+ * smc_gates_reset clears them (ROM load, power-on reset, link cold start).
+ * Re-earning a gate takes SMC_GATE_MIN_SAMPLE flush events at one address --
+ * about 3200 frames for Heart & Soul's mixer -- so clearing them here, on
+ * every state load and dynarec reset, cost 2-16 % of frame time on hardware.
+ * A state load keeps the ROM, so the counts stay valid;
+ * smc_gates_refresh_values rebases the remembered words. */
 void flush_dynarec_caches(void)
 {
   IRQCHK_RESET();
@@ -12422,8 +12357,8 @@ __attribute__((noinline, used)) void drprof_zone(void)
 }
 
 /* noinline: inlined, its body ran inside translate_block_* and the twin
- * charged it to translation (~23 % of translate_block_arm, xlat-cost
- * 2026-10-28); out of line it is drprof_* bookkeeping, never counted, and
+ * charged it to translation (~23 % of translate_block_arm); out of line it
+ * is drprof_* bookkeeping, never counted, and
  * only the call remains (twin only: DRPROF_TWIN). */
 __attribute__((noinline)) void drprof_note(u8 *host, u16 cls)
 {
