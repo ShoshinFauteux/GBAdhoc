@@ -1,7 +1,18 @@
 # Mid-frame state on the Media Engine renderer
 
+**Status now (2026-11-17):** both parts ship.  `ME_AFFINE_LINES` and
+`ME_MIDFRAME_LOG` default to 1 in `video.h`, and the harness key `me_midlog`
+defaults to 1.  Two things changed since the record below: per-line VRAM
+tracking now runs on **every** frame, not by hysteresis
+(`me_log_vram_always = 1` in `video_me_log.h`; harness `me_vram_always = 0`
+restores the hysteresis), and the post point is chosen by `mer_vispost_active`
+(`psp/fe/merend.c.inc.c`): 1x and the draw gate's drawn fast-forward frames
+post at vcount 160 with the log, and every fast-forward preset runs through
+the gate by default (`g_ff_flip_pace` = 7); only bench mode, autopilot fast-forward, or a harness
+`ff_flip_pace` without bit 2, posts at frame end without the log.  The `me_vispost` key is gone.
+
 Status 2026-09-29, branch `claude/me-midframe`: implemented behind two build
-flags, validated on the desktop model, **hardware A/B pending**.
+flags, validated on the desktop model, hardware A/B pending at the time.
 
 A player report (GitHub issue, GBAdhoc 3.0.0) listed broken graphics in Driver 2,
 Tomb Raider, Penny Racers, OutRun and Mario Golf: Advance Tour, with an analysis
@@ -16,7 +27,7 @@ bears out, what was reproduced, what the branch changes, and what it costs.
 | 1 | Not the BIOS | **consistent, not independently audited** | Every divergence reproduced below is explained by the ME contract and disappears with the fix, with no BIOS change. Mario Golf gives the same numbers (1558 wrong frames before, 2 after) with the official BIOS and with the built-in open BIOS (`--option gpsp_bios=builtin`); the synthetic ROMs use the open BIOS. The open BIOS's LZ77/Huffman were not audited. |
 | 2 | HBlank IRQs fire correctly; scroll writes are in the per-line log | **true** | `main.c` raises `IRQ_HBLANK` on every line's HBlank transition (visible lines and VBlank alike); HBlank DMA runs on lines 0-159 only, as on hardware. `me_capture_frame.ioregs[160][64]` copies halfwords 0x00-0x3F of I/O (bytes 0x00-0x7F): DISPCNT, BGxCNT, BGxHOFS/VOFS, BG2/3 PA-PD and X/Y, windows, mosaic, blending. |
 | 3 | Affine reference only on line 0 | **true** | `write_io_register16` reloads `affine_reference_x/y` when BG2X/BG2Y/BG3X/BG3Y are written (`gba_memory.c`). The capture recorded them only at `vcount == 0` (`affine_seed`), and capture mode 1 returned before the PB/PD step. The engine started from the seed and stepped on its own; the renderer reads the counters, not the registers, so a reload in HBlank never reached it. PA-PD are in the log. |
-| 4 | One VRAM/OAM/palette snapshot per frame | **true** | `me_render_glue.cc` phase 1 copies VRAM (dirty pages), OAM and palette once per post, and with `me_vispost` (default) the post is `gpsp_visible_done_hook` at vcount 160, after line 159's HBlank DMA and IRQ. All 160 lines replay against that copy. |
+| 4 | One VRAM/OAM/palette snapshot per frame | **true** | `me_render_glue.cc` phase 1 copies VRAM (dirty pages), OAM and palette once per post, and at normal speed the post is `gpsp_visible_done_hook` at vcount 160, after line 159's HBlank DMA and IRQ. All 160 lines replay against that copy. |
 | 4a | ...so mode-4 back-page drawing mid-frame flickers | **false as stated, true in a variant** | The page select is a DISPCNT bit and is in the line log; drawing the page that is *not* displayed is invisible at either snapshot. The synthetic `m4_back` case matches on every frame. What does break is drawing into the page that *is* (or was, earlier in the same frame) on screen: `m4_front` diverges on every frame. Separately, the fast-forward profiles still post at frame end, and there `m4_back` is wrong every frame (the VBlank flip and redraw land in the snapshot). |
 | 5 | Proposed fix | **right direction, changed in the details** | See "Design" below. |
 
@@ -107,7 +118,7 @@ installs them before each line. On a frame without a reload the recorded values
 the old contract (the fixture table's "drawn identically" column).
 
 This also fixed two hard-coded capture sizes that would not have followed the
-struct: the volatile-memory carve in `main_psp.c` (the literal 20544 would have
+struct: the volatile-memory carve (now `me_rend_init`, `psp/fe/merend.d.inc.c`; the literal 20544 would have
 overlapped the two captures, on hardware only) and the SDL test buffer.
 
 ### 2. Mid-frame graphics-memory log (`ME_MIDFRAME_LOG`, default 1 on this branch)
@@ -137,9 +148,9 @@ each) only when the flag says the region was written since the last check.
 **Write maps (2026-11-13, claude/mlog-range).** A check used to compare all
 256 words of the array with its shadow whenever the flag was up: 2 KiB of cold
 data, ~7 us a line on the Allegrex. A game with an HBlank DMA palette gradient
-raises the palette flag on every visible line, and the hardware profile
-(builds/hwprof-out/report2.txt) put `ml_line_body` at 2.13 ms a frame in Hot
-Wheels. Every store path that raises a flag now also marks WHICH 32-byte rows
+raises the palette flag on every visible line, and a hardware profile
+(2026-11; raw report not kept in the repo) put `ml_line_body` at 2.13 ms a
+frame in Hot Wheels. Every store path that raises a flag now also marks WHICH 32-byte rows
 it wrote (one 16-colour palette row, four OBJ entries) in `reg[PAL_WMAP]` /
 `reg[OAM_WMAP]` (cpu.h, `reg[61]` / `reg[60]`), and the check compares only
 those rows, lowest first, so the log is entry for entry the one the whole
@@ -159,10 +170,12 @@ per line, in every game), and put 476 B of DMA note in front of instance A's
 cold text, which the CORE pad then moved 384 B. This one keeps every per-frame
 function where the whole compare had it: the row diff is its own function
 (`ml_diff_rows`, -Os) in hot_order.txt's last rows between `ml_line_body` and
-`ml_update_relevance`, with LAYOUT_PAD_MLU_BYTES (psp/layout_pad_late.S) for
-the rest of the bytes the inlined compare took; the DMA note and the tails'
+`ml_update_relevance`, held in place by what was then LAYOUT_PAD_MLU_BYTES
+(now the linker row pin `row_mlu`, `psp/layout/hot.ord`, since code-health
+C3-5; the pad variable is refused); the DMA note and the tails'
 emitter are in the cold tail (`ME_WMAP_COLD`, psp/cold_tail.ld: after all
-other text; instance B's copies stay in B's text, before the CORE pad).
+other text; instance B's copies stay in B's text, before the CORE pad, now
+the `core` linker pin).
 
 A flag with an empty map (OAM_UPDATED from a DISPCNT mode change) compares
 everything, as before; the ARM backends keep no map and always compare
@@ -178,9 +191,13 @@ and the twin's log digest
 fixtures emit the identical log, frame by frame, before and after.
 VRAM would need a 96 KiB baseline, so the core keeps a VRAM shadow
 (`me_vram_shadow`, 96 KiB from the volatile partition) that is only trusted for
-pages it has been tracking, and tracking is **hysteresis**: a frame whose
-visible lines wrote a page that some line of that frame reads turns per-line
-VRAM tracking on for 60 frames. "Reads" is computed from the captured
+pages it has been tracking.  As designed here, tracking was **hysteresis**: a
+frame whose visible lines wrote a page that some line of that frame reads
+turned per-line VRAM tracking on for 60 frames.  **Status now:** tracking is
+on every frame by default (`me_log_vram_always = 1`), because the first frame
+of each burst was drawn wrong (issue #8: Sapphire's "Attack fell" strip; the
+Heart & Soul ghost and Mario Golf's two leftover frames are the same gap);
+`me_vram_always = 0` restores the hysteresis. "Reads" is computed from the captured
 registers: all BG VRAM when any BG is on in modes 0-2, only the *displayed*
 frame in modes 3-5, OBJ VRAM when OBJs are on. That is what keeps a mode-4 game
 that draws its back page off this path entirely.
@@ -191,18 +208,18 @@ drops the log for that frame instead. A fallback needs presentation plumbing
 built or validated; the overflow case was never reached in any fixture (maximum
 10322 entries, in the synthetic `m4_front`).
 
-The log is only valid over the line-160 state, so the FF profiles' end-of-frame
-post zeroes it and renders as before (`main_psp.c` `g_mer_in_vis`).
+The log is only valid over the line-160 state, so an end-of-frame post zeroes
+it and renders as before (`g_mer_in_vis`, `psp/fe/merend.c.inc.c`).
 
 ### Not changed
 
-* (2026-10-02: Unlimited and Unlimited Smooth now post their drawn frames at
-  vcount 160 with the log, like 1x; only 3x still posts at frame end. See
-  docs/FF-PRESETS.md.)
-* Fast-forward still posts at frame end (docs/FF-ARTIFACT-FIX.md). In FF the
-  engine draws with post-VBlank memory: `m4_back` and Mario Golf's aim view are
-  wrong there on most frames (the "post" column of the model). Out of scope
-  here; the FF profiles were validated with that post point.
+* (At the time of writing; see the status at the top for today's rule.)
+  3x fast-forward still posted at frame end (docs/FF-ARTIFACT-FIX.md). There the engine draws with
+  post-VBlank memory: `m4_back` and Mario Golf's aim view are wrong on most
+  frames (the "post" column of the model). Out of scope here; those modes were
+  validated with that post point.  The draw gate's drawn frames (Unlimited
+  and Unlimited Smooth) post at vcount 160 with the log, like 1x (since
+  2026-10-02; docs/FF-PRESETS.md).
 * No CPU fallback, as above.
 
 ## Cost
@@ -215,6 +232,7 @@ me_midlog` census line) for the Pokemon fixtures, per frame on average: two
 flag loads per line, about two 1 KiB baseline copies, 0.5-1.2 1 KiB page
 passes (copies and diffs), and per-line VRAM tracking on 41-61% of frames (the games stream tiles
 during the visible lines every few seconds, which re-arms the hysteresis).
+These counts predate always-on VRAM tracking, which now runs on 100% of frames.
 
 **Not measured: the PSP.** An estimate from the counters is tens of
 microseconds a frame on the Allegrex; the hardware census (`core` time,
@@ -253,5 +271,6 @@ the new replay loop (`me_replay_lines`, with the log) is 804 bytes.
 images; `tools/e2e/me_midframe/raw2png.py` puts them side by side.
 
 One-binary A/B on hardware (harness builds): `me_midlog = 0` in
-`.gpsp-harness.ini` turns the log off (the per-line affine reference has no
-runtime switch; the 3.0.0 build is its "before").
+`.gpsp-harness.ini` turns the log off, and `me_vram_always = 0` returns VRAM
+tracking to the hysteresis (the per-line affine reference has no runtime
+switch; the 3.0.0 build is its "before").

@@ -51,7 +51,7 @@ What this shows:
   5.8 KiB, 75 % in 17.6 KiB, 90 % in 30-35 KiB.  Colouring halves each
   core's cache, and that costs more than it saves.
 * **Solo:** half the misses ARE conflicts (11.4k vs 5.5k), so a single core
-  would gain from layout.  But solo GB runs far above full speed on every
+  would gain from layout.  But solo GB runs far above the 59.7 fps GB rate on every
   console, so there is nothing to buy.
 * **What works:** fewer core switches.  Batching 154 cuts misses by 14 %
   (2-way) and 24 % (16-way).  hw5 measured it on the PSP: core -0.65 ms mean,

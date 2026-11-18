@@ -11,11 +11,16 @@ headers. They are collected here once so nobody rediscovers them as defects.
 
 ## Desktop and host
 
+`TESTING.md` explains how to run each of these.
+
 | test | proves | does NOT prove |
 | --- | --- | --- |
 | `tools/e2e/run_video_regress.sh` | The core's software scanline renderer is byte-identical over 1091 frames of a fixed Emerald fixture (intro, title, menu, overworld, party screen). Launches and auto-loads correctly **as of `d2857c1`** | **ME execution** — PPSSPP never runs the second core (`me_init reason=handshake magic=0x00000000`), so `g_me_rend` stays 0 and the oracle always hashes the CPU buffer. Also nothing about suspend/resume, same-frame retirement, the GU blit, or what the PSP LCD shows |
 | `tools/test_smc_safety.c` | Modelled SMC gate/invalidation invariants hold, including pre-change behaviour and the known role-change hole, which it pins deliberately | Real Allegrex cache behaviour, emitted-code layout or size, translation-cache pressure, or PSP stability. It is a model, not the dynarec |
-| `tools/run_host_tests.py` | The host-compilable suites build and pass (FF config/pipeline, Mystery Gift, ROM loading/selection, video buffers, perf rig, SMC safety) | Anything requiring the PSP toolchain's codegen, the ME, or hardware timing |
+| `tools/run_host_tests.py` | Every host suite (54 at the time of writing) builds and passes: frontend logic compiled from slices of the frontend source, netdrv, the GB core, Mystery Gift, ROM loading, SMC safety, the layout-lock, frame-parity and harness-key checkers, the source-split tools | Anything requiring the PSP toolchain's codegen, the ME, or hardware timing. Many frontend suites read source regions by marker, so they prove the extracted slice, not the linked frontend |
+| `tools/drprof/dr_oracle.py A B` (the dynarec twin) | Two translator variants give identical guest state (registers, RAM, I/O, palette, OAM, VRAM, audio) on every frame of the save-state fixtures | Timing on a PSP (no caches, different compiler); changes that legitimately move cycle accounting; the frontend |
+| `tools/drprof/dr_corpus.py` | The same, from power-on, on every ROM of a library with one generic input script, plus a picture hash; `mutants` proves the oracle catches deliberately broken switches | Game paths the generic script never reaches; anything after its frame count |
+| `tools/refactor/flavours.sh --against REF` | The gates in `TESTING.md` section 3: byte identity (G0-G2, HO, ST, BF, DS), and on every commit SS, LL, CF, CI, FP | Behaviour: a gate that passes says the bytes or rules held, not that a game runs |
 | `tools/e2e/run_netsmoke.sh` | Transport connectivity at the title screen: the two sides see each other and the link forms | An actual GBA RFU session. It **intentionally expects `core_tx=0`**, documented in its own header — the core has nothing to send at a title screen. A pass says the transport is alive, not that trading works |
 | `tools/e2e/run_handoff_test.sh` | Application-side USB handoff logic under PPSSPP: the request/park/resume chain forms, and does not form when handoff is disabled (it carries a negative control) | Physical USB re-enumeration, PSP FAT cache flush behaviour, or whether the host OS remounts the volume |
 | `tools/e2e/run_gu_color_test.sh` | The GE blit path and colour conversion | The renderer upstream of it. `run_video_regress.sh` checks the renderer; these are different bugs |
@@ -24,7 +29,7 @@ headers. They are collected here once so nobody rediscovers them as defects.
 
 | question | instrument | why nothing else will do |
 | --- | --- | --- |
-| ME renderer output correctness | `builds/opus-perf-harness` `me_mode` 0-vs-1 A/B | PPSSPP cannot execute the ME at all |
+| ME renderer output correctness | hardware `me_mode` 0-vs-1 A/B (the ME renderer against the CPU renderer on the same console) | PPSSPP cannot execute the ME at all |
 | dynarec performance | source-pinned hardware A/B, both consoles | PPSSPP gave false reassurance twice: once −14 µs where hardware showed +600 µs |
 | suspend / resume | physical sleep/wake on PSP-1000 and PSP Go | PPSSPP does not suspend |
 | RFU trading | two real consoles, host and join roles | netsmoke's title-screen link is not a session |

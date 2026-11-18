@@ -1,5 +1,15 @@
 # The resident-ROM crash: stale instruction-cache lines (2026-09-30 / 10-01)
 
+**Status now (2026-11-17):** this is a historical record.  The narrow fix
+below is gone: `translate_icache_sync_ranged()` no longer exists, and
+`translate_icache_sync()` (`cpu_threaded.c`) now just calls
+`jit_code_publish()`, the JIT code discipline's single publish point.  Every
+path, ROM and RAM alike, writes back and invalidates exactly the recorded
+lines, plus a whole I-cache invalidate after any ownership change
+(`jit_code_owner_changed`: flush, emitter rebuild, tier lend, init).  See
+[JIT-CODE-DISCIPLINE.md](JIT-CODE-DISCIPLINE.md).  Only `JIT_CODE_AB` harness
+builds still compile the old model, as A/B arms.
+
 ## Symptom
 
 With the whole cart resident (`rom_resident = 1`, 64 MiB consoles), Heart & Soul
@@ -32,8 +42,8 @@ does not.
 Every `platform_cache_sync` copy in the original EBOOT is inlined, and each one
 is gated by `bnez <cache_paranoid>`. Making one gate unconditional turns that
 single site into a whole D+I sync, a one-instruction patch that moves nothing.
-The patched EBOOTs, the analysis and the scripts are in `builds/hns-patch/`:
-`PATCHES.json`, `base.dis` and `helper.S`.
+(The patched EBOOTs, disassembly and patch scripts were local files, not kept
+in the repo.)
 
 Go results:
 
@@ -67,8 +77,7 @@ derail, while site B alone did.
 
 **How close this is to the tested patch.** Patch B changed the out-of-line
 copy in the FAILING binary, so it covered whatever called that copy there.
-In a symbol-carrying rebuild of the same source (`builds/hns-patch/canary.elf`)
-those callers are: `block_lookup_address_arm` (one call, not the success
+In a symbol-carrying rebuild of the same source those callers are: `block_lookup_address_arm` (one call, not the success
 path, whose copy is the inlined site E), `init_bios_hooks` (its inlined ARM
 lookup), `block_lookup_address_thumb` and `block_lookup_address_dual`. The
 shipped source keeps the whole invalidate for the Thumb lookup and
@@ -101,9 +110,9 @@ writer is a follow-up, not a blocker.
 A source build of d7df3bb moves code, and this derail is layout-sensitive, so
 the built binary is a different layout from the one bisected, and (above) its
 whole-I coverage is slightly narrower than patch B's. As of 2026-10-01 the
-rig logs in `builds/candidate-out/` hold the narrow build (`CBONLY`) only on
-the AW2 bench on the Go, not on the Heart & Soul resident-state-load
-reproducer; that run is still owed.
+rig had run the narrow build (`CBONLY`) only on the AW2 bench on the Go, not
+on the Heart & Soul resident-state-load reproducer (raw logs not kept in the
+repo).  The narrow form was then superseded by the discipline (see the top).
 
 ## Cost: the "+18% on AW2" was layout, not the invalidate
 
@@ -118,7 +127,7 @@ invalidate cannot explain it:
   per whole invalidate, that is **at most ~12 us/frame** -- not ~1.3 ms.
 - H&S heavy does four times as many whole invalidates per frame (0.85) and
   measured only +0.33 ms (PUB 9.69 -> CAND 10.02 ms, Go).
-- Go AW2, `builds/candidate-out/logs-go-iso*`: no fix 6.98, narrow fix
+- Go AW2 (hardware, 2026-10-01): no fix 6.98, narrow fix
   (CBONLY) 7.16, whole-on-every-publish (CAND) 8.27 ms/frame -- three
   binaries whose only difference is where one sync site's code sits.
 

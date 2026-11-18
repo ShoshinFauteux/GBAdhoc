@@ -8,7 +8,9 @@ The emulator lives here; the project's documentation is one level up.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the pieces fit together
 - [`docs/ADHOC-NOTES.md`](docs/ADHOC-NOTES.md) — the RFU protocol as we found it
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — every design decision and why
-- [`docs/TESTING.md`](docs/TESTING.md) — the harness
+- [`docs/TESTING.md`](docs/TESTING.md) — how it is tested (host suites, oracle, gates, harness)
+- [`docs/BUILD-PROFILES.md`](docs/BUILD-PROFILES.md) — the six build profiles
+- [`../AGENTS.md`](../AGENTS.md) — rules for contributors and AI agents
 - [`docs/RELEASE.md`](docs/RELEASE.md) — how a release is built and verified
 
 Forked from [libretro/gpsp](https://github.com/libretro/gpsp). GPL-2.0, see `COPYING`.

@@ -25,7 +25,9 @@ report it.
    `translate_block_arm/thumb` patched `BLOCK_LOOKUP_UNMAPPABLE` — `(u8 *)(~0)`
    — straight into a live block as `j 0x3FFFFFF`, a jump to `0x0FFFFFFC`.
    `BADJUMP_SAFE` cannot catch that: no dispatcher call is involved.
-2. **Build `diagnostic` and read `ms0:/smchisto.txt`.** The line
+2. **Build with `CORE_EXTRA="SMC_WRITE_HISTO=1" tools/build.sh diagnostic`
+   and read `ms0:/smchisto.txt`.** (The plain `diagnostic` profile leaves the
+   histogram out, because it writes to the stick every 4000 flushes.) The line
    `unmappable block exits contained: N` counts exits that *would* have been
    that jump. A rising N means the gate rule is promoting bad addresses.
 3. **Read `ms0:/badjump.txt`** (diagnostic profile only). Each `*** RECOVERED`
@@ -42,10 +44,14 @@ stick from inside the dispatch path.
 
 Almost always self-modifying code plus a gate or a partial flush.
 
-1. Bisect with the flags, not the code: drop `SMC_GATES` first, then
-   `SMC_PARTIAL_SAFE`. Either alone has been enough before.
-2. `SMC_SKIP_SAME` is known to white-screen Heart & Soul at boot. It is kept
-   for the record and refused in release builds.
+1. The SMC gates and selective retirement are built in (code-health A-6/B-1;
+   `SMC_GATES=0` and `SMC_PARTIAL_SAFE=0` stop the make), so they can no
+   longer be dropped to bisect.  Bisect by commit with the twin oracles
+   instead (`tools/drprof/dr_oracle.py`, the corpus oracle `dr_corpus.py`), or
+   switch off one of the seven switches still in `gpsp_features.h` (for
+   example `CORE_EXTRA="SMC_STM_FIXED=0"`, not in a release).
+2. `SMC_SKIP_SAME` white-screened Heart & Soul at boot and was never shipped;
+   the switch no longer exists.
 3. `tools/test_smc_safety.c` is the fast check that the promotion rules still
    reject a data address and still accept the mixer's.
 
@@ -55,8 +61,9 @@ Almost always self-modifying code plus a gate or a partial flush.
    schedules against the real `video_psp.c`. If that passes, the swap logic is
    not the problem.
 2. Black bars in fast-forward were **fixed** in `ecdd8bc` + `add0f4d` and
-   confirmed on a PSP-3000, for all three presets (`3x`, `Unlimited`,
-   `Unlimited Smooth`). If they reappear it is a regression, and the two guards
+   confirmed on a PSP-3000, for the three presets of the time (`3x`,
+   `Unlimited`, `Unlimited Smooth`; `1.5x` and `2x` came later). If they
+   reappear it is a regression, and the two guards
    to check are `g_fb_filled` (never present an unfilled buffer) and
    `vid_swap()`'s read-back that excludes the live and pending display buffers —
    three buffers are *not* a modulo-3 ring, because FF can submit several frames
@@ -70,13 +77,17 @@ Almost always self-modifying code plus a gate or a partial flush.
 
 ## A sprite is in the wrong place for one frame
 
-This is the ME renderer's temporal seam, not the dynarec. I/O registers are
-captured per scanline; OAM, VRAM and palette are one snapshot per frame. A game
-that moves a sprite mid-frame renders differently on the two paths.
+Suspect the ME renderer's capture first, not the dynarec. I/O registers are
+captured per scanline, and OAM, VRAM and palette writes made while lines 0-159
+draw are replayed per line by the mid-frame log (`ME_MIDFRAME_LOG`, on by
+default). A frame still falls back to one snapshot when the log overflows, on
+bench-mode or autopilot fast-forward (an end-of-frame post), or when the log's
+buffers did not fit in the volatile partition.
 
 The A/B is `me_mode = 0` (CPU renderer) versus the default. If the artifact
-disappears with the CPU renderer, it is this and nothing else. See
-`docs/SUBSYSTEMS.md` → "ME capture and staging".
+disappears with the CPU renderer, it is the ME path; the harness keys
+`me_midlog` and `me_vram_always` narrow it down. See `docs/SUBSYSTEMS.md` →
+"ME capture and staging" and `docs/ME-MIDFRAME.md`.
 
 ## Wireless: a trade will not start, or drops
 
@@ -109,8 +120,10 @@ beacon — check the beacon checksum and field offsets, not the transport.
    cleans by default; `--no-clean` does not.
 3. Verify by **ELF md5**, never by EBOOT md5, and check the flags echoed in
    `psp/build-manifest.json`.
-4. `PSP_EBOOT_TITLE` is ignored by the PBP tooling — titles are patched
-   afterwards by `sfotitle.py`.
+4. The XMB title says which profile you installed: `tools/build.sh` passes
+   `PSP_EBOOT_TITLE` per profile ("GBAdhoc HARNESS", "GBAdhoc DIAG", ...;
+   `GPSP_EBOOT_TITLE` overrides it), and `tools/relabel_pbp.py` retitles an
+   existing PBP without rebuilding it.
 
 ## Something links but dies instantly on hardware
 

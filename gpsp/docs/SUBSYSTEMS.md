@@ -4,10 +4,10 @@ The question this document answers is "I need to change X; what do I have to
 understand, and what am I allowed to touch?"  `ARCHITECTURE.md` covers netdrv's
 wire protocol in depth; this is the map above it.
 
-**Historical snapshot:** audited 2026-09-17 on `opus/performance-stability-fixes`.
-This is not a claim about the active checkout. Verify ownership and file/line
-references against current source before relying on them. Where the original
-audit marked an inference, that status still applies.
+**Audited 2026-09-17; re-checked against source 2026-11-17.** The ME capture,
+dirty-page, SMC and "seams" sections were corrected then. Code is cited by
+function or symbol name, not line number; grep for it. Where the original audit
+marked an inference, that status still applies.
 
 ---
 
@@ -25,7 +25,7 @@ audit marked an inference, that status still applies.
  +----------------------------------------------------------------+
  |                    MAIN CPU  (Allegrex, thread prio 0x2B)      |
  |                                                                |
- |  main_psp.c: init, main loop, ROM browser, lifecycle           |
+ |  main_psp.c + psp/fe/*.inc.c: init, loop, lifecycle, ME glue   |
  |    +-- ff_psp.c ............. frameskip policy + session pacing |
  |    +-- video_psp.c .......... framebuffer ring, GU blit, OSD    |
  |    +-- ui_psp.c ............. browser, menus, artwork           |
@@ -69,7 +69,7 @@ silently reads a stale cache line.
 | framebuffer pixels | main (blit) or ME | GE (display) | `sceGuSync` before `sceDisplaySetFrameBuf`; asserted by `tools/test_video_buffers.c` |
 | `g_mer_*` staging buffers | ME (writes pixels) | main (presents) | ME writes **uncached**, so the GE sees them with no writeback |
 | `me_capture_frame`, VRAM/OAM/palette snapshot | main (fills) | ME (reads) | ME invalidates its D-cache first (`me_inv`), then copies; `mb->input_seq` is published only after the copy, which is what lets the host resume emulating |
-| VRAM dirty-page map | dynarec store stub + C write paths | ME | `u8[96]`, 1 = clean; `vram_clean == 0` means "no map, copy everything", set on the first frame and after any teardown |
+| VRAM dirty-page map | dynarec store stub + C write paths | ME | first 96 bytes of `vram_clean`, 1 = clean; a null map pointer in the descriptor means "no map, copy everything", sent on the first frame and after any teardown |
 | `g_audio_step` | ff_psp.c (pacing) | audio thread | `volatile`; a torn read costs one resample step, not correctness |
 | EVT log ring | any thread (fe_evt) | `gpsp_io` only | `fe_evt_set_async`; exactly one consumer, enforced by contract not by a lock |
 | SRAM / savestate files | `gpsp_io` only | — | ADR-0025: no other thread may touch the .sav |
@@ -98,9 +98,10 @@ Three framebuffers under `VID_TRIPLE`, indexed by `g_fb_cur`, addresses in
 a hardcoded count.
 
 **The fast-forward black-bar artifact is FIXED, for all three presets** (`3x`,
-`Unlimited`, `Unlimited Smooth` -- `pcfg_ff_name`, psp/config_psp.c:32; the
-former capped tiers were migrated away at config_psp.c:214).  It took two
-changes, and both are needed:
+`Unlimited`, `Unlimited Smooth`; the former capped tiers are migrated at config
+load, `pcfg_ff_set_mode` in psp/config_psp.c).  `pcfg_ff_name` now also lists
+`1.5x` and `2x`, added after this fix.  It took two changes, and both are
+needed:
 
 * `ecdd8bc` added `g_fb_filled`, so an unfilled buffer is never presented and the
   ring does not rotate on a skipped frame.  `vid_blank_all()` was also fixed to
@@ -127,37 +128,54 @@ deliberately, "so the invariant does not depend on gu_defer".
 
 ### ME capture and staging (`psp/me/me_render_glue.cc`)
 
-Two phases per frame.  Phase 1 snapshots the core's VRAM (dirty pages only),
-OAM and palette into the PRX's own arrays and then publishes `input_seq`, which
-is what releases the host to emulate the next frame — so there is no torn read.
-Phase 2 replays 160 scanlines through `update_scanline()` and writes pitched
-rows to the host's staging buffer, uncached.
+Two phases per frame.  Phase 1 copies the core's VRAM (dirty pages only) into
+the host-provided **work area** (`d->work`, carved from the volatile partition;
+a descriptor without one is refused and the host draws on the main CPU), and
+OAM and palette into the PRX's own `oam_ram` / `palette_ram_converted`.  It
+then publishes `input_seq`, which is what releases the host to emulate the next
+frame — so there is no torn read.  Phase 2 replays 160 scanlines
+(`me_replay_lines`, `video.cc`) and writes pitched rows to the host's staging
+buffer, uncached.
 
-**The contract has a temporal seam, and it is load-bearing:** I/O registers are
-captured **per scanline** (`cap->ioregs[ln]`, 160 rows), while **OAM, VRAM and
-palette are one snapshot for the whole frame**, taken after the host finished
-emulating it.  `reg[OAM_UPDATED]` is likewise a single value.
+**When the snapshot is taken.** At 1x, and on the fast-forward draw gate's
+drawn frames, the render is posted from the vcount-160 hook
+(`mer_vispost_active` in `psp/fe/merend.c.inc.c`), so graphics memory is the
+line-160 state, not the post-VBlank state.  Every fast-forward preset runs
+through the gate by default (the multiplier presets since `g_ff_flip_pace`
+bit 2, default 7, `psp/fe/pacing.a.inc.c`); only bench mode, autopilot fast-forward, or a harness
+`ff_flip_pace` without bit 2, posts at frame end.
 
-So a game that moves a sprite *during* the frame — a mid-frame OAM write, or an
-HBlank DMA — is rendered by the ME with the sprite where it ended up, on every
-line.  The CPU renderer, which runs scanline by scanline as emulation
-progresses, sees OAM as it was at each line.  That is exactly the shape of
-"a sprite in the wrong position for one frame", and heavy audio makes it more
-likely because load changes *when* in the frame the game writes OAM.
+**Per-line graphics memory.** I/O registers are captured per scanline
+(`cap->ioregs[ln]`).  OAM, palette and VRAM are one snapshot plus the
+**mid-frame log** (`ME_MIDFRAME_LOG`, on by default in `video.h`): the host
+records every OAM, palette and VRAM word written while lines 0-159 draw, and
+the engine undoes the log to the line-0 state, then re-applies it line by line
+(`video_me_log.h`).  Per-line VRAM tracking runs on every frame
+(`me_log_vram_always = 1`).  So a mid-frame OAM write or HBlank DMA is drawn
+per line, as the CPU renderer draws it.  A frame falls back to the single
+snapshot when its log overflows (the log is dropped whole), on an end-of-frame
+post, or when the log buffers did not fit in the volatile partition.  Design
+and costs: [ME-MIDFRAME.md](ME-MIDFRAME.md).
 
 This is independent of the dynarec: no path here can execute wrong code.  The
-A/B that decides it is `me_mode = 0` (CPU renderer) versus the default.
+A/B that decides a picture difference is `me_mode = 0` (CPU renderer) versus
+the default.
 
 ### Dirty-page lifetime
 
-`vram_clean` is a `u8[96]`, one byte per KB page, `1` = clean.  Producers are
-the dynarec store stub and the C write paths (coverage verified at missed=0
-over 255 marked pages).  `vram_clean == 0` (the null pointer, not a zeroed map)
-means "no map available, copy all 96 KB", and the host sets that on the first
-frame and after any teardown or resume, because the eDRAM mirror cannot be
+`vram_clean` (`gba_memory.h`) is a 256-byte array in dynarec builds.  Bytes
+0-95 are the ME's map, one byte per KB page, `1` = clean.  Byte 96
+(`VRAM_DIRTY_ANY`) is cleared by every mark, so the mid-frame log can test "any
+VRAM written" with one load.  The second half, `vram_xclean`, is a separate map
+that only the dynarec resets, for code that runs from VRAM (`VRAM_EXEC`).
+Producers are the dynarec store stub and the C write paths (coverage verified
+at missed=0 over 255 marked pages).  A null map pointer in the descriptor (not
+a zeroed map) means "no map available, copy all 96 KB"; the host sends that on
+the first frame and after any teardown or resume, and the PRX also copies in
+full into a work area it has not seen before, because the mirror cannot be
 trusted as a base to patch.
 
-### ME renderer buffer ownership (`psp/main_psp.c`)
+### ME renderer buffer ownership (`psp/fe/merend.*.inc.c`)
 
 The engine's capture, staging and descriptor buffers come from the volatile
 partition at `0x08400000` when `sceKernelVolatileMemLock` succeeds, and from the
@@ -218,12 +236,17 @@ Three invariants, and one that was tried and withdrawn.
    soft-resets the GBA instead of the console.
 3. **Learned SMC state may not outlive the ROM that produced it.**
    `smc_gates_reset()` clears the ranked candidate table — addresses, counts and
-   the last value seen at each address — **at ROM load only** (`gba_memory.c`).
-   Without it, a candidate saturated by one game promotes on a *single* write
-   from the next, because the stale remembered value counts as a change.
+   the last value seen at each address — plus the gate hit stamps and the entry
+   gates.  It runs at **ROM load** (`gba_memory.c`, after the cartridge's fixed
+   gates are set), at the in-game **"Reset game"** (`gba_reset_power_on`, which
+   also restores the cartridge's own gate set so a reset times like a
+   power-on), and at a **link session's cold start** (`lk_cold_start`,
+   `gbalink_core.c`).  Without it, a candidate saturated by one game promotes on
+   a *single* write from the next, because the stale remembered value counts as
+   a change.
 
-   It is deliberately **not** called on savestate load, emulator reset, cheat
-   install or config change, and that boundary is load-bearing. Earning a gate
+   It is deliberately **not** called on savestate load, a dynarec cache flush,
+   cheat install or config change, and that boundary is load-bearing. Earning a gate
    needs `SMC_GATE_MIN_SAMPLE` observations at one address, and
    `smc_gate_earned` runs once per SMC *flush event* — about 12 per 600 frames
    at `0300168c` in `heart_soul_light`, so roughly 3,200 frames to re-earn.
@@ -268,12 +291,25 @@ They are affordable to drop precisely because of invariant 1: a wrongly promoted
 gate is now a dispatcher lookup, not a jump to `0x0FFFFFFC`.  The holes they
 covered are asserted as holes in `tools/test_smc_safety.c` so nobody mistakes
 them for covered — a role change inside one game can still promote on one write,
-and a different writer pc with the same shape and the same `+0x3c` relationship
-is still admitted.
+and a different writer pc with the same shape is still admitted.
 
-Selective invalidation (`smc_writer_safe_range`) therefore admits exactly what
-7283f13 admitted: an ARM `STMIA lr,{r0,r1}` whose highest written word sits
-`0x3c` bytes past the writer.  **Anything uncertain keeps the full flush.**
+Selective invalidation has widened well past 7283f13's single shape (an ARM
+`STMIA lr,{r0,r1}` exactly `0x3c` past the writer).  A store that traps on
+translated RAM code now retires only the blocks covering what it wrote when it
+is one of:
+
+* an ARM `STR`/`STRB`/`STRH`, or a Thumb single store (`STR`/`STRH`/`STRB`,
+  `STR [SP,#imm]`; outside a link session decoded only from a resident page),
+  into IWRAM or EWRAM (`smc_writer_safe_range`);
+* a non-writeback ARM `STMIA lr,{...}` of any register count whose final word
+  is at most `0x200` past the writer (M4A's mixer patch, the gated range path);
+* a short IWRAM-to-IWRAM `STMIA Rn!` or `STMIA Rn` of 2-16 registers
+  (`smc_trap_entry`);
+* a DMA onto tagged code within one region (`dma_smc_retire`).
+
+Every shape except an IWRAM-to-IWRAM ARM `STR`/`STRB` waits for 64 widened
+traps first (`smc_wide_gate`), and the covering blocks must be decidable
+(`smc_retire_span`).  **Anything uncertain keeps the full flush.**
 
 Host proof: `tools/test_smc_safety.c`.
 
@@ -303,7 +339,7 @@ at a path that cannot exist, so a leftover copy on a player's card is inert;
 ## What the video oracle does and does not cover
 
 `tools/e2e/run_video_regress.sh` is the project's only automated output-equivalence
-gate, and it was silently passing everything from the ADR-0067 rename until
+gate, and it was silently passing everything from the ADR-0036 control-file rename (often miscited as ADR-0067) until
 `d2857c1` (it wrote `autopilot.ini`, a channel that is read only so a leftover
 can be reported and never obeyed, and never named a ROM).  It works now, and it
 is still narrower than it looks.  **A PASS means "the CPU rendering path is
@@ -325,9 +361,16 @@ their commit messages rather than leaning on the PASS.
 
 Stated so the next person does not have to rediscover it.
 
-* **`psp/main_psp.c` is 6387 lines** and still holds the ME renderer, the
+**Status now (2026-11-17):** `psp/main_psp.c` has been split textually into a
+246-line shell and 44 `psp/fe/*.inc.c` fragments, still one translation unit
+(`psp/fe/README.md`).  The coupling counts below were measured on the single
+file before the split; the split moved text, not symbols, so they still
+describe the TU.  The ME renderer is in `fe/merend.*.inc.c`, the suspend/resume
+lifecycle in `fe/power.*.inc.c`, the harness in `fe/harness.*.inc.c`.
+
+* **The frontend is still one translation unit** holding the ME renderer, the
   wireless session lifecycle, Mystery Gift orchestration, suspend/resume, the
-  ROM browser and the main loop.
+  ROM browser and the main loop.  The fragments are files, not modules.
 * **The ME renderer and the suspend/resume lifecycle are interleaved, but the
   interface between them is now closed.**  The region that looks like "the
   renderer" also contains `power_cb`, `standby_note`, `me_standby_up/down` and
@@ -339,13 +382,9 @@ Stated so the next person does not have to rediscover it.
   been done: 215 lines would move for ~12 crossing symbols, against the
   fast-forward move's 1052 lines for 6.  The encapsulation was the part worth
   having, and it stands on its own.
-* **"INPUT SHADOWS" is a misleading header, kept because the code under it is
-  load-bearing and well-explained.**  `g_mer_sh_vram/oam/pal` shadow the ME's
-  *input arrays* -- VRAM, OAM and palette -- so the engine reads a stable copy
-  instead of the host spinning 1415-1456 us per frame waiting for its own
-  memcpy.  Nothing there touches controller input.  This cost one wrong reading
-  of the boundary; if you are mapping this file, read the block comment, not the
-  banner.
+* The ME input shadows (`g_mer_sh_*`, which let the host skip waiting for the
+  ME's input copy) lost on hardware and were deleted in code-health C2-4'.  The
+  host now waits for `me_host_input_done()` after each post (`me_rend_frame`).
 * **The ME renderer is 489 lines with only 5 symbols inbound -- the obstacle is
   now what reads it, not what it reads.**  Counting the renderer's own state
   declarations as part of it (they would travel with it, so counting them as
@@ -357,7 +396,7 @@ Stated so the next person does not have to rediscover it.
 
   | group | sites | risk | verdict |
   | --- | --- | --- | --- |
-  | ini/config binding (`me_mode`, `me_shadow`, `me_dirty`, `me_sameframe`, `vhash`) | 11 | none, boot-time only | a clean accessor/setter conversion, not yet done |
+  | ini/config binding (`me_mode`, `me_shadow` (since deleted), `me_dirty`, `me_sameframe`, `vhash`) | 11 | none, boot-time only | a clean accessor/setter conversion, not yet done |
   | status and telemetry reads (`g_me_rend` in the FF mode check, the loop's status line) | 8 | none | same |
   | **frame-path presentation and stage ownership** | 12 | **on the frame path** | needs hardware measurement, NOT a mechanical conversion |
 
@@ -369,14 +408,16 @@ Stated so the next person does not have to rediscover it.
 
 * **Harness-only execution is not yet its own compilation unit, and the obvious
   first slice is not worth taking.**  `run_testpat` and `run_nettest` are only
-  ~150 lines between them but need 8 symbols from `main_psp.c` -- including
+  ~150 lines between them (`fe/harness.e.inc.c`) but need 8 symbols from the
+  rest of the TU -- including
   `plat_video_frame` and the Mystery Gift status strings `g_mg_l1/l2/linked/secs`
   -- so moving them would make 8 things public to relocate 150 lines.  Compare
   the fast-forward move: 1052 lines out for 6 inbound symbols.  The worthwhile
   version of this is the whole harness surface at once (the frame dumps, vhash,
   `vram_probe`, `vid_prof`, `perf_rig`, testpat and nettest), and that needs the
   same interface work as the renderer.
-* `g_vc_target` (the vblank a frame is presented on) stayed in `main_psp.c`
-  when pacing moved out, because the present loop owns it.  That is deliberate.
+* `g_vc_target` (the vblank a frame is presented on) stayed in the main loop's
+  TU when pacing moved to `ff_psp.c`, because the present loop owns it.  That is
+  deliberate.
 * `OUT_RATE` currently lives in `ff_psp.h`.  It belongs to audio and should
   travel with it when audio is extracted.
