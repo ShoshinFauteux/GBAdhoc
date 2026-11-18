@@ -26,8 +26,8 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# The fixtures are local (GBADHOC_WORK, tools/workdirs.sh: the first builds/ folder at or
-# above the checkout, so a worktree inside the main checkout's builds/ finds them).
+# The fixtures are local (GBADHOC_WORK, tools/workdirs.sh: the first builds/ folder above the
+# main checkout, never a checkout's own tracked builds/, so every worktree finds them).
 source "$SCRIPT_DIR/../workdirs.sh"
 WORK=${MMF_WORK:-$HOME/me-midframe}
 NEW=$WORK/src/sdl

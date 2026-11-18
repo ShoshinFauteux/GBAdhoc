@@ -13,7 +13,7 @@ the defaults.  Set a variable to override its default.
 | variable | what | default |
 |---|---|---|
 | `GBADHOC_REPO` | the repository root | the checkout the script is in |
-| `GBADHOC_WORK` | local build outputs, rig stages, fixtures made by earlier runs | the first `builds/` folder at or above `GBADHOC_REPO` |
+| `GBADHOC_WORK` | local build outputs, rig stages, fixtures made by earlier runs | the first `builds/` folder above the main checkout (from `git rev-parse --git-common-dir`), else above `GBADHOC_REPO`, else `GBADHOC_REPO/builds` |
 | `GBADHOC_ROMS` | the ROM library (a list, `:`-separated, for `drprof/dr_corpus.py stage`) | `GBADHOC_REPO/roms` |
 | `GBADHOC_BIOS` | a GBA BIOS for `drprof/dr_corpus.py` when `~/drprof/fx/gba_bios.bin` is absent | none |
 | `GBADHOC_RIG_ASSETS` | the rig assets folder `stage_cards.ps1` copies saves from (or `-Assets`) | none: required |
@@ -36,5 +36,10 @@ Scripts that used to name a folder under the owner's `builds/` now default to th
 | `rig/mk_emerald_fixture.py` | `FIXTURE_DIR` (this tree's `testdata/fixtures`) |
 | `push_scripts.ps1`, `stage_cards.ps1` | `-Repo` (this gpsp tree) |
 
-From the main checkout the defaults are the folders these scripts always used.  From a worktree that
-is not inside that checkout's `builds/`, set `GBADHOC_WORK` (and `GBADHOC_ROMS`) explicitly.
+The repository tracks a small `builds/` folder of its own (`builds/harness`, `builds/playable`), so
+every checkout and worktree has one; the default picks it only when no `builds/` exists above.  It starts the search one level
+ABOVE the main checkout, so the main checkout and all its worktrees share one work folder wherever
+the worktrees sit.  When git cannot name the main checkout (a `git archive` export, or WSL's git
+reading a worktree whose `.git` file holds a Windows path) the search starts above `GBADHOC_REPO`
+instead, which finds the same folder for a worktree kept inside it.  `GBADHOC_WORK` set explicitly
+always wins.  `tools/tests/test_workdirs.py` (host suite `workdirs`) checks both implementations.

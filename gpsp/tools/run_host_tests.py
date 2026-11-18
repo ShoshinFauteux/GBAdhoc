@@ -724,6 +724,13 @@ def suites(env: Env, baseline: Path | None):
         ("frame_parity", False, lambda: None,
          "python3 tools/tests/test_frame_parity.py"),
 
+        # tools/workdirs.sh and workdirs.py: GBADHOC_WORK is the local work
+        # folder above the main checkout, never a checkout's own tracked
+        # builds/ (a worktree inside the work folder, one elsewhere, an
+        # export with no git), and an explicit GBADHOC_WORK wins.
+        ("workdirs", False, lambda: None,
+         "python3 tools/tests/test_workdirs.py"),
+
         # fe_host.c's core links (T14 fehost, tools/refactor/abi_asserts.py):
         # no hand copy of a core_fe.h name, every weak core reference listed
         # in abi_asserts.weak and defined by the core sources; mutants (a
