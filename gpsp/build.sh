@@ -45,8 +45,8 @@ run() {   # run <label> <workdir> <cmd...>; abort on a nonzero container
   fi
 }
 
-# CORE_FLAGS reaches the ROOT make (SMC_GATES, SMC_REUSE=0, cache
-# sizes -- anything touching the dynarec); EXTRA_DEFS reaches psp/Makefile
+# CORE_FLAGS reaches the ROOT make (a twin switch such as XLAT_FAST=0,
+# diagnostics, cache sizes); EXTRA_DEFS reaches psp/Makefile
 # (GPSP_PLAYABLE, which psp/Makefile requires since code-health A-5, so a bare
 # run of this script stops at the eboot step; tools/build.sh <profile> is the
 # recipe).  Threaded through BECAUSE the alternative bit twice:

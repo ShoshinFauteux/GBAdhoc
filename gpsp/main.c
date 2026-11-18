@@ -1146,7 +1146,7 @@ void utrace_note(const char *what, u32 a, u32 b)
   if (utf) fprintf(utf, "  %s %08x %08x t=%u\n", what, (unsigned)a, (unsigned)b, (unsigned)cpu_ticks);
 }
 #endif
-/* SERIAL_IDLE_FAST (contender #3, OFF by default; docs/DYNAREC-PROFILE.md):
+/* SERIAL_IDLE_FAST (built in; docs/DYNAREC-PROFILE.md):
  * update_serial() runs on every update_gba pass (3-7% of a solo frame).  With
  * no transfer pending and no link client role it is provably a no-op except
  * for the protocol fakes' cycle counter, which this does inline:
@@ -1187,9 +1187,11 @@ static inline int serial_idle_fast(unsigned cycles)
   }
 }
 
-/* SCHED_FAST=1 (build) + sched_fast (run time; harness `sched_fast = 1`):
- * scheduler fast paths, OFF by default (docs/GBA-LINK-MIRROR.md 24).  Pure
- * speed: the machine is identical with it on or off.
+/* SCHED_FAST (built in) + sched_fast (run time): scheduler fast paths
+ * (docs/GBA-LINK-MIRROR.md 24).  The core starts with sched_fast 0
+ * (SCHED_FAST_DEFAULT); the PSP frontend sets it from config.ini, default 1
+ * (psp/fe/play_defaults.h).  Pure speed: the machine is identical with it on
+ * or off.
  *
  * 1. THE INTERRUPT CHECK.  update_gba called check_and_raise_interrupts on
  *    every iteration (845 a frame per machine in Street Fighter's fight,

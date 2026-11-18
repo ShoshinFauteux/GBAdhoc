@@ -254,7 +254,7 @@ void dispatch_cache_clear(void);
 extern u32 idle_loop_target_pc;
 extern u32 translation_gate_targets;
 extern u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
-void smc_gates_reset(void);   /* SMC_GATES builds: forget gate hit stamps */
+void smc_gates_reset(void);   /* new ROM: forget ranked candidates, entry gates */
 void smc_gates_refresh_values(void); /* Savestate: rebase ranked observations */
 #ifdef HAVE_DYNAREC
 /* HBlank/VBlank DMAs that landed on translated code and forced a full RAM

@@ -123,7 +123,7 @@ void drprof_blk_mark(void);
 
 /* ---- DRPROF_HW: the hardware bench's phase word ---------------------------
  * reg[DRPH_IDX] names what the emulation thread is doing; a sampler thread
- * (psp/main_psp.c) reads it at ~1 kHz.  reg[32..63] is REG_USERDEF space that
+ * (psp/fe/harness.f.inc.c) reads it at ~1 kHz.  reg[32..63] is REG_USERDEF space that
  * the MIPS dynarec never uses (the ARM one does); shash hashes reg[0..16].
  * Written by: mips_stub.S cfncall (C calls from translated code) and
  * DRPH_SCOPE at the top of the C functions that matter, which saves the

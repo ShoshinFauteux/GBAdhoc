@@ -27,7 +27,7 @@
  * common.h and the JIT's store emitter in mips/mips_emit.h.  Building the
  * two halves with different values therefore produces a core whose pixels
  * and generated code use one layout and a blitter that assumes the other --
- * and, as psp/Makefile's own comment says, nothing at link time checks.
+ * and nothing else at link time would check.
  *
  * So the core exports a symbol NAMED after its layout and the frontend
  * references the one it expects (psp/video_psp.c).  A mismatch is then an
@@ -264,7 +264,7 @@ void sound_frequency_changed(void)
      (gbc_sound_buffer_index + buffer_adjust) % BUFFER_SIZE;                  \
   }                                                                           \
 
-/* LIVE TIMER COUNTERS (monomyth-compat, 2026-10-30).
+/* LIVE TIMER COUNTERS.
  *
  * Real hardware: TMxCNT_L reads the counter as it is on the cycle of the
  * read, and a timer enabled by a TMxCNT_H write starts counting right after

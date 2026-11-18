@@ -1635,7 +1635,7 @@ void pcarg_dec(void);              /* mips_stub.S */
  * side table's code grows this object's cold text by 4,608 B mod 8 KiB in
  * each core instance; these zeros make it a whole 8 KiB, so the cold text,
  * tables and pads linked after it keep their sets.  Never executed.
- * DISPATCH_ASSOC (claude/ibranch) adds dc_put_assoc and an out-of-line
+ * DISPATCH_ASSOC (built in) adds dc_put_assoc and an out-of-line
  * dispatch_cache_forget to the same cold text, 480 B 32 B-rounded per
  * instance: 3584 -> 3104. */
 __asm__(".pushsection .text.pcarg_layout_pad,\"ax\",@progbits\n"
@@ -3525,7 +3525,7 @@ static void emit_pmemst_stub(
   }
 
 #ifdef SMC_BLOCK_EXACT
-  /* SMC_BLOCK_EXACT (smc-coverage 2026-10-20): the ALIGNED store is every
+  /* SMC_BLOCK_EXACT: the ALIGNED store is every
    * word of a non-SP block store except its last (ARM STM, Thumb STMIA), and
    * upstream gives it no SMC check -- the 2.0.2 block-copy hole: a word that
    * lands on translated code goes unreported, so selective retirement could
@@ -4203,8 +4203,8 @@ static void emit_phand(
 //    and possible operand size and misaligment (+sign extensions)
 void init_emitter(bool must_swap) {
   int i;
-  /* must_swap is unused on MIPS (see x86_emit.h for context). */
-  (void)must_swap;
+  /* must_swap: the cart is paged (gamepak_must_swap), so every ROM load stub
+   * checks for an unloaded page (emit_mem_access, region 8-12). */
   // Initialize memory to a debuggable state
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
   pcarg_reset();         /* both caches start over: no site is known */

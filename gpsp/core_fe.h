@@ -48,7 +48,7 @@ extern u32 smc_flush_wide;
 extern u32 (*smc_prof_clock)(void);
 extern u32 cph_jit_total;
 extern u32 sched_fast;              /* mips_stub.S under SCHED_HOT_IN_REG */
-extern u32 timer_lazy;              /* TIMER_LAZY / HALT_HOP builds */
+extern u32 timer_lazy;              /* HALT_HOP (built in) / TIMER_LAZY mask */
 void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
                    unsigned *oth, unsigned *ovf, unsigned *hot_addr, unsigned *hot_cnt,
                    unsigned *top_addr, unsigned *top_cnt, unsigned nhot);
