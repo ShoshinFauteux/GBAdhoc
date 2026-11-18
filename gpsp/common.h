@@ -219,6 +219,7 @@ typedef u32 fixed8_24;
 #include <string.h>
 #include <stdarg.h>
 #include <stdbool.h>  /* bool, for core_fe.h (cpu.h includes it too) */
+#include <stdint.h>   /* uint64_t, for core_fe.h */
 #include "core_fe.h"  /* the core's exports to a frontend: every definition is checked against it */
 #include "cpu.h"
 #include "gba_memory.h"
