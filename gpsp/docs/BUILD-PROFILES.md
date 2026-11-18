@@ -38,7 +38,7 @@ Words used below:
 |---|---|---|---|---|---|---|
 | XMB title | `GBAdhoc` | `GBAdhoc HARNESS` | `GBAdhoc HARNESS64` | `GBAdhoc LAB` | `GBAdhoc DIAG` | `GBAdhoc SOAK` |
 | for | players | rig runs on a PSP-1000 layout | rig runs that need 64 MiB (32 MiB carts held whole, ROM residency) | every Lab job | chasing one fault on a player-like build | long unattended runs whose point is the failure |
-| `GPSP_PROFILE` (core) | release | harness | harness | harness | diagnostic | soak (not mapped: see below) |
+| `GPSP_PROFILE` (core) | release | harness | harness | harness | diagnostic | soak (checked as harness: see below) |
 | event log to the memory stick | no | yes | yes | yes | no | yes |
 | drivable by a job file | no | yes | yes | yes, plus the Lab queue in `ms0:/GBALAB` | no | yes |
 | bad-jump report, IRQ integrity check, translation-depth probe | no | no | no | no | yes | yes |
@@ -72,10 +72,12 @@ release.
 Makefile sets it for every PSP build (a PSP-3000 can otherwise allocate all 32
 one-megabyte blocks, and Unbound then diverges during battle).
 
-**Known gap.** The soak profile passes `GPSP_PROFILE=soak` to the root make,
-which maps only `release`, `harness` and `diagnostic`, so the soak core is
-compiled without a `GPSP_PROFILE_*` define and gets no core-side profile
-checks. Its frontend is checked as a harness (`-DGPSP_PROFILE_HARNESS=1`).
+The soak profile passes `GPSP_PROFILE=soak` to the root make, which compiles
+its core with `-DGPSP_PROFILE_HARNESS=1`, the same define its frontend gets, so
+`gpsp_profile.h` checks both halves as a harness. The root make refuses any
+`GPSP_PROFILE` other than `release`, `harness`, `soak` or `diagnostic` (unset
+still means an unprofiled build), so a new profile name cannot silently
+compile unprofiled.
 
 ---
 

@@ -9,15 +9,19 @@
    only drop data (`ring_r = ring_w`, `A.bulk_tail = A.bulk_head`) and
    resets need none.
 
-2. Mystery Gift game gate (main_psp.c mgift_start_io): mgift_game_ok()
-   accepts exactly the ROM codes mgift_cart.c serves a script for, and it
-   is checked before mgnet_wifi_up() -- a non-Pokemon game must not wait
-   up to 30 s for an association or write a network profile.
+2. Mystery Gift game gate (main_psp.c mgift_start_io): mgift_game_ok(),
+   compiled as written and asked about every 4-character code over A-Z0-9
+   (and the empty one), accepts exactly the ROM codes mgift_cart.c serves a
+   script for (read from the cart's text), and it is checked before
+   mgnet_wifi_up() -- a non-Pokemon game must not wait up to 30 s for an
+   association or write a network profile.
 
 Each check runs against mutants too, so it is known to catch what it is
 for."""
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import extract
@@ -75,12 +79,42 @@ def codes_served(cart):
     return set(re.findall(r'memcmp\(C\.recv_body \+ 92, "(\w{4})", 4\)', cart))
 
 
+GATE_RUN = r'''
+#include <stdio.h>
+#include <string.h>
+static char g_mg_game[5];
+@FN@
+int main(void)
+{
+   static const char A[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+   unsigned i, j, k, l, n = sizeof A - 1;
+   g_mg_game[0] = 0;
+   if (mgift_game_ok())
+      puts("(empty)");
+   for (i = 0; i < n; i++) for (j = 0; j < n; j++)
+   for (k = 0; k < n; k++) for (l = 0; l < n; l++)
+   {
+      g_mg_game[0] = A[i]; g_mg_game[1] = A[j]; g_mg_game[2] = A[k]; g_mg_game[3] = A[l];
+      g_mg_game[4] = 0;
+      if (mgift_game_ok())
+         puts(g_mg_game);
+   }
+   return 0;
+}
+'''
+
+
 def gate_codes(main):
-    main = extract.extract(main, "fn:mgift_game_ok")
-    m = re.search(r"static int mgift_game_ok\(void\)\n\{(.*?)\n\}", main, re.S)
-    if not m:
-        return None
-    return set(re.findall(r'!strcmp\(g_mg_game, "(\w{4})"\)', m.group(1)))
+    """The codes mgift_game_ok() accepts, by running it (None: it would not build)."""
+    fn = extract.extract(main, "fn:mgift_game_ok")
+    with tempfile.TemporaryDirectory(prefix="gbadhoc-mggate-") as d:
+        c, exe = Path(d) / "g.c", Path(d) / "g"
+        c.write_text(GATE_RUN.replace("@FN@", fn))
+        if subprocess.run(["gcc", "-std=gnu99", "-O2", "-Wall", "-Werror", str(c), "-o", str(exe)],
+                          capture_output=True).returncode:
+            return None
+        return set(subprocess.run([str(exe)], capture_output=True, text=True,
+                                  check=True).stdout.split())
 
 
 def gate_before_wifi(main):
@@ -145,12 +179,24 @@ def main():
         fails += 1
     else:
         print("PASS mgift: refused before Wi-Fi comes up")
-    # mutants: an extra code, a missing code, the check moved after Wi-Fi
+    # mutants: an extra code, a missing code, a prefix match, the check moved
+    # after Wi-Fi -- each must be caught; and the same gate written as a table
+    # (the codes unchanged) must still pass: the run, not the spelling, decides
+    gate = extract.extract(mainc, "fn:mgift_game_ok")
+    body = gate[gate.index("{"):gate.rindex("}") + 1]
+    table = ('{\n   static const char *const k[] = { "BPEE", "BPRE", "BPGE" };\n   unsigned i;\n'
+             '   for (i = 0; i < 3; i++)\n      if (!memcmp(g_mg_game, k[i], 5))\n'
+             '         return 1;\n   return 0;\n}')
     m1 = mainc.replace('!strcmp(g_mg_game, "BPEE")', '!strcmp(g_mg_game, "BPEE") || !strcmp(g_mg_game, "BPEJ")', 1)
     m2 = mainc.replace('!strcmp(g_mg_game, "BPGE") ||', '', 1)
+    m4 = mainc.replace(body, '{\n   return !strncmp(g_mg_game, "BP", 2);\n}', 1)
     m3 = mainc.replace("if (!mgift_game_ok())", "if (0)", 1)
-    if gate_codes(m1) == served or gate_codes(m2) == served or gate_before_wifi(m3):
+    if (any(x == mainc for x in (m1, m2, m3, m4)) or gate_codes(m1) == served or
+            gate_codes(m2) == served or gate_codes(m4) == served or gate_before_wifi(m3)):
         print("FAIL mgift: a mutant was not caught")
+        fails += 1
+    if gate_codes(mainc.replace(body, table, 1)) != served:
+        print("FAIL mgift: the same gate written as a table was refused")
         fails += 1
     return 1 if fails else 0
 

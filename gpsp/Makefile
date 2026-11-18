@@ -594,16 +594,21 @@ else ifeq ($(platform), psp1)
 	ifeq ($(BADJUMP_REPORT),1)
 	CFLAGS += -DBADJUMP_REPORT=1
 	endif
-	# GPSP_PROFILE=release|harness|diagnostic.  Names the build so
+	# GPSP_PROFILE=release|harness|soak|diagnostic.  Names the build so
 	# gpsp_profile.h can reject combinations that are silently wrong (a
 	# release with telemetry).  tools/build.sh always sets it (harness64 and
-	# lab pass harness).  Any other value, or none, means "unprofiled", which
-	# still compiles but gets no cross-checking: the soak profile passes
-	# GPSP_PROFILE=soak, which is not mapped here, so its core is unprofiled.
+	# lab pass harness); leaving it unset means "unprofiled", which still
+	# compiles but gets no cross-checking.  soak is the harness for
+	# gpsp_profile.h (tools/build.sh soak: the harness plus instruments; its
+	# frontend gets -DGPSP_PROFILE_HARNESS=1 too).  Any other name is
+	# refused, so a profile this list misses cannot compile unprofiled.
+	ifneq ($(filter-out release harness soak diagnostic,$(GPSP_PROFILE)),)
+$(error GPSP_PROFILE=$(GPSP_PROFILE) is not a profile: release, harness, soak or diagnostic, or unset for an unprofiled build)
+	endif
 	ifeq ($(GPSP_PROFILE),release)
 	CFLAGS += -DGPSP_PROFILE_RELEASE=1
 	endif
-	ifeq ($(GPSP_PROFILE),harness)
+	ifneq ($(filter harness soak,$(GPSP_PROFILE)),)
 	CFLAGS += -DGPSP_PROFILE_HARNESS=1
 	endif
 	ifeq ($(GPSP_PROFILE),diagnostic)

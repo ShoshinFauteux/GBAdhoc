@@ -136,8 +136,8 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       #
       # This is a harness build by every other measure -- same telemetry, same
       # autopilot, and the frontend gets GPSP_PROFILE_HARNESS.  The core gets
-      # GPSP_PROFILE=soak, which the root Makefile does not map, so the core is
-      # unprofiled (gpsp_profile.h cross-checks nothing for it).
+      # GPSP_PROFILE=soak, which the root Makefile maps to the same
+      # -DGPSP_PROFILE_HARNESS=1, so gpsp_profile.h checks both as a harness.
       # BADJUMP_REPORT is legal here; it is forbidden only in a release.
       #
       # SMC_WRITE_HISTO is deliberately NOT set: it rewrites smchisto.txt every
