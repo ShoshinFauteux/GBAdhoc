@@ -954,6 +954,32 @@ def suites(env: Env, baseline: Path | None):
           "grep -q '^rfu_rx_cap = 0' /tmp/ini-n-$c.ini || exit 1; "
           "echo \"PASS $c config: same fields loaded, same bytes saved\"; "
           "done")),
+
+        # The GBA core's savestate validators against their real writers
+        # (cpu.cc, gba_memory.c, main.c's timers, sound.c): a corrupted field
+        # is refused, a real state round-trips; plain and REWIND arms.
+        ("gba_state", True, lambda: None,
+         "python3 tools/tests/run_gba_state_checks.py"),
+
+        # Online play's desktop pieces (docs/ONLINE-TUNNEL.md): build all of
+        # tools/relay (server, client, fuzzer included), then the in-process
+        # NAT model, the directory/desktop-host model and the invite codes.
+        ("relay", True, lambda: None,
+         "rm -rf /tmp/t_relay && bash tools/relay/build.sh /tmp/t_relay && "
+         "/tmp/t_relay/test_relay_nat && /tmp/t_relay/test_relay_desktop && "
+         "/tmp/t_relay/test_invite"),
+
+        # psp/fe/README.md is generated (tools/refactor/fe_readme.py): the
+        # committed file must be what the generator gives for this tree.
+        ("fe_readme", False, lambda: None,
+         "python3 tools/refactor/fe_readme.py --check"),
+
+        # The flavours gate's own tests: the gate line and its expected-change
+        # mode (flavours_gate.py), then flavours.sh against a throwaway repo
+        # with a fake build.sh and docker (no PSP build).
+        ("flavours", False, lambda: None,
+         "python3 tools/refactor/flavours_gate.py --selftest && "
+         "bash tools/refactor/tests/test_flavours.sh"),
     ]
 
 
