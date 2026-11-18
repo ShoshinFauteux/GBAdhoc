@@ -983,6 +983,99 @@ def suites(env: Env, baseline: Path | None):
     ]
 
 
+# ------------------------------------------------- every test file is run
+# A test file nothing runs looks exactly like a passing one.  So every test_*
+# file under TEST_ROOTS must be reached from a suite's command or be listed in
+# NOT_HOST_SUITES with the reason it is not a host suite; the runner refuses to
+# run (exit 2) otherwise.  --check-registry runs only this check.
+#
+# Reached means named, as a path or a file name, by a suite's command; or by a
+# file a command names; or, from there on, by a runner (run_*), a test
+# (test_*, or any file in a tests/ directory) or the Makefile of a
+# `make -C DIR`.  Other tools a test merely reads (a test of make_release.sh
+# reads that script, which names half the tree) are not followed, and a bare
+# file name that several files share resolves only to the one beside the file
+# that names it.
+TEST_ROOTS = ("tools", "netdrv")
+TEST_FILE = re.compile(r"^test_[A-Za-z0-9_.-]*\.(?:c|cc|py|sh)$")
+NOT_HOST_SUITES = {
+    "tools/refactor/tests/test_exit_model.c":
+        "T8's host half: its expectations come from psp-gcc -E of main_psp.c "
+        "(docker pspdev); run by tools/refactor/tests/abi-exit-ci_test_exit.sh",
+    "tools/xmbwrap/test_xmbwrap.sh":
+        "needs psp/launcher/EBOOT.PBP built and the pspdev docker image "
+        "(docs/XMB-LAUNCH.md)",
+}
+_TEXT = (".py", ".sh", ".c", ".cc", ".h")
+_TOKEN = re.compile(r"[A-Za-z0-9_./$-]+")
+_MAKE_C = re.compile(r"\bmake\s+(?:-\S+\s+)*-C\s+([A-Za-z0-9_./-]+)")
+SELF = Path(__file__).resolve().relative_to(REPO).as_posix()
+
+
+def _runs_tests(rel: str) -> bool:
+    """A file whose references are followed past the first step."""
+    base = rel.rsplit("/", 1)[-1]
+    return (base.startswith(("run_", "test_")) or "/tests/" in "/" + rel
+            or base == "Makefile")
+
+
+def reached_files(commands: list[str]) -> set[str]:
+    """Repo-relative paths of the files the suite commands reach."""
+    index: dict[str, list[str]] = {}
+    for root in TEST_ROOTS + ("gbcore",):
+        for d, dirs, files in os.walk(REPO / root):
+            dirs[:] = [x for x in dirs if x not in ("__pycache__", ".git")]
+            for f in files:
+                rel = (Path(d) / f).relative_to(REPO).as_posix()
+                index.setdefault(f, []).append(rel)
+
+    def resolve(tok: str, here: str) -> list[str]:
+        if "$" in tok:   # $HERE/x/y.c: a path relative to the variable
+            tok = tok.split("$")[-1].partition("/")[2]
+        tok = tok.lstrip("/")
+        if tok.startswith("./"):
+            tok = tok[2:]
+        base = tok.rsplit("/", 1)[-1]
+        cands = index.get(base, [])
+        exact = [c for c in cands if c == tok or c.endswith("/" + tok)]
+        if "/" in tok or len(cands) == 1:
+            return exact
+        return [c for c in cands if here and c == "%s/%s" % (here, base)]
+
+    seen: set[str] = set()
+    todo = [(c, "", True) for c in commands]
+    while todo:
+        text, here, from_suite = todo.pop()
+        found = [m.rstrip("/") + "/Makefile" for m in _MAKE_C.findall(text)]
+        for tok in _TOKEN.findall(text):
+            found += resolve(tok, here)
+        for rel in found:
+            # this file names every suite's tests: reading it reaches them all
+            if rel in seen or rel == SELF or not (REPO / rel).is_file():
+                continue
+            seen.add(rel)
+            if ((from_suite or _runs_tests(rel))
+                    and (rel.endswith(_TEXT) or rel.endswith("Makefile"))):
+                todo.append(((REPO / rel).read_text(errors="replace"),
+                             rel.rsplit("/", 1)[0], False))
+    return seen
+
+
+def unreached_tests(commands: list[str]) -> tuple[list[str], int, list[str]]:
+    """-> (test files no suite reaches and NOT_HOST_SUITES does not list,
+    number reached, NOT_HOST_SUITES entries that name no file)."""
+    tests = []
+    for root in TEST_ROOTS:
+        for d, dirs, files in os.walk(REPO / root):
+            dirs[:] = [x for x in dirs if x not in ("__pycache__", ".git")]
+            tests += [(Path(d) / f).relative_to(REPO).as_posix()
+                      for f in files if TEST_FILE.match(f)]
+    reached = reached_files(commands)
+    missing = sorted(t for t in tests if t not in reached and t not in NOT_HOST_SUITES)
+    stale = sorted(p for p in NOT_HOST_SUITES if not (REPO / p).is_file())
+    return missing, sum(1 for t in tests if t in reached), stale
+
+
 # ---------------------------------------------------------------------- main
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -991,6 +1084,9 @@ def main() -> int:
     ap.add_argument("--strict", action="store_true",
                     help="return failure if any registered suite is skipped")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--check-registry", action="store_true",
+                    help="only check that every test file is run by a suite "
+                         "or listed in NOT_HOST_SUITES")
     args = ap.parse_args()
     if args.only is not None and not args.only:
         ap.error("--only requires at least one suite name")
@@ -1012,6 +1108,19 @@ def main() -> int:
         print("host suite cap exceeded: %d registered; maximum is %d"
               % (len(all_suites), MAX_HOST_SUITES), file=sys.stderr)
         return 2
+    missing, n_reached, stale = unreached_tests([c for _, _, _, c in all_suites])
+    if missing or stale:
+        for t in missing:
+            print("test file run by no suite: %s (register it, or list it in "
+                  "NOT_HOST_SUITES with the reason)" % t, file=sys.stderr)
+        for t in stale:
+            print("NOT_HOST_SUITES names a file that does not exist: %s" % t,
+                  file=sys.stderr)
+        return 2
+    print("test files: %d reached by a suite, %d listed as not host suites"
+          % (n_reached, len(NOT_HOST_SUITES)))
+    if args.check_registry:
+        return 0
     suite_names = {name for name, _, _, _ in all_suites}
     unknown = sorted(set(args.only or ()) - suite_names)
     if unknown:
