@@ -1260,6 +1260,65 @@ static void gblink_draw_status(void)
    link_draw_facts(&pr);
 }
 
+/* ---- "Waiting for the other player..." (frontend-common/fe_linkwait.h) ----
+ * A link session that holds the game for the partner's data -- the adapter's
+ * tick gate, the cable's lockstep -- runs no frame, so the picture freezes.
+ * After a second of that the bottom-left chip says why, and goes on the
+ * first frame that runs; a partner declared dead ends the hold the same way
+ * and the session's disconnect flow takes over.  The loop asks once a pass,
+ * after the core's turn: not holding, that is fe_host_link_held's two loads
+ * and g_lw_since. */
+#include "fe_linkwait.h"
+#define LINK_WAIT_TEXT "Waiting for the other player..."
+static unsigned long long g_lw_since;   /* this hold began; 0 = none */
+static int g_lw_on;                     /* the chip is up */
+
+/* The held picture again, so the chip has a frame to sit on.  The ME paths
+ * re-present at the loop top already (me_rend_present / me_video_present);
+ * the CPU path draws only what the core hands it, which is nothing while a
+ * gate holds.  A GB cable stall re-presents itself (plat_video_frame NULL). */
+static void link_wait_present(void)
+{
+   if (g_drew || g_me_video)
+      return;
+   if (g_me_rend)
+      me_rend_present();
+   else if (cur_frame)
+   {
+      vid_draw_frame(cur_frame, cur_w, cur_h, cur_pitch);
+      g_drew = 1;
+   }
+}
+
+/* held = fe_host_link_held(); the loop calls this only while a hold is on or
+ * just ended, so none of it sits in the frame loop's own code. */
+static __attribute__((noinline)) void link_wait_osd(int held)
+{
+   unsigned long long now = net_now_us();
+   int on;
+   link_wait_note(&g_lw_since, now, held);
+   /* (a link's status screen -- setting up, ending -- says it all itself) */
+   on = link_wait_due(g_lw_since, now) && !g_gblink_screen;
+   if (on != g_lw_on)
+   {
+      g_lw_on = on;
+      osd_chip_wait(on ? LINK_WAIT_TEXT : NULL);
+      fe_evt("link_wait show=%d frame=%u", on, fe_host_frame_count());
+   }
+   if (on)
+      link_wait_present();
+}
+
+/* The menu draws the OSD over itself: the game is paused, not waiting. */
+static void link_wait_hide(void)
+{
+   if (g_lw_on)
+   {
+      g_lw_on = 0;
+      osd_chip_wait(NULL);
+   }
+}
+
 /* ---- GB link: smoothness (docs/GB-LINK.md section 14) ---------------------
  *
  * The same policies run a GBA link-cable session (GBA_LINK builds,

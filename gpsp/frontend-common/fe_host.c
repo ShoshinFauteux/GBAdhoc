@@ -129,6 +129,9 @@ static int gb_link_initialized;
 static int gb_link_completed;
 static const uint16_t *last_frame;
 static size_t last_pitch;
+/* 1 = this pass held the game for the partner's data (fe_host_link_held):
+ * the adapter's tick gate, the cable's lockstep. */
+static unsigned char lw_rfu, lw_cable;
 static unsigned frames_rendered;
 static unsigned frames_skipped;   /* ADR-0019 accounting; see below */
 
@@ -3763,6 +3766,7 @@ int fe_host_gblink_close(void)
       }
       fe_gblink_destroy(gbl);
       gbl = NULL;
+      lw_cable = 0;
       last_frame = NULL;
       gbl_sessions++;
       gbl_hold = 0;
@@ -4554,6 +4558,7 @@ static void gblink_frame(uint64_t core_t0)
    gbl_drain_bulk();
    gbl_waited_us = 0;
    gbl_last = fe_gblink_step(gbl, gb_buttons_from_retro(pad));
+   lw_cable = gbl_last == FE_GBLINK_STALL;   /* held for the partner's buttons */
    if (gbl_last == FE_GBLINK_STALL && host.video_frame)
    {
       gbl_repeat = 1;
@@ -4604,6 +4609,7 @@ static void gba_cable_frame(uint64_t core_t0)
    gbl_waited_us = 0;
    FE_LP_SET(FELP_SESS);
    gbl_last = fe_gblink_step(gbl, fe_gbadual_keys_from_retro(pad));
+   lw_cable = gbl_last == FE_GBLINK_STALL;   /* held for the partner's buttons */
    if (!gbl_ride_set && fe_gblink_state(gbl) == FE_GBLINK_RUNNING)
    {
       /* RUNNING: both consoles now send every frame or two, so an ack has
@@ -4703,6 +4709,7 @@ static int gba_cable_close(void)
    /* The pair ends here (both machines leave cable mode). */
    fe_gblink_destroy(gbl);
    gbl = NULL;
+   lw_cable = 0;
    gbl_sessions++;
    gbl_hold = 0;
    if (host.gb_bulk_enable)
@@ -7020,7 +7027,8 @@ int fe_host_reset(void)
  * is one whose ticks the network is holding up (rfu_gate_step,
  * rfu_sched_api.h); one whose path is clear and that still sends nothing for
  * 2 s is given up on, the link runs free and the game's own timeout decides.
- * A lost link ends the wait at once (rfu_sched_may_run). */
+ * A lost link ends the wait at once (rfu_sched_may_run).  A pass that runs
+ * no frame is a hold (fe_host_link_held: the platform's wait notice). */
 #define RFU_GATE_WAIT_US   12000u
 int fe_host_rfu_gate(void)
 {
@@ -7030,6 +7038,7 @@ int fe_host_rfu_gate(void)
    uint64_t t0, now;
    int ok, held;
 
+   lw_rfu = 0;              /* only a pass that runs no frame holds (below) */
    if (!rfu_sched_d || !host.time_us)
       return 1;
    if (++passes % 600 == 0)
@@ -7076,7 +7085,13 @@ int fe_host_rfu_gate(void)
       return 1;
    }
    skips++;
+   lw_rfu = 1;
    return 0;
+}
+
+int fe_host_link_held(void)
+{
+   return lw_rfu | lw_cable;
 }
 
 void fe_host_run_frame(void)
@@ -7318,6 +7333,7 @@ void fe_host_shutdown(void)
       fe_evt("gblink_abandoned state=%d", fe_gblink_state(gbl));
       fe_gblink_destroy(gbl);
       gbl = NULL;
+      lw_cable = 0;
    }
    if (gb_family)
    {
