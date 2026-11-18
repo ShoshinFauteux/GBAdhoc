@@ -3,6 +3,15 @@
 Branch `claude/jit-coherency-checker`, built on `claude/candidate-3.1-dr`. Written 2026-10-01.
 Desktop and WSL only. No console was touched.
 
+**Status now (2026-11-17):** the recommendations in section 7 were overtaken by the JIT code
+discipline, now built into every PSP core ([JIT-CODE-DISCIPLINE.md](JIT-CODE-DISCIPLINE.md)).
+Its single publish point (`jit_code_publish`, reached from `translate_icache_sync` in
+`cpu_threaded.c`) never hands the kernel a range of 16 KiB or more, and replaced both 8b48b48's
+whole-I-per-ROM-publish and the narrow d7df3bb form. The checker itself (`tools/jitcoh/`) is
+current and is the discipline's acceptance gate; the `variants/*.patch` files target the
+pre-discipline call sites, so they may no longer apply. The rest of this document is the
+2026-10-01 record.
+
 ## Summary
 
 1. **The checker.** `tools/jitcoh/` is a QEMU TCG plugin that runs beside the dynarec twin
@@ -266,11 +275,12 @@ show there. Two tests settle it (section 5).
 
 ## 5. Hardware tests to run (staged, not run: the consoles belong to the main session)
 
-Both are in `builds/jit-coherency-out/`.
+Both were staged as local files (patched EBOOTs and `PATCHES.json`), not kept in the repo.
 
 ### 5.1 The exact failing EBOOT, one call changed at site B
 
-The binary-patch method of `builds/hns-patch` is used: no relayout. The method is verified here by
+The binary-patch method of the resident-ROM bisection
+([RESIDENT-ICACHE-FIX.md](RESIDENT-ICACHE-FIX.md)) is used: no relayout. The method is verified here by
 reproducing `pBA` byte for byte, and `base.PBP` is f4bc41ad itself. A 7-word helper sits in the
 same code cave `pBA` used (over `jit_coherency_scan`, so keep `jit_coherency_scan = 0`). The
 helper:
@@ -296,8 +306,8 @@ and the cause lies outside what a cache model of the emitter can see.
 
 ### 5.2 Firmware probe, no emulator: harness `icache_inval_probe = 1`
 
-The probe is `psp/icprobe.c` `icinv_probe_run`. The EBOOT is
-`builds/jit-coherency-out/harness64-icinv` (pbp c91102c1).
+The probe is `psp/icprobe.c` `icinv_probe_run`. The staged EBOOT was a harness64 build
+(pbp c91102c1), not kept in the repo.
 
 How it works:
 1. 64 one-line functions (`jr ra; li v0, OLD+i`) are made resident by calling them.
@@ -401,6 +411,6 @@ apply once the call sites move, so write the equivalent "drop one publish" switc
   - `drprof.h`;
   - `tools/drprof/dr_host.c` (kernel shims);
   - `tools/drprof/Makefile` + `dr_gbstub.c` (the twin linked again after the GB dual-link merge).
-- `psp/icprobe.c`, `psp/main_psp.c`: harness `icache_inval_probe`.
-- `builds/jit-coherency-out/` (not in git): `base.PBP`, `pBS.PBP`, `pBCS.PBP`, `pBSctl.PBP`,
-  `PATCHES.json`, `harness64-icinv/`.
+- `psp/icprobe.c`, `psp/fe/boot.inc.c`: harness `icache_inval_probe`.
+- The staged hardware EBOOTs (`base.PBP`, `pBS.PBP`, `pBCS.PBP`, `pBSctl.PBP`, `PATCHES.json`,
+  the `icinv` harness build) were local files, not kept in the repo.

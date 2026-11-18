@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""inline_census.py -- T13 / gate IC (builds/mainpsp-map/out/PLAN.md §0.1, §5).
+"""inline_census.py -- T13 / gate IC (gpsp/docs/design/RESTRUCTURE.md §0.1, §5).
 
 Per function DEFINED in a source file (main_psp.c by default): is it compiled
 in this flavour, emitted out of line (and under which symbols: plain, or

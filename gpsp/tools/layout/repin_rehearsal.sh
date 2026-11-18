@@ -21,7 +21,7 @@
 #       OUT keeps each case's patch and file lists.
 #   repin_rehearsal.sh report LOCKREV RUNS BASETAG TAG...
 #       RUNS/TAG/<profile>/ holds a build of a case's commit (build.log,
-#       elf.nm: e.g. builds/health-out/build_and_hash.sh --rev SHA --tag TAG
+#       elf.nm: e.g. a local build-and-hash script (not in the repo), --rev SHA --tag TAG
 #       --profiles "release lab", whose runs/ is RUNS) and RUNS/BASETAG/
 #       <profile>/ BASE's.  For each: did it link (a pin overrun fails a strict link and
 #       names the pin), the build's layoutLock, and `layout_lock.py stats`

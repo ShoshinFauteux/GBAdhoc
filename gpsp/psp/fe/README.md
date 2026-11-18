@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 a17c34f7420206fd; split.py inverse of the shell sha256 7081e9518b7da963 (18843 lines) -->
+     inputs: cutlist.txt sha256 f60457ad3deb2e47; split.py inverse of the shell sha256 43d1848930386c8e (18843 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -32,7 +32,7 @@ None: every copy site is in some T14 flavour's `-E`.
 
 | prefix | meaning | regions | in | read by |
 |---|---|---|---|---|
-| `fn:` | one whole function: its definition line through its closing brace's line | 43 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/harness.b.inc.c`, `fe/iothread.inc.c`, `fe/link.c.inc.c`, `fe/link.e.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_exit_paths.py`, `test_exit_req.py`, `test_inproc_unload.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py`, `test_volume.py` |
+| `fn:` | one whole function: its definition line through its closing brace's line | 43 | `main_psp.c`, `fe/audio.a.inc.c`, `fe/harness.b.inc.c`, `fe/iothread.inc.c`, `fe/link.c.inc.c`, `fe/link.e.inc.c`, `fe/merend.c.inc.c`, `fe/merend.d.inc.c`, `fe/mgift.inc.c`, `fe/power.a.inc.c`, `fe/power.b.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_exit_paths.py`, `test_exit_req.py`, `test_inproc_unload.py`, `test_menu_press.py`, `test_power_callback.py`, `test_psp_runtime.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py`, `test_spsc_mg_wiring.py` |
 | `def:` | the `#define` line(s) a test greps, by name | 7 | `fe/audio.a.inc.c`, `fe/display.a.inc.c`, `fe/iothread.inc.c`, `fe/power.d.inc.c`, `fe/power.e.inc.c` | `test_audio_channel.py`, `test_power_callback.py`, `test_sleep_browser.py`, `test_sleep_holds.py`, `test_sleep_menu.py`, `test_sleep_quiesce.py` |
 | `decl:` | one declaration / object definition a test greps, by name | 3 | `fe/audio.a.inc.c`, `fe/power.d.inc.c`, `fe/rewind.inc.c` | `test_audio_channel.py`, `test_sleep_quiesce.py` |
 | `menu:` | a statement range one test slices (its old start/end anchors are checked inside it) | 1 | `fe/input.b.inc.c` | `test_menu_press.py` |
@@ -53,7 +53,7 @@ Every region, in TU order, and the host tests that read it:
 | `def:IO_JOIN_US` | `fe/iothread.inc.c:22` | `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:io_thread` | `fe/iothread.inc.c:62` | `test_psp_runtime.py` |
 | `decl:audio_ch` | `fe/audio.a.inc.c:81` | `test_audio_channel.py` |
-| `fn:audio_thread` | `fe/audio.a.inc.c:229` | `test_audio_channel.py`, `test_volume.py` |
+| `fn:audio_thread` | `fe/audio.a.inc.c:229` | `test_audio_channel.py` |
 | `fn:audio_start` | `fe/audio.a.inc.c:352` | `test_audio_channel.py` |
 | `def:AUDIO_JOIN_US` | `fe/audio.a.inc.c:403` | `test_audio_channel.py`, `test_power_callback.py`, `test_sleep_browser.py` |
 | `fn:audio_stop` | `fe/audio.a.inc.c:406` | `test_audio_channel.py` |

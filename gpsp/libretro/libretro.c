@@ -1057,13 +1057,8 @@ bool gpsp_rewind_gather(void *data, size_t size)
  * image with gba_rewind_skip_arrays set (gba_memory.h), then gathered from
  * the byte ranges between the arrays; a restore scatters it back and runs
  * the unchanged loader with the same flag.  The arrays' places in the image
- * are found once, from a real image, never assumed. */
-typedef struct gpsp_rewind_arr
-{
-   u32 bytes;
-   u8 *live;
-} gpsp_rewind_arr;
-
+ * are found once, from a real image, never assumed.  gpsp_rewind_arr (one
+ * array's size and live address) is core_fe.h's: the frontend fills it. */
 #define RW_ARRAYS 6
 static struct { u32 off, len; } rw_gap[RW_ARRAYS + 1];
 static u32 rw_gaps, rw_rest_bytes;

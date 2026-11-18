@@ -74,7 +74,7 @@ all three. It fails when:
 
 | area | what drifted |
 |---|---|
-| `lock` | a feature list, make default (the layout pads included) or profile recipe differs from `tools/flags.lock` |
+| `lock` | a feature list, make default or profile recipe differs from `tools/flags.lock` |
 | `recipes` | a profile, makefile or wrapper restates a baked feature, or a force-include is gone |
 | `removed` | a switch in **Removed** below is back in an `#if`, a `-D` or a make conditional |
 | `dead` | something is baked or passed and no source tests it |
@@ -169,7 +169,7 @@ every twin variant too, whatever its `VDEFS`.
 | `DISPATCH_CACHE` | `mips_indirect_branch_*` probe a {guest pc -> host entry} table in asm before `save_registers` and the C block lookup; filled by the C lookup, emptied by every flush entry point. The cycle check still runs first. Oracle IDENTICAL on 7 fixtures; twin -4..-23 % core instructions. |
 | `DISPATCH_PRECISE` *(built in)* | SMC retirement forgets only the retired block's entry instead of emptying both tables; only canonical RAM pcs are cached (a mirrored pc shares the tag, not the key). Twin: Doom -4.6 %, Duke -4.7 %, state hashes identical. |
 | `DISPATCH_ASSOC` *(built in)* | the dispatch cache's 4 KiB per ISA as 256 2-way sets instead of 512 direct-mapped slots; `mips_indirect_branch_dual` enters the ARM/Thumb probe; `DC_STUB_FILL` keeps `mips_stub.o(.text)` its old size so the pinned hot order does not move. Same entries, keys and invalidation points. Twin: C fall-throughs per frame Doom II 140 -> 55, Duke 193 -> 50, Ice Nine 83 -> 47. |
-| `DISPATCH_LOOKUP_PC` *(built in)* | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off by itself under `JIT_CODE_AB` (gpsp_profile.h). |
+| `DISPATCH_LOOKUP_PC` *(built in)* | `lookup_pc` (I/O write epilogue, `update_gba` PC change, halt wake) probes the dispatch cache when no JIT publish is owed, else makes the C lookup as before. 98-99 % hits on the twin. Off under `JIT_CODE_AB`: the gate is `#if defined(DISPATCH_CACHE) && !defined(JIT_CODE_AB)` in `mips/mips_stub.S`. |
 | `XLAT_FAST` | translator host-work speedups; emitted code, tags and counters unchanged. |
 | `JIT_COST` *(built in)* | the cost of producing translated code (docs/JIT-COST.md). Exact. |
 | `JIT_CODE_DISCIPLINE` *(built in)* | code zones that own whole cache lines, one writer API recording every code write, one publish point (D writeback + I invalidate of exactly the recorded lines), whole I invalidate after every ownership change (docs/JIT-CODE-DISCIPLINE.md). Oracle and PPSSPP IDENTICAL; `JIT_CODE_AUDIT` 0 unrecorded writes. |
@@ -249,9 +249,11 @@ for the desktop build until that bakes `SMC_GATES_SIMPLE` too.
 | name | what it is |
 |---|---|
 | `ROM_BUFFER_SIZE` | **15** (root Makefile; `ROM_BUFFER_SIZE=N` overrides): the default of the run-time ROM page-cache cap `gamepak_buffer_cap`. CONFIG.INI `rom_resident = 1` (default since 3.0.0) raises the cap to the cart's size when every block fits while the 1 MiB post-load reserve is held (64 MiB consoles only; a 1000 stops at ~13). See docs/ROM-RESIDENCY.md before changing it. |
-| `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | root make overrides of `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. Tuning knobs, unset in every profile. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart). |
+| `GATE_SLOTS`, `GATE_RATIO` | root make overrides of `MAX_TRANSLATION_GATES` and `SMC_GATE_RATIO`. Tuning knobs, unset in every profile. |
 | `ROM_BRANCH_HASH_BITS_SMALL`, `ROM_BRANCH_HASH_BITS_LARGE` | the ROM block hash (`rom_branch_hash`, gpsp_config.h): 14 bits (64 KiB) on every PSP build, 16 only without `SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model). `#ifndef` overrides for the twin's sizing studies; a shipped build never sets them. |
 | `DISPATCH_CACHE_BITS` | 9 (cpu.h): 512 entries per ISA. |
+| `MSR_FAST_DEFAULT` | 1 (cpu_threaded.c): the start value of the run-time `msr_fast`. `MSR_FAST_DEFAULT=0` (root make) builds the same code with the fast path off, a layout-identical A/B arm. CONFIG.INI `msr_fast = 0` is the player's kill switch. |
+| `IRQ_IO_FAST_DEFAULT` | 0 (cpu_threaded.c): the start value of the run-time `irq_io_fast`, before the frontend sets it from CONFIG.INI (`irq_io_fast`, default `PLAY_IRQ_IO_FAST`). |
 | `ME_AFFINE_LINES`, `ME_MIDFRAME_LOG` | video.h, default 1: the Media Engine capture records the affine reference counters per line, and logs palette/OAM/VRAM written during the visible lines for the engine to apply line by line (docs/ME-MIDFRAME.md). |
 | `OVERCLOCK_60FPS` | upstream's 60 fps overclock build. Untouched by this project; in no profile. |
 
@@ -276,7 +278,7 @@ their defaults.
 | variable | default | what it does |
 |---|---|---|
 | `GBA_LINK`, `REWIND`, `CHEATS` | 1 (both makes) | the GBA link pair, rewind and the per-game cheats menu (docs/CHEATS.md). `tools/build.sh` passes one value to both makes. |
-| `LAYOUT_PIN` | *(built in, code-health A-7)* | the pinned layout (docs/LAYOUT-PINNING.md): `-ffunction-sections -DLAYOUT_PIN=1` in the root make, the hot.ord link, cold tail and layout pads in psp/Makefile, always. Both makes refuse any other value, so the pre-pinning layout (`LAYOUT_PIN=0`) cannot be built; `tools/build.sh` keeps the variable (only 1) for the manifest's `layoutPin`. The source keeps `#if defined(LAYOUT_PIN)` because the twin is unpinned unless a variant asks (dr_corpus `allpin`, `beta`). |
+| `LAYOUT_PIN` | *(built in, code-health A-7)* | the pinned layout (docs/LAYOUT-PINNING.md): `-ffunction-sections -DLAYOUT_PIN=1` in the root make, the hot.ord link, cold tail and layout pins in psp/Makefile, always. Both makes refuse any other value, so the pre-pinning layout (`LAYOUT_PIN=0`) cannot be built; `tools/build.sh` keeps the variable (only 1) for the manifest's `layoutPin`. The source keeps `#if defined(LAYOUT_PIN)` because the twin is unpinned unless a variant asks (dr_corpus `allpin`, `beta`). |
 | `ONLINE` | 1 (psp/Makefile) | experimental online play (docs/ONLINE-TUNNEL.md), compiled in and off until Settings > Online play is turned on; `ONLINE=0` compiles it out. |
 | `MGIFT` | 1 (psp/Makefile, tools/build.sh) | Mystery Gift, the Wonder Card receiver for FireRed/LeafGreen/Emerald (psp/mgift_*.c). `MGIFT=0` compiles out its objects, the Wireless > Mystery Gift row and screen, the Controls binding row, the chord and the per-frame poll; the infrastructure Wi-Fi bring-up (mgift_net.o) stays while online play is in. MGIFT=0 is a variant arm (the lock is reported, not enforced) and would need its own re-pin to ship (`main` shrinks 684 B). |
 | `RFU_SCHED` | *(built in, code-health C-4)* | scheduled ticks for the emulated Wireless Adapter (docs/RFU-COUPLING.md): each console publishes its frame's adapter traffic with a tick, the partner's game gets it D = 2 frames later. Compiled into every build since C-4: no make variable, no `#ifdef`, no `tools/release.sh` version branch (stable 5.0.0 ships it, owner A-0). `tools/build.sh` accepts `RFU_SCHED=1` as a no-op so the kit recipes reproduce and refuses any other value. It changes the wire format: netdrv refuses a session with a console that is not running ticks (`ND_FEAT_RFU_SCHED`), which includes 4.5.0. Harness key `rfu_sched` = D (desktop `--rfu-sched D`, default 2 there too), 0 = raw queues for that run (a diagnostic arm). The older delivery rules it replaced (frame pace, max hold, shedding, hold, supersede) and their keys were deleted in C4-2/C4-3. |
@@ -382,7 +384,8 @@ all of the ME's `.bss` by N (3856 reproduces the catch data addresses; 12528 wit
 | `BADJUMP_REPORT` | `ms0:/badjump.txt`: registers, gate table, previous block entry; re-enables `badjump_recover`'s file append | `diagnostic`, `soak` profiles; refused in a release |
 | `SMC_WRITE_HISTO` | `ms0:/smchisto.txt` every 4000 flushes: write addresses and storing pcs bucketed, plus unmappable block exits contained | root make; refused in a release |
 | `XLAT_DEPTH_PROBE` | the deepest nested block translation and the lowest frame address at translation entry (`xlat_depth_max`, `xlat_sp_min`), printed by the `core_health` EVT line as `xlat_depth` / `stack_used`. Each nesting level costs ~380-430 B of the 256 KB main-thread stack. | `soak`, `diagnostic`; refused in a release |
-| `IRQ_INTEGRITY_CHECK` | snapshots r0-r14, CPSR and the return address at every IRQ entry and compares them at the matching return; a mismatch appends to `ms0:/irqchk.txt` and dumps guest RAM for the first two. `IRQ_INTEGRITY_SUMMARY` adds a heartbeat line every 16384 returns (PPSSPP only). | `soak`, `diagnostic`; refused in a release |
+| `IRQ_INTEGRITY_CHECK` | snapshots r0-r14, CPSR and the return address at every IRQ entry and compares them at the matching return; a mismatch appends to `ms0:/irqchk.txt` and dumps guest RAM for the first two. `IRQ_INTEGRITY_SUMMARY` adds a heartbeat line every 16384 returns (PPSSPP only). It also compiles out the assembler MSR fast path (`MSR_FAST_ON` in `mips/mips_stub.S`), so soak and diagnostic builds run mode switches through C. | `soak`, `diagnostic`; refused in a release |
+| `LAB_LOCKSTEP` | the Lab gate's lockstep twin: a per-instruction trace hook (`trace_instruction` -> `lab_trace`, mips/mips_emit.h) that loads each opcode the way `EXEC_STALE_CHECK` does, so `SMC_IMM_PATCH` sites compare correctly, and a 16x RAM-cache size for `SMC_REUSE` (gpsp_config.h) | twin only (the Lab's gate) |
 | `STALE_CHECK` | snapshots the guest words of every translated IWRAM block and reports a block still live after its source changed without an SMC event (`ms0:/stale.txt`). `STALE_DISPATCH_ONLY` restricts the per-dispatch work to the block entered; `STALE_CHECK_ALL_ENTRIES` routes every RAM-bound exit through the dispatcher so every entry is seen (changes timing); `STALE_ABORT` makes a stale entry abort (the twin/corpus oracle's "assert" kind). Far too slow for hardware. | PPSSPP; refused in a release |
 | `EXEC_STALE_CHECK` | every executed RAM instruction re-reads its guest opcode and compares it with the one it was translated from; counts to stderr (`EXEC_STALE_ABORT=1` aborts on the first). The 0-hit counts behind the `SMC_SAME_*` verdicts. | twin |
 | `ROM_HASH_CENSUS` | walks `rom_branch_hash` at every 10th heartbeat and every other `core_health` EVT and logs `EVT rom_hash` (chain depths, buckets used, walk cost). Both halves or it does not link: `CORE_EXTRA="EXTRA_CFLAGS=-DROM_HASH_CENSUS" FE_EXTRA=-DROM_HASH_CENSUS`. Cold code: the arm's layout differs from the lab's. | in no profile |
@@ -464,7 +467,7 @@ hardware variable it names. Protocol: docs/ROM-RESIDENCY.md.
 | `cache_paranoid = 1` | every JIT cache sync becomes a full D-cache writeback-invalidate plus full I-cache invalidate |
 | `rom_ballast_kb = N` | hold N KiB of heap before the ROM cache, so the blocks land higher |
 | `jit_coherency_scan = N` | every N frames, count RAM-translation-cache words whose cached view differs from memory: `EVT jit_coh` |
-| `shash = 1` | one line per frame to `log/shash.txt`: audio hash, r0-r15/CPSR, IWRAM, EWRAM, I/O, palette, OAM, VRAM hashes. `shash_dump_from/_to` add raw dumps. Needs `vhash = 1` |
+| `shash = 1` | one line per frame to `log/shash.txt`: audio hash, r0-r15/CPSR, IWRAM, EWRAM, I/O, palette, OAM, VRAM hashes. `shash_dump_from/_to` add raw dumps. Independent of `vhash` (harness builds only) |
 
 ### The 2026-09-24 gate-layout A/B apparatus
 

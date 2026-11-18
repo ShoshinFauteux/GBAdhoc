@@ -26,7 +26,7 @@ anonymous C string -> its text; another anonymous constant -> its bytes up to
 32 B, with code pointers in it resolved (switch tables).
 
 Verify pass (2026-11-05, adversarial single-word mutant sweeps over every
-function, builds/mainpsp-tools-out/scratch-elf-func-verify/):
+function; the sweep scripts and logs are not kept in the repo):
   * tier 1 (lui on the base register itself) accepted ~3.5 % of immediate
     mutants on the 304/144 pair (e.g. `addiu v0,v0,1` -> `+5` in
     render_scanline_objs): an unrelated `lui v0` put both addresses in a

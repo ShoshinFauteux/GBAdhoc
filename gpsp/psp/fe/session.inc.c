@@ -860,9 +860,9 @@ static __attribute__((noinline, section(".text.fe_cold.session_load"))) int sess
       }
 
       /* ---- ADR-0080: Media Engine bring-up ---------------------------
-       * All three keys are harness-only and default OFF: the shipped
-       * binary is single-core byte-for-byte until an ini says otherwise.
-       * me_boot loads the kernel PRX and handshakes; me_bench runs the
+       * me_boot is config.ini's (default 1; a harness ini overrides it),
+       * me_video defaults to PLAY_ME_VIDEO (1) and me_bench (harness only)
+       * to 0.  me_boot loads the kernel PRX and handshakes; me_bench runs the
        * Stage-0 microbenchmark (boot-time only — the WLAN-contention arm
        * runs it while a session is live, which is the go/no-go gate the
        * MEDIAENGINE findings demand); me_video enables the Stage-1

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """epochc_probe.py -- Epoch C step C0a-6: where does GCC put a new function that only
-main() calls?  (builds/epochc-out/PLAN-EPOCHC-beta5.md §4.2.)
+main() calls?  (gpsp/docs/design/EPOCH-C.md §4.2.)
 
 The question.  Epoch C moves boot, the session phases and the exits out of main() into
 new static functions that only main() calls (boot_run, session_*, exit_early,

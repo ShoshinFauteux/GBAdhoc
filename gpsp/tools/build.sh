@@ -135,9 +135,10 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       # only evidence is what reached the Memory Stick before it stopped.
       #
       # This is a harness build by every other measure -- same telemetry, same
-      # autopilot, same GPSP_PROFILE_HARNESS for gpsp_profile.h -- so the guard
-      # treats it as one.  BADJUMP_REPORT is legal here; it is forbidden only in
-      # a release, which is the combination that actually shipped once.
+      # autopilot, and the frontend gets GPSP_PROFILE_HARNESS.  The core gets
+      # GPSP_PROFILE=soak, which the root Makefile maps to the same
+      # -DGPSP_PROFILE_HARNESS=1, so gpsp_profile.h checks both as a harness.
+      # BADJUMP_REPORT is legal here; it is forbidden only in a release.
       #
       # SMC_WRITE_HISTO is deliberately NOT set: it rewrites smchisto.txt every
       # 4000 flushes, and over ten minutes of fast-forward that is a lot of
@@ -149,24 +150,19 @@ profile_flags() {   # sets CORE_FLAGS, FE_DEFS, TITLE, KIND
       PSP_MAKE_FLAGS="PSP_LARGE_MEMORY=0"
       ;;
     diagnostic)
-      # Release, plus the instruments for the question currently being asked.
-      # Both of these write to the Memory Stick; that is the point, and it is
-      # exactly why gpsp_profile.h forbids them in a release.
-      # 2026-09-24: the question is the EXECUTED bad jump (badjump_recover dumps
-      # guest RAM at the fault).  SMC_WRITE_HISTO is left out: on Heart & Soul
-      # it rewrites smchisto.txt every 4000 flushes, i.e. constant synchronous
-      # Memory Stick writes on the emulation thread while the player is trying
-      # to reproduce a timing-sensitive fault.
-      # 2026-09-24 (later): plus IRQ_INTEGRITY_CHECK.  The H&S field fault had
-      # r5, r6 and r8-r11 of the sprite loop at 08218fac replaced across one
-      # call to a sprite-anim callee that saves only r4-r7 -- so r8-r11 changed
-      # in something that ran INSIDE that call, and the prime suspect is an
-      # interrupt handler (the VBlank/M4A mixer path) returning with the wrong
-      # state.  PPSSPP never shows it (114k IRQ returns clean); the checker
-      # asks the same question on hardware.  It compares
-      # r0-r14/CPSR/return address at each IRQ return against the entry
-      # snapshot (the BIOS and ABI guarantee equality) and dumps guest RAM to
-      # ms0:/irqlost-N-*.bin on the first mismatches.  One struct copy per IRQ.
+      # Release, plus instruments that write to the Memory Stick; that is the
+      # point, and it is exactly why gpsp_profile.h forbids them in a release.
+      #   BADJUMP_REPORT       an EXECUTED bad jump dumps guest RAM at the fault
+      #                        (badjump_recover).
+      #   IRQ_INTEGRITY_CHECK  compares r0-r14/CPSR/return address at each IRQ
+      #                        return against the entry snapshot (the BIOS and
+      #                        ABI guarantee equality) and dumps guest RAM to
+      #                        ms0:/irqlost-N-*.bin on the first mismatches;
+      #                        one struct copy per IRQ.
+      #   XLAT_DEPTH_PROBE     deepest nested translation, lowest $sp.
+      # SMC_WRITE_HISTO is left out: it rewrites smchisto.txt every 4000
+      # flushes, constant synchronous Memory Stick writes on the emulation
+      # thread while a tester reproduces a timing-sensitive fault.
       CORE_FLAGS="GPSP_PROFILE=diagnostic BADJUMP_REPORT=1 XLAT_DEPTH_PROBE=1 IRQ_INTEGRITY_CHECK=1"
       FE_DEFS="-DGPSP_PLAYABLE -DGPSP_PROFILE_DIAGNOSTIC=1"
       TITLE="GBAdhoc DIAG"
@@ -252,7 +248,7 @@ PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS MGIFT=$MGIFT"
 # Scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
 # docs/RFU-COUPLING.md) are in every build since C-4: there is no switch.
 # RFU_SCHED=1 is accepted and does nothing, so the kit recipes
-# (builds/b5rc-out, build_and_hash.sh) still reproduce; any other value is
+# (the beta.5 release-candidate kit recipes) still reproduce; any other value is
 # refused rather than silently building ticks anyway.  RFU_SCHED=1 still adds
 # the " TICKS" title suffix on non-release kinds, exactly as before, so every
 # recipe's EBOOT stays what it was (the kit lab recipe passes RFU_SCHED only in
@@ -326,38 +322,11 @@ fi
 die()  { echo "FAIL: $*"; exit 1; }
 note() { printf '%s\n' "$*"; }
 
-# THE TRACKED ME MODULE (critique-9 SF1).  psp/me/gbadhoc_me.prx is committed
-# (the release's, ME_CATCH=1) and every build rebuilds it in place, so a lab or
-# harness build leaves a different PRX in the tree.  The NEXT build then reads
-# the tree as dirty, and tools/make_release.sh stamps a release built after it
-# `commit|dirty` although nothing was edited.  When the PRX matched HEAD before
-# this build, put it back on the way out: always on failure, and on success
-# once the build has been staged with --out (the staged directory holds this
-# build's PRX).  A build without --out keeps its PRX beside its EBOOT.
-# The HOME module (psp/home/gbadhoc_home.prx) is tracked too, and a build that
-# fails after `make clean` leaves it deleted; it is restored the same way.
-ME_PRX_REL="psp/me/gbadhoc_me.prx psp/home/gbadhoc_home.prx"
-ME_PRX_RESTORE=0
-ME_PRX_CLEAN=""
-for f in $ME_PRX_REL; do
-  if git ls-files --error-unmatch "$f" >/dev/null 2>&1 &&
-     git diff --quiet HEAD -- "$f" 2>/dev/null; then
-    ME_PRX_CLEAN="$ME_PRX_CLEAN $f"; ME_PRX_RESTORE=1
-  fi
-done
-me_prx_restore() {
-  [ "$ME_PRX_RESTORE" = 1 ] || return 0
-  local f
-  for f in $ME_PRX_CLEAN; do
-    git diff --quiet HEAD -- "$f" 2>/dev/null && continue
-    if git checkout HEAD -- "$f" 2>/dev/null; then
-      printf '%s\n' "prx     : restored the tracked $f (this build's copy, if any, is staged)"
-    else
-      printf '%s\n' "prx     : could NOT restore the tracked $f; the tree now reads dirty"
-    fi
-  done
-}
-trap me_prx_restore EXIT
+# THE KERNEL MODULES (psp/me/gbadhoc_me.prx, psp/home/gbadhoc_home.prx) are build
+# products, rebuilt by every build and ignored by git (.gitignore), like the online PRX.
+# They used to be tracked, and an EXIT trap put the committed copies back so a lab or
+# harness build did not leave the tree reading dirty (critique-9 SF1); untracked, there
+# is nothing to restore.
 
 NEWEST_SRC=$(find "$ROOT" \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
              -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \) \
@@ -531,12 +500,12 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
     "$PYB" "$HB_PY" "$HB_ORD" "$HB_NM" || true
   fi
 
-  # LAYOUT LOCK (tools/layout/layout.lock, critique-7 SF1).  The pins, the
-  # pads left in the hot block, the two 32 B holes in the warm tail and
-  # `main`'s frame loop depend on link order and on the size of everything
-  # linked before them; a change that moves them builds clean and costs frames
-  # on hardware.  A release, and a lab build with the committed lab pads, must
-  # match the lock exactly.  Any other arm (a sweep, CORE_EXTRA, a switch off)
+  # LAYOUT LOCK (tools/layout/layout.lock).  The pins (regions, .rodata and
+  # the hot order's row pins) and the frame loop depend on link order and on
+  # the size of everything linked before them; a change that moves them
+  # builds clean and costs frames on hardware.  A release, and a lab build
+  # with the lab's own pins (LAB_PADS=1, the default), must match the lock
+  # exactly.  Any other arm (a sweep, CORE_EXTRA, a switch off)
   # is checked and reported only.  LL_STRICT was computed before the link.
   LL_FLAVOUR=""
   case "$KIND" in
@@ -560,7 +529,7 @@ if [ "$LAYOUT_PIN" = 1 ] && [ -f "$ROOT/psp/gpsp_adhoc.elf" ]; then
     LAYOUT_LOCK_RESULT=${LL_V%% *}
     case "${LL_V#* }:$LL_RC" in
       ok:*)   note "layout  : layout.lock [$LL_FLAVOUR] OK" ;;
-      die:1)  die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: a pin that moved is a regen decision, layout_lock.py regen; a hot-block pad is re-tuned with solve; re-record checked values with write)" ;;
+      die:1)  die "the layout moved off tools/layout/layout.lock [$LL_FLAVOUR] (docs/LAYOUT-PINNING.md: a pin that moved is a regen decision, layout_lock.py regen; re-record checked values with write)" ;;
       die:*)  die "layout.lock [$LL_FLAVOUR] could not be checked (rc $LL_RC: no psp-nm output in .build-elf.nm?)" ;;
       note:1) note "layout  : layout.lock [$LL_FLAVOUR] differs (variant arm: reported, not enforced)" ;;
       *)      note "layout  : layout.lock [$LL_FLAVOUR] NOT CHECKED (rc $LL_RC: no psp-nm output?)" ;;
@@ -578,6 +547,21 @@ esac
 
 warning_gate "$ROOT/.build-core.log"  "core"
 warning_gate "$ROOT/.build-eboot.log" "eboot"
+
+# WEAK CORE REFERENCES (T14 weaknm; tools/refactor/abi_asserts.weak).  A frontend's
+# `#pragma weak NAME` on a core_fe.h name links even when the core lost NAME (a rename): the
+# reference is NULL and the feature quietly stops.  Every name the profile's core must define
+# has to be in this ELF, in every profile and arm (the lab recipe is a PSP_EXTRA arm, so the
+# layout's strictness cannot decide this).  ABI_WEAK_CHECK=report: a variant core that drops one.
+if [ -s "$ROOT/.build-elf.nm" ]; then
+  WK_PY="$ROOT/tools/refactor/abi_asserts.py"; WK_NM="$ROOT/.build-elf.nm"
+  if command -v cygpath >/dev/null; then WK_PY=$(cygpath -w "$WK_PY"); WK_NM=$(cygpath -w "$WK_NM"); fi
+  WK_STRICT=--strict; [ "${ABI_WEAK_CHECK:-}" = report ] && WK_STRICT=""
+  "$PYB" "$WK_PY" weaknm --nm "$WK_NM" --profile "$PROFILE" $WK_STRICT ||
+    die "a weak core reference is unresolved in this build (tools/refactor/abi_asserts.weak)"
+else
+  die "no psp-nm output (.build-elf.nm): the weak core references cannot be checked"
+fi
 
 if [ -n "$NEWEST_SRC" ] && [ "$NEWEST_SRC" -nt "$ROOT/psp/EBOOT.PBP" ]; then
   die "EBOOT.PBP is OLDER than $NEWEST_SRC -- the build did not run"
@@ -770,6 +754,4 @@ note "manifest: $MANIFEST"
 if [ -n "$BUILD_DIRTY" ] && [ "$BUILD_DIRTY" != 0 ]; then
   note "NOTE: working tree is dirty; this artifact is not reproducible from a commit."
 fi
-# No --out: this build's PRX stays in psp/me/ beside its EBOOT (see me_prx_restore).
-[ -n "$OUTDIR" ] || ME_PRX_RESTORE=0
 exit 0

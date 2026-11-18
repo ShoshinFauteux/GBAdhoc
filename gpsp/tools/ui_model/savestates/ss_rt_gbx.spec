@@ -3,7 +3,7 @@
 # match (ss_rt_gbx.ui).  MODEL=0/1.
 N=1
 D=$(dirname "$SPEC")
-I1_EB=${EB:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/savestate-ui-out/s1-h64}
+I1_EB=${EB:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/savestate-ui-out/s1-h64}
 case "${CON:-gb}" in
   gbc) I1_ROM=$HOME/gbdual/roms/crystal.gbc; I1_ROMNAME="Pokemon - Crystal Version.gbc"; I1_CONSOLE=2 ;;
   *)   I1_ROM=$HOME/gbdual/roms/kirby.gb;    I1_ROMNAME="Kirby's Dream Land.gb";        I1_CONSOLE=1 ;;

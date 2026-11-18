@@ -1,6 +1,6 @@
 GBAdhoc DYNAREC PROFILE -- hardware bench, ONE rig app (docs/DYNAREC-PROFILE.md)
 ==============================================================================
-Branch claude/dynarec-profile.  Stage: builds\dynarec-profile-out\rig-stage\
+Branch claude/dynarec-profile.  Stage: a local rig-stage\ folder (not in the repo)
 One app folder, GBADHOC-DRPROF (XMB title "DRPROF RIG"), launched ONCE.  The
 USB handoff loop then runs 12 cycles by itself: AW2 tour and Heart & Soul
 heavy battle x { shipped dynarec, the two prototypes, time-split sampler },
@@ -28,7 +28,7 @@ relaunch (tools\drprof\drrig_dry.sh; result in rig-dryrun\).
 
 LEAD (PC; the only writes to a card)
 ------------------------------------
-Run from builds\dynarec-profile-worktree.  M: below = the Go's M2 volume.
+Run from your checkout.  M: below = the Go's M2 volume.
 
 L1. Backup (read-only, verified):
       python tools\rig\backup_sticks.py --out ..\go-m2-backup-2026-09-30 M:=PSP-Go

@@ -1,12 +1,12 @@
 # Source-split tools: T3 pp_diff, T4 split + cutlist, T7 extract, T9 globals
 
-Phase T of `builds/mainpsp-map/out/PLAN.md` (§0.1 G0, §1.2-§1.3, phase T, P1, P4, §5).
+Phase T of `gpsp/docs/design/RESTRUCTURE.md` (§0.1 G0, §1.2-§1.3, phase T, P1, P4, §5).
 These tools only read sources, write into scratch directories, and run `psp-gcc -E` in the
 `pspdev/pspdev` image. They never edit `psp/main_psp.c` and make no PSP build. The G1 build
 recorded below was a separate scratch build.
 
 All numbers are from 01067e74 (beta.4 base) unless marked. The scratch evidence is in
-`builds/mainpsp-tools-out/scratch-source-split/`.
+`scratch-source-split/` (a local scratch dir, not kept in the repo).
 
 ## Files
 
@@ -143,7 +143,7 @@ Limits of the trace: compiled-pattern methods, `split`/`partition` pieces, and s
 - `def:`/`decl:`: the `#define` or declaration lines a test greps.
 - `ff:`, `lowlat:`, `menu:`, `qs:`, `sl:`, `sb:`, `vol:`, `spsc:`: the range a test slices (its old start/end anchors are still checked inside the region).
 
-Whole-file facts stay whole-file, over `read_source()`'s text: the ring-index classification of test_spsc_mg_wiring, the `sceAudioOutputBlocking` count and the apply's presence (test_volume), the single `loop_park()` (test_sleep_menu) and the single `"menu"` load (test_state_load_ask). `enumerate_readers` counts `read_source(` as a read, so a converted reader is still found, and it walks all of `gpsp/` recursively (paths relative to it), so a reader added in any subdirectory is found; `tools/refactor/` (the gate tools, which read main_psp.c by design) is left out unless `--gate` is given (12 on 01067e74, 13 on the P0c tree and on P1; 8 more with `--gate`). The cutlist P1 commits (`cutlist.txt`, carried from the P0b cutlist) keeps every row's module, fragment and occurrence; with the end-marker rule above every region stays inside one fragment (each `fe/*.inc.c` passes `extract.py --check` on its own), every fragment is the parent's text plus its own markers and `@lab` tags, and three FRAG rows re-anchor on the begin marker that now opens them (power.b `fn:power_cb`, pacing.d `lowlat:late_present`, shell.b `fn:main`). Every marker is checkable from the tree alone: main_psp.c minus its 130 own-line marker lines and its 18 `/* @lab */ ` tags is the parent byte for byte. The step's record, the planting script and the old-vs-new evidence are kept with the other P evidence outside the repository (`builds/mainpsp-p-out/p1/` in the owner's workspace, not tracked).
+Whole-file facts stay whole-file, over `read_source()`'s text: the ring-index classification of test_spsc_mg_wiring, the `sceAudioOutputBlocking` count and the apply's presence (test_volume), the single `loop_park()` (test_sleep_menu) and the single `"menu"` load (test_state_load_ask). `enumerate_readers` counts `read_source(` as a read, so a converted reader is still found, and it walks all of `gpsp/` recursively (paths relative to it), so a reader added in any subdirectory is found; `tools/refactor/` (the gate tools, which read main_psp.c by design) is left out unless `--gate` is given (12 on 01067e74, 13 on the P0c tree and on P1; 8 more with `--gate`). The cutlist P1 commits (`cutlist.txt`, carried from the P0b cutlist) keeps every row's module, fragment and occurrence; with the end-marker rule above every region stays inside one fragment (each `fe/*.inc.c` passes `extract.py --check` on its own), every fragment is the parent's text plus its own markers and `@lab` tags, and three FRAG rows re-anchor on the begin marker that now opens them (power.b `fn:power_cb`, pacing.d `lowlat:late_present`, shell.b `fn:main`). Every marker is checkable from the tree alone: main_psp.c minus its 130 own-line marker lines and its 18 `/* @lab */ ` tags is the parent byte for byte. The step's record, the planting script and the old-vs-new evidence were kept with the other phase P evidence outside the repository (not tracked).
 
 ## T9 `globals.py`
 
@@ -230,7 +230,7 @@ python gpsp/tools/refactor/split.py cover
 python gpsp/tools/refactor/split.py gen --label "01067e74:gpsp/psp/main_psp.c" -o gpsp/tools/refactor/cutlist.txt   # now tests/fixtures/cutlist_01067e74.txt
 python gpsp/tools/refactor/split.py split --cutlist gpsp/tools/refactor/cutlist.txt --out <scratch>/split-base
 bash gpsp/tools/refactor/pp_diff.sh --ref gpsp --new gpsp --overlay <scratch>/split-base          # WSL
-python gpsp/tools/refactor/globals.py census --basis builds/mainpsp-map/out/scratch/vars_g.json
+python gpsp/tools/refactor/globals.py census --basis <the survey's vars_g.json; a scratch file, not in the repo>
 bash gpsp/tools/refactor/tests/source-split_run_all.sh                                          # WSL, all self-tests
 ```
 

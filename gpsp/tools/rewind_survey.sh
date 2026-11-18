@@ -8,7 +8,8 @@ set -uo pipefail
 BUILD=${1:-d4}
 W=$HOME/rewind-agent
 ROMS=$HOME/drcorpus/corpus/roms
-SAVS=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/roms
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+SAVS=${RW_SAVS:-$GBADHOC_ROMS}
 OUT=$W/survey; rm -rf "$OUT"; mkdir -p "$OUT"
 S=$OUT/mash.inputs
 {

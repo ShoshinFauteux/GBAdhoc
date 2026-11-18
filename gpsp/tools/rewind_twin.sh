@@ -3,7 +3,8 @@
 # worktree into ~/rewind-agent/NAME (WSL).  Run inside WSL.
 set -uo pipefail
 NAME=${1:?name}
-SRC="/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/rewind-worktree"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+SRC=${RW_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # the gpsp tree to copy
 W=$HOME/rewind-agent
 B=$W/$NAME; mkdir -p "$B"
 rsync -a --delete --exclude .git --exclude builds --exclude releases --exclude docs \

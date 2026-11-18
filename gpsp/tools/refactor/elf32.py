@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""elf32.py (from mainpsp-map scratch/x4_elf.py) -- minimal ELF32-LE reader (no pyelftools on this box): sections,
+"""elf32.py (from the restructure survey's x4_elf.py, not in the repo) -- minimal ELF32-LE reader (no pyelftools on this box): sections,
 symbols with their STT_FILE owner (locals only; globals have none), bytes."""
 import struct
 

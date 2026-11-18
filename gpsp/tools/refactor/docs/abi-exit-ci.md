@@ -1,8 +1,8 @@
 # abi-exit-ci: T6, T8, T11 and T14 (phase T proof tools)
 
-PLAN: `builds/mainpsp-map/out/PLAN.md` §0.1 (gates SS, XS), §3.2-§3.6, phase T, §5.
-Base: 01067e74, the clean baseline ELFs in `builds/mainpsp-tools-out/baseline/run1/`
-(see BASELINE.md there). Nothing here edits emulator source or the build. Every run below
+PLAN: `gpsp/docs/design/RESTRUCTURE.md` §0.1 (gates SS, XS), §3.2-§3.6, phase T, §5.
+Base: 01067e74, the clean baseline ELFs (`flavours.sh --baseline` output, `baseline/run1/`; a local folder,
+not in the repo; see [baseline.md](baseline.md)). Nothing here edits emulator source or the build. Every run below
 was made on 2026-11-05 against that baseline.
 
 | Tool | Gate | Files |
@@ -16,7 +16,7 @@ was made on 2026-11-05 against that baseline.
 Tests (all under `tests/`, prefix `abi-exit-ci_`):
 
 ```
-# WSL, from gpsp/tools/refactor; O=.../builds/mainpsp-tools-out
+# WSL, from gpsp/tools/refactor; O=<local output dir holding the baseline, e.g. mainpsp-tools-out beside the checkout>
 MAINPSP_LOCK=$O/build.lock bash tests/abi-exit-ci_run_all.sh $O/baseline/run1 $O/scratch-abi-exit-ci/final
 #   or one at a time:
 bash tests/abi-exit-ci_test_strong.sh   $O/baseline/run1 OUT    # T6
@@ -318,10 +318,10 @@ Note on PLAN §1.4: the table puts `fe_abi_asserts.h` under fe_priv.h, but the a
 
 ## Epoch C step C0a (2026-11-12): T8 repaired for the split tree and extended; T11 R6
 
-Written on `claude/epochc-plan` (b7d0cafd plus tools). Plan: `builds/epochc-out/PLAN-EPOCHC-beta5.md`.
+Written on `claude/epochc-plan` (b7d0cafd plus tools). Plan: `gpsp/docs/design/EPOCH-C.md`.
 
 **Why T8 was red on every post-P tree.**
-- `run_all.sh`'s default baseline is the 01067e74 run, whose compile line has no `-DGBADHOC_MGIFT`. The `-E` views then lose the teardown's `mgift_stop(1)`, and the model fails against a golden that is wrong (16/24, 19/27). `exit_matrix.py all` now refuses such a baseline (`STALE BASELINE`: a define that `psp/Makefile` turns on by default is missing from the logged compile line). Give it a `flavours.sh` run of the tree itself; `builds/mainpsp-p-out/baseline/run1` has the same defines as b7d0cafd. The reference model reads `GBADHOC_MGIFT` like the tree.
+- `run_all.sh`'s default baseline is the 01067e74 run, whose compile line has no `-DGBADHOC_MGIFT`. The `-E` views then lose the teardown's `mgift_stop(1)`, and the model fails against a golden that is wrong (16/24, 19/27). `exit_matrix.py all` now refuses such a baseline (`STALE BASELINE`: a define that `psp/Makefile` turns on by default is missing from the logged compile line). Give it a `flavours.sh` run of the tree itself; a `flavours.sh --baseline` run of the phase P tree (a local output, not in the repo) has the same defines as b7d0cafd. The reference model reads `GBADHOC_MGIFT` like the tree.
 - The source mutants edited the single file by line number and wrote the copy to a directory without `fe/`. They now find their line by anchor, the raw view reads the fragments from the tree (`aec_cparse.load_raw(base=)`), and `--over fe/X.inc.c=FILE` mutates a fragment (read by the raw view, bind-mounted for `-E`).
 - `p0a_test_exit_matrix.py` assumed the pre-P3 hijack. On a tree where P3 has landed it runs P3's sed backwards, and on a split tree C3 compares the `split.py inverse` single file with the shell read through its includes.
 
@@ -346,7 +346,7 @@ Tests (`abi-exit-ci_test_exit.sh`, 29 checks at b7d0cafd, 30 on an F1 tree; `--s
 - M20: the boot hold released before `net_bringup`: XS fails at C4 (hold `boot` -> none).
 - M21 (F1 trees): process_end without the `g_exit_req` guard.
 
-**T11 R6 (new).** Every static function of main_psp.c's unit that only `main()` calls carries `noinline` and an explicit `section(...)`, unless `ci_greps.r6_pinned` lists it (107 names at b7d0cafd: the ones that exist today). Reason: the C0a-6 probe (`epochc_probe.sh`; `builds/epochc-out/probe/`). Measured on release and lab at b7d0cafd, GCC 15.2.0:
+**T11 R6 (new).** Every static function of main_psp.c's unit that only `main()` calls carries `noinline` and an explicit `section(...)`, unless `ci_greps.r6_pinned` lists it (107 names at b7d0cafd: the ones that exist today). Reason: the C0a-6 probe (`epochc_probe.sh`; its outputs are not kept in the repo; [EPOCH-C.md](../../../docs/design/EPOCH-C.md) §4.2). Measured on release and lab at b7d0cafd, GCC 15.2.0:
 
 | A function only `main()` calls, declared | lands in | effect on `main` |
 |---|---|---|

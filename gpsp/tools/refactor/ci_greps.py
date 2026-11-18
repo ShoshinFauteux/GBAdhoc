@@ -30,14 +30,14 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       main; either moves the frame loop with every later edit to that function.
       --write-r6 writes the pinned list from the tree (do it once, on the tree Epoch C
       starts from).
-  R7  (tier C, C2-0; health-out/design/C-2.md §2.4 check c) no raw harness read: no
+  R7  (tier C, C2-0; gpsp/docs/design/TIER-C.md C-2 §2.4 check c) no raw harness read: no
       `fe_ini_get(` / `fe_ini_get_int(` whose first argument is HARNESS_INI or p_harness outside
       psp/fe/fe_priv.h (macro definitions count; comments do not).  C2-1 rewrote every read to
       fe_priv.h's HARNESS_INT/HARNESS_STR.  --r7 fail (the default since C2-1) lists every
       site as a violation; a KNOWN row's key is the harness key the read names (the frame
       loop's rewind_gedump: frame parity).  --r7 warn prints the count per file and never fails.
       R7 reads the files as they are (no logical view): its sites are where the edit goes.
-  R8  core_fe_pure (tier C, C6-1; health-out/design/C-6.md §2, §5): gpsp/core_fe.h, the one
+  R8  core_fe_pure (tier C, C6-1; gpsp/docs/design/TIER-C.md C-6 §2, §5): gpsp/core_fe.h, the one
       core-to-frontend header, stays define-free and attribute-free.  Its only conditionals are
       the include guard (#ifndef X / #define X / #endif) and `__cplusplus` (#ifdef / #if defined /
       #endif); other #define lines (constants) are allowed.  No `section`, `weak`,
@@ -47,6 +47,15 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       address the variable through $gp; a `weak` one would turn the core's own definition weak;
       an #if on a core-only define is the core-vs-frontend-defines trap.  It no-ops (0 hits)
       while core_fe.h is absent.  --rules R8 runs it alone; the hits name the file's own lines.
+  R9  builtin_status (rescore 2026-11-17): no comment calls a built-in switch optional.  The
+      names are the root Makefile's GPSP_BUILT_IN, _VALUES, _B1 and _VALUES_B1 lists plus
+      LAYOUT_PIN, so a batch that bakes more switches in extends the rule by itself.  Over the
+      whole gpsp tree's C/C++/asm/ld/make/shell comments (not arm/ x86/ 3ds/ jni/ libretro/
+      tgbdual/ releases/ docs/ mutants/), it fails on `make NAME=1` and on "off by default",
+      "default off", "opt-in", "optional", "prototype", "experimental", "compiled in but off"
+      or "not built in" said of NAME: the last switch-like name before the phrase on its line,
+      or, when that line names none, a built-in name within 2 comment lines.  No list in the
+      Makefile is a failure, never a pass.  --rules R9 runs it alone.
 Known exceptions live in ci_greps.known (rule, file, key, reason); they are reported as
 KNOWN and do not fail.  Exit: 0 green, 1 violations, 2 usage.
 """
@@ -796,12 +805,146 @@ def rule_r8(src):
     return r8_text_hits(open(p, encoding='utf-8', errors='replace').read()), True
 
 
+# ------------------------------------------------------------- R9 builtin_status
+# The built-in switches are the root Makefile's GPSP_BUILT_IN* lists (code-health A-6, B-1: the make
+# refuses NAME=0) plus LAYOUT_PIN (A-7).  A comment that calls one of them optional, off by default,
+# opt-in, a prototype or experimental, or that says `make NAME=1`, is wrong.
+R9_LISTS = ('GPSP_BUILT_IN', 'GPSP_BUILT_IN_VALUES', 'GPSP_BUILT_IN_B1', 'GPSP_BUILT_IN_VALUES_B1')
+R9_EXTRA = ('LAYOUT_PIN',)
+R9_NEAR = 2            # a status phrase within this many lines of the name, both in comments
+R9_PHRASE = re.compile(r'off by default|\bdefaults? (?:to )?off\b|\bopt-?in\b|\boptional\b|\bprototype\b|'
+                       r'\bexperimental\b|compiled in but off|not (?:yet )?built in', re.I)
+R9_SKIP = ('arm', 'x86', '3ds', 'jni', 'libretro', 'tgbdual', 'releases', 'docs', 'mutants', '.git')
+R9_C_EXT = ('.c', '.h', '.cc', '.cpp', '.S', '.ld', '.inc')
+R9_SH_EXT = ('.sh', '.mk')
+_R9_CPP = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define|undef|include|error|warning|pragma|line)\b')
+
+
+def r9_builtin_names(src):
+    """the GPSP_BUILT_IN* names of the root Makefile, or None when it has none."""
+    p = os.path.join(src, 'Makefile')
+    if not os.path.exists(p):
+        return None
+    text = open(p, encoding='utf-8', errors='replace').read().replace('\\\n', ' ')
+    names = set()
+    for m in re.finditer(r'^(\w+)\s*:=\s*(.*)$', text, re.M):
+        if m.group(1) in R9_LISTS:
+            names |= {w.split('=')[0] for w in m.group(2).split() if re.match(r'[A-Z][A-Z0-9_]*(=|$)', w)}
+    return (names | set(R9_EXTRA)) if names else None
+
+
+def r9_comments(text, kind):
+    """[(line, comment text)] of one file; kind 'c' (/* */ and //, strings skipped; .S: also
+    non-directive # lines) or 'sh' (# to end of line)."""
+    out = []
+    if kind == 'sh':
+        for i, ln in enumerate(text.split('\n'), 1):
+            m = re.search(r'(?:^|\s)#(.*)$', ln)
+            if m and not ln.lstrip().startswith('#!'):
+                out.append((i, m.group(1)))
+        return out
+    i, n, line, buf = 0, len(text), 1, None
+    while i < n:
+        c = text[i]
+        if c == '\n':
+            if buf is not None:
+                out.append((line, buf[1]))
+                buf = (buf[0], '')
+            line += 1
+            i += 1
+        elif buf is not None:                       # inside /* */
+            if text.startswith('*/', i):
+                out.append((line, buf[1]))
+                buf = None
+                i += 2
+            else:
+                buf = (buf[0], buf[1] + c)
+                i += 1
+        elif text.startswith('/*', i):
+            buf = (line, '')
+            i += 2
+        elif text.startswith('//', i):
+            e = text.find('\n', i)
+            e = n if e < 0 else e
+            out.append((line, text[i + 2:e]))
+            i = e
+        elif c in '"\'':
+            j = i + 1
+            while j < n and text[j] != c and text[j] != '\n':
+                j += 2 if text[j] == '\\' else 1
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def r9_file_hits(rel, text, names, kind):
+    cm = r9_comments(text, kind)
+    if kind == 'S':
+        cm += [(i, ln.lstrip()[1:]) for i, ln in enumerate(text.split('\n'), 1)
+               if ln.lstrip().startswith('#') and not _R9_CPP.match(ln)]
+    by = {}
+    for ln, t in cm:
+        by[ln] = by.get(ln, '') + ' ' + t
+    nm = re.compile(r'\b(%s)\b' % '|'.join(sorted(names, key=len, reverse=True)))
+    mk = re.compile(r'\bmake\b[^.;]*?\b(%s)=1\b' % '|'.join(sorted(names, key=len, reverse=True)))
+    hits, seen = [], set()
+    for ln in sorted(by):
+        t = by[ln]
+        for m in mk.finditer(t):
+            if (ln, m.group(1)) not in seen:
+                seen.add((ln, m.group(1)))
+                hits.append(Hit('R9', rel, ln, m.group(1), 'comment says `make %s=1`, but %s is built in'
+                                % (m.group(1), m.group(1))))
+        p = R9_PHRASE.search(t)
+        if not p:
+            continue
+        # the phrase belongs to the last switch-like name before it on its line, if any
+        # ("TIMER_LAZY (prototype) or HALT_HOP": TIMER_LAZY's); else to a built-in name nearby
+        owner = re.findall(r'\b[A-Z][A-Z0-9]*_[A-Z0-9_]*[A-Z0-9]\b', t[:p.start()])
+        if owner:
+            w = owner[-1]
+            if w in names and (ln, w) not in seen:
+                seen.add((ln, w))
+                hits.append(Hit('R9', rel, ln, w, 'comment calls built-in %s "%s"' % (w, p.group(0))))
+            continue
+        for k in range(ln - R9_NEAR, ln + R9_NEAR + 1):
+            for w in nm.findall(by.get(k, '')):
+                if (ln, w) not in seen:
+                    seen.add((ln, w))
+                    hits.append(Hit('R9', rel, ln, w, 'comment calls built-in %s "%s" (line %d names it)'
+                                    % (w, p.group(0), k)))
+    return hits
+
+
+def rule_r9(src):
+    names = r9_builtin_names(src)
+    if not names:
+        return [Hit('R9', 'Makefile', 0, 'list', 'no GPSP_BUILT_IN list in the root Makefile: nothing to check '
+                    'against (R9 never passes on an empty list)')], 0, 0
+    hits, nf = [], 0
+    for root, dirs, fns in os.walk(src):
+        dirs[:] = sorted(d for d in dirs if d not in R9_SKIP)
+        for fn in sorted(fns):
+            if fn.endswith(R9_C_EXT) or fn.endswith('.inc.c'):
+                kind = 'S' if fn.endswith('.S') else 'c'
+            elif fn.endswith(R9_SH_EXT) or fn == 'Makefile' or fn.startswith('Makefile.'):
+                kind = 'sh'
+            else:
+                continue
+            rel = os.path.relpath(os.path.join(root, fn), src).replace('\\', '/')
+            nf += 1
+            hits += r9_file_hits(rel, open(os.path.join(root, fn), encoding='utf-8', errors='replace').read(),
+                                 names, kind)
+    return hits, len(names), nf
+
+
 # ------------------------------------------------------------- driver
 def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_path=None, r7='fail'):
     view, origin = logical_view(src) if logical else (src, {})
     try:
         fails, out = _run(view, phase, known_path, allow_path, pp_dir,
-                          [r for r in only if r not in ('R7', 'R8')] if only else None, origin, r6_path)
+                          [r for r in only if r not in ('R7', 'R8', 'R9')] if only else None, origin, r6_path)
     finally:
         if view != src:
             import shutil
@@ -819,6 +962,22 @@ def run(src, phase, known_path, allow_path, pp_dir, only=None, logical=True, r6_
         out.append('R8 core_fe_pure: %s, %d violations' % ('core_fe.h present' if present else
                                                           'no core_fe.h (no-op)', len(h8)))
         out += ['  FAIL  R8 %s:%d %s [%s]' % (h.file, h.line, h.msg, h.key) for h in h8]
+        out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
+    if not only or 'R9' in only:
+        h9, nn, nf = rule_r9(src)
+        known = [k for k in load_known(known_path) if k['rule'] == 'R9']
+        o9, f9 = [], 0
+        for h in h9:
+            kn = [k for k in known if k['file'] == h.file and k['key'] in (h.key, '*')]
+            if kn:
+                o9.append('  KNOWN R9 %s:%d %s -- %s' % (h.file, h.line, h.msg, kn[0]['reason']))
+            else:
+                f9 += 1
+                o9.append('  FAIL  R9 %s:%d %s [%s]' % (h.file, h.line, h.msg, h.key))
+        fails += f9
+        out.pop()
+        out.append('R9 builtin_status: %d built-in names, %d files, %d violations' % (nn, nf, f9))
+        out += o9
         out.append('T11: %s' % ('green' if not fails else '%d violations' % fails))
     if origin:
         out.insert(0, 'logical files: %d *.inc.c fragment(s) read as part of their includer' %

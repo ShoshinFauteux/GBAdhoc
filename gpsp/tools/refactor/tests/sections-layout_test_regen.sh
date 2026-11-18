@@ -6,7 +6,7 @@
 # derived from its link map and hot_order.txt).
 #
 #   bash tests/sections-layout_test_regen.sh [FLAVOUR_DIR]
-#   (default: builds/mainpsp-tools-out/baseline/run2/release)
+#   (default: mainpsp-tools-out/baseline/run2/release beside the checkout; local)
 #
 # Proves:
 #   C1 plain `regen.sh` (no flag) runs as before and never calls hotord_check

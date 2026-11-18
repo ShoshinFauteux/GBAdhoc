@@ -1,9 +1,15 @@
 # JIT CODE DISCIPLINE — one model for the dynarec's code memory
 
+**Status now (2026-11-17):** the discipline is **built in** to every PSP core
+(code-health A-6; root `Makefile` `GPSP_BUILT_IN`, and `JIT_CODE_DISCIPLINE=0`
+stops the make).  The publish point is `jit_code_publish()`, called from
+`translate_icache_sync()` in `cpu_threaded.c`.  `JIT_CODE_CHECK` and
+`JIT_CODE_AB` remain non-release switches.  The rest of this document is the
+design record of the branch that introduced it, kept as written.
+
 Branch `claude/jit-code-discipline` (off `claude/candidate-3.1-dr`, 2026-10-01).
-Switch: root make `JIT_CODE_DISCIPLINE=1`, **off by default**. With it off,
-every line this branch adds compiles to nothing: the release EBOOT is
-byte-identical to the candidate's (section 6.1).
+At the time: root make `JIT_CODE_DISCIPLINE=1`, off by default; with it off the
+release EBOOT was byte-identical to the candidate's (section 6.1).
 
 **Labels.** *Twin* = the PSP's own translator under qemu (`tools/drprof`),
 exact instruction counts, no caches. *PPSSPP* = emulator, no caches.
@@ -48,8 +54,8 @@ is the hardware plan for the main session.
 * **Hardware:** not run (consoles are the main session's). Section 8 is the
   exact plan: a same-binary layout sweep to reproduce the derail with the
   old syncs and show the discipline survives it, the mechanism probe (mode
-  3), the bench, and a reload soak; `builds/jit-discipline-out/` holds the
-  builds and the drrig arms.
+  3), the bench, and a reload soak. (The staged builds and rig arms were
+  local files, not kept in the repo.)
 
 ---
 
@@ -199,7 +205,7 @@ both `jal` into the STUB zone) and nothing else.
 
 | switch (root make unless noted) | what | where allowed |
 |---|---|---|
-| `JIT_CODE_DISCIPLINE=1` | the model above; zones 64-byte aligned on the SMALL tier too | any profile (off by default) |
+| `JIT_CODE_DISCIPLINE` | the model above; zones 64-byte aligned on the SMALL tier too | built in (code-health A-6); `=0` is refused |
 | `JIT_CODE_CHECK=1` | zone asserts on every record and every lookup return (zones own whole lines, sealed STUB zone, tag table never met, returned pointer inside committed code, nothing pending) | not release; needs the discipline |
 | `-DJIT_CODE_AUDIT` (twin) | the writer audit (6.3); implies the check | not release |
 | `-DJIT_CODE_AUDIT_NEGCTL` (twin) | drops ONE record (the SMC thunk link): the audit must fail | twin only |
@@ -373,7 +379,7 @@ candidate.
 AW2 does 0.21 ROM publishes per frame, so 8b48b48's whole invalidate costs
 at most ~12 µs/frame there, not 1.29 ms. And H&S, with four times as many
 whole-I's per frame, measured only +0.33 ms (PUB 9.69 → CAND 10.02 ms, Go).
-The Go numbers (`builds/candidate-out/logs-go-iso*`): CNOFIX 6.98, CBONLY
+The Go numbers (hardware logs, not kept in the repo): CNOFIX 6.98, CBONLY
 7.16, CAND 8.27 ms on AW2 — three binaries whose only differences are where
 one sync site's code sits. That is a code-layout effect (hot code meeting
 in the same I-cache sets), the same sensitivity that makes the derail come
@@ -411,7 +417,7 @@ The A/B build tells the two apart on hardware, on one binary (8.3): mode 0
 `tools/drprof/jc_ppsspp.sh` on the staged harness64 EBOOTs (PPSSPP, no
 caches: this checks guest behaviour on the real PSP build, not coherency).
 Reference: the candidate's own harness64 EBOOT (`cdr`,
-`candidate-out/dr-harness64`, 32b6d71). Every frame and field of `shash`,
+the harness64 build of 32b6d71). Every frame and field of `shash`,
 audio included, from the state load on:
 
 | arm | AW2 tour (6,031 frames) | H&S heavy, resident (3,170 frames) |
@@ -430,8 +436,7 @@ because that PPSSPP instance started 3 s later (`rtc_seed` 15:13:42 vs
 The harness telemetry worked as staged: `EVT jit_code mode=M` on every A/B
 run, and `core_health` per window, e.g. H&S `jcd`
 `jitc=52316/710000/360/0 own=3/359/2 bjrec=0` against mode 1's 3,951 whole
-invalidates. Logs: `~/jcppsspp/` (WSL), summary
-`builds/jit-discipline-out/ppsspp-oracle.txt`.
+invalidates. (Raw PPSSPP logs were not kept in the repo.)
 
 ---
 
@@ -456,14 +461,14 @@ invalidates. Logs: `~/jcppsspp/` (WSL), summary
 
 All on the existing rig (one rig app, `GBADHOC-DRPROF`, USB handoff loop:
 `drrig.py` arms + `hnsrig.py` window-aware loop, Go on the M2 card with the
-chkdsk gate). Builds are staged in `builds/jit-discipline-out/hw/`; the exact
-`drrig.py` additions are in `builds/jit-discipline-out/DRRIG-ARMS.py`.
+chkdsk gate). The staged builds and the `drrig.py` arm definitions were local
+files, not kept in the repo.
 
 ### 8.1 Builds
 
 | kind | what |
 |---|---|
-| `cdr` | the current candidate: `claude/candidate-3.1-dr` 32b6d71 harness64 (copy of `candidate-out/dr-harness64`) |
+| `cdr` | the current candidate: `claude/candidate-3.1-dr` 32b6d71 harness64 |
 | `jcoff` | this branch, switch off (control: the candidate plus the new telemetry) |
 | `jcd` | this branch + `JIT_CODE_DISCIPLINE=1`: the product |
 | `jab-pN` | + `JIT_CODE_DISCIPLINE=1 JIT_CODE_AB=1`, `.text` padded by N = 0, 1024, 2560, 3776, 5120, 6656 bytes (distinct offsets modulo the I-cache way size, 8 KiB; 3776 ≈ the 3.7 KiB that once hid the bug). The pad is linked first; only `main` (GCC's `.text.startup`, placed first by the linker script) precedes it, so every other function moves by N (checked with `psp-nm`) |
@@ -519,8 +524,7 @@ run 8.5 on both 64 MiB consoles and report "unreproduced, soak clean".
    reported as such rather than tuned.
 3. Read alongside: `jitc=` whole-I counts per window (expected per 6.5).
 
-Score with `builds/candidate-out/bench_score.py` logic (mean of the
-per-window `core_prof` means after the load window).
+Score as the mean of the per-window `core_prof` means after the load window.
 
 ### 8.5 Soak
 
@@ -534,7 +538,8 @@ AW2 tour and H&S paged, vs the candidate's `harness` build.
 
 ## 9. Open risks
 
-* **Not yet run on a PSP.** Everything in section 6 is twin, checker or
+* **Not yet run on a PSP** (at the time of writing; every PSP build now runs
+  the discipline). Everything in section 6 is twin, checker or
   PPSSPP. The checker models the caches; it cannot model firmware or
   silicon behaviour it was not told about (e.g. an instruction prefetch
   buffer that survives a hit invalidate). The ownership invalidate is the

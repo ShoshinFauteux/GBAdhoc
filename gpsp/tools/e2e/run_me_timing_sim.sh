@@ -16,10 +16,10 @@
 # Environment:
 #   MTS_WORK  build/run directory on the Linux filesystem (default ~/me-timing-sim;
 #             /mnt/c is far too slow for the per-frame logs and dumps)
-#   MTS_FIX   fixture directory (default builds/unbound-soak/fixtures of the
-#             main checkout: <fixture>.st0, the .sav files, manifest.json)
+#   MTS_FIX   fixture directory (default <main checkout>/builds/unbound-soak/fixtures:
+#             a local, untracked folder: <fixture>.st0, the .sav files, manifest.json)
 #   MTS_ROMS  directory holding the ROMs and gba_bios.bin
-#             (default builds/unbound-harness/fixtures of the main checkout)
+#             (default <main checkout>/builds/unbound-harness/fixtures, also local)
 #   MTS_DUMP=1  also write raw cpu/post/vis images of every divergent frame
 #
 # The desktop link needs two stand-ins that a PSP build never does: the GB core
@@ -31,14 +31,13 @@ set -euo pipefail
 FIXTURE=${1:?usage: run_me_timing_sim.sh FIXTURE [BATTLE_INPUTS]}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# The fixtures live in the main checkout; a worktree under builds/ finds it by
-# walking up (WSL cannot follow a worktree's Windows-path .git file).
-MAIN=$SRC
-while [ ! -d "$MAIN/builds/unbound-soak" ] && [ "$MAIN" != / ]; do MAIN=$(dirname "$MAIN"); done
+# The fixtures are local (GBADHOC_WORK, tools/workdirs.sh: the first builds/ folder at or
+# above the checkout, so a worktree inside the main checkout's builds/ finds them).
+source "$SCRIPT_DIR/../workdirs.sh"
 WORK=${MTS_WORK:-$HOME/me-timing-sim}
-FIX=${MTS_FIX:-$MAIN/builds/unbound-soak/fixtures}
-ROMS=${MTS_ROMS:-$MAIN/builds/unbound-harness/fixtures}
-INPUTS=${2:-$MAIN/builds/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs}
+FIX=${MTS_FIX:-$GBADHOC_WORK/unbound-soak/fixtures}
+ROMS=${MTS_ROMS:-$GBADHOC_WORK/unbound-harness/fixtures}
+INPUTS=${2:-$GBADHOC_WORK/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs}
 case $FIXTURE in heart_soul*) ROM="Pokemon Heart & Soul";; unbound*) ROM="Pokemon Unbound";;
   *) echo "unknown fixture family: $FIXTURE" >&2; exit 2;; esac
 

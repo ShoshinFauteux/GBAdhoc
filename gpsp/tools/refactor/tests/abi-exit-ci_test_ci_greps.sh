@@ -31,6 +31,14 @@
 #   M10f R6 always_inline together with noinline                            -> FAIL
 #   M10g R6 (tier C C-1) a new static only frame_loop calls, no attributes  -> FAIL
 #   M10h R6 (tier C C-1) frame_loop itself without noinline + section       -> FAIL
+# rescore 2026-11-17, R9 builtin_status (mutant tree: the Makefile + one file):
+#   M12  R9 SMC_IMM_PATCH called "twin prototype, OFF by default"           -> FAIL
+#   M12b R9 ENTRY_GATES with "Optional" two comment lines below             -> FAIL
+#   M12c R9 `make XLAT_PURE=1` in a comment                                 -> FAIL
+#   M12d R9 a make comment calling LAYOUT_PIN opt-in                        -> FAIL
+#   M12 control: a real switch off, TIMER_LAZY's "prototype" next to
+#        HALT_HOP, the phrase in a string                                   -> ok
+#   M12e R9 with no GPSP_BUILT_IN list in the Makefile                      -> FAIL
 # The tree may be split (psp/main_psp.c + psp/fe/*.inc.c) and P3 may have landed (no
 # hijack #define; FE_EXIT_GAME/FE_HANDOFF in fe/fe_priv.h): every edit finds its file
 # and its line by anchor.
@@ -81,6 +89,7 @@ for d in psp frontend-common netdrv; do
   (cd "$SRC" && git ls-files -z "$d" | grep -z -E '\.(c|h|inc)$' | xargs -0 cp --parents -t "$T") 2>/dev/null \
    || (cd "$SRC" && find "$d" -name '*.[ch]' -exec cp --parents -t "$T" {} +)
 done
+cp "$SRC/Makefile" "$T/Makefile"     # R9's built-in list (a run of every rule needs it)
 reset_tree() {
   cp "$SRC/psp/main_psp.c" "$T/psp/main_psp.c"
   [ -d "$SRC/psp/fe" ] && cp "$SRC"/psp/fe/*.inc.c "$T/psp/fe/"
@@ -214,6 +223,23 @@ expect 0 "M11 control: no core_fe.h is a no-op" "no core_fe.h (no-op)" $CG --src
 python3 "$HERE/tests/abi-exit-ci_test_core_fe_pure.py" > "$OUT/r8.log" 2>&1 \
   && ok "R8 text mutants (tests/abi-exit-ci_test_core_fe_pure.py): $(tail -1 "$OUT/r8.log")" \
   || { bad "R8 text mutants"; tail -8 "$OUT/r8.log"; }
+
+# rescore 2026-11-17: R9 builtin_status (the root Makefile's GPSP_BUILT_IN* names + LAYOUT_PIN).
+# Its mutant tree is the Makefile (the name list) and one mutant file.
+expect 0 "C1''' R9 on the tree" "R9 builtin_status: .* 0 violations" $CG --src "$SRC" --rules R9
+T9="$OUT/tree9"; rm -rf "$T9"; mkdir -p "$T9"; cp "$SRC/Makefile" "$T9/Makefile"
+printf '/* SMC_IMM_PATCH (twin prototype, OFF by default). */\nint x;\n' > "$T9/mut9.c"
+expect 1 "M12 R9 a built-in switch called off by default" "FAIL  R9 mut9.c:1 comment calls built-in SMC_IMM_PATCH" $CG --src "$T9" --rules R9
+printf 'int y;\n/* ENTRY_GATES: a RAM routine entered at many points ...\n *\n * Optional: only when the cache fills. */\n' > "$T9/mut9.c"
+expect 1 "M12b R9 the phrase two lines below the name" "FAIL  R9 mut9.c:4 comment calls built-in ENTRY_GATES" $CG --src "$T9" --rules R9
+printf '/* the oracle variant: make XLAT_PURE=1 FOO=2 */\n' > "$T9/mut9.c"
+expect 1 "M12c R9 \`make NAME=1\` for a built-in" "FAIL  R9 mut9.c:1 comment says .make XLAT_PURE=1." $CG --src "$T9" --rules R9
+printf '\t# LAYOUT_PIN=1: pinning is opt-in\n' > "$T9/mut9.mk"; rm -f "$T9/mut9.c"
+expect 1 "M12d R9 a make comment (LAYOUT_PIN opt-in)" "FAIL  R9 mut9.mk:1" $CG --src "$T9" --rules R9; rm -f "$T9/mut9.mk"
+printf '/* XLAT_THUMB_NO_UNSWITCH=1: OFF by default.\n * TIMER_LAZY (prototype, guest-visible) or HALT_HOP */\nconst char *s = "SMC_REUSE off by default";\n' > "$T9/mut9.c"
+expect 0 "M12 control: a real switch off, the phrase owned by a non-built-in name, a string" "R9 builtin_status: .* 0 violations" $CG --src "$T9" --rules R9
+rm -f "$T9/Makefile"
+expect 1 "M12e R9 with no GPSP_BUILT_IN list fails (never passes empty)" "no GPSP_BUILT_IN list" $CG --src "$T9" --rules R9
 
 echo "abi-exit-ci T11 tests: $([ $FAILS = 0 ] && echo PASS || echo "$FAILS FAIL")"
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

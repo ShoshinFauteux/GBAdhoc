@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sect_cmp.py -- T2, gate G1 (builds/mainpsp-map/out/PLAN.md §0.1, §5).
+"""sect_cmp.py -- T2, gate G1 (gpsp/docs/design/RESTRUCTURE.md §0.1, §5).
 
     sect_cmp.py A B [--expect-sections N] [--json OUT]   A, B: ELF files or flavours.sh flavour dirs
     sect_cmp.py --runs R1 R2 [--expect-sections N]       every flavour present in both run dirs
@@ -21,7 +21,7 @@ Only non-alloc sections (DWARF, .comment, .symtab, .strtab, .shstrtab,
 
 THE BUILD LOG.  When A or B is a flavour dir (or --log FILE is given), its
 build.log and logs/*.log are searched for psp-fixup-imports' "could not fixup
-imports" warning (memory: psp-stub-order-trap): make exits 0 on it, the EBOOT
+imports" warning (gpsp/docs/DEBUGGING.md): make exits 0 on it, the EBOOT
 does not start.  Found -> exit 3, whatever the sections say.
 
 ATTRIBUTION.  Each differing byte range is named by the function/object that
@@ -54,7 +54,8 @@ def resolve(p):
     if os.path.isdir(p):
         elf = os.path.join(p, 'gpsp_adhoc.elf')
         if not os.path.isfile(elf):
-            raise SystemExit('sect_cmp: no gpsp_adhoc.elf in %s' % p)
+            print('sect_cmp: no gpsp_adhoc.elf in %s' % p, file=sys.stderr)
+            raise SystemExit(2)   # a missing input is a tool error, never "a difference" (1)
         mp = os.path.join(p, 'gpsp_adhoc.map')
         # logs/.build-*.log (the make output, where psp-fixup-imports prints) are
         # dotfiles: glob's '*' skips them, so list the dir instead

@@ -16,6 +16,8 @@
 #   M10 hermetic: a caller variable (ME_LOWLAT=0) never reaches build.sh, and is recorded
 #   M11 the --against contract: clean tree, lock, extraEnv, buildEnv, hermetic, ancestry,
 #       all three flavours: each clause refused with exit 2
+#   M15 --expect-code-change: a found difference is DIFF -> FAIL by default, CHANGED with the
+#       flag; a crashed tool (exit 1 + traceback) and an invariant gate stay FAIL
 #   (P-review 2026-11-08)
 #   C6/M12 F4 --ref-ancestor: an ancestor reference passes the contract only when named, and
 #       only if the name is the reference's commit and an ancestor (M12a-d refused, exit 2)
@@ -168,6 +170,23 @@ expect_rc 2 "M7'' --against an unpinned build (other version + SDE)" bash "$F" -
 expect_rc 6 "M8 absent tools are FAIL, not skipped" bash "$F" --check-only --out "$T/o10" --against "$T/o9"
 if [ -f "$T/o10/gate.txt" ] && grep -q 'G1 FAIL' "$T/o10/gate.txt" && grep -q 'CI FAIL' "$T/o10/gate.txt"; then
   ok "M8 gate line generated from checks.txt: $(cat "$T/o10/gate.txt")"; else bad "M8 gate line: $(cat "$T/o10/gate.txt" 2>/dev/null)"; fi
+# M15 --expect-code-change (rescore 2026-11-17): an identity gate whose tool ran and found a
+# difference (exit 1) is DIFF in checks.txt -- FAIL in the gate line by default, CHANGED with
+# the flag -- while a tool that crashed (exit 1 with a traceback) stays FAIL either way.
+# Fakes: det_check finds a difference, sect_cmp agrees, func_diff crashes.
+FR="$R/gpsp/tools/refactor"
+printf 'import sys\nprint("  DIFF e_entry 0x1 != 0x2")\nsys.exit(1)\n' > "$FR/det_check.py"
+printf 'print("  identical")\n' > "$FR/sect_cmp.py"
+printf 'import sys\nprint("Traceback (most recent call last):")\nprint("KeyError: x")\nsys.exit(1)\n' > "$FR/func_diff.py"
+expect_rc 6 "M15 default mode: a difference fails" bash "$F" --check-only --out "$T/o10" --against "$T/o9"
+grep -q '^== release G1 DIFF (release det_check)$' "$T/o10/checks.txt" && grep -q 'G1 FAIL rel(release det_check)' "$T/o10/gate.txt" \
+  && ok "M15 default: checks.txt DIFF, gate line G1 FAIL" || bad "M15 default: $(grep ' G1 ' "$T/o10/checks.txt" | head -2) / $(cat "$T/o10/gate.txt")"
+expect_rc 6 "M15 --expect-code-change: other gates still fail (absent tools)" bash "$F" --check-only --out "$T/o10" --against "$T/o9" --expect-code-change
+G15=$(cat "$T/o10/gate.txt" 2>/dev/null)
+case "$G15" in *"G1 CHANGED rel/lab/har"*) ok "M15 expected change: $(echo "$G15" | grep -o 'G1 CHANGED [^ ]*')" ;; *) bad "M15 G1 not CHANGED: $G15" ;; esac
+case "$G15" in *"G2 FAIL rel(release func_diff --data --strict-weak; rc 1)"*) ok "M15 a crashed tool (exit 1 + traceback) stays FAIL" ;; *) bad "M15 crash not FAIL: $G15" ;; esac
+case "$G15" in *"CI FAIL"*) ok "M15 an invariant gate's FAIL stays FAIL" ;; *) bad "M15 CI: $G15" ;; esac
+rm -f "$FR/det_check.py" "$FR/sect_cmp.py" "$FR/func_diff.py"
 # M9 sidecar: a \-continued compile line (layout_pad_gb.o, psp/Makefile) is joined before replay
 SL="$T/eboot.log"
 printf '%s\n' 'make: Entering directory '"'"'/build/psp'"'"'' \

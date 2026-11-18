@@ -1284,7 +1284,7 @@ static void footer(const char *hint)
    vid_text_center(VID_SCR_H - FTR_H + 2, hint, C_DIM);
 }
 
-/* ===== THE OVERLAY: Fable's Direction A (docs/UI-OVERLAY.md) ==============
+/* ===== THE OVERLAY: the design's Direction A (docs/UI-OVERLAY.md) =========
  *
  * The wake-from-sleep screen's language, extended to every in-game screen:
  * the game frame stays up at full fidelity behind a scrim, the wordmark sits
@@ -1292,7 +1292,7 @@ static void footer(const char *hint)
  * out of the bottom edge gives the footer something solid.  No panel is ever
  * drawn; the picture is the backdrop.
  *
- * The numbers are the design's (builds/menu-mockups/mockups.py, class
+ * The numbers are the design's (docs/design/UI-MOCKUPS.md: mockups.py, class
  * Overlay), drawn through the same primitives the design model renders with,
  * so a GE dump can be compared with the model pixel for pixel
  * (tools/ui_model/).
@@ -3816,7 +3816,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
 }
 
 /* ----- wireless screens --------------------------------------------------- */
-/* docs/GBA-LINK-UI.md (the design: builds/linkmode-mockups).  Three games,
+/* docs/GBA-LINK-UI.md (the design: docs/design/UI-MOCKUPS.md).  Three games,
  * three menus, one layout: the Host row's value is the mode it will use,
  * and the two explainer lines name the game and say the one thing the
  * player must know.  Only a game that links both ways asks (SCR_HOST). */
@@ -4223,8 +4223,8 @@ static ui_action screen_wireless(unsigned edges, int session_active,
  * the server and reads it to the friend; the friend enters it here.  For a
  * game that links both ways the host picks the link mode, the joiner follows
  * it.  Nothing touches the network until Create or Join. */
-/* One code box takes either code, told apart by length (owner, 2026-11-05;
- * the design mockup, builds/xmb-relay-mockup): 4 letters = a ROOM code,
+/* One code box takes either code, told apart by length (decided 2026-11-05;
+ * the design mockup, docs/design/UI-MOCKUPS.md): 4 letters = a ROOM code,
  * looked up on the GBAdhoc server (a room there, or a desktop host's room);
  * 8 or 11 symbols = an INVITE code, a desktop host's address with a check
  * (netdrv/invite_code.h), so no server is asked.  The wheel has every letter,
@@ -5641,8 +5641,8 @@ int ui_state_save_ask(int slot)
    return 1;
 }
 
-/* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13; Fable's direction A,
- * "Split", builds/savestate-mockups/README.md section 6).  One page for save
+/* THE SAVE STATES PAGE (docs/UI-OVERLAY.md section 13; the design's direction A,
+ * "Split", docs/design/UI-MOCKUPS.md).  One page for save
  * and load: the five slots on the left (the 64x42 thumbnail, the slot, its
  * time), the highlighted slot's picture 1:1 on the right.
  *
@@ -7780,7 +7780,7 @@ static struct {
  *
  * The game's hero art, taken ONCE when a ROM is picked, becomes the ambient
  * texture (32 KiB of VRAM, ambient_look.h) -- and that same bake is the
- * loading screen's background (Fable's "L2").  Source: the hero the browser
+ * loading screen's background (the design's "L2").  Source: the hero the browser
  * already decoded when it is this ROM's (the Marquee shell usually has it);
  * otherwise the Marquee's own decode, by file name, into the same buffer.
  * Then the browser frees its whole art pool exactly as it always did --
@@ -7864,7 +7864,7 @@ static void clip_title_hd(char *t, int px)
 }
 
 /* "L2": the browser's marquee chrome over the ambient bake, or over the
- * console's palette ramp when there is no art (Fable, loading/). */
+ * console's palette ramp when there is no art (the design study, loading/). */
 void ui_loading_update(const char *stage, unsigned done, unsigned total)
 {
    unsigned now = sceKernelGetSystemTimeLow();

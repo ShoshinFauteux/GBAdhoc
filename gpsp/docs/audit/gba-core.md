@@ -14,3 +14,7 @@ including real state writers, valid round trips and preflight rejection.
 
 Evidence: `audit/reliability/gba-core/state-results.json` and `gba-state.log`.
 This is focused regression coverage, not a complete game compatibility corpus.
+
+Today these checks are host suite `gba_state` (`tools/run_host_tests.py`), with
+`test_gba_cpu_state.c` and `test_gba_sound_safety.c` added, in a plain and a
+REWIND build. The script keeps no logs unless given `--out DIR`.

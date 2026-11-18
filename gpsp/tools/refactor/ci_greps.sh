@@ -10,6 +10,7 @@
 #   R6 every static function only main() calls has noinline + section(), or is pinned (ci_greps.r6_pinned)
 #   R7 no raw harness read fe_ini_get*(HARNESS_INI|p_harness ...) outside fe_priv.h (HARNESS_INT/_STR)
 #   R8 core_fe_pure: core_fe.h has no #if but its guard and __cplusplus, no attribute/static/definition
+#   R9 no comment calls a built-in switch (root Makefile GPSP_BUILT_IN*, LAYOUT_PIN) optional/off/opt-in
 # --pp DIR adds R1e: in main_psp.<flavour>.i (psp-gcc -E, see aec_pspcc.py) every exit and
 # handoff call is wrapped by pwr_release_all().  Known exceptions: ci_greps.known.
 # Exit 0 green, 1 violations.  Self-test: tests/abi-exit-ci_test_ci_greps.sh

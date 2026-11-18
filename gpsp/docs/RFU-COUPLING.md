@@ -1,8 +1,8 @@
 # Coupling the two consoles over the emulated Wireless Adapter
 
 Design, 2026-11-02; built since (see Status). Since code-health C-4 scheduled ticks are the adapter's only
-protocol, in every build. Branch `claude/rfu-reference`; evidence in `builds/rfuref-out` and
-`builds/rfutrace-out/hw1`.
+protocol, in every build. Branch `claude/rfu-reference`; the evidence (PPSSPP traces and the hw1
+hardware run) is not kept in the repo.
 
 ## The problem
 

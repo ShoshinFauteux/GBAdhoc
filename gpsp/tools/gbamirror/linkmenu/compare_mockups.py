@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """compare_mockups.py OUTDIR RUN[:theme] ... -- every PPSSPP GE dump of a link
-screen against the design's PNG (builds/linkmode-mockups/png/<screen>-<theme>
+screen against the design's PNG (docs/design/UI-MOCKUPS.md; PNGs <screen>-<theme>
 .png), docs/GBA-LINK-UI.md.
 
 A dump counts when its file name is a design screen (wireless-cable.bmp,

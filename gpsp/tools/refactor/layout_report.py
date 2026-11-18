@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""layout_report.py -- T10, gate G3 (builds/mainpsp-map/out/PLAN.md §0.1, §5).
+"""layout_report.py -- T10, gate G3 (gpsp/docs/design/RESTRUCTURE.md §0.1, §5).
 
     layout_report.py CAND [--src TREE] [--ref REF [--ref-src TREE]] [--plan FILE] [--objects RE] [--json OUT]
     layout_report.py --selftest DIR [--ref REF]      seeded mutants, no build
@@ -66,7 +66,7 @@ SETS = WAY // LINE                  # 128 sets per way (16 KiB 2-way I and D cac
 LOOP_LINES = None   # by anchor (loop_anchor.py), checked against main's DW_AT_decl_line
 WATCH_BSS = ('out.0', 'ring_r', 'ring_w', 'audio_ring')
 SPECIAL = re.compile(r'^\.text\.(unlikely|hot|startup|exit)(\.|$)')
-# tier C C-1 commit 4: the frame loop's own section (health-out/design/C-1.md decision 2)
+# tier C C-1 commit 4: the frame loop's own section (gpsp/docs/design/TIER-C.md C-1 decision 2)
 DEFAULT_PLAN = ['.text.startup.main', '.text.startup.fe_frame_loop']
 CORE_ARCHIVE = 'gpsp_libretro_psp1.a('
 

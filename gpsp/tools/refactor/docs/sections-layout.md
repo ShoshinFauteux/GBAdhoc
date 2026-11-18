@@ -1,6 +1,6 @@
 # Sections and layout tools: T2, T5, T10
 
-These are phase T tools for the main_psp.c restructure (`builds/mainpsp-map/out/PLAN.md` §0.1, §5, phase T). They are written in host Python, use no docker and need no build. They read ELFs through `elf32.py` and GNU ld maps through `sl_ldmap.py`.
+These are phase T tools for the main_psp.c restructure (`gpsp/docs/design/RESTRUCTURE.md` §0.1, §5, phase T). They are written in host Python, use no docker and need no build. They read ELFs through `elf32.py` and GNU ld maps through `sl_ldmap.py`.
 
 | Tool | Gate | Proves | Inputs |
 |---|---|---|---|
@@ -14,7 +14,7 @@ Helpers:
 
 The `sl_` prefix keeps these clear of the other groups' modules.
 
-All tests are in `tests/sections-layout_*`. `bash tests/sections-layout_run_all.sh` runs every one of them on the clean baseline (`builds/mainpsp-tools-out/baseline`, 01067e74, three flavours built twice).
+All tests are in `tests/sections-layout_*`. `bash tests/sections-layout_run_all.sh` runs every one of them on the clean baseline (`mainpsp-tools-out/baseline` beside the checkout, a local output not in the repo; 01067e74, three flavours built twice; see [baseline.md](baseline.md)).
 
 A **flavour dir** is what `flavours.sh` writes for one flavour: `gpsp_adhoc.elf`, plus `gpsp_adhoc.map` when the sidecar ran, and `build-manifest.json`. Always compare release with release, and Lab with Lab.
 
@@ -80,7 +80,7 @@ Each mutant is cross-checked against stage 1's `det_check.py`. That tool must ne
 | 25 sections listed | **Does not reproduce: there are 24.** `--list` finds the same 24 in all three flavours and in the old `pin144-rel`: `.MIPS.abiflags .init .text .fini .sceStub.text .lib.ent.top .lib.ent .lib.ent.btm .lib.stub.top .lib.stub .lib.stub.btm .rodata.sceModuleInfo .rodata.sceResident .rodata.sceNid .rodata .eh_frame .ctors .dtors .data.pin .data .data.gbahot .sdata .sbss .bss`. `.reginfo` is not SHF_ALLOC. The run-all script asserts `--expect-sections 24` and checks that 25 is rejected with exit 4. PLAN §0.1 G1 and §5 T2 should say 24. |
 | seeded changes in `.sceStub.text` and `.rodata.sceModuleInfo` caught | **Reproduced.** Three positions in each, plus the address move of `.rodata.sceModuleInfo` and the SHF_ALLOC drop of `.sceStub.text`. |
 
-**Finding: `pin144-rel` is the same ELF as a clean pad-144 build.** The elf-func group built 01067e74 from clean with `LAYOUT_PAD_BYTES=144` (`workingTreeClean: true`, copied to `scratch-sections-layout/pad144-release`). It is byte-identical to `builds/beta4-out/pin144-rel/gpsp_adhoc.elf`: both have sha256 `db6d625c…`.
+**Finding: `pin144-rel` is the same ELF as a clean pad-144 build.** The elf-func group built 01067e74 from clean with `LAYOUT_PAD_BYTES=144` (`workingTreeClean: true`, copied to `scratch-sections-layout/pad144-release`). It is byte-identical to the beta.4 kit's `pin144-rel/gpsp_adhoc.elf` (a local kit, not in the repo): both have sha256 `db6d625c…`.
 - So the dirty tree flagged in PLAN §0.2 did not change that ELF.
 - The 21 sections that differ between `pin144-rel` and the clean release come from the pad alone. That includes the 4,255 differing `.data` bytes, which are pointers into the moved `.rodata`.
 - x4's figures measured on `pin144-rel` therefore stand for a clean pad-144 build.

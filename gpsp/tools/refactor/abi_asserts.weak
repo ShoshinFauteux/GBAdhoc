@@ -1,0 +1,21 @@
+# T14 weak core references: name <TAB> profiles whose core must define it (all | none | a comma list of
+# release,lab,harness,harness64,diagnostic,soak) <TAB> why the reference is weak.
+# A frontend references these through gpsp/core_fe.h plus `#pragma weak NAME` (fe_host.c, main_psp.c's TU).
+# abi_asserts.py fehost: every pragma has a row, every row a pragma, every name a definition in the core
+# sources.  abi_asserts.py weaknm (run by tools/build.sh after the link): every name its profile must
+# define is in the ELF, so a renamed core name fails the build instead of resolving to NULL.
+# Profiles checked against the 84604aea ELFs of all six (builds/health-out/runs/b6int-84604aea/*/elf.nm).
+frontend_skip_override	all	fe_host.c: the host tests that link fe_host.c without the GBA core (tools/run_gb_tests.py fe_gb_boot, gb_rtc_utc)
+backup_write_gen	all	fe_host.c: host tests that link fe_host.c without the GBA core; tests that #include fe_host.c define their own
+open_gba_bios_rom	all	fe_host.c (telemetry builds): host tests that link fe_host.c without the GBA core have no BIOS image
+jit_pin_at	all	fe_host.c GBA link session: every PSP core defines it (LAYOUT_PIN is built in); the reference stays weak because a strong one folds the `if (&jit_pin_at)` test away, a code change in the pinned layout
+badjump_reset_pending	all	fe_host.c: interpreter-only cores (the SDL desktop twin, HAVE_DYNAREC=0) and host tests without a core have no cpu_threaded.c
+badjump_last_pc	all	fe_host.c: as badjump_reset_pending
+gpsp_rewind_jit_used	all	fe_host.c (REWIND): interpreter-only cores (the SDL twin with REWIND=1) have no translated code to measure
+xlat_depth_max	diagnostic,soak	main_psp.c (harness.f): XLAT_DEPTH_PROBE cores only
+xlat_sp_min	diagnostic,soak	main_psp.c (harness.f): XLAT_DEPTH_PROBE cores only
+xlat_depth_probe_reset	diagnostic,soak	main_psp.c (harness.f): XLAT_DEPTH_PROBE cores only
+jit_code_mode	none	main_psp.c (inproc.a): JIT_CODE_AB cores only; no profile builds one
+jit_pub_inline	all	main_psp.c (inproc.a): every core of the six profiles defines it; weak for variant cores
+xlat_scan_fast	lab,harness,harness64,diagnostic,soak	main_psp.c (inproc.a): a constant (1u), not a variable, in an XLAT_FAST (release) core
+smc_fallback_stats	none	main_psp.c (inproc.b): SMC_FALLBACK_STATS cores only; no profile builds one

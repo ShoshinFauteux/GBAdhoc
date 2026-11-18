@@ -6,7 +6,7 @@
  * fe_host_mem_read (EWRAM via retro_get_memory_data(SYSTEM_RAM), IWRAM via
  * the SET_MEMORY_MAPS descriptors — FRONTEND-AUDIT §6); input is injected
  * through fe_host_input_inject.  Game addresses live in the scripts, not
- * here — see docs/AUTOPILOT.md for the verified Emerald (BPEE rev 0) table.
+ * here — see ../docs/AUTOPILOT.md for the verified Emerald (BPEE rev 0) table.
  *
  * Script grammar (one command per line; '#'/';' comments; numbers decimal or
  * 0x-hex; BTNS = '+'-joined A B L R UP DOWN LEFT RIGHT START SELECT):

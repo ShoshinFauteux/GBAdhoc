@@ -8,11 +8,15 @@ sections land with their phases. Plan references are to gpsp-adhoc-plan.md.
 | you want | read |
 |---|---|
 | which subsystem owns what, on which processor, and the contracts between them | `SUBSYSTEMS.md` |
-| the three build profiles, what each forbids, and the one build command | `BUILD-PROFILES.md` |
+| the six build profiles, what each is for and forbids, and the one build command | `BUILD-PROFILES.md` |
+| how the emulator is tested: host suites, the dynarec oracle, the build gates, the hardware harness | `TESTING.md`, `TEST-COVERAGE.md` |
+| the rules for changing code safely (fragments, layout, generated files) | `../../AGENTS.md` |
+| why a numbered decision (ADR) was taken | `DECISIONS.md` (ADR-0001..0053), `adr/` (ADR-0043 and later) |
+| the design plans that code comments cite (restructure, Epoch C, tier C, UI mockups) | `design/` |
 | every dynarec switch, with a verdict and the measurement behind it | `BUILD-SWITCHES.md` |
 | a symptom, and the first thing to look at | `DEBUGGING.md` |
 | display-buffer ownership and the fast-forward artifact, already solved | `FF-ARTIFACT-FIX.md` |
-| what the three fast-forward presets do | `FF-PROFILES.md` |
+| what the first three fast-forward presets do (1.5x and 2x came later: `FF-PRESETS.md`) | `FF-PROFILES.md` |
 | how Unlimited / Unlimited Smooth choose which frames to draw (30 / 60 a second) | `FF-PRESETS.md` |
 | what to ask a player for | `BUG-REPORT.md` |
 | why a past decision went the way it did | `DECISIONS.md` |

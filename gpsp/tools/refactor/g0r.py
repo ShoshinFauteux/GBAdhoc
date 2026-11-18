@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""g0r.py -- gate G0R (C5-0; builds/health-out/design/C-5.md §3 "Gates"): is a C-5 commit a
+"""g0r.py -- gate G0R (C5-0; gpsp/docs/design/TIER-C.md C-5 §3 "Gates"): is a C-5 commit a
 pure rename (or, for telemetry in the release, a pure deletion of telemetry stores)?
 
 Input: two preprocessed streams of main_psp.c (`psp-gcc -E -P`, as pp_diff.sh makes them)

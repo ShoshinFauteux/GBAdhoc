@@ -178,7 +178,7 @@ int main(void)
    int r;
    unsigned long n, singles[2] = { 0, 0 }, swaps[2] = { 0, 0 };
 
-   /* 1. vectors made by the mockup's encoder (builds/xmb-relay-mockup/data.js,
+   /* 1. vectors made by the mockup's encoder (data.js of the relay mockup, docs/design/UI-MOCKUPS.md;
     * run under node): the two implementations must agree byte for byte */
    {
       static const struct { uint8_t ip[4]; unsigned port; const char *code; } v[] = {

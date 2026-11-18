@@ -1,5 +1,5 @@
 /* core_fe.h -- what the core exports to a native frontend (tier C, C-6;
- * builds/health-out/design/C-6.md).
+ * docs/design/TIER-C.md, C-6).
  *
  * One declaration per core name a frontend reads or calls, in the core's own
  * types, grouped by the file that defines it.  common.h includes this header
@@ -15,10 +15,18 @@
  * weak.  A name that exists only in some builds is still declared plainly; the
  * frontend that tests its address uses `#pragma weak NAME` beside the use.
  *
- * The includer provides the types: u8/u16/u32/s64 (psptypes.h on the PSP,
- * common.h's type block elsewhere), time_t (<time.h>) and bool (<stdbool.h>;
- * native in C++).  RFILE is libretro-common's `typedef struct RFILE RFILE`, so
- * it is named as a struct.
+ * The includer provides the types: u8/u16/u32/s32/s64 (psptypes.h on the PSP,
+ * common.h's type block elsewhere), size_t and uint64_t (<stddef.h>,
+ * <stdint.h>), time_t (<time.h>) and bool (<stdbool.h>; native in C++).  RFILE
+ * is libretro-common's `typedef struct RFILE RFILE`, so it is named as a struct.
+ *
+ * WHO INCLUDES IT: every core TU (through common.h), psp/main_psp.c's TU and
+ * frontend-common/fe_host.c.  Neither frontend copies a core declaration by
+ * hand; T14 (tools/refactor/abi_asserts.py: `gen` for main_psp.c, `fehost` for
+ * fe_host.c) fails a copy of a name declared here.  A weak reference
+ * (`#pragma weak NAME` in a frontend) is listed in tools/refactor/abi_asserts.weak
+ * with the profiles that must define it; tools/build.sh fails a build whose ELF
+ * lacks one (a renamed core name would otherwise resolve to NULL silently).
  *
  * NOT HERE, on purpose:
  *   - rom_translation_cache, rom_translation_cache_size, ram_translation_cache_size:
@@ -48,7 +56,7 @@ extern u32 smc_flush_wide;
 extern u32 (*smc_prof_clock)(void);
 extern u32 cph_jit_total;
 extern u32 sched_fast;              /* mips_stub.S under SCHED_HOT_IN_REG */
-extern u32 timer_lazy;              /* TIMER_LAZY / HALT_HOP builds */
+extern u32 timer_lazy;              /* HALT_HOP (built in) / TIMER_LAZY mask */
 void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
                    unsigned *oth, unsigned *ovf, unsigned *hot_addr, unsigned *hot_cnt,
                    unsigned *top_addr, unsigned *top_cnt, unsigned nhot);
@@ -117,6 +125,18 @@ typedef struct
   u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
 } jit_code_stats_type;
 extern jit_code_stats_type jit_code_stats;
+/* fe_host.c's GBA link session (section 19) and recovery hook: */
+extern u32 jit_cache_replay;              /* RUNTIME_JIT_CACHE (PSP) builds */
+extern s32 jit_pin_at;                    /* LAYOUT_PIN + GBA_LINK PSP builds */
+extern volatile u32 badjump_reset_pending;
+extern u32 badjump_last_pc;
+void gpsp_rewind_jit_used(u32 *rom, u32 *ram);   /* REWIND builds */
+
+/* ---- mips/mips_stub.S --------------------------------------------------- */
+extern u8 rom_translation_cache_static[]; /* RUNTIME_JIT_CACHE (PSP) builds: the SMALL tier */
+
+/* ---- bios_data.S -------------------------------------------------------- */
+extern const u8 open_gba_bios_rom[1024 * 16];
 
 /* ---- gba_memory.c ------------------------------------------------------- */
 /* The VRAM dirty-page map (vram_clean[], 1 KiB pages; gba_memory.h builds the
@@ -149,6 +169,33 @@ extern void (*gpsp_heap_census)(const char *where);
 extern time_t (*gpsp_wallclock)(void);
 extern volatile s64 gpsp_rtc_wall;
 void gpsp_rtc_peek(long long *shown, long long *frames_time, int *wall);
+extern u8 bios_rom[1024 * 16];
+int gamepak_read_poll(void);              /* a ROM page read failed (sticky; polled per frame) */
+void gba_reset_power_on(void);            /* soft reset as a power-on */
+extern volatile u32 backup_write_gen;     /* bumped when the game writes its save */
+extern u32 gamepak_reload;                /* a controlled reload (GBA link session) */
+extern u32 gamepak_hold_bytes;
+extern void *gamepak_hold;
+/* the rewind's save log and counters (REWIND builds) */
+extern u32 gba_rewind_backup_ro;
+extern u32 gba_rewind_backup_ro_hits;
+extern u32 gba_rewind_bk_acc;
+extern u8 *gba_rewind_rlog;
+extern u32 gba_rewind_rlog_mask;
+extern u32 gba_rewind_rlog_pos;
+extern u32 gba_rewind_rlog_end;
+extern u32 gba_rewind_rlog_served;
+extern u32 gba_rewind_rlog_miss;
+extern u32 gba_rewind_rlog_mutant;
+extern u32 gba_rewind_cnt[2];             /* REWIND_COUNT builds */
+u32 gba_rewind_backup_busy(void);
+void gpsp_rewind_clock_sync(void);
+long long gpsp_rewind_clock_time(const long long *set);
+
+/* ---- cheats.c, serial.c, sound.c (REWIND; sound_synth_off also GBA_LINK) */
+extern u32 gba_rewind_cheat_gen;
+extern u32 gba_rewind_serial_gen;
+extern u32 sound_synth_off;
 
 /* ---- rfu.c (the AGB-015 wireless adapter) ------------------------------- */
 void rfu_set_disc_grace(u32 frames);
@@ -170,6 +217,35 @@ extern const u16 gba_cc_lut[];
 
 /* ---- libretro/libretro.c ------------------------------------------------ */
 extern u32 skip_next_frame;
+extern int frontend_skip_override;       /* -1 none, else the next frame's skip */
+/* The rewind image (REWIND builds; docs/REWIND.md): the save state plus what it
+ * leaves out, and the in-place layout of its six big arrays. */
+typedef struct gpsp_rewind_arr
+{
+   u32 bytes;
+   u8 *live;
+} gpsp_rewind_arr;
+extern u32 gpsp_rewind_light;
+size_t gpsp_rewind_state_size(void);
+bool gpsp_rewind_gather(void *data, size_t size);
+bool gpsp_rewind_restore(const void *data, size_t size);
+u32  gpsp_rewind_layout(u8 *scratch, gpsp_rewind_arr arr[6]);
+void gpsp_rewind_rest_gather(u8 *scratch, u8 *rest);
+bool gpsp_rewind_rest_restore(u8 *scratch, const u8 *rest, int keep_ram_code);
+int  gpsp_rewind_arrays_restore(const u8 *ref, const u8 *ewram256,
+                                const u8 *vram96, u32 *copied);
+void gpsp_rewind_map_peek(u8 *ewram256, u8 *vram96);
+void gpsp_rewind_map_clean(void);
+void gpsp_rewind_marks_want(int on);
+int  gpsp_rewind_marks_ok(void);
+void gpsp_rewind_clock_mode(int frames);
+u32  gpsp_rewind_audio_bytes(void);
+u32  gpsp_rewind_audio_gather(u8 *dst, u32 stale);
+void gpsp_rewind_audio_restore(const u8 *src);
+int  gpsp_rewind_take_dirty(u8 *ewram256, u8 *vram96);
+void gpsp_rewind_gprof(u32 out[4], uint64_t (*clock)(void));
+void gpsp_rewind_rprof(u32 out[9]);
+void gpsp_rewind_mark_all(void);
 
 #ifdef __cplusplus
 }

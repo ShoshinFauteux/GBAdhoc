@@ -52,8 +52,10 @@ psp/build-manifest.json
 .build-*.log
 __pycache__/
 /.layout/
-# Menu = HOME kernel module: the .prx is tracked (packaging, like psp/me),
-# its intermediate .elf is not.
+# The kernel modules (Media Engine, Menu = HOME) are build products: every
+# build rebuilds them in place (psp/Makefile EXTRA_TARGETS), like the online PRX.
+psp/me/gbadhoc_me.prx
+psp/home/gbadhoc_home.prx
 psp/home/gbadhoc_home.elf
 .build-elf.nm
 

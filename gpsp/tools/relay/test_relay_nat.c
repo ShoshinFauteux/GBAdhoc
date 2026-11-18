@@ -88,7 +88,7 @@ static uint32_t ip4(int a, int b, int c, int d)
 
 #define SERVER_IP ip4(203, 0, 113, 1)
 #define SERVER_PORT 27420
-/* g_relay_lan: the relay is a PC on the HOST's LAN (10.0.0.40) behind N[0],
+/* g_relay_lan: the relay is a PC on the HOST's LAN (a private address) behind N[0],
  * whose router forwards UDP 27420/27421 to it (the owner's setup, 2026-11-06):
  * the host reaches it on the LAN, the guest at N[0]'s public address */
 #define RELAY_LAN_IP ip4(10, 0, 0, 40)
@@ -274,7 +274,7 @@ static void deliver_host(int h, pkt_t *p)
 }
 
 /* START cases (run_start): the server is a PC on the GUEST's LAN, 10.0.1.40
- * (the owner's relay on 2026-11-07, the Go joining it at 10.0.0.40): the
+ * (the owner's relay on 2026-11-07, the Go joining it on its LAN): the
  * guest reaches it on the LAN, so the server sees -- and offers the host --
  * a PRIVATE address; the host is elsewhere and reaches it at SERVER_IP. */
 static int srv_lan_send(ep_t *src, const ep_t *dst, const void *buf, size_t len)

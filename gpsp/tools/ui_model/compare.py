@@ -30,7 +30,7 @@ from pspdraw import G_TRI, G_O, G_X, G_SQ  # noqa: E402
 
 FRAME = O.P.ASSETS['frame']
 MOCK_PNG = os.path.join(O.MOCK, 'A-overlay')
-# Fable's Save States design (the six-row menu): builds/savestate-mockups
+# The Save States design (the six-row menu; docs/design/UI-MOCKUPS.md): savestate-mockups
 SS_PNG = os.environ.get('SAVESTATE_MOCKUPS', os.path.normpath(
     os.path.join(O.HERE, '..', '..', '..', 'savestate-mockups')))
 

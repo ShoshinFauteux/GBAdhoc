@@ -180,17 +180,17 @@ typedef struct
     * disagreeing about how long a frame is — which is precisely the failure
     * gen-3's RFU cannot survive (it counts link timeouts in FRAMES).
     *
-    *   0 speed          59.73 fps.  Full speed, and 1.00x the adapter timeout
-    *                    budget a real GBA gets — exactly faithful.
+    *   0 speed          57.00 fps (PCFG_PROFILE_FPS_X100, ADR-0073 above), so
+    *                    1.05x the adapter timeout budget a real GBA (59.73) gets.
     *   1 compatibility  29.97 fps.  Half rate, and therefore 1.99x that
     *                    budget.  The extra wall-clock per emulated timeout is
     *                    the actual mechanism, not "less work per second". */
    int  profile;
-   /* Media Engine mode (user opt-in, default 0): run the GBA scanline
-    * renderer on the PSP's second CPU core.  Applied at boot (the ME PRX,
-    * capture mode and staging buffers are boot-time constructions), so the
-    * settings UI relaunches the app when it changes — the same ADR-0071
-    * restart flow the trading profile used. */
+   /* Media Engine mode (PCFG_ME_MODE_DEF: on in a player build, off in the
+    * harness): the GBA scanline renderer on the PSP's second CPU core.
+    * Applied at boot (the ME PRX, capture mode and staging buffers are
+    * boot-time constructions), so the settings UI relaunches the app when it
+    * changes — the same ADR-0071 restart flow the trading profile used. */
    int  me_mode;
    /* The multiplier in tenths: 15 / 20 / 30 = 1.5x / 2x / 3x (default),
     * 0 = an unlimited preset (ff_smooth picks which).  Use pcfg_ff_set_mode().
@@ -611,7 +611,7 @@ enum
 /* The profile key is bars_<c>.  Up to beta.4 it was ambient_<c>, where 1 was
  * art-or-palette and 2 art-else-game: both read as PCFG_AMB_ART (the old 2
  * exactly; the old 1 gains the game fallback).  Only bars_<c> is written. */
-/* Off until the owner picks a look (Fable's mockups). */
+/* Off until the owner picks a look (the design study's mockups). */
 #define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
 /* GBA colour rows (video.h VIDEO_COLOR_*): config_psp.c cannot include the
  * core's headers, so the count is restated and checked by the host test. */

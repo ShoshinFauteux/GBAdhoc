@@ -30,8 +30,9 @@
 set -uo pipefail
 BUILD=${1:?build}; PLAY=${2:-4000}
 W=$HOME/rewind-agent; O=$W/all_$BUILD; mkdir -p "$O/tools"
-SRC="/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/rewind-worktree"
-LIB=${RW_LIB:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/roms}
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+SRC=${RW_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # the gpsp tree to copy
+LIB=${RW_LIB:-$GBADHOC_ROMS}
 cp "$SRC"/tools/rewind_*.py "$O/tools/" && sed -i 's/\r$//' "$O"/tools/*.py
 ALL="--rewind-inplace --rewind-dirty 3 --rewind-fast-restore --rewind-clock --rewind-burst 4 --rewind-verify --rtc-pin 1700000000 ${RW_EXTRA:-}"
 IN=$W/work/in/mash.inputs

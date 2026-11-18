@@ -4,7 +4,7 @@
 set -uo pipefail
 ARM=$1; TAG=${2:-ppsave}; shift; shift || true
 W=$HOME/rewind-agent; S=$W/s9
-T=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/rewind-worktree/tools
+T=${RW_TOOLS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}   # this tree's tools/
 mkdir -p $S/pp
 {
   echo "wait 300"

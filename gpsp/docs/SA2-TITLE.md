@@ -121,7 +121,7 @@ Frame 120 of each arm, CPU renderer | ME model (vis) | ME model at frame end:
 `GU_NEAREST` for one `sceGuTexFilter` call in `vid_draw_frame` /
 `vid_draw_prestaged`. Nothing else reads it: there are no pacing, audio or
 emulation paths that depend on it. Its only cost is GE sampling time inside
-`blit_prof wait`. Existing hardware logs (`builds/**/frontend.log`) show
+`blit_prof wait`. Existing hardware logs (`frontend.log` from earlier rig runs; not kept in the repo) show
 `wait` window means of 32-42 us for fit+nearest and 54-126 us for
 stretch+bilinear. That comparison is confounded by stretch drawing 18% more
 pixels, but either way it is under 1% of a 16.7 ms frame. PPSSPP's GE is
@@ -144,12 +144,12 @@ the "audio-master nudge" holds it at `RING_HIGH_WATER`, which was
 * A player who changes the filter (menu, or Triangle) and then plays on sees
   the lag build up "after turning bilinear on". The filter is coincidental.
 
-Hardware evidence. `builds/wireless-rig/logs/growl-ch11/auto002-A-host.log`
-(real PSP, `audio_rate in=32768`) has `frame_hist` windows of 600 frames
+Hardware evidence. A wireless-rig host log (growl, channel 11, a real PSP with
+`audio_rate in=32768`; not kept in the repo) has `frame_hist` windows of 600 frames
 showing `nudge=0` for windows 1-19, then `nudge=1` at window 20 and 2-3 in
 every window for the rest of the run. That is the ring reaching 0.75 s at
 ~200 s and staying there. The PPSSPP run below hits its first nudge at the
-same window, 20. 3,528 + 624 hardware windows across `builds/` sit at nudge 2-3.
+same window, 20. 3,528 + 624 hardware windows across the kept rig logs sit at nudge 2-3.
 
 ### Change (this branch)
 

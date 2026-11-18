@@ -1,0 +1,4 @@
+# T14 fehost: the hand copies of core declarations frontend-common/fe_host.c may keep: name <TAB> reason.
+# Every other core name fe_host.c uses comes from gpsp/core_fe.h; abi_asserts.py fehost fails a copy of a
+# core_fe.h name, an unlisted copy, and a row that matches no copy.
+rom_translation_cache	cpu.h types it per configuration (a pointer under RUNTIME_JIT_CACHE, an array otherwise), so core_fe.h cannot declare it (its NOT HERE list); the copy is the PSP's pointer, in fe_host.c's GBA_LINK section, which only the PSP builds

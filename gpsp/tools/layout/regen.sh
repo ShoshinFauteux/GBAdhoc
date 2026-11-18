@@ -4,7 +4,7 @@
 #   (tools/layout/profile_weights.txt) and the function sizes of the tree's
 #   current LAYOUT_PIN=1 build.  docs/LAYOUT-PINNING.md.  Git Bash or WSL, with docker.
 #
-# Run after `LAYOUT_PIN=1 tools/build.sh <profile>` (pinning is opt-in), then
+# Run after `tools/build.sh <profile>` (pinning is built in), then
 # rebuild: the order only changes the link, so tools/build.sh again.  When the
 # per-frame path itself changes (new hot functions, not just new code
 # elsewhere), refresh the profile first: tools/layout/README in the doc.

@@ -26,7 +26,7 @@ How:
     copy of THAT flavour's -E, asserted or UNCHECKED (P-review r2, N4).  A copy in an #if arm
     the flavour does not compile is in neither list; `unbuilt` (below) lists the copy sites
     that no generated flavour has (P-review r3, B6).
- 3b. PLATFORM (tier C, C6-1; health-out/design/C-6.md): a copy whose name abi_asserts.platform
+ 3b. PLATFORM (tier C, C6-1; gpsp/docs/design/TIER-C.md C-6): a copy whose name abi_asserts.platform
     lists (linker symbols, the PSP_MODULE_INFO expansion, an SDK function its header lacks) is not
     core ABI.  It is listed in the header's PLATFORM block with that file's reason, not as
     UNCHECKED, so UNCHECKED holds only copies of core (or other tree) names.  The block's rows
@@ -254,7 +254,7 @@ def _file_stmt(stmt, defined, own_vars, res):
 
 
 KNOWN = os.path.join(HERE, 'abi_asserts.known')
-# THE GUARD (tier C, C6-7; health-out/design/C-6.md).  main_psp.c includes gpsp/core_fe.h, so a
+# THE GUARD (tier C, C6-7; gpsp/docs/design/TIER-C.md C-6).  main_psp.c includes gpsp/core_fe.h, so a
 # frontend copy of a name core_fe.h declares is redundant at best and, retyped, a compile error
 # in main_psp.o itself.  gen FAILS on any such copy ("delete it: core_fe.h declares it").  This
 # replaces the old pin file (abi_asserts.pinned): its job was to catch an asserted copy retyped
@@ -906,6 +906,306 @@ def selftest(src, gen_dir):
     return 1 if bad[0] else 0
 
 
+# ------------------------------------------------------------- fe_host.c and the weak core references
+# THE OTHER FRONTEND TU (rescore 2026-11-17, follow-up 1).  frontend-common/fe_host.c includes
+# core_fe.h like main_psp.c.  `fehost` holds it to the same rule without docker: a raw scan (every
+# #if arm) of fe_host.c through extract() must find no copy of a core_fe.h name and no other hand
+# copy except the rows of abi_asserts.fehost (name <TAB> reason), and no `__attribute__((weak))`
+# (a weak core reference is core_fe.h's declaration plus `#pragma weak NAME`).
+# WEAK REFERENCES.  A weak reference to a renamed core name links and resolves to NULL: nothing
+# fails.  So every `#pragma weak NAME` in fe_host.c and in main_psp.c's TU must name a core_fe.h
+# name with a row in abi_asserts.weak (name <TAB> profiles that define it <TAB> reason), every row
+# must still have its pragma, and every row's name must have a definition in the core sources
+# (CORE_GLOBS: a C definition at file scope, or a global label in a .S).  `weaknm` checks one
+# build's ELF symbol table against the rows (tools/build.sh runs it after every link): a name a
+# row says the profile defines and the ELF does not is a FAIL.
+FEHOST = 'frontend-common/fe_host.c'
+FEHOST_ALLOW = os.path.join(HERE, 'abi_asserts.fehost')
+WEAK = os.path.join(HERE, 'abi_asserts.weak')
+PROFILES = ('release', 'lab', 'harness', 'harness64', 'diagnostic', 'soak')
+CORE_GLOBS = ('*.c', '*.cc', '*.S', 'libretro/*.c', 'mips/*.S')
+PRAGMA_WEAK = re.compile(r'^\s*#\s*pragma\s+weak\s+(\w+)')
+ATTR_WEAK = re.compile(r'__attribute__\s*\(\(\s*(?:__)?weak(?:__)?\s*\)\)')
+ASM_GLOBAL = re.compile(r'^\s*(?:\.globl|\.global)\s+(\w+)|^\s*defsymbl\s*\(\s*(\w+)\s*\)')
+
+
+def load_rows(path):
+    """[(name, [fields...])] of a TAB table (# comments, blank lines skipped)."""
+    out = []
+    for line in open(path, encoding='utf-8'):
+        if line.startswith('#') or not line.strip():
+            continue
+        p = line.rstrip('\n').split('\t')
+        out.append((p[0], p[1:]))
+    return out
+
+
+def load_weak(path=WEAK):
+    """{name: (frozenset of profiles that must define it, reason)}; 'all' / 'none' / a comma list."""
+    out = {}
+    for name, f in load_rows(path):
+        req = f[0].strip() if f else ''
+        if req == 'all':
+            prof = frozenset(PROFILES)
+        elif req == 'none':
+            prof = frozenset()
+        else:
+            prof = frozenset(x.strip() for x in req.split(','))
+            bad = prof - set(PROFILES)
+            if bad or not prof:
+                raise SystemExit('abi_asserts: %s: %s: profiles %r (want all, none or of %s)'
+                                 % (path, name, req, ', '.join(PROFILES)))
+        out[name] = (prof, f[1] if len(f) > 1 else '')
+    return out
+
+
+def _text(src, rel, over):
+    if over and rel in over:
+        return over[rel]
+    return open(os.path.join(src, rel), encoding='utf-8', errors='replace').read()
+
+
+def _toks_of(text):
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix='abi_fh_')
+    try:
+        q = os.path.join(d, 'x.c')
+        with open(q, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+        return C.load_raw(q)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def text_defs(text, names):
+    """the names (of `names`) one C file DEFINES at file scope.  Text, not tokens: the raw token
+    view keeps every #if arm, and a core file whose arms each open a brace does not balance.  The
+    core starts a file-scope definition at column 0 (its style, checked by the selftest's F0 on
+    every row): a variable line `[qualifiers] type [*]NAME[[N]] [ATTR_MACRO] (= ...|;)` that is not
+    extern, typedef or static, or a function header `type NAME(...)` whose parameter list is
+    followed by `{` rather than `;`."""
+    code = re.sub(r'/\*.*?\*/', lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text, flags=re.S)
+    code = re.sub(r'//[^\n]*', '', code)
+    lines = code.split('\n')
+    found = set()
+    for nm in names:
+        var = re.compile(r'^(?!extern\b|typedef\b|static\b|#)[A-Za-z_][\w \t*]*?\b%s\s*(?:\[[^\]]*\])?'
+                         r'\s*(?:[A-Z_][A-Z0-9_]*\s*)?(?:=|;)' % re.escape(nm))
+        fun = re.compile(r'^(?!extern\b|typedef\b|#)[A-Za-z_][\w \t*]*?\b%s\s*\(' % re.escape(nm))
+        for i, ln in enumerate(lines):
+            if var.match(ln):
+                found.add(nm)
+                break
+            m = fun.match(ln)
+            if m:
+                rest = '\n'.join(lines[i:i + 40])[m.end() - 1:]
+                depth, k = 0, 0
+                for k, ch in enumerate(rest):
+                    depth += (ch == '(') - (ch == ')')
+                    if depth == 0:
+                        break
+                after = rest[k + 1:].lstrip()
+                if after.startswith('{'):
+                    found.add(nm)
+                    break
+    return found
+
+
+def core_defs(src, names, over=None):
+    """{name: 'file'} of the names (of `names`) the core sources (CORE_GLOBS) define."""
+    import glob
+    rels = set()
+    for g in CORE_GLOBS:
+        rels |= {os.path.relpath(p, src).replace('\\', '/') for p in glob.glob(os.path.join(src, g))}
+    found = {}
+    for rel in sorted(rels):
+        text = _text(src, rel, over)
+        want = [nm for nm in names if nm not in found and nm in text]
+        if not want:
+            continue
+        if rel.endswith('.S'):
+            got = set()
+            for ln in text.split('\n'):
+                m = ASM_GLOBAL.match(ln)
+                if m:
+                    got.add(m.group(1) or m.group(2))
+        else:
+            got = text_defs(text, want)
+        for nm in want:
+            if nm in got:
+                found[nm] = rel
+    return found
+
+
+def weak_sites(src, over=None):
+    """[(name, cite)] of every `#pragma weak NAME` in fe_host.c and main_psp.c's TU (fragments
+    followed), every #if arm."""
+    out = []
+    for i, ln in enumerate(_text(src, FEHOST, over).split('\n'), 1):
+        m = PRAGMA_WEAK.match(ln)
+        if m:
+            out.append((m.group(1), 'fe_host.c:%d' % i))
+    mp = os.path.join(src, 'psp', 'main_psp.c')
+    if os.path.exists(mp):
+        for lab, i, ln in tu_lines(mp, os.path.join(src, 'psp')):
+            m = PRAGMA_WEAK.match(ln)
+            if m:
+                out.append((m.group(1), '%s:%d' % (lab, i)))
+    return out
+
+
+def fehost_check(src, over=None, allow_path=FEHOST_ALLOW, weak_path=WEAK):
+    """(problems [str], notes [str]).  over = {tree-relative path: mutated text}."""
+    probs, notes = [], []
+    cfe = core_fe_names(src)
+    allow = dict((n, f[0] if f else '') for n, f in load_rows(allow_path))
+    text = _text(src, FEHOST, over)
+    seen = set()
+    for name, line, d, kind in extract(_toks_of(text)):
+        at = 'fe_host.c:%d' % line
+        if name in cfe:
+            probs.append('%s %s: a copy of a name core_fe.h declares (fe_host.c includes it): delete the copy'
+                         % (at, name))
+        elif name in allow:
+            seen.add(name)
+            notes.append('%s %s: allowed hand copy (abi_asserts.fehost: %s)' % (at, name, allow[name]))
+        else:
+            probs.append('%s %s: a hand copy of a core declaration (%s): declare it in core_fe.h, or list it '
+                         'in abi_asserts.fehost with the reason core_fe.h cannot' % (at, name, kind))
+    for nm in sorted(set(allow) - seen):
+        probs.append('abi_asserts.fehost row %s matches no copy in fe_host.c: delete the row' % nm)
+    for i, ln in enumerate(text.split('\n'), 1):
+        if ATTR_WEAK.search(re.sub(r'/\*.*?\*/|//.*', '', ln)):
+            probs.append('fe_host.c:%d: __attribute__((weak)): a weak core reference is core_fe.h\'s '
+                         'declaration plus `#pragma weak NAME` with a row in abi_asserts.weak' % i)
+    weak = load_weak(weak_path)
+    sites = weak_sites(src, over)
+    named = set()
+    for name, at in sites:
+        named.add(name)
+        if name not in cfe:
+            probs.append('%s #pragma weak %s: not a core_fe.h name (declare it there first)' % (at, name))
+        if name not in weak:
+            probs.append('%s #pragma weak %s: no row in abi_asserts.weak (the profiles that define it, '
+                         'and why the reference is weak)' % (at, name))
+    for nm in sorted(set(weak) - named):
+        probs.append('abi_asserts.weak row %s: no `#pragma weak %s` in fe_host.c or main_psp.c\'s TU: '
+                     'delete the row' % (nm, nm))
+    defs = core_defs(src, sorted(weak), over)
+    for nm in sorted(weak):
+        if nm in defs:
+            notes.append('weak %-24s defined in %-22s required in: %s' % (
+                nm, defs[nm], ', '.join(p for p in PROFILES if p in weak[nm][0]) or 'none'))
+        else:
+            probs.append('weak %s: no definition in the core sources (%s): renamed or removed?  A weak '
+                         'reference to it resolves to NULL in every build' % (nm, ', '.join(CORE_GLOBS)))
+    notes.append('fehost: %d core_fe.h names, %d weak references at %d sites, %d allowed hand copies'
+                 % (len(cfe), len(weak), len(sites), len(seen)))
+    return probs, notes
+
+
+def nm_defined(nm_text):
+    """the names an `nm` listing defines (any symbol type but U/w/v)."""
+    out = set()
+    for ln in nm_text.split('\n'):
+        p = ln.split()
+        if len(p) >= 3 and p[-2] not in ('U', 'w', 'v'):
+            out.add(p[-1])
+    return out
+
+
+def weaknm_check(nm_text, profile, weak_path=WEAK):
+    """problems [str]: each abi_asserts.weak name the profile must define that the ELF lacks."""
+    if profile not in PROFILES:
+        return ['weaknm: unknown profile %r (want one of %s)' % (profile, ', '.join(PROFILES))]
+    have = nm_defined(nm_text)
+    if not have:
+        return ['weaknm: the nm listing defines nothing (no psp-nm output?)']
+    weak = load_weak(weak_path)
+    return ['%s: weak core reference %s is not defined in this ELF, and abi_asserts.weak says this '
+            'profile defines it (a renamed core name resolves to NULL): %s' % (profile, nm, weak[nm][1])
+            for nm in sorted(weak) if profile in weak[nm][0] and nm not in have]
+
+
+def fehost_selftest(src):
+    """the tree passes (F0); then mutants, each of which must fail with its name in the message:
+      W1 a core name renamed in its definition (badjump_last_pc in cpu_threaded.c)
+      W2 a hand copy of a core_fe.h name added to fe_host.c (extern uint32_t gamepak_reload)
+      W3 an unlisted hand copy (a core function prototype not in core_fe.h)
+      W4 a weak reference by attribute instead of pragma
+      W5 a #pragma weak with no abi_asserts.weak row
+      W6 weaknm: an ELF listing without a name the profile must define (the rename, linked)
+      W7 weaknm: names a profile need not define may be absent"""
+    bad = [0]
+
+    def t(cond, msg):
+        print('  %s  %s' % ('ok  ' if cond else 'FAIL', msg))
+        bad[0] += 0 if cond else 1
+    probs, notes = fehost_check(src)
+    t(not probs, 'F0 this tree: %s%s' % (notes[-1], ''.join('\n        ' + p for p in probs)))
+    weak = load_weak()
+    fe = _text(src, FEHOST, None)
+    cases = []
+    cpu = _text(src, 'cpu_threaded.c', None)
+    if 'badjump_last_pc' in weak and re.search(r'^u32 badjump_last_pc\b', cpu, re.M):
+        cases.append(('W1 badjump_last_pc renamed in cpu_threaded.c',
+                      {'cpu_threaded.c': re.sub(r'\bbadjump_last_pc\b', 'badjump_last_pc_v2', cpu)},
+                      'weak badjump_last_pc: no definition'))
+    else:
+        t(False, 'W1 cannot run: no `u32 badjump_last_pc` in cpu_threaded.c or no abi_asserts.weak row')
+    anchor = '#pragma weak backup_write_gen\n'
+    if anchor in fe:
+        cases.append(('W2 a copy of a core_fe.h name in fe_host.c',
+                      {FEHOST: fe.replace(anchor, anchor + 'extern uint32_t gamepak_reload;\n')},
+                      'gamepak_reload: a copy of a name core_fe.h declares'))
+        cases.append(('W3 an unlisted hand copy',
+                      {FEHOST: fe.replace(anchor, anchor + 'int gba_core_rename_me(void);\n')},
+                      'gba_core_rename_me: a hand copy of a core declaration'))
+        cases.append(('W4 a weak reference by attribute',
+                      {FEHOST: fe.replace(anchor, 'extern volatile uint32_t backup_write_gen __attribute__((weak));\n')},
+                      '__attribute__((weak))'))
+        cases.append(('W5 a #pragma weak with no row',
+                      {FEHOST: fe.replace(anchor, anchor + '#pragma weak skip_next_frame\n')},
+                      '#pragma weak skip_next_frame: no row in abi_asserts.weak'))
+    else:
+        t(False, 'W2-W5 cannot run: no `%s` line in fe_host.c' % anchor.strip())
+    for title, over, want in cases:
+        p2, _ = fehost_check(src, over)
+        hit = [p for p in p2 if want in p]
+        t(bool(hit), '%s: %s' % (title, (hit or p2 or ['(no problem reported)'])[0][:150]))
+    req = sorted(nm for nm in weak if 'release' in weak[nm][0])
+    nm_all = '\n'.join('0880%04x 00000004 B %s' % (k, nm) for k, nm in enumerate(req))
+    if req:
+        t(not weaknm_check(nm_all, 'release'), 'W6 base: a listing with every name release must define passes')
+        p6 = weaknm_check('\n'.join(l for l in nm_all.split('\n') if not l.endswith(' ' + req[0])), 'release')
+        t(len(p6) == 1 and req[0] in p6[0], 'W6 the listing without %s fails: %s' % (req[0], (p6 or ['-'])[0][:120]))
+    opt = sorted(nm for nm in weak if 'release' not in weak[nm][0])
+    if opt and req:
+        t(not weaknm_check(nm_all, 'release'), 'W7 release need not define %s' % ', '.join(opt))
+    print('abi_asserts fehost-selftest: %s' % ('PASS' if not bad[0] else '%d FAILED' % bad[0]))
+    return 1 if bad[0] else 0
+
+
+def cmd_fehost(src):
+    probs, notes = fehost_check(src)
+    for x in notes:
+        print('  ' + x)
+    for p in probs:
+        print('  FAIL ' + p)
+    print('abi_asserts fehost: %s' % ('ok' if not probs else '%d problem(s)' % len(probs)))
+    return 1 if probs else 0
+
+
+def cmd_weaknm(nm_path, profile, strict):
+    probs = weaknm_check(open(nm_path, encoding='utf-8', errors='replace').read(), profile)
+    for p in probs:
+        print('  %s %s' % ('FAIL' if strict else 'NOTE', p))
+    print('abi_asserts weaknm [%s]: %s' % (profile, 'ok' if not probs else '%d weak core reference(s) '
+                                           'unresolved%s' % (len(probs), '' if strict else ' (reported only)')))
+    return 1 if probs and strict else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd')
@@ -939,9 +1239,25 @@ def main():
                    help='the gpsp tree (default: this tool\'s)')
     s.add_argument('--gen', default=os.path.join(HERE, 'generated'),
                    help='DIR holding <flavour>/fe_abi_asserts.h (default: this tree\'s generated/)')
+    f = sub.add_parser('fehost', help='fe_host.c: no hand copy of a core_fe.h name; weak references listed '
+                       'and defined by the core (no docker)')
+    f.add_argument('--src', default=os.path.normpath(os.path.join(HERE, '..', '..')))
+    fs = sub.add_parser('fehost-selftest', help='fehost on this tree, then its mutants (no docker)')
+    fs.add_argument('--src', default=os.path.normpath(os.path.join(HERE, '..', '..')))
+    w = sub.add_parser('weaknm', help='one build: every weak core reference its profile must have is defined')
+    w.add_argument('--nm', required=True, help='psp-nm of the ELF (tools/build.sh: .build-elf.nm)')
+    w.add_argument('--profile', required=True, choices=PROFILES)
+    w.add_argument('--strict', action='store_true', help='exit 1 on a missing name (else report only)')
     o = ap.parse_args()
     if o.cmd == 'selftest':
-        return selftest(o.src, o.gen)
+        rc = selftest(o.src, o.gen)
+        return rc | fehost_selftest(o.src)
+    if o.cmd == 'fehost':
+        return cmd_fehost(o.src)
+    if o.cmd == 'fehost-selftest':
+        return fehost_selftest(o.src)
+    if o.cmd == 'weaknm':
+        return cmd_weaknm(o.nm, o.profile, o.strict)
     if o.cmd == 'unbuilt':
         return cmd_unbuilt(o.src, o.gen)
     if o.cmd == 'gen':

@@ -11,6 +11,9 @@ with the PSP's 8 output channels.  Checked:
      with its channel still reserved; audio_stop releases it.  Nine
      terminate-restarts in a row (one more than there are channels) each
      find a channel, so the game is never left silent.
+  3. Settings > Volume (issue #31) is the channel's own volume: the output
+     call is given g_audio_hw_vol, and the samples it is given are the same
+     at any volume (none is scaled by it).
 
 Then mutants of the production text, each of which must fail.
 """
@@ -43,6 +46,7 @@ STUB = r'''
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 typedef unsigned SceSize;
 typedef unsigned SceUInt;
@@ -106,9 +110,20 @@ static int sceAudioChRelease(int ch)
    pthread_mutex_unlock(&drv);
    return rc;
 }
+static volatile int record;       /* 3: keep the first chunk, then stop */
+static int out_vol;
+static int16_t out_first[OUT_CHUNK * 2];
 static int sceAudioOutputBlocking(int ch, int vol, void *buf)
 {
-   (void)ch; (void)vol; (void)buf;
+   (void)ch;
+   if (record)
+   {
+      out_vol = vol;
+      memcpy(out_first, buf, sizeof out_first);
+      record = 0;
+      audio_running = 0;          /* one chunk is enough */
+      return 0;
+   }
    playing = 1;
    while (stuck)
       usleep(1000);               /* a cancellation point: terminate */
@@ -173,6 +188,25 @@ static int sceKernelDeleteThread(SceUID id) { (void)id; return 0; }
 
 @FUNCTIONS@
 
+/* 3: one chunk out of a full ring of known samples at channel volume vol */
+static void one_chunk(int vol, int16_t *chunk)
+{
+   int i;
+   for (i = 0; i < RING_FRAMES * 2; i++)
+      audio_ring[i] = (int16_t)(i * 97 - 9000);
+   ring_r = 0;
+   ring_w = RING_FRAMES;
+   g_audio_hw_vol = vol;
+   record = 1;
+   audio_start();
+   for (i = 0; i < 2000 && record; i++)
+      usleep(1000);
+   assert(!record);
+   audio_stop();
+   assert(out_vol == vol);        /* the call is given the setting */
+   memcpy(chunk, out_first, sizeof out_first);
+}
+
 static void wait_playing(void)
 {
    int i;
@@ -219,8 +253,19 @@ int main(void)
    }
    assert(reserved == 11 && released == 11 && bad_releases == 0);
 
+   /* 3. The volume reaches the call and no sample: one chunk at full volume
+    *    and one at 1/8 are the same samples, and the first is the ring's. */
+   {
+      int16_t loud[OUT_CHUNK * 2], quiet[OUT_CHUNK * 2];
+      one_chunk(PSP_AUDIO_VOLUME_MAX, loud);
+      one_chunk(PSP_AUDIO_VOLUME_MAX / 8, quiet);
+      assert(memcmp(loud, quiet, sizeof loud) == 0);
+      assert(loud[0] == audio_ring[0] && loud[1] == audio_ring[1]);  /* frame 0, unresampled */
+   }
+
    puts("audio channel: released on return, not twice on a late join, "
-        "released after a terminate, 9 terminate-restarts pass");
+        "released after a terminate, 9 terminate-restarts pass; the volume "
+        "is the call's, no sample is scaled");
    return 0;
 }
 '''
@@ -255,6 +300,14 @@ MUTANTS = (
      "   audio_ch = -1;\n   sceAudioChRelease(ch);",
      "   sceAudioChRelease(ch);",
      "bad_releases == 0"),
+    ("the audio thread ignores the setting",
+     "sceAudioOutputBlocking(ch, g_audio_hw_vol, out)",
+     "sceAudioOutputBlocking(ch, PSP_AUDIO_VOLUME_MAX, out)",
+     "out_vol == vol"),
+    ("a sample is scaled by the volume",
+     "            out[i * 2 + 0] = (int16_t)sl;\n",
+     "            out[i * 2 + 0] = (int16_t)((sl * g_audio_hw_vol) >> 15);\n",
+     "memcmp(loud, quiet, sizeof loud) == 0"),
 )
 for label, old, new, expect in MUTANTS:
     bad_src = SOURCE.replace(old, new, 1)

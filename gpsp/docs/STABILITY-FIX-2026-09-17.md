@@ -1,10 +1,8 @@
 # The hard freeze: root cause, fix, and what is still unproven
 
 Branch `opus/performance-stability-fixes`, from `7283f13` (the accepted
-candidate). Worktree
-`builds/opus-performance-stability-worktree`; artifacts
-`builds/opus-stability-candidate/`. The preserved candidate at
-`builds/unbound-stability-release-candidate-7283f13` was not touched.
+candidate). The worktree, the artifacts and the preserved candidate were
+local folders outside the repo; the preserved candidate was not touched.
 
 ---
 
@@ -355,8 +353,8 @@ to the freeze.
 
 ## What to do next, in order
 
-1. **Hardware.** Install the release profile from
-   `builds/opus-stability-candidate/release/` and attempt the reported sequence
+1. **Hardware.** Install the release profile of this branch (`tools/build.sh
+   release`) and attempt the reported sequence
    on a PSP Go: Unbound, then Heart & Soul without leaving GBAdhoc, change the
    soundtrack, toggle fast-forward repeatedly, then battle.
 2. **Confirm the perf claim on hardware** with the Unbound rival fixture and both

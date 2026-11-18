@@ -15,6 +15,25 @@
 #include "fe_linkprof.h"
 #include "../netdrv/gb_link.h"
 #include "netpacket_host.h"
+
+/* THE CORE'S NAMES come from core_fe.h, the one core-to-frontend header: no
+ * core declaration is copied here by hand (T14 `abi_asserts.py fehost` fails
+ * a copy).  core_fe.h takes its types from the includer, as the core's own
+ * common.h defines them: psptypes.h on the PSP, the same block elsewhere. */
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <time.h>
+#ifdef PSP
+#include <psptypes.h>
+#else
+typedef unsigned char u8;
+typedef unsigned short int u16;
+typedef unsigned int u32;
+typedef signed int s32;
+typedef signed long long int s64;
+#endif
+#include "../core_fe.h"
 #ifdef REWIND
 #include "fe_rewind.h"
 #endif
@@ -141,10 +160,11 @@ static unsigned frames_skipped;   /* ADR-0019 accounting; see below */
  * as fe_host_last_frame() consumers (dumps, state thumbnails, the wake
  * overlay) run; shutdown clears last_frame before the core frees it. */
 static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
-/* fe_host_skip_override(): -1 none.  The GBA core reads its own copy; weak,
- * so host tests that link this file without the core still link. */
+/* fe_host_skip_override(): -1 none.  The GBA core reads its own copy
+ * (frontend_skip_override, libretro.c; core_fe.h); weak, so host tests that
+ * link this file without the core still link (abi_asserts.weak). */
 static int skip_override = -1;
-extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
+#pragma weak frontend_skip_override
 
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
@@ -978,8 +998,8 @@ static int      sram_have_blk;   /* the .sav on disk matches sram_blk_crc */
  * Pokemon game reports as "The save file is corrupted" if the console is
  * switched off, crashes or runs flat in that window (reproduced; reported
  * for Sapphire).  The window is now the settle time plus one write.  The
- * 5 s cadence stays as the backstop. */
-extern volatile uint32_t backup_write_gen __attribute__((weak));
+ * 5 s cadence stays as the backstop.  (backup_write_gen: core_fe.h.) */
+#pragma weak backup_write_gen
 
 /* Frames of save silence before the first nudge: a gen-3 Pokemon save
  * writes sectors for ~1 s of game time, and scanning mid-save would only
@@ -1104,7 +1124,6 @@ static void rw_put_picture(const void *data, size_t pitch)
    rw_cap_got = 1;
 }
 static void      fe_host_rewind_state_loaded(void);
-extern void      gpsp_rewind_mark_all(void);
 #endif
 
 /* ------------------------------------------------------------ callbacks -- */
@@ -2776,6 +2795,9 @@ int fe_host_option_set_live(const char *key, const char *value)
    return 0;
 }
 
+#ifndef GPSP_NO_TELEMETRY
+#pragma weak open_gba_bios_rom   /* bios_data.S; core_fe.h */
+#endif
 static void log_bios_evt(void)
 {
    char path[512];
@@ -2788,10 +2810,10 @@ static void log_bios_evt(void)
    /* gpsp_bios=builtin (the Lab's lab_bios=builtin, a host tool's --option):
     * the core never opens gba_bios.bin (libretro.c retro_load_game), so a
     * hash of the file beside the build would name a BIOS this run does not
-    * use.  Report the bundled image the core copies instead.  Weak: a test
-    * host that links fe_host.c without the core has no image. */
+    * use.  Report the bundled image the core copies instead.  Weak (the
+    * pragma before this function): a test host that links fe_host.c without
+    * the core has no image. */
    {
-      extern const uint8_t open_gba_bios_rom[] __attribute__((weak));
       size_t i;
       for (i = 0; i < sizeof(options) / sizeof(options[0]); i++)
          if (!strcmp(options[i].key, "gpsp_bios") &&
@@ -3098,16 +3120,13 @@ static int gba_commit(void *user, const void *image, size_t size)
  * as a boot loads it.  Any failure puts the single-player configuration back
  * from the scratch and reports, never a half-session. */
 static int gba_cable_late;
-void dynarec_release_translation_caches(void);     /* cpu_threaded.c */
-extern uint32_t jit_cache_replay;                   /* cpu_threaded.c */
-extern uint32_t gamepak_reload;                     /* gba_memory.c */
-extern uint32_t gamepak_hold_bytes;                 /* gba_memory.c */
-extern uint32_t gamepak_buffer_pages;
-extern void *gamepak_hold;
-extern uint32_t jit_cache_tier;                     /* 1 small, 2 large */
-/* A's translation-cache offset for its next load (LAYOUT_PIN link cores;
- * weak: an unpinned core does not define it).  Section 20. */
-extern int32_t jit_pin_at __attribute__((weak));
+/* The core's names here (jit_cache_replay, gamepak_reload, gamepak_hold,
+ * jit_cache_tier: 1 small, 2 large; ...) are core_fe.h's.
+ * jit_pin_at: A's translation-cache offset for its next load (LAYOUT_PIN link
+ * cores).  Weak, and tested before use: every PSP profile defines it
+ * (abi_asserts.weak, checked by tools/build.sh), but making the reference
+ * strong folds the test away, a code change in the pinned layout.  Section 20. */
+#pragma weak jit_pin_at
 static void gba_pin_a(int32_t at)
 {
    if (&jit_pin_at)
@@ -3118,7 +3137,9 @@ static int gba_tier_ix(void)
 {
    return jit_cache_tier == 2 ? 1 : 0;
 }
-extern uint8_t rom_translation_cache_static[];      /* mips_stub.S */
+/* The one hand copy of a core name in this file (abi_asserts.fehost): cpu.h
+ * types rom_translation_cache per configuration, so core_fe.h cannot declare
+ * it.  This is the PSP's (RUNTIME_JIT_CACHE) pointer; GBA_LINK is PSP-only. */
 extern uint8_t *rom_translation_cache;              /* cpu_threaded.c */
 
 /* Where instance A's state and battery wait across its reload.  On the SMALL
@@ -3389,8 +3410,6 @@ int fe_host_gba_sessmem_cycle(int up)
       return 0;
    return gba_session_mem(up);
 }
-
-extern uint8_t bios_rom[];                           /* gba_memory.c */
 
 static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
@@ -4474,9 +4493,10 @@ static void core_phase_evt(void)
  * not a reset -- the BIOS then boots with the game's IRQs, timers and sound
  * DMA still live (black screen over a looping sound buffer).  The core raises
  * this flag instead, and the real reset happens here, between frames.  Weak,
- * so a core built without the guard links and never resets. */
-extern volatile uint32_t badjump_reset_pending __attribute__((weak));
-extern uint32_t badjump_last_pc __attribute__((weak));
+ * so a core built without the guard (the interpreter-only desktop twin, host
+ * tests without a core) links and never resets.  Both: core_fe.h. */
+#pragma weak badjump_reset_pending
+#pragma weak badjump_last_pc
 static unsigned guest_faults;
 
 static void fe_host_guest_fault_check(void)
@@ -4499,9 +4519,8 @@ unsigned fe_host_guest_faults(void)
  * core maps a page it could not read as zeros and raises a sticky flag; the
  * platform polls it at every frame boundary (code-health C-0): the core's
  * flag says whether this failure was reported, so the frontend keeps no
- * latch of its own and one rom_read_failed event goes with every pause. */
-extern uint32_t gamepak_short_reads, gamepak_reopens;   /* gba_memory.c */
-int gamepak_read_poll(void);
+ * latch of its own and one rom_read_failed event goes with every pause.
+ * (gamepak_read_poll, gamepak_short_reads, gamepak_reopens: core_fe.h.) */
 
 int fe_host_rom_read_poll(void)
 {
@@ -4801,16 +4820,12 @@ static unsigned rw_tick_n, rw_tick_max_us;
 static uint16_t *rw_present;
 static int      rw_present_valid;
 
-/* The core's rewind image (libretro/libretro.c): the save state plus the
- * two things it leaves out that a rewind cannot. */
-extern size_t gpsp_rewind_state_size(void);
-extern bool   gpsp_rewind_gather(void *data, size_t size);
-extern bool   gpsp_rewind_restore(const void *data, size_t size);
-extern uint32_t gpsp_rewind_light;
-/* Measurement: translated code emitted while re-running after a restore
- * (cpu_threaded.c).  Weak: an interpreter-only core has no such thing. */
-extern void gpsp_rewind_jit_used(uint32_t *rom, uint32_t *ram)
-   __attribute__((weak));
+/* The core's rewind image (libretro/libretro.c, declared in core_fe.h): the
+ * save state plus the two things it leaves out that a rewind cannot.
+ * gpsp_rewind_jit_used, the measurement of translated code emitted while
+ * re-running after a restore (cpu_threaded.c), is weak: an interpreter-only
+ * core (the SDL desktop twin with REWIND=1) has no such thing. */
+#pragma weak gpsp_rewind_jit_used
 static uint32_t rw_jit_rom0, rw_jit_ram0;
 static int      rw_jit_open;
 static uint64_t rw_jit_rom_emit, rw_jit_ram_emit;
@@ -4841,36 +4856,10 @@ static void rw_jit_close(void)
  *
  * A restore is the mirror image: the arrays are copied back from the
  * reference and the unchanged save-state loader does the rest. */
-typedef struct { uint32_t bytes; uint8_t *live; } rw_arr_t;
-extern uint32_t gpsp_rewind_layout(uint8_t *scratch, rw_arr_t arr[6]);
-extern void     gpsp_rewind_rest_gather(uint8_t *scratch, uint8_t *rest);
-extern bool     gpsp_rewind_rest_restore(uint8_t *scratch, const uint8_t *rest,
-                                         int keep_ram_code);
-extern int      gpsp_rewind_arrays_restore(const uint8_t *ref,
-                                           const uint8_t *ewram256,
-                                           const uint8_t *vram96,
-                                           uint32_t *copied);
-extern void     gpsp_rewind_map_peek(uint8_t *ewram256, uint8_t *vram96);
-extern void     gpsp_rewind_map_clean(void);
-extern void     gpsp_rewind_marks_want(int on);
-extern int      gpsp_rewind_marks_ok(void);
-extern void     gpsp_rewind_clock_mode(int frames);
-extern void     gpsp_rewind_clock_sync(void);
-extern long long gpsp_rewind_clock_time(const long long *set);
-extern uint32_t gpsp_rewind_audio_bytes(void);
-extern uint32_t gpsp_rewind_audio_gather(uint8_t *dst, uint32_t stale);
-extern void     gpsp_rewind_audio_restore(const uint8_t *src);
-extern int      gpsp_rewind_take_dirty(uint8_t *ewram256, uint8_t *vram96);
-extern void     gpsp_rewind_gprof(uint32_t out[4], uint64_t (*clock)(void));
-extern uint32_t gba_rewind_cheat_gen;
-extern uint32_t gba_rewind_serial_gen;
-extern uint32_t gba_rewind_backup_ro, gba_rewind_backup_ro_hits;
-extern uint32_t gba_rewind_bk_acc;
-extern uint8_t *gba_rewind_rlog;
-extern uint32_t gba_rewind_rlog_mask, gba_rewind_rlog_pos, gba_rewind_rlog_end;
-extern uint32_t gba_rewind_rlog_served, gba_rewind_rlog_miss;
-extern uint32_t gba_rewind_rlog_mutant;
-extern uint32_t gba_rewind_backup_busy(void);
+/* rw_arr_t: one array's size and live address, filled by the core
+ * (gpsp_rewind_layout).  The struct and every gpsp_rewind_* / gba_rewind_*
+ * name used below: core_fe.h. */
+typedef gpsp_rewind_arr rw_arr_t;
 
 #define RW_REST_CAP  (16u * 1024u)   /* the rest of the image is ~4 KiB */
 #define RW_AUD_PAGE  10              /* dirty-map page of the sound span */
@@ -5023,8 +5012,7 @@ static void rw_snapshot_done(void)
    memset(rw_diff_vram, 0, sizeof(rw_diff_vram));
 }
 
-static int rw_run_nopic, rw_play_ext;
-extern uint32_t sound_synth_off;  /* sound.h */
+static int rw_run_nopic, rw_play_ext;     /* sound_synth_off: core_fe.h */
 static int      rw_held_tick;     /* this tick's re-runs are a held rewind's */
 static int      rw_inexact;       /* a re-run since the last restore skipped
                                    * the sound synthesis */
@@ -6343,8 +6331,7 @@ static void rw_win_evt(void)
    rw_w_deferred = t->deferred;
 #ifdef REWIND_COUNT
    {
-      extern uint32_t gba_rewind_cnt[2];
-      static uint32_t c0[2];
+      static uint32_t c0[2];               /* vs gba_rewind_cnt (core_fe.h) */
       unsigned fr = frame_count - rw_w0.frame;
       fe_evt("rewind_marks frames=%u ewram_stores=%u vram_stores=%u "
              "per_frame=%u/%u", fr, gba_rewind_cnt[0] - c0[0],
@@ -6450,7 +6437,6 @@ static void rw_gesture_mark(void)
    rw_g_restore_max = 0;
 }
 
-extern void gpsp_rewind_rprof(uint32_t out[9]);
 
 static void rw_gesture_evt(void)
 {
@@ -6954,9 +6940,7 @@ static int gb_cheat_poke(void *ctx, uint16_t addr, uint8_t value)
  * 0 = reset.  -2 = refused, a link session (or the pair bench) is up: a
  * reset would desynchronise the other machine.  -3 = refused, the GB save
  * could not be written.  -1 = the GB reboot failed (no machine now; the
- * caller must leave the game). */
-extern uint16_t *gba_screen_pixels;          /* the core's (video.h) */
-void gba_reset_power_on(void);               /* the core's (gba_memory.c) */
+ * caller must leave the game).  gba_reset_power_on: core_fe.h. */
 
 int fe_host_reset(void)
 {

@@ -4,7 +4,7 @@ RUN ONLY AFTER THE OWNER HANDSHAKE (docs/RIG-DOUBLE-BATTLE.md §5): this is the
 first thing that WRITES to a stick.
 
     python tools/rig/setup_rig_cards.py --backup-verified <backup dir>
-        --variant-dir <builds/wireless-rig/growl> --arm A
+        --variant-dir <rig dir>/growl --arm A
         host=F:=PSP-3000 join=D:=PSP-1000
 
 What it writes, and nothing else, under PSP/GAME/GBADHOC-RIG/ on each card:

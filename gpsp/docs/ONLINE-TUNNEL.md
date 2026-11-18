@@ -1,7 +1,7 @@
 # Online play: carrying the ad hoc link over the internet
 
 Study and design, 2026-11-05. Branch `claude/online-latency` (base `claude/ram-mirror-pcfix`
-356d6d4, the 4.6.0-beta.3 source). Evidence: `builds/online-out/`. **Nothing here has gone over the
+356d6d4, the 4.6.0-beta.3 source). The raw evidence is not kept in the repo. **Nothing here has gone over the
 real internet.** Latency was injected on the two-console Lab rig (PSP-3000 host, PSP-1000 join).
 
 ## 0. Answer first
@@ -65,7 +65,7 @@ It ran on the beta.3 Lab build `465d0ec94162` with these cases:
 - adapter: `rfu_em_trade`, `rfu_em_battle`
 - GB/GBC: `gblink_gen1_trade`, `gblink_gen2_trade` (hashed)
 
-Queued by `builds/online-out/queue_sweep.py`. One attempt per case (`lab_attempts = 1`), so a failure is
+Queued by a one-off Lab queue script (not kept in the repo). One attempt per case (`lab_attempts = 1`), so a failure is
 not hidden by a retry.
 
 <!-- TABLE -->
@@ -364,9 +364,9 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
 - **A LAN candidate that never answers is dropped** (2026-11-17). After two full bursts in which
   nothing ever came from the peer's private address, the later bursts leave it out. Before, every
   burst punched it, for the whole session. The 2026-11-13 same-Wi-Fi diagnostic (j4e3e01: two PSPs
-  under ARK-4's WPA2 plugin cannot ARP each other) logged 401 sends to the peer's 10.0.0.x address
+  under ARK-4's WPA2 plugin cannot ARP each other) logged 401 sends to the peer's private LAN address
   in a minute, 188 of them EHOSTDOWN. The 2026-11-15 hotspot session (jc23a50) punched the Go's
-  hotspot address 10.148.99.44 in all 8 of its bursts. Anything that arrives from the private
+  carrier-private hotspot address in all 8 of its bursts. Anything that arrives from the private
   address (a late answer, the peer's own punches) takes it back. A CANDIDATES with a new private
   address starts afresh; a re-offer of the same one keeps the verdict. The first burst is
   unchanged, so a same-LAN pair goes direct exactly as fast. In `test_relay_nat` (lan_cases), each
@@ -392,11 +392,11 @@ What goes direct (in-process model `test_relay_nat`, 31/31, and the real-socket 
 ### Direct more often (2026-11-06, branch claude/direct-connect)
 
 The first real internet trade (ZAZA) ran through the relay for its whole length: the PSP-3000 on the
-relay PC's home LAN (`host=10.0.0.22:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
+relay PC's home LAN (`host=<LAN IP>:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
 NAT). Three causes, three changes:
 
 1. **A host on the relay's own LAN had no usable candidate.** The relay saw it at its private address
-   (winfwd carries the LAN source through), so the Go was told `public=10.0.0.22:27500`, an address
+   (winfwd carries the LAN source through), so the Go was told `public=<LAN IP>:27500`, an address
    that leads nowhere from cellular, and no forward candidate (the "forward" was the same endpoint).
    Now:
    - **client side, needs no server change:** a peer whose server-seen address is private
@@ -485,7 +485,7 @@ is step 6 of the plan and needs the owner's go-ahead.
 
 ### Matchmaking (owner decisions, 2026-11-05)
 
-UI reference: the online-play mockup (claude.ai/artifact/4i55Tc1mgfisHUnZ9fPoRv), direction approved.
+UI reference: the online-play design mockup (not kept in the repo), direction approved. The later desktop-host design (room code and invite code) is summarised in [design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#xmb-relay-mockup).
 
 **Room codes: four letters.** A-Z, 26^4 = 456,976 rooms (`RL_CODE_LEN 4`, built). Shown big on the
 host's screen. The code lives while the host's room screen is open, 10 minutes at most. The join screen
@@ -778,10 +778,10 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
   `FW00-00DX` (B typed it as `fw0000dx`) and `online_relay` to an unreachable TEST-NET address, so only the
   invite can find the host. Both decoded 127.0.0.1:27420 and landed in the home room QWER. A was slot 0 and
   hosted, and the path was direct. The Emerald Union Room trade (`rfu_em_trade`) logged `trade_complete` on
-  both, with clean exits after 162 s. Jobs and logs: `builds/online-out/ppsspp-invite`.
+  both, with clean exits after 162 s. (Jobs and logs are not kept in the repo.)
 - **PPSSPP, room code + invite code** (2026-11-05, lab build of 092a4879, the module checking codes):
   two relays in the loopback namespace, a directory on 127.0.0.1:27430 and the desktop host
-  (`--home QWER --register 127.0.0.1:27430`) on 27420 (`builds/desktop-relay-kit/work/ppsspp_dh.sh`).
+  (`--home QWER --register 127.0.0.1:27430`) on 27420 (a one-off PPSSPP script, not kept in the repo).
   A typed the room code `QWER` with `online_relay` at the directory: one LOOKUP, LOCATED as a desktop
   host. B typed the invite `fw0000dx` with an unreachable `online_relay`. Both in room QWER, path
   direct both ways, `trade_complete` on both, clean exits after 161 s. The directory saw 1 REGISTER,
@@ -805,8 +805,8 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
 ### Home relay discovery (beta.5, branch claude/b5-online)
 
 **The problem.** A PSP on the relay's own LAN cannot reach it through its public address when the
-router does no NAT hairpin (the owner's Rogers gateway, and many others). The owner had to switch
-`online_relay` between `10.0.0.40:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
+router does no NAT hairpin (the owner's ISP gateway, and many others). The owner had to switch
+`online_relay` between `<relay LAN IP>:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
 host's own PSPs have the same problem with an invite code (it names the PC's public address).
 
 **Wire.** Two new types, no version bump (an older relay ignores them; an older console never sends
@@ -850,8 +850,8 @@ server as it trusts the LAN's DNS. It never trusts a relay that names another se
 claiming the right IP with another port.
 
 **winfwd.** Windows delivers subnet and limited broadcasts to a socket bound to the unicast LAN
-address (measured 2026-11-07 on the relay PC: a socket bound to 10.0.0.40 received datagrams sent to
-10.0.0.255 and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
+address (measured 2026-11-07 on the relay PC: a socket bound to the LAN address received datagrams sent to
+the subnet broadcast and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
 socket. A Linux relay must bind 0.0.0.0 (a socket bound to a unicast address there gets no
 broadcasts).
 
@@ -865,7 +865,7 @@ amplification). GBAdhoc XMB's tests/online step 5b checks the desktop host's ans
 port; `XMB_ONLINE_NAME`; no identity, no answer).
 
 **PPSSPP, Emerald Union Room trade by discovery only** (2026-11-07, lab build of this branch):
-`builds/b5-online-out/ppsspp-disc/ppsspp_disc.sh` -- a loopback-only namespace with a dummy
+A one-off script (not kept in the repo): a loopback-only namespace with a dummy
 10.0.5.2/24 "Wi-Fi" carrying the default route, `gbadhoc-relay --bind 0.0.0.0 --public-ip
 203.0.113.7`, both consoles configured with `online_relay = 203.0.113.7:27420` (which goes nowhere)
 and room DSCV. Both logged `relay_discover ... match=ip`, `online_up ... lan_relay=1`, the path went

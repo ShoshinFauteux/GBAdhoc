@@ -11,7 +11,7 @@ every frame, = the PPSSPP / PSP-3000 golden M-BATTLE140K).
     prepare_gbalink_solo_rig.py --bench DIR --golden-hash DIR --out RIG
         --role join --arm NAME=BUILDDIR[,KEY=VAL;KEY=VAL...] ...
 
-  --bench        builds/gbalink-mirror-out/hand-hang/base (battle_host.txt,
+  --bench        a local bench directory, not in the repo (battle_host.txt,
                  battle_join.txt, gba_bios.bin, roms/aw2.*)
   --golden-hash  the golden run's directory (gbadual_hash.txt), copied into
                  the rig for the scorer

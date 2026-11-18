@@ -9,11 +9,12 @@
      0x8000 exactly (what sceAudioOutputBlocking always got), 0 is 0, it
      never rises as the setting falls, and never exceeds 0x8000.
   3. The menu's step: +/-10, stopping at 0 and 100 (no wrap).
-  4. main_psp.c's audio thread passes g_audio_hw_vol as the volume, the
-     only sceAudioOutputBlocking call, and touches no sample with it (the
-     out[] writes do not mention the volume); psp_audio_volume_apply sets it
-     from pcfg_audio_hw_volume(g_pcfg.volume), right after the boot's
-     config load (before audio_start) and from the Settings row.
+  4. main_psp.c has one sceAudioOutputBlocking call (the audio thread's;
+     test_audio_channel.py RUNS that thread and proves it is given
+     g_audio_hw_vol and that no sample is scaled by it);
+     psp_audio_volume_apply sets it from pcfg_audio_hw_volume(g_pcfg.volume),
+     right after the boot's config load (before audio_start) and from the
+     Settings row.
 
 Then mutants, each of which must fail.
 """
@@ -155,15 +156,14 @@ def run(cfg, cfgh, expect_pass):
 
 
 def audio_call(src):
-    """4: the one output call, and the volume nowhere near a sample.  The call
-    count and the apply are whole-file facts (src is all of main_psp.c); the
-    boot order and the thread body are read through their @extract markers."""
+    """4: the one output call and the apply.  The call count and the apply are
+    whole-file facts (src is all of main_psp.c); the boot order is read through
+    its @extract marker.  What the thread passes and does to the samples is
+    behaviour, tested by running it (test_audio_channel.py)."""
     bad = []
     calls = re.findall(r"sceAudioOutputBlocking\(([^;]*)\);", src)
     if len(calls) != 1:
         bad.append("%d sceAudioOutputBlocking calls" % len(calls))
-    elif "g_audio_hw_vol" not in calls[0]:
-        bad.append("the output call does not take the setting")
     if "g_audio_hw_vol = pcfg_audio_hw_volume(g_pcfg.volume);" not in src:
         bad.append("the apply does not map the setting")
     boot = extract.extract(src, "vol:boot_apply")
@@ -172,11 +172,6 @@ def audio_call(src):
             boot.find("psp_audio_volume_apply();", load) >
             boot.find("   audio_start();", load)):
         bad.append("the volume is not applied before audio_start")
-    th = extract.extract(src, "fn:audio_thread")
-    i = th.find("static int audio_thread(SceSize args, void *argp)")
-    body = th[i:th.find("sceAudioOutputBlocking", i)]
-    if re.search(r"out\[[^\]]*\]\s*=[^;]*(volume|hw_vol)", body):
-        bad.append("a sample is scaled by the volume")
     return bad
 
 
@@ -190,8 +185,7 @@ def text(old, new, which):
 
 
 assert audio_call(MAIN) == [], audio_call(MAIN)
-print("audio thread: one output call, volume = g_audio_hw_vol (applied at boot "
-      "before audio_start), no sample scaled")
+print("audio: one output call; the volume applied at boot before audio_start")
 UI = (ROOT / "psp/ui_psp.c").read_text(encoding="utf-8")
 assert re.search(r"g_pcfg\.volume = pcfg_volume_step\(g_pcfg\.volume, dir\);\s*"
                  r"psp_audio_volume_apply\(\);", UI), "the row does not apply"
@@ -222,9 +216,8 @@ for label, mutate, expect in MUTANTS:
     assert expect in bad.stderr, (label, bad.stderr)
     print("mutant (%s): failed as it must" % label)
 
-bad_main = MAIN.replace("sceAudioOutputBlocking(ch, g_audio_hw_vol, out)",
-                        "sceAudioOutputBlocking(ch, PSP_AUDIO_VOLUME_MAX, out)", 1)
+bad_main = MAIN.replace("   psp_audio_volume_apply();", "", 1)
 assert bad_main != MAIN
-assert audio_call(bad_main) == ["the output call does not take the setting"]
-print("mutant (the audio thread ignores the setting): seen")
+assert audio_call(bad_main) == ["the volume is not applied before audio_start"], audio_call(bad_main)
+print("mutant (the boot never applies the setting): seen")
 print("volume: %d mutants fail" % (len(MUTANTS) + 1))

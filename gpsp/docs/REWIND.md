@@ -489,8 +489,8 @@ exception is `tools/run_host_tests.py`, which gained the unit test.)
 ## 10. Phase 2, stage 2: what recording costs, and what ends the history
 
 Sections 1-9 describe the desktop prototype. This section is the state after
-stage 2 (branch `claude/rewind`, on top of `claude/rc-4.0.0`). The PSP keys,
-log lines and hardware runs are in `builds/rewind-out/psp/README.md`.
+stage 2 (branch `claude/rewind`, on top of `claude/rc-4.0.0`). The PSP harness
+keys are read in `psp/fe/rewind.inc.c` and listed in `tools/refactor/generated/harness_keys.tsv`; the hardware run logs are not kept in the repo.
 
 ### 10.1 Where the 17.5 ms of stage 1 went
 
@@ -631,8 +631,8 @@ first thing to remove.
 ## 11. Phase 2, stages 3-4 as built: the picture, the ring, the restore
 
 Hardware numbers for stage 2 are in the coordinator's log; nothing in this
-section has run on a PSP. The keys and the runs are in
-`builds/rewind-out/psp/README.md`.
+section has run on a PSP. The keys are in `psp/fe/rewind.inc.c` (listed in
+`tools/refactor/generated/harness_keys.tsv`).
 
 ### 11.1 The pictures cost no copy
 
@@ -939,7 +939,7 @@ Dot back at the top = nothing left ("Start of history" / "Save point").
 `rewind_ring` (harness) picks: 1 the gauge (default), 2 the gauge with
 "-0:06   0:04 left" under it, 3 two rings (the turning head outside, a thin
 gauge inside), 0 the first version. Pictures of each over a Driver 2 frame:
-`builds/rewind-out/ring-gauge/`. Still the plain ring: no arrows, no glyph.
+(the pictures are not kept in the repo). Still the plain ring: no arrows, no glyph.
 
 ### 13.2 Why stage 5 was slow, and the pace now
 
@@ -1562,7 +1562,7 @@ Notes for whoever builds it (I did not start):
 
 70 games: the 36-ROM corpus (`C_`) and the 34 GBA ROMs of the owner's
 library (`L_`; most are the same titles). Full tables:
-`builds/rewind-out/psp/s10a/table_before_f3.txt` and `table_after_g6.txt`.
+`table_before_f3.txt` and `table_after_g6.txt` (not kept in the repo).
 
 | | pass | fail | timing-only frames |
 |---|---|---|---|
@@ -1600,7 +1600,7 @@ question), pace and the ring number.
   instrument), `slcmp.py` + `sl_insert.py` (the per-scanline trace of 16.2
   point 1, inserted into a twin's main.c; env `SLTRACE=lo,hi`
   `SLTRACE_OUT=file`). Results: `~/rewind-agent/all_g6`, `all_f3`.
-- PSP builds of this code (a9aaf01): `builds/rewind-out/psp/s10a`
+- PSP builds of this code (a9aaf01; not kept in the repo): `s10a`
   (harness, `gbadhoc.prx` 4512540b) and `s10a-play` (EBOOT daaca284). They
   still contain the stage 9 save design.
 - Owed: PPSSPP/MIPS subset of the standing test; one listen to Golden Sun 2
@@ -1726,7 +1726,7 @@ elsewhere.
 
 | test | result |
 |---|---|
-| `tools/rewind_all.sh h3` (36 corpus + 34 library ROMs; test, boot, fuzz) | **70 of 70** (`builds/rewind-out/psp/s11a/table_h3.txt`): 656,985 pictures shown backwards, 1,817,073 forward frames compared, 710,551 re-run frames, 0 wrong; timing-only frames 128. Per re-run frame and per resume the save's CRC is held against the last played frame's: never changed |
+| `tools/rewind_all.sh h3` (36 corpus + 34 library ROMs; test, boot, fuzz) | **70 of 70** (table `table_h3.txt`, not kept in the repo): 656,985 pictures shown backwards, 1,817,073 forward frames compared, 710,551 re-run frames, 0 wrong; timing-only frames 128. Per re-run frame and per resume the save's CRC is held against the last played frame's: never changed |
 | `tools/rewind_savetest.py --mutants` (Emerald, a copy of the owner's save, START-menu save in frames 2095-2187, 8 MiB of history) | 16 of 16. Rewound from frame 3214 to 577 across all 86 writes; the file's size, mtime and CRC identical when the control went down and when play resumed, and equal to the never-rewound run's at exit; 57,358 save writes refused in re-runs, 114,702 save bytes served from the log, 0 unlogged; saved again from 577 (88 frames wrote) and the resulting file, started cold, reaches the picture the never-rewound file reaches (not the no-save one); killed at rewind ticks 3, 400, 1500: the file is the save the game wrote; 159 releases with frames 2092..2250 on screen: the 92 inside the save moved to 2094 or 2187, none landed in 2095..2186 |
 | mutants | re-runs write the save: caught (Emerald savetest; FE in rewind_all). Re-runs read the live save: caught in FE Sacred Stones (152 wrong pictures, 284 wrong forward frames) and Driver 2; NOT visible in Emerald (what it reads back while saving is what it has just written). No snap: 3 of 3 releases inside the save caught; unit test built `-DMUT_NOSNAP` fails 33 checks |
 | per chip | 21 corpus games write their save under the mash script and all pass (17.3). Section 15.3's sweep of the same ROMs counted SRAM 9, flash 64K 4, flash 128K 1, EEPROM 512 5, EEPROM 8K 1; I did NOT re-derive which game has which chip, so "one game per chip type" rests on that count plus Emerald (flash 128K) in the savetest |
@@ -1746,7 +1746,7 @@ compared fell by 2.4 % against stage 10 for that reason.
 ### 17.5 Not done, not verified
 
 - **Nothing of this has run on a PSP.** The hardware lines are in
-  `builds/rewind-out/psp/README.md`, stage 11.
+  hardware run notes for stage 11 (not kept in the repo).
 - Reach across saves is one Pokemon save (17.2). The undo log is the fix.
 - N = 60 is a margin, not a measured bound (17.1 rule 5).
 - "One game per chip type": EEPROM 512 vs 8K and flash 64K vs 128K are not
@@ -1770,7 +1770,7 @@ compared fell by 2.4 % against stage 10 for that reason.
 
 Twins in `~/rewind-agent`: `h3` = commit 4d8df8b. Work area `s11`
 (`run_all.sh` = the whole chain of 17.4, about 50 minutes; `ppsave.sh`,
-`player.sh`). PSP: `builds/rewind-out/psp/s11a` (harness, gbadhoc.prx
+`player.sh`). PSP (not kept in the repo): `s11a` (harness, gbadhoc.prx
 a08d71bf) and `s11a-play` (EBOOT e3bda827). Items 2 (the direct-sound fix
 of 2363e97 proved right or replaced), 3 (the timing-only class, the
 production check) and 4 of the coordinator's brief are NOT started.
@@ -1892,8 +1892,8 @@ twin logs.
 
 ## 19. Stage 11b: after the first hardware run of stage 11
 
-The coordinator ran `s11a` on a PSP-3000 (results `builds/fix351-out/
-results/w11_*`): 8 of 8 exit 0, `unlogged=0` everywhere, the cold boot from
+The coordinator ran `s11a` on a PSP-3000 (results `w11_*`, not kept in the
+repo): 8 of 8 exit 0, `unlogged=0` everywhere, the cold boot from
 the save made after a rewind reaches the map, Driver 2 and Unbound hold
 59.7 fps. Three things came out of it.
 
@@ -1967,7 +1967,7 @@ Tip 422cc18. Twin `h6` = that code. Verified on it or on `h5` (the same
 minus the hash-line change): rewind_all 70 of 70 (h5), a 5-game subset
 (h6), rewind_savetest 16 of 16 (h5), host tests 30 of 30 (before 422cc18;
 it touches fe_host.c only), PPSSPP Emerald across a save on `s11b` PASS.
-PSP: `builds/rewind-out/psp/s11b` (gbadhoc.prx 4f6240ec) and `s11b-play`
+PSP (not kept in the repo): `s11b` (gbadhoc.prx 4f6240ec) and `s11b-play`
 (EBOOT 0b742af0).
 
 NOT verified:
@@ -1993,7 +1993,7 @@ with `audio_oracle = 1`; find the right key or listen).
 
 Fifth engineer, 2026-10-11. No emulator code changed in this stage: the
 code under test is 422cc18 (twin `h6`). Evidence, scripts and outputs:
-`builds/rewind-out/psp/s12-item1/`, WSL `~/rewind-agent/s13/`.
+local work folders (not kept in the repo).
 
 **Verdict: neither failure is a defect in the rewind. Both were the test
 asserting something the owner's rule does not promise, and both showed only
@@ -2427,7 +2427,7 @@ attempted (the teardown snapshots the picture the overlay is showing).
 
 ### 23.3 Hardware steps for the owner
 
-Player build `builds/rewind-out/psp/s14-play`.  Use a save you can lose (a
+Player build `s14-play` (md5s in 24.3; not kept in the repo).  Use a save you can lose (a
 copy of a `.sav`, or a fresh game); Rewind ON in Settings.  With the
 harness build (`s14-harness`) the same steps leave the lines quoted in
 `log/frontend.log`.
@@ -2558,10 +2558,10 @@ document):
 
 | | file | md5 |
 |---|---|---|
-| `builds/rewind-out/psp/s14-play` (player; `GBA_LINK=1 REWIND=1 tools/build.sh release`) | EBOOT.PBP | 1e26a0bec76732a5571e9bf090d60546 |
+| `s14-play` (player; `GBA_LINK=1 REWIND=1 tools/build.sh release`) | EBOOT.PBP | 1e26a0bec76732a5571e9bf090d60546 |
 | | gbadhoc_me.prx | 0f2840f85c04f6da4d0bc01110008318 |
 | | gbadhoc_home.prx | d3434f4fd02260583c2e97ce7fe757e6 |
-| `builds/rewind-out/psp/s14-harness` (`GBA_LINK=1 REWIND=1 PSP_EXTRA="BUILD_PRX=1" tools/build.sh harness`) | gbadhoc.prx | e6a852502c79838e867e53045895e4c0 |
+| `s14-harness` (`GBA_LINK=1 REWIND=1 PSP_EXTRA="BUILD_PRX=1" tools/build.sh harness`) | gbadhoc.prx | e6a852502c79838e867e53045895e4c0 |
 | | EBOOT.PBP | 1863cf962fe810967c64fa90f33d324d |
 | | gbadhoc_me.prx | 2f252eeb3c48c26e9016ed5a4f336d65 |
 | | gbadhoc_home.prx | d3434f4fd02260583c2e97ce7fe757e6 |
@@ -2570,7 +2570,7 @@ Player image 13,597,040 bytes, boot heap on a PSP-1000 10,499,512: the
 same as the candidate's `s3` to the byte count (the additions fit the
 section alignment).
 
-### 22.6 / 24.3a Verification before the merge of the candidate (twins `k3` = ac16639, `k4` = ec5c44c; evidence copied to `builds/rewind-out/psp/s14/`)
+### 22.6 / 24.3a Verification before the merge of the candidate (twins `k3` = ac16639, `k4` = ec5c44c; the evidence is not kept in the repo)
 
 | test | result |
 |---|---|
@@ -2628,10 +2628,10 @@ Builds of fb7e715, clean rebuilds, `REWIND=1 GBA_LINK=1`
 
 | | file | md5 |
 |---|---|---|
-| `builds/rewind-out/psp/s14-play` (player) | EBOOT.PBP | 0a9eb4dacc97dca7328d21e7fdb1aa5a |
+| `s14-play` (player) | EBOOT.PBP | 0a9eb4dacc97dca7328d21e7fdb1aa5a |
 | | gbadhoc_me.prx | 0f2840f85c04f6da4d0bc01110008318 |
 | | gbadhoc_home.prx | d3434f4fd02260583c2e97ce7fe757e6 |
-| `builds/rewind-out/psp/s14-harness` (`BUILD_PRX=1`) | gbadhoc.prx | 071900a578d8587d73e17c0f0ebffbb6 |
+| `s14-harness` (`BUILD_PRX=1`) | gbadhoc.prx | 071900a578d8587d73e17c0f0ebffbb6 |
 | | EBOOT.PBP | 224a1f11d6148503735feed75471aa39 |
 | | gbadhoc_me.prx | 2f252eeb3c48c26e9016ed5a4f336d65 |
 | | gbadhoc_home.prx | d3434f4fd02260583c2e97ce7fe757e6 |

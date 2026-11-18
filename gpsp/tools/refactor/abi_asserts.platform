@@ -1,4 +1,4 @@
-# T14 platform names (tier C, C6-1; builds/health-out/design/C-6.md section 1): name <TAB> reason.
+# T14 platform names (tier C, C6-1; gpsp/docs/design/TIER-C.md C-6 section 1): name <TAB> reason.
 # A copy of one of these names in main_psp.c's TU is not a core-ABI hand copy: abi_asserts.py lists
 # it in the generated header's PLATFORM block, not as UNCHECKED, and abi_asserts.ratchet does not
 # count it.  A name belongs here only if no core or frontend header of this tree can declare it.

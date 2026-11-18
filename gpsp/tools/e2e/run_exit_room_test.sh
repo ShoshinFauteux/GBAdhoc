@@ -20,7 +20,7 @@
 #
 # ORACLE.  Direct: `logram cb2_*` samples gMain.callback2 (0x030022C4) at
 # every interesting moment, and CB2_PrintErrorMessage|1 == 0x0800b1a1 IS the
-# fatal screen (docs/AUTOPILOT.md Gate-3 table — the same predicate the
+# fatal screen (../docs/AUTOPILOT.md Gate-3 table — the same predicate the
 # --disconnect trade test uses to prove the host survived).  Indirect: the
 # leaving script cannot reach CB2_Overworld from the fatal screen, so the
 # script itself fails (ap_fail) if the game never comes back.

@@ -91,7 +91,7 @@ kind cannot do harm either: the runtime check (§3) sees it and relaunches.
    cutting in.
 
 PPSSPP GE dumps (harness `ret_dumps = 1`, `inproc_via_menu = 1`, the real
-browser). Raw dumps are in `builds/splash-out/misc/`.
+browser). The raw dumps are not kept in the repo.
 
 | the menu's Quit to game list | the hold | crossfade, frame 8 of 16 | after |
 |---|---|---|---|
@@ -152,7 +152,7 @@ mismatch and carries on (diagnosis only). `ret_fade_in = 1` and
 `inproc_fake_net = 1` exercise the fallback visuals and refusal.
 
 **20 returns, five games, both memory models** (`batch_x20.sh`, final code;
-`builds/splash-out/x20f-32/` and `x20f-64/`, `analysis.txt` in each). The
+one `analysis.txt` per memory model; outputs not kept in the repo). The
 games are aw2 → red.gb → emerald → crystal.gbc → hns, four times round, then
 aw2. Each loads its slot-1 state at frame 30 and runs 300 frames, and
 CONFIG.INI has `menu_button = home`, so the HOME module is loaded and
@@ -182,8 +182,8 @@ compares `shash` (CPU registers, IWRAM, EWRAM, I/O, palette, OAM, VRAM;
 | crystal.gbc | 4 | identical | n/a |
 | hns | 4 | identical | identical from the state load on; frames 11-30 as two fresh boots |
 
-Longer fixtures, one in-process return before each (`builds/splash-out/
-ident2/`; red.gb, or crystal then emerald, played first): the AW2 tour (6061
+Longer fixtures, one in-process return before each (outputs not kept in
+the repo; red.gb, or crystal then emerald, played first): the AW2 tour (6061
 frames) is identical, the H&S heavy battle (3200) and Emerald (2000) are
 identical from the state load on, with boot noise as above.
 
@@ -198,7 +198,7 @@ identical from the state load on, with boot noise as above.
 | x20 | crystal sessions 2-4 differed from a fresh boot in frames 1-13: TGB statics `gb_reset` keeps (above) |
 | x20, final | the tables above |
 
-**The fallbacks** (`batch_misc.sh`, `builds/splash-out/misc/`):
+**The fallbacks** (`batch_misc.sh`):
 `quick_return = 0` → `inproc_refused why=config` and the relaunch path.
 `inproc_fake_net = 1` → `why=wireless`. Both quit through the same hold.
 `ret_fade_in = 1` draws the relaunched browser's fade from black. Two
@@ -268,11 +268,11 @@ in.
 
 ### 7.1 Builds for those checks (commit bdc4a30, clean tree)
 
-| build | dir | EBOOT md5 | ME prx |
-|---|---|---|---|
-| release, "GBAdhoc 3.1.0 beta" | `builds/splash-out/inproc-release/` | `2abffabd42e487a96359e42b8cd94c0a` | `19ae57b6` |
-| harness (32 MiB layout, PSP-1000) | `builds/splash-out/inproc-harness/` | `83a352ef6032d010ab552282d58cc69a` | `18158678` |
-| harness64 (3000 / Go) | `builds/splash-out/inproc-harness64/` | `5601772b28821b3fed5b06eccf9a5caa` | `19ae57b6` |
+| build (not kept in the repo) | EBOOT md5 | ME prx |
+|---|---|---|
+| release, "GBAdhoc 3.1.0 beta" | `2abffabd42e487a96359e42b8cd94c0a` | `19ae57b6` |
+| harness (32 MiB layout, PSP-1000) | `83a352ef6032d010ab552282d58cc69a` | `18158678` |
+| harness64 (3000 / Go) | `5601772b28821b3fed5b06eccf9a5caa` | `19ae57b6` |
 
 HOME prx `d3434f4f` in all three.
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # pp.sh TAG ARM GAME SCRIPT FRAMES [ini lines...]   (FF=1 TIMEOUT=secs in env)
-#   ARM  = dir under builds/rewind-out/psp holding EBOOT.PBP
+#   ARM  = dir under $OUTW (a local output folder, not in the repo) holding EBOOT.PBP
 #   GAME = rom name in ~/rewind-agent/work/roms (without .gba)
 # One PPSSPP under its own Xvfb and its own sandbox; killed by PID only.
 set -uo pipefail
 TAG=$1; ARM=$2; GAME=$3; SCRIPT=$4; FRAMES=$5; shift 5
 W=$HOME/rewind-agent
-OUTW=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/rewind-out/psp
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+OUTW=${RW_OUTW:-$GBADHOC_WORK/rewind-out/psp}
 SB=$W/sandboxes/$TAG
 RES=$W/pp2/$TAG
 TIMEOUT=${TIMEOUT:-900}

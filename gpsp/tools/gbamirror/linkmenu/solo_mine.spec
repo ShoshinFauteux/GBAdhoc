@@ -3,7 +3,7 @@
 # every frame (shash) and the audio oracle.  This branch, link menus off (the harness default).
 N=1
 D=$(dirname "$SPEC")
-I1_EB=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+I1_EB=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
 I1_PLAIN=1
 I1_ROM=$HOME/drprof/fx/aw2.gba
 I1_STATE=$HOME/drprof/fx/aw2.st0

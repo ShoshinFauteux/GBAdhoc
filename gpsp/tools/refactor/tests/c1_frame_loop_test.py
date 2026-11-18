@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""c1_frame_loop_test.py -- tier C C-1 commit 1 (health-out/design/C-1.md; CRITIQUE C-1):
+"""c1_frame_loop_test.py -- tier C C-1 commit 1 (gpsp/docs/design/TIER-C.md C-1; CRITIQUE C-1):
 the tools that key on main()'s loop read the C-1 shape, where the loop is the file-scope
 function frame_loop() that only main() calls.  No compiler, no ELF (the ELF side of the
 function mode is loop_anchor.py --selftest F1-F7, with injected DWARF facts).

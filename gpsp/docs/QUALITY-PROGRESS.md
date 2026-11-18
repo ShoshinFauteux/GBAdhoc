@@ -71,8 +71,8 @@ a pointer table so the documentation has one entry point.
 
 ### Tag and archive the accepted candidate — done
 
-`candidate/stability-7283f13`, with the archived binaries in
-`builds/unbound-stability-release-candidate-7283f13/` and an on-device rollback
+`candidate/stability-7283f13`, with the archived binaries (kept outside the
+repo) and an on-device rollback
 (`EBOOT-7283f13-accepted.PBP`) on all three consoles.
 
 ---

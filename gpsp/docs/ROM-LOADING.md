@@ -76,6 +76,6 @@ If loading remains slow, return the PSP to USB mode: ROMLOAD.TXT separates the
 settings step from ROM reads, cartridge setup and renderer startup. Hardware
 speedup and final stability acceptance remain pending that test.
 
-Source manifest, build/test logs, captured buffers and deployment verification:
-`builds/rom-load1/` in the containing workspace. Public release work remains
+The source manifest, build/test logs, captured buffers and deployment verification
+were kept locally and are not in the repo. Public release work remains
 deferred until hardware validation.

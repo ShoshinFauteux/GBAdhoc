@@ -1,5 +1,5 @@
 The in-process return rig (docs/INPROC-RETURN.md).  Run inside WSL, PPSSPP on Xvfb :142 in a
-private namespace per run (run142.sh, a copy of builds/splash-out/wsl's run136.sh):
+private namespace per run (run142.sh, a copy of an earlier local runner, run136.sh, kept here):
 
   bash tools/inproc/batch_x20.sh <harness eboot dir> <out dir>    # 20 returns + fresh references
   python tools/inproc/x20_analyse.py <out dir>                   # census + per-session identity

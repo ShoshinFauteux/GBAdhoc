@@ -2,13 +2,14 @@
 """stage_slot.py -- stage the layout-pinning hardware bench as the hardware
 queue's SLOT step (docs/LAYOUT-PINNING.md section 7).
 
-    python tools/layout/stage_slot.py --console 3000 --builds builds/layout-pin-out/all
+    python tools/layout/stage_slot.py --console 3000 --builds <dir of the pinned builds>
 
-Reuses builds/hw-queue unchanged where it can: hwqueue.make_drstage writes the
+Reuses the hardware queue (hwqueue.py, queue_arms.py: a local checkout that is
+not in this repo, --hwqueue) unchanged where it can: hwqueue.make_drstage writes the
 drrig-format stage (base fixtures from the queue's own pinned sources,
 relabelled EBOOTs, MANIFEST.json), then `rigshim.py hnsrig stage` turns it into
 the hnsrig stage the queue runs at stages/slot-<console>/.  The arms are
-builds/hw-queue/slot_arms/layout_pin.py (loaded by queue_arms.py), and so is
+the queue's slot_arms/layout_pin.py (loaded by queue_arms.py), and so is
 the order (ABBA).  Builds (harness64, each dir: EBOOT.PBP, gbadhoc_me.prx,
 build-manifest.json):
 
@@ -34,7 +35,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--console", default="3000")
     ap.add_argument("--builds", required=True)
-    ap.add_argument("--hwqueue", default=None, help="builds/hw-queue")
+    ap.add_argument("--hwqueue", default=None, help="the local hardware-queue checkout (not in this repo)")
     a = ap.parse_args()
     here = os.path.dirname(os.path.abspath(__file__))
     hq = a.hwqueue or os.path.normpath(os.path.join(here, "..", "..", "..", "hw-queue"))

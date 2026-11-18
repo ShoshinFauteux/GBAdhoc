@@ -42,6 +42,7 @@
 set -uo pipefail
 OUT="$1"; SPEC="$2"
 N=2; START2='^EVT adhoc_up'; TIMEOUT_S=900
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # specs default to $GBADHOC_WORK/...
 # shellcheck disable=SC1090
 . "$SPEC"
 PPSSPP_DIR="${PPSSPP_DIR:-$HOME/ppsspp}"

@@ -5,8 +5,8 @@ Branch `claude/gbalink-ui` (from `claude/gbalink-hw` + `claude/splash-logo`), 20
 The GBA link mirror (docs/GBA-LINK-MIRROR.md) started only from harness keys.
 This is the player's way in: the Wireless menu hosts and joins Link Cable rooms
 as well as Wireless Adapter rooms, and the game decides which. The design is
-Fable's study in `builds/linkmode-mockups` (README, `linkmode.py`, `png/`,
-published at https://claude.ai/artifact/KVU9vwV1JRW5pauVPydESz); this
+the design mockup's link-mode study (summarised in
+[design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#linkmode-mockups)); this
 implements it, with the owner's answers to its open questions.
 
 **Contents.** 1 What the player sees. 2 How it works. 3 Files. 4 The owner's
@@ -237,7 +237,7 @@ namespace), `ui_script` per console, scored with `score_session.py`.
 Builds: harness64 / harness with `GBA_LINK=1` from this branch (EBOOTs
 `031bf8ea` 64 MiB, `e1049973` 32 MiB; the final `aeb63200` differs only in the
 chip fix of commit "the session chip stays hidden..."). Outputs:
-`builds/gbalink-ui-out/runs/<run>/` (logs, GE dumps, `verdict.txt`).
+logs, GE dumps and a `verdict.txt` per run (not kept in the repo).
 
 | run | consoles | what was driven | result |
 |---|---|---|---|
@@ -267,7 +267,7 @@ injected (`ui_backdrop`, `make_backdrops.py`), walked by
 `linkmenu/ge_{aw2,em,gb}.ui` (fake scan lists, `linking` presets for the
 LINKING states); `linked-menu` / `linked-wireless` from the AW2 pair with the
 same backdrop. Side-by-sides (design | dump | >1-step pixels in red):
-`builds/gbalink-ui-out/cmp2/`.
+made per screen (not kept in the repo).
 
 | screen | theme | differ | >1 step | max |
 |---|---|---:|---:|---:|
@@ -359,7 +359,7 @@ in-game screens, which are live frames.
   cfb015e allows it) builds and passes the release audit; image 13,048,064 B
   (+16 KB over ebd76a0's link release), PSP-1000 heap at boot 11,048,488 B.
   It boots in PPSSPP to the browser and ran until killed (60 s, no harness).
-* **Final builds** from commit ec77330 (clean tree), `builds/gbalink-ui-out/`:
+* **Final builds** from commit ec77330 (clean tree; not kept in the repo):
   `final-release` (GBA_LINK=1, EBOOT `19b124fa128fbe3be8d99b56c7deab61`,
   boots in PPSSPP), `final-harness64` (`e8873d936e7e7f6c281cc5d256f35587`),
   `final-harness` (`5f20dcf13d06f0b98b5a85563af05126`). The PPSSPP runs above

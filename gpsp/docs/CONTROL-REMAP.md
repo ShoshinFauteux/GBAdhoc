@@ -466,7 +466,7 @@ on all three. Steps 7 to 9 need one console, except 9b, which needs two.
   - Built clean through the warning gate and the binary audit.
   - EBOOT.PBP md5 `685f9f040c5f6882cfe5aab1da18a39d`, sha256
     `b1b0b77bfc430743a86e708fcd99bb217031fa6771e12160ef264b63ba0e98b1`.
-  - Staged at `builds/remap-out/release-54afe6c/` with `gbadhoc_me.prx`. That
+  - Staged with `gbadhoc_me.prx` (not kept in the repo). That
     is the EBOOT for §8.
   - `pad_script` is absent from it. The `ui_controls_demo` key string is
     present but inert, like every harness key in a release (ADR-0067).
@@ -592,8 +592,8 @@ cannot take HOME with it.
 **Packaging.** `tools/build.sh` builds `psp/home/gbadhoc_home.prx` as a
 sub-make (`psp/Makefile`), records `homePrxSha256` in the manifest and
 stages it with `--out`. `tools/make_release.sh` ships it beside the EBOOT and
-refuses a stale one. Like the ME module, the `.prx` is tracked so that a
-toolchain-less clone can package a release; its `.elf` is ignored.
+refuses a stale one. Like the ME module, the `.prx` and its `.elf` are build
+products and are not tracked: every build makes them.
 
 **Harness keys (GPSP_PERF_RIG builds only; release refuses them).**
 
@@ -713,8 +713,8 @@ results.
 
 | Build | EBOOT.PBP md5 | gbadhoc_me.prx md5 | gbadhoc_home.prx md5 |
 |---|---|---|---|
-| **release**, title "GBAdhoc 3.1.0 beta" (`builds/home-out/release`) | `413610202e10adbc7c3ac02b79861cc7` | `19ae57b6d21f5d1c3545bf07ff516a4c` (ME_CATCH; identical to the base 97a9dad release build's) | `d3434f4fd02260583c2e97ce7fe757e6` |
-| harness, for checklist step 5 (`builds/home-out/harness`) | `a9beb54a3906f7d63acd5a0a7c0b6684` | `18158678dd49f2d5ac17fa4a8b2a4b50` (identical to base) | `d3434f4fd02260583c2e97ce7fe757e6` |
+| **release**, title "GBAdhoc 3.1.0 beta" | `413610202e10adbc7c3ac02b79861cc7` | `19ae57b6d21f5d1c3545bf07ff516a4c` (ME_CATCH; identical to the base 97a9dad release build's) | `d3434f4fd02260583c2e97ce7fe757e6` |
+| harness, for checklist step 5 | `a9beb54a3906f7d63acd5a0a7c0b6684` | `18158678dd49f2d5ac17fa4a8b2a4b50` (identical to base) | `d3434f4fd02260583c2e97ce7fe757e6` |
 
 The release build passes the warning gate and the binary audit, including
 the new `home_stall_frame` absence check. The home module is reproducible:
@@ -727,8 +727,8 @@ any pad read. That is the hardware checklist below.
 ### Hardware checklist (owner)
 
 Install the **release** EBOOT, `gbadhoc_me.prx` and `gbadhoc_home.prx` from
-`builds/home-out/release` (all three, side by side). For step 5, also
-install the harness build from `builds/home-out/harness` as its own app
+the release build in the table above (all three, side by side; build outputs are not kept in the repo, the md5s identify them). For step 5, also
+install the harness build as its own app
 folder.
 
 1. **Default mode untouched (all three consoles).** Without changing
@@ -1024,12 +1024,12 @@ pages, and makes the buttons behave, as in a link session.
 
 | Build (a173d8a, clean tree, `GBA_LINK=1` as the beta is built) | EBOOT.PBP md5 | gbadhoc_me.prx md5 | gbadhoc_home.prx md5 |
 |---|---|---|---|
-| **release** (`builds/turbo-out/release`) | `28e8716fafaebb7580ec185dcf2efcd5` | `0f2840f85c04f6da4d0bc01110008318` | `d3434f4fd02260583c2e97ce7fe757e6` |
-| harness (`builds/turbo-out/harness`), every PPSSPP run above | `7193167e4b48fc7a3de76d3442df9d56` | `2f252eeb3c48c26e9016ed5a4f336d65` | `d3434f4fd02260583c2e97ce7fe757e6` |
-| base harness, c86e7d6 (`builds/turbo-out/base-harness`) | `17e67f61d59e9be2225ac642415447fd` | | |
+| **release** | `28e8716fafaebb7580ec185dcf2efcd5` | `0f2840f85c04f6da4d0bc01110008318` | `d3434f4fd02260583c2e97ce7fe757e6` |
+| harness, every PPSSPP run above | `7193167e4b48fc7a3de76d3442df9d56` | `2f252eeb3c48c26e9016ed5a4f336d65` | `d3434f4fd02260583c2e97ce7fe757e6` |
+| base harness, c86e7d6 | `17e67f61d59e9be2225ac642415447fd` | | |
 
-Screenshots, both themes: `builds/turbo-out/screens/`. Logs and end frames
-of the runs: `builds/turbo-out/evidence/`. The rig: `builds/turbo-out/rig/`.
+Screenshots (both themes), the logs and end frames of the runs, and the rig
+are not kept in the repo; the md5s above identify the builds.
 
 Both profiles pass `tools/build.sh`'s warning gate and binary audit. The
 hot-core note the script prints (7,008 bytes against a 6,144 budget) is the
@@ -1038,7 +1038,7 @@ base's own, identical on c86e7d6.
 ### 13i. Owner's hand test
 
 Install the **release** EBOOT, `gbadhoc_me.prx` and `gbadhoc_home.prx` from
-`builds/turbo-out/release`.
+the table above (the release row).
 
 1. **Nothing changed.** With your current CONFIG.INI, play a minute. Open
    Controls and back out. CONFIG.INI has no `turbo` line.
@@ -1079,7 +1079,7 @@ rewind control and the game mask unchanged for all 65,536 pad words with
 turbo buttons bound.
 
 **PPSSPP** (harness `GBA_LINK=1 REWIND=1 BUILD_PRX=1`, against the 686235c
-harness in `builds/rcbx-out/s3g-harness`):
+harness build):
 
 | Run | Result |
 |---|---|
@@ -1088,7 +1088,7 @@ harness in `builds/rcbx-out/s3g-harness`):
 | `ui_controls_demo = 1`, 686235c vs this branch | the same binds, captures and reset |
 | `tools/rewind_player.sh` (Driver 2, `pp.d2.txt`, 5,200 frames; the player's state) | **PASS**, B late (905 frames shown backwards) and B at boot (881), never denied, checker clean |
 | Rewind on; Turbo A (Hold) held from f=600; autopilot `rewind 60` at 700 and at 1,160; Turbo B (Toggle) pressed at f=1000 | A pulses 2 / 2 up to the hold, nothing for its 54 frames, a fresh train after; B pulses from 1,000 until the second hold and never again |
-| `ui_controls_demo = 6`, dark and light | Turbo A takes Triangle from Rewind and says so; screenshots in `builds/turbo-out/screens-x/` |
+| `ui_controls_demo = 6`, dark and light | Turbo A takes Triangle from Rewind and says so (screenshots not kept in the repo) |
 
 A `pad_script` cannot hold the rewind button for a set time when rewind is
 on: the frame counter it is keyed to stands still at the limit of the
@@ -1097,8 +1097,8 @@ the autopilot's `rewind N`.
 
 | Build (a3e5ca2, clean tree) | EBOOT.PBP md5 | Other files |
 |---|---|---|
-| harness PRX, `GBA_LINK=1 REWIND=1 PSP_EXTRA="BUILD_PRX=1"` (`builds/turbo-out/x-harness`) | `42198c189b73e52c9358aae3f9eb5ee8` | `gbadhoc.prx` `69fc804e4bfb7ce0bb2f268515e88fe1`, `gbadhoc_me.prx` `2f252eeb3c48c26e9016ed5a4f336d65` |
-| player, release profile, title "GBAdhoc BETA", `GBA_LINK=1 REWIND=1` (`builds/turbo-out/x-play`) | `cf132983d63d99acecc2405bceb8042a` | `gbadhoc_me.prx` `0f2840f85c04f6da4d0bc01110008318`, `gbadhoc_home.prx` `d3434f4fd02260583c2e97ce7fe757e6` |
+| harness PRX, `GBA_LINK=1 REWIND=1 PSP_EXTRA="BUILD_PRX=1"` | `42198c189b73e52c9358aae3f9eb5ee8` | `gbadhoc.prx` `69fc804e4bfb7ce0bb2f268515e88fe1`, `gbadhoc_me.prx` `2f252eeb3c48c26e9016ed5a4f336d65` |
+| player, release profile, title "GBAdhoc BETA", `GBA_LINK=1 REWIND=1` | `cf132983d63d99acecc2405bceb8042a` | `gbadhoc_me.prx` `0f2840f85c04f6da4d0bc01110008318`, `gbadhoc_home.prx` `d3434f4fd02260583c2e97ce7fe757e6` |
 
 ### 13k. Exercising turbo on hardware from a script (harness build)
 
@@ -1174,7 +1174,7 @@ means, and turbo follows it:
 | `rewind_savetest.py --mutants`, testdata save | K=5, 17 of 17 |
 | `rewind_sleeptest.py`, every tick 3690..3840 | 151 sleeps, 91 inside save 1's sequence, all landed, 0 resets, 0 damaged |
 | PPSSPP `rewind_player.sh` (Driver 2) | PASS, B late (941 shown backwards) and B at boot (905), never denied |
-| PPSSPP default config vs `rewind-out/psp/s14-harness`, Emerald and Red | vhash (1,444), events and saved config identical (Red: the `gb_rtc_utc_since` stamp only) |
+| PPSSPP default config vs the `s14-harness` build (a local build, not kept in the repo), Emerald and Red | vhash (1,444), events and saved config identical (Red: the `gb_rtc_utc_since` stamp only) |
 | PPSSPP Controls walk vs s14; Turbo page walk, dark and light | same binds as s14; Turbo A takes Triangle from Rewind |
 | PPSSPP turbo across two scripted rewinds | silent for each gesture, fresh Hold train after, Toggle off after |
 
@@ -1182,8 +1182,8 @@ A landing forced in the middle of a gesture with a turbo button down (menu
 or sleep during a rewind) is covered by the host model and by reading the
 code, not by a PPSSPP run.
 
-Builds of 7d46dad, clean tree, `GBA_LINK=1 REWIND=1`: `builds/rc-out/rc1-harness`
-(`BUILD_PRX=1`) and `builds/rc-out/rc1-play` (title "GBAdhoc BETA").
+Builds of 7d46dad, clean tree, `GBA_LINK=1 REWIND=1` (not kept in the repo): a harness build
+(`BUILD_PRX=1`) and a player build (title "GBAdhoc BETA").
 
 ---
 

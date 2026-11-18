@@ -1,5 +1,5 @@
 N=1
-I1_EB=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64
+I1_EB=${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64
 I1_ROM=$HOME/gbalink/roms/aw2.gba
 I1_ROMNAME="Advance Wars 2 - Black Hole Rising (USA).gba"
 I1_STATE=$HOME/gbalink/roms/aw2.st0

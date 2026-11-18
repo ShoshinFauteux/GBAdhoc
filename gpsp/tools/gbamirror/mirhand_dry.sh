@@ -12,7 +12,8 @@ set -u
 STAGE=$1; LOGS=$2; XD=${3:-96}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MH="$HERE/mirhand.py"
-DRPROF_BASE=${DRPROF_BASE:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage/base}
+source "$HERE/../workdirs.sh"
+DRPROF_BASE=${DRPROF_BASE:-$GBADHOC_WORK/dynarec-profile-out/rig-stage/base}
 SB=$HOME/gpsp-e2e/mirhand
 G="$SB/ppsspp/PSP/GAME/GBADHOC-DRPROF"
 W="--window-s 20 --need-s 5 --poll 0.5"

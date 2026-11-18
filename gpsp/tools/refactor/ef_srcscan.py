@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ef_srcscan.py -- port of builds/mainpsp-map/out/scratch/x4_src.py (the M
+"""ef_srcscan.py -- port of the restructure survey's x4_src.py (a scratch script, not in the repo; the M
 basis of x4's 335/280/55 census) for inline_census.py (T13).
 
 Scans a C file for top-level function definitions (line ranges) and runs a

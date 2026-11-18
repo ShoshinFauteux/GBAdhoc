@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hotord_check.py -- T5 (builds/mainpsp-map/out/PLAN.md §5): is the pinned order
+"""hotord_check.py -- T5 (gpsp/docs/design/RESTRUCTURE.md §5): is the pinned order
 still true of this build?
 
     hotord_check.py --build DIR [--order F] [--ord F] [--sizes fail|warn|off] [--json OUT]

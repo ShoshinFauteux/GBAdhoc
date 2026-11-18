@@ -396,7 +396,7 @@ return_to_main:
 .endm
 #endif
 
-// DISPATCH_LOOKUP_PC (claude/ibranch, 2026-11-13): lookup_pc (an I/O write
+// DISPATCH_LOOKUP_PC (built in): lookup_pc (an I/O write
 // with side effects, an IRQ or other PC change from update_gba, halt wake)
 // probes the dispatch cache too, before paying for the C lookup -- ~110 C
 // lookups a frame on Doom II, 98-99 % of them for a cached pc in the twin.

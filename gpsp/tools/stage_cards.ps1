@@ -17,14 +17,16 @@ param(
   [string]$HostDrive = "D:",
   [string]$JoinDrive = "E:",
   [int]$StableSeconds = 40,     # must exceed the console's park window (30 s)
-  [switch]$SkipStabilityCheck   # escape hatch; you are on your own
+  [switch]$SkipStabilityCheck,  # escape hatch; you are on your own
+  [string]$Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,   # the gpsp tree (testdata\fixtures)
+  [string]$Assets = $env:GBADHOC_RIG_ASSETS   # the rig assets folder (saves, BIOS); required
 )
 
 $ErrorActionPreference = "Stop"
-$repo   = "c:\Users\DrSto\OneDrive\Desktop\GBA PSP Wirless Trading (Claude)\wt-morning"
+$repo   = $Repo
 $fix    = "$repo\testdata\fixtures"
-$sp     = "C:\Users\DrSto\AppData\Local\Temp\claude\c--Users-DrSto-OneDrive-Desktop-GBA-PSP-Wirless-Trading--Claude-\86ab8597-7548-489f-a178-10e8745decd2\scratchpad"
-$assets = "$sp\rigassets"
+if (-not $Assets) { throw "stage_cards.ps1: pass -Assets <folder> or set GBADHOC_RIG_ASSETS (tools/README.md)" }
+$assets = $Assets
 
 $cfg = @{
   $HostDrive = @{ role="host"; sav="emerald_parkedB.sav"; script="emerald_trade_host.inputs"; nick="HOSTPSP" }

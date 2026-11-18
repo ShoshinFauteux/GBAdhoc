@@ -71,7 +71,7 @@ The histories really did differ. These counters are summed from `EVT core_prof`:
 
 That is 27 comparisons plus the 3 cold_rep repeats.
 
-**Hardware (PSP Go, `GBADHOC-AW2BENCH`, 2026-09-29).** Both the ME arm and the CPU arm were **IDENTICAL to the PPSSPP golden for all 6,020 frames**, including the audio hash. So a real console computes the same game, bit for bit, as the emulator does. The PSP-1000 run is pending (same folders, `builds/gba-link-bench-out/OWNER-STEPS.txt`).
+**Hardware (PSP Go, `GBADHOC-AW2BENCH`, 2026-09-29).** Both the ME arm and the CPU arm were **IDENTICAL to the PPSSPP golden for all 6,020 frames**, including the audio hash. So a real console computes the same game, bit for bit, as the emulator does. The PSP-1000 run is pending (same staged bench; the stage is not kept in the repo).
 
 **Host (x86 dynarec).** warm_tour, warm_intro and late_load (500 frames of BIOS/intro before the first load) all match cold on guest state. The only difference is the frontend's audio frame split: 548 against 549 samples in the first frame. That is output buffering, not guest state.
 
@@ -181,7 +181,7 @@ Delivered fps / longest freeze / p95 queueing delay:
 
 ## 3. CPU cost
 
-**HW, PSP Go** (`hw_cost_report.py builds/gba-link-bench-out/hw-go/*`). Core ms per frame, retro_run only:
+**HW, PSP Go** (`tools/linkbench/hw_cost_report.py` over the Go's logs; raw logs are not kept in the repo). Core ms per frame, retro_run only:
 
 | scene | ME arm median / p95 / max | CPU arm (renderer on CPU) median / p95 |
 |---|---|---|
@@ -215,11 +215,11 @@ Delivered fps / longest freeze / p95 queueing delay:
 - A **PSP-1000** would need two small tiers (2 × 2.4 MB) beside the ROM cache on a heap of about 22 MB. That is plausible for an 8 MB cart like AW2, and tight for a 16–32 MB cart.
 - Measuring this with `heap_census` on the 1000 is the first step of any M build.
 
-**Hardware bench:** staged in `builds/gba-link-bench-out/`:
+**Hardware bench:** staged locally (not kept in the repo):
 - `GBADHOC-AW2BENCH` (ME) and `-CPU`, with `OWNER-STEPS.txt` and `MANIFEST.txt`;
 - the PPSSPP golden for the determinism compare in `golden/`.
 
-The Go is done (`hw-go/`). The PSP-1000 run will answer 1000-class cost and cross-model determinism.
+The Go is done. The PSP-1000 run will answer 1000-class cost and cross-model determinism.
 
 ## 4. Delayed virtual cable, and design P (found while checking)
 
@@ -288,7 +288,7 @@ MARK=campaign_map ./run_det_ppsspp.sh EBOOT_DIR ROM STATE SAV OUT PPOUT 4   # PP
 lb_host --rom R --bios-dir B --save S --state ST --script scripts/aw2_scenes.txt --bw X.csv --log X.log
 python3 bw_report.py X.csv X.log
 ./p_link.sh OUT scripts/aw2_link_host.txt scripts/aw2_link_join.txt 9000 JIT LOSS LAT
-python tools/linkbench/hw_cost_report.py builds/gba-link-bench-out/hw-go/GBADHOC-AW2BENCH
+python tools/linkbench/hw_cost_report.py LOGDIR/GBADHOC-AW2BENCH        # LOGDIR: the logs copied off the console
 ```
 
 **Instrumentation hygiene.**
