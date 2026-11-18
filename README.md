@@ -9,7 +9,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 5.0.0 beta 5</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 5.0.0 beta 6</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -50,10 +50,24 @@
 > these folders yourself. Until a save is in the right folder, its game starts as if it had
 > none; nothing is deleted, so moving the file brings it back.
 
-> **This is the `beta` branch: GBAdhoc 5.0.0 beta 5,** the build we intend to become 5.0.0.
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.5)
+> **This is the `beta` branch: GBAdhoc 5.0.0 beta 6,** the build we intend to become 5.0.0.
+> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.6)
 > (the *latest release* link above is the stable 4.5.0). **It links only with the same beta:**
-> update both PSPs. What beta 5 adds:
+> update both PSPs. What beta 6 adds:
+>
+> - **Game fixes:** Polarium Advance starts on the PSP-3000 and with the bundled BIOS, Rock 'N
+>   Roll Racing plays, Top Gun: Combat Zones opens its menus, Activision Anthology no longer
+>   asks you to turn off another Game Boy Advance, and with the bundled BIOS X-Men: Reign of
+>   Apocalypse has sound and Mortal Kombat: Deadly Alliance no longer freezes on its logo.
+> - **Online play is faster and steadier:** Wireless Adapter games online give the other
+>   PSP's data more time, a lost packet is filled in by the next one, and a short network
+>   outage no longer breaks a session.
+> - **"Waiting for the other player..."** shows when a link session holds your game for the
+>   other PSP, instead of a silent frozen picture.
+> - **Wireless Adapter:** a player joining a group is no longer dropped when the leader takes
+>   a few seconds to accept.
+>
+> What beta 5 added:
 >
 > - **Heavy GBA games run faster than in beta 4,** on the PSP-1000 and PSP-3000 alike. Hot
 >   Wheels: Stunt Track Challenge rises from 48.6 to 57 fps, Duke Nukem Advance from 56.5 to
@@ -856,7 +870,7 @@ confirm and ○ to go back.
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
 
 <kbd>NEW</kbd> Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
-5.0.0-beta.5 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
+5.0.0-beta.6 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
 
 The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the

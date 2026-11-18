@@ -10,12 +10,42 @@ separately and are intended for upstream.
 
 ---
 
-## [5.0.0-beta.6] - 2026-11-16
+## [5.0.0-beta.6] - 2026-11-17
 
-Pre-release: beta 5 plus the fixes below, and the build we intend to become 5.0.0. Links
+Pre-release: beta 5 plus the changes below, and the build we intend to become 5.0.0. Links
 only with the same beta: update both PSPs, for the Link Cable, the Wireless Adapter, Game Boy
 link, Share game data and online play alike. Copy all four files (`EBOOT.PBP`,
 `gbadhoc_me.prx`, `gbadhoc_home.prx`, `gbadhoc_online.prx`) together.
+
+> **Your saves and save states have their own folders.** Battery saves go in `saves/` and
+> save states in `states/`, each in the same sub-folder its ROM has under `roms/`, no longer
+> next to your ROMs. 5.0.0 still moves them there for you the first time you open each
+> game. **The next release will stop doing this:** please move your files into these folders
+> yourself. Until a save is in the right folder, its game starts as if it had none; nothing
+> is deleted, so moving the file brings it back. The README shows where each file goes.
+
+### Online play
+
+- **Wireless Adapter games run faster online.** An online room now gives the other PSP's
+  data a little more time to arrive before your game needs it (ad hoc play, where it arrives
+  sooner, is unchanged). With the two changes below, a PSP-3000 in the Pokémon Emerald Trade
+  Center over the internet ran at about 54 fps, where beta 5's setting ran at about 37 in
+  the same test.
+- **A lost packet costs a frame, not a stall.** Online, each packet also carries the two sent
+  just before it, so a lost one is usually filled in by the next packet instead of being
+  waited for and sent again.
+- **A short network outage no longer breaks an online session.** When the connection
+  stalls, both games now wait for it instead of running on without the other player's
+  data; afterwards that data used to arrive all at once and some of it was lost, which
+  could leave a Pokémon trade unable to finish saving. If the other PSP is gone for 8
+  seconds, the session ends as before.
+- **"Waiting for the other player..."** appears at the bottom left when a link session has
+  held your game for a second, waiting for the other PSP (Link Cable, Wireless Adapter,
+  Game Boy link, ad hoc or online), and goes away as soon as the game runs again. The
+  picture used to freeze without a word.
+- **Connecting online:** GBAdhoc stops trying the other PSP's home-network address once it
+  has never answered for two rounds of attempts, instead of trying it for the whole session.
+  Two PSPs on the same home network still connect directly as fast as before.
 
 ### Fixed
 
@@ -60,7 +90,12 @@ version."). A PSP on 4.5.0 that hosts sees nothing, and one that joins over the 
 Adapter finds the room never answers. 5.0.0 will not link with 4.5.0 either, and keeps the
 frame-by-frame Wireless Adapter link the betas use.
 
-**Known issues:** as in beta 5.
+**Known issues:** online play is still experimental; only Pokémon Emerald has been tested over
+the internet, and an online session can run below 58 fps. Mario Golf: Advance Tour's adapter
+lobby can occasionally stick when both players press at the same moment (leave and rejoin).
+Hot Wheels: Stunt Track Challenge, Top Gear Rally and Payback still run below 58 fps, and so
+do FIFA 07's replays. **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` for saves
+and states; move them back from `saves/` and `states/` by hand before going back.
 
 ## [5.0.0-beta.5] - 2026-11-14
 
@@ -165,7 +200,7 @@ online play alike. Copy all four files (`EBOOT.PBP`, `gbadhoc_me.prx`, `gbadhoc_
 **Known issues:** online play is still experimental; only Pokémon Emerald has been tested over
 the internet, and a relayed session on a high ping can run below 58 fps. Mario Golf: Advance
 Tour's adapter lobby can still stick when both players press at the same moment (leave and
-rejoin). Hot Wheels: Stunt Track Challenge, Top Gear Rally, LEGO Drome Racers and Payback
+rejoin). Hot Wheels: Stunt Track Challenge, Top Gear Rally and Payback
 still run below 58 fps. **Downgrading:** 4.6.0-beta.3 and older look only in `roms/` for saves
 and states; move them back from `saves/` and `states/` by hand before going back.
 
