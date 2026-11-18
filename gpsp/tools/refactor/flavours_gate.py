@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """flavours_gate.py -- helpers of flavours.sh --against (T15).
 
-    flavours_gate.py [--any] CHECKS.txt  print the commit gate line generated
-                                         from the '== <flavour> <gate> PASS|FAIL'
+    flavours_gate.py [--any] [--expect-code-change] CHECKS.txt
+                                         print the commit gate line generated
+                                         from the '== <flavour> <gate> PASS|DIFF|FAIL'
                                          lines of flavours.sh's checks.txt; every
                                          gate of REQUIRED must be there with all
                                          its flavours (--any: no required set)
@@ -13,12 +14,25 @@
                                          may not exceed abi_asserts.ratchet's maxima (they may
                                          only fall; PLATFORM rows are not counted).  Defaults:
                                          this tool's generated/ and abi_asserts.ratchet
+    flavours_gate.py --identity            print the identity gates (flavours.sh reads them)
     flavours_gate.py --selftest
 
 The gate line is never typed (PLAN-P-beta5 §4 common): one token per gate, e.g.
     G1 ok rel/lab/har G2 ok rel/lab/har HO ok ... CI ok
 and on a failure  G1 FAIL lab (det_check) ...   Exit 0 when every verdict is
 PASS, 1 when any is FAIL or when checks.txt holds no verdict at all, 2 usage.
+
+IDENTITY gates (G0 G0var G1 G2 HO ST BF DS) prove that a step changed nothing:
+built code, preprocessed source, stack, hot order, build files, diff scope.
+flavours.sh writes DIFF when such a check ran and found a difference (its
+tool's exit 1), FAIL when it could not run or broke.  The other gates (SS LL
+CF CI FP) are invariants every commit must keep; they are only PASS or FAIL.
+  default               a pure refactor: a DIFF is a failure, printed FAIL
+  --expect-code-change  a commit meant to change code: an identity gate whose
+                        verdicts are all PASS or DIFF prints
+                        `G1 CHANGED rel/lab/har` and passes; a FAIL, a MISSING
+                        gate or flavour, a DIFF on an invariant gate and an
+                        invariant FAIL still fail
 """
 import json
 import os
@@ -35,13 +49,15 @@ REQUIRED = {'G0': FLAVOURS, 'G0var': ('-',), 'G1': FLAVOURS, 'G2': FLAVOURS, 'HO
             'ST': FLAVOURS, 'LL': ('release', 'lab'), 'CF': ('-',), 'BF': ('-',), 'DS': ('-',),
             'CI': ('-',), 'FP': ('-',)}
 ORDER = ['G0', 'G0var', 'G1', 'G2', 'HO', 'SS', 'ST', 'LL', 'CF', 'BF', 'DS', 'CI', 'FP']
-VERDICT = re.compile(r'^== (\S+) (\S+) (PASS|FAIL)(?: \((.*)\))?\s*$')
+IDENTITY = ('G0', 'G0var', 'G1', 'G2', 'HO', 'ST', 'BF', 'DS')
+VERDICT = re.compile(r'^== (\S+) (\S+) (PASS|DIFF|FAIL)(?: \((.*)\))?\s*$')
 
 
-def gate_line(lines, required=None):
+def gate_line(lines, required=None, expect_change=False):
     """-> (line, ok).  A gate is ok only if every one of its verdicts passed and,
-    with `required` ({gate: flavours}), every required gate has a PASS verdict
-    for each of its flavours."""
+    with `required` ({gate: flavours}), every required gate has a verdict for
+    each of its flavours.  With expect_change, an IDENTITY gate's DIFF verdicts
+    are expected (CHANGED) instead of failures."""
     per = {}   # gate -> list of (flavour, verdict, label)
     for ln in lines:
         m = VERDICT.match(ln.rstrip('\r\n'))
@@ -61,15 +77,20 @@ def gate_line(lines, required=None):
             ok = False
             out.append('%s MISSING %s' % (g, ','.join(ABBR.get(f, f) or '-' for f in missing)))
             continue
-        fails = [(f, lab) for f, v, lab in per[g] if v != 'PASS']
-        fls = []
-        for f, _, _ in per[g]:
+        expected = expect_change and g in IDENTITY
+        fails = [(f, lab) for f, v, lab in per[g] if v == 'FAIL' or (v == 'DIFF' and not expected)]
+        fls, changed = [], []
+        for f, v, _ in per[g]:
             a = ABBR.get(f, f)
             if a and a not in fls:
                 fls.append(a)
+            if v == 'DIFF' and (a or '-') not in changed:
+                changed.append(a or '-')
         if fails:
             ok = False
             out.append('%s FAIL %s' % (g, ','.join('%s(%s)' % (ABBR.get(f, f) or '-', lab) for f, lab in fails)))
+        elif changed:
+            out.append('%s CHANGED %s' % (g, '/'.join(changed)))
         else:
             out.append('%s ok%s' % (g, (' ' + '/'.join(fls)) if fls else ''))
     return ' '.join(out), ok
@@ -83,7 +104,11 @@ def jsoneq(pa, pb):
         if isinstance(o, list):
             return [norm(v) for v in o]
         return o
-    a, b = (norm(json.load(open(p))) for p in (pa, pb))
+    try:
+        a, b = (norm(json.load(open(p))) for p in (pa, pb))
+    except (OSError, ValueError) as e:   # a report that is not there is no difference: exit 2
+        print('jsoneq: cannot read: %s' % e)
+        return 2
     if a == b:
         print('jsoneq: identical (%s, %s)' % (os.path.basename(pa), os.path.basename(pb)))
         return 0
@@ -192,6 +217,26 @@ def selftest():
     ok, out = ratchet_check({'release': ' * checked: 52 declarations, 6 constants; unchecked: 39 (listed at the end). */'},
                             {'release': (91, 39)})
     t(ok, 'ratchet: a pre-C6-1 header (no platform count) is read -> %s' % out[0].strip())
+    # --expect-code-change: `full` with every identity gate DIFF in every flavour
+    chg = [x.replace(' PASS ', ' DIFF ') if x.split()[2] in IDENTITY else x for x in full]
+    line, ok = gate_line(chg, REQUIRED)
+    t(not ok and 'G1 FAIL' in line and 'CHANGED' not in line, 'default mode: a DIFF is a FAIL -> %r' % line[:60])
+    line, ok = gate_line(chg, REQUIRED, expect_change=True)
+    t(ok and 'G1 CHANGED rel/lab/har' in line and 'G0var CHANGED -' in line and 'SS ok rel/lab/har' in line
+      and 'FAIL' not in line, 'expect-change: identity DIFFs are CHANGED, the gate passes -> %r' % line)
+    line, ok = gate_line([x for x in chg if not x.startswith('== lab G1')] + ['== lab G1 PASS (x)'], REQUIRED, True)
+    t(ok and 'G1 CHANGED rel/har' in line, 'expect-change: CHANGED names only the flavours that differ -> %r' % line[:40])
+    line, ok = gate_line(chg + ['== lab ST FAIL (lab stack_depth; rc 2)'], REQUIRED, True)
+    t(not ok and 'ST FAIL lab(lab stack_depth; rc 2)' in line,
+      'expect-change: a FAIL in an identity gate (the tool broke) still fails -> %r' % line)
+    line, ok = gate_line([x for x in chg if x != '== lab SS PASS (x)'] + ['== lab SS FAIL (x)'], REQUIRED, True)
+    t(not ok and 'SS FAIL lab' in line, 'expect-change: an invariant FAIL (SS) still fails -> %r' % line)
+    line, ok = gate_line([x for x in chg if ' FP ' not in x] + ['== - FP DIFF (x)'], REQUIRED, True)
+    t(not ok and 'FP FAIL' in line, 'expect-change: a DIFF on an invariant gate (FP) is a FAIL -> %r' % line)
+    line, ok = gate_line([x for x in chg if not x.startswith('== harness G2')], REQUIRED, True)
+    t(not ok and 'G2 MISSING har' in line, 'expect-change: a missing flavour is still a FAIL -> %r' % line)
+    line, ok = gate_line(full, REQUIRED, True)
+    t(ok and 'CHANGED' not in line, 'expect-change on a commit that changed nothing: all ok -> %r' % line[:40])
     print('flavours_gate selftest: %s' % ('PASS' if not bad else '%d FAILED' % bad))
     return 1 if bad else 0
 
@@ -199,19 +244,26 @@ def selftest():
 def main(argv):
     if argv[:1] == ['--selftest']:
         return selftest()
+    if argv == ['--identity']:          # flavours.sh reads the identity gates from here
+        print(' '.join(IDENTITY))
+        return 0
     if argv[:1] == ['ratchet'] and len(argv) <= 3:
         return ratchet(argv[1] if len(argv) > 1 else os.path.join(HERE, 'generated'),
                        argv[2] if len(argv) > 2 else RATCHET)
     if len(argv) == 3 and argv[0] == 'jsoneq':
         return jsoneq(argv[1], argv[2])
-    req = REQUIRED
-    if argv[:1] == ['--any']:          # no required set (ad-hoc checks files)
-        req, argv = None, argv[1:]
+    req, expect = REQUIRED, False
+    while argv[:1] in (['--any'], ['--expect-code-change']):
+        if argv[0] == '--any':         # no required set (ad-hoc checks files)
+            req = None
+        else:
+            expect = True
+        argv = argv[1:]
     if len(argv) != 1:
         print(__doc__)
         return 2
     with open(argv[0], encoding='utf-8', errors='replace') as f:
-        line, ok = gate_line(f, req)
+        line, ok = gate_line(f, req, expect)
     print(line)
     return 0 if ok else 1
 

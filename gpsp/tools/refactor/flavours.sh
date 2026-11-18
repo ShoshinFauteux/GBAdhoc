@@ -20,6 +20,8 @@
 #                       (a merge's other parent such as the beta tip, or P0c; PLAN-P-beta5
 #                       P7), only when named: REV must be the reference's own commit
 #   --phase P           ci_greps.sh phase (base|P|HW2, default base)
+#   --expect-code-change  the step is MEANT to change code: an identity gate (below)
+#                       whose check found a difference reads CHANGED, not FAIL
 #   --build-version V   pin the version string (GPSP_BUILD_VERSION, build.sh:54;
 #                       default: the commit's 7-char hash, so two commits differ)
 #   --sde N             pin SOURCE_DATE_EPOCH to N (default: the commit time)
@@ -114,10 +116,18 @@
 #       NEW release ELF vs NEW lab ELF against the commit's frame_parity.base: no
 #       per-frame function gains a release/lab code difference or (where they
 #       shared one, or in the hot block) an I-cache set difference
-# Every check's verdict is a line "== <flavour|-> <gate> PASS|FAIL" in
+# Every check's verdict is a line "== <flavour|-> <gate> PASS|DIFF|FAIL" in
 # OUT/checks.txt, and OUT/gate.txt is the commit gate line GENERATED from it
 # (never typed); flavours_gate.py fails a gate that is missing or that lacks a
 # flavour it must cover.
+# IDENTITY gates (G0 G0var G1 G2 HO ST BF DS) prove a step changed nothing, so
+# on a commit that changes code they differ by design.  Their verdict is DIFF
+# when the tool ran and found a difference (exit 1, no crash in its output) and
+# FAIL when it could not run or broke (any other exit; HO's placement check and
+# ST's stack verdict on the new build are invariants inside those gates and
+# exit 2).  Without --expect-code-change a DIFF fails the gate as before; with
+# it, the gate line says `G1 CHANGED rel/lab/har` and only FAILs, MISSING gates
+# and the invariant gates (SS LL CF CI FP) can fail it.
 #
 # HERMETIC BUILDS (adversarial review 2026-11-07).  build.sh reads about 25
 # environment variables (ME_LOWLAT, MGIFT, REWIND, CHEATS, INPUT_FRESH,
@@ -248,6 +258,7 @@ json_get() { sed -nE "s/.*\"$2\": *\"([^\"]*)\".*/\1/p" "$1" 2>/dev/null | head 
 COMMIT=""; SRC=""; OUT=""; BASELINE=0; FLAVOURS="release lab harness"
 AGAINST=""; SIDECARS=1; SDE_ON=1; KEEP_SRC=0; LOCK=""; WORK="${FLAV_WORK:-}"
 BVER=""; SDE_PIN=""; PHASE=base; CHECK_ONLY=0; REPO_ARG="${FLAV_REPO:-}"; REF_ANCESTOR=""
+EXPECT_CHANGE=0
 SCOPE_ALLOW=(); PRUNE_ALLOW=()
 ALL_FLAVOURS="release lab harness"
 ORIG_ARGS=("$@")
@@ -261,6 +272,7 @@ while [ $# -gt 0 ]; do
     --against)     AGAINST="$2"; shift 2 ;;
     --ref-ancestor) REF_ANCESTOR="$2"; shift 2 ;;
     --phase)       PHASE="$2"; shift 2 ;;
+    --expect-code-change) EXPECT_CHANGE=1; shift ;;
     --build-version) BVER="$2"; shift 2 ;;
     --sde)         SDE_PIN="$2"; shift 2 ;;
     --check-only)  CHECK_ONLY=1; shift ;;
@@ -597,11 +609,23 @@ if [ -n "$AGAINST" ]; then
   note "--against contract ok ($ANCESTRY; env, lock, clean tree, three flavours)"
   : > "$OUT/checks.txt"
   echo "-- contract: $ANCESTRY; buildEnv '$(benv_cmp "$OUT/release/flavour.json")'" >> "$OUT/checks.txt"
+  # the identity gates, from the gate line's own list (none if that tool is absent: then
+  # every difference is a FAIL)
+  IDENTITY_GATES=$("$PY" "$HERE/flavours_gate.py" --identity 2>/dev/null)
   chk() {   # chk <flavour|-> <gate> <label> <cmd...>
-    local fl="$1" gate="$2" label="$3"; shift 3
+    local fl="$1" gate="$2" label="$3" rc v t; shift 3
     echo "-- $label: $*" >> "$OUT/checks.txt"
-    if "$@" >> "$OUT/checks.txt" 2>&1; then note "check $label: PASS"; echo "== $fl $gate PASS ($label)" >> "$OUT/checks.txt"
-    else note "check $label: FAIL"; echo "== $fl $gate FAIL ($label)" >> "$OUT/checks.txt"; CHECK_RC=6; fi
+    t=$(mktemp "${TMPDIR:-/tmp}/flavours-chk-out.XXXXXX")
+    "$@" > "$t" 2>&1; rc=$?
+    cat "$t" >> "$OUT/checks.txt"
+    if [ $rc = 0 ]; then v=PASS
+    elif [ $rc = 1 ] && [[ " $IDENTITY_GATES " == *" $gate "* ]] &&
+         ! grep -qE 'Traceback \(most recent call last\)|unbound variable|command not found|syntax error' "$t"; then
+      v=DIFF   # the tool ran and found a difference; whether that fails is the gate line's call
+    else v=FAIL; label="$label; rc $rc"; fi
+    rm -f "$t"
+    note "check $label: $v"; echo "== $fl $gate $v ($label)" >> "$OUT/checks.txt"
+    if [ $v = FAIL ] || { [ $v = DIFF ] && [ "$EXPECT_CHANGE" = 0 ]; }; then CHECK_RC=6; fi
   }
   failchk() {  # failchk <flavour|-> <gate> <why>: a check that could not run is a FAIL
     note "check $1 $2: FAIL ($3)"; echo "== $1 $2 FAIL ($3)" >> "$OUT/checks.txt"; CHECK_RC=6
@@ -609,10 +633,12 @@ if [ -n "$AGAINST" ]; then
   need() { [ -f "$HERE/$1" ]; }
   stack_same() {   # ST: the verdict passes on NEW, and TOTAL/unmatched lines equal REF's
     local a b
-    "$PY" "$HERE/stack_depth.py" "$N/gpsp_adhoc.elf" --su "$N/su" --resolve "$HERE/stack_resolve.txt" --tree 0 > "$N/stack_depth.txt" 2>&1 || { cat "$N/stack_depth.txt"; return 1; }
+    # exit 2 (FAIL even with --expect-code-change): the new build's stack verdict, or no
+    # TOTAL line on either side; exit 1 (DIFF): both fine, the lines differ
+    "$PY" "$HERE/stack_depth.py" "$N/gpsp_adhoc.elf" --su "$N/su" --resolve "$HERE/stack_resolve.txt" --tree 0 > "$N/stack_depth.txt" 2>&1 || { cat "$N/stack_depth.txt"; return 2; }
     "$PY" "$HERE/stack_depth.py" "$R/gpsp_adhoc.elf" --su "$R/su" --resolve "$HERE/stack_resolve.txt" --tree 0 > "$N/stack_depth.ref.txt" 2>&1
     a=$(grep -E "TOTAL|unmatched" "$N/stack_depth.ref.txt"); b=$(grep -E "TOTAL|unmatched" "$N/stack_depth.txt")
-    echo "ref: $a"; echo "new: $b"; [ -n "$b" ] && [ "$a" = "$b" ]
+    echo "ref: $a"; echo "new: $b"; [ -n "$a" ] && [ -n "$b" ] || return 2; [ "$a" = "$b" ]
   }
   # ---- source checks: both sides' gpsp/ exported from their commits
   CHK=$(mktemp -d "${TMPDIR:-/tmp}/flavours-chk.XXXXXX")
@@ -626,9 +652,11 @@ if [ -n "$AGAINST" ]; then
   hotord_same() {  # HO: placement passes on NEW; the report equals REF's (staleness recorded, not gated alone)
     # each side's own psp/layout/hot_order.txt + hot.ord (the exported source), never the
     # copy next to these tools (a tools snapshot has none; another tree's may differ)
-    [ "$SRC_OK" = 1 ] || { echo "no source export"; return 1; }
+    # exit 2 (FAIL even with --expect-code-change): no source, or NEW's placement fails;
+    # exit 1 (DIFF): the report differs from REF's (jsoneq)
+    [ "$SRC_OK" = 1 ] || { echo "no source export"; return 2; }
     "$PY" "$HERE/hotord_check.py" --build "$N" --order "$NS/psp/layout/hot_order.txt" --ord "$NS/psp/layout/hot.ord" \
-      --sizes warn --json "$N/hotord.json" || return 1
+      --sizes warn --json "$N/hotord.json" || return 2
     "$PY" "$HERE/hotord_check.py" --build "$R" --order "$RS/psp/layout/hot_order.txt" --ord "$RS/psp/layout/hot.ord" \
       --sizes warn --json "$N/hotord.ref.json" > /dev/null 2>&1
     "$PY" "$HERE/flavours_gate.py" jsoneq "$N/hotord.ref.json" "$N/hotord.json"
@@ -719,7 +747,8 @@ if [ -n "$AGAINST" ]; then
   esac
   rm -rf "$CHK"
   # the gate line, generated from checks.txt
-  "$PY" "$HERE/flavours_gate.py" "$OUT/checks.txt" > "$OUT/gate.txt" || CHECK_RC=6
+  GATE_ARGS=(); [ "$EXPECT_CHANGE" = 1 ] && GATE_ARGS=(--expect-code-change)
+  "$PY" "$HERE/flavours_gate.py" "${GATE_ARGS[@]+"${GATE_ARGS[@]}"}" "$OUT/checks.txt" > "$OUT/gate.txt" || CHECK_RC=6
   note "gate: $(cat "$OUT/gate.txt")"
 fi
 
@@ -728,6 +757,7 @@ fi
   echo "  \"sourceCommit\": \"$REV\", \"sourceTree\": \"$TREE\", \"workingTreeClean\": ${CLEAN:-false},"
   echo "  \"sourceDateEpoch\": \"$SDE\", \"rfuSched\": \"$RFU_SCHED\", \"buildVersion\": \"${BUILD_VERSION:-}\","
   echo "  \"dockerImage\": \"$DOCKER_IMAGE\", \"dockerId\": \"${IMG_ID:-}\", \"ciGrepsRc\": \"${CI_RC:-}\", \"phase\": \"$PHASE\","
+  echo "  \"expectCodeChange\": $([ "$EXPECT_CHANGE" = 1 ] && echo true || echo false),"
   echo "  \"flavours\": \"${RESULTS[*]}\", \"against\": \"$AGAINST\", \"checksRc\": $CHECK_RC"
   echo '}'
 } > "$OUT/flavours.json"

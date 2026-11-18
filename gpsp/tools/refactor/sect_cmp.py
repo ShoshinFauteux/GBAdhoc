@@ -54,7 +54,8 @@ def resolve(p):
     if os.path.isdir(p):
         elf = os.path.join(p, 'gpsp_adhoc.elf')
         if not os.path.isfile(elf):
-            raise SystemExit('sect_cmp: no gpsp_adhoc.elf in %s' % p)
+            print('sect_cmp: no gpsp_adhoc.elf in %s' % p, file=sys.stderr)
+            raise SystemExit(2)   # a missing input is a tool error, never "a difference" (1)
         mp = os.path.join(p, 'gpsp_adhoc.map')
         # logs/.build-*.log (the make output, where psp-fixup-imports prints) are
         # dotfiles: glob's '*' skips them, so list the dir instead
