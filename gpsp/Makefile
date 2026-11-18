@@ -265,7 +265,7 @@ else ifeq ($(platform), psp1)
 	# loudly rather than ignored: a silently dropped core flag has already
 	# cost two hardware experiments (core-vs-frontend-defines).
 	ifdef BIG_JIT
-	$(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
+    $(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
 	endif
 	CFLAGS += -DSMALL_TRANSLATION_CACHE -DRUNTIME_JIT_CACHE
 	# GBA_LINK and REWIND are make variables and not gpsp_features.h lines
