@@ -1131,9 +1131,6 @@ $(FLAGS_STAMP): FORCE
 $(OBJECTS): $(FLAGS_STAMP)
 -include $(OBJECTS:.o=.d)
 
-cpu_threaded.o: cpu_threaded.c
-	$(CC) $(DEPFLAGS) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -Wno-unused-variable -Wno-unused-label -c  -o $@ $<
-
 %.o: %.S
 	$(CC) $(DEPFLAGS) $(ASFLAGS) $(CFLAGS) $(OPTIMIZE) -c -o $@ $<
 
