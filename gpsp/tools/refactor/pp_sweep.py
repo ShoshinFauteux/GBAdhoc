@@ -65,7 +65,10 @@ FREEFORM = {'GPSP_BUILD_COMMIT', 'GPSP_BUILD_TREE', 'GPSP_BUILD_DIRTY', 'GPSP_BU
             # retired pads (code-health C3-3, linker pins since): build.sh reads them only to
             # REFUSE the build when one is set, so no arm can ever compile with them
             'LAYOUT_PAD_MAIN_BYTES', 'LAYOUT_PAD_FE_BYTES', 'LAYOUT_PAD_GB_BYTES',
-            'LAYOUT_PAD_CORE_BYTES'}
+            'LAYOUT_PAD_CORE_BYTES',
+            # a post-link checker mode (weaknm --strict or report): read after the ELF is
+            # linked, never on a compile line
+            'ABI_WEAK_CHECK'}
 SKIP_EXT = ('.o', '.d', '.a', '.elf', '.PBP', '.prx', '.map', '.su', '.pyc', '.log', '.nm')
 IGNORED = re.compile(r'(^|/)(docs/|README|.*\.md$)|^tools/(?!build\.sh$|layout/)')
 RECIPE = re.compile(r'^(tools/build\.sh|psp/Makefile|Makefile|tools/layout/.*)$')
