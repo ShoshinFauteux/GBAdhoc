@@ -38,6 +38,10 @@ CHECKS, per hot_order.txt entry (docs/LAYOUT-PINNING.md "Keeping the pads"):
 Exit: 0 clean; 1 a match/rename/ord failure, or rounding breaks with
 --sizes fail (the default); 2 usage.  --sizes warn reports sizes without
 failing (what a pre-regen report wants); --sizes off skips them.
+--unmatched warn reports rows that match nothing without failing: a row for a
+function only some flavours compile (the release has no smc_prof_exact) or a
+dead row pins nothing and moves nothing.  flavours.sh's HO uses it and gates
+the report (unmatched included) on being equal to the reference's instead.
 """
 import argparse
 import json
@@ -181,7 +185,7 @@ class Build:
         return self.input_at(sym['value'])
 
 
-def check(order_path, ord_path, build, sizes='fail', out=print, placement=True):
+def check(order_path, ord_path, build, sizes='fail', out=print, placement=True, unmatched='fail'):
     rows = read_order(order_path)
     res = {'order': order_path, 'elf': build.elf_path, 'map': build.map.path if build.map else None,
            'entries': 0, 'unmatched': [], 'multi': [], 'multi_benign': [], 'renamed': [], 'size_diff': [],
@@ -257,6 +261,9 @@ def check(order_path, ord_path, build, sizes='fail', out=print, placement=True):
             else:
                 res['unmatched'].append({'line': k, 'name': n, 'how': how})
                 out('  NOMATCH  hot_order.txt:%-4d %-40s matches nothing (%s)' % (k, n, how))
+                if unmatched == 'fail':
+                    fail = 1
+                continue
             fail = 1
             continue
         if kind == 'func' and nmatch > 1:
@@ -653,6 +660,9 @@ def main():
     ap.add_argument('--ord', default=None, help='as --order')
     ap.add_argument('--no-ord', action='store_true', help='skip the hot.ord consistency check')
     ap.add_argument('--sizes', choices=('fail', 'warn', 'off'), default='fail')
+    ap.add_argument('--unmatched', choices=('fail', 'warn'), default='fail',
+                    help='warn: a row that matches nothing is reported (and in --json) without failing '
+                         '(a flavour-only function, or a dead row); a RENAME always fails')
     ap.add_argument('--no-placement', action='store_true',
                     help='skip the address-order check (an ELF NOT linked with this order, e.g. regen.sh --check)')
     ap.add_argument('--json')
@@ -666,7 +676,8 @@ def main():
         ap.error('--build DIR or --elf ELF')
     elf, mp = resolve_build(a)
     print('hotord_check: order %s\n              elf   %s%s' % (a.order, elf, '\n              map   %s' % mp if mp else ''))
-    rc, res = check(a.order, ordp, Build(elf, mp), a.sizes, placement=not a.no_placement)
+    rc, res = check(a.order, ordp, Build(elf, mp), a.sizes, placement=not a.no_placement,
+                    unmatched=a.unmatched)
     if a.json:
         json.dump(res, open(a.json, 'w'), indent=1)
     return rc

@@ -93,7 +93,8 @@
 # is absent, or a check that cannot run, is a FAIL (never a note):
 #   G1  det_check.py REF NEW; sect_cmp.py REF NEW              (dirs)
 #   G2  func_diff.py --data --strict-weak REF.elf NEW.elf
-#   HO  hotord_check.py --build NEW --sizes warn, and its JSON (placement +
+#   HO  hotord_check.py --build NEW --sizes warn --unmatched warn (placement, renames,
+#       multi-matches and hot.ord fail it), and its JSON (placement +
 #       staleness) equal to REF's
 #   SS  strong_syms.py check --elf --map --flavour --golden strong_syms.golden.tsv
 #   ST  stack_depth.py NEW.elf --su NEW/su --resolve stack_resolve.txt, and its
@@ -628,9 +629,9 @@ if [ -n "$AGAINST" ]; then
     # copy next to these tools (a tools snapshot has none; another tree's may differ)
     [ "$SRC_OK" = 1 ] || { echo "no source export"; return 1; }
     "$PY" "$HERE/hotord_check.py" --build "$N" --order "$NS/psp/layout/hot_order.txt" --ord "$NS/psp/layout/hot.ord" \
-      --sizes warn --json "$N/hotord.json" || return 1
+      --sizes warn --unmatched warn --json "$N/hotord.json" || return 1
     "$PY" "$HERE/hotord_check.py" --build "$R" --order "$RS/psp/layout/hot_order.txt" --ord "$RS/psp/layout/hot.ord" \
-      --sizes warn --json "$N/hotord.ref.json" > /dev/null 2>&1
+      --sizes warn --unmatched warn --json "$N/hotord.ref.json" > /dev/null 2>&1
     "$PY" "$HERE/flavours_gate.py" jsoneq "$N/hotord.ref.json" "$N/hotord.json"
   }
   for FL in "${RESULTS[@]}"; do
