@@ -1295,8 +1295,11 @@ static void link_wait_present(void)
 }
 
 /* held = fe_host_link_held(); the loop calls this only while a hold is on or
- * just ended, so none of it sits in the frame loop's own code. */
-static __attribute__((noinline)) void link_wait_osd(int held)
+ * just ended, so none of it sits in the frame loop's own code.  Only frame_loop
+ * calls it: noinline and its own -ffunction-sections name as an explicit section
+ * (ci_greps R6), so GCC can neither inline it back into the loop nor move it to
+ * .text.startup. */
+static __attribute__((noinline, section(".text.link_wait_osd"))) void link_wait_osd(int held)
 {
    unsigned long long now = net_now_us();
    int on;
@@ -1313,8 +1316,10 @@ static __attribute__((noinline)) void link_wait_osd(int held)
       link_wait_present();
 }
 
-/* The menu draws the OSD over itself: the game is paused, not waiting. */
-static void link_wait_hide(void)
+/* The menu draws the OSD over itself: the game is paused, not waiting.  Out of
+ * the frame loop's code like link_wait_osd (ci_greps R6): an edit here does not
+ * move the loop. */
+static __attribute__((noinline, section(".text.link_wait_hide"))) void link_wait_hide(void)
 {
    if (g_lw_on)
    {
