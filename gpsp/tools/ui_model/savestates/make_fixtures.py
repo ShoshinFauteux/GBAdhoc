@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """make_fixtures.py OUTDIR -- the card contents and backdrops the Save States
-design (builds/savestate-mockups/savestate.py, direction A) draws, so a
-PPSSPP GE dump of the real page can be held against Fable's PNGs
+design (the savestate mockups' savestate.py, direction A; docs/design/UI-MOCKUPS.md) draws, so a
+PPSSPP GE dump of the real page can be held against the design's PNGs
 (docs/UI-OVERLAY.md section 13):
 
   OUTDIR/<con>/backdrop.565   the design's 480x272 menu backdrop, raw
@@ -12,8 +12,8 @@ PPSSPP GE dump of the real page can be held against Fable's PNGs
   OUTDIR/<con>/slot<k>.time   'YYYY-mm-dd HH:MM' for `touch -d` (the page's
                               timestamp is the file's mtime)
 
-<con> is gba, gbc, gb.  Needs builds/savestate-mockups (SAVESTATE_MOCKUPS)
-and builds/menu-mockups (UI_MOCKUPS) for the 3.1 thumbnail."""
+<con> is gba, gbc, gb.  Needs local copies (not in the repo) of the savestate mockups (SAVESTATE_MOCKUPS)
+and the menu mockups (UI_MOCKUPS) for the 3.1 thumbnail; see docs/design/UI-MOCKUPS.md."""
 import os, sys, struct
 import numpy as np
 from PIL import Image

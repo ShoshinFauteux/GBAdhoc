@@ -16,7 +16,7 @@ The rule is enforced in two places:
 | where | what | on failure |
 |---|---|---|
 | `tools/build.sh` (every profile) | image size against this page's per-console numbers | the build fails |
-| `psp/main_psp.c` (link builds; `GPSP_MEM_BUDGET` elsewhere) | the GBA core's minimum, measured just before `retro_init` | "NOT ENOUGH MEMORY" screen, `EVT exit code=8 reason=mem_budget`, back to the XMB |
+| `psp/fe/session.inc.c`, `mem_budget_gba_ok` (link builds, the PSP default `GBA_LINK=1`; `GPSP_MEM_BUDGET` elsewhere) | the GBA core's minimum, measured just before `retro_init` | "NOT ENOUGH MEMORY" screen, `EVT exit code=8 reason=mem_budget`, back to the XMB |
 
 ## The model: one number per console
 
@@ -38,7 +38,7 @@ The sums agree to within 216 B (alignment).
 
 ### Per-console numbers
 
-The cells marked *pending* are filled from the owner's `memprobe.txt` (OWNER-STEPS in `builds/memprobe-out`).
+The cells marked *pending* are to be filled from `memprobe.txt` written by `tools/memprobe` on each console.
 
 | console | heap_plus_image | source | release heap at boot (image 7,616,768) | link build heap at boot (image 13,200,128) |
 |---|---:|---|---:|---:|
@@ -66,8 +66,8 @@ Measured on the link build in PPSSPP: `boot_ballast_kb` holds N KiB of heap from
 | 3,030,904 | - | **0** | **hang**: NULL ROM page, `translate_block_arm` reads address 0 forever |
 | 933,752 | - | - | hang (netdrv arena also fails) |
 
-- **Why zero blocks hangs.** `init_gamepak_buffer` holds a 1 MiB post-load reserve and then takes 1 MiB blocks until malloc fails. With no block it does not fail: `gamepak_buffers[0]` stays NULL.
-- **The gate.** `MEM_GBA_CORE_MIN` = 1 MiB reserve + 1 block + 64 KiB, asked as three mallocs just before `rom_cache_select`. With the same 40,448 KiB ballast, dev3 logs `mem_budget FAIL need=2162688 largest=1974272`, shows the notice, and exits 8. With 39,936 KiB it passes and runs (one block).
+- **Why zero blocks hung** (2026-10-02). `init_gamepak_buffer` holds a 1 MiB post-load reserve and then takes 1 MiB blocks until malloc fails. With no block it did not fail: `gamepak_buffers[0]` stayed NULL. **Status now:** the load is refused instead (`load_gamepak_raw` in `gba_memory.c` returns -1 when there is no ROM block; the frontend logs `exit code=1 reason=load_failed`), and the gate below normally stops first.
+- **The gate.** `MEM_GBA_CORE_MIN` = 1 MiB reserve + 1 block + 64 KiB, asked as three mallocs before the core loads (`mem_budget_gba_ok`, `psp/fe/inproc.a.inc.c`). With the same 40,448 KiB ballast, dev3 logs `mem_budget FAIL need=2162688 largest=1974272`, shows the notice, and exits 8. With 39,936 KiB it passes and runs (one block).
 - **Build floor** (`BUDGET_BOOT_MIN`): 4 MiB of heap at boot = netdrv's 1 MiB + the core minimum + margin over the measured 3.1-3.6 MB.
 
 ### Where the link build stands
@@ -141,8 +141,8 @@ Evidence it needs before it can be on, none of it available in PPSSPP:
 - md5 `abd13048`, the same size (3,321,559 B).
 - Read back from E: (read-only) and compared cluster by cluster (32 KiB clusters, FAT32), it is arm W's file with:
   - **cluster 89 missing.** File clusters 89-99 are W's clusters 90-100, and 100 is W's last cluster (11,991 B).
-  - **cluster 101** is cluster 52 of the `shash.txt` that the pair rig's takeover had collected and deleted from `log/` in the same window (it matches `logs/pair/pre-join-1790946729/log-shash.txt` at offset 1,703,936).
-- That is a FAT chain rewritten under the file. It matches the documented Go M2 mechanism (memory: go-m2-handoff-fat-damage):
+  - **cluster 101** is cluster 52 of the `shash.txt` that the pair rig's takeover had collected and deleted from `log/` in the same window (it matches the collected copy of that file at offset 1,703,936).
+- That is a FAT chain rewritten under the file. It matches the Go M2 handoff mechanism seen before on the rigs:
   - the parked app's firmware writes back a FAT cached from before the USB window, after the PC has freed and reallocated those clusters;
   - here the PC freed `shash.txt` and reused its clusters for the new EBOOT.
 - The install was md5-verified at 09:12:17 and ejected at 09:12:18. Then the parked app (run 152) served the rest of its 300 s window, released USB, appended STATE.TXT ("usb released", "CMD=RUN -- relaunching"), and relaunched.

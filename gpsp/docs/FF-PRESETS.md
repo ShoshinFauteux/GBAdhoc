@@ -123,7 +123,7 @@ below uses the same instrument on both sides.
 ## Validation (PPSSPP: CPU renderer only)
 
 Harness builds of 53bca1d (base), 5fe6282 (old = base + telemetry) and the
-gate; runs in `builds/ffpresets-out/ppsspp/` (rig129.sh, Xvfb :129). PPSSPP's
+gate; runs under Xvfb :129 (the run outputs are not kept in the repo). PPSSPP's
 clock is the emulated PSP clock, so the fps below are PPSSPP's cost model:
 good for old against new, not a hardware prediction.
 
@@ -222,11 +222,11 @@ render times under the new cadence, and how the panel looks.
 
 ## Hardware A/B (staged, not run)
 
-`builds/ffpresets-out/hw/`, **staged, not run.** One rig app
+**Staged, not run** (the staging folder is not kept in the repo). One rig app
 (`GBADHOC-DRPROF`, "DRPROF RIG") driven by the existing hnsrig/freezerig
-handoff loop; `ffrig.py` adds the fixtures and arms to drrig the way
-`builds/hw-queue/queue_arms.py` does. Steps for the lead and the owner are in
-`hw/OWNER-STEPS.txt`.
+handoff loop; a staging script (`ffrig.py`) adds the fixtures and arms to drrig
+the way the hardware queue's arm scripts do. Steps for the lead and the owner were in
+an owner-steps file beside the stage.
 
 * Builds: harness64 (64 MiB layout), ME on, CATCH PRX 19ae57b6.
   `ffold` = 5fe6282 (EBOOT md5 bc8455520734dc0a07255e9b66c3c514),
@@ -256,11 +256,11 @@ handoff loop; `ffrig.py` adds the fixtures and arms to drrig the way
 
 ## Builds
 
-| artifact | path | EBOOT md5 |
-|---|---|---|
-| playable "GBAdhoc 3.1 RC-ALL+FF" (bf5d633, clean tree) | `builds/ffpresets-out/release/` | `4cd26bc20104b446b7dab637878dd6f7` |
-| playable old presets "GBAdhoc 3.1 RC-ALL FF-OLD" (5fe6282) | `builds/ffpresets-out/hw-builds/old-release/` | `bde5e9524ad2493d08e6b9f40a4defc3` |
-| harness64 old / new (the rig) | `builds/ffpresets-out/hw-builds/{old,new}-h64/` | above |
+| artifact (not kept in the repo) | EBOOT md5 |
+|---|---|
+| playable "GBAdhoc 3.1 RC-ALL+FF" (bf5d633, clean tree) | `4cd26bc20104b446b7dab637878dd6f7` |
+| playable old presets "GBAdhoc 3.1 RC-ALL FF-OLD" (5fe6282) | `bde5e9524ad2493d08e6b9f40a4defc3` |
+| harness64 old / new (the rig) | above |
 
 The release ships `gbadhoc_me.prx` 19ae57b6 (ME_CATCH, as `tools/build.sh
 release` builds it). Release EBOOT sha256
@@ -314,7 +314,7 @@ Findings:
    vblanks in a 59/41 mix; 4.1.0's 103 fps = 34 loops/s, 26/74, a steadier
    2-vblank rhythm. Same code in both: the regression the user sees is the
    faster emulation landing 3x's unsynchronised flip rate near 1.5 vblanks a
-   picture. (`sim3x.py` in builds/ffpace-out reproduces both rows exactly.)
+   picture. (A one-off simulation script, not kept in the repo, reproduced both rows exactly.)
 2. **3x at full speed (~180 fps):** tier 0a `flip_early` (LOW-LATENCY.md)
    flips during the wait without checking that the previous flip latched; a
    loop is ~1 vblank long, so after any overrun the early flip replaces the

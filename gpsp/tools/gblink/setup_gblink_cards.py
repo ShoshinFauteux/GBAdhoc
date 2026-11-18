@@ -6,9 +6,9 @@ WRITES to a stick.  The lead runs it; the owner's PSP/GAME/GBADHOC is only
 ever READ (to copy his own cartridges).
 
     python tools/gblink/setup_gblink_cards.py --backup-verified <backup dir>
-        --rig <builds/gb-dual-out/rig> --arm A
+        --rig <rig dir> --arm A
         host=F:=PSP-3000 join=D:=PSP-1000
-        [--rom-src <folder>] [--m1 <builds/gb-dual-out/m1>]
+        [--rom-src <folder>] [--m1 <m1 run dir>]
 
 Writes, under PSP/GAME/GBADHOC-GBLINK/ on each card and nowhere else:
   EBOOT.PBP, gbadhoc_me.prx, .gpsp-harness.ini, link.ap, CONFIG.INI (the

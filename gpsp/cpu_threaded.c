@@ -4444,7 +4444,7 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 /* DISPATCH_ASSOC (built in): the same 4 KiB per ISA, as
  * 2-way sets -- {key0, entry0, key1, entry1}, 16 bytes, one quarter of a
  * D-cache line -- instead of 512 direct-mapped slots.  The twin
- * (builds/ibranch-out) found almost every C fall-through of the
+ * (offline; its logs are not in the repo) found almost every C fall-through of the
  * direct-mapped table to be a CONFLICT miss (Doom II 138 of 140 a frame,
  * Duke 191 of 193): ~200-250 hot targets a frame alias in 512 slots, ROM and
  * IWRAM code every 2 KiB.  Two ways remove 60-75 % of them; the probe reads

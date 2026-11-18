@@ -1,7 +1,13 @@
 # JIT_COST: the cost of producing translated code
 
-Branch `claude/jit-cost` (from `claude/bench-xlat` 56c55e2, XLAT_FAST). Root-make switch
-`JIT_COST=1`, OFF by default. Pieces can be compiled out with `JIT_COST_NO=PUBINL:SCANWIN:SCANCOND`.
+**Status now (2026-11-17):** `JIT_COST` is **built in** to every PSP core
+(code-health A-6, root `Makefile` `GPSP_BUILT_IN`; `JIT_COST=0` stops the make).
+`JIT_COST_NO=PIECE[:PIECE]` still compiles single pieces out, and the run-time
+keys below still need a `JIT_COST_KEYS` frontend.  The rest is the branch's
+record.
+
+Branch `claude/jit-cost` (from `claude/bench-xlat` 56c55e2, XLAT_FAST). At the
+time a root-make switch, `JIT_COST=1`, off by default. Pieces can be compiled out with `JIT_COST_NO=PUBINL:SCANWIN:SCANCOND`.
 Each piece also has a run-time switch, so one binary can A/B it with the code layout held fixed
 (harness keys, frontend built with `FE_EXTRA=-DJIT_COST_KEYS`):
 
@@ -74,8 +80,8 @@ Scan: about 55 -> about 44 host instructions per guest instruction (-12% scan on
   drops a window byte) caught 2/35, `m_jc_cond` (SCANCOND drops opcode bit 7) caught 5/35. The corpus
   cannot see PUBINL (qemu is coherent), so the checker mutants above cover it.
 - PPSSPP vhash (harness, 1200 frames or the fixture's script): 26/26 GBA bench-ready fixtures IDENTICAL
-  to 4.1.1 (runs/validate-20261019-213754), and all 36 incl. GB identical to XLAT_FAST x7.
-- Switches off: release EBOOT byte-identical. Link harness .text/.data identical; only the
+  to 4.1.1 (2026-10-19 validation run; logs not kept in the repo), and all 36 incl. GB identical to XLAT_FAST x7.
+- Switches off (at the time): release EBOOT byte-identical. Link harness .text/.data identical; only the
   `__TIME__` string differs, as it does between any two harness builds.
 
 ## Hardware (not run by the agent)

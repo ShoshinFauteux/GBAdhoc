@@ -1,8 +1,18 @@
 # DYNAREC PROFILE — where the main CPU's time goes, and what is worth fixing
 
 Branch `claude/dynarec-profile` (off the published 3.0.0 source plus
-`claude/gba-link-bench`), 2026-09-29. Measurement study; nothing here changes
-a release default.
+`claude/gba-link-bench`), 2026-09-29. Measurement study; when written, nothing
+here changed a release default.
+
+**Status now (2026-11-17):** both prototypes ship.  `DISPATCH_CACHE` is on in
+every PSP core (`gpsp_features.h`; `DISPATCH_CACHE=0` is the twin oracles'
+off switch) and `SMC_RETIRE_WINDOW` is built in (root `Makefile`
+`GPSP_BUILT_IN`; `=0` is refused).  The twin's default build is no longer
+"the release `CORE_COMMON` flags" (that list is gone) but `FEATURES=explicit`
+(`tools/drprof/Makefile`): the built-in features plus exactly the switches a
+variant names, so `dr_build.sh base` has `DISPATCH_CACHE` and the other
+`gpsp_features.h` switches **off**; `FEATURES=baked` builds what a PSP core
+is.  The numbers below are the 2026-09-29 study, kept as measured.
 
 **Labels used throughout.** *Twin* = exact dynamic MIPS-instruction counts of
 the PSP's own translator running under qemu (not time). *PPSSPP* = emulator
@@ -41,7 +51,7 @@ runs, used only to calibrate the twin.
   new translator would attack the ~20% that is already reasonable while
   re-opening SMC and timing correctness — which the oracle cannot validate for
   a translator that moves block boundaries. Ranked list in section 6.
-* **Staged for the owner**: `builds/dynarec-profile-out/` — ONE rig app
+* **Staged for the owner** (local staging, not kept in the repo): ONE rig app
   `GBADHOC-DRPROF` driven by the USB handoff loop: AW2 tour and H&S battle ×
   base / prototypes / time-split sampler, twice (ABBA), one launch, ~40
   hands-off minutes per console, one analysis command.
@@ -54,8 +64,9 @@ runs, used only to calibrate the twin.
 
 The PSP's translator (`mips/mips_emit.h`, `mips/mips_stub.S`,
 `cpu_threaded.c`) is built unchanged except for platform glue as a static
-Linux mipsel program (`platform=drprof-mipsel`, the release `CORE_COMMON`
-dynarec flags, the PSP pixel format) and run under qemu-mipsel 9.2 with a TCG
+Linux mipsel program (`platform=drprof-mipsel`; in this study the then-release
+`CORE_COMMON` dynarec flags, today `FEATURES=explicit` as noted at the top; the
+PSP pixel format) and run under qemu-mipsel 9.2 with a TCG
 plugin (`tools/drprof/drprof_plugin.c`). The plugin counts **every guest
 MIPS instruction executed**, with no sampling error, and attributes it:
 
@@ -91,7 +102,7 @@ within one platform only (the PSP harness hashes its output path).
 
 | fixture | twin core instr/frame | hardware ms/frame (Go) | ns per twin instruction |
 |---|---:|---:|---:|
-| AW2 tour (ME on) | 869k median | 5.67 median (`gba-link-bench-out/hw-go`) | 6.52 |
+| AW2 tour (ME on) | 869k median | 5.67 median (PSP Go hardware run; logs not kept in the repo) | 6.52 |
 | H&S heavy battle | 1,467k mean | ~9.5 (owner's figure) | ~6.5 |
 
 Two very different workloads (dispatch-heavy AW2, translation/flush-heavy H&S)
@@ -261,9 +272,12 @@ stubs, shift/operand temporaries.)
 
 ---
 
-## 5. The prototypes (OFF by default; oracle-validated)
+## 5. The prototypes (oracle-validated; both ship now)
 
-### 5.1 `DISPATCH_CACHE` (root make `DISPATCH_CACHE=1`)
+**Status now:** `DISPATCH_CACHE` is on in every PSP core (`gpsp_features.h`)
+and `SMC_RETIRE_WINDOW` is built in; neither needs a make variable.
+
+### 5.1 `DISPATCH_CACHE`
 
 A direct-mapped {guest pc → host entry} table, 512 entries per ISA (4 KiB
 each), probed by `mips_indirect_branch_{arm,thumb,dual}` in asm **before**
@@ -276,7 +290,7 @@ into the dispatcher, and a surviving entry would loop). The `dual` path writes
 CPSR.T exactly as `block_lookup_address_dual` does. `DISPATCH_CYCLE_CHECK`
 still runs first, so guest timing is unchanged by construction.
 
-### 5.2 `SMC_RETIRE_WINDOW` (root make `SMC_RETIRE_WINDOW=1`)
+### 5.2 `SMC_RETIRE_WINDOW`
 
 `flush_translation_cache_ram_range` validates and retires every block that can
 cover a write by walking tags from `lo − MAX_BLOCK_SIZE*4` (4 KiB) — twice,
@@ -368,9 +382,9 @@ argued A/B plus ears, like SMC gates did.
 ## 8. The hardware bench (staged, not run)
 
 **One rig app, one launch** (standing rule: hardware benches are a single
-app driven by the USB handoff loop). `builds/dynarec-profile-out/` —
-`OWNER-STEPS.txt`, `rig-stage/` (`MANIFEST.json`, `base/`, `eboots/`),
-`rig-dryrun/`. Driver: `tools/drprof/drrig.py` (stage / plan / install /
+app driven by the USB handoff loop). The staging (owner steps, rig manifest,
+EBOOTs, dry-run logs) was local and is not kept in the repo; the template is
+`tools/drprof/OWNER-STEPS.template.txt`. Driver: `tools/drprof/drrig.py` (stage / plan / install /
 run), built on the `harness-kit/hw_loop.py` primitives the way
 `tools/rig/resrig.py` is (21 cycles on the Go, 2026-09-26).
 
@@ -407,7 +421,7 @@ to the XMB instead of parking invisibly.
 
 **PPSSPP dry run of the whole loop** (`tools/drprof/drrig_dry.sh`: install,
 one launch, then every handoff, collection, golden restore, EBOOT/ini swap
-and relaunch): see `rig-dryrun/` and section 8.1.
+and relaunch): see section 8.1.
 
 **What it answers.** (a) The real speed of the prototypes (per-scene ms,
 base vs proto) and a **hardware oracle** (base vs proto must be identical on
@@ -436,7 +450,7 @@ prints it on hardware (sampler vs base). The sampler's phases do not split
 translated code from the inline memory stubs (they write nothing); the twin
 does.
 
-**Analysis**: `python tools/drprof/hw_report.py --rig builds/dynarec-profile-out/logs-<model>`
+**Analysis**: `python tools/drprof/hw_report.py --rig <collected-logs-dir>`
 (per fixture and round: base / proto / sampler ms per scene, the hardware
 oracle, the time split, the sampler's cost).
 
@@ -452,8 +466,7 @@ handoff, across both fixture switches (AW2→H&S, H&S→AW2). `hw_report.py
 --rig` on the collected logs: both rounds of both fixtures report base vs
 proto and base vs sampler IDENTICAL on every frame, audio included (6,020 AW2
 frames, 2,899 H&S frames); emulator costs proto −9.2% (AW2) / −9.5% (H&S),
-sampler +4.3% / +3.7%. Evidence: `builds/dynarec-profile-out/rig-dryrun/`
-(`loop.log`, `REPORT.txt`, one `autoNNN-<arm>-solo/` per cycle).
+sampler +4.3% / +3.7%. (Dry-run logs were not kept in the repo.)
 
 Not covered by PPSSPP, and not claimed: physical USB enumeration and ejection
 (proven on hardware by resrig), and the ef0 refusal (a four-line check on the
@@ -464,7 +477,7 @@ logged base directory).
 ## 9. The differential oracle (`tools/drprof/dr_oracle.py`) — the gate for dynarec work
 
 ```
-tools/drprof/dr_build.sh base                          # the shipped dynarec
+tools/drprof/dr_build.sh base                          # built-ins, switches off (FEATURES=explicit)
 tools/drprof/dr_build.sh mychange "-DMY_CHANGE=1"      # a translator variant
 python3 tools/drprof/dr_oracle.py base mychange        # PASS / FAIL, exit 0/1
 ```
@@ -503,14 +516,15 @@ python3 tools/drprof/dr_tables.py ~/drprof/runs/base [--cmp ~/drprof/runs/<varia
 HOT=<symbol> SAV=x.sav tools/drprof/dr_profile.sh out rom st script frames base   # per-address
 ```
 
-PSP EBOOTs: `tools/build.sh harness64` with `CORE_EXTRA="DISPATCH_CACHE=1
-SMC_RETIRE_WINDOW=1"` (B) or `CORE_EXTRA="DRPROF_HW=1" FE_EXTRA="-DDRPROF_HW"`
-(S); stage with `tools/drprof/drrig.py stage` (one rig app). Raw twin profiles and the
-tables: `builds/dynarec-profile-out/twin-results/`.
+PSP EBOOTs: `tools/build.sh harness64` (the prototypes are in every build
+now) or with `CORE_EXTRA="DRPROF_HW=1" FE_EXTRA="-DDRPROF_HW"` (S); stage with
+`tools/drprof/drrig.py stage` (one rig app). The study's raw twin profiles were
+not kept in the repo.
 
 ## 11. Standards kept
 
-* Everything new is behind a switch that is OFF by default; `gpsp_profile.h`
+* At the time, everything new was behind a switch that was off by default
+  (the two prototypes have shipped since; see the top); `gpsp_profile.h`
   refuses `DRPROF_*` in a release; `tools/build.sh` refuses `CORE_EXTRA` /
   `FE_EXTRA` with the release profile.
 * `tools/build.sh release` passes its gates, and **every release core object

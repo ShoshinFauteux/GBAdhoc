@@ -8,7 +8,7 @@ after the owner handshake).  The GB-link counterpart of tools/rig/prepare_rig.py
         --fix <make_fixtures.sh output ON THE RIG'S GEN 1 CARTRIDGE (Red)>
         --reference <make_references.sh output from the same fixtures>
         --backup <stick backup dir with F-PSP-3000/ and D-PSP-1000/>
-        --out <builds/gb-dual-out/rig>
+        --out <rig dir>
 
 Roles are fixed: HOST = PSP-3000, JOIN = PSP-1000 (the 1000 is the console
 whose memory budget matters, so it is the one that RECEIVES the 8 MiB cart).

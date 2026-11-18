@@ -7,7 +7,8 @@ EXACTLY what the design mockups drew it over (docs/UI-OVERLAY.md):
   slot{1,2,3,5}.thumb      the mockups' four 64x42 state previews, in the
                            STH1 format the save path writes (state_slots.h)
 
-Needs builds/menu-mockups (UI_MOCKUPS=...) for pspdraw's assets."""
+Needs a local copy of the menu mockups (UI_MOCKUPS=...; not in the repo, see
+docs/design/UI-MOCKUPS.md) for pspdraw's assets."""
 import os, sys, struct
 import numpy as np
 

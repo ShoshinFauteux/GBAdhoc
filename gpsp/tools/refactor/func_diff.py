@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""func_diff.py -- T1 / gate G2 (builds/mainpsp-map/out/PLAN.md §0.1, §5).
+"""func_diff.py -- T1 / gate G2 (gpsp/docs/design/RESTRUCTURE.md §0.1, §5).
 
 Prove that two linked PSP ELFs run the same code, function by function,
 modulo WHERE things were linked.  No relocations survive in the EBOOT's ELF,

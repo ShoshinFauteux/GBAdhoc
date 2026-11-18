@@ -328,7 +328,7 @@ contract at `fe_cheats_gb_frame()`.
   table, and an 8 KB record pool in each of the two core instances). (Halved 2026-10-10: a PSP-1000 in a two-GBA session is short of ROM residency by tens of KB.) Release
   profile, GBA_LINK=1: image 13,416,816 B, heap at boot 10,679,736 B on a
   PSP-1000 and 38,991,288 B on a Go; the same tree's base (a0658e4,
-  `builds/beta-out/release-egates`) is 13,285,744 / 10,810,808 / 39,122,360.
+  release profile) is 13,285,744 / 10,810,808 / 39,122,360.
 
 ## 10. Verification
 
@@ -357,8 +357,8 @@ GS1/AR3 behavior is verified at the host interpreter/RAM boundary. The
 historical PPSSPP results below cover CodeBreaker and colon-style raw writes;
 they do not claim new GS1/AR3 hardware or game-specific validation.
 
-PPSSPP end to end (harness build with GBA_LINK=1; stages, logs and
-screenshots in `builds/cheats-out/`), Pokemon Sapphire (USA, Rev 2) with the
+PPSSPP end to end (harness build with GBA_LINK=1; the stages, logs and
+screenshots are not kept in the repo), Pokemon Sapphire (USA, Rev 2) with the
 public CodeBreaker code `82025BC4 423F` / `82025BC6 000F`:
 
 | Run | What | Result |
@@ -374,7 +374,7 @@ Identity (`shash = 1`, from a save state, 2311 frames, every state hash: CPU
 registers, PC, IWRAM, EWRAM, I/O, palette, OAM, VRAM, audio): the build with
 `CHEATS=0`, the build with cheats and no file, and the build with a file and
 nothing on are identical; the build with one cheat on differs from the first
-frame (the negative control). `builds/cheats-out/logs/identity-shash.txt`.
+frame (the negative control).
 The base here is the same tree built with `CHEATS=0`, not a separate
 checkout of a0658e4. Frames before the state load differ between two runs of
 the *same* EBOOT (IWRAM hash, PPSSPP, also with `CHEATS=0`), so they are not

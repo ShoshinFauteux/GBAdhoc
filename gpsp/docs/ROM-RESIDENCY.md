@@ -40,7 +40,9 @@ and is full residency possible at all?
 
 3. **The 2026-09-16 failure is hardware-only and deterministic**, and its
    mechanism is not yet known. The A/B below decides it. Until it passes, the
-   default stays 15 blocks.
+   default stays 15 blocks. (**Status now:** it passed; residency is on by
+   default, `rom_resident = 1` in `pcfg_load_doc`, psp/config_psp.c. See the status
+   note at the top.)
 
 ## Differential evidence (PPSSPP)
 
@@ -67,7 +69,7 @@ comparisons.
 
 ## The 2026-09-16 hardware evidence, re-read
 
-`builds/unbound-soak/`, PSP-3000, fixture `unbound_double_high`, job script
+Hardware soak logs (not kept in the repo), PSP-3000, fixture `unbound_double_high`, job script
 450 x A, ME on (`me_mode = 1`). `core_prof win=` is rom_flush / ram_full /
 smc / dma / page_loads per 600-frame window:
 
@@ -96,7 +98,8 @@ most likely first:
 1. **A JIT cache-coherency hole.** PPSSPP does not model the caches. The page
    I/O's kernel cache maintenance, or the different code layout, would decide
    whether it shows. This is the same suspect as the long-running Heart & Soul
-   freeze (`hns-crash-soft-in-3-0`).
+   freeze (later traced to stale I-cache lines:
+   [RESIDENT-ICACHE-FIX.md](RESIDENT-ICACHE-FIX.md)).
 2. **Code-layout sensitivity alone.** The shorter stubs move the ROM
    translation cache.
 3. **Where the data lives.** Blocks above 0x0A000000 only exist in the 64 MiB
@@ -192,7 +195,7 @@ resrig collects them with the retry, which re-runs the same arm.
 
 | requirement | how |
 |---|---|
-| every applied key echoed and checked | `EVT cfg src=harness key= raw=` for every ini key and `cfg_unknown` for a key nothing read (ported from claude/wireless de5e724). The APPLIED values are echoed too: `rom_diag rom_cap= swap_stubs= cache_paranoid= jit_coh_every= ballast_kb=`, `rom_cache_cap`, `rom_cache blocks= resident= lo= hi= plan=`, `me_mode on=`. The summarizer (I4) requires staged = echoed = applied. Every key was grepped against the source before staging (harness-ini-key-trap) |
+| every applied key echoed and checked | `EVT cfg src=harness key= raw=` for every ini key and `cfg_unknown` for a key nothing read (ported from claude/wireless de5e724). The APPLIED values are echoed too: `rom_diag rom_cap= swap_stubs= cache_paranoid= jit_coh_every= ballast_kb=`, `rom_cache_cap`, `rom_cache blocks= resident= lo= hi= plan=`, `me_mode on=`. The summarizer (I4) requires staged = echoed = applied. Every key was grepped against the source before staging, because a misspelled ini key fails silently and defaults |
 | run_id + arm + EBOOT CRC everywhere; mismatches refused | the log (`rig`, `build eboot_crc`), the `shash.txt` header, every heartbeat line and `meta.json`. The summarizer (I2, I3) refuses any disagreement, and any CRC or PRX md5 that differs from the stage manifest |
 | liveness independent of the log | `heartbeat.txt`: the 0x10 stall thread appends a line every 5 s with raw sceIo (frame, loop iteration, phase, drops, shash count, identity). RESULT.TXT carries `frames= evt_drop= t_ms=`, written after the log closes. A frozen run reads "frame STUCK" if the heartbeat kept beating, and ends at its last beat if it did not |
 | dropped lines visible | in-band `EVT evt_gap dropped= total=` (de5e724), `evt_drop total=` at exit, `evt_drop=` in RESULT.TXT and in every heartbeat. The oracle does not go through the ring |
@@ -207,12 +210,11 @@ The dry run is the whole loop against a PPSSPP memory stick
 and relaunch all work in PPSSPP, so the rig's mechanics were exercised end to
 end: every cycle, collection, golden restore, ini staging and relaunch.
 
-The dry run of the final stage is the Go campaign's golden
-(`builds/resrig-go-2026-09-26/golden`; stage EBOOT crc32 `bbb5dc90`, built at
-8208889; nothing console-side has changed since). Result: **21/21 cycles PASS**
-against its first CTRL, 7 arms x 3. Every run is identical from frame 31
-through 3931, the SMC census matches in all 6 windows, 0 invalid and 0 dropped
-lines (`golden/summary.txt`).
+The dry run of the final stage is the Go campaign's golden (stage EBOOT crc32
+`bbb5dc90`, built at 8208889; the staged files were local, not kept in the
+repo). Result: **21/21 cycles PASS** against its first CTRL, 7 arms x 3. Every
+run is identical from frame 31 through 3931, the SMC census matches in all 6
+windows, 0 invalid and 0 dropped lines.
 
 **Freeze path, tested.** `freeze_test.sh` killed the emulator in the middle of
 cycle 2 (RES), at about frame 1250, and relaunched it the way the owner would.
@@ -230,7 +232,9 @@ the global port 27312 from the wireless rig.
 
 ### Owner steps (after the coordinator's handshake)
 
-Commands are run from `builds\rom-resident-worktree`.
+The 2026-09-26 Go campaign's steps, kept as a record. The `..\resrig-go-*` and
+backup folders were local staging beside the branch's worktree, not part of
+the repo, and the drive letter was that day's.
 
 **0. Which Go volume.** The in-app USB export loads `usbstorms.prx`, the
 Memory Stick driver, so the rig must live on the Go's **Memory Stick (M2)**,
@@ -287,8 +291,11 @@ XMB → Game → **GBAdhoc HARNESS64**. From then on:
 Both decisions are made once, in retro_init, in this order:
 
 1. **JIT tier** (`dynarec_select_translation_caches`, jit-runtime-size,
-   unchanged). It takes the large 10.5 MiB block only if the large tier plus
-   `(ROM_BUFFER_SIZE + 1 + 4)` MiB fits. That is the paged 15-block cap plus
+   unchanged). It takes the large block (10.75 MiB today: a 10 MiB ROM cache
+   plus a 768 KiB RAM cache, 384 KiB accounted and 384 KiB `SMC_REUSE` spare;
+   `gpsp_config.h`; 10.5 MiB when this was written) only if one malloc of the
+   large tier plus `JIT_LARGE_HEADROOM` = `(ROM_BUFFER_SIZE + 1 + 4)` MiB
+   succeeds. That is the paged 15-block cap plus
    the reserve and the frontend slack. When it does, the static SMALL arrays
    are idle for the life of the process, and the 2 MiB ROM array is **lent to
    the ROM cache** as two 1 MiB blocks (`gamepak_spare_pool`).
@@ -416,7 +423,11 @@ differs between any two resident runs, even two with the same layout (RES and
 RES-Go-heap). It is boot-window timing: the documented RTC-seconds effect of
 a longer ROM read. It is not layout.
 
-### Merge instructions (for whoever merges; not merged here)
+### Merge instructions (historical: both branches merged long ago)
+
+The ordering and `ROM_BUFFER_SIZE ?= 15` rules below still hold in the root
+`Makefile` and `cpu_threaded.c`; the `psp/main_psp.c` note predates the
+frontend split into `psp/fe/*.inc.c`.
 
 - Keep jit-runtime-size's `dynarec_select_translation_caches()` call before
   `init_gamepak_buffer()` in retro_init. That order IS the budget.
@@ -453,7 +464,7 @@ plenty for a 16 MiB cart (which the 3.0.0 candidate also paged on the Go,
   - The release EBOOT.PBP contains none of the key strings except
     `rom_resident`.
 - **Frames: identical.** The comparison runs on the **release-profile core
-  archive** (`GPSP_PROFILE=release`, the exact `CORE_COMMON` flags), linked
+  archive** (`GPSP_PROFILE=release`, the then-release `CORE_COMMON` flags), linked
   under the harness frontend so a fixture can drive it (a release frontend
   reads no harness ini). fd672be vs this branch at 8208889, `unbound_double_high`,
   9,300 frames, `io_prio = 42`, 0 `evt_gap`:
@@ -481,4 +492,5 @@ plenty for a 16 MiB cart (which the 3.0.0 candidate also paged on the Go,
     `block_lookup_*` and `translate_icache_sync` that follow the larger
     `platform_cache_sync`.
 
-Evidence: `builds/rom-resident-evidence-2026-09-26/`.
+Measured in PPSSPP and on hardware on 2026-09-26; raw logs not kept in the
+repo.

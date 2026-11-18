@@ -1,24 +1,145 @@
-# TESTING.md — Living test strategy (plan §7)
+# TESTING.md — how GBAdhoc is tested
 
-This document is the living version of the project's testing strategy (mission brief §7). It records the
-verified recipes the autonomous validation harness is built on. The harness scripts themselves land in
-`tools/e2e/` (`setup_ppsspp.sh`, `run_boot_test.sh`, `run_nettest.sh`, `run_trade_test.sh`,
-`run_soak.sh`, `run_disconnect_matrix.sh`); this file is the specification they implement and the place
-where every rig-level fact is either **verified against PPSSPP source** or explicitly flagged as needing a
-live-run confirmation. All PPSSPP citations below are against `hrydgard/ppsspp` master @ `d90fdee8`
-(2026-07-30), source at `~/ppsspp` in WSL Ubuntu, binaries at `~/ppsspp/build/PPSSPPSDL` and
-`~/ppsspp/build/PPSSPPHeadless`.
+GBAdhoc is tested in five layers. Each catches a different kind of mistake, and
+none replaces another. [`TEST-COVERAGE.md`](TEST-COVERAGE.md) lists what each
+test does **not** prove. The rules for which layer a change needs are in
+[`../../AGENTS.md`](../../AGENTS.md).
+
+**A word that means two things.** "Twin" in this project means the **dynarec
+twin**: the PSP's own MIPS translator, built for Linux and run under qemu
+(`tools/drprof`). The older sections of this file, written before the dynarec
+twin existed, called the SDL desktop build a "desktop twin"; they now say
+"SDL desktop build".
+
+| layer | command | needs | catches |
+|---|---|---|---|
+| 1. host suites | `python tools/run_host_tests.py` | Python; WSL with gcc for the C suites | logic errors in C and tools, generated files gone stale, broken checkers |
+| 2. dynarec twin oracle | `tools/drprof/dr_oracle.py A B`, `tools/drprof/dr_corpus.py` | WSL, docker (the `drprof-qemu` image), your own ROMs and BIOS | any change in guest behaviour from a translator change |
+| 3. build gates | `tools/build.sh PROFILE`; `tools/refactor/flavours.sh --against REF` | WSL or Git Bash, docker (`pspdev/pspdev`) | warnings, forbidden strings, broken imports, layout moves, release/lab drift |
+| 4. PPSSPP | `tools/e2e/*.sh` (below) | WSL, a PPSSPP build | boots, menus, saves, two-instance link sessions, the CPU renderer's picture |
+| 5. hardware | the Lab (a separate hardware test service) or a console by hand | PSP-1000/3000 consoles | speed, crashes, the Media Engine renderer, sleep, real radio |
+
+## 1. Host suites
+
+`python tools/run_host_tests.py` runs every host suite (54 at the time of
+writing) and prints `PASS`, `FAIL` or `SKIP` for each; a skip always gives its
+reason and is never counted as a pass. `--strict` makes any skip fail,
+`--only NAME` runs one suite, `--json PATH` writes a manifest. The registry is
+`suites()` in the script: one suite per subject, each with the command it runs.
+On Windows the C suites are re-run inside WSL, because there is no native gcc.
+
+The suites include the layout-lock and frame-parity checkers
+(`tools/tests/test_layout_lock.py`, `test_frame_parity.py`), the harness-key
+table (`tools/refactor/harness_keys.py check`), the source-split tools, and
+many C tests in `tools/tests/` that compile slices of the frontend. About 20
+of those read regions of the frontend sources by marker (`@extract`, see
+`tools/tests/extract.py`); `psp/fe/README.md` lists which test reads which
+region, so a change there shows you which tests to rerun.
+
+Docs-only and comment-only changes must still pass them: some suites read
+source text.
+
+`tools/lint.sh` is a faster, dependency-light check (shell and Python syntax,
+whitespace) to run before the host suites.
+
+## 2. The dynarec twin oracle
+
+The dynarec translates GBA (ARM) code into PSP (MIPS) code at run time. The
+twin runs that same translator and emitter (`mips/mips_emit.h`,
+`mips/mips_stub.S`) on a PC under qemu, with a plugin that hashes the guest
+state every frame (`tools/drprof/dr_build.sh` builds it).
+
+- **`dr_oracle.py A B`** runs the save-state fixtures on two twin variants and
+  requires every frame's hash to match: registers, IWRAM, EWRAM, I/O, palette,
+  OAM, VRAM and the audio. A change meant to be behaviour-neutral must match
+  exactly.
+- **`dr_corpus.py`** (the corpus oracle) boots every ROM of a library from
+  power-on with one generic input script, on every variant, and compares
+  frame by frame, including a hash of the picture. `base` runs twice first as
+  a control.
+- **Mutants.** `tools/drprof/mutants/*.patch` are deliberately broken
+  versions of real mechanisms. `dr_corpus.py mutants` must report every one
+  CAUGHT; that is the proof that the oracle can see the bugs it guards against.
+
+Limits: the twin has no caches and uses a different compiler, so its numbers
+are instruction counts, not time. A change that moves cycle accounting
+(where blocks end, when `update_gba` runs) legitimately changes the hashes;
+it cannot be validated by the oracle and must be argued and tested on
+hardware. [`DYNAREC-PROFILE.md`](DYNAREC-PROFILE.md) has the details.
+
+## 3. Build gates
+
+`tools/build.sh` itself refuses a build with a warning in project code, a
+forbidden or missing string for its profile, broken syscall imports, too many
+program headers, a boot heap below the floor, or (release and lab) a layout
+that differs from `tools/layout/layout.lock`
+([`BUILD-PROFILES.md`](BUILD-PROFILES.md)).
+
+`tools/refactor/flavours.sh --commit REV --out DIR --against REF` builds the
+release, lab and harness flavours of a commit and compares them with a
+reference build (normally its parent). Each check prints
+`== <flavour> <gate> PASS|FAIL` into `DIR/checks.txt`, and
+`flavours_gate.py` turns those into one generated gate line.
+
+Most of the gates are **byte-identity proofs**, written for refactors that
+must not change the binary. On an ordinary code change they are expected to
+FAIL, and the FAIL is the report of what changed:
+
+| gate | proves | on a normal code commit |
+|---|---|---|
+| G0 | the preprocessed frontend (`psp/main_psp.c` and its fragments) is token-identical | FAIL expected if frontend source changed |
+| G0var | the same for every build switch arm | FAIL expected if a changed file is under a switch |
+| G1 | every section of the ELF is byte-identical | FAIL expected on any binary change |
+| G2 | each function is identical, or identical except addresses | FAIL expected; read it for the list of changed functions |
+| HO | the hot order's placement and staleness match the reference | FAIL expected if a hot function changed size |
+| ST | the power/exit callback stack depth matches the reference | FAIL expected if code on those paths changed |
+| BF | build files (`layout.lock`, `psp/Makefile`, `psp/layout/`, `tools/build.sh`) are byte-identical | FAIL expected if the commit edits build files or re-pins |
+| DS | every changed file is `psp/main_psp.c` or under `psp/fe/` | FAIL expected for any change outside the frontend |
+| SS | weak-override hooks and exported symbols are still strong and global | **must pass** |
+| LL | release and lab match `layout.lock` (`release:ok`, `lab:ok`) | **must pass** |
+| CF | `tools/check_flags.py` is clean on both trees | **must pass** |
+| CI | `ci_greps.sh`: no raw exits outside `fe_priv.h`, `core_fe.h` stays pure, and the other source rules | **must pass** |
+| FP | frame parity: no per-frame function gains a release/lab difference | **must pass** |
+
+So: on a behaviour-changing commit, SS, LL, CF, CI and FP must pass, and the
+others should FAIL only where the change explains them (G2's list of changed
+functions is the place to check that). On a pure refactor, all of them must
+pass. There is no "expected change" mode yet; read each FAIL's detail line.
+
+## 4. PPSSPP
+
+PPSSPP (a PSP emulator for PCs) runs the real EBOOT. It is the place for boot
+tests, menus, saves and two-instance link sessions, and its picture hashes
+check the CPU renderer (`tools/e2e/run_video_regress.sh`). It never runs the
+second CPU (the Media Engine), and it is not performance evidence. The rest of
+this file is the original harness strategy, with the recipes for running
+PPSSPP and the SDL desktop build.
+
+## 5. Hardware
+
+Speed, crashes, the Media Engine renderer, sleep/resume and real radio only
+show on consoles. The project's Lab (a separate service, not in this repo)
+queues jobs on PSP-1000 and PSP-3000 consoles and runs **lab** builds only;
+that is why gate FP keeps the per-frame code of release and lab identical.
+Its correctness gate also re-runs the twin, the corpus, a PPSSPP smoke test,
+picture hashes (vhash) and replayed link lockstep. Speed claims come only from
+unhashed per-fixture frame times, with about 3 % per game counted as noise.
 
 ---
 
-## Fast source checks
+# The original harness strategy (plan §7)
 
-Run `tools/lint.sh` for shell syntax, Python syntax, and whitespace checks before
-the longer host-test and PSP-build gates. It uses only tools already expected in
-the WSL build environment; ShellCheck runs when installed. C/C++ warnings are
-checked by the host suites and PSP profile builds rather than by this script.
-The host runner enforces a 30-suite ceiling; extend an existing suite when
-additional focused coverage is needed.
+This part is the living version of the project's first testing strategy. It
+records the verified recipes the autonomous validation harness is built on.
+The harness scripts land in `tools/e2e/` (`setup_ppsspp.sh`,
+`run_boot_test.sh`, `run_nettest.sh`, `run_trade_test.sh`, `run_soak.sh`,
+`run_disconnect_matrix.sh`); this part is the specification they implement and
+the place where every rig-level fact is either **verified against PPSSPP
+source** or flagged as needing a live-run confirmation. PPSSPP citations are
+against `hrydgard/ppsspp` master @ `d90fdee8` (2026-07-30), built in WSL
+(`PPSSPPSDL`, `PPSSPPHeadless`).
+
+---
 
 ## PPSSPP multi-instance recipe
 
@@ -308,7 +429,7 @@ the rig is quiet.
   (grammar in the header). RAM access: EWRAM via `retro_get_memory_data(SYSTEM_RAM)`, IWRAM via the
   `SET_MEMORY_MAPS` descriptors (FRONTEND-AUDIT §6). Verified Emerald BPEE rev-0 address table +
   provenance: `docs/AUTOPILOT.md`. Committed scripts: `testdata/fixtures/*.inputs`.
-- **Activation:** desktop twin `--script FILE [--ff]`; PSP frontend `.gpsp-harness.ini` keys
+- **Activation:** SDL desktop build `--script FILE [--ff]`; PSP frontend `.gpsp-harness.ini` keys
   (**renamed from `autopilot.ini` by ADR-0036** — the file moved, the input-script *engine* is
   still called autopilot and still emits `ap_loaded`/`ap_done`/`ap_fail`)
   `script = <file relative to the app dir>` and `ff = 1`. Script end → `EVT ap_done` + clean exit
@@ -333,7 +454,7 @@ scripts share the sandbox directory — run them sequentially, never concurrentl
 
 ---
 
-## Gate-3 trade e2e (Phase 3, desktop twin ×2 over netdrv UDP)
+## Gate-3 trade e2e (Phase 3, SDL desktop build ×2 over netdrv UDP)
 
 The full-stack-minus-PSP-transport acceptance (plan §5 Phase 3). Two `sdl/gpsp_sdl` instances
 (RetroArch not involved) complete an autonomous Emerald↔Emerald **Union Room trade** over the
@@ -376,7 +497,7 @@ own dialog** ("Communication error… A Button: Registration Counter", `CB2_Prin
 BMP captured) and exits cleanly — no crash, and the game itself offers re-entry via the counter.
 
 Diagnostic aids added for this work (both permanent): `--trace NAME:SZ:ADDR[:OFF]` on the
-desktop twin samples RAM every 300 frames into `EVT trace` lines (how the Union-Room state-pair
+SDL desktop build samples RAM every 300 frames into `EVT trace` lines (how the Union-Room state-pair
 wedges were found), and netdrv logs ARQ channel resets and keepalive deaths with silent-ms +
 counters. Verified 2026-08-01: normal mode PASS (`artifacts/trade-*`), `--disconnect` PASS
 (`artifacts/tradedisc-*`), netsmoke re-PASS, netdrv unit suite green after the ADR-0010 retune.
@@ -705,7 +826,7 @@ and derived in docs/AUTOPILOT.md.
 | firered ↔ firered / leafgreen ↔ leafgreen | as above | needs `_parkedA` **and** `_parkedB` | **BLOCKED on fixtures** |
 
 `--disconnect` is Emerald-only: the survival script (`emerald_trade_host_disc.inputs`) has no
-FR/LG twin yet, and the harness says so rather than silently substituting the normal script.
+FR/LG counterpart yet, and the harness says so rather than silently substituting the normal script.
 
 Cross-edition trading is legal in both directions for Kanto-dex species without a National Dex;
 FR/LG additionally refuses to trade your last mon and refuses eggs pre-National-Dex. See

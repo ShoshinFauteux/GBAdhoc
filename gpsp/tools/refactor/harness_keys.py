@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""harness_keys.py -- the harness-ini key table (tier C, C2-0; builds/health-out/design/C-2.md §2.4).
+"""harness_keys.py -- the harness-ini key table (tier C, C2-0; gpsp/docs/design/TIER-C.md C-2 §2.4).
 
-A key the source never reads is silently ignored on the console (memory: harness-ini-key-trap), so
+A key the source never reads is silently ignored on the console (a misspelt key just keeps its default), so
 the Lab refuses to stage a key it does not know.  Until now the Lab learned the keys by grepping
 `fe_ini_get*(HARNESS_INI, "k"` in psp/*.c: on the split tree (psp/fe/*.inc.c) that finds 7 of
 them.  This tool writes ONE table of every harness read instead, from the preprocessed source of

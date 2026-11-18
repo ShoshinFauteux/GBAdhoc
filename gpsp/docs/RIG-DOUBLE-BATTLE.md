@@ -565,7 +565,7 @@ failure is a valid *outcome*. Only broken measurement or setup is INVALID.
   - every `PSP/GAME/*/roms/*.sav`, `*.sav.bak` and `*.st*`;
   - every `CONFIG.INI`/`config.ini` in each GBAdhoc folder;
 
-  into `C:\Users\DrSto\OneDrive\Desktop\GBAdhoc\builds\wireless-stick-backup-2026-09-26\<drive>-<model>\…`,
+  into a dated local backup folder on the PC, one subfolder per console (`<drive>-<model>`),
   with an md5 manifest. The copy is re-read and verified before anything is
   written to either stick.
 - **Separate app folder:** `PSP/GAME/GBADHOC-RIG/` on each stick.
@@ -845,7 +845,7 @@ Re-checked before handover: both FireRed saves, the LeafGreen save and the
 1000's FireRed state still match it.  If the owner plays before setup,
 re-run it into a new dated directory.
 
-**Stages** (builds/wireless-rig/<variant>/, MANIFEST.txt in each):
+**Stages** (one folder per variant with a MANIFEST.txt; not kept in the repo):
 growl (H0/H1, 20 turns), frfr (H3, 20 turns), swift (realistic traffic, 12
 turns); stage-A (shed off), stage-B (keep 2), stage-L (A + 50 ms per side),
 stage-S (A, join slowed 6000 us per frame); golden/ holds the two saves the
@@ -904,7 +904,7 @@ shedding, and shedding removes only content-free packets.
 - **B** (`rfu_shed_keep = 2`, `rfu_hold = 0`): the discards happen as they always did.
 - **H** (`rfu_shed_keep = 2`, `rfu_hold = 1`): nothing is discarded.
 
-Their harness inis differ only in that one line. Stages are in `builds/wireless-rig/hold/growl/`. The
+Their harness inis differ only in that one line. The stages are not kept in the repo. The
 fixture has the timed-hold walk and the start-skew marks.
 
 **Blocks:**

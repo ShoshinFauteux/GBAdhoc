@@ -54,7 +54,7 @@ Host verification includes frozen encrypted/decrypted vectors; every supported c
 
 ## Emulator and build results
 
-The original release source was built separately from the candidate. PPSSPP was `/home/rayquaza/ppsspp/build/PPSSPPSDL` (local revision `d90fdee8fcf7f1a1d9a154cf18441233eb65c8ca`) under Ubuntu WSL2/Xvfb. Each run used its own temporary memory stick and configuration. Existing rigs and the user's original project were left intact. The owner's local Sapphire Rev 2 copy was used privately and is not in deliverable packages.
+The original release source was built separately from the candidate. PPSSPP was a local SDL build (revision `d90fdee8fcf7f1a1d9a154cf18441233eb65c8ca`) under Ubuntu WSL2/Xvfb. Each run used its own temporary memory stick and configuration. Existing rigs and the user's original project were left intact. The owner's local Sapphire Rev 2 copy was used privately and is not in deliverable packages.
 
 | Check | Result |
 |---|---|

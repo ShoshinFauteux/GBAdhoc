@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""extract.py -- T7 (builds/mainpsp-map/out/PLAN.md §5, phase P1): marker
+"""extract.py -- T7 (gpsp/docs/design/RESTRUCTURE.md §5, phase P1): marker
 extraction for the host tests that read psp/main_psp.c (or, after the split,
 its fragments) as text.
 
@@ -336,7 +336,7 @@ EPOCHC_PASS_TAIL = re.compile(r'^   if \(!inproc_try_return\(([^;]*)\)\)\n      
                               r'^   \}   /\* the next game \*/\n', re.M | re.S)
 
 
-# Tier C C-1 commit 4 (builds/health-out/design/C-1.md): the frame loop is frame_loop(),
+# Tier C C-1 commit 4 (gpsp/docs/design/TIER-C.md C-1): the frame loop is frame_loop(),
 # main()'s `while (g_running) { .. }` moved unchanged, with copy-in/copy-out of main()'s
 # locals (it keeps their names).  main() calls it once per game:
 #     L.x = x; ..  const session_ctx S = { .. };  frame_loop(&L, &S);  x = L.x; ..

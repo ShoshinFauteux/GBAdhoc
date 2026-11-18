@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""globals.py -- T9 (builds/mainpsp-map/out/PLAN.md §5, §1.3): the globals census
+"""globals.py -- T9 (gpsp/docs/design/RESTRUCTURE.md §5, §1.3): the globals census
 of psp/main_psp.c, fixed to parse `__attribute__` declarations, with lifetime
 class, owner module, fragment and cross-module writers; plus a safe rename.
 

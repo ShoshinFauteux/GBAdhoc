@@ -238,7 +238,7 @@ EPOCHC_HELPERS = ('exit_early_begin', 'exit_early_end', 'session_end', 'process_
 # are main()'s sites, with the lines of the text they run.  Never sites themselves.
 # Epoch C C3-2c: so are the session's phases (fe/session.inc.c), whose exits are
 # families B and C.
-# Tier C C-1 (health-out/design/C-1.md, commit 4): the frame loop leaves main() for the
+# Tier C C-1 (gpsp/docs/design/TIER-C.md C-1, commit 4): the frame loop leaves main() for the
 # void, return-free `frame_loop(&L, &S)` (its copy-in, `while (g_running)`, copy-out), so
 # it reads as main()'s text the same way: the loop's triggers and the shared teardown
 # after it keep their place in main().

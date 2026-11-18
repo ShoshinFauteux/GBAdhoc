@@ -11,7 +11,7 @@ rig app per console (PSP/GAME/GBADHOC-GBLINK, hw_loop.py's USB handoff).
   --join-build   GBA_LINK=1 tools/build.sh harness output: the 1000's
                  (32 MiB layout; MEMSIZE does nothing on a 1000 anyway)
   --fake-stage   the AW2 link-cable FAKE baseline's stage
-                 (builds/gbalink-baseline-out/rig/stage-A): one core,
+                 (a local stage directory, not in the repo): one core,
                  upstream's AW serial fake over RFU-style netplay
   --golden       host-/join-aw2.sav + .st0 (restored into roms/ every cycle)
   --arm NAME=HOSTDIR,JOINDIR[,KEY=VAL;KEY=VAL...]   (repeatable) replaces the

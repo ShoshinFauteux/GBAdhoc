@@ -23,7 +23,7 @@
 #             (noise: no header of this build's format).  It is fetched,
 #             its checksum is good, and it is REFUSED: err=format, every
 #             guest file is what it was, no temp file left.
-#   old       console 2 is an OLDER build (EB_B, e.g. builds/beta-out/harness)
+#   old       console 2 is an OLDER build (EB_B, e.g. a previous beta's harness build)
 #             with a game open: its scan lists the share room verbatim and
 #             joins it as a link room.  PASS = nobody is taken for a guest,
 #             the sharer keeps sharing, the old build is not harmed.
@@ -31,7 +31,7 @@
 #             share rows, and its scan lists the share room dimmed and
 #             refuses to join it.
 #
-# EB_A / EB_B: EBOOT dirs (a harness build; default builds/save-share-out/
+# EB_A / EB_B: EBOOT dirs (a harness build; default $WIN/builds/save-share-out/, a local folder:
 # eb-harness).  Must run in a private namespace, as every two-PPSSPP rig:
 #   unshare -rmnpf --mount-proc --propagation private bash -c \
 #     'mount -t tmpfs tmpfs /dev/shm && ip link set lo up && \

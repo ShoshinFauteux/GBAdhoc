@@ -1,7 +1,7 @@
 # Phase T clean baseline: 01067e74 (beta.4 base), three flavours, built twice
 
 Built 2026-11-05 by `gpsp/tools/refactor/flavours.sh` (T15) on branch `claude/mainpsp-tools`
-(worktree `builds/mainpsp-tools-worktree`, uncommitted tools). No emulator source was edited.
+(a separate worktree with the tools still uncommitted). No emulator source was edited.
 
 - Source: commit `01067e74970052b141307a1c15130f1dce8bcb35`, tree `ed64f2ba50201812cc5c96e8715f793b324655b4`
 - `workingTreeClean: true` in every `flavour.json` and in `runN/flavours.json` (git-archive export of `01067e74:gpsp`, 1,246 files, count checked against `git ls-tree`)
@@ -11,8 +11,8 @@ Built 2026-11-05 by `gpsp/tools/refactor/flavours.sh` (T15) on branch `claude/ma
 ## Command (run from WSL, once per run dir)
 
 ```
-O=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/mainpsp-tools-out
-cd /mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/mainpsp-tools-worktree
+O=<local output dir, e.g. mainpsp-tools-out beside the checkout>
+cd <the checkout>
 flock $O/build.lock bash gpsp/tools/refactor/flavours.sh --commit 01067e74 --baseline --out $HOME/mainpsp-tools-out/baseline/run1
 flock $O/build.lock bash gpsp/tools/refactor/flavours.sh --commit 01067e74 --baseline --out $HOME/mainpsp-tools-out/baseline/run2
 ```
@@ -28,7 +28,7 @@ ROOT vs psp make split lives:
 | harness | `harness` | `GPSP_PROFILE=harness RFU_SCHED=1` + features | same defines as lab, `PSP_LARGE_MEMORY=0 ...` (no LAB_HARNESS) |
 
 The full flag lists are in each flavour's `build-manifest.json` (`coreFlags`, `frontendDefines`, `pspMakeFlags`).
-Release `coreFlags` are identical to `builds/beta4-out/pin144-rel`'s.
+Release `coreFlags` are identical to those of the beta.4 release kit's pad-144 build (`pin144-rel`, a local kit, not in the repo).
 
 ## ELFs
 
@@ -38,7 +38,7 @@ Release `coreFlags` are identical to `builds/beta4-out/pin144-rel`'s.
 | lab | `baseline/run1/lab/gpsp_adhoc.elf` | `baseline/run2/lab/gpsp_adhoc.elf` | `af9dd3cd262c2e3625be6f18f37267bd2f8aa81b09436870f18a05063a7da4e5` |
 | harness | `baseline/run1/harness/gpsp_adhoc.elf` | `baseline/run2/harness/gpsp_adhoc.elf` | `ecd7fd606d43bce70edc6702640d885a22d58d92f7134d0e993ddefa9896ef9f` |
 
-(paths relative to `C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/mainpsp-tools-out/`). The same three hashes
+(paths relative to the local output dir `$O`; the ELFs are not in the repo). The same three hashes
 also came out of two earlier, discarded runs on the same day, so the ELFs were reproduced four times.
 
 Each flavour dir also holds: `EBOOT.PBP`, the three PRXs, `build-manifest.json`, `flavour.json`,
@@ -78,7 +78,7 @@ harness `.data.pin` 0x96c, `.bss` @0x08bb6000.
 ## SHF_ALLOC count: 24, not 25
 
 `scratch/crit_secs.py` lists **24** SHF_ALLOC sections in all three clean ELFs and also in the old
-`builds/beta4-out/pin144-rel/gpsp_adhoc.elf`: `.MIPS.abiflags .init .text .fini .sceStub.text .lib.ent.top .lib.ent
+beta.4 kit ELF `pin144-rel/gpsp_adhoc.elf`: `.MIPS.abiflags .init .text .fini .sceStub.text .lib.ent.top .lib.ent
 .lib.ent.btm .lib.stub.top .lib.stub .lib.stub.btm .rodata.sceModuleInfo .rodata.sceResident .rodata.sceNid .rodata
 .eh_frame .ctors .dtors .data.pin .data .data.gbahot .sdata .sbss .bss` (22 PROGBITS + 2 NOBITS). PLAN §5/T2 and
 PLAN-critique.md:45 say 25. That figure does not reproduce on either ELF; T2's acceptance should read 24.
@@ -109,10 +109,10 @@ of T1's acceptance needs one extra build, e.g. `FLAV_RELEASE_ENV="LAYOUT_PAD_BYT
 ## Problems hit (fixed in flavours.sh)
 
 1. **The OneDrive /mnt/c path breaks under WSL.** Two attempts writing the export and the outputs straight into
-   `builds/mainpsp-tools-out/baseline/` failed: `tar: Cannot mkdir: No such file or directory`, `wslpath` not seeing
+   the OneDrive-backed output dir failed: `tar: Cannot mkdir: No such file or directory`, `wslpath` not seeing
    an existing dir, `mkdir: Already exists` for a dir neither side could list. flavours.sh now exports once into a
-   native work dir and caches the Windows path for `git.exe`. These runs used a native `--out` and were copied over
-   from `\\wsl$\Ubuntu\home\rayquaza\mainpsp-tools-out\baseline` (that copy is still there).
+   native work dir and caches the Windows path for `git.exe`. These runs used a native `--out` (a dir in the WSL home)
+   and were copied over afterwards.
 2. **Root-owned outputs.** The sidecar container wrote `su/` as root, so the next run could not clear the dir and would
    have mixed stale files into a new run. The sidecar now chowns `/out` back to the caller, and flavours.sh refuses
    (exit 1) a flavour dir it cannot empty.

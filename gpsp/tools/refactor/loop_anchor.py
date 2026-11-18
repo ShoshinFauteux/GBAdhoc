@@ -24,7 +24,7 @@ and then CHECKED: main's DW_AT_decl_line in the ELF must equal the source's
 `int main(` line, else LookupError (a stale or wrong source would silently
 measure other code; that is how the hard-coded windows failed).
 
-FUNCTION MODE (tier C, C-1 commit 1; health-out/design/C-1.md, CRITIQUE C-1): once C-1
+FUNCTION MODE (tier C, C-1 commit 1; gpsp/docs/design/TIER-C.md C-1, CRITIQUE C-1): once C-1
 commit 4 lands, the loop is the file-scope function `frame_loop` (main_psp.c; later moved
 whole, as an ordinary split unit, into fe/loop.inc.c).  When the source DEFINES
 `frame_loop(` -- or the ELF has a concrete `frame_loop` -- the window is that function:

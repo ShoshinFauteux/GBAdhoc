@@ -148,11 +148,11 @@ roles by content, invariants, no conclusions from absence), driven by
   and the exact trade / golden / battle marks.  `tools/tests/test_gblink_score.py`
   proves 17 broken runs never pass.
 
-Owner steps: `builds/gb-dual-out/OWNER-STEPS.txt`.
+Owner steps: a step-by-step sheet staged with the rig (not kept in the repo).
 
 ## 6. Results so far (PPSSPP)
 
-Every staged arm, run from `builds/gb-dual-out/rig` exactly as the cards will
+Every staged arm, run from the staged rig folder exactly as the cards will
 hold it (owner CONFIG.INI, golden saves, card ROM names; Blue standing in for
 Red) and scored by `score_rig.py` as a hw_loop session -- all PASS:
 
@@ -197,7 +197,7 @@ the final binary: DUAL 5,397 us a frame, 185 fps uncapped (unchanged).
 
 ## 8. Hardware run hw1 and what changed
 
-`builds/gb-dual-out/HW1-FINDINGS.txt` has the evidence.  In short -- the link
+The hw1 findings (raw logs and notes are not kept in the repo), in short: the link
 held (every periodic hash matched while sessions ran); four root causes, each
 reproduced off-hardware and fixed:
 
@@ -466,8 +466,7 @@ machine on the 8 MiB cartridge (1.6 s) while the join restarts Red (0.27 s);
 as is (it is the cartridge read; a real game does not rewrite its RAM
 every frame).
 
-Logs: `builds/gb-dual-out/logs/hw5`; rig and steps: `builds/gb-dual-out/rig`,
-`OWNER-STEPS.txt`.
+The hw5 logs, rig and owner steps are not kept in the repo.
 
 ## 13. The instruction cache: why DUAL costs what it does (2026-09-30)
 
@@ -513,7 +512,7 @@ buttons late), (c) how a late or lost frame reaches the audio ring.
   Deterministic: 40/40 simulated sessions with every hash identical, 40/40
   PPSSPP pairs PASS, single-player GB/GBC/GBA frame- and audio-identical.
 * The hardware must price -Os (D vs O) and confirm the rest: staged as one
-  rig app per console, 21 runs, `builds/gblink-perf-out/OWNER-STEPS-PERF.txt`.
+  rig app per console, 21 runs (section 14.7).
 
 ### 14.1 Attribution (hardware logs hw2-hw5, re-read)
 
@@ -818,7 +817,7 @@ policy change no machine state.  The evidence:
   loss, 30/15 ms jitter -- PASSes score_session.py: both DONE, every periodic hash
   matched, equal final hashes, each console's save equal to the
   one-process reference, the trades exact.  The staged hardware rig itself
-  (builds/gblink-perf-out/rig, all seven arms, the base and -O3 binaries
+  (all seven arms, the base and -O3 binaries
   beside the new one) ran in PPSSPP and score_rig.py scored it **7/7 PASS**,
   one ad-hoc cell in every run.
 * **Single-player, base (77aaabb) vs final, PSP builds in PPSSPP**: GB/GBC
@@ -833,7 +832,7 @@ policy change no machine state.  The evidence:
 
 ### 14.7 Hardware A/B (staged, not yet run)
 
-`builds/gblink-perf-out/rig` + `OWNER-STEPS-PERF.txt`: one rig app per
+The staged rig and its owner steps (not kept in the repo): one rig app per
 console (GBADHOC-GBLINK, hw_loop's USB handoff), PSP-3000 host + PSP-1000
 join, order GAFZDOM x 3 (21 runs, ~1 h 45 min), three binaries side by side
 (prepare_gblink_rig.py `--base-build` / `--o3-build`; MANIFEST lists each
@@ -875,14 +874,14 @@ Binaries (all clean builds; MANIFEST.txt has every md5):
 The release ships beside the beta's own modules, unchanged:
 `gbadhoc_me.prx` 19ae57b6d21f5d1c3545bf07ff516a4c and
 `psp/home/gbadhoc_home.prx` d3434f4fd02260583c2e97ce7fe757e6
-(`builds/gblink-perf-out/v8-release`).
+(the release build itself is not kept in the repo).
 
 ### 14.8 Hardware run perf1: -Os is slower on the PSP; the model was wrong
 
 perf1 (2026-10-02, the rig of 14.7 on 3665147, PSP-3000 host / PSP-1000
 join, GAFZDOM x 3 after a wake-up run): **21/21 PASS** -- determinism held on
-hardware -- but the after builds cost MORE.  Logs: `builds/gblink-perf-out/
-logs/perf1`.  Read with the same instruments in every build (perf_report.py
+hardware -- but the after builds cost MORE.  (The perf1 logs are not kept in
+the repo.)  Read with the same instruments in every build (perf_report.py
 now uses only frame_hist / core_prof / sess_cost / fps / audio_ring; the
 first report mixed EVT gblink_win figures into the after builds' columns, and
 cut sessions at gblink_end_at, which dropped the trade's busiest window from
@@ -949,7 +948,7 @@ What it says:
 
 ### 14.9 Round 2 (perf2): the bisect, staged
 
-`builds/gblink-perf-out/rig2` + `OWNER-STEPS-PERF2.txt`, same pair and rig
+The staged rig2 and its owner steps (not kept in the repo), same pair and rig
 app, ~85-90 min.  One binary (6d8435d, -O3) and one telemetry for arms 1-3
 and 5; the changes are switched by harness keys -- `gblink_hash_legacy` (the
 beta's byte-wise hash and CRC; sesssim reproduces the beta's live-link final

@@ -1992,7 +1992,7 @@ static void test_rewind_length(void)
 }
 #endif
 
-/* MF1 (builds/opt-review/FINAL.md): the Mystery Gift binding exists only in
+/* MF1 (an optimisation-review finding): the Mystery Gift binding exists only in
  * a GBADHOC_MGIFT build.  With MGIFT=1 (every shipped profile) SELECT+DOWN
  * is its default, a steal takes it and the save writes the NONE; with
  * MGIFT=0 the action is unavailable like the catch self-test outside a

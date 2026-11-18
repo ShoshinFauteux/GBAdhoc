@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""split.py -- T4 (builds/mainpsp-map/out/PLAN.md §5, phase P4): the unity split
+"""split.py -- T4 (gpsp/docs/design/RESTRUCTURE.md §5, phase P4): the unity split
 of psp/main_psp.c into fragments, driven by a generated cutlist.txt.
 
   split.py cover   [--src main_psp.c]

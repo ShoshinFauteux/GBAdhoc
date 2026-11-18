@@ -16,7 +16,7 @@ so nothing changes here: it is forwarded like any datagram and the answer
 leaves from the P socket -- the address the console then uses.
 
 Bind a LAN address explicitly (never 0.0.0.0): the relay is LAN-only unless the
-owner forwards a port on the router himself (builds/online-out/REAL-TEST.md).
+user forwards a port on the router (a manual test setup, not part of the repo).
 """
 import argparse
 import select

@@ -1,7 +1,7 @@
 # PCARG_SIDE: the PC argument leaves the call site
 
 Branch `claude/pcarg-side` (base claude/beta5-base e70d60aa). Switch `PCARG_SIDE` (gpsp_features.h, on;
-`PCARG_SIDE=0` builds it off). Scripts and twin data: `builds/pcarg-out/`.
+`PCARG_SIDE=0` builds it off). The one-off scripts and twin data named below are not kept in the repo.
 
 ## 1. Why
 
@@ -62,7 +62,7 @@ Wheels .. 3,667 Doom): Hot Wheels' cache resets 286 -> 237 in the window.
 timing, because its interpreter replays the candidate's own I/O values and IRQ times, and its LAB_LOCKSTEP build
 takes another timer-read path). Plain gate twins (`gate_twin.build`, TWIN=0, shipping paths, no LAB_LOCKSTEP)
 of e70d60aa vs 474f7899 + PCARG_SIDE_PAD, both `-DRAM_CACHE_KB=384` (the PSP's RAM cache), state + framebuffer
-hash every frame (builds/pcarg-out/pad_smc.py, pad_smc.json): **identical on all nine runs**: Lab fixtures
+hash every frame (a one-off script, `pad_smc.py`): **identical on all nine runs**: Lab fixtures
 kf_mario_golf_advance_tour (3,900), kf_mario_tennis_power_tour (3,900), own_mario_tennis (3,900), kf_payback
 (2,200), and corpus power-on runs of Golden Sun: The Lost Age, Golden Sun, Mario Golf, Mario Tennis and Payback
 (3,000 each). The pad arm's counters on the same runs (TWIN=1 bookkeeping, same emitted code; pad_ctr.py):
@@ -159,7 +159,7 @@ the flag on the hardware runs, since a PSP-1000 has less room.
 
 ## 6. JIT counters (PPSSPP, lab builds, 3,900-frame fixtures)
 
-`EVT core_health` at the end of each fixture (builds/pcarg-out/jt_run.py, the Lab's perf harness keys; both
+`EVT core_health` at the end of each fixture (a one-off script, `jt_run.py`, with the Lab's perf harness keys; both
 builds on the SMALL tier, PPSSPP 64 MiB model): `jitc` = publishes / lines / whole-I / early, `own` =
 ownership changes by ROM flush / **RAM flush** / rebuild.
 
@@ -185,7 +185,7 @@ entry, whose two single loads each lost their word; the emitted stubs themselves
   Ice Nine (twin from frame 65; PPSSPP one frame, 3838, reconverges), Golden Sun: The Lost Age (corpus f283)
   and Mario Golf (corpus f1155, reconverges). Its instrumented twin runs a 16x RAM cache, where PCARG's smaller
   code never moves a flush, so base and candidate do not differ at all there (L1 identical).
-* **The same lockstep at the plain twin's cache size** (builds/pcarg-out/ls_small.py: the gate's own build,
+* **The same lockstep at the plain twin's cache size** (a one-off script, `ls_small.py`: the gate's own build,
   Pair and classify, lockstep defines + `-DRAM_CACHE_KB=512`, the gate's frame rule) reproduces all three, and
   classifies all three **timing**: the candidate dynarec equals the interpreter replaying its own I/O and IRQs
   for 53.97 M (Ice Nine), 19.98 M (Golden Sun TLA) and 40.00 M (Mario Golf) instructions; the builds first
@@ -252,7 +252,7 @@ full: **47/47 fixtures PASS** (Payback by the gate's lockstep: timing), stale PA
 ROMs PASS (jsmolka 6 -> 6/13), corpus 32/35 identical plus Mario Tennis timing. The gate's verdict is
 NEEDS-REVIEW for the same two corpus ROMs as in section 7, at the same frames (Golden Sun: The Lost Age f283,
 Mario Golf f1155, reconverges), which its 16x-cache lockstep cannot reproduce. The lockstep at the plain twin's
-cache size (section 7's method, builds/b5int3-out/ls_small.py) classifies both **timing** on this build, with
+cache size (section 7's method) classifies both **timing** on this build, with
 section 7's figures: the candidate dynarec equals the interpreter replaying its own I/O and IRQs for 19.98 M and
 40.00 M instructions.
 
@@ -315,12 +315,12 @@ verdict is NEEDS-REVIEW for three divergences its 16x-cache lockstep cannot repr
 with this build: twin from frame 507, PPSSPP 11 frames from 1652, both reconverge) and the two corpus ROMs of
 sections 7 and 8 at the same frames (Golden Sun: The Lost Age f283, Mario Golf f1155).
 
-* **Lockstep at a smaller cache** (section 7's method, builds/b5int4-out/ls_small.py): Golden Sun TLA and
+* **Lockstep at a smaller cache** (section 7's method): Golden Sun TLA and
   Mario Golf classify **timing** at 512 KiB with section 7's figures (19.98 M and 40.00 M instructions). Duke
   does not reproduce at 512 KiB; at 384 KiB, the PSP's RAM cache, it does and classifies **timing**: the
   candidate dynarec equals the interpreter replaying its own I/O and IRQs for 67.60 M instructions, and the
   builds first differ at a timer read (TM0CNT_L 0xd07a / 0xd093).
-* **The pad oracle at the gate's own twin configuration** (builds/b5int4-out/pad_oracle.py: plain twin, the
+* **The pad oracle at the gate's own twin configuration** (a one-off script, `pad_oracle.py`: plain twin, the
   gate's cache size, the candidate with `PCARG_SIDE_PAD=1`): hash-identical to the base on every frame of Duke
   and Street Racing Syndicate (3,900), Payback (2,200) and the corpus runs of Golden Sun TLA, Mario Golf and
   Mario Tennis (3,000 each). With complete call-site records and the base's block sizes there is no difference

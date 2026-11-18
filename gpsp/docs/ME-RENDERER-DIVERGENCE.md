@@ -1,5 +1,15 @@
 # The ME renderer diverges from the CPU renderer, and it is deterministic
 
+> **Status now (2026-11-17):** both fixes below ship.  The vcount-160 post is
+> the only post at 1x and on the fast-forward draw gate's drawn frames
+> (`mer_vispost_active`, `psp/fe/merend.c.inc.c`), and every fast-forward
+> preset runs through the gate by default (`g_ff_flip_pace` = 7); only bench
+> mode, autopilot fast-forward, or a harness `ff_flip_pace` without bit 2, posts at frame end.  The
+> `me_vispost` key and its end-of-frame arm were deleted (code-health C2-4').  The mid-frame log (`ME_MIDFRAME_LOG`,
+> on by default in `video.h`) covers the "single-snapshot limitation", with
+> per-line VRAM tracking on every frame.  See [ME-MIDFRAME.md](ME-MIDFRAME.md).
+> The sections below are the 2026-09 investigation, kept as written.
+>
 > **2026-09-29:** the "known single-snapshot limitation" below (graphics memory
 > written while lines 0-159 draw) and a second gap, the affine reference seeded
 > only at line 0, are addressed on `claude/me-midframe`; the 5 frames left on
@@ -8,7 +18,7 @@
 
 ## Update 2026-09-24: cause found, fix committed, hardware check pending
 
-**The cause is the post point, not the snapshot granularity.** `main_psp.c`
+**The cause is the post point, not the snapshot granularity.** The frontend
 posted the render from `plat_video_frame`, after `retro_run` had emulated the
 whole of VBlank, and the ME copies vram/oam/palette at the post. So frame N's
 captured registers (lines 0-159) were drawn with graphics memory that had
@@ -55,12 +65,14 @@ frames the game writes VRAM or OAM while lines 0-159 draw. That is the known
 single-snapshot limitation, and those frames are equally wrong at either post
 point.
 
-**The fix** (`gpsp_visible_done_hook`, harness key `me_vispost`, default 1)
-posts from the vcount-160 hook at normal speed. The rest is unchanged:
-presentation stays at the loop top, and the once-per-frame guard and the
-stage and capture ownership are the same. The work per frame is the same
-work, done 68 lines earlier. Fast-forward keeps its end-of-frame post.
-`me_vispost = 0` restores the old post point, so one binary can run the A/B.
+**The fix** (`gpsp_visible_done_hook`) posts from the vcount-160 hook at
+normal speed. The rest is unchanged: presentation stays at the loop top, and
+the once-per-frame guard and the stage and capture ownership are the same. The
+work per frame is the same work, done 68 lines earlier. Fast-forward kept its
+end-of-frame post at the time (today the draw gate's drawn frames post at
+vcount 160 like 1x; see the status at the top). (At the time, a harness key
+`me_vispost = 0` restored the old post point for the A/B; that arm has since
+been deleted.)
 
 **Latency, stated plainly.** Before, the presented image took its registers
 from frame N and its memory from N+1. Now both come from N. Scrolling reaches
@@ -229,10 +241,14 @@ above — which input — not from re-measuring the divergence.
 
 ## Reproducing
 
-    builds/opus-perf-harness/append_renderer.py      # queue the A/B
-    builds/opus-perf-harness/compare_renderers.py    # summarise a collected pair
+The 2026-09 hardware A/B was queued and summarised by local rig scripts that
+are not in the repo. To repeat it: run one EBOOT with `vhash` on, `me_mode = 0`
+against the default, on the same fixture and input script, and for each frame
+the ME arm logged, look for the same hash among the CPU arm's frames within
++-8.  Without hardware, `tools/e2e/run_me_timing_sim.sh` (`ME_TIMING_SIM`)
+models the post points on the desktop.
 
-`compare_renderers.py` reports the stale/wrong split directly. Its "matches no
-neighbour" figure is only meaningful for frames whose neighbours the CPU arm
-actually logged — on these runs 188 of 189 qualified, but that check must be made
-every time, because dropped lines otherwise masquerade as wrong images.
+A "matches no neighbour" count is only meaningful for frames whose neighbours
+the CPU arm actually logged — on these runs 188 of 189 qualified, but that check
+must be made every time, because dropped lines otherwise masquerade as wrong
+images.

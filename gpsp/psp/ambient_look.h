@@ -5,8 +5,8 @@
  * video_psp.c (vid_ambient_*) and ui_psp.c (the loading screen) reads only
  * these.  Changing the look is an edit to this file and a rebuild.
  *
- * Defaults: Fable's chosen "soft" ambient and "L2" loading screen
- * (builds/menu-mockups/README.md, ambient/soft-*.png, loading/L2-*.png).
+ * Defaults: the design's chosen "soft" ambient and "L2" loading screen
+ * (docs/design/UI-MOCKUPS.md; ambient/soft-*.png, loading/L2-*.png).
  * The alternatives it drew are one or two numbers away -- "deep" is
  * AMB_BLUR_RADIUS 2 with AMB_SCRIM_HERO 150. */
 #ifndef AMBIENT_LOOK_H

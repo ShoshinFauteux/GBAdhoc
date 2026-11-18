@@ -84,7 +84,7 @@ void flush_translation_cache_rom(void) { flushes++; }
  * fe_host_rom_read_poll, which logs EVT rom_read_failed on PAUSE and EVT
  * rom_read_retry on RETRIED, counted here.  A file given with -include that
  * defines TEST_ROM_POLL replaces it (the pre-C-0 frontend, transcribed, for
- * the fail-before run; builds/health-out/c0/before_poll.h). */
+ * the fail-before run; not kept in the repo, docs/design/TIER-C.md C-0). */
 #ifndef TEST_ROM_POLL
 static unsigned ev_failed, ev_retry;
 static int rom_poll(void)

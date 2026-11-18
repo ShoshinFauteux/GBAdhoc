@@ -62,7 +62,7 @@ Lab work_ms, gb_crystal_walk: lab-final 8.82, lab-combo3 9.02, **lab-c3lat4
 9.63** (+0.61), cpl1/f1c2-da2 unchanged since.  gb_shantae_town 14.31 ->
 14.96, gb_ages_forest 9.67 -> 10.39.  c3lat4 with `input_fresh=0`: 8.95 /
 14.28 -- back to combo3.  So the step is c3lat4's input_fresh pad wait, a
-sleep counted in work_ms (memory input-fresh-work-ms), not GB CPU.  (Smaller,
+sleep counted in work_ms (a known effect of input_fresh), not GB CPU.  (Smaller,
 older: lab-compat +0.3 and the compat-cost arms +0.5 on crystal_walk,
 already gone by combo3.)
 
@@ -138,9 +138,9 @@ Builds gbp-a / gbp-b (section 7), headless PPSSPP, vhash every frame:
   differs: it stamps the wall time at save).  So the replay fixture
   reproduces the real trade on one console.
 
-Fixture files: builds/gbcore-perf-out/replay-gen2 (trade.inputs, slot0.sav =
+Fixture files (kept locally, not in the repo): trade.inputs, slot0.sav =
 the Lab's gblink_gen2_trade sav 4216b8ab, slot1.sav, harness-armed0/1.ini;
-ROM = Crystal Rev 1, 301899b8).  For a Lab fixture set perf_from/perf_to to
+ROM = Crystal Rev 1, 301899b8.  For a Lab fixture set perf_from/perf_to to
 cover frames ~300-10500.
 
 ## 6b. Lazy timer v1 lost on hardware; v2
@@ -166,7 +166,7 @@ fixtures, linkplay 3 scenarios x 5 policies).
 ## 7. Hardware A/B to run
 
 Builds (cand1 Lab recipe, tools/build.sh lab, PAD 5264), commit 6c09270:
-`builds/gbcore-perf-out/gbp-a` (both switches off; armed is run-time) and
+`gbp-a` (both switches off; armed is run-time) and
 `gbp-b` (TGB_LAZY_TIMER=1).
 
 1. Lazy timer: gbp-a vs gbp-b on the gb_* fixtures (both models).  Compare
@@ -241,7 +241,7 @@ Exactness:
 x86 speed vs lazy v2 alone: -0.5 to -7.9 % on most fixtures. Kirby +6 % and
 Kirby 2 +3 % are inside the ±5 % noise.
 
-### Builds (builds/gbcore-perf-out)
+### Builds (not kept in the repo)
 
 | Build | Switches | PBP md5 |
 |---|---|---|

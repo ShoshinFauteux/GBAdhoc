@@ -1152,13 +1152,15 @@ gpsp/tools/build.sh diagnostic   # release plus instruments
 # -> gpsp/psp/EBOOT.PBP
 ```
 
-The three profiles share the same dynarec configuration deliberately: a diagnostic build
-must be the *same emulator* as the release, or it answers a different question. What
-differs is the frontend: **release** has telemetry compiled out entirely; **harness**
-adds telemetry and the autopilot so a job file can drive a console unattended (titled
+There are six profiles in all: `release`, `harness`, `harness64`, `lab`, `diagnostic` and
+`soak`; [`gpsp/docs/BUILD-PROFILES.md`](gpsp/docs/BUILD-PROFILES.md) says what each is for.
+They share the same dynarec configuration deliberately: a diagnostic build must be the
+*same emulator* as the release, or it answers a different question. What differs is the
+frontend: **release** has telemetry compiled out entirely; the **harness** builds add
+telemetry and the autopilot so a job file can drive a console unattended (titled
 *GBAdhoc HARNESS* on the XMB so it is never mistaken for a playable build);
 **diagnostic** is release plus instruments that write to the Memory Stick. The GBA Link
-Cable is built in. The reproducible release procedure (`tools/build.sh release`, nothing else) and the feature
+Cable is built in. Contributors and AI agents start with [`AGENTS.md`](AGENTS.md). The reproducible release procedure (`tools/build.sh release`, nothing else) and the feature
 set (`gpsp/gpsp_features.h`) are in [`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.md).
 
 ## Documentation
@@ -1184,7 +1186,10 @@ set (`gpsp/gpsp_features.h`) are in [`gpsp/docs/RELEASE.md`](gpsp/docs/RELEASE.m
 - [`docs/GB-CORE-PERF.md`](gpsp/docs/GB-CORE-PERF.md), the Game Boy core's speed work
 - [`docs/DECISIONS.md`](gpsp/docs/DECISIONS.md), every design decision and why, including
   the ones that were wrong
-- [`docs/TESTING.md`](gpsp/docs/TESTING.md), the harness
+- [`docs/TESTING.md`](gpsp/docs/TESTING.md), how the emulator is tested: host suites,
+  the dynarec oracle, the build gates and the hardware harness
+- [`docs/BUILD-PROFILES.md`](gpsp/docs/BUILD-PROFILES.md), the six build profiles
+- [`AGENTS.md`](AGENTS.md), the rules for changing the code safely
 - [`docs/RELEASE.md`](gpsp/docs/RELEASE.md), how a release is built and verified
 - [`gbcore/tgbdual/LOCAL-PATCHES.md`](gpsp/gbcore/tgbdual/LOCAL-PATCHES.md), every change
   to the Game Boy core

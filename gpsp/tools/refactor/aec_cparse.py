@@ -869,7 +869,7 @@ def splice_moved(toks, names):
         return toks
     return link(out)
 
-# Tier C C-1 (health-out/design/C-1.md): the frame loop's state is main()'s `loop_t L`,
+# Tier C C-1 (gpsp/docs/design/TIER-C.md C-1): the frame loop's state is main()'s `loop_t L`,
 # copied into frame_loop()'s locals of the same names and back (`int exit_code =
 # L->exit_code;` .. `L->exit_code = exit_code;`; after splice_moved `L.exit_code`).  The
 # tools read `L.f` / `L->f` as the local `f`, so a value main() and the loop pass through

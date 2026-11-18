@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """epochc_exitmap.py -- the Epoch C exit inventory of a split main_psp.c tree.
 
-Planning aid for builds/epochc-out/PLAN-EPOCHC-beta5.md (Epoch C, step C0).  It does NOT
+Planning aid for gpsp/docs/design/EPOCH-C.md (Epoch C, step C0).  It does NOT
 replace T8 (exit_matrix.py, gate XS); it reuses T8's raw view for families A-C and adds
 what T8 does not list as rows:
   D-trigger    every `g_running = 0` write and the lab wall limit (family D's triggers),
@@ -50,7 +50,7 @@ HDR = ('kind', 'id', 'function', 'at', 'code', 'why', 'order|relaunch', 'flags',
        'if_context', 'text', 'hold', 'evt_text')
 
 
-# Tier C C-1 (health-out/design/C-1.md commit 4): the frame loop moves out of main() into
+# Tier C C-1 (gpsp/docs/design/TIER-C.md C-1 commit 4): the frame loop moves out of main() into
 # frame_loop(), which only main() calls.  T8 reads it as main()'s text (exit_matrix
 # EPOCHC_MOVED), so this inventory does too: its triggers, terminals and macro uses keep
 # the function `main`, and a diff across the move shows them as moved, not new/vanished.

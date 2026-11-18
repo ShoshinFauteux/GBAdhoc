@@ -117,8 +117,8 @@ one_run() {
   # own comment records the ME going silently unmeasured for 60 logs; the branch
   # added to fix that is still unreachable from here, and unreachable in
   # principle.  ME-mode equivalence can only be established on hardware (the
-  # me_mode 0-vs-1 A/B in builds/opus-perf-harness).  Treat a PASS here as "the
-  # CPU path is unchanged", never as "the renderer is unchanged".
+  # me_mode 0-vs-1 A/B run on the PSP; its logs are not kept in the repo).
+  # Treat a PASS here as "the CPU path is unchanged", never as "the renderer is unchanged".
   cp "$REPO/psp/me/gbadhoc_me.prx" "$GAME/gbadhoc_me.prx" 2>/dev/null     || echo "WARN: no psp/me/gbadhoc_me.prx -- ME mode will not be exercised"
   # THE CONTROL CHANNEL IS .gpsp-harness.ini, AND HAS BEEN SINCE ADR-0067.
   # This wrote autopilot.ini, which main_psp.c reads only so a leftover can be

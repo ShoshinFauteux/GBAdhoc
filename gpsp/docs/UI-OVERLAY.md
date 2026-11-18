@@ -1,9 +1,10 @@
-# The in-game menu: Fable's Direction A, "Overlay"
+# The in-game menu: the design mockup's Direction A, "Overlay"
 
 Branch `claude/ui-overlay`, based on `claude/candidate-3.1-all` (fa89f4e
 merged: sleep/wake fixes, GB palette, sharp bilinear).
-Design: `builds/menu-mockups/README.md`, section "A — Overlay". The numbers
-are `builds/menu-mockups/mockups.py`, `class Overlay`.
+Design: the menu mockups' direction "A — Overlay"; its numbers (the
+mockup's `class Overlay`) are summarised in
+[design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#menu-mockups).
 
 Every in-game screen (menu, save/load state, settings, controls, wireless,
 plus the scan and Mystery Gift sub-screens) now draws over the paused game
@@ -12,13 +13,14 @@ the top-left, the selection bleeds off the left edge, and a ramp out of the
 bottom edge carries the footer. START in the ROM browser opens the same
 `screen_settings()`, drawn over the highlighted game's blurred art (§11).
 
-Artifacts:
+Artifacts (the build outputs are not kept in the repo; the hashes identify
+them):
 
-| | path | sha256 |
+| | file | sha256 |
 |---|---|---|
-| playable EBOOT, "GBAdhoc 3.1 RC-ALL+UI" (release profile, commit f24f1ff, clean tree) | `builds/ui-overlay-out/release/EBOOT.PBP` | `cd45000b1dce50b9890e0b87d9a1b5bb1435813b4c09623865ac80a59d1da472` |
-| its ME module (unchanged from RC-ALL) | `builds/ui-overlay-out/release/gbadhoc_me.prx` | `ee40522346acc9c5f53351e63f49de8ce0069ec75c54d5e40518244bb83e92ef` |
-| harness EBOOT used for every check below | `builds/ui-overlay-out/build/harness/EBOOT.PBP` | `ea83f500b8be8b5ac0bea38400284d9a363d3fefc016892d150b76c98bca6907` |
+| playable EBOOT, "GBAdhoc 3.1 RC-ALL+UI" (release profile, commit f24f1ff, clean tree) | `EBOOT.PBP` | `cd45000b1dce50b9890e0b87d9a1b5bb1435813b4c09623865ac80a59d1da472` |
+| its ME module (unchanged from RC-ALL) | `gbadhoc_me.prx` | `ee40522346acc9c5f53351e63f49de8ce0069ec75c54d5e40518244bb83e92ef` |
+| harness EBOOT used for every check below | `EBOOT.PBP` | `ea83f500b8be8b5ac0bea38400284d9a363d3fefc016892d150b76c98bca6907` |
 
 MD5 of the playable EBOOT: `7ee8e698cb46e326cc86ec943207098c`.
 
@@ -340,7 +342,7 @@ records the pulse clock. New harness keys: `ui_backdrop`, `wake_shot`.
 
 ## 10. Text centred in the selection band (`claude/ui-tweaks`, 2026-10-02)
 
-**This departs from Fable's mockup spec, on purpose: the owner's eye wins.**
+**This departs from the design mockup's spec, on purpose: the owner's eye wins.**
 The mockup (`mockups.py`, `sel_band(s, y, w, h)`) and §1-§9 above put every
 band at `y - 4` from the row's text y, Settings' at `y - 5`. That centres the
 16 px LINE BOX, but Inter's ink does not fill it: in the UI atlas
@@ -384,7 +386,7 @@ lists, both themes, over a FLAT backdrop (`ui_backdrop` filled with 0x632C) so
 every pixel that differs from its row's band fill is glyph ink. The band's
 extent is the run of rows of its solid edge bar. "Caps" are the label's
 capital rows; margins are band rows above the capitals and below them.
-Script: `builds/uitweak-out/measure_bands.py`. Dark and light give identical
+(The measuring script was a one-off and is not kept in the repo.) Dark and light give identical
 geometry (every row below was checked in both themes where a run exists).
 
 | row | before: band / caps / above, below | after: band / caps / above, below |
@@ -426,7 +428,7 @@ the old geometry and the old Settings list (with "A/B buttons").
 | Emerald `ui_controls_demo` (both themes) | 1800 | IWRAM-only differences of the same cold-boot kind; every other field identical |
 
 Host: `python tools/run_host_tests.py` 30/30. The playable EBOOT ("GBAdhoc 3.1
-RC-ALL+UI", commit a55f1d1, clean tree) is `builds/uitweak-out/release/`,
+RC-ALL+UI", commit a55f1d1, clean tree; not kept in the repo) has
 EBOOT md5 `e3fcec3b5bf7955d9951b044d9970d8a`; it boots in PPSSPP with a 3.0
 config carrying `btn_swap = 1`.
 
@@ -501,18 +503,16 @@ The §2.3 browser images are now the new look.
   `ui_browser_script` opens Settings, Controls, Controls' reset prompt, and
   Settings scrolled to GAMEPLAY on Emerald (art). It then opens Settings and
   Controls on AW2 (no art), Settings and Controls on GB Kirby, and Settings on
-  GBC Crystal. Last, it picks AW2. Shelf and Marquee, dark and light:
-  `builds/browsebg-out/runs-{base,new}/<shell>-<theme>/`, sheets in
-  `builds/browsebg-out/sheets/`.
+  GBC Crystal. Last, it picks AW2. Shelf and Marquee, dark and light, base
+  and new, with contact sheets (the dumps are not kept in the repo).
 * In-game identity: `ui_demo` (real game-frame backdrop, dark; harness
   backdrop, light) and `ui_controls_demo` (both themes), base against this
-  branch. The GE dumps are **48/48 byte-identical**
-  (`builds/browsebg-out/runs-g{base,new}/`).
+  branch. The GE dumps are **48/48 byte-identical**.
 * Walkers: `ui_controls_demo = 2` (browser) dumps `ge_ctlb_0/1` over the
   ramp, and the `ui_browser_script` above runs to its pick.
 * Host: `python tools/run_host_tests.py` 30/30.
 * Playable EBOOT, "GBAdhoc 3.1 RC-ALL+UI" (release profile, commit 1d1cfbb,
-  clean tree): `builds/browsebg-out/release/EBOOT.PBP`, md5
+  clean tree; not kept in the repo): `EBOOT.PBP` md5
   `39284c3b67f288cadaad6dee00e06733`, sha256
   `75f3cd92610718482ba08bc1b0d7665a2361d349811d03bcbadaa18d3a766490`. The ME
   module is unchanged (`ee405223...`). It boots in PPSSPP.
@@ -528,10 +528,9 @@ The §2.3 browser images are now the new look.
 > was built and measured; nothing in the tree draws, loads or ships a splash
 > any more. Everything else in this section is current.
 
-Four owner-approved changes from Fable's splash and logo study
-(`builds/splash-mockups/`, README there; published as
-https://claude.ai/artifact/978uXdzKLEQDRPDgpUxwmG), plus the animated XMB
-icon. Base: `claude/candidate-3.1-all` 77aaabb (the 3.1.0 beta source).
+Four owner-approved changes from the design mockup's splash and logo study
+(summarised in [design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#splash-mockups)),
+plus the animated XMB icon. Base: `claude/candidate-3.1-all` 77aaabb (the 3.1.0 beta source).
 
 ### 12.1 What changed, by file
 
@@ -541,17 +540,17 @@ icon. Base: `claude/candidate-3.1-all` 77aaabb (the 3.1.0 beta source).
 | `psp/video_psp.c/.h` | `vid_splash_load/draw/drop` (the texture in the ambient VRAM slot). `vid_logo` samples GU_NEAREST; `VID_LOGO_W/H` 151x24, held to the atlas by a static assert. `vid_text_a` / `vid_text_hd_a`: text with a vertex alpha (the splash fade). |
 | `psp/main_psp.c` | `ui_splash_begin()` right after `vid_set_mode()`. Harness runs skip it unless `.gpsp-harness.ini` says `splash = 1` (show) or `splash = 2` (show and GE-dump every frame as `log/ge_splash_N.bmp`). The session chip, toasts and the connecting frame say "Room 7". |
 | `psp/room_label.h` | THE place the on-screen room name is made: `ROOM_LABEL_WORD "Room"`. |
-| `psp/logo_ui.h` | The grid-snapped 151x24 wordmark (4 px stems), byte-identical to Fable's `logo_ui-151x24-hint4.h`. |
+| `psp/logo_ui.h` | The grid-snapped 151x24 wordmark (4 px stems), byte-identical to the design's `logo_ui-151x24-hint4.h`. |
 | `psp/assets/` | `gbadhoc_icon0.png` (dark, "tuned": 3 px letters, five separable 2 px arcs, no beads), `gbadhoc_pic1.png` (dark), **new** `gbadhoc_icon1.pmf`, `splash-dark.565` / `splash-light.565`. |
 | `tools/bake_logo.py` | Rewritten: bakes `psp/logo_ui.h` (and with `--xmb` ICON0/PIC1) from the 2x master through `tools/logo/logomark.py`. The old one cropped a band of PIC1 that is now the tagline. `--check` proves the committed atlas reproduces. |
-| `tools/logo/` | `logomark.py` (Fable's mark, master path made local), the master PNG, `bake_splash.py` (the .565s), `make_icon1.py` (ICON1.PMF: frames, x264, our own PSMF muxer), `pmf_inspect.py`. |
+| `tools/logo/` | `logomark.py` (the design's mark, master path made local), the master PNG, `bake_splash.py` (the .565s), `make_icon1.py` (ICON1.PMF: frames, x264, our own PSMF muxer), `pmf_inspect.py`. |
 | `tools/build.sh` | Release profile passes `PSP_EBOOT_ICON1`; `--out` also stages the two .565 files. Harness profiles keep their still icons. |
 | `tools/make_release.sh` | Copies the .565 files next to the EBOOT. |
 | `tools/ui_model/` | `splash_model.py` (the splash and header through pspdraw, and the alignment check over PPSSPP dumps); `overlay_model.py` follows the new logo and room text. |
 
 ### 12.2 The splash
 
-**The launch screen is the loading screen** (Fable's recommendation D):
+**The launch screen is the loading screen** (the design's recommendation D):
 the L2 chrome (wordmark, console card, busy ring, the console's full name as
 the hd title, stage line, amount, 3 px bar, footer ramp) over a 120x68 bake
 of the rainbow arcs, magnified by the GE exactly as a hero's bake is at ROM
@@ -719,12 +718,12 @@ draw it at y=17 (was 18), keeping the old mark's centre row (29); the
 screen title follows the new width (x = 20 + 151 + 14).
 
 `tools/bake_logo.py` reproduces the committed atlas byte for byte
-(`--check`), and with `--xmb` writes ICON0 and PIC1 identical to Fable's
+(`--check`), and with `--xmb` writes ICON0 and PIC1 identical to the design's
 `icon0-dark-tuned.png` and `pic1-dark.png`.
 
 ### 12.5 The animated XMB icon (ICON1.PMF)
 
-Fable's storyboard: 144x80, 90 frames at 29.97 fps (3 s), looping. The
+The design's storyboard: 144x80, 90 frames at 29.97 fps (3 s), looping. The
 letters are always there; the five arcs sweep in, innermost first
 (0.2-1.0 s); the bar wipes (1.0-1.4 s); hold; arcs and bar fade over the
 last 0.4 s, so the loop closes on the letters alone. Dark, like ICON0 and
@@ -795,12 +794,11 @@ keeps it.
 
 * Host: `python tools/run_host_tests.py` 30/30 (`fe_ini_bounds` now also
   covers `fe_ini_never`).
-* PPSSPP GE dumps (Xvfb :136, private namespaces), harness EBOOTs:
-  `builds/splash-out/runs-{base,new}/<shell>-<theme>-<console>/` (browser
-  and splash, 12 each), `builds/splash-out/ingame-{base,new}/` (`ui_demo`
-  in-game menu / Settings / Wireless, `ui_controls_demo = 2` Settings from
-  the browser), `builds/splash-out/mem/` (heap census), sheets in
-  `builds/splash-out/sheets/`.
+* PPSSPP GE dumps (Xvfb :136, private namespaces), harness EBOOTs, base
+  and new: every shell x theme x console (browser and splash, 12 each), the
+  in-game screens (`ui_demo` in-game menu / Settings / Wireless,
+  `ui_controls_demo = 2` Settings from the browser), and a heap census,
+  with contact sheets. The dumps are not kept in the repo.
 * Release EBOOT sections against a base release built with the same title:
   PARAM.SFO identical; ICON0 and PIC1 are exactly the new PNGs; ICON1 is
   exactly `gbadhoc_icon1.pmf` (18,432 B; base has none); PIC0/SND0/DATA.PSAR
@@ -817,13 +815,13 @@ these runs (no `splash` key), as it is in every rig run.
 | Emerald (emerald_3000.st0) | 2000 | identical from frame 30 on; frames 4-30 differ as two base runs do |
 
 **Playable build** ("GBAdhoc 3.1.0 beta", release profile, commit 9357d35,
-clean tree, with §12.8): `builds/splash-out/release3/`, EBOOT md5
-`76202ab9c27df83005e18393d6f1fdc1`; against `release2` below only DATA.PSP
-differs, and the PRXs and .565 files are unchanged.
+clean tree, with §12.8; build outputs are not kept in the repo): EBOOT md5
+`76202ab9c27df83005e18393d6f1fdc1`; against the previous build below only
+DATA.PSP differs, and the PRXs and .565 files are unchanged.
 
-Previous build (commit 214f941): `builds/splash-out/release2/`. It boots in PPSSPP (no harness:
-ran until killed). Against the owner's 20174d22 (`builds/splash-out/release/`,
-1236bc9), only DATA.PSP differs; PARAM.SFO, ICON0, ICON1 and PIC1 are
+Previous build (commit 214f941). It boots in PPSSPP (no harness:
+ran until killed). Against the owner's 20174d22 (built from 1236bc9), only
+DATA.PSP differs; PARAM.SFO, ICON0, ICON1 and PIC1 are
 byte-identical. The binary audit passes (no badjump/smchisto/irqchk/
 home_stall_frame strings, `.playable-no-harness` present).
 
@@ -1011,7 +1009,7 @@ and the base 77aaabb, PPSSPP on Xvfb :142):
   PPSSPP with no harness and runs until killed.
 
 **Playable build** ("GBAdhoc 3.1.0 beta", release profile, commit 59b2b01,
-clean tree): `builds/splash-out/release4/`.
+clean tree; not kept in the repo):
 
 | file | md5 |
 |---|---|
@@ -1027,8 +1025,9 @@ them).
 
 ## 13. One SAVE STATES page (`claude/savestate-ui`, 2026-10-03)
 
-Fable's direction A, "Split" (`builds/savestate-mockups/`, README there;
-the design is `savestate.py`, scenes in `A-split/` and `menu/`). Base:
+The design mockup's direction A, "Split" (summarised in
+[design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#savestate-mockups); the design
+was `savestate.py`, scenes in `A-split/` and `menu/`). Base:
 c746cca (GBA-LINK-UI final). The menu's two rows "Save state" / "Load
 state" and their two pages become one row, **Save states** ("n of 5 used"
 beside it), and one page: the five slots on the left (64x42 thumbnail at
@@ -1059,7 +1058,7 @@ The page opens on slot 1 every time, as 3.1's pages did.
 | `psp/video_psp.c/.h` | The preview texture: 256x256 RGB565 (131,072 B) at a **fixed** VRAM offset after sharp bilinear's full reserved extent, whether or not sharp is in use, so ambient, sharp and this can never overlap: `[display x3][depth][staging][ambient][sharp 344,064][shot]` = 1,581,056 .. 1,712,128 of 2,097,152. `vram_at()` refuses it if the eDRAM is ever smaller; the page then never reads a .shot. `vid_shot_tex/rows/draw`, `vid_image_nearest`. Zero heap. |
 | `psp/ui_psp.c` | The menu (six rows, the open-time count), the page (`screen_state_slots`, `ss_panel`), the scan (`ov_slots_stat` / `ov_slots_scan`: five stats, five 5 KiB .thumb reads, once per open / save / delete), **the dwell read**: once the cursor has rested `OV_SHOT_DWELL` = 6 frames on a saved slot, its .shot is read into the texture with the core paused, and kept until the cursor or the slot changes. Until then, for a 3.1 state (no .shot) for good, and whenever VRAM refused the texture, the panel shows the 64x42 thumbnail at 2x, nearest (a 3.1 state says "saved by 3.1: small preview only"). `ss_slot` EVT per scan (telemetry builds). The demo walkers follow the six-row menu. |
 | `tools/tests/test_state_delete.c` | The .shot as the third name. |
-| `tools/ui_model/savestates/` | The GE rig: `make_fixtures.py` (the design's card and backdrops from Fable's assets, with mtimes), `stage.sh` (the card onto the emulated stick via `run_linkmenu_ppsspp.sh`'s new `Ii_STAGE` hook), the scene walks (`ss_{gba,gbc,gb}_t{0,1}`), `ss_mem` (heap census + VRAM tenancy), `ss_rt` / `ss_rt_gbx` (round trips). |
+| `tools/ui_model/savestates/` | The GE rig: `make_fixtures.py` (the design's card and backdrops from the design's assets, with mtimes), `stage.sh` (the card onto the emulated stick via `run_linkmenu_ppsspp.sh`'s new `Ii_STAGE` hook), the scene walks (`ss_{gba,gbc,gb}_t{0,1}`), `ss_mem` (heap census + VRAM tenancy), `ss_rt` / `ss_rt_gbx` (round trips). |
 | `tools/ui_model/overlay_model.py`, `compare.py` | The model draws the six-row menu and the page; `compare.py` replays the page's state at each dump from the run's log (`ss_slot`, `shot_dwell`, `ui_open`). |
 
 ### 13.2 Deliberate differences from the design and the brief
@@ -1088,10 +1087,10 @@ The page opens on slot 1 every time, as 3.1's pages did.
 All PPSSPP runs: private namespaces, Xvfb :147/:148 (:124 for the walkers),
 the known-good control first (the GBA-LINK-UI `ge_em_t0` walk on
 `final-harness64` e8873d93: 11/11 dumps byte-identical to its earlier run).
-Outputs under `builds/savestate-ui-out/` (`runs/`, `ovruns/`, sheets in
-`cmp/`); the BMPs were deleted once compared.
+The run outputs and comparison sheets are not kept in the repo; the BMPs
+were deleted once compared.
 
-**Against Fable's PNGs** (`compare_mockups.py`, `LINKMODE_PNG` pointed at
+**Against the design's PNGs** (`compare_mockups.py`, `LINKMODE_PNG` pointed at
 `A-split/` and `menu/`), harness64 `f684bb5e`, all 8 scenes x 2 themes, the
 design's card staged (`make_fixtures.py`) and its backdrop injected:
 
@@ -1139,7 +1138,7 @@ excluded): **identical** to `final-harness64` e8873d93. Post-load heap
 **Host:** `python tools/run_host_tests.py` 30/30 (`test_state_delete` runs
 inside the `ctl_map` suite).
 
-**Builds** (commit 6d95484, clean tree, GBA_LINK=1, `builds/savestate-ui-out/`):
+**Builds** (commit 6d95484, clean tree, GBA_LINK=1; not kept in the repo):
 
 | build | EBOOT md5 | image | PSP-1000 boot heap |
 |---|---|---|---|
@@ -1311,7 +1310,8 @@ which the quick load would have read anyway.
   10,122,652 -> 10,106,268 B. No heap at run time: the question is a few
   ints and a format string.
 * **Not run**: the GE rig and the model (`tools/ui_model/`; they need the
-  WSL PPSSPP harness and `builds/menu-mockups`, not in this checkout). The
+  WSL PPSSPP harness and a local copy of the menu mockups, which are not in
+  the repo; see design/UI-MOCKUPS.md). The
   model and the walkers are updated (`ge_ui_8`, the `load-ask` scene, every
   round trip answering its question) but have not produced a dump.
 
@@ -1357,8 +1357,8 @@ there now.
 The footer, the empty slot's panel ("X save"), the shelf's hint line,
 `ui_demo`'s and the delete demo's presses, the savestates walkers
 (`ge_gba.ui`, `ss_rt.ui`, `ss_rt_gbx.ui`: every save is X, every load SQUARE
-then X) and `overlay_model.py` follow. The design PNGs under
-`builds/savestate-mockups/` still draw the old footer: the model, not the
+then X) and `overlay_model.py` follow. The savestate mockups' PNGs
+still draw the old footer: the model, not the
 design, is the reference for the footer row from here.
 
 Host: `tools/tests/test_state_buttons.py` (the `fe_ini_bounds` suite) runs
@@ -1549,7 +1549,7 @@ top of it: no menu, OSD chip, toast or rewind HUD.
   else. The BMP choice is streamed from VRAM the same way
   (`shot_write_bmp_rows`, four rows of stack at a time). Neither borrows the
   netdrv arena, so *As displayed* is a PNG during a wireless session too.
-- **Sizes** (PPSSPP captures, builds/shots-out): PNG 12-165 KB across the
+- **Sizes** (PPSSPP captures, not kept in the repo): PNG 12-165 KB across the
   display modes; BMP 391,734 B.
 
 Host: `tools/tests/test_fe_png_stream.c` (+ `check_png.py`: both sizes, row

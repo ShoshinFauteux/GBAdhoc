@@ -61,8 +61,8 @@ DS/3DS presentation paths retain their existing network progress behavior.
   The PSP information card now shows hotspot settings and the shortcut rather
   than the obsolete RFU/336-byte description. The temporary preview activity
   was excluded from the release and retained only in the local audit folder.
-- Build/source hashes, test logs and device installation manifests are in
-  `builds/mgift-polish/` in the containing workspace.
+- Build/source hashes, test logs and device installation manifests were kept
+  locally and are not in the repo.
 
 Hardware follow-up: enable with the shortcut from the game's Mystery Gift
 screen, receive a card, disable, then enable again with Automatic. Test a PSP

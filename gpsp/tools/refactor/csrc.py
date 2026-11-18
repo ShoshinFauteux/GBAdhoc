@@ -2,7 +2,7 @@
 """csrc.py -- the shared C-source model of psp/main_psp.c for the phase-T tools
 (split.py T4, globals.py T9).  Host Python only, no compiler.
 
-Basis: builds/mainpsp-map/out/scratch/census.py (x1, validated against the ELF in
+Basis: the restructure survey's census.py (x1, a scratch script not kept in the repo; validated against the ELF in
 x1 Verification), ported into a function and FIXED as PLAN §5 T9 asks:
 
   * census.py skipped every declaration carrying `__attribute__((...))`: its

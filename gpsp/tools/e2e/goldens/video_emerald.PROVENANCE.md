@@ -7,7 +7,7 @@ replaced.
 ## The current golden (2026-10-11)
 
 - 1091 frames, md5 see `git log`. Captured in PPSSPP with
-  `VREGRESS_EBOOT=builds/lab-out/mevmem/EBOOT.PBP` (md5 dbbf9770, harness
+  `VREGRESS_EBOOT=<a local lab build>/EBOOT.PBP` (md5 dbbf9770, harness
   profile, `GBA_LINK=1`, source c6c0462 = the code of `claude/rc-4.0.0`
   c8b0b36, the base of the 4.0.0 beta with ~170 clean hardware fixture runs),
   `testdata/fixtures/emerald_vregress.inputs`, Emerald (USA, Europe) rev 0,
@@ -44,7 +44,7 @@ nothing. Two causes, found 2026-10-11:
    script's inputs and the game's free-running animations gives. No picture
    content was found to differ beyond that phase.
    The change lies between 2026-08-02 and 2026-09-18, the weeks the oracle
-   was a no-op (ADR-0067 rename), so nothing saw it happen. Which commit
+   was a no-op (the ADR-0036 control-file rename, often miscited as ADR-0067), so nothing saw it happen. Which commit
    (emulation timing or the frame an autopilot press reaches the core) is
    NOT known: bisecting needs the runner patched at every step of a window
    in which it could not run. It predates v2.x and is in every release since.

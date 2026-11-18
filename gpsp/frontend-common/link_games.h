@@ -1,5 +1,5 @@
 /* link_games.h -- which way a GBA game links: Link Cable, Wireless Adapter,
- * or both (docs/GBA-LINK-UI.md; the design is builds/linkmode-mockups).
+ * or both (docs/GBA-LINK-UI.md; the design: docs/design/UI-MOCKUPS.md).
  *
  * THE GAME DECIDES.  The player should almost never have to know which link
  * a game uses, so the Wireless menu asks this table:
