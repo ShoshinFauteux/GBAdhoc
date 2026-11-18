@@ -582,12 +582,12 @@ warning_gate "$ROOT/.build-eboot.log" "eboot"
 # WEAK CORE REFERENCES (T14 weaknm; tools/refactor/abi_asserts.weak).  A frontend's
 # `#pragma weak NAME` on a core_fe.h name links even when the core lost NAME (a rename): the
 # reference is NULL and the feature quietly stops.  Every name the profile's core must define
-# has to be in this ELF.  Strict where the pins are (LAYOUT_PIN_STRICT: a release, and the
-# profile's own arm); a variant arm (CORE_EXTRA, a sweep) is reported only.
+# has to be in this ELF, in every profile and arm (the lab recipe is a PSP_EXTRA arm, so the
+# layout's strictness cannot decide this).  ABI_WEAK_CHECK=report: a variant core that drops one.
 if [ -s "$ROOT/.build-elf.nm" ]; then
   WK_PY="$ROOT/tools/refactor/abi_asserts.py"; WK_NM="$ROOT/.build-elf.nm"
   if command -v cygpath >/dev/null; then WK_PY=$(cygpath -w "$WK_PY"); WK_NM=$(cygpath -w "$WK_NM"); fi
-  WK_STRICT=""; [ "$LAYOUT_PIN_STRICT" = 1 ] && WK_STRICT=--strict
+  WK_STRICT=--strict; [ "${ABI_WEAK_CHECK:-}" = report ] && WK_STRICT=""
   "$PYB" "$WK_PY" weaknm --nm "$WK_NM" --profile "$PROFILE" $WK_STRICT ||
     die "a weak core reference is unresolved in this build (tools/refactor/abi_asserts.weak)"
 else
