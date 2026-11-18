@@ -12,7 +12,8 @@ set -uo pipefail
 TAG="$1"; ED="$2"; SETUP="$3"; TO="${4:-600}"
 D=${DISPLAY_RIG_DIR:?set DISPLAY_RIG_DIR (holds b-harness/, base-harness/, readme30 lib at ../readme30/lib)}
 LIB=$D/../readme30/lib
-FIX=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage-hnsdiag/base
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # GBADHOC_WORK (tools/README.md)
+FIX=${FIX:-$GBADHOC_WORK/dynarec-profile-out/rig-stage-hnsdiag/base}
 BIOS=$HOME/wireless-rig/testdata/gba_bios.bin
 OUT=$D/runs/$TAG
 SB=$HOME/gpsp-e2e/sandboxes/disp-$TAG

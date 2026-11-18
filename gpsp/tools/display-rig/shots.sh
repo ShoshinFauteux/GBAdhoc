@@ -2,7 +2,8 @@
 # Screenshots: scale modes, ambient (art / palette / snapshot), loading
 # screens, GB/GBC, and the per-console Settings section.
 D=${DISPLAY_RIG_DIR:?set DISPLAY_RIG_DIR (holds b-harness/, base-harness/, readme30 lib at ../readme30/lib)}
-FIX=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage-hnsdiag/base
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # GBADHOC_WORK (tools/README.md)
+FIX=${FIX:-$GBADHOC_WORK/dynarec-profile-out/rig-stage-hnsdiag/base}
 LIB=$D/../readme30/lib; R=$D/../readme30/roms
 cd "$(dirname "$0")"
 EB=$D/b-harness

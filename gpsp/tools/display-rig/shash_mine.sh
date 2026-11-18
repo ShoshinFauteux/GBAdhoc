@@ -2,7 +2,8 @@
 # The emulation-unchanged oracle on the AW2 fixture: per-frame guest state
 # (shash.txt) with the display features off vs on, same build.
 D=${DISPLAY_RIG_DIR:?set DISPLAY_RIG_DIR (holds b-harness/, base-harness/, readme30 lib at ../readme30/lib)}
-FIX=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage-hnsdiag/base
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # GBADHOC_WORK (tools/README.md)
+FIX=${FIX:-$GBADHOC_WORK/dynarec-profile-out/rig-stage-hnsdiag/base}
 LIB=$D/../readme30/lib
 cd "$(dirname "$0")"
 common() { export ROMSRC=$FIX/roms/aw2.gba ROMNAME=aw2.gba STATE=$FIX/roms/aw2.st0 SAV=$FIX/roms/aw2.sav SCRIPT=$FIX/aw2.txt LOADST=1 SHASH=1 FRAMES=${NF:-3000}; }

@@ -3,7 +3,7 @@
 # every frame (shash) and the audio oracle.  This branch, as a player build runs it: instance B loaded for sessions, the cable reserve taken (gba_link_menu = 1).
 N=1
 D=$(dirname "$SPEC")
-I1_EB=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+I1_EB=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
 I1_PLAIN=1
 I1_ROM=$HOME/drprof/fx/aw2.gba
 I1_STATE=$HOME/drprof/fx/aw2.st0

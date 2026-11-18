@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 D=${DISPLAY_RIG_DIR:?set DISPLAY_RIG_DIR (holds b-harness/, base-harness/, readme30 lib at ../readme30/lib)}
 LIB=$D/../readme30/lib; R=$D/../readme30/roms
-FIX=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage-hnsdiag/base
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # GBADHOC_WORK (tools/README.md)
+FIX=${FIX:-$GBADHOC_WORK/dynarec-profile-out/rig-stage-hnsdiag/base}
 cd "$(dirname "$0")"
 brun() { tag=$1; eb=$2; shift 2; ( export "$@"; bash run.sh $tag $eb setups/browser.sh 600 ); }
 prun() { tag=$1; eb=$2; shift 2; ( export "$@"; bash run.sh $tag $eb setups/game.sh 900 ); }

@@ -392,11 +392,11 @@ What goes direct (in-process model `test_relay_nat`, 31/31, and the real-socket 
 ### Direct more often (2026-11-06, branch claude/direct-connect)
 
 The first real internet trade (ZAZA) ran through the relay for its whole length: the PSP-3000 on the
-relay PC's home LAN (`host=10.0.0.22:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
+relay PC's home LAN (`host=<LAN IP>:27500 nat=1`) and the Go on a phone hotspot (`nat=2`, a carrier
 NAT). Three causes, three changes:
 
 1. **A host on the relay's own LAN had no usable candidate.** The relay saw it at its private address
-   (winfwd carries the LAN source through), so the Go was told `public=10.0.0.22:27500`, an address
+   (winfwd carries the LAN source through), so the Go was told `public=<LAN IP>:27500`, an address
    that leads nowhere from cellular, and no forward candidate (the "forward" was the same endpoint).
    Now:
    - **client side, needs no server change:** a peer whose server-seen address is private
@@ -806,7 +806,7 @@ public IP stays hidden until *Show*. There is no QR code (owner, 2026-11-05).
 
 **The problem.** A PSP on the relay's own LAN cannot reach it through its public address when the
 router does no NAT hairpin (the owner's Rogers gateway, and many others). The owner had to switch
-`online_relay` between `10.0.0.40:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
+`online_relay` between `<relay LAN IP>:27420` at home and `relay.rayquaza.ca:3478` away; a GBAdhoc XMB
 host's own PSPs have the same problem with an invite code (it names the PC's public address).
 
 **Wire.** Two new types, no version bump (an older relay ignores them; an older console never sends
@@ -850,8 +850,8 @@ server as it trusts the LAN's DNS. It never trusts a relay that names another se
 claiming the right IP with another port.
 
 **winfwd.** Windows delivers subnet and limited broadcasts to a socket bound to the unicast LAN
-address (measured 2026-11-07 on the relay PC: a socket bound to 10.0.0.40 received datagrams sent to
-10.0.0.255 and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
+address (measured 2026-11-07 on the relay PC: a socket bound to the LAN address received datagrams sent to
+the subnet broadcast and 255.255.255.255), so winfwd.py needs no change; the answer leaves from its port-27420
 socket. A Linux relay must bind 0.0.0.0 (a socket bound to a unicast address there gets no
 broadcasts).
 

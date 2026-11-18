@@ -7,8 +7,11 @@
 # Resume after a dead loop: run_soak.sh <model> <order> <runs> <logs suffix>,
 # e.g. `3000 RECHTZ 6 b` when U finished on the card but was never collected
 # (its log lands as auto001-x-*, the arm hw_loop cannot know).
-cd /c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/inproc-soak-worktree || exit 9
-M=$1; ORDER=${2:-SURECHTZ}; RUNS=${3:-7}; O=../inproc-soak-out; ST=$O/stage/$M; L=$O/logs/$M${4:-}
+source "$(cd "$(dirname "$0")/../.." && pwd)/workdirs.sh"
+# INPROC_SOAK_TREE: the gpsp tree to run (default this script's); INPROC_SOAK_OUT: stages + logs
+INPROC_SOAK_OUT=${INPROC_SOAK_OUT:-$GBADHOC_WORK/inproc-soak-out}
+cd "${INPROC_SOAK_TREE:-$(dirname "$0")/../../..}" || exit 9
+M=$1; ORDER=${2:-SURECHTZ}; RUNS=${3:-7}; O=$INPROC_SOAK_OUT; ST=$O/stage/$M; L=$O/logs/$M${4:-}
 mkdir -p $L
 case $M in
   3000) DRV=(--host F: --join "") ;;

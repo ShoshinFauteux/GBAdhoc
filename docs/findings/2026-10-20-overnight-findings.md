@@ -200,9 +200,9 @@ then whole bench-ready suite on your PSP; a win must not regress any fixture bey
 - xlat: corpus oracle (35 ROMs x 3000 f, power-on, ship config): xlat = fast2 + XLAT_FAST PASS 35/35 (state, audio, picture). 4 mutants (one per XLAT_FAST piece) all CAUGHT (DCLEAR 30/35, GATEMAP-noent 1/35, LIMITS 21/35, EXITPF 35/35). Commits on claude/bench-xlat.
 - xlat: HW PLAN (consoles off USB; nothing below has run). PRX builds in builds/xlat-out/<tag>/ (all harness, GBA_LINK=1 REWIND=1 BUILD_PRX=1, 0 warnings):
     x1 = LIMITS (measured: Doom/Duke +4%) ; x4 = +GATEMAP+EXITPF ; x5 = +RAMEND ; x6 = +DCLEAR ; x7 = +SCANFN = all of XLAT_FAST at 56c55e2 (CANDIDATE)
-  1) candidate, whole suite:  python psp_bench.py --console 1000 --port 10100 --build C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/xlat-out/x7 --tag x7 --tags bench-ready   (~2 h)
+  1) candidate, whole suite:  python psp_bench.py --console 1000 --port 10100 --build $GBADHOC_WORK/xlat-out/x7 --tag x7 --tags bench-ready   (~2 h)
   2) per-piece A/B, key six:  for t in x4 x5 x6: same with --build .../xlat-out/$t --tag $t --only kf_doom_ii,kf_duke_nukem_advance,kf_smashing_drive,kf_ssx_3,kf_need_for_speed_most_wanted,hns_heavy   (~25 min each)
-  3) noise control: --build C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/bench-411/harness-prx --tag b411r with the same --only
+  3) noise control: --build $GBADHOC_WORK/bench-411/harness-prx --tag b411r with the same --only
   compare: python builds/xlat-out/tools/cmp.py b411 x7   (fps/work/jit/cpu per fixture; cmp.py A B [console])
   any further piece: CORE_EXTRA="XLAT_FAST=1 XLAT_NO=SCANFN:DCLEAR" switches pieces off (LIMITS GATEMAP EXITPF RAMEND DCLEAR SCANFN).
 

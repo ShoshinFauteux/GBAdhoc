@@ -41,13 +41,13 @@
 set -uo pipefail
 OUT="$1"; SCEN="${2:-full}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WIN=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc
-EB_A="${3:-$WIN/builds/save-share-out/eb-harness}"; EB_B="${4:-$EB_A}"
+source "$HERE/../workdirs.sh"
+EB_A="${3:-$GBADHOC_WORK/save-share-out/eb-harness}"; EB_B="${4:-$EB_A}"
 PPSSPP_DIR="${PPSSPP_DIR:-$HOME/ppsspp}"
 BIOS="${BIOS:-$HOME/gbalink/bios/gba_bios.bin}"
 GBA="${GBA_ROMS:-$HOME/gbamulti/roms}"; GB="${GB_ROMS:-$HOME/gbdual/roms}"
-FX="${FX:-$WIN/builds/savestate-ui-out/fx}"
-HERO="${HERO:-$WIN/hero}"
+FX="${FX:-$GBADHOC_WORK/savestate-ui-out/fx}"
+HERO="${HERO:-$GBADHOC_REPO/hero}"
 SB="$HOME/saveshare-agent/sb/$(basename "$OUT")"
 TIMEOUT_S="${TIMEOUT_S:-420}"
 read -r XD1 XD2 <<< "${XVFB_DISPLAYS:-153 154}"

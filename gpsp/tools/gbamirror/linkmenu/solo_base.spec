@@ -3,7 +3,7 @@
 # every frame (shash) and the audio oracle.  Base: claude/gbalink-hw ebd76a0 (the link menus not in it).
 N=1
 D=$(dirname "$SPEC")
-I1_EB=${BASE:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-hw-out/h6-link-harness64}
+I1_EB=${BASE:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-hw-out/h6-link-harness64}
 I1_PLAIN=1
 I1_ROM=$HOME/drprof/fx/aw2.gba
 I1_STATE=$HOME/drprof/fx/aw2.st0

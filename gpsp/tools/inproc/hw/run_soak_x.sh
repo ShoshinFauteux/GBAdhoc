@@ -3,8 +3,11 @@
 # arm X (jit_small = 1, so H&S is resident on real hardware; make_stages.py
 # --only X) then Z (the rig's own files back) with STOP.  Wake cycle stages X,
 # cycle 1 collects X and stages Z + STOP: the console parks.
-cd /c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/inproc-soak-worktree || exit 9
-O=../inproc-soak-out; ST=$O/stage/3000; L=$O/logs/3000x
+source "$(cd "$(dirname "$0")/../.." && pwd)/workdirs.sh"
+# INPROC_SOAK_TREE: the gpsp tree to run (default this script's); INPROC_SOAK_OUT: stages + logs
+INPROC_SOAK_OUT=${INPROC_SOAK_OUT:-$GBADHOC_WORK/inproc-soak-out}
+cd "${INPROC_SOAK_TREE:-$(dirname "$0")/../../..}" || exit 9
+O=$INPROC_SOAK_OUT; ST=$O/stage/3000; L=$O/logs/3000x
 mkdir -p $L
 echo "=== soak 3000 X start $(date +%H:%M:%S) pid $$ ===" >> $L/loop.log
 python -u tools/rig/hw_loop.py --host F: --join "" --appdir GBADHOC-GBLINK \

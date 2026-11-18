@@ -3,7 +3,7 @@
 # P0a TEST FIXTURE (tools/refactor/tests): fbe9da63 carried from cutlist_b5.txt with PLAN-P-beta5 2.1 applied
 # (g_np_start_tid#1 -> link).  A stand-in for the P0b cutlist so the P0a tools can simulate P4; not the P0b review.
 # source: main_psp.c  sha256 6f48702b849f30dfcfd097e6aa6620c9469d5835868ece3ad14eae1b9a0a3dff  (18647 lines)
-# modules: carried from C:/Users/DrSto/AppData/Local/Temp/claude/ba7f54c78a644332/ecb5d678-5e7d-4e1c-a9bb-d003dba93995/scratchpad/cutlist_b5.txt
+# modules: carried from cutlist_b5.txt
 # 339 functions, 597 globals, 43 fragments (602 units), 2 function(s) pinned into another module's fragment by #if
 #
 # FRAG	fragment	module	occ	anchor (the fragment's first line, exact; occ = which identical line)

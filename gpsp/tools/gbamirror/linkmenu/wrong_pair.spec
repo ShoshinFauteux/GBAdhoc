@@ -1,7 +1,7 @@
 # Wrong game: console 1 hosts AW2 by cable, console 2 runs Super Circuit.
 N=2
 D=$(dirname "$SPEC")
-EB64=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+EB64=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
 I1_EB=$EB64
 I1_ROM=$HOME/gbamulti/roms/aw2.gba
 I1_ROMNAME="Advance Wars 2 - Black Hole Rising.gba"

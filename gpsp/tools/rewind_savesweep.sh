@@ -6,7 +6,8 @@
 set -uo pipefail
 BUILD=$1
 W=$HOME/rewind-agent; S=$W/s9; O=$S/sx; mkdir -p $O
-SAVS=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/roms
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+SAVS=${RW_SAVS:-$GBADHOC_ROMS}
 ALL="--rewind-inplace --rewind-dirty 3 --rewind-fast-restore --rewind-clock --rewind-burst 4 --rewind-verify --rtc-pin 1700000000"
 one() {
   rom=$1; n=$(basename "$rom" .gba); d=$O/$n; rm -rf "$d"; mkdir -p "$d"
