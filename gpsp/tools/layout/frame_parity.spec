@@ -32,6 +32,7 @@ cold net_bringup_rend_off net_teardown rfu_sched_pause   # session setup / teard
 cold fe_host_reset fe_host_state_recover fe_host_option_set_live skip_policy_reapply psp_clock_apply   # reset, recovery, option changes
 cold vid_cycle_preset pcfg_display_save   # display preset change (a key press)
 cold link_draw_facts link_chip ffh_cap ffh_cap_draw   # on-screen info panels, drawn on request
+cold link_wait_osd link_wait_hide   # the wait notice: only while a link holds the game for its partner (no game frame runs), once as the hold ends, and as the menu opens
 cold fe_ini_get_int snprintf strrchr psp_local_wallclock   # harness reads, formatting
 cold online_psp_enabled
 cold sceKernelDelayThread scePowerLock scePowerUnlock sceIoGetstat   # syscall stubs (8 B jumps)
