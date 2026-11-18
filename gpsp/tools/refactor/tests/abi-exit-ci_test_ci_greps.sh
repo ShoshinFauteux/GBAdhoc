@@ -96,7 +96,7 @@ expect 1 "M1 raw exit in a new module" "FAIL  R1 psp/fe_mut_a.c" $CG --src "$T" 
 
 $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
 k = [i for i, l in enumerate(L) if l.startswith('#define handoff_run(code, why)')]
-k = k or [i for i, l in enumerate(L) if l.startswith('int main(')]      # after P3: any raw call
+k = k or [i for i, l in enumerate(L) if l.startswith('int main(') and i + 1 < len(L) and L[i + 1].rstrip() == '{']      # after P3: any raw call
 assert len(k) == 1, k
 L.insert(k[0], 'static void fe_mut_early(void) { handoff_run(0, 0); }')"
 expect 1 "M2 raw handoff_run in main_psp.c (before the hijack; after P3: anywhere)" "FAIL  R1 psp/main_psp.c" $CG --src "$T" --rules R1; reset_tree
@@ -169,7 +169,7 @@ expect 0 "M9 control: include first" "0 too early" $CG --src "$T" --rules R5; re
 # ---- R6 (Epoch C): a new function that only main() calls
 r6mut() {  # r6mut <declaration prefix> [<extra line>]
   $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
-m = [i for i, l in enumerate(L) if l.startswith('int main(')]; assert len(m) == 1, m
+m = [i for i, l in enumerate(L) if l.startswith('int main(') and i + 1 < len(L) and L[i + 1].rstrip() == '{']; assert len(m) == 1, m
 assert L[m[0] + 1] == '{', L[m[0] + 1]
 L.insert(m[0] + 2, '   fe_mut_boot_run(argc);')   # main()'s first statement (Epoch C C2: the boot is boot_run's)
 L[m[0]:m[0]] = ['$1 void fe_mut_boot_run(int x) { (void)x; }'] + ([\"\"\"${2:-}\"\"\"] if \"\"\"${2:-}\"\"\" else [])"
@@ -187,12 +187,17 @@ expect 0 "M10e control: always_inline (Epoch C stage s)" "0 new without" $CG --s
 r6mut 'static __attribute__((always_inline, noinline))'
 expect 1 "M10f always_inline together with noinline" "only main() calls it and it has no section()" $CG --src "$T" --rules R6; reset_tree
 # tier C C-1: frame_loop (only main calls it) carries the loop; a function only the loop calls
-# is still main-only (M10g), and frame_loop itself needs noinline + section (M10h)
+# is still main-only (M10g), and frame_loop itself needs noinline + section (M10h).  After the
+# unity split frame_loop is fe/loop.inc.c's: the mutants edit the real one (a second definition
+# in the shell only shadowed it, so both mutants had stopped failing; beta.6 integration).
 r6loop() {  # r6loop <frame_loop declaration prefix>
-  $ED "$T/psp/main_psp.c" "$T/psp/main_psp.c" "
-m = [i for i, l in enumerate(L) if l.startswith('int main(')]; assert len(m) == 1, m
-L.insert(m[0] + 2, '   frame_loop(argc);')
-L[m[0]:m[0]] = ['static void fe_mut_step(int x) { (void)x; }', '$1 void frame_loop(int x) { fe_mut_step(x); }']"
+  FL="$T/psp/main_psp.c"; [ -f "$T/psp/fe/loop.inc.c" ] && FL="$T/psp/fe/loop.inc.c"
+  $ED "$FL" "$FL" "
+m = [i for i, l in enumerate(L) if l.startswith('void frame_loop(') and i + 1 < len(L) and L[i + 1].rstrip() == '{']; assert len(m) == 1, m
+assert L[m[0] - 1].startswith('static '), L[m[0] - 1]
+L.insert(m[0] + 2, '   fe_mut_step(0);')
+L[m[0] - 1] = '$1'
+L.insert(m[0] - 1, 'static void fe_mut_step(int x) { (void)x; }')"
 }
 r6loop 'static __attribute__((noinline, noclone, section(\".text.startup.fe_frame_loop\")))'
 expect 1 "M10g a new static only frame_loop calls, no attributes" "it has no noinline and section() .fe_mut_step." $CG --src "$T" --rules R6; reset_tree
