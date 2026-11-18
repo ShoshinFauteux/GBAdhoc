@@ -83,6 +83,7 @@ mgnet_stage
 ms_since
 net_now_us
 netdrv_peer_count
+online_psp_enabled   # reviewed beta.6: psp/online_psp.c `return O.enabled;`, no state change (a5b61d4f's rfu_sched line, fe/link.c.inc.c)
 online_psp_why
 pcfg_clock_name
 pcfg_console_tag
