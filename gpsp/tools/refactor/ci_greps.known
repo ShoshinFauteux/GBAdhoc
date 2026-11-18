@@ -4,8 +4,6 @@
 # handoff_run; x2 §1).  They are the thing fe_priv.h's wrapper calls, not its callers.
 R1	psp/usb_handoff.c	*	handoff_run's own implementation (ADR-0053); reached only via the hijacked handoff_run
 R1	psp/lab_harness.c	*	lab build's lab_finish / ownership loss (x2 E3); reached via LAB_HANDOFF
-# HW-2 (§3.4): stall_exit leaves raw from the stall thread.  Whitelisted ONLY with --phase HW2.
-R1	psp/main_psp.c	sceKernelExitGame@stall_exit	HW-2 harness batch: raw exit from the stall thread, retained-ME decision made there	HW2
 # (R4: both fe_evt-argument calls T11 knew of -- r6-B3's sceCtrlSetSamplingCycle and
 # sleep_sim's fe_host_sram_test_kill_handle -- were moved out of the EVT in HW-2.)
 # R7 (tier C, C2-1): the frame loop's one harness read stays raw in every build: a player build folds

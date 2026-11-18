@@ -162,13 +162,13 @@ static void heartbeat_write(unsigned secs)
  * It cannot help when this thread itself no longer runs (a halted CPU).
  *
  * The exit (PLAN HW-2, §3.4): never pwr_release_all, which is main-only
- * (g_pwr_hold's nesting count, standby_note's fopen); pwr_release_kernel
- * drops the kernel's lock counts instead.  The ME: shut down if the
- * in-process return retained it, exactly as pwr_release_all did here before
- * -- the state every other exit reaches; ExitGame with a retained module has
- * never run.  Whether me_host_shutdown is safe from this thread with main
- * stuck is what the stall_exit_hard arm answers.  Then the raw ExitGame
- * (ci_greps.known R1, phase HW2). */
+ * (g_pwr_hold's nesting count, standby_note's fopen).  The ME first: shut down if
+ * the in-process return retained it, as pwr_release_all does before it drops
+ * the holds -- the state every other exit reaches; ExitGame with a retained
+ * module has never run.  Whether me_host_shutdown is safe from this thread
+ * with main stuck is what the stall_exit_hard arm answers.  Then
+ * FE_EXIT_GAME_STALL (fe/fe_priv.h): pwr_release_kernel drops the kernel's lock
+ * counts, then the exit (ci_greps R1: no raw exit outside fe_priv.h). */
 static int g_stall_exit_s, g_stall_exit_hard;
 static void stall_exit(unsigned iter)
 {
@@ -186,10 +186,9 @@ static void stall_exit(unsigned iter)
       return;
    if (g_hb_s > 0)
       heartbeat_write(200000u + (unsigned)g_stall_exit_s);
-   pwr_release_kernel();
    if (me_host_retained())
       me_host_shutdown();
-   sceKernelExitGame();
+   FE_EXIT_GAME_STALL();
 }
 #endif
 

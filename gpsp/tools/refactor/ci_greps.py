@@ -229,7 +229,9 @@ def _wrapped(t, k, levels=3):
     release `(pwr_release_all(), handoff_run(..))` and in lab/harness
     `(pwr_release_all(), (lab_active() ? lab_finish(..) : handoff_run(..)))`.
     (Verifier 2026-11-05: the old token-window test accepted any call after `:` and
-    skipped any call after `?`, so a raw `c ? 0 : sceKernelExitGame()` passed.)"""
+    skipped any call after `?`, so a raw `c ? 0 : sceKernelExitGame()` passed.)
+    `pwr_release_kernel ( ) ,` is the same release for the one exit that leaves from the
+    stall thread (fe_priv.h FE_EXIT_GAME_STALL; beta.6 replaced its HW2 whitelist row)."""
     j, depth = k - 1, 0
     while j >= 0 and levels > 0:
         x = t[j].text
@@ -237,7 +239,8 @@ def _wrapped(t, k, levels=3):
             depth += 1
         elif x == '(':
             if depth == 0:
-                if [y.text for y in t[j + 1:j + 5]] == ['pwr_release_all', '(', ')', ',']:
+                if [y.text for y in t[j + 1:j + 5]] in (['pwr_release_all', '(', ')', ','],
+                                                         ['pwr_release_kernel', '(', ')', ',']):
                     return True
                 levels -= 1
             else:

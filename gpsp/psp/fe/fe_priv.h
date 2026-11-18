@@ -158,6 +158,12 @@ static void core_health_evt(const char *at);
  * pwr_release_all() is fe/power.b.inc.c's; LAB_HANDOFF is lab_harness.h's. */
 #define FE_HANDOFF(c,w) (pwr_release_all(), LAB_HANDOFF((c),(w),handoff_run))
 #define FE_EXIT_GAME() (pwr_release_all(), sceKernelExitGame())
+/* The one exit that leaves from ANOTHER thread: the harness stall exit (stall_exit,
+ * fe/harness.f.inc.c; PLAN HW-2 §3.4), while main is wedged.  pwr_release_all is
+ * main-only (g_pwr_hold is main's nesting count; its logging is main's), so this drops
+ * only what the kernel holds for us (pwr_release_kernel, fe/power.b.inc.c, rig builds)
+ * before the exit: the switch is not left held here either. */
+#define FE_EXIT_GAME_STALL() (pwr_release_kernel(), sceKernelExitGame())
 
 /* THE SLEEP SIMULATOR's hooks into the power code (harness only: the g_ss_* and
  * sleep_sim_* of fe/harness.b.inc.c); without GPSP_PERF_RIG they are the real
