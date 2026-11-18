@@ -249,7 +249,7 @@ for the desktop build until that bakes `SMC_GATES_SIMPLE` too.
 | name | what it is |
 |---|---|
 | `ROM_BUFFER_SIZE` | **15** (root Makefile; `ROM_BUFFER_SIZE=N` overrides): the default of the run-time ROM page-cache cap `gamepak_buffer_cap`. CONFIG.INI `rom_resident = 1` (default since 3.0.0) raises the cap to the cart's size when every block fits while the 1 MiB post-load reserve is held (64 MiB consoles only; a 1000 stops at ~13). See docs/ROM-RESIDENCY.md before changing it. |
-| `GATE_SLOTS`, `GATE_RATIO`, `CLUSTER_BYTES` | root make overrides of `MAX_TRANSLATION_GATES`, `SMC_GATE_RATIO`, `SMC_GATE_CLUSTER`. Tuning knobs, unset in every profile. `CLUSTER_BYTES` 128 is sized to H&S's M4A layout (two loop copies 152 bytes apart). |
+| `GATE_SLOTS`, `GATE_RATIO` | root make overrides of `MAX_TRANSLATION_GATES` and `SMC_GATE_RATIO`. Tuning knobs, unset in every profile. |
 | `ROM_BRANCH_HASH_BITS_SMALL`, `ROM_BRANCH_HASH_BITS_LARGE` | the ROM block hash (`rom_branch_hash`, gpsp_config.h): 14 bits (64 KiB) on every PSP build, 16 only without `SMALL_TRANSLATION_CACHE` (other platforms, the twin's 10 MiB model). `#ifndef` overrides for the twin's sizing studies; a shipped build never sets them. |
 | `DISPATCH_CACHE_BITS` | 9 (cpu.h): 512 entries per ISA. |
 | `MSR_FAST_DEFAULT` | 1 (cpu_threaded.c): the start value of the run-time `msr_fast`. `MSR_FAST_DEFAULT=0` (root make) builds the same code with the fast path off, a layout-identical A/B arm. CONFIG.INI `msr_fast = 0` is the player's kill switch. |

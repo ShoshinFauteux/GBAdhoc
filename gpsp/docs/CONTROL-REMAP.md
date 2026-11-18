@@ -592,8 +592,8 @@ cannot take HOME with it.
 **Packaging.** `tools/build.sh` builds `psp/home/gbadhoc_home.prx` as a
 sub-make (`psp/Makefile`), records `homePrxSha256` in the manifest and
 stages it with `--out`. `tools/make_release.sh` ships it beside the EBOOT and
-refuses a stale one. Like the ME module, the `.prx` is tracked so that a
-toolchain-less clone can package a release; its `.elf` is ignored.
+refuses a stale one. Like the ME module, the `.prx` and its `.elf` are build
+products and are not tracked: every build makes them.
 
 **Harness keys (GPSP_PERF_RIG builds only; release refuses them).**
 

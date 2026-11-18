@@ -70,6 +70,8 @@ side, `lat_`/`ll_` the latency tiers, `ffh_` the fast-forward helpers,
 | tools, tests, gates | `gpsp/tools/` |
 | docs | `gpsp/docs/` (start at `ARCHITECTURE.md`); design summaries in `gpsp/docs/design/`; decisions in `gpsp/docs/DECISIONS.md` and `gpsp/docs/adr/` |
 
+`x86/` and `arm/` are inherited gpSP backends, not built or maintained by GBAdhoc (see their README.md); GBAdhoc's dynarec features go in `mips/` only, and `platform=unix` with its default x86 dynarec does not compile.
+
 ## 3. Build profiles
 
 One command builds each profile, in docker (`pspdev/pspdev`):
@@ -208,9 +210,10 @@ Change the input, then rerun the generator:
 | `psp/build-manifest.json` | `tools/build.sh` |
 
 `tools/refactor/abi_asserts.ratchet` is hand-kept but may only go down.
-`psp/me/gbadhoc_me.prx` and `psp/home/gbadhoc_home.prx` are tracked build
-products that every build rebuilds in place; `tools/build.sh` restores them.
-Do not commit a rebuilt PRX by accident.
+`psp/me/gbadhoc_me.prx`, `psp/home/gbadhoc_home.prx` and the online PRX are
+build products, not tracked: every build rebuilds them in place, and
+`.gitignore` keeps them out of commits. A `git archive` export holds none of
+them; the build makes them.
 
 ## 8. Tests: which to run
 
