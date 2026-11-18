@@ -12,11 +12,11 @@ headers), never the tree itself.  Also run by `fe_readme.py --selftest [--gpsp D
      (test_psp_runtime.marked_function), fn:audio_thread by test_audio_channel.py (a loop over a tuple),
      ff:me_rend_present by run_ff_tests.py (its own helper, 'ff:' + name)
   C5 --plan on a synthetic PLAN.md made from the transcribed tables: rc 0
-  C6 the #if context of the harness rows the 2026-11-08 review named (run_testpat, psp_state_load: none)
-     and of a GBADHOC_MGIFT one (mgift_start)
+  C6 the #if context of harness rows: run_testpat (GPSP_KEEP_TELEMETRY since code-health C2-5),
+     sess_cost_evt (none: every build), and of a GBADHOC_MGIFT one (mgift_start)
   P-review r3:
   C7 every table row of the generated README has its header's GFM cell count (gfm_table_errors), and
-     eboot_crc's #if context cell, split the GFM way and unescaped, keeps its `|| defined(GPSP_KEEP_TELEMETRY)` (B5)
+     stall_refer's #if context cell, split the GFM way and unescaped, keeps its `|| defined(GPSP_PERF_RIG)` (B5)
   C8 row names (B7): a name defined once is bare everywhere (no `#1` in "Rows outside their owner's
      fragments"); a name defined twice is name#1 / name#2; the "Row names" convention comes before the first
      name#N
@@ -24,10 +24,11 @@ headers), never the tree itself.  Also run by `fe_readme.py --selftest [--gpsp D
      guards, and names the guards (B8a)
   C10 the qs: prefix row says two tests slice it (two read qs:dispatch); a third reader -> "three tests" (B8c)
   C11 the no-fragment-yet sentence names boot's G rows where they sit and no longer says "in `main()` today" (B8b)
-  C12 the copy sites in no T14 flavour are listed (abi_asserts.unbuilt), the six of 2026-11-09 (B6)
+  C12 the copy sites in no T14 flavour are listed (abi_asserts.unbuilt): none since tier C C6-7 (the six
+     of 2026-11-09 became core_fe.h declarations), and the README says so
   M15 gfm_table_errors on a row with an unescaped `||` in a code span -> 1 error, escaped -> 0; the
       generator with cell escaping removed -> refused (its own GFM check)
-  M16 a fragment copy gains an extern in an arm no flavour defines -> the README lists it (7 sites)
+  M16 a fragment copy gains an extern in an arm no flavour defines -> the README lists it (C12's sites + 1)
   M1 a hand edit of the README                         -> --check STALE (rc 1)
   M2 a G row filed in another fragment than it sits in -> refused
   M3 the cutlist's source sha256 is not the inverse's  -> refused (a stale cutlist)
@@ -220,12 +221,14 @@ def r3_rows(gpsp, root):
         bad('C7-C12 generation failed: %s' % msg.strip()[:200])
         return
     errs = fe_readme.gfm_table_errors(text)
-    m = re.search(r'^\| `eboot_crc` \|.*$', text, re.M)
+    # (eboot_crc's cell was the `||` case until code-health C2-5 made it `#ifdef GPSP_KEEP_TELEMETRY`;
+    # stall_refer's chain is `#if defined(GPSP_KEEP_TELEMETRY) || defined(GPSP_PERF_RIG) || ...`)
+    m = re.search(r'^\| `stall_refer` \|.*$', text, re.M)
     cells = fe_readme.gfm_cells(m.group(0)) if m else []
     ctx = cells[2].strip().replace('\\|', '|') if len(cells) == 3 else ''
     ntab = len(re.findall(r'^\|[-|]+\|$', text, re.M))
-    (ok if not errs and ntab >= 6 and '|| defined(GPSP_KEEP_TELEMETRY)' in ctx else bad)(
-        'C7 %d tables, %d rows with another GFM cell count than their header; eboot_crc context cell: %s'
+    (ok if not errs and ntab >= 6 and '|| defined(GPSP_PERF_RIG)' in ctx else bad)(
+        'C7 %d tables, %d rows with another GFM cell count than their header; stall_refer context cell: %s'
         % (ntab, len(errs), ctx[:90]))
 
     out = section(text, "## Rows outside their owner's fragments") or ''
@@ -283,18 +286,15 @@ def r3_rows(gpsp, root):
 
     unb = section(text, '### Core-ABI copies in no T14 flavour') or ''
     got = re.findall(r'^\| `(\w+)` \| `([^`]+)` \| (\w+) \|', unb, re.M)
-    # the shell's site by its text: a comment-only edit of the shell moves its line (P-tidy: the
-    # file header 37 -> 10 lines took it from main_psp.c:2828 to :2801); the fragments' cites hold
-    reopens = [i for i, ln in enumerate(open(os.path.join(gpsp, 'psp', 'main_psp.c'), encoding='utf-8'), 1)
-               if re.match(r'\s*extern u32 gamepak_reopens;', ln)]
-    want = [('jit_pub_inline', 'fe/inproc.a.inc.c:304'), ('xlat_scan_fast', 'fe/inproc.a.inc.c:305'),
-            # HW-2 (claude/hw2-exit) moved gbab_reg/fe_gbadual_running_inst: harness.f +16
-            # (stall_exit's comment and checks); rom_hash_census: HW-1 613 -> 625 (the cb_stack
-            # EVT in core_health_evt), HW-2 +16 -> 641; the shell's site is found by its text (above)
-            ('gbab_reg', 'fe/harness.f.inc.c:303'), ('fe_gbadual_running_inst', 'fe/harness.f.inc.c:304'),
-            ('rom_hash_census', 'fe/harness.f.inc.c:641'),
-            ('gamepak_reopens', 'main_psp.c:%d' % reopens[0] if len(reopens) == 1 else 'main_psp.c:?')]
-    (ok if [(n, c) for n, c, _ in got] == want and '6 of its 124 copy sites' in text else bad)(
+    # Tier C C6-7 (core_fe.h) removed the six copy sites of 2026-11-09 (jit_pub_inline, xlat_scan_fast,
+    # gbab_reg, fe_gbadual_running_inst, rom_hash_census, gamepak_reopens): core_fe.h declares the core
+    # names, and the two gbab_ names left the TU.  abi_asserts.py unbuilt agrees: 0 sites.
+    unb_rows, unb_st = fe_readme.A.unbuilt(gpsp, [os.path.join(gpsp, 'tools', 'refactor', 'generated', fl, 'fe_abi_asserts.h')
+                                        for fl in fe_readme.A.FLAVOURS])
+    want = [(n, c) for c, n, _, _ in unb_rows]
+    (ok if [(n, c) for n, c, _ in got] == want and
+     ('None: every copy site is in some T14 flavour' in unb if not want else True) and
+     '%d of the TU\'s %d copy sites' % (len(want), unb_st['raw']) in text else bad)(
         'C12 copy sites in no T14 flavour: %s' % ', '.join('%s %s' % (c, n) for n, c, _ in got))
 
     one = '| a | b | c |\n|---|---|---|\n| `x` | `y` | `#if A || B` |\n'
@@ -316,7 +316,7 @@ def r3_rows(gpsp, root):
     resha(d4)
     t4, msg4 = gen_text(d4)
     u4 = re.findall(r'^\| `(\w+)` \| `([^`]+)` \|', section(t4 or '', '### Core-ABI copies in no T14 flavour') or '', re.M)
-    (ok if t4 and len(u4) == 7 and any(n == 't14_unbuilt_probe' and c.startswith('fe/paths.inc.c:') for n, c in u4)
+    (ok if t4 and len(u4) == len(got) + 1 and any(n == 't14_unbuilt_probe' and c.startswith('fe/paths.inc.c:') for n, c in u4)
      else bad)('M16 an extern in an arm no flavour defines, added to fe/paths.inc.c: %d sites listed (%s)'
                % (len(u4), msg4.strip()[:120] if t4 is None else ', '.join(n for n, _ in u4)))
 
@@ -347,7 +347,9 @@ def run(gpsp):
                              ('ff:me_rend_present', 'run_ff_tests.py'), ('fn:sleep_park_hold', 'test_sleep_quiesce.py')):
                 row = region_row(text, reg)
                 (ok if row and '`%s`' % rdr in row else bad)('C4 %s read by %s: %s' % (reg, rdr, row))
-            for fn, want in (('run_testpat', 'none: every build'), ('psp_state_load', 'none: every build'),
+            # run_testpat: a telemetry build's unit since code-health C2-5; psp_state_load left the
+            # harness module (fe/misc.c), so sess_cost_evt is the harness row with no #if context
+            for fn, want in (('run_testpat', '`#ifdef GPSP_KEEP_TELEMETRY`'), ('sess_cost_evt', 'none: every build'),
                              ('mgift_start', '`#ifdef GBADHOC_MGIFT`'), ('cheats_link_poll', '`#ifdef GPSP_CHEATS`')):
                 row = fn_row(text, fn)
                 (ok if row and row.startswith(want) else bad)('C6 %s #if context: %s' % (fn, row))
