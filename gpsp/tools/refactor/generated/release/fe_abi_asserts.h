@@ -4,7 +4,7 @@
  * Each assert compares a hand-copied declaration of main_psp.c's TU with the core's own.
  * Cites are file:line of the tree this was generated on: main_psp.c:N is the shell (or
  * the single file), fe/X.inc.c:N a fragment the shell includes (psp/fe/README.md).
- * checked: 4 declarations, 6 constants; unchecked: 0; platform: 5 (listed at the end). */
+ * checked: 3 declarations, 6 constants; unchecked: 0; platform: 5 (listed at the end). */
 #ifndef FE_ABI_ASSERTS_H
 #define FE_ABI_ASSERTS_H
 
@@ -20,10 +20,6 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ram_translation_cache_si
 typedef unsigned char * abi_fe_t_rom_translation_cache;
 _Static_assert(__builtin_types_compatible_p(__typeof__(&rom_translation_cache), abi_fe_t_rom_translation_cache *),
                "fe/input.a.inc.c:51 rom_translation_cache: the frontend copy differs from the core declaration");
-/* fe/merend.d.inc.c:633 (proto) KNOWN, normalised ret=bool (abi_asserts.known reason, its line cites are main_psp.c at 01067e74): main_psp.c:4862 int (void) vs gba_memory.h:321 bool (void): the frontend reads a full int from a _Bool return; works because GCC's MIPS callee returns 0/1 in v0, but it is a real return-type mismatch */
-typedef bool abi_fe_t_gamepak_must_swap ( void );
-_Static_assert(__builtin_types_compatible_p(__typeof__(&gamepak_must_swap), abi_fe_t_gamepak_must_swap *),
-               "fe/merend.d.inc.c:633 gamepak_must_swap: the frontend copy differs from the core declaration");
 
 /* constants copied from the core (r2 H-8) */
 #define ABI_FE_VRAM_DIRTY_SHIFT (10)   /* fe/display.a.inc.c:25 */
@@ -60,10 +56,10 @@ _Static_assert(SQ_DONE == 0 && SQ_NONE == 1, "sleep_q.h: SQ_DONE/SQ_NONE are not
 
 /* PLATFORM (5): copies of names that are not core ABI (abi_asserts.platform gives each reason):
  * linker symbols, the PSP_MODULE_INFO expansion, an SDK function its header lacks.  Not asserted.
- *   main_psp.c:90            __lib_ent_top                        PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_ent_bottom                     PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_stub_top                       PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
- *   main_psp.c:90            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:91            __lib_ent_top                        PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:91            __lib_ent_bottom                     PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:91            __lib_stub_top                       PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
+ *   main_psp.c:91            __lib_stub_bottom                    PSP_MODULE_INFO expansion (pspmoduleinfo.h, main_psp.c's module info): linker-provided
  *   fe/power.d.inc.c:335     scePowerIsRequest                    SDK function in libpsppower that psppower.h does not declare
  */
 #endif
