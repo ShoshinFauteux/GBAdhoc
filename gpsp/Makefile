@@ -7,6 +7,12 @@ MMAP_JIT_CACHE=0
 UNAME=$(shell uname -a)
 
 # platform
+# GBAdhoc builds platform=psp1 (tools/build.sh), platform=unix with HAVE_DYNAREC=0 (the
+# SDL desktop twin) and platform=drprof-mipsel (the dynarec twin).  Every other platform
+# below, and the x86/ and arm/ dynarec backends (their README.md), is inherited from
+# gpSP: not built or maintained by GBAdhoc; GBAdhoc's dynarec features exist only in the
+# MIPS backend, so these may not compile against the current core (platform=unix with its
+# default x86 dynarec does not).  Kept as reference for ports.
 ifeq ($(platform),)
 platform = unix
 ifeq ($(shell uname -s),)
