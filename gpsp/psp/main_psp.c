@@ -83,6 +83,7 @@ static const char *online_build_id(void)
 #include "video_prof.h"   /* ADR-0034 renderer path profile (core-side) */
 #include "video.h"        /* me_capture_frame + capture-mode globals (the
                            * u16/u32/s32 it needs come from psptypes.h) */
+#include <stdbool.h>      /* bool: core_fe.h takes its types from the includer */
 #include "core_fe.h"      /* the core's exports to a frontend (tier C, C-6): no
                            * fragment copies a core declaration by hand */
 #include "gbcore/gbcore.h"   /* gbcore_prepare */

@@ -16,16 +16,15 @@
  * frontend that tests its address uses `#pragma weak NAME` beside the use.
  *
  * The includer provides the types: u8/u16/u32/s64 (psptypes.h on the PSP,
- * common.h's type block elsewhere) and time_t (<time.h>).  RFILE is
- * libretro-common's `typedef struct RFILE RFILE`, so it is named as a struct.
+ * common.h's type block elsewhere), time_t (<time.h>) and bool (<stdbool.h>;
+ * native in C++).  RFILE is libretro-common's `typedef struct RFILE RFILE`, so
+ * it is named as a struct.
  *
  * NOT HERE, on purpose:
  *   - rom_translation_cache, rom_translation_cache_size, ram_translation_cache_size:
  *     their type depends on the core's configuration (cpu.h: a pointer under
  *     RUNTIME_JIT_CACHE/MMAP_JIT_CACHE/VITA, an array otherwise, a macro on 3DS),
  *     so a define-free header cannot declare them.  cpu.h stays their home.
- *   - gamepak_must_swap (bool, gba_memory.h): the frontend's copy still says int
- *     until C6-4 fixes it.
  *   - jit_code_stats (jit_code_stats_type, jit_code.h): the lab heartbeat's copy
  *     is still u32[10] until C6-6 reads it by field.
  */
@@ -123,6 +122,7 @@ extern u32 gamepak_force_swap_stubs;
 extern u32 gamepak_page_loads;
 extern u32 gamepak_reopens;
 extern u32 gamepak_short_reads;
+bool gamepak_must_swap(void);             /* the cart pages: not all of it is resident */
 extern u8 *gamepak_buffers[32];
 extern u8 *gamepak_spare_pool3;
 extern u32 gamepak_spare_pool3_bytes;

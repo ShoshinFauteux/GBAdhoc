@@ -268,6 +268,8 @@ These are listed in `abi_asserts.known` with a normalisation (`uint`: `unsigned 
 
 Without it (C2), exactly those 7 asserts fail. The proposed fix belongs to the P-phase `core_glue.h` move: copy the core's `u32`/`bool` spelling, then delete the known file.
 
+Tier C C-6 did this with `core_fe.h`: C6-3 deleted the six `unsigned int` copies, and C6-4 deleted the `int gamepak_must_swap(void)` copy (the frontend now reads core_fe.h's `bool` declaration). Since C6-4 `abi_asserts.known` has no rows; C6-7 deletes the file.
+
 Tests (`abi-exit-ci_test_abi.sh`, all pass):
 - C1: 3 flavours compile.
 - C2: strict mode gives exactly 7 failures.
