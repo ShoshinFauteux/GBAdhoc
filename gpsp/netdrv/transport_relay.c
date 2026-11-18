@@ -26,6 +26,12 @@
  *             stays quietly on the relay; going direct resets the budget).
  *             The server hears PATH relay only when it heard direct before,
  *             or the peer's punches reached us (it may think it is direct).
+ *   LAN       The peer's private (LAN) address is punched first, but one
+ *             that never answered through PRIV_MISS_MAX full bursts is
+ *             dropped from the later ones: another home's private address
+ *             leads nowhere, and two PSPs on one WPA2 LAN cannot resolve each
+ *             other (ARP, 2026-11-13).  Anything arriving from it (a late
+ *             answer, the peer's own punches) takes it back.
  *   SITE      A peer the server saw at a private address shares the server's
  *             router: its "public" candidate is useless to us.  If WE reached
  *             the server at a public address, that address is the peer's
@@ -59,6 +65,8 @@ enum { P_NONE = 0, P_RELAY = 1, P_PUNCH = 2, P_DIRECT = 3, P_FALLBACK = 4 };
 #define RETRY_MAX_US     48000000ull /*   3, 6, 12, 24, 48 s ... */
 #define RETRY_BUDGET     5           /* ... then only every RETRY_RARE_US */
 #define RETRY_RARE_US    300000000ull
+#define PRIV_MISS_MAX    2           /* full bursts the peer's LAN address may
+                                        stay silent before we stop punching it */
 #define PREDICT_N        16          /* predicted ports per symmetric peer */
 #define PREDICT_MAX_DELTA 8          /* a larger PROBE-port step: random ports */
 #define DIRECT_IDLE_US   500000ull
@@ -84,6 +92,8 @@ typedef struct
    int told_direct;                 /* the server last heard PATH direct */
    uint64_t heard_us;               /* the last direct datagram from the peer */
    int pred_base, pred_delta, pred_n, pred_i;   /* port prediction (PREDICT) */
+   int priv_ok;                     /* something came from its LAN address */
+   int priv_miss, priv_off;         /* full bursts it stayed silent; dropped */
    uint64_t nonce;
    int punch;
    uint64_t start_us, end_us, next_punch_us;
@@ -314,6 +324,17 @@ static void fall_back(relay_transport *t, int j, const char *why, int tell)
    uint64_t n = now(t);
    if (q->path == P_FALLBACK || q->path == P_RELAY)
       return;
+   /* a full burst the peer's LAN address never answered (nothing from it,
+    * ever): after PRIV_MISS_MAX of them it is not punched again */
+   if (q->path == P_PUNCH && q->priv_ip && q->priv_port && !q->priv_ok &&
+       !q->priv_off && ++q->priv_miss >= PRIV_MISS_MAX)
+   {
+      char a[24];
+      q->priv_off = 1;
+      ipfmt(q->priv_ip, q->priv_port, a);
+      lg(t, "relay_candidate peer=%d private=%s dropped (no answer in %d bursts)",
+         j, a, q->priv_miss);
+   }
    q->path = P_FALLBACK;
    t->st.fallbacks++;
    /* the relay is the last resort, not the end: punch again later (a peer
@@ -369,7 +390,7 @@ static void punch_all(relay_transport *t, int j, uint32_t c)
    uint32_t ip[5];
    uint16_t pt[5];
    int k, m, n = 0;
-   ip[0] = q->priv_ip; pt[0] = q->priv_port;
+   ip[0] = q->priv_off ? 0 : q->priv_ip; pt[0] = q->priv_port;
    ip[1] = q->pub_ip;  pt[1] = q->pub_port;
    ip[2] = q->map_ip;  pt[2] = q->map_port;
    ip[3] = q->site_ip; pt[3] = q->site_port;
@@ -753,8 +774,16 @@ static void on_server(relay_transport *t, const uint8_t *b, int len, int sock)
          }
          q->pub_ip = rl_get_ip(body + 1);
          q->pub_port = (uint16_t)rl_get16(body + 5);
-         q->priv_ip = rl_get_ip(body + 7);
-         q->priv_port = (uint16_t)rl_get16(body + 11);
+         {
+            /* a re-offer of the same LAN address keeps its verdict (the
+             * server may resend CANDIDATES); a new one starts afresh */
+            uint32_t pip = rl_get_ip(body + 7);
+            uint16_t ppt = (uint16_t)rl_get16(body + 11);
+            if (!ep_is(pip, ppt, q->priv_ip, q->priv_port))
+               q->priv_ok = q->priv_miss = q->priv_off = 0;
+            q->priv_ip = pip;
+            q->priv_port = ppt;
+         }
          q->nonce = rl_get64(body + 13);
          q->punch = body[23] && t->cfg.direct;
          q->start_us = tn + (uint64_t)rl_get16(body + 21) * 1000u;
@@ -909,6 +938,13 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
          q = &t->p[j];
          t->st.rx_direct++;
          q->heard_us = tn;
+         if (!q->priv_ok && ep_is(ip, port, q->priv_ip, q->priv_port))
+         {
+            q->priv_ok = 1;             /* the LAN leg works: never dropped */
+            if (q->priv_off)
+               lg(t, "relay_candidate peer=%d private answered: back in", j);
+            q->priv_off = 0;
+         }
          if (b[5] == RL_T_PUNCH && len >= RL_HDR + 4)
          {
             t->st.punches_rx++;

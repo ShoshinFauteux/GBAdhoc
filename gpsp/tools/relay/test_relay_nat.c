@@ -123,6 +123,14 @@ static int g_oneway;            /* 1: nothing the guest sends DIRECT reaches the
  * (255.255.255.255, 10.0.N.255) stay on the sender's LAN and reach the relay
  * there (g_relay_lan, LAN 0) and a foreign relay (g_foreign_lan), if any. */
 static int g_no_hairpin;
+/* LOCAL CANDIDATE (2026-11-17).  g_lan_cut: two consoles on one LAN that
+ * cannot reach each other there (two PSPs under ARK-4's WPA2 plugin never
+ * hear each other's ARP: the 2026-11-13 diagnostic, EHOSTDOWN after 5 s).
+ * g_priv_tx[h]: what console h sent to the OTHER console's private address,
+ * reachable or not; g_priv_tx_late[h]: the same after the first minute. */
+static int g_lan_cut;
+static unsigned g_priv_tx[2], g_priv_tx_late[2];
+static uint64_t g_t0;
 static rl_core *g_foreign;       /* another relay on a LAN: never ours */
 static int g_foreign_lan = -1;
 #define FOREIGN_IP(l) ip4(10, 0, (l), 50)
@@ -197,6 +205,14 @@ static void host_send(int h, ep_t dst, const void *b, size_t n)
    nat_t *nt = x->nat;
    if (host_dark(h))
       return;
+   if (dst.ip == H[1 - h].priv.ip && dst.port == H[1 - h].priv.port && lan_of(dst.ip))
+   {
+      g_priv_tx[h]++;
+      if (g_now - g_t0 >= 60000 * MS)
+         g_priv_tx_late[h]++;
+      if (g_lan_cut)
+         return;
+   }
    if (g_oneway && h == 1 && dst.ip != SERVER_IP && dst.ip != GUEST_LAN_SRV)
       return;
    if (is_bcast(dst.ip))
@@ -534,7 +550,15 @@ typedef struct
    int max_path_lines;          /* the server's path log lines, -1 = unchecked */
    /* --- home relay discovery (beta.5): DISC_* --- */
    int disc;
+   /* --- local candidate (2026-11-17) --- */
+   int lan_cut;                 /* g_lan_cut: the LAN leg between them is dead */
+   int no_hairpin;              /* g_no_hairpin without discovery */
+   int priv_bound;              /* 1 = each side punches the other's private
+                                   address in at most PRIV_BURSTS bursts, and
+                                   never after the first minute */
 } case_t;
+#define PRIV_BURSTS 2
+#define PRIV_TX_MAX (PRIV_BURSTS * 100 + 10)   /* 2 s bursts, 20 ms ticks */
 /* disc: the relay's router does no NAT hairpin (g_no_hairpin) in all but 0.
  *   DISC_IP     the relay at the host's home (relay_lan, --public-ip); every
  *               console configured with its PUBLIC address, discovery on: the
@@ -575,8 +599,12 @@ static int run_case(const case_t *c)
    g_same_lan = c->same_lan;
    g_relay_lan = c->relay_lan;
    g_path_lines = 0;
-   g_no_hairpin = c->disc != DISC_NONE;
+   g_no_hairpin = c->disc != DISC_NONE || c->no_hairpin;
    g_disc_rx = 0;
+   g_lan_cut = c->lan_cut;
+   g_t0 = g_now;
+   memset(g_priv_tx, 0, sizeof(g_priv_tx));
+   memset(g_priv_tx_late, 0, sizeof(g_priv_tx_late));
    for (i = 0; i < 2; i++)
    {
       N[i].type = i ? c->nat1 : c->nat0;
@@ -819,6 +847,16 @@ static int run_case(const case_t *c)
             ok = 0;
          }
       }
+      if (c->priv_bound &&
+          (g_priv_tx[0] > PRIV_TX_MAX || g_priv_tx[1] > PRIV_TX_MAX ||
+           g_priv_tx_late[0] || g_priv_tx_late[1]))
+      {
+         printf("FAIL %s: sent to the peer's private address %u/%u times (%u/%u after "
+                "1 min), want <= %d and none late (a dead LAN candidate punched on)\n",
+                c->name, g_priv_tx[0], g_priv_tx[1], g_priv_tx_late[0], g_priv_tx_late[1],
+                PRIV_TX_MAX);
+         ok = 0;
+      }
       if (c->max_path_lines >= 0 && g_path_lines > (unsigned)c->max_path_lines)
       {
          printf("FAIL %s: %u server path lines, want <= %d\n", c->name,
@@ -852,6 +890,9 @@ static int run_case(const case_t *c)
                 st[0].predicted_tx, st[1].predicted_tx, g_path_lines,
                 st[0].direct_rtt_us[1] / 1000, st[0].relay_rtt_us / 1000,
                 c->long_ms ? " (long)" : "");
+      if (ok && (c->priv_bound || c->lan_cut))
+         printf("     %-44s to_private=%u/%u (after 1 min %u/%u)\n", "",
+                g_priv_tx[0], g_priv_tx[1], g_priv_tx_late[0], g_priv_tx_late[1]);
       if (ok && c->disc != DISC_NONE)
          printf("     %-44s lan_relay=%u/%u answers=%u/%u room_ms=%u/%u discovers=%u\n",
                 "", st[0].lan_relay, st[1].lan_relay, st[0].disc_answers,
@@ -870,6 +911,7 @@ static int run_case(const case_t *c)
    g_foreign_lan = -1;
    g_relay_lan = 0;
    g_no_hairpin = 0;
+   g_lan_cut = 0;
    return ok;
 }
 
@@ -1418,8 +1460,9 @@ static int run_start(const start_t *c)
 int main(int argc, char **argv)
 {
    /* the trailing direct-connect fields: relay_lan relay_pub preserve0
-    * long_ms max_bursts max_path_lines (-1 = unchecked) */
-#define X0 0, 0, 0, 0, 0, -1, DISC_NONE
+    * long_ms max_bursts max_path_lines (-1 = unchecked), disc, then the
+    * local-candidate fields lan_cut no_hairpin priv_bound (lan_cases) */
+#define X0 0, 0, 0, 0, 0, -1, DISC_NONE, 0, 0, 0
    static const case_t cases[] = {
       { "cone x cone: direct",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
       { "public x cone: direct",            NAT_NONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, X0 },
@@ -1447,31 +1490,51 @@ int main(int argc, char **argv)
       /* ---- the relay on the host's LAN (2026-11-06 trade: PSP-3000 at the
        * relay's home, Go on a phone hotspot) ---- */
       /*                                            nat0      nat1      lan dir drop to flush fwd map stall rlan rpub pres long    bursts lines */
-      { "relay LAN host x cone: direct",            NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE },
-      { "relay LAN host x cone (--public-ip)",      NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE },
-      { "relay LAN host x symmetric: direct",       NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE },
-      { "relay LAN host x symmetric (--public-ip)", NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE },
-      { "relay LAN host x addr-restr sym: direct",  NAT_ACONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE },
-      { "relay LAN, both on it: direct (lan)",      NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE },
+      { "relay LAN host x cone: direct",            NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
+      { "relay LAN host x cone (--public-ip)",      NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
+      { "relay LAN host x symmetric: direct",       NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
+      { "relay LAN host x symmetric (--public-ip)", NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
+      { "relay LAN host x addr-restr sym: direct",  NAT_ACONE, NAT_SYM, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
+      { "relay LAN, both on it: direct (lan)",      NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,      0, -1, DISC_NONE, 0, 0, 0 },
       /* the router does NOT keep ports: the candidate misses; steady relay */
-      { "relay LAN host, no port keep x cone: relay", NAT_CONE, NAT_CONE, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 600000, 8, 0, DISC_NONE },
-      { "relay LAN host x random sym: relay, 10 min", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 600000, 8, 0, DISC_NONE },
+      { "relay LAN host, no port keep x cone: relay", NAT_CONE, NAT_CONE, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 600000, 8, 0, DISC_NONE, 0, 0, 0 },
+      { "relay LAN host x random sym: relay, 10 min", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 600000, 8, 0, DISC_NONE, 0, 0, 0 },
       /* ---- steady relay sessions: no re-punch churn ---- */
-      { "symmetric x symmetric: relay, 10 min",     NAT_SYM,  NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 1, 0, DISC_NONE },
-      { "cone x random sym: relay, 10 min",         NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 8, 0, DISC_NONE },
-      { "cone x cone: direct, 10 min",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 2, 2, DISC_NONE },
+      { "symmetric x symmetric: relay, 10 min",     NAT_SYM,  NAT_SYM,  0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 1, 0, DISC_NONE, 0, 0, 0 },
+      { "cone x random sym: relay, 10 min",         NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 8, 0, DISC_NONE, 0, 0, 0 },
+      { "cone x cone: direct, 10 min",              NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   0, 0, 0, 600000, 2, 2, DISC_NONE, 0, 0, 0 },
       /* ---- home relay discovery (beta.5): the router does no hairpin, and
        * every console is configured with the relay's PUBLIC identity ---- */
       /*                                            nat0      nat1      lan dir drop to flush fwd map stall rlan rpub pres long bursts lines disc */
-      { "discover: home host x away cone",          NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_IP },
-      { "discover: home host x away symmetric",     NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_IP },
-      { "discover: home host x away rand sym: relay", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0,   0, -1, DISC_IP },
-      { "discover: by name (no --public-ip)",       NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,   0, -1, DISC_NAME },
-      { "discover: both at the relay's home",       NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_BOTH },
-      { "discover: off, no hairpin (the problem)",  NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_OFF },
-      { "discover: foreign relay on the LAN",       NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   0, 0, 0, 0,   0, -1, DISC_FOREIGN },
-      { "discover: foreign relay, our IP, other port", NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   0, -1, DISC_SPOOF },
-      { "discover: home host x away cone, 10 min",  NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 600000, 2, 2, DISC_IP },
+      { "discover: home host x away cone",          NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_IP, 0, 0, 0 },
+      { "discover: home host x away symmetric",     NAT_CONE, NAT_SYM,  0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_IP, 0, 0, 0 },
+      { "discover: home host x away rand sym: relay", NAT_CONE, NAT_SYMR, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0,   0, -1, DISC_IP, 0, 0, 0 },
+      { "discover: by name (no --public-ip)",       NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 0, 1, 0,   0, -1, DISC_NAME, 0, 0, 0 },
+      { "discover: both at the relay's home",       NAT_CONE, NAT_CONE, 1, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_BOTH, 0, 0, 0 },
+      { "discover: off, no hairpin (the problem)",  NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 0,   0, -1, DISC_OFF, 0, 0, 0 },
+      { "discover: foreign relay on the LAN",       NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   0, 0, 0, 0,   0, -1, DISC_FOREIGN, 0, 0, 0 },
+      { "discover: foreign relay, our IP, other port", NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   0, -1, DISC_SPOOF, 0, 0, 0 },
+      { "discover: home host x away cone, 10 min",  NAT_CONE, NAT_CONE, 0, 1, 0, 0, 0, 0, 0, 0,   1, 1, 1, 600000, 2, 2, DISC_IP, 0, 0, 0 },
+   };
+   /* ---- the peer's LAN address that never answers (2026-11-17): punched in
+    * PRIV_BURSTS bursts at most, then dropped; anything from it takes it
+    * back.  no_hairpin: the owner's Rogers gateway ---- */
+   static const case_t lan_cases[] = {
+      { .name = "LAN leg dead (WPA2 ARP), same LAN: relay", .nat0 = NAT_CONE, .nat1 = NAT_CONE,
+        .same_lan = 1, .expect_direct = 0, .long_ms = 600000, .max_path_lines = -1,
+        .lan_cut = 1, .no_hairpin = 1, .priv_bound = 1 },
+      { .name = "other home's LAN x cone: direct, bounded", .nat0 = NAT_CONE, .nat1 = NAT_CONE,
+        .expect_direct = 1, .max_path_lines = -1, .priv_bound = 1 },
+      { .name = "other home's LAN x rand sym: relay, 10 min", .nat0 = NAT_CONE, .nat1 = NAT_SYMR,
+        .expect_direct = 0, .long_ms = 600000, .max_bursts = 8, .max_path_lines = 0,
+        .priv_bound = 1 },
+      { .name = "same LAN, no hairpin: direct (lan)", .nat0 = NAT_CONE, .nat1 = NAT_CONE,
+        .same_lan = 1, .expect_direct = 1, .max_path_lines = -1, .no_hairpin = 1 },
+      /* the guest asleep through both of the host's bursts: the host drops
+       * the guest's LAN address, then the guest's late answer takes it back */
+      { .name = "same LAN, no hairpin, guest stalls 8 s: direct", .nat0 = NAT_CONE,
+        .nat1 = NAT_CONE, .same_lan = 1, .expect_direct = 1, .stall1_ms = 8000,
+        .max_path_lines = -1, .no_hairpin = 1 },
    };
 #undef X0
    static const lobby_t lobbies[] = {
@@ -1520,6 +1583,9 @@ int main(int argc, char **argv)
    g_redund = argc > 1 && !strcmp(argv[argc - 1], "redund") ? ND_RED_MAX : 0;
    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++, n++)
       if (!run_case(&cases[i]))
+         fails++;
+   for (i = 0; i < sizeof(lan_cases) / sizeof(lan_cases[0]); i++, n++)
+      if (!run_case(&lan_cases[i]))
          fails++;
    n++;
    if (!run_discover_rules())

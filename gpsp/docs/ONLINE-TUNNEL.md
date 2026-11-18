@@ -360,6 +360,17 @@ What the transport does now (`transport_relay.c`, `relay_core.c`):
   the **peer-reflexive** address: where the peer's punches actually came from. A symmetric NAT gives
   the peer a new port toward us that the server never sees; we answer it and punch it. If the LAN
   candidate answers after a public one, the path moves to the LAN.
+- **A LAN candidate that never answers is dropped** (2026-11-17). After two full bursts in which
+  nothing ever came from the peer's private address, the later bursts leave it out. Before, every
+  burst punched it, for the whole session. The 2026-11-13 same-Wi-Fi diagnostic (j4e3e01: two PSPs
+  under ARK-4's WPA2 plugin cannot ARP each other) logged 401 sends to the peer's 10.0.0.x address
+  in a minute, 188 of them EHOSTDOWN. The 2026-11-15 hotspot session (jc23a50) punched the Go's
+  hotspot address 10.148.99.44 in all 8 of its bursts. Anything that arrives from the private
+  address (a late answer, the peer's own punches) takes it back. A CANDIDATES with a new private
+  address starts afresh; a re-offer of the same one keeps the verdict. The first burst is
+  unchanged, so a same-LAN pair goes direct exactly as fast. In `test_relay_nat` (lan_cases), each
+  side sends at most 200 datagrams to the peer's private address and none after the first minute;
+  before, it was 700, with 200 after the first minute.
 - **The server offers a punch unless both sides are symmetric** (and neither names a forward). One
   reachable side is enough.
 
