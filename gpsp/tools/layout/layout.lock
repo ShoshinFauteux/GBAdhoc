@@ -170,7 +170,7 @@ at   pte_mutex_check_need_init          0x1e98
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
 at   block_lookup_translate_thumb       0x1b80
-at   gbab_update_gba                    0x0d60
+at   gbab_update_gba                    0x0ce0
 at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
@@ -222,7 +222,7 @@ pin  row_apb_status                     0x08819d38   # after fe_autopilot_status
 pin  row_blk_block                      0x0881a680   # after smc_blk_note_block (was smc_fill_blk_block, release 1152 B)
 pin  row_apb_frame                      0x0881f300   # after fe_autopilot_frame (was layout_pad_apb, player builds)
 pin  row_memory_term                    0x088273e0   # after memory_term (was memory_fill_term, 224/256 B)
-pin  row_xlat                           0x088485e0   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
+pin  row_xlat                           0x08848580   # A translate_block_arm (was LAYOUT_PAD_XLAT_BYTES)
 pin  row_bscan_b                        0x088a1a78   # B update_scanline's stub (was LAYOUT_PAD_BSCAN_BYTES)
 pin  row_dc_arm_b                       0x088a1c20   # B update_serial (was B's 128 B after block_lookup_address_arm)
 pin  row_xs_b                           0x088a2480   # B, after ram_mirror_alias_pc (was smc_fill_xs)
