@@ -296,12 +296,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_GATES),1)
 	CFLAGS += -DSMC_GATES
 	endif
-	# CLUSTER_BYTES=N: gate-clustering window (default 128, cpu_threaded.c).
-	# Must stay BELOW the spacing between a game's distinct patched regions or
-	# they merge into one gate; H&S's two mixer copies are 152 bytes apart.
-	ifneq ($(CLUSTER_BYTES),)
-	CFLAGS += -DSMC_GATE_CLUSTER=$(CLUSTER_BYTES)
-	endif
 	# GATE_SLOTS=N: size of the translation gate table (default 8, cpu.h).
 	# More slots cover more self-modifying regions, but scan_block compares
 	# block_end_pc against every live gate on EVERY instruction it translates,

@@ -7088,9 +7088,7 @@ static u32 smc_reuse_force_real;
  * smc_reuse_armed).  Every SMC_REUSE_ARM_FRAMES frames it decides only
  * whether recording and lookups pay. */
 #define SMC_REUSE_ARM_FRAMES   64
-#define SMC_REUSE_ARM_FLUSHES  32
-static u32 smc_reuse_armed, smc_reuse_win_frame, smc_reuse_win_flushes,
-           smc_reuse_last_full, smc_reuse_full_seen;
+static u32 smc_reuse_armed, smc_reuse_win_frame;
 #ifndef SMC_REUSE_REC_RATIO
 #define SMC_REUSE_REC_RATIO 8
 #endif
@@ -9222,13 +9220,6 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
  * (SMC_GATE_SELFPATCH, below).  The rule is ADD ONLY: once written, a gate's
  * address never changes, and when the table is full smc_add_gate leaves it
  * alone (why, under smc_add_gate's comment). */
-#ifndef SMC_GATE_CLUSTER
-#define SMC_GATE_CLUSTER      128
-#endif
-#define SMC_GATE_IDLE_FRAMES  60
-
-/* frame_counter + 1 at the gate's last hit; 0 = loaded from the game table */
-static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
 
 static void smc_cand_forget(void);   /* defined with the candidate table below */
 
@@ -9244,7 +9235,6 @@ static void smc_cand_forget(void);   /* defined with the candidate table below *
  * reset-boundary experiment below (around flush_dynarec_caches). */
 void smc_gates_reset(void)
 {
-  memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
   smc_cand_forget();
   SMC_GATE_MAP_REBUILD();
   /* Same rule as the SMC gates (gbalink_core.c lk_cold_start): entry gates
@@ -11801,8 +11791,7 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
   xs_win_noted = xs_win_skips = xs_off_retires = 0;
   xs_reprobe = XS_REPROBE;
   xs_probe_paid = 0;
-  smc_reuse_armed = smc_reuse_win_frame = smc_reuse_win_flushes = 0;
-  smc_reuse_last_full = smc_reuse_full_seen = 0;
+  smc_reuse_armed = smc_reuse_win_frame = 0;
   smc_reuse_win_xlat = smc_reuse_win_hits = smc_reuse_win_n = 0;
   smc_reuse_find_on = smc_reuse_rec_on = 1;
   smc_reuse_epoch = 1;
