@@ -7,6 +7,12 @@ MMAP_JIT_CACHE=0
 UNAME=$(shell uname -a)
 
 # platform
+# GBAdhoc builds platform=psp1 (tools/build.sh), platform=unix with HAVE_DYNAREC=0 (the
+# SDL desktop twin) and platform=drprof-mipsel (the dynarec twin).  Every other platform
+# below, and the x86/ and arm/ dynarec backends (their README.md), is inherited from
+# gpSP: not built or maintained by GBAdhoc; GBAdhoc's dynarec features exist only in the
+# MIPS backend, so these may not compile against the current core (platform=unix with its
+# default x86 dynarec does not).  Kept as reference for ports.
 ifeq ($(platform),)
 platform = unix
 ifeq ($(shell uname -s),)
@@ -265,7 +271,7 @@ else ifeq ($(platform), psp1)
 	# loudly rather than ignored: a silently dropped core flag has already
 	# cost two hardware experiments (core-vs-frontend-defines).
 	ifdef BIG_JIT
-	$(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
+    $(error BIG_JIT is obsolete: translation caches are sized at startup (RUNTIME_JIT_CACHE). Drop BIG_JIT)
 	endif
 	CFLAGS += -DSMALL_TRANSLATION_CACHE -DRUNTIME_JIT_CACHE
 	# GBA_LINK and REWIND are make variables and not gpsp_features.h lines
@@ -1121,9 +1127,6 @@ $(FLAGS_STAMP): FORCE
 	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
 $(OBJECTS): $(FLAGS_STAMP)
 -include $(OBJECTS:.o=.d)
-
-cpu_threaded.o: cpu_threaded.c
-	$(CC) $(DEPFLAGS) $(INCFLAGS) $(CFLAGS) $(OPTIMIZE) -Wno-unused-variable -Wno-unused-label -c  -o $@ $<
 
 %.o: %.S
 	$(CC) $(DEPFLAGS) $(ASFLAGS) $(CFLAGS) $(OPTIMIZE) -c -o $@ $<

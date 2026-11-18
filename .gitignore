@@ -16,3 +16,11 @@ gpsp/psp/pins.ld
 # Run artifacts
 logs/
 *.log
+# Build products: every build makes them (tools/build.sh); releases ship them as assets
+/builds/harness/*.PBP
+/builds/harness/*.prx
+/builds/playable/*.PBP
+/builds/playable/*.prx
+# Python bytecode
+__pycache__/
+*.pyc

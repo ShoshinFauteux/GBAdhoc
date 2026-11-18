@@ -11,8 +11,8 @@ Built 2026-11-05 by `gpsp/tools/refactor/flavours.sh` (T15) on branch `claude/ma
 ## Command (run from WSL, once per run dir)
 
 ```
-O=<local output dir, e.g. mainpsp-tools-out beside the checkout>
-cd <the checkout>
+O=$GBADHOC_WORK/mainpsp-tools-out
+cd $GBADHOC_WORK/mainpsp-tools-worktree
 flock $O/build.lock bash gpsp/tools/refactor/flavours.sh --commit 01067e74 --baseline --out $HOME/mainpsp-tools-out/baseline/run1
 flock $O/build.lock bash gpsp/tools/refactor/flavours.sh --commit 01067e74 --baseline --out $HOME/mainpsp-tools-out/baseline/run2
 ```
@@ -38,7 +38,7 @@ Release `coreFlags` are identical to those of the beta.4 release kit's pad-144 b
 | lab | `baseline/run1/lab/gpsp_adhoc.elf` | `baseline/run2/lab/gpsp_adhoc.elf` | `af9dd3cd262c2e3625be6f18f37267bd2f8aa81b09436870f18a05063a7da4e5` |
 | harness | `baseline/run1/harness/gpsp_adhoc.elf` | `baseline/run2/harness/gpsp_adhoc.elf` | `ecd7fd606d43bce70edc6702640d885a22d58d92f7134d0e993ddefa9896ef9f` |
 
-(paths relative to the local output dir `$O`; the ELFs are not in the repo). The same three hashes
+(paths relative to `$GBADHOC_WORK/mainpsp-tools-out/`). The same three hashes
 also came out of two earlier, discarded runs on the same day, so the ELFs were reproduced four times.
 
 Each flavour dir also holds: `EBOOT.PBP`, the three PRXs, `build-manifest.json`, `flavour.json`,

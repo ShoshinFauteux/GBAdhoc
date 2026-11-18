@@ -5,7 +5,8 @@
 set -uo pipefail
 BUILD=$1; NAME=$2
 W=$HOME/rewind-agent; S=$W/s9; R=$HOME/drcorpus/corpus/roms
-SRC="/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/rewind-worktree"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workdirs.sh"
+SRC=${RW_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}   # the gpsp tree to copy
 mkdir -p $S/tools $S/work/$NAME $S/logs/$NAME
 cp "$SRC"/tools/rewind_*.py $S/tools/ && sed -i 's/\r$//' $S/tools/*.py
 ALL="--rewind-inplace --rewind-dirty 3 --rewind-fast-restore --rewind-clock --rewind-slack-us 1 --rewind-pitch 256 --rewind-pace-us 3000 --rewind-burst 4 --rewind-budget-us 600 --rewind-pool 3145728 --rewind-ring 2097152 --rewind-step 4 --rewind-verify"

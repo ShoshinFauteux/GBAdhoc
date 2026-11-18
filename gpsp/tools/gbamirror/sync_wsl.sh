@@ -1,8 +1,9 @@
 #!/bin/bash
-# sync_wsl.sh -- copy this worktree into WSL (~/gbamirror/src) and build
+# sync_wsl.sh -- copy this gpsp tree (SRC, default the one this script is in) into WSL
+# (~/gbamirror/src) and build
 # gl_host there (building on /mnt/c is slow and trips over CRLF checkouts).
 set -e
-SRC=${SRC:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-mirror-worktree/}
+SRC=${SRC:-$(cd "$(dirname "$0")/../.." && pwd)/}
 DST=${DST:-$HOME/gbamirror/src}
 mkdir -p "$DST"
 rsync -a --delete --exclude .git --exclude '*.o' --exclude '*.a' \

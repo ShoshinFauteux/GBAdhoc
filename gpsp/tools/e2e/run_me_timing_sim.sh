@@ -31,14 +31,13 @@ set -euo pipefail
 FIXTURE=${1:?usage: run_me_timing_sim.sh FIXTURE [BATTLE_INPUTS]}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# The fixtures live in the main checkout; a nested worktree finds it by
-# walking up (WSL cannot follow a worktree's Windows-path .git file).
-MAIN=$SRC
-while [ ! -d "$MAIN/builds/unbound-soak" ] && [ "$MAIN" != / ]; do MAIN=$(dirname "$MAIN"); done
+# The fixtures are local (GBADHOC_WORK, tools/workdirs.sh: the first builds/ folder at or
+# above the checkout, so a worktree inside the main checkout's builds/ finds them).
+source "$SCRIPT_DIR/../workdirs.sh"
 WORK=${MTS_WORK:-$HOME/me-timing-sim}
-FIX=${MTS_FIX:-$MAIN/builds/unbound-soak/fixtures}
-ROMS=${MTS_ROMS:-$MAIN/builds/unbound-harness/fixtures}
-INPUTS=${2:-$MAIN/builds/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs}
+FIX=${MTS_FIX:-$GBADHOC_WORK/unbound-soak/fixtures}
+ROMS=${MTS_ROMS:-$GBADHOC_WORK/unbound-harness/fixtures}
+INPUTS=${2:-$GBADHOC_WORK/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs}
 case $FIXTURE in heart_soul*) ROM="Pokemon Heart & Soul";; unbound*) ROM="Pokemon Unbound";;
   *) echo "unknown fixture family: $FIXTURE" >&2; exit 2;; esac
 

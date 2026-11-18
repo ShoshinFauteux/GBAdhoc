@@ -26,14 +26,15 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
-MAIN=$SRC
-while [ ! -d "$MAIN/builds/unbound-soak" ] && [ "$MAIN" != / ]; do MAIN=$(dirname "$MAIN"); done
+# The fixtures are local (GBADHOC_WORK, tools/workdirs.sh: the first builds/ folder at or
+# above the checkout, so a worktree inside the main checkout's builds/ finds them).
+source "$SCRIPT_DIR/../workdirs.sh"
 WORK=${MMF_WORK:-$HOME/me-midframe}
 NEW=$WORK/src/sdl
 BASE=${MMF_BASE_SDL:-$HOME/me-midframe-base/src/sdl}
-FIX=$MAIN/builds/unbound-soak/fixtures
-ROMS=$MAIN/builds/unbound-harness/fixtures
-PKINPUTS=$MAIN/builds/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs
+FIX=$GBADHOC_WORK/unbound-soak/fixtures
+ROMS=$GBADHOC_WORK/unbound-harness/fixtures
+PKINPUTS=$GBADHOC_WORK/opus-perf-harness/campaign-psp3000-split/jobs/rend_r01_heart_soul_heavy_me1/battle.inputs
 MGROM=${MMF_MGAT_ROM:-$WORK/roms/mgat.gba}
 MGSAV=${MMF_MGAT_SAV:-$WORK/roms/mgat.sav}
 FRAMES=${MMF_FIX_FRAMES:-3900}

@@ -7,7 +7,7 @@
     python tools/bake_logo.py --check         -> exit 1 if psp/logo_ui.h differs
 
 SOURCE.  tools/logo/gbadhoc-logo-3-master@2x.png, the README's 2x master,
-through tools/logo/logomark.py (Fable's logo study, 2026-10-02).  The old
+through tools/logo/logomark.py (the logo design study, 2026-10-02).  The old
 baker cropped BAND = (130, 202, 349, 238) out of psp/assets/gbadhoc_pic1.png
 and LANCZOS-resampled it 0.59x with autocontrast: a raster of a raster at a
 non-integer scale (27 % of inked pixels mid-grey, cap line half a pixel off),

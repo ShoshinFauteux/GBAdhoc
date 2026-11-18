@@ -724,6 +724,14 @@ def suites(env: Env, baseline: Path | None):
         ("frame_parity", False, lambda: None,
          "python3 tools/tests/test_frame_parity.py"),
 
+        # fe_host.c's core links (T14 fehost, tools/refactor/abi_asserts.py):
+        # no hand copy of a core_fe.h name, every weak core reference listed
+        # in abi_asserts.weak and defined by the core sources; mutants (a
+        # renamed core name, a copy, a weak attribute, an unlisted pragma, an
+        # ELF without a name its profile must define) must each fail.
+        ("core_links", False, lambda: None,
+         "python3 tools/refactor/abi_asserts.py fehost-selftest"),
+
         # The layout groups (tier C C3-2, tools/layout/groups_ld.sh): grouped
         # text is byte-identical to the default statement's, an object in no
         # group fails the link, `:FILE` is exact, OBJS is only the groups.

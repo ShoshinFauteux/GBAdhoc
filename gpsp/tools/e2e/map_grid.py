@@ -4,7 +4,7 @@
 Reads a pret checkout (map.json + layouts.json + map.bin +
 metatile_attributes.bin) and prints one ASCII cell per tile.  Handles both
 pokeemerald and pokefirered/pokeleafgreen, which differ in two ways
-(Phase-4 FR/LG work, docs/AUTOPILOT.md):
+(Phase-4 FR/LG work, ../docs/AUTOPILOT.md):
 
   * metatile attributes are u16 (behavior = bits 0-7) in Emerald and **u32**
     (behavior = bits 0-8, `sMetatileAttrMasks` in FR src/fieldmap.c) in FR/LG;

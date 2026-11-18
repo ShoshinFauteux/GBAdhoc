@@ -474,13 +474,13 @@ static void rfu_trace_drain(void)
          break;
       case 18:
          /* ADR-0074: `queued` is how many host packets were still undelivered
-          * when the peer's disconnect arrived -- i.e. how much of the Union
-          * Room exit negotiation the immediate teardown destroyed.  mode 0 =
-          * wiped now (historical), 1 = deferral armed, 2 = deferral applied
-          * after the drain.  ADR-0076 adds: 3 = grace window armed, 4 = grace
-          * EXPIRED and the historical teardown ran, 5 = the game issued its
-          * own disconnect inside the window -- THE RACE WAS WON and the exit
-          * was clean.  A healthy grace arm shows 3 followed by 5. */
+          * when the peer's disconnect arrived (rfu.c rfu_client_lose_host).
+          * mode 0 = that census, logged at every loss of the host.  ADR-0076's
+          * grace window: 3 = armed, 4 = EXPIRED and the historical teardown
+          * ran, 5 = the game issued its own disconnect inside the window --
+          * THE RACE WAS WON and the exit was clean.  (Modes 1 and 2, the old
+          * drain deferral, are no longer emitted.)  A healthy grace arm shows
+          * 0, then 3 followed by 5. */
          fe_evt("rfu_discq queued=%u mode=%u net=%s", a, b,
                 g_net_up ? "up" : "down");
          break;

@@ -81,8 +81,8 @@ VARIANTS = {
                "SMC_RETIRE_WINDOW with its invariant asserted (aborts on violation)"),
 }
 # ---- DRCORPUS_SHIP=1: the campaign set (claude/link-speed) -----------------
-# The reference is the configuration tools/build.sh ships today (CORE_COMMON:
-# the three switches above + JIT_CODE_DISCIPLINE + ENTRY_GATES), and every
+# The reference is what tools/build.sh shipped at rc-4.0.0 (its CORE_COMMON list, since removed: the
+# switches are built in now, gpsp_features.h): the three above + JIT_CODE_DISCIPLINE + ENTRY_GATES; every
 # new lever is a switch on top of it that must match it frame for frame.
 # Use a DRCORPUS_HOME of its own: "base" there means this reference.
 SHIP = ALL3 + " " + JCD + " -DENTRY_GATES=1"
@@ -452,13 +452,13 @@ ORDER = [v for v in ORDER if v not in RETIRED]
 def vdefs(v):
     return VARIANTS[v][0] if v in VARIANTS else MUTANTS[v][0]
 
-DEFAULT_LIBS = [
-    "/mnt/c/Users/DrSto/OneDrive/Desktop/Roms",
-    "/mnt/c/Users/DrSto/OneDrive/Desktop/Backup/GBAdhoc Backup/GBADHOC/roms",
-    "/mnt/c/Users/DrSto/OneDrive/Desktop/GBA PSP Wirless Trading (Claude)/gpsp-adhoc/testdata",
-]
-DEFAULT_BIOS = [os.path.expanduser("~/drprof/fx/gba_bios.bin"),
-                "/mnt/c/Users/DrSto/OneDrive/Desktop/GBA PSP Wirless Trading (Claude)/gpsp-adhoc/testdata/gba_bios.bin"]
+# The ROM libraries `stage` reads without --lib: GBADHOC_ROMS (os.pathsep-separated; default the
+# repository's roms/, tools/workdirs.py), and a BIOS: ~/drprof/fx/gba_bios.bin, else GBADHOC_BIOS.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import workdirs  # noqa: E402
+DEFAULT_LIBS = workdirs.roms_list()
+DEFAULT_BIOS = [os.path.expanduser("~/drprof/fx/gba_bios.bin")] + \
+    ([os.environ["GBADHOC_BIOS"]] if os.environ.get("GBADHOC_BIOS") else [])
 MIN_ROM = 64 * 1024     # smaller .gba files are multiboot images / stubs, not cartridges
 
 

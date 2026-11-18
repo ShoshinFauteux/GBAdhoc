@@ -1,7 +1,10 @@
 """Derive emerald_battle_{host,join}.inputs from the FR/LG battle fixtures by
 symbol substitution (pret/pokeemerald symbols branch, pokeemerald.sym), then
 replace the boot/walk section, which differs structurally."""
-R = 'C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/wireless-worktree/testdata/fixtures/'
+import os
+# FIXTURE_DIR: the fixtures folder read and written (default this tree's testdata/fixtures)
+R = os.environ.get('FIXTURE_DIR') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..',
+                                                  'testdata', 'fixtures') + '/'
 SUB = [
     ("0x030030F4", "0x030022C4"),   # gMain.callback2
     ("0x080565C9", "0x08085E5D"),   # CB2_Overworld|1

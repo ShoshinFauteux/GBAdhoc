@@ -1284,7 +1284,7 @@ static void footer(const char *hint)
    vid_text_center(VID_SCR_H - FTR_H + 2, hint, C_DIM);
 }
 
-/* ===== THE OVERLAY: Fable's Direction A (docs/UI-OVERLAY.md) ==============
+/* ===== THE OVERLAY: the design's Direction A (docs/UI-OVERLAY.md) =========
  *
  * The wake-from-sleep screen's language, extended to every in-game screen:
  * the game frame stays up at full fidelity behind a scrim, the wordmark sits
@@ -7780,7 +7780,7 @@ static struct {
  *
  * The game's hero art, taken ONCE when a ROM is picked, becomes the ambient
  * texture (32 KiB of VRAM, ambient_look.h) -- and that same bake is the
- * loading screen's background (Fable's "L2").  Source: the hero the browser
+ * loading screen's background (the design's "L2").  Source: the hero the browser
  * already decoded when it is this ROM's (the Marquee shell usually has it);
  * otherwise the Marquee's own decode, by file name, into the same buffer.
  * Then the browser frees its whole art pool exactly as it always did --
@@ -7864,7 +7864,7 @@ static void clip_title_hd(char *t, int px)
 }
 
 /* "L2": the browser's marquee chrome over the ambient bake, or over the
- * console's palette ramp when there is no art (Fable, loading/). */
+ * console's palette ramp when there is no art (the design study, loading/). */
 void ui_loading_update(const char *stage, unsigned done, unsigned total)
 {
    unsigned now = sceKernelGetSystemTimeLow();

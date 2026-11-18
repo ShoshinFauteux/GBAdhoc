@@ -13,10 +13,11 @@
 # order and only after it has the data.
 param(
   [string]$HostDrive = "D:",
-  [string]$JoinDrive = "E:"
+  [string]$JoinDrive = "E:",
+  [string]$Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path   # the gpsp tree (testdata\fixtures)
 )
 $ErrorActionPreference = "Stop"
-$repo = "c:\Users\DrSto\OneDrive\Desktop\GBA PSP Wirless Trading (Claude)\wt-morning"
+$repo = $Repo
 $cfg = @{
   $HostDrive = "emerald_tradecenter_host.inputs"
   $JoinDrive = "emerald_tradecenter_join.inputs"

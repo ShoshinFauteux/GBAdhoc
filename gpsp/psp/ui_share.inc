@@ -225,7 +225,7 @@ static void sh_tick(int x, int y, uint16_t col)
       vid_rect(x + p[i][0], y + p[i][1], 2, 2, col, 255);
 }
 
-/* THE SAVE ICON: Fable's eight 32x22 frames (the design's drawSaveIcon),
+/* THE SAVE ICON: the design's eight 32x22 frames (the design's drawSaveIcon),
  * as rects rather than a texture -- a card drops into an open tray and
  * seats with a small overshoot (0-4), the tray's lip glints (5), a tick
  * lands (6-7).  `ink` is the row's text colour, `acc` the console's. */

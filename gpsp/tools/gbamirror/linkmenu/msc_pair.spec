@@ -5,8 +5,8 @@
 # agreement 1500 frames after its script is done (the fixture's END_AFTER).
 N=2
 D=$(dirname "$SPEC")
-EB64=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
-EB32=${EB32:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h32}
+EB64=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
+EB32=${EB32:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h32}
 MG=$D/../multigame/scripts
 COMMON_INI='gba_dual_hash = 1\nlink_exit_after = 240\ngblink_end_after = 1500'
 

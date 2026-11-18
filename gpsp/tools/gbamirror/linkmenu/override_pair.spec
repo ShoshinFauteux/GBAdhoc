@@ -2,7 +2,7 @@
 N=2
 START2=
 D=$(dirname "$SPEC")
-EB64=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+EB64=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
 I1_EB=$EB64
 I1_ROM=$HOME/gbamulti/roms/em.gba
 I1_ROMNAME="Pokemon - Emerald Version.gba"

@@ -257,9 +257,13 @@ typedef struct
 // Div (6) and DivArm (7)
 #define is_div_swi(swinum) (((swinum) & 0xFE) == 0x06)
 
+/* The decode macros declare every field of their format; a field that some
+ * instruction's translation does not read is __attribute__((unused)), because
+ * cpu_threaded.o builds with -Wunused-variable and -Wunused-label (the root
+ * Makefile) so that a local nothing reads is reported, not hidden. */
 #define arm_decode_data_proc_reg(opcode)                                      \
-  u32 rn = (opcode >> 16) & 0x0F;                                             \
-  u32 rd = (opcode >> 12) & 0x0F;                                             \
+  __attribute__((unused)) u32 rn = (opcode >> 16) & 0x0F;                     \
+  __attribute__((unused)) u32 rd = (opcode >> 12) & 0x0F;                     \
   u32 rm = opcode & 0x0F                                                      \
 
 #define arm_decode_data_proc_imm(opcode)                                      \
@@ -269,22 +273,22 @@ typedef struct
   u32 imm_ror = ((opcode >> 8) & 0x0F) * 2                                    \
 
 #define arm_decode_psr_reg(opcode)                                            \
-  u32 psr_pfield = ((opcode >> 16) & 1) | ((opcode >> 18) & 2);               \
-  u32 rd = (opcode >> 12) & 0x0F;                                             \
-  u32 rm = opcode & 0x0F                                                      \
+  __attribute__((unused)) u32 psr_pfield = ((opcode >> 16) & 1) | ((opcode >> 18) & 2);\
+  __attribute__((unused)) u32 rd = (opcode >> 12) & 0x0F;                     \
+  __attribute__((unused)) u32 rm = opcode & 0x0F                              \
 
 #define arm_decode_psr_imm(opcode)                                            \
   u32 psr_pfield = ((opcode >> 16) & 1) | ((opcode >> 18) & 2);               \
-  u32 rd = (opcode >> 12) & 0x0F;                                             \
+  __attribute__((unused)) u32 rd = (opcode >> 12) & 0x0F;                     \
   u32 imm = opcode & 0xFF;                                                    \
-  u32 imm_ror = ((opcode >> 8) & 0x0F) * 2                                    \
+  __attribute__((unused)) u32 imm_ror = ((opcode >> 8) & 0x0F) * 2            \
 
 #define arm_decode_branchx(opcode)                                            \
   u32 rn = opcode & 0x0F                                                      \
 
 #define arm_decode_multiply()                                                 \
   u32 rd = (opcode >> 16) & 0x0F;                                             \
-  u32 rn = (opcode >> 12) & 0x0F;                                             \
+  __attribute__((unused)) u32 rn = (opcode >> 12) & 0x0F;                     \
   u32 rs = (opcode >> 8) & 0x0F;                                              \
   u32 rm = opcode & 0x0F                                                      \
 
@@ -342,7 +346,7 @@ typedef struct
   u32 rd = opcode & 0x07                                                      \
 
 #define thumb_decode_imm()                                                    \
-  u32 imm = opcode & 0xFF                                                     \
+  __attribute__((unused)) u32 imm = opcode & 0xFF                             \
 
 #define thumb_decode_alu_op()                                                 \
   u32 rs = (opcode >> 3) & 0x07;                                              \
@@ -350,7 +354,7 @@ typedef struct
 
 #define thumb_decode_hireg_op()                                               \
   u32 rs = (opcode >> 3) & 0x0F;                                              \
-  u32 rd = ((opcode >> 4) & 0x08) | (opcode & 0x07)                           \
+  __attribute__((unused)) u32 rd = ((opcode >> 4) & 0x08) | (opcode & 0x07)   \
 
 #define thumb_decode_mem_reg()                                                \
   u32 ro = (opcode >> 6) & 0x07;                                              \
@@ -3836,8 +3840,6 @@ u32 xlat_lazy_links CORE_SBSS;     /* small data: docs/LAYOUT-PINNING.md */
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
   u8 pcregion = (GBA_PC(pc) >> 24);                                           \
-  u16 *location;                                                              \
-  u32 block_tag;                                                              \
                                                                               \
   block_lookup_address_pc_##type();                                           \
   BIOS_BOUND_CHECK(pcregion, pc);                                             \
@@ -5653,7 +5655,7 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
                                                                               \
         /* Give the branch target macro somewhere to bail if it turns out to  \
            be an indirect branch (ala malformed Thumb bl) */                  \
-        no_direct_branch:;                                                    \
+        no_direct_branch: __attribute__((unused));                            \
       }                                                                       \
                                                                               \
       /* SWI branches to the BIOS, unless it's an HLE call, then it is        \
@@ -7958,7 +7960,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
   u32 opcode = 0;
-  u32 last_opcode;
   u32 condition;
   u32 last_condition;
   u32 pc_region = (pc >> 15);
@@ -8337,7 +8338,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   DRPH_SCOPE(DRPH_XLAT);
   u32 opcode = 0;
   u32 last_opcode;
-  u32 condition;
   u32 pc_region = (pc >> 15);
   u32 new_pc_region;
   u8 *pc_address_block = memory_map_read[pc_region];

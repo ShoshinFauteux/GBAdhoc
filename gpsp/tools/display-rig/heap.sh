@@ -3,7 +3,8 @@
 # (harness) and browser (Shelf / Marquee) launches of Emerald with hero art.
 D=${DISPLAY_RIG_DIR:?set DISPLAY_RIG_DIR (holds b-harness/, base-harness/, readme30 lib at ../readme30/lib)}
 LIB=$D/../readme30/lib; R=$D/../readme30/roms
-FIX=/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/dynarec-profile-out/rig-stage-hnsdiag/base
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/workdirs.sh"   # GBADHOC_WORK (tools/README.md)
+FIX=${FIX:-$GBADHOC_WORK/dynarec-profile-out/rig-stage-hnsdiag/base}
 cd "$(dirname "$0")"
 EMH="$LIB/hero/Pokemon - Emerald Version (USA, Europe).565"
 prun() { tag=$1; eb=$2; shift 2; ( export "$@"; bash run.sh $tag $eb setups/game.sh 600 ); }

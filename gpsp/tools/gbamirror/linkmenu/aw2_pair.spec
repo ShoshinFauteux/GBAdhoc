@@ -4,7 +4,7 @@
 # script is done, and both exit 240 frames after the link closed.
 N=2
 D=$(dirname "$SPEC")
-EB64=${EB64:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+EB64=${EB64:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/u1-h64}
 EB32=${EB32:-$EB64}
 MG=$D/../multigame/scripts
 COMMON_INI='gba_dual_hash = 1\nlink_exit_after = 240\ngblink_end_after = 120'
@@ -18,7 +18,7 @@ I1_SAVE=$HOME/gbamulti/fx/aw2.sav
 I1_THEME=${THEME:-0}
 I1_INI=$COMMON_INI
 I1_CFG='standby = 0'
-I1_BACKDROP=${BACKDROP:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/fx/aw2.565}
+I1_BACKDROP=${BACKDROP:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/fx/aw2.565}
 I1_SCRIPT=$MG/aw2_host.txt
 I1_UI=$D/${HOST_UI:-aw2_host.ui}
 
@@ -31,7 +31,7 @@ I2_SAVE=$HOME/gbamulti/fx/aw2.sav
 I2_THEME=${THEME:-0}
 I2_INI=$COMMON_INI
 I2_CFG='standby = 0'
-I2_BACKDROP=${BACKDROP:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/gbalink-ui-out/fx/aw2.565}
+I2_BACKDROP=${BACKDROP:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/gbalink-ui-out/fx/aw2.565}
 I2_SCRIPT=$MG/aw2_join.txt
 I2_UI=$D/${JOIN_UI:-aw2_join.ui}
 

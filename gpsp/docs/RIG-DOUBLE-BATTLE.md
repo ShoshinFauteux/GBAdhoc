@@ -565,7 +565,7 @@ failure is a valid *outcome*. Only broken measurement or setup is INVALID.
   - every `PSP/GAME/*/roms/*.sav`, `*.sav.bak` and `*.st*`;
   - every `CONFIG.INI`/`config.ini` in each GBAdhoc folder;
 
-  into a dated local backup folder on the PC, one subfolder per console (`<drive>-<model>`),
+  into `%GBADHOC_WORK%\wireless-stick-backup-2026-09-26\<drive>-<model>\…`,
   with an md5 manifest. The copy is re-read and verified before anything is
   written to either stick.
 - **Separate app folder:** `PSP/GAME/GBADHOC-RIG/` on each stick.

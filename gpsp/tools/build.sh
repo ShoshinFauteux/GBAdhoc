@@ -322,38 +322,11 @@ fi
 die()  { echo "FAIL: $*"; exit 1; }
 note() { printf '%s\n' "$*"; }
 
-# THE TRACKED ME MODULE (critique-9 SF1).  psp/me/gbadhoc_me.prx is committed
-# (the release's, ME_CATCH=1) and every build rebuilds it in place, so a lab or
-# harness build leaves a different PRX in the tree.  The NEXT build then reads
-# the tree as dirty, and tools/make_release.sh stamps a release built after it
-# `commit|dirty` although nothing was edited.  When the PRX matched HEAD before
-# this build, put it back on the way out: always on failure, and on success
-# once the build has been staged with --out (the staged directory holds this
-# build's PRX).  A build without --out keeps its PRX beside its EBOOT.
-# The HOME module (psp/home/gbadhoc_home.prx) is tracked too, and a build that
-# fails after `make clean` leaves it deleted; it is restored the same way.
-ME_PRX_REL="psp/me/gbadhoc_me.prx psp/home/gbadhoc_home.prx"
-ME_PRX_RESTORE=0
-ME_PRX_CLEAN=""
-for f in $ME_PRX_REL; do
-  if git ls-files --error-unmatch "$f" >/dev/null 2>&1 &&
-     git diff --quiet HEAD -- "$f" 2>/dev/null; then
-    ME_PRX_CLEAN="$ME_PRX_CLEAN $f"; ME_PRX_RESTORE=1
-  fi
-done
-me_prx_restore() {
-  [ "$ME_PRX_RESTORE" = 1 ] || return 0
-  local f
-  for f in $ME_PRX_CLEAN; do
-    git diff --quiet HEAD -- "$f" 2>/dev/null && continue
-    if git checkout HEAD -- "$f" 2>/dev/null; then
-      printf '%s\n' "prx     : restored the tracked $f (this build's copy, if any, is staged)"
-    else
-      printf '%s\n' "prx     : could NOT restore the tracked $f; the tree now reads dirty"
-    fi
-  done
-}
-trap me_prx_restore EXIT
+# THE KERNEL MODULES (psp/me/gbadhoc_me.prx, psp/home/gbadhoc_home.prx) are build
+# products, rebuilt by every build and ignored by git (.gitignore), like the online PRX.
+# They used to be tracked, and an EXIT trap put the committed copies back so a lab or
+# harness build did not leave the tree reading dirty (critique-9 SF1); untracked, there
+# is nothing to restore.
 
 NEWEST_SRC=$(find "$ROOT" \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
              -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \) \
@@ -575,6 +548,21 @@ esac
 warning_gate "$ROOT/.build-core.log"  "core"
 warning_gate "$ROOT/.build-eboot.log" "eboot"
 
+# WEAK CORE REFERENCES (T14 weaknm; tools/refactor/abi_asserts.weak).  A frontend's
+# `#pragma weak NAME` on a core_fe.h name links even when the core lost NAME (a rename): the
+# reference is NULL and the feature quietly stops.  Every name the profile's core must define
+# has to be in this ELF, in every profile and arm (the lab recipe is a PSP_EXTRA arm, so the
+# layout's strictness cannot decide this).  ABI_WEAK_CHECK=report: a variant core that drops one.
+if [ -s "$ROOT/.build-elf.nm" ]; then
+  WK_PY="$ROOT/tools/refactor/abi_asserts.py"; WK_NM="$ROOT/.build-elf.nm"
+  if command -v cygpath >/dev/null; then WK_PY=$(cygpath -w "$WK_PY"); WK_NM=$(cygpath -w "$WK_NM"); fi
+  WK_STRICT=--strict; [ "${ABI_WEAK_CHECK:-}" = report ] && WK_STRICT=""
+  "$PYB" "$WK_PY" weaknm --nm "$WK_NM" --profile "$PROFILE" $WK_STRICT ||
+    die "a weak core reference is unresolved in this build (tools/refactor/abi_asserts.weak)"
+else
+  die "no psp-nm output (.build-elf.nm): the weak core references cannot be checked"
+fi
+
 if [ -n "$NEWEST_SRC" ] && [ "$NEWEST_SRC" -nt "$ROOT/psp/EBOOT.PBP" ]; then
   die "EBOOT.PBP is OLDER than $NEWEST_SRC -- the build did not run"
 fi
@@ -766,6 +754,4 @@ note "manifest: $MANIFEST"
 if [ -n "$BUILD_DIRTY" ] && [ "$BUILD_DIRTY" != 0 ]; then
   note "NOTE: working tree is dirty; this artifact is not reproducible from a commit."
 fi
-# No --out: this build's PRX stays in psp/me/ beside its EBOOT (see me_prx_restore).
-[ -n "$OUTDIR" ] || ME_PRX_RESTORE=0
 exit 0

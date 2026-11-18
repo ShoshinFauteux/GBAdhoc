@@ -6,8 +6,8 @@
 # one; shot_probe prices the read.  MODEL=0/1.
 N=1
 D=$(dirname "$SPEC")
-FX=${FX:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/savestate-ui-out/fx}
-I1_EB=${EB:-/mnt/c/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/savestate-ui-out/s1-h64}
+FX=${FX:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/savestate-ui-out/fx}
+I1_EB=${EB:-${GBADHOC_WORK:?run through run_linkmenu_ppsspp.sh or set GBADHOC_WORK}/savestate-ui-out/s1-h64}
 I1_ROM=$HOME/gbamulti/roms/em.gba
 I1_ROMNAME="Pokemon - Emerald Version.gba"
 I1_STATE=$HOME/gbamulti/fx/em.st0
