@@ -1,13 +1,19 @@
 # gpsp/tools/refactor: proof tools for the main_psp.c restructure
 
-These are the phase-T tools of `builds/mainpsp-map/out/PLAN.md` (§0.1 gates, §5 tooling). Each one proves
+These are the phase-T tools of `gpsp/docs/design/RESTRUCTURE.md` (§0.1 gates, §5 tooling). Each one proves
 one property of a candidate tree or ELF against an accepted one, so the restructure (phases P, HW-1..6) can
 move code without moving behaviour or layout unnoticed. All of them are host Python or sh. psp-gcc in docker
 (`pspdev/pspdev`) is needed only for `-E` views, a few compile/link mutants and builds. Nothing here is
 linked into the emulator, and no tool edits emulator source.
 
 The baseline every acceptance number was measured on is the clean 01067e74 (beta.4 base), built twice
-per flavour by `flavours.sh`. It is G1-identical and byte-identical (`builds/mainpsp-tools-out/baseline/BASELINE.md`).
+per flavour by `flavours.sh`. It is G1-identical and byte-identical (`tools/refactor/docs/baseline.md`).
+
+**Plan citations.** Comments and docs here cite three plans by section: "PLAN.md §N" / "PLAN §N" (the restructure
+plan) and "PLAN-P-beta5 §N" / P0a..P7 (its phase P redone on the beta.5 base) are summarised, section numbers
+kept, in `gpsp/docs/design/RESTRUCTURE.md`; "PLAN-EPOCHC-beta5 §N" (the one exit sequence, boot, session) is
+`gpsp/docs/design/EPOCH-C.md`; tier C (C-0..C-6, C5-0, C6-1, ...) is `gpsp/docs/design/TIER-C.md`. The original
+plans, run logs and scratch scripts are not kept in the repo.
 
 ## Gate -> tool
 
@@ -27,7 +33,7 @@ per flavour by `flavours.sh`. It is G1-identical and byte-identical (`builds/mai
 | (CI) | no raw exits outside fe_priv.h, no `pwr_hold` in hooks, no logic in `fe_evt()` args, ...; R8 `core_fe_pure`: `core_fe.h` has no `#if` but its guard and `__cplusplus`, no attribute, `static` or definition (tier C, C6-1; mutants: `tests/abi-exit-ci_test_core_fe_pure.py`) | T11 `ci_greps.sh` | docs/abi-exit-ci.md |
 | (ABI) | `fe_abi_asserts.h` static asserts of shared prototypes/constants; since C6-1 a PLATFORM list (`abi_asserts.platform`: names that are not core ABI) apart from UNCHECKED, `--with H` (one more header in the check TU), and a ratchet (`abi_asserts.ratchet`: per-flavour maxima of core copies and UNCHECKED copies, checked by `flavours_gate.py ratchet`; they may only fall) | T14 `abi_asserts.py` | docs/abi-exit-ci.md |
 | (split) | deterministic split of main_psp.c into fragments by `cutlist.txt`; inverse; replay | T4 `split.py`, T9 `globals.py`, T7 `../tests/extract.py` | docs/source-split.md |
-| (struct) | (tier C, C5-0) `globals.py struct MAP`: a reviewed rename map moves globals into a module's `st`/`cfg`/`tel` struct on the inverse (refuses externs, macro-globals, consts, attribute/section/initializer mismatches, mixed `#if`); `census --module X --check`: no object of X outside its structs but `globals.standalone` and the by-rule standalones | `gstruct.py`, `globals.py`, `globals.standalone` | `gstruct.py` header, health-out/design/C-5.md |
+| (struct) | (tier C, C5-0) `globals.py struct MAP`: a reviewed rename map moves globals into a module's `st`/`cfg`/`tel` struct on the inverse (refuses externs, macro-globals, consts, attribute/section/initializer mismatches, mixed `#if`); `census --module X --check`: no object of X outside its structs but `globals.standalone` and the by-rule standalones | `gstruct.py`, `globals.py`, `globals.standalone` | `gstruct.py` header, gpsp/docs/design/TIER-C.md C-5 |
 | (keys) | `generated/harness_keys.tsv`: every harness-ini read (key, getter, default, site, flavours) from the -E of release/lab/harness, plus reads only an opt-in switch compiles; defaults side-effect free (a) and equal across flavours (b); `check` (no docker) proves the committed table still matches the tree. The GBAdhoc Lab validates staged keys against it. Raw reads outside fe_priv.h: ci_greps R7 | `harness_keys.py` (host suite `harness_keys`) | the tool's header |
 | (doc) | `psp/fe/README.md` (module map, owners, `#if` context of the harness/mgift rows, @extract readers per region, conventions of the split) generated from the cutlist, the split tree and the host tests; `--check` fails a stale one; `--plan PLAN.md` checks its transcribed PLAN tables | `fe_readme.py` | docs/source-split.md |
 | (build) | release + lab + harness with the right ROOT/psp make split; refuses a dirty baseline; fails on broken imports | T15 `flavours.sh` (+ `flavours_sidecar.sh` for `.su` and the map without changing the ELF) | docs/baseline.md (copy of mainpsp-tools-out/baseline/BASELINE.md) |
@@ -40,14 +46,17 @@ Shared libraries: `elf32.py`, `ef_mips.py`, `ef_dwarf.py`, `ef_srcscan.py`, `sl_
 Everything, against the baseline (WSL; about 10-15 min; prints one table row per step):
 
 ```
-cd builds/mainpsp-tools-worktree
+cd <your checkout>
 bash gpsp/tools/refactor/run_all.sh                       # default baseline + a mktemp scratch dir
 bash gpsp/tools/refactor/run_all.sh BASELINE_DIR SCRATCH  # explicit
 ONLY=elf_func,stack bash gpsp/tools/refactor/run_all.sh   # a subset
 ```
 
-The docker steps take `builds/mainpsp-tools-out/build.lock` (`LOCK=` overrides). The 304/144 pad pair
-comes from `PAD144=` (default `mainpsp-tools-out/scratch-elf-func/pad144/release`). Per-group runners are
+The default inputs live in `mainpsp-tools-out/`, a local output folder BESIDE the checkout (not in the repo):
+the baseline (`flavours.sh --baseline`, see docs/baseline.md), the build lock and the pad-144 ELF. Pass
+`BASELINE_DIR`, `LOCK=` and `PAD144=` to use your own. The docker steps take `mainpsp-tools-out/build.lock`
+(`LOCK=` overrides). The 304/144 pad pair comes from `PAD144=` (default
+`mainpsp-tools-out/scratch-elf-func/pad144/release`). Per-group runners are
 in `tests/` (`*_run_all.sh`, `elf-func_run_tests.sh`, `stack-cache_test_*.sh`, `test_flavours.sh`).
 
 A candidate against the accepted tree (typical P-commit use):
@@ -230,7 +239,7 @@ LP: set map restored (main mod 6912, 0 sets changed). G1: **fail**, because `.da
 22,592 data-address words before `main` changed. No code address before `main` moved. The same-size
 reorder (variant 1 there) is the predicted pass and still needs its build.
 
-## Last full run (2026-11-05, `run_all.sh`, clean WSL shell, logs in `builds/mainpsp-tools-out/run_all-final/`)
+## Last full run (2026-11-05, `run_all.sh`, clean WSL shell; the raw logs are not kept in the repo)
 
 ```
 step       tools                                            gates     res   rc   ok/F   time

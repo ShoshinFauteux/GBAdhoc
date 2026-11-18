@@ -22,7 +22,7 @@ exported. Overall sentiment: overwhelmingly positive (100% upvote ratio, about
 2. Per-console display profiles (GB/GBC/GBA): in progress (claude/display-features).
 3. Integer 2x scaling: in progress (claude/display-features).
 4. "Back to game list": already exists (Start+Select → Quit to game list); fix the README.
-5. Ambient mode, with blurred hero art in the side bars: in progress (claude/display-features + Fable mockups).
+5. Ambient mode, with blurred hero art in the side bars: in progress (claude/display-features + design mockups).
    Also the hero art behind the ROM loading screen (owner request).
 6. Sharp-bilinear / sharpening filter: next; cost needs measuring on the 1000.
 7. Cheats: medium risk (memory patches vs SMC); needs oracle tests.

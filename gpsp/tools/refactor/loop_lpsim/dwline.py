@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""dwline.py (copied from mainpsp-map scratch/x4_dwline.py, unchanged logic) -- DWARF 2/3 .debug_line decoder (the pspdev ELF emits v3).
+"""dwline.py (copied from the restructure survey's x4_dwline.py, not in the repo; unchanged logic) -- DWARF 2/3 .debug_line decoder (the pspdev ELF emits v3).
 rows(elf, want_file_substr) -> list of (addr, file, line) for every row of
 CUs whose file table names want_file_substr.  CLI:
   x4_dwline.py <elf> <file-substr> <func-lo-hex> <func-hi-hex> [srclo srchi]

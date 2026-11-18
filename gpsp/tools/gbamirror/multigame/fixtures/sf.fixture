@@ -1,6 +1,6 @@
 # Super Street Fighter II Turbo Revival (USA) -- V.S. over the link cable, as
-# a ROLE session from power-on (the owner's hardware spec, builds/fix351-out
-# linkspecs/sf.json: both consoles load the power-on state sf_p0.st0 and hold
+# a ROLE session from power-on (the hardware link spec
+# sf.json, not kept in the repo: both consoles load the power-on state sf_p0.st0 and hold
 # it until the link forms, then the fixed-wait scripts run; Ryu v Ryu, the
 # fight from ~f2500).  The heaviest pair in the set: each machine runs ~155k
 # of its 280,896 cycles a frame in the fight, 8 multi-player transfers a

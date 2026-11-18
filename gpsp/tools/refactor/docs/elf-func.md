@@ -1,6 +1,6 @@
 # ELF function tools: func_diff (T1), loop_diff (T1b), inline_census (T13)
 
-These are phase T proof tools for the main_psp.c restructure (`builds/mainpsp-map/out/PLAN.md` §0.1 gates G2, G2L and IC, and §5).
+These are phase T proof tools for the main_psp.c restructure (`gpsp/docs/design/RESTRUCTURE.md` §0.1 gates G2, G2L and IC, and §5).
 All three are host Python 3 with no dependencies: no pyelftools, no docker and no psp-gcc. They read the linked `gpsp_adhoc.elf`.
 Each runs in about 1 s on the baseline ELF.
 
@@ -16,7 +16,7 @@ Each runs in about 1 s on the baseline ELF.
 | `tests/elf-func_test_*.py`, `tests/elf_func_lib.py`, `tests/elf-func_run_tests.sh` | Self-tests and mutant tests |
 
 Run every test with `bash tests/elf-func_run_tests.sh` (about 40 s), or one tool at a time with `<tool> --selftest`.
-The tests use the baseline in `builds/mainpsp-tools-out/baseline/` and the pad-144 scratch ELF below. Override the paths with `EF_BASELINE`, `EF_PAD144` and `EF_SRC`.
+The tests use the baseline in `mainpsp-tools-out/baseline/` beside the checkout (a local output, not in the repo; see [baseline.md](baseline.md)) and the pad-144 scratch ELF below. Override the paths with `EF_BASELINE`, `EF_PAD144` and `EF_SRC`.
 
 **Scratch build for T1.** The pad pair needs a pad-144 release ELF of the same clean tree. The baseline holds only pad 304.
 It was built once under the lock, release flavour only, without sidecars:
@@ -26,7 +26,7 @@ FLAV_RELEASE_ENV="LAYOUT_PAD_BYTES=144" flock $O/build.lock bash gpsp/tools/refa
     --commit 01067e74 --flavours release --no-sidecars --out $HOME/mainpsp-tools-out/scratch-elf-func/pad144
 ```
 
-The build took 109 s. Its ELF sha256 is `db6d625c…`, it was built from a clean tree, and it is copied to `builds/mainpsp-tools-out/scratch-elf-func/pad144/release/`.
+The build took 109 s. Its ELF sha256 is `db6d625c…`, it was built from a clean tree, and it is copied to `mainpsp-tools-out/scratch-elf-func/pad144/release/` (local, not in the repo).
 
 ---
 
@@ -198,7 +198,7 @@ The status is one of `emitted`, `emitted+inlined`, `clone`, `inlined`, `dead` (n
 
 ## Verify pass (adversarial, 2026-11-05)
 
-Scripts and logs: `builds/mainpsp-tools-out/scratch-elf-func-verify/` (`sweep_fd.py`, `sibling.py`,
+Scripts and logs (not kept in the repo): `scratch-elf-func-verify/` (`sweep_fd.py`, `sibling.py`,
 `loop_mut.py`, `mkfrag.py`, `strmut.py`). Every acceptance figure above was re-run and reproduces
 (T1 5,163/140/5,022/1 + 0/151 hot; T1b 220/115, window 10,372..34,432, 9,912 B; T13
 335/280/55/127 (121+6)/159/22/25/104,380 B). Four false PASSes were found and fixed; the figures are

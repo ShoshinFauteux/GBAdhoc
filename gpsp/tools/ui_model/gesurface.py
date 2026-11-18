@@ -1,6 +1,6 @@
 """gesurface.py -- pspdraw's Surface with the GE's arithmetic.
 
-pspdraw (builds/menu-mockups) blends in floating point and quantises the
+pspdraw (the menu mockups' renderer, docs/design/UI-MOCKUPS.md) blends in floating point and quantises the
 finished frame to RGB565 once.  The GE does not: every draw call blends in
 8-bit integers against the 565 framebuffer and writes 565 back.  Over a
 photograph, through a scrim, a ramp and a band, that difference is a 1-2 LSB

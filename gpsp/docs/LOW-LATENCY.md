@@ -112,8 +112,8 @@ the cadence does not.
 
 ## 5. Hardware A/B still needed (nothing above is measured on a PSP)
 
-`lathw.py` (scratchpad tool, uses the bench's `psp_one.sh`, ms0:/GBALAB only),
-PRX build `builds/low-latency-out/lat-3-prx`, arms A (`flip_early=0
+`lathw.py` (a one-off tool, not kept in the repo; uses the bench's `psp_one.sh`, ms0:/GBALAB only),
+PRX build `lat-3-prx` (not kept in the repo), arms A (`flip_early=0
 me_early_retire=0`), B (defaults), C (`me_lowlat=1`), D (C + `input_fresh=1`),
 fixtures em_battle, hns_heavy, ub_rival_medium, aw2_battle, kf_doom_ii,
 d2_drive, nfsu2_race. Read per arm:

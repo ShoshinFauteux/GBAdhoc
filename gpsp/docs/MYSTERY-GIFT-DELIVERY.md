@@ -100,8 +100,8 @@ Both FR and LG are built from pret/pokefirered.
 - FF configuration/scheduling regression passes. Existing FF artifact/profile
   changes remain included in the build previously validated by the user.
 
-Local evidence is under `builds/mgift-diagnosis/` and `builds/mgift-fix1/` in
-the containing workspace. ROMs, BIOS, save files and screenshots from those
+Local evidence (the diagnosis and the first fix) was kept outside
+the repo. ROMs, BIOS, save files and screenshots from those
 tests are not added to source control. Only the disposable test fixtures had
 the Mystery Gift menu unlock flag enabled; user device saves were not altered.
 

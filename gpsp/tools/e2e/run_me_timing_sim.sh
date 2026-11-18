@@ -16,10 +16,10 @@
 # Environment:
 #   MTS_WORK  build/run directory on the Linux filesystem (default ~/me-timing-sim;
 #             /mnt/c is far too slow for the per-frame logs and dumps)
-#   MTS_FIX   fixture directory (default builds/unbound-soak/fixtures of the
-#             main checkout: <fixture>.st0, the .sav files, manifest.json)
+#   MTS_FIX   fixture directory (default <main checkout>/builds/unbound-soak/fixtures:
+#             a local, untracked folder: <fixture>.st0, the .sav files, manifest.json)
 #   MTS_ROMS  directory holding the ROMs and gba_bios.bin
-#             (default builds/unbound-harness/fixtures of the main checkout)
+#             (default <main checkout>/builds/unbound-harness/fixtures, also local)
 #   MTS_DUMP=1  also write raw cpu/post/vis images of every divergent frame
 #
 # The desktop link needs two stand-ins that a PSP build never does: the GB core
@@ -31,7 +31,7 @@ set -euo pipefail
 FIXTURE=${1:?usage: run_me_timing_sim.sh FIXTURE [BATTLE_INPUTS]}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# The fixtures live in the main checkout; a worktree under builds/ finds it by
+# The fixtures live in the main checkout; a nested worktree finds it by
 # walking up (WSL cannot follow a worktree's Windows-path .git file).
 MAIN=$SRC
 while [ ! -d "$MAIN/builds/unbound-soak" ] && [ "$MAIN" != / ]; do MAIN=$(dirname "$MAIN"); done

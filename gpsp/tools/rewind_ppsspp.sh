@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pp.sh TAG ARM GAME SCRIPT FRAMES [ini lines...]   (FF=1 TIMEOUT=secs in env)
-#   ARM  = dir under builds/rewind-out/psp holding EBOOT.PBP
+#   ARM  = dir under $OUTW (a local output folder, not in the repo) holding EBOOT.PBP
 #   GAME = rom name in ~/rewind-agent/work/roms (without .gba)
 # One PPSSPP under its own Xvfb and its own sandbox; killed by PID only.
 set -uo pipefail

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """abi-exit-ci_test_core_fe_pure.py -- self-test and mutants of ci_greps R8 core_fe_pure
-(tier C, C6-1; builds/health-out/design/C-6.md).  No compiler, no tree edits: every case is a
+(tier C, C6-1; gpsp/docs/design/TIER-C.md C-6).  No compiler, no tree edits: every case is a
 text given to ci_greps.r8_text_hits, plus the rule run on a scratch tree (absent file = no-op,
 the tree's own core_fe.h when it has one).
 

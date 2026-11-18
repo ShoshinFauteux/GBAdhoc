@@ -252,7 +252,7 @@ PSP_MAKE_FLAGS="$PSP_MAKE_FLAGS MGIFT=$MGIFT"
 # Scheduled ticks for the emulated Wireless Adapter (rfu_sched.h,
 # docs/RFU-COUPLING.md) are in every build since C-4: there is no switch.
 # RFU_SCHED=1 is accepted and does nothing, so the kit recipes
-# (builds/b5rc-out, build_and_hash.sh) still reproduce; any other value is
+# (the beta.5 release-candidate kit recipes) still reproduce; any other value is
 # refused rather than silently building ticks anyway.  RFU_SCHED=1 still adds
 # the " TICKS" title suffix on non-release kinds, exactly as before, so every
 # recipe's EBOOT stays what it was (the kit lab recipe passes RFU_SCHED only in

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """make_backdrops.py OUTDIR -- the three 480x272 game frames the link-mode
-design (builds/linkmode-mockups/linkmode.py) draws its screens over, as raw
+design (docs/design/UI-MOCKUPS.md) draws its screens over, as raw
 PSP-5650 files for the harness key `ui_backdrop` (drawn 1:1 behind the menus
 and the LINKING screen instead of the game), so a PPSSPP GE dump can be
 compared with the design's PNG pixel for pixel (docs/GBA-LINK-UI.md):

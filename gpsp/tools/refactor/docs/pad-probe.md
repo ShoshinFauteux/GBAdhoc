@@ -8,7 +8,7 @@ not tooling, and the arithmetic also says which probe would pass (see "What this
 ## What was built
 
 One scratch release build of 01067e74 (2026-11-05, under `build.lock`). Script, logs and measurements:
-`builds/mainpsp-tools-out/scratch-padprobe/` (`probe_build.sh`, `probe_measure.sh`, `premain_diff.py`,
+`scratch-padprobe/` (a local scratch dir, not kept in the repo; `probe_build.sh`, `probe_measure.sh`, `premain_diff.py`,
 `release/`, `measure/*.txt`).
 
 - **The only source difference** is one line added at the end of the ordered list in `psp/layout/hot.ord`,
@@ -38,7 +38,7 @@ One scratch release build of 01067e74 (2026-11-05, under `build.lock`). Script, 
 
 The probe adds a net +7,884 B of `.text` (8,192 B before `main`, minus the 308 B pad that used to sit
 after it). The 27 B `.data.pin` slack cannot absorb that, so the data segment moves a page: 8 KiB
-more image, and 8 KiB less PSP-1000 boot heap (memory: psp1000-heap-over-features). One reordered pad
+more image, and 8 KiB less PSP-1000 boot heap (every boot-time reservation must fit the PSP-1000: gpsp/docs/MEMORY-BUDGET.md). One reordered pad
 cannot hold both of these at once:
 
 - `main` mod 8192, which needs the pad before `main` to be ≡ 0 (mod 8192) here, because nothing upstream changed, and

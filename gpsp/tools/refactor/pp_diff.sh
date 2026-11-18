@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pp_diff.sh -- T3 / gate G0 (builds/mainpsp-map/out/PLAN.md §0.1, §5): the
+# pp_diff.sh -- T3 / gate G0 (gpsp/docs/design/RESTRUCTURE.md §0.1, §5): the
 # preprocessed token stream of psp/main_psp.c (`psp-gcc -E -P`, whitespace-
 # normalised) is identical between two trees, in the release, Lab and harness
 # flavours.  Run from WSL (needs docker and the pspdev/pspdev image).
@@ -31,7 +31,7 @@
 #             harness streams differ in fe_evt("build stamp", __DATE__, __TIME__)
 #             (main_psp.c:13926) between ANY two runs; the self-test proves it.
 #             --sde '' leaves it unpinned.
-# --rename-map MAP  gate G0R (C5-0, health-out/design/C-5.md §3): the verdict is
+# --rename-map MAP  gate G0R (C5-0, gpsp/docs/design/TIER-C.md C-5 §3): the verdict is
 #             g0r.py's instead of byte equality: NEW's `VAR.FIELD` read back as the
 #             map's OLD names, the struct blocks and the old definitions dropped, then
 #             the token lists must be equal.  MAP is gstruct.py's format.

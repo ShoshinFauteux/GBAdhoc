@@ -1,12 +1,12 @@
 # Overnight findings, 2026-10-19/20: KarnFu fixtures + perf campaign
 
-Durable record of what the 47-fixture bench suite (built around KarnFu's issue #9 save states) taught us on the first night, plus the morning report. Nothing here was pushed or merged. ROMs, saves and states are NOT in this file; they stay local in GBAdhoc-fixtures/bench/store.
+Durable record of what the 47-fixture bench suite (built around KarnFu's issue #9 save states) taught us on the first night, plus the morning report. Nothing here was pushed or merged. ROMs, saves and states are NOT in this file; they stay in a local fixture store outside the repo.
 
-Copies: GBAdhoc-fixtures/bench/reports/ (OneDrive), GBAdhoc-Lab docs/findings/ (git, with raw data in docs/findings/data/), gpsp branch claude/bench-dr docs/findings/ (git).
+Copies: the GBAdhoc Lab's docs/findings/ (with its raw data) and gpsp branch claude/bench-dr docs/findings/. The bench's local report folder is not in this repo.
 
 ## 1. Headline findings
 1. **The heavy KarnFu titles are slow because of self-modifying code.** Doom II, Duke Nukem Advance and Smashing Drive patch one fixed word of their own IWRAM render loop with a single ARM `STR` 12-22 times per frame. 4.1.1 answers every such write with a FULL RAM translation-cache flush (5-22 flushes/frame); Doom retranslates ~300 blocks/frame, about 32 ms of JIT per frame. 4.1.1's `smc_writer_safe_range` only admits the M4A mixer's STMIA-via-LR pattern; every other SMC trap falls back to a full flush.
-2. **Fix: `SMC_PARTIAL_SINGLE` (claude/bench-dr 82f099a, default off).** A single ARM STR/STRB from IWRAM to IWRAM retires only the blocks covering the written word (`smc_retire_single_word`, via the STABLE_THUNK path), no gate needed. PPSSPP: translation work -75% Doom, -82% Duke, -70% Smashing, -78% NFS MW, -80% NFS Carbon, -84% Ford Racing 3, -32% SSX 3; Doom RAM flushes 13,754 -> 104. 21/26 bench-ready fixtures frame-identical to 4.1.1 (Doom and Ford included); 5 (Duke, Carbon, MW, Smashing, SSX) differ deterministically with 0 stale-code hits and look identical (timer 0.01 s apart, blink phase) = layout timing. **Not yet run on a PSP** (build GBAdhoc/builds/bench-dr/dr2-prx).
+2. **Fix: `SMC_PARTIAL_SINGLE` (claude/bench-dr 82f099a, default off).** A single ARM STR/STRB from IWRAM to IWRAM retires only the blocks covering the written word (`smc_retire_single_word`, via the STABLE_THUNK path), no gate needed. PPSSPP: translation work -75% Doom, -82% Duke, -70% Smashing, -78% NFS MW, -80% NFS Carbon, -84% Ford Racing 3, -32% SSX 3; Doom RAM flushes 13,754 -> 104. 21/26 bench-ready fixtures frame-identical to 4.1.1 (Doom and Ford included); 5 (Duke, Carbon, MW, Smashing, SSX) differ deterministically with 0 stale-code hits and look identical (timer 0.01 s apart, blink phase) = layout timing. **Not yet run on a PSP** (build `dr2-prx`, not kept in the repo).
 3. **Translation cost: XLAT_FAST (claude/bench-xlat 56c55e2, default off)**, six exact pieces (LIMITS, GATEMAP, EXITPF, RAMEND, DCLEAR, SCANFN; `XLAT_NO=` switches pieces off). PPSSPP vhash 26/26 identical, corpus oracle 35/35 with all 4 mutants caught, twin translation instructions -13..-18% on every heavy title. Hardware so far only LIMITS: Doom 18.50 -> 19.25 fps (+4.1%), Duke 17.18 -> 17.81 (+3.7%) on the PSP-1000.
    - Hardware split (diag build, Doom, PSP-1000): JIT 34.9 ms/frame, of which ARM scan_block 10.1 ms (29%). jit_code_publish costs 2.1 ms/frame OUTSIDE the jit phase (285 publishes, ~7.4 us each: kernel D-writeback + I-invalidate) = the next lever. Translator ~670 cycles per guest instruction (CPI ~3.2).
    - Compiling the translator at O2/Os gave no gain (Os worse: Doom 17.83 fps). Instruction count, not I-cache footprint, sets translator time, so twin counts are a good guide.
@@ -161,29 +161,29 @@ Next for these: script the 9 needs-script states into gameplay (Back To Stone, B
 Two workers, one PSP each. Append-only log below; newest at the bottom.
 Claim an idea BEFORE building it; never test an idea the other has claimed.
 
-| Worker | PSP | PSPLink port | Branch / worktree | Track |
+| Worker | PSP | PSPLink port | Branch | Track |
 |---|---|---|---|---|
-| main (Claude) | PSP-3000 | 10000 | claude/bench-dr  builds/bench-dr-worktree | FREQUENCY: why SMC writes become full RAM flushes (fallbacks, gate churn/capacity) |
-| agent "xlat" | PSP-1000 | 10100 | claude/bench-xlat builds/bench-xlat-worktree | COST: make each RAM-block (re)translation cheaper |
+| main (Claude) | PSP-3000 | 10000 | claude/bench-dr | FREQUENCY: why SMC writes become full RAM flushes (fallbacks, gate churn/capacity) |
+| agent "xlat" | PSP-1000 | 10100 | claude/bench-xlat | COST: make each RAM-block (re)translation cheaper |
 
-Baseline: 4.1.1 harness-prx (builds/bench-411/harness-prx), results psplink-stage/runs/b411-3000 and b411-1000.
+Baseline: 4.1.1 harness-prx, result runs b411-3000 and b411-1000 (builds and raw runs are not kept in the repo).
 Acceptance for any change: PPSSPP vhash identical to baseline on the full bench-ready set (bench.py validate),
 then whole bench-ready suite on your PSP; a win must not regress any fixture beyond noise (~1%).
 
 ## Log
 - main: baseline captured. Slow titles = full RAM flushes 5-22/frame (own field 6 of core_health jitc/own). Doom ~300 blocks retranslated/frame = 32 ms jit.
-- main: two more workers (no console of their own): "prs" reviews PRs #15/#16 on claude/pr-review (builds/pr-review-worktree); "latency" designs a same-frame low-latency mode on claude/low-latency (builds/low-latency-worktree). They request console time here ("- latency: REQUEST psp-3000 slot ...") and wait for main to grant it.
+- main: two more workers (no console of their own): "prs" reviews PRs #15/#16 on claude/pr-review; "latency" designs a same-frame low-latency mode on claude/low-latency. They request console time here ("- latency: REQUEST psp-3000 slot ...") and wait for main to grant it.
 - 2026-10-20 00:44 prs: START review of PRs #15/#16 on claude/pr-review (no console, no USB)
 - xlat: started 2026-10-20. Measuring translation cost with the qemu twin (tools/drprof, ship config) on Doom II / Duke before any change. CLAIM: translation-side costs only (translate_block/scan/emit/publish/flush memsets/bookkeeping), not SMC policy.
 - xlat: RESULT x1 (XLAT_FAST LIMITS: update_pc_limits once per block instead of per guest instr; exact). Twin Doom xlat instr -7.4%, twin hash IDENTICAL 600f. PSP-1000: Doom jit 32.68->30.40 ms, fps 18.50->19.25 (+4.1%); Duke jit 34.65->32.02, fps 17.18->17.81 (+3.7%). vhash PPSSPP pending. Next: CLAIM translator compiled at O2/Os (x2/x3, I-cache size experiment), then scan_block gate lookup hoist.
-- latency: REQUEST psp-3000 (or 1000) ~60 min: PSPLink PRX harness builds/low-latency-out/lat-3-prx, ms0:/GBALAB only, 7 fixtures x 4 ini arms (flip_early/me_early_retire/me_lowlat/input_fresh), perf_rig + EVT lat. No handoff/sleep/quit. Waiting for GRANTED latency.
+- latency: REQUEST psp-3000 (or 1000) ~60 min: PSPLink PRX harness lat-3-prx, ms0:/GBALAB only, 7 fixtures x 4 ini arms (flip_early/me_early_retire/me_lowlat/input_fresh), perf_rig + EVT lat. No handoff/sleep/quit. Waiting for GRANTED latency.
 - main 2026-10-20 ~01:00: PSP-3000 DROPPED OFF USB (pspsh :10000 silent, device gone from Windows) sometime after 23:50; likely battery/power. Needs the owner in the morning. Nobody use port 10000.
 - main: PSP-1000 is now SHARED, one job at a time, in this order: (1) xlat finishes its CURRENT run then pauses; (2) GRANTED latency on psp-1000 for up to 60 min starting when xlat logs "- xlat: PAUSED"; latency logs "- latency: RELEASED" when done; (3) xlat resumes. main's hardware runs queue after latency (main logs a REQUEST). Always check modlist/that no app runs before launching.
 - xlat: RESULT x2/x3 (translator compiled at O2 / Os via optimize attribute; tba 361KB -> 298KB / 241KB): no gain. vs x1: O2 Doom fps 19.25->19.05, Duke 17.81->17.64; Os see next line. Dropped. x1 PPSSPP vhash: 26/26 bench-ready IDENTICAL to 4.1.1. Twin: XLAT_FAST + GATEMAP hoist + ARM exit-point prefilter = xlat instr -13% Doom, -13% Duke, -13% NFSMW, -12% SSX3, -11% Smashing, hashes identical.
 - xlat: PAUSED (PSP-1000 port 10100 free for latency, up to 60 min)
 - xlat: x3 (Os) result: WORSE, Doom fps 19.25->17.83, jit 30.4->34.6 ms; Duke 17.81->16.62. Instruction count, not I-cache footprint, sets translator time -> twin counts are a good guide.
 - latency: START psp-1000 port 10100 (granted by main; xlat PAUSED). lathw.py arms A,B,C,D on 7 fixtures, ms0:/GBALAB/lat3-1000.
-- 2026-10-20 01:39 prs: DONE. claude/pr-review @ 56f35a2: #15 (10 commits) + #16 (2, rebased onto #15) + 1 adjustment; release build 0 warnings (builds/pr-review-out/release), host 30/30, PPSSPP smoke+gb vhash = 4.1.1 baseline. Sleep needs owner HW test; no console used.
+- 2026-10-20 01:39 prs: DONE. claude/pr-review @ 56f35a2: #15 (10 commits) + #16 (2, rebased onto #15) + 1 adjustment; release build 0 warnings, host 30/30, PPSSPP smoke+gb vhash = 4.1.1 baseline. Sleep needs owner HW test; no console used.
 - xlat: x5 (XLAT_FAST LIMITS+GATEMAP+EXITPF+RAMEND) PPSSPP vhash 26/26 IDENTICAL to 4.1.1. Twin xlat -14.9% Doom. Added DCLEAR (dispatch cache clear only filled slots; twin flush zone -28% Doom), twin identical 12 fixtures. Waiting for console (latency).
 - latency: RELEASED psp-1000 (port 10100 idle, no app running). Tier 0 HW-verified: latch-poll 4.0 -> 2.0-2.5 vblanks, fps/work unchanged on 7 fixtures. Pad sample is ~16 ms stale on real firmware too. Tier 1 has a 2nd bug (fixed, rebuilding); asking main for a 10-min follow-up slot.
 - xlat: RESUMED psp-1000 (x6d diag split Doom/Duke, then x6 = full XLAT_FAST on the whole bench-ready set)
@@ -198,11 +198,11 @@ then whole bench-ready suite on your PSP; a win must not regress any fixture bey
 - main 02:40: PSP-1000 has ALSO left USB (device gone, like the 3000). Both consoles need the owner. Possibly flat batteries (both have run PSPLink on PC USB for hours; the 1000 cannot charge over USB) — but latency's tier-1 run (me_lowlat=1, nfsu2 at exit) is NOT ruled out. NO HARDWARE until the owner is back. Everyone: continue PPSSPP / twin work and write up.
 - xlat: x7 (XLAT_FAST all: LIMITS+GATEMAP+EXITPF+RAMEND+DCLEAR+SCANFN, branch claude/bench-xlat 757b2c7+) PPSSPP vhash 26/26 bench-ready IDENTICAL to 4.1.1. Twin xlat instr vs ship: Doom -17.4, Duke -17.6, NFSMW -16.8, SSX3 -16.2, Smash -15.4, Ford -16.1, HotWheels -16.1, MaxPayne -16.9, NFSC -16.7, TopGear -17.3, MTennis -14.2, MGolf -13.5 (%); all twin hashes identical (+7 lab fixtures). No HW for x4-x7 yet (consoles off USB).
 - xlat: corpus oracle (35 ROMs x 3000 f, power-on, ship config): xlat = fast2 + XLAT_FAST PASS 35/35 (state, audio, picture). 4 mutants (one per XLAT_FAST piece) all CAUGHT (DCLEAR 30/35, GATEMAP-noent 1/35, LIMITS 21/35, EXITPF 35/35). Commits on claude/bench-xlat.
-- xlat: HW PLAN (consoles off USB; nothing below has run). PRX builds in builds/xlat-out/<tag>/ (all harness, GBA_LINK=1 REWIND=1 BUILD_PRX=1, 0 warnings):
+- xlat: HW PLAN (consoles off USB; nothing below has run). PRX builds, one per tag, kept locally (all harness, GBA_LINK=1 REWIND=1 BUILD_PRX=1, 0 warnings):
     x1 = LIMITS (measured: Doom/Duke +4%) ; x4 = +GATEMAP+EXITPF ; x5 = +RAMEND ; x6 = +DCLEAR ; x7 = +SCANFN = all of XLAT_FAST at 56c55e2 (CANDIDATE)
-  1) candidate, whole suite:  python psp_bench.py --console 1000 --port 10100 --build C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/xlat-out/x7 --tag x7 --tags bench-ready   (~2 h)
-  2) per-piece A/B, key six:  for t in x4 x5 x6: same with --build .../xlat-out/$t --tag $t --only kf_doom_ii,kf_duke_nukem_advance,kf_smashing_drive,kf_ssx_3,kf_need_for_speed_most_wanted,hns_heavy   (~25 min each)
-  3) noise control: --build C:/Users/DrSto/OneDrive/Desktop/GBAdhoc/builds/bench-411/harness-prx --tag b411r with the same --only
-  compare: python builds/xlat-out/tools/cmp.py b411 x7   (fps/work/jit/cpu per fixture; cmp.py A B [console])
+  1) candidate, whole suite:  python psp_bench.py --console 1000 --port 10100 --build <xlat-out>/x7 --tag x7 --tags bench-ready   (~2 h)
+  2) per-piece A/B, key six:  for t in x4 x5 x6: same with --build <xlat-out>/$t --tag $t --only kf_doom_ii,kf_duke_nukem_advance,kf_smashing_drive,kf_ssx_3,kf_need_for_speed_most_wanted,hns_heavy   (~25 min each)
+  3) noise control: --build <bench-411>/harness-prx --tag b411r with the same --only
+  compare: python cmp.py b411 x7 (a local comparison script)   (fps/work/jit/cpu per fixture; cmp.py A B [console])
   any further piece: CORE_EXTRA="XLAT_FAST=1 XLAT_NO=SCANFN:DCLEAR" switches pieces off (LIMITS GATEMAP EXITPF RAMEND DCLEAR SCANFN).
 

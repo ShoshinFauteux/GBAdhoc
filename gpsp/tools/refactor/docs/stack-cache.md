@@ -5,7 +5,7 @@ main_psp.c restructure. Both run on the host and need no PSP build. T16's simula
 needs WSL, docker and the `drprof-qemu` image.
 
 All acceptance runs used the clean baseline of 01067e74:
-`builds/mainpsp-tools-out/baseline/run1/{release,lab,harness}` (see BASELINE.md there).
+`mainpsp-tools-out/baseline/run1/{release,lab,harness}` beside the checkout (a local output, not in the repo; see [baseline.md](baseline.md)).
 
 ---
 
@@ -225,7 +225,7 @@ its tail was parsed as an address. The buffer is now 1,024 bytes. The numbers be
 come from the rerun.
 
 Copies of the reports and raw sim files are in
-`builds/mainpsp-tools-out/scratch-stack-cache/t16base/`.
+`scratch-stack-cache/t16base/` (local, not kept in the repo).
 
 **Reproduction.** On both fixtures the old plugin and the new `-noloop` rows are
 IDENTICAL on all 6 layouts (J, S and F misses and accesses). The 8 KiB control is
@@ -273,7 +273,7 @@ entries by PSP PC, and write the counts on exit. Once that exists, the commands 
 python3 gpsp/tools/refactor/loop_lpsim/loop_lpsim.py layouts --lp ~/lp --set meas --fixture em_battle \
    --twin rc45f --prof runs/prof/rc45f --frame-path gpsp/tools/layout/psp_frame_path.txt \
    --rates rates.txt --elf acc=<accepted>/gpsp_adhoc.elf --elf s160=<accepted>/gpsp_adhoc.elf+160
-flock builds/mainpsp-tools-out/build.lock bash gpsp/tools/refactor/loop_lpsim/loop_sim.sh meas em_battle rc45f
+flock mainpsp-tools-out/build.lock bash gpsp/tools/refactor/loop_lpsim/loop_sim.sh meas em_battle rc45f
 ```
 
 Interleaving the loop's fetches with the core's, rather than fetching them as one block
@@ -297,7 +297,7 @@ second extension, also open.
 ## Adversarial verification pass (2026-11-05, verifier)
 
 The verifier wrote new mutants against copies of the baseline ELFs (in
-`builds/mainpsp-tools-out/scratch-stack-cache-verify/`, never the worktree sources) and
+`scratch-stack-cache-verify/`, a local dir not kept in the repo, never the worktree sources) and
 found false PASSes in both tools. Each is fixed, and the mutant is now in `--selftest`.
 
 ### T12 `stack_depth.py`: false PASSes found and fixed

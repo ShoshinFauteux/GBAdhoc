@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """mirhand.py -- the mirrig bench (tools/gbamirror/mirrig.py) taken over by a
 console that is ALREADY PARKED in another rig's handoff loop, with no owner
-launch: freezerig's window-aware backup / install / run loop (claude/freeze-
-rig, builds/freeze-rig-worktree/tools/rig/freezerig/freezerig.py, imported
+launch: freezerig's window-aware backup / install / run loop (freezerig.py,
+from a rig branch that is not in this repo, imported
 unchanged, like hnsrig.py does), mirrig's arms and ini text.
 
     python mirhand.py stage   --mirstage MIRRIG_STAGE --out STAGE [--plan p3000]

@@ -5,7 +5,7 @@
 touches emulation. Validated in PPSSPP and the host suites; the hardware checks
 are listed at the end and have **not** been run.
 
-Look: Fable's chosen designs in `builds/menu-mockups/README.md`. The ambient
+Look: the design mockup's chosen designs ([design/UI-MOCKUPS.md](design/UI-MOCKUPS.md#menu-mockups)). The ambient
 bars are **"soft"** and the loading screen is **"L2"**. Every look parameter
 lives in `psp/ambient_look.h`.
 
@@ -230,7 +230,7 @@ display arms 300 frames each and prints `EVT fxcost` per arm.
 * **Paths:** the same geometry applies to the CPU blit (`vid_draw_frame`), the
   ME blit (`vid_draw_prestaged`, used for all FF presets) and the wake overlay
   (`vid_image_screen`).
-* **Not in the TRIANGLE cycle** (Fable's advice): it crops the GBA picture, so
+* **Not in the TRIANGLE cycle** (the design mockup's advice): it crops the GBA picture, so
   it is opt-in from Settings. From 2x, TRIANGLE goes to fit.
 * **CONFIG.INI value:** 3. It was appended to the enum, not inserted. An older
   build clamps 3 to 1x.
@@ -258,7 +258,7 @@ display arms 300 frames each and prints `EVT fxcost` per arm.
    clear**, one textured sprite is drawn per bar: 2 at Fit, 4 at 1x, 0 at
    Stretch and at GBA 2x. They use float UVs and GU_LINEAR. The scrim is the
    MODULATE colour (255 − alpha): 96 for `hero/` art, 150 for box art. That
-   is the same arithmetic as Fable's black rect, without a second blended
+   is the same arithmetic as the design's black rect, without a second blended
    fill. The bars cover fewer pixels than the clear did, and there is no
    per-pixel CPU work.
 4. **The edge glow** (mode **"game"**, and mode **"art"** with no art):

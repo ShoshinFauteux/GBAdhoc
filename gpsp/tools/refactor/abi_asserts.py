@@ -26,7 +26,7 @@ How:
     copy of THAT flavour's -E, asserted or UNCHECKED (P-review r2, N4).  A copy in an #if arm
     the flavour does not compile is in neither list; `unbuilt` (below) lists the copy sites
     that no generated flavour has (P-review r3, B6).
- 3b. PLATFORM (tier C, C6-1; health-out/design/C-6.md): a copy whose name abi_asserts.platform
+ 3b. PLATFORM (tier C, C6-1; gpsp/docs/design/TIER-C.md C-6): a copy whose name abi_asserts.platform
     lists (linker symbols, the PSP_MODULE_INFO expansion, an SDK function its header lacks) is not
     core ABI.  It is listed in the header's PLATFORM block with that file's reason, not as
     UNCHECKED, so UNCHECKED holds only copies of core (or other tree) names.  The block's rows
@@ -254,7 +254,7 @@ def _file_stmt(stmt, defined, own_vars, res):
 
 
 KNOWN = os.path.join(HERE, 'abi_asserts.known')
-# THE GUARD (tier C, C6-7; health-out/design/C-6.md).  main_psp.c includes gpsp/core_fe.h, so a
+# THE GUARD (tier C, C6-7; gpsp/docs/design/TIER-C.md C-6).  main_psp.c includes gpsp/core_fe.h, so a
 # frontend copy of a name core_fe.h declares is redundant at best and, retyped, a compile error
 # in main_psp.o itself.  gen FAILS on any such copy ("delete it: core_fe.h declares it").  This
 # replaces the old pin file (abi_asserts.pinned): its job was to catch an asserted copy retyped

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gstruct.py -- C5-0 (builds/health-out/design/C-5.md §2.1, §3): move a reviewed set of
+"""gstruct.py -- C5-0 (gpsp/docs/design/TIER-C.md C-5 §2.1, §3): move a reviewed set of
 main_psp.c file-scope globals into one module struct, by a RENAME MAP.  Called as
 `globals.py struct MAP --src INVERSE -o OUT [--tel]`; g0r.py (gate G0R) reads the same map.
 

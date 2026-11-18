@@ -2,7 +2,7 @@
 """overlay_model.py -- Fable's Direction A as IMPLEMENTED, through the design
 model (docs/UI-OVERLAY.md).
 
-builds/menu-mockups/mockups.py (class Overlay) is the design: its numbers are
+The menu mockups' mockups.py (class Overlay; docs/design/UI-MOCKUPS.md) is the design: its numbers are
 the spec.  This file draws the screens psp/ui_psp.c draws -- the same calls,
 in the same order, with the REAL content (the Controls table of ctl_map.c,
 the Settings rows of ui_psp.c, the state the harness walkers leave each

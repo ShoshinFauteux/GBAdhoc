@@ -13,7 +13,7 @@ TOOLS = os.path.dirname(TESTS)
 sys.path.insert(0, TOOLS)
 from elf32 import Elf  # noqa: E402
 
-# worktree/gpsp/tools/refactor -> worktree/.. = builds/
+# checkout/gpsp/tools/refactor -> the folder that holds the checkout (local outputs, not in the repo)
 BUILDS = os.path.abspath(os.path.join(TOOLS, '..', '..', '..', '..'))
 OUT = os.environ.get('EF_OUT', os.path.join(BUILDS, 'mainpsp-tools-out'))
 BASELINE = os.environ.get('EF_BASELINE', os.path.join(OUT, 'baseline'))

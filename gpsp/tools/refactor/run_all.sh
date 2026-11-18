@@ -6,11 +6,11 @@
 #
 #   bash gpsp/tools/refactor/run_all.sh [BASELINE_DIR] [SCRATCH_DIR]
 #     BASELINE_DIR  flavours.sh --baseline output with run1/ and run2/
-#                   (default builds/mainpsp-tools-out/baseline)
+#                   (default mainpsp-tools-out/baseline beside the checkout; local, not in the repo)
 #     SCRATCH_DIR   where step logs and test scratch go (default: a new mktemp dir)
 #   PAD144=DIR      release flavour dir of 01067e74 built with LAYOUT_PAD_BYTES=144
-#                   (default builds/mainpsp-tools-out/scratch-elf-func/pad144/release)
-#   LOCK=FILE       flock file for docker steps (default builds/mainpsp-tools-out/build.lock)
+#                   (default mainpsp-tools-out/scratch-elf-func/pad144/release, likewise)
+#   LOCK=FILE       flock file for docker steps (default mainpsp-tools-out/build.lock)
 #   ONLY=a,b        run only the named steps (see STEPS below)
 #
 # Run from WSL (needs python3, bash, flock, docker). Whole run: about 15 min.
@@ -70,7 +70,7 @@ step p0a_unit  "P0a loop_anchor, flavours_gate, T8 raw, T14 consts" "G2L XS G1" 
   set -e; '"$PY"' "'"$R"'/loop_anchor.py" --selftest; '"$PY"' "'"$R"'/flavours_gate.py" --selftest
   '"$PY"' "'"$T"'/p0a_test_exit_matrix.py" "'"$R"'/../../psp/main_psp.c"
   '"$PY"' "'"$R"'/abi_asserts.py" selftest'
-# tier C (health-out/design): C5-0's struct/G0R tools; C-1 commit 1's frame_loop shape
+# tier C (gpsp/docs/design/TIER-C.md): C5-0's struct/G0R tools; C-1 commit 1's frame_loop shape
 # (loop_anchor's function mode is in p0a_unit's --selftest).  No docker (a host gcc, if
 # any, syntax-checks the struct output)
 step tierc     "C5-0 gstruct/g0r/census --check; C1-1 frame_loop" "G0R G2L XS" bash -c '

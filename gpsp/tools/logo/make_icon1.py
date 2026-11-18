@@ -6,7 +6,7 @@
 Needs numpy, Pillow and an ffmpeg with libx264 on PATH.  Nothing else: the
 PSMF container is written here (no UMD Stream Composer).
 
-THE PICTURE (Fable's ICON1 storyboard, builds/splash-mockups/icon1/).  144x80
+THE PICTURE (the splash design's ICON1 storyboard, docs/design/UI-MOCKUPS.md).  144x80
 like ICON0, 90 frames at 29.97 fps (3 s), looping: the 3 px hinted letters
 are always there; the five arcs sweep in left to right, innermost first,
 0.1 s apart (0.2-1.0 s); the console bar wipes left to right (1.0-1.4 s);
@@ -68,7 +68,7 @@ PTS_EVERY = 15                   # frames between stamped PES (Sony: ~16)
 
 # ---------------------------------------------------------------- frames --
 def icon_frame(t, bg=BG, ink=INK, dur=3.0):
-    """Fable's icon_frame (builds/splash-mockups/splash.py), t in seconds."""
+    """The splash design's icon_frame (docs/design/UI-MOCKUPS.md), t in seconds."""
     L, _ = M.render_letters(stroke_px=3, hint=True)
     lh, lw = L.shape
     rb_h, bar_h = 20, 2

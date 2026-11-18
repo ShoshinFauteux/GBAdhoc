@@ -51,8 +51,8 @@ window for that result is not another test. The PSP owns `RUNS.TXT`.
 
 ## Fixtures and workload
 
-Golden ROMs, BIOS, `.sav` files and slot-0 states are private local fixtures in
-`../builds/unbound-harness/fixtures/`, with a hash manifest. They are not Git
+Golden ROMs, BIOS, `.sav` files and slot-0 states are private local fixtures
+outside the repo, with a hash manifest. They are not Git
 assets. The states were copied before device consolidation:
 
 | Fixture | Slot-0 SHA256 |
@@ -107,7 +107,7 @@ No core performance changes are part of this harness checkpoint.
 ## Host tools and campaign
 
 Python 3.11+, Windows PowerShell/`Write-VolumeCache`, and the pinned PSP Docker
-image are required. The active campaign is `../builds/unbound-harness/campaign/`:
+image are required. The campaign folder lives outside the repo; it holds:
 
 - `campaign.json`: exact device path and random `RIG.ID` marker.
 - `jobs/<id>/job.json`: immutable package hashes, fixture identity and window.
@@ -158,8 +158,8 @@ Use one queue writer. Do not edit a published job or a golden fixture.
   relaunch uses the existing plain-load fallback; native CFW and physical USB
   remount/cache behaviour still need the first PSP run.
 
-Audit outputs live under `../builds/unbound-harness/`. The three cleanup archives
-and per-file verification manifests are under `../builds/candidate-2026-09-15/`.
+The audit outputs, the three cleanup archives and the per-file verification
+manifests (2026-09-15) were kept locally and are not in the repo.
 
 ## Campaign result (2026-09-15)
 

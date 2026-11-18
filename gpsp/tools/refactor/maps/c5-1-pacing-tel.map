@@ -1,4 +1,4 @@
-# C5-1 rename map: the pacing telemetry (builds/health-out/design/C-5.md §2.3, §3 C5-1).
+# C5-1 rename map: the pacing telemetry (docs/design/TIER-C.md, C-5 §2.3 and §3).
 # Applied with `globals.py struct THIS --tel`; checked with `pp_diff.sh --rename-map THIS --tel`.
 # Owner decision 2026-11-17: per-frame code stays the same in the player and the Lab builds, so
 # TEL() runs in every build and the struct is not under #ifdef: G0R is equal in release, lab and

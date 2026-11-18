@@ -1,5 +1,5 @@
 /* core_fe.h -- what the core exports to a native frontend (tier C, C-6;
- * builds/health-out/design/C-6.md).
+ * docs/design/TIER-C.md, C-6).
  *
  * One declaration per core name a frontend reads or calls, in the core's own
  * types, grouped by the file that defines it.  common.h includes this header

@@ -4,7 +4,7 @@
     python source-split_test_extract.py [TRACE.json] [MAIN_PSP_C]
 
 TRACE.json is extract_trace.py's record of the byte ranges every host test
-slices out of main_psp.c today (default: builds/mainpsp-tools-out/
+slices out of main_psp.c today (default, local and not in the repo: mainpsp-tools-out/
 scratch-source-split/trace-01067e74.json; regenerate with extract_trace.py).
 
   C1 enumerate: the readers found by grep (12 on 01067e74; PLAN: 12 at x1)

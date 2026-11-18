@@ -16,7 +16,9 @@ Inputs (all read, none written except -o):
     TUs", = the "(F, forever)" rows of §1.2) and LATER (the PLAN §2 items that create the modules
     with no fragment yet) are transcribed beside it.  `--plan PLAN.md` checks all four against the
     plan, cell for cell (exit 1 on any difference); EXPORTED is also checked against the cutlist
-    (every name is a row its module owns).
+    (every name is a row its module owns).  PLAN.md (the restructure plan) is not kept in the
+    repo; gpsp/docs/design/RESTRUCTURE.md summarises it with the same § numbers, so `--plan`
+    runs only where a copy of the original plan exists.
   * the @extract markers in the shell and fragments, and the host tests that read them
     (tools/tests/extract.py --enumerate).  A test reads a region by calling `extract.extract(src,
     NAME)`, or a helper that passes its argument on (test_psp_runtime.marked_function reads
@@ -115,7 +117,7 @@ NEVER_TU = ('audio', 'iothread', 'power', 'merend', 'pacing', 'loop')
 # the PLAN §2 items that create the modules that have no fragment yet (HW-3 = epoch C, HW-4 = epoch D1).
 # teardown left the list with Epoch C C1a (fe/teardown.inc.c, PLAN-EPOCHC-beta5 §3),
 # boot with C2 (fe/boot.inc.c), session with C3-1 (fe/session.inc.c), loop with tier C C-1
-# (fe/loop.inc.c: frame_loop, loop_t, loop_reset; health-out/design/C-1.md).
+# (fe/loop.inc.c: frame_loop, loop_t, loop_reset; gpsp/docs/design/TIER-C.md C-1).
 LATER = collections.OrderedDict()
 # PLAN §1.2 modules that left the tree after the plan: no FRAG row and no cutlist row, kept in PLAN12
 # (and so in `--plan`) because the plan still lists them, left out of the README's module table.

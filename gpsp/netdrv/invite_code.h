@@ -1,7 +1,7 @@
 /* invite_code.h -- the invite code: a desktop host's IPv4 address (and port)
  * with a check, so a PSP can join it with no server at all.  Header-only, no
  * allocation, no libc (the PSP module has none of its own).  The format is
- * the one the design mockup drew (builds/xmb-relay-mockup, data.js); the spec
+ * the one the design mockup drew (docs/design/UI-MOCKUPS.md, data.js); the spec
  * is docs/ONLINE-TUNNEL.md, "Invite codes", the tests tools/relay/test_invite.c
  * (which also check vectors made by the mockup's own encoder).
  *

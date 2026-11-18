@@ -4,9 +4,9 @@
 #
 #   bash tests/sections-layout_run_all.sh [BASELINE_DIR] [PAD144_DIR]
 #     BASELINE_DIR  flavours.sh --baseline output with run1/ and run2/
-#                   (default builds/mainpsp-tools-out/baseline)
+#                   (default mainpsp-tools-out/baseline beside the checkout; local)
 #     PAD144_DIR    a release flavour dir of the same commit built with
-#                   LAYOUT_PAD_BYTES=144 (default builds/mainpsp-tools-out/
+#                   LAYOUT_PAD_BYTES=144 (default mainpsp-tools-out/ beside the checkout:
 #                   scratch-sections-layout/pad144-release); its pair checks are
 #                   skipped (and said so) when it is missing
 #   SL_DOCKER=0     skip the real-toolchain test (needs docker + pspdev/pspdev)

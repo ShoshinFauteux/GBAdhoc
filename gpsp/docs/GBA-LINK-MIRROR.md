@@ -427,13 +427,13 @@ Both agents want the 1000 + 3000 pair.
 - `p1000`: BATTLE, DUAL, SOLO, DUAL10K, then reversed (8 cycles).
 - `p64`: adds M-OWN (10 cycles).
 - Timing: about 3-5 min a cycle.
-- Stages: `builds/gbalink-mirror-out/rig3-{p1000,p64}`, EBOOT crc32 69cb4adc (commit 233e2fc, clean build, with the cold start and the block-0 fix).
-- Owner steps: `builds/gbalink-mirror-out/OWNER-STEPS.txt`.
+- Stages `rig3-{p1000,p64}` (not kept in the repo), EBOOT crc32 69cb4adc (commit 233e2fc, clean build, with the cold start and the block-0 fix).
+- Owner steps: a sheet staged with the rig (not kept in the repo).
 
 **Proven in PPSSPP before staging.**
 - **The whole handoff loop** (`mirrig_dry.sh`): install, one launch, every collection, golden restore, ini swap and relaunch.
   - rig1, an earlier EBOOT, same rig code: all 6 cycles.
-  - rig3: cycle 1 (M-BATTLE) collected, then the relaunch into cycle 2. PPSSPP then died at frame 7,341 (the known PPSSPP launch wear: docs memory "PPSSPP rig wears out"), so the run was stopped there.
+  - rig3: cycle 1 (M-BATTLE) collected, then the relaunch into cycle 2. PPSSPP then died at frame 7,341 (a known PPSSPP limitation: after many relaunches in one rig session it dies), so the run was stopped there.
   - The collected rig3 M-BATTLE cycle matches the golden: `shash` 15,319 lines and `gbadual_hash` 30,567 lines IDENTICAL. Both autopilots DONE, day lines 20, 23,409 transfers.
 - **The report** (`mir_report.py`): the dry run's logs compare IDENTICAL to the golden on both oracles (the player's `shash` and both machines' `gbadual_hash`).
 - **Costs in the dry run** (link window, PPSSPP, so a hint only):
@@ -479,10 +479,10 @@ Both agents want the 1000 + 3000 pair.
 ## 12. PSP-3000 results (2026-10-01, single console, no owner launch)
 
 **How it ran.** The 3000 sat parked in another rig's handoff loop (`GBADHOC-DRPROF`).
-- `tools/gbamirror/mirhand.py` took it over through freezerig's window-aware loop: verified backup (`backup_sticks.py` plus a verified copy of the folder, in `builds/mirror-backup-2026-10-01-3000`), install into that folder inside an open window, then CMD=RUN.
+- `tools/gbamirror/mirhand.py` took it over through freezerig's window-aware loop: verified backup (`backup_sticks.py` plus a verified copy of the folder, kept off-repo), install into that folder inside an open window, then CMD=RUN.
 - The EBOOT was 69cb4adc (commit 233e2fc), harness64 `GBA_LINK`, ME renderer on, `jit_cache` large, AW2 resident and shared.
 - Session 1 ran arms 1-5 with `gba_dual_hash` on. Session 2 ran the lookahead sweep, mostly with the per-frame hash off.
-- Logs: `builds/gbalink-mirror-out/logs-3000`, `logs-3000c`, `layout-3000-all`; report: `REPORT-3000.txt`.
+- The logs and the run's report are not kept in the repo.
 
 **Frame cost.** Core microseconds per frame (shash `c=`), averaged over the link window, frames 1500+.
 
@@ -516,8 +516,8 @@ Both agents want the 1000 + 3000 pair.
 **The hang (session 2, run 5, M-BATTLE140K-NH).**
 - CMD=RUN went in at 15:13:03 and the eject took. There was no RESULT.TXT and no USB window for 2 h; a live run hands off within ~7 min.
 - The same arm with the hash (run 1) and every other arm completed. Nobody saw the screen, so "frozen", "hung in a loop" and "never relaunched" cannot be told apart.
-- The lead stopped the loop. Recovery that keeps the evidence (the mirror EBOOT has no `freeze_rig_recover`, so relaunching first would overwrite the logs): `builds/gbalink-mirror-out/FREEZE-3000-RECOVERY.txt`.
-- **Before any further hardware use, read the frozen run's `heartbeat.txt`** for the last frame. Then rerun M-BATTLE140K-NH several times, ABBA against M-BATTLE140K. This sits in the same family as the open ME / I-cache freezes in memory ("freeze reproduced: battlecycle", "resident-icache fix"); two cores double the code that runs between I-cache syncs.
+- The lead stopped the loop. Recovery that keeps the evidence (the mirror EBOOT has no `freeze_rig_recover`, so relaunching first would overwrite the logs): copy the logs off the stick before any relaunch.
+- **Before any further hardware use, read the frozen run's `heartbeat.txt`** for the last frame. Then rerun M-BATTLE140K-NH several times, ABBA against M-BATTLE140K. This sits in the same family as the open ME / I-cache freezes (the battlecycle freeze; RESIDENT-ICACHE-FIX.md); two cores double the code that runs between I-cache syncs.
 - The 3000 is NOT parked as it was found. The card holds the mirror rig in `GBADHOC-DRPROF` with run 5 staged, and it needs a power cycle.
 
 ## 13. The PSP-3000 hang: what can be ruled out without the console (2026-10-01)
@@ -541,7 +541,7 @@ The 3000's logs from the hung run are still on its card, so the hang is not diag
 **What is left.** Everything that differs between PPSSPP and a PSP:
 
 1. **A hardware-only guest derail.** Evidence for it:
-   - the 3000 still has the open freeze family (memory: battlecycle, resident I-cache);
+   - the 3000 still has the open freeze family (the battlecycle freeze; RESIDENT-ICACHE-FIX.md);
    - the `-NH` arm no longer runs ~10 ms of hashing and fprintf a frame, which on HW flushed both 16 KiB caches every frame.
 
    Evidence against it: the only coherency mechanism with hardware evidence, the large-range path, is not exercised by this arm (table above).
@@ -584,7 +584,7 @@ All of it is under `GBA_LINK`, so a release build is untouched.
 
 ### 13.3 Next on hardware: ONE rig app
 
-`builds/gbalink-mirror-out/OWNER-STEPS-HANG.txt`; stage `hand-hang` (mirror stage `rig4-hang`, EBOOT crc32 23b41a8e, ME PRX 402c68b4).
+Owner steps and stage `hand-hang` (not kept in the repo; mirror stage `rig4-hang`, EBOOT crc32 23b41a8e, ME PRX 402c68b4).
 
 1. **Evidence first.** Follow `FREEZE-3000-RECOVERY.txt` as written: photograph, power off and on, XMB USB, copy `log\*` and `handoff\*`. Read `heartbeat.txt`'s last lines (13.1).
 2. **Then the hang rig** (`hand-hang`, plan `hang`, 4 ABBA rounds = 8 runs, ~45 min). It installs into the same `GBADHOC-DRPROF` folder, from the XMB USB connection (`--no-window`). The owner launches "GBA MIRROR RIG" once.
@@ -653,7 +653,7 @@ Commits 76361ea (the layer) and dcface5 (the session clock). Section 7's plan, b
 
 ### 14.3 Hardware
 
-`builds/hw-queue/pairrig.py` + `PAIR-README.txt`: one rig app per console (3000 = host, Go = join), started automatically when both overnight queues are complete; arms M (per-frame hash) and Q (none) after the GB link and AW-fake pairs.
+A pair-rig script of the local hardware queue (not kept in the repo): one rig app per console (3000 = host, Go = join), started automatically when both overnight queues are complete; arms M (per-frame hash) and Q (none) after the GB link and AW-fake pairs.
 
 **2026-10-02, first takeover: the Go stayed black at the wake arm (W) and its `log/` stayed empty. It was not memory.** The EBOOT on the Go's card (md5 `abd13048`) was arm W's `af98e599` with its FAT chain rewritten after the verified install:
 - cluster 89 was missing;
@@ -736,7 +736,7 @@ The 3000 (harness64) has the large JIT tier, the cart resident (15 blocks), and 
 
 ### 15.5 The hardware pair rig (hw1)
 
-`tools/gbamirror/prepare_gbalink_hw_rig.py` writes `builds/gbalink-hw-out/rig`. Its MANIFEST.txt lists every md5 and each arm's per-role EBOOT crc32.
+`tools/gbamirror/prepare_gbalink_hw_rig.py` writes the rig folder (outside the repo). Its MANIFEST.txt lists every md5 and each arm's per-role EBOOT crc32.
 - **Consoles:** PSP-3000 = HOST (F:, harness64); PSP-1000 = JOIN (D:, harness).
 - **App folder:** the GB link rig's own `PSP/GAME/GBADHOC-GBLINK`, because the parked app relaunches its own folder. hw_loop.py's USB handoff drives it.
 - **Staged every cycle:** the cart and BIOS with every arm, and the golden AW2 save and state restored.
@@ -753,7 +753,7 @@ The 3000 (harness64) has the large JIT tier, the cart resident (15 blocks), and 
 - Order BAABFABBAFAB: 12 runs, ~80 min.
 
 **Takeover.** Both consoles were parked in the GB rig app: perf2 ended at 21:09, and `handoff_park_s = 0` means the park has no limit.
-1. Scoped read-only backups first: `hnsrig backup --appdir GBADHOC-GBLINK --scope PSP/GAME/GBADHOC` -> `builds/gbalink-hw-out/backups/{3000,1000-2222}`, each with MANIFEST.verified.
+1. Scoped read-only backups first: `hnsrig backup --appdir GBADHOC-GBLINK --scope PSP/GAME/GBADHOC` -> one backup folder per console, kept off-repo, each with MANIFEST.verified.
 2. hw_loop's wake cycle stages arm B inside a fresh window and commands RUN.
 3. The last cycle commands STOP, so both consoles end parked.
 
@@ -785,7 +785,7 @@ AW2 alone could hide a game-specific hole. The mirror now has a fixture per link
 - `--ram-dump DIR:F0:F1:STEP`: both machines' EWRAM+IWRAM every STEP frames (the RAM searches behind Super Circuit's driver, 16.7);
 - an **SIO census** at exit: which mode each port sat in, for how many frames, and how many transfers completed in each mode.
 
-Binaries, ROMs, states and batteries live outside the repo, in `~/gbamulti/{eb,roms,fx}`; the EBOOTs are also in `builds/gbamulti-out/fix-harness{64,}`. Each fixture pins them by md5.
+Binaries, ROMs, states and batteries live outside the repo, in a local work folder (`eb`, `roms`, `fx`). Each fixture pins them by md5.
 
 ### 16.2 Fixtures and the SIO modes each game uses
 
@@ -1010,7 +1010,7 @@ From commit 772d287 (claude/gbalink-hw + claude/gbalink-multigame's 9e8819e):
 
 | build | 1000 (harness, 32 MiB) | 3000 (harness64) |
 |---|---|---|
-| best (`GBA_LINK=1 CORE_EXTRA="DISPATCH_CACHE=1"`, title "GBAdhoc GBA LINK") | `builds/gbalink-hw-out/m-best-harness` EBOOT f0909ac5, ME 18158678 | `m-best-harness64` EBOOT b5b70d54, ME 19ae57b6 |
+| best (`GBA_LINK=1 CORE_EXTRA="DISPATCH_CACHE=1"`, title "GBAdhoc GBA LINK") | `m-best-harness` EBOOT f0909ac5, ME 18158678 | `m-best-harness64` EBOOT b5b70d54, ME 19ae57b6 |
 | control | `m-ctl-harness` 4aedcfcf | `m-ctl-harness64` e7b49c24 |
 | profiler (+ `DRPROF_HW=1`) | `m-prof-harness` b485c095 | `m-prof-harness64` 92e3f721 |
 
@@ -1049,7 +1049,7 @@ From commit 772d287 (claude/gbalink-hw + claude/gbalink-multigame's 9e8819e):
 
 ### 17.3 hw3 (rig3): arms and why
 
-Restaged after the merge (section 17.4): every arm comes from `claude/gbalink-hw` e5308c8. Each binary's build log is in `builds/gbalink-hw-out/p3-*.log`.
+Restaged after the merge (section 17.4): every arm comes from `claude/gbalink-hw` e5308c8. Each binary's build log was kept beside it (not in the repo).
 
 | arm | binaries (harness64 / harness EBOOT md5) | keys | question |
 |---|---|---|---|
@@ -1290,7 +1290,7 @@ All from `claude/gbalink-sessmem`, unpinned (`LAYOUT_PIN=0`):
 
 | build | commit | EBOOT md5 |
 |---|---|---|
-| harness (1000), link | be2ca8b | 6e309b92 (`builds/gbalink-hw-out/s12-link-harness`) |
+| harness (1000), link | be2ca8b | 6e309b92 (`s12-link-harness`) |
 | harness64 (3000), link | be2ca8b | f4d87d7f (`s12-link-harness64`) |
 | harness / harness64, no link (comparison) | be2ca8b | 037d85a1 / 4fa02304 |
 | release, link | ce5b7d1 | 07ef13e5 (`r6-link`; image 13,207,488) |
@@ -1403,7 +1403,7 @@ Pinning is worth -21 % AW2 core and -4 % H&S in single player on the 3000; two c
 
 ### 21.1 Cause
 
-**The bench never started its pair.** The bench pair starts in `fe_gbadual_state_loaded`, i.e. when the player's machine loads a state. `r3_1_sf/harness.ini` has no `load_state`, so instance B was loaded and then never run: the log has `gbadual_load ok` and no `gbadual_start`, and (the detail that was noticed) no `gbadual frames=... switches=` line, because that line is only printed for a running pair. None of the 32 one-console results with `gba_dual = 1` under `builds/fix351-out/results` (`*_sf`, `sf_dual_*`) has a `gbadual_start`. The 10.3 ms is ONE machine, drawn and heard, with nothing on its port. The session's 25.3 ms is two machines in a linked fight. Nothing was sliced, blocked or spun differently: the two runs were not the same work.
+**The bench never started its pair.** The bench pair starts in `fe_gbadual_state_loaded`, i.e. when the player's machine loads a state. `r3_1_sf/harness.ini` has no `load_state`, so instance B was loaded and then never run: the log has `gbadual_load ok` and no `gbadual_start`, and (the detail that was noticed) no `gbadual frames=... switches=` line, because that line is only printed for a running pair. None of the 32 one-console results with `gba_dual = 1` in those runs (`*_sf`, `sf_dual_*`; the results are not kept in the repo) has a `gbadual_start`. The 10.3 ms is ONE machine, drawn and heard, with nothing on its port. The session's 25.3 ms is two machines in a linked fight. Nothing was sliced, blocked or spun differently: the two runs were not the same work.
 
 **Off the console (PPSSPP, modelled time, the owner's ini byte for byte; `tools/gbamirror/sf_bench_ppsspp.sh`):**
 
@@ -1468,7 +1468,7 @@ On hardware the saving should be about the same share (the skipped code is two c
 
 ### 21.4 Hardware: what to run
 
-PRX: `builds/linkspeed-out/psp/ls-prx` (`gbadhoc.prx` md5 9d5374a9, `gbadhoc_me.prx` md5 2f252eeb = the c8b0b36 module, sha256 63d8c5a4; built clean from 9868cbf, `harness` + `GBA_LINK=1 BUILD_PRX=1`).
+PRX `ls-prx` (not kept in the repo; `gbadhoc.prx` md5 9d5374a9, `gbadhoc_me.prx` md5 2f252eeb = the c8b0b36 module, sha256 63d8c5a4; built clean from 9868cbf, `harness` + `GBA_LINK=1 BUILD_PRX=1`).
 
 1. **The real one-console pair** (says how much of the 25.3 ms is radio). Stage the PRX pair as a `plrun.sh` arm and add one line to the existing row:
    `r <tag> <arm> sf.gba - - sf_host.inputs 8600 1 "gba_dual = 1" "gba_dual_autopilot = sf_join.txt" "gba_dual_lookahead = 140448" "gba_dual_cold = 1"`
@@ -1554,7 +1554,7 @@ The first two one-console SF pair runs ever made on hardware (section 21.4, PRX 
 
 ### 22.5 The next hardware run (owner present)
 
-PRX: `builds/linkspeed-out/psp/ls2-prx`. One console, the section 21.4 row, each arm with `"stall_watch_s = 10"`:
+PRX `ls2-prx` (not kept in the repo). One console, the section 21.4 row, each arm with `"stall_watch_s = 10"`:
 
 1. CONTROL x2: `... "gba_dual_cold = 1" "stall_watch_s = 10"`
 2. CHECK x2: `... "gba_dual_cold = 1" "gba_link_fast = 2" "stall_watch_s = 10"`
@@ -1732,7 +1732,7 @@ Sessions with all on, both PASS: **SF 44.3 fps** (work 22.05 ms; was 39.05), **A
 - **The larger layout lever is the static code**, half of the misses: a hot order made for the pair (both instances' hot functions and the cable hooks placed, `update_gba` at its new size). `tools/layout/gen_layout.py` from a pair profile; needs a rebuild per candidate, and the simulator can now rank candidates before a console sees them. Next.
 - **Lever 4 (machine A's sound synthesis on the Media Engine), measured gain:** the output-only part of A's sound is 167,000 instructions a frame (PSG render 129,534 minus the 34,985 a silent machine still spends on its counters; FIFO resample 73,425 - 29,659; read-out 28,556): 0.9 ms by the model plus its misses. Design, not built: the main CPU keeps every guest-visible step (FIFO pops and DMA requests, PSG length/envelope/sweep counters, SOUNDCNT_X) and logs, per frame, the popped FIFO bytes with their ring positions and a copy of the PSG channel state at each `render_gbc_sound` call; the ME runs the existing synthesis code on that log into the output ring, so the samples are the same integers by construction (to be proven on the desktop model as the renderer was, then on hardware by `audio_hash`). The audio job goes before the frame's render on the ME (it is ~1 ms there), the ring is written back from the ME's D-cache before the main CPU's audio thread reads it, the log lives in the volatile-pool work area beside the renderer's, and if the ME has not finished when the read-out comes the main CPU synthesises that frame itself from the same log.
 
-PRX `builds/linkspeed-out/psp/ls4-prx` (`gbadhoc.prx` md5 7a625cb9, ME module 2f252eeb, built clean from 58329e8 with `CORE_EXTRA="SCHED_FAST=1"`):
+PRX `ls4-prx` (not kept in the repo; `gbadhoc.prx` md5 7a625cb9, ME module 2f252eeb, built clean from 58329e8 with `CORE_EXTRA="SCHED_FAST=1"`):
 
 ```
 VHASH=0 bash plrun_ms.sh <tag> <arm> sf.gba - - sf_host.inputs 8600 1 "gba_dual = 1" "gba_dual_autopilot = sf_join.txt" "gba_dual_lookahead = 140448" "gba_dual_cold = 1" "stall_watch_s = 10" <extra>
@@ -1873,7 +1873,7 @@ Per frame on the host, fight windows of `ls5_sf_s1/a`:
 
 - So the session costs **~4.0 ms a frame over the one-console pair**, and 2.95 of it is wall-clock time inside the pair's step that the emulation thread did not use. The only things that can take it are threads that outrank the emulation thread (0x2B in a session): the kernel's WLAN threads, our ad-hoc RX/TX threads, audio. hw3's `thrcpu` measured exactly that for AW2 (17.5: SceWlanMac 1.4 + SceWlanHal 0.8 + SceNetNetintr 0.35 + ad-hoc 0.5 + audio 0.25 = 3.3 ms per frame at 60 fps). **This is an inference from two measurements, not a direct one for SF.**
 - The radio traffic in the fight: `sess_cost pdp=1267` (sceNetAdhocPdpSend calls per 600 frames: 2.1 a frame, 126 us each on the TX thread) and about as many received; the transport itself sends ~1 packet a frame (0.5 data + 0.46 bare ACKs).
-- **This is a lever no profile of the machines could show, and it touches nothing guest-visible:** fewer radio packets per frame (ACKs riding on the next input packet instead of going bare; two frames of buttons per packet, which the 4-frame input delay allows), and a cheaper receive pump. If the WLAN threads' cost is per packet, halving the packets is worth 1-1.5 ms; if it is per second (beacons, polling), nothing. `thrcpu` and `looprof` on a console decide that: PRX `builds/linkspeed-out/psp/ls5prof-prx` (ls5 + `DRPROF_HW`), same session line, then `tools/gbamirror/linkprof_report.py`.
+- **This is a lever no profile of the machines could show, and it touches nothing guest-visible:** fewer radio packets per frame (ACKs riding on the next input packet instead of going bare; two frames of buttons per packet, which the 4-frame input delay allows), and a cheaper receive pump. If the WLAN threads' cost is per packet, halving the packets is worth 1-1.5 ms; if it is per second (beacons, polling), nothing. `thrcpu` and `looprof` on a console decide that: PRX `ls5prof-prx` (ls5 + `DRPROF_HW`; not kept in the repo), same session line, then `tools/gbamirror/linkprof_report.py`.
 
 ### 26.3 The timing prototype: `TIMER_LAZY=1` + `timer_lazy = 1` (commit 5a78241)
 
@@ -1946,7 +1946,7 @@ Each lever so far delivered about 60 % of its estimate (fast path 18 -> 12 %, sc
 
 ### 27.1 The profiler run (before any radio code)
 
-PRX `builds/linkspeed-out/psp/ls5prof-prx` (`gbadhoc.prx` md5 15dd9143: ls5 + `DRPROF_HW`; ME module unchanged). It has not run in PPSSPP or under PSPLink: owner present.
+PRX `ls5prof-prx` (not kept in the repo; `gbadhoc.prx` md5 15dd9143: ls5 + `DRPROF_HW`; ME module unchanged). It has not run in PPSSPP or under PSPLink: owner present.
 
 ```
 python link_hw.py <tag> 3000 1000 sf --ms --nohash --prx ../linkspeed-out/psp/ls5prof-prx --src ../linkspeed-worktree --ini "gba_link_fast = 3" --ini "gba_link_headless_audio = 2" --ini "sched_fast = 1" --ini "irq_io_fast = 1"
@@ -2053,7 +2053,7 @@ Not in the table: the emulation thread's own receive work (`sess_cost rx=` 0.65 
 
 ### 28.5 Hardware runs (3000 host, 1000 guest, from the memory stick)
 
-PRX `builds/linkspeed-out/psp/ls8-prx` (`gbadhoc.prx` md5 762f0150, commit e64e21b; ME module unchanged 2f252eeb) and the profiler build `ls8prof-prx` (md5 0893e773). `C` below stands for `--ini "gba_link_fast = 3" --ini "gba_link_headless_audio = 2" --ini "sched_fast = 1" --ini "irq_io_fast = 1"`. Checked with `--dry`: the key audit accepts both new keys.
+PRX `ls8-prx` (not kept in the repo; `gbadhoc.prx` md5 762f0150, commit e64e21b; ME module unchanged 2f252eeb) and the profiler build `ls8prof-prx` (md5 0893e773). `C` below stands for `--ini "gba_link_fast = 3" --ini "gba_link_headless_audio = 2" --ini "sched_fast = 1" --ini "irq_io_fast = 1"`. Checked with `--dry`: the key audit accepts both new keys.
 
 ```
 python link_hw.py ls8_sf_c  3000 1000 sf --ms --nohash --prx ../linkspeed-out/psp/ls8-prx --src ../linkspeed-worktree C

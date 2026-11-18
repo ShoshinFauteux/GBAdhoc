@@ -4,8 +4,8 @@
 The master is the README's 2x logo (published as assets/gbadhoc-logo-3-dark@2x.png,
 880x320), kept beside this file as gbadhoc-logo-3-master@2x.png so every baked
 form -- psp/logo_ui.h, ICON0, PIC1, ICON1 -- can be re-made from this tree
-(tools/bake_logo.py, tools/logo/make_icon1.py).  Derived by Fable's logo study
-(builds/splash-mockups/logomark.py), copied verbatim apart from MASTER and the
+(tools/bake_logo.py, tools/logo/make_icon1.py).  Derived by the splash/logo design study
+(docs/design/UI-MOCKUPS.md; its logomark.py), copied verbatim apart from MASTER and the
 header writer's attribution.
 Three things live in it:
 

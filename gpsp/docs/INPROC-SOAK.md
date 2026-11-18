@@ -19,8 +19,8 @@ rendered in every GBA session, and HOME loaded in every session.
 
 One solo `hw_loop` per console (`tools/inproc/hw/run_soak.sh`), from the GB
 link rig's app folder `PSP/GAME/GBADHOC-GBLINK`, which was backed up first
-(freezerig `--scope PSP/GAME/GBADHOC-GBLINK`,
-`builds/inproc-soak-out/backups/`). The soak's files all live in `roms/soak/`
+(freezerig `--scope PSP/GAME/GBADHOC-GBLINK`; the backups are kept off-repo).
+The soak's files all live in `roms/soak/`
 under `s_` names. The rig's own saves are restored from `golden/` after every
 run, and the last cycle stages arm Z, which puts back the rig's own EBOOT, ME
 prx, CONFIG.INI and harness ini, then sends STOP. Both consoles were left
@@ -50,8 +50,8 @@ the cross-reference in §3.
 
 ## 2. Results
 
-`tools/inproc/hw/soak_analyse.py`, full output in
-`builds/inproc-soak-out/analysis-{1000,3000}.txt`.
+`tools/inproc/hw/soak_analyse.py` (its full output per console is not kept
+in the repo).
 
 | | PSP-1000 | PSP-3000 |
 |---|---|---|

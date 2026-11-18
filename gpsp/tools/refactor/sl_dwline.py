@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """sl_dwline.py -- DWARF 2-4 .debug_line row decoder, vendored unchanged in logic
-from builds/mainpsp-map/out/scratch/x4_dwline.py (the x4 basis that gave
+from the restructure survey's x4_dwline.py (not in the repo; the x4 basis that gave
 "220 lines / 115 sets" for main's loop), reading through elf32.Elf.  Group
 "sections-layout"; layout_report.py uses it for main's loop set map BY LINE.
 T1b loop_diff.py owns the by-address window with inlined ranges.

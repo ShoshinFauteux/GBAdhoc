@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""loop_diff.py -- T1b / gate G2L (builds/mainpsp-map/out/PLAN.md §0.1, §5).
+"""loop_diff.py -- T1b / gate G2L (gpsp/docs/design/RESTRUCTURE.md §0.1, §5).
 
 While the per-frame loop still lives inside `main`, prove it unchanged BY
 ADDRESS, not by source line.  A line-range diff cannot see an edited inlined

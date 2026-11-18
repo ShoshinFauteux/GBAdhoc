@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# flavours.sh -- T15 (builds/mainpsp-map/out/PLAN.md §5): build the release,
+# flavours.sh -- T15 (gpsp/docs/design/RESTRUCTURE.md §5): build the release,
 # Lab and harness flavours of one tree, with the commit's OWN recipe, then run
 # the phase-T checks on them.  One command per commit.
 #
@@ -39,7 +39,7 @@
 #                       FLAV_LAB_ENV="LAYOUT_PAD_BYTES=5904 PSP_EXTRA=LAYOUT_PAD_RO_BYTES=2864"
 #                       (a baseline uses none: the commit's own pads).
 #
-# THE ROOT vs psp MAKE SPLIT (memory: core-vs-frontend-defines).  This script
+# THE ROOT vs psp MAKE SPLIT (gpsp/docs/BUILD-SWITCHES.md, BUILD-PROFILES.md).  This script
 # never builds anything itself: it calls the tree's own tools/build.sh with a
 # profile name.  build.sh is the one place the flag lists live: core flags go
 # to the ROOT `make platform=psp1`, frontend defines to psp/Makefile, and it
@@ -47,10 +47,10 @@
 #   release -> build.sh release   core GPSP_PROFILE=release, -DGPSP_PLAYABLE
 #   lab     -> build.sh lab       core GPSP_PROFILE=harness, PERF_RIG+telemetry, LAB_HARNESS=1
 #   harness -> build.sh harness   core GPSP_PROFILE=harness, PERF_RIG+telemetry, PSP_LARGE_MEMORY=0
-# Every one of them is GPSP_PLAYABLE (memory: build-flavour-playable): a bare
+# Every one of them is GPSP_PLAYABLE (gpsp/docs/BUILD-SWITCHES.md): a bare
 # `make` in psp/ is NOT one of these flavours and is never used here.
 #
-# BROKEN IMPORTS (memory: psp-stub-order-trap).  psp-fixup-imports prints
+# BROKEN IMPORTS (gpsp/docs/DEBUGGING.md, BUILD-PROFILES.md).  psp-fixup-imports prints
 # "could not fixup imports, stubs out of order" and make exits 0.  build.sh's
 # run() already dies on it; this script ALSO greps every saved make log, so a
 # weakened build.sh cannot let it through.  Exit 4.

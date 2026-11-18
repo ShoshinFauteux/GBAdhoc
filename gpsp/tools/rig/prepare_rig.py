@@ -5,7 +5,7 @@ owner handshake).  docs/RIG-DOUBLE-BATTLE.md §4-§5.
 
     python tools/rig/prepare_rig.py --build <dir with EBOOT.PBP + gbadhoc_me.prx>
         --variant growl|swift|frfr --backup <wireless-stick-backup dir>
-        --out <builds/wireless-rig>
+        --out <rig dir>
 
 Produces <out>/<variant>/stage-A (the build as it ships), stage-Q (A at a
 57.00 session rate), the H0 controls stage-L (V1: arm A plus net_latency_ms 50

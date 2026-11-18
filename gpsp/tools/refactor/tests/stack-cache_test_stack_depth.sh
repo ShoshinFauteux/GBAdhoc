@@ -2,7 +2,7 @@
 # stack-cache_test_stack_depth.sh -- T12 stack_depth.py self-test and mutants on
 # the clean baseline ELFs (no build).  Usage:
 #   bash tests/stack-cache_test_stack_depth.sh [BASELINE_RUN_DIR]
-# default BASELINE_RUN_DIR = builds/mainpsp-tools-out/baseline/run1 next to the worktree.
+# default BASELINE_RUN_DIR = mainpsp-tools-out/baseline/run1 beside the checkout (local, not in the repo).
 # Per flavour: the control report (exit 0 = PASS with the reviewed stack_resolve.txt)
 # and `stack_depth.py --selftest` (vsnprintf/fopen non-zero, .su agreement, mutants M1-M6).
 set -u
