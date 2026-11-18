@@ -106,6 +106,12 @@ a flavour it must cover, makes the line red (`flavours_gate.py`).
   0 size / 0 rounding rows, was 19 / 14). Data only: hot.ord (names) is byte-identical and
   `hot_budget.py` reads the HOT core's rows, none of which changed. That commit's gate has HO and BF
   red by design (the staleness report and psp/layout/ differ from b7d0cafd's); the bytes are equal.
+  Refreshed again for beta.6 (claude/beta6-final, on 84604aea) from that commit's release ELF: 24 rows,
+  T5 on release 0 size / 0 rounding (was 24 / 18); lab and harness 17 / 17 (31 / 26), Lab-only code;
+  the 5 release / 2 Lab NOMATCH rows (Lab-only `smc_*` profilers; `mer_sameframe_active` and
+  `ll_to_b.part.0`: the first is gone from the source, the second is always_inline now) are unchanged and match nothing, as before. hot.ord byte-identical,
+  hot_budget 7552 = 7552 slots. HO is red by design on that commit (its report is cleaner than its
+  reference's); a later commit's HO is measured against it.
 
 ### Fix pass after the adversarial review of P0a (2026-11-07)
 

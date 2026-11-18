@@ -11,7 +11,7 @@
 sound_timer                                       0.677621     884
 sound_read_samples                                0.130810     180
 check_and_raise_interrupts                        0.145173     292
-update_gba                                        1.775192    4068
+update_gba                                        1.775192    4084
 serial_next_event                                 0.045799     148
 sound_timer_queue32                               0.033961     112
 check_interrupt                                   0.014094      68
@@ -24,7 +24,7 @@ update_scanline_render                            0.000001    6080
 # below (smc_fill_*, rfu_fill_update, memory_fill_term, psp/layout_pad_warm.S/_late.S/_apb.S, B's
 # zeros in psp/gbalink_b_stubs.c, LAYOUT_PAD_BSCAN/XLAT/BXLAT/LATE/MLU): same addresses, no zeros.
 @mips_stub.o(.text.msr_fast)
-block_lookup_address_arm                          0.038072     388
+block_lookup_address_arm                          0.038072     288
 @pin dc_arm ab layout_pad_warm_dc_arm
 update_serial                                     0.038938     368
 xs_blocks_current                                 0.166025    1564
@@ -36,12 +36,12 @@ ram_mirror_alias_pc                               0.000000     124
 @pin xs ab smc_fill_xs
 flag_interrupt                                    0.006280      76
 memset                                            0.018631     284 libc.a:libc_a-memset.o
-block_lookup_address_thumb                        0.019709     380
+block_lookup_address_thumb                        0.019709     288
 @pin dc_thumb ab layout_pad_warm_dc_thumb
 spin_check                                        0.026178     524
 block_lookup_translate_arm                        0.052539    1656
 @pin lk ab smc_fill_lk
-rfu_update                                        0.033567    1000
+rfu_update                                        0.033567     880
 # code-health B-4 (the tier-B re-pin): rfu_fill_update (rfu.c) gives back B-2's rfu_update shrink
 # (1024 -> 960 B 32 B-rounded), both flavours; the smc_fill_prof_* / smc_fill_blk_* rows (main.c) give
 # back the SMC profile's functions, which a release no longer links (they match nothing in the lab).
@@ -49,7 +49,7 @@ rfu_update                                        0.033567    1000
 smc_pipe_store                                    0.009727     320
 write_io_register16                               0.082094    2760
 dma_transfer                                      0.088941    3088
-smc_prof_note_store                               0.008008     288
+smc_prof_note_store                               0.008008      84
 @pin prof_store ab smc_fill_prof_store
 jit_code_wrote_.part.0                            0.007611     300
 smc_prof_exact                                    0.013770     576
@@ -60,7 +60,7 @@ block_lookup_translate_thumb                      0.023820    1720
 @pin lkt ab smc_fill_lkt
 getenv                                            0.000705      40 libc.a:libc_a-getenv.o
 smc_trap_entry                                    0.009492     600
-flush_translation_cache_ram_smc                   0.093982    6232
+flush_translation_cache_ram_smc                   0.093982    6228
 smc_remember_retired_tag                          0.000000     336
 xlat_scan_arm_ram_fast.constprop.0                0.031467    2624
 memcpy                                            0.010117     880 libc.a:libc_a-memcpy.o
@@ -76,7 +76,7 @@ core_phase_enter                                  0.000560      72
 emit_load_pc_k                                    0.001723     224
 dma_tf_loop32                                     0.108231   14188
 ramtag_note_extent                                0.002909     384
-read_backup                                       0.001504     212
+read_backup                                       0.001504     220
 dma_tf_loop16                                     0.088886   12712
 smc_window_first                                  0.001076     164
 xs_extent_note                                    0.004269     672
@@ -85,11 +85,11 @@ set_cpu_mode                                      0.002371     452
 smc_blk_note_writer                               0.001602     348
 @pin blk_writer ab smc_fill_blk_writer
 fe_host_frame_count                               0.000055      12
-smc_stable_thunk_dispatch                         0.001594     312
+smc_stable_thunk_dispatch                         0.001594     244
 @pin dc_thunk ab layout_pad_warm_dc_thunk
 iok_site                                          0.002197      72
 execute_arm_translate                             0.000046      12
-me_rend_retire_if_idle                            0.002160     616
+me_rend_retire_if_idle                            0.002160     464
 mer_lowlat_active                                 0.000780     208
 mer_sameframe_active                              0.000165      44
 smc_reuse_commit                                  0.006847    1876
@@ -109,11 +109,11 @@ fe_autopilot_status                               0.000023      12
 @pin apb_status a layout_pad_apb_status
 fe_host_input_inject                              0.000023      12
 retro_run                                         0.001920    1124
-smc_blk_note_block                                0.001972    1164
+smc_blk_note_block                                0.001972      20
 @pin blk_block ab smc_fill_blk_block
 rumble_frame_reset                                0.000064      40
-lat_swap.isra.0                                   0.000790     632
-lat_wait_begin                                    0.000795     636
+lat_swap.isra.0                                   0.000790     580
+lat_wait_begin                                    0.000795     608
 ll_own_posted                                     0.000155     124
 ll_sample                                         0.000250     200
 ll_to_b.part.0                                    0.000045      36
@@ -121,15 +121,15 @@ me_host_idle                                      0.000055      44
 me_host_post_render                               0.000145     116
 me_host_result                                    0.000030      24
 me_host_watchdog_frame                            0.000135     108
-me_rend_present                                   0.000295     236
-osd_draw                                          0.000160     660
+me_rend_present                                   0.000295     244
+osd_draw                                          0.000160     740
 plat_audio_frames                                 0.000415     332
 vid_draw_prestaged                                0.000705     564
 vid_gu_flush                                      0.000040      32
 vid_swap                                          0.000555     444
-lat_wait_step                                     0.002900    2320
+lat_wait_step                                     0.002900    2244
 ll_present                                        0.000205     164
-plat_video_frame                                  0.001385    1108
+plat_video_frame                                  0.001385    1120
 vid_gu_busy                                       0.000070      56
 vid_gu_flush.part.0                               0.000130     104
 input_state                                       0.000238     192
@@ -146,23 +146,23 @@ audio_sample_batch                                0.000128     328
 fe_autopilot_frame                                0.000697    2612
 @pin apb_frame a layout_pad_apb_frame
 serialpoke_frame_update                           0.000107     400
-fe_host_run_frame                                 0.000843    3972
+fe_host_run_frame                                 0.000843    4004
 fwrite                                            0.000006      32 libc.a:libc_a-fwrite.o
 gpsp_rfu_now_us                                   0.000004      28
 note_pc_limits_range.constprop.1                  0.000040     356
-rfu_frame_update                                  0.000780    8988
+rfu_frame_update                                  0.000780    3552
 spin_thumb_op                                     0.000150    2372
 execute_spsr_restore_body                         0.000010     184
 xs_clear_all                                      0.000015     292
 __popcountsi2                                     0.000004      88 libgcc.a:_popcountsi2.o
 sram_scan                                         0.000030     708
 flush_translation_cache_ram                       0.000042    1184
-gpsp_visible_done_hook                            0.000018     528
+gpsp_visible_done_hook                            0.000018     408
 read_memory16                                     0.000023     664
 fe_evt                                            0.000002      48
 fe_host_sram_flush                                0.000009     280
 fps_evt                                           0.000001      32
-trigger_timer                                     0.000025     824
+trigger_timer                                     0.000025     816
 core_prof_evt                                     0.000002      84
 emit_shift_reg                                    0.000095    4228
 spin_load                                         0.000017     792
@@ -171,7 +171,7 @@ read_memory8                                      0.000012     628
 spin_arm_op                                       0.000045    3096
 fflush                                            0.000003     244 libc.a:libc_a-fflush.o
 entry_gates_harvest                               0.000004     316
-memory_term                                       0.000002     340
+memory_term                                       0.000002     368
 # code-health B-4: reload_timing_info (a WAITCNT write) left the order; memory_fill_term's zeros
 # (gba_memory.c: 224 B release, 256 B lab) take back rfu_frame_update's (B-2) and memory_term's (B-3)
 # growth, so __moddi3 .. translate_block_arm (render_gbc_sound, the translators) keep beta.5's sets.
@@ -183,9 +183,9 @@ rtc_current_time                                  0.000003     784
 flush_translation_cache_ram_dma                   0.000002     824
 __udivdi3                                         0.000001    1340 libgcc.a:_udivdi3.o
 render_gbc_sound                                  0.297837   25816
-translate_block_thumb                             0.049984   99816
+translate_block_thumb                             0.049984   97856
 @pin xlat a layout_pad_warm_xlat
-translate_block_arm                               0.090269  376860
+translate_block_arm                               0.090269  349144
 @pin xlat b
 # ---- bscan: linked inside B's hot path, just before B's update_scanline stub (at `pin row_bscan_b`;
 # until code-health C3-5 LAYOUT_PAD_BSCAN_BYTES zeros), A's copy then B's (gen_layout.py write_ord).
@@ -230,7 +230,7 @@ process_cheats                                    0.000412       8
 @pin late a layout_pad_late
 _ZL12ml_diff_pagemm                               0.010000     204
 _ZL12ml_relevancePKtPm.isra.0                     0.005000     396
-_ZL12ml_line_bodym                                0.076800    1712
+_ZL12ml_line_bodym                                0.076800    1280
 _ZL12ml_diff_rowsmmPKmPmmS1_                      0.010000     396
 @pin mlu a layout_pad_mlu
 _ZL19ml_update_relevancem                         0.050000     656
