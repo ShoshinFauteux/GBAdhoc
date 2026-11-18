@@ -638,9 +638,6 @@ static void mer_note_sum(void)
  * first line that differs names the frame, and the field names what diverged.
  * Built for the paged-vs-resident ROM differential (ROM_BUFFER_SIZE 15/32). */
 static int g_shash_on;
-extern unsigned char iwram[];
-extern unsigned char ewram[];
-extern unsigned short palette_ram[];
 /* FNV-style over 32-bit words, not bytes: ~97K steps a frame instead of
  * ~388K, so the oracle costs well under a millisecond on a PSP and does not
  * push Unbound's frame past its budget.  Every region hashed is a multiple of

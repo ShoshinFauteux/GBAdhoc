@@ -46,7 +46,6 @@
  * What it cannot simulate: the hardware actually losing power, the radio,
  * VRAM and the Memory Stick across a suspend. */
 #include <streams/file_stream.h>
-extern RFILE *gamepak_file_large;                 /* gba_memory.c */
 static long g_ss_at, g_ss_ms = 1500, g_ss_again_ms;
 static int g_ss_rom, g_ss_game, g_ss_browser, g_ss_fired, g_ss_nohold;
 /* `sleep_sim_sav = 1`: the held-open .sav handle does not survive the sleep

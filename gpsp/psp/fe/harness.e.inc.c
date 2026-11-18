@@ -1,3 +1,7 @@
+/* The rig's two no-ROM self-tests (harness keys testpat, nettest): a telemetry
+ * build's unit (code-health C2-5).  A player build folds both keys to 0, so its
+ * calls are dead; the stubs at the end keep them compiling. */
+#ifdef GPSP_KEEP_TELEMETRY
 /* ---- GU color-order test pattern (testpat = 1; no core, no ROM) --------
  * Renders 8 vertical 30px bars of known RGB565 values through the exact
  * production blit path, then GE-dumps the drawbuffer.  The harness asserts
@@ -153,4 +157,8 @@ static int run_nettest(int is_host, const char *group, long secs)
    adhoc_transport_term();
    return (is_host ? pings : pongs) >= NETTEST_TARGET ? 0 : -1;
 }
+#else
+#define run_testpat()            ((void)0)
+#define run_nettest(h, g, s)     ((void)(h), (void)(g), (void)(s), 0)
+#endif
 

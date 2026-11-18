@@ -44,8 +44,9 @@ unreliable **bulk lane** for cartridge and save transfers.
 The delay shim already existed: harness keys `net_latency_ms`, `net_jitter_ms` and `net_loss_pct`
 (`adhoc_transport_set_fault`, `transport_adhoc.c`). It holds each **received** datagram in the
 transport's receive ring for N ms, so N on both consoles adds **2N ms of round trip**. The queue stays
-FIFO, so jitter does not reorder packets. In a release build the keys are dead, because `HARNESS_INI`
-names a file that cannot exist, and at 0 the shim costs one integer test per datagram. No new key was
+FIFO, so jitter does not reorder packets. In a release build the keys are dead (a player build folds
+every harness read to its default at compile time, `HARNESS_FOLD` in psp/fe/fe_priv.h), and at 0 the
+shim costs one integer test per datagram. No new key was
 needed. The Lab already validates these keys, and the gblink fixtures already set them.
 
 Two caveats apply to every number below:

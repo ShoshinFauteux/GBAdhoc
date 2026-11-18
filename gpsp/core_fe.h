@@ -25,8 +25,6 @@
  *     their type depends on the core's configuration (cpu.h: a pointer under
  *     RUNTIME_JIT_CACHE/MMAP_JIT_CACHE/VITA, an array otherwise, a macro on 3DS),
  *     so a define-free header cannot declare them.  cpu.h stays their home.
- *   - jit_code_stats (jit_code_stats_type, jit_code.h): the lab heartbeat's copy
- *     is still u32[10] until C6-6 reads it by field.
  */
 #ifndef CORE_FE_H
 #define CORE_FE_H
@@ -102,6 +100,23 @@ extern u32 jit_pub_inline;
 extern u32 translation_gate_targets;
 extern u32 translation_gate_target_pc[];  /* MAX_TRANSLATION_GATES (cpu.h, GATE_SLOTS) */
 void rom_hash_census(u32 out[10]);
+/* JIT_CODE_DISCIPLINE statistics (jit_code.h, docs/JIT-CODE-DISCIPLINE.md): the lab
+ * heartbeat reads them by field.  owner[] counts ownership changes by reason, jit_code.h's
+ * JOWN_* order; jit_code.h asserts JOWN_COUNT == CORE_FE_JOWN_COUNT. */
+#define CORE_FE_JOWN_COUNT 5
+typedef struct
+{
+  u32 publishes;        /* non-empty publishes                               */
+  u32 spans;            /* spans published                                   */
+  u32 lines;            /* 64-byte lines written back (and, if ranged, I-inv) */
+  u32 whole_i;          /* whole I-cache invalidates                         */
+  u32 early;            /* publishes forced by a full span table             */
+  u32 owner[CORE_FE_JOWN_COUNT];
+  u32 big_i;            /* whole-I forced by a span >= 16 KiB                 */
+  u32 kcalls;           /* kernel cache calls (ranged + whole) by publishes  */
+  u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
+} jit_code_stats_type;
+extern jit_code_stats_type jit_code_stats;
 
 /* ---- gba_memory.c ------------------------------------------------------- */
 /* The VRAM dirty-page map (vram_clean[], 1 KiB pages; gba_memory.h builds the

@@ -37,10 +37,9 @@ static int g_inproc_me_unload;
 /* INPROC_ME_UNLOAD_MUTANT(): this arm's definition is in fe/fe_priv.h */
 #endif
 /* gbadhoc_net_touched: netdrv/transport_adhoc.h.  badjump_recoveries and
- * smc_fallback_stats (SMC_FALLBACK_STATS, diagnostic: why SMC traps took a
- * full RAM flush): core_fe.h, weak here because the frontend tests their
- * address. */
-#pragma weak badjump_recoveries
+ * smc_fallback_stats: core_fe.h.  smc_fallback_stats (SMC_FALLBACK_STATS:
+ * why SMC traps took a full RAM flush) is in no build.sh profile's core,
+ * so it stays weak: the heartbeat tests its address. */
 #pragma weak smc_fallback_stats
 
 /* Why this quit may not return in-process, or NULL when it may.  Checked
@@ -60,7 +59,7 @@ static const char *inproc_refusal(int have_variant)
       return "variant";
    if (gbadhoc_net_touched)
       return "wireless";
-   if (&badjump_recoveries && badjump_recoveries)
+   if (badjump_recoveries)
       return "guest_fault";
    if (me_host_was_dead())
       return "me_watchdog";

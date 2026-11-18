@@ -21,6 +21,10 @@ WHAT COUNTS AS A HARNESS READ (per translation unit, all from `psp-gcc -E`):
                 `p_harness` must be classified (NOT_READS callees, its declaration, or an alias
                 `NAME = ... p_harness ...;` whose reads are listed in ALIAS_KEYS); an
                 unclassified use FAILS, so a new indirect reader cannot slip past the table.
+                A player build (release; HARNESS_FOLD, C2-3) has no getter call: its rows are the
+                folded expansions `( ( void ) sizeof ( "k" ) , ( long ) ( d ) )` (fold_at), so
+                check (b) still compares its defaults with the rig flavours'.  Defaults are
+                written with every nested harness read in fe_priv.h's spelling (canon).
   online_psp.o  calls whose path argument is `h` (online_psp_configure's harness path), incl. the
                 get_str/get_int(h, c, "k", ...) helpers.
   lab_harness.o calls on `L_ini` (the task ini, which IS the harness ini in a Lab build) or `ini`
@@ -77,7 +81,8 @@ GETTERS = {'fe_ini_get_int': (0, 1, 2), 'fe_ini_get': (0, 1, None),
 IMPLICIT_TU = {'task_ini_int': 'lab_harness.c'}
 # fe_priv.h's call form (C2-1), as the RAW source spells it (opt_in_rows only; the -E has the
 # getter it expands to): macro -> (the getter the table names, key index, default index or None)
-MACRO_GETTERS = {'HARNESS_INT': ('fe_ini_get_int', 0, 1), 'HARNESS_STR': ('fe_ini_get', 0, None)}
+MACRO_GETTERS = {'HARNESS_INT': ('fe_ini_get_int', 0, 1), 'HARNESS_STR': ('fe_ini_get', 0, None),
+                 'HARNESS_FPS_X100': ('pcfg_fps_x100', 0, 1)}
 # functions whose harness read takes the key from their caller (the caller's literal is the row)
 DYNAMIC_OK = {('online_psp.c', 'get_str'), ('online_psp.c', 'get_int'),
               ('lab_harness.c', 'task_ini_int'), ('lab_harness.c', 'lab_audit_keys')}
@@ -144,6 +149,79 @@ def side_effects(toks, names=('p_harness',)):
                 continue
             return 'call %s()' % t.text
     return None
+
+
+# fe_priv.h's folded call form (C2-3, HARNESS_FOLD 1 = a player build), as the -E has it:
+#   HARNESS_INT(k, d)      ( ( void ) sizeof ( "k" ) , ( long ) ( d ) )
+#   HARNESS_FPS_X100(k, d) ( ( void ) sizeof ( "k" ) , ( int ) ( d ) )
+#   HARNESS_STR(k, o, n)   ( ( void ) sizeof ( "k" ) , ( void ) ( o ) , ( void ) ( n ) , harness_not_found ( ) )
+# A player build has no harness read left to find, so these are its rows: check (b) then still
+# compares its defaults with the rig flavours' (ADR-0067's no-drift guarantee survives the fold).
+FOLD_HEAD = ('(', '(', 'void', ')', 'sizeof', '(', None, ')', ',')
+FOLD_GETTER = {'long': ('fe_ini_get_int', 'HARNESS_INT'), 'int': ('pcfg_fps_x100', 'HARNESS_FPS_X100')}
+CANON_GETTER = {'fe_ini_get_int': 'HARNESS_INT', 'pcfg_fps_x100': 'HARNESS_FPS_X100', 'fe_ini_get': 'HARNESS_STR'}
+
+
+def fold_at(toks, j):
+    """(getter, macro, key token, [arg token lists after the key], end index) when toks[j] opens
+    a folded harness read, else None."""
+    if j + len(FOLD_HEAD) >= len(toks) or toks[j].text != '(' or toks[j].pair is None:
+        return None
+    for k, want in enumerate(FOLD_HEAD):
+        t = toks[j + k]
+        if (want is None and t.kind != 'str') or (want is not None and t.text != want):
+            return None
+    end = toks[j].pair.idx
+    rest = toks[j + len(FOLD_HEAD):end]
+
+    def cast_paren(seq, ty):
+        # `( ty ) ( X )` -> X tokens, or None
+        if (len(seq) >= 5 and [x.text for x in seq[:3]] == ['(', ty, ')'] and seq[3].text == '('
+                and seq[3].pair is not None and seq[3].pair.idx == seq[-1].idx):
+            return seq[4:-1]
+        return None
+    key = toks[j + 6]
+    for ty, (getter, macro) in FOLD_GETTER.items():
+        d = cast_paren(rest, ty)
+        if d is not None:
+            return getter, macro, key, [d], end
+    parts = [[]]
+    for x in rest:
+        if x.text == ',' and not any(p.text in '([{' for p in parts[-1]
+                                     if p.pair is not None and p.pair.idx > x.idx):
+            parts.append([])
+        else:
+            parts[-1].append(x)
+    if len(parts) == 3 and [x.text for x in parts[2]] == ['harness_not_found', '(', ')']:
+        o, n = cast_paren(parts[0], 'void'), cast_paren(parts[1], 'void')
+        if o is not None and n is not None:
+            return 'fe_ini_get', 'HARNESS_STR', key, [o, n], end
+    return None
+
+
+def canon(toks, seq, names=('p_harness',)):
+    """the text of token list `seq` (a slice of `toks`) with every harness read in fe_priv.h's
+    spelling, so a default holding a nested read reads the same folded or not (check b)."""
+    out, i = [], 0
+    while i < len(seq):
+        t = seq[i]
+        j = t.idx
+        f = fold_at(toks, j)
+        if f is not None:
+            getter, macro, key, args, end = f
+            out.append('%s ( %s , %s )' % (macro, key.text, ' , '.join(canon(toks, a, names) for a in args)))
+            i += end - j + 1
+            continue
+        if (t.text in CANON_GETTER and j + 1 < len(toks) and toks[j + 1].text == '('
+                and toks[j + 1].pair is not None):
+            args = split_args(toks, j + 1)
+            if len(args) >= 2 and len(args[0]) == 1 and args[0][0].text in names:
+                out.append('%s ( %s )' % (CANON_GETTER[t.text], ' , '.join(canon(toks, a, names) for a in args[1:])))
+                i += toks[j + 1].pair.idx - j + 1
+                continue
+        out.append(t.text)
+        i += 1
+    return ' '.join(out)
 
 
 def _fn_spans(toks):
@@ -251,7 +329,7 @@ def extract(toks, tu_src, names):
             if why:
                 errs.append('(a) %s: %s() default `%s` has a side effect (%s)'
                             % (site_of(tu_src, t), callee, ' '.join(x.text for x in dt), why))
-            default = ' '.join(x.text for x in dt)
+            default = canon(toks, dt, names)
         if via:
             keys = []
             for x in lits:
@@ -273,6 +351,22 @@ def extract(toks, tu_src, names):
         else:
             errs.append('%s: %s() in %s reads the harness with a non-literal key `%s` (not in DYNAMIC_OK)'
                         % (site_of(tu_src, t), callee, fn, ' '.join(x.text for x in karg)))
+    # the folded reads of a player build (C2-3): one row each, nested ones included, as the
+    # getter scan above finds a rig build's
+    if strict:
+        for j, t in enumerate(toks):
+            f = fold_at(toks, j)
+            if f is None:
+                continue
+            getter, macro, key, args, end = f
+            default = '-'
+            if getter != 'fe_ini_get':
+                why = side_effects(args[0], names)
+                if why:
+                    errs.append('(a) %s: %s() default `%s` has a side effect (%s)'
+                                % (site_of(tu_src, key), macro, ' '.join(x.text for x in args[0]), why))
+                default = canon(toks, args[0], names)
+            rows.append((key.text[1:-1], getter, default, site_of(tu_src, key)))
     # the key list lab_audit_keys re-reads (`static const char *const keys[] = {...}`)
     if tu_src.startswith('lab_'):
         found = {(r[0], r[3]) for r in rows}
@@ -472,7 +566,7 @@ def opt_in_rows(src, have):
 # ------------------------------------------------------------- check (no docker)
 _CMT = re.compile(r'/\*.*?\*/|//[^\n]*', re.S)
 RAW_CALL = re.compile(r'(?:fe_ini_get(?:_int)?\s*\(\s*(?:HARNESS_INI|p_harness)\s*,'
-                      r'|\bHARNESS_(?:INT|STR)\s*\()\s*"([a-z0-9_]+)"')
+                      r'|\bHARNESS_(?:INT|STR|FPS_X100)\s*\()\s*"([a-z0-9_]+)"')
 RAW_RW = re.compile(r'\bRW_(?:KEY|FLAG)\s*\(\s*\w+\s*,\s*"([a-z0-9_]+)"')
 
 
@@ -628,6 +722,26 @@ def selftest():
     r8, e8 = extract(_tu(on, 'online_psp.c'), 'online_psp.c', ('h',))
     ok(not e8 and sorted(x[0] for x in r8) == ['online_direct', 'online_prx_cycles'] and
        r8[0][3].startswith('psp/online_psp.c:'), 'online: h reads and the get_int helper (%s %s)' % (r8, e8))
+    # the folded form of a player build (C2-3): the same rows, defaults in fe_priv.h's spelling
+    rig = ('static char p_harness[160];\nvoid boot(void) {\n'
+           '  long a = fe_ini_get_int(p_harness, "alpha", 0);\n'
+           '  fe_ini_get(p_harness, "beta", buf, sizeof(buf));\n'
+           '  int f = pcfg_fps_x100(p_harness, "fps", g.f);\n'
+           '  long n = fe_ini_get_int(p_harness, "outer", !hv && fe_ini_get_int(p_harness, "inner", 0) != 0);\n}\n')
+    fold = ('static char p_config[160];\nvoid boot(void) {\n'
+            '  long a = ((void)sizeof("alpha"), (long)(0));\n'
+            '  ((void)sizeof("beta"), (void)(buf), (void)(sizeof(buf)), harness_not_found());\n'
+            '  int f = ((void)sizeof("fps"), (int)(g.f));\n'
+            '  long n = ((void)sizeof("outer"), (long)(!hv && ((void)sizeof("inner"), (long)(0)) != 0));\n}\n')
+    rr, er = extract(_tu(rig), 'main_psp.c', ('p_harness',))
+    rf, ef = extract(_tu(fold), 'main_psp.c', ('p_harness',))
+    rows, eb = merge({'release': rf, 'harness': rr})
+    ok(not er and not ef and not eb and sorted(rr) == sorted(rf) and len(rf) == 5 and
+       ('outer', 'fe_ini_get_int', '! hv && HARNESS_INT ( "inner" , 0 ) != 0', 'psp/main_psp.c:6') in rf,
+       'fold: the folded reads give the rig rows, nested default canonical (%s %s %s)' % (rf, ef, eb))
+    rf2, _ = extract(_tu(fold.replace('(long)(0));\n  ((void)', '(long)(1));\n  ((void)', 1)), 'main_psp.c', ('p_harness',))
+    rows, eb = merge({'release': rf2, 'harness': rr})
+    ok(any(x.startswith('(b)') for x in eb), 'M-folddrift: a folded default that differs from the rig fails (b)')
     # opt-in arms in fe_priv.h's call form (C2-1): HARNESS_INT/HARNESS_STR in the raw source
     d = tempfile.mkdtemp(prefix='hk_optin_')
     os.makedirs(os.path.join(d, 'psp', 'fe'))

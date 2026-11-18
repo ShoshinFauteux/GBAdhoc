@@ -19,11 +19,22 @@ psp_config g_pcfg;
 static int g_me_rend, g_ff_gate, g_ff_uncapped, g_ff_mult;
 static int g_mer_pending, g_mer_ready, g_mer_cur, g_mer_last_presented, g_drew;
 static int g_mer_dirty_cfg, g_mer_full_copy;
-static unsigned g_mer_frames, g_mer_miss, g_mer_drops, g_fps_drawn;
-static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_post_us, g_mer_rend_seen;
-static unsigned g_mer_census, g_mer_watch_us;
-static unsigned g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
-static unsigned g_vis_n, g_vis_us, g_vis_max, g_mer_wb_pages, g_mer_wb_n;
+static unsigned g_mer_miss, g_fps_drawn;
+static unsigned g_mer_post_us, g_mer_rend_seen;
+static unsigned g_mer_watch_us;
+static unsigned g_vis_n, g_vis_us, g_vis_max;   /* reset by me_rend_frame's census block */
+/* fe_priv.h's TEL(): telemetry stores run in every build (code-health C5-1, C5-2), so
+ * the sliced code stores to the ME renderer's telemetry (the drop count the cases
+ * assert on is merend_tel.drops), EVT ff_win's drawn counter and the pacing census's
+ * overwrite count; only merend_tel is observed here */
+#define TEL(...) do { __VA_ARGS__; } while (0)
+static struct
+{
+   unsigned frames, drops, wait_us, wait_max, census, rend_n, rend_us, rend_max;
+   unsigned wb_pages, wb_n;
+} merend_tel;
+static unsigned g_ffw_drawn;
+static struct { unsigned lat_over; } pacing_tel;
 /* low-latency bookkeeping (docs/LOW-LATENCY.md); only recorded, never asserted here */
 static unsigned g_lat_poll_vc, g_mer_stage_pvc[2], g_lat_seq, g_mer_stage_seq[2];
 static unsigned g_bb_pvc;
@@ -79,11 +90,6 @@ static void vid_draw_prestaged(const int *pix, unsigned w, unsigned h)
 #ifndef LOOP_PHASE
 #define LOOP_PHASE(p) do { (void)(p); } while (0)
 #endif
-/* Telemetry statements (fe_priv.h TEL(): EVT ff_win's drawn counter, the
- * low-latency census): this test observes none of them, so it drops them. */
-#ifndef TEL
-#define TEL(...) do { } while (0)
-#endif
 /* The Lab-only hooks (psp/lab_ffpace.h, psp/lab_harness.h) as a player build
  * compiles them: to nothing.  The sliced functions carry LAB_FFP(...) on the
  * same lines as production statements, so without these the extract does
@@ -104,7 +110,7 @@ static void reset(void)
    g_mer_cur = 0;
    me_capture_buf = g_mer_cap[0];
    g_ff_gate = g_ff_uncapped = g_ff_mult = 0;
-   g_mer_drops = g_fps_drawn = g_mer_miss = g_mer_census = 0;
+   merend_tel.drops = g_fps_drawn = g_mer_miss = merend_tel.census = 0;
    g_mer_watch_us = now = done_at = posts = watchdogs = blits = teardown = 0;
    refused = 0;
    teardown_why = "ff_render_wedge";
@@ -216,7 +222,7 @@ int main(void)
    start = now;
    me_rend_frame(0);                      /* a gated-out frame, ME busy */
    assert(now - start < 1000);            /* it never waits */
-   assert(posts == 1 && g_mer_drops == 0 && g_mer_cur == cur && !teardown);
+   assert(posts == 1 && merend_tel.drops == 0 && g_mer_cur == cur && !teardown);
    assert(me_capture_buf == g_mer_cap[cur]);
    assert(watchdogs == 0); /* Tiny guest frames are not heartbeat failures. */
    now = done_at;
@@ -231,20 +237,20 @@ int main(void)
    assert(posts == 2);
    start = now;
    me_rend_frame(1);
-   assert(posts == 3 && g_fps_drawn == 2 && !g_mer_drops && !teardown);
+   assert(posts == 3 && g_fps_drawn == 2 && !merend_tel.drops && !teardown);
    assert(now - start >= latency - 200 && now - start < MER_INPUT_US);
    assert(me_capture_buf == g_mer_cap[g_mer_cur]);
    /* 100 drawn frames back to back (emulation slower than the gate period):
     * every one is posted. */
    for (i = 0; i < 100; i++)
       me_rend_frame(1);
-   assert(posts == 103 && g_fps_drawn == 102 && !g_mer_drops && !teardown);
+   assert(posts == 103 && g_fps_drawn == 102 && !merend_tel.drops && !teardown);
 
    reset();
    g_ff_mult = 1;
    me_rend_frame(1);
    me_rend_frame(1);
-   assert(posts == 1 && g_mer_drops == 1); /* 3x retains its prior late policy. */
+   assert(posts == 1 && merend_tel.drops == 1); /* 3x retains its prior late policy. */
    me_rend_present();
    assert(blits == 0);   /* nothing retired yet */
    now = done_at;
@@ -293,7 +299,7 @@ int main(void)
    me_rend_frame(1);
    start = now;
    me_rend_frame(1);
-   assert(posts == 1 && g_mer_drops == 1 && !teardown);
+   assert(posts == 1 && merend_tel.drops == 1 && !teardown);
    assert(now - start >= MER_RETIRE_US && now - start < MER_RETIRE_US + 1000);
 
    /* Early retirement is INERT with the low-latency retire off (this test's

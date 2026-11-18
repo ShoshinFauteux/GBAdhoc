@@ -35,7 +35,7 @@ every rule works on aec_cparse tokens, not on raw grep lines).
       psp/fe/fe_priv.h (macro definitions count; comments do not).  C2-1 rewrote every read to
       fe_priv.h's HARNESS_INT/HARNESS_STR.  --r7 fail (the default since C2-1) lists every
       site as a violation; a KNOWN row's key is the harness key the read names (the frame
-      loop's rewind_gedump until C2-5).  --r7 warn prints the count per file and never fails.
+      loop's rewind_gedump: frame parity).  --r7 warn prints the count per file and never fails.
       R7 reads the files as they are (no logical view): its sites are where the edit goes.
   R8  core_fe_pure (tier C, C6-1; health-out/design/C-6.md §2, §5): gpsp/core_fe.h, the one
       core-to-frontend header, stays define-free and attribute-free.  Its only conditionals are

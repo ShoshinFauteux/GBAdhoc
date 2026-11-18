@@ -354,6 +354,7 @@ ones marked "refused in a release".
 | define | meaning |
 |---|---|
 | `GPSP_PLAYABLE` | build a binary for someone to play (ADR-0067); every `tools/build.sh` profile sets it, and `psp/Makefile` refuses a build (any goal but `clean`) whose `EXTRA_DEFS` lacks it: the bare-`make` flavour without it, whose arms only that never-shipped build compiled, was removed in code-health A-5. The host tests still compile `config_psp.c`, `fe_util.c`, `fe_evt.h` and `fe_autopilot.c` both with and without it, so those keep both arms. Among other things it points the harness ini at a filename that cannot exist, so a leftover `.gpsp-harness.ini` on a player's card is inert. |
+| `HARNESS_FOLD` | derived in psp/fe/fe_priv.h, never set on the command line (setting it is an `#error`): 1 without `GPSP_PERF_RIG` (release, diagnostic), 0 in rig builds. At 1 every harness read (`HARNESS_INT`, `HARNESS_STR`, `HARNESS_FPS_X100`, `HARNESS_PRESENT`) compiles to its default (code-health C2-3; ADR-0067 amended: the same source expression in both builds, the defaults checked equal by `tools/refactor/harness_keys.py` check (b) instead of being compiled into every player's EBOOT). |
 | `GPSP_KEEP_TELEMETRY` | keep the EVT logger. Without it `fe_evt()` compiles to `((void)0)` and does **not** evaluate its arguments (ADR-0067b). |
 | `GPSP_PERF_RIG` | the performance harness: autopilot plus perf windows. Requires `GPSP_KEEP_TELEMETRY`. |
 | `LAB_HARNESS` | the lab profile's Lab-driven harness (psp/lab_harness.c). |

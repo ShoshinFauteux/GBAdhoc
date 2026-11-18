@@ -180,26 +180,34 @@ static void audio_status_frame(void)
  * outside link sessions (frame_hist's `nudge` is session-only), which is how
  * a 0.75 s audio lag went unseen.  lvl/min/max in ring frames (in_rate
  * samples), starved = output frames the audio thread filled with silence. */
-static unsigned g_ar_n, g_ar_min = ~0u, g_ar_max, g_ar_nudge, g_ar_starved0;
+/* The audio ring's telemetry (code-health C5-2), in every build (frame parity: TEL in
+ * fe/fe_priv.h).  The window's minimum keeps its own object: it starts at ~0u, and a
+ * struct member with an initializer would move the whole struct from .bss to .data. */
+static struct fe_audio_tel
+{
+   unsigned n, max, nudge, starved0;
+} audio_tel;
+static unsigned g_ar_min = ~0u;
 
+/* Per paced frame in every build; only a telemetry build prints the window line. */
 static void audio_ring_note(void)
 {
    unsigned level = ring_w - ring_r;
    if (level < g_ar_min)
       g_ar_min = level;
-   if (level > g_ar_max)
-      g_ar_max = level;
-   if (++g_ar_n >= 600)
+   if (level > audio_tel.max)
+      audio_tel.max = level;
+   if (++audio_tel.n >= 600)
    {
       unsigned st = g_audio_starved;
       fe_evt("audio_ring n=%u lvl=%u min=%u max=%u target=%u nudge=%u "
-             "starved=%u in_rate=%u", g_ar_n, level, g_ar_min, g_ar_max,
-             g_ring_high_water, g_ar_nudge, st - g_ar_starved0, in_rate);
-      g_ar_starved0 = st;
-      g_ar_n = 0;
+             "starved=%u in_rate=%u", audio_tel.n, level, g_ar_min, audio_tel.max,
+             g_ring_high_water, audio_tel.nudge, st - audio_tel.starved0, in_rate);
+      audio_tel.starved0 = st;
+      audio_tel.n = 0;
       g_ar_min = ~0u;
-      g_ar_max = 0;
-      g_ar_nudge = 0;
+      audio_tel.max = 0;
+      audio_tel.nudge = 0;
    }
 }
 

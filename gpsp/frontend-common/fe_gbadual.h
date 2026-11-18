@@ -117,6 +117,9 @@ uint16_t fe_gbadual_keys_from_retro(uint32_t pad);
  * gba_memory.o, psp/Makefile): 32 KiB ROM page faults served.
  * fe_gbadual.c asserts its type equals instance A's. */
 extern uint32_t gbab_gamepak_page_loads;
+/* Instance B's reg[] (the same rename of cpu.o): the DRPROF_HW heartbeat reads its
+ * phase word.  Declared only, as reg[] is in core_fe.h. */
+extern uint32_t gbab_reg[];
 
 #ifdef __cplusplus
 }

@@ -14,7 +14,7 @@
 * ci_greps.py R7 (check c) on a scratch tree: warn mode counts and never fails; fail mode (the
   default since C2-1) fails each raw read unless a KNOWN row names its file and key; fe_priv.h
   and comments are not counted.  On this tree R7 in fail mode is clean: the one raw read is the
-  frame loop's rewind_gedump, KNOWN until C2-5.
+  frame loop's rewind_gedump, KNOWN (frame parity: raw in every build).
 """
 import os
 import shutil

@@ -297,8 +297,8 @@ static void me_rend_fill_desc(int out)
       sceKernelDcacheWritebackRange(vram_clean, VRAM_DIRTY_PAGES);
       sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
       sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
-      g_mer_wb_pages += n;
-      g_mer_wb_n++;
+      TEL(merend_tel.wb_pages += n);
+      TEL(merend_tel.wb_n++);
    }
 #if ME_MIDFRAME_LOG
    {
@@ -422,7 +422,7 @@ static void me_rend_frame(int emulated)
    if (!g_me_rend)
       return;
    LOOP_PHASE(7);
-   g_mer_frames++;
+   TEL(merend_tel.frames++);
 
    /* 1. Retire the previous post (render of frame N-1).  A full frame has
     *    elapsed since the post, so the ~10 ms render is normally long done;
@@ -502,7 +502,7 @@ static void me_rend_frame(int emulated)
          /* ME still busy: drop this frame (present the old one), do NOT
           * flip the capture buffer — the next emulated frame overwrites
           * the capture and we try again. */
-         g_mer_drops++;
+         TEL(merend_tel.drops++);
          /* Any fast-forward outruns the ME by design — drops there are the
           * expected outcome, not a sick renderer, and a teardown would
           * silently switch rendering paths mid-FF (or mid-measurement).
@@ -530,10 +530,9 @@ static void me_rend_frame(int emulated)
             while (!me_host_input_done() &&
                    ((t1 = (unsigned)sceKernelGetSystemTimeLow()) - t0) < MER_INPUT_US)
                ;
-            t1 = (unsigned)sceKernelGetSystemTimeLow() - t0;
-            g_mer_wait_us += t1;
-            if (t1 > g_mer_wait_max)
-               g_mer_wait_max = t1;
+            t1 = (unsigned)sceKernelGetSystemTimeLow() - t0;   /* kept: timing */
+            TEL(merend_tel.wait_us += t1);
+            TEL(if (t1 > merend_tel.wait_max) merend_tel.wait_max = t1);
             if (!me_host_input_done())
             {
                me_rend_teardown("input_wedge");   /* watchdog-class failure */
@@ -564,7 +563,7 @@ static void me_rend_frame(int emulated)
          me_capture_buf = g_mer_cap[g_mer_cur];
       }
       else
-         g_mer_drops++;
+         TEL(merend_tel.drops++);
    }
 
 present:
@@ -580,18 +579,20 @@ present:
          me_rend_teardown("watchdog");
    }
 
-   if (++g_mer_census >= 600)
+   if (++merend_tel.census >= 600)
    {
       fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u "
              "dirty=%d wb_pages=%u "
              "rend_n=%u rend_mean_us=%u rend_max_us=%u "
              "vis_n=%u vis_mean_us=%u vis_max_us=%u",
-             g_mer_frames, g_mer_drops, g_mer_wait_us / g_mer_census,
-             g_mer_wait_max,
+             merend_tel.frames, merend_tel.drops,
+             merend_tel.wait_us / merend_tel.census,
+             merend_tel.wait_max,
              g_mer_dirty_cfg,
-             g_mer_wb_n ? g_mer_wb_pages / g_mer_wb_n : 0u,
-             g_mer_rend_n, g_mer_rend_n ? g_mer_rend_us / g_mer_rend_n : 0,
-             g_mer_rend_max,
+             merend_tel.wb_n ? merend_tel.wb_pages / merend_tel.wb_n : 0u,
+             merend_tel.rend_n,
+             merend_tel.rend_n ? merend_tel.rend_us / merend_tel.rend_n : 0,
+             merend_tel.rend_max,
              g_vis_n, g_vis_n ? g_vis_us / g_vis_n : 0, g_vis_max);
 #if ME_MIDFRAME_LOG
       /* Cumulative recorder work (video.h me_log_stats_t): what the mid-frame
@@ -604,11 +605,11 @@ present:
              me_log_stats.page_copies, me_log_stats.base_copies,
              me_log_stats.entries, me_log_stats.overflows);
 #endif
-      g_mer_census = 0;
-      g_mer_wait_us = g_mer_wait_max = 0;
-      g_mer_rend_n = g_mer_rend_us = g_mer_rend_max = 0;
+      merend_tel.census = 0;
+      merend_tel.wait_us = merend_tel.wait_max = 0;
+      merend_tel.rend_n = merend_tel.rend_us = merend_tel.rend_max = 0;
       g_vis_n = g_vis_us = g_vis_max = 0;
-      g_mer_wb_pages = g_mer_wb_n = 0;
+      merend_tel.wb_pages = merend_tel.wb_n = 0;
    }
    LOOP_PHASE(2);   /* back in the core's frame (always called from it) */
 }

@@ -107,23 +107,12 @@ enum { JCM_LEGACY = 0, JCM_ROMWHOLE = 1, JCM_DISCIPLINE = 2, JCM_NOOWNER = 3 };
 extern u32 jit_code_mode;
 #endif
 
-/* Statistics: always kept in discipline builds (a few adds per publish). */
-typedef struct
-{
-  u32 publishes;        /* non-empty publishes                               */
-  u32 spans;            /* spans published                                   */
-  u32 lines;            /* 64-byte lines written back (and, if ranged, I-inv) */
-  u32 whole_i;          /* whole I-cache invalidates                         */
-  u32 early;            /* publishes forced by a full span table             */
-  u32 owner[JOWN_COUNT];
-  u32 big_i;            /* whole-I forced by a span >= 16 KiB (kept last:
-                           the frontend reads the first ten words) */
-  u32 kcalls;           /* kernel cache calls (ranged + whole) by publishes  */
-  u32 lineops;          /* user-mode cache line ops (JIT_COST PUBINL)        */
-} jit_code_stats_type;
+/* Statistics: always kept in discipline builds (a few adds per publish).  The type,
+ * jit_code_stats_type, is core_fe.h's (the frontend's heartbeat reads it by field). */
+_Static_assert(JOWN_COUNT == CORE_FE_JOWN_COUNT,
+               "core_fe.h CORE_FE_JOWN_COUNT must match jit_code.h's JOWN_* reasons");
 /* run time: 1 = user-mode line ops (default), 0 = the kernel calls */
 extern u32 jit_pub_inline;
-extern jit_code_stats_type jit_code_stats;
 
 /* JIT_CODE_CHECK (implied by JIT_CODE_AUDIT): zone asserts on every record
  * and on every pointer a lookup returns.  Debug/twin builds only. */

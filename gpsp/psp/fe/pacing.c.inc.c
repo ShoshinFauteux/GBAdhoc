@@ -529,8 +529,8 @@ static void lat_census(void)
           pacing_tel.lat_age_n ? pacing_tel.lat_age_us / pacing_tel.lat_age_n : 0u,
           g_ll_cfg, g_ll_mode_h, pacing_tel.ll_hit, pacing_tel.ll_miss_me, pacing_tel.ll_miss_ge,
           pacing_tel.ll_would, pacing_tel.ll_wouldnt, pacing_tel.ll_to_h, pacing_tel.ll_to_b, g_ll_blit_ema,
-          pacing_tel.lat_age_n, g_in_fresh_n, g_in_fresh_got,
-          g_in_fresh_n ? g_in_fresh_us / g_in_fresh_n : 0u,
+          pacing_tel.lat_age_n, input_tel.fresh_n, input_tel.fresh_got,
+          input_tel.fresh_n ? input_tel.fresh_us / input_tel.fresh_n : 0u,
           pacing_tel.ll_eng, pacing_tel.ll_slot, pacing_tel.ll_slot_fail, g_ll_win_miss, g_ll_win_n,
           g_ll_clean, (unsigned)ll_need_us(), g_ll_blit_dev,
           g_ll_lead_min == ~0u ? 0u : g_ll_lead_min,
@@ -558,6 +558,6 @@ static void lat_census(void)
    pacing_tel.ll_to_h = pacing_tel.ll_to_b = 0;
    pacing_tel.ll_eng = pacing_tel.ll_slot = pacing_tel.ll_slot_fail = pacing_tel.ll_pull = 0;
    g_ll_lead_min = ~0u;
-   g_in_fresh_n = g_in_fresh_us = g_in_fresh_got = 0;
+   input_tel.fresh_n = input_tel.fresh_us = input_tel.fresh_got = 0;
 }
 

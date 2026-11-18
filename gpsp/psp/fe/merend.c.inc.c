@@ -45,7 +45,6 @@ static int mer_vispost_active(void)
           !skip_next_frame;
 }
 static int g_mer_posted;        /* posted from the vcount-160 hook this frame */
-static unsigned g_mer_wb_pages, g_mer_wb_n;
 /* Frame start at file scope. frame_t0 in the main loop is a LOCAL and is only
  * taken while a session is up; this probe wants every frame. */
 static uint64_t g_frame_start_us;
@@ -76,7 +75,7 @@ static void me_rend_teardown(const char *why)
    me_capture_buf  = NULL;
    g_mer_pending = g_mer_ready = g_mer_last_presented = -1;
    fe_evt("me_rend off reason=%s frames=%u drops=%u", why,
-          g_mer_frames, g_mer_drops);
+          merend_tel.frames, merend_tel.drops);
 }
 
 static int me_rend_init(void);   /* defined below */

@@ -254,39 +254,47 @@ def _file_stmt(stmt, defined, own_vars, res):
 
 
 KNOWN = os.path.join(HERE, 'abi_asserts.known')
-# The names asserted at the reviewed baseline, per flavour.  The discovery pass moves a
-# copy to UNCHECKED whenever its typedef does not compile in the core TU, so without
-# this pin a copy retyped to a frontend-only typedef (`extern fe_count_t x;` with
-# fe_count_t = u16, where the core says u32) silently stopped being checked and the
-# tool still passed (verifier 2026-11-05).  A pinned name that is no longer asserted
-# FAILS; `--write-pin` rewrites a flavour's entries after review.
-PIN = os.path.join(HERE, 'abi_asserts.pinned')
+# THE GUARD (tier C, C6-7; health-out/design/C-6.md).  main_psp.c includes gpsp/core_fe.h, so a
+# frontend copy of a name core_fe.h declares is redundant at best and, retyped, a compile error
+# in main_psp.o itself.  gen FAILS on any such copy ("delete it: core_fe.h declares it").  This
+# replaces the old pin file (abi_asserts.pinned): its job was to catch an asserted copy retyped
+# to a frontend-only type, which the discovery pass would quietly move to UNCHECKED.  Such a
+# retyping of a core_fe.h name now fails the build and this guard, and any other UNCHECKED copy
+# fails abi_asserts.ratchet (0 UNCHECKED in every flavour since C6-7).
+CORE_FE = 'core_fe.h'
 
 
-def load_pin(path, flavour):
-    if not path or not os.path.exists(path):
-        return None
-    out = set()
-    for line in open(path, encoding='utf-8'):
-        if line.startswith('#') or not line.strip():
-            continue
-        p = line.rstrip('\n').split('\t')
-        if p[0] == flavour:
-            out.add(p[1])
-    return out
-
-
-def write_pin(path, flavour, names):
+def core_fe_names(src):
+    """the names gpsp/core_fe.h declares.  It is define-free (ci_greps R8): its only braces
+    besides struct bodies are the extern "C" block, so the file is read with that block's lines
+    and the directives blanked, then through extract() like main_psp.c's -E."""
+    import tempfile
+    p = os.path.join(src, CORE_FE)
+    if not os.path.exists(p):
+        return set()
     keep = []
-    if os.path.exists(path):
-        keep = [l for l in open(path, encoding='utf-8')
-                if not l.startswith('#') and l.strip() and l.split('\t')[0] != flavour]
-    with open(path, 'w', newline='\n', encoding='utf-8') as f:
-        f.write('# T14 pinned asserted copies: flavour <TAB> name.  Written by abi_asserts.py\n'
-                '# --write-pin after review; a pinned name that is no longer asserted fails gen.\n')
-        f.writelines(sorted(keep))
-        for n in sorted(names):
-            f.write('%s\t%s\n' % (flavour, n))
+    for ln in open(p, encoding='utf-8').read().split('\n'):
+        s = ln.strip()
+        keep.append('' if s.startswith('#') or s in ('extern "C" {', '}') and not keep_struct(keep) else ln)
+    d = tempfile.mkdtemp(prefix='abi_cfe_')
+    try:
+        q = os.path.join(d, 'core_fe.h')
+        with open(q, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('\n'.join(keep))
+        return {name for name, _, _, _ in extract(C.load_raw(q))}
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def keep_struct(lines):
+    """True while the text so far has an open brace other than extern "C"'s (a struct body)."""
+    depth = 0
+    for ln in lines:
+        if ln.strip() == 'extern "C" {':
+            continue
+        depth += ln.count('{') - ln.count('}')
+    return depth > 0
 
 
 def load_known(path=KNOWN):
@@ -451,10 +459,10 @@ def constants_line(macros_fe, macros_test, missing):
         '%s %s' % (k, at[k]) for k in CORE_MACROS + [t for t in TEST_MACROS if t not in CORE_MACROS]))
 
 
-def gen_verdict(rc, pin_fail, missing):
-    """gen's exit status: 0 only when the check TU compiles, no pinned name is lost and all six
-    constants were found (a missing constant is a failure, never a silent drop)."""
-    return 0 if rc == 0 and not pin_fail and not missing else 1
+def gen_verdict(rc, guard_fail, missing):
+    """gen's exit status: 0 only when the check TU compiles, no copy repeats a core_fe.h name and
+    all six constants were found (a missing constant is a failure, never a silent drop)."""
+    return 0 if rc == 0 and not guard_fail and not missing else 1
 
 
 # ------------------------------------------------------------- generation
@@ -554,7 +562,7 @@ def compile_check(src, flavour_dir, workdir, header_name='fe_abi_asserts.h', cor
 
 
 def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None, known_path=KNOWN,
-        pin_path=PIN, frags=None, with_h=None, platform_path=PLATFORM):
+        frags=None, with_h=None, platform_path=PLATFORM):
     """frags: [(mutated copy, 'fe/X.inc.c')] laid over the tree's fragments (-E and constants).
     with_h: tree-relative headers the check TU includes after common.h (C6-1 --with)."""
     os.makedirs(outdir, exist_ok=True)
@@ -636,29 +644,19 @@ def gen(flavour_dir, src, outdir, flavour, main_c=None, core_h=None, test_c=None
     unused = [n for n in known if n not in set(i[0] for i in items)]
     if unused:
         rep.append('known entries with no matching copy in this flavour (stale?): %s' % ', '.join(unused))
-    asserted = set(i[0] for i in items)
-    pin_fail = 0
-    if pin_path == 'WRITE':
-        write_pin(PIN, flavour, asserted)
-        rep.append('pin: wrote %d asserted names for %s to %s' % (len(asserted), flavour, PIN))
-    else:
-        pinned = load_pin(pin_path, flavour)
-        if pinned is None:
-            rep.append('pin: none (%s missing): asserted set not held to a baseline' % pin_path)
-        else:
-            why = {n: w for n, _, w in unchecked}
-            for n in sorted(pinned - asserted):
-                pin_fail += 1
-                rep.append('  PIN FAIL %s: asserted at the pinned baseline, now %s' % (
-                    n, ('UNCHECKED (%s)' % why[n]) if n in why else 'no copy found'))
-            new = sorted(asserted - pinned)
-            rep.append('pin: %d pinned, %d lost, %d new%s' % (
-                len(pinned), pin_fail, len(new), (' (review, then --write-pin): ' + ', '.join(new)) if new else ''))
+    cfe = core_fe_names(src)
+    dup = sorted({(n, cite(ln)) for n, ln, _, _ in items if n in cfe} |
+                 {(n, cite(ln)) for n, ln, _ in unchecked if n in cfe})
+    for n, at in dup:
+        rep.append('  GUARD FAIL %s at %s: a copy of a name core_fe.h declares (main_psp.c includes it): '
+                   'delete the copy' % (n, at))
+    rep.append('guard (no copy of a core_fe.h name, %d names): %s' % (
+        len(cfe), 'ok' if not dup else '%d copies' % len(dup)))
     rep += ['  ' + l for l in fails[:30]]
     with open(os.path.join(outdir, 'report.txt'), 'w', newline='\n') as f:
         f.write('\n'.join(rep) + '\n' + se)
     print('\n'.join(rep))
-    return gen_verdict(rc, pin_fail, missing)
+    return gen_verdict(rc, len(dup), missing)
 
 
 # ------------------------------------------------------------- the sites no flavour compiles
@@ -927,13 +925,10 @@ def main():
                    help='a tree-relative header the check TU includes after common.h (repeatable)')
     g.add_argument('--platform', default=PLATFORM, help='platform names (abi_asserts.platform)')
     g.add_argument('--known', default=KNOWN)
-    g.add_argument('--pin', default=PIN, help='pinned asserted names (abi_asserts.pinned)')
-    g.add_argument('--write-pin', action='store_true', help='rewrite this flavour\'s pin (after review)')
     a = sub.add_parser('all')
     a.add_argument('--run', required=True)
     a.add_argument('--src', required=True)
     a.add_argument('--out', required=True)
-    a.add_argument('--write-pin', action='store_true')
     a.add_argument('--with', dest='with_h', action='append', metavar='H')
     u = sub.add_parser('unbuilt')
     u.add_argument('--src', required=True)
@@ -952,12 +947,12 @@ def main():
     if o.cmd == 'gen':
         fl = o.flavour or os.path.basename(os.path.normpath(o.flavour_dir))
         return gen(o.flavour_dir, o.src, o.out, fl, o.main_c, o.core_h, o.test_c, o.known,
-                   'WRITE' if o.write_pin else o.pin, [tuple(x) for x in (o.frag or [])], o.with_h or DEFAULT_WITH, o.platform)
+                   [tuple(x) for x in (o.frag or [])], o.with_h or DEFAULT_WITH, o.platform)
     if o.cmd == 'all':
         rc = 0
         for fl in FLAVOURS:
             rc |= gen(os.path.join(o.run, fl), o.src, os.path.join(o.out, fl), fl,
-                      pin_path='WRITE' if o.write_pin else PIN, with_h=o.with_h or DEFAULT_WITH)
+                      with_h=o.with_h or DEFAULT_WITH)
         return rc
     ap.print_help()
     return 2
