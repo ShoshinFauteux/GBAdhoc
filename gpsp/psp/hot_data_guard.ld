@@ -1,6 +1,6 @@
 /* hot_data_guard.ld -- HOT_DATA_GUARD's placement (mips/mips_stub.S), added to
- * psp-gcc's default script with INSERT (psp/Makefile, only when the ROOT make
- * has HOT_DATA_GUARD=1).
+ * psp-gcc's default script with INSERT (psp/Makefile; every build, since the
+ * core half is built in and tools/build.sh always passes HOT_DATA_GUARD=1).
  *
  * WHY A SCRIPT.  The first guard asked for the placement with `.balign 8192`
  * on .data.gbahot.a.  An 8 KiB input alignment raises the alignment of the

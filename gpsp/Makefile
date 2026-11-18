@@ -284,25 +284,17 @@ else ifeq ($(platform), psp1)
     $(error LAYOUT_PIN=$(LAYOUT_PIN): pinning is built in (code-health A-7); drop LAYOUT_PIN)
 	endif
 	CFLAGS += -ffunction-sections -DLAYOUT_PIN=1
-	# SMC_PARTIAL_SAFE=1: experimental selective invalidation with exact,
-	# per-ISA block extents and indirect cross-block branches into RAM. ARM
-	# block stores are eligible only when they do not write back their base;
-	# advancing copy loops retain the proven full-cache flush.
+	# BUILT IN (code-health A-6/B-1; the ifeq blocks below that name a
+	# GPSP_BUILT_IN or GPSP_BUILT_IN_B1 switch stay for NAME=1 recipes and the
+	# Lab's coreFlags, and change nothing): SMC_PARTIAL_SAFE, selective
+	# invalidation with exact per-ISA block extents.
 	ifeq ($(SMC_PARTIAL_SAFE),1)
 	CFLAGS += -DSMC_PARTIAL_SAFE
 	endif
-	# SMC_GATES=1: add a translation gate at each self-modified address so
-	# future blocks split there.  Independent of SMC_PARTIAL_SAFE on purpose —
-	# gates are what bought Unbound its speed AND what broke its audio, so
-	# the two must be testable separately.
+	# SMC_GATES (built in): a translation gate at a self-modified address
+	# splits future blocks there (cpu_threaded.c TRANSLATION GATES).
 	ifeq ($(SMC_GATES),1)
 	CFLAGS += -DSMC_GATES
-	endif
-	# CLUSTER_BYTES=N: gate-clustering window (default 128, cpu_threaded.c).
-	# Must stay BELOW the spacing between a game's distinct patched regions or
-	# they merge into one gate; H&S's two mixer copies are 152 bytes apart.
-	ifneq ($(CLUSTER_BYTES),)
-	CFLAGS += -DSMC_GATE_CLUSTER=$(CLUSTER_BYTES)
 	endif
 	# GATE_SLOTS=N: size of the translation gate table (default 8, cpu.h).
 	# More slots cover more self-modifying regions, but scan_block compares
@@ -332,11 +324,11 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_SPLIT_DIAG),1)
 	CFLAGS += -DXLAT_SPLIT_DIAG=1
 	endif
-	# VRAM_EXEC=1: translate and run code the game copied into VRAM
+	# VRAM_EXEC (built in): translate and run code the game copied into VRAM
 	# (cpu_threaded.c VRAM_EXEC; Big Mutha Truckers, Street Racing Syndicate,
 	# jsmolka nes.gba).
-	# FIQ_BANK_FIX=1: bank FIQ's r8-r12 correctly in set_cpu_mode (cpu.cc;
-	# OpenLara).  (From claude/self-activate 950c5f3/25cab1b.)
+	# FIQ_BANK_FIX (built in): bank FIQ's r8-r12 correctly in set_cpu_mode
+	# (cpu.cc; OpenLara).
 	ifeq ($(FIQ_BANK_FIX),1)
 	CFLAGS += -DFIQ_BANK_FIX=1
 	endif
@@ -359,10 +351,10 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_WRITE_HISTO),1)
 	CFLAGS += -DSMC_WRITE_HISTO=1
 	endif
-	# TIMER_RELOAD_FIX=1: a timer that has just overflowed reads its reload
-	# value instead of 0x0000 (main.c update_timers).  Need for Speed
-	# Underground computed a 4 GB mixer fill from the 0 and wiped IWRAM
-	# (dr2-nfsu 2026-10-21).  Guest-visible.
+	# TIMER_RELOAD_FIX (built in): a timer that has just overflowed reads its
+	# reload value instead of 0x0000 (main.c update_timers).  Need for Speed
+	# Underground computed a 4 GB mixer fill from the 0 and wiped IWRAM.
+	# Guest-visible.
 	ifeq ($(TIMER_RELOAD_FIX),1)
 	CFLAGS += -DTIMER_RELOAD_FIX
 	endif
@@ -373,21 +365,20 @@ else ifeq ($(platform), psp1)
 	# when $PC_RING_PC is entered with r1 negative.
 	# SMC_FALLBACK_STATS=1: DIAGNOSTIC.  Count why SMC traps fall back to a
 	# full RAM flush (EVT core_health smcfb=).
-	# smc-coverage 2026-10-20: widen SMC_PARTIAL_SINGLE, one class per switch
-	# (all need SMC_PARTIAL_SINGLE=1; cpu_threaded.c smc_writer_safe_range).
-	#   SMC_SINGLE_THUMB=1  Thumb STR/STRH/STRB single stores
-	#   SMC_SINGLE_HALF=1   ARM STRH
-	#   SMC_SINGLE_ANYPC=1  writers outside IWRAM (ROM/EWRAM/BIOS)
-	#   SMC_SINGLE_EWRAM=1  EWRAM targets (smc_retire_span)
-	#   SMC_SINGLE_HOT=K    widened classes engage only after K of their traps
+	# The single-store classes SMC_PARTIAL_SINGLE retires selectively, all
+	# built in (cpu_threaded.c smc_writer_safe_range):
+	#   SMC_SINGLE_THUMB    Thumb STR/STRH/STRB single stores
+	#   SMC_SINGLE_HALF     ARM STRH
+	#   SMC_SINGLE_ANYPC    writers outside IWRAM (ROM/EWRAM/BIOS)
+	#   SMC_SINGLE_EWRAM    EWRAM targets (smc_retire_span)
+	#   SMC_SINGLE_HOT=64   widened classes engage only after 64 of their traps
 	#                       (or once selective retirement is already active)
 	ifneq ($(SMC_SINGLE_HOT),)
 	CFLAGS += -DSMC_SINGLE_HOT=$(SMC_SINGLE_HOT)
 	endif
 	# SMC_BLOCK_EXACT=1: tag-check every non-final word of a non-SP block
 	# store (mips_emit.h aligned store stub) and retire what it hits; block
-	# stores' final-word traps then take the exact single-word path.  Needs
-	# SMC_PARTIAL_SINGLE=1 (and SMC_SINGLE_THUMB=1 for Thumb STMIA).
+	# stores' final-word traps then take the exact single-word path.
 	ifeq ($(SMC_BLOCK_EXACT),1)
 	CFLAGS += -DSMC_BLOCK_EXACT
 	endif
@@ -409,7 +400,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_FALLBACK_STATS),1)
 	CFLAGS += -DSMC_FALLBACK_STATS
 	endif
-	# STALE_CHECK=1: DIAGNOSTIC (needs SMC_PARTIAL_SAFE and SMC_FALLBACK_STATS).
+	# STALE_CHECK=1: DIAGNOSTIC (needs SMC_FALLBACK_STATS).
 	# Hash each RAM block's guest bytes at translation and re-check on reuse.
 	ifeq ($(STALE_CHECK),1)
 	CFLAGS += -DSTALE_CHECK
@@ -434,7 +425,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_WRITER_PROBE),1)
 	CFLAGS += -DSMC_WRITER_PROBE=1
 	endif
-	# DMA_SMC_FLUSH=1: an HBlank/VBlank DMA that lands on translated code
+	# DMA_SMC_FLUSH (built in): an HBlank/VBlank DMA that lands on translated code
 	# (CPU_ALERT_SMC from dma_transfer) flushes the RAM translation cache and
 	# re-dispatches, as the CPU-triggered DMA path already does.  Upstream
 	# dropped that alert in update_gba, leaving the old translation live.
@@ -469,7 +460,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_RETIRE_LOCAL_CHECK),1)
 	CFLAGS += -DSMC_RETIRE_LOCAL_CHECK=1
 	endif
-	# XS_HEAP=1: (cpu-levers cpl2w).  The SMC_SAME_SKIP and
+	# XS_HEAP (built in): the SMC_SAME_SKIP and
 	# SMC_RETIRE_LOCAL tables (up to 69 KiB) come from one heap block taken
 	# before the ROM cache instead of .bss, so the hot arrays after them in
 	# .bss keep the release layout (D-cache sets).
@@ -500,7 +491,7 @@ else ifeq ($(platform), psp1)
 	ifeq ($(DISPATCH_CACHE),1)
 	CFLAGS += -DDISPATCH_CACHE=1
 	endif
-	# SPIN_SKIP=1: (cpu-levers).  A loop the translator proves
+	# SPIN_SKIP (built in): a loop the translator proves
 	# side-effect free (loads + ALU only, every iteration a pure function of
 	# memory) ends the scheduler slice when it spins on locations only an
 	# event can change; anything else (timer counters, KEYINPUT, serial,
@@ -509,21 +500,20 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SPIN_SKIP),1)
 	CFLAGS += -DSPIN_SKIP=1
 	endif
-	# DMA_SMC_RETIRE=1: (cpu-levers, twin prototype).  A DMA that
-	# lands on translated code retires exactly the tagged words it wrote while
-	# selective retirement is active, instead of a full RAM flush (Top Gear
-	# Rally's ROM->IWRAM overlays).  Needs SMC_STM_RANGE.
+	# DMA_SMC_RETIRE (built in): a DMA that lands on translated code retires
+	# exactly the tagged words it wrote while selective retirement is active,
+	# instead of a full RAM flush (Top Gear Rally's ROM->IWRAM overlays).
 	ifeq ($(DMA_SMC_RETIRE),1)
 	CFLAGS += -DDMA_SMC_RETIRE=1
 	endif
 	ifeq ($(SMC_STM_AHEAD_MUTANT),1)
 	CFLAGS += -DSMC_STM_AHEAD_MUTANT=1
 	endif
-	# SMC_STM_FIXED=1: ON in gpsp_features.h (Chandler Hardy, PR #27; 4.6.0
-	# beta; =0 switches it off).  SMC_STM_RANGE's span
-	# retirement also for STMIA Rn WITHOUT writeback (ipatix's mixer pastes
-	# its resampling loop with STMIA LR,{..}: The Morrow's Golden Country).
-	# No forward widening for this shape.  Needs SMC_STM_RANGE.
+	# SMC_STM_FIXED=1: ON in gpsp_features.h (Chandler Hardy, PR #27; =0
+	# switches it off).  SMC_STM_RANGE's span retirement also for STMIA Rn
+	# WITHOUT writeback (ipatix's mixer pastes its resampling loop with
+	# STMIA LR,{..}: The Morrow's Golden Country).  No forward widening for
+	# this shape.
 	ifeq ($(SMC_STM_FIXED),1)
 	CFLAGS += -DSMC_STM_FIXED=1
 	endif
@@ -535,33 +525,33 @@ else ifeq ($(platform), psp1)
 	ifeq ($(XLAT_THUMB_NO_UNSWITCH),1)
 	CFLAGS += -DXLAT_THUMB_NO_UNSWITCH=1
 	endif
-	# SERIAL_IDLE_FAST=1: contender #3 (docs/DYNAREC-PROFILE.md).
+	# SERIAL_IDLE_FAST (built in; docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).
 	ifeq ($(SERIAL_IDLE_FAST),1)
 	CFLAGS += -DSERIAL_IDLE_FAST=1
 	endif
-	# SCHED_FAST=1: scheduler fast paths in update_gba, compiled in but OFF
-	# until the run-time switch `sched_fast` is set (harness key sched_fast;
-	# docs/GBA-LINK-MIRROR.md 24).  Pure speed, exact by construction.
+	# SCHED_FAST (built in): scheduler fast paths in update_gba, used while the
+	# run-time switch `sched_fast` is set (the PSP frontend sets it from
+	# config.ini, default 1; docs/GBA-LINK-MIRROR.md 24).  Pure speed, exact by
+	# construction.
 	ifeq ($(SCHED_FAST),1)
 	CFLAGS += -DSCHED_FAST=1
 	endif
-	# TIMER_LAZY=1: PROTOTYPE, changes guest-visible timing (overflows of
-	# timers with no interrupt and no cascade are not scheduler events).
-	# Compiled in but OFF until `timer_lazy` is set (harness key timer_lazy;
-	# docs/GBA-LINK-MIRROR.md 26).  Not a decision to ship.
-	# HALT_HOP=1: while the CPU is halted, one scheduler jump over H-blank
-	# edges nothing can see (main.c halt_hop_begin); exact (corpus 35/35, pair
-	# twin hash-identical, claude/kirby-hop2).  Run-time mask timer_lazy
-	# (bit 1 HALT_HOP, bit 2 HOP_DRAWN); HALT_HOP_DEFAULT=N its start value
-	# (default 6 = both on).
+	# HALT_HOP (built in): while the CPU is halted, one scheduler jump over
+	# H-blank edges nothing can see (main.c halt_hop_begin); exact.  Run-time
+	# mask timer_lazy (bit 1 HALT_HOP, bit 2 HOP_DRAWN); HALT_HOP_DEFAULT=N its
+	# start value (default 6 = both on).
 	ifeq ($(HALT_HOP),1)
 	CFLAGS += -DHALT_HOP=1
 	endif
 	ifneq ($(HALT_HOP_DEFAULT),)
 	CFLAGS += -DHALT_HOP_DEFAULT=$(HALT_HOP_DEFAULT)
 	endif
+	# TIMER_LAZY=1: PROTOTYPE, changes guest-visible timing (overflows of
+	# timers with no interrupt and no cascade are not scheduler events).
+	# Compiled in but OFF until `timer_lazy` is set (harness key timer_lazy;
+	# docs/GBA-LINK-MIRROR.md 26).  Not a decision to ship.
 	ifeq ($(TIMER_LAZY),1)
 	CFLAGS += -DTIMER_LAZY=1
 	endif
@@ -606,9 +596,10 @@ else ifeq ($(platform), psp1)
 	endif
 	# GPSP_PROFILE=release|harness|diagnostic.  Names the build so
 	# gpsp_profile.h can reject combinations that are silently wrong (a
-	# release with telemetry, two SMC rules where one shadows the other).
-	# tools/build.sh always sets it; leaving it unset means "unprofiled",
-	# which still compiles but gets no cross-checking.
+	# release with telemetry).  tools/build.sh always sets it (harness64 and
+	# lab pass harness).  Any other value, or none, means "unprofiled", which
+	# still compiles but gets no cross-checking: the soak profile passes
+	# GPSP_PROFILE=soak, which is not mapped here, so its core is unprofiled.
 	ifeq ($(GPSP_PROFILE),release)
 	CFLAGS += -DGPSP_PROFILE_RELEASE=1
 	endif
@@ -619,9 +610,10 @@ else ifeq ($(platform), psp1)
 	CFLAGS += -DGPSP_PROFILE_DIAGNOSTIC=1
 	endif
 	# ADR-0039 pixel format.  MUST MATCH psp/Makefile's PSP_PIXFMT -- the
-	# core decides the layout, the frontend's blit assumes it, and nothing
-	# at link time checks.  Build both with `make PSP_PIXFMT=rgb565` to get
-	# the old libretro layout back for a hardware A/B.
+	# core decides the layout and the frontend's blit assumes it.  A mismatch
+	# is a link error (gba_memory.c exports a symbol named after the layout,
+	# psp/video_psp.c references the one it expects).  Build both with
+	# `make PSP_PIXFMT=rgb565` to get the old libretro layout back for an A/B.
 	PSP_PIXFMT ?= psp5650
 	ifeq ($(PSP_PIXFMT), psp5650)
 		CFLAGS += -DUSE_PSP_RGB565_FORMAT

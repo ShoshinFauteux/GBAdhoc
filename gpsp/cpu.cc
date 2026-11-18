@@ -885,7 +885,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   }                                                                           \
 }                                                                             \
 
-/* PIPELINE PREFETCH WINDOW (monomyth-compat, 2026-10-30).
+/* PIPELINE PREFETCH WINDOW.
  * The ARM7TDMI has a three-stage pipeline: while an instruction executes, the
  * next one is already decoded and the one after it already fetched.  A store
  * that overwrites either of those two slots does not change what runs next:

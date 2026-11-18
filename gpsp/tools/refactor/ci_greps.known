@@ -9,3 +9,6 @@ R1	psp/lab_harness.c	*	lab build's lab_finish / ownership loss (x2 E3); reached 
 # R7 (tier C, C2-1): the frame loop's one harness read stays raw in every build: a player build folds
 # HARNESS_INT, and a folded read would take the block out of its frame loop (frame parity, 2026-11-17).
 R7	psp/fe/loop.inc.c	rewind_gedump	the only harness read inside the frame loop (static-once); raw so release and Lab compile the same frame loop (frame parity)
+# R9 (rescore 2026-11-17): the rule's own description and self-test quote the phrases it forbids.
+R9	tools/refactor/ci_greps.sh	*	R9's own description quotes the phrases
+R9	tools/refactor/tests/abi-exit-ci_test_ci_greps.sh	*	the R9 mutants' descriptions quote the phrases

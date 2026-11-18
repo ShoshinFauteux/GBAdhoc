@@ -34,7 +34,7 @@ static u32 smc_window_armed;
 /* Blocks found live and overlapping the write in [lo-4KiB, lo-span): must
  * stay 0.  Counted by the SMC_RETIRE_WINDOW_CHECK build (and the twin). */
 u32 smc_window_violations;
-/* SMC_RETIRE_LOCAL (slow-titles 2026-10-27): SMC_RETIRE_WINDOW's bound, per
+/* SMC_RETIRE_LOCAL (built in): SMC_RETIRE_WINDOW's bound, per
  * 64-byte chunk instead of per region.  smc_back[r][c] is the largest
  * distance from chunk c's first byte back to the start of any block noted
  * (ramtag_note_extent) since the last full RAM flush whose extent reaches
@@ -385,9 +385,8 @@ typedef struct
   #include "x86/x86_emit.h"
 #endif
 
-/* JIT_CODE_DISCIPLINE (docs/JIT-CODE-DISCIPLINE.md): zones, one writer API,
- * one publish point.  Every macro it adds expands to the original code when
- * the switch is off. */
+/* JIT_CODE_DISCIPLINE (built in; docs/JIT-CODE-DISCIPLINE.md): zones, one
+ * writer API, one publish point. */
 #include "jit_code.h"
 
 /* Only the MIPS emitter needs a larger private entry for SMC retirement.
@@ -2844,7 +2843,7 @@ void translate_icache_sync() {
 
 #define VALID_TAG(tagn) (tagn > LAST_TAG_NUM)
 
-/* ram_tag_next (smc-cost 2026-11-13): the first slot at or after i, up to
+/* ram_tag_next: the first slot at or after i, up to
  * `last` inclusive, holding a block-start tag; last + 1 when there is none.
  * Exactly the slots `for (; i <= last; i++) if (VALID_TAG(tagp[i]))` stops
  * at, in the same order: a slot is skipped only when both its bytes are 0 or
@@ -2926,7 +2925,7 @@ typedef struct
    * clears it then, so before activation (and after every state load) a
    * fresh tag inherits blk_end/hash from a previous user of the same tag
    * slot: comparing against that produced the 13,853 Mario Golf
-   * "mismatches" of 2026-10-20 (smc-coverage).  These fields are cleared at
+   * false "mismatches".  These fields are cleared at
    * EVERY tag allocation and written at every translation. */
   u32 stale_end_arm;
   u32 stale_end_thumb;
@@ -2941,7 +2940,7 @@ typedef struct
 } ramtag_type;
 
 #ifdef STALE_CHECK
-/* DIAGNOSTIC (bench campaign 2026-10-20, suggested by the xlat worker): prove
+/* DIAGNOSTIC: prove
  * selective SMC retirement never leaves stale code.  Every RAM block records
  * a hash of its guest source bytes when translated; every lookup that reuses
  * the translation re-hashes them.  A mismatch means the block was entered
@@ -3036,7 +3035,7 @@ static u32 smc_block_pending_full;
 typedef struct { u32 addr; u16 tag; u16 next; } smc_retired_tag_type;
 static smc_retired_tag_type smc_retired_tags[SMC_RETIRED_TAGS];
 static u32 smc_retired_tag_count;
-/* The table's INDEX (smc-cost 2026-11-13): a chain per hash bucket, newest
+/* The table's INDEX: a chain per hash bucket, newest
  * first, through the entries' `next` (entry number + 1; 0 ends a chain; the
  * field sits in what was the struct's padding, so the table is the same
  * 4 KiB).  It replaces two linear searches of the whole table: every
@@ -3445,7 +3444,7 @@ static void vram_code_check(void)
     }
 }
 
-/* SELF-ACTIVATION (claude/self-activate).  The region-6 store stubs are
+/* SELF-ACTIVATION.  The region-6 store stubs are
  * built dormant (mips_emit.h vram_x_slots): until the game first jumps into
  * VRAM, a VRAM store costs exactly what it did in 4.1.1.  That first jump
  * always arrives here (every entry into VRAM is an indirect branch through
@@ -3561,8 +3560,8 @@ vram_lookup_builder(thumb)
     vram_lookup_translate_##type((target), (thumb)) :                         \
     block_lookup_translate_##type(target))
 
-/* SMC_REUSE (make SMC_REUSE=1, off by default; docs/BUILD-SWITCHES.md).
- * The implementation and its contract are above translate_block_arm. */
+/* SMC_REUSE (built in; docs/BUILD-SWITCHES.md).  The implementation and its
+ * contract are above translate_block_arm. */
 struct smc_reuse_rec_s;
 static struct smc_reuse_rec_s *smc_reuse_find(u32 key);
 static u32 smc_reuse_gen;         /* bumped by every gate-table change */
@@ -3970,7 +3969,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 block_lookup_translate_builder(arm);
 block_lookup_translate_builder(thumb);
 
-/* STALE_CHECK_ALL_ENTRIES (DIAGNOSTIC, smc-coverage 2026-10-20): send EVERY
+/* STALE_CHECK_ALL_ENTRIES (DIAGNOSTIC): send EVERY
  * exit that targets RAM through a dispatch island, in every mode, so that
  * stale_check_entry sees every entry into a RAM block and not only lookups
  * (eagerly patched RAM->RAM links otherwise bypass it).  Changes timing
@@ -4426,7 +4425,8 @@ vram_or_badjump_builder(thumb, 1)
 #define BADJUMP_EXHAUSTED_X(pc, type)  return vram_or_badjump_##type(pc)
 
 #ifdef DISPATCH_CACHE
-/* DISPATCH_CACHE (prototype, docs/DYNAREC-PROFILE.md): a direct-mapped
+/* DISPATCH_CACHE (on in every PSP build, gpsp_features.h; the twin oracles
+ * can turn it off; docs/DYNAREC-PROFILE.md): a direct-mapped
  * {guest pc -> host entry} table probed by mips_indirect_branch_* in asm
  * BEFORE they save the guest registers and call into C.  Filled here, on the
  * success path of the C lookup, so it only ever holds pointers this function
@@ -4441,7 +4441,7 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 #define DC_KEY_ARM(pc)   ((((pc) & 0x0FFFFFFFu) >> 2))
 #define DC_KEY_THUMB(pc) ((((pc) & 0x0FFFFFFFu) >> 1))
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
-/* DISPATCH_ASSOC (claude/ibranch, 2026-11-13): the same 4 KiB per ISA, as
+/* DISPATCH_ASSOC (built in): the same 4 KiB per ISA, as
  * 2-way sets -- {key0, entry0, key1, entry1}, 16 bytes, one quarter of a
  * D-cache line -- instead of 512 direct-mapped slots.  The twin
  * (builds/ibranch-out) found almost every C fall-through of the
@@ -4499,7 +4499,7 @@ void dispatch_cache_clear(void)
 }
 #define DC_NOTE_FILL(tbl, i_) do { } while (0)
 #endif
-/* DISPATCH_PRECISE (cpu-levers, 2026-10-26): SMC retirement forgets only the
+/* DISPATCH_PRECISE (built in): SMC retirement forgets only the
  * retired blocks' own entries instead of emptying the whole cache (Doom II
  * retires ~200 blocks a frame; each wipe cost the next indirect branches a
  * C lookup: twin dispatch-cache miss rate 59-70%).
@@ -4909,7 +4909,7 @@ DC_NOINLINE u8 function_cc *block_lookup_address_thumb(u32 pc)
  * separately: reserving it cost nothing, so it was never the problem -- but
  * with nothing emitted there is nothing to reserve for.) */
 
-/* SMC_SAME_SKIP (cpu-levers, 2026-10-26): do not retire translations that a
+/* SMC_SAME_SKIP (built in): do not retire translations that a
  * single-store SMC trap left exactly as they were compiled.
  *
  * Doom II and Duke Nukem Advance patch their IWRAM renderers from a handful
@@ -4957,7 +4957,7 @@ static u16 *xs_val;
 static u8  *xs_ok, *xs_bad;
 static u32 xs_ready;
 u32 smc_same_skips, smc_same_poison;
-/* SMC_SAME_ADAPT (cpu-levers, 2026-10-26): record only while it pays.
+/* SMC_SAME_ADAPT (built in): record only while it pays.
  *
  * The record costs ~40 host instructions per IWRAM halfword translated
  * (xs_note_half), whether or not a single-store trap ever asks.  Hot Wheels
@@ -5089,7 +5089,7 @@ static __attribute__((noinline)) void xs_note_block(u32 start, u32 end)
 {
   u32 a;
   xs_dirty = 1;
-  /* XS_NOTE_FAST (xlat-cost 2026-10-28): eight halfwords (one xs_ok byte)
+  /* XS_NOTE_FAST (built in): eight halfwords (one xs_ok byte)
    * at a time where that is exactly what xs_note_half would do eight times.
    *  - none recorded, none poisoned: record all eight; both halves of each
    *    word were unrecorded, so xs_min[w] = s (the first half sets it, the
@@ -5250,7 +5250,7 @@ static __attribute__((noinline)) void xs_clear_all(void)
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
-/* TAG EACH HALFWORD OF AN ARM INSTRUCTION ON ITS OWN (dr2-nfsu, 2026-10-21).
+/* TAG EACH HALFWORD OF AN ARM INSTRUCTION ON ITS OWN.
  *
  * The stock macro marks the word only when BOTH halfword tags are zero.  That
  * was harmless while every SMC event wiped the whole tag map, but
@@ -5316,7 +5316,7 @@ block_exit_type block_exits[MAX_EXITS];
  * block and whose checked final word lands on the gate raises NO SMC event,
  * and the live block keeps executing the pre-patch instructions.
  *
- * Measured (PPSSPP, heart_soul_heavy, timing-neutral A/B, 2026-09-24): with
+ * Measured (PPSSPP, heart_soul_heavy, timing-neutral A/B): with
  * only the high endpoint gate 0x0300168c, SoundMainRAM's `stm lr, {r0, r1}`
  * at 0x03001644 rewrites 0x03001688 (unchecked) and 0x0300168c (checked but
  * untagged).  Blocks 030015bc..0300168c and 03001604..0300168c stayed live
@@ -5406,8 +5406,8 @@ static inline int smc_gate_map_has(u32 pc)
   return map[off >> 3] & (1u << (off & 7));
 }
 
-/* ENTRY_GATES (make ENTRY_GATES=1; needs SMC_GATES + SMC_GATE_BITMAP).  A RAM routine entered at many
- * points (a computed jump into an unrolled loop) is translated once per entry,
+/* ENTRY_GATES (built in).  A RAM routine entered at many points (a computed
+ * jump into an unrolled loop) is translated once per entry,
  * each block holding the whole rest of the routine: Driver 2's two rasterisers
  * (~4 KB of guest code, ~45 entries each) become ~380 KB of native code and
  * the RAM cache fills every few frames.  When the RAM cache is EXHAUSTED,
@@ -5418,7 +5418,7 @@ static inline int smc_gate_map_has(u32 pc)
 static u8 entry_gate_iwram[0x8000 >> 4];
 static u8 entry_gate_ewram[0x40000 >> 4];
 u32 entry_gates_armed, entry_gate_count;
-/* ENTRY_GATES_RANGE (slow-titles 2026-10-27): walk only the tag range the
+/* ENTRY_GATES_RANGE (built in): walk only the tag range the
  * full flush that follows will clear ([*_code_min & ~15, *_code_max + 8),
  * the same bounds and the same whole-region fallback as
  * flush_translation_cache_ram), instead of all 16K + 128K halfwords.  Every
@@ -5439,7 +5439,7 @@ static void entry_gates_bounds(u32 cmin, u32 cmax, u32 size, u32 *lo, u32 *hi)
     *hi = size >> 1;
   }
 }
-/* ENTRY_GATES_FAST (xlat-cost 2026-10-28): the harvest tests four tag slots
+/* ENTRY_GATES_FAST (built in): the harvest tests four tag slots
  * at a time.  Tags are 0 (data), 0x0101 (interior) or a block start with a
  * byte >= 2 (XS_WALK_PAIR's argument), so four slots whose bytes are all 0
  * or 1 hold no start.  Same slots, same bits, same count. */
@@ -5506,7 +5506,13 @@ static inline int entry_gate_has(u32 pc)
   }
   return 0;
 }
-#define ENTRY_GATE_SCAN(tag_gate_op)                                         else if (entry_gate_has(block_end_pc)) {                                     tag_gate_op;                                                               scan_exit_reason = SMC_SCAN_GATE;                                          entry_gate_stop = 1;                                                       goto block_end;                                                          }
+#define ENTRY_GATE_SCAN(tag_gate_op)                                          \
+  else if (entry_gate_has(block_end_pc)) {                                    \
+    tag_gate_op;                                                              \
+    scan_exit_reason = SMC_SCAN_GATE;                                         \
+    entry_gate_stop = 1;                                                      \
+    goto block_end;                                                           \
+  }
 
 #define SMC_GATE_MAP_ADD(pc)       smc_gate_map_add(pc)
 #define SMC_GATE_MAP_REBUILD()     smc_gate_map_rebuild()
@@ -5609,21 +5615,16 @@ static inline u32 xlat_ramend_stop(u32 start, u32 width)
 #define SCAN_VARS                       XLAT_GATEMAP_VARS
 #define SCAN_SET_CONDITION(type, c)     type##_set_condition(c)
 #define SCAN_GATE_END(tag_gate_op)      SMC_SCAN_GATE_END(tag_gate_op)
-/* XLAT_PURE (make XLAT_PURE=1, off by default; ported from claude/smc-reuse
- * bb8b7b2).
+/* XLAT_PURE (built in): scan_block clears an instruction's update_cycles flag
+ * at the TOP of its loop, for every scanned instruction.
  *
- * block_data[] is static and scan_block clears an instruction's update_cycles
- * flag only at the BOTTOM of its loop, which the last instruction of a block
- * never reaches when the scan leaves through an exit point.  The emit loop
- * then tests that slot to decide whether to commit the pending cycles before
- * the block's last instruction, so it reads whatever an EARLIER translation
- * left there: 1 if some earlier block had a branch target at the same
- * instruction index, 0 if a longer block cleared it since.  The same guest
- * code is therefore translated two ways depending on translation history.
- * With this switch the flag is cleared at the top of the loop, for every
- * scanned instruction, so a block's code depends only on its own guest bytes
- * (a precondition of reusing a translation).  It CHANGES emulation timing
- * wherever the stale flag used to be 1. */
+ * block_data[] is static, and the emit loop tests that flag to decide whether
+ * to commit the pending cycles before the block's last instruction.  Cleared
+ * only at the bottom of the loop (upstream), the last instruction of a block
+ * that leaves through an exit point kept whatever an EARLIER translation left
+ * there, so the same guest code was translated two ways depending on
+ * translation history.  Cleared here, a block's code depends only on its own
+ * guest bytes, which SMC_REUSE needs. */
 #define SCAN_CLEAR_SLOT() (block_data[block_data_position].update_cycles = 0)
 
 #define scan_block(type, smc_write_op)                                        \
@@ -5728,7 +5729,8 @@ if (ram_region) {                                                             \
   }                                                                           \
 }                                                                             \
 
-/* XLAT_FAST (make XLAT_FAST=1; claude/bench-xlat): translator-side speedups
+/* XLAT_FAST (on in every PSP build, gpsp_features.h; the twin can turn it
+ * off): translator-side speedups
  * that change NOTHING the translator produces -- same emitted bytes, same
  * tags, same counters -- only the host work spent producing them.  Each piece
  * has its own XLAT_NO_<piece> define so a bisect can switch it off alone.
@@ -5997,7 +5999,7 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
 #endif
 
 
-/* SMC_IMM_PATCH (xlat-cost 2026-10-28; twin prototype, OFF by default).
+/* SMC_IMM_PATCH (built in; docs/BUILD-SWITCHES.md).
  *
  * WHAT IT IS FOR.  Doom II, Duke Nukem Advance and Ice Nine rewrite the
  * immediate field of a handful of ARM data-processing instructions in their
@@ -6014,9 +6016,9 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
  *     unpoisoned) and the word now are both patchable (immp_class_ok: ARM
  *     DP immediate, not MSR, Rd/Rn != pc) and differ only in bits 11:0 --
  *     w's bit is set.  (Learning any retire to a DP-imm word learned 3386
- *     words on Top Gear Rally and 751 on Mario Golf for no patch at all.)  The retirement that follows removes every live translation
- *     covering w (if it cannot, the caller full-flushes, which clears
- *     everything here).
+ *     words on Top Gear Rally and 751 on Mario Golf for no patch at all.)
+ *     The retirement that follows removes every live translation covering w
+ *     (if it cannot, the caller full-flushes, which clears everything here).
  *  2. EMIT.  While w's bit is set, every ARM RAM translation of w emits the
  *     fixed form (mips_emit.h IMMP_OR) and registers the host address of its
  *     lui at commit.  A translation of w that does NOT (the word is no longer
@@ -6050,11 +6052,10 @@ static __attribute__((noinline)) void xlat_scan_arm_ram_fast(xlat_scan_state *st
  * timing still moves wherever translation volume moves the full-flush
  * points (ram-cache-pressure-codegen); emulated semantics do not.
  *
- * LAYOUT.  The emitted code of a game that never rewrites an immediate is
- * byte-identical; the helpers are out of line, outside the pinned order.
- * translate_block_arm itself grows (IMMP_OR's second emit path, twin +11.6
- * KB) and flush_translation_cache_ram (immp_reset), both pinned in hot.ord:
- * a hardware build needs the layout regenerated. */
+ * LAYOUT.  A game that never rewrites an immediate gets the same emitted code
+ * as without this mechanism.  The helpers are out of line, outside the pinned
+ * order; translate_block_arm (IMMP_OR's second emit path) and
+ * flush_translation_cache_ram (immp_reset) carry it inside hot.ord. */
 #define IMMP_K      16
 /* IMMP_ESC: the sites also hold EXEC_STALE_CHECK's opcode load (mips_emit.h
  * IMMP_ESC_OP), which only twin/lockstep builds emit.  Elsewhere every esc
@@ -6168,7 +6169,7 @@ static void immp_bad_range(u32 start, u32 end)   /* a Thumb block's extent */
  * word of the block's extent that got no site (not emitted in the fixed
  * form: a flag-only op, a different encoding path, a full pend list) leaves
  * a translation a patch cannot reach: the word goes bad, so it retires. */
-/* SMC_REUSE x SMC_IMM_PATCH (cand2, 2026-10-28).  Reuse revives a recorded
+/* SMC_REUSE x SMC_IMM_PATCH.  Reuse revives a recorded
  * body after comparing only the guest bytes it was translated from; this
  * switch rewrites bodies in place and keeps a list of the live fixed-form
  * sites of every learned word.  Two rules keep both contracts:
@@ -6423,7 +6424,7 @@ __attribute__((constructor)) static void immp_report_init(void)
 }
 #endif
 #ifdef MIPS_ARCH
-/* SPIN_SKIP (cpu-levers lever 4, 2026-10-26): fast-forward a provably
+/* SPIN_SKIP (built in): fast-forward a provably
  * side-effect-free polling loop to the next scheduled event.
  *
  * WHAT IS A SPIN LOOP.  A backward branch B (B, or Thumb B/Bcc; never BL/SWI)
@@ -6436,14 +6437,14 @@ __attribute__((constructor)) static void immp_report_init(void)
  *      a conditional ARM instruction or a partial flag write counts as a read
  *      of what it may leave unchanged;
  *   2. every register a load ADDRESS uses is never written in the loop --
- *      or (claude/idle-general) is set earlier in the same iteration to a
- *      constant, a ROM literal-pool word or an immediate, so the address is
- *      that constant (`ldr r0, =FLAG; ldrh r1, [r0]` inside the loop).
+ *      or is set earlier in the same iteration to a constant, a ROM
+ *      literal-pool word or an immediate, so the address is that constant
+ *      (`ldr r0, =FLAG; ldrh r1, [r0]` inside the loop).
  * Then, as long as no memory the loop reads changes, every iteration leaves
  * exactly the state the previous one left, and the loop never exits.
  *
- * TWO MORE SHAPES (claude/idle-general, 2026-10-27), both still one straight
- * run [T, B) inside the block being translated:
+ * TWO MORE SHAPES, both still one straight run [T, B) inside the block
+ * being translated:
  *  - EXIT IN THE MIDDLE: the body may hold conditional B/Bcc whose target is
  *    outside [T, B].  Taken, it leaves the loop (the block exits there); not
  *    taken, it only read its flags (rule 1 applies).  B is reached only when
@@ -7039,15 +7040,12 @@ int spin_check(u32 *desc)
  *     pointer that advances exactly as the real one would without this switch
  *     (smc_reuse_vptr, the record's size and chk), so the cache fills at the
  *     same block as before.
- *  5. The one known exception to (4): the real cache also holds dormant bodies
- *     and records, so it can fill while the virtual one has room.  That is
- *     handled as an ordinary cache-full flush, and counted in
- *     smc_reuse_early_full; a flush that finds the cache more than half used
- *     resets it for real to keep that rare, and the switch stays inert in
- *     any game that is not flushing constantly (see ARMING below), which is
- *     every game that fills its cache in the library sweep.  NOT yet exact:
- *     an exact answer needs either spare cache bytes that the virtual
- *     pointer never counts, or a purge that keeps the tags.
+ *  5. The real cache also holds dormant bodies and records, so it could fill
+ *     while the virtual one has room.  THE SPARE INVARIANT (smc_reuse_excess,
+ *     below) rules that out: the real cache is SMC_REUSE_SPARE bytes larger
+ *     than the virtual one, and a record or a kept flush that would use more
+ *     than the spare is refused.  smc_reuse_early_full counts violations;
+ *     by the invariant it stays 0.
  *
  * Code memory is not written on a virtual flush or on a revival whose links
  * are unchanged, so neither needs an I-cache sync. */
@@ -7085,17 +7083,16 @@ static u32 smc_reuse_index[SMC_REUSE_SLOTS];   /* cache offset of a chain head *
 static u32 smc_reuse_vptr;        /* where ram_translation_ptr would be */
 static u8 *smc_reuse_water;       /* ram_translation_ptr as last seen */
 static u32 smc_reuse_force_real;
-/* ARMING.  Records cost cache space, which contract point 5 says can make
- * the real cache fill before the virtual one.  So the switch is inert -- no
- * record written, nothing kept, nothing revived, the cache used byte for byte
- * as without it -- unless the game is flushing its RAM code for reasons other
- * than a full cache at least SMC_REUSE_ARM_FLUSHES times per
- * SMC_REUSE_ARM_FRAMES frames (re-evaluated every window), and it stands down
- * for the rest of the session the first time the cache does fill. */
+/* WINDOWS.  Reuse is exact by the spare invariant, so it is always armed
+ * (smc_reuse_window, which every RAM translation's record step calls, sets
+ * smc_reuse_armed).  Every SMC_REUSE_ARM_FRAMES frames it decides only
+ * whether recording and lookups pay. */
 #define SMC_REUSE_ARM_FRAMES   64
-#define SMC_REUSE_ARM_FLUSHES  32
-static u32 smc_reuse_armed, smc_reuse_win_frame, smc_reuse_win_flushes,
-           smc_reuse_last_full, smc_reuse_full_seen;
+static u32 smc_reuse_armed, smc_reuse_win_frame;
+/* Never read: left from the arming rule the spare invariant replaced.
+ * Deleting them shrinks the code and moves the pinned layout, so they go
+ * with the next re-pin. */
+static u32 smc_reuse_win_flushes, smc_reuse_last_full, smc_reuse_full_seen;
 #ifndef SMC_REUSE_REC_RATIO
 #define SMC_REUSE_REC_RATIO 8
 #endif
@@ -8091,7 +8088,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
        * instructions,
        * so a branch landing mid-run executed the rest of the run
        * unconditionally (Mario Golf's stack-resident loop: bne back into
-       * ANDEQ words with Z clear; corpus-classify 2026-10-28).  0x40, like
+       * ANDEQ words with Z clear).  0x40, like
        * the flag-setting 0x20, makes translate_arm_instruction close the run
        * here (its skip lands on the entry) and open a fresh header. */
       if((block_data[(branch_target - block_start_pc) /
@@ -8267,17 +8264,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
    * Speculatively scanned blocks produce these targets routinely -- 223 in one
    * Heart & Soul battle, every one from a block a translation gate started at
    * a non-instruction boundary, and almost none ever executed.  So the rule is
-   * containment rather than prediction: send the branch through the runtime
-   * dispatcher.  That is lazy (an exit that is never taken costs nothing at
-   * all) and it puts the fault back inside BADJUMP_SAFE's reach, where an
-   * unmappable guest pc resets the GBA instead of the console.
-   *
-   * It runs HERE, before translation_ptr is published, because the island has
-   * to come out of this block's emit budget; the region test is a pure
-   * function of the target address, so nothing needs translating to decide.
-   * Worst case is MAX_EXITS islands of 16 bytes = 512 B, and the loop above
-   * can only claim an exit this one would (their region sets are disjoint), so
-   * the two together stay inside TRANSLATION_CACHE_LIMIT_THRESHOLD's 2 KB. */
+   * containment rather than prediction: each such exit is patched to
+   * bios_swi_entrypoint (WHERE AN UNMAPPABLE BLOCK EXIT IS SENT, earlier in
+   * this file).  One patched word, nothing emitted; the region test is a pure
+   * function of the target address. */
   for(i = 0; i < external_block_exit_position; i++)
   {
     if (!external_block_exits[i].branch_source)
@@ -8444,7 +8434,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   while(pc != block_end_pc)
   {
 #ifdef XLAT_THUMB_NO_UNSWITCH
-    /* XLAT_THUMB_NO_UNSWITCH (cpu-levers, 2026-10-26): host compiler only.
+    /* XLAT_THUMB_NO_UNSWITCH: host compiler only.
      * It changes no emitted code and no guest behaviour.
      *
      * psp-gcc 15.2 -O3 unswitches this loop on `ram_region`
@@ -8604,17 +8594,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
    * Speculatively scanned blocks produce these targets routinely -- 223 in one
    * Heart & Soul battle, every one from a block a translation gate started at
    * a non-instruction boundary, and almost none ever executed.  So the rule is
-   * containment rather than prediction: send the branch through the runtime
-   * dispatcher.  That is lazy (an exit that is never taken costs nothing at
-   * all) and it puts the fault back inside BADJUMP_SAFE's reach, where an
-   * unmappable guest pc resets the GBA instead of the console.
-   *
-   * It runs HERE, before translation_ptr is published, because the island has
-   * to come out of this block's emit budget; the region test is a pure
-   * function of the target address, so nothing needs translating to decide.
-   * Worst case is MAX_EXITS islands of 16 bytes = 512 B, and the loop above
-   * can only claim an exit this one would (their region sets are disjoint), so
-   * the two together stay inside TRANSLATION_CACHE_LIMIT_THRESHOLD's 2 KB. */
+   * containment rather than prediction: each such exit is patched to
+   * bios_swi_entrypoint (WHERE AN UNMAPPABLE BLOCK EXIT IS SENT, earlier in
+   * this file).  One patched word, nothing emitted; the region test is a pure
+   * function of the target address. */
   for(i = 0; i < external_block_exit_position; i++)
   {
     if (!external_block_exits[i].branch_source)
@@ -8807,7 +8790,7 @@ void flush_translation_cache_ram(void)
  * 16 are listed; EXEC_STALE_ABORT=1 in the environment aborts on the first. */
 static u32 esc_hits, esc_checks;
 static int esc_abort = -1;
-/* IMMP_VERIFY (xlat-cost 2026-10-28; rides on EXEC_STALE_CHECK, twin only):
+/* IMMP_VERIFY (rides on EXEC_STALE_CHECK, twin only):
  * the opcode compare above sees a site whose EXEC_STALE opcode load was not
  * patched, but not one whose ALU immediate is wrong while its opcode load is
  * right.  So every time an instruction at a learned, not-bad word executes,
@@ -8903,7 +8886,7 @@ static int smc_evt_on(void)
 #endif
 
 #ifdef SMC_FALLBACK_STATS
-/* DIAGNOSTIC (bench campaign 2026-10-20): why an SMC trap took the full RAM
+/* DIAGNOSTIC: why an SMC trap took the full RAM
  * flush.  [0] writer not range-safe, [1] activation, [2] range gate installed
  * or moved, [3] low/high not gated, [4] range: wrap/cross-region/bad bounds,
  * [5] range: final word untagged, [6] range: domain end, [7] range: live block
@@ -8945,7 +8928,7 @@ u32 smc_fallback_stats[16];   /* [10] stale checks, [11] stale MISMATCHES,
  * it really covers.  Tags are already canonical (they index by offset), so
  * rebasing the end onto base + offset(start) + length makes the extent exact
  * for every non-wrapping block; wrapping ones set smc_partial_wrap_live. */
-/* SMC_RETIRE_WINDOW (prototype, docs/DYNAREC-PROFILE.md): the longest source
+/* SMC_RETIRE_WINDOW (built in; docs/DYNAREC-PROFILE.md): the longest source
  * extent recorded for a live RAM block since the last full RAM flush, per
  * region ([0] IWRAM, [1] EWRAM).  No block can start further than this below
  * a write and still cover it, so flush_translation_cache_ram_range scans
@@ -9047,9 +9030,10 @@ static __attribute__((noinline)) u32 smc_window_first(u32 rgn, u32 lo_off,
   return local_ > first ? local_ : first;
 }
 #endif
-/* Retire every translation whose source overlaps [low, high). Cross-block
- * branches into RAM are indirect under this flag, so clearing an offset
- * cannot leave a generated jump pointing at the retired cache entry. */
+/* Retire every translation whose source overlaps [low, high).  RAM->RAM links
+ * jump to the target's stable thunk, which retirement turns into a dispatch
+ * (smc_stable_thunk_dispatch), and ROM->RAM links go through an island
+ * (SMC_RAM_LINK_NEEDS_DISPATCH), so no generated jump reaches a retired body. */
 static void flush_translation_cache_ram_range(u32 low, u32 high)
 {
   u16 *tagp;
@@ -9229,65 +9213,29 @@ static void flush_translation_cache_ram_range(u32 low, u32 high)
 }
 
 
-/* Split future blocks at the self-modified address, so each rebuild is a small
- * block instead of the whole routine.  Hoisted OUT of the partial-invalidation
- * path so the two can be tested independently: gates alone change block
- * boundaries (and therefore when timers/DMA get serviced), which is the
- * remaining suspect for Unbound's mangled audio now that stale jumps are
- * ruled out. */
-/* WHICH ADDRESSES GET A GATE.
+/* TRANSLATION GATES.  A gate splits future blocks at a self-modified
+ * address, so a write there retires a short block instead of the whole
+ * routine.  It is not free: it ends a block with an indirect branch, so every
+ * pass through it is a dispatcher lookup.
  *
- * A gate is not free.  It ends a block with an indirect branch, so every
- * pass through it is a dispatcher lookup; its only benefit is that a write
- * there retires a small block instead of a large one.  Measured per gate
- * (SMC hits vs lookups at that PC), two rules came out of it:
- *
- *  1. ONE GATE PER PATCHED REGION.  A self-modifying routine patches several
- *     words a few bytes apart -- the M4A sound mixer rewrites 4 words within
- *     56 bytes, in two copies of its loop 152 bytes apart.  The first gate
- *     already makes every later write in the region retire a short block;
- *     further gates there saved no translation at all and each added ~25k
- *     lookups a second, because they sit in the mixer's inner loop.  So a
- *     write within SMC_GATE_CLUSTER bytes after an existing gate counts as a
- *     hit on that gate.  128 keeps the mixer's two loop copies apart.
- *
- *  2. REPLACE GATES THAT HAVE GONE QUIET.  The 8 slots fill with whatever is
- *     written first.  Pokemon Heart & Soul spends all of them at boot on
- *     stack and copy writes that never recur, so its music engine never got
- *     one: 457 KB/s re-translated, and a PSP-1000 dropped to 37 fps whenever
- *     music played.  Once the table is full, a gate not hit for
- *     SMC_GATE_IDLE_FRAMES is replaced.  Gates from the game table
- *     (gba_over.h) carry no stamp and are never replaced.
- *
- * Hardware A/B, Heart & Soul on a PSP-1000 with music on: 37-60 fps -> a
- * locked 60; re-translation 457 -> 48 KB/s, full flushes 8.0 -> 1.7/s.
- * PPSSPP, Unbound: lookups -49%, translation unchanged, core time -10%.
- * Unbound never fills the table, so rule 2 never fires there. */
-/* Overridable from the root make as CLUSTER_BYTES=N.  Sized to the GAME's
- * layout, not picked for roundness: H&S's M4A mixer patches two loop copies
- * 152 bytes apart, so a window under that gates each copy separately while
- * anything over it merges them and leaves the second ungated.  64 was too
- * small (slots wasted inside one region: 105k dispatcher lookups vs 59k). */
-#ifndef SMC_GATE_CLUSTER
-#define SMC_GATE_CLUSTER      128
-#endif
-#define SMC_GATE_IDLE_FRAMES  60
+ * WHICH ADDRESSES GET ONE.  The table (MAX_TRANSLATION_GATES slots) starts
+ * with the game table's gates (gba_over.h).  An address earns a slot by
+ * ranking (SMC_GATES_RANKED, below) or as a self-patch target
+ * (SMC_GATE_SELFPATCH, below).  The rule is ADD ONLY: once written, a gate's
+ * address never changes, and when the table is full smc_add_gate leaves it
+ * alone (why, under smc_add_gate's comment). */
 
-/* frame_counter + 1 at the gate's last hit; 0 = loaded from the game table */
+/* Never read: the rule that used it is gone.  Deleting it shrinks the code
+ * and moves the pinned layout, so it goes with the next re-pin. */
 static u32 smc_gate_last_hit[MAX_TRANSLATION_GATES];
 
 static void smc_cand_forget(void);   /* defined with the candidate table below */
 
-/* Clear ROM-specific gate learning after a new cartridge is loaded.
- *
- * Ranked candidates contain addresses, write counts, and the last value seen
- * at each address.  Reusing those observations across ROMs could let one
- * game's evidence promote a gate in another game.  This function is called
- * from gba_memory.c after the new cartridge's fixed gate table is populated.
- * It is intentionally NOT called by dynarec reset or cache-flush paths:
- * clearing candidates during a same-ROM reset or savestate load discarded
- * useful learning and caused a measured performance loss.  See the withdrawn
- * reset-boundary experiment below (around flush_dynarec_caches). */
+/* Clear the gate learning: ranked candidates (addresses, write counts, the
+ * last value seen) and entry gates.  Called where the guest starts over with
+ * the cartridge's fixed gate table: ROM load and gba_reset_power_on
+ * (gba_memory.c) and a link session's cold start (gbalink_core.c).  Not on a
+ * savestate load or a dynarec flush (why, above flush_dynarec_caches). */
 void smc_gates_reset(void)
 {
   memset(smc_gate_last_hit, 0, sizeof(smc_gate_last_hit));
@@ -9301,10 +9249,9 @@ void smc_gates_reset(void)
 
 #define SMC_GATE_PICK(a) ((a) & ~3u)
 
-/* SMC_GATES_RANKED: promote an address to a gate only once it has proven
- * itself HOT.  Both shipped rules pick gates blind -- add-only takes the
- * first eight addresses it ever sees, eviction cycles round-robin -- and
- * neither asks how much a gate would actually buy.
+/* SMC_GATES_RANKED (built in): promote an address to a gate only once it has
+ * proven itself HOT.  Unranked, add-only would take the first addresses
+ * written, whatever a gate there would buy.
  *
  * Measured on the H&S rival battle, over one 8000-flush window:
  *
@@ -9327,33 +9274,14 @@ void smc_gates_reset(void)
 #define SMC_GATE_RATIO 4            /* within 1/4 of the hottest */
 #endif
 #define SMC_GATE_MIN_SAMPLE 64     /* writes before judging an address */
-/* WITHDRAWN: A STALENESS RULE ON THE CANDIDATE ROWS.
- *
- * A gap over ~60 frames restarted a row's statistics, the reasoning being that
- * an address hot in one role (a boot copy destination, the previous
- * soundtrack's mixer body) should not promote on one write when the game later
- * uses it in another.
- *
- * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
- * The rule and the thing it gates are the same order of magnitude: earning a
- * gate needs SMC_GATE_MIN_SAMPLE writes AT ONE ADDRESS, and if that takes
- * longer than the window the row restarts forever and the gate is NEVER
- * earned -- which is the documented 457 KB/s re-translation, 37 fps regime.
- * I never measured writes-per-frame at a single address before choosing 60,
- * so the window may well have been inside the accumulation time.
- *
- * It was also the only change on this branch with no demonstrated defect
- * behind it -- unlike the cross-ROM leak, the role-change case was a
- * hypothesis.  And it is defence in depth rather than the guard: with the
- * containment fix, a wrongly promoted gate is no longer fatal, it is a
- * dispatcher lookup.  That is what makes this safe to drop.
- *
- * If it is ever wanted back, the window has to be derived from measured
- * writes-per-frame at the gate address, with a wide margin -- not chosen.
- *
- * An absolute floor on `chg` was tried first and was worse than useless: at
- * SMC_GATE_MIN_SAMPLE 64 a floor of 32 is exactly what `chg * 2 >= hits`
- * already requires. */
+/* NO STALENESS RULE ON THE CANDIDATE ROWS.  Earning a gate needs
+ * SMC_GATE_MIN_SAMPLE writes at ONE address; a restart window shorter than
+ * that accumulation time restarts the row forever and the gate is never
+ * earned (Heart & Soul: 457 KB/s re-translated, 37 fps -- a 60-frame window
+ * did that on hardware).  A wrongly promoted gate costs only a dispatcher
+ * lookup, so there is no window.  One that is ever wanted must come from
+ * measured writes-per-frame at the gate address.  (A floor on `chg` adds
+ * nothing: `chg * 2 >= hits` already requires it.) */
 #define SMC_GATE_CAND 32            /* candidates tracked before promotion */
 static u32 smc_cand_addr[SMC_GATE_CAND];
 static u32 smc_cand_hits[SMC_GATE_CAND];
@@ -9451,24 +9379,13 @@ static void smc_cand_forget(void)
 
 #define SMC_GATE_EARNED(gpc) smc_gate_earned(gpc)
 
-/* The 2.0.1 gate rule: ADD ONLY.  An address either already has a gate or
- * takes a free slot; once written, a gate's address is NEVER changed.
- *
- * 2.0.2 replaced this with cluster-128 + idle eviction, which measured better
- * in PPSSPP.  But eviction means the gate table MUTATES while blocks compiled
- * against the old layout are still live, and gpSP's tag map holds one slot per
- * halfword — it cannot represent the overlapping blocks that creates.  On
- * 2026-09-12 a stock build (no gates at all) survived a full rival battle and
- * four Growls at the highest flush rate we have ever measured (~1900/s), while
- * every gated build died.  That puts the gate rule itself under suspicion, and
- * this is the variable to eliminate first: Heart & Soul has never run on the
- * simple rule, because it did not boot at all before 2.0.2.
- *
- * There is also a concrete defect in the evicting version: `now` derives from
- * frame_counter, which savestates restore, while smc_gate_last_hit[] does not.
- * Loading a state with a lower frame count underflows the idle comparison to
- * ~4.29e9, so every gate reads as infinitely idle and churns constantly. */
-/* SMC_GATE_SELFPATCH (claude/idle-general, 2026-10-27): code that patches
+/* THE GATE RULE: ADD ONLY.  An address either already has a gate or takes a
+ * free slot; once written, a gate's address never changes.  A rule that
+ * replaced idle gates (2.0.2) mutated the table while blocks compiled against
+ * the old one were still live, and the tag map (one slot per halfword) cannot
+ * represent the overlapping blocks that creates: Heart & Soul crashed under
+ * it, and it was removed. */
+/* SMC_GATE_SELFPATCH (built in): code that patches
  * the code just AHEAD of itself earns a gate at the start of what it wrote,
  * whether or not the bytes change.
  *
@@ -9574,31 +9491,14 @@ static void smc_add_gate(u32 gba_addr)
  * flush: an earlier iteration can have written code without its final word
  * landing on a tag, and the later full flush is what makes that sequence safe.
  * Thumb block stores always write back, so they follow the same fallback. */
-/* WITHDRAWN: HARDENING OF THIS FINGERPRINT.
- *
- * The predicate below is narrow but not sound: an ARM STMIA lr,{r0,r1} whose
- * highest written word sits 0x3c bytes past the writer is a 32-bit opcode match
- * plus an offset, and nothing in it is specific to a sound engine.  I added
- * three requirements -- writer and target both in IWRAM, one latched writer pc,
- * and N repetitions before activating -- on the reasoning that all three are
- * structurally true of M4A's SoundMainRAM.
- *
- * REMOVED after a hardware session on 2026-09-18 showed degraded performance.
- * This function is the gate on selective invalidation, so any extra condition
- * that turns out not to hold for the ROM in hand costs the FULL FLUSH on every
- * mixer write -- which is a large, load-dependent slowdown and exactly what was
- * reported.  I had not verified on hardware that Unbound's writer satisfies the
- * IWRAM assumption, and a regression hunt is the wrong moment to be carrying an
- * unverified extra condition on the hot path.
- *
- * The risk it was addressing remains real but theoretical: a false match hands
- * a game selective retirement on a store whose earlier words bypassed the SMC
- * check.  Re-introducing it needs the writer pc and its region CONFIRMED from a
- * diagnostic build on hardware first -- ms0:/smchisto.txt reports storing pcs.
- *
- * Anything uncertain keeps the established full flush, which is the whole
- * point: this function's job is to say yes to one known routine, not to
- * classify stores in general. */
+/* NO EXTRA CONDITIONS ON smc_writer_safe_range WITHOUT HARDWARE PROOF.  It
+ * gates selective invalidation, so a condition the ROM in hand fails costs the
+ * FULL FLUSH on every mixer write (writer and target in IWRAM, one latched
+ * writer pc and N repetitions were each withdrawn for slowing hardware).  A
+ * false yes hands a store whose earlier words bypassed the SMC check to
+ * selective retirement, so a newly admitted shape needs its writer pc and
+ * region measured first (SMC_WRITER_PROBE, ms0:/smchisto.txt).  Anything
+ * uncertain keeps the full flush. */
 #ifdef SMC_WRITER_PROBE
 /* DIAGNOSTIC ONLY, and in no build profile.  Record the distinct writer shapes
  * this function sees, so the fingerprint can be extended from measurement rather
@@ -9664,7 +9564,7 @@ static int smc_single_store;   /* set by smc_writer_safe_range per event */
  * patched block at once; lifting its tags there only churned the retired-tag
  * table (twin: NFS Carbon +5%, Smashing +7% core). */
 static int smc_untag_now;
-/* Which single stores are admitted (smc-coverage 2026-10-20).  dr2 admitted
+/* Which single stores are admitted.  dr2 admitted
  * only IWRAM writers into IWRAM.  Neither restriction is a correctness
  * condition -- the store reports its whole write wherever it runs from, and
  * smc_write always resumes through the lookup -- so each is lifted by its own
@@ -9677,7 +9577,7 @@ static int smc_untag_now;
  * STR/STRB from IWRAM into IWRAM) is only admitted once selective retirement
  * is already active, or after K widened traps since the caches were last
  * initialised.  Before that the trap takes the 4.1.1 path unchanged (full
- * flush + gate).  Reason: the corpus oracle (2026-10-20) showed that without
+ * flush + gate).  Reason: the corpus oracle showed that without
  * it nearly every game ACTIVATES selective retirement on its boot-time code
  * copies (a handful of ROM/Thumb writers), changing timing library-wide for
  * no gain; the titles that benefit trap thousands of times.  Built in as 64
@@ -9709,7 +9609,7 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
    * single stores is still too broad for Heart & Soul. Only admit the exact
    * class needed by Unbound; all Thumb and non-STM writes keep full flushes. */
   if (reg[REG_CPSR] & 0x20) {
-    /* SMC_SINGLE_THUMB (smc-coverage 2026-10-20): a Thumb single store --
+    /* SMC_SINGLE_THUMB (built in): a Thumb single store --
      * STR/STRH/STRB, register or immediate offset, or STR [SP, #imm] --
      * reports its whole write exactly like an ARM STR (no unchecked words),
      * so the same exact retirement applies.  The store emitter loads REG_PC
@@ -9763,7 +9663,7 @@ static int smc_writer_safe_range(u32 *low, u32 *high)
     swp_note(pc, addr, op, 0);
 #endif
   /* A single-word ARM store (STR/STRB) executing from IWRAM into IWRAM.
-   * SMC_CLASS_PROBE (2026-10-20) measured the slow issue #9 titles: Doom II,
+   * SMC_CLASS_PROBE measured the slow issue #9 titles: Doom II,
    * Duke Nukem Advance and Smashing Drive raise 100% of their SMC traps here,
    * from 4-6 writer pcs that each patch ONE fixed word of their own render
    * loop, 12-22 times a frame -- and every trap was a full RAM flush.
@@ -9924,7 +9824,7 @@ u32 smc_work_blocks;   /* RAM translations (DMA_ADAPT_V2's per-block price) */
  * per-frame code copy (50k traps vs 374 full flushes on 4.1.1).
  * A live block keeps every one of its marks, so no write to live code can
  * go unreported.  A full retired-tag table keeps the tag (never a flush). */
-/* smc_untag_span: that pass, out of line (smc-cost 2026-11-13): it runs
+/* smc_untag_span: that pass, out of line: it runs
  * only for the widened classes (Hot Wheels, Top Gear Rally), and keeping
  * it out of the pinned smc_retire_span keeps that function's size.
  * [ulo, uhi): the retired blocks' union (ulo >= uhi: nothing retired). */
@@ -10126,7 +10026,7 @@ static int smc_retire_span(u32 lo, u32 hi)
   return 1;
 }
 
-/* SMC_STM_CHAIN (cpu-levers 2026-10-27): a non-final word of a block store
+/* SMC_STM_CHAIN (built in): a non-final word of a block store
  * (ARM STM, Thumb STMIA; not the SP fast path) just landed on a tagged word
  * of IWRAM or EWRAM -- translated code, or a mark this function left.  Only
  * the FINAL word of a block store is SMC-checked, so a store whose earlier
@@ -10261,7 +10161,7 @@ static __attribute__((noinline)) int xs_blocks_current(u32 word);
 #ifdef SMC_COST_VERIFY
 static __attribute__((noinline)) int xs_blocks_current_ref(u32 word);
 #endif
-/* LAYOUT NEUTRALITY (cpu-levers 2026-10-27).  flush_translation_cache_ram_smc,
+/* LAYOUT NEUTRALITY.  flush_translation_cache_ram_smc,
  * ramtag_note_extent and flush_translation_cache_ram are in the pinned hot
  * order (psp/layout/hot.ord).  The first cut of this lever grew them by up to
  * 1.1 KiB.  That moved 59 of the 83 pinned functions to other I-cache sets
@@ -10332,7 +10232,7 @@ static inline u32 xs_tag_next(const u16 *tagp, u32 i, u32 last)
     return i;
   return last + 1;
 }
-/* xs_range_current (smc-cost 2026-11-13): every IWRAM halfword h of
+/* xs_range_current: every IWRAM halfword h of
  * [h0, h1) has a valid (xs_ok), unpoisoned (xs_bad) record equal to memory
  * now -- the per-halfword test xs_blocks_current applied to each covering
  * block, here over a whole range: the record bits a byte (8 halfwords) at a
@@ -10376,7 +10276,7 @@ static __attribute__((noinline)) int xs_range_current(u32 h0, u32 h1)
   return 1;
 }
 #ifdef SMC_COST_VERIFY
-/* DIAGNOSTIC (twin only, smc-cost 2026-11-13): the a34f8eaf xs_blocks_current,
+/* DIAGNOSTIC (twin only): the a34f8eaf xs_blocks_current,
  * one slot and one block at a time, run beside the union version on every
  * call; any disagreement is counted (SMC_COST_VERIFY xs_mismatch=). */
 static __attribute__((noinline)) int xs_blocks_current_ref(u32 word)
@@ -10724,7 +10624,7 @@ static void smc_histo_note(u32 addr, u32 storepc)
 #endif
 
 #ifdef SMC_CLASS_PROBE
-/* DIAGNOSTIC ONLY, in no profile (bench campaign 2026-10-20).  Classify every
+/* DIAGNOSTIC ONLY, in no profile.  Classify every
  * SMC trap by the shape of the storing instruction, ARM and Thumb alike, so
  * the safe-range fingerprint can be widened from measurement.  The 4.1.1
  * fingerprint admits only M4A's mixer patch (ARM STMIA via LR, no writeback);
@@ -10739,9 +10639,9 @@ static const char *const scp_name[SCP_N] = {
   "arm_stm_nowriteback", "arm_other", "thumb_str", "thumb_strh", "thumb_strb",
   "thumb_stmia", "thumb_push", "thumb_other", "(admitted_partial_range)" };
 #define SCP_PCS 64
-/* Rewritten at every power-of-two trap count from 256 on (smc-coverage
- * 2026-10-20: the original single dump at 30000 traps never fired on the
- * low-trap fixtures), so the last file on disk is at most 2x stale. */
+/* Rewritten at every power-of-two trap count from 256 on (a single dump at
+ * 30000 traps never fires on low-trap games), so the last file on disk is at
+ * most 2x stale. */
 static u32 scp_count[SCP_N], scp_traps, scp_next_dump = 256;
 static u32 scp_pc[SCP_PCS], scp_pc_hits[SCP_PCS], scp_pc_cls[SCP_PCS];
 static u32 scp_pc_lo[SCP_PCS], scp_pc_hi[SCP_PCS], scp_pc_op[SCP_PCS];
@@ -10959,7 +10859,7 @@ void flush_translation_cache_ram_smc(void)
 #ifndef SMC_STM_RANGE_MAX
 #define SMC_STM_RANGE_MAX 4
 #endif
-/* SMC_STM_RANGE (cpu-levers 2026-10-27): the smc_write stub's entry (fnptrs
+/* SMC_STM_RANGE (built in): the smc_write stub's entry (fnptrs
  * slot 10) when the switch is on.  A short increment-after writeback STM --
  * STMIA Rn!, 2..SMC_STM_RANGE_MAX registers, from IWRAM into IWRAM -- retires
  * exactly its own write instead of taking the full RAM flush.
@@ -10985,7 +10885,7 @@ void flush_translation_cache_ram_smc(void)
  * LAYOUT NEUTRALITY: this sits outside the pinned hot order, and
  * flush_translation_cache_ram_smc is byte-identical with the switch on or
  * off; only the stub's function-pointer slot changes. */
-/* SMC_STM_FIXED (perf/tmgc 2026-11-02): the same span retirement for the
+/* SMC_STM_FIXED: the same span retirement for the
  * fixed-base shape, STMIA Rn without writeback (P0 U1 S0 W0 L0).
  *
  * Measured on the twin (4.5.0 core defines): ipatix's "ImprovedSoundMixer"
@@ -11011,7 +10911,7 @@ void flush_translation_cache_ram_smc(void)
 #ifndef SMC_STM_AHEAD_BLOCKS
 #define SMC_STM_AHEAD_BLOCKS 8
 #endif
-/* SMC_STM_AHEAD (cpu-levers 2026-10-27, twin prototype): an advancing copy
+/* SMC_STM_AHEAD (built in): an advancing copy
  * (STMIA Rn!) that traps on live code is about to overwrite what follows it.
  * Exact retirement of just its own span left every later STM of the copy to
  * trap again (Hot Wheels: 774 full flushes became 58k selective traps, ~48 a
@@ -11105,7 +11005,7 @@ void smc_trap_entry(void)
   flush_translation_cache_ram_smc();
 }
 
-/* DMA_SMC_RETIRE (cpu-levers 2026-10-27, twin prototype): dma_write_iwram /
+/* DMA_SMC_RETIRE (built in): dma_write_iwram /
  * dma_write_ewram record the lowest and highest TAGGED word every transfer
  * since the last consumption wrote (gba_memory.c; only on a tag hit, so an
  * ordinary DMA pays nothing).  Every instruction word of a live block is
@@ -11156,7 +11056,7 @@ u32 dma_rt_mode = 0, dma_rt_switches, dma_rt_probes;
 static u32 drt_f0, drt_x0, drt_ref, drt_since, drt_probing;
 static u32 drt_gap = DMA_ADAPT_GAP0;
 extern void fe_evt(const char *fmt, ...) __attribute__((weak));
-/* DMA_ADAPT_V2 (tgr-regression 2026-10-28): a cost model fitted to what the
+/* DMA_ADAPT_V2 (built in): a cost model fitted to what the
  * work costs, and ties go to the full flush.
  *
  * WHY.  Hardware A/B lab-xvr2 vs lab-f1c2: Top Gear Rally +5 % on both
@@ -11432,8 +11332,7 @@ void init_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
-  /* NO smc_gates_reset() HERE.  See flush_dynarec_caches below: a reset keeps
-   * the same ROM, and ROM load already resets the table. */
+  /* NO smc_gates_reset() HERE (why, above flush_dynarec_caches). */
 }
 
 #if defined(RUNTIME_JIT_CACHE)
@@ -11463,10 +11362,11 @@ void init_dynarec_caches(void)
  * malloc that fails, which moves no break and allocates nothing.  The static
  * arrays are where they were, so the 1000's post-load budget is what it was.
  *
- * ON THE LARGE PATH the static SMALL arrays are simply left unused (2.4 MiB
- * of a 64 MiB console's ~30 MiB spare).  The block is never freed: it lives
- * for the process, like the static arrays it replaces, so retro_deinit /
- * retro_init cycles keep the first decision. */
+ * ON THE LARGE PATH the static SMALL ROM array (2 MiB) is lent to the ROM
+ * page cache (end of the large-tier setup below) and the static RAM array
+ * (768 KiB with the SMC_REUSE spare) is left unused.  The block lives for
+ * the process unless the frontend unloads the ROM
+ * (dynarec_release_translation_caches, below). */
 u32 jit_cache_tier = JIT_CACHE_UNDECIDED;
 u32 jit_cache_force_small = 0;
 /* A frontend reloading the SAME game in the same process (GBA-LINK-MIRROR.md
@@ -11637,8 +11537,8 @@ void dynarec_select_translation_caches(void)
    * tier never changes back), so lend it to the ROM page cache: 2 MiB the
    * heap does not have to supply.  That is what lets a 32 MiB cart sit beside
    * this tier on a real PSP Go, whose heap is 5 MiB smaller than PPSSPP's
-   * 64 MiB model (docs/ROM-RESIDENCY.md).  The RAM array (384 KiB) is not a
-   * whole block and stays idle.  Only the ROM cache's DATA lands here; no
+   * 64 MiB model (docs/ROM-RESIDENCY.md).  The RAM array (768 KiB with the
+   * SMC_REUSE spare) is not a whole block and stays idle.  Only the ROM cache's DATA lands here; no
    * code is ever emitted into it again. */
   {
     extern u8 *gamepak_spare_pool;
@@ -11745,36 +11645,13 @@ void rom_hash_census(u32 out[10])
 }
 #endif
 
-/* WITHDRAWN: CLEARING THE GATE CANDIDATE TABLE HERE, AND IN
- * init_dynarec_caches.  This cost 2-16% of frame time on hardware.
- *
- * The proven defect was CROSS-ROM: a candidate saturated by one game promotes on
- * a single write from the next, because the stale remembered value counts as a
- * change.  That happens at ROM load, and gba_memory.c already calls
- * smc_gates_reset() there.  Extending it to savestate load, emulator reset,
- * cheat install and config change was my inference, and it is the expensive
- * kind of wrong.
- *
- * WHY IT COSTS SO MUCH.  Earning a gate needs SMC_GATE_MIN_SAMPLE observations
- * at ONE address, and smc_gate_earned runs once per SMC flush event -- not once
- * per store.  Measured on heart_soul_light, the hot mixer address 0300168c
- * produces about 12 events per 600 frames, so re-earning its gate from scratch
- * takes roughly 3200 frames.  Boot supplies those samples cheaply; a savestate
- * load at frame 30 threw them away and left the rest of the run in the no-gate
- * regime, which is the documented 457 KB/s re-translation behaviour.
- *
- * It shows up as MORE SMC EVENTS, not merely more CPU: hardware measured the
- * window count 33 -> 51, xlat 705 -> 831, and mean core time +21%.  The penalty
- * scales inversely with the mixer's write rate, which is why it was +16% on
- * heart_soul_light, +8% on unbound_double_high and +2% on unbound_rival_medium
- * -- the busier the mixer, the sooner the gate comes back.
- *
- * A savestate load does not change ROM, so the candidates remain evidence about
- * the right game.  What a state load DOES invalidate is smc_cand_val, the
- * remembered word at each address -- a real but much smaller hazard, and one
- * that cannot be closed by throwing away the hit counts that cost thousands of
- * frames to collect.  If it is ever worth closing, refresh the VALUES and keep
- * the counts. */
+/* THE GATE CANDIDATES SURVIVE THIS FLUSH (and init_dynarec_caches); only
+ * smc_gates_reset clears them (ROM load, power-on reset, link cold start).
+ * Re-earning a gate takes SMC_GATE_MIN_SAMPLE flush events at one address --
+ * about 3200 frames for Heart & Soul's mixer -- so clearing them here, on
+ * every state load and dynarec reset, cost 2-16 % of frame time on hardware.
+ * A state load keeps the ROM, so the counts stay valid;
+ * smc_gates_refresh_values rebases the remembered words. */
 void flush_dynarec_caches(void)
 {
   IRQCHK_RESET();
@@ -11894,7 +11771,7 @@ void dynarec_link_session(u32 slot, u32 headless, int on)
 #define JIT_KERNEL_RANGE_MAX 16384u  /* never pass the kernel a range this big */
 #define JIT_KERNEL_CHUNK      8192u  /* D writeback piece size */
 
-/* JIT_COST PUBINL (make JIT_COST=1; docs/JIT-COST.md): publish with the
+/* JIT_COST PUBINL (built in; docs/JIT-COST.md): publish with the
  * cache-line operations themselves instead of two kernel calls.
  *
  * WHY.  The heavy SMC titles publish ~285 times a frame (Doom II, PSP-1000:
@@ -12490,8 +12367,8 @@ __attribute__((noinline, used)) void drprof_zone(void)
 }
 
 /* noinline: inlined, its body ran inside translate_block_* and the twin
- * charged it to translation (~23 % of translate_block_arm, xlat-cost
- * 2026-10-28); out of line it is drprof_* bookkeeping, never counted, and
+ * charged it to translation (~23 % of translate_block_arm); out of line it
+ * is drprof_* bookkeeping, never counted, and
  * only the call remains (twin only: DRPROF_TWIN). */
 __attribute__((noinline)) void drprof_note(u8 *host, u16 cls)
 {
