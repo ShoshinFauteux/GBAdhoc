@@ -170,7 +170,7 @@ at   pte_mutex_check_need_init          0x1e98
 at   update_gba                         0x1080
 at   block_lookup_translate_arm         0x1240
 at   block_lookup_translate_thumb       0x1b80
-at   gbab_update_gba                    0x0ce0
+at   gbab_update_gba                    0x0d60
 at   gbab_block_lookup_translate_arm    0x0880
 at   gbab_block_lookup_address_arm      0x1a80
 at   gbab_block_lookup_translate_thumb  0x11a0
