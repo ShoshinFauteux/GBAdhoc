@@ -5,6 +5,7 @@
 # release: refill-41a67c81-as-a925892/release (elf f95a92551d7e)
 # lab:     refill-41a67c81-as-a925892/lab (elf 36ba99b0553a)
 # 423 members: diff 40, lab-only 41, layout 162, rigonly 3, same 177
+# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (the 6c3f2caf binaries), then for the refill fix (7e794c37, held by 41a67c81's row_xlat --move).
 # Re-recorded for claude/refill-fix 41a67c81 (the conditional-branch refill charged before the exit check). Only the two translators loosen: translate_block_arm and gbab_translate_block_arm were already release/lab 'diff' members (2,359 chunks each: the lab compiles them as a harness core); the edit recompiles both, so their chunk sets are new (2,329), and the release row_xlat --move (41a67c81) changes translate_block_arm's d 0x1660 -> 0x16c0 (the hot row after it keeps its baseline d). gbab_execute_arm_translate tightens diff -> layout. Every other member unchanged.
 fn   _ZL10pipe_latchv@cpu.cc#1                        layout d=0x10a0
 fn   _ZL10pipe_latchv@cpu.cc#2                        layout d=0x1a60
