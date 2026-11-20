@@ -16,7 +16,11 @@
  * fall back to the retransmission, a swap delivers in order and counts no
  * duplicates, every datagram stays <= ND_MAX_DGRAM with the extra bytes
  * bounded, a DATAR whose inner lengths do not add up is dropped whole, and
- * 3 % random loss: how many payloads came late, with and without.
+ * 3 % random loss: how many payloads came late, with and without.  The
+ * cable's cap (nd_config.red_body_max = ND_MAX_PAYLOAD): a DATAR never
+ * outgrows a plain frame, small payloads still carry copies, big ones go
+ * plain.  netdrv_rx_how names each delivery: in order, a redundant copy, or
+ * a gap a retransmission filled.
  * Build it at the desktop sizes and the PSP's (psp/fe_features.h). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +54,8 @@ static unsigned swap_at = 0;                  /* payload swap_at + 1 overtakes *
 static uint8_t sent_once[2][NPAY];
 static uint32_t prng = 12345;
 static unsigned max_dgram, n_datar, n_data_plain, extra_max;
+static unsigned plen = 104;                   /* payload bytes (>= 2) */
+static unsigned red_cap;                      /* nd_config.red_body_max */
 
 static unsigned rnd(void)
 {
@@ -143,7 +149,9 @@ static void t_addr(void *ctx, uint8_t mac[6])
 
 /* ---- the apps ------------------------------------------------------------ */
 static int recv_frame[2][NPAY];       /* [receiver][payload] */
+static int recv_how[2][NPAY];         /* netdrv_rx_how at delivery */
 static unsigned next_k[2], order_bad[2], up[2];
+static netdrv *nd[2];
 static void deliver(void *user, const void *buf, size_t len, uint8_t src)
 {
   int side = (int)(intptr_t)user;
@@ -151,18 +159,19 @@ static void deliver(void *user, const void *buf, size_t len, uint8_t src)
   unsigned k = (unsigned)(b[0] | b[1] << 8);
   size_t i;
   (void)src;
-  if (len != 104 || k != next_k[side])
+  if (len != plen || k != next_k[side])
     order_bad[side]++;
   for (i = 2; i < len; i++)
     if (b[i] != (uint8_t)(k * 7 + i))
       order_bad[side]++;
   next_k[side] = k + 1;
-  if (k < NPAY)
+  if (k < NPAY) {
     recv_frame[side][k] = frame;
+    recv_how[side][k] = netdrv_rx_how(nd[side]);
+  }
 }
 static void started(void *user, uint8_t id) { (void)id; up[(int)(intptr_t)user] = 1; }
 
-static netdrv *nd[2];
 static int sent_frame[NPAY];
 
 static void make(unsigned redund)
@@ -195,6 +204,7 @@ static void make(unsigned redund)
     cfg.protocol = "gpSP v1.0";
     cfg.join_nonce = 0x100u + (unsigned)s;
     cfg.redund = (uint8_t)redund;
+    cfg.red_body_max = (uint16_t)red_cap;
     nd[s] = netdrv_create(&tp, &cb, &cfg);
   }
   netdrv_host(nd[0]);
@@ -213,7 +223,7 @@ static void step(void)
 static void play(int n)
 {
   int i, f;
-  uint8_t p[104];
+  uint8_t p[560];
   for (i = 0; i < 400 && !(up[0] && up[1] && netdrv_peer_count(nd[0])); i++)
     step();
   CHECK(up[0] && up[1], "no session");
@@ -221,11 +231,11 @@ static void play(int n)
     int s;
     p[0] = (uint8_t)f;
     p[1] = (uint8_t)(f >> 8);
-    for (i = 2; i < 104; i++)
+    for (i = 2; i < (int)plen; i++)
       p[i] = (uint8_t)(f * 7 + i);
     sent_frame[f] = frame;
     for (s = 0; s < 2; s++)
-      netdrv_send(nd[s], ND_RELIABLE | ND_FLUSH_HINT, p, sizeof(p), (uint16_t)!s);
+      netdrv_send(nd[s], ND_RELIABLE | ND_FLUSH_HINT, p, plen, (uint16_t)!s);
     step();
   }
   for (i = 0; i < 120; i++)
@@ -258,6 +268,12 @@ static void test_off_unchanged(void)
   CHECK(max_dgram <= ND_MAX_FRAME, "redund 0 datagram %u > ND_MAX_FRAME", max_dgram);
   CHECK(next_k[1] == 200 && order_bad[1] == 0, "B got %u, %u bad", next_k[1], order_bad[1]);
   CHECK(in > LAT + 2, "a loss without redundancy cost only %d frames", in);
+  /* the retransmission fills a gap the later payloads already crossed */
+  CHECK(recv_how[1][60] == ND_RX_GAP && recv_how[1][61] == ND_RX_GAP,
+        "redund 0: lost payload's how %d, its successor's %d", recv_how[1][60],
+        recv_how[1][61]);
+  CHECK(recv_how[1][59] == ND_RX_INORDER && recv_how[1][150] == ND_RX_INORDER,
+        "redund 0: in-order hows %d %d", recv_how[1][59], recv_how[1][150]);
   printf("  redund 0: DATA only; a lost datagram waits for the retransmission "
          "(lag %d frames, %d without loss)\n", in, out);
   done();
@@ -285,6 +301,12 @@ static void test_losses(void)
     if (n <= ND_RED_MAX) {
       CHECK(in <= LAT + n, "%d lost: worst lag %d > %d", n, in, LAT + n);
       CHECK(sb.red_fill >= (unsigned)n, "%d lost: %u filled", n, sb.red_fill);
+      CHECK(recv_how[1][60] == ND_RX_RED && recv_how[1][60 + n - 1] == ND_RX_RED,
+            "%d lost: how %d / %d, a redundant copy expected", n, recv_how[1][60],
+            recv_how[1][60 + n - 1]);
+      CHECK(recv_how[1][59] == ND_RX_INORDER && recv_how[1][60 + n] == ND_RX_INORDER,
+            "%d lost: neighbours' how %d / %d", n, recv_how[1][59],
+            recv_how[1][60 + n]);
     } else
       CHECK(in > LAT + n, "%d lost: lag %d, the fallback should have been needed", n, in);
     /* a copy B already had is red_dup, never rx_dup: rx_dup only counts
@@ -373,6 +395,42 @@ static void test_random_loss(void)
          "(retx %u)\n", total, late[0], st[0].retx, late[1], st[1].retx);
 }
 
+/* The cable's cap: copies only while the datagram fits a plain frame (the
+ * ad hoc transport drops anything bigger on arrival).  A button-sized
+ * payload still carries two copies and a loss is filled one frame later; a
+ * payload too big to carry any goes as plain DATA. */
+static void test_cable_cap(void)
+{
+  int in, out;
+  nd_stats sb;
+  plen = 8;
+  red_cap = ND_MAX_PAYLOAD;
+  make(2);
+  drop_lo = drop_hi = 60;
+  play(300);
+  netdrv_get_stats(nd[1], &sb);
+  lags(300, 60, 60, &in, &out);
+  CHECK(next_k[1] == 300 && order_bad[1] == 0, "cap: B got %u, %u bad", next_k[1],
+        order_bad[1]);
+  CHECK(max_dgram <= ND_MAX_FRAME, "cap: datagram %u > ND_MAX_FRAME %u", max_dgram,
+        (unsigned)ND_MAX_FRAME);
+  CHECK(n_datar > 0 && in <= LAT + 1 && sb.red_fill >= 1 &&
+        recv_how[1][60] == ND_RX_RED,
+        "cap, 8 B: %u DATAR, lag %d, filled %u, how %d", n_datar, in, sb.red_fill,
+        recv_how[1][60]);
+  printf("  cable cap, 8 B payloads: %u DATAR, largest datagram %u <= %u, a loss "
+         "costs %d frames\n", n_datar, max_dgram, (unsigned)ND_MAX_FRAME, in);
+  done();
+  plen = ND_MAX_PAYLOAD;
+  make(2);
+  play(100);
+  CHECK(max_dgram <= ND_MAX_FRAME && n_datar == 0,
+        "cap, full payloads: datagram %u, %u DATAR", max_dgram, n_datar);
+  done();
+  plen = 104;
+  red_cap = 0;
+}
+
 int main(void)
 {
   printf("[netdrv redundant DATA, ND_MAX_PAYLOAD %u, ND_WINDOW %u]\n",
@@ -382,6 +440,7 @@ int main(void)
   test_swap_and_bound();
   test_malformed_bundle();
   test_random_loss();
+  test_cable_cap();
   if (fails) {
     printf("netdrv redund: %d check(s) FAILED\n", fails);
     return 1;

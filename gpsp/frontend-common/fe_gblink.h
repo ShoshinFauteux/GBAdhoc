@@ -304,6 +304,10 @@ void fe_gblink_destroy(fe_gblink *s);
 
 /* Network events. */
 void fe_gblink_receive(fe_gblink *s, const void *buf, size_t len);
+/* How the ordered channel got the message about to be received
+ * (FE_GBLINK_VIA_LATE / _RED / _RETX, the values of netdrv.h ND_RX_*); a
+ * platform that cannot tell leaves it at LATE.  Only telemetry reads it. */
+void fe_gblink_set_rx_how(fe_gblink *s, int how);
 /* A bulk-lane datagram (anything else is counted and ignored). */
 void fe_gblink_receive_bulk(fe_gblink *s, const void *buf, size_t len);
 void fe_gblink_peer(fe_gblink *s, int connected);
@@ -390,7 +394,19 @@ typedef struct fe_gblink_stats
    /* resend requests sent / answered for the partner / inputs taken from
     * the partner's answers */
    uint32_t nacks, resends, inputs_resent;
+   /* stall episodes by how the partner's buttons that ended each one came:
+    * indexed by FE_GBLINK_VIA_* */
+   uint32_t stall_end[5];
 } fe_gblink_stats;
+/* fe_gblink_stats.stall_end: the partner's buttons came in order with
+ * nothing missing before them (sent late, or held by the air); a redundant
+ * copy filled the gap; a retransmission filled it; the bulk lane's resend
+ * (our NACK's answer) brought them first; the wait was for something else. */
+enum
+{
+   FE_GBLINK_VIA_LATE = 0, FE_GBLINK_VIA_RED = 1, FE_GBLINK_VIA_RETX = 2,
+   FE_GBLINK_VIA_RESEND = 3, FE_GBLINK_VIA_OTHER = 4
+};
 void fe_gblink_get_stats(const fe_gblink *s, fe_gblink_stats *out);
 
 /* Per-window telemetry (docs/GB-LINK.md section 14): what a RUNNING step

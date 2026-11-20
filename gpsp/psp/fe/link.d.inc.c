@@ -710,12 +710,15 @@ static __attribute__((noinline)) void silent_frame(void)
  *
  * Harness keys (GPSP_PERF_RIG): gblink_role = host|join starts one
  * automatically (group = the room); gblink_delay = input delay in frames
- * (default 4); gblink_rtc_seed = the host's clock for both machines (fixes a
+ * (default by the session's kind: GBLINK_DELAY_ADHOC / _ONLINE,
+ * play_defaults.h); gblink_input_copies = redundant DATA (net_start_np);
+ * gblink_rtc_seed = the host's clock for both machines (fixes a
  * run's clock); gblink_end_after = frames after the autopilot script ends
  * before the host asks to end (default 300).  The run exits when the
  * session is DONE (exit 0) or FAILED (exit 4). */
-#define GBLINK_DELAY_DEFAULT 4
-static unsigned g_gblink_delay = GBLINK_DELAY_DEFAULT;
+/* config.ini or harness gblink_delay; 0 = by the session's kind, which the
+ * host picks in gblink_begin (the guest takes the host's from CONFIG). */
+static unsigned g_gblink_delay = 0;
 /* Harness: the auto input delay's cap in frames (fe_gblink_local.delay_auto,
  * docs/ONLINE-TUNNEL.md section 2); 0 = off, every build's behaviour so far.
  * Host only: the guest takes the delay from CONFIG. */
@@ -1030,6 +1033,7 @@ static int gblink_close_held(void)
 static int gblink_begin(int is_host)
 {
    int rc;
+   unsigned d;
 #ifndef GPSP_NO_TELEMETRY
    heap_census("gblink_pre");
    g_gblink_census = 0;
@@ -1059,7 +1063,11 @@ static int gblink_begin(int is_host)
              fb < 0 ? "config" : "harness", is_host ? "host" : "guest");
    }
    pwr_hold("session");               /* A's reload + B's load (section 19) */
-   rc = fe_host_gblink_start(is_host, g_gblink_delay, (int64_t)g_gblink_seed);
+   /* The input delay: the player's or the harness's, else by the session's
+    * kind, as the adapter's ticks (rfu_sched_d_for). */
+   d = g_gblink_delay ? g_gblink_delay
+     : online_psp_enabled() ? GBLINK_DELAY_ONLINE : GBLINK_DELAY_ADHOC;
+   rc = fe_host_gblink_start(is_host, d, (int64_t)g_gblink_seed);
    pwr_release();
    cur_frame = NULL;                 /* the single machine's frame is gone */
    if (rc == -3)
@@ -1070,8 +1078,10 @@ static int gblink_begin(int is_host)
       g_link_fatal_why = "gblink_reload";
       g_running = 0;
    }
-   fe_evt("gblink_begin role=%s delay=%u rc=%d", is_host ? "host" : "guest",
-          g_gblink_delay, rc);
+   fe_evt("gblink_begin role=%s delay=%u from=%s kind=%s rc=%d",
+          is_host ? "host" : "guest", d,
+          g_gblink_delay ? "config" : "default",
+          online_psp_enabled() ? "online" : "adhoc", rc);
    if (rc != 0)
    {
       osd_toast("Link could not start");

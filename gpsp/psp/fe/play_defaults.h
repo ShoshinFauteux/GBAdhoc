@@ -78,6 +78,14 @@
  * g_cable_reserve, and its comment says why and how it was sized).  Harness
  * cable_reserve_kb overrides it (0 = none, the old behaviour). */
 #define CABLE_RESERVE_KB 2560u
+/* A cable session's (GBA cable, GB/GBC) input delay in frames and redundant
+ * DATA (netdrv.h nd_config.redund) when neither config.ini nor the harness
+ * sets gblink_delay / gblink_input_copies: by the session's kind, as the adapter's
+ * tick delay (rfu_sched_d_for).  The host's delay is the pair's. */
+#define GBLINK_DELAY_ADHOC   2
+#define GBLINK_DELAY_ONLINE  4
+#define GBLINK_COPIES_ADHOC  2
+#define GBLINK_COPIES_ONLINE 0
 /* Section 20: a cable session's default translation-cache offsets mod 8 KiB
  * (LAYOUT_PIN builds; -1 = keep the single-player pin).  hw6/hw7
  * (GBA-LINK-MIRROR.md 20.1-20.2): the LARGE tier (3000/Go) is fastest at

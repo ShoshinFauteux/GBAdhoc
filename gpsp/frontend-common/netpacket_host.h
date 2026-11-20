@@ -125,10 +125,16 @@ uint32_t fe_np_rx_frames(void);
 
 /* 1 while a session is established (start() called, not stopped). */
 int fe_np_session_active(void);
-/* Redundant DATA (netdrv.h nd_config.redund) for the next adapter session
- * started (never a GB/cable-mode one); 0 = off.  Both consoles must set the
- * same: it is announced as ND_FEAT_REDUND at admission. */
+/* Redundant DATA (netdrv.h nd_config.redund) for the next session started;
+ * 0 = off.  An adapter session announces it as ND_FEAT_REDUND at admission,
+ * so both consoles must set the same.  A GB/cable-mode session announces
+ * nothing (both consoles run the same build, and every build reads DATAR):
+ * each console protects its own sends, and its DATAR never outgrows a plain
+ * frame (nd_config.red_body_max), which every transport receives. */
 void fe_np_set_redundancy(unsigned n);
+/* Inside a GB-mode receive callback: how netdrv got that message
+ * (netdrv.h ND_RX_*). */
+int fe_np_gb_rx_how(void);
 /* netdrv_link_held for peer `id` (netdrv.h): -1 no session or no such peer,
  * 0 the path to it is clear, else ND_HELD_* -- the network, not the peer,
  * is holding its traffic. */

@@ -442,6 +442,10 @@ typedef struct
    /* config.ini gblink_delay as written, -1 when absent: main_psp.c owns the
     * default and range (it used to read the file again for this one key). */
    int  gblink_delay_cfg;
+   /* config.ini gblink_input_copies (a cable session's redundant DATA: how
+    * many earlier payloads each datagram carries again, 0-2), -1
+    * when absent: main_psp.c (net_start_np) owns the default. */
+   int  gblink_copies_cfg;
    /* STANDBY (sleep/wake).  0 = off, the historical behaviour: the console
     * cannot wake with the Media Engine running and comes back to a black
     * screen.  1 = tear the engine down on suspend and rebuild it on wake.

@@ -299,6 +299,8 @@ struct netdrv
                                     stack. */
 
    nd_stats st;
+   uint8_t  rx_carried;              /* arq_rx_data: a DATAR's carried copy */
+   uint8_t  rx_how;                  /* netdrv_rx_how (ND_RX_*) */
 
    int      from_arena;              /* built in the host's reserved block */
    uint8_t  scratch[ND_MAX_DGRAM];   /* tx build buffer */
@@ -439,11 +441,14 @@ static void nd_xmit_first(netdrv *nd, nd_peer *p, uint16_t i)
    uint16_t   ix = txq_idx(p, i), take = 0, k;
    nd_txmeta *s  = &p->txq[ix];
    size_t     body = 2u + s->len;
+   size_t     cap  = nd->cfg.red_body_max &&
+                     nd->cfg.red_body_max < ND_RED_BODY_MAX
+                        ? nd->cfg.red_body_max : ND_RED_BODY_MAX;
    uint8_t   *o;
    while (take < nd->cfg.redund && take < ND_RED_MAX && take < i)
    {
       nd_txmeta *e = txq_at(p, (uint16_t)(i - take - 1));
-      if (!e->next_tx_us || body + 4u + e->len > ND_RED_BODY_MAX)
+      if (!e->next_tx_us || body + 4u + e->len > cap)
          break;
       body += 4u + e->len;
       take++;
@@ -888,6 +893,11 @@ static void arq_rx_data(netdrv *nd, nd_peer *p, uint16_t seq,
       uint16_t llen = len;
       /* Copy out: deliver() may re-enter send paths that reuse buffers. */
       memcpy(local, payload, len);
+      /* netdrv_rx_how: a payload that ends a gap (later ones are waiting in
+       * the reorder buffer) came again; the successors it releases share
+       * its kind, since they were waiting on it. */
+      nd->rx_how = nd->rx_carried ? ND_RX_RED
+                 : p->reorder_n ? ND_RX_GAP : ND_RX_INORDER;
       p->rx_expect++;
       nd_deliver(nd, p, local, llen, 1);
       /* Drain the buffered successors now unblocked: each is in its own
@@ -1567,7 +1577,9 @@ static void handle_frame(netdrv *nd, const uint8_t mac[6],
             continue;
          }
          nd->st.red_fill++;
+         nd->rx_carried = 1;
          arq_rx_data(nd, p, sq, pl + o + 4, get16(pl + o + 2));
+         nd->rx_carried = 0;
          if (!p->active)
             return;
       }
@@ -2109,6 +2121,10 @@ int netdrv_local_id(const netdrv *nd)
 int netdrv_peer_count(const netdrv *nd)
 {
    return nd ? nd_peer_count_(nd) : 0;
+}
+int netdrv_rx_how(const netdrv *nd)
+{
+   return nd ? nd->rx_how : ND_RX_INORDER;
 }
 
 void netdrv_set_ack_ride(netdrv *nd, uint32_t us)

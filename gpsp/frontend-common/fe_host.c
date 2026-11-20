@@ -747,6 +747,7 @@ static void gb_link_receive_message(void *userdata, const void *payload,
    (void)userdata;
    if (gbl)
    {
+      fe_gblink_set_rx_how(gbl, fe_np_gb_rx_how());
       fe_gblink_receive(gbl, payload, len);
       return;
    }
@@ -4561,12 +4562,16 @@ static void gblink_stats_evt(void)
    fe_evt("gblink_stats slot=%d delay=%u f0=%llu f1=%llu stalls=%u "
           "streak_max=%u hashes=%u/%u last_hash=%u:%016llx episodes=%u "
           "inputs_fast=%u inputs_ordered=%u nacks=%u resends=%u "
-          "inputs_resent=%u", s.local_slot,
+          "inputs_resent=%u end_late=%u end_red=%u end_retx=%u "
+          "end_resend=%u end_other=%u", s.local_slot,
           s.input_delay, (unsigned long long)s.frames[0],
           (unsigned long long)s.frames[1], s.stalls, s.stall_streak_max,
           s.hashes_matched, s.hashes_sent, s.last_hash_frame,
           (unsigned long long)s.last_hash, s.stall_episodes, s.inputs_fast,
-          s.inputs_ordered, s.nacks, s.resends, s.inputs_resent);
+          s.inputs_ordered, s.nacks, s.resends, s.inputs_resent,
+          s.stall_end[FE_GBLINK_VIA_LATE], s.stall_end[FE_GBLINK_VIA_RED],
+          s.stall_end[FE_GBLINK_VIA_RETX], s.stall_end[FE_GBLINK_VIA_RESEND],
+          s.stall_end[FE_GBLINK_VIA_OTHER]);
 }
 
 static void gblink_frame(uint64_t core_t0)

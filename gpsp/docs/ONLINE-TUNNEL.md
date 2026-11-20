@@ -30,8 +30,8 @@ Three kinds of session sit on netdrv. They react to delay differently:
 | session | how the consoles stay together | delay knob today |
 |---|---|---|
 | **GBA Wireless Adapter** (`rfu.c`, Union Room, Mario Golf/Tennis) | scheduled ticks (`rfu_sched.h`): partner data for frame F arrives at the start of F + D, and frame F + D waits for the partner's tick F | `rfu_sched` = D (default 2) |
-| **GBA link cable** (mirror, `fe_gbadual.c` + `fe_gblink.c`: AW2, Emerald Trade Center/Colosseum, Super Circuit) | input lockstep: each console runs BOTH GBAs; only buttons cross; frame f uses buttons sent at f - D | `gblink_delay` = D (default 4) |
-| **GB/GBC link** (`fe_gblink.c` over `gbcore_dual`) | the same input lockstep | `gblink_delay` = D (default 4) |
+| **GBA link cable** (mirror, `fe_gbadual.c` + `fe_gblink.c`: AW2, Emerald Trade Center/Colosseum, Super Circuit) | input lockstep: each console runs BOTH GBAs; only buttons cross; frame f uses buttons sent at f - D | `gblink_delay` = D (default 2 ad hoc, 4 online) |
+| **GB/GBC link** (`fe_gblink.c` over `gbcore_dual`) | the same input lockstep | `gblink_delay` = D (default 2 ad hoc, 4 online) |
 
 Reliability is netdrv's ARQ: sliding window 256, adaptive RTO (RFC 6298) with a 200 ms floor and a
 2.5 s ceiling on the PSP, keepalive PING every 250 ms, peer dead after 8 s. The GB session adds an
@@ -263,7 +263,8 @@ What changes on the internet:
   (`gblink_input_copies`, unreliable, beside the ordered copy) removed most loss stalls in the simulator, but
   on the PSP radio (hw2) they cost +0.7-1.8 ms of emulation time a frame and doubled the join's stalls, and
   code-health C2-4' (2026-11-16) deleted them with their key. If online loss wants them back, they return
-  from git as a measured change, not as a default.
+  from git as a measured change, not as a default. (The key name now belongs to netdrv's redundant DATA on
+  the cable, copies carried inside the datagram that goes out anyway: GB-LINK.md.)
 - **Reordering.** The relay forwards in arrival order. The internet rarely reorders a single flow, and
   netdrv's receive window absorbs it.
 

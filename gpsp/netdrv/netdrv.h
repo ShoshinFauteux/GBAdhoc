@@ -405,8 +405,14 @@ typedef struct nd_config
     * timeout (~160 ms on the 3000's internet path); carried again, it is
     * delivered with the next datagram, one frame later.  The retransmission
     * stays as the fallback.  Every build understands DATAR; set it only where
-    * the peer runs this build (ND_FEAT_REDUND at admission). */
+    * the peer runs this build (ND_FEAT_REDUND at admission, or, as for the
+    * link cable, a pair the build check already makes identical). */
    uint8_t  redund;
+   /* The largest DATAR body this session sends; 0 = ND_RED_BODY_MAX.  A
+    * transport that drops datagrams over ND_MAX_FRAME (the ad hoc one does)
+    * needs ND_MAX_PAYLOAD here: copies are then carried only while the whole
+    * datagram fits a plain frame, and a bigger payload goes as plain DATA. */
+   uint16_t red_body_max;
    /* OPTIONAL profiling clock (ADR-0021). When non-NULL netdrv_pump splits
     * its own cost into nd_stats.prof_rx_us / prof_arq_us. Costs 4 extra
     * clock reads per pump, so it is only sane once the pump is called ~once
@@ -535,6 +541,13 @@ int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6]);
 int  netdrv_active(const netdrv *nd);        /* session up? */
 int  netdrv_local_id(const netdrv *nd);      /* -1 if no session */
 int  netdrv_peer_count(const netdrv *nd);    /* connected remote peers */
+/* How the reliable payload being delivered right now arrived (valid inside
+ * the deliver callback; receive side only, nothing on the wire): */
+#define ND_RX_INORDER 0   /* in order, nothing missing before it */
+#define ND_RX_RED     1   /* a redundant copy (DATAR) filled the gap */
+#define ND_RX_GAP     2   /* a plain DATA filled a gap later payloads had
+                             already crossed: a retransmission */
+int  netdrv_rx_how(const netdrv *nd);
 void netdrv_get_stats(const netdrv *nd, nd_stats *out);
 
 /* ---- peer frame-rate matching (ADR-0027) --------------------------------
