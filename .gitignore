@@ -13,6 +13,7 @@ gpsp/sdl/gpsp_sdl
 gpsp/psp/gbadhoc.ld
 gpsp/psp/groups.ld
 gpsp/psp/pins.ld
+gpsp/psp/ro.ld
 # Run artifacts
 logs/
 *.log

@@ -52,10 +52,11 @@ psp/build-manifest.json
 .build-*.log
 __pycache__/
 /.layout/
-# The kernel modules (Media Engine, Menu = HOME) are build products: every
-# build rebuilds them in place (psp/Makefile EXTRA_TARGETS), like the online PRX.
+# The kernel modules (Media Engine, Menu = HOME) and the online-play PRX are build
+# products: every build rebuilds them in place (psp/Makefile EXTRA_TARGETS).
 psp/me/gbadhoc_me.prx
 psp/home/gbadhoc_home.prx
+psp/online/gbadhoc_online.prx
 psp/home/gbadhoc_home.elf
 .build-elf.nm
 
