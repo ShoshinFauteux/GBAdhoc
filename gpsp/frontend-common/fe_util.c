@@ -78,7 +78,7 @@ void fe_sha1_hex(const void *data, size_t len, char *out_hex)
    sha1_ctx c;
    const uint8_t *p = (const uint8_t *)data;
    size_t n = len;
-   uint8_t pad[64 + 8];
+   uint8_t pad[128];
    size_t pad_len;
    int i;
 
@@ -144,7 +144,7 @@ void fe_sha1_update(fe_sha1_ctx *c, const void *data, size_t len)
 
 void fe_sha1_final(fe_sha1_ctx *c, uint8_t out[20])
 {
-   uint8_t pad[64 + 8];
+   uint8_t pad[128];
    size_t pad_len;
    sha1_ctx b;
    int i;

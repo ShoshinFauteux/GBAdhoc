@@ -826,6 +826,22 @@ def suites(env: Env, baseline: Path | None):
         ("gb", True, lambda: None,
          "python3 tools/run_gb_tests.py"),
 
+        # The ROM hash link play compares (frontend-common/fe_util.c):
+        # fe_sha1_hex and the streaming fe_sha1_* against known digests at
+        # both padding boundaries.  A 56-63 byte tail once overran a 72-byte
+        # pad buffer and refused link for those carts (rom_hash_mismatch).
+        # Built plain (wrong digests from stack garbage) and with ASan (the
+        # overrun itself).
+        ("fe_sha1", True, lambda: None,
+         ("gcc -std=gnu99 -O2 -Wall -Wextra -Werror -Ifrontend-common "
+          "-o /tmp/t_fe_sha1 tools/tests/test_fe_sha1.c "
+          "frontend-common/fe_util.c && /tmp/t_fe_sha1 && "
+          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+          "-fsanitize=address,undefined -fno-sanitize-recover=all "
+          "-Ifrontend-common -o /tmp/t_fe_sha1_asan "
+          "tools/tests/test_fe_sha1.c frontend-common/fe_util.c && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_sha1_asan")),
+
         # CONFIG.INI: the reader's bounds, then the control-remap table
         # (psp/ctl_map.c: defaults == 3.0 over every pad transition, the
         # conflict rule, validation and save/load) in both build flavours.
