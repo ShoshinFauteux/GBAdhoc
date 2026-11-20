@@ -10861,8 +10861,15 @@ void flush_translation_cache_ram_smc(void)
 #endif
 /* SMC_STM_RANGE (built in): the smc_write stub's entry (fnptrs
  * slot 10) when the switch is on.  A short increment-after writeback STM --
- * STMIA Rn!, 2..SMC_STM_RANGE_MAX registers, from IWRAM into IWRAM -- retires
+ * STMIA Rn!, 1..SMC_STM_RANGE_MAX registers, from IWRAM into IWRAM -- retires
  * exactly its own write instead of taking the full RAM flush.
+ *
+ * One register is the same store as an STR with post-increment: its one word
+ * is the checked word, so the span below is the whole write with no unchecked
+ * earlier words.  tonc's memcpy32 copies its leftover words (count mod 8)
+ * first, one STMCSIA r0!,{r3} at a time, before the 8-word blocks; a copy
+ * over live code therefore usually traps on that one-register store (MonoMyth
+ * copies an ARM routine to the stack every frame of some battle animations).
  *
  * Measured on the twin: FIFA 07's sound-code generator writes its routine
  * with STMIA r12!,{r0,r7,r9} and STMIA r12!,{r4,r7}: 4090 traps in 1500 f,
@@ -10969,7 +10976,7 @@ void smc_trap_entry(void)
       const int fixed = 0;
 #endif
       if (((op & 0x0FF00000) == 0x08A00000 || fixed) && /* STMIA Rn! (P0 U1 S0 W1 L0) */
-          n >= 2 && n <= SMC_STM_RANGE_MAX &&
+          n >= 1 && n <= SMC_STM_RANGE_MAX &&
           (lo >> 15) == ((hi - 4) >> 15) &&    /* one 32 KiB IWRAM mirror */
           smc_wide_gate()) {
         DRPH_SCOPE(DRPH_FLUSH);

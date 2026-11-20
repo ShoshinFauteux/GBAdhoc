@@ -142,7 +142,7 @@ every twin variant too, whatever its `VDEFS`.
 | `SMC_SINGLE_HOT` *(built in, B-1)* | **64**: the widened single-store classes engage only after this many of their traps (or once selective retirement is already active). |
 | `SMC_STM_RANGE` *(built in)* | a short writeback STMIA from IWRAM into IWRAM retires its own span instead of a full RAM flush (FIFA 07's code generator). |
 | `SMC_STM_CHAIN` *(built in)* | a non-final block-store word landing on tagged RAM marks the next word, so the final word's checked store traps (the STM hole). Needs `SMC_STM_RANGE`. |
-| `SMC_STM_WIDE` *(built in)* | widens `SMC_STM_RANGE` to 2-16 registers and lets such a store activate selective retirement (Hot Wheels). |
+| `SMC_STM_WIDE` *(built in)* | widens `SMC_STM_RANGE` to 1-16 registers (one register: tonc's `memcpy32` leftover words, MonoMyth) and lets such a store activate selective retirement (Hot Wheels). |
 | `SMC_STM_AHEAD` *(built in)* | `SMC_STM_WIDE` retires forward over the tagged run after an advancing copy's write. Needs `SMC_STM_WIDE`. |
 | `SMC_STM_FIXED` | the same span retirement for a fixed-base `STMIA Rn,{..}` (no writeback), with no forward widening: ipatix's ImprovedSoundMixer pastes its IWRAM resampling loop this way (The Morrow's Golden Country, ~4 full RAM flushes a frame without it). Changes block boundaries, so timing; not exact. Needs `SMC_STM_RANGE`. |
 | **Unchanged-code filters and in-place patching** | |
