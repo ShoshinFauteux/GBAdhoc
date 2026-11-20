@@ -394,11 +394,9 @@ typedef struct fe_gblink_stats
    /* resend requests sent / answered for the partner / inputs taken from
     * the partner's answers */
    uint32_t nacks, resends, inputs_resent;
-   /* stall episodes by how the partner's buttons that ended each one came:
-    * indexed by FE_GBLINK_VIA_* */
-   uint32_t stall_end[5];
 } fe_gblink_stats;
-/* fe_gblink_stats.stall_end: the partner's buttons came in order with
+/* How the partner's buttons that ended a stall episode came (EVT
+ * gblink_done end_late/end_red/end_retx/end_resend/end_other): in order with
  * nothing missing before them (sent late, or held by the air); a redundant
  * copy filled the gap; a retransmission filled it; the bulk lane's resend
  * (our NACK's answer) brought them first; the wait was for something else. */

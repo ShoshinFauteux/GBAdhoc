@@ -75,7 +75,7 @@ earlier redundant-input datagram below, the copies ride in the datagram that
 was going out anyway: no extra send.  The cable announces nothing at
 admission (both consoles must run the same build, and every build reads
 DATAR), and its DATAR never outgrows a plain frame (`red_body_max`), because
-the ad hoc transport drops a bigger datagram on arrival.  `gblink_stats`
+the ad hoc transport drops a bigger datagram on arrival.  `gblink_done`
 splits stall episodes by how the awaited buttons came (`end_late`, `end_red`,
 `end_retx`, `end_resend`, `end_other`; `fe_gblink.h` `FE_GBLINK_VIA_*`).
 
