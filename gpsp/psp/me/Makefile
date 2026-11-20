@@ -62,6 +62,19 @@ ifneq ($(ME_PAD_BSS),)
 CFLAGS += -DME_PAD_BSS=$(ME_PAD_BSS)
 endif
 
+# Idle-poll A/B arms (main.c ME_IDLE_SPIN / ME_HB_EVERY), rig builds only:
+# PSP_EXTRA="ME_POLL_ARM=Z" reaches this sub-make through MAKEFLAGS, and
+# tools/build.sh refuses PSP_EXTRA for a release.  P = the flat-out poll
+# ADR-0080a removed (a positive control for bus contention, never shipped);
+# Z = the 5.0.0 poll (4096 spins, heartbeat stored every poll).
+ifeq ($(ME_POLL_ARM),P)
+CFLAGS += -DME_IDLE_SPIN=1u -DME_HB_EVERY=1u
+else ifeq ($(ME_POLL_ARM),Z)
+CFLAGS += -DME_IDLE_SPIN=4096u -DME_HB_EVERY=1u
+else ifneq ($(ME_POLL_ARM),)
+$(error ME_POLL_ARM=$(ME_POLL_ARM): only P or Z)
+endif
+
 PSP_FW_VERSION = 500
 
 PSPSDK = $(shell psp-config --pspsdk-path)

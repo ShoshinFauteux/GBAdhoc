@@ -133,14 +133,30 @@ extern void me_render_boot(void);
  * mailbox FLAT OUT with uncached reads/writes, and every uncached access
  * is a full main-memory transaction on the bus the WLAN DMA shares.  When
  * idle, spin on a CACHED local instead (ME stack is kseg0-cached, so it
- * touches no bus) and poll only every ~50 us.  That is <<1 frame of
- * latency for a posted video job but frees the bus ~99.9 % of idle time.
- * Sized for ~333 MHz: ~16650 cycles / ~4 per iter ~= 4096. */
-#define ME_IDLE_SPIN 4096u
+ * touches no bus) and poll only every ~50 us at 333 MHz (~75 us at 222:
+ * the ME clock follows the CPU's).  That is <<1 frame of latency for a
+ * posted video job but frees the bus ~99.9 % of idle time.
+ * Sized from the compiled loop, not guessed: one pass of the volatile
+ * counter below is lw/addiu/sw/lw/bne/nop and costs ~14 cycles (measured on
+ * hardware: 4096 passes took 173.4 us at 333 MHz), so 16650 / 14 ~= 1184.
+ *
+ * The heartbeat is counted in a register and reaches the mailbox on every
+ * command, every park poll, and every ME_HB_EVERY-th idle poll (~1.6 ms at
+ * 333, ~2.4 ms at 222): an idle poll then costs one uncached read, not a
+ * read and a write.  The host only asks that the value moves -- within 50 ms
+ * (me_host_take_up) and within 30 frames (the watchdog).
+ * Both are overridable for the rig's poll A/B arms (me/Makefile ME_POLL_ARM). */
+#ifndef ME_IDLE_SPIN
+#define ME_IDLE_SPIN 1184u
+#endif
+#ifndef ME_HB_EVERY
+#define ME_HB_EVERY 32u        /* a power of two */
+#endif
+typedef char me_hb_every_pow2[(ME_HB_EVERY & (ME_HB_EVERY - 1u)) ? -1 : 1];
 
 static void me_dispatch(volatile me_mbox *mb)
 {
-   unsigned int seen;
+   unsigned int seen, beat;
 
    /* $gp first.  me_stub.S never loads it, and video.cc's small data
     * (common.h CORE_SBSS: video_color_mode, video_color_lut) is addressed
@@ -163,6 +179,7 @@ static void me_dispatch(volatile me_mbox *mb)
    mb->magic   = ME_MBOX_MAGIC;
    seen = mb->cmd_seq;
    mb->done_seq = seen;
+   beat = mb->heartbeat;   /* carry on from what the host last saw */
 
    for (;;)
    {
@@ -172,11 +189,12 @@ static void me_dispatch(volatile me_mbox *mb)
          volatile unsigned int d = ME_IDLE_SPIN;
          while (d)
             d--;
-         mb->heartbeat = mb->heartbeat + 1;   /* liveness, throttled */
+         if ((++beat & (ME_HB_EVERY - 1u)) == 0)
+            mb->heartbeat = beat;             /* liveness, throttled */
          continue;
       }
       seen = seq;
-      mb->heartbeat = mb->heartbeat + 1;
+      mb->heartbeat = ++beat;
 
       switch (mb->cmd)
       {
@@ -255,7 +273,7 @@ static void me_dispatch(volatile me_mbox *mb)
                ;
             if (mb->cmd_seq != seen)
                break;
-            mb->heartbeat = mb->heartbeat + 1;
+            mb->heartbeat = ++beat;
          }
          continue;   /* new command: loop picks it up (seen != cmd_seq) */
       case ME_CMD_NOP:
