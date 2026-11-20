@@ -5,7 +5,7 @@
 # twin's rsynced source tree.  Leaves mtm_module.o and mtm_driver.o in its
 # root, where the twin's archive step picks them up.
 #
-# The three sources and their defines are psp/me/Makefile's (OBJS, RENDER_DEF),
+# The four sources and their defines are psp/me/Makefile's (OBJS, RENDER_DEF),
 # minus the pixel-format define: the twin's core is built without
 # USE_PSP_RGB565_FORMAT, and the module must agree with the core it is fed by,
 # here as on the PSP.
@@ -23,11 +23,13 @@ g++ $INC $DEF "$NOCACHE" "$@" -O2 -fPIC -fno-rtti -fno-exceptions -std=c++11 \
     -fpermissive -w -c -o "$T/video.o" video.cc
 g++ $INC $DEF "$NOCACHE" "$@" -O2 -fPIC -fno-rtti -fno-exceptions -std=c++11 \
     -fpermissive -w -Ipsp/me -c -o "$T/glue.o" psp/me/me_render_glue.cc
+g++ $INC $DEF "$NOCACHE" "$@" -O2 -fPIC -fno-rtti -fno-exceptions -std=c++11 \
+    -fpermissive -w -Ipsp/me -c -o "$T/copy.o" psp/me/me_copy.cc
 gcc -O2 -fPIC -c -o "$T/data.o" psp/me/me_render_data.c
-ld -r -o "$T/mod.o" "$T/video.o" "$T/glue.o" "$T/data.o"
+ld -r -o "$T/mod.o" "$T/video.o" "$T/glue.o" "$T/copy.o" "$T/data.o"
 
 # Everything the module DEFINES becomes mep_*; what it merely uses must be the
-# C library and nothing else -- on the PSP these three objects link against the
+# C library and nothing else -- on the PSP these four objects link against the
 # kernel's libc alone, so any other undefined symbol here is a module that
 # would not have linked.
 nm -u "$T/mod.o" | awk '{print $2}' | sort -u > "$T/undef"

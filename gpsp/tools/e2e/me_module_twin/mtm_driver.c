@@ -5,7 +5,7 @@
  * me_render_glue.cc, not video.cc as the module compiles it (ME_PRX_BUILD),
  * not the work area the host hands over (psp/me/me_mbox.h).  This does.
  *
- * tools/e2e/me_module_twin/build.sh compiles the module's three renderer
+ * tools/e2e/me_module_twin/build.sh compiles the module's four renderer
  * sources for the desktop, exactly as psp/me/Makefile lists them, and renames
  * every symbol they define to mep_*, so a second, independent renderer sits
  * beside the twin's.  This file plays the host: for every frame the model
