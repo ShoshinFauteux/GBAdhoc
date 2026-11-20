@@ -2,10 +2,10 @@
 # The release/lab parity baseline of the per-frame set (see the tool's docstring).
 # Re-recorded only with a reason in the commit (the ratchet: check fails on any new
 # release/lab difference, and passes with a note when one disappears).
-# release: cr-fl-tip/release (elf 82ff46e8bcdf)
-# lab:     cr-fl-tip/lab (elf 8efc05b13f31)
+# release: cr-0a31b5ba/release (elf 82ff46e8bcdf)
+# lab:     cr-0a31b5ba/labdef (elf 8efc05b13f31)
 # 423 members: diff 40, lab-only 41, layout 162, rigonly 3, same 177
-# 0a31b5ba (claude/cable-redund): the fe_tail page spend moves .rodata/.data 8 KiB, so three lab-only stores reached through a base register (rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part) carry displacements 0x2000 apart; the code is the same as at abb33949 in each build (frame_parity chunks parent vs new: same / layout)
+# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (6c3f2caf), for the refill fix (41a67c81), and for claude/cable-redund 0a31b5ba: its fe_tail page spend moves .rodata/.data 8 KiB, so three lab-only stores reached through a base register (rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part) carry displacements 0x2000 apart; in each build the code is the same as at abb33949 (frame_parity chunks parent vs new: same / layout). Every other member unchanged.
 fn   _ZL10pipe_latchv@cpu.cc#1                        layout d=0x10a0
 fn   _ZL10pipe_latchv@cpu.cc#2                        layout d=0x1a60
 fn   _ZL12ml_diff_pagemm                              layout d=0x0000 hot

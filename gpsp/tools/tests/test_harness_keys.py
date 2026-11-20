@@ -31,9 +31,10 @@ CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # rfu_pace_max_hold, rfu_shed_keep, rfu_supersede; release 198, lab 336, harness 314).  C2-4'
 # (code-health C-2): 323 keys on 349 sites, the 16 rejected-experiment keys gone (release 182,
 # lab 320, harness 298).  health-bios: 324 keys on 351 sites, lab_bios (the Lab's bundled-BIOS switch,
-# lab_harness.c lab_audit_keys: two sites, lab only; lab 321).
-EXPECT_KEYS = 324
-EXPECT_SITES = 351
+# lab_harness.c lab_audit_keys: two sites, lab only; lab 321).  cable-redund: 325 keys on 352 sites,
+# gblink_input_copies (the cable's redundant DATA; release 181, lab 322, harness 299).
+EXPECT_KEYS = 325
+EXPECT_SITES = 352
 
 fails = 0
 
