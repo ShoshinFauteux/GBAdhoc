@@ -435,9 +435,9 @@ pin  row_mlu                            0x08931f80   # A ml_update_relevance (wa
 pin  frame_loop                         0x08933364   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a8cc   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898c590   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a016c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a4b138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08af8eb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_tail                            0x08a036c4   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4d138   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afaeb4   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [diagnostic]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -483,9 +483,9 @@ pin  row_mlu                            0x08930900   # A ml_update_relevance (wa
 pin  frame_loop                         0x08931ce4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x08939350   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x089787a8   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x089e9a90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a32278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08ad6054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_tail                            0x089eba90   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a34278   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ad8054   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [soak]
 # row pins (code-health C3-5): the hot block's holds, in address order; each
@@ -531,6 +531,6 @@ pin  row_mlu                            0x08931f00   # A ml_update_relevance (wa
 pin  frame_loop                         0x089332e4   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x0893a84c   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x0898c510   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x08a01644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a4bc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08afaf34   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_tail                            0x08a03644   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a4dc98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08afcf34   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
