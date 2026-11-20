@@ -3,7 +3,9 @@
 # and is loaded at runtime with kuKernelLoadModule (the usb_handoff.c
 # pattern), so nothing here touches the EBOOT link.
 TARGET = gbadhoc_me
-OBJS = me_stub.o main.o me_render_data.o me_render_glue.o video.o
+# me_copy.o (the line copy) comes AFTER video.o, so the renderer keeps its
+# place on the engine's instruction cache as far as the glue allows.
+OBJS = me_stub.o main.o me_render_data.o me_render_glue.o video.o me_copy.o
 
 INCDIR =
 CFLAGS = -O2 -G0 -Wall -Wextra

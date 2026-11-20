@@ -82,6 +82,10 @@ static void me_inv(unsigned int cached_addr, int nbytes)
       __builtin_allegrex_cache(0x19, (int)a);
 }
 
+/* The page, OAM and palette copies of phase 1: whole 64-byte lines, each
+ * aligned destination line claimed without a fetch (me_copy.cc). */
+extern "C" void me_copy_span(void *dst, const void *src, unsigned int nbytes);
+
 /* ME_CMD_RENDER entry (called from me_dispatch with the command's seq).
  * Returns an additive checksum of the output frame. */
 extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
@@ -144,8 +148,8 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
             continue;                       /* clean: eDRAM copy still valid */
          me_inv((unsigned int)(src + (p << VRAM_DIRTY_SHIFT)),
                 1u << VRAM_DIRTY_SHIFT);
-         memcpy(me_work_vram + (p << VRAM_DIRTY_SHIFT),
-                src + (p << VRAM_DIRTY_SHIFT), 1u << VRAM_DIRTY_SHIFT);
+         me_copy_span(me_work_vram + (p << VRAM_DIRTY_SHIFT),
+                      src + (p << VRAM_DIRTY_SHIFT), 1u << VRAM_DIRTY_SHIFT);
       }
    }
    else
@@ -154,10 +158,10 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
       memcpy(me_work_vram, (const void *)(d->vram & ~0x40000000u), 1024 * 96);
    }
    me_inv(d->oam     & ~0x40000000u, 512 * 2);
-   memcpy(oam_ram, (const void *)(d->oam & ~0x40000000u), 512 * 2);
+   me_copy_span(oam_ram, (const void *)(d->oam & ~0x40000000u), 512 * 2);
    me_inv(d->palette & ~0x40000000u, 512 * 2);
-   memcpy(palette_ram_converted, (const void *)(d->palette & ~0x40000000u),
-          512 * 2);
+   me_copy_span(palette_ram_converted,
+                (const void *)(d->palette & ~0x40000000u), 512 * 2);
    /* PRESENTATION COLOUR (me_mbox.h, video.h): this copy is the renderer's
     * own, so it is transformed in place; the log's palette values are
     * transformed as they are replayed (video_me_log.h ml_store). */
@@ -175,6 +179,12 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
       video_color_lut  = (const u16 *)lut;
       video_color_palette(palette_ram_converted);
    }
+   mb->input_seq = seq;              /* host may resume emulation NOW */
+
+   /* The capture and the log are read where they lie, in phase 2: drop any
+    * stale line of them first.  After input_seq, off the host's wait: the
+    * host does not write this capture or its log again until it has retired
+    * this render (both are double-buffered, g_mer_cap[2] / g_mer_log[2]). */
    me_inv(d->capture & ~0x40000000u, sizeof(me_capture_frame));
 #if ME_MIDFRAME_LOG
    {
@@ -186,7 +196,6 @@ extern "C" unsigned int me_render_run(volatile me_mbox *mb, unsigned int seq)
          me_inv(c->log_addr & ~0x40000000u, c->log_n * sizeof(me_log_entry));
    }
 #endif
-   mb->input_seq = seq;              /* host may resume emulation NOW */
 
    if (fresh)
    {
