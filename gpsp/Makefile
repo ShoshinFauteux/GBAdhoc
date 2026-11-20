@@ -523,14 +523,6 @@ else ifeq ($(platform), psp1)
 	ifeq ($(SMC_STM_FIXED),1)
 	CFLAGS += -DSMC_STM_FIXED=1
 	endif
-	# XLAT_THUMB_NO_UNSWITCH=1: OFF by default (cpu-levers).  Host-compiler
-	# only: stops psp-gcc -O3 unswitching translate_block_thumb's loop on
-	# ram_region, which doubles the function and spills translation_ptr to
-	# the stack.  Emitted code and guest behaviour unchanged.  tools/build.sh
-	# runs tools/xlat_spill_guard.sh when it is on.
-	ifeq ($(XLAT_THUMB_NO_UNSWITCH),1)
-	CFLAGS += -DXLAT_THUMB_NO_UNSWITCH=1
-	endif
 	# SERIAL_IDLE_FAST (built in; docs/DYNAREC-PROFILE.md).
 	# Skips update_serial's call chain when no transfer is pending and this
 	# console has no link client role; exact by construction (main.c).

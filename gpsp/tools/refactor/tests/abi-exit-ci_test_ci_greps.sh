@@ -236,7 +236,7 @@ printf '/* the oracle variant: make XLAT_PURE=1 FOO=2 */\n' > "$T9/mut9.c"
 expect 1 "M12c R9 \`make NAME=1\` for a built-in" "FAIL  R9 mut9.c:1 comment says .make XLAT_PURE=1." $CG --src "$T9" --rules R9
 printf '\t# LAYOUT_PIN=1: pinning is opt-in\n' > "$T9/mut9.mk"; rm -f "$T9/mut9.c"
 expect 1 "M12d R9 a make comment (LAYOUT_PIN opt-in)" "FAIL  R9 mut9.mk:1" $CG --src "$T9" --rules R9; rm -f "$T9/mut9.mk"
-printf '/* XLAT_THUMB_NO_UNSWITCH=1: OFF by default.\n * TIMER_LAZY (prototype, guest-visible) or HALT_HOP */\nconst char *s = "SMC_REUSE off by default";\n' > "$T9/mut9.c"
+printf '/* JIT_CODE_AB=1: OFF by default.\n * TIMER_LAZY (prototype, guest-visible) or HALT_HOP */\nconst char *s = "SMC_REUSE off by default";\n' > "$T9/mut9.c"
 expect 0 "M12 control: a real switch off, the phrase owned by a non-built-in name, a string" "R9 builtin_status: .* 0 violations" $CG --src "$T9" --rules R9
 rm -f "$T9/Makefile"
 expect 1 "M12e R9 with no GPSP_BUILT_IN list fails (never passes empty)" "no GPSP_BUILT_IN list" $CG --src "$T9" --rules R9
