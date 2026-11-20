@@ -9,17 +9,17 @@
 #   tools/build.sh release --out dist/release-build
 #
 # It refuses any other build: the manifest beside the EBOOT must say profile
-# release and name the EBOOT and PRX you gave it, and its resolved features must
-# be exactly gpsp_features.h plus GBA_LINK and REWIND, with the release frontend
-# defines and the shipped layout.  Nothing here takes an override for that.
+# release and name the EBOOT and every PRX you gave it, and its resolved features
+# must be exactly gpsp_features.h plus GBA_LINK and REWIND, with the release
+# frontend defines and the shipped layout.  The build must also be of the commit
+# you are releasing (sourceCommit = git rev-parse HEAD) from a clean tree, and the
+# tracked files must be unchanged now.  Nothing here takes an override for that.
 #
 # Usage:
 #   tools/make_release.sh [EBOOT.PBP] [options]
 #     EBOOT.PBP          path to the prebuilt EBOOT (default: psp/EBOOT.PBP)
 #     --version X.Y.Z    release version (default: git tag, else 0.1.0)
 #     --out DIR          output directory   (default: dist/)
-#     --allow-stale      package an EBOOT older than the sources anyway
-#                        (you must mean it; the default is to refuse)
 #
 # Produces:
 #   <out>/GBAdhoc-<version>.zip      the release; PSP/ sits at the zip's root
@@ -43,12 +43,11 @@ die()  { echo "FATAL: $*" >&2; exit 1; }
 note() { echo "== $*"; }
 
 # ------------------------------------------------------------------ args ---
-EBOOT=""; VERSION=""; OUTDIR=""; ALLOW_STALE=0
+EBOOT=""; VERSION=""; OUTDIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version)     VERSION="${2:-}"; shift 2 ;;
     --out)         OUTDIR="${2:-}";  shift 2 ;;
-    --allow-stale) ALLOW_STALE=1;    shift ;;
     -h|--help)     sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)            die "unknown option: $1" ;;
     *)             [ -z "$EBOOT" ] || die "unexpected argument: $1"
@@ -86,102 +85,29 @@ if grep -q 'ONLINE=1' "$EBOOT_DIR/build-manifest.json" 2>/dev/null; then
   [ -f "$ONLINE_PRX" ] || die "no online-play module at '$ONLINE_PRX' (the build has ONLINE=1). Build the PSP frontend before packaging."
 fi
 
-# Staleness: any recursively included PSP/frontend/transport source or build
-# input, including artwork embedded in EBOOT.PBP, newer than the EBOOT means
-# you are about to ship yesterday's binary.
-STALE=$({
-  find "$REPO" -maxdepth 1 -type f \( -name '*.c' -o -name '*.cc' \
-       -o -name '*.h' -o -name '*.S' -o -name '*.s' \
-       -o -name 'Makefile' \)
-  find "$REPO/psp" "$REPO/frontend-common" "$REPO/netdrv" "$REPO/libretro" \
-       "$REPO/gbcore" \
-       -type f \( -name '*.c' -o -name '*.cc' -o -name '*.h' \
-                   -o -name '*.S' -o -name '*.s' -o -name 'Makefile' \
-                   -o -name '*.inc' \
-                   -o -name '*.png' -o -name '*.jpg' -o -name '*.bmp' \)
-} | while IFS= read -r source; do
-       [ "$source" -nt "$EBOOT" ] && printf '%s\n' "$source" || true
-     done)
-STALE=$(echo "$STALE" | sed '/^$/d')
-ME_STALE=$(find "$REPO/psp/me" -type f \( -name '*.c' -o -name '*.cc' \
-             -o -name '*.h' -o -name '*.S' -o -name '*.s' \
-             -o -name '*.exp' -o -name 'Makefile' \) \
-             -newer "$ME_PRX" -print 2>/dev/null || true)
-HOME_STALE=$(find "$REPO/psp/home" -type f \( -name '*.c' -o -name '*.h' \
-               -o -name '*.exp' -o -name 'Makefile' \) \
-               -newer "$HOME_PRX" -print 2>/dev/null || true)
-ONLINE_STALE=""
-if [ "$WANT_ONLINE" = 1 ]; then
-  ONLINE_STALE=$(find "$REPO/psp/online" -type f \( -name '*.c' -o -name '*.h' \
-                   -o -name '*.exp' -o -name 'Makefile' \) \
-                   -newer "$ONLINE_PRX" -print 2>/dev/null || true)
-  for od in netdrv/transport_relay.c netdrv/transport_relay.h netdrv/relay_proto.h netdrv/netdrv.h; do
-    if [ "$REPO/$od" -nt "$ONLINE_PRX" ]; then
-      ONLINE_STALE="$ONLINE_STALE
-$REPO/$od"
-    fi
-  done
-  ONLINE_STALE=$(echo "$ONLINE_STALE" | sed '/^$/d')
-fi
-if [ -n "$ONLINE_STALE" ]; then
-  if [ "$ALLOW_STALE" -eq 1 ]; then
-    echo "WARNING: online-play module is older than these sources (--allow-stale given):" >&2
-    echo "$ONLINE_STALE" | sed 's/^/  /' >&2
-  else
-    echo "FATAL: '$ONLINE_PRX' is OLDER than its sources:" >&2
-    echo "$ONLINE_STALE" | sed 's/^/  /' >&2
-    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
-    exit 1
-  fi
-fi
-for me_dep in psp/Makefile video.cc video.h video_prof.h video_me_log.h common.h; do
-  if [ "$REPO/$me_dep" -nt "$ME_PRX" ]; then
-    ME_STALE="$ME_STALE
-$REPO/$me_dep"
-  fi
-done
-if [ -n "$STALE" ]; then
-  if [ "$ALLOW_STALE" -eq 1 ]; then
-    echo "WARNING: EBOOT is older than these sources (--allow-stale given):" >&2
-    echo "$STALE" | sed 's/^/  /' >&2
-  else
-    echo "FATAL: '$EBOOT' is OLDER than sources that go into it:" >&2
-    echo "$STALE" | sed 's/^/  /' >&2
-    echo "  Rebuild the EBOOT, or pass --allow-stale if you really mean it." >&2
-    exit 1
-  fi
-fi
-if [ -n "$HOME_STALE" ]; then
-  if [ "$ALLOW_STALE" -eq 1 ]; then
-    echo "WARNING: HOME-button module is older than these sources (--allow-stale given):" >&2
-    echo "$HOME_STALE" | sed 's/^/  /' >&2
-  else
-    echo "FATAL: '$HOME_PRX' is OLDER than its sources:" >&2
-    echo "$HOME_STALE" | sed 's/^/  /' >&2
-    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
-    exit 1
-  fi
-fi
-if [ -n "$ME_STALE" ]; then
-  if [ "$ALLOW_STALE" -eq 1 ]; then
-    echo "WARNING: Media Engine module is older than these sources (--allow-stale given):" >&2
-    echo "$ME_STALE" | sed 's/^/  /' >&2
-  else
-    echo "FATAL: '$ME_PRX' is OLDER than Media Engine sources:" >&2
-    echo "$ME_STALE" | sed 's/^/  /' >&2
-    echo "  Rebuild the PSP frontend, or pass --allow-stale if you really mean it." >&2
-    exit 1
-  fi
-fi
+# THE RELEASE IS THE COMMIT THE BUILD RECORDED.  The manifest names the commit
+# it was built from and whether that tree was clean; the release must be that
+# commit, with its tracked files unchanged, and every packaged binary must hash
+# as the manifest says (make_release_check.py).  Then the package holds exactly
+# that commit's build, whichever directories the change touched.  Untracked
+# files are not asked about here: the build's own tree check covered them, and
+# a build leaves some behind.
+HEAD_COMMIT=$(git -C "$REPO" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || \
+  die "cannot read the commit being released (git rev-parse HEAD in '$REPO')"
+TRACKED_CHANGES=$(git -C "$REPO" status --porcelain --untracked-files=no -- . 2>/dev/null) || \
+  die "cannot read the working tree's status (git status in '$REPO')"
+[ -z "$TRACKED_CHANGES" ] || die "tracked files differ from commit ${HEAD_COMMIT:0:7}; release a commit, not a working tree:
+$(echo "$TRACKED_CHANGES" | sed 's/^/  /')"
 
-# Confirm that this is the player profile and that the supplied EBOOT and PRX
-# are the exact pair recorded by the build, rather than unrelated fresh files.
+# Confirm that this is the player profile and that the supplied EBOOT and PRXs
+# are the exact set recorded by the build, rather than unrelated fresh files.
 BUILD_MANIFEST="$EBOOT_DIR/build-manifest.json"
 [ -f "$BUILD_MANIFEST" ] || die "no build-manifest.json beside '$EBOOT'; build with tools/build.sh release --out DIR"
 # The tree's flags against tools/flags.lock, and this build's manifest against
 # the tree.  Same rule as below: no override.
 python3 "$REPO/tools/check_flags.py" --build "$EBOOT_DIR" || die "the build flags drifted (docs/BUILD-SWITCHES.md, The drift check)"
-python3 -I "$SCRIPT_DIR/make_release_check.py" "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" "$REPO/gpsp_features.h" "$REPO/psp/Makefile" || die "build manifest does not describe a release built by: tools/build.sh release"
+python3 -I "$SCRIPT_DIR/make_release_check.py" "$BUILD_MANIFEST" "$EBOOT" "$ME_PRX" "$REPO/gpsp_features.h" "$REPO/psp/Makefile" \
+  "$HOME_PRX" "$ONLINE_PRX" "$HEAD_COMMIT" || die "build manifest does not describe a release built by: tools/build.sh release"
 BUILD_ID=$(python3 -I "$SCRIPT_DIR/make_release_buildid.py" "$BUILD_MANIFEST")
 
 # ---------------------------------------------------------- version/stamp --

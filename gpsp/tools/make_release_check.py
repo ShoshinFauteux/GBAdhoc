@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # make_release_check.py MANIFEST EBOOT ME_PRX gpsp_features.h psp/Makefile
-# Called by make_release.sh: refuses any build that is not the release set.
+#                       HOME_PRX ONLINE_PRX HEAD_COMMIT
+# Called by make_release.sh: refuses any build that is not the release set, or
+# not a clean build of HEAD_COMMIT (the commit being released).
 # Text inputs are read as UTF-8 with errors replaced (psp/Makefile carries a
 # cp1252 dash in a comment; every pattern matched here is ASCII).
 import hashlib, json, pathlib, re, sys
@@ -17,6 +19,21 @@ if m.get("eboot", {}).get("sha256") != sha(sys.argv[2]):
     raise SystemExit("EBOOT hash differs from build manifest")
 if m.get("mePrxSha256") != sha(sys.argv[3]):
     raise SystemExit("Media Engine PRX hash differs from build manifest")
+if m.get("homePrxSha256") != sha(sys.argv[6]):
+    raise SystemExit("HOME-button PRX hash differs from build manifest")
+# A release always carries online play (ONLINE=1, checked below).
+if not pathlib.Path(sys.argv[7]).is_file():
+    raise SystemExit("no online-play PRX at %s" % sys.argv[7])
+if m.get("onlinePrxSha256") != sha(sys.argv[7]):
+    raise SystemExit("online-play PRX hash differs from build manifest")
+# THE COMMIT BEING RELEASED.  With the hashes above, this binds every packaged
+# binary to that commit's sources, whatever directory a change touched.
+if m.get("sourceCommit") != sys.argv[8]:
+    raise SystemExit("the build is of commit %s, not of the commit being released (%s): "
+                     "rebuild at this commit" % (m.get("sourceCommit"), sys.argv[8]))
+if m.get("workingTreeClean") is not True:
+    raise SystemExit("the build was made from a dirty working tree (workingTreeClean=%r): "
+                     "rebuild from a clean checkout" % m.get("workingTreeClean"))
 # THE RIGHT BUILD, not merely a matching one.  A make line that drops a feature,
 # or an instrument that slipped in, still says profile=release and hashes fine.
 features = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8", errors="replace")

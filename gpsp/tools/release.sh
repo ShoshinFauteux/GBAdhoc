@@ -19,8 +19,10 @@ PY=python3; command -v python3 >/dev/null 2>&1 || PY=python
 # What a release must not inherit.  GPSP_BUILD_VERSION is a reproduction aid:
 # a release stamps its own commit unless RELEASE_ALLOW_VERSION_PIN=1 says that
 # reproducing an older stamp is the point.
+# GPSP_BUILD_COMMIT/TREE/DIRTY would let the manifest claim a commit and a clean
+# tree instead of reading them from git, and packaging trusts those two fields.
 for v in CORE_EXTRA FE_EXTRA PSP_EXTRA GBA_LINK REWIND LAYOUT_PIN LAYOUT_PAD_BYTES CHEATS INPUT_FRESH \
-         ME_LOWLAT GPSP_EBOOT_TITLE RFU_SCHED; do
+         ME_LOWLAT GPSP_EBOOT_TITLE RFU_SCHED GPSP_BUILD_COMMIT GPSP_BUILD_TREE GPSP_BUILD_DIRTY; do
   [ -z "${!v+x}" ] || die "$v is set in the environment; a release has none"
 done
 if [ -n "${GPSP_BUILD_VERSION:-}" ] && [ "${RELEASE_ALLOW_VERSION_PIN:-0}" != 1 ]; then

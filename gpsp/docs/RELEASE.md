@@ -23,7 +23,7 @@ ends up with a zip that hard-locks their console.
 | P6 | **Gate 4-H passed on real hardware** | `docs/HARDWARE-ACCEPTANCE.md` run once on two real PSPs, both `frontend.log`s received and reviewed: `overflow=0`, no `arq overflow` line, `retx/acked` well under 0.5, `core_tx`/`core_rx` climbing throughout the trade, saves intact after every step |
 | P7 | **CHANGELOG is current and honest** | The `[0.1.0]` heading has a date, and "Known issues" reflects reality *after* the fix — delete what's fixed, keep what isn't |
 | P8 | **README claims match the code** | Every control, path and menu item still exists. If the UI moved, the README moves. |
-| P9 | **Working tree clean, on `main`** | `git status` empty; the release stamp embeds the commit and marks `-dirty` otherwise |
+| P9 | **Working tree clean, on `main`** | `git status` empty; the release stamp embeds the commit, and packaging refuses a build from a dirty tree or of another commit |
 
 If P6 cannot happen before you want to ship, **ship nothing** — or ship explicitly as a
 pre-release, with the README status section saying so in the same words the CHANGELOG uses.
@@ -68,19 +68,20 @@ before it reaches a memory stick.
 tools/make_release.sh dist/release-build/EBOOT.PBP --version 4.6.0
 ```
 
-The script runs `tools/check_flags.py --build` and checks that the adjacent manifest says `release`, that its EBOOT and Media Engine
-hashes match the selected artifacts, and that the build is the right one: `coreFlags` (what
+The script runs `tools/check_flags.py --build` and checks that the adjacent manifest says `release`, that its EBOOT and its three PRX
+hashes (Media Engine, HOME, online) match the selected artifacts, and that the build is the right one: `coreFlags` (what
 the compiler resolved) must be exactly `gpsp_features.h` plus `GBA_LINK=1 REWIND=1
 GPSP_PROFILE=release`, `frontendDefines` exactly `psp/fe_features.h` plus the release
 profile's, with the release make flags, pinned layout and pad,
 title `GBAdhoc` and a clean rebuild. There is no override for that check; an arm built with
-any switch off, or with an instrument on, cannot be packaged. It also refuses to package
-source files newer than the EBOOT unless `--allow-stale` is explicitly used.
+any switch off, or with an instrument on, cannot be packaged. The build must also be of the
+commit being released: the manifest's `sourceCommit` must equal `git rev-parse HEAD` and its
+`workingTreeClean` must be true, and the tracked files must be unchanged at packaging time.
+To release a later commit, build it; nothing packages an older build under a newer commit.
 The script will:
 
-- refuse if the EBOOT is missing, implausibly small, or **older than any source in
-  `psp/`, `frontend-common/`, `netdrv/`** or the core archive (`--allow-stale` overrides —
-  never use it for a real release);
+- refuse if the EBOOT is missing or implausibly small, or if the build is not a clean build
+  of the checked-out commit;
 - lay out `PSP/GAME/GBAdhoc/` with the EBOOT, Media Engine module, and empty
   `roms/`, `saves/`, `log/`;
 - write `README.txt` (install text with the WLAN-switch and ad-hoc-channel warnings first),
