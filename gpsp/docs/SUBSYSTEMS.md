@@ -303,7 +303,7 @@ is one of:
   into IWRAM or EWRAM (`smc_writer_safe_range`);
 * a non-writeback ARM `STMIA lr,{...}` of any register count whose final word
   is at most `0x200` past the writer (M4A's mixer patch, the gated range path);
-* a short IWRAM-to-IWRAM `STMIA Rn!` or `STMIA Rn` of 2-16 registers
+* a short IWRAM-to-IWRAM `STMIA Rn!` or `STMIA Rn` of 1-16 registers
   (`smc_trap_entry`);
 * a DMA onto tagged code within one region (`dma_smc_retire`).
 
