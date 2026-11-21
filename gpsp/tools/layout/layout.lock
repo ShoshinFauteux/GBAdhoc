@@ -245,9 +245,9 @@ pin  row_mlu                            0x08930880   # A ml_update_relevance (wa
 pin  frame_loop                         0x089324e8   # frame_loop, the frame loop (C-1; was pin main, LAYOUT_PAD_MAIN_BYTES)
 pin  fe_head                            0x089392d0   # main_psp.o .. stb_impl.o (was layout_pad_cold, LAYOUT_PAD_BYTES)
 pin  fe_common                          0x08978700   # netdrv, frontend-common (was LAYOUT_PAD_FE_BYTES)
-pin  fe_tail                            0x089e99e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
-pin  core                               0x08a2fe98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
-pin  ro                                 0x08ad105c   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
+pin  fe_tail                            0x089eb9e8   # the frontend tail, B cold (was LAYOUT_PAD_GB_BYTES)
+pin  core                               0x08a31e98   # instance A's cold core (was LAYOUT_PAD_CORE_BYTES)
+pin  ro                                 0x08ad305c   # .rodata after the start files' merged strings (was LAYOUT_PAD_RO_BYTES)
 
 [lab]
 # the frame loop and the per-frame frontend (round 3 sets; critique-6 MF1)
