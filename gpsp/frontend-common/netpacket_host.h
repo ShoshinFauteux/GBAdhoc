@@ -110,6 +110,9 @@ void fe_np_ack_ride_session(int on);
 /* Per-frame service: pumps netdrv (delivering into the core), emits
  * net_stats. Safe to call when not started (no-op). */
 void fe_np_pump(void);
+/* Would fe_np_pump() find work (netdrv_poll_needed: a datagram pending, a
+ * send due)?  No syscall; 0 when not started. */
+int fe_np_poll_needed(void);
 
 /* Tear down: core stop(), BYE to peers, driver freed. */
 void fe_np_stop(void);

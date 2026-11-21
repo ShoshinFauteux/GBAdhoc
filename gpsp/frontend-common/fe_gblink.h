@@ -190,6 +190,12 @@ typedef struct fe_gblink_platform
     * how many samples stand behind them (0 = none yet).  Only a HOST with
     * fe_gblink_local.delay_auto set calls it. */
    uint32_t (*rtt_us)(void *user, uint32_t *rttvar_us, uint32_t *samples);
+   /* Pickup at need (optional; used with wait): deliver what the network
+    * has ALREADY received (pump it once if anything is pending), without
+    * waiting and whatever the frame's budget.  Called once each time a step
+    * is held up, before wait(); if it brought the buttons, the step resumes
+    * at once.  Returns nonzero if it pumped.  NULL = wait() alone. */
+   int (*pickup)(void *user);
 } fe_gblink_platform;
 
 typedef struct fe_gblink_local

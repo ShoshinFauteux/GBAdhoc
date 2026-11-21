@@ -2245,6 +2245,13 @@ int fe_gblink_step(fe_gblink *s, uint16_t local_buttons)
              !s->captured)
       {
          uint64_t w0 = clock_us(s), w1;
+         /* Pickup at need: the buttons usually arrive while the machines
+          * run and sit in the receive queue until the next pump.  Deliver
+          * them first, whatever the budget: if they were there, the advance
+          * resumes at once and no frame is lost; if not, wait() decides as
+          * before.  Again only WHEN the step returns changes. */
+         if (s->p.pickup)
+            s->p.pickup(s->p.user);
          while (!need_met(s) &&
                 s->p.wait(s->p.user, waited + (uint32_t)(clock_us(s) - w0)))
             ;

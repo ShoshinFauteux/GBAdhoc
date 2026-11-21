@@ -483,6 +483,7 @@ int fe_np_gb_local_id(uint8_t *id) { (void)id; return 0; }
 int fe_np_gb_send(uint16_t id, const void *p, size_t n)
 { (void)id; (void)p; (void)n; return -1; }
 void fe_np_pump(void) { }
+int fe_np_poll_needed(void) { return 0; }
 int fe_np_link_held(int id, uint32_t q) { (void)id; (void)q; return -1; }
 
 /* ---- periodic battery flush: settle first, cap, and the writer thread ----

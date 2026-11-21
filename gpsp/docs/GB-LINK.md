@@ -698,6 +698,16 @@ unscaled: 543 of 600 frames waited, 0.3 ms each) instead of losing a whole
 frame now and then.  The machines run on the inputs alone, so absorbing
 changes when a step returns, never what it computes (14.6).
 
+**Pickup at need** (2026-11-21, `fe_gblink_platform.pickup`; no key: it
+runs wherever absorption's hook is wired).  The partner's buttons usually
+reach the receive queue while the machines run, and only the loop-top pump
+drains it, so a step held up mid-frame often had them in the queue already
+(55 % of delay-3 stalls, 71 % on the guest; builds/link-latency-out).
+Before asking wait(), the step now pumps once if netdrv says something is
+pending (`netdrv_poll_needed`, no syscall) and resumes at once if that
+brought the buttons, whatever the frame budget says.  Otherwise wait()
+decides exactly as before.
+
 **Resend requests** (`gblink_nack`, default 1).  With the CPU fixed, loss is
 what is left: PPSSPP at 3 % loss still lost 25 frames per 1000 in runs of up
 to 10, because a lost INPUT waits behind netdrv's cumulative acknowledgement
