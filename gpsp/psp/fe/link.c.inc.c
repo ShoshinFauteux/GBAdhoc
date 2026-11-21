@@ -71,11 +71,26 @@ static int net_start_np(int is_host, const char *group, const char *nick,
       fe_evt("rfu_sched d=%u kind=%s", rfu_sched_d,
              online_psp_enabled() ? "online" : "adhoc");
    }
-   /* An online adapter room carries each frame's packets again in the next
-    * datagram (netdrv.h nd_config.redund): a lost datagram then costs one
-    * frame, not a retransmission timeout.  Ad hoc's radio retransmits
-    * below us; the cable's sessions (GB mode) never take it. */
-   fe_np_set_redundancy(online_psp_enabled() ? ND_RED_MAX : 0u);
+   /* Redundant DATA (netdrv.h nd_config.redund): each frame's packets ride
+    * again in the next datagrams, so a lost datagram costs one frame, not a
+    * resend or a retransmission timeout.  An online adapter room takes it;
+    * an ad hoc one does not.  A cable session (GB mode: GBA cable, GB/GBC)
+    * takes config.ini / harness gblink_input_copies (0-2), else its kind's
+    * default (play_defaults.h). */
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      fe_np_set_redundancy(online_psp_enabled() ? ND_RED_MAX : 0u);
+   else
+   {
+      int rd = g_pcfg.gblink_copies_cfg;
+      if (rd < 0)
+         rd = online_psp_enabled() ? GBLINK_COPIES_ONLINE : GBLINK_COPIES_ADHOC;
+      if (rd > ND_RED_MAX)
+         rd = ND_RED_MAX;
+      fe_np_set_redundancy((unsigned)rd);
+      fe_evt("gblink_input_copies n=%d from=%s kind=%s", rd,
+             g_pcfg.gblink_copies_cfg < 0 ? "default" : "set",
+             online_psp_enabled() ? "online" : "adhoc");
+   }
 #ifdef GPSP_KEEP_TELEMETRY
    g_np_start_tid = sceKernelGetThreadId();    /* see player_screenshot */
 #endif

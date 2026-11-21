@@ -288,15 +288,19 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
       if (HARNESS_STR("gblink_role", gr, sizeof(gr)))
          g_gblink_role = !strcmp(gr, "host") ? 1 : !strcmp(gr, "join") ? 2 : 0;
       /* config.ini gblink_delay: the player's own tuning (frames of input
-       * delay, 1-30); the harness key, when present, wins. */
-      g_gblink_delay = g_pcfg.gblink_delay_cfg >= 0
-                     ? (unsigned)g_pcfg.gblink_delay_cfg : GBLINK_DELAY_DEFAULT;
-      if (g_gblink_delay < 1 || g_gblink_delay > 30)
-         g_gblink_delay = GBLINK_DELAY_DEFAULT;
+       * delay, 1-30); the harness key, when present, wins.  0 (absent or
+       * out of range) = by the session's kind (gblink_begin). */
+      g_gblink_delay = g_pcfg.gblink_delay_cfg >= 1 &&
+                       g_pcfg.gblink_delay_cfg <= 30
+                     ? (unsigned)g_pcfg.gblink_delay_cfg : 0u;
       g_gblink_delay = (unsigned)HARNESS_INT("gblink_delay",
                                                 g_gblink_delay);
       if (g_gblink_delay > 60)
          g_gblink_delay = 60;
+      /* config.ini gblink_input_copies (0-2, -1 = by kind; net_start_np); the
+       * harness key, when present, wins. */
+      g_pcfg.gblink_copies_cfg = (int)HARNESS_INT("gblink_input_copies",
+                                                  g_pcfg.gblink_copies_cfg);
       g_gblink_delay_auto = (unsigned)HARNESS_INT(
                                                      "gblink_delay_auto", 0);
       if (g_gblink_delay_auto > 30)

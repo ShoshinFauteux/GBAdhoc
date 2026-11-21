@@ -349,6 +349,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
     * Max and Max Smooth retain their respective unlimited selections. */
    pcfg_ff_set_mode(pcfg_ff_mode());
    g_pcfg.gblink_delay_cfg = (int)fe_ini_get_int(cfg_path, "gblink_delay", -1);
+   g_pcfg.gblink_copies_cfg = (int)fe_ini_get_int(cfg_path, "gblink_input_copies",
+                                                  -1);
    fe_ini_doc_bind(NULL, NULL);
 
    fe_log("config loaded: scale=%s filter=%s ff_mult_x10=%d ff_hold=%d "

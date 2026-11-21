@@ -498,6 +498,11 @@ typedef struct
     * old `btn_swap` key (3.0's "A/B buttons" row, now removed) is converted
     * into bind_a/bind_b at load and has no field of its own. */
    ctl_map controls;
+   /* config.ini gblink_input_copies (a cable session's redundant DATA: how
+    * many earlier payloads each datagram carries again, 0-2), -1
+    * when absent: main_psp.c (net_start_np) owns the default.  Last, so no
+    * field the per-frame code reads moves. */
+   int  gblink_copies_cfg;
 } psp_config;
 
 /* Bounds for `net_session_fps` (ADR-0033), in hundredths of a frame/second.

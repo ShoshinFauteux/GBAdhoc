@@ -747,6 +747,7 @@ static void gb_link_receive_message(void *userdata, const void *payload,
    (void)userdata;
    if (gbl)
    {
+      fe_gblink_set_rx_how(gbl, fe_np_gb_rx_how());
       fe_gblink_receive(gbl, payload, len);
       return;
    }

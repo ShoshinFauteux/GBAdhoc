@@ -154,7 +154,7 @@ Each step gets a hardware answer before the next; one build awaiting hardware at
 - **Redundant DATA online** (netdrv `nd_config.redund`, `ND_T_DATAR`, `ND_FEAT_REDUND`). Each first transmission
   carries up to 2 earlier unacknowledged payloads, so one or two lost datagrams cost one or two frames instead of an
   RTO stall on the ordered lane (~9-18 s per trade at the 3000's 2.4-5.3 % loss, ONLINE-SUITE.md 10.3). Online
-  adapter rooms only; ad hoc and the cable never send it. RFU packets are 104 B, so a datagram grows by at most
+  adapter rooms only; ad hoc adapter rooms never send it (the cable does ad hoc: GB-LINK.md, `gblink_input_copies`). RFU packets are 104 B, so a datagram grows by at most
   2 + 2 x 108 = 218 B (346 B), never past 584 B (the relay's 600 B datagram holds it unchanged).
   tools/tests/test_netdrv_redund.c: at 3 % random loss, 602 of 2500 payloads came late without it, 1 with it.
 - **Hardware, build 01c4b13a50d5 (a2073cf7), 2026-11-17.** PSP-3000 vs PPSSPP on the Lab VPS, Emerald Trade Center,

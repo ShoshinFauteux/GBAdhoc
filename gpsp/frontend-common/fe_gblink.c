@@ -295,6 +295,9 @@ struct fe_gblink
    uint64_t nack_frame;              /* the partner frame last NACKed */
    uint64_t nack_us;                 /* ...and when */
    uint32_t nack_steps;              /* steps since (no clock) */
+   int rx_how;                       /* fe_gblink_set_rx_how */
+   int need_via;                     /* how a stall's awaited buttons came */
+   uint32_t stall_end[5];            /* episodes by need_via (gblink_done) */
 };
 
 static uint64_t clock_us(const fe_gblink *s)
@@ -1794,6 +1797,9 @@ static int take_input(fe_gblink *s, uint32_t f, uint16_t buttons, int fast)
       return -1;
    s->q[r][f % RING] = buttons;
    s->have[r]++;
+   if (s->streak && r == s->need_slot && f == s->need_frame)
+      s->need_via = fast == 2 ? FE_GBLINK_VIA_RESEND
+                  : fast ? FE_GBLINK_VIA_LATE : s->rx_how;
    if (fast == 2)
       s->st.inputs_resent++;
    else if (fast)
@@ -2129,10 +2135,15 @@ static void check_final(fe_gblink *s)
    }
    s->state = FE_GBLINK_DONE;
    fe_evt("gblink_done frame=%u hash=%016llx save_committed=%u hashes=%u/%u "
-          "stalls=%u t_ms=%llu", s->final_frame,
+          "stalls=%u t_ms=%llu episodes=%u end_late=%u end_red=%u "
+          "end_retx=%u end_resend=%u end_other=%u", s->final_frame,
           (unsigned long long)s->final_hash,
           (unsigned)s->final_save_size, s->st.hashes_matched,
-          s->st.hashes_sent, s->st.stalls, evt_ms(s));
+          s->st.hashes_sent, s->st.stalls, evt_ms(s), s->st.stall_episodes,
+          s->stall_end[FE_GBLINK_VIA_LATE], s->stall_end[FE_GBLINK_VIA_RED],
+          s->stall_end[FE_GBLINK_VIA_RETX],
+          s->stall_end[FE_GBLINK_VIA_RESEND],
+          s->stall_end[FE_GBLINK_VIA_OTHER]);
 }
 
 static void set_end(fe_gblink *s, uint32_t f)
@@ -2278,6 +2289,8 @@ int fe_gblink_step(fe_gblink *s, uint16_t local_buttons)
    }
    if (r == 1)
    {
+      if (s->streak)
+         s->stall_end[s->need_via]++;      /* an episode ends: its cause */
       s->streak = 0;
       s->win.frames++;
       return FE_GBLINK_FRAME;
@@ -2295,6 +2308,7 @@ int fe_gblink_step(fe_gblink *s, uint16_t local_buttons)
    {
       s->st.stall_episodes++;
       s->win.stall_episodes++;
+      s->need_via = FE_GBLINK_VIA_OTHER;  /* until the buttons come */
    }
    if (++s->streak > s->st.stall_streak_max)
       s->st.stall_streak_max = s->streak;
@@ -2732,6 +2746,13 @@ int fe_gblink_fast_link(const fe_gblink *s, int *source)
 int fe_gblink_error(const fe_gblink *s) { return s ? s->error : FE_GBLINK_E_LOCAL; }
 gbdual_t *fe_gblink_dual(const fe_gblink *s) { return s ? s->dual : NULL; }
 int fe_gblink_local_slot(const fe_gblink *s) { return s ? s->local_slot : -1; }
+
+void fe_gblink_set_rx_how(fe_gblink *s, int how)
+{
+   if (s)
+      s->rx_how = how >= FE_GBLINK_VIA_LATE && how <= FE_GBLINK_VIA_RETX
+                     ? how : FE_GBLINK_VIA_LATE;
+}
 
 void fe_gblink_get_stats(const fe_gblink *s, fe_gblink_stats *out)
 {

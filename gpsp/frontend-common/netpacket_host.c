@@ -25,9 +25,10 @@ static int np_stop_reason;           /* fe_np_stop_reason */
  * turned ticks off (rfu_sched = 0) says so too. */
 #include "../rfu_sched_api.h"
 #define NP_RFU_FEATURES (rfu_sched_d ? ND_FEAT_RFU_SCHED : 0u)
-/* Redundant DATA for the next adapter session (fe_np_set_redundancy; netdrv.h
- * nd_config.redund), announced as ND_FEAT_REDUND: both consoles of an online
- * room set it alike, and a pair that does not is refused at admission. */
+/* Redundant DATA for the next session (fe_np_set_redundancy; netdrv.h
+ * nd_config.redund).  An adapter session announces it as ND_FEAT_REDUND: both
+ * consoles of an online room set it alike, and a pair that does not is
+ * refused at admission.  A GB-mode (cable) session does not announce it. */
 static unsigned np_redund;
 void fe_np_set_redundancy(unsigned n) { np_redund = n; }
 static int np_refused_new;           /* fe_np_take_refused */
@@ -414,7 +415,10 @@ static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
    nc.build = np_build();
    nc.link_features = gb_mode ? 0 : NP_RFU_FEATURES |
                                     (np_redund ? ND_FEAT_REDUND : 0u);
-   nc.redund = gb_mode ? 0 : (uint8_t)np_redund;
+   nc.redund = (uint8_t)np_redund;
+   /* the cable's copies only while the datagram fits a plain frame: the ad
+    * hoc transport drops anything bigger on arrival */
+   nc.red_body_max = gb_mode ? ND_MAX_PAYLOAD : 0u;
    nc.join_nonce = cfg->nonce ? cfg->nonce
                               : (uint32_t)(cfg->now_us() | 1);
    nc.prof_us    = cfg->now_us;     /* ADR-0021 pump rx/arq split */
@@ -472,6 +476,11 @@ void fe_np_gb_set_peer_callback(fe_np_gb_peer_fn peer, void *userdata)
       np.gb_peer = peer;
       np.gb_peer_user = userdata;
    }
+}
+
+int fe_np_gb_rx_how(void)
+{
+   return np.active && np.nd ? netdrv_rx_how(np.nd) : ND_RX_INORDER;
 }
 
 int fe_np_gb_peer_ready(uint8_t *peer_id)

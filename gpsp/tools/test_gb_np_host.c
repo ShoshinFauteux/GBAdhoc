@@ -17,6 +17,8 @@ struct netdrv
    int local_id;
    uint32_t ride;      /* cfg.ack_ride_us as the session has it */
    uint16_t features;  /* cfg.link_features (NP_RFU_FEATURES) */
+   uint8_t redund;     /* cfg.redund */
+   uint16_t red_max;   /* cfg.red_body_max */
 };
 
 static struct netdrv fake_nd;
@@ -60,6 +62,8 @@ netdrv *netdrv_create(const nd_transport *tp, const nd_callbacks *cb,
    snprintf(negotiated, sizeof(negotiated), "%s", cfg->protocol);
    fake_nd.ride = cfg->ack_ride_us;
    fake_nd.features = cfg->link_features;
+   fake_nd.redund = cfg->redund;
+   fake_nd.red_max = cfg->red_body_max;
    return &fake_nd;
 }
 void netdrv_destroy(netdrv *nd) { (void)nd; }
@@ -104,6 +108,7 @@ int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
 int netdrv_active(const netdrv *nd) { return nd->active; }
 int netdrv_local_id(const netdrv *nd) { return nd->active ? nd->local_id : -1; }
 int netdrv_peer_count(const netdrv *nd) { return nd->peers; }
+int netdrv_rx_how(const netdrv *nd) { (void)nd; return ND_RX_INORDER; }
 void netdrv_get_stats(const netdrv *nd, nd_stats *out)
 { (void)nd; memset(out, 0, sizeof(*out)); }
 unsigned netdrv_peer_min_fps(const netdrv *nd) { (void)nd; return 0; }
@@ -240,7 +245,25 @@ int main(void)
    CHECK(fake_nd.features == 0);
    fe_np_stop();
 
-   puts("gb netpacket host: protocol routing/readiness, ack riding and the "
-        "adapter feature bit passed");
+   /* Redundant DATA: an adapter session announces it (ND_FEAT_REDUND) and
+    * may send a DATAR up to ND_RED_BODY_MAX; a GB/cable session sends it
+    * unannounced and never larger than a plain frame's body. */
+   fe_np_set_redundancy(2);
+   CHECK(fe_np_start(&cfg) == 0);
+   CHECK(fake_nd.features == ND_FEAT_REDUND && fake_nd.redund == 2 &&
+         fake_nd.red_max == 0);
+   fe_np_stop();
+   CHECK(fe_np_start_gb(&cfg) == 0);
+   CHECK(fake_nd.features == 0 && fake_nd.redund == 2 &&
+         fake_nd.red_max == ND_MAX_PAYLOAD);
+   CHECK(fe_np_gb_rx_how() == ND_RX_INORDER);
+   fe_np_stop();
+   fe_np_set_redundancy(0);
+   CHECK(fe_np_start_gb(&cfg) == 0);
+   CHECK(fake_nd.redund == 0);
+   fe_np_stop();
+
+   puts("gb netpacket host: protocol routing/readiness, ack riding, the "
+        "adapter feature bit and redundancy per session kind passed");
    return 0;
 }
