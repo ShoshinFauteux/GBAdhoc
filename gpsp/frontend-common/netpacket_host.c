@@ -550,6 +550,11 @@ int fe_np_gb_send(uint16_t peer_id, const void *payload, size_t len)
                       peer_id);
 }
 
+int fe_np_poll_needed(void)
+{
+   return np.active && np.nd && netdrv_poll_needed(np.nd);
+}
+
 void fe_np_pump(void)
 {
    uint64_t now;

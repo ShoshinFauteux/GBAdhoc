@@ -7350,3 +7350,27 @@ void fe_host_shutdown(void)
    retro_unload_game();
    retro_deinit();
 }
+
+/* Pickup at need (fe_gblink_step, before its wait): deliver what has already
+ * arrived, now -- no wait, no frame budget.  netdrv's pending test is two
+ * loads; the pump runs only if it says yes.  The bulk lane is drained as
+ * gbl_wait does.  Kept last in the file: fe_host_reset's place is held by
+ * tools/layout/layout.lock, so nothing before it may grow. */
+int fe_host_gblink_pickup(void)
+{
+   int pumped = 0;
+   unsigned was = 0;
+#ifdef DRPROF_HW
+   was = fe_lp_phase;
+#endif
+   FE_LP_SET(FELP_NET);
+   if (fe_np_poll_needed())
+   {
+      fe_np_pump();
+      pumped = 1;
+   }
+   gbl_drain_bulk();
+   FE_LP_SET(was);
+   (void)was;
+   return pumped;
+}
