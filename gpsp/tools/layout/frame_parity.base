@@ -2,14 +2,14 @@
 # The release/lab parity baseline of the per-frame set (see the tool's docstring).
 # Re-recorded only with a reason in the commit (the ratchet: check fails on any new
 # release/lab difference, and passes with a note when one disappears).
-# release: cr-0a31b5ba/release (elf 82ff46e8bcdf)
-# lab:     cr-0a31b5ba/labdef (elf 8efc05b13f31)
-# 423 members: diff 40, lab-only 41, layout 162, rigonly 3, same 177
-# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (6c3f2caf), for the refill fix (41a67c81), and for claude/cable-redund 0a31b5ba: its fe_tail page spend moves .rodata/.data 8 KiB, so three lab-only stores reached through a base register (rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part) carry displacements 0x2000 apart; in each build the code is the same as at abb33949 (frame_parity chunks parent vs new: same / layout). Every other member unchanged.
+# release: rc-8a20710a/release (elf 344d2af27329)
+# lab:     rc-8a20710a/lab (elf 6cafb2c47ed8)
+# 423 members: diff 40, lab-only 41, layout 164, rigonly 3, same 175
+# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (6c3f2caf), for the refill fix (41a67c81), for claude/cable-redund 0a31b5ba (its fe_tail page spend moved .rodata/.data 8 KiB: rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part carry displacements 0x2000 apart), and for the 5.1.0 merge of cable-redund into claude/beta-5.1 (8a20710a): the release frees the fe_tail page again (beta-5.1's SHA-1 fix shrank fe_sha1_final 44 B) while the lab keeps it, so the release's .data/.bss sit 8 KiB lower than the lab's relative to before; two members that were 'same' now differ only in data-address immediates (lui/addiu of .bss objects, same D-cache set mod 8 KiB): ml_diff_rows (1 of 99 words, hot, d 0) and me_vram_map_consumed (4 of 30 words, d 0x1a60). 0 code hunks. Every other member unchanged.
 fn   _ZL10pipe_latchv@cpu.cc#1                        layout d=0x10a0
 fn   _ZL10pipe_latchv@cpu.cc#2                        layout d=0x1a60
 fn   _ZL12ml_diff_pagemm                              layout d=0x0000 hot
-fn   _ZL12ml_diff_rowsmmPKmPmmS1_                     same   d=0x0000 hot
+fn   _ZL12ml_diff_rowsmmPKmPmmS1_                     layout d=0x0000 hot
 fn   _ZL12ml_line_bodym                               layout d=0x0000 hot
 fn   _ZL12ml_relevancePKtPm.isra                      same   d=0x0000 hot
 fn   _ZL19ml_update_relevancem                        layout d=0x0000 hot
@@ -43,11 +43,11 @@ fn   core_phase_frame_end                             layout d=0x0120 hot
 fn   core_phase_leave                                 layout d=0x1fa0 hot
 fn   core_phase_now                                   layout d=0x16c0 hot
 fn   core_prof_evt                                    diff   d=0x1400 hot n=2 c=1f34ceadcd80,241baa433d0c
-fn   ctl_info                                         same   d=0x18d4
-fn   ctl_pad_word                                     same   d=0x18d4
-fn   ctl_shortcuts                                    same   d=0x18d4
-fn   ctl_turbo_pad                                    same   d=0x1968
-fn   ctl_turbo_stop                                   same   d=0x1968
+fn   ctl_info                                         same   d=0x18d8
+fn   ctl_pad_word                                     same   d=0x18d8
+fn   ctl_shortcuts                                    same   d=0x18d8
+fn   ctl_turbo_pad                                    same   d=0x196c
+fn   ctl_turbo_stop                                   same   d=0x196c
 fn   dispatch_cache_clear                             same   d=0x1f40 hot
 fn   dma_tf_loop16                                    layout d=0x0000 hot
 fn   dma_tf_loop32                                    layout d=0x0000 hot
@@ -120,8 +120,8 @@ fn   fe_np_set_peer_dead_us                           diff   d=0x013c n=2 c=174b
 fn   fe_np_stop_reason                                same   d=0x013c
 fn   fe_np_take_refused                               same   d=0x013c
 fn   fe_np_txq_now                                    same   d=0x0150
-fn   ff_chip_text                                     layout d=0x10bc
-fn   ff_pace_target_x100                              same   d=0x149c
+fn   ff_chip_text                                     layout d=0x10c0
+fn   ff_pace_target_x100                              same   d=0x14a0
 fn   ffh_too_soon                                     same   d=0x1688
 fn   fflush                                           same   d=0x1680 hot
 fn   flag_interrupt                                   layout d=0x0000 hot
@@ -209,11 +209,11 @@ fn   halt_hop_wake@main.c#1                           layout d=0x17a0 hot
 fn   halt_hop_wake@main.c#2                           layout d=0x17a0 hot
 fn   heap_exact                                       lab-only
 fn   heartbeat_write                                  lab-only
-fn   home_host_fallbacks                              same   d=0x194c
-fn   home_host_frame                                  same   d=0x192c
-fn   home_host_imp_rc                                 same   d=0x194c
-fn   home_host_ok                                     diff   d=0x192c n=4 c=228147edd22e,415ac7b25190,53e1ad833339,b079d8691c43
-fn   home_host_take_press                             same   d=0x194c
+fn   home_host_fallbacks                              same   d=0x1950
+fn   home_host_frame                                  same   d=0x1930
+fn   home_host_imp_rc                                 same   d=0x1950
+fn   home_host_ok                                     diff   d=0x1930 n=4 c=228147edd22e,415ac7b25190,53e1ad833339,b079d8691c43
+fn   home_host_take_press                             same   d=0x1950
 fn   input_poll                                       same   d=0x1f20 hot
 fn   input_state                                      layout d=0x0130 hot
 fn   iok_encode@cpu_threaded.c#1                      same   d=0x16c0 hot
@@ -244,11 +244,11 @@ fn   ll_sample                                        layout d=0x1f9c hot
 fn   malloc                                           same   d=0x0120 hot
 fn   me_capture_line                                  layout d=0x0000 hot
 fn   me_host_idle                                     same   d=0x1f9c hot
-fn   me_host_input_done                               same   d=0x180c
+fn   me_host_input_done                               same   d=0x1810
 fn   me_host_post_render                              same   d=0x1f9c hot
-fn   me_host_render_refused                           same   d=0x180c
+fn   me_host_render_refused                           same   d=0x1810
 fn   me_host_result                                   same   d=0x1f9c hot
-fn   me_host_up                                       same   d=0x1608
+fn   me_host_up                                       same   d=0x160c
 fn   me_host_watchdog_frame                           diff   d=0x1f9c hot n=5 c=1fac0638edd9,23b5bdc63105,da70651f76ab,ecbca4a25cfb,f2d339d9261b
 fn   me_rend_frame.part                               diff   d=0x1940 n=93 c=00292b945e61,0046685a4416,04c0eb9826d7,05b8cc4b7ffa,09fbb59af2ff,0a28b6d5e77a,0c48a1dc6796,0d2163e4ef4b,0dcd707e0eaa,0f44aca96ed2,0fa722ce05ba,12a7adba1f4e,174b1da95dcc,1cb7568e536f,253ea136835d,26dd66ba40c9,2720c665a929,27b2451b94f1,2b771fda2588,2d7901739432,347489971f15,3544eb7ecfb0,35cfd5ac44bd,3a3bdb3139f9,3bb3a33dfe54,3e3a74bb9ce8,3e3a74bb9ce8,3f3d3ded90ca,42bdb99f9210,467d432833fe,479d8abe3e45,4c2b0afd2fe9,4f979c889a35,52dd04ec7115,52dd04ec7115,534231ea84bb,53e1ad833339,548e09db5194,5716564dd3ce,59c6a5fae486,59f341e73611,5c1f8521545b,5d74433c6c4b,5e19fc47ce1c,5e610557759f,5fe24cda242a,621d0f794207,6699370c9a34,691eb90a6f7c,6b0c58ce1afe,6c9a4e98e2f3,7b98f2c0ff81,8b52053d24fd,8bd28881c845,8fbc0ce3ecd6,915ea14c9d65,91d1fca6cb32,93ca909e5eea,93fb34f47639,9568679c57b4,95d27c2eed30,9bcef9fc75e2,9c8821d2b711,9ef639e73b3a,a0b28c9ba9d8,a0b28c9ba9d8,a5bfe5a80bf4,a77920121ee9,a7adbe908d84,abc9ec550663,ada1262e2310,ae02000d6d9b,b4ef33572e46,b5744b6740f2,b71ce9e8780e,b8fbc7bafb92,bb13dc3c6f20,c0967ee4197e,c4975061ddbb,c7aa00afd860,c9f6c0f806c9,cad23eb66750,cb3f471b237a,cc48bb69fbee,cd3f311f2c9b,ce7fa4ad4858,d1f447d962f6,d83c769bdedf,df4cf1551126,e2f233ecd6f7,f3f660a2fcf5,f7d9798f123a,f8b28a429b1c
 fn   me_rend_present                                  layout d=0x1fc0 hot
@@ -256,7 +256,7 @@ fn   me_rend_quiesce.part                             lab-only
 fn   me_rend_retire_if_idle                           diff   d=0x0000 hot n=9 c=0febfa8ad3c7,23f2fc4e4322,29795f81c889,62d00658b3ae,90cba02e6603,d2f239cf3686,e0391628f995,e0c9d055f179,f3d1640f5eb2
 fn   me_rend_teardown.part                            lab-only
 fn   me_replay_lines                                  layout d=0x1a60
-fn   me_vram_map_consumed                             same   d=0x1a60
+fn   me_vram_map_consumed                             layout d=0x1a60
 fn   memcmp                                           same   d=0x17a0 hot
 fn   memcpy                                           same   d=0x0000 hot
 fn   memmove                                          same   d=0x0154
@@ -264,7 +264,7 @@ fn   memory_term                                      layout d=0x1680 hot
 fn   memset                                           same   d=0x0000 hot
 fn   mer_lowlat_active                                same   d=0x1f84 hot
 fn   mer_note_sum                                     lab-only
-fn   net_frame                                        diff   d=0x1548 n=12 c=1335a1197305,1ec086920e34,4e861eca9db5,5c2d079b0a74,5f7571797bd8,8320c6648465,aeb311aa8468,b88e3665b3be,b9c0a4efcbe9,ba58d0f76751,bf57c101fbd7,e4e3cab8b5c7
+fn   net_frame                                        diff   d=0x154c n=12 c=1335a1197305,1ec086920e34,4e861eca9db5,5c2d079b0a74,5f7571797bd8,8320c6648465,aeb311aa8468,b88e3665b3be,b9c0a4efcbe9,ba58d0f76751,bf57c101fbd7,e4e3cab8b5c7
 fn   net_now_us                                       same   d=0x0abc
 fn   net_teardown_io.part                             diff   d=0x1798 n=14 c=0f403f54fb71,10e1e3481d1d,159d1da4c3be,1f7e3ef21769,308239598f48,34bb778b1511,56306a6747a6,6b0182484933,6e70efc74316,7b1f1d090a43,7b1f1d090a43,e49bcef6795a,f3a3bd22fdb8,f64ac606d8cb
 data netpacket_iface                                  same   d=0x02c0
@@ -274,17 +274,17 @@ fn   note_pc_limits_range.constprop@cpu_threaded.c#3  layout d=0x1720 hot
 fn   note_pc_limits_range.constprop@cpu_threaded.c#4  layout d=0x1720 hot
 fn   online_psp_connected                             same   d=0x1058
 fn   online_psp_stats_evt                             same   d=0x1058
-fn   osd_chip_ff                                      layout d=0x1f04
-fn   osd_chip_fps                                     layout d=0x1f04
-fn   osd_chip_session                                 layout d=0x1f04
+fn   osd_chip_ff                                      layout d=0x1f08
+fn   osd_chip_fps                                     layout d=0x1f08
+fn   osd_chip_session                                 layout d=0x1f08
 fn   osd_draw                                         layout d=0x1fc0 hot
-fn   osd_toast                                        same   d=0x1f04
-fn   pace_burn                                        same   d=0x1144
-fn   pace_extra_vblanks                               layout d=0x149c
-fn   pace_frame                                       diff   d=0x1244 n=80 c=01c48c8b2022,02a00bd30528,0b45f539297a,10d04c31ac76,118fd304774b,14a888240a8a,17ded8959e2b,1fa9dce06a47,282d3b2df9bf,28f42731e54e,2a6e52a91d0f,2b73d771987a,2ba0216b8929,32731eac7532,32ed4939610a,3b5b89471a15,3c7dca8f7c46,4a7789a5a324,4c8158475617,503f332bf4f0,535de2f04700,54460844f330,577dff97cf02,57faeddea72f,5b2b5cb748c8,5b63b05aaead,5c4353df89e5,5cc8c8554a78,5db7bb1d5672,6cad0692ff15,704bdc723bb7,721df04bab38,741bb1b2d48f,8c205bcb2d44,8c5577e70cb9,8dc8cb28b82b,909b1636acdf,93e6d00e0136,944cbc923808,9a714cad4474,9c9f185cff0a,a18119345625,a1d6cd512764,a3e9ea633862,a3e9ea633862,a54d8eb47be5,a646b3c24e34,ad79be110ca5,ada870e58de7,ae51f7b1c4dd,b3eb2e825948,b4270475576b,b7de4c1482bd,bf243ba26d40,bfeb26d204dc,c725c746f591,cbe3d65d3c59,cf3d9b5fc492,cf3d9b5fc492,cf3d9b5fc492,d018eb2f732f,d333d0b555e7,d3bc2a595251,d6bb11635adb,d76a257747c6,d842e2e09e11,d9ded0bd3a03,e12fe398e987,e2c52799e878,e4d23b18288b,e8302563a140,ef4eeb3d2225,f1923ed87a47,f2b80735860d,f475d61614aa,f63f06dafad9,f6ed96a4c0f5,f7561612007a,fa25e5588489,ff3577e5a903
-fn   pace_window                                      same   d=0x1244
-fn   pcfg_ff_mode                                     same   d=0x128c
-fn   pcfg_ff_name                                     layout d=0x128c
+fn   osd_toast                                        same   d=0x1f08
+fn   pace_burn                                        same   d=0x1148
+fn   pace_extra_vblanks                               layout d=0x14a0
+fn   pace_frame                                       diff   d=0x1248 n=80 c=01c48c8b2022,02a00bd30528,0b45f539297a,10d04c31ac76,118fd304774b,14a888240a8a,17ded8959e2b,1fa9dce06a47,282d3b2df9bf,28f42731e54e,2a6e52a91d0f,2b73d771987a,2ba0216b8929,32731eac7532,32ed4939610a,3b5b89471a15,3c7dca8f7c46,4a7789a5a324,4c8158475617,503f332bf4f0,535de2f04700,54460844f330,577dff97cf02,57faeddea72f,5b2b5cb748c8,5b63b05aaead,5c4353df89e5,5cc8c8554a78,5db7bb1d5672,6cad0692ff15,704bdc723bb7,721df04bab38,741bb1b2d48f,8c205bcb2d44,8c5577e70cb9,8dc8cb28b82b,909b1636acdf,93e6d00e0136,944cbc923808,9a714cad4474,9c9f185cff0a,a18119345625,a1d6cd512764,a3e9ea633862,a3e9ea633862,a54d8eb47be5,a646b3c24e34,ad79be110ca5,ada870e58de7,ae51f7b1c4dd,b3eb2e825948,b4270475576b,b7de4c1482bd,bf243ba26d40,bfeb26d204dc,c725c746f591,cbe3d65d3c59,cf3d9b5fc492,cf3d9b5fc492,cf3d9b5fc492,d018eb2f732f,d333d0b555e7,d3bc2a595251,d6bb11635adb,d76a257747c6,d842e2e09e11,d9ded0bd3a03,e12fe398e987,e2c52799e878,e4d23b18288b,e8302563a140,ef4eeb3d2225,f1923ed87a47,f2b80735860d,f475d61614aa,f63f06dafad9,f6ed96a4c0f5,f7561612007a,fa25e5588489,ff3577e5a903
+fn   pace_window                                      same   d=0x1248
+fn   pcfg_ff_mode                                     same   d=0x1290
+fn   pcfg_ff_name                                     layout d=0x1290
 fn   plat_audio_frames                                diff   d=0x1fc0 hot n=4 c=19e98800f54e,1d70a05778ea,62f72f24c2bf,fb45e84292c2
 fn   plat_video_frame                                 diff   d=0x1fc0 hot n=50 c=013581468cae,0637029e9709,0c81fad23789,0fb6c7118143,1c65ebafd734,26e9ba3aa4b0,28c6f8cb493f,2b6e8c48419d,2de43339ffe2,311c92d44664,311c92d44664,3c332d3cd1a3,3d7fddf459f0,4053cd69baf6,49f2ee9d597b,5354f3bca41b,552a2b5ad95a,61917034dfe8,645173d3ff6e,6524b6f8d766,75e3d7e1e03d,78bf4c53d4f4,862f4a49387b,86f0549f7d2f,8f8cbaff03ef,9134419a8f50,9489a9b4f2c5,9592431f7f7c,9c35e54cfaa4,9c7336f8ed66,9dedab1238ee,9fda3792978d,a740e8b62944,b058e829af4b,b6e45ead4c75,b6e45ead4c75,b918b8640f9f,b9bec14d1cb5,be06c395dea0,ca0760ae3f24,cb4fa8b5cdc8,d7fc5d85e83f,dba4b8c5cf12,e4a38cbac42f,eabf2409b3d5,eb974f280e88,ecba7e5105e9,ee46b8dba316,f70953e98d10,fccc69fe0f23
 fn   process_cheats                                   same   d=0x17a0 hot
@@ -325,8 +325,8 @@ fn   serialpoke_frame_update                          same   d=0x08e0 hot
 fn   sess_cost_evt                                    diff   d=0x1090 n=14 c=04628faf077b,3d35ee78d8cd,4558daab7f0a,46679754a5fc,54c1565bb351,66d377193053,71fb56734494,86411df6dfb0,b4e51db7d136,b94d3548812a,c660cd67f6c3,e15b7886536a,e934229be2ba,ebe096dd353c
 fn   set_cpu_mode                                     layout d=0x0000 hot
 fn   shash_frame                                      lab-only
-fn   silent_frame                                     diff   d=0x1824 n=26 c=05dc8e75a5e0,0dd98367b38c,21d65e07b8bb,23899e25bf4a,25164f760131,4328a2bd8053,57fd501e84ed,58c155dcee78,7b1f1d090a43,80152646b8df,86c81ba45000,8d2d516041f6,943376f91515,a0f26bada41a,a4a72dacfcc9,a5318865c0ed,a5bfe5a80bf4,b4674cd9cb77,bb6e4ef259fa,bba1322a01d6,d2cf6d64dd88,ed2853e7137f,f39240c810f2,f57ac223854a,f9b2c9bb503f,fb816888ad7a
-fn   skip_policy_frame                                diff   d=0x10bc n=13 c=065cd5fd14e7,0953adc6b7f3,3b7f471404c9,46dce42eebb4,48637a08cee5,4f315c43604b,5c2887ea2370,72b80b16502b,8545ed55178d,c4d405bec8c8,c4d405bec8c8,e363f0ac28c7,f00e22a6b09e
+fn   silent_frame                                     diff   d=0x1828 n=26 c=05dc8e75a5e0,0dd98367b38c,21d65e07b8bb,23899e25bf4a,25164f760131,4328a2bd8053,57fd501e84ed,58c155dcee78,7b1f1d090a43,80152646b8df,86c81ba45000,8d2d516041f6,943376f91515,a0f26bada41a,a4a72dacfcc9,a5318865c0ed,a5bfe5a80bf4,b4674cd9cb77,bb6e4ef259fa,bba1322a01d6,d2cf6d64dd88,ed2853e7137f,f39240c810f2,f57ac223854a,f9b2c9bb503f,fb816888ad7a
+fn   skip_policy_frame                                diff   d=0x10c0 n=13 c=065cd5fd14e7,0953adc6b7f3,3b7f471404c9,46dce42eebb4,48637a08cee5,4f315c43604b,5c2887ea2370,72b80b16502b,8545ed55178d,c4d405bec8c8,c4d405bec8c8,e363f0ac28c7,f00e22a6b09e
 fn   smc_blk_check_silent                             lab-only
 fn   smc_blk_note_block                               diff   d=0x1f20 hot n=3 c=04441cf6b477,07d88e8935ea,2eb3dbdeb361
 fn   smc_blk_note_writer                              lab-only
@@ -380,9 +380,9 @@ fn   trigger_dma@gba_memory.c#2                       layout d=0x1720 hot
 fn   trigger_timer@gba_memory.c#1                     layout d=0x1400 hot
 fn   trigger_timer@gba_memory.c#2                     layout d=0x1800 hot
 fn   turbo_frame                                      lab-only
-fn   ui_active                                        same   d=0x09f0
-fn   ui_capturing                                     same   d=0x0ab4
-fn   ui_demo_start                                    diff   d=0x0914 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
+fn   ui_active                                        same   d=0x09f4
+fn   ui_capturing                                     same   d=0x0ab8
+fn   ui_demo_start                                    diff   d=0x0918 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
 fn   uiscript_linking_draw                            lab-only
 fn   uiscript_pad                                     lab-only
 fn   update_gba                                       layout d=0x0000 hot
@@ -390,21 +390,21 @@ fn   update_input                                     layout d=0x0120 hot
 fn   update_scanline                                  layout d=0x0000 hot
 fn   update_scanline_render                           layout d=0x0000 hot
 fn   update_serial                                    layout d=0x0000 hot
-fn   vid_blit_mode                                    same   d=0x1b00
-fn   vid_blit_mode_name                               layout d=0x1b00
-fn   vid_blit_prof                                    same   d=0x1b00
+fn   vid_blit_mode                                    same   d=0x1b04
+fn   vid_blit_mode_name                               layout d=0x1b04
+fn   vid_blit_prof                                    same   d=0x1b04
 fn   vid_draw_prestaged                               layout d=0x1fc0 hot
-fn   vid_dump_ge                                      same   d=0x1f3c
-fn   vid_filter                                       same   d=0x1b00
-fn   vid_filter_name                                  same   d=0x1b00
+fn   vid_dump_ge                                      same   d=0x1f40
+fn   vid_filter                                       same   d=0x1b04
+fn   vid_filter_name                                  same   d=0x1b04
 fn   vid_flip_latched                                 same   d=0x1f40 hot
 fn   vid_gu_busy                                      same   d=0x0130 hot
 fn   vid_gu_flush                                     same   d=0x1fc0 hot
 fn   vid_gu_flush.part                                same   d=0x0130 hot
 fn   vid_prof_frame                                   lab-only
-fn   vid_scale_mode                                   same   d=0x1b00
-fn   vid_scale_name                                   same   d=0x1b00
-fn   vid_smooth                                       same   d=0x1b00
+fn   vid_scale_mode                                   same   d=0x1b04
+fn   vid_scale_name                                   same   d=0x1b04
+fn   vid_smooth                                       same   d=0x1b04
 fn   vid_swap                                         diff   d=0x1fc0 hot n=31 c=0e25ddd8d3da,17f64f8f59c6,236164424133,3114ec789873,35cb2fe3020b,36600e60e15d,3a6aab04b6a3,3c8daf8157d7,51696c2e9aba,5683d04018c7,5683d04018c7,6aec8a0e9b38,6b3172bdc452,6d2457bba1f6,79f29541fa72,8327f7842e11,8bae4884793e,8e7bac799152,a0198bddd9ef,a8d9694b2e68,ac45eca0778d,ad31f722b1f3,ae1fec9d5d85,bca5316aecf8,bed7e8e241d5,c0f5aa47f7d0,c61d0816b90b,cf876934ac0c,dbe6d69bab72,e585b0ee5f00,ebae2a04cf37
 fn   video_prof_read_reset                            same   d=0x1a60
 fn   video_refresh                                    same   d=0x0120 hot
