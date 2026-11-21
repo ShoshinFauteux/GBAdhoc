@@ -573,6 +573,9 @@ int fe_host_gblink_stalled(void);
  * absorbed waiting is excluded from core_prof's `core`. */
 struct fe_gblink_window;
 int fe_host_gblink_window(struct fe_gblink_window *out);
+/* Pickup at need: pump once if netdrv has something pending, drain the bulk
+ * lane; nonzero if it pumped (fe_gblink_step calls it on a stall). */
+int fe_host_gblink_pickup(void);
 void fe_host_gblink_request_end(void);
 int  fe_host_gblink_close(void);
 /* GBA-LINK-MIRROR.md 19 (harness): a session start's (1) or end's (0)

@@ -3082,29 +3082,6 @@ static int gbl_wait(void *user, uint32_t waited_us)
    return ok;
 }
 
-/* fe_gblink_platform.pickup: what has already arrived, now (no wait, no
- * budget).  netdrv's pending test is two loads; the pump only runs if it
- * says yes.  The bulk lane is drained as gbl_wait does. */
-static int gbl_pickup(void *user)
-{
-   int pumped = 0;
-   unsigned was = 0;
-   (void)user;
-#ifdef DRPROF_HW
-   was = fe_lp_phase;
-#endif
-   FE_LP_SET(FELP_NET);
-   if (fe_np_poll_needed())
-   {
-      fe_np_pump();
-      pumped = 1;
-   }
-   gbl_drain_bulk();
-   FE_LP_SET(was);
-   (void)was;
-   return pumped;
-}
-
 int fe_host_gblink_window(struct fe_gblink_window *out)
 {
    if (!gbl || !out)
@@ -3487,7 +3464,6 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
     * stall absorption and resend requests, each with the GB session's
     * kill switch (gblink_absorb / gblink_nack). */
    p.wait = host.gblink_wait ? gbl_wait : NULL;
-   p.pickup = host.gblink_wait ? gbl_pickup : NULL;
    p.nack = host.gblink_nack;
    if (host.gblink_delay_auto)
       p.rtt_us = gbl_rtt;
@@ -3628,7 +3604,6 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    p.video = gbl_video;
    p.audio = gb_audio_batch;
    p.wait = host.gblink_wait ? gbl_wait : NULL;
-   p.pickup = host.gblink_wait ? gbl_pickup : NULL;
    p.nack = host.gblink_nack;
    if (host.gblink_delay_auto)
       p.rtt_us = gbl_rtt;
@@ -7374,4 +7349,28 @@ void fe_host_shutdown(void)
    }
    retro_unload_game();
    retro_deinit();
+}
+
+/* Pickup at need (fe_gblink_step, before its wait): deliver what has already
+ * arrived, now -- no wait, no frame budget.  netdrv's pending test is two
+ * loads; the pump runs only if it says yes.  The bulk lane is drained as
+ * gbl_wait does.  Kept last in the file: fe_host_reset's place is held by
+ * tools/layout/layout.lock, so nothing before it may grow. */
+int fe_host_gblink_pickup(void)
+{
+   int pumped = 0;
+   unsigned was = 0;
+#ifdef DRPROF_HW
+   was = fe_lp_phase;
+#endif
+   FE_LP_SET(FELP_NET);
+   if (fe_np_poll_needed())
+   {
+      fe_np_pump();
+      pumped = 1;
+   }
+   gbl_drain_bulk();
+   FE_LP_SET(was);
+   (void)was;
+   return pumped;
 }
