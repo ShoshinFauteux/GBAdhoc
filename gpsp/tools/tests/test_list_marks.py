@@ -5,7 +5,8 @@ docs/UI-OVERLAY.md section 15.7).
 psp/ui_psp.c's browser_footer, list_position, marquee_step and browser_marks,
 as written, against stubs, in both the cheats build and the one without:
 
-  1. The footer: "✕ play  ◀ states  ▶ cheats  □ star  START settings";
+  1. The footer: "✕ play  ◀ states  ▶ cheats  □ star  R wireless
+     START settings";
      "◀ states" lit (C_VALUE) only when the game has states, "▶ cheats" only
      when it has a cheats file; everything else C_DIM.
   2. browser_marks reads the game's marks byte (psp/list_marks.h) and
@@ -136,6 +137,7 @@ int main(void)
    foot();
    CHECK(col_of(VID_GLYPH_LEFT " states") == C_DIM);
    CHECK(col_of(VID_GLYPH_X " play") == C_DIM && col_of("START settings") == C_DIM);
+   CHECK(col_of("R wireless") == C_DIM);
    g_roms[0].marks = LM_ST_K | LM_ST | LM_CHT_K | LM_CHT | LM_SAV_K;
    browser_marks(0);
    CHECK(g_mark_states == 1);
@@ -144,7 +146,7 @@ int main(void)
 #ifdef GPSP_CHEATS
    CHECK(g_mark_cheats == 1 && col_of(VID_GLYPH_RIGHT " cheats") == C_VALUE);
 #else
-   CHECK(col_of("L/R page") == C_DIM);
+   CHECK(col_of("L page") == C_DIM);
 #endif
    CHECK(col_of(VID_GLYPH_SQ " star") == C_DIM);
    g_roms[1].marks = LM_ST_K | LM_CHT_K;        /* known: neither */
