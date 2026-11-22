@@ -3826,8 +3826,10 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
  * and the two explainer lines name the game and say the one thing the
  * player must know.  Only a game that links both ways asks (SCR_HOST). */
 
-enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_CHANNEL, WL_MGIFT, WL_FAST,
-       WL_ONLINE, WL_BACK, WL_COUNT };
+/* Ids, not positions (wl_rows orders them).  WL_CHANNEL is last so the
+ * screen's switches keep their tables (layout.lock's netpacket_iface). */
+enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_FAST, WL_ONLINE, WL_BACK,
+       WL_CHANNEL, WL_COUNT };
 /* the ONLINE screen's rows (screen_online) */
 enum { OL_NET, OL_MODE, OL_CREATE, OL_CODE, OL_JOIN, OL_BACK, OL_COUNT };
 enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
@@ -4254,6 +4256,11 @@ static ui_action screen_wireless(unsigned edges, int session_active,
    for (i = 0; i < n; i++)
    {
       y = WL_ROW_Y0 + i * pitch;
+      if (ids[i] == WL_CHANNEL)
+      {
+         wl_row_at(y, g_cursor == i, 1, "Ad hoc channel", adhoc_ch_label(0));
+         continue;
+      }
       switch (ids[i])
       {
       case WL_HOST:
@@ -4265,9 +4272,6 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       case WL_JOINCODE:
          wl_row_at(y, g_cursor == i, 1, "Join room",
                    room_label(g_pcfg.group, lbl, sizeof(lbl)));
-         break;
-      case WL_CHANNEL:
-         wl_row_at(y, g_cursor == i, 1, "Ad hoc channel", adhoc_ch_label(0));
          break;
       case WL_MGIFT:
          wl_row_at(y, g_cursor == i, 1, "Mystery Gift", "phone");
