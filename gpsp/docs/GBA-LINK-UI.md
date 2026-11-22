@@ -42,6 +42,10 @@ answers and my choices. 5 Deviations from the design. 6 Verification.
   one Room N found = join it; a Link Cable and a Wireless Adapter Room N =
   ask ("Room 7 is open two ways. Which one?"); none = "Room 7 not found - is
   the host still there?".
+* **Ad hoc channel** (under Join room): Automatic / 1 / 6 / 11, LEFT / RIGHT.
+  It is the PSP's own Ad Hoc Mode setting (the XMB's Network Settings), read
+  when Wireless opens and written at once; greyed while a session runs. An
+  empty scan adds "Both PSPs must use the same Ad hoc channel (this PSP: 6)".
 * **One LINKING screen** for cable, adapter and GB, in the loading screen's
   style: title LINKING, the busy ring left of the console badge, line 1 what
   is happening, line 2 the step and its amount, the 3 px bar in the console
