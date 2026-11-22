@@ -19,6 +19,7 @@
 #include <pspctrl.h>
 #include <pspdisplay.h>
 #include <pspiofilemgr.h>
+#include <psputility_sysparam.h>   /* the Ad hoc channel (Wireless) */
 
 #include <stdio.h>
 #include <string.h>
@@ -1182,8 +1183,12 @@ int ui_home_press(void)
    return 1;
 }
 
+static void adhoc_ch_read(void);   /* the Wireless screen's Ad hoc channel */
+
 static void screen_to(int scr)
 {
+   /* SCR_ONLINE is named at the fe_evt: an 11th entry here would move a lab
+    * data anchor (layout.lock netpacket_iface) by 8 B. */
    static const char *names[] __attribute__((unused)) =
       { "menu", "settings", "wireless", "scan", "mystery_gift", "state_slots",
         "controls", "host", "join_ask", "cheats" };
@@ -1207,6 +1212,8 @@ static void screen_to(int scr)
     * only ever holds a slot listed during this run. */
    if (scr == SCR_ONLINE || scr == SCR_MGIFT)
       g_pcfg.online_wifi = mgnet_pick_saved(g_pcfg.online_wifi, 0);
+   if (scr == SCR_WIRELESS)
+      adhoc_ch_read();
    if (scr == SCR_SETTINGS)
    {
       g_profile_at_open = g_pcfg.me_mode;
@@ -1221,7 +1228,7 @@ static void screen_to(int scr)
    if (scr == SCR_CHEATS)
       cht_page_reset();
 #endif
-   fe_evt("ui_screen name=%s", names[scr]);
+   fe_evt("ui_screen name=%s", scr == SCR_ONLINE ? "online" : names[scr]);
 }
 
 /* Edge/repeat filter: returns buttons to act on this frame. */
@@ -3821,19 +3828,77 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
  * and the two explainer lines name the game and say the one thing the
  * player must know.  Only a game that links both ways asks (SCR_HOST). */
 
+/* Ids, not positions (wl_rows orders them).  WL_CHANNEL is last so the
+ * screen's switches keep their tables (layout.lock's netpacket_iface). */
 enum { WL_HOST, WL_SCAN, WL_JOINCODE, WL_MGIFT, WL_FAST, WL_ONLINE, WL_BACK,
-       WL_COUNT };
+       WL_CHANNEL, WL_COUNT };
 /* the ONLINE screen's rows (screen_online) */
 enum { OL_NET, OL_MODE, OL_CREATE, OL_CODE, OL_JOIN, OL_BACK, OL_COUNT };
 enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
 
 /* One wireless-family row: 20 px pitch from y=112 (the main menu's dense
  * pitch), the band 300 wide, the value right-aligned at its end.  Seven rows
- * (GBA with Online play on) end at y=232, so the last band (y-4 .. y+20)
- * stops at the footer's top edge (272 - FTR_H) instead of under it. */
+ * end at y=232, so the last band (y-4 .. y+20) stops at the footer's top edge
+ * (272 - FTR_H) instead of under it; eight (GBA with Online play on) close up
+ * to a 17 px pitch for the same reason. */
 #define WL_ROW_Y0 112
 #define WL_PITCH  20
+#define WL_PITCH8 17
 #define WL_STATUS_ROW_Y0 136     /* hosting / linked: under three lines  */
+
+/* Ad hoc channel: the PSP's own Ad Hoc Mode setting, the one the XMB shows
+ * under Network Settings (0 = Automatic, 1, 6, 11).  No ad hoc call takes a
+ * channel; the firmware reads this setting each time the radio comes up, and
+ * every Host, Join and scan brings it up and takes it down again, so a
+ * change applies to the next one.  Read when the Wireless screen opens,
+ * written as soon as LEFT / RIGHT changes it. */
+static int g_adhoc_ch;                   /* -1: the read failed */
+
+static void adhoc_ch_read(void)
+{
+   int v = -1;
+   if (sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL,
+                                   &v) < 0)
+      v = -1;
+   g_adhoc_ch = v;
+   fe_evt("wl_adhoc_channel read=%d", v);
+}
+
+/* "Automatic" (`short`: "Auto"), "1", "6", "11"; "?" for any other value. */
+static const char *adhoc_ch_label(int shrt)
+{
+   if (g_adhoc_ch == 0)
+      return shrt ? "Auto" : "Automatic";
+   if (g_adhoc_ch == 1)
+      return "1";
+   if (g_adhoc_ch == 6)
+      return "6";
+   if (g_adhoc_ch == 11)
+      return "11";
+   return "?";
+}
+
+/* One step through Automatic, 1, 6, 11 and round (an unknown value counts as
+ * Automatic), then write it and read it back. */
+static void adhoc_ch_step(int dir)
+{
+   int want, rc, ch = g_adhoc_ch;
+   if (ch == 1)
+      want = dir > 0 ? 6 : 0;
+   else if (ch == 6)
+      want = dir > 0 ? 11 : 1;
+   else if (ch == 11)
+      want = dir > 0 ? 0 : 6;
+   else
+      want = dir > 0 ? 1 : 11;
+   rc = sceUtilitySetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL,
+                                    want);
+   adhoc_ch_read();
+   FE_EVT_ONLY(rc);
+   fe_evt("wl_adhoc_channel set=%d rc=0x%08x now=%d", want, (unsigned)rc,
+          g_adhoc_ch);
+}
+
 static void wl_row_at_w(int y, int w, int sel, int enabled, const char *label,
                         const char *value)
 {
@@ -3863,6 +3928,7 @@ static int wl_rows(int ids[WL_COUNT])
    ids[n++] = WL_HOST;
    ids[n++] = WL_SCAN;
    ids[n++] = WL_JOINCODE;
+   ids[n++] = WL_CHANNEL;     /* under Join room: no row above it moves */
 #ifdef GBADHOC_MGIFT
    if (g_pcfg.console == FE_CONSOLE_GBA)
       ids[n++] = WL_MGIFT;
@@ -4020,7 +4086,7 @@ static ui_action scan_resolve_room(int nn, int n)
  * the explainer sits, then Stop hosting / Disconnect and Back. */
 static ui_action wl_session(unsigned edges, const char *session_info)
 {
-   int hosting = g_link.state == UI_LINK_HOSTING;
+   int hosting = g_link.state == UI_LINK_HOSTING, y = WL_STATUS_ROW_Y0 + 44;
    char l2[96], l3[96];
    if (edges & PSP_CTRL_UP)
       g_cursor = (g_cursor + WLS_COUNT - 1) % WLS_COUNT;
@@ -4082,12 +4148,19 @@ static ui_action wl_session(unsigned edges, const char *session_info)
    /* Fast link as THIS session runs it, greyed: it cannot change now, and
     * for a guest it is the host's choice, not this console's setting. */
    if (g_link.state == UI_LINK_LINKED && g_link.cable && g_link.fast >= 0)
-      wl_row_at(WL_STATUS_ROW_Y0 + 44, 0, 0, "Fast link",
+   {
+      wl_row_at(y, 0, 0, "Fast link",
                 g_link.fast_src == FE_GBLINK_FL_HOST
                    ? (g_link.fast ? "on (host)" : "off (host)")
                 : g_link.fast_src == FE_GBLINK_FL_OLD_PEER
                    ? "off (other PSP: older version)"
                    : (g_link.fast ? "on" : "off"));
+      y += 22;
+   }
+   /* The Ad hoc channel setting, greyed: it cannot change while the radio
+    * is up.  Not for an online session, which uses the server, not ad hoc. */
+   if (!g_link.room || strncmp(g_link.room, "Online", 6))
+      wl_row_at(y, 0, 0, "Ad hoc channel", adhoc_ch_label(0));
    footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
@@ -4095,7 +4168,8 @@ static ui_action wl_session(unsigned edges, const char *session_info)
 static ui_action screen_wireless(unsigned edges, int session_active,
                                  const char *session_info)
 {
-   int ids[WL_COUNT], n = wl_rows(ids), i, id;
+   int ids[WL_COUNT], n = wl_rows(ids), i, id, y;
+   int pitch = n > 7 ? WL_PITCH8 : WL_PITCH;
    char l1[96], l2[96], lbl[ROOM_LABEL_CAP];
    const char *host_value = NULL;
 
@@ -4121,6 +4195,8 @@ static ui_action screen_wireless(unsigned edges, int session_active,
    if (id == WL_FAST && ui_host_mode() != UI_HOST_ADAPTER &&
        (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_CROSS)))
       settings_adjust(SET_FASTLINK, +1);
+   if (id == WL_CHANNEL && (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)))
+      adhoc_ch_step(edges & PSP_CTRL_LEFT ? -1 : +1);
    if (edges & PSP_CTRL_CIRCLE)
       screen_to(SCR_MENU);
    if (edges & PSP_CTRL_CROSS)
@@ -4169,46 +4245,57 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       snprintf(l1, sizeof(l1), "%s", FASTLINK_HINT1);
       snprintf(l2, sizeof(l2), "%s", FASTLINK_HINT2);
    }
+   if (id == WL_CHANNEL)
+   {
+      snprintf(l1, sizeof(l1), "Both PSPs must use the same Ad hoc channel.");
+      snprintf(l2, sizeof(l2), "The PSP's own setting: Network Settings > "
+               "Ad Hoc Mode.");
+   }
    ov_backdrop(OV_SCRIM);
    ov_head(NULL, "WIRELESS");
    vid_text(22, 72, l1, C_DIM);
    vid_text(22, 72 + FE_FONT_H + 2, l2, C_DIM);
    for (i = 0; i < n; i++)
    {
+      y = WL_ROW_Y0 + i * pitch;
+      if (ids[i] == WL_CHANNEL)
+      {
+         wl_row_at(y, g_cursor == i, 1, "Ad hoc channel", adhoc_ch_label(0));
+         continue;
+      }
       switch (ids[i])
       {
       case WL_HOST:
-         wl_row(i, g_cursor == i, "Host", host_value);
+         wl_row_at(y, g_cursor == i, 1, "Host", host_value);
          break;
       case WL_SCAN:
-         wl_row(i, g_cursor == i, "Join: scan for rooms", NULL);
+         wl_row_at(y, g_cursor == i, 1, "Join: scan for rooms", NULL);
          break;
       case WL_JOINCODE:
-         wl_row(i, g_cursor == i, "Join room",
-                room_label(g_pcfg.group, lbl, sizeof(lbl)));
+         wl_row_at(y, g_cursor == i, 1, "Join room",
+                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
          break;
       case WL_MGIFT:
-         wl_row(i, g_cursor == i, "Mystery Gift", "phone");
+         wl_row_at(y, g_cursor == i, 1, "Mystery Gift", "phone");
          break;
 #ifdef GBADHOC_ONLINE
       case WL_ONLINE:
-         wl_row(i, g_cursor == i, s_ol_row, NULL);
+         wl_row_at(y, g_cursor == i, 1, s_ol_row, NULL);
          break;
 #endif
       case WL_FAST:
          if (ui_host_mode() == UI_HOST_ADAPTER)
-            wl_row_at(WL_ROW_Y0 + i * WL_PITCH, g_cursor == i, 0, "Fast link",
-                      "Link Cable only");
+            wl_row_at(y, g_cursor == i, 0, "Fast link", "Link Cable only");
          else
-            wl_row(i, g_cursor == i, "Fast link",
-                   g_pcfg.fast_link ? "on" : "off");
+            wl_row_at(y, g_cursor == i, 1, "Fast link",
+                      g_pcfg.fast_link ? "on" : "off");
          break;
       default:
-         wl_row(i, g_cursor == i, "Back", NULL);
+         wl_row_at(y, g_cursor == i, 1, "Back", NULL);
          break;
       }
    }
-   if (id == WL_FAST)
+   if (id == WL_FAST || id == WL_CHANNEL)
       footer(VID_GLYPH_LEFT VID_GLYPH_RIGHT " change   " VID_GLYPH_O " back");
    else
       footer(VID_GLYPH_X " select   " VID_GLYPH_LEFT VID_GLYPH_RIGHT
@@ -4761,10 +4848,18 @@ static ui_action screen_scan(unsigned edges)
    }
    else
    {
+      char t[72];
       vid_text(22, 72, "No rooms answered the scan.", C_DIM);
       vid_text(22, 72 + FE_FONT_H + 2,
                "Have the other PSP host first, then rescan.", C_DIM);
-      wl_row(0, 1, "Back", NULL);
+      /* the setting as Wireless read it (Wireless > Ad hoc channel) */
+      if (g_adhoc_ch < 0)
+         snprintf(t, sizeof(t), "Both PSPs must use the same Ad hoc channel.");
+      else
+         snprintf(t, sizeof(t), "Both PSPs must use the same Ad hoc channel "
+                  "(this PSP: %s)", adhoc_ch_label(1));
+      vid_text(22, 72 + 2 * (FE_FONT_H + 2), t, C_DIM);
+      wl_row_at(WL_STATUS_ROW_Y0, 1, 1, "Back", NULL);   /* under three lines */
    }
    if (g_scan_note[0])
       ov_plate(g_scan_note);

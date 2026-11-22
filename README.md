@@ -659,7 +659,8 @@ and the PSP Go has no switch at all, it is a setting. If it is off you get a mes
 says so.
 
 **2. Both consoles must be on the SAME FIXED ad-hoc channel, not "Automatic".**
-GBAdhoc uses the channel the XMB sets under `Settings → Network Settings → Ad Hoc Mode`.
+GBAdhoc uses the channel the XMB sets under `Settings → Network Settings → Ad Hoc Mode`;
+the in-game menu's *Wireless → Ad hoc channel* changes that same setting.
 Pick **1**, **6** or **11** and set the same one on both consoles, and pick one that is
 *away from your router*. "Automatic" lets the two consoles choose different channels,
 and two radios on different channels cannot hear each other no matter how correct
