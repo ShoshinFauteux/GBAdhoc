@@ -266,7 +266,7 @@ static int g_active;
 static int g_screen;
 static int g_cursor;
 static int g_settings_dirty;
-static int g_set_cat = -1;    /* SETTINGS: -1 the top page, else a category */
+static int g_set_cat;         /* SETTINGS: -1 the top page (screen_to), else a category */
 /* The game list's Wireless screen: Share game data was chosen. */
 static int g_share_req;
 static char g_state_base[PSP_FILE_PATH_CAP];
@@ -1911,14 +1911,16 @@ enum { SC_DISPLAY, SC_SPEED, SC_SAVES, SC_CONTROLS, SC_SHOTS, SC_WIRELESS,
        SC_UI, SC_COUNT };
 
 /* Category c's rows are set_cat_first[c] .. set_cat_first[c + 1] - 1.
- * set_cat_name and set_label are in .data on purpose, as the Online page's
- * texts: this file's tables sit after pin ro, in front of layout.lock's
- * netpacket_iface, so their .rodata total is held where it was. */
+ * set_cat_name and set_label are in this file's text on purpose: its .rodata
+ * tables sit after pin ro, in front of layout.lock's netpacket_iface, and its
+ * .data in front of every later object's data, so both totals are held where
+ * they were (frame parity compares the data release and lab code touches). */
 static const unsigned char set_cat_first[SC_COUNT + 1] = {
    SET_SCALE, SET_VOLUME, SET_QLOADASK, SET_STICK, SET_SHOT_SRC,
    SET_LINKMODE, SET_THEME, SET_ROOM
 };
-static const char *set_cat_name[SC_COUNT] __attribute__((section(".data"))) = {
+static const char *const set_cat_name[SC_COUNT]
+   __attribute__((section(".text.ui_tables"))) = {
    "Display", "Audio & speed", "Saves & rewind", "Controls", "Screenshots",
    "Wireless", "Interface"
 };
@@ -1935,10 +1937,11 @@ static const char *const set_cat_info[SC_COUNT] = {
 #ifdef GBADHOC_ONLINE
 /* writable, as the Online page's texts (see s_ol_title) */
 static char s_ol_setting[] = "Online play";
-static char s_ol_hint[] = "Adds Online to the Wireless screen.";
+static char s_ol_hint[] = "Then Wireless > Online.";
 static char s_ol_row[] = "Online";
 #endif
-static const char *set_label[SET_ROOM] __attribute__((section(".data"))) = {
+static const char *const set_label[SET_ROOM]
+   __attribute__((section(".text.ui_tables"))) = {
    "Video scale", "Smoothing", "Screen effect", "Colour", "Ambient bars",
    "Volume", "Fast-forward speed", "Fast-forward button", "CPU clock",
    "FPS counter",
@@ -1949,7 +1952,7 @@ static const char *set_label[SET_ROOM] __attribute__((section(".data"))) = {
    "Thumbstick", "Button mapping", "Turbo buttons",
    "Capture source", "File format", "Save folder",
    /* The per-game Link Cable / Wireless Adapter override
-    * (docs/GBA-LINK-UI.md).  Online's own choice is "Link hardware". */
+    * (docs/GBA-LINK-UI.md).  Online's own choice is "Link type". */
    "Default host link", "Session overlay",
 #ifdef GBADHOC_ONLINE
    s_ol_setting,
@@ -1992,9 +1995,10 @@ static void set_open(int id)
    g_cursor = id - set_cat_first[c];
 }
 
-/* The rewind setting the running game started with (ui_set_game): Rewind's
- * value says "(next game)" while the row differs from it. */
-static int g_rw_game = -1;
+/* The rewind setting the running game started with, plus one (ui_set_game;
+ * 0 = no game yet): Rewind's value says "(next game)" while the row differs
+ * from it. */
+static int g_rw_game;
 
 /* ----- link mode (docs/GBA-LINK-UI.md) -------------------------------------
  *
@@ -2063,7 +2067,7 @@ void ui_set_game(const char *gba_code, const char *gb_title, const char *key,
             gb_title ? gb_title : "");
    snprintf(g_game_key, sizeof(g_game_key), "%s", key ? key : "");
    g_cable_ready = cable_ready;
-   g_rw_game = g_pcfg.rewind;       /* what the game started with (Rewind) */
+   g_rw_game = g_pcfg.rewind + 1;   /* what the game started with (Rewind) */
    ov_title_take();                 /* the LINKING screen's game line */
    fe_evt("link_game code=%s key=\"%s\" table=%d override=%d cable_ready=%d",
           g_game_code, g_game_key, link_game_mode(g_game_code),
@@ -2668,7 +2672,7 @@ static const char *set_value(int id, char *v, size_t n)
    case SET_REWIND:
       /* Read when a game starts: in game, a change waits for the next one. */
       snprintf(t, sizeof(t), "%s%s", ONOFF(g_pcfg.rewind),
-               !g_ov_browse && g_rw_game >= 0 && g_rw_game != g_pcfg.rewind
+               !g_ov_browse && g_rw_game && g_rw_game - 1 != g_pcfg.rewind
                   ? " (next game)" : "");
       break;
    case SET_REWIND_MB: s = pcfg_rewind_mb_name(g_pcfg.rewind_mb); break;
@@ -2784,7 +2788,7 @@ static const char *set_info(int id, char *f, size_t n)
                 : "The quick save saves slot 1 at once, without asking.";
 #ifdef REWIND
    case SET_REWIND:
-      return !g_ov_browse && g_rw_game >= 0 && g_rw_game != g_pcfg.rewind
+      return !g_ov_browse && g_rw_game && g_rw_game - 1 != g_pcfg.rewind
                 ? "From the next game started."
                 : "Hold Rewind: the game runs backwards.";
    case SET_REWIND_MB:
@@ -4410,7 +4414,7 @@ static int  g_ol_typed;                /* the player set the code: a host asks f
 static char s_ol_title[] = "ONLINE";
 static char s_ol_line[] = "Online link play (experimental).";
 static char s_ol_net[] = "Network";
-static char s_ol_mode[] = "Link hardware";
+static char s_ol_mode[] = "Link type";   /* same size as "Link mode": .data held */
 static char s_ol_create[] = "Create room";
 static char s_ol_code[] = "Code";
 static char s_ol_join[] = "Join with code";

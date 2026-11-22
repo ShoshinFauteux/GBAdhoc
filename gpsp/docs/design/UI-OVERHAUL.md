@@ -33,7 +33,7 @@ structure; `psp/ui_psp.c` is the code.
 - In the game list, R opens it: Room, Share game data, Join: scan for rooms,
   Ad hoc channel, Fast link. L still pages the list up.
 - Settings' per-game link override is "Default host link"; the Online page's
-  own choice is "Link hardware".
+  own choice is "Link type".
 
 ## One rule for a greyed row
 
@@ -41,7 +41,7 @@ On every screen: the cursor stops on it, nothing changes it, the info line
 says why, and the footer drops the keys it cannot use. Examples: Rewind length
 with Rewind off, Default host link for a GB game, Fast link and Mystery Gift
 for a GB game, Online with Online play off, Save states and Reset game during
-link play, Online's Link hardware for a one-way game.
+link play, Online's Link type for a one-way game.
 
 ## The info line and the footer
 
@@ -68,5 +68,7 @@ stays: it is frame-loop code, outside this change.
 The menu code grew about 2.2 KB of text and 1.5 KB of strings. Release's
 `fe_common` gap had 276 B, so `pin fe_common` took one page
 (`layout_lock.py regen release --spend-page fe_common`): 8 KiB of PSP-1000
-boot heap. The tables after `pin ro` are held at their old size (two tables
-live in `.data`), so `netpacket_iface` and every other lock value hold.
+boot heap. The file's `.rodata` tables (after `pin ro`, in front of
+`netpacket_iface`) and its `.data` are held at their old sizes, the two new
+label tables living in its text, so every lock value holds and release and
+lab touch the same data layout (frame parity).
