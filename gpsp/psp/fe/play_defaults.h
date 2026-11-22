@@ -85,7 +85,7 @@
 #define GBLINK_DELAY_ADHOC   3
 #define GBLINK_DELAY_ONLINE  4
 #define GBLINK_COPIES_ADHOC  2
-#define GBLINK_COPIES_ONLINE 0
+#define GBLINK_COPIES_ONLINE 2
 /* Section 20: a cable session's default translation-cache offsets mod 8 KiB
  * (LAYOUT_PIN builds; -1 = keep the single-player pin).  hw6/hw7
  * (GBA-LINK-MIRROR.md 20.1-20.2): the LARGE tier (3000/Go) is fastest at
