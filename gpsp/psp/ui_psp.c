@@ -3848,8 +3848,7 @@ enum { WLS_DISCONNECT, WLS_BACK, WLS_COUNT };
  * every Host, Join and scan brings it up and takes it down again, so a
  * change applies to the next one.  Read when the Wireless screen opens,
  * written as soon as LEFT / RIGHT changes it. */
-static const unsigned char s_adhoc_chs[4] = { 0, 1, 6, 11 };
-static int g_adhoc_ch = -1;              /* -1: not read, or the read failed */
+static int g_adhoc_ch;                   /* -1: the read failed */
 
 static void adhoc_ch_read(void)
 {
@@ -3864,24 +3863,30 @@ static void adhoc_ch_read(void)
 /* "Automatic" (`short`: "Auto"), "1", "6", "11"; "?" for any other value. */
 static const char *adhoc_ch_label(int shrt)
 {
-   static char num[4];
    if (g_adhoc_ch == 0)
       return shrt ? "Auto" : "Automatic";
-   if (g_adhoc_ch == 1 || g_adhoc_ch == 6 || g_adhoc_ch == 11)
-   {
-      snprintf(num, sizeof(num), "%d", g_adhoc_ch);
-      return num;
-   }
+   if (g_adhoc_ch == 1)
+      return "1";
+   if (g_adhoc_ch == 6)
+      return "6";
+   if (g_adhoc_ch == 11)
+      return "11";
    return "?";
 }
 
+/* One step through Automatic, 1, 6, 11 and round (an unknown value counts as
+ * Automatic), then write it and read it back. */
 static void adhoc_ch_step(int dir)
 {
-   int i, k = 0, want, rc;
-   for (i = 0; i < 4; i++)
-      if (s_adhoc_chs[i] == g_adhoc_ch)
-         k = i;
-   want = s_adhoc_chs[(k + 4 + dir) % 4];
+   int want, rc, ch = g_adhoc_ch;
+   if (ch == 1)
+      want = dir > 0 ? 6 : 0;
+   else if (ch == 6)
+      want = dir > 0 ? 11 : 1;
+   else if (ch == 11)
+      want = dir > 0 ? 0 : 6;
+   else
+      want = dir > 0 ? 1 : 11;
    rc = sceUtilitySetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL,
                                     want);
    adhoc_ch_read();
