@@ -1187,9 +1187,11 @@ static void adhoc_ch_read(void);   /* the Wireless screen's Ad hoc channel */
 
 static void screen_to(int scr)
 {
+   /* SCR_ONLINE is named at the fe_evt: an 11th entry here would move a lab
+    * data anchor (layout.lock netpacket_iface) by 8 B. */
    static const char *names[] __attribute__((unused)) =
       { "menu", "settings", "wireless", "scan", "mystery_gift", "state_slots",
-        "controls", "host", "join_ask", "cheats", "online" };
+        "controls", "host", "join_ask", "cheats" };
    if (g_screen != scr && g_settings_dirty)
    {
       pcfg_save();
@@ -1226,7 +1228,7 @@ static void screen_to(int scr)
    if (scr == SCR_CHEATS)
       cht_page_reset();
 #endif
-   fe_evt("ui_screen name=%s", names[scr]);
+   fe_evt("ui_screen name=%s", scr == SCR_ONLINE ? "online" : names[scr]);
 }
 
 /* Edge/repeat filter: returns buttons to act on this frame. */
