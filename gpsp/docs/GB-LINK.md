@@ -68,9 +68,11 @@ Wireless Adapter does (`rfu_sched_d_for`): 3 frames ad hoc, 4 online
 partner's buttons arrive with about 1.5-1.8 frames to spare (hardware
 `lead`), barely a resend (~1.5 frames) and short of a retransmission (3), so
 a session also turns on netdrv's redundant DATA (`nd_config.redund`, `ND_T_DATAR`): each
-datagram carries the last 2 still-unacknowledged payloads again, and one
+datagram carries the last N still-unacknowledged payloads again, and one
 lost datagram is filled by the next, one frame later.  `gblink_input_copies`
-sets it (0-2; default 2, ad hoc and online, `GBLINK_COPIES_*`).  Unlike the
+sets it (0-6; default 2 ad hoc, 6 online, `GBLINK_COPIES_*`: an online
+round trip leaves several input datagrams unacknowledged, and the copies of
+small input payloads ride through a burst of losses).  Unlike the
 earlier redundant-input datagram below, the copies ride in the datagram that
 was going out anyway: no extra send.  The cable announces nothing at
 admission (both consoles must run the same build, and every build reads

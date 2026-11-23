@@ -297,7 +297,7 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
                                                 g_gblink_delay);
       if (g_gblink_delay > 60)
          g_gblink_delay = 60;
-      /* config.ini gblink_input_copies (0-2, -1 = by kind; net_start_np); the
+      /* config.ini gblink_input_copies (0-6, -1 = by kind; net_start_np); the
        * harness key, when present, wins. */
       g_pcfg.gblink_copies_cfg = (int)HARNESS_INT("gblink_input_copies",
                                                   g_pcfg.gblink_copies_cfg);

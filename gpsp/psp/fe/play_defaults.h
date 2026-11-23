@@ -85,7 +85,10 @@
 #define GBLINK_DELAY_ADHOC   3
 #define GBLINK_DELAY_ONLINE  4
 #define GBLINK_COPIES_ADHOC  2
-#define GBLINK_COPIES_ONLINE 2
+#define GBLINK_COPIES_ONLINE 6
+/* An online adapter room's redundant DATA: RFU packets are up to 104 B and
+ * the adapter sets no body cap, so 2 copies keep its datagrams as they are. */
+#define RFU_COPIES_ONLINE    2u
 /* Section 20: a cable session's default translation-cache offsets mod 8 KiB
  * (LAYOUT_PIN builds; -1 = keep the single-player pin).  hw6/hw7
  * (GBA-LINK-MIRROR.md 20.1-20.2): the LARGE tier (3000/Go) is fastest at
