@@ -69,7 +69,7 @@ static void diag(char *why, unsigned cap, const char *what)
 
 static void evt(const char *fmt, ...)
 {
-   char b[224];
+   char b[320];
    va_list ap;
    va_start(ap, fmt);
    g_ol_host->vsnprintf_(b, sizeof(b), fmt, ap);
@@ -597,6 +597,38 @@ static char ol_text(char *out, unsigned cap)
 
 static void ol_status(char *out, unsigned cap) { (void)ol_text(out, cap); }
 
+/* v6: the side lane.  Sent with the transport's own send_to, so it takes the
+ * session's path (direct, or DATA through the relay); received datagrams are
+ * sorted into the transport's side ring by netdrv's pump (ol_recv). */
+static nd_transport O_tp;               /* the iface, for side_send */
+static int ol_side_open(unsigned slots, const char magic[4])
+{
+   if (!O.rt)
+      return -1;
+   relay_transport_iface(O.rt, &O_tp);
+   return relay_transport_side_open(O.rt, slots, magic);
+}
+static void ol_side_close(void)
+{
+   if (O.rt)
+      relay_transport_side_close(O.rt);
+}
+static int ol_side_send(const uint8_t mac[6], const void *buf, size_t len)
+{
+   if (!O.rt || !O_tp.send_to || len > RL_SIDE_MAX)
+      return -1;
+   O_tp.send_to(O_tp.ctx, mac, buf, len);
+   return 0;                            /* UDP: a failed send is a loss */
+}
+static int ol_side_recv(void *buf, size_t cap)
+{
+   return O.rt ? relay_transport_side_recv(O.rt, buf, cap) : 0;
+}
+static unsigned ol_side_depth(void)
+{
+   return O.rt ? relay_transport_side_depth(O.rt) : 0u;
+}
+
 static void ol_stats_evt(const char *at)
 {
    rl_client_stats s;
@@ -611,14 +643,15 @@ static void ol_stats_evt(const char *at)
    evt("online_stats at=%s nat=%u paths=%s tx=%u rx=%u tx_direct=%u rx_direct=%u "
        "tx_relay=%u rx_relay=%u punches=%u/%u acks=%u fallbacks=%u "
        "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u bursts=%u directs=%u stalls=%u "
-       "located=%u invite=%d lan_relay=%u", at, s.nat, paths,
+       "located=%u invite=%d lan_relay=%u side_rx=%u side_drop=%u", at, s.nat, paths,
        (unsigned)s.tx, (unsigned)s.rx, (unsigned)s.tx_direct, (unsigned)s.rx_direct,
        (unsigned)s.tx_relay, (unsigned)s.rx_relay, (unsigned)s.punches_tx,
        (unsigned)s.punches_rx, (unsigned)s.acks_rx, (unsigned)s.fallbacks,
        (unsigned)(s.relay_rtt_us / 1000), (unsigned)(s.direct_rtt_us[0] / 1000),
        (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad,
        (unsigned)s.bursts, (unsigned)s.directs, (unsigned)s.stalls,
-       (unsigned)s.located, O.invite, (unsigned)s.lan_relay);
+       (unsigned)s.located, O.invite, (unsigned)s.lan_relay, (unsigned)s.side_rx,
+       (unsigned)s.side_drop);
 }
 
 int module_start(SceSize args, void *argp)
@@ -645,6 +678,11 @@ int module_start(SceSize args, void *argp)
    g_api.stats_evt = ol_stats_evt;
    g_api.status = ol_status;
    g_api.slot = ol_slot;
+   g_api.side_open = ol_side_open;
+   g_api.side_close = ol_side_close;
+   g_api.side_send = ol_side_send;
+   g_api.side_recv = ol_side_recv;
+   g_api.side_depth = ol_side_depth;
    *l->api = g_api;
    return 0;
 }

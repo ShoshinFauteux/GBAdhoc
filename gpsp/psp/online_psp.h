@@ -21,6 +21,9 @@
 #include "../netdrv/netdrv.h"
 
 #define ONLINE_RELAY_DEFAULT "relay.rayquaza.ca"
+/* the side lane's largest datagram: netdrv/transport_relay.h RL_SIDE_MAX (a
+ * relay forwards GBR1 datagrams of up to RL_MAX_DGRAM = 600 bytes) */
+#define ONLINE_SIDE_MAX 584
 
 #ifdef GBADHOC_ONLINE
 /* Boot: the harness / config.ini keys.  1 = online for every session. */
@@ -50,6 +53,13 @@ int  online_psp_connected(void);
 /* EVT online_stats (heartbeat); nothing when no online session */
 void online_psp_stats_evt(const char *at);
 const char *online_psp_why(void);
+/* The link session's side lane online (the module's api.side_*; the ad hoc
+ * twin is transport_adhoc.h's bulk lane): open/close, one datagram of up to
+ * ONLINE_SIDE_MAX bytes to the peer, one received (its length, 0 = none). */
+int  online_psp_side_open(unsigned slots, const char magic[4]);
+void online_psp_side_close(void);
+int  online_psp_side_send(const uint8_t mac[6], const void *buf, size_t len);
+int  online_psp_side_recv(void *buf, size_t cap);
 #else
 #define online_psp_configure(h, c) 0
 #define online_psp_set(r, c, w, m) ((void)0)
@@ -65,6 +75,10 @@ const char *online_psp_why(void);
 #define online_psp_connected() 0
 #define online_psp_stats_evt(a) ((void)0)
 #define online_psp_why() ""
+#define online_psp_side_open(n, m) (-1)
+#define online_psp_side_close() ((void)0)
+#define online_psp_side_send(a, b, n) (-1)
+#define online_psp_side_recv(b, n) 0
 #endif
 
 #endif

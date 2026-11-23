@@ -27,6 +27,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* online_psp.h's copy of the side lane's limit must be the transport's */
+typedef char online_side_max_check[ONLINE_SIDE_MAX == RL_MAX_DGRAM - RL_HDR ? 1 : -1];
+
 /* online_psp_configure() reads each of these keys from the harness ini
  * first, then config.ini (get_str/get_int on `h`, below):
  *   online_relay, online_room             (strings)
@@ -359,6 +362,20 @@ void online_psp_down(void)
    O.api.down();
    prx_unload();
    mgnet_wifi_down();
+}
+
+int online_psp_side_open(unsigned slots, const char magic[4])
+{
+   return O.loaded ? O.api.side_open(slots, magic) : -1;
+}
+void online_psp_side_close(void) { if (O.loaded) O.api.side_close(); }
+int online_psp_side_send(const uint8_t mac[6], const void *buf, size_t len)
+{
+   return O.loaded ? O.api.side_send(mac, buf, len) : -1;
+}
+int online_psp_side_recv(void *buf, size_t cap)
+{
+   return O.loaded ? O.api.side_recv(buf, cap) : 0;
 }
 
 void online_psp_stats_evt(const char *at)

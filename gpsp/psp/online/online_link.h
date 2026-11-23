@@ -31,8 +31,9 @@
 #define OL_MAGIC_HOST 0x474F4C48u   /* 'GOLH' */
 #define OL_MAGIC_API  0x474F4C41u   /* 'GOLA' */
 /* Bump on ANY change to either table or to the semantics of a call. */
-#define OL_VERSION    5u   /* 3: room[16] (invite codes), api.slot; the host chip/toast. 4: both (beta.4 fix 1).
-                              5: host.cancel (HW-1 r4-L3: the LINKING screen's O cancel) */
+#define OL_VERSION    6u   /* 3: room[16] (invite codes), api.slot; the host chip/toast. 4: both (beta.4 fix 1).
+                              5: host.cancel (HW-1 r4-L3: the LINKING screen's O cancel).
+                              6: api.side_* (the link session's side lane online) */
 #define OL_ERR_ABI    (-0x4F4C)
 
 typedef struct online_host
@@ -91,6 +92,14 @@ typedef struct online_api
    void (*stats_evt)(const char *at);
    void (*status)(char *out, unsigned cap);
    int  (*slot)(void);          /* 0 = this console hosts the room (v3) */
+   /* v6: the side lane (transport_relay.h relay_transport_side_*): the link
+    * session's bulk datagrams, up to RL_SIDE_MAX bytes, to the peer by its
+    * netdrv MAC, on the session's own path (direct or the relay) */
+   int  (*side_open)(unsigned slots, const char magic[4]);
+   void (*side_close)(void);
+   int  (*side_send)(const uint8_t mac[6], const void *buf, size_t len);
+   int  (*side_recv)(void *buf, size_t cap);
+   unsigned (*side_depth)(void);
 } online_api;
 
 typedef struct online_link
