@@ -132,9 +132,13 @@ netem (relay round trip = 4 x the delay, direct = 2 x):
 | path, netem | ordered channel (before) | side lane |
 |---|---|---|
 | relay 120 ms, 0 % | 16.9 s | 5.1 s |
-| relay 120 ms, ~2 % | 49.6 s | see REPORT |
+| relay 120 ms, ~2 % | 49.6 s | 6.2 s |
+| relay 200 ms, ~6 % | 225-232 s | 9.4 s |
+| direct 100 ms, ~6 % | | 5.5 s |
 
-Full table (2 MiB, direct, loss, pace caps, resend requests): builds/online-cart-out/REPORT.md.
+2 MiB (Crystal <-> Silver): 10.2 s clean (relay or direct), 19.0 s on the 200 ms / ~6 % relay, 13.0 s direct
+at ~6 %.  The pace cap: at 8 a frame the relay's limiter drops datagrams (inputs too), at 12 it drops ~5x
+more, for at most 0.6 s gained.
 
 **Memory.** The session reads its own cartridge into memory while hashing it,
 right after the single machine is freed, so the partner's cartridge cannot
