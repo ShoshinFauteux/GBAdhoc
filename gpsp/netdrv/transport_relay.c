@@ -139,6 +139,11 @@ struct relay_transport
    uint64_t keep_sent_us;
    rl_peer p[RL_SLOTS];
    rl_client_stats st;
+   /* the side lane (relay_transport_side_open): a ring of datagrams */
+   struct rl_side { uint16_t len; uint8_t data[RL_SIDE_MAX]; } *side;
+   unsigned side_slots;
+   uint32_t side_head, side_tail;
+   char side_magic[4];
 };
 
 static uint64_t now(relay_transport *t) { return t->cfg.now_us(); }
@@ -877,6 +882,26 @@ static void slot_mac(int slot, uint8_t mac[6])
    mac[5] = (uint8_t)slot;
 }
 
+/* A DATA payload for the side lane goes to its ring (1 = taken, so not
+ * netdrv's).  Single-threaded: recv and side_recv run on the pumping thread. */
+static int side_take(relay_transport *t, const uint8_t *p, int n)
+{
+   struct rl_side *s;
+   if (!t->side || n < 4 || n > RL_SIDE_MAX || memcmp(p, t->side_magic, 4))
+      return 0;
+   if (t->side_head - t->side_tail >= t->side_slots)
+   {
+      t->st.side_drop++;
+      return 1;
+   }
+   s = &t->side[t->side_head % t->side_slots];
+   s->len = (uint16_t)n;
+   memcpy(s->data, p, (size_t)n);
+   t->side_head++;
+   t->st.side_rx++;
+   return 1;
+}
+
 static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
 {
    relay_transport *t = (relay_transport *)ctx;
@@ -911,10 +936,11 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
          if (b[5] == RL_T_DATA)
          {
             int n = len - RL_HDR;
-            if (t->state != RL_ST_IN_ROOM || b[6] >= RL_SLOTS || n <= 0 ||
-                (size_t)n > cap)
+            if (t->state != RL_ST_IN_ROOM || b[6] >= RL_SLOTS || n <= 0)
                continue;
             t->st.rx_relay++;
+            if (side_take(t, b + RL_HDR, n) || (size_t)n > cap)
+               continue;
             slot_mac(b[6], src_mac);
             memcpy(buf, b + RL_HDR, (size_t)n);
             return n;
@@ -1037,10 +1063,12 @@ static int relay_recv(void *ctx, uint8_t src_mac[6], void *buf, size_t cap)
          if (b[5] == RL_T_DATA)
          {
             int n = len - RL_HDR;
-            if (n <= 0 || (size_t)n > cap)
+            if (n <= 0)
                continue;
             if (q->path == P_DIRECT)
                q->last_rx_us = tn;
+            if (side_take(t, b + RL_HDR, n) || (size_t)n > cap)
+               continue;
             slot_mac(j, src_mac);
             memcpy(buf, b + RL_HDR, (size_t)n);
             return n;
@@ -1160,7 +1188,53 @@ void relay_transport_destroy(relay_transport *t)
       rl_hdr(b, RL_T_BYE, t->slot, RL_SLOT_NONE, t->token);
       to_server(t, 0, b, sizeof(b));
    }
+   free(t->side);
    free(t);
+}
+
+int relay_transport_side_open(relay_transport *t, unsigned slots, const char magic[4])
+{
+   if (!t || !slots)
+      return -1;
+   if (!t->side || t->side_slots != slots)
+   {
+      free(t->side);
+      t->side = (struct rl_side *)calloc(slots, sizeof(*t->side));
+      t->side_slots = t->side ? slots : 0;
+      if (!t->side)
+         return -1;
+   }
+   memcpy(t->side_magic, magic, 4);
+   t->side_head = t->side_tail = 0;
+   return 0;
+}
+
+void relay_transport_side_close(relay_transport *t)
+{
+   if (!t)
+      return;
+   free(t->side);
+   t->side = NULL;
+   t->side_slots = 0;
+   t->side_head = t->side_tail = 0;
+}
+
+int relay_transport_side_recv(relay_transport *t, void *buf, size_t cap)
+{
+   struct rl_side *s;
+   size_t n;
+   if (!t || !t->side || t->side_tail == t->side_head)
+      return 0;
+   s = &t->side[t->side_tail % t->side_slots];
+   n = s->len < cap ? s->len : cap;
+   memcpy(buf, s->data, n);
+   t->side_tail++;
+   return (int)n;
+}
+
+unsigned relay_transport_side_depth(const relay_transport *t)
+{
+   return t && t->side ? (unsigned)(t->side_head - t->side_tail) : 0u;
 }
 
 int relay_transport_error(const relay_transport *t, const char **text)
