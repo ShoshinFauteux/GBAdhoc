@@ -31,6 +31,9 @@ static inline unsigned rfu_sched_d_for(int online, long harness_d)
 }
 
 extern unsigned rfu_sched_d, rfu_sched_held_peak;
+/* 1 = D drops to 1 through librfu NI handshakes and a link's start window
+ * (rfu_sched.h); the harness key rfu_sched_ni = 0 is an A/B arm. */
+extern unsigned rfu_sched_ni_on;
 /* Sets D (one store: the older delivery rules are gone, C-4).  Call it
  * before any adapter session starts. */
 void rfu_sched_config(unsigned d);

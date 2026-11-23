@@ -810,6 +810,11 @@ static __attribute__((noinline, section(".text.fe_cold.boot_run"))) int boot_run
    rfu_sched_config(rfu_sched_d_for(0, g_rfu_sched_ini =
                                        HARNESS_INT("rfu_sched", -1)));
    fe_evt("rfu_sched d=%u", rfu_sched_d);
+   /* Harness A/B only: 0 keeps D through librfu NI handshakes and a link's
+    * start window instead of dropping to 1 (rfu_sched.h, rfu_sched_cur_d). */
+   rfu_sched_ni_on = HARNESS_INT("rfu_sched_ni", 1) != 0;
+   if (!rfu_sched_ni_on)
+      fe_evt("rfu_sched_ni on=0");
    /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
     * receives, to prove the rig's cross-console desync detector fires.  0 in
     * every real run; the value is echoed so a stray one cannot hide. */
