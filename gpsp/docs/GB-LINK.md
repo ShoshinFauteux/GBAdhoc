@@ -63,7 +63,7 @@ final hashes agree.  Harness keys: `gblink_role`, `gblink_delay` (also a
 
 **Input delay and carried copies.**  With neither `config.ini` nor the
 harness setting them, the host picks the delay by the session's kind, as the
-Wireless Adapter does (`rfu_sched_d_for`): 3 frames ad hoc, 4 online
+Wireless Adapter does (`rfu_sched_d_for`): 3 frames ad hoc, 6 online
 (`GBLINK_DELAY_ADHOC` / `_ONLINE`, `psp/fe/play_defaults.h`).  At 3 frames the
 partner's buttons arrive with about 1.5-1.8 frames to spare (hardware
 `lead`), barely a resend (~1.5 frames) and short of a retransmission (3), so

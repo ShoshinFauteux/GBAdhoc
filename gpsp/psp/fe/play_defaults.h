@@ -83,7 +83,7 @@
  * sets gblink_delay / gblink_input_copies: by the session's kind, as the adapter's
  * tick delay (rfu_sched_d_for).  The host's delay is the pair's. */
 #define GBLINK_DELAY_ADHOC   3
-#define GBLINK_DELAY_ONLINE  4
+#define GBLINK_DELAY_ONLINE  6
 #define GBLINK_COPIES_ADHOC  2
 #define GBLINK_COPIES_ONLINE 6
 /* An online adapter room's redundant DATA: RFU packets are up to 104 B and
