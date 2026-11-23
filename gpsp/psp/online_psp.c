@@ -18,6 +18,7 @@
 #include "mgift_net.h"
 #include "osd_psp.h"
 #include "../netdrv/relay_proto.h"
+#include "../rfu_sched_api.h"
 #include "../frontend-common/fe_evt.h"
 #include "../frontend-common/fe_util.h"
 
@@ -207,6 +208,13 @@ int online_psp_configure(const char *h, const char *c)
    return 0;      /* a player's build: online only per session, from the menu */
 #else
    cycles = (int)fe_ini_get_int(h, "online_prx_cycles", 0);
+   /* A/B arm (rig builds only): 0 keeps the adapter's D through librfu NI
+    * handshakes and a link's start window instead of dropping to 1
+    * (rfu_sched.h, rfu_sched_cur_d).  Read here, not in boot, so the player
+    * build and the per-frame layout do not change. */
+   rfu_sched_ni_on = fe_ini_get_int(h, "rfu_sched_ni", 1) != 0;
+   if (!rfu_sched_ni_on)
+      fe_evt("rfu_sched_ni on=0");
    /* every-session online: only the harness ini turns it on (a player turns
     * it on per session from the menu) */
    if (!fe_ini_get(h, "online_relay", s, sizeof(s)) || !s[0])
