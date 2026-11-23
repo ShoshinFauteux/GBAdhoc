@@ -588,6 +588,10 @@ static int run_case(const case_t *c)
    app_t app[2];
    rl_client_stats st[2];
    int i, ok = 1, sent[2] = { 0, 0 };
+   /* the side lane (relay_transport_side_*): one max-size datagram a side
+    * every frame beside netdrv's, on whatever path the session has */
+   unsigned side_tx[2] = { 0, 0 }, side_rx[2] = { 0, 0 }, side_badrx[2] = { 0, 0 };
+   int side_big = 0;
    const int N_PAY = 600;
    uint64_t t_end, t_start = 1000000, t_in[2] = { 0, 0 };
 
@@ -753,6 +757,19 @@ static int run_case(const case_t *c)
    }
    netdrv_host(nd[0]);
    netdrv_join(nd[1]);
+   for (i = 0; i < 2; i++)
+      if (relay_transport_side_open(rt[i], 32, "SIDE") != 0)
+      {
+         printf("FAIL %s: side_open\n", c->name);
+         ok = 0;
+      }
+   {
+      /* one byte over the limit is refused, never sent */
+      uint8_t big[RL_SIDE_MAX + 1], mac[6] = { 0x02, 0x47, 0x42, 0x52, 0x00, 1 };
+      memset(big, 0, sizeof(big));
+      memcpy(big, "SIDE", 4);
+      side_big = tp[0].send_to(tp[0].ctx, mac, big, sizeof(big));
+   }
 
    {
    uint64_t stall_end = g_now + (uint64_t)c->stall1_ms * MS;
@@ -781,6 +798,29 @@ static int run_case(const case_t *c)
                             i ? 0 : 1) == 0)
                sent[i]++;
          }
+         if (netdrv_active(nd[i]) && netdrv_peer_count(nd[i]) > 0 &&
+             side_tx[i] < 600 && (g_now / MS) % 16 == (unsigned)i * 8 + 4)
+         {
+            uint8_t d[RL_SIDE_MAX], mac[6] = { 0x02, 0x47, 0x42, 0x52, 0x00, 0 };
+            mac[5] = (uint8_t)(i ? 0 : 1);
+            memset(d, (int)(side_tx[i] & 0xFF), sizeof(d));
+            memcpy(d, "SIDE", 4);
+            memcpy(d + 4, &side_tx[i], 4);
+            tp[i].send_to(tp[i].ctx, mac, d, sizeof(d));
+            side_tx[i]++;
+         }
+         {
+            uint8_t d[RL_SIDE_MAX + 8];
+            int n;
+            while ((n = relay_transport_side_recv(rt[i], d, sizeof(d))) > 0)
+            {
+               uint32_t k;
+               memcpy(&k, d + 4, 4);
+               if (n != RL_SIDE_MAX || memcmp(d, "SIDE", 4) || d[n - 1] != (uint8_t)(k & 0xFF))
+                  side_badrx[i]++;
+               side_rx[i]++;
+            }
+         }
       }
       if (app[0].got >= (uint32_t)N_PAY && app[1].got >= (uint32_t)N_PAY &&
           g_now - sess0 >= (uint64_t)c->long_ms * MS)
@@ -801,6 +841,20 @@ static int run_case(const case_t *c)
       {
          printf("FAIL %s: payloads host got %u bad %u, guest got %u bad %u\n",
                 c->name, app[0].got, app[0].bad, app[1].got, app[1].bad);
+         ok = 0;
+      }
+      /* netdrv's payloads were all intact above (bad 0): the side lane's
+       * datagrams never reached netdrv.  Every one sent crossed, but for
+       * what a dead path swallows until the transport falls back (direct
+       * silent 1.5 s: ~100 at one a frame; the sender resends those) */
+      if (side_big >= 0 || side_badrx[0] || side_badrx[1] ||
+          side_rx[1] + st[1].side_drop + 120 < side_tx[0] ||
+          side_rx[0] + st[0].side_drop + 120 < side_tx[1] ||
+          side_tx[0] < 500 || side_tx[1] < 500)
+      {
+         printf("FAIL %s: side lane sent %u/%u got %u/%u bad %u/%u oversize_send=%d\n",
+                c->name, side_tx[0], side_tx[1], side_rx[1], side_rx[0], side_badrx[0],
+                side_badrx[1], side_big);
          ok = 0;
       }
       if (app[0].lost || app[1].lost || app[0].stopped || app[1].stopped)
@@ -881,7 +935,7 @@ static int run_case(const case_t *c)
       if (ok)
          printf("ok   %-44s nat=%u/%u path=%s/%s direct_rx=%u/%u relay_rx=%u/%u "
                 "fallbacks=%u/%u bursts=%u/%u predicted=%u/%u srv_path=%u "
-                "rtt_direct=%ums rtt_relay=%ums%s\n",
+                "rtt_direct=%ums rtt_relay=%ums side=%u/%u%s\n",
                 c->name, st[0].nat, st[1].nat,
                 path0 == 3 ? "direct" : path0 == 4 ? "fellback" : "relay",
                 path1 == 3 ? "direct" : path1 == 4 ? "fellback" : "relay",
@@ -889,7 +943,7 @@ static int run_case(const case_t *c)
                 st[0].fallbacks, st[1].fallbacks, st[0].bursts, st[1].bursts,
                 st[0].predicted_tx, st[1].predicted_tx, g_path_lines,
                 st[0].direct_rtt_us[1] / 1000, st[0].relay_rtt_us / 1000,
-                c->long_ms ? " (long)" : "");
+                side_rx[1], side_rx[0], c->long_ms ? " (long)" : "");
       if (ok && (c->priv_bound || c->lan_cut))
          printf("     %-44s to_private=%u/%u (after 1 min %u/%u)\n", "",
                 g_priv_tx[0], g_priv_tx[1], g_priv_tx_late[0], g_priv_tx_late[1]);
