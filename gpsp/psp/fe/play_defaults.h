@@ -86,9 +86,13 @@
 #define GBLINK_DELAY_ONLINE  6
 #define GBLINK_COPIES_ADHOC  2
 #define GBLINK_COPIES_ONLINE 6
-/* An online adapter room's redundant DATA: RFU packets are up to 104 B and
- * the adapter sets no body cap, so 2 copies keep its datagrams as they are. */
-#define RFU_COPIES_ONLINE    2u
+/* An online adapter room's redundant DATA: each datagram also carries up
+ * to 6 earlier unacknowledged RFU packets, as many as fit netdrv's 560 B
+ * body (4 full-size 104 B packets; more when small).  The adapter's tick gate
+ * holds every frame behind a lost packet, so a burst the copies do not cover
+ * waits for a retransmission (300-500 ms on a cellular route): the cellular
+ * Trade Center ran 55-57 fps at 7-10 % retransmitted, 25-35 fps at 25-30 %. */
+#define RFU_COPIES_ONLINE    6u
 /* Section 20: a cable session's default translation-cache offsets mod 8 KiB
  * (LAYOUT_PIN builds; -1 = keep the single-player pin).  hw6/hw7
  * (GBA-LINK-MIRROR.md 20.1-20.2): the LARGE tier (3000/Go) is fastest at
