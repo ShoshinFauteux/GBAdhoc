@@ -211,12 +211,12 @@ net_session_fps_snap	fe_ini_get_int	g_pcfg . net_session_fps_snap	psp/fe/boot.in
 nettest	fe_ini_get_int	0	psp/fe/boot.inc.c:1228	release,lab,harness
 nettest_secs	fe_ini_get_int	90	psp/fe/boot.inc.c:1230	release,lab,harness
 nick	fe_ini_get	-	psp/fe/boot.inc.c:1125	release,lab,harness
-online_direct	get_int	1	psp/online_psp.c:222	lab,harness
-online_drop_direct_ms	get_int	0	psp/online_psp.c:224	lab,harness
-online_prx_cycles	fe_ini_get_int	0	psp/online_psp.c:209	lab,harness
-online_relay	fe_ini_get	-	psp/online_psp.c:212	lab,harness
-online_room	get_str	-	psp/online_psp.c:220	lab,harness
-online_wifi	get_int	1	psp/online_psp.c:223	lab,harness
+online_direct	get_int	1	psp/online_psp.c:230	lab,harness
+online_drop_direct_ms	get_int	0	psp/online_psp.c:232	lab,harness
+online_prx_cycles	fe_ini_get_int	0	psp/online_psp.c:210	lab,harness
+online_relay	fe_ini_get	-	psp/online_psp.c:220	lab,harness
+online_room	get_str	-	psp/online_psp.c:228	lab,harness
+online_wifi	get_int	1	psp/online_psp.c:231	lab,harness
 pace_slow_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1116	release,lab,harness
 pad_script	fe_ini_get	-	psp/fe/boot.inc.c:642	lab,harness
 perf_fixture	fe_ini_get	-	psp/fe/boot.inc.c:685	release,lab,harness
@@ -280,6 +280,7 @@ rfu_poll_min_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1053	release,lab,harn
 rfu_rtx_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:869	release,lab,harness
 rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:785	release,lab,harness
 rfu_sched	fe_ini_get_int	- 1	psp/fe/boot.inc.c:811	release,lab,harness
+rfu_sched_ni	fe_ini_get_int	1	psp/online_psp.c:215	lab,harness
 rfu_timeout_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:868	release,lab,harness
 role	fe_ini_get[src]	-	psp/fe/boot.inc.c:1273	lab,harness
 rom	fe_ini_get	-	psp/fe/session.inc.c:114	release,lab,harness
