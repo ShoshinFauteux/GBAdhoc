@@ -662,7 +662,7 @@ route), and the resend requests (`gblink_nack`) had no lane at all. Now:
 - The ad hoc path is unchanged; fe_gblink and fe_host are the same code for both (one pipeline), and the
   transport's `gb_bulk_enable` sets the lane's size and pace for its session (`fe_bulk_lane`).
 
-Measurements: builds/online-cart-out/REPORT.md (the numbers are summarised in docs/GB-LINK.md section 3).
+Measurements: docs/GB-LINK.md section 3.
 
 ### Desktop hosts and discovery (built 2026-11-05, branch claude/online-desktophost)
 
