@@ -298,7 +298,7 @@ static void test_losses(void)
     lags(400, 60, 60 + n - 1, &in, &out);
     CHECK(next_k[1] == 400 && order_bad[1] == 0, "%d lost: B got %u, %u bad", n,
           next_k[1], order_bad[1]);
-    if (n <= ND_RED_MAX) {
+    if (n <= 2) {               /* this session's redund */
       CHECK(in <= LAT + n, "%d lost: worst lag %d > %d", n, in, LAT + n);
       CHECK(sb.red_fill >= (unsigned)n, "%d lost: %u filled", n, sb.red_fill);
       CHECK(recv_how[1][60] == ND_RX_RED && recv_how[1][60 + n - 1] == ND_RX_RED,
@@ -431,6 +431,39 @@ static void test_cable_cap(void)
   red_cap = 0;
 }
 
+/* An online cable session: redund 6 within the cable's cap (one plain frame).
+ * Small input payloads ride six deep, so a burst of 5 lost datagrams is
+ * filled from the next one without a retransmission, and no datagram
+ * outgrows ND_MAX_FRAME. */
+static void test_cable_burst(void)
+{
+  int in, out;
+  nd_stats sa, sb;
+  plen = 10;
+  red_cap = ND_MAX_PAYLOAD;
+  make(6);
+  drop_lo = 60;
+  drop_hi = 64;
+  play(300);
+  netdrv_get_stats(nd[0], &sa);
+  netdrv_get_stats(nd[1], &sb);
+  lags(300, 60, 64, &in, &out);
+  CHECK(next_k[1] == 300 && order_bad[1] == 0, "burst: B got %u, %u bad", next_k[1],
+        order_bad[1]);
+  CHECK(max_dgram <= ND_MAX_FRAME, "burst: datagram %u > ND_MAX_FRAME %u", max_dgram,
+        (unsigned)ND_MAX_FRAME);
+  CHECK(in <= LAT + 5 && sb.red_fill >= 5 && recv_how[1][60] == ND_RX_RED &&
+        recv_how[1][64] == ND_RX_RED,
+        "burst of 5, redund 6: lag %d, filled %u, how %d / %d", in, sb.red_fill,
+        recv_how[1][60], recv_how[1][64]);
+  printf("  cable, redund 6, 10 B payloads, 5 in a row lost: worst lag %d frames "
+         "(others %d), filled %u, largest datagram %u <= %u\n", in, out, sb.red_fill,
+         max_dgram, (unsigned)ND_MAX_FRAME);
+  done();
+  plen = 104;
+  red_cap = 0;
+}
+
 int main(void)
 {
   printf("[netdrv redundant DATA, ND_MAX_PAYLOAD %u, ND_WINDOW %u]\n",
@@ -441,6 +474,7 @@ int main(void)
   test_malformed_bundle();
   test_random_loss();
   test_cable_cap();
+  test_cable_burst();
   if (fails) {
     printf("netdrv redund: %d check(s) FAILED\n", fails);
     return 1;

@@ -75,10 +75,10 @@ static int net_start_np(int is_host, const char *group, const char *nick,
     * again in the next datagrams, so a lost datagram costs one frame, not a
     * resend or a retransmission timeout.  An online adapter room takes it;
     * an ad hoc one does not.  A cable session (GB mode: GBA cable, GB/GBC)
-    * takes config.ini / harness gblink_input_copies (0-2), else its kind's
+    * takes config.ini / harness gblink_input_copies (0-6), else its kind's
     * default (play_defaults.h). */
    if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
-      fe_np_set_redundancy(online_psp_enabled() ? ND_RED_MAX : 0u);
+      fe_np_set_redundancy(online_psp_enabled() ? RFU_COPIES_ONLINE : 0u);
    else
    {
       int rd = g_pcfg.gblink_copies_cfg;

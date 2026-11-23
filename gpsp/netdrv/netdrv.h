@@ -56,8 +56,11 @@ extern "C" {
  * ND_WIRE_CAP: the desktop build's largest frame (24 + 560), which every
  * transport already carries -- the online relay's RL_MAX_DGRAM is 600 =
  * its 16 B header + 584 -- so the relay needs no change.  PSP (payload
- * 144): body <= 442, datagram <= 466. */
-#define ND_RED_MAX       2
+ * 144): body <= 560, datagram <= 584.  A session's own red_body_max keeps
+ * its datagrams smaller (a cable's: one plain frame), and its redund picks how
+ * many it carries: 6 lets an online cable's small input payloads ride through a
+ * burst of several lost datagrams (~100 ms round trip). */
+#define ND_RED_MAX       6
 #define ND_WIRE_CAP      584
 #define ND_RED_BODY_RAW  (2 + ND_MAX_PAYLOAD + ND_RED_MAX * (4 + ND_MAX_PAYLOAD))
 #define ND_RED_BODY_MAX  (ND_HDR_SIZE + ND_RED_BODY_RAW <= ND_WIRE_CAP ? \

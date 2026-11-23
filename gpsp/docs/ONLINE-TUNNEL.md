@@ -30,8 +30,8 @@ Three kinds of session sit on netdrv. They react to delay differently:
 | session | how the consoles stay together | delay knob today |
 |---|---|---|
 | **GBA Wireless Adapter** (`rfu.c`, Union Room, Mario Golf/Tennis) | scheduled ticks (`rfu_sched.h`): partner data for frame F arrives at the start of F + D, and frame F + D waits for the partner's tick F | `rfu_sched` = D (default 2) |
-| **GBA link cable** (mirror, `fe_gbadual.c` + `fe_gblink.c`: AW2, Emerald Trade Center/Colosseum, Super Circuit) | input lockstep: each console runs BOTH GBAs; only buttons cross; frame f uses buttons sent at f - D | `gblink_delay` = D (default 2 ad hoc, 4 online) |
-| **GB/GBC link** (`fe_gblink.c` over `gbcore_dual`) | the same input lockstep | `gblink_delay` = D (default 2 ad hoc, 4 online) |
+| **GBA link cable** (mirror, `fe_gbadual.c` + `fe_gblink.c`: AW2, Emerald Trade Center/Colosseum, Super Circuit) | input lockstep: each console runs BOTH GBAs; only buttons cross; frame f uses buttons sent at f - D | `gblink_delay` = D (default 3 ad hoc, 6 online) |
+| **GB/GBC link** (`fe_gblink.c` over `gbcore_dual`) | the same input lockstep | `gblink_delay` = D (default 3 ad hoc, 6 online) |
 
 Reliability is netdrv's ARQ: sliding window 256, adaptive RTO (RFC 6298) with a 200 ms floor and a
 2.5 s ceiling on the PSP, keepalive PING every 250 ms, peer dead after 8 s. The GB session adds an
