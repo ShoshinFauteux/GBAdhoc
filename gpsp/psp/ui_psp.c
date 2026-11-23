@@ -2705,7 +2705,9 @@ static const char *set_value(int id, char *v, size_t n)
 #endif
    case SET_THEME:    s = g_pcfg.theme ? "light" : "dark"; break;
    case SET_SHELL:    s = g_pcfg.ui_shell ? "marquee" : "shelf"; break;
-   case SET_ROOM:     s = room_label(g_pcfg.group, t, sizeof(t)); break;
+   case SET_ROOM:     /* ROOM_LABEL_CAP, as every caller: one clone */
+      s = room_label(g_pcfg.group, t, ROOM_LABEL_CAP);
+      break;
    case SET_FASTLINK: s = ONOFF(g_pcfg.fast_link); break;
    }
    return cap1(v, n, s);
