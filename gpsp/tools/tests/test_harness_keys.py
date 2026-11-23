@@ -32,9 +32,11 @@ CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # (code-health C-2): 323 keys on 349 sites, the 16 rejected-experiment keys gone (release 182,
 # lab 320, harness 298).  health-bios: 324 keys on 351 sites, lab_bios (the Lab's bundled-BIOS switch,
 # lab_harness.c lab_audit_keys: two sites, lab only; lab 321).  cable-redund: 325 keys on 352 sites,
-# gblink_input_copies (the cable's redundant DATA; release 181, lab 322, harness 299).
-EXPECT_KEYS = 325
-EXPECT_SITES = 352
+# gblink_input_copies (the cable's redundant DATA; release 181, lab 322, harness 299).  online-smooth:
+# 326 keys on 353 sites, rfu_sched_ni (the adapter's NI-rule A/B arm, online_psp.c, rig builds only;
+# release 181, lab 323, harness 300).
+EXPECT_KEYS = 326
+EXPECT_SITES = 353
 
 fails = 0
 
