@@ -1,5 +1,7 @@
 # Link Cable or Wireless Adapter: the player's link menus
 
+> Since 5.1 the menus are arranged as docs/design/UI-OVERHAUL.md says: Room is the first row of the Wireless screen (and edited only there), Settings > Link mode is Settings > Wireless > Default host link, and the Wireless screens have no Back row (O goes back). The paths and row counts below are as built in 3.5.0.
+
 Branch `claude/gbalink-ui` (from `claude/gbalink-hw` + `claude/splash-logo`), 2026-10-03.
 
 The GBA link mirror (docs/GBA-LINK-MIRROR.md) started only from harness keys.

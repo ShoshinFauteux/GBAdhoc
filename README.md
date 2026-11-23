@@ -112,13 +112,13 @@
 >   hints, state/cheat marks and a position bar on the game list, a `Screenshots` folder,
 >   and a Video preset that can really be set to none.
 > - **XMB launch mode** (#29): a game's own XMB entry can start it directly.
-> - **Online play (experimental, off by default):** *Settings → Online play*, then
+> - **Online play (experimental, off by default):** *Settings → Wireless → Online play*, then
 >   *Wireless → Online*; two PSPs link over the internet. Only Pokémon Emerald has been
 >   tested so far. The step-by-step guide is in the
 >   [beta 4 release notes](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4).
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
-> - **Settings → CPU clock** (333 MHz, 222 MHz or your CFW's own), and **mismatched builds
+> - **Settings → Audio & speed → CPU clock** (333 MHz, 222 MHz or your CFW's own), and **mismatched builds
 >   are refused** before they link.
 >
 > Full notes and known issues: [CHANGELOG](gpsp/CHANGELOG.md). Everything below describes
@@ -361,9 +361,9 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
   screen, with your scale, smoothing, screen effect, colour, ambient bars and Game Boy palette,
   but without the menu, the FPS counter or any message on top. To save only the game's own
   picture at its own size (240 x 160 for GBA, 160 x 144 for GB and GBC), as earlier versions
-  did, set ***Settings → Screenshots → Screenshot picture*** to *Game only*.
+  did, set ***Settings → Screenshots → Capture source*** to *Game only*.
 - **They go to `PICTURE/GBAdhoc` by default,** so you can open them from the XMB's Photo
-  column. To keep them beside the app instead, set ***Settings → Screenshots → Screenshot
+  column. To keep them beside the app instead, set ***Settings → Screenshots → Save
   folder*** to *GBAdhoc/Screenshots* (<kbd>NEW</kbd> its own `Screenshots` folder in the app
   folder; it was `log/` until 4.6.0-beta.3). On a Go running GBAdhoc from internal storage, they
   save to internal storage.
@@ -378,7 +378,7 @@ Press **L + R + SELECT** (or your own shortcut) as before. What changed
 
 - <kbd>NEW</kbd> **1.5x and 2x fast-forward** for when 3x is too fast
   ([#37](https://github.com/ShoshinFauteux/GBAdhoc/issues/37)). Pick them in
-  ***Settings → Gameplay → Fast-forward***; 3x stays the default. Both show a new picture on
+  ***Settings → Audio & speed → Fast-forward speed***; 3x stays the default. Both show a new picture on
   every screen refresh, so the speed-up looks smooth. Sound is muted during fast-forward,
   as with the other presets.
 - <kbd>NEW</kbd> **Game Boy Color colours for original Game Boy games**
@@ -438,7 +438,7 @@ that moment.
 - **It survives the POWER switch.** Sleep in the middle of a rewind and the PSP wakes to
   the picture you were looking at.
 - **It works with fast-forward,** so you can skim forward and step back.
-- **Turn it on in *Settings → Rewind*.** It is off by default and takes effect from the
+- **Turn it on in *Settings → Saves & rewind → Rewind*.** It is off by default and takes effect from the
   next game you start. *Rewind length* chooses how much history is kept: **Short**
   (1 MB), **Medium** (2 MB, the default) or **Long** (4 MB). How many seconds that is
   depends on the game: about 40 seconds of Pokémon Emerald at Medium, a few seconds of
@@ -480,8 +480,8 @@ Per-game cheat lists you switch on and off from the menu.
 
 Send a save file or a save state to a friend's PSP, or pull theirs onto yours.
 
-- ***Settings → Share game data*** on one PSP opens a room; the other joins it from the
-  room list. You see the games you both have, and for each one the other PSP's save
+- On the game list, **R** opens *Wireless*: ***Share game data*** on one PSP opens a room;
+  the other joins it from *Join: scan for rooms* on the same screen. You see the games you both have, and for each one the other PSP's save
   states, with their pictures and times, and its save file.
 - **Careful with your saves.** Every transfer is checked end to end. Replacing a save
   file asks first and keeps your old one beside it as `.sav.bak`. A file that is not
@@ -572,7 +572,7 @@ Internet, no cable.
 | **Link Cable** | GBA link-cable games, and every GB/GBC link game | only the buttons each player presses |
 | **Wireless Adapter** | Pokémon Emerald, FireRed and LeafGreen through the AGB-015 adapter | the adapter's radio traffic |
 
-**The game picks the mode.** *Settings → Link mode* shows what the game will use:
+**The game picks the mode.** *Settings → Wireless → Default host link* shows what the game will use:
 *Auto: Link Cable*, *Auto: Wireless Adapter*, or *Auto: ask* for the games that do both
 (Pokémon Emerald, FireRed and LeafGreen, Mega Man Battle Network 5 and 6, Mario Tennis:
 Power Tour), which ask *How will the other PSP connect?* when you host. You can override
@@ -608,8 +608,8 @@ cartridge.** If your friend doesn't have it, it is sent over for the session (*R
 4. The LINKING screen runs once on both PSPs, then you're in. The chip in the corner reads
    *Link Cable · Room 7 · P1* on the host and *P2* on the joiner.
 
-Rooms are numbered 0 to 99; yours is under *Settings → Room* (Room 7 unless you change
-it). In the scan list, a room you can't enter is dimmed, and ✕ on it says why (*Room 3 is
+Rooms are numbered 0 to 99; yours is the first row of the *Wireless* screen, changed with ← / → (Room 7 unless you
+change it). In the scan list, a room you can't enter is dimmed, and ✕ on it says why (*Room 3 is
 playing Mario Kart Super Circuit. Open it to join.*).
 
 <table>
@@ -791,23 +791,23 @@ favourites, the state shelf) are unchanged and still apply.
   game list's state shelf ✕ loads and △ deletes. Saving over a saved slot, loading and
   deleting each ask first: ✕ answers, any other button keeps what you have.
 - Select + L / Select + R for a quick save and load of slot 1 (the load asks first, unless
-  you turn *Settings → Quick load asks first* off; <kbd>NEW</kbd> while it asks, ↑/↓ picks
+  you turn *Settings → Saves & rewind → Confirm quick load* off; <kbd>NEW</kbd> while it asks, ↑/↓ picks
   any of your saved slots, with its picture and time; <kbd>NEW</kbd> the save can ask before
-  overwriting with *Settings → Quick save asks first*).
+  overwriting with *Settings → Saves & rewind → Confirm quick save*).
 - Battery saves flushed on exit, on HOME, on Quit to game list, and
   periodically as you play, with a `.sav.bak` kept. Sleeping never touches the save.
 
 **The console**
 - Wake from sleep: slide it shut, flick the switch, come back whenever.
 - All three PSP models, tested on hardware. 333 MHz by default; <kbd>NEW</kbd> 222 MHz or
-  your CFW's own clock under *Settings → CPU clock*.
+  your CFW's own clock under *Settings → Audio & speed → CPU clock*.
 - <kbd>NEW</kbd> Screenshots as named PNG files in `PICTURE/GBAdhoc` for the XMB's Photo
   column, or BMP, or beside the app.
 
 </details>
 
 <details>
-<summary><b>In-game controls</b> (all remappable under <i>Settings → Button mapping</i>)</summary>
+<summary><b>In-game controls</b> (all remappable under <i>Settings → Controls → Button mapping</i>)</summary>
 
 | PSP (default) | Does |
 |---|---|
@@ -838,42 +838,48 @@ confirm and ○ to go back.
 <details>
 <summary><b>Settings</b></summary>
 
-| Section | Setting | |
+<kbd>NEW</kbd> Settings opens on a page of seven groups, each showing a summary of what's
+set. ✕ (or →) opens a group, ○ goes back, and L / R jump to the previous or next group
+without going back. Every group fits on one screen. A greyed-out option can still be
+highlighted: the line above the button hints says why it can't be changed.
+
+| Group | Setting | |
 |---|---|---|
-| Wireless | Room | Room 0–99 (Room 7 by default) |
-| | Link mode | Auto, Link Cable or Wireless Adapter, per game |
-| | Session overlay | show or hide the session chip during play |
-| | Fast link | on or off; the host decides for both PSPs |
-| | Share game data | from the game list: share, or scan for a room |
-| Display per console | Video scale | 1x, fit, stretch, 2x (integer) |
-| | <kbd>NEW</kbd> Smoothing | nearest, bilinear, sharp bilinear |
-| | <kbd>NEW</kbd> Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD; GB/GBC also RGB stripes and RGB stripes strong (Stretch only). Off at 1x |
-| | <kbd>NEW</kbd> Colour (GBA) | native, GBA LCD colour, black & white |
+| Display (per console) | Video scale | 1x, fit, stretch, 2x (integer) |
+| | Smoothing | nearest, bilinear, sharp bilinear |
+| | Screen effect | none, LCD grid, dot grid, scanlines, vintage LCD; GB/GBC also RGB stripes and RGB stripes strong (Stretch only). Off at 1x |
+| | Colour (GBA) | native, GBA LCD colour, black & white |
+| | GB palette (GB) | Auto, Grey, DMG green, Pocket, GBC (auto) (the Game Boy Color's own colours for each original Game Boy game), and the 12 GBC button palettes (GBC Up ... GBC Right+B) |
 | | Ambient bars | None, Art (else the edge glow), Game (live edge glow) |
-| | GB palette | Auto, Grey, DMG green, Pocket, GBC (auto) (the Game Boy Color's own colours for each original Game Boy game), and the 12 GBC button palettes (GBC Up ... GBC Right+B) |
-| Interface | Theme | dark or light |
-| | Menu style | Marquee or Shelf |
-| Gameplay | Fast-forward | <kbd>NEW</kbd> 1.5x, <kbd>NEW</kbd> 2x, 3x, Unlimited, Unlimited Smooth (3x is the default) |
-| | FF button (Square) | hold or toggle |
+| Audio & speed | Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
+| | Fast-forward speed | 1.5x, 2x, 3x, Unlimited, Unlimited Smooth (3x is the default) |
+| | Fast-forward button | hold or toggle |
+| | CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
 | | FPS counter | on or off |
-| | <kbd>NEW</kbd> Volume | 0 to 100 in steps of 10 (100, the default, is the full volume of every earlier release) |
-| | <kbd>NEW</kbd> Quick load asks first | on (default) or off: the quick load opens *Save States* with the question (<kbd>NEW</kbd> the d-pad picks another saved slot), or loads slot 1 at once |
-| | <kbd>NEW</kbd> Quick save asks first | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
-| | <kbd>NEW</kbd> Online play | off (default) or on: adds *Online* to the in-game *Wireless* menu (experimental) |
-| | <kbd>NEW</kbd> CPU clock | 333 MHz (default), 222 MHz, or System (your firmware's or CFW's own); heavy games and link play need 333 |
-| | Rewind | on or off, from the next game |
+| Saves & rewind | Confirm quick load | on (default) or off: the quick load opens *Save States* with the question (the d-pad picks another saved slot), or loads slot 1 at once |
+| | Confirm quick save | off (default) or on: over a saved slot 1 the quick save asks "Overwrite Slot 1?" first |
+| | Rewind | on or off; a change applies from the next game you open (*On (next game)*) |
 | | Rewind length | Short, Medium or Long |
-| Screenshots | <kbd>NEW</kbd> Screenshot picture | As displayed (default: the whole screen, without menus or messages) or Game only |
-| | <kbd>NEW</kbd> Screenshot format | PNG or BMP |
-| | <kbd>NEW</kbd> Screenshot folder | `PICTURE/GBAdhoc`, or *GBAdhoc/Screenshots* |
 | Controls | Thumbstick | off, moves (a second d-pad) or custom |
 | | Button mapping | every button and shortcut; the menu button |
 | | Turbo buttons | four turbo actions: button, rate, hold or toggle |
+| Screenshots | Capture source | As displayed (default: the whole screen, without menus or messages) or Game only |
+| | File format | PNG or BMP |
+| | Save folder | `PICTURE/GBAdhoc`, or *GBAdhoc/Screenshots* |
+| Wireless | Default host link | Auto, Link Cable or Wireless Adapter, per game |
+| | Session overlay | show or hide the session chip during play |
+| | Online play | off (default) or on: turns on *Online* in the in-game *Wireless* menu (experimental) |
+| Interface | Theme | dark or light |
+| | Menu style | Marquee or Shelf |
 
-<kbd>NEW</kbd> Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
+The Room, Ad hoc channel and Fast link are on the *Wireless* screen itself (in-game menu →
+*Wireless*, or <kbd>NEW</kbd> **R** on the game list, which also has *Share game data* and
+*Join: scan for rooms*). The Room is set only there, on its first row, with ← / →.
+
+Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
 5.0.0-beta.6 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
 
-The *Display* section is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
+The *Display* group is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the
 running one. A few more keys live only in `config.ini`: `quick_return = 0` brings back
 the old relaunching Quit to game list, `gbc_color_correction = 0` the old GBC colours,

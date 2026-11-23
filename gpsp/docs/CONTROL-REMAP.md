@@ -1,5 +1,7 @@
 # Control remapping (Settings > Controls)
 
+> Since 5.1 these pages open from Settings > Controls (*Button mapping*, *Turbo buttons*), and the fast-forward rows are Settings > Audio & speed (docs/design/UI-OVERHAUL.md).
+
 Branch `claude/control-remap`, from `claude/candidate-3.1` (d7df3bb). 2026-10-01.
 
 Players can rebind every GBA/GB button and every emulator shortcut, or leave

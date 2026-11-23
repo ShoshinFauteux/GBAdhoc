@@ -1,5 +1,7 @@
 # The in-game menu: the design mockup's Direction A, "Overlay"
 
+> Since 5.1 Settings is a top page of seven groups (docs/design/UI-OVERHAUL.md); the Settings paths and row labels below are as built (e.g. *Quick load asks first* is now Saves & rewind > *Confirm quick load*, *Screenshot picture* is Screenshots > *Capture source*).
+
 Branch `claude/ui-overlay`, based on `claude/candidate-3.1-all` (fa89f4e
 merged: sleep/wake fixes, GB palette, sharp bilinear).
 Design: the menu mockups' direction "A — Overlay"; its numbers (the

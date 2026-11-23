@@ -1,5 +1,7 @@
 # Share game data
 
+> Since 5.1 a room is opened from the game list's Wireless screen (R): *Share game data*, and the guest joins from *Join: scan for rooms* on the same screen (docs/design/UI-OVERHAUL.md).
+
 Save files and save states from one PSP to another over ad-hoc wireless.
 Browser only: neither PSP has a game loaded.
 
