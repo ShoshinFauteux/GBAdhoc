@@ -8,9 +8,11 @@ while something blocks (the 10 s room scan, the radio coming up), so the
 gaps below only have to cover what happens INSIDE a screen: a transfer, a
 thumbnail arriving, the console flare.  They are generous on purpose.
 
-Settings rows from the cursor's start (Room), in the browser with a GBA
-game highlighted: Link mode, Session overlay, Share game data, Join: scan
-for rooms."""
+R on the game list opens its Wireless screen.  Rows from the cursor's
+start: Room, Share game data, Join: scan for rooms, Ad hoc channel, Fast
+link (docs/design/UI-OVERHAUL.md).  Builds before the 5.1 menu overhaul
+opened these rows from START's Settings (Room, Link mode, Session overlay,
+Share game data, Join: scan for rooms) and need this file from before it."""
 import sys
 
 
@@ -41,9 +43,8 @@ class S:
 
 def sharer(scen):
     s = S()
-    s.wait(60).press('START').wait(20)
-    for _ in range(3):
-        s.press('DOWN')
+    s.wait(60).press('R').wait(20)   # the game list's Wireless screen
+    s.press('DOWN')                  # Room -> Share game data
     s.dump('a1_settings', 20)
     s.press('CROSS')                 # scan the stick, start the room
     s.dump('a2_waiting', 90)
@@ -58,8 +59,8 @@ def sharer(scen):
 
 def join(s):
     """From the browser to the shared-data list."""
-    s.wait(60).press('START').wait(20)
-    for _ in range(4):
+    s.wait(60).press('R').wait(20)   # the game list's Wireless screen
+    for _ in range(2):               # Room -> Share game data -> Join: scan
         s.press('DOWN')
     s.dump('b01_settings', 20)
     s.press('CROSS')                 # the room list (blocks 10 s scanning)

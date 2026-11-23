@@ -143,7 +143,7 @@ def main():
 
 # The menu's rows since 3.5: Resume, Save states, Wireless, Settings,
 # Quit to game list, Exit.  Leaving the Save States page puts the cursor on
-# Resume, so Quit is four DOWNs away.
+# Resume; UP wraps to Exit, and UP again is Quit to game list.
 SS_UI = """# Save States page: slot 1 (saved at frame 100, with .shot), dwell on it,
 # back out, Quit to game list from the menu (RC 3.5.0 quit realism).
 +200 menu
@@ -152,10 +152,8 @@ SS_UI = """# Save States page: slot 1 (saved at frame 100, with .shot), dwell on
 +40 press DOWN
 +30 press UP
 +40 press CIRCLE
-+10 press DOWN
-+4 press DOWN
-+4 press DOWN
-+4 press DOWN
++10 press UP
++4 press UP
 +6 press CROSS
 """
 

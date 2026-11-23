@@ -39,6 +39,7 @@ run S-gb-1x-pal ROMSRC=$R/kirby.gb ROMNAME=kirby.gb FRAMES=700 GEAT=650 LDUMP=2 
 run S-gb-uidemo ROMSRC=$R/kirby.gb ROMNAME=kirby.gb HERO="$KBH" FRAMES=900 UIDEMO=1 CFG="console = 1\nscale_gb = 1\nambient_gb = 1" &
 wait
 # browser: Settings per console (GBA -> GB -> GBC), then pick Emerald
-BS='90 press START\n100 press DOWN\n106 press DOWN\n120 dump set_gba\n126 press CIRCLE\n140 press TRIANGLE\n200 press START\n210 press DOWN\n216 press DOWN\n230 dump set_gb\n236 press CIRCLE\n250 press TRIANGLE\n310 press START\n320 dump set_gbc\n326 press CIRCLE\n340 press TRIANGLE\n400 press CROSS'
+# (Settings opens on its top page: X opens Display; O, O back to the list)
+BS='90 press START\n100 press CROSS\n120 dump set_gba\n126 press CIRCLE\n132 press CIRCLE\n140 press TRIANGLE\n200 press START\n210 press CROSS\n230 dump set_gb\n236 press CIRCLE\n242 press CIRCLE\n250 press TRIANGLE\n310 press START\n318 press CROSS\n330 dump set_gbc\n336 press CIRCLE\n342 press CIRCLE\n350 press TRIANGLE\n410 press CROSS'
 brun S-browser-settings BSCRIPT="$BS" FRAMES=200 LDUMP=3 GEAT=150 CFG="console = 0\nui_shell = 1\nscale_gb = 3\nambient_gb = 2\ngb_palette_gb = 2" &
 wait

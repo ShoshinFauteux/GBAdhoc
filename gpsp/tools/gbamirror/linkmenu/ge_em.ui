@@ -1,16 +1,18 @@
 # GE walk, a game that links both ways (Emerald), backdrop = the design's
 # Emerald capture: the both/chooser/override screens, the mixed scan list
-# and its plates, Settings > Link mode, the adapter bring-up.
+# and its plates, Settings > Wireless > Default host link, the adapter bring-up.
 +150 menu
 +12 press DOWN
 +4 press DOWN
 +4 press CROSS
++4 press DOWN
 +14 dump wireless-both
 +2 press CROSS
 +14 dump host-choose
 +2 press CIRCLE
 +4 fakescan GPSP07,GC07BPEE,GC03AMKE,GC12AW2E,GB05GAME,GC09AGFE
 +2 press DOWN
++4 press DOWN
 +4 press CROSS
 +14 press DOWN
 +8 dump scan-mixed
@@ -26,19 +28,21 @@
 +8 dump x-scan-another-game
 +2 press CIRCLE
 +6 press CIRCLE
++6 press CIRCLE
 +6 press DOWN
 +4 press DOWN
 +4 press DOWN
-+4 press DOWN
 +4 press CROSS
-+8 press DOWN
++8 press UP
++4 press UP
++4 press CROSS
 +14 dump settings-auto
 +2 press RIGHT
 +10 dump settings-override
 +2 press RIGHT
 +4 press CIRCLE
++4 press CIRCLE
 +6 press DOWN
-+4 press DOWN
 +4 press DOWN
 +4 press CROSS
 +14 dump wireless-adapter
@@ -46,10 +50,12 @@
 +6 press DOWN
 +4 press DOWN
 +4 press DOWN
-+4 press DOWN
 +4 press CROSS
-+8 press DOWN
++8 press UP
++4 press UP
++4 press CROSS
 +4 press RIGHT
++4 press CIRCLE
 +4 press CIRCLE
 +6 press CIRCLE
 +10 linking adapter_join

@@ -229,6 +229,7 @@ if [ "$SCEN" = ingame ]; then
 +4 press DOWN
 +4 press CROSS
 +10 press DOWN
++4 press DOWN
 +4 press CROSS
 +30 dump ig2_scan
 +10 press CROSS

@@ -1,4 +1,4 @@
-# One console, a cable game (AW2): the Wireless screen, Settings > Link mode
+# One console, a cable game (AW2): the Wireless screen, Settings > Wireless > Default host link
 # through its three values, Host (it keeps playing), the hosting chip, the
 # Wireless screen while hosting, Stop hosting.
 +150 menu
@@ -12,12 +12,15 @@
 +4 press DOWN
 +4 press DOWN
 +4 press CROSS
-+8 press DOWN
++8 press UP
++4 press UP
++4 press CROSS
 +8 dump s_settings_auto
 +4 press RIGHT
 +8 dump s_settings_override
 +4 press RIGHT
 +8 dump s_settings_adapter
++4 press CIRCLE
 +4 press CIRCLE
 +6 menu
 +6 press DOWN
@@ -29,14 +32,18 @@
 +4 press DOWN
 +4 press DOWN
 +4 press CROSS
-+8 press DOWN
++8 press UP
++4 press UP
++4 press CROSS
 +4 press RIGHT
++4 press CIRCLE
 +4 press CIRCLE
 +6 menu
 +6 press DOWN
 +4 press DOWN
 +4 press CROSS
-+8 press CROSS
++8 press DOWN
++4 press CROSS
 +2 wait hosting
 +20 dump s_hosting_game
 +120 dump s_hosting_chip

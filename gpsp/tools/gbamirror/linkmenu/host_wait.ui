@@ -4,6 +4,7 @@
 +10 press DOWN
 +4 press DOWN
 +4 press CROSS
++4 press DOWN
 +10 press CROSS
 +2 wait net_up
 +40 dump x-host-up

@@ -66,11 +66,10 @@ log_input = 0
 
 CONFIG = "theme = 0\r\nui_shell = 0\r\ngroup = GPSP07\r\nconsole = 0\r\nmenu_button = home\r\n"
 
+# Quit to game list: UP from Resume wraps to Exit, then Quit to game list
 QUIT = """+120 menu
-+10 press DOWN
-+4 press DOWN
-+4 press DOWN
-+4 press DOWN
++10 press UP
++4 press UP
 +4 press CROSS
 """
 
@@ -141,7 +140,7 @@ def main():
         "S": dict(rom=AW2, st="aw2", script=None,
                   host=(menu + "autoexit_frames = 6000\n",
                         "+120 menu\n+10 press DOWN\n+4 press DOWN\n+4 press CROSS\n"
-                        "+10 press DOWN\n+4 press CROSS\n+120 dump scan-list\n"
+                        "+10 press DOWN\n+4 press DOWN\n+4 press CROSS\n+120 dump scan-list\n"
                         "+4 press CIRCLE\n+6 press CIRCLE\n+6 press CIRCLE\n" + QUIT),
                   join=("autoexit_frames = 900\n", None)),
         "H": dict(rom=AW2, st="aw2", script=None,

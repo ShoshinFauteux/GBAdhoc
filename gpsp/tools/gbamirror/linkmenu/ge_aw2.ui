@@ -7,12 +7,14 @@
 +14 dump wireless-cable
 +2 fakescan GPSP07,GC12AW2E,GC03AMKE
 +2 press DOWN
++4 press DOWN
 +4 press CROSS
 +14 press CROSS
 +8 dump scan-adapter-room
 +2 press CIRCLE
 +4 fakescan -
 +2 press DOWN
++4 press DOWN
 +4 press CROSS
 +14 dump scan-empty
 +2 press CIRCLE
@@ -35,6 +37,7 @@
 +12 press DOWN
 +4 press DOWN
 +4 press CROSS
++4 press DOWN
 +8 press CROSS
 +2 wait hosting
 +150 menu
