@@ -32,7 +32,15 @@
  *                         frame (0 = adaptive), [bulk_cap=N] the network
  *                         carries at most N bulk datagrams per frame and
  *                         direction (the rest are lost, as a full radio),
- *                         [corrupt_bulk=N] the Nth bulk datagram damaged
+ *                         [corrupt_bulk=N] the Nth bulk datagram damaged,
+ *                         [bulk_rate_max=N] the adaptive rate's cap (online 6)
+ *           [bulk_bw=N]   a bottleneck (a phone hotspot's radio + uplink)
+ *                         that serves N bulk datagrams a frame per direction
+ *                         from a FIFO of [bulk_qmax=M] datagrams (default
+ *                         600; a full FIFO drops); the ordered channel waits
+ *                         behind the queue it finds (bufferbloat)
+ *           [bulk_nobuf=N] the sender's buffer takes N bulk datagrams a
+ *                         frame; more are refused (bulk_send < 0, ENOBUFS)
  *           [absorb=1]    stall absorption: a stalled console also gets
  *                         what arrives during the rest of the frame
  *           [nack=1]      resend requests on the bulk lane (needs bulk=)
@@ -144,6 +152,8 @@ static int corrupt_rom;                 /* flip a byte of one ROM chunk */
 static int bad_config;                  /* alter the host's CONFIG in flight */
 static int bad_ready;                   /* alter / forge the host's READY */
 
+static double q_wait(int from);
+
 static int net_send(int from, const void *buf, size_t len)
 {
    msg_t *m;
@@ -191,6 +201,7 @@ static int net_send(int from, const void *buf, size_t len)
       sim("rom_chunk_corrupted from=%d", from);
    }
    due = tick + lat + (jit ? rnd() % (jit + 1) : 0);
+   due += (uint64_t)(q_wait(from) + 0.999);
    if (arq_loss && rnd() % 100 < arq_loss)
       due += arq_rto;
    /* ordered: never before the one queued ahead of it */
@@ -214,6 +225,18 @@ static int corrupt_bulk;                 /* flip a byte of the Nth datagram */
 static uint64_t bulk_tick[2];
 static unsigned bulk_this_tick[2];
 static uint64_t bulk_sent_n[2], bulk_lost_n[2];
+static unsigned bulk_bw, bulk_qmax, bulk_nobuf;
+static double q_free[2];                 /* tick the bottleneck is free again */
+static double q_max_ticks[2];            /* the deepest queue seen, in frames */
+static uint64_t q_drop_n[2], nobuf_n[2];
+static unsigned nobuf_this_tick[2];
+static uint64_t nobuf_tick[2];
+
+/* The queue a datagram sent now waits behind, in frames (0 without bulk_bw). */
+static double q_wait(int from)
+{
+   return bulk_bw && q_free[from] > (double)tick ? q_free[from] - (double)tick : 0.0;
+}
 
 static int bulk_send(int from, const void *buf, size_t len)
 {
@@ -223,8 +246,34 @@ static int bulk_send(int from, const void *buf, size_t len)
       bulk_tick[from] = tick;
       bulk_this_tick[from] = 0;
    }
+   if (bulk_nobuf)
+   {
+      if (nobuf_tick[from] != tick)
+      {
+         nobuf_tick[from] = tick;
+         nobuf_this_tick[from] = 0;
+      }
+      if (++nobuf_this_tick[from] > bulk_nobuf)
+      {
+         nobuf_n[from]++;
+         return -1;                      /* the send buffer is full */
+      }
+   }
    bulk_sent_n[from]++;
    bytes_sent[from] += len;
+   if (bulk_bw)
+   {
+      double w = q_wait(from);
+      if (w * bulk_bw >= (double)bulk_qmax)
+      {
+         q_drop_n[from]++;
+         bulk_lost_n[from]++;
+         return 0;                       /* the bottleneck's queue is full */
+      }
+      if (w > q_max_ticks[from])
+         q_max_ticks[from] = w;
+      q_free[from] = (double)tick + w + 1.0 / bulk_bw;
+   }
    if ((bulk_cap && ++bulk_this_tick[from] > bulk_cap) ||
        (bulk_loss && rnd() % 100 < bulk_loss))
    {
@@ -241,6 +290,8 @@ static int bulk_send(int from, const void *buf, size_t len)
       sim("bulk_datagram_corrupted from=%d", from);
    }
    m->due = tick + lat + (jit ? rnd() % (jit + 1) : 0);
+   if (bulk_bw)
+      m->due += (uint64_t)(q_free[from] - (double)tick + 0.999);
    m->next = bq[!from];
    bq[!from] = m;
    return 0;
@@ -452,6 +503,9 @@ int main(int argc, char **argv)
    bad_ready = atoi(arg(argc, argv, "bad_ready", "0"));
    bulk_loss = (unsigned)atoi(arg(argc, argv, "bulk_loss", "0"));
    bulk_cap = (unsigned)atoi(arg(argc, argv, "bulk_cap", "0"));
+   bulk_bw = (unsigned)atoi(arg(argc, argv, "bulk_bw", "0"));
+   bulk_qmax = (unsigned)atoi(arg(argc, argv, "bulk_qmax", "600"));
+   bulk_nobuf = (unsigned)atoi(arg(argc, argv, "bulk_nobuf", "0"));
    arq_loss = (unsigned)atoi(arg(argc, argv, "arq_loss", "0"));
    arq_rto = (unsigned)atoi(arg(argc, argv, "arq_rto", "4"));
    corrupt_bulk = atoi(arg(argc, argv, "corrupt_bulk", "0"));
@@ -481,6 +535,7 @@ int main(int argc, char **argv)
       p.bulk_max = (size_t)atoi(arg(argc, argv, "bulk", "0"));
       p.bulk_send = p.bulk_max ? p_bulk : NULL;
       p.bulk_rate = (unsigned)atoi(arg(argc, argv, "bulk_rate", "0"));
+      p.bulk_rate_max = (unsigned)atoi(arg(argc, argv, "bulk_rate_max", "0"));
       p.wait = atoi(arg(argc, argv, "absorb", "0")) ? p_wait : NULL;
       p.nack = atoi(arg(argc, argv, "nack", "0"));
       l.delay_auto = (unsigned)atoi(arg(argc, argv, "auto", "0"));
@@ -631,6 +686,11 @@ int main(int argc, char **argv)
           s.resends, s.inputs_resent);
       if (STACK[i].state(sess[i]) != FE_GBLINK_DONE) rc = 1;
    }
+   if (bulk_bw || bulk_nobuf)
+      sim("bulk_net bw=%u qmax=%u maxq_frames=%.1f/%.1f qdrop=%llu/%llu nobuf=%llu/%llu",
+          bulk_bw, bulk_qmax, q_max_ticks[0], q_max_ticks[1],
+          (unsigned long long)q_drop_n[0], (unsigned long long)q_drop_n[1],
+          (unsigned long long)nobuf_n[0], (unsigned long long)nobuf_n[1]);
    sim("ticks=%llu", (unsigned long long)tick);
    if (hashlog) fclose(hashlog);
    STACK[0].destroy(sess[0]);

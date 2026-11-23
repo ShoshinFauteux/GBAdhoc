@@ -287,6 +287,7 @@ struct fe_gblink
    uint32_t bk_epoch_at, bk_epoch_sent, bk_epoch_resent;
    uint32_t bk_srtt8;                /* ticks x 8 */
    uint32_t bk_rttvar4;              /* ticks x 4 */
+   uint32_t bk_refused;              /* datagrams the platform refused (gblink_bulk_sent) */
 
    fe_gblink_stats st;
    uint32_t streak;
@@ -516,7 +517,11 @@ static unsigned bk_rto(const fe_gblink *s)
    return r < 4 ? 4 : r > 240 ? 240 : r;
 }
 
-static void bk_send_chunk(fe_gblink *s, int k, uint32_t i)
+/* -> 0 sent; < 0 the platform refused it (its send buffer is full: an
+ * online PSP's sendto ENOBUFS).  A refused chunk is not recorded as sent,
+ * so it goes out again at the next step instead of after a resend timeout,
+ * and the step stops: the buffer drains between frames. */
+static int bk_send_chunk(fe_gblink *s, int k, uint32_t i)
 {
    uint8_t d[FE_GBLINK_BULK_HDR + 1500];
    struct bk_tx *t = &s->bt[k];
@@ -526,11 +531,16 @@ static void bk_send_chunk(fe_gblink *s, int k, uint32_t i)
    put32(d + 5, i);
    put32(d + 9, fe_crc32(0, t->data + (size_t)i * s->bk_chunk, n));
    memcpy(d + FE_GBLINK_BULK_HDR, t->data + (size_t)i * s->bk_chunk, n);
-   s->p.bulk_send(s->p.user, d, FE_GBLINK_BULK_HDR + n);
+   if (s->p.bulk_send(s->p.user, d, FE_GBLINK_BULK_HDR + n) < 0)
+   {
+      s->bk_refused++;
+      return -1;
+   }
    if (t->tries[i] < 255)
       t->tries[i]++;
    t->sent_at[i] = (uint16_t)s->tick;
    s->st.bulk_sent++;
+   return 0;
 }
 
 /* One step of the sender, both kinds sharing the rate: resends of what has
@@ -564,7 +574,11 @@ static void bk_tx_step(fe_gblink *s)
          if (!bit_get(t->acked, i) &&
              (uint16_t)((uint16_t)s->tick - t->sent_at[i]) >= rto)
          {
-            bk_send_chunk(s, k, i);
+            if (bk_send_chunk(s, k, i) < 0)
+            {
+               budget = 0;
+               break;
+            }
             s->st.bulk_resent++;
             budget--;
             if (s->now_us && s->now_us() - t0 >= BK_TX_STEP_US)
@@ -572,7 +586,12 @@ static void bk_tx_step(fe_gblink *s)
          }
       while (budget && t->next_new < t->n && t->next_new < t->cum + BK_WINDOW)
       {
-         bk_send_chunk(s, k, t->next_new++);
+         if (bk_send_chunk(s, k, t->next_new) < 0)
+         {
+            budget = 0;
+            break;
+         }
+         t->next_new++;
          budget--;
          if (s->now_us && s->now_us() - t0 >= BK_TX_STEP_US)
             budget = 0;
@@ -676,11 +695,11 @@ static void bk_on_ack(fe_gblink *s, const uint8_t *b, size_t len)
       if (k == BK_ROM)
          s->st.rom_sent = 1;
       fe_evt("gblink_bulk_sent kind=%s size=%u chunk=%u sent=%u resent=%u "
-             "rate=%u srtt=%u",
+             "rate=%u srtt=%u refused=%u",
              k == BK_ROM ? "rom" : k == BK_SAVE ? "save" : "state",
              (unsigned)t->size, (unsigned)s->bk_chunk,
              (unsigned)s->st.bulk_sent, (unsigned)s->st.bulk_resent,
-             s->bk_rate, (unsigned)(s->bk_srtt8 / 8));
+             s->bk_rate, (unsigned)(s->bk_srtt8 / 8), (unsigned)s->bk_refused);
       if (k == BK_ROM)
          fe_evt("gblink_rom_send done size=%u", (unsigned)t->size);
    }
