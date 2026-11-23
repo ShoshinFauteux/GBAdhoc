@@ -164,6 +164,8 @@ STUB = r'''
 #define VID_GLYPH_X     "\x81"
 #define VID_GLYPH_LEFT  "\x85"
 #define VID_GLYPH_RIGHT "\x86"
+#define VID_GLYPH_UP    "\x87"
+#define VID_GLYPH_DOWN  "\x88"
 #define VID_SCR_W 480
 #define VID_SCR_H 272
 #define FE_FONT_H 16

@@ -2,14 +2,14 @@
 # The release/lab parity baseline of the per-frame set (see the tool's docstring).
 # Re-recorded only with a reason in the commit (the ratchet: check fails on any new
 # release/lab difference, and passes with a note when one disappears).
-# release: rc-8a20710a/release (elf 344d2af27329)
-# lab:     rc-8a20710a/lab (elf 6cafb2c47ed8)
+# release: uiov-fl-final3-new/release (elf a6b662794217)
+# lab:     uiov-fl-final3-new/lab (elf 1ff560d06556)
 # 423 members: diff 40, lab-only 41, layout 164, rigonly 3, same 175
-# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (6c3f2caf), for the refill fix (41a67c81), for claude/cable-redund 0a31b5ba (its fe_tail page spend moved .rodata/.data 8 KiB: rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part carry displacements 0x2000 apart), and for the 5.1.0 merge of cable-redund into claude/beta-5.1 (8a20710a): the release frees the fe_tail page again (beta-5.1's SHA-1 fix shrank fe_sha1_final 44 B) while the lab keeps it, so the release's .data/.bss sit 8 KiB lower than the lab's relative to before; two members that were 'same' now differ only in data-address immediates (lui/addiu of .bss objects, same D-cache set mod 8 KiB): ml_diff_rows (1 of 99 words, hot, d 0) and me_vram_map_consumed (4 of 30 words, d 0x1a60). 0 code hunks. Every other member unchanged.
+# Lineage: the ratchet's first baseline was the 624af868 release/lab pair (owner decision 2026-11-17); re-recorded at the beta.6 integration (6c3f2caf), for the refill fix (41a67c81), for claude/cable-redund 0a31b5ba (its fe_tail page spend moved .rodata/.data 8 KiB: rfu_frame_update, gbab_rfu_frame_update, me_rend_frame.part carry displacements 0x2000 apart), and for the 5.1.0 merge of cable-redund into claude/beta-5.1 (8a20710a): the release frees the fe_tail page again (beta-5.1's SHA-1 fix shrank fe_sha1_final 44 B) while the lab keeps it, so the release's .data/.bss sit 8 KiB lower than the lab's relative to before; two members that were 'same' now differ only in data-address immediates (lui/addiu of .bss objects, same D-cache set mod 8 KiB): ml_diff_rows (1 of 99 words, hot, d 0) and me_vram_map_consumed (4 of 30 words, d 0x1a60). 0 code hunks. Every other member unchanged. Re-recorded for claude/ui-overhaul (a0d6a4d5): release pin fe_common took a page (+8 KiB to fe_common, fe_tail, core, ro), so release data sits 8 KiB higher; fe_host_guest_faults and fe_host_rewind_info_get now differ from the lab only in a lui (data 0x50000 apart, the same D-cache set), 0 code hunks; ml_diff_rows and me_vram_map_consumed are identical again; FE_HEAD members after ui_psp.o moved (notes only).
 fn   _ZL10pipe_latchv@cpu.cc#1                        layout d=0x10a0
 fn   _ZL10pipe_latchv@cpu.cc#2                        layout d=0x1a60
 fn   _ZL12ml_diff_pagemm                              layout d=0x0000 hot
-fn   _ZL12ml_diff_rowsmmPKmPmmS1_                     layout d=0x0000 hot
+fn   _ZL12ml_diff_rowsmmPKmPmmS1_                     same   d=0x0000 hot
 fn   _ZL12ml_line_bodym                               layout d=0x0000 hot
 fn   _ZL12ml_relevancePKtPm.isra                      same   d=0x0000 hot
 fn   _ZL19ml_update_relevancem                        layout d=0x0000 hot
@@ -43,11 +43,11 @@ fn   core_phase_frame_end                             layout d=0x0120 hot
 fn   core_phase_leave                                 layout d=0x1fa0 hot
 fn   core_phase_now                                   layout d=0x16c0 hot
 fn   core_prof_evt                                    diff   d=0x1400 hot n=2 c=1f34ceadcd80,241baa433d0c
-fn   ctl_info                                         same   d=0x18d8
-fn   ctl_pad_word                                     same   d=0x18d8
-fn   ctl_shortcuts                                    same   d=0x18d8
-fn   ctl_turbo_pad                                    same   d=0x196c
-fn   ctl_turbo_stop                                   same   d=0x196c
+fn   ctl_info                                         same   d=0x18a4
+fn   ctl_pad_word                                     same   d=0x18a4
+fn   ctl_shortcuts                                    same   d=0x18a4
+fn   ctl_turbo_pad                                    same   d=0x1938
+fn   ctl_turbo_stop                                   same   d=0x1938
 fn   dispatch_cache_clear                             same   d=0x1f40 hot
 fn   dma_tf_loop16                                    layout d=0x0000 hot
 fn   dma_tf_loop32                                    layout d=0x0000 hot
@@ -89,7 +89,7 @@ fn   fe_host_gblink_hold                              same   d=0x18a0
 fn   fe_host_gblink_state                             same   d=0x18a0
 fn   fe_host_gblink_status                            same   d=0x18a0
 fn   fe_host_gblink_window                            same   d=0x18a0
-fn   fe_host_guest_faults                             same   d=0x1ee0
+fn   fe_host_guest_faults                             layout d=0x1ee0
 fn   fe_host_input_inject                             same   d=0x1f20 hot
 fn   fe_host_input_mask                               layout d=0x1268
 fn   fe_host_last_frame                               same   d=0x0ad8
@@ -97,7 +97,7 @@ fn   fe_host_link_held                                same   d=0x0ad8
 fn   fe_host_mem_read                                 same   d=0x1268
 fn   fe_host_mem_write                                same   d=0x1268
 fn   fe_host_rewind_busy                              same   d=0x023c
-fn   fe_host_rewind_info_get                          same   d=0x023c
+fn   fe_host_rewind_info_get                          layout d=0x023c
 fn   fe_host_rewind_replaying                         same   d=0x1fd4
 fn   fe_host_rewind_unvetted                          same   d=0x023c
 fn   fe_host_rfu_gate                                 diff   d=0x09f4 n=7 c=544e3015e0bc,9148e2468157,9e35a71b96a1,a01a64b344a4,ae02000d6d9b,c0d754d356f8,c8bce3fad29b
@@ -256,7 +256,7 @@ fn   me_rend_quiesce.part                             lab-only
 fn   me_rend_retire_if_idle                           diff   d=0x0000 hot n=9 c=0febfa8ad3c7,23f2fc4e4322,29795f81c889,62d00658b3ae,90cba02e6603,d2f239cf3686,e0391628f995,e0c9d055f179,f3d1640f5eb2
 fn   me_rend_teardown.part                            lab-only
 fn   me_replay_lines                                  layout d=0x1a60
-fn   me_vram_map_consumed                             layout d=0x1a60
+fn   me_vram_map_consumed                             same   d=0x1a60
 fn   memcmp                                           same   d=0x17a0 hot
 fn   memcpy                                           same   d=0x0000 hot
 fn   memmove                                          same   d=0x0154
@@ -283,8 +283,8 @@ fn   pace_burn                                        same   d=0x1148
 fn   pace_extra_vblanks                               layout d=0x14a0
 fn   pace_frame                                       diff   d=0x1248 n=80 c=01c48c8b2022,02a00bd30528,0b45f539297a,10d04c31ac76,118fd304774b,14a888240a8a,17ded8959e2b,1fa9dce06a47,282d3b2df9bf,28f42731e54e,2a6e52a91d0f,2b73d771987a,2ba0216b8929,32731eac7532,32ed4939610a,3b5b89471a15,3c7dca8f7c46,4a7789a5a324,4c8158475617,503f332bf4f0,535de2f04700,54460844f330,577dff97cf02,57faeddea72f,5b2b5cb748c8,5b63b05aaead,5c4353df89e5,5cc8c8554a78,5db7bb1d5672,6cad0692ff15,704bdc723bb7,721df04bab38,741bb1b2d48f,8c205bcb2d44,8c5577e70cb9,8dc8cb28b82b,909b1636acdf,93e6d00e0136,944cbc923808,9a714cad4474,9c9f185cff0a,a18119345625,a1d6cd512764,a3e9ea633862,a3e9ea633862,a54d8eb47be5,a646b3c24e34,ad79be110ca5,ada870e58de7,ae51f7b1c4dd,b3eb2e825948,b4270475576b,b7de4c1482bd,bf243ba26d40,bfeb26d204dc,c725c746f591,cbe3d65d3c59,cf3d9b5fc492,cf3d9b5fc492,cf3d9b5fc492,d018eb2f732f,d333d0b555e7,d3bc2a595251,d6bb11635adb,d76a257747c6,d842e2e09e11,d9ded0bd3a03,e12fe398e987,e2c52799e878,e4d23b18288b,e8302563a140,ef4eeb3d2225,f1923ed87a47,f2b80735860d,f475d61614aa,f63f06dafad9,f6ed96a4c0f5,f7561612007a,fa25e5588489,ff3577e5a903
 fn   pace_window                                      same   d=0x1248
-fn   pcfg_ff_mode                                     same   d=0x1290
-fn   pcfg_ff_name                                     layout d=0x1290
+fn   pcfg_ff_mode                                     same   d=0x125c
+fn   pcfg_ff_name                                     layout d=0x125c
 fn   plat_audio_frames                                diff   d=0x1fc0 hot n=4 c=19e98800f54e,1d70a05778ea,62f72f24c2bf,fb45e84292c2
 fn   plat_video_frame                                 diff   d=0x1fc0 hot n=50 c=013581468cae,0637029e9709,0c81fad23789,0fb6c7118143,1c65ebafd734,26e9ba3aa4b0,28c6f8cb493f,2b6e8c48419d,2de43339ffe2,311c92d44664,311c92d44664,3c332d3cd1a3,3d7fddf459f0,4053cd69baf6,49f2ee9d597b,5354f3bca41b,552a2b5ad95a,61917034dfe8,645173d3ff6e,6524b6f8d766,75e3d7e1e03d,78bf4c53d4f4,862f4a49387b,86f0549f7d2f,8f8cbaff03ef,9134419a8f50,9489a9b4f2c5,9592431f7f7c,9c35e54cfaa4,9c7336f8ed66,9dedab1238ee,9fda3792978d,a740e8b62944,b058e829af4b,b6e45ead4c75,b6e45ead4c75,b918b8640f9f,b9bec14d1cb5,be06c395dea0,ca0760ae3f24,cb4fa8b5cdc8,d7fc5d85e83f,dba4b8c5cf12,e4a38cbac42f,eabf2409b3d5,eb974f280e88,ecba7e5105e9,ee46b8dba316,f70953e98d10,fccc69fe0f23
 fn   process_cheats                                   same   d=0x17a0 hot
@@ -380,9 +380,9 @@ fn   trigger_dma@gba_memory.c#2                       layout d=0x1720 hot
 fn   trigger_timer@gba_memory.c#1                     layout d=0x1400 hot
 fn   trigger_timer@gba_memory.c#2                     layout d=0x1800 hot
 fn   turbo_frame                                      lab-only
-fn   ui_active                                        same   d=0x09f4
-fn   ui_capturing                                     same   d=0x0ab8
-fn   ui_demo_start                                    diff   d=0x0918 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
+fn   ui_active                                        same   d=0x09dc
+fn   ui_capturing                                     same   d=0x0abc
+fn   ui_demo_start                                    diff   d=0x0900 n=3 c=4dd3a2e436c1,dc4fdc501f89,fccc69fe0f23
 fn   uiscript_linking_draw                            lab-only
 fn   uiscript_pad                                     lab-only
 fn   update_gba                                       layout d=0x0000 hot
