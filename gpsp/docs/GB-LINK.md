@@ -121,6 +121,21 @@ less the chunk header; synthetic 8 MiB cart `tools/gblink/mksynth.py`):
   under latency (20 ms + 10 ms jitter: 6,000+ ringdrops); it is fine for the
   1-2 datagrams a frame of a running session.
 
+**Online (owner decision 2026-11-22).** The transfer works online too, on the direct path and through
+the relay, with the same rules (memory only, this session only, SHA-1 checked). It rides the online
+transport's side lane (docs/ONLINE-TUNNEL.md section 6, "The side lane"): datagrams of at most 584 bytes
+(571 data, so a relay forwards them unchanged), the adaptive pace capped at 6 a frame for the relay's
+per-console limits.  Before, an online session had no bulk lane and the cartridge crossed netdrv's ordered
+channel.  PPSSPP pair, Red <-> Yellow (each lacks the other's, 1 MiB each way), Lab namespace relay with
+netem (relay round trip = 4 x the delay, direct = 2 x):
+
+| path, netem | ordered channel (before) | side lane |
+|---|---|---|
+| relay 120 ms, 0 % | 16.9 s | 5.1 s |
+| relay 120 ms, ~2 % | 49.6 s | see REPORT |
+
+Full table (2 MiB, direct, loss, pace caps, resend requests): builds/online-cart-out/REPORT.md.
+
 **Memory.** The session reads its own cartridge into memory while hashing it,
 right after the single machine is freed, so the partner's cartridge cannot
 land in the middle of that space: loading it at power-on instead failed with
