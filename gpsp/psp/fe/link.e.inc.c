@@ -493,19 +493,16 @@ static inline __attribute__((always_inline)) int gblink_service(int have_script,
       return 0;
    }
    st = fe_host_gblink_state();
-   {
-      /* A partner that is STARTING (beta.4 hotfix): until its HELLO, the
-       * partner may be reloading its game (a cable host does that the
-       * moment it admits us, 18-25 s on a slow card, silent on beta.4), so
-       * its silence counts against the session's own no-partner limit
-       * (fe_gblink NO_PEER_STEPS, 30 s), not netdrv's 8 s.  After it: 8 s. */
-      fe_gblink_progress gp;
-      gp.have_peer_header = 1;
-      if (st == FE_GBLINK_SETUP)
-         fe_host_gblink_facts(&gp);
-      fe_np_set_peer_dead_us(!gp.have_peer_header && g_start_grace
-                             ? LINK_START_GRACE_US : 0u);
-   }
+   /* While the link is being set up, a silent partner is not a gone one:
+    * before its HELLO it may be reloading its game (a cable host does that
+    * the moment it admits us, 18-25 s on a slow card; beta.4 hotfix), and
+    * during the state/save exchange a phone hotspot's LTE link stalls for
+    * 1-13 s when the modem reconfigures carrier aggregation (online-setup,
+    * 11-23: seen with no traffic at all).  Nothing is on screen to freeze,
+    * so the setup waits up to 30 s (fe_gblink's own no-partner limit is
+    * the same); from RUNNING on netdrv's 8 s applies (the play hold). */
+   fe_np_set_peer_dead_us(st == FE_GBLINK_SETUP && g_start_grace
+                          ? LINK_START_GRACE_US : 0u);
    if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
    {
       char l1[64], l2[64];
