@@ -21,6 +21,14 @@
 #include "../netdrv/netdrv.h"
 
 #define ONLINE_RELAY_DEFAULT "relay.rayquaza.ca"
+/* the side lane's largest datagram: netdrv/transport_relay.h RL_SIDE_MAX (a
+ * relay forwards GBR1 datagrams of up to RL_MAX_DGRAM = 600 bytes) */
+#define ONLINE_SIDE_MAX 584
+/* ... and its pace cap in datagrams a display frame: a relay allows a
+ * console 1000 datagrams and 256 KiB a second (relay_core.c), and 6 of up to
+ * 584 bytes a frame is ~210 KB/s, room left for the inputs */
+#define ONLINE_SIDE_RATE 6u
+#define ONLINE_SIDE_SLOTS 32u     /* the side lane's ring, datagrams */
 
 #ifdef GBADHOC_ONLINE
 /* Boot: the harness / config.ini keys.  1 = online for every session. */
@@ -50,6 +58,18 @@ int  online_psp_connected(void);
 /* EVT online_stats (heartbeat); nothing when no online session */
 void online_psp_stats_evt(const char *at);
 const char *online_psp_why(void);
+/* The link session's bulk lane (fe_host.h gb_bulk_enable).  Online it is
+ * the module's side lane (api.side_*): bulk_lane opens it for datagrams
+ * that begin with `magic` (lane != NULL) or closes it (NULL), and cuts the
+ * session's lane to what a relay carries: datagrams of at most
+ * ONLINE_SIDE_MAX bytes, the adaptive pace capped at ONLINE_SIDE_RATE a
+ * frame (harness gblink_bulk_rate_max overrides it).  bulk_send / bulk_recv
+ * take the lane that is open: the side lane online, transport_adhoc.h's
+ * bulk lane ad hoc -- one call site in the frontend for both. */
+struct fe_bulk_lane;
+int  online_psp_bulk_lane(struct fe_bulk_lane *lane, const char magic[4]);
+int  online_psp_bulk_send(const uint8_t mac[6], const void *buf, size_t len);
+int  online_psp_bulk_recv(void *buf, size_t cap);
 #else
 #define online_psp_configure(h, c) 0
 #define online_psp_set(r, c, w, m) ((void)0)
@@ -65,6 +85,9 @@ const char *online_psp_why(void);
 #define online_psp_connected() 0
 #define online_psp_stats_evt(a) ((void)0)
 #define online_psp_why() ""
+#define online_psp_bulk_lane(l, m) (-1)
+#define online_psp_bulk_send adhoc_transport_bulk_send
+#define online_psp_bulk_recv adhoc_transport_bulk_recv
 #endif
 
 #endif

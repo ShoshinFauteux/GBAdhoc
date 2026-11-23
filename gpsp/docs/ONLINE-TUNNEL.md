@@ -34,8 +34,10 @@ Three kinds of session sit on netdrv. They react to delay differently:
 | **GB/GBC link** (`fe_gblink.c` over `gbcore_dual`) | the same input lockstep | `gblink_delay` = D (default 3 ad hoc, 6 online) |
 
 Reliability is netdrv's ARQ: sliding window 256, adaptive RTO (RFC 6298) with a 200 ms floor and a
-2.5 s ceiling on the PSP, keepalive PING every 250 ms, peer dead after 8 s. The GB session adds an
-unreliable **bulk lane** for cartridge and save transfers.
+2.5 s ceiling on the PSP, keepalive PING every 250 ms, peer dead after 8 s. The cable sessions (GB/GBC
+and the GBA cable) add an unreliable **bulk lane** for cartridge, save and state transfers and the resend
+requests: ad hoc a separate ring of the ad hoc socket, online the relay transport's **side lane** (section
+6, "The side lane").
 
 ## 2. The latency experiment
 
@@ -632,15 +634,35 @@ know the difference: it is the same GBR1 protocol at another address.
   players" (later).
 - **Log** (collapsible): joins, leaves, version refusals ("Refused: the PSP runs GBAdhoc 4.6.0-beta.3,
   this room needs beta.4"), rate-limit drops.
-- A one-line notice: game files never pass through this PC. Only link traffic does, as between two PSPs.
+- A one-line notice: only link traffic passes through this PC, as between two PSPs (a GB/GBC session's
+  partner cartridge, streamed into the other PSP's memory, is link traffic; nothing is stored).
 
-**What the server never carries.** No ROM and no save data, beyond what link play already exchanges
-between the two consoles. The GB/GBC session can **stream the partner's cartridge** when this console's
-library lacks it (fe_gblink NEED/ROM, bulk lane). **Online, that path is switched off:** both players must
-own the cartridge, the session compares SHA-1s only, and a mismatch is refused with "Both players need this
-game". The battery-image and save-state exchange that every GB/GBA cable session already performs (so both
-consoles run identical machines) stays, as link play already does it. "Share game data" (save sharing) is
-not offered online.
+**What crosses the server.** Link traffic only: what two PSPs exchange in an ad hoc session, the same
+bytes. That includes the battery images and save states every GB/GBA cable session exchanges (so both
+consoles run identical machines), and, for a GB/GBC session where one console's library lacks the partner's
+cartridge, **the partner's cartridge**, streamed into the other PSP's memory for that session only (never
+written to its Memory Stick, dropped at the end; docs/GB-LINK.md section 3). Owner decision 2026-11-22: the
+cartridge stream works online exactly as ad hoc, on the direct path and through the relay. The server
+stores nothing and never parses a payload. "Share game data" (save sharing) is not offered online.
+
+**The side lane** (2026-11-22, `relay_transport_side_*`, `online_psp_bulk_*`). Before it, an online session
+had no bulk lane: `psp_gb_bulk_enable` refused it online, so cartridges, saves and states crossed netdrv's
+ordered channel (1 MiB: 17 s on a clean 120 ms relay in PPSSPP, 50 s at ~2 % loss, minutes on the cellular
+route), and the resend requests (`gblink_nack`) had no lane at all. Now:
+
+- A DATA payload that begins with the session's bulk magic (`GBLK`) goes to the transport's side ring instead
+  of netdrv, on either path; side datagrams are sent with the transport's own `send_to`, so they follow the
+  session's path (direct, or DATA through the relay). The relay forwards them like any DATA (it never parses
+  a payload), so no relay change or redeploy is needed.
+- Size: at most `RL_SIDE_MAX` = `RL_MAX_DGRAM - RL_HDR` = 584 bytes, what every deployed relay forwards; the
+  session's chunk is 571 data bytes (ad hoc: 1024).
+- Pace: fe_gblink's adaptive rate (start 4 a frame, doubling while under 6 % resent), capped online at
+  `ONLINE_SIDE_RATE` = 6 datagrams a frame: ~210 KB/s, under the relay's per-slot limits (1000 datagrams and
+  256 KiB a second, `relay_core.c`) with room for the inputs. Harness `gblink_bulk_rate_max` overrides it.
+- The ad hoc path is unchanged; fe_gblink and fe_host are the same code for both (one pipeline), and the
+  transport's `gb_bulk_enable` sets the lane's size and pace for its session (`fe_bulk_lane`).
+
+Measurements: docs/GB-LINK.md section 3.
 
 ### Desktop hosts and discovery (built 2026-11-05, branch claude/online-desktophost)
 

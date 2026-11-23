@@ -2,7 +2,7 @@
      tools/refactor/cutlist.txt, psp/main_psp.c, psp/fe/, the host tests that read main_psp.c or
      tools/refactor/generated/: python3 tools/refactor/fe_readme.py
      (python3 tools/refactor/fe_readme.py --check exits 1 when this file is stale).
-     inputs: cutlist.txt sha256 b811f85eb65e73c4; split.py inverse of the shell sha256 ae63cab9badd6df4 (18872 lines) -->
+     inputs: cutlist.txt sha256 06da807f08db3b4f; split.py inverse of the shell sha256 f630d5a2e32bb0d8 (18880 lines) -->
 
 # psp/fe: the fragments of main_psp.c
 
@@ -269,7 +269,7 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 | 28 | harness.d | `fe/harness.d.inc.c` | 1-105 | harness | 2 / 0 | - |
 | 29 | link.c | `fe/link.c.inc.c` | 1-654 | link | 15 / 14 | merend 3, harness 1 |
 | 30 | inproc.b | `fe/inproc.b.inc.c` | 1-75 | inproc | 1 / 2 | power 1 |
-| 31 | link.d | `fe/link.d.inc.c` | 1-1433 | link | 32 / 85 | power 3, mgift 1, boot 5, harness 2 |
+| 31 | link.d | `fe/link.d.inc.c` | 1-1441 | link | 32 / 85 | power 3, mgift 1, boot 5, harness 2 |
 | 32 | audio.b | `fe/audio.b.inc.c` | 1-52 | audio | 2 / 0 | - |
 | 33 | link.e | `fe/link.e.inc.c` | 1-930 | link | 13 / 17 | - |
 | 34 | mgift | `fe/mgift.inc.c` | 1-554 | mgift | 20 / 8 | input 1 |
@@ -469,11 +469,11 @@ Every F row of these modules, at its first line (TU order). A row in no `#if` gr
 - `fe/link.d.inc.c:589` G `g_mg_on` -> mgift
 - `fe/link.d.inc.c:731` G `g_gedump_loops` -> harness
 - `fe/link.d.inc.c:731` G `g_gedump_left` -> harness
-- `fe/link.d.inc.c:825` G `g_start_keepalive` -> boot
-- `fe/link.d.inc.c:825` G `g_start_grace` -> boot
-- `fe/link.d.inc.c:825` G `g_start_heard` -> boot
-- `fe/link.d.inc.c:826` G `g_reload_slow_ms` -> boot
-- `fe/link.d.inc.c:827` G `g_gblink_host_wait_peer` -> boot
+- `fe/link.d.inc.c:826` G `g_start_keepalive` -> boot
+- `fe/link.d.inc.c:826` G `g_start_grace` -> boot
+- `fe/link.d.inc.c:826` G `g_start_heard` -> boot
+- `fe/link.d.inc.c:827` G `g_reload_slow_ms` -> boot
+- `fe/link.d.inc.c:828` G `g_gblink_host_wait_peer` -> boot
 
 **mgift** (module mgift):
 
@@ -517,7 +517,7 @@ Every F row (function definition), at its first line, in TU order; `(owner)` fol
 - **harness.d** (`fe/harness.d.inc.c`): sess_cost_evt:1, adhoc_ctl_evt:91
 - **link.c** (`fe/link.c.inc.c`): log_adhoc_up:1, net_start_np:56, osd_session_chip_refresh:137, fx_sweep_step:180, blit_prof_evt:221, net_bringup_io:244, net_bringup:359, net_bringup_rend_off:378, gpsp_adhoc_step:395, net_teardown_io:401, net_teardown:444, link_version_text:458, net_frame:467, gpsp_rfu_now_us:566, gpsp_rfu_flight_dump_hook:578
 - **inproc.b** (`fe/inproc.b.inc.c`): inproc_refusal:47
-- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:163, gpsp_visible_done_hook:216, gpsp_rfu_trace_hook:278, rfu_tr_state_name:315, rfu_trace_drain:324, silent_frame:594, gblink_seed_wallclock:735, gblink_find_in:745, psp_gb_bulk_enable:846, psp_gb_bulk_send:859, psp_gb_bulk_recv:863, psp_gb_find_rom:868, link_backdrop_take:881, gba_reload_draw:898, gba_reload_progress:921, gba_reload_note:930, heap_exact:970, sessmem_cycle_test:981, gblink_close_held:1024, gblink_begin:1033, link_amount:1095, link_fail_text:1116, link_draw_facts:1170, gblink_draw_status:1270, link_wait_present:1294, link_wait_osd:1312, link_wait_hide:1332, plat_gblink_wait:1408
+- **link.d** (`fe/link.d.inc.c`): relaunch_eboot:21, gpsp_rfu_activated_hook:43, gpsp_rfu_link_down_hook:82, rfu_link_down_drain:100, exit_assist_frame:163, gpsp_visible_done_hook:216, gpsp_rfu_trace_hook:278, rfu_tr_state_name:315, rfu_trace_drain:324, silent_frame:594, gblink_seed_wallclock:735, gblink_find_in:745, psp_gb_bulk_enable:851, psp_gb_bulk_send:862, psp_gb_bulk_recv:866, psp_gb_find_rom:871, link_backdrop_take:884, gba_reload_draw:901, gba_reload_progress:924, gba_reload_note:933, heap_exact:973, sessmem_cycle_test:984, gblink_close_held:1027, gblink_begin:1036, link_amount:1098, link_fail_text:1119, link_draw_facts:1178, gblink_draw_status:1278, link_wait_present:1302, link_wait_osd:1320, link_wait_hide:1340, plat_gblink_wait:1416
 - **audio.b** (`fe/audio.b.inc.c`): audio_nominal_step:1, gblink_audio_session:8
 - **link.e** (`fe/link.e.inc.c`): gblink_audio_frame:13, gblink_win_reset:73, gblink_win_work:91, gblink_win_note:110, gblink_cpu_scale:171, link_host_heard:214, link_setup_watch:237, link_end:291, gblink_service:394, gblink_script_disconnect:644, link_bringup_view:658, online_bringup_cancel:699, ui_net_action:727
 - **mgift** (`fe/mgift.inc.c`): mg_l2_hold:39, mgift_ui_active:64, mgift_ui_line1:65, mgift_ui_line2:66, rom_loading_progress:74, rom_loading_stage:79, mgift_read_game_code:84, mgift_chip:105, mgift_stop_io:111, mgift_stop:140, mgift_game_ok:153, mgift_start_io:161, mgift_start:287, link_read_identity:299, link_locks_states:344, link_session_any:351, turbo_frame:382, cheats_link_poll:424, link_ui_view:437, mgift_frame:461

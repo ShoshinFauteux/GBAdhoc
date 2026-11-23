@@ -2942,6 +2942,26 @@ static int gbl_bulk_send(void *user, const void *buf, size_t len)
    return host.gb_bulk_send(mac, buf, len);
 }
 
+/* The session's bulk lane, if the platform has one for it: the datagram
+ * size and pace the platform's enable(1) leaves (fe_host.h gb_bulk_enable).
+ * 1 = the transfers ride it; 0 = the ordered channel carries them. */
+static __attribute__((noipa)) int gbl_lane_open(fe_gblink_platform *p)
+{
+   fe_bulk_lane ln;
+   if (!host.gb_bulk_send || !host.gb_bulk_recv || !host.gb_bulk_max)
+      return 0;
+   ln.max = host.gb_bulk_max;
+   ln.rate = host.gb_bulk_rate;
+   ln.rate_max = 0;
+   if (host.gb_bulk_enable && host.gb_bulk_enable(&ln) != 0)
+      return 0;
+   p->bulk_send = gbl_bulk_send;
+   p->bulk_max = ln.max;
+   p->bulk_rate = ln.rate;
+   p->bulk_rate_max = ln.rate_max;
+   return 1;
+}
+
 static int gbl_find(void *user, uint32_t size, const uint8_t header[0x1C],
                     char *path, size_t cap)
 {
@@ -3467,13 +3487,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    p.nack = host.gblink_nack;
    if (host.gblink_delay_auto)
       p.rtt_us = gbl_rtt;
-   if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
-       (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
-   {
-      p.bulk_send = gbl_bulk_send;
-      p.bulk_max = host.gb_bulk_max;
-      p.bulk_rate = host.gb_bulk_rate;
-   }
+   gbl_lane_open(&p);
    l.is_host = is_host;
    l.rom_path = host.rom_path;
    l.console = FE_CONSOLE_GBA;
@@ -3507,14 +3521,14 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    gbl_ride_set = 0;
    gbl_last = FE_GBLINK_IDLE;
    gbl_primed = 0;
-   fe_evt("gblink_lane bulk_max=%u rate=%u",
-          (unsigned)p.bulk_max, p.bulk_rate);
+   fe_evt("gblink_lane bulk_max=%u rate=%u rate_max=%u",
+          (unsigned)p.bulk_max, p.bulk_rate, p.bulk_rate_max);
    if (!gbl)
    {
       fe_evt("gblink_start FAILED reason=create");
       gba_sram_hold = 0;
       if (p.bulk_send && host.gb_bulk_enable)
-         host.gb_bulk_enable(0);
+         host.gb_bulk_enable(NULL);
       return -1;
    }
    fe_gblink_set_clock(gbl, host.time_us);
@@ -3607,15 +3621,9 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    p.nack = host.gblink_nack;
    if (host.gblink_delay_auto)
       p.rtt_us = gbl_rtt;
-   if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
-       (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
-   {
-      p.bulk_send = gbl_bulk_send;
-      p.bulk_max = host.gb_bulk_max;
-      p.bulk_rate = host.gb_bulk_rate;
-   }
-   fe_evt("gblink_lane bulk_max=%u rate=%u",
-          (unsigned)p.bulk_max, p.bulk_rate);
+   gbl_lane_open(&p);
+   fe_evt("gblink_lane bulk_max=%u rate=%u rate_max=%u",
+          (unsigned)p.bulk_max, p.bulk_rate, p.bulk_rate_max);
    l.is_host = is_host;
    l.rom_path = host.rom_path;
    l.console = host.console;
@@ -3651,7 +3659,7 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    {
       fe_evt("gblink_start FAILED reason=create");
       if (p.bulk_send && host.gb_bulk_enable)
-         host.gb_bulk_enable(0);
+         host.gb_bulk_enable(NULL);
       gb_single_boot();
       return -1;
    }
@@ -3791,7 +3799,7 @@ int fe_host_gblink_close(void)
       gbl_sessions++;
       gbl_hold = 0;
       if (host.gb_bulk_enable)
-         host.gb_bulk_enable(0);
+         host.gb_bulk_enable(NULL);
       rc = gb_single_boot();
       if (rc == 0 && state)
       {
@@ -4733,7 +4741,7 @@ static int gba_cable_close(void)
    gbl_sessions++;
    gbl_hold = 0;
    if (host.gb_bulk_enable)
-      host.gb_bulk_enable(0);
+      host.gb_bulk_enable(NULL);
    if (!bat && carry_on)
    {
       /* A as it stands after its frame; its battery image is the live one. */

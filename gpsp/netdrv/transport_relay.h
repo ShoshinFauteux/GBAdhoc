@@ -108,6 +108,24 @@ uint64_t relay_transport_server_silent_us(relay_transport *t);
 
 void relay_transport_iface(relay_transport *t, nd_transport *out);
 
+/* ---- the side lane ----------------------------------------------------------
+ * Unreliable datagrams of up to RL_SIDE_MAX bytes beside netdrv's frames, on
+ * the same path to the peer (direct, or DATA through the server, which never
+ * parses either): a received DATA payload that begins with the 4-byte
+ * `magic` goes to its own ring of `slots` datagrams instead of to netdrv.
+ * The online twin of transport_adhoc.h's bulk lane, for the same user (the
+ * GB/GBA link session's cartridge, save and state transfers, their
+ * acknowledgements and the resend requests; frontend-common/fe_gblink.h).
+ * Send with the iface's send_to.  The ring is allocated by open and freed by
+ * close (or destroy); full = the datagram is dropped, the sender resends. */
+#define RL_SIDE_MAX (RL_MAX_DGRAM - RL_HDR)
+int  relay_transport_side_open(relay_transport *t, unsigned slots, const char magic[4]);
+void relay_transport_side_close(relay_transport *t);
+/* One datagram into buf; its length, 0 if none.  Fed by the iface's recv
+ * (netdrv's pump): call it after a pump. */
+int  relay_transport_side_recv(relay_transport *t, void *buf, size_t cap);
+unsigned relay_transport_side_depth(const relay_transport *t);
+
 typedef struct rl_client_stats
 {
    uint32_t tx, rx, tx_relay, tx_direct, rx_relay, rx_direct, rx_bad;
@@ -131,6 +149,8 @@ typedef struct rl_client_stats
    uint8_t lan_relay;              /* 1 = the server is used at its LAN address
                                       (home relay discovery) */
    uint8_t disc_answers;           /* DISCOVERED answers seen (any relay) */
+   /* the side lane: datagrams taken into its ring, and dropped (ring full) */
+   uint32_t side_rx, side_drop;
 } rl_client_stats;
 void relay_transport_stats(const relay_transport *t, rl_client_stats *out);
 

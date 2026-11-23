@@ -24,6 +24,14 @@ extern "C" {
 #define FE_GBA_HEIGHT   160
 #define FE_SRAM_SIZE    0x20000                  /* core always reports 128 KiB */
 
+/* One session's bulk lane, as the platform's gb_bulk_enable leaves it. */
+typedef struct fe_bulk_lane
+{
+   size_t max;                  /* datagram bytes */
+   unsigned rate;               /* datagrams a frame, 0 = adaptive */
+   unsigned rate_max;           /* the adaptive rate's cap, 0 = fe_gblink's */
+} fe_bulk_lane;
+
 typedef struct fe_host_config
 {
    /* Select the execution backend. Zero/default preserves the GBA libretro
@@ -176,11 +184,15 @@ typedef struct fe_host_config
     * (the behaviour before the fix), to show the clock prompt it caused. */
    int gblink_rtc_keep_session_stamp;
    /* GB link bulk lane (optional; fe_gblink.h): large unreliable datagrams
-    * to the partner's radio address, and the ones received.  enable(1) at a
-    * session's start, enable(0) at its end.  gb_bulk_max = datagram bytes
-    * (0 = the ordered channel carries transfers); gb_bulk_rate = datagrams
-    * a frame (0 = adaptive). */
-   int (*gb_bulk_enable)(int on);
+    * to the partner's radio address, and the ones received.  enable(lane)
+    * at a session's start opens it, enable(NULL) at its end closes it;
+    * nonzero from an open = no lane this session (the ordered channel
+    * carries the transfers).  gb_bulk_max = datagram bytes (0 = never a
+    * lane); gb_bulk_rate = datagrams a frame (0 = adaptive).  The open gets
+    * them in *lane and may lower them for this session's transport: the
+    * online side lane's datagrams are smaller (a relay forwards at most 600
+    * bytes) and its pace is capped (the relay's per-slot rate limits). */
+   int (*gb_bulk_enable)(fe_bulk_lane *lane);
    int (*gb_bulk_send)(const uint8_t mac[6], const void *buf, size_t len);
    int (*gb_bulk_recv)(void *buf, size_t cap);
    size_t gb_bulk_max;

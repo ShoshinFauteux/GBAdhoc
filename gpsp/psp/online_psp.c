@@ -21,11 +21,16 @@
 #include "../rfu_sched_api.h"
 #include "../frontend-common/fe_evt.h"
 #include "../frontend-common/fe_util.h"
+#include "../frontend-common/fe_host.h"
+#include "../netdrv/transport_adhoc.h"
 
 #include <pspkernel.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* online_psp.h's copy of the side lane's limit must be the transport's */
+typedef char online_side_max_check[ONLINE_SIDE_MAX == RL_MAX_DGRAM - RL_HDR ? 1 : -1];
 
 /* online_psp_configure() reads each of these keys from the harness ini
  * first, then config.ini (get_str/get_int on `h`, below):
@@ -58,6 +63,7 @@ static struct
 } O = { .mod = -1, .cfg = { .direct = 1, .wifi = 1 } };
 
 static char g_cfg_relay[64];    /* config.ini online_relay, for menu sessions */
+static unsigned g_side_rate_max; /* harness gblink_bulk_rate_max (rig builds; 0 = ONLINE_SIDE_RATE) */
 
 /* ---- the host table ------------------------------------------------------ */
 static void h_evt(const char *line) { fe_evt("%s", line); FE_EVT_ONLY(line); }
@@ -213,6 +219,10 @@ int online_psp_configure(const char *h, const char *c)
     * (rfu_sched.h, rfu_sched_cur_d).  Read here, not in boot, so the player
     * build and the per-frame layout do not change. */
    rfu_sched_ni_on = fe_ini_get_int(h, "rfu_sched_ni", 1) != 0;
+   /* A/B arm: the online side lane's pace cap (online_psp_bulk_lane) */
+   g_side_rate_max = (unsigned)fe_ini_get_int(h, "gblink_bulk_rate_max", 0);
+   if (g_side_rate_max)
+      fe_evt("online_side rate_max=%u", g_side_rate_max);
    if (!rfu_sched_ni_on)
       fe_evt("rfu_sched_ni on=0");
    /* every-session online: only the harness ini turns it on (a player turns
@@ -359,6 +369,32 @@ void online_psp_down(void)
    O.api.down();
    prx_unload();
    mgnet_wifi_down();
+}
+
+int online_psp_bulk_lane(struct fe_bulk_lane *lane, const char magic[4])
+{
+   if (!lane)
+   {
+      if (O.loaded)
+         O.api.side_close();
+      return 0;
+   }
+   if (!O.loaded || O.api.side_open(ONLINE_SIDE_SLOTS, magic) != 0)
+      return -1;
+   if (lane->max > ONLINE_SIDE_MAX)
+      lane->max = ONLINE_SIDE_MAX;
+   lane->rate_max = g_side_rate_max ? g_side_rate_max : ONLINE_SIDE_RATE;
+   return 0;
+}
+int online_psp_bulk_send(const uint8_t mac[6], const void *buf, size_t len)
+{
+   return O.enabled ? (O.loaded ? O.api.side_send(mac, buf, len) : -1)
+                    : adhoc_transport_bulk_send(mac, buf, len);
+}
+int online_psp_bulk_recv(void *buf, size_t cap)
+{
+   return O.enabled ? (O.loaded ? O.api.side_recv(buf, cap) : 0)
+                    : adhoc_transport_bulk_recv(buf, cap);
 }
 
 void online_psp_stats_evt(const char *at)

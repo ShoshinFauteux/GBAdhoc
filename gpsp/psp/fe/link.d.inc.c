@@ -788,7 +788,8 @@ static int gblink_find_in(const char *dir, uint32_t size,
    return found;
 }
 
-/* The link session's bulk lane (fe_gblink.h, transport_adhoc.h). */
+/* The link session's bulk lane (fe_gblink.h): transport_adhoc.h's bulk lane
+ * ad hoc, the online module's side lane online (online_psp.h). */
 #define GBLINK_BULK_SLOTS 32
 static unsigned g_gblink_bulk_bytes = 1037;   /* 1024 data + 13 header */
 static unsigned g_gblink_bulk_rate;           /* 0 = adaptive */
@@ -843,13 +844,15 @@ static const char *g_gblink_after_why;
  * read by main() as the loop ends.  They exited code 0 with no reason. */
 static int g_link_fatal_code;
 static const char *g_link_fatal_why;
-static int psp_gb_bulk_enable(int on)
+/* fe_host_config.gb_bulk_enable (lane = open, NULL = close).  Online, the
+ * module's side lane, which also sets the lane's datagram size and pace cap
+ * for the relay (online_psp_bulk_lane); send and recv take whichever lane
+ * is open. */
+static int psp_gb_bulk_enable(fe_bulk_lane *lane)
 {
-   /* online: no bulk lane -- the ordered channel carries transfers, and the
-    * partner-cartridge transfer must not cross a server (ONLINE-TUNNEL.md 6) */
    if (online_psp_enabled())
-      return on ? -1 : 0;
-   if (!on)
+      return online_psp_bulk_lane(lane, FE_GBLINK_BULK_MAGIC);
+   if (!lane)
    {
       adhoc_transport_bulk_close();
       return 0;
@@ -858,11 +861,11 @@ static int psp_gb_bulk_enable(int on)
 }
 static int psp_gb_bulk_send(const uint8_t mac[6], const void *buf, size_t len)
 {
-   return adhoc_transport_bulk_send(mac, buf, len);
+   return online_psp_bulk_send(mac, buf, len);
 }
 static int psp_gb_bulk_recv(void *buf, size_t cap)
 {
-   return adhoc_transport_bulk_recv(buf, cap);
+   return online_psp_bulk_recv(buf, cap);
 }
 
 static int psp_gb_find_rom(uint32_t size, const uint8_t header[0x1C],
@@ -1136,9 +1139,14 @@ static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
    }
    else if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
    {
-      snprintf(l1, c1, "The games do not match: a different version or "
-               "hack.");
-      snprintf(l2, c2, "Both PSPs need the same ROM.");
+      /* ROM_BAD: a GB/GBC partner cartridge that arrived and failed its
+       * SHA-1 (the games may differ: the session streams the missing one);
+       * ROM_MISSING: a GBA cable pair with two different cartridges, or a
+       * game file this PSP could not read.  One wording for both, of the
+       * old lengths: GCC inlines the copy, so the code (and pace_frame
+       * after it) stays as it was. */
+      snprintf(l1, c1, "A game file did not check out: damaged or different.");
+      snprintf(l2, c2, "Try again. GBA uses one ROM.");
    }
    else if (e == FE_GBLINK_E_BIOS)
       snprintf(l1, c1, "%s", s_link_bios);
