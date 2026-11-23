@@ -138,6 +138,24 @@ def main() -> int:
         print("gblink session: bulk lane throttled to 1 datagram/frame by the "
               "network: rate adapted, DONE")
 
+        # A send buffer that takes 2 bulk datagrams a frame (an online PSP's
+        # sendto ENOBUFS) behind a bloated 3-a-frame bottleneck: refused
+        # chunks go out at the next step, never through a resend timeout.
+        rc, out = run(sim, t, "nobuf", "rom_h=%s/cgb.gbc" % t,
+                      "rom_g=%s/dmg.gb" % t, "lat=4", "bulk=584",
+                      "bulk_rate_max=6", "bulk_bw=3", "bulk_qmax=300",
+                      "bulk_nobuf=2", *common)
+        sent = [l for l in out.splitlines() if "gblink_bulk_sent kind=rom" in l]
+        check(rc == 0 and out.count("gblink_done") == 2 and
+              out.count("gblink_rom_received") == 2 and sent and
+              all(int(dict(x.split("=", 1) for x in l.split()
+                           if "=" in x)["resent"]) == 0 for l in sent) and
+              any(" refused=0" not in l for l in sent),
+              "bulk lane with a full send buffer: refused chunks resent by "
+              "timeout, or the transfer failed", out)
+        print("gblink session: bulk lane, send buffer full 2-a-frame: refused "
+              "chunks sent at the next step, no resends, DONE")
+
         # A LIVE link: each console links from its running game (a save
         # state), and the session equals the one-process pair started from
         # the same states, hash for hash.
