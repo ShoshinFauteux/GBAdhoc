@@ -34,9 +34,11 @@ CG = os.path.join(ROOT, "tools", "refactor", "ci_greps.py")
 # lab_harness.c lab_audit_keys: two sites, lab only; lab 321).  cable-redund: 325 keys on 352 sites,
 # gblink_input_copies (the cable's redundant DATA; release 181, lab 322, harness 299).  online-smooth:
 # 326 keys on 353 sites, rfu_sched_ni (the adapter's NI-rule A/B arm, online_psp.c, rig builds only;
-# release 181, lab 323, harness 300).
-EXPECT_KEYS = 326
-EXPECT_SITES = 353
+# release 181, lab 323, harness 300).  online-cart: 327 keys on 354 sites, gblink_bulk_rate_max
+# (the online side lane's pace cap A/B arm, online_psp.c, rig builds only; release 181, lab 324,
+# harness 301).
+EXPECT_KEYS = 327
+EXPECT_SITES = 354
 
 fails = 0
 

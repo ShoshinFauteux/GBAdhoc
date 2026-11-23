@@ -77,6 +77,7 @@ gblink_batch_armed	fe_ini_get_int	1	psp/fe/boot.inc.c:347	release,lab,harness
 gblink_bulk	fe_ini_get_int	0	psp/fe/boot.inc.c:314	release,lab,harness
 gblink_bulk_bytes	fe_ini_get_int	( long ) g_gblink_bulk_bytes	psp/fe/boot.inc.c:336	release,lab,harness
 gblink_bulk_rate	fe_ini_get_int	0	psp/fe/boot.inc.c:340	release,lab,harness
+gblink_bulk_rate_max	fe_ini_get_int	0	psp/online_psp.c:223	lab,harness
 gblink_cpu_x100	fe_ini_get_int	0	psp/fe/boot.inc.c:1118	lab,harness
 gblink_delay	fe_ini_get_int	g_gblink_delay	psp/fe/boot.inc.c:296	release,lab,harness
 gblink_delay_auto	fe_ini_get_int	0	psp/fe/boot.inc.c:304	release,lab,harness
@@ -84,7 +85,7 @@ gblink_end_after	fe_ini_get_int	300	psp/fe/boot.inc.c:312	release,lab,harness
 gblink_hash_every	fe_ini_get_int	0	psp/fe/boot.inc.c:387	release,lab,harness
 gblink_hash_every	fe_ini_get_int	0	psp/fe/session.inc.c:549	lab,harness
 gblink_host_wait_peer	fe_ini_get_int	0	psp/fe/boot.inc.c:362	lab,harness
-gblink_input_batch	fe_ini_get_int	- 1	psp/fe/link.d.inc.c:1059	release,lab,harness
+gblink_input_batch	fe_ini_get_int	- 1	psp/fe/link.d.inc.c:1062	release,lab,harness
 gblink_input_copies	fe_ini_get_int	g_pcfg . gblink_copies_cfg	psp/fe/boot.inc.c:302	release,lab,harness
 gblink_library	fe_ini_get_int	1	psp/fe/boot.inc.c:319	release,lab,harness
 gblink_live	fe_ini_get_int	1	psp/fe/boot.inc.c:351	release,lab,harness
@@ -211,12 +212,12 @@ net_session_fps_snap	fe_ini_get_int	g_pcfg . net_session_fps_snap	psp/fe/boot.in
 nettest	fe_ini_get_int	0	psp/fe/boot.inc.c:1228	release,lab,harness
 nettest_secs	fe_ini_get_int	90	psp/fe/boot.inc.c:1230	release,lab,harness
 nick	fe_ini_get	-	psp/fe/boot.inc.c:1125	release,lab,harness
-online_direct	get_int	1	psp/online_psp.c:230	lab,harness
-online_drop_direct_ms	get_int	0	psp/online_psp.c:232	lab,harness
-online_prx_cycles	fe_ini_get_int	0	psp/online_psp.c:210	lab,harness
-online_relay	fe_ini_get	-	psp/online_psp.c:220	lab,harness
-online_room	get_str	-	psp/online_psp.c:228	lab,harness
-online_wifi	get_int	1	psp/online_psp.c:231	lab,harness
+online_direct	get_int	1	psp/online_psp.c:240	lab,harness
+online_drop_direct_ms	get_int	0	psp/online_psp.c:242	lab,harness
+online_prx_cycles	fe_ini_get_int	0	psp/online_psp.c:216	lab,harness
+online_relay	fe_ini_get	-	psp/online_psp.c:230	lab,harness
+online_room	get_str	-	psp/online_psp.c:238	lab,harness
+online_wifi	get_int	1	psp/online_psp.c:241	lab,harness
 pace_slow_us	fe_ini_get_int	0	psp/fe/boot.inc.c:1116	release,lab,harness
 pad_script	fe_ini_get	-	psp/fe/boot.inc.c:642	lab,harness
 perf_fixture	fe_ini_get	-	psp/fe/boot.inc.c:685	release,lab,harness
@@ -280,7 +281,7 @@ rfu_poll_min_cycles	fe_ini_get_int	34952	psp/fe/boot.inc.c:1053	release,lab,harn
 rfu_rtx_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:869	release,lab,harness
 rfu_sched	fe_ini_get_int	2u	psp/fe/boot.inc.c:785	release,lab,harness
 rfu_sched	fe_ini_get_int	- 1	psp/fe/boot.inc.c:811	release,lab,harness
-rfu_sched_ni	fe_ini_get_int	1	psp/online_psp.c:215	lab,harness
+rfu_sched_ni	fe_ini_get_int	1	psp/online_psp.c:221	lab,harness
 rfu_timeout_scale	fe_ini_get_int	100	psp/fe/boot.inc.c:868	release,lab,harness
 role	fe_ini_get[src]	-	psp/fe/boot.inc.c:1273	lab,harness
 rom	fe_ini_get	-	psp/fe/session.inc.c:114	release,lab,harness
