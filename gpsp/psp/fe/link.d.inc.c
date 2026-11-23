@@ -1139,9 +1139,14 @@ static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
    }
    else if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
    {
-      snprintf(l1, c1, "The games do not match: a different version or "
-               "hack.");
-      snprintf(l2, c2, "Both PSPs need the same ROM.");
+      /* ROM_BAD: a GB/GBC partner cartridge that arrived and failed its
+       * SHA-1 (the games may differ: the session streams the missing one);
+       * ROM_MISSING: a GBA cable pair with two different cartridges, or a
+       * game file this PSP could not read.  One wording for both, of the
+       * old lengths: GCC inlines the copy, so the code (and pace_frame
+       * after it) stays as it was. */
+      snprintf(l1, c1, "A game file did not check out: damaged or different.");
+      snprintf(l2, c2, "Try again. GBA uses one ROM.");
    }
    else if (e == FE_GBLINK_E_BIOS)
       snprintf(l1, c1, "%s", s_link_bios);
