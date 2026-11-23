@@ -623,7 +623,7 @@ static int ol_side_send(const uint8_t mac[6], const void *buf, size_t len)
       return -1;
    O_tp.send_to(O_tp.ctx, mac, buf, len);
    /* a refused sendto (the PSP's send buffer is full) is reported, so the
-    * bulk sender keeps the datagram for its next step and slows down */
+    * bulk sender keeps the datagram for its next step */
    return D.tx_fail != f0 ? -1 : 0;
 }
 static int ol_side_recv(void *buf, size_t cap)
