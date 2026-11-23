@@ -55,6 +55,7 @@ static online_api g_api;
 static struct
 {
    unsigned tx, tx_ok, rx;
+   unsigned tx_fail;                    /* every failed sendto (ENOBUFS: the send buffer is full) */
    int tx_rc, tx_errno;      /* the first failed sendto */
    int rx_errno;             /* the last recvfrom error that is not EAGAIN */
 } D;
@@ -155,7 +156,9 @@ static int sk_send(void *ctx, uint32_t ip, uint16_t port, const void *buf, size_
    D.tx++;
    if (n >= 0)
       D.tx_ok++;
-   else if (!D.tx_rc)
+   else
+      D.tx_fail++;
+   if (n < 0 && !D.tx_rc)
    {
       D.tx_rc = n;
       D.tx_errno = sceNetInetGetErrno();
@@ -615,10 +618,13 @@ static void ol_side_close(void)
 }
 static int ol_side_send(const uint8_t mac[6], const void *buf, size_t len)
 {
+   unsigned f0 = D.tx_fail;
    if (!O.rt || !O_tp.send_to || len > RL_SIDE_MAX)
       return -1;
    O_tp.send_to(O_tp.ctx, mac, buf, len);
-   return 0;                            /* UDP: a failed send is a loss */
+   /* a refused sendto (the PSP's send buffer is full) is reported, so the
+    * bulk sender keeps the datagram for its next step and slows down */
+   return D.tx_fail != f0 ? -1 : 0;
 }
 static int ol_side_recv(void *buf, size_t cap)
 {
@@ -643,7 +649,7 @@ static void ol_stats_evt(const char *at)
    evt("online_stats at=%s nat=%u paths=%s tx=%u rx=%u tx_direct=%u rx_direct=%u "
        "tx_relay=%u rx_relay=%u punches=%u/%u acks=%u fallbacks=%u "
        "rtt_relay_ms=%u rtt_direct_ms=%u/%u bad=%u bursts=%u directs=%u stalls=%u "
-       "located=%u invite=%d lan_relay=%u side_rx=%u side_drop=%u", at, s.nat, paths,
+       "located=%u invite=%d lan_relay=%u side_rx=%u side_drop=%u tx_fail=%u", at, s.nat, paths,
        (unsigned)s.tx, (unsigned)s.rx, (unsigned)s.tx_direct, (unsigned)s.rx_direct,
        (unsigned)s.tx_relay, (unsigned)s.rx_relay, (unsigned)s.punches_tx,
        (unsigned)s.punches_rx, (unsigned)s.acks_rx, (unsigned)s.fallbacks,
@@ -651,7 +657,7 @@ static void ol_stats_evt(const char *at)
        (unsigned)(s.direct_rtt_us[1] / 1000), (unsigned)s.rx_bad,
        (unsigned)s.bursts, (unsigned)s.directs, (unsigned)s.stalls,
        (unsigned)s.located, O.invite, (unsigned)s.lan_relay, (unsigned)s.side_rx,
-       (unsigned)s.side_drop);
+       (unsigned)s.side_drop, D.tx_fail);
 }
 
 int module_start(SceSize args, void *argp)
