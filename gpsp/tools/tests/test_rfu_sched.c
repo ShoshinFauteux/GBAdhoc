@@ -626,17 +626,17 @@ static void test_link_lost(void)
 }
 
 /* 8. The D a session runs follows its kind, which both consoles know: 2 ad
- *    hoc, 4 online; a harness value (the Lab's D study arms, 0 included)
+ *    hoc, 7 online; a harness value (the Lab's D study arms, 0 included)
  *    wins for every kind. */
 static void test_d_for_kind(void)
 {
   CHECK(rfu_sched_d_for(0, -1) == 2, "ad hoc D %u", rfu_sched_d_for(0, -1));
-  CHECK(rfu_sched_d_for(1, -1) == 4, "online D %u", rfu_sched_d_for(1, -1));
+  CHECK(rfu_sched_d_for(1, -1) == 7, "online D %u", rfu_sched_d_for(1, -1));
   CHECK(rfu_sched_d_for(1, 2) == 2 && rfu_sched_d_for(0, 4) == 4 &&
         rfu_sched_d_for(1, 3) == 3, "harness D not used as given");
   CHECK(rfu_sched_d_for(1, 0) == 0 && rfu_sched_d_for(0, 0) == 0,
         "harness D = 0 (raw queues) not kept");
-  CHECK(RFU_SCHED_D_DEFAULT == 2 && RFU_SCHED_D_ONLINE == 4, "constants");
+  CHECK(RFU_SCHED_D_DEFAULT == 2 && RFU_SCHED_D_ONLINE == 7, "constants");
   printf("  D by kind: ad hoc %u, online %u, a harness D wins\n",
          rfu_sched_d_for(0, -1), rfu_sched_d_for(1, -1));
 }
@@ -654,10 +654,10 @@ static void test_d_for_kind(void)
  *       already have run D frames ahead), then the exchange runs at 1. */
 static void test_ni_window_d4(void)
 {
-  static const unsigned ds[2] = { 2, 4 };
-  int32_t lobby_max[2][2], press[2], cold[2];
+  static const unsigned ds[3] = { 2, 4, 7 };   /* ad hoc, the old online D, online */
+  int32_t lobby_max[3][2], press[3], cold[3];
   int i, r, k;
-  for (r = 0; r < 2; r++) {
+  for (r = 0; r < 3; r++) {
     int32_t a0, b0, pf;
     cfg_d = ds[r];
     CHECK(linked(), "no lock at D=%u", cfg_d);
@@ -704,16 +704,14 @@ static void test_ni_window_d4(void)
     CHECK(bad[A] + bad[B] == 0, "off schedule %u/%u (D=%u)", bad[A], bad[B], cfg_d);
   }
   cfg_d = 2;
-  CHECK(lobby_max[0][0] == 1 && lobby_max[0][1] == 1 &&
-        lobby_max[1][0] == 1 && lobby_max[1][1] == 1,
-        "lobby NI delay D=2 %d/%d, D=4 %d/%d (want 1 everywhere)", lobby_max[0][0],
-        lobby_max[0][1], lobby_max[1][0], lobby_max[1][1]);
-  CHECK(press[0] == 1 && press[1] == 1, "press delay D=2 %d, D=4 %d", press[0],
-        press[1]);
-  CHECK(cold[0] <= 2 && cold[1] <= 4, "cold NI delay D=2 %d, D=4 %d", cold[0],
-        cold[1]);
-  printf("  NI window: lobby 1 frame, press 1 frame at D=2 and D=4; "
-         "cold NI %d (D=2) / %d (D=4) frames\n", cold[0], cold[1]);
+  for (r = 0; r < 3; r++) {
+    CHECK(lobby_max[r][0] == 1 && lobby_max[r][1] == 1,
+          "lobby NI delay D=%u %d/%d (want 1)", ds[r], lobby_max[r][0], lobby_max[r][1]);
+    CHECK(press[r] == 1, "press delay D=%u %d (want 1)", ds[r], press[r]);
+    CHECK(cold[r] <= (int32_t)ds[r], "cold NI delay D=%u %d (want <= D)", ds[r], cold[r]);
+  }
+  printf("  NI window: lobby 1 frame, press 1 frame at D=2, 4 and 7; "
+         "cold NI %d / %d / %d frames\n", cold[0], cold[1], cold[2]);
 }
 
 /* 10. The gate's wait (rfu_gate_step): a partner whose ticks the network
