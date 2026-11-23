@@ -2472,8 +2472,11 @@ void fe_gblink_receive(fe_gblink *s, const void *buf, size_t len)
          s->corecfg_wait = 1;
          fe_evt("gblink_caps sent=%08x", (unsigned)FE_GBLINK_MASK_NEGOTIABLE);
       }
-      /* A vtable pair compares SHA-1s only: wait for our own. */
-      if (s->m && !s->own_hashed)
+      /* Wait for our own SHA-1 before looking the partner's cartridge up:
+       * a vtable pair compares SHA-1s only, and a GB/GBC pair whose HELLO
+       * came first compared against zeros -- the same cartridge then went
+       * to the library or streamed in full (seen online in PPSSPP). */
+      if (!s->own_hashed)
          s->lookup_pending = 1;
       else
          partner_lookup(s);
