@@ -9,7 +9,7 @@
 <h3 align="center">Game Boy Advance, Game Boy and Game Boy Color on your PSP,<br>and two PSPs that play together like two consoles and a link cable.</h3>
 
 <p align="center">
-  <sub><b>Version 5.0.0 beta 6</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
+  <sub><b>Version 5.0.0 beta 7</b> (pre-release; stable is 4.5.0) &nbsp;·&nbsp; PSP-1000, 2000/3000 and Go &nbsp;·&nbsp; no BIOS needed &nbsp;·&nbsp; GPL-2.0</sub>
 </p>
 
 <p align="center">
@@ -50,10 +50,68 @@
 > these folders yourself. Until a save is in the right folder, its game starts as if it had
 > none; nothing is deleted, so moving the file brings it back.
 
-> **This is the `beta` branch: GBAdhoc 5.0.0 beta 6,** the build we intend to become 5.0.0.
-> [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.6)
+> **This is the `beta` branch: GBAdhoc 5.0.0 beta 7,** new menus and the finishing work on
+> multiplayer. [Download it from the pre-release](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v5.0.0-beta.7)
 > (the *latest release* link above is the stable 4.5.0). **It links only with the same beta:**
-> update both PSPs. What beta 6 adds:
+> update both PSPs. What beta 7 adds:
+>
+> - **New menus.** Settings opens on one page of seven groups (Display, Audio & speed,
+>   Saves & rewind, Controls, Screenshots, Wireless, Interface), each with a summary of
+>   what's set. ✕ opens a group, ○ goes back, L / R step to the next group, and nothing
+>   scrolls. A greyed-out option can still be highlighted: the line above the button hints
+>   says why it can't be changed, and the hints show only the buttons the highlighted row
+>   takes. On the game list, **R** opens *Wireless*: your Room, *Share game data*, *Join:
+>   scan for rooms*, the ad hoc channel and Fast link. Your settings carry over; a few have
+>   new names (see *Settings* under [Everything it does](#everything-it-does)).
+> - **Wireless → Ad hoc channel** sets the PSP's own ad hoc channel (Automatic, 1, 6 or 11)
+>   without a trip to the XMB, and an empty room list names the channel you are on.
+> - **Link Cable play answers a frame sooner.** Over ad hoc, the other player's buttons are
+>   used 3 frames after they are pressed instead of 4 (50 ms instead of 67), each packet
+>   also carries the two before it, and a button that arrives just in time is picked up
+>   the moment it is needed. In Mario Kart: Super Circuit a short pause now comes about
+>   every 5 to 6 seconds instead of about every 2.5, and Advance Wars 2, Kirby: Nightmare
+>   in Dream Land and Pokémon Emerald's link battles pause less often too; the slower link
+>   games (Mario Tennis, Mario Golf, the Emerald Trade Center) pause about as often as in
+>   beta 6. Frame rates are the same or a little higher.
+> - **Online play is now smooth enough to enjoy** (still experimental: *Settings →
+>   Wireless → Online play*). Online sessions give the other PSP's data time to cross the
+>   internet and carry spare copies of it, so a lost packet rarely stops the game:
+>   - **Link Cable and Game Boy link:** the other player's buttons are used after 6 frames
+>     (100 ms, was 67) and every packet carries the 6 before it. In Pokémon Emerald's Trade
+>     Center a PSP on a phone hotspot linked with a PSP at home now runs at about 52 fps,
+>     where beta 6 ran at 13 to 20 on the same connection; on a fast, steady connection,
+>     42 rose to 52.
+>   - **Wireless Adapter:** the other PSP's adapter data gets 7 frames (117 ms, was 67)
+>     and every packet carries spare copies too. Your own buttons are not delayed. The
+>     Emerald Trade Center went from about 32 to 55-57 fps over a phone hotspot, and from
+>     53-55 to 56-58 on a fast, steady connection.
+>   - **Linking online is much quicker.** What two PSPs exchange when a link starts (and,
+>     for Game Boy, a cartridge) now travels on a lane of its own: a Link Cable link that
+>     took two to three minutes to start over a phone hotspot starts in about a minute,
+>     and on a good connection in about 10 seconds instead of 20 to 40.
+>   - **Game Boy link online needs the cartridge on one PSP only,** as over ad hoc. If your
+>     friend doesn't have the game, it is sent to their PSP for the session in seconds
+>     rather than minutes, kept in memory only, checked, and never written to their Memory
+>     Stick. It passes through the online server on its way and is not stored there.
+>   - **A connection that drops for a moment while linking** no longer ends the session:
+>     link setup waits up to 30 seconds for the other PSP to come back. Once you are
+>     playing, the session still ends if the other PSP is gone for 8 seconds.
+> - **A little faster:** the second processor copies each picture faster, and a few heavy
+>   scenes need less work. Hot Wheels: Stunt Track Challenge rises from 57.0 to 57.7 fps on
+>   a PSP-3000 (57.4 to 58.1 on a PSP-1000), and a Pokémon MonoMyth trainer battle needs
+>   3-4 % less work per frame. Every game we test runs at least as fast as in beta 6.
+> - **Fixed:** some Game Boy and Game Boy Color games, and small GBA games, could be refused
+>   for link even with the same file on both PSPs, because the check misread files of
+>   certain sizes. A Game Boy link no longer sends the whole cartridge across when both
+>   PSPs already have it.
+> - **Known limits:** online Link Cable games carry about 100 ms of input delay, so fast
+>   action games feel it. Mario Kart: Super Circuit online is playable but not smooth:
+>   about 50 fps over a phone hotspot (ad hoc: 59.9), with frequent short pauses and the
+>   odd freeze of a few seconds. Phone hotspots can go silent for several seconds at a
+>   time; if that lasts 8 seconds during play, the session ends. On a very lossy
+>   connection the host can raise `gblink_delay` in `config.ini` (8 = 134 ms).
+>
+> What beta 6 added:
 >
 > - **Game fixes:** Polarium Advance starts on the PSP-3000 and with the bundled BIOS, Rock 'N
 >   Roll Racing plays, Top Gun: Combat Zones opens its menus, Activision Anthology no longer
@@ -622,7 +680,7 @@ playing Mario Kart Super Circuit. Open it to join.*).
 
 | The PSP says | What to do |
 |---|---|
-| *The games do not match: a different version or hack.* | Both PSPs need the same ROM. |
+| *A game file did not check out: damaged or different.* | For a GBA game, both PSPs need the same ROM. For Game Boy, try again. |
 | *The other PSP runs a different GBAdhoc version.* | Update both PSPs to the same release. |
 | *Room 7 is full: 2 players.* | Wait for a seat, or host your own room. |
 | *Room 7 not found - is the host still there?* | Have them host again, then rescan. |
@@ -709,8 +767,8 @@ favourites, the state shelf) are unchanged and still apply.
 <td width="50%"><img src="gpsp/docs/img/shot-save-states.png" alt="The Save States page"><br><sub><b>Save States.</b> Five slots, a picture and a time each.</sub></td>
 </tr>
 <tr>
-<td><img src="gpsp/docs/img/shot-controls-page.png" alt="The Controls page"><br><sub><b>Controls.</b> Game buttons, shortcuts, and HOME as the menu.</sub></td>
-<td><img src="gpsp/docs/img/shot-settings-over-art.png" alt="Settings over the game's art"><br><sub><b>Settings</b>, over the selected game's art. Room, Link mode, and a display section per console.</sub></td>
+<td><img src="gpsp/docs/img/shot-controls.png" alt="The Controls page"><br><sub><b>Controls.</b> Game buttons, shortcuts, turbo buttons, and HOME as the menu.</sub></td>
+<td><img src="gpsp/docs/img/shot-settings.png" alt="Settings: seven groups, each with a summary, over the selected game's art"><br><sub><b>Settings</b>, over the selected game's art: seven groups on one page, each with a summary of what's set.</sub></td>
 </tr>
 <tr>
 <td><img src="gpsp/docs/img/shot-loading-minish.png" alt="The loading screen over The Minish Cap's art"><br><sub><b>Loading</b>, over the game's own art.</sub></td>
@@ -877,7 +935,7 @@ The Room, Ad hoc channel and Fast link are on the *Wireless* screen itself (in-g
 *Join: scan for rooms*). The Room is set only there, on its first row, with ← / →.
 
 Under the *SETTINGS* title: the build you are running, e.g. *GBAdhoc
-5.0.0-beta.6 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
+5.0.0-beta.7 (abc1234)*, from the `VERSION.txt` that ships beside the EBOOT.
 
 The *Display* group is labelled with the console it applies to (*DISPLAY (GBA)*, *(GB)*
 or *(GBC)*): from the browser it edits the highlighted game's console, in game the

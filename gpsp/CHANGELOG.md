@@ -10,6 +10,95 @@ separately and are intended for upstream.
 
 ---
 
+## [5.0.0-beta.7] - 2026-11-23
+
+Pre-release: beta 6 plus new menus and the finishing work on multiplayer. Links only with
+the same beta: update both PSPs, for the Link Cable, the Wireless Adapter, Game Boy link,
+Share game data and online play alike. Copy all four files (`EBOOT.PBP`, `gbadhoc_me.prx`,
+`gbadhoc_home.prx`, `gbadhoc_online.prx`) together.
+
+> **Your saves and save states have their own folders** (`saves/`, `states/`), as in beta 6.
+> GBAdhoc still moves them there for you the first time you open each game; **the next
+> release will stop doing this.** The README shows where each file goes.
+
+### Menus
+
+- **Settings opens on one page of seven groups:** Display, Audio & speed, Saves & rewind,
+  Controls, Screenshots, Wireless and Interface, each with a summary of what's set. ✕ (or →)
+  opens a group, ○ goes back, L / R step between groups. Every group fits on one screen.
+- **Greyed-out options** can be highlighted; the line above the button hints says why they
+  can't be changed. The hints list only the buttons the highlighted row takes.
+- **R on the game list opens *Wireless*:** Room, *Share game data*, *Join: scan for rooms*,
+  Ad hoc channel and Fast link. In game, *Wireless* starts on the Room row, the only place
+  the Room is set. *Turbo buttons* opens from *Settings → Controls*.
+- **Renamed:** *Link mode* is *Default host link* (Settings → Wireless); *Screenshot picture*,
+  *format* and *folder* are *Capture source*, *File format* and *Save folder*; *Quick load /
+  save asks first* are *Confirm quick load / save*. Your `config.ini` carries over unchanged.
+- **Wireless → Ad hoc channel** (Automatic, 1, 6 or 11) changes the PSP's own ad hoc channel
+  setting, the one the XMB sets. An empty room list names the channel this PSP is on.
+
+### Link Cable over ad hoc
+
+- **The other player's buttons are used after 3 frames instead of 4** (50 ms instead of 67),
+  and each packet also carries the two sent before it, so a lost packet is filled in by the
+  next one. A button that arrives just in time is picked up when the game needs it, instead
+  of at the start of the next frame. Mario Kart: Super Circuit, Advance Wars 2, Kirby:
+  Nightmare in Dream Land and Emerald's link battles pause less often than in beta 6 (Mario
+  Kart about every 5 to 6 seconds instead of every 2.5); Mario Tennis, Mario Golf and the
+  Emerald Trade Center about as often. Frame rates are unchanged or a
+  little higher. *Fast link* stays an option, off by default.
+
+### Online play (experimental)
+
+- **Link Cable and Game Boy link online:** input delay 6 frames (100 ms, was 67), and every
+  packet carries the 6 inputs before it. Pokémon Emerald's Trade Center between a PSP on a
+  phone hotspot and a PSP at home: about 52 fps, where beta 6 ran at 13-20; on a fast, steady
+  connection 42 rose to 52.
+- **Wireless Adapter online:** the other PSP's adapter data gets 7 frames (117 ms, was 67),
+  and packets carry up to 6 copies. Your own buttons are not delayed. Emerald Trade Center:
+  about 32 -> 55-57 fps over a phone hotspot, 53-55 -> 56-58 on a fast, steady connection.
+- **Faster link start online.** The data exchanged when a link starts (saves, the game's
+  state and, for Game Boy, a missing cartridge) has a lane of its own online, as it does
+  over ad hoc. A Link Cable link over a phone hotspot starts in about a minute instead of two
+  to three; on a good connection in about 10 seconds instead of 20-40.
+- **Game Boy link online needs the cartridge on one PSP only.** A missing cartridge is sent
+  for the session in seconds rather than minutes, kept in memory, checked and never written
+  to the Memory Stick. It crosses the online server in transit only; nothing is stored there.
+- **Link setup survives a short drop:** while a link starts, the other PSP may be silent for
+  up to 30 seconds (phone hotspots stall for several seconds now and then). In play, the
+  session still ends after 8 seconds of silence, as before.
+
+### Speed
+
+- The second processor copies each picture faster, and one more kind of code that a game
+  rewrites while it runs is handled cheaply. Hot Wheels: Stunt Track Challenge 57.0 -> 57.7 fps on a
+  PSP-3000 and 57.4 -> 58.1 on a PSP-1000; a Pokémon MonoMyth trainer battle needs 3-4 %
+  less work per frame. Every game we test runs at least as fast as in beta 6.
+
+### Fixed
+
+- Some Game Boy and Game Boy Color games, and GBA games of 256 KB or less, could be refused
+  for link with the same file on both PSPs: the file check misread files whose size left
+  56-63 bytes over a multiple of 64.
+- A Game Boy link could send the whole cartridge across even when both PSPs had it, if the
+  other PSP answered before this one had finished checking its own copy.
+- The link error for a damaged or different game file now reads *A game file did not check
+  out: damaged or different.* (it said the games did not match, which was wrong for Game Boy
+  links, where the games may differ).
+
+### Known issues
+
+- Online Link Cable games carry about 100 ms of input delay; fast action games feel it.
+- Mario Kart: Super Circuit online is playable but not smooth: about 50 fps over a phone
+  hotspot (59.9 over ad hoc), frequent short pauses and the odd freeze of a few seconds.
+- Phone hotspots can go silent for several seconds; 8 seconds of silence during play ends
+  the session. On a very lossy connection the host can raise `gblink_delay` in `config.ini`
+  (8 = 134 ms).
+- As in beta 6: Mario Golf: Advance Tour's adapter lobby can occasionally stick when both
+  players press at the same moment (leave and rejoin). Hot Wheels: Stunt Track Challenge (on
+  the PSP-3000), Top Gear Rally and Payback still run below 58 fps, and so do FIFA 07's
+  replays.
+
 ## [5.0.0-beta.6] - 2026-11-17
 
 Pre-release: beta 5 plus the changes below, and the build we intend to become 5.0.0. Links
