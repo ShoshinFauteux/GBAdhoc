@@ -83,16 +83,15 @@
 >     42 rose to 52.
 >   - **Wireless Adapter:** the other PSP's adapter data gets 7 frames (117 ms, was 67)
 >     and every packet carries spare copies too. Your own buttons are not delayed. The
->     Emerald Trade Center went from about 32 to 55-57 fps over a phone hotspot, and from
+>     Emerald Trade Center went from about 32 to up to 55-57 fps over a phone hotspot, and from
 >     53-55 to 56-58 on a fast, steady connection.
 >   - **Linking online is much quicker.** What two PSPs exchange when a link starts (and,
 >     for Game Boy, a cartridge) now travels on a lane of its own: a Link Cable link that
->     took two to three minutes to start over a phone hotspot starts in about a minute,
->     and on a good connection in about 10 seconds instead of 20 to 40.
+>     took two to three minutes to start over a phone hotspot starts in about a minute.
 >   - **Game Boy link online needs the cartridge on one PSP only,** as over ad hoc. If your
->     friend doesn't have the game, it is sent to their PSP for the session in seconds
->     rather than minutes, kept in memory only, checked, and never written to their Memory
->     Stick. It passes through the online server on its way and is not stored there.
+>     friend doesn't have the game, it is sent to their PSP for the session, kept in memory
+>     only, checked, and never written to their Memory Stick. It passes through the online
+>     server on its way and is not stored there. This is new and lightly tested so far.
 >   - **A connection that drops for a moment while linking** no longer ends the session:
 >     link setup waits up to 30 seconds for the other PSP to come back. Once you are
 >     playing, the session still ends if the other PSP is gone for 8 seconds.
@@ -171,8 +170,8 @@
 >   and a Video preset that can really be set to none.
 > - **XMB launch mode** (#29): a game's own XMB entry can start it directly.
 > - **Online play (experimental, off by default):** *Settings → Wireless → Online play*, then
->   *Wireless → Online*; two PSPs link over the internet. Only Pokémon Emerald has been
->   tested so far. The step-by-step guide is in the
+>   *Wireless → Online*; two PSPs link over the internet. At the time only Pokémon Emerald had
+>   been tested (beta 7 lists what has been tested since). The step-by-step guide is in the
 >   [beta 4 release notes](https://github.com/ShoshinFauteux/GBAdhoc/releases/tag/v4.6.0-beta.4).
 > - **Sleep after *Quit to game list*** no longer powers the PSP off (#28), and the
 >   **PSP Go's slider** sleeps again during play.
@@ -696,8 +695,8 @@ The AGB-015 Wireless Adapter is emulated in full (that work is
 [davidgfnet's](#credits-this-project-stands-on-other-peoples-work)); GBAdhoc carries its
 radio traffic over the PSP's ad-hoc WiFi with a reliable transport of its own. Union Room
 trades, link battles (singles and doubles), the Trade Center and Mystery Gift, between
-any of Emerald, FireRed and LeafGreen. Link sessions are paced to 57 fps on both
-consoles, because Gen-3 games count link timeouts in *frames*. At each battle menu the
+any of Emerald, FireRed and LeafGreen. A session runs as fast as the slower PSP allows
+(the old 57 fps cap went in 4.6.0 beta 2). At each battle menu the
 games themselves pause for about a second while both consoles sync, exactly as they do
 through the real adapter.
 

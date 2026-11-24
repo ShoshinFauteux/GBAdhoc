@@ -56,14 +56,14 @@ Share game data and online play alike. Copy all four files (`EBOOT.PBP`, `gbadho
   connection 42 rose to 52.
 - **Wireless Adapter online:** the other PSP's adapter data gets 7 frames (117 ms, was 67),
   and packets carry up to 6 copies. Your own buttons are not delayed. Emerald Trade Center:
-  about 32 -> 55-57 fps over a phone hotspot, 53-55 -> 56-58 on a fast, steady connection.
+  about 32 -> up to 55-57 fps over a phone hotspot, 53-55 -> 56-58 on a fast, steady connection.
 - **Faster link start online.** The data exchanged when a link starts (saves, the game's
   state and, for Game Boy, a missing cartridge) has a lane of its own online, as it does
   over ad hoc. A Link Cable link over a phone hotspot starts in about a minute instead of two
-  to three; on a good connection in about 10 seconds instead of 20-40.
+  to three.
 - **Game Boy link online needs the cartridge on one PSP only.** A missing cartridge is sent
-  for the session in seconds rather than minutes, kept in memory, checked and never written
-  to the Memory Stick. It crosses the online server in transit only; nothing is stored there.
+  for the session, kept in memory, checked and never written to the Memory Stick. It crosses
+  the online server in transit only; nothing is stored there. New and lightly tested so far.
 - **Link setup survives a short drop:** while a link starts, the other PSP may be silent for
   up to 30 seconds (phone hotspots stall for several seconds now and then). In play, the
   session still ends after 8 seconds of silence, as before.
